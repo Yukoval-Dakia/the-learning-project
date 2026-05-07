@@ -1,7 +1,7 @@
 # AI 学习工具 · 规划主索引
 
 > 自用 · 移动 + 桌面双修 · 应试与兴趣并行
-> v0.5 · 2026-05-08 · 加入 Quiz 子系统 + Cluster 决议落地
+> v0.6 · 2026-05-08 · Artifact 多态化（Note + Tool）
 
 ---
 
@@ -12,9 +12,9 @@
 错题、进度、artifact 都是知识点的不同切面：
 - 错题 = 知识点上「失败的尝试」
 - 进度 = 知识点上「掌握度的演化」
-- artifact = 知识点上「可被反复消费的产物」
+- artifact = 知识点上「可被反复消费的产物」（**Note 阅读型 + Tool 互动型**）
 
-只要锚不丢，模块就不会变成孤岛。**架构是泛化的**，不锁单一学科或场景；**Phase 1 首发数据集 = 文言文（高中语文）**，理由是它逼出 4 种 judge_kind 的多样性。
+只要锚不丢，模块就不会变成孤岛。**架构是泛化的**，不锁单一学科或场景；**Phase 1 首发数据集 = 文言文（高中语文）**。
 
 ---
 
@@ -24,14 +24,14 @@
 the-learning-project/
 ├── PLANNING.md                     # 本文件 — 总览、模块速览、路线图、待决策汇总
 └── docs/
-    ├── architecture.md             # 跨模块基础：知识图谱 / AI 角色 / AI 任务层 / 技术栈 / 数据模型
+    ├── architecture.md             # 跨模块基础：知识图谱 / Artifact 多态化 / AI 任务层 / 技术栈 / 数据模型
     └── modules/
         ├── mistakes.md             # 错题管理
         ├── learning-items.md       # 待学习列表
         ├── progress.md             # 学习进度追踪
-        ├── notes.md                # Note artifact (含 TipTap / markdown 存储等技术实现)
+        ├── notes.md                # Artifact 阅读型（note_hub / note_atomic）
         ├── lanes.md                # Dreaming + Maintenance lanes
-        └── quiz.md                 # Quiz / Assessment 子系统（含 JudgeRouter / Direct multimodal / 申诉流程）
+        └── quiz.md                 # Artifact 互动型当前唯一实例（tool_quiz）
 ```
 
 ---
@@ -40,13 +40,13 @@ the-learning-project/
 
 | 模块 | 一句话 | 详细 |
 | --- | --- | --- |
-| 架构基础 | KG / AI 角色 / AI 任务层 / 技术栈 / 数据模型 | [docs/architecture.md](docs/architecture.md) |
+| 架构基础 | KG / Artifact 多态化 / AI 任务层 / 技术栈 / 数据模型 | [docs/architecture.md](docs/architecture.md) |
 | 错题管理 | 录入 / 归因 / 复习（FSRS） | [docs/modules/mistakes.md](docs/modules/mistakes.md) |
 | 待学习列表 | 4 来源汇入的 LearningItem，多路径完成判定 + Evidence 留痕 | [docs/modules/learning-items.md](docs/modules/learning-items.md) |
 | 学习进度追踪 | mastery 双层（base + AI delta），周复盘 | [docs/modules/progress.md](docs/modules/progress.md) |
-| Note Artifact | AI 作者 / 用户消费；hub + atomic 结构；source tier 防幻觉 | [docs/modules/notes.md](docs/modules/notes.md) |
+| Artifact: Note (note_hub / note_atomic) | 阅读型；hub + atomic 结构；source tier 防幻觉 | [docs/modules/notes.md](docs/modules/notes.md) |
+| Artifact: Tool (tool_quiz) | 互动型当前唯一实例；可独立或嵌入 Note；Question/Answer/Judgment + ai_flexible 兜底 | [docs/modules/quiz.md](docs/modules/quiz.md) |
 | Dreaming + Maintenance | AI 主动产出（生产 + 维护）两条 lane | [docs/modules/lanes.md](docs/modules/lanes.md) |
-| Quiz / Assessment | 题目生产 → 判定（7 种 judge_kind） → 反馈 → 错题入库；含 ai_flexible 兜底和申诉重判 | [docs/modules/quiz.md](docs/modules/quiz.md) |
 
 ---
 
@@ -54,7 +54,7 @@ the-learning-project/
 
 ### Phase 1 · 让一个闭环跑起来（最小可用）
 
-只做错题管理 + 学习项 + 知识点挂载 + Quiz 骨架，验证数据模型。
+只做错题管理 + 学习项 + 知识点挂载 + Note 录入 + tool_quiz 骨架，验证数据模型。
 
 **核心闭环**
 - [ ] 知识点 schema（含 base / ai_delta mastery、merged_from、归档字段、updated_at/version）
@@ -65,9 +65,13 @@ the-learning-project/
 - [ ] FSRS 复习队列
 - [ ] 完成判定多路径（自我宣告 + Evidence 留痕，软反问 + 强制覆盖）
 
-**Quiz 子系统骨架**
+**Artifact 多态化骨架**
+- [ ] Artifact schema 多态化（note_hub / note_atomic / tool_quiz）
+- [ ] tool_quiz 可独立存在 + 可嵌入 note section（embedded_check inline 模式）
+
+**tool_quiz 子系统**
 - [ ] Schema: Question / Answer / Judgment / UserAppeal
-- [ ] QuizGenTask（参数化）
+- [ ] QuizGenTask（参数化，输出 Question[]，caller 决定包成 standalone 还是 inline）
 - [ ] JudgeRouter
 - [ ] JudgeExactTask / JudgeKeywordTask / JudgeSemanticTask（基础 3 种）
 - [ ] JudgeFlexibleTask + UserAppeal 流程
@@ -98,7 +102,7 @@ the-learning-project/
 - [ ] Dreaming lane（每日总结、每日 quiz、题目 / 知识点建议）
 - [ ] Maintenance lane（合并、归档、删错题、状态重置）
 - [ ] 完成判定的 AI 主动提议路径（mastery>0.8 持续 14 天 ∨ 关联 check 全过 ∨ 7 天错 0）
-- [ ] **学习意图声明输入 + Artifact 生成 pipeline**
+- [ ] **学习意图声明输入 + Note Artifact 生成 pipeline**
 - [ ] **Hub + Atomic note 双层结构（基于 TipTap + markdown 存储）**
 - [ ] **结构化 section 模板（5 种 kind）**
 - [ ] **Hub outline 同步 + atomic batch 异步生成**
@@ -107,14 +111,16 @@ the-learning-project/
 - [ ] **Note 演进机制（基于错题更新 section）**
 - [ ] **JudgeRubricTask（rubric 评分）+ JudgeStepsTask（步骤验证）**
 - [ ] **JudgeMultimodalTask + VisionAnswerExtractTask + visual_complexity 路由**
+- [ ] **Standalone tool_quiz Artifact**（每日 quiz / final quiz / 用户存的模拟卷成独立 artifact 行）
 - [ ] 视觉模型 eval（CMMMU + MMMU + 自定义 10~20 张样本），定 baseline
 - [ ] Skill 抽离（如果 prompt 重复够多）
 - [ ] MCP Server expose（safe resources + propose-only tools）
 - [ ] 外部 MCP 消费（Calendar 优先）
 
-### Phase 3 · Tool 型 Artifact / Plugin
+### Phase 3 · 加新 tool_kind / Plugin
 
-- [ ] Tool 型 Artifact 评估（Note 升级 还是独立创作类）
+- [ ] 评估加新 `tool_kind`（visualizer / simulator / drill 等），按需求触发
+- [ ] 抽出通用 Tool interface（mount / emit / serialize）—— **真有第二种 tool 才做**
 - [ ] Plugin loader（如果引入第二学科）
 - [ ] 论述题深度评分（多 pass + self-consistency）
 - [ ] Tauri 桌面端打包
@@ -139,25 +145,25 @@ the-learning-project/
 - [x] 同步策略 → 本地优先 + 自动后台同步（去抖 3~5s），LWW + version 字段
 - [x] 完成判定 → 多路径 + Evidence 留痕，不强制 quiz；self_declare 软反问 + 强制覆盖（留痕）
 - [x] AI 能动性边界 → 软判断 / 软提议 AI free，硬数据 / 不可逆操作锁死
-- [x] Artifact 定位 → AI 作者，用户消费；Phase 1/2 只做 Note，Tool 型 Phase 3 评估
+- [x] **Artifact 定位 → 多态化（note_hub / note_atomic / tool_quiz / tool_<future>）；都是 AI 作者用户消费；Tool 可独立存在或嵌入 Note；不抽通用 Tool interface 直到第二种 tool 出现**
 - [x] Note 结构 → Hub + Atomic 双层，atomic ↔ 知识点节点
 - [x] Tool calling 实现 → 用 OSS 框架（Vercel AI SDK / LangChain），不自建
 - [x] Note 框架 → 自建（不嵌 Obsidian），编辑器用 TipTap，存储用 markdown + frontmatter
-- [x] **第一个落地的应试场景 → 文言文（高中语文）**（理由：覆盖 4 种 judge_kind 多样性）
-- [x] **视觉模型 eval baseline → CMMMU + MMMU + 自定义 10~20 张真实样本**
-- [x] **Quiz 子系统的判定方式 → 7 种 judge_kind，由 JudgeRouter 路由**
-- [x] **Vision 输入路径 → pipeline 与 direct multimodal 双路径，按 visual_complexity 路由**
-- [x] **Embedded check 引擎 → 与 QuizGenTask 共用，参数化**
-- [x] **AI 申诉兜底 → JudgeFlexibleTask（Opus + 完整上下文 + CoT），同 Judgment 限申诉 1 次**
-- [x] **base mastery 公式 → `max(fsrs_retrievability, quiz_pass_floor=0.7)`**
-- [x] **Hub mastery 聚合 → 按 `(错题数 + 学习项数)` 加权平均子节点**
-- [x] **AI delta mastery 单次最大幅度 → ±0.15**
-- [x] **LearningItem 优先级 → Hybrid（用户 pin + AI score）**
-- [x] **跨学科引用 → markdown wiki link 软引用，不做强类型**
-- [x] **阅读 UX → 移动优先线性流 + 桌面双栏（hub outline 侧栏 + atomic 主体）**
-- [x] **变式题质量保证 → 双 pass + draft 状态**
-- [x] **Search-grounded 搜索源 → Phase 2 初通用 web，后期教材 RAG**
-- [x] **AI 主动提议完成的触发 → mastery>0.8 持续 14 天 ∨ 关联 check 全过 ∨ 7 天错 0**
+- [x] 第一个落地的应试场景 → 文言文（高中语文）
+- [x] 视觉模型 eval baseline → CMMMU + MMMU + 自定义 10~20 张真实样本
+- [x] tool_quiz 的判定方式 → 7 种 judge_kind，由 JudgeRouter 路由
+- [x] Vision 输入路径 → pipeline 与 direct multimodal 双路径，按 visual_complexity 路由
+- [x] Embedded check 模型 → inline 在 note section（持 question_ids），不独立成 tool_quiz Artifact 行；standalone tool_quiz（每日 / final / 模拟卷）才是独立 Artifact
+- [x] AI 申诉兜底 → JudgeFlexibleTask（Opus + 完整上下文 + CoT），同 Judgment 限申诉 1 次
+- [x] base mastery 公式 → `max(fsrs_retrievability, quiz_pass_floor=0.7)`
+- [x] Hub mastery 聚合 → 按 `(错题数 + 学习项数)` 加权平均子节点
+- [x] AI delta mastery 单次最大幅度 → ±0.15
+- [x] LearningItem 优先级 → Hybrid（用户 pin + AI score）
+- [x] 跨学科引用 → markdown wiki link 软引用，不做强类型
+- [x] 阅读 UX → 移动优先线性流 + 桌面双栏
+- [x] 变式题质量保证 → 双 pass + draft 状态
+- [x] Search-grounded 搜索源 → Phase 2 初通用 web，后期教材 RAG
+- [x] AI 主动提议完成的触发 → mastery>0.8 持续 14 天 ∨ 关联 check 全过 ∨ 7 天错 0
 
 ### 阈值类默认（runtime 调）
 
@@ -171,8 +177,9 @@ the-learning-project/
 ### 仍未定（runtime 数据后再决）
 
 - [ ] Phase 1 启动后第一周跑出的具体数据，校准 base mastery 公式权重
-- [ ] LearningItem priority score 的权重 (urgency/weakness/recency/pin)
+- [ ] LearningItem priority score 的权重 (urgency / weakness / recency / pin)
 - [ ] Rubric 多次评分的一致性检测策略（Phase 3+）
+- [ ] 何时引入第二种 tool_kind（drill / visualizer / simulator）
 
 ### 模块特定未定
 
