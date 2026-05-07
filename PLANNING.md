@@ -1,7 +1,7 @@
 # AI 学习工具 · 规划主索引
 
 > 自用 · 移动 + 桌面双修 · 应试与兴趣并行
-> v0.6 · 2026-05-08 · Artifact 多态化（Note + Tool）
+> v0.7 · 2026-05-08 · Mistake 与 Question 解耦
 
 ---
 
@@ -13,6 +13,7 @@
 - 错题 = 知识点上「失败的尝试」
 - 进度 = 知识点上「掌握度的演化」
 - artifact = 知识点上「可被反复消费的产物」（**Note 阅读型 + Tool 互动型**）
+- 题目 = 知识点上「测验素材」（**Question 是统一题库**）
 
 只要锚不丢，模块就不会变成孤岛。**架构是泛化的**，不锁单一学科或场景；**Phase 1 首发数据集 = 文言文（高中语文）**。
 
@@ -24,14 +25,14 @@
 the-learning-project/
 ├── PLANNING.md                     # 本文件 — 总览、模块速览、路线图、待决策汇总
 └── docs/
-    ├── architecture.md             # 跨模块基础：知识图谱 / Artifact 多态化 / AI 任务层 / 技术栈 / 数据模型
+    ├── architecture.md             # 跨模块基础：知识图谱 / Artifact 多态化 / 统一题库 / AI 任务层 / 技术栈 / 数据模型
     └── modules/
-        ├── mistakes.md             # 错题管理
+        ├── mistakes.md             # 错题管理（事件 + 复习态；题面在 Question）
         ├── learning-items.md       # 待学习列表
         ├── progress.md             # 学习进度追踪
         ├── notes.md                # Artifact 阅读型（note_hub / note_atomic）
         ├── lanes.md                # Dreaming + Maintenance lanes
-        └── quiz.md                 # Artifact 互动型当前唯一实例（tool_quiz）
+        └── quiz.md                 # Artifact 互动型当前唯一实例（tool_quiz）+ 统一题库 Question
 ```
 
 ---
@@ -40,8 +41,8 @@ the-learning-project/
 
 | 模块 | 一句话 | 详细 |
 | --- | --- | --- |
-| 架构基础 | KG / Artifact 多态化 / AI 任务层 / 技术栈 / 数据模型 | [docs/architecture.md](docs/architecture.md) |
-| 错题管理 | 录入 / 归因 / 复习（FSRS） | [docs/modules/mistakes.md](docs/modules/mistakes.md) |
+| 架构基础 | KG / Artifact 多态化 / 统一题库 / AI 任务层 / 技术栈 / 数据模型 | [docs/architecture.md](docs/architecture.md) |
+| 错题管理 | 录入 / 归因 / 复习（FSRS）；Mistake = 事件 + 复习态，题面在 Question 表 | [docs/modules/mistakes.md](docs/modules/mistakes.md) |
 | 待学习列表 | 4 来源汇入的 LearningItem，多路径完成判定 + Evidence 留痕 | [docs/modules/learning-items.md](docs/modules/learning-items.md) |
 | 学习进度追踪 | mastery 双层（base + AI delta），周复盘 | [docs/modules/progress.md](docs/modules/progress.md) |
 | Artifact: Note (note_hub / note_atomic) | 阅读型；hub + atomic 结构；source tier 防幻觉 | [docs/modules/notes.md](docs/modules/notes.md) |
@@ -59,7 +60,9 @@ the-learning-project/
 **核心闭环**
 - [ ] 知识点 schema（含 base / ai_delta mastery、merged_from、归档字段、updated_at/version）
 - [ ] 文言文课标 import + AI 自动建议节点（人工确认）
-- [ ] 错题录入（vision LLM 直接处理）
+- [ ] **Question 统一题库 schema**（题面唯一存储）
+- [ ] **Mistake schema 解耦**（只持 question_id + 事件 + 复习态 + 错因）
+- [ ] 错题录入（vision LLM 直接处理 → 建 Question + 绑 Mistake）
 - [ ] LearningItem 数据流（来源：mistake / manual）
 - [ ] AI 归因 + 自动挂载知识点
 - [ ] FSRS 复习队列
@@ -70,7 +73,7 @@ the-learning-project/
 - [ ] tool_quiz 可独立存在 + 可嵌入 note section（embedded_check inline 模式）
 
 **tool_quiz 子系统**
-- [ ] Schema: Question / Answer / Judgment / UserAppeal
+- [ ] Schema: Answer / Judgment / UserAppeal
 - [ ] QuizGenTask（参数化，输出 Question[]，caller 决定包成 standalone 还是 inline）
 - [ ] JudgeRouter
 - [ ] JudgeExactTask / JudgeKeywordTask / JudgeSemanticTask（基础 3 种）
@@ -112,6 +115,8 @@ the-learning-project/
 - [ ] **JudgeRubricTask（rubric 评分）+ JudgeStepsTask（步骤验证）**
 - [ ] **JudgeMultimodalTask + VisionAnswerExtractTask + visual_complexity 路由**
 - [ ] **Standalone tool_quiz Artifact**（每日 quiz / final quiz / 用户存的模拟卷成独立 artifact 行）
+- [ ] **Review session tool_quiz**（FSRS 到期错题集合走 tool_quiz）
+- [ ] **VariantGenTask + VariantVerifyTask 双 pass**（变式题进 Question 题库，挂 Mistake.variants）
 - [ ] 视觉模型 eval（CMMMU + MMMU + 自定义 10~20 张样本），定 baseline
 - [ ] Skill 抽离（如果 prompt 重复够多）
 - [ ] MCP Server expose（safe resources + propose-only tools）
@@ -138,14 +143,16 @@ the-learning-project/
 
 ## 待决策汇总
 
-### 已定（Cluster A/B/C 决议）
+### 已定（Cluster A/B/C 决议 + 后续 reframe）
 
 - [x] 应试 vs 兴趣两套图谱 → 共享 tag、独立主图
 - [x] AI 调用 API 还是本地 → 走 API（Phase 1 单家 Claude，任务层留多 provider 接口）
 - [x] 同步策略 → 本地优先 + 自动后台同步（去抖 3~5s），LWW + version 字段
 - [x] 完成判定 → 多路径 + Evidence 留痕，不强制 quiz；self_declare 软反问 + 强制覆盖（留痕）
 - [x] AI 能动性边界 → 软判断 / 软提议 AI free，硬数据 / 不可逆操作锁死
-- [x] **Artifact 定位 → 多态化（note_hub / note_atomic / tool_quiz / tool_<future>）；都是 AI 作者用户消费；Tool 可独立存在或嵌入 Note；不抽通用 Tool interface 直到第二种 tool 出现**
+- [x] **Artifact 定位 → 多态化（note_hub / note_atomic / tool_quiz / tool_<future>）**；Tool 可独立存在或嵌入 Note；不抽通用 Tool interface 直到第二种 tool 出现
+- [x] **题目唯一存储 → Question 是统一题库**；Mistake / tool_quiz Artifact / embedded check 都引用 question_id
+- [x] **Mistake 与 Question 解耦** → Mistake 只记事件（question_id + wrong_answer + source）+ 复习态（fsrs_state）+ 错因（cause）
 - [x] Note 结构 → Hub + Atomic 双层，atomic ↔ 知识点节点
 - [x] Tool calling 实现 → 用 OSS 框架（Vercel AI SDK / LangChain），不自建
 - [x] Note 框架 → 自建（不嵌 Obsidian），编辑器用 TipTap，存储用 markdown + frontmatter
@@ -153,7 +160,7 @@ the-learning-project/
 - [x] 视觉模型 eval baseline → CMMMU + MMMU + 自定义 10~20 张真实样本
 - [x] tool_quiz 的判定方式 → 7 种 judge_kind，由 JudgeRouter 路由
 - [x] Vision 输入路径 → pipeline 与 direct multimodal 双路径，按 visual_complexity 路由
-- [x] Embedded check 模型 → inline 在 note section（持 question_ids），不独立成 tool_quiz Artifact 行；standalone tool_quiz（每日 / final / 模拟卷）才是独立 Artifact
+- [x] Embedded check 模型 → inline 在 note section（持 question_ids），不独立成 tool_quiz Artifact 行；standalone tool_quiz（每日 / final / 模拟卷 / review session）才是独立 Artifact
 - [x] AI 申诉兜底 → JudgeFlexibleTask（Opus + 完整上下文 + CoT），同 Judgment 限申诉 1 次
 - [x] base mastery 公式 → `max(fsrs_retrievability, quiz_pass_floor=0.7)`
 - [x] Hub mastery 聚合 → 按 `(错题数 + 学习项数)` 加权平均子节点
@@ -161,9 +168,10 @@ the-learning-project/
 - [x] LearningItem 优先级 → Hybrid（用户 pin + AI score）
 - [x] 跨学科引用 → markdown wiki link 软引用，不做强类型
 - [x] 阅读 UX → 移动优先线性流 + 桌面双栏
-- [x] 变式题质量保证 → 双 pass + draft 状态
+- [x] 变式题质量保证 → 双 pass + draft 状态（VariantGenTask + VariantVerifyTask）
 - [x] Search-grounded 搜索源 → Phase 2 初通用 web，后期教材 RAG
 - [x] AI 主动提议完成的触发 → mastery>0.8 持续 14 天 ∨ 关联 check 全过 ∨ 7 天错 0
+- [x] **复习 = tool_quiz session** → FSRS 到期 Mistake 集合 → 临时 standalone tool_quiz（source=review_session）
 
 ### 阈值类默认（runtime 调）
 
@@ -173,6 +181,7 @@ the-learning-project/
 - [x] 成本天花板 → $5/day, $30/week（兜底）
 - [x] borderline 阈值 → 0.4 ≤ score ≤ 0.7（统一，可 runtime 调）
 - [x] partial credit verdict 阈值 → score≥0.85=correct, 0.4<score<0.85=partial, ≤0.4=incorrect
+- [x] partial 错题复习 → 进 FSRS 但 lapses+0.5 半计
 
 ### 仍未定（runtime 数据后再决）
 
@@ -180,6 +189,7 @@ the-learning-project/
 - [ ] LearningItem priority score 的权重 (urgency / weakness / recency / pin)
 - [ ] Rubric 多次评分的一致性检测策略（Phase 3+）
 - [ ] 何时引入第二种 tool_kind（drill / visualizer / simulator）
+- [ ] 错因分类是否扩展（当前 4 类是否够，需要 6+ 类 + secondary 标签 — 见 mistakes.md 模块特定）
 
 ### 模块特定未定
 

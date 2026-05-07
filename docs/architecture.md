@@ -56,7 +56,7 @@ Artifact (AI 产出物)
 │   ├── note_hub      (大纲 + 子 atomic 列表)
 │   └── note_atomic   (5-section 结构化笔记，含 check section)
 └── Tool  (互动型，被用)
-    ├── tool_quiz         ← 当前唯一实例（题目 / 答题 / 判定 / 申诉）
+    ├── tool_quiz         ← 当前唯一实例
     ├── tool_visualizer   (Phase 3 候选)
     ├── tool_simulator    (Phase 3 候选)
     └── tool_drill        (Phase 3 候选)
@@ -64,26 +64,50 @@ Artifact (AI 产出物)
 
 **两个关键性质**：
 
-1. **Tool 可独立存在**：每日 quiz / final quiz / 用户存的模拟卷都是独立的 `tool_quiz` Artifact，不需要嵌在 Note 里。
+1. **Tool 可独立存在**：每日 quiz / final quiz / 用户存的模拟卷 / 复习 session 都是独立的 `tool_quiz` Artifact，不需要嵌在 Note 里。
 2. **Tool 也可以嵌入 Note**：note 的 `check` section 是 **inline embedded** 的迷你 quiz——直接在 section 里持 `question_ids[]`，不另建独立 `tool_quiz` Artifact 行（避免数据膨胀，因为 embedded check 跟 section 1:1 强耦合）。
 
 **不抽通用 Tool interface**：Phase 1 只有 quiz 一种 tool kind，搞 generic Tool base 是 YAGNI。等 Phase 3 真出现第二种 tool（visualizer 等）时再抽两者共有的 `mount() / emit() / serialize()`。
 
 ---
 
-## 四、AI 任务层（LLM Task Layer）
+## 四、统一题库（Question 单一来源）
+
+`Question` 是题面、参考答案、评分标准的**唯一存储**。所有题相关的对象都引用 Question.id：
+
+```
+Question (统一题库，single source of truth)
+  ↑ 被引用
+  ├── tool_quiz Artifact.tool_state.question_ids[]   (standalone quiz)
+  ├── note_atomic.sections[check].embedded_check.question_ids[]   (embedded check)
+  ├── Mistake.question_id                            (做错事件)
+  └── Mistake.variants[].question_id                 (变式题，本身也是 Question)
+```
+
+**好处**：
+- 题面去重（同题不同来源不重复存）
+- 变式题自然成为题库一员（不是 Mistake 私有数据）
+- 复习 / 每日 quiz / 模拟卷的题都从 Question 抽
+- 错题录入与 quiz 答错的路径一致：先建 Question 再建 Mistake
+
+详见 [`modules/quiz.md`](modules/quiz.md) §  Question 部分 与 [`modules/mistakes.md`](modules/mistakes.md) § 1。
+
+---
+
+## 五、AI 任务层（LLM Task Layer）
 
 独立模块。所有 AI 调用按「任务」抽象，**不**按 `chat()` 抽象——避免丢掉 provider 特色能力（prompt caching / batch API / structured output / multimodal）。
 
-### 4.1 Task 注册
+### 5.1 Task 注册
 
 | 任务 | Provider/Model 选择 | 触发 | tool call | 多模态 | 产出 |
 | --- | --- | --- | --- | --- | --- |
-| `VisionExtractTask` | 低成本视觉（CMMMU 选型） | 录入错题图片 → 文字 | 否 | 输入 | 文字 / LaTeX |
+| `VisionExtractTask` | 低成本视觉（CMMMU 选型） | 录入错题图片 → 题面 / LaTeX / 选项 | 否 | 输入 | 题面文本（建 Question） |
 | `VisionAnswerExtractTask` | 同上 | 答案图片 → 文字（pipeline 路径） | 否 | 输入 | 文字 |
-| `AttributionTask` | Sonnet → Haiku 备选 | 错题归因 + 挂载知识点 | 是 | — | Mistake.cause |
-| `VariantGenTask` | Sonnet + batch | 变式题生成（draft 状态） | 否 | — | Mistake.variants |
-| `QuizGenTask` | Sonnet (+ batch 可选) | embedded check / daily / final / 用户主动 | 否 | — | `Question[]`（caller 决定包成 standalone tool_quiz Artifact 或 inline 进 note section） |
+| `AttributionTask` | Sonnet → Haiku 备选 | Mistake 创建时归因 + 挂载知识点 | 是 | — | Mistake.cause + knowledge_ids |
+| `VariantGenTask` | Sonnet + batch | 变式题生成（draft 状态） | 否 | — | 新 Question 实例（source=mistake_variant） |
+| `VariantVerifyTask` | 不同 model + batch | 变式题双 pass 验证 | 否 | — | Question.draft_status |
+| `QuizGenTask` | Sonnet (+ batch 可选) | embedded check / daily / final / 用户主动 | 否 | — | `Question[]` |
 | `JudgeRouter` | n/a | 答案提交后路由 | 否 | — | judge_kind |
 | `JudgeExactTask` | n/a | exact judge | 否 | — | Judgment |
 | `JudgeKeywordTask` | n/a | keyword judge | 否 | — | Judgment |
@@ -99,9 +123,9 @@ Artifact (AI 产出物)
 | `NoteVerifyTask` | 不同 model + batch | Note 双 pass 反幻觉 | 否 | — | section.source_tier 标记 |
 | `NoteSectionUpdateTask` | Sonnet | Living note 更新某 section | 否 | — | section diff |
 
-**命名约定**：`Note*Task` 产出 note_* 类型 Artifact；`Quiz*Task` 与 `Judge*Task` 服务 tool_quiz 子系统。Tool 之间不共享通用 task，每种 tool_kind 自己长自己的。
+**命名约定**：`Note*Task` 产出 note_* 类型 Artifact；`Quiz*Task` 与 `Judge*Task` 服务 tool_quiz 子系统；`Variant*Task` 产出新 Question 挂在 Mistake.variants 上。Tool 之间不共享通用 task，每种 tool_kind 自己长自己的。
 
-### 4.2 运行时 Tool Calling
+### 5.2 运行时 Tool Calling
 
 需要"边看数据边决策"的 Task 走 multi-turn tool call；输入已固定的 Task 走单轮 structured output。
 
@@ -111,11 +135,12 @@ Artifact (AI 产出物)
 Read（任何 Task 可用）：
   search_knowledge_by_concept / get_knowledge_node / get_node_neighbors
   find_similar_mistakes / get_recent_mistakes / get_weak_points
-  get_review_due / get_learning_history / get_artifact
+  get_review_due / get_learning_history / get_artifact / get_question
 
 Write（Task 白名单）：
   create_knowledge_node           # AttributionTask, NoteGenerateTask (atomic 级)
   link_mistake_to_node            # AttributionTask
+  create_question                 # 录入 / VariantGenTask
   update_ai_delta_mastery         # 限定 Task，可回滚
 
 Propose-only（产生待审核记录，不立即执行）：
@@ -145,17 +170,17 @@ TaskBudget {
 - Budget 与降级
 - ToolCallLog（必须）
 
-### 4.3 成本控制
+### 5.3 成本控制
 
 - 同步任务（用户操作时跑）：归因 + 挂载 + 视觉录入 + 答案判定（除 ai_flexible）
-- 异步 batch（夜间跑，50% 折扣）：变式生成、dreaming、maintenance、周报、atomic note 生成、Note Verify
+- 异步 batch（夜间跑，50% 折扣）：变式生成、dreaming、maintenance、周报、atomic note 生成、Note Verify、Variant Verify
 - prompt caching：知识图谱 / 错题历史 / rubric 标准 / system prompt 作稳定 prefix
 - 模型分级：简单任务用便宜模型
 - 结果缓存：同 prompt 命中直接返回
 - **预算天花板**：日 $5 / 周 $30（自用规模兜底，跑数据后调）；超了自动降级（顶级 → 中级 → 暂停 dreaming）
 - 每次调用记录 `CostLedger`，按 `(task, provider, model)` 聚合可见
 
-### 4.4 Skill / MCP Server / Plugin（推后）
+### 5.4 Skill / MCP Server / Plugin（推后）
 
 这三块概念保留但不在 Phase 1 实现：
 
@@ -166,7 +191,7 @@ TaskBudget {
 
 ---
 
-## 五、技术栈
+## 六、技术栈
 
 | 层 | 选型 | 理由 |
 | --- | --- | --- |
@@ -192,11 +217,12 @@ TaskBudget {
 - 不自建 tool-calling 循环，用 OSS
 - 不嵌 Obsidian 当 note 框架（详见 [`modules/notes.md`](modules/notes.md)）
 - 不抽通用 Tool interface（YAGNI，等第二种 tool kind 出现再抽）
+- 不在 Mistake 表里复制题面（题面只在 Question 表）
 - schema 第一天就加 `updated_at` / `version` 字段，给同步留位
 
 ---
 
-## 六、数据模型骨架
+## 七、数据模型骨架
 
 ```
 Knowledge
@@ -208,16 +234,53 @@ Knowledge
   approval_status: pending | approved | rejected
   updated_at, version
 
-Mistake
-  id, content, source, created_at
+// 统一题库
+Question
+  id
+  kind: choice | true_false | fill_blank | short_answer | essay
+        | computation | reading | translation
+  prompt_md
+  reference_md
+  rubric_json?                    // {criteria: [{name, weight, descriptor}]}
+  judge_kind_override?
+  visual_complexity?: low | medium | high
   → knowledge_ids[]
-  → cause: {category, ai_analysis, partial?: bool}
-  → variants[]                    // 含 status: draft | active
-  → fsrs_state {due_at, interval, ease, repeat, lapses}
-  → from_judgment_id?             // 来自 quiz 判错时关联
-  deleted_at?                     // soft delete (30 天后真删)；appeal 翻盘也走 soft delete
+  difficulty: 1~5
+  source: embedded | daily | final | dreaming | manual
+        | vision_capture | reverse_mark | mistake_variant
+  source_ref?                     // mistake_id (variant) / artifact_id (reverse_mark) / null
+  draft_status?: draft | active   // 仅 mistake_variant 等需要双 pass 的题
+  created_by: {task, version}
+  metadata?: { force_flexible?, expected_input_kind?, ... }
+  created_at, updated_at, version
+
+// 做错事件 + 复习态（题面在 Question 那边）
+Mistake
+  id
+  question_id                     // ★ 必须，题面在 Question
+  wrong_answer_md?                // 用户当时的错答（可省略）
+  wrong_answer_image_refs[]?
+  source: quiz_answer | manual | vision_capture | reverse_mark
+  source_ref?                     // judgment_id (quiz_answer) / artifact_id (reverse_mark)
+  → knowledge_ids[]                // 错过反映的具体盲点（可与 Question.knowledge_ids[] 不同）
+  cause: {
+    primary_category               // concept | calculation | reading | knowledge_gap | ...
+    secondary_categories[]?
+    ai_analysis_md
+    user_notes?
+    partial?: bool
+  }
+  fsrs_state {due_at, interval, ease, repeat, lapses, retrievability_at}
+  variants[]: [{                   // 变式题，每条引用一个 Question
+    question_id,
+    status: draft | active
+  }]
+  status: draft | active | resting | archived
+  archived_reason?: mastered | obsolete | user
+  archived_at?
+  deleted_at?
   delete_reason?: user | merge | duplicate | misjudged
-  updated_at, version
+  created_at, updated_at, version
 
 LearningItem                      // 待学习列表
   id
@@ -237,7 +300,7 @@ CompletionEvidence
   id, learning_item_id
   path: self_declare | ai_propose | quiz_pass
   evidence_json                   // AI 看到的信号快照
-  user_overrode_low_evidence?: bool   // self_declare 强制覆盖时标记
+  user_overrode_low_evidence?: bool
   decided_at
 
 DreamingProposal
@@ -254,73 +317,52 @@ MaintenanceSuggestion
   snapshot_json
   proposed_at, decided_at, rollback_until
 
-Artifact                          // AI 产出物的统一抽象（Note 阅读型 + Tool 互动型）
+Artifact                          // AI 产出物的统一抽象（Note + Tool）
   id
   type: note_hub | note_atomic | tool_quiz | tool_<future>
   title
 
-  // 关联知识点
   knowledge_id?                   // note_atomic 必填；note_hub 可选；tool_* 视情况
 
-  // 关系
   parent_artifact_id?             // note_atomic→note_hub
   child_artifact_ids[]            // note_hub 持有 atomic 列表
 
-  // 来源
   intent_source: declared | from_mistake | from_dream
   source                          // 具体语义按 type:
                                   //   note: 同 intent_source
-                                  //   tool_quiz: embedded | daily | final | dreaming | manual | mistake_variant
-  source_ref?                     // mistake_id / learning_item_id / proposal_id
+                                  //   tool_quiz: embedded | daily | final | dreaming | manual | mistake_variant | review_session
+  source_ref?
 
   // Note 字段（type=note_*）
-  outline_json?                   // note_hub: [{section_id, atomic_id, status}]
+  outline_json?                   // note_hub
   sections?                       // note_atomic
     [{
       id, kind: definition | mechanism | example | pitfall | check
       body_md
       source_tier: llm_only | search_grounded | textbook | user_verified
       user_verified: bool
-      embedded_check?: { question_ids: [string] }   // inline tool_quiz，不另建 Artifact 行
+      embedded_check?: { question_ids: [string] }   // inline，引用 Question 表
       version
     }]
 
-  // Tool 字段（type=tool_*，仅 standalone）
+  // Tool 字段（type=tool_*）
   tool_kind?                      // quiz | visualizer | simulator | drill | ...
   tool_state?                     // tool_quiz: { question_ids[], session_meta? }
-                                  // future tools: 自定义 schema
 
-  // 通用元信息
   generation_status: pending | partial | complete
   generated_by: {task, provider, model, prompt_version}
-  history[]                       // section / state diff，可回放
+  history[]
   archived_at?
   updated_at, version
 
-// Quiz 子系统的内部 schema（Question 是 tool_quiz 引用的题目；Answer/Judgment 是答题事件）
-Question
-  id
-  kind: choice | true_false | fill_blank | short_answer | essay
-        | computation | reading | translation
-  prompt_md
-  reference_md
-  rubric_json?                    // {criteria: [{name, weight, descriptor}]}
-  judge_kind_override?
-  visual_complexity?: low | medium | high
-  → knowledge_ids[]
-  difficulty: 1~5
-  source: embedded | daily | final | dreaming | manual | mistake_variant
-  created_by: {task, version}
-  metadata?: { force_flexible?, expected_input_kind?, ... }
-  updated_at, version
-
+// Quiz 子系统的事件 schema
 Answer
   id, question_id, learning_item_id?
   input_kind: text | option | image | voice
-  content_md                      # 文字答案
-  image_refs[]                    # 图片附件
-  vision_extracted?               # pipeline 路径下 vision 转文字结果
-  tags?: [string]                 # ['handwritten', ...]
+  content_md
+  image_refs[]
+  vision_extracted?
+  tags?: [string]
   submitted_at
 
 Judgment                          // 不可变；同 answer_id 可有多条
@@ -353,7 +395,7 @@ WeeklyReview
   → weak_points: knowledge_ids[]
   → recurring_mistakes: mistake_ids[]
 
-ToolCallLog                       // 运行时 LLM tool 调用观测（注意：跟 tool_* artifact 是不同概念）
+ToolCallLog                       // 运行时 LLM tool 调用观测（注意：跟 tool_* artifact 不同概念）
   id, task_run_id, task_kind
   tool_name, input_json, output_json
   iteration, latency_ms, cost
