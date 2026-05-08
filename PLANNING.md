@@ -1,7 +1,7 @@
 # AI 学习工具 · 规划主索引
 
 > 自用 · 移动 + 桌面双修 · 应试与兴趣并行
-> v0.8 · 2026-05-08 · 录入流程：AI 自动判断学科 + 批改识别提前到 Phase 1.5
+> v0.9 · 2026-05-08 · 变式题深化（双 pass + 三层防错题繁殖）
 
 ---
 
@@ -27,7 +27,7 @@ the-learning-project/
 └── docs/
     ├── architecture.md             # 跨模块基础：知识图谱 / Artifact 多态化 / 统一题库 / AI 任务层 / 技术栈 / 数据模型
     └── modules/
-        ├── mistakes.md             # 错题管理（事件 + 复习态；题面在 Question）
+        ├── mistakes.md             # 错题管理（事件 + 复习态；题面在 Question；变式题双 pass + 防繁殖）
         ├── learning-items.md       # 待学习列表
         ├── progress.md             # 学习进度追踪
         ├── notes.md                # Artifact 阅读型（note_hub / note_atomic）
@@ -42,7 +42,7 @@ the-learning-project/
 | 模块 | 一句话 | 详细 |
 | --- | --- | --- |
 | 架构基础 | KG / Artifact 多态化 / 统一题库 / AI 任务层 / 技术栈 / 数据模型 | [docs/architecture.md](docs/architecture.md) |
-| 错题管理 | 录入 / 归因 / 复习（FSRS）；Mistake = 事件 + 复习态，题面在 Question 表 | [docs/modules/mistakes.md](docs/modules/mistakes.md) |
+| 错题管理 | 录入 / 归因 / 复习（FSRS）；变式题双 pass + 三层防"错题繁殖" | [docs/modules/mistakes.md](docs/modules/mistakes.md) |
 | 待学习列表 | 4 来源汇入的 LearningItem，多路径完成判定 + Evidence 留痕 | [docs/modules/learning-items.md](docs/modules/learning-items.md) |
 | 学习进度追踪 | mastery 双层（base + AI delta），周复盘 | [docs/modules/progress.md](docs/modules/progress.md) |
 | Artifact: Note (note_hub / note_atomic) | 阅读型；hub + atomic 结构；source tier 防幻觉 | [docs/modules/notes.md](docs/modules/notes.md) |
@@ -60,8 +60,8 @@ the-learning-project/
 **核心闭环**
 - [ ] 知识点 schema（含 base / ai_delta mastery、merged_from、归档字段、updated_at/version）
 - [ ] 文言文课标 import + AI 自动建议节点（人工确认）
-- [ ] **Question 统一题库 schema**（题面唯一存储）
-- [ ] **Mistake schema 解耦**（只持 question_id + 事件 + 复习态 + 错因）
+- [ ] **Question 统一题库 schema**（题面唯一存储，含 variant_depth / root_question_id 字段）
+- [ ] **Mistake schema 解耦**（只持 question_id + 事件 + 复习态 + 错因 + variants[]）
 - [ ] 单题拍照录入（`vision_single`，AI 自动判断学科 / 题型 / 知识点）
 - [ ] 一击确认页（必审 3 字段：题面 / 参考答案 / 关联知识点）
 - [ ] 手动粘贴录入（`manual`）
@@ -109,7 +109,7 @@ the-learning-project/
 - [ ] **保留为模拟卷选项**（勾选后整套 Question 包成 standalone tool_quiz Artifact）
 - [ ] 没有批改痕迹时的 fallback（用户逐题点对错 / 上传参考答案让 AI 自动判）
 
-### Phase 2 · 进度图谱 + Dreaming + Maintenance + Note Artifact + 高级 Judge
+### Phase 2 · 进度图谱 + Dreaming + Maintenance + Note Artifact + 高级 Judge + 变式题
 
 - [ ] base mastery 公式实现：`max(fsrs_retrievability, quiz_pass_floor=0.7)`
 - [ ] Hub mastery 聚合：按 `(错题数 + 学习项数)` 加权平均子节点
@@ -131,7 +131,18 @@ the-learning-project/
 - [ ] **JudgeMultimodalTask + VisionAnswerExtractTask + visual_complexity 路由**
 - [ ] **Standalone tool_quiz Artifact**（每日 quiz / final quiz / 用户存的模拟卷成独立 artifact 行）
 - [ ] **Review session tool_quiz**（FSRS 到期错题集合走 tool_quiz）
-- [ ] **VariantGenTask + VariantVerifyTask 双 pass**（变式题进 Question 题库，挂 Mistake.variants）
+
+**变式题深化**
+- [ ] **VariantGenTask**（按 mistake.cause 类型出针对性变式）
+- [ ] **VariantVerifyTask**（双 pass，不同 model 验证：题面歧义 / 参考答案对错 / 难度匹配 / 错因针对性）
+- [ ] **variant_depth + root_question_id + parent_variant_id 字段**
+- [ ] **variants_max=3 + variants_generated_count 字段**
+- [ ] **draft → active 触发**（首次 verdict=correct，含申诉翻盘）
+- [ ] **broken_variant 处理**（VerifyTask 失败 / 用户主动标 → status='broken' + failure_reasons）
+- [ ] **用户主动触发"再来几道类似的"按钮**（绕过 variants_max）
+- [ ] **变式 Mistake 不再生变式**（链终止逻辑）
+- [ ] **变式质量监控指标**（接受率 / broken 率 / cause_targeting 分布）
+
 - [ ] 视觉模型 eval（CMMMU + MMMU + 自定义 10~20 张样本），定 baseline
 - [ ] Skill 抽离（如果 prompt 重复够多）
 - [ ] MCP Server expose（safe resources + propose-only tools）
@@ -184,13 +195,14 @@ the-learning-project/
 - [x] 跨学科引用 → markdown wiki link 软引用，不做强类型
 - [x] 阅读 UX → 移动优先线性流 + 桌面双栏
 - [x] 变式题质量保证 → 双 pass + draft 状态（VariantGenTask + VariantVerifyTask）
+- [x] **变式题深化（v0.9）** → 按 cause 类型针对性生成；三层防"错题繁殖"（variant_depth≤2 + variants_max=3 + 变式 Mistake 不再生变式）；draft→active 在首次 correct；用户主动可绕过 variants_max；broken_variant 走 VerifyTask 输出的 failure_reasons
 - [x] Search-grounded 搜索源 → Phase 2 初通用 web，后期教材 RAG
 - [x] AI 主动提议完成的触发 → mastery>0.8 持续 14 天 ∨ 关联 check 全过 ∨ 7 天错 0
-- [x] **复习 = tool_quiz session** → FSRS 到期 Mistake 集合 → 临时 standalone tool_quiz（source=review_session）
-- [x] **录入学科判断** → AI 自主判断（vision pipeline + AttributionTask），不让用户预选
-- [x] **批改识别提前到 Phase 1.5** → 多张图一次 vision call；批改痕迹靠 prompt 不靠 schema 分类；跨页大题让 AI 自然关联
-- [x] **录入流程必审字段** → 题面 / 参考答案 / 关联知识点；其他自动
-- [x] **AI 失败不阻塞录入** → Mistake 总能创建，AttributionTask 失败后台重试
+- [x] 复习 = tool_quiz session → FSRS 到期 Mistake 集合 → 临时 standalone tool_quiz（source=review_session）
+- [x] 录入学科判断 → AI 自主判断（vision pipeline + AttributionTask），不让用户预选
+- [x] 批改识别提前到 Phase 1.5 → 多张图一次 vision call；批改痕迹靠 prompt 不靠 schema 分类；跨页大题让 AI 自然关联
+- [x] 录入流程必审字段 → 题面 / 参考答案 / 关联知识点；其他自动
+- [x] AI 失败不阻塞录入 → Mistake 总能创建，AttributionTask 失败后台重试
 
 ### 阈值类默认（runtime 调）
 
@@ -201,6 +213,7 @@ the-learning-project/
 - [x] borderline 阈值 → 0.4 ≤ score ≤ 0.7（统一，可 runtime 调）
 - [x] partial credit verdict 阈值 → score≥0.85=correct, 0.4<score<0.85=partial, ≤0.4=incorrect
 - [x] partial 错题复习 → 进 FSRS 但 lapses+0.5 半计
+- [x] **变式接受率阈值** → 应 >70%；broken 率 <15%（低于阈值触发调 prompt）
 
 ### 仍未定（runtime 数据后再决）
 
@@ -208,7 +221,7 @@ the-learning-project/
 - [ ] LearningItem priority score 的权重 (urgency / weakness / recency / pin)
 - [ ] Rubric 多次评分的一致性检测策略（Phase 3+）
 - [ ] 何时引入第二种 tool_kind（drill / visualizer / simulator）
-- [ ] 错因分类是否扩展（当前 4 类是否够，需要 6+ 类 + secondary 标签 — 见 mistakes.md 模块特定）
+- [ ] 错因分类是否扩展（当前 4 类是否够，需要 6+ 类 + secondary 标签 — 见 mistakes.md 模块特定，下一轮 push）
 
 ### 模块特定未定
 

@@ -84,6 +84,8 @@ Question (统一题库，single source of truth)
   └── Mistake.variants[].question_id                 (变式题，本身也是 Question)
 ```
 
+**变式系列是 Question 的链式扩展**：每条变式是新 Question 实例，通过 `variant_depth` / `root_question_id` / `parent_variant_id` 跟原题关联。`variant_depth ≤ 2`（防"错题繁殖"，详见 [`modules/mistakes.md`](modules/mistakes.md) § 3.4）。
+
 **好处**：
 - 题面去重（同题不同来源不重复存）
 - 变式题自然成为题库一员（不是 Mistake 私有数据）
@@ -105,8 +107,8 @@ Question (统一题库，single source of truth)
 | `VisionExtractTask` | 低成本视觉（CMMMU 选型） | 录入错题图片 → 题面 / LaTeX / 选项 | 否 | 输入 | 题面文本（建 Question） |
 | `VisionAnswerExtractTask` | 同上 | 答案图片 → 文字（pipeline 路径） | 否 | 输入 | 文字 |
 | `AttributionTask` | Sonnet → Haiku 备选 | Mistake 创建时归因 + 挂载知识点 | 是 | — | Mistake.cause + knowledge_ids |
-| `VariantGenTask` | Sonnet + batch | 变式题生成（draft 状态） | 否 | — | 新 Question 实例（source=mistake_variant） |
-| `VariantVerifyTask` | 不同 model + batch | 变式题双 pass 验证 | 否 | — | Question.draft_status |
+| `VariantGenTask` | Sonnet + batch | 变式题生成（按 mistake.cause 针对性出题） | 否 | — | 新 Question 实例（source=mistake_variant，draft_status=draft） |
+| `VariantVerifyTask` | 不同 model（如 Opus） + batch | 变式题双 pass 验证 | 否 | — | `{is_valid, failure_reasons[], cause_targeting}` |
 | `QuizGenTask` | Sonnet (+ batch 可选) | embedded check / daily / final / 用户主动 | 否 | — | `Question[]` |
 | `JudgeRouter` | n/a | 答案提交后路由 | 否 | — | judge_kind |
 | `JudgeExactTask` | n/a | exact judge | 否 | — | Judgment |
@@ -173,7 +175,7 @@ TaskBudget {
 ### 5.3 成本控制
 
 - 同步任务（用户操作时跑）：归因 + 挂载 + 视觉录入 + 答案判定（除 ai_flexible）
-- 异步 batch（夜间跑，50% 折扣）：变式生成、dreaming、maintenance、周报、atomic note 生成、Note Verify、Variant Verify
+- 异步 batch（夜间跑，50% 折扣）：变式生成、变式验证、dreaming、maintenance、周报、atomic note 生成、Note Verify
 - prompt caching：知识图谱 / 错题历史 / rubric 标准 / system prompt 作稳定 prefix
 - 模型分级：简单任务用便宜模型
 - 结果缓存：同 prompt 命中直接返回
@@ -218,6 +220,7 @@ TaskBudget {
 - 不嵌 Obsidian 当 note 框架（详见 [`modules/notes.md`](modules/notes.md)）
 - 不抽通用 Tool interface（YAGNI，等第二种 tool kind 出现再抽）
 - 不在 Mistake 表里复制题面（题面只在 Question 表）
+- 不在 schema 或 pipeline 里做不必要的分类细化（如批改痕迹类型、跨页 passage 关系等）—— 交给 prompt engineering
 - schema 第一天就加 `updated_at` / `version` 字段，给同步留位
 
 ---
@@ -247,9 +250,13 @@ Question
   → knowledge_ids[]
   difficulty: 1~5
   source: embedded | daily | final | dreaming | manual
-        | vision_capture | reverse_mark | mistake_variant
+        | vision_single | vision_paper | reverse_mark | mistake_variant
   source_ref?                     // mistake_id (variant) / artifact_id (reverse_mark) / null
   draft_status?: draft | active   // 仅 mistake_variant 等需要双 pass 的题
+  // 变式系列字段
+  variant_depth: int              // 默认 0；0=原题，1=一代变式，最大 2
+  root_question_id?: string       // 指向 root question (variant_depth=0 时可省略)
+  parent_variant_id?: string      // 直接上一代
   created_by: {task, version}
   metadata?: { force_flexible?, expected_input_kind?, ... }
   created_at, updated_at, version
@@ -260,8 +267,9 @@ Mistake
   question_id                     // ★ 必须，题面在 Question
   wrong_answer_md?                // 用户当时的错答（可省略）
   wrong_answer_image_refs[]?
-  source: quiz_answer | manual | vision_capture | reverse_mark
+  source: quiz_answer | manual | vision_single | vision_paper | reverse_mark
   source_ref?                     // judgment_id (quiz_answer) / artifact_id (reverse_mark)
+                                  //   / paper_session_id (vision_paper)
   → knowledge_ids[]                // 错过反映的具体盲点（可与 Question.knowledge_ids[] 不同）
   cause: {
     primary_category               // concept | calculation | reading | knowledge_gap | ...
@@ -271,10 +279,13 @@ Mistake
     partial?: bool
   }
   fsrs_state {due_at, interval, ease, repeat, lapses, retrievability_at}
-  variants[]: [{                   // 变式题，每条引用一个 Question
+  variants[]: [{
     question_id,
-    status: draft | active
+    status: draft | active | broken | dismissed,
+    failure_reasons?: string[]    // status=broken 时记录 VerifyTask 输出
   }]
+  variants_generated_count: int   // 默认 0
+  variants_max: int                // 默认 3
   status: draft | active | resting | archived
   archived_reason?: mastered | obsolete | user
   archived_at?

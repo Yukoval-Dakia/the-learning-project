@@ -13,6 +13,7 @@
 Question (统一题库)
   · 题面、参考答案、rubric、知识点、难度
   · 来源：quiz_answer / manual / vision_single / vision_paper / reverse_mark / mistake_variant
+  · 变式系列：variant_depth / root_question_id / parent_variant_id
   ↑ 引用
 Mistake (事件 + 复习态)
   · question_id (必须)
@@ -21,6 +22,7 @@ Mistake (事件 + 复习态)
   · cause (错因分析)
   · fsrs_state (复习调度)
   · variants[] (变式题，每条引用另一个 question_id)
+  · variants_generated_count / variants_max (防错题繁殖)
 ```
 
 **好处**：
@@ -161,16 +163,113 @@ Mistake.create({source: 'reverse_mark', source_ref: artifact_id})
 
 错题暴露的知识点缺口够明显时（mastery<0.3 或近期反复错），自动创建 LearningItem（见 [`learning-items.md`](learning-items.md)）。
 
-### 3.4 异步：变式题生成
+### 3.4 异步：变式题生成（双 pass + 防"错题繁殖"）
 
-夜间 batch 跑 `VariantGenTask`：
-- 输入：原 Question + Mistake.cause（针对错因生成变式）
-- 输出：每条变式是新 `Question` 实例（`source: mistake_variant`，`source_ref: original_question_id`）
-- 写入：`Mistake.variants[].push({question_id, status: 'draft'})`
-- 用户做对一次 → status=`active`，进复习池
-- 双 pass + draft 状态防止 AI 幻觉变式直接喂复习
+夜间 batch 跑 `VariantGenTask` + `VariantVerifyTask` 双 pass。变式 Question 跟主题库平级——`source: mistake_variant`，可被 daily quiz 抽，也可入 standalone tool_quiz。
 
-详细见 [模块特定的待决策 § 变式题深化]。
+#### 3.4.1 生成维度（针对 cause）
+
+`VariantGenTask` 的 prompt 收 `Mistake.cause` 作为关键输入，按错因类型出针对性变式：
+
+| Cause 类型 | 变式策略 |
+| --- | --- |
+| `concept` (概念不清) | 同概念不同语境 / 反向考查（验证概念边界） |
+| `calculation` (计算失误) | 改数据 + 留下相同陷阱（验证计算稳定性） |
+| `reading` (审题) | 改提问方式 + 加干扰信息 |
+| `knowledge_gap` (知识点缺失) | 补充该知识点的多种典型变体 |
+| `memory` (记忆错误) | 不同表述测同一记忆点 |
+| 任意 | 难度 ±1 级、加入相关知识点的连考 |
+
+#### 3.4.2 双 pass 验证
+
+```
+Pass 1  VariantGenTask    → 候选变式 (新 Question 实例，draft_status='draft')
+                            provider: Sonnet + batch
+Pass 2  VariantVerifyTask → 验证（不同 model，如 Opus + batch）：
+                            · AI 自己尝试解一遍，是否得到 reference_md
+                            · 题面是否有歧义
+                            · 难度是否符合标记
+                            · 是否真的考查了目标知识点 + 错因
+                            输出: { is_valid, failure_reasons[],
+                                    cause_targeting: 'good'|'weak'|'mismatch' }
+不通过 → variants[].status = 'broken'，不入复习池，记录失败原因
+通过   → variants[].status = 'draft'，等用户首次做对转 'active'
+```
+
+成本 +50%（双 pass + 不同 model），但显著降低"错答案进复习池"风险。
+
+#### 3.4.3 draft → active / broken 触发规则
+
+```
+首次答 verdict=correct (含申诉翻盘)        → status='active' (进复习池)
+首次答 verdict=incorrect                   → 保持 'draft'
+                                            (不立刻入复习池，等用户再答确认)
+首次答 verdict=partial                     → 保持 'draft' + Mistake.cause.partial
+用户主动标"题面 / 答案有问题"               → status='broken'
+用户主动 dismiss                            → status='dismissed'
+变式 active 后再被错答                      → 跟普通错题一样进新 Mistake，
+                                            但**该新 Mistake 不再生变式**（防繁殖根）
+```
+
+#### 3.4.4 防"错题繁殖"三层防御
+
+最大风险：**错变式 → 又生变式 → 又错 → 无限循环**。三层防御层层堵：
+
+**1) `variant_depth` 上限：变式不超过 2 代**
+
+```
+Question
+  + variant_depth: int          // 0=原题，1=一代变式
+  + root_question_id?: string
+  + parent_variant_id?: string
+
+VariantGenTask 触发条件:
+  if root_question.variant_depth >= 2:
+    SKIP   # 不再扩展第三代
+```
+
+实操：原题 (depth=0) 错了能生 depth=1，depth=1 的变式错了**不再生 depth=2**。
+
+**2) `variants_max` per Mistake：默认 3 条上限**
+
+```
+Mistake
+  + variants_generated_count: int (默认 0)
+  + variants_max: int              (默认 3)
+```
+
+每条 Mistake 默认最多生 3 条变式，达上限不再触发 VariantGenTask。
+
+**3) 变式 Mistake 不再生变式：链终止**
+
+```
+if mistake.from_judgment_id and 
+   question.source == 'mistake_variant':
+  do NOT trigger VariantGenTask
+```
+
+变式题答错产生的 Mistake 不会再触发新的变式生成——这是繁殖链的最终终止。
+
+#### 3.4.5 用户主动 vs 自动触发
+
+| 触发 | 条件 | 限制 |
+| --- | --- | --- |
+| 自动（默认） | Mistake 创建后 dreaming 夜间 batch | variants_max=3 / variant_depth≤2 |
+| 用户主动 | 错题页"再来几道类似的"按钮 | **绕过 variants_max**（用户明确意图） |
+
+#### 3.4.6 质量监控指标（dreaming 周报输出）
+
+跑一段时间后看：
+- **变式接受率** = `active` 数 / 总生成数（应 >70%）
+- **broken 率** = `broken` 数 / 总生成数（应 <15%，否则 prompt 有问题）
+- **单 active cost** = 总成本 / active 数
+- **错因匹配度** = VerifyTask 标 `cause_targeting='good'` 比例
+
+低于阈值触发"调 prompt"或"换 verify model"。
+
+#### 3.4.7 UI 展现
+
+错题本展示原 Mistake 时，下面列 variants：每条状态（draft / active / broken / dismissed）+ 上次结果。点 broken 标记可看 VerifyTask 的 `failure_reasons[]`，让用户判断要不要手动修。
 
 ---
 
@@ -259,6 +358,7 @@ deleted     soft delete (30 天可恢复)
 | Maintenance: 删 / 重置 / 归档 | maintenance → mistake | 走 MaintenanceSuggestion |
 | 复习 = tool_quiz session | mistake → quiz | source='review_session' |
 | 卷子另存为 standalone tool_quiz | mistake (vision_paper) → quiz | 用户勾选保留为模拟卷 |
+| 变式题入主题库 | mistakes → quiz | Question.source='mistake_variant' |
 
 ---
 
@@ -270,13 +370,17 @@ deleted     soft delete (30 天可恢复)
 - 变式题质量保证 → 双 pass + draft 状态
 - partial credit 错题的复习策略 → 进 FSRS，但 lapses+0.5 温和扣分
 - Mistake 与 Question 解耦 → 题面统一在 Question；Mistake 只记事件+复习态+错因
-- **学科自动判断** → 由 vision pipeline / AttributionTask 推断，不让用户预选
-- **批改识别（vision_paper）** → Phase 1.5 实现；多张图一次性 vision call；批改痕迹 prompt 里描述（不分类型）；默认仅 incorrect/partial 入 Mistake；可选保留为 standalone tool_quiz
-- **录入流程必审字段** → 题面 / 参考答案 / 关联知识点；其他 AI 自动
-- **AttributionTask 失败兜底** → Mistake 创建不阻塞，后台重试 + 待人工归因队列
+- 学科自动判断 → 由 vision pipeline / AttributionTask 推断，不让用户预选
+- 批改识别（vision_paper）→ Phase 1.5 实现；多张图一次性 vision call；批改痕迹 prompt 里描述（不分类型）；默认仅 incorrect/partial 入 Mistake；可选保留为 standalone tool_quiz
+- 录入流程必审字段 → 题面 / 参考答案 / 关联知识点；其他 AI 自动
+- AttributionTask 失败兜底 → Mistake 创建不阻塞，后台重试 + 待人工归因队列
+- **变式题生成维度** → 按 cause 类型出针对性变式（concept/calculation/reading/knowledge_gap/memory）
+- **防"错题繁殖"三层防御** → variant_depth ≤ 2 + variants_max=3 + 变式 Mistake 不再生变式
+- **draft → active 触发** → 首次 verdict=correct（含申诉翻盘）
+- **broken_variant 处理** → VerifyTask 不通过 / 用户主动标 → 不入复习池，记录 failure_reasons
+- **用户主动触发"再来几道"绕过 variants_max**（明确意图，不限）
 
 ### 待 push
 
 - 错因分类扩展（当前 4 类不够，建议 6+ 类 + secondary 标签支持）
-- 变式题深化（生成维度 / 双 pass 验证 / draft→active 触发条件 / 防"错题繁殖"）
 - 错题搜索 UX 细节（多维过滤组合、保存的过滤条件、错频可视化）
