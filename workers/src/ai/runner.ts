@@ -98,8 +98,8 @@ export function streamTask(
   const def = tasks[kind];
   const model = ctx.model ?? anthropic(def.defaultModel);
   const taskRunId = createId();
-  const startTime = Date.now();
   let iteration = 0;
+  let stepStartTime = Date.now();
 
   const result = streamText({
     model,
@@ -110,9 +110,15 @@ export function streamTask(
     abortSignal: AbortSignal.timeout(def.budget.timeout),
     onStepFinish: async ({ toolCalls, toolResults }) => {
       iteration += 1;
+      const stepLatencyMs = Date.now() - stepStartTime;
+      // Match toolResults to toolCalls by toolCallId, not array index — order/length
+      // can diverge if a call fails or is held for approval.
+      const resultsById = new Map(
+        (toolResults ?? []).map((tr) => [tr.toolCallId, tr]),
+      );
       // Write a ToolCallLog row per tool call this step.
-      for (const [idx, tc] of toolCalls.entries()) {
-        const tr = toolResults?.[idx];
+      for (const tc of toolCalls) {
+        const tr = resultsById.get(tc.toolCallId);
         await writeToolCallLog(ctx.env.DB, {
           task_run_id: taskRunId,
           task_kind: kind,
@@ -120,10 +126,11 @@ export function streamTask(
           input_json: tc.input ?? {},
           output_json: tr ?? {},
           iteration,
-          latency_ms: Date.now() - startTime,
+          latency_ms: stepLatencyMs,
           cost: 0,
         });
       }
+      stepStartTime = Date.now();
     },
     onFinish: async ({ totalUsage }) => {
       await writeCostLedger(ctx.env.DB, {
