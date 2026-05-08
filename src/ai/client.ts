@@ -53,5 +53,11 @@ export async function runTask<TInput, TOutput = unknown>(
     full += chunk;
     options.onChunk?.(chunk);
   }
+  // Flush any bytes buffered for an incomplete multibyte sequence at the boundary.
+  const tail = decoder.decode();
+  if (tail) {
+    full += tail;
+    options.onChunk?.(tail);
+  }
   return full;
 }
