@@ -203,8 +203,8 @@ TaskBudget {
 | 前端 | React / Svelte + Tailwind | 个人手感，两者都能 PWA |
 | 桌面壳 | **Tauri** | 比 Electron 轻一个数量级，自用够了 |
 | 移动 | PWA（先）→ 必要时 Capacitor 包装 | 不要一上来就 RN |
-| 本地存储 | SQLite（Tauri 原生集成） | 错题/进度天然适合关系型 |
-| 云同步 | Cloudflare D1 + R2 | 已有账号 |
+| 数据存储 | Phase 1 = D1 远程；Phase 1.5 起 R2 存图片；Phase 4 = D1 + PWA cache 离线层；Phase 3 Tauri 端 = better-sqlite3 镜像 | 自用初期"能用"远比"离线"重要，避免 sqlite-wasm 集成的 1-2 周硬骨头 |
+| 云同步 | 与上同源（D1 + R2）；Phase 4 加 PWA cache 离线层 | 自用规模够，已有账号 |
 | AI 调用 | 见上节任务层 | |
 | Tool calling 循环 | OSS 框架（Vercel AI SDK / LangChain） | 不自建 |
 | Note 编辑器 | TipTap / Milkdown / Lexical（基于 ProseMirror） | 详见 [`modules/notes.md`](modules/notes.md) |
