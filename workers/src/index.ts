@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { internalAuth } from './auth';
+import { runTask, streamTask } from './ai/runner';
+import { tasks } from '../../src/ai/registry';
 import { getDb } from './db';
 import type { AppEnv } from './types';
 
@@ -28,14 +30,28 @@ app.get('/api/health', async (c) => {
   return c.json({ ok: true, db_ok });
 });
 
-// AI Task 调度入口（Phase 1 留壳，PR 2 改进 6 实现）。
 app.post('/api/ai/:task', async (c) => {
-  const task = c.req.param('task');
-  const body = await c.req.json().catch(() => ({}));
-  return c.json({ error: 'not_implemented', task, received: body }, 501);
+  const taskKind = c.req.param('task');
+  const body = (await c.req.json().catch(() => ({}))) as { input?: unknown };
+  const def = (tasks as Record<string, { needsToolCall: boolean }>)[taskKind];
+  if (!def) {
+    return c.json({ error: 'unknown_task', task: taskKind }, 404);
+  }
+
+  if (def.needsToolCall) {
+    // Multi-step tool calling → stream Response
+    // Phase 1: tools registry not yet built; pass empty object to validate streaming pipeline
+    const stream = streamTask(taskKind, body.input ?? {}, {
+      env: c.env,
+      tools: {},
+    });
+    return stream;
+  }
+
+  // Single-shot → JSON
+  const result = await runTask(taskKind, body.input ?? {}, { env: c.env });
+  return c.json(result);
 });
 
-// 让 TS / wrangler 知道 db helper 存在（runtime 还没用，PR 2+ 启用）
 export { getDb };
-
 export default app;
