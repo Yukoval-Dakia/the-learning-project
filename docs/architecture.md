@@ -272,11 +272,15 @@ Mistake
                                   //   / paper_session_id (vision_paper)
   → knowledge_ids[]                // 错过反映的具体盲点（可与 Question.knowledge_ids[] 不同）
   cause: {
-    primary_category               // concept | calculation | reading | knowledge_gap | ...
-    secondary_categories[]?
+    primary_category               // 10 类 enum:
+                                   //   concept | knowledge_gap | calculation | reading | memory
+                                   //   | expression | method | carelessness | time_pressure | other
+    secondary_categories[]?        // 多重原因，同 enum
     ai_analysis_md
     user_notes?
     partial?: bool
+    confidence?: float             // AI 对 primary 的信心 (0~1)；<0.6 走 'other'
+    user_edited?: bool             // 用户编辑后 AI 不再覆盖
   }
   fsrs_state {due_at, interval, ease, repeat, lapses, retrievability_at}
   variants[]: [{

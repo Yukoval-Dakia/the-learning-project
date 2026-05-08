@@ -19,7 +19,7 @@ Mistake (事件 + 复习态)
   · question_id (必须)
   · wrong_answer_md? (用户当时的错答，可省略)
   · source / source_ref (区分错题怎么进来的)
-  · cause (错因分析)
+  · cause (错因分析，10 类 primary + secondary[])
   · fsrs_state (复习调度)
   · variants[] (变式题，每条引用另一个 question_id)
   · variants_generated_count / variants_max (防错题繁殖)
@@ -142,14 +142,50 @@ Mistake.create({source: 'reverse_mark', source_ref: artifact_id})
 输出 → `Mistake.cause`：
 ```
 {
-  primary_category: concept | calculation | reading | knowledge_gap | ...
-                    (扩展分类详见模块特定待决策)
-  secondary_categories?: [...]   // 多因素
-  ai_analysis_md: 自然语言分析「为什么会错」
-  user_notes?: 用户事后补充
+  primary_category:                # 10 类（详见下表）
+    concept | knowledge_gap | calculation | reading | memory
+    | expression | method | carelessness | time_pressure | other
+  secondary_categories?: [<same enum>]   # 多重原因（一道题常多因）
+  ai_analysis_md                    # 自然语言分析「为什么会错」
+  user_notes?                       # 用户事后补充
   partial?: bool
+  confidence?: float                # AI 对 primary 的信心 (0~1)
+  user_edited?: bool                # 用户改过后 AI 不再覆盖
 }
 ```
+
+**10 类错因 taxonomy**：
+
+| 类 | 含义 | 区别 |
+| --- | --- | --- |
+| `concept` | 对核心概念理解有偏差 | 有概念但边界模糊 / 抽象误解 |
+| `knowledge_gap` | 该知识点完全不知道 / 没学过 | 根本不知 vs 知道但偏 |
+| `calculation` | 计算执行错误 | 思路对，算错 |
+| `reading` | 审题失误 | 没理解题目要问什么 |
+| `memory` | 记错具体内容 | 人名 / 年份 / 公式 / 定义字面 |
+| `expression` | 思路对但表达不准确 | 语言组织 / 术语混淆 |
+| `method` | 解题方法选错 | 宏观思路错（vs concept 局部理解错） |
+| `carelessness` | 粗心 / 笔误 / 漏看 | 机械错（vs calculation 计算能力问题） |
+| `time_pressure` | 时间不够 | 限时场景；本来会做 |
+| `other` | 以上都不准 | confidence < 0.6 时走这个 + ai_analysis_md 自由描述 |
+
+**AI 推断逻辑**：
+- 看 wrong_answer 跟 reference 的差异类型
+- 看用户在该知识点的历史（初次接触？多次错？）
+- 看错题的 cause keywords（题面 / 用户答案中的线索）
+- confidence < 0.6 → 走 `other` + 详细 ai_analysis_md
+
+**Secondary categories**：一道题常多重原因，secondary_categories[] 收尾。例：
+
+```
+主 calculation, 副 [carelessness]      算错时还抄错符号
+主 concept, 副 [method]                概念不清导致选错方法
+主 reading, 副 [knowledge_gap]         看错题 + 该点也不熟
+```
+
+**用户编辑**：
+- 错题详情页可改 primary_category（dropdown）+ 加/删 secondary_categories（tag）+ 写 user_notes
+- 修改后 `user_edited=true`，AI 不再覆盖（除非用户清空让 AI 重新归因）
 
 **失败兜底**：AttributionTask 失败不阻塞 Mistake 创建——cause 留空标"待归因"，后台重试 ≤3 次；仍失败进"待人工归因"队列让用户手动写或忽略。
 
@@ -167,18 +203,22 @@ Mistake.create({source: 'reverse_mark', source_ref: artifact_id})
 
 夜间 batch 跑 `VariantGenTask` + `VariantVerifyTask` 双 pass。变式 Question 跟主题库平级——`source: mistake_variant`，可被 daily quiz 抽，也可入 standalone tool_quiz。
 
-#### 3.4.1 生成维度（针对 cause）
+#### 3.4.1 生成维度（针对 cause 类型）
 
 `VariantGenTask` 的 prompt 收 `Mistake.cause` 作为关键输入，按错因类型出针对性变式：
 
 | Cause 类型 | 变式策略 |
 | --- | --- |
-| `concept` (概念不清) | 同概念不同语境 / 反向考查（验证概念边界） |
-| `calculation` (计算失误) | 改数据 + 留下相同陷阱（验证计算稳定性） |
-| `reading` (审题) | 改提问方式 + 加干扰信息 |
-| `knowledge_gap` (知识点缺失) | 补充该知识点的多种典型变体 |
-| `memory` (记忆错误) | 不同表述测同一记忆点 |
-| 任意 | 难度 ±1 级、加入相关知识点的连考 |
+| `concept` | 同概念不同语境 / 反向考查（验证概念边界） |
+| `knowledge_gap` | 补充该知识点的多种典型变体 |
+| `calculation` | 改数据 + 留下相同陷阱（验证计算稳定性） |
+| `reading` | 改提问方式 + 加干扰信息 |
+| `memory` | 不同表述测同一记忆点 |
+| `expression` | 同题让用户重写答案，重点检查表达 |
+| `method` | 提示备选方法 + 同类型题 |
+| `carelessness` | 标"做完检查"提示，**不出 conceptually 难变式**（避免噪音） |
+| `time_pressure` | 同类题 + 时间分配提示 |
+| `other` | AI 根据 ai_analysis_md 自由生成 |
 
 #### 3.4.2 双 pass 验证
 
@@ -306,6 +346,25 @@ FSRS 更新 (correct → 加大 interval；incorrect → lapses+1, 重置 interv
 - 不重置 interval，但 lapses+0.5（半计）
 - `Mistake.cause.partial = true` 标记，复习时显示「上次部分正确」
 
+### 4.4 cause 类型差异化（Phase 2）
+
+不同错因的复习权重 / mastery 衰减不同：
+
+| Cause | 复习频率 | mastery 影响 | 理由 |
+| --- | --- | --- | --- |
+| `knowledge_gap` | 高 | 大 | 基础没打好 |
+| `concept` | 高 | 大 | 概念不清反复错 |
+| `calculation` | 中 | 中 | 需要练但非"理解"问题 |
+| `reading` | 中 | 中 | 审题习惯训练 |
+| `memory` | 中 | 中 | 间隔重复主战场 |
+| `method` | 中 | 中 | 见多识广 |
+| `expression` | 低 | 小 | 表达细节不需多练 |
+| `carelessness` | 低 | 小 | 提醒就够，不需难题练 |
+| `time_pressure` | 低 | 小 | 训练速度 ≠ 训练知识 |
+| `other` | 中 | 中 | 默认 |
+
+具体权重 Phase 2 跑数据后调。
+
 ---
 
 ## 5. 生命周期状态
@@ -337,7 +396,7 @@ deleted     soft delete (30 天可恢复)
 
 错题本的过滤维度（UI 提供）：
 - 知识点（filter by knowledge_ids）
-- 错因（filter by cause.primary_category）
+- **错因**（filter by cause.primary_category，10 类 + secondary[]）
 - 错频（错过 N 次以上）
 - 时间（最近 / 一周内 / 一月内）
 - 学科（domain）
@@ -354,6 +413,7 @@ deleted     soft delete (30 天可恢复)
 | `link_mistake_to_node` | mistake → knowledge | AttributionTask 输出挂载 |
 | 触发 LearningItem | mistake → learning-items | 缺口明显时 |
 | FSRS retrievability 喂 base mastery | mistake → progress | 自动驱动 |
+| **cause 维度喂周报** | mistake → progress | 周复盘按 cause 分类统计 |
 | 反向 propose 更新 note pitfall | mistake → notes | living note 触发器 |
 | Maintenance: 删 / 重置 / 归档 | maintenance → mistake | 走 MaintenanceSuggestion |
 | 复习 = tool_quiz session | mistake → quiz | source='review_session' |
@@ -371,16 +431,20 @@ deleted     soft delete (30 天可恢复)
 - partial credit 错题的复习策略 → 进 FSRS，但 lapses+0.5 温和扣分
 - Mistake 与 Question 解耦 → 题面统一在 Question；Mistake 只记事件+复习态+错因
 - 学科自动判断 → 由 vision pipeline / AttributionTask 推断，不让用户预选
-- 批改识别（vision_paper）→ Phase 1.5 实现；多张图一次性 vision call；批改痕迹 prompt 里描述（不分类型）；默认仅 incorrect/partial 入 Mistake；可选保留为 standalone tool_quiz
+- 批改识别（vision_paper）→ Phase 1.5 实现
 - 录入流程必审字段 → 题面 / 参考答案 / 关联知识点；其他 AI 自动
 - AttributionTask 失败兜底 → Mistake 创建不阻塞，后台重试 + 待人工归因队列
-- **变式题生成维度** → 按 cause 类型出针对性变式（concept/calculation/reading/knowledge_gap/memory）
-- **防"错题繁殖"三层防御** → variant_depth ≤ 2 + variants_max=3 + 变式 Mistake 不再生变式
-- **draft → active 触发** → 首次 verdict=correct（含申诉翻盘）
-- **broken_variant 处理** → VerifyTask 不通过 / 用户主动标 → 不入复习池，记录 failure_reasons
-- **用户主动触发"再来几道"绕过 variants_max**（明确意图，不限）
+- 变式题生成维度 → 按 cause 类型出针对性变式（10 类各对应策略）
+- 防"错题繁殖"三层防御 → variant_depth ≤ 2 + variants_max=3 + 变式 Mistake 不再生变式
+- 变式 draft → active 触发 → 首次 verdict=correct（含申诉翻盘）
+- broken_variant 处理 → VerifyTask 不通过 / 用户主动标
+- 用户主动触发"再来几道"绕过 variants_max
+- **错因分类 10 类**（concept / knowledge_gap / calculation / reading / memory / expression / method / carelessness / time_pressure / other）
+- **secondary_categories[] 多重原因支持**
+- **cause confidence 字段** → 低信心走 `other` + 自由描述
+- **cause user_edited 字段** → 用户编辑后 AI 不再覆盖
+- **复习权重 / mastery 衰减按 cause 差异化**（Phase 2 实施，权重表已定方向）
 
 ### 待 push
 
-- 错因分类扩展（当前 4 类不够，建议 6+ 类 + secondary 标签支持）
 - 错题搜索 UX 细节（多维过滤组合、保存的过滤条件、错频可视化）
