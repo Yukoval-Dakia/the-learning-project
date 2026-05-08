@@ -214,7 +214,76 @@ TaskBudget {
 
 #### 与 Dreaming 实施栈的关系
 
-Dreaming / Maintenance lane（见 § 5.5 Dreaming 实施栈—— Phase 2 加）也复用这套 runner：cron worker / queue consumer 调 `runTask` / `streamTask` 同样的入口；区别只是触发方式（HTTP 请求 vs cron / queue message）和是否走 Anthropic Batch API（重批量任务）。
+Dreaming / Maintenance lane（见 § 5.6 Dreaming / Maintenance 实施栈—— Phase 2 加）也复用这套 runner：cron worker / queue consumer 调 `runTask` / `streamTask` 同样的入口；区别只是触发方式（HTTP 请求 vs cron / queue message）和是否走 Anthropic Batch API（重批量任务）。
+
+---
+
+### 5.6 Dreaming / Maintenance 实施栈
+
+Dreaming 和 Maintenance lane 都是「定时触发 + 大批量产出 + 写 propose 表」的模式，跑在 Cloudflare 原生组件上。Phase 2 实施。
+
+#### 触发：Cloudflare Cron Triggers
+
+cron 表达式定义在 wrangler.toml：
+
+```toml
+[triggers]
+crons = [
+  "0 18 * * *",   # 每天 18:00 UTC = 北京 02:00，跑 dreaming 主流程
+  "0 19 * * 0"    # 每周日 19:00 UTC，跑 weekly review
+]
+```
+
+cron worker 不直接生成 proposal，只负责 dispatch（扫 D1 找候选 + 推 Queue），30s 内退出。
+
+#### 任务分发：Cloudflare Queues
+
+`DreamingTaskQueue` / `MaintenanceTaskQueue` 两个队列。
+
+- Cron worker:
+  1. 扫 D1 找触发条件命中的对象（mastery>0.8/14d、7 天 0 错、相似度高的节点对、久未触达对象 ...）
+  2. 每个候选对象封装成一条 message 推 Queue
+  3. cron worker 30s 内退出
+- Consumer worker:
+  - 各自消费一条 message → 调 LLM 生成单条 proposal → 写 DreamingProposal / MaintenanceSuggestion
+  - 单 unit 30s budget 够（一次 LLM call + 写 DB）
+
+#### 真重批量：Anthropic Batch API
+
+针对真正大批量任务（变式题双 pass、周报全量分析、Note 全量 verify）：
+
+- Worker submit batch（HTTP）→ 返 `batch_id`
+- 24h 内 worker 主动轮询 / 用 Cloudflare Cron 第二天早晨拉结果
+- 拉到结果 → 写 DreamingProposal / 更新 Question.draft_status 等
+- 50% cost 折扣
+
+#### Queue vs Batch API 选哪
+
+| 场景 | 选哪 | 理由 |
+| --- | --- | --- |
+| 单 task 几秒、需要"明早就能看" | Queue | 一次 LLM call 即可，无折扣浪费 |
+| 单 task 较重 + 不急 | Batch API | 等 24h，省一半钱 |
+| 周报全量分析 | Batch API | 整周数据 prompt 长，缓存命中率低，靠 batch 折扣 |
+| 每日 quiz 生成 | Queue | 用户当天醒来要看到 |
+| 变式题双 pass | Batch API | 大量 + 不急 + 双 model verify |
+| Maintenance 提议（合并 / 删除） | Queue | 每日少量，靠 cron 触发 |
+
+混用即可。
+
+#### 调度文件目录
+
+所有 cron 入口、queue consumer、batch poller 都放在 `workers/src/dreaming/`：
+
+```
+workers/src/dreaming/
+  cron.ts            # cron 触发入口
+  consumer.ts        # queue 消费者
+  batch-submit.ts    # batch API 提交
+  batch-poll.ts      # batch API 结果拉取
+  scanners/          # D1 扫描器（mastery 阈值、错题密度等）
+```
+
+实际实施推到 Phase 2。
 
 ---
 
@@ -234,6 +303,9 @@ Dreaming / Maintenance lane（见 § 5.5 Dreaming 实施栈—— Phase 2 加）
 | 数学公式 | KaTeX | |
 | 图表 | Mermaid | |
 | 视觉录入 | vision LLM（CMMMU + 自定义样本选型） | 跳过 OCR 中间层 |
+| 定时触发 | Cloudflare Cron Triggers | Phase 2 dreaming / weekly report 入口 |
+| 任务队列 | Cloudflare Queues | Phase 2 dreaming task 分发 + consumer |
+| 批量 LLM | Anthropic Batch API | Phase 2 重批量任务（变式题 / 周报 / Note verify），50% 折扣 |
 
 **反模式**：
 

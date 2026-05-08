@@ -58,54 +58,66 @@ the-learning-project/
 
 只做错题管理 + 学习项 + 知识点挂载 + Note 录入 + tool_quiz 骨架，验证数据模型。
 
-**核心闭环**
-- [ ] 知识点 schema（含 base / ai_delta mastery、merged_from、归档字段、updated_at/version）
-- [ ] 文言文课标 import + AI 自动建议节点（人工确认）
-- [ ] **Question 统一题库 schema**（题面唯一存储，含 variant_depth / root_question_id 字段）
-- [ ] **Mistake schema 解耦**（只持 question_id + 事件 + 复习态 + 错因 + variants[]）
-- [ ] **错因分类扩展（10 类 enum + secondary[] + confidence + user_edited 字段）**
-- [ ] 单题拍照录入（`vision_single`，AI 自动判断学科 / 题型 / 知识点）
-- [ ] 一击确认页（必审 3 字段：题面 / 参考答案 / 关联知识点）
-- [ ] 手动粘贴录入（`manual`）
+拆为 1a（最小可上手 MVP，5-7 天）和 1b（补完，1a 跑出第一周数据后做）。完整决策见 `docs/superpowers/specs/2026-05-08-phase1-improvements-design.md` 改进 3。
 
-**LearningItem 层级 + 状态**
-- [ ] **LearningItem 层级化字段**（parent_learning_item_id / child_learning_item_ids[]）
-- [ ] **状态扩展为 6 个**（pending / in_progress / done / dismissed / resting / archived）
-- [ ] **完成时间戳字段**（completed_at / dismissed_at / archived_at + archived_reason）
-- [ ] LearningItem 数据流（来源：mistake / manual）
-- [ ] AI 归因（10 类 taxonomy）+ 自动挂载知识点（AttributionTask 失败不阻塞 Mistake 创建）
-- [ ] FSRS 复习队列
-- [ ] 完成判定多路径（自我宣告 + Evidence 留痕，软反问 + 强制覆盖）
+#### Phase 1a · 最小可用（目标 5-7 天上手）
 
-**StudyLog**
-- [ ] **StudyLog schema**（5 种 kind，可挂任意学习对象）
-- [ ] **基础录入 UI**（错题 / 题目 / note / 知识点页面"+ 写学习日志"按钮）
+**核心闭环（manual 录入 + 错因 + FSRS 复习）**
+- [x] DB driver 接 D1（PR 1 已落）
+- [x] Worker shared-secret auth（PR 1 已落）
+- [x] AI Task Runner 骨架 + ToolCallLog / CostLedger（PR 2 已落）
+- [ ] 知识点 schema seed（文言文课标 import + AI 自动建议节点 + 人工确认 UI）
+- [ ] **manual 录入页**（粘贴题面 / 参考答案 / 错答 / 知识点 dropdown）
+- [ ] AttributionTask 接通（10 类 cause + AI 自动归因 + 失败兜底走"待人工归因队列"）
+- [ ] FSRS 复习队列（用 OSS lib `ts-fsrs`）+ 简陋复习 UI
+- [ ] LearningItem 简化版（仅 pending / in_progress / done 三态走通；6 状态字段保留 schema，状态机本身先简化）
+- [ ] 完成判定：自我宣告 + Evidence 留痕（多路径推 1b）
+
+**最小观测**
+- [x] AI 任务层 ToolCallLog + CostLedger 写入（PR 2）
+- [x] `/_/inspect` 观测 UI（PR 3）
+
+**项目结构**
+- [x] 目录边界：`core/` vs `subjects/wenyan/`（PR 1 已落 wenyan 占位）
+- [ ] 数据导出（JSON / Markdown）—— 给未来的自己买保险
+- [x] PWA 基础（manifest + standalone + 安装到主屏；PR 2 已落，dev-mode SW 关）
+
+目标：自己能用它备文言文一周，跑出第一批数据。
+
+#### Phase 1b · 补完（1a 跑出第一周数据后做）
+
+**录入扩展**
+- [ ] **vision_single 录入路径**（视觉模型 + 一击确认页）
+- [ ] **手动粘贴录入** UX 优化（如需要）
+
+**Quiz 骨架 + StudyLog**
+- [ ] tool_quiz embedded check（最小 standalone + inline）
+- [ ] Schema: Answer / Judgment / UserAppeal（PR 1 schema 已 ready，本阶段接通流程）
+- [ ] QuizGenTask + JudgeRouter（exact / keyword / semantic 三种 judge_kind）
+- [ ] JudgeFlexibleTask + UserAppeal 流程（兜底必须 Phase 1 就有）
+- [ ] Mistake 创建事件（incorrect/partial → mistake，appeal 翻盘撤销）
+- [ ] mastery 反馈喂 base_mastery
+- [ ] feedback_md 模板 + partial credit 计算
+- [ ] **StudyLog 录入入口**（错题 / 题目 / note 旁批"+ 写学习日志"按钮）
+
+**LearningItem 完整化**
+- [ ] LearningItem 6 状态完整（pending / in_progress / done / dismissed / resting / archived）
+- [ ] 完成时间戳字段（completed_at / dismissed_at / archived_at + archived_reason）
+- [ ] LearningItem 优先级 score 公式（urgency 0.4 / weakness 0.3 / recency 0.3 / pin 顶部）
+- [ ] AI 主动提议完成（DreamingProposal.kind=`learning_item_completion`，dismiss 后 7 天冷却）
+- [ ] LearningItem 层级化字段（parent_learning_item_id / child_learning_item_ids[]，hub status 自动聚合）
+- [ ] 完成判定多路径（自我宣告 + AI propose + quiz_pass，evidence 留痕，软反问 + 强制覆盖）
 
 **Artifact 多态化骨架**
 - [ ] Artifact schema 多态化（note_hub / note_atomic / tool_quiz）
 - [ ] tool_quiz 可独立存在 + 可嵌入 note section（embedded_check inline 模式）
 
-**tool_quiz 子系统**
-- [ ] Schema: Answer / Judgment / UserAppeal
-- [ ] QuizGenTask（参数化，输出 Question[]，caller 决定包成 standalone 还是 inline）
-- [ ] JudgeRouter
-- [ ] JudgeExactTask / JudgeKeywordTask / JudgeSemanticTask（基础 3 种）
-- [ ] JudgeFlexibleTask + UserAppeal 流程
-- [ ] Mistake 创建事件（incorrect/partial → mistake，appeal 翻盘撤销）
-- [ ] mastery 反馈喂 base_mastery
-- [ ] feedback_md 模板 + partial credit 计算
+#### 推到 Phase 1.5+
 
-**AI 基础设施**
-- [ ] AI Task Layer 骨架（基于 OSS 框架，先单 Claude provider）
-- [ ] Tool registry + Task 白名单 + Budget 控制
-- [ ] ToolCallLog 观测
-
-**项目结构**
-- [ ] 目录边界：`core/` vs `subjects/wenyan/`
-- [ ] 数据导出（JSON / Markdown）—— 给未来的自己买保险
-- [ ] PWA 跑通（移动端能录入、能复习、能管学习项、能答 quiz、能写 StudyLog）
-
-目标：自己能用它备文言文一周，跑出第一批数据。
+- vision_paper 卷子拍照（已是 Phase 1.5）
+- reverse_mark 反向标记（依赖 Note UI，本来就 Phase 2）
+- LearningItem 复学机制 / 变式题双 pass / 错因差异化复习权重（Phase 2，依赖 dreaming）
+- 学习时间线视图（Phase 2）
 
 ### Phase 1.5 · 批改识别（关键降摩擦特性）
 
