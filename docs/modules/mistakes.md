@@ -105,6 +105,8 @@ N × AttributionTask 走 batch（夜间）
 - 所有题（含对的）都进 Question 题库（题库丰富）
 - 用户可勾选「保留为模拟卷」→ 整套 Question 包成 standalone `tool_quiz` Artifact，未来可重刷
 
+**图片存储**：vision_paper 单次上传 1~N 张图片（每张 2-5MB），用户审核完批量录入时图片必须可重复读取。卷子图片走 Cloudflare R2 持久化（worker `[[r2_buckets]]` binding `IMAGES`，PR 1 已加 wrangler.toml 占位字段）；DB 中 `Mistake.wrong_answer_image_refs[]` / `Answer.image_refs[]` 持的是 R2 object key。client 上传时走 worker `POST /api/upload/image` → 写 R2 → 返 r2 key（实际 endpoint 落地推 Phase 1.5 实施时）。
+
 ### 2.4 手动粘贴（manual）
 
 ```
