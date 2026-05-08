@@ -1,0 +1,9 @@
+name = "learning-tool-workers"
+main = "src/index.ts"
+compatibility_date = "2025-09-01"
+
+# 本地 dev：把 ANTHROPIC_API_KEY 放在 workers/.dev.vars
+# 生产：wrangler secret put ANTHROPIC_API_KEY
+
+[dev]
+port = 8787
