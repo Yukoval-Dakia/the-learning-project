@@ -30,6 +30,11 @@ app.get('/api/health', async (c) => {
   return c.json({ ok: true, db_ok });
 });
 
+app.onError((err, c) => {
+  console.error('worker error', err);
+  return c.json({ error: 'internal_error', message: err.message }, 500);
+});
+
 app.post('/api/ai/:task', async (c) => {
   const taskKind = c.req.param('task');
   const body = (await c.req.json().catch(() => ({}))) as { input?: unknown };

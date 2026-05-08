@@ -130,6 +130,11 @@ describe('runTask streaming with tools', () => {
     const toolCallLogged = calls.find((c) => /tool_call_log/i.test(c.sql));
     expect(toolCallLogged).toBeDefined();
     expect(toolCallLogged?.binds[3]).toBe('echo_tool');
+
+    // Verify CostLedger row was also written by onFinish.
+    const costLogged = calls.find((c) => /cost_ledger/i.test(c.sql));
+    expect(costLogged).toBeDefined();
+    expect(costLogged?.binds[1]).toBe('AttributionTask');
   });
 
   it('returns a Response with a streaming body', async () => {
