@@ -1,16 +1,17 @@
 # Phase 1 改进 · 设计 spec
 
-> 2026-05-08 · 输入：12 项改进（5 项 Tier 1 解锁 + 5 项 Tier 2 完善 + 2 项技术栈缺口前置）
+> 2026-05-08 · 输入：13 项改进（5 Tier 1 + 5 Tier 2 + 2 技术栈前置 + 1 dep 升级）
 
 ---
 
 ## 背景
 
-当前状态：文档 v0.11 完整、scaffold 已搭（Zod + Drizzle schema 与文档对齐、技术选型完毕），但 Phase 1 推进卡在 12 个决策 / 缺口。本 spec 把这十二项固化为可执行设计。
+当前状态：文档 v0.11 完整、scaffold 已搭（Zod + Drizzle schema 与文档对齐、技术选型完毕），但 Phase 1 推进卡在 13 个决策 / 缺口。本 spec 把这十三项固化为可执行设计。
 
 - **Tier 1（改进 1-5）**：解锁 Phase 1 推进的硬卡点，必须先动
 - **Tier 2（改进 6-10）**：不阻塞但回报高的完善项，与 Tier 1 同 PR 周期内做完
 - **技术栈前置（改进 11-12）**：Phase 1.5 + Phase 2 启动前必须就位的基础设施缺口（R2 图片存储 / Dreaming 实施栈）—— 不在 Phase 1 实现，但 Phase 1 PR 周期内**写明设计 + 占位配置**，避免到时候返工架构
+- **dep 升级（改进 13）**：Vercel AI SDK 已经过期，升级到主线版本
 
 ---
 
@@ -534,6 +535,46 @@ workers/src/dreaming/
 
 ---
 
+## 改进 13：升级 Vercel AI SDK 到主线版本
+
+### 决策
+
+把 `package.json` 里的 `"ai": "^1.0.0"` 和 `"@ai-sdk/anthropic": "^1.0.0"` 升级到当前主线版本。在改进 5（scaffold commit）的 PR 1 内一并做。
+
+### Why
+
+- Vercel AI SDK 主线已经 v5（2025），1.x 是 2023 年版本
+- 1.x 没有 `maxSteps` / `stopWhen` / 改进的 tool 类型推断 / `streamText` 现代 signature
+- 改进 6（AI Runner）依赖这些现代 API；1.x 实现会被绑住做半成品 runner
+- 这不是选型决定，是**过期 dep**——升级是免费的能力，符合"用 OSS 解成熟问题"
+
+### 实施要点
+
+- `pnpm up ai @ai-sdk/anthropic --latest`，pin 一个 caret 范围（如 `^5.0.0`）
+- verify：
+  - 当前 `src/ai/client.ts` 仅 fetch，**不引用 SDK**，升级零影响
+  - 当前 `src/ai/registry.ts` 仅 metadata，**不调用 SDK**，升级零影响
+  - 实际影响面：改进 6 (AI Runner) 实施时直接用新 API
+- 升级后跑一次 `pnpm typecheck` 确认无现存调用 break
+
+### 与现有改进的依赖
+
+- 改进 5：升级落到 scaffold commit 的 `package.json` 上
+- 改进 6：必须先升级再写 runner，否则 runner 写两遍
+- 改进 7：`streamText` / `streamObject` 是新版 SDK 的主力 API，必须现代版本
+
+### 风险
+
+- 4.x → 5.x 之间有 breaking changes（tool 定义方式、stream return type）
+- 当前代码 SDK 调用面 = 0，升级后 typecheck 不会报错；真正适配在改进 6 实施时面对
+- pin major version (`^5.0.0`) 而非 `latest`，避免后续意外升 6.x
+
+### 文档改动
+
+- 无（README 不锁具体版本）
+
+---
+
 ## 顺序 + 依赖
 
 ```
@@ -560,8 +601,8 @@ workers/src/dreaming/
 
 可以拆三个 PR 节奏推进：
 
-1. **PR 1（基础设施）**：改进 5 + 1 + 2 + 4 + 10 + 11(占位) + 12(占位)
-   一次把 D1、auth、code 进库、schema 单源、subjects 路径占位、R2 binding 占位、cron/queues 占位全做了。完成后 Phase 1a 可启动开发
+1. **PR 1（基础设施）**：改进 5 + 1 + 2 + 4 + 10 + 11(占位) + 12(占位) + 13
+   一次把 D1、auth、code 进库、schema 单源、subjects 路径占位、R2 binding 占位、cron/queues 占位、AI SDK 升级全做了。完成后 Phase 1a 可启动开发
 2. **PR 2（AI 接通）**：改进 6 + 7 + 8
    AI runner + tool calling stream + PWA 一起。完成后 AttributionTask 真能跑、移动端能装
 3. **PR 3（路线 + 观测 + 文档）**：改进 9 + 3 + 11(doc) + 12(doc)
@@ -591,6 +632,7 @@ workers/src/dreaming/
 | 10. subjects/wenyan/ | 目录 + 4 个文件存在；core/ 中 grep 不到 `from '@/subjects'` |
 | 11. R2 占位 + 文档 | wrangler.toml 含 r2_buckets binding 占位；architecture.md § 六 + mistakes.md § 2.3 doc 改动落地 |
 | 12. Dreaming 实施栈文档 | architecture.md § 5.5 + § 六 + lanes.md § 调度 改动落地；wrangler.toml 含 cron / queues 占位字段 |
+| 13. AI SDK 升级 | `pnpm list ai @ai-sdk/anthropic` 显示主线版本（不再 1.x）；typecheck 通过 |
 
 ---
 
@@ -605,4 +647,5 @@ workers/src/dreaming/
 - R2 bucket 命名 / 分区策略（per-user prefix? per-domain prefix?）：Phase 1.5 实施时再决
 - Cron 表达式具体时间（北京 02:00 是默认，要不要按用户作息调）：Phase 2 实施时再决
 - Queue 名字 + consumer batch_size / max_concurrent：Phase 2 实施时按真实负载调
+- AI SDK pin 到 `^5.x.x` 还是 `^4.x.x`：升级时按 changelog 选最稳的 LTS 范围（5.x 太新可降到 4.x）
 - Phase 1a 跑通后，下一步是 Phase 1b 还是直接跳 Phase 1.5（批改识别）？等数据出来再决，不在本 spec 范围
