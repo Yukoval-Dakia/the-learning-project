@@ -21,6 +21,6 @@
     "baseUrl": ".",
     "paths": { "@/*": ["./src/*"] }
   },
-  "include": ["src", "vite.config.ts", "drizzle.config.ts"],
-  "exclude": ["workers"]
+  "include": ["src"],
+  "exclude": ["workers", "vite.config.ts", "drizzle.config.ts"]
 }

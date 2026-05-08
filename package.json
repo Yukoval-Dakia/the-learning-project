@@ -16,10 +16,10 @@
     "workers:deploy": "wrangler deploy --config workers/wrangler.toml"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^1.0.0",
+    "@ai-sdk/anthropic": "^3.0.76",
     "@paralleldrive/cuid2": "^2.2.2",
     "@tanstack/react-query": "^5.59.0",
-    "ai": "^4.0.0",
+    "ai": "^6.0.176",
     "drizzle-orm": "^0.36.0",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
