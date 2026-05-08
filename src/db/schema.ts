@@ -1,6 +1,6 @@
 import { integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
-// Drizzle schema —— 与 src/core/schema.ts 的 Zod 对应。
+// Drizzle schema —— 单一来源；Zod 部分由 drizzle-zod 在 src/core/schema/generated.ts 自动生成。
 // JSON 字段以 TEXT 存（drizzle 的 mode:'json' 自动序列化）。
 // 时间戳全部以 unix-second integer 存。
 
