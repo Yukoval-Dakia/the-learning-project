@@ -1,7 +1,7 @@
 # AI 学习工具 · 规划主索引
 
 > 自用 · 移动 + 桌面双修 · 应试与兴趣并行
-> v0.10 · 2026-05-08 · 错因分类扩展（10 类 + secondary 多重）
+> v0.11 · 2026-05-08 · LearningItem 层级化 + 状态机 + StudyLog + 学习时间线
 
 ---
 
@@ -14,6 +14,7 @@
 - 进度 = 知识点上「掌握度的演化」
 - artifact = 知识点上「可被反复消费的产物」（**Note 阅读型 + Tool 互动型**）
 - 题目 = 知识点上「测验素材」（**Question 是统一题库**）
+- StudyLog = 知识点上「用户主动记录的非错题内容」（顿悟 / 反思 / 疑问 / 标记）
 
 只要锚不丢，模块就不会变成孤岛。**架构是泛化的**，不锁单一学科或场景；**Phase 1 首发数据集 = 文言文（高中语文）**。
 
@@ -27,9 +28,9 @@ the-learning-project/
 └── docs/
     ├── architecture.md             # 跨模块基础：知识图谱 / Artifact 多态化 / 统一题库 / AI 任务层 / 技术栈 / 数据模型
     └── modules/
-        ├── mistakes.md             # 错题管理（事件 + 复习态；题面在 Question；变式题双 pass + 防繁殖；10 类错因）
-        ├── learning-items.md       # 待学习列表
-        ├── progress.md             # 学习进度追踪
+        ├── mistakes.md             # 错题管理（事件 + 复习态；变式题双 pass + 防繁殖；10 类错因）
+        ├── learning-items.md       # 待学习列表（4 来源 + 层级化 + 6 状态机 + 优先级 score 公式 + 复学）
+        ├── progress.md             # 学习进度追踪（mastery 双层 + StudyLog + 学习时间线）
         ├── notes.md                # Artifact 阅读型（note_hub / note_atomic）
         ├── lanes.md                # Dreaming + Maintenance lanes
         └── quiz.md                 # Artifact 互动型当前唯一实例（tool_quiz）+ 统一题库 Question
@@ -43,8 +44,8 @@ the-learning-project/
 | --- | --- | --- |
 | 架构基础 | KG / Artifact 多态化 / 统一题库 / AI 任务层 / 技术栈 / 数据模型 | [docs/architecture.md](docs/architecture.md) |
 | 错题管理 | 录入 / 归因（10 类错因）/ 复习（FSRS）；变式题双 pass + 三层防"错题繁殖" | [docs/modules/mistakes.md](docs/modules/mistakes.md) |
-| 待学习列表 | 4 来源汇入的 LearningItem，多路径完成判定 + Evidence 留痕 | [docs/modules/learning-items.md](docs/modules/learning-items.md) |
-| 学习进度追踪 | mastery 双层（base + AI delta），周复盘 | [docs/modules/progress.md](docs/modules/progress.md) |
+| 待学习列表 | hub + atomic 层级 / 6 状态机 / 优先级 score / 复学机制 | [docs/modules/learning-items.md](docs/modules/learning-items.md) |
+| 学习进度追踪 | mastery 双层 + StudyLog（5 种 kind）+ 学习时间线视图 | [docs/modules/progress.md](docs/modules/progress.md) |
 | Artifact: Note (note_hub / note_atomic) | 阅读型；hub + atomic 结构；source tier 防幻觉 | [docs/modules/notes.md](docs/modules/notes.md) |
 | Artifact: Tool (tool_quiz) | 互动型当前唯一实例；可独立或嵌入 Note；Question/Answer/Judgment + ai_flexible 兜底 | [docs/modules/quiz.md](docs/modules/quiz.md) |
 | Dreaming + Maintenance | AI 主动产出（生产 + 维护）两条 lane | [docs/modules/lanes.md](docs/modules/lanes.md) |
@@ -66,10 +67,19 @@ the-learning-project/
 - [ ] 单题拍照录入（`vision_single`，AI 自动判断学科 / 题型 / 知识点）
 - [ ] 一击确认页（必审 3 字段：题面 / 参考答案 / 关联知识点）
 - [ ] 手动粘贴录入（`manual`）
+
+**LearningItem 层级 + 状态**
+- [ ] **LearningItem 层级化字段**（parent_learning_item_id / child_learning_item_ids[]）
+- [ ] **状态扩展为 6 个**（pending / in_progress / done / dismissed / resting / archived）
+- [ ] **完成时间戳字段**（completed_at / dismissed_at / archived_at + archived_reason）
 - [ ] LearningItem 数据流（来源：mistake / manual）
-- [ ] AI 归因（10 类 taxonomy + AttributionTask prompt 含每类判别描述）+ 自动挂载知识点
+- [ ] AI 归因（10 类 taxonomy）+ 自动挂载知识点（AttributionTask 失败不阻塞 Mistake 创建）
 - [ ] FSRS 复习队列
 - [ ] 完成判定多路径（自我宣告 + Evidence 留痕，软反问 + 强制覆盖）
+
+**StudyLog**
+- [ ] **StudyLog schema**（5 种 kind，可挂任意学习对象）
+- [ ] **基础录入 UI**（错题 / 题目 / note / 知识点页面"+ 写学习日志"按钮）
 
 **Artifact 多态化骨架**
 - [ ] Artifact schema 多态化（note_hub / note_atomic / tool_quiz）
@@ -93,7 +103,7 @@ the-learning-project/
 **项目结构**
 - [ ] 目录边界：`core/` vs `subjects/wenyan/`
 - [ ] 数据导出（JSON / Markdown）—— 给未来的自己买保险
-- [ ] PWA 跑通（移动端能录入、能复习、能管学习项、能答 quiz）
+- [ ] PWA 跑通（移动端能录入、能复习、能管学习项、能答 quiz、能写 StudyLog）
 
 目标：自己能用它备文言文一周，跑出第一批数据。
 
@@ -110,28 +120,43 @@ the-learning-project/
 - [ ] **保留为模拟卷选项**（勾选后整套 Question 包成 standalone tool_quiz Artifact）
 - [ ] 没有批改痕迹时的 fallback（用户逐题点对错 / 上传参考答案让 AI 自动判）
 
-### Phase 2 · 进度图谱 + Dreaming + Maintenance + Note Artifact + 高级 Judge + 变式题
+### Phase 2 · 进度图谱 + Dreaming + Maintenance + Note Artifact + 高级 Judge + 变式题 + 时间线
 
+**Mastery 与进度**
 - [ ] base mastery 公式实现：`max(fsrs_retrievability, quiz_pass_floor=0.7)`
 - [ ] Hub mastery 聚合：按 `(错题数 + 学习项数)` 加权平均子节点
 - [ ] AI delta mastery + 回滚（单次最大幅度 ±0.15）
 - [ ] **复习权重按 cause 类型差异化**（knowledge_gap/concept 高频；carelessness/time_pressure 低频）
 - [ ] **mastery 衰减按 cause 类型差异化**（knowledge_gap 影响最大；carelessness 影响小）
+- [ ] **学习时间线视图**（整合自动事件 + StudyLog；按时间 / 知识点 / 类型 / 学科过滤）
 - [ ] 知识点图谱可视化
 - [ ] 学习会话记录 + 热力图
+
+**周复盘 + Dreaming + Maintenance**
 - [ ] 周复盘报告（WeeklyReportTask）
-- [ ] **周复盘加 cause 维度统计**（"本周 60% 错题是 calculation 类，建议加强计算训练"）
+- [ ] **周复盘加 cause 维度统计**
+- [ ] **周复盘整合 StudyLog**（reflection / question 作为输入）
 - [ ] Dreaming lane（每日总结、每日 quiz、题目 / 知识点建议）
 - [ ] **Dreaming 推荐按薄弱 cause 类型出针对训练**
+- [ ] **Dreaming 读 StudyLog 信号**（未解 question 提示生成 note）
 - [ ] Maintenance lane（合并、归档、删错题、状态重置）
-- [ ] 完成判定的 AI 主动提议路径（mastery>0.8 持续 14 天 ∨ 关联 check 全过 ∨ 7 天错 0）
-- [ ] **学习意图声明输入 + Note Artifact 生成 pipeline**
+
+**LearningItem 高级路径**
+- [ ] **优先级 score 公式实施**（urgency 0.4 / weakness 0.3 / recency 0.3 / pin 顶部）
+- [ ] **AI 主动提议完成走 DreamingProposal**（kind=learning_item_completion）
+- [ ] **复学机制**（mastery 衰减 <0.5 持续 N 天 → DreamingProposal.kind=learning_item_relearn）
+- [ ] **完成判定的 AI 主动提议路径** UX（一键 approve/dismiss + 7 天冷却）
+
+**Note Artifact**
+- [ ] **学习意图声明输入 + Note Artifact 生成 pipeline**（同步创建 LearningItem 层级）
 - [ ] **Hub + Atomic note 双层结构（基于 TipTap + markdown 存储）**
 - [ ] **结构化 section 模板（5 种 kind）**
 - [ ] **Hub outline 同步 + atomic batch 异步生成**
 - [ ] **Source tier 标记 + 双 pass 生成（NoteVerifyTask）**
 - [ ] **Embedded check 与 mistake / mastery 联动**
 - [ ] **Note 演进机制（基于错题更新 section）**
+
+**Quiz 高级 judge**
 - [ ] **JudgeRubricTask（rubric 评分）+ JudgeStepsTask（步骤验证）**
 - [ ] **JudgeMultimodalTask + VisionAnswerExtractTask + visual_complexity 路由**
 - [ ] **Standalone tool_quiz Artifact**（每日 quiz / final quiz / 用户存的模拟卷成独立 artifact 行）
@@ -139,7 +164,7 @@ the-learning-project/
 
 **变式题深化**
 - [ ] **VariantGenTask**（按 mistake.cause 10 类分别出针对性变式）
-- [ ] **VariantVerifyTask**（双 pass，不同 model 验证：题面歧义 / 参考答案对错 / 难度匹配 / 错因针对性）
+- [ ] **VariantVerifyTask**（双 pass，不同 model 验证）
 - [ ] **variant_depth + root_question_id + parent_variant_id 字段**
 - [ ] **variants_max=3 + variants_generated_count 字段**
 - [ ] **draft → active 触发**（首次 verdict=correct，含申诉翻盘）
@@ -148,6 +173,7 @@ the-learning-project/
 - [ ] **变式 Mistake 不再生变式**（链终止逻辑）
 - [ ] **变式质量监控指标**（接受率 / broken 率 / cause_targeting 分布）
 
+**其他**
 - [ ] 视觉模型 eval（CMMMU + MMMU + 自定义 10~20 张样本），定 baseline
 - [ ] Skill 抽离（如果 prompt 重复够多）
 - [ ] MCP Server expose（safe resources + propose-only tools）
@@ -200,19 +226,30 @@ the-learning-project/
 - [x] 跨学科引用 → markdown wiki link 软引用，不做强类型
 - [x] 阅读 UX → 移动优先线性流 + 桌面双栏
 - [x] 变式题质量保证 → 双 pass + draft 状态（VariantGenTask + VariantVerifyTask）
-- [x] 变式题深化 → 按 cause 类型针对性生成；三层防"错题繁殖"（variant_depth≤2 + variants_max=3 + 变式 Mistake 不再生变式）；draft→active 在首次 correct；用户主动可绕过 variants_max；broken_variant 走 VerifyTask 输出的 failure_reasons
+- [x] 变式题深化 → 按 cause 类型针对性生成；三层防"错题繁殖"
 - [x] Search-grounded 搜索源 → Phase 2 初通用 web，后期教材 RAG
 - [x] AI 主动提议完成的触发 → mastery>0.8 持续 14 天 ∨ 关联 check 全过 ∨ 7 天错 0
 - [x] 复习 = tool_quiz session → FSRS 到期 Mistake 集合 → 临时 standalone tool_quiz（source=review_session）
 - [x] 录入学科判断 → AI 自主判断（vision pipeline + AttributionTask），不让用户预选
-- [x] 批改识别提前到 Phase 1.5 → 多张图一次 vision call；批改痕迹靠 prompt 不靠 schema 分类；跨页大题让 AI 自然关联
+- [x] 批改识别提前到 Phase 1.5 → 多张图一次 vision call；批改痕迹靠 prompt 不靠 schema 分类
 - [x] 录入流程必审字段 → 题面 / 参考答案 / 关联知识点；其他自动
 - [x] AI 失败不阻塞录入 → Mistake 总能创建，AttributionTask 失败后台重试
-- [x] **错因分类 10 类**（v0.10）→ concept / knowledge_gap / calculation / reading / memory / expression / method / carelessness / time_pressure / other
-- [x] **secondary_categories[] 多重原因支持**（一道题多因）
-- [x] **cause confidence + user_edited 字段** → 低信心走 `other`；用户编辑后 AI 不再覆盖
-- [x] **复习权重 / mastery 衰减按 cause 差异化**（Phase 2 实施，权重表已定方向）
-- [x] **周复盘加 cause 维度统计 / dreaming 推薄弱 cause 类型针对训练**
+- [x] 错因分类 10 类 → concept / knowledge_gap / calculation / reading / memory / expression / method / carelessness / time_pressure / other
+- [x] secondary_categories[] 多重原因支持
+- [x] cause confidence + user_edited 字段
+- [x] 复习权重 / mastery 衰减按 cause 差异化（Phase 2 实施）
+- [x] 周复盘加 cause 维度统计 / dreaming 推薄弱 cause 类型针对训练
+- [x] **LearningItem 层级化（v0.11）** → 学习意图触发 1 hub + N atomic 自动拆分；其他来源默认 1 atomic
+- [x] **LearningItem 状态扩展到 6**（pending / in_progress / done / dismissed / resting / archived）
+- [x] **hub status 自动聚合 children**
+- [x] **"复学"机制** → mastery 衰减 <0.5 持续 N 天 dreaming propose `learning_item_relearn`
+- [x] **优先级 score 4 维加权公式**（urgency 0.4 / weakness 0.3 / recency 0.3 / pin 顶部）
+- [x] **AI 主动提议完成走 DreamingProposal**（kind=`learning_item_completion`，dismiss 后 7 天冷却）
+- [x] **dismissed ≠ archived ≠ done**：语义清晰区分
+- [x] **引入 StudyLog 对象**（5 种 kind：highlight / insight / question / reflection / observation）
+- [x] **StudyLog 多对一关联**（knowledge / question / mistake / artifact / learning_item 任一/多）
+- [x] **学习时间线视图**（Phase 2 整合自动事件 + StudyLog）
+- [x] **DreamingProposal.kind 扩展** → 加 learning_item_completion / learning_item_relearn
 
 ### 阈值类默认（runtime 调）
 
@@ -224,7 +261,9 @@ the-learning-project/
 - [x] partial credit verdict 阈值 → score≥0.85=correct, 0.4<score<0.85=partial, ≤0.4=incorrect
 - [x] partial 错题复习 → 进 FSRS 但 lapses+0.5 半计
 - [x] 变式接受率阈值 → 应 >70%；broken 率 <15%（低于阈值触发调 prompt）
-- [x] **错因 confidence 阈值 → <0.6 走 'other'**
+- [x] 错因 confidence 阈值 → <0.6 走 'other'
+- [x] **复学触发 mastery 阈值 → < 0.5 持续 N 天**（runtime 调）
+- [x] **AI 主动提议完成被 dismiss 后冷却 → 7 天**（默认）
 
 ### 仍未定（runtime 数据后再决）
 
@@ -233,10 +272,11 @@ the-learning-project/
 - [ ] Rubric 多次评分的一致性检测策略（Phase 3+）
 - [ ] 何时引入第二种 tool_kind（drill / visualizer / simulator）
 - [ ] cause 类型差异化的复习权重 / mastery 衰减具体数值（Phase 2 跑数据）
+- [ ] StudyLog 喂 dreaming 信号的具体方式（Phase 2+）
 
 ### 模块特定未定
 
-各模块的 open questions 见各自文档底部。错题模块剩"搜索 UX 细节"（下一项）。
+各模块的 open questions 见各自文档底部。错题模块剩"搜索 UX 细节"。
 
 ---
 

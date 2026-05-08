@@ -16,7 +16,7 @@ Tool 互动型分支当前唯一实例是 `tool_quiz`（见 [`quiz.md`](quiz.md)
 - 错题归因发现缺口（AI propose："你似乎在 X 上有缺口，要生成笔记吗？"）
 - Dreaming 主动 propose
 
-每个入口都创建 LearningItem（见 [`learning-items.md`](learning-items.md)），并触发 `NoteGenerateTask` 产出 `note_hub` + 多个 `note_atomic` Artifact。
+每个入口都触发 `NoteGenerateTask` 产出 `note_hub` + N 个 `note_atomic` Artifact。`learning_intent` 来源会**同步创建 LearningItem 层级**：1 hub LearningItem + N atomic LearningItems，跟 note 层级一一对应（详见 [`learning-items.md`](learning-items.md) § 1.2）。其他来源（mistake / dreaming）默认创建 1 atomic LearningItem。
 
 ## 2. Hub + Atomic 双层结构
 

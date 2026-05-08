@@ -121,7 +121,7 @@ Question (统一题库，single source of truth)
 | `WeeklyReportTask` | Opus + prompt cache | 周复盘 | 是 | — | WeeklyReview |
 | `DreamingTask` | Opus + batch + prompt cache | 夜间生产 lane | 是 | — | DreamingProposal |
 | `MaintenanceProposeTask` | Sonnet + batch | 维护 lane 提议 | 是 | — | MaintenanceSuggestion |
-| `NoteGenerateTask` | Sonnet + batch (atomic) | 学习意图触发 | hub 是 | — | note_hub / note_atomic Artifact |
+| `NoteGenerateTask` | Sonnet + batch (atomic) | 学习意图触发 | hub 是 | — | note_hub / note_atomic Artifact + 配套 LearningItem 层级 |
 | `NoteVerifyTask` | 不同 model + batch | Note 双 pass 反幻觉 | 否 | — | section.source_tier 标记 |
 | `NoteSectionUpdateTask` | Sonnet | Living note 更新某 section | 否 | — | section diff |
 
@@ -138,16 +138,19 @@ Read（任何 Task 可用）：
   search_knowledge_by_concept / get_knowledge_node / get_node_neighbors
   find_similar_mistakes / get_recent_mistakes / get_weak_points
   get_review_due / get_learning_history / get_artifact / get_question
+  get_study_log
 
 Write（Task 白名单）：
   create_knowledge_node           # AttributionTask, NoteGenerateTask (atomic 级)
   link_mistake_to_node            # AttributionTask
   create_question                 # 录入 / VariantGenTask
+  create_learning_item            # NoteGenerateTask (hub+atomic)
   update_ai_delta_mastery         # 限定 Task，可回滚
 
 Propose-only（产生待审核记录，不立即执行）：
   propose_completion / propose_merge / propose_archive
   propose_delete_mistake / propose_new_knowledge_node (hub 级)
+  propose_learning_item_completion / propose_learning_item_relearn
 ```
 
 破坏性操作（删错题、合并节点）**没有直接 tool**——AI 只能 propose，走 MaintenanceSuggestion 流程。
@@ -268,28 +271,27 @@ Mistake
   wrong_answer_md?                // 用户当时的错答（可省略）
   wrong_answer_image_refs[]?
   source: quiz_answer | manual | vision_single | vision_paper | reverse_mark
-  source_ref?                     // judgment_id (quiz_answer) / artifact_id (reverse_mark)
-                                  //   / paper_session_id (vision_paper)
-  → knowledge_ids[]                // 错过反映的具体盲点（可与 Question.knowledge_ids[] 不同）
+  source_ref?                     // judgment_id / artifact_id / paper_session_id
+  → knowledge_ids[]                // 错过反映的具体盲点
   cause: {
     primary_category               // 10 类 enum:
                                    //   concept | knowledge_gap | calculation | reading | memory
                                    //   | expression | method | carelessness | time_pressure | other
-    secondary_categories[]?        // 多重原因，同 enum
+    secondary_categories[]?        // 多重原因
     ai_analysis_md
     user_notes?
     partial?: bool
-    confidence?: float             // AI 对 primary 的信心 (0~1)；<0.6 走 'other'
+    confidence?: float             // < 0.6 走 'other'
     user_edited?: bool             // 用户编辑后 AI 不再覆盖
   }
   fsrs_state {due_at, interval, ease, repeat, lapses, retrievability_at}
   variants[]: [{
     question_id,
     status: draft | active | broken | dismissed,
-    failure_reasons?: string[]    // status=broken 时记录 VerifyTask 输出
+    failure_reasons?: string[]
   }]
-  variants_generated_count: int   // 默认 0
-  variants_max: int                // 默认 3
+  variants_generated_count: int
+  variants_max: int
   status: draft | active | resting | archived
   archived_reason?: mastered | obsolete | user
   archived_at?
@@ -297,18 +299,27 @@ Mistake
   delete_reason?: user | merge | duplicate | misjudged
   created_at, updated_at, version
 
-LearningItem                      // 待学习列表
+// 待学习列表（含层级）
+LearningItem
   id
   source: mistake | manual | learning_intent | ai_dream
   source_ref                      // mistake_id / dream_id / null
   title, content
   → knowledge_ids[]
   primary_artifact_id?            // 主消费物（note_hub 或 standalone tool_quiz）
-  status: pending | in_progress | done | dismissed
+  // 层级关系
+  parent_learning_item_id?        // atomic 指向 hub
+  child_learning_item_ids[]?      // hub 持有 atomic
+  // 状态（6 个）
+  status: pending | in_progress | done | dismissed | resting | archived
   user_pinned: bool
   ai_score?: float                // weighted (urgency, weakness, recency)
   created_at, due_at?
-  reviewed_at?
+  completed_at?                   // status=done 时填
+  dismissed_at?                   // status=dismissed 时填
+  archived_at?                    // status=archived 时填
+  archived_reason?: maintenance | user
+  reviewed_at?                    // dreaming 来源被用户确认的时间
   updated_at, version
 
 CompletionEvidence
@@ -318,8 +329,24 @@ CompletionEvidence
   user_overrode_low_evidence?: bool
   decided_at
 
+// 学习日志 — 用户主动记录的"非错题"学习内容（progress 模块详述）
+StudyLog
+  id
+  kind: highlight | insight | question | reflection | observation
+  content_md
+  // 关联（任一/多个）
+  → knowledge_ids[]?
+  → question_id?
+  → mistake_id?
+  → artifact_id?
+  → learning_item_id?             // 可挂学习项做反思
+  created_at, updated_at, version
+
 DreamingProposal
-  id, kind: problem | knowledge | quiz | summary | note_section_update
+  id, kind: problem | knowledge | quiz | summary
+        | note_section_update
+        | learning_item_completion        // AI 主动提议某 LearningItem 完成
+        | learning_item_relearn           // AI 主动提议复学
   payload, reasoning
   status: pending | accepted | dismissed
   proposed_at, decided_at
@@ -404,13 +431,16 @@ Session
   id, started_at, ended_at, type
   → knowledge_ids[]
   → mistake_ids[]
+  → artifact_ids[]                // artifact 阅读 session
 
 WeeklyReview
   id, week_start, summary_md
   → weak_points: knowledge_ids[]
   → recurring_mistakes: mistake_ids[]
+  → cause_distribution            // 按 cause 类型的错题分布
+  → integrated_study_logs: study_log_ids[]    // 整合本周用户写的 reflection / question
 
-ToolCallLog                       // 运行时 LLM tool 调用观测（注意：跟 tool_* artifact 不同概念）
+ToolCallLog                       // 运行时 LLM tool 调用观测
   id, task_run_id, task_kind
   tool_name, input_json, output_json
   iteration, latency_ms, cost
