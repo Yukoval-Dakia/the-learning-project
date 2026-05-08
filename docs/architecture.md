@@ -194,6 +194,28 @@ TaskBudget {
 - **Plugin**（学科 bundle）：Phase 3 真有第二学科再做；Phase 1 划好 `core/` vs `subjects/wenyan/` 的目录边界
 - **外部 MCP 消费**（Calendar / Search / FS）：Phase 2 按需接
 
+### 5.5 Tool calling 循环位置
+
+**决策**：tool calling 多步循环跑在 **worker 端**（Cloudflare Workers），client 只负责发起请求 + 接 stream。
+
+#### 实现
+
+- worker `/api/ai/:task`：
+  - `needsToolCall: false` 的 task → `generateText` 单轮 → 返 JSON
+  - `needsToolCall: true` 的 task → `streamText({ tools, stopWhen: stepCountIs(N) })` → 返 stream Response
+- AI SDK 的 `streamText` 自带 tool call 循环（multi-step），每步完成调 `onStepFinish`，每个 tool call 写一条 `ToolCallLog`
+- 总 finish 时 `onFinish` 写一条 `CostLedger`（按 task / provider / model 聚合）
+- client `src/ai/client.ts` 用 `fetch` + `ReadableStream`，按 `content-type` 分流：JSON 走 `res.json()`，stream 走 reader 循环（Phase 1 buffer 全文，未来 UI 消费 progress 再加 callback）
+
+#### 为什么不在 client 跑
+
+- Anthropic API key 不能暴露到浏览器
+- 跨请求保留 turn state 复杂（要 KV / Durable Objects），server 一次跑完最简
+
+#### 与 Dreaming 实施栈的关系
+
+Dreaming / Maintenance lane（见 § 5.5 Dreaming 实施栈—— Phase 2 加）也复用这套 runner：cron worker / queue consumer 调 `runTask` / `streamTask` 同样的入口；区别只是触发方式（HTTP 请求 vs cron / queue message）和是否走 Anthropic Batch API（重批量任务）。
+
 ---
 
 ## 六、技术栈
