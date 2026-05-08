@@ -1,0 +1,23 @@
+{
+  "files": {
+    "ignore": ["dist", ".wrangler", "node_modules", "drizzle"]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "style": { "useImportType": "warn" },
+      "suspicious": { "noExplicitAny": "warn" }
+    }
+  },
+  "javascript": {
+    "formatter": { "quoteStyle": "single", "semicolons": "always", "trailingCommas": "all" }
+  },
+  "organizeImports": { "enabled": true }
+}

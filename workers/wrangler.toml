@@ -1,0 +1,33 @@
+name = "the-learning-project-api"
+main = "src/index.ts"
+compatibility_date = "2026-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Phase 1 D1 binding
+# 注意：database_id 需要先跑 `pnpm exec wrangler d1 create learning-project` 后填回。
+# wrangler dev --local 模式下 wrangler 会自动 mock D1，不强制需要真实 ID；
+# 但 wrangler 仍会要求字段存在，所以保留 placeholder。
+[[d1_databases]]
+binding = "DB"
+database_name = "learning-project"
+database_id = "REPLACE_AFTER_WRANGLER_D1_CREATE"
+
+# 改进 11: Phase 1.5 起 R2 存图片
+[[r2_buckets]]
+binding = "IMAGES"
+bucket_name = "learning-project-images"
+preview_bucket_name = "learning-project-images-preview"
+
+# 改进 12: Phase 2 起 dreaming / maintenance cron + queues
+# Phase 2 实施时启用 + 填值
+# [triggers]
+# crons = ["0 18 * * *"]      # 北京 02:00 跑 dreaming
+#
+# [[queues.producers]]
+# binding = "DREAMING_TASKS"
+# queue = "dreaming-tasks"
+#
+# [[queues.consumers]]
+# queue = "dreaming-tasks"
+# max_batch_size = 1
+# max_batch_timeout = 30

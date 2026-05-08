@@ -4,3 +4,17 @@ node_modules/
 .env.local
 .idea/
 .vscode/
+
+# Build
+dist/
+.cache/
+
+# Cloudflare Workers
+.wrangler/
+.wrangler-state/
+.dev.vars
+workers/.dev.vars
+
+# Drizzle generated
+drizzle/.snapshots/
+
