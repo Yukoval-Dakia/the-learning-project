@@ -1,7 +1,7 @@
 # AI 学习工具 · 规划主索引
 
 > 自用 · 移动 + 桌面双修 · 应试与兴趣并行
-> v0.7 · 2026-05-08 · Mistake 与 Question 解耦
+> v0.8 · 2026-05-08 · 录入流程：AI 自动判断学科 + 批改识别提前到 Phase 1.5
 
 ---
 
@@ -62,9 +62,11 @@ the-learning-project/
 - [ ] 文言文课标 import + AI 自动建议节点（人工确认）
 - [ ] **Question 统一题库 schema**（题面唯一存储）
 - [ ] **Mistake schema 解耦**（只持 question_id + 事件 + 复习态 + 错因）
-- [ ] 错题录入（vision LLM 直接处理 → 建 Question + 绑 Mistake）
+- [ ] 单题拍照录入（`vision_single`，AI 自动判断学科 / 题型 / 知识点）
+- [ ] 一击确认页（必审 3 字段：题面 / 参考答案 / 关联知识点）
+- [ ] 手动粘贴录入（`manual`）
 - [ ] LearningItem 数据流（来源：mistake / manual）
-- [ ] AI 归因 + 自动挂载知识点
+- [ ] AI 归因 + 自动挂载知识点（AttributionTask 失败不阻塞 Mistake 创建）
 - [ ] FSRS 复习队列
 - [ ] 完成判定多路径（自我宣告 + Evidence 留痕，软反问 + 强制覆盖）
 
@@ -93,6 +95,19 @@ the-learning-project/
 - [ ] PWA 跑通（移动端能录入、能复习、能管学习项、能答 quiz）
 
 目标：自己能用它备文言文一周，跑出第一批数据。
+
+### Phase 1.5 · 批改识别（关键降摩擦特性）
+
+**Why 单独成一个 Phase**：批改识别是错题录入摩擦的关键降低 —— 一张卷子从 N 次单题录入降到 1 次拍照 + 1 次审核。比 Phase 2 其他功能更优先。
+
+- [ ] **VisionExtractTask 多图输入**（多张照片作为一次 vision call，自动识别 page 顺序与跨页大题）
+- [ ] **批改痕迹识别**（prompt 设计：识别任何形式的勾叉 / 扣分 / 批语，不在 schema 区分类型）
+- [ ] **多题切分**（vision 输出 question_blocks[] + verdict_inferred per block）
+- [ ] **vision_paper 录入路径**（`source: vision_paper`）
+- [ ] **卷子审核页 UX**（默认仅展开错题，对的折叠；批量录入按钮）
+- [ ] **批量 AttributionTask**（N 个新 Mistake 走 batch API 夜间一次跑完）
+- [ ] **保留为模拟卷选项**（勾选后整套 Question 包成 standalone tool_quiz Artifact）
+- [ ] 没有批改痕迹时的 fallback（用户逐题点对错 / 上传参考答案让 AI 自动判）
 
 ### Phase 2 · 进度图谱 + Dreaming + Maintenance + Note Artifact + 高级 Judge
 
@@ -172,6 +187,10 @@ the-learning-project/
 - [x] Search-grounded 搜索源 → Phase 2 初通用 web，后期教材 RAG
 - [x] AI 主动提议完成的触发 → mastery>0.8 持续 14 天 ∨ 关联 check 全过 ∨ 7 天错 0
 - [x] **复习 = tool_quiz session** → FSRS 到期 Mistake 集合 → 临时 standalone tool_quiz（source=review_session）
+- [x] **录入学科判断** → AI 自主判断（vision pipeline + AttributionTask），不让用户预选
+- [x] **批改识别提前到 Phase 1.5** → 多张图一次 vision call；批改痕迹靠 prompt 不靠 schema 分类；跨页大题让 AI 自然关联
+- [x] **录入流程必审字段** → 题面 / 参考答案 / 关联知识点；其他自动
+- [x] **AI 失败不阻塞录入** → Mistake 总能创建，AttributionTask 失败后台重试
 
 ### 阈值类默认（runtime 调）
 
