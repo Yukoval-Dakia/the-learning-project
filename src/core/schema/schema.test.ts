@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { CauseCategory, KnowledgeInsert, Mistake } from './index';
+import {
+  CauseCategory,
+  DreamingProposal,
+  KnowledgeInsert,
+  LearningItemInsert,
+  Mistake,
+  MistakeInsert,
+} from './index';
 
 describe('schema generated from drizzle', () => {
   it('KnowledgeInsert accepts valid record', () => {
@@ -48,5 +55,42 @@ describe('schema generated from drizzle', () => {
     });
     if (!result.success) console.error(result.error.format());
     expect(result.success).toBe(true);
+  });
+
+  it('MistakeInsert accepts insert payload (no timestamps required for defaulted fields)', () => {
+    const result = MistakeInsert.safeParse({
+      id: 'm1',
+      question_id: 'q1',
+      source: 'manual',
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+    if (!result.success) console.error(result.error.format());
+    expect(result.success).toBe(true);
+  });
+
+  it('LearningItemInsert accepts minimal payload', () => {
+    const result = LearningItemInsert.safeParse({
+      id: 'li1',
+      source: 'mistake',
+      title: '宾语前置',
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+    if (!result.success) console.error(result.error.format());
+    expect(result.success).toBe(true);
+  });
+
+  it('DreamingProposal Select rejects unknown status', () => {
+    const result = DreamingProposal.safeParse({
+      id: 'p1',
+      kind: 'quiz',
+      payload: {},
+      reasoning: 'x',
+      status: 'bogus_status',
+      proposed_at: new Date(),
+      decided_at: null,
+    });
+    expect(result.success).toBe(false);
   });
 });

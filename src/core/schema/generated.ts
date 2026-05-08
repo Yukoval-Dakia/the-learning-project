@@ -28,7 +28,16 @@ export const JudgmentInsertGenerated = createInsertSchema(t.judgment);
 export const JudgmentSelectGenerated = createSelectSchema(t.judgment);
 
 export const UserAppealInsertGenerated = createInsertSchema(t.user_appeal);
+export const UserAppealSelectGenerated = createSelectSchema(t.user_appeal);
+
 export const CompletionEvidenceInsertGenerated = createInsertSchema(t.completion_evidence);
+export const CompletionEvidenceSelectGenerated = createSelectSchema(t.completion_evidence);
+
 export const DreamingProposalInsertGenerated = createInsertSchema(t.dreaming_proposal);
+export const DreamingProposalSelectGenerated = createSelectSchema(t.dreaming_proposal);
+
 export const ToolCallLogInsertGenerated = createInsertSchema(t.tool_call_log);
+export const ToolCallLogSelectGenerated = createSelectSchema(t.tool_call_log);
+
 export const CostLedgerInsertGenerated = createInsertSchema(t.cost_ledger);
+export const CostLedgerSelectGenerated = createSelectSchema(t.cost_ledger);

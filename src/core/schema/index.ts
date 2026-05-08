@@ -30,6 +30,15 @@ export const Question = g.QuestionSelectGenerated.extend({
 export type Question = z.infer<typeof Question>;
 
 // ---------- Mistake ----------
+export const MistakeInsert = g.MistakeInsertGenerated.extend({
+  source: b.MistakeSource,
+  cause: b.Cause.nullish(),
+  fsrs_state: b.FsrsState.nullish(),
+  variants: z.array(b.MistakeVariant).nullish(),
+  status: b.MistakeStatus.nullish(),
+  archived_reason: z.enum(['mastered', 'obsolete', 'user']).nullish(),
+  delete_reason: z.enum(['user', 'merge', 'duplicate', 'misjudged']).nullish(),
+});
 export const Mistake = g.MistakeSelectGenerated.extend({
   source: b.MistakeSource,
   cause: b.Cause.nullable(),
@@ -42,6 +51,11 @@ export const Mistake = g.MistakeSelectGenerated.extend({
 export type Mistake = z.infer<typeof Mistake>;
 
 // ---------- LearningItem ----------
+export const LearningItemInsert = g.LearningItemInsertGenerated.extend({
+  source: b.LearningItemSource,
+  status: b.LearningItemStatus.nullish(),
+  archived_reason: z.enum(['maintenance', 'user']).nullish(),
+});
 export const LearningItem = g.LearningItemSelectGenerated.extend({
   source: b.LearningItemSource,
   status: b.LearningItemStatus,
@@ -79,25 +93,35 @@ export const Judgment = g.JudgmentSelectGenerated.extend({
 });
 export type Judgment = z.infer<typeof Judgment>;
 
-export const UserAppeal = g.UserAppealInsertGenerated;
+export const UserAppealInsert = g.UserAppealInsertGenerated;
+export const UserAppeal = g.UserAppealSelectGenerated;
 export type UserAppeal = z.infer<typeof UserAppeal>;
 
 // ---------- LearningItem 完成证据 ----------
-export const CompletionEvidence = g.CompletionEvidenceInsertGenerated.extend({
+export const CompletionEvidenceInsert = g.CompletionEvidenceInsertGenerated.extend({
+  path: z.enum(['self_declare', 'ai_propose', 'quiz_pass']),
+});
+export const CompletionEvidence = g.CompletionEvidenceSelectGenerated.extend({
   path: z.enum(['self_declare', 'ai_propose', 'quiz_pass']),
 });
 export type CompletionEvidence = z.infer<typeof CompletionEvidence>;
 
 // ---------- Dreaming ----------
-export const DreamingProposal = g.DreamingProposalInsertGenerated.extend({
+export const DreamingProposalInsert = g.DreamingProposalInsertGenerated.extend({
+  kind: b.DreamingProposalKind,
+  status: z.enum(['pending', 'accepted', 'dismissed']).nullish(),
+});
+export const DreamingProposal = g.DreamingProposalSelectGenerated.extend({
   kind: b.DreamingProposalKind,
   status: z.enum(['pending', 'accepted', 'dismissed']),
 });
 export type DreamingProposal = z.infer<typeof DreamingProposal>;
 
 // ---------- 观测 ----------
-export const ToolCallLog = g.ToolCallLogInsertGenerated;
+export const ToolCallLogInsert = g.ToolCallLogInsertGenerated;
+export const ToolCallLog = g.ToolCallLogSelectGenerated;
 export type ToolCallLog = z.infer<typeof ToolCallLog>;
 
-export const CostLedger = g.CostLedgerInsertGenerated;
+export const CostLedgerInsert = g.CostLedgerInsertGenerated;
+export const CostLedger = g.CostLedgerSelectGenerated;
 export type CostLedger = z.infer<typeof CostLedger>;
