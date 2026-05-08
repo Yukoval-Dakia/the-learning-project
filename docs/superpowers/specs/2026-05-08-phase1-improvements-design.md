@@ -1,15 +1,16 @@
 # Phase 1 改进 · 设计 spec
 
-> 2026-05-08 · 输入：10 项改进（5 项 Tier 1 解锁 + 5 项 Tier 2 高 ROI 完善）
+> 2026-05-08 · 输入：12 项改进（5 项 Tier 1 解锁 + 5 项 Tier 2 完善 + 2 项技术栈缺口前置）
 
 ---
 
 ## 背景
 
-当前状态：文档 v0.11 完整、scaffold 已搭（Zod + Drizzle schema 与文档对齐、技术选型完毕），但 Phase 1 推进卡在 10 个决策 / 缺口。本 spec 把这十项固化为可执行设计。
+当前状态：文档 v0.11 完整、scaffold 已搭（Zod + Drizzle schema 与文档对齐、技术选型完毕），但 Phase 1 推进卡在 12 个决策 / 缺口。本 spec 把这十二项固化为可执行设计。
 
 - **Tier 1（改进 1-5）**：解锁 Phase 1 推进的硬卡点，必须先动
 - **Tier 2（改进 6-10）**：不阻塞但回报高的完善项，与 Tier 1 同 PR 周期内做完
+- **技术栈前置（改进 11-12）**：Phase 1.5 + Phase 2 启动前必须就位的基础设施缺口（R2 图片存储 / Dreaming 实施栈）—— 不在 Phase 1 实现，但 Phase 1 PR 周期内**写明设计 + 占位配置**，避免到时候返工架构
 
 ---
 
@@ -172,7 +173,7 @@ app.use('/api/*', async (c, next) => {
 
 ### 缺失文件清单
 
-1. `workers/wrangler.toml`：
+1. `workers/wrangler.toml`（PR 1 完成后的最终形态，含改进 11/12 的占位字段）：
 
 ```toml
 name = "the-learning-project-api"
@@ -185,6 +186,26 @@ compatibility_flags = ["nodejs_compat"]
 binding = "DB"
 database_name = "learning-project"
 database_id = "<TBD-after-d1-create>"
+
+# 改进 11: Phase 1.5 起 R2 存图片
+[[r2_buckets]]
+binding = "IMAGES"
+bucket_name = "learning-project-images"
+preview_bucket_name = "learning-project-images-preview"
+
+# 改进 12: Phase 2 起 dreaming / maintenance cron + queues（先注释掉占位，
+# Phase 2 实施时再启用 + 填值）
+# [triggers]
+# crons = ["0 18 * * *"]      # 北京 02:00 跑 dreaming
+#
+# [[queues.producers]]
+# binding = "DREAMING_TASKS"
+# queue = "dreaming-tasks"
+#
+# [[queues.consumers]]
+# queue = "dreaming-tasks"
+# max_batch_size = 1
+# max_batch_timeout = 30
 ```
 
 2. `workers/.dev.vars.example`：
@@ -368,6 +389,151 @@ tool calling 多步循环跑在 **worker 端**，client 只负责发起请求 + 
 
 ---
 
+## 改进 11：Cloudflare R2 提前到 Phase 1.5（图片存储）
+
+### 决策
+
+把 R2 接入提前到 Phase 1.5（`vision_paper` 上线时），不等 Phase 4 云同步阶段。Phase 1 阶段在 wrangler.toml 加占位 binding 字段。
+
+### Why
+
+- `vision_paper` 卷子拍照单张 2-5MB，多页一次上传 10MB+
+- Workers KV 单 value 25MB 上限，且不适合二进制 / 列表检索
+- 客户端 blob URL 不持久 → 用户审核后批量录入时图片消失
+- R2 是 Cloudflare object storage，免费 10GB / 月 + 与 Workers 同账号一行 binding 接通
+- vision_single（Phase 1）原本可以用 base64 inline 传给 vision API 不存 R2，但 vision_paper 多图必存
+- 文档里 R2 在 Phase 4，是过期假设（写在 vision_paper 提前到 Phase 1.5 之前）
+
+### 实施要点
+
+**Phase 1（本 spec 范围内做的占位）**：
+
+- `workers/wrangler.toml` 加：
+
+```toml
+[[r2_buckets]]
+binding = "IMAGES"
+bucket_name = "learning-project-images"
+preview_bucket_name = "learning-project-images-preview"
+```
+
+- bucket 实际创建（`wrangler r2 bucket create`）推到 Phase 1.5 实施时
+
+**Phase 1.5（实施改进 11 主体）**：
+
+- worker `POST /api/upload/image`：接 multipart → 写 R2 → 返 r2 key
+- DB schema 复用现有 `Mistake.wrong_answer_image_refs[]` / `Answer.image_refs[]`，存 r2 key 字符串
+- vision pipeline：worker 从 R2 拉图 → 调 Anthropic Vision（base64 inline 给 API）
+- 安全：R2 bucket 私有，所有读写走 worker auth 中间件（改进 2 已覆盖 `/api/*`）
+
+### 与现有改进的依赖
+
+- 改进 5（wrangler.toml 补全）：包含 r2_buckets binding 占位（仅占位，不创建 bucket）
+- 改进 2（worker auth）：覆盖未来的 `/api/upload/*` / `/api/r2/*` 路径
+
+### 文档改动
+
+- `docs/architecture.md § 六 技术栈` 把"云同步 = D1 + R2 (Phase 4)"改成"Phase 1.5 起 R2 存图片；Phase 4 起 R2 用作云同步附件层"
+- `docs/modules/mistakes.md § 2.3` vision_paper 流程加一句：图片走 R2 存储，传 r2 key 给 vision pipeline
+
+---
+
+## 改进 12：Dreaming 实施栈写入 architecture
+
+### 决策
+
+`docs/architecture.md` 加一节 `§ 5.5 Dreaming 实施栈`，明确 Dreaming / Maintenance 在 Cloudflare 上的具体接通方式（Cron Triggers + Queues + Batch API）。Phase 1 不实现，但 Phase 1 PR 周期内 doc 必须写明，避免 Phase 2 实施时现写架构。
+
+### Why
+
+- 当前 `architecture.md § 5.3` 写了"异步 batch 夜间跑 50% 折扣"，但没说"夜间"怎么触发、batch API 怎么提交、N 条任务怎么分散
+- 文档 § 6 技术栈里也没列 Cron Triggers / Queues
+- Phase 2 实施 dreaming 时如果架构没定，会拖延整个 Phase 2
+- 三个 Cloudflare 原生组件（Cron Triggers / Queues / Workers）+ Anthropic Batch API 都是成熟方案，写明就是"用 OSS 解成熟问题"的延伸
+
+### 拟新增内容（写入 architecture.md § 5.5）
+
+```markdown
+### 5.5 Dreaming / Maintenance 实施栈
+
+Dreaming 和 Maintenance lane 都是"定时触发 + 大批量产出 + 写 propose 表"的模式，
+跑在 Cloudflare 原生组件上：
+
+#### 触发：Cloudflare Cron Triggers
+
+cron 表达式定义在 wrangler.toml：
+
+```toml
+[triggers]
+crons = [
+  "0 18 * * *",   # 每天 18:00 UTC = 北京 02:00，跑 dreaming 主流程
+  "0 19 * * 0"    # 每周日 19:00 UTC，跑 weekly review
+]
+```
+
+cron worker 不直接生成 proposal，只负责 dispatch（扫 D1 找候选 + 推 Queue）。
+
+#### 任务分发：Cloudflare Queues
+
+DreamingTaskQueue / MaintenanceTaskQueue 两个队列。
+
+- Cron worker:
+  1. 扫 D1 找触发条件命中的对象（mastery>0.8/14d、7 天 0 错、相似度高的节点对、久未触达对象 ...）
+  2. 每个候选对象封装成一条 message 推 Queue
+  3. cron worker 30s 内退出
+- Consumer worker:
+  - 各自消费一条 message → 调 LLM 生成单条 proposal → 写 DreamingProposal / MaintenanceSuggestion
+  - 单 unit 30s budget 够（一次 LLM call + 写 DB）
+
+#### 真重批量：Anthropic Batch API
+
+针对真正大批量任务（变式题双 pass、周报全量分析、Note 全量 verify）：
+
+- Worker submit batch（HTTP）→ 返 `batch_id`
+- 24h 内 worker 主动轮询 / 用 Cloudflare Cron 第二天早晨拉结果
+- 拉到结果 → 写 DreamingProposal / 更新 Question.draft_status 等
+- 50% cost 折扣
+
+#### Queue vs Batch API 选哪
+
+| 场景 | 选哪 | 理由 |
+| --- | --- | --- |
+| 单 task 几秒、需要"明早就能看" | Queue | 一次 LLM call 即可，无折扣浪费 |
+| 单 task 较重 + 不急 | Batch API | 等 24h，省一半钱 |
+| 周报全量分析 | Batch API | 整周数据 prompt 长，缓存命中率低，靠 batch 折扣 |
+| 每日 quiz 生成 | Queue | 用户当天醒来要看到 |
+| 变式题双 pass | Batch API | 大量 + 不急 + 双 model verify |
+| Maintenance 提议（合并 / 删除） | Queue | 每日少量，靠 cron 触发 |
+
+混用即可。
+
+#### 调度文件
+所有 cron 入口、queue consumer、batch poller 都放在 `workers/src/dreaming/` 目录：
+
+```
+workers/src/dreaming/
+  cron.ts            # cron 触发入口
+  consumer.ts        # queue 消费者
+  batch-submit.ts    # batch API 提交
+  batch-poll.ts      # batch API 结果拉取
+  scanners/          # D1 扫描器（mastery 阈值、错题密度等）
+```
+```
+
+### 与现有改进的依赖
+
+- 改进 5（wrangler.toml）：补 `[triggers] crons = []` 和 `[[queues.producers]]` / `[[queues.consumers]]` 占位字段
+- 改进 6（AI Runner）：runner 接口要兼容"批量提交 batch + 后续拉结果"模式（不需要立刻实现，但接口 shape 留出）
+- 改进 7（tool calling = server）：dreaming 也跑在 server，复用同一套 Workers + AI SDK 设施
+
+### 文档改动
+
+- `docs/architecture.md` 在 § 5.4 后插入新的 § 5.5 Dreaming / Maintenance 实施栈
+- `docs/architecture.md § 六 技术栈` 增加 Cron Triggers / Queues 两行
+- `docs/modules/lanes.md § 调度` 把 "两条 lane 都走 dreaming batch（夜间）" 改成引用 `architecture.md § 5.5`
+
+---
+
 ## 顺序 + 依赖
 
 ```
@@ -394,12 +560,18 @@ tool calling 多步循环跑在 **worker 端**，client 只负责发起请求 + 
 
 可以拆三个 PR 节奏推进：
 
-1. **PR 1（基础设施）**：改进 5 + 1 + 2 + 4 + 10
-   一次把 D1、auth、code 进库、schema 单源、subjects 路径占位全做了。完成后 Phase 1a 可启动开发
+1. **PR 1（基础设施）**：改进 5 + 1 + 2 + 4 + 10 + 11(占位) + 12(占位)
+   一次把 D1、auth、code 进库、schema 单源、subjects 路径占位、R2 binding 占位、cron/queues 占位全做了。完成后 Phase 1a 可启动开发
 2. **PR 2（AI 接通）**：改进 6 + 7 + 8
    AI runner + tool calling stream + PWA 一起。完成后 AttributionTask 真能跑、移动端能装
-3. **PR 3（路线 + 观测）**：改进 9 + 3
-   观测 UI（依赖 6 已跑出数据）+ Phase 1 拆 1a/1b 文档
+3. **PR 3（路线 + 观测 + 文档）**：改进 9 + 3 + 11(doc) + 12(doc)
+   观测 UI + Phase 1 拆 1a/1b + R2 文档改动 + dreaming 实施栈写入 architecture.md
+   注：改进 11 和 12 的"占位配置"在 PR 1，"主体设计 doc 写入"在 PR 3；R2 bucket 实际创建和 cron worker 实现都不在本 spec 范围
+
+完整实现（R2 上线 / dreaming 跑起来）：
+
+- **改进 11 实施主体**：Phase 1.5 vision_paper 落地时
+- **改进 12 实施主体**：Phase 2 dreaming 启动时
 
 ---
 
@@ -417,6 +589,8 @@ tool calling 多步循环跑在 **worker 端**，client 只负责发起请求 + 
 | 8. PWA | 移动端 Safari "添加到主屏幕" 出现安装按钮；启动后是 standalone 模式 |
 | 9. 观测 UI | `/_/inspect` 能看到改进 6 跑过的 ToolCallLog；CostLedger 当日累计正确 |
 | 10. subjects/wenyan/ | 目录 + 4 个文件存在；core/ 中 grep 不到 `from '@/subjects'` |
+| 11. R2 占位 + 文档 | wrangler.toml 含 r2_buckets binding 占位；architecture.md § 六 + mistakes.md § 2.3 doc 改动落地 |
+| 12. Dreaming 实施栈文档 | architecture.md § 5.5 + § 六 + lanes.md § 调度 改动落地；wrangler.toml 含 cron / queues 占位字段 |
 
 ---
 
@@ -428,4 +602,7 @@ tool calling 多步循环跑在 **worker 端**，client 只负责发起请求 + 
 - registry 共享路径：放 `shared/ai/registry.ts` 还是用 path mapping 让 worker 直接 import `src/ai/registry`？实施 6 时决定（取决于 wrangler 对 monorepo 路径的支持）
 - AI SDK `streamText` vs `streamObject` 在 Cloudflare Workers 上的稳定性：实施 7 时 verify（Workers runtime 对 Node stream API 支持有限）
 - PWA icon 占位：先用 1 张 SVG 转 192/512 PNG 还是直接 emoji-png？Phase 4 真正美化前都是占位
+- R2 bucket 命名 / 分区策略（per-user prefix? per-domain prefix?）：Phase 1.5 实施时再决
+- Cron 表达式具体时间（北京 02:00 是默认，要不要按用户作息调）：Phase 2 实施时再决
+- Queue 名字 + consumer batch_size / max_concurrent：Phase 2 实施时按真实负载调
 - Phase 1a 跑通后，下一步是 Phase 1b 还是直接跳 Phase 1.5（批改识别）？等数据出来再决，不在本 spec 范围
