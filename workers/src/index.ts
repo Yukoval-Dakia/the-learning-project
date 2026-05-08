@@ -4,6 +4,7 @@ import { internalAuth } from './auth';
 import { runTask, streamTask } from './ai/runner';
 import { tasks } from '../../src/ai/registry';
 import { getDb } from './db';
+import { logs } from './routes/logs';
 import type { AppEnv } from './types';
 
 const app = new Hono<AppEnv>();
@@ -18,6 +19,8 @@ app.use(
   }),
 );
 app.use('/api/*', internalAuth);
+
+app.route('/api/_/logs', logs);
 
 app.get('/api/health', async (c) => {
   let db_ok = false;
