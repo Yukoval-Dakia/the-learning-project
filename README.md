@@ -12,7 +12,7 @@
 | 状态 | TanStack Query + Zustand |
 | Schema / 校验 | Zod |
 | ORM | Drizzle（SQLite dialect） |
-| 本地存储 | OPFS-backed `@sqlite.org/sqlite-wasm`（Phase 1）→ better-sqlite3 via Tauri（Phase 3） |
+| 数据存储 | Cloudflare D1（Phase 1 远程优先；Phase 1.5 起 R2 存图片；Phase 4 加 PWA cache；Phase 3 Tauri 端 better-sqlite3 镜像） |
 | AI SDK | Vercel AI SDK + `@ai-sdk/anthropic` |
 | 边缘后端 | Cloudflare Workers + Hono（AI 代理 / 持 key；Phase 4 起接管同步） |
 | Lint / Format | Biome |
@@ -45,7 +45,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 ```
 src/
   core/          # 领域 Zod schema、id 工具、跨学科共享
-  db/            # Drizzle schema + client（driver 待接 OPFS）
+  db/            # Drizzle schema + client（D1 driver via Cloudflare Workers）
   ai/            # Task 注册表 + 客户端调用器
   ui/            # 共享 UI 组件
   routes/        # PWA 路由（React Router）
