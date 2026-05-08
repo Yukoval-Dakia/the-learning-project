@@ -22,6 +22,7 @@ export interface TaskDef {
   needsToolCall: boolean;
   isMultimodal: boolean;
   allowedTools: string[];
+  systemPrompt: string;
 }
 
 const DEFAULT_BUDGET: TaskBudget = { maxIterations: 6, maxCost: 0.5, timeout: 60_000 };
@@ -48,6 +49,8 @@ export const tasks = {
       'create_knowledge_node',
       'link_mistake_to_node',
     ],
+    systemPrompt:
+      '你是错题归因助手。给定一道做错的题、用户的错答和参考答案，分析错因并选择最匹配的知识点。错因从 10 类中选：concept / knowledge_gap / calculation / reading / memory / expression / method / carelessness / time_pressure / other。低信心走 other + 详细 ai_analysis_md。',
   },
   VisionExtractTask: {
     kind: 'VisionExtractTask',
@@ -59,6 +62,7 @@ export const tasks = {
     needsToolCall: false,
     isMultimodal: true,
     allowedTools: [],
+    systemPrompt: '识别图片中的题目题面、参考答案（如可见）、选项；输出结构化 JSON。',
   },
   // 其余 Task（VariantGen / Judge* / Dreaming / Maintenance 等）见
   // docs/architecture.md § 五，按需补全。
