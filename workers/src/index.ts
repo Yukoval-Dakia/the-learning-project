@@ -6,7 +6,15 @@ import type { AppEnv } from './types';
 
 const app = new Hono<AppEnv>();
 
-app.use('*', cors({ origin: '*' }));
+app.use(
+  '*',
+  cors({
+    origin: '*',
+    allowHeaders: ['Content-Type', 'x-internal-token'],
+    allowMethods: ['GET', 'POST', 'OPTIONS'],
+    maxAge: 600,
+  }),
+);
 app.use('/api/*', internalAuth);
 
 app.get('/api/health', async (c) => {

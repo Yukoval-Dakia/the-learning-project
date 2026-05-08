@@ -6,9 +6,10 @@
   "packageManager": "pnpm@9.12.0",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "pnpm typecheck && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p workers/tsconfig.json",
+    "typecheck:workers": "tsc --noEmit -p workers/tsconfig.json",
     "lint": "biome check .",
     "format": "biome format --write .",
     "test": "vitest run",
