@@ -179,29 +179,35 @@ mistakes.post('/', async (c) => {
   );
 
   if (body.cause === null) {
-    const tree = await loadTreeSnapshot(c.env.DB);
-    const pickedNodes = tree.filter((n) => body.knowledge_ids.includes(n.id));
     c.executionCtx.waitUntil(
-      runAttributionAndWrite({
-        db: c.env.DB,
-        mistakeId,
-        expectedVersion: 0,
-        input: {
-          prompt_md: body.prompt_md,
-          reference_md: body.reference_md,
-          wrong_answer_md: body.wrong_answer_md,
-          knowledge_context: pickedNodes.map((n) => ({
-            id: n.id,
-            name: n.name,
-            effective_domain: n.effective_domain,
-          })),
-        },
-        runTaskFn: async (kind, input, ctx) => {
-          const result = await runTask(kind, input, ctx as { env: typeof c.env });
-          return { text: result.text };
-        },
-        env: c.env,
-      }),
+      (async () => {
+        try {
+          const tree = await loadTreeSnapshot(c.env.DB);
+          const pickedNodes = tree.filter((n) => body.knowledge_ids.includes(n.id));
+          await runAttributionAndWrite({
+            db: c.env.DB,
+            mistakeId,
+            expectedVersion: 0,
+            input: {
+              prompt_md: body.prompt_md,
+              reference_md: body.reference_md,
+              wrong_answer_md: body.wrong_answer_md,
+              knowledge_context: pickedNodes.map((n) => ({
+                id: n.id,
+                name: n.name,
+                effective_domain: n.effective_domain,
+              })),
+            },
+            runTaskFn: async (kind, input, ctx) => {
+              const result = await runTask(kind, input, ctx as { env: typeof c.env });
+              return { text: result.text };
+            },
+            env: c.env,
+          });
+        } catch (err) {
+          console.error('attribution prep failed (mistake unaffected)', err);
+        }
+      })(),
     );
   }
 

@@ -4,6 +4,7 @@ import { mistakes } from './mistakes';
 
 function mockEnv(opts: {
   knowledgeRows?: Array<{ id: string; name: string; domain: string | null; parent_id: string | null; archived_at: number | null }>;
+  treeAllThrows?: boolean;
 } = {}) {
   const knowledgeById = new Map((opts.knowledgeRows ?? []).map((r) => [r.id, r]));
   const calls: Array<{ sql: string; binds: unknown[] }> = [];
@@ -20,7 +21,12 @@ function mockEnv(opts: {
           return null;
         },
         all: async () => {
-          if (/from knowledge/i.test(sql)) return { results: Array.from(knowledgeById.values()) };
+          if (/from knowledge/i.test(sql)) {
+            if (opts.treeAllThrows && /select id, name, domain, parent_id, archived_at from knowledge/i.test(sql)) {
+              throw new Error('transient D1 error');
+            }
+            return { results: Array.from(knowledgeById.values()) };
+          }
           return { results: [] };
         },
         run: async () => ({ success: true, meta: { changes: 1 } }),
@@ -306,6 +312,38 @@ describe('POST /api/mistakes', () => {
       executionCtx,
     );
     expect(waitUntilFns).toHaveLength(2);
+  });
+
+  it('still returns 200 when attribution prep (loadTreeSnapshot) fails post-insert', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { Bindings, executionCtx, waitUntilFns } = mockEnv({
+      knowledgeRows: [{ id: 'k1', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null }],
+      treeAllThrows: true,
+    });
+    const res = await mistakes.request(
+      '/',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          prompt_md: 'p',
+          reference_md: null,
+          wrong_answer_md: 'w',
+          knowledge_ids: ['k1'],
+          cause: null,
+          difficulty: 3,
+          question_kind: 'short_answer',
+        }),
+        headers: { 'content-type': 'application/json' },
+      },
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(200);
+    // attribution waitUntil still scheduled; failure caught inside it
+    expect(waitUntilFns).toHaveLength(2);
+    await Promise.allSettled(waitUntilFns);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 
   it('queues only propose when cause is provided manually', async () => {
