@@ -1,36 +1,14 @@
 import { Hono } from 'hono';
 import { acceptProposal, dismissProposal } from '../knowledge/proposals';
 import { streamReviewTask } from '../knowledge/review';
+import { loadTreeSnapshot } from '../knowledge/tree';
 import type { AppEnv } from '../types';
 
 export const knowledge = new Hono<AppEnv>();
 
-interface KnowledgeRow {
-  id: string;
-  name: string;
-  domain: string | null;
-  parent_id: string | null;
-  archived_at: number | null;
-}
-
 knowledge.get('/', async (c) => {
-  const rows = await c.env.DB.prepare(
-    `select id, name, domain, parent_id, archived_at from knowledge where archived_at is null`,
-  )
-    .bind()
-    .all<KnowledgeRow>();
-  const byId = new Map<string, KnowledgeRow>();
-  for (const r of rows.results) byId.set(r.id, r);
-  const out = rows.results.map((r) => {
-    let cur: KnowledgeRow | undefined = r;
-    let depth = 0;
-    while (cur && cur.domain === null && cur.parent_id !== null && depth < 32) {
-      cur = byId.get(cur.parent_id);
-      depth += 1;
-    }
-    return { ...r, effective_domain: cur?.domain ?? null };
-  });
-  return c.json({ rows: out });
+  const rows = await loadTreeSnapshot(c.env.DB);
+  return c.json({ rows });
 });
 
 knowledge.get('/proposals', async (c) => {
