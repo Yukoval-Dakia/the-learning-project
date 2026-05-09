@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { D1Database, ExecutionContext } from '@cloudflare/workers-types';
+import type { D1Database, ExecutionContext, R2Bucket } from '@cloudflare/workers-types';
 import { mistakes } from './mistakes';
 
 function mockEnv(opts: {
@@ -50,7 +50,7 @@ function mockEnv(opts: {
     props: {},
   } as unknown as ExecutionContext;
   return {
-    Bindings: { DB: db, INTERNAL_TOKEN: 'test', ANTHROPIC_API_KEY: 'test' },
+    Bindings: { DB: db, IMAGES: { put: vi.fn(async () => null) } as unknown as R2Bucket, INTERNAL_TOKEN: 'test', ANTHROPIC_API_KEY: 'test' },
     executionCtx,
     calls,
     waitUntilFns,
@@ -387,7 +387,7 @@ describe('GET /api/mistakes/recent', () => {
     }));
     const db = { prepare, batch: async () => [] } as unknown as D1Database;
     return {
-      Bindings: { DB: db, INTERNAL_TOKEN: 't', ANTHROPIC_API_KEY: 't' },
+      Bindings: { DB: db, IMAGES: { put: vi.fn(async () => null) } as unknown as R2Bucket, INTERNAL_TOKEN: 't', ANTHROPIC_API_KEY: 't' },
       executionCtx: {
         waitUntil: () => {},
         passThroughOnException: () => {},

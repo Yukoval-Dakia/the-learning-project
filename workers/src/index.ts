@@ -5,6 +5,7 @@ import { runTask, streamTask } from './ai/runner';
 import { tasks } from '../../src/ai/registry';
 import { getDb } from './db';
 import { seedKnowledge } from './knowledge/seed';
+import { assets } from './routes/assets';
 import { knowledge } from './routes/knowledge';
 import { logs } from './routes/logs';
 import { mistakes } from './routes/mistakes';
@@ -24,6 +25,7 @@ app.use(
 app.use('/api/*', internalAuth);
 
 app.route('/api/_/logs', logs);
+app.route('/api/assets', assets);
 app.route('/api/knowledge', knowledge);
 app.route('/api/mistakes', mistakes);
 
