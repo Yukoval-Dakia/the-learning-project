@@ -82,9 +82,19 @@ export async function writeDreamingProposal(
   return id;
 }
 
+async function assertParentExists(db: D1Database, parentId: string): Promise<void> {
+  const row = await db
+    .prepare(`select id from knowledge where id = ?`)
+    .bind(parentId)
+    .first<{ id: string }>();
+  if (!row) {
+    throw new Error(`parent knowledge node not found: ${parentId}`);
+  }
+}
+
 // Build the "insert into knowledge" prepared statement for a propose_new payload.
-// Extracted so acceptProposal can batch INSERT + UPDATE atomically; standalone
-// applyProposeNew also reuses it for the non-batch path.
+// Used by the standalone applyProposeNew path. acceptProposal uses a conditional
+// INSERT…SELECT…WHERE EXISTS variant inline so it can race-guard against a concurrent decide.
 function buildKnowledgeInsert(
   db: D1Database,
   payload: ProposeNewPayload,
@@ -131,6 +141,7 @@ export async function applyProposeNew(
       'PR A: propose_new with parent_id=null (root creation) not supported; Phase 2 multi-domain will allow it',
     );
   }
+  await assertParentExists(db, payload.parent_id);
   const newId = createId();
   const now = Math.floor(Date.now() / 1000);
   await buildKnowledgeInsert(db, payload, newId, now).run();
@@ -143,9 +154,10 @@ export type AcceptResult = { kind: 'propose_new_applied'; new_node_id: string };
  * Accept proposal: only propose_new in PR A.
  * Reparent / merge / split / archive 留 PR B。
  *
- * Atomic via db.batch: INSERT + UPDATE commit together or both roll back.
- * Without this, a failed UPDATE would leave a ghost knowledge row with proposal still 'pending',
- * and a retry would create a duplicate.
+ * Race-safe: the INSERT is gated on `dreaming_proposal.status = 'pending'` via INSERT…SELECT…
+ * WHERE EXISTS, and the UPDATE carries the same guard. Two concurrent accepts can both pass the
+ * pre-read but only one batch will actually mutate; the loser's INSERT and UPDATE are both no-ops
+ * (no orphan knowledge row) and we surface the loss via the post-batch row-count check.
  */
 export async function acceptProposal(
   db: D1Database,
@@ -172,16 +184,29 @@ export async function acceptProposal(
       'PR A: propose_new with parent_id=null (root creation) not supported; Phase 2 multi-domain will allow it',
     );
   }
+  await assertParentExists(db, payload.parent_id);
   const newId = createId();
   const now = Math.floor(Date.now() / 1000);
-  await db.batch([
-    buildKnowledgeInsert(db, payload, newId, now),
-    db
-      .prepare(
-        `update dreaming_proposal set status = ?, decided_at = ? where id = ? and status = 'pending'`,
+  const conditionalInsert = db
+    .prepare(
+      `insert into knowledge (
+        id, name, domain, parent_id, base_mastery, ai_delta_mastery,
+        merged_from, proposed_by_ai, approval_status, created_at, updated_at, version
       )
-      .bind('accepted', now, proposalId),
-  ]);
+      select ?, ?, NULL, ?, 0, 0, '[]', 1, 'approved', ?, ?, 0
+      where exists (select 1 from dreaming_proposal where id = ? and status = 'pending')`,
+    )
+    .bind(newId, payload.name, payload.parent_id, now, now, proposalId);
+  const guardedUpdate = db
+    .prepare(
+      `update dreaming_proposal set status = ?, decided_at = ? where id = ? and status = 'pending'`,
+    )
+    .bind('accepted', now, proposalId);
+  const results = await db.batch([conditionalInsert, guardedUpdate]);
+  const updateChanges = (results[1] as { meta?: { changes?: number } } | undefined)?.meta?.changes;
+  if (updateChanges !== 1) {
+    throw new Error(`proposal ${proposalId} was concurrently decided`);
+  }
   return { kind: 'propose_new_applied', new_node_id: newId };
 }
 

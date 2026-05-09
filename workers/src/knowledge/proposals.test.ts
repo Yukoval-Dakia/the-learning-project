@@ -7,10 +7,17 @@ import {
   dismissProposal,
 } from './proposals';
 
-function makeMockDb(initialRows: Record<string, Record<string, unknown>> = {}) {
+interface MockOptions {
+  proposals?: Record<string, Record<string, unknown>>;
+  knowledge?: Record<string, Record<string, unknown>>;
+  /** Force the next batch's UPDATE statement to report 0 row changes (race simulation). */
+  raceUpdateZeroChanges?: boolean;
+}
+
+function makeMockDb(opts: MockOptions = {}) {
   const tableRows: Record<string, Record<string, Record<string, unknown>>> = {
-    knowledge: {},
-    dreaming_proposal: { ...initialRows },
+    knowledge: { ...(opts.knowledge ?? {}) },
+    dreaming_proposal: { ...(opts.proposals ?? {}) },
   };
   const calls: Array<{ sql: string; binds: unknown[] }> = [];
 
@@ -29,14 +36,21 @@ function makeMockDb(initialRows: Record<string, Record<string, unknown>> = {}) {
         },
         run: async () => ({ success: true, meta: { changes: 1 } }),
         all: async () => ({ results: Object.values(tableRows.dreaming_proposal) }),
+        _sql: sql,
       };
     },
   }));
   const db = {
     prepare,
-    batch: async (stmts: Array<{ run: () => Promise<unknown> }>) => {
+    batch: async (stmts: Array<{ run: () => Promise<unknown>; _sql?: string }>) => {
       const results: unknown[] = [];
-      for (const s of stmts) results.push(await s.run());
+      for (const s of stmts) {
+        if (opts.raceUpdateZeroChanges && /update dreaming_proposal/i.test(s._sql ?? '')) {
+          results.push({ success: true, meta: { changes: 0 } });
+        } else {
+          results.push(await s.run());
+        }
+      }
       return results;
     },
   } as unknown as D1Database;
@@ -64,7 +78,9 @@ describe('writeDreamingProposal', () => {
 
 describe('applyProposeNew', () => {
   it('inserts a new knowledge row with status=approved', async () => {
-    const { db, calls } = makeMockDb();
+    const { db, calls } = makeMockDb({
+      knowledge: { 'seed:wenyan:shici': { id: 'seed:wenyan:shici' } },
+    });
     const newId = await applyProposeNew(db, {
       mutation: 'propose_new',
       name: '通假字',
@@ -85,6 +101,13 @@ describe('applyProposeNew', () => {
       applyProposeNew(db, { mutation: 'propose_new', name: 'x', parent_id: null }),
     ).rejects.toThrow(/root creation.*not supported/i);
   });
+
+  it('rejects propose_new when parent_id does not exist in knowledge', async () => {
+    const { db } = makeMockDb(); // no knowledge rows seeded
+    await expect(
+      applyProposeNew(db, { mutation: 'propose_new', name: 'x', parent_id: 'ghost-parent' }),
+    ).rejects.toThrow(/parent knowledge node not found.*ghost-parent/i);
+  });
 });
 
 describe('acceptProposal (propose_new only)', () => {
@@ -102,7 +125,10 @@ describe('acceptProposal (propose_new only)', () => {
       proposed_at: 1700000000,
       decided_at: null,
     };
-    const { db, calls } = makeMockDb({ p1: proposal });
+    const { db, calls } = makeMockDb({
+      proposals: { p1: proposal },
+      knowledge: { 'seed:wenyan:shici': { id: 'seed:wenyan:shici' } },
+    });
     const result = await acceptProposal(db, 'p1');
     expect(result.kind).toBe('propose_new_applied');
     expect(result.new_node_id).toMatch(/^[a-z0-9]+$/);
@@ -120,7 +146,7 @@ describe('acceptProposal (propose_new only)', () => {
       proposed_at: 1700000000,
       decided_at: 1700001000,
     };
-    const { db } = makeMockDb({ p2: proposal });
+    const { db } = makeMockDb({ proposals: { p2: proposal } });
     await expect(acceptProposal(db, 'p2')).rejects.toThrow(/not.*pending/i);
   });
 
@@ -134,8 +160,50 @@ describe('acceptProposal (propose_new only)', () => {
       proposed_at: 1700000000,
       decided_at: null,
     };
-    const { db } = makeMockDb({ p3: proposal });
+    const { db } = makeMockDb({ proposals: { p3: proposal } });
     await expect(acceptProposal(db, 'p3')).rejects.toThrow(/PR A.*propose_new/i);
+  });
+
+  it('rejects accept when parent_id does not exist', async () => {
+    const proposal = {
+      id: 'p5',
+      kind: 'knowledge',
+      payload: JSON.stringify({
+        mutation: 'propose_new',
+        name: 'x',
+        parent_id: 'ghost-parent',
+      }),
+      reasoning: 'test',
+      status: 'pending',
+      proposed_at: 1700000000,
+      decided_at: null,
+    };
+    const { db } = makeMockDb({ proposals: { p5: proposal } }); // no knowledge rows
+    await expect(acceptProposal(db, 'p5')).rejects.toThrow(
+      /parent knowledge node not found.*ghost-parent/i,
+    );
+  });
+
+  it('throws when concurrent accept already flipped status (UPDATE affects 0 rows)', async () => {
+    const proposal = {
+      id: 'p6',
+      kind: 'knowledge',
+      payload: JSON.stringify({
+        mutation: 'propose_new',
+        name: '通假字',
+        parent_id: 'seed:wenyan:shici',
+      }),
+      reasoning: 'test',
+      status: 'pending',
+      proposed_at: 1700000000,
+      decided_at: null,
+    };
+    const { db } = makeMockDb({
+      proposals: { p6: proposal },
+      knowledge: { 'seed:wenyan:shici': { id: 'seed:wenyan:shici' } },
+      raceUpdateZeroChanges: true,
+    });
+    await expect(acceptProposal(db, 'p6')).rejects.toThrow(/concurrently decided/i);
   });
 });
 
@@ -150,7 +218,7 @@ describe('dismissProposal', () => {
       proposed_at: 1700000000,
       decided_at: null,
     };
-    const { db, calls } = makeMockDb({ p4: proposal });
+    const { db, calls } = makeMockDb({ proposals: { p4: proposal } });
     await dismissProposal(db, 'p4');
     const update = calls.find((c) => /update dreaming_proposal/i.test(c.sql));
     expect(update?.binds[0]).toBe('dismissed');
