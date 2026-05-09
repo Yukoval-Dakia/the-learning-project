@@ -7,10 +7,22 @@ import { runAttributionAndWrite } from '../knowledge/attribute';
 import { loadTreeSnapshot } from '../knowledge/tree';
 import { CauseCategory, QuestionKind } from '../../../src/core/schema/business';
 import type { AppEnv } from '../types';
+import type { D1Database } from '@cloudflare/workers-types';
 
 export const mistakes = new Hono<AppEnv>();
 
-const TOTAL_IMAGE_BYTES_LIMIT = 800_000;
+async function assertAssetsExist(
+  db: D1Database,
+  ids: string[],
+  field: 'prompt_image_refs' | 'wrong_answer_image_refs',
+): Promise<{ ok: true } | { ok: false; missing: string[]; field: string }> {
+  const missing: string[] = [];
+  for (const id of ids) {
+    const row = await db.prepare(`select id from source_asset where id = ?`).bind(id).first();
+    if (!row) missing.push(id);
+  }
+  return missing.length > 0 ? { ok: false, missing, field } : { ok: true };
+}
 
 const Body = z.object({
   prompt_md: z.string().min(1, 'prompt_md is required'),
@@ -89,23 +101,17 @@ mistakes.post('/', async (c) => {
     );
   }
 
-  const promptImageBytes = body.prompt_image_refs.reduce((sum, s) => sum + s.length, 0);
-  if (promptImageBytes > TOTAL_IMAGE_BYTES_LIMIT) {
+  const promptCheck = await assertAssetsExist(c.env.DB, body.prompt_image_refs, 'prompt_image_refs');
+  if (!promptCheck.ok) {
     return c.json(
-      {
-        error: 'validation_error',
-        message: `prompt_image_refs total ${promptImageBytes} bytes exceeds ${TOTAL_IMAGE_BYTES_LIMIT} (D1 cell ~1MB limit)`,
-      },
+      { error: 'validation_error', message: `unknown ${promptCheck.field}: ${promptCheck.missing.join(', ')}` },
       400,
     );
   }
-  const wrongAnswerImageBytes = body.wrong_answer_image_refs.reduce((sum, s) => sum + s.length, 0);
-  if (wrongAnswerImageBytes > TOTAL_IMAGE_BYTES_LIMIT) {
+  const wrongCheck = await assertAssetsExist(c.env.DB, body.wrong_answer_image_refs, 'wrong_answer_image_refs');
+  if (!wrongCheck.ok) {
     return c.json(
-      {
-        error: 'validation_error',
-        message: `wrong_answer_image_refs total ${wrongAnswerImageBytes} bytes exceeds ${TOTAL_IMAGE_BYTES_LIMIT} (D1 cell ~1MB limit)`,
-      },
+      { error: 'validation_error', message: `unknown ${wrongCheck.field}: ${wrongCheck.missing.join(', ')}` },
       400,
     );
   }
@@ -125,7 +131,10 @@ mistakes.post('/', async (c) => {
 
   const questionMetadata =
     body.prompt_image_refs.length > 0
-      ? JSON.stringify({ prompt_image_refs: body.prompt_image_refs })
+      ? JSON.stringify({
+          prompt_image_refs: body.prompt_image_refs,
+          prompt_image_ref_kind: 'source_asset_id' as const,
+        })
       : null;
   const insertQuestion = c.env.DB.prepare(
     `insert into question (
