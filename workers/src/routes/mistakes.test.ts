@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { D1Database } from '@cloudflare/workers-types';
+import type { D1Database, ExecutionContext } from '@cloudflare/workers-types';
 import { mistakes } from './mistakes';
 
 function mockEnv(opts: {
@@ -40,7 +40,9 @@ function mockEnv(opts: {
     waitUntil: (p: Promise<unknown>) => {
       waitUntilFns.push(p);
     },
-  };
+    passThroughOnException: () => {},
+    props: {},
+  } as unknown as ExecutionContext;
   return {
     Bindings: { DB: db, INTERNAL_TOKEN: 'test', ANTHROPIC_API_KEY: 'test' },
     executionCtx,
