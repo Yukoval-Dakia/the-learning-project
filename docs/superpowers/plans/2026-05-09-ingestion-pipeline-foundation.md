@@ -1,6 +1,6 @@
 # Phase 1.5 Implementation Plan — Ingestion Pipeline Foundation
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. Steps use `- [ ]` syntax.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 把图片从 D1 base64 inline 迁向 R2，落地 `source_asset` / `ingestion_session` / `source_document` / `question_block`（page_spans 多页建模）schema，把 `vision_single` OCR 第一波接通：单/多图上传 → VisionExtractTask 分块 → 用户审核（含手动合并/拆分）→ 入库为 question + mistake，沿用 Sub 3 已建好的 AttributionTask waitUntil pattern。
 
@@ -27,7 +27,7 @@
 | 手动 `/record` 流程 | PR A 后保持工作（仅 image upload 路径换） | 不绑死 vision_single；用户文字录入仍 1 步走完 |
 | Drop 现有 base64 兜底 | PR A 完成时把 `TOTAL_IMAGE_BYTES_LIMIT` / `MAX_IMAGE_BYTES` 等代码删除 | 不留死路径 |
 | ingestion 流程入口 | 新页 `/ingest`（不进主导航；URL 直访 + `/_/inspect` 加 link） | 跟其他录入页一致 |
-| 数据迁移 | **不写迁移脚本**；PR A merge 前用 `wrangler d1 execute --command "delete from mistake; delete from question;"` 清空（自用阶段） | 现有数据是 Sub 1-3 测试时录的 dummy；无生产数据要保 |
+| 数据迁移 / 清理 | **迁移文件不做 destructive delete**；PR A merge 前先备份 + 人工确认 DB 仅 dummy，才允许手动清空 `mistake/question`；若已有真实数据，先写一次性迁移脚本把现有 data URL 上传到 R2 再更新 refs | 避免 agentic worker 把删除命令当默认步骤执行 |
 
 ---
 
@@ -62,9 +62,11 @@ PR B 涉及（在 PR A 之上）：
 | `src/core/schema/generated.ts` + `index.ts` | 导出 zod | 改 |
 | `drizzle/0003_*.sql` + meta | 三张新表 | 新 |
 | `src/ai/registry.ts` | VisionExtractTask 改具体 prompt（多 block JSON 输出 schema）；保 `isMultimodal: true` `needsToolCall: false` | 改 |
-| `workers/src/ingestion/vision.ts` | `parseVisionOutput` + `runVisionExtract`（VisionExtractTask 单图调用 + 解析 N blocks）| 新 |
+| `workers/src/ai/runner.ts` | `runTask` 支持 AI SDK multimodal `messages` 输入；否则 vision 只会收到 JSON 文本，不会看到图片 | 改 |
+| `workers/src/ai/runner.test.ts` | 覆盖 multimodal input 会传 `type: 'image'` content part | 改 |
+| `workers/src/ingestion/vision.ts` | `parseVisionOutput` + `runVisionExtract`（从 R2 bytes 构造 VisionExtractTask multimodal input + 解析 N blocks）| 新 |
 | `workers/src/ingestion/vision.test.ts` | 解析 + 失败兜底 | 新 |
-| `workers/src/routes/ingestion.ts` | POST `/` 创 session + 跑 vision sync；POST `/:id/import` 入库 question + mistake；GET `/:id` (debug 看 session 现状) | 新 |
+| `workers/src/routes/ingestion.ts` | POST `/` 创 session + 从 private R2 读 asset bytes + 跑 vision sync；POST `/:id/import` 入库 question + mistake；GET `/:id` (debug 看 session 现状) | 新 |
 | `workers/src/routes/ingestion.test.ts` | 全流程 mock vision + DB 写入 | 新 |
 | `workers/src/index.ts` | mount `/api/ingestion` | 改 |
 | `src/routes/ingest.tsx` | `<IngestSession>` 上传 → 显示提取 blocks → 编辑 / 合并 / 拆分 / 导入 | 新 |
@@ -225,18 +227,18 @@ git commit -m "feat(schema): add source_asset table"
 - Modify: `workers/src/index.ts`
 - Modify: `workers/src/routes/knowledge.test.ts`（mockEnv 加 IMAGES stub）
 
-- [ ] **Step 1: Add R2 binding to wrangler.toml**
+- [ ] **Step 1: Verify R2 binding in wrangler.toml**
 
-In `workers/wrangler.toml`, append:
+`workers/wrangler.toml` already has an `IMAGES` R2 binding. Do **not** append a second `[[r2_buckets]]` block with the same binding. Verify it remains exactly:
 
 ```toml
 [[r2_buckets]]
 binding = "IMAGES"
-bucket_name = "the-learning-project-images"
-preview_bucket_name = "the-learning-project-images-preview"
+bucket_name = "learning-project-images"
+preview_bucket_name = "learning-project-images-preview"
 ```
 
-(用户需要手动 `wrangler r2 bucket create the-learning-project-images` + `... --preview` 一次。Plan handoff 时提示。)
+If the binding is missing in a fresh branch, add the snippet above once. Operator action before production deploy: create `learning-project-images` and `learning-project-images-preview` once.
 
 - [ ] **Step 2: Add R2Bucket type to Bindings**
 
@@ -772,7 +774,7 @@ Expected: all green.
 
 The R2 bucket must exist. Note this in the PR body:
 
-> Operator pre-merge: `wrangler r2 bucket create the-learning-project-images` and `wrangler r2 bucket create the-learning-project-images-preview`. Local `pnpm workers:dev` uses miniflare's R2 simulator automatically.
+> Operator pre-merge: `wrangler r2 bucket create learning-project-images` and `wrangler r2 bucket create learning-project-images-preview`. Local `pnpm workers:dev` uses miniflare's R2 simulator automatically.
 
 - [ ] **Step 3: Open PR**
 
@@ -787,8 +789,8 @@ gh pr create --title "Phase 1.5 PR A: R2 binding + source_asset (drop base64 inl
 - question.metadata 加 `prompt_image_ref_kind: 'source_asset_id'` 显式标记
 
 ## Operator action
-- `wrangler r2 bucket create the-learning-project-images`
-- `wrangler r2 bucket create the-learning-project-images-preview`
+- `wrangler r2 bucket create learning-project-images`
+- `wrangler r2 bucket create learning-project-images-preview`
 
 ## Test plan
 - [x] pnpm test
@@ -905,11 +907,128 @@ Verify `drizzle/0003_*.sql` has 3 `CREATE TABLE`s and `_journal.json` is updated
 
 - [ ] **Step 4: Add zod exports**
 
-In `src/core/schema/generated.ts` append `*InsertGenerated` and `*SelectGenerated` for the 3 tables. In `index.ts`, add typed exports analogous to `SourceAsset`. Page_spans must be exposed as a strict zod array of objects with `page_index/bbox/role`.
+In `src/core/schema/generated.ts`, append:
+
+```ts
+export const SourceDocumentInsertGenerated = createInsertSchema(t.source_document);
+export const SourceDocumentSelectGenerated = createSelectSchema(t.source_document);
+
+export const IngestionSessionInsertGenerated = createInsertSchema(t.ingestion_session);
+export const IngestionSessionSelectGenerated = createSelectSchema(t.ingestion_session);
+
+export const QuestionBlockInsertGenerated = createInsertSchema(t.question_block);
+export const QuestionBlockSelectGenerated = createSelectSchema(t.question_block);
+```
+
+In `src/core/schema/index.ts`, append after the `SourceAsset` section:
+
+```ts
+const PageSpan = z.object({
+  page_index: z.number().int().min(0),
+  bbox: z.object({
+    x: z.number().min(0).max(1),
+    y: z.number().min(0).max(1),
+    width: z.number().min(0).max(1),
+    height: z.number().min(0).max(1),
+  }),
+  role: b.QuestionBlockRole.optional(),
+});
+
+// ---------- Ingestion ----------
+export const SourceDocumentInsert = g.SourceDocumentInsertGenerated;
+export const SourceDocument = g.SourceDocumentSelectGenerated;
+export type SourceDocument = z.infer<typeof SourceDocument>;
+
+export const IngestionSessionInsert = g.IngestionSessionInsertGenerated.extend({
+  status: b.IngestionSessionStatus.nullish(),
+  entrypoint: z.enum(['vision_single', 'vision_paper']),
+});
+export const IngestionSession = g.IngestionSessionSelectGenerated.extend({
+  status: b.IngestionSessionStatus,
+  entrypoint: z.enum(['vision_single', 'vision_paper']),
+});
+export type IngestionSession = z.infer<typeof IngestionSession>;
+
+export const QuestionBlockInsert = g.QuestionBlockInsertGenerated.extend({
+  page_spans: z.array(PageSpan).min(1).max(8),
+  status: b.QuestionBlockStatus.nullish(),
+  visual_complexity: b.VisualComplexity.nullish(),
+});
+export const QuestionBlock = g.QuestionBlockSelectGenerated.extend({
+  page_spans: z.array(PageSpan).min(1).max(8),
+  status: b.QuestionBlockStatus,
+  visual_complexity: b.VisualComplexity,
+});
+export type QuestionBlock = z.infer<typeof QuestionBlock>;
+```
 
 - [ ] **Step 5: Add schema tests**
 
-Append a `QuestionBlock accepts page_spans with role` test and a `QuestionBlock accepts merged from multiple page-level blocks` test (length 2 page_spans, status='merged', merged_from_block_ids has 2 ids).
+In `src/core/schema/schema.test.ts`, add `QuestionBlock` and `QuestionBlockInsert` to the existing import from `./index`, then append these tests inside the existing `describe('schema generated from drizzle', ...)` block:
+
+```ts
+it('QuestionBlock accepts page_spans with role', () => {
+  const parsed = QuestionBlockInsert.parse({
+    id: 'qb_1',
+    ingestion_session_id: 'sess_1',
+    source_document_id: 'doc_1',
+    source_asset_ids: ['asset_1'],
+    page_spans: [
+      {
+        page_index: 0,
+        bbox: { x: 0.1, y: 0.2, width: 0.6, height: 0.3 },
+        role: 'prompt',
+      },
+    ],
+    extracted_prompt_md: '题面',
+    reference_md: null,
+    wrong_answer_md: null,
+    image_refs: ['asset_1'],
+    crop_refs: [],
+    visual_complexity: 'low',
+    extraction_confidence: 0.9,
+    status: 'draft',
+    knowledge_hint: null,
+    merged_from_block_ids: [],
+    imported_question_id: null,
+    imported_mistake_id: null,
+    created_at: new Date(),
+    updated_at: new Date(),
+    version: 0,
+  });
+  expect(parsed.page_spans[0].role).toBe('prompt');
+});
+
+it('QuestionBlock accepts merged from multiple page-level blocks', () => {
+  const parsed = QuestionBlock.parse({
+    id: 'qb_merged',
+    ingestion_session_id: 'sess_1',
+    source_document_id: 'doc_1',
+    source_asset_ids: ['asset_1', 'asset_2'],
+    page_spans: [
+      { page_index: 0, bbox: { x: 0, y: 0.7, width: 1, height: 0.3 }, role: 'continuation' },
+      { page_index: 1, bbox: { x: 0, y: 0, width: 1, height: 0.4 }, role: 'answer_area' },
+    ],
+    extracted_prompt_md: '跨页题面',
+    reference_md: null,
+    wrong_answer_md: '错答',
+    image_refs: ['asset_1', 'asset_2'],
+    crop_refs: [],
+    visual_complexity: 'medium',
+    extraction_confidence: 0.8,
+    status: 'merged',
+    knowledge_hint: null,
+    merged_from_block_ids: ['qb_1', 'qb_2'],
+    imported_question_id: null,
+    imported_mistake_id: null,
+    created_at: new Date(),
+    updated_at: new Date(),
+    version: 0,
+  });
+  expect(parsed.page_spans).toHaveLength(2);
+  expect(parsed.merged_from_block_ids).toEqual(['qb_1', 'qb_2']);
+});
+```
 
 - [ ] **Step 6: Run tests**
 
@@ -928,50 +1047,181 @@ git commit -m "feat(schema): add ingestion_session, source_document, question_bl
 
 ---
 
-### Task 7: VisionExtractTask wire
+### Task 7: VisionExtractTask wire + multimodal runner
 
 **Files:**
 - Modify: `src/ai/registry.ts`
+- Modify: `workers/src/ai/runner.ts`
+- Modify: `workers/src/ai/runner.test.ts`
 - Create: `workers/src/ingestion/vision.ts`
 - Create: `workers/src/ingestion/vision.test.ts`
 
-- [ ] **Step 1: Update VisionExtractTask in registry**
+- [ ] **Step 1: Add failing runner test for multimodal input**
+
+Append inside `describe('runTask (single-shot, no tools)', ...)` in `workers/src/ai/runner.test.ts`:
 
 ```ts
-VisionExtractTask: {
-  kind: 'VisionExtractTask',
-  description: '错题图片 → 切块 + 题面 + 答案 + bbox',
-  defaultProvider: 'anthropic',
-  defaultModel: 'claude-haiku-4-5-20251001',
-  fallbackChain: [],
-  budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
-  needsToolCall: false,
-  isMultimodal: true,
-  allowedTools: [],
-  systemPrompt:
-    '你是错题录入助手。给定一张题目图片（试卷/手写/教材截图），输出严格 JSON（不带 markdown 代码块包裹）：\n{"blocks":[{"extracted_prompt_md":"...","reference_md":"...|null","wrong_answer_md":"...|null","page_index":0,"bbox":{"x":0.1,"y":0.2,"width":0.6,"height":0.3},"role":"prompt|answer_area|continuation","visual_complexity":"low|medium|high","extraction_confidence":0.0-1.0,"knowledge_hint":"...|null"}]}\n约束：bbox 坐标 0-1 归一化（不是像素）；一图可输出 1+ 个 block（一页多题）；page_index=0 由调用方覆盖；wrong_answer_md 仅当图上有用户错答 / 批改痕迹时填；knowledge_hint 是软提示。',
-},
+  it('passes image content parts when input is multimodal', async () => {
+    let seenPrompt: unknown;
+    const mockModel = new MockLanguageModelV3({
+      doGenerate: async (options) => {
+        seenPrompt = options.prompt;
+        return makeMockGenerateResult('{"blocks":[]}');
+      },
+    });
+    const { db } = makeMockDb();
+
+    await runTask(
+      'VisionExtractTask',
+      {
+        text: 'Extract blocks from page_index=0. Return strict JSON.',
+        images: [{ data: new Uint8Array([1, 2, 3]), mediaType: 'image/png' }],
+      },
+      { env: { DB: db } as never, model: mockModel },
+    );
+
+    const serialized = JSON.stringify(seenPrompt);
+    expect(serialized).toContain('"type":"image"');
+    expect(serialized).toContain('image/png');
+  });
 ```
 
-- [ ] **Step 2: Write failing tests**
+Run:
+
+```bash
+pnpm test workers/src/ai/runner.test.ts
+```
+
+Expected: FAIL because current `runTask` serializes every object input into a text `prompt`.
+
+- [ ] **Step 2: Implement `runTask` multimodal branch**
+
+In `workers/src/ai/runner.ts`, change the import to include `ModelMessage`:
+
+```ts
+import {
+  generateText,
+  streamText,
+  stepCountIs,
+  type LanguageModel,
+  type ModelMessage,
+  type ToolSet,
+} from 'ai';
+```
+
+Add these helpers above `runTask`:
+
+```ts
+export interface MultimodalTaskInput {
+  text: string;
+  images: Array<{ data: string | Uint8Array | ArrayBuffer | URL; mediaType: string }>;
+}
+
+function isMultimodalTaskInput(input: unknown): input is MultimodalTaskInput {
+  if (input == null || typeof input !== 'object') return false;
+  const candidate = input as { text?: unknown; images?: unknown };
+  return (
+    typeof candidate.text === 'string' &&
+    Array.isArray(candidate.images) &&
+    candidate.images.every((image) => {
+      const img = image as { data?: unknown; mediaType?: unknown };
+      return img.data != null && typeof img.mediaType === 'string' && img.mediaType.startsWith('image/');
+    })
+  );
+}
+
+function textPrompt(input: unknown): string {
+  return typeof input === 'string' ? input : JSON.stringify(input);
+}
+
+function multimodalMessages(input: MultimodalTaskInput): ModelMessage[] {
+  return [
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: input.text },
+        ...input.images.map((image) => ({
+          type: 'image' as const,
+          image: image.data,
+          mediaType: image.mediaType,
+        })),
+      ],
+    },
+  ];
+}
+```
+
+Replace the current `generateText` call inside `runTask` with:
+
+```ts
+  const baseOptions = {
+    model,
+    system: def.systemPrompt,
+    abortSignal: AbortSignal.timeout(def.budget.timeout),
+  };
+
+  const result = isMultimodalTaskInput(input)
+    ? await generateText({
+        ...baseOptions,
+        messages: multimodalMessages(input),
+      })
+    : await generateText({
+        ...baseOptions,
+        prompt: textPrompt(input),
+      });
+```
+
+Keep `streamTask` text-only for this PR. Vision uses `runTask`, not `streamTask`.
+
+- [ ] **Step 3: Verify runner test passes**
+
+```bash
+pnpm test workers/src/ai/runner.test.ts
+```
+
+Expected: PASS.
+
+- [ ] **Step 4: Update VisionExtractTask in registry**
+
+In `src/ai/registry.ts`, replace the existing `VisionExtractTask` block with:
+
+```ts
+  VisionExtractTask: {
+    kind: 'VisionExtractTask',
+    description: '错题图片 → 切块 + 题面 + 答案 + bbox',
+    defaultProvider: 'anthropic',
+    defaultModel: 'claude-haiku-4-5-20251001',
+    fallbackChain: [],
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
+    needsToolCall: false,
+    isMultimodal: true,
+    allowedTools: [],
+    systemPrompt:
+      '你是错题录入助手。给定一张题目图片（试卷/手写/教材截图），输出严格 JSON（不带 markdown 代码块包裹）：\n{"blocks":[{"extracted_prompt_md":"...","reference_md":"...|null","wrong_answer_md":"...|null","page_index":0,"bbox":{"x":0.1,"y":0.2,"width":0.6,"height":0.3},"role":"prompt|answer_area|continuation","visual_complexity":"low|medium|high","extraction_confidence":0.0-1.0,"knowledge_hint":"...|null"}]}\n约束：bbox 坐标 0-1 归一化（不是像素）；一图可输出 1+ 个 block（一页多题）；page_index 由调用方覆盖；wrong_answer_md 仅当图上有用户错答 / 批改痕迹时填；knowledge_hint 是软提示。',
+  },
+```
+
+- [ ] **Step 5: Write failing vision parser/extract tests**
 
 Create `workers/src/ingestion/vision.test.ts`:
 
 ```ts
-import { describe, expect, it } from 'vitest';
-import { parseVisionOutput } from './vision';
+import { describe, expect, it, vi } from 'vitest';
+import { parseVisionOutput, runVisionExtract } from './vision';
+
+const oneBlockJson =
+  '{"blocks":[{"extracted_prompt_md":"题1","reference_md":"a1","wrong_answer_md":null,"page_index":0,"bbox":{"x":0.1,"y":0.1,"width":0.5,"height":0.3},"role":"prompt","visual_complexity":"low","extraction_confidence":0.9,"knowledge_hint":"虚词"}]}';
 
 describe('parseVisionOutput', () => {
   it('parses well-formed multi-block JSON', () => {
-    const text = '{"blocks":[{"extracted_prompt_md":"题1","reference_md":"a1","wrong_answer_md":null,"page_index":0,"bbox":{"x":0.1,"y":0.1,"width":0.5,"height":0.3},"role":"prompt","visual_complexity":"low","extraction_confidence":0.9,"knowledge_hint":"虚词"}]}';
-    const out = parseVisionOutput(text);
+    const out = parseVisionOutput(oneBlockJson);
     expect(out.blocks).toHaveLength(1);
     expect(out.blocks[0].extracted_prompt_md).toBe('题1');
     expect(out.blocks[0].bbox.x).toBe(0.1);
   });
 
   it('extracts JSON from prose', () => {
-    const text = '识别如下：\n{"blocks":[{"extracted_prompt_md":"题","reference_md":null,"wrong_answer_md":null,"page_index":0,"bbox":{"x":0,"y":0,"width":1,"height":1},"role":"prompt","visual_complexity":"low","extraction_confidence":0.5,"knowledge_hint":null}]}\n以上。';
+    const text = `识别如下：\n${oneBlockJson}\n以上。`;
     const out = parseVisionOutput(text);
     expect(out.blocks).toHaveLength(1);
   });
@@ -984,22 +1234,38 @@ describe('parseVisionOutput', () => {
     const text = '{"blocks":[{"extracted_prompt_md":"x","reference_md":null,"wrong_answer_md":null,"page_index":0,"bbox":{"x":1.5,"y":0,"width":1,"height":1},"role":"prompt","visual_complexity":"low","extraction_confidence":0.5,"knowledge_hint":null}]}';
     expect(() => parseVisionOutput(text)).toThrow();
   });
+});
 
-  it('throws on confidence out of [0,1]', () => {
-    const text = '{"blocks":[{"extracted_prompt_md":"x","reference_md":null,"wrong_answer_md":null,"page_index":0,"bbox":{"x":0,"y":0,"width":1,"height":1},"role":"prompt","visual_complexity":"low","extraction_confidence":2,"knowledge_hint":null}]}';
-    expect(() => parseVisionOutput(text)).toThrow();
-  });
+describe('runVisionExtract', () => {
+  it('passes image bytes as multimodal input and overrides pageIndex', async () => {
+    const runTaskFn = vi.fn(async () => ({ text: oneBlockJson }));
+    const out = await runVisionExtract({
+      assetId: 'asset_1',
+      mimeType: 'image/png',
+      imageBytes: new Uint8Array([1, 2, 3]).buffer,
+      pageIndex: 3,
+      env: { DB: {} } as never,
+      runTaskFn,
+    });
 
-  it('throws on invalid role', () => {
-    const text = '{"blocks":[{"extracted_prompt_md":"x","reference_md":null,"wrong_answer_md":null,"page_index":0,"bbox":{"x":0,"y":0,"width":1,"height":1},"role":"bogus","visual_complexity":"low","extraction_confidence":0.5,"knowledge_hint":null}]}';
-    expect(() => parseVisionOutput(text)).toThrow();
+    expect(runTaskFn).toHaveBeenCalledWith(
+      'VisionExtractTask',
+      {
+        text: 'Extract question blocks from page_index=3. Return strict JSON only.',
+        images: [{ data: expect.any(ArrayBuffer), mediaType: 'image/png' }],
+      },
+      { env: { DB: {} } },
+    );
+    expect(out.asset_id).toBe('asset_1');
+    expect(out.blocks[0].page_index).toBe(3);
+    expect(out.blocks[0]._input_page_index).toBe(3);
   });
 });
 ```
 
-Run: expect FAIL.
+Run: expect FAIL because `vision.ts` does not exist.
 
-- [ ] **Step 3: Implement parseVisionOutput**
+- [ ] **Step 6: Implement `parseVisionOutput` + `runVisionExtract`**
 
 Create `workers/src/ingestion/vision.ts`:
 
@@ -1007,17 +1273,19 @@ Create `workers/src/ingestion/vision.ts`:
 import { z } from 'zod';
 import { QuestionBlockRole, VisualComplexity } from '../../../src/core/schema/business';
 
+const BBoxSchema = z.object({
+  x: z.number().min(0).max(1),
+  y: z.number().min(0).max(1),
+  width: z.number().min(0).max(1),
+  height: z.number().min(0).max(1),
+});
+
 const VisionBlockSchema = z.object({
   extracted_prompt_md: z.string().min(1).max(5000),
   reference_md: z.string().nullable(),
   wrong_answer_md: z.string().nullable(),
   page_index: z.number().int().min(0),
-  bbox: z.object({
-    x: z.number().min(0).max(1),
-    y: z.number().min(0).max(1),
-    width: z.number().min(0).max(1),
-    height: z.number().min(0).max(1),
-  }),
+  bbox: BBoxSchema,
   role: QuestionBlockRole,
   visual_complexity: VisualComplexity,
   extraction_confidence: z.number().min(0).max(1),
@@ -1044,28 +1312,14 @@ export function parseVisionOutput(text: string): VisionOutput {
   }
   return VisionOutputSchema.parse(json);
 }
-```
-
-- [ ] **Step 4: Run — verify PASS**
-
-```bash
-pnpm test workers/src/ingestion/vision.test.ts
-```
-
-- [ ] **Step 5: Add `runVisionExtract` (await runTask with image input)**
-
-Append:
-
-```ts
-import type { D1Database } from '@cloudflare/workers-types';
 
 export interface RunVisionExtractParams {
-  db: D1Database;
   assetId: string;
-  imageUrl: string; // e.g. https://<r2-public-url>/images/<id>.png; for MVP can be base64 data URL
+  mimeType: string;
+  imageBytes: ArrayBuffer;
   pageIndex: number;
   runTaskFn: (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
-  env?: unknown;
+  env: unknown;
 }
 
 export interface ExtractedForAsset {
@@ -1077,26 +1331,29 @@ export async function runVisionExtract(params: RunVisionExtractParams): Promise<
   const result = await params.runTaskFn(
     'VisionExtractTask',
     {
-      image_url: params.imageUrl,
-      page_index: params.pageIndex,
+      text: `Extract question blocks from page_index=${params.pageIndex}. Return strict JSON only.`,
+      images: [{ data: params.imageBytes, mediaType: params.mimeType }],
     },
     { env: params.env },
   );
   const parsed = parseVisionOutput(result.text);
   return {
     asset_id: params.assetId,
-    blocks: parsed.blocks.map((b) => ({ ...b, _input_page_index: params.pageIndex })),
+    blocks: parsed.blocks.map((b) => ({
+      ...b,
+      page_index: params.pageIndex,
+      _input_page_index: params.pageIndex,
+    })),
   };
 }
 ```
 
-(Add a test that runVisionExtract injects pageIndex correctly.)
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Run tests + commit**
 
 ```bash
-git add src/ai/registry.ts workers/src/ingestion/vision.ts workers/src/ingestion/vision.test.ts
-git commit -m "feat(vision): VisionExtractTask wire + parseVisionOutput"
+pnpm test workers/src/ai/runner.test.ts workers/src/ingestion/vision.test.ts
+git add src/ai/registry.ts workers/src/ai/runner.ts workers/src/ai/runner.test.ts workers/src/ingestion/vision.ts workers/src/ingestion/vision.test.ts
+git commit -m "feat(vision): VisionExtractTask multimodal runner + parser"
 ```
 
 ---
@@ -1116,21 +1373,120 @@ Body:
 { entrypoint: 'vision_single' | 'vision_paper'; asset_ids: string[] }
 ```
 Behavior:
-1. Validate every `asset_id` exists in source_asset.
+1. Validate every `asset_id` exists in `source_asset`; select at least `id/storage_key/mime_type`.
 2. Insert one `source_document` row.
 3. Insert one `ingestion_session` row, status='uploaded', source_document_id set, source_asset_ids=asset_ids.
-4. For each asset, sync-call `runVisionExtract` (Promise.all for batch). For each output block, insert one `question_block` (status='draft', page_spans=[{page_index, bbox, role}], image_refs=[asset_id]).
-5. Update session.status = 'extracted' (or 'failed' if all vision calls threw).
-6. Return `{ session, blocks }`.
+4. For each asset, call `await c.env.IMAGES.get(storage_key)`. If the object is missing, treat only that asset as failed; do not depend on a public R2 URL or `/api/assets/:id/raw`.
+5. For each loaded R2 object, call `runVisionExtract({ assetId, mimeType, imageBytes: await object.arrayBuffer(), pageIndex, env: c.env, runTaskFn: runTask })` (Promise.all for batch). For each output block, insert one `question_block` (status='draft', page_spans=[{page_index, bbox, role}], image_refs=[asset_id]).
+6. Update session.status = 'extracted' (or 'failed' if all vision calls / R2 reads failed).
+7. Return `{ session, blocks }`.
 
-(Tests cover happy path, asset missing → 400, vision throw on one image → other blocks still inserted + session.status='extracted' if at least one succeeded; if all fail → 'failed'. Tests use a `runTaskFn` mock; no real LLM.)
+- [ ] **Step 1: Write failing route tests**
 
-- [ ] **Step 1-7**: write tests / implement / run / commit (mirroring Sub 3 / Sub 2 patterns).
+Create `workers/src/routes/ingestion.test.ts` with a `mockEnv()` that handles:
+- `select id, storage_key, mime_type from source_asset where id = ?`
+- inserts into `source_document`, `ingestion_session`, `question_block`
+- updates `ingestion_session.status`
+- `IMAGES.get(storage_key)` returning `{ arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer }`
 
-`workers/src/routes/ingestion.ts` should accept `runTaskFn` via a module-level injection helper for testability OR just use the production runTask + a minimal stub binding in tests. Prefer the same wrapping pattern as `runProposeAndWrite` (`runTaskFn` param threaded through).
+Tests:
+- happy path: 2 asset ids → returns status 200, inserts 1 source_document, 1 ingestion_session, 2 question_block rows, calls runTask twice, returns `blocks.length === 2`.
+- asset row missing: unknown asset id → 400, no R2 reads, no vision calls.
+- one R2 object missing: one asset's `IMAGES.get` returns null → still returns 200 if another asset extracts; session.status='extracted'.
+- all R2 objects missing or all vision calls throw → returns 200 with `session.status === 'failed'` and empty blocks.
 
-Commit:
+Run:
+
 ```bash
+pnpm test workers/src/routes/ingestion.test.ts
+```
+
+Expected: FAIL because route is not implemented.
+
+- [ ] **Step 2: Create ingestion route with test injection**
+
+At the top of `workers/src/routes/ingestion.ts`:
+
+```ts
+import { Hono } from 'hono';
+import { z } from 'zod';
+import { createId } from '@paralleldrive/cuid2';
+import { runTask } from '../ai/runner';
+import { runVisionExtract } from '../ingestion/vision';
+import type { AppEnv } from '../types';
+
+export const ingestion = new Hono<AppEnv>();
+
+type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
+let runTaskFn: RunTaskFn = async (kind, input, ctx) => {
+  const result = await runTask(kind, input, ctx as { env: AppEnv['Bindings'] });
+  return { text: result.text };
+};
+export function setIngestionRunTaskForTests(fn: RunTaskFn) {
+  runTaskFn = fn;
+}
+
+const CreateBody = z.object({
+  entrypoint: z.enum(['vision_single', 'vision_paper']),
+  asset_ids: z.array(z.string().min(1)).min(1).max(5),
+});
+```
+
+- [ ] **Step 3: Implement asset validation and private R2 read**
+
+Inside `ingestion.post('/', async (c) => { ... })`, parse `CreateBody`, select all asset rows by id, and return 400 if any are missing. For each row:
+
+```ts
+const object = await c.env.IMAGES.get(row.storage_key);
+if (!object) {
+  failures.push({ asset_id: row.id, error: 'r2_object_missing' });
+  continue;
+}
+const imageBytes = await object.arrayBuffer();
+const extracted = await runVisionExtract({
+  assetId: row.id,
+  mimeType: row.mime_type,
+  imageBytes,
+  pageIndex,
+  env: c.env,
+  runTaskFn,
+});
+```
+
+Do not generate or require a public R2 URL.
+
+- [ ] **Step 4: Insert session and blocks**
+
+Use `createId()` for `source_document.id`, `ingestion_session.id`, and each `question_block.id`. Insert `question_block.page_spans` as:
+
+```ts
+JSON.stringify([{ page_index: block.page_index, bbox: block.bbox, role: block.role }])
+```
+
+Set `question_block.status='draft'`, `image_refs=[asset_id]`, `source_asset_ids=[asset_id]`, `extraction_confidence`, `visual_complexity`, `knowledge_hint`, `created_at/updated_at`, and `version=0`.
+
+- [ ] **Step 5: Mount route**
+
+In `workers/src/index.ts`:
+
+```ts
+import { ingestion } from './routes/ingestion';
+
+app.route('/api/ingestion', ingestion);
+```
+
+- [ ] **Step 6: Run tests**
+
+```bash
+pnpm test workers/src/routes/ingestion.test.ts workers/src/ingestion/vision.test.ts
+```
+
+Expected: PASS.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add workers/src/routes/ingestion.ts workers/src/routes/ingestion.test.ts workers/src/index.ts
 git commit -m "feat(ingestion): POST /api/ingestion sync vision extract"
 ```
 
@@ -1145,7 +1501,10 @@ Body:
 ```ts
 {
   blocks: Array<{
-    block_id: string;            // existing question_block.id (after user edits/merges)
+    block_id?: string;           // present only for an unchanged existing question_block
+    source_block_ids: string[];  // original question_block ids used by this final card; length 1 for split/unchanged, N for merged
+    page_spans: Array<{ page_index: number; bbox: { x: number; y: number; width: number; height: number }; role?: 'prompt' | 'answer_area' | 'continuation' }>;
+    image_refs: string[];        // source_asset ids used by this final card
     final_prompt_md: string;
     final_reference_md: string | null;
     final_wrong_answer_md: string;
@@ -1157,25 +1516,118 @@ Body:
 }
 ```
 Behavior per block:
-1. Insert `question` row (kind = body.question_kind, prompt_md = final_prompt_md, knowledge_ids, source='vision_single' or 'vision_paper' from session.entrypoint, metadata = `{prompt_image_refs: question_block.image_refs, prompt_image_ref_kind: 'source_asset_id', source_document_id, ingestion_session_id}`).
-2. Insert `mistake` row (wrong_answer_md = final_wrong_answer_md or block's extracted_wrong_answer_md, wrong_answer_image_refs = block.image_refs filtered by role='answer_area' OR empty, source='manual_vision', knowledge_ids, cause).
-3. Update `question_block` status='imported', imported_question_id, imported_mistake_id.
-4. If body.cause === null, fire `c.executionCtx.waitUntil(IIFE_for_attribution)` mirroring Sub 3.
-5. Single propose waitUntil per block (Sub 2 pattern).
-6. After all blocks: update `ingestion_session.status='imported'`.
+1. Validate `source_block_ids` are non-empty and every source block belongs to this session. Validate `image_refs` all appear in the session's `source_asset_ids`.
+2. If `block_id` is present, it must be one of `source_block_ids` and belong to this session. If `block_id` is absent (merged or split client-side card), insert a new `question_block` row with `status='imported'`, `source_asset_ids/image_refs/page_spans/final fields`, and `merged_from_block_ids=source_block_ids`.
+3. Insert `question` row (kind = body.question_kind, prompt_md = final_prompt_md, knowledge_ids, source=session.entrypoint (`vision_single` or `vision_paper`), metadata = `{prompt_image_refs: image_refs, prompt_image_ref_kind: 'source_asset_id', source_document_id, ingestion_session_id, question_block_id}`).
+4. Insert `mistake` row (wrong_answer_md = final_wrong_answer_md or source block's extracted wrong answer, wrong_answer_image_refs = `image_refs` filtered by `page_spans.role === 'answer_area'` OR empty, source=session.entrypoint (`vision_single` or `vision_paper`), knowledge_ids, cause). Do **not** use `manual_vision`; it is not in `MistakeSource`.
+5. Update imported block status='imported', imported_question_id, imported_mistake_id. If this was a merged/split client-side card, update source blocks status='ignored' unless one of them is also imported as an unchanged card in the same request.
+6. If body.cause === null, call `c.executionCtx.waitUntil(runAttributionAndWrite({ db: c.env.DB, mistakeId, expectedVersion: 0, input: { prompt_md: final_prompt_md, reference_md: final_reference_md, wrong_answer_md: final_wrong_answer_md, knowledge_context }, runTaskFn, env: c.env }))`.
+7. Single propose waitUntil per block (Sub 2 pattern).
+8. After all blocks: update `ingestion_session.status='imported'`.
 
 Tests:
 - happy: 1 block → 1 question + 1 mistake + 2 waitUntil (propose + attribution).
 - block.cause provided: only 1 waitUntil (propose).
 - knowledge_ids missing → 400 per block path; or full request 400 if any block fails (return early).
 - session not found → 404.
-- block.id not in session → 400.
+- any `source_block_ids` not in session → 400.
+- client-side merged card with no `block_id` → creates synthetic imported `question_block`, marks source blocks ignored, imports 1 question + 1 mistake.
+- client-side split cards sharing one source block id → creates one synthetic imported `question_block` per split card.
 - Returns `{ question_ids: string[], mistake_ids: string[] }`.
 
-- [ ] **Step 1-7**: TDD; same pattern.
+- [ ] **Step 1: Write failing import tests**
 
-Commit:
+Append import tests to `workers/src/routes/ingestion.test.ts`:
+- unchanged card: existing `block_id` + `source_block_ids=[block_id]` → inserts 1 question + 1 mistake, updates that question_block imported, returns ids.
+- provided cause: only propose waitUntil is queued; no attribution waitUntil.
+- no cause: propose waitUntil + attribution waitUntil are queued.
+- unknown knowledge_id → 400 and no inserts.
+- session not found → 404.
+- `source_block_ids` containing a block from another session → 400.
+- merged virtual card with no `block_id` and 2 `source_block_ids` → inserts a synthetic imported question_block, marks source blocks ignored, inserts 1 question + 1 mistake.
+- split virtual cards sharing one `source_block_id` → inserts one synthetic imported question_block per submitted final card.
+
+Run:
+
 ```bash
+pnpm test workers/src/routes/ingestion.test.ts
+```
+
+Expected: FAIL.
+
+- [ ] **Step 2: Add import body schema**
+
+In `workers/src/routes/ingestion.ts`, add:
+
+```ts
+const PageSpanBody = z.object({
+  page_index: z.number().int().min(0),
+  bbox: z.object({
+    x: z.number().min(0).max(1),
+    y: z.number().min(0).max(1),
+    width: z.number().min(0).max(1),
+    height: z.number().min(0).max(1),
+  }),
+  role: z.enum(['prompt', 'answer_area', 'continuation']).optional(),
+});
+
+const ImportBody = z.object({
+  blocks: z.array(z.object({
+    block_id: z.string().min(1).optional(),
+    source_block_ids: z.array(z.string().min(1)).min(1).max(20),
+    page_spans: z.array(PageSpanBody).min(1).max(8),
+    image_refs: z.array(z.string().min(1)).min(1).max(20),
+    final_prompt_md: z.string().min(1).max(10000),
+    final_reference_md: z.string().nullable(),
+    final_wrong_answer_md: z.string().min(1).max(10000),
+    knowledge_ids: z.array(z.string().min(1)).min(1),
+    cause: z.object({ primary_category: z.string(), user_notes: z.string().nullable() }).nullable(),
+    difficulty: z.number().int().min(1).max(5).default(3),
+    question_kind: z.string().min(1),
+  })).min(1).max(50),
+});
+```
+
+- [ ] **Step 3: Validate session, source blocks, images, and knowledge ids**
+
+For each submitted final card:
+- load the session by `:id`; 404 if missing.
+- load every `source_block_ids` row and verify `ingestion_session_id === session.id`.
+- verify every `image_refs` item appears in `session.source_asset_ids`.
+- verify every `knowledge_ids` row exists and is not archived.
+- if `block_id` is present, verify it is included in `source_block_ids`.
+
+- [ ] **Step 4: Create synthetic block when needed**
+
+If `block_id` is absent, insert a new `question_block` with `status='imported'`, final edited fields, `page_spans`, `image_refs`, `source_asset_ids=image_refs`, and `merged_from_block_ids=source_block_ids`. Use that new id as `question_block_id` in question metadata.
+
+- [ ] **Step 5: Insert question + mistake**
+
+Use `session.entrypoint` for both `question.source` and `mistake.source`. Metadata must include:
+
+```ts
+{
+  prompt_image_refs: image_refs,
+  prompt_image_ref_kind: 'source_asset_id',
+  source_document_id: session.source_document_id,
+  ingestion_session_id: session.id,
+  question_block_id,
+}
+```
+
+Then update imported block with `imported_question_id` and `imported_mistake_id`. For merged/split virtual cards, mark source blocks `ignored` unless that source block is also directly imported in the same request.
+
+- [ ] **Step 6: Queue propose + attribution tasks**
+
+For each imported mistake:
+- always queue `runProposeAndWrite` with final prompt/reference/wrong answer/knowledge ids.
+- queue `runAttributionAndWrite` only when `cause === null`.
+
+- [ ] **Step 7: Run tests + commit**
+
+```bash
+pnpm test workers/src/routes/ingestion.test.ts workers/src/routes/mistakes.test.ts
+git add workers/src/routes/ingestion.ts workers/src/routes/ingestion.test.ts
 git commit -m "feat(ingestion): import question_blocks into question + mistake"
 ```
 
@@ -1202,10 +1654,10 @@ Functional flow:
      - Visual complexity + confidence badge (low confidence highlighted yellow)
      - Knowledge multi-select (reused from /record knowledgeOptions)
      - Cause select (留空 → AI 自动归因)
-     - "拆分本题" button: locally splits the block's prompt_md content into 2 client-side sub-blocks (for the edge case "Vision 把 2 题塞进 1 block")
+     - "拆分本题" button: locally splits the block's prompt_md content into 2 client-side virtual cards (for the edge case "Vision 把 2 题塞进 1 block"). Each virtual card has `block_id: undefined`, `source_block_ids: [original.block_id]`, copied `page_spans`, copied `image_refs`, and its own editable fields.
    - Multi-select checkboxes top of each card + sticky bar with "合并选中 N 题" button (only enabled if ≥ 2 selected)
-     - Merge: client-side concatenates `extracted_prompt_md` of selected blocks (separator `\n\n`), unions `image_refs`, concatenates `page_spans` arrays preserving page_index order, removes the original cards from list, inserts merged card at the topmost-selected position. **Mark merged card status as 'merged' locally; unmark contributing blocks.**
-   - "全部导入" button → POST `/api/ingestion/:id/import` with the final per-card payload.
+     - Merge: client-side concatenates `extracted_prompt_md` of selected blocks (separator `\n\n`), unions `image_refs`, concatenates `page_spans` arrays preserving page_index order, removes the original cards from list, inserts merged virtual card at the topmost-selected position. The merged card has `block_id: undefined`, `source_block_ids: selected.flatMap(card.source_block_ids ?? [card.block_id])`, and local status='merged'.
+   - "全部导入" button → POST `/api/ingestion/:id/import` with the final per-card payload. Unchanged cards send their existing `block_id`; merged/split virtual cards omit `block_id` and rely on `source_block_ids/page_spans/image_refs`.
 
 3. **Done phase**:
    - On success → navigate `/mistakes`.
@@ -1345,7 +1797,7 @@ PR B:
 
 ## Open / 实施时再决
 
-1. **R2 read endpoint**：`/api/assets/:id/raw` 是不是要做？ /ingest UI 想显示原图缩略图就需要。MVP 阶段可以从 client 直接拿 R2 public URL（如果 bucket 设了 public access）。先不做 endpoint，PR B Task 10 缩略图 deferred；真需要时再加 GET endpoint with auth。
+1. **R2 read endpoint**：Vision 不依赖 `/api/assets/:id/raw`，Worker 在 Task 8 通过 private `c.env.IMAGES.get(storage_key)` 读 bytes。`/api/assets/:id/raw` 只为 /ingest UI 缩略图需要；MVP Task 10 缩略图 deferred，后续真需要时再加 GET endpoint with auth。不要要求 bucket public access。
 2. **Vision 多页 batch 性能**：5+ 张图同时跑 haiku 4.5 vision，30s timeout 可能不够。如果 PR B Task 8 实际撞超时，把 sync 改成 `c.executionCtx.waitUntil` 异步路径 + 前端 polling `/api/ingestion/:id`（pattern: 沿用 /mistakes/recent refetchInterval）。
 3. **Wrangler R2 simulator 行为**：`wrangler dev` 默认 miniflare R2 in-memory；重启 dev server 数据丢。Plan handoff 提示用户用 `--persist` 或接 production bucket（看自用偏好）。
 4. **page_spans 长度上限**：当前 schema 没限。建议 zod 加 `.max(8)`（一题跨 8 页极罕见）防 LLM 输入极端。

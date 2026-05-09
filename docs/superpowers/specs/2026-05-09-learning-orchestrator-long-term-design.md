@@ -340,7 +340,7 @@ Quiz UI：
 - `IngestionSession` 最小状态机：`uploaded` → `extracted` → `reviewed` → `imported` / `failed`。
 - `QuestionBlock` 用 `page_spans` 多页建模（即使 vision_single MVP 都填长度 1 spans，schema 跨页 ready）。
 - `vision_single` 第一波接通：单图上传 → `VisionExtractTask` (haiku 4.5 多模态) → 1 个 `question_block`（draft） → 审核页 → import 成 question + mistake → 触发 AttributionTask（沿用 Sub 3 流）。
-- 多图批量 + 用户**手动合并按钮**（B 路径 MVP）。
+- 多图批量 + 用户**手动合并按钮**（Block Assembly A 路径 MVP）。
 - 保存 `crop_refs[]`，支持带图题原图裁剪回放。
 
 ### Phase 2
