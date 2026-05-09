@@ -82,20 +82,16 @@ export async function writeDreamingProposal(
   return id;
 }
 
-/**
- * Apply propose_new: insert a new knowledge row.
- * Returns the new node id.
- *
- * - parent_id=null → new ROOT node, domain='wenyan' (Phase 1a single domain)
- * - parent_id!=null → child node, domain=null (inherit from parent chain)
- */
-export async function applyProposeNew(
+// Build the "insert into knowledge" prepared statement for a propose_new payload.
+// Extracted so acceptProposal can batch INSERT + UPDATE atomically; standalone
+// applyProposeNew also reuses it for the non-batch path.
+function buildKnowledgeInsert(
   db: D1Database,
   payload: ProposeNewPayload,
-): Promise<string> {
-  const newId = createId();
-  const now = Math.floor(Date.now() / 1000);
-  await db
+  newId: string,
+  now: number,
+) {
+  return db
     .prepare(
       `insert into knowledge (
         id, name, domain, parent_id, base_mastery, ai_delta_mastery,
@@ -105,7 +101,7 @@ export async function applyProposeNew(
     .bind(
       newId,
       payload.name,
-      payload.parent_id === null ? 'wenyan' : null,
+      null, // child node: domain inherits via getEffectiveDomain. PR A rejects parent_id=null.
       payload.parent_id,
       0,
       0,
@@ -115,8 +111,29 @@ export async function applyProposeNew(
       now,
       now,
       0,
-    )
-    .run();
+    );
+}
+
+/**
+ * Apply propose_new: insert a new knowledge row.
+ * Returns the new node id.
+ *
+ * PR A scope: only **child** nodes (parent_id !== null). Root creation rejected — would
+ * silently default domain to 'wenyan' and bake in single-domain assumption. Phase 2 multi-domain
+ * will need an explicit `domain` field on root proposals; lifting this guard then is the right time.
+ */
+export async function applyProposeNew(
+  db: D1Database,
+  payload: ProposeNewPayload,
+): Promise<string> {
+  if (payload.parent_id === null) {
+    throw new Error(
+      'PR A: propose_new with parent_id=null (root creation) not supported; Phase 2 multi-domain will allow it',
+    );
+  }
+  const newId = createId();
+  const now = Math.floor(Date.now() / 1000);
+  await buildKnowledgeInsert(db, payload, newId, now).run();
   return newId;
 }
 
@@ -125,6 +142,10 @@ export type AcceptResult = { kind: 'propose_new_applied'; new_node_id: string };
 /**
  * Accept proposal: only propose_new in PR A.
  * Reparent / merge / split / archive 留 PR B。
+ *
+ * Atomic via db.batch: INSERT + UPDATE commit together or both roll back.
+ * Without this, a failed UPDATE would leave a ghost knowledge row with proposal still 'pending',
+ * and a retry would create a duplicate.
  */
 export async function acceptProposal(
   db: D1Database,
@@ -146,19 +167,33 @@ export async function acceptProposal(
   if (payload.mutation !== 'propose_new') {
     throw new Error(`PR A only supports propose_new accept; got ${payload.mutation}`);
   }
-  const newId = await applyProposeNew(db, payload);
-  const decidedAt = Math.floor(Date.now() / 1000);
-  await db
-    .prepare(`update dreaming_proposal set status = ?, decided_at = ? where id = ?`)
-    .bind('accepted', decidedAt, proposalId)
-    .run();
+  if (payload.parent_id === null) {
+    throw new Error(
+      'PR A: propose_new with parent_id=null (root creation) not supported; Phase 2 multi-domain will allow it',
+    );
+  }
+  const newId = createId();
+  const now = Math.floor(Date.now() / 1000);
+  await db.batch([
+    buildKnowledgeInsert(db, payload, newId, now),
+    db
+      .prepare(
+        `update dreaming_proposal set status = ?, decided_at = ? where id = ? and status = 'pending'`,
+      )
+      .bind('accepted', now, proposalId),
+  ]);
   return { kind: 'propose_new_applied', new_node_id: newId };
 }
 
+/**
+ * Dismiss proposal. Idempotent on already-dismissed (status guard prevents repeated decided_at flips).
+ */
 export async function dismissProposal(db: D1Database, proposalId: string): Promise<void> {
   const decidedAt = Math.floor(Date.now() / 1000);
   await db
-    .prepare(`update dreaming_proposal set status = ?, decided_at = ? where id = ?`)
+    .prepare(
+      `update dreaming_proposal set status = ?, decided_at = ? where id = ? and status = 'pending'`,
+    )
     .bind('dismissed', decidedAt, proposalId)
     .run();
 }

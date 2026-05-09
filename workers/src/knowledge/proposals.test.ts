@@ -32,7 +32,15 @@ function makeMockDb(initialRows: Record<string, Record<string, unknown>> = {}) {
       };
     },
   }));
-  return { db: { prepare } as unknown as D1Database, tableRows, calls };
+  const db = {
+    prepare,
+    batch: async (stmts: Array<{ run: () => Promise<unknown> }>) => {
+      const results: unknown[] = [];
+      for (const s of stmts) results.push(await s.run());
+      return results;
+    },
+  } as unknown as D1Database;
+  return { db, tableRows, calls };
 }
 
 describe('writeDreamingProposal', () => {
@@ -69,6 +77,13 @@ describe('applyProposeNew', () => {
     expect(insert?.binds[2]).toBeNull(); // domain (child node, inherit)
     expect(insert?.binds[3]).toBe('seed:wenyan:shici'); // parent_id
     expect(insert?.binds[7]).toBe(1); // proposed_by_ai true
+  });
+
+  it('rejects propose_new with parent_id=null (PR A single-domain scope)', async () => {
+    const { db } = makeMockDb();
+    await expect(
+      applyProposeNew(db, { mutation: 'propose_new', name: 'x', parent_id: null }),
+    ).rejects.toThrow(/root creation.*not supported/i);
   });
 });
 

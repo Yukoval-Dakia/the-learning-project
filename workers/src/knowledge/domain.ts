@@ -10,6 +10,10 @@ const MAX_DEPTH = 32; // 防 cycle
 /**
  * Walk up parent chain to find first non-null domain.
  * Invariant: parent_id IS NULL ↔ domain IS NOT NULL（root 必有 domain）。
+ *
+ * GET /api/knowledge does its own in-memory walk over the full tree (batch-friendly),
+ * so this single-node helper is reserved for Sub 2's KnowledgeProposeTask which will
+ * need point lookups during tool calling (resolving a node's domain in tool results).
  */
 export async function getEffectiveDomain(db: D1Database, nodeId: string): Promise<string> {
   let curId: string = nodeId;

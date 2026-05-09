@@ -40,7 +40,14 @@ function mockEnv(allRows: Record<string, unknown>[] = [], proposalRows: Record<s
       };
     },
   }));
-  const db = { prepare } as unknown as D1Database;
+  const db = {
+    prepare,
+    batch: async (stmts: Array<{ run: () => Promise<unknown> }>) => {
+      const results: unknown[] = [];
+      for (const s of stmts) results.push(await s.run());
+      return results;
+    },
+  } as unknown as D1Database;
   return {
     Bindings: { DB: db, INTERNAL_TOKEN: 'test', ANTHROPIC_API_KEY: 'test' },
     calls,
