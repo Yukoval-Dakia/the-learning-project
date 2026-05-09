@@ -39,18 +39,11 @@ export const tasks = {
     defaultModel: 'claude-sonnet-4-6',
     fallbackChain: [{ provider: 'anthropic', model: 'claude-haiku-4-5-20251001' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 4 },
-    needsToolCall: true,
+    needsToolCall: false,
     isMultimodal: false,
-    allowedTools: [
-      'search_knowledge_by_concept',
-      'get_knowledge_node',
-      'get_node_neighbors',
-      'find_similar_mistakes',
-      'create_knowledge_node',
-      'link_mistake_to_node',
-    ],
+    allowedTools: [],
     systemPrompt:
-      '你是错题归因助手。给定一道做错的题、用户的错答和参考答案，分析错因并选择最匹配的知识点。错因从 10 类中选：concept / knowledge_gap / calculation / reading / memory / expression / method / carelessness / time_pressure / other。低信心走 other + 详细 ai_analysis_md。',
+      '你是错题归因助手。给定一道做错的题、用户的错答、参考答案和已挂的知识点上下文，分析错因。\n输出严格 JSON 格式（不带 markdown 代码块包裹）：\n{"primary_category": "<10 类之一>", "secondary_categories": [...], "ai_analysis_md": "<分析过程，含错答与参考答案差异 + 涉及的知识点 / 概念>", "confidence": 0.0-1.0}\n10 类 cause: concept | knowledge_gap | calculation | reading | memory | expression | method | carelessness | time_pressure | other。低信心走 other + 详细 ai_analysis_md。',
   },
   VisionExtractTask: {
     kind: 'VisionExtractTask',

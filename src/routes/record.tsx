@@ -115,7 +115,7 @@ export function RecordMistake() {
     mutationFn: postMistake,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/knowledge/proposals'] });
-      navigate('/knowledge/proposals');
+      navigate('/mistakes');
     },
     onError: (err: Error) => {
       setErrorMsg(err.message);

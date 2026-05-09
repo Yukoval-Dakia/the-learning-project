@@ -4,6 +4,7 @@ import { mistakes } from './mistakes';
 
 function mockEnv(opts: {
   knowledgeRows?: Array<{ id: string; name: string; domain: string | null; parent_id: string | null; archived_at: number | null }>;
+  treeAllThrows?: boolean;
 } = {}) {
   const knowledgeById = new Map((opts.knowledgeRows ?? []).map((r) => [r.id, r]));
   const calls: Array<{ sql: string; binds: unknown[] }> = [];
@@ -20,7 +21,12 @@ function mockEnv(opts: {
           return null;
         },
         all: async () => {
-          if (/from knowledge/i.test(sql)) return { results: Array.from(knowledgeById.values()) };
+          if (/from knowledge/i.test(sql)) {
+            if (opts.treeAllThrows && /select id, name, domain, parent_id, archived_at from knowledge/i.test(sql)) {
+              throw new Error('transient D1 error');
+            }
+            return { results: Array.from(knowledgeById.values()) };
+          }
           return { results: [] };
         },
         run: async () => ({ success: true, meta: { changes: 1 } }),
@@ -281,5 +287,165 @@ describe('POST /api/mistakes', () => {
     expect(JSON.parse(questionMetadataBind ?? '{}')).toEqual({ prompt_image_refs: [promptImage] });
     const mistakeImageRefsBind = insertMistakeCall?.binds[5] as string;
     expect(JSON.parse(mistakeImageRefsBind)).toEqual([wrongImage]);
+  });
+
+  it('queues both propose + attribution when cause is null', async () => {
+    const { Bindings, executionCtx, waitUntilFns } = mockEnv({
+      knowledgeRows: [{ id: 'k1', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null }],
+    });
+    await mistakes.request(
+      '/',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          prompt_md: 'p',
+          reference_md: null,
+          wrong_answer_md: 'w',
+          knowledge_ids: ['k1'],
+          cause: null,
+          difficulty: 3,
+          question_kind: 'short_answer',
+        }),
+        headers: { 'content-type': 'application/json' },
+      },
+      Bindings,
+      executionCtx,
+    );
+    expect(waitUntilFns).toHaveLength(2);
+  });
+
+  it('still returns 200 when attribution prep (loadTreeSnapshot) fails post-insert', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { Bindings, executionCtx, waitUntilFns } = mockEnv({
+      knowledgeRows: [{ id: 'k1', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null }],
+      treeAllThrows: true,
+    });
+    const res = await mistakes.request(
+      '/',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          prompt_md: 'p',
+          reference_md: null,
+          wrong_answer_md: 'w',
+          knowledge_ids: ['k1'],
+          cause: null,
+          difficulty: 3,
+          question_kind: 'short_answer',
+        }),
+        headers: { 'content-type': 'application/json' },
+      },
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(200);
+    // attribution waitUntil still scheduled; failure caught inside it
+    expect(waitUntilFns).toHaveLength(2);
+    await Promise.allSettled(waitUntilFns);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it('queues only propose when cause is provided manually', async () => {
+    const { Bindings, executionCtx, waitUntilFns } = mockEnv({
+      knowledgeRows: [{ id: 'k1', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null }],
+    });
+    await mistakes.request(
+      '/',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          prompt_md: 'p',
+          reference_md: null,
+          wrong_answer_md: 'w',
+          knowledge_ids: ['k1'],
+          cause: { primary_category: 'concept', user_notes: null },
+          difficulty: 3,
+          question_kind: 'short_answer',
+        }),
+        headers: { 'content-type': 'application/json' },
+      },
+      Bindings,
+      executionCtx,
+    );
+    expect(waitUntilFns).toHaveLength(1);
+  });
+});
+
+describe('GET /api/mistakes/recent', () => {
+  function mockEnvWithList(rows: Array<Record<string, unknown>>) {
+    const calls: Array<{ sql: string; binds: unknown[] }> = [];
+    const prepare = vi.fn((sql: string) => ({
+      bind: (...binds: unknown[]) => {
+        calls.push({ sql, binds });
+        return {
+          all: async () => ({ results: rows }),
+          first: async () => null,
+          run: async () => ({ success: true, meta: { changes: 1 } }),
+        };
+      },
+    }));
+    const db = { prepare, batch: async () => [] } as unknown as D1Database;
+    return {
+      Bindings: { DB: db, INTERNAL_TOKEN: 't', ANTHROPIC_API_KEY: 't' },
+      executionCtx: {
+        waitUntil: () => {},
+        passThroughOnException: () => {},
+        props: {},
+      } as unknown as ExecutionContext,
+      calls,
+    };
+  }
+
+  it('returns recent mistakes with prompt + wrong answer + cause', async () => {
+    const { Bindings, executionCtx } = mockEnvWithList([
+      {
+        id: 'm1',
+        question_id: 'q1',
+        prompt_md: 'P'.repeat(300),
+        wrong_answer_md: 'W'.repeat(300),
+        knowledge_ids: '["k1"]',
+        cause: '{"primary_category":"concept","secondary_categories":[],"ai_analysis_md":"a","user_edited":false}',
+        created_at: 1700000000,
+      },
+    ]);
+    const res = await mistakes.request('/recent', { method: 'GET' }, Bindings, executionCtx);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { rows: Array<{ id: string; prompt_md: string; cause: unknown }> };
+    expect(body.rows).toHaveLength(1);
+    expect(body.rows[0].id).toBe('m1');
+    expect(body.rows[0].prompt_md).toHaveLength(200);
+    expect((body.rows[0].cause as { primary_category: string }).primary_category).toBe('concept');
+  });
+
+  it('passes null cause through', async () => {
+    const { Bindings, executionCtx } = mockEnvWithList([
+      {
+        id: 'm2',
+        question_id: 'q2',
+        prompt_md: 'p',
+        wrong_answer_md: 'w',
+        knowledge_ids: '["k1"]',
+        cause: null,
+        created_at: 1700000001,
+      },
+    ]);
+    const res = await mistakes.request('/recent', { method: 'GET' }, Bindings, executionCtx);
+    const body = (await res.json()) as { rows: Array<{ cause: unknown }> };
+    expect(body.rows[0].cause).toBeNull();
+  });
+
+  it('respects limit query param up to 100', async () => {
+    const { Bindings, executionCtx, calls } = mockEnvWithList([]);
+    await mistakes.request('/recent?limit=50', { method: 'GET' }, Bindings, executionCtx);
+    const selectCall = calls.find((c) => /select.*from mistake/i.test(c.sql));
+    expect(selectCall?.binds).toContain(50);
+  });
+
+  it('clamps limit > 100 to 100', async () => {
+    const { Bindings, executionCtx, calls } = mockEnvWithList([]);
+    await mistakes.request('/recent?limit=999', { method: 'GET' }, Bindings, executionCtx);
+    const selectCall = calls.find((c) => /select.*from mistake/i.test(c.sql));
+    expect(selectCall?.binds).toContain(100);
   });
 });

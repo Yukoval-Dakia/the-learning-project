@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { createId } from '@paralleldrive/cuid2';
 import { runTask } from '../ai/runner';
 import { runProposeAndWrite } from '../knowledge/propose';
+import { runAttributionAndWrite } from '../knowledge/attribute';
+import { loadTreeSnapshot } from '../knowledge/tree';
 import { CauseCategory, QuestionKind } from '../../../src/core/schema/business';
 import type { AppEnv } from '../types';
 
@@ -25,6 +27,35 @@ const Body = z.object({
   question_kind: QuestionKind,
   prompt_image_refs: z.array(z.string().min(1)).default([]),
   wrong_answer_image_refs: z.array(z.string().min(1)).default([]),
+});
+
+mistakes.get('/recent', async (c) => {
+  const limitRaw = c.req.query('limit');
+  const limitParsed = limitRaw ? parseInt(limitRaw, 10) : 20;
+  const limit = Math.min(Math.max(isNaN(limitParsed) ? 20 : limitParsed, 1), 100);
+  const rows = await c.env.DB.prepare(
+    `select m.id, m.question_id, m.knowledge_ids, m.cause, m.created_at, q.prompt_md, m.wrong_answer_md from mistake m join question q on q.id = m.question_id where m.archived_at is null and m.deleted_at is null order by m.created_at desc limit ?`,
+  )
+    .bind(limit)
+    .all<{
+      id: string;
+      question_id: string;
+      knowledge_ids: string;
+      cause: string | null;
+      created_at: number;
+      prompt_md: string;
+      wrong_answer_md: string;
+    }>();
+  const out = rows.results.map((r) => ({
+    id: r.id,
+    question_id: r.question_id,
+    prompt_md: r.prompt_md.slice(0, 200),
+    wrong_answer_md: r.wrong_answer_md.slice(0, 200),
+    knowledge_ids: JSON.parse(r.knowledge_ids) as string[],
+    cause: r.cause ? JSON.parse(r.cause) : null,
+    created_at: r.created_at,
+  }));
+  return c.json({ rows: out });
 });
 
 mistakes.post('/', async (c) => {
@@ -146,6 +177,39 @@ mistakes.post('/', async (c) => {
       env: c.env,
     }),
   );
+
+  if (body.cause === null) {
+    c.executionCtx.waitUntil(
+      (async () => {
+        try {
+          const tree = await loadTreeSnapshot(c.env.DB);
+          const pickedNodes = tree.filter((n) => body.knowledge_ids.includes(n.id));
+          await runAttributionAndWrite({
+            db: c.env.DB,
+            mistakeId,
+            expectedVersion: 0,
+            input: {
+              prompt_md: body.prompt_md,
+              reference_md: body.reference_md,
+              wrong_answer_md: body.wrong_answer_md,
+              knowledge_context: pickedNodes.map((n) => ({
+                id: n.id,
+                name: n.name,
+                effective_domain: n.effective_domain,
+              })),
+            },
+            runTaskFn: async (kind, input, ctx) => {
+              const result = await runTask(kind, input, ctx as { env: typeof c.env });
+              return { text: result.text };
+            },
+            env: c.env,
+          });
+        } catch (err) {
+          console.error('attribution prep failed (mistake unaffected)', err);
+        }
+      })(),
+    );
+  }
 
   return c.json({
     question_id: questionId,
