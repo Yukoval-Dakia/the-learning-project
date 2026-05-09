@@ -67,7 +67,8 @@ describe('POST /api/mistakes', () => {
         }),
         headers: { 'content-type': 'application/json' },
       },
-      { ...Bindings, executionCtx },
+      Bindings,
+      executionCtx,
     );
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
@@ -93,7 +94,8 @@ describe('POST /api/mistakes', () => {
         }),
         headers: { 'content-type': 'application/json' },
       },
-      { ...Bindings, executionCtx },
+      Bindings,
+      executionCtx,
     );
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string; message: string };
@@ -120,7 +122,8 @@ describe('POST /api/mistakes', () => {
         }),
         headers: { 'content-type': 'application/json' },
       },
-      { ...Bindings, executionCtx },
+      Bindings,
+      executionCtx,
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { question_id: string; mistake_id: string; propose_task: string };
@@ -149,7 +152,8 @@ describe('POST /api/mistakes', () => {
         }),
         headers: { 'content-type': 'application/json' },
       },
-      { ...Bindings, executionCtx },
+      Bindings,
+      executionCtx,
     );
     expect(res.status).toBe(400);
   });
@@ -173,7 +177,8 @@ describe('POST /api/mistakes', () => {
         }),
         headers: { 'content-type': 'application/json' },
       },
-      { ...Bindings, executionCtx },
+      Bindings,
+      executionCtx,
     );
     expect(res.status).toBe(200);
     const insertMistakeCall = calls.find((c) => /insert into mistake/i.test(c.sql));

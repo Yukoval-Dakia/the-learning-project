@@ -4,15 +4,9 @@ import { createId } from '@paralleldrive/cuid2';
 import { runTask } from '../ai/runner';
 import { runProposeAndWrite } from '../knowledge/propose';
 import { CauseCategory, QuestionKind } from '../../../src/core/schema/business';
-import type { Bindings } from '../types';
+import type { AppEnv } from '../types';
 
-type MistakesEnv = {
-  Bindings: Bindings & {
-    executionCtx: { waitUntil: (p: Promise<unknown>) => void };
-  };
-};
-
-export const mistakes = new Hono<MistakesEnv>();
+export const mistakes = new Hono<AppEnv>();
 
 const Body = z.object({
   prompt_md: z.string().min(1, 'prompt_md is required'),
@@ -105,7 +99,7 @@ mistakes.post('/', async (c) => {
   );
   await c.env.DB.batch([insertQuestion, insertMistake]);
 
-  c.env.executionCtx.waitUntil(
+  c.executionCtx.waitUntil(
     runProposeAndWrite({
       db: c.env.DB,
       mistakeContent: {
