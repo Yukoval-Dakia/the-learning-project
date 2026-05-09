@@ -329,6 +329,70 @@ export async function applySplit(
 }
 
 /**
+ * Apply merge: archive all from_ids + push their ids onto into.merged_from JSON array.
+ *
+ * mistake/question.knowledge_ids JSON arrays are NOT rewritten (deviation from spec § 3.3
+ * — see plan header). Read-side UI follows merged_from to surface tag-was-merged hint.
+ *
+ * Race-safe via batch: each archive UPDATE gates by its own expected_version; the into
+ * UPDATE bumps version unconditionally (lock on into not strictly needed since we only
+ * append — concurrent merges into the same node are commutative on merged_from but version
+ * still bumps).
+ */
+export async function applyMerge(
+  db: D1Database,
+  payload: MergePayload,
+): Promise<void> {
+  if (payload.from_ids.includes(payload.into_id)) {
+    throw new Error(`merge: into_id (${payload.into_id}) cannot also appear in from_ids`);
+  }
+  for (const fromId of payload.from_ids) {
+    if (!(fromId in payload.expected_versions)) {
+      throw new Error(`merge: expected_versions missing entry for ${fromId}`);
+    }
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const archiveStmts = payload.from_ids.map((fromId) =>
+    db
+      .prepare(
+        `update knowledge
+          set archived_at = ?, updated_at = ?, version = version + 1
+          where id = ? and version = ? and archived_at is null`,
+      )
+      .bind(now, now, fromId, payload.expected_versions[fromId]),
+  );
+  // Append from_ids onto into.merged_from JSON array via SQLite JSON1.
+  const intoUpdate = db
+    .prepare(
+      `update knowledge
+        set merged_from = json(
+          (select json_group_array(value) from (
+            select value from json_each(merged_from) union all
+            select value from json_each(?)
+          ))
+        ), updated_at = ?, version = version + 1
+        where id = ? and archived_at is null`,
+    )
+    .bind(JSON.stringify(payload.from_ids), now, payload.into_id);
+  const results = await db.batch([...archiveStmts, intoUpdate]);
+  for (let i = 0; i < archiveStmts.length; i++) {
+    const changes =
+      (results[i] as { meta?: { changes?: number } } | undefined)?.meta?.changes ?? 0;
+    if (changes !== 1) {
+      throw new Error(
+        `stale: knowledge ${payload.from_ids[i]} version mismatch or already archived`,
+      );
+    }
+  }
+  const intoChanges =
+    (results[results.length - 1] as { meta?: { changes?: number } } | undefined)?.meta
+      ?.changes ?? 0;
+  if (intoChanges !== 1) {
+    throw new Error(`merge: into_id ${payload.into_id} not found or archived`);
+  }
+}
+
+/**
  * Dismiss proposal. Idempotent on already-dismissed (status guard prevents repeated decided_at flips).
  */
 export async function dismissProposal(db: D1Database, proposalId: string): Promise<void> {

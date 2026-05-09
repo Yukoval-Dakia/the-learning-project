@@ -235,7 +235,7 @@ describe('dismissProposal', () => {
   });
 });
 
-import { applyReparent, applyArchive, applySplit } from './proposals';
+import { applyReparent, applyArchive, applySplit, applyMerge } from './proposals';
 
 describe('applyReparent', () => {
   it('moves a child node to a new parent (happy path)', async () => {
@@ -386,6 +386,74 @@ describe('applySplit', () => {
         from_id: 'k_from',
         into: [{ name: 'A', parent_id: 'k_p1' }],
         expected_version: 7,
+      }),
+    ).rejects.toThrow(/stale/i);
+  });
+});
+
+describe('applyMerge', () => {
+  it('archives all from_ids + pushes to into.merged_from (happy path)', async () => {
+    const { db, calls } = makeMockDb({
+      knowledge: {
+        k_from1: { id: 'k_from1', archived_at: null, version: 2 },
+        k_from2: { id: 'k_from2', archived_at: null, version: 4 },
+        k_into: { id: 'k_into', archived_at: null, version: 1, merged_from: '[]' },
+      },
+    });
+    await applyMerge(db, {
+      mutation: 'merge',
+      from_ids: ['k_from1', 'k_from2'],
+      into_id: 'k_into',
+      expected_versions: { k_from1: 2, k_from2: 4 },
+    });
+    const archives = calls.filter(
+      (c) => /update knowledge/i.test(c.sql) && /archived_at = \?/i.test(c.sql),
+    );
+    expect(archives).toHaveLength(2);
+    const intoUpdate = calls.find(
+      (c) => /update knowledge/i.test(c.sql) && /merged_from/i.test(c.sql),
+    );
+    expect(intoUpdate).toBeDefined();
+  });
+
+  it('rejects when into_id is in from_ids', async () => {
+    const { db } = makeMockDb({});
+    await expect(
+      applyMerge(db, {
+        mutation: 'merge',
+        from_ids: ['k_a', 'k_into'],
+        into_id: 'k_into',
+        expected_versions: { k_a: 1, k_into: 1 },
+      }),
+    ).rejects.toThrow(/into_id.*from_ids/i);
+  });
+
+  it('rejects when expected_versions missing for a from_id', async () => {
+    const { db } = makeMockDb({});
+    await expect(
+      applyMerge(db, {
+        mutation: 'merge',
+        from_ids: ['k_a', 'k_b'],
+        into_id: 'k_into',
+        expected_versions: { k_a: 1 },
+      }),
+    ).rejects.toThrow(/expected_versions.*k_b/i);
+  });
+
+  it('throws stale when any archive UPDATE returns 0 changes', async () => {
+    const { db } = makeMockDb({
+      knowledge: {
+        k_from1: { id: 'k_from1', archived_at: null, version: 2 },
+        k_into: { id: 'k_into', archived_at: null, version: 1, merged_from: '[]' },
+      },
+      raceUpdateZeroChanges: true,
+    });
+    await expect(
+      applyMerge(db, {
+        mutation: 'merge',
+        from_ids: ['k_from1'],
+        into_id: 'k_into',
+        expected_versions: { k_from1: 2 },
       }),
     ).rejects.toThrow(/stale/i);
   });
