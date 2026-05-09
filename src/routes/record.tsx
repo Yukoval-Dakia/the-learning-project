@@ -24,15 +24,27 @@ interface MistakePayload {
   wrong_answer_image_refs: string[];
 }
 
-const MAX_IMAGE_BYTES = 500_000;
+interface UploadedAsset {
+  id: string;
+  name: string;
+  mime_type: string;
+  byte_size: number;
+}
 
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(reader.error ?? new Error('FileReader failed'));
-    reader.readAsDataURL(file);
+async function uploadAsset(file: File): Promise<UploadedAsset> {
+  const form = new FormData();
+  form.set('file', file);
+  const res = await fetch('/api/assets', {
+    method: 'POST',
+    headers: { 'x-internal-token': INTERNAL_TOKEN },
+    body: form,
   });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`POST /api/assets ${res.status}: ${text}`);
+  }
+  const body = (await res.json()) as { asset: { id: string; mime_type: string; byte_size: number } };
+  return { id: body.asset.id, name: file.name, mime_type: body.asset.mime_type, byte_size: body.asset.byte_size };
 }
 
 const QUESTION_KINDS = [
@@ -97,8 +109,9 @@ export function RecordMistake() {
   const [selectedKnowledgeIds, setSelectedKnowledgeIds] = useState<string[]>([]);
   const [causeCategory, setCauseCategory] = useState<string>('');
   const [userNotes, setUserNotes] = useState('');
-  const [promptImages, setPromptImages] = useState<string[]>([]);
-  const [wrongAnswerImages, setWrongAnswerImages] = useState<string[]>([]);
+  const [promptImages, setPromptImages] = useState<UploadedAsset[]>([]);
+  const [wrongAnswerImages, setWrongAnswerImages] = useState<UploadedAsset[]>([]);
+  const [uploading, setUploading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const knowledgeOptions = useMemo(() => {
@@ -139,8 +152,8 @@ export function RecordMistake() {
         : null,
       difficulty,
       question_kind: questionKind,
-      prompt_image_refs: promptImages,
-      wrong_answer_image_refs: wrongAnswerImages,
+      prompt_image_refs: promptImages.map((a) => a.id),
+      wrong_answer_image_refs: wrongAnswerImages.map((a) => a.id),
     };
     submitMutation.mutate(payload);
   }
@@ -151,27 +164,21 @@ export function RecordMistake() {
 
   async function appendImages(
     files: FileList | null,
-    setter: (updater: (prev: string[]) => string[]) => void,
+    setter: (updater: (prev: UploadedAsset[]) => UploadedAsset[]) => void,
   ) {
     if (!files || files.length === 0) return;
-    const oversized: string[] = [];
-    const dataUrls: string[] = [];
-    for (const file of Array.from(files)) {
-      if (file.size > MAX_IMAGE_BYTES) {
-        oversized.push(`${file.name} (${(file.size / 1024).toFixed(0)}KB)`);
-        continue;
+    setErrorMsg(null);
+    setUploading(true);
+    try {
+      const uploaded: UploadedAsset[] = [];
+      for (const file of Array.from(files)) {
+        uploaded.push(await uploadAsset(file));
       }
-      try {
-        dataUrls.push(await readFileAsDataUrl(file));
-      } catch (e) {
-        setErrorMsg(`读取图片失败: ${(e as Error).message}`);
-      }
-    }
-    if (oversized.length > 0) {
-      setErrorMsg(`图片超过 ${MAX_IMAGE_BYTES / 1000}KB 单张上限（D1 cell ~1MB）：${oversized.join(', ')}`);
-    }
-    if (dataUrls.length > 0) {
-      setter((prev) => [...prev, ...dataUrls]);
+      setter((prev) => [...prev, ...uploaded]);
+    } catch (e) {
+      setErrorMsg(`上传图片失败: ${(e as Error).message}`);
+    } finally {
+      setUploading(false);
     }
   }
 
@@ -314,10 +321,10 @@ export function RecordMistake() {
         <div className="flex items-center gap-2 pt-2">
           <button
             type="submit"
-            disabled={submitMutation.isPending}
+            disabled={submitMutation.isPending || uploading}
             className="bg-slate-900 text-white px-4 py-2 rounded disabled:opacity-50"
           >
-            {submitMutation.isPending ? '提交中...' : '提交'}
+            {uploading ? '图片上传中...' : submitMutation.isPending ? '提交中...' : '提交'}
           </button>
           <button
             type="button"
@@ -344,7 +351,7 @@ export function RecordMistake() {
 
 interface ImagePickerProps {
   label: string;
-  images: string[];
+  images: UploadedAsset[];
   onAdd: (files: FileList | null) => void;
   onRemove: (index: number) => void;
 }
@@ -353,25 +360,18 @@ function ImagePicker({ label, images, onAdd, onRemove }: ImagePickerProps) {
   return (
     <div className="block">
       <span className="text-sm font-medium">{label}</span>
-      <div className="mt-1 flex flex-wrap gap-2 items-start">
-        {images.map((src, i) => (
-          <div key={`${i}-${src.slice(0, 32)}`} className="relative">
-            <img
-              src={src}
-              alt={`${label} ${i + 1}`}
-              className="h-20 w-20 object-cover border rounded"
-            />
-            <button
-              type="button"
-              onClick={() => onRemove(i)}
-              className="absolute -top-1 -right-1 bg-red-600 text-white text-xs rounded-full w-5 h-5 leading-5 text-center"
-              aria-label="remove"
-            >
-              ×
-            </button>
-          </div>
-        ))}
-        <label className="border-2 border-dashed border-slate-300 rounded h-20 w-20 flex items-center justify-center cursor-pointer text-slate-500 text-xs hover:border-slate-500">
+      <div className="mt-1">
+        {images.length > 0 && (
+          <ul className="mt-2 space-y-1">
+            {images.map((img, i) => (
+              <li key={img.id} className="flex items-center justify-between text-xs border rounded px-2 py-1 gap-2">
+                <span className="truncate">{img.name} · {(img.byte_size / 1024).toFixed(0)}KB</span>
+                <button type="button" className="text-red-600 underline" onClick={() => onRemove(i)}>移除</button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <label className="mt-2 inline-flex border-2 border-dashed border-slate-300 rounded px-3 py-1 items-center cursor-pointer text-slate-500 text-xs hover:border-slate-500">
           + 加图
           <input
             type="file"
