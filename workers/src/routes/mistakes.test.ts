@@ -282,4 +282,54 @@ describe('POST /api/mistakes', () => {
     const mistakeImageRefsBind = insertMistakeCall?.binds[5] as string;
     expect(JSON.parse(mistakeImageRefsBind)).toEqual([wrongImage]);
   });
+
+  it('queues both propose + attribution when cause is null', async () => {
+    const { Bindings, executionCtx, waitUntilFns } = mockEnv({
+      knowledgeRows: [{ id: 'k1', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null }],
+    });
+    await mistakes.request(
+      '/',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          prompt_md: 'p',
+          reference_md: null,
+          wrong_answer_md: 'w',
+          knowledge_ids: ['k1'],
+          cause: null,
+          difficulty: 3,
+          question_kind: 'short_answer',
+        }),
+        headers: { 'content-type': 'application/json' },
+      },
+      Bindings,
+      executionCtx,
+    );
+    expect(waitUntilFns).toHaveLength(2);
+  });
+
+  it('queues only propose when cause is provided manually', async () => {
+    const { Bindings, executionCtx, waitUntilFns } = mockEnv({
+      knowledgeRows: [{ id: 'k1', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null }],
+    });
+    await mistakes.request(
+      '/',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          prompt_md: 'p',
+          reference_md: null,
+          wrong_answer_md: 'w',
+          knowledge_ids: ['k1'],
+          cause: { primary_category: 'concept', user_notes: null },
+          difficulty: 3,
+          question_kind: 'short_answer',
+        }),
+        headers: { 'content-type': 'application/json' },
+      },
+      Bindings,
+      executionCtx,
+    );
+    expect(waitUntilFns).toHaveLength(1);
+  });
 });

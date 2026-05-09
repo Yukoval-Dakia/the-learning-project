@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { createId } from '@paralleldrive/cuid2';
 import { runTask } from '../ai/runner';
 import { runProposeAndWrite } from '../knowledge/propose';
+import { runAttributionAndWrite } from '../knowledge/attribute';
+import { loadTreeSnapshot } from '../knowledge/tree';
 import { CauseCategory, QuestionKind } from '../../../src/core/schema/business';
 import type { AppEnv } from '../types';
 
@@ -146,6 +148,33 @@ mistakes.post('/', async (c) => {
       env: c.env,
     }),
   );
+
+  if (body.cause === null) {
+    const tree = await loadTreeSnapshot(c.env.DB);
+    const pickedNodes = tree.filter((n) => body.knowledge_ids.includes(n.id));
+    c.executionCtx.waitUntil(
+      runAttributionAndWrite({
+        db: c.env.DB,
+        mistakeId,
+        expectedVersion: 0,
+        input: {
+          prompt_md: body.prompt_md,
+          reference_md: body.reference_md,
+          wrong_answer_md: body.wrong_answer_md,
+          knowledge_context: pickedNodes.map((n) => ({
+            id: n.id,
+            name: n.name,
+            effective_domain: n.effective_domain,
+          })),
+        },
+        runTaskFn: async (kind, input, ctx) => {
+          const result = await runTask(kind, input, ctx as { env: typeof c.env });
+          return { text: result.text };
+        },
+        env: c.env,
+      }),
+    );
+  }
 
   return c.json({
     question_id: questionId,
