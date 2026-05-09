@@ -141,6 +141,7 @@ describe('acceptProposal (propose_new only)', () => {
     });
     const result = await acceptProposal(db, 'p1');
     expect(result.kind).toBe('propose_new_applied');
+    if (result.kind !== 'propose_new_applied') throw new Error('unexpected kind');
     expect(result.new_node_id).toMatch(/^[a-z0-9]+$/);
     expect(calls.some((c) => /insert into knowledge/i.test(c.sql))).toBe(true);
     expect(calls.some((c) => /update dreaming_proposal set status = \?/i.test(c.sql))).toBe(true);
@@ -158,20 +159,6 @@ describe('acceptProposal (propose_new only)', () => {
     };
     const { db } = makeMockDb({ proposals: { p2: proposal } });
     await expect(acceptProposal(db, 'p2')).rejects.toThrow(/not.*pending/i);
-  });
-
-  it('rejects unsupported mutation kinds (PR A scope)', async () => {
-    const proposal = {
-      id: 'p3',
-      kind: 'knowledge',
-      payload: JSON.stringify({ mutation: 'reparent', node_id: 'x', new_parent_id: 'y' }),
-      reasoning: 'test',
-      status: 'pending',
-      proposed_at: 1700000000,
-      decided_at: null,
-    };
-    const { db } = makeMockDb({ proposals: { p3: proposal } });
-    await expect(acceptProposal(db, 'p3')).rejects.toThrow(/PR A.*propose_new/i);
   });
 
   it('rejects accept when parent_id does not exist', async () => {
@@ -456,5 +443,82 @@ describe('applyMerge', () => {
         expected_versions: { k_from1: 2 },
       }),
     ).rejects.toThrow(/stale/i);
+  });
+});
+
+describe('acceptProposal — high-tier mutations', () => {
+  it('dispatches reparent and returns reparent_applied result', async () => {
+    const proposal = {
+      id: 'p_reparent',
+      kind: 'knowledge',
+      payload: JSON.stringify({
+        mutation: 'reparent',
+        node_id: 'k_node',
+        new_parent_id: 'k_newparent',
+        expected_version: 3,
+      }),
+      reasoning: 'AI thinks this node fits better under k_newparent',
+      status: 'pending',
+      proposed_at: 1700000000,
+      decided_at: null,
+    };
+    const { db, calls } = makeMockDb({
+      proposals: { p_reparent: proposal },
+      knowledge: {
+        k_newparent: { id: 'k_newparent', archived_at: null },
+      },
+    });
+    const result = await acceptProposal(db, 'p_reparent');
+    expect(result.kind).toBe('reparent_applied');
+    expect(calls.some((c) => /update knowledge.*parent_id/is.test(c.sql))).toBe(true);
+    expect(calls.some((c) => /update dreaming_proposal set status = \?/i.test(c.sql))).toBe(true);
+  });
+
+  it('dispatches archive and returns archive_applied result', async () => {
+    const proposal = {
+      id: 'p_arch',
+      kind: 'knowledge',
+      payload: JSON.stringify({
+        mutation: 'archive',
+        node_id: 'k_node',
+        expected_version: 5,
+      }),
+      reasoning: 'unused',
+      status: 'pending',
+      proposed_at: 1700000000,
+      decided_at: null,
+    };
+    const { db } = makeMockDb({
+      proposals: { p_arch: proposal },
+      knowledge: { k_node: { id: 'k_node', archived_at: null, version: 5 } },
+    });
+    const result = await acceptProposal(db, 'p_arch');
+    expect(result.kind).toBe('archive_applied');
+  });
+
+  it('marks proposal stale on stale error and re-throws', async () => {
+    const proposal = {
+      id: 'p_stale',
+      kind: 'knowledge',
+      payload: JSON.stringify({
+        mutation: 'archive',
+        node_id: 'k_node',
+        expected_version: 5,
+      }),
+      reasoning: 'r',
+      status: 'pending',
+      proposed_at: 1700000000,
+      decided_at: null,
+    };
+    const { db, calls } = makeMockDb({
+      proposals: { p_stale: proposal },
+      knowledge: { k_node: { id: 'k_node', archived_at: null, version: 5 } },
+      runZeroChangesFor: /update knowledge/i,
+    });
+    await expect(acceptProposal(db, 'p_stale')).rejects.toThrow(/stale/i);
+    const staleUpdate = calls.find(
+      (c) => /update dreaming_proposal/i.test(c.sql) && /stale/.test(c.binds[0] as string),
+    );
+    expect(staleUpdate).toBeDefined();
   });
 });

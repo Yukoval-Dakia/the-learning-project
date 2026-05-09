@@ -148,16 +148,19 @@ export async function applyProposeNew(
   return newId;
 }
 
-export type AcceptResult = { kind: 'propose_new_applied'; new_node_id: string };
+export type AcceptResult =
+  | { kind: 'propose_new_applied'; new_node_id: string }
+  | { kind: 'reparent_applied'; node_id: string; new_parent_id: string }
+  | { kind: 'merge_applied'; into_id: string; archived_ids: string[] }
+  | { kind: 'split_applied'; archived_id: string; new_node_ids: string[] }
+  | { kind: 'archive_applied'; node_id: string };
 
 /**
- * Accept proposal: only propose_new in PR A.
- * Reparent / merge / split / archive 留 PR B。
+ * Accept proposal: dispatches over all 5 mutation kinds.
  *
- * Race-safe: the INSERT is gated on `dreaming_proposal.status = 'pending'` via INSERT…SELECT…
- * WHERE EXISTS, and the UPDATE carries the same guard. Two concurrent accepts can both pass the
- * pre-read but only one batch will actually mutate; the loser's INSERT and UPDATE are both no-ops
- * (no orphan knowledge row) and we surface the loss via the post-batch row-count check.
+ * propose_new uses a race-safe INSERT…SELECT…WHERE EXISTS batch pattern (PR A).
+ * reparent / merge / split / archive go through acceptHighTier which handles stale errors
+ * by marking the proposal stale before re-throwing.
  */
 export async function acceptProposal(
   db: D1Database,
@@ -176,9 +179,91 @@ export async function acceptProposal(
     throw new Error(`proposal ${proposalId} is not pending (status=${row.status})`);
   }
   const payload = JSON.parse(row.payload) as KnowledgeMutationPayload;
-  if (payload.mutation !== 'propose_new') {
-    throw new Error(`PR A only supports propose_new accept; got ${payload.mutation}`);
+
+  switch (payload.mutation) {
+    case 'propose_new':
+      return await acceptProposeNew(db, proposalId, payload);
+    case 'reparent':
+      return await acceptHighTier(db, proposalId, async () => {
+        await applyReparent(db, payload);
+        return {
+          kind: 'reparent_applied',
+          node_id: payload.node_id,
+          new_parent_id: payload.new_parent_id!,
+        };
+      });
+    case 'merge':
+      return await acceptHighTier(db, proposalId, async () => {
+        await applyMerge(db, payload);
+        return {
+          kind: 'merge_applied',
+          into_id: payload.into_id,
+          archived_ids: payload.from_ids,
+        };
+      });
+    case 'split':
+      return await acceptHighTier(db, proposalId, async () => {
+        const newIds = await applySplit(db, payload);
+        return {
+          kind: 'split_applied',
+          archived_id: payload.from_id,
+          new_node_ids: newIds,
+        };
+      });
+    case 'archive':
+      return await acceptHighTier(db, proposalId, async () => {
+        await applyArchive(db, payload);
+        return { kind: 'archive_applied', node_id: payload.node_id };
+      });
   }
+}
+
+async function markProposalStale(db: D1Database, proposalId: string): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  await db
+    .prepare(
+      `update dreaming_proposal set status = ?, decided_at = ? where id = ? and status = 'pending'`,
+    )
+    .bind('stale', now, proposalId)
+    .run();
+}
+
+async function acceptHighTier(
+  db: D1Database,
+  proposalId: string,
+  apply: () => Promise<AcceptResult>,
+): Promise<AcceptResult> {
+  let result: AcceptResult;
+  try {
+    result = await apply();
+  } catch (e) {
+    const msg = (e as Error).message;
+    if (/^stale/i.test(msg)) {
+      await markProposalStale(db, proposalId);
+    }
+    throw e;
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const update = await db
+    .prepare(
+      `update dreaming_proposal set status = ?, decided_at = ? where id = ? and status = 'pending'`,
+    )
+    .bind('accepted', now, proposalId)
+    .run();
+  const changes = (update as { meta?: { changes?: number } }).meta?.changes;
+  if (changes !== 1) {
+    throw new Error(`proposal ${proposalId} was concurrently decided`);
+  }
+  return result;
+}
+
+// Extracted from previous acceptProposal body for propose_new path. Inline race-safe
+// INSERT…SELECT…WHERE EXISTS preserves the autofix-bot's PR A pattern.
+async function acceptProposeNew(
+  db: D1Database,
+  proposalId: string,
+  payload: ProposeNewPayload,
+): Promise<AcceptResult> {
   if (payload.parent_id === null) {
     throw new Error(
       'PR A: propose_new with parent_id=null (root creation) not supported; Phase 2 multi-domain will allow it',
