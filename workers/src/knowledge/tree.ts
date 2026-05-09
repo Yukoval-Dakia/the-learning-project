@@ -25,11 +25,10 @@ export async function loadTreeSnapshot(db: D1Database): Promise<KnowledgeNode[]>
     let cur: KnowledgeRow | undefined = r;
     let depth = 0;
     while (depth < 32 && cur && cur.domain === null && cur.parent_id !== null) {
-      depth++;
       const next = byId.get(cur.parent_id);
       if (next === undefined) break;
-      if (depth >= 32) break;
       cur = next;
+      depth++;
     }
     return { ...r, effective_domain: cur?.domain ?? null };
   });

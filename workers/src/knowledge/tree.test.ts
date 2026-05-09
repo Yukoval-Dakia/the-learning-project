@@ -40,6 +40,7 @@ describe('loadTreeSnapshot', () => {
     const db = mockDb(rows);
     const tree = await loadTreeSnapshot(db);
     expect(tree.find((r) => r.id === 'k0')?.effective_domain).toBe('wenyan');
-    expect(tree.find((r) => r.id === 'k32')?.effective_domain).toBeNull();
+    expect(tree.find((r) => r.id === 'k32')?.effective_domain).toBe('wenyan');
+    expect(tree.find((r) => r.id === 'k33')?.effective_domain).toBeNull();
   });
 });
