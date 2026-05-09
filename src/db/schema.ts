@@ -7,7 +7,7 @@ import { integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 export const knowledge = sqliteTable('knowledge', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
-  domain: text('domain').notNull(),
+  domain: text('domain'),
   parent_id: text('parent_id'),
   base_mastery: real('base_mastery').notNull().default(0),
   ai_delta_mastery: real('ai_delta_mastery').notNull().default(0),

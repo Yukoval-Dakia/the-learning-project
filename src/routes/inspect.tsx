@@ -200,6 +200,10 @@ export function Inspect() {
   return (
     <main className="mx-auto max-w-5xl px-4 py-8">
       <h1 className="text-xl font-semibold mb-4">/_/inspect</h1>
+      <p className="text-sm text-slate-500 mb-1">
+        Other admin pages: <a href="/knowledge" className="underline">/knowledge</a> ·{' '}
+        <a href="/knowledge/proposals" className="underline">/knowledge/proposals</a>
+      </p>
       <p className="text-sm text-slate-500 mb-4">
         Recent ToolCallLog + CostLedger from D1. Manual refresh; no auto-poll.
       </p>

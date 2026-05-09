@@ -64,6 +64,19 @@ export const tasks = {
     allowedTools: [],
     systemPrompt: '识别图片中的题目题面、参考答案（如可见）、选项；输出结构化 JSON。',
   },
+  KnowledgeProposeTask: {
+    kind: 'KnowledgeProposeTask',
+    description: '看新录入的 mistake 提议 0-3 个 propose_new 知识点（挂在合适 parent 下）',
+    defaultProvider: 'anthropic',
+    defaultModel: 'claude-sonnet-4-6',
+    fallbackChain: [{ provider: 'anthropic', model: 'claude-haiku-4-5-20251001' }],
+    budget: { ...DEFAULT_BUDGET, maxIterations: 2 },
+    needsToolCall: false,
+    isMultimodal: false,
+    allowedTools: [],
+    systemPrompt:
+      '你是知识图谱编辑助手。用户录入了一道做错的题，挂的 knowledge_ids 是用户自选。看错题内容 + 当前 tree snapshot，如果你认为 tree 里缺一个**更精确**的子节点能挂这条 mistake（例：「之-主谓间用法」之于「虚词」），propose 它。0-3 条，不必凑数。每条返回 { name, parent_id, reasoning }。parent_id 必须是 tree 里已有节点 id；若找不到合适 parent，跳过这条。',
+  },
   // 其余 Task（VariantGen / Judge* / Dreaming / Maintenance 等）见
   // docs/architecture.md § 五，按需补全。
 } satisfies Record<string, TaskDef>;
