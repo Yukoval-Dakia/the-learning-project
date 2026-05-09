@@ -81,6 +81,18 @@ describe('schema generated from drizzle', () => {
     expect(result.success).toBe(true);
   });
 
+  it('KnowledgeInsert accepts null domain (non-root nodes inherit)', () => {
+    const result = KnowledgeInsert.safeParse({
+      id: 'k_child',
+      name: '通假字',
+      domain: null,
+      parent_id: 'k_root',
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+    expect(result.success).toBe(true);
+  });
+
   it('DreamingProposal Select rejects unknown status', () => {
     const result = DreamingProposal.safeParse({
       id: 'p1',
