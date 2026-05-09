@@ -74,6 +74,8 @@ export const StudyLogKind = z.enum([
 
 export const ArtifactType = z.enum(['note_hub', 'note_atomic', 'tool_quiz']);
 
+export const SourceAssetKind = z.enum(['image', 'pdf', 'text', 'web']);
+
 export const JudgeKind = z.enum([
   'exact',
   'keyword',
