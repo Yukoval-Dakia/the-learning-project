@@ -243,6 +243,29 @@ export async function applyReparent(
 }
 
 /**
+ * Apply archive: soft-delete a node by setting archived_at + bumping version.
+ * Race-safe via WHERE version=? AND archived_at IS NULL — changes=0 → stale.
+ */
+export async function applyArchive(
+  db: D1Database,
+  payload: ArchivePayload,
+): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  const result = await db
+    .prepare(
+      `update knowledge
+        set archived_at = ?, updated_at = ?, version = version + 1
+        where id = ? and version = ? and archived_at is null`,
+    )
+    .bind(now, now, payload.node_id, payload.expected_version)
+    .run();
+  const changes = (result as { meta?: { changes?: number } }).meta?.changes ?? 0;
+  if (changes !== 1) {
+    throw new Error(`stale: knowledge ${payload.node_id} version mismatch or already archived`);
+  }
+}
+
+/**
  * Dismiss proposal. Idempotent on already-dismissed (status guard prevents repeated decided_at flips).
  */
 export async function dismissProposal(db: D1Database, proposalId: string): Promise<void> {

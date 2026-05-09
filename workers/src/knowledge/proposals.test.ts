@@ -235,7 +235,7 @@ describe('dismissProposal', () => {
   });
 });
 
-import { applyReparent } from './proposals';
+import { applyReparent, applyArchive } from './proposals';
 
 describe('applyReparent', () => {
   it('moves a child node to a new parent (happy path)', async () => {
@@ -299,5 +299,36 @@ describe('applyReparent', () => {
         expected_version: 3,
       }),
     ).rejects.toThrow(/stale.*version/i);
+  });
+});
+
+describe('applyArchive', () => {
+  it('archives a node and bumps version (happy path)', async () => {
+    const { db, calls } = makeMockDb({
+      knowledge: { k_node: { id: 'k_node', archived_at: null, version: 5 } },
+    });
+    await applyArchive(db, {
+      mutation: 'archive',
+      node_id: 'k_node',
+      expected_version: 5,
+    });
+    const update = calls.find((c) => /update knowledge/i.test(c.sql) && /archived_at = \?/i.test(c.sql));
+    expect(update).toBeDefined();
+    expect(update?.binds[2]).toBe('k_node');
+    expect(update?.binds[3]).toBe(5);
+  });
+
+  it('throws stale error when already archived (changes=0)', async () => {
+    const { db } = makeMockDb({
+      knowledge: { k_node: { id: 'k_node', archived_at: 1700000000, version: 5 } },
+      runZeroChangesFor: /update knowledge/i,
+    });
+    await expect(
+      applyArchive(db, {
+        mutation: 'archive',
+        node_id: 'k_node',
+        expected_version: 5,
+      }),
+    ).rejects.toThrow(/stale/i);
   });
 });
