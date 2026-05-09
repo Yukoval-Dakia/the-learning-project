@@ -8,6 +8,8 @@ import type { AppEnv } from '../types';
 
 export const mistakes = new Hono<AppEnv>();
 
+const TOTAL_IMAGE_BYTES_LIMIT = 800_000;
+
 const Body = z.object({
   prompt_md: z.string().min(1, 'prompt_md is required'),
   reference_md: z.string().nullable(),
@@ -21,6 +23,8 @@ const Body = z.object({
     .nullable(),
   difficulty: z.number().int().min(1).max(5),
   question_kind: QuestionKind,
+  prompt_image_refs: z.array(z.string().min(1)).default([]),
+  wrong_answer_image_refs: z.array(z.string().min(1)).default([]),
 });
 
 mistakes.post('/', async (c) => {
@@ -54,6 +58,27 @@ mistakes.post('/', async (c) => {
     );
   }
 
+  const promptImageBytes = body.prompt_image_refs.reduce((sum, s) => sum + s.length, 0);
+  if (promptImageBytes > TOTAL_IMAGE_BYTES_LIMIT) {
+    return c.json(
+      {
+        error: 'validation_error',
+        message: `prompt_image_refs total ${promptImageBytes} bytes exceeds ${TOTAL_IMAGE_BYTES_LIMIT} (D1 cell ~1MB limit)`,
+      },
+      400,
+    );
+  }
+  const wrongAnswerImageBytes = body.wrong_answer_image_refs.reduce((sum, s) => sum + s.length, 0);
+  if (wrongAnswerImageBytes > TOTAL_IMAGE_BYTES_LIMIT) {
+    return c.json(
+      {
+        error: 'validation_error',
+        message: `wrong_answer_image_refs total ${wrongAnswerImageBytes} bytes exceeds ${TOTAL_IMAGE_BYTES_LIMIT} (D1 cell ~1MB limit)`,
+      },
+      400,
+    );
+  }
+
   const now = Math.floor(Date.now() / 1000);
   const questionId = createId();
   const mistakeId = createId();
@@ -67,11 +92,15 @@ mistakes.post('/', async (c) => {
       })
     : null;
 
+  const questionMetadata =
+    body.prompt_image_refs.length > 0
+      ? JSON.stringify({ prompt_image_refs: body.prompt_image_refs })
+      : null;
   const insertQuestion = c.env.DB.prepare(
     `insert into question (
       id, kind, prompt_md, reference_md, knowledge_ids, difficulty,
-      source, variant_depth, created_at, updated_at, version
-    ) values (?, ?, ?, ?, ?, ?, 'manual', 0, ?, ?, 0)`,
+      source, variant_depth, metadata, created_at, updated_at, version
+    ) values (?, ?, ?, ?, ?, ?, 'manual', 0, ?, ?, ?, 0)`,
   ).bind(
     questionId,
     body.question_kind,
@@ -79,6 +108,7 @@ mistakes.post('/', async (c) => {
     body.reference_md,
     JSON.stringify(body.knowledge_ids),
     body.difficulty,
+    questionMetadata,
     now,
     now,
   );
@@ -87,13 +117,14 @@ mistakes.post('/', async (c) => {
       id, question_id, wrong_answer_md, knowledge_ids, cause,
       wrong_answer_image_refs, source, variants, variants_generated_count, variants_max,
       status, created_at, updated_at, version
-    ) values (?, ?, ?, ?, ?, '[]', 'manual', '[]', 0, 3, 'active', ?, ?, 0)`,
+    ) values (?, ?, ?, ?, ?, ?, 'manual', '[]', 0, 3, 'active', ?, ?, 0)`,
   ).bind(
     mistakeId,
     questionId,
     body.wrong_answer_md,
     JSON.stringify(body.knowledge_ids),
     causeJson,
+    JSON.stringify(body.wrong_answer_image_refs),
     now,
     now,
   );

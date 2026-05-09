@@ -20,6 +20,19 @@ interface MistakePayload {
   cause: { primary_category: string; user_notes: string | null } | null;
   difficulty: number;
   question_kind: string;
+  prompt_image_refs: string[];
+  wrong_answer_image_refs: string[];
+}
+
+const MAX_IMAGE_BYTES = 500_000;
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error ?? new Error('FileReader failed'));
+    reader.readAsDataURL(file);
+  });
 }
 
 const QUESTION_KINDS = [
@@ -84,6 +97,8 @@ export function RecordMistake() {
   const [selectedKnowledgeIds, setSelectedKnowledgeIds] = useState<string[]>([]);
   const [causeCategory, setCauseCategory] = useState<string>('');
   const [userNotes, setUserNotes] = useState('');
+  const [promptImages, setPromptImages] = useState<string[]>([]);
+  const [wrongAnswerImages, setWrongAnswerImages] = useState<string[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const knowledgeOptions = useMemo(() => {
@@ -124,12 +139,40 @@ export function RecordMistake() {
         : null,
       difficulty,
       question_kind: questionKind,
+      prompt_image_refs: promptImages,
+      wrong_answer_image_refs: wrongAnswerImages,
     };
     submitMutation.mutate(payload);
   }
 
   function toggleKnowledge(id: string) {
     setSelectedKnowledgeIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
+  async function appendImages(
+    files: FileList | null,
+    setter: (updater: (prev: string[]) => string[]) => void,
+  ) {
+    if (!files || files.length === 0) return;
+    const oversized: string[] = [];
+    const dataUrls: string[] = [];
+    for (const file of Array.from(files)) {
+      if (file.size > MAX_IMAGE_BYTES) {
+        oversized.push(`${file.name} (${(file.size / 1024).toFixed(0)}KB)`);
+        continue;
+      }
+      try {
+        dataUrls.push(await readFileAsDataUrl(file));
+      } catch (e) {
+        setErrorMsg(`读取图片失败: ${(e as Error).message}`);
+      }
+    }
+    if (oversized.length > 0) {
+      setErrorMsg(`图片超过 ${MAX_IMAGE_BYTES / 1000}KB 单张上限（D1 cell ~1MB）：${oversized.join(', ')}`);
+    }
+    if (dataUrls.length > 0) {
+      setter((prev) => [...prev, ...dataUrls]);
+    }
   }
 
   return (
@@ -151,6 +194,13 @@ export function RecordMistake() {
           />
         </label>
 
+        <ImagePicker
+          label="题面图（可空）"
+          images={promptImages}
+          onAdd={(files) => appendImages(files, setPromptImages)}
+          onRemove={(i) => setPromptImages((prev) => prev.filter((_, idx) => idx !== i))}
+        />
+
         <label className="block">
           <span className="text-sm font-medium">参考答案（可空）</span>
           <textarea
@@ -170,6 +220,13 @@ export function RecordMistake() {
             className="mt-1 w-full border rounded p-2 font-mono text-sm"
           />
         </label>
+
+        <ImagePicker
+          label="错答图（可空）"
+          images={wrongAnswerImages}
+          onAdd={(files) => appendImages(files, setWrongAnswerImages)}
+          onRemove={(i) => setWrongAnswerImages((prev) => prev.filter((_, idx) => idx !== i))}
+        />
 
         <div className="grid grid-cols-2 gap-4">
           <label className="block">
@@ -271,6 +328,8 @@ export function RecordMistake() {
               setSelectedKnowledgeIds([]);
               setCauseCategory('');
               setUserNotes('');
+              setPromptImages([]);
+              setWrongAnswerImages([]);
               setErrorMsg(null);
             }}
             className="border px-4 py-2 rounded"
@@ -280,5 +339,52 @@ export function RecordMistake() {
         </div>
       </form>
     </main>
+  );
+}
+
+interface ImagePickerProps {
+  label: string;
+  images: string[];
+  onAdd: (files: FileList | null) => void;
+  onRemove: (index: number) => void;
+}
+
+function ImagePicker({ label, images, onAdd, onRemove }: ImagePickerProps) {
+  return (
+    <div className="block">
+      <span className="text-sm font-medium">{label}</span>
+      <div className="mt-1 flex flex-wrap gap-2 items-start">
+        {images.map((src, i) => (
+          <div key={`${i}-${src.slice(0, 32)}`} className="relative">
+            <img
+              src={src}
+              alt={`${label} ${i + 1}`}
+              className="h-20 w-20 object-cover border rounded"
+            />
+            <button
+              type="button"
+              onClick={() => onRemove(i)}
+              className="absolute -top-1 -right-1 bg-red-600 text-white text-xs rounded-full w-5 h-5 leading-5 text-center"
+              aria-label="remove"
+            >
+              ×
+            </button>
+          </div>
+        ))}
+        <label className="border-2 border-dashed border-slate-300 rounded h-20 w-20 flex items-center justify-center cursor-pointer text-slate-500 text-xs hover:border-slate-500">
+          + 加图
+          <input
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              onAdd(e.target.files);
+              e.target.value = '';
+            }}
+          />
+        </label>
+      </div>
+    </div>
   );
 }
