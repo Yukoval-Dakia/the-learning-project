@@ -4,6 +4,8 @@ import { internalAuth } from './auth';
 import { runTask, streamTask } from './ai/runner';
 import { tasks } from '../../src/ai/registry';
 import { getDb } from './db';
+import { seedKnowledge } from './knowledge/seed';
+import { knowledge } from './routes/knowledge';
 import { logs } from './routes/logs';
 import type { AppEnv } from './types';
 
@@ -21,6 +23,12 @@ app.use(
 app.use('/api/*', internalAuth);
 
 app.route('/api/_/logs', logs);
+app.route('/api/knowledge', knowledge);
+
+app.post('/api/_/seed', async (c) => {
+  const result = await seedKnowledge(c.env.DB);
+  return c.json(result);
+});
 
 app.get('/api/health', async (c) => {
   let db_ok = false;
