@@ -252,18 +252,35 @@ IngestionSession
 ```ts
 QuestionBlock {
   source_document_id: string
-  page_index?: number
-  bbox?: { x: number; y: number; width: number; height: number }
+  page_spans: Array<{
+    page_index: number
+    bbox: { x: number; y: number; width: number; height: number }
+    role?: 'prompt' | 'answer_area' | 'continuation'
+  }>
   extracted_prompt_md: string
   image_refs: string[]
   crop_refs: string[]
   reference_md?: string
   visual_complexity: 'low' | 'medium' | 'high'
   extraction_confidence: number
+  assembly_status: 'single_page' | 'merged' | 'pending_review'
+  merged_from_block_ids?: string[]   // 合并产生时记录原 blocks
 }
 ```
 
-`crop_refs[]` 是关键：几何题、图表题、截图局部题干以后可以原样渲染，不依赖 OCR 完美。
+`page_spans` 是关键决策：一道题就是一个 block，无论它跨几页。单页题 spans 长度为 1；跨页题（语文阅读理解 prompt 在前页 + 答题区在后页 / 数学大题题面跨页）spans 长度 ≥ 2，role 区分 prompt / answer_area / continuation。这种建模让"一题一行"的表语义保持干净，而不是把跨页题硬拆成多 row 再 join。
+
+`crop_refs[]` 是几何题、图表题、截图局部题干的回放保险：以后可以原样渲染，不依赖 OCR 完美。
+
+### Block Assembly：处理跨页题
+
+OCR/vision 第一遍按"卷面 layout 块"切，所以**自然产出 page-level block**（每页一个或几个 block）。跨页题需要把多个 page-level block 合并成一个 question-level block。两条路径：
+
+**A. 用户手动合并（MVP）**：审核页给"选中 N 个 block，合并为一题"按钮 + "拆分 block"按钮。状态机：page-level block.status=`pending_review`，merge 后产出新 block.status=`merged` + `merged_from_block_ids[]`，原 page-level block 软删（`status=ignored`）。
+
+**B. AI auto-merge（Phase 2）**：`BlockAssemblyTask` 看相邻 block 上下文（spatial：页脚/页头；semantic：编号连续 / 题干指代"接上"/"承接前题"/题面与答区半截），输出 merge proposal + confidence。低 confidence 时审核页高亮，仍由用户决定。**AI 不直接 mutate**，走 `dreaming_proposal kind='block_merge'`（与现有 knowledge mutation queue 共表）。
+
+MVP 走 A：合并是显性用户行为，frequency 不高（自用估 10-15% 题跨页），UI 加一个按钮就够。第二迭代再加 B。
 
 ### 超长阅读题
 
@@ -316,12 +333,14 @@ Quiz UI：
 
 ## 阶段放置
 
-### Phase 1.5
+### Phase 1.5（紧接 Phase 1a Sub 3 后做；详见 `docs/superpowers/plans/2026-05-09-ingestion-pipeline-foundation.md`）
 
 - `SourceAsset` / `SourceDocument` 最小 schema。
-- 图片从 D1 base64 迁向 R2/object storage。
-- `IngestionSession` 最小状态机。
-- `vision_single` 和 `vision_paper` 共用 QuestionBlock 审核页。
+- 图片从 D1 base64 迁向 R2/object storage（`/record` API 字段语义换 base64 → asset id）。
+- `IngestionSession` 最小状态机：`uploaded` → `extracted` → `reviewed` → `imported` / `failed`。
+- `QuestionBlock` 用 `page_spans` 多页建模（即使 vision_single MVP 都填长度 1 spans，schema 跨页 ready）。
+- `vision_single` 第一波接通：单图上传 → `VisionExtractTask` (haiku 4.5 多模态) → 1 个 `question_block`（draft） → 审核页 → import 成 question + mistake → 触发 AttributionTask（沿用 Sub 3 流）。
+- 多图批量 + 用户**手动合并按钮**（B 路径 MVP）。
 - 保存 `crop_refs[]`，支持带图题原图裁剪回放。
 
 ### Phase 2
@@ -330,6 +349,7 @@ Quiz UI：
 - `SourcePack` / `SourceResult`，接 Exa/search。
 - Search-grounded `QuizGenTask`。
 - `QuizVerifyTask`，把 search-grounded 题从 draft 推向 active。
+- `BlockAssemblyTask`：AI auto-merge 跨页题，输出 `dreaming_proposal kind='block_merge'`，用户最终确认。
 - Review Orchestrator 跑通 A。
 
 ### Phase 2.5
@@ -356,11 +376,16 @@ Quiz UI：
 
 ## 第一可实施切片
 
-在 Phase 1a 之后，优先做：
+**Phase 1a 已 ship Sub 1 + Sub 2 + Sub 3**（知识图谱 / 录入闭环 / AttributionTask）。**Sub 4 复习闭环 + Sub 5 数据导出未做**。
 
-1. `SourceAsset` + `Question.image_refs/crop_refs`。
-2. `IngestionSession` + 单图题审核页。
-3. `review_session tool_quiz` 的最小 Review Orchestrator。
-4. `SourcePack` + Exa provider stub，只用于 QuizGenTask grounding，不直接生成题库。
+下一步顺序定为：
 
-这个顺序能同时解决两个实际痛点：复杂题录入摩擦和题库来源不足，同时不打断当前错题闭环。
+1. **Phase 1.5：Ingestion Foundation**（这一段）— `SourceAsset` + R2 迁移 + `IngestionSession` + `QuestionBlock`（page_spans）+ vision_single 第一波 + 用户手动合并按钮。**因为越早做，越没有真用户数据要迁移**。详细 plan: `docs/superpowers/plans/2026-05-09-ingestion-pipeline-foundation.md`。
+2. **Sub 4 复习闭环**（FSRS + LearningItem 三态 + Evidence）— 完成 Phase 1a 闭环，达成"自用一周"目标。
+3. **Sub 5 数据导出**。
+4. **Phase 2A：Review Orchestrator** — 在 Sub 4 跑出真复习数据后启动。
+5. **Phase 2 后续：BlockAssemblyTask、SourcePack、Search-grounded QuizGen 等**，按使用强度逐步加。
+
+为什么 Phase 1.5 插到 Sub 4 前：当前 `mistake.wrong_answer_image_refs` 字段 base64 inline 落库，PR #10 已经踩到 D1 cell 1MB 上限并加了 800KB 兜底。"自用一周"如果开始拍图，base64 后续再迁 R2 要写迁移脚本；现在没数据迁移成本几乎零。
+
+为什么不 Phase 2 整体推到 Phase 1a 后：Sub 4 复习闭环（FSRS + Evidence）跟 Source/Ingestion 模块**没数据依赖**，分批做不互相阻塞。Phase 2A Review Orchestrator 才是真正依赖 Sub 4 数据，所以排在 Sub 4 之后。

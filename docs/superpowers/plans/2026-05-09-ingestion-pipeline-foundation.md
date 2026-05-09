@@ -1,96 +1,134 @@
-# Ingestion Pipeline Foundation Implementation Plan
+# Phase 1.5 Implementation Plan — Ingestion Pipeline Foundation
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. Steps use `- [ ]` syntax.
 
-**Goal:** Replace the current base64-in-D1 image attachment path with an R2-backed source asset layer, add the first ingestion data model, and keep the existing manual `/record -> /api/mistakes -> /mistakes` flow working.
+**Goal:** 把图片从 D1 base64 inline 迁向 R2，落地 `source_asset` / `ingestion_session` / `source_document` / `question_block`（page_spans 多页建模）schema，把 `vision_single` OCR 第一波接通：单/多图上传 → VisionExtractTask 分块 → 用户审核（含手动合并/拆分）→ 入库为 question + mistake，沿用 Sub 3 已建好的 AttributionTask waitUntil pattern。
 
-**Architecture:** This is the Phase 1.5 foundation, not full OCR/cutting yet. The browser uploads image files to a new `/api/assets` endpoint, gets `source_asset.id` refs, and submits those refs with the mistake. The worker stores asset metadata in D1, object bytes in R2, and writes a minimal `ingestion_session` + `question_block` record so later Vision/OCR can replace the manual block without changing the rest of the pipeline.
+**Architecture:** 拆 2 个 sub-PR：
+- **PR A**：仅 R2 + `source_asset` 一张表 + `/api/assets` + `/record` 改用 asset id。**单一交付：base64 inline 离开 D1**。
+- **PR B**：`ingestion_session` + `source_document` + `question_block`(page_spans) + VisionExtractTask 真正接通 + `/ingest` 页（上传 / 审核 / 合并 / 拆分 / 导入）。**单一交付：拍卷子录入闭环**。
 
-**Tech Stack:** React 19, TanStack Query, Hono Worker, Cloudflare D1, Cloudflare R2, Drizzle schema, Vitest.
+**Tech Stack:** Cloudflare Workers + Hono / D1 + Drizzle / R2 / Vercel AI SDK v6 (`@ai-sdk/anthropic` claude-haiku-4-5 multimodal) / React 19 + react-router + TanStack Query / zod。
+
+**Spec reference:** `docs/superpowers/specs/2026-05-09-learning-orchestrator-long-term-design.md` § Source Layer / § Ingestion Layer / § Block Assembly。
 
 ---
 
-## Scope
+## 关键决策（lock）
 
-This plan implements the smallest useful ingestion foundation:
+| 决策 | 选择 | 理由 |
+|---|---|---|
+| 拆 2 PR | A: R2 + source_asset 一张；B: ingestion 全套 + vision wire | A 单独 ship 后即解决 D1 cell 1MB 风险；B 是真正用户能用的 vision 录入路径 |
+| `QuestionBlock` 跨页建模 | `page_spans: Array<{page_index, bbox, role?}>` | 一题一行，跨页不拆表（spec § Block Assembly） |
+| 跨页合并 MVP | 用户手动合并按钮（A 路径）；AI auto-merge `BlockAssemblyTask` 推 Phase 2 | 自用频率低（~10-15%），按钮够 |
+| `POST /api/ingestion` 同步还是异步 | **同步**（accept asset_ids → run vision sync → return blocks） | 自用 5 图以内，30s worker timeout 够；异步路径推迭代 2 |
+| VisionExtractTask 模型 | `claude-haiku-4-5-20251001` 多模态（registry 已注册 `isMultimodal: true`） | 便宜、快；准确率不够再上 sonnet |
+| 现有 `prompt_image_refs` API 字段 | 语义换：base64 data URL → `source_asset.id` | 减少接口 break；question.metadata 加 `prompt_image_ref_kind: 'source_asset_id'` 显式标记 |
+| 手动 `/record` 流程 | PR A 后保持工作（仅 image upload 路径换） | 不绑死 vision_single；用户文字录入仍 1 步走完 |
+| Drop 现有 base64 兜底 | PR A 完成时把 `TOTAL_IMAGE_BYTES_LIMIT` / `MAX_IMAGE_BYTES` 等代码删除 | 不留死路径 |
+| ingestion 流程入口 | 新页 `/ingest`（不进主导航；URL 直访 + `/_/inspect` 加 link） | 跟其他录入页一致 |
+| 数据迁移 | **不写迁移脚本**；PR A merge 前用 `wrangler d1 execute --command "delete from mistake; delete from question;"` 清空（自用阶段） | 现有数据是 Sub 1-3 测试时录的 dummy；无生产数据要保 |
 
-- R2-backed image storage.
-- `source_asset`, `source_document`, `ingestion_session`, `question_block` schema.
-- Manual record flow uses asset IDs instead of base64 strings.
-- `POST /api/mistakes` still creates `Question + Mistake` synchronously.
-- A single manual `QuestionBlock` is created per manual submission when images are present.
-
-This plan does not implement:
-
-- OCR.
-- automatic question cutting.
-- PDF rendering.
-- crop generation.
-- Passage segmentation.
-- Exa/Search grounding.
-
-Those become later tasks once the storage/provenance path exists.
-
-## Claude Code Handoff Notes
-
-- Execute tasks in order. Each task should leave the repo compiling before moving on.
-- Do not touch the existing untracked `.claude/` directory unless the user explicitly asks.
-- Keep the current API field names `prompt_image_refs` and `wrong_answer_image_refs`; this plan changes their meaning from base64 data URLs to `source_asset.id`.
-- Do not add OCR, cutting, PDF parsing, Exa, thumbnails, or a public asset download endpoint in this pass.
-- Use `apply_patch` or normal editor edits; avoid broad rewrites of unrelated route files.
-- If `pnpm db:generate` emits a migration name other than `0002_*`, keep the generated name and update the commit accordingly.
-- After every task, run the task-specific test command before committing.
+---
 
 ## File Structure
 
-- `src/db/schema.ts` — add ingestion/source tables.
-- `src/core/schema/business.ts` — add ingestion/source enums.
-- `src/core/schema/index.ts` — export zod schemas for the new tables after drizzle-zod regeneration.
-- `drizzle/0002_*.sql` + `drizzle/meta/*` — generated D1 migration for new tables.
-- `workers/src/types.ts` — add `IMAGES: R2Bucket` binding.
-- `workers/src/routes/assets.ts` — new upload endpoint and asset metadata helpers.
-- `workers/src/routes/assets.test.ts` — tests for upload validation and D1/R2 writes.
-- `workers/src/routes/mistakes.ts` — accept asset refs, validate they exist, write question/mistake references, create manual ingestion rows.
-- `workers/src/routes/mistakes.test.ts` — update image tests from base64 limits to asset-ref validation.
-- `workers/src/index.ts` — mount `/api/assets`.
-- `src/routes/record.tsx` — upload selected images before submitting mistake, display upload state, send asset IDs.
-- `src/routes/mistakes-list.tsx` — no required behavior change; optional future task can render thumbnails.
+PR A 涉及：
 
-## Task 1: Add Source/Ingestion Schema
+| 路径 | 责任 | 新建/修改 |
+|---|---|---|
+| `src/db/schema.ts` | + `source_asset` 表 | 改 |
+| `src/core/schema/business.ts` | + `SourceAssetKind` enum | 改 |
+| `src/core/schema/generated.ts` | + `SourceAssetInsertGenerated` / `SourceAssetSelectGenerated` | 改 |
+| `src/core/schema/index.ts` | 导出 `SourceAsset` zod | 改 |
+| `src/core/schema/schema.test.ts` | + SourceAsset zod 测试 | 改 |
+| `drizzle/0002_*.sql` + `drizzle/meta/0002_snapshot.json` + `drizzle/meta/_journal.json` | drizzle generate 出来 | 新 |
+| `workers/wrangler.toml` | + `[[r2_buckets]] binding = "IMAGES"` | 改 |
+| `workers/src/types.ts` | + `IMAGES: R2Bucket` | 改 |
+| `workers/src/routes/assets.ts` | POST / 上传 → R2.put + insert source_asset | 新 |
+| `workers/src/routes/assets.test.ts` | 上传校验 / R2 + D1 写入 | 新 |
+| `workers/src/index.ts` | mount `/api/assets` | 改 |
+| `workers/src/routes/knowledge.test.ts` | mockEnv 加 `IMAGES` stub | 改 |
+| `workers/src/routes/mistakes.ts` | drop `TOTAL_IMAGE_BYTES_LIMIT` 检查；改成 `assertSourceAssetsExist`；`question.metadata.prompt_image_ref_kind = 'source_asset_id'` | 改 |
+| `workers/src/routes/mistakes.test.ts` | mockEnv 加 `IMAGES` + `sourceAssetIds`；删 byte cap 测试；加 asset existence 测试 | 改 |
+| `src/routes/record.tsx` | drop base64 readAsDataURL；加 `uploadAsset` 先 POST /api/assets 拿 id；提交 mistake 用 id | 改 |
+
+PR B 涉及（在 PR A 之上）：
+
+| 路径 | 责任 | 新建/修改 |
+|---|---|---|
+| `src/db/schema.ts` | + `source_document` / `ingestion_session` / `question_block` (page_spans) | 改 |
+| `src/core/schema/business.ts` | + `IngestionSessionStatus` / `QuestionBlockStatus` / `QuestionBlockRole` / `VisualComplexity` enums | 改 |
+| `src/core/schema/generated.ts` + `index.ts` | 导出 zod | 改 |
+| `drizzle/0003_*.sql` + meta | 三张新表 | 新 |
+| `src/ai/registry.ts` | VisionExtractTask 改具体 prompt（多 block JSON 输出 schema）；保 `isMultimodal: true` `needsToolCall: false` | 改 |
+| `workers/src/ingestion/vision.ts` | `parseVisionOutput` + `runVisionExtract`（VisionExtractTask 单图调用 + 解析 N blocks）| 新 |
+| `workers/src/ingestion/vision.test.ts` | 解析 + 失败兜底 | 新 |
+| `workers/src/routes/ingestion.ts` | POST `/` 创 session + 跑 vision sync；POST `/:id/import` 入库 question + mistake；GET `/:id` (debug 看 session 现状) | 新 |
+| `workers/src/routes/ingestion.test.ts` | 全流程 mock vision + DB 写入 | 新 |
+| `workers/src/index.ts` | mount `/api/ingestion` | 改 |
+| `src/routes/ingest.tsx` | `<IngestSession>` 上传 → 显示提取 blocks → 编辑 / 合并 / 拆分 / 导入 | 新 |
+| `src/App.tsx` | mount `/ingest` | 改 |
+| `src/routes/inspect.tsx` | + `/ingest` link | 改 |
+| `src/routes/record.tsx` | 顶部加 link "图片录入 → /ingest"（提示用户拍卷子走另一条路） | 改 |
+
+---
+
+## VisionExtractTask Output Contract
+
+新 system prompt 约束严格 JSON：
+
+```json
+{
+  "blocks": [
+    {
+      "extracted_prompt_md": "string，markdown，可含 LaTeX",
+      "reference_md": "string | null（题面有写参考答案/标准答案时填）",
+      "wrong_answer_md": "string | null（图上若已有用户错答／批改痕迹，提取它）",
+      "page_index": 0,
+      "bbox": { "x": 0.1, "y": 0.2, "width": 0.6, "height": 0.3 },
+      "role": "prompt | answer_area | continuation",
+      "visual_complexity": "low | medium | high",
+      "extraction_confidence": 0.0-1.0,
+      "knowledge_hint": "string | null"
+    }
+  ]
+}
+```
+
+约束：
+- 每 page 一张图给 vision，可以输出多个 blocks（一页多题）
+- bbox 坐标都是 0-1 归一化（不是像素）
+- `extraction_confidence` < 0.5 时审核页高亮
+- `knowledge_hint` 是 hint 不是绑定（最终知识点用户在审核页选）
+
+跨页：vision 单图调用每次只看一张图，无法"跨页"。**跨页合并发生在审核页：用户从多个 single-page block 里选 N 个 → 合并按钮 → 客户端 reduce 成一个 block，page_spans 长度 = N**。VisionExtractTask 自身不做跨页推理。
+
+---
+
+## PR A：R2 + source_asset
+
+### Task 1: source_asset schema + 0002 migration
 
 **Files:**
 - Modify: `src/db/schema.ts`
 - Modify: `src/core/schema/business.ts`
-- Modify after generation: `src/core/schema/index.ts`
-- Create by generator: `drizzle/0002_*.sql`
-- Test: `src/core/schema/schema.test.ts`
+- Modify: `src/core/schema/generated.ts`
+- Modify: `src/core/schema/index.ts`
+- Create (by `pnpm db:generate`): `drizzle/0002_*.sql`, `drizzle/meta/0002_snapshot.json`, updated `drizzle/meta/_journal.json`
+- Modify: `src/core/schema/schema.test.ts`
 
-- [ ] **Step 1: Add business enums**
+- [ ] **Step 1: Add SourceAssetKind enum**
 
-In `src/core/schema/business.ts`, add these exports after `ArtifactType`:
+In `src/core/schema/business.ts`, add after `ArtifactType`:
 
 ```ts
 export const SourceAssetKind = z.enum(['image', 'pdf', 'text', 'web']);
-
-export const IngestionSessionStatus = z.enum([
-  'uploaded',
-  'extracted',
-  'reviewed',
-  'imported',
-  'failed',
-]);
-
-export const QuestionBlockStatus = z.enum([
-  'draft',
-  'reviewed',
-  'imported',
-  'ignored',
-]);
 ```
 
-- [ ] **Step 2: Add D1 tables to Drizzle schema**
+- [ ] **Step 2: Add `source_asset` to drizzle schema**
 
-In `src/db/schema.ts`, add these tables after `knowledge` and before `question`:
+In `src/db/schema.ts`, append after `knowledge`:
 
 ```ts
 export const source_asset = sqliteTable('source_asset', {
@@ -105,147 +143,38 @@ export const source_asset = sqliteTable('source_asset', {
   provenance: text('provenance', { mode: 'json' }).notNull().default({}),
   created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
 });
-
-export const source_document = sqliteTable('source_document', {
-  id: text('id').primaryKey(),
-  title: text('title'),
-  source_asset_ids: text('source_asset_ids', { mode: 'json' })
-    .$type<string[]>()
-    .notNull()
-    .default([]),
-  body_md: text('body_md'),
-  provenance: text('provenance', { mode: 'json' }).notNull().default({}),
-  created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
-  updated_at: integer('updated_at', { mode: 'timestamp' }).notNull(),
-  version: integer('version').notNull().default(0),
-});
-
-export const ingestion_session = sqliteTable('ingestion_session', {
-  id: text('id').primaryKey(),
-  source_document_id: text('source_document_id'),
-  source_asset_ids: text('source_asset_ids', { mode: 'json' })
-    .$type<string[]>()
-    .notNull()
-    .default([]),
-  status: text('status').notNull().default('uploaded'),
-  entrypoint: text('entrypoint').notNull(),
-  error_message: text('error_message'),
-  created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
-  updated_at: integer('updated_at', { mode: 'timestamp' }).notNull(),
-  version: integer('version').notNull().default(0),
-});
-
-export const question_block = sqliteTable('question_block', {
-  id: text('id').primaryKey(),
-  ingestion_session_id: text('ingestion_session_id').notNull(),
-  source_document_id: text('source_document_id'),
-  source_asset_ids: text('source_asset_ids', { mode: 'json' })
-    .$type<string[]>()
-    .notNull()
-    .default([]),
-  page_index: integer('page_index'),
-  bbox: text('bbox', { mode: 'json' }),
-  extracted_prompt_md: text('extracted_prompt_md').notNull(),
-  image_refs: text('image_refs', { mode: 'json' }).$type<string[]>().notNull().default([]),
-  crop_refs: text('crop_refs', { mode: 'json' }).$type<string[]>().notNull().default([]),
-  reference_md: text('reference_md'),
-  visual_complexity: text('visual_complexity').notNull().default('low'),
-  extraction_confidence: real('extraction_confidence').notNull().default(1),
-  status: text('status').notNull().default('draft'),
-  imported_question_id: text('imported_question_id'),
-  created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
-  updated_at: integer('updated_at', { mode: 'timestamp' }).notNull(),
-  version: integer('version').notNull().default(0),
-});
 ```
 
-- [ ] **Step 3: Generate migration SQL**
-
-Run:
+- [ ] **Step 3: Generate migration**
 
 ```bash
 pnpm db:generate
 ```
 
-Expected:
+Verify the generated `drizzle/0002_*.sql` contains exactly one `CREATE TABLE source_asset` and that `_journal.json` references it.
 
-- a new `drizzle/0002_*.sql` file is created;
-- `drizzle/meta/_journal.json` is updated;
-- a new `drizzle/meta/0002_snapshot.json` is created.
+- [ ] **Step 4: Add zod exports**
 
-Open the generated SQL and verify it contains these four `CREATE TABLE` statements:
-
-```text
-CREATE TABLE `source_asset`
-CREATE TABLE `source_document`
-CREATE TABLE `ingestion_session`
-CREATE TABLE `question_block`
-```
-
-If a migration file was already generated from a failed attempt, delete only that uncommitted generated `drizzle/0002_*.sql` and its matching `drizzle/meta/0002_snapshot.json`, then rerun `pnpm db:generate`. Do not edit committed migrations.
-
-- [ ] **Step 4: Add generated zod schema exports**
-
-`src/core/schema/generated.ts` is a small checked-in bridge that imports `src/db/schema.ts` and calls `createInsertSchema` / `createSelectSchema`. It is not produced by `pnpm db:generate`, so update it manually.
-
-Add after `KnowledgeSelectGenerated`:
+In `src/core/schema/generated.ts`, append:
 
 ```ts
 export const SourceAssetInsertGenerated = createInsertSchema(t.source_asset);
 export const SourceAssetSelectGenerated = createSelectSchema(t.source_asset);
-
-export const SourceDocumentInsertGenerated = createInsertSchema(t.source_document);
-export const SourceDocumentSelectGenerated = createSelectSchema(t.source_document);
-
-export const IngestionSessionInsertGenerated = createInsertSchema(t.ingestion_session);
-export const IngestionSessionSelectGenerated = createSelectSchema(t.ingestion_session);
-
-export const QuestionBlockInsertGenerated = createInsertSchema(t.question_block);
-export const QuestionBlockSelectGenerated = createSelectSchema(t.question_block);
 ```
 
-- [ ] **Step 5: Export typed public zod schemas**
-
-Add to `src/core/schema/index.ts` after the Knowledge section:
+In `src/core/schema/index.ts`, append:
 
 ```ts
-// ---------- Source / Ingestion ----------
-export const SourceAssetInsert = g.SourceAssetInsertGenerated.extend({
-  kind: b.SourceAssetKind,
-});
-export const SourceAsset = g.SourceAssetSelectGenerated.extend({
-  kind: b.SourceAssetKind,
-});
+// ---------- Source ----------
+export const SourceAssetInsert = g.SourceAssetInsertGenerated.extend({ kind: b.SourceAssetKind });
+export const SourceAsset = g.SourceAssetSelectGenerated.extend({ kind: b.SourceAssetKind });
 export type SourceAssetInsert = z.infer<typeof SourceAssetInsert>;
 export type SourceAsset = z.infer<typeof SourceAsset>;
-
-export const SourceDocumentInsert = g.SourceDocumentInsertGenerated;
-export const SourceDocument = g.SourceDocumentSelectGenerated;
-export type SourceDocumentInsert = z.infer<typeof SourceDocumentInsert>;
-export type SourceDocument = z.infer<typeof SourceDocument>;
-
-export const IngestionSessionInsert = g.IngestionSessionInsertGenerated.extend({
-  status: b.IngestionSessionStatus.nullish(),
-});
-export const IngestionSession = g.IngestionSessionSelectGenerated.extend({
-  status: b.IngestionSessionStatus,
-});
-export type IngestionSessionInsert = z.infer<typeof IngestionSessionInsert>;
-export type IngestionSession = z.infer<typeof IngestionSession>;
-
-export const QuestionBlockInsert = g.QuestionBlockInsertGenerated.extend({
-  status: b.QuestionBlockStatus.nullish(),
-  visual_complexity: z.enum(['low', 'medium', 'high']).nullish(),
-});
-export const QuestionBlock = g.QuestionBlockSelectGenerated.extend({
-  status: b.QuestionBlockStatus,
-  visual_complexity: z.enum(['low', 'medium', 'high']),
-});
-export type QuestionBlockInsert = z.infer<typeof QuestionBlockInsert>;
-export type QuestionBlock = z.infer<typeof QuestionBlock>;
 ```
 
-- [ ] **Step 6: Add schema tests**
+(If existing `index.ts` imports look like `import * as g from './generated'` and `import * as b from './business'`, the above works as-is. Otherwise match existing import style.)
+
+- [ ] **Step 5: Add schema test**
 
 Append to `src/core/schema/schema.test.ts`:
 
@@ -265,63 +194,53 @@ it('SourceAsset accepts image metadata', () => {
   });
   expect(result.success).toBe(true);
 });
-
-it('QuestionBlock accepts a manual imported block', () => {
-  const result = QuestionBlock.safeParse({
-    id: 'qb_1',
-    ingestion_session_id: 'ing_1',
-    source_document_id: null,
-    source_asset_ids: ['asset_1'],
-    page_index: null,
-    bbox: null,
-    extracted_prompt_md: '题面',
-    image_refs: ['asset_1'],
-    crop_refs: [],
-    reference_md: null,
-    visual_complexity: 'low',
-    extraction_confidence: 1,
-    status: 'imported',
-    imported_question_id: 'q_1',
-    created_at: new Date(1700000000 * 1000),
-    updated_at: new Date(1700000000 * 1000),
-    version: 0,
-  });
-  expect(result.success).toBe(true);
-});
 ```
 
-If imports are missing, extend the existing import list with `SourceAsset` and `QuestionBlock`.
+(Add `SourceAsset` to the existing import list at top of file.)
 
-- [ ] **Step 7: Run schema tests**
-
-Run:
+- [ ] **Step 6: Run test**
 
 ```bash
 pnpm test src/core/schema/schema.test.ts
 ```
 
-Expected: all schema tests pass.
+Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add src/db/schema.ts src/core/schema/business.ts src/core/schema/index.ts src/core/schema/generated.ts src/core/schema/schema.test.ts drizzle
-git commit -m "feat(ingestion): add source asset schema"
+git add src/db/schema.ts src/core/schema/business.ts src/core/schema/generated.ts src/core/schema/index.ts src/core/schema/schema.test.ts drizzle/0002_*.sql drizzle/meta
+git commit -m "feat(schema): add source_asset table"
 ```
 
-## Task 2: Add R2 Asset Upload Endpoint
+---
+
+### Task 2: R2 binding + POST /api/assets
 
 **Files:**
+- Modify: `workers/wrangler.toml`
 - Modify: `workers/src/types.ts`
 - Create: `workers/src/routes/assets.ts`
 - Create: `workers/src/routes/assets.test.ts`
 - Modify: `workers/src/index.ts`
-- Modify: `workers/src/routes/knowledge.test.ts`
-- Modify: `workers/src/routes/mistakes.test.ts`
+- Modify: `workers/src/routes/knowledge.test.ts`（mockEnv 加 IMAGES stub）
 
-- [ ] **Step 1: Add R2 binding type**
+- [ ] **Step 1: Add R2 binding to wrangler.toml**
 
-In `workers/src/types.ts`, change `Bindings` to:
+In `workers/wrangler.toml`, append:
+
+```toml
+[[r2_buckets]]
+binding = "IMAGES"
+bucket_name = "the-learning-project-images"
+preview_bucket_name = "the-learning-project-images-preview"
+```
+
+(用户需要手动 `wrangler r2 bucket create the-learning-project-images` + `... --preview` 一次。Plan handoff 时提示。)
+
+- [ ] **Step 2: Add R2Bucket type to Bindings**
+
+In `workers/src/types.ts`:
 
 ```ts
 import type { D1Database, R2Bucket } from '@cloudflare/workers-types';
@@ -332,124 +251,11 @@ export type Bindings = {
   DB: D1Database;
   IMAGES: R2Bucket;
 };
+
+export type AppEnv = { Bindings: Bindings };
 ```
 
-- [ ] **Step 2: Create upload route**
-
-Create `workers/src/routes/assets.ts`:
-
-```ts
-import { Hono } from 'hono';
-import { createId } from '@paralleldrive/cuid2';
-import type { AppEnv } from '../types';
-
-export const assets = new Hono<AppEnv>();
-
-const MAX_UPLOAD_BYTES = 8_000_000;
-const ALLOWED_MIME = new Set(['image/png', 'image/jpeg', 'image/webp']);
-
-async function sha256Hex(bytes: ArrayBuffer): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-assets.post('/', async (c) => {
-  const form = await c.req.formData().catch(() => null);
-  const file = form?.get('file');
-  if (!(file instanceof File)) {
-    return c.json({ error: 'validation_error', message: 'file is required' }, 400);
-  }
-  if (!ALLOWED_MIME.has(file.type)) {
-    return c.json({ error: 'validation_error', message: `unsupported mime_type: ${file.type}` }, 400);
-  }
-  if (file.size <= 0 || file.size > MAX_UPLOAD_BYTES) {
-    return c.json({ error: 'validation_error', message: `file size must be 1..${MAX_UPLOAD_BYTES}` }, 400);
-  }
-
-  const bytes = await file.arrayBuffer();
-  const id = createId();
-  const ext = file.type === 'image/png' ? 'png' : file.type === 'image/webp' ? 'webp' : 'jpg';
-  const storageKey = `images/${id}.${ext}`;
-  const sha256 = await sha256Hex(bytes);
-  const now = Math.floor(Date.now() / 1000);
-
-  await c.env.IMAGES.put(storageKey, bytes, {
-    httpMetadata: { contentType: file.type },
-    customMetadata: { source_asset_id: id, sha256 },
-  });
-
-  await c.env.DB.prepare(
-    `insert into source_asset (
-      id, kind, storage_key, mime_type, byte_size, sha256, width, height, provenance, created_at
-    ) values (?, 'image', ?, ?, ?, ?, null, null, ?, ?)`,
-  )
-    .bind(
-      id,
-      storageKey,
-      file.type,
-      file.size,
-      sha256,
-      JSON.stringify({ entrypoint: 'manual_record', original_name: file.name }),
-      now,
-    )
-    .run();
-
-  return c.json({
-    asset: {
-      id,
-      kind: 'image',
-      storage_key: storageKey,
-      mime_type: file.type,
-      byte_size: file.size,
-      sha256,
-    },
-  });
-});
-```
-
-- [ ] **Step 3: Mount route**
-
-In `workers/src/index.ts`, import and mount:
-
-```ts
-import { assets } from './routes/assets';
-```
-
-Add after the logs route:
-
-```ts
-app.route('/api/assets', assets);
-```
-
-- [ ] **Step 4: Update existing worker test mocks for the new binding**
-
-Any test env typed as `AppEnv['Bindings']` now needs an `IMAGES` stub. Add `R2Bucket` to type imports where needed:
-
-```ts
-import type { D1Database, R2Bucket } from '@cloudflare/workers-types';
-```
-
-In `workers/src/routes/knowledge.test.ts`, add this inside `mockEnv` after `db` is created:
-
-```ts
-const images = { put: vi.fn(async () => null) } as unknown as R2Bucket;
-```
-
-Then change the returned bindings to:
-
-```ts
-Bindings: { DB: db, IMAGES: images, INTERNAL_TOKEN: 'test', ANTHROPIC_API_KEY: 'test' },
-```
-
-In `workers/src/routes/mistakes.test.ts`, update both `mockEnv` and `mockEnvWithList` in the same way:
-
-```ts
-const images = { put: vi.fn(async () => null) } as unknown as R2Bucket;
-```
-
-and include `IMAGES: images` in each returned `Bindings` object.
-
-- [ ] **Step 5: Add route tests**
+- [ ] **Step 3: Write failing tests**
 
 Create `workers/src/routes/assets.test.ts`:
 
@@ -487,18 +293,17 @@ function mockEnv() {
 }
 
 describe('POST /api/assets', () => {
-  it('uploads image to R2 and writes source_asset metadata', async () => {
+  it('uploads PNG and writes source_asset metadata', async () => {
     const { Bindings, executionCtx, calls, put } = mockEnv();
     const form = new FormData();
-    form.set('file', new File([new Uint8Array([1, 2, 3])], 'q.png', { type: 'image/png' }));
-
+    form.set('file', new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'q.png', { type: 'image/png' }));
     const res = await assets.request('/', { method: 'POST', body: form }, Bindings, executionCtx);
-
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { asset: { id: string; storage_key: string; mime_type: string } };
+    const body = (await res.json()) as { asset: { id: string; storage_key: string; mime_type: string; sha256: string } };
     expect(body.asset.id).toBeTruthy();
-    expect(body.asset.storage_key).toMatch(/^images\/.+\.png$/);
+    expect(body.asset.storage_key).toMatch(/^images\/[a-z0-9]+\.png$/);
     expect(body.asset.mime_type).toBe('image/png');
+    expect(body.asset.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(put).toHaveBeenCalledOnce();
     expect(calls.some((c) => /insert into source_asset/i.test(c.sql))).toBe(true);
   });
@@ -509,7 +314,7 @@ describe('POST /api/assets', () => {
     expect(res.status).toBe(400);
   });
 
-  it('rejects unsupported mime type', async () => {
+  it('rejects non-image mime', async () => {
     const { Bindings, executionCtx } = mockEnv();
     const form = new FormData();
     form.set('file', new File(['x'], 'note.txt', { type: 'text/plain' }));
@@ -518,178 +323,177 @@ describe('POST /api/assets', () => {
     const body = (await res.json()) as { message: string };
     expect(body.message).toMatch(/unsupported mime_type/);
   });
+
+  it('rejects oversized file', async () => {
+    const { Bindings, executionCtx } = mockEnv();
+    const big = new Uint8Array(9_000_000);
+    const form = new FormData();
+    form.set('file', new File([big], 'huge.png', { type: 'image/png' }));
+    const res = await assets.request('/', { method: 'POST', body: form }, Bindings, executionCtx);
+    expect(res.status).toBe(400);
+  });
 });
 ```
 
-- [ ] **Step 6: Run asset and smoke route tests**
-
 Run:
+
+```bash
+pnpm test workers/src/routes/assets.test.ts
+```
+
+Expected: FAIL (module not found).
+
+- [ ] **Step 4: Implement route**
+
+Create `workers/src/routes/assets.ts`:
+
+```ts
+import { Hono } from 'hono';
+import { createId } from '@paralleldrive/cuid2';
+import type { AppEnv } from '../types';
+
+export const assets = new Hono<AppEnv>();
+
+const MAX_UPLOAD_BYTES = 8_000_000;
+const ALLOWED_MIME = new Set(['image/png', 'image/jpeg', 'image/webp']);
+
+async function sha256Hex(bytes: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function extFromMime(mime: string): string {
+  if (mime === 'image/png') return 'png';
+  if (mime === 'image/webp') return 'webp';
+  return 'jpg';
+}
+
+assets.post('/', async (c) => {
+  const form = await c.req.formData().catch(() => null);
+  const file = form?.get('file');
+  if (!(file instanceof File)) {
+    return c.json({ error: 'validation_error', message: 'file is required' }, 400);
+  }
+  if (!ALLOWED_MIME.has(file.type)) {
+    return c.json({ error: 'validation_error', message: `unsupported mime_type: ${file.type}` }, 400);
+  }
+  if (file.size <= 0 || file.size > MAX_UPLOAD_BYTES) {
+    return c.json({ error: 'validation_error', message: `file size must be 1..${MAX_UPLOAD_BYTES}` }, 400);
+  }
+
+  const bytes = await file.arrayBuffer();
+  const id = createId();
+  const storageKey = `images/${id}.${extFromMime(file.type)}`;
+  const sha256 = await sha256Hex(bytes);
+  const now = Math.floor(Date.now() / 1000);
+
+  await c.env.IMAGES.put(storageKey, bytes, {
+    httpMetadata: { contentType: file.type },
+    customMetadata: { source_asset_id: id, sha256 },
+  });
+
+  await c.env.DB.prepare(
+    `insert into source_asset (
+      id, kind, storage_key, mime_type, byte_size, sha256, width, height, provenance, created_at
+    ) values (?, 'image', ?, ?, ?, ?, null, null, ?, ?)`,
+  )
+    .bind(
+      id,
+      storageKey,
+      file.type,
+      file.size,
+      sha256,
+      JSON.stringify({ entrypoint: 'manual_record', original_name: file.name }),
+      now,
+    )
+    .run();
+
+  return c.json({
+    asset: {
+      id,
+      kind: 'image' as const,
+      storage_key: storageKey,
+      mime_type: file.type,
+      byte_size: file.size,
+      sha256,
+    },
+  });
+});
+```
+
+- [ ] **Step 5: Mount route + update existing test mocks**
+
+In `workers/src/index.ts`:
+
+```ts
+import { assets } from './routes/assets';
+// ... after existing routes:
+app.route('/api/assets', assets);
+```
+
+In `workers/src/routes/knowledge.test.ts` `mockEnv`, change the returned Bindings to include the IMAGES stub:
+
+```ts
+const images = { put: vi.fn(async () => null) } as unknown as R2Bucket;
+return {
+  Bindings: { DB: db, IMAGES: images, INTERNAL_TOKEN: 'test', ANTHROPIC_API_KEY: 'test' },
+  calls,
+};
+```
+
+(Add `R2Bucket` to the type imports.)
+
+- [ ] **Step 6: Run tests**
 
 ```bash
 pnpm test workers/src/routes/assets.test.ts workers/src/routes/knowledge.test.ts
 ```
 
-Expected: tests pass.
+Expected: PASS.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add workers/src/types.ts workers/src/routes/assets.ts workers/src/routes/assets.test.ts workers/src/index.ts workers/src/routes/knowledge.test.ts workers/src/routes/mistakes.test.ts
-git commit -m "feat(worker): add source asset uploads"
+git add workers/wrangler.toml workers/src/types.ts workers/src/routes/assets.ts workers/src/routes/assets.test.ts workers/src/index.ts workers/src/routes/knowledge.test.ts
+git commit -m "feat(worker): R2 binding + POST /api/assets upload"
 ```
 
-## Task 3: Update Mistake Creation to Use Asset Refs
+---
+
+### Task 3: mistakes route — drop byte cap, validate asset existence
 
 **Files:**
 - Modify: `workers/src/routes/mistakes.ts`
 - Modify: `workers/src/routes/mistakes.test.ts`
 
-- [ ] **Step 1: Replace image byte validation with source_asset validation**
+- [ ] **Step 1: Update test mock to support source_asset existence + IMAGES stub**
 
-In `workers/src/routes/mistakes.ts`, remove `TOTAL_IMAGE_BYTES_LIMIT` and the two total byte checks.
-
-Add helper near the body schema:
-
-```ts
-async function assertAssetsExist(db: D1Database, ids: string[], field: string): Promise<Response | null> {
-  const missing: string[] = [];
-  for (const id of ids) {
-    const row = await db.prepare(`select id from source_asset where id = ?`).bind(id).first();
-    if (!row) missing.push(id);
-  }
-  if (missing.length > 0) {
-    return new Response(
-      JSON.stringify({
-        error: 'validation_error',
-        message: `unknown ${field}: ${missing.join(', ')}`,
-      }),
-      { status: 400, headers: { 'content-type': 'application/json' } },
-    );
-  }
-  return null;
-}
-```
-
-Add import:
-
-```ts
-import type { D1Database } from '@cloudflare/workers-types';
-```
-
-After knowledge validation, add:
-
-```ts
-const badPromptAssets = await assertAssetsExist(c.env.DB, body.prompt_image_refs, 'prompt_image_refs');
-if (badPromptAssets) return badPromptAssets;
-const badWrongAssets = await assertAssetsExist(c.env.DB, body.wrong_answer_image_refs, 'wrong_answer_image_refs');
-if (badWrongAssets) return badWrongAssets;
-```
-
-- [ ] **Step 2: Store asset refs in question metadata**
-
-Keep the existing metadata key for compatibility, but it now contains asset IDs:
-
-```ts
-const questionMetadata =
-  body.prompt_image_refs.length > 0
-    ? JSON.stringify({ prompt_image_refs: body.prompt_image_refs, prompt_image_ref_kind: 'source_asset_id' })
-    : null;
-```
-
-- [ ] **Step 3: Create manual ingestion rows in the same D1 batch**
-
-Replace:
-
-```ts
-await c.env.DB.batch([insertQuestion, insertMistake]);
-```
-
-with:
-
-```ts
-const batchStatements = [insertQuestion, insertMistake];
-const allAssetIds = [...body.prompt_image_refs, ...body.wrong_answer_image_refs];
-
-if (allAssetIds.length > 0) {
-  const ingestionId = createId();
-  const blockId = createId();
-  const sourceDocumentId = createId();
-  const sourceAssetIdsJson = JSON.stringify(allAssetIds);
-  const promptImageRefsJson = JSON.stringify(body.prompt_image_refs);
-
-  batchStatements.push(
-    c.env.DB.prepare(
-      `insert into source_document (
-        id, title, source_asset_ids, body_md, provenance, created_at, updated_at, version
-      ) values (?, ?, ?, ?, ?, ?, ?, 0)`,
-    ).bind(
-      sourceDocumentId,
-      body.prompt_md.slice(0, 80),
-      sourceAssetIdsJson,
-      body.prompt_md,
-      JSON.stringify({ entrypoint: 'manual_record' }),
-      now,
-      now,
-    ),
-  );
-  batchStatements.push(
-    c.env.DB.prepare(
-      `insert into ingestion_session (
-        id, source_document_id, source_asset_ids, status, entrypoint, error_message,
-        created_at, updated_at, version
-      ) values (?, ?, ?, 'imported', 'manual_record', null, ?, ?, 0)`,
-    ).bind(ingestionId, sourceDocumentId, sourceAssetIdsJson, now, now),
-  );
-  batchStatements.push(
-    c.env.DB.prepare(
-      `insert into question_block (
-        id, ingestion_session_id, source_document_id, source_asset_ids, page_index, bbox,
-        extracted_prompt_md, image_refs, crop_refs, reference_md, visual_complexity,
-        extraction_confidence, status, imported_question_id, created_at, updated_at, version
-      ) values (?, ?, ?, ?, null, null, ?, ?, '[]', ?, 'low', 1, 'imported', ?, ?, ?, 0)`,
-    ).bind(
-      blockId,
-      ingestionId,
-      sourceDocumentId,
-      sourceAssetIdsJson,
-      body.prompt_md,
-      promptImageRefsJson,
-      body.reference_md,
-      questionId,
-      now,
-      now,
-    ),
-  );
-}
-
-await c.env.DB.batch(batchStatements);
-```
-
-- [ ] **Step 4: Update route tests**
-
-In `workers/src/routes/mistakes.test.ts`, update `mockEnv` so source assets can be looked up:
-
-```ts
-function mockEnv(opts: {
-  knowledgeRows?: Array<{ id: string; name: string; domain: string | null; parent_id: string | null; archived_at: number | null }>;
-  sourceAssetIds?: string[];
-  treeAllThrows?: boolean;
-} = {}) {
-  const sourceAssetIds = new Set(opts.sourceAssetIds ?? []);
-```
-
-In `first`, add:
+In `workers/src/routes/mistakes.test.ts` `mockEnv`, add `sourceAssetIds?: string[]` to opts. In the `prepare` `first` handler, add:
 
 ```ts
 if (/select id from source_asset where id = \?/i.test(sql)) {
   const id = binds[0] as string;
-  return sourceAssetIds.has(id) ? { id } : null;
+  return (opts.sourceAssetIds ?? []).includes(id) ? { id } : null;
 }
 ```
 
-Delete the two byte-limit tests because `/api/mistakes` no longer receives raw image bytes. Also replace the old `persists prompt_image_refs in question.metadata and wrong_answer_image_refs` test with the second test below because the refs are now `source_asset.id` values, not data URLs.
+Also add `IMAGES` to the Bindings:
 
-Add these tests:
+```ts
+const images = { put: vi.fn(async () => null) } as unknown as R2Bucket;
+// in returned Bindings:
+{ DB: db, IMAGES: images, INTERNAL_TOKEN: 'test', ANTHROPIC_API_KEY: 'test' }
+```
+
+(Same change in `mockEnvWithList` for the GET /recent block.)
+
+- [ ] **Step 2: Replace 2 byte-cap tests with 2 asset-existence tests**
+
+In the same test file, **delete** these two tests:
+- `'rejects when total image bytes exceed D1 cell limit'`
+- `'rejects when wrong_answer_image_refs total exceeds limit'`
+
+**Replace** the existing `'persists prompt_image_refs in question.metadata and wrong_answer_image_refs'` test with:
 
 ```ts
 it('rejects unknown prompt_image_refs asset id', async () => {
@@ -720,10 +524,10 @@ it('rejects unknown prompt_image_refs asset id', async () => {
   expect(body.message).toMatch(/unknown prompt_image_refs/);
 });
 
-it('persists source asset refs and creates manual ingestion rows', async () => {
+it('persists asset id refs and tags metadata kind', async () => {
   const { Bindings, executionCtx, calls } = mockEnv({
     knowledgeRows: [{ id: 'k1', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null }],
-    sourceAssetIds: ['asset_prompt', 'asset_wrong'],
+    sourceAssetIds: ['asset_p', 'asset_w'],
   });
   const res = await mistakes.request(
     '/',
@@ -737,8 +541,8 @@ it('persists source asset refs and creates manual ingestion rows', async () => {
         cause: null,
         difficulty: 3,
         question_kind: 'short_answer',
-        prompt_image_refs: ['asset_prompt'],
-        wrong_answer_image_refs: ['asset_wrong'],
+        prompt_image_refs: ['asset_p'],
+        wrong_answer_image_refs: ['asset_w'],
       }),
       headers: { 'content-type': 'application/json' },
     },
@@ -746,37 +550,109 @@ it('persists source asset refs and creates manual ingestion rows', async () => {
     executionCtx,
   );
   expect(res.status).toBe(200);
-  expect(calls.some((c) => /insert into source_document/i.test(c.sql))).toBe(true);
-  expect(calls.some((c) => /insert into ingestion_session/i.test(c.sql))).toBe(true);
-  expect(calls.some((c) => /insert into question_block/i.test(c.sql))).toBe(true);
+  const insertQ = calls.find((c) => /insert into question/i.test(c.sql));
+  const meta = JSON.parse((insertQ?.binds[6] as string) ?? '{}');
+  expect(meta.prompt_image_refs).toEqual(['asset_p']);
+  expect(meta.prompt_image_ref_kind).toBe('source_asset_id');
+  const insertM = calls.find((c) => /insert into mistake/i.test(c.sql));
+  const wrongRefs = JSON.parse(insertM?.binds[5] as string);
+  expect(wrongRefs).toEqual(['asset_w']);
 });
 ```
 
-- [ ] **Step 5: Run mistake route tests**
-
-Run:
+- [ ] **Step 3: Run — verify FAIL**
 
 ```bash
 pnpm test workers/src/routes/mistakes.test.ts
 ```
 
-Expected: route tests pass.
+Expected: 2 new tests fail (server still does byte cap, doesn't check asset existence).
+
+- [ ] **Step 4: Implement**
+
+In `workers/src/routes/mistakes.ts`:
+
+1. **Delete** the `TOTAL_IMAGE_BYTES_LIMIT` constant + the two byte-cap blocks.
+
+2. **Add** asset existence check helper near top:
+
+```ts
+async function assertAssetsExist(
+  db: D1Database,
+  ids: string[],
+  field: 'prompt_image_refs' | 'wrong_answer_image_refs',
+): Promise<{ ok: true } | { ok: false; missing: string[]; field: string }> {
+  const missing: string[] = [];
+  for (const id of ids) {
+    const row = await db.prepare(`select id from source_asset where id = ?`).bind(id).first();
+    if (!row) missing.push(id);
+  }
+  return missing.length > 0 ? { ok: false, missing, field } : { ok: true };
+}
+```
+
+(Add `D1Database` to type imports.)
+
+3. **Insert** the existence checks right after the knowledge_ids missing check:
+
+```ts
+const promptCheck = await assertAssetsExist(c.env.DB, body.prompt_image_refs, 'prompt_image_refs');
+if (!promptCheck.ok) {
+  return c.json(
+    { error: 'validation_error', message: `unknown ${promptCheck.field}: ${promptCheck.missing.join(', ')}` },
+    400,
+  );
+}
+const wrongCheck = await assertAssetsExist(c.env.DB, body.wrong_answer_image_refs, 'wrong_answer_image_refs');
+if (!wrongCheck.ok) {
+  return c.json(
+    { error: 'validation_error', message: `unknown ${wrongCheck.field}: ${wrongCheck.missing.join(', ')}` },
+    400,
+  );
+}
+```
+
+4. **Update** the questionMetadata to tag the kind:
+
+```ts
+const questionMetadata =
+  body.prompt_image_refs.length > 0
+    ? JSON.stringify({
+        prompt_image_refs: body.prompt_image_refs,
+        prompt_image_ref_kind: 'source_asset_id' as const,
+      })
+    : null;
+```
+
+- [ ] **Step 5: Run — verify PASS**
+
+```bash
+pnpm test workers/src/routes/mistakes.test.ts
+```
+
+Expected: all PASS.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add workers/src/routes/mistakes.ts workers/src/routes/mistakes.test.ts
-git commit -m "feat(ingestion): attach source assets to mistakes"
+git commit -m "feat(mistakes): validate source_asset existence; drop base64 byte cap"
 ```
 
-## Task 4: Update `/record` to Upload Images Before Submit
+---
+
+### Task 4: /record migrate to asset upload
 
 **Files:**
 - Modify: `src/routes/record.tsx`
 
-- [ ] **Step 1: Replace base64 image state with upload state**
+- [ ] **Step 1: Replace base64 image state with uploaded-asset state**
 
-In `src/routes/record.tsx`, add:
+In `src/routes/record.tsx`:
+
+1. **Remove** the `MAX_IMAGE_BYTES` const and `readFileAsDataUrl` function.
+
+2. **Add** at top:
 
 ```ts
 interface UploadedAsset {
@@ -796,23 +672,14 @@ async function uploadAsset(file: File): Promise<UploadedAsset> {
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(`POST /api/assets failed: ${res.status} ${text}`);
+    throw new Error(`POST /api/assets ${res.status}: ${text}`);
   }
-  const body = (await res.json()) as {
-    asset: { id: string; mime_type: string; byte_size: number };
-  };
-  return {
-    id: body.asset.id,
-    name: file.name,
-    mime_type: body.asset.mime_type,
-    byte_size: body.asset.byte_size,
-  };
+  const body = (await res.json()) as { asset: { id: string; mime_type: string; byte_size: number } };
+  return { id: body.asset.id, name: file.name, mime_type: body.asset.mime_type, byte_size: body.asset.byte_size };
 }
 ```
 
-Remove `MAX_IMAGE_BYTES` and `readFileAsDataUrl`.
-
-Change state:
+3. **Change** state types:
 
 ```ts
 const [promptImages, setPromptImages] = useState<UploadedAsset[]>([]);
@@ -820,30 +687,7 @@ const [wrongAnswerImages, setWrongAnswerImages] = useState<UploadedAsset[]>([]);
 const [uploading, setUploading] = useState(false);
 ```
 
-- [ ] **Step 2: Send asset IDs to Worker**
-
-In `handleSubmit`, change:
-
-```ts
-prompt_image_refs: promptImages.map((x) => x.id),
-wrong_answer_image_refs: wrongAnswerImages.map((x) => x.id),
-```
-
-Disable submit while uploading:
-
-```tsx
-<button
-  type="submit"
-  disabled={submitMutation.isPending || uploading}
-  className="bg-slate-900 text-white px-4 py-2 rounded disabled:opacity-50"
->
-  {submitMutation.isPending ? '提交中...' : uploading ? '图片上传中...' : '提交'}
-</button>
-```
-
-- [ ] **Step 3: Replace appendImages**
-
-Replace `appendImages` with:
+4. **Change** `appendImages` to upload one-by-one and push UploadedAsset:
 
 ```ts
 async function appendImages(
@@ -867,156 +711,642 @@ async function appendImages(
 }
 ```
 
-- [ ] **Step 4: Update ImagePicker props**
-
-Change `ImagePicker` props from `images: string[]` to:
+5. **Change** the submit handler payload:
 
 ```ts
-function ImagePicker({
-  label,
-  images,
-  onAdd,
-  onRemove,
-}: {
-  label: string;
-  images: UploadedAsset[];
-  onAdd: (files: FileList | null) => void;
-  onRemove: (index: number) => void;
-}) {
+prompt_image_refs: promptImages.map((a) => a.id),
+wrong_answer_image_refs: wrongAnswerImages.map((a) => a.id),
 ```
 
-Render filenames instead of base64 thumbnails:
+6. **Update** `<ImagePicker>` props to accept `images: UploadedAsset[]`. Replace `<img>` thumbnails with filename+size rows:
 
 ```tsx
-{images.length > 0 && (
-  <ul className="mt-2 space-y-1">
-    {images.map((img, i) => (
-      <li key={img.id} className="flex items-center justify-between text-xs border rounded px-2 py-1">
-        <span>
-          {img.name} · {(img.byte_size / 1024).toFixed(0)}KB
-        </span>
-        <button type="button" className="underline" onClick={() => onRemove(i)}>
-          移除
-        </button>
-      </li>
-    ))}
-  </ul>
-)}
+{images.map((img, i) => (
+  <li key={img.id} className="flex items-center justify-between text-xs border rounded px-2 py-1 gap-2">
+    <span className="truncate">{img.name} · {(img.byte_size / 1024).toFixed(0)}KB</span>
+    <button type="button" className="text-red-600 underline" onClick={() => onRemove(i)}>移除</button>
+  </li>
+))}
 ```
 
-- [ ] **Step 5: Run typecheck**
+(Wrap `<ul>` around the list. Drop the data-URL-based `<img>` preview — that visual feedback can come back when GET /api/assets/:id/raw lands in PR B; for PR A keep filename only.)
 
-Run:
+7. **Disable** submit while uploading:
+
+```tsx
+<button type="submit" disabled={submitMutation.isPending || uploading} ...>
+  {uploading ? '图片上传中...' : submitMutation.isPending ? '提交中...' : '提交'}
+</button>
+```
+
+8. **Add** to the clear button: `setPromptImages([]); setWrongAnswerImages([]);` (already there — verify).
+
+- [ ] **Step 2: Type check**
 
 ```bash
 pnpm typecheck
 ```
 
-Expected: TypeScript passes.
+Expected: clean.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add src/routes/record.tsx
+git commit -m "feat(record): upload images to /api/assets, send asset ids"
+```
+
+---
+
+### Task 5: PR A verification + open PR
+
+- [ ] **Step 1: Full test + typecheck + build**
+
+```bash
+pnpm test && pnpm typecheck && pnpm build
+```
+
+Expected: all green.
+
+- [ ] **Step 2: Document operator action in commit body**
+
+The R2 bucket must exist. Note this in the PR body:
+
+> Operator pre-merge: `wrangler r2 bucket create the-learning-project-images` and `wrangler r2 bucket create the-learning-project-images-preview`. Local `pnpm workers:dev` uses miniflare's R2 simulator automatically.
+
+- [ ] **Step 3: Open PR**
+
+```bash
+git push -u origin <branch>
+gh pr create --title "Phase 1.5 PR A: R2 binding + source_asset (drop base64 inline)" --body "$(cat <<'EOF'
+## Summary
+- 加 `source_asset` 表 + drizzle 0002 migration
+- `[[r2_buckets]] IMAGES` binding；POST /api/assets 上传 → R2 + insert metadata
+- /record 改用 asset upload 流程（drop base64 readAsDataURL + 700KB 单图 cap + 800KB worker 总量 cap）
+- mistakes.ts 不再 byte-cap，改成 source_asset 存在校验
+- question.metadata 加 `prompt_image_ref_kind: 'source_asset_id'` 显式标记
+
+## Operator action
+- `wrangler r2 bucket create the-learning-project-images`
+- `wrangler r2 bucket create the-learning-project-images-preview`
+
+## Test plan
+- [x] pnpm test
+- [x] pnpm typecheck
+- [x] pnpm build
+- [ ] 手动: /record 提交一张 PNG，DB 检查 source_asset 行 + R2 object exists
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+EOF
+)"
+```
+
+---
+
+## PR B：Ingestion + vision_single 第一波
+
+> **依赖**：PR A 已 merge。Local 须有 R2 bucket 创建。
+
+### Task 6: ingestion schema + 0003 migration
+
+**Files:**
+- Modify: `src/db/schema.ts`
+- Modify: `src/core/schema/business.ts`
+- Modify: `src/core/schema/generated.ts` + `index.ts`
+- Create (by `pnpm db:generate`): `drizzle/0003_*.sql` + meta
+- Modify: `src/core/schema/schema.test.ts`
+
+- [ ] **Step 1: Add enums to business.ts**
+
+```ts
+export const IngestionSessionStatus = z.enum([
+  'uploaded',
+  'extracted',
+  'reviewed',
+  'imported',
+  'failed',
+]);
+
+export const QuestionBlockStatus = z.enum([
+  'draft',
+  'reviewed',
+  'merged',
+  'imported',
+  'ignored',
+]);
+
+export const QuestionBlockRole = z.enum(['prompt', 'answer_area', 'continuation']);
+
+export const VisualComplexity = z.enum(['low', 'medium', 'high']);
+```
+
+- [ ] **Step 2: Add three tables to drizzle schema**
+
+In `src/db/schema.ts` after `source_asset`:
+
+```ts
+export const source_document = sqliteTable('source_document', {
+  id: text('id').primaryKey(),
+  title: text('title'),
+  source_asset_ids: text('source_asset_ids', { mode: 'json' }).$type<string[]>().notNull().default([]),
+  body_md: text('body_md'),
+  provenance: text('provenance', { mode: 'json' }).notNull().default({}),
+  created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updated_at: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  version: integer('version').notNull().default(0),
+});
+
+export const ingestion_session = sqliteTable('ingestion_session', {
+  id: text('id').primaryKey(),
+  source_document_id: text('source_document_id'),
+  source_asset_ids: text('source_asset_ids', { mode: 'json' }).$type<string[]>().notNull().default([]),
+  status: text('status').notNull().default('uploaded'),
+  entrypoint: text('entrypoint').notNull(),
+  error_message: text('error_message'),
+  created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updated_at: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  version: integer('version').notNull().default(0),
+});
+
+export const question_block = sqliteTable('question_block', {
+  id: text('id').primaryKey(),
+  ingestion_session_id: text('ingestion_session_id').notNull(),
+  source_document_id: text('source_document_id'),
+  source_asset_ids: text('source_asset_ids', { mode: 'json' }).$type<string[]>().notNull().default([]),
+  page_spans: text('page_spans', { mode: 'json' })
+    .$type<Array<{ page_index: number; bbox: { x: number; y: number; width: number; height: number }; role?: string }>>()
+    .notNull()
+    .default([]),
+  extracted_prompt_md: text('extracted_prompt_md').notNull(),
+  reference_md: text('reference_md'),
+  wrong_answer_md: text('wrong_answer_md'),
+  image_refs: text('image_refs', { mode: 'json' }).$type<string[]>().notNull().default([]),
+  crop_refs: text('crop_refs', { mode: 'json' }).$type<string[]>().notNull().default([]),
+  visual_complexity: text('visual_complexity').notNull().default('low'),
+  extraction_confidence: real('extraction_confidence').notNull().default(1),
+  status: text('status').notNull().default('draft'),
+  knowledge_hint: text('knowledge_hint'),
+  merged_from_block_ids: text('merged_from_block_ids', { mode: 'json' }).$type<string[]>().notNull().default([]),
+  imported_question_id: text('imported_question_id'),
+  imported_mistake_id: text('imported_mistake_id'),
+  created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updated_at: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  version: integer('version').notNull().default(0),
+});
+```
+
+- [ ] **Step 3: Generate migration**
+
+```bash
+pnpm db:generate
+```
+
+Verify `drizzle/0003_*.sql` has 3 `CREATE TABLE`s and `_journal.json` is updated.
+
+- [ ] **Step 4: Add zod exports**
+
+In `src/core/schema/generated.ts` append `*InsertGenerated` and `*SelectGenerated` for the 3 tables. In `index.ts`, add typed exports analogous to `SourceAsset`. Page_spans must be exposed as a strict zod array of objects with `page_index/bbox/role`.
+
+- [ ] **Step 5: Add schema tests**
+
+Append a `QuestionBlock accepts page_spans with role` test and a `QuestionBlock accepts merged from multiple page-level blocks` test (length 2 page_spans, status='merged', merged_from_block_ids has 2 ids).
+
+- [ ] **Step 6: Run tests**
+
+```bash
+pnpm test src/core/schema/schema.test.ts
+```
+
+Expected: PASS.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/db/schema.ts src/core/schema/business.ts src/core/schema/generated.ts src/core/schema/index.ts src/core/schema/schema.test.ts drizzle/0003_*.sql drizzle/meta
+git commit -m "feat(schema): add ingestion_session, source_document, question_block (page_spans)"
+```
+
+---
+
+### Task 7: VisionExtractTask wire
+
+**Files:**
+- Modify: `src/ai/registry.ts`
+- Create: `workers/src/ingestion/vision.ts`
+- Create: `workers/src/ingestion/vision.test.ts`
+
+- [ ] **Step 1: Update VisionExtractTask in registry**
+
+```ts
+VisionExtractTask: {
+  kind: 'VisionExtractTask',
+  description: '错题图片 → 切块 + 题面 + 答案 + bbox',
+  defaultProvider: 'anthropic',
+  defaultModel: 'claude-haiku-4-5-20251001',
+  fallbackChain: [],
+  budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
+  needsToolCall: false,
+  isMultimodal: true,
+  allowedTools: [],
+  systemPrompt:
+    '你是错题录入助手。给定一张题目图片（试卷/手写/教材截图），输出严格 JSON（不带 markdown 代码块包裹）：\n{"blocks":[{"extracted_prompt_md":"...","reference_md":"...|null","wrong_answer_md":"...|null","page_index":0,"bbox":{"x":0.1,"y":0.2,"width":0.6,"height":0.3},"role":"prompt|answer_area|continuation","visual_complexity":"low|medium|high","extraction_confidence":0.0-1.0,"knowledge_hint":"...|null"}]}\n约束：bbox 坐标 0-1 归一化（不是像素）；一图可输出 1+ 个 block（一页多题）；page_index=0 由调用方覆盖；wrong_answer_md 仅当图上有用户错答 / 批改痕迹时填；knowledge_hint 是软提示。',
+},
+```
+
+- [ ] **Step 2: Write failing tests**
+
+Create `workers/src/ingestion/vision.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest';
+import { parseVisionOutput } from './vision';
+
+describe('parseVisionOutput', () => {
+  it('parses well-formed multi-block JSON', () => {
+    const text = '{"blocks":[{"extracted_prompt_md":"题1","reference_md":"a1","wrong_answer_md":null,"page_index":0,"bbox":{"x":0.1,"y":0.1,"width":0.5,"height":0.3},"role":"prompt","visual_complexity":"low","extraction_confidence":0.9,"knowledge_hint":"虚词"}]}';
+    const out = parseVisionOutput(text);
+    expect(out.blocks).toHaveLength(1);
+    expect(out.blocks[0].extracted_prompt_md).toBe('题1');
+    expect(out.blocks[0].bbox.x).toBe(0.1);
+  });
+
+  it('extracts JSON from prose', () => {
+    const text = '识别如下：\n{"blocks":[{"extracted_prompt_md":"题","reference_md":null,"wrong_answer_md":null,"page_index":0,"bbox":{"x":0,"y":0,"width":1,"height":1},"role":"prompt","visual_complexity":"low","extraction_confidence":0.5,"knowledge_hint":null}]}\n以上。';
+    const out = parseVisionOutput(text);
+    expect(out.blocks).toHaveLength(1);
+  });
+
+  it('throws on non-JSON', () => {
+    expect(() => parseVisionOutput('not json')).toThrow();
+  });
+
+  it('throws on bbox out of [0,1]', () => {
+    const text = '{"blocks":[{"extracted_prompt_md":"x","reference_md":null,"wrong_answer_md":null,"page_index":0,"bbox":{"x":1.5,"y":0,"width":1,"height":1},"role":"prompt","visual_complexity":"low","extraction_confidence":0.5,"knowledge_hint":null}]}';
+    expect(() => parseVisionOutput(text)).toThrow();
+  });
+
+  it('throws on confidence out of [0,1]', () => {
+    const text = '{"blocks":[{"extracted_prompt_md":"x","reference_md":null,"wrong_answer_md":null,"page_index":0,"bbox":{"x":0,"y":0,"width":1,"height":1},"role":"prompt","visual_complexity":"low","extraction_confidence":2,"knowledge_hint":null}]}';
+    expect(() => parseVisionOutput(text)).toThrow();
+  });
+
+  it('throws on invalid role', () => {
+    const text = '{"blocks":[{"extracted_prompt_md":"x","reference_md":null,"wrong_answer_md":null,"page_index":0,"bbox":{"x":0,"y":0,"width":1,"height":1},"role":"bogus","visual_complexity":"low","extraction_confidence":0.5,"knowledge_hint":null}]}';
+    expect(() => parseVisionOutput(text)).toThrow();
+  });
+});
+```
+
+Run: expect FAIL.
+
+- [ ] **Step 3: Implement parseVisionOutput**
+
+Create `workers/src/ingestion/vision.ts`:
+
+```ts
+import { z } from 'zod';
+import { QuestionBlockRole, VisualComplexity } from '../../../src/core/schema/business';
+
+const VisionBlockSchema = z.object({
+  extracted_prompt_md: z.string().min(1).max(5000),
+  reference_md: z.string().nullable(),
+  wrong_answer_md: z.string().nullable(),
+  page_index: z.number().int().min(0),
+  bbox: z.object({
+    x: z.number().min(0).max(1),
+    y: z.number().min(0).max(1),
+    width: z.number().min(0).max(1),
+    height: z.number().min(0).max(1),
+  }),
+  role: QuestionBlockRole,
+  visual_complexity: VisualComplexity,
+  extraction_confidence: z.number().min(0).max(1),
+  knowledge_hint: z.string().nullable(),
+});
+
+const VisionOutputSchema = z.object({
+  blocks: z.array(VisionBlockSchema).min(1).max(20),
+});
+
+export type VisionOutput = z.infer<typeof VisionOutputSchema>;
+export type VisionBlock = z.infer<typeof VisionBlockSchema>;
+
+export function parseVisionOutput(text: string): VisionOutput {
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start === -1 || end === -1 || end < start) throw new Error('parseVisionOutput: no JSON');
+  const slice = text.slice(start, end + 1);
+  let json: unknown;
+  try {
+    json = JSON.parse(slice);
+  } catch (e) {
+    throw new Error(`parseVisionOutput: JSON.parse failed: ${(e as Error).message}`);
+  }
+  return VisionOutputSchema.parse(json);
+}
+```
+
+- [ ] **Step 4: Run — verify PASS**
+
+```bash
+pnpm test workers/src/ingestion/vision.test.ts
+```
+
+- [ ] **Step 5: Add `runVisionExtract` (await runTask with image input)**
+
+Append:
+
+```ts
+import type { D1Database } from '@cloudflare/workers-types';
+
+export interface RunVisionExtractParams {
+  db: D1Database;
+  assetId: string;
+  imageUrl: string; // e.g. https://<r2-public-url>/images/<id>.png; for MVP can be base64 data URL
+  pageIndex: number;
+  runTaskFn: (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
+  env?: unknown;
+}
+
+export interface ExtractedForAsset {
+  asset_id: string;
+  blocks: Array<VisionBlock & { _input_page_index: number }>;
+}
+
+export async function runVisionExtract(params: RunVisionExtractParams): Promise<ExtractedForAsset> {
+  const result = await params.runTaskFn(
+    'VisionExtractTask',
+    {
+      image_url: params.imageUrl,
+      page_index: params.pageIndex,
+    },
+    { env: params.env },
+  );
+  const parsed = parseVisionOutput(result.text);
+  return {
+    asset_id: params.assetId,
+    blocks: parsed.blocks.map((b) => ({ ...b, _input_page_index: params.pageIndex })),
+  };
+}
+```
+
+(Add a test that runVisionExtract injects pageIndex correctly.)
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/routes/record.tsx
-git commit -m "feat(record): upload images as source assets"
+git add src/ai/registry.ts workers/src/ingestion/vision.ts workers/src/ingestion/vision.test.ts
+git commit -m "feat(vision): VisionExtractTask wire + parseVisionOutput"
 ```
 
-## Task 5: Full Verification
+---
+
+### Task 8: POST /api/ingestion (sync extract)
 
 **Files:**
-- No source changes unless a verification failure exposes a bug.
+- Create: `workers/src/routes/ingestion.ts`
+- Create: `workers/src/routes/ingestion.test.ts`
+- Modify: `workers/src/index.ts`
 
-- [ ] **Step 1: Run worker and schema tests**
+Endpoint contract:
 
-Run:
+`POST /api/ingestion`
+Body:
+```ts
+{ entrypoint: 'vision_single' | 'vision_paper'; asset_ids: string[] }
+```
+Behavior:
+1. Validate every `asset_id` exists in source_asset.
+2. Insert one `source_document` row.
+3. Insert one `ingestion_session` row, status='uploaded', source_document_id set, source_asset_ids=asset_ids.
+4. For each asset, sync-call `runVisionExtract` (Promise.all for batch). For each output block, insert one `question_block` (status='draft', page_spans=[{page_index, bbox, role}], image_refs=[asset_id]).
+5. Update session.status = 'extracted' (or 'failed' if all vision calls threw).
+6. Return `{ session, blocks }`.
 
+(Tests cover happy path, asset missing → 400, vision throw on one image → other blocks still inserted + session.status='extracted' if at least one succeeded; if all fail → 'failed'. Tests use a `runTaskFn` mock; no real LLM.)
+
+- [ ] **Step 1-7**: write tests / implement / run / commit (mirroring Sub 3 / Sub 2 patterns).
+
+`workers/src/routes/ingestion.ts` should accept `runTaskFn` via a module-level injection helper for testability OR just use the production runTask + a minimal stub binding in tests. Prefer the same wrapping pattern as `runProposeAndWrite` (`runTaskFn` param threaded through).
+
+Commit:
 ```bash
-pnpm test workers/src/routes/assets.test.ts workers/src/routes/mistakes.test.ts src/core/schema/schema.test.ts
+git commit -m "feat(ingestion): POST /api/ingestion sync vision extract"
 ```
 
-Expected: all selected tests pass.
+---
 
-- [ ] **Step 2: Run full tests**
+### Task 9: POST /api/ingestion/:id/import
 
-Run:
+Endpoint contract:
 
+`POST /api/ingestion/:id/import`
+Body:
+```ts
+{
+  blocks: Array<{
+    block_id: string;            // existing question_block.id (after user edits/merges)
+    final_prompt_md: string;
+    final_reference_md: string | null;
+    final_wrong_answer_md: string;
+    knowledge_ids: string[];     // user picks from current tree
+    cause: { primary_category: string; user_notes: string | null } | null;
+    difficulty: number;          // 1-5, default 3
+    question_kind: string;
+  }>
+}
+```
+Behavior per block:
+1. Insert `question` row (kind = body.question_kind, prompt_md = final_prompt_md, knowledge_ids, source='vision_single' or 'vision_paper' from session.entrypoint, metadata = `{prompt_image_refs: question_block.image_refs, prompt_image_ref_kind: 'source_asset_id', source_document_id, ingestion_session_id}`).
+2. Insert `mistake` row (wrong_answer_md = final_wrong_answer_md or block's extracted_wrong_answer_md, wrong_answer_image_refs = block.image_refs filtered by role='answer_area' OR empty, source='manual_vision', knowledge_ids, cause).
+3. Update `question_block` status='imported', imported_question_id, imported_mistake_id.
+4. If body.cause === null, fire `c.executionCtx.waitUntil(IIFE_for_attribution)` mirroring Sub 3.
+5. Single propose waitUntil per block (Sub 2 pattern).
+6. After all blocks: update `ingestion_session.status='imported'`.
+
+Tests:
+- happy: 1 block → 1 question + 1 mistake + 2 waitUntil (propose + attribution).
+- block.cause provided: only 1 waitUntil (propose).
+- knowledge_ids missing → 400 per block path; or full request 400 if any block fails (return early).
+- session not found → 404.
+- block.id not in session → 400.
+- Returns `{ question_ids: string[], mistake_ids: string[] }`.
+
+- [ ] **Step 1-7**: TDD; same pattern.
+
+Commit:
 ```bash
-pnpm test
+git commit -m "feat(ingestion): import question_blocks into question + mistake"
 ```
 
-Expected: full Vitest suite passes.
+---
 
-- [ ] **Step 3: Run typecheck**
+### Task 10: /ingest UI
 
-Run:
+**Files:**
+- Create: `src/routes/ingest.tsx`
+
+Functional flow:
+
+1. **Upload phase**:
+   - File picker (multiple images) → uploads each via existing `uploadAsset` (factor out from `record.tsx` to a shared helper if not already; Task 4 keeps it in record.tsx — for Task 10 either extract to `src/lib/upload.ts` OR duplicate `uploadAsset` in ingest.tsx — pick whichever requires less file movement; if you extract, also update record.tsx import).
+   - Show thumbnails (later — for MVP filenames only).
+   - "开始提取" button → POST `/api/ingestion` with collected `asset_ids` + entrypoint `vision_single`.
+
+2. **Review phase**:
+   - Display each returned block as a card:
+     - Page indicator + bbox preview (later, for MVP just show "page 0")
+     - Editable `extracted_prompt_md` textarea
+     - Editable `reference_md` textarea
+     - Editable `wrong_answer_md` textarea
+     - Visual complexity + confidence badge (low confidence highlighted yellow)
+     - Knowledge multi-select (reused from /record knowledgeOptions)
+     - Cause select (留空 → AI 自动归因)
+     - "拆分本题" button: locally splits the block's prompt_md content into 2 client-side sub-blocks (for the edge case "Vision 把 2 题塞进 1 block")
+   - Multi-select checkboxes top of each card + sticky bar with "合并选中 N 题" button (only enabled if ≥ 2 selected)
+     - Merge: client-side concatenates `extracted_prompt_md` of selected blocks (separator `\n\n`), unions `image_refs`, concatenates `page_spans` arrays preserving page_index order, removes the original cards from list, inserts merged card at the topmost-selected position. **Mark merged card status as 'merged' locally; unmark contributing blocks.**
+   - "全部导入" button → POST `/api/ingestion/:id/import` with the final per-card payload.
+
+3. **Done phase**:
+   - On success → navigate `/mistakes`.
+
+For MVP keep edits client-side only — do NOT hit a "save block" endpoint per edit (avoid round-trip). The `/import` call is the only persistence of user edits. (Acceptable trade-off: refresh loses edits; user is warned with `beforeunload`.)
+
+(This is a single-file ~300-line page; allow it.)
+
+- [ ] **Step 1: Implement** as above.
+
+- [ ] **Step 2: Type check**
 
 ```bash
 pnpm typecheck
 ```
 
-Expected: client and worker typecheck pass.
-
-- [ ] **Step 4: Run lint**
-
-Run:
+- [ ] **Step 3: Commit**
 
 ```bash
-pnpm lint
+git add src/routes/ingest.tsx
+git commit -m "feat(ingest): /ingest page upload + review + merge/split + import"
 ```
 
-Expected: Biome reports no errors.
+---
 
-- [ ] **Step 5: Manual dev smoke**
+### Task 11: route mount + nav links
 
-Run:
+**Files:**
+- Modify: `src/App.tsx`
+- Modify: `src/routes/inspect.tsx`
+- Modify: `src/routes/record.tsx`
+
+- [ ] **Step 1: Mount /ingest in App.tsx**
+
+```tsx
+import { IngestSession } from './routes/ingest';
+<Route path="/ingest" element={<IngestSession />} />
+```
+
+- [ ] **Step 2: Inspect link**
+
+In `src/routes/inspect.tsx`, prepend `/ingest`:
+
+```tsx
+Other admin pages:{' '}
+<a href="/record" className="underline">/record</a> ·{' '}
+<a href="/ingest" className="underline">/ingest</a> ·{' '}
+<a href="/mistakes" className="underline">/mistakes</a> ·{' '}
+<a href="/knowledge" className="underline">/knowledge</a> ·{' '}
+<a href="/knowledge/proposals" className="underline">/knowledge/proposals</a>
+```
+
+- [ ] **Step 3: /record top hint**
+
+In `src/routes/record.tsx`, after the "录完跳转" hint paragraph, add:
+
+```tsx
+<p className="text-sm text-slate-500 mb-2">
+  拍试卷或多张图? 试 <a href="/ingest" className="underline">/ingest</a> (vision OCR 切块再审核)。
+</p>
+```
+
+- [ ] **Step 4: typecheck + tests**
 
 ```bash
-pnpm workers:dev
+pnpm typecheck && pnpm test
 ```
 
-In another terminal:
+- [ ] **Step 5: Commit**
 
 ```bash
-pnpm dev
+git add src/App.tsx src/routes/inspect.tsx src/routes/record.tsx
+git commit -m "feat(client): mount /ingest + nav hints"
 ```
 
-Open `/record`, upload one small PNG as a题面图, submit a manual mistake, then open `/mistakes`.
+---
 
-Expected:
+### Task 12: PR B verify + open
 
-- `/record` shows uploaded filename before submit.
-- submit succeeds.
-- `/mistakes` shows the new mistake.
-- cause starts as `归因中...` if not manually provided.
-- no large base64 string is posted to `/api/mistakes`.
+- [ ] **Step 1: pnpm test && pnpm typecheck && pnpm build**
 
-- [ ] **Step 6: Final commit if any verification fixes were needed**
+Expected: all green.
 
-If verification required fixes:
+- [ ] **Step 2: Manual smoke**
+
+Two terminals: `pnpm workers:dev` and `pnpm dev`.
+
+Manual flow:
+1. Open `/ingest`.
+2. Upload 1 PNG of a test paper question.
+3. "开始提取" → wait ~10s → see 1+ blocks rendered.
+4. Edit one block's prompt_md.
+5. Pick knowledge_ids, leave cause empty.
+6. "全部导入" → navigate `/mistakes` → new mistake row appears with "归因中..." badge → ~5s later turns into AI cause badge.
+7. DB check (`wrangler d1 execute`):
+   - `select * from ingestion_session` → 1 row, status='imported'
+   - `select * from question_block where ingestion_session_id = '<id>'` → status='imported'
+   - `select * from question where source = 'vision_single'` → row with metadata.prompt_image_refs
+
+- [ ] **Step 3: Open PR**
 
 ```bash
-git add <changed-files>
-git commit -m "fix(ingestion): pass verification"
+git push -u origin <branch>
+gh pr create --title "Phase 1.5 PR B: vision_single OCR ingestion + manual merge UI" --body "..."
 ```
 
-If no fixes were needed, do not create an empty commit.
+PR body covers:
+- Schema (3 new tables, page_spans schema decision)
+- VisionExtractTask wire (haiku 4.5 multimodal, JSON output)
+- /ingest page (upload → review → edit/merge/split → import)
+- Cross-page handling: manual merge button (A path of spec § Block Assembly)
+- Sub 3 pattern reused: AttributionTask waitUntil per imported mistake
+- Test count, build status, manual smoke checklist
 
-## Self-Review
+---
 
-Spec coverage:
+## Self-Review Checklist
 
-- R2-backed source assets are covered in Task 2.
-- Existing manual mistake flow remains covered in Tasks 3 and 4.
-- Source/Ingestion/QuestionBlock data model is covered in Task 1.
-- `crop_refs[]` exists in schema, but actual crop generation is intentionally not implemented in this foundation.
-- OCR/cutting/PDF/passage/search are intentionally out of scope and remain future work.
+PR A:
 
-Unresolved-marker scan:
+- [ ] R2 bucket creation documented in PR body
+- [ ] /record uploads asset before submit; clear button resets uploaded state
+- [ ] mistakes route validates source_asset existence; no byte cap left
+- [ ] question.metadata records `prompt_image_ref_kind = 'source_asset_id'`
+- [ ] All worker tests' `mockEnv` include `IMAGES` stub
 
-- The plan contains no unresolved markers or intentionally vague implementation step.
+PR B:
 
-Type consistency:
+- [ ] page_spans schema: arrays of `{page_index, bbox, role?}` (not single page_index)
+- [ ] VisionExtractTask single-shot JSON; isMultimodal=true
+- [ ] ingestion.import path triggers AttributionTask via waitUntil mirroring Sub 3
+- [ ] manual merge in client only (no merge endpoint); merged block has status='merged' + merged_from_block_ids
+- [ ] /ingest reuses knowledge tree query
+- [ ] Failure modes: vision throw on one asset → other blocks still inserted; session.status='failed' only if all fail
 
-- Frontend sends `prompt_image_refs` and `wrong_answer_image_refs` as string arrays, preserving the existing API shape.
-- The semantics of those strings change from base64 data URLs to `source_asset.id`.
-- `question.metadata.prompt_image_ref_kind = 'source_asset_id'` records the new interpretation.
+---
+
+## Open / 实施时再决
+
+1. **R2 read endpoint**：`/api/assets/:id/raw` 是不是要做？ /ingest UI 想显示原图缩略图就需要。MVP 阶段可以从 client 直接拿 R2 public URL（如果 bucket 设了 public access）。先不做 endpoint，PR B Task 10 缩略图 deferred；真需要时再加 GET endpoint with auth。
+2. **Vision 多页 batch 性能**：5+ 张图同时跑 haiku 4.5 vision，30s timeout 可能不够。如果 PR B Task 8 实际撞超时，把 sync 改成 `c.executionCtx.waitUntil` 异步路径 + 前端 polling `/api/ingestion/:id`（pattern: 沿用 /mistakes/recent refetchInterval）。
+3. **Wrangler R2 simulator 行为**：`wrangler dev` 默认 miniflare R2 in-memory；重启 dev server 数据丢。Plan handoff 提示用户用 `--persist` 或接 production bucket（看自用偏好）。
+4. **page_spans 长度上限**：当前 schema 没限。建议 zod 加 `.max(8)`（一题跨 8 页极罕见）防 LLM 输入极端。
+5. **vision 输出 page_index**：vision 单图只看一张图，page_index 由调用方覆盖（Task 7 `runVisionExtract` 已注入）。LLM 输出的 page_index 字段保留是为了未来真给多页 PDF 时不改 contract，但 MVP 强制覆盖。
