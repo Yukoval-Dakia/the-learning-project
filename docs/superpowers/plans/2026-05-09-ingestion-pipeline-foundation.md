@@ -43,7 +43,7 @@ PR A 涉及：
 | `src/core/schema/index.ts` | 导出 `SourceAsset` zod | 改 |
 | `src/core/schema/schema.test.ts` | + SourceAsset zod 测试 | 改 |
 | `drizzle/0002_*.sql` + `drizzle/meta/0002_snapshot.json` + `drizzle/meta/_journal.json` | drizzle generate 出来 | 新 |
-| `workers/wrangler.toml` | + `[[r2_buckets]] binding = "IMAGES"` | 改 |
+| `workers/wrangler.toml` | verify existing `[[r2_buckets]] binding = "IMAGES"` uses `learning-project-images`; add only if missing in a fresh branch | 改 |
 | `workers/src/types.ts` | + `IMAGES: R2Bucket` | 改 |
 | `workers/src/routes/assets.ts` | POST / 上传 → R2.put + insert source_asset | 新 |
 | `workers/src/routes/assets.test.ts` | 上传校验 / R2 + D1 写入 | 新 |
@@ -63,7 +63,7 @@ PR B 涉及（在 PR A 之上）：
 | `drizzle/0003_*.sql` + meta | 三张新表 | 新 |
 | `src/ai/registry.ts` | VisionExtractTask 改具体 prompt（多 block JSON 输出 schema）；保 `isMultimodal: true` `needsToolCall: false` | 改 |
 | `workers/src/ai/runner.ts` | `runTask` 支持 AI SDK multimodal `messages` 输入；否则 vision 只会收到 JSON 文本，不会看到图片 | 改 |
-| `workers/src/ai/runner.test.ts` | 覆盖 multimodal input 会传 `type: 'image'` content part | 改 |
+| `workers/src/ai/runner.test.ts` | 覆盖 multimodal input 会把 image 传进 AI SDK provider prompt（AI SDK v6 会 normalize 为 `type: 'file'`, `mediaType: 'image/*'`） | 改 |
 | `workers/src/ingestion/vision.ts` | `parseVisionOutput` + `runVisionExtract`（从 R2 bytes 构造 VisionExtractTask multimodal input + 解析 N blocks）| 新 |
 | `workers/src/ingestion/vision.test.ts` | 解析 + 失败兜底 | 新 |
 | `workers/src/routes/ingestion.ts` | POST `/` 创 session + 从 private R2 读 asset bytes + 跑 vision sync；POST `/:id/import` 入库 question + mistake；GET `/:id` (debug 看 session 现状) | 新 |
@@ -1081,7 +1081,8 @@ Append inside `describe('runTask (single-shot, no tools)', ...)` in `workers/src
     );
 
     const serialized = JSON.stringify(seenPrompt);
-    expect(serialized).toContain('"type":"image"');
+    // AI SDK v6 ModelMessage uses type:'image'; provider prompt normalizes it to type:'file'.
+    expect(serialized).toContain('"type":"file"');
     expect(serialized).toContain('image/png');
   });
 ```
@@ -1377,9 +1378,12 @@ Behavior:
 2. Insert one `source_document` row.
 3. Insert one `ingestion_session` row, status='uploaded', source_document_id set, source_asset_ids=asset_ids.
 4. For each asset, call `await c.env.IMAGES.get(storage_key)`. If the object is missing, treat only that asset as failed; do not depend on a public R2 URL or `/api/assets/:id/raw`.
-5. For each loaded R2 object, call `runVisionExtract({ assetId, mimeType, imageBytes: await object.arrayBuffer(), pageIndex, env: c.env, runTaskFn: runTask })` (Promise.all for batch). For each output block, insert one `question_block` (status='draft', page_spans=[{page_index, bbox, role}], image_refs=[asset_id]).
-6. Update session.status = 'extracted' (or 'failed' if all vision calls / R2 reads failed).
-7. Return `{ session, blocks }`.
+5. For each loaded R2 object, call `runVisionExtract({ assetId, mimeType, imageBytes: await object.arrayBuffer(), pageIndex, env: c.env, runTaskFn })` (Promise.all for batch). Use the wrapper defined in Step 2, not raw `runTask`, so the function type stays `(kind, input, ctx) => Promise<{ text: string }>`.
+6. For each output block, insert one `question_block` (status='draft', page_spans=[{page_index, bbox, role}], image_refs=[asset_id]).
+7. Build response blocks in the UI/import shape:
+   `{ block_id, source_block_ids: [block_id], page_spans, image_refs, extracted_prompt_md, reference_md, wrong_answer_md, visual_complexity, extraction_confidence, knowledge_hint }`.
+8. Update session.status = 'extracted' (or 'failed' if all vision calls / R2 reads failed).
+9. Return `{ session, blocks }`.
 
 - [ ] **Step 1: Write failing route tests**
 
@@ -1390,7 +1394,7 @@ Create `workers/src/routes/ingestion.test.ts` with a `mockEnv()` that handles:
 - `IMAGES.get(storage_key)` returning `{ arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer }`
 
 Tests:
-- happy path: 2 asset ids → returns status 200, inserts 1 source_document, 1 ingestion_session, 2 question_block rows, calls runTask twice, returns `blocks.length === 2`.
+- happy path: 2 asset ids → returns status 200, inserts 1 source_document, 1 ingestion_session, 2 question_block rows, calls runTask twice, returns `blocks.length === 2`, and every returned block has `block_id` plus `source_block_ids=[block_id]`.
 - asset row missing: unknown asset id → 400, no R2 reads, no vision calls.
 - one R2 object missing: one asset's `IMAGES.get` returns null → still returns 200 if another asset extracts; session.status='extracted'.
 - all R2 objects missing or all vision calls throw → returns 200 with `session.status === 'failed'` and empty blocks.
@@ -1465,6 +1469,23 @@ JSON.stringify([{ page_index: block.page_index, bbox: block.bbox, role: block.ro
 
 Set `question_block.status='draft'`, `image_refs=[asset_id]`, `source_asset_ids=[asset_id]`, `extraction_confidence`, `visual_complexity`, `knowledge_hint`, `created_at/updated_at`, and `version=0`.
 
+Push this shape into the response array after each insert:
+
+```ts
+blocks.push({
+  block_id,
+  source_block_ids: [block_id],
+  page_spans: [{ page_index: block.page_index, bbox: block.bbox, role: block.role }],
+  image_refs: [asset_id],
+  extracted_prompt_md: block.extracted_prompt_md,
+  reference_md: block.reference_md,
+  wrong_answer_md: block.wrong_answer_md,
+  visual_complexity: block.visual_complexity,
+  extraction_confidence: block.extraction_confidence,
+  knowledge_hint: block.knowledge_hint,
+});
+```
+
 - [ ] **Step 5: Mount route**
 
 In `workers/src/index.ts`:
@@ -1509,9 +1530,9 @@ Body:
     final_reference_md: string | null;
     final_wrong_answer_md: string;
     knowledge_ids: string[];     // user picks from current tree
-    cause: { primary_category: string; user_notes: string | null } | null;
+    cause: { primary_category: 'concept' | 'knowledge_gap' | 'calculation' | 'reading' | 'memory' | 'expression' | 'method' | 'carelessness' | 'time_pressure' | 'other'; user_notes: string | null } | null;
     difficulty: number;          // 1-5, default 3
-    question_kind: string;
+    question_kind: 'choice' | 'true_false' | 'fill_blank' | 'short_answer' | 'essay' | 'computation' | 'reading' | 'translation';
   }>
 }
 ```
@@ -1519,7 +1540,7 @@ Behavior per block:
 1. Validate `source_block_ids` are non-empty and every source block belongs to this session. Validate `image_refs` all appear in the session's `source_asset_ids`.
 2. If `block_id` is present, it must be one of `source_block_ids` and belong to this session. If `block_id` is absent (merged or split client-side card), insert a new `question_block` row with `status='imported'`, `source_asset_ids/image_refs/page_spans/final fields`, and `merged_from_block_ids=source_block_ids`.
 3. Insert `question` row (kind = body.question_kind, prompt_md = final_prompt_md, knowledge_ids, source=session.entrypoint (`vision_single` or `vision_paper`), metadata = `{prompt_image_refs: image_refs, prompt_image_ref_kind: 'source_asset_id', source_document_id, ingestion_session_id, question_block_id}`).
-4. Insert `mistake` row (wrong_answer_md = final_wrong_answer_md or source block's extracted wrong answer, wrong_answer_image_refs = `image_refs` filtered by `page_spans.role === 'answer_area'` OR empty, source=session.entrypoint (`vision_single` or `vision_paper`), knowledge_ids, cause). Do **not** use `manual_vision`; it is not in `MistakeSource`.
+4. Insert `mistake` row (wrong_answer_md = final_wrong_answer_md or source block's extracted wrong answer, wrong_answer_image_refs = answer-area asset ids derived from `page_spans.role === 'answer_area'` and `session.source_asset_ids[page_index]`, source=session.entrypoint (`vision_single` or `vision_paper`), knowledge_ids, cause). Do **not** use `manual_vision`; it is not in `MistakeSource`.
 5. Update imported block status='imported', imported_question_id, imported_mistake_id. If this was a merged/split client-side card, update source blocks status='ignored' unless one of them is also imported as an unchanged card in the same request.
 6. If body.cause === null, call `c.executionCtx.waitUntil(runAttributionAndWrite({ db: c.env.DB, mistakeId, expectedVersion: 0, input: { prompt_md: final_prompt_md, reference_md: final_reference_md, wrong_answer_md: final_wrong_answer_md, knowledge_context }, runTaskFn, env: c.env }))`.
 7. Single propose waitUntil per block (Sub 2 pattern).
@@ -1557,9 +1578,16 @@ Expected: FAIL.
 
 - [ ] **Step 2: Add import body schema**
 
-In `workers/src/routes/ingestion.ts`, add:
+In `workers/src/routes/ingestion.ts`, add this top-level import with the other imports:
 
 ```ts
+import { CauseCategory, QuestionKind } from '../../../src/core/schema/business';
+```
+
+Then add:
+
+```ts
+
 const PageSpanBody = z.object({
   page_index: z.number().int().min(0),
   bbox: z.object({
@@ -1581,9 +1609,9 @@ const ImportBody = z.object({
     final_reference_md: z.string().nullable(),
     final_wrong_answer_md: z.string().min(1).max(10000),
     knowledge_ids: z.array(z.string().min(1)).min(1),
-    cause: z.object({ primary_category: z.string(), user_notes: z.string().nullable() }).nullable(),
+    cause: z.object({ primary_category: CauseCategory, user_notes: z.string().nullable() }).nullable(),
     difficulty: z.number().int().min(1).max(5).default(3),
-    question_kind: z.string().min(1),
+    question_kind: QuestionKind,
   })).min(1).max(50),
 });
 ```
@@ -1613,6 +1641,20 @@ Use `session.entrypoint` for both `question.source` and `mistake.source`. Metada
   ingestion_session_id: session.id,
   question_block_id,
 }
+```
+
+Compute answer image refs before inserting the mistake:
+
+```ts
+const sessionAssetIds = JSON.parse(session.source_asset_ids) as string[];
+const answerImageRefs = [
+  ...new Set(
+    block.page_spans
+      .filter((span) => span.role === 'answer_area')
+      .map((span) => sessionAssetIds[span.page_index])
+      .filter((assetId): assetId is string => typeof assetId === 'string' && block.image_refs.includes(assetId)),
+  ),
+];
 ```
 
 Then update imported block with `imported_question_id` and `imported_mistake_id`. For merged/split virtual cards, mark source blocks `ignored` unless that source block is also directly imported in the same request.
@@ -1654,9 +1696,9 @@ Functional flow:
      - Visual complexity + confidence badge (low confidence highlighted yellow)
      - Knowledge multi-select (reused from /record knowledgeOptions)
      - Cause select (留空 → AI 自动归因)
-     - "拆分本题" button: locally splits the block's prompt_md content into 2 client-side virtual cards (for the edge case "Vision 把 2 题塞进 1 block"). Each virtual card has `block_id: undefined`, `source_block_ids: [original.block_id]`, copied `page_spans`, copied `image_refs`, and its own editable fields.
+     - "拆分本题" button: locally splits the block's prompt_md content into 2 client-side virtual cards (for the edge case "Vision 把 2 题塞进 1 block"). Each returned server block already has `block_id` and `source_block_ids`. Each split virtual card sets `block_id: undefined`, keeps `source_block_ids: original.source_block_ids`, copies `page_spans`, copies `image_refs`, and owns its edited fields.
    - Multi-select checkboxes top of each card + sticky bar with "合并选中 N 题" button (only enabled if ≥ 2 selected)
-     - Merge: client-side concatenates `extracted_prompt_md` of selected blocks (separator `\n\n`), unions `image_refs`, concatenates `page_spans` arrays preserving page_index order, removes the original cards from list, inserts merged virtual card at the topmost-selected position. The merged card has `block_id: undefined`, `source_block_ids: selected.flatMap(card.source_block_ids ?? [card.block_id])`, and local status='merged'.
+     - Merge: client-side concatenates `extracted_prompt_md` of selected blocks (separator `\n\n`), unions `image_refs`, concatenates `page_spans` arrays preserving page_index order, removes the original cards from list, inserts merged virtual card at the topmost-selected position. The merged card has `block_id: undefined`, `source_block_ids: selected.flatMap((card) => card.source_block_ids)`, and local status='merged'.
    - "全部导入" button → POST `/api/ingestion/:id/import` with the final per-card payload. Unchanged cards send their existing `block_id`; merged/split virtual cards omit `block_id` and rely on `source_block_ids/page_spans/image_refs`.
 
 3. **Done phase**:
