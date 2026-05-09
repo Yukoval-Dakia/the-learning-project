@@ -66,6 +66,9 @@ knowledge.post('/proposals/:id/decide', async (c) => {
     if (/not found/i.test(msg)) {
       return c.json({ error: 'not_found' }, 404);
     }
+    if (/^stale/i.test(msg)) {
+      return c.json({ error: 'stale', message: msg }, 409);
+    }
     throw e;
   }
 });
