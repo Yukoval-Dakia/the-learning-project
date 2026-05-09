@@ -1,7 +1,7 @@
 # AI 学习工具 · 规划主索引
 
 > 自用 · 移动 + 桌面双修 · 应试与兴趣并行
-> v0.11 · 2026-05-08 · LearningItem 层级化 + 状态机 + StudyLog + 学习时间线
+> v0.12 · 2026-05-09 · Learning Orchestrator + Source Layer + Ingestion Layer
 
 ---
 
@@ -15,8 +15,12 @@
 - artifact = 知识点上「可被反复消费的产物」（**Note 阅读型 + Tool 互动型**）
 - 题目 = 知识点上「测验素材」（**Question 是统一题库**）
 - StudyLog = 知识点上「用户主动记录的非错题内容」（顿悟 / 反思 / 疑问 / 标记）
+- Source = 题目 / note / quiz 的来源证据（检索、上传、开放资料、个人材料）
+- Ingestion = 复杂题的录入管线（图片 / PDF / 长阅读 → 结构化 Question）
 
 只要锚不丢，模块就不会变成孤岛。**架构是泛化的**，不锁单一学科或场景；**Phase 1 首发数据集 = 文言文（高中语文）**。
+
+长期 AI 形态不是一个直接改数据的万能聊天 agent，而是横跨模块的 **Learning Orchestrator / Control Plane**：读取学习状态，决定下一步，调度 Task，写 proposal / evidence。ABC 都要实现：A 错题复习、B 新知识学习、C 全局教练；交付顺序按 A → B → C。详见 `docs/superpowers/specs/2026-05-09-learning-orchestrator-long-term-design.md`。
 
 ---
 
@@ -49,6 +53,7 @@ the-learning-project/
 | Artifact: Note (note_hub / note_atomic) | 阅读型；hub + atomic 结构；source tier 防幻觉 | [docs/modules/notes.md](docs/modules/notes.md) |
 | Artifact: Tool (tool_quiz) | 互动型当前唯一实例；可独立或嵌入 Note；Question/Answer/Judgment + ai_flexible 兜底 | [docs/modules/quiz.md](docs/modules/quiz.md) |
 | Dreaming + Maintenance | AI 主动产出（生产 + 维护）两条 lane | [docs/modules/lanes.md](docs/modules/lanes.md) |
+| Learning Orchestrator / Source / Ingestion | 长期控制面；Exa/Search-grounded quiz；图片/PDF/长阅读优雅录入 | [长期 spec](docs/superpowers/specs/2026-05-09-learning-orchestrator-long-term-design.md) |
 
 ---
 
@@ -89,6 +94,7 @@ the-learning-project/
 **录入扩展**
 - [ ] **vision_single 录入路径**（视觉模型 + 一击确认页）
 - [ ] **手动粘贴录入** UX 优化（如需要）
+- [ ] Source / Ingestion 字段预留：`image_refs` / `crop_refs` / `source_refs`（先不做完整 R2 pipeline）
 
 **Quiz 骨架 + StudyLog**
 - [ ] tool_quiz embedded check（最小 standalone + inline）
@@ -126,6 +132,9 @@ the-learning-project/
 - [ ] **VisionExtractTask 多图输入**（多张照片作为一次 vision call，自动识别 page 顺序与跨页大题）
 - [ ] **批改痕迹识别**（prompt 设计：识别任何形式的勾叉 / 扣分 / 批语，不在 schema 区分类型）
 - [ ] **多题切分**（vision 输出 question_blocks[] + verdict_inferred per block）
+- [ ] **IngestionSession 最小状态机**（uploaded → extracted → reviewed → imported / failed）
+- [ ] **SourceAsset / SourceDocument 最小 schema**（R2 object key / mime / hash / provenance；D1 只存 ref）
+- [ ] **QuestionBlock + crop_refs[]**（保留题目在原图/PDF中的区域，带图题复习时可回放）
 - [ ] **vision_paper 录入路径**（`source: vision_paper`）
 - [ ] **卷子审核页 UX**（默认仅展开错题，对的折叠；批量录入按钮）
 - [ ] **批量 AttributionTask**（N 个新 Mistake 走 batch API 夜间一次跑完）
@@ -173,6 +182,11 @@ the-learning-project/
 - [ ] **JudgeMultimodalTask + VisionAnswerExtractTask + visual_complexity 路由**
 - [ ] **Standalone tool_quiz Artifact**（每日 quiz / final quiz / 用户存的模拟卷成独立 artifact 行）
 - [ ] **Review session tool_quiz**（FSRS 到期错题集合走 tool_quiz）
+- [ ] **Review Orchestrator (A)**（读取 FSRS / 错因 / mastery，决定今日复习 session，并解释选题原因）
+- [ ] **SourcePack + Exa/Search retrieval**（QuizGenTask 需要新材料时先检索来源包，不直接抓题）
+- [ ] **Search-grounded QuizGenTask**（基于 SourcePack 生成原创题，题目带 source_refs）
+- [ ] **QuizVerifyTask**（事实、答案、知识点命中、抄题风险校验；通过后 draft → active）
+- [ ] **Passage / referenced_span_ids[]**（长阅读材料共享，不把全文复制进每道题）
 
 **变式题深化**
 - [ ] **VariantGenTask**（按 mistake.cause 10 类分别出针对性变式）
@@ -190,12 +204,16 @@ the-learning-project/
 - [ ] Skill 抽离（如果 prompt 重复够多）
 - [ ] MCP Server expose（safe resources + propose-only tools）
 - [ ] 外部 MCP 消费（Calendar 优先）
+- [ ] **Learning Intent Orchestrator (B)**（用户声明“我想学 X”→ hub/atomic LearningItem + Note + embedded check + evidence）
 
 ### Phase 3 · 加新 tool_kind / Plugin
 
+- [ ] **Global Coach Orchestrator (C)**（每日/每周横跨复习、新学、计划、复盘和维护给出可拒绝安排）
 - [ ] 评估加新 `tool_kind`（visualizer / simulator / drill 等），按需求触发
 - [ ] 抽出通用 Tool interface（mount / emit / serialize）—— **真有第二种 tool 才做**
 - [ ] Plugin loader（如果引入第二学科）
+- [ ] 本地教材 / 用户上传材料 RAG（作为 Source Layer 的高可信来源）
+- [ ] 授权题库 adapter（如未来需要，不作为 MVP 前提）
 - [ ] 论述题深度评分（多 pass + self-consistency）
 - [ ] Tauri 桌面端打包
 
@@ -262,6 +280,10 @@ the-learning-project/
 - [x] **StudyLog 多对一关联**（knowledge / question / mistake / artifact / learning_item 任一/多）
 - [x] **学习时间线视图**（Phase 2 整合自动事件 + StudyLog）
 - [x] **DreamingProposal.kind 扩展** → 加 learning_item_completion / learning_item_relearn
+- [x] **Learning Orchestrator 长期形态** → ABC 都要实现，按 A 错题复习 → B 新知识学习 → C 全局教练交付
+- [x] **题库来源策略** → 个人真实题优先 + AI 变式双 pass + Search-grounded 原创题 + 开放/授权来源
+- [x] **Quiz agent 接 Source Layer** → 通过 SourcePack/Exa/search grounding，不直接抓第三方题库原题
+- [x] **复杂录入策略** → IngestionSession + SourceAsset/SourceDocument + QuestionBlock + crop_refs + Passage
 
 ### 阈值类默认（runtime 调）
 
@@ -285,6 +307,9 @@ the-learning-project/
 - [ ] 何时引入第二种 tool_kind（drill / visualizer / simulator）
 - [ ] cause 类型差异化的复习权重 / mastery 衰减具体数值（Phase 2 跑数据）
 - [ ] StudyLog 喂 dreaming 信号的具体方式（Phase 2+）
+- [ ] Exa/Search provider 的域名白名单 / 黑名单策略
+- [ ] Source license 不明确时允许生成的题型边界
+- [ ] 长阅读 passage 的默认切分粒度（段落 / 句群 / 题目引用 span）
 
 ### 模块特定未定
 
