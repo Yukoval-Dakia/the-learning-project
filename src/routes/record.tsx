@@ -191,6 +191,9 @@ export function RecordMistake() {
   return (
     <main className="mx-auto max-w-3xl px-4 py-8">
       <h1 className="text-xl font-semibold mb-4">录入错题</h1>
+      <p className="text-sm text-slate-500 mb-2">
+        拍试卷或多张图? 试 <a href="/ingest" className="underline">/ingest</a>（vision OCR 切块再审核）。
+      </p>
       <p className="text-sm text-slate-500 mb-6">
         录完跳转到 <a href="/knowledge/proposals" className="underline">/knowledge/proposals</a> 看 AI 提议。
       </p>
