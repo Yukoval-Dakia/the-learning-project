@@ -61,6 +61,9 @@ knowledge.post('/proposals/:id/decide', async (c) => {
     if (/PR A.*propose_new/i.test(msg)) {
       return c.json({ error: 'unsupported_mutation', message: msg }, 400);
     }
+    if (/^unknown_mutation/i.test(msg)) {
+      return c.json({ error: 'unknown_mutation', message: msg }, 400);
+    }
     if (/not.*pending/i.test(msg)) {
       return c.json({ error: 'not_pending', message: msg }, 409);
     }

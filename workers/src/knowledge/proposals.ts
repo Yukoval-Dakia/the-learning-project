@@ -215,6 +215,17 @@ export async function acceptProposal(
         await applyArchive(db, payload);
         return { kind: 'archive_applied', node_id: payload.node_id };
       });
+    default: {
+      // JSON.parse + type assertion above is not validation; a malformed payload
+      // (older code, manual DB row, unexpected LLM tool shape) must surface as 4xx,
+      // not silently fall through and leave the proposal pending.
+      const _exhaustive: never = payload;
+      void _exhaustive;
+      const kind = (payload as { mutation?: unknown }).mutation;
+      throw new Error(
+        `unknown_mutation: proposal ${proposalId} payload mutation=${JSON.stringify(kind)}`,
+      );
+    }
   }
 }
 
@@ -437,14 +448,20 @@ export async function applyMerge(
     }
   }
   const now = Math.floor(Date.now() / 1000);
+  // Each archive gates on into_id still existing & non-archived, evaluated in the
+  // same D1 batch transaction. If into is gone at accept time (or got archived
+  // concurrently), the EXISTS clause makes archives no-ops → no destructive
+  // partial apply; the intoUpdate's own `archived_at is null` clause then 0-changes,
+  // and we surface a stale error instead of a silent half-apply.
   const archiveStmts = payload.from_ids.map((fromId) =>
     db
       .prepare(
         `update knowledge
           set archived_at = ?, updated_at = ?, version = version + 1
-          where id = ? and version = ? and archived_at is null`,
+          where id = ? and version = ? and archived_at is null
+            and exists (select 1 from knowledge where id = ? and archived_at is null)`,
       )
-      .bind(now, now, fromId, payload.expected_versions[fromId]),
+      .bind(now, now, fromId, payload.expected_versions[fromId], payload.into_id),
   );
   // Append from_ids onto into.merged_from JSON array via SQLite JSON1.
   const intoUpdate = db
@@ -460,6 +477,14 @@ export async function applyMerge(
     )
     .bind(JSON.stringify(payload.from_ids), now, payload.into_id);
   const results = await db.batch([...archiveStmts, intoUpdate]);
+  // Check into_id first — when into is missing/archived, archives didn't run
+  // (EXISTS guard), so reporting "from_id stale" would be misleading.
+  const intoChanges =
+    (results[results.length - 1] as { meta?: { changes?: number } } | undefined)?.meta
+      ?.changes ?? 0;
+  if (intoChanges !== 1) {
+    throw new Error(`stale: merge into_id ${payload.into_id} not found or archived`);
+  }
   for (let i = 0; i < archiveStmts.length; i++) {
     const changes =
       (results[i] as { meta?: { changes?: number } } | undefined)?.meta?.changes ?? 0;
@@ -468,12 +493,6 @@ export async function applyMerge(
         `stale: knowledge ${payload.from_ids[i]} version mismatch or already archived`,
       );
     }
-  }
-  const intoChanges =
-    (results[results.length - 1] as { meta?: { changes?: number } } | undefined)?.meta
-      ?.changes ?? 0;
-  if (intoChanges !== 1) {
-    throw new Error(`merge: into_id ${payload.into_id} not found or archived`);
   }
 }
 

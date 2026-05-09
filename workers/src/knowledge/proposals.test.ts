@@ -444,6 +444,25 @@ describe('applyMerge', () => {
       }),
     ).rejects.toThrow(/stale/i);
   });
+
+  it('reports into_id missing as stale (not the from_id) so the failure mode matches reality', async () => {
+    // raceUpdateZeroChanges forces every batch UPDATE to changes=0. Real SQL
+    // semantics: when into is gone, the EXISTS guard makes archive UPDATEs
+    // no-ops and intoUpdate's `archived_at is null` clause also no-ops. The
+    // function should surface the missing into, not blame the from_id.
+    const { db } = makeMockDb({
+      knowledge: { k_from1: { id: 'k_from1', archived_at: null, version: 2 } },
+      raceUpdateZeroChanges: true,
+    });
+    await expect(
+      applyMerge(db, {
+        mutation: 'merge',
+        from_ids: ['k_from1'],
+        into_id: 'k_into_missing',
+        expected_versions: { k_from1: 2 },
+      }),
+    ).rejects.toThrow(/stale.*into_id.*k_into_missing/i);
+  });
 });
 
 describe('acceptProposal — high-tier mutations', () => {
@@ -520,5 +539,21 @@ describe('acceptProposal — high-tier mutations', () => {
       (c) => /update dreaming_proposal/i.test(c.sql) && /stale/.test(c.binds[0] as string),
     );
     expect(staleUpdate).toBeDefined();
+  });
+
+  it('throws unknown_mutation when payload has unrecognized mutation kind', async () => {
+    const proposal = {
+      id: 'p_bad',
+      kind: 'knowledge',
+      // Bypass type-check: simulates a malformed row (older code, manual write,
+      // or LLM tool with unexpected shape). The runtime switch must reject it.
+      payload: JSON.stringify({ mutation: 'frobnicate', node_id: 'k_x' }),
+      reasoning: 'r',
+      status: 'pending',
+      proposed_at: 1700000000,
+      decided_at: null,
+    };
+    const { db } = makeMockDb({ proposals: { p_bad: proposal } });
+    await expect(acceptProposal(db, 'p_bad')).rejects.toThrow(/unknown_mutation/i);
   });
 });
