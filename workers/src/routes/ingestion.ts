@@ -3,7 +3,15 @@ import { z } from 'zod';
 import { createId } from '@paralleldrive/cuid2';
 import { runTask } from '../ai/runner';
 import { runVisionExtract } from '../ingestion/vision';
-import { IngestionEntrypoint } from '../../../src/core/schema/business';
+import { runProposeAndWrite } from '../knowledge/propose';
+import { runAttributionAndWrite } from '../knowledge/attribute';
+import { loadTreeSnapshot } from '../knowledge/tree';
+import {
+  CauseCategory,
+  IngestionEntrypoint,
+  QuestionBlockRole,
+  QuestionKind,
+} from '../../../src/core/schema/business';
 import type { AppEnv } from '../types';
 
 type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
@@ -208,4 +216,415 @@ ingestion.post('/', async (c) => {
     },
     blocks,
   });
+});
+
+// =================== POST /:id/import ===================
+
+const ImportPageSpan = z.object({
+  page_index: z.number().int().min(0),
+  bbox: z.object({
+    x: z.number(),
+    y: z.number(),
+    width: z.number(),
+    height: z.number(),
+  }),
+  role: QuestionBlockRole.optional(),
+});
+
+const ImportBlock = z.object({
+  block_id: z.string().min(1).optional(),
+  source_block_ids: z.array(z.string().min(1)).min(1),
+  page_spans: z.array(ImportPageSpan).min(1),
+  image_refs: z.array(z.string().min(1)),
+  final_prompt_md: z.string().min(1),
+  final_reference_md: z.string().nullable(),
+  final_wrong_answer_md: z.string().min(1),
+  knowledge_ids: z.array(z.string().min(1)).min(1),
+  cause: z
+    .object({
+      primary_category: CauseCategory,
+      user_notes: z.string().nullable(),
+    })
+    .nullable(),
+  difficulty: z.number().int().min(1).max(5).default(3),
+  question_kind: QuestionKind,
+});
+
+const ImportBody = z.object({
+  blocks: z.array(ImportBlock).min(1),
+});
+
+type SessionRow = {
+  id: string;
+  source_document_id: string | null;
+  source_asset_ids: string;
+  status: string;
+  entrypoint: string;
+  error_message: string | null;
+  created_at: number;
+  updated_at: number;
+  version: number;
+};
+
+type QuestionBlockSelectRow = {
+  id: string;
+  ingestion_session_id: string;
+  source_document_id: string | null;
+  source_asset_ids: string;
+  page_spans: string;
+  extracted_prompt_md: string;
+  reference_md: string | null;
+  wrong_answer_md: string | null;
+  image_refs: string;
+  crop_refs: string;
+  visual_complexity: string;
+  extraction_confidence: number;
+  status: string;
+  knowledge_hint: string | null;
+  merged_from_block_ids: string;
+  imported_question_id: string | null;
+  imported_mistake_id: string | null;
+  created_at: number;
+  updated_at: number;
+  version: number;
+};
+
+ingestion.post('/:id/import', async (c) => {
+  const sessionId = c.req.param('id');
+  const raw = (await c.req.json().catch(() => null)) as unknown;
+  const parsed = ImportBody.safeParse(raw);
+  if (!parsed.success) {
+    return c.json(
+      {
+        error: 'validation_error',
+        message: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
+      },
+      400,
+    );
+  }
+  const body = parsed.data;
+
+  // 1. Validate session exists
+  const session = await c.env.DB.prepare(`select * from ingestion_session where id = ?`)
+    .bind(sessionId)
+    .first<SessionRow>();
+  if (!session) {
+    return c.json({ error: 'not_found', message: `ingestion_session ${sessionId} not found` }, 404);
+  }
+
+  const sessionAssetIds = JSON.parse(session.source_asset_ids) as string[];
+  const sessionAssetSet = new Set(sessionAssetIds);
+
+  // 2. Validate every source_block_id belongs to this session, and block_id (if present) is in source_block_ids
+  const sourceBlockRows = new Map<string, QuestionBlockSelectRow>();
+  const allSourceIds = new Set<string>();
+  for (const block of body.blocks) {
+    for (const sid of block.source_block_ids) allSourceIds.add(sid);
+    if (block.block_id !== undefined && !block.source_block_ids.includes(block.block_id)) {
+      return c.json(
+        {
+          error: 'validation_error',
+          message: `block_id ${block.block_id} must be in its source_block_ids`,
+        },
+        400,
+      );
+    }
+  }
+  for (const sid of allSourceIds) {
+    const row = await c.env.DB.prepare(`select * from question_block where id = ?`)
+      .bind(sid)
+      .first<QuestionBlockSelectRow>();
+    if (!row) {
+      return c.json(
+        { error: 'validation_error', message: `unknown source_block_id: ${sid}` },
+        400,
+      );
+    }
+    if (row.ingestion_session_id !== sessionId) {
+      return c.json(
+        {
+          error: 'validation_error',
+          message: `source_block_id ${sid} does not belong to session ${sessionId}`,
+        },
+        400,
+      );
+    }
+    sourceBlockRows.set(sid, row);
+  }
+
+  // 3. Validate image_refs belong to session.source_asset_ids
+  for (const block of body.blocks) {
+    for (const ref of block.image_refs) {
+      if (!sessionAssetSet.has(ref)) {
+        return c.json(
+          {
+            error: 'validation_error',
+            message: `image_ref ${ref} not in session source_asset_ids`,
+          },
+          400,
+        );
+      }
+    }
+  }
+
+  // 4. Validate knowledge_ids
+  for (const block of body.blocks) {
+    for (const kid of block.knowledge_ids) {
+      const k = await c.env.DB.prepare(
+        `select id from knowledge where id = ? and archived_at is null`,
+      )
+        .bind(kid)
+        .first();
+      if (!k) {
+        return c.json(
+          {
+            error: 'validation_error',
+            message: `unknown or archived knowledge_id: ${kid}`,
+          },
+          400,
+        );
+      }
+    }
+  }
+
+  // ---- All validation passed; build and execute batch ----
+  const now = Math.floor(Date.now() / 1000);
+
+  // Pre-compute the set of block_ids being imported as "unchanged"
+  const directlyImportedIds = new Set<string>();
+  for (const b of body.blocks) {
+    if (b.block_id !== undefined) directlyImportedIds.add(b.block_id);
+  }
+
+  // Track source blocks that should be marked 'ignored' (used by virtual cards
+  // but NOT also imported directly as unchanged)
+  const toIgnore = new Set<string>();
+
+  const batchStmts: Array<ReturnType<typeof c.env.DB.prepare>> = [];
+
+  const questionIds: string[] = [];
+  const mistakeIds: string[] = [];
+  // Track per-block: which mistakeId pairs with which knowledge_ids/content for waitUntils
+  const queueData: Array<{
+    mistakeId: string;
+    prompt_md: string;
+    reference_md: string | null;
+    wrong_answer_md: string;
+    knowledge_ids: string[];
+    cause: { primary_category: string; user_notes: string | null } | null;
+  }> = [];
+
+  for (const block of body.blocks) {
+    let importedBlockId: string;
+
+    if (block.block_id !== undefined) {
+      importedBlockId = block.block_id;
+    } else {
+      // Virtual card (merged or split): INSERT new question_block
+      importedBlockId = createId();
+      const sourceRows = block.source_block_ids
+        .map((sid) => sourceBlockRows.get(sid))
+        .filter((r): r is QuestionBlockSelectRow => r !== undefined);
+      const allLow = sourceRows.length > 0 && sourceRows.every((r) => r.visual_complexity === 'low');
+      const visualComplexity = allLow ? 'low' : 'medium';
+
+      batchStmts.push(
+        c.env.DB.prepare(
+          `insert into question_block (
+            id, ingestion_session_id, source_document_id, source_asset_ids,
+            page_spans, extracted_prompt_md, reference_md, wrong_answer_md,
+            image_refs, crop_refs, visual_complexity, extraction_confidence,
+            status, knowledge_hint, merged_from_block_ids,
+            imported_question_id, imported_mistake_id, created_at, updated_at, version
+          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+        ).bind(
+          importedBlockId,
+          sessionId,
+          session.source_document_id,
+          JSON.stringify(block.image_refs),
+          JSON.stringify(block.page_spans),
+          block.final_prompt_md,
+          block.final_reference_md,
+          block.final_wrong_answer_md,
+          JSON.stringify(block.image_refs),
+          JSON.stringify([]),
+          visualComplexity,
+          1,
+          'imported',
+          null,
+          JSON.stringify(block.source_block_ids),
+          null, // imported_question_id (filled later by UPDATE)
+          null, // imported_mistake_id  (filled later by UPDATE)
+          now,
+          now,
+        ),
+      );
+      // Mark source blocks for 'ignored' status — except those being imported as unchanged
+      for (const sid of block.source_block_ids) {
+        if (!directlyImportedIds.has(sid)) {
+          toIgnore.add(sid);
+        }
+      }
+    }
+
+    // Compute wrong_answer_image_refs
+    const wrongAnswerImageRefs = [
+      ...new Set(
+        block.page_spans
+          .filter((s) => s.role === 'answer_area')
+          .map((s) => sessionAssetIds[s.page_index])
+          .filter((id): id is string => typeof id === 'string' && block.image_refs.includes(id)),
+      ),
+    ];
+
+    // INSERT question
+    const questionId = createId();
+    questionIds.push(questionId);
+    const questionMetadata = JSON.stringify({
+      prompt_image_refs: block.image_refs,
+      prompt_image_ref_kind: 'source_asset_id',
+      source_document_id: session.source_document_id,
+      ingestion_session_id: sessionId,
+      question_block_id: importedBlockId,
+    });
+    batchStmts.push(
+      c.env.DB.prepare(
+        `insert into question (
+          id, kind, prompt_md, reference_md, knowledge_ids, difficulty,
+          source, variant_depth, metadata, created_at, updated_at, version
+        ) values (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 0)`,
+      ).bind(
+        questionId,
+        block.question_kind,
+        block.final_prompt_md,
+        block.final_reference_md,
+        JSON.stringify(block.knowledge_ids),
+        block.difficulty,
+        session.entrypoint,
+        questionMetadata,
+        now,
+        now,
+      ),
+    );
+
+    // INSERT mistake
+    const mistakeId = createId();
+    mistakeIds.push(mistakeId);
+    const causeJson = block.cause
+      ? JSON.stringify({
+          primary_category: block.cause.primary_category,
+          secondary_categories: [],
+          ai_analysis_md: '',
+          user_notes: block.cause.user_notes,
+          user_edited: true,
+        })
+      : null;
+    batchStmts.push(
+      c.env.DB.prepare(
+        `insert into mistake (
+          id, question_id, wrong_answer_md, knowledge_ids, cause,
+          wrong_answer_image_refs, source, variants, variants_generated_count, variants_max,
+          status, created_at, updated_at, version
+        ) values (?, ?, ?, ?, ?, ?, ?, '[]', 0, 3, 'active', ?, ?, 0)`,
+      ).bind(
+        mistakeId,
+        questionId,
+        block.final_wrong_answer_md,
+        JSON.stringify(block.knowledge_ids),
+        causeJson,
+        JSON.stringify(wrongAnswerImageRefs),
+        session.entrypoint,
+        now,
+        now,
+      ),
+    );
+
+    // UPDATE question_block to set imported_question_id, imported_mistake_id, status
+    batchStmts.push(
+      c.env.DB.prepare(
+        `update question_block set imported_question_id = ?, imported_mistake_id = ?, status = 'imported', updated_at = ?, version = version + 1 where id = ?`,
+      ).bind(questionId, mistakeId, now, importedBlockId),
+    );
+
+    queueData.push({
+      mistakeId,
+      prompt_md: block.final_prompt_md,
+      reference_md: block.final_reference_md,
+      wrong_answer_md: block.final_wrong_answer_md,
+      knowledge_ids: block.knowledge_ids,
+      cause: block.cause,
+    });
+  }
+
+  // UPDATE source blocks → status='ignored' (those not directly imported)
+  for (const sid of toIgnore) {
+    batchStmts.push(
+      c.env.DB.prepare(
+        `update question_block set status = ?, updated_at = ?, version = version + 1 where id = ?`,
+      ).bind('ignored', now, sid),
+    );
+  }
+
+  // UPDATE ingestion_session → status='imported'
+  batchStmts.push(
+    c.env.DB.prepare(
+      `update ingestion_session set status = 'imported', updated_at = ?, version = version + 1 where id = ?`,
+    ).bind(now, sessionId),
+  );
+
+  await c.env.DB.batch(batchStmts);
+
+  // Queue post-write tasks
+  for (const q of queueData) {
+    c.executionCtx.waitUntil(
+      runProposeAndWrite({
+        db: c.env.DB,
+        mistakeContent: {
+          prompt_md: q.prompt_md,
+          reference_md: q.reference_md,
+          wrong_answer_md: q.wrong_answer_md,
+          knowledge_ids_picked: q.knowledge_ids,
+        },
+        runTaskFn: async (kind, input, ctx) => {
+          const result = await runTask(kind, input, ctx as { env: typeof c.env });
+          return { text: result.text };
+        },
+        env: c.env,
+      }),
+    );
+    if (q.cause === null) {
+      c.executionCtx.waitUntil(
+        (async () => {
+          try {
+            const tree = await loadTreeSnapshot(c.env.DB);
+            const pickedNodes = tree.filter((n) => q.knowledge_ids.includes(n.id));
+            await runAttributionAndWrite({
+              db: c.env.DB,
+              mistakeId: q.mistakeId,
+              expectedVersion: 0,
+              input: {
+                prompt_md: q.prompt_md,
+                reference_md: q.reference_md,
+                wrong_answer_md: q.wrong_answer_md,
+                knowledge_context: pickedNodes.map((n) => ({
+                  id: n.id,
+                  name: n.name,
+                  effective_domain: n.effective_domain,
+                })),
+              },
+              runTaskFn: async (kind, input, ctx) => {
+                const result = await runTask(kind, input, ctx as { env: typeof c.env });
+                return { text: result.text };
+              },
+              env: c.env,
+            });
+          } catch (err) {
+            console.error('attribution prep failed (mistake unaffected)', err);
+          }
+        })(),
+      );
+    }
+  }
+
+  return c.json({ question_ids: questionIds, mistake_ids: mistakeIds });
 });
