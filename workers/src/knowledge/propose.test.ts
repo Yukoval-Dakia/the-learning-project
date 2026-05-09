@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { parseProposeOutput } from './propose';
+import { describe, expect, it, vi } from 'vitest';
+import type { D1Database } from '@cloudflare/workers-types';
+import { parseProposeOutput, runProposeAndWrite } from './propose';
 
 describe('parseProposeOutput', () => {
   it('parses well-formed JSON with proposals array', () => {
@@ -43,5 +44,106 @@ describe('parseProposeOutput', () => {
   it('throws when an entry has empty name or reasoning', () => {
     const text = '{"proposals":[{"name":"","parent_id":"p","reasoning":"r"}]}';
     expect(() => parseProposeOutput(text)).toThrow();
+  });
+});
+
+function makePropoeMockDb(opts: {
+  tree: Array<{ id: string; name: string; domain: string | null; parent_id: string | null; archived_at: number | null }>;
+}) {
+  const inserted: Array<{ payload: string; reasoning: string }> = [];
+  const knowledgeById = new Map(opts.tree.map((r) => [r.id, r]));
+  const prepare = vi.fn((sql: string) => ({
+    bind: (...binds: unknown[]) => ({
+      first: async () => {
+        if (/select id from knowledge where id = \? and archived_at is null/i.test(sql)) {
+          const id = binds[0] as string;
+          const row = knowledgeById.get(id);
+          return row && row.archived_at === null ? { id } : null;
+        }
+        return null;
+      },
+      all: async () => ({ results: opts.tree }),
+      run: async () => {
+        if (/insert into dreaming_proposal/i.test(sql)) {
+          inserted.push({ payload: binds[2] as string, reasoning: binds[3] as string });
+        }
+        return { success: true, meta: { changes: 1 } };
+      },
+    }),
+  }));
+  const db = { prepare } as unknown as D1Database;
+  return { db, inserted };
+}
+
+describe('runProposeAndWrite', () => {
+  it('writes one dreaming_proposal per parsed propose_new entry', async () => {
+    const { db, inserted } = makePropoeMockDb({
+      tree: [{ id: 'k_xuci', name: '虚词', domain: 'wenyan', parent_id: null, archived_at: null }],
+    });
+    const fakeRunTask = async () => ({
+      task_run_id: 't1',
+      text: '{"proposals":[{"name":"之-主谓","parent_id":"k_xuci","reasoning":"r1"},{"name":"乎","parent_id":"k_xuci","reasoning":"r2"}]}',
+      finishReason: 'stop',
+      usage: { inputTokens: 0, outputTokens: 0 },
+    });
+    await runProposeAndWrite({
+      db,
+      mistakeContent: { prompt_md: 'p', reference_md: null, wrong_answer_md: 'w', knowledge_ids_picked: ['k_xuci'] },
+      runTaskFn: fakeRunTask,
+    });
+    expect(inserted).toHaveLength(2);
+    expect(JSON.parse(inserted[0].payload)).toMatchObject({ mutation: 'propose_new', name: '之-主谓', parent_id: 'k_xuci' });
+  });
+
+  it('skips entries whose parent_id does not exist', async () => {
+    const { db, inserted } = makePropoeMockDb({
+      tree: [{ id: 'k_xuci', name: '虚词', domain: 'wenyan', parent_id: null, archived_at: null }],
+    });
+    const fakeRunTask = async () => ({
+      task_run_id: 't',
+      text: '{"proposals":[{"name":"X","parent_id":"k_xuci","reasoning":"r"},{"name":"Y","parent_id":"k_does_not_exist","reasoning":"r"}]}',
+      finishReason: 'stop',
+      usage: { inputTokens: 0, outputTokens: 0 },
+    });
+    await runProposeAndWrite({
+      db,
+      mistakeContent: { prompt_md: 'p', reference_md: null, wrong_answer_md: 'w', knowledge_ids_picked: [] },
+      runTaskFn: fakeRunTask,
+    });
+    expect(inserted).toHaveLength(1);
+    expect(JSON.parse(inserted[0].payload).name).toBe('X');
+  });
+
+  it('swallows runTask error (no inserts; no throw)', async () => {
+    const { db, inserted } = makePropoeMockDb({ tree: [] });
+    const fakeRunTask = async () => {
+      throw new Error('LLM down');
+    };
+    await expect(
+      runProposeAndWrite({
+        db,
+        mistakeContent: { prompt_md: 'p', reference_md: null, wrong_answer_md: 'w', knowledge_ids_picked: [] },
+        runTaskFn: fakeRunTask,
+      }),
+    ).resolves.toBeUndefined();
+    expect(inserted).toHaveLength(0);
+  });
+
+  it('swallows parseProposeOutput error (no inserts; no throw)', async () => {
+    const { db, inserted } = makePropoeMockDb({ tree: [] });
+    const fakeRunTask = async () => ({
+      task_run_id: 't',
+      text: '不是 JSON',
+      finishReason: 'stop',
+      usage: { inputTokens: 0, outputTokens: 0 },
+    });
+    await expect(
+      runProposeAndWrite({
+        db,
+        mistakeContent: { prompt_md: 'p', reference_md: null, wrong_answer_md: 'w', knowledge_ids_picked: [] },
+        runTaskFn: fakeRunTask,
+      }),
+    ).resolves.toBeUndefined();
+    expect(inserted).toHaveLength(0);
   });
 });
