@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { acceptProposal, dismissProposal } from '../knowledge/proposals';
+import { streamReviewTask } from '../knowledge/review';
 import type { AppEnv } from '../types';
 
 export const knowledge = new Hono<AppEnv>();
@@ -71,4 +72,8 @@ knowledge.post('/proposals/:id/decide', async (c) => {
     }
     throw e;
   }
+});
+
+knowledge.post('/review', async (c) => {
+  return streamReviewTask({ env: c.env });
 });

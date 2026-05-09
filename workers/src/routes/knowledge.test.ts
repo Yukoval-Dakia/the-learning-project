@@ -38,6 +38,9 @@ function mockEnv(
             );
             return { results };
           }
+          if (/from mistake/i.test(sql)) {
+            return { results: [] };
+          }
           return { results: [] };
         },
         run: async () => {
@@ -194,5 +197,27 @@ describe('POST /api/knowledge/proposals/:id/decide', () => {
     expect(res.status).toBe(409);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe('stale');
+  });
+});
+
+describe('POST /api/knowledge/review', () => {
+  it('hits the wired handler (does not 404)', async () => {
+    const { Bindings } = mockEnv(
+      [{ id: 'k1', name: '虚词', domain: 'wenyan', parent_id: null, archived_at: null, version: 0 }],
+      [],
+    );
+    // Real LLM call would happen via streamReviewTask → streamTask → anthropic provider
+    // (no network in test env). We don't inject a mock model here (router doesn't expose
+    // that override). Deep streaming behavior is covered by review.test.ts (Task 8) using
+    // MockLanguageModelV3.
+    //
+    // For the router test, we only assert: handler is mounted (not 404). The eventual
+    // status may be 500 because the LLM call fails — that's fine, the handler ran.
+    const res = await knowledge.request(
+      '/review',
+      { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } },
+      { ...Bindings },
+    );
+    expect(res.status).not.toBe(404);
   });
 });
