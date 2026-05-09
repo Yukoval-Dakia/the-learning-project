@@ -6,6 +6,9 @@ import * as t from '../../db/schema';
 export const KnowledgeInsertGenerated = createInsertSchema(t.knowledge);
 export const KnowledgeSelectGenerated = createSelectSchema(t.knowledge);
 
+export const SourceAssetInsertGenerated = createInsertSchema(t.source_asset);
+export const SourceAssetSelectGenerated = createSelectSchema(t.source_asset);
+
 export const QuestionInsertGenerated = createInsertSchema(t.question);
 export const QuestionSelectGenerated = createSelectSchema(t.question);
 

@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { D1Database, ExecutionContext } from '@cloudflare/workers-types';
+import type { D1Database, ExecutionContext, R2Bucket } from '@cloudflare/workers-types';
 import { mistakes } from './mistakes';
 
 function mockEnv(opts: {
   knowledgeRows?: Array<{ id: string; name: string; domain: string | null; parent_id: string | null; archived_at: number | null }>;
   treeAllThrows?: boolean;
+  sourceAssetIds?: string[];
 } = {}) {
   const knowledgeById = new Map((opts.knowledgeRows ?? []).map((r) => [r.id, r]));
   const calls: Array<{ sql: string; binds: unknown[] }> = [];
@@ -17,6 +18,10 @@ function mockEnv(opts: {
             const id = binds[0] as string;
             const row = knowledgeById.get(id);
             return row && row.archived_at === null ? { id } : null;
+          }
+          if (/select id from source_asset where id = \?/i.test(sql)) {
+            const id = binds[0] as string;
+            return (opts.sourceAssetIds ?? []).includes(id) ? { id } : null;
           }
           return null;
         },
@@ -50,7 +55,7 @@ function mockEnv(opts: {
     props: {},
   } as unknown as ExecutionContext;
   return {
-    Bindings: { DB: db, INTERNAL_TOKEN: 'test', ANTHROPIC_API_KEY: 'test' },
+    Bindings: { DB: db, IMAGES: { put: vi.fn(async () => null) } as unknown as R2Bucket, INTERNAL_TOKEN: 'test', ANTHROPIC_API_KEY: 'test' },
     executionCtx,
     calls,
     waitUntilFns,
@@ -194,11 +199,10 @@ describe('POST /api/mistakes', () => {
     expect(insertMistakeCall?.binds[4]).toBeNull();
   });
 
-  it('rejects when total image bytes exceed D1 cell limit', async () => {
+  it('rejects unknown wrong_answer_image_refs even when prompt_image_refs is empty', async () => {
     const { Bindings, executionCtx } = mockEnv({
       knowledgeRows: [{ id: 'k1', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null }],
     });
-    const big = 'x'.repeat(900_000);
     const res = await mistakes.request(
       '/',
       {
@@ -211,7 +215,7 @@ describe('POST /api/mistakes', () => {
           cause: null,
           difficulty: 3,
           question_kind: 'short_answer',
-          prompt_image_refs: [big],
+          wrong_answer_image_refs: ['asset_missing'],
         }),
         headers: { 'content-type': 'application/json' },
       },
@@ -219,16 +223,14 @@ describe('POST /api/mistakes', () => {
       executionCtx,
     );
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string; message: string };
-    expect(body.error).toBe('validation_error');
-    expect(body.message).toMatch(/prompt_image_refs/);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toMatch(/unknown wrong_answer_image_refs/);
   });
 
-  it('rejects when wrong_answer_image_refs total exceeds limit', async () => {
+  it('rejects unknown prompt_image_refs asset id', async () => {
     const { Bindings, executionCtx } = mockEnv({
       knowledgeRows: [{ id: 'k1', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null }],
     });
-    const half = 'y'.repeat(500_000);
     const res = await mistakes.request(
       '/',
       {
@@ -241,7 +243,7 @@ describe('POST /api/mistakes', () => {
           cause: null,
           difficulty: 3,
           question_kind: 'short_answer',
-          wrong_answer_image_refs: [half, half],
+          prompt_image_refs: ['asset_missing'],
         }),
         headers: { 'content-type': 'application/json' },
       },
@@ -249,16 +251,15 @@ describe('POST /api/mistakes', () => {
       executionCtx,
     );
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string; message: string };
-    expect(body.message).toMatch(/wrong_answer_image_refs/);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toMatch(/unknown prompt_image_refs/);
   });
 
-  it('persists prompt_image_refs in question.metadata and wrong_answer_image_refs', async () => {
+  it('persists asset id refs and tags metadata kind', async () => {
     const { Bindings, executionCtx, calls } = mockEnv({
       knowledgeRows: [{ id: 'k1', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null }],
+      sourceAssetIds: ['asset_p', 'asset_w'],
     });
-    const promptImage = 'data:image/png;base64,iVBORw0KGgoAAAA';
-    const wrongImage = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEA';
     const res = await mistakes.request(
       '/',
       {
@@ -271,8 +272,8 @@ describe('POST /api/mistakes', () => {
           cause: null,
           difficulty: 3,
           question_kind: 'short_answer',
-          prompt_image_refs: [promptImage],
-          wrong_answer_image_refs: [wrongImage],
+          prompt_image_refs: ['asset_p'],
+          wrong_answer_image_refs: ['asset_w'],
         }),
         headers: { 'content-type': 'application/json' },
       },
@@ -280,13 +281,19 @@ describe('POST /api/mistakes', () => {
       executionCtx,
     );
     expect(res.status).toBe(200);
-    const insertQuestionCall = calls.find((c) => /insert into question/i.test(c.sql));
-    const insertMistakeCall = calls.find((c) => /insert into mistake/i.test(c.sql));
-    const questionMetadataBind = insertQuestionCall?.binds[6] as string | null;
-    expect(questionMetadataBind).not.toBeNull();
-    expect(JSON.parse(questionMetadataBind ?? '{}')).toEqual({ prompt_image_refs: [promptImage] });
-    const mistakeImageRefsBind = insertMistakeCall?.binds[5] as string;
-    expect(JSON.parse(mistakeImageRefsBind)).toEqual([wrongImage]);
+    const insertQ = calls.find((c) => /insert into question/i.test(c.sql));
+    const metaBind = (insertQ?.binds as unknown[])
+      .filter((b): b is string => typeof b === 'string')
+      .find((b) => b.includes('prompt_image_refs'));
+    const meta = JSON.parse(metaBind ?? '{}');
+    expect(meta.prompt_image_refs).toEqual(['asset_p']);
+    expect(meta.prompt_image_ref_kind).toBe('source_asset_id');
+    const insertM = calls.find((c) => /insert into mistake/i.test(c.sql));
+    const wrongRefsBind = (insertM?.binds as unknown[])
+      .filter((b): b is string => typeof b === 'string')
+      .find((b) => b === '["asset_w"]' || b.startsWith('["asset_w"]'));
+    expect(wrongRefsBind).toBeDefined();
+    expect(JSON.parse(wrongRefsBind!)).toEqual(['asset_w']);
   });
 
   it('queues both propose + attribution when cause is null', async () => {
@@ -387,7 +394,7 @@ describe('GET /api/mistakes/recent', () => {
     }));
     const db = { prepare, batch: async () => [] } as unknown as D1Database;
     return {
-      Bindings: { DB: db, INTERNAL_TOKEN: 't', ANTHROPIC_API_KEY: 't' },
+      Bindings: { DB: db, IMAGES: { put: vi.fn(async () => null) } as unknown as R2Bucket, INTERNAL_TOKEN: 't', ANTHROPIC_API_KEY: 't' },
       executionCtx: {
         waitUntil: () => {},
         passThroughOnException: () => {},
