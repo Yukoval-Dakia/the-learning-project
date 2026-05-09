@@ -266,6 +266,69 @@ export async function applyArchive(
 }
 
 /**
+ * Apply split: archive from_id + insert N new children. Each into[i].parent_id must
+ * exist and not be archived. Phase 1a single-domain: rejects parent_id=null entries.
+ *
+ * mistake/question.knowledge_ids JSON arrays are NOT rewritten — they continue to
+ * reference the archived from_id. Read-side UI follows merged_from / archived_at
+ * to surface "tag was split" hint. (Deviation from spec § 3.3 — see plan header.)
+ *
+ * Race-safe via batch: archive UPDATE gates by expected_version; inserts use
+ * INSERT…SELECT…WHERE EXISTS gated on the same version not yet bumped.
+ */
+export async function applySplit(
+  db: D1Database,
+  payload: SplitPayload,
+): Promise<string[]> {
+  for (const entry of payload.into) {
+    if (entry.parent_id === null) {
+      throw new Error(
+        'PR B: split into root (parent_id=null) not supported in Phase 1a single-domain',
+      );
+    }
+    await assertParentExists(db, entry.parent_id);
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const newIds: string[] = payload.into.map(() => createId());
+  const archiveStmt = db
+    .prepare(
+      `update knowledge
+        set archived_at = ?, updated_at = ?, version = version + 1
+        where id = ? and version = ? and archived_at is null`,
+    )
+    .bind(now, now, payload.from_id, payload.expected_version);
+  const insertStmts = payload.into.map((entry, i) =>
+    db
+      .prepare(
+        `insert into knowledge (
+          id, name, domain, parent_id, base_mastery, ai_delta_mastery,
+          merged_from, proposed_by_ai, approval_status, created_at, updated_at, version
+        )
+        select ?, ?, NULL, ?, 0, 0, '[]', 1, 'approved', ?, ?, 0
+        where exists (
+          select 1 from knowledge where id = ? and version = ?
+        )`,
+      )
+      .bind(
+        newIds[i],
+        entry.name,
+        entry.parent_id,
+        now,
+        now,
+        payload.from_id,
+        payload.expected_version + 1,
+      ),
+  );
+  const results = await db.batch([archiveStmt, ...insertStmts]);
+  const archiveChanges =
+    (results[0] as { meta?: { changes?: number } } | undefined)?.meta?.changes ?? 0;
+  if (archiveChanges !== 1) {
+    throw new Error(`stale: knowledge ${payload.from_id} version mismatch or already archived`);
+  }
+  return newIds;
+}
+
+/**
  * Dismiss proposal. Idempotent on already-dismissed (status guard prevents repeated decided_at flips).
  */
 export async function dismissProposal(db: D1Database, proposalId: string): Promise<void> {

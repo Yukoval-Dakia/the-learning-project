@@ -55,7 +55,7 @@ function makeMockDb(opts: MockOptions = {}) {
     batch: async (stmts: Array<{ run: () => Promise<unknown>; _sql?: string }>) => {
       const results: unknown[] = [];
       for (const s of stmts) {
-        if (opts.raceUpdateZeroChanges && /update dreaming_proposal/i.test(s._sql ?? '')) {
+        if (opts.raceUpdateZeroChanges && /update (dreaming_proposal|knowledge)/i.test(s._sql ?? '')) {
           results.push({ success: true, meta: { changes: 0 } });
         } else {
           results.push(await s.run());
@@ -235,7 +235,7 @@ describe('dismissProposal', () => {
   });
 });
 
-import { applyReparent, applyArchive } from './proposals';
+import { applyReparent, applyArchive, applySplit } from './proposals';
 
 describe('applyReparent', () => {
   it('moves a child node to a new parent (happy path)', async () => {
@@ -328,6 +328,64 @@ describe('applyArchive', () => {
         mutation: 'archive',
         node_id: 'k_node',
         expected_version: 5,
+      }),
+    ).rejects.toThrow(/stale/i);
+  });
+});
+
+describe('applySplit', () => {
+  it('archives from + inserts N new children (happy path)', async () => {
+    const { db, calls } = makeMockDb({
+      knowledge: {
+        k_from: { id: 'k_from', archived_at: null, version: 7 },
+        k_p1: { id: 'k_p1', archived_at: null },
+        k_p2: { id: 'k_p2', archived_at: null },
+      },
+    });
+    const newIds = await applySplit(db, {
+      mutation: 'split',
+      from_id: 'k_from',
+      into: [
+        { name: 'A', parent_id: 'k_p1' },
+        { name: 'B', parent_id: 'k_p2' },
+      ],
+      expected_version: 7,
+    });
+    expect(newIds).toHaveLength(2);
+    const inserts = calls.filter((c) => /insert into knowledge/i.test(c.sql));
+    expect(inserts).toHaveLength(2);
+    const archive = calls.find((c) => /update knowledge/i.test(c.sql) && /archived_at/i.test(c.sql));
+    expect(archive).toBeDefined();
+  });
+
+  it('rejects split with into[].parent_id=null (root creation)', async () => {
+    const { db } = makeMockDb({
+      knowledge: { k_from: { id: 'k_from', archived_at: null, version: 1 } },
+    });
+    await expect(
+      applySplit(db, {
+        mutation: 'split',
+        from_id: 'k_from',
+        into: [{ name: 'A', parent_id: null }],
+        expected_version: 1,
+      }),
+    ).rejects.toThrow(/root.*not supported/i);
+  });
+
+  it('throws stale when archive UPDATE returns 0 changes', async () => {
+    const { db } = makeMockDb({
+      knowledge: {
+        k_from: { id: 'k_from', archived_at: null, version: 7 },
+        k_p1: { id: 'k_p1', archived_at: null },
+      },
+      raceUpdateZeroChanges: true,
+    });
+    await expect(
+      applySplit(db, {
+        mutation: 'split',
+        from_id: 'k_from',
+        into: [{ name: 'A', parent_id: 'k_p1' }],
+        expected_version: 7,
       }),
     ).rejects.toThrow(/stale/i);
   });
