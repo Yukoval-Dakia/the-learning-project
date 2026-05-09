@@ -84,11 +84,11 @@ export async function writeDreamingProposal(
 
 async function assertParentExists(db: D1Database, parentId: string): Promise<void> {
   const row = await db
-    .prepare(`select id from knowledge where id = ?`)
+    .prepare(`select id from knowledge where id = ? and archived_at is null`)
     .bind(parentId)
     .first<{ id: string }>();
   if (!row) {
-    throw new Error(`parent knowledge node not found: ${parentId}`);
+    throw new Error(`parent knowledge node not found or archived: ${parentId}`);
   }
 }
 
@@ -208,6 +208,38 @@ export async function acceptProposal(
     throw new Error(`proposal ${proposalId} was concurrently decided`);
   }
   return { kind: 'propose_new_applied', new_node_id: newId };
+}
+
+/**
+ * Apply reparent: change a node's parent_id under optimistic lock.
+ *
+ * Phase 1a single-domain: rejects new_parent_id=null (root creation) — same guard
+ * as applyProposeNew. When the node was a root (parent_id IS NULL, domain set),
+ * the UPDATE also clears domain so the inheritance invariant holds.
+ */
+export async function applyReparent(
+  db: D1Database,
+  payload: ReparentPayload,
+): Promise<void> {
+  if (payload.new_parent_id === null) {
+    throw new Error(
+      'PR B: reparent to root (new_parent_id=null) not supported in Phase 1a single-domain',
+    );
+  }
+  await assertParentExists(db, payload.new_parent_id);
+  const now = Math.floor(Date.now() / 1000);
+  const result = await db
+    .prepare(
+      `update knowledge
+        set parent_id = ?, domain = NULL, updated_at = ?, version = version + 1
+        where id = ? and version = ? and archived_at is null`,
+    )
+    .bind(payload.new_parent_id, now, payload.node_id, payload.expected_version)
+    .run();
+  const changes = (result as { meta?: { changes?: number } }).meta?.changes ?? 0;
+  if (changes !== 1) {
+    throw new Error(`stale: knowledge ${payload.node_id} version mismatch or archived`);
+  }
 }
 
 /**

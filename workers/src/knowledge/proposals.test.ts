@@ -12,6 +12,8 @@ interface MockOptions {
   knowledge?: Record<string, Record<string, unknown>>;
   /** Force the next batch's UPDATE statement to report 0 row changes (race simulation). */
   raceUpdateZeroChanges?: boolean;
+  /** Force any prepare/run matching this regex to report 0 row changes (stale simulation). */
+  runZeroChangesFor?: RegExp;
 }
 
 function makeMockDb(opts: MockOptions = {}) {
@@ -30,11 +32,19 @@ function makeMockDb(opts: MockOptions = {}) {
             return tableRows.dreaming_proposal[binds[0] as string] ?? null;
           }
           if (/select id from knowledge where id = \?/i.test(sql)) {
-            return tableRows.knowledge[binds[0] as string] ?? null;
+            const row = tableRows.knowledge[binds[0] as string];
+            if (!row) return null;
+            if (/archived_at is null/i.test(sql) && row.archived_at != null) return null;
+            return row;
           }
           return null;
         },
-        run: async () => ({ success: true, meta: { changes: 1 } }),
+        run: async () => {
+          if (opts.runZeroChangesFor && opts.runZeroChangesFor.test(sql)) {
+            return { success: true, meta: { changes: 0 } };
+          }
+          return { success: true, meta: { changes: 1 } };
+        },
         all: async () => ({ results: Object.values(tableRows.dreaming_proposal) }),
         _sql: sql,
       };
@@ -222,5 +232,72 @@ describe('dismissProposal', () => {
     await dismissProposal(db, 'p4');
     const update = calls.find((c) => /update dreaming_proposal/i.test(c.sql));
     expect(update?.binds[0]).toBe('dismissed');
+  });
+});
+
+import { applyReparent } from './proposals';
+
+describe('applyReparent', () => {
+  it('moves a child node to a new parent (happy path)', async () => {
+    const { db, calls } = makeMockDb({
+      knowledge: {
+        k_node: { id: 'k_node', parent_id: 'k_oldparent', version: 3, archived_at: null },
+        k_newparent: { id: 'k_newparent', archived_at: null },
+      },
+    });
+    await applyReparent(db, {
+      mutation: 'reparent',
+      node_id: 'k_node',
+      new_parent_id: 'k_newparent',
+      expected_version: 3,
+    });
+    const update = calls.find((c) => /update knowledge/i.test(c.sql) && /parent_id/i.test(c.sql));
+    expect(update).toBeDefined();
+    expect(update?.binds[0]).toBe('k_newparent');
+    expect(update?.binds[2]).toBe('k_node');
+    expect(update?.binds[3]).toBe(3);
+  });
+
+  it('rejects reparent → null (root creation, PR A guard)', async () => {
+    const { db } = makeMockDb({});
+    await expect(
+      applyReparent(db, {
+        mutation: 'reparent',
+        node_id: 'k_node',
+        new_parent_id: null,
+        expected_version: 3,
+      }),
+    ).rejects.toThrow(/root.*not supported/i);
+  });
+
+  it('rejects when parent is archived', async () => {
+    const { db } = makeMockDb({
+      knowledge: {
+        k_archived: { id: 'k_archived', archived_at: 1700000000 },
+      },
+    });
+    await expect(
+      applyReparent(db, {
+        mutation: 'reparent',
+        node_id: 'k_node',
+        new_parent_id: 'k_archived',
+        expected_version: 1,
+      }),
+    ).rejects.toThrow(/parent.*not found/i);
+  });
+
+  it('throws stale error when version mismatch (changes=0)', async () => {
+    const { db } = makeMockDb({
+      knowledge: { k_newparent: { id: 'k_newparent', archived_at: null } },
+      runZeroChangesFor: /update knowledge/i,
+    });
+    await expect(
+      applyReparent(db, {
+        mutation: 'reparent',
+        node_id: 'k_node',
+        new_parent_id: 'k_newparent',
+        expected_version: 3,
+      }),
+    ).rejects.toThrow(/stale.*version/i);
   });
 });
