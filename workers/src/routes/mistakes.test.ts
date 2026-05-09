@@ -333,3 +333,81 @@ describe('POST /api/mistakes', () => {
     expect(waitUntilFns).toHaveLength(1);
   });
 });
+
+describe('GET /api/mistakes/recent', () => {
+  function mockEnvWithList(rows: Array<Record<string, unknown>>) {
+    const calls: Array<{ sql: string; binds: unknown[] }> = [];
+    const prepare = vi.fn((sql: string) => ({
+      bind: (...binds: unknown[]) => {
+        calls.push({ sql, binds });
+        return {
+          all: async () => ({ results: rows }),
+          first: async () => null,
+          run: async () => ({ success: true, meta: { changes: 1 } }),
+        };
+      },
+    }));
+    const db = { prepare, batch: async () => [] } as unknown as D1Database;
+    return {
+      Bindings: { DB: db, INTERNAL_TOKEN: 't', ANTHROPIC_API_KEY: 't' },
+      executionCtx: {
+        waitUntil: () => {},
+        passThroughOnException: () => {},
+        props: {},
+      } as unknown as ExecutionContext,
+      calls,
+    };
+  }
+
+  it('returns recent mistakes with prompt + wrong answer + cause', async () => {
+    const { Bindings, executionCtx } = mockEnvWithList([
+      {
+        id: 'm1',
+        question_id: 'q1',
+        prompt_md: 'P'.repeat(300),
+        wrong_answer_md: 'W'.repeat(300),
+        knowledge_ids: '["k1"]',
+        cause: '{"primary_category":"concept","secondary_categories":[],"ai_analysis_md":"a","user_edited":false}',
+        created_at: 1700000000,
+      },
+    ]);
+    const res = await mistakes.request('/recent', { method: 'GET' }, Bindings, executionCtx);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { rows: Array<{ id: string; prompt_md: string; cause: unknown }> };
+    expect(body.rows).toHaveLength(1);
+    expect(body.rows[0].id).toBe('m1');
+    expect(body.rows[0].prompt_md).toHaveLength(200);
+    expect((body.rows[0].cause as { primary_category: string }).primary_category).toBe('concept');
+  });
+
+  it('passes null cause through', async () => {
+    const { Bindings, executionCtx } = mockEnvWithList([
+      {
+        id: 'm2',
+        question_id: 'q2',
+        prompt_md: 'p',
+        wrong_answer_md: 'w',
+        knowledge_ids: '["k1"]',
+        cause: null,
+        created_at: 1700000001,
+      },
+    ]);
+    const res = await mistakes.request('/recent', { method: 'GET' }, Bindings, executionCtx);
+    const body = (await res.json()) as { rows: Array<{ cause: unknown }> };
+    expect(body.rows[0].cause).toBeNull();
+  });
+
+  it('respects limit query param up to 100', async () => {
+    const { Bindings, executionCtx, calls } = mockEnvWithList([]);
+    await mistakes.request('/recent?limit=50', { method: 'GET' }, Bindings, executionCtx);
+    const selectCall = calls.find((c) => /select.*from mistake/i.test(c.sql));
+    expect(selectCall?.binds).toContain(50);
+  });
+
+  it('clamps limit > 100 to 100', async () => {
+    const { Bindings, executionCtx, calls } = mockEnvWithList([]);
+    await mistakes.request('/recent?limit=999', { method: 'GET' }, Bindings, executionCtx);
+    const selectCall = calls.find((c) => /select.*from mistake/i.test(c.sql));
+    expect(selectCall?.binds).toContain(100);
+  });
+});

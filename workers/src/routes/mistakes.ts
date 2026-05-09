@@ -29,6 +29,35 @@ const Body = z.object({
   wrong_answer_image_refs: z.array(z.string().min(1)).default([]),
 });
 
+mistakes.get('/recent', async (c) => {
+  const limitRaw = c.req.query('limit');
+  const limitParsed = limitRaw ? parseInt(limitRaw, 10) : 20;
+  const limit = Math.min(Math.max(isNaN(limitParsed) ? 20 : limitParsed, 1), 100);
+  const rows = await c.env.DB.prepare(
+    `select m.id, m.question_id, m.knowledge_ids, m.cause, m.created_at, q.prompt_md, m.wrong_answer_md from mistake m join question q on q.id = m.question_id where m.archived_at is null and m.deleted_at is null order by m.created_at desc limit ?`,
+  )
+    .bind(limit)
+    .all<{
+      id: string;
+      question_id: string;
+      knowledge_ids: string;
+      cause: string | null;
+      created_at: number;
+      prompt_md: string;
+      wrong_answer_md: string;
+    }>();
+  const out = rows.results.map((r) => ({
+    id: r.id,
+    question_id: r.question_id,
+    prompt_md: r.prompt_md.slice(0, 200),
+    wrong_answer_md: r.wrong_answer_md.slice(0, 200),
+    knowledge_ids: JSON.parse(r.knowledge_ids) as string[],
+    cause: r.cause ? JSON.parse(r.cause) : null,
+    created_at: r.created_at,
+  }));
+  return c.json({ rows: out });
+});
+
 mistakes.post('/', async (c) => {
   const raw = (await c.req.json().catch(() => null)) as unknown;
   const parsed = Body.safeParse(raw);
