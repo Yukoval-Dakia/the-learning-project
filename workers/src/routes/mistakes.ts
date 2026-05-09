@@ -8,6 +8,8 @@ import type { AppEnv } from '../types';
 
 export const mistakes = new Hono<AppEnv>();
 
+const TOTAL_IMAGE_BYTES_LIMIT = 800_000;
+
 const Body = z.object({
   prompt_md: z.string().min(1, 'prompt_md is required'),
   reference_md: z.string().nullable(),
@@ -51,6 +53,27 @@ mistakes.post('/', async (c) => {
       {
         error: 'validation_error',
         message: `unknown or archived knowledge_ids: ${missing.join(', ')}`,
+      },
+      400,
+    );
+  }
+
+  const promptImageBytes = body.prompt_image_refs.reduce((sum, s) => sum + s.length, 0);
+  if (promptImageBytes > TOTAL_IMAGE_BYTES_LIMIT) {
+    return c.json(
+      {
+        error: 'validation_error',
+        message: `prompt_image_refs total ${promptImageBytes} bytes exceeds ${TOTAL_IMAGE_BYTES_LIMIT} (D1 cell ~1MB limit)`,
+      },
+      400,
+    );
+  }
+  const wrongAnswerImageBytes = body.wrong_answer_image_refs.reduce((sum, s) => sum + s.length, 0);
+  if (wrongAnswerImageBytes > TOTAL_IMAGE_BYTES_LIMIT) {
+    return c.json(
+      {
+        error: 'validation_error',
+        message: `wrong_answer_image_refs total ${wrongAnswerImageBytes} bytes exceeds ${TOTAL_IMAGE_BYTES_LIMIT} (D1 cell ~1MB limit)`,
       },
       400,
     );

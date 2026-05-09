@@ -188,6 +188,65 @@ describe('POST /api/mistakes', () => {
     expect(insertMistakeCall?.binds[4]).toBeNull();
   });
 
+  it('rejects when total image bytes exceed D1 cell limit', async () => {
+    const { Bindings, executionCtx } = mockEnv({
+      knowledgeRows: [{ id: 'k1', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null }],
+    });
+    const big = 'x'.repeat(900_000);
+    const res = await mistakes.request(
+      '/',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          prompt_md: 'p',
+          reference_md: null,
+          wrong_answer_md: 'w',
+          knowledge_ids: ['k1'],
+          cause: null,
+          difficulty: 3,
+          question_kind: 'short_answer',
+          prompt_image_refs: [big],
+        }),
+        headers: { 'content-type': 'application/json' },
+      },
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe('validation_error');
+    expect(body.message).toMatch(/prompt_image_refs/);
+  });
+
+  it('rejects when wrong_answer_image_refs total exceeds limit', async () => {
+    const { Bindings, executionCtx } = mockEnv({
+      knowledgeRows: [{ id: 'k1', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null }],
+    });
+    const half = 'y'.repeat(500_000);
+    const res = await mistakes.request(
+      '/',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          prompt_md: 'p',
+          reference_md: null,
+          wrong_answer_md: 'w',
+          knowledge_ids: ['k1'],
+          cause: null,
+          difficulty: 3,
+          question_kind: 'short_answer',
+          wrong_answer_image_refs: [half, half],
+        }),
+        headers: { 'content-type': 'application/json' },
+      },
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.message).toMatch(/wrong_answer_image_refs/);
+  });
+
   it('persists prompt_image_refs in question.metadata and wrong_answer_image_refs', async () => {
     const { Bindings, executionCtx, calls } = mockEnv({
       knowledgeRows: [{ id: 'k1', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null }],

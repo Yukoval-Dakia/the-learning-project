@@ -24,7 +24,7 @@ interface MistakePayload {
   wrong_answer_image_refs: string[];
 }
 
-const MAX_IMAGE_BYTES = 700_000;
+const MAX_IMAGE_BYTES = 500_000;
 
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
