@@ -7,6 +7,7 @@ import { getDb } from './db';
 import { seedKnowledge } from './knowledge/seed';
 import { knowledge } from './routes/knowledge';
 import { logs } from './routes/logs';
+import { mistakes } from './routes/mistakes';
 import type { AppEnv } from './types';
 
 const app = new Hono<AppEnv>();
@@ -24,6 +25,7 @@ app.use('/api/*', internalAuth);
 
 app.route('/api/_/logs', logs);
 app.route('/api/knowledge', knowledge);
+app.route('/api/mistakes', mistakes);
 
 app.post('/api/_/seed', async (c) => {
   const result = await seedKnowledge(c.env.DB);
