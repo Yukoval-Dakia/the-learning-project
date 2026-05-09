@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
@@ -107,7 +107,7 @@ export function RecordMistake() {
     },
   });
 
-  function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setErrorMsg(null);
     if (!promptMd.trim() || !wrongAnswerMd.trim() || selectedKnowledgeIds.length === 0) {
