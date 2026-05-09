@@ -187,4 +187,40 @@ describe('POST /api/mistakes', () => {
     expect(insertMistakeCall).toBeDefined();
     expect(insertMistakeCall?.binds[4]).toBeNull();
   });
+
+  it('persists prompt_image_refs in question.metadata and wrong_answer_image_refs', async () => {
+    const { Bindings, executionCtx, calls } = mockEnv({
+      knowledgeRows: [{ id: 'k1', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null }],
+    });
+    const promptImage = 'data:image/png;base64,iVBORw0KGgoAAAA';
+    const wrongImage = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEA';
+    const res = await mistakes.request(
+      '/',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          prompt_md: 'p',
+          reference_md: null,
+          wrong_answer_md: 'w',
+          knowledge_ids: ['k1'],
+          cause: null,
+          difficulty: 3,
+          question_kind: 'short_answer',
+          prompt_image_refs: [promptImage],
+          wrong_answer_image_refs: [wrongImage],
+        }),
+        headers: { 'content-type': 'application/json' },
+      },
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(200);
+    const insertQuestionCall = calls.find((c) => /insert into question/i.test(c.sql));
+    const insertMistakeCall = calls.find((c) => /insert into mistake/i.test(c.sql));
+    const questionMetadataBind = insertQuestionCall?.binds[6] as string | null;
+    expect(questionMetadataBind).not.toBeNull();
+    expect(JSON.parse(questionMetadataBind ?? '{}')).toEqual({ prompt_image_refs: [promptImage] });
+    const mistakeImageRefsBind = insertMistakeCall?.binds[5] as string;
+    expect(JSON.parse(mistakeImageRefsBind)).toEqual([wrongImage]);
+  });
 });
