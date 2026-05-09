@@ -2,7 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 import type { D1Database } from '@cloudflare/workers-types';
 import { knowledge } from './knowledge';
 
-function mockEnv(allRows: Record<string, unknown>[] = [], proposalRows: Record<string, unknown>[] = []) {
+function mockEnv(
+  allRows: Record<string, unknown>[] = [],
+  proposalRows: Record<string, unknown>[] = [],
+  opts: { forceZeroChangesOnUpdate?: RegExp } = {},
+) {
   const knowledgeTable: Record<string, Record<string, unknown>> = {};
   for (const r of allRows) knowledgeTable[r.id as string] = r;
   const proposalTable: Record<string, Record<string, unknown>> = {};
@@ -34,9 +38,17 @@ function mockEnv(allRows: Record<string, unknown>[] = [], proposalRows: Record<s
             );
             return { results };
           }
+          if (/from mistake/i.test(sql)) {
+            return { results: [] };
+          }
           return { results: [] };
         },
-        run: async () => ({ success: true, meta: { changes: 1 } }),
+        run: async () => {
+          if (opts.forceZeroChangesOnUpdate?.test(sql)) {
+            return { success: true, meta: { changes: 0 } };
+          }
+          return { success: true, meta: { changes: 1 } };
+        },
       };
     },
   }));
@@ -151,5 +163,61 @@ describe('POST /api/knowledge/proposals/:id/decide', () => {
     expect(res.status).toBe(200);
     const update = calls.find((c) => /update dreaming_proposal/i.test(c.sql));
     expect(update?.binds[0]).toBe('dismissed');
+  });
+
+  it('returns 409 when underlying mutation is stale', async () => {
+    const { Bindings } = mockEnv(
+      [{ id: 'k_node', name: 'X', domain: null, parent_id: 'k_p1', archived_at: null, version: 5 }],
+      [
+        {
+          id: 'p_stale',
+          kind: 'knowledge',
+          payload: JSON.stringify({
+            mutation: 'archive',
+            node_id: 'k_node',
+            expected_version: 5,
+          }),
+          reasoning: 'r',
+          status: 'pending',
+          proposed_at: 1700000000,
+          decided_at: null,
+        },
+      ],
+      { forceZeroChangesOnUpdate: /update knowledge/i },
+    );
+    const res = await knowledge.request(
+      '/proposals/p_stale/decide',
+      {
+        method: 'POST',
+        body: JSON.stringify({ decision: 'accept' }),
+        headers: { 'content-type': 'application/json' },
+      },
+      { ...Bindings },
+    );
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('stale');
+  });
+});
+
+describe('POST /api/knowledge/review', () => {
+  it('hits the wired handler (does not 404)', async () => {
+    const { Bindings } = mockEnv(
+      [{ id: 'k1', name: '虚词', domain: 'wenyan', parent_id: null, archived_at: null, version: 0 }],
+      [],
+    );
+    // Real LLM call would happen via streamReviewTask → streamTask → anthropic provider
+    // (no network in test env). We don't inject a mock model here (router doesn't expose
+    // that override). Deep streaming behavior is covered by review.test.ts (Task 8) using
+    // MockLanguageModelV3.
+    //
+    // For the router test, we only assert: handler is mounted (not 404). The eventual
+    // status may be 500 because the LLM call fails — that's fine, the handler ran.
+    const res = await knowledge.request(
+      '/review',
+      { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } },
+      { ...Bindings },
+    );
+    expect(res.status).not.toBe(404);
   });
 });

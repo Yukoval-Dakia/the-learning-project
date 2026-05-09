@@ -109,11 +109,11 @@ export type CompletionEvidence = z.infer<typeof CompletionEvidence>;
 // ---------- Dreaming ----------
 export const DreamingProposalInsert = g.DreamingProposalInsertGenerated.extend({
   kind: b.DreamingProposalKind,
-  status: z.enum(['pending', 'accepted', 'dismissed']).nullish(),
+  status: z.enum(['pending', 'accepted', 'dismissed', 'stale']).nullish(),
 });
 export const DreamingProposal = g.DreamingProposalSelectGenerated.extend({
   kind: b.DreamingProposalKind,
-  status: z.enum(['pending', 'accepted', 'dismissed']),
+  status: z.enum(['pending', 'accepted', 'dismissed', 'stale']),
 });
 export type DreamingProposal = z.infer<typeof DreamingProposal>;
 

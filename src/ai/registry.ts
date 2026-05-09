@@ -77,6 +77,19 @@ export const tasks = {
     systemPrompt:
       '你是知识图谱编辑助手。用户录入了一道做错的题，挂的 knowledge_ids 是用户自选。看错题内容 + 当前 tree snapshot，如果你认为 tree 里缺一个**更精确**的子节点能挂这条 mistake（例：「之-主谓间用法」之于「虚词」），propose 它。0-3 条，不必凑数。每条返回 { name, parent_id, reasoning }。parent_id 必须是 tree 里已有节点 id；若找不到合适 parent，跳过这条。',
   },
+  KnowledgeReviewTask: {
+    kind: 'KnowledgeReviewTask',
+    description: '看完整 tree + 最近 mistakes，提议任意 mutation（reparent/merge/split/archive/propose_new）让 tree 更合理',
+    defaultProvider: 'anthropic',
+    defaultModel: 'claude-sonnet-4-6',
+    fallbackChain: [{ provider: 'anthropic', model: 'claude-haiku-4-5-20251001' }],
+    budget: { ...DEFAULT_BUDGET, maxIterations: 12, timeout: 120_000 },
+    needsToolCall: true,
+    isMultimodal: false,
+    allowedTools: ['write_proposal'],
+    systemPrompt:
+      '你是知识图谱维护助手。看完整 tree（含层级 / archived / merged_from）+ 最近的 mistake 数据，propose 让 tree 更合理的 mutation。可选 mutation：propose_new（加新子节点）/ reparent（移到别 parent 下）/ merge（合并冗余）/ split（拆解过粗）/ archive（archive 没用的）。每 propose 一条，调一次 write_proposal({mutation, payload, reasoning})。reasoning 必须具体（指向 mistake id 或 tree 结构）。不必凑数；如果 tree 已经合理，0 条也行。Phase 1a 单 domain wenyan：禁止 propose_new / reparent / split 把节点变 root（parent_id=null）。',
+  },
   // 其余 Task（VariantGen / Judge* / Dreaming / Maintenance 等）见
   // docs/architecture.md § 五，按需补全。
 } satisfies Record<string, TaskDef>;
