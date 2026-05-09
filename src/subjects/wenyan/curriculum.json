@@ -1,5 +1,13 @@
 {
-  "version": 0,
+  "version": 1,
   "domain": "wenyan",
-  "knowledge_seeds": []
+  "knowledge_seeds": [
+    { "slug": "shici", "name": "实词" },
+    { "slug": "xuci", "name": "虚词" },
+    { "slug": "jushi", "name": "句式" },
+    { "slug": "duanju", "name": "断句" },
+    { "slug": "fanyi", "name": "翻译" },
+    { "slug": "wenxue-changshi", "name": "文学常识" },
+    { "slug": "lunshu", "name": "论述题" }
+  ]
 }
