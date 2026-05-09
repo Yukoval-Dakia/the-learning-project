@@ -9,9 +9,9 @@ import { loadTreeSnapshot } from '../knowledge/tree';
 import {
   CauseCategory,
   IngestionEntrypoint,
-  QuestionBlockRole,
   QuestionKind,
 } from '../../../src/core/schema/business';
+import { PageSpan } from '../../../src/core/schema';
 import type { AppEnv } from '../types';
 
 type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
@@ -118,7 +118,7 @@ ingestion.post('/', async (c) => {
   };
 
   const blocks: BlockRow[] = [];
-  let successCount = 0;
+  const failures: Array<{ asset_id: string; reason: string }> = [];
 
   for (let i = 0; i < assetRows.length; i++) {
     const row = assetRows[i];
@@ -126,6 +126,8 @@ ingestion.post('/', async (c) => {
 
     const r2Object = await c.env.IMAGES.get(row.storage_key);
     if (!r2Object) {
+      console.error('ingestion: r2 object missing', { assetId: row.id, storageKey: row.storage_key });
+      failures.push({ asset_id: row.id, reason: 'r2_object_missing' });
       continue;
     }
 
@@ -143,11 +145,10 @@ ingestion.post('/', async (c) => {
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      void msg;
+      console.error('ingestion: runVisionExtract failed', { assetId: row.id, pageIndex, err: msg });
+      failures.push({ asset_id: row.id, reason: msg });
       continue;
     }
-
-    successCount++;
 
     for (const block of extracted.blocks) {
       const blockId = createId();
@@ -194,14 +195,14 @@ ingestion.post('/', async (c) => {
     }
   }
 
-  const finalStatus =
-    successCount === 0 ? 'failed' : 'extracted';
+  const finalStatus = blocks.length === 0 ? 'failed' : 'extracted';
+  const errorMessage = failures.length > 0 ? JSON.stringify(failures) : null;
 
   const updatedAt = Math.floor(Date.now() / 1000);
   await c.env.DB.prepare(
-    `update ingestion_session set status = ?, updated_at = ?, version = version + 1 where id = ?`,
+    `update ingestion_session set status = ?, error_message = ?, updated_at = ?, version = version + 1 where id = ?`,
   )
-    .bind(finalStatus, updatedAt, sessionId)
+    .bind(finalStatus, errorMessage, updatedAt, sessionId)
     .run();
 
   return c.json({
@@ -220,21 +221,10 @@ ingestion.post('/', async (c) => {
 
 // =================== POST /:id/import ===================
 
-const ImportPageSpan = z.object({
-  page_index: z.number().int().min(0),
-  bbox: z.object({
-    x: z.number(),
-    y: z.number(),
-    width: z.number(),
-    height: z.number(),
-  }),
-  role: QuestionBlockRole.optional(),
-});
-
 const ImportBlock = z.object({
   block_id: z.string().min(1).optional(),
   source_block_ids: z.array(z.string().min(1)).min(1),
-  page_spans: z.array(ImportPageSpan).min(1),
+  page_spans: z.array(PageSpan).min(1),
   image_refs: z.array(z.string().min(1)),
   final_prompt_md: z.string().min(1),
   final_reference_md: z.string().nullable(),
@@ -360,6 +350,21 @@ ingestion.post('/:id/import', async (c) => {
           {
             error: 'validation_error',
             message: `image_ref ${ref} not in session source_asset_ids`,
+          },
+          400,
+        );
+      }
+    }
+  }
+
+  // 3b. Validate page_spans page_index against session asset count
+  for (const block of body.blocks) {
+    for (const span of block.page_spans) {
+      if (span.page_index >= sessionAssetIds.length) {
+        return c.json(
+          {
+            error: 'validation_error',
+            message: `page_index ${span.page_index} out of range (session has ${sessionAssetIds.length} assets)`,
           },
           400,
         );
@@ -577,20 +582,26 @@ ingestion.post('/:id/import', async (c) => {
   // Queue post-write tasks
   for (const q of queueData) {
     c.executionCtx.waitUntil(
-      runProposeAndWrite({
-        db: c.env.DB,
-        mistakeContent: {
-          prompt_md: q.prompt_md,
-          reference_md: q.reference_md,
-          wrong_answer_md: q.wrong_answer_md,
-          knowledge_ids_picked: q.knowledge_ids,
-        },
-        runTaskFn: async (kind, input, ctx) => {
-          const result = await runTask(kind, input, ctx as { env: typeof c.env });
-          return { text: result.text };
-        },
-        env: c.env,
-      }),
+      (async () => {
+        try {
+          await runProposeAndWrite({
+            db: c.env.DB,
+            mistakeContent: {
+              prompt_md: q.prompt_md,
+              reference_md: q.reference_md,
+              wrong_answer_md: q.wrong_answer_md,
+              knowledge_ids_picked: q.knowledge_ids,
+            },
+            runTaskFn: async (kind, input, ctx) => {
+              const result = await runTask(kind, input, ctx as { env: typeof c.env });
+              return { text: result.text };
+            },
+            env: c.env,
+          });
+        } catch (err) {
+          console.error('propose prep failed (mistake unaffected)', err);
+        }
+      })(),
     );
     if (q.cause === null) {
       c.executionCtx.waitUntil(

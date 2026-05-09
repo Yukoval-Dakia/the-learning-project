@@ -860,4 +860,200 @@ describe('POST /api/ingestion/:id/import', () => {
     );
     expect(ignoreUpdates).toHaveLength(0);
   });
+
+  it('rejects image_ref not in session.source_asset_ids → 400, NO inserts', async () => {
+    const blocks = new Map<string, QuestionBlockRow>();
+    blocks.set('block_a', makeBlockRow({ id: 'block_a' }));
+    const { Bindings, executionCtx, calls, waitUntilFns } = mockImportEnv({
+      session: makeSessionRow({ source_asset_ids: '["asset_1"]' }),
+      questionBlocks: blocks,
+      knowledgeIds: ['k1'],
+    });
+
+    const res = await ingestion.request(
+      '/sess_1/import',
+      makeImportRequest({
+        blocks: [
+          {
+            block_id: 'block_a',
+            source_block_ids: ['block_a'],
+            page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' }],
+            image_refs: ['asset_FOREIGN'],
+            final_prompt_md: 'Q',
+            final_reference_md: null,
+            final_wrong_answer_md: 'WA',
+            knowledge_ids: ['k1'],
+            cause: null,
+            difficulty: 3,
+            question_kind: 'short_answer',
+          },
+        ],
+      }),
+      Bindings,
+      executionCtx,
+    );
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toMatch(/image_ref asset_FOREIGN/);
+    expect(calls.some((c) => /insert into question \(/i.test(c.sql))).toBe(false);
+    expect(calls.some((c) => /insert into mistake/i.test(c.sql))).toBe(false);
+    expect(waitUntilFns).toHaveLength(0);
+  });
+
+  it('rejects block_id not in source_block_ids → 400, NO inserts', async () => {
+    const blocks = new Map<string, QuestionBlockRow>();
+    blocks.set('block_a', makeBlockRow({ id: 'block_a' }));
+    blocks.set('block_b', makeBlockRow({ id: 'block_b' }));
+    const { Bindings, executionCtx, calls } = mockImportEnv({
+      session: makeSessionRow({}),
+      questionBlocks: blocks,
+      knowledgeIds: ['k1'],
+    });
+
+    const res = await ingestion.request(
+      '/sess_1/import',
+      makeImportRequest({
+        blocks: [
+          {
+            block_id: 'block_a',
+            source_block_ids: ['block_b'],
+            page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' }],
+            image_refs: ['asset_1'],
+            final_prompt_md: 'Q',
+            final_reference_md: null,
+            final_wrong_answer_md: 'WA',
+            knowledge_ids: ['k1'],
+            cause: null,
+            difficulty: 3,
+            question_kind: 'short_answer',
+          },
+        ],
+      }),
+      Bindings,
+      executionCtx,
+    );
+
+    expect(res.status).toBe(400);
+    expect(calls.some((c) => /insert into question \(/i.test(c.sql))).toBe(false);
+  });
+
+  it('rejects unknown source_block_id (no row at all) → 400', async () => {
+    const blocks = new Map<string, QuestionBlockRow>();
+    // No block_a row in session — DB returns null
+    const { Bindings, executionCtx, calls } = mockImportEnv({
+      session: makeSessionRow({}),
+      questionBlocks: blocks,
+      knowledgeIds: ['k1'],
+    });
+
+    const res = await ingestion.request(
+      '/sess_1/import',
+      makeImportRequest({
+        blocks: [
+          {
+            source_block_ids: ['block_NEVER_EXISTED'],
+            page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' }],
+            image_refs: ['asset_1'],
+            final_prompt_md: 'Q',
+            final_reference_md: null,
+            final_wrong_answer_md: 'WA',
+            knowledge_ids: ['k1'],
+            cause: null,
+            difficulty: 3,
+            question_kind: 'short_answer',
+          },
+        ],
+      }),
+      Bindings,
+      executionCtx,
+    );
+
+    expect(res.status).toBe(400);
+    expect(calls.some((c) => /insert into question \(/i.test(c.sql))).toBe(false);
+  });
+
+  it('rejects page_index out of session asset range → 400', async () => {
+    const blocks = new Map<string, QuestionBlockRow>();
+    blocks.set('block_a', makeBlockRow({ id: 'block_a' }));
+    const { Bindings, executionCtx, calls } = mockImportEnv({
+      session: makeSessionRow({ source_asset_ids: '["asset_1"]' }),
+      questionBlocks: blocks,
+      knowledgeIds: ['k1'],
+    });
+
+    const res = await ingestion.request(
+      '/sess_1/import',
+      makeImportRequest({
+        blocks: [
+          {
+            block_id: 'block_a',
+            source_block_ids: ['block_a'],
+            // session has 1 asset → page_index 5 is out of range
+            page_spans: [{ page_index: 5, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' }],
+            image_refs: ['asset_1'],
+            final_prompt_md: 'Q',
+            final_reference_md: null,
+            final_wrong_answer_md: 'WA',
+            knowledge_ids: ['k1'],
+            cause: null,
+            difficulty: 3,
+            question_kind: 'short_answer',
+          },
+        ],
+      }),
+      Bindings,
+      executionCtx,
+    );
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toMatch(/page_index 5 out of range/);
+    expect(calls.some((c) => /insert into question \(/i.test(c.sql))).toBe(false);
+  });
+
+  it('wrong_answer_image_refs derived from page_spans where role=answer_area', async () => {
+    const blocks = new Map<string, QuestionBlockRow>();
+    blocks.set('block_a', makeBlockRow({ id: 'block_a' }));
+    const { Bindings, executionCtx, calls } = mockImportEnv({
+      session: makeSessionRow({ source_asset_ids: '["asset_p","asset_a"]' }),
+      questionBlocks: blocks,
+      knowledgeIds: ['k1'],
+    });
+
+    const res = await ingestion.request(
+      '/sess_1/import',
+      makeImportRequest({
+        blocks: [
+          {
+            block_id: 'block_a',
+            source_block_ids: ['block_a'],
+            page_spans: [
+              { page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' },
+              { page_index: 1, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'answer_area' },
+            ],
+            image_refs: ['asset_p', 'asset_a'],
+            final_prompt_md: 'Q',
+            final_reference_md: null,
+            final_wrong_answer_md: 'WA',
+            knowledge_ids: ['k1'],
+            cause: { primary_category: 'concept', user_notes: null },
+            difficulty: 3,
+            question_kind: 'short_answer',
+          },
+        ],
+      }),
+      Bindings,
+      executionCtx,
+    );
+
+    expect(res.status).toBe(200);
+    const insertMistake = calls.find((c) => /insert into mistake/i.test(c.sql));
+    expect(insertMistake).toBeDefined();
+    const wrongRefsBind = (insertMistake!.binds as unknown[]).find(
+      (b) => typeof b === 'string' && b.startsWith('[') && b.includes('asset_a') && !b.includes('asset_p'),
+    );
+    expect(wrongRefsBind).toBeDefined();
+    expect(JSON.parse(wrongRefsBind as string)).toEqual(['asset_a']);
+  });
 });

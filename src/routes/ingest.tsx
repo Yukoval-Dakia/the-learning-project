@@ -159,6 +159,7 @@ export function IngestSession() {
     if (selectedFiles.length === 0 || uploading) return;
     setErrorMsg(null);
     setUploading(true);
+    const total = selectedFiles.length;
     const uploadedIds: string[] = [];
     try {
       for (const file of selectedFiles) {
@@ -166,7 +167,10 @@ export function IngestSession() {
         uploadedIds.push(asset.id);
       }
     } catch (e) {
-      setErrorMsg(`上传失败: ${(e as Error).message}`);
+      const remaining = total - uploadedIds.length;
+      setErrorMsg(
+        `上传失败 (${remaining}/${total} 张未上传，已上传 ${uploadedIds.length} 张): ${(e as Error).message}`,
+      );
       setUploading(false);
       return;
     }

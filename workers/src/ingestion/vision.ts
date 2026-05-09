@@ -1,19 +1,13 @@
 import { z } from 'zod';
 import { QuestionBlockRole, VisualComplexity } from '../../../src/core/schema/business';
-
-const BBoxSchema = z.object({
-  x: z.number().min(0).max(1),
-  y: z.number().min(0).max(1),
-  width: z.number().min(0).max(1),
-  height: z.number().min(0).max(1),
-});
+import { BBox } from '../../../src/core/schema';
 
 const VisionBlockSchema = z.object({
   extracted_prompt_md: z.string().min(1).max(5000),
   reference_md: z.string().nullable(),
   wrong_answer_md: z.string().nullable(),
   page_index: z.number().int().min(0),
-  bbox: BBoxSchema,
+  bbox: BBox,
   role: QuestionBlockRole,
   visual_complexity: VisualComplexity,
   extraction_confidence: z.number().min(0).max(1),

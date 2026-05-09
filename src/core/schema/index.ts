@@ -19,16 +19,20 @@ export const SourceAsset = g.SourceAssetSelectGenerated.extend({ kind: b.SourceA
 export type SourceAssetInsert = z.infer<typeof SourceAssetInsert>;
 export type SourceAsset = z.infer<typeof SourceAsset>;
 
-const PageSpan = z.object({
+export const BBox = z.object({
+  x: z.number().min(0).max(1),
+  y: z.number().min(0).max(1),
+  width: z.number().min(0).max(1),
+  height: z.number().min(0).max(1),
+});
+export type BBox = z.infer<typeof BBox>;
+
+export const PageSpan = z.object({
   page_index: z.number().int().min(0),
-  bbox: z.object({
-    x: z.number().min(0).max(1),
-    y: z.number().min(0).max(1),
-    width: z.number().min(0).max(1),
-    height: z.number().min(0).max(1),
-  }),
+  bbox: BBox,
   role: b.QuestionBlockRole.optional(),
 });
+export type PageSpan = z.infer<typeof PageSpan>;
 
 // ---------- Ingestion ----------
 export const SourceDocumentInsert = g.SourceDocumentInsertGenerated;
