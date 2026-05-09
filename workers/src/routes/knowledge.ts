@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { acceptProposal, dismissProposal } from '../knowledge/proposals';
+import { streamReviewTask } from '../knowledge/review';
 import type { AppEnv } from '../types';
 
 export const knowledge = new Hono<AppEnv>();
@@ -60,12 +61,22 @@ knowledge.post('/proposals/:id/decide', async (c) => {
     if (/PR A.*propose_new/i.test(msg)) {
       return c.json({ error: 'unsupported_mutation', message: msg }, 400);
     }
+    if (/^unknown_mutation/i.test(msg)) {
+      return c.json({ error: 'unknown_mutation', message: msg }, 400);
+    }
     if (/not.*pending/i.test(msg)) {
       return c.json({ error: 'not_pending', message: msg }, 409);
     }
     if (/not found/i.test(msg)) {
       return c.json({ error: 'not_found' }, 404);
     }
+    if (/^stale/i.test(msg)) {
+      return c.json({ error: 'stale', message: msg }, 409);
+    }
     throw e;
   }
+});
+
+knowledge.post('/review', async (c) => {
+  return streamReviewTask({ env: c.env });
 });

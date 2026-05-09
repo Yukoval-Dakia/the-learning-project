@@ -105,4 +105,17 @@ describe('schema generated from drizzle', () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it('DreamingProposal accepts status=stale', () => {
+    const result = DreamingProposal.safeParse({
+      id: 'p1',
+      kind: 'knowledge',
+      payload: '{}',
+      reasoning: 'r',
+      status: 'stale',
+      proposed_at: new Date(1700000000 * 1000),
+      decided_at: new Date(1700001000 * 1000),
+    });
+    expect(result.success).toBe(true);
+  });
 });

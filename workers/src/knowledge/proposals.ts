@@ -84,11 +84,11 @@ export async function writeDreamingProposal(
 
 async function assertParentExists(db: D1Database, parentId: string): Promise<void> {
   const row = await db
-    .prepare(`select id from knowledge where id = ?`)
+    .prepare(`select id from knowledge where id = ? and archived_at is null`)
     .bind(parentId)
     .first<{ id: string }>();
   if (!row) {
-    throw new Error(`parent knowledge node not found: ${parentId}`);
+    throw new Error(`parent knowledge node not found or archived: ${parentId}`);
   }
 }
 
@@ -148,16 +148,19 @@ export async function applyProposeNew(
   return newId;
 }
 
-export type AcceptResult = { kind: 'propose_new_applied'; new_node_id: string };
+export type AcceptResult =
+  | { kind: 'propose_new_applied'; new_node_id: string }
+  | { kind: 'reparent_applied'; node_id: string; new_parent_id: string }
+  | { kind: 'merge_applied'; into_id: string; archived_ids: string[] }
+  | { kind: 'split_applied'; archived_id: string; new_node_ids: string[] }
+  | { kind: 'archive_applied'; node_id: string };
 
 /**
- * Accept proposal: only propose_new in PR A.
- * Reparent / merge / split / archive 留 PR B。
+ * Accept proposal: dispatches over all 5 mutation kinds.
  *
- * Race-safe: the INSERT is gated on `dreaming_proposal.status = 'pending'` via INSERT…SELECT…
- * WHERE EXISTS, and the UPDATE carries the same guard. Two concurrent accepts can both pass the
- * pre-read but only one batch will actually mutate; the loser's INSERT and UPDATE are both no-ops
- * (no orphan knowledge row) and we surface the loss via the post-batch row-count check.
+ * propose_new uses a race-safe INSERT…SELECT…WHERE EXISTS batch pattern (PR A).
+ * reparent / merge / split / archive go through acceptHighTier which handles stale errors
+ * by marking the proposal stale before re-throwing.
  */
 export async function acceptProposal(
   db: D1Database,
@@ -176,9 +179,102 @@ export async function acceptProposal(
     throw new Error(`proposal ${proposalId} is not pending (status=${row.status})`);
   }
   const payload = JSON.parse(row.payload) as KnowledgeMutationPayload;
-  if (payload.mutation !== 'propose_new') {
-    throw new Error(`PR A only supports propose_new accept; got ${payload.mutation}`);
+
+  switch (payload.mutation) {
+    case 'propose_new':
+      return await acceptProposeNew(db, proposalId, payload);
+    case 'reparent':
+      return await acceptHighTier(db, proposalId, async () => {
+        await applyReparent(db, payload);
+        return {
+          kind: 'reparent_applied',
+          node_id: payload.node_id,
+          new_parent_id: payload.new_parent_id!,
+        };
+      });
+    case 'merge':
+      return await acceptHighTier(db, proposalId, async () => {
+        await applyMerge(db, payload);
+        return {
+          kind: 'merge_applied',
+          into_id: payload.into_id,
+          archived_ids: payload.from_ids,
+        };
+      });
+    case 'split':
+      return await acceptHighTier(db, proposalId, async () => {
+        const newIds = await applySplit(db, payload);
+        return {
+          kind: 'split_applied',
+          archived_id: payload.from_id,
+          new_node_ids: newIds,
+        };
+      });
+    case 'archive':
+      return await acceptHighTier(db, proposalId, async () => {
+        await applyArchive(db, payload);
+        return { kind: 'archive_applied', node_id: payload.node_id };
+      });
+    default: {
+      // JSON.parse + type assertion above is not validation; a malformed payload
+      // (older code, manual DB row, unexpected LLM tool shape) must surface as 4xx,
+      // not silently fall through and leave the proposal pending.
+      const _exhaustive: never = payload;
+      void _exhaustive;
+      const kind = (payload as { mutation?: unknown }).mutation;
+      throw new Error(
+        `unknown_mutation: proposal ${proposalId} payload mutation=${JSON.stringify(kind)}`,
+      );
+    }
   }
+}
+
+async function markProposalStale(db: D1Database, proposalId: string): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  await db
+    .prepare(
+      `update dreaming_proposal set status = ?, decided_at = ? where id = ? and status = 'pending'`,
+    )
+    .bind('stale', now, proposalId)
+    .run();
+}
+
+async function acceptHighTier(
+  db: D1Database,
+  proposalId: string,
+  apply: () => Promise<AcceptResult>,
+): Promise<AcceptResult> {
+  let result: AcceptResult;
+  try {
+    result = await apply();
+  } catch (e) {
+    const msg = (e as Error).message;
+    if (/^stale/i.test(msg)) {
+      await markProposalStale(db, proposalId);
+    }
+    throw e;
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const update = await db
+    .prepare(
+      `update dreaming_proposal set status = ?, decided_at = ? where id = ? and status = 'pending'`,
+    )
+    .bind('accepted', now, proposalId)
+    .run();
+  const changes = (update as { meta?: { changes?: number } }).meta?.changes;
+  if (changes !== 1) {
+    throw new Error(`proposal ${proposalId} was concurrently decided`);
+  }
+  return result;
+}
+
+// Extracted from previous acceptProposal body for propose_new path. Inline race-safe
+// INSERT…SELECT…WHERE EXISTS preserves the autofix-bot's PR A pattern.
+async function acceptProposeNew(
+  db: D1Database,
+  proposalId: string,
+  payload: ProposeNewPayload,
+): Promise<AcceptResult> {
   if (payload.parent_id === null) {
     throw new Error(
       'PR A: propose_new with parent_id=null (root creation) not supported; Phase 2 multi-domain will allow it',
@@ -208,6 +304,196 @@ export async function acceptProposal(
     throw new Error(`proposal ${proposalId} was concurrently decided`);
   }
   return { kind: 'propose_new_applied', new_node_id: newId };
+}
+
+/**
+ * Apply reparent: change a node's parent_id under optimistic lock.
+ *
+ * Phase 1a single-domain: rejects new_parent_id=null (root creation) — same guard
+ * as applyProposeNew. When the node was a root (parent_id IS NULL, domain set),
+ * the UPDATE also clears domain so the inheritance invariant holds.
+ */
+export async function applyReparent(
+  db: D1Database,
+  payload: ReparentPayload,
+): Promise<void> {
+  if (payload.new_parent_id === null) {
+    throw new Error(
+      'PR B: reparent to root (new_parent_id=null) not supported in Phase 1a single-domain',
+    );
+  }
+  await assertParentExists(db, payload.new_parent_id);
+  const now = Math.floor(Date.now() / 1000);
+  const result = await db
+    .prepare(
+      `update knowledge
+        set parent_id = ?, domain = NULL, updated_at = ?, version = version + 1
+        where id = ? and version = ? and archived_at is null`,
+    )
+    .bind(payload.new_parent_id, now, payload.node_id, payload.expected_version)
+    .run();
+  const changes = (result as { meta?: { changes?: number } }).meta?.changes ?? 0;
+  if (changes !== 1) {
+    throw new Error(`stale: knowledge ${payload.node_id} version mismatch or archived`);
+  }
+}
+
+/**
+ * Apply archive: soft-delete a node by setting archived_at + bumping version.
+ * Race-safe via WHERE version=? AND archived_at IS NULL — changes=0 → stale.
+ */
+export async function applyArchive(
+  db: D1Database,
+  payload: ArchivePayload,
+): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  const result = await db
+    .prepare(
+      `update knowledge
+        set archived_at = ?, updated_at = ?, version = version + 1
+        where id = ? and version = ? and archived_at is null`,
+    )
+    .bind(now, now, payload.node_id, payload.expected_version)
+    .run();
+  const changes = (result as { meta?: { changes?: number } }).meta?.changes ?? 0;
+  if (changes !== 1) {
+    throw new Error(`stale: knowledge ${payload.node_id} version mismatch or already archived`);
+  }
+}
+
+/**
+ * Apply split: archive from_id + insert N new children. Each into[i].parent_id must
+ * exist and not be archived. Phase 1a single-domain: rejects parent_id=null entries.
+ *
+ * mistake/question.knowledge_ids JSON arrays are NOT rewritten — they continue to
+ * reference the archived from_id. Read-side UI follows merged_from / archived_at
+ * to surface "tag was split" hint. (Deviation from spec § 3.3 — see plan header.)
+ *
+ * Race-safe via batch: archive UPDATE gates by expected_version; inserts use
+ * INSERT…SELECT…WHERE EXISTS gated on the same version not yet bumped.
+ */
+export async function applySplit(
+  db: D1Database,
+  payload: SplitPayload,
+): Promise<string[]> {
+  for (const entry of payload.into) {
+    if (entry.parent_id === null) {
+      throw new Error(
+        'PR B: split into root (parent_id=null) not supported in Phase 1a single-domain',
+      );
+    }
+    await assertParentExists(db, entry.parent_id);
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const newIds: string[] = payload.into.map(() => createId());
+  const archiveStmt = db
+    .prepare(
+      `update knowledge
+        set archived_at = ?, updated_at = ?, version = version + 1
+        where id = ? and version = ? and archived_at is null`,
+    )
+    .bind(now, now, payload.from_id, payload.expected_version);
+  const insertStmts = payload.into.map((entry, i) =>
+    db
+      .prepare(
+        `insert into knowledge (
+          id, name, domain, parent_id, base_mastery, ai_delta_mastery,
+          merged_from, proposed_by_ai, approval_status, created_at, updated_at, version
+        )
+        select ?, ?, NULL, ?, 0, 0, '[]', 1, 'approved', ?, ?, 0
+        where exists (
+          select 1 from knowledge where id = ? and version = ?
+        )`,
+      )
+      .bind(
+        newIds[i],
+        entry.name,
+        entry.parent_id,
+        now,
+        now,
+        payload.from_id,
+        payload.expected_version + 1,
+      ),
+  );
+  const results = await db.batch([archiveStmt, ...insertStmts]);
+  const archiveChanges =
+    (results[0] as { meta?: { changes?: number } } | undefined)?.meta?.changes ?? 0;
+  if (archiveChanges !== 1) {
+    throw new Error(`stale: knowledge ${payload.from_id} version mismatch or already archived`);
+  }
+  return newIds;
+}
+
+/**
+ * Apply merge: archive all from_ids + push their ids onto into.merged_from JSON array.
+ *
+ * mistake/question.knowledge_ids JSON arrays are NOT rewritten (deviation from spec § 3.3
+ * — see plan header). Read-side UI follows merged_from to surface tag-was-merged hint.
+ *
+ * Race-safe via batch: each archive UPDATE gates by its own expected_version; the into
+ * UPDATE bumps version unconditionally (lock on into not strictly needed since we only
+ * append — concurrent merges into the same node are commutative on merged_from but version
+ * still bumps).
+ */
+export async function applyMerge(
+  db: D1Database,
+  payload: MergePayload,
+): Promise<void> {
+  if (payload.from_ids.includes(payload.into_id)) {
+    throw new Error(`merge: into_id (${payload.into_id}) cannot also appear in from_ids`);
+  }
+  for (const fromId of payload.from_ids) {
+    if (!(fromId in payload.expected_versions)) {
+      throw new Error(`merge: expected_versions missing entry for ${fromId}`);
+    }
+  }
+  const now = Math.floor(Date.now() / 1000);
+  // Each archive gates on into_id still existing & non-archived, evaluated in the
+  // same D1 batch transaction. If into is gone at accept time (or got archived
+  // concurrently), the EXISTS clause makes archives no-ops → no destructive
+  // partial apply; the intoUpdate's own `archived_at is null` clause then 0-changes,
+  // and we surface a stale error instead of a silent half-apply.
+  const archiveStmts = payload.from_ids.map((fromId) =>
+    db
+      .prepare(
+        `update knowledge
+          set archived_at = ?, updated_at = ?, version = version + 1
+          where id = ? and version = ? and archived_at is null
+            and exists (select 1 from knowledge where id = ? and archived_at is null)`,
+      )
+      .bind(now, now, fromId, payload.expected_versions[fromId], payload.into_id),
+  );
+  // Append from_ids onto into.merged_from JSON array via SQLite JSON1.
+  const intoUpdate = db
+    .prepare(
+      `update knowledge
+        set merged_from = json(
+          (select json_group_array(value) from (
+            select value from json_each(merged_from) union all
+            select value from json_each(?)
+          ))
+        ), updated_at = ?, version = version + 1
+        where id = ? and archived_at is null`,
+    )
+    .bind(JSON.stringify(payload.from_ids), now, payload.into_id);
+  const results = await db.batch([...archiveStmts, intoUpdate]);
+  // Check into_id first — when into is missing/archived, archives didn't run
+  // (EXISTS guard), so reporting "from_id stale" would be misleading.
+  const intoChanges =
+    (results[results.length - 1] as { meta?: { changes?: number } } | undefined)?.meta
+      ?.changes ?? 0;
+  if (intoChanges !== 1) {
+    throw new Error(`stale: merge into_id ${payload.into_id} not found or archived`);
+  }
+  for (let i = 0; i < archiveStmts.length; i++) {
+    const changes =
+      (results[i] as { meta?: { changes?: number } } | undefined)?.meta?.changes ?? 0;
+    if (changes !== 1) {
+      throw new Error(
+        `stale: knowledge ${payload.from_ids[i]} version mismatch or already archived`,
+      );
+    }
+  }
 }
 
 /**
