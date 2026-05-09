@@ -42,21 +42,29 @@ assets.post('/', async (c) => {
     customMetadata: { source_asset_id: id, sha256 },
   });
 
-  await c.env.DB.prepare(
-    `insert into source_asset (
-      id, kind, storage_key, mime_type, byte_size, sha256, width, height, provenance, created_at
-    ) values (?, 'image', ?, ?, ?, ?, null, null, ?, ?)`,
-  )
-    .bind(
-      id,
-      storageKey,
-      file.type,
-      file.size,
-      sha256,
-      JSON.stringify({ entrypoint: 'manual_record', original_name: file.name }),
-      now,
+  try {
+    await c.env.DB.prepare(
+      `insert into source_asset (
+        id, kind, storage_key, mime_type, byte_size, sha256, width, height, provenance, created_at
+      ) values (?, 'image', ?, ?, ?, ?, null, null, ?, ?)`,
     )
-    .run();
+      .bind(
+        id,
+        storageKey,
+        file.type,
+        file.size,
+        sha256,
+        JSON.stringify({ entrypoint: 'manual_record', original_name: file.name }),
+        now,
+      )
+      .run();
+  } catch (err) {
+    // Roll back R2 to avoid orphans; if delete itself fails, log and rethrow original.
+    await c.env.IMAGES.delete(storageKey).catch((delErr) => {
+      console.error('source_asset insert failed AND R2 rollback failed', { storageKey, id, delErr });
+    });
+    throw err;
+  }
 
   return c.json({
     asset: {

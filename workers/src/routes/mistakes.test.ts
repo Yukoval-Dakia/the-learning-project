@@ -199,6 +199,34 @@ describe('POST /api/mistakes', () => {
     expect(insertMistakeCall?.binds[4]).toBeNull();
   });
 
+  it('rejects unknown wrong_answer_image_refs even when prompt_image_refs is empty', async () => {
+    const { Bindings, executionCtx } = mockEnv({
+      knowledgeRows: [{ id: 'k1', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null }],
+    });
+    const res = await mistakes.request(
+      '/',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          prompt_md: 'p',
+          reference_md: null,
+          wrong_answer_md: 'w',
+          knowledge_ids: ['k1'],
+          cause: null,
+          difficulty: 3,
+          question_kind: 'short_answer',
+          wrong_answer_image_refs: ['asset_missing'],
+        }),
+        headers: { 'content-type': 'application/json' },
+      },
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toMatch(/unknown wrong_answer_image_refs/);
+  });
+
   it('rejects unknown prompt_image_refs asset id', async () => {
     const { Bindings, executionCtx } = mockEnv({
       knowledgeRows: [{ id: 'k1', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null }],

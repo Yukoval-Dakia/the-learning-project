@@ -11,11 +11,13 @@ import type { D1Database } from '@cloudflare/workers-types';
 
 export const mistakes = new Hono<AppEnv>();
 
+type AssetField = 'prompt_image_refs' | 'wrong_answer_image_refs';
+
 async function assertAssetsExist(
   db: D1Database,
   ids: string[],
-  field: 'prompt_image_refs' | 'wrong_answer_image_refs',
-): Promise<{ ok: true } | { ok: false; missing: string[]; field: string }> {
+  field: AssetField,
+): Promise<{ ok: true } | { ok: false; missing: string[]; field: AssetField }> {
   const missing: string[] = [];
   for (const id of ids) {
     const row = await db.prepare(`select id from source_asset where id = ?`).bind(id).first();

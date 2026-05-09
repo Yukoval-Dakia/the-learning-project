@@ -2,21 +2,32 @@ import { describe, expect, it, vi } from 'vitest';
 import type { D1Database, ExecutionContext, R2Bucket } from '@cloudflare/workers-types';
 import { assets } from './assets';
 
-function mockEnv() {
+function mockEnv(opts: { putThrows?: boolean; insertThrows?: boolean } = {}) {
   const calls: Array<{ sql: string; binds: unknown[] }> = [];
-  const put = vi.fn(async () => null);
+  const put = vi.fn<(key: string, bytes: ArrayBuffer, options?: { customMetadata?: { sha256?: string } }) => Promise<null>>(async () => {
+    if (opts.putThrows) throw new Error('R2 put failed');
+    return null;
+  });
+  const del = vi.fn<(key: string) => Promise<void>>(async () => undefined);
   const db = {
     prepare: vi.fn((sql: string) => ({
       bind: (...binds: unknown[]) => {
         calls.push({ sql, binds });
-        return { run: async () => ({ success: true, meta: { changes: 1 } }) };
+        return {
+          run: async () => {
+            if (opts.insertThrows && /insert into source_asset/i.test(sql)) {
+              throw new Error('D1 insert failed');
+            }
+            return { success: true, meta: { changes: 1 } };
+          },
+        };
       },
     })),
   } as unknown as D1Database;
   return {
     Bindings: {
       DB: db,
-      IMAGES: { put } as unknown as R2Bucket,
+      IMAGES: { put, delete: del } as unknown as R2Bucket,
       INTERNAL_TOKEN: 't',
       ANTHROPIC_API_KEY: 't',
     },
@@ -27,6 +38,7 @@ function mockEnv() {
     } as unknown as ExecutionContext,
     calls,
     put,
+    del,
   };
 }
 
@@ -44,6 +56,32 @@ describe('POST /api/assets', () => {
     expect(body.asset.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(put).toHaveBeenCalledOnce();
     expect(calls.some((c) => /insert into source_asset/i.test(c.sql))).toBe(true);
+    // sha256 must match between R2 customMetadata and D1 row (same source).
+    const putOpts = put.mock.calls[0][2] as { customMetadata?: { sha256?: string } } | undefined;
+    const insertCall = calls.find((c) => /insert into source_asset/i.test(c.sql))!;
+    expect(putOpts?.customMetadata?.sha256).toBe(body.asset.sha256);
+    expect(insertCall.binds[4]).toBe(body.asset.sha256);
+  });
+
+  it('rolls back R2 object when D1 insert fails', async () => {
+    const { Bindings, executionCtx, put, del } = mockEnv({ insertThrows: true });
+    const form = new FormData();
+    form.set('file', new File([new Uint8Array([1, 2, 3])], 'q.png', { type: 'image/png' }));
+    const res = await assets.request('/', { method: 'POST', body: form }, Bindings, executionCtx);
+    expect(res.status).toBe(500);
+    expect(put).toHaveBeenCalledOnce();
+    expect(del).toHaveBeenCalledOnce();
+    const deletedKey = del.mock.calls[0][0] as string;
+    expect(deletedKey).toMatch(/^images\/[a-z0-9]+\.png$/);
+  });
+
+  it('returns 500 and does not insert when R2 put throws', async () => {
+    const { Bindings, executionCtx, calls } = mockEnv({ putThrows: true });
+    const form = new FormData();
+    form.set('file', new File([new Uint8Array([1, 2, 3])], 'q.png', { type: 'image/png' }));
+    const res = await assets.request('/', { method: 'POST', body: form }, Bindings, executionCtx);
+    expect(res.status).toBe(500);
+    expect(calls.some((c) => /insert into source_asset/i.test(c.sql))).toBe(false);
   });
 
   it('rejects missing file', async () => {

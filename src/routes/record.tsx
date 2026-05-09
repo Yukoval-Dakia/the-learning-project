@@ -169,14 +169,20 @@ export function RecordMistake() {
     if (!files || files.length === 0) return;
     setErrorMsg(null);
     setUploading(true);
+    const list = Array.from(files);
+    let succeeded = 0;
     try {
-      const uploaded: UploadedAsset[] = [];
-      for (const file of Array.from(files)) {
-        uploaded.push(await uploadAsset(file));
+      for (const file of list) {
+        const asset = await uploadAsset(file);
+        // Commit incrementally so a later failure doesn't drop earlier successes.
+        setter((prev) => [...prev, asset]);
+        succeeded += 1;
       }
-      setter((prev) => [...prev, ...uploaded]);
     } catch (e) {
-      setErrorMsg(`上传图片失败: ${(e as Error).message}`);
+      const remaining = list.length - succeeded;
+      setErrorMsg(
+        `上传图片失败 (${remaining}/${list.length} 张未上传): ${(e as Error).message}`,
+      );
     } finally {
       setUploading(false);
     }
