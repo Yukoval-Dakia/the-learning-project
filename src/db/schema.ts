@@ -25,6 +25,19 @@ export const knowledge = sqliteTable('knowledge', {
   version: integer('version').notNull().default(0),
 });
 
+export const source_asset = sqliteTable('source_asset', {
+  id: text('id').primaryKey(),
+  kind: text('kind').notNull(),
+  storage_key: text('storage_key').notNull(),
+  mime_type: text('mime_type').notNull(),
+  byte_size: integer('byte_size').notNull(),
+  sha256: text('sha256').notNull(),
+  width: integer('width'),
+  height: integer('height'),
+  provenance: text('provenance', { mode: 'json' }).notNull().default({}),
+  created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
+});
+
 export const question = sqliteTable('question', {
   id: text('id').primaryKey(),
   kind: text('kind').notNull(),

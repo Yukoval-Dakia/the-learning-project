@@ -6,6 +6,7 @@ import {
   LearningItemInsert,
   Mistake,
   MistakeInsert,
+  SourceAsset,
 } from './index';
 
 describe('schema generated from drizzle', () => {
@@ -117,5 +118,37 @@ describe('schema generated from drizzle', () => {
       decided_at: new Date(1700001000 * 1000),
     });
     expect(result.success).toBe(true);
+  });
+
+  it('SourceAsset accepts image metadata', () => {
+    const result = SourceAsset.safeParse({
+      id: 'asset_1',
+      kind: 'image',
+      storage_key: 'images/asset_1.png',
+      mime_type: 'image/png',
+      byte_size: 123,
+      sha256: 'a'.repeat(64),
+      width: null,
+      height: null,
+      provenance: {},
+      created_at: new Date(1700000000 * 1000),
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('SourceAsset rejects unknown kind', () => {
+    const result = SourceAsset.safeParse({
+      id: 'asset_2',
+      kind: 'video',
+      storage_key: 'x',
+      mime_type: 'video/mp4',
+      byte_size: 1,
+      sha256: 'a'.repeat(64),
+      width: null,
+      height: null,
+      provenance: {},
+      created_at: new Date(),
+    });
+    expect(result.success).toBe(false);
   });
 });

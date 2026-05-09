@@ -13,6 +13,12 @@ export const Knowledge = g.KnowledgeSelectGenerated.extend({
 });
 export type Knowledge = z.infer<typeof Knowledge>;
 
+// ---------- Source ----------
+export const SourceAssetInsert = g.SourceAssetInsertGenerated.extend({ kind: b.SourceAssetKind });
+export const SourceAsset = g.SourceAssetSelectGenerated.extend({ kind: b.SourceAssetKind });
+export type SourceAssetInsert = z.infer<typeof SourceAssetInsert>;
+export type SourceAsset = z.infer<typeof SourceAsset>;
+
 // ---------- Question ----------
 export const QuestionInsert = g.QuestionInsertGenerated.extend({
   kind: b.QuestionKind,

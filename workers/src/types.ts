@@ -1,9 +1,10 @@
-import type { D1Database } from '@cloudflare/workers-types';
+import type { D1Database, R2Bucket } from '@cloudflare/workers-types';
 
 export type Bindings = {
   ANTHROPIC_API_KEY: string;
   INTERNAL_TOKEN: string;
   DB: D1Database;
+  IMAGES: R2Bucket;
 };
 
 export type AppEnv = { Bindings: Bindings };

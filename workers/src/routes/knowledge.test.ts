@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { D1Database } from '@cloudflare/workers-types';
+import type { D1Database, R2Bucket } from '@cloudflare/workers-types';
 import { knowledge } from './knowledge';
 
 function mockEnv(
@@ -60,8 +60,9 @@ function mockEnv(
       return results;
     },
   } as unknown as D1Database;
+  const images = { put: vi.fn(async () => null) } as unknown as R2Bucket;
   return {
-    Bindings: { DB: db, INTERNAL_TOKEN: 'test', ANTHROPIC_API_KEY: 'test' },
+    Bindings: { DB: db, IMAGES: images, INTERNAL_TOKEN: 'test', ANTHROPIC_API_KEY: 'test' },
     calls,
   };
 }
