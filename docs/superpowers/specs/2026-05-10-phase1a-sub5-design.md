@@ -18,8 +18,9 @@
 | `mistakes.csv` 错题摘要（denormalized + knowledge 名字 join）| Markdown / PDF rendering |
 | `review_events.csv` 复习时间序列（含 before/after FSRS state 解构）| 其他衍生 CSV（quiz / artifact 等）|
 | `manifest.json.schema_version` 严格匹配（`"1.0"`） | 跨版本迁移工具 |
-| `/_/inspect` 加 "数据" tab：2 个下载按钮 + 还原 file picker | 单独页面 |
-| CLI 用法 doc（curl + wrangler 双示例） | wrangler tunnel / dev 模式专用步骤 |
+| `/_/inspect` 加 "数据" tab：2 个下载按钮 + 还原 file picker + 下载进度（"已下载 N MB"） | 单独页面 |
+| CLI 用法 doc（curl + wrangler 双示例 + R2 旁路 cp 脚本） | wrangler tunnel / dev 模式专用步骤 |
+| `MAX_INLINE_ASSETS = 45` 守卫：含 R2 字节时若超 45 张直接 400 + 引导走 R2 旁路 | 真正大量 R2 异步导出（Phase 2 Workers Queue） |
 
 ---
 
@@ -38,6 +39,8 @@
 | R2 含与不含 | 默认不含；`?include_assets=1` 才加 `assets/` 目录 | refs-only 几 MB；含 R2 可几十 MB；让调用方选 |
 | 部分失败语义 | export 单点失败 → HTTP 5xx + 结束（不 partial ZIP）；import wipe 后失败 → 500 + stats 截止；R2 put 失败逐个记录 + 继续 | 用户重跑友好；半 D1 但 R2 OK 不阻塞 |
 | 文件名命名 | export 响应头 `Content-Disposition: attachment; filename="loom-backup-<ISO date>.zip"` | 浏览器下载文件名稳定 |
+| 下载进度 | client 用 `Response.body.getReader()` 累积 chunks；UI 显示"已下载 X MB"（Content-Length 未知则不显示百分比） | streaming 不知道最终长度；显示已传输量足够安抚用户 |
+| 子请求上限守卫 | server 检查 `source_asset.length > MAX_INLINE_ASSETS=45` → 400 `too_many_assets`；用户走 wrangler r2 cp 旁路 | CF Worker free 50 子请求上限；留 5 个给 D1 SELECT |
 
 ---
 
@@ -60,6 +63,10 @@ app.route('/api/_/import', importRoute);
 
 ```ts
 export const SCHEMA_VERSION = '1.0';
+
+// CF Worker free plan 子请求上限 50；留 5 个给 D1 SELECT * × 18 张表 + 容错。
+// 付费版 1000，可上调到 ~950（Phase 2 升级时改这里）。
+export const MAX_INLINE_ASSETS = 45;
 
 // FK 拓扑顺序：插入沿此向前；wipe 沿其反向。
 // 任何 schema 改动（增 / 删表）必须更新此数组并 bump SCHEMA_VERSION。
@@ -152,9 +159,22 @@ exportRoute.get('/', async (c) => {
   ];
 
   if (includeAssets) {
-    for (const asset of tableRows.source_asset as Array<{ storage_key: string }>) {
+    const assets = tableRows.source_asset as Array<{ storage_key: string }>;
+    if (assets.length > MAX_INLINE_ASSETS) {
+      return c.json(
+        {
+          error: 'too_many_assets',
+          count: assets.length,
+          limit: MAX_INLINE_ASSETS,
+          suggestion:
+            'export with ?include_assets=0 then `wrangler r2 cp` per storage_key (see README)',
+        },
+        400,
+      );
+    }
+    for (const asset of assets) {
       const obj = await c.env.IMAGES.get(asset.storage_key);
-      if (!obj) continue; // missing = skip silently; recorded in tier_log if you care
+      if (!obj) continue; // missing = skip silently
       entries.push({
         name: `assets/${asset.storage_key}`,
         input: obj.body, // ReadableStream
@@ -442,20 +462,43 @@ function DataTab() {
   const [confirmText, setConfirmText] = useState('');
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importStatus, setImportStatus] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadBytes, setDownloadBytes] = useState(0);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
-  function downloadExport(includeAssets: boolean) {
-    const url = includeAssets
-      ? '/api/_/export?include_assets=1'
-      : '/api/_/export';
-    fetch(url, { headers: { 'x-internal-token': INTERNAL_TOKEN } })
-      .then((res) => res.blob())
-      .then((blob) => {
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = `loom-backup-${new Date().toISOString().slice(0, 10)}.zip`;
-        a.click();
-        URL.revokeObjectURL(a.href);
-      });
+  async function downloadExport(includeAssets: boolean) {
+    setDownloading(true);
+    setDownloadBytes(0);
+    setDownloadError(null);
+    const url = includeAssets ? '/api/_/export?include_assets=1' : '/api/_/export';
+    try {
+      const res = await fetch(url, { headers: { 'x-internal-token': INTERNAL_TOKEN } });
+      if (!res.ok) {
+        const text = await res.text();
+        setDownloadError(`${res.status}: ${text}`);
+        return;
+      }
+      const reader = res.body!.getReader();
+      const chunks: Uint8Array[] = [];
+      let bytes = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        bytes += value.length;
+        setDownloadBytes(bytes);
+      }
+      const blob = new Blob(chunks, { type: 'application/zip' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `loom-backup-${new Date().toISOString().slice(0, 10)}.zip`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDownloading(false);
+    }
   }
 
   async function runImport() {
@@ -476,7 +519,10 @@ function DataTab() {
     });
     if (res.ok) {
       const body = (await res.json()) as { stats: unknown; assets_uploaded: number };
-      setImportStatus(`完成。assets uploaded: ${body.assets_uploaded}`);
+      setImportStatus(`完成。assets uploaded: ${body.assets_uploaded}。3 秒后刷新页面...`);
+      // Force-reload — TanStack Query cache and component state would otherwise show
+      // pre-import data. Simpler than walking every queryKey to invalidate.
+      setTimeout(() => window.location.reload(), 3000);
     } else {
       const text = await res.text();
       setImportStatus(`失败: ${res.status} ${text}`);
@@ -488,13 +534,27 @@ function DataTab() {
       <section>
         <h2 className="text-base font-medium">下载备份</h2>
         <div className="flex gap-2 mt-2">
-          <button onClick={() => downloadExport(false)} className="px-3 py-1.5 bg-slate-900 text-white text-sm rounded">
+          <button
+            onClick={() => downloadExport(false)}
+            disabled={downloading}
+            className="px-3 py-1.5 bg-slate-900 text-white text-sm rounded disabled:opacity-50"
+          >
             data only (refs)
           </button>
-          <button onClick={() => downloadExport(true)} className="px-3 py-1.5 bg-slate-700 text-white text-sm rounded">
+          <button
+            onClick={() => downloadExport(true)}
+            disabled={downloading}
+            className="px-3 py-1.5 bg-slate-700 text-white text-sm rounded disabled:opacity-50"
+          >
             full (含 R2 图片)
           </button>
         </div>
+        {downloading && (
+          <p className="text-sm text-slate-600 mt-2">
+            已下载 {(downloadBytes / 1024 / 1024).toFixed(1)} MB
+          </p>
+        )}
+        {downloadError && <p className="text-sm text-red-600 mt-2">{downloadError}</p>}
       </section>
 
       <section>
@@ -563,29 +623,60 @@ function DataTab() {
 
 | 段 | 任务 | 估时 |
 |---|---|---|
-| Schema topo + manifest | FK_ORDER + manifest 生成 + readme builder | ~0.1d |
-| Export endpoint | client-zip + 流式 R2 + Content-Disposition | ~0.4d |
+| Schema topo + manifest | FK_ORDER + MAX_INLINE_ASSETS + manifest 生成 + readme builder | ~0.1d |
+| Export endpoint | client-zip + 流式 R2 + Content-Disposition + asset-count guard | ~0.4d |
 | CSV builders | mistakes / review_events JOIN 序列化 | ~0.3d |
 | Import endpoint | fflate + wipe + chunked insert + R2 put | ~0.5d |
-| Inspect UI Data tab | 2 button + file input + confirm 输入 | ~0.2d |
-| 测试 | 7+ 测试（含 round-trip） | ~0.4d |
-| README + PLANNING | docs | ~0.1d |
-| **合计** | | **~2.0d** |
+| Inspect UI Data tab | 2 button + 流式 progress + file input + confirm 输入 + reload | ~0.3d |
+| 测试 | 8+ 测试（含 round-trip + too_many_assets 守卫 + schema_version mismatch） | ~0.4d |
+| README + PLANNING + R2 旁路脚本 | docs | ~0.2d |
+| **合计** | | **~2.2d** |
 
 **1 个 PR**：`feat(export): Phase 1a Sub 5 — D1 + R2 backup/restore via ZIP`
 
 ---
 
-## 七、Open（实施时再决）
+## 七、决策（用户已 lock 2026-05-10）
 
-1. **`download` 失败时的 UI 反馈**：`fetch().blob()` 在 30MB+ 上有 progress 吗？需要进度条吗？MVP 先无 progress；下载慢就用 curl
-2. **Worker 子请求限制**：CF Worker 单请求 50 子请求上限。export 含 50+ R2 assets 时会触顶。MVP 不处理；超过 50 就报 issue
-3. **CSV 题面包含 newline**：现已用 `csvEscape` 处理 `"`/`,`/`\n`；但 Excel 在 Mac 可能识别 `\n` 为多行 — 建议 README 说明用 LibreOffice 或 `csv.reader` 解
-4. **schema_version bump 流程**：当 D1 schema 变（增列 / 改 enum）时谁负责升 SCHEMA_VERSION？建议在 `src/db/schema.ts` 注释强调；后续 PR check
-5. **`include_assets=1` 时 ZIP 包大小上限**：CF Worker response 没硬上限，但客户端浏览器下载 Blob 可能受 ~500MB 影响；超大时建议走 wrangler r2 cp 旁路
-6. **import 后是否 invalidate React Query cache**：UI 看到的 stale 数据问题；建议 import 成功后 `window.location.reload()` 强制刷新
-7. **mistakes.csv 含 prompt_md 全文还是 excerpt**：现 spec 是全文（用户分析需要）；如果隐私 / 大小担忧加配置项
+1. **下载进度条** — **lock 实现**。`fetch()` → 读 `Response.body` ReadableStream + 累积 `bytesRead / Content-Length`，在 inspect Data tab 显示 0–100% 进度条。export 端响应头要带 `Content-Length`（client-zip 流式不知道最终长度，但可以**先把 entries 拼成 Blob 后再 send**，牺牲一点首包延迟换 Content-Length —— 或者不带 length 改显示"已下载 N MB"无 % 文案）。MVP 走"已下载 N MB"无总长方案，简单可行；进度条逻辑：
+   ```ts
+   const res = await fetch('/api/_/export');
+   const reader = res.body!.getReader();
+   const total = Number(res.headers.get('content-length') ?? 0); // 0 if unknown
+   let bytes = 0;
+   const chunks: Uint8Array[] = [];
+   for (;;) {
+     const { done, value } = await reader.read();
+     if (done) break;
+     chunks.push(value);
+     bytes += value.length;
+     setProgress({ bytes, total });
+   }
+   const blob = new Blob(chunks, { type: 'application/zip' });
+   // ...trigger download
+   ```
 
+2. **Worker 子请求超 50（>50 R2 assets）** — **lock 三层方案**：
+   - **Tier A（默认行为）**：MVP `?include_assets=1` 时，server 端如果 `source_asset.length > 45`（留 5 个给 D1 SELECT），返回 `400 + {error: 'too_many_assets', count, suggested: 'use ?include_assets=0 then wrangler r2 cp sidecar'}`。
+   - **Tier B（用户解决）**：refs-only export + 旁路 `wrangler r2 cp r2://learning-project-images/<key> ./assets/<key>` 拉每张图。README 提供脚本：
+     ```bash
+     # extract storage_keys from manifest
+     jq -r '.row_counts.source_asset' manifest.json
+     # then for each key:
+     wrangler r2 cp "r2://learning-project-images/<key>" "./assets/<key>"
+     ```
+   - **Tier C（Phase 2）**：升级 Workers 付费版（1000 子请求上限）或引入 Workers Queue + R2-staged ZIP（async job 模型）。Sub 5 不实现。
+   - 阈值 45 写成 `MAX_INLINE_ASSETS` 常量，付费版上调到 ~950。
+
+3. **CSV newline 处理** — lock。`csvEscape` 已处理；README 加一行"建议 LibreOffice / `csv.reader` 解析；Excel for Mac 可能识别 \n 为多行"。
+
+4. **schema_version bump 流程** — lock：在 `src/db/schema.ts` 文件顶加常量 + 注释 `/* Bump SCHEMA_VERSION in workers/src/export/constants.ts whenever this file changes */`，靠人肉 + code review 维护。CI guard 暂不引入（YAGNI）。
+
+5. **ZIP 包大小上限** — lock：默认 `?include_assets=0`；用户要带图就自觉走 wrangler r2 cp 旁路。Server 不强制 cap。
+
+6. **import 后 React Query cache** — lock：import 成功 alert + `window.location.reload()`。
+
+7. **mistakes.csv prompt_md 全文** — lock。CSV 列 `prompt_md` 写完整文本；`csvEscape` 保证 quoting 正确。
 ---
 
 ## 八、依赖（OSS）
