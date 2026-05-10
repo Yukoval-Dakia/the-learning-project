@@ -46,16 +46,34 @@ review.get('/due', async (c) => {
       reference_md: string | null;
     }>();
 
-  const out = rows.results.map((r) => ({
-    id: r.id,
-    question_id: r.question_id,
-    prompt_md: r.prompt_md.slice(0, 1000),
-    reference_md: r.reference_md ? r.reference_md.slice(0, 1000) : null,
-    knowledge_ids: JSON.parse(r.knowledge_ids) as string[],
-    cause: r.cause ? JSON.parse(r.cause) : null,
-    fsrs_state: r.fsrs_state ? JSON.parse(r.fsrs_state) : null,
-    created_at: r.created_at,
-  }));
+  // Per-row try/catch so one corrupt JSON column doesn't block the entire review queue.
+  // Skipped rows are logged for follow-up — they remain in DB but stay invisible to /review.
+  const out: Array<{
+    id: string;
+    question_id: string;
+    prompt_md: string;
+    reference_md: string | null;
+    knowledge_ids: string[];
+    cause: unknown;
+    fsrs_state: unknown;
+    created_at: number;
+  }> = [];
+  for (const r of rows.results) {
+    try {
+      out.push({
+        id: r.id,
+        question_id: r.question_id,
+        prompt_md: r.prompt_md.slice(0, 1000),
+        reference_md: r.reference_md ? r.reference_md.slice(0, 1000) : null,
+        knowledge_ids: JSON.parse(r.knowledge_ids) as string[],
+        cause: r.cause ? JSON.parse(r.cause) : null,
+        fsrs_state: r.fsrs_state ? JSON.parse(r.fsrs_state) : null,
+        created_at: r.created_at,
+      });
+    } catch (err) {
+      console.error('review/due: skipping row with corrupt JSON', { mistakeId: r.id, err });
+    }
+  }
 
   return c.json({ rows: out });
 });
@@ -93,8 +111,23 @@ review.post('/submit', async (c) => {
 
   // Plan F1: zod-coerce JSON-deserialized strings back to Date.
   // Direct JSON.parse leaves due/last_review as ISO strings; ts-fsrs would compute NaN intervals.
-  const prevState = row.fsrs_state ? FsrsState.parse(JSON.parse(row.fsrs_state)) : null;
-  const result = scheduleReview(prevState, body.rating, now);
+  // Wrap in try/catch — a corrupt or schema-drifted fsrs_state row would otherwise stick
+  // forever as 5xx with no audit trail. Surface 422 with mistake_id so user can act.
+  let prevState: ReturnType<typeof FsrsState.parse> | null;
+  let result: ReturnType<typeof scheduleReview>;
+  try {
+    prevState = row.fsrs_state ? FsrsState.parse(JSON.parse(row.fsrs_state)) : null;
+    result = scheduleReview(prevState, body.rating, now);
+  } catch (err) {
+    console.error('review submit prep failed', { mistakeId: body.mistake_id, err });
+    return c.json(
+      {
+        error: 'corrupt_state',
+        message: `mistake ${body.mistake_id} fsrs_state could not be parsed; please reset this mistake`,
+      },
+      422,
+    );
+  }
 
   const dueBefore = prevState ? Math.floor(prevState.due.getTime() / 1000) : null;
   const updateStmt = c.env.DB.prepare(

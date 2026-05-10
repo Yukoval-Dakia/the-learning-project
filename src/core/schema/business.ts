@@ -145,11 +145,12 @@ export const FsrsCardState = z.enum(['new', 'learning', 'review', 'relearning'])
 
 // Mirrors ts-fsrs v5 Card. JSON column reads must FsrsState.parse() to coerce
 // ISO strings back to Date — z.coerce.date() handles that.
+// elapsed_days is deprecated in ts-fsrs v6 — kept optional for forward compat.
 export const FsrsState = z.object({
   due: z.coerce.date(),
   stability: z.number(),
   difficulty: z.number(),
-  elapsed_days: z.number(),
+  elapsed_days: z.number().optional(),
   scheduled_days: z.number(),
   learning_steps: z.number(),
   reps: z.number().int(),

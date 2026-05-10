@@ -7,10 +7,10 @@ import {
   type Grade,
 } from 'ts-fsrs';
 import type { z } from 'zod';
-import { FsrsState } from '../../../src/core/schema/business';
+import { FsrsRating, FsrsState } from '../../../src/core/schema/business';
 
 type FsrsStateData = z.infer<typeof FsrsState>;
-type RatingLabel = 'again' | 'hard' | 'good';
+type RatingLabel = z.infer<typeof FsrsRating>;
 
 const RATING_MAP: Record<RatingLabel, Grade> = {
   again: Rating.Again,
@@ -57,7 +57,8 @@ function cardFromState(s: FsrsStateData): Card {
     due: s.due,
     stability: s.stability,
     difficulty: s.difficulty,
-    elapsed_days: s.elapsed_days,
+    // elapsed_days deprecated in ts-fsrs v6; default to 0 if absent.
+    elapsed_days: s.elapsed_days ?? 0,
     scheduled_days: s.scheduled_days,
     learning_steps: s.learning_steps,
     reps: s.reps,

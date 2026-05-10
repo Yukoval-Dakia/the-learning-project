@@ -154,6 +154,40 @@ describe('GET /api/review/due', () => {
     }
   });
 
+  it('skips rows with corrupt JSON; remaining rows still returned', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const dueRows: DueRow[] = [
+      {
+        id: 'm_corrupt',
+        question_id: 'q1',
+        knowledge_ids: '{not valid', // poison
+        cause: null,
+        fsrs_state: null,
+        created_at: 1700000000,
+        prompt_md: 'p',
+        reference_md: null,
+      },
+      {
+        id: 'm_ok',
+        question_id: 'q2',
+        knowledge_ids: '["k1"]',
+        cause: null,
+        fsrs_state: null,
+        created_at: 1700000001,
+        prompt_md: 'p2',
+        reference_md: null,
+      },
+    ];
+    const { Bindings, executionCtx } = mockEnv({ dueRows });
+    const res = await review.request('/due', { method: 'GET' }, Bindings, executionCtx);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { rows: Array<{ id: string }> };
+    expect(body.rows).toHaveLength(1);
+    expect(body.rows[0].id).toBe('m_ok');
+    expect(errSpy).toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
   it('SQL filters archived + deleted + active status', async () => {
     const { Bindings, executionCtx, calls } = mockEnv({ dueRows: [] });
     await review.request('/due', { method: 'GET' }, Bindings, executionCtx);
@@ -281,6 +315,58 @@ describe('POST /api/review/submit', () => {
     // version=1 used in optimistic update
     const updateStmt = batchCalls[0].stmts[0];
     expect(updateStmt.binds).toContain(1);
+
+    // due_at_before bind on the INSERT must be a finite unix timestamp derived from
+    // the parsed prevState.due — would be NaN/string if FsrsState.parse() were skipped.
+    const insertStmt = batchCalls[0].stmts[1];
+    const expectedDueBefore = Math.floor(Date.parse(dueIso) / 1000);
+    expect(insertStmt.binds).toContain(expectedDueBefore);
+  });
+
+  it('returns 422 corrupt_state when fsrs_state JSON is malformed', async () => {
+    const mistakeById = new Map<string, MistakeRow>([
+      [
+        'm1',
+        { id: 'm1', fsrs_state: '{not valid json', version: 0, archived_at: null, deleted_at: null },
+      ],
+    ]);
+    const { Bindings, executionCtx, batchCalls } = mockEnv({ mistakeById });
+    const res = await review.request(
+      '/submit',
+      submitReq({ mistake_id: 'm1', rating: 'good' }),
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe('corrupt_state');
+    expect(body.message).toMatch(/m1/);
+    expect(batchCalls).toHaveLength(0);
+  });
+
+  it('returns 422 corrupt_state when fsrs_state schema does not match (e.g. missing required field)', async () => {
+    const mistakeById = new Map<string, MistakeRow>([
+      [
+        'm1',
+        {
+          id: 'm1',
+          // valid JSON but missing required fields like 'state'
+          fsrs_state: JSON.stringify({ due: '2026-05-10T00:00:00.000Z', stability: 1 }),
+          version: 0,
+          archived_at: null,
+          deleted_at: null,
+        },
+      ],
+    ]);
+    const { Bindings, executionCtx, batchCalls } = mockEnv({ mistakeById });
+    const res = await review.request(
+      '/submit',
+      submitReq({ mistake_id: 'm1', rating: 'good' }),
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(422);
+    expect(batchCalls).toHaveLength(0);
   });
 
   it('404 when mistake not found, batch NOT called', async () => {
