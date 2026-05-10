@@ -162,29 +162,41 @@ Body:
 Behavior:
 1. zod parse body, 400 on fail.
 2. Load mistake row by id; 404 if missing or archived/deleted.
-3. Parse `mistake.fsrs_state` JSON → if null, `createEmptyCard(now)` from ts-fsrs.
-4. ts-fsrs `FSRS().repeat(card, now)` → returns scheduling info for all 4 ratings; pick the one matching body.rating.
-5. Compute `cardAfter` and `due_at_next`.
-6. **乐观锁 UPDATE**：
-   ```sql
-   update mistake
-     set fsrs_state = ?, updated_at = ?, version = version + 1
-     where id = ? and version = ?
+3. **`prevState = mistake.fsrs_state ? FsrsState.parse(JSON.parse(...)) : null`** —— 必须经 zod，因为 `FsrsState.due` / `last_review` 是 `z.coerce.date()`，DB JSON 反序列化拿到的是 ISO 字符串而不是 Date 对象，直接传给 ts-fsrs 会让 elapsed/scheduled days 计算错误。
+4. ts-fsrs `FSRS().next(card, now, rating)` → 返回 next card + 新的 due。
+5. Compute `nextState` (zod-shaped) 和 `dueAt`。
+6. **D1 batch 原子写**（both UPDATE + INSERT 同 batch）：
+   ```ts
+   const updateStmt = db.prepare(
+     `update mistake set fsrs_state = ?, updated_at = ?, version = version + 1
+      where id = ? and version = ?`
+   ).bind(JSON.stringify(nextState), now, mistakeId, prevVersion);
+   const insertStmt = db.prepare(
+     `insert into review_event (id, mistake_id, rating, response_md, latency_ms,
+        fsrs_state_before, fsrs_state_after, due_at_before, due_at_next, created_at)
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+   ).bind(...);
+   const results = await db.batch([updateStmt, insertStmt]);
    ```
-   If `meta.changes !== 1` → 409 Conflict（mistake 已被并发修改）.
-7. INSERT review_event:
-   ```sql
-   insert into review_event (id, mistake_id, rating, response_md, latency_ms,
-     fsrs_state_before, fsrs_state_after, due_at_before, due_at_next, created_at)
-   values (...)
-   ```
-   `fsrs_state_before` = JSON of pre-update state (null for first review).
-8. Return `{ next_due_at: number, new_state: FsrsState }`.
+   D1 batch 的语义：要么所有 stmt 都提交，要么全部回滚。任何 D1 错误 → 两条都没写。
+7. 检查 `results[0].meta.changes`：
+   - `=== 1` → 正常成功，return 200 with `{ next_due_at, new_state }`
+   - `=== 0` → version 不匹配（极罕见，单用户场景几乎不会发生）。**review_event 仍然提交**（作为 audit log 记录这次 attempt），response 409 Conflict 让客户端知道 fsrs_state 没动。
+8. Return `{ next_due_at, new_state }` 或 `{ error: 'conflict', ... }`。
+
+**为什么 review_event 在 409 路径下仍然写**：
+
+`review_event` 的语义从这次设计开始改为"所有 submit attempt 的审计日志"，不是"成功 fsrs_state 变更的伴随日志"。原因：
+- 用户实际按了那个键 / 做了那次复习决定，是真实发生的行为；
+- `fsrs_state_before` / `fsrs_state_after` 仍然是有意义的快照（after = 这次 attempt 计算出的预期下一态）；
+- 后续分析（BMMS 风格）想知道"用户怎么 rating"比想知道"哪些 rating 成功 mutate"更有用；
+- D1 batch 让 UPDATE no-op 和 INSERT success 共存的概率成 0（要么俩都进，要么俩都不进）；不存在"UPDATE 成 + INSERT 丢"或"UPDATE 丢 + INSERT 成"两种半失败。
 
 **Failure modes**:
-- ts-fsrs 抛错（不应该发生，纯计算）→ Hono onError 5xx
-- review_event INSERT 失败 after fsrs_state UPDATE 成功 → log + 5xx；下次 `/review/due` 不会再返这条（fsrs_state 已 update），用户失去一条 review_event 行为日志。**接受这个边角**，自用阶段不为 audit log 100% 完整性付双写代价。
-- 并发 submit（用户 double-click） → 第一次成功 + 第二次 409。前端 disable submit while pending。
+- ts-fsrs 抛错（不应该发生，纯计算）→ Hono onError 5xx，batch 未触发
+- D1 batch 整体失败（网络 / 限额 / 内部错误）→ Hono onError 5xx，**两条 stmt 都没提交**
+- `prevState` JSON shape 异常（不应发生，因为我们写入路径走 ts-fsrs 直出 + JSON.stringify）→ FsrsState.parse 抛错 → 5xx
+- 并发 submit（用户 double-click） → 第一次成功 + 第二次 409 + 一条 audit-only review_event。前端 disable submit while pending 减少误触发。
 
 ### 3.3 mount
 
@@ -275,9 +287,10 @@ Behavior:
 
 ## 六、约束 / 不变量
 
-- **review_event append-only**：写入路径仅 INSERT；schema 没有 update 路径。任何 fsrs_state 变更必产生一条 review_event。
-- **fsrs_state 与 review_event 一致性**：先 UPDATE mistake.fsrs_state（乐观锁），再 INSERT review_event。前者成功后者失败 → 数据不一致（log，接受）。前者失败 409 → 后者不执行。
-- **append-only 不等于原子**：fsrs_state UPDATE + review_event INSERT 没用 D1 batch（让 review_event 即使 mistake 已被并发修改后也能记一条 fsrs_state_before / fsrs_state_after 真实快照）。Phase 1a 自用单人，并发场景不存在。
+- **review_event = 所有 submit attempt 的审计日志**：每次 `POST /api/review/submit` 通过 zod 校验后必产生一条 review_event。append-only schema（无 update / version / updated_at）。
+- **fsrs_state 与 review_event 双写原子性**：UPDATE mistake.fsrs_state + INSERT review_event 必须放在同一个 `c.env.DB.batch([...])`。D1 batch 是原子的：要么俩都提交，要么俩都不提交。
+- **乐观锁 vs audit log 的分离**：UPDATE 用 `where version = ?` gate；如果 version 不匹配 → UPDATE no-op (`meta.changes === 0`)，但因为 D1 batch 整体提交，INSERT review_event 仍然成功 → 留下一条 audit-only 记录（fsrs_state 没动，但用户的 rating 行为被记录）。客户端拿到 409 知道这次没生效。
+- **State 读路径必须经 zod**：JSON.parse 后再 `FsrsState.parse()`，依赖 `z.coerce.date()` 把 ISO 字符串转成 Date 对象。直接传 string 给 ts-fsrs 会让间隔计算错乱。
 - **rating 三档闭合**：客户端只暴露 again/hard/good 三按钮；server zod enum 三档；ts-fsrs scheduling 用三档（不用 Easy）。
 - **Latency 不可信但有用**：上报值由客户端计算，可被篡改 / NaN / 极端值；server 只 store，不据此做决策。
 - **Due 列表无副作用**：GET /due 不修改 DB；纯 read。
