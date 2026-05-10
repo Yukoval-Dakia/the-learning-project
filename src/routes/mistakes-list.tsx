@@ -82,7 +82,7 @@ export function MistakesList() {
           <span>全部归因完毕（{data.length}）</span>
         )}
         {' · '}
-        <a href="/record" className="underline">+ 录入新错题</a>
+        <a href="/capture" className="underline">+ 录入新错题</a>
       </p>
 
       <a
@@ -123,7 +123,7 @@ export function MistakesList() {
 
       {!recentQuery.isLoading && data.length === 0 && (
         <p className="text-sm text-slate-500">
-          还没有错题。<a href="/record" className="underline">先录一条</a>。
+          还没有错题。<a href="/capture" className="underline">先录一条</a>。
         </p>
       )}
     </main>

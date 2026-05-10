@@ -137,7 +137,7 @@ export function ReviewSession() {
       <main className="mx-auto max-w-3xl px-4 py-8">
         <p className="text-lg font-medium mb-4">今天没有要复习的，太好了</p>
         <div className="flex gap-4 text-sm">
-          <a href="/record" className="underline">+ 录新错题</a>
+          <a href="/capture" className="underline">+ 录新错题</a>
           <a href="/mistakes" className="underline">看历史 →</a>
         </div>
       </main>
