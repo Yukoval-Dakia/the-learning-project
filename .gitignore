@@ -24,5 +24,6 @@ drizzle/.snapshots/
 
 # Next.js
 next-env.d.ts
+tsconfig.tsbuildinfo
 
 .env*.local
