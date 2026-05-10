@@ -151,9 +151,7 @@ importRoute.post('/', async (c) => {
     return c.json(
       {
         error: 'restore_failed_mid_flight',
-        message:
-          'D1 may be in a half-wiped state. Re-run the same ZIP to retry — wipe is idempotent. ' +
-          msg,
+        message: `D1 may be in a half-wiped state. Re-run the same ZIP to retry — wipe is idempotent. ${msg}`,
         partial_stats: stats,
       },
       500,

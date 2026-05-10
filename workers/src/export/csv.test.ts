@@ -137,10 +137,8 @@ describe('buildReviewEventsCsv', () => {
           mistake_id: 'm1',
           created_at: 1700100000, // was rated_at
           rating: 'again', // string label, not numeric
-          fsrs_state_before: // was before_fsrs_state
-            '{"stability":2.5,"difficulty":5,"due":1700000000,"state":2}',
-          fsrs_state_after: // was after_fsrs_state
-            '{"stability":1.5,"difficulty":7,"due":1700200000,"state":3}',
+          fsrs_state_before: '{"stability":2.5,"difficulty":5,"due":1700000000,"state":2}', // was before_fsrs_state
+          fsrs_state_after: '{"stability":1.5,"difficulty":7,"due":1700200000,"state":3}', // was after_fsrs_state
           due_at_before: 1700000000,
           due_at_next: 1700200000,
         },
