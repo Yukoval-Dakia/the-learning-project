@@ -186,16 +186,26 @@ export function CaptureSession() {
         const text = await res.text().catch(() => '');
         throw new Error(`POST /api/ingestion ${res.status}: ${text}`);
       }
-      const body = (await res.json()) as { session: IngestionSession; blocks: IngestionBlock[] };
-      if (body.session.status === 'failed' || body.blocks.length === 0) {
-        setErrorMsg('OCR 失败，请检查图片');
-        setUploading(false);
-        return;
-      }
+      const body = (await res.json()) as {
+        session: IngestionSession;
+        blocks: IngestionBlock[];
+        failures?: Array<{ asset_id: string; reason: string }>;
+      };
       const initial = body.blocks.map(blockToCard);
       setSessionId(body.session.id);
       setSession(body.session);
       setCards(initial);
+      // Surface failures (partial multi-page failure was previously silent)
+      const noticeParts: string[] = [];
+      if (body.session.status === 'failed' || body.blocks.length === 0) {
+        noticeParts.push('OCR 未识别出题目，可手动 + 新增空题');
+      }
+      if (body.failures && body.failures.length > 0) {
+        noticeParts.push(
+          `${body.failures.length} 张图抽取失败：${body.failures.map((f) => f.reason).join('；')}`,
+        );
+      }
+      setErrorMsg(noticeParts.length > 0 ? noticeParts.join(' ｜ ') : null);
       setPhase('review');
     } catch (e) {
       setErrorMsg(`提取失败: ${(e as Error).message}`);
@@ -362,11 +372,6 @@ export function CaptureSession() {
       setErrorMsg('每题必须有题面、错答、至少一个知识点');
       return;
     }
-    const emptyManual = cards.find((c) => c.source_block_ids.length === 0);
-    if (emptyManual) {
-      setErrorMsg('手动新增的题暂不支持单独导入（无 source_block_id）。请先合并到现有题或先用拆分。');
-      return;
-    }
     importMutation.mutate();
   }
 
@@ -380,11 +385,11 @@ export function CaptureSession() {
 
         <div className="space-y-4">
           <label className="block">
-            <span className="text-sm font-medium">选择图片（PNG / JPEG / WebP，可多张）</span>
+            <span className="text-sm font-medium">选择图片（PNG / JPEG，可多张）</span>
             <input
               type="file"
               multiple
-              accept="image/png,image/jpeg,image/webp"
+              accept="image/png,image/jpeg"
               className="mt-1 block text-sm"
               onChange={(e) => {
                 setSelectedFiles(Array.from(e.target.files ?? []));
