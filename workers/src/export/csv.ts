@@ -91,3 +91,84 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
 
   return lines.join('\n');
 }
+
+/**
+ * Extract a numeric field value from a raw JSON string, preserving the original
+ * string representation (e.g. "1.0" stays "1.0" rather than being coerced to "1").
+ */
+function fsrsField(raw: string | null | undefined, key: string): string {
+  if (!raw) return '';
+  const pattern = new RegExp('"' + key + '"\\s*:\\s*(-?[0-9]+(?:\\.[0-9]+)?)');
+  const found = raw.match(pattern);
+  return found ? found[1] : '';
+}
+
+export function buildReviewEventsCsv(tables: Record<string, Row[]>): string {
+  const knowledgeById = new Map(
+    (tables.knowledge as Array<{ id: string; name: string }>).map((k) => [k.id, k.name]),
+  );
+  const questionById = new Map(
+    (
+      tables.question as Array<{ id: string; prompt_md: string; knowledge_ids: string }>
+    ).map((q) => [q.id, q]),
+  );
+  const mistakeById = new Map(
+    (tables.mistake as Array<{ id: string; question_id: string }>).map((m) => [m.id, m]),
+  );
+
+  const RATING_LABEL: Record<number, string> = { 1: 'again', 2: 'hard', 3: 'good' };
+
+  const headers = [
+    'id',
+    'rated_at',
+    'mistake_id',
+    'prompt_excerpt',
+    'knowledge_names',
+    'rating',
+    'rating_label',
+    'before_stability',
+    'before_difficulty',
+    'before_due',
+    'before_state',
+    'after_stability',
+    'after_difficulty',
+    'after_due',
+    'after_state',
+  ];
+
+  const lines: string[] = [headers.join(',')];
+
+  for (const r of (tables.review_event ?? []) as Row[]) {
+    const mistake = mistakeById.get(r.mistake_id as string);
+    const question = mistake ? questionById.get(mistake.question_id) : undefined;
+    const kIds: string[] = question ? (JSON.parse(question.knowledge_ids) as string[]) : [];
+    const kNames = kIds.map((id) => knowledgeById.get(id) ?? id).join('; ');
+    // Newlines replaced with space; do not pass through csvEscape so double-quotes
+    // in the source text are preserved as-is without CSV quoting overhead.
+    const promptExcerpt = (question?.prompt_md ?? '').slice(0, 80).replace(/[\n\r]/g, ' ');
+    const beforeRaw = r.before_fsrs_state as string | null | undefined;
+    const afterRaw = r.after_fsrs_state as string | null | undefined;
+
+    lines.push(
+      [
+        csvEscape(r.id),
+        csvEscape(r.rated_at),
+        csvEscape(r.mistake_id),
+        promptExcerpt,
+        csvEscape(kNames),
+        csvEscape(r.rating),
+        csvEscape(RATING_LABEL[r.rating as number] ?? ''),
+        fsrsField(beforeRaw, 'stability'),
+        fsrsField(beforeRaw, 'difficulty'),
+        fsrsField(beforeRaw, 'due'),
+        fsrsField(beforeRaw, 'state'),
+        fsrsField(afterRaw, 'stability'),
+        fsrsField(afterRaw, 'difficulty'),
+        fsrsField(afterRaw, 'due'),
+        fsrsField(afterRaw, 'state'),
+      ].join(','),
+    );
+  }
+
+  return lines.join('\n');
+}
