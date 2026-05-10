@@ -112,7 +112,45 @@ the-learning-project/
 5. **既有 page 用既有 token** — 不允许新 page 用 ad-hoc 颜色 / 字号 / 间距；token 不够先扩展 token，再用
 6. **Anti-drift CI guard（建议加）** — 至少跑 `grep -r '[\x{1F300}-\x{1FAFF}\x{2600}-\x{27BF}]' src/` 防止再混入 emoji
 
-#### Phase 1b · 补完（1a 跑出第一周数据后做）
+## Architecture Review 2026-05-11 — 横向决策（必读）
+
+**触发**：Phase 1a 5 sub 全 ship 后，发现一路 sub-level 推进**没横向审视战略一致性**。Architecture review 整理 7 个跨模块决策：
+
+详见 `docs/superpowers/specs/2026-05-11-architecture-review.md`。**所有后续 sub 必须对照此文档实施**。
+
+**TL;DR — 7 lock'd 决策**：
+- Q1: Session 升格为一等公民（kind enum + summary_json + 一等列 subject/session_id）
+- Q2: All-questions ingest（mistake = AI 决策 enroll 子集）
+- Q3: QuestionTaggingTask sync 紧接 OCR
+- Q4: Hybrid mastery (rule-based base + LLM-driven ai_delta + audit log)
+- Q5: 两层 LLM 拓扑（13 Tasks + Agents）
+- Q6: 4 lane 分类（sync user-facing / async Workflow / cron / user-triggered）
+- Q7: Tree primary + 跨 subject question.knowledge_ids + 科内 knowledge_link
+
+**外加 stack pivot**：放弃 CF Workers，迁 **Vercel Hobby + Workflow DevKit + Cron + Neon Postgres + R2**。
+
+### Phase 1b/2 重排 sub 列表（取代下面的旧 Phase 1b 路线）
+
+| 新 # | Sub | 必先决 | 估时 |
+|---|---|---|---|
+| **Sub 0** | **Stack Migration**（挡所有 Phase 1b） | 即刻 | ~5d |
+| **Sub 1** | Capture Pipeline Rebuild（Q1+Q2+Q3 落实） | Sub 0 | ~7d |
+| **Sub 2** | 多学科 + knowledge_link schema (Q7) | Sub 1 | ~3d |
+| **Sub 3** | Quiz Render UI (kind-switch + reading + image) | Sub 1 | ~3d |
+| **Sub 4** | StudyLog | 无强依赖 | ~2d |
+| **Sub 5** | Variants gen (Maintenance lane) | Sub 1+3 | ~4d |
+| **Sub 6** | Source layer (Exa search) | Sub 3 | ~3d |
+| **Sub 7** | Orchestrator Agent (Layer 2) | Sub 1-6 多数 | ~7d |
+| **Sub 8** | Dreaming lane (daily cron) | Sub 1+2 | ~4d |
+| **Sub 9** | Maintenance lane (weekly cron) | Sub 5 | ~3d |
+
+**总估时**：~41d (±30%)。
+
+---
+
+#### ~~Phase 1b · 补完（旧版，1a 跑出第一周数据后做）~~ — superseded by architecture review 2026-05-11
+
+> 以下旧版 Phase 1b checklist 仅作历史 reference。新 sub 列表以上面 architecture review 表格为准。
 
 **录入扩展**
 - [x] **vision_single 录入路径**（已提前到 Phase 1.5 ingestion foundation：图片上传 → vision extract → 审核导入）
