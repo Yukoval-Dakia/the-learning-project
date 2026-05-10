@@ -24,7 +24,7 @@
 | `completion_evidence.path = 'self_declare'` 路径写入 | `ai_propose` / `quiz_pass` 路径（依赖 dreaming / JudgeRouter） |
 | 知识点关联（multi-select 复用 /record + /ingest 的 knowledge picker） | hub / atomic LearningItem 层级 UI（Phase 2 LearningIntent Orchestrator） |
 | `/learning-items` 极简列表 + 状态筛选 + 内联编辑 | Note Artifact 自动生成 / embedded check（Phase 2） |
-| 软删除：archive 操作 → status='archived' + archived_at | StudyLog 多对一关联（Phase 2 progress 模块） |
+| 软删除：archive 操作 → set `archived_at + archived_reason='user'`（**`archived_at` 是 source of truth；不改 status**） | StudyLog 多对一关联（Phase 2 progress 模块） |
 | 沿用 Sub 2/3/4A 模式：zod Body / 乐观锁 version / IIFE waitUntil（这次没有 LLM，所以无 waitUntil） | 复杂查询 / 全文搜索 / 批量操作 |
 
 ---
@@ -37,8 +37,8 @@
 | 三态范围 | `pending / in_progress / done` 走通；`dismissed / resting / archived` 留 enum 但 UI 不暴露 | YAGNI；Phase 2 真用到再开 |
 | 完成判定 path | 仅 `self_declare`（用户点"我学完了"按钮） | `ai_propose` 推 Phase 2，`quiz_pass` 推 Phase 1b（依赖 JudgeRouter） |
 | Done → completed_at | UPDATE 时 set `completed_at = now`；反向 in_progress 时 set null | 跟 Schema 字段语义对齐 |
-| 写 completion_evidence 的时机 | 仅在 status 转入 `done` 时写一条 | 复学（done → in_progress）不删旧 evidence，留痕 |
-| 重学（done → in_progress） | UPDATE status + completed_at=null；**保留旧 completion_evidence 行**作为历史 | append-only audit 与 4A review_event 同语义 |
+| 写 completion_evidence 的时机 | **仅在 UPDATE 成功后** 写一条（不进 batch；UPDATE 失败 409 → 不写 evidence） | evidence 是"完成证明"非"行为日志"——409 时写 orphan 会破坏 status↔completed_at 不变量、产生幻完成（与 Sub 4A `review_event` audit-only 语义有别） |
+| 重学（done → in_progress） | UPDATE status + completed_at=null；**保留旧 completion_evidence 行**作为历史 | append-only audit；上次完成的事实不被否认 |
 | evidence_json 内容 | `{ declared_at, user_notes?: string }` | self_declare 路径只有这俩字段；ai_propose/quiz_pass 时再加更复杂结构 |
 | List 排序 | `status` 优先（pending → in_progress → done）；同 status 按 `updated_at desc` | 让"待办在前，已完成在后"的直觉对齐 |
 | List 默认筛选 | 所有非 archived | 自用单人量级小 |
@@ -100,6 +100,7 @@ Behavior：
 Body:
 ```ts
 {
+  version: number;             // REQUIRED — client must echo the version it last saw
   title?: string;
   content?: string;
   knowledge_ids?: string[];
@@ -107,6 +108,8 @@ Body:
   user_notes?: string;  // only used when transitioning to done; written into evidence_json
 }
 ```
+
+`version` 是**客户端 send 的版本号**（来自上一次 GET / POST 响应），不是 server SELECT 出的版本。这样能防 stale-UI 覆盖：用户开编辑 5 分钟，期间他人改了行，version 不匹配 → 409，而不是用 server 实时拉的 version 覆盖人家的修改。
 
 Behavior：
 1. zod parse → 400
@@ -118,15 +121,18 @@ Behavior：
    - 其他组合 → 400 `invalid_transition`
 4. 如果 knowledge_ids 改了，校验存在
 5. 计算 transition：
-   - 转入 `done`: set `completed_at = now`, also queue completion_evidence INSERT
+   - 转入 `done`: set `completed_at = now`, 后续 INSERT completion_evidence
    - 转出 `done`（done → in_progress）: set `completed_at = null`，**不删旧 evidence**
    - 其他不动 completed_at
-6. **D1 batch**（与 Sub 4A `review_event` 同模式）：
-   - Stmt 0: UPDATE learning_item with optimistic lock `where id = ? and version = ?`
-   - Stmt 1（仅当转入 done 时）: INSERT completion_evidence
-7. 检查 batch[0].meta.changes:
-   - `=== 1` → 200 + 新行
-   - `=== 0` → 409 Conflict (并发修改)；如果有 evidence INSERT 它仍提交作 audit-only orphan，跟 Sub 4A 模式一致
+6. **Sequential write**（**不**用 D1 batch）：
+   - Stmt A: UPDATE learning_item with `where id = ? and version = ?`（用 body.version）
+   - 检查 `meta.changes`:
+     - `=== 0` → 409 Conflict, **不写 evidence**, return
+     - `=== 1` → 继续
+   - Stmt B（仅当转入 done 时）: INSERT completion_evidence
+   - **为什么不用 batch**：completion_evidence 是"完成证明"语义（status='done' ↔ 必须有 evidence），跟 Sub 4A `review_event` 的"行为日志"语义不同。如果 batch + 409 仍提交 evidence，会产生"item 不是 done 但已有 completion_evidence"的幻完成，破坏不变量 § 五（status='done' ↔ completed_at != null）。
+   - **失败模式权衡**：UPDATE 成 + INSERT 失败（D1 抖动） → status='done' 且 completed_at != null 但无 evidence。这违反"done 必有 evidence"的弱约束，但保留了核心不变量（done 的状态本身一致）；evidence 缺失只丢 audit。Phase 1a 自用单人，D1 抖动罕见，接受。
+7. Return `{ id, ...new row }` 或 `{ error: 'conflict', ... }` / `{ error: 'invalid_transition', from, to }`.
 
 Response: `{ id, ...updated row }` 或 `{ error: 'conflict', ... }` / `{ error: 'invalid_transition', from, to }`.
 
@@ -135,19 +141,24 @@ Response: `{ id, ...updated row }` 或 `{ error: 'conflict', ... }` / `{ error: 
 软删 — UPDATE set `archived_at = now`, `archived_reason = 'user'`, `version + 1`. 乐观锁需带 If-Match 或 query param `version`，避免覆盖。简化：客户端先 GET 拿 version，DELETE 带 query `?version=N`。
 
 Behavior：
-1. 200 on success
-2. 404 if not found / already archived
-3. 409 if version mismatch
+1. UPDATE set `archived_at = now, archived_reason = 'user', updated_at = now, version = version + 1 where id = ? and version = ?` — `archived_at` 是 source of truth；**不动 status**（保留它最后状态供 export 看，spec § 一 范围表已对齐）
+2. 200 on success
+3. 404 if not found / already archived
+4. 409 if version mismatch
 
-### 3.2 文件
+### 3.2 CORS
+
+新 endpoints 用 PATCH/DELETE，但当前 worker `allowMethods` 仅 `['GET', 'POST', 'OPTIONS']`（`workers/src/index.ts`）。本地 Vite proxy 同源不会触发 preflight，但生产 / 跨域 / 直接打 worker URL 会失败。**Plan 必加一步**扩展 `allowMethods` 到 `['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS']`。
+
+### 3.3 文件
 
 | 路径 | 责任 | 新建/修改 |
 |---|---|---|
 | `workers/src/routes/learning_items.ts` | 4 个 handler（GET / POST / PATCH / DELETE）+ helpers | 新 |
 | `workers/src/routes/learning_items.test.ts` | mockEnv + 全流程测试 | 新 |
-| `workers/src/index.ts` | mount `/api/learning-items` | 改 |
+| `workers/src/index.ts` | mount `/api/learning-items` + 扩展 `allowMethods` | 改 |
 
-### 3.3 失败模式
+### 3.4 失败模式
 
 | 场景 | 行为 |
 |---|---|
@@ -232,12 +243,11 @@ Card 角落小 × 按钮 → confirm("删除这条?") → DELETE `?version=N`。
 ## 五、约束 / 不变量
 
 - **Status transition 严格**：只允许 spec § 3.1 PATCH 步骤 3 列出的转换；其他 400。
-- **completion_evidence append-only**：与 4A review_event 同语义，每次进入 `done` 写新行；重学不删旧行。
-- **D1 batch 原子性**：UPDATE + INSERT evidence 同 batch（与 4A 同模式）；版本不匹配的 409 仍可留 audit-only orphan evidence（罕见但允许）。
+- **completion_evidence append-only**：每次"成功"进入 `done` 写一条；重学不删旧行；不存在 orphan evidence（与 Sub 4A `review_event` 不同——后者记录"行为尝试"，前者记录"完成证明"）。
+- **PATCH/DELETE 必须由客户端传 `version`**：服务器 `where id = ? and version = ?` 用 client 传的版本；防 stale-UI 覆盖。版本不匹配 → 409，**不写 evidence**。
 - **completed_at 与 status 一致**：status='done' ↔ completed_at != null；其他 status ↔ completed_at = null（PATCH 内统一管理，不让 client 直接传 completed_at）。
-- **archived 软删不可逆**：UPDATE archived_at + archived_reason；不开恢复 UI（Phase 2 维护页才有）。
+- **archived 是 source of truth**：DELETE 仅 set `archived_at + archived_reason`；**不动 status**。GET filter 用 `archived_at is null` 排除。
 - **knowledge_ids 校验存在**：写入路径必须 verify against `knowledge` table 非 archived（沿用 mistakes.ts 模式）。
-- **乐观锁 version**：所有 UPDATE / DELETE 必带 `where version = ?`；mismatch 返 409。
 
 ---
 
