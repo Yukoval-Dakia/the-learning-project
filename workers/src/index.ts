@@ -6,6 +6,8 @@ import { internalAuth } from './auth';
 import { getDb } from './db';
 import { seedKnowledge } from './knowledge/seed';
 import { assets } from './routes/assets';
+import { exportRoute } from './routes/export';
+import { importRoute } from './routes/import';
 import { ingestion } from './routes/ingestion';
 import { knowledge } from './routes/knowledge';
 import { learningItems } from './routes/learning_items';
@@ -28,6 +30,8 @@ app.use(
 app.use('/api/*', internalAuth);
 
 app.route('/api/_/logs', logs);
+app.route('/api/_/export', exportRoute);
+app.route('/api/_/import', importRoute);
 app.route('/api/assets', assets);
 app.route('/api/knowledge', knowledge);
 app.route('/api/mistakes', mistakes);

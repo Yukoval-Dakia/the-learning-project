@@ -194,8 +194,158 @@ function CostLedgerTab() {
   );
 }
 
+function DataTab() {
+  const [downloading, setDownloading] = useState(false);
+  const [downloadBytes, setDownloadBytes] = useState(0);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [confirmText, setConfirmText] = useState('');
+  const [importStatus, setImportStatus] = useState<string | null>(null);
+
+  async function downloadExport(includeAssets: boolean) {
+    setDownloading(true);
+    setDownloadBytes(0);
+    setDownloadError(null);
+    const url = includeAssets ? '/api/_/export?include_assets=1' : '/api/_/export';
+    try {
+      const res = await fetch(url, { headers: { 'x-internal-token': INTERNAL_TOKEN } });
+      if (!res.ok || !res.body) {
+        const text = res.ok ? 'no body' : await res.text();
+        setDownloadError(`${res.status}: ${text}`);
+        return;
+      }
+      const reader = res.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let bytes = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        bytes += value.length;
+        setDownloadBytes(bytes);
+      }
+      const blob = new Blob(chunks as BlobPart[], { type: 'application/zip' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `loom-backup-${new Date().toISOString().slice(0, 10)}.zip`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  async function runImport() {
+    if (!importFile) return;
+    if (confirmText !== 'wipe') {
+      setImportStatus('请先在 confirm 框内输入 "wipe" 字样');
+      return;
+    }
+    setImportStatus('清空 + 还原中...');
+    try {
+      const ab = await importFile.arrayBuffer();
+      const res = await fetch('/api/_/import?confirm=wipe-and-reload', {
+        method: 'POST',
+        headers: {
+          'x-internal-token': INTERNAL_TOKEN,
+          'content-type': 'application/zip',
+        },
+        body: ab,
+      });
+      if (res.ok) {
+        const body = (await res.json()) as {
+          ok: boolean;
+          stats: unknown;
+          assets_uploaded: number;
+          assets_failed: number;
+          failed_keys?: string[];
+        };
+        const failureNote =
+          body.assets_failed > 0
+            ? ` ⚠ ${body.assets_failed} 个 R2 资源上传失败：${(body.failed_keys ?? []).join(', ').slice(0, 200)}`
+            : '';
+        setImportStatus(
+          `${body.ok ? '完成' : '完成（含失败）'}。assets uploaded: ${body.assets_uploaded}${failureNote}。3 秒后刷新页面...`,
+        );
+        setTimeout(() => window.location.reload(), 3000);
+      } else {
+        const text = await res.text();
+        setImportStatus(`失败: ${res.status} ${text}`);
+      }
+    } catch (err) {
+      setImportStatus(`失败: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <section>
+        <h2 className="text-base font-medium">下载备份</h2>
+        <div className="flex gap-2 mt-2">
+          <button
+            type="button"
+            onClick={() => downloadExport(false)}
+            disabled={downloading}
+            className="px-3 py-1.5 bg-slate-900 text-white text-sm rounded disabled:opacity-50"
+          >
+            data only (refs)
+          </button>
+          <button
+            type="button"
+            onClick={() => downloadExport(true)}
+            disabled={downloading}
+            className="px-3 py-1.5 bg-slate-700 text-white text-sm rounded disabled:opacity-50"
+          >
+            full (含 R2 图片)
+          </button>
+        </div>
+        {downloading && (
+          <p className="text-sm text-slate-600 mt-2">
+            已下载 {(downloadBytes / 1024 / 1024).toFixed(1)} MB
+          </p>
+        )}
+        {downloadError && <p className="text-sm text-red-600 mt-2">{downloadError}</p>}
+      </section>
+
+      <section>
+        <h2 className="text-base font-medium text-red-700">还原（清空式）</h2>
+        <p className="text-xs text-slate-500 mt-1">
+          这个动作会清空所有 D1 数据，然后从你上传的 ZIP 重装；ZIP 里的 R2 图片会覆盖上传，但
+          <strong>不删除</strong> 之前的 R2 对象（孤儿 R2 不会被自动清理）。先 export 当前再 import
+          新的；没 UNDO。
+        </p>
+        <div className="mt-2 space-y-2">
+          <input
+            type="file"
+            accept=".zip"
+            onChange={(e) => setImportFile(e.target.files?.[0] ?? null)}
+          />
+          <input
+            type="text"
+            value={confirmText}
+            onChange={(e) => setConfirmText(e.target.value)}
+            placeholder='输入 "wipe" 确认'
+            className="border px-2 py-1 text-sm rounded block"
+          />
+          <button
+            type="button"
+            onClick={runImport}
+            disabled={!importFile || confirmText !== 'wipe'}
+            className="px-3 py-1.5 bg-red-700 text-white text-sm rounded disabled:opacity-40"
+          >
+            清空并还原
+          </button>
+          {importStatus && <p className="text-sm text-slate-600">{importStatus}</p>}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export function Inspect() {
-  const [tab, setTab] = useState<'tool_calls' | 'cost'>('tool_calls');
+  const [tab, setTab] = useState<'tool_calls' | 'cost' | 'data'>('tool_calls');
   return (
     <main className="mx-auto max-w-5xl px-4 py-8">
       <h1 className="text-xl font-semibold mb-4">/_/inspect</h1>
@@ -250,9 +400,20 @@ export function Inspect() {
         >
           CostLedger
         </button>
+        <button
+          type="button"
+          onClick={() => setTab('data')}
+          className={`px-3 py-2 text-sm border-b-2 ${
+            tab === 'data' ? 'border-slate-900 font-semibold' : 'border-transparent text-slate-500'
+          }`}
+        >
+          Data
+        </button>
       </div>
 
-      {tab === 'tool_calls' ? <ToolCallLogTab /> : <CostLedgerTab />}
+      {tab === 'tool_calls' && <ToolCallLogTab />}
+      {tab === 'cost' && <CostLedgerTab />}
+      {tab === 'data' && <DataTab />}
     </main>
   );
 }
