@@ -76,6 +76,28 @@ export const ArtifactType = z.enum(['note_hub', 'note_atomic', 'tool_quiz']);
 
 export const SourceAssetKind = z.enum(['image', 'pdf', 'text', 'web']);
 
+export const IngestionSessionStatus = z.enum([
+  'uploaded',
+  'extracted',
+  'reviewed',
+  'imported',
+  'failed',
+]);
+
+export const IngestionEntrypoint = z.enum(['vision_single', 'vision_paper']);
+
+export const QuestionBlockStatus = z.enum([
+  'draft',
+  'reviewed',
+  'merged',
+  'imported',
+  'ignored',
+]);
+
+export const QuestionBlockRole = z.enum(['prompt', 'answer_area', 'continuation']);
+
+export const VisualComplexity = z.enum(['low', 'medium', 'high']);
+
 export const JudgeKind = z.enum([
   'exact',
   'keyword',

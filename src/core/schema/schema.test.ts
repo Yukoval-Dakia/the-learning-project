@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest';
 import {
   CauseCategory,
   DreamingProposal,
+  IngestionSession,
   KnowledgeInsert,
   LearningItemInsert,
   Mistake,
   MistakeInsert,
+  QuestionBlock,
+  QuestionBlockInsert,
   SourceAsset,
 } from './index';
 
@@ -148,6 +151,82 @@ describe('schema generated from drizzle', () => {
       height: null,
       provenance: {},
       created_at: new Date(),
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('QuestionBlock accepts a single-page draft block', () => {
+    const result = QuestionBlockInsert.safeParse({
+      id: 'qb_1',
+      ingestion_session_id: 'sess_1',
+      source_document_id: 'doc_1',
+      source_asset_ids: ['asset_1'],
+      page_spans: [
+        { page_index: 0, bbox: { x: 0.1, y: 0.2, width: 0.6, height: 0.3 }, role: 'prompt' },
+      ],
+      extracted_prompt_md: '题面',
+      reference_md: null,
+      wrong_answer_md: null,
+      image_refs: ['asset_1'],
+      crop_refs: [],
+      visual_complexity: 'low',
+      extraction_confidence: 0.9,
+      status: 'draft',
+      knowledge_hint: null,
+      merged_from_block_ids: [],
+      imported_question_id: null,
+      imported_mistake_id: null,
+      created_at: new Date(),
+      updated_at: new Date(),
+      version: 0,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('QuestionBlock accepts a merged cross-page block (page_spans length 2)', () => {
+    const result = QuestionBlock.safeParse({
+      id: 'qb_merged',
+      ingestion_session_id: 'sess_1',
+      source_document_id: 'doc_1',
+      source_asset_ids: ['asset_1', 'asset_2'],
+      page_spans: [
+        { page_index: 0, bbox: { x: 0, y: 0.7, width: 1, height: 0.3 }, role: 'continuation' },
+        { page_index: 1, bbox: { x: 0, y: 0, width: 1, height: 0.4 }, role: 'answer_area' },
+      ],
+      extracted_prompt_md: '跨页题面',
+      reference_md: null,
+      wrong_answer_md: '错答',
+      image_refs: ['asset_1', 'asset_2'],
+      crop_refs: [],
+      visual_complexity: 'medium',
+      extraction_confidence: 0.8,
+      status: 'merged',
+      knowledge_hint: null,
+      merged_from_block_ids: ['qb_1', 'qb_2'],
+      imported_question_id: null,
+      imported_mistake_id: null,
+      created_at: new Date(),
+      updated_at: new Date(),
+      version: 0,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.page_spans).toHaveLength(2);
+      expect(result.data.merged_from_block_ids).toEqual(['qb_1', 'qb_2']);
+    }
+  });
+
+  it('IngestionSession rejects unknown status', () => {
+    const result = IngestionSession.safeParse({
+      id: 'sess_1',
+      source_document_id: null,
+      source_asset_ids: [],
+      status: 'bogus',
+      entrypoint: 'vision_single',
+      error_message: null,
+      created_at: new Date(),
+      updated_at: new Date(),
+      version: 0,
     });
     expect(result.success).toBe(false);
   });
