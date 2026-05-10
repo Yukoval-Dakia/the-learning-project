@@ -1,29 +1,75 @@
-import { boolean, integer, jsonb, pgTable, real, text, timestamp } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import {
+  boolean,
+  check,
+  integer,
+  jsonb,
+  pgTable,
+  real,
+  text,
+  timestamp,
+} from 'drizzle-orm/pg-core';
+import type { z } from 'zod';
+import type {
+  AgentRef,
+  ArtifactHistoryEntry,
+  Cause,
+  FsrsState,
+  MistakeVariant,
+  NoteSection,
+  Provenance,
+  Rubric,
+  ToolState,
+} from '../core/schema/business';
 
 // Drizzle schema (Postgres) — single source of truth.
 // Per architecture-review.md § Stack Pivot: Postgres types throughout;
 // json columns are jsonb; booleans + timestamps native.
+//
+// JSON column types come from src/core/schema/business.ts. Importing the
+// inferred types (not the schemas) keeps this module zod-free at runtime;
+// generated.ts wraps these tables with drizzle-zod for validation.
 
-export const knowledge = pgTable('knowledge', {
-  id: text('id').primaryKey(),
-  name: text('name').notNull(),
-  domain: text('domain'),
-  parent_id: text('parent_id'),
-  base_mastery: real('base_mastery').notNull().default(0),
-  ai_delta_mastery: real('ai_delta_mastery').notNull().default(0),
-  last_active_at: timestamp('last_active_at', { withTimezone: true }),
-  merged_from: jsonb('merged_from').$type<string[]>().notNull().default([]),
-  archived_at: timestamp('archived_at', { withTimezone: true }),
-  proposed_by_ai: boolean('proposed_by_ai').notNull().default(false),
-  approval_status: text('approval_status', {
-    enum: ['pending', 'approved', 'rejected'],
-  })
-    .notNull()
-    .default('approved'),
-  created_at: timestamp('created_at', { withTimezone: true }).notNull(),
-  updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
-  version: integer('version').notNull().default(0),
-});
+type AgentRefT = z.infer<typeof AgentRef>;
+type ArtifactHistoryEntryT = z.infer<typeof ArtifactHistoryEntry>;
+type CauseT = z.infer<typeof Cause>;
+type FsrsStateT = z.infer<typeof FsrsState>;
+type MistakeVariantT = z.infer<typeof MistakeVariant>;
+type NoteSectionT = z.infer<typeof NoteSection>;
+type ProvenanceT = z.infer<typeof Provenance>;
+type RubricT = z.infer<typeof Rubric>;
+type ToolStateT = z.infer<typeof ToolState>;
+
+type JsonObject = Record<string, unknown>;
+
+export const knowledge = pgTable(
+  'knowledge',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    domain: text('domain'),
+    parent_id: text('parent_id'),
+    base_mastery: real('base_mastery').notNull().default(0),
+    ai_delta_mastery: real('ai_delta_mastery').notNull().default(0),
+    last_active_at: timestamp('last_active_at', { withTimezone: true }),
+    merged_from: jsonb('merged_from').$type<string[]>().notNull().default([]),
+    archived_at: timestamp('archived_at', { withTimezone: true }),
+    proposed_by_ai: boolean('proposed_by_ai').notNull().default(false),
+    approval_status: text('approval_status', {
+      enum: ['pending', 'approved', 'rejected'],
+    })
+      .notNull()
+      .default('approved'),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+    version: integer('version').notNull().default(0),
+  },
+  (t) => [
+    check('knowledge_base_mastery_range', sql`${t.base_mastery} BETWEEN 0 AND 1`),
+    // AI can move mastery at most ±0.2 from the base value (per ADR: hybrid mastery).
+    check('knowledge_ai_delta_mastery_range', sql`${t.ai_delta_mastery} BETWEEN -0.2 AND 0.2`),
+  ],
+);
 
 export const source_asset = pgTable('source_asset', {
   id: text('id').primaryKey(),
@@ -34,7 +80,7 @@ export const source_asset = pgTable('source_asset', {
   sha256: text('sha256').notNull(),
   width: integer('width'),
   height: integer('height'),
-  provenance: jsonb('provenance').notNull().default({}),
+  provenance: jsonb('provenance').$type<ProvenanceT>().notNull().default({}),
   created_at: timestamp('created_at', { withTimezone: true }).notNull(),
 });
 
@@ -43,7 +89,7 @@ export const source_document = pgTable('source_document', {
   title: text('title'),
   source_asset_ids: jsonb('source_asset_ids').$type<string[]>().notNull().default([]),
   body_md: text('body_md'),
-  provenance: jsonb('provenance').notNull().default({}),
+  provenance: jsonb('provenance').$type<ProvenanceT>().notNull().default({}),
   created_at: timestamp('created_at', { withTimezone: true }).notNull(),
   updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
   version: integer('version').notNull().default(0),
@@ -61,60 +107,73 @@ export const ingestion_session = pgTable('ingestion_session', {
   version: integer('version').notNull().default(0),
 });
 
-export const question_block = pgTable('question_block', {
-  id: text('id').primaryKey(),
-  ingestion_session_id: text('ingestion_session_id').notNull(),
-  source_document_id: text('source_document_id'),
-  source_asset_ids: jsonb('source_asset_ids').$type<string[]>().notNull().default([]),
-  page_spans: jsonb('page_spans')
-    .$type<
-      Array<{
-        page_index: number;
-        bbox: { x: number; y: number; width: number; height: number };
-        role?: string;
-      }>
-    >()
-    .notNull()
-    .default([]),
-  extracted_prompt_md: text('extracted_prompt_md').notNull(),
-  reference_md: text('reference_md'),
-  wrong_answer_md: text('wrong_answer_md'),
-  image_refs: jsonb('image_refs').$type<string[]>().notNull().default([]),
-  crop_refs: jsonb('crop_refs').$type<string[]>().notNull().default([]),
-  visual_complexity: text('visual_complexity').notNull().default('low'),
-  extraction_confidence: real('extraction_confidence').notNull().default(1),
-  status: text('status').notNull().default('draft'),
-  knowledge_hint: text('knowledge_hint'),
-  merged_from_block_ids: jsonb('merged_from_block_ids').$type<string[]>().notNull().default([]),
-  imported_question_id: text('imported_question_id'),
-  imported_mistake_id: text('imported_mistake_id'),
-  created_at: timestamp('created_at', { withTimezone: true }).notNull(),
-  updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
-  version: integer('version').notNull().default(0),
-});
+export const question_block = pgTable(
+  'question_block',
+  {
+    id: text('id').primaryKey(),
+    ingestion_session_id: text('ingestion_session_id').notNull(),
+    source_document_id: text('source_document_id'),
+    source_asset_ids: jsonb('source_asset_ids').$type<string[]>().notNull().default([]),
+    page_spans: jsonb('page_spans')
+      .$type<
+        Array<{
+          page_index: number;
+          bbox: { x: number; y: number; width: number; height: number };
+          role?: string;
+        }>
+      >()
+      .notNull()
+      .default([]),
+    extracted_prompt_md: text('extracted_prompt_md').notNull(),
+    reference_md: text('reference_md'),
+    wrong_answer_md: text('wrong_answer_md'),
+    image_refs: jsonb('image_refs').$type<string[]>().notNull().default([]),
+    crop_refs: jsonb('crop_refs').$type<string[]>().notNull().default([]),
+    visual_complexity: text('visual_complexity').notNull().default('low'),
+    extraction_confidence: real('extraction_confidence').notNull().default(1),
+    status: text('status').notNull().default('draft'),
+    knowledge_hint: text('knowledge_hint'),
+    merged_from_block_ids: jsonb('merged_from_block_ids').$type<string[]>().notNull().default([]),
+    imported_question_id: text('imported_question_id'),
+    imported_mistake_id: text('imported_mistake_id'),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+    version: integer('version').notNull().default(0),
+  },
+  (t) => [
+    check(
+      'question_block_extraction_confidence_range',
+      sql`${t.extraction_confidence} BETWEEN 0 AND 1`,
+    ),
+  ],
+);
 
-export const question = pgTable('question', {
-  id: text('id').primaryKey(),
-  kind: text('kind').notNull(),
-  prompt_md: text('prompt_md').notNull(),
-  reference_md: text('reference_md'),
-  rubric_json: jsonb('rubric_json'),
-  judge_kind_override: text('judge_kind_override'),
-  visual_complexity: text('visual_complexity'),
-  knowledge_ids: jsonb('knowledge_ids').$type<string[]>().notNull().default([]),
-  difficulty: integer('difficulty').notNull().default(3),
-  source: text('source').notNull(),
-  source_ref: text('source_ref'),
-  draft_status: text('draft_status'),
-  variant_depth: integer('variant_depth').notNull().default(0),
-  root_question_id: text('root_question_id'),
-  parent_variant_id: text('parent_variant_id'),
-  created_by: jsonb('created_by'),
-  metadata: jsonb('metadata'),
-  created_at: timestamp('created_at', { withTimezone: true }).notNull(),
-  updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
-  version: integer('version').notNull().default(0),
-});
+export const question = pgTable(
+  'question',
+  {
+    id: text('id').primaryKey(),
+    kind: text('kind').notNull(),
+    prompt_md: text('prompt_md').notNull(),
+    reference_md: text('reference_md'),
+    rubric_json: jsonb('rubric_json').$type<RubricT>(),
+    judge_kind_override: text('judge_kind_override'),
+    visual_complexity: text('visual_complexity'),
+    knowledge_ids: jsonb('knowledge_ids').$type<string[]>().notNull().default([]),
+    difficulty: integer('difficulty').notNull().default(3),
+    source: text('source').notNull(),
+    source_ref: text('source_ref'),
+    draft_status: text('draft_status'),
+    variant_depth: integer('variant_depth').notNull().default(0),
+    root_question_id: text('root_question_id'),
+    parent_variant_id: text('parent_variant_id'),
+    created_by: jsonb('created_by').$type<AgentRefT>(),
+    metadata: jsonb('metadata').$type<JsonObject>(),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+    version: integer('version').notNull().default(0),
+  },
+  (t) => [check('question_difficulty_range', sql`${t.difficulty} BETWEEN 1 AND 5`)],
+);
 
 export const mistake = pgTable('mistake', {
   id: text('id').primaryKey(),
@@ -126,9 +185,9 @@ export const mistake = pgTable('mistake', {
   source: text('source').notNull(),
   source_ref: text('source_ref'),
   knowledge_ids: jsonb('knowledge_ids').$type<string[]>().notNull().default([]),
-  cause: jsonb('cause'),
-  fsrs_state: jsonb('fsrs_state'),
-  variants: jsonb('variants').$type<unknown[]>().notNull().default([]),
+  cause: jsonb('cause').$type<CauseT>(),
+  fsrs_state: jsonb('fsrs_state').$type<FsrsStateT>(),
+  variants: jsonb('variants').$type<MistakeVariantT[]>().notNull().default([]),
   variants_generated_count: integer('variants_generated_count').notNull().default(0),
   variants_max: integer('variants_max').notNull().default(3),
   status: text('status').notNull().default('active'),
@@ -147,36 +206,46 @@ export const review_event = pgTable('review_event', {
   rating: text('rating').notNull(),
   response_md: text('response_md'),
   latency_ms: integer('latency_ms'),
-  fsrs_state_before: jsonb('fsrs_state_before'),
-  fsrs_state_after: jsonb('fsrs_state_after').notNull(),
+  fsrs_state_before: jsonb('fsrs_state_before').$type<FsrsStateT>(),
+  fsrs_state_after: jsonb('fsrs_state_after').$type<FsrsStateT>().notNull(),
   due_at_before: timestamp('due_at_before', { withTimezone: true }),
   due_at_next: timestamp('due_at_next', { withTimezone: true }).notNull(),
   created_at: timestamp('created_at', { withTimezone: true }).notNull(),
 });
 
-export const learning_item = pgTable('learning_item', {
-  id: text('id').primaryKey(),
-  source: text('source').notNull(),
-  source_ref: text('source_ref'),
-  title: text('title').notNull(),
-  content: text('content').notNull().default(''),
-  knowledge_ids: jsonb('knowledge_ids').$type<string[]>().notNull().default([]),
-  primary_artifact_id: text('primary_artifact_id'),
-  parent_learning_item_id: text('parent_learning_item_id'),
-  child_learning_item_ids: jsonb('child_learning_item_ids').$type<string[]>().notNull().default([]),
-  status: text('status').notNull().default('pending'),
-  user_pinned: boolean('user_pinned').notNull().default(false),
-  ai_score: real('ai_score'),
-  due_at: timestamp('due_at', { withTimezone: true }),
-  completed_at: timestamp('completed_at', { withTimezone: true }),
-  dismissed_at: timestamp('dismissed_at', { withTimezone: true }),
-  archived_at: timestamp('archived_at', { withTimezone: true }),
-  archived_reason: text('archived_reason'),
-  reviewed_at: timestamp('reviewed_at', { withTimezone: true }),
-  created_at: timestamp('created_at', { withTimezone: true }).notNull(),
-  updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
-  version: integer('version').notNull().default(0),
-});
+export const learning_item = pgTable(
+  'learning_item',
+  {
+    id: text('id').primaryKey(),
+    source: text('source').notNull(),
+    source_ref: text('source_ref'),
+    title: text('title').notNull(),
+    content: text('content').notNull().default(''),
+    knowledge_ids: jsonb('knowledge_ids').$type<string[]>().notNull().default([]),
+    primary_artifact_id: text('primary_artifact_id'),
+    parent_learning_item_id: text('parent_learning_item_id'),
+    child_learning_item_ids: jsonb('child_learning_item_ids')
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    status: text('status').notNull().default('pending'),
+    user_pinned: boolean('user_pinned').notNull().default(false),
+    ai_score: real('ai_score'),
+    due_at: timestamp('due_at', { withTimezone: true }),
+    completed_at: timestamp('completed_at', { withTimezone: true }),
+    dismissed_at: timestamp('dismissed_at', { withTimezone: true }),
+    archived_at: timestamp('archived_at', { withTimezone: true }),
+    archived_reason: text('archived_reason'),
+    reviewed_at: timestamp('reviewed_at', { withTimezone: true }),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+    version: integer('version').notNull().default(0),
+  },
+  (t) => [
+    // ai_score is nullable; CHECK accepts NULL by default.
+    check('learning_item_ai_score_range', sql`${t.ai_score} BETWEEN 0 AND 1`),
+  ],
+);
 
 export const study_log = pgTable('study_log', {
   id: text('id').primaryKey(),
@@ -202,13 +271,13 @@ export const artifact = pgTable('artifact', {
   intent_source: text('intent_source').notNull(),
   source: text('source').notNull(),
   source_ref: text('source_ref'),
-  outline_json: jsonb('outline_json'),
-  sections: jsonb('sections'),
+  outline_json: jsonb('outline_json').$type<JsonObject>(),
+  sections: jsonb('sections').$type<NoteSectionT[]>(),
   tool_kind: text('tool_kind'),
-  tool_state: jsonb('tool_state'),
+  tool_state: jsonb('tool_state').$type<ToolStateT>(),
   generation_status: text('generation_status').notNull().default('pending'),
-  generated_by: jsonb('generated_by'),
-  history: jsonb('history').$type<unknown[]>().notNull().default([]),
+  generated_by: jsonb('generated_by').$type<AgentRefT>(),
+  history: jsonb('history').$type<ArtifactHistoryEntryT[]>().notNull().default([]),
   archived_at: timestamp('archived_at', { withTimezone: true }),
   created_at: timestamp('created_at', { withTimezone: true }).notNull(),
   updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
@@ -227,21 +296,25 @@ export const answer = pgTable('answer', {
   submitted_at: timestamp('submitted_at', { withTimezone: true }).notNull(),
 });
 
-export const judgment = pgTable('judgment', {
-  id: text('id').primaryKey(),
-  answer_id: text('answer_id').notNull(),
-  judge_kind: text('judge_kind').notNull(),
-  verdict: text('verdict').notNull(),
-  score: real('score').notNull(),
-  feedback_md: text('feedback_md').notNull(),
-  evidence_json: jsonb('evidence_json').notNull().default({}),
-  is_flexible_fallback: boolean('is_flexible_fallback').notNull().default(false),
-  triggered_by: text('triggered_by'),
-  prior_judgment_id: text('prior_judgment_id'),
-  judged_by: jsonb('judged_by').notNull(),
-  judged_at: timestamp('judged_at', { withTimezone: true }).notNull(),
-  is_effective: boolean('is_effective').notNull().default(true),
-});
+export const judgment = pgTable(
+  'judgment',
+  {
+    id: text('id').primaryKey(),
+    answer_id: text('answer_id').notNull(),
+    judge_kind: text('judge_kind').notNull(),
+    verdict: text('verdict').notNull(),
+    score: real('score').notNull(),
+    feedback_md: text('feedback_md').notNull(),
+    evidence_json: jsonb('evidence_json').$type<JsonObject>().notNull().default({}),
+    is_flexible_fallback: boolean('is_flexible_fallback').notNull().default(false),
+    triggered_by: text('triggered_by'),
+    prior_judgment_id: text('prior_judgment_id'),
+    judged_by: jsonb('judged_by').$type<AgentRefT>().notNull(),
+    judged_at: timestamp('judged_at', { withTimezone: true }).notNull(),
+    is_effective: boolean('is_effective').notNull().default(true),
+  },
+  (t) => [check('judgment_score_range', sql`${t.score} BETWEEN 0 AND 1`)],
+);
 
 export const user_appeal = pgTable('user_appeal', {
   id: text('id').primaryKey(),
@@ -255,7 +328,7 @@ export const completion_evidence = pgTable('completion_evidence', {
   id: text('id').primaryKey(),
   learning_item_id: text('learning_item_id').notNull(),
   path: text('path').notNull(),
-  evidence_json: jsonb('evidence_json').notNull().default({}),
+  evidence_json: jsonb('evidence_json').$type<JsonObject>().notNull().default({}),
   user_overrode_low_evidence: boolean('user_overrode_low_evidence').notNull().default(false),
   decided_at: timestamp('decided_at', { withTimezone: true }).notNull(),
 });
@@ -263,7 +336,7 @@ export const completion_evidence = pgTable('completion_evidence', {
 export const dreaming_proposal = pgTable('dreaming_proposal', {
   id: text('id').primaryKey(),
   kind: text('kind').notNull(),
-  payload: jsonb('payload').notNull(),
+  payload: jsonb('payload').$type<JsonObject>().notNull(),
   reasoning: text('reasoning').notNull(),
   status: text('status').notNull().default('pending'),
   proposed_at: timestamp('proposed_at', { withTimezone: true }).notNull(),
@@ -275,8 +348,8 @@ export const tool_call_log = pgTable('tool_call_log', {
   task_run_id: text('task_run_id').notNull(),
   task_kind: text('task_kind').notNull(),
   tool_name: text('tool_name').notNull(),
-  input_json: jsonb('input_json'),
-  output_json: jsonb('output_json'),
+  input_json: jsonb('input_json').$type<JsonObject>(),
+  output_json: jsonb('output_json').$type<JsonObject>(),
   iteration: integer('iteration').notNull(),
   latency_ms: real('latency_ms').notNull(),
   cost: real('cost').notNull(),
