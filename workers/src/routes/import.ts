@@ -76,32 +76,88 @@ importRoute.post('/', async (c) => {
     return c.json({ error: 'invalid_zip', message: 'data.json is not valid JSON' }, 400);
   }
 
-  const stats: Record<string, { deleted: number; inserted: number }> = {};
-
-  // Wipe in REVERSE FK order, one DELETE per table.
-  for (const t of [...FK_ORDER].reverse()) {
-    const r = (await c.env.DB.prepare(`delete from ${t}`).run()) as {
-      meta?: { changes?: number };
-    };
-    stats[t] = { deleted: r.meta?.changes ?? 0, inserted: 0 };
+  // Pre-flight: catch common shape errors BEFORE we wipe D1.
+  const validationErrors: string[] = [];
+  for (const t of FK_ORDER) {
+    const rows = data[t];
+    if (rows === undefined) continue; // table absent in ZIP — OK, treat as empty
+    if (!Array.isArray(rows)) {
+      validationErrors.push(`${t}: not an array`);
+      continue;
+    }
+    if (rows.length === 0) continue;
+    // Column shape uniformity: every row must have the same key set as row[0].
+    const expectedCols = new Set(Object.keys(rows[0]));
+    for (let i = 1; i < rows.length; i++) {
+      const cols = new Set(Object.keys(rows[i]));
+      if (cols.size !== expectedCols.size) {
+        validationErrors.push(`${t}[${i}]: column count mismatch`);
+        break;
+      }
+      let missing: string | null = null;
+      for (const c of expectedCols) {
+        if (!cols.has(c)) {
+          missing = c;
+          break;
+        }
+      }
+      if (missing) {
+        validationErrors.push(`${t}[${i}]: missing column ${missing}`);
+        break;
+      }
+    }
+  }
+  if (validationErrors.length > 0) {
+    return c.json(
+      {
+        error: 'data_validation_failed',
+        message: 'Pre-flight validation caught issues; D1 was NOT wiped.',
+        issues: validationErrors.slice(0, 20),
+      },
+      400,
+    );
   }
 
-  // Insert in FORWARD FK order, chunked into D1 batches.
-  for (const t of FK_ORDER) {
-    const rows = data[t] ?? [];
-    if (rows.length === 0) continue;
-    const cols = Object.keys(rows[0]);
-    const placeholders = `(${cols.map(() => '?').join(',')})`;
-    for (let i = 0; i < rows.length; i += INSERT_BATCH_SIZE) {
-      const chunk = rows.slice(i, i + INSERT_BATCH_SIZE);
-      const stmts = chunk.map((row) =>
-        c.env.DB.prepare(`insert into ${t} (${cols.join(',')}) values ${placeholders}`).bind(
-          ...cols.map((col) => row[col] ?? null),
-        ),
-      );
-      await c.env.DB.batch(stmts);
-      stats[t].inserted += chunk.length;
+  const stats: Record<string, { deleted: number; inserted: number }> = {};
+
+  try {
+    // Wipe in REVERSE FK order, one DELETE per table.
+    for (const t of [...FK_ORDER].reverse()) {
+      const r = (await c.env.DB.prepare(`delete from ${t}`).run()) as {
+        meta?: { changes?: number };
+      };
+      stats[t] = { deleted: r.meta?.changes ?? 0, inserted: 0 };
     }
+
+    // Insert in FORWARD FK order, chunked into D1 batches.
+    for (const t of FK_ORDER) {
+      const rows = data[t] ?? [];
+      if (rows.length === 0) continue;
+      const cols = Object.keys(rows[0]);
+      const placeholders = `(${cols.map(() => '?').join(',')})`;
+      for (let i = 0; i < rows.length; i += INSERT_BATCH_SIZE) {
+        const chunk = rows.slice(i, i + INSERT_BATCH_SIZE);
+        const stmts = chunk.map((row) =>
+          c.env.DB.prepare(`insert into ${t} (${cols.join(',')}) values ${placeholders}`).bind(
+            ...cols.map((col) => row[col] ?? null),
+          ),
+        );
+        await c.env.DB.batch(stmts);
+        stats[t].inserted += chunk.length;
+      }
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return c.json(
+      {
+        error: 'restore_failed_mid_flight',
+        message:
+          'D1 may be in a half-wiped state. Re-run the same ZIP to retry — wipe is idempotent. ' +
+          msg,
+        partial_stats: stats,
+      },
+      500,
+    );
   }
 
   // Re-PUT assets to R2.

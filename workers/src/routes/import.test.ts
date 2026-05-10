@@ -282,3 +282,35 @@ describe('POST /api/_/import — wipe + reinsert', () => {
     expect(body.stats.knowledge.inserted).toBe(1);
   });
 });
+
+describe('POST /api/_/import — pre-flight validation', () => {
+  it('rejects data.json with column shape mismatch BEFORE wiping D1', async () => {
+    const { Bindings, calls } = mockEnv();
+    const zip = buildZip({
+      'manifest.json': JSON.stringify({
+        schema_version: '1.0',
+        exported_at: 1700000000,
+        include_assets: false,
+        row_counts: { knowledge: 2 },
+        asset_count: 0,
+      }),
+      'data.json': JSON.stringify({
+        knowledge: [
+          { id: 'k1', name: 'x', parent_id: null },
+          { id: 'k2', name: 'y' }, // missing parent_id!
+        ],
+      }),
+    });
+    const res = await importRoute.request(
+      '/?confirm=wipe-and-reload',
+      { method: 'POST', body: zip },
+      Bindings,
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; issues: string[] };
+    expect(body.error).toBe('data_validation_failed');
+    expect(body.issues.length).toBeGreaterThan(0);
+    // CRITICAL: no DELETE issued — D1 NOT touched.
+    expect(calls.filter((c) => /^delete from/i.test(c.sql)).length).toBe(0);
+  });
+});
