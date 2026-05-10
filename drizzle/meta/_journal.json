@@ -1,40 +1,12 @@
 {
   "version": "7",
-  "dialect": "sqlite",
+  "dialect": "postgresql",
   "entries": [
     {
       "idx": 0,
-      "version": "6",
-      "when": 1778247939138,
-      "tag": "0000_wet_earthquake",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "6",
-      "when": 1778296694191,
-      "tag": "0001_slippery_skin",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "6",
-      "when": 1778338131240,
-      "tag": "0002_friendly_lily_hollister",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "6",
-      "when": 1778340969874,
-      "tag": "0003_smooth_doctor_strange",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "6",
-      "when": 1778379350902,
-      "tag": "0004_abandoned_wallop",
+      "version": "7",
+      "when": 1778434014539,
+      "tag": "0000_crazy_ultragirl",
       "breakpoints": true
     }
   ]

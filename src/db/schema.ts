@@ -1,31 +1,39 @@
-import { integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import {
+  boolean,
+  integer,
+  jsonb,
+  pgTable,
+  real,
+  text,
+  timestamp,
+} from 'drizzle-orm/pg-core';
 
-// Drizzle schema —— 单一来源；Zod 部分由 drizzle-zod 在 src/core/schema/generated.ts 自动生成。
-// JSON 字段以 TEXT 存（drizzle 的 mode:'json' 自动序列化）。
-// 时间戳全部以 unix-second integer 存。
+// Drizzle schema (Postgres) — single source of truth.
+// Per architecture-review.md § Stack Pivot: Postgres types throughout;
+// json columns are jsonb; booleans + timestamps native.
 
-export const knowledge = sqliteTable('knowledge', {
+export const knowledge = pgTable('knowledge', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   domain: text('domain'),
   parent_id: text('parent_id'),
   base_mastery: real('base_mastery').notNull().default(0),
   ai_delta_mastery: real('ai_delta_mastery').notNull().default(0),
-  last_active_at: integer('last_active_at', { mode: 'timestamp' }),
-  merged_from: text('merged_from', { mode: 'json' }).$type<string[]>().notNull().default([]),
-  archived_at: integer('archived_at', { mode: 'timestamp' }),
-  proposed_by_ai: integer('proposed_by_ai', { mode: 'boolean' }).notNull().default(false),
+  last_active_at: timestamp('last_active_at', { withTimezone: true }),
+  merged_from: jsonb('merged_from').$type<string[]>().notNull().default([]),
+  archived_at: timestamp('archived_at', { withTimezone: true }),
+  proposed_by_ai: boolean('proposed_by_ai').notNull().default(false),
   approval_status: text('approval_status', {
     enum: ['pending', 'approved', 'rejected'],
   })
     .notNull()
     .default('approved'),
-  created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
-  updated_at: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
   version: integer('version').notNull().default(0),
 });
 
-export const source_asset = sqliteTable('source_asset', {
+export const source_asset = pgTable('source_asset', {
   id: text('id').primaryKey(),
   kind: text('kind').notNull(),
   storage_key: text('storage_key').notNull(),
@@ -34,48 +42,39 @@ export const source_asset = sqliteTable('source_asset', {
   sha256: text('sha256').notNull(),
   width: integer('width'),
   height: integer('height'),
-  provenance: text('provenance', { mode: 'json' }).notNull().default({}),
-  created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
+  provenance: jsonb('provenance').notNull().default({}),
+  created_at: timestamp('created_at', { withTimezone: true }).notNull(),
 });
 
-export const source_document = sqliteTable('source_document', {
+export const source_document = pgTable('source_document', {
   id: text('id').primaryKey(),
   title: text('title'),
-  source_asset_ids: text('source_asset_ids', { mode: 'json' })
-    .$type<string[]>()
-    .notNull()
-    .default([]),
+  source_asset_ids: jsonb('source_asset_ids').$type<string[]>().notNull().default([]),
   body_md: text('body_md'),
-  provenance: text('provenance', { mode: 'json' }).notNull().default({}),
-  created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
-  updated_at: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  provenance: jsonb('provenance').notNull().default({}),
+  created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
   version: integer('version').notNull().default(0),
 });
 
-export const ingestion_session = sqliteTable('ingestion_session', {
+export const ingestion_session = pgTable('ingestion_session', {
   id: text('id').primaryKey(),
   source_document_id: text('source_document_id'),
-  source_asset_ids: text('source_asset_ids', { mode: 'json' })
-    .$type<string[]>()
-    .notNull()
-    .default([]),
+  source_asset_ids: jsonb('source_asset_ids').$type<string[]>().notNull().default([]),
   status: text('status').notNull().default('uploaded'),
   entrypoint: text('entrypoint').notNull(),
   error_message: text('error_message'),
-  created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
-  updated_at: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
   version: integer('version').notNull().default(0),
 });
 
-export const question_block = sqliteTable('question_block', {
+export const question_block = pgTable('question_block', {
   id: text('id').primaryKey(),
   ingestion_session_id: text('ingestion_session_id').notNull(),
   source_document_id: text('source_document_id'),
-  source_asset_ids: text('source_asset_ids', { mode: 'json' })
-    .$type<string[]>()
-    .notNull()
-    .default([]),
-  page_spans: text('page_spans', { mode: 'json' })
+  source_asset_ids: jsonb('source_asset_ids').$type<string[]>().notNull().default([]),
+  page_spans: jsonb('page_spans')
     .$type<
       Array<{
         page_index: number;
@@ -88,32 +87,29 @@ export const question_block = sqliteTable('question_block', {
   extracted_prompt_md: text('extracted_prompt_md').notNull(),
   reference_md: text('reference_md'),
   wrong_answer_md: text('wrong_answer_md'),
-  image_refs: text('image_refs', { mode: 'json' }).$type<string[]>().notNull().default([]),
-  crop_refs: text('crop_refs', { mode: 'json' }).$type<string[]>().notNull().default([]),
+  image_refs: jsonb('image_refs').$type<string[]>().notNull().default([]),
+  crop_refs: jsonb('crop_refs').$type<string[]>().notNull().default([]),
   visual_complexity: text('visual_complexity').notNull().default('low'),
   extraction_confidence: real('extraction_confidence').notNull().default(1),
   status: text('status').notNull().default('draft'),
   knowledge_hint: text('knowledge_hint'),
-  merged_from_block_ids: text('merged_from_block_ids', { mode: 'json' })
-    .$type<string[]>()
-    .notNull()
-    .default([]),
+  merged_from_block_ids: jsonb('merged_from_block_ids').$type<string[]>().notNull().default([]),
   imported_question_id: text('imported_question_id'),
   imported_mistake_id: text('imported_mistake_id'),
-  created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
-  updated_at: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
   version: integer('version').notNull().default(0),
 });
 
-export const question = sqliteTable('question', {
+export const question = pgTable('question', {
   id: text('id').primaryKey(),
   kind: text('kind').notNull(),
   prompt_md: text('prompt_md').notNull(),
   reference_md: text('reference_md'),
-  rubric_json: text('rubric_json', { mode: 'json' }),
+  rubric_json: jsonb('rubric_json'),
   judge_kind_override: text('judge_kind_override'),
   visual_complexity: text('visual_complexity'),
-  knowledge_ids: text('knowledge_ids', { mode: 'json' }).$type<string[]>().notNull().default([]),
+  knowledge_ids: jsonb('knowledge_ids').$type<string[]>().notNull().default([]),
   difficulty: integer('difficulty').notNull().default(3),
   source: text('source').notNull(),
   source_ref: text('source_ref'),
@@ -121,197 +117,187 @@ export const question = sqliteTable('question', {
   variant_depth: integer('variant_depth').notNull().default(0),
   root_question_id: text('root_question_id'),
   parent_variant_id: text('parent_variant_id'),
-  created_by: text('created_by', { mode: 'json' }),
-  metadata: text('metadata', { mode: 'json' }),
-  created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
-  updated_at: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  created_by: jsonb('created_by'),
+  metadata: jsonb('metadata'),
+  created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
   version: integer('version').notNull().default(0),
 });
 
-export const mistake = sqliteTable('mistake', {
+export const mistake = pgTable('mistake', {
   id: text('id').primaryKey(),
   question_id: text('question_id')
     .notNull()
     .references(() => question.id),
   wrong_answer_md: text('wrong_answer_md'),
-  wrong_answer_image_refs: text('wrong_answer_image_refs', { mode: 'json' })
+  wrong_answer_image_refs: jsonb('wrong_answer_image_refs')
     .$type<string[]>()
     .notNull()
     .default([]),
   source: text('source').notNull(),
   source_ref: text('source_ref'),
-  knowledge_ids: text('knowledge_ids', { mode: 'json' }).$type<string[]>().notNull().default([]),
-  cause: text('cause', { mode: 'json' }),
-  fsrs_state: text('fsrs_state', { mode: 'json' }),
-  variants: text('variants', { mode: 'json' }).$type<unknown[]>().notNull().default([]),
+  knowledge_ids: jsonb('knowledge_ids').$type<string[]>().notNull().default([]),
+  cause: jsonb('cause'),
+  fsrs_state: jsonb('fsrs_state'),
+  variants: jsonb('variants').$type<unknown[]>().notNull().default([]),
   variants_generated_count: integer('variants_generated_count').notNull().default(0),
   variants_max: integer('variants_max').notNull().default(3),
   status: text('status').notNull().default('active'),
   archived_reason: text('archived_reason'),
-  archived_at: integer('archived_at', { mode: 'timestamp' }),
-  deleted_at: integer('deleted_at', { mode: 'timestamp' }),
+  archived_at: timestamp('archived_at', { withTimezone: true }),
+  deleted_at: timestamp('deleted_at', { withTimezone: true }),
   delete_reason: text('delete_reason'),
-  created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
-  updated_at: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
   version: integer('version').notNull().default(0),
 });
 
-// Append-only audit log of every review submit attempt.
-// fsrs_state_after is recorded even when the parent mistake's UPDATE is a
-// no-op due to version mismatch — the row records the user's rating action.
-export const review_event = sqliteTable('review_event', {
+export const review_event = pgTable('review_event', {
   id: text('id').primaryKey(),
   mistake_id: text('mistake_id').notNull(),
   rating: text('rating').notNull(),
   response_md: text('response_md'),
   latency_ms: integer('latency_ms'),
-  fsrs_state_before: text('fsrs_state_before', { mode: 'json' }),
-  fsrs_state_after: text('fsrs_state_after', { mode: 'json' }).notNull(),
-  due_at_before: integer('due_at_before', { mode: 'timestamp' }),
-  due_at_next: integer('due_at_next', { mode: 'timestamp' }).notNull(),
-  created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
+  fsrs_state_before: jsonb('fsrs_state_before'),
+  fsrs_state_after: jsonb('fsrs_state_after').notNull(),
+  due_at_before: timestamp('due_at_before', { withTimezone: true }),
+  due_at_next: timestamp('due_at_next', { withTimezone: true }).notNull(),
+  created_at: timestamp('created_at', { withTimezone: true }).notNull(),
 });
 
-export const learning_item = sqliteTable('learning_item', {
+export const learning_item = pgTable('learning_item', {
   id: text('id').primaryKey(),
   source: text('source').notNull(),
   source_ref: text('source_ref'),
   title: text('title').notNull(),
   content: text('content').notNull().default(''),
-  knowledge_ids: text('knowledge_ids', { mode: 'json' }).$type<string[]>().notNull().default([]),
+  knowledge_ids: jsonb('knowledge_ids').$type<string[]>().notNull().default([]),
   primary_artifact_id: text('primary_artifact_id'),
   parent_learning_item_id: text('parent_learning_item_id'),
-  child_learning_item_ids: text('child_learning_item_ids', { mode: 'json' })
+  child_learning_item_ids: jsonb('child_learning_item_ids')
     .$type<string[]>()
     .notNull()
     .default([]),
   status: text('status').notNull().default('pending'),
-  user_pinned: integer('user_pinned', { mode: 'boolean' }).notNull().default(false),
+  user_pinned: boolean('user_pinned').notNull().default(false),
   ai_score: real('ai_score'),
-  due_at: integer('due_at', { mode: 'timestamp' }),
-  completed_at: integer('completed_at', { mode: 'timestamp' }),
-  dismissed_at: integer('dismissed_at', { mode: 'timestamp' }),
-  archived_at: integer('archived_at', { mode: 'timestamp' }),
+  due_at: timestamp('due_at', { withTimezone: true }),
+  completed_at: timestamp('completed_at', { withTimezone: true }),
+  dismissed_at: timestamp('dismissed_at', { withTimezone: true }),
+  archived_at: timestamp('archived_at', { withTimezone: true }),
   archived_reason: text('archived_reason'),
-  reviewed_at: integer('reviewed_at', { mode: 'timestamp' }),
-  created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
-  updated_at: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  reviewed_at: timestamp('reviewed_at', { withTimezone: true }),
+  created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
   version: integer('version').notNull().default(0),
 });
 
-export const study_log = sqliteTable('study_log', {
+export const study_log = pgTable('study_log', {
   id: text('id').primaryKey(),
   kind: text('kind').notNull(),
   content_md: text('content_md').notNull(),
-  knowledge_ids: text('knowledge_ids', { mode: 'json' }).$type<string[]>().notNull().default([]),
+  knowledge_ids: jsonb('knowledge_ids').$type<string[]>().notNull().default([]),
   question_id: text('question_id'),
   mistake_id: text('mistake_id'),
   artifact_id: text('artifact_id'),
   learning_item_id: text('learning_item_id'),
-  created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
-  updated_at: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
   version: integer('version').notNull().default(0),
 });
 
-export const artifact = sqliteTable('artifact', {
+export const artifact = pgTable('artifact', {
   id: text('id').primaryKey(),
   type: text('type').notNull(),
   title: text('title').notNull(),
   knowledge_id: text('knowledge_id'),
   parent_artifact_id: text('parent_artifact_id'),
-  child_artifact_ids: text('child_artifact_ids', { mode: 'json' })
-    .$type<string[]>()
-    .notNull()
-    .default([]),
+  child_artifact_ids: jsonb('child_artifact_ids').$type<string[]>().notNull().default([]),
   intent_source: text('intent_source').notNull(),
   source: text('source').notNull(),
   source_ref: text('source_ref'),
-  outline_json: text('outline_json', { mode: 'json' }),
-  sections: text('sections', { mode: 'json' }),
+  outline_json: jsonb('outline_json'),
+  sections: jsonb('sections'),
   tool_kind: text('tool_kind'),
-  tool_state: text('tool_state', { mode: 'json' }),
+  tool_state: jsonb('tool_state'),
   generation_status: text('generation_status').notNull().default('pending'),
-  generated_by: text('generated_by', { mode: 'json' }),
-  history: text('history', { mode: 'json' }).$type<unknown[]>().notNull().default([]),
-  archived_at: integer('archived_at', { mode: 'timestamp' }),
-  created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
-  updated_at: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  generated_by: jsonb('generated_by'),
+  history: jsonb('history').$type<unknown[]>().notNull().default([]),
+  archived_at: timestamp('archived_at', { withTimezone: true }),
+  created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
   version: integer('version').notNull().default(0),
 });
 
-export const answer = sqliteTable('answer', {
+export const answer = pgTable('answer', {
   id: text('id').primaryKey(),
   question_id: text('question_id').notNull(),
   learning_item_id: text('learning_item_id'),
   input_kind: text('input_kind').notNull(),
   content_md: text('content_md').notNull().default(''),
-  image_refs: text('image_refs', { mode: 'json' }).$type<string[]>().notNull().default([]),
+  image_refs: jsonb('image_refs').$type<string[]>().notNull().default([]),
   vision_extracted: text('vision_extracted'),
-  tags: text('tags', { mode: 'json' }).$type<string[]>().notNull().default([]),
-  submitted_at: integer('submitted_at', { mode: 'timestamp' }).notNull(),
+  tags: jsonb('tags').$type<string[]>().notNull().default([]),
+  submitted_at: timestamp('submitted_at', { withTimezone: true }).notNull(),
 });
 
-export const judgment = sqliteTable('judgment', {
+export const judgment = pgTable('judgment', {
   id: text('id').primaryKey(),
   answer_id: text('answer_id').notNull(),
   judge_kind: text('judge_kind').notNull(),
   verdict: text('verdict').notNull(),
   score: real('score').notNull(),
   feedback_md: text('feedback_md').notNull(),
-  evidence_json: text('evidence_json', { mode: 'json' }).notNull().default({}),
-  is_flexible_fallback: integer('is_flexible_fallback', { mode: 'boolean' })
-    .notNull()
-    .default(false),
+  evidence_json: jsonb('evidence_json').notNull().default({}),
+  is_flexible_fallback: boolean('is_flexible_fallback').notNull().default(false),
   triggered_by: text('triggered_by'),
   prior_judgment_id: text('prior_judgment_id'),
-  judged_by: text('judged_by', { mode: 'json' }).notNull(),
-  judged_at: integer('judged_at', { mode: 'timestamp' }).notNull(),
-  is_effective: integer('is_effective', { mode: 'boolean' }).notNull().default(true),
+  judged_by: jsonb('judged_by').notNull(),
+  judged_at: timestamp('judged_at', { withTimezone: true }).notNull(),
+  is_effective: boolean('is_effective').notNull().default(true),
 });
 
-export const user_appeal = sqliteTable('user_appeal', {
+export const user_appeal = pgTable('user_appeal', {
   id: text('id').primaryKey(),
   judgment_id: text('judgment_id').notNull(),
   reason: text('reason'),
-  appealed_at: integer('appealed_at', { mode: 'timestamp' }).notNull(),
+  appealed_at: timestamp('appealed_at', { withTimezone: true }).notNull(),
   resolved_judgment_id: text('resolved_judgment_id'),
 });
 
-export const completion_evidence = sqliteTable('completion_evidence', {
+export const completion_evidence = pgTable('completion_evidence', {
   id: text('id').primaryKey(),
   learning_item_id: text('learning_item_id').notNull(),
   path: text('path').notNull(),
-  evidence_json: text('evidence_json', { mode: 'json' }).notNull().default({}),
-  user_overrode_low_evidence: integer('user_overrode_low_evidence', { mode: 'boolean' })
-    .notNull()
-    .default(false),
-  decided_at: integer('decided_at', { mode: 'timestamp' }).notNull(),
+  evidence_json: jsonb('evidence_json').notNull().default({}),
+  user_overrode_low_evidence: boolean('user_overrode_low_evidence').notNull().default(false),
+  decided_at: timestamp('decided_at', { withTimezone: true }).notNull(),
 });
 
-export const dreaming_proposal = sqliteTable('dreaming_proposal', {
+export const dreaming_proposal = pgTable('dreaming_proposal', {
   id: text('id').primaryKey(),
   kind: text('kind').notNull(),
-  payload: text('payload', { mode: 'json' }).notNull(),
+  payload: jsonb('payload').notNull(),
   reasoning: text('reasoning').notNull(),
   status: text('status').notNull().default('pending'),
-  proposed_at: integer('proposed_at', { mode: 'timestamp' }).notNull(),
-  decided_at: integer('decided_at', { mode: 'timestamp' }),
+  proposed_at: timestamp('proposed_at', { withTimezone: true }).notNull(),
+  decided_at: timestamp('decided_at', { withTimezone: true }),
 });
 
-export const tool_call_log = sqliteTable('tool_call_log', {
+export const tool_call_log = pgTable('tool_call_log', {
   id: text('id').primaryKey(),
   task_run_id: text('task_run_id').notNull(),
   task_kind: text('task_kind').notNull(),
   tool_name: text('tool_name').notNull(),
-  input_json: text('input_json', { mode: 'json' }),
-  output_json: text('output_json', { mode: 'json' }),
+  input_json: jsonb('input_json'),
+  output_json: jsonb('output_json'),
   iteration: integer('iteration').notNull(),
   latency_ms: real('latency_ms').notNull(),
   cost: real('cost').notNull(),
-  occurred_at: integer('occurred_at', { mode: 'timestamp' }).notNull(),
+  occurred_at: timestamp('occurred_at', { withTimezone: true }).notNull(),
 });
 
-export const cost_ledger = sqliteTable('cost_ledger', {
+export const cost_ledger = pgTable('cost_ledger', {
   id: text('id').primaryKey(),
   task_kind: text('task_kind').notNull(),
   provider: text('provider').notNull(),
@@ -319,5 +305,5 @@ export const cost_ledger = sqliteTable('cost_ledger', {
   cost: real('cost').notNull(),
   tokens_in: integer('tokens_in').notNull(),
   tokens_out: integer('tokens_out').notNull(),
-  occurred_at: integer('occurred_at', { mode: 'timestamp' }).notNull(),
+  occurred_at: timestamp('occurred_at', { withTimezone: true }).notNull(),
 });
