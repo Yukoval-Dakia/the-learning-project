@@ -24,6 +24,9 @@ export const QuestionSelectGenerated = createSelectSchema(t.question);
 export const MistakeInsertGenerated = createInsertSchema(t.mistake);
 export const MistakeSelectGenerated = createSelectSchema(t.mistake);
 
+export const ReviewEventInsertGenerated = createInsertSchema(t.review_event);
+export const ReviewEventSelectGenerated = createSelectSchema(t.review_event);
+
 export const LearningItemInsertGenerated = createInsertSchema(t.learning_item);
 export const LearningItemSelectGenerated = createSelectSchema(t.learning_item);
 

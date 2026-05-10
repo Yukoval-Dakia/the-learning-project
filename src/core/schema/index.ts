@@ -98,6 +98,15 @@ export const Mistake = g.MistakeSelectGenerated.extend({
 });
 export type Mistake = z.infer<typeof Mistake>;
 
+// ---------- Review ----------
+export const ReviewEventInsert = g.ReviewEventInsertGenerated.extend({
+  rating: b.FsrsRating,
+});
+export const ReviewEvent = g.ReviewEventSelectGenerated.extend({
+  rating: b.FsrsRating,
+});
+export type ReviewEvent = z.infer<typeof ReviewEvent>;
+
 // ---------- LearningItem ----------
 export const LearningItemInsert = g.LearningItemInsertGenerated.extend({
   source: b.LearningItemSource,

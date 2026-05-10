@@ -6,6 +6,7 @@ import { KnowledgeProposals } from './routes/knowledge-proposals';
 import { RecordMistake } from './routes/record';
 import { MistakesList } from './routes/mistakes-list';
 import { IngestSession } from './routes/ingest';
+import { ReviewSession } from './routes/review';
 
 export function App() {
   return (
@@ -17,6 +18,7 @@ export function App() {
       <Route path="/record" element={<RecordMistake />} />
       <Route path="/mistakes" element={<MistakesList />} />
       <Route path="/ingest" element={<IngestSession />} />
+      <Route path="/review" element={<ReviewSession />} />
     </Routes>
   );
 }

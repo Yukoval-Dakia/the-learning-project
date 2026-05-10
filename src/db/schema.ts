@@ -156,6 +156,22 @@ export const mistake = sqliteTable('mistake', {
   version: integer('version').notNull().default(0),
 });
 
+// Append-only audit log of every review submit attempt.
+// fsrs_state_after is recorded even when the parent mistake's UPDATE is a
+// no-op due to version mismatch — the row records the user's rating action.
+export const review_event = sqliteTable('review_event', {
+  id: text('id').primaryKey(),
+  mistake_id: text('mistake_id').notNull(),
+  rating: text('rating').notNull(),
+  response_md: text('response_md'),
+  latency_ms: integer('latency_ms'),
+  fsrs_state_before: text('fsrs_state_before', { mode: 'json' }),
+  fsrs_state_after: text('fsrs_state_after', { mode: 'json' }).notNull(),
+  due_at_before: integer('due_at_before', { mode: 'timestamp' }),
+  due_at_next: integer('due_at_next', { mode: 'timestamp' }).notNull(),
+  created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
+});
+
 export const learning_item = sqliteTable('learning_item', {
   id: text('id').primaryKey(),
   source: text('source').notNull(),
