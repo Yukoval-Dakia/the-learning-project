@@ -7,6 +7,7 @@ import { RecordMistake } from './routes/record';
 import { MistakesList } from './routes/mistakes-list';
 import { IngestSession } from './routes/ingest';
 import { ReviewSession } from './routes/review';
+import { LearningItemsList } from './routes/learning-items';
 
 export function App() {
   return (
@@ -19,6 +20,7 @@ export function App() {
       <Route path="/mistakes" element={<MistakesList />} />
       <Route path="/ingest" element={<IngestSession />} />
       <Route path="/review" element={<ReviewSession />} />
+      <Route path="/learning-items" element={<LearningItemsList />} />
     </Routes>
   );
 }
