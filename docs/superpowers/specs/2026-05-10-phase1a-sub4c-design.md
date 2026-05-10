@@ -32,7 +32,7 @@
 |---|---|---|
 | 录入入口收敛为单条 | 删除 /record，/ingest 升格为唯一入口 /capture | 手敲为主 + 拍图为辅在真实场景下颠倒；图本身就是源 |
 | OCR Tier 1 实现 | **腾讯云教育试卷识别 API**（首选，对口学习场景结构化输出），DocOCR 通用文档识别（fallback —— 非试卷图） | 跟 question_block.role / page_spans schema 直接对口；2024-25 中文 doc OCR 第一梯队 |
-| OCR 鉴权 | TC3-HMAC-SHA256 Worker secret（`TENCENT_SECRET_ID` + `TENCENT_SECRET_KEY`） | 标准 Tencent SDK 鉴权 |
+| OCR 鉴权 | TC3-HMAC-SHA256，Worker 内用 `fetch` + `crypto.subtle` 自实现签名（不引 Node SDK，CF Workers 跑不了 `@tencentcloud/cloud-sdk`）；secrets `TENCENT_SECRET_ID` + `TENCENT_SECRET_KEY` 走 `wrangler secret put` | 标准 Tencent 鉴权协议 + Workers 兼容 |
 | Tier 2/3 vision LLM | Tier 2 = haiku 4.5（已有 VisionExtractTask）；Tier 3 = sonnet 4.6（新增 VisionExtractTaskHeavy registry 项） | 失败成本极小：均价仍是 Tier 1，仅 Tier 1 0 region 时升级 |
 | 级联触发条件 | Tier 1 0 regions OR 全 region confidence < 0.6 → Tier 2；Tier 2 0 blocks → Tier 3；Tier 3 0 blocks → 用户审核页手动 add block | 阈值后期可调；MVP 用 0.6 |
 | 失败签名 / 元信息 | 每次升级在 ingestion_session.error_message JSON 累计 `tier_log: [{tier, model, blocks_count, took_ms, reason}]` | 留 audit；Sub 5 export 时可分析失败模式 |
@@ -73,7 +73,7 @@ async function recognizeDocument(
 ```
 
 实现要点：
-- TC3-HMAC-SHA256 签名：照 Tencent 官方文档 + 现有 OSS lib `@tencentcloud/cloud-sdk` —— **避免**自实现签名（容易出错）；Worker 环境用 fetch + crypto.subtle 签名（无 Node deps）
+- TC3-HMAC-SHA256 签名：CF Workers 没有 Node 运行时，无法用 `@tencentcloud/cloud-sdk`；按 Tencent 官方 TC3 文档手写签名，全用 `fetch` + `crypto.subtle.digest('SHA-256', ...)` + `crypto.subtle.importKey + sign('HMAC', ...)`。签名步骤拆成纯函数，单测 mock 时间戳后断签名字符串
 - 端点优先：`POST https://ocr.tencentcloudapi.com/?Action=EduPaperOCR`（教育试卷）→ fallback `Action=DocOCR`（通用文档）
 - 输出归一化：bbox 像素 → 0-1 归一（除以 image dimensions）；type 字符串映射到 question_block role enum
 
