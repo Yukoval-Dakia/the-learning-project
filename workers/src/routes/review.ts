@@ -1,7 +1,18 @@
 import { Hono } from 'hono';
+import { z } from 'zod';
+import { createId } from '@paralleldrive/cuid2';
+import { scheduleReview } from '../review/fsrs';
+import { FsrsState, FsrsRating } from '../../../src/core/schema/business';
 import type { AppEnv } from '../types';
 
 export const review = new Hono<AppEnv>();
+
+const SubmitBody = z.object({
+  mistake_id: z.string().min(1),
+  rating: FsrsRating,
+  response_md: z.string().nullable().optional(),
+  latency_ms: z.number().int().min(0).max(3_600_000).nullable().optional(),
+});
 
 review.get('/due', async (c) => {
   const limitRaw = c.req.query('limit');
@@ -47,4 +58,85 @@ review.get('/due', async (c) => {
   }));
 
   return c.json({ rows: out });
+});
+
+review.post('/submit', async (c) => {
+  const raw = (await c.req.json().catch(() => null)) as unknown;
+  const parsed = SubmitBody.safeParse(raw);
+  if (!parsed.success) {
+    return c.json(
+      {
+        error: 'validation_error',
+        message: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
+      },
+      400,
+    );
+  }
+  const body = parsed.data;
+  const now = new Date();
+
+  const row = await c.env.DB.prepare(
+    `select id, fsrs_state, version, archived_at, deleted_at from mistake where id = ?`,
+  )
+    .bind(body.mistake_id)
+    .first<{
+      id: string;
+      fsrs_state: string | null;
+      version: number;
+      archived_at: number | null;
+      deleted_at: number | null;
+    }>();
+
+  if (!row || row.archived_at !== null || row.deleted_at !== null) {
+    return c.json({ error: 'not_found', message: `mistake ${body.mistake_id} not found` }, 404);
+  }
+
+  // Plan F1: zod-coerce JSON-deserialized strings back to Date.
+  // Direct JSON.parse leaves due/last_review as ISO strings; ts-fsrs would compute NaN intervals.
+  const prevState = row.fsrs_state ? FsrsState.parse(JSON.parse(row.fsrs_state)) : null;
+  const result = scheduleReview(prevState, body.rating, now);
+
+  const dueBefore = prevState ? Math.floor(prevState.due.getTime() / 1000) : null;
+  const updateStmt = c.env.DB.prepare(
+    `update mistake set fsrs_state = ?, updated_at = ?, version = version + 1
+     where id = ? and version = ?`,
+  ).bind(
+    JSON.stringify(result.nextState),
+    Math.floor(now.getTime() / 1000),
+    body.mistake_id,
+    row.version,
+  );
+  const insertStmt = c.env.DB.prepare(
+    `insert into review_event (
+       id, mistake_id, rating, response_md, latency_ms,
+       fsrs_state_before, fsrs_state_after, due_at_before, due_at_next, created_at
+     ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    createId(),
+    body.mistake_id,
+    body.rating,
+    body.response_md ?? null,
+    body.latency_ms ?? null,
+    prevState ? JSON.stringify(prevState) : null,
+    JSON.stringify(result.nextState),
+    dueBefore,
+    Math.floor(result.dueAt.getTime() / 1000),
+    Math.floor(now.getTime() / 1000),
+  );
+
+  // Atomic via D1 batch. Hard failure → both rollback (Hono onError 5xx).
+  // Version mismatch → UPDATE no-op + INSERT commits as audit-only review_event (spec § 六).
+  const results = await c.env.DB.batch([updateStmt, insertStmt]);
+  const updateChanges = (results[0] as { meta?: { changes?: number } }).meta?.changes ?? 0;
+  if (updateChanges !== 1) {
+    return c.json(
+      { error: 'conflict', message: `mistake ${body.mistake_id} was concurrently modified (audit logged)` },
+      409,
+    );
+  }
+
+  return c.json({
+    next_due_at: Math.floor(result.dueAt.getTime() / 1000),
+    new_state: result.nextState,
+  });
 });

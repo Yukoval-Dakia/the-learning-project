@@ -13,15 +13,40 @@ type DueRow = {
   reference_md: string | null;
 };
 
+type MistakeRow = {
+  id: string;
+  fsrs_state: string | null;
+  version: number;
+  archived_at: number | null;
+  deleted_at: number | null;
+};
+
+type BatchResult = Array<{ meta?: { changes?: number } }>;
+
+type BatchCall = {
+  stmts: Array<{ sql: string; binds: unknown[] }>;
+};
+
 function mockEnv(opts: {
   dueRows?: DueRow[];
+  mistakeById?: Map<string, MistakeRow>;
+  batchResult?: BatchResult;
 } = {}) {
   const calls: Array<{ sql: string; binds: unknown[] }> = [];
+  const batchCalls: BatchCall[] = [];
   const prepare = vi.fn((sql: string) => ({
     bind: (...binds: unknown[]) => {
       calls.push({ sql, binds });
-      return {
-        first: async () => null,
+      const wrapped = {
+        __sql: sql,
+        __binds: binds,
+        first: async () => {
+          if (/select id, fsrs_state, version, archived_at, deleted_at from mistake where id = \?/i.test(sql)) {
+            const id = binds[0] as string;
+            return opts.mistakeById?.get(id) ?? null;
+          }
+          return null;
+        },
         all: async () => {
           if (/from mistake m\s+join question q/i.test(sql)) {
             return { results: opts.dueRows ?? [] };
@@ -30,14 +55,16 @@ function mockEnv(opts: {
         },
         run: async () => ({ success: true, meta: { changes: 1 } }),
       };
+      return wrapped;
     },
   }));
   const db = {
     prepare,
-    batch: async (stmts: Array<{ run: () => Promise<unknown> }>) => {
-      const results: unknown[] = [];
-      for (const s of stmts) results.push(await s.run());
-      return results;
+    batch: async (stmts: Array<{ __sql: string; __binds: unknown[] }>) => {
+      batchCalls.push({
+        stmts: stmts.map((s) => ({ sql: s.__sql, binds: s.__binds })),
+      });
+      return opts.batchResult ?? [{ meta: { changes: 1 } }, { meta: { changes: 1 } }];
     },
   } as unknown as D1Database;
   const executionCtx = {
@@ -54,6 +81,7 @@ function mockEnv(opts: {
     },
     executionCtx,
     calls,
+    batchCalls,
   };
 }
 
@@ -154,5 +182,198 @@ describe('GET /api/review/due', () => {
     const body = (await res.json()) as { rows: Array<{ prompt_md: string; reference_md: string }> };
     expect(body.rows[0].prompt_md).toHaveLength(1000);
     expect(body.rows[0].reference_md).toHaveLength(1000);
+  });
+});
+
+function submitReq(body: unknown) {
+  return {
+    method: 'POST',
+    body: JSON.stringify(body),
+    headers: { 'content-type': 'application/json' },
+  };
+}
+
+describe('POST /api/review/submit', () => {
+  it('first review (fsrs_state was null) → batch atomic UPDATE+INSERT, returns next state', async () => {
+    const mistakeById = new Map<string, MistakeRow>([
+      ['m1', { id: 'm1', fsrs_state: null, version: 0, archived_at: null, deleted_at: null }],
+    ]);
+    const { Bindings, executionCtx, batchCalls } = mockEnv({ mistakeById });
+    const res = await review.request(
+      '/submit',
+      submitReq({ mistake_id: 'm1', rating: 'good', latency_ms: 5000 }),
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      next_due_at: number;
+      new_state: { reps: number; scheduled_days: number };
+    };
+    expect(typeof body.next_due_at).toBe('number');
+    expect(body.next_due_at).toBeGreaterThan(0);
+    expect(body.new_state.reps).toBeGreaterThanOrEqual(1);
+
+    expect(batchCalls).toHaveLength(1);
+    expect(batchCalls[0].stmts).toHaveLength(2);
+
+    const updateStmt = batchCalls[0].stmts[0];
+    expect(updateStmt.sql).toMatch(/update mistake set fsrs_state =/i);
+    expect(updateStmt.binds).toContain('m1');
+    expect(updateStmt.binds).toContain(0); // old version
+
+    const insertStmt = batchCalls[0].stmts[1];
+    expect(insertStmt.sql).toMatch(/insert into review_event/i);
+    // binds order: id, mistake_id, rating, response_md, latency_ms, before, after, due_before, due_next, created_at
+    expect(insertStmt.binds[1]).toBe('m1');
+    expect(insertStmt.binds[2]).toBe('good');
+    expect(insertStmt.binds[3]).toBeNull(); // response_md
+    expect(insertStmt.binds[4]).toBe(5000); // latency_ms
+    expect(insertStmt.binds[5]).toBeNull(); // fsrs_state_before
+    expect(typeof insertStmt.binds[6]).toBe('string'); // fsrs_state_after JSON
+    expect(insertStmt.binds[7]).toBeNull(); // due_at_before
+    expect(typeof insertStmt.binds[8]).toBe('number'); // due_at_next unix seconds
+  });
+
+  it('second review (DB-shaped JSON with ISO strings) survives Plan F1 — coerces strings to Date before ts-fsrs', async () => {
+    const dueIso = '2026-05-09T12:00:00.000Z';
+    const lastReviewIso = '2026-05-08T12:00:00.000Z';
+    const mistakeById = new Map<string, MistakeRow>([
+      [
+        'm1',
+        {
+          id: 'm1',
+          fsrs_state: JSON.stringify({
+            due: dueIso,
+            stability: 1.5,
+            difficulty: 5,
+            elapsed_days: 0,
+            scheduled_days: 1,
+            learning_steps: 0,
+            reps: 1,
+            lapses: 0,
+            state: 'review',
+            last_review: lastReviewIso,
+          }),
+          version: 1,
+          archived_at: null,
+          deleted_at: null,
+        },
+      ],
+    ]);
+    const { Bindings, executionCtx, batchCalls } = mockEnv({ mistakeById });
+    const res = await review.request(
+      '/submit',
+      submitReq({ mistake_id: 'm1', rating: 'again' }),
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      next_due_at: number;
+      new_state: { scheduled_days: number; stability: number; lapses: number };
+    };
+    expect(Number.isFinite(body.next_due_at)).toBe(true);
+    expect(body.next_due_at).toBeGreaterThan(0);
+    expect(Number.isFinite(body.new_state.scheduled_days)).toBe(true);
+    expect(Number.isFinite(body.new_state.stability)).toBe(true);
+
+    // version=1 used in optimistic update
+    const updateStmt = batchCalls[0].stmts[0];
+    expect(updateStmt.binds).toContain(1);
+  });
+
+  it('404 when mistake not found, batch NOT called', async () => {
+    const { Bindings, executionCtx, batchCalls } = mockEnv({ mistakeById: new Map() });
+    const res = await review.request(
+      '/submit',
+      submitReq({ mistake_id: 'm_missing', rating: 'good' }),
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(404);
+    expect(batchCalls).toHaveLength(0);
+  });
+
+  it('404 when mistake archived, batch NOT called', async () => {
+    const mistakeById = new Map<string, MistakeRow>([
+      ['m1', { id: 'm1', fsrs_state: null, version: 0, archived_at: 1700000000, deleted_at: null }],
+    ]);
+    const { Bindings, executionCtx, batchCalls } = mockEnv({ mistakeById });
+    const res = await review.request(
+      '/submit',
+      submitReq({ mistake_id: 'm1', rating: 'good' }),
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(404);
+    expect(batchCalls).toHaveLength(0);
+  });
+
+  it('409 when version mismatch — review_event INSERT still committed (audit-only orphan, spec § 六)', async () => {
+    const mistakeById = new Map<string, MistakeRow>([
+      ['m1', { id: 'm1', fsrs_state: null, version: 5, archived_at: null, deleted_at: null }],
+    ]);
+    const { Bindings, executionCtx, batchCalls } = mockEnv({
+      mistakeById,
+      batchResult: [{ meta: { changes: 0 } }, { meta: { changes: 1 } }],
+    });
+    const res = await review.request(
+      '/submit',
+      submitReq({ mistake_id: 'm1', rating: 'good' }),
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('conflict');
+    // Crucial: the batch (containing both UPDATE + INSERT) was committed exactly once.
+    expect(batchCalls).toHaveLength(1);
+    expect(batchCalls[0].stmts).toHaveLength(2);
+    expect(batchCalls[0].stmts[1].sql).toMatch(/insert into review_event/i);
+  });
+
+  it('400 when rating is not in enum (e.g. "easy")', async () => {
+    const mistakeById = new Map<string, MistakeRow>([
+      ['m1', { id: 'm1', fsrs_state: null, version: 0, archived_at: null, deleted_at: null }],
+    ]);
+    const { Bindings, executionCtx, batchCalls } = mockEnv({ mistakeById });
+    const res = await review.request(
+      '/submit',
+      submitReq({ mistake_id: 'm1', rating: 'easy' }),
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(400);
+    expect(batchCalls).toHaveLength(0);
+  });
+
+  it('400 when mistake_id is missing', async () => {
+    const { Bindings, executionCtx, batchCalls } = mockEnv();
+    const res = await review.request(
+      '/submit',
+      submitReq({ rating: 'good' }),
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(400);
+    expect(batchCalls).toHaveLength(0);
+  });
+
+  it('binds null for response_md and latency_ms when not provided', async () => {
+    const mistakeById = new Map<string, MistakeRow>([
+      ['m1', { id: 'm1', fsrs_state: null, version: 0, archived_at: null, deleted_at: null }],
+    ]);
+    const { Bindings, executionCtx, batchCalls } = mockEnv({ mistakeById });
+    const res = await review.request(
+      '/submit',
+      submitReq({ mistake_id: 'm1', rating: 'good' }),
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(200);
+    const insertStmt = batchCalls[0].stmts[1];
+    expect(insertStmt.binds[3]).toBeNull(); // response_md
+    expect(insertStmt.binds[4]).toBeNull(); // latency_ms
   });
 });
