@@ -61,6 +61,8 @@ interface GeneralOCRResponse {
 
 export async function recognizeDocument(
   imageBytes: ArrayBuffer,
+  // _mimeType is reserved for a future ImageType header (Tencent accepts 'PNG'|'JPG'|...).
+  // Currently unused because ImageBase64 implies the type.
   _mimeType: string,
   pageIndex: number,
   env: TencentEnv,
@@ -131,6 +133,7 @@ function normalizeEduPaper(
           .map((r) => r.Question?.Confidence ?? 0)
           .reduce((a, b) => a + b, 0) /
         Math.max(1, q.ResultList?.length ?? 0);
+      if (!text) continue;
       out.push({
         bbox: {
           x: q.Position.X / dim.width,
