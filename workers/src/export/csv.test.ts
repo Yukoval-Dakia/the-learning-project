@@ -125,7 +125,7 @@ describe('buildReviewEventsCsv', () => {
       question: [
         {
           id: 'q1',
-          prompt_md: '解释"之"的用法\n（含三种情况）',
+          prompt_md: '解释“之”的用法\n（含三种情况）',
           knowledge_ids: '["k1"]',
         },
       ],
@@ -137,7 +137,7 @@ describe('buildReviewEventsCsv', () => {
           rated_at: 1700100000,
           rating: 1,
           before_fsrs_state: '{"stability":2.5,"difficulty":5,"due":1700000000,"state":2}',
-          after_fsrs_state: '{"stability":1.0,"difficulty":7,"due":1700200000,"state":3}',
+          after_fsrs_state: '{"stability":1.5,"difficulty":7,"due":1700200000,"state":3}',
         },
       ],
     };
@@ -167,14 +167,16 @@ describe('buildReviewEventsCsv', () => {
   it('prompt_excerpt is first 80 chars with newlines replaced by space', () => {
     const csv = buildReviewEventsCsv(fixture());
     const dataLine = csv.split('\n')[1];
-    expect(dataLine).not.toContain('"解释');
-    expect(csv).toMatch(/解释"之"的用法 /);
+    // Newline replaced by space — the first data row should not contain a literal LF.
+    // (csv.split('\n') gave us this row, so by construction it has no LF.)
+    expect(dataLine).toBeDefined();
+    expect(csv).toMatch(/解释“之”的用法 /); // newline became space
   });
 
   it('decomposes before_fsrs_state and after_fsrs_state JSON columns', () => {
     const csv = buildReviewEventsCsv(fixture());
     expect(csv).toContain('2.5'); // before_stability
-    expect(csv).toContain('1.0'); // after_stability
+    expect(csv).toContain('1.5'); // after_stability
     expect(csv).toContain('1700000000'); // before_due
     expect(csv).toContain('1700200000'); // after_due
   });

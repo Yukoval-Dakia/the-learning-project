@@ -92,17 +92,6 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
   return lines.join('\n');
 }
 
-/**
- * Extract a numeric field value from a raw JSON string, preserving the original
- * string representation (e.g. "1.0" stays "1.0" rather than being coerced to "1").
- */
-function fsrsField(raw: string | null | undefined, key: string): string {
-  if (!raw) return '';
-  const pattern = new RegExp('"' + key + '"\\s*:\\s*(-?[0-9]+(?:\\.[0-9]+)?)');
-  const found = raw.match(pattern);
-  return found ? found[1] : '';
-}
-
 export function buildReviewEventsCsv(tables: Record<string, Row[]>): string {
   const knowledgeById = new Map(
     (tables.knowledge as Array<{ id: string; name: string }>).map((k) => [k.id, k.name]),
@@ -143,29 +132,27 @@ export function buildReviewEventsCsv(tables: Record<string, Row[]>): string {
     const question = mistake ? questionById.get(mistake.question_id) : undefined;
     const kIds: string[] = question ? (JSON.parse(question.knowledge_ids) as string[]) : [];
     const kNames = kIds.map((id) => knowledgeById.get(id) ?? id).join('; ');
-    // Newlines replaced with space; do not pass through csvEscape so double-quotes
-    // in the source text are preserved as-is without CSV quoting overhead.
     const promptExcerpt = (question?.prompt_md ?? '').slice(0, 80).replace(/[\n\r]/g, ' ');
-    const beforeRaw = r.before_fsrs_state as string | null | undefined;
-    const afterRaw = r.after_fsrs_state as string | null | undefined;
+    const before = r.before_fsrs_state ? JSON.parse(r.before_fsrs_state as string) : null;
+    const after = r.after_fsrs_state ? JSON.parse(r.after_fsrs_state as string) : null;
 
     lines.push(
       [
         csvEscape(r.id),
         csvEscape(r.rated_at),
         csvEscape(r.mistake_id),
-        promptExcerpt,
+        csvEscape(promptExcerpt),
         csvEscape(kNames),
         csvEscape(r.rating),
         csvEscape(RATING_LABEL[r.rating as number] ?? ''),
-        fsrsField(beforeRaw, 'stability'),
-        fsrsField(beforeRaw, 'difficulty'),
-        fsrsField(beforeRaw, 'due'),
-        fsrsField(beforeRaw, 'state'),
-        fsrsField(afterRaw, 'stability'),
-        fsrsField(afterRaw, 'difficulty'),
-        fsrsField(afterRaw, 'due'),
-        fsrsField(afterRaw, 'state'),
+        csvEscape(before?.stability ?? ''),
+        csvEscape(before?.difficulty ?? ''),
+        csvEscape(before?.due ?? ''),
+        csvEscape(before?.state ?? ''),
+        csvEscape(after?.stability ?? ''),
+        csvEscape(after?.difficulty ?? ''),
+        csvEscape(after?.due ?? ''),
+        csvEscape(after?.state ?? ''),
       ].join(','),
     );
   }
