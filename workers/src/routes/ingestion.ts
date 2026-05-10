@@ -294,12 +294,21 @@ ingestion.post('/:id/import', async (c) => {
   }
   const body = parsed.data;
 
-  // 1. Validate session exists
+  // 1. Validate session exists and is in an importable state
   const session = await c.env.DB.prepare(`select * from ingestion_session where id = ?`)
     .bind(sessionId)
     .first<SessionRow>();
   if (!session) {
     return c.json({ error: 'not_found', message: `ingestion_session ${sessionId} not found` }, 404);
+  }
+  if (session.status !== 'extracted' && session.status !== 'reviewed') {
+    return c.json(
+      {
+        error: 'conflict',
+        message: `ingestion_session ${sessionId} is in status '${session.status}'; only 'extracted' or 'reviewed' can be imported`,
+      },
+      409,
+    );
   }
 
   const sessionAssetIds = JSON.parse(session.source_asset_ids) as string[];
@@ -430,8 +439,12 @@ ingestion.post('/:id/import', async (c) => {
       const sourceRows = block.source_block_ids
         .map((sid) => sourceBlockRows.get(sid))
         .filter((r): r is QuestionBlockSelectRow => r !== undefined);
-      const allLow = sourceRows.length > 0 && sourceRows.every((r) => r.visual_complexity === 'low');
-      const visualComplexity = allLow ? 'low' : 'medium';
+      // Preserve the highest complexity from any source — never downgrade.
+      const visualComplexity = sourceRows.some((r) => r.visual_complexity === 'high')
+        ? 'high'
+        : sourceRows.some((r) => r.visual_complexity === 'medium')
+          ? 'medium'
+          : 'low';
 
       batchStmts.push(
         c.env.DB.prepare(

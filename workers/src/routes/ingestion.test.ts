@@ -1012,6 +1012,86 @@ describe('POST /api/ingestion/:id/import', () => {
     expect(calls.some((c) => /insert into question \(/i.test(c.sql))).toBe(false);
   });
 
+  it('rejects re-import: session already in status=imported → 409', async () => {
+    const blocks = new Map<string, QuestionBlockRow>();
+    blocks.set('block_a', makeBlockRow({ id: 'block_a' }));
+    const { Bindings, executionCtx, calls, waitUntilFns } = mockImportEnv({
+      session: makeSessionRow({ status: 'imported' }),
+      questionBlocks: blocks,
+      knowledgeIds: ['k1'],
+    });
+
+    const res = await ingestion.request(
+      '/sess_1/import',
+      makeImportRequest({
+        blocks: [
+          {
+            block_id: 'block_a',
+            source_block_ids: ['block_a'],
+            page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' }],
+            image_refs: ['asset_1'],
+            final_prompt_md: 'Q',
+            final_reference_md: null,
+            final_wrong_answer_md: 'WA',
+            knowledge_ids: ['k1'],
+            cause: null,
+            difficulty: 3,
+            question_kind: 'short_answer',
+          },
+        ],
+      }),
+      Bindings,
+      executionCtx,
+    );
+
+    expect(res.status).toBe(409);
+    expect(calls.some((c) => /insert into question \(/i.test(c.sql))).toBe(false);
+    expect(calls.some((c) => /insert into mistake/i.test(c.sql))).toBe(false);
+    expect(waitUntilFns).toHaveLength(0);
+  });
+
+  it('preserves high visual_complexity when merging from any high source block', async () => {
+    const blocks = new Map<string, QuestionBlockRow>();
+    blocks.set('block_low', makeBlockRow({ id: 'block_low', visual_complexity: 'low' }));
+    blocks.set('block_high', makeBlockRow({ id: 'block_high', visual_complexity: 'high' }));
+    const { Bindings, executionCtx, calls } = mockImportEnv({
+      session: makeSessionRow({ source_asset_ids: '["asset_1","asset_2"]' }),
+      questionBlocks: blocks,
+      knowledgeIds: ['k1'],
+    });
+
+    const res = await ingestion.request(
+      '/sess_1/import',
+      makeImportRequest({
+        blocks: [
+          {
+            // virtual merged card
+            source_block_ids: ['block_low', 'block_high'],
+            page_spans: [
+              { page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' },
+              { page_index: 1, bbox: { x: 0, y: 0, width: 1, height: 0.5 }, role: 'continuation' },
+            ],
+            image_refs: ['asset_1', 'asset_2'],
+            final_prompt_md: 'Merged Q',
+            final_reference_md: null,
+            final_wrong_answer_md: 'WA',
+            knowledge_ids: ['k1'],
+            cause: null,
+            difficulty: 3,
+            question_kind: 'short_answer',
+          },
+        ],
+      }),
+      Bindings,
+      executionCtx,
+    );
+
+    expect(res.status).toBe(200);
+    const insertBlock = calls.find((c) => /insert into question_block/i.test(c.sql));
+    expect(insertBlock).toBeDefined();
+    expect((insertBlock!.binds as unknown[]).includes('high')).toBe(true);
+  });
+
   it('wrong_answer_image_refs derived from page_spans where role=answer_area', async () => {
     const blocks = new Map<string, QuestionBlockRow>();
     blocks.set('block_a', makeBlockRow({ id: 'block_a' }));
