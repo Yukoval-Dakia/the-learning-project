@@ -548,3 +548,107 @@ describe('PATCH /api/learning-items/:id', () => {
     expect(updateCall?.binds).not.toContain(5);
   });
 });
+
+describe('DELETE /api/learning-items/:id', () => {
+  it('happy path: soft-archive — UPDATE sets archived_at + archived_reason="user"', async () => {
+    const learningItemDeleteById = new Map<string, LearningItemDeleteMetaRow>([
+      ['li1', { id: 'li1', version: 0, archived_at: null }],
+    ]);
+    const { Bindings, executionCtx, calls } = mockEnv({ learningItemDeleteById });
+    const res = await learningItems.request(
+      '/li1?version=0',
+      { method: 'DELETE' },
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean };
+    expect(body.ok).toBe(true);
+
+    const updateCall = calls.find((c) => /^update learning_item/i.test(c.sql));
+    expect(updateCall).toBeDefined();
+    expect(updateCall?.sql).toMatch(/archived_at = \?/i);
+    expect(updateCall?.sql).toMatch(/archived_reason = 'user'/i);
+    // Status NOT touched.
+    expect(updateCall?.sql).not.toMatch(/\bstatus =/i);
+  });
+
+  it('404 when not found, no UPDATE', async () => {
+    const { Bindings, executionCtx, calls } = mockEnv({ learningItemDeleteById: new Map() });
+    const res = await learningItems.request(
+      '/li_missing?version=0',
+      { method: 'DELETE' },
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(404);
+    const updateCall = calls.find((c) => /^update learning_item/i.test(c.sql));
+    expect(updateCall).toBeUndefined();
+  });
+
+  it('404 when already archived, no UPDATE', async () => {
+    const learningItemDeleteById = new Map<string, LearningItemDeleteMetaRow>([
+      ['li1', { id: 'li1', version: 0, archived_at: 1700000000 }],
+    ]);
+    const { Bindings, executionCtx, calls } = mockEnv({ learningItemDeleteById });
+    const res = await learningItems.request(
+      '/li1?version=0',
+      { method: 'DELETE' },
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(404);
+    const updateCall = calls.find((c) => /^update learning_item/i.test(c.sql));
+    expect(updateCall).toBeUndefined();
+  });
+
+  it('409 when version mismatch (UPDATE meta.changes=0)', async () => {
+    const learningItemDeleteById = new Map<string, LearningItemDeleteMetaRow>([
+      ['li1', { id: 'li1', version: 5, archived_at: null }],
+    ]);
+    const { Bindings, executionCtx } = mockEnv({
+      learningItemDeleteById,
+      updateResult: { meta: { changes: 0 } },
+    });
+    const res = await learningItems.request(
+      '/li1?version=2',
+      { method: 'DELETE' },
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('conflict');
+  });
+
+  it('400 when ?version is missing', async () => {
+    const learningItemDeleteById = new Map<string, LearningItemDeleteMetaRow>([
+      ['li1', { id: 'li1', version: 0, archived_at: null }],
+    ]);
+    const { Bindings, executionCtx, calls } = mockEnv({ learningItemDeleteById });
+    const res = await learningItems.request('/li1', { method: 'DELETE' }, Bindings, executionCtx);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('validation_error');
+    const updateCall = calls.find((c) => /^update learning_item/i.test(c.sql));
+    expect(updateCall).toBeUndefined();
+  });
+
+  it('400 when ?version is non-numeric', async () => {
+    const learningItemDeleteById = new Map<string, LearningItemDeleteMetaRow>([
+      ['li1', { id: 'li1', version: 0, archived_at: null }],
+    ]);
+    const { Bindings, executionCtx, calls } = mockEnv({ learningItemDeleteById });
+    const res = await learningItems.request(
+      '/li1?version=abc',
+      { method: 'DELETE' },
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('validation_error');
+    const updateCall = calls.find((c) => /^update learning_item/i.test(c.sql));
+    expect(updateCall).toBeUndefined();
+  });
+});

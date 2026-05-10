@@ -298,3 +298,37 @@ learningItems.patch('/:id', async (c) => {
     version: updated.version,
   });
 });
+
+learningItems.delete('/:id', async (c) => {
+  const id = c.req.param('id');
+  const versionRaw = c.req.query('version');
+  if (!versionRaw) {
+    return c.json({ error: 'validation_error', message: 'version query param required' }, 400);
+  }
+  const version = parseInt(versionRaw, 10);
+  if (isNaN(version) || version < 0) {
+    return c.json({ error: 'validation_error', message: 'invalid version' }, 400);
+  }
+
+  const row = await c.env.DB.prepare(
+    `select id, version, archived_at from learning_item where id = ?`,
+  )
+    .bind(id)
+    .first<{ id: string; version: number; archived_at: number | null }>();
+  if (!row || row.archived_at !== null) {
+    return c.json({ error: 'not_found', message: `learning_item ${id} not found` }, 404);
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const result = await c.env.DB.prepare(
+    `update learning_item set archived_at = ?, archived_reason = 'user', updated_at = ?, version = version + 1 where id = ? and version = ?`,
+  )
+    .bind(now, now, id, version)
+    .run();
+
+  const changes = (result as { meta?: { changes?: number } }).meta?.changes ?? 0;
+  if (changes !== 1) {
+    return c.json({ error: 'conflict', message: `learning_item ${id} concurrently modified` }, 409);
+  }
+  return c.json({ ok: true });
+});
