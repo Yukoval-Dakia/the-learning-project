@@ -99,11 +99,7 @@ describe('round-trip: export → import → DB state mirrored', () => {
     };
 
     // 1. Export
-    const exportRes = await exportRoute.request(
-      '/',
-      { method: 'GET' },
-      exportEnv(fixture),
-    );
+    const exportRes = await exportRoute.request('/', { method: 'GET' }, exportEnv(fixture));
     expect(exportRes.status).toBe(200);
     const ab = await exportRes.arrayBuffer();
     const entries = unzipSync(new Uint8Array(ab));
@@ -133,7 +129,7 @@ describe('round-trip: export → import → DB state mirrored', () => {
     // 4. The actual binds for knowledge match fixture
     const knowledgeBatch = batchCalls.find((b) => /insert into knowledge/i.test(b[0]?.sql ?? ''));
     expect(knowledgeBatch).toBeDefined();
-    expect(knowledgeBatch![0].binds).toContain('k1');
-    expect(knowledgeBatch![0].binds).toContain('虚词');
+    expect(knowledgeBatch?.[0].binds).toContain('k1');
+    expect(knowledgeBatch?.[0].binds).toContain('虚词');
   });
 });

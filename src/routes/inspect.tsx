@@ -209,12 +209,12 @@ function DataTab() {
     const url = includeAssets ? '/api/_/export?include_assets=1' : '/api/_/export';
     try {
       const res = await fetch(url, { headers: { 'x-internal-token': INTERNAL_TOKEN } });
-      if (!res.ok) {
-        const text = await res.text();
+      if (!res.ok || !res.body) {
+        const text = res.ok ? 'no body' : await res.text();
         setDownloadError(`${res.status}: ${text}`);
         return;
       }
-      const reader = res.body!.getReader();
+      const reader = res.body.getReader();
       const chunks: Uint8Array[] = [];
       let bytes = 0;
       for (;;) {
@@ -256,9 +256,7 @@ function DataTab() {
       });
       if (res.ok) {
         const body = (await res.json()) as { stats: unknown; assets_uploaded: number };
-        setImportStatus(
-          `完成。assets uploaded: ${body.assets_uploaded}。3 秒后刷新页面...`,
-        );
+        setImportStatus(`完成。assets uploaded: ${body.assets_uploaded}。3 秒后刷新页面...`);
         setTimeout(() => window.location.reload(), 3000);
       } else {
         const text = await res.text();
@@ -302,7 +300,8 @@ function DataTab() {
       <section>
         <h2 className="text-base font-medium text-red-700">还原（清空式）</h2>
         <p className="text-xs text-slate-500 mt-1">
-          这个动作会删除所有 D1 数据 + R2 图片，然后从你上传的 ZIP 重装。先 export 当前再 import 新的；没 UNDO。
+          这个动作会删除所有 D1 数据 + R2 图片，然后从你上传的 ZIP 重装。先 export 当前再 import
+          新的；没 UNDO。
         </p>
         <div className="mt-2 space-y-2">
           <input
@@ -392,9 +391,7 @@ export function Inspect() {
           type="button"
           onClick={() => setTab('data')}
           className={`px-3 py-2 text-sm border-b-2 ${
-            tab === 'data'
-              ? 'border-slate-900 font-semibold'
-              : 'border-transparent text-slate-500'
+            tab === 'data' ? 'border-slate-900 font-semibold' : 'border-transparent text-slate-500'
           }`}
         >
           Data

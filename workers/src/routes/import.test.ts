@@ -26,16 +26,14 @@ function mockEnv() {
         return { success: true, meta: { changes: 0 } };
       },
     })),
-    batch: vi.fn(
-      async (stmts: Array<{ __sql?: string; __binds?: unknown[] }>) => {
-        const stmtCalls = stmts.map((s) => ({
-          sql: s.__sql ?? '',
-          binds: s.__binds ?? [],
-        }));
-        batchCalls.push(stmtCalls);
-        return [{ success: true, meta: { changes: stmts.length } }];
-      },
-    ),
+    batch: vi.fn(async (stmts: Array<{ __sql?: string; __binds?: unknown[] }>) => {
+      const stmtCalls = stmts.map((s) => ({
+        sql: s.__sql ?? '',
+        binds: s.__binds ?? [],
+      }));
+      batchCalls.push(stmtCalls);
+      return [{ success: true, meta: { changes: stmts.length } }];
+    }),
   } as unknown as D1Database;
 
   const IMAGES = {
@@ -165,11 +163,7 @@ describe('POST /api/_/import — wipe + reinsert', () => {
       }),
       'data.json': JSON.stringify({}),
     });
-    await importRoute.request(
-      '/?confirm=wipe-and-reload',
-      { method: 'POST', body: zip },
-      Bindings,
-    );
+    await importRoute.request('/?confirm=wipe-and-reload', { method: 'POST', body: zip }, Bindings);
     const deletes = calls.filter((c) => /^delete from/i.test(c.sql));
     expect(deletes.length).toBe(FK_ORDER.length);
     expect(deletes[0].sql).toMatch(new RegExp(`delete from ${FK_ORDER[FK_ORDER.length - 1]}`, 'i'));
@@ -209,11 +203,7 @@ describe('POST /api/_/import — wipe + reinsert', () => {
         ],
       }),
     });
-    await importRoute.request(
-      '/?confirm=wipe-and-reload',
-      { method: 'POST', body: zip },
-      Bindings,
-    );
+    await importRoute.request('/?confirm=wipe-and-reload', { method: 'POST', body: zip }, Bindings);
     expect(batchCalls.length).toBe(2);
     expect(batchCalls[0][0].sql).toMatch(/insert into knowledge/i);
     expect(batchCalls[1][0].sql).toMatch(/insert into mistake/i);
@@ -236,11 +226,7 @@ describe('POST /api/_/import — wipe + reinsert', () => {
       }),
       'data.json': JSON.stringify({ knowledge: rows }),
     });
-    await importRoute.request(
-      '/?confirm=wipe-and-reload',
-      { method: 'POST', body: zip },
-      Bindings,
-    );
+    await importRoute.request('/?confirm=wipe-and-reload', { method: 'POST', body: zip }, Bindings);
     expect(batchCalls.length).toBe(3);
     expect(batchCalls[0].length).toBe(50);
     expect(batchCalls[1].length).toBe(50);
@@ -261,11 +247,7 @@ describe('POST /api/_/import — wipe + reinsert', () => {
       'assets/sk-1': 'IMG-A',
       'assets/sk-2': 'IMG-B',
     });
-    await importRoute.request(
-      '/?confirm=wipe-and-reload',
-      { method: 'POST', body: zip },
-      Bindings,
-    );
+    await importRoute.request('/?confirm=wipe-and-reload', { method: 'POST', body: zip }, Bindings);
     expect(Bindings.IMAGES.put).toHaveBeenCalledTimes(2);
     expect((Bindings.IMAGES.put as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe('sk-1');
     expect((Bindings.IMAGES.put as ReturnType<typeof vi.fn>).mock.calls[1][0]).toBe('sk-2');

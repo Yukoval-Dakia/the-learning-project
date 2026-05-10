@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { SCHEMA_VERSION, MAX_INLINE_ASSETS, FK_ORDER } from './constants';
+import { describe, expect, it } from 'vitest';
+import { FK_ORDER, MAX_INLINE_ASSETS, SCHEMA_VERSION } from './constants';
 
 describe('export constants', () => {
   it('SCHEMA_VERSION is "1.0"', () => {

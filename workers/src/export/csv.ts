@@ -16,9 +16,9 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
     (tables.knowledge as Array<{ id: string; name: string }>).map((k) => [k.id, k.name]),
   );
   const questionById = new Map(
-    (
-      tables.question as Array<{ id: string; prompt_md: string; reference_md: string | null }>
-    ).map((q) => [q.id, q]),
+    (tables.question as Array<{ id: string; prompt_md: string; reference_md: string | null }>).map(
+      (q) => [q.id, q],
+    ),
   );
   const reviewsByMistake = new Map<string, Row[]>();
   for (const r of (tables.review_event ?? []) as Row[]) {
@@ -66,7 +66,8 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
         })
       : null;
     const reviews = reviewsByMistake.get(m.id as string) ?? [];
-    const lastReview = reviews.length > 0 ? Math.max(...reviews.map((r) => r.rated_at as number)) : null;
+    const lastReview =
+      reviews.length > 0 ? Math.max(...reviews.map((r) => r.rated_at as number)) : null;
 
     lines.push(
       [
@@ -97,9 +98,9 @@ export function buildReviewEventsCsv(tables: Record<string, Row[]>): string {
     (tables.knowledge as Array<{ id: string; name: string }>).map((k) => [k.id, k.name]),
   );
   const questionById = new Map(
-    (
-      tables.question as Array<{ id: string; prompt_md: string; knowledge_ids: string }>
-    ).map((q) => [q.id, q]),
+    (tables.question as Array<{ id: string; prompt_md: string; knowledge_ids: string }>).map(
+      (q) => [q.id, q],
+    ),
   );
   const mistakeById = new Map(
     (tables.mistake as Array<{ id: string; question_id: string }>).map((m) => [m.id, m]),

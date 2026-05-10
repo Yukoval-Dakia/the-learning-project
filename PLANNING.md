@@ -79,7 +79,7 @@ the-learning-project/
 - [ ] **Sub 4A** — Mistake FSRS 复习闭环（用 OSS `ts-fsrs`） + `review_event` 行为日志表 + 简陋 `/review` UI（键盘 1/2/3 串行）
 - [ ] **Sub 4B** — LearningItem 简化版（仅 pending / in_progress / done 三态走通；6 状态字段保留 schema，状态机本身先简化）+ CompletionEvidence 自我宣告写入路径
 - [x] **Sub 4C** — Capture 流重整 + Tencent OCR Tier-1 + 退役 /record（OCR cascade + /capture 主入口 + 审核页全字段编辑；PR 当前分支待 merge）
-- [ ] **Sub 5** — 数据导出（JSON 全量 + 错题 CSV 摘要）
+- [x] **Sub 5** — 数据导出 + 还原（ZIP 含 manifest + data.json + 2 CSV + README + 可选 R2 字节；POST /api/_/import 清空式还原；详见 `docs/superpowers/specs/2026-05-10-phase1a-sub5-design.md`）
 
 **Sub 4A 关键决策**（详见 `docs/superpowers/specs/2026-05-10-phase1a-sub4a-design.md`）：
 - FSRS 只调度 Mistake（错题），不管 LearningItem 是否完成
@@ -94,7 +94,7 @@ the-learning-project/
 
 **项目结构**
 - [x] 目录边界：`core/` vs `subjects/wenyan/`（PR 1 已落 wenyan 占位）
-- [ ] 数据导出（JSON / Markdown）—— 给未来的自己买保险
+- [x] 数据导出（ZIP / CSV）—— 给未来的自己买保险（见 Sub 5）
 - [x] PWA 基础（manifest + standalone + 安装到主屏；PR 2 已落，dev-mode SW 关）
 
 目标：自己能用它备文言文一周，跑出第一批数据。

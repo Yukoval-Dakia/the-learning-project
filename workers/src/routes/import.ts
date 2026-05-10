@@ -41,20 +41,14 @@ importRoute.post('/', async (c) => {
 
   const manifestBytes = entries['manifest.json'];
   if (!manifestBytes) {
-    return c.json(
-      { error: 'invalid_zip', message: 'manifest.json missing from ZIP' },
-      400,
-    );
+    return c.json({ error: 'invalid_zip', message: 'manifest.json missing from ZIP' }, 400);
   }
 
   let manifest: ImportManifest;
   try {
     manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as ImportManifest;
   } catch {
-    return c.json(
-      { error: 'invalid_zip', message: 'manifest.json is not valid JSON' },
-      400,
-    );
+    return c.json({ error: 'invalid_zip', message: 'manifest.json is not valid JSON' }, 400);
   }
 
   if (manifest.schema_version !== SCHEMA_VERSION) {
@@ -70,10 +64,7 @@ importRoute.post('/', async (c) => {
 
   const dataBytes = entries['data.json'];
   if (!dataBytes) {
-    return c.json(
-      { error: 'invalid_zip', message: 'data.json missing from ZIP' },
-      400,
-    );
+    return c.json({ error: 'invalid_zip', message: 'data.json missing from ZIP' }, 400);
   }
   let data: Record<string, Array<Record<string, unknown>>>;
   try {
@@ -82,10 +73,7 @@ importRoute.post('/', async (c) => {
       Array<Record<string, unknown>>
     >;
   } catch {
-    return c.json(
-      { error: 'invalid_zip', message: 'data.json is not valid JSON' },
-      400,
-    );
+    return c.json({ error: 'invalid_zip', message: 'data.json is not valid JSON' }, 400);
   }
 
   const stats: Record<string, { deleted: number; inserted: number }> = {};
@@ -107,9 +95,9 @@ importRoute.post('/', async (c) => {
     for (let i = 0; i < rows.length; i += INSERT_BATCH_SIZE) {
       const chunk = rows.slice(i, i + INSERT_BATCH_SIZE);
       const stmts = chunk.map((row) =>
-        c.env.DB.prepare(
-          `insert into ${t} (${cols.join(',')}) values ${placeholders}`,
-        ).bind(...cols.map((col) => row[col] ?? null)),
+        c.env.DB.prepare(`insert into ${t} (${cols.join(',')}) values ${placeholders}`).bind(
+          ...cols.map((col) => row[col] ?? null),
+        ),
       );
       await c.env.DB.batch(stmts);
       stats[t].inserted += chunk.length;
