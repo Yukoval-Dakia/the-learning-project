@@ -10,6 +10,7 @@ import { knowledge } from './routes/knowledge';
 import { logs } from './routes/logs';
 import { mistakes } from './routes/mistakes';
 import { ingestion } from './routes/ingestion';
+import { learningItems } from './routes/learning_items';
 import { review } from './routes/review';
 import type { AppEnv } from './types';
 
@@ -31,6 +32,7 @@ app.route('/api/assets', assets);
 app.route('/api/knowledge', knowledge);
 app.route('/api/mistakes', mistakes);
 app.route('/api/ingestion', ingestion);
+app.route('/api/learning-items', learningItems);
 app.route('/api/review', review);
 
 app.post('/api/_/seed', async (c) => {
