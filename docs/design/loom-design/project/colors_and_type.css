@@ -7,25 +7,17 @@
    ============================================================ */
 
 /* ── Webfonts ─────────────────────────────────────────────── */
-/* Source Serif 4 + MiSans — self-hosted (user-supplied TTFs in fonts/).
-   Source Han Serif SC is loaded via Google Fonts as "Noto Serif SC"
-   (Noto Serif CJK SC and Source Han Serif SC are literally the same
-   typeface, released jointly by Adobe + Google). JetBrains Mono CDN. */
-@font-face {
-  font-family: "Source Serif 4";
-  src: url("fonts/SourceSerif4-Regular.ttf") format("truetype");
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: "MiSans";
-  src: url("fonts/MiSans-Normal.ttf") format("truetype");
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Noto+Serif+SC:wght@400;500;600&display=swap");
+/* Patched on import (2026-05-10):
+   1. @import MUST come before any other rules per CSS spec — moved to top.
+   2. Source Serif 4 added to the Google Fonts @import (it's available on
+      Google CDN); previous local @font-face was broken because fonts/ was
+      excluded from the repo to keep size sane.
+   3. MiSans has no public CDN — local @font-face removed; --font-sans stack
+      falls back to PingFang SC / Hiragino Sans GB on Apple OS. If MiSans is
+      required, drop the .ttf into project/fonts/ and re-add an @font-face
+      block here.
+   4. Source Han Serif SC == Noto Serif SC (joint Adobe/Google release). */
+@import url("https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@400;500;600&family=Noto+Serif+SC:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap");
 
 :root {
   /* ── Color · Paper (warm whites) ───────────────────────── */
@@ -110,6 +102,12 @@
   --lh-snug:    1.5;
   --lh-prose:   1.7;    /* default for 中文 body */
   --lh-loose:   1.85;   /* for 文言文 long passages */
+
+  /* Aliases — `body { font-size: var(--fs-base); line-height: var(--lh-base); }`
+     in ui_kits/loom-app/styles.css uses these names. Patched on import. */
+  --fs-base:    var(--fs-body);    /* 15px */
+  --lh-base:    var(--lh-snug);    /* 1.5 */
+  --ring:       var(--shadow-focus);
 
   /* letter-spacing */
   --ls-tight:   -0.015em;

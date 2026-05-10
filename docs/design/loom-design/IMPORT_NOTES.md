@@ -18,6 +18,27 @@ production CSS.
 - `project/fonts/` (~8 MB) — Source Serif 4 + MiSans TTF
 - `project/uploads/` (~38 MB) — duplicate copies + Source Han Serif SC OTF
 
+## What was patched on import
+
+The bundle as exported from claude.ai had two functional issues that broke
+the local previews. Both fixed inline in `project/colors_and_type.css`:
+
+1. **`@import` was after `@font-face`** — invalid per CSS spec, so the
+   Google Fonts CDN load (Noto Serif SC + JetBrains Mono) was being ignored.
+   Moved `@import` to the top.
+2. **Local `@font-face` rules pointed at `fonts/SourceSerif4-Regular.ttf` +
+   `fonts/MiSans-Normal.ttf`** which we excluded above. Removed the local
+   blocks; instead added Source Serif 4 to the Google Fonts `@import` (it's
+   on the public CDN). MiSans isn't on Google's CDN — falls back to PingFang
+   SC / Hiragino Sans GB on Apple OS via the `--font-sans` stack.
+3. **3 undefined CSS tokens** referenced by `ui_kits/loom-app/styles.css`
+   (`--fs-base`, `--lh-base`, `--ring`) — added as aliases of the existing
+   tokens (`--fs-body`, `--lh-snug`, `--shadow-focus`).
+
+If you later self-host MiSans / Source Serif 4 / Source Han Serif SC, drop
+the `.ttf` / `.otf` into `project/fonts/` and replace the `@import` line with
+`@font-face` blocks — the family names already match the `--font-*` stacks.
+
 Fonts were dropped to keep repo size sane. Re-acquire when actually wiring CSS:
 
 | Brand intent | Where to get it |
