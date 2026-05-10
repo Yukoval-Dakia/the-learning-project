@@ -47,6 +47,7 @@ describe('buildMistakesCsv', () => {
           prompt_md: '解释"之"的用法',
           reference_md: '助词；代词；动词',
           knowledge_ids: '["k1"]',
+          difficulty: 4, // moved here — difficulty lives on question, not mistake
         },
       ],
       mistake: [
@@ -57,14 +58,14 @@ describe('buildMistakesCsv', () => {
           knowledge_ids: '["k1","k2"]',
           cause: '{"primary_category":"knowledge_gap","user_notes":"需要复习"}',
           fsrs_state: '{"due":1700000000,"reps":3,"lapses":1}',
-          difficulty: 4,
+          // NOTE: no `difficulty` here — it's on question
           status: 'active',
           created_at: 1699000000,
         },
       ],
       review_event: [
-        { id: 'r1', mistake_id: 'm1', rated_at: 1700100000, rating: 1 },
-        { id: 'r2', mistake_id: 'm1', rated_at: 1700200000, rating: 3 },
+        { id: 'r1', mistake_id: 'm1', created_at: 1700100000, rating: 'again' },
+        { id: 'r2', mistake_id: 'm1', created_at: 1700200000, rating: 'good' },
       ],
     };
   }
@@ -134,10 +135,14 @@ describe('buildReviewEventsCsv', () => {
         {
           id: 'r1',
           mistake_id: 'm1',
-          rated_at: 1700100000,
-          rating: 1,
-          before_fsrs_state: '{"stability":2.5,"difficulty":5,"due":1700000000,"state":2}',
-          after_fsrs_state: '{"stability":1.5,"difficulty":7,"due":1700200000,"state":3}',
+          created_at: 1700100000, // was rated_at
+          rating: 'again', // string label, not numeric
+          fsrs_state_before: // was before_fsrs_state
+            '{"stability":2.5,"difficulty":5,"due":1700000000,"state":2}',
+          fsrs_state_after: // was after_fsrs_state
+            '{"stability":1.5,"difficulty":7,"due":1700200000,"state":3}',
+          due_at_before: 1700000000,
+          due_at_next: 1700200000,
         },
       ],
     };
@@ -147,44 +152,42 @@ describe('buildReviewEventsCsv', () => {
     const csv = buildReviewEventsCsv(fixture());
     const lines = csv.split('\n');
     expect(lines.length).toBe(2);
-    expect(lines[0]).toContain('rated_at,mistake_id,prompt_excerpt');
-    expect(lines[0]).toContain('rating_label');
+    expect(lines[0]).toContain('created_at,mistake_id,prompt_excerpt');
+    expect(lines[0]).toContain('rating');
+    expect(lines[0]).toContain('due_at_next');
   });
 
-  it('rating_label is "again" for rating=1', () => {
+  it('rating column outputs the text label directly (again/hard/good)', () => {
     const csv = buildReviewEventsCsv(fixture());
-    expect(csv).toContain('again');
+    expect(csv).toContain(',again,'); // rating column value
   });
 
-  it('rating_label is "hard" for rating=2 and "good" for rating=3', () => {
-    const f = fixture();
-    f.review_event[0].rating = 2;
-    expect(buildReviewEventsCsv(f)).toContain('hard');
-    f.review_event[0].rating = 3;
-    expect(buildReviewEventsCsv(f)).toContain('good');
+  it('rating "hard" and "good" pass through', () => {
+    const f1 = fixture();
+    f1.review_event[0].rating = 'hard';
+    expect(buildReviewEventsCsv(f1)).toContain(',hard,');
+    const f2 = fixture();
+    f2.review_event[0].rating = 'good';
+    expect(buildReviewEventsCsv(f2)).toContain(',good,');
   });
 
   it('prompt_excerpt is first 80 chars with newlines replaced by space', () => {
     const csv = buildReviewEventsCsv(fixture());
-    const dataLine = csv.split('\n')[1];
-    // Newline replaced by space — the first data row should not contain a literal LF.
-    // (csv.split('\n') gave us this row, so by construction it has no LF.)
-    expect(dataLine).toBeDefined();
-    expect(csv).toMatch(/解释“之”的用法 /); // newline became space
+    expect(csv).toMatch(/解释“之”的用法 /);
   });
 
-  it('decomposes before_fsrs_state and after_fsrs_state JSON columns', () => {
+  it('decomposes fsrs_state_before and fsrs_state_after JSON columns', () => {
     const csv = buildReviewEventsCsv(fixture());
-    expect(csv).toContain('2.5'); // before_stability
-    expect(csv).toContain('1.5'); // after_stability
-    expect(csv).toContain('1700000000'); // before_due
-    expect(csv).toContain('1700200000'); // after_due
+    expect(csv).toContain('2.5');
+    expect(csv).toContain('1.5');
+    expect(csv).toContain('1700000000');
+    expect(csv).toContain('1700200000');
   });
 
-  it('handles missing before/after fsrs_state gracefully', () => {
+  it('handles missing fsrs_state_before/after gracefully', () => {
     const f = fixture();
-    f.review_event[0].before_fsrs_state = null as unknown as string;
-    f.review_event[0].after_fsrs_state = null as unknown as string;
+    f.review_event[0].fsrs_state_before = null as unknown as string;
+    f.review_event[0].fsrs_state_after = null as unknown as string;
     const csv = buildReviewEventsCsv(f);
     expect(csv.split('\n').length).toBe(2);
   });

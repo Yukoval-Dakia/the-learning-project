@@ -67,7 +67,7 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
       : null;
     const reviews = reviewsByMistake.get(m.id as string) ?? [];
     const lastReview =
-      reviews.length > 0 ? Math.max(...reviews.map((r) => r.rated_at as number)) : null;
+      reviews.length > 0 ? Math.max(...reviews.map((r) => r.created_at as number)) : null;
 
     lines.push(
       [
@@ -79,7 +79,7 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
         csvEscape(kNames),
         csvEscape(cause?.primary_category ?? ''),
         csvEscape(cause?.user_notes ?? ''),
-        csvEscape((m as { difficulty?: number }).difficulty),
+        csvEscape((q as { difficulty?: number } | undefined)?.difficulty ?? ''),
         csvEscape(fsrs?.due ?? ''),
         csvEscape(fsrs?.reps ?? ''),
         csvEscape(fsrs?.lapses ?? ''),
@@ -106,16 +106,13 @@ export function buildReviewEventsCsv(tables: Record<string, Row[]>): string {
     (tables.mistake as Array<{ id: string; question_id: string }>).map((m) => [m.id, m]),
   );
 
-  const RATING_LABEL: Record<number, string> = { 1: 'again', 2: 'hard', 3: 'good' };
-
   const headers = [
     'id',
-    'rated_at',
+    'created_at',
     'mistake_id',
     'prompt_excerpt',
     'knowledge_names',
-    'rating',
-    'rating_label',
+    'rating', // text label, e.g. 'again' | 'hard' | 'good'
     'before_stability',
     'before_difficulty',
     'before_due',
@@ -124,6 +121,8 @@ export function buildReviewEventsCsv(tables: Record<string, Row[]>): string {
     'after_difficulty',
     'after_due',
     'after_state',
+    'due_at_before', // separate D1 column
+    'due_at_next', // separate D1 column
   ];
 
   const lines: string[] = [headers.join(',')];
@@ -134,18 +133,17 @@ export function buildReviewEventsCsv(tables: Record<string, Row[]>): string {
     const kIds: string[] = question ? (JSON.parse(question.knowledge_ids) as string[]) : [];
     const kNames = kIds.map((id) => knowledgeById.get(id) ?? id).join('; ');
     const promptExcerpt = (question?.prompt_md ?? '').slice(0, 80).replace(/[\n\r]/g, ' ');
-    const before = r.before_fsrs_state ? JSON.parse(r.before_fsrs_state as string) : null;
-    const after = r.after_fsrs_state ? JSON.parse(r.after_fsrs_state as string) : null;
+    const before = r.fsrs_state_before ? JSON.parse(r.fsrs_state_before as string) : null;
+    const after = r.fsrs_state_after ? JSON.parse(r.fsrs_state_after as string) : null;
 
     lines.push(
       [
         csvEscape(r.id),
-        csvEscape(r.rated_at),
+        csvEscape(r.created_at),
         csvEscape(r.mistake_id),
         csvEscape(promptExcerpt),
         csvEscape(kNames),
         csvEscape(r.rating),
-        csvEscape(RATING_LABEL[r.rating as number] ?? ''),
         csvEscape(before?.stability ?? ''),
         csvEscape(before?.difficulty ?? ''),
         csvEscape(before?.due ?? ''),
@@ -154,6 +152,8 @@ export function buildReviewEventsCsv(tables: Record<string, Row[]>): string {
         csvEscape(after?.difficulty ?? ''),
         csvEscape(after?.due ?? ''),
         csvEscape(after?.state ?? ''),
+        csvEscape(r.due_at_before ?? ''),
+        csvEscape(r.due_at_next ?? ''),
       ].join(','),
     );
   }
