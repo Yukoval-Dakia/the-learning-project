@@ -67,16 +67,25 @@ the-learning-project/
 
 #### Phase 1a · 最小可用（目标 5-7 天上手）
 
+**当前状态（2026-05-10）**：Phase 1a Sub 1-3 已 ship；Phase 1.5 ingestion foundation 已提前落地。下一步回到复习闭环，**Sub 4 拆为 4A（错题 FSRS + review_event）+ 4B（LearningItem 三态 + Evidence）**，分两个 PR ship；4A 是 Phase 1a 闭环的关键，先做。
+
 **核心闭环（manual 录入 + 错因 + FSRS 复习）**
 - [x] DB driver 接 D1（PR 1 已落）
 - [x] Worker shared-secret auth（PR 1 已落）
 - [x] AI Task Runner 骨架 + ToolCallLog / CostLedger（PR 2 已落）
-- [ ] 知识点 schema seed（文言文课标 import + AI 自动建议节点 + 人工确认 UI）
-- [ ] **manual 录入页**（粘贴题面 / 参考答案 / 错答 / 知识点 dropdown）
-- [ ] AttributionTask 接通（10 类 cause + AI 自动归因 + 失败兜底走"待人工归因队列"）
-- [ ] FSRS 复习队列（用 OSS lib `ts-fsrs`）+ 简陋复习 UI
-- [ ] LearningItem 简化版（仅 pending / in_progress / done 三态走通；6 状态字段保留 schema，状态机本身先简化）
-- [ ] 完成判定：自我宣告 + Evidence 留痕（多路径推 1b）
+- [x] 知识点 schema seed（文言文课标 import + AI 自动建议节点 + 人工确认 UI；Phase 1a Sub 1 已落）
+- [x] **manual 录入页**（粘贴题面 / 参考答案 / 错答 / 知识点 dropdown；Phase 1a Sub 2 已落）
+- [x] AttributionTask 接通（10 类 cause + AI 自动归因；失败兜底为 cause 留空 + log，Phase 1a Sub 3 已落）
+- [ ] **Sub 4A** — Mistake FSRS 复习闭环（用 OSS `ts-fsrs`） + `review_event` 行为日志表 + 简陋 `/review` UI（键盘 1/2/3 串行）
+- [ ] **Sub 4B** — LearningItem 简化版（仅 pending / in_progress / done 三态走通；6 状态字段保留 schema，状态机本身先简化）+ CompletionEvidence 自我宣告写入路径
+- [ ] **Sub 5** — 数据导出（JSON 全量 + 错题 CSV 摘要）
+
+**Sub 4A 关键决策**（详见 `docs/superpowers/specs/2026-05-10-phase1a-sub4a-design.md`）：
+- FSRS 只调度 Mistake（错题），不管 LearningItem 是否完成
+- rating 三档：incorrect → Again / partial → Hard / correct → Good（不暴露 Easy）
+- 不做 cause 差异化复习权重（Phase 2 跑数据再说）
+- `review_event` 单独一张表（结构化字段 + before/after fsrs_state JSON），从 day 1 就记录所有复习行为，给未来调度器替换 / BMMS 风格分析留 schema 空间
+- 不引入"复习 session / tool_quiz" 仪式感 —— Phase 2 才搞
 
 **最小观测**
 - [x] AI 任务层 ToolCallLog + CostLedger 写入（PR 2）
@@ -92,9 +101,9 @@ the-learning-project/
 #### Phase 1b · 补完（1a 跑出第一周数据后做）
 
 **录入扩展**
-- [ ] **vision_single 录入路径**（视觉模型 + 一击确认页）
+- [x] **vision_single 录入路径**（已提前到 Phase 1.5 ingestion foundation：图片上传 → vision extract → 审核导入）
 - [ ] **手动粘贴录入** UX 优化（如需要）
-- [ ] Source / Ingestion 字段预留：`image_refs` / `crop_refs` / `source_refs`（先不做完整 R2 pipeline）
+- [x] Source / Ingestion 字段预留：`source_asset` / `source_document` / `ingestion_session` / `question_block` / `image_refs` / `crop_refs`（已提前到 Phase 1.5 ingestion foundation）
 
 **Quiz 骨架 + StudyLog**
 - [ ] tool_quiz embedded check（最小 standalone + inline）
@@ -120,26 +129,28 @@ the-learning-project/
 
 #### 推到 Phase 1.5+
 
-- vision_paper 卷子拍照（已是 Phase 1.5）
+- vision_paper 卷子拍照（Phase 1.5 MVP 已落；完整跨页/批量优化继续留在后续）
 - reverse_mark 反向标记（依赖 Note UI，本来就 Phase 2）
 - LearningItem 复学机制 / 变式题双 pass / 错因差异化复习权重（Phase 2，依赖 dreaming）
 - 学习时间线视图（Phase 2）
 
-### Phase 1.5 · 批改识别（关键降摩擦特性）
+### Phase 1.5 · 批改识别（关键降摩擦特性，MVP 已 ship）
 
 **Why 单独成一个 Phase**：批改识别是错题录入摩擦的关键降低 —— 一张卷子从 N 次单题录入降到 1 次拍照 + 1 次审核。比 Phase 2 其他功能更优先。
 
-- [ ] **VisionExtractTask 多图输入**（多张照片作为一次 vision call，自动识别 page 顺序与跨页大题）
-- [ ] **批改痕迹识别**（prompt 设计：识别任何形式的勾叉 / 扣分 / 批语，不在 schema 区分类型）
-- [ ] **多题切分**（vision 输出 question_blocks[] + verdict_inferred per block）
-- [ ] **IngestionSession 最小状态机**（uploaded → extracted → reviewed → imported / failed）
-- [ ] **SourceAsset / SourceDocument 最小 schema**（R2 object key / mime / hash / provenance；D1 只存 ref）
-- [ ] **QuestionBlock + crop_refs[]**（保留题目在原图/PDF中的区域，带图题复习时可回放）
-- [ ] **vision_paper 录入路径**（`source: vision_paper`）
-- [ ] **卷子审核页 UX**（默认仅展开错题，对的折叠；批量录入按钮）
-- [ ] **批量 AttributionTask**（N 个新 Mistake 走 batch API 夜间一次跑完）
+- [x] **VisionExtractTask MVP**（支持 1-5 张图片上传；当前按页逐张 vision extract，非真正多图单次 call）
+- [x] **批改痕迹识别 MVP**（prompt 识别勾叉 / 扣分 / 批语，schema 不区分痕迹类型）
+- [x] **多题切分**（vision 输出 question_blocks[]，审核后导入）
+- [x] **IngestionSession 最小状态机**（uploaded → extracted → reviewed → imported / failed）
+- [x] **SourceAsset / SourceDocument 最小 schema**（R2 object key / mime / hash / provenance；D1 只存 ref）
+- [x] **QuestionBlock + page_spans[] / crop_refs[] schema**（page_spans 已落；真实 crop 生成未做）
+- [x] **vision_paper 录入路径 MVP**（`source: vision_paper`，多图审核导入）
+- [x] **卷子审核页 MVP**（编辑 / 合并 / 拆分 / 批量导入；“默认仅展开错题”未做）
+- [ ] **批量 AttributionTask**（当前是导入后 per-mistake waitUntil；batch API / 夜间跑未做）
 - [ ] **保留为模拟卷选项**（勾选后整套 Question 包成 standalone tool_quiz Artifact）
-- [ ] 没有批改痕迹时的 fallback（用户逐题点对错 / 上传参考答案让 AI 自动判）
+- [ ] 没有批改痕迹时的专门 fallback（用户逐题点对错 / 上传参考答案让 AI 自动判）
+- [ ] 真正多图单次 vision call + 跨页大题自动关联
+- [ ] 真实 crop_refs 生成与复习时图片回放
 
 ### Phase 2 · 进度图谱 + Dreaming + Maintenance + Note Artifact + 高级 Judge + 变式题 + 时间线
 
