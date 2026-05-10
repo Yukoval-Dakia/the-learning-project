@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  body { margin: 0; padding: 28px; background: var(--paper); }
+  .row { display: flex; gap: 10px; }
+  button {
+    flex: 1;
+    font-family: var(--font-sans);
+    font-size: 16px;
+    font-weight: 500;
+    padding: 14px 16px;
+    border-radius: var(--r-2);
+    border: 1px solid;
+    cursor: pointer;
+    line-height: 1.2;
+    transition: all var(--dur-fast) var(--ease-out);
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+  }
+  .kbd { font-family: var(--font-mono); font-size: 11px; opacity: 0.65; font-weight: 400; letter-spacing: 0; }
+
+  .again { background: var(--again-soft); color: var(--again-ink); border-color: var(--again-line); }
+  .again:hover { background: #F0D2C5; }
+  .hard { background: var(--hard-soft); color: var(--hard-ink); border-color: var(--hard-line); }
+  .hard:hover { background: #EFE0BC; }
+  .good { background: var(--good-soft); color: var(--good-ink); border-color: var(--good-line); }
+  .good:hover { background: #D4E2D4; }
+
+  .label { font-family: var(--font-mono); font-size: 11px; color: var(--ink-4); margin-bottom: 12px; letter-spacing: 0.04em; }
+</style>
+</head>
+<body>
+  <div class="label">FSRS · review rating · 1/2/3 keyboard</div>
+  <div class="row">
+    <button class="again"><span>不会</span><span class="kbd">1</span></button>
+    <button class="hard"><span>模糊</span><span class="kbd">2</span></button>
+    <button class="good"><span>会了</span><span class="kbd">3</span></button>
+  </div>
+</body>
+</html>

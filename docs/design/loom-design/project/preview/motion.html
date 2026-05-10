@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  body { margin: 0; padding: 28px; background: var(--paper); }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .card { background: var(--paper-raised); border: 1px solid var(--line); border-radius: var(--r-3); padding: 14px; }
+  h3 { font-family: var(--font-mono); font-size: 11px; color: var(--ink-4); margin: 0 0 10px; letter-spacing: 0.04em; font-weight: 500; }
+  .row { display: grid; grid-template-columns: 1fr 110px; gap: 8px; align-items: baseline; padding: 6px 0; border-bottom: 1px dashed var(--line-soft); }
+  .row:last-child { border-bottom: 0; }
+  .name { font-family: var(--font-mono); font-size: 12px; color: var(--ink-2); }
+  .val { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-4); text-align: right; }
+  .ease-curve { height: 32px; width: 100%; }
+  .ease-curve path { fill: none; stroke: var(--coral); stroke-width: 2; }
+  .ease-curve line { stroke: var(--line); stroke-width: 1; }
+</style>
+</head>
+<body>
+  <div class="grid">
+    <div class="card">
+      <h3>DURATION</h3>
+      <div class="row"><span class="name">--dur-fast</span><span class="val">120 ms</span></div>
+      <div class="row"><span class="name">--dur-base</span><span class="val">200 ms</span></div>
+      <div class="row"><span class="name">--dur-slow</span><span class="val">320 ms</span></div>
+    </div>
+    <div class="card">
+      <h3>EASING</h3>
+      <div class="row">
+        <span class="name">--ease-out</span>
+        <svg class="ease-curve" viewBox="0 0 100 32"><line x1="0" y1="32" x2="100" y2="32"/><line x1="0" y1="0" x2="0" y2="32"/><path d="M 0 32 C 22 32, 36 4, 100 0"/></svg>
+      </div>
+      <div class="row">
+        <span class="name">--ease-soft</span>
+        <svg class="ease-curve" viewBox="0 0 100 32"><line x1="0" y1="32" x2="100" y2="32"/><line x1="0" y1="0" x2="0" y2="32"/><path d="M 0 32 C 40 32, 80 0, 100 0"/></svg>
+      </div>
+      <div class="row">
+        <span class="name">--ease-in</span>
+        <svg class="ease-curve" viewBox="0 0 100 32"><line x1="0" y1="32" x2="100" y2="32"/><line x1="0" y1="0" x2="0" y2="32"/><path d="M 0 32 C 55 32, 68 28, 100 0"/></svg>
+      </div>
+    </div>
+  </div>
+  <p style="font-family: var(--font-sans); font-size: 13px; color: var(--ink-3); margin: 14px 0 0; line-height: 1.5;">
+    Fades and translates only. No bounces, no springs. Press shrinks 0.98 for ~80ms — the only place we shrink.
+  </p>
+</body>
+</html>

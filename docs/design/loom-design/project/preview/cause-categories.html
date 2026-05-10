@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  body { margin: 0; padding: 24px; background: var(--paper); display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+  .cell {
+    border-radius: var(--r-2);
+    border: 1px solid var(--line);
+    padding: 9px 10px;
+    background: var(--paper-raised);
+    display: flex; flex-direction: column; gap: 2px;
+    min-height: 56px;
+  }
+  .cn { font-family: var(--font-sans); font-size: 13px; font-weight: 600; color: var(--ink); }
+  .key { font-family: var(--font-mono); font-size: 11px; color: var(--ink-4); }
+  .pct { font-family: var(--font-mono); font-size: 11px; color: var(--coral); margin-top: auto; }
+</style>
+</head>
+<body>
+  <div class="cell"><span class="cn">概念</span><span class="key">concept</span><span class="pct">22%</span></div>
+  <div class="cell"><span class="cn">知识空白</span><span class="key">knowledge_gap</span><span class="pct">19%</span></div>
+  <div class="cell"><span class="cn">计算</span><span class="key">calculation</span><span class="pct">11%</span></div>
+  <div class="cell"><span class="cn">阅读</span><span class="key">reading</span><span class="pct">9%</span></div>
+  <div class="cell"><span class="cn">记忆</span><span class="key">memory</span><span class="pct">8%</span></div>
+  <div class="cell"><span class="cn">表达</span><span class="key">expression</span><span class="pct">8%</span></div>
+  <div class="cell"><span class="cn">方法</span><span class="key">method</span><span class="pct">7%</span></div>
+  <div class="cell"><span class="cn">粗心</span><span class="key">carelessness</span><span class="pct">7%</span></div>
+  <div class="cell"><span class="cn">时间不足</span><span class="key">time_pressure</span><span class="pct">5%</span></div>
+  <div class="cell"><span class="cn">其他</span><span class="key">other</span><span class="pct">4%</span></div>
+</body>
+</html>

@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  body { margin: 0; padding: 28px; background: var(--paper); display: grid; grid-template-columns: 1fr 1fr; gap: 28px; align-items: start; }
+  .col h6 { font-family: var(--font-mono); font-size: 11px; color: var(--ink-4); margin: 0 0 8px; letter-spacing: 0; text-transform: none; font-weight: 500; }
+  .col p { margin: 0 0 10px; }
+  .body { font-family: var(--font-sans); font-size: 15px; line-height: 1.7; color: var(--ink-2); }
+  .body-lg { font-family: var(--font-sans); font-size: 17px; line-height: 1.7; color: var(--ink); }
+  .wenyan { font-family: var(--font-wenyan); font-size: 17px; line-height: 1.85; color: var(--ink); letter-spacing: 0.01em; }
+  .caption { font-family: var(--font-sans); font-size: 14px; color: var(--ink-3); line-height: 1.5; }
+  .meta { font-family: var(--font-sans); font-size: 13px; color: var(--ink-4); line-height: 1.4; letter-spacing: 0.04em; }
+</style>
+</head>
+<body>
+  <div class="col">
+    <h6>body · 15 / 1.7</h6>
+    <p class="body">每条错题的归因都由 AI 兜底完成，留空时后台会跑 AttributionTask；失败不阻塞录入。</p>
+
+    <h6 style="margin-top:18px">body-lg · 17 / 1.7（中文首选阅读尺寸）</h6>
+    <p class="body-lg">知识点不丢，模块就不会变成孤岛。</p>
+  </div>
+
+  <div class="col">
+    <h6>wenyan · serif 17 / 1.85</h6>
+    <p class="wenyan">古之学者必有师。师者，所以传道受业解惑也。</p>
+
+    <h6 style="margin-top:18px">caption · 14 / 1.5</h6>
+    <p class="caption">最近 20 条 · 全部归因完毕</p>
+
+    <h6 style="margin-top:14px">meta · 13 · letter-spacing 0.04em</h6>
+    <p class="meta">PHASE 1A · SUB 4A</p>
+  </div>
+</body>
+</html>

@@ -1,6 +1,6 @@
 {
   "files": {
-    "ignore": ["dist", ".wrangler", "node_modules", "drizzle"]
+    "ignore": ["dist", ".wrangler", "node_modules", "drizzle", "docs/design/loom-design"]
   },
   "formatter": {
     "enabled": true,

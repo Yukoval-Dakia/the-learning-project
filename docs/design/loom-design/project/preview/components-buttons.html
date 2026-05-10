@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  body { margin: 0; padding: 28px; background: var(--paper); display: flex; flex-direction: column; gap: 14px; }
+  .group { display: flex; gap: 10px; align-items: center; }
+  .label { font-family: var(--font-mono); font-size: 11px; color: var(--ink-4); width: 64px; flex-shrink: 0; }
+
+  button { font-family: var(--font-sans); font-size: 14px; font-weight: 500; line-height: 1; padding: 10px 16px; border-radius: var(--r-2); cursor: pointer; transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); border: 1px solid transparent; }
+
+  .btn-primary { background: var(--coral); color: #fff; border-color: var(--coral); }
+  .btn-primary.hover { background: var(--coral-hover); border-color: var(--coral-hover); }
+  .btn-primary.press { background: var(--coral-press); border-color: var(--coral-press); }
+
+  .btn-secondary { background: var(--paper-raised); color: var(--ink); border-color: var(--line-strong); }
+  .btn-secondary.hover { background: var(--paper-tint); }
+
+  .btn-ghost { background: transparent; color: var(--ink-2); border-color: transparent; }
+  .btn-ghost.hover { background: var(--paper-tint); }
+
+  .btn-link { background: transparent; color: var(--coral); padding: 4px 0; border: 0; text-decoration: underline; text-decoration-color: var(--coral-line); text-underline-offset: 2px; }
+  .btn-link.hover { color: var(--coral-hover); text-decoration-color: var(--coral); }
+</style>
+</head>
+<body>
+  <div class="group">
+    <div class="label">primary</div>
+    <button class="btn-primary">提交</button>
+    <button class="btn-primary hover">提交</button>
+    <button class="btn-primary press">提交</button>
+    <button class="btn-primary" disabled style="opacity:0.5; cursor:not-allowed;">提交中...</button>
+  </div>
+  <div class="group">
+    <div class="label">secondary</div>
+    <button class="btn-secondary">清空</button>
+    <button class="btn-secondary hover">清空</button>
+  </div>
+  <div class="group">
+    <div class="label">ghost</div>
+    <button class="btn-ghost">改回待办</button>
+    <button class="btn-ghost hover">改回待办</button>
+  </div>
+  <div class="group">
+    <div class="label">link</div>
+    <button class="btn-link">+ 录新错题</button>
+    <button class="btn-link hover">+ 录新错题</button>
+    <a href="#">看历史 →</a>
+  </div>
+</body>
+</html>
