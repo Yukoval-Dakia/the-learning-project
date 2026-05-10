@@ -73,24 +73,45 @@ function importEnv() {
 
 describe('round-trip: export → import → DB state mirrored', () => {
   it('preserves rows from one knowledge + one mistake fixture', async () => {
+    // Schema-faithful fixtures matching src/db/schema.ts.
     const fixture = {
       knowledge: [
-        { id: 'k1', name: '虚词', parent_id: null, archived_at: null, effective_domain: 'wenyan' },
+        {
+          id: 'k1',
+          name: '虚词',
+          domain: 'wenyan',
+          parent_id: null,
+          base_mastery: 0,
+          ai_delta_mastery: 0,
+          last_active_at: null,
+          merged_from: '[]',
+          archived_at: null,
+          proposed_by_ai: 0,
+          approval_status: 'approved',
+          created_at: 1700000000,
+          updated_at: 1700000000,
+          version: 0,
+        },
       ],
       mistake: [
         {
           id: 'm1',
           question_id: 'q1',
           wrong_answer_md: 'oops',
-          knowledge_ids: '["k1"]',
-          cause: null,
           wrong_answer_image_refs: '[]',
           source: 'manual',
+          source_ref: null,
+          knowledge_ids: '["k1"]',
+          cause: null,
+          fsrs_state: null,
           variants: '[]',
           variants_generated_count: 0,
           variants_max: 3,
           status: 'active',
-          fsrs_state: null,
+          archived_reason: null,
+          archived_at: null,
+          deleted_at: null,
+          delete_reason: null,
           created_at: 1700000000,
           updated_at: 1700000000,
           version: 0,

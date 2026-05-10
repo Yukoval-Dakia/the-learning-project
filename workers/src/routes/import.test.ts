@@ -63,6 +63,54 @@ function buildZip(files: Record<string, string | Uint8Array>): Uint8Array {
   return zipSync(entries);
 }
 
+// Full schema-faithful knowledge row (matches src/db/schema.ts knowledge table).
+function knowledgeRow(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: 'k1',
+    name: 'x',
+    domain: null,
+    parent_id: null,
+    base_mastery: 0,
+    ai_delta_mastery: 0,
+    last_active_at: null,
+    merged_from: '[]',
+    archived_at: null,
+    proposed_by_ai: 0,
+    approval_status: 'approved',
+    created_at: 1700000000,
+    updated_at: 1700000000,
+    version: 0,
+    ...overrides,
+  };
+}
+
+// Full schema-faithful mistake row (matches src/db/schema.ts mistake table).
+function mistakeRow(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: 'm1',
+    question_id: 'q1',
+    wrong_answer_md: null,
+    wrong_answer_image_refs: '[]',
+    source: 'manual',
+    source_ref: null,
+    knowledge_ids: '[]',
+    cause: null,
+    fsrs_state: null,
+    variants: '[]',
+    variants_generated_count: 0,
+    variants_max: 3,
+    status: 'active',
+    archived_reason: null,
+    archived_at: null,
+    deleted_at: null,
+    delete_reason: null,
+    created_at: 1700000000,
+    updated_at: 1700000000,
+    version: 0,
+    ...overrides,
+  };
+}
+
 describe('POST /api/_/import — guards', () => {
   it('returns 400 when ?confirm is missing', async () => {
     const { Bindings } = mockEnv();
@@ -181,25 +229,12 @@ describe('POST /api/_/import — wipe + reinsert', () => {
         asset_count: 0,
       }),
       'data.json': JSON.stringify({
-        knowledge: [{ id: 'k1', name: 'x', parent_id: null }],
+        knowledge: [knowledgeRow()],
         mistake: [
-          {
-            id: 'm1',
-            question_id: 'q1',
+          mistakeRow({
             wrong_answer_md: 'oops',
             knowledge_ids: '["k1"]',
-            cause: null,
-            wrong_answer_image_refs: '[]',
-            source: 'manual',
-            variants: '[]',
-            variants_generated_count: 0,
-            variants_max: 3,
-            status: 'active',
-            fsrs_state: null,
-            created_at: 1700000000,
-            updated_at: 1700000000,
-            version: 0,
-          },
+          }),
         ],
       }),
     });
@@ -211,11 +246,9 @@ describe('POST /api/_/import — wipe + reinsert', () => {
 
   it('chunks large inserts into batches of INSERT_BATCH_SIZE', async () => {
     const { Bindings, batchCalls } = mockEnv();
-    const rows = Array.from({ length: 120 }, (_, i) => ({
-      id: `k${i}`,
-      name: `n${i}`,
-      parent_id: null,
-    }));
+    const rows = Array.from({ length: 120 }, (_, i) =>
+      knowledgeRow({ id: `k${i}`, name: `n${i}` }),
+    );
     const zip = buildZip({
       'manifest.json': JSON.stringify({
         schema_version: '1.0',
@@ -264,7 +297,7 @@ describe('POST /api/_/import — wipe + reinsert', () => {
         asset_count: 0,
       }),
       'data.json': JSON.stringify({
-        knowledge: [{ id: 'k1', name: 'x', parent_id: null }],
+        knowledge: [knowledgeRow()],
       }),
     });
     const res = await importRoute.request(
