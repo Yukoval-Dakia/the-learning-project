@@ -109,7 +109,7 @@ function blockToCard(b: IngestionBlock): EditableCard {
   };
 }
 
-export function IngestSession() {
+export function CaptureSession() {
   const navigate = useNavigate();
   const [phase, setPhase] = useState<'upload' | 'review'>('upload');
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -335,8 +335,10 @@ export function IngestSession() {
   if (phase === 'upload') {
     return (
       <main className="mx-auto max-w-3xl px-4 py-8">
-        <h1 className="text-xl font-semibold mb-4">批量导入错题（视觉提取）</h1>
-        <p className="text-sm text-slate-500 mb-6">上传题目截图或扫描件，AI 自动识别题目并拆块。</p>
+        <h1 className="text-xl font-semibold mb-4">录题</h1>
+        <p className="text-sm text-slate-500 mb-6">
+          上传题目图片（试卷 / 截图 / 扫描件）。OCR + AI 兜底自动切题；不满意可在审核页编辑。
+        </p>
 
         <div className="space-y-4">
           <label className="block">
