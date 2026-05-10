@@ -248,3 +248,303 @@ describe('POST /api/learning-items', () => {
     expect(insertCall).toBeUndefined();
   });
 });
+
+describe('PATCH /api/learning-items/:id', () => {
+  const baseAfter = (over: Partial<LearningItemRow> = {}) =>
+    makeRow({ id: 'li1', title: 't', content: 'c', status: 'pending', version: 1, ...over });
+
+  it('edit content/title only — UPDATE only, no completion_evidence INSERT', async () => {
+    const learningItemById = new Map<string, LearningItemMetaRow>([
+      ['li1', { id: 'li1', status: 'pending', version: 0, archived_at: null }],
+    ]);
+    const { Bindings, executionCtx, calls } = mockEnv({
+      learningItemById,
+      learningItemAfterUpdate: baseAfter({ content: 'new' }),
+    });
+    const res = await learningItems.request(
+      '/li1',
+      jsonReq({ version: 0, content: 'new' }, 'PATCH'),
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(200);
+    const evidenceCall = calls.find((c) => /^insert into completion_evidence/i.test(c.sql));
+    expect(evidenceCall).toBeUndefined();
+  });
+
+  it('transition pending → in_progress — UPDATE only, completed_at remains null', async () => {
+    const learningItemById = new Map<string, LearningItemMetaRow>([
+      ['li1', { id: 'li1', status: 'pending', version: 0, archived_at: null }],
+    ]);
+    const { Bindings, executionCtx, calls } = mockEnv({
+      learningItemById,
+      learningItemAfterUpdate: baseAfter({ status: 'in_progress', completed_at: null }),
+    });
+    const res = await learningItems.request(
+      '/li1',
+      jsonReq({ version: 0, status: 'in_progress' }, 'PATCH'),
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { completed_at: number | null };
+    expect(body.completed_at).toBeNull();
+    const evidenceCall = calls.find((c) => /^insert into completion_evidence/i.test(c.sql));
+    expect(evidenceCall).toBeUndefined();
+  });
+
+  it('transition pending → done: sequential UPDATE then INSERT evidence (NOT batch); completed_at set; path=self_declare', async () => {
+    const learningItemById = new Map<string, LearningItemMetaRow>([
+      ['li1', { id: 'li1', status: 'pending', version: 0, archived_at: null }],
+    ]);
+    const { Bindings, executionCtx, calls, batchCalls } = mockEnv({
+      learningItemById,
+      learningItemAfterUpdate: baseAfter({ status: 'done', completed_at: 1700000100 }),
+    });
+    const res = await learningItems.request(
+      '/li1',
+      jsonReq({ version: 0, status: 'done' }, 'PATCH'),
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(200);
+    expect(batchCalls).toHaveLength(0); // sequential, not batched
+
+    const updateIdx = calls.findIndex((c) => /^update learning_item/i.test(c.sql));
+    const evidenceIdx = calls.findIndex((c) => /^insert into completion_evidence/i.test(c.sql));
+    expect(updateIdx).toBeGreaterThanOrEqual(0);
+    expect(evidenceIdx).toBeGreaterThan(updateIdx);
+
+    const updateCall = calls[updateIdx];
+    expect(updateCall.sql).toMatch(/completed_at = \?/i);
+
+    const evidenceCall = calls[evidenceIdx];
+    expect(evidenceCall.sql).toMatch(/insert into completion_evidence/i);
+    expect(evidenceCall.sql).toMatch(/'self_declare'/i);
+
+    const body = (await res.json()) as { completed_at: number | null };
+    expect(body.completed_at).toBe(1700000100);
+  });
+
+  it('transition in_progress → done with user_notes — evidence_json contains declared_at + user_notes', async () => {
+    const learningItemById = new Map<string, LearningItemMetaRow>([
+      ['li1', { id: 'li1', status: 'in_progress', version: 0, archived_at: null }],
+    ]);
+    const { Bindings, executionCtx, calls } = mockEnv({
+      learningItemById,
+      learningItemAfterUpdate: baseAfter({ status: 'done', completed_at: 1700000100 }),
+    });
+    const res = await learningItems.request(
+      '/li1',
+      jsonReq({ version: 0, status: 'done', user_notes: '学完了' }, 'PATCH'),
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(200);
+    const evidenceCall = calls.find((c) => /^insert into completion_evidence/i.test(c.sql));
+    expect(evidenceCall).toBeDefined();
+    const evidenceJsonBind = evidenceCall?.binds.find(
+      (b) => typeof b === 'string' && (b as string).includes('declared_at'),
+    ) as string | undefined;
+    expect(evidenceJsonBind).toBeDefined();
+    const parsed = JSON.parse(evidenceJsonBind as string) as {
+      declared_at: number;
+      user_notes?: string;
+    };
+    expect(parsed.user_notes).toBe('学完了');
+    expect(typeof parsed.declared_at).toBe('number');
+  });
+
+  it('transition done → in_progress (relearn): UPDATE only, no new evidence INSERT, completed_at set to null', async () => {
+    const learningItemById = new Map<string, LearningItemMetaRow>([
+      ['li1', { id: 'li1', status: 'done', version: 0, archived_at: null }],
+    ]);
+    const { Bindings, executionCtx, calls } = mockEnv({
+      learningItemById,
+      learningItemAfterUpdate: baseAfter({ status: 'in_progress', completed_at: null }),
+    });
+    const res = await learningItems.request(
+      '/li1',
+      jsonReq({ version: 0, status: 'in_progress' }, 'PATCH'),
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { completed_at: number | null };
+    expect(body.completed_at).toBeNull();
+
+    const evidenceCall = calls.find((c) => /^insert into completion_evidence/i.test(c.sql));
+    expect(evidenceCall).toBeUndefined();
+
+    const updateCall = calls.find((c) => /^update learning_item/i.test(c.sql));
+    expect(updateCall?.sql).toMatch(/completed_at = \?/i);
+    // null bound for completed_at
+    expect(updateCall?.binds).toContain(null);
+  });
+
+  it('400 invalid_transition done → pending', async () => {
+    const learningItemById = new Map<string, LearningItemMetaRow>([
+      ['li1', { id: 'li1', status: 'done', version: 0, archived_at: null }],
+    ]);
+    const { Bindings, executionCtx, calls } = mockEnv({ learningItemById });
+    const res = await learningItems.request(
+      '/li1',
+      jsonReq({ version: 0, status: 'pending' }, 'PATCH'),
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('invalid_transition');
+    const updateCall = calls.find((c) => /^update learning_item/i.test(c.sql));
+    expect(updateCall).toBeUndefined();
+  });
+
+  it('400 status="archived" rejected by zod', async () => {
+    const learningItemById = new Map<string, LearningItemMetaRow>([
+      ['li1', { id: 'li1', status: 'pending', version: 0, archived_at: null }],
+    ]);
+    const { Bindings, executionCtx, calls } = mockEnv({ learningItemById });
+    const res = await learningItems.request(
+      '/li1',
+      jsonReq({ version: 0, status: 'archived' }, 'PATCH'),
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(400);
+    const updateCall = calls.find((c) => /^update learning_item/i.test(c.sql));
+    expect(updateCall).toBeUndefined();
+  });
+
+  it('400 when knowledge_ids changed but unknown id; no UPDATE', async () => {
+    const learningItemById = new Map<string, LearningItemMetaRow>([
+      ['li1', { id: 'li1', status: 'pending', version: 0, archived_at: null }],
+    ]);
+    const { Bindings, executionCtx, calls } = mockEnv({
+      learningItemById,
+      knownKnowledgeIds: new Set(),
+    });
+    const res = await learningItems.request(
+      '/li1',
+      jsonReq({ version: 0, knowledge_ids: ['k_missing'] }, 'PATCH'),
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toMatch(/k_missing/);
+    const updateCall = calls.find((c) => /^update learning_item/i.test(c.sql));
+    expect(updateCall).toBeUndefined();
+  });
+
+  it('404 when item not found', async () => {
+    const { Bindings, executionCtx, calls } = mockEnv({ learningItemById: new Map() });
+    const res = await learningItems.request(
+      '/li_missing',
+      jsonReq({ version: 0, content: 'x' }, 'PATCH'),
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(404);
+    const updateCall = calls.find((c) => /^update learning_item/i.test(c.sql));
+    expect(updateCall).toBeUndefined();
+  });
+
+  it('404 when item archived', async () => {
+    const learningItemById = new Map<string, LearningItemMetaRow>([
+      ['li1', { id: 'li1', status: 'pending', version: 0, archived_at: 1700000000 }],
+    ]);
+    const { Bindings, executionCtx, calls } = mockEnv({ learningItemById });
+    const res = await learningItems.request(
+      '/li1',
+      jsonReq({ version: 0, content: 'x' }, 'PATCH'),
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(404);
+    const updateCall = calls.find((c) => /^update learning_item/i.test(c.sql));
+    expect(updateCall).toBeUndefined();
+  });
+
+  it('409 simple edit version mismatch → no completion_evidence INSERT', async () => {
+    const learningItemById = new Map<string, LearningItemMetaRow>([
+      ['li1', { id: 'li1', status: 'pending', version: 5, archived_at: null }],
+    ]);
+    const { Bindings, executionCtx, calls } = mockEnv({
+      learningItemById,
+      updateResult: { meta: { changes: 0 } },
+    });
+    const res = await learningItems.request(
+      '/li1',
+      jsonReq({ version: 0, content: 'x' }, 'PATCH'),
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(409);
+    const evidenceCall = calls.find((c) => /^insert into completion_evidence/i.test(c.sql));
+    expect(evidenceCall).toBeUndefined();
+  });
+
+  it('409 done transition version mismatch — prepare called for SELECT + UPDATE only, NOT for completion_evidence', async () => {
+    const learningItemById = new Map<string, LearningItemMetaRow>([
+      ['li1', { id: 'li1', status: 'pending', version: 5, archived_at: null }],
+    ]);
+    const { Bindings, executionCtx, calls } = mockEnv({
+      learningItemById,
+      updateResult: { meta: { changes: 0 } },
+    });
+    const res = await learningItems.request(
+      '/li1',
+      jsonReq({ version: 0, status: 'done' }, 'PATCH'),
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(409);
+    const evidenceCall = calls.find((c) => /^insert into completion_evidence/i.test(c.sql));
+    expect(evidenceCall).toBeUndefined();
+    // Sequential semantics: only SELECT + UPDATE prepared, never the evidence INSERT.
+    const sqls = calls.map((c) => c.sql);
+    expect(sqls.some((s) => /^select id, status, version, archived_at from learning_item/i.test(s))).toBe(true);
+    expect(sqls.some((s) => /^update learning_item/i.test(s))).toBe(true);
+  });
+
+  it('400 when version field is missing (zod required)', async () => {
+    const learningItemById = new Map<string, LearningItemMetaRow>([
+      ['li1', { id: 'li1', status: 'pending', version: 0, archived_at: null }],
+    ]);
+    const { Bindings, executionCtx, calls } = mockEnv({ learningItemById });
+    const res = await learningItems.request(
+      '/li1',
+      jsonReq({ content: 'x' }, 'PATCH'),
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(400);
+    const updateCall = calls.find((c) => /^update learning_item/i.test(c.sql));
+    expect(updateCall).toBeUndefined();
+  });
+
+  it('409 when body.version is stale (2) but row.version is 5', async () => {
+    const learningItemById = new Map<string, LearningItemMetaRow>([
+      ['li1', { id: 'li1', status: 'pending', version: 5, archived_at: null }],
+    ]);
+    const { Bindings, executionCtx, calls } = mockEnv({
+      learningItemById,
+      updateResult: { meta: { changes: 0 } },
+    });
+    const res = await learningItems.request(
+      '/li1',
+      jsonReq({ version: 2, content: 'x' }, 'PATCH'),
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(409);
+    const evidenceCall = calls.find((c) => /^insert into completion_evidence/i.test(c.sql));
+    expect(evidenceCall).toBeUndefined();
+
+    // Verify version=2 (body.version) was bound on the UPDATE, NOT row.version=5.
+    const updateCall = calls.find((c) => /^update learning_item/i.test(c.sql));
+    expect(updateCall?.binds).toContain(2);
+    expect(updateCall?.binds).not.toContain(5);
+  });
+});

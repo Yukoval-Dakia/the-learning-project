@@ -139,3 +139,162 @@ learningItems.post('/', async (c) => {
     version: 0,
   });
 });
+
+const PatchBody = z.object({
+  version: z.number().int().min(0),
+  title: z.string().min(1).max(200).optional(),
+  content: z.string().max(10_000).optional(),
+  knowledge_ids: z.array(z.string().min(1)).optional(),
+  status: z.enum(['pending', 'in_progress', 'done']).optional(),
+  user_notes: z.string().max(2000).optional(),
+});
+
+const VALID_TRANSITIONS: Record<string, Set<'pending' | 'in_progress' | 'done'>> = {
+  pending: new Set(['in_progress', 'done']),
+  in_progress: new Set(['done', 'pending']),
+  done: new Set(['in_progress']),
+};
+
+learningItems.patch('/:id', async (c) => {
+  const id = c.req.param('id');
+  const raw = (await c.req.json().catch(() => null)) as unknown;
+  const parsed = PatchBody.safeParse(raw);
+  if (!parsed.success) {
+    return c.json(
+      {
+        error: 'validation_error',
+        message: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
+      },
+      400,
+    );
+  }
+  const body = parsed.data;
+
+  const row = await c.env.DB.prepare(
+    `select id, status, version, archived_at from learning_item where id = ?`,
+  )
+    .bind(id)
+    .first<{ id: string; status: string; version: number; archived_at: number | null }>();
+  if (!row || row.archived_at !== null) {
+    return c.json({ error: 'not_found', message: `learning_item ${id} not found` }, 404);
+  }
+
+  if (body.status !== undefined && body.status !== row.status) {
+    const allowed = VALID_TRANSITIONS[row.status];
+    if (!allowed || !allowed.has(body.status)) {
+      return c.json(
+        {
+          error: 'invalid_transition',
+          message: `cannot transition ${row.status} → ${body.status}`,
+          from: row.status,
+          to: body.status,
+        },
+        400,
+      );
+    }
+  }
+
+  if (body.knowledge_ids && body.knowledge_ids.length > 0) {
+    const check = await assertKnowledgeIdsExist(c.env.DB, body.knowledge_ids);
+    if (!check.ok) {
+      return c.json(
+        { error: 'validation_error', message: `unknown knowledge_ids: ${check.missing.join(', ')}` },
+        400,
+      );
+    }
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const transitioningToDone = body.status === 'done' && row.status !== 'done';
+  const transitioningOutOfDone =
+    row.status === 'done' && body.status !== undefined && body.status !== 'done';
+
+  const sets: string[] = [];
+  const binds: unknown[] = [];
+  if (body.title !== undefined) {
+    sets.push('title = ?');
+    binds.push(body.title);
+  }
+  if (body.content !== undefined) {
+    sets.push('content = ?');
+    binds.push(body.content);
+  }
+  if (body.knowledge_ids !== undefined) {
+    sets.push('knowledge_ids = ?');
+    binds.push(JSON.stringify(body.knowledge_ids));
+  }
+  if (body.status !== undefined) {
+    sets.push('status = ?');
+    binds.push(body.status);
+  }
+  if (transitioningToDone) {
+    sets.push('completed_at = ?');
+    binds.push(now);
+  }
+  if (transitioningOutOfDone) {
+    sets.push('completed_at = ?');
+    binds.push(null);
+  }
+  sets.push('updated_at = ?');
+  binds.push(now);
+  sets.push('version = version + 1');
+
+  // WHERE uses body.version (client-supplied), not row.version. Stale-UI overwrites surface as 409.
+  const updateResult = await c.env.DB.prepare(
+    `update learning_item set ${sets.join(', ')} where id = ? and version = ?`,
+  )
+    .bind(...binds, id, body.version)
+    .run();
+  const updateChanges = (updateResult as { meta?: { changes?: number } }).meta?.changes ?? 0;
+  if (updateChanges !== 1) {
+    return c.json({ error: 'conflict', message: `learning_item ${id} concurrently modified` }, 409);
+  }
+
+  // Sequential — completion_evidence ONLY after UPDATE success. Spec § 五 invariant:
+  // completion_evidence is "completion proof" (orphans corrupt analytics + violate
+  // status='done' ↔ completed_at != null). Different from Sub 4A review_event ("attempt log").
+  if (transitioningToDone) {
+    const evidenceJson = JSON.stringify({
+      declared_at: now,
+      ...(body.user_notes ? { user_notes: body.user_notes } : {}),
+    });
+    await c.env.DB.prepare(
+      `insert into completion_evidence (
+         id, learning_item_id, path, evidence_json, user_overrode_low_evidence, decided_at
+       ) values (?, ?, 'self_declare', ?, 0, ?)`,
+    )
+      .bind(createId(), id, evidenceJson, now)
+      .run();
+  }
+
+  const updated = await c.env.DB.prepare(
+    `select id, title, content, knowledge_ids, status, completed_at, created_at, updated_at, version
+     from learning_item where id = ?`,
+  )
+    .bind(id)
+    .first<{
+      id: string;
+      title: string;
+      content: string;
+      knowledge_ids: string;
+      status: string;
+      completed_at: number | null;
+      created_at: number;
+      updated_at: number;
+      version: number;
+    }>();
+  if (!updated) {
+    return c.json({ error: 'not_found', message: `learning_item ${id} not found after update` }, 404);
+  }
+  return c.json({
+    id: updated.id,
+    title: updated.title,
+    content: updated.content,
+    knowledge_ids: JSON.parse(updated.knowledge_ids) as string[],
+    status: updated.status,
+    completed_at: updated.completed_at,
+    created_at: updated.created_at,
+    updated_at: updated.updated_at,
+    version: updated.version,
+  });
+});
