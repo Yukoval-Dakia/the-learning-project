@@ -10,6 +10,7 @@ import { knowledge } from './routes/knowledge';
 import { logs } from './routes/logs';
 import { mistakes } from './routes/mistakes';
 import { ingestion } from './routes/ingestion';
+import { review } from './routes/review';
 import type { AppEnv } from './types';
 
 const app = new Hono<AppEnv>();
@@ -30,6 +31,7 @@ app.route('/api/assets', assets);
 app.route('/api/knowledge', knowledge);
 app.route('/api/mistakes', mistakes);
 app.route('/api/ingestion', ingestion);
+app.route('/api/review', review);
 
 app.post('/api/_/seed', async (c) => {
   const result = await seedKnowledge(c.env.DB);

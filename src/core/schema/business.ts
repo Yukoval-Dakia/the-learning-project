@@ -140,13 +140,23 @@ export const Cause = z.object({
   user_edited: z.boolean().default(false),
 });
 
+export const FsrsRating = z.enum(['again', 'hard', 'good']);
+export const FsrsCardState = z.enum(['new', 'learning', 'review', 'relearning']);
+
+// Mirrors ts-fsrs v5 Card. JSON column reads must FsrsState.parse() to coerce
+// ISO strings back to Date — z.coerce.date() handles that.
+// elapsed_days is deprecated in ts-fsrs v6 — kept optional for forward compat.
 export const FsrsState = z.object({
-  due_at: z.coerce.date(),
-  interval: z.number(),
-  ease: z.number(),
-  repeat: z.number(),
-  lapses: z.number(),
-  retrievability_at: z.coerce.date().nullish(),
+  due: z.coerce.date(),
+  stability: z.number(),
+  difficulty: z.number(),
+  elapsed_days: z.number().optional(),
+  scheduled_days: z.number(),
+  learning_steps: z.number(),
+  reps: z.number().int(),
+  lapses: z.number().int(),
+  state: FsrsCardState,
+  last_review: z.coerce.date().nullable(),
 });
 
 export const MistakeVariant = z.object({

@@ -85,6 +85,13 @@ export function MistakesList() {
         <a href="/record" className="underline">+ 录入新错题</a>
       </p>
 
+      <a
+        href="/review"
+        className="inline-block mb-4 px-3 py-2 bg-slate-900 text-white rounded hover:bg-slate-800"
+      >
+        开始复习 →
+      </a>
+
       {recentQuery.isLoading && <p className="text-sm text-slate-500">加载中...</p>}
       {recentQuery.isError && (
         <p className="text-sm text-red-600">加载失败: {String(recentQuery.error)}</p>

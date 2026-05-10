@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CauseCategory,
   DreamingProposal,
+  FsrsState,
   IngestionSession,
   KnowledgeInsert,
   LearningItemInsert,
@@ -9,6 +10,8 @@ import {
   MistakeInsert,
   QuestionBlock,
   QuestionBlockInsert,
+  ReviewEvent,
+  ReviewEventInsert,
   SourceAsset,
 } from './index';
 
@@ -227,6 +230,85 @@ describe('schema generated from drizzle', () => {
       created_at: new Date(),
       updated_at: new Date(),
       version: 0,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('FsrsState accepts ts-fsrs Card-aligned shape', () => {
+    const result = FsrsState.safeParse({
+      due: new Date(1700000000 * 1000),
+      stability: 1.5,
+      difficulty: 5.0,
+      elapsed_days: 0,
+      scheduled_days: 1,
+      learning_steps: 0,
+      reps: 1,
+      lapses: 0,
+      state: 'review',
+      last_review: new Date(1700000000 * 1000 - 86_400_000),
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('FsrsState rejects old shape (due_at / interval / ease)', () => {
+    const result = FsrsState.safeParse({
+      due_at: new Date(),
+      interval: 1,
+      ease: 2.5,
+      repeat: 1,
+      lapses: 0,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('FsrsState coerces ISO string due (DB JSON round-trip path)', () => {
+    const result = FsrsState.safeParse({
+      due: '2026-05-10T00:00:00.000Z',
+      stability: 1,
+      difficulty: 5,
+      elapsed_days: 0,
+      scheduled_days: 1,
+      learning_steps: 0,
+      reps: 1,
+      lapses: 0,
+      state: 'learning',
+      last_review: '2026-05-09T00:00:00.000Z',
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.due).toBeInstanceOf(Date);
+      expect(result.data.last_review).toBeInstanceOf(Date);
+    }
+  });
+
+  it('ReviewEventInsert accepts a first-review entry (before=null)', () => {
+    const result = ReviewEventInsert.safeParse({
+      id: 'rev_1',
+      mistake_id: 'm1',
+      rating: 'again',
+      response_md: null,
+      latency_ms: 5000,
+      fsrs_state_before: null,
+      fsrs_state_after: { due: new Date().toISOString(), stability: 0.4, difficulty: 5, elapsed_days: 0, scheduled_days: 0, learning_steps: 1, reps: 1, lapses: 1, state: 'learning', last_review: new Date().toISOString() },
+      due_at_before: null,
+      due_at_next: new Date(),
+      created_at: new Date(),
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('ReviewEvent rejects unknown rating', () => {
+    const result = ReviewEvent.safeParse({
+      id: 'rev_2',
+      mistake_id: 'm1',
+      rating: 'easy',
+      response_md: null,
+      latency_ms: null,
+      fsrs_state_before: null,
+      fsrs_state_after: {},
+      due_at_before: null,
+      due_at_next: new Date(),
+      created_at: new Date(),
     });
     expect(result.success).toBe(false);
   });
