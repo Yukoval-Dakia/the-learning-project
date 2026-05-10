@@ -7,7 +7,7 @@ const env = {
   TENCENT_OCR_REGION: 'ap-guangzhou',
 };
 
-const fakeImageBytes = new TextEncoder().encode('IMG_BYTES_PNG').buffer;
+const fakeImageBytes = new TextEncoder().encode('IMG_BYTES_PNG').buffer as ArrayBuffer;
 
 beforeEach(() => {
   vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000); // 2023-11-14 UTC
@@ -47,10 +47,12 @@ describe('recognizeDocument — EduPaperOCR happy path', () => {
     });
 
     expect(fetchMock).toHaveBeenCalledOnce();
-    const [url, init] = fetchMock.mock.calls[0];
+    const call = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const url = call[0];
+    const init = call[1];
     expect(url).toBe('https://ocr.tencentcloudapi.com/');
-    expect((init as RequestInit).method).toBe('POST');
-    const headers = (init as RequestInit).headers as Record<string, string>;
+    expect(init.method).toBe('POST');
+    const headers = init.headers as Record<string, string>;
     expect(headers['X-TC-Action']).toBe('EduPaperOCR');
     expect(headers['X-TC-Region']).toBe('ap-guangzhou');
     expect(headers['authorization']).toMatch(/^TC3-HMAC-SHA256 Credential=AKID0000\//);
