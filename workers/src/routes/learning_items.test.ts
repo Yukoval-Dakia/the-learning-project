@@ -175,6 +175,42 @@ describe('GET /api/learning-items', () => {
     expect(sql).toMatch(/when 'in_progress' then 1/i);
     expect(sql).toMatch(/when 'done' then 2/i);
   });
+
+  it('skips rows with corrupt knowledge_ids JSON; remaining rows still returned', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const learningItemRows: LearningItemRow[] = [
+      {
+        id: 'li_corrupt',
+        title: 'corrupt',
+        content: '',
+        knowledge_ids: '{not valid',
+        status: 'pending',
+        completed_at: null,
+        created_at: 1700000000,
+        updated_at: 1700000000,
+        version: 0,
+      },
+      {
+        id: 'li_ok',
+        title: 'ok',
+        content: '',
+        knowledge_ids: '["k1"]',
+        status: 'pending',
+        completed_at: null,
+        created_at: 1700000001,
+        updated_at: 1700000001,
+        version: 0,
+      },
+    ];
+    const { Bindings, executionCtx } = mockEnv({ learningItemRows });
+    const res = await learningItems.request('/', { method: 'GET' }, Bindings, executionCtx);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { rows: Array<{ id: string }> };
+    expect(body.rows).toHaveLength(1);
+    expect(body.rows[0].id).toBe('li_ok');
+    expect(errSpy).toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
 });
 
 function jsonReq(body: unknown, method = 'POST') {
@@ -291,6 +327,75 @@ describe('PATCH /api/learning-items/:id', () => {
     expect(body.completed_at).toBeNull();
     const evidenceCall = calls.find((c) => /^insert into completion_evidence/i.test(c.sql));
     expect(evidenceCall).toBeUndefined();
+  });
+
+  it('transition in_progress → pending (撤回到待办) — UPDATE only, no evidence', async () => {
+    const learningItemById = new Map<string, LearningItemMetaRow>([
+      ['li1', { id: 'li1', status: 'in_progress', version: 1, archived_at: null }],
+    ]);
+    const { Bindings, executionCtx, calls } = mockEnv({
+      learningItemById,
+      learningItemAfterUpdate: baseAfter({ status: 'pending', completed_at: null, version: 2 }),
+    });
+    const res = await learningItems.request(
+      '/li1',
+      jsonReq({ version: 1, status: 'pending' }, 'PATCH'),
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { status: string };
+    expect(body.status).toBe('pending');
+    const evidenceCall = calls.find((c) => /^insert into completion_evidence/i.test(c.sql));
+    expect(evidenceCall).toBeUndefined();
+  });
+
+  it('transition pending → done WITHOUT user_notes — evidence_json has only declared_at', async () => {
+    const learningItemById = new Map<string, LearningItemMetaRow>([
+      ['li1', { id: 'li1', status: 'pending', version: 0, archived_at: null }],
+    ]);
+    const { Bindings, executionCtx, calls } = mockEnv({
+      learningItemById,
+      learningItemAfterUpdate: baseAfter({ status: 'done', completed_at: 1700000100 }),
+    });
+    const res = await learningItems.request(
+      '/li1',
+      jsonReq({ version: 0, status: 'done' }, 'PATCH'),
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(200);
+    const evidenceCall = calls.find((c) => /^insert into completion_evidence/i.test(c.sql));
+    expect(evidenceCall).toBeDefined();
+    const evidenceJsonBind = (evidenceCall!.binds as unknown[]).find(
+      (b): b is string => typeof b === 'string' && b.startsWith('{') && b.includes('declared_at'),
+    );
+    expect(evidenceJsonBind).toBeDefined();
+    const parsed = JSON.parse(evidenceJsonBind!) as Record<string, unknown>;
+    expect(typeof parsed.declared_at).toBe('number');
+    expect(Object.keys(parsed)).toEqual(['declared_at']);
+    expect(parsed.user_notes).toBeUndefined();
+  });
+
+  it('rejects user_notes when not transitioning into done — 400 validation_error', async () => {
+    const learningItemById = new Map<string, LearningItemMetaRow>([
+      ['li1', { id: 'li1', status: 'pending', version: 0, archived_at: null }],
+    ]);
+    const { Bindings, executionCtx, calls } = mockEnv({
+      learningItemById,
+      learningItemAfterUpdate: baseAfter({}),
+    });
+    const res = await learningItems.request(
+      '/li1',
+      jsonReq({ version: 0, status: 'in_progress', user_notes: '想写笔记但没转 done' }, 'PATCH'),
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe('validation_error');
+    expect(body.message).toMatch(/user_notes/);
+    expect(calls.find((c) => /^update learning_item/i.test(c.sql))).toBeUndefined();
   });
 
   it('transition pending → done: sequential UPDATE then INSERT evidence (NOT batch); completed_at set; path=self_declare', async () => {

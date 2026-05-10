@@ -209,6 +209,19 @@ learningItems.patch('/:id', async (c) => {
   const transitioningOutOfDone =
     row.status === 'done' && body.status !== undefined && body.status !== 'done';
 
+  // user_notes is only persisted via the completion_evidence INSERT, which only
+  // fires on transitioningToDone. If the client sends user_notes without that
+  // transition, accepting it would silently drop the field — refuse explicitly.
+  if (body.user_notes !== undefined && !transitioningToDone) {
+    return c.json(
+      {
+        error: 'validation_error',
+        message: 'user_notes only valid when transitioning into done state',
+      },
+      400,
+    );
+  }
+
   const sets: string[] = [];
   const binds: unknown[] = [];
   if (body.title !== undefined) {
@@ -284,13 +297,23 @@ learningItems.patch('/:id', async (c) => {
       version: number;
     }>();
   if (!updated) {
+    console.error('learning-items: row vanished after successful UPDATE', { id });
     return c.json({ error: 'not_found', message: `learning_item ${id} not found after update` }, 404);
+  }
+  // Guard JSON.parse — write already committed, so a corrupt knowledge_ids row
+  // shouldn't surface as an opaque 500 that misleads the client into retrying.
+  let knowledgeIds: string[] = [];
+  try {
+    knowledgeIds = JSON.parse(updated.knowledge_ids) as string[];
+  } catch (err) {
+    console.error('learning-items: corrupt knowledge_ids on updated row', { id, err });
+    knowledgeIds = [];
   }
   return c.json({
     id: updated.id,
     title: updated.title,
     content: updated.content,
-    knowledge_ids: JSON.parse(updated.knowledge_ids) as string[],
+    knowledge_ids: knowledgeIds,
     status: updated.status,
     completed_at: updated.completed_at,
     created_at: updated.created_at,
@@ -305,10 +328,13 @@ learningItems.delete('/:id', async (c) => {
   if (!versionRaw) {
     return c.json({ error: 'validation_error', message: 'version query param required' }, 400);
   }
-  const version = parseInt(versionRaw, 10);
-  if (isNaN(version) || version < 0) {
+  // Strict regex — parseInt accepts garbage tails ('1.5' → 1, '1abc' → 1) which
+  // could silently coerce a typo'd version into a valid integer that matches a
+  // real row.
+  if (!/^\d+$/.test(versionRaw)) {
     return c.json({ error: 'validation_error', message: 'invalid version' }, 400);
   }
+  const version = parseInt(versionRaw, 10);
 
   const row = await c.env.DB.prepare(
     `select id, version, archived_at from learning_item where id = ?`,
