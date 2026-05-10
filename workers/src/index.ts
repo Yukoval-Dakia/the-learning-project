@@ -21,7 +21,7 @@ app.use(
   cors({
     origin: '*',
     allowHeaders: ['Content-Type', 'x-internal-token'],
-    allowMethods: ['GET', 'POST', 'OPTIONS'],
+    allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
     maxAge: 600,
   }),
 );

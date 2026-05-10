@@ -205,6 +205,7 @@ export function Inspect() {
         <a href="/ingest" className="underline">/ingest</a> ·{' '}
         <a href="/mistakes" className="underline">/mistakes</a> ·{' '}
         <a href="/review" className="underline">/review</a> ·{' '}
+        <a href="/learning-items" className="underline">/learning-items</a> ·{' '}
         <a href="/knowledge" className="underline">/knowledge</a> ·{' '}
         <a href="/knowledge/proposals" className="underline">/knowledge/proposals</a>
       </p>
