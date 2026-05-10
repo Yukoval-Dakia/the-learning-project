@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
 import type { D1Database, R2Bucket } from '@cloudflare/workers-types';
+import { describe, expect, it, vi } from 'vitest';
 import { knowledge } from './knowledge';
 
 function mockEnv(
@@ -32,7 +32,9 @@ function mockEnv(
           }
           if (/from dreaming_proposal/i.test(sql)) {
             // honor status filter if present in SQL+binds
-            const statusFilter = /status = \?/.test(sql) ? (binds[binds.length - 1] as string) : null;
+            const statusFilter = /status = \?/.test(sql)
+              ? (binds[binds.length - 1] as string)
+              : null;
             const results = Object.values(proposalTable).filter(
               (r) => statusFilter === null || r.status === statusFilter,
             );
@@ -86,10 +88,29 @@ describe('GET /api/knowledge', () => {
 
 describe('GET /api/knowledge/proposals', () => {
   it('returns pending proposals (default)', async () => {
-    const { Bindings } = mockEnv([], [
-      { id: 'p1', kind: 'knowledge', payload: '{}', reasoning: 'r', status: 'pending', proposed_at: 1700000000, decided_at: null },
-      { id: 'p2', kind: 'knowledge', payload: '{}', reasoning: 'r', status: 'accepted', proposed_at: 1700000000, decided_at: 1700001000 },
-    ]);
+    const { Bindings } = mockEnv(
+      [],
+      [
+        {
+          id: 'p1',
+          kind: 'knowledge',
+          payload: '{}',
+          reasoning: 'r',
+          status: 'pending',
+          proposed_at: 1700000000,
+          decided_at: null,
+        },
+        {
+          id: 'p2',
+          kind: 'knowledge',
+          payload: '{}',
+          reasoning: 'r',
+          status: 'accepted',
+          proposed_at: 1700000000,
+          decided_at: 1700001000,
+        },
+      ],
+    );
     const res = await knowledge.request('/proposals', { method: 'GET' }, { ...Bindings });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { rows: Array<{ id: string; status: string }> };
@@ -112,12 +133,24 @@ describe('POST /api/knowledge/proposals/:id/decide', () => {
 
   it('accepts a pending propose_new proposal', async () => {
     const { Bindings, calls } = mockEnv(
-      [{ id: 'seed:wenyan:shici', name: '诗词', domain: 'wenyan', parent_id: null, archived_at: null }],
+      [
+        {
+          id: 'seed:wenyan:shici',
+          name: '诗词',
+          domain: 'wenyan',
+          parent_id: null,
+          archived_at: null,
+        },
+      ],
       [
         {
           id: 'p1',
           kind: 'knowledge',
-          payload: JSON.stringify({ mutation: 'propose_new', name: '通假字', parent_id: 'seed:wenyan:shici' }),
+          payload: JSON.stringify({
+            mutation: 'propose_new',
+            name: '通假字',
+            parent_id: 'seed:wenyan:shici',
+          }),
           reasoning: 'r',
           status: 'pending',
           proposed_at: 1700000000,
@@ -141,17 +174,20 @@ describe('POST /api/knowledge/proposals/:id/decide', () => {
   });
 
   it('dismisses a pending proposal', async () => {
-    const { Bindings, calls } = mockEnv([], [
-      {
-        id: 'p2',
-        kind: 'knowledge',
-        payload: JSON.stringify({ mutation: 'propose_new', name: 'x', parent_id: null }),
-        reasoning: 'r',
-        status: 'pending',
-        proposed_at: 1700000000,
-        decided_at: null,
-      },
-    ]);
+    const { Bindings, calls } = mockEnv(
+      [],
+      [
+        {
+          id: 'p2',
+          kind: 'knowledge',
+          payload: JSON.stringify({ mutation: 'propose_new', name: 'x', parent_id: null }),
+          reasoning: 'r',
+          status: 'pending',
+          proposed_at: 1700000000,
+          decided_at: null,
+        },
+      ],
+    );
     const res = await knowledge.request(
       '/proposals/p2/decide',
       {
@@ -204,7 +240,16 @@ describe('POST /api/knowledge/proposals/:id/decide', () => {
 describe('POST /api/knowledge/review', () => {
   it('hits the wired handler (does not 404)', async () => {
     const { Bindings } = mockEnv(
-      [{ id: 'k1', name: '虚词', domain: 'wenyan', parent_id: null, archived_at: null, version: 0 }],
+      [
+        {
+          id: 'k1',
+          name: '虚词',
+          domain: 'wenyan',
+          parent_id: null,
+          archived_at: null,
+          version: 0,
+        },
+      ],
       [],
     );
     // Real LLM call would happen via streamReviewTask → streamTask → anthropic provider

@@ -1,6 +1,6 @@
+import type { D1Database } from '@cloudflare/workers-types';
 import { MockLanguageModelV3 } from 'ai/test';
 import { describe, expect, it, vi } from 'vitest';
-import type { D1Database } from '@cloudflare/workers-types';
 import { streamReviewTask } from './review';
 
 function makeMockDb() {
@@ -75,10 +75,12 @@ describe('streamReviewTask', () => {
     expect(response.body).toBeTruthy();
 
     // Drain stream so onStepFinish fires.
-    const reader = response.body!.getReader();
-    while (true) {
-      const { done } = await reader.read();
-      if (done) break;
+    const reader = response.body?.getReader();
+    if (reader) {
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
     }
 
     const insert = calls.find((c) => /insert into dreaming_proposal/i.test(c.sql));
@@ -115,12 +117,14 @@ describe('streamReviewTask', () => {
 
     const response = await streamReviewTask({ env, model: mockModel });
     expect(response).toBeInstanceOf(Response);
-    const reader = response.body!.getReader();
+    const reader = response.body?.getReader();
     let total = '';
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += new TextDecoder().decode(value);
+    if (reader) {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += new TextDecoder().decode(value);
+      }
     }
     expect(total).toContain('tree looks fine');
   });

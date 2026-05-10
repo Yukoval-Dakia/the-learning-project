@@ -1,6 +1,6 @@
 import { ZodError } from 'zod';
-import { recognizeDocument as defaultRecognize, type TencentOCRRegion } from './ocr_tencent';
-import { parseVisionOutput, type VisionBlock } from './vision';
+import type { TencentOCRRegion, recognizeDocument as defaultRecognize } from './ocr_tencent';
+import { type VisionBlock, parseVisionOutput } from './vision';
 
 function isEmptyBlocksError(err: unknown): boolean {
   // parseVisionOutput uses zod schema with `blocks: array(...).min(1)`.
@@ -11,11 +11,7 @@ function isEmptyBlocksError(err: unknown): boolean {
   if (!(err instanceof ZodError)) return false;
   if (err.issues.length !== 1) return false;
   const [issue] = err.issues;
-  return (
-    issue.code === 'too_small' &&
-    issue.path.length === 1 &&
-    issue.path[0] === 'blocks'
-  );
+  return issue.code === 'too_small' && issue.path.length === 1 && issue.path[0] === 'blocks';
 }
 
 export interface NormalizedBlock {
@@ -122,8 +118,7 @@ export async function runOCRCascade(args: RunOCRCascadeArgs): Promise<CascadeRes
     );
     if (eduOut.regions.length > 0) {
       tier1Blocks = regionsToBlocks(eduOut.regions, args.pageIndex);
-      tier1Avg =
-        eduOut.regions.reduce((s, r) => s + r.confidence, 0) / eduOut.regions.length;
+      tier1Avg = eduOut.regions.reduce((s, r) => s + r.confidence, 0) / eduOut.regions.length;
     } else {
       // Fallback within Tier 1 — try general OCR before escalating.
       tier1Model = 'tencent_general_accurate';

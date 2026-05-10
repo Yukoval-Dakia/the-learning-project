@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 const INTERNAL_TOKEN = import.meta.env.VITE_INTERNAL_TOKEN ?? '';
@@ -61,10 +61,32 @@ interface EditableCard {
   selected: boolean;
 }
 
-const QUESTION_KINDS = ['short_answer', 'choice', 'true_false', 'fill_blank', 'essay', 'computation', 'reading', 'translation'];
-const CAUSE_CATEGORIES = ['concept', 'knowledge_gap', 'calculation', 'reading', 'memory', 'expression', 'method', 'carelessness', 'time_pressure', 'other'];
+const QUESTION_KINDS = [
+  'short_answer',
+  'choice',
+  'true_false',
+  'fill_blank',
+  'essay',
+  'computation',
+  'reading',
+  'translation',
+];
+const CAUSE_CATEGORIES = [
+  'concept',
+  'knowledge_gap',
+  'calculation',
+  'reading',
+  'memory',
+  'expression',
+  'method',
+  'carelessness',
+  'time_pressure',
+  'other',
+];
 
-async function uploadAsset(file: File): Promise<{ id: string; mime_type: string; byte_size: number; name: string }> {
+async function uploadAsset(
+  file: File,
+): Promise<{ id: string; mime_type: string; byte_size: number; name: string }> {
   const form = new FormData();
   form.set('file', file);
   const res = await fetch('/api/assets', {
@@ -76,8 +98,15 @@ async function uploadAsset(file: File): Promise<{ id: string; mime_type: string;
     const text = await res.text().catch(() => '');
     throw new Error(`POST /api/assets ${res.status}: ${text}`);
   }
-  const body = (await res.json()) as { asset: { id: string; mime_type: string; byte_size: number } };
-  return { id: body.asset.id, mime_type: body.asset.mime_type, byte_size: body.asset.byte_size, name: file.name };
+  const body = (await res.json()) as {
+    asset: { id: string; mime_type: string; byte_size: number };
+  };
+  return {
+    id: body.asset.id,
+    mime_type: body.asset.mime_type,
+    byte_size: body.asset.byte_size,
+    name: file.name,
+  };
 }
 
 async function fetchKnowledge(): Promise<KnowledgeNode[]> {
@@ -228,10 +257,14 @@ export function CaptureSession() {
         visual_complexity: sel.some((c) => c.visual_complexity === 'high')
           ? 'high'
           : sel.some((c) => c.visual_complexity === 'medium')
-          ? 'medium'
-          : 'low',
+            ? 'medium'
+            : 'low',
         extraction_confidence: Math.min(...sel.map((c) => c.extraction_confidence)),
-        knowledge_hint: sel.map((c) => c.knowledge_hint).filter(Boolean).join('; ') || null,
+        knowledge_hint:
+          sel
+            .map((c) => c.knowledge_hint)
+            .filter(Boolean)
+            .join('; ') || null,
         final_prompt_md: sel.map((c) => c.final_prompt_md).join('\n\n'),
         final_reference_md: sel
           .map((c) => c.final_reference_md)
@@ -400,8 +433,11 @@ export function CaptureSession() {
 
           {selectedFiles.length > 0 && (
             <ul className="space-y-1">
-              {selectedFiles.map((f, i) => (
-                <li key={i} className="text-xs text-slate-600 border rounded px-2 py-1">
+              {selectedFiles.map((f) => (
+                <li
+                  key={`${f.name}-${f.size}`}
+                  className="text-xs text-slate-600 border rounded px-2 py-1"
+                >
                   {f.name} · {(f.size / 1024).toFixed(0)} KB
                 </li>
               ))}
@@ -430,8 +466,7 @@ export function CaptureSession() {
     <main className="mx-auto max-w-3xl px-4 py-8">
       <div className="flex items-baseline justify-between mb-4">
         <h1 className="text-xl font-semibold">
-          已识别 {cards.length} 题
-          {mergedCount > 0 && `，已合并 ${mergedCount} 组`}
+          已识别 {cards.length} 题{mergedCount > 0 && `，已合并 ${mergedCount} 组`}
         </h1>
         <div className="flex items-center gap-3">
           <span className="text-xs px-2 py-1 rounded bg-slate-100 text-slate-700">
@@ -473,9 +508,7 @@ export function CaptureSession() {
         </button>
       </div>
 
-      {knowledgeQuery.isLoading && (
-        <p className="text-sm text-slate-500 mb-2">知识点加载中...</p>
-      )}
+      {knowledgeQuery.isLoading && <p className="text-sm text-slate-500 mb-2">知识点加载中...</p>}
 
       <div className="space-y-6">
         {cards.map((card, idx) => (
@@ -519,7 +552,15 @@ interface CardViewProps {
   onDelete: () => void;
 }
 
-function CardView({ card, idx, knowledgeOptions, onUpdate, onToggleKnowledge, onSplit, onDelete }: CardViewProps) {
+function CardView({
+  card,
+  idx,
+  knowledgeOptions,
+  onUpdate,
+  onToggleKnowledge,
+  onSplit,
+  onDelete,
+}: CardViewProps) {
   const confidenceLow = card.extraction_confidence < 0.5;
 
   return (
@@ -626,7 +667,9 @@ function CardView({ card, idx, knowledgeOptions, onUpdate, onToggleKnowledge, on
             className="mt-1 w-full border rounded p-1.5 text-sm"
           >
             {QUESTION_KINDS.map((k) => (
-              <option key={k} value={k}>{k}</option>
+              <option key={k} value={k}>
+                {k}
+              </option>
             ))}
           </select>
         </label>
@@ -638,7 +681,9 @@ function CardView({ card, idx, knowledgeOptions, onUpdate, onToggleKnowledge, on
             className="mt-1 w-full border rounded p-1.5 text-sm"
           >
             {[1, 2, 3, 4, 5].map((n) => (
-              <option key={n} value={n}>{n}</option>
+              <option key={n} value={n}>
+                {n}
+              </option>
             ))}
           </select>
         </label>
@@ -650,9 +695,10 @@ function CardView({ card, idx, knowledgeOptions, onUpdate, onToggleKnowledge, on
           value={card.page_spans[0]?.role ?? 'prompt'}
           onChange={(e) => {
             const newRole = e.target.value as 'prompt' | 'answer_area' | 'continuation';
-            const nextSpans = card.page_spans.length === 0
-              ? [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: newRole }]
-              : card.page_spans.map((s, i) => (i === 0 ? { ...s, role: newRole } : s));
+            const nextSpans =
+              card.page_spans.length === 0
+                ? [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: newRole }]
+                : card.page_spans.map((s, i) => (i === 0 ? { ...s, role: newRole } : s));
             onUpdate({ page_spans: nextSpans });
           }}
           className="mt-1 w-full border rounded p-1.5 text-sm"
@@ -672,7 +718,9 @@ function CardView({ card, idx, knowledgeOptions, onUpdate, onToggleKnowledge, on
         >
           <option value="">— AI 兜底 —</option>
           {CAUSE_CATEGORIES.map((c) => (
-            <option key={c} value={c}>{c}</option>
+            <option key={c} value={c}>
+              {c}
+            </option>
           ))}
         </select>
       </label>

@@ -1,5 +1,5 @@
-import { z } from 'zod';
 import type { D1Database } from '@cloudflare/workers-types';
+import { z } from 'zod';
 import { CauseCategory } from '../../../src/core/schema/business';
 
 const AttributionOutputSchema = z.object({
@@ -15,7 +15,7 @@ export function parseAttributionOutput(text: string): AttributionOutput {
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
   if (start === -1 || end === -1 || end < start) {
-    throw new Error(`parseAttributionOutput: no JSON object found in text`);
+    throw new Error('parseAttributionOutput: no JSON object found in text');
   }
   const slice = text.slice(start, end + 1);
   let json: unknown;
@@ -64,7 +64,9 @@ export async function runAttributionAndWrite(params: RunAttributionAndWriteParam
       .run();
     const changes = (update as { meta?: { changes?: number } }).meta?.changes ?? 0;
     if (changes !== 1) {
-      console.warn(`runAttributionAndWrite: skipped (cause already set or version mismatch) for ${params.mistakeId}`);
+      console.warn(
+        `runAttributionAndWrite: skipped (cause already set or version mismatch) for ${params.mistakeId}`,
+      );
     }
   } catch (err) {
     console.error('runAttributionAndWrite: failed', err);

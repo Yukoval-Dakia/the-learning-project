@@ -9,14 +9,12 @@ const DEFAULT_LIMIT = 50;
 logs.get('/tool_calls', async (c) => {
   const rawLimit = Number.parseInt(c.req.query('limit') ?? `${DEFAULT_LIMIT}`, 10);
   const limit =
-    Number.isFinite(rawLimit) && rawLimit > 0
-      ? Math.min(rawLimit, MAX_LIMIT)
-      : DEFAULT_LIMIT;
+    Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, MAX_LIMIT) : DEFAULT_LIMIT;
   const taskKind = c.req.query('task_kind');
 
   const sql = taskKind
-    ? `select id, task_run_id, task_kind, tool_name, input_json, output_json, iteration, latency_ms, cost, occurred_at from tool_call_log where task_kind = ? order by occurred_at desc limit ?`
-    : `select id, task_run_id, task_kind, tool_name, input_json, output_json, iteration, latency_ms, cost, occurred_at from tool_call_log order by occurred_at desc limit ?`;
+    ? 'select id, task_run_id, task_kind, tool_name, input_json, output_json, iteration, latency_ms, cost, occurred_at from tool_call_log where task_kind = ? order by occurred_at desc limit ?'
+    : 'select id, task_run_id, task_kind, tool_name, input_json, output_json, iteration, latency_ms, cost, occurred_at from tool_call_log order by occurred_at desc limit ?';
 
   const stmt = c.env.DB.prepare(sql);
   const bound = taskKind ? stmt.bind(taskKind, limit) : stmt.bind(limit);

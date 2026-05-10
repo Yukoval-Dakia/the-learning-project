@@ -1,16 +1,16 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { internalAuth } from './auth';
-import { runTask, streamTask } from './ai/runner';
 import { tasks } from '../../src/ai/registry';
+import { runTask, streamTask } from './ai/runner';
+import { internalAuth } from './auth';
 import { getDb } from './db';
 import { seedKnowledge } from './knowledge/seed';
 import { assets } from './routes/assets';
+import { ingestion } from './routes/ingestion';
 import { knowledge } from './routes/knowledge';
+import { learningItems } from './routes/learning_items';
 import { logs } from './routes/logs';
 import { mistakes } from './routes/mistakes';
-import { ingestion } from './routes/ingestion';
-import { learningItems } from './routes/learning_items';
 import { review } from './routes/review';
 import type { AppEnv } from './types';
 

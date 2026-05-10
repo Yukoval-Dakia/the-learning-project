@@ -1,7 +1,7 @@
+import type { D1Database } from '@cloudflare/workers-types';
 import { MockLanguageModelV3 } from 'ai/test';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import type { D1Database } from '@cloudflare/workers-types';
 import { runTask, streamTask } from './runner';
 
 function makeMockDb() {
@@ -53,19 +53,15 @@ describe('runTask (single-shot, no tools)', () => {
       doGenerate: async () => makeMockGenerateResult('ok'),
     });
     const { db } = makeMockDb();
-    const r = await runTask(
-      'AttributionTask',
-      {},
-      { env: { DB: db } as never, model: mockModel },
-    );
+    const r = await runTask('AttributionTask', {}, { env: { DB: db } as never, model: mockModel });
     expect(r.finishReason).toBe('stop');
   });
 
   it('throws for unknown task kind', async () => {
     const { db } = makeMockDb();
-    await expect(
-      runTask('NonexistentTask', {}, { env: { DB: db } as never }),
-    ).rejects.toThrow(/unknown task/i);
+    await expect(runTask('NonexistentTask', {}, { env: { DB: db } as never })).rejects.toThrow(
+      /unknown task/i,
+    );
   });
 
   it('passes image content parts when input is multimodal (AI SDK v6 normalizes image→file)', async () => {
@@ -144,10 +140,12 @@ describe('runTask streaming with tools', () => {
     );
 
     // Drain the stream so onStepFinish + onFinish fire.
-    const reader = stream.body!.getReader();
-    while (true) {
-      const { done } = await reader.read();
-      if (done) break;
+    const reader = stream.body?.getReader();
+    if (reader) {
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
     }
 
     // Verify ToolCallLog was written. binds index 3 = tool_name (id, task_run_id, task_kind, tool_name, ...)
@@ -192,12 +190,14 @@ describe('runTask streaming with tools', () => {
     expect(stream.body).toBeTruthy();
 
     // Drain stream.
-    const reader = stream.body!.getReader();
+    const reader = stream.body?.getReader();
     let total = '';
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += new TextDecoder().decode(value);
+    if (reader) {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += new TextDecoder().decode(value);
+      }
     }
     expect(total).toContain('hello');
   });

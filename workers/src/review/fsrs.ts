@@ -1,13 +1,6 @@
-import {
-  fsrs,
-  createEmptyCard,
-  Rating,
-  State,
-  type Card,
-  type Grade,
-} from 'ts-fsrs';
+import { type Card, type Grade, Rating, State, createEmptyCard, fsrs } from 'ts-fsrs';
 import type { z } from 'zod';
-import { FsrsRating, FsrsState } from '../../../src/core/schema/business';
+import type { FsrsRating, FsrsState } from '../../../src/core/schema/business';
 
 type FsrsStateData = z.infer<typeof FsrsState>;
 type RatingLabel = z.infer<typeof FsrsRating>;

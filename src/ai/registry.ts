@@ -86,7 +86,8 @@ export const tasks = {
   },
   KnowledgeReviewTask: {
     kind: 'KnowledgeReviewTask',
-    description: '看完整 tree + 最近 mistakes，提议任意 mutation（reparent/merge/split/archive/propose_new）让 tree 更合理',
+    description:
+      '看完整 tree + 最近 mistakes，提议任意 mutation（reparent/merge/split/archive/propose_new）让 tree 更合理',
     defaultProvider: 'anthropic',
     defaultModel: 'claude-sonnet-4-6',
     fallbackChain: [{ provider: 'anthropic', model: 'claude-haiku-4-5-20251001' }],

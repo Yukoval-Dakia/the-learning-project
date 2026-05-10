@@ -14,9 +14,24 @@ interface ProposalRow {
 
 type AnyMutation =
   | { mutation: 'propose_new'; name: string; parent_id: string | null }
-  | { mutation: 'reparent'; node_id: string; new_parent_id: string | null; expected_version: number }
-  | { mutation: 'merge'; from_ids: string[]; into_id: string; expected_versions: Record<string, number> }
-  | { mutation: 'split'; from_id: string; into: Array<{ name: string; parent_id: string | null }>; expected_version: number }
+  | {
+      mutation: 'reparent';
+      node_id: string;
+      new_parent_id: string | null;
+      expected_version: number;
+    }
+  | {
+      mutation: 'merge';
+      from_ids: string[];
+      into_id: string;
+      expected_versions: Record<string, number>;
+    }
+  | {
+      mutation: 'split';
+      from_id: string;
+      into: Array<{ name: string; parent_id: string | null }>;
+      expected_version: number;
+    }
   | { mutation: 'archive'; node_id: string; expected_version: number };
 
 async function fetchProposals(): Promise<{ rows: ProposalRow[] }> {
@@ -71,7 +86,7 @@ function PayloadPreview({ p }: { p: AnyMutation }) {
         <span>
           split <code>{p.from_id}</code> →{' '}
           {p.into.map((c, i) => (
-            <span key={i}>
+            <span key={`${c.name}-${c.parent_id}`}>
               <b>{c.name}</b>(under <code>{c.parent_id ?? '(root)'}</code>)
               {i < p.into.length - 1 ? ', ' : ''}
             </span>
@@ -122,18 +137,14 @@ export function KnowledgeProposals() {
       </p>
 
       {isLoading && <p className="text-sm text-slate-500">Loading…</p>}
-      {error && (
-        <p className="text-sm text-red-600">Error: {(error as Error).message}</p>
-      )}
+      {error && <p className="text-sm text-red-600">Error: {(error as Error).message}</p>}
       {decideMutation.error && (
-        <p className="text-sm text-amber-700 mb-2">
-          {(decideMutation.error as Error).message}
-        </p>
+        <p className="text-sm text-amber-700 mb-2">{(decideMutation.error as Error).message}</p>
       )}
       {data && data.rows.length === 0 && (
         <p className="text-sm text-slate-500">No pending proposals.</p>
       )}
-      {data && data.rows.map((r) => {
+      {data?.rows.map((r) => {
         let parsed: AnyMutation | null;
         try {
           parsed = JSON.parse(r.payload) as AnyMutation;

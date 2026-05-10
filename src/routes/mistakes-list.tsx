@@ -38,7 +38,9 @@ function CauseBadge({ cause, createdAt }: { cause: CauseShape | null; createdAt:
   if (cause === null) {
     const elapsedSec = Math.floor(Date.now() / 1000) - createdAt;
     if (elapsedSec < 30) {
-      return <span className="text-xs px-2 py-1 rounded bg-yellow-100 text-yellow-800">归因中...</span>;
+      return (
+        <span className="text-xs px-2 py-1 rounded bg-yellow-100 text-yellow-800">归因中...</span>
+      );
     }
     return <span className="text-xs px-2 py-1 rounded bg-slate-200 text-slate-700">待归因</span>;
   }
@@ -82,7 +84,9 @@ export function MistakesList() {
           <span>全部归因完毕（{data.length}）</span>
         )}
         {' · '}
-        <a href="/capture" className="underline">+ 录入新错题</a>
+        <a href="/capture" className="underline">
+          + 录入新错题
+        </a>
       </p>
 
       <a
@@ -108,13 +112,13 @@ export function MistakesList() {
             <p className="text-sm text-slate-700 mt-1">
               <span className="text-xs text-slate-400">错答:</span> {row.wrong_answer_md}
             </p>
-            <p className="text-xs text-slate-500 mt-1">
-              知识点: {row.knowledge_ids.join(', ')}
-            </p>
+            <p className="text-xs text-slate-500 mt-1">知识点: {row.knowledge_ids.join(', ')}</p>
             {row.cause?.ai_analysis_md && (
               <details className="mt-2">
                 <summary className="text-xs text-slate-500 cursor-pointer">分析</summary>
-                <p className="text-xs text-slate-600 mt-1 whitespace-pre-wrap">{row.cause.ai_analysis_md}</p>
+                <p className="text-xs text-slate-600 mt-1 whitespace-pre-wrap">
+                  {row.cause.ai_analysis_md}
+                </p>
               </details>
             )}
           </li>
@@ -123,7 +127,11 @@ export function MistakesList() {
 
       {!recentQuery.isLoading && data.length === 0 && (
         <p className="text-sm text-slate-500">
-          还没有错题。<a href="/capture" className="underline">先录一条</a>。
+          还没有错题。
+          <a href="/capture" className="underline">
+            先录一条
+          </a>
+          。
         </p>
       )}
     </main>

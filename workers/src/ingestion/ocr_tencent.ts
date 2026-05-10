@@ -44,10 +44,22 @@ function clamp01(n: number): number {
   return n;
 }
 
-interface EduPosition { X: number; Y: number; Width: number; Height: number }
-interface EduResultListItem { Question?: { Text: string; Confidence: number } }
-interface EduQuestionArrItem { Position: EduPosition; ResultList: EduResultListItem[] }
-interface EduQuestionBlockInfo { QuestionArr?: EduQuestionArrItem[] }
+interface EduPosition {
+  X: number;
+  Y: number;
+  Width: number;
+  Height: number;
+}
+interface EduResultListItem {
+  Question?: { Text: string; Confidence: number };
+}
+interface EduQuestionArrItem {
+  Position: EduPosition;
+  ResultList: EduResultListItem[];
+}
+interface EduQuestionBlockInfo {
+  QuestionArr?: EduQuestionArrItem[];
+}
 interface EduOCRResponse {
   Response?: {
     Error?: { Code: string; Message: string };
@@ -56,7 +68,11 @@ interface EduOCRResponse {
   };
 }
 
-interface GeneralTextItem { DetectedText: string; Confidence: number; ItemPolygon?: { X: number; Y: number; Width: number; Height: number } }
+interface GeneralTextItem {
+  DetectedText: string;
+  Confidence: number;
+  ItemPolygon?: { X: number; Y: number; Width: number; Height: number };
+}
 interface GeneralOCRResponse {
   Response?: {
     Error?: { Code: string; Message: string };
@@ -93,8 +109,8 @@ export async function recognizeDocument(
     method: 'POST',
     headers: {
       'content-type': 'application/json; charset=utf-8',
-      'host': HOST,
-      'authorization': auth,
+      host: HOST,
+      authorization: auth,
       'X-TC-Action': action,
       'X-TC-Version': VERSION,
       'X-TC-Region': env.TENCENT_OCR_REGION,
@@ -135,9 +151,7 @@ function normalizeEduPaper(
         .filter((t) => t.length > 0)
         .join('\n');
       const conf =
-        (q.ResultList ?? [])
-          .map((r) => r.Question?.Confidence ?? 0)
-          .reduce((a, b) => a + b, 0) /
+        (q.ResultList ?? []).map((r) => r.Question?.Confidence ?? 0).reduce((a, b) => a + b, 0) /
         Math.max(1, q.ResultList?.length ?? 0);
       if (!text) continue;
       out.push({

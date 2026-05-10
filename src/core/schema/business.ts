@@ -48,12 +48,7 @@ export const MistakeSource = z.enum([
 
 export const MistakeStatus = z.enum(['draft', 'active', 'resting', 'archived']);
 
-export const LearningItemSource = z.enum([
-  'mistake',
-  'manual',
-  'learning_intent',
-  'ai_dream',
-]);
+export const LearningItemSource = z.enum(['mistake', 'manual', 'learning_intent', 'ai_dream']);
 
 export const LearningItemStatus = z.enum([
   'pending',
@@ -86,13 +81,7 @@ export const IngestionSessionStatus = z.enum([
 
 export const IngestionEntrypoint = z.enum(['vision_single', 'vision_paper']);
 
-export const QuestionBlockStatus = z.enum([
-  'draft',
-  'reviewed',
-  'merged',
-  'imported',
-  'ignored',
-]);
+export const QuestionBlockStatus = z.enum(['draft', 'reviewed', 'merged', 'imported', 'ignored']);
 
 export const QuestionBlockRole = z.enum(['prompt', 'answer_area', 'continuation']);
 

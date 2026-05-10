@@ -1,18 +1,18 @@
+import { createId } from '@paralleldrive/cuid2';
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { createId } from '@paralleldrive/cuid2';
-import { runTask } from '../ai/runner';
-import { runOCRCascade } from '../ingestion/cascade';
-import { recognizeDocument } from '../ingestion/ocr_tencent';
-import { runProposeAndWrite } from '../knowledge/propose';
-import { runAttributionAndWrite } from '../knowledge/attribute';
-import { loadTreeSnapshot } from '../knowledge/tree';
+import { PageSpan } from '../../../src/core/schema';
 import {
   CauseCategory,
   IngestionEntrypoint,
   QuestionKind,
 } from '../../../src/core/schema/business';
-import { PageSpan } from '../../../src/core/schema';
+import { runTask } from '../ai/runner';
+import { runOCRCascade } from '../ingestion/cascade';
+import { recognizeDocument } from '../ingestion/ocr_tencent';
+import { runAttributionAndWrite } from '../knowledge/attribute';
+import { runProposeAndWrite } from '../knowledge/propose';
+import { loadTreeSnapshot } from '../knowledge/tree';
 import type { AppEnv } from '../types';
 
 type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
@@ -52,7 +52,7 @@ ingestion.post('/', async (c) => {
   const missingIds: string[] = [];
   for (const assetId of body.asset_ids) {
     const row = await c.env.DB.prepare(
-      `select id, storage_key, mime_type from source_asset where id = ?`,
+      'select id, storage_key, mime_type from source_asset where id = ?',
     )
       .bind(assetId)
       .first<{ id: string; storage_key: string; mime_type: string }>();
@@ -77,7 +77,7 @@ ingestion.post('/', async (c) => {
   const sessionId = createId();
 
   await c.env.DB.prepare(
-    `insert into source_document (id, title, source_asset_ids, body_md, provenance, created_at, updated_at, version) values (?, ?, ?, ?, ?, ?, ?, 0)`,
+    'insert into source_document (id, title, source_asset_ids, body_md, provenance, created_at, updated_at, version) values (?, ?, ?, ?, ?, ?, ?, 0)',
   )
     .bind(
       sourceDocId,
@@ -91,7 +91,7 @@ ingestion.post('/', async (c) => {
     .run();
 
   await c.env.DB.prepare(
-    `insert into ingestion_session (id, source_document_id, source_asset_ids, status, entrypoint, error_message, created_at, updated_at, version) values (?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+    'insert into ingestion_session (id, source_document_id, source_asset_ids, status, entrypoint, error_message, created_at, updated_at, version) values (?, ?, ?, ?, ?, ?, ?, ?, 0)',
   )
     .bind(
       sessionId,
@@ -108,7 +108,11 @@ ingestion.post('/', async (c) => {
   type BlockRow = {
     block_id: string;
     source_block_ids: string[];
-    page_spans: Array<{ page_index: number; bbox: { x: number; y: number; width: number; height: number }; role: string }>;
+    page_spans: Array<{
+      page_index: number;
+      bbox: { x: number; y: number; width: number; height: number };
+      role: string;
+    }>;
     image_refs: string[];
     extracted_prompt_md: string;
     reference_md: string | null;
@@ -131,24 +135,29 @@ ingestion.post('/', async (c) => {
 
     const r2Object = await c.env.IMAGES.get(row.storage_key);
     if (!r2Object) {
-      console.error('ingestion: r2 object missing', { assetId: row.id, storageKey: row.storage_key });
+      console.error('ingestion: r2 object missing', {
+        assetId: row.id,
+        storageKey: row.storage_key,
+      });
       failures.push({ asset_id: row.id, reason: 'r2_object_missing' });
       continue;
     }
 
     const imageBytes = await r2Object.arrayBuffer();
 
-    let extracted: { blocks: Array<{
-      extracted_prompt_md: string;
-      reference_md: string | null;
-      wrong_answer_md: string | null;
-      page_index: number;
-      bbox: { x: number; y: number; width: number; height: number };
-      role: 'prompt' | 'answer_area' | 'continuation';
-      visual_complexity: 'low' | 'medium' | 'high';
-      extraction_confidence: number;
-      knowledge_hint: string | null;
-    }> };
+    let extracted: {
+      blocks: Array<{
+        extracted_prompt_md: string;
+        reference_md: string | null;
+        wrong_answer_md: string | null;
+        page_index: number;
+        bbox: { x: number; y: number; width: number; height: number };
+        role: 'prompt' | 'answer_area' | 'continuation';
+        visual_complexity: 'low' | 'medium' | 'high';
+        extraction_confidence: number;
+        knowledge_hint: string | null;
+      }>;
+    };
     let tierLogForAsset: import('../ingestion/cascade').TierLogEntry[] = [];
     try {
       const cascadeOut = await runOCRCascade({
@@ -188,7 +197,7 @@ ingestion.post('/', async (c) => {
       const pageSpans = [{ page_index: block.page_index, bbox: block.bbox, role: block.role }];
 
       await c.env.DB.prepare(
-        `insert into question_block (id, ingestion_session_id, source_document_id, source_asset_ids, page_spans, extracted_prompt_md, reference_md, wrong_answer_md, image_refs, crop_refs, visual_complexity, extraction_confidence, status, knowledge_hint, merged_from_block_ids, imported_question_id, imported_mistake_id, created_at, updated_at, version) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+        'insert into question_block (id, ingestion_session_id, source_document_id, source_asset_ids, page_spans, extracted_prompt_md, reference_md, wrong_answer_md, image_refs, crop_refs, visual_complexity, extraction_confidence, status, knowledge_hint, merged_from_block_ids, imported_question_id, imported_mistake_id, created_at, updated_at, version) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)',
       )
         .bind(
           blockId,
@@ -236,7 +245,7 @@ ingestion.post('/', async (c) => {
 
   const updatedAt = Math.floor(Date.now() / 1000);
   await c.env.DB.prepare(
-    `update ingestion_session set status = ?, error_message = ?, updated_at = ?, version = version + 1 where id = ?`,
+    'update ingestion_session set status = ?, error_message = ?, updated_at = ?, version = version + 1 where id = ?',
   )
     .bind(finalStatus, tierLogPayload, updatedAt, sessionId)
     .run();
@@ -332,7 +341,7 @@ ingestion.post('/:id/import', async (c) => {
   const body = parsed.data;
 
   // 1. Validate session exists and is in an importable state
-  const session = await c.env.DB.prepare(`select * from ingestion_session where id = ?`)
+  const session = await c.env.DB.prepare('select * from ingestion_session where id = ?')
     .bind(sessionId)
     .first<SessionRow>();
   if (!session) {
@@ -359,7 +368,10 @@ ingestion.post('/:id/import', async (c) => {
     const isManual = block.block_id === undefined && block.source_block_ids.length === 0;
     if (isManual && block.image_refs.length === 0) {
       return c.json(
-        { error: 'validation_error', message: 'manual block must reference at least one image_ref' },
+        {
+          error: 'validation_error',
+          message: 'manual block must reference at least one image_ref',
+        },
         400,
       );
     }
@@ -375,14 +387,11 @@ ingestion.post('/:id/import', async (c) => {
     }
   }
   for (const sid of allSourceIds) {
-    const row = await c.env.DB.prepare(`select * from question_block where id = ?`)
+    const row = await c.env.DB.prepare('select * from question_block where id = ?')
       .bind(sid)
       .first<QuestionBlockSelectRow>();
     if (!row) {
-      return c.json(
-        { error: 'validation_error', message: `unknown source_block_id: ${sid}` },
-        400,
-      );
+      return c.json({ error: 'validation_error', message: `unknown source_block_id: ${sid}` }, 400);
     }
     if (row.ingestion_session_id !== sessionId) {
       return c.json(
@@ -430,7 +439,7 @@ ingestion.post('/:id/import', async (c) => {
   for (const block of body.blocks) {
     for (const kid of block.knowledge_ids) {
       const k = await c.env.DB.prepare(
-        `select id from knowledge where id = ? and archived_at is null`,
+        'select id from knowledge where id = ? and archived_at is null',
       )
         .bind(kid)
         .first();
@@ -638,7 +647,7 @@ ingestion.post('/:id/import', async (c) => {
   for (const sid of toIgnore) {
     batchStmts.push(
       c.env.DB.prepare(
-        `update question_block set status = ?, updated_at = ?, version = version + 1 where id = ?`,
+        'update question_block set status = ?, updated_at = ?, version = version + 1 where id = ?',
       ).bind('ignored', now, sid),
     );
   }

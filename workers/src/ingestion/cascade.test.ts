@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-import { runOCRCascade, type CascadeDeps } from './cascade';
+import { describe, expect, it, vi } from 'vitest';
+import { type CascadeDeps, runOCRCascade } from './cascade';
 
 const env = {
   TENCENT_SECRET_ID: 'AKID',
@@ -50,16 +50,28 @@ describe('runOCRCascade — Tier 1 happy', () => {
     expect(out.tier_log[0].blocks_count).toBe(1);
     expect(runTaskFn).not.toHaveBeenCalled();
     expect(recognize).toHaveBeenCalledTimes(1);
-    expect((recognize.mock.calls[0] as unknown as [unknown, unknown, unknown, unknown, { action: string }])[4].action).toBe('EduPaperOCR');
+    expect(
+      (
+        recognize.mock.calls[0] as unknown as [
+          unknown,
+          unknown,
+          unknown,
+          unknown,
+          { action: string },
+        ]
+      )[4].action,
+    ).toBe('EduPaperOCR');
   });
 });
 
 describe('runOCRCascade — escalations', () => {
   it('Tier 1 0-region edu → calls general → still 0 → escalate to Tier 2 haiku', async () => {
-    const recognize = vi.fn(async (_b: unknown, _m: unknown, _p: unknown, _e: unknown, opts: { action?: string }) => ({
-      regions: [], // both edu and general return empty
-      raw_response: { action: opts.action },
-    }));
+    const recognize = vi.fn(
+      async (_b: unknown, _m: unknown, _p: unknown, _e: unknown, opts: { action?: string }) => ({
+        regions: [], // both edu and general return empty
+        raw_response: { action: opts.action },
+      }),
+    );
     const runTaskFn = vi.fn(async () => ({
       text: JSON.stringify({
         blocks: [

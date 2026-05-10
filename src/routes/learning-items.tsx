@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMemo, useState } from 'react';
 
 const INTERNAL_TOKEN = import.meta.env.VITE_INTERNAL_TOKEN ?? '';
 
@@ -26,9 +26,7 @@ interface KnowledgeNode {
 type StatusFilter = '' | 'pending' | 'in_progress' | 'done';
 
 async function fetchList(statusFilter: StatusFilter): Promise<LearningItem[]> {
-  const url = statusFilter
-    ? `/api/learning-items?status=${statusFilter}`
-    : '/api/learning-items';
+  const url = statusFilter ? `/api/learning-items?status=${statusFilter}` : '/api/learning-items';
   const res = await fetch(url, { headers: { 'x-internal-token': INTERNAL_TOKEN } });
   if (!res.ok) throw new Error(`GET /api/learning-items ${res.status}`);
   const body = (await res.json()) as { rows: LearningItem[] };
@@ -123,8 +121,7 @@ export function LearningItemsList() {
     [knowledgeQuery.data],
   );
 
-  const invalidateList = () =>
-    queryClient.invalidateQueries({ queryKey: ['/api/learning-items'] });
+  const invalidateList = () => queryClient.invalidateQueries({ queryKey: ['/api/learning-items'] });
 
   const createMutation = useMutation({
     mutationFn: postCreate,
@@ -215,7 +212,13 @@ export function LearningItemsList() {
             onClick={() => setStatusFilter(s)}
             className={`px-3 py-1 rounded ${statusFilter === s ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700'}`}
           >
-            {s === '' ? '全部' : s === 'pending' ? '待办' : s === 'in_progress' ? '进行中' : '已完成'}
+            {s === ''
+              ? '全部'
+              : s === 'pending'
+                ? '待办'
+                : s === 'in_progress'
+                  ? '进行中'
+                  : '已完成'}
           </button>
         ))}
       </div>
@@ -249,9 +252,7 @@ export function LearningItemsList() {
                       type="button"
                       onClick={() =>
                         setCreateKnowledgeIds((prev) =>
-                          prev.includes(k.id)
-                            ? prev.filter((x) => x !== k.id)
-                            : [...prev, k.id],
+                          prev.includes(k.id) ? prev.filter((x) => x !== k.id) : [...prev, k.id],
                         )
                       }
                       className={`text-xs px-2 py-1 rounded ${
@@ -319,12 +320,14 @@ export function LearningItemsList() {
               {item.status === 'pending' && (
                 <>
                   <button
+                    type="button"
                     onClick={() => transition(item, 'in_progress')}
                     className="px-2 py-1 bg-yellow-100 text-yellow-900 rounded"
                   >
                     开始学
                   </button>
                   <button
+                    type="button"
                     onClick={() => transition(item, 'done')}
                     className="px-2 py-1 bg-green-100 text-green-900 rounded"
                   >
@@ -335,12 +338,14 @@ export function LearningItemsList() {
               {item.status === 'in_progress' && (
                 <>
                   <button
+                    type="button"
                     onClick={() => transition(item, 'done')}
                     className="px-2 py-1 bg-green-100 text-green-900 rounded"
                   >
                     我学完了
                   </button>
                   <button
+                    type="button"
                     onClick={() => transition(item, 'pending')}
                     className="px-2 py-1 bg-slate-100 text-slate-700 rounded"
                   >
@@ -350,6 +355,7 @@ export function LearningItemsList() {
               )}
               {item.status === 'done' && (
                 <button
+                  type="button"
                   onClick={() => transition(item, 'in_progress')}
                   className="px-2 py-1 bg-yellow-100 text-yellow-900 rounded"
                 >

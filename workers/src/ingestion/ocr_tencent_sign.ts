@@ -123,10 +123,5 @@ export async function buildAuthHeader(a: BuildAuthArgs): Promise<string> {
     service: a.service,
   });
   const signatureHex = await hmacSha256Hex(signingKey, sts);
-  return (
-    `TC3-HMAC-SHA256 ` +
-    `Credential=${a.secretId}/${date}/${a.service}/tc3_request, ` +
-    `SignedHeaders=content-type;host, ` +
-    `Signature=${signatureHex}`
-  );
+  return `TC3-HMAC-SHA256 Credential=${a.secretId}/${date}/${a.service}/tc3_request, SignedHeaders=content-type;host, Signature=${signatureHex}`;
 }

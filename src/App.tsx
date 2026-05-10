@@ -1,12 +1,12 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
+import { CaptureSession } from './routes/capture';
 import { Home } from './routes/index';
 import { Inspect } from './routes/inspect';
 import { KnowledgeTree } from './routes/knowledge';
 import { KnowledgeProposals } from './routes/knowledge-proposals';
-import { MistakesList } from './routes/mistakes-list';
-import { CaptureSession } from './routes/capture';
-import { ReviewSession } from './routes/review';
 import { LearningItemsList } from './routes/learning-items';
+import { MistakesList } from './routes/mistakes-list';
+import { ReviewSession } from './routes/review';
 
 export function App() {
   return (

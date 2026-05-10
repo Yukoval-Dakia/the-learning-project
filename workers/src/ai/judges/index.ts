@@ -1,6 +1,6 @@
 import { judgeExact } from './exact';
-import { judgeKeyword } from './keyword';
 import type { AnswerInput, JudgeResult } from './exact';
+import { judgeKeyword } from './keyword';
 
 export type JudgeKind =
   | 'exact'

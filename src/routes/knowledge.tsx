@@ -91,8 +91,8 @@ export function KnowledgeTree() {
         </div>
       </div>
       <p className="text-sm text-slate-500 mb-4">
-        Knowledge tree (read-only). Effective domain inherited from parent chain. AI review
-        triggers KnowledgeReviewTask, which writes proposals to{' '}
+        Knowledge tree (read-only). Effective domain inherited from parent chain. AI review triggers
+        KnowledgeReviewTask, which writes proposals to{' '}
         <a href="/knowledge/proposals" className="underline">
           /knowledge/proposals
         </a>
@@ -111,9 +111,7 @@ export function KnowledgeTree() {
       )}
 
       {isLoading && <p className="text-sm text-slate-500">Loading…</p>}
-      {error && (
-        <p className="text-sm text-red-600">Error: {(error as Error).message}</p>
-      )}
+      {error && <p className="text-sm text-red-600">Error: {(error as Error).message}</p>}
       {data && (
         <table className="w-full text-xs border-collapse">
           <thead className="bg-slate-100">

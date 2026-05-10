@@ -1,5 +1,12 @@
-import { describe, it, expect } from 'vitest';
-import { sha256Hex, hmacSha256Hex, buildCanonicalRequest, buildStringToSign, deriveSigningKey, buildAuthHeader } from './ocr_tencent_sign';
+import { describe, expect, it } from 'vitest';
+import {
+  buildAuthHeader,
+  buildCanonicalRequest,
+  buildStringToSign,
+  deriveSigningKey,
+  hmacSha256Hex,
+  sha256Hex,
+} from './ocr_tencent_sign';
 
 describe('sha256Hex', () => {
   it('hashes empty string to known SHA-256', async () => {
@@ -94,7 +101,9 @@ describe('buildAuthHeader', () => {
       payloadJson: '{"ImageBase64":"abc"}',
       host: 'ocr.tencentcloudapi.com',
     });
-    expect(auth.startsWith('TC3-HMAC-SHA256 Credential=AKID0000/2023-11-14/ocr/tc3_request, ')).toBe(true);
+    expect(
+      auth.startsWith('TC3-HMAC-SHA256 Credential=AKID0000/2023-11-14/ocr/tc3_request, '),
+    ).toBe(true);
     expect(auth).toContain('SignedHeaders=content-type;host,');
     expect(auth).toMatch(/Signature=[0-9a-f]{64}$/);
     // Determinism: same inputs → same output
