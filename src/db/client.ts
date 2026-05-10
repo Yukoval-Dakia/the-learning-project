@@ -1,9 +1,13 @@
-// Drizzle client —— driver 待接入。
-//
-// Phase 1 (PWA)：OPFS-backed `@sqlite.org/sqlite-wasm` + `drizzle-orm/sqlite-proxy`。
-// Phase 3 (Tauri)：tauri-plugin-sql 或 better-sqlite3 直连。
-// Phase 4 (云同步)：Cloudflare D1 镜像（`drizzle-orm/d1`）。
-//
-// 当下导出 schema 让 drizzle-kit 能从 schema diff 生成 SQL 迁移；运行时连接在下一步加。
+import { drizzle } from 'drizzle-orm/postgres-js';
+import postgres from 'postgres';
+import * as schema from './schema';
 
-export * as schema from './schema';
+// Singleton client. In Vercel functions, this module is cached across invocations
+// within a hot container; postgres-js handles connection pooling per process.
+const queryClient = postgres(process.env.DATABASE_URL!, {
+  ssl: 'require',
+  max: 10, // pool size; per-Vercel-function cap
+});
+
+export const db = drizzle(queryClient, { schema });
+export type Db = typeof db;
