@@ -1,16 +1,16 @@
 import { anthropic } from '@ai-sdk/anthropic';
+import { createId } from '@paralleldrive/cuid2';
 import {
-  generateText,
-  streamText,
-  stepCountIs,
   type LanguageModel,
   type ModelMessage,
   type ToolSet,
+  generateText,
+  stepCountIs,
+  streamText,
 } from 'ai';
-import { createId } from '@paralleldrive/cuid2';
-import { tasks, type TaskKind } from '../../../src/ai/registry';
-import { writeCostLedger, writeToolCallLog } from './log';
+import { type TaskKind, tasks } from '../../../src/ai/registry';
 import type { Bindings } from '../types';
+import { writeCostLedger, writeToolCallLog } from './log';
 
 export interface RunTaskCtx {
   env: Bindings;
@@ -44,7 +44,9 @@ function isMultimodalTaskInput(input: unknown): input is MultimodalTaskInput {
     Array.isArray(candidate.images) &&
     candidate.images.every((image) => {
       const img = image as { data?: unknown; mediaType?: unknown };
-      return img.data != null && typeof img.mediaType === 'string' && img.mediaType.startsWith('image/');
+      return (
+        img.data != null && typeof img.mediaType === 'string' && img.mediaType.startsWith('image/')
+      );
     })
   );
 }
@@ -131,11 +133,7 @@ export interface StreamTaskCtx extends RunTaskCtx {
  *
  * The caller (Hono handler) is responsible for piping the body to the client.
  */
-export function streamTask(
-  kind: string,
-  input: unknown,
-  ctx: StreamTaskCtx,
-): Response {
+export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Response {
   if (!isKnownTask(kind)) {
     throw new Error(`Unknown task kind: ${kind}`);
   }
@@ -157,9 +155,7 @@ export function streamTask(
       const stepLatencyMs = Date.now() - stepStartTime;
       // Match toolResults to toolCalls by toolCallId, not array index — order/length
       // can diverge if a call fails or is held for approval.
-      const resultsById = new Map(
-        (toolResults ?? []).map((tr) => [tr.toolCallId, tr]),
-      );
+      const resultsById = new Map((toolResults ?? []).map((tr) => [tr.toolCallId, tr]));
       // Write a ToolCallLog row per tool call this step.
       for (const tc of toolCalls) {
         const tr = resultsById.get(tc.toolCallId);

@@ -22,17 +22,20 @@ describe('parseVisionOutput', () => {
   });
 
   it('throws on bbox out of [0,1]', () => {
-    const text = '{"blocks":[{"extracted_prompt_md":"x","reference_md":null,"wrong_answer_md":null,"page_index":0,"bbox":{"x":1.5,"y":0,"width":1,"height":1},"role":"prompt","visual_complexity":"low","extraction_confidence":0.5,"knowledge_hint":null}]}';
+    const text =
+      '{"blocks":[{"extracted_prompt_md":"x","reference_md":null,"wrong_answer_md":null,"page_index":0,"bbox":{"x":1.5,"y":0,"width":1,"height":1},"role":"prompt","visual_complexity":"low","extraction_confidence":0.5,"knowledge_hint":null}]}';
     expect(() => parseVisionOutput(text)).toThrow();
   });
 
   it('throws on confidence > 1', () => {
-    const text = '{"blocks":[{"extracted_prompt_md":"x","reference_md":null,"wrong_answer_md":null,"page_index":0,"bbox":{"x":0,"y":0,"width":1,"height":1},"role":"prompt","visual_complexity":"low","extraction_confidence":2,"knowledge_hint":null}]}';
+    const text =
+      '{"blocks":[{"extracted_prompt_md":"x","reference_md":null,"wrong_answer_md":null,"page_index":0,"bbox":{"x":0,"y":0,"width":1,"height":1},"role":"prompt","visual_complexity":"low","extraction_confidence":2,"knowledge_hint":null}]}';
     expect(() => parseVisionOutput(text)).toThrow();
   });
 
   it('throws on invalid role', () => {
-    const text = '{"blocks":[{"extracted_prompt_md":"x","reference_md":null,"wrong_answer_md":null,"page_index":0,"bbox":{"x":0,"y":0,"width":1,"height":1},"role":"bogus","visual_complexity":"low","extraction_confidence":0.5,"knowledge_hint":null}]}';
+    const text =
+      '{"blocks":[{"extracted_prompt_md":"x","reference_md":null,"wrong_answer_md":null,"page_index":0,"bbox":{"x":0,"y":0,"width":1,"height":1},"role":"bogus","visual_complexity":"low","extraction_confidence":0.5,"knowledge_hint":null}]}';
     expect(() => parseVisionOutput(text)).toThrow();
   });
 });
@@ -53,9 +56,7 @@ describe('runVisionExtract', () => {
       'VisionExtractTask',
       expect.objectContaining({
         text: expect.stringContaining('page_index=3'),
-        images: expect.arrayContaining([
-          expect.objectContaining({ mediaType: 'image/png' }),
-        ]),
+        images: expect.arrayContaining([expect.objectContaining({ mediaType: 'image/png' })]),
       }),
       expect.objectContaining({ env: expect.anything() }),
     );

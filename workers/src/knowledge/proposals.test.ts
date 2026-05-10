@@ -1,10 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
 import type { D1Database } from '@cloudflare/workers-types';
+import { describe, expect, it, vi } from 'vitest';
 import {
-  writeDreamingProposal,
-  applyProposeNew,
   acceptProposal,
+  applyProposeNew,
   dismissProposal,
+  writeDreamingProposal,
 } from './proposals';
 
 interface MockOptions {
@@ -40,7 +40,7 @@ function makeMockDb(opts: MockOptions = {}) {
           return null;
         },
         run: async () => {
-          if (opts.runZeroChangesFor && opts.runZeroChangesFor.test(sql)) {
+          if (opts.runZeroChangesFor?.test(sql)) {
             return { success: true, meta: { changes: 0 } };
           }
           return { success: true, meta: { changes: 1 } };
@@ -55,7 +55,10 @@ function makeMockDb(opts: MockOptions = {}) {
     batch: async (stmts: Array<{ run: () => Promise<unknown>; _sql?: string }>) => {
       const results: unknown[] = [];
       for (const s of stmts) {
-        if (opts.raceUpdateZeroChanges && /update (dreaming_proposal|knowledge)/i.test(s._sql ?? '')) {
+        if (
+          opts.raceUpdateZeroChanges &&
+          /update (dreaming_proposal|knowledge)/i.test(s._sql ?? '')
+        ) {
           results.push({ success: true, meta: { changes: 0 } });
         } else {
           results.push(await s.run());
@@ -222,7 +225,7 @@ describe('dismissProposal', () => {
   });
 });
 
-import { applyReparent, applyArchive, applySplit, applyMerge } from './proposals';
+import { applyArchive, applyMerge, applyReparent, applySplit } from './proposals';
 
 describe('applyReparent', () => {
   it('moves a child node to a new parent (happy path)', async () => {
@@ -299,7 +302,9 @@ describe('applyArchive', () => {
       node_id: 'k_node',
       expected_version: 5,
     });
-    const update = calls.find((c) => /update knowledge/i.test(c.sql) && /archived_at = \?/i.test(c.sql));
+    const update = calls.find(
+      (c) => /update knowledge/i.test(c.sql) && /archived_at = \?/i.test(c.sql),
+    );
     expect(update).toBeDefined();
     expect(update?.binds[2]).toBe('k_node');
     expect(update?.binds[3]).toBe(5);
@@ -341,7 +346,9 @@ describe('applySplit', () => {
     expect(newIds).toHaveLength(2);
     const inserts = calls.filter((c) => /insert into knowledge/i.test(c.sql));
     expect(inserts).toHaveLength(2);
-    const archive = calls.find((c) => /update knowledge/i.test(c.sql) && /archived_at/i.test(c.sql));
+    const archive = calls.find(
+      (c) => /update knowledge/i.test(c.sql) && /archived_at/i.test(c.sql),
+    );
     expect(archive).toBeDefined();
   });
 

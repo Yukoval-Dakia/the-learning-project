@@ -1,12 +1,20 @@
-import { describe, expect, it, vi } from 'vitest';
 import type { D1Database, ExecutionContext, R2Bucket } from '@cloudflare/workers-types';
+import { describe, expect, it, vi } from 'vitest';
 import { mistakes } from './mistakes';
 
-function mockEnv(opts: {
-  knowledgeRows?: Array<{ id: string; name: string; domain: string | null; parent_id: string | null; archived_at: number | null }>;
-  treeAllThrows?: boolean;
-  sourceAssetIds?: string[];
-} = {}) {
+function mockEnv(
+  opts: {
+    knowledgeRows?: Array<{
+      id: string;
+      name: string;
+      domain: string | null;
+      parent_id: string | null;
+      archived_at: number | null;
+    }>;
+    treeAllThrows?: boolean;
+    sourceAssetIds?: string[];
+  } = {},
+) {
   const knowledgeById = new Map((opts.knowledgeRows ?? []).map((r) => [r.id, r]));
   const calls: Array<{ sql: string; binds: unknown[] }> = [];
   const prepare = vi.fn((sql: string) => ({
@@ -27,7 +35,10 @@ function mockEnv(opts: {
         },
         all: async () => {
           if (/from knowledge/i.test(sql)) {
-            if (opts.treeAllThrows && /select id, name, domain, parent_id, archived_at from knowledge/i.test(sql)) {
+            if (
+              opts.treeAllThrows &&
+              /select id, name, domain, parent_id, archived_at from knowledge/i.test(sql)
+            ) {
               throw new Error('transient D1 error');
             }
             return { results: Array.from(knowledgeById.values()) };
@@ -55,7 +66,12 @@ function mockEnv(opts: {
     props: {},
   } as unknown as ExecutionContext;
   return {
-    Bindings: { DB: db, IMAGES: { put: vi.fn(async () => null) } as unknown as R2Bucket, INTERNAL_TOKEN: 'test', ANTHROPIC_API_KEY: 'test' },
+    Bindings: {
+      DB: db,
+      IMAGES: { put: vi.fn(async () => null) } as unknown as R2Bucket,
+      INTERNAL_TOKEN: 'test',
+      ANTHROPIC_API_KEY: 'test',
+    },
     executionCtx,
     calls,
     waitUntilFns,
@@ -90,7 +106,9 @@ describe('POST /api/mistakes', () => {
 
   it('returns 400 when knowledge_ids contains non-existent id', async () => {
     const { Bindings, executionCtx } = mockEnv({
-      knowledgeRows: [{ id: 'k_real', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null }],
+      knowledgeRows: [
+        { id: 'k_real', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null },
+      ],
     });
     const res = await mistakes.request(
       '/',
@@ -118,7 +136,9 @@ describe('POST /api/mistakes', () => {
 
   it('inserts question + mistake on valid body, queues propose task', async () => {
     const { Bindings, executionCtx, calls, waitUntilFns } = mockEnv({
-      knowledgeRows: [{ id: 'k_xuci', name: '虚词', domain: 'wenyan', parent_id: null, archived_at: null }],
+      knowledgeRows: [
+        { id: 'k_xuci', name: '虚词', domain: 'wenyan', parent_id: null, archived_at: null },
+      ],
     });
     const res = await mistakes.request(
       '/',
@@ -139,7 +159,11 @@ describe('POST /api/mistakes', () => {
       executionCtx,
     );
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { question_id: string; mistake_id: string; propose_task: string };
+    const body = (await res.json()) as {
+      question_id: string;
+      mistake_id: string;
+      propose_task: string;
+    };
     expect(body.question_id).toBeTruthy();
     expect(body.mistake_id).toBeTruthy();
     expect(body.propose_task).toBe('queued');
@@ -173,7 +197,9 @@ describe('POST /api/mistakes', () => {
 
   it('persists null cause when not provided', async () => {
     const { Bindings, executionCtx, calls } = mockEnv({
-      knowledgeRows: [{ id: 'k1', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null }],
+      knowledgeRows: [
+        { id: 'k1', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null },
+      ],
     });
     const res = await mistakes.request(
       '/',
@@ -201,7 +227,9 @@ describe('POST /api/mistakes', () => {
 
   it('rejects unknown wrong_answer_image_refs even when prompt_image_refs is empty', async () => {
     const { Bindings, executionCtx } = mockEnv({
-      knowledgeRows: [{ id: 'k1', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null }],
+      knowledgeRows: [
+        { id: 'k1', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null },
+      ],
     });
     const res = await mistakes.request(
       '/',
@@ -229,7 +257,9 @@ describe('POST /api/mistakes', () => {
 
   it('rejects unknown prompt_image_refs asset id', async () => {
     const { Bindings, executionCtx } = mockEnv({
-      knowledgeRows: [{ id: 'k1', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null }],
+      knowledgeRows: [
+        { id: 'k1', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null },
+      ],
     });
     const res = await mistakes.request(
       '/',
@@ -257,7 +287,9 @@ describe('POST /api/mistakes', () => {
 
   it('persists asset id refs and tags metadata kind', async () => {
     const { Bindings, executionCtx, calls } = mockEnv({
-      knowledgeRows: [{ id: 'k1', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null }],
+      knowledgeRows: [
+        { id: 'k1', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null },
+      ],
       sourceAssetIds: ['asset_p', 'asset_w'],
     });
     const res = await mistakes.request(
@@ -293,12 +325,15 @@ describe('POST /api/mistakes', () => {
       .filter((b): b is string => typeof b === 'string')
       .find((b) => b === '["asset_w"]' || b.startsWith('["asset_w"]'));
     expect(wrongRefsBind).toBeDefined();
+    // biome-ignore lint/style/noNonNullAssertion: checked by toBeDefined above
     expect(JSON.parse(wrongRefsBind!)).toEqual(['asset_w']);
   });
 
   it('queues both propose + attribution when cause is null', async () => {
     const { Bindings, executionCtx, waitUntilFns } = mockEnv({
-      knowledgeRows: [{ id: 'k1', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null }],
+      knowledgeRows: [
+        { id: 'k1', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null },
+      ],
     });
     await mistakes.request(
       '/',
@@ -324,7 +359,9 @@ describe('POST /api/mistakes', () => {
   it('still returns 200 when attribution prep (loadTreeSnapshot) fails post-insert', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { Bindings, executionCtx, waitUntilFns } = mockEnv({
-      knowledgeRows: [{ id: 'k1', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null }],
+      knowledgeRows: [
+        { id: 'k1', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null },
+      ],
       treeAllThrows: true,
     });
     const res = await mistakes.request(
@@ -355,7 +392,9 @@ describe('POST /api/mistakes', () => {
 
   it('queues only propose when cause is provided manually', async () => {
     const { Bindings, executionCtx, waitUntilFns } = mockEnv({
-      knowledgeRows: [{ id: 'k1', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null }],
+      knowledgeRows: [
+        { id: 'k1', name: 'X', domain: 'wenyan', parent_id: null, archived_at: null },
+      ],
     });
     await mistakes.request(
       '/',
@@ -394,7 +433,12 @@ describe('GET /api/mistakes/recent', () => {
     }));
     const db = { prepare, batch: async () => [] } as unknown as D1Database;
     return {
-      Bindings: { DB: db, IMAGES: { put: vi.fn(async () => null) } as unknown as R2Bucket, INTERNAL_TOKEN: 't', ANTHROPIC_API_KEY: 't' },
+      Bindings: {
+        DB: db,
+        IMAGES: { put: vi.fn(async () => null) } as unknown as R2Bucket,
+        INTERNAL_TOKEN: 't',
+        ANTHROPIC_API_KEY: 't',
+      },
       executionCtx: {
         waitUntil: () => {},
         passThroughOnException: () => {},
@@ -412,13 +456,16 @@ describe('GET /api/mistakes/recent', () => {
         prompt_md: 'P'.repeat(300),
         wrong_answer_md: 'W'.repeat(300),
         knowledge_ids: '["k1"]',
-        cause: '{"primary_category":"concept","secondary_categories":[],"ai_analysis_md":"a","user_edited":false}',
+        cause:
+          '{"primary_category":"concept","secondary_categories":[],"ai_analysis_md":"a","user_edited":false}',
         created_at: 1700000000,
       },
     ]);
     const res = await mistakes.request('/recent', { method: 'GET' }, Bindings, executionCtx);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { rows: Array<{ id: string; prompt_md: string; cause: unknown }> };
+    const body = (await res.json()) as {
+      rows: Array<{ id: string; prompt_md: string; cause: unknown }>;
+    };
     expect(body.rows).toHaveLength(1);
     expect(body.rows[0].id).toBe('m1');
     expect(body.rows[0].prompt_md).toHaveLength(200);

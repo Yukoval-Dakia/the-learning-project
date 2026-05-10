@@ -1,8 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
 import type { D1Database } from '@cloudflare/workers-types';
+import { describe, expect, it, vi } from 'vitest';
 import { getEffectiveDomain } from './domain';
 
-function makeMockDbWithRows(rows: Record<string, { domain: string | null; parent_id: string | null }>) {
+function makeMockDbWithRows(
+  rows: Record<string, { domain: string | null; parent_id: string | null }>,
+) {
   const prepare = vi.fn((sql: string) => ({
     bind: (id: string) => ({
       first: async () => rows[id] ?? null,

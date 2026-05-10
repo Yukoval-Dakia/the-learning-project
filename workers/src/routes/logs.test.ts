@@ -1,8 +1,8 @@
+import type { D1Database } from '@cloudflare/workers-types';
 import { Hono } from 'hono';
 import { describe, expect, it } from 'vitest';
-import type { D1Database } from '@cloudflare/workers-types';
-import { logs } from './logs';
 import type { AppEnv } from '../types';
+import { logs } from './logs';
 
 function makeMockDb(rows: Record<string, unknown>[]) {
   const queries: string[] = [];
@@ -51,9 +51,7 @@ describe('GET /tool_calls', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { rows: unknown[] };
     expect(body.rows).toHaveLength(1);
-    expect((body.rows[0] as { tool_name: string }).tool_name).toBe(
-      'search_knowledge_by_concept',
-    );
+    expect((body.rows[0] as { tool_name: string }).tool_name).toBe('search_knowledge_by_concept');
   });
 
   it('clamps limit to safe range', async () => {
@@ -66,11 +64,7 @@ describe('GET /tool_calls', () => {
 
   it('filters by task_kind when provided', async () => {
     const { app, env, queries } = makeApp([]);
-    await app.request(
-      '/api/_/logs/tool_calls?task_kind=AttributionTask',
-      {},
-      env,
-    );
+    await app.request('/api/_/logs/tool_calls?task_kind=AttributionTask', {}, env);
     const sql = queries.find((q) => /tool_call_log/i.test(q)) ?? '';
     expect(sql).toMatch(/task_kind\s*=\s*\?/i);
   });

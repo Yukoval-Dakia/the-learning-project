@@ -1,7 +1,7 @@
+import type { D1Database } from '@cloudflare/workers-types';
+import { createId } from '@paralleldrive/cuid2';
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { createId } from '@paralleldrive/cuid2';
-import type { D1Database } from '@cloudflare/workers-types';
 import type { AppEnv } from '../types';
 
 export const learningItems = new Hono<AppEnv>();
@@ -13,7 +13,7 @@ async function assertKnowledgeIdsExist(
   const missing: string[] = [];
   for (const id of ids) {
     const row = await db
-      .prepare(`select id from knowledge where id = ? and archived_at is null`)
+      .prepare('select id from knowledge where id = ? and archived_at is null')
       .bind(id)
       .first();
     if (!row) missing.push(id);
@@ -28,8 +28,8 @@ const ListQuery = z.object({
 learningItems.get('/', async (c) => {
   const statusRaw = c.req.query('status');
   const limitRaw = c.req.query('limit');
-  const limitParsed = limitRaw ? parseInt(limitRaw, 10) : 50;
-  const limit = Math.min(Math.max(isNaN(limitParsed) ? 50 : limitParsed, 1), 200);
+  const limitParsed = limitRaw ? Number.parseInt(limitRaw, 10) : 50;
+  const limit = Math.min(Math.max(Number.isNaN(limitParsed) ? 50 : limitParsed, 1), 200);
   const parsedStatus = ListQuery.safeParse({ status: statusRaw });
   if (!parsedStatus.success) {
     return c.json({ error: 'validation_error', message: 'invalid status filter' }, 400);
@@ -109,7 +109,10 @@ learningItems.post('/', async (c) => {
     const check = await assertKnowledgeIdsExist(c.env.DB, body.knowledge_ids);
     if (!check.ok) {
       return c.json(
-        { error: 'validation_error', message: `unknown knowledge_ids: ${check.missing.join(', ')}` },
+        {
+          error: 'validation_error',
+          message: `unknown knowledge_ids: ${check.missing.join(', ')}`,
+        },
         400,
       );
     }
@@ -171,7 +174,7 @@ learningItems.patch('/:id', async (c) => {
   const body = parsed.data;
 
   const row = await c.env.DB.prepare(
-    `select id, status, version, archived_at from learning_item where id = ?`,
+    'select id, status, version, archived_at from learning_item where id = ?',
   )
     .bind(id)
     .first<{ id: string; status: string; version: number; archived_at: number | null }>();
@@ -198,7 +201,10 @@ learningItems.patch('/:id', async (c) => {
     const check = await assertKnowledgeIdsExist(c.env.DB, body.knowledge_ids);
     if (!check.ok) {
       return c.json(
-        { error: 'validation_error', message: `unknown knowledge_ids: ${check.missing.join(', ')}` },
+        {
+          error: 'validation_error',
+          message: `unknown knowledge_ids: ${check.missing.join(', ')}`,
+        },
         400,
       );
     }
@@ -298,7 +304,10 @@ learningItems.patch('/:id', async (c) => {
     }>();
   if (!updated) {
     console.error('learning-items: row vanished after successful UPDATE', { id });
-    return c.json({ error: 'not_found', message: `learning_item ${id} not found after update` }, 404);
+    return c.json(
+      { error: 'not_found', message: `learning_item ${id} not found after update` },
+      404,
+    );
   }
   // Guard JSON.parse — write already committed, so a corrupt knowledge_ids row
   // shouldn't surface as an opaque 500 that misleads the client into retrying.
@@ -334,10 +343,10 @@ learningItems.delete('/:id', async (c) => {
   if (!/^\d+$/.test(versionRaw)) {
     return c.json({ error: 'validation_error', message: 'invalid version' }, 400);
   }
-  const version = parseInt(versionRaw, 10);
+  const version = Number.parseInt(versionRaw, 10);
 
   const row = await c.env.DB.prepare(
-    `select id, version, archived_at from learning_item where id = ?`,
+    'select id, version, archived_at from learning_item where id = ?',
   )
     .bind(id)
     .first<{ id: string; version: number; archived_at: number | null }>();

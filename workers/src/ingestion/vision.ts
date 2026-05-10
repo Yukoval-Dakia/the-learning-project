@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { QuestionBlockRole, VisualComplexity } from '../../../src/core/schema/business';
 import { BBox } from '../../../src/core/schema';
+import { QuestionBlockRole, VisualComplexity } from '../../../src/core/schema/business';
 
 const VisionBlockSchema = z.object({
   extracted_prompt_md: z.string().min(1).max(5000),
@@ -24,7 +24,8 @@ export type VisionBlock = z.infer<typeof VisionBlockSchema>;
 export function parseVisionOutput(text: string): VisionOutput {
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) throw new Error('parseVisionOutput: no JSON object found');
+  if (start === -1 || end === -1 || end < start)
+    throw new Error('parseVisionOutput: no JSON object found');
   const slice = text.slice(start, end + 1);
   let json: unknown;
   try {

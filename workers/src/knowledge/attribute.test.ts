@@ -1,10 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
 import type { D1Database } from '@cloudflare/workers-types';
+import { describe, expect, it, vi } from 'vitest';
 import { parseAttributionOutput, runAttributionAndWrite } from './attribute';
 
 describe('parseAttributionOutput', () => {
   it('parses well-formed JSON with all fields', () => {
-    const text = '{"primary_category":"concept","secondary_categories":["memory"],"ai_analysis_md":"用户混淆了「之」的助词和动词用法","confidence":0.85}';
+    const text =
+      '{"primary_category":"concept","secondary_categories":["memory"],"ai_analysis_md":"用户混淆了「之」的助词和动词用法","confidence":0.85}';
     const out = parseAttributionOutput(text);
     expect(out.primary_category).toBe('concept');
     expect(out.secondary_categories).toEqual(['memory']);
@@ -12,7 +13,8 @@ describe('parseAttributionOutput', () => {
   });
 
   it('extracts JSON from text with surrounding prose', () => {
-    const text = '分析如下：\n\n{"primary_category":"reading","secondary_categories":[],"ai_analysis_md":"未注意「之」位置","confidence":0.6}\n\n以上。';
+    const text =
+      '分析如下：\n\n{"primary_category":"reading","secondary_categories":[],"ai_analysis_md":"未注意「之」位置","confidence":0.6}\n\n以上。';
     const out = parseAttributionOutput(text);
     expect(out.primary_category).toBe('reading');
   });

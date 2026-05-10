@@ -1,12 +1,9 @@
-import { z } from 'zod';
-import type { LanguageModel } from 'ai';
 import type { D1Database } from '@cloudflare/workers-types';
+import type { LanguageModel } from 'ai';
+import { z } from 'zod';
 import { streamTask } from '../ai/runner';
-import {
-  writeDreamingProposal,
-  type KnowledgeMutationPayload,
-} from './proposals';
 import type { Bindings } from '../types';
+import { type KnowledgeMutationPayload, writeDreamingProposal } from './proposals';
 
 interface KnowledgeNode {
   id: string;
@@ -34,13 +31,13 @@ const RECENT_MISTAKES_LIMIT = 100;
 async function buildReviewInput(db: D1Database) {
   const tree = await db
     .prepare(
-      `select id, name, domain, parent_id, archived_at, version, merged_from from knowledge order by created_at`,
+      'select id, name, domain, parent_id, archived_at, version, merged_from from knowledge order by created_at',
     )
     .bind()
     .all<KnowledgeNode>();
   const mistakes = await db
     .prepare(
-      `select id, question_id, knowledge_ids, cause from mistake order by created_at desc limit ?`,
+      'select id, question_id, knowledge_ids, cause from mistake order by created_at desc limit ?',
     )
     .bind(RECENT_MISTAKES_LIMIT)
     .all<MistakeRow>();
@@ -61,32 +58,28 @@ export async function streamReviewTask(ctx: {
   model?: LanguageModel;
 }): Promise<Response> {
   const input = await buildReviewInput(ctx.env.DB);
-  return streamTask(
-    'KnowledgeReviewTask',
-    input,
-    {
-      env: ctx.env,
-      model: ctx.model,
-      tools: {
-        write_proposal: {
-          description:
-            'Propose one knowledge tree mutation. Call once per mutation. payload.mutation distinguishes the kind (propose_new / reparent / merge / split / archive). reasoning must be concrete.',
-          inputSchema: z.object({
-            payload: z.unknown(),
-            reasoning: z.string(),
-          }),
-          execute: async ({
-            payload,
-            reasoning,
-          }: {
-            payload: KnowledgeMutationPayload;
-            reasoning: string;
-          }) => {
-            const id = await writeDreamingProposal(ctx.env.DB, { payload, reasoning });
-            return { proposal_id: id };
-          },
+  return streamTask('KnowledgeReviewTask', input, {
+    env: ctx.env,
+    model: ctx.model,
+    tools: {
+      write_proposal: {
+        description:
+          'Propose one knowledge tree mutation. Call once per mutation. payload.mutation distinguishes the kind (propose_new / reparent / merge / split / archive). reasoning must be concrete.',
+        inputSchema: z.object({
+          payload: z.unknown(),
+          reasoning: z.string(),
+        }),
+        execute: async ({
+          payload,
+          reasoning,
+        }: {
+          payload: KnowledgeMutationPayload;
+          reasoning: string;
+        }) => {
+          const id = await writeDreamingProposal(ctx.env.DB, { payload, reasoning });
+          return { proposal_id: id };
         },
       },
     },
-  );
+  });
 }

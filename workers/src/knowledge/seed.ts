@@ -36,20 +36,7 @@ export async function seedKnowledge(db: D1Database): Promise<SeedResult> {
           merged_from, proposed_by_ai, approval_status, created_at, updated_at, version
         ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .bind(
-        id,
-        seed.name,
-        curriculum.domain,
-        null,
-        0,
-        0,
-        '[]',
-        0,
-        'approved',
-        now,
-        now,
-        0,
-      )
+      .bind(id, seed.name, curriculum.domain, null, 0, 0, '[]', 0, 'approved', now, now, 0)
       .run();
     inserted += 1;
   }

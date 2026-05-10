@@ -1,8 +1,8 @@
+import { createId } from '@paralleldrive/cuid2';
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { createId } from '@paralleldrive/cuid2';
+import { FsrsRating, FsrsState } from '../../../src/core/schema/business';
 import { scheduleReview } from '../review/fsrs';
-import { FsrsState, FsrsRating } from '../../../src/core/schema/business';
 import type { AppEnv } from '../types';
 
 export const review = new Hono<AppEnv>();
@@ -16,8 +16,8 @@ const SubmitBody = z.object({
 
 review.get('/due', async (c) => {
   const limitRaw = c.req.query('limit');
-  const limitParsed = limitRaw ? parseInt(limitRaw, 10) : 20;
-  const limit = Math.min(Math.max(isNaN(limitParsed) ? 20 : limitParsed, 1), 50);
+  const limitParsed = limitRaw ? Number.parseInt(limitRaw, 10) : 20;
+  const limit = Math.min(Math.max(Number.isNaN(limitParsed) ? 20 : limitParsed, 1), 50);
   const nowIso = new Date().toISOString();
 
   const rows = await c.env.DB.prepare(
@@ -94,7 +94,7 @@ review.post('/submit', async (c) => {
   const now = new Date();
 
   const row = await c.env.DB.prepare(
-    `select id, fsrs_state, version, archived_at, deleted_at from mistake where id = ?`,
+    'select id, fsrs_state, version, archived_at, deleted_at from mistake where id = ?',
   )
     .bind(body.mistake_id)
     .first<{
@@ -163,7 +163,10 @@ review.post('/submit', async (c) => {
   const updateChanges = (results[0] as { meta?: { changes?: number } }).meta?.changes ?? 0;
   if (updateChanges !== 1) {
     return c.json(
-      { error: 'conflict', message: `mistake ${body.mistake_id} was concurrently modified (audit logged)` },
+      {
+        error: 'conflict',
+        message: `mistake ${body.mistake_id} was concurrently modified (audit logged)`,
+      },
       409,
     );
   }
