@@ -38,6 +38,12 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
   return btoa(binary);
 }
 
+function clamp01(n: number): number {
+  if (n < 0) return 0;
+  if (n > 1) return 1;
+  return n;
+}
+
 interface EduPosition { X: number; Y: number; Width: number; Height: number }
 interface EduResultListItem { Question?: { Text: string; Confidence: number } }
 interface EduQuestionArrItem { Position: EduPosition; ResultList: EduResultListItem[] }
@@ -136,10 +142,10 @@ function normalizeEduPaper(
       if (!text) continue;
       out.push({
         bbox: {
-          x: q.Position.X / dim.width,
-          y: q.Position.Y / dim.height,
-          width: q.Position.Width / dim.width,
-          height: q.Position.Height / dim.height,
+          x: clamp01(q.Position.X / dim.width),
+          y: clamp01(q.Position.Y / dim.height),
+          width: clamp01(q.Position.Width / dim.width),
+          height: clamp01(q.Position.Height / dim.height),
         },
         text,
         type: 'question',
@@ -162,10 +168,10 @@ function normalizeGeneral(
     if (!poly) continue;
     out.push({
       bbox: {
-        x: poly.X / dim.width,
-        y: poly.Y / dim.height,
-        width: poly.Width / dim.width,
-        height: poly.Height / dim.height,
+        x: clamp01(poly.X / dim.width),
+        y: clamp01(poly.Y / dim.height),
+        width: clamp01(poly.Width / dim.width),
+        height: clamp01(poly.Height / dim.height),
       },
       text: t.DetectedText,
       type: 'text',

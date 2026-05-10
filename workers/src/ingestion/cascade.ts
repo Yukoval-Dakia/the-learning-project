@@ -1,13 +1,21 @@
+import { ZodError } from 'zod';
 import { recognizeDocument as defaultRecognize, type TencentOCRRegion } from './ocr_tencent';
 import { parseVisionOutput, type VisionBlock } from './vision';
 
 function isEmptyBlocksError(err: unknown): boolean {
   // parseVisionOutput uses zod schema with `blocks: array(...).min(1)`.
-  // When the model returns `{"blocks":[]}` we get a ZodError whose message contains
-  // "Array must contain at least 1 element". That's not a failure — it's a successful
-  // model call that found no question blocks. Treat it as 0 blocks with no reason.
-  if (!(err instanceof Error)) return false;
-  return /at least 1 element|Too small|too_small/i.test(err.message);
+  // When the model returns `{"blocks":[]}` we get a ZodError whose ONLY issue is
+  // a too_small at path ["blocks"]. That's a successful model call with no blocks,
+  // not a real failure. Anything else (path inside blocks[i], wrong types, etc.) is
+  // a real malformation and should propagate as `reason` in tier_log.
+  if (!(err instanceof ZodError)) return false;
+  if (err.issues.length !== 1) return false;
+  const [issue] = err.issues;
+  return (
+    issue.code === 'too_small' &&
+    issue.path.length === 1 &&
+    issue.path[0] === 'blocks'
+  );
 }
 
 export interface NormalizedBlock {
