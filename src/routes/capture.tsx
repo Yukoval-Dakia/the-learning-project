@@ -247,6 +247,39 @@ export function CaptureSession() {
     });
   }
 
+  function handleDelete(localId: string) {
+    setCards((prev) => prev.filter((c) => c.localId !== localId));
+  }
+
+  function handleAddEmpty() {
+    const empty: EditableCard = {
+      localId: crypto.randomUUID(),
+      block_id: undefined,
+      source_block_ids: [],
+      page_spans: [
+        {
+          page_index: 0,
+          bbox: { x: 0, y: 0, width: 1, height: 1 },
+          role: 'prompt',
+        },
+      ],
+      image_refs: session?.source_asset_ids ?? [],
+      visual_complexity: 'low',
+      extraction_confidence: 1,
+      knowledge_hint: null,
+      final_prompt_md: '',
+      final_reference_md: '',
+      final_wrong_answer_md: '',
+      knowledge_ids: [],
+      cause_category: '',
+      cause_notes: '',
+      difficulty: 3,
+      question_kind: 'short_answer',
+      selected: false,
+    };
+    setCards((prev) => [empty, ...prev]);
+  }
+
   function handleSplit(localId: string) {
     setCards((prev) => {
       const idx = prev.findIndex((c) => c.localId === localId);
@@ -327,6 +360,11 @@ export function CaptureSession() {
     );
     if (invalid) {
       setErrorMsg('每题必须有题面、错答、至少一个知识点');
+      return;
+    }
+    const emptyManual = cards.find((c) => c.source_block_ids.length === 0);
+    if (emptyManual) {
+      setErrorMsg('手动新增的题暂不支持单独导入（无 source_block_id）。请先合并到现有题或先用拆分。');
       return;
     }
     importMutation.mutate();
@@ -421,6 +459,13 @@ export function CaptureSession() {
         >
           合并选中
         </button>
+        <button
+          type="button"
+          onClick={handleAddEmpty}
+          className="px-3 py-1 bg-emerald-100 text-emerald-800 text-sm rounded"
+        >
+          + 新增空题
+        </button>
       </div>
 
       {knowledgeQuery.isLoading && (
@@ -437,6 +482,7 @@ export function CaptureSession() {
             onUpdate={(patch) => updateCard(card.localId, patch)}
             onToggleKnowledge={(knId) => toggleCardKnowledge(card.localId, knId)}
             onSplit={() => handleSplit(card.localId)}
+            onDelete={() => handleDelete(card.localId)}
           />
         ))}
       </div>
@@ -465,9 +511,10 @@ interface CardViewProps {
   onUpdate: (patch: Partial<EditableCard>) => void;
   onToggleKnowledge: (knId: string) => void;
   onSplit: () => void;
+  onDelete: () => void;
 }
 
-function CardView({ card, idx, knowledgeOptions, onUpdate, onToggleKnowledge, onSplit }: CardViewProps) {
+function CardView({ card, idx, knowledgeOptions, onUpdate, onToggleKnowledge, onSplit, onDelete }: CardViewProps) {
   const confidenceLow = card.extraction_confidence < 0.5;
 
   return (
@@ -494,13 +541,23 @@ function CardView({ card, idx, knowledgeOptions, onUpdate, onToggleKnowledge, on
             </span>
           )}
         </div>
-        <button
-          type="button"
-          onClick={onSplit}
-          className="text-xs px-2 py-1 border rounded text-slate-600 hover:bg-slate-50"
-        >
-          拆分本题
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onSplit}
+            className="text-xs px-2 py-1 border rounded text-slate-600 hover:bg-slate-50"
+          >
+            拆分本题
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            className="text-xs px-2 py-1 border border-red-200 rounded text-red-600 hover:bg-red-50"
+            aria-label="丢弃本题"
+          >
+            ×
+          </button>
+        </div>
       </div>
 
       <label className="block">
@@ -581,6 +638,25 @@ function CardView({ card, idx, knowledgeOptions, onUpdate, onToggleKnowledge, on
           </select>
         </label>
       </div>
+
+      <label className="block">
+        <span className="text-xs font-medium text-slate-600">类型（page role）</span>
+        <select
+          value={card.page_spans[0]?.role ?? 'prompt'}
+          onChange={(e) => {
+            const newRole = e.target.value as 'prompt' | 'answer_area' | 'continuation';
+            const nextSpans = card.page_spans.length === 0
+              ? [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: newRole }]
+              : card.page_spans.map((s, i) => (i === 0 ? { ...s, role: newRole } : s));
+            onUpdate({ page_spans: nextSpans });
+          }}
+          className="mt-1 w-full border rounded p-1.5 text-sm"
+        >
+          <option value="prompt">题面 (prompt)</option>
+          <option value="answer_area">错答区 (answer_area)</option>
+          <option value="continuation">续页 (continuation)</option>
+        </select>
+      </label>
 
       <label className="block">
         <span className="text-xs font-medium text-slate-600">错因（可空，留空 → AI 自动归因）</span>
