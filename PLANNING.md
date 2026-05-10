@@ -78,6 +78,7 @@ the-learning-project/
 - [x] AttributionTask 接通（10 类 cause + AI 自动归因；失败兜底为 cause 留空 + log，Phase 1a Sub 3 已落）
 - [ ] **Sub 4A** — Mistake FSRS 复习闭环（用 OSS `ts-fsrs`） + `review_event` 行为日志表 + 简陋 `/review` UI（键盘 1/2/3 串行）
 - [ ] **Sub 4B** — LearningItem 简化版（仅 pending / in_progress / done 三态走通；6 状态字段保留 schema，状态机本身先简化）+ CompletionEvidence 自我宣告写入路径
+- [x] **Sub 4C** — Capture 流重整 + Tencent OCR Tier-1 + 退役 /record（OCR cascade + /capture 主入口 + 审核页全字段编辑；PR 当前分支待 merge）
 - [ ] **Sub 5** — 数据导出（JSON 全量 + 错题 CSV 摘要）
 
 **Sub 4A 关键决策**（详见 `docs/superpowers/specs/2026-05-10-phase1a-sub4a-design.md`）：
@@ -97,6 +98,16 @@ the-learning-project/
 - [x] PWA 基础（manifest + standalone + 安装到主屏；PR 2 已落，dev-mode SW 关）
 
 目标：自己能用它备文言文一周，跑出第一批数据。
+
+## Design system 增量扩展原则（Sub 4C 起 lock）
+
+每加新 module / page 必须遵循（详见 `docs/superpowers/specs/2026-05-10-phase1a-sub4c-design.md` § 八）：
+
+1. **扩展 token 而非重写** — 在 `src/index.css` 既有 `--token-*` 之上加新 token，不替换已有名字
+2. **重复 ≥3 次抽 component** — 抽到 `src/components/`，业务命名（`Card` / `StatusBadge` / `KnowledgePicker`），不是 `BoxV2`
+3. **写 design extension 小文档** — 引入新 token / component 时加一节到 `docs/design/extensions.md`：[新增 token + 用途] / [新增 component + 用途 + 已用页]
+4. **不偏离 Loom anchor** — 暖白底 + coral 单 accent / 思源宋体 + Source Serif 4 + MiSans + Inter / 中文优先 / 低视觉噪音 / 无 emoji 体验、无游戏化
+5. **既有 page 用既有 token** — 不允许新 page 用 ad-hoc 颜色 / 字号 / 间距；token 不够先扩展 token，再用
 
 #### Phase 1b · 补完（1a 跑出第一周数据后做）
 

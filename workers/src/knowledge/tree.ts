@@ -15,7 +15,7 @@ export interface KnowledgeNode extends KnowledgeRow {
 export async function loadTreeSnapshot(db: D1Database): Promise<KnowledgeNode[]> {
   const rows = await db
     .prepare(
-      `select id, name, domain, parent_id, archived_at from knowledge where archived_at is null`,
+      'select id, name, domain, parent_id, archived_at from knowledge where archived_at is null',
     )
     .bind()
     .all<KnowledgeRow>();

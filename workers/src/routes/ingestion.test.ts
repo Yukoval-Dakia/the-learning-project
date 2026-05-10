@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { D1Database, ExecutionContext, R2Bucket } from '@cloudflare/workers-types';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ingestion, setIngestionRunTaskForTests } from './ingestion';
 
 type SourceAssetRow = { id: string; storage_key: string; mime_type: string };
@@ -23,10 +23,12 @@ function makeVisionOutput(pageIndex: number, seed = 'a') {
   return JSON.stringify({ blocks: [makeVisionBlock(pageIndex, seed)] });
 }
 
-function mockEnv(opts: {
-  sourceAssetRows?: Map<string, SourceAssetRow>;
-  r2Missing?: Set<string>;
-} = {}) {
+function mockEnv(
+  opts: {
+    sourceAssetRows?: Map<string, SourceAssetRow>;
+    r2Missing?: Set<string>;
+  } = {},
+) {
   const assetRows = opts.sourceAssetRows ?? new Map();
   const r2Missing = opts.r2Missing ?? new Set();
   const calls: Array<{ sql: string; binds: unknown[] }> = [];
@@ -59,7 +61,9 @@ function mockEnv(opts: {
 
   const waitUntilFns: Array<Promise<unknown>> = [];
   const executionCtx = {
-    waitUntil: (p: Promise<unknown>) => { waitUntilFns.push(p); },
+    waitUntil: (p: Promise<unknown>) => {
+      waitUntilFns.push(p);
+    },
     passThroughOnException: () => {},
     props: {},
   } as unknown as ExecutionContext;
@@ -73,7 +77,15 @@ function mockEnv(opts: {
   } as unknown as R2Bucket;
 
   return {
-    Bindings: { DB: db, IMAGES, INTERNAL_TOKEN: 'test', ANTHROPIC_API_KEY: 'test' },
+    Bindings: {
+      DB: db,
+      IMAGES,
+      INTERNAL_TOKEN: 'test',
+      ANTHROPIC_API_KEY: 'test',
+      TENCENT_SECRET_ID: 'test',
+      TENCENT_SECRET_KEY: 'test',
+      TENCENT_OCR_REGION: 'ap-guangzhou',
+    },
     executionCtx,
     calls,
     waitUntilFns,
@@ -97,9 +109,26 @@ describe('POST /api/ingestion', () => {
       visionCallArgs.push({ kind, input });
       const inp = input as { text: string };
       const match = inp.text.match(/page_index=(\d+)/);
-      const pageIndex = match ? parseInt(match[1], 10) : 0;
+      const pageIndex = match ? Number.parseInt(match[1], 10) : 0;
       return { text: makeVisionOutput(pageIndex, String(pageIndex)) };
     });
+    // Stub Tencent so it returns 0 regions twice (edu + general fallback) and
+    // cascade escalates to Tier 2 haiku — preserves existing test semantics.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ Response: { QuestionBlockInfos: [], TextDetections: [] } }),
+            { status: 200 },
+          ),
+      ),
+    );
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it('happy path 2 assets: inserts session + doc + 2 blocks, returns extracted status', async () => {
@@ -118,7 +147,13 @@ describe('POST /api/ingestion', () => {
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      session: { id: string; source_document_id: string; status: string; source_asset_ids: string[]; entrypoint: string };
+      session: {
+        id: string;
+        source_document_id: string;
+        status: string;
+        source_asset_ids: string[];
+        entrypoint: string;
+      };
       blocks: Array<{ block_id: string; source_block_ids: string[] }>;
     };
 
@@ -204,7 +239,9 @@ describe('POST /api/ingestion', () => {
   });
 
   it('all vision throw: returns 200, blocks=[], status=failed', async () => {
-    setIngestionRunTaskForTests(async () => { throw new Error('ai exploded'); });
+    setIngestionRunTaskForTests(async () => {
+      throw new Error('ai exploded');
+    });
 
     const assetRows = new Map<string, SourceAssetRow>([
       ['asset_1', { id: 'asset_1', storage_key: 'sk_1', mime_type: 'image/png' }],
@@ -229,10 +266,12 @@ describe('POST /api/ingestion', () => {
     let callCount = 0;
     setIngestionRunTaskForTests(async (_kind, input) => {
       callCount++;
-      if (callCount === 1) throw new Error('first asset exploded');
+      // Cascade has Tier 2 (haiku) + Tier 3 (sonnet) per asset.
+      // Throw on the first two calls so asset_1 exhausts all AI tiers; asset_2 succeeds on its first.
+      if (callCount <= 2) throw new Error('first asset exploded');
       const inp = input as { text: string };
       const match = inp.text.match(/page_index=(\d+)/);
-      const pageIndex = match ? parseInt(match[1], 10) : 0;
+      const pageIndex = match ? Number.parseInt(match[1], 10) : 0;
       return { text: makeVisionOutput(pageIndex, String(pageIndex)) };
     });
 
@@ -261,7 +300,7 @@ describe('POST /api/ingestion', () => {
       const inp = input as { text: string };
       capturedInputs.push(inp);
       const match = inp.text.match(/page_index=(\d+)/);
-      const pageIndex = match ? parseInt(match[1], 10) : 0;
+      const pageIndex = match ? Number.parseInt(match[1], 10) : 0;
       return { text: makeVisionOutput(pageIndex, String(pageIndex)) };
     });
 
@@ -315,6 +354,64 @@ describe('POST /api/ingestion', () => {
     );
     expect(res.status).toBe(400);
   });
+
+  it('R2 missing asset: failures array in response contains asset_id + reason', async () => {
+    const assetRows = new Map<string, SourceAssetRow>([
+      ['asset_ok', { id: 'asset_ok', storage_key: 'sk_ok', mime_type: 'image/png' }],
+      ['asset_missing', { id: 'asset_missing', storage_key: 'sk_missing', mime_type: 'image/png' }],
+    ]);
+    const { Bindings, executionCtx } = mockEnv({
+      sourceAssetRows: assetRows,
+      r2Missing: new Set(['sk_missing']),
+    });
+
+    const res = await ingestion.request(
+      '/',
+      makeRequest({ entrypoint: 'vision_single', asset_ids: ['asset_ok', 'asset_missing'] }),
+      Bindings,
+      executionCtx,
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      session: { status: string };
+      blocks: unknown[];
+      failures: Array<{ asset_id: string; reason: string }>;
+    };
+    expect(body.failures).toBeDefined();
+    expect(body.failures).toHaveLength(1);
+    expect(body.failures[0].asset_id).toBe('asset_missing');
+    expect(body.failures[0].reason).toBe('r2_object_missing');
+    expect(body.blocks).toHaveLength(1);
+  });
+
+  it('persists tier_log JSON to session.error_message even on success', async () => {
+    const assetRows = new Map<string, SourceAssetRow>([
+      ['a', { id: 'a', storage_key: 'sk', mime_type: 'image/png' }],
+    ]);
+    const { Bindings, executionCtx, calls } = mockEnv({ sourceAssetRows: assetRows });
+    const res = await ingestion.request(
+      '/',
+      makeRequest({ entrypoint: 'vision_single', asset_ids: ['a'] }),
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(200);
+    // Find the UPDATE on ingestion_session
+    const update = calls.find((c) => /update ingestion_session/i.test(c.sql));
+    expect(update).toBeDefined();
+    const payloadRaw = update?.binds[1] as string;
+    expect(typeof payloadRaw).toBe('string');
+    const payload = JSON.parse(payloadRaw) as {
+      tier_logs: Array<{ asset_id: string; log: Array<{ tier: number }> }>;
+    };
+    expect(payload.tier_logs).toHaveLength(1);
+    expect(payload.tier_logs[0].asset_id).toBe('a');
+    // Tier 1 (Tencent stubbed empty) + Tier 2 (haiku mock returns blocks) → 2 entries.
+    expect(payload.tier_logs[0].log.length).toBe(2);
+    expect(payload.tier_logs[0].log[0].tier).toBe(1);
+    expect(payload.tier_logs[0].log[1].tier).toBe(2);
+  });
 });
 
 // =================== POST /api/ingestion/:id/import ===================
@@ -354,14 +451,19 @@ type QuestionBlockRow = {
   version: number;
 };
 
-function mockImportEnv(opts: {
-  session?: SessionRow | null;
-  questionBlocks?: Map<string, QuestionBlockRow>;
-  knowledgeIds?: string[];
-} = {}) {
+function mockImportEnv(
+  opts: {
+    session?: SessionRow | null;
+    questionBlocks?: Map<string, QuestionBlockRow>;
+    knowledgeIds?: string[];
+    /** Extra draft block ids that exist in DB but are NOT passed in body.blocks (user deleted them) */
+    extraDraftBlockIds?: string[];
+  } = {},
+) {
   const session = opts.session !== undefined ? opts.session : null;
   const blocks = opts.questionBlocks ?? new Map<string, QuestionBlockRow>();
   const knowledgeSet = new Set(opts.knowledgeIds ?? []);
+  const extraDraftIds = opts.extraDraftBlockIds ?? [];
   const calls: Array<{ sql: string; binds: unknown[] }> = [];
 
   const prepare = vi.fn((sql: string) => ({
@@ -394,6 +496,22 @@ function mockImportEnv(opts: {
               archived_at: null,
             }));
             return { results: rows };
+          }
+          // Draft-block sweep query
+          if (
+            /select id from question_block where ingestion_session_id = \? and status = 'draft'/i.test(
+              sql,
+            )
+          ) {
+            // Return all draft block ids: those in blocks map with draft status + extraDraftIds
+            const draftRows: Array<{ id: string }> = [];
+            for (const [id, row] of blocks) {
+              if (row.status === 'draft') draftRows.push({ id });
+            }
+            for (const id of extraDraftIds) {
+              draftRows.push({ id });
+            }
+            return { results: draftRows };
           }
           return { results: [] };
         },
@@ -438,7 +556,9 @@ function makeBlockRow(overrides: Partial<QuestionBlockRow>): QuestionBlockRow {
     ingestion_session_id: overrides.ingestion_session_id ?? 'sess_1',
     source_document_id: overrides.source_document_id ?? 'doc_1',
     source_asset_ids: overrides.source_asset_ids ?? '["asset_1"]',
-    page_spans: overrides.page_spans ?? '[{"page_index":0,"bbox":{"x":0,"y":0,"width":1,"height":1},"role":"prompt"}]',
+    page_spans:
+      overrides.page_spans ??
+      '[{"page_index":0,"bbox":{"x":0,"y":0,"width":1,"height":1},"role":"prompt"}]',
     extracted_prompt_md: overrides.extracted_prompt_md ?? 'Q text',
     reference_md: overrides.reference_md ?? null,
     wrong_answer_md: overrides.wrong_answer_md ?? null,
@@ -500,7 +620,9 @@ describe('POST /api/ingestion/:id/import', () => {
           {
             block_id: 'block_a',
             source_block_ids: ['block_a'],
-            page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' }],
+            page_spans: [
+              { page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' },
+            ],
             image_refs: ['asset_1'],
             final_prompt_md: 'Q final',
             final_reference_md: null,
@@ -523,7 +645,9 @@ describe('POST /api/ingestion/:id/import', () => {
 
     expect(calls.filter((c) => /insert into question \(/i.test(c.sql))).toHaveLength(1);
     expect(calls.filter((c) => /insert into mistake/i.test(c.sql))).toHaveLength(1);
-    expect(calls.filter((c) => /update question_block/i.test(c.sql)).length).toBeGreaterThanOrEqual(1);
+    expect(calls.filter((c) => /update question_block/i.test(c.sql)).length).toBeGreaterThanOrEqual(
+      1,
+    );
     expect(calls.filter((c) => /update ingestion_session/i.test(c.sql))).toHaveLength(1);
 
     expect(waitUntilFns).toHaveLength(2);
@@ -545,7 +669,9 @@ describe('POST /api/ingestion/:id/import', () => {
           {
             block_id: 'block_a',
             source_block_ids: ['block_a'],
-            page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' }],
+            page_spans: [
+              { page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' },
+            ],
             image_refs: ['asset_1'],
             final_prompt_md: 'Q',
             final_reference_md: null,
@@ -581,7 +707,9 @@ describe('POST /api/ingestion/:id/import', () => {
           {
             block_id: 'block_a',
             source_block_ids: ['block_a'],
-            page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' }],
+            page_spans: [
+              { page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' },
+            ],
             image_refs: ['asset_1'],
             final_prompt_md: 'Q',
             final_reference_md: null,
@@ -616,7 +744,9 @@ describe('POST /api/ingestion/:id/import', () => {
           {
             block_id: 'block_a',
             source_block_ids: ['block_a'],
-            page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' }],
+            page_spans: [
+              { page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' },
+            ],
             image_refs: ['asset_1'],
             final_prompt_md: 'Q',
             final_reference_md: null,
@@ -652,7 +782,9 @@ describe('POST /api/ingestion/:id/import', () => {
           {
             block_id: 'block_a',
             source_block_ids: ['block_a'],
-            page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' }],
+            page_spans: [
+              { page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' },
+            ],
             image_refs: ['asset_1'],
             final_prompt_md: 'Q',
             final_reference_md: null,
@@ -728,9 +860,7 @@ describe('POST /api/ingestion/:id/import', () => {
 
     // Source blocks block_a + block_b should be UPDATEd to status='ignored'
     const updateBlockCalls = calls.filter((c) => /update question_block/i.test(c.sql));
-    const ignoreUpdates = updateBlockCalls.filter((c) =>
-      c.binds.some((b) => b === 'ignored'),
-    );
+    const ignoreUpdates = updateBlockCalls.filter((c) => c.binds.some((b) => b === 'ignored'));
     expect(ignoreUpdates).toHaveLength(2);
     const ignoredIds = ignoreUpdates.map((c) => c.binds[c.binds.length - 1] as string).sort();
     expect(ignoredIds).toEqual(['block_a', 'block_b']);
@@ -757,7 +887,9 @@ describe('POST /api/ingestion/:id/import', () => {
           {
             // No block_id, source_block_ids contains shared source
             source_block_ids: ['block_a'],
-            page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 0.5, height: 1 }, role: 'prompt' }],
+            page_spans: [
+              { page_index: 0, bbox: { x: 0, y: 0, width: 0.5, height: 1 }, role: 'prompt' },
+            ],
             image_refs: ['asset_1'],
             final_prompt_md: 'Q1 split',
             final_reference_md: null,
@@ -769,7 +901,9 @@ describe('POST /api/ingestion/:id/import', () => {
           },
           {
             source_block_ids: ['block_a'],
-            page_spans: [{ page_index: 0, bbox: { x: 0.5, y: 0, width: 0.5, height: 1 }, role: 'prompt' }],
+            page_spans: [
+              { page_index: 0, bbox: { x: 0.5, y: 0, width: 0.5, height: 1 }, role: 'prompt' },
+            ],
             image_refs: ['asset_1'],
             final_prompt_md: 'Q2 split',
             final_reference_md: null,
@@ -823,7 +957,9 @@ describe('POST /api/ingestion/:id/import', () => {
           {
             block_id: 'block_a',
             source_block_ids: ['block_a'],
-            page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' }],
+            page_spans: [
+              { page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' },
+            ],
             image_refs: ['asset_1'],
             final_prompt_md: 'Q unchanged',
             final_reference_md: null,
@@ -836,7 +972,9 @@ describe('POST /api/ingestion/:id/import', () => {
           {
             // Virtual card sharing block_a as source
             source_block_ids: ['block_a'],
-            page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 0.5, height: 1 }, role: 'prompt' }],
+            page_spans: [
+              { page_index: 0, bbox: { x: 0, y: 0, width: 0.5, height: 1 }, role: 'prompt' },
+            ],
             image_refs: ['asset_1'],
             final_prompt_md: 'Q virtual',
             final_reference_md: null,
@@ -877,7 +1015,9 @@ describe('POST /api/ingestion/:id/import', () => {
           {
             block_id: 'block_a',
             source_block_ids: ['block_a'],
-            page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' }],
+            page_spans: [
+              { page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' },
+            ],
             image_refs: ['asset_FOREIGN'],
             final_prompt_md: 'Q',
             final_reference_md: null,
@@ -918,7 +1058,9 @@ describe('POST /api/ingestion/:id/import', () => {
           {
             block_id: 'block_a',
             source_block_ids: ['block_b'],
-            page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' }],
+            page_spans: [
+              { page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' },
+            ],
             image_refs: ['asset_1'],
             final_prompt_md: 'Q',
             final_reference_md: null,
@@ -953,7 +1095,9 @@ describe('POST /api/ingestion/:id/import', () => {
         blocks: [
           {
             source_block_ids: ['block_NEVER_EXISTED'],
-            page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' }],
+            page_spans: [
+              { page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' },
+            ],
             image_refs: ['asset_1'],
             final_prompt_md: 'Q',
             final_reference_md: null,
@@ -990,7 +1134,9 @@ describe('POST /api/ingestion/:id/import', () => {
             block_id: 'block_a',
             source_block_ids: ['block_a'],
             // session has 1 asset → page_index 5 is out of range
-            page_spans: [{ page_index: 5, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' }],
+            page_spans: [
+              { page_index: 5, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' },
+            ],
             image_refs: ['asset_1'],
             final_prompt_md: 'Q',
             final_reference_md: null,
@@ -1028,7 +1174,9 @@ describe('POST /api/ingestion/:id/import', () => {
           {
             block_id: 'block_a',
             source_block_ids: ['block_a'],
-            page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' }],
+            page_spans: [
+              { page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' },
+            ],
             image_refs: ['asset_1'],
             final_prompt_md: 'Q',
             final_reference_md: null,
@@ -1089,7 +1237,140 @@ describe('POST /api/ingestion/:id/import', () => {
     expect(res.status).toBe(200);
     const insertBlock = calls.find((c) => /insert into question_block/i.test(c.sql));
     expect(insertBlock).toBeDefined();
-    expect((insertBlock!.binds as unknown[]).includes('high')).toBe(true);
+    expect((insertBlock?.binds as unknown[]).includes('high')).toBe(true);
+  });
+
+  it('manual block (Tier 4 fallback): block_id=undefined, source_block_ids=[] → 200, question + mistake created', async () => {
+    const { Bindings, executionCtx, calls } = mockImportEnv({
+      session: makeSessionRow({}),
+      questionBlocks: new Map(),
+      knowledgeIds: ['k1'],
+    });
+
+    const res = await ingestion.request(
+      '/sess_1/import',
+      makeImportRequest({
+        blocks: [
+          {
+            // No block_id, no source_block_ids — manual Tier 4 fallback
+            source_block_ids: [],
+            page_spans: [
+              { page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' },
+            ],
+            image_refs: ['asset_1'],
+            final_prompt_md: 'manual q',
+            final_reference_md: null,
+            final_wrong_answer_md: 'manual a',
+            knowledge_ids: ['k1'],
+            cause: null,
+            difficulty: 3,
+            question_kind: 'short_answer',
+          },
+        ],
+      }),
+      Bindings,
+      executionCtx,
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { question_ids: string[]; mistake_ids: string[] };
+    expect(body.question_ids).toHaveLength(1);
+    expect(body.mistake_ids).toHaveLength(1);
+    expect(calls.filter((c) => /insert into question \(/i.test(c.sql))).toHaveLength(1);
+    expect(calls.filter((c) => /insert into mistake/i.test(c.sql))).toHaveLength(1);
+    // A new question_block is inserted for the manual card
+    expect(calls.filter((c) => /insert into question_block/i.test(c.sql))).toHaveLength(1);
+  });
+
+  it('manual block without image_refs → 400', async () => {
+    const { Bindings, executionCtx } = mockImportEnv({
+      session: makeSessionRow({}),
+      questionBlocks: new Map(),
+      knowledgeIds: ['k1'],
+    });
+
+    const res = await ingestion.request(
+      '/sess_1/import',
+      makeImportRequest({
+        blocks: [
+          {
+            source_block_ids: [],
+            page_spans: [
+              { page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' },
+            ],
+            image_refs: [],
+            final_prompt_md: 'manual q',
+            final_reference_md: null,
+            final_wrong_answer_md: 'manual a',
+            knowledge_ids: ['k1'],
+            cause: null,
+            difficulty: 3,
+            question_kind: 'short_answer',
+          },
+        ],
+      }),
+      Bindings,
+      executionCtx,
+    );
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toMatch(/manual block must reference at least one image_ref/);
+  });
+
+  it('delete-block sweep: draft block not in body → marked ignored after import', async () => {
+    const blocks = new Map<string, QuestionBlockRow>();
+    blocks.set('block_imported', makeBlockRow({ id: 'block_imported' }));
+    // block_deleted is a draft block that exists in DB but is NOT in the import body
+    const { Bindings, executionCtx, calls } = mockImportEnv({
+      session: makeSessionRow({}),
+      questionBlocks: blocks,
+      knowledgeIds: ['k1'],
+      extraDraftBlockIds: ['block_deleted'],
+    });
+
+    const res = await ingestion.request(
+      '/sess_1/import',
+      makeImportRequest({
+        blocks: [
+          {
+            block_id: 'block_imported',
+            source_block_ids: ['block_imported'],
+            page_spans: [
+              { page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' },
+            ],
+            image_refs: ['asset_1'],
+            final_prompt_md: 'Q final',
+            final_reference_md: null,
+            final_wrong_answer_md: 'WA',
+            knowledge_ids: ['k1'],
+            cause: null,
+            difficulty: 3,
+            question_kind: 'short_answer',
+          },
+        ],
+      }),
+      Bindings,
+      executionCtx,
+    );
+
+    expect(res.status).toBe(200);
+    // The sweep query should have been issued
+    expect(
+      calls.some((c) =>
+        /select id from question_block where ingestion_session_id = \? and status = 'draft'/i.test(
+          c.sql,
+        ),
+      ),
+    ).toBe(true);
+    // block_deleted should be marked 'ignored'
+    const ignoreUpdates = calls.filter(
+      (c) => /update question_block/i.test(c.sql) && c.binds.some((b) => b === 'ignored'),
+    );
+    const ignoredIds = ignoreUpdates.map((c) => c.binds[c.binds.length - 1] as string);
+    expect(ignoredIds).toContain('block_deleted');
+    // block_imported should NOT be marked ignored
+    expect(ignoredIds).not.toContain('block_imported');
   });
 
   it('wrong_answer_image_refs derived from page_spans where role=answer_area', async () => {
@@ -1130,8 +1411,12 @@ describe('POST /api/ingestion/:id/import', () => {
     expect(res.status).toBe(200);
     const insertMistake = calls.find((c) => /insert into mistake/i.test(c.sql));
     expect(insertMistake).toBeDefined();
-    const wrongRefsBind = (insertMistake!.binds as unknown[]).find(
-      (b) => typeof b === 'string' && b.startsWith('[') && b.includes('asset_a') && !b.includes('asset_p'),
+    const wrongRefsBind = (insertMistake?.binds as unknown[]).find(
+      (b) =>
+        typeof b === 'string' &&
+        b.startsWith('[') &&
+        b.includes('asset_a') &&
+        !b.includes('asset_p'),
     );
     expect(wrongRefsBind).toBeDefined();
     expect(JSON.parse(wrongRefsBind as string)).toEqual(['asset_a']);

@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 const INTERNAL_TOKEN = import.meta.env.VITE_INTERNAL_TOKEN ?? '';
@@ -61,10 +61,32 @@ interface EditableCard {
   selected: boolean;
 }
 
-const QUESTION_KINDS = ['short_answer', 'choice', 'true_false', 'fill_blank', 'essay', 'computation', 'reading', 'translation'];
-const CAUSE_CATEGORIES = ['concept', 'knowledge_gap', 'calculation', 'reading', 'memory', 'expression', 'method', 'carelessness', 'time_pressure', 'other'];
+const QUESTION_KINDS = [
+  'short_answer',
+  'choice',
+  'true_false',
+  'fill_blank',
+  'essay',
+  'computation',
+  'reading',
+  'translation',
+];
+const CAUSE_CATEGORIES = [
+  'concept',
+  'knowledge_gap',
+  'calculation',
+  'reading',
+  'memory',
+  'expression',
+  'method',
+  'carelessness',
+  'time_pressure',
+  'other',
+];
 
-async function uploadAsset(file: File): Promise<{ id: string; mime_type: string; byte_size: number; name: string }> {
+async function uploadAsset(
+  file: File,
+): Promise<{ id: string; mime_type: string; byte_size: number; name: string }> {
   const form = new FormData();
   form.set('file', file);
   const res = await fetch('/api/assets', {
@@ -76,8 +98,15 @@ async function uploadAsset(file: File): Promise<{ id: string; mime_type: string;
     const text = await res.text().catch(() => '');
     throw new Error(`POST /api/assets ${res.status}: ${text}`);
   }
-  const body = (await res.json()) as { asset: { id: string; mime_type: string; byte_size: number } };
-  return { id: body.asset.id, mime_type: body.asset.mime_type, byte_size: body.asset.byte_size, name: file.name };
+  const body = (await res.json()) as {
+    asset: { id: string; mime_type: string; byte_size: number };
+  };
+  return {
+    id: body.asset.id,
+    mime_type: body.asset.mime_type,
+    byte_size: body.asset.byte_size,
+    name: file.name,
+  };
 }
 
 async function fetchKnowledge(): Promise<KnowledgeNode[]> {
@@ -109,7 +138,7 @@ function blockToCard(b: IngestionBlock): EditableCard {
   };
 }
 
-export function IngestSession() {
+export function CaptureSession() {
   const navigate = useNavigate();
   const [phase, setPhase] = useState<'upload' | 'review'>('upload');
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -186,16 +215,26 @@ export function IngestSession() {
         const text = await res.text().catch(() => '');
         throw new Error(`POST /api/ingestion ${res.status}: ${text}`);
       }
-      const body = (await res.json()) as { session: IngestionSession; blocks: IngestionBlock[] };
-      if (body.session.status === 'failed' || body.blocks.length === 0) {
-        setErrorMsg('OCR 失败，请检查图片');
-        setUploading(false);
-        return;
-      }
+      const body = (await res.json()) as {
+        session: IngestionSession;
+        blocks: IngestionBlock[];
+        failures?: Array<{ asset_id: string; reason: string }>;
+      };
       const initial = body.blocks.map(blockToCard);
       setSessionId(body.session.id);
       setSession(body.session);
       setCards(initial);
+      // Surface failures (partial multi-page failure was previously silent)
+      const noticeParts: string[] = [];
+      if (body.session.status === 'failed' || body.blocks.length === 0) {
+        noticeParts.push('OCR 未识别出题目，可手动 + 新增空题');
+      }
+      if (body.failures && body.failures.length > 0) {
+        noticeParts.push(
+          `${body.failures.length} 张图抽取失败：${body.failures.map((f) => f.reason).join('；')}`,
+        );
+      }
+      setErrorMsg(noticeParts.length > 0 ? noticeParts.join(' ｜ ') : null);
       setPhase('review');
     } catch (e) {
       setErrorMsg(`提取失败: ${(e as Error).message}`);
@@ -218,10 +257,14 @@ export function IngestSession() {
         visual_complexity: sel.some((c) => c.visual_complexity === 'high')
           ? 'high'
           : sel.some((c) => c.visual_complexity === 'medium')
-          ? 'medium'
-          : 'low',
+            ? 'medium'
+            : 'low',
         extraction_confidence: Math.min(...sel.map((c) => c.extraction_confidence)),
-        knowledge_hint: sel.map((c) => c.knowledge_hint).filter(Boolean).join('; ') || null,
+        knowledge_hint:
+          sel
+            .map((c) => c.knowledge_hint)
+            .filter(Boolean)
+            .join('; ') || null,
         final_prompt_md: sel.map((c) => c.final_prompt_md).join('\n\n'),
         final_reference_md: sel
           .map((c) => c.final_reference_md)
@@ -245,6 +288,39 @@ export function IngestSession() {
       remaining.splice(firstSelectedIndex, 0, merged);
       return remaining;
     });
+  }
+
+  function handleDelete(localId: string) {
+    setCards((prev) => prev.filter((c) => c.localId !== localId));
+  }
+
+  function handleAddEmpty() {
+    const empty: EditableCard = {
+      localId: crypto.randomUUID(),
+      block_id: undefined,
+      source_block_ids: [],
+      page_spans: [
+        {
+          page_index: 0,
+          bbox: { x: 0, y: 0, width: 1, height: 1 },
+          role: 'prompt',
+        },
+      ],
+      image_refs: session?.source_asset_ids ?? [],
+      visual_complexity: 'low',
+      extraction_confidence: 1,
+      knowledge_hint: null,
+      final_prompt_md: '',
+      final_reference_md: '',
+      final_wrong_answer_md: '',
+      knowledge_ids: [],
+      cause_category: '',
+      cause_notes: '',
+      difficulty: 3,
+      question_kind: 'short_answer',
+      selected: false,
+    };
+    setCards((prev) => [empty, ...prev]);
   }
 
   function handleSplit(localId: string) {
@@ -335,16 +411,18 @@ export function IngestSession() {
   if (phase === 'upload') {
     return (
       <main className="mx-auto max-w-3xl px-4 py-8">
-        <h1 className="text-xl font-semibold mb-4">批量导入错题（视觉提取）</h1>
-        <p className="text-sm text-slate-500 mb-6">上传题目截图或扫描件，AI 自动识别题目并拆块。</p>
+        <h1 className="text-xl font-semibold mb-4">录题</h1>
+        <p className="text-sm text-slate-500 mb-6">
+          上传题目图片（试卷 / 截图 / 扫描件）。OCR + AI 兜底自动切题；不满意可在审核页编辑。
+        </p>
 
         <div className="space-y-4">
           <label className="block">
-            <span className="text-sm font-medium">选择图片（PNG / JPEG / WebP，可多张）</span>
+            <span className="text-sm font-medium">选择图片（PNG / JPEG，可多张）</span>
             <input
               type="file"
               multiple
-              accept="image/png,image/jpeg,image/webp"
+              accept="image/png,image/jpeg"
               className="mt-1 block text-sm"
               onChange={(e) => {
                 setSelectedFiles(Array.from(e.target.files ?? []));
@@ -355,8 +433,11 @@ export function IngestSession() {
 
           {selectedFiles.length > 0 && (
             <ul className="space-y-1">
-              {selectedFiles.map((f, i) => (
-                <li key={i} className="text-xs text-slate-600 border rounded px-2 py-1">
+              {selectedFiles.map((f) => (
+                <li
+                  key={`${f.name}-${f.size}`}
+                  className="text-xs text-slate-600 border rounded px-2 py-1"
+                >
                   {f.name} · {(f.size / 1024).toFixed(0)} KB
                 </li>
               ))}
@@ -385,8 +466,7 @@ export function IngestSession() {
     <main className="mx-auto max-w-3xl px-4 py-8">
       <div className="flex items-baseline justify-between mb-4">
         <h1 className="text-xl font-semibold">
-          已识别 {cards.length} 题
-          {mergedCount > 0 && `，已合并 ${mergedCount} 组`}
+          已识别 {cards.length} 题{mergedCount > 0 && `，已合并 ${mergedCount} 组`}
         </h1>
         <div className="flex items-center gap-3">
           <span className="text-xs px-2 py-1 rounded bg-slate-100 text-slate-700">
@@ -419,11 +499,16 @@ export function IngestSession() {
         >
           合并选中
         </button>
+        <button
+          type="button"
+          onClick={handleAddEmpty}
+          className="px-3 py-1 bg-emerald-100 text-emerald-800 text-sm rounded"
+        >
+          + 新增空题
+        </button>
       </div>
 
-      {knowledgeQuery.isLoading && (
-        <p className="text-sm text-slate-500 mb-2">知识点加载中...</p>
-      )}
+      {knowledgeQuery.isLoading && <p className="text-sm text-slate-500 mb-2">知识点加载中...</p>}
 
       <div className="space-y-6">
         {cards.map((card, idx) => (
@@ -435,6 +520,7 @@ export function IngestSession() {
             onUpdate={(patch) => updateCard(card.localId, patch)}
             onToggleKnowledge={(knId) => toggleCardKnowledge(card.localId, knId)}
             onSplit={() => handleSplit(card.localId)}
+            onDelete={() => handleDelete(card.localId)}
           />
         ))}
       </div>
@@ -463,9 +549,18 @@ interface CardViewProps {
   onUpdate: (patch: Partial<EditableCard>) => void;
   onToggleKnowledge: (knId: string) => void;
   onSplit: () => void;
+  onDelete: () => void;
 }
 
-function CardView({ card, idx, knowledgeOptions, onUpdate, onToggleKnowledge, onSplit }: CardViewProps) {
+function CardView({
+  card,
+  idx,
+  knowledgeOptions,
+  onUpdate,
+  onToggleKnowledge,
+  onSplit,
+  onDelete,
+}: CardViewProps) {
   const confidenceLow = card.extraction_confidence < 0.5;
 
   return (
@@ -492,13 +587,23 @@ function CardView({ card, idx, knowledgeOptions, onUpdate, onToggleKnowledge, on
             </span>
           )}
         </div>
-        <button
-          type="button"
-          onClick={onSplit}
-          className="text-xs px-2 py-1 border rounded text-slate-600 hover:bg-slate-50"
-        >
-          拆分本题
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onSplit}
+            className="text-xs px-2 py-1 border rounded text-slate-600 hover:bg-slate-50"
+          >
+            拆分本题
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            className="text-xs px-2 py-1 border border-red-200 rounded text-red-600 hover:bg-red-50"
+            aria-label="丢弃本题"
+          >
+            ×
+          </button>
+        </div>
       </div>
 
       <label className="block">
@@ -562,7 +667,9 @@ function CardView({ card, idx, knowledgeOptions, onUpdate, onToggleKnowledge, on
             className="mt-1 w-full border rounded p-1.5 text-sm"
           >
             {QUESTION_KINDS.map((k) => (
-              <option key={k} value={k}>{k}</option>
+              <option key={k} value={k}>
+                {k}
+              </option>
             ))}
           </select>
         </label>
@@ -574,11 +681,33 @@ function CardView({ card, idx, knowledgeOptions, onUpdate, onToggleKnowledge, on
             className="mt-1 w-full border rounded p-1.5 text-sm"
           >
             {[1, 2, 3, 4, 5].map((n) => (
-              <option key={n} value={n}>{n}</option>
+              <option key={n} value={n}>
+                {n}
+              </option>
             ))}
           </select>
         </label>
       </div>
+
+      <label className="block">
+        <span className="text-xs font-medium text-slate-600">类型（page role）</span>
+        <select
+          value={card.page_spans[0]?.role ?? 'prompt'}
+          onChange={(e) => {
+            const newRole = e.target.value as 'prompt' | 'answer_area' | 'continuation';
+            const nextSpans =
+              card.page_spans.length === 0
+                ? [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: newRole }]
+                : card.page_spans.map((s, i) => (i === 0 ? { ...s, role: newRole } : s));
+            onUpdate({ page_spans: nextSpans });
+          }}
+          className="mt-1 w-full border rounded p-1.5 text-sm"
+        >
+          <option value="prompt">题面 (prompt)</option>
+          <option value="answer_area">错答区 (answer_area)</option>
+          <option value="continuation">续页 (continuation)</option>
+        </select>
+      </label>
 
       <label className="block">
         <span className="text-xs font-medium text-slate-600">错因（可空，留空 → AI 自动归因）</span>
@@ -589,7 +718,9 @@ function CardView({ card, idx, knowledgeOptions, onUpdate, onToggleKnowledge, on
         >
           <option value="">— AI 兜底 —</option>
           {CAUSE_CATEGORIES.map((c) => (
-            <option key={c} value={c}>{c}</option>
+            <option key={c} value={c}>
+              {c}
+            </option>
           ))}
         </select>
       </label>

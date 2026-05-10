@@ -47,8 +47,11 @@ function ToolCallLogTab() {
   return (
     <div className="space-y-3">
       <div className="flex gap-2 items-center">
-        <label className="text-sm text-slate-600">Filter task_kind:</label>
+        <label htmlFor="task_kind_filter" className="text-sm text-slate-600">
+          Filter task_kind:
+        </label>
         <input
+          id="task_kind_filter"
           type="text"
           value={taskKindFilter}
           onChange={(e) => setTaskKindFilter(e.target.value)}
@@ -65,9 +68,7 @@ function ToolCallLogTab() {
       </div>
 
       {isLoading && <p className="text-sm text-slate-500">Loading…</p>}
-      {error && (
-        <p className="text-sm text-red-600">Error: {(error as Error).message}</p>
-      )}
+      {error && <p className="text-sm text-red-600">Error: {(error as Error).message}</p>}
       {data && (
         <table className="w-full text-xs border-collapse">
           <thead className="bg-slate-100">
@@ -129,8 +130,8 @@ function CostLedgerTab() {
 
   return (
     <div className="space-y-3">
-      <div className="flex gap-2 items-center">
-        <label className="text-sm text-slate-600">Range:</label>
+      <fieldset className="flex gap-2 items-center border-0 p-0 m-0">
+        <legend className="text-sm text-slate-600">Range:</legend>
         {(['day', 'week', 'month'] as const).map((r) => (
           <button
             type="button"
@@ -150,12 +151,10 @@ function CostLedgerTab() {
         >
           Refresh
         </button>
-      </div>
+      </fieldset>
 
       {isLoading && <p className="text-sm text-slate-500">Loading…</p>}
-      {error && (
-        <p className="text-sm text-red-600">Error: {(error as Error).message}</p>
-      )}
+      {error && <p className="text-sm text-red-600">Error: {(error as Error).message}</p>}
       {data && (
         <table className="w-full text-xs border-collapse">
           <thead className="bg-slate-100">
@@ -201,13 +200,30 @@ export function Inspect() {
     <main className="mx-auto max-w-5xl px-4 py-8">
       <h1 className="text-xl font-semibold mb-4">/_/inspect</h1>
       <p className="text-sm text-slate-500 mb-1">
-        Other admin pages: <a href="/record" className="underline">/record</a> ·{' '}
-        <a href="/ingest" className="underline">/ingest</a> ·{' '}
-        <a href="/mistakes" className="underline">/mistakes</a> ·{' '}
-        <a href="/review" className="underline">/review</a> ·{' '}
-        <a href="/learning-items" className="underline">/learning-items</a> ·{' '}
-        <a href="/knowledge" className="underline">/knowledge</a> ·{' '}
-        <a href="/knowledge/proposals" className="underline">/knowledge/proposals</a>
+        Other admin pages:{' '}
+        <a href="/capture" className="underline">
+          /capture
+        </a>{' '}
+        ·{' '}
+        <a href="/mistakes" className="underline">
+          /mistakes
+        </a>{' '}
+        ·{' '}
+        <a href="/review" className="underline">
+          /review
+        </a>{' '}
+        ·{' '}
+        <a href="/learning-items" className="underline">
+          /learning-items
+        </a>{' '}
+        ·{' '}
+        <a href="/knowledge" className="underline">
+          /knowledge
+        </a>{' '}
+        ·{' '}
+        <a href="/knowledge/proposals" className="underline">
+          /knowledge/proposals
+        </a>
       </p>
       <p className="text-sm text-slate-500 mb-4">
         Recent ToolCallLog + CostLedger from D1. Manual refresh; no auto-poll.
@@ -229,9 +245,7 @@ export function Inspect() {
           type="button"
           onClick={() => setTab('cost')}
           className={`px-3 py-2 text-sm border-b-2 ${
-            tab === 'cost'
-              ? 'border-slate-900 font-semibold'
-              : 'border-transparent text-slate-500'
+            tab === 'cost' ? 'border-slate-900 font-semibold' : 'border-transparent text-slate-500'
           }`}
         >
           CostLedger

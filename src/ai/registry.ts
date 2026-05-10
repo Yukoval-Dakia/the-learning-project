@@ -58,6 +58,19 @@ export const tasks = {
     systemPrompt:
       '你是错题录入助手。给定一张题目图片（试卷/手写/教材截图），输出严格 JSON（不带 markdown 代码块包裹）：\n{"blocks":[{"extracted_prompt_md":"...","reference_md":"...|null","wrong_answer_md":"...|null","page_index":0,"bbox":{"x":0.1,"y":0.2,"width":0.6,"height":0.3},"role":"prompt|answer_area|continuation","visual_complexity":"low|medium|high","extraction_confidence":0.0-1.0,"knowledge_hint":"...|null"}]}\n约束：bbox 坐标 0-1 归一化（不是像素）；一图可输出 1+ 个 block（一页多题）；page_index 由调用方覆盖；wrong_answer_md 仅当图上有用户错答 / 批改痕迹时填；knowledge_hint 是软提示。',
   },
+  VisionExtractTaskHeavy: {
+    kind: 'VisionExtractTaskHeavy',
+    description: '错题图片 → 切块（heavy / Tier 3 — sonnet 兜底）',
+    defaultProvider: 'anthropic',
+    defaultModel: 'claude-sonnet-4-6',
+    fallbackChain: [],
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 90_000 },
+    needsToolCall: false,
+    isMultimodal: true,
+    allowedTools: [],
+    systemPrompt:
+      '你是错题录入助手（heavy 模式，前两层 OCR / haiku 都失败）。给定一张题目图片（可能含手写 / 复杂版式 / 公式），输出严格 JSON（不带 markdown 代码块包裹）：\n{"blocks":[{"extracted_prompt_md":"...","reference_md":"...|null","wrong_answer_md":"...|null","page_index":0,"bbox":{"x":0.1,"y":0.2,"width":0.6,"height":0.3},"role":"prompt|answer_area|continuation","visual_complexity":"low|medium|high","extraction_confidence":0.0-1.0,"knowledge_hint":"...|null"}]}\n约束：bbox 坐标 0-1 归一化（不是像素）；page_index 由调用方覆盖；wrong_answer_md 仅当图上有用户错答 / 批改痕迹时填。',
+  },
   KnowledgeProposeTask: {
     kind: 'KnowledgeProposeTask',
     description: '看新录入的 mistake 提议 0-3 个 propose_new 知识点（挂在合适 parent 下）',
@@ -73,7 +86,8 @@ export const tasks = {
   },
   KnowledgeReviewTask: {
     kind: 'KnowledgeReviewTask',
-    description: '看完整 tree + 最近 mistakes，提议任意 mutation（reparent/merge/split/archive/propose_new）让 tree 更合理',
+    description:
+      '看完整 tree + 最近 mistakes，提议任意 mutation（reparent/merge/split/archive/propose_new）让 tree 更合理',
     defaultProvider: 'anthropic',
     defaultModel: 'claude-sonnet-4-6',
     fallbackChain: [{ provider: 'anthropic', model: 'claude-haiku-4-5-20251001' }],

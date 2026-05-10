@@ -18,6 +18,10 @@ binding = "IMAGES"
 bucket_name = "learning-project-images"
 preview_bucket_name = "learning-project-images-preview"
 
+[vars]
+TENCENT_OCR_REGION = "ap-guangzhou"
+# TENCENT_SECRET_ID and TENCENT_SECRET_KEY: set via `wrangler secret put`, NOT in this file.
+
 # 改进 12: Phase 2 起 dreaming / maintenance cron + queues
 # Phase 2 实施时启用 + 填值
 # [triggers]

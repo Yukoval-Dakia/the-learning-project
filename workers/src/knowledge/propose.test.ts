@@ -1,10 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
 import type { D1Database } from '@cloudflare/workers-types';
+import { describe, expect, it, vi } from 'vitest';
 import { parseProposeOutput, runProposeAndWrite } from './propose';
 
 describe('parseProposeOutput', () => {
   it('parses well-formed JSON with proposals array', () => {
-    const text = '{"proposals":[{"name":"之-主谓间用法","parent_id":"k_xuci","reasoning":"该错题表明..."}]}';
+    const text =
+      '{"proposals":[{"name":"之-主谓间用法","parent_id":"k_xuci","reasoning":"该错题表明..."}]}';
     const out = parseProposeOutput(text);
     expect(out.proposals).toHaveLength(1);
     expect(out.proposals[0].name).toBe('之-主谓间用法');
@@ -12,7 +13,8 @@ describe('parseProposeOutput', () => {
   });
 
   it('extracts JSON from text with surrounding prose', () => {
-    const text = '好的，我建议如下：\n\n{"proposals":[{"name":"X","parent_id":"k1","reasoning":"r"}]}\n\n以上。';
+    const text =
+      '好的，我建议如下：\n\n{"proposals":[{"name":"X","parent_id":"k1","reasoning":"r"}]}\n\n以上。';
     const out = parseProposeOutput(text);
     expect(out.proposals).toHaveLength(1);
   });
@@ -48,7 +50,13 @@ describe('parseProposeOutput', () => {
 });
 
 function makePropoeMockDb(opts: {
-  tree: Array<{ id: string; name: string; domain: string | null; parent_id: string | null; archived_at: number | null }>;
+  tree: Array<{
+    id: string;
+    name: string;
+    domain: string | null;
+    parent_id: string | null;
+    archived_at: number | null;
+  }>;
 }) {
   const inserted: Array<{ payload: string; reasoning: string }> = [];
   const knowledgeById = new Map(opts.tree.map((r) => [r.id, r]));
@@ -88,11 +96,20 @@ describe('runProposeAndWrite', () => {
     });
     await runProposeAndWrite({
       db,
-      mistakeContent: { prompt_md: 'p', reference_md: null, wrong_answer_md: 'w', knowledge_ids_picked: ['k_xuci'] },
+      mistakeContent: {
+        prompt_md: 'p',
+        reference_md: null,
+        wrong_answer_md: 'w',
+        knowledge_ids_picked: ['k_xuci'],
+      },
       runTaskFn: fakeRunTask,
     });
     expect(inserted).toHaveLength(2);
-    expect(JSON.parse(inserted[0].payload)).toMatchObject({ mutation: 'propose_new', name: '之-主谓', parent_id: 'k_xuci' });
+    expect(JSON.parse(inserted[0].payload)).toMatchObject({
+      mutation: 'propose_new',
+      name: '之-主谓',
+      parent_id: 'k_xuci',
+    });
   });
 
   it('skips entries whose parent_id does not exist', async () => {
@@ -107,7 +124,12 @@ describe('runProposeAndWrite', () => {
     });
     await runProposeAndWrite({
       db,
-      mistakeContent: { prompt_md: 'p', reference_md: null, wrong_answer_md: 'w', knowledge_ids_picked: [] },
+      mistakeContent: {
+        prompt_md: 'p',
+        reference_md: null,
+        wrong_answer_md: 'w',
+        knowledge_ids_picked: [],
+      },
       runTaskFn: fakeRunTask,
     });
     expect(inserted).toHaveLength(1);
@@ -122,7 +144,12 @@ describe('runProposeAndWrite', () => {
     await expect(
       runProposeAndWrite({
         db,
-        mistakeContent: { prompt_md: 'p', reference_md: null, wrong_answer_md: 'w', knowledge_ids_picked: [] },
+        mistakeContent: {
+          prompt_md: 'p',
+          reference_md: null,
+          wrong_answer_md: 'w',
+          knowledge_ids_picked: [],
+        },
         runTaskFn: fakeRunTask,
       }),
     ).resolves.toBeUndefined();
@@ -140,7 +167,12 @@ describe('runProposeAndWrite', () => {
     await expect(
       runProposeAndWrite({
         db,
-        mistakeContent: { prompt_md: 'p', reference_md: null, wrong_answer_md: 'w', knowledge_ids_picked: [] },
+        mistakeContent: {
+          prompt_md: 'p',
+          reference_md: null,
+          wrong_answer_md: 'w',
+          knowledge_ids_picked: [],
+        },
         runTaskFn: fakeRunTask,
       }),
     ).resolves.toBeUndefined();

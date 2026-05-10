@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
 import type { D1Database, ExecutionContext, R2Bucket } from '@cloudflare/workers-types';
+import { describe, expect, it, vi } from 'vitest';
 import { review } from './review';
 
 type DueRow = {
@@ -27,11 +27,13 @@ type BatchCall = {
   stmts: Array<{ sql: string; binds: unknown[] }>;
 };
 
-function mockEnv(opts: {
-  dueRows?: DueRow[];
-  mistakeById?: Map<string, MistakeRow>;
-  batchResult?: BatchResult;
-} = {}) {
+function mockEnv(
+  opts: {
+    dueRows?: DueRow[];
+    mistakeById?: Map<string, MistakeRow>;
+    batchResult?: BatchResult;
+  } = {},
+) {
   const calls: Array<{ sql: string; binds: unknown[] }> = [];
   const batchCalls: BatchCall[] = [];
   const prepare = vi.fn((sql: string) => ({
@@ -41,7 +43,11 @@ function mockEnv(opts: {
         __sql: sql,
         __binds: binds,
         first: async () => {
-          if (/select id, fsrs_state, version, archived_at, deleted_at from mistake where id = \?/i.test(sql)) {
+          if (
+            /select id, fsrs_state, version, archived_at, deleted_at from mistake where id = \?/i.test(
+              sql,
+            )
+          ) {
             const id = binds[0] as string;
             return opts.mistakeById?.get(id) ?? null;
           }
@@ -102,7 +108,8 @@ describe('GET /api/review/due', () => {
         id: 'm_due',
         question_id: 'q2',
         knowledge_ids: '["k1"]',
-        cause: '{"primary_category":"concept","secondary_categories":[],"ai_analysis_md":"a","user_edited":false}',
+        cause:
+          '{"primary_category":"concept","secondary_categories":[],"ai_analysis_md":"a","user_edited":false}',
         fsrs_state:
           '{"due":"2026-05-09T12:00:00.000Z","stability":1.5,"difficulty":5,"elapsed_days":0,"scheduled_days":1,"learning_steps":0,"reps":1,"lapses":0,"state":"review","last_review":"2026-05-08T12:00:00.000Z"}',
         created_at: 1700000010,
@@ -327,7 +334,13 @@ describe('POST /api/review/submit', () => {
     const mistakeById = new Map<string, MistakeRow>([
       [
         'm1',
-        { id: 'm1', fsrs_state: '{not valid json', version: 0, archived_at: null, deleted_at: null },
+        {
+          id: 'm1',
+          fsrs_state: '{not valid json',
+          version: 0,
+          archived_at: null,
+          deleted_at: null,
+        },
       ],
     ]);
     const { Bindings, executionCtx, batchCalls } = mockEnv({ mistakeById });

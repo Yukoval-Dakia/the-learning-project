@@ -68,23 +68,16 @@ export async function writeDreamingProposal(
   const proposedAt = Math.floor(Date.now() / 1000);
   await db
     .prepare(
-      `insert into dreaming_proposal (id, kind, payload, reasoning, status, proposed_at) values (?, ?, ?, ?, ?, ?)`,
+      'insert into dreaming_proposal (id, kind, payload, reasoning, status, proposed_at) values (?, ?, ?, ?, ?, ?)',
     )
-    .bind(
-      id,
-      'knowledge',
-      JSON.stringify(entry.payload),
-      entry.reasoning,
-      'pending',
-      proposedAt,
-    )
+    .bind(id, 'knowledge', JSON.stringify(entry.payload), entry.reasoning, 'pending', proposedAt)
     .run();
   return id;
 }
 
 async function assertParentExists(db: D1Database, parentId: string): Promise<void> {
   const row = await db
-    .prepare(`select id from knowledge where id = ? and archived_at is null`)
+    .prepare('select id from knowledge where id = ? and archived_at is null')
     .bind(parentId)
     .first<{ id: string }>();
   if (!row) {
@@ -132,10 +125,7 @@ function buildKnowledgeInsert(
  * silently default domain to 'wenyan' and bake in single-domain assumption. Phase 2 multi-domain
  * will need an explicit `domain` field on root proposals; lifting this guard then is the right time.
  */
-export async function applyProposeNew(
-  db: D1Database,
-  payload: ProposeNewPayload,
-): Promise<string> {
+export async function applyProposeNew(db: D1Database, payload: ProposeNewPayload): Promise<string> {
   if (payload.parent_id === null) {
     throw new Error(
       'PR A: propose_new with parent_id=null (root creation) not supported; Phase 2 multi-domain will allow it',
@@ -162,13 +152,10 @@ export type AcceptResult =
  * reparent / merge / split / archive go through acceptHighTier which handles stale errors
  * by marking the proposal stale before re-throwing.
  */
-export async function acceptProposal(
-  db: D1Database,
-  proposalId: string,
-): Promise<AcceptResult> {
+export async function acceptProposal(db: D1Database, proposalId: string): Promise<AcceptResult> {
   const row = await db
     .prepare(
-      `select id, kind, payload, reasoning, status, proposed_at, decided_at from dreaming_proposal where id = ?`,
+      'select id, kind, payload, reasoning, status, proposed_at, decided_at from dreaming_proposal where id = ?',
     )
     .bind(proposalId)
     .first<DreamingProposalRow>();
@@ -183,15 +170,20 @@ export async function acceptProposal(
   switch (payload.mutation) {
     case 'propose_new':
       return await acceptProposeNew(db, proposalId, payload);
-    case 'reparent':
+    case 'reparent': {
+      const reparentPayload = payload as ReparentPayload;
       return await acceptHighTier(db, proposalId, async () => {
-        await applyReparent(db, payload);
+        await applyReparent(db, reparentPayload);
+        if (reparentPayload.new_parent_id === null) {
+          throw new Error('reparent payload must have new_parent_id');
+        }
         return {
           kind: 'reparent_applied',
-          node_id: payload.node_id,
-          new_parent_id: payload.new_parent_id!,
+          node_id: reparentPayload.node_id,
+          new_parent_id: reparentPayload.new_parent_id,
         };
       });
+    }
     case 'merge':
       return await acceptHighTier(db, proposalId, async () => {
         await applyMerge(db, payload);
@@ -313,10 +305,7 @@ async function acceptProposeNew(
  * as applyProposeNew. When the node was a root (parent_id IS NULL, domain set),
  * the UPDATE also clears domain so the inheritance invariant holds.
  */
-export async function applyReparent(
-  db: D1Database,
-  payload: ReparentPayload,
-): Promise<void> {
+export async function applyReparent(db: D1Database, payload: ReparentPayload): Promise<void> {
   if (payload.new_parent_id === null) {
     throw new Error(
       'PR B: reparent to root (new_parent_id=null) not supported in Phase 1a single-domain',
@@ -342,10 +331,7 @@ export async function applyReparent(
  * Apply archive: soft-delete a node by setting archived_at + bumping version.
  * Race-safe via WHERE version=? AND archived_at IS NULL — changes=0 → stale.
  */
-export async function applyArchive(
-  db: D1Database,
-  payload: ArchivePayload,
-): Promise<void> {
+export async function applyArchive(db: D1Database, payload: ArchivePayload): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
   const result = await db
     .prepare(
@@ -372,10 +358,7 @@ export async function applyArchive(
  * Race-safe via batch: archive UPDATE gates by expected_version; inserts use
  * INSERT…SELECT…WHERE EXISTS gated on the same version not yet bumped.
  */
-export async function applySplit(
-  db: D1Database,
-  payload: SplitPayload,
-): Promise<string[]> {
+export async function applySplit(db: D1Database, payload: SplitPayload): Promise<string[]> {
   for (const entry of payload.into) {
     if (entry.parent_id === null) {
       throw new Error(
@@ -435,10 +418,7 @@ export async function applySplit(
  * append — concurrent merges into the same node are commutative on merged_from but version
  * still bumps).
  */
-export async function applyMerge(
-  db: D1Database,
-  payload: MergePayload,
-): Promise<void> {
+export async function applyMerge(db: D1Database, payload: MergePayload): Promise<void> {
   if (payload.from_ids.includes(payload.into_id)) {
     throw new Error(`merge: into_id (${payload.into_id}) cannot also appear in from_ids`);
   }
@@ -480,14 +460,13 @@ export async function applyMerge(
   // Check into_id first — when into is missing/archived, archives didn't run
   // (EXISTS guard), so reporting "from_id stale" would be misleading.
   const intoChanges =
-    (results[results.length - 1] as { meta?: { changes?: number } } | undefined)?.meta
-      ?.changes ?? 0;
+    (results[results.length - 1] as { meta?: { changes?: number } } | undefined)?.meta?.changes ??
+    0;
   if (intoChanges !== 1) {
     throw new Error(`stale: merge into_id ${payload.into_id} not found or archived`);
   }
   for (let i = 0; i < archiveStmts.length; i++) {
-    const changes =
-      (results[i] as { meta?: { changes?: number } } | undefined)?.meta?.changes ?? 0;
+    const changes = (results[i] as { meta?: { changes?: number } } | undefined)?.meta?.changes ?? 0;
     if (changes !== 1) {
       throw new Error(
         `stale: knowledge ${payload.from_ids[i]} version mismatch or already archived`,

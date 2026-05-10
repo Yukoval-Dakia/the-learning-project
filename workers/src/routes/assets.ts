@@ -1,5 +1,5 @@
-import { Hono } from 'hono';
 import { createId } from '@paralleldrive/cuid2';
+import { Hono } from 'hono';
 import type { AppEnv } from '../types';
 
 export const assets = new Hono<AppEnv>();
@@ -25,10 +25,16 @@ assets.post('/', async (c) => {
     return c.json({ error: 'validation_error', message: 'file is required' }, 400);
   }
   if (!ALLOWED_MIME.has(file.type)) {
-    return c.json({ error: 'validation_error', message: `unsupported mime_type: ${file.type}` }, 400);
+    return c.json(
+      { error: 'validation_error', message: `unsupported mime_type: ${file.type}` },
+      400,
+    );
   }
   if (file.size <= 0 || file.size > MAX_UPLOAD_BYTES) {
-    return c.json({ error: 'validation_error', message: `file size must be 1..${MAX_UPLOAD_BYTES}` }, 400);
+    return c.json(
+      { error: 'validation_error', message: `file size must be 1..${MAX_UPLOAD_BYTES}` },
+      400,
+    );
   }
 
   const bytes = await file.arrayBuffer();
@@ -61,7 +67,11 @@ assets.post('/', async (c) => {
   } catch (err) {
     // Roll back R2 to avoid orphans; if delete itself fails, log and rethrow original.
     await c.env.IMAGES.delete(storageKey).catch((delErr) => {
-      console.error('source_asset insert failed AND R2 rollback failed', { storageKey, id, delErr });
+      console.error('source_asset insert failed AND R2 rollback failed', {
+        storageKey,
+        id,
+        delErr,
+      });
     });
     throw err;
   }

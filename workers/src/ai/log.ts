@@ -17,7 +17,7 @@ export async function writeToolCallLog(db: D1Database, entry: ToolCallLogEntry):
   const occurredAt = Math.floor(Date.now() / 1000);
   await db
     .prepare(
-      `insert into tool_call_log (id, task_run_id, task_kind, tool_name, input_json, output_json, iteration, latency_ms, cost, occurred_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      'insert into tool_call_log (id, task_run_id, task_kind, tool_name, input_json, output_json, iteration, latency_ms, cost, occurred_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     )
     .bind(
       id,
@@ -48,7 +48,7 @@ export async function writeCostLedger(db: D1Database, entry: CostLedgerEntry): P
   const occurredAt = Math.floor(Date.now() / 1000);
   await db
     .prepare(
-      `insert into cost_ledger (id, task_kind, provider, model, cost, tokens_in, tokens_out, occurred_at) values (?, ?, ?, ?, ?, ?, ?, ?)`,
+      'insert into cost_ledger (id, task_kind, provider, model, cost, tokens_in, tokens_out, occurred_at) values (?, ?, ?, ?, ?, ?, ?, ?)',
     )
     .bind(
       id,

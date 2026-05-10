@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
 import type { D1Database, ExecutionContext, R2Bucket } from '@cloudflare/workers-types';
+import { describe, expect, it, vi } from 'vitest';
 import { learningItems } from './learning_items';
 
 type LearningItemRow = {
@@ -29,14 +29,16 @@ type LearningItemDeleteMetaRow = {
 
 type RunResult = { success?: boolean; meta?: { changes?: number } };
 
-function mockEnv(opts: {
-  learningItemRows?: LearningItemRow[];
-  knownKnowledgeIds?: Set<string>;
-  learningItemById?: Map<string, LearningItemMetaRow>;
-  learningItemDeleteById?: Map<string, LearningItemDeleteMetaRow>;
-  learningItemAfterUpdate?: LearningItemRow | null;
-  updateResult?: RunResult;
-} = {}) {
+function mockEnv(
+  opts: {
+    learningItemRows?: LearningItemRow[];
+    knownKnowledgeIds?: Set<string>;
+    learningItemById?: Map<string, LearningItemMetaRow>;
+    learningItemDeleteById?: Map<string, LearningItemDeleteMetaRow>;
+    learningItemAfterUpdate?: LearningItemRow | null;
+    updateResult?: RunResult;
+  } = {},
+) {
   const calls: Array<{ sql: string; binds: unknown[] }> = [];
   const batchCalls: Array<{ stmts: Array<{ sql: string; binds: unknown[] }> }> = [];
   const prepare = vi.fn((sql: string) => ({
@@ -50,7 +52,9 @@ function mockEnv(opts: {
             const id = binds[0] as string;
             return opts.knownKnowledgeIds?.has(id) ? { id } : null;
           }
-          if (/select id, status, version, archived_at from learning_item where id = \?/i.test(sql)) {
+          if (
+            /select id, status, version, archived_at from learning_item where id = \?/i.test(sql)
+          ) {
             const id = binds[0] as string;
             return opts.learningItemById?.get(id) ?? null;
           }
@@ -68,7 +72,9 @@ function mockEnv(opts: {
           return null;
         },
         all: async () => {
-          if (/from learning_item\s+where archived_at is null and status != 'dismissed'/i.test(sql)) {
+          if (
+            /from learning_item\s+where archived_at is null and status != 'dismissed'/i.test(sql)
+          ) {
             return { results: opts.learningItemRows ?? [] };
           }
           return { results: [] };
@@ -367,10 +373,11 @@ describe('PATCH /api/learning-items/:id', () => {
     expect(res.status).toBe(200);
     const evidenceCall = calls.find((c) => /^insert into completion_evidence/i.test(c.sql));
     expect(evidenceCall).toBeDefined();
-    const evidenceJsonBind = (evidenceCall!.binds as unknown[]).find(
+    const evidenceJsonBind = (evidenceCall?.binds as unknown[]).find(
       (b): b is string => typeof b === 'string' && b.startsWith('{') && b.includes('declared_at'),
     );
     expect(evidenceJsonBind).toBeDefined();
+    // biome-ignore lint/style/noNonNullAssertion: checked by toBeDefined above
     const parsed = JSON.parse(evidenceJsonBind!) as Record<string, unknown>;
     expect(typeof parsed.declared_at).toBe('number');
     expect(Object.keys(parsed)).toEqual(['declared_at']);
@@ -609,7 +616,9 @@ describe('PATCH /api/learning-items/:id', () => {
     expect(evidenceCall).toBeUndefined();
     // Sequential semantics: only SELECT + UPDATE prepared, never the evidence INSERT.
     const sqls = calls.map((c) => c.sql);
-    expect(sqls.some((s) => /^select id, status, version, archived_at from learning_item/i.test(s))).toBe(true);
+    expect(
+      sqls.some((s) => /^select id, status, version, archived_at from learning_item/i.test(s)),
+    ).toBe(true);
     expect(sqls.some((s) => /^update learning_item/i.test(s))).toBe(true);
   });
 

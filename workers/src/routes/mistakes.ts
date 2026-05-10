@@ -1,13 +1,13 @@
+import type { D1Database } from '@cloudflare/workers-types';
+import { createId } from '@paralleldrive/cuid2';
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { createId } from '@paralleldrive/cuid2';
-import { runTask } from '../ai/runner';
-import { runProposeAndWrite } from '../knowledge/propose';
-import { runAttributionAndWrite } from '../knowledge/attribute';
-import { loadTreeSnapshot } from '../knowledge/tree';
 import { CauseCategory, QuestionKind } from '../../../src/core/schema/business';
+import { runTask } from '../ai/runner';
+import { runAttributionAndWrite } from '../knowledge/attribute';
+import { runProposeAndWrite } from '../knowledge/propose';
+import { loadTreeSnapshot } from '../knowledge/tree';
 import type { AppEnv } from '../types';
-import type { D1Database } from '@cloudflare/workers-types';
 
 export const mistakes = new Hono<AppEnv>();
 
@@ -20,7 +20,7 @@ async function assertAssetsExist(
 ): Promise<{ ok: true } | { ok: false; missing: string[]; field: AssetField }> {
   const missing: string[] = [];
   for (const id of ids) {
-    const row = await db.prepare(`select id from source_asset where id = ?`).bind(id).first();
+    const row = await db.prepare('select id from source_asset where id = ?').bind(id).first();
     if (!row) missing.push(id);
   }
   return missing.length > 0 ? { ok: false, missing, field } : { ok: true };
@@ -45,10 +45,10 @@ const Body = z.object({
 
 mistakes.get('/recent', async (c) => {
   const limitRaw = c.req.query('limit');
-  const limitParsed = limitRaw ? parseInt(limitRaw, 10) : 20;
-  const limit = Math.min(Math.max(isNaN(limitParsed) ? 20 : limitParsed, 1), 100);
+  const limitParsed = limitRaw ? Number.parseInt(limitRaw, 10) : 20;
+  const limit = Math.min(Math.max(Number.isNaN(limitParsed) ? 20 : limitParsed, 1), 100);
   const rows = await c.env.DB.prepare(
-    `select m.id, m.question_id, m.knowledge_ids, m.cause, m.created_at, q.prompt_md, m.wrong_answer_md from mistake m join question q on q.id = m.question_id where m.archived_at is null and m.deleted_at is null order by m.created_at desc limit ?`,
+    'select m.id, m.question_id, m.knowledge_ids, m.cause, m.created_at, q.prompt_md, m.wrong_answer_md from mistake m join question q on q.id = m.question_id where m.archived_at is null and m.deleted_at is null order by m.created_at desc limit ?',
   )
     .bind(limit)
     .all<{
@@ -88,7 +88,9 @@ mistakes.post('/', async (c) => {
 
   const missing: string[] = [];
   for (const id of body.knowledge_ids) {
-    const row = await c.env.DB.prepare(`select id from knowledge where id = ? and archived_at is null`)
+    const row = await c.env.DB.prepare(
+      'select id from knowledge where id = ? and archived_at is null',
+    )
       .bind(id)
       .first();
     if (!row) missing.push(id);
@@ -103,17 +105,31 @@ mistakes.post('/', async (c) => {
     );
   }
 
-  const promptCheck = await assertAssetsExist(c.env.DB, body.prompt_image_refs, 'prompt_image_refs');
+  const promptCheck = await assertAssetsExist(
+    c.env.DB,
+    body.prompt_image_refs,
+    'prompt_image_refs',
+  );
   if (!promptCheck.ok) {
     return c.json(
-      { error: 'validation_error', message: `unknown ${promptCheck.field}: ${promptCheck.missing.join(', ')}` },
+      {
+        error: 'validation_error',
+        message: `unknown ${promptCheck.field}: ${promptCheck.missing.join(', ')}`,
+      },
       400,
     );
   }
-  const wrongCheck = await assertAssetsExist(c.env.DB, body.wrong_answer_image_refs, 'wrong_answer_image_refs');
+  const wrongCheck = await assertAssetsExist(
+    c.env.DB,
+    body.wrong_answer_image_refs,
+    'wrong_answer_image_refs',
+  );
   if (!wrongCheck.ok) {
     return c.json(
-      { error: 'validation_error', message: `unknown ${wrongCheck.field}: ${wrongCheck.missing.join(', ')}` },
+      {
+        error: 'validation_error',
+        message: `unknown ${wrongCheck.field}: ${wrongCheck.missing.join(', ')}`,
+      },
       400,
     );
   }

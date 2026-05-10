@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 const INTERNAL_TOKEN = import.meta.env.VITE_INTERNAL_TOKEN ?? '';
 
@@ -77,6 +77,7 @@ export function ReviewSession() {
 
   const currentMistake = data[currentIndex];
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: currentIndex used to trigger reset
   useEffect(() => {
     setResponseMd('');
     setErrorMsg(null);
@@ -91,28 +92,38 @@ export function ReviewSession() {
     onError: (err: Error) => setErrorMsg(err.message),
   });
 
-  function submit(rating: Rating) {
-    if (!currentMistake || submitMutation.isPending) return;
-    const latency_ms = Math.round(performance.now() - startTimeRef.current);
-    submitMutation.mutate({
-      mistake_id: currentMistake.id,
-      rating,
-      response_md: responseMd.trim() === '' ? null : responseMd,
-      latency_ms,
-    });
-  }
+  const submit = useCallback(
+    (rating: Rating) => {
+      if (!currentMistake || submitMutation.isPending) return;
+      const latency_ms = Math.round(performance.now() - startTimeRef.current);
+      submitMutation.mutate({
+        mistake_id: currentMistake.id,
+        rating,
+        response_md: responseMd.trim() === '' ? null : responseMd,
+        latency_ms,
+      });
+    },
+    [currentMistake, submitMutation, responseMd],
+  );
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const target = e.target as HTMLElement | null;
       if (target && target.tagName === 'TEXTAREA') return;
-      if (e.key === '1') { e.preventDefault(); submit('again'); }
-      else if (e.key === '2') { e.preventDefault(); submit('hard'); }
-      else if (e.key === '3') { e.preventDefault(); submit('good'); }
+      if (e.key === '1') {
+        e.preventDefault();
+        submit('again');
+      } else if (e.key === '2') {
+        e.preventDefault();
+        submit('hard');
+      } else if (e.key === '3') {
+        e.preventDefault();
+        submit('good');
+      }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [currentIndex, submitMutation.isPending]);
+  }, [submit]);
 
   if (dueQuery.isLoading) {
     return (
@@ -125,9 +136,7 @@ export function ReviewSession() {
   if (dueQuery.isError) {
     return (
       <main className="mx-auto max-w-3xl px-4 py-8">
-        <p className="text-sm text-red-600">
-          加载失败: {String(dueQuery.error)}。请刷新重试。
-        </p>
+        <p className="text-sm text-red-600">加载失败: {String(dueQuery.error)}。请刷新重试。</p>
       </main>
     );
   }
@@ -137,8 +146,12 @@ export function ReviewSession() {
       <main className="mx-auto max-w-3xl px-4 py-8">
         <p className="text-lg font-medium mb-4">今天没有要复习的，太好了</p>
         <div className="flex gap-4 text-sm">
-          <a href="/record" className="underline">+ 录新错题</a>
-          <a href="/mistakes" className="underline">看历史 →</a>
+          <a href="/capture" className="underline">
+            + 录新错题
+          </a>
+          <a href="/mistakes" className="underline">
+            看历史 →
+          </a>
         </div>
       </main>
     );
@@ -148,7 +161,9 @@ export function ReviewSession() {
     return (
       <main className="mx-auto max-w-3xl px-4 py-8">
         <p className="text-lg font-medium mb-4">今日复习完毕（{data.length} 条）</p>
-        <a href="/mistakes" className="underline">看错题历史 →</a>
+        <a href="/mistakes" className="underline">
+          看错题历史 →
+        </a>
       </main>
     );
   }
@@ -157,7 +172,9 @@ export function ReviewSession() {
     <main className="mx-auto max-w-3xl px-4 py-8">
       <div className="flex items-baseline justify-between mb-4">
         <h1 className="text-xl font-semibold">复习</h1>
-        <span className="text-sm text-slate-500">{currentIndex + 1} / {data.length}</span>
+        <span className="text-sm text-slate-500">
+          {currentIndex + 1} / {data.length}
+        </span>
       </div>
 
       <p className="text-xs text-slate-500 mb-2">
@@ -165,8 +182,10 @@ export function ReviewSession() {
         {currentMistake.cause && (
           <>
             {' · '}
-            <span>错因: {currentMistake.cause.primary_category}
-              {currentMistake.cause.confidence != null && ` (${Math.round(currentMistake.cause.confidence * 100)}%)`}
+            <span>
+              错因: {currentMistake.cause.primary_category}
+              {currentMistake.cause.confidence != null &&
+                ` (${Math.round(currentMistake.cause.confidence * 100)}%)`}
             </span>
           </>
         )}
@@ -180,14 +199,18 @@ export function ReviewSession() {
       {currentMistake.reference_md && (
         <details className="mb-4">
           <summary className="text-xs text-slate-500 cursor-pointer">参考答案（点开看）</summary>
-          <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">{currentMistake.reference_md}</p>
+          <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">
+            {currentMistake.reference_md}
+          </p>
         </details>
       )}
 
       {currentMistake.cause?.ai_analysis_md && (
         <details className="mb-4">
           <summary className="text-xs text-slate-500 cursor-pointer">AI 错因分析</summary>
-          <p className="mt-1 whitespace-pre-wrap text-xs text-slate-600">{currentMistake.cause.ai_analysis_md}</p>
+          <p className="mt-1 whitespace-pre-wrap text-xs text-slate-600">
+            {currentMistake.cause.ai_analysis_md}
+          </p>
         </details>
       )}
 

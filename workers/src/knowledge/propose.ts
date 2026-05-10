@@ -1,7 +1,7 @@
-import { z } from 'zod';
 import type { D1Database } from '@cloudflare/workers-types';
-import { loadTreeSnapshot } from './tree';
+import { z } from 'zod';
 import { writeDreamingProposal } from './proposals';
+import { loadTreeSnapshot } from './tree';
 
 const ProposalSchema = z.object({
   name: z.string().min(1).max(80),
@@ -22,9 +22,7 @@ export interface MistakeContent {
   knowledge_ids_picked: string[];
 }
 
-export interface RunTaskFn {
-  (kind: string, input: unknown, ctx: unknown): Promise<{ text: string }>;
-}
+export type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
 
 export interface RunProposeAndWriteParams {
   db: D1Database;
@@ -49,11 +47,13 @@ export async function runProposeAndWrite(params: RunProposeAndWriteParams): Prom
     const parsed = parseProposeOutput(result.text);
     for (const p of parsed.proposals) {
       const parentExists = await params.db
-        .prepare(`select id from knowledge where id = ? and archived_at is null`)
+        .prepare('select id from knowledge where id = ? and archived_at is null')
         .bind(p.parent_id)
         .first();
       if (!parentExists) {
-        console.warn(`runProposeAndWrite: skipping propose_new with non-existent parent_id=${p.parent_id}`);
+        console.warn(
+          `runProposeAndWrite: skipping propose_new with non-existent parent_id=${p.parent_id}`,
+        );
         continue;
       }
       await writeDreamingProposal(params.db, {
@@ -70,7 +70,7 @@ export function parseProposeOutput(text: string): ProposeOutput {
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
   if (start === -1 || end === -1 || end < start) {
-    throw new Error(`parseProposeOutput: no JSON object found in text`);
+    throw new Error('parseProposeOutput: no JSON object found in text');
   }
   const slice = text.slice(start, end + 1);
   let json: unknown;
