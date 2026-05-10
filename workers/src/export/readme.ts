@@ -4,11 +4,13 @@ export interface Manifest {
   include_assets: boolean;
   row_counts: Record<string, number>;
   asset_count: number;
+  missing_assets?: string[];
 }
 
 export function buildReadme(m: Manifest): string {
   const date = new Date(m.exported_at * 1000).toISOString();
   const totalRows = Object.values(m.row_counts).reduce((s, n) => s + n, 0);
+  const missingCount = m.missing_assets?.length ?? 0;
 
   return `# Loom backup
 
@@ -26,6 +28,11 @@ asset_count: ${m.asset_count}
 - \`review_events.csv\` — flattened review log w/ before/after FSRS state for analytics
 - \`README.md\` — this file
 ${m.include_assets ? '- `assets/<storage_key>` — R2 image bytes (one file per source_asset)' : ''}
+${
+  m.include_assets && missingCount > 0
+    ? `\n## Missing R2 assets\n\n${missingCount} asset(s) referenced by source_asset rows could not be fetched from R2 — they are listed in manifest.missing_assets. Restoring this ZIP will leave those source_asset rows with broken image refs.\n`
+    : ''
+}
 
 ## CSV note
 
@@ -33,12 +40,14 @@ Excel for Mac may misinterpret \\n inside quoted fields as a row break. Use
 LibreOffice or Python's \`csv.reader\` (or pandas) instead — both handle the
 RFC 4180 quoting correctly.
 
-## Restore (destructive — wipes D1 + R2)
+## Restore (destructive — wipes D1, overwrites R2 keys, leaves R2 orphans)
 
 Restore is destructive: it DELETEs every row from every table in this app's
-D1, then re-INSERTs from \`data.json\`, then re-PUTs the assets to R2 (if the
-ZIP carries them). Take a fresh export of the *current* state before
-restoring an old one — there is no UNDO.
+D1, then re-INSERTs from \`data.json\`. R2 assets included in the ZIP are
+PUT under their original keys — but pre-existing R2 objects NOT included
+in the ZIP are NOT deleted (they become orphans; clean them up via wrangler
+r2 object delete if needed). Take a fresh export of the *current* state
+before restoring an old one — there is no UNDO.
 
 ### Via UI
 

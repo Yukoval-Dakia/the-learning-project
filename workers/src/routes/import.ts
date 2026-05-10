@@ -162,7 +162,7 @@ importRoute.post('/', async (c) => {
 
   // Re-PUT assets to R2.
   let assetsUploaded = 0;
-  let assetsFailed = 0;
+  const assetsFailed: string[] = [];
   if (manifest.include_assets) {
     for (const [path, bytes] of Object.entries(entries)) {
       if (!path.startsWith('assets/')) continue;
@@ -172,10 +172,16 @@ importRoute.post('/', async (c) => {
         assetsUploaded += 1;
       } catch (err) {
         console.error('import: R2 put failed', { key, err });
-        assetsFailed += 1;
+        assetsFailed.push(key);
       }
     }
   }
 
-  return c.json({ ok: true, stats, assets_uploaded: assetsUploaded, assets_failed: assetsFailed });
+  return c.json({
+    ok: assetsFailed.length === 0,
+    stats,
+    assets_uploaded: assetsUploaded,
+    assets_failed: assetsFailed.length,
+    failed_keys: assetsFailed,
+  });
 });

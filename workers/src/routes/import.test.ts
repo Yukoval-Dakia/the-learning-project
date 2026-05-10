@@ -283,6 +283,47 @@ describe('POST /api/_/import — wipe + reinsert', () => {
   });
 });
 
+describe('POST /api/_/import — R2 failure surfacing', () => {
+  it('returns ok:false + failed_keys when an R2 PUT throws', async () => {
+    const { Bindings } = mockEnv();
+    // Override IMAGES.put to throw for sk-2 only.
+    Bindings.IMAGES = {
+      put: vi.fn(async (key: string) => {
+        if (key === 'sk-2') throw new Error('R2 unavailable');
+        return null;
+      }),
+    } as unknown as R2Bucket;
+    const zip = buildZip({
+      'manifest.json': JSON.stringify({
+        schema_version: '1.0',
+        exported_at: 1700000000,
+        include_assets: true,
+        row_counts: {},
+        asset_count: 2,
+      }),
+      'data.json': JSON.stringify({}),
+      'assets/sk-1': 'IMG-A',
+      'assets/sk-2': 'IMG-B',
+    });
+    const res = await importRoute.request(
+      '/?confirm=wipe-and-reload',
+      { method: 'POST', body: zip },
+      Bindings,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      ok: boolean;
+      assets_uploaded: number;
+      assets_failed: number;
+      failed_keys: string[];
+    };
+    expect(body.ok).toBe(false);
+    expect(body.assets_uploaded).toBe(1);
+    expect(body.assets_failed).toBe(1);
+    expect(body.failed_keys).toEqual(['sk-2']);
+  });
+});
+
 describe('POST /api/_/import — pre-flight validation', () => {
   it('rejects data.json with column shape mismatch BEFORE wiping D1', async () => {
     const { Bindings, calls } = mockEnv();

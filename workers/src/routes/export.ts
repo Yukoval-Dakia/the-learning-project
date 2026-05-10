@@ -19,31 +19,10 @@ exportRoute.get('/', async (c) => {
     rowCounts[t] = result.results.length;
   }
 
-  const manifest: Manifest = {
-    schema_version: SCHEMA_VERSION,
-    exported_at: exportedAt,
-    include_assets: includeAssets,
-    row_counts: rowCounts,
-    asset_count: includeAssets ? rowCounts.source_asset : 0,
-  };
-
-  const mistakesCsv = buildMistakesCsv(
-    tableRows as unknown as Record<string, Array<Record<string, unknown>>>,
-  );
-  const reviewEventsCsv = buildReviewEventsCsv(
-    tableRows as unknown as Record<string, Array<Record<string, unknown>>>,
-  );
-  const readme = buildReadme(manifest);
-
   type Entry = { name: string; input: string | ReadableStream; lastModified?: Date };
-  const entries: Entry[] = [
-    { name: 'manifest.json', input: JSON.stringify(manifest, null, 2) },
-    { name: 'data.json', input: JSON.stringify(tableRows, null, 2) },
-    { name: 'mistakes.csv', input: mistakesCsv },
-    { name: 'review_events.csv', input: reviewEventsCsv },
-    { name: 'README.md', input: readme },
-  ];
+  const entries: Entry[] = [];
 
+  const missingAssets: string[] = [];
   if (includeAssets) {
     const assets = tableRows.source_asset as Array<{ storage_key: string }>;
     if (assets.length > MAX_INLINE_ASSETS) {
@@ -60,13 +39,42 @@ exportRoute.get('/', async (c) => {
     }
     for (const asset of assets) {
       const obj = await c.env.IMAGES.get(asset.storage_key);
-      if (!obj) continue;
+      if (!obj) {
+        missingAssets.push(asset.storage_key);
+        continue;
+      }
       entries.push({
         name: `assets/${asset.storage_key}`,
         input: obj.body,
       });
     }
   }
+
+  const manifest: Manifest = {
+    schema_version: SCHEMA_VERSION,
+    exported_at: exportedAt,
+    include_assets: includeAssets,
+    row_counts: rowCounts,
+    asset_count: includeAssets ? rowCounts.source_asset - missingAssets.length : 0,
+    missing_assets: missingAssets,
+  };
+
+  const mistakesCsv = buildMistakesCsv(
+    tableRows as unknown as Record<string, Array<Record<string, unknown>>>,
+  );
+  const reviewEventsCsv = buildReviewEventsCsv(
+    tableRows as unknown as Record<string, Array<Record<string, unknown>>>,
+  );
+  const readme = buildReadme(manifest);
+
+  // Prepend metadata entries so the ZIP order is: manifest, data, csvs, readme, then assets.
+  entries.unshift(
+    { name: 'manifest.json', input: JSON.stringify(manifest, null, 2) },
+    { name: 'data.json', input: JSON.stringify(tableRows, null, 2) },
+    { name: 'mistakes.csv', input: mistakesCsv },
+    { name: 'review_events.csv', input: reviewEventsCsv },
+    { name: 'README.md', input: readme },
+  );
 
   const dateStamp = new Date(exportedAt * 1000).toISOString().slice(0, 10);
   return new Response(downloadZip(entries).body, {

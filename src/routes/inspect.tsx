@@ -255,8 +255,20 @@ function DataTab() {
         body: ab,
       });
       if (res.ok) {
-        const body = (await res.json()) as { stats: unknown; assets_uploaded: number };
-        setImportStatus(`完成。assets uploaded: ${body.assets_uploaded}。3 秒后刷新页面...`);
+        const body = (await res.json()) as {
+          ok: boolean;
+          stats: unknown;
+          assets_uploaded: number;
+          assets_failed: number;
+          failed_keys?: string[];
+        };
+        const failureNote =
+          body.assets_failed > 0
+            ? ` ⚠ ${body.assets_failed} 个 R2 资源上传失败：${(body.failed_keys ?? []).join(', ').slice(0, 200)}`
+            : '';
+        setImportStatus(
+          `${body.ok ? '完成' : '完成（含失败）'}。assets uploaded: ${body.assets_uploaded}${failureNote}。3 秒后刷新页面...`,
+        );
         setTimeout(() => window.location.reload(), 3000);
       } else {
         const text = await res.text();

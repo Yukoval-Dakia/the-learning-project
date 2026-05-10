@@ -139,7 +139,7 @@ describe('GET /api/_/export?include_assets=1', () => {
     expect(new TextDecoder().decode(entries['assets/sk-1'])).toBe('PNG-A');
   });
 
-  it('skips assets whose R2 object is missing (silent)', async () => {
+  it('skips assets whose R2 object is missing AND records key in manifest.missing_assets', async () => {
     const { Bindings } = mockEnv({
       tables: {
         source_asset: [
@@ -154,6 +154,9 @@ describe('GET /api/_/export?include_assets=1', () => {
     const entries = unzipSync(new Uint8Array(ab));
     expect(entries['assets/sk-present']).toBeDefined();
     expect(entries['assets/sk-missing']).toBeUndefined();
+    const manifest = JSON.parse(new TextDecoder().decode(entries['manifest.json']));
+    expect(manifest.missing_assets).toContain('sk-missing');
+    expect(manifest.asset_count).toBe(1); // present minus missing
   });
 
   it('manifest reports include_assets:true and asset_count', async () => {
