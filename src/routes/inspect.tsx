@@ -204,6 +204,7 @@ export function Inspect() {
         Other admin pages: <a href="/record" className="underline">/record</a> ·{' '}
         <a href="/ingest" className="underline">/ingest</a> ·{' '}
         <a href="/mistakes" className="underline">/mistakes</a> ·{' '}
+        <a href="/review" className="underline">/review</a> ·{' '}
         <a href="/knowledge" className="underline">/knowledge</a> ·{' '}
         <a href="/knowledge/proposals" className="underline">/knowledge/proposals</a>
       </p>
