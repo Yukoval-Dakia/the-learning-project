@@ -38,6 +38,9 @@ importers:
       react-router-dom:
         specifier: ^7.0.0
         version: 7.15.0(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      ts-fsrs:
+        specifier: ^5.3.2
+        version: 5.3.2
       zod:
         specifier: ^3.23.8
         version: 3.25.76
@@ -3293,6 +3296,10 @@ packages:
 
   tr46@1.0.1:
     resolution: {integrity: sha512-dTpowEjclQ7Kgx5SdBkqRzVhERQXov8/l9Ft9dVM9fmg0W0KQSVaXX9T4i6twCPNtYiZM53lpSSUAwJbFPOHxA==}
+
+  ts-fsrs@5.3.2:
+    resolution: {integrity: sha512-moJJfYAeG9ynyyGCNaQPUloi0sspTMHFtgCvsx2wDchELu3O2c513/7fp+6PxsGth0ztxNjEtG8d85gX4ce0og==}
+    engines: {node: '>=20.0.0'}
 
   tslib@2.8.1:
     resolution: {integrity: sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==}
@@ -6647,6 +6654,8 @@ snapshots:
   tr46@1.0.1:
     dependencies:
       punycode: 2.3.1
+
+  ts-fsrs@5.3.2: {}
 
   tslib@2.8.1:
     optional: true

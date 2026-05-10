@@ -29,6 +29,13 @@
       "when": 1778340969874,
       "tag": "0003_smooth_doctor_strange",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1778379350902,
+      "tag": "0004_abandoned_wallop",
+      "breakpoints": true
     }
   ]
 }
