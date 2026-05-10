@@ -252,6 +252,7 @@ ingestion.post('/', async (c) => {
       updated_at: updatedAt,
     },
     blocks,
+    failures,
   });
 });
 
@@ -259,7 +260,7 @@ ingestion.post('/', async (c) => {
 
 const ImportBlock = z.object({
   block_id: z.string().min(1).optional(),
-  source_block_ids: z.array(z.string().min(1)).min(1),
+  source_block_ids: z.array(z.string().min(1)),
   page_spans: z.array(PageSpan).min(1),
   image_refs: z.array(z.string().min(1)),
   final_prompt_md: z.string().min(1),
@@ -351,9 +352,17 @@ ingestion.post('/:id/import', async (c) => {
   const sessionAssetSet = new Set(sessionAssetIds);
 
   // 2. Validate every source_block_id belongs to this session, and block_id (if present) is in source_block_ids
+  // Manual blocks: block_id === undefined AND source_block_ids.length === 0 (Tier 4 fallback)
   const sourceBlockRows = new Map<string, QuestionBlockSelectRow>();
   const allSourceIds = new Set<string>();
   for (const block of body.blocks) {
+    const isManual = block.block_id === undefined && block.source_block_ids.length === 0;
+    if (isManual && block.image_refs.length === 0) {
+      return c.json(
+        { error: 'validation_error', message: 'manual block must reference at least one image_ref' },
+        400,
+      );
+    }
     for (const sid of block.source_block_ids) allSourceIds.add(sid);
     if (block.block_id !== undefined && !block.source_block_ids.includes(block.block_id)) {
       return c.json(
@@ -608,6 +617,21 @@ ingestion.post('/:id/import', async (c) => {
       knowledge_ids: block.knowledge_ids,
       cause: block.cause,
     });
+  }
+
+  // Sweep: mark any draft blocks user dropped (not in directlyImportedIds and not used as
+  // source_block in any imported virtual card) as 'ignored'. This handles the case where
+  // user clicked × delete on a block in the review page — the block exists in DB but
+  // shouldn't stay draft after import.
+  const sessionDrafts = await c.env.DB.prepare(
+    `select id from question_block where ingestion_session_id = ? and status = 'draft'`,
+  )
+    .bind(sessionId)
+    .all<{ id: string }>();
+  for (const r of sessionDrafts.results) {
+    if (!directlyImportedIds.has(r.id) && !toIgnore.has(r.id)) {
+      toIgnore.add(r.id);
+    }
   }
 
   // UPDATE source blocks → status='ignored' (those not directly imported)

@@ -342,6 +342,36 @@ describe('POST /api/ingestion', () => {
     expect(res.status).toBe(400);
   });
 
+  it('R2 missing asset: failures array in response contains asset_id + reason', async () => {
+    const assetRows = new Map<string, SourceAssetRow>([
+      ['asset_ok', { id: 'asset_ok', storage_key: 'sk_ok', mime_type: 'image/png' }],
+      ['asset_missing', { id: 'asset_missing', storage_key: 'sk_missing', mime_type: 'image/png' }],
+    ]);
+    const { Bindings, executionCtx } = mockEnv({
+      sourceAssetRows: assetRows,
+      r2Missing: new Set(['sk_missing']),
+    });
+
+    const res = await ingestion.request(
+      '/',
+      makeRequest({ entrypoint: 'vision_single', asset_ids: ['asset_ok', 'asset_missing'] }),
+      Bindings,
+      executionCtx,
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      session: { status: string };
+      blocks: unknown[];
+      failures: Array<{ asset_id: string; reason: string }>;
+    };
+    expect(body.failures).toBeDefined();
+    expect(body.failures).toHaveLength(1);
+    expect(body.failures[0].asset_id).toBe('asset_missing');
+    expect(body.failures[0].reason).toBe('r2_object_missing');
+    expect(body.blocks).toHaveLength(1);
+  });
+
   it('persists tier_log JSON to session.error_message even on success', async () => {
     const assetRows = new Map<string, SourceAssetRow>([
       ['a', { id: 'a', storage_key: 'sk', mime_type: 'image/png' }],
@@ -412,10 +442,13 @@ function mockImportEnv(opts: {
   session?: SessionRow | null;
   questionBlocks?: Map<string, QuestionBlockRow>;
   knowledgeIds?: string[];
+  /** Extra draft block ids that exist in DB but are NOT passed in body.blocks (user deleted them) */
+  extraDraftBlockIds?: string[];
 } = {}) {
   const session = opts.session !== undefined ? opts.session : null;
   const blocks = opts.questionBlocks ?? new Map<string, QuestionBlockRow>();
   const knowledgeSet = new Set(opts.knowledgeIds ?? []);
+  const extraDraftIds = opts.extraDraftBlockIds ?? [];
   const calls: Array<{ sql: string; binds: unknown[] }> = [];
 
   const prepare = vi.fn((sql: string) => ({
@@ -448,6 +481,18 @@ function mockImportEnv(opts: {
               archived_at: null,
             }));
             return { results: rows };
+          }
+          // Draft-block sweep query
+          if (/select id from question_block where ingestion_session_id = \? and status = 'draft'/i.test(sql)) {
+            // Return all draft block ids: those in blocks map with draft status + extraDraftIds
+            const draftRows: Array<{ id: string }> = [];
+            for (const [id, row] of blocks) {
+              if (row.status === 'draft') draftRows.push({ id });
+            }
+            for (const id of extraDraftIds) {
+              draftRows.push({ id });
+            }
+            return { results: draftRows };
           }
           return { results: [] };
         },
@@ -1144,6 +1189,127 @@ describe('POST /api/ingestion/:id/import', () => {
     const insertBlock = calls.find((c) => /insert into question_block/i.test(c.sql));
     expect(insertBlock).toBeDefined();
     expect((insertBlock!.binds as unknown[]).includes('high')).toBe(true);
+  });
+
+  it('manual block (Tier 4 fallback): block_id=undefined, source_block_ids=[] → 200, question + mistake created', async () => {
+    const { Bindings, executionCtx, calls } = mockImportEnv({
+      session: makeSessionRow({}),
+      questionBlocks: new Map(),
+      knowledgeIds: ['k1'],
+    });
+
+    const res = await ingestion.request(
+      '/sess_1/import',
+      makeImportRequest({
+        blocks: [
+          {
+            // No block_id, no source_block_ids — manual Tier 4 fallback
+            source_block_ids: [],
+            page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' }],
+            image_refs: ['asset_1'],
+            final_prompt_md: 'manual q',
+            final_reference_md: null,
+            final_wrong_answer_md: 'manual a',
+            knowledge_ids: ['k1'],
+            cause: null,
+            difficulty: 3,
+            question_kind: 'short_answer',
+          },
+        ],
+      }),
+      Bindings,
+      executionCtx,
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { question_ids: string[]; mistake_ids: string[] };
+    expect(body.question_ids).toHaveLength(1);
+    expect(body.mistake_ids).toHaveLength(1);
+    expect(calls.filter((c) => /insert into question \(/i.test(c.sql))).toHaveLength(1);
+    expect(calls.filter((c) => /insert into mistake/i.test(c.sql))).toHaveLength(1);
+    // A new question_block is inserted for the manual card
+    expect(calls.filter((c) => /insert into question_block/i.test(c.sql))).toHaveLength(1);
+  });
+
+  it('manual block without image_refs → 400', async () => {
+    const { Bindings, executionCtx } = mockImportEnv({
+      session: makeSessionRow({}),
+      questionBlocks: new Map(),
+      knowledgeIds: ['k1'],
+    });
+
+    const res = await ingestion.request(
+      '/sess_1/import',
+      makeImportRequest({
+        blocks: [
+          {
+            source_block_ids: [],
+            page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' }],
+            image_refs: [],
+            final_prompt_md: 'manual q',
+            final_reference_md: null,
+            final_wrong_answer_md: 'manual a',
+            knowledge_ids: ['k1'],
+            cause: null,
+            difficulty: 3,
+            question_kind: 'short_answer',
+          },
+        ],
+      }),
+      Bindings,
+      executionCtx,
+    );
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { message: string };
+    expect(body.message).toMatch(/manual block must reference at least one image_ref/);
+  });
+
+  it('delete-block sweep: draft block not in body → marked ignored after import', async () => {
+    const blocks = new Map<string, QuestionBlockRow>();
+    blocks.set('block_imported', makeBlockRow({ id: 'block_imported' }));
+    // block_deleted is a draft block that exists in DB but is NOT in the import body
+    const { Bindings, executionCtx, calls } = mockImportEnv({
+      session: makeSessionRow({}),
+      questionBlocks: blocks,
+      knowledgeIds: ['k1'],
+      extraDraftBlockIds: ['block_deleted'],
+    });
+
+    const res = await ingestion.request(
+      '/sess_1/import',
+      makeImportRequest({
+        blocks: [
+          {
+            block_id: 'block_imported',
+            source_block_ids: ['block_imported'],
+            page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' }],
+            image_refs: ['asset_1'],
+            final_prompt_md: 'Q final',
+            final_reference_md: null,
+            final_wrong_answer_md: 'WA',
+            knowledge_ids: ['k1'],
+            cause: null,
+            difficulty: 3,
+            question_kind: 'short_answer',
+          },
+        ],
+      }),
+      Bindings,
+      executionCtx,
+    );
+
+    expect(res.status).toBe(200);
+    // The sweep query should have been issued
+    expect(calls.some((c) => /select id from question_block where ingestion_session_id = \? and status = 'draft'/i.test(c.sql))).toBe(true);
+    // block_deleted should be marked 'ignored'
+    const ignoreUpdates = calls.filter(
+      (c) => /update question_block/i.test(c.sql) && c.binds.some((b) => b === 'ignored'),
+    );
+    const ignoredIds = ignoreUpdates.map((c) => c.binds[c.binds.length - 1] as string);
+    expect(ignoredIds).toContain('block_deleted');
+    // block_imported should NOT be marked ignored
+    expect(ignoredIds).not.toContain('block_imported');
   });
 
   it('wrong_answer_image_refs derived from page_spans where role=answer_area', async () => {
