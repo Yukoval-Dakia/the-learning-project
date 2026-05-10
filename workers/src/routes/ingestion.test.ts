@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { D1Database, ExecutionContext, R2Bucket } from '@cloudflare/workers-types';
 import { ingestion, setIngestionRunTaskForTests } from './ingestion';
 
@@ -73,7 +73,15 @@ function mockEnv(opts: {
   } as unknown as R2Bucket;
 
   return {
-    Bindings: { DB: db, IMAGES, INTERNAL_TOKEN: 'test', ANTHROPIC_API_KEY: 'test' },
+    Bindings: {
+      DB: db,
+      IMAGES,
+      INTERNAL_TOKEN: 'test',
+      ANTHROPIC_API_KEY: 'test',
+      TENCENT_SECRET_ID: 'test',
+      TENCENT_SECRET_KEY: 'test',
+      TENCENT_OCR_REGION: 'ap-guangzhou',
+    },
     executionCtx,
     calls,
     waitUntilFns,
@@ -100,6 +108,22 @@ describe('POST /api/ingestion', () => {
       const pageIndex = match ? parseInt(match[1], 10) : 0;
       return { text: makeVisionOutput(pageIndex, String(pageIndex)) };
     });
+    // Stub Tencent so it returns 0 regions twice (edu + general fallback) and
+    // cascade escalates to Tier 2 haiku — preserves existing test semantics.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({ Response: { QuestionBlockInfos: [], TextDetections: [] } }),
+          { status: 200 },
+        ),
+      ),
+    );
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it('happy path 2 assets: inserts session + doc + 2 blocks, returns extracted status', async () => {
@@ -229,7 +253,9 @@ describe('POST /api/ingestion', () => {
     let callCount = 0;
     setIngestionRunTaskForTests(async (_kind, input) => {
       callCount++;
-      if (callCount === 1) throw new Error('first asset exploded');
+      // Cascade has Tier 2 (haiku) + Tier 3 (sonnet) per asset.
+      // Throw on the first two calls so asset_1 exhausts all AI tiers; asset_2 succeeds on its first.
+      if (callCount <= 2) throw new Error('first asset exploded');
       const inp = input as { text: string };
       const match = inp.text.match(/page_index=(\d+)/);
       const pageIndex = match ? parseInt(match[1], 10) : 0;
@@ -314,6 +340,34 @@ describe('POST /api/ingestion', () => {
       executionCtx,
     );
     expect(res.status).toBe(400);
+  });
+
+  it('persists tier_log JSON to session.error_message even on success', async () => {
+    const assetRows = new Map<string, SourceAssetRow>([
+      ['a', { id: 'a', storage_key: 'sk', mime_type: 'image/png' }],
+    ]);
+    const { Bindings, executionCtx, calls } = mockEnv({ sourceAssetRows: assetRows });
+    const res = await ingestion.request(
+      '/',
+      makeRequest({ entrypoint: 'vision_single', asset_ids: ['a'] }),
+      Bindings,
+      executionCtx,
+    );
+    expect(res.status).toBe(200);
+    // Find the UPDATE on ingestion_session
+    const update = calls.find((c) => /update ingestion_session/i.test(c.sql));
+    expect(update).toBeDefined();
+    const payloadRaw = update!.binds[1] as string;
+    expect(typeof payloadRaw).toBe('string');
+    const payload = JSON.parse(payloadRaw) as {
+      tier_logs: Array<{ asset_id: string; log: Array<{ tier: number }> }>;
+    };
+    expect(payload.tier_logs).toHaveLength(1);
+    expect(payload.tier_logs[0].asset_id).toBe('a');
+    // Tier 1 (Tencent stubbed empty) + Tier 2 (haiku mock returns blocks) → 2 entries.
+    expect(payload.tier_logs[0].log.length).toBe(2);
+    expect(payload.tier_logs[0].log[0].tier).toBe(1);
+    expect(payload.tier_logs[0].log[1].tier).toBe(2);
   });
 });
 

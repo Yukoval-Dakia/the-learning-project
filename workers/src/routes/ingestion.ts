@@ -2,7 +2,8 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { createId } from '@paralleldrive/cuid2';
 import { runTask } from '../ai/runner';
-import { runVisionExtract } from '../ingestion/vision';
+import { runOCRCascade } from '../ingestion/cascade';
+import { recognizeDocument } from '../ingestion/ocr_tencent';
 import { runProposeAndWrite } from '../knowledge/propose';
 import { runAttributionAndWrite } from '../knowledge/attribute';
 import { loadTreeSnapshot } from '../knowledge/tree';
@@ -119,6 +120,10 @@ ingestion.post('/', async (c) => {
 
   const blocks: BlockRow[] = [];
   const failures: Array<{ asset_id: string; reason: string }> = [];
+  const perAssetTierLogs: Array<{
+    asset_id: string;
+    log: import('../ingestion/cascade').TierLogEntry[];
+  }> = [];
 
   for (let i = 0; i < assetRows.length; i++) {
     const row = assetRows[i];
@@ -133,22 +138,50 @@ ingestion.post('/', async (c) => {
 
     const imageBytes = await r2Object.arrayBuffer();
 
-    let extracted: Awaited<ReturnType<typeof runVisionExtract>>;
+    let extracted: { blocks: Array<{
+      extracted_prompt_md: string;
+      reference_md: string | null;
+      wrong_answer_md: string | null;
+      page_index: number;
+      bbox: { x: number; y: number; width: number; height: number };
+      role: 'prompt' | 'answer_area' | 'continuation';
+      visual_complexity: 'low' | 'medium' | 'high';
+      extraction_confidence: number;
+      knowledge_hint: string | null;
+    }> };
+    let tierLogForAsset: import('../ingestion/cascade').TierLogEntry[] = [];
     try {
-      extracted = await runVisionExtract({
-        assetId: row.id,
-        mimeType: row.mime_type,
+      const cascadeOut = await runOCRCascade({
         imageBytes,
+        mimeType: row.mime_type,
         pageIndex,
-        runTaskFn,
         env: c.env,
+        deps: {
+          recognizeDocument,
+          runTaskFn,
+          // Image dimensions: Tencent needs pixel dims for normalization. Without
+          // an image-decoder in the Worker we use a coarse bound that matches
+          // the upload pipeline's max (8 MB / typical scan ~ 2480x3508 A4 @ 300dpi).
+          // Tier 1 normalization tolerates this bound — bbox values are advisory and
+          // user can re-edit on the review page.
+          imageDimensions: { width: 2480, height: 3508 },
+          now: () => Date.now(),
+        },
       });
+      extracted = { blocks: cascadeOut.blocks };
+      tierLogForAsset = cascadeOut.tier_log;
+      if (cascadeOut.final_status === 'failed') {
+        failures.push({ asset_id: row.id, reason: 'all tiers exhausted' });
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error('ingestion: runVisionExtract failed', { assetId: row.id, pageIndex, err: msg });
+      console.error('ingestion: runOCRCascade failed', { assetId: row.id, pageIndex, err: msg });
       failures.push({ asset_id: row.id, reason: msg });
+      tierLogForAsset = [];
       continue;
     }
+
+    perAssetTierLogs.push({ asset_id: row.id, log: tierLogForAsset });
 
     for (const block of extracted.blocks) {
       const blockId = createId();
@@ -196,13 +229,16 @@ ingestion.post('/', async (c) => {
   }
 
   const finalStatus = blocks.length === 0 ? 'failed' : 'extracted';
-  const errorMessage = failures.length > 0 ? JSON.stringify(failures) : null;
+  const tierLogPayload =
+    perAssetTierLogs.length > 0 || failures.length > 0
+      ? JSON.stringify({ tier_logs: perAssetTierLogs, failures })
+      : null;
 
   const updatedAt = Math.floor(Date.now() / 1000);
   await c.env.DB.prepare(
     `update ingestion_session set status = ?, error_message = ?, updated_at = ?, version = version + 1 where id = ?`,
   )
-    .bind(finalStatus, errorMessage, updatedAt, sessionId)
+    .bind(finalStatus, tierLogPayload, updatedAt, sessionId)
     .run();
 
   return c.json({
