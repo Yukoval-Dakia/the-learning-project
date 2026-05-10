@@ -101,3 +101,87 @@ describe('GET /api/_/export — refs only', () => {
     expect(Bindings.IMAGES.get).not.toHaveBeenCalled();
   });
 });
+
+describe('GET /api/_/export?include_assets=1', () => {
+  function r2WithBytes(map: Record<string, string>) {
+    return {
+      get: vi.fn(async (key: string) => {
+        if (!(key in map)) return null;
+        const bytes = new TextEncoder().encode(map[key]);
+        return {
+          body: new ReadableStream({
+            start(ctrl) {
+              ctrl.enqueue(bytes);
+              ctrl.close();
+            },
+          }),
+        };
+      }),
+    } as unknown as R2Bucket;
+  }
+
+  it('includes assets/ entries with R2 bytes', async () => {
+    const { Bindings } = mockEnv({
+      tables: {
+        source_asset: [
+          { id: 'a1', storage_key: 'sk-1' },
+          { id: 'a2', storage_key: 'sk-2' },
+        ],
+      },
+    });
+    Bindings.IMAGES = r2WithBytes({ 'sk-1': 'PNG-A', 'sk-2': 'PNG-B' });
+    const res = await exportRoute.request('/?include_assets=1', { method: 'GET' }, Bindings);
+    expect(res.status).toBe(200);
+    const ab = await res.arrayBuffer();
+    const entries = unzipSync(new Uint8Array(ab));
+    expect(entries['assets/sk-1']).toBeDefined();
+    expect(entries['assets/sk-2']).toBeDefined();
+    expect(new TextDecoder().decode(entries['assets/sk-1'])).toBe('PNG-A');
+  });
+
+  it('skips assets whose R2 object is missing (silent)', async () => {
+    const { Bindings } = mockEnv({
+      tables: {
+        source_asset: [
+          { id: 'a1', storage_key: 'sk-present' },
+          { id: 'a2', storage_key: 'sk-missing' },
+        ],
+      },
+    });
+    Bindings.IMAGES = r2WithBytes({ 'sk-present': 'X' });
+    const res = await exportRoute.request('/?include_assets=1', { method: 'GET' }, Bindings);
+    const ab = await res.arrayBuffer();
+    const entries = unzipSync(new Uint8Array(ab));
+    expect(entries['assets/sk-present']).toBeDefined();
+    expect(entries['assets/sk-missing']).toBeUndefined();
+  });
+
+  it('manifest reports include_assets:true and asset_count', async () => {
+    const { Bindings } = mockEnv({
+      tables: { source_asset: [{ id: 'a1', storage_key: 'sk-1' }] },
+    });
+    Bindings.IMAGES = r2WithBytes({ 'sk-1': 'X' });
+    const res = await exportRoute.request('/?include_assets=1', { method: 'GET' }, Bindings);
+    const ab = await res.arrayBuffer();
+    const entries = unzipSync(new Uint8Array(ab));
+    const manifest = JSON.parse(new TextDecoder().decode(entries['manifest.json']));
+    expect(manifest.include_assets).toBe(true);
+    expect(manifest.asset_count).toBe(1);
+  });
+
+  it('returns 400 too_many_assets when source_asset > MAX_INLINE_ASSETS', async () => {
+    const assets = Array.from({ length: 46 }, (_, i) => ({
+      id: `a${i}`,
+      storage_key: `sk-${i}`,
+    }));
+    const { Bindings } = mockEnv({ tables: { source_asset: assets } });
+    Bindings.IMAGES = r2WithBytes({});
+    const res = await exportRoute.request('/?include_assets=1', { method: 'GET' }, Bindings);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; count: number; limit: number };
+    expect(body.error).toBe('too_many_assets');
+    expect(body.count).toBe(46);
+    expect(body.limit).toBe(45);
+    expect(Bindings.IMAGES.get).not.toHaveBeenCalled();
+  });
+});
