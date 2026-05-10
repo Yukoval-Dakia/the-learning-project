@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  body { margin: 0; padding: 24px; background: var(--paper); display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+  .swatch {
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    padding: 18px;
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+    min-height: 130px;
+    justify-content: center;
+  }
+  .swatch svg { width: 56px; height: 56px; }
+  .label { font-family: var(--font-mono); font-size: 11px; color: var(--ink-4); }
+  .label b { color: var(--ink); font-weight: 600; font-family: var(--font-sans); display: block; font-size: 12.5px; }
+
+  /* Color contexts */
+  .on-paper { background: var(--paper); }
+  .on-paper svg { color: var(--coral); }
+  .on-raised { background: var(--paper-raised); }
+  .on-raised svg { color: var(--ink); }
+  .on-ink { background: var(--ink); }
+  .on-ink svg { color: var(--paper); }
+  .on-ink .label, .on-ink .label b { color: rgba(250,249,245,0.8); }
+  .on-ink .label b { color: #fff; }
+</style>
+</head>
+<body>
+  <div class="swatch on-paper">
+    <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><rect x="10" y="10" width="44" height="44" rx="4" stroke-opacity="0.35"/><path d="M10 22 C 22 22, 22 30, 32 30 S 42 22, 54 22"/><path d="M10 32 C 22 32, 22 40, 32 40 S 42 32, 54 32" stroke-opacity="0.7"/><path d="M10 42 C 22 42, 22 50, 32 50 S 42 42, 54 42" stroke-opacity="0.45"/></svg>
+    <div class="label"><b>coral on paper</b>--coral on --paper</div>
+  </div>
+  <div class="swatch on-raised">
+    <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><rect x="10" y="10" width="44" height="44" rx="4" stroke-opacity="0.35"/><path d="M10 22 C 22 22, 22 30, 32 30 S 42 22, 54 22"/><path d="M10 32 C 22 32, 22 40, 32 40 S 42 32, 54 32" stroke-opacity="0.7"/><path d="M10 42 C 22 42, 22 50, 32 50 S 42 42, 54 42" stroke-opacity="0.45"/></svg>
+    <div class="label"><b>ink on raised</b>app icon, header use</div>
+  </div>
+  <div class="swatch on-ink">
+    <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><rect x="10" y="10" width="44" height="44" rx="4" stroke-opacity="0.5"/><path d="M10 22 C 22 22, 22 30, 32 30 S 42 22, 54 22"/><path d="M10 32 C 22 32, 22 40, 32 40 S 42 32, 54 32" stroke-opacity="0.7"/><path d="M10 42 C 22 42, 22 50, 32 50 S 42 42, 54 42" stroke-opacity="0.45"/></svg>
+    <div class="label"><b>paper on ink</b>dark-mode contexts</div>
+  </div>
+</body>
+</html>

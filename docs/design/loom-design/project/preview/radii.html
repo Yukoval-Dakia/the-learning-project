@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  body { margin: 0; padding: 28px; background: var(--paper); display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; }
+  .demo { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .square {
+    width: 84px; height: 64px;
+    background: var(--paper-raised);
+    border: 1px solid var(--line);
+  }
+  .label { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-3); text-align: center; line-height: 1.3; }
+  .label b { color: var(--ink); font-weight: 600; }
+</style>
+</head>
+<body>
+  <div class="demo">
+    <div class="square" style="border-radius:4px"></div>
+    <div class="label"><b>--r-1</b><br/>4 · chips, tags</div>
+  </div>
+  <div class="demo">
+    <div class="square" style="border-radius:6px"></div>
+    <div class="label"><b>--r-2</b><br/>6 · inputs, buttons</div>
+  </div>
+  <div class="demo">
+    <div class="square" style="border-radius:8px"></div>
+    <div class="label"><b>--r-3</b><br/>8 · cards</div>
+  </div>
+  <div class="demo">
+    <div class="square" style="border-radius:12px"></div>
+    <div class="label"><b>--r-4</b><br/>12 · modals</div>
+  </div>
+  <div class="demo">
+    <div class="square" style="border-radius:999px; width:64px;"></div>
+    <div class="label"><b>--r-pill</b><br/>999 · capsules</div>
+  </div>
+</body>
+</html>

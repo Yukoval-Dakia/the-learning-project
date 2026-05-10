@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  body { margin: 0; padding: 36px; background: var(--paper); display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; align-items: end; }
+  .demo { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  .card {
+    width: 110px; height: 70px;
+    background: #fff;
+    border-radius: var(--r-3);
+    border: 1px solid var(--line);
+  }
+  .s1 { box-shadow: var(--shadow-1); }
+  .s2 { box-shadow: var(--shadow-2); }
+  .s3 { box-shadow: var(--shadow-3); }
+  .focus { box-shadow: var(--shadow-focus); border-color: var(--coral); }
+  .label { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-3); text-align: center; line-height: 1.3; }
+  .label b { color: var(--ink); font-weight: 600; }
+</style>
+</head>
+<body>
+  <div class="demo">
+    <div class="card s1"></div>
+    <div class="label"><b>--shadow-1</b><br/>resting card</div>
+  </div>
+  <div class="demo">
+    <div class="card s2"></div>
+    <div class="label"><b>--shadow-2</b><br/>hovered · popover</div>
+  </div>
+  <div class="demo">
+    <div class="card s3"></div>
+    <div class="label"><b>--shadow-3</b><br/>modal · dialog</div>
+  </div>
+  <div class="demo">
+    <div class="card focus"></div>
+    <div class="label"><b>--shadow-focus</b><br/>:focus-visible</div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  body { margin: 0; padding: 28px; background: var(--paper); display: flex; flex-direction: column; gap: 14px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .label { font-family: var(--font-mono); font-size: 11px; color: var(--ink-4); width: 96px; flex-shrink: 0; }
+
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: var(--font-sans);
+    font-size: 12.5px;
+    font-weight: 500;
+    line-height: 1;
+    padding: 5px 10px;
+    border-radius: var(--r-pill);
+    border: 1px solid transparent;
+  }
+
+  .b-pending { background: var(--paper-sunk); color: var(--ink-3); border-color: var(--line); }
+  .b-progress { background: var(--hard-soft); color: var(--hard-ink); border-color: var(--hard-line); }
+  .b-done { background: var(--good-soft); color: var(--good-ink); border-color: var(--good-line); }
+
+  .b-ai { background: var(--info-soft); color: var(--info-ink); }
+  .b-user { background: var(--good-soft); color: var(--good-ink); }
+  .b-attr-pending { background: var(--hard-soft); color: var(--hard-ink); }
+  .b-attr-stale { background: var(--paper-sunk); color: var(--ink-3); }
+
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: 0.7; }
+</style>
+</head>
+<body>
+  <div class="row">
+    <div class="label">status</div>
+    <span class="badge b-pending">待办</span>
+    <span class="badge b-progress">进行中</span>
+    <span class="badge b-done">已完成</span>
+  </div>
+  <div class="row">
+    <div class="label">attribution</div>
+    <span class="badge b-attr-pending"><span class="dot"></span>归因中...</span>
+    <span class="badge b-attr-stale">待归因</span>
+    <span class="badge b-ai">AI · concept (87%)</span>
+    <span class="badge b-user">用户 · knowledge_gap</span>
+  </div>
+</body>
+</html>
