@@ -19,6 +19,48 @@ export const SourceAsset = g.SourceAssetSelectGenerated.extend({ kind: b.SourceA
 export type SourceAssetInsert = z.infer<typeof SourceAssetInsert>;
 export type SourceAsset = z.infer<typeof SourceAsset>;
 
+export const BBox = z.object({
+  x: z.number().min(0).max(1),
+  y: z.number().min(0).max(1),
+  width: z.number().min(0).max(1),
+  height: z.number().min(0).max(1),
+});
+export type BBox = z.infer<typeof BBox>;
+
+export const PageSpan = z.object({
+  page_index: z.number().int().min(0),
+  bbox: BBox,
+  role: b.QuestionBlockRole.optional(),
+});
+export type PageSpan = z.infer<typeof PageSpan>;
+
+// ---------- Ingestion ----------
+export const SourceDocumentInsert = g.SourceDocumentInsertGenerated;
+export const SourceDocument = g.SourceDocumentSelectGenerated;
+export type SourceDocument = z.infer<typeof SourceDocument>;
+
+export const IngestionSessionInsert = g.IngestionSessionInsertGenerated.extend({
+  status: b.IngestionSessionStatus.nullish(),
+  entrypoint: b.IngestionEntrypoint,
+});
+export const IngestionSession = g.IngestionSessionSelectGenerated.extend({
+  status: b.IngestionSessionStatus,
+  entrypoint: b.IngestionEntrypoint,
+});
+export type IngestionSession = z.infer<typeof IngestionSession>;
+
+export const QuestionBlockInsert = g.QuestionBlockInsertGenerated.extend({
+  page_spans: z.array(PageSpan).min(1).max(8),
+  status: b.QuestionBlockStatus.nullish(),
+  visual_complexity: b.VisualComplexity.nullish(),
+});
+export const QuestionBlock = g.QuestionBlockSelectGenerated.extend({
+  page_spans: z.array(PageSpan).min(1).max(8),
+  status: b.QuestionBlockStatus,
+  visual_complexity: b.VisualComplexity,
+});
+export type QuestionBlock = z.infer<typeof QuestionBlock>;
+
 // ---------- Question ----------
 export const QuestionInsert = g.QuestionInsertGenerated.extend({
   kind: b.QuestionKind,

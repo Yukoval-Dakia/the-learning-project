@@ -9,6 +9,15 @@ export const KnowledgeSelectGenerated = createSelectSchema(t.knowledge);
 export const SourceAssetInsertGenerated = createInsertSchema(t.source_asset);
 export const SourceAssetSelectGenerated = createSelectSchema(t.source_asset);
 
+export const SourceDocumentInsertGenerated = createInsertSchema(t.source_document);
+export const SourceDocumentSelectGenerated = createSelectSchema(t.source_document);
+
+export const IngestionSessionInsertGenerated = createInsertSchema(t.ingestion_session);
+export const IngestionSessionSelectGenerated = createSelectSchema(t.ingestion_session);
+
+export const QuestionBlockInsertGenerated = createInsertSchema(t.question_block);
+export const QuestionBlockSelectGenerated = createSelectSchema(t.question_block);
+
 export const QuestionInsertGenerated = createInsertSchema(t.question);
 export const QuestionSelectGenerated = createSelectSchema(t.question);
 

@@ -4,6 +4,7 @@ import {
   streamText,
   stepCountIs,
   type LanguageModel,
+  type ModelMessage,
   type ToolSet,
 } from 'ai';
 import { createId } from '@paralleldrive/cuid2';
@@ -30,6 +31,40 @@ function isKnownTask(k: string): k is TaskKind {
   return (TASK_KINDS as string[]).includes(k);
 }
 
+export interface MultimodalTaskInput {
+  text: string;
+  images: Array<{ data: string | Uint8Array | ArrayBuffer | URL; mediaType: string }>;
+}
+
+function isMultimodalTaskInput(input: unknown): input is MultimodalTaskInput {
+  if (input == null || typeof input !== 'object') return false;
+  const candidate = input as { text?: unknown; images?: unknown };
+  return (
+    typeof candidate.text === 'string' &&
+    Array.isArray(candidate.images) &&
+    candidate.images.every((image) => {
+      const img = image as { data?: unknown; mediaType?: unknown };
+      return img.data != null && typeof img.mediaType === 'string' && img.mediaType.startsWith('image/');
+    })
+  );
+}
+
+function multimodalMessages(input: MultimodalTaskInput): ModelMessage[] {
+  return [
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: input.text },
+        ...input.images.map((image) => ({
+          type: 'image' as const,
+          image: image.data,
+          mediaType: image.mediaType,
+        })),
+      ],
+    },
+  ];
+}
+
 /**
  * Runs a registered task with a single-shot generateText call (no tools, no streaming).
  * Streaming + tool-calling come in later tasks (Task 7+).
@@ -48,12 +83,21 @@ export async function runTask(
   const model = ctx.model ?? anthropic(def.defaultModel);
   const taskRunId = createId();
 
-  const result = await generateText({
+  const baseOptions = {
     model,
     system: def.systemPrompt,
-    prompt: typeof input === 'string' ? input : JSON.stringify(input),
     abortSignal: AbortSignal.timeout(def.budget.timeout),
-  });
+  };
+
+  const result = isMultimodalTaskInput(input)
+    ? await generateText({
+        ...baseOptions,
+        messages: multimodalMessages(input),
+      })
+    : await generateText({
+        ...baseOptions,
+        prompt: typeof input === 'string' ? input : JSON.stringify(input),
+      });
 
   await writeCostLedger(ctx.env.DB, {
     task_kind: kind,

@@ -38,6 +38,73 @@ export const source_asset = sqliteTable('source_asset', {
   created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
 });
 
+export const source_document = sqliteTable('source_document', {
+  id: text('id').primaryKey(),
+  title: text('title'),
+  source_asset_ids: text('source_asset_ids', { mode: 'json' })
+    .$type<string[]>()
+    .notNull()
+    .default([]),
+  body_md: text('body_md'),
+  provenance: text('provenance', { mode: 'json' }).notNull().default({}),
+  created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updated_at: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  version: integer('version').notNull().default(0),
+});
+
+export const ingestion_session = sqliteTable('ingestion_session', {
+  id: text('id').primaryKey(),
+  source_document_id: text('source_document_id'),
+  source_asset_ids: text('source_asset_ids', { mode: 'json' })
+    .$type<string[]>()
+    .notNull()
+    .default([]),
+  status: text('status').notNull().default('uploaded'),
+  entrypoint: text('entrypoint').notNull(),
+  error_message: text('error_message'),
+  created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updated_at: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  version: integer('version').notNull().default(0),
+});
+
+export const question_block = sqliteTable('question_block', {
+  id: text('id').primaryKey(),
+  ingestion_session_id: text('ingestion_session_id').notNull(),
+  source_document_id: text('source_document_id'),
+  source_asset_ids: text('source_asset_ids', { mode: 'json' })
+    .$type<string[]>()
+    .notNull()
+    .default([]),
+  page_spans: text('page_spans', { mode: 'json' })
+    .$type<
+      Array<{
+        page_index: number;
+        bbox: { x: number; y: number; width: number; height: number };
+        role?: string;
+      }>
+    >()
+    .notNull()
+    .default([]),
+  extracted_prompt_md: text('extracted_prompt_md').notNull(),
+  reference_md: text('reference_md'),
+  wrong_answer_md: text('wrong_answer_md'),
+  image_refs: text('image_refs', { mode: 'json' }).$type<string[]>().notNull().default([]),
+  crop_refs: text('crop_refs', { mode: 'json' }).$type<string[]>().notNull().default([]),
+  visual_complexity: text('visual_complexity').notNull().default('low'),
+  extraction_confidence: real('extraction_confidence').notNull().default(1),
+  status: text('status').notNull().default('draft'),
+  knowledge_hint: text('knowledge_hint'),
+  merged_from_block_ids: text('merged_from_block_ids', { mode: 'json' })
+    .$type<string[]>()
+    .notNull()
+    .default([]),
+  imported_question_id: text('imported_question_id'),
+  imported_mistake_id: text('imported_mistake_id'),
+  created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updated_at: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  version: integer('version').notNull().default(0),
+});
+
 export const question = sqliteTable('question', {
   id: text('id').primaryKey(),
   kind: text('kind').notNull(),

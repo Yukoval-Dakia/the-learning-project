@@ -67,6 +67,30 @@ describe('runTask (single-shot, no tools)', () => {
       runTask('NonexistentTask', {}, { env: { DB: db } as never }),
     ).rejects.toThrow(/unknown task/i);
   });
+
+  it('passes image content parts when input is multimodal (AI SDK v6 normalizes image→file)', async () => {
+    let seenPrompt: unknown;
+    const mockModel = new MockLanguageModelV3({
+      doGenerate: async (options) => {
+        seenPrompt = options.prompt;
+        return makeMockGenerateResult('{"blocks":[]}');
+      },
+    });
+    const { db } = makeMockDb();
+
+    await runTask(
+      'VisionExtractTask',
+      {
+        text: 'Extract blocks from page_index=0. Return strict JSON.',
+        images: [{ data: new Uint8Array([1, 2, 3]), mediaType: 'image/png' }],
+      },
+      { env: { DB: db } as never, model: mockModel },
+    );
+
+    const serialized = JSON.stringify(seenPrompt);
+    expect(serialized).toContain('"type":"file"');
+    expect(serialized).toContain('image/png');
+  });
 });
 
 // V3 stream chunk usage / finishReason shape (same nested layout as doGenerate).

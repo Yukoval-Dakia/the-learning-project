@@ -202,6 +202,7 @@ export function Inspect() {
       <h1 className="text-xl font-semibold mb-4">/_/inspect</h1>
       <p className="text-sm text-slate-500 mb-1">
         Other admin pages: <a href="/record" className="underline">/record</a> ·{' '}
+        <a href="/ingest" className="underline">/ingest</a> ·{' '}
         <a href="/mistakes" className="underline">/mistakes</a> ·{' '}
         <a href="/knowledge" className="underline">/knowledge</a> ·{' '}
         <a href="/knowledge/proposals" className="underline">/knowledge/proposals</a>
