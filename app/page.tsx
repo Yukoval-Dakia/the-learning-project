@@ -6,7 +6,10 @@ export default function Home() {
         Stack migration in progress (Sub 0a). UI lands in Sub 0b.
       </p>
       <p className="mt-6 text-xs text-slate-500">
-        Health check: <a href="/api/health" className="underline">/api/health</a>
+        Health check:{' '}
+        <a href="/api/health" className="underline">
+          /api/health
+        </a>
       </p>
     </main>
   );

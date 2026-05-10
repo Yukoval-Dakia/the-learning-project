@@ -1,12 +1,4 @@
-import {
-  boolean,
-  integer,
-  jsonb,
-  pgTable,
-  real,
-  text,
-  timestamp,
-} from 'drizzle-orm/pg-core';
+import { boolean, integer, jsonb, pgTable, real, text, timestamp } from 'drizzle-orm/pg-core';
 
 // Drizzle schema (Postgres) — single source of truth.
 // Per architecture-review.md § Stack Pivot: Postgres types throughout;
@@ -130,10 +122,7 @@ export const mistake = pgTable('mistake', {
     .notNull()
     .references(() => question.id),
   wrong_answer_md: text('wrong_answer_md'),
-  wrong_answer_image_refs: jsonb('wrong_answer_image_refs')
-    .$type<string[]>()
-    .notNull()
-    .default([]),
+  wrong_answer_image_refs: jsonb('wrong_answer_image_refs').$type<string[]>().notNull().default([]),
   source: text('source').notNull(),
   source_ref: text('source_ref'),
   knowledge_ids: jsonb('knowledge_ids').$type<string[]>().notNull().default([]),
@@ -174,10 +163,7 @@ export const learning_item = pgTable('learning_item', {
   knowledge_ids: jsonb('knowledge_ids').$type<string[]>().notNull().default([]),
   primary_artifact_id: text('primary_artifact_id'),
   parent_learning_item_id: text('parent_learning_item_id'),
-  child_learning_item_ids: jsonb('child_learning_item_ids')
-    .$type<string[]>()
-    .notNull()
-    .default([]),
+  child_learning_item_ids: jsonb('child_learning_item_ids').$type<string[]>().notNull().default([]),
   status: text('status').notNull().default('pending'),
   user_pinned: boolean('user_pinned').notNull().default(false),
   ai_score: real('ai_score'),

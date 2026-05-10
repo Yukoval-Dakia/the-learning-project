@@ -25,3 +25,4 @@ drizzle/.snapshots/
 # Next.js
 next-env.d.ts
 
+.env*.local
