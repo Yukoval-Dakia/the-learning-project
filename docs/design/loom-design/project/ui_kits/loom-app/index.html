@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Loom · UI kit</title>
+  <link rel="stylesheet" href="../../colors_and_type.css" />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="orchestrator.css" />
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" src="Primitives.jsx"></script>
+  <script type="text/babel" src="Screens.jsx"></script>
+  <script type="text/babel" src="Ingest.jsx"></script>
+  <script type="text/babel" src="Today.jsx"></script>
+  <script type="text/babel" data-presets="react">
+    const { useState } = React;
+
+    const NOW = Math.floor(Date.now() / 1000);
+    const SEED = {
+      knowledge: [
+        { id: "k_xuci",       name: "文言虚词",        parent_id: null,         domain: "wenyan",  effective_domain: "wenyan" },
+        { id: "k_xuci_zhi",   name: "之 (用法)",       parent_id: "k_xuci",     domain: null,      effective_domain: "wenyan" },
+        { id: "k_xuci_yu",    name: "于 (用法)",       parent_id: "k_xuci",     domain: null,      effective_domain: "wenyan" },
+        { id: "k_juedu",      name: "断句",            parent_id: null,         domain: "wenyan",  effective_domain: "wenyan" },
+        { id: "k_shici",      name: "实词词义",        parent_id: null,         domain: "wenyan",  effective_domain: "wenyan" },
+      ],
+      mistakes: [
+        {
+          id: "m1", question_id: "q1",
+          prompt_md: '"之"在「古之学者必有师」中的用法是?',
+          reference_md: "结构助词，定语标志，相当于「的」。",
+          wrong_answer_md: "代词，指代「学者」。",
+          knowledge_ids: ["k_xuci_zhi"],
+          cause: { primary_category: "concept", confidence: 0.87, user_edited: false },
+          fsrs_state: { due: NOW - 3600, state: "learning" },
+          created_at: NOW - 86400,
+        },
+        {
+          id: "m2", question_id: "q2",
+          prompt_md: "翻译: 「师者，所以传道受业解惑也」。",
+          reference_md: "老师，是用来传授道理、教授学业、解答疑惑的人。",
+          wrong_answer_md: "老师所以传授道理、学业和解答疑惑。",
+          knowledge_ids: ["k_juedu", "k_shici"],
+          cause: { primary_category: "expression", confidence: 0.74, user_edited: false },
+          fsrs_state: { due: NOW - 7200, state: "review" },
+          created_at: NOW - 86400 * 2,
+        },
+        {
+          id: "m3", question_id: "q3",
+          prompt_md: '「青，取之于蓝，而青于蓝」中两个"于"的用法?',
+          reference_md: "前一个表来源(从)；后一个表比较(比)。",
+          wrong_answer_md: "都表示比较。",
+          knowledge_ids: ["k_xuci_yu"],
+          cause: null,  // pending attribution
+          fsrs_state: { due: NOW + 86400, state: "new" },
+          created_at: NOW - 60,
+        },
+      ],
+      items: [
+        { id: "li1", title: "梳理「之」的所有用法",   knowledge_ids: ["k_xuci_zhi"],          status: "in_progress", created_at: NOW - 86400 * 3, version: 2 },
+        { id: "li2", title: "把《师说》全文背下来",   knowledge_ids: ["k_juedu", "k_shici"],   status: "pending",     created_at: NOW - 86400 * 5, version: 1 },
+        { id: "li3", title: "「于」的来源 vs 比较",   knowledge_ids: ["k_xuci_yu"],            status: "done",        created_at: NOW - 86400 * 14, completed_at: NOW - 86400 * 7, version: 3 },
+      ],
+    };
+
+    function App() {
+      const [page, setPage] = useState("today");
+      const [db, setDb] = useState(SEED);
+
+      const navMap = { today: "today", home: "today", record: "record", review: "review",
+        mistakes: "mistakes", items: "items", knowledge: "knowledge",
+        "knowledge-proposals": "knowledge", inspect: null };
+      const activeNav = navMap[page];
+
+      let screen;
+      switch (page) {
+        case "record":     screen = <RecordScreenUnified db={db} setDb={setDb} nav={setPage} />; break;
+        case "review":     screen = <ReviewScreen db={db} setDb={setDb} nav={setPage} />; break;
+        case "mistakes":   screen = <MistakesScreen db={db} nav={setPage} />; break;
+        case "items":      screen = <ItemsScreen db={db} setDb={setDb} nav={setPage} />; break;
+        case "knowledge":  screen = <KnowledgeScreen db={db} nav={setPage} />; break;
+        case "knowledge-proposals": screen = <KnowledgeScreen db={db} nav={setPage} />; break;
+        default:           screen = <TodayScreen db={db} nav={setPage} />;
+      }
+
+      return (
+        <div className="app">
+          <TopNav active={activeNav} onNav={setPage} />
+          {screen}
+          <TabBar active={activeNav} onNav={setPage} />
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>

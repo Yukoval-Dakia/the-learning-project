@@ -101,13 +101,16 @@ the-learning-project/
 
 ## Design system 增量扩展原则（Sub 4C 起 lock）
 
-每加新 module / page 必须遵循（详见 `docs/superpowers/specs/2026-05-10-phase1a-sub4c-design.md` § 八）：
+**Reference bundle**: `docs/design/loom-design/`（claude.ai design 出的 v1 handoff，2026-05-10）。当前**只作 reference 不接 CSS** —— 等 Phase 1 收尾让 claude design 看完整项目重出 v2 production code。
 
-1. **扩展 token 而非重写** — 在 `src/index.css` 既有 `--token-*` 之上加新 token，不替换已有名字
+每加新 module / page 必须遵循（详见 `docs/superpowers/specs/2026-05-10-phase1a-sub4c-design.md` § 八 + bundle README）：
+
+1. **扩展 token 而非重写** — 在 `src/index.css` 既有 `--token-*` 之上加新 token，不替换已有名字；命名向 bundle 的 `colors_and_type.css` 对齐
 2. **重复 ≥3 次抽 component** — 抽到 `src/components/`，业务命名（`Card` / `StatusBadge` / `KnowledgePicker`），不是 `BoxV2`
 3. **写 design extension 小文档** — 引入新 token / component 时加一节到 `docs/design/extensions.md`：[新增 token + 用途] / [新增 component + 用途 + 已用页]
-4. **不偏离 Loom anchor** — 暖白底 + coral 单 accent / 思源宋体 + Source Serif 4 + MiSans + Inter / 中文优先 / 低视觉噪音 / 无 emoji 体验、无游戏化
+4. **不偏离 Loom anchor** — 暖白底 + coral 单 accent / 思源宋体 + Source Serif 4 / 中文优先 / 低视觉噪音 / **零 emoji（任何场合，包括首页入口、empty state、loading 状态）**；要图标用 Lucide（`lucide-react` 已在 deps）；UI sans 字体未定（bundle 推 Geist + Noto Sans SC，session 选过 MiSans + Inter — 见 issue 待决）
 5. **既有 page 用既有 token** — 不允许新 page 用 ad-hoc 颜色 / 字号 / 间距；token 不够先扩展 token，再用
+6. **Anti-drift CI guard（建议加）** — 至少跑 `grep -r '[\x{1F300}-\x{1FAFF}\x{2600}-\x{27BF}]' src/` 防止再混入 emoji
 
 #### Phase 1b · 补完（1a 跑出第一周数据后做）
 

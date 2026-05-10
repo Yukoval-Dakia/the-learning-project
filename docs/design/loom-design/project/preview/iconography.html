@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  body { margin: 0; padding: 24px; background: var(--paper); }
+  .header { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-4); margin-bottom: 14px; letter-spacing: 0.04em; }
+  .grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 12px; }
+  .icon { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 4px; border-radius: var(--r-2); }
+  .icon svg { width: 24px; height: 24px; color: var(--ink-2); stroke-width: 1.75; }
+  .icon .name { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-4); text-align: center; line-height: 1.2; }
+  .pri svg { color: var(--coral); }
+</style>
+</head>
+<body>
+  <div class="header">LUCIDE · 1.75 stroke · rounded caps · 24px nominal</div>
+  <div class="grid">
+    <!-- pen-line -->
+    <div class="icon"><svg fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.376 3.622a1 1 0 0 1 3.002 3.002L7.368 18.635a2 2 0 0 1-.855.506l-2.872.838a.5.5 0 0 1-.62-.62l.838-2.872a2 2 0 0 1 .506-.855z"/></svg><div class="name">record</div></div>
+    <!-- list-checks -->
+    <div class="icon"><svg fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg><div class="name">mistakes</div></div>
+    <!-- repeat-2 -->
+    <div class="icon pri"><svg fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="m2 9 3-3 3 3"/><path d="M13 18H7a2 2 0 0 1-2-2V6"/><path d="m22 15-3 3-3-3"/><path d="M11 6h6a2 2 0 0 1 2 2v10"/></svg><div class="name">review</div></div>
+    <!-- network -->
+    <div class="icon"><svg fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"/><path d="M12 12V8"/></svg><div class="name">knowledge</div></div>
+    <!-- file-up -->
+    <div class="icon"><svg fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M12 12v6"/><path d="m15 15-3-3-3 3"/></svg><div class="name">ingest</div></div>
+    <!-- bookmark -->
+    <div class="icon"><svg fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg><div class="name">learning-items</div></div>
+    <!-- search-code -->
+    <div class="icon"><svg fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/><path d="m9 9-2 2 2 2"/><path d="m13 9 2 2-2 2"/></svg><div class="name">_/inspect</div></div>
+    <!-- check -->
+    <div class="icon"><svg fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg><div class="name">done</div></div>
+  </div>
+</body>
+</html>

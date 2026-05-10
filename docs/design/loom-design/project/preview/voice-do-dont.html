@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  body { margin: 0; padding: 28px; background: var(--paper); }
+  .stack { display: flex; flex-direction: column; gap: 14px; }
+  .item { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: stretch; }
+  .yes, .no { border-radius: var(--r-2); padding: 10px 14px; font-family: var(--font-sans); font-size: 14.5px; line-height: 1.5; color: var(--ink); }
+  .yes { background: var(--good-soft); border: 1px solid var(--good-line); }
+  .no { background: var(--again-soft); border: 1px solid var(--again-line); color: var(--ink-2); }
+  .tag { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.05em; color: var(--ink-4); display: block; margin-bottom: 4px; text-transform: uppercase; }
+  .yes .tag { color: var(--good-ink); }
+  .no .tag { color: var(--again-ink); }
+</style>
+</head>
+<body>
+  <div class="stack">
+    <div class="item">
+      <div class="yes"><span class="tag">on-brand</span>今天没有要复习的，太好了</div>
+      <div class="no"><span class="tag">off-brand</span>🎉 哇！太棒了，今天没有任务！</div>
+    </div>
+    <div class="item">
+      <div class="yes"><span class="tag">on-brand</span>归因中... · 待归因</div>
+      <div class="no"><span class="tag">off-brand</span>AI 正在认真思考你的错题 ✨</div>
+    </div>
+    <div class="item">
+      <div class="yes"><span class="tag">on-brand</span>AI · concept (87%)</div>
+      <div class="no"><span class="tag">off-brand</span>★★★★☆ 概念错误</div>
+    </div>
+    <div class="item">
+      <div class="yes"><span class="tag">on-brand</span>+ 录新错题</div>
+      <div class="no"><span class="tag">off-brand</span>📝 添加一条新错题</div>
+    </div>
+  </div>
+</body>
+</html>

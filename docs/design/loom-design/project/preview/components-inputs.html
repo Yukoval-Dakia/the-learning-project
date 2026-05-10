@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  body { margin: 0; padding: 28px; background: var(--paper); }
+  .stack { display: flex; flex-direction: column; gap: 12px; max-width: 540px; }
+  label.field { display: flex; flex-direction: column; gap: 6px; }
+  label .lbl { font-family: var(--font-sans); font-size: 14px; font-weight: 500; color: var(--ink-2); }
+  input[type=text], textarea, select {
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    padding: 9px 12px;
+    background: var(--paper-raised);
+    border: 1px solid var(--line);
+    border-radius: var(--r-2);
+    color: var(--ink);
+    transition: border-color var(--dur-fast), box-shadow var(--dur-fast);
+  }
+  input[type=text]:focus-visible, textarea:focus-visible, select:focus-visible {
+    border-color: var(--coral);
+    outline: none;
+    box-shadow: var(--shadow-focus);
+  }
+  textarea { font-family: var(--font-mono); font-size: 13px; resize: vertical; min-height: 64px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .helper { font-size: 12.5px; color: var(--ink-4); }
+</style>
+</head>
+<body>
+  <div class="stack">
+    <label class="field">
+      <span class="lbl">题面 *</span>
+      <textarea placeholder='"之"在主谓之间的用法是？'>古之学者必有师。师者，所以传道受业解惑也。</textarea>
+    </label>
+    <div class="row">
+      <label class="field">
+        <span class="lbl">题型</span>
+        <select><option>short_answer</option><option>translation</option></select>
+      </label>
+      <label class="field">
+        <span class="lbl">难度</span>
+        <select><option>3</option></select>
+      </label>
+    </div>
+    <label class="field">
+      <span class="lbl">备注（可空）</span>
+      <input type="text" placeholder="—" />
+      <span class="helper">留空 → AttributionTask 兜底</span>
+    </label>
+  </div>
+</body>
+</html>

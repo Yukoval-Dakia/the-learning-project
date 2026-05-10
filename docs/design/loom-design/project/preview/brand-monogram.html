@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  body { margin: 0; padding: 28px; background: var(--paper); display: grid; grid-template-columns: 180px 1fr; gap: 28px; align-items: center; }
+  .mark { color: var(--coral); display: flex; align-items: center; justify-content: center; }
+  .mark svg { width: 140px; height: 140px; }
+  .copy { display: flex; flex-direction: column; gap: 8px; }
+  .name { font-family: var(--font-serif); font-size: 36px; font-weight: 500; color: var(--ink); line-height: 1; letter-spacing: -0.015em; }
+  .tag { font-family: var(--font-sans); font-size: 14px; color: var(--ink-3); line-height: 1.5; }
+  .tag b { color: var(--ink-2); }
+  code { font-family: var(--font-mono); font-size: 12px; }
+</style>
+</head>
+<body>
+  <div class="mark">
+    <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="10" y="10" width="44" height="44" rx="4" stroke-opacity="0.35"/>
+      <path d="M10 22 C 22 22, 22 30, 32 30 S 42 22, 54 22"/>
+      <path d="M10 32 C 22 32, 22 40, 32 40 S 42 32, 54 32" stroke-opacity="0.7"/>
+      <path d="M10 42 C 22 42, 22 50, 32 50 S 42 42, 54 42" stroke-opacity="0.45"/>
+    </svg>
+  </div>
+  <div class="copy">
+    <div class="name">Loom</div>
+    <div class="tag">三股线 · 知识图谱 · 错题归因 · FSRS 复习</div>
+    <div class="tag" style="color: var(--ink-4); font-size: 13px;"><code>assets/loom-monogram.svg</code> · stroke <code>currentColor</code></div>
+  </div>
+</body>
+</html>

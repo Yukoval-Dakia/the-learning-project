@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  body { margin: 0; padding: 24px; background: var(--paper); }
+  .grid { display: grid; gap: 12px; grid-template-columns: repeat(2, 1fr); }
+  .swatch {
+    display: flex; flex-direction: column; gap: 6px;
+    padding: 14px 14px 14px 14px;
+    border-radius: var(--r-3);
+    border: 1px solid var(--line);
+    min-height: 64px;
+    background: var(--paper-raised);
+  }
+  .swatch .top { display: flex; align-items: center; gap: 12px; }
+  .chip {
+    width: 36px; height: 36px; border-radius: var(--r-2);
+    border: 1px solid rgba(60,50,30,0.08);
+    flex-shrink: 0;
+  }
+  .name {
+    font-family: var(--font-sans);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ink);
+    line-height: 1.2;
+  }
+  .hex {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--ink-4);
+    line-height: 1.2;
+    letter-spacing: 0;
+  }
+  .meta {
+    font-size: 12px;
+    color: var(--ink-3);
+    line-height: 1.3;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+</style>
+</head>
+<body>
+  <div class="grid">
+    <div class="swatch">
+      <div class="top">
+        <div class="chip" style="background:#D97757"></div>
+        <div>
+          <div class="name">--coral</div>
+          <div class="hex">#D97757</div>
+        </div>
+      </div>
+      <div class="meta">primary brand · solid CTA, links, focus ring tint</div>
+    </div>
+    <div class="swatch">
+      <div class="top">
+        <div class="chip" style="background:#C2553A"></div>
+        <div>
+          <div class="name">--coral-hover</div>
+          <div class="hex">#C2553A</div>
+        </div>
+      </div>
+      <div class="meta">solid CTA :hover</div>
+    </div>
+    <div class="swatch">
+      <div class="top">
+        <div class="chip" style="background:#A93F26"></div>
+        <div>
+          <div class="name">--coral-press</div>
+          <div class="hex">#A93F26</div>
+        </div>
+      </div>
+      <div class="meta">solid CTA :active</div>
+    </div>
+    <div class="swatch">
+      <div class="top">
+        <div class="chip" style="background:#FAEDE5; border-color:#EDC3AE"></div>
+        <div>
+          <div class="name">--coral-soft / --coral-line</div>
+          <div class="hex">#FAEDE5 · border #EDC3AE</div>
+        </div>
+      </div>
+      <div class="meta">tinted capsule background · sparingly</div>
+    </div>
+  </div>
+</body>
+</html>
