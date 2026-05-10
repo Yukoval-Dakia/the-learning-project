@@ -1,6 +1,7 @@
 import type { D1Database, R2Bucket } from '@cloudflare/workers-types';
 import { zipSync } from 'fflate';
 import { describe, expect, it, vi } from 'vitest';
+import { FK_ORDER } from '../export/constants';
 import { importRoute } from './import';
 
 function mockEnv() {
@@ -148,5 +149,154 @@ describe('POST /api/_/import — guards', () => {
     const body = (await res.json()) as { error: string; message: string };
     expect(body.error).toBe('invalid_zip');
     expect(body.message).toContain('manifest.json');
+  });
+});
+
+describe('POST /api/_/import — wipe + reinsert', () => {
+  it('issues DELETE FROM in REVERSE FK order before any INSERT', async () => {
+    const { Bindings, calls } = mockEnv();
+    const zip = buildZip({
+      'manifest.json': JSON.stringify({
+        schema_version: '1.0',
+        exported_at: 1700000000,
+        include_assets: false,
+        row_counts: {},
+        asset_count: 0,
+      }),
+      'data.json': JSON.stringify({}),
+    });
+    await importRoute.request(
+      '/?confirm=wipe-and-reload',
+      { method: 'POST', body: zip },
+      Bindings,
+    );
+    const deletes = calls.filter((c) => /^delete from/i.test(c.sql));
+    expect(deletes.length).toBe(FK_ORDER.length);
+    expect(deletes[0].sql).toMatch(new RegExp(`delete from ${FK_ORDER[FK_ORDER.length - 1]}`, 'i'));
+    expect(deletes[deletes.length - 1].sql).toMatch(new RegExp(`delete from ${FK_ORDER[0]}`, 'i'));
+  });
+
+  it('inserts data in FORWARD FK order via D1.batch', async () => {
+    const { Bindings, batchCalls } = mockEnv();
+    const zip = buildZip({
+      'manifest.json': JSON.stringify({
+        schema_version: '1.0',
+        exported_at: 1700000000,
+        include_assets: false,
+        row_counts: { knowledge: 1, mistake: 1 },
+        asset_count: 0,
+      }),
+      'data.json': JSON.stringify({
+        knowledge: [{ id: 'k1', name: 'x', parent_id: null }],
+        mistake: [
+          {
+            id: 'm1',
+            question_id: 'q1',
+            wrong_answer_md: 'oops',
+            knowledge_ids: '["k1"]',
+            cause: null,
+            wrong_answer_image_refs: '[]',
+            source: 'manual',
+            variants: '[]',
+            variants_generated_count: 0,
+            variants_max: 3,
+            status: 'active',
+            fsrs_state: null,
+            created_at: 1700000000,
+            updated_at: 1700000000,
+            version: 0,
+          },
+        ],
+      }),
+    });
+    await importRoute.request(
+      '/?confirm=wipe-and-reload',
+      { method: 'POST', body: zip },
+      Bindings,
+    );
+    expect(batchCalls.length).toBe(2);
+    expect(batchCalls[0][0].sql).toMatch(/insert into knowledge/i);
+    expect(batchCalls[1][0].sql).toMatch(/insert into mistake/i);
+  });
+
+  it('chunks large inserts into batches of INSERT_BATCH_SIZE', async () => {
+    const { Bindings, batchCalls } = mockEnv();
+    const rows = Array.from({ length: 120 }, (_, i) => ({
+      id: `k${i}`,
+      name: `n${i}`,
+      parent_id: null,
+    }));
+    const zip = buildZip({
+      'manifest.json': JSON.stringify({
+        schema_version: '1.0',
+        exported_at: 1700000000,
+        include_assets: false,
+        row_counts: { knowledge: 120 },
+        asset_count: 0,
+      }),
+      'data.json': JSON.stringify({ knowledge: rows }),
+    });
+    await importRoute.request(
+      '/?confirm=wipe-and-reload',
+      { method: 'POST', body: zip },
+      Bindings,
+    );
+    expect(batchCalls.length).toBe(3);
+    expect(batchCalls[0].length).toBe(50);
+    expect(batchCalls[1].length).toBe(50);
+    expect(batchCalls[2].length).toBe(20);
+  });
+
+  it('PUTs assets/<key> to R2 when assets are present', async () => {
+    const { Bindings } = mockEnv();
+    const zip = buildZip({
+      'manifest.json': JSON.stringify({
+        schema_version: '1.0',
+        exported_at: 1700000000,
+        include_assets: true,
+        row_counts: {},
+        asset_count: 2,
+      }),
+      'data.json': JSON.stringify({}),
+      'assets/sk-1': 'IMG-A',
+      'assets/sk-2': 'IMG-B',
+    });
+    await importRoute.request(
+      '/?confirm=wipe-and-reload',
+      { method: 'POST', body: zip },
+      Bindings,
+    );
+    expect(Bindings.IMAGES.put).toHaveBeenCalledTimes(2);
+    expect((Bindings.IMAGES.put as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe('sk-1');
+    expect((Bindings.IMAGES.put as ReturnType<typeof vi.fn>).mock.calls[1][0]).toBe('sk-2');
+  });
+
+  it('returns ok:true with stats per table', async () => {
+    const { Bindings } = mockEnv();
+    const zip = buildZip({
+      'manifest.json': JSON.stringify({
+        schema_version: '1.0',
+        exported_at: 1700000000,
+        include_assets: false,
+        row_counts: { knowledge: 1 },
+        asset_count: 0,
+      }),
+      'data.json': JSON.stringify({
+        knowledge: [{ id: 'k1', name: 'x', parent_id: null }],
+      }),
+    });
+    const res = await importRoute.request(
+      '/?confirm=wipe-and-reload',
+      { method: 'POST', body: zip },
+      Bindings,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      ok: boolean;
+      stats: Record<string, { deleted: number; inserted: number }>;
+      assets_uploaded: number;
+    };
+    expect(body.ok).toBe(true);
+    expect(body.stats.knowledge.inserted).toBe(1);
   });
 });

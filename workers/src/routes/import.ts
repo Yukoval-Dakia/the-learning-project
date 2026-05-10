@@ -5,11 +5,7 @@ import type { AppEnv } from '../types';
 
 export const importRoute = new Hono<AppEnv>();
 
-// biome-ignore lint/correctness/noUnusedVariables: used in Task 9
 const INSERT_BATCH_SIZE = 50;
-
-// biome-ignore lint/correctness/noUnusedVariables: used in Task 9
-const _FK_ORDER = FK_ORDER;
 
 interface ImportManifest {
   schema_version: string;
@@ -72,6 +68,70 @@ importRoute.post('/', async (c) => {
     );
   }
 
-  // TODO: wipe + reinsert + R2 — added in Task 9
-  return c.json({ ok: true, stats: {}, assets_uploaded: 0, assets_failed: 0 });
+  const dataBytes = entries['data.json'];
+  if (!dataBytes) {
+    return c.json(
+      { error: 'invalid_zip', message: 'data.json missing from ZIP' },
+      400,
+    );
+  }
+  let data: Record<string, Array<Record<string, unknown>>>;
+  try {
+    data = JSON.parse(new TextDecoder().decode(dataBytes)) as Record<
+      string,
+      Array<Record<string, unknown>>
+    >;
+  } catch {
+    return c.json(
+      { error: 'invalid_zip', message: 'data.json is not valid JSON' },
+      400,
+    );
+  }
+
+  const stats: Record<string, { deleted: number; inserted: number }> = {};
+
+  // Wipe in REVERSE FK order, one DELETE per table.
+  for (const t of [...FK_ORDER].reverse()) {
+    const r = (await c.env.DB.prepare(`delete from ${t}`).run()) as {
+      meta?: { changes?: number };
+    };
+    stats[t] = { deleted: r.meta?.changes ?? 0, inserted: 0 };
+  }
+
+  // Insert in FORWARD FK order, chunked into D1 batches.
+  for (const t of FK_ORDER) {
+    const rows = data[t] ?? [];
+    if (rows.length === 0) continue;
+    const cols = Object.keys(rows[0]);
+    const placeholders = `(${cols.map(() => '?').join(',')})`;
+    for (let i = 0; i < rows.length; i += INSERT_BATCH_SIZE) {
+      const chunk = rows.slice(i, i + INSERT_BATCH_SIZE);
+      const stmts = chunk.map((row) =>
+        c.env.DB.prepare(
+          `insert into ${t} (${cols.join(',')}) values ${placeholders}`,
+        ).bind(...cols.map((col) => row[col] ?? null)),
+      );
+      await c.env.DB.batch(stmts);
+      stats[t].inserted += chunk.length;
+    }
+  }
+
+  // Re-PUT assets to R2.
+  let assetsUploaded = 0;
+  let assetsFailed = 0;
+  if (manifest.include_assets) {
+    for (const [path, bytes] of Object.entries(entries)) {
+      if (!path.startsWith('assets/')) continue;
+      const key = path.slice('assets/'.length);
+      try {
+        await c.env.IMAGES.put(key, bytes);
+        assetsUploaded += 1;
+      } catch (err) {
+        console.error('import: R2 put failed', { key, err });
+        assetsFailed += 1;
+      }
+    }
+  }
+
+  return c.json({ ok: true, stats, assets_uploaded: assetsUploaded, assets_failed: assetsFailed });
 });
