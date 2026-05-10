@@ -61,7 +61,7 @@ Then update `manifest.json` inside the ZIP to set `include_assets: true` and
 
 (In practice: easiest path is to have <45 assets and use `?include_assets=1`.)
 
-## Import (destructive — wipes D1 + R2)
+## Import (destructive — wipes D1; overwrites R2 keys but does NOT wipe R2)
 
 ```bash
 curl -X POST \
@@ -78,9 +78,32 @@ Response is JSON:
   "ok": true,
   "stats": { "knowledge": {"deleted": 0, "inserted": 42}, ... },
   "assets_uploaded": 12,
-  "assets_failed": 0
+  "assets_failed": 0,
+  "failed_keys": []
 }
 ```
 
+`ok` is `false` if any R2 PUT failed; `failed_keys` lists the storage_keys.
+
 If `schema_version` doesn't match the running worker (`1.0`), import returns
 400 with `{error: "schema_version_mismatch", expected, got}`.
+
+If `data.json` has column-shape problems, import returns 400 with
+`{error: "data_validation_failed", issues: [...]}` and D1 is NOT wiped.
+
+## R2 orphans
+
+Restore PUTs assets included in the ZIP but does NOT delete pre-existing
+R2 objects. If you restore an older backup, R2 may carry orphan keys from
+the in-between state. To clean up:
+
+```bash
+# List all R2 keys (fragmented across pages):
+wrangler r2 object list learning-project-images
+
+# Cross-reference with manifest.row_counts.source_asset post-restore.
+# Delete by key:
+wrangler r2 object delete learning-project-images/<orphan-key>
+```
+
+Or live with the orphans (they cost ~$0.015/GB/month).

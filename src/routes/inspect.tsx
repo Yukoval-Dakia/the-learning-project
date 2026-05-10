@@ -312,7 +312,8 @@ function DataTab() {
       <section>
         <h2 className="text-base font-medium text-red-700">还原（清空式）</h2>
         <p className="text-xs text-slate-500 mt-1">
-          这个动作会删除所有 D1 数据 + R2 图片，然后从你上传的 ZIP 重装。先 export 当前再 import
+          这个动作会清空所有 D1 数据，然后从你上传的 ZIP 重装；ZIP 里的 R2 图片会覆盖上传，但
+          <strong>不删除</strong> 之前的 R2 对象（孤儿 R2 不会被自动清理）。先 export 当前再 import
           新的；没 UNDO。
         </p>
         <div className="mt-2 space-y-2">
