@@ -1,6 +1,15 @@
 import { recognizeDocument as defaultRecognize, type TencentOCRRegion } from './ocr_tencent';
 import { parseVisionOutput, type VisionBlock } from './vision';
 
+function isEmptyBlocksError(err: unknown): boolean {
+  // parseVisionOutput uses zod schema with `blocks: array(...).min(1)`.
+  // When the model returns `{"blocks":[]}` we get a ZodError whose message contains
+  // "Array must contain at least 1 element". That's not a failure — it's a successful
+  // model call that found no question blocks. Treat it as 0 blocks with no reason.
+  if (!(err instanceof Error)) return false;
+  return /at least 1 element|Too small|too_small/i.test(err.message);
+}
+
 export interface NormalizedBlock {
   extracted_prompt_md: string;
   reference_md: string | null;
@@ -90,6 +99,9 @@ export async function runOCRCascade(args: RunOCRCascadeArgs): Promise<CascadeRes
   let tier1Blocks: NormalizedBlock[] = [];
   let tier1Avg: number | null = null;
   let tier1Reason: string | undefined;
+  // tier1Model starts as edu paper; mutated to general_accurate inside the else
+  // branch when edu returns 0 regions. If a call throws, this records whichever
+  // model was last attempted (edu if edu threw; general if general threw mid-fallback).
   let tier1Model = 'tencent_edu_paper';
 
   try {
@@ -155,7 +167,9 @@ export async function runOCRCascade(args: RunOCRCascadeArgs): Promise<CascadeRes
     const parsed = parseVisionOutput(result.text);
     tier2Blocks = visionBlocksToNormalized(parsed.blocks, args.pageIndex);
   } catch (err) {
-    tier2Reason = err instanceof Error ? err.message : String(err);
+    if (!isEmptyBlocksError(err)) {
+      tier2Reason = err instanceof Error ? err.message : String(err);
+    }
     tier2Blocks = [];
   }
   tierLog.push({
@@ -186,7 +200,9 @@ export async function runOCRCascade(args: RunOCRCascadeArgs): Promise<CascadeRes
     const parsed = parseVisionOutput(result.text);
     tier3Blocks = visionBlocksToNormalized(parsed.blocks, args.pageIndex);
   } catch (err) {
-    tier3Reason = err instanceof Error ? err.message : String(err);
+    if (!isEmptyBlocksError(err)) {
+      tier3Reason = err instanceof Error ? err.message : String(err);
+    }
     tier3Blocks = [];
   }
   tierLog.push({

@@ -228,4 +228,31 @@ describe('runOCRCascade — escalations', () => {
     expect(out.tier_log[0].blocks_count).toBe(0);
     expect(out.blocks[0].extracted_prompt_md).toBe('haiku ok');
   });
+
+  it('Tier 1 confidence exactly 0.6 → keeps tier 1 (>= threshold)', async () => {
+    const recognize = vi.fn(async () => ({
+      regions: [
+        {
+          bbox: { x: 0, y: 0, width: 1, height: 1 },
+          text: 'borderline',
+          type: 'question' as const,
+          confidence: 0.6,
+          page_index: 0,
+        },
+      ],
+      raw_response: null,
+    }));
+    const runTaskFn = vi.fn();
+    const out = await runOCRCascade({
+      imageBytes,
+      mimeType: 'image/png',
+      pageIndex: 0,
+      env,
+      deps: depsWith({ recognizeDocument: recognize, runTaskFn }),
+    });
+    expect(out.final_status).toBe('extracted');
+    expect(out.tier_log).toHaveLength(1);
+    expect(out.tier_log[0].confidence_avg).toBeCloseTo(0.6, 5);
+    expect(runTaskFn).not.toHaveBeenCalled();
+  });
 });
