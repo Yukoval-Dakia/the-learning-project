@@ -92,6 +92,11 @@ export interface BuildAuthArgs {
   secretKey: string;
   timestamp: number;
   service: string;
+  /**
+   * Action is sent in the X-TC-Action HTTP header by the caller (Task 3),
+   * not included in the canonical request or signed headers. Field is kept
+   * here for call-site documentation.
+   */
   action: string;
   payloadJson: string;
   host: string;

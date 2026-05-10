@@ -13,6 +13,14 @@ describe('sha256Hex', () => {
   });
 });
 
+describe('hmacSha256Hex', () => {
+  it('matches Node crypto.createHmac for known key/data', async () => {
+    const key = new TextEncoder().encode('secret');
+    const out = await hmacSha256Hex(key, 'hello');
+    expect(out).toBe('88aab3ede8d3adf94d26ab90d3bafd4a2083070c3bcce9c014ee04a443847c0b');
+  });
+});
+
 describe('buildCanonicalRequest', () => {
   it('builds canonical request with signed_headers content-type;host', async () => {
     const out = await buildCanonicalRequest({
@@ -66,6 +74,12 @@ describe('deriveSigningKey', () => {
     });
     // Determinism check
     expect(new Uint8Array(key)).toEqual(new Uint8Array(key2));
+    // Byte-exact reference: independently verified with Node crypto.createHmac.
+    // hmac chain: HMAC(TC3TEST_SECRET, "2024-01-01") → HMAC(_, "ocr") → HMAC(_, "tc3_request")
+    const hex = Array.from(new Uint8Array(key))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+    expect(hex).toBe('3993e9de274d6a1c1d8cb18e25809223b3b5bc78075d58a426c7af632d3dfe4a');
   });
 });
 
