@@ -1,6 +1,6 @@
+import { BBox } from '@/core/schema';
+import { QuestionBlockRole, VisualComplexity } from '@/core/schema/business';
 import { z } from 'zod';
-import { BBox } from '../../../src/core/schema';
-import { QuestionBlockRole, VisualComplexity } from '../../../src/core/schema/business';
 
 const VisionBlockSchema = z.object({
   extracted_prompt_md: z.string().min(1).max(5000),
@@ -42,7 +42,6 @@ export interface RunVisionExtractParams {
   imageBytes: ArrayBuffer;
   pageIndex: number;
   runTaskFn: (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
-  env: unknown;
 }
 
 export interface ExtractedForAsset {
@@ -57,7 +56,7 @@ export async function runVisionExtract(params: RunVisionExtractParams): Promise<
       text: `Extract question blocks from page_index=${params.pageIndex}. Return strict JSON only.`,
       images: [{ data: params.imageBytes, mediaType: params.mimeType }],
     },
-    { env: params.env },
+    {},
   );
   const parsed = parseVisionOutput(result.text);
   return {

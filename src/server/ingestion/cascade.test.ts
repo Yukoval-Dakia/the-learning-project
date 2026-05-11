@@ -1,12 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { type CascadeDeps, runOCRCascade } from './cascade';
 
-const env = {
-  TENCENT_SECRET_ID: 'AKID',
-  TENCENT_SECRET_KEY: 'SK',
-  TENCENT_OCR_REGION: 'ap-guangzhou',
-} as never;
-
 const imageBytes = new ArrayBuffer(8);
 
 function depsWith(overrides: Partial<CascadeDeps>): CascadeDeps {
@@ -38,7 +32,6 @@ describe('runOCRCascade — Tier 1 happy', () => {
       imageBytes,
       mimeType: 'image/png',
       pageIndex: 0,
-      env,
       deps: depsWith({ recognizeDocument: recognize, runTaskFn }),
     });
     expect(out.final_status).toBe('extracted');
@@ -51,15 +44,8 @@ describe('runOCRCascade — Tier 1 happy', () => {
     expect(runTaskFn).not.toHaveBeenCalled();
     expect(recognize).toHaveBeenCalledTimes(1);
     expect(
-      (
-        recognize.mock.calls[0] as unknown as [
-          unknown,
-          unknown,
-          unknown,
-          unknown,
-          { action: string },
-        ]
-      )[4].action,
+      (recognize.mock.calls[0] as unknown as [unknown, unknown, unknown, { action: string }])[3]
+        .action,
     ).toBe('EduPaperOCR');
   });
 });
@@ -67,7 +53,7 @@ describe('runOCRCascade — Tier 1 happy', () => {
 describe('runOCRCascade — escalations', () => {
   it('Tier 1 0-region edu → calls general → still 0 → escalate to Tier 2 haiku', async () => {
     const recognize = vi.fn(
-      async (_b: unknown, _m: unknown, _p: unknown, _e: unknown, opts: { action?: string }) => ({
+      async (_b: unknown, _m: unknown, _p: unknown, opts: { action?: string }) => ({
         regions: [], // both edu and general return empty
         raw_response: { action: opts.action },
       }),
@@ -93,7 +79,6 @@ describe('runOCRCascade — escalations', () => {
       imageBytes,
       mimeType: 'image/png',
       pageIndex: 0,
-      env,
       deps: depsWith({ recognizeDocument: recognize, runTaskFn }),
     });
     expect(out.final_status).toBe('extracted');
@@ -141,7 +126,6 @@ describe('runOCRCascade — escalations', () => {
       imageBytes,
       mimeType: 'image/png',
       pageIndex: 0,
-      env,
       deps: depsWith({ recognizeDocument: recognize, runTaskFn }),
     });
     expect(out.blocks[0].extracted_prompt_md).toBe('haiku rescue');
@@ -179,7 +163,6 @@ describe('runOCRCascade — escalations', () => {
       imageBytes,
       mimeType: 'image/png',
       pageIndex: 0,
-      env,
       deps: depsWith({ recognizeDocument: recognize, runTaskFn }),
     });
     expect(out.blocks[0].extracted_prompt_md).toBe('sonnet found');
@@ -197,7 +180,6 @@ describe('runOCRCascade — escalations', () => {
       imageBytes,
       mimeType: 'image/png',
       pageIndex: 0,
-      env,
       deps: depsWith({ recognizeDocument: recognize, runTaskFn }),
     });
     expect(out.final_status).toBe('failed');
@@ -232,7 +214,6 @@ describe('runOCRCascade — escalations', () => {
       imageBytes,
       mimeType: 'image/png',
       pageIndex: 0,
-      env,
       deps: depsWith({ recognizeDocument: recognize, runTaskFn }),
     });
     expect(out.final_status).toBe('extracted');
@@ -259,7 +240,6 @@ describe('runOCRCascade — escalations', () => {
       imageBytes,
       mimeType: 'image/png',
       pageIndex: 0,
-      env,
       deps: depsWith({ recognizeDocument: recognize, runTaskFn }),
     });
     expect(out.final_status).toBe('extracted');

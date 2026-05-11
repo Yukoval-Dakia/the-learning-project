@@ -52,11 +52,6 @@ export interface RunOCRCascadeArgs {
   imageBytes: ArrayBuffer;
   mimeType: string;
   pageIndex: number;
-  env: {
-    TENCENT_SECRET_ID: string;
-    TENCENT_SECRET_KEY: string;
-    TENCENT_OCR_REGION: string;
-  };
   deps: CascadeDeps;
 }
 
@@ -113,7 +108,6 @@ export async function runOCRCascade(args: RunOCRCascadeArgs): Promise<CascadeRes
       args.imageBytes,
       args.mimeType,
       args.pageIndex,
-      args.env,
       { action: 'EduPaperOCR', imageDimensions: args.deps.imageDimensions },
     );
     if (eduOut.regions.length > 0) {
@@ -126,7 +120,6 @@ export async function runOCRCascade(args: RunOCRCascadeArgs): Promise<CascadeRes
         args.imageBytes,
         args.mimeType,
         args.pageIndex,
-        args.env,
         { action: 'GeneralAccurateOCR', imageDimensions: args.deps.imageDimensions },
       );
       tier1Blocks = regionsToBlocks(genOut.regions, args.pageIndex);
@@ -165,7 +158,7 @@ export async function runOCRCascade(args: RunOCRCascadeArgs): Promise<CascadeRes
         text: `Extract question blocks from page_index=${args.pageIndex}. Return strict JSON only.`,
         images: [{ data: args.imageBytes, mediaType: args.mimeType }],
       },
-      { env: args.env },
+      {},
     );
     const parsed = parseVisionOutput(result.text);
     tier2Blocks = visionBlocksToNormalized(parsed.blocks, args.pageIndex);
@@ -198,7 +191,7 @@ export async function runOCRCascade(args: RunOCRCascadeArgs): Promise<CascadeRes
         text: `Extract question blocks from page_index=${args.pageIndex}. Return strict JSON only.`,
         images: [{ data: args.imageBytes, mediaType: args.mimeType }],
       },
-      { env: args.env },
+      {},
     );
     const parsed = parseVisionOutput(result.text);
     tier3Blocks = visionBlocksToNormalized(parsed.blocks, args.pageIndex);

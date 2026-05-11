@@ -48,7 +48,6 @@ describe('runVisionExtract', () => {
       mimeType: 'image/png',
       imageBytes: new Uint8Array([1, 2, 3]).buffer,
       pageIndex: 3,
-      env: { DB: {} } as never,
       runTaskFn,
     });
 
@@ -58,7 +57,7 @@ describe('runVisionExtract', () => {
         text: expect.stringContaining('page_index=3'),
         images: expect.arrayContaining([expect.objectContaining({ mediaType: 'image/png' })]),
       }),
-      expect.objectContaining({ env: expect.anything() }),
+      expect.anything(),
     );
     expect(out.asset_id).toBe('asset_1');
     expect(out.blocks[0].page_index).toBe(3);

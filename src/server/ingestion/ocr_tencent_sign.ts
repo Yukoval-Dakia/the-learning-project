@@ -17,12 +17,12 @@ export async function sha256Hex(data: string | ArrayBuffer | Uint8Array): Promis
       : data instanceof Uint8Array
         ? data
         : new Uint8Array(data);
-  const hash = await crypto.subtle.digest('SHA-256', bytes);
+  const hash = await crypto.subtle.digest('SHA-256', bytes as BufferSource);
   return bytesToHex(hash);
 }
 
 async function hmacSha256(key: ArrayBuffer | Uint8Array, data: string): Promise<ArrayBuffer> {
-  const keyBuf = key instanceof Uint8Array ? key : new Uint8Array(key);
+  const keyBuf = (key instanceof Uint8Array ? key : new Uint8Array(key)) as BufferSource;
   const ck = await crypto.subtle.importKey(
     'raw',
     keyBuf,

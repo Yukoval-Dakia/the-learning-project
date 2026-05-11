@@ -25,12 +25,6 @@ export interface RecognizeOpts {
   now?: number; // unix seconds, override for tests
 }
 
-interface TencentEnv {
-  TENCENT_SECRET_ID: string;
-  TENCENT_SECRET_KEY: string;
-  TENCENT_OCR_REGION: string;
-}
-
 function arrayBufferToBase64(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf);
   let binary = '';
@@ -87,17 +81,20 @@ export async function recognizeDocument(
   // Currently unused because ImageBase64 implies the type.
   _mimeType: string,
   pageIndex: number,
-  env: TencentEnv,
   opts: RecognizeOpts,
 ): Promise<TencentOCRResult> {
+  const secretId = process.env.TENCENT_SECRET_ID ?? '';
+  const secretKey = process.env.TENCENT_SECRET_KEY ?? '';
+  const region = process.env.TENCENT_OCR_REGION ?? '';
+
   const action = opts.action ?? 'EduPaperOCR';
   const now = opts.now ?? Math.floor(Date.now() / 1000);
   const imageB64 = arrayBufferToBase64(imageBytes);
   const payloadJson = JSON.stringify({ ImageBase64: imageB64 });
 
   const auth = await buildAuthHeader({
-    secretId: env.TENCENT_SECRET_ID,
-    secretKey: env.TENCENT_SECRET_KEY,
+    secretId,
+    secretKey,
     timestamp: now,
     service: SERVICE,
     action,
@@ -113,7 +110,7 @@ export async function recognizeDocument(
       authorization: auth,
       'X-TC-Action': action,
       'X-TC-Version': VERSION,
-      'X-TC-Region': env.TENCENT_OCR_REGION,
+      'X-TC-Region': region,
       'X-TC-Timestamp': String(now),
     },
     body: payloadJson,

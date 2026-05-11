@@ -1,20 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { recognizeDocument } from './ocr_tencent';
 
-const env = {
-  TENCENT_SECRET_ID: 'AKID0000',
-  TENCENT_SECRET_KEY: 'TEST_SECRET',
-  TENCENT_OCR_REGION: 'ap-guangzhou',
-};
-
 const fakeImageBytes = new TextEncoder().encode('IMG_BYTES_PNG').buffer as ArrayBuffer;
 
 beforeEach(() => {
   vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000); // 2023-11-14 UTC
+  vi.stubEnv('TENCENT_SECRET_ID', 'AKID0000');
+  vi.stubEnv('TENCENT_SECRET_KEY', 'TEST_SECRET');
+  vi.stubEnv('TENCENT_OCR_REGION', 'ap-guangzhou');
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
 
@@ -43,7 +41,7 @@ describe('recognizeDocument — EduPaperOCR happy path', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const out = await recognizeDocument(fakeImageBytes, 'image/png', 0, env, {
+    const out = await recognizeDocument(fakeImageBytes, 'image/png', 0, {
       action: 'EduPaperOCR',
       imageDimensions: { width: 1000, height: 1000 },
     });
@@ -87,7 +85,7 @@ describe('recognizeDocument — error paths', () => {
       ),
     );
     await expect(
-      recognizeDocument(fakeImageBytes, 'image/png', 0, env, {
+      recognizeDocument(fakeImageBytes, 'image/png', 0, {
         action: 'EduPaperOCR',
         imageDimensions: { width: 100, height: 100 },
       }),
@@ -100,7 +98,7 @@ describe('recognizeDocument — error paths', () => {
       vi.fn(async () => new Response('boom', { status: 500 })),
     );
     await expect(
-      recognizeDocument(fakeImageBytes, 'image/png', 0, env, {
+      recognizeDocument(fakeImageBytes, 'image/png', 0, {
         action: 'EduPaperOCR',
         imageDimensions: { width: 100, height: 100 },
       }),
@@ -128,7 +126,7 @@ describe('recognizeDocument — error paths', () => {
           ),
       ),
     );
-    const out = await recognizeDocument(fakeImageBytes, 'image/png', 2, env, {
+    const out = await recognizeDocument(fakeImageBytes, 'image/png', 2, {
       action: 'GeneralAccurateOCR',
       imageDimensions: { width: 1000, height: 200 },
     });
@@ -148,7 +146,7 @@ describe('recognizeDocument — error paths', () => {
           new Response(JSON.stringify({ Response: { QuestionBlockInfos: [] } }), { status: 200 }),
       ),
     );
-    const out = await recognizeDocument(fakeImageBytes, 'image/png', 0, env, {
+    const out = await recognizeDocument(fakeImageBytes, 'image/png', 0, {
       action: 'EduPaperOCR',
       imageDimensions: { width: 100, height: 100 },
     });
