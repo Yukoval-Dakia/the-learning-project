@@ -1,6 +1,15 @@
 {
   "files": {
-    "ignore": ["dist", ".wrangler", "node_modules", "drizzle", "docs/design/loom-design"]
+    "ignore": [
+      "dist",
+      ".wrangler",
+      "node_modules",
+      "drizzle",
+      "docs/design/loom-design",
+      "workers",
+      ".next",
+      "next-env.d.ts"
+    ]
   },
   "formatter": {
     "enabled": true,
