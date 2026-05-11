@@ -9,11 +9,11 @@ node_modules/
 dist/
 .cache/
 
-# Cloudflare Workers
+# Wrangler runtime artifacts (leftover from old workers/ setup)
 .wrangler/
 .wrangler-state/
 .dev.vars
-workers/.dev.vars
+workers/
 
 # Drizzle generated
 drizzle/.snapshots/

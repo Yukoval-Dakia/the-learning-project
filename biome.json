@@ -2,11 +2,9 @@
   "files": {
     "ignore": [
       "dist",
-      ".wrangler",
       "node_modules",
       "drizzle",
       "docs/design/loom-design",
-      "workers",
       ".next",
       "next-env.d.ts"
     ]
