@@ -1,3 +1,5 @@
+import { type TaskKind, tasks } from '@/ai/registry';
+import type { Db } from '@/db/client';
 import { anthropic } from '@ai-sdk/anthropic';
 import { createId } from '@paralleldrive/cuid2';
 import {
@@ -8,12 +10,12 @@ import {
   stepCountIs,
   streamText,
 } from 'ai';
-import { type TaskKind, tasks } from '../../../src/ai/registry';
-import type { Bindings } from '../types';
+import type { R2Client } from '../r2';
 import { writeCostLedger, writeToolCallLog } from './log';
 
 export interface RunTaskCtx {
-  env: Bindings;
+  db: Db;
+  r2: R2Client;
   /** Override model for testing (defaults to anthropic provider with task's defaultModel). */
   model?: LanguageModel;
 }
@@ -69,7 +71,6 @@ function multimodalMessages(input: MultimodalTaskInput): ModelMessage[] {
 
 /**
  * Runs a registered task with a single-shot generateText call (no tools, no streaming).
- * Streaming + tool-calling come in later tasks (Task 7+).
  *
  * Records token usage to CostLedger; cost calc deferred (Phase 1 records 0).
  */
@@ -101,7 +102,7 @@ export async function runTask(
         prompt: typeof input === 'string' ? input : JSON.stringify(input),
       });
 
-  await writeCostLedger(ctx.env.DB, {
+  await writeCostLedger(ctx.db, {
     task_kind: kind,
     provider: def.defaultProvider,
     model: def.defaultModel,
@@ -131,7 +132,7 @@ export interface StreamTaskCtx extends RunTaskCtx {
  * (UTF-8 text deltas via toTextStreamResponse). Per-step tool calls are persisted
  * to ToolCallLog; final aggregated usage is persisted to CostLedger.
  *
- * The caller (Hono handler) is responsible for piping the body to the client.
+ * The caller is responsible for piping the body to the client.
  */
 export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Response {
   if (!isKnownTask(kind)) {
@@ -153,13 +154,10 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
     onStepFinish: async ({ toolCalls, toolResults }) => {
       iteration += 1;
       const stepLatencyMs = Date.now() - stepStartTime;
-      // Match toolResults to toolCalls by toolCallId, not array index — order/length
-      // can diverge if a call fails or is held for approval.
       const resultsById = new Map((toolResults ?? []).map((tr) => [tr.toolCallId, tr]));
-      // Write a ToolCallLog row per tool call this step.
       for (const tc of toolCalls) {
         const tr = resultsById.get(tc.toolCallId);
-        await writeToolCallLog(ctx.env.DB, {
+        await writeToolCallLog(ctx.db, {
           task_run_id: taskRunId,
           task_kind: kind,
           tool_name: tc.toolName,
@@ -173,7 +171,7 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
       stepStartTime = Date.now();
     },
     onFinish: async ({ totalUsage }) => {
-      await writeCostLedger(ctx.env.DB, {
+      await writeCostLedger(ctx.db, {
         task_kind: kind,
         provider: def.defaultProvider,
         model: def.defaultModel,
