@@ -1,0 +1,385 @@
+{
+  "QuestionInfo": [
+    {
+      "Angle": 0,
+      "Height": 2000,
+      "ImageBase64": "",
+      "OrgHeight": 2000,
+      "OrgWidth": 1500,
+      "ResultList": [
+        {
+          "Answer": [
+            {
+              "Coord": {
+                "LeftBottom": { "X": 816, "Y": 140 },
+                "LeftTop": { "X": 816, "Y": 104 },
+                "RightBottom": { "X": 850, "Y": 140 },
+                "RightTop": { "X": 850, "Y": 104 }
+              },
+              "GroupType": "multiple-choice",
+              "Index": 5,
+              "ResultList": null,
+              "Text": "B"
+            }
+          ],
+          "Coord": [
+            {
+              "LeftBottom": { "X": 162, "Y": 178 },
+              "LeftTop": { "X": 162, "Y": 92 },
+              "RightBottom": { "X": 1086, "Y": 178 },
+              "RightTop": { "X": 1086, "Y": 92 }
+            }
+          ],
+          "Figure": [],
+          "Option": [
+            {
+              "Coord": {
+                "LeftBottom": { "X": 190, "Y": 170 },
+                "LeftTop": { "X": 190, "Y": 144 },
+                "RightBottom": { "X": 294, "Y": 170 },
+                "RightTop": { "X": 294, "Y": 144 }
+              },
+              "GroupType": "multiple-choice",
+              "Index": 1,
+              "ResultList": null,
+              "Text": "A.(0,1)"
+            },
+            {
+              "Coord": {
+                "LeftBottom": { "X": 450, "Y": 174 },
+                "LeftTop": { "X": 450, "Y": 150 },
+                "RightBottom": { "X": 560, "Y": 174 },
+                "RightTop": { "X": 560, "Y": 150 }
+              },
+              "GroupType": "multiple-choice",
+              "Index": 2,
+              "ResultList": null,
+              "Text": "B.(1,2)"
+            },
+            {
+              "Coord": {
+                "LeftBottom": { "X": 720, "Y": 178 },
+                "LeftTop": { "X": 720, "Y": 154 },
+                "RightBottom": { "X": 826, "Y": 178 },
+                "RightTop": { "X": 826, "Y": 154 }
+              },
+              "GroupType": "multiple-choice",
+              "Index": 3,
+              "ResultList": null,
+              "Text": "C.(2,3)"
+            },
+            {
+              "Coord": {
+                "LeftBottom": { "X": 976, "Y": 178 },
+                "LeftTop": { "X": 976, "Y": 150 },
+                "RightBottom": { "X": 1086, "Y": 178 },
+                "RightTop": { "X": 1086, "Y": 150 }
+              },
+              "GroupType": "multiple-choice",
+              "Index": 4,
+              "ResultList": null,
+              "Text": "D.(3,4)"
+            }
+          ],
+          "Parse": [],
+          "Question": [
+            {
+              "Coord": {
+                "LeftBottom": { "X": 162, "Y": 130 },
+                "LeftTop": { "X": 162, "Y": 92 },
+                "RightBottom": { "X": 868, "Y": 130 },
+                "RightTop": { "X": 868, "Y": 92 }
+              },
+              "GroupType": "multiple-choice",
+              "Index": 0,
+              "ResultList": null,
+              "Text": "1.函数$f(x)=x+\\sin x-2$的零点所在的大致区间为()"
+            }
+          ],
+          "Table": []
+        },
+        {
+          "Answer": [
+            {
+              "Coord": {
+                "LeftBottom": { "X": 980, "Y": 230 },
+                "LeftTop": { "X": 980, "Y": 190 },
+                "RightBottom": { "X": 1020, "Y": 230 },
+                "RightTop": { "X": 1020, "Y": 190 }
+              },
+              "GroupType": "multiple-choice",
+              "Index": 11,
+              "ResultList": null,
+              "Text": "B"
+            }
+          ],
+          "Coord": [
+            {
+              "LeftBottom": { "X": 146, "Y": 280 },
+              "LeftTop": { "X": 146, "Y": 190 },
+              "RightBottom": { "X": 1058, "Y": 280 },
+              "RightTop": { "X": 1058, "Y": 190 }
+            }
+          ],
+          "Figure": [],
+          "Option": [
+            {
+              "Coord": {
+                "LeftBottom": { "X": 170, "Y": 274 },
+                "LeftTop": { "X": 170, "Y": 246 },
+                "RightBottom": { "X": 244, "Y": 274 },
+                "RightTop": { "X": 244, "Y": 246 }
+              },
+              "GroupType": "multiple-choice",
+              "Index": 7,
+              "ResultList": null,
+              "Text": "A.3"
+            },
+            {
+              "Coord": {
+                "LeftBottom": { "X": 444, "Y": 276 },
+                "LeftTop": { "X": 444, "Y": 250 },
+                "RightBottom": { "X": 518, "Y": 276 },
+                "RightTop": { "X": 518, "Y": 250 }
+              },
+              "GroupType": "multiple-choice",
+              "Index": 8,
+              "ResultList": null,
+              "Text": "B.4"
+            },
+            {
+              "Coord": {
+                "LeftBottom": { "X": 720, "Y": 280 },
+                "LeftTop": { "X": 720, "Y": 252 },
+                "RightBottom": { "X": 790, "Y": 280 },
+                "RightTop": { "X": 790, "Y": 252 }
+              },
+              "GroupType": "multiple-choice",
+              "Index": 9,
+              "ResultList": null,
+              "Text": "C.6"
+            },
+            {
+              "Coord": {
+                "LeftBottom": { "X": 986, "Y": 280 },
+                "LeftTop": { "X": 986, "Y": 252 },
+                "RightBottom": { "X": 1058, "Y": 280 },
+                "RightTop": { "X": 1058, "Y": 252 }
+              },
+              "GroupType": "multiple-choice",
+              "Index": 10,
+              "ResultList": null,
+              "Text": "D.7"
+            }
+          ],
+          "Parse": [],
+          "Question": [
+            {
+              "Coord": {
+                "LeftBottom": { "X": 146, "Y": 228 },
+                "LeftTop": { "X": 146, "Y": 190 },
+                "RightBottom": { "X": 1038, "Y": 228 },
+                "RightTop": { "X": 1038, "Y": 190 }
+              },
+              "GroupType": "multiple-choice",
+              "Index": 6,
+              "ResultList": null,
+              "Text": "2.函数$h(x)=x^{2} -9x^{2} +12x-a$恰有两个不同的零点，则a可以是()"
+            }
+          ],
+          "Table": []
+        },
+        {
+          "Answer": [
+            {
+              "Coord": {
+                "LeftBottom": { "X": 1170, "Y": 328 },
+                "LeftTop": { "X": 1170, "Y": 292 },
+                "RightBottom": { "X": 1210, "Y": 328 },
+                "RightTop": { "X": 1210, "Y": 292 }
+              },
+              "GroupType": "multiple-choice",
+              "Index": 17,
+              "ResultList": null,
+              "Text": "D"
+            }
+          ],
+          "Coord": [
+            {
+              "LeftBottom": { "X": 130, "Y": 456 },
+              "LeftTop": { "X": 130, "Y": 292 },
+              "RightBottom": { "X": 1224, "Y": 456 },
+              "RightTop": { "X": 1224, "Y": 292 }
+            }
+          ],
+          "Figure": [],
+          "Option": [
+            {
+              "Coord": {
+                "LeftBottom": { "X": 154, "Y": 390 },
+                "LeftTop": { "X": 154, "Y": 344 },
+                "RightBottom": { "X": 330, "Y": 390 },
+                "RightTop": { "X": 330, "Y": 344 }
+              },
+              "GroupType": "multiple-choice",
+              "Index": 13,
+              "ResultList": null,
+              "Text": "A.$(-\\infty,\\frac{ln2e}{2e})$"
+            },
+            {
+              "Coord": {
+                "LeftBottom": { "X": 720, "Y": 400 },
+                "LeftTop": { "X": 720, "Y": 352 },
+                "RightBottom": { "X": 836, "Y": 400 },
+                "RightTop": { "X": 836, "Y": 352 }
+              },
+              "GroupType": "multiple-choice",
+              "Index": 14,
+              "ResultList": null,
+              "Text": "B.$(0,\\frac{1}{2}]$"
+            },
+            {
+              "Coord": {
+                "LeftBottom": { "X": 150, "Y": 450 },
+                "LeftTop": { "X": 150, "Y": 400 },
+                "RightBottom": { "X": 270, "Y": 450 },
+                "RightTop": { "X": 270, "Y": 400 }
+              },
+              "GroupType": "multiple-choice",
+              "Index": 15,
+              "ResultList": null,
+              "Text": "C.$(0,\\frac{1}{e})$"
+            },
+            {
+              "Coord": {
+                "LeftBottom": { "X": 720, "Y": 456 },
+                "LeftTop": { "X": 720, "Y": 410 },
+                "RightBottom": { "X": 876, "Y": 456 },
+                "RightTop": { "X": 876, "Y": 410 }
+              },
+              "GroupType": "multiple-choice",
+              "Index": 16,
+              "ResultList": null,
+              "Text": "D.$(\\frac{\\ln 2e}{2e},\\frac{1}{e})$"
+            }
+          ],
+          "Parse": [],
+          "Question": [
+            {
+              "Coord": {
+                "LeftBottom": { "X": 130, "Y": 334 },
+                "LeftTop": { "X": 130, "Y": 296 },
+                "RightBottom": { "X": 1224, "Y": 334 },
+                "RightTop": { "X": 1224, "Y": 296 }
+              },
+              "GroupType": "multiple-choice",
+              "Index": 12,
+              "ResultList": null,
+              "Text": "3.若函数$f(x)=\\ln{x}-ax$在(0,2e)上有两个不同的零点，则实数a的取值范围是()"
+            }
+          ],
+          "Table": []
+        },
+        {
+          "Answer": [
+            {
+              "Coord": {
+                "LeftBottom": { "X": 700, "Y": 708 },
+                "LeftTop": { "X": 700, "Y": 670 },
+                "RightBottom": { "X": 728, "Y": 708 },
+                "RightTop": { "X": 728, "Y": 670 }
+              },
+              "GroupType": "fill-in-the-blank",
+              "Index": 19,
+              "ResultList": null,
+              "Text": "5"
+            }
+          ],
+          "Coord": [
+            {
+              "LeftBottom": { "X": 92, "Y": 716 },
+              "LeftTop": { "X": 92, "Y": 544 },
+              "RightBottom": { "X": 1210, "Y": 716 },
+              "RightTop": { "X": 1210, "Y": 544 }
+            }
+          ],
+          "Figure": [],
+          "Option": [],
+          "Parse": [],
+          "Question": [
+            {
+              "Coord": {
+                "LeftBottom": { "X": 92, "Y": 716 },
+                "LeftTop": { "X": 92, "Y": 544 },
+                "RightBottom": { "X": 1210, "Y": 716 },
+                "RightTop": { "X": 1210, "Y": 544 }
+              },
+              "GroupType": "fill-in-the-blank",
+              "Index": 18,
+              "ResultList": null,
+              "Text": "4.已知定义在R上的函数f(x)同时满足下列三个条件:\n①f(x)为奇函数;\n②当0≤x≤2时，$f(x)=x^{3}-3x$，\n③当x\\ge0时，f(x+2)=f(x)+2.\n则函数$y=f(x)-ln|x|}$的零点的个数为_."
+            }
+          ],
+          "Table": []
+        },
+        {
+          "Answer": [
+            {
+              "Coord": {
+                "LeftBottom": { "X": 1030, "Y": 1386 },
+                "LeftTop": { "X": 1030, "Y": 880 },
+                "RightBottom": { "X": 1370, "Y": 1386 },
+                "RightTop": { "X": 1370, "Y": 880 }
+              },
+              "GroupType": "problem-solving",
+              "Index": 22,
+              "ResultList": null,
+              "Text": "$\\left \\{ ①当m>12时 \\right \\}$\n g(x)有一个零点\n②当m=12时\n g(x)有两个零点\n③当-15m<12时\n g(x)有三个零点\n④当m=-15时\n g(x)有两个零点\n⑤当m<-15时\n g(x)有一个零点$"
+            }
+          ],
+          "Coord": [
+            {
+              "LeftBottom": { "X": 66, "Y": 1386 },
+              "LeftTop": { "X": 66, "Y": 812 },
+              "RightBottom": { "X": 1370, "Y": 1386 },
+              "RightTop": { "X": 1370, "Y": 812 }
+            }
+          ],
+          "Figure": [
+            {
+              "Coord": {
+                "LeftBottom": { "X": 304, "Y": 1376 },
+                "LeftTop": { "X": 304, "Y": 876 },
+                "RightBottom": { "X": 974, "Y": 1376 },
+                "RightTop": { "X": 974, "Y": 876 }
+              },
+              "GroupType": "problem-solving",
+              "Index": 21,
+              "ResultList": null,
+              "Text": ""
+            }
+          ],
+          "Option": [],
+          "Parse": [],
+          "Question": [
+            {
+              "Coord": {
+                "LeftBottom": { "X": 66, "Y": 880 },
+                "LeftTop": { "X": 66, "Y": 812 },
+                "RightBottom": { "X": 1084, "Y": 880 },
+                "RightTop": { "X": 1084, "Y": 812 }
+              },
+              "GroupType": "problem-solving",
+              "Index": 20,
+              "ResultList": null,
+              "Text": "5.已知函数$f(x)=2x^{3}-3x^{2}-12x+5$，讨论函数g(x)=f(x)-m的零点个数."
+            }
+          ],
+          "Table": []
+        }
+      ],
+      "Width": 1500
+    }
+  ],
+  "RequestId": "05c640a2-61fb-4c33-bd87-79293e33ba0f"
+}
