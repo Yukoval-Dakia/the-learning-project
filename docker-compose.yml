@@ -1,0 +1,48 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-loom}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-loom}
+      POSTGRES_DB: ${POSTGRES_DB:-loom}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-loom} -d ${POSTGRES_DB:-loom}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN}
+    depends_on:
+      - app
+    networks:
+      - internal
+    restart: unless-stopped
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  pgdata:
