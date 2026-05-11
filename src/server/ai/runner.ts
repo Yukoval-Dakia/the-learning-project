@@ -102,14 +102,19 @@ export async function runTask(
         prompt: typeof input === 'string' ? input : JSON.stringify(input),
       });
 
-  await writeCostLedger(ctx.db, {
-    task_kind: kind,
-    provider: def.defaultProvider,
-    model: def.defaultModel,
-    cost: 0, // Phase 1: just record tokens; cost calc deferred.
-    tokens_in: result.usage.inputTokens ?? 0,
-    tokens_out: result.usage.outputTokens ?? 0,
-  });
+  try {
+    await writeCostLedger(ctx.db, {
+      task_kind: kind,
+      provider: def.defaultProvider,
+      model: def.defaultModel,
+      cost: 0, // Phase 1: just record tokens; cost calc deferred.
+      tokens_in: result.usage.inputTokens ?? 0,
+      tokens_out: result.usage.outputTokens ?? 0,
+    });
+  } catch (err) {
+    // Telemetry write failure must not fail the AI call; the model already produced output.
+    console.error('[runTask] writeCostLedger failed', { task_run_id: taskRunId, kind, err });
+  }
 
   return {
     task_run_id: taskRunId,
@@ -157,28 +162,43 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
       const resultsById = new Map((toolResults ?? []).map((tr) => [tr.toolCallId, tr]));
       for (const tc of toolCalls) {
         const tr = resultsById.get(tc.toolCallId);
-        await writeToolCallLog(ctx.db, {
-          task_run_id: taskRunId,
-          task_kind: kind,
-          tool_name: tc.toolName,
-          input_json: tc.input ?? {},
-          output_json: tr ?? {},
-          iteration,
-          latency_ms: stepLatencyMs,
-          cost: 0,
-        });
+        try {
+          await writeToolCallLog(ctx.db, {
+            task_run_id: taskRunId,
+            task_kind: kind,
+            tool_name: tc.toolName,
+            input_json: tc.input ?? {},
+            output_json: tr ?? {},
+            iteration,
+            latency_ms: stepLatencyMs,
+            cost: 0,
+          });
+        } catch (err) {
+          // A log write failure here would surface as a stream error after the client already
+          // received partial content. Demote to console so the stream stays healthy.
+          console.error('[streamTask] writeToolCallLog failed', {
+            task_run_id: taskRunId,
+            kind,
+            tool_name: tc.toolName,
+            err,
+          });
+        }
       }
       stepStartTime = Date.now();
     },
     onFinish: async ({ totalUsage }) => {
-      await writeCostLedger(ctx.db, {
-        task_kind: kind,
-        provider: def.defaultProvider,
-        model: def.defaultModel,
-        cost: 0, // Phase 1: just record tokens; cost calc deferred.
-        tokens_in: totalUsage?.inputTokens ?? 0,
-        tokens_out: totalUsage?.outputTokens ?? 0,
-      });
+      try {
+        await writeCostLedger(ctx.db, {
+          task_kind: kind,
+          provider: def.defaultProvider,
+          model: def.defaultModel,
+          cost: 0, // Phase 1: just record tokens; cost calc deferred.
+          tokens_in: totalUsage?.inputTokens ?? 0,
+          tokens_out: totalUsage?.outputTokens ?? 0,
+        });
+      } catch (err) {
+        console.error('[streamTask] writeCostLedger failed', { task_run_id: taskRunId, kind, err });
+      }
     },
   });
 
