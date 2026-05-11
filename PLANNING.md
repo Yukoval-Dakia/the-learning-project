@@ -133,7 +133,9 @@ the-learning-project/
 
 | 新 # | Sub | 必先决 | 估时 |
 |---|---|---|---|
-| **Sub 0** | **Stack Migration**（挡所有 Phase 1b） | 即刻 | ~5d |
+| **Sub 0a** | **Stack Migration — Infrastructure** (Vercel + Next.js + Neon) | ✅ shipped | ~2d |
+| **Sub 0b** | **Stack Migration — Routes** (Workers Hono → Next.js) | Sub 0a | ~3-4d |
+| **Sub 0c** | **Stack Migration — Workflow + OCR upgrade** | Sub 0b | ~2-3d |
 | **Sub 1** | Capture Pipeline Rebuild（Q1+Q2+Q3 落实） | Sub 0 | ~7d |
 | **Sub 2** | 多学科 + knowledge_link schema (Q7) | Sub 1 | ~3d |
 | **Sub 3** | Quiz Render UI (kind-switch + reading + image) | Sub 1 | ~3d |

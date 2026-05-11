@@ -1,0 +1,1 @@
+当创建Subagent时，应当考虑任务难度自主调度Opus与Sonnet模型，极少使用Haiku。

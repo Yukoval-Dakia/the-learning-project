@@ -18,3 +18,12 @@ workers/.dev.vars
 # Drizzle generated
 drizzle/.snapshots/
 
+# Vercel
+.vercel/
+.next/
+
+# Next.js
+next-env.d.ts
+tsconfig.tsbuildinfo
+
+.env*.local

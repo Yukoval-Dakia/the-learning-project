@@ -168,3 +168,39 @@ export const ToolState = z.object({
   question_ids: z.array(z.string()),
   session_meta: z.record(z.unknown()).nullish(),
 });
+
+// AgentRef: a uniform "who did this" stamp on question.created_by /
+// judgment.judged_by / artifact.generated_by. Catchall allows callers to add
+// task-specific fields without bumping the schema; required keys are the
+// minimum any consumer can rely on.
+export const AgentRef = z
+  .object({
+    by: z.enum(['ai', 'user', 'system']),
+    task_kind: z.string().optional(),
+    model: z.string().optional(),
+    task_run_id: z.string().optional(),
+  })
+  .catchall(z.unknown());
+
+// ArtifactHistoryEntry: one entry in artifact.history. Keeps the snapshot
+// shape open (artifacts have many sub-kinds) but pins the bookkeeping fields
+// so callers can rely on `version` + `at` to render a timeline.
+export const ArtifactHistoryEntry = z
+  .object({
+    version: z.number().int().nonnegative(),
+    at: z.coerce.date(),
+    by: AgentRef.optional(),
+    summary_md: z.string().optional(),
+  })
+  .catchall(z.unknown());
+
+// Provenance: lineage of an asset / document — minimal pinned fields, rest
+// open. Source-specific fields (ocr_engine, http_status, etc.) live in the
+// catchall so we don't fork the schema per source kind.
+export const Provenance = z
+  .object({
+    captured_at: z.coerce.date().optional(),
+    captured_by: AgentRef.optional(),
+    source_kind: z.string().optional(),
+  })
+  .catchall(z.unknown());
