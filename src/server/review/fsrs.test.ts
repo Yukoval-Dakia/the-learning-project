@@ -45,7 +45,7 @@ describe('scheduleReview', () => {
   });
 
   it('handles a state round-tripped through DB JSON without breaking ts-fsrs (regression)', async () => {
-    const { FsrsState } = await import('../../../src/core/schema/business');
+    const { FsrsState } = await import('../../core/schema/business');
     const first = scheduleReview(null, 'good', NOW);
     const dbShaped = JSON.parse(JSON.stringify(first.nextState)) as unknown;
     expect(typeof (dbShaped as { due: unknown }).due).toBe('string');
