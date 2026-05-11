@@ -40,6 +40,65 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 浏览器代码绝不持有 key —— 所有 AI 调用走 `/api/ai/<task>`，由 Workers 转发到 Anthropic。
 
+## Self-host on NAS
+
+### Prerequisites
+
+- NAS with Docker support (绿联 UGOS Pro Docker panel, or any Docker Compose–capable host)
+- Cloudflare account with a domain you control
+- Cloudflare R2 bucket already provisioned (see `.env.example` for required keys)
+
+### One-time setup
+
+1. **Create a Cloudflare Tunnel** in the [Zero Trust dashboard](https://one.dash.cloudflare.com) → Networks → Tunnels.
+   - Point the public hostname (e.g. `loom.<your-domain>`) to `http://app:3000`.
+   - Copy the **Tunnel Token** shown after creation.
+
+2. **Configure environment variables** — copy `.env.example` to `.env` and fill in:
+   ```
+   DATABASE_URL=postgres://loom:loom@postgres:5432/loom
+   ANTHROPIC_API_KEY=...
+   INTERNAL_TOKEN=...
+   TUNNEL_TOKEN=<paste-token-here>
+   # + R2 / Tencent OCR keys
+   ```
+
+3. **Run database migrations** after first start:
+   ```bash
+   docker compose exec app pnpm db:push
+   ```
+
+### Deploy
+
+```bash
+docker compose build
+docker compose up -d
+```
+
+All three services start: `postgres`, `app`, and `cloudflared`. The app is only reachable through the Cloudflare Tunnel — port 3000 is not bound to the host.
+
+### Verify
+
+```bash
+curl https://loom.<your-domain>/api/health
+# → {"status":"ok"}
+```
+
+### Backup
+
+`db:dump` streams a `pg_dump` from the running `postgres` container to a timestamped SQL file on the host:
+
+```bash
+pnpm db:dump          # writes /tmp/loom-YYYYMMDD-HHMMSS.sql on host
+```
+
+To restore:
+```bash
+pnpm db:restore < /tmp/loom-20260101-000000.sql
+```
+
+---
+
 ## 目录
 
 ```
