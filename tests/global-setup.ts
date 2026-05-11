@@ -27,6 +27,7 @@ export async function setup() {
   container = await new PostgreSqlContainer('postgres:16').start();
   const uri = container.getConnectionUri();
   process.env.TEST_DATABASE_URL = uri;
+  process.env.DATABASE_URL = uri;
   // Drizzle pushes schema into the fresh container. We point drizzle-kit at
   // TEST_DATABASE_URL via env so it does not touch the dev Neon DB.
   const result = spawnSync('pnpm', ['db:push', '--force'], {
