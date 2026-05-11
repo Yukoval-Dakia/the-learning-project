@@ -1,0 +1,210 @@
+{
+  "QuestionInfo": [
+    {
+      "Angle": 0,
+      "Height": 4032,
+      "ImageBase64": "",
+      "OrgHeight": 4032,
+      "OrgWidth": 3024,
+      "ResultList": [
+        {
+          "Answer": [],
+          "Coord": [
+            {
+              "LeftBottom": { "X": 241, "Y": 3644 },
+              "LeftTop": { "X": 241, "Y": 463 },
+              "RightBottom": { "X": 1572, "Y": 3644 },
+              "RightTop": { "X": 1572, "Y": 463 }
+            }
+          ],
+          "Figure": [],
+          "Option": [],
+          "Parse": [],
+          "Question": [
+            {
+              "Coord": {
+                "LeftBottom": { "X": 241, "Y": 2419 },
+                "LeftTop": { "X": 241, "Y": 463 },
+                "RightBottom": { "X": 1572, "Y": 2419 },
+                "RightTop": { "X": 1572, "Y": 463 }
+              },
+              "GroupType": "problem-solving",
+              "Index": 0,
+              "ResultList": [
+                {
+                  "Answer": [],
+                  "Coord": [
+                    {
+                      "LeftBottom": { "X": 342, "Y": 2713 },
+                      "LeftTop": { "X": 342, "Y": 2419 },
+                      "RightBottom": { "X": 1552, "Y": 2713 },
+                      "RightTop": { "X": 1552, "Y": 2419 }
+                    }
+                  ],
+                  "Figure": [],
+                  "Option": [],
+                  "Parse": [],
+                  "Question": [
+                    {
+                      "Coord": {
+                        "LeftBottom": { "X": 342, "Y": 2713 },
+                        "LeftTop": { "X": 342, "Y": 2419 },
+                        "RightBottom": { "X": 1552, "Y": 2713 },
+                        "RightTop": { "X": 1552, "Y": 2419 }
+                      },
+                      "GroupType": "problem-solving",
+                      "Index": 1,
+                      "ResultList": null,
+                      "Text": "1.(4分)请在文中横线处补写恰当的语句，使整段文字语意完整连贯,内容贴切,逻辑严密,每处不超过10个字。"
+                    }
+                  ],
+                  "Table": []
+                },
+                {
+                  "Answer": [],
+                  "Coord": [
+                    {
+                      "LeftBottom": { "X": 322, "Y": 2923 },
+                      "LeftTop": { "X": 322, "Y": 2713 },
+                      "RightBottom": { "X": 1552, "Y": 2923 },
+                      "RightTop": { "X": 1552, "Y": 2713 }
+                    }
+                  ],
+                  "Figure": [],
+                  "Option": [],
+                  "Parse": [],
+                  "Question": [
+                    {
+                      "Coord": {
+                        "LeftBottom": { "X": 322, "Y": 2923 },
+                        "LeftTop": { "X": 322, "Y": 2713 },
+                        "RightBottom": { "X": 1552, "Y": 2923 },
+                        "RightTop": { "X": 1552, "Y": 2713 }
+                      },
+                      "GroupType": "problem-solving",
+                      "Index": 2,
+                      "ResultList": null,
+                      "Text": "2.(3分)请分别用一个否定句概括上文各段的主要意思,并使之构成整句。每句不超过15个字。"
+                    }
+                  ],
+                  "Table": []
+                },
+                {
+                  "Answer": [],
+                  "Coord": [
+                    {
+                      "LeftBottom": { "X": 322, "Y": 3644 },
+                      "LeftTop": { "X": 322, "Y": 2915 },
+                      "RightBottom": { "X": 1552, "Y": 3644 },
+                      "RightTop": { "X": 1552, "Y": 2915 }
+                    }
+                  ],
+                  "Figure": [],
+                  "Option": [
+                    {
+                      "Coord": {
+                        "LeftBottom": { "X": 362, "Y": 3225 },
+                        "LeftTop": { "X": 362, "Y": 3124 },
+                        "RightBottom": { "X": 1459, "Y": 3225 },
+                        "RightTop": { "X": 1459, "Y": 3124 }
+                      },
+                      "GroupType": "multiple-choice",
+                      "Index": 4,
+                      "ResultList": null,
+                      "Text": "[A]张某是一家国有化工企业的法定代表人。"
+                    },
+                    {
+                      "Coord": {
+                        "LeftBottom": { "X": 346, "Y": 3435 },
+                        "LeftTop": { "X": 346, "Y": 3225 },
+                        "RightBottom": { "X": 1552, "Y": 3435 },
+                        "RightTop": { "X": 1552, "Y": 3225 }
+                      },
+                      "GroupType": "multiple-choice",
+                      "Index": 5,
+                      "ResultList": null,
+                      "Text": "[B]沈阳部队某国政治处按照党委的要求,准备召集连队干部开会。"
+                    },
+                    {
+                      "Coord": {
+                        "LeftBottom": { "X": 346, "Y": 3536 },
+                        "LeftTop": { "X": 346, "Y": 3435 },
+                        "RightBottom": { "X": 1512, "Y": 3536 },
+                        "RightTop": { "X": 1512, "Y": 3435 }
+                      },
+                      "GroupType": "multiple-choice",
+                      "Index": 6,
+                      "ResultList": null,
+                      "Text": "[C]某虽不才,愿去万军中取其首级,来献丞相。"
+                    },
+                    {
+                      "Coord": {
+                        "LeftBottom": { "X": 346, "Y": 3644 },
+                        "LeftTop": { "X": 346, "Y": 3536 },
+                        "RightBottom": { "X": 1528, "Y": 3644 },
+                        "RightTop": { "X": 1528, "Y": 3536 }
+                      },
+                      "GroupType": "multiple-choice",
+                      "Index": 7,
+                      "ResultList": null,
+                      "Text": "D.某事物在被禁止时,最容易引起人们的好奇心。"
+                    }
+                  ],
+                  "Parse": [],
+                  "Question": [
+                    {
+                      "Coord": {
+                        "LeftBottom": { "X": 322, "Y": 3124 },
+                        "LeftTop": { "X": 322, "Y": 2915 },
+                        "RightBottom": { "X": 1552, "Y": 3124 },
+                        "RightTop": { "X": 1552, "Y": 2915 }
+                      },
+                      "GroupType": "multiple-choice",
+                      "Index": 3,
+                      "ResultList": null,
+                      "Text": "3.(3分)下列句子中的“某”和文中画横线处的“某”,用法相同的一项是()"
+                    }
+                  ],
+                  "Table": []
+                }
+              ],
+              "Text": "阅读下面的文字，完成1~3题。\n一座完善的建筑,①_：适用，坚固，美观。建筑本身常常是时代环境的写照。建筑里一定不可避免的，是反映某个时代的知识、技能、思想、制度、习惯,当然也反映某个地方的地理气候。所以所谓适用者,只是适合于当时当地人民的生活习惯、气候环境。\n天然材料种类很多,但不一定被人采用;被选用的材料,更不一定是最坚固、最易驾驭的。石料本身比木料坚固,然而在中国用木达到了高度的圆满,②_，且建筑上的各种问题常不能独用石料解决,即有用石料处亦常发生弊病,反比木质的部分容易损毁。"
+            }
+          ],
+          "Table": []
+        },
+        {
+          "Answer": [],
+          "Coord": [
+            {
+              "LeftBottom": { "X": 1624, "Y": 3620 },
+              "LeftTop": { "X": 1624, "Y": 508 },
+              "RightBottom": { "X": 2903, "Y": 3620 },
+              "RightTop": { "X": 2903, "Y": 508 }
+            }
+          ],
+          "Figure": [],
+          "Option": [],
+          "Parse": [],
+          "Question": [
+            {
+              "Coord": {
+                "LeftBottom": { "X": 1624, "Y": 3620 },
+                "LeftTop": { "X": 1624, "Y": 508 },
+                "RightBottom": { "X": 2903, "Y": 3620 },
+                "RightTop": { "X": 2903, "Y": 508 }
+              },
+              "GroupType": "problem-solving",
+              "Index": 8,
+              "ResultList": null,
+              "Text": "阅读下面的文字,完成文后题目。\n材料一:\n法国作家雨果说,“建筑是石头的史书”,但这只适用欧洲,对中国并不贴切。中国传统建筑以土、木为主要材料,很少使用石材。木材在耐久性上远逊于石材,使中西建筑给人留下的印象迥异。从古希腊神庙到巴洛克教堂,以石构为主的欧洲建筑遗产蔚为壮观。相比之下,以木构为主的中国建筑遗产似乎善可陈。\n其实,我们并不缺石材,在中国广袤的土地上,到处都蕴藏着适合建筑的优良石材。同时,在中国古代,适用的木材并非随处都易取得。\"蜀山兀,阿房出”,阿房宫的木材就是从千里之外的四川运到陕西的。可见,古代建筑营造并非严格遵循“就地取材”的经济原则。在古代的交通条件下,建筑材料的长途运输是很不经济的:只有当木材的使用意义超越物质层面,进而成为一种执着的文化选择乃至建筑观念中的要素时,人们才会如此不惜人力物力地寻找木材盖庭房子。\n这种选择与华夏民族古老的价值观息息相关,中国自古以来宗教观念淡薄,从未出现过神权凌驾一切的时代。我们祖先有关建筑的基本思考,是从“人本”出发的。建筑既然服务于人,其理性和适度的使用就十分重要。从材料性质上看,木材比"
+            }
+          ],
+          "Table": []
+        }
+      ],
+      "Width": 3024
+    }
+  ],
+  "RequestId": "62836953-f5a0-484f-8f6b-6f036e685828"
+}
