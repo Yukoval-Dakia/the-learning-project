@@ -6,7 +6,9 @@
 
 **Architecture:** Direct port. Business logic moves into `src/server/` with `db: Db` and `r2: R2Client` injected as function parameters (no module singletons). Route handlers under `app/api/.../route.ts` are thin: parse request → call business function → return `Response.json`. A single `middleware.ts` gates `/api/*` on `x-internal-token`. R2 goes through `@aws-sdk/client-s3` via a small wrapper. PostgreSQL queries are rewritten to Drizzle query builder. Workers tests port 1:1 to the new locations and run against a `testcontainers` Postgres.
 
-**Tech Stack:** Next.js 15 App Router · Drizzle ORM (postgres-js) · Neon Postgres · `@aws-sdk/client-s3` · `@testcontainers/postgresql` · vitest · zod / drizzle-zod · `@paralleldrive/cuid2` · Vercel AI SDK · ts-fsrs.
+**Tech Stack:** Next.js 15 App Router · Drizzle ORM (postgres-js) · Postgres 16 (Neon during dev, self-host PG on NAS in production via Sub 0z) · `@aws-sdk/client-s3` against Cloudflare R2 · `@testcontainers/postgresql` · vitest · zod / drizzle-zod · `@paralleldrive/cuid2` · `ai` SDK · ts-fsrs.
+
+**Deployment target:** Self-host on 绿联 NAS via docker-compose + Cloudflare Tunnel (set up in Sub 0z, not this plan). All code paths in this plan must run identically on `pnpm dev` locally and inside the production container.
 
 **Spec:** `docs/superpowers/specs/2026-05-11-sub0b1-api-route-migration-design.md`
 
@@ -1820,13 +1822,29 @@ git commit -m "chore(sub-0b1): delete workers/, drop hono/wrangler/@cloudflare/w
 git push -u origin sub-0b1-api-route-migration
 ```
 
-- [ ] **Step 21.2: Watch Vercel preview deploy**
+- [ ] **Step 21.2: Bring up a local PG for the smoke test**
 
-Use Vercel MCP `list_deployments` filtered by branch alias. Wait for `state: READY`.
+```bash
+docker run --rm -d --name loom-smoke-pg -p 5433:5432 -e POSTGRES_PASSWORD=loom postgres:16-alpine
+export DATABASE_URL="postgres://postgres:loom@localhost:5433/postgres"
+pnpm db:push --force
+```
 
-- [ ] **Step 21.3: Curl the 24 endpoints against the preview URL**
+(Or: keep using the Neon dev DATABASE_URL until Sub 0z lands the NAS PG — either works.)
 
-For each method/path in the spec endpoint inventory (§4), run `curl -H 'x-internal-token: <TOKEN>' <preview-url><path>` (with appropriate method + body) and confirm the response. Recommended: write a smoke script `tests/smoke-preview.sh` that exercises one happy path per endpoint.
+- [ ] **Step 21.3: Start the dev server + curl the 24 endpoints**
+
+```bash
+export INTERNAL_TOKEN=smoke-token
+# R2_* envs from .env.local (real Cloudflare R2 dev bucket)
+pnpm dev
+```
+
+In a second shell, run a smoke script `tests/smoke-local.sh` that exercises one happy path per endpoint in the spec endpoint inventory (§4) against `http://localhost:3000`, sending `x-internal-token: smoke-token`. Confirm 200/201/204 for each. Tear down:
+
+```bash
+docker stop loom-smoke-pg
+```
 
 - [ ] **Step 21.4: Open PR**
 

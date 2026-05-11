@@ -1,21 +1,24 @@
 # Sub 0b1 · API Route Migration — Workers Hono → Next.js · Design
 
-**Date:** 2026-05-11
-**Stack pivot context:** Architecture review 2026-05-11 (#25) + Sub 0a (#26 merged)
+**Date:** 2026-05-11 (revised 2026-05-11 for self-host pivot)
+**Stack pivot context:** Architecture review 2026-05-11 (#25) + Sub 0a (#26 merged) + self-host pivot 2026-05-11
 **This sub:** Sub 0b1 — API only. UI redesign per Loom design v1 = Sub 0b2 (separate spec).
+
+> **Deployment target update (2026-05-11):** The project moved from Vercel + Neon to **self-host on 绿联 NAS** (Docker compose + local Postgres + Cloudflare R2 + Cloudflare Tunnel). Sub 0b1 itself is deployment-agnostic — Next.js Route Handlers + `src/server/*` business logic run on either target — but verification examples and acceptance steps below use the local docker-compose flow rather than Vercel preview deploys. The NAS deployment bootstrap (Dockerfile, docker-compose.yml, Cloudflare Tunnel agent, `.vercel/` cleanup) is **Sub 0z**, a separate brainstorm.
 
 ---
 
 ## 0. Goal
 
-Migrate all Cloudflare Workers Hono routes to Next.js App Router Route Handlers, running on Vercel. Business logic moves out of `workers/` into runtime-agnostic `src/server/` modules. D1 → Neon Postgres via Drizzle; R2 binding → `@aws-sdk/client-s3`. Workers tree fully deleted at the end. UI rebuild deferred to Sub 0b2.
+Migrate all Cloudflare Workers Hono routes to Next.js App Router Route Handlers. Business logic moves out of `workers/` into runtime-agnostic `src/server/` modules. D1 → Postgres via Drizzle; R2 binding → `@aws-sdk/client-s3`. Workers tree fully deleted at the end. UI rebuild deferred to Sub 0b2.
 
-**Why now:** Sub 0a shipped infrastructure (Next.js + PG + /api/health) but legacy API still lives in `workers/`. Sub 0c (Workflow + OCR upgrade) requires the routes to be on Vercel runtime first.
+**Why now:** Sub 0a shipped infrastructure (Next.js + PG + /api/health) but legacy API still lives in `workers/`. Sub 0c (pg-boss inline workers + OCR upgrade) needs the routes on the new runtime first.
 
 **Out of scope:**
 - UI / pages (Sub 0b2)
-- Workflow DevKit migration (Sub 0c)
+- pg-boss inline workers + durable job pipeline (Sub 0c)
 - Tencent OCR EduPaperOCR → QuestionSplitOCR upgrade (Sub 0c)
+- NAS deployment bootstrap — Dockerfile, docker-compose, Cloudflare Tunnel agent, removal of Vercel artifacts (Sub 0z)
 - New endpoints; this is pure port + decouple
 
 ---
@@ -28,8 +31,8 @@ Migrate all Cloudflare Workers Hono routes to Next.js App Router Route Handlers,
 | Business logic location | `src/server/{ai,ingestion,knowledge,review,export}` (1:1 with `workers/src/*`) | Runtime-agnostic; future self-host can reuse |
 | Dependency injection | Functions take `db: Db` and `r2: R2Client` as args | Unit tests use mocks; no module singletons |
 | Route handler granularity | One `route.ts` per URL (Next.js convention), exports `GET`/`POST`/`PATCH`/`DELETE` as needed | Standard pattern |
-| R2 client | `@aws-sdk/client-s3` v3 | Most mature; Vercel Node 24 runtime handles bundle size; broad docs |
-| Auth | `x-internal-token` via `middleware.ts` matching `/api/:path*`, exempting `/api/health` | Works on Vercel + future self-host; preserves Workers behavior |
+| R2 client | `@aws-sdk/client-s3` v3 | Most mature; bundle size irrelevant on self-host Node 24; broad docs; Cloudflare R2 stays as offsite-friendly asset store |
+| Auth | `x-internal-token` via `middleware.ts` matching `/api/:path*`, exempting `/api/health` | Works behind Cloudflare Tunnel; same scheme Workers used |
 | SQL rewrite | Drizzle query builder (not raw `sql\`\``) for all touched queries | Type-safety; PG-native operator hints |
 | Test PG | `testcontainers` (Docker Postgres) via vitest `globalSetup` | Automated, deterministic; CI Docker available on `ubuntu-latest` |
 | Test port | All workers/*.test.ts ported 1:1 (unit + route handler) | Coverage parity, no silent regressions |
@@ -186,11 +189,12 @@ export const r2: R2Client = {
 
 Business functions take `r2: R2Client` so tests can mock.
 
-**New env vars** (Vercel + `.env.local` + `.env.example`):
+**New env vars** (`.env.local` for dev; `docker-compose.yml` env_file for prod — wired by Sub 0z):
 - `R2_ACCESS_KEY_ID`
 - `R2_SECRET_ACCESS_KEY`
 - `R2_ENDPOINT` (e.g. `https://<accountid>.r2.cloudflarestorage.com`)
 - `R2_BUCKET`
+- `INTERNAL_TOKEN` (already used by Workers; carries over)
 
 ### 3.3 Auth middleware
 
@@ -268,9 +272,9 @@ Each Route Handler wraps its body in `try/catch` → `errorResponse(err)`. Busin
 
 ### 3.6 DB connection pooling
 
-Sub 0a `src/db/client.ts` uses `postgres-js` with `max: 10`. With Vercel Fluid Compute reusing function instances, this is per-instance — N concurrent instances × 10 connections could exhaust Neon free tier (100 connection cap).
+Sub 0a `src/db/client.ts` uses `postgres-js` with `max: 10`. On self-host the entire Next.js app runs in a single Node process — one connection pool, capped at 10, owned by that process. For single-user load (~30 questions/day) this is far below the bottleneck. No PgBouncer needed.
 
-**Mitigation:** Neon's Vercel integration injects a **pooled** `DATABASE_URL` by default (PgBouncer-backed). Keep using `DATABASE_URL` directly; do not switch to the direct URL. Future self-host must run its own PgBouncer.
+If concurrency ever climbs (e.g. pg-boss adds parallel workers in Sub 0c), bump `max` or move workers to their own process with their own pool.
 
 This is a doc-only note for Sub 0b1; no code change.
 
@@ -406,7 +410,7 @@ Every `workers/**/*.test.ts` has an equivalent in the new layout — same descri
 - [ ] `pnpm lint` clean
 - [ ] `pnpm build` clean
 - [ ] `pnpm test` green, coverage ≥ Workers baseline
-- [ ] All 24 endpoints respond on Vercel preview deploy (manual curl matrix or smoke script)
+- [ ] All 24 endpoints respond against local `pnpm dev` (curl matrix or smoke script; DATABASE_URL points at a local docker-compose Postgres or temporarily Neon)
 - [ ] `/api/health` 200, `db_ok=true`
 - [ ] `/api/_/seed` produces seed knowledge rows
 - [ ] `/api/ai/<task>` streaming case: chunks arrive in order, non-buffered
@@ -414,8 +418,10 @@ Every `workers/**/*.test.ts` has an equivalent in the new layout — same descri
 - [ ] `workers/` directory deleted
 - [ ] `hono`, `wrangler`, `@cloudflare/workers-types` removed from `package.json`
 - [ ] `workers:dev` / `workers:deploy` scripts removed
-- [ ] `.gitignore` cleaned of Workers-only entries (keep `.dev.vars` ignore until next PR — no harm)
+- [ ] `.gitignore` cleaned of Workers-only entries
 - [ ] PR review (P1/P2 fix loop per Sub 0a pattern)
+
+> **NAS deployment verification is Sub 0z** — pulling the merged 0b1 branch onto the NAS, `docker compose up`, hitting endpoints via `loom.<domain>.com` through Cloudflare Tunnel. Not part of 0b1's acceptance.
 
 ---
 
@@ -423,11 +429,11 @@ Every `workers/**/*.test.ts` has an equivalent in the new layout — same descri
 
 | Risk | Mitigation |
 |---|---|
-| testcontainers Docker unavailable in CI | GitHub Actions `ubuntu-latest` ships Docker; smoke-tested first task |
+| testcontainers Docker unavailable on dev machine / CI | Local dev: documented "Docker Desktop must be running". CI: GitHub Actions `ubuntu-latest` ships Docker. Smoke-tested in Task 4 of the plan. |
 | Drizzle PG rewrite misses behavior on complex queries (esp. `ingestion.ts` 723 LOC) | Task decomposition is per-module; each module ships with its ported test before moving on |
-| `@aws-sdk/client-s3` cold start adds latency | Fluid Compute reuses instances; if p99 problematic, switch to `aws4fetch` in follow-up — interface is stable behind `R2Client` |
-| `/api/_/import` ZIP > Vercel payload limit (~4.5MB serverless) | Document workaround (split ZIP); proper fix is Sub 0c (Workflow chunked import) |
-| Neon free tier 100 connections | Use pooled `DATABASE_URL` (Neon Vercel integration default); document for self-host |
+| `@aws-sdk/client-s3` bundle size affects standalone build | Acceptable on self-host Node (no function size limits); standalone build still <50MB |
+| `/api/_/import` ZIP very large (multi-GB) | Self-host has no platform payload cap; only constraint is NAS RAM. Document chunked upload for future; proper fix is Sub 0c (pg-boss chunked import job). |
+| DB connection pooling under high concurrency | Single Node process owns the postgres-js pool (`max: 10`); single-user load nowhere near. No PgBouncer needed on self-host. |
 | Workers tests use D1 fixtures that don't translate (e.g. `unixepoch()`) | Rewrite the few SQL bits as part of test port; not a separate task |
 
 ---
@@ -444,6 +450,7 @@ Every `workers/**/*.test.ts` has an equivalent in the new layout — same descri
 
 ## 9. Out of scope / followups
 
-- Sub 0b2: Loom design v1 UI (separate spec)
-- Sub 0c: Workflow DevKit, Tencent QuestionSplitOCR, chunked import via Workflow
-- Sub 1+: actual product features (capture pipeline, knowledge_link, dreaming, etc.)
+- **Sub 0z (NAS bootstrap):** `Dockerfile` + `docker-compose.yml` (app + postgres:16-alpine + cloudflared) + remove `.vercel/`, drop Vercel-specific scripts, point `DATABASE_URL` at the NAS PG, document Cloudflare Tunnel setup. Can run in parallel to 0b1 since neither blocks the other.
+- **Sub 0b2:** Loom design v1 UI (separate spec)
+- **Sub 0c (revised):** pg-boss inline workers + durable LLM pipeline + Tencent QuestionSplitOCR upgrade. Replaces the earlier "Vercel Workflow DevKit" plan with pg-boss running in the same Node process as the API (single-process for single-user load).
+- **Sub 1+:** actual product features (capture pipeline, knowledge_link, dreaming, etc.)
