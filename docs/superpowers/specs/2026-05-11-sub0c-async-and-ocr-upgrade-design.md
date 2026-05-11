@@ -97,10 +97,11 @@ COMMIT;
 
 > **Spec 修订（2026-05-11 grill 反馈）**：原计划的 `EduPaperOCR → QuestionSplitOCR` 同步替换被超集 API 替代。新方向：用 `SubmitQuestionMarkAgentJob` + `DescribeQuestionMarkAgentJob` 异步 job 对，完整覆盖切题 + 手写答案 + 知识点标签 + Tencent 内置判分 evidence。完形填空 / 长 passage + 网格选项 类布局原生支持（已经用真实样本 verify，见 fixtures）。
 
-- **Submit endpoint**：`SubmitQuestionMarkAgentJob`（Action 名），Version `2018-11-19`。请求要点：
+- **SDK**：用 Tencent 官方 npm 包 `tencentcloud-sdk-nodejs-ocr`（@4.1.228+，活跃维护），**不手写 V3 签名 / HTTP 客户端**。SDK 自动处理签名 / endpoint / SDK 级 retry / 结构化错误（`TencentCloudSDKException`），并自带完整 TS 类型（`SubmitQuestionMarkAgentJobRequest/Response` 等）。
+- **Submit method**：`client.SubmitQuestionMarkAgentJob(req)` —— Version `2018-11-19`。请求要点：
   - `ImageBase64` 或 `ImageUrl`（≤10M）；多页用 `ImageBase64List` / `ImageUrlList`，最多 3 张
   - 返回 `JobId`（同步返回，无须 poll Submit 本身）
-- **Query endpoint**：`DescribeQuestionMarkAgentJob`，请求只带 `JobId`。
+- **Query method**：`client.DescribeQuestionMarkAgentJob({ JobId })`：
   - `JobStatus` 四态：`WAIT` / `RUN` / `FAIL` / `DONE`
   - `DONE` → 完整响应载荷可读（MarkInfos 树）
   - `FAIL` → 配合 `ErrorCode` / `ErrorMessage`
@@ -378,14 +379,15 @@ src/
       sse_replay.ts                   # 新 — Last-Event-ID query + snapshot synth
       listen_loop.ts                  # 新 — start listenClient + dispatch to router
     ingestion/
-      tencent_mark.ts                 # 新 — SubmitQuestionMarkAgentJob + DescribeQuestionMarkAgentJob 客户端
+      tencent_mark.ts                 # 新 — 包装 SDK client + pollUntilDone (无手签 / HTTP)
       tencent_mark_parser.ts          # 新 — raw response → StructuredQuestion 树 (含 extraction_evidence)
-      tencent_mark_errors.ts          # 新 — Tencent ErrorCode → Retryable/Permanent 映射
+      tencent_mark_errors.ts          # 新 — TencentCloudSDKException.code → Retryable/Permanent 映射
       crop.ts                         # 新 — sharp 裁剪 + R2 upload (从 QuestionImagePositions 派生)
+      figure_attach.ts                # 新 — 配图归属启发式 (spatial containment + nearest)
       rescue.ts                       # 新 — Vision Tier 2/3 同步调用 + 写 structured
       # cascade.ts                    # 删除 — Tier 1 sync + auto-fallback 链路彻底退役
       # ocr_tencent.ts                # 删除 — 旧 EduPaperOCR 同步客户端
-      # ocr_tencent_sign.ts           # 保留 — V3 签名机制复用
+      # ocr_tencent_sign.ts           # 删除 — SDK 自带 V3 签名，手写签名不再需要
     backfill/
       knowledge_propose.ts            # 新 — 手动 backfill handler
 
@@ -699,7 +701,7 @@ Merge gate — 5 必须 + 文档 + 性能：
 
 - pg-boss + worker + SSE 基础设施：1.5 d
 - `job_events` 表 + replay + cron pruning：0.5 d
-- Tencent Mark Agent endpoint（Submit + Describe + poll loop + error 映射）：1 d
+- Tencent Mark Agent SDK 包装（Submit + Describe + 固定 2s poll + 错误映射）：0.5 d（SDK 省掉手写签名）
 - Parser（cloze 树形 + extraction_evidence + layout_quality + figure 归属启发式）+ figure crop：1 d
 - Figure 重对应 API（PATCH endpoint + 事件 + 校验）：0.3 d
 - Rescue endpoint（同步 Tier 2/3）+ schema migration：0.5 d

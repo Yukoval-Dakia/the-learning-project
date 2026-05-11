@@ -22,10 +22,11 @@
 - [ ] **Step 0.1**: 当前分支 `sub-0c-implementation`，从 main 起。`git status` 干净。
 - [ ] **Step 0.2**: 装新依赖
   ```
-  pnpm add pg-boss sharp pg
+  pnpm add pg-boss sharp pg tencentcloud-sdk-nodejs-ocr
   pnpm add -D @types/pg
   ```
-  `pg` 是 pg-boss 内部驱动；`postgres-js` 仍用于 drizzle，**两个驱动共存是被库逼的**。
+  - `pg` 是 pg-boss 内部驱动；`postgres-js` 仍用于 drizzle，**两个驱动共存是被库逼的**。
+  - `tencentcloud-sdk-nodejs-ocr` 是 Tencent 官方 SDK（精简版，只装 OCR 产品；自动拉 `tencentcloud-sdk-nodejs-common`）。**直接调 `client.SubmitQuestionMarkAgentJob()` / `client.DescribeQuestionMarkAgentJob()`，零手写签名 / HTTP / 错误形状**。TypeScript 类型自带（`SubmitQuestionMarkAgentJobRequest` 等）。
 - [ ] **Step 0.3**: `.env.example` 加一行（pg-boss 共用 DATABASE_URL，但 worker process 可能独立配置）：
   ```
   # pg-boss schema (auto-created on boss.start())。无需手动设。
@@ -120,24 +121,64 @@
 
 ---
 
-## Step 6: Tencent Mark Agent client + 错误映射
+## Step 6: Tencent Mark Agent client（用官方 SDK）+ 错误映射
 
-- [ ] **Step 6.1 (red)**: 写 `src/server/ingestion/tencent_mark.test.ts` —— mock `fetch` 拦截 Tencent endpoint：
-  - `submitJob({ imageUrl })` → 返回 JobId（断言 X-TC-Action='SubmitQuestionMarkAgentJob'、Version='2018-11-19'、Signature header 存在）
-  - `describeJob(jobId)` → mock 返回 cloze fixture → 返回完整响应
-  - `pollUntilDone(jobId, opts)` → mock 三次返回 WAIT/RUN/DONE → 总耗时 ≈ 4s（固定 2s 间隔）→ 返回 DONE 响应
+> **重要决策**：用 `tencentcloud-sdk-nodejs-ocr` 官方 SDK 而非手写 HTTP 客户端。SDK 自动处理 V3 签名 / endpoint / retry / 错误结构化 + 自带 TS 类型。**删除老的 `src/server/ingestion/ocr_tencent_sign.ts` + 其 test**（不再需要手签）。
+
+- [ ] **Step 6.1 (red)**: 写 `src/server/ingestion/tencent_mark.test.ts`：
+  - mock SDK client（用 `vi.mock('tencentcloud-sdk-nodejs-ocr')`）的 `SubmitQuestionMarkAgentJob` 和 `DescribeQuestionMarkAgentJob` 方法
+  - `submitOcrJob(params)` → 透传给 SDK，返回 `JobId` 字符串
+  - `pollUntilDone(jobId, opts)` → mock 三次返回 `{ JobStatus: 'WAIT' }` / `'RUN'` / `'DONE'` + 完整响应 → 固定 2s 间隔，总耗时 ≈ 4s
   - `pollUntilDone` 超时（5min）→ 抛 RetryableError
-  - error mapping：`FailedOperation.OcrFailed` → RetryableError；`InvalidParameterValue.X` → PermanentError；`ResourceUnavailable.InArrears` → PermanentError
+  - SDK 抛 `TencentCloudSDKException` `{ code: 'FailedOperation.OcrFailed', message }` → mapper 转 RetryableError
+  - SDK 抛 `code: 'InvalidParameterValue.X'` → PermanentError
+  - SDK 抛 `code: 'ResourceUnavailable.InArrears'` → PermanentError（账号欠费）
 - [ ] **Step 6.2**: fail
 - [ ] **Step 6.3 (green)**:
   - `src/server/ingestion/tencent_mark.ts`：
-    - `submitJob({ imageUrl?, imageBase64?, imageUrlList? }): Promise<string>` —— 签 V3 调 SubmitQuestionMarkAgentJob，返回 JobId
-    - `describeJob(jobId): Promise<TencentMarkResponse>` —— 调 DescribeQuestionMarkAgentJob
-    - `pollUntilDone(jobId, opts: { intervalMs: 2000, timeoutMs: 300_000 }): Promise<TencentMarkResponse>` —— while loop sleep + describe，DONE/FAIL 返回，超时 throw RetryableError
-  - `src/server/ingestion/tencent_mark_errors.ts`：`mapTencentError(code: string, message: string): RetryableError | PermanentError` —— 按 spec § 1.6 错误映射表
-  - **签名机制复用 existing `ocr_tencent_sign.ts`**（V3 通用）
-- [ ] **Step 6.4**: tests 全过；MSW mock 正确拦截
-- [ ] **Step 6.5**: Commit：`feat(sub-0c): Tencent Mark Agent client — Submit + Describe + 2s poll + error mapping`
+    ```ts
+    import { ocr } from 'tencentcloud-sdk-nodejs-ocr';
+    const OcrClient = ocr.v20181119.Client;
+
+    function createOcrClient() {
+      return new OcrClient({
+        credential: {
+          secretId: process.env.TENCENT_SECRET_ID!,
+          secretKey: process.env.TENCENT_SECRET_KEY!,
+        },
+        region: process.env.TENCENT_OCR_REGION ?? 'ap-shanghai',
+        profile: { httpProfile: { endpoint: 'ocr.tencentcloudapi.com' } },
+      });
+    }
+
+    export async function submitOcrJob(params: {
+      ImageUrl?: string;
+      ImageBase64?: string;
+      ImageUrlList?: string[];
+    }): Promise<string> {
+      const client = createOcrClient();
+      const resp = await client.SubmitQuestionMarkAgentJob(params);
+      return resp.JobId!;
+    }
+
+    export async function pollUntilDone(
+      jobId: string,
+      opts = { intervalMs: 2000, timeoutMs: 300_000 },
+    ): Promise<DescribeQuestionMarkAgentJobResponse> {
+      const client = createOcrClient();
+      const deadline = Date.now() + opts.timeoutMs;
+      while (Date.now() < deadline) {
+        const resp = await client.DescribeQuestionMarkAgentJob({ JobId: jobId });
+        if (resp.JobStatus === 'DONE' || resp.JobStatus === 'FAIL') return resp;
+        await new Promise((r) => setTimeout(r, opts.intervalMs));
+      }
+      throw new RetryableError(`Tencent OCR poll timeout after ${opts.timeoutMs}ms`);
+    }
+    ```
+  - `src/server/ingestion/tencent_mark_errors.ts`：`mapTencentError(err: TencentCloudSDKException): RetryableError | PermanentError` —— 取 `err.code` 做 spec § 1.6 错误映射表分类（其它包装 PermanentError，cause 保留原错）
+  - **删除** `src/server/ingestion/ocr_tencent_sign.ts` 和 `ocr_tencent_sign.test.ts`（SDK 替代）
+- [ ] **Step 6.4**: tests 全过；mock SDK 路径正确
+- [ ] **Step 6.5**: Commit：`feat(sub-0c): Tencent Mark Agent via official SDK + poll loop + error mapper (replaces hand-rolled V3 signing)`
 
 ---
 
