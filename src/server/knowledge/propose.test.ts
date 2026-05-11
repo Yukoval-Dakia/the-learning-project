@@ -1,5 +1,6 @@
-import type { D1Database } from '@cloudflare/workers-types';
-import { describe, expect, it, vi } from 'vitest';
+import { dreaming_proposal, knowledge } from '@/db/schema';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { resetDb, testDb } from '../../../tests/helpers/db';
 import { parseProposeOutput, runProposeAndWrite } from './propose';
 
 describe('parseProposeOutput', () => {
@@ -49,50 +50,36 @@ describe('parseProposeOutput', () => {
   });
 });
 
-function makePropoeMockDb(opts: {
-  tree: Array<{
-    id: string;
-    name: string;
-    domain: string | null;
-    parent_id: string | null;
-    archived_at: number | null;
-  }>;
-}) {
-  const inserted: Array<{ payload: string; reasoning: string }> = [];
-  const knowledgeById = new Map(opts.tree.map((r) => [r.id, r]));
-  const prepare = vi.fn((sql: string) => ({
-    bind: (...binds: unknown[]) => ({
-      first: async () => {
-        if (/select id from knowledge where id = \? and archived_at is null/i.test(sql)) {
-          const id = binds[0] as string;
-          const row = knowledgeById.get(id);
-          return row && row.archived_at === null ? { id } : null;
-        }
-        return null;
-      },
-      all: async () => ({ results: opts.tree }),
-      run: async () => {
-        if (/insert into dreaming_proposal/i.test(sql)) {
-          inserted.push({ payload: binds[2] as string, reasoning: binds[3] as string });
-        }
-        return { success: true, meta: { changes: 1 } };
-      },
-    }),
-  }));
-  const db = { prepare } as unknown as D1Database;
-  return { db, inserted };
-}
-
 describe('runProposeAndWrite', () => {
-  it('writes one dreaming_proposal per parsed propose_new entry', async () => {
-    const { db, inserted } = makePropoeMockDb({
-      tree: [{ id: 'k_xuci', name: '虚词', domain: 'wenyan', parent_id: null, archived_at: null }],
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  async function insertKnowledge(id: string, opts: { archived?: boolean } = {}) {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(knowledge).values({
+      id,
+      name: id,
+      domain: 'wenyan',
+      parent_id: null,
+      base_mastery: 0,
+      ai_delta_mastery: 0,
+      merged_from: [],
+      proposed_by_ai: false,
+      approval_status: 'approved',
+      archived_at: opts.archived ? now : null,
+      created_at: now,
+      updated_at: now,
+      version: 0,
     });
+  }
+
+  it('writes one dreaming_proposal per parsed propose_new entry', async () => {
+    const db = testDb();
+    await insertKnowledge('k_xuci');
     const fakeRunTask = async () => ({
-      task_run_id: 't1',
       text: '{"proposals":[{"name":"之-主谓","parent_id":"k_xuci","reasoning":"r1"},{"name":"乎","parent_id":"k_xuci","reasoning":"r2"}]}',
-      finishReason: 'stop',
-      usage: { inputTokens: 0, outputTokens: 0 },
     });
     await runProposeAndWrite({
       db,
@@ -104,8 +91,9 @@ describe('runProposeAndWrite', () => {
       },
       runTaskFn: fakeRunTask,
     });
-    expect(inserted).toHaveLength(2);
-    expect(JSON.parse(inserted[0].payload)).toMatchObject({
+    const proposals = await db.select().from(dreaming_proposal);
+    expect(proposals).toHaveLength(2);
+    expect(proposals[0].payload).toMatchObject({
       mutation: 'propose_new',
       name: '之-主谓',
       parent_id: 'k_xuci',
@@ -113,14 +101,10 @@ describe('runProposeAndWrite', () => {
   });
 
   it('skips entries whose parent_id does not exist', async () => {
-    const { db, inserted } = makePropoeMockDb({
-      tree: [{ id: 'k_xuci', name: '虚词', domain: 'wenyan', parent_id: null, archived_at: null }],
-    });
+    const db = testDb();
+    await insertKnowledge('k_xuci');
     const fakeRunTask = async () => ({
-      task_run_id: 't',
       text: '{"proposals":[{"name":"X","parent_id":"k_xuci","reasoning":"r"},{"name":"Y","parent_id":"k_does_not_exist","reasoning":"r"}]}',
-      finishReason: 'stop',
-      usage: { inputTokens: 0, outputTokens: 0 },
     });
     await runProposeAndWrite({
       db,
@@ -132,12 +116,13 @@ describe('runProposeAndWrite', () => {
       },
       runTaskFn: fakeRunTask,
     });
-    expect(inserted).toHaveLength(1);
-    expect(JSON.parse(inserted[0].payload).name).toBe('X');
+    const proposals = await db.select().from(dreaming_proposal);
+    expect(proposals).toHaveLength(1);
+    expect((proposals[0].payload as Record<string, unknown>).name).toBe('X');
   });
 
   it('swallows runTask error (no inserts; no throw)', async () => {
-    const { db, inserted } = makePropoeMockDb({ tree: [] });
+    const db = testDb();
     const fakeRunTask = async () => {
       throw new Error('LLM down');
     };
@@ -153,16 +138,14 @@ describe('runProposeAndWrite', () => {
         runTaskFn: fakeRunTask,
       }),
     ).resolves.toBeUndefined();
-    expect(inserted).toHaveLength(0);
+    const proposals = await db.select().from(dreaming_proposal);
+    expect(proposals).toHaveLength(0);
   });
 
   it('swallows parseProposeOutput error (no inserts; no throw)', async () => {
-    const { db, inserted } = makePropoeMockDb({ tree: [] });
+    const db = testDb();
     const fakeRunTask = async () => ({
-      task_run_id: 't',
       text: '不是 JSON',
-      finishReason: 'stop',
-      usage: { inputTokens: 0, outputTokens: 0 },
     });
     await expect(
       runProposeAndWrite({
@@ -176,6 +159,7 @@ describe('runProposeAndWrite', () => {
         runTaskFn: fakeRunTask,
       }),
     ).resolves.toBeUndefined();
-    expect(inserted).toHaveLength(0);
+    const proposals = await db.select().from(dreaming_proposal);
+    expect(proposals).toHaveLength(0);
   });
 });

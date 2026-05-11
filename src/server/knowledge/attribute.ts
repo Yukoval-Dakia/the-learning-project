@@ -1,6 +1,8 @@
-import type { D1Database } from '@cloudflare/workers-types';
+import { CauseCategory } from '@/core/schema/business';
+import type { Db } from '@/db/client';
+import { mistake } from '@/db/schema';
+import { and, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
-import { CauseCategory } from '../../../src/core/schema/business';
 
 const AttributionOutputSchema = z.object({
   primary_category: CauseCategory,
@@ -35,7 +37,7 @@ export interface AttributionInput {
 }
 
 export interface RunAttributionAndWriteParams {
-  db: D1Database;
+  db: Db;
   mistakeId: string;
   expectedVersion: number;
   input: AttributionInput;
@@ -47,22 +49,26 @@ export async function runAttributionAndWrite(params: RunAttributionAndWriteParam
   try {
     const result = await params.runTaskFn('AttributionTask', params.input, { env: params.env });
     const parsed = parseAttributionOutput(result.text);
-    const causeJson = JSON.stringify({
+    const causeJson = {
       primary_category: parsed.primary_category,
       secondary_categories: parsed.secondary_categories,
       ai_analysis_md: parsed.ai_analysis_md,
       confidence: parsed.confidence,
       user_edited: false,
-    });
-    const now = Math.floor(Date.now() / 1000);
-    const update = await params.db
-      .prepare(
-        `update mistake set cause = ?, updated_at = ?, version = version + 1
-         where id = ? and version = ? and cause is null`,
-      )
-      .bind(causeJson, now, params.mistakeId, params.expectedVersion)
-      .run();
-    const changes = (update as { meta?: { changes?: number } }).meta?.changes ?? 0;
+    };
+    const now = new Date();
+    const updated = await params.db
+      .update(mistake)
+      .set({ cause: causeJson, updated_at: now })
+      .where(
+        and(
+          eq(mistake.id, params.mistakeId),
+          eq(mistake.version, params.expectedVersion),
+          isNull(mistake.cause),
+        ),
+      );
+    // postgres-js drizzle returns rowCount on the result
+    const changes = (updated as { count?: number }).count ?? 0;
     if (changes !== 1) {
       console.warn(
         `runAttributionAndWrite: skipped (cause already set or version mismatch) for ${params.mistakeId}`,

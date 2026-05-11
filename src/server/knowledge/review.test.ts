@@ -1,33 +1,8 @@
-import type { D1Database } from '@cloudflare/workers-types';
+import { dreaming_proposal, knowledge } from '@/db/schema';
 import { MockLanguageModelV3 } from 'ai/test';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { resetDb, testDb } from '../../../tests/helpers/db';
 import { streamReviewTask } from './review';
-
-function makeMockDb() {
-  const calls: Array<{ sql: string; binds: unknown[] }> = [];
-  const knowledgeRows = [
-    { id: 'k1', name: '虚词', domain: 'wenyan', parent_id: null, archived_at: null, version: 0 },
-  ];
-  const mistakeRows: Record<string, unknown>[] = [];
-  const prepare = vi.fn((sql: string) => ({
-    bind: (...binds: unknown[]) => {
-      calls.push({ sql, binds });
-      return {
-        first: async () => null,
-        all: async () => {
-          if (/from knowledge/i.test(sql)) return { results: knowledgeRows };
-          if (/from mistake/i.test(sql)) return { results: mistakeRows };
-          return { results: [] };
-        },
-        run: async () => ({ success: true }),
-      };
-    },
-  }));
-  return {
-    db: { prepare } as unknown as D1Database,
-    calls,
-  };
-}
 
 function makeV3Usage() {
   return {
@@ -37,7 +12,29 @@ function makeV3Usage() {
 }
 
 describe('streamReviewTask', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
   it('returns a streaming Response and writes dreaming_proposal on tool call', async () => {
+    const db = testDb();
+    // Insert a knowledge node so the tree is not empty
+    const now = new Date();
+    await db.insert(knowledge).values({
+      id: 'k1',
+      name: '虚词',
+      domain: 'wenyan',
+      parent_id: null,
+      base_mastery: 0,
+      ai_delta_mastery: 0,
+      merged_from: [],
+      proposed_by_ai: false,
+      approval_status: 'approved',
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+
     const mockModel = new MockLanguageModelV3({
       doStream: async () => ({
         stream: new ReadableStream({
@@ -63,18 +60,11 @@ describe('streamReviewTask', () => {
       }),
     });
 
-    const { db, calls } = makeMockDb();
-    const env = {
-      DB: db,
-      INTERNAL_TOKEN: 'test',
-      ANTHROPIC_API_KEY: 'test',
-    } as never;
-
-    const response = await streamReviewTask({ env, model: mockModel });
+    const response = await streamReviewTask({ db, model: mockModel });
     expect(response).toBeInstanceOf(Response);
     expect(response.body).toBeTruthy();
 
-    // Drain stream so onStepFinish fires.
+    // Drain stream so tool execute fires.
     const reader = response.body?.getReader();
     if (reader) {
       while (true) {
@@ -83,12 +73,13 @@ describe('streamReviewTask', () => {
       }
     }
 
-    const insert = calls.find((c) => /insert into dreaming_proposal/i.test(c.sql));
-    expect(insert).toBeDefined();
-    expect(insert?.binds[1]).toBe('knowledge'); // kind
+    const proposals = await db.select().from(dreaming_proposal);
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0].kind).toBe('knowledge');
   });
 
   it('returns streaming Response even with no recent mistakes (empty input)', async () => {
+    const db = testDb();
     const mockModel = new MockLanguageModelV3({
       doStream: async () => ({
         stream: new ReadableStream({
@@ -108,14 +99,7 @@ describe('streamReviewTask', () => {
       }),
     });
 
-    const { db } = makeMockDb();
-    const env = {
-      DB: db,
-      INTERNAL_TOKEN: 'test',
-      ANTHROPIC_API_KEY: 'test',
-    } as never;
-
-    const response = await streamReviewTask({ env, model: mockModel });
+    const response = await streamReviewTask({ db, model: mockModel });
     expect(response).toBeInstanceOf(Response);
     const reader = response.body?.getReader();
     let total = '';

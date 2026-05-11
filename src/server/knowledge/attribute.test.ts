@@ -1,5 +1,7 @@
-import type { D1Database } from '@cloudflare/workers-types';
-import { describe, expect, it, vi } from 'vitest';
+import { mistake, question } from '@/db/schema';
+import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetDb, testDb } from '../../../tests/helpers/db';
 import { parseAttributionOutput, runAttributionAndWrite } from './attribute';
 
 describe('parseAttributionOutput', () => {
@@ -45,22 +47,39 @@ describe('parseAttributionOutput', () => {
   });
 });
 
-function makeAttributeMockDb(opts: { updateChanges?: number } = {}) {
-  const updates: Array<{ sql: string; binds: unknown[] }> = [];
-  const prepare = vi.fn((sql: string) => ({
-    bind: (...binds: unknown[]) => ({
-      run: async () => {
-        if (/update mistake/i.test(sql)) {
-          updates.push({ sql, binds });
-        }
-        return { success: true, meta: { changes: opts.updateChanges ?? 1 } };
-      },
-    }),
-  }));
-  return { db: { prepare } as unknown as D1Database, updates };
+async function insertMistake(opts: { mistakeId: string; questionId: string; version?: number }) {
+  const db = testDb();
+  const now = new Date();
+  await db.insert(question).values({
+    id: opts.questionId,
+    kind: 'short_answer',
+    prompt_md: 'test prompt',
+    reference_md: null,
+    knowledge_ids: [],
+    difficulty: 3,
+    source: 'test',
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  });
+  await db.insert(mistake).values({
+    id: opts.mistakeId,
+    question_id: opts.questionId,
+    wrong_answer_md: 'wrong',
+    source: 'test',
+    knowledge_ids: [],
+    variants: [],
+    created_at: now,
+    updated_at: now,
+    version: opts.version ?? 0,
+  });
 }
 
 describe('runAttributionAndWrite', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
   const validInput = {
     prompt_md: '"之"在主谓之间的用法?',
     reference_md: '取消句子独立性',
@@ -69,7 +88,8 @@ describe('runAttributionAndWrite', () => {
   };
 
   it('writes parsed cause to mistake row', async () => {
-    const { db, updates } = makeAttributeMockDb();
+    const db = testDb();
+    await insertMistake({ mistakeId: 'm1', questionId: 'q1' });
     const fakeRunTask = async () => ({
       text: '{"primary_category":"concept","secondary_categories":[],"ai_analysis_md":"a","confidence":0.8}',
     });
@@ -80,17 +100,20 @@ describe('runAttributionAndWrite', () => {
       input: validInput,
       runTaskFn: fakeRunTask,
     });
-    expect(updates).toHaveLength(1);
-    const cause = JSON.parse(updates[0].binds[0] as string);
-    expect(cause.primary_category).toBe('concept');
-    expect(cause.user_edited).toBe(false);
-    expect(cause.confidence).toBe(0.8);
-    expect(updates[0].binds[2]).toBe('m1');
-    expect(updates[0].binds[3]).toBe(0);
+    const rows = await db
+      .select({ cause: mistake.cause })
+      .from(mistake)
+      .where(eq(mistake.id, 'm1'));
+    expect(rows[0]?.cause).toMatchObject({
+      primary_category: 'concept',
+      user_edited: false,
+      confidence: 0.8,
+    });
   });
 
   it('swallows runTask error (no update; no throw)', async () => {
-    const { db, updates } = makeAttributeMockDb();
+    const db = testDb();
+    await insertMistake({ mistakeId: 'm1', questionId: 'q1' });
     const fakeRunTask = async () => {
       throw new Error('LLM down');
     };
@@ -103,11 +126,16 @@ describe('runAttributionAndWrite', () => {
         runTaskFn: fakeRunTask,
       }),
     ).resolves.toBeUndefined();
-    expect(updates).toHaveLength(0);
+    const rows = await db
+      .select({ cause: mistake.cause })
+      .from(mistake)
+      .where(eq(mistake.id, 'm1'));
+    expect(rows[0]?.cause).toBeNull();
   });
 
   it('swallows parse error (no update)', async () => {
-    const { db, updates } = makeAttributeMockDb();
+    const db = testDb();
+    await insertMistake({ mistakeId: 'm1', questionId: 'q1' });
     const fakeRunTask = async () => ({ text: '不是 JSON' });
     await expect(
       runAttributionAndWrite({
@@ -118,12 +146,18 @@ describe('runAttributionAndWrite', () => {
         runTaskFn: fakeRunTask,
       }),
     ).resolves.toBeUndefined();
-    expect(updates).toHaveLength(0);
+    const rows = await db
+      .select({ cause: mistake.cause })
+      .from(mistake)
+      .where(eq(mistake.id, 'm1'));
+    expect(rows[0]?.cause).toBeNull();
   });
 
-  it('logs warn when changes=0 (cause already set or version mismatch)', async () => {
+  it('logs warn when version mismatch (cause already set or version mismatch)', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const { db } = makeAttributeMockDb({ updateChanges: 0 });
+    const db = testDb();
+    // Insert mistake with version=1 but we'll pass expectedVersion=0 (mismatch)
+    await insertMistake({ mistakeId: 'm1', questionId: 'q1', version: 1 });
     const fakeRunTask = async () => ({
       text: '{"primary_category":"concept","secondary_categories":[],"ai_analysis_md":"a","confidence":0.5}',
     });

@@ -1,9 +1,6 @@
-import type { D1Database } from '@cloudflare/workers-types';
-
-interface KnowledgeRow {
-  domain: string | null;
-  parent_id: string | null;
-}
+import type { Db } from '@/db/client';
+import { knowledge } from '@/db/schema';
+import { eq } from 'drizzle-orm';
 
 const MAX_DEPTH = 32; // 防 cycle
 
@@ -15,13 +12,16 @@ const MAX_DEPTH = 32; // 防 cycle
  * so this single-node helper is reserved for Sub 2's KnowledgeProposeTask which will
  * need point lookups during tool calling (resolving a node's domain in tool results).
  */
-export async function getEffectiveDomain(db: D1Database, nodeId: string): Promise<string> {
+export async function getEffectiveDomain(db: Db, nodeId: string): Promise<string> {
   let curId: string = nodeId;
   for (let depth = 0; depth < MAX_DEPTH; depth++) {
-    const row = await db
-      .prepare('select domain, parent_id from knowledge where id = ?')
-      .bind(curId)
-      .first<KnowledgeRow>();
+    const row = (
+      await db
+        .select({ domain: knowledge.domain, parent_id: knowledge.parent_id })
+        .from(knowledge)
+        .where(eq(knowledge.id, curId))
+        .limit(1)
+    )[0];
     if (!row) {
       throw new Error(`knowledge node not found: ${curId}`);
     }

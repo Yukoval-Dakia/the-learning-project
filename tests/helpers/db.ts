@@ -1,17 +1,18 @@
+import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 
 let _client: ReturnType<typeof postgres> | undefined;
-let _db: ReturnType<typeof drizzle> | undefined;
+let _db: Db | undefined;
 
-export function testDb() {
+export function testDb(): Db {
   if (_db) return _db;
   const url = process.env.TEST_DATABASE_URL;
   if (!url) throw new Error('TEST_DATABASE_URL not set — globalSetup did not run');
   _client = postgres(url, { max: 4 });
-  _db = drizzle(_client, { schema });
+  _db = drizzle(_client, { schema }) as unknown as Db;
   return _db;
 }
 

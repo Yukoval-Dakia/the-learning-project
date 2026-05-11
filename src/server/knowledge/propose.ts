@@ -1,4 +1,6 @@
-import type { D1Database } from '@cloudflare/workers-types';
+import type { Db } from '@/db/client';
+import { knowledge } from '@/db/schema';
+import { and, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import { writeDreamingProposal } from './proposals';
 import { loadTreeSnapshot } from './tree';
@@ -25,7 +27,7 @@ export interface MistakeContent {
 export type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
 
 export interface RunProposeAndWriteParams {
-  db: D1Database;
+  db: Db;
   mistakeContent: MistakeContent;
   runTaskFn: RunTaskFn;
   env?: unknown;
@@ -46,10 +48,13 @@ export async function runProposeAndWrite(params: RunProposeAndWriteParams): Prom
     const result = await params.runTaskFn('KnowledgeProposeTask', input, { env: params.env });
     const parsed = parseProposeOutput(result.text);
     for (const p of parsed.proposals) {
-      const parentExists = await params.db
-        .prepare('select id from knowledge where id = ? and archived_at is null')
-        .bind(p.parent_id)
-        .first();
+      const parentExists = (
+        await params.db
+          .select({ id: knowledge.id })
+          .from(knowledge)
+          .where(and(eq(knowledge.id, p.parent_id), isNull(knowledge.archived_at)))
+          .limit(1)
+      )[0];
       if (!parentExists) {
         console.warn(
           `runProposeAndWrite: skipping propose_new with non-existent parent_id=${p.parent_id}`,
