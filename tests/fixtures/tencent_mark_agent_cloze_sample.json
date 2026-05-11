@@ -1,0 +1,137 @@
+{
+  "Angle": 0,
+  "ErrorCode": "",
+  "ErrorMessage": "",
+  "JobStatus": "DONE",
+  "MarkInfos": [
+    {
+      "AnswerInfos": [],
+      "MarkInfos": [
+        {
+          "AnswerInfos": [
+            {
+              "AnswerAnalysis": "此处考查固定搭配\"make a big difference\"，表示“产生很大影响”，符合语境：学会有效管理时间会带来很大影响，因此选C。",
+              "HandwriteInfo": "C",
+              "HandwriteInfoPositions": [86, 973, 128, 973, 128, 1008, 86, 1008],
+              "IsCorrect": true,
+              "KnowledgePoints": ["完形填空", "固定短语搭配"],
+              "RightAnswer": "C"
+            }
+          ],
+          "MarkInfos": [],
+          "MarkItemTitle": "1. ______\nA. decision\nB. reason\nC. difference\nD. choice",
+          "QuestionImagePositions": [],
+          "QuestionPositions": [77, 967, 1035, 967, 1035, 1015, 77, 1015],
+          "RightAnswer": ""
+        },
+        {
+          "AnswerInfos": [
+            {
+              "AnswerAnalysis": "前文说把任务记录下来，分出最重要的，因此这里表示关注真正重要的事，matters表示“要紧，重要”，符合语境，因此选A。",
+              "HandwriteInfo": "A",
+              "HandwriteInfoPositions": [89, 1026, 132, 1026, 132, 1062, 89, 1062],
+              "IsCorrect": true,
+              "KnowledgePoints": ["完形填空", "词义辨析"],
+              "RightAnswer": "A"
+            }
+          ],
+          "MarkInfos": [],
+          "MarkItemTitle": "2. ______\nA. matters\nB. happens\nC. changes\nD. exists",
+          "QuestionImagePositions": [],
+          "QuestionPositions": [77, 1023, 1028, 1023, 1028, 1068, 77, 1068],
+          "RightAnswer": ""
+        },
+        {
+          "AnswerInfos": [
+            {
+              "AnswerAnalysis": "前文说我们会承担太多责任，原因是不想让别人失望，disappoint表示“使失望”，符合该逻辑，因此选A。",
+              "HandwriteInfo": "A",
+              "HandwriteInfoPositions": [89, 1076, 132, 1076, 132, 1115, 89, 1115],
+              "IsCorrect": true,
+              "KnowledgePoints": ["完形填空", "词义辨析"],
+              "RightAnswer": "A"
+            }
+          ],
+          "MarkInfos": [],
+          "MarkItemTitle": "3. ______\nA. disappoint\nB. help\nC. encourage\nD. surprise",
+          "QuestionImagePositions": [],
+          "QuestionPositions": [77, 1074, 1051, 1074, 1051, 1123, 77, 1123],
+          "RightAnswer": ""
+        },
+        {
+          "AnswerInfos": [
+            {
+              "AnswerAnalysis": "前文已经说了已经接太多工作，没有足够时间完成自己的目标，所以此处表示忙碌的时候礼貌拒绝他人是没问题的，refuse表示“拒绝”，符合语境，因此选B。",
+              "HandwriteInfo": "B",
+              "HandwriteInfoPositions": [89, 1131, 125, 1131, 125, 1171, 89, 1171],
+              "IsCorrect": true,
+              "KnowledgePoints": ["完形填空", "词义辨析"],
+              "RightAnswer": "B"
+            }
+          ],
+          "MarkInfos": [],
+          "MarkItemTitle": "4. ______\nA. agree\nB. refuse\nC. promise\nD. explain",
+          "QuestionImagePositions": [],
+          "QuestionPositions": [77, 1131, 1044, 1131, 1044, 1176, 77, 1176],
+          "RightAnswer": ""
+        },
+        {
+          "AnswerInfos": [
+            {
+              "AnswerAnalysis": "大脑休息之后才能保持冷静和高效，calm表示“冷静的”，和productive并列符合语境，因此选B。",
+              "HandwriteInfo": "B",
+              "HandwriteInfoPositions": [89, 1186, 125, 1186, 125, 1223, 89, 1223],
+              "IsCorrect": true,
+              "KnowledgePoints": ["完形填空", "词义辨析"],
+              "RightAnswer": "B"
+            }
+          ],
+          "MarkInfos": [],
+          "MarkItemTitle": "5. ______\nA. tired\nB. calm\nC. bored\nD. nervous",
+          "QuestionImagePositions": [],
+          "QuestionPositions": [77, 1183, 1051, 1183, 1051, 1228, 77, 1228],
+          "RightAnswer": ""
+        },
+        {
+          "AnswerInfos": [
+            {
+              "AnswerAnalysis": "此处表示对我们重要的人和活动，mean sth to sb表示“对某人重要”，符合语境，因此选C。",
+              "HandwriteInfo": "C",
+              "HandwriteInfoPositions": [89, 1240, 125, 1240, 125, 1278, 89, 1278],
+              "IsCorrect": true,
+              "KnowledgePoints": ["完形填空", "词义辨析"],
+              "RightAnswer": "C"
+            }
+          ],
+          "MarkInfos": [],
+          "MarkItemTitle": "6. ______\nA. belong\nB. appeal\nC. mean\nD. happen",
+          "QuestionImagePositions": [],
+          "QuestionPositions": [77, 1238, 1044, 1238, 1044, 1282, 77, 1282],
+          "RightAnswer": ""
+        },
+        {
+          "AnswerInfos": [
+            {
+              "AnswerAnalysis": "前文提到时间管理的几个要点：清晰计划、学会拒绝、规律休息，此处对应前文“learn to say 'no'”，因此选C。",
+              "HandwriteInfo": "C",
+              "HandwriteInfoPositions": [89, 1295, 125, 1295, 125, 1330, 89, 1330],
+              "IsCorrect": true,
+              "KnowledgePoints": ["完形填空", "语篇理解"],
+              "RightAnswer": "C"
+            }
+          ],
+          "MarkInfos": [],
+          "MarkItemTitle": "7. ______\nA. relax\nB. plan\nC. say no\nD. give up",
+          "QuestionImagePositions": [],
+          "QuestionPositions": [77, 1291, 1044, 1291, 1044, 1336, 77, 1336],
+          "RightAnswer": ""
+        }
+      ],
+      "MarkItemTitle": "Cloze Test\nDirections: Read the following passage and choose the best answer (A, B, C or D) for each blank.\nThen mark the corresponding letter on the answer sheet.\nIn today's fast-paced world, many people feel stressed and overwhelmed. It seems that there is never enough time to do everything. However, learning to manage time effectively can make a big 1. ________.\nOne useful way to manage time is to make a plan each day. You can write down the tasks you need to do and decide which ones are the most important. By doing this, you can focus on what really 2. ________ and avoid wasting time on less important activities.\nAnother important tip is to learn to say “no.” Sometimes, we take on too many responsibilities because we don't want to 3. ________ others. However, if we accept everything, we may not have enough time for our own goals. It's okay to 4. ________ politely when we are already busy.\nIt's also helpful to take regular breaks. Our brains need time to rest so that we can stay 5. ________ and productive. Even a short break can help us return to our work with more energy and better ideas.\nFinally, remember that good time management is not about doing more things, but about doing the right things. When we use our time wisely, we can reduce stress and have more time for the people and activities that 6. ________ to us.\nIn short, with a clear plan, the ability to 7. ________, regular breaks, and a focus on what matters most, anyone can improve their time management skills and live a happier and more balanced life.",
+      "QuestionImagePositions": [],
+      "QuestionPositions": [],
+      "RightAnswer": ""
+    }
+  ],
+  "RequestId": "7d2a6239-1e7f-431d-bd34-d1f7f70ac60f"
+}
