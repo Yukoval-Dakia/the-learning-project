@@ -3,7 +3,11 @@
 // 每个 Task 一种产物语义；tool-calling 循环交给 Vercel AI SDK，本文件只持注册元信息。
 // 详见 docs/architecture.md § 五 AI 任务层。
 
-export type Provider = 'anthropic';
+// Sub 0c: widen provider union to enable future routing through OpenRouter /
+// Vercel AI Gateway / OpenAI without breaking registry consumers. Only
+// 'anthropic' is wired in runner.ts; others throw 'not implemented' until
+// Sub 0d's Provider Manager lands (see ADR-0003 2026-05-11 update + ADR-0004).
+export type Provider = 'anthropic' | 'openrouter' | 'gateway' | 'openai';
 export type ModelId = string;
 
 export interface TaskBudget {
