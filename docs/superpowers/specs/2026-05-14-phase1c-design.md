@@ -230,8 +230,8 @@ Phase 1c 同时解决两个耦合问题：
 
 ## 待 grill / 待决（剩余）
 
-- **UI 组件库选型**：自建 vs shadcn。前者更可控、后者更快。**Sub-grill 后写 spec addendum**。
-- **R5 enum 占位 vs 延后加**：spec 写 6 种 type，行为只实现 ingestion + review。其他四种 (tutor / explore / create / conversation) 现在就进 enum 还是延后？**倾向：enum 全写、行为延后**（per "draft 期一次做对" 原则，让 enum 演化空间一开始就在）。
+- ~~**UI 组件库选型**：自建 vs shadcn~~ ✅ **2026-05-14 self-grill 拍板 shadcn**——理由：（1）契合"用成熟 OSS"原则（CLAUDE.md）；（2）copy-paste 模式不是 npm lock-in，装完拥有；（3）Claude Code 有 `vercel:shadcn` skill + `frontend-design` skill 按 shadcn 形状训练。若审美太"AI 默认味"，用 frontend-design skill 改 Tailwind tokens + 组件 variant 一晚搞定独特感。
+- ~~**R5 enum 占位 vs 延后加**~~ ✅ **spec 内已答**：enum 全写、行为延后（per "draft 期一次做对" 原则）。
 
 ---
 

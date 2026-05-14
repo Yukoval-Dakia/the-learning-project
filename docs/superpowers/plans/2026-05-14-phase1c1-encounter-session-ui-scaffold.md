@@ -200,7 +200,7 @@ Commit：`feat(1c.1): DROP mistake / ingestion_session / artifact tables — poi
 - `src/ui/stores/`：Zustand stores skeleton（先空：session store / encounter store）
 - `app/globals.css`：Tailwind v4 + design tokens（CSS-first，sub-grill 阶段先用 minimal palette）
 - `app/health/page.tsx`：测试页面，GET `/api/health` 显示 status
-- **不动**：组件库选型（等 1c.2 grill addendum）
+- **组件库**：shadcn/ui（2026-05-14 spec 决策）—— `pnpm dlx shadcn@latest init`，先装 minimal set: `button` / `input` / `card` / `dialog`。深度组件（form / tree / sheet 等）按 1c.2 各页面需要时再装。Tailwind tokens 通过 `app/globals.css` 控制 shadcn 色彩 / radius / typography。
 
 `pnpm dev` 启起来；浏览器访问 `/health` 显示 OK。
 
