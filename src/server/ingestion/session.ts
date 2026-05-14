@@ -2,11 +2,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { type SQL, and, eq, sql } from 'drizzle-orm';
 import type { PgBoss } from 'pg-boss';
 
-import type {
-  BBoxT,
-  FigureRefT,
-  StructuredQuestionT,
-} from '@/core/schema/structured_question';
+import type { BBoxT, FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
 import { ingestion_session, question_block } from '@/db/schema';
 import { writeJobEvent } from '@/server/events/writer';

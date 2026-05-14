@@ -27,7 +27,10 @@ function makeStem(): StructuredQuestionT {
   };
 }
 
-function fig(bbox: { x: number; y: number; width: number; height: number }, idx = 0): PreAttachFigure {
+function fig(
+  bbox: { x: number; y: number; width: number; height: number },
+  idx = 0,
+): PreAttachFigure {
   return {
     asset_id: `fig_${idx}`,
     role: 'diagram',
@@ -64,8 +67,18 @@ describe('assignFigures', () => {
       role: 'stem',
       prompt_text: 'p',
       sub_questions: [
-        { id: 'sub-c', role: 'sub', prompt_text: 'c', bbox: { x: 0, y: 0, width: 0.1, height: 0.1 } },
-        { id: 'sub-d', role: 'sub', prompt_text: 'd', bbox: { x: 0.9, y: 0.9, width: 0.05, height: 0.05 } },
+        {
+          id: 'sub-c',
+          role: 'sub',
+          prompt_text: 'c',
+          bbox: { x: 0, y: 0, width: 0.1, height: 0.1 },
+        },
+        {
+          id: 'sub-d',
+          role: 'sub',
+          prompt_text: 'd',
+          bbox: { x: 0.9, y: 0.9, width: 0.05, height: 0.05 },
+        },
       ],
     };
     // figure at top-right corner

@@ -3,7 +3,6 @@ import { eq } from 'drizzle-orm';
 import sharp from 'sharp';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import clozeFixture from '../../../../tests/fixtures/tencent_mark_agent_cloze_sample.json';
 import { db } from '@/db/client';
 import {
   cost_ledger,
@@ -14,6 +13,7 @@ import {
   source_document,
 } from '@/db/schema';
 import type { R2Client } from '@/server/r2';
+import clozeFixture from '../../../../tests/fixtures/tencent_mark_agent_cloze_sample.json';
 import { buildTencentOcrHandler } from './tencent_ocr_extract';
 
 async function makeTestImage(): Promise<Buffer> {
@@ -143,9 +143,9 @@ describe('tencent_ocr_extract handler', () => {
     const pollFn = vi.fn(async () => ({ JobStatus: 'FAIL', JobErrorMsg: 'OCR failed' }) as never);
 
     const handler = buildTencentOcrHandler({ db, r2, submitFn, pollFn });
-    await expect(
-      handler([{ id: 'boss-job-2', data: { sessionId } } as never]),
-    ).rejects.toThrow(/Tencent OCR job .* FAIL/);
+    await expect(handler([{ id: 'boss-job-2', data: { sessionId } } as never])).rejects.toThrow(
+      /Tencent OCR job .* FAIL/,
+    );
 
     const session = await db
       .select()
@@ -174,9 +174,9 @@ describe('tencent_ocr_extract handler', () => {
     const pollFn = vi.fn();
 
     const handler = buildTencentOcrHandler({ db, r2, submitFn, pollFn });
-    await expect(
-      handler([{ id: 'boss-job-3', data: { sessionId } } as never]),
-    ).rejects.toThrow(/R2 object missing/);
+    await expect(handler([{ id: 'boss-job-3', data: { sessionId } } as never])).rejects.toThrow(
+      /R2 object missing/,
+    );
     expect(submitFn).not.toHaveBeenCalled();
 
     const cost = await db.select().from(cost_ledger);

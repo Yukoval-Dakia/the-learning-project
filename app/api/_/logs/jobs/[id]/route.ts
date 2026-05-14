@@ -24,9 +24,12 @@ export async function GET(
       .orderBy(asc(cost_ledger.occurred_at));
 
     if (attempts.length === 0) {
-      return Response.json({ error: 'not_found', message: `no job ${pgboss_job_id}` }, {
-        status: 404,
-      });
+      return Response.json(
+        { error: 'not_found', message: `no job ${pgboss_job_id}` },
+        {
+          status: 404,
+        },
+      );
     }
 
     // pg-boss_job_id 与 task_run_id 解耦（不同概念），但若处于同一 task 内

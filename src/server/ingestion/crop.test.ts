@@ -61,10 +61,7 @@ describe('cropAndUploadFigures', () => {
 
     expect(r2.puts).toHaveLength(2);
     const keys = r2.puts.map((p) => p.key).sort();
-    expect(keys).toEqual([
-      'figures/asset_page_1-fig-0.png',
-      'figures/asset_page_1-fig-1.png',
-    ]);
+    expect(keys).toEqual(['figures/asset_page_1-fig-0.png', 'figures/asset_page_1-fig-1.png']);
     for (const p of r2.puts) {
       expect(p.body.byteLength).toBeGreaterThan(0);
     }

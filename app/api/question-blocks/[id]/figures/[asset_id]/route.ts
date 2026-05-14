@@ -38,21 +38,23 @@ export async function PATCH(
       if (!block) {
         throw new ApiError('not_found', `question_block ${blockId} not found`, 404);
       }
-      const figures = (block.figures as unknown as Array<{
-        asset_id: string;
-        attached_to_index?: string;
-        attach_confidence?: string;
-        last_reassigned_at?: string;
-      }>) ?? [];
+      const figures =
+        (block.figures as unknown as Array<{
+          asset_id: string;
+          attached_to_index?: string;
+          attach_confidence?: string;
+          last_reassigned_at?: string;
+        }>) ?? [];
       const idx = figures.findIndex((f) => f.asset_id === assetId);
       if (idx < 0) {
         throw new ApiError('not_found', `figure ${assetId} not in block ${blockId}`, 404);
       }
 
       // Validate attached_to_index exists in structured tree
-      const structured = block.structured as unknown as
-        | { id: string; sub_questions?: Array<{ id: string }> }
-        | null;
+      const structured = block.structured as unknown as {
+        id: string;
+        sub_questions?: Array<{ id: string }>;
+      } | null;
       if (!structured || !idHasMatch(structured, attached_to_index)) {
         throw new ApiError(
           'validation_error',

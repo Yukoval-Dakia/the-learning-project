@@ -34,11 +34,7 @@ export function subscribe(
   return () => unsubscribe(businessTable, businessId, handler);
 }
 
-export function unsubscribe(
-  businessTable: string,
-  businessId: string,
-  handler: SSEHandler,
-): void {
+export function unsubscribe(businessTable: string, businessId: string, handler: SSEHandler): void {
   const key = channelKey(businessTable, businessId);
   const set = subscribers.get(key);
   if (!set) return;

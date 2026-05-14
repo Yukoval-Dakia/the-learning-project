@@ -1,6 +1,6 @@
-import { sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { job_events } from '@/db/schema';
+import { sql } from 'drizzle-orm';
 
 export type JobEventInput = {
   business_table: string;

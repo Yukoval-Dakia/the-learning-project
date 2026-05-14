@@ -1,5 +1,5 @@
 import postgres from 'postgres';
-import { broadcast, type SSEPayload } from './sse_router';
+import { type SSEPayload, broadcast } from './sse_router';
 
 // 专用 postgres LISTEN 连接 —— max:1 避免 pg-boss / drizzle 主池被占。
 // 这个连接整个 app process lifetime 维持，断了得重连（v0 不做自动重连，靠重启

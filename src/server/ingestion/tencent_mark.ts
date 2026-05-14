@@ -1,5 +1,5 @@
-import { ocr } from 'tencentcloud-sdk-nodejs-ocr';
 import { RetryableError } from '@/core/schema/structured_question';
+import { ocr } from 'tencentcloud-sdk-nodejs-ocr';
 
 // Tencent OCR v20181119 API. Mark Agent endpoint 支持完形填空 / 阅读理解嵌套布局
 // + 手写答案 bbox + 内置判分 evidence。见 ADR-0002 2026-05-11 修订。

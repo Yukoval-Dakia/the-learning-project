@@ -62,9 +62,9 @@ describe('pollUntilDone', () => {
     describeMock.mockReset();
     describeMock.mockResolvedValue({ JobStatus: 'RUN' }); // never finishes
 
-    await expect(
-      pollUntilDone('job-3', { intervalMs: 5, timeoutMs: 30 }),
-    ).rejects.toBeInstanceOf(RetryableError);
+    await expect(pollUntilDone('job-3', { intervalMs: 5, timeoutMs: 30 })).rejects.toBeInstanceOf(
+      RetryableError,
+    );
   });
 });
 

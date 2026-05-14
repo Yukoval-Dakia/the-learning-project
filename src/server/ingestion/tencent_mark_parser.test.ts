@@ -90,8 +90,7 @@ describe('parseMarkAgentResponse (cloze fixture)', () => {
     const synthetic = JSON.parse(JSON.stringify(clozeFixture)) as typeof clozeFixture;
     const stem = synthetic.MarkInfos?.[0];
     if (stem) {
-      stem.MarkItemTitle =
-        '1. ___ 2. ___ 3. ___ 4. ___ 5. ___ 6. ___ 7. ___ 8. ___ 9. ___ 10. ___';
+      stem.MarkItemTitle = '1. ___ 2. ___ 3. ___ 4. ___ 5. ___ 6. ___ 7. ___ 8. ___ 9. ___ 10. ___';
     }
     const result = parseMarkAgentResponse(synthetic, { pageWidth: 1500, pageHeight: 2000 });
     expect(result.layout_quality).toBe('partial');

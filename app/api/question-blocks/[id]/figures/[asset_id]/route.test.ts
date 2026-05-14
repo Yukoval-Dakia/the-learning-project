@@ -94,7 +94,9 @@ describe('PATCH /api/question-blocks/[id]/figures/[asset_id]', () => {
       { params: Promise.resolve({ id: seed.blockId, asset_id: 'fig-1' }) },
     );
     expect(resp.status).toBe(200);
-    const body = (await resp.json()) as { figures: Array<{ asset_id: string; attach_confidence: string; attached_to_index: string }> };
+    const body = (await resp.json()) as {
+      figures: Array<{ asset_id: string; attach_confidence: string; attached_to_index: string }>;
+    };
     expect(body.figures[0].attached_to_index).toBe('sub-2');
     expect(body.figures[0].attach_confidence).toBe('manual');
 
@@ -106,7 +108,16 @@ describe('PATCH /api/question-blocks/[id]/figures/[asset_id]', () => {
 
   it('attached_to_index not in tree → 400', async () => {
     const seed = await seedBlock(
-      [{ asset_id: 'fig-1', role: 'diagram', source_page_index: 0, source_bbox: { x: 0, y: 0, width: 1, height: 1 }, attached_to_index: 'x', attach_confidence: 'low' }],
+      [
+        {
+          asset_id: 'fig-1',
+          role: 'diagram',
+          source_page_index: 0,
+          source_bbox: { x: 0, y: 0, width: 1, height: 1 },
+          attached_to_index: 'x',
+          attach_confidence: 'low',
+        },
+      ],
       { id: 'x', role: 'standalone', prompt_text: '' },
     );
     const resp = await PATCH(

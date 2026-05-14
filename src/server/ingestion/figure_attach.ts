@@ -48,8 +48,7 @@ export function assignFigures(
 
     const nearest = candidatesWithBbox.reduce((min, q) =>
       // biome-ignore lint/style/noNonNullAssertion: filter 已保证 bbox 非空
-      bboxCenterDistance(q.bbox!, fig.source_bbox) <
-      bboxCenterDistance(min.bbox!, fig.source_bbox)
+      bboxCenterDistance(q.bbox!, fig.source_bbox) < bboxCenterDistance(min.bbox!, fig.source_bbox)
         ? q
         : min,
     );

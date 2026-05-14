@@ -5,8 +5,8 @@ import { db } from '@/db/client';
 import { echo_jobs } from '@/db/schema';
 import { readSSEUntil } from '../../../tests/helpers/sse';
 import { startTestWorker } from '../../../tests/helpers/worker';
-import { POST as enqueueEcho } from './route';
 import { GET as openEvents } from './[id]/events/route';
+import { POST as enqueueEcho } from './route';
 
 describe('EchoJob E2E (acceptance gate #1)', () => {
   let teardown: (() => Promise<void>) | undefined;
@@ -34,10 +34,9 @@ describe('EchoJob E2E (acceptance gate #1)', () => {
     expect(businessId).toMatch(/^[a-z0-9]+$/i);
 
     // Open SSE and collect events until echo.completed arrives
-    const sseResp = await openEvents(
-      new Request(`http://t/api/echo/${businessId}/events`),
-      { params: Promise.resolve({ id: businessId }) },
-    );
+    const sseResp = await openEvents(new Request(`http://t/api/echo/${businessId}/events`), {
+      params: Promise.resolve({ id: businessId }),
+    });
     expect(sseResp.headers.get('Content-Type')).toContain('text/event-stream');
 
     const events = (await readSSEUntil(
@@ -51,7 +50,11 @@ describe('EchoJob E2E (acceptance gate #1)', () => {
             (e as { event_type?: string }).event_type === 'echo.completed',
         ),
       { timeoutMs: 8_000 },
-    )) as Array<{ event_id: number; event_type: string; payload: { input: string; output: string } }>;
+    )) as Array<{
+      event_id: number;
+      event_type: string;
+      payload: { input: string; output: string };
+    }>;
 
     const completed = events.find((e) => e.event_type === 'echo.completed');
     expect(completed).toBeTruthy();

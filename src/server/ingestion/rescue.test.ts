@@ -3,14 +3,9 @@ import { eq } from 'drizzle-orm';
 import { describe, expect, it, vi } from 'vitest';
 
 import { db } from '@/db/client';
-import {
-  ingestion_session,
-  question_block,
-  source_asset,
-  source_document,
-} from '@/db/schema';
-import type { R2Client } from '@/server/r2';
+import { ingestion_session, question_block, source_asset, source_document } from '@/db/schema';
 import { ApiError } from '@/server/http/errors';
+import type { R2Client } from '@/server/r2';
 import { runRescue } from './rescue';
 
 async function seed() {

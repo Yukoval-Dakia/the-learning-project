@@ -26,6 +26,7 @@ describe('startListenLoop', () => {
     });
 
     // Fire a NOTIFY via auto-commit client
+    // biome-ignore lint/style/noNonNullAssertion: tests/global-setup.ts guarantees DATABASE_URL
     const sender = postgres(process.env.DATABASE_URL!, { max: 1 });
     try {
       const payload = JSON.stringify({
@@ -57,6 +58,7 @@ describe('startListenLoop', () => {
       received.push(evt);
     });
 
+    // biome-ignore lint/style/noNonNullAssertion: tests/global-setup.ts guarantees DATABASE_URL
     const sender = postgres(process.env.DATABASE_URL!, { max: 1 });
     try {
       const payload = JSON.stringify({

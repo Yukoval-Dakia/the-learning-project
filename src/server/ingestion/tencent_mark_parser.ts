@@ -1,8 +1,5 @@
+import type { BBoxT, StructuredQuestionT } from '@/core/schema/structured_question';
 import { createId } from '@paralleldrive/cuid2';
-import type {
-  BBoxT,
-  StructuredQuestionT,
-} from '@/core/schema/structured_question';
 
 /**
  * Parser for Tencent QuestionMarkAgent DONE response → 系统内 StructuredQuestion 树。
@@ -39,11 +36,7 @@ export type ParseResult = {
  * 8-flat-array (Tencent QuestionPositions / HandwriteInfoPositions) → 0-1 normalized BBox.
  * 输入是 [x1,y1, x2,y2, x3,y3, x4,y4]（顺时针四角），取 axis-aligned 包围盒。
  */
-export function flat8ToBBox(
-  flat: number[],
-  pageWidth: number,
-  pageHeight: number,
-): BBoxT {
+export function flat8ToBBox(flat: number[], pageWidth: number, pageHeight: number): BBoxT {
   if (flat.length !== 8) {
     throw new Error(`flat8ToBBox: expected 8 numbers, got ${flat.length}`);
   }
@@ -179,10 +172,7 @@ type MarkAgentRawResponse = {
   ErrorMessage?: string;
 };
 
-export function parseMarkAgentResponse(
-  raw: MarkAgentRawResponse,
-  pageMeta: PageMeta,
-): ParseResult {
+export function parseMarkAgentResponse(raw: MarkAgentRawResponse, pageMeta: PageMeta): ParseResult {
   const pageIndex = pageMeta.pageIndex ?? 0;
   const questions: StructuredQuestionT[] = [];
   const figures: ParsedFigureBox[] = [];
@@ -249,9 +239,7 @@ function nodeToLeaf(
   pageIndex: number,
   role: 'sub' | 'standalone',
 ): StructuredQuestionT {
-  const { question_no, prompt_text, options } = parseSubMarkItemTitle(
-    node.MarkItemTitle ?? '',
-  );
+  const { question_no, prompt_text, options } = parseSubMarkItemTitle(node.MarkItemTitle ?? '');
 
   // bbox
   let bbox: BBoxT | undefined;
@@ -297,8 +285,7 @@ function nodeToLeaf(
     answers,
     analysis,
     bbox,
-    extraction_evidence:
-      evidence.handwriting || evidence.tencent_grading ? evidence : undefined,
+    extraction_evidence: evidence.handwriting || evidence.tencent_grading ? evidence : undefined,
     source: 'tencent_ocr',
   };
 }

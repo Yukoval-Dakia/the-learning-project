@@ -1,4 +1,4 @@
-import { type PgBoss } from 'pg-boss';
+import type { PgBoss } from 'pg-boss';
 
 import type { Db } from '@/db/client';
 import { _resetBossForTests, createBoss } from '@/server/boss/client';

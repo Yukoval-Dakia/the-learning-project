@@ -25,10 +25,7 @@ describe('writeJobEvent', () => {
       .select()
       .from(job_events)
       .where(
-        and(
-          eq(job_events.business_table, 'test_writer'),
-          eq(job_events.business_id, businessId),
-        ),
+        and(eq(job_events.business_table, 'test_writer'), eq(job_events.business_id, businessId)),
       );
 
     expect(rows).toHaveLength(1);
@@ -42,6 +39,7 @@ describe('writeJobEvent', () => {
     const received: string[] = [];
 
     beforeAll(async () => {
+      // biome-ignore lint/style/noNonNullAssertion: tests/global-setup.ts guarantees DATABASE_URL
       const url = process.env.DATABASE_URL!;
       listenClient = postgres(url, { max: 1 });
       await listenClient.listen('job_status', (payload) => {

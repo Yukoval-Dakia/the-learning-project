@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { db } from '@/db/client';
 import { cost_ledger } from '@/db/schema';
-import { GET as getList } from './route';
 import { GET as getById } from './[id]/route';
+import { GET as getList } from './route';
 
 beforeEach(async () => {
   // clear cost_ledger between tests to avoid interference
@@ -37,16 +37,40 @@ async function insertCost(opts: {
 describe('GET /api/_/logs/jobs', () => {
   it('groups by pgboss_job_id, returns aggregated attempts/cost/tokens', async () => {
     // Job A: 2 attempts (retryable then success)
-    await insertCost({ pgboss_job_id: 'job-A', outcome: 'failed_retryable', task_kind: 'tencent_ocr_extract', cost: 0.01, occurred_at: new Date(Date.now() - 60_000) });
-    await insertCost({ pgboss_job_id: 'job-A', outcome: 'success', task_kind: 'tencent_ocr_extract', cost: 0.02, tokens_in: 100 });
+    await insertCost({
+      pgboss_job_id: 'job-A',
+      outcome: 'failed_retryable',
+      task_kind: 'tencent_ocr_extract',
+      cost: 0.01,
+      occurred_at: new Date(Date.now() - 60_000),
+    });
+    await insertCost({
+      pgboss_job_id: 'job-A',
+      outcome: 'success',
+      task_kind: 'tencent_ocr_extract',
+      cost: 0.02,
+      tokens_in: 100,
+    });
     // Job B: 1 attempt
     await insertCost({ pgboss_job_id: 'job-B', outcome: 'success', task_kind: 'echo', cost: 0 });
     // Row without pgboss_job_id (manual run) should be excluded
-    await insertCost({ pgboss_job_id: null, outcome: 'success', task_kind: 'AttributionTask', cost: 0 });
+    await insertCost({
+      pgboss_job_id: null,
+      outcome: 'success',
+      task_kind: 'AttributionTask',
+      cost: 0,
+    });
 
     const resp = await getList(new Request('http://t/list'));
     expect(resp.status).toBe(200);
-    const body = (await resp.json()) as { jobs: Array<{ pgboss_job_id: string; attempts: number; latest_outcome: string; total_cost: number }> };
+    const body = (await resp.json()) as {
+      jobs: Array<{
+        pgboss_job_id: string;
+        attempts: number;
+        latest_outcome: string;
+        total_cost: number;
+      }>;
+    };
     const ids = body.jobs.map((j) => j.pgboss_job_id);
     expect(ids).toContain('job-A');
     expect(ids).toContain('job-B');
@@ -75,13 +99,32 @@ describe('GET /api/_/logs/jobs', () => {
 
 describe('GET /api/_/logs/jobs/[id]', () => {
   it('returns summary + attempts for a known job', async () => {
-    await insertCost({ pgboss_job_id: 'job-X', outcome: 'failed_retryable', task_kind: 'tencent_ocr_extract', cost: 0.001 });
-    await insertCost({ pgboss_job_id: 'job-X', outcome: 'success', task_kind: 'tencent_ocr_extract', cost: 0.002, tokens_in: 200, tokens_out: 50 });
+    await insertCost({
+      pgboss_job_id: 'job-X',
+      outcome: 'failed_retryable',
+      task_kind: 'tencent_ocr_extract',
+      cost: 0.001,
+    });
+    await insertCost({
+      pgboss_job_id: 'job-X',
+      outcome: 'success',
+      task_kind: 'tencent_ocr_extract',
+      cost: 0.002,
+      tokens_in: 200,
+      tokens_out: 50,
+    });
 
-    const resp = await getById(new Request('http://t/x'), { params: Promise.resolve({ id: 'job-X' }) });
+    const resp = await getById(new Request('http://t/x'), {
+      params: Promise.resolve({ id: 'job-X' }),
+    });
     expect(resp.status).toBe(200);
     const body = (await resp.json()) as {
-      summary: { attempts: number; latest_outcome: string; total_cost: number; total_tokens_in: number };
+      summary: {
+        attempts: number;
+        latest_outcome: string;
+        total_cost: number;
+        total_tokens_in: number;
+      };
       attempts: Array<{ outcome: string }>;
     };
     expect(body.summary.attempts).toBe(2);
@@ -92,7 +135,9 @@ describe('GET /api/_/logs/jobs/[id]', () => {
   });
 
   it('404 for unknown id', async () => {
-    const resp = await getById(new Request('http://t/x'), { params: Promise.resolve({ id: 'never-existed' }) });
+    const resp = await getById(new Request('http://t/x'), {
+      params: Promise.resolve({ id: 'never-existed' }),
+    });
     expect(resp.status).toBe(404);
   });
 });

@@ -3,7 +3,7 @@ import type { Job } from 'pg-boss';
 
 import type { Db } from '@/db/client';
 import { mistake, question } from '@/db/schema';
-import { runProposeAndWrite, type RunTaskFn } from '@/server/knowledge/propose';
+import { type RunTaskFn, runProposeAndWrite } from '@/server/knowledge/propose';
 
 type DepsOverride = {
   runTaskFn?: RunTaskFn;

@@ -1,6 +1,6 @@
-import type { PgBoss } from 'pg-boss';
 import type { Db } from '@/db/client';
 import { getR2 } from '@/server/r2';
+import type { PgBoss } from 'pg-boss';
 import { buildEchoHandler } from './handlers/echo';
 import { buildKnowledgePropoNightlyHandler } from './handlers/knowledge_propose_nightly';
 import { buildPruneJobEventsHandler } from './handlers/prune_job_events';

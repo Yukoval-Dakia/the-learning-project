@@ -4,11 +4,11 @@ import { eq } from 'drizzle-orm';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { question_block, source_asset } from '@/db/schema';
-import type { R2Client } from '@/server/r2';
 import { ApiError } from '@/server/http/errors';
+import type { R2Client } from '@/server/r2';
 
 import { applyRescue } from './session';
-import { runVisionExtract, type VisionBlock } from './vision';
+import { type VisionBlock, runVisionExtract } from './vision';
 
 export type RescueTier = 2 | 3;
 export type RescueStrategy = 'extract' | 'restructure_cloze' | 'restructure_compound';
@@ -39,7 +39,9 @@ export type RunRescueParams = {
  *   4. 用第一块结果 → 合成 StructuredQuestion（standalone）
  *   5. 调 IngestionSession.applyRescue 写回（事务内 + version bump + writeJobEvent）
  */
-export async function runRescue(params: RunRescueParams): Promise<{ structured: StructuredQuestionT }> {
+export async function runRescue(
+  params: RunRescueParams,
+): Promise<{ structured: StructuredQuestionT }> {
   if (params.strategy && params.strategy !== 'extract') {
     throw new ApiError(
       'not_implemented',
@@ -68,10 +70,7 @@ export async function runRescue(params: RunRescueParams): Promise<{ structured: 
   if (!assetId) {
     throw new ApiError('validation_error', `block ${params.blockId} has no source_asset_ids`, 400);
   }
-  const assetRows = await params.db
-    .select()
-    .from(source_asset)
-    .where(eq(source_asset.id, assetId));
+  const assetRows = await params.db.select().from(source_asset).where(eq(source_asset.id, assetId));
   const asset = assetRows[0];
   if (!asset) {
     throw new ApiError('not_found', `source_asset ${assetId} not found`, 404);

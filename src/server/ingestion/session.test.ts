@@ -2,6 +2,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it, vi } from 'vitest';
 
+import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import { db } from '@/db/client';
 import { ingestion_session, job_events, question_block, source_document } from '@/db/schema';
 import { ApiError } from '@/server/http/errors';
@@ -13,7 +14,6 @@ import {
   markExtractionStarted,
   markReviewed,
 } from './session';
-import type { StructuredQuestionT } from '@/core/schema/structured_question';
 
 // Mock pg-boss boss instance for enqueueExtraction tests
 function mockBoss() {
@@ -64,9 +64,7 @@ const STEM_FIXTURE: StructuredQuestionT = {
   id: 'q-stem',
   role: 'stem',
   prompt_text: 'passage',
-  sub_questions: [
-    { id: 'q-sub-1', role: 'sub', question_no: '1', prompt_text: '___' },
-  ],
+  sub_questions: [{ id: 'q-sub-1', role: 'sub', question_no: '1', prompt_text: '___' }],
 };
 
 describe('IngestionSession.enqueueExtraction', () => {
@@ -77,7 +75,10 @@ describe('IngestionSession.enqueueExtraction', () => {
     expect(jobId).toBe('mock-job-id');
     expect(boss.send).toHaveBeenCalledWith('tencent_ocr_extract', { sessionId });
 
-    const rows = await db.select().from(ingestion_session).where(eq(ingestion_session.id, sessionId));
+    const rows = await db
+      .select()
+      .from(ingestion_session)
+      .where(eq(ingestion_session.id, sessionId));
     expect(rows[0].status).toBe('queued');
     await cleanup(sessionId, sourceDocId);
   });
@@ -85,16 +86,19 @@ describe('IngestionSession.enqueueExtraction', () => {
   it('failed → queued (retry)', async () => {
     const { sessionId, sourceDocId } = await makeSession('failed');
     await enqueueExtraction({ db, boss: mockBoss(), sessionId });
-    const rows = await db.select().from(ingestion_session).where(eq(ingestion_session.id, sessionId));
+    const rows = await db
+      .select()
+      .from(ingestion_session)
+      .where(eq(ingestion_session.id, sessionId));
     expect(rows[0].status).toBe('queued');
     await cleanup(sessionId, sourceDocId);
   });
 
   it('rejects from extracting (409)', async () => {
     const { sessionId, sourceDocId } = await makeSession('extracting');
-    await expect(
-      enqueueExtraction({ db, boss: mockBoss(), sessionId }),
-    ).rejects.toBeInstanceOf(ApiError);
+    await expect(enqueueExtraction({ db, boss: mockBoss(), sessionId })).rejects.toBeInstanceOf(
+      ApiError,
+    );
     await cleanup(sessionId, sourceDocId);
   });
 
@@ -109,7 +113,10 @@ describe('IngestionSession.markExtractionStarted', () => {
   it('queued → extracting', async () => {
     const { sessionId, sourceDocId } = await makeSession('queued');
     await db.transaction(async (tx) => markExtractionStarted(tx, sessionId));
-    const rows = await db.select().from(ingestion_session).where(eq(ingestion_session.id, sessionId));
+    const rows = await db
+      .select()
+      .from(ingestion_session)
+      .where(eq(ingestion_session.id, sessionId));
     expect(rows[0].status).toBe('extracting');
     await cleanup(sessionId, sourceDocId);
   });
@@ -143,7 +150,10 @@ describe('IngestionSession.applyExtractionResult', () => {
         warnings: [],
       }),
     );
-    const session = await db.select().from(ingestion_session).where(eq(ingestion_session.id, sessionId));
+    const session = await db
+      .select()
+      .from(ingestion_session)
+      .where(eq(ingestion_session.id, sessionId));
     expect(session[0].status).toBe('extracted');
     const blocks = await db
       .select()
@@ -173,7 +183,10 @@ describe('IngestionSession.applyExtractionResult', () => {
         warnings: ['partial: 7 blanks 5 subs'],
       }),
     );
-    const session = await db.select().from(ingestion_session).where(eq(ingestion_session.id, sessionId));
+    const session = await db
+      .select()
+      .from(ingestion_session)
+      .where(eq(ingestion_session.id, sessionId));
     expect(session[0].status).toBe('partial');
     expect(session[0].warnings).toEqual(['existing warn', 'partial: 7 blanks 5 subs']);
     await cleanup(sessionId, sourceDocId);
@@ -224,14 +237,14 @@ describe('IngestionSession.markExtractionFailed', () => {
   it('extracting → failed + error_message stored + job_event emitted', async () => {
     const { sessionId, sourceDocId } = await makeSession('extracting');
     await db.transaction((tx) => markExtractionFailed(tx, sessionId, 'Tencent API down'));
-    const session = await db.select().from(ingestion_session).where(eq(ingestion_session.id, sessionId));
+    const session = await db
+      .select()
+      .from(ingestion_session)
+      .where(eq(ingestion_session.id, sessionId));
     expect(session[0].status).toBe('failed');
     expect(session[0].error_message).toBe('Tencent API down');
 
-    const events = await db
-      .select()
-      .from(job_events)
-      .where(eq(job_events.business_id, sessionId));
+    const events = await db.select().from(job_events).where(eq(job_events.business_id, sessionId));
     const fail = events.find((e) => e.event_type === 'ingestion.extraction_failed');
     expect(fail).toBeTruthy();
     expect((fail?.payload as { error_message?: string })?.error_message).toBe('Tencent API down');
@@ -277,7 +290,10 @@ describe('IngestionSession.applyRescue', () => {
     expect((after[0].structured as { role?: string })?.role).toBe('stem');
     expect(after[0].version).toBe(1);
 
-    const session = await db.select().from(ingestion_session).where(eq(ingestion_session.id, sessionId));
+    const session = await db
+      .select()
+      .from(ingestion_session)
+      .where(eq(ingestion_session.id, sessionId));
     expect(session[0].status).toBe('partial');
 
     await cleanup(sessionId, sourceDocId);
@@ -303,7 +319,10 @@ describe('IngestionSession.markReviewed', () => {
   it('extracted → reviewed', async () => {
     const { sessionId, sourceDocId } = await makeSession('extracted');
     await markReviewed(db, sessionId);
-    const session = await db.select().from(ingestion_session).where(eq(ingestion_session.id, sessionId));
+    const session = await db
+      .select()
+      .from(ingestion_session)
+      .where(eq(ingestion_session.id, sessionId));
     expect(session[0].status).toBe('reviewed');
     await cleanup(sessionId, sourceDocId);
   });
@@ -311,7 +330,10 @@ describe('IngestionSession.markReviewed', () => {
   it('partial → reviewed', async () => {
     const { sessionId, sourceDocId } = await makeSession('partial');
     await markReviewed(db, sessionId);
-    const session = await db.select().from(ingestion_session).where(eq(ingestion_session.id, sessionId));
+    const session = await db
+      .select()
+      .from(ingestion_session)
+      .where(eq(ingestion_session.id, sessionId));
     expect(session[0].status).toBe('reviewed');
     await cleanup(sessionId, sourceDocId);
   });

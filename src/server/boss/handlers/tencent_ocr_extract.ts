@@ -1,29 +1,26 @@
-import sharp from 'sharp';
 import type { Job } from 'pg-boss';
+import sharp from 'sharp';
 
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
-import { eq } from 'drizzle-orm';
 import { ingestion_session, source_asset } from '@/db/schema';
 import { writeCostLedger } from '@/server/ai/log';
+import { type PreAttachFigure, cropAndUploadFigures } from '@/server/ingestion/crop';
+import { assignFigures } from '@/server/ingestion/figure_attach';
 import {
   applyExtractionResult,
   markExtractionFailed,
   markExtractionStarted,
 } from '@/server/ingestion/session';
 import {
-  cropAndUploadFigures,
-  type PreAttachFigure,
-} from '@/server/ingestion/crop';
-import { assignFigures } from '@/server/ingestion/figure_attach';
-import {
+  type DescribeResponse,
   pollUntilDone,
   submitOcrJob,
-  type DescribeResponse,
 } from '@/server/ingestion/tencent_mark';
 import { mapTencentError } from '@/server/ingestion/tencent_mark_errors';
 import { parseMarkAgentResponse } from '@/server/ingestion/tencent_mark_parser';
 import type { R2Client } from '@/server/r2';
+import { eq } from 'drizzle-orm';
 
 export type TencentOcrJobData = { sessionId: string };
 
@@ -75,10 +72,7 @@ async function processOneOcrJob(
     );
     return; // already failed, don't rethrow
   }
-  const assetRows = await deps.db
-    .select()
-    .from(source_asset)
-    .where(eq(source_asset.id, assetId));
+  const assetRows = await deps.db.select().from(source_asset).where(eq(source_asset.id, assetId));
   const asset = assetRows[0];
   if (!asset) {
     await markFailedAndLogCost(
@@ -200,9 +194,8 @@ async function markFailedAndLogCost(
   bossJobId: string,
   err: unknown,
 ): Promise<void> {
-  const mapped = err instanceof RetryableError || err instanceof PermanentError
-    ? err
-    : mapTencentError(err);
+  const mapped =
+    err instanceof RetryableError || err instanceof PermanentError ? err : mapTencentError(err);
   const outcome = mapped instanceof RetryableError ? 'failed_retryable' : 'failed_permanent';
 
   try {

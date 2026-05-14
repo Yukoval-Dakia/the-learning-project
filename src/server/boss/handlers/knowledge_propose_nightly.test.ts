@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { db } from '@/db/client';
 import { dreaming_proposal, knowledge, mistake, question } from '@/db/schema';
-import { runKnowledgeProposeNightly } from './knowledge_propose_nightly';
 import { eq, sql } from 'drizzle-orm';
+import { runKnowledgeProposeNightly } from './knowledge_propose_nightly';
 
 describe('knowledge_propose_nightly handler', () => {
   it('processes recent mistakes via runProposeAndWrite (per-mistake try-catch)', async () => {
@@ -45,9 +45,7 @@ describe('knowledge_propose_nightly handler', () => {
     // Mock runTaskFn that returns valid propose output
     const runTaskFn = vi.fn(async () => ({
       text: JSON.stringify({
-        proposals: [
-          { name: 'NewSubNode', parent_id: kId, reasoning: 'because reasons' },
-        ],
+        proposals: [{ name: 'NewSubNode', parent_id: kId, reasoning: 'because reasons' }],
       }),
     }));
 
