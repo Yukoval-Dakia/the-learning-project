@@ -8,10 +8,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 The README still describes the original Phase-1 stack (Vite + React Router + Cloudflare Workers + Hono + D1). That migration is done — see commit `4c324b8 chore(sub-0b1): delete workers/, drop hono/wrangler/@cloudflare/workers-types`. Current stack:
 
-- **Next.js 15 App Router** (`app/`) on Vercel — `next dev` / `next build`
+- **Next.js 15 App Router** (`app/`), self-hosted on NAS via Docker (sub-0z) — `next dev` for dev, Next standalone build runs in container for prod
 - **Postgres + Drizzle ORM** (`postgresql` dialect, `postgres` driver) — connection from `DATABASE_URL`
 - **R2 / S3-compatible blob** via `@aws-sdk/client-s3` (`src/server/r2.ts`)
-- **Vercel AI SDK v6** + `@ai-sdk/anthropic` (server-side only)
+- **AI SDK v6** (`ai` package) + `@ai-sdk/anthropic` — SDK only; runtime is self-hosted Node, not Vercel Functions
 - **React 19, Tailwind v4 (CSS-first), Zustand, TanStack Query, Zod, ts-fsrs**
 - **Biome** for lint + format, **Vitest** for tests, **pnpm** package manager
 
@@ -75,9 +75,9 @@ docs/            # architecture.md, modules/, design/
 - Don't introduce abstractions until a second concrete instance demands them.
 - Evidence-first: AI actions should be traceable and reversible — runs log to `src/server/ai/log.ts`. Preserve this when adding AI features.
 
-## Vercel / deployment
+## Deployment
 
-Project is linked (`.vercel/`). Env management via `vercel env pull` → `.env.local`. `DATABASE_URL` points to Neon in dev/prod, to the testcontainer URI inside `pnpm test`.
+Self-hosted on NAS via `docker-compose.yml` (sub-0z): app container (Next.js standalone build, `Dockerfile`) + Postgres + Cloudflare Tunnel for ingress. Runtime config via `.env` injected at compose level. `DATABASE_URL` points to the compose Postgres in prod / NAS, to `.env.local` for local dev, and to the testcontainer URI inside `pnpm test`. **No Vercel** — drop any `.vercel/`, `vercel env pull`, or Vercel-specific assumptions you carry from other Next.js projects.
 
 ## Agent skills
 

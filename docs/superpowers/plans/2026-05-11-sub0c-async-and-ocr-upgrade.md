@@ -39,6 +39,9 @@
   - `cost_ledger` ADD `outcome text NOT NULL DEFAULT 'success'`、`pgboss_job_id text`
   - 新表 `job_events`：`id bigserial PK, business_table text, business_id text, event_type text, payload jsonb, occurred_at timestamptz`，索引 `(business_table, business_id, id)`
   - 新表 `echo_jobs`：`id text PK, input text NOT NULL, output text, status text NOT NULL DEFAULT 'queued', error_md text, created_at/updated_at`
+  - **Zod enum 调整**（`src/core/schema/business.ts`，DB `status` 列是 text，无需 SQL migration）：
+    - `QuestionBlockStatus` 删 `'reviewed'`（全仓 zero writers，已 verify dead）；保留 `'merged'`（client-side transient state，Sub 1b plan:1701）
+    - `IngestionSessionStatus` 补 `'queued'`、`'extracting'`、`'partial'`（当前已有 `'uploaded'` / `'extracted'` / `'reviewed'` / `'imported'` / `'failed'`）
 - [ ] **Step 0.5**: `pnpm db:generate` 生成 migration 文件；本地 `.env.local` 指向 Neon dev DB 运行 `pnpm db:push`，确认 migration 干净
 - [ ] **Step 0.6**: Commit：`chore(sub-0c): add pg-boss/sharp deps + drizzle schema for async lane + OCR upgrade`
 
@@ -215,6 +218,32 @@
 
 ---
 
+## Step 8b: IngestionSession state-machine module（新增——所有 session/block transition 单一所有者）
+
+> 决策出处：CONTEXT.md "录入会话" 词条（已更新）+ 2026-05-14 grilling。
+> 五个写入位置（POST /api/ingestion、/extract、handler、/rescue、/import）都走本模块；不允许任何 route / handler 直接 `db.update(ingestion_session)...status` 或 `db.update(question_block)...status`。
+
+- [ ] **Step 8b.1 (red)**: 写 `src/server/ingestion/session.test.ts`，每个 transition 都覆盖合法路径 + 至少一条 from-state 非法路径（应抛 `ApiError('conflict', 409)`）：
+  - `initiateUpload(db, { assetIds, entrypoint })` → session.status='uploaded'
+  - `enqueueExtraction(db, boss, sessionId)`：from `uploaded` → `queued` + `boss.send` 被调；from `failed` → `queued`（retry）；from `extracting` → 409
+  - `markExtractionStarted(db, sessionId)`：from `queued` → `extracting`；from `uploaded` → 409
+  - `applyExtractionResult(db, sessionId, { blocks, layoutQuality, warnings })`：`extracting` + `layoutQuality='structured'` + N blocks → `extracted` + N 条 question_block(status='draft')；`layoutQuality='partial'` → `partial`
+  - `markExtractionFailed(db, sessionId, error)`：from `extracting` → `failed` + error_message 写入
+  - `applyRescue(db, { sessionId, blockId, structured, figures })`：from `partial` → session 仍 `partial` + question_block.structured 替换 + version+1
+  - `markReviewed(db, sessionId)`：from `extracted` / `partial` → `reviewed`
+  - `commitImport(db, sessionId, importBlocks)`：from `extracted` / `partial` / `reviewed` → `imported` + 写 question + mistake + 未选 source blocks → `'ignored'`；from `imported` → 409（终态）
+- [ ] **Step 8b.2**: fail
+- [ ] **Step 8b.3 (green)**: 实现 `src/server/ingestion/session.ts`：
+  - Type alias 显式分意图：`type Tx = Db /* 调用方已在事务里，函数不再开 tx */` 与 `type DbHandle = Db /* 调用方未开事务，函数内部自管 */`。运行时同型，**仅文档作用**；约定见 JSDoc。
+  - 模块顶层 `function assertFromState(current, allowed[]) { if (!allowed.includes(current)) throw new ApiError('conflict', ...) }` 单点守卫
+  - `applyExtractionResult` 内部决定终态：`blocks.length === 0` → 应走 `markExtractionFailed` 而非此函数（在测试里 verify）；`layoutQuality !== 'structured'` → `partial`；否则 `extracted`
+  - `commitImport` 内部封原 `app/api/ingestion/[id]/import/route.ts` 的 validation + INSERT 逻辑（lift 时保留行为，Step 11.5 完成迁移再删旧 route 实现）
+  - 每个 transition 同事务内写 `job_events`（event_type: `ingestion.<transition>.success` / `.failed`）—— 复用 Step 3 的 `writeJobEvent`
+- [ ] **Step 8b.4**: `pnpm vitest run src/server/ingestion/session` 全过
+- [ ] **Step 8b.5**: Commit：`feat(sub-0c): IngestionSession state-machine module — single owner for session/block status transitions`
+
+---
+
 ## Step 9: Tencent OCR pg-boss handler — 第一个真生产 async job
 
 - [ ] **Step 9.1 (red)**: 写 `src/server/boss/handlers/tencent_ocr_extract.test.ts`（boss-driven 集成）：
@@ -224,16 +253,18 @@
   - 断言：question_block.structured + figures 写入；ingestion_session.status = 'extracted'；job_events 含 'extraction.success' 事件；cost_ledger 含 `outcome='success'` + `pgboss_job_id` 非空
 - [ ] **Step 9.2**: fail
 - [ ] **Step 9.3 (green)**:
-  - `src/server/boss/handlers/tencent_ocr_extract.ts`：
+  - `src/server/boss/handlers/tencent_ocr_extract.ts`（**不再直接写 ingestion_session.status / question_block，全部走 Step 8b 的模块**）：
     1. 取 session + asset
-    2. download asset bytes (r2.get) → asset URL（如 R2 公开 URL）或直接 base64
-    3. `submitJob` → JobId
-    4. `pollUntilDone(jobId)` （内部 2s poll）
-    5. parse response → questions + figures + layout_quality
-    6. `cropAndUploadFigures` → FigureRef[] with bbox
-    7. `assignFigures(figures, questions)` → 填 attached_to_index
-    8. **事务内**：insert question_block(structured, figures, layout_quality) + writeJobEvent('extraction.success', payload=full state) + update ingestion_session(status='extracted', warnings) + writeCostLedger(outcome='success', pgboss_job_id)
-    9. 抛 error → wrapper catch → 分类 Retryable/Permanent → 写 cost_ledger(outcome='failed_*') + writeJobEvent('extraction.failed') → rethrow 让 pg-boss retry / archive
+    2. `await IngestionSession.markExtractionStarted(db, sessionId)` —— queued → extracting（模块自管事务 + writeJobEvent）
+    3. download asset bytes (r2.get) → asset URL 或直接 base64
+    4. `submitJob` → JobId
+    5. `pollUntilDone(jobId)` （内部 2s poll）
+    6. parse response → questions + figures + layout_quality
+    7. `cropAndUploadFigures` → FigureRef[] with bbox
+    8. `assignFigures(figures, questions)` → 填 attached_to_index
+    9. `await IngestionSession.applyExtractionResult(db, sessionId, { blocks, figures, layoutQuality, warnings })` —— 模块内部事务：UPDATE session（→ extracted | partial）+ INSERT question_block × N + writeJobEvent('ingestion.extraction_completed')
+    10. 同步：`writeCostLedger(outcome='success', pgboss_job_id)`（cost ledger 与 transition 解耦，handler 自己写）
+    11. 抛 error → wrapper catch → 分类 Retryable/Permanent → `await IngestionSession.markExtractionFailed(db, sessionId, message)` + cost_ledger(outcome='failed_*') → rethrow 让 pg-boss retry / archive
   - 注册在 `handlers.ts`：`await boss.work('tencent_ocr_extract', { teamSize: 1 }, handler)`
 - [ ] **Step 9.4**: tests 全过；E2E retry 行为 verify（mock 第一次 fail → 第二次 success）
 - [ ] **Step 9.5**: Commit：`feat(sub-0c): tencent_ocr_extract pg-boss handler — first production async job`
@@ -245,7 +276,7 @@
 - [ ] **Step 10.1 (red)**: 写 `app/api/ingestion/[id]/extract/route.test.ts`：POST → 200 + `{ jobId, businessId }`，立即返回；同时 `boss.fetch` 能拿到一条 pending job。`app/api/ingestion/[id]/events/route.test.ts`：开 SSE → 收到 snapshot 事件 → handler 跑完后收到 'extraction.success' live 事件。
 - [ ] **Step 10.2**: fail
 - [ ] **Step 10.3 (green)**:
-  - `app/api/ingestion/[id]/extract/route.ts`：**改 POST 为 enqueue**：插业务行 status='queued' + `boss.send` + return `{ businessId, jobId }`，**移除老的 sync 路径**
+  - `app/api/ingestion/[id]/extract/route.ts`：**改 POST 为 enqueue**，调 `await IngestionSession.enqueueExtraction(db, boss, sessionId)`（模块负责 from-state 守卫 + status='queued' UPDATE + `boss.send`）→ return `{ businessId, jobId }`。route handler 不再直接写 `ingestion_session`。**移除老的 sync 路径**
   - `app/api/ingestion/[id]/events/route.ts`：SSE endpoint，subscribe `ingestion_session:id`
   - **删除** `src/server/ingestion/cascade.ts` 及其 tests（不再有 sync Tier 1 + auto Vision 升级）
   - **删除** `src/server/ingestion/ocr_tencent.ts` 旧版（保留 `ocr_tencent_sign.ts` 复用）
@@ -260,12 +291,28 @@
 - [ ] **Step 11.1 (red)**: 写 `app/api/ingestion/[id]/rescue/route.test.ts`：POST `{ page, bbox?, tier: 2 | 3 }` → 同步调 VisionExtractTask → 返回 StructuredQuestion；写入 question_block 时 source='vision_rescue'、version+1
 - [ ] **Step 11.2**: fail
 - [ ] **Step 11.3 (green)**:
-  - `src/server/ingestion/rescue.ts`：`runRescue({ db, sessionId, page, bbox?, tier, strategy?, r2 })` —— 调对应 VisionExtractTask（tier=2 → haiku，tier=3 → sonnet），结果解析为 StructuredQuestion + figures，update question_block
+  - `src/server/ingestion/rescue.ts`：`runRescue({ db, sessionId, blockId, page, bbox?, tier, strategy?, r2 })` —— 调对应 VisionExtractTask（tier=2 → haiku，tier=3 → sonnet），结果解析为 StructuredQuestion + figures，**调 `await IngestionSession.applyRescue(db, { sessionId, blockId, structured, figures })`** 写回（不要直接 `db.update(question_block)`）
   - `app/api/ingestion/[id]/rescue/route.ts`：POST，同步返回
   - `src/ai/registry.ts`：VisionExtractTask + Heavy 加 `invocation: 'manual_rescue_only' as const` 字段
   - 预留 `strategy?: 'extract' | 'restructure_cloze' | 'restructure_compound'`，仅实现 'extract'，其它 throw `not implemented`
 - [ ] **Step 11.4**: tests 全过
 - [ ] **Step 11.5**: Commit：`feat(sub-0c): /api/ingestion/[id]/rescue — manual Vision Tier 2/3 rescue endpoint`
+
+---
+
+## Step 11.5: 迁移遗留 route 到 IngestionSession 模块（关掉破窗）
+
+> Step 8b 建模块、Steps 9/10/11 让新 async lane 走模块。本步把另外两个**遗留 route** 也迁过去，让"五个写入位置全收口"这条 invariant 实际成立。
+> 若不做：`POST /api/ingestion` + `POST /api/ingestion/[id]/import` 仍会直接 `db.insert(ingestion_session)` / `db.update(... status: 'imported')`，模块的 single-owner 保证形同虚设。
+
+- [ ] **Step 11.5.1 (red)**: 把现有 `app/api/ingestion/route.test.ts` 跑一遍记 baseline；把 `app/api/ingestion/[id]/import/route.test.ts` 的预期断言保持不变（迁移**行为不变**）。
+- [ ] **Step 11.5.2 (green)**:
+  - `app/api/ingestion/route.ts`：handler 收 body → 校验 asset_ids 存在（保留）→ `await IngestionSession.initiateUpload(db, { assetIds, entrypoint })` 写 `source_document` + `ingestion_session(status='uploaded')`。**移除 inline `db.insert(ingestion_session).values(...)`**。
+  - `app/api/ingestion/[id]/import/route.ts`：把 41-397 行的 validation + 虚拟 block 创建 + ignored sweep + question/mistake INSERT **整段下沉到 `IngestionSession.commitImport(db, sessionId, importBlocks)`**（lift-shift，行为保持）。route handler 缩到：parse body → call commitImport → return `{ questionIds, mistakeIds }`。预期 route 文件 < 50 行。
+  - import route 中现存的 `Promise.allSettled` 背景任务队列（attribution / propose）**暂留**（Sub 0c 不动 AI side-effects；候选 #3 是独立 PR）。
+- [ ] **Step 11.5.3**: 两个 route 的 test 全过 + Step 8b 的 session.test.ts 全过
+- [ ] **Step 11.5.4**: grep verify —— `db.update(ingestion_session)` / `db.insert(ingestion_session)` / `db.update(question_block).*status` **只在 `src/server/ingestion/session.ts` 出现**（接受例外：Step 11/figure 重对应是 figures 列写入，不动 status）
+- [ ] **Step 11.5.5**: Commit：`refactor(sub-0c): migrate legacy ingestion + import routes to IngestionSession module — single-owner invariant closes`
 
 ---
 
@@ -326,6 +373,7 @@
 
 - [ ] **Step 15.1**: 更新 `docs/architecture.md`：
   - 新增章节"异步任务层 (pg-boss)"
+  - 新增章节"录入会话状态机"：把 CONTEXT.md "录入会话"词条里的状态图扩成完整 transition table，并点名 `src/server/ingestion/session.ts` 是 single owner
   - 更新"AI 任务层"：移除 cascade auto-promotion 描述、加 rescue 路径、加 extraction_evidence 概念
 - [ ] **Step 15.2**: 跑完整 acceptance（spec § 6 checklist 全过）：
   - EchoJob E2E ✓
