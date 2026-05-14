@@ -73,7 +73,10 @@ export const SourceAssetKind = z.enum(['image', 'pdf', 'text', 'web']);
 
 export const IngestionSessionStatus = z.enum([
   'uploaded',
+  'queued',
+  'extracting',
   'extracted',
+  'partial',
   'reviewed',
   'imported',
   'failed',
