@@ -203,7 +203,7 @@ describe('schema generated from drizzle', () => {
       crop_refs: [],
       visual_complexity: 'medium',
       extraction_confidence: 0.8,
-      status: 'merged',
+      status: 'imported',
       knowledge_hint: null,
       merged_from_block_ids: ['qb_1', 'qb_2'],
       imported_question_id: null,

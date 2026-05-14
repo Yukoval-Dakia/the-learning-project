@@ -261,6 +261,11 @@ export const study_log = pgTable('study_log', {
   version: integer('version').notNull().default(0),
 });
 
+// TODO(Phase 1c+): 当前零调用 —— schema 与 Zod 类型已建（含 outline_json / sections /
+// tool_state / history 等），但无任何 route / service 写入或读取。审计 2026-05-14
+// 标记为 dead schema。保留以等待 Phase 1c brainstorm 决定其与 encounter / Note 的关系
+// （见 docs/superpowers/brainstorms/2026-05-14-phase1c-encounter-session-ui.md）。
+// 若 Phase 1c spec 拍板不用，应在该 phase 同步 migration 删表。
 export const artifact = pgTable('artifact', {
   id: text('id').primaryKey(),
   type: text('type').notNull(),

@@ -40,7 +40,7 @@
   - 新表 `job_events`：`id bigserial PK, business_table text, business_id text, event_type text, payload jsonb, occurred_at timestamptz`，索引 `(business_table, business_id, id)`
   - 新表 `echo_jobs`：`id text PK, input text NOT NULL, output text, status text NOT NULL DEFAULT 'queued', error_md text, created_at/updated_at`
   - **Zod enum 调整**（`src/core/schema/business.ts`，DB `status` 列是 text，无需 SQL migration）：
-    - `QuestionBlockStatus` 删 `'reviewed'`（全仓 zero writers，已 verify dead）；保留 `'merged'`（client-side transient state，Sub 1b plan:1701）
+    - `QuestionBlockStatus`：**已在 2026-05-14 cleanup commit 完成**——`['draft', 'reviewed', 'merged', 'imported', 'ignored']` 收窄为 `['draft', 'imported', 'ignored']`（drop `'reviewed'` + `'merged'`，均 zero writers）。本步无操作。
     - `IngestionSessionStatus` 补 `'queued'`、`'extracting'`、`'partial'`（当前已有 `'uploaded'` / `'extracted'` / `'reviewed'` / `'imported'` / `'failed'`）
 - [ ] **Step 0.5**: `pnpm db:generate` 生成 migration 文件；本地 `.env.local` 指向 Neon dev DB 运行 `pnpm db:push`，确认 migration 干净
 - [ ] **Step 0.6**: Commit：`chore(sub-0c): add pg-boss/sharp deps + drizzle schema for async lane + OCR upgrade`
