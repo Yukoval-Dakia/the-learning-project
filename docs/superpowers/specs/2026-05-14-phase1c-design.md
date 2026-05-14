@@ -1,7 +1,7 @@
 # Phase 1c Design Spec — Encounter / Session 抽象 + UI 闭环
 
 **Date**: 2026-05-14
-**Status**: spec（self-grill 完成，待用户 ack / override）
+**Status**: spec — D1 用户 grill 修订完成（2026-05-14），D2 顺带修订（与 D1 耦合），D3/D4/D5 待 grill
 **Brainstorm**: `docs/superpowers/brainstorms/2026-05-14-phase1c-encounter-session-ui.md`
 **Audit**: `docs/superpowers/audits/2026-05-14-phase1-pre-1c-audit.md`
 **Predecessor**: Sub 0c（async lane + Tencent Mark Agent，进行中）
@@ -21,32 +21,73 @@ Phase 1c 同时解决两个耦合问题：
 
 ## 决策（D1-D5，self-grill 答案，每条标"可推翻"）
 
-### D1 (← brainstorm Q1)：encounter 实施 — 阶段式 rename + 渐进重构
+### D1 (← brainstorm Q1)：encounter 实施 — 一次性 full rename + 多态重构（**修订**）
 
-> **可推翻** — 三选一的 (a)，但伴随显著工作量。
+> **2026-05-14 grill 后修订** —— 原 lite-rename + 渐进多态方案被推翻。理由记下面。
 
-**选定 (a) rename in place + 渐进字段扩展**，理由：
+**初版（已废）**：分两阶段——1c.1 lite rename（只改表名 + 加 `outcome` 默认列）、1c.3 outcome 多态。
 
-- 项目品味偏 single-owner / no-duplication（见 ADR-0005），(b) 双表共存违反；(c) 视图是半截子方案，长期束缚。
-- Sub 0c 是这个码库历史上最大的一次 schema 改动；下一个大改 == Phase 1c。**改名 + 加列**比"先复制再迁移"便宜。
-- 重命名是机械的（grep + sed + drizzle migration），不是 risk vector；**真正的 risk 在 outcome 多态语义**——分两阶段降级风险。
+**初版的三处硬伤**（grill 暴露）：
 
-**分两阶段**：
+1. **lite rename 是 type lying**：表叫 `encounter` 但 `wrong_answer_md` / `cause` / `variants` / `variants_max` 等字段只对 `outcome='wrong'` 成立——接口承诺通用、实现强制 mistake-性。
+2. **lite rename 的杠杆 ≈ 0**：1c.2 的 UI 只展示 wrongs（review + inbox 都是错题流），rename 不解锁任何 UI 新形态，只是 ~20 个文件的 grep-replace 工作量。
+3. **API + SQL 不分两次**：`/api/mistakes` 端点 vs SQL `encounter` 表是半截子；UI 一上来就要被命名锁死思路。
 
-1. **Phase 1c.1 lite rename**：`mistake` 表 → `encounter` 表，**加 `outcome` 列 default `'wrong'`**，其他字段不动。所有 query / route / AI prompt 也跟着改名。这一步零行为变化，纯换皮。
-2. **Phase 1c.3 outcome 多态**：加 `material_ref` polymorphic 字段（`question_id | artifact_id | source_document_id | free_text`），扩 `outcome` enum 到 `wrong | right | exposed | created | drilled | reviewed`，把 `wrong_answer_md` / `cause` 等 outcome-specific 字段下沉到 `evidence_jsonb`。这一步引入新概念，等 UI 反馈到位再做。
+**真正的推翻理由**（用户 2026-05-14 grill）：
 
-### D2 (← Q2)：UI 先行（带 lite rename 铺垫）
+> "我们没时间等上线之后再改。现在的一切都是draft，而真实数据要完工后才会有。"
 
-> **可推翻** — 但延后 UI 的代价（架构反馈失联）继续累计。
+→ "schema 等 UI 反馈再迭代" 的论据**依赖真实使用数据**；本项目在完工前无任何真实数据，反馈循环不存在。**不存在的反馈不能驱动设计**。结论：**做一次就要做对**。
 
-**选定**：先做 D1 的 lite rename → 再建 UI → 再做 D1 的 outcome 多态重构。
+---
 
-理由：
+**修订选定（a-honest）**：**1c.1 一次性完成 full rename + 多态重构 + API rename**。
 
-- UI 需要立刻拿到反馈；不能等"理想 schema"
-- UI 代码若长在 `mistake` 名字上，未来再迁就两遍劳力
-- lite rename 是 1-2 天的事，不阻塞 UI
+**1c.1 schema 改动一次到位**：
+
+- 新表 `encounter`（不是 `mistake` 改名，是新建 + 数据迁移）：
+  - `id text PK`
+  - `outcome text NOT NULL`，enum `wrong | right | exposed | created | drilled | reviewed`
+  - `material_ref jsonb NOT NULL`，`{ kind: 'question' | 'artifact' | 'source_document' | 'free_text', id?: text, text?: text }`
+  - `knowledge_ids jsonb`
+  - `evidence jsonb NOT NULL`，outcome-specific schema（per-outcome Zod 守护，参考 ADR-0002 `extraction_evidence` 模式）
+    - `wrong` → `{ wrong_answer_md, wrong_answer_image_refs, cause }`
+    - `right` → `{ answer_md, took_ms? }`
+    - `exposed` → `{ duration_ms?, scrolled?: boolean }`
+    - `created` → `{ artifact_id, prompt_id? }`
+    - `drilled` → `{ variant_of_encounter_id, attempt_outcome }`
+    - `reviewed` → `{ source_encounter_id, fsrs_rating }`
+  - `source text NOT NULL`，enum `manual | ingest | drill | ...`
+  - `status text NOT NULL DEFAULT 'active'`
+  - `version int`, `created_at`, `updated_at`
+- `mistake` 表数据迁移：每行 `outcome='wrong'`、`evidence = { wrong_answer_md, wrong_answer_image_refs, cause }`、`material_ref = { kind: 'question', id: question_id }`
+- `mistake` 表 DROP（不保留兼容 VIEW —— 完工前 draft 数据不值这个长期复杂度）
+- 所有引用 `mistake` 的代码：knowledge.attribute / propose / review、import route、export CSV、AI prompts、tests 全部迁到 `encounter`
+- API：`/api/mistakes` → `/api/encounters`，`mistakes/recent` → `encounters/recent`
+
+**1c.1 同时做 UI 脚手架**：状态管理 / 组件库 / fetch 模式三大约定。
+
+**1c.1 不做**：
+
+- `learning_session` 多态（R5）—— 这是独立问题，见 D2 grill
+- artifact 表命运 —— 同上
+
+**变化对实施计划的影响**：
+
+- 1c.1 从 3-5 天 → **6-10 天**（schema 重构 + 数据迁移 + 全栈 rename + UI 脚手架）
+- 1c.2（UI 五页）不变，但**长在新 schema 上**
+- 1c.3 收窄为"learning_session envelope + artifact 决断"（不再含 encounter 多态——已并入 1c.1）
+
+### D2 (← Q2)：~~UI 先行（带 lite rename 铺垫）~~ → schema-first，但与 UI 脚手架同 PR
+
+> **2026-05-14 grill 修订**：原 "UI 先 + 后补 rename" 方案随 D1 一起作废。
+
+**修订选定**：
+
+- 1c.1 一个 PR 内：schema 重构 + UI 脚手架（routing / state mgmt / 组件约定）
+- 1c.2 UI 五页长在已敲实的 schema 上，零迁移
+
+理由：用户 2026-05-14 grill —— "完工前无真实使用反馈"，所以"UI 先跑、schema 后跟"的迭代逻辑失效。改成"schema 一次做对、UI 在对的 schema 上长"。
 
 ### D3 (← Q3)：source_kind 占位字段，image only 实质实现
 
@@ -78,111 +119,121 @@ Phase 1c 同时解决两个耦合问题：
 
 ---
 
-## 三阶段实施（按依赖排序）
+## 三阶段实施（按依赖排序，**2026-05-14 D1 修订后**）
 
-### Phase 1c.1: Namespace prep + UI 脚手架（~3-5 day）
+### Phase 1c.1: encounter 全量重构 + UI 脚手架（~6-10 day）
 
 **前置**：Sub 0c **完全 merge**（不可与 1c.1 同时改 schema）。
 
-**Schema**:
-- `mistake` 表 rename → `encounter`，加 `outcome text NOT NULL DEFAULT 'wrong'`
-- 所有 FK / index / 业务代码 / AI prompts / tests 跟随改名
+**Schema 一次到位（详见 D1 修订）**：
 
-**Code**:
-- 100% mechanical 改名 + tests pass
-- 验证：测试 全绿；handler grep 无 `mistake` 残留
+- 新建 `encounter` 表（含 `outcome` / `material_ref` / `evidence` jsonb / `knowledge_ids` / `source` / `status`）
+- 数据迁移：`mistake` → `encounter`（每行 outcome='wrong'、evidence 重组）
+- DROP `mistake` 表（无兼容 view）
+- per-outcome `evidence` Zod schema（`src/core/schema/encounter.ts`）
 
-**UI 脚手架**:
-- `app/page.tsx` 替换占位 → 一个 "Home" 路由壳
-- 决定状态管理：Zustand store skeleton
-- 决定数据 fetch：TanStack Query setup + 一份 `/api/health` 调用作 smoke
-- 决定 styling：Tailwind v4（CSS-first）+ 一份 design token convention
-- 决定 component 库：自建（参考 frontend-design skill）or shadcn——**待 grill**
+**Code 全量 rename**：
 
-**产出**: 命名干净的 encounter 抽象 + 可运行的 UI 框架 + 第一份 health 页面（"系统活着"）
+- `src/server/knowledge/{attribute,propose,review}.ts`：所有 mistake 引用 → encounter
+- `app/api/mistakes/` → `app/api/encounters/`
+- `app/api/ingestion/[id]/import/route.ts`：插入 encounter(outcome='wrong') 而非 mistake
+- AI prompts：registry.ts 中 "错题" / "mistake" 文案改为"做错的 encounter" 或"答错"——保留中文领域语义，不强行直译
+- `src/server/export/csv.ts`：CSV 列名同步
+- 全部测试：~10 个 test 文件 mistake → encounter
+
+**UI 脚手架**：
+
+- `app/page.tsx` 占位 → "Home" 路由壳
+- 状态管理：Zustand
+- 数据 fetch：TanStack Query setup
+- styling：Tailwind v4（CSS-first）+ design tokens
+- 组件库：**待 grill**（自建 vs shadcn）
+
+**产出**：encounter 是干净的 first-class entity；UI 框架就位；任何 1c.2 UI 长在新 schema 上。
 
 ### Phase 1c.2: UI 主切片（~5-7 day）
 
-**5 个页面（按价值排）**：
+**5 个页面（按价值排）**，**长在 encounter 上**：
 
-1. **`/review`**（最高价值）：FSRS due queue → 一道题 prompt → 答 → judge → 反馈含 `cause`。**让 attribution 终于到达用户眼前**。
-2. **`/inbox`**：SSE-driven 抽取进度可视化 → 块编辑 / 合并 / 拆分 → 一键 import。复用 Sub 0c 的 `/api/ingestion/[id]/events` SSE。
-3. **`/capture`**：拍照上传入口（mobile-camera-first，但桌面也 OK）→ enqueue ingestion session → redirect 到 inbox。
+1. **`/review`**（最高价值）：FSRS due queue → encounter prompt → 答 → judge → 反馈含 evidence.cause。**让 attribution 终于到达用户眼前**。
+2. **`/inbox`**：SSE-driven 抽取进度 → 块编辑 / 合并 / 拆分 → 一键 import（生成 encounter outcome='wrong'）。
+3. **`/capture`**：拍照上传入口 → enqueue ingestion session → redirect inbox。
 4. **`/knowledge`**：read-only 知识树浏览。点节点 → 看挂在它下面的 encounters。
-5. **`/history`**：session 列表（先只 ingestion session，等 1c.3 扩到所有 session type）
+5. **`/history`**：session 列表（仅 ingestion session；扩到全 session type 在 1c.3）。
 
 **Schema**: 不动。
-**API**: 仅"补漏"——若 UI 发现某查询效率低 / 返回值不够，加 query parameter / 加 list endpoint。不开新主线。
+**API**: 仅补漏 query 参数 / list endpoint，不开新主线。
 
-**产出**: 用户能拍照、看抽取过程、审阅、import、复习、看错因、看自己知识树、看历史。**Phase 1 闭环可演示**。
+**产出**：Phase 1 闭环可演示。
 
-### Phase 1c.3: encounter 多态重构 + R5 envelope（~3-5 day）
+### Phase 1c.3: learning_session envelope + artifact 决断（~3-5 day）
 
-**前置**：Phase 1c.2 跑过至少一周，有真实使用反馈。
+> 修订后 1c.3 **收窄**：encounter 多态已在 1c.1 落定，本步只剩 R5 + artifact。
+
+**前置**：1c.2 完成。
 
 **Schema**:
-- `encounter`:
-  - 加 `material_ref jsonb`（`{ kind: 'question' | 'artifact' | 'source_document' | 'free_text', id: text }`）
-  - 加 `evidence jsonb`（outcome-specific，例：wrong 时 `{ wrong_answer_md, cause }`；created 时 `{ artifact_id }`；exposed 时 `{ duration_ms }`）
-  - 扩 `outcome` enum 到 `wrong | right | exposed | created | drilled | reviewed`
-  - 弃用 `wrong_answer_md` / `cause` 顶级字段（迁移到 evidence jsonb）
+
 - 新表 `learning_session`：
-  - `type text NOT NULL`（`ingestion | review | tutor | explore | create | conversation`，仅前两个有实现）
+  - `type text NOT NULL`（`ingestion | review | tutor | explore | create | conversation`）
   - `status text` / `started_at` / `ended_at` / `summary_md text` / `goal_id text NULL`
-- `ingestion_session` 改名 → `learning_session WHERE type='ingestion'`（或保留 view 兼容）
+- `ingestion_session` 改名 → `learning_session` row WHERE type='ingestion'（数据迁移 + DROP 老表）
+- `artifact` 表决断：保留 / 删除 / 重塑（**待 grill**——与 `material_ref kind='artifact'` 关系决定）
 
 **Code**:
-- ADR-0005 的 `IngestionSession` 模块演化为 `LearningSession` 多态模块——内部仍单一所有者，但 type-driven 状态机分支
-- review submit 写一条 `learning_session(type='review')` 记录（启动每次复习会话）
 
-**Artifact 表决断**：在此阶段决定保留 / 删除。倾向：**与 R5 一起拍板**，因为 artifact 与 `material_ref kind='artifact'` 的关系决定 artifact 表的命运。
+- ADR-0005 的 `IngestionSession` 模块演化为 `LearningSession` 多态模块（type-driven 状态机分支，内部仍单一所有者）
+- review submit 同时写一条 `learning_session(type='review')`
+- `/history` 扩到全 session type
+
+**产出**：通用 session envelope；artifact 命运拍板；CONTEXT.md 提议词条转正式。
 
 **产出**: schema 真正承载"通用学习框架"概念；后续 tutor / coach / explore 角色有 session 落点。
 
 ---
 
-## Schema 改动一览
+## Schema 改动一览（**D1 修订后**）
 
 | 阶段 | 改动 | 风险 |
 |---|---|---|
-| 1c.1 | rename `mistake` → `encounter` + `outcome` 列 default `'wrong'`；加 `ingestion_session.source_kind` 列 default `'image'` | 中——触及 ~15 个 server / AI 文件 + ~10 个 test |
+| 1c.1 | 新建 `encounter` 表（含 `outcome` / `material_ref` / `evidence` jsonb）；migrate `mistake` → `encounter`；DROP `mistake`；加 `ingestion_session.source_kind` 列 default `'image'`；per-outcome Zod schema | **高**——大型 migration + 全栈 rename + per-outcome evidence schema 守护 |
 | 1c.2 | 无 schema 改动 | 低 |
-| 1c.3 | encounter `material_ref` / `evidence` polymorphic；新 `learning_session` 表；artifact 表保留 / 删除决断 | 高——大型 migration + agent prompts 重写 + IngestionSession 模块演化 |
+| 1c.3 | 新表 `learning_session`；migrate `ingestion_session` → `learning_session`；artifact 表决断 | 中——migration + IngestionSession 模块演化为 LearningSession 多态 |
 
 ---
 
 ## 风险与回滚
 
 1. **UI 是新栈**——`src/ui/` 空，需建组件库 + 数据 fetch + 状态管理三大约定。**回滚成本低**（UI 是新的，可任意推翻）。
-2. **mistake → encounter rename 触面广**——但 100% 机械。**回滚**：drizzle migration 反向（重命名再反向）。
-3. **Sub 0c 尚未 merge**——1c.1 严格阻塞至 Sub 0c merge。期间可推进 spec / ADRs / UI 脚手架 prototype（不动 schema）。
-4. **D1 阶段二（outcome 多态）若做错**会让 schema 长成"什么都能塞"的 jsonb 黑洞。**缓解**：每种 outcome 自带 Zod schema 守 evidence 形状（参考 ADR-0002 的 `extraction_evidence` 模式）。
-5. **设计反馈缺失**——单用户无 telemetry。Phase 1c.2 上线后**至少自用一周**再做 1c.3。
+2. **encounter 全量重构触面巨大**——~15 个 server / AI 文件 + ~10 个 test 同时改。**缓解**：在 worktree 推；migration 单独 commit；mechanical rename 与 schema design 分两层 commit。**回滚**：drizzle migration 反向恢复 `mistake` 表，复原 evidence 拆字段。
+3. **outcome 多态若做错**会让 schema 长成"什么都能塞"的 jsonb 黑洞。**缓解**：per-outcome Zod schema 守 evidence 形状（参考 ADR-0002 的 `extraction_evidence` 模式）；evidence schema 单独的 test 文件覆盖所有 outcome × 字段组合。
+4. **Sub 0c 未 merge → 1c.1 阻塞**。期间可推进：spec / ADRs / UI 脚手架（不动 schema 的部分）。
+5. **D5 单用户假设 + encounter 重构同时落地** —— ADR-0006 / 0007 应在 1c.1 开干**之前**写完，避免 schema 长出之后再回头补 ADR。
 
 ---
 
 ## 待 grill / 待决
 
 - **UI 组件库选型**：自建 vs shadcn。前者更可控、后者更快。**Sub-grill 后单写一份 spec addendum**。
-- **artifact 表命运**：与 D1 阶段二一起拍板。
+- **artifact 表命运**：1c.3 拍板（与 `material_ref kind='artifact'` 关系）。
 - **R5 多 type 一开始建几个**：spec 写 6 种，1c.3 仅实现 ingestion + review。其他 type 是 enum 占位还是延后加？倾向：**enum 全写、行为延后**。
+- **D1 修订引出的新问题**：用户 "没时间等上线后再改" 的逻辑也适用于 R5——learning_session 是否应该并入 1c.1 而非 1c.3？倾向：**不并入**——learning_session 与 encounter 解耦（encounters 可独立存在），1c.1 已经很重，再叠 R5 会让单 PR 过 10 天。但本条**待与你 grill 后定**。
 
 ---
 
 ## ADRs（待写）
 
-- **ADR-0006**：`encounter` 替换 `mistake` 为 first-class learning event（D1 拍板后写）
+- **ADR-0006**：`encounter` 替换 `mistake` 为 first-class learning event（D1 已拍板，可起草）
 - **ADR-0007**：单用户假设明文化 + 多用户回滚成本（D5 拍板后写）
-- **ADR-0008**（可选）：`learning_session` 多态 envelope 模式（D1 阶段二完成后写）
+- **ADR-0008**（可选）：`learning_session` 多态 envelope 模式（1c.3 开干前写）
 
 ---
 
 ## 下一步
 
-1. **用户 grill D1-D5** —— 任一推翻则 spec 需修订；全 ack 则进 2
-2. 拆 → 三份 plan：
-   - `docs/superpowers/plans/2026-05-1X-phase1c1-rename-and-ui-scaffold.md`
+1. **用户继续 grill D2-D5**（D1 已 grill+修订）—— 任一推翻则 spec 再修订
+2. D5 拍板后起 ADR-0006 + ADR-0007 草稿
+3. 拆 → 两份 plan（1c.3 暂缓拆，等 1c.1/1c.2 收尾再起）：
+   - `docs/superpowers/plans/2026-05-1X-phase1c1-encounter-and-ui-scaffold.md`
    - `docs/superpowers/plans/2026-05-1X-phase1c2-ui-main.md`
-   - `docs/superpowers/plans/2026-05-1X-phase1c3-encounter-polymorphic.md`
-3. 起 ADR-0006 + 0007 草稿
 4. 等 Sub 0c merge → 开 worktree 推 1c.1
