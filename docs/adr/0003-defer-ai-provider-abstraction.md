@@ -15,6 +15,8 @@
 - Anthropic prod 事故需要紧急 fallback → 选 OpenRouter
 - 用户对 Anthropic 单点依赖的合规风险有顾虑 → 选 Gateway 或 OpenRouter
 
+**2026-05-11 更新**：Sub 0d 引入了 `providers.ts`（Provider Manager）+ `resolveTaskModel()`（Task Model Selector），这是 ADR 原文所说"~1 天局部重构"的最轻实现——每个 task 在 registry 声明 `{ provider, model }`，provider 切换只改 registry 一行。Anthropic 仍是唯一实际运行的 provider，其余 provider config 存在但 env var 为空。触发条件不变。
+
 **接受的代价**：
 
 - 短期锁 Anthropic，单点故障没有备份路径。**单用户工具可接受**（停机几小时不致命）。
