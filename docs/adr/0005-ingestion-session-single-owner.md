@@ -31,3 +31,5 @@
 ---
 
 **相关：** ADR-0002（抽取层 = 确定性 OCR）定义了进入会话的"内容"约束；本 ADR 定义了会话"生命周期"约束。两者正交、互补。
+
+**演化（2026-05-14）：** [[ADR-0008]] 把本 ADR 的 single-owner invariant 扩展到全 session type。`src/server/ingestion/session.ts` 演化为 `src/server/session/` 多态模块，ingestion 子状态机作为其中一支保留；本 ADR 的所有规约（守卫、事务原子性、`job_events` 同事务写入）在更大 scope 内继续有效。
