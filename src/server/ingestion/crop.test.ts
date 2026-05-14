@@ -60,10 +60,16 @@ describe('cropAndUploadFigures', () => {
     expect(result[1].asset_id).toBe('asset_page_1-fig-1');
 
     expect(r2.puts).toHaveLength(2);
-    expect(r2.puts[0].key).toBe('figures/asset_page_1-fig-0.png');
-    expect(r2.puts[0].body.byteLength).toBeGreaterThan(0);
+    const keys = r2.puts.map((p) => p.key).sort();
+    expect(keys).toEqual([
+      'figures/asset_page_1-fig-0.png',
+      'figures/asset_page_1-fig-1.png',
+    ]);
+    for (const p of r2.puts) {
+      expect(p.body.byteLength).toBeGreaterThan(0);
+    }
 
-    // Verify the cropped image is the red block (sample pixel)
+    // Verify at least one body decodes as a valid image
     const decoded = await sharp(r2.puts[0].body).raw().toBuffer({ resolveWithObject: true });
     expect(decoded.info.channels).toBeGreaterThan(0);
   });

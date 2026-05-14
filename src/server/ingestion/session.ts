@@ -354,4 +354,61 @@ export async function markReviewed(db: Db, sessionId: string): Promise<void> {
   });
 }
 
-// initiateUpload + commitImport 留给 Step 11.5（迁老 route 时实现）。
+// ---------- initiateUpload ----------
+
+export type InitiateUploadParams = {
+  assetIds: string[];
+  entrypoint: 'vision_single' | 'vision_paper';
+};
+
+/**
+ * 创建 source_document + ingestion_session(status='uploaded')。
+ * 调用方负责事先校验 assetIds 存在于 source_asset 表。
+ */
+export async function initiateUpload(
+  db: Db,
+  params: InitiateUploadParams,
+): Promise<{ sessionId: string; sourceDocumentId: string }> {
+  return db.transaction(async (tx) => {
+    const sourceDocumentId = createId();
+    const sessionId = createId();
+    const now = new Date();
+    // dynamic import to avoid circular dep at module load time
+    const { source_document } = await import('@/db/schema');
+    await tx.insert(source_document).values({
+      id: sourceDocumentId,
+      title: null,
+      source_asset_ids: params.assetIds,
+      body_md: null,
+      provenance: { entrypoint: params.entrypoint } as Record<string, unknown>,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    await tx.insert(ingestion_session).values({
+      id: sessionId,
+      source_document_id: sourceDocumentId,
+      source_asset_ids: params.assetIds,
+      status: 'uploaded',
+      entrypoint: params.entrypoint,
+      error_message: null,
+      warnings: [],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+
+    await writeJobEvent(tx, {
+      business_table: SESSION_TABLE,
+      business_id: sessionId,
+      event_type: 'ingestion.uploaded',
+      payload: { asset_count: params.assetIds.length, entrypoint: params.entrypoint },
+    });
+
+    return { sessionId, sourceDocumentId };
+  });
+}
+
+// commitImport（迁 POST /api/ingestion/[id]/import）推迟到 Phase 1c.1 —— 那里
+// 整个 session 模块演化为 LearningSession，import 也会改成 encounter 形态。
+// 双倍 lift-shift 不值。
