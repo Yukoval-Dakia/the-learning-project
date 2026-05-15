@@ -1,0 +1,290 @@
+{
+  "_comment": "Schema fields with no INSERT/UPDATE write path. Each entry MUST have reason + resolves_when. When the resolving milestone lands, remove from this allowlist.",
+
+  "knowledge.base_mastery": {
+    "reason": "ADR-0012 decided derived view; field will be DROPped in Phase 1c.1 Step 1",
+    "resolves_when": "Phase 1c.1 Step 1 DROP COLUMN executed"
+  },
+  "knowledge.ai_delta_mastery": {
+    "reason": "ADR-0012 decided derived view; field will be DROPped in Phase 1c.1 Step 1",
+    "resolves_when": "Phase 1c.1 Step 1 DROP COLUMN executed"
+  },
+  "knowledge.last_active_at": {
+    "reason": "ADR-0012 decided derived view; field will be DROPped in Phase 1c.1 Step 1",
+    "resolves_when": "Phase 1c.1 Step 1 DROP COLUMN executed"
+  },
+  "knowledge.delete_reason": {
+    "reason": "Soft-delete metadata; Sub 1 maintenance lane (ADR-0004) will write it",
+    "resolves_when": "Sub 1 MaintenanceProposeTask delete_knowledge path implemented"
+  },
+
+  "mistake.variants": {
+    "reason": "Sub 0d Step 14 VariantGenTask deferred; 1c.1 DROP mistake → variants migrate to event(generate, artifact)",
+    "resolves_when": "Phase 1c.1 DROP mistake executed"
+  },
+  "mistake.archived_at": {
+    "reason": "Soft-delete unreached; 1c.1 DROP mistake",
+    "resolves_when": "Phase 1c.1 DROP mistake executed"
+  },
+  "mistake.archived_reason": {
+    "reason": "Soft-delete unreached; 1c.1 DROP mistake",
+    "resolves_when": "Phase 1c.1 DROP mistake executed"
+  },
+  "mistake.delete_reason": {
+    "reason": "Soft-delete unreached; 1c.1 DROP mistake",
+    "resolves_when": "Phase 1c.1 DROP mistake executed"
+  },
+  "mistake.source_ref": {
+    "reason": "Provenance ref unused; 1c.1 DROP mistake — provenance via event.payload.source 替代",
+    "resolves_when": "Phase 1c.1 DROP mistake executed"
+  },
+
+  "completion_evidence.user_overrode_low_evidence": {
+    "reason": "Phase 1b user-override flow not implemented; decision pending",
+    "resolves_when": "Phase 1b override-completion UI path landed OR field dropped"
+  },
+
+  "judgment.id": {
+    "reason": "Sub 1 JudgeTask deferred; 1c.1 DROP judgment (judge → event action='judge')",
+    "resolves_when": "Phase 1c.1 DROP judgment executed"
+  },
+  "judgment.answer_id": {
+    "reason": "Same as judgment.id",
+    "resolves_when": "Phase 1c.1 DROP judgment executed"
+  },
+  "judgment.judge_kind": {
+    "reason": "Same as judgment.id",
+    "resolves_when": "Phase 1c.1 DROP judgment executed"
+  },
+  "judgment.verdict": {
+    "reason": "Same as judgment.id",
+    "resolves_when": "Phase 1c.1 DROP judgment executed"
+  },
+  "judgment.score": {
+    "reason": "Same as judgment.id",
+    "resolves_when": "Phase 1c.1 DROP judgment executed"
+  },
+  "judgment.feedback_md": {
+    "reason": "Same as judgment.id",
+    "resolves_when": "Phase 1c.1 DROP judgment executed"
+  },
+  "judgment.error_detail": {
+    "reason": "Same as judgment.id",
+    "resolves_when": "Phase 1c.1 DROP judgment executed"
+  },
+  "judgment.knowledge_ids_touched": {
+    "reason": "Same as judgment.id",
+    "resolves_when": "Phase 1c.1 DROP judgment executed"
+  },
+  "judgment.prior_judgment_id": {
+    "reason": "Same as judgment.id",
+    "resolves_when": "Phase 1c.1 DROP judgment executed"
+  },
+  "judgment.appeal_kind": {
+    "reason": "Same as judgment.id",
+    "resolves_when": "Phase 1c.1 DROP judgment executed"
+  },
+  "judgment.is_effective": {
+    "reason": "Same as judgment.id",
+    "resolves_when": "Phase 1c.1 DROP judgment executed"
+  },
+  "judgment.is_flexible_fallback": {
+    "reason": "Same as judgment.id",
+    "resolves_when": "Phase 1c.1 DROP judgment executed"
+  },
+  "judgment.triggered_by": {
+    "reason": "Same as judgment.id",
+    "resolves_when": "Phase 1c.1 DROP judgment executed"
+  },
+  "judgment.judged_by": {
+    "reason": "Same as judgment.id",
+    "resolves_when": "Phase 1c.1 DROP judgment executed"
+  },
+  "judgment.judged_at": {
+    "reason": "Same as judgment.id",
+    "resolves_when": "Phase 1c.1 DROP judgment executed"
+  },
+
+  "user_appeal.judgment_id": {
+    "reason": "user_appeal references judgment; both DROP in 1c.1",
+    "resolves_when": "Phase 1c.1 DROP user_appeal executed"
+  },
+  "user_appeal.reason": {
+    "reason": "user_appeal table dead; 1c.1 DROP",
+    "resolves_when": "Phase 1c.1 DROP user_appeal executed"
+  },
+  "user_appeal.resolved_judgment_id": {
+    "reason": "user_appeal table dead; 1c.1 DROP",
+    "resolves_when": "Phase 1c.1 DROP user_appeal executed"
+  },
+  "user_appeal.appealed_at": {
+    "reason": "user_appeal table dead; 1c.1 DROP",
+    "resolves_when": "Phase 1c.1 DROP user_appeal executed"
+  },
+
+  "question.rubric_json": {
+    "reason": "Sub 1 JudgeTask grading config; not yet written by ingestion",
+    "resolves_when": "Sub 1 JudgeTask + question authoring path implemented"
+  },
+  "question.judge_kind_override": {
+    "reason": "Sub 1 per-question judge override; not yet written",
+    "resolves_when": "Sub 1 JudgeTask implemented"
+  },
+  "question.source_ref": {
+    "reason": "Provenance ref unused; ADR-0006 v2 后 event.payload.source 替代",
+    "resolves_when": "Phase 1c.1 落地，决定 keep or drop"
+  },
+  "question.draft_status": {
+    "reason": "ADR-0004 lifecycle promise (draft/active); Sub 0d MaintenanceProposeTask",
+    "resolves_when": "Sub 0d Step 13 MaintenanceProposeTask implemented"
+  },
+  "question.root_question_id": {
+    "reason": "Variant family tree backbone; Sub 0d Step 14 VariantGenTask",
+    "resolves_when": "Sub 0d Step 14 VariantGenTask implemented"
+  },
+  "question.parent_variant_id": {
+    "reason": "Same as root_question_id",
+    "resolves_when": "Sub 0d Step 14 VariantGenTask implemented"
+  },
+  "question.created_by": {
+    "reason": "Provenance for AI-generated questions; ADR-0006 v2 will fill via event(action='generate', subject_kind='question')",
+    "resolves_when": "Phase 1c.1 event generation path implemented"
+  },
+
+  "learning_item.source_ref": {
+    "reason": "Provenance ref; same as question.source_ref",
+    "resolves_when": "Phase 1c.1 落地，决定 keep or drop"
+  },
+  "learning_item.primary_artifact_id": {
+    "reason": "ADR-0004 Phase 2 — learning_item ↔ artifact 双向关联",
+    "resolves_when": "Sub 0d Phase 2 (artifact generation lane) implemented"
+  },
+  "learning_item.parent_learning_item_id": {
+    "reason": "ADR-0004 Phase 2 — learning_item tree structure",
+    "resolves_when": "Sub 0d Phase 2 implemented"
+  },
+  "learning_item.child_learning_item_ids": {
+    "reason": "Same as parent_learning_item_id",
+    "resolves_when": "Sub 0d Phase 2 implemented"
+  },
+  "learning_item.ai_score": {
+    "reason": "AI-assessed value score; not yet implemented",
+    "resolves_when": "Sub 0d AI proposal scoring path implemented"
+  },
+  "learning_item.due_at": {
+    "reason": "Sub 0d MaintenanceProposeTask sets due_at on learning_item; not yet written",
+    "resolves_when": "Sub 0d MaintenanceProposeTask implemented"
+  },
+  "learning_item.reviewed_at": {
+    "reason": "Sub 0d learning lane review timestamp; not yet written",
+    "resolves_when": "Sub 0d Phase 1 (review_event handler) implemented"
+  },
+
+  "study_log.content_md": {
+    "reason": "study_log free-form content; not yet written by UI",
+    "resolves_when": "Phase 1c.2 study log UI implemented"
+  },
+  "study_log.artifact_id": {
+    "reason": "study_log ↔ artifact link; ADR-0006 v2 likely converts study_log → event(action='generate', subject_kind='note')",
+    "resolves_when": "Phase 1c.1 ADR-0006 v2 study_log → event migration"
+  },
+
+  "answer.input_kind": {
+    "reason": "Answer table currently unused; Phase 1c.2 /review submit will write",
+    "resolves_when": "Phase 1c.2 review submit path implemented"
+  },
+  "answer.content_md": {
+    "reason": "Same as answer.input_kind",
+    "resolves_when": "Phase 1c.2 review submit path implemented"
+  },
+  "answer.vision_extracted": {
+    "reason": "Same as answer.input_kind",
+    "resolves_when": "Phase 1c.2 review submit path implemented"
+  },
+  "answer.tags": {
+    "reason": "Same as answer.input_kind",
+    "resolves_when": "Phase 1c.2 review submit path implemented"
+  },
+  "answer.submitted_at": {
+    "reason": "Same as answer.input_kind",
+    "resolves_when": "Phase 1c.2 review submit path implemented"
+  },
+
+  "artifact.id": {
+    "reason": "artifact table zero usage; ADR-0006 v2 revives via GenerateArtifact event",
+    "resolves_when": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands"
+  },
+  "artifact.kind": {
+    "reason": "Same as artifact.id",
+    "resolves_when": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands"
+  },
+  "artifact.title": {
+    "reason": "Same as artifact.id",
+    "resolves_when": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands"
+  },
+  "artifact.body_md": {
+    "reason": "Same as artifact.id",
+    "resolves_when": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands"
+  },
+  "artifact.metadata": {
+    "reason": "Same as artifact.id",
+    "resolves_when": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands"
+  },
+  "artifact.created_by": {
+    "reason": "Same as artifact.id",
+    "resolves_when": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands"
+  },
+  "artifact.source_event_id": {
+    "reason": "Same as artifact.id",
+    "resolves_when": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands"
+  },
+  "artifact.parent_artifact_id": {
+    "reason": "Same as artifact.id (tree structure)",
+    "resolves_when": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands"
+  },
+  "artifact.child_artifact_ids": {
+    "reason": "Same as artifact.id (tree structure)",
+    "resolves_when": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands"
+  },
+  "artifact.intent_source": {
+    "reason": "Same as artifact.id",
+    "resolves_when": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands"
+  },
+  "artifact.source_ref": {
+    "reason": "Same as artifact.id",
+    "resolves_when": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands"
+  },
+  "artifact.outline_json": {
+    "reason": "Same as artifact.id",
+    "resolves_when": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands"
+  },
+  "artifact.sections": {
+    "reason": "Same as artifact.id",
+    "resolves_when": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands"
+  },
+  "artifact.tool_kind": {
+    "reason": "Same as artifact.id (tool_kind for tool-based artifacts e.g. quiz)",
+    "resolves_when": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands"
+  },
+  "artifact.tool_state": {
+    "reason": "Same as artifact.id",
+    "resolves_when": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands"
+  },
+  "artifact.generation_status": {
+    "reason": "Same as artifact.id",
+    "resolves_when": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands"
+  },
+  "artifact.generated_by": {
+    "reason": "Same as artifact.id",
+    "resolves_when": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands"
+  },
+  "artifact.history": {
+    "reason": "Same as artifact.id",
+    "resolves_when": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands"
+  },
+
+  "echo_jobs.error_md": {
+    "reason": "Sub 0c golden E2E hard-fail path not implemented; echo handler only writes success path. error_md reserved for explicit failure scenarios test",
+    "resolves_when": "Sub 0c echo hard-fail E2E test added OR field dropped"
+  }
+}
