@@ -13,8 +13,8 @@
  * 实现：纯 TS file-walk（无 shell exec），扫描 src/ + app/ 内所有 .ts/.tsx。
  */
 
-import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
-import { resolve, dirname, join } from 'node:path';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -40,11 +40,19 @@ const TRIVIAL_FIELDS = new Set(['id', 'created_at', 'updated_at', 'version', 'ar
 
 function parseSchema(src: string): Field[] {
   const fields: Field[] = [];
+  // Find pgTable entry points so we can slice per-table blocks.
   const tableHeads = [...src.matchAll(/export const (\w+) = pgTable\(\s*'(\w+)'/g)];
+  // Also find pgView so a per-table block stops at the next entity boundary
+  // (otherwise view columns get misattributed to the preceding pgTable).
+  const viewHeads = [...src.matchAll(/export const (\w+) = pgView\(\s*'(\w+)'/g)];
+  // Sorted union of all entity-start offsets — block boundaries.
+  const boundaries = [...tableHeads, ...viewHeads].map((m) => m.index ?? 0).sort((a, b) => a - b);
   for (let i = 0; i < tableHeads.length; i++) {
     const tableName = tableHeads[i][2];
     const start = tableHeads[i].index ?? 0;
-    const end = tableHeads[i + 1]?.index ?? src.length;
+    // End at the next entity boundary (pgTable or pgView) — whichever comes first.
+    const next = boundaries.find((b) => b > start);
+    const end = next ?? src.length;
     const block = src.slice(start, end);
     const fieldMatches = block.matchAll(
       /^\s{2,4}(\w+):\s+(text|integer|real|jsonb|boolean|timestamp|smallint|bigint|date|numeric|varchar|json|uuid|bytea|check|primaryKey|unique|index|foreignKey)\(/gm,
@@ -78,7 +86,9 @@ function walkFiles(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-function buildIndex(files: string[]): Map<string, { src: string; hasInsert: boolean; hasUpdate: boolean }> {
+function buildIndex(
+  files: string[],
+): Map<string, { src: string; hasInsert: boolean; hasUpdate: boolean }> {
   const index = new Map<string, { src: string; hasInsert: boolean; hasUpdate: boolean }>();
   for (const f of files) {
     const src = readFileSync(f, 'utf8');
@@ -165,7 +175,9 @@ function main() {
   console.log(`  init-only: ${results.filter((r) => r.status === 'init-only').length}`);
   console.log(`  update-only: ${results.filter((r) => r.status === 'update-only').length}`);
   console.log(`  stub (allowed): ${allowedStubs.length}`);
-  console.log(`  stub (unallowed): ${unallowedStubs.length}${unallowedStubs.length > 0 ? ' ⚠️' : ''}`);
+  console.log(
+    `  stub (unallowed): ${unallowedStubs.length}${unallowedStubs.length > 0 ? ' ⚠️' : ''}`,
+  );
 
   if (unallowedStubs.length > 0 && !listOnly) {
     console.log('\n⚠️  Unallowed stubs found:\n');

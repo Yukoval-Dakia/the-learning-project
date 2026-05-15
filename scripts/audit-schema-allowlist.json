@@ -1,18 +1,6 @@
 {
   "_comment": "Schema fields with no INSERT/UPDATE write path. Each entry MUST have reason + resolves_when. When the resolving milestone lands, remove from this allowlist.",
 
-  "knowledge.base_mastery": {
-    "reason": "ADR-0012 decided derived view; field will be DROPped in Phase 1c.1 Step 1",
-    "resolves_when": "Phase 1c.1 Step 1 DROP COLUMN executed"
-  },
-  "knowledge.ai_delta_mastery": {
-    "reason": "ADR-0012 decided derived view; field will be DROPped in Phase 1c.1 Step 1",
-    "resolves_when": "Phase 1c.1 Step 1 DROP COLUMN executed"
-  },
-  "knowledge.last_active_at": {
-    "reason": "ADR-0012 decided derived view; field will be DROPped in Phase 1c.1 Step 1",
-    "resolves_when": "Phase 1c.1 Step 1 DROP COLUMN executed"
-  },
   "knowledge.delete_reason": {
     "reason": "Soft-delete metadata; Sub 1 maintenance lane (ADR-0004) will write it",
     "resolves_when": "Sub 1 MaintenanceProposeTask delete_knowledge path implemented"
@@ -42,84 +30,6 @@
   "completion_evidence.user_overrode_low_evidence": {
     "reason": "Phase 1b user-override flow not implemented; decision pending",
     "resolves_when": "Phase 1b override-completion UI path landed OR field dropped"
-  },
-
-  "judgment.id": {
-    "reason": "Sub 1 JudgeTask deferred; 1c.1 DROP judgment (judge → event action='judge')",
-    "resolves_when": "Phase 1c.1 DROP judgment executed"
-  },
-  "judgment.answer_id": {
-    "reason": "Same as judgment.id",
-    "resolves_when": "Phase 1c.1 DROP judgment executed"
-  },
-  "judgment.judge_kind": {
-    "reason": "Same as judgment.id",
-    "resolves_when": "Phase 1c.1 DROP judgment executed"
-  },
-  "judgment.verdict": {
-    "reason": "Same as judgment.id",
-    "resolves_when": "Phase 1c.1 DROP judgment executed"
-  },
-  "judgment.score": {
-    "reason": "Same as judgment.id",
-    "resolves_when": "Phase 1c.1 DROP judgment executed"
-  },
-  "judgment.feedback_md": {
-    "reason": "Same as judgment.id",
-    "resolves_when": "Phase 1c.1 DROP judgment executed"
-  },
-  "judgment.error_detail": {
-    "reason": "Same as judgment.id",
-    "resolves_when": "Phase 1c.1 DROP judgment executed"
-  },
-  "judgment.knowledge_ids_touched": {
-    "reason": "Same as judgment.id",
-    "resolves_when": "Phase 1c.1 DROP judgment executed"
-  },
-  "judgment.prior_judgment_id": {
-    "reason": "Same as judgment.id",
-    "resolves_when": "Phase 1c.1 DROP judgment executed"
-  },
-  "judgment.appeal_kind": {
-    "reason": "Same as judgment.id",
-    "resolves_when": "Phase 1c.1 DROP judgment executed"
-  },
-  "judgment.is_effective": {
-    "reason": "Same as judgment.id",
-    "resolves_when": "Phase 1c.1 DROP judgment executed"
-  },
-  "judgment.is_flexible_fallback": {
-    "reason": "Same as judgment.id",
-    "resolves_when": "Phase 1c.1 DROP judgment executed"
-  },
-  "judgment.triggered_by": {
-    "reason": "Same as judgment.id",
-    "resolves_when": "Phase 1c.1 DROP judgment executed"
-  },
-  "judgment.judged_by": {
-    "reason": "Same as judgment.id",
-    "resolves_when": "Phase 1c.1 DROP judgment executed"
-  },
-  "judgment.judged_at": {
-    "reason": "Same as judgment.id",
-    "resolves_when": "Phase 1c.1 DROP judgment executed"
-  },
-
-  "user_appeal.judgment_id": {
-    "reason": "user_appeal references judgment; both DROP in 1c.1",
-    "resolves_when": "Phase 1c.1 DROP user_appeal executed"
-  },
-  "user_appeal.reason": {
-    "reason": "user_appeal table dead; 1c.1 DROP",
-    "resolves_when": "Phase 1c.1 DROP user_appeal executed"
-  },
-  "user_appeal.resolved_judgment_id": {
-    "reason": "user_appeal table dead; 1c.1 DROP",
-    "resolves_when": "Phase 1c.1 DROP user_appeal executed"
-  },
-  "user_appeal.appealed_at": {
-    "reason": "user_appeal table dead; 1c.1 DROP",
-    "resolves_when": "Phase 1c.1 DROP user_appeal executed"
   },
 
   "question.rubric_json": {
@@ -286,5 +196,95 @@
   "echo_jobs.error_md": {
     "reason": "Sub 0c golden E2E hard-fail path not implemented; echo handler only writes success path. error_md reserved for explicit failure scenarios test",
     "resolves_when": "Sub 0c echo hard-fail E2E test added OR field dropped"
+  },
+
+  "_comment_phase1c1_lane_a": "Phase 1c.1 Lane A added 4 new tables (event, learning_session, material_fsrs_state, knowledge_edge). Their write paths land in Lane B (Zod schemas in src/core/schema/event/**) and main-lane Step 4-6 (server read-path rewrite + /api/events + edges CRUD). Lane A only declares schema; write paths must follow.",
+
+  "learning_session.summary_md": {
+    "reason": "type='conversation' session summary; Lane B / Step 5 LearningSession module writes",
+    "resolves_when": "Phase 1c.1 Step 5 LearningSession.Conversation handler implemented"
+  },
+  "learning_session.goal_id": {
+    "reason": "Phase 1d goal linkage placeholder; not written in 1c.1",
+    "resolves_when": "Phase 1d goal-tracking implementation"
+  },
+  "learning_session.started_at": {
+    "reason": "Session writer in Lane B / Step 5; defaults via DB but no app-level write yet",
+    "resolves_when": "Phase 1c.1 Step 5 LearningSession module implemented"
+  },
+  "learning_session.ended_at": {
+    "reason": "Session end transition in Lane B / Step 5",
+    "resolves_when": "Phase 1c.1 Step 5 LearningSession module implemented"
+  },
+
+  "event.session_id": {
+    "reason": "event-stream writer lands in Lane B / Step 4 (server read-path rewrite + events queries module)",
+    "resolves_when": "Phase 1c.1 Step 4 events writer module implemented"
+  },
+  "event.actor_kind": {
+    "reason": "Same as event.session_id",
+    "resolves_when": "Phase 1c.1 Step 4 events writer module implemented"
+  },
+  "event.actor_ref": {
+    "reason": "Same as event.session_id",
+    "resolves_when": "Phase 1c.1 Step 4 events writer module implemented"
+  },
+  "event.action": {
+    "reason": "Same as event.session_id",
+    "resolves_when": "Phase 1c.1 Step 4 events writer module implemented"
+  },
+  "event.subject_kind": {
+    "reason": "Same as event.session_id",
+    "resolves_when": "Phase 1c.1 Step 4 events writer module implemented"
+  },
+  "event.subject_id": {
+    "reason": "Same as event.session_id",
+    "resolves_when": "Phase 1c.1 Step 4 events writer module implemented"
+  },
+  "event.caused_by_event_id": {
+    "reason": "event chain — judge ← attempt link; Lane B / Step 4 attribution writer",
+    "resolves_when": "Phase 1c.1 Step 4 attribution event writer implemented"
+  },
+  "event.cost_micro_usd": {
+    "reason": "AI event cost stamping in Lane B / Step 7 AI prompt/registry updates",
+    "resolves_when": "Phase 1c.1 Step 7 AI prompts emit cost on event write"
+  },
+
+  "material_fsrs_state.subject_kind": {
+    "reason": "FSRS projection writer in Step 4-5 review handler",
+    "resolves_when": "Phase 1c.1 Step 4-5 review event → FSRS state projection implemented"
+  },
+  "material_fsrs_state.subject_id": {
+    "reason": "Same as material_fsrs_state.subject_kind",
+    "resolves_when": "Phase 1c.1 Step 4-5 review event → FSRS state projection implemented"
+  },
+  "material_fsrs_state.due_at": {
+    "reason": "Same as material_fsrs_state.subject_kind",
+    "resolves_when": "Phase 1c.1 Step 4-5 review event → FSRS state projection implemented"
+  },
+  "material_fsrs_state.last_review_event_id": {
+    "reason": "Same as material_fsrs_state.subject_kind",
+    "resolves_when": "Phase 1c.1 Step 4-5 review event → FSRS state projection implemented"
+  },
+
+  "knowledge_edge.from_knowledge_id": {
+    "reason": "knowledge_edge CRUD in Step 6 /api/knowledge/edges and Step 7 AI propose-edge branch",
+    "resolves_when": "Phase 1c.1 Step 6 /api/knowledge/edges + Step 7 AI propose implemented"
+  },
+  "knowledge_edge.to_knowledge_id": {
+    "reason": "Same as knowledge_edge.from_knowledge_id",
+    "resolves_when": "Phase 1c.1 Step 6 /api/knowledge/edges + Step 7 AI propose implemented"
+  },
+  "knowledge_edge.relation_type": {
+    "reason": "Same as knowledge_edge.from_knowledge_id",
+    "resolves_when": "Phase 1c.1 Step 6 /api/knowledge/edges + Step 7 AI propose implemented"
+  },
+  "knowledge_edge.weight": {
+    "reason": "Same as knowledge_edge.from_knowledge_id",
+    "resolves_when": "Phase 1c.1 Step 6 /api/knowledge/edges + Step 7 AI propose implemented"
+  },
+  "knowledge_edge.created_by": {
+    "reason": "Same as knowledge_edge.from_knowledge_id",
+    "resolves_when": "Phase 1c.1 Step 6 /api/knowledge/edges + Step 7 AI propose implemented"
   }
 }
