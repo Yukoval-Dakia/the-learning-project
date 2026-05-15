@@ -16,6 +16,7 @@
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "worker:dev": "tsx scripts/worker.ts",
+    "audit:schema": "tsx scripts/audit-schema-writes.ts",
     "compose:up": "docker compose up -d",
     "compose:down": "docker compose down",
     "compose:build": "docker compose build",
