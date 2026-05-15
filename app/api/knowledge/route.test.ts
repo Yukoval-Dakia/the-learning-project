@@ -4,8 +4,6 @@ import { resetDb, testDb } from '../../../tests/helpers/db';
 import { GET } from './route';
 
 const KNOWLEDGE_BASE = {
-  base_mastery: 0 as const,
-  ai_delta_mastery: 0 as const,
   merged_from: [] as string[],
   proposed_by_ai: false,
   approval_status: 'approved' as const,

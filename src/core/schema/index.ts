@@ -143,16 +143,8 @@ export const Answer = g.AnswerSelectGenerated.extend({
 });
 export type Answer = z.infer<typeof Answer>;
 
-export const Judgment = g.JudgmentSelectGenerated.extend({
-  judge_kind: b.JudgeKind,
-  verdict: z.enum(['correct', 'partial', 'incorrect']),
-  triggered_by: z.enum(['initial', 'borderline', 'appeal', 'force']).nullable(),
-});
-export type Judgment = z.infer<typeof Judgment>;
-
-export const UserAppealInsert = g.UserAppealInsertGenerated;
-export const UserAppeal = g.UserAppealSelectGenerated;
-export type UserAppeal = z.infer<typeof UserAppeal>;
+// Judgment + UserAppeal removed in Phase 1c.1 Step 1.4 (Lane A) per ADR-0006 v2 /
+// data-assumptions §O2. Judge is now an event (action='judge', subject_kind='event').
 
 // ---------- LearningItem 完成证据 ----------
 export const CompletionEvidenceInsert = g.CompletionEvidenceInsertGenerated.extend({

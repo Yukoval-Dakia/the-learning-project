@@ -30,8 +30,6 @@ async function insertKnowledge(opts: {
     name: opts.name ?? opts.id,
     domain: opts.domain !== undefined ? opts.domain : 'wenyan',
     parent_id: opts.parent_id ?? null,
-    base_mastery: 0,
-    ai_delta_mastery: 0,
     merged_from: opts.merged_from ?? [],
     proposed_by_ai: false,
     approval_status: 'approved',
