@@ -1,5 +1,18 @@
 # Phase 1c.1 Implementation Plan — event 核 + learning_session + mesh + UI 脚手架
 
+> ⚠️ **REFRESH 2026-05-16 — Step 3-9 body 重写 + Lane 结构 + ADR-0011 v2 + v2.1 design 落定**
+>
+> 之前 Step 3-9 body 仍把 entity 当 `encounter`（单表）写，与 ADR-0006 v2（event-stream）不一致 — 本轮 refresh 把 body 与 banner 对齐。`encounter` 一词从 plan body 全部撤回；用户面"错题"概念保留为 `events WHERE action='attempt' AND outcome='failure'` 视图。
+>
+> **新增**：
+> - **Lane 结构**（见下节）：Step 1 / 2 / 10-C1 三 lane 并行；Step 3-9 sequential 在主 lane 上跑
+> - **Lane C 切 C1（1c.1）+ C2（1c.2）**：v2.1 设计的 4 个 mesh / tool-use Primitives 依赖 Lane A/B schema 落定，推 1c.2
+> - **ADR-0011 v2**（2026-05-16）：`accept_suggestion.payload.suggestion_kind = 'proactive' | 'corrective'` discriminator —— 落进 Step 2 KnownEvent 测试用例
+> - **Step 9 修正**：DROP 不含 `artifact`（per ADR-0006 v2，artifact 激活为 C 档 AI 产出落点）
+> - **v2.1 设计 promoted**：`docs/design/loom-design-v2.1/` 现在是 canonical 设计源（tokens.css + Primitives.jsx + 6 路由 + Copilot drawer）
+>
+> ---
+>
 > ⚠️ **REFRESH 2026-05-15 晚 — ADR-0011 + ADR-0012 追加**
 >
 > 本 plan 经过 3 轮 ADR 加固，banner 现在含全部 deltas：
@@ -32,19 +45,52 @@
 >
 > **For agentic workers**：开干前 (a) 补 TDD substeps（参考 sub-0c plan 的 X.1 red / X.3 green / X.5 commit 模式）(b) **必须**先确认 Sub 0c 已 merge 到 main（✅ commit 054837c）(c) 读 ADR-0006 v2 / 0010 / 0011 / 0012 + 数据假设清单 / loom design v2 + v2.1 brief 全部完文 (d) 起 worktree
 
-**Goal**：把 Phase 1c 的双 first-class entity（`encounter` + `learning_session`）一次性落地——schema、数据迁移、server code rename、模块演化、API rename、AI prompts、测试，外加 UI 脚手架（让 1c.2 五页有家可回）。Phase 1c.1 收尾时：mistake / ingestion_session / artifact 三张表 DROP，新 schema 长成，UI 框架可见 health 页面。
+**Goal**：把 Phase 1c 的核心实体（`event` + `learning_session` + `knowledge_edge` mesh）一次性落地——schema、数据迁移、server read-path 重写、模块演化、API body 重写、AI prompts、测试，外加 UI 脚手架 C1（让 1c.2 五页 + 4 个 mesh/tool-use Primitives 有家可回）。Phase 1c.1 收尾时：mistake / review_event / dreaming_proposal / ingestion_session 四张表 DROP，artifact 激活为 C 档落点，新 schema 长成，UI 框架可见 health 页面。
 
 **Spec**：`docs/superpowers/specs/2026-05-14-phase1c-design.md` + addendum `docs/superpowers/specs/2026-05-15-phase1c-loom-design-addendum.md`
 
 **ADRs**：
-- ADR-0006（encounter 替换 mistake）
+- ADR-0006 v2（event 核 — AI 与用户结构对等）
 - ADR-0007（单用户假设）
 - ADR-0008（LearningSession 多态 envelope）
+- ADR-0010（knowledge_mesh — tree + edge）
+- ADR-0011 v2（tool_use + accept_suggestion + edge events; suggestion_kind discriminator）
+- ADR-0012（mastery → derived view）
 - 演化 ADR-0005（IngestionSession single-owner → LearningSession single-owner）
 
 **前置（不可妥协）**：Sub 0c 完全 merge 到 main。`git log main --oneline` 含 sub-0c 收尾 commit；CI 绿。
 
-**预估**：10-14 d 单人推进，13 个 Step。
+**预估**：单线 20-27 d；按下面 Lane 结构并行后 9-12 d。
+
+---
+
+## Lane 结构（2026-05-16 加）
+
+并行 3 lane + 主 lane sequential：
+
+```
+                    ┌─ Lane A (worktree-A) ─ Step 1 schema / migration / view ─┐
+Step 0 (main) ──────┼─ Lane B (worktree-B) ─ Step 2 Zod / event union ─────────┼─→ converge ─→ Step 3 → 4 → 5 → 6 → 7 → 8 → 9 → 11 → 12 → 13
+                    └─ Lane C1 (worktree-C) ─ Step 10 UI scaffold (C1 scope) ──┘
+```
+
+**Lane 共享契约**（开干前锁，主 lane 写入 spec addendum）：
+- `event` 表 schema（Lane A 落 DDL，Lane B 读 columns）
+- `action` enum 11 个 KnownEvent + `experimental:*`（Lane B 落 Zod，Lane A index 用）
+- `subject_kind` enum 8 个（同上）
+
+**Lane 间 dependency**：
+- Lane B 引用 Lane A 的表名 / 列名，但只在测试 fixture（Zod parse 不依赖 drizzle types）— **可同时跑**
+- Lane C1 用 v2.1 设计的 tokens.css + Primitives.jsx，**完全独立** schema —— 可同时跑
+
+**Lane C 切 C1（本 1c.1）/ C2（推 1c.2）**：
+
+| Lane C1（Step 10，本 plan） | Lane C2（推 1c.2）|
+|---|---|
+| Tailwind v4 setup · tokens.css lift · Source Serif 4 / Noto Serif SC / JetBrains Mono CDN | mesh / tool-use Primitives（依赖 Lane A schema） |
+| v1+v2 通用 10 个 Primitives port：Brand / Icon / Button / Badge / StatusBadge / CauseBadge / Card / PageHeader / TopNav / TabBar | `<ToolUseCard>` · `<KnowledgeRelation>` · `<EdgeProposalCard>` · `<KnowledgeGraph>`（手写 SVG verlet） |
+| `/health` 烟测页 + TanStack Query + Zustand provider | Copilot drawer 三段式 |
+| 2-3d | 3-4d 并到 1c.2 第一步 |
 
 ---
 
@@ -379,36 +425,69 @@ Commit：`feat(1c.1): Step 2 — Event Zod discriminated union (12 known + exper
 
 ---
 
-## Step 3: 数据迁移脚本（mistake → encounter，ingestion_session → learning_session）
+## Step 3: 数据迁移脚本（三表 → event，ingestion_session → learning_session）
 
 写 `scripts/migrate-phase1c1.ts`（参考 Sub 5 export/import 风格）：
 
-- 读 `mistake` 全表 → 每行映射：`outcome='wrong'`、`material_ref={kind:'question', id:question_id}`、`evidence={wrong_answer_md, wrong_answer_image_refs, cause}` → INSERT 进 `encounter`
-- 读 `ingestion_session` 全表 → 每行映射：`type='ingestion'`、`status` 平移、其他 ingestion-specific 列对齐 → INSERT 进 `learning_session`
-- **未做**：DROP 旧表（留给 Step 9）
+**三表 → event**（ADR-0006 v2 §"DROP 三张表"）：
 
-测试：建一个 fixture mistake + ingestion_session → 跑 migration → 验证新表行符合预期 + 旧表数据不变。
+- 读 `mistake` 全表 → 每行映射为 1-2 个 event：
+  - `event(actor_kind='user', action='attempt', subject_kind='question', subject_id=question_id, outcome='failure', payload={user_answer_md, user_answer_image_refs, knowledge_ids})`
+  - 若 `mistake.cause IS NOT NULL`：再写一个 `event(actor_kind='agent', actor_ref='legacy_attribution', action='judge', subject_kind='event', subject_id=<attempt_event.id>, payload={cause, analysis_md, confidence}, caused_by_event_id=<attempt_event.id>)`
+- 读 `review_event` 全表（若有数据） → `event(actor_kind='user', action='review', subject_kind='question', subject_id=question_id, payload={rating, fsrs_state_before, fsrs_state_after}, outcome='success')`
+  - 同时把最新一条 review_event 的 fsrs_state_after 投影进 `material_fsrs_state(subject_kind='question', subject_id=question_id, state, due_at, last_review_event_id)`
+- 读 `dreaming_proposal` 全表（若有数据） → `event(actor_kind='agent', actor_ref='dreaming', action='propose', subject_kind='knowledge', payload={proposed_knowledge, parent_id, reasoning})`
+- 读 `judgment` 全表（per banner，应为空） → `event(actor='agent', action='judge', subject_kind='event', ...)` 占位逻辑（实际跑应跳过）
 
-Commit：`feat(1c.1): data migration script — mistake/ingestion_session → encounter/learning_session`
+**ingestion_session → learning_session**：
+
+- 每行映射：`type='ingestion'`、`status` 平移、其他 ingestion-specific 列对齐 → INSERT 进 `learning_session`
+- session_id 保留作 event.session_id 外键候选（attempt event 若来自 ingestion 期间的复习记录，链 caused_by 上去）
+
+**未做**：DROP 旧表（留给 Step 9）。脚本幂等：每个写都加 ON CONFLICT DO NOTHING 或先 SELECT 检查。
+
+测试 `scripts/migrate-phase1c1.test.ts`：建 fixture（mistake + review_event + ingestion_session）→ 跑 migration → 验证：
+- event 表行数 = mistake 数 + 有 cause 的 mistake 数 + review_event 数 + dreaming_proposal 数
+- learning_session 行数 = ingestion_session 行数
+- material_fsrs_state 只对有过 review_event 的 question 有行
+- 旧表数据不变（only-additive 迁移）
+
+Commit：`feat(1c.1): data migration script — mistake/review_event/dreaming_proposal/ingestion_session → event/learning_session`
 
 ---
 
-## Step 4: Server 端 rename — mistake → encounter（**Big Bang**）
+## Step 4: Server 端 read-path 重写 — mistake → event stream
 
-机械化批量替换（**不**修改逻辑）：
+**不是机械 rename**。`mistake` 是单表实体；`event` 是 action log。同一份"错题数据"在新模型下是 1-2 个 events 的 view（attempt + optional judge）。所以 server code 要换查询模式：
 
-- `src/server/knowledge/attribute.ts`：`mistake` 表引用 → `encounter` 表；写入时 `outcome='wrong'`、cause 入 `evidence.cause`
-- `src/server/knowledge/propose.ts`：同上
-- `src/server/knowledge/review.ts`：query mistake → query encounter（仍 filter outcome='wrong'）
-- `src/server/export/csv.ts`：encounter 列、evidence 拆出
-- 所有 `import { mistake } from '@/db/schema'` → `import { encounter } from '@/db/schema'`
-- 全部相关 test 同步改
+| 旧 | 新 |
+|---|---|
+| `db.select().from(mistake).where(eq(mistake.id, ...))` | `db.select().from(event).where(and(eq(event.action,'attempt'), eq(event.subject_kind,'question'), eq(event.outcome,'failure'), ...))` + LATERAL JOIN judge event |
+| `db.insert(mistake).values({...})` | `db.insert(event).values({action:'attempt', subject_kind:'question', outcome:'failure', payload:{user_answer,...}})` + 触发 attribution 写 `event(action='judge', subject_kind='event', caused_by=...)` |
+| `mistake.cause` 直接读字段 | 沿 `caused_by` 链找到对应 judge event，读 `payload.cause` |
 
-**注意**：本步**写代码用 encounter 表**，但**老 mistake 表仍未删**（Step 9 删）。在测试里 verify：所有路径只写 encounter，不写 mistake。
+**重写文件**：
 
-`pnpm test` 全绿；`grep -r "table.*mistake\|from.*mistake\b" src/ app/` 期望仅在迁移脚本中出现。
+- `src/server/knowledge/attribute.ts`：写 attempt + judge 两个 event；不再写 mistake 表
+- `src/server/knowledge/propose.ts`：read 错题列表 = `event(action='attempt', outcome='failure')` 流；query knowledge_ids 走 event.payload jsonb GIN
+- `src/server/knowledge/review.ts`：query "近期错题" = event filter（保留同一函数签名 — 内部换实现）
+- `src/server/export/csv.ts`：rebuild 错题导出 = 按 attempt event + 关联 judge event reduce 成原 mistake-shape CSV 行（向前兼容老 CSV reader）
+- 所有 `import { mistake } from '@/db/schema'` → 删；改 `import { event } from '@/db/schema'`
+- 业务层封装：新建 `src/server/events/queries.ts` 提供 `getFailureAttempts(filter)` / `getJudgeFor(eventId)` 等 helper，让上层不写裸 event SQL（per ADR-0005 single-owner 风格 — event 表只有 events module 写）
 
-Commit（可分多 sub-commit）：`refactor(1c.1): server rename mistake → encounter (knowledge / export)`
+**测试**：
+
+- `tests/integration/mistake-readpath.test.ts`：fixture 写 attempt + judge events → 跑老 mistake-shape 查询 helper → 验证返回与历史 mistake table 一致
+- 全栈 `grep -r "from.*mistake\b\|import.*mistake\b" src/ app/` 期望仅在 `scripts/migrate-phase1c1.ts` 和 `tests/migration/` fixture 中出现（迁移期暂留）
+
+`pnpm test` 全绿；`pnpm typecheck` 全绿。
+
+**注意**：本步**写代码用 event 表**，但**老 mistake 表仍未删**（Step 9 删）。中间态：旧 mistake 数据靠 Step 8 迁移到 event 表，server code 全部读新表。
+
+Commit（可分 3 sub-commit，按文件域）：
+- `refactor(1c.1): events queries module (read-path helpers)`
+- `refactor(1c.1): attribute/propose/review server — write events instead of mistake`
+- `refactor(1c.1): export csv rebuild from event stream (back-compat)`
 
 ---
 
@@ -422,7 +501,8 @@ Commit（可分多 sub-commit）：`refactor(1c.1): server rename mistake → en
 - 删 `src/server/ingestion/session.ts`（搬空了）
 - 所有调用方（OCR handler / rescue / import route / extract route）改 import `from '@/server/session'`
 - API 命名保留 `/api/ingestion/*` 不动（语义本身没变），但内部写 `learning_session(type='ingestion')`
-- 单一所有者 invariant verify：grep `db.update(learning_session)` 在模块外应 zero hit；grep `db.update(encounter).*status` 同理
+- **event 写入路径**：所有 session 状态转移同时写一个 `event(actor_kind='system' | 'user', action='extract' | 'review' | ..., subject_kind='source_document' | 'event', session_id=<learning_session.id>)`（per banner "Step 5: LearningSession，写入路径含 event 写"）
+- 单一所有者 invariant verify：grep `db.update(learning_session)` 在模块外应 zero hit；grep `db.insert(event)` 在 module 外（除 attribution / review handler 外）应 zero hit
 
 `pnpm test` 全绿。
 
@@ -430,72 +510,114 @@ Commit：`refactor(1c.1): IngestionSession → LearningSession multi-type module
 
 ---
 
-## Step 6: API rename — `/api/mistakes` → `/api/encounters`
+## Step 6: API routes 重写 — `/api/mistakes` 保 URL，body 走 event 流
 
-- `app/api/mistakes/route.ts` → `app/api/encounters/route.ts`
-- `app/api/mistakes/recent/route.ts` → `app/api/encounters/recent/route.ts`
-- POST body schema 调整：客户端可送 `outcome`（默认 'wrong' 向后兼容）+ evidence shape
-- 所有 route test 改 path
+**URL 不改**（用户面"错题"概念稳定）；body 内部换实现：
 
-Commit：`refactor(1c.1): API rename /api/mistakes → /api/encounters`
+- `app/api/mistakes/route.ts` GET：返回 events filter → 投影到 mistake-shape JSON（用 Step 4 的 `getFailureAttempts` helper）
+- `app/api/mistakes/recent/route.ts` GET：同上，加 ORDER BY created_at DESC + LIMIT
+- `app/api/mistakes/route.ts` POST：client 送 `{question_id, user_answer, knowledge_ids, cause?}`；内部写 attempt event +（若给 cause）judge event
+- 新增 `app/api/events/route.ts`：原生 event log API（GET filter by action/subject_kind/actor）+ `app/api/events/[id]/route.ts` GET 单 event + caused_by chain（v2.1 设计 EventChain primitives 需要）
+- 新增 `app/api/knowledge/edges/route.ts` GET / POST（per banner "Step 7 新增 /api/knowledge/edges CRUD"——这块挪到 Step 6 一起 batch）
+- 所有 route test 加 event-shape 测试 + 老 mistake-shape JSON contract 保持测试
+
+Commit（可分 2 sub-commit）：
+- `feat(1c.1): /api/events + /api/knowledge/edges raw event APIs`
+- `refactor(1c.1): /api/mistakes — body re-implemented over event stream (URL stable)`
 
 ---
 
 ## Step 7: AI prompts + registry 更新
 
 - `src/ai/registry.ts` 各 task system prompt：
-  - "错题" 在用户面文案保留（"做错的题目"），但 entity 命名提到 mistake 的统一改 encounter
-  - AttributionTask: input 改 encounter shape，output 仍 cause
-  - KnowledgeReviewTask: tree snapshot + recent encounters (filter outcome='wrong'，与历史一致)
+  - "错题" 在用户面文案**保留**（用户语义稳定）
+  - 模型可见的 entity 命名：从 "mistake record" 改为 "attempt event (action=attempt, outcome=failure) 及其关联 judge event"
+  - AttributionTask: input = `event(action='attempt', outcome='failure')` + question 上下文；output = `event(action='judge', subject_kind='event', payload.cause)` —— prompt 描述这条 chain
+  - KnowledgeReviewTask: tree snapshot + recent failure attempts (filter `events WHERE action='attempt' AND outcome='failure' AND created_at > now()-7d`) + **新增**："propose new knowledge_edge" 分支（per banner Step 7 delta + ADR-0010）
+  - KnowledgeProposeTask: 同上，prompt 扩"在 propose knowledge 节点之外，也可 propose knowledge_edge (relation_type, from, to, reasoning)"
   - 其他 task 同理
-- 测试：AI runner 自测（registry parse + runTask 仍工作）
+- 测试：AI runner 自测（registry parse + runTask 仍工作）+ 新 KnowledgeReviewTask 输出能 parse 进 `ProposeKnowledgeEdge` schema（Step 2 落地）
 
-Commit：`refactor(1c.1): AI prompts + registry — entity rename mistake → encounter`
+Commit：`refactor(1c.1): AI prompts + registry — entity = event stream + edge propose branch`
 
 ---
 
-## Step 8: 跑数据迁移（一次性脚本 + 整合到 db:push 流程）
+## Step 8: 跑数据迁移 + mastery view smoke
 
-> 严格按顺序：**Step 1-7 已 merge** → 老 mistake/ingestion_session 数据 + 新 encounter/learning_session 空表共存 → 跑迁移。
+> 严格按顺序：**Step 1-7 已 merge** → 老 mistake/review_event/dreaming_proposal/ingestion_session 数据 + 新 event/learning_session 空表共存 → 跑迁移。
 
 - Production（NAS）维护窗：手动 `pnpm tsx scripts/migrate-phase1c1.ts` 跑一次
-- Dev：写 `tests/global-setup.ts` 钩子，testcontainer 初次 `db:push` 后自动跑（**幂等**：如果 encounter 已有数据则跳过）
+- Dev：写 `tests/global-setup.ts` 钩子，testcontainer 初次 `db:push` 后自动跑（**幂等**：如果 event 表已有从 mistake 转的数据则跳过）
 - 整合后跑全套测试，**期望全绿**
+- **Mastery view smoke**（per banner Step 8 delta）：
+  - `SELECT * FROM knowledge_mastery WHERE knowledge_id = '<某未练习节点>'` → `mastery IS NULL`
+  - `SELECT * FROM knowledge_mastery WHERE knowledge_id = '<刚迁移过的有 ≥3 failure attempt 的节点>'` → `mastery BETWEEN 0 AND 1` 且 `evidence_count >= 3`
+  - 加进 `tests/integration/mastery-view.test.ts`
 
-Commit：`feat(1c.1): execute data migration in test setup + add prod migration script`
+Commit：`feat(1c.1): execute data migration in test setup + mastery view smoke`
 
 ---
 
-## Step 9: DROP 旧表 — mistake / ingestion_session / artifact
+## Step 9: DROP 旧表 — mistake / review_event / dreaming_proposal / ingestion_session
 
-> 不可逆点。本步**之前**所有代码必须已切到新表。
+> 不可逆点。本步**之前**所有代码必须已切到 event/learning_session。
 
-- Drizzle schema：删除 `mistake` / `ingestion_session` / `artifact` 表定义
+**DROP 范围**（per ADR-0006 v2 + banner 修正）：
+
+- `mistake` — 数据已迁 event(action='attempt', outcome='failure')
+- `review_event` — 数据已迁 event(action='review')
+- `dreaming_proposal` — 数据已迁 event(action='propose', actor_kind='agent')
+- `ingestion_session` — 数据已迁 learning_session(type='ingestion')
+
+**保留**（per ADR-0006 v2）：
+
+- `artifact` — **激活**为 C 档 AI 主动产出落点（generate event 写入；comment update 见 [issue #34 finding 1](https://github.com/Yukoval-Dakia/the-learning-project/issues/34)）
+- `learning_item` — TODO/Goal 语义独立
+- `cost_ledger` / `tool_call_log` — per-step AI 账本
+- `job_events`（Sub 0c）— pg-boss plumbing
+
+**Already DROP in Step 1**：`judgment` + `user_appeal`（data-assumptions §O2）
+
+**操作**：
+
+- Drizzle schema：删除 `mistake` / `review_event` / `dreaming_proposal` / `ingestion_session` 表定义
 - `pnpm db:generate` 出 DROP migration
 - 同时 `src/core/schema/generated.ts` 重新 generate（生成的 Zod 类型同步消失）
-- 测试 round-trip：跑测试套件 + 全栈 grep `mistake\|ingestion_session\|artifact` 在 schema/migration 外应 zero hit
+- `src/db/schema.ts:278-280` artifact 表注释更新为 "激活 — C 档 AI 主动产出落点（per ADR-0006 v2）"——关闭 [issue #34 finding 1](https://github.com/Yukoval-Dakia/the-learning-project/issues/34)
+- 测试 round-trip：跑测试套件 + 全栈 grep `mistake|review_event|dreaming_proposal|ingestion_session` 在 schema/migration 外应 zero hit；grep `artifact` 应在 `src/server/ai/` 出现（写 generate event）
 
-Commit：`feat(1c.1): DROP mistake / ingestion_session / artifact tables — point of no return`
+Commit：`feat(1c.1): DROP 4 legacy tables (mistake/review_event/dreaming_proposal/ingestion_session) — point of no return`
 
 ---
 
-## Step 10: UI 脚手架 — Next.js routing + Zustand + TanStack Query + loom design system
+## Step 10: UI 脚手架（Lane C1 scope）— Next.js routing + Zustand + TanStack Query + v2.1 tokens
 
-> **修订 2026-05-15**（addendum L1 + L3）：drop shadcn，直接 port loom Primitives + 直接 lift design tokens 进 `@theme`。
+> **2026-05-16 refresh**：v2.1 设计 promoted 到 `docs/design/loom-design-v2.1/`（canonical）。本 Step 只 port 10 个 v1/v2 通用 Primitives（**C1 scope**）；mesh / tool-use 4 个 Primitives 推到 1c.2 Lane C2。
 
-- 替换 `app/page.tsx`：redirect 到 `/today`（addendum L2 拍板 home = today）
+**Lane C1 scope**：
+
+- 替换 `app/page.tsx`：redirect 到 `/today`
 - `app/layout.tsx`：globals.css import、TanStack Query Provider、Zustand store provider
 - `src/ui/lib/queryClient.ts`：TanStack Query 单例配置
-- `src/ui/stores/`：Zustand stores skeleton（先空：session store / encounter store）
-- `app/globals.css`：Tailwind v4 + **直接 lift `docs/design/loom-design/project/colors_and_type.css` 进 `@theme` 块**（warm paper + ink + 单一 coral + FSRS 3 档；spec addendum L3 列出完整字段映射）
-- 字体：Google Fonts CDN 装 `Source Serif 4` / `Noto Serif SC` / `JetBrains Mono`；MiSans 默认回落 PingFang SC（addendum L8.1；要 ship 时 drop `public/fonts/MiSans-Normal.ttf` + `@font-face`）
-- 资源 lift：copy `docs/design/loom-design/project/assets/loom-{monogram,wordmark}.svg` + `icon-{192,512}.png` 到 `public/`
-- `src/ui/primitives/`：port loom `Primitives.jsx` 的 10 个原子到 TSX 文件——`Brand.tsx` / `Icon.tsx`（用 `lucide-react` 替 loom 的 inline SVG，loom README 自己说"closest match is lucide-react"）/ `Button.tsx` / `Badge.tsx` / `StatusBadge.tsx` / `CauseBadge.tsx` / `Card.tsx` / `PageHeader.tsx` / `TopNav.tsx` / `TabBar.tsx`
-- `app/health/page.tsx`：测试页面，GET `/api/health` 显示 status（用 loom `<Card>` + `<Badge>` 验证 Primitives 通了）
+- `src/ui/stores/`：Zustand stores skeleton（先空：session store / event store —— 注意名是 event store，**不**叫 encounter store）
+- `app/globals.css`：Tailwind v4 + **直接 lift `docs/design/loom-design-v2.1/tokens.css` 进 `@theme` 块**（warm paper + ink + 单一 coral + FSRS 3 档 + info color；token names 完全沿用 v2.1）
+- 字体：v2.1 `tokens.css` 已含 Google Fonts `@import`（Source Serif 4 / Noto Serif SC / Noto Sans SC / JetBrains Mono）—— production 切自托管 MiSans 留 1c.2 处理
+- 资源 lift：copy `docs/design/loom-design/project/assets/loom-{monogram,wordmark}.svg` + `icon-{192,512}.png` 到 `public/`（v2.1 没改 logo —— sticking with v1 placeholder per [issue #22](https://github.com/Yukoval-Dakia/the-learning-project/issues/22)）
+- `src/ui/primitives/`：port v1/v2 通用 10 个原子到 TSX 文件，从 `docs/design/loom-design-v2.1/primitives.jsx` 抽：
+  - `Brand.tsx` / `Icon.tsx`（用 `lucide-react`）
+  - `Button.tsx` / `Badge.tsx` / `StatusBadge.tsx` / `CauseBadge.tsx`
+  - `Card.tsx` / `PageHeader.tsx` / `TopNav.tsx` / `TabBar.tsx`
+- `app/health/page.tsx`：烟测页面，GET `/api/health` 显示 status（用 `<Card>` + `<StatusBadge>` 验证 Primitives 通了）
 
-`pnpm dev` 启起来；浏览器访问 `/health` 显示 OK + 视觉用 loom palette 渲染。
+**Lane C1 不做**（推 Lane C2 / 1c.2）：
 
-Commit：`feat(1c.1): UI scaffold — Next.js routing + Zustand + TanStack Query + Tailwind v4 tokens`
+- `<ActorBadge>` / `<EventChain>` / `<ProposalCard>` / `<CopilotDrawer>` / `<CostRibbon>` / `<Lane>`（v2 引入，依赖 event/session 数据已落）
+- `<KnowledgeRelation>` / `<EdgeProposalCard>` / `<KnowledgeGraph>` / `<ToolUseCard>`（v2.1 引入，依赖 mesh schema 已落）
+- 6 路由 + Copilot drawer 的实际页面（1c.2 主菜）
+
+`pnpm dev` 启起来；浏览器访问 `/health` 显示 OK + 视觉用 v2.1 palette 渲染（warm paper + coral focus ring）。
+
+Commit：`feat(1c.1): UI scaffold (C1) — Next.js routing + Zustand + TanStack Query + v2.1 tokens + 10 base Primitives`
 
 ---
 
@@ -504,15 +626,15 @@ Commit：`feat(1c.1): UI scaffold — Next.js routing + Zustand + TanStack Query
 - `pnpm test` 全绿
 - `pnpm typecheck` 全绿
 - `pnpm lint` 全绿
+- `pnpm audit:schema` 全绿（allowlist 中 3 个 mastery stub 字段 entries 应已可删，因为字段已 DROP）
 - grep 健康度：
-  - `mistake` 在 src / app 内零 hit
-  - `ingestion_session` 在 src / app 内零 hit（migration 脚本除外）
-  - `artifact` 在 src / app 内零 hit
+  - `mistake` / `review_event` / `dreaming_proposal` / `ingestion_session` 在 src / app 内零 hit（仅 migration 脚本 + tests/migration fixture 中保留）
   - `db.update(learning_session)` 仅在 `src/server/session/` 出现
-  - `db.update(encounter).*status` 同上
-- 集成测试：跑一次完整 ingestion → import → encounter 创建 → review submit → encounter outcome='reviewed' 写入
+  - `db.insert(event)` 在 `src/server/events/` / `src/server/ai/` / `src/server/session/` 之外应 zero hit
+  - `artifact` 应在 `src/server/ai/` 出现（C 档 generate 路径）
+- 集成测试：跑一次完整 ingestion → import → attempt event 创建 → judge event 创建（attribution）→ review event → material_fsrs_state 更新 → mastery view 反映新分
 
-Commit：`test(1c.1): single-owner invariant verified across encounter + learning_session`
+Commit：`test(1c.1): single-owner invariant verified across event + learning_session + mastery view`
 
 ---
 
@@ -520,36 +642,44 @@ Commit：`test(1c.1): single-owner invariant verified across encounter + learnin
 
 - `docs/architecture.md`：
   - "录入会话状态机" 章节 → 升级为 "学习会话 (LearningSession) 多态状态机"
-  - 加 "encounter — first-class learning event" 章节
+  - 加 "event — first-class action log" 章节（user / agent / cron / system 对等）
+  - 加 "knowledge_mesh — tree + edge" 章节（per ADR-0010）
   - 删除任何 "mistake 是学习记录核心" 的描述
+  - **新增**：追认 `echo_jobs` + `/api/echo` 为 pg-boss dev harness（关闭 [issue #34 finding 2](https://github.com/Yukoval-Dakia/the-learning-project/issues/34)，选项 a）
 - `CONTEXT.md`：
-  - "提议中" 节标题改为 "核心实体（Phase 1c.1 后正式生效）"
-  - 删除 provisional 标记
-  - "错题（mistake）" 旧词条 → 改为 "encounter (outcome='wrong')" 的别名注解
-- `README.md`：如有提到 mistake 的，同步更新
+  - "已批准" 节去除 "待 Phase 1c.1 落地" 标记
+  - 删除 v1 词条注释（已被取代）
+  - "错题（mistake）" 旧词条 → 改为 `event(action='attempt', outcome='failure')` 的视图注解
+  - "复习（review）" / "归因（attribution）" / "梦境流" / "维护流" 词条同步引用对应 event filter
+- `README.md`：如有提到 mistake / encounter 的，同步更新
 
-Commit：`docs(1c.1): architecture.md + CONTEXT.md — encounter / learning_session promoted to canonical`
+Commit：`docs(1c.1): architecture.md + CONTEXT.md — event / learning_session / mesh promoted to canonical`
 
 ---
 
 ## Step 13: PR
 
 ```bash
-gh pr create --title "Phase 1c.1: encounter + learning_session full restructure + UI scaffold" \
+gh pr create --title "Phase 1c.1: event-driven core + learning_session + knowledge mesh + UI scaffold" \
   --body "$(cat <<'EOF'
 ## Summary
 - Phase 1c.1 实现 spec docs/superpowers/specs/2026-05-14-phase1c-design.md
-- ADRs: 0006 (encounter) / 0007 (single-user) / 0008 (LearningSession)
-- mistake / ingestion_session / artifact 三表 DROP；encounter + learning_session 取代
+- ADRs: 0006 v2 (event 核) / 0007 (single-user) / 0008 (LearningSession) / 0010 (mesh) / 0011 v2 (tool-use + suggestion paths) / 0012 (mastery view)
+- mistake / review_event / dreaming_proposal / ingestion_session 四表 DROP；event + learning_session + knowledge_edge 取代
+- artifact 表激活为 C 档 AI 产出落点（保留，不 DROP）
+- knowledge.{base_mastery, ai_delta_mastery, last_active_at} 三 stub 字段 DROP；CREATE VIEW knowledge_mastery
 - IngestionSession 模块 (ADR-0005) 演化为 LearningSession 多态模块 (ADR-0008)
-- UI 脚手架就位，1c.2 五页可以开始落
+- UI 脚手架 C1 就位（10 个通用 Primitives + v2.1 tokens），1c.2 主菜 6 路由 + 4 mesh/tool-use Primitives (C2)
 
 ## Test plan
 - [ ] pnpm test 全绿
 - [ ] pnpm typecheck 全绿
-- [ ] grep verify: mistake/ingestion_session/artifact 在 src/app/ 零 hit
-- [ ] 集成测试: ingestion → import → encounter → review 全链路
-- [ ] pnpm dev + 浏览器 /health 显示 OK
+- [ ] pnpm audit:schema 全绿
+- [ ] grep verify: mistake/review_event/dreaming_proposal/ingestion_session 在 src/app/ 零 hit
+- [ ] 集成测试: ingestion → attempt event → judge event → review event → mastery view 全链路
+- [ ] pnpm dev + 浏览器 /health 显示 OK + v2.1 palette
+
+Closes: #34
 
 🤖 Generated with Claude Code
 EOF
