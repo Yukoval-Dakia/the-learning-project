@@ -1,0 +1,291 @@
+/* ============================================================
+   Loom · Design Tokens
+   Yukoval Studios · 2026
+   ------------------------------------------------------------
+   A warm, Claude-ish system tuned for Chinese-first reading.
+   Single coral accent; everything else is neutral paper + ink.
+   ============================================================ */
+
+/* ── Webfonts ─────────────────────────────────────────────── */
+/* All from Google Fonts CDN for prototype portability.
+   Production: drop self-hosted Source Serif 4 + MiSans into fonts/. */
+@import url("https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&family=Noto+Serif+SC:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+
+:root {
+  /* ── Color · Paper (warm whites) ───────────────────────── */
+  --paper:        #FAF9F5;  /* page background */
+  --paper-sunk:   #F5F1E8;  /* recessed surface, large fills */
+  --paper-raised: #FFFFFF;  /* card on paper */
+  --paper-tint:   #F2EDE0;  /* subtle highlight stripe */
+
+  /* ── Color · Ink (warm slates) ─────────────────────────── */
+  --ink:        #1F1E1D;    /* fg-1 · primary text */
+  --ink-2:      #3D3B36;    /* fg-2 · headings on paper */
+  --ink-3:      #5C5B57;    /* fg-3 · secondary copy */
+  --ink-4:      #8A8880;    /* fg-4 · meta, captions */
+  --ink-5:      #B6B3A8;    /* fg-5 · disabled, hairlines */
+
+  /* ── Color · Hairlines & dividers ──────────────────────── */
+  --line:        #E8E4D8;   /* default border */
+  --line-strong: #D5D0BF;   /* emphasized border */
+  --line-soft:   #F0EBDD;   /* faint divider */
+
+  /* ── Color · Coral (single accent) ─────────────────────── */
+  --coral:        #D97757;  /* brand · 织线珊瑚 */
+  --coral-hover:  #C2553A;
+  --coral-press:  #A93F26;
+  --coral-soft:   #FAEDE5;  /* tint background */
+  --coral-line:   #EDC3AE;  /* tinted border */
+  --coral-ink:    #6E2C18;  /* coral text on coral-soft */
+
+  /* ── Color · Semantic (FSRS · 三档) ────────────────────── */
+  /* 不会 · again */
+  --again:        #B5341B;
+  --again-soft:   #F6E1D8;
+  --again-line:   #E8B7A4;
+  --again-ink:    #5A1709;
+
+  /* 模糊 · hard */
+  --hard:         #A87519;
+  --hard-soft:    #F6ECD2;
+  --hard-line:    #E0C788;
+  --hard-ink:     #4A3208;
+
+  /* 会了 · good */
+  --good:         #4A7C59;
+  --good-soft:    #E2EBDF;
+  --good-line:    #B5CDB8;
+  --good-ink:     #1F3625;
+
+  /* informational (used sparingly — AI-attributed) */
+  --info:         #4F6E8E;
+  --info-soft:    #E2E9F1;
+  --info-ink:     #1F3247;
+
+  /* ── Type · Families ───────────────────────────────────── */
+  --font-serif: "Source Serif 4", "Noto Serif SC", "Songti SC",
+                "STSong", "FangSong", ui-serif, Georgia, serif;
+  --font-sans:  "Noto Sans SC", "PingFang SC", "MiSans",
+                "Hiragino Sans GB", -apple-system, BlinkMacSystemFont,
+                "Segoe UI", system-ui, sans-serif;
+  --font-mono:  "JetBrains Mono", "Source Han Mono", ui-monospace,
+                "SFMono-Regular", "Cascadia Code", Consolas, monospace;
+
+  /* Alias — 文言文 first-class */
+  --font-wenyan: "Source Serif 4", "Noto Serif SC", "Songti SC",
+                 "STSong", "FangSong", serif;
+
+  /* ── Type · Scale ──────────────────────────────────────── */
+  /* Mobile-first: nothing smaller than 14px ever ships. */
+  --fs-meta:    13px;   /* internal-only tags, chips */
+  --fs-caption: 14px;   /* meta lines, helper copy   ← min on screen */
+  --fs-body:    15px;   /* default body              */
+  --fs-body-lg: 17px;   /* preferred reading size    */
+  --fs-h6:      15px;
+  --fs-h5:      17px;
+  --fs-h4:      19px;
+  --fs-h3:      22px;
+  --fs-h2:      28px;
+  --fs-h1:      36px;
+  --fs-display: 48px;   /* hero only                 */
+
+  /* line-height — Chinese needs more air */
+  --lh-tight:   1.35;
+  --lh-snug:    1.5;
+  --lh-prose:   1.7;    /* default for 中文 body */
+  --lh-loose:   1.85;   /* for 文言文 long passages */
+
+  /* letter-spacing */
+  --ls-tight:   -0.015em;
+  --ls-normal:  0;
+  --ls-wide:    0.04em;  /* small caps / labels */
+
+  /* ── Spacing · 4-pt grid ───────────────────────────────── */
+  --s-1:  4px;
+  --s-2:  8px;
+  --s-3:  12px;
+  --s-4:  16px;
+  --s-5:  20px;
+  --s-6:  24px;
+  --s-8:  32px;
+  --s-10: 40px;
+  --s-12: 48px;
+  --s-16: 64px;
+  --s-20: 80px;
+  --s-24: 96px;
+
+  /* ── Radii ─────────────────────────────────────────────── */
+  --r-1: 4px;    /* chips, tags */
+  --r-2: 6px;    /* inputs, buttons */
+  --r-3: 8px;    /* cards */
+  --r-4: 12px;   /* modals, large cards */
+  --r-pill: 999px;
+
+  /* ── Shadows · soft & warm, never crisp ────────────────── */
+  --shadow-1: 0 1px 0 rgba(60, 50, 30, 0.04),
+              0 1px 2px rgba(60, 50, 30, 0.04);
+  --shadow-2: 0 1px 0 rgba(60, 50, 30, 0.04),
+              0 4px 14px -4px rgba(60, 50, 30, 0.08);
+  --shadow-3: 0 2px 0 rgba(60, 50, 30, 0.04),
+              0 12px 32px -8px rgba(60, 50, 30, 0.12);
+  --shadow-focus: 0 0 0 3px rgba(217, 119, 87, 0.22);
+  --shadow-inset: inset 0 1px 0 rgba(60, 50, 30, 0.04);
+
+  /* ── Motion ────────────────────────────────────────────── */
+  --ease-out:   cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in:    cubic-bezier(0.55, 0, 0.68, 0);
+  --ease-soft:  cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-fast:   120ms;
+  --dur-base:   200ms;
+  --dur-slow:   320ms;
+
+  /* ── Layout caps ───────────────────────────────────────── */
+  --cap-prose:  680px;  /* reading column */
+  --cap-app:    960px;  /* admin pages, /record etc */
+  --cap-wide:   1200px; /* /knowledge, /_/inspect */
+}
+
+/* ============================================================
+   Semantic element styles
+   ============================================================ */
+
+html, body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  line-height: var(--lh-prose);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "ss01", "cv11";
+}
+
+/* Headings — serif for display, sans for in-app */
+h1, .h1 {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h1);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--ls-tight);
+  color: var(--ink);
+  font-weight: 500;
+}
+h2, .h2 {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h2);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--ls-tight);
+  color: var(--ink);
+  font-weight: 500;
+}
+h3, .h3 {
+  font-family: var(--font-sans);
+  font-size: var(--fs-h3);
+  line-height: var(--lh-snug);
+  color: var(--ink);
+  font-weight: 600;
+}
+h4, .h4 {
+  font-family: var(--font-sans);
+  font-size: var(--fs-h4);
+  line-height: var(--lh-snug);
+  color: var(--ink-2);
+  font-weight: 600;
+}
+h5, .h5 {
+  font-family: var(--font-sans);
+  font-size: var(--fs-h5);
+  line-height: var(--lh-snug);
+  color: var(--ink-2);
+  font-weight: 600;
+}
+h6, .h6 {
+  font-family: var(--font-sans);
+  font-size: var(--fs-h6);
+  line-height: var(--lh-snug);
+  color: var(--ink-3);
+  font-weight: 600;
+  letter-spacing: var(--ls-wide);
+  text-transform: none; /* never UPPERCASE in 中文 contexts */
+}
+
+p {
+  font-size: var(--fs-body);
+  line-height: var(--lh-prose);
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+
+/* 文言文 passages — bigger, airier, serif */
+.wenyan, .prose-cn {
+  font-family: var(--font-wenyan);
+  font-size: var(--fs-body-lg);
+  line-height: var(--lh-loose);
+  color: var(--ink);
+  letter-spacing: 0.01em;
+}
+
+small, .caption {
+  font-size: var(--fs-caption);
+  line-height: var(--lh-snug);
+  color: var(--ink-3);
+}
+
+.meta {
+  font-size: var(--fs-meta);
+  line-height: var(--lh-snug);
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+}
+
+code, kbd, samp, pre, .mono {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+code {
+  background: var(--paper-sunk);
+  padding: 0.1em 0.35em;
+  border-radius: var(--r-1);
+  color: var(--ink-2);
+}
+
+pre {
+  background: var(--paper-sunk);
+  border: 1px solid var(--line-soft);
+  padding: var(--s-4);
+  border-radius: var(--r-3);
+  overflow-x: auto;
+  line-height: var(--lh-snug);
+}
+
+a {
+  color: var(--coral);
+  text-decoration: underline;
+  text-decoration-color: var(--coral-line);
+  text-underline-offset: 2px;
+  transition: color var(--dur-fast) var(--ease-out),
+              text-decoration-color var(--dur-fast) var(--ease-out);
+}
+a:hover {
+  color: var(--coral-hover);
+  text-decoration-color: var(--coral);
+}
+
+hr {
+  border: 0;
+  height: 1px;
+  background: var(--line);
+  margin: var(--s-8) 0;
+}
+
+::selection {
+  background: var(--coral-soft);
+  color: var(--coral-ink);
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+  border-radius: var(--r-2);
+}
