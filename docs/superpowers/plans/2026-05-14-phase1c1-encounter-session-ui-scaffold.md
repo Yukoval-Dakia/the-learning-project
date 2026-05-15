@@ -255,25 +255,127 @@ Commit：`feat(1c.1): Step 1 schema — event + mesh + DROP stub fields + knowle
 
 ---
 
-## Step 2: per-outcome + per-session-type Zod schemas
+## Step 2: per-(action × subject_kind) Zod discriminated union + learning_session schemas
 
-在 `src/core/schema/` 新建 `encounter.ts` 与 `learning_session.ts`：
+> 本 Step 落地 ADR-0006 v2 + ADR-0010 + ADR-0011 = **12 个 KnownEvent + 1 个 ExperimentalEvent**。Option 折中：核心严守 Zod discriminated union；experimental:* 命名空间松守。
 
-- `EncounterOutcome` enum
-- `MaterialRef` polymorphic Zod schema（kind discriminant）
-- `EvidenceByOutcome` discriminated union：
-  - `wrong` → `{ wrong_answer_md, wrong_answer_image_refs, cause }`
-  - `right` → `{ answer_md, took_ms? }`
-  - `exposed` → `{ duration_ms?, scrolled?: boolean }`
-  - `created` → `{ artifact_ref?, output_md? }`（**注**：artifact 表已 DROP，此 ref 暂为 free-text id 字符串）
-  - `drilled` → `{ source_encounter_id, attempt_outcome }`
-  - `reviewed` → `{ source_encounter_id, fsrs_rating }`
-- `LearningSessionType` enum
-- `LearningSessionStatusByType` discriminated union（per-type 状态机 enum）
+### Step 2.1: 共用 building blocks
 
-Test：每种 outcome × evidence 组合至少 1 个 parse 用例；非法组合（如 outcome='wrong' 但 evidence shape='right'）必须拒绝。
+`src/core/schema/event/blocks.ts`：
 
-Commit：`feat(1c.1): per-outcome / per-session-type Zod schemas`
+- `ActorKind` enum: `'user' | 'agent' | 'cron' | 'system'`
+- `SubjectKind` enum: `'question' | 'knowledge' | 'knowledge_edge' | 'artifact' | 'source_document' | 'event' | 'chip' | 'query'`
+- `MaterialRef` polymorphic Zod schema（kind discriminant）—— 用于 payload 内引用 question / knowledge / artifact
+- `CauseSchema`（ADR-0006 v2 原 10 类 enum + analysis_md + confidence）
+- `FsrsStateSchema`（ts-fsrs 状态 dump，jsonb roundtrip 安全）
+- `RelationTypeSchema`（ADR-0010 5 + `experimental:*`）
+
+### Step 2.2: KnownEvent discriminated union（12 个分支）
+
+`src/core/schema/event/known.ts`：
+
+**ADR-0006 v2 原 7 个**：
+1. `AttemptOnQuestion` — `actor=user|agent / action='attempt' / subject='question'`
+2. `JudgeOnEvent` — `actor=agent / action='judge' / subject='event'`，payload.cause
+3. `ReviewOnQuestion` — `actor=user / action='review' / subject='question'`，payload.fsrs_*
+4. `ProposeKnowledge` — `actor=agent / action='propose' / subject='knowledge'`
+5. `GenerateArtifact` — `actor=agent / action='generate' / subject='artifact'`
+6. `RateEvent` — `actor=user / action='rate' / subject='event'`
+7. `ExtractSourceDocument` — `actor=agent / action='extract' / subject='source_document'`
+
+**ADR-0011 新 4 个**：
+8. `AcceptSuggestionChip` — `actor=user / action='accept_suggestion' / subject='chip'`，payload.{chip_label, target_tool, target_args, source_event_id}
+9. `ProposeKnowledgeEdge` — `actor=agent / action='propose' / subject='knowledge_edge'`，payload.{from, to, relation_type, weight, reasoning}
+10. `GenerateKnowledgeEdge` — `actor=agent|user / action='generate' / subject='knowledge_edge'`，payload + optional propose_event_id
+11. `RateKnowledgeEdge` — `actor=user / action='rate' / subject='knowledge_edge'`，payload.rating ∈ {accept, dismiss, reverse, change_type, rollback}
+
+**ADR-0010 已规定但是 ADR-0011 给 Zod**：
+（上面 9/10/11 即 ADR-0010 三个 edge events）
+
+```ts
+export const KnownEvent = z.discriminatedUnion('action', [
+  AttemptOnQuestion,
+  JudgeOnEvent,
+  ReviewOnQuestion,
+  ProposeKnowledge,
+  ProposeKnowledgeEdge,
+  GenerateArtifact,
+  GenerateKnowledgeEdge,
+  RateEvent,
+  RateKnowledgeEdge,
+  AcceptSuggestionChip,
+  ExtractSourceDocument,
+]);
+```
+
+注意：discriminatedUnion 只支持单键判别（action），但每个分支用 `z.literal()` 也固化了 subject_kind，因此组合 (action, subject_kind) 单义。
+
+### Step 2.3: ExperimentalEvent escape hatch
+
+`src/core/schema/event/experimental.ts`：
+
+```ts
+export const ExperimentalEvent = z.object({
+  action: z.string().refine((s) => s.startsWith('experimental:')),
+  payload: z.record(z.string(), z.unknown()),
+});
+```
+
+**特化 ToolUseExperimental**（per ADR-0011 §1）：
+
+```ts
+export const ToolUseExperimental = z.object({
+  actor_kind: z.literal('agent'),
+  actor_ref: z.string(),
+  action: z.literal('experimental:tool_use'),
+  subject_kind: z.literal('query'),
+  outcome: z.enum(['success', 'failure']),
+  payload: z.object({
+    tool_name: z.string(),
+    args: z.record(z.string(), z.unknown()),
+    result_summary: z.string().optional(),
+    result_count: z.number().int().optional(),
+    error_reason: z.string().optional(),
+  }),
+});
+```
+
+它形式上是 ExperimentalEvent 的特例；parse 时先试 ToolUseExperimental，失败回退通用 ExperimentalEvent。
+
+### Step 2.4: Event 顶层 union + parse helper
+
+`src/core/schema/event/index.ts`：
+
+```ts
+export const Event = z.union([KnownEvent, ToolUseExperimental, ExperimentalEvent]);
+export type EventT = z.infer<typeof Event>;
+export const parseEvent = (input: unknown) => Event.parse(input);
+```
+
+### Step 2.5: learning_session per-type schemas
+
+`src/core/schema/learning_session.ts`：
+
+- `LearningSessionType` enum: `'ingestion' | 'review' | 'tutor' | 'explore' | 'create' | 'conversation'`
+- per-type 状态机：
+  - `ingestion`: `uploaded → queued → extracting → extracted | partial | failed → reviewed → imported`（沿用 ADR-0005）
+  - `review`: `started → completed | abandoned`
+  - `conversation`: `active → idle → ended`（ADR-0008）
+  - `tutor` / `explore` / `create`: 占位（Phase 1d/2 落定）
+- `LearningSessionStatusByType` discriminated union 按 type 判别
+
+### Step 2.6: 测试
+
+`tests/schema/event.test.ts`：
+
+每个 KnownEvent 分支至少 1 个 valid + 1 个 invalid parse 用例。重点：
+- 非法组合（action='attempt' 配 subject='knowledge_edge' 等）必须拒绝
+- experimental:* prefix 不在 KnownEvent action 范围内（防漂移）
+- ProposeKnowledgeEdge.payload.relation_type 是 ADR-0010 5 个 enum 或 `experimental:*`，不是任意字符串
+- AcceptSuggestionChip.payload.target_tool 与 source_event_id 都是字符串
+- ToolUseExperimental.payload.args 接受任意 record
+
+Commit：`feat(1c.1): Step 2 — Event Zod discriminated union (12 known + experimental escape) + learning_session per-type`
 
 ---
 
