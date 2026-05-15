@@ -1,6 +1,7 @@
 import { eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
+import type { FigureRefT } from '@/core/schema/structured_question';
 import { db } from '@/db/client';
 import { question_block } from '@/db/schema';
 import { writeJobEvent } from '@/server/events/writer';
@@ -38,23 +39,14 @@ export async function PATCH(
       if (!block) {
         throw new ApiError('not_found', `question_block ${blockId} not found`, 404);
       }
-      const figures =
-        (block.figures as unknown as Array<{
-          asset_id: string;
-          attached_to_index?: string;
-          attach_confidence?: string;
-          last_reassigned_at?: string;
-        }>) ?? [];
+      const figures = block.figures ?? [];
       const idx = figures.findIndex((f) => f.asset_id === assetId);
       if (idx < 0) {
         throw new ApiError('not_found', `figure ${assetId} not in block ${blockId}`, 404);
       }
 
       // Validate attached_to_index exists in structured tree
-      const structured = block.structured as unknown as {
-        id: string;
-        sub_questions?: Array<{ id: string }>;
-      } | null;
+      const structured = block.structured;
       if (!structured || !idHasMatch(structured, attached_to_index)) {
         throw new ApiError(
           'validation_error',
@@ -64,13 +56,13 @@ export async function PATCH(
       }
 
       const nowIso = new Date().toISOString();
-      const updatedFigures = figures.map((f, i) =>
+      const updatedFigures: FigureRefT[] = figures.map((f, i) =>
         i === idx
           ? {
               ...f,
               attached_to_index,
-              attach_confidence: 'manual',
-              last_reassigned_at: nowIso,
+              attach_confidence: 'manual' as const,
+              last_reassigned_at: new Date(nowIso),
             }
           : f,
       );
@@ -78,7 +70,7 @@ export async function PATCH(
       await tx
         .update(question_block)
         .set({
-          figures: updatedFigures as unknown as Record<string, unknown>[],
+          figures: updatedFigures,
           updated_at: new Date(),
           version: sql`${question_block.version} + 1`,
         })

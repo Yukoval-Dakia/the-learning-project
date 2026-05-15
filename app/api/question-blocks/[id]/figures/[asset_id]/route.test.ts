@@ -6,7 +6,8 @@ import { db } from '@/db/client';
 import { ingestion_session, question_block, source_document } from '@/db/schema';
 import { PATCH } from './route';
 
-async function seedBlock(figures: unknown[], structured: unknown) {
+// biome-ignore lint/suspicious/noExplicitAny: tests pass arbitrary shapes through jsonb columns
+async function seedBlock(figures: any[], structured: any) {
   const sourceDocId = createId();
   const sessionId = createId();
   const blockId = createId();
@@ -37,8 +38,8 @@ async function seedBlock(figures: unknown[], structured: unknown) {
     source_document_id: sourceDocId,
     source_asset_ids: [],
     page_spans: [],
-    structured: structured as Record<string, unknown>,
-    figures: figures as Record<string, unknown>[],
+    structured,
+    figures,
     layout_quality: 'structured',
     image_refs: [],
     crop_refs: [],

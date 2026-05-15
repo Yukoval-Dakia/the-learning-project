@@ -1,4 +1,4 @@
-import { eq, gte, sql } from 'drizzle-orm';
+import { eq, gte } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
 import type { Db } from '@/db/client';
@@ -58,10 +58,6 @@ export async function runKnowledgeProposeNightly(
   }
   return { processed, failed };
 }
-
-// 避免 sql 模板未使用的告警（type 推导需要）
-const _sqlMarker = sql;
-void _sqlMarker;
 
 async function defaultRunTaskFn(
   kind: string,

@@ -75,6 +75,20 @@ export type EnqueueExtractionParams = {
 
 /**
  * uploaded | failed → queued。投递 pg-boss tencent_ocr_extract job。
+ *
+ * **Ghost-job 风险记录**（PR #30 review #2）：
+ * `boss.send` 走 pg-boss 自己的连接池写 `pgboss.*` 表，不在我们 drizzle tx 内。
+ * 如果 boss.send 成功但我们的 tx commit 失败（罕见：网络抖动等），会出现
+ * "job 已入队但 session.status 没翻成 queued" 的孤儿 job。
+ *
+ * 回收路径：handler 跑起来调 `markExtractionStarted` 时会发现 session 不是
+ * 'queued'，抛 ApiError(409, 'conflict')。`markFailedAndLogCost` 内部 catch
+ * 后写 cost_ledger 失败记录，然后 rethrow 让 pg-boss 把 job archive。
+ * 数据无损坏，仅留一条 archived ghost job。
+ *
+ * 接受这个权衡：把 boss.send 挪到 tx 外可消除 ghost 但引入 "session=queued
+ * 但 job 不存在"（也需 cleanup）。inside-tx + ghost-tolerant handler 是
+ * 更小复杂度。
  */
 export async function enqueueExtraction(
   params: EnqueueExtractionParams,
@@ -195,8 +209,8 @@ export async function applyExtractionResult(
       source_asset_ids: blk.source_asset_ids,
       page_spans: blk.page_spans,
       // new schema fields
-      structured: blk.structured as unknown as Record<string, unknown>,
-      figures: blk.figures as unknown as Record<string, unknown>[],
+      structured: blk.structured,
+      figures: blk.figures,
       layout_quality: params.layoutQuality,
       // legacy nullable
       extracted_prompt_md: null,
@@ -308,8 +322,8 @@ export async function applyRescue(tx: Db | Tx, params: ApplyRescueParams): Promi
   await tx
     .update(question_block)
     .set({
-      structured: params.structured as unknown as Record<string, unknown>,
-      figures: params.figures as unknown as Record<string, unknown>[],
+      structured: params.structured,
+      figures: params.figures,
       updated_at: now,
       version: sql`${question_block.version} + 1` as unknown as SQL<number>,
     })

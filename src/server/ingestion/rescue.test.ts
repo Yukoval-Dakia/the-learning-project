@@ -50,7 +50,11 @@ async function seed() {
     source_document_id: sourceDocId,
     source_asset_ids: [assetId],
     page_spans: [],
-    structured: { stale: true } as unknown as Record<string, unknown>,
+    structured: {
+      id: 'q-stale',
+      role: 'standalone',
+      prompt_text: 'stale content',
+    },
     figures: [],
     layout_quality: 'partial',
     image_refs: [assetId],

@@ -265,7 +265,11 @@ describe('IngestionSession.applyRescue', () => {
       source_document_id: sourceDocId,
       source_asset_ids: ['asset_a'],
       page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
-      structured: { stale: true } as unknown as Record<string, unknown>,
+      structured: {
+        id: 'q-stale',
+        role: 'standalone',
+        prompt_text: 'stale content',
+      },
       figures: [],
       layout_quality: 'partial',
       image_refs: ['asset_a'],
