@@ -1,6 +1,21 @@
 # Phase 1c.1 Implementation Plan — encounter + learning_session 全量重构 + UI 脚手架
 
-> **Status**: sketch（高层 step 已敲定；TDD 红/绿子步待开干前细化）。
+> ⚠️ **REFRESH REQUIRED — 2026-05-15 per ADR-0006 v2**
+>
+> 本 plan 写于 ADR-0006 v1（单表 encounter + per-outcome evidence）时代。**ADR-0006 v2 (2026-05-15)** 推翻 v1，改为 3-table event-driven 核：
+>
+> - Step 1: 新建 `event` 表 + `material_fsrs_state` 投影表（不是 encounter 单表）
+> - Step 2: per-(action × subject_kind) Zod discriminated union——核心 6+ 严守 + `experimental:*` 松守（Option 折中）
+> - Step 3: 三表 `mistake` / `review_event` / `dreaming_proposal` → event 迁移（不是单表 mistake → encounter）
+> - Step 5: `IngestionSession` 模块演化为 `LearningSession`，写入路径含 event 写
+> - `artifact` 表**不再 DROP**（C 档 AI 主动产出激活）
+> - 工时 10-14d → 18-24d（grill Q4 ack）
+>
+> Server rename + API rename + UI 脚手架（Step 6-12）大致不变，但 entity 名是 event 而非 encounter。
+>
+> **开干前请按 ADR-0006 v2 重写 Step 1-5**。loom addendum L1-L8 仍生效。
+>
+> **Status**: sketch — REFRESH REQUIRED before execution
 >
 > **For agentic workers**：开干前请补 TDD substeps（参考 sub-0c plan 的 X.1 (red) / X.3 (green) / X.5 (commit) 模式），且**必须**先确认 Sub 0c 已 merge 到 main。
 
