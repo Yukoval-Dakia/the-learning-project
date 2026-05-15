@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Loom · v2 prototype · event-driven</title>
+  <link rel="stylesheet" href="tokens.css" />
+  <link rel="stylesheet" href="app.css" />
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" src="primitives.jsx"></script>
+  <script type="text/babel" src="data.jsx"></script>
+  <script type="text/babel" src="pages.jsx"></script>
+  <script type="text/babel" src="tweaks-panel.jsx"></script>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+      "inbox": "distributed-only",
+      "copilotMode": "context-aware",
+      "lanes": "show-disabled",
+      "costVisible": true,
+      "showActorRef": true,
+      "chainRowCost": "summary-only",
+      "proactiveDelay": 30,
+      "toolUseDetail": "folded"
+    }/*EDITMODE-END*/;
+
+    function App() {
+      const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+      const [page, setPage] = useState(() => {
+        const h = (location.hash || '#today').slice(1);
+        return ['today','record','review','mistakes','items','knowledge','inbox'].includes(h) ? h : 'today';
+      });
+      const [copilotOpen, setCopilotOpen] = useState(false);
+      const [proposalStatus, setProposalStatus] = useState({
+        // pre-seed: user accepted a_n_zhi yesterday (e_05 yields a note)
+        'e_05': 'accept',
+      });
+      const [db, setDb] = useState({
+        events: window.EVENTS,
+        questions: window.QUESTIONS,
+        knowledge: window.KNOWLEDGE,
+        edges: window.KNOWLEDGE_EDGES,
+        sessions: window.SESSIONS,
+        artifacts: window.ARTIFACTS,
+        items: window.LEARNING_ITEMS,
+        copilotEvents: window.COPILOT_SEED_EVENTS,
+      });
+
+      // Track visits for revisit-based proactive trigger (v2.1 §1.2)
+      const pageVisitsRef = React.useRef({});
+
+      const nav = (p) => {
+        pageVisitsRef.current[p] = (pageVisitsRef.current[p] || 0) + 1;
+        setPage(p);
+        history.replaceState(null, '', '#' + p);
+      };
+      window.__nav = nav;
+
+      // Sync if user pastes a hash URL or external code drives it
+      useEffect(() => {
+        const onHash = () => {
+          const h = (location.hash || '#today').slice(1);
+          if (['today','record','review','mistakes','items','knowledge','inbox'].includes(h)) {
+            setPage(h);
+          }
+        };
+        window.addEventListener('hashchange', onHash);
+        return () => window.removeEventListener('hashchange', onHash);
+      }, []);
+
+      // v2.1 §1.2: Proactive Copilot
+      // — default 30s dwell (was 1.2s; that was sales-pop pacing, not learning-tool)
+      // — also fire on 2nd+ visit to same entity (revisiting = "stuck")
+      useEffect(() => {
+        if (t.copilotMode !== 'proactive') return;
+        if (!(page === 'mistakes' || page === 'review')) return;
+        if (copilotOpen) return;
+        const visits = pageVisitsRef.current[page] || 1;
+        if (visits >= 2) {
+          setCopilotOpen(true); // revisit = open immediately
+          return;
+        }
+        const delayMs = Math.max(5, (t.proactiveDelay || 30)) * 1000;
+        const tid = setTimeout(() => setCopilotOpen(true), delayMs);
+        return () => clearTimeout(tid);
+      }, [page, t.copilotMode, t.proactiveDelay, copilotOpen]);
+
+      // Pick a context entity from the current page for the copilot chip
+      const contextEntity = page === 'mistakes' ? 'e_01 / q1'
+        : page === 'review' ? 'q3'
+        : page === 'knowledge' ? 'k_xuci_zhi'
+        : null;
+
+      let screen;
+      switch (page) {
+        case 'record':    screen = <RecordScreen db={db} nav={nav} />; break;
+        case 'review':    screen = <ReviewScreen db={db} nav={nav} chainRowCost={t.chainRowCost} />; break;
+        case 'mistakes':  screen = <MistakesScreen db={db} nav={nav} proposalStatus={proposalStatus} setProposalStatus={setProposalStatus} chainRowCost={t.chainRowCost} />; break;
+        case 'items':     screen = <ItemsScreen db={db} nav={nav} setDb={setDb} />; break;
+        case 'knowledge': screen = <KnowledgeScreen db={db} nav={nav} proposalStatus={proposalStatus} setProposalStatus={setProposalStatus} chainRowCost={t.chainRowCost} />; break;
+        case 'inbox':     screen = <InboxScreen db={db} nav={nav} proposalStatus={proposalStatus} setProposalStatus={setProposalStatus} chainRowCost={t.chainRowCost} />; break;
+        default:          screen = <TodayScreen db={db} nav={nav} proposalStatus={proposalStatus} setProposalStatus={setProposalStatus} lanesMode={t.lanes === 'show-disabled' ? 'show-disabled' : 'live-only'} />;
+      }
+
+      const navMap = { today: 'today', record: 'record', review: 'review', mistakes: 'mistakes', items: 'items', knowledge: 'knowledge', inbox: 'today' };
+      const activeNav = navMap[page] || 'today';
+
+      return (
+        <>
+          <div className={`app ${copilotOpen ? 'has-drawer' : ''}`}>
+            <div className="app-main">
+              <TopNav active={activeNav} onNav={nav}
+                onCopilot={() => setCopilotOpen(o => !o)}
+                copilotOn={copilotOpen} />
+              {screen}
+            </div>
+            {copilotOpen && (
+              <CopilotDrawer
+                db={db}
+                onClose={() => setCopilotOpen(false)}
+                contextRoute={page}
+                contextEntity={contextEntity}
+                setProposalStatus={setProposalStatus}
+                nav={nav}
+                toolUseDetail={t.toolUseDetail}
+              />
+            )}
+          </div>
+
+          <TweaksPanel title="Tweaks · §9 open questions">
+            <TweakSection label="§1.6 · Copilot tool-use 详细度">
+              <TweakRadio
+                value={t.toolUseDetail}
+                onChange={(v) => setTweak('toolUseDetail', v)}
+                options={[
+                  { value: 'folded',   label: 'folded' },
+                  { value: 'expanded', label: 'expanded' },
+                  { value: 'off',      label: 'off' },
+                ]} />
+              <p style={{margin:'8px 0 0',fontSize:12,color:'var(--ink-4)',lineHeight:1.5}}>
+                <b>v2.1 §1.6</b> · Copilot drawer 里的 <code>tool_use</code> 事件如何显示。<br/>
+                folded 只示 tool 名 + 结果摘要；expanded 展开 args / result rows；off 隐藏、只看 text 回答。
+              </p>
+            </TweakSection>
+
+            <TweakSection label="§6.2 · AI 提议 inbox 形态">
+              <TweakRadio
+                value={t.inbox}
+                onChange={(v) => setTweak('inbox', v)}
+                options={[
+                  { value: 'today-strip', label: 'today 顶条 + 分布式' },
+                  { value: 'central-route', label: '独立路由 /inbox' },
+                  { value: 'distributed-only', label: '完全分布式' },
+                ]} />
+              <p style={{margin:'8px 0 0',fontSize:12,color:'var(--ink-4)',lineHeight:1.5}}>
+                当前默认：今日页顶 strip 摘要 + 各页面内嵌提议卡。
+                独立路由可在 today strip 上点"集中审批"进入。
+              </p>
+            </TweakSection>
+
+            <TweakSection label="§6.3 · Copilot 主动性">
+              <TweakRadio
+                value={t.copilotMode}
+                onChange={(v) => setTweak('copilotMode', v)}
+                options={[
+                  { value: 'manual', label: '仅按钮' },
+                  { value: 'context-aware', label: '上下文' },
+                  { value: 'proactive', label: '主动' },
+                ]} />
+              <p style={{margin:'8px 0 0',fontSize:12,color:'var(--ink-4)',lineHeight:1.5}}>
+                "主动"会在 /mistakes 与 /review 停留 N 秒（下方）后自动打开 drawer。<br/>
+                <b>revisit 信号</b>：同一页面访问 ≥2 次直接开（"反复看说明卡住"）。
+              </p>
+              {t.copilotMode === 'proactive' && (
+                <TweakSlider label="proactive 触发延时"
+                  value={t.proactiveDelay} min={5} max={120} step={5} unit="s"
+                  onChange={(v) => setTweak('proactiveDelay', v)} />
+              )}
+            </TweakSection>
+
+            <TweakSection label="§9 Q5 · Lane B/C 空数据处理">
+              <TweakRadio
+                value={t.lanes}
+                onChange={(v) => setTweak('lanes', v)}
+                options={[
+                  { value: 'live-only', label: '只显示有数据的' },
+                  { value: 'show-disabled', label: '显示 stub' },
+                ]} />
+            </TweakSection>
+
+            <TweakSection label="§6.4 · 成本透明度">
+              <TweakRadio
+                value={t.chainRowCost}
+                onChange={(v) => setTweak('chainRowCost', v)}
+                options={[
+                  { value: 'summary-only', label: '只 summary' },
+                  { value: 'hover', label: 'hover 显示' },
+                  { value: 'always', label: '总显示' },
+                ]} />
+              <p style={{margin:'8px 0 0',fontSize:12,color:'var(--ink-4)',lineHeight:1.5}}>
+                <b>v2.1 §1.5</b> · EventChain 每行的 cost：summary 只在汇总行显示总额；hover 鼠标到行才显；always 每行都印。<br/>
+                ProposalCard 上的 per-event cost 始终保留——那里 user 正在做成本决策。
+              </p>
+              <TweakToggle
+                value={t.costVisible}
+                onChange={(v) => setTweak('costVisible', v)}
+                label="cost ribbon (今日 / 预算)" />
+              <TweakToggle
+                value={t.showActorRef}
+                onChange={(v) => setTweak('showActorRef', v)}
+                label="actor 名展开 (agent · attribution)" />
+            </TweakSection>
+          </TweaksPanel>
+        </>
+      );
+    }
+
+    try {
+      ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    } catch (e) {
+      const pre = document.createElement('pre');
+      pre.style.cssText = 'padding:20px;color:red;font-family:monospace;white-space:pre-wrap;background:white;margin:0';
+      pre.textContent = 'RENDER FAIL: ' + e.message + '\n' + e.stack;
+      document.body.appendChild(pre);
+    }
+    window.addEventListener('error', (e) => {
+      const pre = document.createElement('pre');
+      pre.style.cssText = 'padding:20px;color:red;font-family:monospace;white-space:pre-wrap;background:white;position:fixed;top:0;left:0;right:0;z-index:9999;border-bottom:2px solid red';
+      pre.textContent = 'ERR: ' + (e.message || e.error?.message) + '\n' + (e.error?.stack || e.filename + ':' + e.lineno);
+      document.body.appendChild(pre);
+    });
+
+    // hash-route external link support
+    window.addEventListener('hashchange', () => {
+      const h = (location.hash || '#today').slice(1);
+      // App reads on mount only; for now, a soft reload
+    });
+  </script>
+</body>
+</html>
