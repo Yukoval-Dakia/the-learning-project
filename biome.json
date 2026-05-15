@@ -5,6 +5,7 @@
       "node_modules",
       "drizzle",
       "docs/design/loom-design",
+      "docs/design/loom-design-v2",
       ".next",
       "next-env.d.ts"
     ]
