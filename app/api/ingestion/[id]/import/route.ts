@@ -1,3 +1,21 @@
+/**
+ * POST /api/ingestion/[id]/import
+ *
+ * **ADR-0005 single-owner invariant 已知缺口**（PR #30 review #5）：
+ * 本 route 仍直接 `db.insert(question_block).status='imported'` / `db.insert(question)` /
+ * `db.insert(mistake)`，**未走 IngestionSession.commitImport**。Sub 0c Step 11.5
+ * 把 commitImport 推迟到了 Phase 1c.1（届时 session 模块演化为 LearningSession，
+ * 整个 import 路径也要重写为 encounter 形态——双倍 lift-shift 不值）。
+ *
+ * 见 `docs/superpowers/plans/2026-05-14-phase1c1-encounter-session-ui-scaffold.md` Step 4 +
+ * ADR-0005 / ADR-0006 / ADR-0008。
+ *
+ * **混合 schema 提示**（PR #30 review #7）：
+ * post-Sub-0c 抽取写的 question_block 有 `structured` jsonb，`extracted_prompt_md` 为 null；
+ * pre-Sub-0c 已存在的行反之。本 route 不读这两个字段（client 在 body 里直接传
+ * `final_prompt_md`），所以兼容；但**未来 UI** 渲染 block 列表时要同时处理两种形态，
+ * 或派生 `structuredToPromptMarkdown(structured)` 作为统一展示源。
+ */
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';

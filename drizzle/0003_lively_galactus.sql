@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS "job_events_business_idx" ON "job_events" USING btree ("business_table","business_id","id");

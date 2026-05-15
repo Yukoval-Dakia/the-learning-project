@@ -569,4 +569,52 @@ JudgeTask extends Task {
 }
 ```
 
+---
+
+## 七、异步任务层 (pg-boss) — Sub 0c
+
+独立 worker 进程 + app process 经 LISTEN/NOTIFY 协同：
+
+```
+[Web (Next.js app)]                [Worker (Node.js, scripts/worker.ts)]
+       │                               │  boss.work('tencent_ocr_extract', handler)
+       │ POST /.../extract             │  → 拉到 job
+       │ enqueueExtraction             │  handler:
+       │   ├─ UPDATE session.status    │    IngestionSession.markExtractionStarted
+       │   ├─ writeJobEvent → NOTIFY   │    R2.get + Tencent submit/poll + parse + crop
+       │   └─ boss.send                │    IngestionSession.applyExtractionResult
+       │                               │       └─ writeJobEvent (NOTIFY)
+       ├── GET /.../events (SSE)       │    writeCostLedger(outcome, pgboss_job_id)
+       │   replay + subscribe          │
+       ↑                               │
+       └─ listen_loop ←── pg_notify ──┘
+          (instrumentation.ts)
+```
+
+**关键模块**：
+- `src/server/boss/{client,handlers,shutdown}.ts` — pg-boss 单例 + handler 注册 + graceful stop
+- `src/server/events/{writer,sse_router,listen_loop,sse_replay}.ts` — job_events + NOTIFY + SSE
+- `src/server/ingestion/session.ts` — IngestionSession 状态机（ADR-0005 single owner）
+- `src/server/ingestion/tencent_mark{,_parser,_errors}.ts` — Mark Agent SDK + parser + 错误分类
+- `src/server/boss/handlers/tencent_ocr_extract.ts` — 生产 OCR async job handler
+
+**录入会话状态机** ([CONTEXT.md](../CONTEXT.md) "录入会话" + [ADR-0005](adr/0005-ingestion-session-single-owner.md))：
+
+```
+uploaded → (enqueueExtraction) → queued
+        → (worker markExtractionStarted) → extracting
+        → applyExtractionResult         → extracted | partial
+        → markExtractionFailed          → failed
+extracted | partial → markReviewed → reviewed
+extracted | partial | reviewed → commitImport → imported (终态)
+failed → enqueueExtraction (retry) → queued
+partial → applyRescue (block-level) → partial（session 不变）
+```
+
+**Single owner invariant** (ADR-0005)：`src/server/ingestion/session.ts` 是 `ingestion_session.status` 唯一可信写入点；route / handler 不允许直接 `db.update(ingestion_session)`。
+
+**OCR 抽取层** (ADR-0002 修订)：用 Tencent QuestionMarkAgent (async submit+poll)，**不再 cascade**。Vision Tier 2/3 (haiku / sonnet) 仅作为**用户触发的救援**，走 `/api/ingestion/[id]/rescue`，永不参与自动 fallback。
+
+**Acceptance gates**：EchoJob E2E (`app/api/echo/echo.e2e.test.ts`) + tencent_ocr_extract handler test + IngestionSession 16 transition tests。
+
 **命名澄清**：`Tool` (LLM 函数原语) ≠ `tool_*` Artifact (互动型产出物)。前者是 AI 任务层的实现细节，后者是用户消费的内容对象。两个层级不冲突但同名易混。

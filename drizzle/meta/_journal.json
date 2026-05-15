@@ -15,6 +15,20 @@
       "when": 1778456973302,
       "tag": "0001_complex_logan",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1778768069669,
+      "tag": "0002_aromatic_expediter",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1778838508467,
+      "tag": "0003_lively_galactus",
+      "breakpoints": true
     }
   ]
 }

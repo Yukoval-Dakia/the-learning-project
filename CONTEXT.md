@@ -31,5 +31,13 @@
 
 ## 录入与会话
 
-- **录入会话（ingestion session）**：一次"用户上传一批材料 → 系统抽取 → 落库"的工作单元。状态机：uploaded → extracting → extracted（成功）/ failed（OCR 全失败）/ partial（部分题需要救援）。
+- **录入会话（ingestion session）**：一次"用户上传一批材料 → 系统抽取 → 落库"的工作单元。状态机：`uploaded` →（用户触发抽取）→ `queued` →（worker 起跑）→ `extracting` → `extracted` / `partial` / `failed`；`extracted` / `partial` 可 `markReviewed()` → `reviewed`（可选步骤，`commitImport()` 也直接接 `extracted` / `partial`）→ **`imported`（终态，只读）**。`failed` 可 `retryExtraction()` 重入 `queued`。所有 transition 由 `src/server/ingestion/session.ts` 单一守卫，五个写入位置（POST /api/ingestion、/extract、handler、/rescue、/import）都走它。**救援是 block-level**：session 状态不变（partial → partial），仅替换单块内容。
 - **会话总结（session summary）**：用户主动结束一次学习会话时由 LLM 生成的总结。Phase 1b 新增（架构 review Q1）。
+
+## 已批准（approved，待 Phase 1c.1 落地）
+
+> 2026-05-14 grill 完成，ADR 存档；schema 落地见 Phase 1c.1 plan。**代码未到位前，这些词不会出现在 src/ 里**——但 spec / ADR / brainstorm 引用从此用这些名字。
+
+- **遭遇（encounter）**（ADR-0006）：学习者与材料的一次交互。`outcome` enum: `wrong | right | exposed | created | drilled | reviewed`。**替换 `mistake` 为 first-class entity**——mistake 落地后即 DROP，其语义被 `encounter where outcome='wrong'` 完整覆盖。`material_ref jsonb` 指向材料（`question | source_document | free_text`；暂不含 artifact）；`evidence jsonb` 承载 per-outcome 具体证据（per-outcome Zod schema 守护）。
+- **学习会话（learning_session）**（ADR-0008）：通用 session envelope。`type` enum: `ingestion | review | tutor | explore | create | conversation`。每 type 独立状态机；single-owner invariant（ADR-0005 演化）保留。Phase 1c.1 实现 ingestion + review，其余 enum 占位。
+- **暴露（exposure）**：encounter outcome 值之一——仅"看过 / 读过 / 听过"但未答题。区别于 wrong（答错）和 right（答对）。填补"只输入未输出"的学习行为语义空缺。
