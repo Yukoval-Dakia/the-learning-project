@@ -32,6 +32,8 @@ export const AttemptOnQuestion = z.object({
     answer_md: z.string().nullable(),
     answer_image_refs: z.array(z.string()),
     duration_ms: z.number().int().optional(),
+    // feeds knowledge_mastery view (ADR-0012): which knowledge nodes this attempt exercises
+    referenced_knowledge_ids: z.array(z.string()).default([]),
   }),
   ...baseOptionalFields,
 });
@@ -63,20 +65,34 @@ export type JudgeOnEventT = z.infer<typeof JudgeOnEvent>;
 // 用户 FSRS 复习一道题。outcome 来自 fsrs_rating 派生（again→failure, hard/good→success）。
 // fsrs_state_after 为复习后的 ts-fsrs Card dump。
 
-export const ReviewOnQuestion = z.object({
-  actor_kind: z.literal('user'),
-  actor_ref: z.string(),
-  action: z.literal('review'),
-  subject_kind: z.literal('question'),
-  subject_id: z.string(),
-  outcome: z.enum(['success', 'failure']),
-  payload: z.object({
-    fsrs_rating: z.enum(['again', 'hard', 'good']),
-    fsrs_state_after: FsrsStateSchema,
-    user_response_md: z.string().nullable(),
-  }),
-  ...baseOptionalFields,
-});
+export const ReviewOnQuestion = z
+  .object({
+    actor_kind: z.literal('user'),
+    actor_ref: z.string(),
+    action: z.literal('review'),
+    subject_kind: z.literal('question'),
+    subject_id: z.string(),
+    outcome: z.enum(['success', 'failure']),
+    payload: z.object({
+      fsrs_rating: z.enum(['again', 'hard', 'good']),
+      fsrs_state_after: FsrsStateSchema,
+      user_response_md: z.string().nullable(),
+      // feeds knowledge_mastery view (ADR-0012)
+      referenced_knowledge_ids: z.array(z.string()).default([]),
+    }),
+    ...baseOptionalFields,
+  })
+  // fsrs_rating ↔ outcome invariant: again→failure, hard/good→success
+  .superRefine((data, ctx) => {
+    const expected = data.payload.fsrs_rating === 'again' ? 'failure' : 'success';
+    if (data.outcome !== expected) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `outcome must be '${expected}' when fsrs_rating='${data.payload.fsrs_rating}'`,
+        path: ['outcome'],
+      });
+    }
+  });
 export type ReviewOnQuestionT = z.infer<typeof ReviewOnQuestion>;
 
 // 4. ProposeKnowledge — actor=agent / action='propose' / subject='knowledge'
@@ -227,23 +243,34 @@ export type ProposeKnowledgeEdgeT = z.infer<typeof ProposeKnowledgeEdge>;
 //
 // 注意 actor_kind 是 enum 而非 literal —— 但仍唯一锁住 (action, subject_kind) 组合。
 
-export const GenerateKnowledgeEdge = z.object({
-  actor_kind: z.enum(['agent', 'user']),
-  actor_ref: z.string(),
-  action: z.literal('generate'),
-  subject_kind: z.literal('knowledge_edge'),
-  subject_id: z.string(),
-  outcome: z.enum(['success', 'failure']),
-  payload: z.object({
-    from_knowledge_id: z.string(),
-    to_knowledge_id: z.string(),
-    relation_type: RelationTypeSchema,
-    weight: z.number().min(0).max(1).default(1),
-    reasoning: z.string().optional(),
-    propose_event_id: z.string().optional(),
-  }),
-  ...baseOptionalFields,
-});
+export const GenerateKnowledgeEdge = z
+  .object({
+    actor_kind: z.enum(['agent', 'user']),
+    actor_ref: z.string(),
+    action: z.literal('generate'),
+    subject_kind: z.literal('knowledge_edge'),
+    subject_id: z.string(),
+    outcome: z.enum(['success', 'failure']),
+    payload: z.object({
+      from_knowledge_id: z.string(),
+      to_knowledge_id: z.string(),
+      relation_type: RelationTypeSchema,
+      weight: z.number().min(0).max(1).default(1),
+      reasoning: z.string().optional(),
+      propose_event_id: z.string().optional(),
+    }),
+    ...baseOptionalFields,
+  })
+  // actor=agent requires non-empty reasoning (audit trail); user may omit
+  .superRefine((data, ctx) => {
+    if (data.actor_kind === 'agent' && (!data.payload.reasoning || data.payload.reasoning.length === 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'reasoning is required when actor_kind=agent',
+        path: ['payload', 'reasoning'],
+      });
+    }
+  });
 export type GenerateKnowledgeEdgeT = z.infer<typeof GenerateKnowledgeEdge>;
 
 // 11. RateKnowledgeEdge — actor=user / action='rate' / subject='knowledge_edge'
@@ -252,21 +279,39 @@ export type GenerateKnowledgeEdgeT = z.infer<typeof GenerateKnowledgeEdge>;
 // rating='reverse' 时 new_direction_reversed 应为 true —— 业务层校验。Zod 这里只锁 rating
 // enum，semantics 在 handler 守门。
 
-export const RateKnowledgeEdge = z.object({
-  actor_kind: z.literal('user'),
-  actor_ref: z.literal('self'),
-  action: z.literal('rate'),
-  subject_kind: z.literal('knowledge_edge'),
-  subject_id: z.string(),
-  outcome: z.literal('success'),
-  payload: z.object({
-    rating: z.enum(['accept', 'dismiss', 'reverse', 'change_type', 'rollback']),
-    new_relation_type: RelationTypeSchema.optional(),
-    new_direction_reversed: z.boolean().optional(),
-    user_note: z.string().optional(),
-  }),
-  ...baseOptionalFields,
-});
+export const RateKnowledgeEdge = z
+  .object({
+    actor_kind: z.literal('user'),
+    actor_ref: z.literal('self'),
+    action: z.literal('rate'),
+    subject_kind: z.literal('knowledge_edge'),
+    subject_id: z.string(),
+    outcome: z.literal('success'),
+    payload: z.object({
+      rating: z.enum(['accept', 'dismiss', 'reverse', 'change_type', 'rollback']),
+      new_relation_type: RelationTypeSchema.optional(),
+      new_direction_reversed: z.boolean().optional(),
+      user_note: z.string().optional(),
+    }),
+    ...baseOptionalFields,
+  })
+  // rating-dependent payload requirements (ADR-0011 §5)
+  .superRefine((data, ctx) => {
+    if (data.payload.rating === 'change_type' && !data.payload.new_relation_type) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "new_relation_type is required when rating='change_type'",
+        path: ['payload', 'new_relation_type'],
+      });
+    }
+    if (data.payload.rating === 'reverse' && data.payload.new_direction_reversed !== true) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "new_direction_reversed must be true when rating='reverse'",
+        path: ['payload', 'new_direction_reversed'],
+      });
+    }
+  });
 export type RateKnowledgeEdgeT = z.infer<typeof RateKnowledgeEdge>;
 
 // ====================================================================

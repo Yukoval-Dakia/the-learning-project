@@ -78,6 +78,42 @@ describe('AttemptOnQuestion', () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it('accepts payload.referenced_knowledge_ids (mastery view feed)', () => {
+    const result = AttemptOnQuestion.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: 'q_1',
+      outcome: 'failure',
+      payload: {
+        answer_md: '错',
+        answer_image_refs: [],
+        referenced_knowledge_ids: ['k_xuci_zhi', 'k_dingyu_biaozhi'],
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.payload.referenced_knowledge_ids).toEqual(['k_xuci_zhi', 'k_dingyu_biaozhi']);
+    }
+  });
+
+  it('defaults referenced_knowledge_ids to empty array when omitted', () => {
+    const result = AttemptOnQuestion.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: 'q_1',
+      outcome: 'failure',
+      payload: { answer_md: null, answer_image_refs: [] },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.payload.referenced_knowledge_ids).toEqual([]);
+    }
+  });
 });
 
 // ====================================================================
@@ -209,6 +245,94 @@ describe('ReviewOnQuestion', () => {
       },
     });
     expect(result.success).toBe(false);
+  });
+
+  const baseFsrsState = {
+    due: '2026-05-20T00:00:00.000Z',
+    stability: 1.5,
+    difficulty: 5.0,
+    elapsed_days: 0,
+    scheduled_days: 4,
+    learning_steps: 0,
+    reps: 2,
+    lapses: 0,
+    state: 'review' as const,
+    last_review: '2026-05-16T00:00:00.000Z',
+  };
+
+  it('accepts payload.referenced_knowledge_ids (mastery view feed)', () => {
+    const result = ReviewOnQuestion.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'review',
+      subject_kind: 'question',
+      subject_id: 'q_1',
+      outcome: 'success',
+      payload: {
+        fsrs_rating: 'good',
+        fsrs_state_after: baseFsrsState,
+        user_response_md: null,
+        referenced_knowledge_ids: ['k_zhi'],
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects fsrs_rating='again' with outcome='success' (superRefine invariant)", () => {
+    const result = ReviewOnQuestion.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'review',
+      subject_kind: 'question',
+      subject_id: 'q_1',
+      outcome: 'success',
+      payload: {
+        fsrs_rating: 'again',
+        fsrs_state_after: baseFsrsState,
+        user_response_md: null,
+      },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0]?.message).toMatch(/outcome must be 'failure'/);
+    }
+  });
+
+  it("rejects fsrs_rating='good' with outcome='failure' (superRefine invariant)", () => {
+    const result = ReviewOnQuestion.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'review',
+      subject_kind: 'question',
+      subject_id: 'q_1',
+      outcome: 'failure',
+      payload: {
+        fsrs_rating: 'good',
+        fsrs_state_after: baseFsrsState,
+        user_response_md: null,
+      },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0]?.message).toMatch(/outcome must be 'success'/);
+    }
+  });
+
+  it("accepts fsrs_rating='again' with outcome='failure' (consistent)", () => {
+    const result = ReviewOnQuestion.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'review',
+      subject_kind: 'question',
+      subject_id: 'q_1',
+      outcome: 'failure',
+      payload: {
+        fsrs_rating: 'again',
+        fsrs_state_after: baseFsrsState,
+        user_response_md: null,
+      },
+    });
+    expect(result.success).toBe(true);
   });
 });
 
@@ -606,6 +730,46 @@ describe('GenerateKnowledgeEdge', () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it('rejects agent-generated edge missing reasoning (superRefine invariant)', () => {
+    const result = GenerateKnowledgeEdge.safeParse({
+      actor_kind: 'agent',
+      actor_ref: 'maintenance',
+      action: 'generate',
+      subject_kind: 'knowledge_edge',
+      subject_id: 'ke_4',
+      outcome: 'success',
+      payload: {
+        from_knowledge_id: 'k_a',
+        to_knowledge_id: 'k_b',
+        relation_type: 'related_to',
+        weight: 1,
+      },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0]?.message).toMatch(/reasoning is required when actor_kind=agent/);
+    }
+  });
+
+  it('rejects agent-generated edge with empty-string reasoning', () => {
+    const result = GenerateKnowledgeEdge.safeParse({
+      actor_kind: 'agent',
+      actor_ref: 'maintenance',
+      action: 'generate',
+      subject_kind: 'knowledge_edge',
+      subject_id: 'ke_5',
+      outcome: 'success',
+      payload: {
+        from_knowledge_id: 'k_a',
+        to_knowledge_id: 'k_b',
+        relation_type: 'related_to',
+        weight: 1,
+        reasoning: '',
+      },
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 // ====================================================================
@@ -655,6 +819,64 @@ describe('RateKnowledgeEdge', () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it("rejects rating='change_type' without new_relation_type (superRefine)", () => {
+    const result = RateKnowledgeEdge.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'knowledge_edge',
+      subject_id: 'e_2',
+      outcome: 'success',
+      payload: { rating: 'change_type' },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0]?.message).toMatch(/new_relation_type is required/);
+    }
+  });
+
+  it("rejects rating='reverse' without new_direction_reversed=true (superRefine)", () => {
+    const result = RateKnowledgeEdge.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'knowledge_edge',
+      subject_id: 'e_3',
+      outcome: 'success',
+      payload: { rating: 'reverse' },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0]?.message).toMatch(/new_direction_reversed must be true/);
+    }
+  });
+
+  it("rejects rating='reverse' with new_direction_reversed=false", () => {
+    const result = RateKnowledgeEdge.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'knowledge_edge',
+      subject_id: 'e_4',
+      outcome: 'success',
+      payload: { rating: 'reverse', new_direction_reversed: false },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts rating='reverse' with new_direction_reversed=true", () => {
+    const result = RateKnowledgeEdge.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'knowledge_edge',
+      subject_id: 'e_5',
+      outcome: 'success',
+      payload: { rating: 'reverse', new_direction_reversed: true },
+    });
+    expect(result.success).toBe(true);
+  });
 });
 
 // ====================================================================
@@ -684,6 +906,17 @@ describe('ExperimentalEvent', () => {
       payload: { x: 1 },
     });
     expect(result.success).toBe(false);
+  });
+
+  it("rejects reserved action 'experimental:tool_use' (must use ToolUseExperimental)", () => {
+    const result = ExperimentalEvent.safeParse({
+      action: 'experimental:tool_use',
+      payload: { tool_name: 'x', args: {} },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0]?.message).toMatch(/reserved experimental action/);
+    }
   });
 });
 
@@ -825,6 +1058,30 @@ describe('Event (top-level union) + parseEvent', () => {
       subject_id: 'q_1',
       outcome: 'success',
       payload: {},
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects malformed experimental:tool_use (missing tool_name) — must not fall through to generic ExperimentalEvent', () => {
+    // ToolUseExperimental requires payload.tool_name; generic ExperimentalEvent would
+    // otherwise accept this with arbitrary payload. The RESERVED_EXPERIMENTAL_ACTIONS
+    // guard in experimental.ts blocks that fallback.
+    const result = Event.safeParse({
+      action: 'experimental:tool_use',
+      payload: {},
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects malformed experimental:tool_use even with extra envelope fields', () => {
+    const result = Event.safeParse({
+      actor_kind: 'agent',
+      actor_ref: 'copilot',
+      action: 'experimental:tool_use',
+      subject_kind: 'query',
+      subject_id: 'tu_x',
+      outcome: 'success',
+      payload: { args: { x: 1 } }, // missing tool_name
     });
     expect(result.success).toBe(false);
   });

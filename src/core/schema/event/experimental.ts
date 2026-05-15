@@ -31,6 +31,21 @@ export const ToolUseExperimental = z.object({
 export type ToolUseExperimentalT = z.infer<typeof ToolUseExperimental>;
 
 // ====================================================================
+// Reserved experimental actions
+// ====================================================================
+//
+// Action names that have a dedicated typed schema (e.g., ToolUseExperimental). The generic
+// `ExperimentalEvent` fallback must REJECT these — otherwise a malformed event with a
+// reserved action name (e.g., `{ action: 'experimental:tool_use', payload: {} }`) would
+// silently fall through to generic parse and lose schema validation.
+//
+// Adding a new specialised experimental schema? Add its action literal here too.
+
+export const RESERVED_EXPERIMENTAL_ACTIONS = new Set<string>([
+  'experimental:tool_use',
+]);
+
+// ====================================================================
 // ExperimentalEvent — 通用 escape hatch (ADR-0006 v2)
 // ====================================================================
 //
@@ -38,12 +53,19 @@ export type ToolUseExperimentalT = z.infer<typeof ToolUseExperimental>;
 // 稳定后 promote 到 KnownEvent（写 Zod schema + 测试 + 数据迁移）。
 //
 // Parse 时 ToolUseExperimental 应该优先 try（它是 ExperimentalEvent 的特例，shape 更
-// 紧）—— 顶层 Event union 的顺序处理这点（见 ./index.ts）。
+// 紧）—— 顶层 Event union 的顺序处理这点（见 ./index.ts）。此外，generic ExperimentalEvent
+// 拒绝 reserved action names 防止 malformed reserved-action event 绕过专用 schema 校验。
 
 export const ExperimentalEvent = z.object({
-  action: z.string().refine((s) => s.startsWith('experimental:'), {
-    message: 'experimental action must start with "experimental:"',
-  }),
+  action: z
+    .string()
+    .refine((s) => s.startsWith('experimental:'), {
+      message: 'experimental action must start with "experimental:"',
+    })
+    .refine((s) => !RESERVED_EXPERIMENTAL_ACTIONS.has(s), {
+      message:
+        'reserved experimental action — payload must satisfy the dedicated schema (e.g., experimental:tool_use → ToolUseExperimental)',
+    }),
   payload: z.record(z.string(), z.unknown()),
 });
 export type ExperimentalEventT = z.infer<typeof ExperimentalEvent>;
