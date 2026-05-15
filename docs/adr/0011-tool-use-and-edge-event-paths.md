@@ -1,6 +1,10 @@
 # Tool-use + suggestion + knowledge_edge 事件路径追认（extends ADR-0006 v2）
 
 > 起源：v2.1 design brief (2026-05-15) 引入 AI tool-use 三段式 UI 与 chip 直触发 tool 流；ADR-0010 (2026-05-15) 引入 knowledge_edge × 3 路径。这些路径已被 design / ADR 引用，但未在 ADR-0006 v2 的 `KnownEvent` discriminated union 里有 schema 定义。本 ADR 追认 5 处新 event 路径，**让 design 与 ADR 不再漂移**。
+>
+> **Revisions**
+> - **v2 (2026-05-16)**：§2 AcceptSuggestionChip.payload 加 `suggestion_kind: 'proactive' | 'corrective'` discriminator。处理 v2.1 design bundle README hot-spot #5（soft-fail corrective chip 语义混淆）。详见 §2.1。
+> - v1 (2026-05-15)：5 路径首次追认。
 
 ---
 
@@ -65,7 +69,8 @@ const AcceptSuggestionChip = z.object({
   subject_id: z.string(),                     // synthetic chip id from agent payload
   outcome: z.literal('success'),
   payload: z.object({
-    chip_label: z.string(),                   // "出 3 道变式" / "归因 e_20" / ...
+    chip_label: z.string(),                   // "出 3 道变式" / "归因 e_20" / "扩到 90 天再查"
+    suggestion_kind: z.enum(['proactive', 'corrective']),  // ★ v2 — see §2.1
     target_tool: z.string().optional(),       // 'propose_variant' / 'attribute_mistake' / ...
     target_args: z.record(z.string(), z.unknown()).optional(),
     source_event_id: z.string(),              // agent 上一条 explain event 的 id（chip 出自这里）
@@ -73,6 +78,28 @@ const AcceptSuggestionChip = z.object({
   // caused_by_event_id = source_event_id（chip 是来自 agent 提议）
 });
 ```
+
+### 2.1 `suggestion_kind` discriminator — 处理 v2.1 hot-spot #5
+
+v2.1 designer 在 README hot-spot #5 push back：soft-fail 时 corrective chip（如 "扩到 90 天再查"）用 `accept_suggestion` 语义不准——主动提议（"出 3 道变式"）和修正建议（"换个查询参数再试"）在意图上不同。
+
+**决策**：复用同一 `accept_suggestion` action（不增 action），payload 加 `suggestion_kind` 二级判别。两种含义：
+
+| `suggestion_kind` | 上下文 | 例子 | source_event 形态 |
+|---|---|---|---|
+| `proactive` | agent 在成功 explain 后主动提议下一步动作 | "出 3 道变式" / "归因这道题" | source = `explain` event，outcome=success |
+| `corrective` | agent 在失败 / 0 result 后提议修正参数 | "扩到 90 天再查" / "改用 query_events 看所有 attempts" | source = `tool_use` event，outcome=failure 或 result_count=0 |
+
+**两者共享**：写 first-class event，UI 渲染为 chip-tag row（不伪装 user msg），caused_by 指向 source。
+
+**两者区分**：handler 层可按 `suggestion_kind` 分支——`corrective` 不计入"用户接受 AI 建议"KPI（避免修正动作虚增接受率），UI 上可加 "修正" 标签。
+
+**为何不新开 action**：
+- chip 主体语义"用户从 agent 提议里挑了一个动作"在两种情况下一致
+- discriminated union 多一个分支增加 Zod 表面积，而 payload 字段拓展是 ADR-0006 v2 鼓励的渐进演化
+- 真有第三种 chip 语义（如 "纠正 AI 错误"）再考虑分裂
+
+**stabilization**：v2.1 design 已实装两种 chip。1c.2 实装时 SEED 至少各 1 个 `proactive` + `corrective` 用例。
 
 **事件链典型形态**（v2.1 §1.6.3b）：
 
