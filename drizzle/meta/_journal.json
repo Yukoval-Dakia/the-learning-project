@@ -29,6 +29,20 @@
       "when": 1778838508467,
       "tag": "0003_lively_galactus",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1778866159725,
+      "tag": "0004_phase1c1_step1_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1778866159726,
+      "tag": "0005_phase1c1_event_payload_gin_and_mastery_view",
+      "breakpoints": true
     }
   ]
 }
