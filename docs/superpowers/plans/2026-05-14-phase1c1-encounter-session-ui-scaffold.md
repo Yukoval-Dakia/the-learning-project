@@ -1,24 +1,36 @@
-# Phase 1c.1 Implementation Plan — encounter + learning_session 全量重构 + UI 脚手架
+# Phase 1c.1 Implementation Plan — event 核 + learning_session + mesh + UI 脚手架
 
-> ⚠️ **REFRESH REQUIRED — 2026-05-15 per ADR-0006 v2 + ADR-0010**
+> ⚠️ **REFRESH 2026-05-15 晚 — ADR-0011 + ADR-0012 追加**
 >
-> 本 plan 写于 ADR-0006 v1（单表 encounter + per-outcome evidence）时代。**ADR-0006 v2 (2026-05-15)** 推翻 v1，改为 3-table event-driven 核；**ADR-0010 (2026-05-15)** 叠加 knowledge mesh：
+> 本 plan 经过 3 轮 ADR 加固，banner 现在含全部 deltas：
 >
-> - Step 1: 新建 `event` 表 + `material_fsrs_state` 投影表 + **`knowledge_edge` 表 (ADR-0010 mesh)**
-> - Step 2: per-(action × subject_kind) Zod discriminated union——核心 6+ 严守 + `experimental:*` 松守（Option 折中）；含新分支 Propose / Generate / Rate `knowledge_edge`
-> - Step 3: 三表 `mistake` / `review_event` / `dreaming_proposal` → event 迁移（不是单表 mistake → encounter）
-> - Step 5: `IngestionSession` 模块演化为 `LearningSession`，写入路径含 event 写
-> - Step 7: 新增 `/api/knowledge/edges` CRUD + KnowledgeProposeTask / KnowledgeReviewTask prompt 扩"propose new edge"分支
+> **ADR-0006 v2** (2026-05-15)：3-table event-driven 核（material + learning_session + event），DROP mistake / review_event / dreaming_proposal
+>
+> **ADR-0010** (2026-05-15)：knowledge_edge 表 + 5 个 relation_type（tree 是骨架，mesh 是肌肉）
+>
+> **ADR-0011** (2026-05-15 晚)：5 个新 event 路径追认 Zod schema：
+> - `ToolUseExperimental` (action='experimental:tool_use', subject_kind='query')
+> - `AcceptSuggestionChip` (action='accept_suggestion', subject_kind='chip')
+> - `ProposeKnowledgeEdge` / `GenerateKnowledgeEdge` / `RateKnowledgeEdge`
+>
+> **ADR-0012** (2026-05-15 晚)：mastery / last_active_at 转 derived view。**Step 1 同步执行 DROP** 三个 stub 字段（`knowledge.base_mastery` / `ai_delta_mastery` / `last_active_at`）+ 建 `knowledge_mastery` PG view
+>
+> **deltas 落进 Step**：
+> - **Step 1**：event 表 + material_fsrs_state 投影 + **knowledge_edge** + **DROP 三个 stub 字段** + **CREATE VIEW knowledge_mastery** + jsonb GIN index on event.payload（per data-assumptions follow-up）+ **DROP judgment 表**（合并进 event action='judge'）
+> - **Step 2**：per-(action × subject_kind) Zod discriminated union——ADR-0006 v2 原 7 个 + ADR-0011 新 5 个 = 共 12 个 KnownEvent + 1 个 ExperimentalEvent (tool_use)
+> - **Step 3**：三表 → event 迁移；judgment 表数据若有则同步（应当为空——本来就是死表）
+> - **Step 5**：`IngestionSession` 模块演化为 `LearningSession`，写入路径含 event 写
+> - **Step 7**：新增 `/api/knowledge/edges` CRUD + KnowledgeProposeTask / KnowledgeReviewTask prompt 扩"propose new edge"分支
+> - **Step 8**：mastery view 上线后跑 smoke：query 一个无练习节点应得 NULL，有练习节点 mastery ∈ [0, 1]
 > - `artifact` 表**不再 DROP**（C 档 AI 主动产出激活）
-> - 工时 10-14d → **20-27d**（grill Q4 ack + mesh +2-3d）
+>
+> 工时调整：10-14d → 20-27d (mesh + ADR-0011/0012 deltas)
 >
 > Server rename + API rename + UI 脚手架（Step 6-12）大致不变，但 entity 名是 event 而非 encounter。
 >
-> **开干前请按 ADR-0006 v2 重写 Step 1-5**。loom addendum L1-L8 仍生效。
+> **Status**: ready for execution（Step 1 已 refresh，Step 2-13 执行时跟随 ADR-0011/0012）
 >
-> **Status**: sketch — REFRESH REQUIRED before execution
->
-> **For agentic workers**：开干前请补 TDD substeps（参考 sub-0c plan 的 X.1 (red) / X.3 (green) / X.5 (commit) 模式），且**必须**先确认 Sub 0c 已 merge 到 main。
+> **For agentic workers**：开干前 (a) 补 TDD substeps（参考 sub-0c plan 的 X.1 red / X.3 green / X.5 commit 模式）(b) **必须**先确认 Sub 0c 已 merge 到 main（✅ commit 054837c）(c) 读 ADR-0006 v2 / 0010 / 0011 / 0012 + 数据假设清单 / loom design v2 + v2.1 brief 全部完文 (d) 起 worktree
 
 **Goal**：把 Phase 1c 的双 first-class entity（`encounter` + `learning_session`）一次性落地——schema、数据迁移、server code rename、模块演化、API rename、AI prompts、测试，外加 UI 脚手架（让 1c.2 五页有家可回）。Phase 1c.1 收尾时：mistake / ingestion_session / artifact 三张表 DROP，新 schema 长成，UI 框架可见 health 页面。
 
@@ -46,43 +58,200 @@
 
 ---
 
-## Step 1: 新 schema — `encounter` + `learning_session` 表（DDL only，**不动**旧表）
+## Step 1: 新 schema — event 核 + learning_session + mesh + DROP stub 字段 + 建 view
+
+> 本 Step 是 1c.1 灵魂——schema 一次性全到位。后续 Step 2-13 都建立在它之上。
+
+### Step 1.1: 新增 `event` + `learning_session` + `material_fsrs_state` + `knowledge_edge` 表（DDL only，**不动**旧表）
 
 在 `src/db/schema.ts` 加：
 
 ```typescript
-export const encounter = pgTable('encounter', {
+export const event = pgTable('event', {
   id: text('id').primaryKey(),
-  outcome: text('outcome').notNull(),  // wrong | right | exposed | created | drilled | reviewed
-  material_ref: jsonb('material_ref').$type<MaterialRefT>().notNull(),
-  knowledge_ids: jsonb('knowledge_ids').$type<string[]>().notNull().default([]),
-  evidence: jsonb('evidence').$type<EvidenceT>().notNull(),
-  source: text('source').notNull(),
-  status: text('status').notNull().default('active'),
+  session_id: text('session_id'),                  // nullable — cron / system 事件可空
+  actor_kind: text('actor_kind').notNull(),        // 'user' | 'agent' | 'cron' | 'system'
+  actor_ref: text('actor_ref').notNull(),          // 'self' | task_kind | cron_name
+  action: text('action').notNull(),                // 'attempt' | 'judge' | 'propose' | 'generate' | 'review' | 'rate' | 'extract' | 'accept_suggestion' | 'experimental:*'
+  subject_kind: text('subject_kind').notNull(),    // 'question' | 'knowledge' | 'knowledge_edge' | 'artifact' | 'source_document' | 'event' | 'chip' | 'query'
+  subject_id: text('subject_id').notNull(),
+  outcome: text('outcome'),                        // 'success' | 'failure' | 'partial' | NULL
+  payload: jsonb('payload').notNull(),             // Zod-guarded（per ADR-0006 v2 + 0011）
+  caused_by_event_id: text('caused_by_event_id'),  // chain
+  task_run_id: text('task_run_id'),
+  cost_micro_usd: integer('cost_micro_usd'),
+  created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index('event_subject_idx').on(t.subject_kind, t.subject_id, t.created_at.desc()),
+  index('event_action_outcome_idx').on(t.action, t.outcome, t.created_at.desc()),
+  index('event_session_idx').on(t.session_id, t.created_at),
+  index('event_actor_idx').on(t.actor_kind, t.actor_ref, t.created_at),
+  // GIN on payload — per data-assumptions follow-up
+  sql`CREATE INDEX event_payload_idx ON event USING GIN (payload jsonb_path_ops)`,
+  // caused_by 链
+  index('event_caused_by_idx').on(t.caused_by_event_id),
+]);
+
+export const learning_session = pgTable('learning_session', {
+  id: text('id').primaryKey(),
+  type: text('type').notNull(),                    // 'ingestion' | 'review' | 'tutor' | 'explore' | 'create' | 'conversation'
+  status: text('status').notNull(),                // per-type 状态机
+  source_document_id: text('source_document_id'),  // 仅 type='ingestion'
+  source_asset_ids: jsonb('source_asset_ids').$type<string[]>().notNull().default([]),
+  entrypoint: text('entrypoint'),                  // 仅 type='ingestion'
+  warnings: jsonb('warnings').$type<string[]>().notNull().default([]),
+  error_message: text('error_message'),
+  summary_md: text('summary_md'),                  // type='conversation' 用
+  goal_id: text('goal_id'),                        // 占位 Phase 1d
+  started_at: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+  ended_at: timestamp('ended_at', { withTimezone: true }),
   version: integer('version').notNull().default(0),
   created_at, updated_at, ...
 });
 
-export const learning_session = pgTable('learning_session', {
+export const material_fsrs_state = pgTable('material_fsrs_state', {
+  id: text('id').primaryKey(),                     // synthetic
+  subject_kind: text('subject_kind').notNull(),    // 'question'（v1 只支持题；其他 material 后续）
+  subject_id: text('subject_id').notNull(),
+  state: jsonb('state').$type<FsrsState>().notNull(),
+  due_at: timestamp('due_at', { withTimezone: true }).notNull(),
+  last_review_event_id: text('last_review_event_id'),   // event.id
+  updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex('material_fsrs_unique').on(t.subject_kind, t.subject_id),
+  index('material_fsrs_due_idx').on(t.due_at),
+]);
+
+export const knowledge_edge = pgTable('knowledge_edge', {
   id: text('id').primaryKey(),
-  type: text('type').notNull(),  // ingestion | review | tutor | explore | create | conversation
-  status: text('status').notNull(),  // per-type 状态机
-  source_document_id: text('source_document_id'),  // 仅 type='ingestion'
-  // ... 其他 ingestion 字段（source_asset_ids / entrypoint / error_message / warnings 等）
-  // 各 type 自己用到的列允许 NULL，其他 type 不碰
-  started_at: timestamp('started_at', { withTimezone: true }).notNull(),
-  ended_at: timestamp('ended_at', { withTimezone: true }),
-  summary_md: text('summary_md'),
-  goal_id: text('goal_id'),  // 占位，Phase 1d
-  ...
-});
+  from_knowledge_id: text('from_knowledge_id').notNull().references(() => knowledge.id),
+  to_knowledge_id: text('to_knowledge_id').notNull().references(() => knowledge.id),
+  relation_type: text('relation_type').notNull(),     // ADR-0010 5+experimental
+  weight: real('weight').notNull().default(1),
+  created_by: jsonb('created_by').$type<{actor_kind: string, actor_ref?: string}>().notNull(),
+  reasoning: text('reasoning'),
+  created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  archived_at: timestamp('archived_at', { withTimezone: true }),
+}, (t) => [
+  uniqueIndex('knowledge_edge_unique').on(t.from_knowledge_id, t.to_knowledge_id, t.relation_type),
+  index('knowledge_edge_from_idx').on(t.from_knowledge_id, t.relation_type),
+  index('knowledge_edge_to_idx').on(t.to_knowledge_id, t.relation_type),
+]);
 ```
 
-`pnpm db:generate` 出 migration；不动 `mistake` / `ingestion_session` / `artifact`。
+### Step 1.2: DROP stub 字段（ADR-0012 同步执行）
 
-`pnpm test` 期望 全绿（schema 新增不破坏现有）。
+```typescript
+// schema.ts knowledge 表内删除：
+//   base_mastery: real('base_mastery').notNull().default(0),
+//   ai_delta_mastery: real('ai_delta_mastery').notNull().default(0),
+//   last_active_at: timestamp('last_active_at', { withTimezone: true }),
+// 也删 check constraint:
+//   check('knowledge_base_mastery_range', sql`${t.base_mastery} BETWEEN 0 AND 1`),
+//   check('knowledge_ai_delta_mastery_range', sql`${t.ai_delta_mastery} BETWEEN -0.2 AND 0.2`),
+```
 
-Commit：`feat(1c.1): add encounter + learning_session tables (drizzle DDL, no data yet)`
+drizzle-kit 出 migration with `ALTER TABLE knowledge DROP COLUMN ...`。
+
+### Step 1.3: CREATE VIEW `knowledge_mastery`（ADR-0012）
+
+drizzle 不直接支持 view，**手写 SQL migration**：
+
+```sql
+-- migrations/00XX_create_knowledge_mastery_view.sql
+
+CREATE VIEW knowledge_mastery AS
+WITH attempts AS (
+  SELECT
+    k.id AS knowledge_id,
+    e.id AS event_id,
+    e.outcome,
+    e.created_at,
+    exp(-ln(2) * extract(days from (now() - e.created_at)) / 30.0) AS weight
+  FROM knowledge k
+  CROSS JOIN LATERAL (
+    SELECT id, outcome, created_at, payload
+    FROM event
+    WHERE action IN ('attempt', 'review')
+      AND subject_kind = 'question'
+      AND created_at > now() - interval '180 days'
+      AND payload->'referenced_knowledge_ids' @> to_jsonb(k.id)
+  ) e
+),
+agg AS (
+  SELECT
+    knowledge_id,
+    sum(CASE WHEN outcome = 'success' THEN weight ELSE 0 END) AS weighted_success,
+    sum(weight) AS weighted_total,
+    count(*) AS evidence_count,
+    max(created_at) AS last_evidence_at
+  FROM attempts
+  GROUP BY knowledge_id
+),
+activity AS (
+  SELECT
+    k.id AS knowledge_id,
+    max(e.created_at) AS last_event_at
+  FROM knowledge k
+  CROSS JOIN LATERAL (
+    SELECT created_at
+    FROM event
+    WHERE (subject_kind = 'knowledge' AND subject_id = k.id)
+       OR (payload->'referenced_knowledge_ids' @> to_jsonb(k.id))
+       OR (payload->'knowledge_ids' @> to_jsonb(k.id))
+  ) e
+  GROUP BY k.id
+)
+SELECT
+  k.id AS knowledge_id,
+  CASE
+    WHEN agg.evidence_count IS NULL OR agg.evidence_count = 0 THEN NULL
+    WHEN agg.evidence_count < 3 THEN 0.5
+    ELSE (agg.weighted_success / agg.weighted_total)::real
+  END AS mastery,
+  coalesce(agg.evidence_count, 0) AS evidence_count,
+  agg.last_evidence_at,
+  coalesce(activity.last_event_at, k.created_at) AS last_active_at
+FROM knowledge k
+LEFT JOIN agg ON agg.knowledge_id = k.id
+LEFT JOIN activity ON activity.knowledge_id = k.id;
+```
+
+drizzle 侧把这个 view 当只读表注册：
+
+```typescript
+export const knowledge_mastery = pgView('knowledge_mastery', {
+  knowledge_id: text('knowledge_id').notNull(),
+  mastery: real('mastery'),                  // nullable: 未练习
+  evidence_count: integer('evidence_count').notNull(),
+  last_evidence_at: timestamp('last_evidence_at', { withTimezone: true }),
+  last_active_at: timestamp('last_active_at', { withTimezone: true }).notNull(),
+}).existing();
+```
+
+### Step 1.4: DROP judgment 表（data-assumptions §O2 决策）
+
+audit follow-up 验证 `judgment` 表 ADR-0006 v2 后判分走 `event(action='judge')` 替代——judgment 表无家可归，**1c.1 一起 DROP**：
+
+```typescript
+// schema.ts：删除 judgment 表定义
+```
+
+drizzle-kit migration 出 `DROP TABLE judgment CASCADE`（依赖：`user_appeal.judgment_id` FK 同步处理；audit 显示 user_appeal 也是空表，**一起 DROP**）。
+
+### Step 1.5: Migration 出 + 测试
+
+`pnpm db:generate` 出 drizzle 自动 migrations + 手挂 `0XXX_knowledge_mastery_view.sql`。
+
+跑 `pnpm db:push` against testcontainer：
+- 新表 ✅
+- DROP 字段 ✅
+- VIEW 建好 ✅
+- DROP 死表 ✅
+
+`pnpm test` 期望全绿（schema 改动不破坏现有测试，因为 mistake / ingestion_session / artifact 还在；mastery 字段读路径 audit 已确认无）。
+
+Commit：`feat(1c.1): Step 1 schema — event + mesh + DROP stub fields + knowledge_mastery view + DROP judgment`
 
 ---
 
