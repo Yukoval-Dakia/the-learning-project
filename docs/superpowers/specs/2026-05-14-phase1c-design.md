@@ -1,7 +1,7 @@
 # Phase 1c Design Spec — Encounter / Session 抽象 + UI 闭环
 
 **Date**: 2026-05-14
-**Status**: spec — **2026-05-14 全 grill 完成**：D1/D2 修订（full restructure，R5 并入 1c.1，artifact DROP），D3/D4/D5 ack。下一步起 ADR-0006/0007/0008 + 1c.1 plan。
+**Status**: spec — 2026-05-14 全 grill 完成；**2026-05-15 loom design 对齐 addendum** 见 [`2026-05-15-phase1c-loom-design-addendum.md`](./2026-05-15-phase1c-loom-design-addendum.md)。addendum 覆盖 D2（UI 顺序）+ D6（drop shadcn → 用 loom Primitives）+ 新增 D9（design tokens lift 进 Tailwind v4 `@theme`）；不动 D1/D3/D4/D5。
 **Brainstorm**: `docs/superpowers/brainstorms/2026-05-14-phase1c-encounter-session-ui.md`
 **Audit**: `docs/superpowers/audits/2026-05-14-phase1-pre-1c-audit.md`
 **Predecessor**: Sub 0c（async lane + Tencent Mark Agent，进行中）
