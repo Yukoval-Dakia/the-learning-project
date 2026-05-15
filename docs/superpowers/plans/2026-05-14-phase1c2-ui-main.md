@@ -1,6 +1,15 @@
 # Phase 1c.2 Implementation Plan — UI 主切片（六页，loom 对齐版）
 
-> **Status**: sketch；2026-05-15 由 loom design system 重排为 6 页。开干前请细化具体交互。
+> ⚠️ **REFRESH REQUIRED — 2026-05-15 v2**
+>
+> 数据访问语言从 `encounter` 改成 event 视图（per ADR-0006 v2）。具体影响：
+> - "错题列表"（/mistakes）= `events WHERE action='attempt' AND outcome='failure' AND subject_kind='question'`
+> - cause 来源 = 该 attempt 的 caused_by `judge` event 的 payload.cause
+> - UI 大体不变（loom 6 页结构保留），只改数据 fetch / state shape
+> - C 档新增 UI 元素：用户可以**审查 AI event 链**（"AI 为什么提议这个" → 沿 caused_by_event_id 看 reasoning）—— 未在 loom design 中画，**1c.2 收尾前再 sub-grill 是否本 phase 做**
+> - 1c.1 后端落定后，Encounter 命名全替换 event；本 plan 各 Step 描述待 refresh
+>
+> **Status**: sketch — REFRESH REQUIRED before execution (1c.1 落定后)
 >
 > **重要 — 2026-05-15 refresh**（per `docs/superpowers/specs/2026-05-15-phase1c-loom-design-addendum.md`）：
 > - 页面从 5 变 6：drop `/history`（用 `/today` 顶部"近期"区块替代），drop `/capture` 与 `/inbox` 独立路由（合并进 `/record` 三 tab unified），新增 `/today` orchestrator + `/mistakes` + `/learning-items`
