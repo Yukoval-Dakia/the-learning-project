@@ -10,8 +10,10 @@ describe('export constants', () => {
     expect(MAX_INLINE_ASSETS).toBe(45);
   });
 
-  it('FK_ORDER lists all 18 tables in topological order', () => {
-    expect(FK_ORDER.length).toBe(18);
+  it('FK_ORDER lists all 16 tables in topological order', () => {
+    // 18 → 16: judgment + user_appeal DROPped in Phase 1c.1 Step 1.4 (Lane A)
+    // per ADR-0006 v2 / data-assumptions §O2.
+    expect(FK_ORDER.length).toBe(16);
     expect(FK_ORDER[0]).toBe('knowledge');
     expect(FK_ORDER[FK_ORDER.length - 1]).toBe('cost_ledger');
   });

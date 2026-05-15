@@ -63,8 +63,6 @@ describe('runProposeAndWrite', () => {
       name: id,
       domain: 'wenyan',
       parent_id: null,
-      base_mastery: 0,
-      ai_delta_mastery: 0,
       merged_from: [],
       proposed_by_ai: false,
       approval_status: 'approved',
