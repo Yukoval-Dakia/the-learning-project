@@ -1,12 +1,414 @@
+@import url("https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&family=Noto+Serif+SC:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+
 @import "tailwindcss";
 
-@layer base {
-  html,
-  body {
-    height: 100%;
-  }
-  body {
-    background: #ffffff;
-    color: #0f172a;
-  }
+@theme {
+  /* ── Color · Paper (warm whites) ───────────────────────── */
+  --color-paper: #faf9f5;
+  --color-paper-sunk: #f5f1e8;
+  --color-paper-raised: #ffffff;
+  --color-paper-tint: #f2ede0;
+
+  /* ── Color · Ink (warm slates) ─────────────────────────── */
+  --color-ink: #1f1e1d;
+  --color-ink-2: #3d3b36;
+  --color-ink-3: #5c5b57;
+  --color-ink-4: #8a8880;
+  --color-ink-5: #b6b3a8;
+
+  /* ── Color · Hairlines & dividers ──────────────────────── */
+  --color-line: #e8e4d8;
+  --color-line-strong: #d5d0bf;
+  --color-line-soft: #f0ebdd;
+
+  /* ── Color · Coral (single accent) ─────────────────────── */
+  --color-coral: #d97757;
+  --color-coral-hover: #c2553a;
+  --color-coral-press: #a93f26;
+  --color-coral-soft: #faede5;
+  --color-coral-line: #edc3ae;
+  --color-coral-ink: #6e2c18;
+
+  /* ── Color · Semantic (FSRS · 三档) ────────────────────── */
+  /* 不会 · again */
+  --color-again: #b5341b;
+  --color-again-soft: #f6e1d8;
+  --color-again-line: #e8b7a4;
+  --color-again-ink: #5a1709;
+
+  /* 模糊 · hard */
+  --color-hard: #a87519;
+  --color-hard-soft: #f6ecd2;
+  --color-hard-line: #e0c788;
+  --color-hard-ink: #4a3208;
+
+  /* 会了 · good */
+  --color-good: #4a7c59;
+  --color-good-soft: #e2ebdf;
+  --color-good-line: #b5cdb8;
+  --color-good-ink: #1f3625;
+
+  /* informational (used sparingly — AI-attributed) */
+  --color-info: #4f6e8e;
+  --color-info-soft: #e2e9f1;
+  --color-info-ink: #1f3247;
+
+  /* ── Type · Families ───────────────────────────────────── */
+  --font-serif: "Source Serif 4", "Noto Serif SC", "Songti SC", "STSong", "FangSong", ui-serif,
+    Georgia, serif;
+  --font-sans: "Noto Sans SC", "PingFang SC", "MiSans", "Hiragino Sans GB", -apple-system,
+    BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Source Han Mono", ui-monospace, "SFMono-Regular", "Cascadia Code",
+    Consolas, monospace;
+  --font-wenyan: "Source Serif 4", "Noto Serif SC", "Songti SC", "STSong", "FangSong", serif;
+
+  /* ── Type · Scale ──────────────────────────────────────── */
+  --text-meta: 13px;
+  --text-caption: 14px;
+  --text-body: 15px;
+  --text-body-lg: 17px;
+  --text-h6: 15px;
+  --text-h5: 17px;
+  --text-h4: 19px;
+  --text-h3: 22px;
+  --text-h2: 28px;
+  --text-h1: 36px;
+  --text-display: 48px;
+
+  /* ── Spacing · 4-pt grid ───────────────────────────────── */
+  --spacing-s1: 4px;
+  --spacing-s2: 8px;
+  --spacing-s3: 12px;
+  --spacing-s4: 16px;
+  --spacing-s5: 20px;
+  --spacing-s6: 24px;
+  --spacing-s8: 32px;
+  --spacing-s10: 40px;
+  --spacing-s12: 48px;
+  --spacing-s16: 64px;
+  --spacing-s20: 80px;
+  --spacing-s24: 96px;
+
+  /* ── Radii ─────────────────────────────────────────────── */
+  --radius-r1: 4px;
+  --radius-r2: 6px;
+  --radius-r3: 8px;
+  --radius-r4: 12px;
+  --radius-pill: 999px;
+
+  /* ── Shadows · soft & warm, never crisp ────────────────── */
+  --shadow-1: 0 1px 0 rgba(60, 50, 30, 0.04), 0 1px 2px rgba(60, 50, 30, 0.04);
+  --shadow-2: 0 1px 0 rgba(60, 50, 30, 0.04), 0 4px 14px -4px rgba(60, 50, 30, 0.08);
+  --shadow-3: 0 2px 0 rgba(60, 50, 30, 0.04), 0 12px 32px -8px rgba(60, 50, 30, 0.12);
+  --shadow-focus: 0 0 0 3px rgba(217, 119, 87, 0.22);
+  --shadow-inset: inset 0 1px 0 rgba(60, 50, 30, 0.04);
+
+  /* ── Motion ────────────────────────────────────────────── */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in: cubic-bezier(0.55, 0, 0.68, 0);
+  --ease-soft: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+
+  /* ── Layout caps ───────────────────────────────────────── */
+  --width-prose: 680px;
+  --width-app: 960px;
+  --width-wide: 1200px;
+}
+
+/* ── CSS custom props for non-Tailwind consumption ─────────── */
+/* Keep these in sync with @theme above so design tokens work
+   both via Tailwind utilities and plain CSS var() references. */
+:root {
+  --paper: #faf9f5;
+  --paper-sunk: #f5f1e8;
+  --paper-raised: #ffffff;
+  --paper-tint: #f2ede0;
+
+  --ink: #1f1e1d;
+  --ink-2: #3d3b36;
+  --ink-3: #5c5b57;
+  --ink-4: #8a8880;
+  --ink-5: #b6b3a8;
+
+  --line: #e8e4d8;
+  --line-strong: #d5d0bf;
+  --line-soft: #f0ebdd;
+
+  --coral: #d97757;
+  --coral-hover: #c2553a;
+  --coral-press: #a93f26;
+  --coral-soft: #faede5;
+  --coral-line: #edc3ae;
+  --coral-ink: #6e2c18;
+
+  --again: #b5341b;
+  --again-soft: #f6e1d8;
+  --again-line: #e8b7a4;
+  --again-ink: #5a1709;
+
+  --hard: #a87519;
+  --hard-soft: #f6ecd2;
+  --hard-line: #e0c788;
+  --hard-ink: #4a3208;
+
+  --good: #4a7c59;
+  --good-soft: #e2ebdf;
+  --good-line: #b5cdb8;
+  --good-ink: #1f3625;
+
+  --info: #4f6e8e;
+  --info-soft: #e2e9f1;
+  --info-ink: #1f3247;
+
+  --font-serif: "Source Serif 4", "Noto Serif SC", "Songti SC", "STSong", "FangSong", ui-serif,
+    Georgia, serif;
+  --font-sans: "Noto Sans SC", "PingFang SC", "MiSans", "Hiragino Sans GB", -apple-system,
+    BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Source Han Mono", ui-monospace, "SFMono-Regular", "Cascadia Code",
+    Consolas, monospace;
+  --font-wenyan: "Source Serif 4", "Noto Serif SC", "Songti SC", "STSong", "FangSong", serif;
+
+  --fs-meta: 13px;
+  --fs-caption: 14px;
+  --fs-body: 15px;
+  --fs-body-lg: 17px;
+  --fs-h6: 15px;
+  --fs-h5: 17px;
+  --fs-h4: 19px;
+  --fs-h3: 22px;
+  --fs-h2: 28px;
+  --fs-h1: 36px;
+  --fs-display: 48px;
+
+  --lh-tight: 1.35;
+  --lh-snug: 1.5;
+  --lh-prose: 1.7;
+  --lh-loose: 1.85;
+
+  --ls-tight: -0.015em;
+  --ls-normal: 0;
+  --ls-wide: 0.04em;
+
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+  --s-10: 40px;
+  --s-12: 48px;
+  --s-16: 64px;
+  --s-20: 80px;
+  --s-24: 96px;
+
+  --r-1: 4px;
+  --r-2: 6px;
+  --r-3: 8px;
+  --r-4: 12px;
+  --r-pill: 999px;
+
+  --shadow-1: 0 1px 0 rgba(60, 50, 30, 0.04), 0 1px 2px rgba(60, 50, 30, 0.04);
+  --shadow-2: 0 1px 0 rgba(60, 50, 30, 0.04), 0 4px 14px -4px rgba(60, 50, 30, 0.08);
+  --shadow-3: 0 2px 0 rgba(60, 50, 30, 0.04), 0 12px 32px -8px rgba(60, 50, 30, 0.12);
+  --shadow-focus: 0 0 0 3px rgba(217, 119, 87, 0.22);
+  --shadow-inset: inset 0 1px 0 rgba(60, 50, 30, 0.04);
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in: cubic-bezier(0.55, 0, 0.68, 0);
+  --ease-soft: cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 320ms;
+
+  --cap-prose: 680px;
+  --cap-app: 960px;
+  --cap-wide: 1200px;
+}
+
+/* ============================================================
+   Semantic element styles (lifted from loom-design-v2/tokens.css)
+   ============================================================ */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  line-height: var(--lh-prose);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "ss01", "cv11";
+}
+
+/* Headings — serif for display, sans for in-app */
+h1,
+.h1 {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h1);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--ls-tight);
+  color: var(--ink);
+  font-weight: 500;
+}
+h2,
+.h2 {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h2);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--ls-tight);
+  color: var(--ink);
+  font-weight: 500;
+}
+h3,
+.h3 {
+  font-family: var(--font-sans);
+  font-size: var(--fs-h3);
+  line-height: var(--lh-snug);
+  color: var(--ink);
+  font-weight: 600;
+}
+h4,
+.h4 {
+  font-family: var(--font-sans);
+  font-size: var(--fs-h4);
+  line-height: var(--lh-snug);
+  color: var(--ink-2);
+  font-weight: 600;
+}
+h5,
+.h5 {
+  font-family: var(--font-sans);
+  font-size: var(--fs-h5);
+  line-height: var(--lh-snug);
+  color: var(--ink-2);
+  font-weight: 600;
+}
+h6,
+.h6 {
+  font-family: var(--font-sans);
+  font-size: var(--fs-h6);
+  line-height: var(--lh-snug);
+  color: var(--ink-3);
+  font-weight: 600;
+  letter-spacing: var(--ls-wide);
+  text-transform: none;
+}
+
+p {
+  font-size: var(--fs-body);
+  line-height: var(--lh-prose);
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+
+/* 文言文 passages — bigger, airier, serif */
+.wenyan,
+.prose-cn {
+  font-family: var(--font-wenyan);
+  font-size: var(--fs-body-lg);
+  line-height: var(--lh-loose);
+  color: var(--ink);
+  letter-spacing: 0.01em;
+}
+
+small,
+.caption {
+  font-size: var(--fs-caption);
+  line-height: var(--lh-snug);
+  color: var(--ink-3);
+}
+
+.meta {
+  font-size: var(--fs-meta);
+  line-height: var(--lh-snug);
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+}
+
+code,
+kbd,
+samp,
+pre,
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+code {
+  background: var(--paper-sunk);
+  padding: 0.1em 0.35em;
+  border-radius: var(--r-1);
+  color: var(--ink-2);
+}
+
+pre {
+  background: var(--paper-sunk);
+  border: 1px solid var(--line-soft);
+  padding: var(--s-4);
+  border-radius: var(--r-3);
+  overflow-x: auto;
+  line-height: var(--lh-snug);
+}
+
+a {
+  color: var(--coral);
+  text-decoration: underline;
+  text-decoration-color: var(--coral-line);
+  text-underline-offset: 2px;
+  transition: color var(--dur-fast) var(--ease-out), text-decoration-color var(--dur-fast)
+    var(--ease-out);
+}
+a:hover {
+  color: var(--coral-hover);
+  text-decoration-color: var(--coral);
+}
+
+hr {
+  border: 0;
+  height: 1px;
+  background: var(--line);
+  margin: var(--s-8) 0;
+}
+
+::selection {
+  background: var(--coral-soft);
+  color: var(--coral-ink);
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+  border-radius: var(--r-2);
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+ul,
+ol {
+  margin: 0;
+  padding: 0;
 }
