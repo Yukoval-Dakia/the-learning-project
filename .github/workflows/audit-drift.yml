@@ -1,0 +1,132 @@
+name: Drift Audit (weekly)
+
+# 每周 Monday 03:00 UTC (~11:00 Beijing) 跑一次 audit-drift skill。
+# 也支持 workflow_dispatch 手动触发（建议先 dispatch 跑 1-2 次校准信号/噪音比）。
+
+on:
+  schedule:
+    - cron: '0 3 * * 1'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write       # peter-evans create-pull-request 需要
+  pull-requests: write  # 同上
+  issues: write         # tracking issue
+  id-token: write       # claude-code-action
+
+concurrency:
+  group: audit-drift
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Set today's date (UTC)
+        id: today
+        run: echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Run audit-drift skill via Claude Code
+        uses: anthropics/claude-code-action@v1
+        env:
+          REPORT_DATE: ${{ steps.today.outputs.date }}
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # 限制工具——不让 Claude 自己 commit / push / 开 issue（workflow 后续步骤处理）
+          claude_args: '--disallowedTools "Bash(git commit:*),Bash(git push:*),Bash(gh issue:*),Bash(gh pr:*)"'
+          prompt: |
+            执行 `.claude/skills/audit-drift/SKILL.md` 中描述的 audit。
+
+            **今天日期（UTC）**：见 env var `REPORT_DATE`
+            **报告位置**：`docs/audit/$REPORT_DATE-drift.md`
+
+            约束：
+            - **不要**执行 `git commit` / `git push` / `gh issue create` / `gh pr create`——workflow 后续步骤处理
+            - 只写报告文件即可，写完结束
+            - 报告须严格遵循 SKILL.md §4 的格式
+
+      - name: Verify report + count findings
+        id: scan
+        env:
+          REPORT_DATE: ${{ steps.today.outputs.date }}
+        run: |
+          report="docs/audit/${REPORT_DATE}-drift.md"
+          if [ ! -f "$report" ]; then
+            echo "::error::audit-drift did not produce $report"
+            ls -la docs/audit/ || true
+            exit 1
+          fi
+          echo "path=$report" >> "$GITHUB_OUTPUT"
+
+          # 用 H4 题目数（每条 finding 是 #### 起头）作 finding 数估计
+          findings=$(grep -cE "^#### \[" "$report" 2>/dev/null || echo 0)
+          echo "findings=$findings" >> "$GITHUB_OUTPUT"
+          echo "::notice::audit produced $findings findings in $report"
+
+      - name: Open PR with audit report
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: audit-drift/run-${{ github.run_id }}
+          base: main
+          title: "audit(drift): ${{ steps.today.outputs.date }} weekly report"
+          commit-message: "audit: weekly drift report ${{ steps.today.outputs.date }}"
+          body: |
+            🤖 自动生成的每周 drift audit 报告。
+
+            **报告路径**：`${{ steps.scan.outputs.path }}`
+            **Actionable findings**：${{ steps.scan.outputs.findings }}
+
+            ---
+
+            ### 处理建议
+
+            - **findings = 0** → 可以直接 merge（保留作为时间戳证据），或 close 不合（不影响下次 cron）
+            - **findings > 0** → 阅读报告 → 用内嵌 `gh issue create` 命令开 issue → merge 报告 PR
+
+            生成自 `.github/workflows/audit-drift.yml` (run `${{ github.run_id }}`)
+          labels: |
+            audit-drift
+            automated
+
+      - name: Create tracking issue when findings > 0
+        if: steps.scan.outputs.findings != '0' && steps.scan.outputs.findings != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPORT_DATE: ${{ steps.today.outputs.date }}
+          FINDINGS_COUNT: ${{ steps.scan.outputs.findings }}
+          REPORT_PATH: ${{ steps.scan.outputs.path }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          body=$(cat <<EOF
+          Weekly drift audit found **${FINDINGS_COUNT}** actionable finding(s) on ${REPORT_DATE}.
+
+          报告 PR 分支：\`audit-drift/run-${RUN_ID}\`
+          报告路径：\`${REPORT_PATH}\`
+
+          **不要 auto-close** —— 人工 triage 后再决定关 / 拆 sub-issue。
+          EOF
+          )
+          gh issue create \
+            --title "drift: ${REPORT_DATE} audit found ${FINDINGS_COUNT} finding(s)" \
+            --label drift,automated \
+            --body "$body"

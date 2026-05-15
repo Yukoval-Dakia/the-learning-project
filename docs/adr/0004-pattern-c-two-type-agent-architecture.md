@@ -6,6 +6,8 @@
 
 ## 调用约定（不自建 harness）
 
+> **Status (2026-05-16 audit)**: 下文描述的 **Provider Manager** (`src/server/ai/providers.ts`) 与 **Task Model Selector** (`resolveTaskModel()`) **尚未落地** —— 计划于 Sub 0d 中实现（见 `docs/superpowers/plans/2026-05-11-sub0d-agent-layer.md`，目前 DEFERRED）。下文为**目标形态**。当前 `src/server/ai/runner.ts` 直接 `import { anthropic } from '@ai-sdk/anthropic'`；`src/ai/registry.ts` 已预占 `defaultProvider` + `fallbackChain` 字段但 `fallbackChain` 是 dead config（无 reader），亦无 `resolveTaskModel()` 函数。
+
 **不**自建 `runAgent()` wrapper。直接用 Vercel AI SDK `generateText / streamText + maxSteps`，通过 **Provider Manager** + **Task Model Selector** 管理 model 与 provider。
 
 ### Provider Manager (`src/server/ai/providers.ts`)
@@ -49,16 +51,22 @@ export function resolveTaskModel(kind: TaskKind, override?: Partial<TaskModelCon
 | 审计 | `ai_task_runs` + `ai_tool_calls` + `ai_cost_ledger` |
 | 输出 | 结构化对象，写 DB（Proposal / Suggestion / enriched rows） |
 
-**已知 task（Phase 1 现有 + Phase 2 规划）：**
+**Task 现状（2026-05-16，参考 `src/ai/registry.ts`）：**
 
-| Task | 模型 | 触发 | 输出 |
-|---|---|---|---|
-| `EnrichMistakeTask` | Sonnet | user action / pg-boss | 归因 + 提议 + 知识点关联 |
-| `JudgeMistakeTask` | Sonnet | pg-boss | 判题结论 |
-| `VariantGenTask` | Opus | pg-boss | `DreamingProposal kind='variant'` |
-| `DreamingTask` | Opus + Batch | pg-boss cron 每日 02:00 BJT | `DreamingProposal`（多种） |
-| `MaintenanceProposeTask` | Sonnet + Batch | pg-boss cron 每日 | `MaintenanceSuggestion` |
-| `BlockAssemblyTask` | Sonnet | pg-boss | `DreamingProposal kind='block_merge'` |
+| Task | 模型 | 状态 | 触发 | 输出 |
+|---|---|---|---|---|
+| `AttributionTask` | Sonnet | ✅ 已实装 | user action / pg-boss | 错题归因（10 类 cause）+ ai_analysis_md |
+| `KnowledgeProposeTask` | Sonnet | ✅ 已实装 | user action / pg-boss | 0-3 条 propose_new 知识点（挂在合适 parent 下） |
+| `KnowledgeReviewTask` | Sonnet | ✅ 已实装 | maintenance | tree mutation propose（reparent / merge / split / archive / propose_new） |
+| `VisionExtractTask` | Haiku | ✅ 已实装（manual rescue only after Sub 0c） | `POST /api/ingestion/[id]/rescue` | bbox blocks |
+| `VisionExtractTaskHeavy` | Sonnet | ✅ 已实装（heavy manual rescue） | 同上 | 同上 |
+| `JudgeMistakeTask` | Sonnet | ⏳ Sub 0d 计划 | pg-boss | 判题结论 |
+| `VariantGenTask` | Opus | ⏳ Sub 0d 计划 | pg-boss | `DreamingProposal kind='variant'` |
+| `DreamingTask` | Opus + Batch | ⏳ Sub 0d 计划 | pg-boss cron 每日 02:00 BJT | `DreamingProposal`（多种） |
+| `MaintenanceProposeTask` | Sonnet + Batch | ⏳ Sub 0d 计划 | pg-boss cron 每日 | `MaintenanceSuggestion` |
+| `BlockAssemblyTask` | Sonnet | ⏳ Sub 0d 计划 | pg-boss | `DreamingProposal kind='block_merge'` |
+
+**与旧 ADR-0004 版本差异（2026-05-16 audit refresh）**：原计划的 `EnrichMistakeTask`（"归因 + 提议 + 知识点关联"）已**拆分**为 `AttributionTask`（归因）+ `KnowledgeProposeTask`（知识点提议）。新增 `KnowledgeReviewTask`（tree maintenance，原 ADR 未提）。VisionExtract* 在 ADR-0002 修订（2026-05-11）中改为 "manual rescue tool"，本表注明 `invocation: 'manual_rescue_only'`。其余 5 个 `Judge*/VariantGen/Dreaming/Maintenance/BlockAssembly` 仍在 Sub 0d 计划中，未实装（Sub 0d plan DEFERRED）。
 
 **破坏性操作（删题、合并节点）没有直接 tool**——AI 只能 propose，走 Proposal/Suggestion 流程，用户最终确认。
 
