@@ -120,9 +120,45 @@ v2 Copilot drawer 当前只演示 **text-only** 响应：用户问 → AI 回 ex
    - `attribute_mistake` — 给一个 attempt event 写 judge cause
    - `propose_edge` — 提议 knowledge_edge（对接 §2 mesh）
 
+3a. **Folded summary：每个 tool 自定模板，不用 generic 截断**（designer 反馈采纳）
+
+ToolUseCard primitive 接 `foldedSummary(args, result)` 回调，每个 tool 实现各自的 1–2 个关键参数嵌入：
+
+```
+query_mistakes · k='之的用法' · 7d · 5 found
+query_events · attempt+failure · 3 found
+propose_variant · q1 · 3 generated
+attribute_mistake · e_20
+propose_edge · k_shici→k_fanyi
+query_knowledge · k_shici · mesh:4 / mistakes:12
+```
+
+理由：generic 截前 20 字会把 JSON args 切糊；每个 tool 都有它自己"读者真要知道"的 1–2 个参数，由 tool 自己提供。
+
+3b. **`suggested_actions` chip 直触发 tool_use，不走 sendUser**（designer 反馈采纳）
+
+v2 当前 chip 点击 = simulate user msg = 写 ask event。**错的**——chip 是 agent 给的结构化动作，user 点是 accept，不是打字。
+
+改 event 链：
+
+```
+event(actor=user, action=accept_suggestion,
+      subject_kind=chip, payload={label,tool})
+   ↓ caused_by
+event(actor=agent:copilot, action=tool_use, ...)
+```
+
+UI 上 chip 接受 = 一行小 chip-tag row（**不画**完整 ask bubble），链条仍可读但 actor 标签正确。当前模拟 user msg 的形式违背 ADR-0006 v2 三轴 actor 定位的本意，务必改。
+
 4. **回答应当来自 tool result，不来自 chat history**：SEED 数据要把 "回答暂无错题" 这种 hallucination 改成"通过 query_mistakes 拿到 N 条具体题号 → 回答引用具体行"。这是 voice 上的 demonstration——展示 AI 不靠记忆答，靠现查。
 
-5. **failed tool-call 也要展示**：如 `query_events` 拿到 0 行，UI 显示 "no events found" + AI 解释"暂无符合条件的错题，可能因为..." —— 不是憋着回答"暂无"。
+5. **Failed tool-call 必须画 SEED 两种 mode**（designer 反馈采纳）
+
+a. **Soft fail**（结果合法但空）：例 `query_events` 返回 0 行 → ToolUseCard 显示 `0 found`，AI 解释 "未找到符合条件的错题，可能因为..." + 修正条件 chip（如"扩到 30 天"）
+
+b. **Hard fail**（tool 自己崩）：例 `propose_variant` LLM 超时/限流 → `outcome='failure'`, `payload.error_reason='timeout_30s'`，ToolUseCard **红色边框** + 重试 chip。AI 文字回应做 graceful degradation："刚才生成超时了，要不要重试？" —— 不憋着、不假装成功
+
+两种 fail 都 mirror 进 events 表（ADR evidence-first 硬要求，**不能静默吞**）。
 
 6. **`/inbox` 也加 tool-use trace**：当 Dreaming agent 提议变式时，那条 event chain 应该展示它调了 `query_mistakes(k='之的用法')` → 拿 5 道相似题 → 生成 3 道变式。**让 AI 的推理过程 = 可见的 tool 调用流**。
 
@@ -144,7 +180,9 @@ v2 完全没反映。本轮要补四块：
 
 - ⛔ **不存**：tree parent_id 已经表达的层级关系（孩子 → 父）
 - ✅ **存**：跨子树的横向关系（prerequisite / contrasts_with / applied_in / related_to）
-- ✅ **存**：跨 tree 但有方向的"演化/派生"关系（一个非父子节点对另一个节点的 derived_from——比如同级或远房）
+- ✅ **存**：远跳 derived_from——非父子但有派生意义（兄弟节点之间、隔代亲属之间）
+
+> Phase 1 单 subject（wenyan）—— mesh 例子全部在文言文树内，**不引入跨学科 root**（语文 / 数学 / 物理 …）。多学科 root 是更晚的事，design 不预先 mock 不存在的结构。
 
 `data.jsx` 加：
 
@@ -182,11 +220,13 @@ const KNOWLEDGE_EDGES = [
   },
   {
     id: 'kedge_04',
-    from_id: 'k_fanyi',
-    to_id: 'k_yuwen',         // 远房节点（语文学科级）
+    from_id: 'k_xuci_zhi',    // 之-用法（tree: 文言 > 字词 > 虚词 > 之）
+    to_id: 'k_juedu',         // 句读（tree: 文言 > 句段 > 句读）
+                              // 都在文言文树内，但跨 2 个一级子树
     relation_type: 'related_to',
     weight: 0.4,
     created_by: { actor_kind: 'user' },
+    reasoning: '断句时虚词位置是关键线索',
     created_at: NOW - 8 * DAY,
   },
 ];
