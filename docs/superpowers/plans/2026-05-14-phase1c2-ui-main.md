@@ -1,10 +1,21 @@
-# Phase 1c.2 Implementation Plan — UI 主切片（五页）
+# Phase 1c.2 Implementation Plan — UI 主切片（六页，loom 对齐版）
 
-> **Status**: sketch（高层 step 已敲定；具体页面 layout / 交互细节 + 测试策略待 1c.1 merge 后细化）。
+> **Status**: sketch；2026-05-15 由 loom design system 重排为 6 页。开干前请细化具体交互。
 >
-> **For agentic workers**：开干前请确认 1c.1 PR 已 merge 到 main，UI 脚手架（Next.js routing / Zustand / TanStack Query / Tailwind v4 / shadcn）就位。
+> **重要 — 2026-05-15 refresh**（per `docs/superpowers/specs/2026-05-15-phase1c-loom-design-addendum.md`）：
+> - 页面从 5 变 6：drop `/history`（用 `/today` 顶部"近期"区块替代），drop `/capture` 与 `/inbox` 独立路由（合并进 `/record` 三 tab unified），新增 `/today` orchestrator + `/mistakes` + `/learning-items`
+> - drop shadcn → 用 1c.1 已 port 的 **loom Primitives**（`src/ui/primitives/`），icon = `lucide-react`
+> - design tokens 已在 1c.1 lift 进 `app/globals.css` `@theme`，本 phase 不再调
+>
+> **For agentic workers**：开干前请确认 1c.1 PR 已 merge 到 main，UI 脚手架（Next.js routing / Zustand / TanStack Query / Tailwind v4 + loom tokens / 10 个 loom Primitives）就位。
 
-**Goal**：把 Phase 1c.1 建好的"无人触达的完整后端"接到人类眼前。五个页面：`/review`（最高价值——错因终于到达用户）/ `/inbox`（抽取审阅）/ `/capture`（拍照入口）/ `/knowledge`（知识树浏览）/ `/history`（学习会话历史）。
+**Goal**：把 Phase 1c.1 建好的"无人触达的完整后端"接到人类眼前。**六个页面**（per loom L2）：
+- `/today` —— Learning Orchestrator 控制面（KPI strip + 3 lane A/B/C + Task Dispatcher + cost ledger 链接）
+- `/record` —— 三 tab unified（manual + vision_single + vision_paper），同一 IngestionSession 状态机
+- `/review` —— FSRS due queue + 单题答 + 键盘 1/2/3 评分 + cause 显示
+- `/mistakes` —— encounter where outcome='wrong' 列表 + CauseBadge AI/user provenance
+- `/learning-items` —— TODO 形态，segmented filter + 状态 transitions
+- `/knowledge` —— read-only tree table + AI proposals 链接
 
 **Spec**：`docs/superpowers/specs/2026-05-14-phase1c-design.md`
 
@@ -16,45 +27,43 @@
 
 - Phase 1c.1 PR merge 完成
 - `encounter` / `learning_session` 表已上线
-- shadcn 初始化完毕，至少 button / input / card / dialog 装好
+- loom Primitives 10 atoms 在 `src/ui/primitives/` 就位（1c.1 Step 10 已完成）
 
 **预估**：5-7 d 单人推进，9 个 Step。
 
 ---
 
-## Step 0: 准备 + 路由约定
+## Step 0: 准备 + 路由约定（loom 6 页结构）
 
 - 起新分支 `phase1c2-implementation`（worktree 推荐）
-- 确认 1c.1 schema 跑得动；`pnpm dev` 起来 `/health` 仍 OK
-- 路由命名约定：
-  - `/` → Dashboard（精简版，显示今日 due reviews + 最近 sessions）
-  - `/review` → 复习
-  - `/capture` → 拍照入口
-  - `/inbox/[sessionId]` → 录入会话审阅
-  - `/inbox` → 录入会话列表（含 active / extracted / partial / failed）
-  - `/knowledge` → 知识树浏览
+- 确认 1c.1 schema 跑得动 + loom Primitives 就位；`pnpm dev` 起来 `/health` 用 loom palette 渲染
+- 路由（addendum L2）：
+  - `/` → redirect 到 `/today`（1c.1 已完成）
+  - `/today` → Learning Orchestrator 控制面
+  - `/record` → 三 tab unified（manual / vision_single / vision_paper）
+  - `/review` → FSRS 复习
+  - `/mistakes` → encounter where outcome='wrong' 列表（alias 给 `/encounters?outcome=wrong`）
+  - `/learning-items` → 学习项 TODO
+  - `/knowledge` → 知识 tree table
   - `/knowledge/[id]` → 单节点 + 挂在它下面的 encounters
-  - `/history` → 全 session 列表（type='ingestion' + 'review'）
-  - `/history/[sessionId]` → 单 session 详情
-- Layout：`app/(app)/layout.tsx` 含侧边栏导航（5 个路由 + Dashboard）。`app/(app)/` 是 route group，所有真实页面都走它
+- Layout：
+  - desktop ≥ 760px: `<TopNav>` 顶部（6 routes）
+  - mobile < 760px: `<TabBar>` 底部（5 routes — drop `/learning-items`）
+  - `app/(app)/layout.tsx` 包 layout component；所有真实页面在此 route group
 
-Commit：`feat(1c.2): route group + sidebar navigation shell`
+Commit：`feat(1c.2): route group + TopNav/TabBar shell (loom)`
 
 ---
 
-## Step 1: 共享 primitives + theming
+## Step 1: 共享辅助 + 验证 Primitives
 
-> 装 shadcn 组件 + 调 design tokens。这一步是审美定调。
+> Primitives 在 1c.1 Step 10 已经 port。本步只补 helper + 跑一次视觉冒烟。
 
-- `pnpm dlx shadcn@latest add button input card dialog form label select textarea sheet skeleton sonner badge separator scroll-area tabs` —— 一次性把高频 primitive 装齐
-- `app/globals.css` 调 Tailwind tokens：
-  - 字号 / 行高 / 间距 用学习型工具风格（read-oriented，不是 dashboard 风格）
-  - 色彩 palette：cool neutrals + 一个 accent（蓝 or 绿，待 frontend-design grill）
-  - 圆角 / 阴影 克制
-- 跑 `frontend-design` skill 一次 review 已装组件的视觉风格，按需要 override Tailwind tokens 进 minimal layer
-- `src/ui/lib/utils.ts`：shadcn 提供的 `cn` 工具 + 项目特有 helpers（如 formatCnDate、formatRelTime）
+- `src/ui/lib/utils.ts`：`cn` 工具（写一个或装 `clsx` + `tailwind-merge`）+ formatCnDate / formatRelTime
+- 跑 `frontend-design` skill 一次 review 已 port 的 Primitives 视觉，按需要 override Tailwind tokens 进 minimal layer
+- 写 `app/(app)/_storybook/page.tsx`（dev-only）—— 把所有 10 个 Primitives 在一页渲染，对比 loom `preview/components-*.html` 的 reference（仅 dev 路径）
 
-Commit：`feat(1c.2): shadcn primitives + design tokens + theming`
+Commit：`feat(1c.2): UI utils + Primitives storybook smoke`
 
 ---
 
@@ -86,55 +95,111 @@ Commit：`feat(1c.2): /review page — FSRS due queue + encounter answer + cause
 
 ---
 
-## Step 3: `/inbox` + `/inbox/[sessionId]` — 录入审阅
+## Step 3: `/record` —— 三 tab unified（capture + inbox 合并）
 
-**`/inbox` 列表页**：
+> loom L2 拍板：原 sketch 的 `/capture` + `/inbox` 折叠成 `/record` 一个页面的三 tab，全部走同一 IngestionSession 状态机。直接 lift loom `Ingest.jsx` 的 `RecordScreenUnified` 形状。
 
-- `GET /api/learning-sessions?type=ingestion&status=active,extracted,partial,failed`
-- 按状态分组 / 排序：partial / failed 优先（要用户决策），其次 extracted（待 import），最后 active / queued / extracting（仍跑中）
-- 每行展示：缩略图（首张 asset）+ 状态 chip + 创建时间 + tier_log 摘要
+**3 个 mode tab**（`<IngestModeTabs>`）：
 
-**`/inbox/[sessionId]` 单 session 详情**：
+1. **`manual`** —— ManualForm：textarea prompt / reference / wrong + 知识点 chip-row + 错因 select（留空 → AI 兜底）→ submit POST `/api/encounters`（post-1c.1）→ jump `/mistakes`
+2. **`vision_single`** —— 1 张图 VisionFlow（dropzone → 上传 → SSE 进度 → 单 block 编辑 → import）
+3. **`vision_paper`** —— 1-5 张图 VisionFlow + 跨页块合并（Block Assembly A path MVP）
 
-- 顶部：session 状态 + SSE 进度条（订阅 `/api/ingestion/[id]/events`）—— **复用 Sub 0c 的 SSE 路由**
-- 块列表：每个 question_block 一张卡，展示 structured.prompt / options / answer / 配图 + bbox 角标
-- 块级操作：编辑 prompt / 改 cause / 合并相邻块 / 拆分 / 标记 ignore
-- 合并 UI：拖拽多块到合并区 → 生成 virtual block (`merged_from_block_ids: [...]`)
-- 一键 import：选中要 import 的 blocks（默认全选） → `POST /api/ingestion/[id]/import` → 跳 `/encounters` 列表 or `/knowledge`
+**VisionFlow 数据流（Sub 0c 集成，per addendum L4）**：
 
-**关键 UX**：
+```
+dropzone → POST /api/assets (multipart) → POST /api/ingestion 创建 session
+         → POST /api/ingestion/[id]/extract 触发异步
+         → GET /api/ingestion/[id]/events 开 SSE
+         → 收 ingestion.queued / extracting / extraction_completed 事件 → 推进 IngestPipelineTrace
+         → 显示 N 个 question_block + layout_quality badge
+         → 用户合并 / 编辑 / 标记 ignore（A path manual merge MVP）
+         → 若 partial → 用户可点 "Vision Tier 2 (haiku)" / "Tier 3 (sonnet)"
+            → POST /api/ingestion/[id]/rescue → 同步替换该 block
+         → "审核完成 →" → "批量导入" POST /api/ingestion/[id]/import
+         → jump `/mistakes`
+```
 
-- SSE 实时进度：用户能看到"正在抽取第 2/5 页"
-- 块编辑用 inline edit pattern（点字段→变 input→失焦保存）
-- 合并区视觉显著（drop zone 边框 + "把卡片拖来合并"提示）
+**新增 UI 元素（loom 没画，addendum L4 要求）**：
 
-Commit：`feat(1c.2): /inbox list + session detail with SSE progress + block editing + merge UI`
+- **SSE 进度条** 替代 loom 的 "模拟上传 + 提取" 按钮 —— 显示当前 stage 的实时点亮 + 来自 server 的 stage 名（queued / extracting / extraction_completed）
+- **layout_quality badge**：`structured` 不显，`partial` 显 amber"布局部分识别"，`text_only` 显 amber "仅文本识别"
+- **救援按钮 per block**：仅 partial 状态下显示，Tier 2 / Tier 3 + 成本提示
+- **extraction_evidence 展示**：
+  - `evidence.tencent_grading` → info-tone badge "Tencent · {RightAnswer}"
+  - `evidence.handwriting[]` → 在原图上高亮 bbox（hover 显示 OCR 文本）
 
----
+**保留 loom 设计**：
+- `IngestModeTabs` 三 tab + hint + phase 标
+- `IngestPipelineTrace` 4 阶段 ol（uploaded → extracted → reviewed → imported；扩到 Sub 0c 的 queued / extracting / partial / failed 状态）
+- Manual form 中文-first textarea + 知识点 chip-row + 留空 cause select
+- 批量导入按钮文案 "批量导入 · {n} 道 → AttributionTask"
 
-## Step 4: `/capture` — 拍照入口
-
-> mobile-camera-first，但桌面也支持文件 picker。
-
-**Layout**：
-
-- 大按钮 "拍照"（mobile triggers camera）+ 次按钮 "从相册选" / "选文件"
-- 选完后预览（多张照片网格）+ "继续" 按钮
-- "继续" 后：`POST /api/assets`（multipart）→ `POST /api/ingestion`（创建 session + 触发 extract）→ redirect `/inbox/[sessionId]`
-
-**关键 UX**：
-
-- mobile：`<input type="file" accept="image/*" capture="environment">` 直接调用相机
-- 上传过程显示 progress（每张 asset 一条）
-- 网络失败 retry 友好（不要全部重传）
-
-**移动端测试**：本地 dev 用 ngrok 或 Cloudflare Tunnel 让手机能访问（NAS deployment 自带 Tunnel，方便）
-
-Commit：`feat(1c.2): /capture page — camera + file picker + multipart upload + session enqueue`
+Commit：`feat(1c.2): /record unified — manual + vision_single + vision_paper + SSE`
 
 ---
 
-## Step 5: `/knowledge` + `/knowledge/[id]` — 知识树浏览
+## Step 4: `/today` —— Learning Orchestrator 控制面
+
+> loom L2 新增、最高 UX 价值（不存在于原 sketch）。直接 lift loom `Today.jsx` 的形状。
+
+**Layout**（loom `<TodayScreen>` + `<OrchestratorPanel>`）：
+
+- **KPI strip** 4 块大数：`FSRS 到期` / `归因中` / `学习项 (active)` / `知识点数`（来自 `GET /api/encounters` + `/api/learning-items` + `/api/knowledge` 各自 count endpoint）
+- **Orchestrator panel**（"今日学习安排"）：3 lane ol
+  - **A · Review** （`Phase 2A`）—— "复习 N 道错题"，reason 行展示按 cause 分布（concept/knowledge_gap/expression 计数），按钮 "开始 review_session →" 跳 `/review`
+  - **B · Learning Intent** （`Phase 2B · spec`）—— stub disabled "+ 我想学…（未实现）"（addendum L8.2 拍板保留 stub）
+  - **C · Coach** （`Phase 3 · spec`）—— stub disabled "查看本周报告（未实现）"
+- **Task Dispatcher details**（`<details>` collapsible）—— 列已注册 task + 状态（shipped / in-flight / Phase 2）
+- **Footer meta**：`Cost guard · CostLedger 今日 $X / $5 · ToolCallLog N calls · 详见 /api/_/logs/jobs`
+
+**数据 fetch**：
+- `GET /api/encounters?outcome=wrong&due_before=now` → A lane
+- `GET /api/encounters?outcome=wrong&cause_is_null=true` → "归因中" KPI
+- `GET /api/learning-items?status=pending,in_progress` → "学习项" KPI
+- `GET /api/knowledge` → "知识点数" KPI
+- `GET /api/_/logs/jobs?limit=1` → 今日 cost 推算（暂用 cost_ledger sum）
+
+Commit：`feat(1c.2): /today orchestrator — KPI + 3 lanes + task dispatcher`
+
+---
+
+## Step 5: `/mistakes` —— encounter wrong 列表
+
+> loom `<MistakesScreen>` 直接 lift。post-1c.1 后底层是 `encounter where outcome='wrong'`，但 UI 文案保留"错题"（用户语义）。
+
+- header `<PageHeader title="错题列表" eyebrow="/mistakes">` + "AI 知识点提议 →" 链 `/knowledge/proposals`（Phase 1d 实装）
+- lede：`最近 N 条 · 归因中 X / 已归因 Y · + 录新错题`
+- 主区：card-list，每张卡用 loom `<Card>` + 顶部 row：`<meta-mono>{时间}</meta-mono>` + `<CauseBadge cause={evidence.cause} createdAt={created_at} />`
+- 卡片体：prompt_md（prose-cn 类）+ 错答 + 知识点列表
+
+`<CauseBadge>` 三态：
+- `evidence.cause === null` 且 elapsed < 30s → `<Badge tone="hard"><dot> 归因中...</Badge>`
+- `evidence.cause === null` 且 elapsed > 30s → `<Badge tone="neutral">待归因</Badge>`
+- `evidence.cause.user_edited === false` → `<Badge tone="info">AI · {primary_category} ({confidence}%)</Badge>`
+- 否则 → `<Badge tone="good">用户 · {primary_category}</Badge>`
+
+Commit：`feat(1c.2): /mistakes — encounter list with CauseBadge provenance`
+
+---
+
+## Step 6: `/learning-items` —— TODO 形态
+
+> loom `<ItemsScreen>` 直接 lift。学习项是 `learning_item` 表（Sub 4b 已建）。
+
+- segmented filter：`全部 / 待办 / 进行中 / 已完成`
+- `<details open>` 新增表单：title input + 创建按钮
+- card-list with `<StatusBadge>` + 状态 transitions：
+  - pending → "开始学" (hard 按钮) / "我学完了" (good 按钮)
+  - in_progress → "我学完了" / "改回待办"
+  - done → "重学"
+- 删除：`×` 按钮 + 二次确认
+
+Commit：`feat(1c.2): /learning-items — TODO with segmented filter + transitions`
+
+---
+
+## Step 7: `/knowledge` + `/knowledge/[id]` —— 知识树浏览
 
 **`/knowledge` 列表页**：
 
@@ -159,26 +224,9 @@ Commit：`feat(1c.2): /knowledge tree viewer + per-node encounters list`
 
 ---
 
-## Step 6: `/history` + `/history/[sessionId]` — 学习会话历史
+## Step 8: 顶层 — auth gate + error boundary + loading patterns
 
-**`/history` 列表**：
-
-- `GET /api/learning-sessions`（全 type，按 started_at desc）
-- 分组：今天 / 昨天 / 本周 / 更早
-- 每行：type chip（ingestion 蓝 / review 绿 / others 灰）+ 持续时间 + 关联 encounters 计数 + summary_md 预览（第一段）
-- 空状态："还没有学习记录，去 `/capture` 拍张试卷开始"
-
-**`/history/[sessionId]` 详情**：
-
-- session 元信息（type / status / 起止时间）
-- timeline：本 session 内发生的 encounter 列表（按时间）
-- summary_md 完整渲染（如果 AI 生成过；Phase 1c 不一定有，1d 加 session summary）
-
-Commit：`feat(1c.2): /history session list + detail view`
-
----
-
-## Step 7: 顶层 — auth gate + error boundary + loading patterns
+> **drop `/history`**（loom L2）：`/today` 顶部 KPI strip + 中部 orchestrator 已覆盖"看自己干了啥"的需求；全 session 历史延 Phase 1d。
 
 **Auth gate**：
 
@@ -189,12 +237,12 @@ Commit：`feat(1c.2): /history session list + detail view`
 **Error boundary**：
 
 - `app/(app)/error.tsx`：捕获 client-side 异常
-- 全局 toast（shadcn sonner）显示 API 错误（特别是 401 / 500）
+- 全局 toast（用 loom Primitives 自建 `<Toast>` 或装 `sonner` —— sonner 是独立 lib 非 shadcn 专用，可直接装）
 - 401 时清空 token + 重新提示
 
 **Loading**：
 
-- 每个页面统一用 shadcn skeleton + suspense boundary
+- 每个页面用自建 `<Skeleton>` 占位组件（loom 没画，~15 行 CSS：paper-sunk 上的脉动条）+ React Suspense
 - TanStack Query 默认 stale-while-revalidate，loading 状态自然
 
 Commit：`feat(1c.2): auth gate + error boundary + loading patterns`
@@ -207,14 +255,15 @@ Commit：`feat(1c.2): auth gate + error boundary + loading patterns`
 
 手动测：
 
-- [ ] `/capture` 上传 2 张试卷照片 → 进入 `/inbox/[sessionId]`
-- [ ] SSE 进度条跑完 → session.status='extracted'
-- [ ] 编辑一个块的 cause → 点 "import 全部"
-- [ ] 跳到 `/encounters` 列表，看到新 encounter（outcome='wrong'）
-- [ ] 等 attribution 跑完（看 `/api/_/logs/jobs`）→ cause 字段填上
-- [ ] 进 `/review`，做这道题答错 → 看到 cause 展示
+- [ ] `/today` 加载 → 4 KPI 显示 + 3 lane 状态正确
+- [ ] `/record` vision_paper tab：上传 2 张试卷照片 → SSE 进度条跑完 → 显示 N 个 block + layout_quality badge
+- [ ] 编辑一个块 + 标记一个 ignore → 点"批量导入"
+- [ ] 跳 `/mistakes`，看到新 encounter（outcome='wrong'），`<CauseBadge>` 显"归因中..."
+- [ ] 等 attribution 跑完（看 `/api/_/logs/jobs`）→ `<CauseBadge>` 变 "AI · concept (87%)"
+- [ ] `/today` KPI "归因中" 数字应该 -1
+- [ ] 进 `/review`，做这道题答错 → 看到 cause 展示 + 键盘 1/2/3 工作
 - [ ] 进 `/knowledge`，找到这个 encounter 挂的节点
-- [ ] 进 `/history` 看到两条 session：ingestion + review
+- [ ] 进 `/learning-items` 新建 1 项 → transition pending → in_progress → done
 
 跑通后写到 PR 里。
 
@@ -230,9 +279,10 @@ Commit：`docs(1c.2): smoke E2E walkthrough record (in PR body)`
 gh pr create --title "Phase 1c.2: UI main — review / inbox / capture / knowledge / history" \
   --body "$(cat <<'EOF'
 ## Summary
-- 五个主要 UI 页面落地，Phase 1 闭环可演示
-- shadcn primitives + Tailwind v4 + Zustand + TanStack Query
+- 六个 UI 页面落地（today / record / review / mistakes / learning-items / knowledge），Phase 1 闭环可演示
+- loom Primitives + Tailwind v4 (loom tokens) + Zustand + TanStack Query
 - /review 让 attribution 终于到达用户眼前（关键价值兑现）
+- /today orchestrator 是控制面 entry，/record unified 把"拍 + 审 + import"折叠成一个状态机
 
 ## Test plan
 - [ ] pnpm test 全绿
@@ -248,17 +298,18 @@ EOF
 
 ## Notes / 防踩坑
 
-- **UI 测试策略本 plan 不投资 Playwright**。理由：单用户 + 完工前无生产流量 + 手动跑一次 cheap。如果 1c.2 收尾后频繁手测累，**再开独立 plan 加 Playwright + `mcp__plugin_playwright_*` 自动化**。
-- **`/review` 是杠杆最大的一页**——它直接兑现 ADR-0006 的承诺（"让 cause 到达用户"）。其他四页可以晚做 / 简化；`/review` 不能省。
-- **shadcn 装多了会冗余**——只装真正用的 primitive，看 1c.2 各 step 实际需要再 add。
-- **mobile 体验**：`/capture` 必须 mobile-first 设计（拍照场景）；其他四页可以 desktop-first，mobile 可读即可。
-- **frontend-design skill 用法**：每页第一次画 layout 前调一次 skill，让它出 mockup + 推荐 token 调整。不要"自己画 + 然后让 skill review"——前者快得多。
+- **UI 测试策略本 plan 不投资 Playwright**。单用户 + 完工前无生产流量 + 手动跑一次 cheap。频繁手测累再开独立 plan。
+- **`/review` 是杠杆最大的一页**——直接兑现 ADR-0006 的承诺。其他五页可以晚做；`/review` 不能省。
+- **mobile 体验**：`/record` 的 vision_single / vision_paper tab 必须 mobile-first 设计（拍照场景）；其他五页 desktop-first，mobile 可读即可。loom `<TabBar>` 已经覆盖 mobile 导航。
+- **loom Primitives port 顺序**：1c.1 Step 10 应该一次性 port 完 10 个（addendum L1 推翻 shadcn），不要边做 1c.2 边补。
+- **frontend-design skill 用法**：本 phase **不用** skill 出 mockup——loom 设计已经定型，按 loom HTML / JSX 1:1 port 即可。skill 仅用于 review port 后的 RSC 结果。
 
 ---
 
 ## TBD: 细节待开干前敲定
 
-1. **/review 的 cause 展示视觉规范**：10 类 cause 应有不同 emoji / 色彩？或都用统一 chip？grill 时定
-2. **/inbox 的合并 UI 是 drag-drop 还是 multi-select + button**：drag-drop 更直观但 mobile 难用，grill 时定
-3. **`/encounters/[id]` 详情页**：Phase 1c.2 占位"todo" or 简易实现？grill 时定
-4. **session summary 谁触发 + 何时显示**：CONTEXT.md 提到但 1c.3 phase 已并入 1c.1，summary_md 字段已存在但没 AI 生成路径——可能 Phase 1d
+1. **/review 的 cause 展示视觉规范**：10 类 cause 共用 loom info-tone Badge（addendum 默认）or per-cause 色？grill 时定。**默认**：共用，文案足以区分。
+2. **/record vision tab 的合并 UI 是 drag-drop 还是 multi-select + button**：loom `Ingest.jsx` 用 multi-select + button（更适合 mobile）。**采用 multi-select**。
+3. **`/encounters/[id]` 详情页**：本 phase 占位 "todo"，Phase 1d 补。
+4. **session summary 谁触发 + 何时显示**：summary_md 字段在 1c.1 schema 已建，AI 生成路径 Phase 1d 加；本 phase 不显。
+5. **B/C lane stub 显示与否**（addendum L8.2）：**保留 disabled stub**——loom 设计意图是 show the mechanism。

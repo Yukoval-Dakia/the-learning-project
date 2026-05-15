@@ -6,7 +6,7 @@
 
 **Goal**：把 Phase 1c 的双 first-class entity（`encounter` + `learning_session`）一次性落地——schema、数据迁移、server code rename、模块演化、API rename、AI prompts、测试，外加 UI 脚手架（让 1c.2 五页有家可回）。Phase 1c.1 收尾时：mistake / ingestion_session / artifact 三张表 DROP，新 schema 长成，UI 框架可见 health 页面。
 
-**Spec**：`docs/superpowers/specs/2026-05-14-phase1c-design.md`
+**Spec**：`docs/superpowers/specs/2026-05-14-phase1c-design.md` + addendum `docs/superpowers/specs/2026-05-15-phase1c-loom-design-addendum.md`
 
 **ADRs**：
 - ADR-0006（encounter 替换 mistake）
@@ -192,17 +192,21 @@ Commit：`feat(1c.1): DROP mistake / ingestion_session / artifact tables — poi
 
 ---
 
-## Step 10: UI 脚手架 — Next.js routing + Zustand + TanStack Query + Tailwind tokens
+## Step 10: UI 脚手架 — Next.js routing + Zustand + TanStack Query + loom design system
 
-- 替换 `app/page.tsx` 占位为简单 "Home" 路由（暂不展示真实数据）
+> **修订 2026-05-15**（addendum L1 + L3）：drop shadcn，直接 port loom Primitives + 直接 lift design tokens 进 `@theme`。
+
+- 替换 `app/page.tsx`：redirect 到 `/today`（addendum L2 拍板 home = today）
 - `app/layout.tsx`：globals.css import、TanStack Query Provider、Zustand store provider
 - `src/ui/lib/queryClient.ts`：TanStack Query 单例配置
 - `src/ui/stores/`：Zustand stores skeleton（先空：session store / encounter store）
-- `app/globals.css`：Tailwind v4 + design tokens（CSS-first，sub-grill 阶段先用 minimal palette）
-- `app/health/page.tsx`：测试页面，GET `/api/health` 显示 status
-- **组件库**：shadcn/ui（2026-05-14 spec 决策）—— `pnpm dlx shadcn@latest init`，先装 minimal set: `button` / `input` / `card` / `dialog`。深度组件（form / tree / sheet 等）按 1c.2 各页面需要时再装。Tailwind tokens 通过 `app/globals.css` 控制 shadcn 色彩 / radius / typography。
+- `app/globals.css`：Tailwind v4 + **直接 lift `docs/design/loom-design/project/colors_and_type.css` 进 `@theme` 块**（warm paper + ink + 单一 coral + FSRS 3 档；spec addendum L3 列出完整字段映射）
+- 字体：Google Fonts CDN 装 `Source Serif 4` / `Noto Serif SC` / `JetBrains Mono`；MiSans 默认回落 PingFang SC（addendum L8.1；要 ship 时 drop `public/fonts/MiSans-Normal.ttf` + `@font-face`）
+- 资源 lift：copy `docs/design/loom-design/project/assets/loom-{monogram,wordmark}.svg` + `icon-{192,512}.png` 到 `public/`
+- `src/ui/primitives/`：port loom `Primitives.jsx` 的 10 个原子到 TSX 文件——`Brand.tsx` / `Icon.tsx`（用 `lucide-react` 替 loom 的 inline SVG，loom README 自己说"closest match is lucide-react"）/ `Button.tsx` / `Badge.tsx` / `StatusBadge.tsx` / `CauseBadge.tsx` / `Card.tsx` / `PageHeader.tsx` / `TopNav.tsx` / `TabBar.tsx`
+- `app/health/page.tsx`：测试页面，GET `/api/health` 显示 status（用 loom `<Card>` + `<Badge>` 验证 Primitives 通了）
 
-`pnpm dev` 启起来；浏览器访问 `/health` 显示 OK。
+`pnpm dev` 启起来；浏览器访问 `/health` 显示 OK + 视觉用 loom palette 渲染。
 
 Commit：`feat(1c.1): UI scaffold — Next.js routing + Zustand + TanStack Query + Tailwind v4 tokens`
 
