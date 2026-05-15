@@ -1,15 +1,16 @@
 # Phase 1c.1 Implementation Plan — encounter + learning_session 全量重构 + UI 脚手架
 
-> ⚠️ **REFRESH REQUIRED — 2026-05-15 per ADR-0006 v2**
+> ⚠️ **REFRESH REQUIRED — 2026-05-15 per ADR-0006 v2 + ADR-0010**
 >
-> 本 plan 写于 ADR-0006 v1（单表 encounter + per-outcome evidence）时代。**ADR-0006 v2 (2026-05-15)** 推翻 v1，改为 3-table event-driven 核：
+> 本 plan 写于 ADR-0006 v1（单表 encounter + per-outcome evidence）时代。**ADR-0006 v2 (2026-05-15)** 推翻 v1，改为 3-table event-driven 核；**ADR-0010 (2026-05-15)** 叠加 knowledge mesh：
 >
-> - Step 1: 新建 `event` 表 + `material_fsrs_state` 投影表（不是 encounter 单表）
-> - Step 2: per-(action × subject_kind) Zod discriminated union——核心 6+ 严守 + `experimental:*` 松守（Option 折中）
+> - Step 1: 新建 `event` 表 + `material_fsrs_state` 投影表 + **`knowledge_edge` 表 (ADR-0010 mesh)**
+> - Step 2: per-(action × subject_kind) Zod discriminated union——核心 6+ 严守 + `experimental:*` 松守（Option 折中）；含新分支 Propose / Generate / Rate `knowledge_edge`
 > - Step 3: 三表 `mistake` / `review_event` / `dreaming_proposal` → event 迁移（不是单表 mistake → encounter）
 > - Step 5: `IngestionSession` 模块演化为 `LearningSession`，写入路径含 event 写
+> - Step 7: 新增 `/api/knowledge/edges` CRUD + KnowledgeProposeTask / KnowledgeReviewTask prompt 扩"propose new edge"分支
 > - `artifact` 表**不再 DROP**（C 档 AI 主动产出激活）
-> - 工时 10-14d → 18-24d（grill Q4 ack）
+> - 工时 10-14d → **20-27d**（grill Q4 ack + mesh +2-3d）
 >
 > Server rename + API rename + UI 脚手架（Step 6-12）大致不变，但 entity 名是 event 而非 encounter。
 >

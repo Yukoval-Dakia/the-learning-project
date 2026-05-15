@@ -46,7 +46,9 @@ event {
   actor_kind: text NOT NULL    -- 'user' | 'agent' | 'cron' | 'system'
   actor_ref: text NOT NULL     -- 'self' (单用户) / task_kind (agent) / cron_name
   action: text NOT NULL        -- 'attempt' | 'judge' | 'propose' | 'generate' | 'review' | 'rate' | 'extract' | 'import' | ...
-  subject_kind: text NOT NULL  -- 'question' | 'knowledge' | 'artifact' | 'source_document' | 'event' (chain)
+  subject_kind: text NOT NULL  -- 'question' | 'knowledge' | 'knowledge_edge' | 'artifact'
+                                --  | 'source_document' | 'event' (chain)
+                                -- 注：'knowledge_edge' 加于 ADR-0010 (mesh)
   subject_id: text NOT NULL
   outcome: text NULLABLE       -- 'success' | 'failure' | 'partial' | NULL（视 action 而定）
   payload: jsonb NOT NULL      -- Zod-guarded per action × subject_kind 组合（见下）
@@ -284,6 +286,7 @@ learning_session(type='ingestion', id=s_dream):
 - **ADR-0004**（Pattern C 两类 agent）：Copilot 对话**不再需要独立 agent_sessions / agent_messages 表**——learning_session(type='conversation') + event 替代。Backend Purpose Agent 仍按 ADR-0004 写法跑，每次 run 写 task_run + 关联 event(action='generate'|'judge'|'propose')
 - **ADR-0005**（IngestionSession single-owner）：演化为更广的 `LearningSession` 多态模块，event 写入也走它（保 single-owner invariant 在 event 表上）
 - **ADR-0008**（LearningSession 多 type envelope）：**修订**——agent_sessions / agent_messages 被吸收进 learning_session(type='conversation') + event；下次启动 Sub 0d 时按此 refresh
+- **ADR-0010**（knowledge mesh）：**扩展**——event.subject_kind 加 'knowledge_edge'；新增 3 个 discriminated union 分支（Propose / Generate / Rate edge）
 - **CONTEXT.md** "录入会话 / 错题 / 归因 / 学习项 / 知识点" 词条——event 时代下"错题"是 events 的视图、"归因"是 action='judge' event；逻辑保留、机制下沉
 
 ---

@@ -40,7 +40,8 @@
 >
 > v1 词条（遭遇 / 单表 outcome / exposure）已被 v2 取代，见 ADR-0006 v1 决策（已被取代）节。
 
-- **事件（event）**（ADR-0006 v2）：学习系统里发生的一次动作（user / agent / cron / system 皆可）。`actor_kind × action × subject_kind` 三轴定位；payload 按 Zod discriminated union 守。**替代** 旧的 `mistake` / `review_event` / `dreaming_proposal` 三表。
+- **知识网（knowledge mesh）**（ADR-0010）：`knowledge.parent_id` 作主层级 backbone（tree），叠加 `knowledge_edge` 表承载有类型横向链接。**relation_type** 核心 5 类：`prerequisite | related_to | contrasts_with | applied_in | derived_from`，外加 `experimental:*` 命名空间。AI 与用户都可 propose / generate / rate edge。"tree 是骨架，mesh 是肌肉"。
+- **事件（event）**（ADR-0006 v2）：学习系统里发生的一次动作（user / agent / cron / system 皆可）。`actor_kind × action × subject_kind` 三轴定位；payload 按 Zod discriminated union 守。subject_kind 含 `knowledge_edge`（ADR-0010 扩展）。**替代** 旧的 `mistake` / `review_event` / `dreaming_proposal` 三表。
   - 例：用户错答 = `event(actor='user', action='attempt', subject=question, outcome='failure')`
   - 例：AI 归因 = `event(actor='agent:attribution', action='judge', subject=event, caused_by=...)`
   - 例：AI 提议变式 = `event(actor='agent:variant_gen', action='generate', subject=artifact)`
