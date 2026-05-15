@@ -1,7 +1,13 @@
 # Phase 1c Design Spec — Encounter / Session 抽象 + UI 闭环
 
 **Date**: 2026-05-14
-**Status**: spec — 2026-05-14 全 grill 完成；**2026-05-15 loom design 对齐 addendum** 见 [`2026-05-15-phase1c-loom-design-addendum.md`](./2026-05-15-phase1c-loom-design-addendum.md)。addendum 覆盖 D2（UI 顺序）+ D6（drop shadcn → 用 loom Primitives）+ 新增 D9（design tokens lift 进 Tailwind v4 `@theme`）；不动 D1/D3/D4/D5。
+**Status**: spec — ⚠️ **D1 + D6 部分 superseded by ADR-0006 v2 (2026-05-15)**。
+- D1（encounter rename 多态）→ 演化为 3-table event-driven 核（material + learning_session + event）。详见 `docs/adr/0006-encounter-replaces-mistake.md` v2 节。
+- D6（R5 并入 1c.1 + artifact DROP）→ artifact **不再 DROP**（C 档 AI 主动产出落点激活），其它仍成立。
+- D2 / D3 / D4 / D5 / D9（addendum 各 L）不变。
+- Phase 1c.1 工时 10-14d → 18-24d（grill Q4 ack）；plan refresh 见相关 plan banner。
+
+2026-05-14 loom addendum 仍生效见 [`2026-05-15-phase1c-loom-design-addendum.md`](./2026-05-15-phase1c-loom-design-addendum.md)。
 **Brainstorm**: `docs/superpowers/brainstorms/2026-05-14-phase1c-encounter-session-ui.md`
 **Audit**: `docs/superpowers/audits/2026-05-14-phase1-pre-1c-audit.md`
 **Predecessor**: Sub 0c（async lane + Tencent Mark Agent，进行中）
