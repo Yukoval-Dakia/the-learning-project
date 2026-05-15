@@ -151,8 +151,6 @@ async function insertKnowledge(db: ReturnType<typeof testDb>, id: string) {
     name: `K-${id}`,
     domain: 'wenyan',
     parent_id: null,
-    base_mastery: 0,
-    ai_delta_mastery: 0,
     archived_at: null,
     created_at: now,
     updated_at: now,

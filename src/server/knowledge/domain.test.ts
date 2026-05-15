@@ -16,8 +16,6 @@ describe('getEffectiveDomain', () => {
       name: '虚词',
       domain: 'wenyan',
       parent_id: null,
-      base_mastery: 0,
-      ai_delta_mastery: 0,
       merged_from: [],
       proposed_by_ai: false,
       approval_status: 'approved',
@@ -32,8 +30,6 @@ describe('getEffectiveDomain', () => {
     const db = testDb();
     const now = new Date();
     const base = {
-      base_mastery: 0 as const,
-      ai_delta_mastery: 0 as const,
       merged_from: [] as string[],
       proposed_by_ai: false,
       approval_status: 'approved' as const,
@@ -62,8 +58,6 @@ describe('getEffectiveDomain', () => {
       name: 'bad',
       domain: null,
       parent_id: null,
-      base_mastery: 0,
-      ai_delta_mastery: 0,
       merged_from: [],
       proposed_by_ai: false,
       approval_status: 'approved',

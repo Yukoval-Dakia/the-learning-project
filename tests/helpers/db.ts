@@ -18,9 +18,14 @@ export function testDb(): Db {
 
 // Truncate all known tables, used in beforeEach for hermetic tests.
 // CASCADE handles FK dependencies; whitelist of identifiers (not user input).
+// Phase 1c.1 Step 1.4 (Lane A): judgment + user_appeal dropped per
+// data-assumptions §O2. New event-driven core tables (event, learning_session,
+// material_fsrs_state, knowledge_edge) are also truncated for hermetic tests.
 const ALL_TABLES = [
-  'user_appeal',
-  'judgment',
+  'event',
+  'material_fsrs_state',
+  'knowledge_edge',
+  'learning_session',
   'answer',
   'completion_evidence',
   'review_event',
