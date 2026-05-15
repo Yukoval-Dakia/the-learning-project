@@ -15,7 +15,14 @@
 - Anthropic prod 事故需要紧急 fallback → 选 OpenRouter
 - 用户对 Anthropic 单点依赖的合规风险有顾虑 → 选 Gateway 或 OpenRouter
 
-**2026-05-11 更新**：Sub 0d 引入了 `providers.ts`（Provider Manager）+ `resolveTaskModel()`（Task Model Selector），这是 ADR 原文所说"~1 天局部重构"的最轻实现——每个 task 在 registry 声明 `{ provider, model }`，provider 切换只改 registry 一行。Anthropic 仍是唯一实际运行的 provider，其余 provider config 存在但 env var 为空。触发条件不变。
+**2026-05-11 更新 (status: DEFERRED — Sub 0d 落地后实装)**：Sub 0d **计划**引入 `src/server/ai/providers.ts`（Provider Manager）+ `src/ai/registry.ts` 的 `resolveTaskModel()`（Task Model Selector），这是 ADR 原文所说"~1 天局部重构"的最轻实现——每个 task 在 registry 声明 `{ provider, model }`，provider 切换只改 registry 一行。
+
+**当前状态（2026-05-16 audit）**：Sub 0d plan 标 DEFERRED（见 `docs/superpowers/plans/2026-05-11-sub0d-agent-layer.md` banner），**上述抽象尚未实现**：
+- `src/server/ai/providers.ts` 文件不存在
+- `src/server/ai/runner.ts` 仍直接 `import { anthropic } from '@ai-sdk/anthropic'`
+- `src/ai/registry.ts` 已预占 `defaultProvider` + `fallbackChain` 字段，但**无** `resolveTaskModel()` 函数，且 `fallbackChain` 当前是 dead config（无 reader）
+
+Anthropic 仍是唯一实际运行的 provider。触发条件不变。`fallbackChain` 字段是否保留 / 删除 / 在 Sub 0d 中激活，由 Sub 0d refresh 时决定（per audit-drift 2026-05-16 finding）。
 
 **接受的代价**：
 
