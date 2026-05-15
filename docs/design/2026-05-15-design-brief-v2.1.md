@@ -35,8 +35,9 @@ v2 当前：`/mistakes` / `/knowledge` / Copilot drawer 三处都用 inline `<de
 v2 tweak `proactive` 选项当前 1.2s 触发——过激进，1.2s 是用户还没读完顶部的时间。改：
 
 - **默认 trigger = 30s** 停留 + 未交互
-- 或更精明：**行为信号** —— 用户在同一 entity 内连续 hover/scroll 5s+ 无 click（"卡住了"信号）
-- 显式：双访同一 entity 触发 ("反复看说明困惑")
+- **或显式信号：双访同一 entity 触发**（"反复看说明困惑"）—— v2.1 实装基线
+
+> **未来方向（designer 反馈采纳，留给 v2.2+）**：revisit-count 仍是"时长替代品"，真正的"卡住"信号是 **dwell with no progress** —— scroll/hover idle 5s+ 且无 click 推进。实装难度高（需要细粒度行为埋点 + 状态机），v2.1 不做，但 brief 里记一笔，避免后人把 revisit 当终点。
 
 不要拍卖时长（1.2s 是 sales 弹窗思路）—— 学习工具应当克制。
 
@@ -139,24 +140,21 @@ v2 完全没反映。本轮要补四块：
 
 ### 2.1 Knowledge schema 扩展
 
+**不变量（designer 反馈采纳）**：mesh **只存非 tree 的关系**。如果 from→to 在 tree 上已是父子，就不要再写一条 `derived_from` edge——那是双重记账。"tree 是骨架，mesh 是肌肉"的本意是 **互补**，不是 **冗余镜像**。
+
+- ⛔ **不存**：tree parent_id 已经表达的层级关系（孩子 → 父）
+- ✅ **存**：跨子树的横向关系（prerequisite / contrasts_with / applied_in / related_to）
+- ✅ **存**：跨 tree 但有方向的"演化/派生"关系（一个非父子节点对另一个节点的 derived_from——比如同级或远房）
+
 `data.jsx` 加：
 
 ```js
-// material · knowledge_edge (新增 mesh table)
+// material · knowledge_edge (新增 mesh table — 只存 tree 之外的关系)
 const KNOWLEDGE_EDGES = [
   {
     id: 'kedge_01',
-    from_id: 'k_xuci_zhi',   // 之-用法
-    to_id: 'k_xuci',          // 文言虚词（父节点）—— 但这是 tree 已有的
-    relation_type: 'derived_from',
-    weight: 1.0,
-    created_by: { actor_kind: 'user' },
-    created_at: NOW - 7 * DAY,
-  },
-  {
-    id: 'kedge_02',
-    from_id: 'k_shici',       // 实词词义
-    to_id: 'k_fanyi',         // 翻译
+    from_id: 'k_shici',       // 实词词义（位于 tree: 文言 > 字词 > 实词）
+    to_id: 'k_fanyi',         // 翻译（位于 tree: 文言 > 句段 > 翻译）—— 跨子树
     relation_type: 'prerequisite',  // 学翻译先学实词
     weight: 0.9,
     created_by: { actor_kind: 'agent', actor_ref: 'review' },
@@ -164,28 +162,39 @@ const KNOWLEDGE_EDGES = [
     created_at: NOW - 3 * DAY,
   },
   {
-    id: 'kedge_03',
-    from_id: 'k_xuci_zhi',
-    to_id: 'k_xuci_yu',
+    id: 'kedge_02',
+    from_id: 'k_xuci_zhi',    // 之-用法（兄弟节点之一）
+    to_id: 'k_xuci_yu',       // 于-用法（兄弟节点之一）—— 同父但需横向对比
     relation_type: 'contrasts_with',
     weight: 0.7,
     created_by: { actor_kind: 'user' },
     created_at: NOW - 12 * DAY,
   },
   {
-    id: 'kedge_04',
+    id: 'kedge_03',
     from_id: 'k_shici',
-    to_id: 'k_juedu',
+    to_id: 'k_juedu',         // 句读
     relation_type: 'applied_in',
     weight: 0.6,
     created_by: { actor_kind: 'agent', actor_ref: 'review' },
     reasoning: '词义不准导致断句错位的 case study',
     created_at: NOW - 2 * DAY,
   },
+  {
+    id: 'kedge_04',
+    from_id: 'k_fanyi',
+    to_id: 'k_yuwen',         // 远房节点（语文学科级）
+    relation_type: 'related_to',
+    weight: 0.4,
+    created_by: { actor_kind: 'user' },
+    created_at: NOW - 8 * DAY,
+  },
 ];
 ```
 
 **5 个 core relation_type**（per ADR-0010）：`prerequisite | related_to | contrasts_with | applied_in | derived_from`，外加 `experimental:*` 命名空间。
+
+**渲染含义**：当 `/knowledge` 节点 detail panel 显示"关系"区段时，**tree 关系（父子）由 parent_id 直接渲染**（如"父：文言虚词"），**mesh edges 在另一组列出**，互不重复。Graph 视图也同——tree edges 用一种视觉（如灰色细线 / 折线），mesh edges 按 relation_type 分色，避免观感上"为什么这条边和 tree 一样"。
 
 ### 2.2 新 Event 类型 — Propose / Generate / Rate `knowledge_edge`
 
@@ -216,17 +225,20 @@ const KNOWLEDGE_EDGES = [
 
 **a. 节点旁显示 mesh edges**：
 
-每个 knowledge 节点的 detail panel（点节点展开）含一个 "关系" 区段：
+每个 knowledge 节点的 detail panel（点节点展开）含两段——**Tree 段**（来自 parent_id）和 **Mesh 段**（来自 knowledge_edge 表），物理上区分开：
 
 ```
-关系
-  ↓ prerequisite 之前：(无)
+层级 (tree)
+  父：文言虚词
+  子：（无）
+
+关系 (mesh)
   ↑ prerequisite 之后：翻译 (0.9)
-  ↔ contrasts_with：之 (用法), 而 (用法)
-  ↳ derived_from：（无 / 自动从 tree）
+  ↔ contrasts_with：于 (用法) (0.7)
+  ↳ applied_in：句读 (0.6)
 ```
 
-每条关系右侧 hover 显示 reasoning + actor + cost；user 可点 "撤销" 写 `event(action='rate', subject='knowledge_edge', payload.rating='dismiss')`。
+mesh 段绝不重复 tree 段已说的事。每条 mesh 关系右侧 hover 显示 reasoning + actor + cost；user 可点 "撤销" 写 `event(action='rate', subject='knowledge_edge', payload.rating='dismiss')`。
 
 **b. Force-directed graph 视图（toggle）**：
 
@@ -234,7 +246,8 @@ const KNOWLEDGE_EDGES = [
 
 - < 1000 节点 / ~5000 edges 规模
 - 节点 = 圆，半径按 mistake_count（被错答过多少道题）
-- edge 按 `relation_type` 分色：
+- **Tree edges**（parent_id）：灰色细折线，**始终渲染但视觉退后**——给空间骨架感
+- **Mesh edges** 按 `relation_type` 分色（盖在 tree 之上，主角）：
   - `prerequisite` → coral（重要，有方向 arrow）
   - `related_to` → ink-4（弱，无方向）
   - `contrasts_with` → 紫色（明显，无方向）
@@ -242,6 +255,8 @@ const KNOWLEDGE_EDGES = [
   - `derived_from` → ink-5（淡，有方向）
 - node click → 同 tree 视图的 detail panel
 - 用 D3 / cytoscape / vis-network（**designer 提议哪个最合身**）
+
+视觉分层关键：mesh edges 永远盖在 tree 之上，让 tree edges 像"地图底色"，mesh 像"行车路线"——读者一眼能区分骨架和肌肉。
 
 **c. 节点页内嵌 Edge Proposal 区**：
 
