@@ -10,14 +10,16 @@
 
 ## Mapping reference (source → target)
 
-### `mistake` → `event` (action='attempt') + optional `event` (action='judge')
+> **Source column names verified against `src/db/schema.ts` as of 2026-05-16** (post Lane A — legacy tables not yet DROP'd). Confirm with `Read` of schema.ts ranges shown below before implementing.
 
-For each `mistake` row:
+### `mistake` (schema.ts:190-213) → `event` (action='attempt') + optional `event` (action='judge')
+
+Note: `mistake.cause` is `jsonb<CauseT>` — full object (see `src/core/schema/cause.ts` for `CauseT` shape, likely `{ cause: 'concept'|..., analysis_md?, confidence? }`). Extract sub-fields from the jsonb.
 
 ```ts
 // 1. Write attempt event (always)
 const attemptEvent = {
-  id: newEventId(),
+  id: deterministicId('evt_mistake', mistake.id),  // see §"Idempotency" — deterministic IDs
   session_id: null,                       // legacy mistakes had no session linkage
   actor_kind: 'user',
   actor_ref: 'self',
@@ -26,9 +28,12 @@ const attemptEvent = {
   subject_id: mistake.question_id,
   outcome: 'failure',
   payload: {
-    user_answer_md: mistake.wrong_answer_md,
+    user_answer_md: mistake.wrong_answer_md ?? null,
     user_answer_image_refs: mistake.wrong_answer_image_refs ?? [],
     referenced_knowledge_ids: mistake.knowledge_ids ?? [],   // for mastery view
+    legacy_source: mistake.source,        // 'manual' | 'ocr' | ... — preserve for forensics
+    legacy_source_ref: mistake.source_ref ?? null,
+    legacy_mistake_id: mistake.id,        // back-pointer for debugging
   },
   caused_by_event_id: null,
   task_run_id: null,
@@ -36,93 +41,113 @@ const attemptEvent = {
   created_at: mistake.created_at,
 };
 
-// 2. If mistake.cause exists: write judge event chained to attempt
-if (mistake.cause) {
+// 2. If mistake.cause is non-null jsonb: write judge event chained to attempt
+if (mistake.cause !== null) {
   const judgeEvent = {
-    id: newEventId(),
+    id: deterministicId('evt_judge', mistake.id),
     session_id: null,
     actor_kind: 'agent',
-    actor_ref: 'legacy_attribution',      // marker — these came from pre-v2 attribution
+    actor_ref: 'legacy_attribution',      // marker — pre-v2 attribution
     action: 'judge',
     subject_kind: 'event',
     subject_id: attemptEvent.id,
     outcome: 'success',
     payload: {
+      // cause is a jsonb — pass through entirely; Lane B CauseSchema should validate it
       cause: mistake.cause,
-      analysis_md: mistake.analysis_md ?? null,
-      confidence: mistake.confidence ?? null,
     },
     caused_by_event_id: attemptEvent.id,
     task_run_id: null,                    // legacy data lost task_run linkage
     cost_micro_usd: null,
-    created_at: mistake.cause_attributed_at ?? mistake.created_at,
+    created_at: mistake.updated_at,       // best proxy — original attribution timestamp lost
   };
 }
 ```
 
-### `review_event` → `event` (action='review') + `material_fsrs_state` projection
+### `review_event` (schema.ts:215-226) → `event` (action='review') + `material_fsrs_state` projection
 
-For each `review_event` row in chronological order per question:
+**Key gotcha**: `review_event.mistake_id` (not question_id). Migration must JOIN mistake to get `question_id`.
 
 ```ts
+// For each review_event, joined with mistake:
 const reviewEvent = {
-  id: newEventId(),
+  id: deterministicId('evt_review', review_event.id),
   session_id: null,
   actor_kind: 'user',
   actor_ref: 'self',
   action: 'review',
   subject_kind: 'question',
-  subject_id: reviewEvent.question_id,
-  outcome: reviewEvent.rating === 'again' ? 'failure' : 'success',
+  subject_id: mistake.question_id,        // from JOIN
+  outcome: review_event.rating === 'again' ? 'failure' : 'success',
   payload: {
-    rating: reviewEvent.rating,
-    fsrs_state_before: reviewEvent.fsrs_state_before,
-    fsrs_state_after: reviewEvent.fsrs_state_after,
-    elapsed_ms: reviewEvent.elapsed_ms,
+    rating: review_event.rating,
+    fsrs_state_before: review_event.fsrs_state_before,
+    fsrs_state_after: review_event.fsrs_state_after,
+    due_at_before: review_event.due_at_before,
+    due_at_next: review_event.due_at_next,
+    latency_ms: review_event.latency_ms,
+    response_md: review_event.response_md ?? null,
+    legacy_review_event_id: review_event.id,
+    legacy_mistake_id: review_event.mistake_id,
   },
   caused_by_event_id: null,
-  created_at: reviewEvent.created_at,
+  created_at: review_event.created_at,
 };
 ```
 
-After processing ALL review_events per question, write the LATEST as `material_fsrs_state`:
+After processing ALL review_events per (question, mistake), write the LATEST as `material_fsrs_state`:
 
 ```ts
-// Only most recent review_event per question
+// Group: by mistake.question_id, take MAX(created_at) review_event
+// (rationale: review_event PK is per-mistake; one question may have multiple mistakes if user repeated; deduplicate at question grain)
 const fsrsState = {
-  id: newSyntheticId(),
+  id: deterministicId('fsrs', question_id),
   subject_kind: 'question',
-  subject_id: latestReviewEvent.question_id,
+  subject_id: question_id,
   state: latestReviewEvent.fsrs_state_after,
-  due_at: latestReviewEvent.next_due_at,
-  last_review_event_id: latestReviewEvent.id,
+  due_at: latestReviewEvent.due_at_next,
+  last_review_event_id: deterministicId('evt_review', latestReviewEvent.id),
   updated_at: latestReviewEvent.created_at,
 };
 ```
 
-### `dreaming_proposal` → `event` (action='propose')
+**Fallback**: For mistakes with `mistake.fsrs_state IS NOT NULL` but ZERO review_events (early-stage FSRS state on mistake creation), use `mistake.fsrs_state` directly — write `material_fsrs_state` with `last_review_event_id: null`. Add to Step 3.C tests.
+
+### `dreaming_proposal` (schema.ts:353-361) → `event` (action='propose')
+
+Note: `dreaming_proposal.payload` is jsonb — its inner shape varies by `kind` (knowledge node proposal vs knowledge_edge proposal vs other). Migration must inspect `kind` to route to the right `subject_kind`.
 
 ```ts
+// kind enum: investigate actual values in legacy data first (likely 'knowledge_node' or similar)
+// Default mapping (single kind value 'knowledge'):
 const proposeEvent = {
-  id: newEventId(),
+  id: deterministicId('evt_propose', proposal.id),
   session_id: null,
   actor_kind: 'agent',
   actor_ref: 'dreaming',                   // matches new agent identity convention
   action: 'propose',
-  subject_kind: 'knowledge',
-  subject_id: proposal.proposed_knowledge_id ?? newKnowledgeId(),
-  outcome: proposal.status === 'accepted' ? 'success' : 'partial',
+  subject_kind: 'knowledge',               // route by proposal.kind if multiple kinds exist
+  subject_id: extractSubjectIdFromPayload(proposal) ?? newKnowledgeId(),
+  outcome:
+    proposal.status === 'accepted' ? 'success' :
+    proposal.status === 'rejected' ? 'failure' :
+    'partial',                              // 'pending' → partial
   payload: {
-    proposed_knowledge: proposal.proposed_knowledge_body,
-    parent_id: proposal.parent_knowledge_id,
+    legacy_kind: proposal.kind,
+    legacy_payload: proposal.payload,      // pass through entirely
     reasoning: proposal.reasoning,
-    legacy_status: proposal.status,         // 'pending' | 'accepted' | 'rejected'
+    legacy_status: proposal.status,        // 'pending' | 'accepted' | 'rejected'
+    legacy_decided_at: proposal.decided_at,
+    legacy_proposal_id: proposal.id,
   },
-  created_at: proposal.created_at,
+  caused_by_event_id: null,
+  created_at: proposal.proposed_at,
 };
 ```
 
-### `ingestion_session` → `learning_session` (type='ingestion')
+**Investigation step BEFORE 3.D.1**: query distinct `kind` values in legacy production data; document them in this doc; map each to (action, subject_kind) tuple.
+
+### `ingestion_session` (schema.ts:100-111) → `learning_session` (type='ingestion')
 
 ```ts
 const session = {
@@ -130,15 +155,17 @@ const session = {
   type: 'ingestion',
   status: ingestion_session.status,        // status enum is preserved verbatim
   source_document_id: ingestion_session.source_document_id,
-  source_asset_ids: ingestion_session.source_asset_ids ?? [],
+  source_asset_ids: ingestion_session.source_asset_ids,  // already []-defaulted
   entrypoint: ingestion_session.entrypoint,
-  warnings: ingestion_session.warnings ?? [],
+  warnings: ingestion_session.warnings,    // already []-defaulted
   error_message: ingestion_session.error_message,
   summary_md: null,                        // ingestion didn't have summaries
   goal_id: null,
   started_at: ingestion_session.created_at,
-  ended_at: ingestion_session.completed_at,
-  version: ingestion_session.version ?? 0,
+  ended_at: ingestion_session.status === 'imported' || ingestion_session.status === 'failed'
+    ? ingestion_session.updated_at        // terminal status — updated_at is the end time
+    : null,
+  version: ingestion_session.version,
   created_at: ingestion_session.created_at,
   updated_at: ingestion_session.updated_at,
 };
@@ -312,13 +339,39 @@ When done, return:
 
 ---
 
-## Sanity checks before dispatching
+## Idempotency: deterministic IDs (decided)
 
-1. Confirm `mistake` table source columns (read `src/db/schema.ts` BEFORE Lane A's DROPs — i.e., on `main` before Step 9). Schema as of 2026-05-16 should still have `mistake.wrong_answer_md`, `mistake.knowledge_ids` (jsonb), `mistake.cause`, etc. Lane A merge doesn't DROP these yet — those drop in Step 9.
+Use **deterministic event IDs** keyed off legacy source PKs: `deterministicId(prefix, sourceId)` produces e.g., `evt_mistake_<mistake.id>`, `evt_judge_<mistake.id>`, `evt_review_<review_event.id>`, `evt_propose_<dreaming_proposal.id>`.
 
-2. Confirm `dreaming_proposal` column names match the mapping above. If different (e.g., `proposed_knowledge_body` vs `body_md`), update the mapping doc inline.
+Benefits:
+- Re-running migration is a no-op (INSERT ON CONFLICT DO NOTHING is sufficient guard)
+- Debugging: any event in target table traces back to legacy row by id pattern
+- Safer than UUID + dedup probe (probe is racy if scaled)
 
-3. Decide: write event IDs deterministically (e.g., `evt_mistake_<mistake.id>`) so migration is **truly** idempotent (same input → same IDs), OR use random CUIDs + dedup probe? **Recommend deterministic IDs** — simpler idempotency story, easier to debug.
+Decision: **commit to deterministic IDs**. The subagent must implement `deterministicId(prefix, sourceId)` helper (likely `${prefix}_${sourceId}` since legacy IDs already CUID-shaped); add to `src/core/id.ts` if not already there.
+
+## Pre-dispatch investigation tasks
+
+These should be done BEFORE the subagent runs Step 3.A — they may surface mapping adjustments:
+
+1. **Audit `dreaming_proposal.kind` distinct values in legacy data**:
+   ```sql
+   SELECT kind, count(*) FROM dreaming_proposal GROUP BY kind;
+   ```
+   Document each kind → target (action, subject_kind) in this file. If only one kind exists, the mapping above suffices.
+
+2. **Audit `mistake.cause` value distribution**:
+   ```sql
+   SELECT cause->>'cause' AS cause_enum, count(*)
+   FROM mistake
+   WHERE cause IS NOT NULL
+   GROUP BY cause->>'cause';
+   ```
+   If any value is outside the ADR-0006 v2 10-enum (concept / knowledge_gap / calculation / reading / memory / expression / method / carelessness / time_pressure / other), document the bridge — map old→new or coalesce to 'other'.
+
+3. **Confirm `src/core/id.ts` exists** + read its `newCuid()` / id-generation pattern; reuse same style for `deterministicId`.
+
+4. **Confirm Lane B's `CauseSchema` accepts the legacy `mistake.cause` jsonb directly** (parse a sample legacy cause through `CauseSchema.parse(legacyCauseJsonb)` in the integration test). If it rejects, document the shim.
 
 ---
 
