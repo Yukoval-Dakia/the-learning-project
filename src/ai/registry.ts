@@ -3,7 +3,11 @@
 // 每个 Task 一种产物语义；tool-calling 循环交给 Vercel AI SDK，本文件只持注册元信息。
 // 详见 docs/architecture.md § 五 AI 任务层。
 
-export type Provider = 'anthropic';
+// Sub 0c: widen provider union to enable future routing through OpenRouter /
+// Vercel AI Gateway / OpenAI without breaking registry consumers. Only
+// 'anthropic' is wired in runner.ts; others throw 'not implemented' until
+// Sub 0d's Provider Manager lands (see ADR-0003 2026-05-11 update + ADR-0004).
+export type Provider = 'anthropic' | 'openrouter' | 'gateway' | 'openai';
 export type ModelId = string;
 
 export interface TaskBudget {
@@ -23,6 +27,11 @@ export interface TaskDef {
   isMultimodal: boolean;
   allowedTools: string[];
   systemPrompt: string;
+  /**
+   * Sub 0c: Vision tasks 仅作为 manual rescue 工具，不参与自动 cascade（ADR-0002
+   * 修订）。'auto' = 后端可自由调用；'manual_rescue_only' = 仅用户手动触发。
+   */
+  invocation?: 'auto' | 'manual_rescue_only';
 }
 
 const DEFAULT_BUDGET: TaskBudget = { maxIterations: 6, maxCost: 0.5, timeout: 60_000 };
@@ -47,7 +56,7 @@ export const tasks = {
   },
   VisionExtractTask: {
     kind: 'VisionExtractTask',
-    description: '错题图片 → 切块 + 题面 + 答案 + bbox',
+    description: '错题图片 → 切块 + 题面 + 答案 + bbox（manual rescue only after Sub 0c）',
     defaultProvider: 'anthropic',
     defaultModel: 'claude-haiku-4-5-20251001',
     fallbackChain: [],
@@ -55,12 +64,13 @@ export const tasks = {
     needsToolCall: false,
     isMultimodal: true,
     allowedTools: [],
+    invocation: 'manual_rescue_only',
     systemPrompt:
       '你是错题录入助手。给定一张题目图片（试卷/手写/教材截图），输出严格 JSON（不带 markdown 代码块包裹）：\n{"blocks":[{"extracted_prompt_md":"...","reference_md":"...|null","wrong_answer_md":"...|null","page_index":0,"bbox":{"x":0.1,"y":0.2,"width":0.6,"height":0.3},"role":"prompt|answer_area|continuation","visual_complexity":"low|medium|high","extraction_confidence":0.0-1.0,"knowledge_hint":"...|null"}]}\n约束：bbox 坐标 0-1 归一化（不是像素）；一图可输出 1+ 个 block（一页多题）；page_index 由调用方覆盖；wrong_answer_md 仅当图上有用户错答 / 批改痕迹时填；knowledge_hint 是软提示。',
   },
   VisionExtractTaskHeavy: {
     kind: 'VisionExtractTaskHeavy',
-    description: '错题图片 → 切块（heavy / Tier 3 — sonnet 兜底）',
+    description: '错题图片 → 切块（heavy / Tier 3 — sonnet manual rescue）',
     defaultProvider: 'anthropic',
     defaultModel: 'claude-sonnet-4-6',
     fallbackChain: [],
@@ -68,6 +78,7 @@ export const tasks = {
     needsToolCall: false,
     isMultimodal: true,
     allowedTools: [],
+    invocation: 'manual_rescue_only',
     systemPrompt:
       '你是错题录入助手（heavy 模式，前两层 OCR / haiku 都失败）。给定一张题目图片（可能含手写 / 复杂版式 / 公式），输出严格 JSON（不带 markdown 代码块包裹）：\n{"blocks":[{"extracted_prompt_md":"...","reference_md":"...|null","wrong_answer_md":"...|null","page_index":0,"bbox":{"x":0.1,"y":0.2,"width":0.6,"height":0.3},"role":"prompt|answer_area|continuation","visual_complexity":"low|medium|high","extraction_confidence":0.0-1.0,"knowledge_hint":"...|null"}]}\n约束：bbox 坐标 0-1 归一化（不是像素）；page_index 由调用方覆盖；wrong_answer_md 仅当图上有用户错答 / 批改痕迹时填。',
   },

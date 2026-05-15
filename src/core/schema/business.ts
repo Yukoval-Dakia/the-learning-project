@@ -73,7 +73,10 @@ export const SourceAssetKind = z.enum(['image', 'pdf', 'text', 'web']);
 
 export const IngestionSessionStatus = z.enum([
   'uploaded',
+  'queued',
+  'extracting',
   'extracted',
+  'partial',
   'reviewed',
   'imported',
   'failed',
@@ -81,7 +84,7 @@ export const IngestionSessionStatus = z.enum([
 
 export const IngestionEntrypoint = z.enum(['vision_single', 'vision_paper']);
 
-export const QuestionBlockStatus = z.enum(['draft', 'reviewed', 'merged', 'imported', 'ignored']);
+export const QuestionBlockStatus = z.enum(['draft', 'imported', 'ignored']);
 
 export const QuestionBlockRole = z.enum(['prompt', 'answer_area', 'continuation']);
 

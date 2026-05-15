@@ -24,3 +24,11 @@ const queryClient = postgres(databaseUrl, {
 
 export const db = drizzle(queryClient, { schema });
 export type Db = typeof db;
+
+/**
+ * Transaction handle (the argument passed to `db.transaction(async (tx) => …)`).
+ * 与 `Db` 的查询/写入 API 完全一致，但**不**含 `$client`（raw postgres-js client）。
+ * 模块需要在调用方事务内做写入时（如 `writeJobEvent` / `IngestionSession.*`），
+ * 接收类型 `Tx | Db` 同时支持两种调用方式。
+ */
+export type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];

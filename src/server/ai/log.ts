@@ -35,6 +35,9 @@ export interface CostLedgerEntry {
   cost: number;
   tokens_in: number;
   tokens_out: number;
+  /** Sub 0c: track pg-boss job correlation + outcome for OCR / async jobs. */
+  outcome?: 'success' | 'failed_retryable' | 'failed_permanent';
+  pgboss_job_id?: string;
 }
 
 export async function writeCostLedger(db: Db, entry: CostLedgerEntry): Promise<void> {
@@ -46,6 +49,8 @@ export async function writeCostLedger(db: Db, entry: CostLedgerEntry): Promise<v
     cost: entry.cost,
     tokens_in: entry.tokens_in,
     tokens_out: entry.tokens_out,
+    outcome: entry.outcome ?? 'success',
+    pgboss_job_id: entry.pgboss_job_id ?? null,
     occurred_at: new Date(),
   });
 }

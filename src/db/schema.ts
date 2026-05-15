@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import {
   boolean,
   check,
+  index,
   integer,
   jsonb,
   pgTable,
@@ -21,6 +22,7 @@ import type {
   Rubric,
   ToolState,
 } from '../core/schema/business';
+import type { FigureRefT, StructuredQuestionT } from '../core/schema/structured_question';
 
 // Drizzle schema (Postgres) — single source of truth.
 // Per architecture-review.md § Stack Pivot: Postgres types throughout;
@@ -102,6 +104,7 @@ export const ingestion_session = pgTable('ingestion_session', {
   status: text('status').notNull().default('uploaded'),
   entrypoint: text('entrypoint').notNull(),
   error_message: text('error_message'),
+  warnings: jsonb('warnings').$type<string[]>().notNull().default([]),
   created_at: timestamp('created_at', { withTimezone: true }).notNull(),
   updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
   version: integer('version').notNull().default(0),
@@ -124,7 +127,16 @@ export const question_block = pgTable(
       >()
       .notNull()
       .default([]),
-    extracted_prompt_md: text('extracted_prompt_md').notNull(),
+    // 2026-05-14: deviation from plan Step 0.4 —— plan 原文要求 DROP COLUMN，但
+    // 当前 cascade.ts / ingestion route / import route 仍写此列，若现在 DROP 则
+    // typecheck + 测试在 Step 1-10 之间全断。改为 nullable（行为：新代码不写、
+    // 老代码继续写），DROP 推迟到 Step 11.5 legacy route 迁完之后。
+    extracted_prompt_md: text('extracted_prompt_md'),
+    // structured 是 Tencent Mark Agent 返回的递归 StructuredQuestion 树
+    structured: jsonb('structured').$type<StructuredQuestionT>(),
+    // figures: 题目附带的图（FigureRef[]）
+    figures: jsonb('figures').$type<FigureRefT[]>().notNull().default([]),
+    layout_quality: text('layout_quality').notNull().default('structured'),
     reference_md: text('reference_md'),
     wrong_answer_md: text('wrong_answer_md'),
     image_refs: jsonb('image_refs').$type<string[]>().notNull().default([]),
@@ -261,6 +273,11 @@ export const study_log = pgTable('study_log', {
   version: integer('version').notNull().default(0),
 });
 
+// TODO(Phase 1c+): 当前零调用 —— schema 与 Zod 类型已建（含 outline_json / sections /
+// tool_state / history 等），但无任何 route / service 写入或读取。审计 2026-05-14
+// 标记为 dead schema。保留以等待 Phase 1c brainstorm 决定其与 encounter / Note 的关系
+// （见 docs/superpowers/brainstorms/2026-05-14-phase1c-encounter-session-ui.md）。
+// 若 Phase 1c spec 拍板不用，应在该 phase 同步 migration 删表。
 export const artifact = pgTable('artifact', {
   id: text('id').primaryKey(),
   type: text('type').notNull(),
@@ -364,5 +381,38 @@ export const cost_ledger = pgTable('cost_ledger', {
   cost: real('cost').notNull(),
   tokens_in: integer('tokens_in').notNull(),
   tokens_out: integer('tokens_out').notNull(),
+  outcome: text('outcome').notNull().default('success'),
+  pgboss_job_id: text('pgboss_job_id'),
   occurred_at: timestamp('occurred_at', { withTimezone: true }).notNull(),
+});
+
+// pg-boss 之上的"业务事件流"：每次状态迁移同事务 INSERT 一行 + pg_notify。
+// SSE replay 根据 (business_table, business_id, id) 索引查 since-id 增量事件。
+// 见 ADR-0005 / 0008 + Sub 0c plan Step 3
+export const job_events = pgTable(
+  'job_events',
+  {
+    id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+    business_table: text('business_table').notNull(),
+    business_id: text('business_id').notNull(),
+    event_type: text('event_type').notNull(),
+    payload: jsonb('payload').$type<JsonObject>().notNull(),
+    occurred_at: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // computeReplay 主查询路径：(table, id, id > lastEventId ORDER BY id ASC)
+    index('job_events_business_idx').on(t.business_table, t.business_id, t.id),
+  ],
+);
+
+// Echo job 用作 Sub 0c golden E2E（acceptance gate #1）：HTTP enqueue → pg-boss
+// worker → DB update → SSE delivers full-state event。Step 4 实现
+export const echo_jobs = pgTable('echo_jobs', {
+  id: text('id').primaryKey(),
+  input: text('input').notNull(),
+  output: text('output'),
+  status: text('status').notNull().default('queued'),
+  error_md: text('error_md'),
+  created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
 });
