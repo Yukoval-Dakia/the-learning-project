@@ -34,10 +34,26 @@
 - **录入会话（ingestion session）**：一次"用户上传一批材料 → 系统抽取 → 落库"的工作单元。状态机：`uploaded` →（用户触发抽取）→ `queued` →（worker 起跑）→ `extracting` → `extracted` / `partial` / `failed`；`extracted` / `partial` 可 `markReviewed()` → `reviewed`（可选步骤，`commitImport()` 也直接接 `extracted` / `partial`）→ **`imported`（终态，只读）**。`failed` 可 `retryExtraction()` 重入 `queued`。所有 transition 由 `src/server/ingestion/session.ts` 单一守卫，五个写入位置（POST /api/ingestion、/extract、handler、/rescue、/import）都走它。**救援是 block-level**：session 状态不变（partial → partial），仅替换单块内容。
 - **会话总结（session summary）**：用户主动结束一次学习会话时由 LLM 生成的总结。Phase 1b 新增（架构 review Q1）。
 
-## 已批准（approved，待 Phase 1c.1 落地）
+## 已批准（approved，2026-05-15 v2 — event-driven 核）
 
-> 2026-05-14 grill 完成，ADR 存档；schema 落地见 Phase 1c.1 plan。**代码未到位前，这些词不会出现在 src/ 里**——但 spec / ADR / brainstorm 引用从此用这些名字。
+> 2026-05-15 grill：用户明确 AI-Driven（C+D 档）是中心设计概念。ADR-0006 v2 推翻 v1 单表 encounter，转向 3-table 模型（material + learning_session + event）。本节词条对应 ADR-0006 v2 + ADR-0008 修订。**待 Phase 1c.1 落地**。
+>
+> v1 词条（遭遇 / 单表 outcome / exposure）已被 v2 取代，见 ADR-0006 v1 决策（已被取代）节。
 
-- **遭遇（encounter）**（ADR-0006）：学习者与材料的一次交互。`outcome` enum: `wrong | right | exposed | created | drilled | reviewed`。**替换 `mistake` 为 first-class entity**——mistake 落地后即 DROP，其语义被 `encounter where outcome='wrong'` 完整覆盖。`material_ref jsonb` 指向材料（`question | source_document | free_text`；暂不含 artifact）；`evidence jsonb` 承载 per-outcome 具体证据（per-outcome Zod schema 守护）。
-- **学习会话（learning_session）**（ADR-0008）：通用 session envelope。`type` enum: `ingestion | review | tutor | explore | create | conversation`。每 type 独立状态机；single-owner invariant（ADR-0005 演化）保留。Phase 1c.1 实现 ingestion + review，其余 enum 占位。
-- **暴露（exposure）**：encounter outcome 值之一——仅"看过 / 读过 / 听过"但未答题。区别于 wrong（答错）和 right（答对）。填补"只输入未输出"的学习行为语义空缺。
+- **事件（event）**（ADR-0006 v2）：学习系统里发生的一次动作（user / agent / cron / system 皆可）。`actor_kind × action × subject_kind` 三轴定位；payload 按 Zod discriminated union 守。**替代** 旧的 `mistake` / `review_event` / `dreaming_proposal` 三表。
+  - 例：用户错答 = `event(actor='user', action='attempt', subject=question, outcome='failure')`
+  - 例：AI 归因 = `event(actor='agent:attribution', action='judge', subject=event, caused_by=...)`
+  - 例：AI 提议变式 = `event(actor='agent:variant_gen', action='generate', subject=artifact)`
+  - 例：用户接受 AI 提议 = `event(actor='user', action='rate', subject=event, payload={rating:'accept'})`
+- **学习会话（learning_session）**（ADR-0008 修订）：通用 session envelope。type ∈ `ingestion | review | conversation | tutor | explore | create`。一个 session 内的 event 流自然成 timeline。`type='conversation'` **替代** ADR-0004 原规划的独立 agent_sessions / agent_messages 表。
+- **AI 平等 actor**（ADR-0006 v2 核心原则）：event.actor_kind ∈ {'user', 'agent', 'cron', 'system'} —— AI 不是注释层，是和用户对等的事件发起者。Copilot 对话、Dreaming 夜间产出、Critique 自批改全部 first-class。
+- **事件链（event chaining）**：event.caused_by_event_id 把因果连成 DAG。可重放、可审计、可让 critique agent 作用在历史 event 上。
+- **核心 6+ action 严守 Zod + experimental:* 松守**（ADR-0006 v2 Option 折中）：已稳定的 `attempt / judge / propose / generate / review / rate / extract` 用 discriminated union 严守 payload；新交互用 `experimental:*` 命名空间先跑，稳了再 promote。
+
+### 与现有概念的映射（Phase 1c.1 落地后更新各正式词条）
+
+- **错题**（"做错的题"用户语义）→ `events WHERE action='attempt' AND outcome='failure' AND subject_kind='question'` 视图
+- **归因**（AI 判错因）→ `events WHERE action='judge' AND actor_kind='agent'`，payload.cause
+- **复习**（FSRS 到期重做）→ `events WHERE action='review'`
+- **梦境流 / 维护流**（Dreaming / Maintenance）→ events with actor_kind='agent' / cron 在夜间批量
+- **学习项（learning_item）**—— **保留** 现有 TODO / Goal 语义，与 event 解耦（用户 / AI 声明的学习意图 ≠ 发生过的事件）
