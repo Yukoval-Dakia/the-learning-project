@@ -36,3 +36,19 @@ Phase 1c.1 实现 `type='ingestion'`（从 IngestionSession 平移而来）和 `
 **演化关系：**
 - **演化（partial supersede）ADR-0005**：IngestionSession single-owner invariant 完整保留并扩大到全 session type；ADR-0005 仍作为 ingestion 子状态机的规范有效（同一文件、同一组方法，只是住进更大的 namespace）。
 - **相关 ADR-0006**：encounter 与 learning_session 是 Phase 1c.1 双 first-class entity——相互独立但常一起被查询（例："今天的 review session 里答错了哪些 encounter"）。
+
+---
+
+## 修订（2026-05-15）：agent_sessions / agent_messages 吸收进 learning_session + event
+
+ADR-0006 v2（event-driven 核）落定后，本 ADR 的 `type` enum 中 `'conversation'` 不再需要独立的 agent_sessions / agent_messages 表（ADR-0004 原规划）。Copilot 对话即：
+
+- 一个 `learning_session(type='conversation', status='active')` 容器
+- 多行 `event(actor_kind='user'|'agent:copilot', action='experimental:ask_copilot'|'experimental:explain'|'rate'|'generate', subject_kind='event'|'artifact')`
+
+好处：
+- 复用 event 表的事件链 / 审计 / 重放能力
+- 避免 agent_sessions 表与 learning_session 双轨
+- Copilot 调 propose/generate 等 tool 时直接写 event，与后台 Backend Purpose Agent 共享 schema
+
+Sub 0d plan 之前规划的 agent_sessions / agent_messages 表已**作废**——Sub 0d refresh 时按此调整。
