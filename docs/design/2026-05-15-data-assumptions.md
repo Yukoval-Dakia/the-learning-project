@@ -8,6 +8,18 @@
 
 ---
 
+## 📍 状态更新 (2026-05-15 晚)
+
+- **ADR-0011** 落地：tool_use / accept_suggestion / propose|generate|rate × knowledge_edge 五处 event 路径追认。**§H、§I、§G 等改 ⏳ → ✅ ADR'd**（schema 仍待 1c.1 落库）
+- **ADR-0012** 落地：mastery / last_active_at 转 derived view，drop 三个 stub 字段。**§A、§A2 改 🔴 stub → ✅ ADR'd derived**（实施在 Phase 1c.1 Step 1）
+- **audit follow-up**：`judgment` 整张表 / `mistake.variants` / `mistake.archived_at` 系列 / `completion_evidence.user_overrode_low_evidence` —— **不是死代码，是 Sub 1 / Sub 5 / Phase 1b 的 pending tasks**。grep 验证：
+  - `judgment` 在 sub-0a / sub-0b1 / phase-1-pr1 / phase1a-sub5 plans 引用；sub-0d Step 6 JudgeMistakeTask 要写它
+  - `mistake.variants` / `variants_generated_count` 在 phase1a-sub5 / sub-0d Step 14 VariantGenTask
+  - 这一切都是 ADR-0004 "60% 任务空格"（pre-1c audit 已 flagged）的延伸
+- **GIN 索引 audit**：`src/db/schema.ts` 全无 jsonb GIN 索引。但当前**没有代码做"找 knowledge_ids 包含 X 的 mistake"查询**——所有 SELECT 都是单行或全表扫单字段。**GIN 索引非当前 blocker**，但 v2.1 brief §1.6 `query_mistakes(k='...')` 和 mesh edge reasoning 落地时必加；列为 Phase 1c.1 Step 1 prerequisite
+
+---
+
 ## 状态色
 
 - 🟢 **live**：write path + read path 都 OK
@@ -20,23 +32,24 @@
 
 ## 1. 学习进度 / mastery
 
-### A. `knowledge.base_mastery` / `knowledge.ai_delta_mastery`
+### A. `knowledge.base_mastery` / `knowledge.ai_delta_mastery` ✅ ADR-0012 已决
 
 | 维度 | 内容 |
 |---|---|
 | 承诺者 | CONTEXT.md "Dreaming lane: 调整掌握度" / sub-0d plan Step 2.1 `update_ai_delta_mastery` tool / v2.1 brief 隐含（query_knowledge result）|
 | 当前 | 🔴 stub —— schema.ts:54-55，仅 INSERT 时初始化为 0（`src/server/knowledge/proposals.ts:267-268`），全代码零 UPDATE |
-| 1c.1 后 | 不变（1c.1 只动 mistake → event 迁移，不碰 mastery）|
-| sub-0d 后 | ⏳ planned —— sub-0d Step 2.1 `update_ai_delta_mastery` tool 提议建立 write path（dreaming agent 调用）|
-| Gap | **base_mastery 没有 write path 任何计划**。`ai_delta` 有但要等 sub-0d。base_mastery 是用户 review hard/again 派生还是 dreaming 计算？ADR 未明 |
+| ADR-0012 决策 | **drop 字段，改 PG view `knowledge_mastery`** 从 events 派生（30d 半衰期 weighted）|
+| 1c.1 后 | ✅ derived —— Phase 1c.1 Step 1 同步执行 DROP + 建 view |
+| sub-0d refresh | `get_weak_points` 改 `SELECT FROM knowledge_mastery WHERE mastery < 0.4`；`update_ai_delta_mastery` tool 删除（mastery 不再可写）|
 
-### A2. `knowledge.last_active_at` 🆕（audit 新发现）
+### A2. `knowledge.last_active_at` ✅ ADR-0012 已决
 
 | 维度 | 内容 |
 |---|---|
-| 承诺者 | sub-0d Step 13 MaintenanceProposeTask "60d 无访问归档候选"——隐含 last_active_at 在维护 |
-| 当前 | 🔴 stub —— schema 字段存在，**全 codebase 零 INSERT、零 UPDATE、零 SELECT** |
-| Gap | 谁该写？mistake / review_event 触达 knowledge 时应当 bump last_active_at。当前没人做。又一例"sub-0d 假设但前置未建" |
+| 承诺者 | sub-0d Step 13 MaintenanceProposeTask "60d 无访问归档候选" / architecture.md:329 |
+| 当前 | 🔴 stub —— schema 字段存在，全 codebase 零 INSERT/UPDATE/SELECT |
+| ADR-0012 决策 | **drop 字段，与 mastery 同一 view** —— `knowledge_mastery.last_active_at = max(events 触及该 knowledge)`，依赖 GIN 索引（见上方状态更新） |
+| 1c.1 后 | ✅ derived |
 
 ### B. mistake/encounter → knowledge mastery 反向投影
 
@@ -93,31 +106,29 @@
 | 1c.1 后 | ⏳ planned，schema 字段 + writer 写时自动连 |
 | Gap | chain 摘要 / 总 cost 聚合（v2.1 §1.5）需另建——chain 本身是 DAG，要计算总 cost 需 traversal |
 
-### G. event.subject_kind = 'knowledge_edge'（ADR-0010 扩展）
+### G. event.subject_kind = 'knowledge_edge'（ADR-0010 扩展）✅ ADR-0011 已写 schema
 
 | 维度 | 内容 |
 |---|---|
-| 承诺者 | ADR-0010 / v2.1 brief §2.2 |
-| 当前 | ⚫ |
-| 1c.1 后 | ⏳ planned per 1c.1 refresh banner |
-| Gap | 无 |
+| 承诺者 | ADR-0010 / v2.1 brief §2.2 / **ADR-0011** ProposeKnowledgeEdge / GenerateKnowledgeEdge / RateKnowledgeEdge Zod schemas |
+| 当前 | ⚫ schema 未落 |
+| 1c.1 后 | ⏳ planned per 1c.1 refresh banner + ADR-0011 |
 
-### H. event.action = 'experimental:tool_use'（v2.1 §1.6 新加）
-
-| 维度 | 内容 |
-|---|---|
-| 承诺者 | v2.1 brief §1.6 |
-| 当前 | ⚫ |
-| 1c.1 后 | 部分——event 表存在，experimental:* 命名空间可用，但 tool_use 是 v2.1 design 新提议，**未进 ADR-0006 v2 文本**。要补 ADR-0006 v2 或单开新 ADR |
-| Gap | 文档级 gap——v2.1 brief 引入新 action 类型，ADR 还没追认。落地前先补 ADR-0006 v2 修订 |
-
-### I. event.action = 'accept_suggestion' / subject_kind='chip'（v2.1 §1.6 新加）
+### H. event.action = 'experimental:tool_use'（v2.1 §1.6 新加）✅ ADR-0011 追认
 
 | 维度 | 内容 |
 |---|---|
-| 承诺者 | v2.1 brief §1.6.3b（designer 反馈采纳） |
+| 承诺者 | v2.1 brief §1.6 / **ADR-0011 §1** ToolUseExperimental Zod schema + stabilization criteria |
+| 当前 | ⚫ schema 未落（依赖 events 表）|
+| 落地 | Phase 1c.1 Step 2 写 Zod；sub-0d 落地实际 tool_use 路径 |
+
+### I. event.action = 'accept_suggestion' / subject_kind='chip'（v2.1 §1.6 新加）✅ ADR-0011 追认
+
+| 维度 | 内容 |
+|---|---|
+| 承诺者 | v2.1 brief §1.6.3b / **ADR-0011 §2** AcceptSuggestionChip Zod schema |
 | 当前 | ⚫ |
-| Gap | 同 H——ADR 未追认 |
+| 落地 | Phase 1c.1 Step 2 写 Zod；sub-0d 写 chip→tool_use 触发链 |
 
 ---
 
@@ -129,8 +140,8 @@
 |---|---|
 | 承诺者 | v2.1 brief 各处（Today KPI / EventChain summary / Vision rescue cost / mesh edge reasoning）|
 | 当前 | 🟡 partial —— `app/api/_/logs/cost/route.ts` 是唯一聚合（cost-by-bucket × task_kind × model）。无 mistake/knowledge/event 维度的 |
-| 计划 | ⚫ 任何 plan 都没明确建 |
-| Gap | **#2 候选**：`src/server/aggregations/` module 集中所有跨表聚合。是 mastery write、tool-use result、design KPI 三方共用前置 |
+| 决策 | **#2 推到 Phase 1c.1 落地后做**——mistake 表即将 DROP，建在它上是浪费；events 表落地后统一建 `src/server/aggregations/` |
+| 部分 | `knowledge_mastery` view（ADR-0012）落地后是第一个跨 event 聚合；其他（chain cost / cost-by-actor）跟随 |
 
 ### K. cost-by-actor / cost-by-day（v2 CostRibbon 用）
 
@@ -196,24 +207,28 @@
 
 ## 6.5 Audit 新发现的 stub / dead fields 🆕
 
-### O2. 死表（整张表零调用）
+### O2. 死表（整张表零调用）—— **修正：不是死代码，是 Sub 1 pending**
 
-**`judgment` 表**——schema 完整定义但全 codebase **零 INSERT / 零 UPDATE / 零 SELECT**：
-- 字段：id / answer_id / judge_kind / verdict / appeal_kind / is_effective / ... 11 列
-- 推测：是 Sub 1 plan 的 "JudgeTask 独立判分" 预留——但 Sub 1 一直没启动
-- 1c.1 后 ADR-0006 v2：判分用 `event(action='judge')` 替代——judgment 表彻底无家
-- **决策待**：删 or 等 Sub 1 重启再说
+**`judgment` 表**——audit follow-up 验证：
+
+- grep `docs/superpowers/` 显示 `judgment` 在 sub-0a / sub-0b1 / phase1-pr1 / phase1a-sub5 plan 都引用；**sub-0d Step 6 JudgeMistakeTask 明确要写它**
+- Sub 0c handoffs spec L51 / L79 / L96 列 JudgeTask 为 Sub 1 范围（pending）
+- 所以**不是死代码，是 ADR-0004 60% 任务空格之一**（pre-1c audit 2026-05-14 已 flagged）
+- 1c.1 后 ADR-0006 v2：判分会改成 `event(action='judge')`；**判分表本身在 1c.1 落地后应当被合并 / DROP**
+- **决策**：1c.1 时 DROP（与 mistake / review_event 一起），Sub 1 启动时按 event-action 路径建，不再用独立 judgment 表
+
+**`artifact` 表**——同上路径。schema comment 已标 zero usage，1c.1 plan Step 9 不删（因 C 档 AI 主动产出激活——ADR-0006 v2）。状态：planned to revive (ADR-0006 v2 GenerateArtifact)。
 
 **`artifact` 表**——schema comment 已自标 "TODO(Phase 1c+): 当前零调用"。1c.1 plan Step 9 不删（因 C 档 AI 主动产出激活）。状态：planned to revive。
 
-### P2. mistake 上的死/初始化-only 字段
+### P2. mistake 上的死/初始化-only 字段 —— **修正：sub-0d / Sub 5 pending**
 
-| 字段 | 类型 | 状态 | Gap |
+| 字段 | 类型 | 状态 | 修正后判断 |
 |---|---|---|---|
-| `mistake.variants` jsonb default [] | 🔴 stub | INSERT 写 []，**从无 push**。Sub 5 维护流要"批量生成变式"——promise 没兑现 |
-| `mistake.archived_at` / `.archived_reason` / `.delete_reason` | 🔴 stub | soft-delete 三件套全空。表上没有"归档错题"路径 |
-| `mistake.status` | 🟡 init-only | INSERT 写 'active'，无 UPDATE。生命周期 transitions 未实现 |
-| **Note** | | 1c.1 后 mistake DROP，这些字段全部不存在。**短期忽略**，长期注意 encounter 要不要继承同样的 soft-delete 设计 |
+| `mistake.variants` jsonb default [] | 🔴 → ⏳ | sub-0d Step 14 VariantGenTask 要写它；phase1a-sub5 / sub-0a 引用 `variants_generated_count`。**不是死字段，是 Sub 5 维护流的 pending implementation** |
+| `mistake.archived_at` / `.archived_reason` / `.delete_reason` | 🔴 stub | soft-delete 真的没人写。1c.1 后 mistake DROP，自然消失。**短期忽略**，但 events 表 / `material_fsrs_state` 投影是否要 archived_at？ADR-0006 v2 未明 |
+| `mistake.status` | 🟡 init-only | INSERT 写 'active'，无 UPDATE。**生命周期 transitions 未实现是 ADR-0004 Phase 2 promise**（maintenance lane 应当转 'resting' / 'archived'）|
+| **Note** | | 1c.1 后 mistake DROP；所有这些都迁移到 event-driven 模型，由 event 流派生 status / variants_count |
 
 ### Q2. completion_evidence
 
@@ -258,52 +273,57 @@ INSERT 写一次（learning-items/route.ts:76），**无 UPDATE path**。如果 
 
 ---
 
-## 总览：gaps 排序
+## 总览：gaps 排序（修订 — ADR-0011/0012 落地后）
 
 按 **会卡多少 design / 多少 plan** 排：
 
-1. **聚合层缺失（#J）** —— v2.1 几乎所有 KPI / tool-use / mesh reasoning 都假设它。**单点 blocker**
-2. **events 表未建（#E + #F + #G + #H + #I）** —— Phase 1c.1 灵魂，~3 周工时
-3. **mastery / last_active_at 写路径全空（#A + #A2 + #B）** —— sub-0d 假设 mastery 在、last_active_at 在；当前两个都是 stub
-4. **死表 / 半死表（#O2 + #P2 + 部分 #Q2 + #R2 + #S2）** —— `judgment` 整张死、mistake 三个 soft-delete 字段死、user_overrode_low_evidence 死、approval_status 流转 UPDATE 缺、learning_item.knowledge_ids UPDATE 缺
-5. **agent read tools（#L + #M）** —— sub-0d 范围，但 sub-0d deferred + needs refresh
-6. **agent write mirror to events（#O + #P）** —— 1c.1 落地后才能 audit
-7. **新 event 类型（tool_use / accept_suggestion）（#H + #I）** —— v2.1 brief 引入但 ADR-0006 v2 未追认
+1. **events 表未建（#E + #F + #G + #H + #I + #O + #P）** —— Phase 1c.1 灵魂；所有 mastery / mesh / tool-use 路径都 stake 在它上。⭐ **下一步主战场**
+2. **聚合层（#J）+ GIN 索引** —— 等 events 表落定后跟随建。`knowledge_mastery` view (ADR-0012) 是第一个；query_mistakes / chain_cost 等跟随
+3. ~~mastery / last_active_at（#A + #A2）~~ → ✅ ADR-0012 已决策为 derived view，落 1c.1 Step 1
+4. ~~新 event 类型（tool_use / accept_suggestion / mesh edges）~~ → ✅ ADR-0011 已追认 Zod schema，落 1c.1 Step 2
+5. **sub-0d refresh**（#L + #M）—— 1c.1 落地后启动；`update_ai_delta_mastery` tool 删（per ADR-0012），`get_weak_points` 改 view 查询
+6. **死表 / pending 字段** —— audit 修正后明确：
+   - `judgment` 表：1c.1 同步 DROP（合并进 event action='judge'）
+   - `mistake.variants` etc：Sub 5/Sub 0d pending，1c.1 DROP 后由 event 派生
+   - `completion_evidence.user_overrode_low_evidence`：Phase 1b 流要决定实现 or 删 schema
+   - `knowledge.approval_status` UPDATE path：要么实现 admin 流（用户级权限决策），要么字段降级为 INSERT-only
+7. **C 档 maintenance lifecycle transitions**（mistake.status / learning_item lifecycle）—— ADR-0004 Phase 2 promise，待 sub-0d Step 13 落
 
 ---
 
-## 行动建议（待 grill）
+## 行动建议（落地状态 — 2026-05-15 晚）
 
-**A. 建聚合 module（#2 候选）**——`src/server/aggregations/`，先做 knowledge-level + event-chain 两组。**做完它，70% gap 闭环**。当下唯一不被 1c.1 / sub-0d block 的工作。
+**✅ A. 死字段 → ADR-0012 已决（derived view）+ Phase 1c.1 Step 1 落地**
 
-**B. mastery / last_active_at 写路径定权（#1 候选）**
+**✅ B. ADR 追认 → ADR-0011 已写**
 
-需要 ADR 级决策（**或微 ADR**）回答：
-- `base_mastery` 是 user 派生 / dreaming 计算 / 删掉？
-- `ai_delta_mastery` 谁更新、何时、按什么信号？
-- `last_active_at` 在哪个事件链上 bump？
+**⏭️ C. 聚合 module 推到 1c.1 落地后做**——`src/server/aggregations/` 等 events 表落地统一建。当前唯一可做的轻量聚合是 `knowledge_mastery` view（ADR-0012）含在 1c.1 Step 1
 
-**C. 死字段 / 死表批量清理**
+**⏭️ D. Phase 1c.1 启动**——本次 brainstorm 终点。事件表 + mesh + DROP 死字段 + 建 view + UI 脚手架。20-27d 工时
 
-按 audit 结果逐条决策：
-- `judgment` 整张表 → ADR-0006 v2 后 judge 是 event.action，**删表**
-- `mistake.variants / archived_at / archived_reason / delete_reason` → 1c.1 后 mistake DROP，**自然消失**
-- `completion_evidence.user_overrode_low_evidence` → Phase 1b 流要么实现要么删字段
-- `knowledge.approval_status` UPDATE path → 缺，要么实现要么把字段降级为 INSERT-time only
+**⏳ E. 1c.1 落地后：sub-0d refresh + 启动**
 
-**D. 补 ADR-0006 v2 修订或新 ADR**
+sub-0d 改造点（per ADR-0011 / 0012）：
+- Step 1.1 `get_weak_points` 改 `SELECT FROM knowledge_mastery WHERE mastery < 0.4`
+- Step 1.1 `get_recent_mistakes` 改 `event WHERE action='attempt' AND outcome='failure'` 视图
+- Step 2.1 `update_ai_delta_mastery` 删除（mastery 不再可写，per ADR-0012）
+- Step 6 JudgeMistakeTask → JudgeEventTask，写 `event(action='judge', subject_kind='event')`
+- Step 14 VariantGenTask → 写 `event(action='generate', subject_kind='artifact')` per ADR-0006 v2
 
-v2.1 brief 引入的 `action='experimental:tool_use'` / `action='accept_suggestion'` / `subject_kind='chip'` 进 ADR 文本——否则落地时随手发明，引发设计漂移。
+**⏳ F. Sub 1 (Judge / Variant gen) 接 Sub 0d 后**
 
-**E. sub-0d refresh + 重新评估"前置依赖"**
+**⏳ G. 数据假设清单 maintenance** —— 任何 ADR / plan 写新表 / 字段时附 write path 标注；建议建轻量 lint："schema 字段必须 grep 到 ≥1 处 write，否则 fail"——防止 1c.1 之后再撞同样问题。本 lint 不阻塞 1c.1，可作 Phase 1c.1 收尾任务
 
-sub-0d Step 1.1 `get_weak_points`（mastery）、`get_recent_mistakes`（events 表）—— 全部前置依赖未建。要么 sub-0d 自己建（变大），要么先做 #A + #B 喂数据。
+---
 
-**F. 多 audit follow-up**：
+## 已完成的 Audit follow-up（2026-05-15 晚）
 
-- `judgment` 表是否真有 Sub 1 plan 引用？（如有，决定 keep；如否，删）
-- `knowledge.last_active_at` 是否 sub-0d 之外有人引用？
-- `mistake.knowledge_ids` GIN 索引存在吗？（影响 §N 是否真能 query "某 knowledge 的所有 mistakes"）
+| 问题 | 结论 |
+|---|---|
+| `judgment` 是否真有 Sub 1 plan 引用？ | ✅ 是。sub-0a / sub-0b1 / phase1-pr1 / phase1a-sub5 / sub-0d Step 6 都引用。但 ADR-0006 v2 后判分是 event action—— **judgment 表 1c.1 DROP** |
+| `knowledge.last_active_at` 是否 sub-0d 之外引用？ | ✅ architecture.md:329 / sub-0d Step 13 / spec architecture-review 都用。ADR-0012 决策 derived，drop 字段 |
+| `mistake.knowledge_ids` GIN 索引？ | ❌ schema.ts 全无 jsonb GIN 索引。但当前**没有 query 需要它**（所有 SELECT 单行/全表扫单字段）。落地 §1.6 `query_mistakes(k=...)` / mesh reasoning 时必加—— Phase 1c.1 Step 1 prerequisite |
+| `mistake.variants` Sub 5 真要写吗？ | ✅ sub-0d Step 14 VariantGenTask。但 1c.1 后 mistake → event，variants 改为 `event(action='generate', subject_kind='artifact')` 表达 |
 
 ---
 
