@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ActorKind, CauseSchema, FsrsStateSchema, RelationTypeSchema } from './blocks';
+import { CauseSchema, FsrsStateSchema, RelationTypeSchema } from './blocks';
 
 // ---------- 通用 envelope 字段 ----------
 //
