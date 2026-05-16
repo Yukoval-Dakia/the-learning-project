@@ -1,3 +1,9 @@
+// HISTORICAL: legacy tables (mistake / review_event / dreaming_proposal /
+// ingestion_session) were DROP'd in Phase 1c.1 Step 9.J. This script is no
+// longer runnable against current schema — it stays in repo as historical
+// record of the legacy → event-driven mapping logic. The migration ran once
+// against prod data during the Phase 1c.1 maintenance window.
+//
 // Phase 1c.1 Step 3 — legacy → event-driven migration.
 //
 // Maps 4 legacy tables to the new event-driven shape per
