@@ -37,7 +37,8 @@ function isAllowedLine(text: string): boolean {
   // ADR cross-reference lines
   if (/ADR-0{0,3}[0-9]/.test(text)) return true;
   // Historical marker lines
-  if (/v1[\s—]|v1\s+\(superseded\)|已被取代|已 DROP|旧 Mistake|旧.*表已 DROP/.test(text)) return true;
+  if (/v1[\s—]|v1\s+\(superseded\)|已被取代|已 DROP|旧 Mistake|旧.*表已 DROP/.test(text))
+    return true;
   // User-facing preservation lines (CONTEXT.md header items or mappings that explicitly say "UI 保留")
   if (/UI 保留|用户语义|用户称呼/.test(text)) return true;
   // Architecture data model skeleton historical planning block annotation
@@ -98,11 +99,7 @@ describe('Phase 1c.1 Step 12.D — docs legacy term invariant', () => {
   });
 
   it('docs/architecture.md: legacy terms only in allowed contexts', () => {
-    const LEGACY_TERMS = [
-      'review_event',
-      'dreaming_proposal',
-      'ingestion_session',
-    ];
+    const LEGACY_TERMS = ['review_event', 'dreaming_proposal', 'ingestion_session'];
     const lines = readLines('docs/architecture.md');
     const violations: string[] = [];
 
@@ -156,11 +153,7 @@ describe('Phase 1c.1 Step 12.D — docs legacy term invariant', () => {
   });
 
   it('CONTEXT.md: legacy terms only in allowed contexts', () => {
-    const LEGACY_TERMS = [
-      'review_event',
-      'dreaming_proposal',
-      'ingestion_session',
-    ];
+    const LEGACY_TERMS = ['review_event', 'dreaming_proposal', 'ingestion_session'];
     const lines = readLines('CONTEXT.md');
     const violations: string[] = [];
 
