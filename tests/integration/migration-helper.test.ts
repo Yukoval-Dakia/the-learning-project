@@ -8,9 +8,9 @@
 // in `learning_session`. If the helper or the underlying script gets renamed
 // or the export disappears, this test fails with a clear import-time error.
 
-import { beforeEach, describe, expect, it } from 'vitest';
 import { ingestion_session, learning_session } from '@/db/schema';
 import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../helpers/db';
 import { runMigrationInTest } from '../helpers/migration';
 
@@ -43,7 +43,7 @@ describe('tests/helpers/migration — runMigrationInTest re-export', () => {
       .from(learning_session)
       .where(eq(learning_session.id, 'is_helper_smoke'));
     expect(sessions).toHaveLength(1);
-    expect(sessions[0]!.type).toBe('ingestion');
-    expect(sessions[0]!.status).toBe('uploaded');
+    expect(sessions[0]?.type).toBe('ingestion');
+    expect(sessions[0]?.status).toBe('uploaded');
   });
 });

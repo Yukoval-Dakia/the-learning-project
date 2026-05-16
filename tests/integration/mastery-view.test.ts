@@ -15,9 +15,9 @@
 // by writeEvent's runtime gate. This is the standard test-side pattern (Step
 // 4 fixtures use the same direct-insert convention).
 
+import { event, knowledge } from '@/db/schema';
 import { sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { event, knowledge } from '@/db/schema';
 import { resetDb, testDb } from '../helpers/db';
 
 // Direct-insert seed helpers — bypass writeEvent so we can fix created_at.
@@ -111,9 +111,11 @@ async function masteryFor(knowledge_id: string): Promise<{
     knowledge_id: string;
     mastery: number | null;
     evidence_count: number;
-  }>(sql`SELECT knowledge_id, mastery, evidence_count FROM knowledge_mastery WHERE knowledge_id = ${knowledge_id}`);
-  if (rows.length === 0) return null;
-  const r = rows[0]!;
+  }>(
+    sql`SELECT knowledge_id, mastery, evidence_count FROM knowledge_mastery WHERE knowledge_id = ${knowledge_id}`,
+  );
+  const r = rows[0];
+  if (r === undefined) return null;
   return {
     knowledge_id: r.knowledge_id,
     mastery: r.mastery === null ? null : Number(r.mastery),
