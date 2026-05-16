@@ -549,3 +549,206 @@ describe('migrateIngestionSessions — ingestion_session → learning_session (3
     expect(mid?.ended_at).toBeNull();
   });
 });
+
+describe('runMigration — orchestrator + idempotent re-run (3.G)', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await seedQuestion();
+  });
+
+  it('processes mixed fixture: 2 mistakes + 1 review chain + 1 dreaming_proposal + 1 ingestion_session', async () => {
+    const db = testDb();
+    const baseTime = new Date('2026-06-01T00:00:00Z');
+
+    // 2 mistakes (1 with cause, 1 without)
+    await db.insert(mistake).values({
+      id: 'm_orch_no_cause',
+      question_id: QUESTION_ID,
+      wrong_answer_md: 'wrong A',
+      source: 'manual',
+      knowledge_ids: ['k_orch_a'],
+      cause: null,
+      fsrs_state: null,
+      created_at: baseTime,
+      updated_at: baseTime,
+    });
+    await db.insert(mistake).values({
+      id: 'm_orch_with_cause',
+      question_id: QUESTION_ID,
+      wrong_answer_md: 'wrong B',
+      source: 'manual',
+      knowledge_ids: ['k_orch_b'],
+      cause: {
+        primary_category: 'concept',
+        secondary_categories: [],
+        ai_analysis_md: 'orchestrator-test cause',
+        user_edited: false,
+        confidence: 0.7,
+      },
+      fsrs_state: null,
+      created_at: baseTime,
+      updated_at: new Date(baseTime.getTime() + 1000),
+    });
+
+    // 1 review chain on m_orch_no_cause
+    await db.insert(review_event).values({
+      id: 're_orch_001',
+      mistake_id: 'm_orch_no_cause',
+      rating: 'good',
+      response_md: 'orch review response',
+      latency_ms: 4000,
+      fsrs_state_before: null,
+      fsrs_state_after: {
+        due: new Date(baseTime.getTime() + 86400000),
+        stability: 1.5,
+        difficulty: 5.0,
+        elapsed_days: 1,
+        scheduled_days: 1,
+        learning_steps: 0,
+        reps: 1,
+        lapses: 0,
+        state: 'review',
+        last_review: baseTime,
+      },
+      due_at_before: baseTime,
+      due_at_next: new Date(baseTime.getTime() + 86400000),
+      created_at: new Date(baseTime.getTime() + 3600000),
+    });
+
+    // 1 dreaming_proposal
+    await db.insert(dreaming_proposal).values({
+      id: 'dp_orch_001',
+      kind: 'knowledge',
+      payload: { proposed_knowledge: { name: 'orch_node', parent_id: 'k_root' } },
+      reasoning: 'orch reasoning',
+      status: 'accepted',
+      proposed_at: baseTime,
+      decided_at: new Date(baseTime.getTime() + 7200000),
+    });
+
+    // 1 ingestion_session
+    await db.insert(ingestion_session).values({
+      id: 'is_orch_001',
+      source_document_id: 'sd_orch',
+      source_asset_ids: ['sa_orch'],
+      status: 'imported',
+      entrypoint: 'vision_single',
+      warnings: [],
+      created_at: baseTime,
+      updated_at: new Date(baseTime.getTime() + 3600000),
+      version: 1,
+    });
+
+    const { runMigration } = await import('./migrate-phase1c1');
+    const result = await runMigration(db);
+    expect(result.ok).toBe(true);
+
+    // Expected row counts:
+    //   event: 2 attempts + 1 judge + 1 review + 1 propose = 5
+    //   material_fsrs_state: 1 (from review on m_orch_no_cause)
+    //   learning_session: 1 (from ingestion_session)
+    const events = await db.select().from(event);
+    expect(events).toHaveLength(5);
+    expect(events.filter((e) => e.action === 'attempt')).toHaveLength(2);
+    expect(events.filter((e) => e.action === 'judge')).toHaveLength(1);
+    expect(events.filter((e) => e.action === 'review')).toHaveLength(1);
+    expect(events.filter((e) => e.action === 'propose')).toHaveLength(1);
+
+    const fsrsStates = await db.select().from(material_fsrs_state);
+    expect(fsrsStates).toHaveLength(1);
+
+    const sessions = await db.select().from(learning_session);
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].type).toBe('ingestion');
+  });
+
+  it('idempotent: running twice produces the same end-state row counts', async () => {
+    const db = testDb();
+    const baseTime = new Date('2026-06-02T00:00:00Z');
+
+    await db.insert(mistake).values({
+      id: 'm_idem',
+      question_id: QUESTION_ID,
+      wrong_answer_md: 'idem',
+      source: 'manual',
+      knowledge_ids: [],
+      cause: {
+        primary_category: 'method',
+        secondary_categories: [],
+        ai_analysis_md: 'idem analysis',
+        user_edited: false,
+        confidence: 0.6,
+      },
+      fsrs_state: null,
+      created_at: baseTime,
+      updated_at: baseTime,
+    });
+    await db.insert(ingestion_session).values({
+      id: 'is_idem',
+      source_document_id: null,
+      source_asset_ids: [],
+      status: 'imported',
+      entrypoint: 'vision_paper',
+      warnings: [],
+      created_at: baseTime,
+      updated_at: baseTime,
+      version: 0,
+    });
+
+    const { runMigration } = await import('./migrate-phase1c1');
+
+    const first = await runMigration(db);
+    expect(first.ok).toBe(true);
+    const evCount1 = (await db.select().from(event)).length;
+    const lsCount1 = (await db.select().from(learning_session)).length;
+    const mistakeCount1 = (await db.select().from(mistake)).length;
+    expect(evCount1).toBe(2); // attempt + judge
+    expect(lsCount1).toBe(1);
+    expect(mistakeCount1).toBe(1);
+
+    // Second run — onConflictDoNothing + deterministic IDs make this a no-op.
+    const second = await runMigration(db);
+    expect(second.ok).toBe(true);
+    const evCount2 = (await db.select().from(event)).length;
+    const lsCount2 = (await db.select().from(learning_session)).length;
+    const mistakeCount2 = (await db.select().from(mistake)).length;
+    expect(evCount2).toBe(evCount1);
+    expect(lsCount2).toBe(lsCount1);
+    // Legacy data still present (additive migration)
+    expect(mistakeCount2).toBe(mistakeCount1);
+  });
+
+  it('aborts when judgment table is non-empty (precheck violation)', async () => {
+    const db = testDb();
+    const { sql } = await import('drizzle-orm');
+    await db.execute(sql.raw(`CREATE TABLE IF NOT EXISTS "judgment" (id text PRIMARY KEY)`));
+    try {
+      await db.execute(sql.raw(`INSERT INTO "judgment" (id) VALUES ('j_abort_001')`));
+
+      // Seed a mistake — if the orchestrator IGNORED the precheck, it would
+      // write events; we assert events table stays empty.
+      await db.insert(mistake).values({
+        id: 'm_should_not_migrate',
+        question_id: QUESTION_ID,
+        wrong_answer_md: 'x',
+        source: 'manual',
+        knowledge_ids: [],
+        cause: null,
+        fsrs_state: null,
+        created_at: new Date('2026-06-03T00:00:00Z'),
+        updated_at: new Date('2026-06-03T00:00:00Z'),
+      });
+
+      const { runMigration } = await import('./migrate-phase1c1');
+      const result = await runMigration(db);
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error('unreachable');
+      expect(result.error).toMatch(/judgment table/i);
+
+      const events = await db.select().from(event);
+      expect(events).toHaveLength(0); // migration refused to proceed
+    } finally {
+      await db.execute(sql.raw(`DROP TABLE IF EXISTS "judgment"`));
+    }
+  });
+});
