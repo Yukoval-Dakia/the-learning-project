@@ -1,4 +1,5 @@
 import { newId } from '@/core/ids';
+import { tasks } from '@/ai/registry';
 import { parseEvent } from '@/core/schema/event';
 import { dreaming_proposal, event, knowledge } from '@/db/schema';
 import { and, eq } from 'drizzle-orm';
@@ -6,6 +7,17 @@ import { MockLanguageModelV3 } from 'ai/test';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { streamReviewTask } from './review';
+
+describe('KnowledgeReviewTask system prompt (event-stream language + edge branch)', () => {
+  it('speaks attempt-event vocabulary and lists propose_knowledge_edge with relation_type', () => {
+    const prompt = tasks.KnowledgeReviewTask.systemPrompt;
+    // Event-stream entity language present
+    expect(prompt).toContain('attempt event');
+    // Edge-shape mutation option present
+    expect(prompt).toContain('propose_knowledge_edge');
+    expect(prompt).toContain('relation_type');
+  });
+});
 
 function makeV3Usage() {
   return {
