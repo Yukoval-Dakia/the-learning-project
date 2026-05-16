@@ -4,16 +4,18 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import { db } from '@/db/client';
-import { ingestion_session, job_events, question_block, source_document } from '@/db/schema';
+import { event, job_events, learning_session, question_block, source_document } from '@/db/schema';
 import { ApiError } from '@/server/http/errors';
 import {
   applyExtractionResult,
   applyRescue,
+  commitImport,
   enqueueExtraction,
+  initiateUpload,
   markExtractionFailed,
   markExtractionStarted,
   markReviewed,
-} from './session';
+} from './ingestion';
 
 // Mock pg-boss boss instance for enqueueExtraction tests
 function mockBoss() {
@@ -39,14 +41,16 @@ async function makeSession(
     updated_at: now,
     version: 0,
   });
-  await db.insert(ingestion_session).values({
+  await db.insert(learning_session).values({
     id: sessionId,
+    type: 'ingestion',
     source_document_id: sourceDocId,
     source_asset_ids: ['asset_a'],
     status,
     entrypoint: 'vision_single',
     error_message: null,
     warnings,
+    started_at: now,
     created_at: now,
     updated_at: now,
     version: 0,
@@ -55,9 +59,11 @@ async function makeSession(
 }
 
 async function cleanup(sessionId: string, sourceDocId: string): Promise<void> {
+  await db.delete(event).where(eq(event.session_id, sessionId));
   await db.delete(question_block).where(eq(question_block.ingestion_session_id, sessionId));
-  await db.delete(ingestion_session).where(eq(ingestion_session.id, sessionId));
+  await db.delete(learning_session).where(eq(learning_session.id, sessionId));
   await db.delete(source_document).where(eq(source_document.id, sourceDocId));
+  await db.delete(job_events).where(eq(job_events.business_id, sessionId));
 }
 
 const STEM_FIXTURE: StructuredQuestionT = {
@@ -67,7 +73,7 @@ const STEM_FIXTURE: StructuredQuestionT = {
   sub_questions: [{ id: 'q-sub-1', role: 'sub', question_no: '1', prompt_text: '___' }],
 };
 
-describe('IngestionSession.enqueueExtraction', () => {
+describe('Ingestion.enqueueExtraction', () => {
   it('uploaded → queued + boss.send called', async () => {
     const { sessionId, sourceDocId } = await makeSession('uploaded');
     const boss = mockBoss();
@@ -75,21 +81,16 @@ describe('IngestionSession.enqueueExtraction', () => {
     expect(jobId).toBe('mock-job-id');
     expect(boss.send).toHaveBeenCalledWith('tencent_ocr_extract', { sessionId });
 
-    const rows = await db
-      .select()
-      .from(ingestion_session)
-      .where(eq(ingestion_session.id, sessionId));
+    const rows = await db.select().from(learning_session).where(eq(learning_session.id, sessionId));
     expect(rows[0].status).toBe('queued');
+    expect(rows[0].type).toBe('ingestion');
     await cleanup(sessionId, sourceDocId);
   });
 
   it('failed → queued (retry)', async () => {
     const { sessionId, sourceDocId } = await makeSession('failed');
     await enqueueExtraction({ db, boss: mockBoss(), sessionId });
-    const rows = await db
-      .select()
-      .from(ingestion_session)
-      .where(eq(ingestion_session.id, sessionId));
+    const rows = await db.select().from(learning_session).where(eq(learning_session.id, sessionId));
     expect(rows[0].status).toBe('queued');
     await cleanup(sessionId, sourceDocId);
   });
@@ -107,16 +108,39 @@ describe('IngestionSession.enqueueExtraction', () => {
       enqueueExtraction({ db, boss: mockBoss(), sessionId: 'never-existed' }),
     ).rejects.toMatchObject({ code: 'not_found', status: 404 });
   });
+
+  it('refuses to load a non-ingestion learning_session (type filter)', async () => {
+    // Insert a review-type session with status='uploaded' (nonsensical, but
+    // demonstrates the type filter — ingestion transitions must not pick it up)
+    const id = createId();
+    const now = new Date();
+    await db.insert(learning_session).values({
+      id,
+      type: 'review',
+      status: 'uploaded',
+      source_document_id: null,
+      source_asset_ids: [],
+      entrypoint: null,
+      warnings: [],
+      error_message: null,
+      started_at: now,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    await expect(enqueueExtraction({ db, boss: mockBoss(), sessionId: id })).rejects.toMatchObject({
+      code: 'not_found',
+      status: 404,
+    });
+    await db.delete(learning_session).where(eq(learning_session.id, id));
+  });
 });
 
-describe('IngestionSession.markExtractionStarted', () => {
+describe('Ingestion.markExtractionStarted', () => {
   it('queued → extracting', async () => {
     const { sessionId, sourceDocId } = await makeSession('queued');
     await db.transaction(async (tx) => markExtractionStarted(tx, sessionId));
-    const rows = await db
-      .select()
-      .from(ingestion_session)
-      .where(eq(ingestion_session.id, sessionId));
+    const rows = await db.select().from(learning_session).where(eq(learning_session.id, sessionId));
     expect(rows[0].status).toBe('extracting');
     await cleanup(sessionId, sourceDocId);
   });
@@ -130,8 +154,8 @@ describe('IngestionSession.markExtractionStarted', () => {
   });
 });
 
-describe('IngestionSession.applyExtractionResult', () => {
-  it('extracting + structured → extracted + N question_block rows', async () => {
+describe('Ingestion.applyExtractionResult', () => {
+  it('extracting + structured → extracted + N question_block rows + extract event(success)', async () => {
     const { sessionId, sourceDocId } = await makeSession('extracting');
     await db.transaction((tx) =>
       applyExtractionResult(tx, {
@@ -152,8 +176,8 @@ describe('IngestionSession.applyExtractionResult', () => {
     );
     const session = await db
       .select()
-      .from(ingestion_session)
-      .where(eq(ingestion_session.id, sessionId));
+      .from(learning_session)
+      .where(eq(learning_session.id, sessionId));
     expect(session[0].status).toBe('extracted');
     const blocks = await db
       .select()
@@ -161,10 +185,24 @@ describe('IngestionSession.applyExtractionResult', () => {
       .where(eq(question_block.ingestion_session_id, sessionId));
     expect(blocks).toHaveLength(1);
     expect(blocks[0].layout_quality).toBe('structured');
+
+    // Domain event chained to session_id (ExtractSourceDocument shape)
+    const events = await db.select().from(event).where(eq(event.session_id, sessionId));
+    const ex = events.find((e) => e.action === 'extract');
+    expect(ex).toBeTruthy();
+    expect(ex?.subject_kind).toBe('source_document');
+    expect(ex?.subject_id).toBe(sourceDocId);
+    expect(ex?.actor_kind).toBe('agent');
+    expect(ex?.actor_ref).toBe('tencent_ocr');
+    expect(ex?.outcome).toBe('success');
+    const payload = ex?.payload as { structured_block_ids: string[]; layout_quality: string };
+    expect(payload.structured_block_ids).toEqual([blocks[0].id]);
+    expect(payload.layout_quality).toBe('structured');
+
     await cleanup(sessionId, sourceDocId);
   });
 
-  it('extracting + partial layout → partial + warnings appended', async () => {
+  it('extracting + partial layout → partial + warnings appended + extract event(partial)', async () => {
     const { sessionId, sourceDocId } = await makeSession('extracting', ['existing warn']);
     await db.transaction((tx) =>
       applyExtractionResult(tx, {
@@ -185,10 +223,17 @@ describe('IngestionSession.applyExtractionResult', () => {
     );
     const session = await db
       .select()
-      .from(ingestion_session)
-      .where(eq(ingestion_session.id, sessionId));
+      .from(learning_session)
+      .where(eq(learning_session.id, sessionId));
     expect(session[0].status).toBe('partial');
     expect(session[0].warnings).toEqual(['existing warn', 'partial: 7 blanks 5 subs']);
+
+    const events = await db.select().from(event).where(eq(event.session_id, sessionId));
+    const ex = events.find((e) => e.action === 'extract');
+    expect(ex?.outcome).toBe('partial');
+    expect((ex?.payload as { warnings: string[] }).warnings).toEqual(['partial: 7 blanks 5 subs']);
+    expect((ex?.payload as { layout_quality: string }).layout_quality).toBe('partial');
+
     await cleanup(sessionId, sourceDocId);
   });
 
@@ -233,28 +278,36 @@ describe('IngestionSession.applyExtractionResult', () => {
   });
 });
 
-describe('IngestionSession.markExtractionFailed', () => {
-  it('extracting → failed + error_message stored + job_event emitted', async () => {
+describe('Ingestion.markExtractionFailed', () => {
+  it('extracting → failed + error_message stored + job_event + extract event(failure)', async () => {
     const { sessionId, sourceDocId } = await makeSession('extracting');
     await db.transaction((tx) => markExtractionFailed(tx, sessionId, 'Tencent API down'));
     const session = await db
       .select()
-      .from(ingestion_session)
-      .where(eq(ingestion_session.id, sessionId));
+      .from(learning_session)
+      .where(eq(learning_session.id, sessionId));
     expect(session[0].status).toBe('failed');
     expect(session[0].error_message).toBe('Tencent API down');
 
-    const events = await db.select().from(job_events).where(eq(job_events.business_id, sessionId));
-    const fail = events.find((e) => e.event_type === 'ingestion.extraction_failed');
+    const jevents = await db.select().from(job_events).where(eq(job_events.business_id, sessionId));
+    const fail = jevents.find((e) => e.event_type === 'ingestion.extraction_failed');
     expect(fail).toBeTruthy();
     expect((fail?.payload as { error_message?: string })?.error_message).toBe('Tencent API down');
 
+    const events = await db.select().from(event).where(eq(event.session_id, sessionId));
+    const ex = events.find((e) => e.action === 'extract');
+    expect(ex).toBeTruthy();
+    expect(ex?.outcome).toBe('failure');
+    expect(ex?.actor_ref).toBe('tencent_ocr');
+    expect(ex?.subject_id).toBe(sourceDocId);
+    expect((ex?.payload as { warnings: string[] }).warnings).toEqual(['Tencent API down']);
+    expect((ex?.payload as { structured_block_ids: string[] }).structured_block_ids).toEqual([]);
+
     await cleanup(sessionId, sourceDocId);
-    await db.delete(job_events).where(eq(job_events.business_id, sessionId));
   });
 });
 
-describe('IngestionSession.applyRescue', () => {
+describe('Ingestion.applyRescue', () => {
   it('updates the block structured + figures, bumps version, session stays partial', async () => {
     const { sessionId, sourceDocId } = await makeSession('partial');
     const now = new Date();
@@ -296,9 +349,18 @@ describe('IngestionSession.applyRescue', () => {
 
     const session = await db
       .select()
-      .from(ingestion_session)
-      .where(eq(ingestion_session.id, sessionId));
+      .from(learning_session)
+      .where(eq(learning_session.id, sessionId));
     expect(session[0].status).toBe('partial');
+
+    const events = await db.select().from(event).where(eq(event.session_id, sessionId));
+    const rescueEv = events.find((e) => e.action === 'extract' && e.actor_ref === 'vision_rescue');
+    expect(rescueEv).toBeTruthy();
+    expect(rescueEv?.outcome).toBe('success');
+    expect((rescueEv?.payload as { structured_block_ids: string[] }).structured_block_ids).toEqual([
+      blockId,
+    ]);
+    expect((rescueEv?.payload as { layout_quality: string }).layout_quality).toBe('partial');
 
     await cleanup(sessionId, sourceDocId);
   });
@@ -319,14 +381,14 @@ describe('IngestionSession.applyRescue', () => {
   });
 });
 
-describe('IngestionSession.markReviewed', () => {
+describe('Ingestion.markReviewed', () => {
   it('extracted → reviewed', async () => {
     const { sessionId, sourceDocId } = await makeSession('extracted');
     await markReviewed(db, sessionId);
     const session = await db
       .select()
-      .from(ingestion_session)
-      .where(eq(ingestion_session.id, sessionId));
+      .from(learning_session)
+      .where(eq(learning_session.id, sessionId));
     expect(session[0].status).toBe('reviewed');
     await cleanup(sessionId, sourceDocId);
   });
@@ -336,8 +398,8 @@ describe('IngestionSession.markReviewed', () => {
     await markReviewed(db, sessionId);
     const session = await db
       .select()
-      .from(ingestion_session)
-      .where(eq(ingestion_session.id, sessionId));
+      .from(learning_session)
+      .where(eq(learning_session.id, sessionId));
     expect(session[0].status).toBe('reviewed');
     await cleanup(sessionId, sourceDocId);
   });
@@ -346,5 +408,84 @@ describe('IngestionSession.markReviewed', () => {
     const { sessionId, sourceDocId } = await makeSession('uploaded');
     await expect(markReviewed(db, sessionId)).rejects.toBeInstanceOf(ApiError);
     await cleanup(sessionId, sourceDocId);
+  });
+
+  it('writes no domain event (state-only transition)', async () => {
+    const { sessionId, sourceDocId } = await makeSession('extracted');
+    await markReviewed(db, sessionId);
+    const events = await db.select().from(event).where(eq(event.session_id, sessionId));
+    expect(events).toHaveLength(0);
+    await cleanup(sessionId, sourceDocId);
+  });
+});
+
+describe('Ingestion.commitImport', () => {
+  it('extracted → imported, sets ended_at, bumps version', async () => {
+    const { sessionId, sourceDocId } = await makeSession('extracted');
+    await db.transaction((tx) => commitImport(tx, sessionId));
+    const session = await db
+      .select()
+      .from(learning_session)
+      .where(eq(learning_session.id, sessionId));
+    expect(session[0].status).toBe('imported');
+    expect(session[0].ended_at).toBeTruthy();
+    expect(session[0].version).toBe(1);
+    await cleanup(sessionId, sourceDocId);
+  });
+
+  it('reviewed → imported', async () => {
+    const { sessionId, sourceDocId } = await makeSession('reviewed');
+    await db.transaction((tx) => commitImport(tx, sessionId));
+    const session = await db
+      .select()
+      .from(learning_session)
+      .where(eq(learning_session.id, sessionId));
+    expect(session[0].status).toBe('imported');
+    await cleanup(sessionId, sourceDocId);
+  });
+
+  it('rejects re-import (already imported, 409)', async () => {
+    const { sessionId, sourceDocId } = await makeSession('imported');
+    await expect(db.transaction((tx) => commitImport(tx, sessionId))).rejects.toBeInstanceOf(
+      ApiError,
+    );
+    await cleanup(sessionId, sourceDocId);
+  });
+
+  it('writes no domain event (state-only)', async () => {
+    const { sessionId, sourceDocId } = await makeSession('extracted');
+    await db.transaction((tx) => commitImport(tx, sessionId));
+    const events = await db.select().from(event).where(eq(event.session_id, sessionId));
+    expect(events).toHaveLength(0);
+    await cleanup(sessionId, sourceDocId);
+  });
+});
+
+describe('Ingestion.initiateUpload', () => {
+  it('creates source_document + learning_session(type=ingestion, status=uploaded)', async () => {
+    const { sessionId, sourceDocumentId } = await initiateUpload(db, {
+      assetIds: ['a1', 'a2'],
+      entrypoint: 'vision_single',
+    });
+    const session = await db
+      .select()
+      .from(learning_session)
+      .where(eq(learning_session.id, sessionId));
+    expect(session[0].type).toBe('ingestion');
+    expect(session[0].status).toBe('uploaded');
+    expect(session[0].source_document_id).toBe(sourceDocumentId);
+    expect(session[0].source_asset_ids).toEqual(['a1', 'a2']);
+    expect(session[0].entrypoint).toBe('vision_single');
+    await cleanup(sessionId, sourceDocumentId);
+  });
+
+  it('writes no domain event (state-only)', async () => {
+    const { sessionId, sourceDocumentId } = await initiateUpload(db, {
+      assetIds: ['a1'],
+      entrypoint: 'vision_paper',
+    });
+    const events = await db.select().from(event).where(eq(event.session_id, sessionId));
+    expect(events).toHaveLength(0);
+    await cleanup(sessionId, sourceDocumentId);
   });
 });

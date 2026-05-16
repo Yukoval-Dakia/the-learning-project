@@ -6,7 +6,7 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { ingestion_session, source_asset, source_document } from '@/db/schema';
+import { learning_session, source_asset, source_document } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { POST } from './route';
 
@@ -63,8 +63,8 @@ describe('POST /api/ingestion', () => {
 
     const sessions = await db
       .select()
-      .from(ingestion_session)
-      .where(eq(ingestion_session.id, body.session.id));
+      .from(learning_session)
+      .where(eq(learning_session.id, body.session.id));
     expect(sessions).toHaveLength(1);
     expect(sessions[0].status).toBe('uploaded');
 
@@ -85,7 +85,7 @@ describe('POST /api/ingestion', () => {
     const body = (await res.json()) as { message: string };
     expect(body.message).toMatch(/asset_missing/);
 
-    const sessions = await db.select().from(ingestion_session);
+    const sessions = await db.select().from(learning_session);
     expect(sessions).toHaveLength(0);
   });
 

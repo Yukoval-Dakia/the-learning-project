@@ -4,7 +4,7 @@ import { IngestionEntrypoint } from '@/core/schema/business';
 import { db } from '@/db/client';
 import { source_asset } from '@/db/schema';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { initiateUpload } from '@/server/ingestion/session';
+import { Ingestion } from '@/server/session';
 import { inArray } from 'drizzle-orm';
 
 export const runtime = 'nodejs';
@@ -50,8 +50,8 @@ export async function POST(req: Request): Promise<Response> {
       throw new ApiError('validation_error', `unknown asset_ids: ${missing.join(', ')}`, 400);
     }
 
-    // IngestionSession.initiateUpload —— single owner for ingestion_session writes
-    const { sessionId, sourceDocumentId } = await initiateUpload(db, {
+    // Ingestion.initiateUpload — single owner for learning_session(type='ingestion') writes
+    const { sessionId, sourceDocumentId } = await Ingestion.initiateUpload(db, {
       assetIds: body.asset_ids,
       entrypoint: body.entrypoint,
     });
