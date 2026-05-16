@@ -6,7 +6,7 @@
 // must pass `parseEvent` (verified inside the migrate fn) — this guards against
 // silent drift from Lane B's locked KnownEvent contract.
 
-import { question, mistake, event, review_event, material_fsrs_state, dreaming_proposal } from '@/db/schema';
+import { question, mistake, event, review_event, material_fsrs_state, dreaming_proposal, ingestion_session, learning_session } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../tests/helpers/db';
@@ -420,5 +420,84 @@ describe('migrateDreamingProposals — propose event (3.D)', () => {
     } finally {
       console.warn = originalWarn;
     }
+  });
+});
+
+describe('migrateIngestionSessions — ingestion_session → learning_session (3.E)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('preserves id, sets type=ingestion, status passthrough; ended_at on terminal status', async () => {
+    const db = testDb();
+    const now = new Date('2026-05-01T00:00:00Z');
+    const later = new Date('2026-05-01T01:00:00Z');
+
+    // 'imported' is terminal — ended_at = updated_at
+    await db.insert(ingestion_session).values({
+      id: 'is_imported_001',
+      source_document_id: 'sd_1',
+      source_asset_ids: ['sa_1'],
+      status: 'imported',
+      entrypoint: 'vision_single',
+      warnings: ['w1'],
+      error_message: null,
+      created_at: now,
+      updated_at: later,
+      version: 2,
+    });
+
+    // 'failed' is terminal — ended_at = updated_at
+    await db.insert(ingestion_session).values({
+      id: 'is_failed_001',
+      source_document_id: null,
+      source_asset_ids: [],
+      status: 'failed',
+      entrypoint: 'vision_paper',
+      warnings: [],
+      error_message: 'OCR returned nothing',
+      created_at: now,
+      updated_at: later,
+      version: 0,
+    });
+
+    // 'extracting' is mid-flight — ended_at = null
+    await db.insert(ingestion_session).values({
+      id: 'is_mid_001',
+      source_document_id: 'sd_2',
+      source_asset_ids: [],
+      status: 'extracting',
+      entrypoint: 'vision_single',
+      warnings: [],
+      created_at: now,
+      updated_at: later,
+      version: 1,
+    });
+
+    const { migrateIngestionSessions } = await import('./migrate-phase1c1');
+    await migrateIngestionSessions(db);
+
+    const sessions = await db.select().from(learning_session);
+    expect(sessions).toHaveLength(3);
+
+    const imported = sessions.find((s) => s.id === 'is_imported_001');
+    expect(imported).toBeDefined();
+    expect(imported?.type).toBe('ingestion');
+    expect(imported?.status).toBe('imported');
+    expect(imported?.source_document_id).toBe('sd_1');
+    expect(imported?.entrypoint).toBe('vision_single');
+    expect(imported?.warnings).toEqual(['w1']);
+    expect(imported?.ended_at).toEqual(later);
+    expect(imported?.started_at).toEqual(now);
+    expect(imported?.summary_md).toBeNull();
+    expect(imported?.goal_id).toBeNull();
+    expect(imported?.version).toBe(2);
+
+    const failed = sessions.find((s) => s.id === 'is_failed_001');
+    expect(failed?.ended_at).toEqual(later);
+    expect(failed?.error_message).toBe('OCR returned nothing');
+
+    const mid = sessions.find((s) => s.id === 'is_mid_001');
+    expect(mid?.ended_at).toBeNull();
   });
 });
