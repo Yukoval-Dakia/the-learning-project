@@ -1,7 +1,7 @@
 import { tasks } from '@/ai/registry';
 import { newId } from '@/core/ids';
 import { parseEvent } from '@/core/schema/event';
-import { dreaming_proposal, event, knowledge } from '@/db/schema';
+import { event, knowledge } from '@/db/schema';
 import { MockLanguageModelV3 } from 'ai/test';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -101,7 +101,7 @@ describe('streamReviewTask', () => {
     await resetDb();
   });
 
-  it('returns a streaming Response and writes dreaming_proposal on tool call', async () => {
+  it('returns a streaming Response and writes propose event on tool call', async () => {
     const db = testDb();
     await seedKnowledgeNode('k1');
     // Seed an attempt+judge event pair so review has recent-mistakes context
@@ -150,9 +150,12 @@ describe('streamReviewTask', () => {
       }
     }
 
-    const proposals = await db.select().from(dreaming_proposal);
+    const proposals = await db
+      .select()
+      .from(event)
+      .where(eq(event.subject_kind, 'knowledge'));
     expect(proposals).toHaveLength(1);
-    expect(proposals[0].kind).toBe('knowledge');
+    expect(proposals[0].action).toBe('experimental:knowledge_archive');
   });
 
   it('passes recent-mistakes shape projected from event stream into the LLM prompt', async () => {
@@ -201,7 +204,7 @@ describe('streamReviewTask', () => {
     expect(capturedPrompt).toContain('concept'); // cause.primary_category
   });
 
-  it('write_proposal with tree-mutation payload writes dreaming_proposal (not event)', async () => {
+  it('write_proposal with tree-mutation payload writes propose event (knowledge subject)', async () => {
     const db = testDb();
     await seedKnowledgeNode('k_parent');
 
@@ -243,10 +246,13 @@ describe('streamReviewTask', () => {
       }
     }
 
-    const proposals = await db.select().from(dreaming_proposal);
+    const proposals = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge')));
     expect(proposals).toHaveLength(1);
-    expect(proposals[0].kind).toBe('knowledge');
-    expect((proposals[0].payload as Record<string, unknown>).mutation).toBe('propose_new');
+    expect((proposals[0].payload as Record<string, unknown>).name).toBe('之-主谓间用法');
+    expect((proposals[0].payload as Record<string, unknown>).parent_id).toBe('k_parent');
 
     // No knowledge_edge event should have been written for tree-shape mutations.
     const edgeEvents = await db
@@ -312,8 +318,12 @@ describe('streamReviewTask', () => {
       }
     }
 
-    // No dreaming_proposal row — propose_knowledge_edge goes to event log
-    const proposals = await db.select().from(dreaming_proposal);
+    // No knowledge subject propose event — propose_knowledge_edge goes to a
+    // different subject_kind.
+    const proposals = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge')));
     expect(proposals).toHaveLength(0);
 
     const edgeEvents = await db

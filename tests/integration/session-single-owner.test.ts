@@ -80,35 +80,6 @@ function isAllowed(relPath: string): boolean {
   return ALLOWED_PATH_PREFIXES.some((prefix) => norm.startsWith(prefix));
 }
 
-// Phase 1c.1 Step 5.J — legacy ingestion_session has ZERO write-callers in
-// src/server/ + app/api/. Step 9 drops the table; until then this audit makes
-// sure no code accidentally writes to the dead table. Test files (fixtures)
-// and the Step 3 migration script (read-only) are exempt.
-const LEGACY_ALLOWED_PATH_PREFIXES = ['scripts/migrate-phase1c1.ts'] as const;
-
-async function findLegacyIngestionSessionWriteHits(): Promise<string[]> {
-  const re = /\b(?:insert|update)\s*\(\s*ingestion_session\s*[,)]/;
-  const hits: string[] = [];
-  // 5.J only audits the runtime app, not scripts/ (the migration script is
-  // explicitly a one-shot read; it does not write ingestion_session anyway).
-  for (const root of ['src', 'app'] as const) {
-    const files = await walkFiles(path.join(REPO_ROOT, root));
-    for (const file of files) {
-      if (file.endsWith('.test.ts') || file.endsWith('.test.tsx')) continue;
-      const text = await fs.readFile(file, 'utf8');
-      if (re.test(text)) {
-        hits.push(path.relative(REPO_ROOT, file));
-      }
-    }
-  }
-  return hits.sort();
-}
-
-function isLegacyAllowed(relPath: string): boolean {
-  const norm = relPath.split(path.sep).join('/');
-  return LEGACY_ALLOWED_PATH_PREFIXES.some((prefix) => norm.startsWith(prefix));
-}
-
 describe('session-single-owner invariant', () => {
   it('db.{insert,update}(learning_session) appears ONLY in src/server/session/* and scripts/migrate-phase1c1.ts', async () => {
     const hits = await findLearningSessionWriteHits();
@@ -125,12 +96,8 @@ describe('session-single-owner invariant', () => {
     expect(hits.some((h) => h.startsWith('src/server/session/'))).toBe(true);
   });
 
-  it('legacy ingestion_session has ZERO write-callers in src/server/ + app/api/ (Step 5.J — table drops in Step 9)', async () => {
-    const hits = await findLegacyIngestionSessionWriteHits();
-    const violations = hits.filter((h) => !isLegacyAllowed(h));
-    expect(
-      violations,
-      `Legacy ingestion_session writers found (table is dead — migrate to learning_session via Ingestion.*):\n  ${violations.join('\n  ')}`,
-    ).toEqual([]);
-  });
+  // Phase 1c.1 Step 9: legacy ingestion_session table DROPped — the audit
+  // branch that asserted "zero writers of the dead table" is trivially
+  // satisfied and was removed. The Step 9.L invariant audit covers the wider
+  // "no writes to the 4 dropped tables anywhere in src/ + app/" check.
 });
