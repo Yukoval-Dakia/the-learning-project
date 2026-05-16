@@ -12,20 +12,42 @@
 //     so any drift from Lane B's KnownEvent shape fails loudly here.
 //   - Drizzle ORM for all writes (consistency with rest of codebase).
 
+import type { z } from 'zod';
 import type { Db, Tx } from '@/db/client';
 import { event, mistake } from '@/db/schema';
 import { deterministicId } from '@/core/ids';
 import { parseEvent } from '@/core/schema/event';
+import type { Cause } from '@/core/schema/business';
 
 type DbLike = Db | Tx;
+type LegacyCause = z.infer<typeof Cause>;
 
 /**
- * 3.A — Migrate `mistake` rows into `event(action='attempt')`.
+ * Bridge legacy `mistake.cause` (business.ts Cause) → Lane B `CauseSchema`.
  *
- * Each mistake → 1 attempt event (always). If `mistake.cause` is non-null,
- * also emit a chained judge event (covered in 3.B).
+ * 3 differences vs Lane B:
+ *   1. `ai_analysis_md` → `analysis_md` (rename)
+ *   2. `confidence` legacy nullable → Lane B required (default 0.5 when null)
+ *   3. `user_notes / partial / user_edited` are legacy-only — dropped.
+ *      Forensic data preserved in legacy `mistake` table (Step 9 drops it).
+ */
+function bridgeCause(legacy: LegacyCause) {
+  return {
+    primary_category: legacy.primary_category,
+    secondary_categories: legacy.secondary_categories ?? [],
+    analysis_md: legacy.ai_analysis_md,
+    confidence: legacy.confidence ?? 0.5,
+  };
+}
+
+/**
+ * 3.A + 3.B — Migrate `mistake` rows into `event(action='attempt')` and,
+ * when `mistake.cause` is non-null, a chained `event(action='judge')`.
  *
- * Idempotent: deterministic event ID `evt_mistake_<mistake.id>` +
+ * Each mistake → 1 attempt event (always); + 1 judge event if cause exists.
+ * Judge `caused_by_event_id` chains to the attempt's deterministic ID.
+ *
+ * Idempotent: deterministic event IDs +
  * onConflictDoNothing on PK means re-running is a no-op.
  */
 export async function migrateMistakes(db: DbLike): Promise<void> {
@@ -54,7 +76,6 @@ export async function migrateMistakes(db: DbLike): Promise<void> {
       created_at: m.created_at,
     };
 
-    // Parse-guard before INSERT — drift fails loudly.
     parseEvent({
       actor_kind: attemptEvent.actor_kind,
       actor_ref: attemptEvent.actor_ref,
@@ -66,5 +87,42 @@ export async function migrateMistakes(db: DbLike): Promise<void> {
     });
 
     await db.insert(event).values(attemptEvent).onConflictDoNothing({ target: event.id });
+
+    // 3.B — chained judge event if legacy cause exists. Lane B JudgeOnEvent:
+    // actor=agent / action='judge' / subject='event' / outcome='success'
+    // payload = { cause: CauseSchema, referenced_knowledge_ids }
+    if (m.cause !== null) {
+      const judgeEvent = {
+        id: deterministicId('evt_judge', m.id),
+        session_id: null,
+        actor_kind: 'agent' as const,
+        actor_ref: 'legacy_attribution', // marker — pre-v2 attribution lost task_run linkage
+        action: 'judge' as const,
+        subject_kind: 'event' as const,
+        subject_id: attemptId,
+        outcome: 'success' as const,
+        payload: {
+          cause: bridgeCause(m.cause),
+          referenced_knowledge_ids: m.knowledge_ids ?? [],
+        },
+        caused_by_event_id: attemptId,
+        task_run_id: null,
+        cost_micro_usd: null,
+        // best proxy — original attribution timestamp lost; updated_at marks last write
+        created_at: m.updated_at,
+      };
+
+      parseEvent({
+        actor_kind: judgeEvent.actor_kind,
+        actor_ref: judgeEvent.actor_ref,
+        action: judgeEvent.action,
+        subject_kind: judgeEvent.subject_kind,
+        subject_id: judgeEvent.subject_id,
+        outcome: judgeEvent.outcome,
+        payload: judgeEvent.payload,
+      });
+
+      await db.insert(event).values(judgeEvent).onConflictDoNothing({ target: event.id });
+    }
   }
 }
