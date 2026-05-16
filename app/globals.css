@@ -412,3 +412,52 @@ ol {
   margin: 0;
   padding: 0;
 }
+
+/* ------------------------------------------------------------ */
+/* App shell — desktop TopNav + mobile fixed bottom TabBar      */
+/* Breakpoint 760px per Phase 1c.2 plan Step 0.                  */
+/* ------------------------------------------------------------ */
+
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+}
+
+.app-shell-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+@media (min-width: 760px) {
+  .app-shell-top-nav {
+    display: block;
+  }
+  .app-shell-bottom-tabs {
+    display: none;
+  }
+}
+
+@media (max-width: 759.98px) {
+  .app-shell-top-nav {
+    display: none;
+  }
+  .app-shell-bottom-tabs {
+    display: flex;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 20;
+    background: var(--paper-raised);
+    border-top: 1px solid var(--line);
+    padding: 6px 12px calc(6px + env(safe-area-inset-bottom));
+    justify-content: center;
+  }
+  .app-shell-content {
+    padding-bottom: 72px;
+  }
+}
