@@ -266,9 +266,9 @@ export const study_log = pgTable('study_log', {
   version: integer('version').notNull().default(0),
 });
 
-// 激活 — C 档 AI 主动产出落点（per ADR-0006 v2 / Phase 1c.1）。
+// 激活 — C 档 AI 主动产出落点（per ADR-0006 v2 + Phase 1c.1）。
 // Phase 1c.1 brainstorm（2026-05-14 → ADR-0006 v2）拍板保留：作为 Note / 长答案 /
-// 工具产物等 AI 主动产出的统一落地表。当前仍零写入路径——Phase 1c.1 Step 9 落地
+// 工具产物等 AI 主动产出的统一落地表。当前仍零写入路径——Phase 1c.2 落地
 // AI 产出 handler 时启用（NoteGenerateTask / BlockAssemblyTask 等）。
 export const artifact = pgTable('artifact', {
   id: text('id').primaryKey(),
