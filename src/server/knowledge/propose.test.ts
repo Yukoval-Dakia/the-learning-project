@@ -1,7 +1,19 @@
+import { tasks } from '@/ai/registry';
 import { dreaming_proposal, knowledge } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { parseProposeOutput, runProposeAndWrite } from './propose';
+
+describe('KnowledgeProposeTask system prompt (event-stream language)', () => {
+  it('speaks attempt-event vocabulary, not legacy "做错的题"', () => {
+    const prompt = tasks.KnowledgeProposeTask.systemPrompt;
+    // Event-stream entity language present
+    expect(prompt).toContain('attempt event');
+    expect(prompt).toContain('referenced_knowledge_ids');
+    // Legacy "做错的题" entity phrasing replaced (agent role label "错题" 仍可保留)
+    expect(prompt).not.toContain('做错的题');
+  });
+});
 
 describe('parseProposeOutput', () => {
   it('parses well-formed JSON with proposals array', () => {
