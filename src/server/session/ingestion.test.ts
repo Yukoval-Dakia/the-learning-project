@@ -81,10 +81,7 @@ describe('Ingestion.enqueueExtraction', () => {
     expect(jobId).toBe('mock-job-id');
     expect(boss.send).toHaveBeenCalledWith('tencent_ocr_extract', { sessionId });
 
-    const rows = await db
-      .select()
-      .from(learning_session)
-      .where(eq(learning_session.id, sessionId));
+    const rows = await db.select().from(learning_session).where(eq(learning_session.id, sessionId));
     expect(rows[0].status).toBe('queued');
     expect(rows[0].type).toBe('ingestion');
     await cleanup(sessionId, sourceDocId);
@@ -93,10 +90,7 @@ describe('Ingestion.enqueueExtraction', () => {
   it('failed → queued (retry)', async () => {
     const { sessionId, sourceDocId } = await makeSession('failed');
     await enqueueExtraction({ db, boss: mockBoss(), sessionId });
-    const rows = await db
-      .select()
-      .from(learning_session)
-      .where(eq(learning_session.id, sessionId));
+    const rows = await db.select().from(learning_session).where(eq(learning_session.id, sessionId));
     expect(rows[0].status).toBe('queued');
     await cleanup(sessionId, sourceDocId);
   });
@@ -134,9 +128,10 @@ describe('Ingestion.enqueueExtraction', () => {
       updated_at: now,
       version: 0,
     });
-    await expect(
-      enqueueExtraction({ db, boss: mockBoss(), sessionId: id }),
-    ).rejects.toMatchObject({ code: 'not_found', status: 404 });
+    await expect(enqueueExtraction({ db, boss: mockBoss(), sessionId: id })).rejects.toMatchObject({
+      code: 'not_found',
+      status: 404,
+    });
     await db.delete(learning_session).where(eq(learning_session.id, id));
   });
 });
@@ -145,10 +140,7 @@ describe('Ingestion.markExtractionStarted', () => {
   it('queued → extracting', async () => {
     const { sessionId, sourceDocId } = await makeSession('queued');
     await db.transaction(async (tx) => markExtractionStarted(tx, sessionId));
-    const rows = await db
-      .select()
-      .from(learning_session)
-      .where(eq(learning_session.id, sessionId));
+    const rows = await db.select().from(learning_session).where(eq(learning_session.id, sessionId));
     expect(rows[0].status).toBe('extracting');
     await cleanup(sessionId, sourceDocId);
   });
@@ -239,9 +231,7 @@ describe('Ingestion.applyExtractionResult', () => {
     const events = await db.select().from(event).where(eq(event.session_id, sessionId));
     const ex = events.find((e) => e.action === 'extract');
     expect(ex?.outcome).toBe('partial');
-    expect((ex?.payload as { warnings: string[] }).warnings).toEqual([
-      'partial: 7 blanks 5 subs',
-    ]);
+    expect((ex?.payload as { warnings: string[] }).warnings).toEqual(['partial: 7 blanks 5 subs']);
     expect((ex?.payload as { layout_quality: string }).layout_quality).toBe('partial');
 
     await cleanup(sessionId, sourceDocId);
@@ -299,10 +289,7 @@ describe('Ingestion.markExtractionFailed', () => {
     expect(session[0].status).toBe('failed');
     expect(session[0].error_message).toBe('Tencent API down');
 
-    const jevents = await db
-      .select()
-      .from(job_events)
-      .where(eq(job_events.business_id, sessionId));
+    const jevents = await db.select().from(job_events).where(eq(job_events.business_id, sessionId));
     const fail = jevents.find((e) => e.event_type === 'ingestion.extraction_failed');
     expect(fail).toBeTruthy();
     expect((fail?.payload as { error_message?: string })?.error_message).toBe('Tencent API down');

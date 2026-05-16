@@ -17,10 +17,7 @@ describe('Review.startReviewSession', () => {
   it('inserts learning_session(type=review, status=started) and returns sessionId', async () => {
     const { sessionId } = await startReviewSession(db);
     expect(sessionId).toBeTruthy();
-    const rows = await db
-      .select()
-      .from(learning_session)
-      .where(eq(learning_session.id, sessionId));
+    const rows = await db.select().from(learning_session).where(eq(learning_session.id, sessionId));
     expect(rows).toHaveLength(1);
     expect(rows[0].type).toBe('review');
     expect(rows[0].status).toBe('started');
@@ -31,20 +28,14 @@ describe('Review.startReviewSession', () => {
 
   it('optionally stores goal_id', async () => {
     const { sessionId } = await startReviewSession(db, { goalId: 'g_xyz' });
-    const rows = await db
-      .select()
-      .from(learning_session)
-      .where(eq(learning_session.id, sessionId));
+    const rows = await db.select().from(learning_session).where(eq(learning_session.id, sessionId));
     expect(rows[0].goal_id).toBe('g_xyz');
     await cleanup(sessionId);
   });
 
   it('writes a job_events row but NO domain event (per-question events come later)', async () => {
     const { sessionId } = await startReviewSession(db);
-    const jevents = await db
-      .select()
-      .from(job_events)
-      .where(eq(job_events.business_id, sessionId));
+    const jevents = await db.select().from(job_events).where(eq(job_events.business_id, sessionId));
     expect(jevents.find((e) => e.event_type === 'review.started')).toBeTruthy();
     const events = await db.select().from(event).where(eq(event.session_id, sessionId));
     expect(events).toHaveLength(0);
@@ -56,10 +47,7 @@ describe('Review.completeReviewSession', () => {
   it('started → completed + ended_at set + version bump', async () => {
     const { sessionId } = await startReviewSession(db);
     await completeReviewSession(db, sessionId);
-    const rows = await db
-      .select()
-      .from(learning_session)
-      .where(eq(learning_session.id, sessionId));
+    const rows = await db.select().from(learning_session).where(eq(learning_session.id, sessionId));
     expect(rows[0].status).toBe('completed');
     expect(rows[0].ended_at).toBeTruthy();
     expect(rows[0].version).toBe(1);
@@ -110,10 +98,7 @@ describe('Review.abandonReviewSession', () => {
   it('started → abandoned + ended_at + version bump', async () => {
     const { sessionId } = await startReviewSession(db);
     await abandonReviewSession(db, sessionId);
-    const rows = await db
-      .select()
-      .from(learning_session)
-      .where(eq(learning_session.id, sessionId));
+    const rows = await db.select().from(learning_session).where(eq(learning_session.id, sessionId));
     expect(rows[0].status).toBe('abandoned');
     expect(rows[0].ended_at).toBeTruthy();
     await cleanup(sessionId);

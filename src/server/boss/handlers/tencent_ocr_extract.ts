@@ -7,7 +7,6 @@ import { learning_session, source_asset } from '@/db/schema';
 import { writeCostLedger } from '@/server/ai/log';
 import { type PreAttachFigure, cropAndUploadFigures } from '@/server/ingestion/crop';
 import { assignFigures } from '@/server/ingestion/figure_attach';
-import { Ingestion } from '@/server/session';
 import {
   type DescribeResponse,
   pollUntilDone,
@@ -16,6 +15,7 @@ import {
 import { mapTencentError } from '@/server/ingestion/tencent_mark_errors';
 import { parseMarkAgentResponse } from '@/server/ingestion/tencent_mark_parser';
 import type { R2Client } from '@/server/r2';
+import { Ingestion } from '@/server/session';
 import { and, eq } from 'drizzle-orm';
 
 export type TencentOcrJobData = { sessionId: string };
@@ -197,7 +197,9 @@ async function markFailedAndLogCost(
   const outcome = mapped instanceof RetryableError ? 'failed_retryable' : 'failed_permanent';
 
   try {
-    await deps.db.transaction((tx) => Ingestion.markExtractionFailed(tx, sessionId, mapped.message));
+    await deps.db.transaction((tx) =>
+      Ingestion.markExtractionFailed(tx, sessionId, mapped.message),
+    );
   } catch (innerErr) {
     // markExtractionFailed itself can throw if state guard rejects (e.g. session already failed
     // from earlier retry). Log and continue —— pg-boss already knows.

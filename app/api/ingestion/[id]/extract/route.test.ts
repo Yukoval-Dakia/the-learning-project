@@ -54,10 +54,7 @@ describe('POST /api/ingestion/[id]/extract', () => {
     expect(body.businessId).toBe(sessionId);
     expect(typeof body.jobId).toBe('string');
 
-    const rows = await db
-      .select()
-      .from(learning_session)
-      .where(eq(learning_session.id, sessionId));
+    const rows = await db.select().from(learning_session).where(eq(learning_session.id, sessionId));
     expect(rows[0].status).toBe('queued');
 
     await db.delete(event).where(eq(event.session_id, sessionId));

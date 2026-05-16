@@ -4,8 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { db } from '@/db/client';
 import {
-  ingestion_session as legacy_ingestion_session,
   learning_session,
+  ingestion_session as legacy_ingestion_session,
   source_asset,
   source_document,
 } from '@/db/schema';
@@ -83,10 +83,7 @@ describe('learning_session read-path roundtrip (post-Step-5 callers)', () => {
     const body = (await resp.json()) as { businessId: string; jobId: string };
     expect(body.businessId).toBe(sessionId);
 
-    const rows = await db
-      .select()
-      .from(learning_session)
-      .where(eq(learning_session.id, sessionId));
+    const rows = await db.select().from(learning_session).where(eq(learning_session.id, sessionId));
     expect(rows[0].status).toBe('queued');
   });
 

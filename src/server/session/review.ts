@@ -138,12 +138,7 @@ export async function abandonReviewSession(db: Db, sessionId: string): Promise<v
     if (!current) {
       throw new ApiError('not_found', `learning_session ${sessionId} (type=review) not found`, 404);
     }
-    assertFromState(
-      current.status,
-      ['started'] as const,
-      sessionId,
-      'Review.abandonReviewSession',
-    );
+    assertFromState(current.status, ['started'] as const, sessionId, 'Review.abandonReviewSession');
 
     const now = new Date();
     await tx
