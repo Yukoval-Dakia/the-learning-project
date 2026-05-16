@@ -1,7 +1,7 @@
 'use client';
 
+import { VisionTab } from '@/ui/components/VisionTab';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
-import { Badge } from '@/ui/primitives/Badge';
 import { Button } from '@/ui/primitives/Button';
 import { Card } from '@/ui/primitives/Card';
 import { PageHeader } from '@/ui/primitives/PageHeader';
@@ -74,30 +74,10 @@ export default function RecordPage() {
 
       <div style={{ marginTop: 'var(--s-4)' }}>
         {mode === 'manual' && <ManualForm />}
-        {mode === 'vision_single' && (
-          <VisionPlaceholder title="单题拍照" desc="拖入 1 张图 → OCR → AI 判别题目结构 → 导入。" />
-        )}
-        {mode === 'vision_paper' && (
-          <VisionPlaceholder
-            title="整页拍照"
-            desc="拖入 1–5 张试卷照片 → 跨页块合并（manual merge MVP）→ 批量导入。"
-          />
-        )}
+        {mode === 'vision_single' && <VisionTab mode="vision_single" />}
+        {mode === 'vision_paper' && <VisionTab mode="vision_paper" />}
       </div>
     </main>
-  );
-}
-
-function VisionPlaceholder({ title, desc }: { title: string; desc: string }) {
-  return (
-    <Card pad="lg">
-      <h2 style={visionTitleStyle}>{title}</h2>
-      <p style={visionDescStyle}>{desc}</p>
-      <p style={{ ...visionDescStyle, marginTop: 'var(--s-2)' }}>
-        视觉录入流（SSE + extraction_evidence + 救援按钮）由 Phase 1c.2.B 接入。
-        当前先用「手动录入」tab 录题。
-      </p>
-    </Card>
   );
 }
 
@@ -377,21 +357,3 @@ const errorStyle: React.CSSProperties = {
   fontSize: 'var(--fs-caption)',
   color: 'var(--again-ink)',
 };
-
-const visionTitleStyle: React.CSSProperties = {
-  margin: 0,
-  fontFamily: 'var(--font-serif)',
-  fontSize: 'var(--fs-h4)',
-  fontWeight: 500,
-  color: 'var(--ink)',
-};
-
-const visionDescStyle: React.CSSProperties = {
-  margin: 'var(--s-2) 0 0',
-  fontSize: 'var(--fs-body)',
-  color: 'var(--ink-3)',
-  lineHeight: 'var(--lh-prose)',
-};
-
-// Suppress unused-export warning when Badge isn't referenced yet in vision tabs.
-void Badge;
