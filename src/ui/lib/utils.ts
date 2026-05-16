@@ -18,10 +18,7 @@ export function formatCnDate(input: Date | string | number): string {
   return `${y}-${m}-${day} ${h}:${min}`;
 }
 
-export function formatRelTime(
-  input: Date | string | number,
-  now: Date = new Date(),
-): string {
+export function formatRelTime(input: Date | string | number, now: Date = new Date()): string {
   const d = input instanceof Date ? input : new Date(input);
   if (Number.isNaN(d.getTime())) return '--';
   const past = now.getTime() - d.getTime();

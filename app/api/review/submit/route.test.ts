@@ -4,7 +4,7 @@
 // tables are gone; seed question rows + (optionally) material_fsrs_state.
 
 import { event, material_fsrs_state, question } from '@/db/schema';
-import { eq, and } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST } from './route';
@@ -31,20 +31,14 @@ async function seedQuestion(id: string) {
   });
 }
 
-async function seedFsrsState(
-  question_id: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  state: any,
-  due_at: Date,
-) {
+async function seedFsrsState(question_id: string, state: unknown, due_at: Date) {
   const db = testDb();
   const now = new Date();
   await db.insert(material_fsrs_state).values({
     id: `f_${question_id}`,
     subject_kind: 'question',
     subject_id: question_id,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    state: state as any,
+    state: state as never,
     due_at,
     last_review_event_id: null,
     updated_at: now,

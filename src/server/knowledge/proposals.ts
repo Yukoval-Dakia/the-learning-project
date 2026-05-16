@@ -13,9 +13,9 @@
 // (insert/update knowledge rows) happens transactionally with the rate event
 // write to keep accept atomic.
 
+import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge } from '@/db/schema';
-import { newId } from '@/core/ids';
 import { writeEvent } from '@/server/events/queries';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 
@@ -381,10 +381,7 @@ async function readProposeEvent(db: DbLike, proposalId: string): Promise<Propose
   if (row.subject_kind !== 'knowledge') {
     throw new Error(`proposal ${proposalId} is not a knowledge proposal`);
   }
-  if (
-    row.action !== 'propose' &&
-    !row.action.startsWith('experimental:knowledge_')
-  ) {
+  if (row.action !== 'propose' && !row.action.startsWith('experimental:knowledge_')) {
     throw new Error(
       `proposal ${proposalId} action '${row.action}' is not a knowledge mutation event`,
     );
@@ -585,9 +582,7 @@ export async function dismissProposal(db: Db, proposalId: string): Promise<void>
   const isProposal =
     proposeRow.action === 'propose' || proposeRow.action.startsWith('experimental:knowledge_');
   if (!isProposal) {
-    throw new Error(
-      `event ${proposalId} is not a proposal (action='${proposeRow.action}')`,
-    );
+    throw new Error(`event ${proposalId} is not a proposal (action='${proposeRow.action}')`);
   }
 
   await writeEvent(db, {

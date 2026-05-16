@@ -263,7 +263,10 @@ export const GenerateKnowledgeEdge = z
   })
   // actor=agent requires non-empty reasoning (audit trail); user may omit
   .superRefine((data, ctx) => {
-    if (data.actor_kind === 'agent' && (!data.payload.reasoning || data.payload.reasoning.length === 0)) {
+    if (
+      data.actor_kind === 'agent' &&
+      (!data.payload.reasoning || data.payload.reasoning.length === 0)
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'reasoning is required when actor_kind=agent',

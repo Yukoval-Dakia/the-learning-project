@@ -13,7 +13,7 @@
 
 import { db } from '@/db/client';
 import { material_fsrs_state, question } from '@/db/schema';
-import { getJudgeForAttempt, getFailureAttempts } from '@/server/events/queries';
+import { getFailureAttempts, getJudgeForAttempt } from '@/server/events/queries';
 import { errorResponse } from '@/server/http/errors';
 import { and, desc, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 
@@ -48,10 +48,7 @@ export async function GET(req: Request): Promise<Response> {
       .from(material_fsrs_state)
       .innerJoin(question, eq(question.id, material_fsrs_state.subject_id))
       .where(
-        and(
-          eq(material_fsrs_state.subject_kind, 'question'),
-          lte(material_fsrs_state.due_at, now),
-        ),
+        and(eq(material_fsrs_state.subject_kind, 'question'), lte(material_fsrs_state.due_at, now)),
       )
       .orderBy(material_fsrs_state.due_at, question.created_at)
       .limit(limit);
@@ -67,7 +64,7 @@ export async function GET(req: Request): Promise<Response> {
         newQuestionIds.push(a.question_id);
       }
     }
-    let newRows: Array<{
+    const newRows: Array<{
       question_id: string;
       prompt_md: string;
       reference_md: string | null;

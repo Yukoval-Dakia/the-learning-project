@@ -62,10 +62,7 @@ async function findWriteHits(
   for (const root of opts.roots ?? SCAN_ROOTS) {
     const files = await walkFiles(path.join(REPO_ROOT, root));
     for (const file of files) {
-      if (
-        !opts.includeTests &&
-        (file.endsWith('.test.ts') || file.endsWith('.test.tsx'))
-      ) {
+      if (!opts.includeTests && (file.endsWith('.test.ts') || file.endsWith('.test.tsx'))) {
         continue;
       }
       const text = await fs.readFile(file, 'utf8');
@@ -122,10 +119,7 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
   });
 
   it('db.{insert,update}(material_fsrs_state) appears only in src/server/fsrs/state.ts (extended by scripts/migrate-phase1c1.ts historical)', async () => {
-    const ALLOWED_FSRS_WRITERS = [
-      'src/server/fsrs/',
-      'scripts/migrate-phase1c1.ts',
-    ] as const;
+    const ALLOWED_FSRS_WRITERS = ['src/server/fsrs/', 'scripts/migrate-phase1c1.ts'] as const;
     const hits = await findWriteHits('material_fsrs_state');
     const violations = hits.filter((h) => !isAllowed(h, ALLOWED_FSRS_WRITERS));
     expect(

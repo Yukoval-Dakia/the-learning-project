@@ -8,7 +8,7 @@
  */
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq } from "drizzle-orm";
+import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
