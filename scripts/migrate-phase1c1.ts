@@ -12,12 +12,21 @@
 //     so any drift from Lane B's KnownEvent shape fails loudly here.
 //   - Drizzle ORM for all writes (consistency with rest of codebase).
 
-import type { z } from 'zod';
-import type { Db, Tx } from '@/db/client';
-import { event, mistake } from '@/db/schema';
 import { deterministicId } from '@/core/ids';
-import { parseEvent } from '@/core/schema/event';
 import type { Cause } from '@/core/schema/business';
+import { parseEvent } from '@/core/schema/event';
+import type { Db, Tx } from '@/db/client';
+import {
+  dreaming_proposal,
+  event,
+  ingestion_session,
+  learning_session,
+  material_fsrs_state,
+  mistake,
+  review_event,
+} from '@/db/schema';
+import { eq, sql } from 'drizzle-orm';
+import type { z } from 'zod';
 
 type DbLike = Db | Tx;
 type LegacyCause = z.infer<typeof Cause>;
@@ -127,9 +136,6 @@ export async function migrateMistakes(db: DbLike): Promise<void> {
   }
 }
 
-import { material_fsrs_state, review_event } from '@/db/schema';
-import { eq } from 'drizzle-orm';
-
 /**
  * 3.C — Migrate `review_event` rows into `event(action='review')` and project
  * the latest per-question state into `material_fsrs_state`.
@@ -204,7 +210,10 @@ export async function migrateReviewEvents(db: DbLike): Promise<void> {
 
   // (3): group by question_id, project the latest review into material_fsrs_state.
   // Build the projection in JS (clearer than SQL window functions for fixture sizes):
-  const latestByQuestion = new Map<string, { review: typeof review_event.$inferSelect; question_id: string }>();
+  const latestByQuestion = new Map<
+    string,
+    { review: typeof review_event.$inferSelect; question_id: string }
+  >();
   for (const row of reviews) {
     const prev = latestByQuestion.get(row.question_id);
     if (!prev || row.review.created_at > prev.review.created_at) {
@@ -264,8 +273,6 @@ export async function migrateReviewEvents(db: DbLike): Promise<void> {
   }
 }
 
-import { dreaming_proposal } from '@/db/schema';
-
 /**
  * 3.D — Migrate `dreaming_proposal` rows into `event(action='propose',
  * subject_kind='knowledge')` per Lane B `ProposeKnowledge` shape.
@@ -290,11 +297,13 @@ export async function migrateDreamingProposals(db: DbLike): Promise<void> {
   for (const p of rows) {
     const payload = (p.payload ?? {}) as Record<string, unknown>;
     const proposed = (payload.proposed_knowledge ?? {}) as Record<string, unknown>;
-    const name = (proposed.name as string | undefined) ?? (payload.name as string | undefined) ?? null;
+    const name =
+      (proposed.name as string | undefined) ?? (payload.name as string | undefined) ?? null;
     const parentId =
-      (proposed.parent_id as string | undefined) ?? (payload.parent_id as string | undefined) ?? null;
-    const subjectId =
-      (proposed.id as string | undefined) ?? deterministicId('k_legacy', p.id);
+      (proposed.parent_id as string | undefined) ??
+      (payload.parent_id as string | undefined) ??
+      null;
+    const subjectId = (proposed.id as string | undefined) ?? deterministicId('k_legacy', p.id);
 
     if (name === null || parentId === null) {
       // Strict KnownEvent contract — don't construct invalid event. Stable
@@ -305,14 +314,13 @@ export async function migrateDreamingProposals(db: DbLike): Promise<void> {
       continue;
     }
 
-    const outcome =
-      p.status === 'accepted' ? ('success' as const) : ('partial' as const);
+    const outcome = p.status === 'accepted' ? ('success' as const) : ('partial' as const);
     // Forensic prefix for rejected → otherwise the rejection signal disappears
     // (Lane B doesn't allow outcome='failure' on propose).
     const reasoning =
       p.status === 'rejected'
         ? `[legacy rejected] ${p.reasoning ?? '(legacy: reasoning missing)'}`
-        : p.reasoning ?? '(legacy: reasoning missing)';
+        : (p.reasoning ?? '(legacy: reasoning missing)');
 
     const proposeEvent = {
       id: deterministicId('evt_propose', p.id),
@@ -347,9 +355,6 @@ export async function migrateDreamingProposals(db: DbLike): Promise<void> {
     await db.insert(event).values(proposeEvent).onConflictDoNothing({ target: event.id });
   }
 }
-
-import { ingestion_session, learning_session } from '@/db/schema';
-import { sql } from 'drizzle-orm';
 
 /**
  * 3.F — Precheck: assert the legacy `judgment` table is empty (or absent).
