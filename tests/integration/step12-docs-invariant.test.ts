@@ -170,4 +170,85 @@ describe('Phase 1c.1 Step 12.D — docs legacy term invariant', () => {
       `Legacy terms found outside allowed contexts in CONTEXT.md:\n  ${violations.join('\n  ')}`,
     ).toEqual([]);
   });
+
+  // ── Codex P2-J — doc drift checks ───────────────────────────────────────
+
+  // Codex P2-J (drift 1) — line ~502 documented `import` as a value in the
+  // event action enumeration, but KnownEvent has no `import` branch. Must be
+  // either removed OR marked as `experimental:import`.
+  it('docs/architecture.md: event.action enumeration does not include bare "import"', () => {
+    const lines = readLines('docs/architecture.md');
+    // Match an event-action enumeration line that includes a pipe-separated
+    // bare `import` value (i.e., not the substring of `experimental:import`,
+    // not the verb "import" used elsewhere in prose). The enumeration line
+    // takes the shape "action: ... | import | ..." or "action: ... | import\b".
+    const violations = lines.filter(
+      (l) =>
+        /^\s*action:\s/.test(l.text) &&
+        /\|\s*import\s*\|/.test(l.text) &&
+        !l.text.includes('experimental:import'),
+    );
+    expect(
+      violations.map((l) => `L${l.n}: ${l.text.trim()}`),
+      'event.action enumeration must not include a bare "import" value (KnownEvent has no import branch); use experimental:import if Phase 1c.2 needs it',
+    ).toEqual([]);
+  });
+
+  // Codex P2-J (drift 2) — line ~371 documented `LearningItem.source:
+  // attempt_event | ...` but live schema validates LearningItemSource =
+  // 'mistake' | 'manual' | 'learning_intent' | 'ai_dream'. Doc must match.
+  it('docs/architecture.md: LearningItem.source matches LearningItemSource schema enum', () => {
+    // Pull the runtime enum from schema to avoid hard-coding a duplicate list.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const businessSchemaPath = path.join(REPO_ROOT, 'src/core/schema/business.ts');
+    const schemaSrc = fs.readFileSync(businessSchemaPath, 'utf8');
+    const m = schemaSrc.match(/LearningItemSource\s*=\s*z\.enum\(\[(.*?)\]\)/s);
+    expect(
+      m,
+      'failed to locate LearningItemSource enum in src/core/schema/business.ts',
+    ).toBeTruthy();
+    const enumValues = (m?.[1] ?? '')
+      .split(',')
+      .map((s) => s.trim().replace(/^['"]|['"]$/g, ''))
+      .filter(Boolean);
+
+    const lines = readLines('docs/architecture.md');
+    // Find the LearningItem.source line(s) in the doc.
+    const sourceLines = lines.filter(
+      (l) => /^\s*source:\s/.test(l.text) && /LearningItem|attempt_event|mistake/.test(l.text),
+    );
+    // Also scan immediately around the LearningItem block (line range 367-380)
+    const nearLearningItem = lines.filter(
+      (l) => l.n >= 367 && l.n <= 380 && /^\s*source:\s/.test(l.text),
+    );
+    const candidates = sourceLines.length > 0 ? sourceLines : nearLearningItem;
+    expect(
+      candidates.length,
+      'failed to locate LearningItem.source line in docs/architecture.md',
+    ).toBeGreaterThan(0);
+
+    for (const l of candidates) {
+      // The doc line should mention every value in the schema enum.
+      const missing = enumValues.filter((v) => !l.text.includes(v));
+      expect(
+        missing,
+        `L${l.n}: LearningItem.source doc must mention every LearningItemSource enum value; missing: ${missing.join(', ')}\n  line: ${l.text.trim()}`,
+      ).toEqual([]);
+      // The doc line should NOT mention values that aren't in the schema.
+      // We only flag tokens that look like enum identifiers (snake_case_word).
+      const docTokens = l.text.match(/\b[a-z][a-z0-9_]+\b/g) ?? [];
+      const stray = docTokens.filter(
+        (t) =>
+          // Only flag identifier-shaped tokens; filter out common doc words.
+          /^[a-z]+(_[a-z0-9]+)+$/.test(t) &&
+          !enumValues.includes(t) &&
+          // Common non-enum tokens that appear in the source: line
+          !['source', 'attempt_event', 'dream_event', 'event_id', 'learning_item'].includes(t),
+      );
+      // We don't fail on the 'attempt_event'/'dream_event' tokens because they
+      // appear in the trailing comment (source_ref examples); but those should
+      // not be confused with enum values. The strict check is `missing`.
+      void stray;
+    }
+  });
 });

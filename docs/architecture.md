@@ -367,7 +367,7 @@ Question
 // 待学习列表（含层级）—— 学习意图层，与 event 解耦
 LearningItem
   id
-  source: attempt_event | manual | learning_intent | ai_dream
+  source: mistake | manual | learning_intent | ai_dream
   source_ref                      // attempt event_id / dream event_id / null
   title, content
   → knowledge_ids[]
@@ -499,7 +499,7 @@ Event
   session_id → learning_session   // cron / system 事件可空
   actor_kind: user | agent | cron | system
   actor_ref                       // 'self' (user) / task_kind (agent) / cron_name
-  action: attempt | judge | propose | generate | review | rate | extract | import | ...
+  action: attempt | judge | propose | generate | review | rate | extract | ...
   subject_kind: question | knowledge | knowledge_edge | artifact | source_document | event
   subject_id
   outcome: success | failure | partial | null
