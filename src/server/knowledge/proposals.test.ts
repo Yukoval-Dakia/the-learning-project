@@ -1,5 +1,10 @@
-import { dreaming_proposal, knowledge } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+// Phase 1c.1 Step 9.D — proposals.test rewritten for event-based handlers.
+//
+// Pre-Step-9 tests INSERTed dreaming_proposal rows; post-Step-9 the legacy
+// table is gone. Seed propose events directly + assert event-driven flow.
+
+import { event, knowledge } from '@/db/schema';
+import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
@@ -10,10 +15,9 @@ import {
   applyReparent,
   applySplit,
   dismissProposal,
-  writeDreamingProposal,
+  writeKnowledgeProposeEvent,
 } from './proposals';
 
-// Helper to insert a knowledge node for tests
 async function insertKnowledge(opts: {
   id: string;
   name?: string;
@@ -40,32 +44,70 @@ async function insertKnowledge(opts: {
   });
 }
 
-async function insertProposal(opts: {
+async function insertProposeEvent(opts: {
   id: string;
-  payload: object;
-  status?: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  payload: any;
+  reasoning?: string;
+  action?: string;
+  subject_id?: string;
+  // rate event chained to this propose to simulate already-decided
+  rate?: 'accept' | 'dismiss' | 'rollback';
 }) {
   const db = testDb();
   const now = new Date();
-  await db.insert(dreaming_proposal).values({
+  const action = opts.action ?? (opts.payload.mutation === 'propose_new'
+    ? 'propose'
+    : `experimental:knowledge_${opts.payload.mutation}`);
+  const isProposeNew = opts.payload.mutation === 'propose_new';
+  // Strip mutation key for event payload (it's encoded in action)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { mutation, ...rest } = opts.payload;
+  const eventPayload = isProposeNew
+    ? { ...rest, reasoning: opts.reasoning ?? 'r' }
+    : { ...rest, reasoning: opts.reasoning ?? 'r' };
+  await db.insert(event).values({
     id: opts.id,
-    kind: 'knowledge',
-    payload: opts.payload as Record<string, unknown>,
-    reasoning: 'test',
-    status: opts.status ?? 'pending',
-    proposed_at: now,
-    decided_at: opts.status && opts.status !== 'pending' ? now : null,
+    session_id: null,
+    actor_kind: 'agent',
+    actor_ref: 'dreaming',
+    action,
+    subject_kind: 'knowledge',
+    subject_id: opts.subject_id ?? 'subject_' + opts.id,
+    outcome: 'partial',
+    payload: eventPayload,
+    caused_by_event_id: null,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: now,
   });
+  if (opts.rate) {
+    await db.insert(event).values({
+      id: `rate_${opts.id}`,
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'event',
+      subject_id: opts.id,
+      outcome: 'success',
+      payload: { rating: opts.rate },
+      caused_by_event_id: opts.id,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: now,
+    });
+  }
 }
 
-describe('writeDreamingProposal', () => {
+describe('writeKnowledgeProposeEvent', () => {
   beforeEach(async () => {
     await resetDb();
   });
 
-  it('inserts a dreaming_proposal row with kind=knowledge', async () => {
+  it('writes a propose event with subject_kind=knowledge for propose_new', async () => {
     const db = testDb();
-    const id = await writeDreamingProposal(db, {
+    const id = await writeKnowledgeProposeEvent(db, {
       payload: {
         mutation: 'propose_new',
         name: '通假字',
@@ -74,9 +116,34 @@ describe('writeDreamingProposal', () => {
       reasoning: '看 mistake 涉及通假字',
     });
     expect(id).toMatch(/^[a-z0-9]+$/);
-    const rows = await db.select().from(dreaming_proposal).where(eq(dreaming_proposal.id, id));
-    expect(rows[0]?.kind).toBe('knowledge');
-    expect(rows[0]?.status).toBe('pending');
+    const rows = await db.select().from(event).where(eq(event.id, id));
+    expect(rows[0]?.action).toBe('propose');
+    expect(rows[0]?.subject_kind).toBe('knowledge');
+    expect(rows[0]?.outcome).toBe('partial');
+    expect((rows[0]?.payload as Record<string, unknown>).name).toBe('通假字');
+  });
+
+  it('writes experimental:knowledge_<mutation> event for non-propose_new mutations', async () => {
+    const db = testDb();
+    const id = await writeKnowledgeProposeEvent(db, {
+      payload: { mutation: 'archive', node_id: 'k_node', expected_version: 5 },
+      reasoning: '过时',
+    });
+    const rows = await db.select().from(event).where(eq(event.id, id));
+    expect(rows[0]?.action).toBe('experimental:knowledge_archive');
+    expect(rows[0]?.subject_kind).toBe('knowledge');
+    expect(rows[0]?.subject_id).toBe('k_node');
+    expect((rows[0]?.payload as Record<string, unknown>).node_id).toBe('k_node');
+  });
+
+  it('rejects propose_new with parent_id=null', async () => {
+    const db = testDb();
+    await expect(
+      writeKnowledgeProposeEvent(db, {
+        payload: { mutation: 'propose_new', name: 'x', parent_id: null },
+        reasoning: 'r',
+      }),
+    ).rejects.toThrow(/parent_id=null/i);
   });
 });
 
@@ -88,13 +155,13 @@ describe('applyProposeNew', () => {
   it('inserts a new knowledge row with proposed_by_ai=true', async () => {
     const db = testDb();
     await insertKnowledge({ id: 'seed:wenyan:shici', domain: 'wenyan' });
-    const newId = await applyProposeNew(db, {
+    const newId_ = await applyProposeNew(db, {
       mutation: 'propose_new',
       name: '通假字',
       parent_id: 'seed:wenyan:shici',
     });
-    expect(newId).toMatch(/^[a-z0-9]+$/);
-    const rows = await db.select().from(knowledge).where(eq(knowledge.id, newId));
+    expect(newId_).toMatch(/^[a-z0-9]+$/);
+    const rows = await db.select().from(knowledge).where(eq(knowledge.id, newId_));
     expect(rows[0]?.name).toBe('通假字');
     expect(rows[0]?.domain).toBeNull();
     expect(rows[0]?.parent_id).toBe('seed:wenyan:shici');
@@ -121,10 +188,10 @@ describe('acceptProposal (propose_new only)', () => {
     await resetDb();
   });
 
-  it('accepts pending propose_new proposal: inserts knowledge + sets status', async () => {
+  it('accepts pending propose_new event: inserts knowledge + writes rate=accept event', async () => {
     const db = testDb();
     await insertKnowledge({ id: 'seed:wenyan:shici', domain: 'wenyan' });
-    await insertProposal({
+    await insertProposeEvent({
       id: 'p1',
       payload: {
         mutation: 'propose_new',
@@ -141,52 +208,35 @@ describe('acceptProposal (propose_new only)', () => {
       .from(knowledge)
       .where(eq(knowledge.id, result.new_node_id));
     expect(knowledgeRows).toHaveLength(1);
-    const proposalRows = await db
-      .select({ status: dreaming_proposal.status })
-      .from(dreaming_proposal)
-      .where(eq(dreaming_proposal.id, 'p1'));
-    expect(proposalRows[0]?.status).toBe('accepted');
+    // rate=accept event chained
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'p1')));
+    expect(rateRows).toHaveLength(1);
+    expect((rateRows[0].payload as Record<string, unknown>).rating).toBe('accept');
   });
 
-  it('rejects accept on non-pending proposal', async () => {
+  it('rejects accept on already-decided proposal', async () => {
     const db = testDb();
-    await insertProposal({
+    await insertKnowledge({ id: 'parent_x' });
+    await insertProposeEvent({
       id: 'p2',
-      payload: { mutation: 'propose_new', name: 'x', parent_id: null },
-      status: 'accepted',
+      payload: { mutation: 'propose_new', name: 'x', parent_id: 'parent_x' },
+      rate: 'accept',
     });
     await expect(acceptProposal(db, 'p2')).rejects.toThrow(/not.*pending/i);
   });
 
   it('rejects accept when parent_id does not exist', async () => {
     const db = testDb();
-    await insertProposal({
+    await insertProposeEvent({
       id: 'p5',
-      payload: {
-        mutation: 'propose_new',
-        name: 'x',
-        parent_id: 'ghost-parent',
-      },
+      payload: { mutation: 'propose_new', name: 'x', parent_id: 'ghost-parent' },
     });
     await expect(acceptProposal(db, 'p5')).rejects.toThrow(
       /parent knowledge node not found.*ghost-parent/i,
     );
-  });
-
-  it('throws when concurrent accept already flipped status', async () => {
-    const db = testDb();
-    await insertKnowledge({ id: 'seed:wenyan:shici', domain: 'wenyan' });
-    // Insert proposal then immediately set it to accepted (simulates race)
-    await insertProposal({
-      id: 'p6',
-      payload: {
-        mutation: 'propose_new',
-        name: '通假字',
-        parent_id: 'seed:wenyan:shici',
-      },
-      status: 'accepted',
-    });
-    await expect(acceptProposal(db, 'p6')).rejects.toThrow(/not.*pending|concurrently decided/i);
   });
 });
 
@@ -195,18 +245,36 @@ describe('dismissProposal', () => {
     await resetDb();
   });
 
-  it('updates status to dismissed', async () => {
+  it('writes rate=dismiss event chained to propose', async () => {
     const db = testDb();
-    await insertProposal({
+    await insertKnowledge({ id: 'parent_x' });
+    await insertProposeEvent({
       id: 'p4',
-      payload: { mutation: 'propose_new', name: 'x', parent_id: null },
+      payload: { mutation: 'propose_new', name: 'x', parent_id: 'parent_x' },
     });
     await dismissProposal(db, 'p4');
     const rows = await db
-      .select({ status: dreaming_proposal.status })
-      .from(dreaming_proposal)
-      .where(eq(dreaming_proposal.id, 'p4'));
-    expect(rows[0]?.status).toBe('dismissed');
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'p4')));
+    expect(rows).toHaveLength(1);
+    expect((rows[0].payload as Record<string, unknown>).rating).toBe('dismiss');
+  });
+
+  it('idempotent on already-rated proposal', async () => {
+    const db = testDb();
+    await insertProposeEvent({
+      id: 'p_dismissed',
+      payload: { mutation: 'propose_new', name: 'x', parent_id: 'parent_x' },
+      rate: 'dismiss',
+    });
+    await dismissProposal(db, 'p_dismissed');
+    const rows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'p_dismissed')));
+    // No second rate event added — idempotent
+    expect(rows).toHaveLength(1);
   });
 });
 
@@ -268,7 +336,7 @@ describe('applyReparent', () => {
         mutation: 'reparent',
         node_id: 'k_node',
         new_parent_id: 'k_newparent',
-        expected_version: 3, // wrong version
+        expected_version: 3,
       }),
     ).rejects.toThrow(/stale.*version/i);
   });
@@ -359,7 +427,7 @@ describe('applySplit', () => {
         mutation: 'split',
         from_id: 'k_from',
         into: [{ name: 'A', parent_id: 'k_p1' }],
-        expected_version: 3, // wrong version → stale
+        expected_version: 3,
       }),
     ).rejects.toThrow(/stale/i);
   });
@@ -427,7 +495,7 @@ describe('applyMerge', () => {
         mutation: 'merge',
         from_ids: ['k_from1'],
         into_id: 'k_into',
-        expected_versions: { k_from1: 99 }, // wrong version → stale
+        expected_versions: { k_from1: 99 },
       }),
     ).rejects.toThrow(/stale/i);
   });
@@ -456,7 +524,7 @@ describe('acceptProposal — high-tier mutations', () => {
     await insertKnowledge({ id: 'k_oldparent', domain: 'wenyan' });
     await insertKnowledge({ id: 'k_newparent', domain: 'wenyan' });
     await insertKnowledge({ id: 'k_node', domain: null, parent_id: 'k_oldparent', version: 3 });
-    await insertProposal({
+    await insertProposeEvent({
       id: 'p_reparent',
       payload: {
         mutation: 'reparent',
@@ -467,17 +535,17 @@ describe('acceptProposal — high-tier mutations', () => {
     });
     const result = await acceptProposal(db, 'p_reparent');
     expect(result.kind).toBe('reparent_applied');
-    const proposalRows = await db
-      .select({ status: dreaming_proposal.status })
-      .from(dreaming_proposal)
-      .where(eq(dreaming_proposal.id, 'p_reparent'));
-    expect(proposalRows[0]?.status).toBe('accepted');
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'p_reparent')));
+    expect((rateRows[0].payload as Record<string, unknown>).rating).toBe('accept');
   });
 
   it('dispatches archive and returns archive_applied result', async () => {
     const db = testDb();
     await insertKnowledge({ id: 'k_node', version: 5 });
-    await insertProposal({
+    await insertProposeEvent({
       id: 'p_arch',
       payload: {
         mutation: 'archive',
@@ -492,28 +560,113 @@ describe('acceptProposal — high-tier mutations', () => {
   it('marks proposal stale on stale error and re-throws', async () => {
     const db = testDb();
     await insertKnowledge({ id: 'k_node', version: 5 });
-    await insertProposal({
+    await insertProposeEvent({
       id: 'p_stale',
       payload: {
         mutation: 'archive',
         node_id: 'k_node',
-        expected_version: 3, // wrong version → stale
+        expected_version: 3,
       },
     });
     await expect(acceptProposal(db, 'p_stale')).rejects.toThrow(/stale/i);
-    const proposalRows = await db
-      .select({ status: dreaming_proposal.status })
-      .from(dreaming_proposal)
-      .where(eq(dreaming_proposal.id, 'p_stale'));
-    expect(proposalRows[0]?.status).toBe('stale');
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'p_stale')));
+    expect(rateRows).toHaveLength(1);
+    expect((rateRows[0].payload as Record<string, unknown>).rating).toBe('rollback');
   });
 
   it('throws unknown_mutation when payload has unrecognized mutation kind', async () => {
     const db = testDb();
-    await insertProposal({
+    // Manually insert experimental:knowledge_frobnicate event with bogus mutation
+    await insertProposeEvent({
       id: 'p_bad',
       payload: { mutation: 'frobnicate', node_id: 'k_x' },
     });
     await expect(acceptProposal(db, 'p_bad')).rejects.toThrow(/unknown_mutation/i);
   });
+
+  // Codex P2-I — dismiss must reject non-proposal events.
+  it('dismissProposal throws when the event id is not a proposal (e.g., attempt event)', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(event).values({
+      id: 'attempt_e1',
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: 'q1',
+      outcome: 'failure',
+      payload: {
+        answer_md: 'wrong',
+        answer_image_refs: [],
+        referenced_knowledge_ids: [],
+      },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: now,
+    });
+    await expect(dismissProposal(db, 'attempt_e1')).rejects.toThrow(/not a proposal/i);
+    // No rate event was written.
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'attempt_e1')));
+    expect(rateRows).toHaveLength(0);
+  });
+
+  // Codex P1-F — concurrent double-accept must not produce duplicate
+  // knowledge nodes / duplicate rate=accept events. assertNotAlreadyRated +
+  // mutation apply must share a transaction with SELECT … FOR UPDATE on the
+  // propose event row, otherwise both callers pass the pre-check and apply.
+  it('concurrent double-accept: exactly one apply succeeds', async () => {
+    const db = testDb();
+    await insertKnowledge({ id: 'seed:wenyan:shici', domain: 'wenyan' });
+    await insertProposeEvent({
+      id: 'p_concurrent',
+      payload: {
+        mutation: 'propose_new',
+        name: '通假字',
+        parent_id: 'seed:wenyan:shici',
+      },
+    });
+
+    const results = await Promise.allSettled([
+      acceptProposal(db, 'p_concurrent'),
+      acceptProposal(db, 'p_concurrent'),
+    ]);
+
+    const fulfilled = results.filter((r) => r.status === 'fulfilled');
+    const rejected = results.filter((r) => r.status === 'rejected');
+    // Exactly one succeeds; the other sees the rate event already written and
+    // throws not-pending.
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+
+    // Exactly one new knowledge node from this proposal (not two).
+    // proposed_by_ai=true filters out the seed knowledge nodes.
+    const proposedRows = await db
+      .select()
+      .from(knowledge)
+      .where(eq(knowledge.proposed_by_ai, true));
+    expect(proposedRows).toHaveLength(1);
+
+    // Exactly one rate=accept event (not two).
+    const acceptRows = await db
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'rate'),
+          eq(event.caused_by_event_id, 'p_concurrent'),
+        ),
+      );
+    expect(acceptRows.filter((r) => (r.payload as { rating?: string }).rating === 'accept'))
+      .toHaveLength(1);
+  });
 });
+

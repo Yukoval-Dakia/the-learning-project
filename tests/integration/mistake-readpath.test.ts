@@ -1,9 +1,10 @@
-// Phase 1c.1 Step 4 — integration back-compat test for the mistake read-path.
+// Phase 1c.1 Step 4 → Step 9 — integration back-compat test for the mistake
+// read-path.
 //
 // Seeds attempt + judge + review events (Lane B shapes) and verifies that the
 // projections produced by the new server library match a hand-written
-// mistake-shape baseline. This guards against drift between the legacy
-// `mistake` table view and the event-stream projection.
+// mistake-shape baseline. Step 9 removed the legacy `mistake` table; this
+// test now exclusively exercises the event-stream projection path.
 
 import { event, knowledge, material_fsrs_state, question } from '@/db/schema';
 import { getFailureAttempts, getRecentReviewEvents } from '@/server/events/queries';
@@ -264,8 +265,6 @@ describe('integration: mistake read-path back-compat (event stream → mistake-s
         ...q,
         knowledge_ids: JSON.stringify(q.knowledge_ids),
       })) as unknown as Record<string, unknown>[],
-      mistake: [], // empty → triggers event projection path
-      review_event: [],
       event: events as unknown as Record<string, unknown>[],
       material_fsrs_state: fsrs as unknown as Record<string, unknown>[],
     });
@@ -292,8 +291,6 @@ describe('integration: mistake read-path back-compat (event stream → mistake-s
         ...q,
         knowledge_ids: JSON.stringify(q.knowledge_ids),
       })) as unknown as Record<string, unknown>[],
-      mistake: [],
-      review_event: [], // empty → triggers event projection path
       event: events as unknown as Record<string, unknown>[],
     });
 

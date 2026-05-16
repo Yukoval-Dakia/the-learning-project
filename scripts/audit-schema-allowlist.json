@@ -6,27 +6,6 @@
     "resolves_when": "Sub 1 MaintenanceProposeTask delete_knowledge path implemented"
   },
 
-  "mistake.variants": {
-    "reason": "Sub 0d Step 14 VariantGenTask deferred; 1c.1 DROP mistake → variants migrate to event(generate, artifact)",
-    "resolves_when": "Phase 1c.1 DROP mistake executed"
-  },
-  "mistake.archived_at": {
-    "reason": "Soft-delete unreached; 1c.1 DROP mistake",
-    "resolves_when": "Phase 1c.1 DROP mistake executed"
-  },
-  "mistake.archived_reason": {
-    "reason": "Soft-delete unreached; 1c.1 DROP mistake",
-    "resolves_when": "Phase 1c.1 DROP mistake executed"
-  },
-  "mistake.delete_reason": {
-    "reason": "Soft-delete unreached; 1c.1 DROP mistake",
-    "resolves_when": "Phase 1c.1 DROP mistake executed"
-  },
-  "mistake.source_ref": {
-    "reason": "Provenance ref unused; 1c.1 DROP mistake — provenance via event.payload.source 替代",
-    "resolves_when": "Phase 1c.1 DROP mistake executed"
-  },
-
   "completion_evidence.user_overrode_low_evidence": {
     "reason": "Phase 1b user-override flow not implemented; decision pending",
     "resolves_when": "Phase 1b override-completion UI path landed OR field dropped"

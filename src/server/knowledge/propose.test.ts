@@ -1,5 +1,8 @@
+// Phase 1c.1 Step 9.I — propose.test updated for event-based proposals.
+
 import { tasks } from '@/ai/registry';
-import { dreaming_proposal, knowledge } from '@/db/schema';
+import { event, knowledge } from '@/db/schema';
+import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { parseProposeOutput, runProposeAndWrite } from './propose';
@@ -7,10 +10,8 @@ import { parseProposeOutput, runProposeAndWrite } from './propose';
 describe('KnowledgeProposeTask system prompt (event-stream language)', () => {
   it('speaks attempt-event vocabulary, not legacy "做错的题"', () => {
     const prompt = tasks.KnowledgeProposeTask.systemPrompt;
-    // Event-stream entity language present
     expect(prompt).toContain('attempt event');
     expect(prompt).toContain('referenced_knowledge_ids');
-    // Legacy "做错的题" entity phrasing replaced (agent role label "错题" 仍可保留)
     expect(prompt).not.toContain('做错的题');
   });
 });
@@ -85,7 +86,7 @@ describe('runProposeAndWrite', () => {
     });
   }
 
-  it('writes one dreaming_proposal per parsed propose_new entry', async () => {
+  it('writes one propose event per parsed propose_new entry', async () => {
     const db = testDb();
     await insertKnowledge('k_xuci');
     const fakeRunTask = async () => ({
@@ -101,13 +102,14 @@ describe('runProposeAndWrite', () => {
       },
       runTaskFn: fakeRunTask,
     });
-    const proposals = await db.select().from(dreaming_proposal);
+    const proposals = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge')));
     expect(proposals).toHaveLength(2);
-    expect(proposals[0].payload).toMatchObject({
-      mutation: 'propose_new',
-      name: '之-主谓',
-      parent_id: 'k_xuci',
-    });
+    const names = proposals.map((p) => (p.payload as Record<string, unknown>).name);
+    expect(names).toContain('之-主谓');
+    expect(names).toContain('乎');
   });
 
   it('skips entries whose parent_id does not exist', async () => {
@@ -126,7 +128,10 @@ describe('runProposeAndWrite', () => {
       },
       runTaskFn: fakeRunTask,
     });
-    const proposals = await db.select().from(dreaming_proposal);
+    const proposals = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge')));
     expect(proposals).toHaveLength(1);
     expect((proposals[0].payload as Record<string, unknown>).name).toBe('X');
   });
@@ -148,7 +153,10 @@ describe('runProposeAndWrite', () => {
         runTaskFn: fakeRunTask,
       }),
     ).resolves.toBeUndefined();
-    const proposals = await db.select().from(dreaming_proposal);
+    const proposals = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge')));
     expect(proposals).toHaveLength(0);
   });
 
@@ -169,7 +177,10 @@ describe('runProposeAndWrite', () => {
         runTaskFn: fakeRunTask,
       }),
     ).resolves.toBeUndefined();
-    const proposals = await db.select().from(dreaming_proposal);
+    const proposals = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge')));
     expect(proposals).toHaveLength(0);
   });
 });

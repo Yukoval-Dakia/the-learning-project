@@ -2,7 +2,7 @@ import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { and, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
-import { writeDreamingProposal } from './proposals';
+import { writeKnowledgeProposeEvent } from './proposals';
 import { loadTreeSnapshot } from './tree';
 
 const ProposalSchema = z.object({
@@ -61,7 +61,7 @@ export async function runProposeAndWrite(params: RunProposeAndWriteParams): Prom
         );
         continue;
       }
-      await writeDreamingProposal(params.db, {
+      await writeKnowledgeProposeEvent(params.db, {
         payload: { mutation: 'propose_new', name: p.name, parent_id: p.parent_id },
         reasoning: p.reasoning,
       });

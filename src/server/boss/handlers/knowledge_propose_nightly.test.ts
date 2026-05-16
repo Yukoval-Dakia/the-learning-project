@@ -2,8 +2,8 @@ import { createId } from '@paralleldrive/cuid2';
 import { describe, expect, it, vi } from 'vitest';
 
 import { db } from '@/db/client';
-import { dreaming_proposal, event, knowledge, question } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { event, knowledge, question } from '@/db/schema';
+import { and, eq } from 'drizzle-orm';
 import { runKnowledgeProposeNightly } from './knowledge_propose_nightly';
 
 describe('knowledge_propose_nightly handler', () => {
@@ -63,8 +63,11 @@ describe('knowledge_propose_nightly handler', () => {
     expect(result.processed).toBeGreaterThanOrEqual(1);
     expect(runTaskFn).toHaveBeenCalled();
 
-    // Verify proposal written
-    const proposals = await db.select().from(dreaming_proposal);
+    // Verify propose event written (event-based proposals post-Step-9)
+    const proposals = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge')));
     const ours = proposals.find(
       (p) =>
         typeof p.payload === 'object' &&
@@ -74,7 +77,9 @@ describe('knowledge_propose_nightly handler', () => {
     expect(ours).toBeTruthy();
 
     // Cleanup
-    await db.delete(dreaming_proposal).where(eq(dreaming_proposal.id, ours?.id ?? ''));
+    if (ours?.id) {
+      await db.delete(event).where(eq(event.id, ours.id));
+    }
     await db.delete(event).where(eq(event.id, attemptId));
     await db.delete(question).where(eq(question.id, qId));
     await db.delete(knowledge).where(eq(knowledge.id, kId));

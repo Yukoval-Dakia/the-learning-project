@@ -1,0 +1,159 @@
+// Phase 1c.1 Step 9.L — final single-owner invariant audit.
+//
+// Pure-Node fs walker (mirrors tests/integration/session-single-owner.test.ts).
+// Three assertions:
+//   1. `db.insert(event)` only appears in the documented allowlist of writer
+//      modules.
+//   2. `db.update(learning_session)` only appears in src/server/session/.
+//   3. `db.insert/update(material_fsrs_state)` only appears in
+//      src/server/fsrs/state.ts (the new Step 9.A single-owner).
+//   4. The 4 DROP'd tables (mistake / review_event / dreaming_proposal /
+//      ingestion_session) have ZERO write-callers anywhere in src/ + app/.
+//      The Step 3 migration script (scripts/migrate-phase1c1.ts) may have
+//      historical references — verified separately to be comments / stub
+//      only (no live `db.insert/update(<dropped>)` SQL).
+//
+// `artifact` table writes are documented as Phase 1c.2 pending (no AI
+// generate handler exists yet); the audit notes this rather than failing.
+
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { describe, expect, it } from 'vitest';
+
+const REPO_ROOT = path.resolve(__dirname, '..', '..');
+
+const SCAN_ROOTS = ['src', 'app', 'scripts'] as const;
+const SCAN_RUNTIME_ROOTS = ['src', 'app'] as const;
+const SKIP_DIRS = new Set(['node_modules', '.next', '.git', 'dist', 'build', '.turbo', '.vercel']);
+const SCAN_EXTS = new Set(['.ts', '.tsx']);
+
+async function walkFiles(root: string): Promise<string[]> {
+  const out: string[] = [];
+  async function recurse(dir: string): Promise<void> {
+    let entries: import('node:fs').Dirent[];
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (SKIP_DIRS.has(entry.name)) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await recurse(full);
+      } else if (entry.isFile()) {
+        const ext = path.extname(entry.name);
+        if (SCAN_EXTS.has(ext)) out.push(full);
+      }
+    }
+  }
+  await recurse(root);
+  return out;
+}
+
+type Hit = string; // repo-relative path
+
+async function findWriteHits(
+  tableName: string,
+  opts: { roots?: ReadonlyArray<string>; includeTests?: boolean } = {},
+): Promise<Hit[]> {
+  const re = new RegExp(`\\b(?:insert|update)\\s*\\(\\s*${tableName}\\s*[,)]`);
+  const hits: Hit[] = [];
+  for (const root of opts.roots ?? SCAN_ROOTS) {
+    const files = await walkFiles(path.join(REPO_ROOT, root));
+    for (const file of files) {
+      if (
+        !opts.includeTests &&
+        (file.endsWith('.test.ts') || file.endsWith('.test.tsx'))
+      ) {
+        continue;
+      }
+      const text = await fs.readFile(file, 'utf8');
+      if (re.test(text)) {
+        hits.push(path.relative(REPO_ROOT, file));
+      }
+    }
+  }
+  return hits.sort();
+}
+
+function isAllowed(relPath: string, prefixes: ReadonlyArray<string>): boolean {
+  const norm = relPath.split(path.sep).join('/');
+  return prefixes.some((prefix) => norm.startsWith(prefix));
+}
+
+describe('Phase 1c.1 Step 9.L — invariant audit', () => {
+  it('db.insert(event) appears only inside documented writer modules', async () => {
+    const ALLOWED_EVENT_WRITERS = [
+      // Single-owner INSERT path (ADR-0005)
+      'src/server/events/queries.ts',
+      // session → event mapper (delegates to writeEvent)
+      'src/server/session/events.ts',
+      // knowledge tree mutation propose events
+      'src/server/knowledge/proposals.ts',
+      // knowledge edges direct writers (Lane B GenerateKnowledgeEdge / ProposeKnowledgeEdge)
+      'src/server/knowledge/edges.ts',
+      // knowledge attribute (judge event writer)
+      'src/server/knowledge/attribute.ts',
+      // knowledge review stream task tool
+      'src/server/knowledge/review.ts',
+      // Test fixture helpers
+      'tests/helpers/',
+    ] as const;
+    const hits = await findWriteHits('event');
+    const violations = hits.filter((h) => !isAllowed(h, ALLOWED_EVENT_WRITERS));
+    expect(
+      violations,
+      `Disallowed writers of \`event\` table found:\n  ${violations.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('db.{insert,update}(learning_session) appears only inside src/server/session/* (extended by scripts/migrate-phase1c1.ts historical)', async () => {
+    const ALLOWED_LEARNING_SESSION_WRITERS = [
+      'src/server/session/',
+      'scripts/migrate-phase1c1.ts',
+    ] as const;
+    const hits = await findWriteHits('learning_session');
+    const violations = hits.filter((h) => !isAllowed(h, ALLOWED_LEARNING_SESSION_WRITERS));
+    expect(
+      violations,
+      `Disallowed writers of \`learning_session\` table found:\n  ${violations.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('db.{insert,update}(material_fsrs_state) appears only in src/server/fsrs/state.ts (extended by scripts/migrate-phase1c1.ts historical)', async () => {
+    const ALLOWED_FSRS_WRITERS = [
+      'src/server/fsrs/',
+      'scripts/migrate-phase1c1.ts',
+    ] as const;
+    const hits = await findWriteHits('material_fsrs_state');
+    const violations = hits.filter((h) => !isAllowed(h, ALLOWED_FSRS_WRITERS));
+    expect(
+      violations,
+      `Disallowed writers of \`material_fsrs_state\` found:\n  ${violations.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  for (const dropped of ['mistake', 'review_event', 'dreaming_proposal', 'ingestion_session']) {
+    it(`legacy \`${dropped}\` table has ZERO write-callers in src/ + app/ (DROPped in 9.J)`, async () => {
+      const hits = await findWriteHits(dropped, { roots: SCAN_RUNTIME_ROOTS });
+      expect(
+        hits,
+        `Stale writers of dropped table \`${dropped}\` found:\n  ${hits.join('\n  ')}`,
+      ).toEqual([]);
+    });
+  }
+
+  it('artifact table writes: documented as Phase 1c.2 pending (no AI generate handler yet)', async () => {
+    // 'artifact' is the C-tier AI production landing point per ADR-0006 v2.
+    // Step 9 keeps the schema and removes the legacy mistake-id ambiguity in
+    // its comments; the actual writer lands in Phase 1c.2 with
+    // NoteGenerateTask / BlockAssemblyTask. This test simply asserts that
+    // status today: NO writes anywhere in src/ + app/.
+    const hits = await findWriteHits('artifact', { roots: SCAN_RUNTIME_ROOTS });
+    expect(
+      hits,
+      `Phase 1c.2-pending invariant: artifact writes should be deferred. Hits:\n  ${hits.join('\n  ')}`,
+    ).toEqual([]);
+  });
+});

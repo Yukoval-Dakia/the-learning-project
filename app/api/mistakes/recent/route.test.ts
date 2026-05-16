@@ -2,7 +2,7 @@
 // Tests seed `event` rows directly (attempt + chained judge); the route projects
 // to legacy mistake-shape JSON for back-compat.
 
-import { event, mistake, question } from '@/db/schema';
+import { event, question } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET } from './route';
@@ -196,86 +196,8 @@ describe('GET /api/mistakes/recent (event-stream projection)', () => {
     expect(body.rows).toEqual([]);
   });
 
-  // Codex P1-B — user-supplied causes must surface in the projection.
-  // POST /api/mistakes stores user-supplied causes on the legacy `mistake` row
-  // and does NOT write a judge event. Reading purely from chained judge events
-  // dropped those causes; the projection must fall back to mistake.cause when
-  // no judge is chained.
-  //
-  // TODO Step 9: legacy mistake.cause read removed when table drops; user_cause
-  // moves to experimental event (Phase 1c.2).
-  it('falls back to legacy mistake.cause when no chained judge exists (user-supplied cause)', async () => {
-    const db = testDb();
-    const now = new Date();
-    await seedQuestion('q1', 'prompt');
-    await seedAttempt({ id: 'a1', question_id: 'q1' });
-    await db.insert(mistake).values({
-      id: 'm1',
-      question_id: 'q1',
-      wrong_answer_md: 'wrong',
-      wrong_answer_image_refs: [],
-      source: 'manual',
-      knowledge_ids: ['k1'],
-      cause: {
-        primary_category: 'concept',
-        secondary_categories: [],
-        ai_analysis_md: '',
-        user_notes: 'note',
-        user_edited: true,
-      },
-      variants: [],
-      variants_generated_count: 0,
-      variants_max: 3,
-      status: 'active',
-      created_at: now,
-      updated_at: now,
-      version: 0,
-    });
-
-    const res = await GET(new Request('http://localhost/api/mistakes/recent'));
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      rows: Array<{ cause: { primary_category: string; user_notes: string | null } | null }>;
-    };
-    expect(body.rows).toHaveLength(1);
-    expect(body.rows[0].cause).not.toBeNull();
-    expect(body.rows[0].cause?.primary_category).toBe('concept');
-    expect(body.rows[0].cause?.user_notes).toBe('note');
-  });
-
-  it('judge event cause takes precedence over legacy mistake.cause', async () => {
-    const db = testDb();
-    const now = new Date();
-    await seedQuestion('q1', 'prompt');
-    await seedAttempt({ id: 'a1', question_id: 'q1' });
-    await seedJudge({ id: 'j1', attempt_event_id: 'a1', primary_category: 'memory' });
-    await db.insert(mistake).values({
-      id: 'm1',
-      question_id: 'q1',
-      wrong_answer_md: 'wrong',
-      wrong_answer_image_refs: [],
-      source: 'manual',
-      knowledge_ids: ['k1'],
-      cause: {
-        primary_category: 'concept', // different from judge
-        secondary_categories: [],
-        ai_analysis_md: '',
-        user_notes: 'legacy notes',
-        user_edited: true,
-      },
-      variants: [],
-      variants_generated_count: 0,
-      variants_max: 3,
-      status: 'active',
-      created_at: now,
-      updated_at: now,
-      version: 0,
-    });
-
-    const res = await GET(new Request('http://localhost/api/mistakes/recent'));
-    const body = (await res.json()) as {
-      rows: Array<{ cause: { primary_category: string } }>;
-    };
-    expect(body.rows[0].cause.primary_category).toBe('memory');
-  });
+  // Codex P1-B tests retired in Step 9 — the legacy `mistake` table was
+  // DROPped, so the fallback path no longer exists. User-supplied causes
+  // (from POST /api/mistakes with body.cause !== null) are now lost; Phase
+  // 1c.2 will introduce an `experimental:user_cause` event path.
 });

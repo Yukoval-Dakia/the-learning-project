@@ -12,16 +12,12 @@
 // `cause.user_notes` is preserved as `null` for back-compat (Lane B dropped
 // the field per ADR-0006 v2; product accepts the data loss).
 
-import { desc, inArray } from 'drizzle-orm';
-import type { z } from 'zod';
+import { inArray } from 'drizzle-orm';
 
-import type { Cause } from '@/core/schema/business';
 import { db } from '@/db/client';
-import { mistake, question } from '@/db/schema';
+import { question } from '@/db/schema';
 import { getFailureAttempts } from '@/server/events/queries';
 import { errorResponse } from '@/server/http/errors';
-
-type CauseT = z.infer<typeof Cause>;
 
 export const runtime = 'nodejs';
 
@@ -42,42 +38,15 @@ export async function GET(req: Request): Promise<Response> {
       .where(inArray(question.id, questionIds));
     const promptByQid = new Map(questions.map((q) => [q.id, q.prompt_md]));
 
-    // Codex P1-B — LEFT JOIN equivalent for legacy `mistake.cause`. POST stores
-    // user-supplied causes on the mistake row without writing a judge event;
-    // reading judge-only would silently drop them.
-    // TODO Step 9: legacy mistake.cause read removed when table drops; user_cause
-    // moves to experimental event (Phase 1c.2).
-    const legacyMistakeRows = await db
-      .select({
-        question_id: mistake.question_id,
-        cause: mistake.cause,
-      })
-      .from(mistake)
-      .where(inArray(mistake.question_id, questionIds))
-      .orderBy(desc(mistake.created_at));
-    const legacyCauseByQid = new Map<string, CauseT | null>();
-    for (const row of legacyMistakeRows) {
-      // First (most recent) wins per question; older mistakes are ignored.
-      if (!legacyCauseByQid.has(row.question_id)) {
-        legacyCauseByQid.set(row.question_id, row.cause);
-      }
-    }
-
+    // Codex P1-B fix retired in Step 9 — the legacy `mistake` table was
+    // DROPped, so the fallback no longer applies. User-supplied causes
+    // (from POST /api/mistakes with body.cause !== null) are not currently
+    // recoverable from the event stream; Phase 1c.2 will introduce an
+    // `experimental:user_cause` event path.
     const rows = fails.map((f) => {
-      let cause: { primary_category: string; user_notes: string | null } | null = null;
-      if (f.judge) {
-        // Judge-event cause wins (AI-attributed or canonical).
-        cause = { primary_category: f.judge.cause.primary_category, user_notes: null };
-      } else {
-        // Fallback: legacy mistake.cause preserves user-supplied causes.
-        const legacy = legacyCauseByQid.get(f.question_id);
-        if (legacy) {
-          cause = {
-            primary_category: legacy.primary_category,
-            user_notes: legacy.user_notes ?? null,
-          };
-        }
-      }
+      const cause = f.judge
+        ? { primary_category: f.judge.cause.primary_category, user_notes: null }
+        : null;
       return {
         id: f.attempt_event_id,
         question_id: f.question_id,
