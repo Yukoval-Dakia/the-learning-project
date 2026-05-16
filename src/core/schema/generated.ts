@@ -12,20 +12,15 @@ export const SourceAssetSelectGenerated = createSelectSchema(t.source_asset);
 export const SourceDocumentInsertGenerated = createInsertSchema(t.source_document);
 export const SourceDocumentSelectGenerated = createSelectSchema(t.source_document);
 
-export const IngestionSessionInsertGenerated = createInsertSchema(t.ingestion_session);
-export const IngestionSessionSelectGenerated = createSelectSchema(t.ingestion_session);
+// Phase 1c.1 Step 9.J — ingestion_session, mistake, review_event,
+// dreaming_proposal tables DROPped. Sessions live in learning_session
+// (type='ingestion'); attempts / reviews / proposals live in `event`.
 
 export const QuestionBlockInsertGenerated = createInsertSchema(t.question_block);
 export const QuestionBlockSelectGenerated = createSelectSchema(t.question_block);
 
 export const QuestionInsertGenerated = createInsertSchema(t.question);
 export const QuestionSelectGenerated = createSelectSchema(t.question);
-
-export const MistakeInsertGenerated = createInsertSchema(t.mistake);
-export const MistakeSelectGenerated = createSelectSchema(t.mistake);
-
-export const ReviewEventInsertGenerated = createInsertSchema(t.review_event);
-export const ReviewEventSelectGenerated = createSelectSchema(t.review_event);
 
 export const LearningItemInsertGenerated = createInsertSchema(t.learning_item);
 export const LearningItemSelectGenerated = createSelectSchema(t.learning_item);
@@ -44,9 +39,6 @@ export const AnswerSelectGenerated = createSelectSchema(t.answer);
 
 export const CompletionEvidenceInsertGenerated = createInsertSchema(t.completion_evidence);
 export const CompletionEvidenceSelectGenerated = createSelectSchema(t.completion_evidence);
-
-export const DreamingProposalInsertGenerated = createInsertSchema(t.dreaming_proposal);
-export const DreamingProposalSelectGenerated = createSelectSchema(t.dreaming_proposal);
 
 export const ToolCallLogInsertGenerated = createInsertSchema(t.tool_call_log);
 export const ToolCallLogSelectGenerated = createSelectSchema(t.tool_call_log);

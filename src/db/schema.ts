@@ -16,9 +16,7 @@ import type { z } from 'zod';
 import type {
   AgentRef,
   ArtifactHistoryEntry,
-  Cause,
   FsrsState,
-  MistakeVariant,
   NoteSection,
   Provenance,
   Rubric,
@@ -36,9 +34,7 @@ import type { FigureRefT, StructuredQuestionT } from '../core/schema/structured_
 
 type AgentRefT = z.infer<typeof AgentRef>;
 type ArtifactHistoryEntryT = z.infer<typeof ArtifactHistoryEntry>;
-type CauseT = z.infer<typeof Cause>;
 type FsrsStateT = z.infer<typeof FsrsState>;
-type MistakeVariantT = z.infer<typeof MistakeVariant>;
 type NoteSectionT = z.infer<typeof NoteSection>;
 type ProvenanceT = z.infer<typeof Provenance>;
 type RubricT = z.infer<typeof Rubric>;
@@ -90,18 +86,10 @@ export const source_document = pgTable('source_document', {
   version: integer('version').notNull().default(0),
 });
 
-export const ingestion_session = pgTable('ingestion_session', {
-  id: text('id').primaryKey(),
-  source_document_id: text('source_document_id'),
-  source_asset_ids: jsonb('source_asset_ids').$type<string[]>().notNull().default([]),
-  status: text('status').notNull().default('uploaded'),
-  entrypoint: text('entrypoint').notNull(),
-  error_message: text('error_message'),
-  warnings: jsonb('warnings').$type<string[]>().notNull().default([]),
-  created_at: timestamp('created_at', { withTimezone: true }).notNull(),
-  updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
-  version: integer('version').notNull().default(0),
-});
+// Phase 1c.1 Step 9.J — `ingestion_session` table DROPped. Sessions now live
+// in `learning_session(type='ingestion')` (ADR-0008). The `question_block.
+// ingestion_session_id` text column is preserved (no FK enforced; points at
+// learning_session.id post-migration).
 
 export const question_block = pgTable(
   'question_block',
@@ -180,43 +168,10 @@ export const question = pgTable(
   (t) => [check('question_difficulty_range', sql`${t.difficulty} BETWEEN 1 AND 5`)],
 );
 
-export const mistake = pgTable('mistake', {
-  id: text('id').primaryKey(),
-  question_id: text('question_id')
-    .notNull()
-    .references(() => question.id),
-  wrong_answer_md: text('wrong_answer_md'),
-  wrong_answer_image_refs: jsonb('wrong_answer_image_refs').$type<string[]>().notNull().default([]),
-  source: text('source').notNull(),
-  source_ref: text('source_ref'),
-  knowledge_ids: jsonb('knowledge_ids').$type<string[]>().notNull().default([]),
-  cause: jsonb('cause').$type<CauseT>(),
-  fsrs_state: jsonb('fsrs_state').$type<FsrsStateT>(),
-  variants: jsonb('variants').$type<MistakeVariantT[]>().notNull().default([]),
-  variants_generated_count: integer('variants_generated_count').notNull().default(0),
-  variants_max: integer('variants_max').notNull().default(3),
-  status: text('status').notNull().default('active'),
-  archived_reason: text('archived_reason'),
-  archived_at: timestamp('archived_at', { withTimezone: true }),
-  deleted_at: timestamp('deleted_at', { withTimezone: true }),
-  delete_reason: text('delete_reason'),
-  created_at: timestamp('created_at', { withTimezone: true }).notNull(),
-  updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
-  version: integer('version').notNull().default(0),
-});
-
-export const review_event = pgTable('review_event', {
-  id: text('id').primaryKey(),
-  mistake_id: text('mistake_id').notNull(),
-  rating: text('rating').notNull(),
-  response_md: text('response_md'),
-  latency_ms: integer('latency_ms'),
-  fsrs_state_before: jsonb('fsrs_state_before').$type<FsrsStateT>(),
-  fsrs_state_after: jsonb('fsrs_state_after').$type<FsrsStateT>().notNull(),
-  due_at_before: timestamp('due_at_before', { withTimezone: true }),
-  due_at_next: timestamp('due_at_next', { withTimezone: true }).notNull(),
-  created_at: timestamp('created_at', { withTimezone: true }).notNull(),
-});
+// Phase 1c.1 Step 9.J — `mistake` and `review_event` tables DROPped per
+// ADR-0006 v2: failure attempts are events (action='attempt', outcome='failure'),
+// reviews are events (action='review'). FSRS state projection lives in
+// `material_fsrs_state` declared below.
 
 export const learning_item = pgTable(
   'learning_item',
@@ -318,15 +273,9 @@ export const completion_evidence = pgTable('completion_evidence', {
   decided_at: timestamp('decided_at', { withTimezone: true }).notNull(),
 });
 
-export const dreaming_proposal = pgTable('dreaming_proposal', {
-  id: text('id').primaryKey(),
-  kind: text('kind').notNull(),
-  payload: jsonb('payload').$type<JsonObject>().notNull(),
-  reasoning: text('reasoning').notNull(),
-  status: text('status').notNull().default('pending'),
-  proposed_at: timestamp('proposed_at', { withTimezone: true }).notNull(),
-  decided_at: timestamp('decided_at', { withTimezone: true }),
-});
+// Phase 1c.1 Step 9.J — `dreaming_proposal` table DROPped. Proposals live as
+// event(action='propose', subject_kind='knowledge') (Lane B ProposeKnowledge)
+// plus experimental:knowledge_<mutation> namespace events.
 
 export const tool_call_log = pgTable('tool_call_log', {
   id: text('id').primaryKey(),
