@@ -31,7 +31,7 @@ const SESSION_TABLE = 'ingestion_session' as const;
 // require migration; deferred to Phase 1d if/when a session-type-agnostic
 // SSE channel is needed.
 
-// writeSessionEvent wired in 5.D step.
+import { writeSessionEvent } from './events';
 
 // ---------- Load helpers ----------
 //
@@ -274,9 +274,23 @@ export async function applyExtractionResult(
     },
   });
 
-  // Domain event written in 5.D step.
-  void insertedBlockIds;
-  void eventOutcome;
+  // Domain event: ExtractSourceDocument (Lane B). Chained to the session via
+  // session_id so any future timeline UI can walk the chain.
+  await writeSessionEvent(tx, {
+    session_id: params.sessionId,
+    action: 'extract',
+    subject_kind: 'source_document',
+    subject_id: params.sourceDocumentId,
+    actor_kind: 'agent',
+    actor_ref: 'tencent_ocr',
+    outcome: eventOutcome,
+    payload: {
+      structured_block_ids: insertedBlockIds,
+      layout_quality: params.layoutQuality,
+      warnings: params.warnings,
+    },
+    created_at: now,
+  });
 
   return { status: nextStatus };
 }
@@ -321,8 +335,28 @@ export async function markExtractionFailed(
     payload: { error_message: errorMessage },
   });
 
-  // Domain event written in 5.D step.
-  void now;
+  // Domain event: extract failure. Lane B's ExtractSourceDocument carries the
+  // error message in `warnings` (no dedicated `error_message` field) — this is
+  // the cleanest fit without an experimental:* escape. Skipped if source_document_id
+  // is null (degenerate, shouldn't happen post-Step 3 migration; subject_id must
+  // be a real string per Lane B).
+  if (current.source_document_id) {
+    await writeSessionEvent(tx, {
+      session_id: sessionId,
+      action: 'extract',
+      subject_kind: 'source_document',
+      subject_id: current.source_document_id,
+      actor_kind: 'agent',
+      actor_ref: 'tencent_ocr',
+      outcome: 'failure',
+      payload: {
+        structured_block_ids: [],
+        layout_quality: 'text_only',
+        warnings: [errorMessage],
+      },
+      created_at: now,
+    });
+  }
 }
 
 // ---------- applyRescue ----------
@@ -388,7 +422,27 @@ export async function applyRescue(tx: Db | Tx, params: ApplyRescueParams): Promi
     payload: { block_id: params.blockId },
   });
 
-  // Domain event written in 5.D step.
+  // Domain event: rescue produces a fresh structured block — modeled as an
+  // extract success authored by 'vision_rescue' (vs 'tencent_ocr' for the
+  // original extraction). layout_quality reflects the session's current state
+  // (rescue happens on partial / extracted sessions, doesn't transition them).
+  if (current.source_document_id) {
+    await writeSessionEvent(tx, {
+      session_id: params.sessionId,
+      action: 'extract',
+      subject_kind: 'source_document',
+      subject_id: current.source_document_id,
+      actor_kind: 'agent',
+      actor_ref: 'vision_rescue',
+      outcome: 'success',
+      payload: {
+        structured_block_ids: [params.blockId],
+        layout_quality: current.status === 'extracted' ? 'structured' : 'partial',
+        warnings: [],
+      },
+      created_at: now,
+    });
+  }
 }
 
 // ---------- markReviewed ----------
