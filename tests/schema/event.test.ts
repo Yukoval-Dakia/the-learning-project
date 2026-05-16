@@ -14,6 +14,7 @@ import {
   RateKnowledgeEdge,
   ReviewOnQuestion,
   ToolUseExperimental,
+  UserCauseExperimental,
   parseEvent,
 } from '@/core/schema/event';
 import { describe, expect, it } from 'vitest';
@@ -95,7 +96,10 @@ describe('AttemptOnQuestion', () => {
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.payload.referenced_knowledge_ids).toEqual(['k_xuci_zhi', 'k_dingyu_biaozhi']);
+      expect(result.data.payload.referenced_knowledge_ids).toEqual([
+        'k_xuci_zhi',
+        'k_dingyu_biaozhi',
+      ]);
     }
   });
 
@@ -748,7 +752,9 @@ describe('GenerateKnowledgeEdge', () => {
     });
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error.issues[0]?.message).toMatch(/reasoning is required when actor_kind=agent/);
+      expect(result.error.issues[0]?.message).toMatch(
+        /reasoning is required when actor_kind=agent/,
+      );
     }
   });
 
@@ -1010,6 +1016,95 @@ describe('ToolUseExperimental', () => {
 });
 
 // ====================================================================
+// UserCauseExperimental
+// ====================================================================
+
+describe('UserCauseExperimental', () => {
+  it('accepts a minimal user-supplied cause', () => {
+    const result = UserCauseExperimental.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:user_cause',
+      subject_kind: 'event',
+      subject_id: 'attempt_evt_1',
+      payload: { primary_category: 'carelessness' },
+      caused_by_event_id: 'attempt_evt_1',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts optional user_notes (string or null)', () => {
+    const a = UserCauseExperimental.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:user_cause',
+      subject_kind: 'event',
+      subject_id: 'a1',
+      payload: { primary_category: 'concept', user_notes: '看错题号了' },
+      caused_by_event_id: 'a1',
+    });
+    expect(a.success).toBe(true);
+    const b = UserCauseExperimental.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:user_cause',
+      subject_kind: 'event',
+      subject_id: 'a2',
+      payload: { primary_category: 'memory', user_notes: null },
+      caused_by_event_id: 'a2',
+    });
+    expect(b.success).toBe(true);
+  });
+
+  it('rejects unknown primary_category', () => {
+    const result = UserCauseExperimental.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:user_cause',
+      subject_kind: 'event',
+      subject_id: 'a3',
+      payload: { primary_category: 'not_a_real_category' },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects actor_kind=agent (user_cause is user-only)', () => {
+    const result = UserCauseExperimental.safeParse({
+      actor_kind: 'agent',
+      actor_ref: 'attribution',
+      action: 'experimental:user_cause',
+      subject_kind: 'event',
+      subject_id: 'a4',
+      payload: { primary_category: 'concept' },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects subject_kind other than event', () => {
+    const result = UserCauseExperimental.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:user_cause',
+      subject_kind: 'question',
+      subject_id: 'q_1',
+      payload: { primary_category: 'concept' },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('generic ExperimentalEvent rejects experimental:user_cause (reserved)', () => {
+    const result = ExperimentalEvent.safeParse({
+      action: 'experimental:user_cause',
+      payload: { primary_category: 'concept' },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0]?.message).toMatch(/reserved experimental action/);
+    }
+  });
+});
+
+// ====================================================================
 // Top-level Event union + parseEvent
 // ====================================================================
 
@@ -1082,6 +1177,32 @@ describe('Event (top-level union) + parseEvent', () => {
       subject_id: 'tu_x',
       outcome: 'success',
       payload: { args: { x: 1 } }, // missing tool_name
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('parses UserCauseExperimental through top-level Event', () => {
+    const parsed = parseEvent({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:user_cause',
+      subject_kind: 'event',
+      subject_id: 'uc_attempt_1',
+      payload: { primary_category: 'carelessness', user_notes: 'misread' },
+      caused_by_event_id: 'uc_attempt_1',
+    });
+    expect('subject_kind' in parsed).toBe(true);
+    expect(parsed.action).toBe('experimental:user_cause');
+  });
+
+  it('rejects malformed experimental:user_cause (unknown primary_category) — does not fall through to generic', () => {
+    const result = Event.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:user_cause',
+      subject_kind: 'event',
+      subject_id: 'uc_bad',
+      payload: { primary_category: 'made_up' },
     });
     expect(result.success).toBe(false);
   });

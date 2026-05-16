@@ -6,6 +6,8 @@
       "drizzle",
       "docs/design/loom-design",
       "docs/design/loom-design-v2",
+      "docs/design/loom-design-v2.1",
+      ".claude",
       ".next",
       "next-env.d.ts"
     ]

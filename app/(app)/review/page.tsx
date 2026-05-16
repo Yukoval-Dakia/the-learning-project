@@ -20,7 +20,11 @@ interface DueRow {
 
 interface MistakeRow {
   question_id: string;
-  cause: { primary_category: string; user_notes: string | null } | null;
+  cause: {
+    source?: 'user' | 'agent';
+    primary_category: string;
+    user_notes: string | null;
+  } | null;
 }
 
 type Phase = 'answering' | 'feedback';
@@ -246,7 +250,7 @@ export default function ReviewPage() {
                     cause={
                       cause
                         ? {
-                            actor_kind: 'agent',
+                            actor_kind: cause.source === 'user' ? 'user' : 'agent',
                             primary: cause.primary_category,
                           }
                         : null

@@ -18,7 +18,7 @@
 //     idempotent via PK conflict do-nothing.
 
 import { type EventT, parseEvent } from '@/core/schema/event';
-import type { CauseSchemaT, FsrsStateSchemaT } from '@/core/schema/event/blocks';
+import type { CauseCategoryT, CauseSchemaT, FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
@@ -38,6 +38,16 @@ export type FailureAttemptJudge = {
   created_at: Date;
 };
 
+// User-supplied cause via experimental:user_cause event (Phase 1c.2). Lives
+// alongside `judge` because both can coexist on the same attempt — projection
+// callers pick user_cause first (the user has the last word on attribution).
+export type FailureAttemptUserCause = {
+  user_cause_event_id: string;
+  primary_category: CauseCategoryT;
+  user_notes: string | null;
+  created_at: Date;
+};
+
 export type FailureAttempt = {
   attempt_event_id: string;
   question_id: string;
@@ -46,6 +56,7 @@ export type FailureAttempt = {
   referenced_knowledge_ids: string[];
   created_at: Date;
   judge?: FailureAttemptJudge;
+  user_cause?: FailureAttemptUserCause;
 };
 
 export interface GetFailureAttemptsOpts {
@@ -90,24 +101,29 @@ export async function getFailureAttempts(
   if (attemptRows.length === 0) return [];
 
   const attemptIds = attemptRows.map((r) => r.id);
-  const judgeRows = await db
+  // One round-trip fetches BOTH judge events (action='judge') and user_cause
+  // events (action='experimental:user_cause'). Both chain via caused_by_event_id
+  // and have subject_kind='event'.
+  const chainedRows = await db
     .select()
     .from(event)
     .where(
       and(
-        eq(event.action, 'judge'),
         eq(event.subject_kind, 'event'),
         inArray(event.caused_by_event_id, attemptIds),
+        inArray(event.action, ['judge', 'experimental:user_cause']),
       ),
     );
 
-  // Group judges by caused_by_event_id (one judge per attempt expected; keep newest if dupes).
-  const judgeByAttempt = new Map<string, (typeof judgeRows)[number]>();
-  for (const j of judgeRows) {
-    const key = j.caused_by_event_id as string;
-    const existing = judgeByAttempt.get(key);
-    if (!existing || j.created_at > existing.created_at) {
-      judgeByAttempt.set(key, j);
+  // Group by (action, caused_by_event_id); keep newest within each group.
+  const judgeByAttempt = new Map<string, (typeof chainedRows)[number]>();
+  const userCauseByAttempt = new Map<string, (typeof chainedRows)[number]>();
+  for (const row of chainedRows) {
+    const key = row.caused_by_event_id as string;
+    const bucket = row.action === 'judge' ? judgeByAttempt : userCauseByAttempt;
+    const existing = bucket.get(key);
+    if (!existing || row.created_at > existing.created_at) {
+      bucket.set(key, row);
     }
   }
 
@@ -136,6 +152,19 @@ export async function getFailureAttempts(
         cause: jPayload.cause,
         referenced_knowledge_ids: jPayload.referenced_knowledge_ids ?? [],
         created_at: j.created_at,
+      };
+    }
+    const uc = userCauseByAttempt.get(a.id);
+    if (uc) {
+      const ucPayload = uc.payload as {
+        primary_category: CauseCategoryT;
+        user_notes?: string | null;
+      };
+      result.user_cause = {
+        user_cause_event_id: uc.id,
+        primary_category: ucPayload.primary_category,
+        user_notes: ucPayload.user_notes ?? null,
+        created_at: uc.created_at,
       };
     }
     return result;
@@ -173,6 +202,41 @@ export async function getJudgeForAttempt(
     cause: jPayload.cause,
     referenced_knowledge_ids: jPayload.referenced_knowledge_ids ?? [],
     created_at: j.created_at,
+  };
+}
+
+/**
+ * Returns the (latest) user_cause event chained to the given attempt, or null.
+ * Mirrors getJudgeForAttempt but for the experimental:user_cause channel
+ * (Phase 1c.2). Uses `event_caused_by_idx`.
+ */
+export async function getUserCauseForAttempt(
+  db: DbLike,
+  attemptEventId: string,
+): Promise<FailureAttemptUserCause | null> {
+  const rows = await db
+    .select()
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:user_cause'),
+        eq(event.subject_kind, 'event'),
+        eq(event.caused_by_event_id, attemptEventId),
+      ),
+    )
+    .orderBy(desc(event.created_at))
+    .limit(1);
+  const uc = rows[0];
+  if (!uc) return null;
+  const ucPayload = uc.payload as {
+    primary_category: CauseCategoryT;
+    user_notes?: string | null;
+  };
+  return {
+    user_cause_event_id: uc.id,
+    primary_category: ucPayload.primary_category,
+    user_notes: ucPayload.user_notes ?? null,
+    created_at: uc.created_at,
   };
 }
 

@@ -17,6 +17,7 @@ import {
   getFailureAttempts,
   getJudgeForAttempt,
   getRecentReviewEvents,
+  getUserCauseForAttempt,
   writeEvent,
 } from './queries';
 
@@ -46,6 +47,36 @@ async function seedAttemptEvent(opts: {
       referenced_knowledge_ids: opts.referenced_knowledge_ids ?? [],
     },
     caused_by_event_id: null,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: opts.created_at ?? new Date(),
+  });
+  return id;
+}
+
+async function seedUserCauseEvent(opts: {
+  id?: string;
+  attempt_event_id: string;
+  primary_category?: string;
+  user_notes?: string | null;
+  created_at?: Date;
+}): Promise<string> {
+  const db = testDb();
+  const id = opts.id ?? newId();
+  await db.insert(event).values({
+    id,
+    session_id: null,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'experimental:user_cause',
+    subject_kind: 'event',
+    subject_id: opts.attempt_event_id,
+    outcome: null,
+    payload: {
+      primary_category: opts.primary_category ?? 'carelessness',
+      user_notes: opts.user_notes ?? null,
+    },
+    caused_by_event_id: opts.attempt_event_id,
     task_run_id: null,
     cost_micro_usd: null,
     created_at: opts.created_at ?? new Date(),
@@ -184,6 +215,64 @@ describe('getFailureAttempts', () => {
     const results = await getFailureAttempts(db);
     expect(results.map((r) => r.question_id)).toEqual(['q_fail']);
   });
+
+  it('populates user_cause from experimental:user_cause event chained to attempt', async () => {
+    const db = testDb();
+    const baseTime = new Date('2026-05-01T12:00:00Z');
+    const attemptId = await seedAttemptEvent({ question_id: 'q1', created_at: baseTime });
+    await seedUserCauseEvent({
+      attempt_event_id: attemptId,
+      primary_category: 'carelessness',
+      user_notes: 'misread the problem number',
+      created_at: new Date(baseTime.getTime() + 30_000),
+    });
+
+    const results = await getFailureAttempts(db);
+    expect(results).toHaveLength(1);
+    expect(results[0].user_cause?.primary_category).toBe('carelessness');
+    expect(results[0].user_cause?.user_notes).toBe('misread the problem number');
+    expect(results[0].judge).toBeUndefined();
+  });
+
+  it('populates both judge and user_cause when both chained to the same attempt', async () => {
+    const db = testDb();
+    const baseTime = new Date('2026-05-01T12:00:00Z');
+    const attemptId = await seedAttemptEvent({ question_id: 'q1', created_at: baseTime });
+    await seedJudgeEvent({
+      attempt_event_id: attemptId,
+      primary_category: 'concept',
+      created_at: new Date(baseTime.getTime() + 60_000),
+    });
+    await seedUserCauseEvent({
+      attempt_event_id: attemptId,
+      primary_category: 'memory',
+      created_at: new Date(baseTime.getTime() + 90_000),
+    });
+
+    const results = await getFailureAttempts(db);
+    expect(results).toHaveLength(1);
+    expect(results[0].judge?.cause.primary_category).toBe('concept');
+    expect(results[0].user_cause?.primary_category).toBe('memory');
+  });
+
+  it('keeps newest user_cause when multiple exist (latest user judgement wins)', async () => {
+    const db = testDb();
+    const baseTime = new Date('2026-05-01T12:00:00Z');
+    const attemptId = await seedAttemptEvent({ question_id: 'q1', created_at: baseTime });
+    await seedUserCauseEvent({
+      attempt_event_id: attemptId,
+      primary_category: 'concept',
+      created_at: new Date(baseTime.getTime() + 60_000),
+    });
+    await seedUserCauseEvent({
+      attempt_event_id: attemptId,
+      primary_category: 'memory',
+      created_at: new Date(baseTime.getTime() + 120_000),
+    });
+
+    const results = await getFailureAttempts(db);
+    expect(results[0].user_cause?.primary_category).toBe('memory');
+  });
 });
 
 describe('getJudgeForAttempt', () => {
@@ -215,6 +304,52 @@ describe('getJudgeForAttempt', () => {
   void deterministicId;
   void material_fsrs_state;
   void eq;
+});
+
+describe('getUserCauseForAttempt', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('returns user_cause event when present', async () => {
+    const db = testDb();
+    const attemptId = await seedAttemptEvent({ question_id: 'q1' });
+    const ucId = await seedUserCauseEvent({
+      attempt_event_id: attemptId,
+      primary_category: 'carelessness',
+      user_notes: 'mis-clicked',
+    });
+    const uc = await getUserCauseForAttempt(db, attemptId);
+    expect(uc).not.toBeNull();
+    expect(uc?.user_cause_event_id).toBe(ucId);
+    expect(uc?.primary_category).toBe('carelessness');
+    expect(uc?.user_notes).toBe('mis-clicked');
+  });
+
+  it('returns null when no user_cause chained to attempt', async () => {
+    const db = testDb();
+    const attemptId = await seedAttemptEvent({ question_id: 'q1' });
+    const uc = await getUserCauseForAttempt(db, attemptId);
+    expect(uc).toBeNull();
+  });
+
+  it('returns latest user_cause when multiple exist', async () => {
+    const db = testDb();
+    const baseTime = new Date('2026-05-01T12:00:00Z');
+    const attemptId = await seedAttemptEvent({ question_id: 'q1', created_at: baseTime });
+    await seedUserCauseEvent({
+      attempt_event_id: attemptId,
+      primary_category: 'concept',
+      created_at: new Date(baseTime.getTime() + 60_000),
+    });
+    await seedUserCauseEvent({
+      attempt_event_id: attemptId,
+      primary_category: 'memory',
+      created_at: new Date(baseTime.getTime() + 120_000),
+    });
+    const uc = await getUserCauseForAttempt(db, attemptId);
+    expect(uc?.primary_category).toBe('memory');
+  });
 });
 
 async function seedReviewEvent(opts: {

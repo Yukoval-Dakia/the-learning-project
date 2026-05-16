@@ -231,6 +231,48 @@ describe('POST /api/mistakes', () => {
     await new Promise((r) => setTimeout(r, 50));
     expect(vi.mocked(runAttributionAndWriteJudgeEvent)).not.toHaveBeenCalled();
   });
+
+  it('writes an experimental:user_cause event when body.cause !== null', async () => {
+    const db = testDb();
+    const { eq, and } = await import('drizzle-orm');
+    const res = await postMistake(
+      validBody({
+        cause: { primary_category: 'carelessness', user_notes: '看错题号了' },
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { mistake_id: string };
+
+    const userCauseRows = await db
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'experimental:user_cause'),
+          eq(event.caused_by_event_id, body.mistake_id),
+        ),
+      );
+    expect(userCauseRows).toHaveLength(1);
+    expect(userCauseRows[0].actor_kind).toBe('user');
+    expect(userCauseRows[0].subject_kind).toBe('event');
+    expect(userCauseRows[0].subject_id).toBe(body.mistake_id);
+    expect(userCauseRows[0].payload).toEqual({
+      primary_category: 'carelessness',
+      user_notes: '看错题号了',
+    });
+  });
+
+  it('does NOT write a user_cause event when body.cause is null', async () => {
+    const db = testDb();
+    const { eq } = await import('drizzle-orm');
+    const res = await postMistake(validBody({ cause: null }));
+    expect(res.status).toBe(200);
+    const userCauseRows = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:user_cause'));
+    expect(userCauseRows).toHaveLength(0);
+  });
 });
 
 // ============================================================================
@@ -316,6 +358,33 @@ async function seedJudge(opts: { id: string; attempt_event_id: string }): Promis
   });
 }
 
+async function seedUserCause(opts: {
+  id: string;
+  attempt_event_id: string;
+  primary_category?: string;
+  user_notes?: string | null;
+}): Promise<void> {
+  const db = testDb();
+  await db.insert(event).values({
+    id: opts.id,
+    session_id: null,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'experimental:user_cause',
+    subject_kind: 'event',
+    subject_id: opts.attempt_event_id,
+    outcome: null,
+    payload: {
+      primary_category: opts.primary_category ?? 'carelessness',
+      user_notes: opts.user_notes ?? null,
+    },
+    caused_by_event_id: opts.attempt_event_id,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: new Date(),
+  });
+}
+
 async function getMistakes(qs = ''): Promise<Response> {
   return GET(new Request(`http://localhost/api/mistakes${qs ? `?${qs}` : ''}`, { method: 'GET' }));
 }
@@ -354,8 +423,36 @@ describe('GET /api/mistakes', () => {
     expect(body.rows[0].prompt_md).toHaveLength(200);
     expect(body.rows[0].wrong_answer_md).toHaveLength(200);
     expect(body.rows[0].knowledge_ids).toEqual(['k1', 'k2']);
-    expect(body.rows[0].cause).toEqual({ primary_category: 'concept', user_notes: null });
+    expect(body.rows[0].cause).toEqual({
+      source: 'agent',
+      primary_category: 'concept',
+      user_notes: null,
+    });
     expect(typeof body.rows[0].created_at).toBe('number');
+  });
+
+  it('user_cause overrides agent judge in the GET projection', async () => {
+    await seedQuestion('q1', 'p1');
+    await seedAttempt({ id: 'a1', question_id: 'q1' });
+    await seedJudge({ id: 'j1', attempt_event_id: 'a1' });
+    await seedUserCause({
+      id: 'uc1',
+      attempt_event_id: 'a1',
+      primary_category: 'memory',
+      user_notes: '记错了',
+    });
+
+    const res = await getMistakes();
+    const body = (await res.json()) as {
+      rows: Array<{
+        cause: { source: string; primary_category: string; user_notes: string | null } | null;
+      }>;
+    };
+    expect(body.rows[0].cause).toEqual({
+      source: 'user',
+      primary_category: 'memory',
+      user_notes: '记错了',
+    });
   });
 
   it('filters by question_id', async () => {
