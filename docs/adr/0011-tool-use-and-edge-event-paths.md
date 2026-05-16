@@ -246,7 +246,7 @@ export const Event = z.union([KnownEvent, ExperimentalEvent]);
 
 1. `src/core/schema/event.ts` 加 5 个新 schema + 改 `KnownEvent` union
 2. 单元测试：每个新 schema 至少 1 个 valid parse + 1 个 invalid parse 测试
-3. `src/server/events/writer.ts` 不变（已经 polymorphic 写）
+3. `src/server/events/writer.ts` —— 当前实现 `writeJobEvent()` 只写 `job_events` 表（pg-boss SSE plumbing，per Sub 0c），**不**写 domain `event` 表（该表 Phase 1c.1 Step 1 才创建）。Step 1 后需在此模块新增 `writeDomainEvent()`（或 polymorphic 入口），覆盖 KnownEvent union 各分支
 4. handler 层：
    - `propose_knowledge_edge` handler（dreaming agent 调用）
    - `accept_edge_proposal` handler（接 user rate=accept → 生成 generate event + 落 knowledge_edge 表）
