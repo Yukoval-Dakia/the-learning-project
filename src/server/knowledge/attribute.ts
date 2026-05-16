@@ -1,15 +1,39 @@
+// Phase 1c.1 Step 4 — attribution rewrite.
+//
+// PREVIOUSLY: takes mistakeId + expectedVersion, UPDATEs mistake.cause with optimistic
+// version check. NOW: takes attemptEventId, writes a chained judge event via writeEvent.
+// Per ADR-0006 v2, attribution is no longer a column UPDATE — it's a JudgeOnEvent row
+// chained on the attempt via caused_by_event_id.
+//
+// Idempotency: if a judge event with caused_by_event_id=attemptEventId already exists,
+// skip + warn (mirrors the legacy "cause already set" check). Single-owner write path
+// per ADR-0005 — never call db.insert(event) directly; goes through writeEvent.
+
+import { newId } from '@/core/ids';
 import { CauseCategory } from '@/core/schema/business';
 import type { Db } from '@/db/client';
-import { mistake } from '@/db/schema';
-import { and, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
+import { getJudgeForAttempt, writeEvent } from '../events/queries';
 
-const AttributionOutputSchema = z.object({
-  primary_category: CauseCategory,
-  secondary_categories: z.array(CauseCategory).default([]),
-  ai_analysis_md: z.string().min(1).max(2000),
-  confidence: z.number().min(0).max(1),
-});
+// Lane B `CauseSchema` uses `analysis_md`, but legacy AttributionTask prompts in
+// src/ai/registry.ts still emit `ai_analysis_md`. Bridge by accepting both names.
+// Step 7 will rewrite the prompts to emit `analysis_md` natively, at which point
+// the bridge can be removed.
+const AttributionOutputSchema = z.preprocess(
+  (raw) => {
+    if (raw && typeof raw === 'object' && 'ai_analysis_md' in raw && !('analysis_md' in raw)) {
+      const r = raw as Record<string, unknown>;
+      return { ...r, analysis_md: r.ai_analysis_md };
+    }
+    return raw;
+  },
+  z.object({
+    primary_category: CauseCategory,
+    secondary_categories: z.array(CauseCategory).default([]),
+    analysis_md: z.string().min(1).max(2000),
+    confidence: z.number().min(0).max(1),
+  }),
+);
 
 export type AttributionOutput = z.infer<typeof AttributionOutputSchema>;
 
@@ -36,45 +60,71 @@ export interface AttributionInput {
   knowledge_context: Array<{ id: string; name: string; effective_domain: string | null }>;
 }
 
-export interface RunAttributionAndWriteParams {
+export interface RunAttributionAndWriteJudgeEventParams {
   db: Db;
-  mistakeId: string;
-  expectedVersion: number;
+  attemptEventId: string; // was mistakeId + expectedVersion
   input: AttributionInput;
   runTaskFn: (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
   env?: unknown;
+  /**
+   * Optional: knowledge ids the judge referenced. Defaults to []. Used to populate
+   * JudgeOnEvent.payload.referenced_knowledge_ids; caller (route layer) typically
+   * passes the attempt's referenced knowledge so the mastery view picks them up.
+   */
+  referencedKnowledgeIds?: string[];
 }
 
-export async function runAttributionAndWrite(params: RunAttributionAndWriteParams): Promise<void> {
+/**
+ * Runs the AttributionTask LLM call, parses the JSON output, and writes a
+ * JudgeOnEvent row chained on the attempt via caused_by_event_id.
+ *
+ * Idempotency: if a prior judge already exists for this attempt, skip + warn.
+ * Errors (LLM failure, parse failure) are caught and logged; the attempt event
+ * remains intact (no judge written).
+ */
+export async function runAttributionAndWriteJudgeEvent(
+  params: RunAttributionAndWriteJudgeEventParams,
+): Promise<void> {
   try {
+    // Idempotency check — mirrors old "cause already set" behaviour. The DB-level
+    // PK conflict in writeEvent gives us idempotency on event id, but here we
+    // dedupe by attempt to avoid wastefully calling the LLM.
+    const existing = await getJudgeForAttempt(params.db, params.attemptEventId);
+    if (existing) {
+      console.warn(
+        `runAttributionAndWriteJudgeEvent: skipped — judge already exists for attempt ${params.attemptEventId}`,
+      );
+      return;
+    }
+
     const result = await params.runTaskFn('AttributionTask', params.input, { env: params.env });
     const parsed = parseAttributionOutput(result.text);
-    const causeJson = {
-      primary_category: parsed.primary_category,
-      secondary_categories: parsed.secondary_categories,
-      ai_analysis_md: parsed.ai_analysis_md,
-      confidence: parsed.confidence,
-      user_edited: false,
-    };
-    const now = new Date();
-    const updated = await params.db
-      .update(mistake)
-      .set({ cause: causeJson, updated_at: now })
-      .where(
-        and(
-          eq(mistake.id, params.mistakeId),
-          eq(mistake.version, params.expectedVersion),
-          isNull(mistake.cause),
-        ),
-      );
-    // postgres-js drizzle returns rowCount on the result
-    const changes = (updated as { count?: number }).count ?? 0;
-    if (changes !== 1) {
-      console.warn(
-        `runAttributionAndWrite: skipped (cause already set or version mismatch) for ${params.mistakeId}`,
-      );
-    }
+
+    const judgeId = newId();
+    await writeEvent(params.db, {
+      id: judgeId,
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'attribution',
+      action: 'judge',
+      subject_kind: 'event',
+      subject_id: params.attemptEventId,
+      outcome: 'success',
+      payload: {
+        cause: {
+          primary_category: parsed.primary_category,
+          secondary_categories: parsed.secondary_categories,
+          analysis_md: parsed.analysis_md,
+          confidence: parsed.confidence,
+        },
+        referenced_knowledge_ids: params.referencedKnowledgeIds ?? [],
+      },
+      caused_by_event_id: params.attemptEventId,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: new Date(),
+    });
   } catch (err) {
-    console.error('runAttributionAndWrite: failed', err);
+    console.error('runAttributionAndWriteJudgeEvent: failed (attempt unaffected)', err);
   }
 }

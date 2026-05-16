@@ -25,8 +25,9 @@ import { type Cause, CauseCategory, QuestionKind } from '@/core/schema/business'
 import { db } from '@/db/client';
 import { ingestion_session, knowledge, mistake, question, question_block } from '@/db/schema';
 import { runTask } from '@/server/ai/runner';
+import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { runAttributionAndWrite } from '@/server/knowledge/attribute';
+import { runAttributionAndWriteJudgeEvent } from '@/server/knowledge/attribute';
 import { runProposeAndWrite } from '@/server/knowledge/propose';
 import { loadTreeSnapshot } from '@/server/knowledge/tree';
 import { getR2 } from '@/server/r2';
@@ -184,6 +185,7 @@ export async function POST(
     const mistakeIds: string[] = [];
     const queueData: Array<{
       mistakeId: string;
+      attemptEventId: string;
       prompt_md: string;
       reference_md: string | null;
       wrong_answer_md: string;
@@ -314,8 +316,33 @@ export async function POST(
         })
         .where(eq(question_block.id, importedBlockId));
 
+      // Step 4 dual-write: also emit an attempt event for the new event-stream
+      // read path. Mistake row stays as legacy source until Step 9. The attempt
+      // event id is what we pass to runAttributionAndWriteJudgeEvent below.
+      const attemptEventId = createId();
+      await writeEvent(db, {
+        id: attemptEventId,
+        session_id: null,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'attempt',
+        subject_kind: 'question',
+        subject_id: questionId,
+        outcome: 'failure',
+        payload: {
+          answer_md: block.final_wrong_answer_md,
+          answer_image_refs: wrongAnswerImageRefs,
+          referenced_knowledge_ids: block.knowledge_ids,
+        },
+        caused_by_event_id: null,
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: now,
+      });
+
       queueData.push({
         mistakeId,
+        attemptEventId,
         prompt_md: block.final_prompt_md,
         reference_md: block.final_reference_md,
         wrong_answer_md: block.final_wrong_answer_md,
@@ -379,10 +406,9 @@ export async function POST(
               try {
                 const tree = await loadTreeSnapshot(db);
                 const pickedNodes = tree.filter((n) => q.knowledge_ids.includes(n.id));
-                await runAttributionAndWrite({
+                await runAttributionAndWriteJudgeEvent({
                   db,
-                  mistakeId: q.mistakeId,
-                  expectedVersion: 0,
+                  attemptEventId: q.attemptEventId,
                   input: {
                     prompt_md: q.prompt_md,
                     reference_md: q.reference_md,
@@ -393,7 +419,8 @@ export async function POST(
                       effective_domain: n.effective_domain,
                     })),
                   },
-                  runTaskFn: async (kind, input) => {
+                  referencedKnowledgeIds: q.knowledge_ids,
+                  runTaskFn: async (kind: string, input: unknown) => {
                     const result = await runTask(kind, input, { db, r2 });
                     return { text: result.text };
                   },
