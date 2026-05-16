@@ -10,6 +10,8 @@
 //   - getJudgeForAttempt(db, attemptEventId) — single chained judge
 //   - getRecentReviewEvents(db, opts?) — FSRS review log
 //   - getEventById(db, id) — single event for caused_by chain navigation
+//   - getEvents(db, filter?) — Step 6: raw event log filter API (parseEvent on output)
+//   - getEventChain(db, id) — Step 6: focal event + parent + reverse children
 //
 // Write API:
 //   - writeEvent(db, eventObj) — single INSERT path; calls parseEvent() before INSERT;
@@ -246,18 +248,11 @@ export async function getRecentReviewEvents(
 // getEventById — single event lookup (caused_by chain navigation).
 // ============================================================================
 
-/**
- * Fetches one event by id and returns the parsed KnownEvent shape (validated
- * via parseEvent — failures throw, never silently swallowed). Returns null
- * when the row is absent. The DB row's id / session_id / created_at envelope
- * fields are stripped here; parseEvent only validates Lane B's user payload
- * shape (action / subject / outcome / payload + base optional fields).
- */
-export async function getEventById(db: DbLike, id: string): Promise<EventT | null> {
-  const rows = await db.select().from(event).where(eq(event.id, id)).limit(1);
-  const row = rows[0];
-  if (!row) return null;
-  return parseEvent({
+// Internal row → parseEvent input projection. parseEvent only validates Lane B's
+// user payload shape (action / subject / outcome / payload + base optional
+// fields); the DB row's id / session_id / created_at envelope fields are stripped.
+function rowToParseInput(row: typeof event.$inferSelect): Parameters<typeof parseEvent>[0] {
+  return {
     actor_kind: row.actor_kind,
     actor_ref: row.actor_ref,
     action: row.action,
@@ -268,7 +263,101 @@ export async function getEventById(db: DbLike, id: string): Promise<EventT | nul
     caused_by_event_id: row.caused_by_event_id ?? undefined,
     task_run_id: row.task_run_id ?? undefined,
     cost_micro_usd: row.cost_micro_usd ?? undefined,
-  });
+  };
+}
+
+/**
+ * Fetches one event by id and returns the parsed KnownEvent shape (validated
+ * via parseEvent — failures throw, never silently swallowed). Returns null
+ * when the row is absent.
+ */
+export async function getEventById(db: DbLike, id: string): Promise<EventT | null> {
+  const rows = await db.select().from(event).where(eq(event.id, id)).limit(1);
+  const row = rows[0];
+  if (!row) return null;
+  return parseEvent(rowToParseInput(row));
+}
+
+// ============================================================================
+// getEvents — Phase 1c.1 Step 6: raw event log filter API.
+//
+// Filters AND-combined. Default limit 50, max 200. Output goes through
+// parseEvent — guards schema drift on the way OUT (Step 4's writeEvent only
+// guards INWARD writes). A corrupted row throws (something tampered the db);
+// callers must surface, not silently skip.
+// ============================================================================
+
+export interface GetEventsFilter {
+  action?: string;
+  subject_kind?: string;
+  subject_id?: string;
+  actor_kind?: string;
+  actor_ref?: string;
+  outcome?: string;
+  since?: Date;
+  limit?: number;
+}
+
+const DEFAULT_EVENTS_LIMIT = 50;
+const MAX_EVENTS_LIMIT = 200;
+
+export async function getEvents(db: DbLike, filter: GetEventsFilter = {}): Promise<EventT[]> {
+  const limit = Math.min(filter.limit ?? DEFAULT_EVENTS_LIMIT, MAX_EVENTS_LIMIT);
+  const conditions = [];
+  if (filter.action) conditions.push(eq(event.action, filter.action));
+  if (filter.subject_kind) conditions.push(eq(event.subject_kind, filter.subject_kind));
+  if (filter.subject_id) conditions.push(eq(event.subject_id, filter.subject_id));
+  if (filter.actor_kind) conditions.push(eq(event.actor_kind, filter.actor_kind));
+  if (filter.actor_ref) conditions.push(eq(event.actor_ref, filter.actor_ref));
+  if (filter.outcome) conditions.push(eq(event.outcome, filter.outcome));
+  if (filter.since) conditions.push(gte(event.created_at, filter.since));
+
+  const baseQuery = db.select().from(event);
+  const filtered = conditions.length > 0 ? baseQuery.where(and(...conditions)) : baseQuery;
+  const rows = await filtered.orderBy(desc(event.created_at)).limit(limit);
+
+  return rows.map((r) => parseEvent(rowToParseInput(r)));
+}
+
+// ============================================================================
+// getEventChain — Phase 1c.1 Step 6: caused_by chain navigation.
+//
+// Returns the focal event's parent (caused_by_event_id resolved) + the events
+// that point back to it via caused_by_event_id (reverse lookup, supported by
+// `event_caused_by_idx`). Throws when focal event id is unknown — the caller
+// asked for a specific id, so missing = error, not empty chain.
+// ============================================================================
+
+export type EventChain = {
+  caused_by: EventT | null;
+  caused_events: EventT[];
+};
+
+export async function getEventChain(db: DbLike, id: string): Promise<EventChain> {
+  const focal = await getEventById(db, id);
+  if (focal === null) {
+    throw new Error(`event ${id} not found`);
+  }
+
+  // Forward link: caused_by_event_id (envelope field; not on parsed EventT)
+  const focalRows = await db
+    .select({ caused_by_event_id: event.caused_by_event_id })
+    .from(event)
+    .where(eq(event.id, id))
+    .limit(1);
+  const caused_by_event_id = focalRows[0]?.caused_by_event_id ?? null;
+
+  const caused_by = caused_by_event_id ? await getEventById(db, caused_by_event_id) : null;
+
+  // Reverse link: events with caused_by_event_id = id. Use index on caused_by_event_id.
+  const reverseRows = await db
+    .select()
+    .from(event)
+    .where(eq(event.caused_by_event_id, id))
+    .orderBy(desc(event.created_at));
+  const caused_events = reverseRows.map((r) => parseEvent(rowToParseInput(r)));
+
+  return { caused_by, caused_events };
 }
 
 // ============================================================================
