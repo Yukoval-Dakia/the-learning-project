@@ -332,9 +332,13 @@ describe('getEventById', () => {
     const id = await seedAttemptEvent({ question_id: 'q1' });
     const evt = await getEventById(db, id);
     expect(evt).not.toBeNull();
-    expect(evt?.action).toBe('attempt');
-    expect(evt?.subject_kind).toBe('question');
-    expect(evt?.subject_id).toBe('q1');
+    // EventT is a union (KnownEvent | ToolUseExperimental | ExperimentalEvent).
+    // For a fresh seed-and-fetch on an attempt event we expect the KnownEvent
+    // AttemptOnQuestion branch; narrow via property access on `as` cast.
+    const narrowed = evt as Extract<typeof evt, { action: 'attempt' }>;
+    expect(narrowed.action).toBe('attempt');
+    expect(narrowed.subject_kind).toBe('question');
+    expect(narrowed.subject_id).toBe('q1');
   });
 
   it('returns null when absent', async () => {
