@@ -1,0 +1,22 @@
+# Local OrbStack/Docker-Desktop overlay — overlays docker-compose.yml.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up app postgres -d
+#
+# Differences from prod compose:
+#   - Postgres exposes 5433 on the host so `pnpm db:migrate` and the host
+#     `pnpm test` testcontainer setup can reach it directly.
+#   - cloudflared is gated behind a "production" profile so `docker compose up`
+#     does NOT try to start the tunnel locally (no TUNNEL_TOKEN required).
+
+services:
+  postgres:
+    ports:
+      - "5433:5432"
+
+  app:
+    ports:
+      - "3000:3000"
+
+  cloudflared:
+    profiles: ["production"]
