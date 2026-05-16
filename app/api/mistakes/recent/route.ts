@@ -12,12 +12,16 @@
 // `cause.user_notes` is preserved as `null` for back-compat (Lane B dropped
 // the field per ADR-0006 v2; product accepts the data loss).
 
-import { inArray } from 'drizzle-orm';
+import { desc, inArray } from 'drizzle-orm';
+import type { z } from 'zod';
 
+import type { Cause } from '@/core/schema/business';
 import { db } from '@/db/client';
-import { question } from '@/db/schema';
+import { mistake, question } from '@/db/schema';
 import { getFailureAttempts } from '@/server/events/queries';
 import { errorResponse } from '@/server/http/errors';
+
+type CauseT = z.infer<typeof Cause>;
 
 export const runtime = 'nodejs';
 
@@ -38,17 +42,52 @@ export async function GET(req: Request): Promise<Response> {
       .where(inArray(question.id, questionIds));
     const promptByQid = new Map(questions.map((q) => [q.id, q.prompt_md]));
 
-    const rows = fails.map((f) => ({
-      id: f.attempt_event_id,
-      question_id: f.question_id,
-      prompt_md: (promptByQid.get(f.question_id) ?? '').slice(0, 200),
-      wrong_answer_md: (f.answer_md ?? '').slice(0, 200),
-      knowledge_ids: f.referenced_knowledge_ids,
-      cause: f.judge
-        ? { primary_category: f.judge.cause.primary_category, user_notes: null as string | null }
-        : null,
-      created_at: Math.floor(f.created_at.getTime() / 1000),
-    }));
+    // Codex P1-B — LEFT JOIN equivalent for legacy `mistake.cause`. POST stores
+    // user-supplied causes on the mistake row without writing a judge event;
+    // reading judge-only would silently drop them.
+    // TODO Step 9: legacy mistake.cause read removed when table drops; user_cause
+    // moves to experimental event (Phase 1c.2).
+    const legacyMistakeRows = await db
+      .select({
+        question_id: mistake.question_id,
+        cause: mistake.cause,
+      })
+      .from(mistake)
+      .where(inArray(mistake.question_id, questionIds))
+      .orderBy(desc(mistake.created_at));
+    const legacyCauseByQid = new Map<string, CauseT | null>();
+    for (const row of legacyMistakeRows) {
+      // First (most recent) wins per question; older mistakes are ignored.
+      if (!legacyCauseByQid.has(row.question_id)) {
+        legacyCauseByQid.set(row.question_id, row.cause);
+      }
+    }
+
+    const rows = fails.map((f) => {
+      let cause: { primary_category: string; user_notes: string | null } | null = null;
+      if (f.judge) {
+        // Judge-event cause wins (AI-attributed or canonical).
+        cause = { primary_category: f.judge.cause.primary_category, user_notes: null };
+      } else {
+        // Fallback: legacy mistake.cause preserves user-supplied causes.
+        const legacy = legacyCauseByQid.get(f.question_id);
+        if (legacy) {
+          cause = {
+            primary_category: legacy.primary_category,
+            user_notes: legacy.user_notes ?? null,
+          };
+        }
+      }
+      return {
+        id: f.attempt_event_id,
+        question_id: f.question_id,
+        prompt_md: (promptByQid.get(f.question_id) ?? '').slice(0, 200),
+        wrong_answer_md: (f.answer_md ?? '').slice(0, 200),
+        knowledge_ids: f.referenced_knowledge_ids,
+        cause,
+        created_at: Math.floor(f.created_at.getTime() / 1000),
+      };
+    });
 
     return Response.json({ rows });
   } catch (err) {
