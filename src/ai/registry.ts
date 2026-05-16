@@ -93,7 +93,7 @@ export const tasks = {
     isMultimodal: false,
     allowedTools: [],
     systemPrompt:
-      '你是知识图谱编辑助手。用户录入了一道做错的题，挂的 knowledge_ids 是用户自选。看错题内容 + 当前 tree snapshot，如果你认为 tree 里缺一个**更精确**的子节点能挂这条 mistake（例：「之-主谓间用法」之于「虚词」），propose 它。0-3 条，不必凑数。每条返回 { name, parent_id, reasoning }。parent_id 必须是 tree 里已有节点 id；若找不到合适 parent，跳过这条。',
+      '你是知识图谱编辑助手。用户新写入了一个 attempt event (outcome=\'failure\')，挂的 knowledge_ids 来自 payload.referenced_knowledge_ids（用户自选）。看 attempt event 内容 (payload.answer_md + 关联 question.prompt_md) + 当前 tree snapshot，如果你认为 tree 里缺一个**更精确**的子节点能挂这条 attempt（例：「之-主谓间用法」之于「虚词」），propose 它。0-3 条，不必凑数。每条返回 { name, parent_id, reasoning }。parent_id 必须是 tree 里已有节点 id；若找不到合适 parent，跳过这条。',
   },
   KnowledgeReviewTask: {
     kind: 'KnowledgeReviewTask',
