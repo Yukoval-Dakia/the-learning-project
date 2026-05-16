@@ -423,6 +423,54 @@ describe('migrateDreamingProposals — propose event (3.D)', () => {
   });
 });
 
+describe('assertJudgmentEmpty — data-assumptions §O2 precheck (3.F)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it("returns ok=true when judgment table is absent (dropped at Step 1.4) — production state", async () => {
+    const db = testDb();
+    const { assertJudgmentEmpty } = await import('./migrate-phase1c1');
+    const result = await assertJudgmentEmpty(db);
+    expect(result.ok).toBe(true);
+    // Discriminated union narrowed; no error field on ok=true branch.
+  });
+
+  it("returns ok=true when judgment table exists but is empty", async () => {
+    const db = testDb();
+    const { sql } = await import('drizzle-orm');
+    // Temporarily recreate the table (it was DROPped at Step 1.4) to exercise
+    // the "empty table" path. Schema is minimal — we only need the table to
+    // exist so SELECT COUNT(*) succeeds with 0 rows.
+    await db.execute(sql.raw(`CREATE TABLE IF NOT EXISTS "judgment" (id text PRIMARY KEY)`));
+    try {
+      const { assertJudgmentEmpty } = await import('./migrate-phase1c1');
+      const result = await assertJudgmentEmpty(db);
+      expect(result.ok).toBe(true);
+    } finally {
+      await db.execute(sql.raw(`DROP TABLE IF EXISTS "judgment"`));
+    }
+  });
+
+  it("returns ok=false with stable error marker when judgment has rows (data-assumptions §O2 violation)", async () => {
+    const db = testDb();
+    const { sql } = await import('drizzle-orm');
+    await db.execute(sql.raw(`CREATE TABLE IF NOT EXISTS "judgment" (id text PRIMARY KEY)`));
+    try {
+      await db.execute(sql.raw(`INSERT INTO "judgment" (id) VALUES ('j_unexpected_001')`));
+      const { assertJudgmentEmpty } = await import('./migrate-phase1c1');
+      const result = await assertJudgmentEmpty(db);
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error('unreachable');
+      // Stable marker for caller-side detection
+      expect(result.error).toMatch(/judgment table/i);
+      expect(result.error).toMatch(/1 row/);
+    } finally {
+      await db.execute(sql.raw(`DROP TABLE IF EXISTS "judgment"`));
+    }
+  });
+});
+
 describe('migrateIngestionSessions — ingestion_session → learning_session (3.E)', () => {
   beforeEach(async () => {
     await resetDb();
