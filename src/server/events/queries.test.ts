@@ -9,7 +9,12 @@ import { event, material_fsrs_state } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import { getFailureAttempts, getJudgeForAttempt } from './queries';
+import {
+  getEventById,
+  getFailureAttempts,
+  getJudgeForAttempt,
+  getRecentReviewEvents,
+} from './queries';
 
 async function seedAttemptEvent(opts: {
   id?: string;
@@ -206,4 +211,134 @@ describe('getJudgeForAttempt', () => {
   void deterministicId;
   void material_fsrs_state;
   void eq;
+});
+
+async function seedReviewEvent(opts: {
+  id?: string;
+  question_id: string;
+  rating?: 'again' | 'hard' | 'good';
+  created_at?: Date;
+}): Promise<string> {
+  const db = testDb();
+  const id = opts.id ?? newId();
+  const rating = opts.rating ?? 'good';
+  const outcome = rating === 'again' ? ('failure' as const) : ('success' as const);
+  await db.insert(event).values({
+    id,
+    session_id: null,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'review',
+    subject_kind: 'question',
+    subject_id: opts.question_id,
+    outcome,
+    payload: {
+      fsrs_rating: rating,
+      fsrs_state_after: {
+        due: new Date('2026-06-01T00:00:00Z').toISOString(),
+        stability: 2,
+        difficulty: 5,
+        elapsed_days: 1,
+        scheduled_days: 3,
+        learning_steps: 0,
+        reps: 1,
+        lapses: 0,
+        state: 'review',
+        last_review: new Date('2026-05-15T00:00:00Z').toISOString(),
+      },
+      user_response_md: null,
+      referenced_knowledge_ids: [],
+    },
+    caused_by_event_id: null,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: opts.created_at ?? new Date(),
+  });
+  return id;
+}
+
+describe('getRecentReviewEvents', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('returns review events on a question ordered desc by created_at', async () => {
+    const db = testDb();
+    const baseTime = new Date('2026-05-01T12:00:00Z');
+    await seedReviewEvent({
+      question_id: 'q1',
+      rating: 'again',
+      created_at: new Date(baseTime.getTime() + 0),
+    });
+    await seedReviewEvent({
+      question_id: 'q1',
+      rating: 'hard',
+      created_at: new Date(baseTime.getTime() + 60_000),
+    });
+    await seedReviewEvent({
+      question_id: 'q1',
+      rating: 'good',
+      created_at: new Date(baseTime.getTime() + 120_000),
+    });
+
+    const results = await getRecentReviewEvents(db, { questionIds: ['q1'] });
+    expect(results).toHaveLength(3);
+    // desc order — newest (good) first
+    expect(results[0].fsrs_rating).toBe('good');
+    expect(results[1].fsrs_rating).toBe('hard');
+    expect(results[2].fsrs_rating).toBe('again');
+  });
+
+  it('honours limit (default 100)', async () => {
+    const db = testDb();
+    for (let i = 0; i < 5; i++) {
+      await seedReviewEvent({
+        question_id: 'q1',
+        rating: 'good',
+        created_at: new Date(Date.now() + i * 1000),
+      });
+    }
+    const results = await getRecentReviewEvents(db, { limit: 2 });
+    expect(results).toHaveLength(2);
+  });
+
+  it('filters by since', async () => {
+    const db = testDb();
+    const cutoff = new Date('2026-05-10T00:00:00Z');
+    await seedReviewEvent({
+      question_id: 'q1',
+      rating: 'good',
+      created_at: new Date('2026-05-09T00:00:00Z'),
+    });
+    await seedReviewEvent({
+      question_id: 'q1',
+      rating: 'hard',
+      created_at: new Date('2026-05-11T00:00:00Z'),
+    });
+    const results = await getRecentReviewEvents(db, { since: cutoff });
+    expect(results).toHaveLength(1);
+    expect(results[0].fsrs_rating).toBe('hard');
+  });
+});
+
+describe('getEventById', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('returns the event when present', async () => {
+    const db = testDb();
+    const id = await seedAttemptEvent({ question_id: 'q1' });
+    const evt = await getEventById(db, id);
+    expect(evt).not.toBeNull();
+    expect(evt?.action).toBe('attempt');
+    expect(evt?.subject_kind).toBe('question');
+    expect(evt?.subject_id).toBe('q1');
+  });
+
+  it('returns null when absent', async () => {
+    const db = testDb();
+    const evt = await getEventById(db, 'nope_no_such_id');
+    expect(evt).toBeNull();
+  });
 });
