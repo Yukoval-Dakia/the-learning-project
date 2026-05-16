@@ -1,7 +1,7 @@
-import { knowledge, source_asset } from '@/db/schema';
+import { event, knowledge, question, source_asset } from '@/db/schema';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import { POST } from './route';
+import { GET, POST } from './route';
 
 // Mock the AI background tasks so tests don't call Anthropic
 vi.mock('@/server/knowledge/propose', () => ({
@@ -241,5 +241,240 @@ describe('POST /api/mistakes', () => {
     await new Promise((r) => setTimeout(r, 50));
     // attribution should NOT be called when cause is provided
     expect(vi.mocked(runAttributionAndWriteJudgeEvent)).not.toHaveBeenCalled();
+  });
+});
+
+// ============================================================================
+// Phase 1c.1 Step 6.G — GET /api/mistakes — list failure attempts projected
+// from event stream. Same back-compat shape as /api/mistakes/recent.
+// ============================================================================
+
+const QUESTION_BASE = {
+  kind: 'short_answer',
+  reference_md: null,
+  knowledge_ids: ['k1'],
+  difficulty: 3,
+  source: 'manual' as const,
+  variant_depth: 0,
+  version: 0,
+};
+
+async function seedQuestion(id: string, prompt_md: string, created_at = new Date()): Promise<void> {
+  const db = testDb();
+  await db.insert(question).values({
+    id,
+    prompt_md,
+    created_at,
+    updated_at: created_at,
+    ...QUESTION_BASE,
+  });
+}
+
+async function seedAttempt(opts: {
+  id: string;
+  question_id: string;
+  outcome?: 'failure' | 'success' | 'partial';
+  answer_md?: string;
+  knowledge_ids?: string[];
+  created_at?: Date;
+}): Promise<void> {
+  const db = testDb();
+  await db.insert(event).values({
+    id: opts.id,
+    session_id: null,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'attempt',
+    subject_kind: 'question',
+    subject_id: opts.question_id,
+    outcome: opts.outcome ?? 'failure',
+    payload: {
+      answer_md: opts.answer_md ?? 'wrong',
+      answer_image_refs: [],
+      referenced_knowledge_ids: opts.knowledge_ids ?? ['k1'],
+    },
+    caused_by_event_id: null,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: opts.created_at ?? new Date(),
+  });
+}
+
+async function seedJudge(opts: { id: string; attempt_event_id: string }): Promise<void> {
+  const db = testDb();
+  await db.insert(event).values({
+    id: opts.id,
+    session_id: null,
+    actor_kind: 'agent',
+    actor_ref: 'attribution',
+    action: 'judge',
+    subject_kind: 'event',
+    subject_id: opts.attempt_event_id,
+    outcome: 'success',
+    payload: {
+      cause: {
+        primary_category: 'concept',
+        secondary_categories: [],
+        analysis_md: 'analysis',
+        confidence: 0.9,
+      },
+      referenced_knowledge_ids: ['k1'],
+    },
+    caused_by_event_id: opts.attempt_event_id,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: new Date(),
+  });
+}
+
+async function getMistakes(qs = ''): Promise<Response> {
+  return GET(new Request(`http://localhost/api/mistakes${qs ? `?${qs}` : ''}`, { method: 'GET' }));
+}
+
+describe('GET /api/mistakes', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('returns failure attempts projected to legacy mistake-shape JSON', async () => {
+    await seedQuestion('q1', 'P'.repeat(300));
+    await seedAttempt({
+      id: 'a1',
+      question_id: 'q1',
+      answer_md: 'W'.repeat(300),
+      knowledge_ids: ['k1', 'k2'],
+    });
+    await seedJudge({ id: 'j1', attempt_event_id: 'a1' });
+
+    const res = await getMistakes();
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      rows: Array<{
+        id: string;
+        question_id: string;
+        prompt_md: string;
+        wrong_answer_md: string;
+        knowledge_ids: string[];
+        cause: { primary_category: string; user_notes: string | null } | null;
+        created_at: number;
+      }>;
+    };
+    expect(body.rows).toHaveLength(1);
+    expect(body.rows[0].id).toBe('a1'); // attempt event id
+    expect(body.rows[0].question_id).toBe('q1');
+    expect(body.rows[0].prompt_md).toHaveLength(200);
+    expect(body.rows[0].wrong_answer_md).toHaveLength(200);
+    expect(body.rows[0].knowledge_ids).toEqual(['k1', 'k2']);
+    expect(body.rows[0].cause).toEqual({ primary_category: 'concept', user_notes: null });
+    expect(typeof body.rows[0].created_at).toBe('number');
+  });
+
+  it('filters by question_id', async () => {
+    await seedQuestion('q1', 'p1');
+    await seedQuestion('q2', 'p2');
+    await seedAttempt({ id: 'a1', question_id: 'q1' });
+    await seedAttempt({ id: 'a2', question_id: 'q2' });
+
+    const res = await getMistakes('question_id=q1');
+    const body = (await res.json()) as { rows: Array<{ question_id: string }> };
+    expect(body.rows).toHaveLength(1);
+    expect(body.rows[0].question_id).toBe('q1');
+  });
+
+  it('filters by since', async () => {
+    await seedQuestion('q_old', 'p_old');
+    await seedQuestion('q_new', 'p_new');
+    await seedAttempt({
+      id: 'a_old',
+      question_id: 'q_old',
+      created_at: new Date('2026-05-09T00:00:00Z'),
+    });
+    await seedAttempt({
+      id: 'a_new',
+      question_id: 'q_new',
+      created_at: new Date('2026-05-11T00:00:00Z'),
+    });
+
+    const res = await getMistakes('since=2026-05-10T00:00:00Z');
+    const body = (await res.json()) as { rows: Array<{ question_id: string }> };
+    expect(body.rows).toHaveLength(1);
+    expect(body.rows[0].question_id).toBe('q_new');
+  });
+
+  it('honours limit (default 50, max 200)', async () => {
+    const t0 = new Date('2026-05-01T00:00:00Z');
+    for (let i = 0; i < 5; i++) {
+      await seedQuestion(`q${i}`, `p${i}`, new Date(t0.getTime() + i * 1000));
+      await seedAttempt({
+        id: `a${i}`,
+        question_id: `q${i}`,
+        created_at: new Date(t0.getTime() + i * 1000),
+      });
+    }
+    const res = await getMistakes('limit=2');
+    const body = (await res.json()) as { rows: unknown[] };
+    expect(body.rows).toHaveLength(2);
+  });
+
+  it('400s on invalid since', async () => {
+    const res = await getMistakes('since=not-a-date');
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('validation_error');
+  });
+
+  it('400s on non-numeric limit', async () => {
+    const res = await getMistakes('limit=banana');
+    expect(res.status).toBe(400);
+  });
+
+  it('returns empty rows when no failures match', async () => {
+    const res = await getMistakes();
+    const body = (await res.json()) as { rows: unknown[] };
+    expect(body.rows).toEqual([]);
+  });
+
+  it('excludes non-failure attempts', async () => {
+    await seedQuestion('q1', 'p1');
+    await seedQuestion('q2', 'p2');
+    await seedAttempt({ id: 'a1', question_id: 'q1', outcome: 'failure' });
+    await seedAttempt({ id: 'a2', question_id: 'q2', outcome: 'success' });
+
+    const res = await getMistakes();
+    const body = (await res.json()) as { rows: Array<{ id: string }> };
+    expect(body.rows.map((r) => r.id)).toEqual(['a1']);
+  });
+
+  // Codex P1-B — POST stores user cause on legacy mistake row only; GET must
+  // project that cause too. End-to-end: POST → GET round-trips the cause.
+  // TODO Step 9: legacy mistake.cause read removed when table drops.
+  it('round-trips user-supplied cause from POST → GET (no judge event needed)', async () => {
+    const db = testDb();
+    const now = new Date();
+    // Seed knowledge — GET-describe doesn't have the POST-describe's beforeEach
+    // hook, so we must do it inline.
+    await db.insert(knowledge).values({
+      id: 'k1',
+      name: 'X',
+      archived_at: null,
+      created_at: now,
+      updated_at: now,
+      ...KNOWLEDGE_BASE,
+    });
+
+    const res = await postMistake(
+      validBody({ cause: { primary_category: 'concept', user_notes: 'note' } }),
+    );
+    expect(res.status).toBe(200);
+
+    const get = await getMistakes();
+    expect(get.status).toBe(200);
+    const body = (await get.json()) as {
+      rows: Array<{ cause: { primary_category: string; user_notes: string | null } | null }>;
+    };
+    expect(body.rows).toHaveLength(1);
+    expect(body.rows[0].cause).not.toBeNull();
+    expect(body.rows[0].cause?.primary_category).toBe('concept');
+    expect(body.rows[0].cause?.user_notes).toBe('note');
   });
 });
