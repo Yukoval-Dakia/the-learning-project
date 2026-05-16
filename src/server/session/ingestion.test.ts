@@ -163,7 +163,7 @@ describe('Ingestion.markExtractionStarted', () => {
 });
 
 describe('Ingestion.applyExtractionResult', () => {
-  it('extracting + structured → extracted + N question_block rows', async () => {
+  it('extracting + structured → extracted + N question_block rows + extract event(success)', async () => {
     const { sessionId, sourceDocId } = await makeSession('extracting');
     await db.transaction((tx) =>
       applyExtractionResult(tx, {
@@ -193,10 +193,24 @@ describe('Ingestion.applyExtractionResult', () => {
       .where(eq(question_block.ingestion_session_id, sessionId));
     expect(blocks).toHaveLength(1);
     expect(blocks[0].layout_quality).toBe('structured');
+
+    // Domain event chained to session_id (ExtractSourceDocument shape)
+    const events = await db.select().from(event).where(eq(event.session_id, sessionId));
+    const ex = events.find((e) => e.action === 'extract');
+    expect(ex).toBeTruthy();
+    expect(ex?.subject_kind).toBe('source_document');
+    expect(ex?.subject_id).toBe(sourceDocId);
+    expect(ex?.actor_kind).toBe('agent');
+    expect(ex?.actor_ref).toBe('tencent_ocr');
+    expect(ex?.outcome).toBe('success');
+    const payload = ex?.payload as { structured_block_ids: string[]; layout_quality: string };
+    expect(payload.structured_block_ids).toEqual([blocks[0].id]);
+    expect(payload.layout_quality).toBe('structured');
+
     await cleanup(sessionId, sourceDocId);
   });
 
-  it('extracting + partial layout → partial + warnings appended', async () => {
+  it('extracting + partial layout → partial + warnings appended + extract event(partial)', async () => {
     const { sessionId, sourceDocId } = await makeSession('extracting', ['existing warn']);
     await db.transaction((tx) =>
       applyExtractionResult(tx, {
@@ -221,6 +235,15 @@ describe('Ingestion.applyExtractionResult', () => {
       .where(eq(learning_session.id, sessionId));
     expect(session[0].status).toBe('partial');
     expect(session[0].warnings).toEqual(['existing warn', 'partial: 7 blanks 5 subs']);
+
+    const events = await db.select().from(event).where(eq(event.session_id, sessionId));
+    const ex = events.find((e) => e.action === 'extract');
+    expect(ex?.outcome).toBe('partial');
+    expect((ex?.payload as { warnings: string[] }).warnings).toEqual([
+      'partial: 7 blanks 5 subs',
+    ]);
+    expect((ex?.payload as { layout_quality: string }).layout_quality).toBe('partial');
+
     await cleanup(sessionId, sourceDocId);
   });
 
@@ -266,7 +289,7 @@ describe('Ingestion.applyExtractionResult', () => {
 });
 
 describe('Ingestion.markExtractionFailed', () => {
-  it('extracting → failed + error_message stored + job_event emitted', async () => {
+  it('extracting → failed + error_message stored + job_event + extract event(failure)', async () => {
     const { sessionId, sourceDocId } = await makeSession('extracting');
     await db.transaction((tx) => markExtractionFailed(tx, sessionId, 'Tencent API down'));
     const session = await db
@@ -283,6 +306,15 @@ describe('Ingestion.markExtractionFailed', () => {
     const fail = jevents.find((e) => e.event_type === 'ingestion.extraction_failed');
     expect(fail).toBeTruthy();
     expect((fail?.payload as { error_message?: string })?.error_message).toBe('Tencent API down');
+
+    const events = await db.select().from(event).where(eq(event.session_id, sessionId));
+    const ex = events.find((e) => e.action === 'extract');
+    expect(ex).toBeTruthy();
+    expect(ex?.outcome).toBe('failure');
+    expect(ex?.actor_ref).toBe('tencent_ocr');
+    expect(ex?.subject_id).toBe(sourceDocId);
+    expect((ex?.payload as { warnings: string[] }).warnings).toEqual(['Tencent API down']);
+    expect((ex?.payload as { structured_block_ids: string[] }).structured_block_ids).toEqual([]);
 
     await cleanup(sessionId, sourceDocId);
   });
@@ -334,6 +366,15 @@ describe('Ingestion.applyRescue', () => {
       .where(eq(learning_session.id, sessionId));
     expect(session[0].status).toBe('partial');
 
+    const events = await db.select().from(event).where(eq(event.session_id, sessionId));
+    const rescueEv = events.find((e) => e.action === 'extract' && e.actor_ref === 'vision_rescue');
+    expect(rescueEv).toBeTruthy();
+    expect(rescueEv?.outcome).toBe('success');
+    expect((rescueEv?.payload as { structured_block_ids: string[] }).structured_block_ids).toEqual([
+      blockId,
+    ]);
+    expect((rescueEv?.payload as { layout_quality: string }).layout_quality).toBe('partial');
+
     await cleanup(sessionId, sourceDocId);
   });
 
@@ -381,6 +422,14 @@ describe('Ingestion.markReviewed', () => {
     await expect(markReviewed(db, sessionId)).rejects.toBeInstanceOf(ApiError);
     await cleanup(sessionId, sourceDocId);
   });
+
+  it('writes no domain event (state-only transition)', async () => {
+    const { sessionId, sourceDocId } = await makeSession('extracted');
+    await markReviewed(db, sessionId);
+    const events = await db.select().from(event).where(eq(event.session_id, sessionId));
+    expect(events).toHaveLength(0);
+    await cleanup(sessionId, sourceDocId);
+  });
 });
 
 describe('Ingestion.commitImport', () => {
@@ -415,6 +464,14 @@ describe('Ingestion.commitImport', () => {
     );
     await cleanup(sessionId, sourceDocId);
   });
+
+  it('writes no domain event (state-only)', async () => {
+    const { sessionId, sourceDocId } = await makeSession('extracted');
+    await db.transaction((tx) => commitImport(tx, sessionId));
+    const events = await db.select().from(event).where(eq(event.session_id, sessionId));
+    expect(events).toHaveLength(0);
+    await cleanup(sessionId, sourceDocId);
+  });
 });
 
 describe('Ingestion.initiateUpload', () => {
@@ -432,6 +489,16 @@ describe('Ingestion.initiateUpload', () => {
     expect(session[0].source_document_id).toBe(sourceDocumentId);
     expect(session[0].source_asset_ids).toEqual(['a1', 'a2']);
     expect(session[0].entrypoint).toBe('vision_single');
+    await cleanup(sessionId, sourceDocumentId);
+  });
+
+  it('writes no domain event (state-only)', async () => {
+    const { sessionId, sourceDocumentId } = await initiateUpload(db, {
+      assetIds: ['a1'],
+      entrypoint: 'vision_paper',
+    });
+    const events = await db.select().from(event).where(eq(event.session_id, sessionId));
+    expect(events).toHaveLength(0);
     await cleanup(sessionId, sourceDocumentId);
   });
 });
