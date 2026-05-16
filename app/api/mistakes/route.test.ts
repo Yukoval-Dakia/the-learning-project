@@ -8,7 +8,7 @@ vi.mock('@/server/knowledge/propose', () => ({
   runProposeAndWrite: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('@/server/knowledge/attribute', () => ({
-  runAttributionAndWrite: vi.fn().mockResolvedValue(undefined),
+  runAttributionAndWriteJudgeEvent: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('@/server/knowledge/tree', () => ({
   loadTreeSnapshot: vi.fn().mockResolvedValue([
@@ -217,9 +217,9 @@ describe('POST /api/mistakes', () => {
 
   it('queues both propose + attribution when cause is null (integration verify via mock counts)', async () => {
     const { runProposeAndWrite } = await import('@/server/knowledge/propose');
-    const { runAttributionAndWrite } = await import('@/server/knowledge/attribute');
+    const { runAttributionAndWriteJudgeEvent } = await import('@/server/knowledge/attribute');
     vi.mocked(runProposeAndWrite).mockClear();
-    vi.mocked(runAttributionAndWrite).mockClear();
+    vi.mocked(runAttributionAndWriteJudgeEvent).mockClear();
 
     const res = await postMistake(validBody({ cause: null }));
     expect(res.status).toBe(200);
@@ -231,8 +231,8 @@ describe('POST /api/mistakes', () => {
   });
 
   it('queues only propose when cause is provided manually', async () => {
-    const { runAttributionAndWrite } = await import('@/server/knowledge/attribute');
-    vi.mocked(runAttributionAndWrite).mockClear();
+    const { runAttributionAndWriteJudgeEvent } = await import('@/server/knowledge/attribute');
+    vi.mocked(runAttributionAndWriteJudgeEvent).mockClear();
 
     const res = await postMistake(
       validBody({ cause: { primary_category: 'memory', user_notes: null } }),
@@ -240,6 +240,6 @@ describe('POST /api/mistakes', () => {
     expect(res.status).toBe(200);
     await new Promise((r) => setTimeout(r, 50));
     // attribution should NOT be called when cause is provided
-    expect(vi.mocked(runAttributionAndWrite)).not.toHaveBeenCalled();
+    expect(vi.mocked(runAttributionAndWriteJudgeEvent)).not.toHaveBeenCalled();
   });
 });
