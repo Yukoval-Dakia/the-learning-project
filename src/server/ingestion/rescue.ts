@@ -6,8 +6,8 @@ import type { Db } from '@/db/client';
 import { question_block, source_asset } from '@/db/schema';
 import { ApiError } from '@/server/http/errors';
 import type { R2Client } from '@/server/r2';
+import { Ingestion } from '@/server/session';
 
-import { applyRescue } from './session';
 import { type VisionBlock, runVisionExtract } from './vision';
 
 export type RescueTier = 2 | 3;
@@ -104,7 +104,7 @@ export async function runRescue(
 
   const structured: StructuredQuestionT = visionBlockToStructured(first);
   await params.db.transaction((tx) =>
-    applyRescue(tx, {
+    Ingestion.applyRescue(tx, {
       sessionId: params.sessionId,
       blockId: params.blockId,
       structured,

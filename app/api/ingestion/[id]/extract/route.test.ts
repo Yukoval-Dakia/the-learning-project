@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { db } from '@/db/client';
-import { ingestion_session, source_document } from '@/db/schema';
+import { event, learning_session, source_document } from '@/db/schema';
 import { startTestWorker } from '../../../../../tests/helpers/worker';
 import { POST as extractRoute } from './route';
 
@@ -31,14 +31,16 @@ describe('POST /api/ingestion/[id]/extract', () => {
       updated_at: now,
       version: 0,
     });
-    await db.insert(ingestion_session).values({
+    await db.insert(learning_session).values({
       id: sessionId,
+      type: 'ingestion',
       source_document_id: sourceDocId,
       source_asset_ids: ['fake_asset'],
       status: 'uploaded',
       entrypoint: 'vision_single',
       error_message: null,
       warnings: [],
+      started_at: now,
       created_at: now,
       updated_at: now,
       version: 0,
@@ -54,11 +56,12 @@ describe('POST /api/ingestion/[id]/extract', () => {
 
     const rows = await db
       .select()
-      .from(ingestion_session)
-      .where(eq(ingestion_session.id, sessionId));
+      .from(learning_session)
+      .where(eq(learning_session.id, sessionId));
     expect(rows[0].status).toBe('queued');
 
-    await db.delete(ingestion_session).where(eq(ingestion_session.id, sessionId));
+    await db.delete(event).where(eq(event.session_id, sessionId));
+    await db.delete(learning_session).where(eq(learning_session.id, sessionId));
     await db.delete(source_document).where(eq(source_document.id, sourceDocId));
   });
 
@@ -74,14 +77,16 @@ describe('POST /api/ingestion/[id]/extract', () => {
       updated_at: now,
       version: 0,
     });
-    await db.insert(ingestion_session).values({
+    await db.insert(learning_session).values({
       id: sessionId,
+      type: 'ingestion',
       source_document_id: sourceDocId,
       source_asset_ids: ['fake_asset'],
       status: 'extracting',
       entrypoint: 'vision_single',
       error_message: null,
       warnings: [],
+      started_at: now,
       created_at: now,
       updated_at: now,
       version: 0,
@@ -92,7 +97,8 @@ describe('POST /api/ingestion/[id]/extract', () => {
     });
     expect(resp.status).toBe(409);
 
-    await db.delete(ingestion_session).where(eq(ingestion_session.id, sessionId));
+    await db.delete(event).where(eq(event.session_id, sessionId));
+    await db.delete(learning_session).where(eq(learning_session.id, sessionId));
     await db.delete(source_document).where(eq(source_document.id, sourceDocId));
   });
 
