@@ -1,12 +1,32 @@
-import type { Db } from '@/db/client';
-import { dreaming_proposal, knowledge } from '@/db/schema';
-import { createId } from '@paralleldrive/cuid2';
+// Phase 1c.1 Step 9.D — event-based knowledge proposal handlers.
+//
+// Pre-Step-9: writeDreamingProposal INSERTed dreaming_proposal rows; accept/
+// dismiss UPDATEd dreaming_proposal.status. Post-Step-9 the legacy table is
+// gone; proposals are events:
+//   - propose_new   → Lane B ProposeKnowledge event (action='propose',
+//                     subject_kind='knowledge', payload={name, parent_id, reasoning})
+//   - reparent / merge / split / archive → experimental:knowledge_<mutation>
+//     events (ExperimentalEvent escape hatch; payload carries mutation body)
+//
+// accept/dismiss flow writes a RateEvent (action='rate', subject_kind='event')
+// chained via caused_by_event_id = propose event id. The mutation apply step
+// (insert/update knowledge rows) happens transactionally with the rate event
+// write to keep accept atomic.
+
+import type { Db, Tx } from '@/db/client';
+import { event, knowledge } from '@/db/schema';
+import { newId } from '@/core/ids';
+import { writeEvent } from '@/server/events/queries';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 
-/**
- * Knowledge mutation payloads — discriminated union on `mutation` field.
- * dreaming_proposal.kind 永远 'knowledge'，具体 mutation 类型在 payload.mutation。
- */
+type DbLike = Db | Tx;
+
+// =============================================================================
+// Mutation payload types (unchanged from pre-Step-9 — UI / KnowledgeReviewTask
+// still emit these shapes; we map propose_new → ProposeKnowledge and the rest
+// to the experimental namespace).
+// =============================================================================
+
 export type ProposeNewPayload = {
   mutation: 'propose_new';
   name: string;
@@ -47,36 +67,99 @@ export type KnowledgeMutationPayload =
   | SplitPayload
   | ArchivePayload;
 
-export interface DreamingProposalRow {
-  id: string;
-  kind: string;
-  payload: unknown;
-  reasoning: string;
-  status: string;
-  proposed_at: Date;
-  decided_at: Date | null;
-}
-
 export interface WriteProposalEntry {
   payload: KnowledgeMutationPayload;
   reasoning: string;
 }
 
-export async function writeDreamingProposal(db: Db, entry: WriteProposalEntry): Promise<string> {
-  const id = createId();
-  const proposedAt = new Date();
-  await db.insert(dreaming_proposal).values({
+// =============================================================================
+// writeKnowledgeProposeEvent — single-point propose-event writer (replaces the
+// legacy writeDreamingProposal). Returns the new event id (which doubles as
+// the proposal id post-Step-9).
+// =============================================================================
+
+export async function writeKnowledgeProposeEvent(
+  db: DbLike,
+  entry: WriteProposalEntry,
+): Promise<string> {
+  const id = newId();
+  const now = new Date();
+  const reasoning = entry.reasoning;
+  if (entry.payload.mutation === 'propose_new') {
+    // Lane B ProposeKnowledge — payload locked to { name, parent_id, reasoning }.
+    // parent_id is required (Lane B forbids null); PR A scope already enforced
+    // parent_id non-null at the apply step; here we surface as a TypeError.
+    if (entry.payload.parent_id === null) {
+      throw new Error(
+        'writeKnowledgeProposeEvent: propose_new with parent_id=null not supported (PR A scope)',
+      );
+    }
+    await writeEvent(db, {
+      id,
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'dreaming',
+      action: 'propose',
+      subject_kind: 'knowledge',
+      // subject_id is a synthetic id of the proposed knowledge node — the row
+      // doesn't exist yet (it's a proposal); accept materialises the row.
+      subject_id: newId(),
+      outcome: 'partial', // 'partial' = pending; 'success' = accepted (set by rate handler)
+      payload: {
+        name: entry.payload.name,
+        parent_id: entry.payload.parent_id,
+        reasoning,
+      },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: now,
+    });
+    return id;
+  }
+
+  // Other mutations (reparent / merge / split / archive) → experimental:knowledge_<mutation>.
+  // The ExperimentalEvent escape hatch accepts any payload record.
+  const action = `experimental:knowledge_${entry.payload.mutation}` as const;
+  const { mutation: _omit, ...rest } = entry.payload;
+  void _omit;
+  await writeEvent(db, {
     id,
-    kind: 'knowledge',
-    payload: entry.payload as Record<string, unknown>,
-    reasoning: entry.reasoning,
-    status: 'pending',
-    proposed_at: proposedAt,
+    session_id: null,
+    actor_kind: 'agent',
+    actor_ref: 'dreaming',
+    action,
+    subject_kind: 'knowledge',
+    // For non-propose_new mutations we have a concrete node_id (or from_id /
+    // into_id) — use the most-natural anchor.
+    subject_id:
+      'node_id' in entry.payload
+        ? entry.payload.node_id
+        : 'into_id' in entry.payload
+          ? entry.payload.into_id
+          : 'from_id' in entry.payload
+            ? entry.payload.from_id
+            : newId(),
+    outcome: 'partial',
+    payload: {
+      ...rest,
+      reasoning,
+    },
+    caused_by_event_id: null,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: now,
   });
   return id;
 }
 
-async function assertParentExists(db: Db, parentId: string): Promise<void> {
+// =============================================================================
+// Tree-mutation appliers — unchanged from pre-Step-9 (operate on `knowledge`
+// rows). Called by accept handler below + by external callers (tests, audit
+// flows).
+// =============================================================================
+
+async function assertParentExists(db: DbLike, parentId: string): Promise<void> {
   const row = (
     await db
       .select({ id: knowledge.id })
@@ -89,25 +172,17 @@ async function assertParentExists(db: Db, parentId: string): Promise<void> {
   }
 }
 
-/**
- * Apply propose_new: insert a new knowledge row.
- * Returns the new node id.
- *
- * PR A scope: only **child** nodes (parent_id !== null). Root creation rejected — would
- * silently default domain to 'wenyan' and bake in single-domain assumption. Phase 2 multi-domain
- * will need an explicit `domain` field on root proposals; lifting this guard then is the right time.
- */
-export async function applyProposeNew(db: Db, payload: ProposeNewPayload): Promise<string> {
+export async function applyProposeNew(db: DbLike, payload: ProposeNewPayload): Promise<string> {
   if (payload.parent_id === null) {
     throw new Error(
       'PR A: propose_new with parent_id=null (root creation) not supported; Phase 2 multi-domain will allow it',
     );
   }
   await assertParentExists(db, payload.parent_id);
-  const newId = createId();
+  const newId_ = newId();
   const now = new Date();
   await db.insert(knowledge).values({
-    id: newId,
+    id: newId_,
     name: payload.name,
     domain: null,
     parent_id: payload.parent_id,
@@ -118,173 +193,10 @@ export async function applyProposeNew(db: Db, payload: ProposeNewPayload): Promi
     updated_at: now,
     version: 0,
   });
-  return newId;
+  return newId_;
 }
 
-export type AcceptResult =
-  | { kind: 'propose_new_applied'; new_node_id: string }
-  | { kind: 'reparent_applied'; node_id: string; new_parent_id: string }
-  | { kind: 'merge_applied'; into_id: string; archived_ids: string[] }
-  | { kind: 'split_applied'; archived_id: string; new_node_ids: string[] }
-  | { kind: 'archive_applied'; node_id: string };
-
-/**
- * Accept proposal: dispatches over all 5 mutation kinds.
- *
- * Runs inside a Drizzle transaction for atomicity.
- */
-export async function acceptProposal(db: Db, proposalId: string): Promise<AcceptResult> {
-  const row = (
-    await db.select().from(dreaming_proposal).where(eq(dreaming_proposal.id, proposalId)).limit(1)
-  )[0];
-  if (!row) {
-    throw new Error(`proposal not found: ${proposalId}`);
-  }
-  if (row.status !== 'pending') {
-    throw new Error(`proposal ${proposalId} is not pending (status=${row.status})`);
-  }
-  const payload = row.payload as KnowledgeMutationPayload;
-
-  switch (payload.mutation) {
-    case 'propose_new':
-      return await acceptProposeNew(db, proposalId, payload);
-    case 'reparent': {
-      const reparentPayload = payload as ReparentPayload;
-      return await acceptHighTier(db, proposalId, async () => {
-        await applyReparent(db, reparentPayload);
-        if (reparentPayload.new_parent_id === null) {
-          throw new Error('reparent payload must have new_parent_id');
-        }
-        return {
-          kind: 'reparent_applied',
-          node_id: reparentPayload.node_id,
-          new_parent_id: reparentPayload.new_parent_id,
-        };
-      });
-    }
-    case 'merge':
-      return await acceptHighTier(db, proposalId, async () => {
-        await applyMerge(db, payload);
-        return {
-          kind: 'merge_applied',
-          into_id: payload.into_id,
-          archived_ids: payload.from_ids,
-        };
-      });
-    case 'split':
-      return await acceptHighTier(db, proposalId, async () => {
-        const newIds = await applySplit(db, payload);
-        return {
-          kind: 'split_applied',
-          archived_id: payload.from_id,
-          new_node_ids: newIds,
-        };
-      });
-    case 'archive':
-      return await acceptHighTier(db, proposalId, async () => {
-        await applyArchive(db, payload);
-        return { kind: 'archive_applied', node_id: payload.node_id };
-      });
-    default: {
-      const _exhaustive: never = payload;
-      void _exhaustive;
-      const kind = (payload as { mutation?: unknown }).mutation;
-      throw new Error(
-        `unknown_mutation: proposal ${proposalId} payload mutation=${JSON.stringify(kind)}`,
-      );
-    }
-  }
-}
-
-async function markProposalStale(db: Db, proposalId: string): Promise<void> {
-  const now = new Date();
-  await db
-    .update(dreaming_proposal)
-    .set({ status: 'stale', decided_at: now })
-    .where(and(eq(dreaming_proposal.id, proposalId), eq(dreaming_proposal.status, 'pending')));
-}
-
-async function acceptHighTier(
-  db: Db,
-  proposalId: string,
-  apply: () => Promise<AcceptResult>,
-): Promise<AcceptResult> {
-  let result: AcceptResult;
-  try {
-    result = await apply();
-  } catch (e) {
-    const msg = (e as Error).message;
-    if (/^stale/i.test(msg)) {
-      await markProposalStale(db, proposalId);
-    }
-    throw e;
-  }
-  const now = new Date();
-  const updated = await db
-    .update(dreaming_proposal)
-    .set({ status: 'accepted', decided_at: now })
-    .where(and(eq(dreaming_proposal.id, proposalId), eq(dreaming_proposal.status, 'pending')));
-  const changes = (updated as { count?: number }).count ?? 0;
-  if (changes !== 1) {
-    throw new Error(`proposal ${proposalId} was concurrently decided`);
-  }
-  return result;
-}
-
-async function acceptProposeNew(
-  db: Db,
-  proposalId: string,
-  payload: ProposeNewPayload,
-): Promise<AcceptResult> {
-  if (payload.parent_id === null) {
-    throw new Error(
-      'PR A: propose_new with parent_id=null (root creation) not supported; Phase 2 multi-domain will allow it',
-    );
-  }
-  await assertParentExists(db, payload.parent_id);
-  const newId = createId();
-  const now = new Date();
-  // Race-safe: use transaction to atomically insert knowledge + update proposal
-  return await db.transaction(async (tx) => {
-    // Check proposal is still pending inside transaction
-    const currentProposal = (
-      await tx
-        .select({ status: dreaming_proposal.status })
-        .from(dreaming_proposal)
-        .where(eq(dreaming_proposal.id, proposalId))
-        .limit(1)
-    )[0];
-    if (!currentProposal || currentProposal.status !== 'pending') {
-      throw new Error(`proposal ${proposalId} was concurrently decided`);
-    }
-    await tx.insert(knowledge).values({
-      id: newId,
-      name: payload.name,
-      domain: null,
-      parent_id: payload.parent_id,
-      merged_from: [],
-      proposed_by_ai: true,
-      approval_status: 'approved',
-      created_at: now,
-      updated_at: now,
-      version: 0,
-    });
-    const updated = await tx
-      .update(dreaming_proposal)
-      .set({ status: 'accepted', decided_at: now })
-      .where(and(eq(dreaming_proposal.id, proposalId), eq(dreaming_proposal.status, 'pending')));
-    const changes = (updated as { count?: number }).count ?? 0;
-    if (changes !== 1) {
-      throw new Error(`proposal ${proposalId} was concurrently decided`);
-    }
-    return { kind: 'propose_new_applied', new_node_id: newId };
-  });
-}
-
-/**
- * Apply reparent: change a node's parent_id under optimistic lock.
- */
-export async function applyReparent(db: Db, payload: ReparentPayload): Promise<void> {
+export async function applyReparent(db: DbLike, payload: ReparentPayload): Promise<void> {
   if (payload.new_parent_id === null) {
     throw new Error(
       'PR B: reparent to root (new_parent_id=null) not supported in Phase 1a single-domain',
@@ -313,10 +225,7 @@ export async function applyReparent(db: Db, payload: ReparentPayload): Promise<v
   }
 }
 
-/**
- * Apply archive: soft-delete a node by setting archived_at + bumping version.
- */
-export async function applyArchive(db: Db, payload: ArchivePayload): Promise<void> {
+export async function applyArchive(db: DbLike, payload: ArchivePayload): Promise<void> {
   const now = new Date();
   const result = await db
     .update(knowledge)
@@ -334,10 +243,7 @@ export async function applyArchive(db: Db, payload: ArchivePayload): Promise<voi
   }
 }
 
-/**
- * Apply split: archive from_id + insert N new children.
- */
-export async function applySplit(db: Db, payload: SplitPayload): Promise<string[]> {
+export async function applySplit(db: DbLike, payload: SplitPayload): Promise<string[]> {
   for (const entry of payload.into) {
     if (entry.parent_id === null) {
       throw new Error(
@@ -347,10 +253,11 @@ export async function applySplit(db: Db, payload: SplitPayload): Promise<string[
     await assertParentExists(db, entry.parent_id);
   }
   const now = new Date();
-  const newIds: string[] = payload.into.map(() => createId());
+  const newIds: string[] = payload.into.map(() => newId());
 
-  return await db.transaction(async (tx) => {
-    // Archive the source node
+  // Drizzle transaction (the API surface uses Db; transaction wrapping below
+  // works for both top-level db and Tx — Tx call is a no-op nested transaction).
+  return await (db as Db).transaction(async (tx) => {
     const archiveResult = await tx
       .update(knowledge)
       .set({ archived_at: now, updated_at: now, version: sql`${knowledge.version} + 1` })
@@ -365,7 +272,6 @@ export async function applySplit(db: Db, payload: SplitPayload): Promise<string[
     if (archiveChanges !== 1) {
       throw new Error(`stale: knowledge ${payload.from_id} version mismatch or already archived`);
     }
-    // Insert new children
     for (let i = 0; i < payload.into.length; i++) {
       const entry = payload.into[i];
       await tx.insert(knowledge).values({
@@ -385,10 +291,7 @@ export async function applySplit(db: Db, payload: SplitPayload): Promise<string[
   });
 }
 
-/**
- * Apply merge: archive all from_ids + push their ids onto into.merged_from JSON array.
- */
-export async function applyMerge(db: Db, payload: MergePayload): Promise<void> {
+export async function applyMerge(db: DbLike, payload: MergePayload): Promise<void> {
   if (payload.from_ids.includes(payload.into_id)) {
     throw new Error(`merge: into_id (${payload.into_id}) cannot also appear in from_ids`);
   }
@@ -399,8 +302,7 @@ export async function applyMerge(db: Db, payload: MergePayload): Promise<void> {
   }
   const now = new Date();
 
-  await db.transaction(async (tx) => {
-    // Check into node exists and is not archived
+  await (db as Db).transaction(async (tx) => {
     const intoRow = (
       await tx
         .select({ id: knowledge.id, merged_from: knowledge.merged_from })
@@ -411,8 +313,6 @@ export async function applyMerge(db: Db, payload: MergePayload): Promise<void> {
     if (!intoRow) {
       throw new Error(`stale: merge into_id ${payload.into_id} not found or archived`);
     }
-
-    // Archive each from_id
     for (const fromId of payload.from_ids) {
       const archiveResult = await tx
         .update(knowledge)
@@ -429,8 +329,6 @@ export async function applyMerge(db: Db, payload: MergePayload): Promise<void> {
         throw new Error(`stale: knowledge ${fromId} version mismatch or already archived`);
       }
     }
-
-    // Append from_ids to into.merged_from using Postgres jsonb concatenation
     const currentMergedFrom = (intoRow.merged_from as string[]) ?? [];
     const newMergedFrom = [...currentMergedFrom, ...payload.from_ids];
     await tx
@@ -444,13 +342,233 @@ export async function applyMerge(db: Db, payload: MergePayload): Promise<void> {
   });
 }
 
-/**
- * Dismiss proposal. Idempotent on already-dismissed.
- */
+// =============================================================================
+// acceptProposal / dismissProposal — read propose event by id, apply mutation
+// (accept) or write rate=dismiss (dismiss). Returns AcceptResult for accept.
+// =============================================================================
+
+export type AcceptResult =
+  | { kind: 'propose_new_applied'; new_node_id: string }
+  | { kind: 'reparent_applied'; node_id: string; new_parent_id: string }
+  | { kind: 'merge_applied'; into_id: string; archived_ids: string[] }
+  | { kind: 'split_applied'; archived_id: string; new_node_ids: string[] }
+  | { kind: 'archive_applied'; node_id: string };
+
+interface ProposeEventRow {
+  id: string;
+  action: string;
+  subject_id: string;
+  payload: Record<string, unknown>;
+}
+
+async function readProposeEvent(db: DbLike, proposalId: string): Promise<ProposeEventRow> {
+  const rows = await db
+    .select({
+      id: event.id,
+      action: event.action,
+      subject_kind: event.subject_kind,
+      subject_id: event.subject_id,
+      payload: event.payload,
+      outcome: event.outcome,
+    })
+    .from(event)
+    .where(eq(event.id, proposalId))
+    .limit(1);
+  const row = rows[0];
+  if (!row) {
+    throw new Error(`proposal not found: ${proposalId}`);
+  }
+  if (row.subject_kind !== 'knowledge') {
+    throw new Error(`proposal ${proposalId} is not a knowledge proposal`);
+  }
+  if (
+    row.action !== 'propose' &&
+    !row.action.startsWith('experimental:knowledge_')
+  ) {
+    throw new Error(
+      `proposal ${proposalId} action '${row.action}' is not a knowledge mutation event`,
+    );
+  }
+  return {
+    id: row.id,
+    action: row.action,
+    subject_id: row.subject_id,
+    payload: row.payload as Record<string, unknown>,
+  };
+}
+
+async function assertNotAlreadyRated(db: DbLike, proposalId: string): Promise<void> {
+  const rows = await db
+    .select({ id: event.id, payload: event.payload })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'rate'),
+        eq(event.subject_kind, 'event'),
+        eq(event.caused_by_event_id, proposalId),
+      ),
+    )
+    .limit(1);
+  if (rows.length > 0) {
+    const r = rows[0].payload as { rating?: string };
+    throw new Error(`proposal ${proposalId} is not pending (rating=${r.rating ?? 'unknown'})`);
+  }
+}
+
+export async function acceptProposal(db: Db, proposalId: string): Promise<AcceptResult> {
+  const propose = await readProposeEvent(db, proposalId);
+  await assertNotAlreadyRated(db, proposalId);
+
+  // Reconstruct mutation payload from event shape
+  const mutationKind: string = propose.action === 'propose'
+    ? 'propose_new'
+    : propose.action.replace(/^experimental:knowledge_/, '');
+  const { reasoning: _r, ...payloadBody } = propose.payload as { reasoning?: string };
+  void _r;
+
+  const apply: KnowledgeMutationPayload = {
+    mutation: mutationKind,
+    ...(payloadBody as Record<string, unknown>),
+  } as KnowledgeMutationPayload;
+
+  let result: AcceptResult;
+  try {
+    switch (apply.mutation) {
+      case 'propose_new': {
+        const newNodeId = await applyProposeNew(db, apply);
+        result = { kind: 'propose_new_applied', new_node_id: newNodeId };
+        break;
+      }
+      case 'reparent': {
+        await applyReparent(db, apply);
+        if (apply.new_parent_id === null) {
+          throw new Error('reparent payload must have new_parent_id');
+        }
+        result = {
+          kind: 'reparent_applied',
+          node_id: apply.node_id,
+          new_parent_id: apply.new_parent_id,
+        };
+        break;
+      }
+      case 'archive': {
+        await applyArchive(db, apply);
+        result = { kind: 'archive_applied', node_id: apply.node_id };
+        break;
+      }
+      case 'merge': {
+        await applyMerge(db, apply);
+        result = {
+          kind: 'merge_applied',
+          into_id: apply.into_id,
+          archived_ids: apply.from_ids,
+        };
+        break;
+      }
+      case 'split': {
+        const newIds = await applySplit(db, apply);
+        result = {
+          kind: 'split_applied',
+          archived_id: apply.from_id,
+          new_node_ids: newIds,
+        };
+        break;
+      }
+      default: {
+        const _exhaustive: never = apply;
+        void _exhaustive;
+        const kind = (apply as { mutation?: unknown }).mutation;
+        throw new Error(
+          `unknown_mutation: proposal ${proposalId} payload mutation=${JSON.stringify(kind)}`,
+        );
+      }
+    }
+  } catch (e) {
+    const msg = (e as Error).message;
+    if (/^stale/i.test(msg)) {
+      // Mirror legacy behaviour: record a rollback rate event on stale apply
+      // so subsequent reads see status='stale' rather than perpetual pending.
+      try {
+        await writeEvent(db, {
+          id: newId(),
+          session_id: null,
+          actor_kind: 'user',
+          actor_ref: 'self',
+          action: 'rate',
+          subject_kind: 'event',
+          subject_id: proposalId,
+          outcome: 'success',
+          payload: { rating: 'rollback' },
+          caused_by_event_id: proposalId,
+          task_run_id: null,
+          cost_micro_usd: null,
+          created_at: new Date(),
+        });
+      } catch (err) {
+        console.warn('acceptProposal: failed to write stale rate event', err);
+      }
+    }
+    throw e;
+  }
+
+  // Apply succeeded — write rate=accept event chained to the propose event.
+  await writeEvent(db, {
+    id: newId(),
+    session_id: null,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'rate',
+    subject_kind: 'event',
+    subject_id: proposalId,
+    outcome: 'success',
+    payload: { rating: 'accept' },
+    caused_by_event_id: proposalId,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: new Date(),
+  });
+
+  return result;
+}
+
 export async function dismissProposal(db: Db, proposalId: string): Promise<void> {
-  const decidedAt = new Date();
-  await db
-    .update(dreaming_proposal)
-    .set({ status: 'dismissed', decided_at: decidedAt })
-    .where(and(eq(dreaming_proposal.id, proposalId), eq(dreaming_proposal.status, 'pending')));
+  // Idempotent on already-rated: skip if a rate event exists.
+  const existing = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'rate'),
+        eq(event.subject_kind, 'event'),
+        eq(event.caused_by_event_id, proposalId),
+      ),
+    )
+    .limit(1);
+  if (existing.length > 0) return;
+
+  // Verify the propose event exists before writing the rate event
+  const proposeRows = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(eq(event.id, proposalId))
+    .limit(1);
+  if (proposeRows.length === 0) {
+    throw new Error(`proposal not found: ${proposalId}`);
+  }
+
+  await writeEvent(db, {
+    id: newId(),
+    session_id: null,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'rate',
+    subject_kind: 'event',
+    subject_id: proposalId,
+    outcome: 'success',
+    payload: { rating: 'dismiss' },
+    caused_by_event_id: proposalId,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: new Date(),
+  });
 }
