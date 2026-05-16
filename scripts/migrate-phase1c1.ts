@@ -427,3 +427,36 @@ export async function migrateIngestionSessions(db: DbLike): Promise<void> {
       .onConflictDoNothing({ target: learning_session.id });
   }
 }
+
+/**
+ * 3.G — Top-level orchestrator. Runs all migrate fns in additive order, gated
+ * on the §O2 judgment-empty precheck.
+ *
+ * Idempotency note: each migrate fn uses deterministic IDs (`deterministicId`)
+ * + `onConflictDoNothing` on PK. Re-running is a no-op via the PK conflict
+ * mechanism alone — no separate "already migrated?" SELECT is needed. This
+ * is robust against partial migrations (e.g., crash mid-flight): retrying
+ * picks up where it left off without double-writing.
+ *
+ * Order is somewhat arbitrary (no inter-fn dependencies thanks to additive +
+ * idempotent design), but we run review_events AFTER mistakes since the
+ * fallback path in migrateReviewEvents reads mistakes to project FSRS state.
+ */
+export async function runMigration(
+  db: DbLike,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const precheck = await assertJudgmentEmpty(db);
+  if (!precheck.ok) {
+    // Refuse to proceed — data-assumptions violation. Log + return error;
+    // caller (Step 8 CLI / cron) can exit non-zero on this result.
+    console.warn(`[migrate-phase1c1] aborting: ${precheck.error}`);
+    return precheck;
+  }
+
+  await migrateMistakes(db);
+  await migrateReviewEvents(db);
+  await migrateDreamingProposals(db);
+  await migrateIngestionSessions(db);
+
+  return { ok: true };
+}
