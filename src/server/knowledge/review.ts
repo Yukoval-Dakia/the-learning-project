@@ -78,22 +78,47 @@ export async function streamReviewTask(ctx: StreamReviewTaskCtx): Promise<Respon
   // The `write_proposal` tool dispatches by payload.mutation:
   //   - 'propose_knowledge_edge' → writeEvent (Lane B ProposeKnowledgeEdge).
   //   - anything else → writeDreamingProposal (existing tree-mutation path).
+  // Codex P1-C — the prompt instructs the LLM to call
+  // `write_proposal({mutation, payload, reasoning})` with `mutation` at the top
+  // level. The previous inputSchema only declared `payload + reasoning`, so a
+  // top-level `mutation` was silently dropped — propose_knowledge_edge fell
+  // back to writeDreamingProposal. Accept `mutation` optionally for compat
+  // with the prompt + retain isKnowledgeEdgeMutation(payload) for the legacy
+  // case where the LLM puts the discriminator inside the payload.
   const tools: ToolSet = {
     write_proposal: {
       description:
-        'Propose one knowledge graph mutation. Call once per mutation. payload.mutation distinguishes the kind: tree-shape (propose_new / reparent / merge / split / archive) writes to dreaming_proposal; mesh-shape (propose_knowledge_edge) writes a ProposeKnowledgeEdge event with {from_knowledge_id, to_knowledge_id, relation_type, reasoning}. reasoning must be concrete.',
+        'Propose one knowledge graph mutation. Call once per mutation. mutation discriminates: tree-shape (propose_new / reparent / merge / split / archive) writes to dreaming_proposal; mesh-shape (propose_knowledge_edge) writes a ProposeKnowledgeEdge event with payload={from_knowledge_id, to_knowledge_id, relation_type}. reasoning must be concrete.',
       inputSchema: z.object({
+        mutation: z.string().optional(),
         payload: z.unknown(),
         reasoning: z.string(),
       }),
       execute: async ({
+        mutation,
         payload,
         reasoning,
       }: {
+        mutation?: string;
         payload: unknown;
         reasoning: string;
       }) => {
-        if (isKnowledgeEdgeMutation(payload)) {
+        const isEdgeProposal =
+          mutation === 'propose_knowledge_edge' || isKnowledgeEdgeMutation(payload);
+        if (isEdgeProposal) {
+          // Edge fields may arrive on `payload` (top-level mutation case) OR
+          // baked into payload alongside the legacy `payload.mutation` field.
+          const edgePayload = extractEdgePayload(payload);
+          if (!edgePayload) {
+            // Malformed edge proposal — fall through to dreaming path so we
+            // don't silently swallow it; writeDreamingProposal will surface
+            // a clearer error.
+            const id = await writeDreamingProposal(ctx.db, {
+              payload: payload as KnowledgeMutationPayload,
+              reasoning,
+            });
+            return { proposal_id: id, kind: 'tree_mutation' };
+          }
           const eventId = newId();
           await writeEvent(ctx.db, {
             id: eventId,
@@ -108,9 +133,9 @@ export async function streamReviewTask(ctx: StreamReviewTaskCtx): Promise<Respon
             subject_kind: 'knowledge_edge',
             outcome: 'success',
             payload: {
-              from_knowledge_id: payload.from_knowledge_id,
-              to_knowledge_id: payload.to_knowledge_id,
-              relation_type: payload.relation_type,
+              from_knowledge_id: edgePayload.from_knowledge_id,
+              to_knowledge_id: edgePayload.to_knowledge_id,
+              relation_type: edgePayload.relation_type,
               reasoning,
             },
             created_at: new Date(),
@@ -163,4 +188,28 @@ function isKnowledgeEdgeMutation(payload: unknown): payload is KnowledgeEdgeMuta
     typeof p.to_knowledge_id === 'string' &&
     typeof p.relation_type === 'string'
   );
+}
+
+/**
+ * Extracts edge fields from either shape:
+ *   1) top-level mutation case: payload = { from_knowledge_id, to_knowledge_id, relation_type }
+ *   2) legacy case: payload = { mutation: 'propose_knowledge_edge', from_knowledge_id, ... }
+ */
+function extractEdgePayload(
+  payload: unknown,
+): { from_knowledge_id: string; to_knowledge_id: string; relation_type: string } | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  const p = payload as Record<string, unknown>;
+  if (
+    typeof p.from_knowledge_id === 'string' &&
+    typeof p.to_knowledge_id === 'string' &&
+    typeof p.relation_type === 'string'
+  ) {
+    return {
+      from_knowledge_id: p.from_knowledge_id,
+      to_knowledge_id: p.to_knowledge_id,
+      relation_type: p.relation_type,
+    };
+  }
+  return null;
 }
