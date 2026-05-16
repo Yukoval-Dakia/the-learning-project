@@ -43,6 +43,13 @@
       "when": 1778866159726,
       "tag": "0005_phase1c1_event_payload_gin_and_mastery_view",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1778917621778,
+      "tag": "0006_drop_legacy_tables",
+      "breakpoints": true
     }
   ]
 }

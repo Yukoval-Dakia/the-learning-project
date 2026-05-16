@@ -1,17 +1,15 @@
+// Phase 1c.1 Step 9.J — schema.test trimmed: tests for dropped tables
+// (Mistake / ReviewEvent / IngestionSession / DreamingProposal) removed.
+// Surviving tests cover the schemas that still exist post-DROP.
+
 import { describe, expect, it } from 'vitest';
 import {
   CauseCategory,
-  DreamingProposal,
   FsrsState,
-  IngestionSession,
   KnowledgeInsert,
   LearningItemInsert,
-  Mistake,
-  MistakeInsert,
   QuestionBlock,
   QuestionBlockInsert,
-  ReviewEvent,
-  ReviewEventInsert,
   SourceAsset,
 } from './index';
 
@@ -30,50 +28,6 @@ describe('schema generated from drizzle', () => {
   it('CauseCategory rejects unknown category', () => {
     const result = CauseCategory.safeParse('not_a_real_category');
     expect(result.success).toBe(false);
-  });
-
-  it('Mistake parses with typed cause field', () => {
-    const result = Mistake.safeParse({
-      id: 'm1',
-      question_id: 'q1',
-      wrong_answer_md: null,
-      wrong_answer_image_refs: [],
-      source: 'manual',
-      source_ref: null,
-      knowledge_ids: [],
-      cause: {
-        primary_category: 'concept',
-        secondary_categories: [],
-        ai_analysis_md: '理解偏差',
-        user_edited: false,
-      },
-      fsrs_state: null,
-      variants: [],
-      variants_generated_count: 0,
-      variants_max: 3,
-      status: 'active',
-      archived_reason: null,
-      archived_at: null,
-      deleted_at: null,
-      delete_reason: null,
-      created_at: new Date(),
-      updated_at: new Date(),
-      version: 0,
-    });
-    if (!result.success) console.error(result.error.format());
-    expect(result.success).toBe(true);
-  });
-
-  it('MistakeInsert accepts insert payload (no timestamps required for defaulted fields)', () => {
-    const result = MistakeInsert.safeParse({
-      id: 'm1',
-      question_id: 'q1',
-      source: 'manual',
-      created_at: new Date(),
-      updated_at: new Date(),
-    });
-    if (!result.success) console.error(result.error.format());
-    expect(result.success).toBe(true);
   });
 
   it('LearningItemInsert accepts minimal payload', () => {
@@ -96,32 +50,6 @@ describe('schema generated from drizzle', () => {
       parent_id: 'k_root',
       created_at: new Date(),
       updated_at: new Date(),
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it('DreamingProposal Select rejects unknown status', () => {
-    const result = DreamingProposal.safeParse({
-      id: 'p1',
-      kind: 'quiz',
-      payload: {},
-      reasoning: 'x',
-      status: 'bogus_status',
-      proposed_at: new Date(),
-      decided_at: null,
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it('DreamingProposal accepts status=stale', () => {
-    const result = DreamingProposal.safeParse({
-      id: 'p1',
-      kind: 'knowledge',
-      payload: '{}',
-      reasoning: 'r',
-      status: 'stale',
-      proposed_at: new Date(1700000000 * 1000),
-      decided_at: new Date(1700001000 * 1000),
     });
     expect(result.success).toBe(true);
   });
@@ -222,21 +150,6 @@ describe('schema generated from drizzle', () => {
     }
   });
 
-  it('IngestionSession rejects unknown status', () => {
-    const result = IngestionSession.safeParse({
-      id: 'sess_1',
-      source_document_id: null,
-      source_asset_ids: [],
-      status: 'bogus',
-      entrypoint: 'vision_single',
-      error_message: null,
-      created_at: new Date(),
-      updated_at: new Date(),
-      version: 0,
-    });
-    expect(result.success).toBe(false);
-  });
-
   it('FsrsState accepts ts-fsrs Card-aligned shape', () => {
     const result = FsrsState.safeParse({
       due: new Date(1700000000 * 1000),
@@ -282,48 +195,5 @@ describe('schema generated from drizzle', () => {
       expect(result.data.due).toBeInstanceOf(Date);
       expect(result.data.last_review).toBeInstanceOf(Date);
     }
-  });
-
-  it('ReviewEventInsert accepts a first-review entry (before=null)', () => {
-    const result = ReviewEventInsert.safeParse({
-      id: 'rev_1',
-      mistake_id: 'm1',
-      rating: 'again',
-      response_md: null,
-      latency_ms: 5000,
-      fsrs_state_before: null,
-      fsrs_state_after: {
-        due: new Date().toISOString(),
-        stability: 0.4,
-        difficulty: 5,
-        elapsed_days: 0,
-        scheduled_days: 0,
-        learning_steps: 1,
-        reps: 1,
-        lapses: 1,
-        state: 'learning',
-        last_review: new Date().toISOString(),
-      },
-      due_at_before: null,
-      due_at_next: new Date(),
-      created_at: new Date(),
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it('ReviewEvent rejects unknown rating', () => {
-    const result = ReviewEvent.safeParse({
-      id: 'rev_2',
-      mistake_id: 'm1',
-      rating: 'easy',
-      response_md: null,
-      latency_ms: null,
-      fsrs_state_before: null,
-      fsrs_state_after: {},
-      due_at_before: null,
-      due_at_next: new Date(),
-      created_at: new Date(),
-    });
-    expect(result.success).toBe(false);
   });
 });
