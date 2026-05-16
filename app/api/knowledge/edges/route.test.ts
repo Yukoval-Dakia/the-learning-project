@@ -207,4 +207,19 @@ describe('POST /api/knowledge/edges', () => {
     });
     expect(res.status).toBe(201);
   });
+
+  // Codex P2-H — invalid `created_by` shape (AgentRefLike rejects it) currently
+  // bubbles a raw ZodError → 500 instead of 4xx. Should be a 400 validation_error.
+  it('400s when created_by is the wrong shape (not 500)', async () => {
+    await seedKnowledge(['k1', 'k2']);
+    const res = await postEdge({
+      from_knowledge_id: 'k1',
+      to_knowledge_id: 'k2',
+      relation_type: 'related_to',
+      created_by: { kind: 'agent', task: 'x' }, // object — AgentRefLike accepts user|string only
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('validation_error');
+  });
 });

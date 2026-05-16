@@ -136,8 +136,17 @@ export async function createKnowledgeEdge(
 
   // 2) created_by defaults to 'user' (single-user assumption per ADR-0007);
   //    AgentRef shape passes through unchanged for AI-generated edges.
+  //    Codex P2-H: convert ZodError to ApiError(400) so callers get a clean
+  //    `validation_error` response instead of a raw 500.
   const createdBy = input.created_by ?? 'user';
-  AgentRefLike.parse(createdBy);
+  const createdByParsed = AgentRefLike.safeParse(createdBy);
+  if (!createdByParsed.success) {
+    throw new ApiError(
+      'validation_error',
+      `invalid created_by: ${createdByParsed.error.issues.map((i) => i.message).join('; ')}`,
+      400,
+    );
+  }
 
   // 3) FK existence: both endpoints must point at non-archived knowledge nodes.
   //    Drizzle's `.references()` only declares FK at DDL; here we surface a
