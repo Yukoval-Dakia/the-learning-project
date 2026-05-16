@@ -6,7 +6,7 @@ import { CauseCategory, QuestionKind } from '@/core/schema/business';
 import { db } from '@/db/client';
 import { knowledge, mistake, question, source_asset } from '@/db/schema';
 import { runTask } from '@/server/ai/runner';
-import { writeEvent } from '@/server/events/queries';
+import { getFailureAttempts, writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { runAttributionAndWriteJudgeEvent } from '@/server/knowledge/attribute';
 import { runProposeAndWrite } from '@/server/knowledge/propose';
@@ -214,6 +214,83 @@ export async function POST(req: Request): Promise<Response> {
       mistake_id: mistakeId,
       propose_task: 'queued' as const,
     });
+  } catch (err) {
+    return errorResponse(err);
+  }
+}
+
+// ----- Phase 1c.1 Step 6.G — GET (event-stream projection) -----
+//
+// GET /api/mistakes?limit=N&since=ISO&question_id=X
+//   → { rows: [{ id, question_id, prompt_md, wrong_answer_md, knowledge_ids,
+//                cause, created_at }] }
+//
+// Same projection / back-compat shape as `/api/mistakes/recent`. Filters:
+//   - limit: default 50, clamped [1, 200]
+//   - since: ISO-8601 timestamp (created_at >= since)
+//   - question_id: restrict to one question's failure attempts
+
+const GetQuerySchema = z.object({
+  limit: z
+    .string()
+    .optional()
+    .refine((s) => s === undefined || /^\d+$/.test(s), {
+      message: 'limit must be a positive integer',
+    }),
+  since: z
+    .string()
+    .optional()
+    .refine((s) => s === undefined || !Number.isNaN(new Date(s).getTime()), {
+      message: 'since must be an ISO-8601 timestamp',
+    }),
+  question_id: z.string().min(1).optional(),
+});
+
+const DEFAULT_LIMIT = 50;
+const MAX_LIMIT = 200;
+
+export async function GET(req: Request): Promise<Response> {
+  try {
+    const url = new URL(req.url);
+    const raw: Record<string, string> = {};
+    for (const [key, value] of url.searchParams.entries()) raw[key] = value;
+    const parsed = GetQuerySchema.safeParse(raw);
+    if (!parsed.success) {
+      const message = parsed.error.issues
+        .map((i) => `${i.path.join('.')}: ${i.message}`)
+        .join('; ');
+      throw new ApiError('validation_error', message, 400);
+    }
+    const limit = Math.min(
+      Math.max(parsed.data.limit ? Number.parseInt(parsed.data.limit, 10) : DEFAULT_LIMIT, 1),
+      MAX_LIMIT,
+    );
+    const since = parsed.data.since ? new Date(parsed.data.since) : undefined;
+    const questionIds = parsed.data.question_id ? [parsed.data.question_id] : undefined;
+
+    const fails = await getFailureAttempts(db, { limit, since, questionIds });
+    if (fails.length === 0) return Response.json({ rows: [] });
+
+    const uniqueQids = [...new Set(fails.map((f) => f.question_id))];
+    const questions = await db
+      .select({ id: question.id, prompt_md: question.prompt_md })
+      .from(question)
+      .where(inArray(question.id, uniqueQids));
+    const promptByQid = new Map(questions.map((q) => [q.id, q.prompt_md]));
+
+    const rows = fails.map((f) => ({
+      id: f.attempt_event_id,
+      question_id: f.question_id,
+      prompt_md: (promptByQid.get(f.question_id) ?? '').slice(0, 200),
+      wrong_answer_md: (f.answer_md ?? '').slice(0, 200),
+      knowledge_ids: f.referenced_knowledge_ids,
+      cause: f.judge
+        ? { primary_category: f.judge.cause.primary_category, user_notes: null as string | null }
+        : null,
+      created_at: Math.floor(f.created_at.getTime() / 1000),
+    }));
+
+    return Response.json({ rows });
   } catch (err) {
     return errorResponse(err);
   }
