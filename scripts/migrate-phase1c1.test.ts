@@ -6,7 +6,7 @@
 // must pass `parseEvent` (verified inside the migrate fn) — this guards against
 // silent drift from Lane B's locked KnownEvent contract.
 
-import { question, mistake, event } from '@/db/schema';
+import { question, mistake, event, review_event, material_fsrs_state } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../tests/helpers/db';
@@ -192,3 +192,126 @@ describe('migrateMistakes — cause bridge (3.B)', () => {
     expect(payload.cause.secondary_categories).toEqual([]);
   });
 });
+
+describe('migrateReviewEvents — review events + FSRS projection (3.C)', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await seedQuestion();
+  });
+
+  function buildFsrsState(due: Date, reps: number) {
+    return {
+      due,
+      stability: 1.5,
+      difficulty: 5.0,
+      elapsed_days: 1,
+      scheduled_days: 2,
+      learning_steps: 0,
+      reps,
+      lapses: 0,
+      state: 'review' as const,
+      last_review: new Date('2026-03-01T00:00:00Z'),
+    };
+  }
+
+  it('emits 3 review events + 1 material_fsrs_state with latest state', async () => {
+    const db = testDb();
+    const mistakeId = 'm_with_reviews';
+    const baseTime = new Date('2026-03-01T00:00:00Z');
+    await db.insert(mistake).values({
+      id: mistakeId,
+      question_id: QUESTION_ID,
+      source: 'manual',
+      knowledge_ids: ['k_topic_a'],
+      cause: null,
+      fsrs_state: null,
+      created_at: baseTime,
+      updated_at: baseTime,
+    });
+
+    const reviews = [
+      { id: 're_001', rating: 'good', day: 1 },
+      { id: 're_002', rating: 'hard', day: 2 },
+      { id: 're_003', rating: 'again', day: 3 },
+    ] as const;
+
+    for (const r of reviews) {
+      const at = new Date(baseTime.getTime() + r.day * 86400000);
+      const due = new Date(at.getTime() + 86400000);
+      await db.insert(review_event).values({
+        id: r.id,
+        mistake_id: mistakeId,
+        rating: r.rating,
+        response_md: `response ${r.id}`,
+        latency_ms: 5000,
+        fsrs_state_before: buildFsrsState(at, r.day - 1),
+        fsrs_state_after: buildFsrsState(due, r.day),
+        due_at_before: at,
+        due_at_next: due,
+        created_at: at,
+      });
+    }
+
+    const { migrateReviewEvents } = await import('./migrate-phase1c1');
+    await migrateReviewEvents(db);
+
+    const reviewEvents = await db.select().from(event);
+    expect(reviewEvents).toHaveLength(3);
+    for (const re of reviewEvents) {
+      expect(re.action).toBe('review');
+      expect(re.subject_kind).toBe('question');
+      expect(re.subject_id).toBe(QUESTION_ID);
+      const payload = re.payload as { fsrs_rating: string; user_response_md: string | null; referenced_knowledge_ids: string[] };
+      expect(payload.referenced_knowledge_ids).toEqual(['k_topic_a']);
+      expect(payload.user_response_md).toMatch(/^response /);
+      // outcome invariant: again→failure, hard/good→success
+      const expectedOutcome = payload.fsrs_rating === 'again' ? 'failure' : 'success';
+      expect(re.outcome).toBe(expectedOutcome);
+    }
+
+    // material_fsrs_state: 1 row keyed at question grain, state from latest review
+    const fsrsStates = await db.select().from(material_fsrs_state);
+    expect(fsrsStates).toHaveLength(1);
+    expect(fsrsStates[0].subject_kind).toBe('question');
+    expect(fsrsStates[0].subject_id).toBe(QUESTION_ID);
+    expect(fsrsStates[0].last_review_event_id).toBe(deterministicIdHelper('evt_review', 're_003'));
+    // due_at = latest state.due (day 4)
+    expect(fsrsStates[0].due_at).toEqual(new Date(baseTime.getTime() + 4 * 86400000));
+  });
+
+  it('fallback: mistake.fsrs_state with ZERO review_events → material_fsrs_state from mistake', async () => {
+    const db = testDb();
+    const mistakeId = 'm_fsrs_only';
+    const created = new Date('2026-03-05T00:00:00Z');
+    const due = new Date('2026-03-06T00:00:00Z');
+    await db.insert(mistake).values({
+      id: mistakeId,
+      question_id: QUESTION_ID,
+      source: 'manual',
+      knowledge_ids: [],
+      cause: null,
+      fsrs_state: buildFsrsState(due, 0),
+      created_at: created,
+      updated_at: created,
+    });
+
+    const { migrateReviewEvents } = await import('./migrate-phase1c1');
+    await migrateReviewEvents(db);
+
+    // No review events emitted (no review_events to migrate)
+    const reviewEvents = await db.select().from(event);
+    expect(reviewEvents).toHaveLength(0);
+
+    // Fallback FSRS state written from mistake.fsrs_state
+    const fsrsStates = await db.select().from(material_fsrs_state);
+    expect(fsrsStates).toHaveLength(1);
+    expect(fsrsStates[0].subject_id).toBe(QUESTION_ID);
+    expect(fsrsStates[0].last_review_event_id).toBeNull();
+    expect(fsrsStates[0].due_at).toEqual(due);
+  });
+});
+
+// Hoisted helper for the tests' deterministic ID matcher (matches src/core/ids.ts)
+function deterministicIdHelper(prefix: string, sourceId: string): string {
+  return `${prefix}_${sourceId}`;
+}

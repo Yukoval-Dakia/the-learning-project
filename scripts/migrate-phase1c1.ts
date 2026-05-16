@@ -126,3 +126,140 @@ export async function migrateMistakes(db: DbLike): Promise<void> {
     }
   }
 }
+
+import { material_fsrs_state, review_event } from '@/db/schema';
+import { eq } from 'drizzle-orm';
+
+/**
+ * 3.C — Migrate `review_event` rows into `event(action='review')` and project
+ * the latest per-question state into `material_fsrs_state`.
+ *
+ * Algorithm:
+ *   1. JOIN review_event ↔ mistake to recover question_id + knowledge_ids
+ *      (review_event.mistake_id, not question_id directly).
+ *   2. Emit one `event(action='review')` per review_event with deterministic
+ *      ID `evt_review_<review_event.id>`.
+ *   3. Group by question_id, take MAX(created_at) review → write
+ *      `material_fsrs_state` keyed at question grain.
+ *   4. Fallback: for mistakes with `fsrs_state IS NOT NULL` but ZERO
+ *      review_events, project `mistake.fsrs_state` directly with
+ *      `last_review_event_id: null`.
+ *
+ * Note: Lane B `ReviewOnQuestion` intentionally drops
+ * `fsrs_state_before / due_at_before / due_at_next / latency_ms` — they live in
+ * the legacy `review_event` table for forensics (Step 9 drops it).
+ */
+export async function migrateReviewEvents(db: DbLike): Promise<void> {
+  // JOIN review_event ↔ mistake to recover question_id + knowledge_ids.
+  // Drizzle query API doesn't expose a typed select with JOIN cleanly across
+  // mixed jsonb types; raw .innerJoin in select chain is the canonical pattern.
+  const reviews = await db
+    .select({
+      review: review_event,
+      question_id: mistake.question_id,
+      knowledge_ids: mistake.knowledge_ids,
+    })
+    .from(review_event)
+    .innerJoin(mistake, eq(review_event.mistake_id, mistake.id));
+
+  // (1) + (2): emit one review event per row.
+  for (const row of reviews) {
+    const r = row.review;
+    const evtId = deterministicId('evt_review', r.id);
+    // outcome invariant: again→failure, hard/good→success
+    const outcome = r.rating === 'again' ? ('failure' as const) : ('success' as const);
+    const reviewEvent = {
+      id: evtId,
+      session_id: null,
+      actor_kind: 'user' as const,
+      actor_ref: 'self',
+      action: 'review' as const,
+      subject_kind: 'question' as const,
+      subject_id: row.question_id,
+      outcome,
+      payload: {
+        fsrs_rating: r.rating as 'again' | 'hard' | 'good',
+        fsrs_state_after: r.fsrs_state_after,
+        user_response_md: r.response_md ?? null,
+        referenced_knowledge_ids: row.knowledge_ids ?? [],
+      },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: r.created_at,
+    };
+
+    parseEvent({
+      actor_kind: reviewEvent.actor_kind,
+      actor_ref: reviewEvent.actor_ref,
+      action: reviewEvent.action,
+      subject_kind: reviewEvent.subject_kind,
+      subject_id: reviewEvent.subject_id,
+      outcome: reviewEvent.outcome,
+      payload: reviewEvent.payload,
+    });
+
+    await db.insert(event).values(reviewEvent).onConflictDoNothing({ target: event.id });
+  }
+
+  // (3): group by question_id, project the latest review into material_fsrs_state.
+  // Build the projection in JS (clearer than SQL window functions for fixture sizes):
+  const latestByQuestion = new Map<string, { review: typeof review_event.$inferSelect; question_id: string }>();
+  for (const row of reviews) {
+    const prev = latestByQuestion.get(row.question_id);
+    if (!prev || row.review.created_at > prev.review.created_at) {
+      latestByQuestion.set(row.question_id, { review: row.review, question_id: row.question_id });
+    }
+  }
+
+  for (const { review: latest, question_id } of latestByQuestion.values()) {
+    const fsrsRow = {
+      id: deterministicId('fsrs', question_id),
+      subject_kind: 'question',
+      subject_id: question_id,
+      state: latest.fsrs_state_after,
+      due_at: latest.due_at_next,
+      last_review_event_id: deterministicId('evt_review', latest.id),
+      updated_at: latest.created_at,
+    };
+    await db
+      .insert(material_fsrs_state)
+      .values(fsrsRow)
+      .onConflictDoNothing({ target: material_fsrs_state.id });
+  }
+
+  // (4): fallback — mistakes with fsrs_state but ZERO review_events.
+  // Pick mistakes with non-null fsrs_state, NOT referenced by any review_event.
+  // Use the drizzle typed select so timestamps come back as Date (raw `execute`
+  // returns ISO strings under postgres-js, which then fail drizzle's Date
+  // serializer on the subsequent insert).
+  const allMistakesWithFsrs = await db.select().from(mistake);
+  const reviewedMistakeIds = new Set(
+    (await db.select({ mistake_id: review_event.mistake_id }).from(review_event)).map(
+      (r) => r.mistake_id,
+    ),
+  );
+  const fallbackMistakes = allMistakesWithFsrs.filter(
+    (m) => m.fsrs_state !== null && !reviewedMistakeIds.has(m.id),
+  );
+
+  for (const m of fallbackMistakes) {
+    // mistake.fsrs_state is $type<FsrsStateT>; due is a Date | ISO string after
+    // jsonb roundtrip — coerce to Date for the timestamp column.
+    const state = m.fsrs_state as { due: string | Date };
+    const dueValue = state.due instanceof Date ? state.due : new Date(state.due);
+    const fsrsRow = {
+      id: deterministicId('fsrs', m.question_id),
+      subject_kind: 'question',
+      subject_id: m.question_id,
+      state: m.fsrs_state as typeof material_fsrs_state.$inferInsert.state,
+      due_at: dueValue,
+      last_review_event_id: null,
+      updated_at: m.created_at,
+    };
+    await db
+      .insert(material_fsrs_state)
+      .values(fsrsRow)
+      .onConflictDoNothing({ target: material_fsrs_state.id });
+  }
+}
