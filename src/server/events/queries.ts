@@ -271,5 +271,79 @@ export async function getEventById(db: DbLike, id: string): Promise<EventT | nul
   });
 }
 
+// ============================================================================
+// writeEvent — single-owner INSERT path (ADR-0005).
+// ============================================================================
+
+export interface WriteEventInput {
+  id: string;
+  session_id?: string | null;
+  actor_kind: string;
+  actor_ref: string;
+  action: string;
+  subject_kind: string;
+  subject_id: string;
+  outcome?: string | null;
+  payload: unknown;
+  caused_by_event_id?: string | null;
+  task_run_id?: string | null;
+  cost_micro_usd?: number | null;
+  created_at?: Date;
+}
+
+/**
+ * The single INSERT path for `event` rows. parseEvent() validates the row
+ * matches a KnownEvent or experimental:* shape before writing — failures throw,
+ * never silently swallowed. Per ADR-0005, no other module should call
+ * `db.insert(event)` directly.
+ *
+ * Idempotency: PK conflict do-nothing means re-running with the same id is
+ * safe. When a conflict happens we fetch the existing row's id (which equals
+ * the caller's id) so callers don't need to special-case the "did nothing" path.
+ * First write wins — second write does NOT overwrite payload.
+ */
+export async function writeEvent(db: DbLike, input: WriteEventInput): Promise<string> {
+  // parseEvent on a normalised view — Lane B's discriminated union locks
+  // action/subject/outcome/payload. Envelope fields (id, session_id, created_at,
+  // etc.) live on the DB row but outside Lane B's contract, so they're not
+  // included in the parse input.
+  parseEvent({
+    actor_kind: input.actor_kind,
+    actor_ref: input.actor_ref,
+    action: input.action,
+    subject_kind: input.subject_kind,
+    subject_id: input.subject_id,
+    outcome: input.outcome,
+    payload: input.payload,
+    caused_by_event_id: input.caused_by_event_id ?? undefined,
+    task_run_id: input.task_run_id ?? undefined,
+    cost_micro_usd: input.cost_micro_usd ?? undefined,
+  });
+
+  await db
+    .insert(event)
+    .values({
+      id: input.id,
+      session_id: input.session_id ?? null,
+      actor_kind: input.actor_kind,
+      actor_ref: input.actor_ref,
+      action: input.action,
+      subject_kind: input.subject_kind,
+      subject_id: input.subject_id,
+      outcome: input.outcome ?? null,
+      payload: input.payload as Record<string, unknown>,
+      caused_by_event_id: input.caused_by_event_id ?? null,
+      task_run_id: input.task_run_id ?? null,
+      cost_micro_usd: input.cost_micro_usd ?? null,
+      created_at: input.created_at ?? new Date(),
+    })
+    .onConflictDoNothing({ target: event.id });
+
+  // Drizzle's onConflictDoNothing returns an empty result on no-op. The caller's
+  // id IS the row's id (deterministic or assigned), so return it directly.
+  // First write wins — semantics documented at fn-doc.
+  return input.id;
+}
+
 // suppress unused-import warning at module level (kept for future expansion)
 void sql;

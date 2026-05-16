@@ -14,6 +14,7 @@ import {
   getFailureAttempts,
   getJudgeForAttempt,
   getRecentReviewEvents,
+  writeEvent,
 } from './queries';
 
 async function seedAttemptEvent(opts: {
@@ -340,5 +341,95 @@ describe('getEventById', () => {
     const db = testDb();
     const evt = await getEventById(db, 'nope_no_such_id');
     expect(evt).toBeNull();
+  });
+});
+
+describe('writeEvent', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('parses + inserts a valid attempt event; returns the id', async () => {
+    const db = testDb();
+    const id = newId();
+    const created_at = new Date();
+    const returnedId = await writeEvent(db, {
+      id,
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: 'q1',
+      outcome: 'failure',
+      payload: {
+        answer_md: 'wrong',
+        answer_image_refs: [],
+        referenced_knowledge_ids: [],
+      },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at,
+    });
+    expect(returnedId).toBe(id);
+    const rows = await db.select().from(event).where(eq(event.id, id));
+    expect(rows).toHaveLength(1);
+  });
+
+  it('throws on invalid event payload (parseEvent guard)', async () => {
+    const db = testDb();
+    await expect(
+      writeEvent(db, {
+        id: newId(),
+        session_id: null,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'attempt',
+        subject_kind: 'question',
+        subject_id: 'q1',
+        // INVALID — outcome 'bogus' not in enum
+        outcome: 'bogus',
+        payload: {
+          answer_md: 'x',
+          answer_image_refs: [],
+          referenced_knowledge_ids: [],
+        },
+        created_at: new Date(),
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('is idempotent under duplicate id (returns existing id, no second row)', async () => {
+    const db = testDb();
+    const id = deterministicId('evt_test', 'fixed1');
+    const base = {
+      id,
+      session_id: null,
+      actor_kind: 'user' as const,
+      actor_ref: 'self',
+      action: 'attempt' as const,
+      subject_kind: 'question' as const,
+      subject_id: 'q1',
+      outcome: 'failure' as const,
+      payload: {
+        answer_md: 'wrong',
+        answer_image_refs: [],
+        referenced_knowledge_ids: [],
+      },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: new Date('2026-05-01T00:00:00Z'),
+    };
+    const id1 = await writeEvent(db, base);
+    const id2 = await writeEvent(db, { ...base, payload: { ...base.payload, answer_md: 'different' } });
+    expect(id1).toBe(id);
+    expect(id2).toBe(id);
+    const rows = await db.select().from(event).where(eq(event.id, id));
+    expect(rows).toHaveLength(1);
+    // First write wins (no overwrite on conflict)
+    const payload = rows[0].payload as { answer_md: string };
+    expect(payload.answer_md).toBe('wrong');
   });
 });
