@@ -15,8 +15,8 @@
 //   - writeEvent(db, eventObj) — single INSERT path; calls parseEvent() before INSERT;
 //     idempotent via PK conflict do-nothing.
 
-import { parseEvent } from '@/core/schema/event';
-import type { CauseSchemaT } from '@/core/schema/event/blocks';
+import { type EventT, parseEvent } from '@/core/schema/event';
+import type { CauseSchemaT, FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
@@ -172,6 +172,103 @@ export async function getJudgeForAttempt(
     referenced_knowledge_ids: jPayload.referenced_knowledge_ids ?? [],
     created_at: j.created_at,
   };
+}
+
+// ============================================================================
+// ReviewEvent — FSRS review log view.
+// ============================================================================
+
+export type ReviewEvent = {
+  review_event_id: string;
+  question_id: string;
+  fsrs_rating: 'again' | 'hard' | 'good';
+  fsrs_state_after: FsrsStateSchemaT;
+  user_response_md: string | null;
+  referenced_knowledge_ids: string[];
+  outcome: 'success' | 'failure';
+  created_at: Date;
+};
+
+export interface GetRecentReviewEventsOpts {
+  limit?: number;
+  questionIds?: string[];
+  since?: Date;
+}
+
+const DEFAULT_REVIEW_EVENTS_LIMIT = 100;
+
+/**
+ * Returns review events ordered desc by created_at. Filters by questionIds /
+ * since when provided. action='review' AND subject_kind='question' only — review
+ * action on other materials may come in future phases.
+ */
+export async function getRecentReviewEvents(
+  db: DbLike,
+  opts: GetRecentReviewEventsOpts = {},
+): Promise<ReviewEvent[]> {
+  const limit = opts.limit ?? DEFAULT_REVIEW_EVENTS_LIMIT;
+  const conditions = [eq(event.action, 'review'), eq(event.subject_kind, 'question')];
+  if (opts.questionIds && opts.questionIds.length > 0) {
+    conditions.push(inArray(event.subject_id, opts.questionIds));
+  }
+  if (opts.since) {
+    conditions.push(gte(event.created_at, opts.since));
+  }
+  const rows = await db
+    .select()
+    .from(event)
+    .where(and(...conditions))
+    .orderBy(desc(event.created_at))
+    .limit(limit);
+
+  return rows.map((r) => {
+    const payload = r.payload as {
+      fsrs_rating: 'again' | 'hard' | 'good';
+      fsrs_state_after: FsrsStateSchemaT;
+      user_response_md: string | null;
+      referenced_knowledge_ids: string[];
+    };
+    return {
+      review_event_id: r.id,
+      question_id: r.subject_id,
+      fsrs_rating: payload.fsrs_rating,
+      fsrs_state_after: payload.fsrs_state_after,
+      user_response_md: payload.user_response_md ?? null,
+      referenced_knowledge_ids: payload.referenced_knowledge_ids ?? [],
+      // review outcome invariant: again→failure, hard/good→success
+      outcome: (r.outcome as 'success' | 'failure') ?? 'success',
+      created_at: r.created_at,
+    };
+  });
+}
+
+// ============================================================================
+// getEventById — single event lookup (caused_by chain navigation).
+// ============================================================================
+
+/**
+ * Fetches one event by id and returns the parsed KnownEvent shape (validated
+ * via parseEvent — failures throw, never silently swallowed). Returns null
+ * when the row is absent. The DB row's id / session_id / created_at envelope
+ * fields are stripped here; parseEvent only validates Lane B's user payload
+ * shape (action / subject / outcome / payload + base optional fields).
+ */
+export async function getEventById(db: DbLike, id: string): Promise<EventT | null> {
+  const rows = await db.select().from(event).where(eq(event.id, id)).limit(1);
+  const row = rows[0];
+  if (!row) return null;
+  return parseEvent({
+    actor_kind: row.actor_kind,
+    actor_ref: row.actor_ref,
+    action: row.action,
+    subject_kind: row.subject_kind,
+    subject_id: row.subject_id,
+    outcome: row.outcome,
+    payload: row.payload,
+    caused_by_event_id: row.caused_by_event_id ?? undefined,
+    task_run_id: row.task_run_id ?? undefined,
+    cost_micro_usd: row.cost_micro_usd ?? undefined,
+  });
 }
 
 // suppress unused-import warning at module level (kept for future expansion)
