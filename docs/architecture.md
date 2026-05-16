@@ -6,7 +6,7 @@
 
 ## 一、知识点图谱（Knowledge Graph）
 
-底层数据结构。每个知识点是一个节点，节点之间有「前置 / 关联 / 同属」三种边。
+底层数据结构。每个知识点是一个节点（`knowledge` 表 + `parent_id` 树骨架），节点之间用 `knowledge_edge` 表承载五种类型化横向边（per ADR-0010）：`prerequisite` / `related_to` / `contrasts_with` / `applied_in` / `derived_from`，外加 `experimental:*` 命名空间用于新关系探索。
 
 每个知识点至少包含：
 - id / 名称 / 所属领域（应试科目 or 兴趣主题）
@@ -102,30 +102,31 @@ Question (统一题库，single source of truth)
 
 ### 5.1 Task 注册
 
-| 任务 | Provider/Model 选择 | 触发 | tool call | 多模态 | 产出 |
-| --- | --- | --- | --- | --- | --- |
-| `VisionExtractTask` | 低成本视觉（CMMMU 选型） | 录入错题图片 → 题面 / LaTeX / 选项 | 否 | 输入 | 题面文本（建 Question） |
-| `VisionAnswerExtractTask` | 同上 | 答案图片 → 文字（pipeline 路径） | 否 | 输入 | 文字 |
-| `AttributionTask` | Sonnet → Haiku 备选 | Mistake 创建时归因 + 挂载知识点 | 是 | — | Mistake.cause + knowledge_ids |
-| `VariantGenTask` | Sonnet + batch | 变式题生成（按 mistake.cause 针对性出题） | 否 | — | 新 Question 实例（source=mistake_variant，draft_status=draft） |
-| `VariantVerifyTask` | 不同 model（如 Opus） + batch | 变式题双 pass 验证 | 否 | — | `{is_valid, failure_reasons[], cause_targeting}` |
-| `QuizGenTask` | Sonnet (+ batch 可选) | embedded check / daily / final / 用户主动 | 否 | — | `Question[]` |
-| `JudgeRouter` | n/a | 答案提交后路由 | 否 | — | judge_kind |
-| `JudgeExactTask` | n/a | exact judge | 否 | — | Judgment |
-| `JudgeKeywordTask` | n/a | keyword judge | 否 | — | Judgment |
-| `JudgeSemanticTask` | Sonnet / Haiku | semantic judge | 否 | — | Judgment |
-| `JudgeRubricTask` | Opus / Sonnet | rubric judge | 否 | — | Judgment + criteria |
-| `JudgeStepsTask` | Sonnet | computation 步骤验证 | 否 | — | Judgment + steps |
-| `JudgeMultimodalTask` | Opus / GPT-5.x (multimodal) | image 答案 + 高 visual_complexity | 否 | 直接 | Judgment |
-| `JudgeFlexibleTask` | Opus / 顶级 reasoning | ai_flexible 兜底 | 否 | 视情况 | Judgment + 详细 CoT |
-| `WeeklyReportTask` | Opus + prompt cache | 周复盘 | 是 | — | WeeklyReview |
-| `DreamingTask` | Opus + batch + prompt cache | 夜间生产 lane | 是 | — | DreamingProposal |
-| `MaintenanceProposeTask` | Sonnet + batch | 维护 lane 提议 | 是 | — | MaintenanceSuggestion |
-| `NoteGenerateTask` | Sonnet + batch (atomic) | 学习意图触发 | hub 是 | — | note_hub / note_atomic Artifact + 配套 LearningItem 层级 |
-| `NoteVerifyTask` | 不同 model + batch | Note 双 pass 反幻觉 | 否 | — | section.source_tier 标记 |
-| `NoteSectionUpdateTask` | Sonnet | Living note 更新某 section | 否 | — | section diff |
+> **Canonical source**: `src/ai/registry.ts` + `docs/adr/0004-pattern-c-two-type-agent-architecture.md` §"Task 现状"。本节为同步快照（2026-05-16），与 ADR-0004 lines 54-69 对齐。
 
-**命名约定**：`Note*Task` 产出 note_* 类型 Artifact；`Quiz*Task` 与 `Judge*Task` 服务 tool_quiz 子系统；`Variant*Task` 产出新 Question 挂在 Mistake.variants 上。Tool 之间不共享通用 task，每种 tool_kind 自己长自己的。
+**Phase 1 已实装**（5 个，runner + registry 都通）：
+
+| Task | 模型 | 触发 | tool call | 多模态 | 产出 |
+| --- | --- | --- | --- | --- | --- |
+| `AttributionTask` | Sonnet | user action / pg-boss | 是 | — | 错题归因（10 类 cause）+ `ai_analysis_md` |
+| `KnowledgeProposeTask` | Sonnet | user action / pg-boss | 是 | — | 0-3 条 `propose_new` 知识点（挂在合适 parent 下） |
+| `KnowledgeReviewTask` | Sonnet | maintenance | 是 | — | tree mutation propose（reparent / merge / split / archive / propose_new） |
+| `VisionExtractTask` | Haiku | `POST /api/ingestion/[id]/rescue` (manual rescue only after Sub 0c) | 否 | 输入 | bbox blocks |
+| `VisionExtractTaskHeavy` | Sonnet | 同上（heavy manual rescue） | 否 | 输入 | bbox blocks |
+
+**Sub 0d 计划实装**（5 个，Sub 0d plan 当前 DEFERRED，等 Phase 1c.1 / 1c.2 落地后 refresh）：
+
+| Task | 模型 | 触发 | 产出 |
+| --- | --- | --- | --- |
+| `JudgeMistakeTask` | Sonnet | pg-boss | 判题结论 |
+| `VariantGenTask` | Opus | pg-boss | `DreamingProposal kind='variant'` |
+| `DreamingTask` | Opus + Batch | pg-boss cron 每日 02:00 BJT | `DreamingProposal`（多种） |
+| `MaintenanceProposeTask` | Sonnet + Batch | pg-boss cron 每日 | `MaintenanceSuggestion` |
+| `BlockAssemblyTask` | Sonnet | pg-boss | `DreamingProposal kind='block_merge'` |
+
+**与旧 ADR 版本差异**（2026-05-16 audit refresh）：原计划的 `EnrichMistakeTask`（"归因 + 提议 + 知识点关联"）已**拆分**为 `AttributionTask`（归因）+ `KnowledgeProposeTask`（知识点提议）。新增 `KnowledgeReviewTask`（tree maintenance）。`VisionExtract*` 在 ADR-0002 修订（2026-05-11）中改为 "manual rescue tool"（不再作为自动 cascade fallback）。早期文档中提到的 `Quiz*Task` / `Judge*Task`(细分) / `Note*Task` / `Weekly*Task` 在 Phase 1c.1 schema refresh 后形态待定，未进 registry。
+
+**命名约定**：Task 一律 `PascalCase + 'Task'` 后缀；破坏性操作（删题、合并节点）走 Proposal/Suggestion 流程而非直接 tool（per ADR-0004）。
 
 ### 5.2 运行时 Tool Calling
 
