@@ -595,13 +595,18 @@ JudgeTask extends Task {
 **关键模块**：
 - `src/server/boss/{client,handlers,shutdown}.ts` — pg-boss 单例 + handler 注册 + graceful stop
 - `src/server/events/{writer,sse_router,listen_loop,sse_replay}.ts` — job_events + NOTIFY + SSE
-- `src/server/ingestion/session.ts` — IngestionSession 状态机（ADR-0005 single owner）
+- `src/server/session/` — LearningSession 多态模块（ADR-0008 + ADR-0005 演化，single owner）
 - `src/server/ingestion/tencent_mark{,_parser,_errors}.ts` — Mark Agent SDK + parser + 错误分类
 - `src/server/boss/handlers/tencent_ocr_extract.ts` — 生产 OCR async job handler
 
-**录入会话状态机** ([CONTEXT.md](../CONTEXT.md) "录入会话" + [ADR-0005](adr/0005-ingestion-session-single-owner.md))：
+**学习会话 (LearningSession) 多态状态机** (ADR-0008，演化自 ADR-0005；[CONTEXT.md](../CONTEXT.md) "录入会话")：
+
+`learning_session` 表承载 6 种会话类型：`ingestion | review | tutor | explore | create | conversation`。Phase 1c.1 实现前 2 种；余 4 种 enum 占位、行为延后。
+
+每种 type 有独立 status 状态机，由 `src/server/session/` 多态模块内部分支：
 
 ```
+# type='ingestion'（从 ADR-0005 IngestionSession 平移而来）
 uploaded → (enqueueExtraction) → queued
         → (worker markExtractionStarted) → extracting
         → applyExtractionResult         → extracted | partial
@@ -610,9 +615,12 @@ extracted | partial → markReviewed → reviewed
 extracted | partial | reviewed → commitImport → imported (终态)
 failed → enqueueExtraction (retry) → queued
 partial → applyRescue (block-level) → partial（session 不变）
+
+# type='review'（Phase 1c.1 新建最小状态机）
+started → completed | abandoned
 ```
 
-**Single owner invariant** (ADR-0005)：`src/server/ingestion/session.ts` 是 `ingestion_session.status` 唯一可信写入点；route / handler 不允许直接 `db.update(ingestion_session)`。
+**Single owner invariant** (ADR-0005 / ADR-0008)：`src/server/session/` 是 `learning_session.status` 唯一可信写入点；route / handler 不允许直接 `db.update(learning_session)`。per-type Zod 状态机定义见 `src/core/schema/`。
 
 **OCR 抽取层** (ADR-0002 修订)：用 Tencent QuestionMarkAgent (async submit+poll)，**不再 cascade**。Vision Tier 2/3 (haiku / sonnet) 仅作为**用户触发的救援**，走 `/api/ingestion/[id]/rescue`，永不参与自动 fallback。
 
