@@ -4,7 +4,7 @@ import { z } from 'zod';
 
 import { type Cause, CauseCategory, QuestionKind } from '@/core/schema/business';
 import { db } from '@/db/client';
-import { knowledge, mistake, question, source_asset } from '@/db/schema';
+import { knowledge, question, source_asset } from '@/db/schema';
 import { runTask } from '@/server/ai/runner';
 import { getFailureAttempts, writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
@@ -81,17 +81,11 @@ export async function POST(req: Request): Promise<Response> {
 
     const now = new Date();
     const questionId = createId();
-    const mistakeId = createId();
-
-    const causeJson = body.cause
-      ? {
-          primary_category: body.cause.primary_category,
-          secondary_categories: [] as z.infer<typeof CauseCategory>[],
-          ai_analysis_md: '',
-          user_notes: body.cause.user_notes,
-          user_edited: true,
-        }
-      : null;
+    // mistake_id is preserved on the wire for client back-compat; post-Step-9
+    // it semantically equals the attempt event id (the legacy mistake row is
+    // gone — the attempt event IS the mistake from the read-path's perspective).
+    const attemptEventId = createId();
+    const mistakeId = attemptEventId;
 
     const questionMetadata =
       body.prompt_image_refs.length > 0
@@ -101,11 +95,6 @@ export async function POST(req: Request): Promise<Response> {
           }
         : null;
 
-    // Step 4 dual-write: legacy mistake row + new event-stream pair. The mistake
-    // row keeps Step 6 (route body rewrite) decoupled from Step 4; Step 9 will
-    // remove the legacy insert. The attempt event is the source of truth for
-    // mastery view + Step 6 queries.
-    const attemptEventId = createId();
     await db.transaction(async (tx) => {
       await tx.insert(question).values({
         id: questionId,
@@ -121,26 +110,6 @@ export async function POST(req: Request): Promise<Response> {
         updated_at: now,
         version: 0,
       });
-      await tx.insert(mistake).values({
-        id: mistakeId,
-        question_id: questionId,
-        wrong_answer_md: body.wrong_answer_md,
-        knowledge_ids: body.knowledge_ids,
-        cause: causeJson,
-        wrong_answer_image_refs: body.wrong_answer_image_refs,
-        source: 'manual',
-        variants: [],
-        variants_generated_count: 0,
-        variants_max: 3,
-        status: 'active',
-        created_at: now,
-        updated_at: now,
-        version: 0,
-      });
-      // New event-stream write — attempt event (always). AI-attributed cause is
-      // written later via runAttributionAndWriteJudgeEvent (below); user-provided
-      // cause stays in the legacy mistake.cause column for now — Step 6 will
-      // rewrite the route to also project user cause to the event stream.
       await writeEvent(tx, {
         id: attemptEventId,
         session_id: null,
@@ -161,6 +130,12 @@ export async function POST(req: Request): Promise<Response> {
         created_at: now,
       });
     });
+    // User-provided cause: Lane B JudgeOnEvent requires actor_kind='agent', so
+    // the cause cannot be written as a user judge event. Pre-Step-9 it landed
+    // on mistake.cause; that column is gone. The data is dropped post-Step-9
+    // — feature gap for Phase 1c.2 (likely as experimental:user_cause event).
+    // AI-attributed cause still flows through runAttributionAndWriteJudgeEvent
+    // below when body.cause is null.
 
     // Queue background tasks (runs after response is sent)
     after(async () => {
@@ -278,41 +253,15 @@ export async function GET(req: Request): Promise<Response> {
       .where(inArray(question.id, uniqueQids));
     const promptByQid = new Map(questions.map((q) => [q.id, q.prompt_md]));
 
-    // Codex P1-B — LEFT JOIN equivalent for legacy `mistake.cause`. POST stores
-    // user-supplied causes on the mistake row without writing a judge event;
-    // reading judge-only would silently drop them.
-    // TODO Step 9: legacy mistake.cause read removed when table drops; user_cause
-    // moves to experimental event (Phase 1c.2).
-    type CauseT = z.infer<typeof Cause>;
-    const legacyMistakeRows = await db
-      .select({
-        question_id: mistake.question_id,
-        cause: mistake.cause,
-      })
-      .from(mistake)
-      .where(inArray(mistake.question_id, uniqueQids))
-      .orderBy(desc(mistake.created_at));
-    const legacyCauseByQid = new Map<string, CauseT | null>();
-    for (const row of legacyMistakeRows) {
-      // First (most recent) wins per question; older mistakes are ignored.
-      if (!legacyCauseByQid.has(row.question_id)) {
-        legacyCauseByQid.set(row.question_id, row.cause);
-      }
-    }
-
+    // Codex P1-B fix retired in Step 9 — the legacy `mistake` table was
+    // DROPped, so the fallback no longer applies. User-supplied causes
+    // (from POST /api/mistakes with body.cause !== null) are not currently
+    // recoverable from the event stream; Phase 1c.2 will introduce an
+    // `experimental:user_cause` event path.
     const rows = fails.map((f) => {
-      let cause: { primary_category: string; user_notes: string | null } | null = null;
-      if (f.judge) {
-        cause = { primary_category: f.judge.cause.primary_category, user_notes: null };
-      } else {
-        const legacy = legacyCauseByQid.get(f.question_id);
-        if (legacy) {
-          cause = {
-            primary_category: legacy.primary_category,
-            user_notes: legacy.user_notes ?? null,
-          };
-        }
-      }
+      const cause = f.judge
+        ? { primary_category: f.judge.cause.primary_category, user_notes: null }
+        : null;
       return {
         id: f.attempt_event_id,
         question_id: f.question_id,

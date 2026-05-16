@@ -1,6 +1,6 @@
-// Phase 1c.1 (Lane A): event-driven core + knowledge mesh + view + DROPs (judgment, user_appeal,
-// 3 mastery stub columns). Breaking change → major bump.
-export const SCHEMA_VERSION = '2.0';
+// Phase 1c.1 Step 9.J: legacy tables (mistake / review_event / dreaming_proposal /
+// ingestion_session) DROPped — major bump.
+export const SCHEMA_VERSION = '3.0';
 
 // CF Worker free plan caps at 50 subrequests per request. We use 18 D1 SELECTs
 // + a few R2 reads for assets + future-proof headroom. Cap inline assets at 45;
@@ -13,10 +13,11 @@ export const MAX_INLINE_ASSETS = 45;
 // change that adds/removes/renames a table MUST update this array AND bump
 // SCHEMA_VERSION in lockstep.
 //
-// Phase 1c.1 Step 1 (Lane A):
-//   - removed: judgment + user_appeal (DROPped per data-assumptions §O2)
-//   - added: knowledge_edge (ADR-0010), learning_session (ADR-0008), material_fsrs_state
-//     (ADR-0006 v2 FSRS projection), event (ADR-0006 v2 action log)
+// Phase 1c.1 Lane A + Step 9.J:
+//   - removed: judgment + user_appeal (Step 1.4) + mistake + review_event +
+//     dreaming_proposal + ingestion_session (Step 9.J)
+//   - added: knowledge_edge (ADR-0010), learning_session (ADR-0008),
+//     material_fsrs_state (ADR-0006 v2 FSRS projection), event (ADR-0006 v2)
 //   - knowledge_mastery view: NOT in FK_ORDER (views are read-only, not exported)
 //
 // Topological constraints:
@@ -28,19 +29,15 @@ export const FK_ORDER = [
   'knowledge_edge',
   'source_asset',
   'source_document',
-  'ingestion_session',
   'learning_session',
   'question_block',
   'question',
-  'mistake',
-  'review_event',
   'material_fsrs_state',
   'learning_item',
   'completion_evidence',
   'study_log',
   'artifact',
   'answer',
-  'dreaming_proposal',
   'event',
   'tool_call_log',
   'cost_ledger',

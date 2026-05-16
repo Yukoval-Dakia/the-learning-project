@@ -39,15 +39,9 @@ export const SourceDocumentInsert = g.SourceDocumentInsertGenerated;
 export const SourceDocument = g.SourceDocumentSelectGenerated;
 export type SourceDocument = z.infer<typeof SourceDocument>;
 
-export const IngestionSessionInsert = g.IngestionSessionInsertGenerated.extend({
-  status: b.IngestionSessionStatus.nullish(),
-  entrypoint: b.IngestionEntrypoint,
-});
-export const IngestionSession = g.IngestionSessionSelectGenerated.extend({
-  status: b.IngestionSessionStatus,
-  entrypoint: b.IngestionEntrypoint,
-});
-export type IngestionSession = z.infer<typeof IngestionSession>;
+// Phase 1c.1 Step 9.J: legacy `ingestion_session` table DROPped. Sessions now
+// live in `learning_session(type='ingestion')`; Zod schemas for the new shape
+// live in src/core/schema/learning_session.ts (Lane B).
 
 export const QuestionBlockInsert = g.QuestionBlockInsertGenerated.extend({
   page_spans: z.array(PageSpan).min(1).max(8),
@@ -77,35 +71,11 @@ export const Question = g.QuestionSelectGenerated.extend({
 });
 export type Question = z.infer<typeof Question>;
 
-// ---------- Mistake ----------
-export const MistakeInsert = g.MistakeInsertGenerated.extend({
-  source: b.MistakeSource,
-  cause: b.Cause.nullish(),
-  fsrs_state: b.FsrsState.nullish(),
-  variants: z.array(b.MistakeVariant).nullish(),
-  status: b.MistakeStatus.nullish(),
-  archived_reason: z.enum(['mastered', 'obsolete', 'user']).nullish(),
-  delete_reason: z.enum(['user', 'merge', 'duplicate', 'misjudged']).nullish(),
-});
-export const Mistake = g.MistakeSelectGenerated.extend({
-  source: b.MistakeSource,
-  cause: b.Cause.nullable(),
-  fsrs_state: b.FsrsState.nullable(),
-  variants: z.array(b.MistakeVariant),
-  status: b.MistakeStatus,
-  archived_reason: z.enum(['mastered', 'obsolete', 'user']).nullable(),
-  delete_reason: z.enum(['user', 'merge', 'duplicate', 'misjudged']).nullable(),
-});
-export type Mistake = z.infer<typeof Mistake>;
-
-// ---------- Review ----------
-export const ReviewEventInsert = g.ReviewEventInsertGenerated.extend({
-  rating: b.FsrsRating,
-});
-export const ReviewEvent = g.ReviewEventSelectGenerated.extend({
-  rating: b.FsrsRating,
-});
-export type ReviewEvent = z.infer<typeof ReviewEvent>;
+// Phase 1c.1 Step 9.J: legacy `mistake` + `review_event` tables DROPped.
+// Failure attempts are events (action='attempt', outcome='failure'); reviews
+// are events (action='review'). FSRS state projection lives in
+// `material_fsrs_state`. Zod schemas for the event shapes live in
+// src/core/schema/event/known.ts (Lane B).
 
 // ---------- LearningItem ----------
 export const LearningItemInsert = g.LearningItemInsertGenerated.extend({
@@ -155,16 +125,9 @@ export const CompletionEvidence = g.CompletionEvidenceSelectGenerated.extend({
 });
 export type CompletionEvidence = z.infer<typeof CompletionEvidence>;
 
-// ---------- Dreaming ----------
-export const DreamingProposalInsert = g.DreamingProposalInsertGenerated.extend({
-  kind: b.DreamingProposalKind,
-  status: z.enum(['pending', 'accepted', 'dismissed', 'stale']).nullish(),
-});
-export const DreamingProposal = g.DreamingProposalSelectGenerated.extend({
-  kind: b.DreamingProposalKind,
-  status: z.enum(['pending', 'accepted', 'dismissed', 'stale']),
-});
-export type DreamingProposal = z.infer<typeof DreamingProposal>;
+// Phase 1c.1 Step 9.J: legacy `dreaming_proposal` table DROPped. Proposals
+// live as event(action='propose', subject_kind='knowledge') (Lane B
+// ProposeKnowledge) plus experimental:knowledge_<mutation> namespace events.
 
 // ---------- 观测 ----------
 export const ToolCallLogInsert = g.ToolCallLogInsertGenerated;

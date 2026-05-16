@@ -76,15 +76,24 @@ describe('GET /api/_/export — refs only', () => {
       { id: 'k1', name: 'x', parent_id: null },
       { id: 'k2', name: 'y', parent_id: null },
     ];
-    tableMock.mistake = [{ id: 'm1', question_id: 'q1', knowledge_ids: '[]' }];
+    tableMock.event = [
+      {
+        id: 'e1',
+        action: 'attempt',
+        subject_kind: 'question',
+        subject_id: 'q1',
+        outcome: 'failure',
+        payload: '{"answer_md":"x","answer_image_refs":[],"referenced_knowledge_ids":[]}',
+      },
+    ];
     const res = await GET(makeGetRequest());
     const ab = await res.arrayBuffer();
     const entries = unzipSync(new Uint8Array(ab));
     const manifest = JSON.parse(new TextDecoder().decode(entries['manifest.json']));
-    expect(manifest.schema_version).toBe('2.0');
+    expect(manifest.schema_version).toBe('3.0');
     expect(manifest.include_assets).toBe(false);
     expect(manifest.row_counts.knowledge).toBe(2);
-    expect(manifest.row_counts.mistake).toBe(1);
+    expect(manifest.row_counts.event).toBe(1);
     expect(manifest.asset_count).toBe(0);
   });
 

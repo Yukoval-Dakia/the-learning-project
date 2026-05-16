@@ -1,14 +1,13 @@
 /**
  * POST /api/ingestion/[id]/import
  *
- * **ADR-0005 single-owner invariant 已知缺口**（PR #30 review #5）：
- * 本 route 仍直接 `db.insert(question_block).status='imported'` / `db.insert(question)` /
- * `db.insert(mistake)`，**未走 IngestionSession.commitImport**。Sub 0c Step 11.5
- * 把 commitImport 推迟到了 Phase 1c.1（届时 session 模块演化为 LearningSession，
- * 整个 import 路径也要重写为 encounter 形态——双倍 lift-shift 不值）。
+ * Phase 1c.1 Step 9.G: legacy mistake row INSERTs removed. Each imported
+ * failure block now produces only:
+ *   - question row (canonical)
+ *   - attempt event (outcome='failure') chained to the question
+ *   - optional AI-attributed judge event (queued via runAttributionAndWriteJudgeEvent)
  *
- * 见 `docs/superpowers/plans/2026-05-14-phase1c1-encounter-session-ui-scaffold.md` Step 4 +
- * ADR-0005 / ADR-0006 / ADR-0008。
+ * `mistake_id` on the wire equals the attempt event id (opaque to clients).
  *
  * **混合 schema 提示**（PR #30 review #7）：
  * post-Sub-0c 抽取写的 question_block 有 `structured` jsonb，`extracted_prompt_md` 为 null；
@@ -21,9 +20,9 @@ import { and, eq, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { PageSpan } from '@/core/schema';
-import { type Cause, CauseCategory, QuestionKind } from '@/core/schema/business';
+import { CauseCategory, QuestionKind } from '@/core/schema/business';
 import { db } from '@/db/client';
-import { knowledge, learning_session, mistake, question, question_block } from '@/db/schema';
+import { knowledge, learning_session, question, question_block } from '@/db/schema';
 import { runTask } from '@/server/ai/runner';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
@@ -313,51 +312,25 @@ export async function POST(
           version: 0,
         });
 
-        // INSERT mistake
-        const mistakeId = createId();
+        // Attempt event (failure) — Step 9 replaced the legacy mistake row INSERT.
+        // The attempt event id doubles as the back-compat `mistake_id` returned
+        // to clients (opaque token; semantics shifted post-Step-9).
+        const attemptEventId = createId();
+        const mistakeId = attemptEventId;
         mistakeIds.push(mistakeId);
-        const causeJson: z.infer<typeof Cause> | null = block.cause
-          ? {
-              primary_category: block.cause.primary_category,
-              secondary_categories: [],
-              ai_analysis_md: '',
-              user_notes: block.cause.user_notes,
-              user_edited: true,
-            }
-          : null;
-        await tx.insert(mistake).values({
-          id: mistakeId,
-          question_id: questionId,
-          wrong_answer_md: block.final_wrong_answer_md,
-          knowledge_ids: block.knowledge_ids,
-          cause: causeJson,
-          wrong_answer_image_refs: wrongAnswerImageRefs,
-          source: sessionEntrypoint,
-          variants: [],
-          variants_generated_count: 0,
-          variants_max: 3,
-          status: 'active',
-          created_at: now,
-          updated_at: now,
-          version: 0,
-        });
 
-        // UPDATE question_block to set imported_question_id, imported_mistake_id, status
+        // UPDATE question_block: link to question + attempt event, transition to 'imported'.
         await tx
           .update(question_block)
           .set({
             imported_question_id: questionId,
-            imported_mistake_id: mistakeId,
+            imported_mistake_id: attemptEventId,
             status: 'imported',
             updated_at: now,
             version: sql`${question_block.version} + 1`,
           })
           .where(eq(question_block.id, importedBlockId));
 
-        // Step 4 dual-write: also emit an attempt event for the new event-stream
-        // read path. Mistake row stays as legacy source until Step 9. The attempt
-        // event id is what we pass to runAttributionAndWriteJudgeEvent below.
-        const attemptEventId = createId();
         await writeEvent(tx, {
           id: attemptEventId,
           session_id: null,

@@ -23,9 +23,9 @@ asset_count: ${m.asset_count}
 ## ZIP contents
 
 - \`manifest.json\` — backup metadata + per-table row counts
-- \`data.json\` — every row from every D1 table, in FK topological order
-- \`mistakes.csv\` — denormalized per-mistake summary (knowledge names, FSRS state, review count)
-- \`review_events.csv\` — flattened review log w/ before/after FSRS state for analytics
+- \`data.json\` — every row from every table, in FK topological order
+- \`mistakes.csv\` — denormalized per-failure-attempt summary (event-stream projection, knowledge names, FSRS state, review count)
+- \`review_events.csv\` — flattened review log (event-stream projection)
 - \`README.md\` — this file
 ${m.include_assets ? '- `assets/<storage_key>` — R2 image bytes (one file per source_asset)' : ''}
 ${

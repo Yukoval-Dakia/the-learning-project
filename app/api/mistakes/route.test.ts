@@ -1,3 +1,5 @@
+// Phase 1c.1 Step 9.F — POST /api/mistakes writes only events (no mistake row).
+
 import { event, knowledge, question, source_asset } from '@/db/schema';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -118,7 +120,7 @@ describe('POST /api/mistakes', () => {
     expect(body.message).toMatch(/k_archived/);
   });
 
-  it('inserts question + mistake on valid body, queues propose task', async () => {
+  it('inserts question + attempt event on valid body, queues propose task', async () => {
     const res = await postMistake(validBody());
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -128,33 +130,26 @@ describe('POST /api/mistakes', () => {
     };
     expect(body.question_id).toBeTruthy();
     expect(body.mistake_id).toBeTruthy();
+    // mistake_id == attempt event id post-Step-9 (opaque to clients)
+    expect(body.mistake_id).toBe(body.mistake_id);
     expect(body.propose_task).toBe('queued');
+
+    const db = testDb();
+    const { eq, and } = await import('drizzle-orm');
+    const events = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'attempt'), eq(event.subject_id, body.question_id)));
+    expect(events).toHaveLength(1);
+    expect(events[0].outcome).toBe('failure');
+    expect(events[0].id).toBe(body.mistake_id);
   });
 
-  it('persists null cause when not provided', async () => {
-    const { mistake } = await import('@/db/schema');
-    const { eq } = await import('drizzle-orm');
+  it('does not write any mistake row (legacy table dropped)', async () => {
+    // schema.ts no longer exports `mistake` — the assertion lives implicit in
+    // typecheck. Just verify the event was written without error.
     const res = await postMistake(validBody({ cause: null }));
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { mistake_id: string };
-    const db = testDb();
-    const rows = await db.select().from(mistake).where(eq(mistake.id, body.mistake_id));
-    expect(rows[0].cause).toBeNull();
-  });
-
-  it('persists cause object when provided', async () => {
-    const { mistake } = await import('@/db/schema');
-    const { eq } = await import('drizzle-orm');
-    const res = await postMistake(
-      validBody({ cause: { primary_category: 'concept', user_notes: 'note' } }),
-    );
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { mistake_id: string };
-    const db = testDb();
-    const rows = await db.select().from(mistake).where(eq(mistake.id, body.mistake_id));
-    const cause = rows[0].cause as { primary_category: string; user_edited: boolean } | null;
-    expect(cause?.primary_category).toBe('concept');
-    expect(cause?.user_edited).toBe(true);
   });
 
   it('rejects unknown prompt_image_refs asset id', async () => {
@@ -171,7 +166,7 @@ describe('POST /api/mistakes', () => {
     expect(body.message).toMatch(/unknown wrong_answer_image_refs/);
   });
 
-  it('persists asset id refs and tags metadata kind', async () => {
+  it('persists asset id refs in question.metadata + attempt event payload', async () => {
     const db = testDb();
     const now = new Date();
     await db.insert(source_asset).values([
@@ -201,7 +196,6 @@ describe('POST /api/mistakes', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { question_id: string; mistake_id: string };
 
-    const { question, mistake } = await import('@/db/schema');
     const { eq } = await import('drizzle-orm');
     const qs = await db.select().from(question).where(eq(question.id, body.question_id));
     const meta = qs[0].metadata as {
@@ -211,11 +205,11 @@ describe('POST /api/mistakes', () => {
     expect(meta?.prompt_image_refs).toEqual(['asset_p']);
     expect(meta?.prompt_image_ref_kind).toBe('source_asset_id');
 
-    const ms = await db.select().from(mistake).where(eq(mistake.id, body.mistake_id));
-    expect(ms[0].wrong_answer_image_refs).toEqual(['asset_w']);
+    const events = await db.select().from(event).where(eq(event.id, body.mistake_id));
+    expect((events[0].payload as Record<string, unknown>).answer_image_refs).toEqual(['asset_w']);
   });
 
-  it('queues both propose + attribution when cause is null (integration verify via mock counts)', async () => {
+  it('queues both propose + attribution when cause is null', async () => {
     const { runProposeAndWrite } = await import('@/server/knowledge/propose');
     const { runAttributionAndWriteJudgeEvent } = await import('@/server/knowledge/attribute');
     vi.mocked(runProposeAndWrite).mockClear();
@@ -223,10 +217,6 @@ describe('POST /api/mistakes', () => {
 
     const res = await postMistake(validBody({ cause: null }));
     expect(res.status).toBe(200);
-    // After awaiting the response, background tasks are scheduled via waitUntil
-    // In Next.js API routes there's no waitUntil; we call them directly via after()
-    // The mocks confirm both are called or not based on cause
-    // Wait a tick for any microtasks
     await new Promise((r) => setTimeout(r, 50));
   });
 
@@ -239,14 +229,13 @@ describe('POST /api/mistakes', () => {
     );
     expect(res.status).toBe(200);
     await new Promise((r) => setTimeout(r, 50));
-    // attribution should NOT be called when cause is provided
     expect(vi.mocked(runAttributionAndWriteJudgeEvent)).not.toHaveBeenCalled();
   });
 });
 
 // ============================================================================
-// Phase 1c.1 Step 6.G — GET /api/mistakes — list failure attempts projected
-// from event stream. Same back-compat shape as /api/mistakes/recent.
+// Phase 1c.1 Step 6.G — GET /api/mistakes (event-stream projection).
+// Unchanged from Step 6.
 // ============================================================================
 
 const QUESTION_BASE = {
@@ -360,7 +349,7 @@ describe('GET /api/mistakes', () => {
       }>;
     };
     expect(body.rows).toHaveLength(1);
-    expect(body.rows[0].id).toBe('a1'); // attempt event id
+    expect(body.rows[0].id).toBe('a1');
     expect(body.rows[0].question_id).toBe('q1');
     expect(body.rows[0].prompt_md).toHaveLength(200);
     expect(body.rows[0].wrong_answer_md).toHaveLength(200);
@@ -445,36 +434,8 @@ describe('GET /api/mistakes', () => {
     expect(body.rows.map((r) => r.id)).toEqual(['a1']);
   });
 
-  // Codex P1-B — POST stores user cause on legacy mistake row only; GET must
-  // project that cause too. End-to-end: POST → GET round-trips the cause.
-  // TODO Step 9: legacy mistake.cause read removed when table drops.
-  it('round-trips user-supplied cause from POST → GET (no judge event needed)', async () => {
-    const db = testDb();
-    const now = new Date();
-    // Seed knowledge — GET-describe doesn't have the POST-describe's beforeEach
-    // hook, so we must do it inline.
-    await db.insert(knowledge).values({
-      id: 'k1',
-      name: 'X',
-      archived_at: null,
-      created_at: now,
-      updated_at: now,
-      ...KNOWLEDGE_BASE,
-    });
-
-    const res = await postMistake(
-      validBody({ cause: { primary_category: 'concept', user_notes: 'note' } }),
-    );
-    expect(res.status).toBe(200);
-
-    const get = await getMistakes();
-    expect(get.status).toBe(200);
-    const body = (await get.json()) as {
-      rows: Array<{ cause: { primary_category: string; user_notes: string | null } | null }>;
-    };
-    expect(body.rows).toHaveLength(1);
-    expect(body.rows[0].cause).not.toBeNull();
-    expect(body.rows[0].cause?.primary_category).toBe('concept');
-    expect(body.rows[0].cause?.user_notes).toBe('note');
-  });
+  // Codex P1-B test retired in Step 9 — the legacy `mistake` table was DROPped,
+  // so user-supplied causes are no longer recoverable via the GET projection.
+  // Phase 1c.2 will introduce an `experimental:user_cause` event path; the
+  // round-trip test moves there at that point.
 });
