@@ -718,4 +718,44 @@ describe('POST /api/ingestion/[id]/import', () => {
     const mistakes = await db.select().from(mistake).where(eq(mistake.id, body.mistake_ids[0]));
     expect(mistakes[0].wrong_answer_image_refs).toEqual(['asset_a']);
   });
+
+  // Codex P1-A — concurrent double-submit must not produce partial side effects.
+  // The status-machine check (commitImport) and the write phase must live inside
+  // a single transaction; otherwise both callers may pass per-row checks, both
+  // INSERT question/mistake/question_block rows, and only one wins the
+  // status-transition fight in commitImport — leaving the other call's writes
+  // committed and orphaned (and the user observing duplicate imports on retry).
+  it('concurrent double-submit: exactly one import succeeds, no partial side effects', async () => {
+    const db = testDb();
+    const { sessionId, sourceDocId } = await setupSession(db);
+    await insertBlock(db, { id: 'block_a', sessionId, docId: sourceDocId });
+    await insertKnowledge(db, 'k1');
+
+    const [resA, resB] = await Promise.all([
+      post(sessionId, makeImportBody()),
+      post(sessionId, makeImportBody()),
+    ]);
+
+    const statuses = [resA.status, resB.status].sort();
+    // Exactly one 200 and one 409 (status guard). NEVER two 200 (would imply
+    // duplicate imports), NEVER 500 (would imply torn writes).
+    expect(statuses).toEqual([200, 409]);
+
+    // Exactly one question and one mistake were inserted (the winning import).
+    const questions = await db.select().from(question);
+    const mistakes = await db.select().from(mistake);
+    expect(questions).toHaveLength(1);
+    expect(mistakes).toHaveLength(1);
+
+    // Block was promoted from draft → imported exactly once.
+    const blocks = await db.select().from(question_block).where(eq(question_block.id, 'block_a'));
+    expect(blocks[0].status).toBe('imported');
+
+    // Session reached terminal `imported` state.
+    const sessions = await db
+      .select()
+      .from(learning_session)
+      .where(eq(learning_session.id, sessionId));
+    expect(sessions[0].status).toBe('imported');
+  });
 });
