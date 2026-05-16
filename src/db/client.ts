@@ -15,10 +15,14 @@ if (!databaseUrl) {
 // Singleton client. In Vercel functions, this module is cached across invocations
 // within a hot container; postgres-js handles connection pooling per process.
 // Disable SSL for local/test connections (localhost or 127.0.0.1) so testcontainers
-// and local dev containers work without a TLS certificate.
+// and local dev containers work without a TLS certificate. Also honour an
+// explicit `sslmode=disable` in the URL — the option object otherwise wins over
+// URL params, which silently breaks docker-compose-internal hostnames like
+// `postgres:5432`.
 const isLocalConnection = /localhost|127\.0\.0\.1/.test(databaseUrl);
+const hasSslDisable = /[?&]sslmode=disable\b/.test(databaseUrl);
 const queryClient = postgres(databaseUrl, {
-  ssl: isLocalConnection ? false : 'require',
+  ssl: isLocalConnection || hasSslDisable ? false : 'require',
   max: 10, // pool size; per-Vercel-function cap
 });
 
