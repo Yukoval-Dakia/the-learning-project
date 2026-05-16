@@ -28,14 +28,23 @@ export async function setup() {
   const uri = container.getConnectionUri();
   process.env.TEST_DATABASE_URL = uri;
   process.env.DATABASE_URL = uri;
-  // Drizzle pushes schema into the fresh container. We point drizzle-kit at
-  // TEST_DATABASE_URL via env so it does not touch the dev Neon DB.
-  const result = spawnSync('pnpm', ['db:push', '--force'], {
+  // Phase 1c.1 Step 8 — switch from `db:push --force` to `drizzle-kit migrate`.
+  //
+  // `db:push` only diffs `src/db/schema.ts` against the live DB and skips
+  // hand-written `.sql` files in `drizzle/` (notably the `knowledge_mastery`
+  // view DDL in 0005_*.sql). Tests that touch the view fail with "relation
+  // does not exist" or have to inline the view DDL (Step 5 workaround).
+  //
+  // `drizzle-kit migrate` walks `drizzle/meta/_journal.json` and applies every
+  // migration file in order — including hand-written ones — so the view + GIN
+  // index land in the test container the same way they will in production.
+  // We point at TEST_DATABASE_URL via env so drizzle-kit does not touch dev DB.
+  const result = spawnSync('pnpm', ['db:migrate'], {
     env: { ...process.env, DATABASE_URL: uri },
     stdio: 'inherit',
   });
   if (result.status !== 0) {
-    throw new Error(`drizzle-kit push failed (exit ${result.status}) against test container`);
+    throw new Error(`drizzle-kit migrate failed (exit ${result.status}) against test container`);
   }
 }
 
