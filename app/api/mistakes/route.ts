@@ -6,8 +6,9 @@ import { CauseCategory, QuestionKind } from '@/core/schema/business';
 import { db } from '@/db/client';
 import { knowledge, mistake, question, source_asset } from '@/db/schema';
 import { runTask } from '@/server/ai/runner';
+import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { runAttributionAndWrite } from '@/server/knowledge/attribute';
+import { runAttributionAndWriteJudgeEvent } from '@/server/knowledge/attribute';
 import { runProposeAndWrite } from '@/server/knowledge/propose';
 import { loadTreeSnapshot } from '@/server/knowledge/tree';
 import { and, inArray, isNull } from 'drizzle-orm';
@@ -100,6 +101,11 @@ export async function POST(req: Request): Promise<Response> {
           }
         : null;
 
+    // Step 4 dual-write: legacy mistake row + new event-stream pair. The mistake
+    // row keeps Step 6 (route body rewrite) decoupled from Step 4; Step 9 will
+    // remove the legacy insert. The attempt event is the source of truth for
+    // mastery view + Step 6 queries.
+    const attemptEventId = createId();
     await db.transaction(async (tx) => {
       await tx.insert(question).values({
         id: questionId,
@@ -131,6 +137,29 @@ export async function POST(req: Request): Promise<Response> {
         updated_at: now,
         version: 0,
       });
+      // New event-stream write — attempt event (always). AI-attributed cause is
+      // written later via runAttributionAndWriteJudgeEvent (below); user-provided
+      // cause stays in the legacy mistake.cause column for now — Step 6 will
+      // rewrite the route to also project user cause to the event stream.
+      await writeEvent(tx, {
+        id: attemptEventId,
+        session_id: null,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'attempt',
+        subject_kind: 'question',
+        subject_id: questionId,
+        outcome: 'failure',
+        payload: {
+          answer_md: body.wrong_answer_md,
+          answer_image_refs: body.wrong_answer_image_refs,
+          referenced_knowledge_ids: body.knowledge_ids,
+        },
+        caused_by_event_id: null,
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: now,
+      });
     });
 
     // Queue background tasks (runs after response is sent)
@@ -155,10 +184,9 @@ export async function POST(req: Request): Promise<Response> {
         try {
           const tree = await loadTreeSnapshot(db);
           const pickedNodes = tree.filter((n) => body.knowledge_ids.includes(n.id));
-          await runAttributionAndWrite({
+          await runAttributionAndWriteJudgeEvent({
             db,
-            mistakeId,
-            expectedVersion: 0,
+            attemptEventId,
             input: {
               prompt_md: body.prompt_md,
               reference_md: body.reference_md,
@@ -169,6 +197,7 @@ export async function POST(req: Request): Promise<Response> {
                 effective_domain: n.effective_domain,
               })),
             },
+            referencedKnowledgeIds: body.knowledge_ids,
             runTaskFn: async (kind, input, ctx) => {
               const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
               return { text: result.text };

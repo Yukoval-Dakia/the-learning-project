@@ -43,9 +43,10 @@ vi.mock('@/server/knowledge/propose', () => ({
   runProposeAndWrite: (...args: unknown[]) => mockRunProposeAndWrite(...(args as [])),
 }));
 
-const mockRunAttributionAndWrite = vi.fn(async () => {});
+const mockRunAttributionAndWriteJudgeEvent = vi.fn(async () => {});
 vi.mock('@/server/knowledge/attribute', () => ({
-  runAttributionAndWrite: (...args: unknown[]) => mockRunAttributionAndWrite(...(args as [])),
+  runAttributionAndWriteJudgeEvent: (...args: unknown[]) =>
+    mockRunAttributionAndWriteJudgeEvent(...(args as [])),
   parseAttributionOutput: vi.fn(),
 }));
 
@@ -196,10 +197,10 @@ describe('POST /api/ingestion/[id]/import', () => {
     r2._store.clear();
     await resetDb();
     mockRunProposeAndWrite.mockReset();
-    mockRunAttributionAndWrite.mockReset();
+    mockRunAttributionAndWriteJudgeEvent.mockReset();
     vi.clearAllMocks();
     mockRunProposeAndWrite.mockResolvedValue(undefined);
-    mockRunAttributionAndWrite.mockResolvedValue(undefined);
+    mockRunAttributionAndWriteJudgeEvent.mockResolvedValue(undefined);
   });
 
   it('unchanged card happy path: cause=null → inserts 1 question + 1 mistake, session=imported', async () => {
