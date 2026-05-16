@@ -12,9 +12,9 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  event,
   knowledge,
   learning_session,
-  mistake,
   question,
   question_block,
   source_asset,
@@ -206,7 +206,7 @@ describe('POST /api/ingestion/[id]/import', () => {
     mockRunAttributionAndWriteJudgeEvent.mockResolvedValue(undefined);
   });
 
-  it('unchanged card happy path: cause=null → inserts 1 question + 1 mistake, session=imported', async () => {
+  it('unchanged card happy path: cause=null → inserts 1 question + 1 attempt event, session=imported', async () => {
     const db = testDb();
     const { sessionId, sourceDocId } = await setupSession(db);
     await insertBlock(db, { id: 'block_a', sessionId, docId: sourceDocId });
@@ -219,14 +219,18 @@ describe('POST /api/ingestion/[id]/import', () => {
     expect(body.question_ids).toHaveLength(1);
     expect(body.mistake_ids).toHaveLength(1);
 
-    // DB assertions
     const questions = await db.select().from(question).where(eq(question.id, body.question_ids[0]));
     expect(questions).toHaveLength(1);
     expect(questions[0].prompt_md).toBe('Q final');
 
-    const mistakes = await db.select().from(mistake).where(eq(mistake.id, body.mistake_ids[0]));
-    expect(mistakes).toHaveLength(1);
-    expect(mistakes[0].wrong_answer_md).toBe('WA');
+    // Attempt event (failure) — replaces the legacy mistake row
+    const events = await db.select().from(event).where(eq(event.id, body.mistake_ids[0]));
+    expect(events).toHaveLength(1);
+    expect(events[0].action).toBe('attempt');
+    expect(events[0].subject_kind).toBe('question');
+    expect(events[0].subject_id).toBe(body.question_ids[0]);
+    expect(events[0].outcome).toBe('failure');
+    expect((events[0].payload as Record<string, unknown>).answer_md).toBe('WA');
 
     const sessions = await db
       .select()
@@ -234,14 +238,17 @@ describe('POST /api/ingestion/[id]/import', () => {
       .where(eq(learning_session.id, sessionId));
     expect(sessions[0].status).toBe('imported');
 
-    // Block updated
     const blocks = await db.select().from(question_block).where(eq(question_block.id, 'block_a'));
     expect(blocks[0].status).toBe('imported');
     expect(blocks[0].imported_question_id).toBe(body.question_ids[0]);
     expect(blocks[0].imported_mistake_id).toBe(body.mistake_ids[0]);
   });
 
-  it('cause provided → cause stored in mistake', async () => {
+  it('cause provided → cause dropped in event stream (Lane B JudgeOnEvent requires actor=agent)', async () => {
+    // Phase 1c.1 documented gap: user-provided cause cannot be written as a
+    // Lane B JudgeOnEvent (actor_kind must be 'agent'). Pre-Step-9 it lived on
+    // mistake.cause; post-Step-9 the data is dropped. Phase 1c.2 may
+    // introduce experimental:user_cause to recover.
     const db = testDb();
     const { sessionId, sourceDocId } = await setupSession(db);
     await insertBlock(db, { id: 'block_a', sessionId, docId: sourceDocId });
@@ -254,9 +261,9 @@ describe('POST /api/ingestion/[id]/import', () => {
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as { mistake_ids: string[] };
-    const mistakes = await db.select().from(mistake).where(eq(mistake.id, body.mistake_ids[0]));
-    expect((mistakes[0].cause as Record<string, unknown>)?.primary_category).toBe('concept');
-    expect((mistakes[0].cause as Record<string, unknown>)?.user_notes).toBe('note');
+    const events = await db.select().from(event).where(eq(event.id, body.mistake_ids[0]));
+    expect(events).toHaveLength(1);
+    expect(events[0].action).toBe('attempt');
   });
 
   it('knowledge_ids missing/archived → 400, NO inserts', async () => {
@@ -606,8 +613,8 @@ describe('POST /api/ingestion/[id]/import', () => {
 
     const questions = await db.select().from(question);
     expect(questions).toHaveLength(1);
-    const mistakes = await db.select().from(mistake);
-    expect(mistakes).toHaveLength(1);
+    const events = await db.select().from(event).where(eq(event.action, 'attempt'));
+    expect(events).toHaveLength(1);
 
     // A new question_block is inserted for the manual card
     const blocks = await db
@@ -715,7 +722,9 @@ describe('POST /api/ingestion/[id]/import', () => {
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as { mistake_ids: string[] };
-    const mistakes = await db.select().from(mistake).where(eq(mistake.id, body.mistake_ids[0]));
-    expect(mistakes[0].wrong_answer_image_refs).toEqual(['asset_a']);
+    // Verify the attempt event payload carries the answer_image_refs derived
+    // from the answer_area page_spans.
+    const events = await db.select().from(event).where(eq(event.id, body.mistake_ids[0]));
+    expect((events[0].payload as Record<string, unknown>).answer_image_refs).toEqual(['asset_a']);
   });
 });
