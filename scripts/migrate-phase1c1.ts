@@ -347,3 +347,44 @@ export async function migrateDreamingProposals(db: DbLike): Promise<void> {
     await db.insert(event).values(proposeEvent).onConflictDoNothing({ target: event.id });
   }
 }
+
+import { ingestion_session, learning_session } from '@/db/schema';
+
+/**
+ * 3.E — Migrate `ingestion_session` rows into `learning_session(type='ingestion')`.
+ *
+ * Preserves the legacy id verbatim — some downstream code may reference these
+ * session IDs and the ADR-0008 polymorphic envelope explicitly accepts this.
+ *
+ * `ended_at`: set to `updated_at` when status is terminal
+ * ('imported' | 'failed'); null otherwise (mid-flight sessions).
+ *
+ * `summary_md` / `goal_id`: ingestion sessions had no summaries or goal
+ * linkage, so both are null.
+ */
+export async function migrateIngestionSessions(db: DbLike): Promise<void> {
+  const rows = await db.select().from(ingestion_session);
+  for (const s of rows) {
+    const isTerminal = s.status === 'imported' || s.status === 'failed';
+    await db
+      .insert(learning_session)
+      .values({
+        id: s.id, // preserve legacy id for FK reference continuity
+        type: 'ingestion',
+        status: s.status, // ingestion status enum already aligned with Lane B IngestionStatus
+        source_document_id: s.source_document_id,
+        source_asset_ids: s.source_asset_ids,
+        entrypoint: s.entrypoint,
+        warnings: s.warnings,
+        error_message: s.error_message,
+        summary_md: null,
+        goal_id: null,
+        started_at: s.created_at,
+        ended_at: isTerminal ? s.updated_at : null,
+        version: s.version,
+        created_at: s.created_at,
+        updated_at: s.updated_at,
+      })
+      .onConflictDoNothing({ target: learning_session.id });
+  }
+}
