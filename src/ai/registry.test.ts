@@ -26,6 +26,17 @@ describe('AttributionTask.systemPrompt', () => {
     expect(p).toContain('judge event');
     expect(p).toContain('caused_by_event_id');
   });
+
+  // Codex P1-D — input fields must match AttributionInput (prompt_md,
+  // reference_md, wrong_answer_md, knowledge_context). Prompt previously
+  // referenced `event.payload.answer_md`, which doesn't match what runtime
+  // actually sends, leaving the LLM guessing.
+  it('references the flat AttributionInput field names (wrong_answer_md, not payload.answer_md)', () => {
+    const p = tasks.AttributionTask.systemPrompt;
+    expect(p).toContain('wrong_answer_md');
+    expect(p).not.toContain('payload.answer_md');
+    expect(p).not.toContain('event.payload.answer_md');
+  });
 });
 
 describe('KnowledgeProposeTask.systemPrompt', () => {
