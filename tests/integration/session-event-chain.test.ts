@@ -111,10 +111,7 @@ describe('ingestion lifecycle → event chain', () => {
     expect(payload.layout_quality).toBe('structured');
 
     // (c) job_events plumbing covers each transition (ingestion.uploaded/queued/extracting/extraction_completed)
-    const jevents = await db
-      .select()
-      .from(job_events)
-      .where(eq(job_events.business_id, sessionId));
+    const jevents = await db.select().from(job_events).where(eq(job_events.business_id, sessionId));
     const jtypes = jevents.map((e) => e.event_type).sort();
     expect(jtypes).toContain('ingestion.uploaded');
     expect(jtypes).toContain('ingestion.queued');
@@ -145,9 +142,7 @@ describe('ingestion lifecycle → event chain', () => {
     expect(ex).toBeTruthy();
     expect(ex?.outcome).toBe('failure');
     expect(ex?.subject_id).toBe(sourceDocumentId);
-    expect((ex?.payload as { warnings: string[] }).warnings).toEqual([
-      'Tencent OCR returned FAIL',
-    ]);
+    expect((ex?.payload as { warnings: string[] }).warnings).toEqual(['Tencent OCR returned FAIL']);
   });
 
   it('rescue after partial emits a second extract event(success, vision_rescue) chained to the same session', async () => {

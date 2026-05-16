@@ -11,10 +11,7 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
 // Hits inside these dirs/files are allowed (the actual single-owner module + the
 // Step 3 migration script). Anything else is a violation.
-const ALLOWED_PATH_PREFIXES = [
-  'src/server/session/',
-  'scripts/migrate-phase1c1.ts',
-] as const;
+const ALLOWED_PATH_PREFIXES = ['src/server/session/', 'scripts/migrate-phase1c1.ts'] as const;
 
 // Directories scanned. Only source dirs that produce runtime writes.
 const SCAN_ROOTS = ['src', 'app', 'scripts'] as const;
@@ -83,16 +80,57 @@ function isAllowed(relPath: string): boolean {
   return ALLOWED_PATH_PREFIXES.some((prefix) => norm.startsWith(prefix));
 }
 
+// Phase 1c.1 Step 5.J — legacy ingestion_session has ZERO write-callers in
+// src/server/ + app/api/. Step 9 drops the table; until then this audit makes
+// sure no code accidentally writes to the dead table. Test files (fixtures)
+// and the Step 3 migration script (read-only) are exempt.
+const LEGACY_ALLOWED_PATH_PREFIXES = ['scripts/migrate-phase1c1.ts'] as const;
+
+async function findLegacyIngestionSessionWriteHits(): Promise<string[]> {
+  const re = /\b(?:insert|update)\s*\(\s*ingestion_session\s*[,)]/;
+  const hits: string[] = [];
+  // 5.J only audits the runtime app, not scripts/ (the migration script is
+  // explicitly a one-shot read; it does not write ingestion_session anyway).
+  for (const root of ['src', 'app'] as const) {
+    const files = await walkFiles(path.join(REPO_ROOT, root));
+    for (const file of files) {
+      if (file.endsWith('.test.ts') || file.endsWith('.test.tsx')) continue;
+      const text = await fs.readFile(file, 'utf8');
+      if (re.test(text)) {
+        hits.push(path.relative(REPO_ROOT, file));
+      }
+    }
+  }
+  return hits.sort();
+}
+
+function isLegacyAllowed(relPath: string): boolean {
+  const norm = relPath.split(path.sep).join('/');
+  return LEGACY_ALLOWED_PATH_PREFIXES.some((prefix) => norm.startsWith(prefix));
+}
+
 describe('session-single-owner invariant', () => {
   it('db.{insert,update}(learning_session) appears ONLY in src/server/session/* and scripts/migrate-phase1c1.ts', async () => {
     const hits = await findLearningSessionWriteHits();
     const violations = hits.filter((h) => !isAllowed(h));
-    expect(violations, `Disallowed writers of learning_session found:\n  ${violations.join('\n  ')}`).toEqual([]);
+    expect(
+      violations,
+      `Disallowed writers of learning_session found:\n  ${violations.join('\n  ')}`,
+    ).toEqual([]);
   });
 
-  it('the single-owner module actually contains learning_session writes (sanity: regex isn\'t over-conservative)', async () => {
+  it("the single-owner module actually contains learning_session writes (sanity: regex isn't over-conservative)", async () => {
     const hits = await findLearningSessionWriteHits();
     expect(hits.length).toBeGreaterThan(0);
     expect(hits.some((h) => h.startsWith('src/server/session/'))).toBe(true);
+  });
+
+  it('legacy ingestion_session has ZERO write-callers in src/server/ + app/api/ (Step 5.J — table drops in Step 9)', async () => {
+    const hits = await findLegacyIngestionSessionWriteHits();
+    const violations = hits.filter((h) => !isLegacyAllowed(h));
+    expect(
+      violations,
+      `Legacy ingestion_session writers found (table is dead — migrate to learning_session via Ingestion.*):\n  ${violations.join('\n  ')}`,
+    ).toEqual([]);
   });
 });
