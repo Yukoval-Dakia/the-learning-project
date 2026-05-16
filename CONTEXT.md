@@ -20,14 +20,15 @@
 
 ## 学习内容
 
-- **错题（mistake）**：一道用户做错的具体题目实例。挂在一个 `question` 上，可能多个 mistake 共享同一 question（用户多次做错同一题）。
-- **学习项（learning item）**：FSRS 调度单元，泛指 mistake / 变体 / 概念卡。
-- **变体（variant）**：从原 mistake 派生的同质题，用于巩固练习。Sub 5 Maintenance lane 批量生成。
-- **知识点（knowledge）**：学科知识树的节点。一个 mistake 可挂 0..N 个 knowledge 节点。
-- **归因（attribution）**：分析一次错误的成因（10 类 cause：concept / knowledge_gap / calculation / reading / memory / expression / method / carelessness / time_pressure / other），写入 mistake.cause。
-- **判分（judge）**：评判用户对一道题的答案是否正确，输出分数 + 评语 + 错误细节。
-- **梦境流（Dreaming lane）**：夜间 cron 跑的批量任务，挖新知识点 / 调整掌握度 / 提议 mistake-knowledge 关联。
-- **维护流（Maintenance lane）**：每周 cron 跑的批量任务，复检知识树质量 + 批量生成变体。
+- **错题 / 失败 attempt**：`event WHERE action='attempt' AND subject_kind='question' AND outcome='failure'`。UI 保留"错题"称呼（用户语义不变）；底层数据模型是 event 流上的 filter view。归因（cause）走 chained judge event（`caused_by_event_id` 指向此 attempt event）。
+- **学习项（learning item）**：FSRS 调度单元，泛指失败 attempt（错题）/ 变体 / 概念卡的学习意图记录，与 event 解耦（用户 / AI 声明的学习意图 ≠ 发生过的事件）。
+- **变体（variant）**：从原 attempt 派生的同质题，用于巩固练习。Sub 5 Maintenance lane 批量生成。
+- **知识点（knowledge）**：学科知识树的节点。一个 attempt event 可挂 0..N 个 knowledge 节点（通过 judge event payload.referenced_knowledge_ids 关联）。
+- **归因（attribution）**：`event WHERE action='judge' AND actor_kind='agent'`，`payload.cause`（10 类：concept / knowledge_gap / calculation / reading / memory / expression / method / carelessness / time_pressure / other）；通过 `caused_by_event_id` 与 attempt event 链接。
+- **复习（review）**：`event WHERE action='review' AND subject_kind='question'`；FSRS 状态派生到 `material_fsrs_state` 表（每次 review event 同事务写入）。
+- **判分（judge）**：评判用户对一道题的答案是否正确，输出分数 + 评语 + 错误细节（写为 judge event）。
+- **梦境流（Dreaming lane）**：夜间 cron 跑的批量任务，挖新知识点 / 调整掌握度 / 提议关联；产出为 `event WHERE action='propose' AND actor_kind='agent' AND actor_ref='dreaming'`。
+- **维护流（Maintenance lane）**：每周 cron 跑的批量任务，复检知识树质量 + 批量生成变体；产出走 MaintenanceSuggestion（含 snapshot + rollback_until）。
 
 ## 录入与会话
 
@@ -36,7 +37,7 @@
 
 ## 已批准（approved，2026-05-15 v2 — event-driven 核）
 
-> 2026-05-15 grill：用户明确 AI-Driven（C+D 档）是中心设计概念。ADR-0006 v2 推翻 v1 单表 encounter，转向 3-table 模型（material + learning_session + event）。本节词条对应 ADR-0006 v2 + ADR-0008 修订。**待 Phase 1c.1 落地**。
+> 2026-05-15 grill：用户明确 AI-Driven（C+D 档）是中心设计概念。ADR-0006 v2 推翻 v1 单表 encounter，转向 3-table 模型（material + learning_session + event）。本节词条对应 ADR-0006 v2 + ADR-0008 修订。Phase 1c.1（Steps 1-9）已落地。
 >
 > v1 词条（遭遇 / 单表 outcome / exposure）已被 v2 取代，见 ADR-0006 v1 决策（已被取代）节。
 
@@ -51,10 +52,10 @@
 - **事件链（event chaining）**：event.caused_by_event_id 把因果连成 DAG。可重放、可审计、可让 critique agent 作用在历史 event 上。
 - **核心 6+ action 严守 Zod + experimental:* 松守**（ADR-0006 v2 Option 折中）：已稳定的 `attempt / judge / propose / generate / review / rate / extract` 用 discriminated union 严守 payload；新交互用 `experimental:*` 命名空间先跑，稳了再 promote。
 
-### 与现有概念的映射（Phase 1c.1 落地后更新各正式词条）
+### 概念 → event 流映射（Phase 1c.1 已落地）
 
-- **错题**（"做错的题"用户语义）→ `events WHERE action='attempt' AND outcome='failure' AND subject_kind='question'` 视图
-- **归因**（AI 判错因）→ `events WHERE action='judge' AND actor_kind='agent'`，payload.cause
-- **复习**（FSRS 到期重做）→ `events WHERE action='review'`
-- **梦境流 / 维护流**（Dreaming / Maintenance）→ events with actor_kind='agent' / cron 在夜间批量
-- **学习项（learning_item）**—— **保留** 现有 TODO / Goal 语义，与 event 解耦（用户 / AI 声明的学习意图 ≠ 发生过的事件）
+- **错题**（"做错的题"用户语义）= `events WHERE action='attempt' AND outcome='failure' AND subject_kind='question'`
+- **归因**（AI 判错因）= `events WHERE action='judge' AND actor_kind='agent'`，`payload.cause`
+- **复习**（FSRS 到期重做）= `events WHERE action='review'`；FSRS 状态投影到 `material_fsrs_state`
+- **梦境流 / 维护流**（Dreaming / Maintenance）= `events WHERE actor_kind IN ('agent','cron')` 夜间批量产出
+- **学习项（learning_item）**—— **保留** TODO / Goal 语义，与 event 解耦（用户 / AI 声明的学习意图 ≠ 发生过的事件）
