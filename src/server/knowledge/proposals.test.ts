@@ -586,4 +586,55 @@ describe('acceptProposal — high-tier mutations', () => {
     });
     await expect(acceptProposal(db, 'p_bad')).rejects.toThrow(/unknown_mutation/i);
   });
+
+  // Codex P1-F — concurrent double-accept must not produce duplicate
+  // knowledge nodes / duplicate rate=accept events. assertNotAlreadyRated +
+  // mutation apply must share a transaction with SELECT … FOR UPDATE on the
+  // propose event row, otherwise both callers pass the pre-check and apply.
+  it('concurrent double-accept: exactly one apply succeeds', async () => {
+    const db = testDb();
+    await insertKnowledge({ id: 'seed:wenyan:shici', domain: 'wenyan' });
+    await insertProposeEvent({
+      id: 'p_concurrent',
+      payload: {
+        mutation: 'propose_new',
+        name: '通假字',
+        parent_id: 'seed:wenyan:shici',
+      },
+    });
+
+    const results = await Promise.allSettled([
+      acceptProposal(db, 'p_concurrent'),
+      acceptProposal(db, 'p_concurrent'),
+    ]);
+
+    const fulfilled = results.filter((r) => r.status === 'fulfilled');
+    const rejected = results.filter((r) => r.status === 'rejected');
+    // Exactly one succeeds; the other sees the rate event already written and
+    // throws not-pending.
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+
+    // Exactly one new knowledge node from this proposal (not two).
+    // proposed_by_ai=true filters out the seed knowledge nodes.
+    const proposedRows = await db
+      .select()
+      .from(knowledge)
+      .where(eq(knowledge.proposed_by_ai, true));
+    expect(proposedRows).toHaveLength(1);
+
+    // Exactly one rate=accept event (not two).
+    const acceptRows = await db
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'rate'),
+          eq(event.caused_by_event_id, 'p_concurrent'),
+        ),
+      );
+    expect(acceptRows.filter((r) => (r.payload as { rating?: string }).rating === 'accept'))
+      .toHaveLength(1);
+  });
 });
+

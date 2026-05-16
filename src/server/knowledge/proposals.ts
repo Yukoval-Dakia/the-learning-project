@@ -416,78 +416,121 @@ async function assertNotAlreadyRated(db: DbLike, proposalId: string): Promise<vo
 }
 
 export async function acceptProposal(db: Db, proposalId: string): Promise<AcceptResult> {
-  const propose = await readProposeEvent(db, proposalId);
-  await assertNotAlreadyRated(db, proposalId);
-
-  // Reconstruct mutation payload from event shape
-  const mutationKind: string = propose.action === 'propose'
-    ? 'propose_new'
-    : propose.action.replace(/^experimental:knowledge_/, '');
-  const { reasoning: _r, ...payloadBody } = propose.payload as { reasoning?: string };
-  void _r;
-
-  const apply: KnowledgeMutationPayload = {
-    mutation: mutationKind,
-    ...(payloadBody as Record<string, unknown>),
-  } as KnowledgeMutationPayload;
-
-  let result: AcceptResult;
+  // Codex P1-F — concurrent double-accept must not produce duplicate apply
+  // side effects. The status check (assertNotAlreadyRated) and the mutation
+  // apply must share a transaction with SELECT … FOR UPDATE on the propose
+  // event row; otherwise two concurrent callers both pass the pre-check and
+  // both apply. The row lock serialises callers; the second sees the rate
+  // event written by the first and throws not-pending.
+  let staleError: Error | null = null;
   try {
-    switch (apply.mutation) {
-      case 'propose_new': {
-        const newNodeId = await applyProposeNew(db, apply);
-        result = { kind: 'propose_new_applied', new_node_id: newNodeId };
-        break;
-      }
-      case 'reparent': {
-        await applyReparent(db, apply);
-        if (apply.new_parent_id === null) {
-          throw new Error('reparent payload must have new_parent_id');
+    return await db.transaction(async (tx) => {
+      // SELECT … FOR UPDATE on the propose event row — concurrent callers
+      // serialise here.
+      await tx.execute(sql`SELECT id FROM event WHERE id = ${proposalId} FOR UPDATE`);
+
+      const propose = await readProposeEvent(tx, proposalId);
+      await assertNotAlreadyRated(tx, proposalId);
+
+      // Reconstruct mutation payload from event shape
+      const mutationKind: string =
+        propose.action === 'propose'
+          ? 'propose_new'
+          : propose.action.replace(/^experimental:knowledge_/, '');
+      const { reasoning: _r, ...payloadBody } = propose.payload as { reasoning?: string };
+      void _r;
+
+      const apply: KnowledgeMutationPayload = {
+        mutation: mutationKind,
+        ...(payloadBody as Record<string, unknown>),
+      } as KnowledgeMutationPayload;
+
+      let result: AcceptResult;
+      try {
+        switch (apply.mutation) {
+          case 'propose_new': {
+            const newNodeId = await applyProposeNew(tx, apply);
+            result = { kind: 'propose_new_applied', new_node_id: newNodeId };
+            break;
+          }
+          case 'reparent': {
+            await applyReparent(tx, apply);
+            if (apply.new_parent_id === null) {
+              throw new Error('reparent payload must have new_parent_id');
+            }
+            result = {
+              kind: 'reparent_applied',
+              node_id: apply.node_id,
+              new_parent_id: apply.new_parent_id,
+            };
+            break;
+          }
+          case 'archive': {
+            await applyArchive(tx, apply);
+            result = { kind: 'archive_applied', node_id: apply.node_id };
+            break;
+          }
+          case 'merge': {
+            await applyMerge(tx, apply);
+            result = {
+              kind: 'merge_applied',
+              into_id: apply.into_id,
+              archived_ids: apply.from_ids,
+            };
+            break;
+          }
+          case 'split': {
+            const newIds = await applySplit(tx, apply);
+            result = {
+              kind: 'split_applied',
+              archived_id: apply.from_id,
+              new_node_ids: newIds,
+            };
+            break;
+          }
+          default: {
+            const _exhaustive: never = apply;
+            void _exhaustive;
+            const kind = (apply as { mutation?: unknown }).mutation;
+            throw new Error(
+              `unknown_mutation: proposal ${proposalId} payload mutation=${JSON.stringify(kind)}`,
+            );
+          }
         }
-        result = {
-          kind: 'reparent_applied',
-          node_id: apply.node_id,
-          new_parent_id: apply.new_parent_id,
-        };
-        break;
+      } catch (e) {
+        const msg = (e as Error).message;
+        if (/^stale/i.test(msg)) {
+          // Capture so we can write the rollback rate event OUTSIDE the
+          // transaction (the tx is about to roll back; we want the rollback
+          // marker to survive). The outer catch handles the write.
+          staleError = e as Error;
+        }
+        throw e;
       }
-      case 'archive': {
-        await applyArchive(db, apply);
-        result = { kind: 'archive_applied', node_id: apply.node_id };
-        break;
-      }
-      case 'merge': {
-        await applyMerge(db, apply);
-        result = {
-          kind: 'merge_applied',
-          into_id: apply.into_id,
-          archived_ids: apply.from_ids,
-        };
-        break;
-      }
-      case 'split': {
-        const newIds = await applySplit(db, apply);
-        result = {
-          kind: 'split_applied',
-          archived_id: apply.from_id,
-          new_node_ids: newIds,
-        };
-        break;
-      }
-      default: {
-        const _exhaustive: never = apply;
-        void _exhaustive;
-        const kind = (apply as { mutation?: unknown }).mutation;
-        throw new Error(
-          `unknown_mutation: proposal ${proposalId} payload mutation=${JSON.stringify(kind)}`,
-        );
-      }
-    }
+
+      // Apply succeeded — write rate=accept event chained to the propose event.
+      await writeEvent(tx, {
+        id: newId(),
+        session_id: null,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'rate',
+        subject_kind: 'event',
+        subject_id: proposalId,
+        outcome: 'success',
+        payload: { rating: 'accept' },
+        caused_by_event_id: proposalId,
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: new Date(),
+      });
+
+      return result;
+    });
   } catch (e) {
-    const msg = (e as Error).message;
-    if (/^stale/i.test(msg)) {
-      // Mirror legacy behaviour: record a rollback rate event on stale apply
-      // so subsequent reads see status='stale' rather than perpetual pending.
+    if (staleError) {
+      // Write the rollback marker post-rollback so subsequent reads see
+      // status='stale' rather than perpetual pending. Best-effort.
       try {
         await writeEvent(db, {
           id: newId(),
@@ -510,25 +553,6 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
     }
     throw e;
   }
-
-  // Apply succeeded — write rate=accept event chained to the propose event.
-  await writeEvent(db, {
-    id: newId(),
-    session_id: null,
-    actor_kind: 'user',
-    actor_ref: 'self',
-    action: 'rate',
-    subject_kind: 'event',
-    subject_id: proposalId,
-    outcome: 'success',
-    payload: { rating: 'accept' },
-    caused_by_event_id: proposalId,
-    task_run_id: null,
-    cost_micro_usd: null,
-    created_at: new Date(),
-  });
-
-  return result;
 }
 
 export async function dismissProposal(db: Db, proposalId: string): Promise<void> {
