@@ -6,9 +6,11 @@ import {
   integer,
   jsonb,
   pgTable,
+  pgView,
   real,
   text,
   timestamp,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import type { z } from 'zod';
 import type {
@@ -44,34 +46,25 @@ type ToolStateT = z.infer<typeof ToolState>;
 
 type JsonObject = Record<string, unknown>;
 
-export const knowledge = pgTable(
-  'knowledge',
-  {
-    id: text('id').primaryKey(),
-    name: text('name').notNull(),
-    domain: text('domain'),
-    parent_id: text('parent_id'),
-    base_mastery: real('base_mastery').notNull().default(0),
-    ai_delta_mastery: real('ai_delta_mastery').notNull().default(0),
-    last_active_at: timestamp('last_active_at', { withTimezone: true }),
-    merged_from: jsonb('merged_from').$type<string[]>().notNull().default([]),
-    archived_at: timestamp('archived_at', { withTimezone: true }),
-    proposed_by_ai: boolean('proposed_by_ai').notNull().default(false),
-    approval_status: text('approval_status', {
-      enum: ['pending', 'approved', 'rejected'],
-    })
-      .notNull()
-      .default('approved'),
-    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
-    updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
-    version: integer('version').notNull().default(0),
-  },
-  (t) => [
-    check('knowledge_base_mastery_range', sql`${t.base_mastery} BETWEEN 0 AND 1`),
-    // AI can move mastery at most ±0.2 from the base value (per ADR: hybrid mastery).
-    check('knowledge_ai_delta_mastery_range', sql`${t.ai_delta_mastery} BETWEEN -0.2 AND 0.2`),
-  ],
-);
+// Phase 1c.1 Step 1.2 (Lane A): DROPped base_mastery / ai_delta_mastery / last_active_at
+// per ADR-0012 — mastery is now a derived PG view (knowledge_mastery, declared below).
+export const knowledge = pgTable('knowledge', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  domain: text('domain'),
+  parent_id: text('parent_id'),
+  merged_from: jsonb('merged_from').$type<string[]>().notNull().default([]),
+  archived_at: timestamp('archived_at', { withTimezone: true }),
+  proposed_by_ai: boolean('proposed_by_ai').notNull().default(false),
+  approval_status: text('approval_status', {
+    enum: ['pending', 'approved', 'rejected'],
+  })
+    .notNull()
+    .default('approved'),
+  created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+  version: integer('version').notNull().default(0),
+});
 
 export const source_asset = pgTable('source_asset', {
   id: text('id').primaryKey(),
@@ -312,33 +305,9 @@ export const answer = pgTable('answer', {
   submitted_at: timestamp('submitted_at', { withTimezone: true }).notNull(),
 });
 
-export const judgment = pgTable(
-  'judgment',
-  {
-    id: text('id').primaryKey(),
-    answer_id: text('answer_id').notNull(),
-    judge_kind: text('judge_kind').notNull(),
-    verdict: text('verdict').notNull(),
-    score: real('score').notNull(),
-    feedback_md: text('feedback_md').notNull(),
-    evidence_json: jsonb('evidence_json').$type<JsonObject>().notNull().default({}),
-    is_flexible_fallback: boolean('is_flexible_fallback').notNull().default(false),
-    triggered_by: text('triggered_by'),
-    prior_judgment_id: text('prior_judgment_id'),
-    judged_by: jsonb('judged_by').$type<AgentRefT>().notNull(),
-    judged_at: timestamp('judged_at', { withTimezone: true }).notNull(),
-    is_effective: boolean('is_effective').notNull().default(true),
-  },
-  (t) => [check('judgment_score_range', sql`${t.score} BETWEEN 0 AND 1`)],
-);
-
-export const user_appeal = pgTable('user_appeal', {
-  id: text('id').primaryKey(),
-  judgment_id: text('judgment_id').notNull(),
-  reason: text('reason'),
-  appealed_at: timestamp('appealed_at', { withTimezone: true }).notNull(),
-  resolved_judgment_id: text('resolved_judgment_id'),
-});
+// Phase 1c.1 Step 1.4 (Lane A): judgment + user_appeal tables DROPped per
+// data-assumptions §O2. judging is now an event (action='judge',
+// subject_kind='event') per ADR-0006 v2.
 
 export const completion_evidence = pgTable('completion_evidence', {
   id: text('id').primaryKey(),
@@ -415,3 +384,153 @@ export const echo_jobs = pgTable('echo_jobs', {
   created_at: timestamp('created_at', { withTimezone: true }).notNull(),
   updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 1c.1 Step 1.1 (Lane A) — event-driven core tables.
+//
+// Per ADR-0006 v2: events are the unified action log (user / agent / cron /
+// system structurally equal). Per ADR-0008: learning_session is the polymorphic
+// envelope for ingestion / review / tutor / explore / create / conversation
+// sessions. Per ADR-0010: knowledge_edge carries typed mesh links between
+// knowledge nodes (tree backbone + mesh muscle).
+//
+// `event.payload` is Zod-guarded per (action × subject_kind) discriminated
+// union — written by Lane B (src/core/schema/event/**). Schema-level enforce-
+// ment is intentionally absent; correctness lives in the Zod parse barrier.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const learning_session = pgTable('learning_session', {
+  id: text('id').primaryKey(),
+  // per-type semantics — Zod discriminated union in src/core/schema/learning_session.ts (Lane B)
+  type: text('type').notNull(),
+  // status machine per type — see Lane B schema
+  status: text('status').notNull(),
+  // ingestion-only fields (nullable for other types)
+  source_document_id: text('source_document_id'),
+  source_asset_ids: jsonb('source_asset_ids').$type<string[]>().notNull().default([]),
+  entrypoint: text('entrypoint'),
+  warnings: jsonb('warnings').$type<string[]>().notNull().default([]),
+  error_message: text('error_message'),
+  // conversation-only fields
+  summary_md: text('summary_md'),
+  // goal linkage — Phase 1d placeholder
+  goal_id: text('goal_id'),
+  started_at: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+  ended_at: timestamp('ended_at', { withTimezone: true }),
+  created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  version: integer('version').notNull().default(0),
+});
+
+export const event = pgTable(
+  'event',
+  {
+    id: text('id').primaryKey(),
+    // nullable — cron / system events may have no session
+    session_id: text('session_id'),
+    // 'user' | 'agent' | 'cron' | 'system' (locked Lane B contract)
+    actor_kind: text('actor_kind').notNull(),
+    // 'self' (single user) | task_kind (agent) | cron_name | ...
+    actor_ref: text('actor_ref').notNull(),
+    // KnownEvent actions + 'experimental:*' namespace (locked Lane B contract)
+    action: text('action').notNull(),
+    // 'question' | 'knowledge' | 'knowledge_edge' | 'artifact' | 'source_document' |
+    // 'event' | 'chip' | 'query' (locked Lane B contract)
+    subject_kind: text('subject_kind').notNull(),
+    subject_id: text('subject_id').notNull(),
+    // 'success' | 'failure' | 'partial' | NULL (depends on action)
+    outcome: text('outcome'),
+    // Zod-guarded per (action × subject_kind) — see Lane B
+    payload: jsonb('payload').$type<JsonObject>().notNull(),
+    // chain link: judge ← attempt, propose ← cron, etc.
+    caused_by_event_id: text('caused_by_event_id'),
+    // AI task run association
+    task_run_id: text('task_run_id'),
+    cost_micro_usd: integer('cost_micro_usd'),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('event_subject_idx').on(t.subject_kind, t.subject_id, t.created_at.desc()),
+    index('event_action_outcome_idx').on(t.action, t.outcome, t.created_at.desc()),
+    index('event_session_idx').on(t.session_id, t.created_at),
+    index('event_actor_idx').on(t.actor_kind, t.actor_ref, t.created_at),
+    index('event_caused_by_idx').on(t.caused_by_event_id),
+    // GIN index on payload (jsonb_path_ops) — declared in hand-written migration
+    // (drizzle-kit doesn't generate GIN on jsonb_path_ops natively at this version).
+    // See drizzle/0005_phase1c1_event_payload_gin.sql.
+  ],
+);
+
+// FSRS state projection per material (currently only 'question').
+// Latest FSRS card state derived from `event(action='review', subject_kind='question')`.
+export const material_fsrs_state = pgTable(
+  'material_fsrs_state',
+  {
+    id: text('id').primaryKey(),
+    // 'question' for Phase 1c.1; other material kinds in later phases
+    subject_kind: text('subject_kind').notNull(),
+    subject_id: text('subject_id').notNull(),
+    // FsrsState (ts-fsrs Card-aligned) — typed via Lane B parse barrier
+    state: jsonb('state').$type<FsrsStateT>().notNull(),
+    due_at: timestamp('due_at', { withTimezone: true }).notNull(),
+    last_review_event_id: text('last_review_event_id'),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('material_fsrs_unique').on(t.subject_kind, t.subject_id),
+    index('material_fsrs_due_idx').on(t.due_at),
+  ],
+);
+
+// Typed mesh edges between knowledge nodes (ADR-0010).
+// Tree (knowledge.parent_id) is the backbone; this is the muscle.
+export const knowledge_edge = pgTable(
+  'knowledge_edge',
+  {
+    id: text('id').primaryKey(),
+    from_knowledge_id: text('from_knowledge_id')
+      .notNull()
+      .references(() => knowledge.id),
+    to_knowledge_id: text('to_knowledge_id')
+      .notNull()
+      .references(() => knowledge.id),
+    // 'prerequisite' | 'related_to' | 'contrasts_with' | 'applied_in' |
+    // 'derived_from' | 'experimental:*' — Zod-validated in Lane B
+    relation_type: text('relation_type').notNull(),
+    // 0-1 confidence; AI proposals fill with confidence, user adds default 1
+    weight: real('weight').notNull().default(1),
+    created_by: jsonb('created_by').$type<AgentRefT>().notNull(),
+    reasoning: text('reasoning'),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    archived_at: timestamp('archived_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('knowledge_edge_unique').on(
+      t.from_knowledge_id,
+      t.to_knowledge_id,
+      t.relation_type,
+    ),
+    index('knowledge_edge_from_idx').on(t.from_knowledge_id, t.relation_type),
+    index('knowledge_edge_to_idx').on(t.to_knowledge_id, t.relation_type),
+  ],
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 1c.1 Step 1.3 (Lane A) — knowledge_mastery derived view.
+//
+// Per ADR-0012: mastery / last_active_at are derived from events, not stored
+// fields. DDL lives in drizzle/0004_phase1c1_knowledge_mastery_view.sql
+// (drizzle-kit can register the view as `.existing()` but does NOT generate
+// the CREATE VIEW statement). All view columns nullable except knowledge_id
+// (primary correlation) — `mastery` is NULL when no evidence, `evidence_count`
+// is always 0+ via COALESCE in the view SQL, `last_active_at` defaults to
+// knowledge.created_at when no events touch the node.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const knowledge_mastery = pgView('knowledge_mastery', {
+  knowledge_id: text('knowledge_id').notNull(),
+  mastery: real('mastery'),
+  evidence_count: integer('evidence_count').notNull(),
+  last_evidence_at: timestamp('last_evidence_at', { withTimezone: true }),
+  last_active_at: timestamp('last_active_at', { withTimezone: true }).notNull(),
+}).existing();

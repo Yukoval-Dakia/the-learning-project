@@ -12,8 +12,6 @@ describe('loadTreeSnapshot', () => {
     const db = testDb();
     const now = new Date();
     const base = {
-      base_mastery: 0 as const,
-      ai_delta_mastery: 0 as const,
       merged_from: [] as string[],
       proposed_by_ai: false,
       approval_status: 'approved' as const,
@@ -50,8 +48,6 @@ describe('loadTreeSnapshot', () => {
       domain: i === 0 ? 'wenyan' : null,
       parent_id: i === 0 ? null : `k${i - 1}`,
       archived_at: null,
-      base_mastery: 0 as const,
-      ai_delta_mastery: 0 as const,
       merged_from: [] as string[],
       proposed_by_ai: false,
       approval_status: 'approved' as const,

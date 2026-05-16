@@ -39,11 +39,8 @@ export const ArtifactSelectGenerated = createSelectSchema(t.artifact);
 export const AnswerInsertGenerated = createInsertSchema(t.answer);
 export const AnswerSelectGenerated = createSelectSchema(t.answer);
 
-export const JudgmentInsertGenerated = createInsertSchema(t.judgment);
-export const JudgmentSelectGenerated = createSelectSchema(t.judgment);
-
-export const UserAppealInsertGenerated = createInsertSchema(t.user_appeal);
-export const UserAppealSelectGenerated = createSelectSchema(t.user_appeal);
+// judgment + user_appeal removed in Phase 1c.1 Step 1.4 (Lane A) per ADR-0006 v2 /
+// data-assumptions §O2. Judge is now an event (action='judge', subject_kind='event').
 
 export const CompletionEvidenceInsertGenerated = createInsertSchema(t.completion_evidence);
 export const CompletionEvidenceSelectGenerated = createSelectSchema(t.completion_evidence);
