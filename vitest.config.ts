@@ -9,6 +9,7 @@ export default defineConfig({
       'app/**/*.test.ts',
       'workers/src/**/*.test.ts',
       'tests/**/*.test.ts',
+      'scripts/**/*.test.ts',
     ],
     environment: 'node',
     globals: false,
