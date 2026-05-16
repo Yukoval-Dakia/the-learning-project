@@ -46,8 +46,7 @@ async function insertKnowledge(opts: {
 
 async function insertProposeEvent(opts: {
   id: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  payload: any;
+  payload: Record<string, unknown>;
   reasoning?: string;
   action?: string;
   subject_id?: string;
@@ -56,9 +55,11 @@ async function insertProposeEvent(opts: {
 }) {
   const db = testDb();
   const now = new Date();
-  const action = opts.action ?? (opts.payload.mutation === 'propose_new'
-    ? 'propose'
-    : `experimental:knowledge_${opts.payload.mutation}`);
+  const action =
+    opts.action ??
+    (opts.payload.mutation === 'propose_new'
+      ? 'propose'
+      : `experimental:knowledge_${opts.payload.mutation}`);
   const isProposeNew = opts.payload.mutation === 'propose_new';
   // Strip mutation key for event payload (it's encoded in action)
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -73,7 +74,7 @@ async function insertProposeEvent(opts: {
     actor_ref: 'dreaming',
     action,
     subject_kind: 'knowledge',
-    subject_id: opts.subject_id ?? 'subject_' + opts.id,
+    subject_id: opts.subject_id ?? `subject_${opts.id}`,
     outcome: 'partial',
     payload: eventPayload,
     caused_by_event_id: null,
@@ -659,14 +660,9 @@ describe('acceptProposal — high-tier mutations', () => {
     const acceptRows = await db
       .select()
       .from(event)
-      .where(
-        and(
-          eq(event.action, 'rate'),
-          eq(event.caused_by_event_id, 'p_concurrent'),
-        ),
-      );
-    expect(acceptRows.filter((r) => (r.payload as { rating?: string }).rating === 'accept'))
-      .toHaveLength(1);
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'p_concurrent')));
+    expect(
+      acceptRows.filter((r) => (r.payload as { rating?: string }).rating === 'accept'),
+    ).toHaveLength(1);
   });
 });
-

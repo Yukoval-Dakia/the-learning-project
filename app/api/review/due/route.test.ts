@@ -83,8 +83,9 @@ function makeFsrsState(overrides: {
 async function seedFsrsState(opts: {
   question_id: string;
   due_at: Date;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  state: any;
+  // jsonb column; tests build the FSRS state inline via mkFsrsState. unknown
+  // keeps the helper agnostic without dragging the full FsrsStateSchemaT here.
+  state: unknown;
 }) {
   const db = testDb();
   const now = new Date();
@@ -92,8 +93,7 @@ async function seedFsrsState(opts: {
     id: `f_${opts.question_id}`,
     subject_kind: 'question',
     subject_id: opts.question_id,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    state: opts.state as any,
+    state: opts.state as never,
     due_at: opts.due_at,
     last_review_event_id: null,
     updated_at: now,

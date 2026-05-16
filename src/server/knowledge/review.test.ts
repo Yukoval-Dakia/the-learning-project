@@ -150,10 +150,7 @@ describe('streamReviewTask', () => {
       }
     }
 
-    const proposals = await db
-      .select()
-      .from(event)
-      .where(eq(event.subject_kind, 'knowledge'));
+    const proposals = await db.select().from(event).where(eq(event.subject_kind, 'knowledge'));
     expect(proposals).toHaveLength(1);
     expect(proposals[0].action).toBe('experimental:knowledge_archive');
   });
@@ -487,10 +484,7 @@ describe('streamReviewTask', () => {
     // Post-Step-9: tree mutations (non-propose_new) write
     // `event(action='experimental:knowledge_<mutation>', actor='dreaming')`
     // via writeKnowledgeProposeEvent (no more dreaming_proposal table).
-    const proposeEvents = await db
-      .select()
-      .from(event)
-      .where(eq(event.actor_ref, 'dreaming'));
+    const proposeEvents = await db.select().from(event).where(eq(event.actor_ref, 'dreaming'));
     expect(proposeEvents).toHaveLength(1);
     expect(proposeEvents[0].action).toBe('experimental:knowledge_archive');
   });

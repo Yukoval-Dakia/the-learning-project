@@ -121,7 +121,11 @@ describe('GET /api/knowledge/proposals', () => {
     expect(body.rows).toHaveLength(1);
     expect(body.rows[0].id).toBe('p1');
     expect(body.rows[0].kind).toBe('knowledge');
-    expect(body.rows[0].payload).toEqual({ mutation: 'propose_new', name: 'X', parent_id: 'parent' });
+    expect(body.rows[0].payload).toEqual({
+      mutation: 'propose_new',
+      name: 'X',
+      parent_id: 'parent',
+    });
     expect(body.rows[0].reasoning).toBe('because');
     expect(body.rows[0].status).toBe('pending');
     expect(body.rows[0].decided_at).toBeNull();

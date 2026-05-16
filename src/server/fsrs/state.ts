@@ -8,12 +8,12 @@
 // table outside the Step 3 migration script. The Step 9.L invariant audit
 // enforces this.
 
-import { eq, and } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 
 import { newId } from '@/core/ids';
+import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import type { Db, Tx } from '@/db/client';
 import { material_fsrs_state } from '@/db/schema';
-import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 
 type DbLike = Db | Tx;
 
