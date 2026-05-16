@@ -263,3 +263,87 @@ export async function migrateReviewEvents(db: DbLike): Promise<void> {
       .onConflictDoNothing({ target: material_fsrs_state.id });
   }
 }
+
+import { dreaming_proposal } from '@/db/schema';
+
+/**
+ * 3.D — Migrate `dreaming_proposal` rows into `event(action='propose',
+ * subject_kind='knowledge')` per Lane B `ProposeKnowledge` shape.
+ *
+ * Defensive payload extraction — legacy `dreaming_proposal.payload` is loose
+ * jsonb; in practice should carry `{ proposed_knowledge: { name, parent_id, ...
+ * }, ... }` per parent plan §"读 dreaming_proposal", but legacy AI output may
+ * vary. We accept both `payload.proposed_knowledge.{name,parent_id}` and
+ * top-level fallbacks; if neither yields name + parent_id, skip with a stable
+ * warn marker (the contract is strict; we don't fabricate data).
+ *
+ * outcome mapping (Lane B ProposeKnowledge.outcome ∈ {'success', 'partial'}):
+ *   accepted → success
+ *   pending  → partial
+ *   rejected → partial + reasoning prefix '[legacy rejected] '
+ *     (Lane B drops 'failure' from propose outcome on purpose — rejected
+ *     proposals are early-stage experiments; forensic data preserved in
+ *     legacy dreaming_proposal table.)
+ */
+export async function migrateDreamingProposals(db: DbLike): Promise<void> {
+  const rows = await db.select().from(dreaming_proposal);
+  for (const p of rows) {
+    const payload = (p.payload ?? {}) as Record<string, unknown>;
+    const proposed = (payload.proposed_knowledge ?? {}) as Record<string, unknown>;
+    const name = (proposed.name as string | undefined) ?? (payload.name as string | undefined) ?? null;
+    const parentId =
+      (proposed.parent_id as string | undefined) ?? (payload.parent_id as string | undefined) ?? null;
+    const subjectId =
+      (proposed.id as string | undefined) ?? deterministicId('k_legacy', p.id);
+
+    if (name === null || parentId === null) {
+      // Strict KnownEvent contract — don't construct invalid event. Stable
+      // warn prefix lets tests/observers grep for these.
+      console.warn(
+        `[migrate-phase1c1] skip propose id=${p.id} kind=${p.kind}: missing name or parent_id in payload`,
+      );
+      continue;
+    }
+
+    const outcome =
+      p.status === 'accepted' ? ('success' as const) : ('partial' as const);
+    // Forensic prefix for rejected → otherwise the rejection signal disappears
+    // (Lane B doesn't allow outcome='failure' on propose).
+    const reasoning =
+      p.status === 'rejected'
+        ? `[legacy rejected] ${p.reasoning ?? '(legacy: reasoning missing)'}`
+        : p.reasoning ?? '(legacy: reasoning missing)';
+
+    const proposeEvent = {
+      id: deterministicId('evt_propose', p.id),
+      session_id: null,
+      actor_kind: 'agent' as const,
+      actor_ref: 'dreaming',
+      action: 'propose' as const,
+      subject_kind: 'knowledge' as const,
+      subject_id: subjectId,
+      outcome,
+      payload: {
+        name,
+        parent_id: parentId,
+        reasoning,
+      },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: p.proposed_at,
+    };
+
+    parseEvent({
+      actor_kind: proposeEvent.actor_kind,
+      actor_ref: proposeEvent.actor_ref,
+      action: proposeEvent.action,
+      subject_kind: proposeEvent.subject_kind,
+      subject_id: proposeEvent.subject_id,
+      outcome: proposeEvent.outcome,
+      payload: proposeEvent.payload,
+    });
+
+    await db.insert(event).values(proposeEvent).onConflictDoNothing({ target: event.id });
+  }
+}

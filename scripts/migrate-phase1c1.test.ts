@@ -6,7 +6,7 @@
 // must pass `parseEvent` (verified inside the migrate fn) — this guards against
 // silent drift from Lane B's locked KnownEvent contract.
 
-import { question, mistake, event, review_event, material_fsrs_state } from '@/db/schema';
+import { question, mistake, event, review_event, material_fsrs_state, dreaming_proposal } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../tests/helpers/db';
@@ -315,3 +315,110 @@ describe('migrateReviewEvents — review events + FSRS projection (3.C)', () => 
 function deterministicIdHelper(prefix: string, sourceId: string): string {
   return `${prefix}_${sourceId}`;
 }
+
+describe('migrateDreamingProposals — propose event (3.D)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  async function seedKnowledge(id: string) {
+    const db = testDb();
+    await db.insert(question).values({
+      id: `q_unused_${id}`,
+      kind: 'short_answer',
+      prompt_md: 'x',
+      source: 'manual',
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+  }
+
+  it('pending → outcome=partial; accepted → success; rejected → partial + reasoning prefix', async () => {
+    const db = testDb();
+    const proposedAt = new Date('2026-04-01T00:00:00Z');
+
+    const fixtures = [
+      { id: 'dp_pending', status: 'pending', expectedOutcome: 'partial', expectReasoningPrefix: false },
+      { id: 'dp_accepted', status: 'accepted', expectedOutcome: 'success', expectReasoningPrefix: false },
+      { id: 'dp_rejected', status: 'rejected', expectedOutcome: 'partial', expectReasoningPrefix: true },
+    ] as const;
+
+    for (const f of fixtures) {
+      await db.insert(dreaming_proposal).values({
+        id: f.id,
+        kind: 'knowledge',
+        payload: {
+          proposed_knowledge: { name: `node_${f.id}`, parent_id: 'k_parent_x' },
+        },
+        reasoning: `legacy reasoning for ${f.id}`,
+        status: f.status,
+        proposed_at: proposedAt,
+        decided_at: f.status === 'pending' ? null : new Date('2026-04-02T00:00:00Z'),
+      });
+    }
+
+    const { migrateDreamingProposals } = await import('./migrate-phase1c1');
+    await migrateDreamingProposals(db);
+
+    const events = await db.select().from(event);
+    expect(events).toHaveLength(3);
+    for (const f of fixtures) {
+      const ev = events.find((e) => e.id === `evt_propose_${f.id}`);
+      expect(ev, `event for ${f.id} should exist`).toBeDefined();
+      if (!ev) continue;
+      expect(ev.action).toBe('propose');
+      expect(ev.subject_kind).toBe('knowledge');
+      expect(ev.actor_kind).toBe('agent');
+      expect(ev.actor_ref).toBe('dreaming');
+      expect(ev.outcome).toBe(f.expectedOutcome);
+      const p = ev.payload as { name: string; parent_id: string; reasoning: string };
+      expect(p.name).toBe(`node_${f.id}`);
+      expect(p.parent_id).toBe('k_parent_x');
+      if (f.expectReasoningPrefix) {
+        expect(p.reasoning.startsWith('[legacy rejected] ')).toBe(true);
+      } else {
+        expect(p.reasoning.startsWith('[legacy rejected] ')).toBe(false);
+      }
+    }
+  });
+
+  it('skips proposals missing name or parent_id + emits a stable warn marker', async () => {
+    const db = testDb();
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (msg: unknown) => {
+      if (typeof msg === 'string') warnings.push(msg);
+    };
+    try {
+      await db.insert(dreaming_proposal).values({
+        id: 'dp_no_name',
+        kind: 'knowledge',
+        payload: { proposed_knowledge: { parent_id: 'k_parent_x' } }, // name missing
+        reasoning: 'reasoning',
+        status: 'pending',
+        proposed_at: new Date('2026-04-03T00:00:00Z'),
+      });
+      await db.insert(dreaming_proposal).values({
+        id: 'dp_no_parent',
+        kind: 'knowledge',
+        payload: { proposed_knowledge: { name: 'orphan_node' } }, // parent_id missing
+        reasoning: 'reasoning',
+        status: 'pending',
+        proposed_at: new Date('2026-04-03T00:00:00Z'),
+      });
+
+      const { migrateDreamingProposals } = await import('./migrate-phase1c1');
+      await migrateDreamingProposals(db);
+
+      const events = await db.select().from(event);
+      expect(events).toHaveLength(0);
+      // Both should have logged a warning with the stable prefix
+      const hits = warnings.filter((w) => w.startsWith('[migrate-phase1c1] skip propose'));
+      expect(hits).toHaveLength(2);
+      expect(hits.some((w) => w.includes('dp_no_name'))).toBe(true);
+      expect(hits.some((w) => w.includes('dp_no_parent'))).toBe(true);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+});
