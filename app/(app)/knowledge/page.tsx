@@ -47,6 +47,7 @@ interface KnowledgeProposal {
 }
 
 interface EdgeProposalEvent {
+  id: string;
   actor_kind: 'user' | 'agent' | 'cron' | 'system';
   actor_ref: string;
   action: 'propose';
@@ -144,6 +145,35 @@ export default function KnowledgePage() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['knowledge'] }),
         queryClient.invalidateQueries({ queryKey: ['knowledge-proposals', 'pending'] }),
+      ]);
+    },
+  });
+
+  // Phase 1c.2 — wire knowledge_edge proposal decisions through to the server.
+  // Pre-1c.2 this was local state only; now decisions write rate + (for accept)
+  // generate events and insert the actual knowledge_edge row, so subsequent
+  // page loads remember what the user decided.
+  const edgeProposalDecision = useMutation({
+    mutationFn: ({
+      id,
+      decision,
+      new_relation_type,
+    }: {
+      id: string;
+      decision: ProposalDecision;
+      new_relation_type?: RelationType;
+    }) =>
+      apiJson(`/api/knowledge/edges/proposals/${id}`, {
+        method: 'POST',
+        body: JSON.stringify({
+          decision,
+          ...(new_relation_type ? { new_relation_type } : {}),
+        }),
+      }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['knowledge-edges'] }),
+        queryClient.invalidateQueries({ queryKey: ['knowledge-edge-proposals'] }),
       ]);
     },
   });
@@ -377,12 +407,18 @@ export default function KnowledgePage() {
                       event={event}
                       nodesById={byId}
                       status={edgeProposalStatus[edgeProposalKey(event)]}
-                      onDecision={(decision) =>
+                      pending={edgeProposalDecision.isPending}
+                      onDecision={(decision, new_relation_type) => {
                         setEdgeProposalStatus((current) => ({
                           ...current,
                           [edgeProposalKey(event)]: decision,
-                        }))
-                      }
+                        }));
+                        edgeProposalDecision.mutate({
+                          id: event.id,
+                          decision,
+                          new_relation_type,
+                        });
+                      }}
                     />
                   ))}
                 </div>
@@ -716,17 +752,19 @@ function EdgeProposalCard({
   event,
   nodesById,
   status,
+  pending,
   onDecision,
 }: {
   event: EdgeProposalEvent;
   nodesById: Map<string, TreeNode>;
   status: ProposalDecision | undefined;
-  onDecision: (decision: ProposalDecision) => void;
+  pending: boolean;
+  onDecision: (decision: ProposalDecision, new_relation_type?: RelationType) => void;
 }) {
   const fromId = edgeProposalFrom(event);
   const toId = edgeProposalTo(event);
   const meta = relationMeta(event.payload.relation_type);
-  const disabled = status !== undefined;
+  const disabled = status !== undefined || pending;
   return (
     <div className={`edge-proposal tone-${meta.tone} ${status ? `is-${status}` : ''}`}>
       <div className="edge-proposal-head">
@@ -773,7 +811,14 @@ function EdgeProposalCard({
           size="sm"
           disabled={disabled}
           className="knowledge-btn-secondary"
-          onClick={() => onDecision('change_type')}
+          onClick={() => {
+            // Pick the next relation type from the core enum, skipping the
+            // current one. The full picker is a later UX polish; cycling lets
+            // users at least round-trip the decision through the server.
+            const cur = event.payload.relation_type;
+            const next = (Object.keys(RELATION_TYPES) as RelationType[]).find((r) => r !== cur);
+            if (next) onDecision('change_type', next);
+          }}
         >
           改关系
         </Button>
