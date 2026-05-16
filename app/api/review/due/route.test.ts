@@ -1,4 +1,11 @@
-import { mistake, question } from '@/db/schema';
+// Phase 1c.1 Step 9.B — `/api/review/due` rewritten over `material_fsrs_state`.
+//
+// Pre-Step-9 fixtures seeded `mistake` rows w/ fsrs_state jsonb. Post-Step-9
+// fixtures seed `question` + (optionally) `material_fsrs_state` rows. Cards
+// with no FSRS state row but at least one failure attempt also surface (never-
+// reviewed slice).
+
+import { event, material_fsrs_state, question } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET } from './route';
@@ -13,18 +20,43 @@ const QUESTION_BASE = {
   version: 0,
 };
 
-const MISTAKE_BASE = {
-  source: 'manual' as const,
-  knowledge_ids: ['k1'],
-  wrong_answer_image_refs: [] as string[],
-  variants: [] as [],
-  variants_generated_count: 0,
-  variants_max: 3,
-  status: 'active' as const,
-  version: 0,
-};
+async function seedQuestion(id: string, overrides: Partial<Record<string, unknown>> = {}) {
+  const db = testDb();
+  const now = new Date();
+  await db.insert(question).values({
+    id,
+    prompt_md: `P ${id}`,
+    created_at: now,
+    updated_at: now,
+    ...QUESTION_BASE,
+    ...overrides,
+  });
+}
 
-// Serialize FsrsState for JSONB — dates must be ISO strings.
+async function seedFailureAttempt(question_id: string) {
+  const db = testDb();
+  const now = new Date();
+  await db.insert(event).values({
+    id: `evt_attempt_${question_id}`,
+    session_id: null,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'attempt',
+    subject_kind: 'question',
+    subject_id: question_id,
+    outcome: 'failure',
+    payload: {
+      answer_md: 'wrong',
+      answer_image_refs: [],
+      referenced_knowledge_ids: ['k1'],
+    },
+    caused_by_event_id: null,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: now,
+  });
+}
+
 function makeFsrsState(overrides: {
   due: string;
   stability?: number;
@@ -48,6 +80,26 @@ function makeFsrsState(overrides: {
   };
 }
 
+async function seedFsrsState(opts: {
+  question_id: string;
+  due_at: Date;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  state: any;
+}) {
+  const db = testDb();
+  const now = new Date();
+  await db.insert(material_fsrs_state).values({
+    id: `f_${opts.question_id}`,
+    subject_kind: 'question',
+    subject_id: opts.question_id,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    state: opts.state as any,
+    due_at: opts.due_at,
+    last_review_event_id: null,
+    updated_at: now,
+  });
+}
+
 async function getReview(params = '') {
   return GET(new Request(`http://localhost/api/review/due${params ? `?${params}` : ''}`));
 }
@@ -57,180 +109,92 @@ describe('GET /api/review/due', () => {
     await resetDb();
   });
 
-  it('returns never-reviewed mistakes first (null fsrs_state)', async () => {
-    const db = testDb();
+  it('returns never-reviewed questions (no FSRS state row) first, then due cards', async () => {
     const now = new Date();
-    const past = new Date(now.getTime() - 2 * 86400 * 1000).toISOString();
-    const future = new Date(now.getTime() + 86400 * 1000).toISOString();
+    const pastIso = new Date(now.getTime() - 2 * 86400 * 1000).toISOString();
+    const futureIso = new Date(now.getTime() + 86400 * 1000).toISOString();
 
-    await db.insert(question).values([
-      { id: 'q1', prompt_md: 'P null', created_at: now, updated_at: now, ...QUESTION_BASE },
-      { id: 'q2', prompt_md: 'P due', created_at: now, updated_at: now, ...QUESTION_BASE },
-      { id: 'q3', prompt_md: 'P future', created_at: now, updated_at: now, ...QUESTION_BASE },
-    ]);
+    await seedQuestion('q_null');
+    await seedQuestion('q_due');
+    await seedQuestion('q_future');
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await db.insert(mistake).values([
-      {
-        id: 'm_null',
-        question_id: 'q1',
-        fsrs_state: null,
-        created_at: now,
-        updated_at: now,
-        ...MISTAKE_BASE,
-      },
-      {
-        id: 'm_due',
-        question_id: 'q2',
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        fsrs_state: makeFsrsState({ due: past }) as any,
-        created_at: now,
-        updated_at: now,
-        ...MISTAKE_BASE,
-      },
-      {
-        id: 'm_future',
-        question_id: 'q3',
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        fsrs_state: makeFsrsState({ due: future }) as any,
-        created_at: now,
-        updated_at: now,
-        ...MISTAKE_BASE,
-      },
-    ]);
+    // q_null: failure attempt, no fsrs state
+    await seedFailureAttempt('q_null');
+    // q_due: already-reviewed but overdue
+    await seedFsrsState({
+      question_id: 'q_due',
+      due_at: new Date(pastIso),
+      state: makeFsrsState({ due: pastIso }),
+    });
+    // q_future: reviewed, not yet due
+    await seedFsrsState({
+      question_id: 'q_future',
+      due_at: new Date(futureIso),
+      state: makeFsrsState({ due: futureIso }),
+    });
 
     const res = await getReview();
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { rows: Array<{ id: string; fsrs_state: unknown }> };
+    const body = (await res.json()) as {
+      rows: Array<{ id: string; fsrs_state: unknown }>;
+    };
 
-    // Only null + past-due should be returned (not future)
-    expect(body.rows.map((r) => r.id)).toContain('m_null');
-    expect(body.rows.map((r) => r.id)).toContain('m_due');
-    expect(body.rows.map((r) => r.id)).not.toContain('m_future');
-
-    // Null fsrs_state comes first
-    expect(body.rows[0].id).toBe('m_null');
+    const ids = body.rows.map((r) => r.id);
+    expect(ids).toContain('q_null');
+    expect(ids).toContain('q_due');
+    expect(ids).not.toContain('q_future');
+    // Null-state comes first
+    expect(body.rows[0].id).toBe('q_null');
     expect(body.rows[0].fsrs_state).toBeNull();
   });
 
-  it('excludes archived mistakes', async () => {
-    const db = testDb();
-    const now = new Date();
-    await db.insert(question).values([
-      { id: 'q1', prompt_md: 'P1', created_at: now, updated_at: now, ...QUESTION_BASE },
-      { id: 'q2', prompt_md: 'P2', created_at: now, updated_at: now, ...QUESTION_BASE },
-    ]);
-    await db.insert(mistake).values([
-      {
-        id: 'm_archived',
-        question_id: 'q1',
-        fsrs_state: null,
-        archived_at: now,
-        created_at: now,
-        updated_at: now,
-        ...MISTAKE_BASE,
-      },
-      {
-        id: 'm_active',
-        question_id: 'q2',
-        fsrs_state: null,
-        created_at: now,
-        updated_at: now,
-        ...MISTAKE_BASE,
-      },
-    ]);
-
+  it('returns empty rows when no cards are due', async () => {
     const res = await getReview();
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { rows: Array<{ id: string }> };
-    expect(body.rows.map((r) => r.id)).not.toContain('m_archived');
-    expect(body.rows.map((r) => r.id)).toContain('m_active');
+    const body = (await res.json()) as { rows: unknown[] };
+    expect(body.rows).toHaveLength(0);
   });
 
-  it('excludes non-active status mistakes', async () => {
-    const db = testDb();
-    const now = new Date();
-    await db.insert(question).values([
-      { id: 'q1', prompt_md: 'P1', created_at: now, updated_at: now, ...QUESTION_BASE },
-      { id: 'q2', prompt_md: 'P2', created_at: now, updated_at: now, ...QUESTION_BASE },
-    ]);
-    await db.insert(mistake).values([
-      {
-        ...MISTAKE_BASE,
-        id: 'm_inactive',
-        question_id: 'q1',
-        fsrs_state: null,
-        status: 'suspended',
-        created_at: now,
-        updated_at: now,
-      },
-      {
-        id: 'm_active',
-        question_id: 'q2',
-        fsrs_state: null,
-        created_at: now,
-        updated_at: now,
-        ...MISTAKE_BASE,
-      },
-    ]);
-
+  it('does NOT include questions that have no attempt events and no FSRS state', async () => {
+    // Question alone is not due — only enters via either failure-attempt event
+    // (never-reviewed slice) or material_fsrs_state row.
+    await seedQuestion('q_alone');
     const res = await getReview();
     const body = (await res.json()) as { rows: Array<{ id: string }> };
-    expect(body.rows.map((r) => r.id)).not.toContain('m_inactive');
-    expect(body.rows.map((r) => r.id)).toContain('m_active');
+    expect(body.rows.map((r) => r.id)).not.toContain('q_alone');
   });
 
-  it('respects limit=2 param', async () => {
-    const db = testDb();
+  it('respects limit=2 param across both slices', async () => {
     const now = new Date();
-    const qs = Array.from({ length: 5 }, (_, i) => ({
-      id: `q${i}`,
-      prompt_md: `P${i}`,
-      created_at: now,
-      updated_at: now,
-      ...QUESTION_BASE,
-    }));
-    const ms = Array.from({ length: 5 }, (_, i) => ({
-      id: `m${i}`,
-      question_id: `q${i}`,
-      fsrs_state: null,
-      created_at: new Date(now.getTime() + i),
-      updated_at: now,
-      ...MISTAKE_BASE,
-    }));
-    await db.insert(question).values(qs);
-    await db.insert(mistake).values(ms);
-
+    const pastIso = new Date(now.getTime() - 86400 * 1000).toISOString();
+    for (let i = 0; i < 5; i++) {
+      await seedQuestion(`q${i}`);
+      await seedFsrsState({
+        question_id: `q${i}`,
+        due_at: new Date(pastIso),
+        state: makeFsrsState({ due: pastIso }),
+      });
+    }
     const res = await getReview('limit=2');
     const body = (await res.json()) as { rows: unknown[] };
     expect(body.rows).toHaveLength(2);
   });
 
   it('clamps limit=0 to 1', async () => {
-    const db = testDb();
     const now = new Date();
-    await db.insert(question).values([
-      { id: 'q1', prompt_md: 'P1', created_at: now, updated_at: now, ...QUESTION_BASE },
-      { id: 'q2', prompt_md: 'P2', created_at: now, updated_at: now, ...QUESTION_BASE },
-    ]);
-    await db.insert(mistake).values([
-      {
-        id: 'm1',
-        question_id: 'q1',
-        fsrs_state: null,
-        created_at: now,
-        updated_at: now,
-        ...MISTAKE_BASE,
-      },
-      {
-        id: 'm2',
-        question_id: 'q2',
-        fsrs_state: null,
-        created_at: new Date(now.getTime() + 1),
-        updated_at: now,
-        ...MISTAKE_BASE,
-      },
-    ]);
+    const pastIso = new Date(now.getTime() - 86400 * 1000).toISOString();
+    await seedQuestion('q1');
+    await seedFsrsState({
+      question_id: 'q1',
+      due_at: new Date(pastIso),
+      state: makeFsrsState({ due: pastIso }),
+    });
+    await seedQuestion('q2');
+    await seedFsrsState({
+      question_id: 'q2',
+      due_at: new Date(pastIso),
+      state: makeFsrsState({ due: pastIso }),
+    });
 
     const res = await getReview('limit=0');
     const body = (await res.json()) as { rows: unknown[] };
@@ -238,49 +202,29 @@ describe('GET /api/review/due', () => {
   });
 
   it('clamps limit=abc to default 20', async () => {
-    const db = testDb();
     const now = new Date();
-    await db
-      .insert(question)
-      .values([{ id: 'q1', prompt_md: 'P1', created_at: now, updated_at: now, ...QUESTION_BASE }]);
-    await db.insert(mistake).values([
-      {
-        id: 'm1',
-        question_id: 'q1',
-        fsrs_state: null,
-        created_at: now,
-        updated_at: now,
-        ...MISTAKE_BASE,
-      },
-    ]);
-
-    // With 1 item in DB, limit=abc (→20) still returns 1
+    const pastIso = new Date(now.getTime() - 86400 * 1000).toISOString();
+    await seedQuestion('q1');
+    await seedFsrsState({
+      question_id: 'q1',
+      due_at: new Date(pastIso),
+      state: makeFsrsState({ due: pastIso }),
+    });
     const res = await getReview('limit=abc');
     const body = (await res.json()) as { rows: unknown[] };
     expect(body.rows).toHaveLength(1);
   });
 
   it('truncates prompt_md and reference_md to 1000 chars', async () => {
-    const db = testDb();
     const now = new Date();
+    const pastIso = new Date(now.getTime() - 86400 * 1000).toISOString();
     const long = 'X'.repeat(1500);
-    await db.insert(question).values({
-      ...QUESTION_BASE,
-      id: 'q1',
-      prompt_md: long,
-      reference_md: long,
-      created_at: now,
-      updated_at: now,
+    await seedQuestion('q_long', { prompt_md: long, reference_md: long });
+    await seedFsrsState({
+      question_id: 'q_long',
+      due_at: new Date(pastIso),
+      state: makeFsrsState({ due: pastIso }),
     });
-    await db.insert(mistake).values({
-      id: 'm1',
-      question_id: 'q1',
-      fsrs_state: null,
-      created_at: now,
-      updated_at: now,
-      ...MISTAKE_BASE,
-    });
-
     const res = await getReview();
     const body = (await res.json()) as {
       rows: Array<{ prompt_md: string; reference_md: string }>;
@@ -289,48 +233,27 @@ describe('GET /api/review/due', () => {
     expect(body.rows[0].reference_md).toHaveLength(1000);
   });
 
-  it('returns empty rows when no mistakes are due', async () => {
-    const res = await getReview();
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { rows: unknown[] };
-    expect(body.rows).toHaveLength(0);
-  });
-
-  it('ordered by due asc after null-first group', async () => {
-    const db = testDb();
+  it('ordered by due_at asc within the already-reviewed slice', async () => {
     const now = new Date();
-    const earlier = new Date(now.getTime() - 3 * 86400 * 1000).toISOString(); // 3 days ago
-    const later = new Date(now.getTime() - 1 * 86400 * 1000).toISOString(); // 1 day ago
+    const earlier = new Date(now.getTime() - 3 * 86400 * 1000);
+    const later = new Date(now.getTime() - 1 * 86400 * 1000);
 
-    await db.insert(question).values([
-      { id: 'q1', prompt_md: 'P1', created_at: now, updated_at: now, ...QUESTION_BASE },
-      { id: 'q2', prompt_md: 'P2', created_at: now, updated_at: now, ...QUESTION_BASE },
-    ]);
-    await db.insert(mistake).values([
-      {
-        id: 'm_later',
-        question_id: 'q1',
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        fsrs_state: makeFsrsState({ due: later }) as any,
-        created_at: now,
-        updated_at: now,
-        ...MISTAKE_BASE,
-      },
-      {
-        id: 'm_earlier',
-        question_id: 'q2',
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        fsrs_state: makeFsrsState({ due: earlier }) as any,
-        created_at: now,
-        updated_at: now,
-        ...MISTAKE_BASE,
-      },
-    ]);
+    await seedQuestion('q_later');
+    await seedFsrsState({
+      question_id: 'q_later',
+      due_at: later,
+      state: makeFsrsState({ due: later.toISOString() }),
+    });
+    await seedQuestion('q_earlier');
+    await seedFsrsState({
+      question_id: 'q_earlier',
+      due_at: earlier,
+      state: makeFsrsState({ due: earlier.toISOString() }),
+    });
 
     const res = await getReview();
     const body = (await res.json()) as { rows: Array<{ id: string }> };
-    // earlier due_at should come before later
     const ids = body.rows.map((r) => r.id);
-    expect(ids.indexOf('m_earlier')).toBeLessThan(ids.indexOf('m_later'));
+    expect(ids.indexOf('q_earlier')).toBeLessThan(ids.indexOf('q_later'));
   });
 });
