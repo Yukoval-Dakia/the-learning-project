@@ -2,12 +2,12 @@ import { createId } from '@paralleldrive/cuid2';
 import { describe, expect, it, vi } from 'vitest';
 
 import { db } from '@/db/client';
-import { dreaming_proposal, knowledge, mistake, question } from '@/db/schema';
-import { eq, sql } from 'drizzle-orm';
+import { dreaming_proposal, event, knowledge, question } from '@/db/schema';
+import { eq } from 'drizzle-orm';
 import { runKnowledgeProposeNightly } from './knowledge_propose_nightly';
 
 describe('knowledge_propose_nightly handler', () => {
-  it('processes recent mistakes via runProposeAndWrite (per-mistake try-catch)', async () => {
+  it('processes recent failure attempts via runProposeAndWrite (per-attempt try-catch)', async () => {
     // Seed knowledge node so propose has a tree
     const kId = createId();
     const now = new Date();
@@ -20,7 +20,7 @@ describe('knowledge_propose_nightly handler', () => {
       updated_at: now,
     });
 
-    // Seed question + mistake (created now → within 24h window)
+    // Seed question + attempt event (within 24h window)
     const qId = createId();
     await db.insert(question).values({
       id: qId,
@@ -31,15 +31,25 @@ describe('knowledge_propose_nightly handler', () => {
       created_at: now,
       updated_at: now,
     });
-    const mId = createId();
-    await db.insert(mistake).values({
-      id: mId,
-      question_id: qId,
-      wrong_answer_md: 'wrong',
-      source: 'manual',
-      knowledge_ids: [kId],
+    const attemptId = createId();
+    await db.insert(event).values({
+      id: attemptId,
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: qId,
+      outcome: 'failure',
+      payload: {
+        answer_md: 'wrong',
+        answer_image_refs: [],
+        referenced_knowledge_ids: [kId],
+      },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
       created_at: now,
-      updated_at: now,
     });
 
     // Mock runTaskFn that returns valid propose output
@@ -65,12 +75,12 @@ describe('knowledge_propose_nightly handler', () => {
 
     // Cleanup
     await db.delete(dreaming_proposal).where(eq(dreaming_proposal.id, ours?.id ?? ''));
-    await db.delete(mistake).where(eq(mistake.id, mId));
+    await db.delete(event).where(eq(event.id, attemptId));
     await db.delete(question).where(eq(question.id, qId));
     await db.delete(knowledge).where(eq(knowledge.id, kId));
   });
 
-  it('skips mistakes older than 24 hours', async () => {
+  it('skips failure attempts older than 24 hours', async () => {
     const oldDate = new Date(Date.now() - 48 * 60 * 60 * 1000); // 48h ago
 
     const qId = createId();
@@ -83,35 +93,40 @@ describe('knowledge_propose_nightly handler', () => {
       created_at: oldDate,
       updated_at: oldDate,
     });
-    const mId = createId();
-    await db.insert(mistake).values({
-      id: mId,
-      question_id: qId,
-      wrong_answer_md: 'wrong',
-      source: 'manual',
-      knowledge_ids: [],
+    const attemptId = createId();
+    await db.insert(event).values({
+      id: attemptId,
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: qId,
+      outcome: 'failure',
+      payload: {
+        answer_md: 'wrong',
+        answer_image_refs: [],
+        referenced_knowledge_ids: [],
+      },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
       created_at: oldDate,
-      updated_at: oldDate,
     });
-
-    // Force update created_at to bypass default
-    await db.execute(
-      sql`UPDATE mistake SET created_at = ${oldDate.toISOString()} WHERE id = ${mId}`,
-    );
 
     const runTaskFn = vi.fn(async (_kind: string, _input: unknown, _ctx: unknown) => ({
       text: '{"proposals":[]}',
     }));
     const result = await runKnowledgeProposeNightly(db, { runTaskFn });
 
-    // The old mistake shouldn't be picked up
-    const callsForOldMistake = runTaskFn.mock.calls.filter((c) =>
-      JSON.stringify(c[1]).includes(mId),
+    // The old event shouldn't be picked up
+    const callsForOldAttempt = runTaskFn.mock.calls.filter((c) =>
+      JSON.stringify(c[1]).includes(qId),
     );
-    expect(callsForOldMistake.length).toBe(0);
+    expect(callsForOldAttempt.length).toBe(0);
     expect(result.processed).toBe(0);
 
-    await db.delete(mistake).where(eq(mistake.id, mId));
+    await db.delete(event).where(eq(event.id, attemptId));
     await db.delete(question).where(eq(question.id, qId));
   });
 });
