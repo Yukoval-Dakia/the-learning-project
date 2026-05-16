@@ -570,14 +570,24 @@ export async function dismissProposal(db: Db, proposalId: string): Promise<void>
     .limit(1);
   if (existing.length > 0) return;
 
-  // Verify the propose event exists before writing the rate event
+  // Codex P2-I — verify the event is actually a proposal, not just any
+  // event id. Without this guard, calling dismiss on, e.g., an attempt
+  // event id would still write a rate event chained to it — state pollution.
   const proposeRows = await db
-    .select({ id: event.id })
+    .select({ id: event.id, action: event.action, subject_kind: event.subject_kind })
     .from(event)
     .where(eq(event.id, proposalId))
     .limit(1);
   if (proposeRows.length === 0) {
     throw new Error(`proposal not found: ${proposalId}`);
+  }
+  const proposeRow = proposeRows[0];
+  const isProposal =
+    proposeRow.action === 'propose' || proposeRow.action.startsWith('experimental:knowledge_');
+  if (!isProposal) {
+    throw new Error(
+      `event ${proposalId} is not a proposal (action='${proposeRow.action}')`,
+    );
   }
 
   await writeEvent(db, {

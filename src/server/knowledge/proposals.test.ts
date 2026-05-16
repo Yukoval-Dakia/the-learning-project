@@ -587,6 +587,38 @@ describe('acceptProposal — high-tier mutations', () => {
     await expect(acceptProposal(db, 'p_bad')).rejects.toThrow(/unknown_mutation/i);
   });
 
+  // Codex P2-I — dismiss must reject non-proposal events.
+  it('dismissProposal throws when the event id is not a proposal (e.g., attempt event)', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(event).values({
+      id: 'attempt_e1',
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: 'q1',
+      outcome: 'failure',
+      payload: {
+        answer_md: 'wrong',
+        answer_image_refs: [],
+        referenced_knowledge_ids: [],
+      },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: now,
+    });
+    await expect(dismissProposal(db, 'attempt_e1')).rejects.toThrow(/not a proposal/i);
+    // No rate event was written.
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'attempt_e1')));
+    expect(rateRows).toHaveLength(0);
+  });
+
   // Codex P1-F — concurrent double-accept must not produce duplicate
   // knowledge nodes / duplicate rate=accept events. assertNotAlreadyRated +
   // mutation apply must share a transaction with SELECT … FOR UPDATE on the
