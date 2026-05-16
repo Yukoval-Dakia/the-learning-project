@@ -349,6 +349,45 @@ export async function migrateDreamingProposals(db: DbLike): Promise<void> {
 }
 
 import { ingestion_session, learning_session } from '@/db/schema';
+import { sql } from 'drizzle-orm';
+
+/**
+ * 3.F — Precheck: assert the legacy `judgment` table is empty (or absent).
+ *
+ * Per data-assumptions §O2 (and Lane A's Step 1.4 DROP), no rows should have
+ * ever been written to `judgment`; we DROPped it. This precheck is defensive
+ * for environments where the migration runs on older snapshots (e.g., a NAS
+ * backup taken before Step 1.4). Behaviour:
+ *
+ *   - table absent → ok (production / post-Step-1.4 state)
+ *   - table present but COUNT = 0 → ok
+ *   - table present with rows → ok=false; caller (orchestrator) refuses to run
+ *
+ * Stable error marker `judgment table` lets observers grep for these.
+ */
+export async function assertJudgmentEmpty(
+  db: DbLike,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  // to_regclass returns NULL when the relation doesn't exist (no error thrown).
+  const existsRows = await db.execute<{ exists: boolean }>(
+    sql`SELECT to_regclass('public.judgment') IS NOT NULL AS exists`,
+  );
+  const exists = existsRows[0]?.exists ?? false;
+  if (!exists) return { ok: true };
+
+  const countRows = await db.execute<{ count: string | number }>(
+    sql`SELECT COUNT(*)::bigint AS count FROM "judgment"`,
+  );
+  const raw = countRows[0]?.count ?? 0;
+  // postgres-js may return bigint counts as strings; coerce defensively.
+  const count = typeof raw === 'string' ? Number.parseInt(raw, 10) : raw;
+  if (count === 0) return { ok: true };
+
+  return {
+    ok: false,
+    error: `judgment table is not empty: ${count} row${count === 1 ? '' : 's'} present (data-assumptions §O2 violation; manual triage required)`,
+  };
+}
 
 /**
  * 3.E — Migrate `ingestion_session` rows into `learning_session(type='ingestion')`.
