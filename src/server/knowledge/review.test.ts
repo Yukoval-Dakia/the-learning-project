@@ -1,9 +1,9 @@
-import { newId } from '@/core/ids';
 import { tasks } from '@/ai/registry';
+import { newId } from '@/core/ids';
 import { parseEvent } from '@/core/schema/event';
 import { dreaming_proposal, event, knowledge } from '@/db/schema';
-import { and, eq } from 'drizzle-orm';
 import { MockLanguageModelV3 } from 'ai/test';
+import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { streamReviewTask } from './review';
