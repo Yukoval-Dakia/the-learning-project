@@ -9,6 +9,8 @@ export const MAX_INLINE_ASSETS = 45;
 // FK topological order. Insert sweeps forward; wipe sweeps reverse. Any schema
 // change that adds/removes/renames a table MUST update this array AND bump
 // SCHEMA_VERSION in lockstep.
+// Phase 1c.1 Step 1.4 (Lane A): judgment + user_appeal removed (DROPped per
+// data-assumptions §O2). Judging is now an event (action='judge') per ADR-0006 v2.
 export const FK_ORDER = [
   'knowledge',
   'source_asset',
@@ -23,8 +25,6 @@ export const FK_ORDER = [
   'study_log',
   'artifact',
   'answer',
-  'judgment',
-  'user_appeal',
   'dreaming_proposal',
   'tool_call_log',
   'cost_ledger',
