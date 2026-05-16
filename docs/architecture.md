@@ -325,8 +325,10 @@ workers/src/dreaming/
 
 ## 七、数据模型骨架
 
+> **Phase 1c.1 事件驱动核**（ADR-0006 v2）已落地。`event` + `learning_session` + `knowledge_edge` 是现行 schema 的三个新晋实体；下文骨架以现行 schema 为准，旧表（mistake / review_event / dreaming_proposal / ingestion_session）已在 Phase 1c.1 Step 9 DROP。骨架中的 Mistake / DreamingProposal / Session 块为**历史规划参考**（原始设计遗留），保留以维持 ADR 和 modules/ 文档引用的连贯性；代码层不再有这些表。
+
 ```
-Knowledge
+Knowledge                          // 知识树节点（backbone）
   id, name, domain, parent_id, last_active_at
   base_mastery, ai_delta_mastery
   merged_from[]                   // 合并历史，可拆回
@@ -348,9 +350,9 @@ Question
   → knowledge_ids[]
   difficulty: 1~5
   source: embedded | daily | final | dreaming | manual
-        | vision_single | vision_paper | reverse_mark | mistake_variant
-  source_ref?                     // mistake_id (variant) / artifact_id (reverse_mark) / null
-  draft_status?: draft | active   // 仅 mistake_variant 等需要双 pass 的题
+        | vision_single | vision_paper | reverse_mark | attempt_variant
+  source_ref?                     // source event_id (variant) / artifact_id (reverse_mark) / null
+  draft_status?: draft | active   // 仅 attempt_variant 等需要双 pass 的题
   // 变式系列字段
   variant_depth: int              // 默认 0；0=原题，1=一代变式，最大 2
   root_question_id?: string       // 指向 root question (variant_depth=0 时可省略)
@@ -359,46 +361,14 @@ Question
   metadata?: { force_flexible?, expected_input_kind?, ... }
   created_at, updated_at, version
 
-// 做错事件 + 复习态（题面在 Question 那边）
-Mistake
-  id
-  question_id                     // ★ 必须，题面在 Question
-  wrong_answer_md?                // 用户当时的错答（可省略）
-  wrong_answer_image_refs[]?
-  source: quiz_answer | manual | vision_single | vision_paper | reverse_mark
-  source_ref?                     // judgment_id / artifact_id / paper_session_id
-  → knowledge_ids[]                // 错过反映的具体盲点
-  cause: {
-    primary_category               // 10 类 enum:
-                                   //   concept | knowledge_gap | calculation | reading | memory
-                                   //   | expression | method | carelessness | time_pressure | other
-    secondary_categories[]?        // 多重原因
-    ai_analysis_md
-    user_notes?
-    partial?: bool
-    confidence?: float             // < 0.6 走 'other'
-    user_edited?: bool             // 用户编辑后 AI 不再覆盖
-  }
-  fsrs_state {due_at, interval, ease, repeat, lapses, retrievability_at}
-  variants[]: [{
-    question_id,
-    status: draft | active | broken | dismissed,
-    failure_reasons?: string[]
-  }]
-  variants_generated_count: int
-  variants_max: int
-  status: draft | active | resting | archived
-  archived_reason?: mastered | obsolete | user
-  archived_at?
-  deleted_at?
-  delete_reason?: user | merge | duplicate | misjudged
-  created_at, updated_at, version
+// ★ Phase 1c.1 实体：失败 attempt = event WHERE action='attempt' AND outcome='failure'
+//    旧 Mistake 表已 DROP（ADR-0006 v2）；UI 保留"错题"称呼（用户语义不变）
 
-// 待学习列表（含层级）
+// 待学习列表（含层级）—— 学习意图层，与 event 解耦
 LearningItem
   id
   source: mistake | manual | learning_intent | ai_dream
-  source_ref                      // mistake_id / dream_id / null
+  source_ref                      // attempt event_id / dream event_id / null
   title, content
   → knowledge_ids[]
   primary_artifact_id?            // 主消费物（note_hub 或 standalone tool_quiz）
@@ -432,22 +402,16 @@ StudyLog
   // 关联（任一/多个）
   → knowledge_ids[]?
   → question_id?
-  → mistake_id?
+  → event_id?                     // 关联到 attempt event（替代旧 mistake_id）
   → artifact_id?
   → learning_item_id?             // 可挂学习项做反思
   created_at, updated_at, version
 
-DreamingProposal
-  id, kind: problem | knowledge | quiz | summary
-        | note_section_update
-        | learning_item_completion        // AI 主动提议某 LearningItem 完成
-        | learning_item_relearn           // AI 主动提议复学
-  payload, reasoning
-  status: pending | accepted | dismissed
-  proposed_at, decided_at
+// ★ Phase 1c.1 实体：propose / generate 动作走 event（ADR-0006 v2）
+//    旧 DreamingProposal 表已 DROP；梦境流提议 = event WHERE action='propose' AND actor_kind='agent'
 
-MaintenanceSuggestion
-  id, kind                        // delete_mistake | merge_knowledge | archive | reset_fsrs | reset_mastery
+MaintenanceSuggestion               // ★ 保留 — 用户可回滚的维护建议（非 event，因需快照 + rollback_until）
+  id, kind                        // merge_knowledge | archive | reset_fsrs | reset_mastery
   target_ref
   reasoning
   status: pending | accepted | dismissed | rolled_back
@@ -522,17 +486,34 @@ UserAppeal
   appealed_at
   resolved_judgment_id?
 
-Session
-  id, started_at, ended_at, type
-  → knowledge_ids[]
-  → mistake_ids[]
-  → artifact_ids[]                // artifact 阅读 session
+// ★ Phase 1c.1 实体：LearningSession 替代旧 Session（ADR-0008）
+LearningSession
+  id, type: ingestion | review | tutor | explore | create | conversation
+  status                          // per-type 状态机（见 § 学习会话多态状态机）
+  started_at, ended_at?
+  updated_at
+
+// ★ Phase 1c.1 实体：event — 统一 action log（ADR-0006 v2）
+Event
+  id
+  session_id → learning_session   // cron / system 事件可空
+  actor_kind: user | agent | cron | system
+  actor_ref                       // 'self' (user) / task_kind (agent) / cron_name
+  action: attempt | judge | propose | generate | review | rate | extract | ...
+  subject_kind: question | knowledge | knowledge_edge | artifact | source_document | event
+  subject_id
+  outcome: success | failure | partial | null
+  payload: jsonb                  // Zod-guarded per action × subject_kind（见 ADR-0006 v2）
+  caused_by_event_id → event      // 因果链：judge ← attempt，propose ← cron
+  task_run_id → ai_task_runs
+  cost_micro_usd: int?
+  created_at
 
 WeeklyReview
   id, week_start, summary_md
   → weak_points: knowledge_ids[]
-  → recurring_mistakes: mistake_ids[]
-  → cause_distribution            // 按 cause 类型的错题分布
+  → recurring_attempt_event_ids[] // 反复答错的 attempt event（替代旧 recurring_mistakes）
+  → cause_distribution            // 按 cause 类型的分布（来自 judge event payload）
   → integrated_study_logs: study_log_ids[]    // 整合本周用户写的 reflection / question
 
 ToolCallLog                       // 运行时 LLM tool 调用观测
@@ -572,7 +553,63 @@ JudgeTask extends Task {
 
 ---
 
-## 七、异步任务层 (pg-boss) — Sub 0c
+## 八、event — first-class action log（统一 action log）
+
+> ADR-0006 v2 + ADR-0011。`event` 表是 Phase 1c.1 的核心新实体，替代旧 mistake / review_event / dreaming_proposal 三表。
+
+**equal-actor model**：`actor_kind ∈ {user, agent, cron, system}`——AI 不是注释层，是与用户对等的事件发起者。Copilot 对话、Dreaming 夜间产出、Critique 自批改全部 first-class。
+
+**schema reference**：见 § 七、数据模型骨架 `Event` 块；完整 DDL 在 `src/db/schema.ts`（event 表）。
+
+**payload 守护策略**（ADR-0006 v2 "Option 折中"）：
+- **KnownEvent union（11 个 discriminated 分支）**：`AttemptOnQuestion` / `JudgeOnEvent` / `ReviewOnQuestion` / `ProposeKnowledge` / `ProposeKnowledgeEdge` / `GenerateArtifact` / `GenerateKnowledgeEdge` / `RateEvent` / `RateKnowledgeEdge` / `AcceptSuggestionChip` / `ExtractSourceDocument`
+- **ExperimentalEvent**：`action.startsWith('experimental:')` 的 escape hatch；探索期先跑，稳了再 promote 到 KnownEvent + 数据迁移
+- Zod schema 在 `src/core/schema/event/`；每次 event 写入必须经 `parseEvent()` guard
+
+**单一写入点**：`writeEvent()` from `src/server/events/queries.ts`。route / handler 不允许直接 `db.insert(event)` 绕过 parse guard。
+
+**因果链（event chaining）**：`caused_by_event_id` 把动作串成 DAG——judge ← attempt，propose ← cron trigger，rate ← propose。可重放、可审计，critique agent 可作用于历史 event。
+
+**示例**：
+```
+e1: user / attempt / question:q1 / failure   (用户答错)
+e2: agent:attribution / judge / event:e1    (AI 归因，caused_by=e1)
+e3: agent:propose / propose / knowledge:k1  (AI 提议知识点，caused_by=e1)
+e4: user / rate / event:e3 / accept         (用户接受提议)
+```
+
+FSRS 投影表 `material_fsrs_state` 从 event 流派生，每次 `action='review'` 同事务写入（ADR-0006 v2 § 接受的代价）。
+
+---
+
+## 九、knowledge_mesh — tree + typed edge
+
+> ADR-0010。`knowledge_edge` 表是 Phase 1c.1 加入的第二个新实体。
+
+**结构**："tree 是骨架，mesh 是肌肉"——`knowledge.parent_id` 保留主层级 backbone（一棵树），`knowledge_edge` 表叠加有类型的横向链接。tree 用于 effective_domain 派生 + UI tree-view；mesh 用于 Dreaming agent 找"薄弱但邻近"复习候选。
+
+**关系类型（5 核心 + experimental）**：
+
+| relation_type | 语义 | 例 |
+|---|---|---|
+| `prerequisite` | from 是 to 的前置 | 实词词义 → 翻译 |
+| `related_to` | 弱关联（双向） | 之-用法 ↔ 其-用法 |
+| `contrasts_with` | 对照（双向） | 之-代词 vs 之-助词 |
+| `applied_in` | from 应用于 to | 古今异义 → 阅读理解 |
+| `derived_from` | from 派生自 to | 之-主谓间用法 ← 之-用法 |
+| `experimental:*` | 探索期新关系 | — |
+
+**单一写入点**：`src/server/knowledge/edges.ts`；route 不允许直接 `db.insert(knowledge_edge)` 绕过 guard。
+
+**propose 路径**（通过 event 流）：
+1. `ProposeKnowledgeEdge` event（AI 提议，dry-run）→ 用户 accept
+2. `RateKnowledgeEdge` event（rating='accept'）→ 触发 `GenerateKnowledgeEdge` event + `knowledge_edge` INSERT
+
+参考 `src/server/knowledge/edges.ts`，ADR-0010，ADR-0011 §3-5。
+
+---
+
+## 十、异步任务层 (pg-boss) — Sub 0c
 
 独立 worker 进程 + app process 经 LISTEN/NOTIFY 协同：
 
@@ -595,13 +632,18 @@ JudgeTask extends Task {
 **关键模块**：
 - `src/server/boss/{client,handlers,shutdown}.ts` — pg-boss 单例 + handler 注册 + graceful stop
 - `src/server/events/{writer,sse_router,listen_loop,sse_replay}.ts` — job_events + NOTIFY + SSE
-- `src/server/ingestion/session.ts` — IngestionSession 状态机（ADR-0005 single owner）
+- `src/server/session/` — LearningSession 多态模块（ADR-0008 + ADR-0005 演化，single owner）
 - `src/server/ingestion/tencent_mark{,_parser,_errors}.ts` — Mark Agent SDK + parser + 错误分类
 - `src/server/boss/handlers/tencent_ocr_extract.ts` — 生产 OCR async job handler
 
-**录入会话状态机** ([CONTEXT.md](../CONTEXT.md) "录入会话" + [ADR-0005](adr/0005-ingestion-session-single-owner.md))：
+**学习会话 (LearningSession) 多态状态机** (ADR-0008，演化自 ADR-0005；[CONTEXT.md](../CONTEXT.md) "录入会话")：
+
+`learning_session` 表承载 6 种会话类型：`ingestion | review | tutor | explore | create | conversation`。Phase 1c.1 实现前 2 种；余 4 种 enum 占位、行为延后。
+
+每种 type 有独立 status 状态机，由 `src/server/session/` 多态模块内部分支：
 
 ```
+# type='ingestion'（从 ADR-0005 IngestionSession 平移而来）
 uploaded → (enqueueExtraction) → queued
         → (worker markExtractionStarted) → extracting
         → applyExtractionResult         → extracted | partial
@@ -610,12 +652,17 @@ extracted | partial → markReviewed → reviewed
 extracted | partial | reviewed → commitImport → imported (终态)
 failed → enqueueExtraction (retry) → queued
 partial → applyRescue (block-level) → partial（session 不变）
+
+# type='review'（Phase 1c.1 新建最小状态机）
+started → completed | abandoned
 ```
 
-**Single owner invariant** (ADR-0005)：`src/server/ingestion/session.ts` 是 `ingestion_session.status` 唯一可信写入点；route / handler 不允许直接 `db.update(ingestion_session)`。
+**Single owner invariant** (ADR-0005 / ADR-0008)：`src/server/session/` 是 `learning_session.status` 唯一可信写入点；route / handler 不允许直接 `db.update(learning_session)`。per-type Zod 状态机定义见 `src/core/schema/`。
 
 **OCR 抽取层** (ADR-0002 修订)：用 Tencent QuestionMarkAgent (async submit+poll)，**不再 cascade**。Vision Tier 2/3 (haiku / sonnet) 仅作为**用户触发的救援**，走 `/api/ingestion/[id]/rescue`，永不参与自动 fallback。
 
 **Acceptance gates**：EchoJob E2E (`app/api/echo/echo.e2e.test.ts`) + tencent_ocr_extract handler test + IngestionSession 16 transition tests。
+
+**pg-boss dev harness（`echo_jobs` + `/api/echo`）**：`echo_jobs` 表 + `POST /api/echo` 路由 + `src/server/boss/handlers/echo.ts` 是 Sub 0c 的 **pg-boss E2E dev harness**，验证 enqueue → pg-boss worker → notify → SSE 全链路。这是验收门（acceptance gate），**不是生产业务路由**；不在 Phase 1c.1 DROP，但 Phase 2+ 可按需清理。（closes #34 finding 2）
 
 **命名澄清**：`Tool` (LLM 函数原语) ≠ `tool_*` Artifact (互动型产出物)。前者是 AI 任务层的实现细节，后者是用户消费的内容对象。两个层级不冲突但同名易混。
