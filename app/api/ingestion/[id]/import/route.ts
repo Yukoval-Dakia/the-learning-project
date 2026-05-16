@@ -23,7 +23,7 @@ import { z } from 'zod';
 import { PageSpan } from '@/core/schema';
 import { type Cause, CauseCategory, QuestionKind } from '@/core/schema/business';
 import { db } from '@/db/client';
-import { ingestion_session, knowledge, mistake, question, question_block } from '@/db/schema';
+import { knowledge, learning_session, mistake, question, question_block } from '@/db/schema';
 import { runTask } from '@/server/ai/runner';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
@@ -31,6 +31,7 @@ import { runAttributionAndWriteJudgeEvent } from '@/server/knowledge/attribute';
 import { runProposeAndWrite } from '@/server/knowledge/propose';
 import { loadTreeSnapshot } from '@/server/knowledge/tree';
 import { getR2 } from '@/server/r2';
+import { Ingestion } from '@/server/session';
 
 export const runtime = 'nodejs';
 
@@ -74,22 +75,44 @@ export async function POST(
     }
     const body = parsed.data;
 
-    // 1. Validate session exists and is in an importable state
+    // 1. Validate session exists and is in an importable state. Reads from
+    //    learning_session (Step 5 post-migration). Status-machine guard is
+    //    applied a second time at commit time by Ingestion.commitImport (also
+    //    holds a FOR UPDATE lock).
     const sessionRows = await db
       .select()
-      .from(ingestion_session)
-      .where(eq(ingestion_session.id, sessionId));
+      .from(learning_session)
+      .where(and(eq(learning_session.id, sessionId), eq(learning_session.type, 'ingestion')));
     const session = sessionRows[0] ?? null;
     if (!session) {
-      throw new ApiError('not_found', `ingestion_session ${sessionId} not found`, 404);
+      throw new ApiError('not_found', `learning_session ${sessionId} not found`, 404);
     }
     if (session.status !== 'extracted' && session.status !== 'reviewed') {
       throw new ApiError(
         'conflict',
-        `ingestion_session ${sessionId} is in status '${session.status}'; only 'extracted' or 'reviewed' can be imported`,
+        `learning_session ${sessionId} is in status '${session.status}'; only 'extracted' or 'reviewed' can be imported`,
         409,
       );
     }
+    // type='ingestion' invariant — these fields are required for the import flow.
+    // The DB schema marks them nullable because learning_session is polymorphic;
+    // an ingestion-flavored session always has both set (initiateUpload enforces it).
+    if (session.entrypoint === null) {
+      throw new ApiError(
+        'validation_error',
+        `learning_session ${sessionId} (type=ingestion) is missing entrypoint`,
+        400,
+      );
+    }
+    const sessionEntrypoint: string = session.entrypoint;
+    if (session.source_document_id === null) {
+      throw new ApiError(
+        'validation_error',
+        `learning_session ${sessionId} (type=ingestion) is missing source_document_id`,
+        400,
+      );
+    }
+    const sessionSourceDocumentId: string = session.source_document_id;
 
     const sessionAssetIds = session.source_asset_ids as string[];
     const sessionAssetSet = new Set(sessionAssetIds);
@@ -172,14 +195,19 @@ export async function POST(
     }
 
     // ---- All validation passed; build and execute batch ----
+    // Codex P1-A: write phase + commitImport MUST share a transaction so the
+    // status-machine check (FOR UPDATE lock acquired by
+    // Ingestion.assertSessionAvailableForImport) gates concurrent double-submit.
+    // Without this, two POSTs both pass the per-row pre-checks above, both INSERT
+    // question/mistake/question_block rows, then race in commitImport — the loser
+    // throws 409 AFTER its writes have already committed (partial side effects
+    // + duplicate imports on retry).
     const now = new Date();
 
     const directlyImportedIds = new Set<string>();
     for (const b of body.blocks) {
       if (b.block_id !== undefined) directlyImportedIds.add(b.block_id);
     }
-
-    const toIgnore = new Set<string>();
 
     const questionIds: string[] = [];
     const mistakeIds: string[] = [];
@@ -193,190 +221,207 @@ export async function POST(
       cause: { primary_category: string; user_notes: string | null } | null;
     }> = [];
 
-    for (const block of body.blocks) {
-      let importedBlockId: string;
+    await db.transaction(async (tx) => {
+      // SELECT … FOR UPDATE on the session row + asserts importable status.
+      // Concurrent callers serialise here; the second to acquire the lock sees
+      // status='imported' and throws 409 before any writes happen.
+      await Ingestion.assertSessionAvailableForImport(tx, sessionId);
 
-      if (block.block_id !== undefined) {
-        importedBlockId = block.block_id;
-      } else {
-        // Virtual card (merged or split): INSERT new question_block
-        importedBlockId = createId();
-        const sourceRows = block.source_block_ids
-          .map((sid) => sourceBlockRows.get(sid))
-          .filter((r): r is typeof question_block.$inferSelect => r !== undefined);
-        const visualComplexity = sourceRows.some((r) => r.visual_complexity === 'high')
-          ? 'high'
-          : sourceRows.some((r) => r.visual_complexity === 'medium')
-            ? 'medium'
-            : 'low';
+      const toIgnore = new Set<string>();
 
-        await db.insert(question_block).values({
-          id: importedBlockId,
+      for (const block of body.blocks) {
+        let importedBlockId: string;
+
+        if (block.block_id !== undefined) {
+          importedBlockId = block.block_id;
+        } else {
+          // Virtual card (merged or split): INSERT new question_block
+          importedBlockId = createId();
+          const sourceRows = block.source_block_ids
+            .map((sid) => sourceBlockRows.get(sid))
+            .filter((r): r is typeof question_block.$inferSelect => r !== undefined);
+          const visualComplexity = sourceRows.some((r) => r.visual_complexity === 'high')
+            ? 'high'
+            : sourceRows.some((r) => r.visual_complexity === 'medium')
+              ? 'medium'
+              : 'low';
+
+          await tx.insert(question_block).values({
+            id: importedBlockId,
+            ingestion_session_id: sessionId,
+            source_document_id: sessionSourceDocumentId,
+            source_asset_ids: block.image_refs,
+            page_spans: block.page_spans,
+            extracted_prompt_md: block.final_prompt_md,
+            reference_md: block.final_reference_md,
+            wrong_answer_md: block.final_wrong_answer_md,
+            image_refs: block.image_refs,
+            crop_refs: [],
+            visual_complexity: visualComplexity,
+            extraction_confidence: 1,
+            status: 'imported',
+            knowledge_hint: null,
+            merged_from_block_ids: block.source_block_ids,
+            imported_question_id: null,
+            imported_mistake_id: null,
+            created_at: now,
+            updated_at: now,
+            version: 0,
+          });
+
+          for (const sid of block.source_block_ids) {
+            if (!directlyImportedIds.has(sid)) {
+              toIgnore.add(sid);
+            }
+          }
+        }
+
+        // Compute wrong_answer_image_refs
+        const wrongAnswerImageRefs = [
+          ...new Set(
+            block.page_spans
+              .filter((s) => s.role === 'answer_area')
+              .map((s) => sessionAssetIds[s.page_index])
+              .filter(
+                (id): id is string => typeof id === 'string' && block.image_refs.includes(id),
+              ),
+          ),
+        ];
+
+        // INSERT question
+        const questionId = createId();
+        questionIds.push(questionId);
+        const questionMetadata = {
+          prompt_image_refs: block.image_refs,
+          prompt_image_ref_kind: 'source_asset_id',
+          source_document_id: sessionSourceDocumentId,
           ingestion_session_id: sessionId,
-          source_document_id: session.source_document_id,
-          source_asset_ids: block.image_refs,
-          page_spans: block.page_spans,
-          extracted_prompt_md: block.final_prompt_md,
+          question_block_id: importedBlockId,
+        };
+        await tx.insert(question).values({
+          id: questionId,
+          kind: block.question_kind,
+          prompt_md: block.final_prompt_md,
           reference_md: block.final_reference_md,
-          wrong_answer_md: block.final_wrong_answer_md,
-          image_refs: block.image_refs,
-          crop_refs: [],
-          visual_complexity: visualComplexity,
-          extraction_confidence: 1,
-          status: 'imported',
-          knowledge_hint: null,
-          merged_from_block_ids: block.source_block_ids,
-          imported_question_id: null,
-          imported_mistake_id: null,
+          knowledge_ids: block.knowledge_ids,
+          difficulty: block.difficulty,
+          source: sessionEntrypoint,
+          variant_depth: 0,
+          metadata: questionMetadata,
           created_at: now,
           updated_at: now,
           version: 0,
         });
 
-        for (const sid of block.source_block_ids) {
-          if (!directlyImportedIds.has(sid)) {
-            toIgnore.add(sid);
-          }
+        // INSERT mistake
+        const mistakeId = createId();
+        mistakeIds.push(mistakeId);
+        const causeJson: z.infer<typeof Cause> | null = block.cause
+          ? {
+              primary_category: block.cause.primary_category,
+              secondary_categories: [],
+              ai_analysis_md: '',
+              user_notes: block.cause.user_notes,
+              user_edited: true,
+            }
+          : null;
+        await tx.insert(mistake).values({
+          id: mistakeId,
+          question_id: questionId,
+          wrong_answer_md: block.final_wrong_answer_md,
+          knowledge_ids: block.knowledge_ids,
+          cause: causeJson,
+          wrong_answer_image_refs: wrongAnswerImageRefs,
+          source: sessionEntrypoint,
+          variants: [],
+          variants_generated_count: 0,
+          variants_max: 3,
+          status: 'active',
+          created_at: now,
+          updated_at: now,
+          version: 0,
+        });
+
+        // UPDATE question_block to set imported_question_id, imported_mistake_id, status
+        await tx
+          .update(question_block)
+          .set({
+            imported_question_id: questionId,
+            imported_mistake_id: mistakeId,
+            status: 'imported',
+            updated_at: now,
+            version: sql`${question_block.version} + 1`,
+          })
+          .where(eq(question_block.id, importedBlockId));
+
+        // Step 4 dual-write: also emit an attempt event for the new event-stream
+        // read path. Mistake row stays as legacy source until Step 9. The attempt
+        // event id is what we pass to runAttributionAndWriteJudgeEvent below.
+        const attemptEventId = createId();
+        await writeEvent(tx, {
+          id: attemptEventId,
+          session_id: null,
+          actor_kind: 'user',
+          actor_ref: 'self',
+          action: 'attempt',
+          subject_kind: 'question',
+          subject_id: questionId,
+          outcome: 'failure',
+          payload: {
+            answer_md: block.final_wrong_answer_md,
+            answer_image_refs: wrongAnswerImageRefs,
+            referenced_knowledge_ids: block.knowledge_ids,
+          },
+          caused_by_event_id: null,
+          task_run_id: null,
+          cost_micro_usd: null,
+          created_at: now,
+        });
+
+        queueData.push({
+          mistakeId,
+          attemptEventId,
+          prompt_md: block.final_prompt_md,
+          reference_md: block.final_reference_md,
+          wrong_answer_md: block.final_wrong_answer_md,
+          knowledge_ids: block.knowledge_ids,
+          cause: block.cause,
+        });
+      }
+
+      // Sweep: mark any draft blocks user dropped as 'ignored'
+      const sessionDrafts = await tx
+        .select({ id: question_block.id })
+        .from(question_block)
+        .where(
+          and(
+            eq(question_block.ingestion_session_id, sessionId),
+            eq(question_block.status, 'draft'),
+          ),
+        );
+      for (const r of sessionDrafts) {
+        if (!directlyImportedIds.has(r.id) && !toIgnore.has(r.id)) {
+          toIgnore.add(r.id);
         }
       }
 
-      // Compute wrong_answer_image_refs
-      const wrongAnswerImageRefs = [
-        ...new Set(
-          block.page_spans
-            .filter((s) => s.role === 'answer_area')
-            .map((s) => sessionAssetIds[s.page_index])
-            .filter((id): id is string => typeof id === 'string' && block.image_refs.includes(id)),
-        ),
-      ];
-
-      // INSERT question
-      const questionId = createId();
-      questionIds.push(questionId);
-      const questionMetadata = {
-        prompt_image_refs: block.image_refs,
-        prompt_image_ref_kind: 'source_asset_id',
-        source_document_id: session.source_document_id,
-        ingestion_session_id: sessionId,
-        question_block_id: importedBlockId,
-      };
-      await db.insert(question).values({
-        id: questionId,
-        kind: block.question_kind,
-        prompt_md: block.final_prompt_md,
-        reference_md: block.final_reference_md,
-        knowledge_ids: block.knowledge_ids,
-        difficulty: block.difficulty,
-        source: session.entrypoint,
-        variant_depth: 0,
-        metadata: questionMetadata,
-        created_at: now,
-        updated_at: now,
-        version: 0,
-      });
-
-      // INSERT mistake
-      const mistakeId = createId();
-      mistakeIds.push(mistakeId);
-      const causeJson: z.infer<typeof Cause> | null = block.cause
-        ? {
-            primary_category: block.cause.primary_category,
-            secondary_categories: [],
-            ai_analysis_md: '',
-            user_notes: block.cause.user_notes,
-            user_edited: true,
-          }
-        : null;
-      await db.insert(mistake).values({
-        id: mistakeId,
-        question_id: questionId,
-        wrong_answer_md: block.final_wrong_answer_md,
-        knowledge_ids: block.knowledge_ids,
-        cause: causeJson,
-        wrong_answer_image_refs: wrongAnswerImageRefs,
-        source: session.entrypoint,
-        variants: [],
-        variants_generated_count: 0,
-        variants_max: 3,
-        status: 'active',
-        created_at: now,
-        updated_at: now,
-        version: 0,
-      });
-
-      // UPDATE question_block to set imported_question_id, imported_mistake_id, status
-      await db
-        .update(question_block)
-        .set({
-          imported_question_id: questionId,
-          imported_mistake_id: mistakeId,
-          status: 'imported',
-          updated_at: now,
-          version: sql`${question_block.version} + 1`,
-        })
-        .where(eq(question_block.id, importedBlockId));
-
-      // Step 4 dual-write: also emit an attempt event for the new event-stream
-      // read path. Mistake row stays as legacy source until Step 9. The attempt
-      // event id is what we pass to runAttributionAndWriteJudgeEvent below.
-      const attemptEventId = createId();
-      await writeEvent(db, {
-        id: attemptEventId,
-        session_id: null,
-        actor_kind: 'user',
-        actor_ref: 'self',
-        action: 'attempt',
-        subject_kind: 'question',
-        subject_id: questionId,
-        outcome: 'failure',
-        payload: {
-          answer_md: block.final_wrong_answer_md,
-          answer_image_refs: wrongAnswerImageRefs,
-          referenced_knowledge_ids: block.knowledge_ids,
-        },
-        caused_by_event_id: null,
-        task_run_id: null,
-        cost_micro_usd: null,
-        created_at: now,
-      });
-
-      queueData.push({
-        mistakeId,
-        attemptEventId,
-        prompt_md: block.final_prompt_md,
-        reference_md: block.final_reference_md,
-        wrong_answer_md: block.final_wrong_answer_md,
-        knowledge_ids: block.knowledge_ids,
-        cause: block.cause,
-      });
-    }
-
-    // Sweep: mark any draft blocks user dropped as 'ignored'
-    const sessionDrafts = await db
-      .select({ id: question_block.id })
-      .from(question_block)
-      .where(
-        and(eq(question_block.ingestion_session_id, sessionId), eq(question_block.status, 'draft')),
-      );
-    for (const r of sessionDrafts) {
-      if (!directlyImportedIds.has(r.id) && !toIgnore.has(r.id)) {
-        toIgnore.add(r.id);
+      // UPDATE source blocks → status='ignored'
+      for (const sid of toIgnore) {
+        await tx
+          .update(question_block)
+          .set({
+            status: 'ignored',
+            updated_at: now,
+            version: sql`${question_block.version} + 1`,
+          })
+          .where(eq(question_block.id, sid));
       }
-    }
 
-    // UPDATE source blocks → status='ignored'
-    for (const sid of toIgnore) {
-      await db
-        .update(question_block)
-        .set({ status: 'ignored', updated_at: now, version: sql`${question_block.version} + 1` })
-        .where(eq(question_block.id, sid));
-    }
-
-    // UPDATE ingestion_session → status='imported'
-    await db
-      .update(ingestion_session)
-      .set({ status: 'imported', updated_at: now, version: sql`${ingestion_session.version} + 1` })
-      .where(eq(ingestion_session.id, sessionId));
+      // Terminal transition extracted | reviewed → imported. Re-asserts state
+      // under the same lock (no-op vs assertSessionAvailableForImport above
+      // unless something inside the txn mutated it, which is impossible).
+      await Ingestion.commitImport(tx, sessionId);
+    });
 
     // Queue post-write tasks (fire-and-forget with Promise.allSettled)
     const r2 = getR2();

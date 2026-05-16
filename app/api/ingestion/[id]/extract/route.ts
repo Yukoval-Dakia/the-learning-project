@@ -1,7 +1,7 @@
 import { db } from '@/db/client';
 import { createBoss } from '@/server/boss/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { enqueueExtraction } from '@/server/ingestion/session';
+import { Ingestion } from '@/server/session';
 
 export const runtime = 'nodejs';
 
@@ -27,7 +27,7 @@ export async function POST(
     // boss singleton 可能未 start —— 调用时 pg-boss send 会 lazy start
     // 但 web process 不应该负责 start；测试 worker / scripts/worker.ts 才 start。
     // boss.send 不依赖 worker，只写 pgboss.* 表，所以 web 可直接 send。
-    const { jobId } = await enqueueExtraction({ db, boss, sessionId });
+    const { jobId } = await Ingestion.enqueueExtraction({ db, boss, sessionId });
     return Response.json({ businessId: sessionId, jobId });
   } catch (err) {
     return errorResponse(err);

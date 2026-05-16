@@ -6,8 +6,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { db } from '@/db/client';
 import {
   cost_ledger,
-  ingestion_session,
+  event,
   job_events,
+  learning_session,
   question_block,
   source_asset,
   source_document,
@@ -58,14 +59,16 @@ async function seedSessionWithAsset(): Promise<{
     created_at: now,
   });
 
-  await db.insert(ingestion_session).values({
+  await db.insert(learning_session).values({
     id: sessionId,
+    type: 'ingestion',
     source_document_id: sourceDocId,
     source_asset_ids: [assetId],
     status: 'queued',
     entrypoint: 'vision_single',
     error_message: null,
     warnings: [],
+    started_at: now,
     created_at: now,
     updated_at: now,
     version: 0,
@@ -75,9 +78,10 @@ async function seedSessionWithAsset(): Promise<{
 }
 
 async function cleanup(sessionId: string, sourceDocId: string, assetId: string) {
+  await db.delete(event).where(eq(event.session_id, sessionId));
   await db.delete(job_events).where(eq(job_events.business_id, sessionId));
   await db.delete(question_block).where(eq(question_block.ingestion_session_id, sessionId));
-  await db.delete(ingestion_session).where(eq(ingestion_session.id, sessionId));
+  await db.delete(learning_session).where(eq(learning_session.id, sessionId));
   await db.delete(source_asset).where(eq(source_asset.id, assetId));
   await db.delete(source_document).where(eq(source_document.id, sourceDocId));
 }
@@ -114,8 +118,8 @@ describe('tencent_ocr_extract handler', () => {
 
     const session = await db
       .select()
-      .from(ingestion_session)
-      .where(eq(ingestion_session.id, sessionId));
+      .from(learning_session)
+      .where(eq(learning_session.id, sessionId));
     expect(session[0].status).toBe('extracted'); // cloze fixture layout_quality='structured'
 
     const blocks = await db
@@ -149,8 +153,8 @@ describe('tencent_ocr_extract handler', () => {
 
     const session = await db
       .select()
-      .from(ingestion_session)
-      .where(eq(ingestion_session.id, sessionId));
+      .from(learning_session)
+      .where(eq(learning_session.id, sessionId));
     expect(session[0].status).toBe('failed');
     expect(session[0].error_message).toContain('FAIL');
 
