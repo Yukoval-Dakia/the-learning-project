@@ -444,4 +444,37 @@ describe('GET /api/mistakes', () => {
     const body = (await res.json()) as { rows: Array<{ id: string }> };
     expect(body.rows.map((r) => r.id)).toEqual(['a1']);
   });
+
+  // Codex P1-B — POST stores user cause on legacy mistake row only; GET must
+  // project that cause too. End-to-end: POST → GET round-trips the cause.
+  // TODO Step 9: legacy mistake.cause read removed when table drops.
+  it('round-trips user-supplied cause from POST → GET (no judge event needed)', async () => {
+    const db = testDb();
+    const now = new Date();
+    // Seed knowledge — GET-describe doesn't have the POST-describe's beforeEach
+    // hook, so we must do it inline.
+    await db.insert(knowledge).values({
+      id: 'k1',
+      name: 'X',
+      archived_at: null,
+      created_at: now,
+      updated_at: now,
+      ...KNOWLEDGE_BASE,
+    });
+
+    const res = await postMistake(
+      validBody({ cause: { primary_category: 'concept', user_notes: 'note' } }),
+    );
+    expect(res.status).toBe(200);
+
+    const get = await getMistakes();
+    expect(get.status).toBe(200);
+    const body = (await get.json()) as {
+      rows: Array<{ cause: { primary_category: string; user_notes: string | null } | null }>;
+    };
+    expect(body.rows).toHaveLength(1);
+    expect(body.rows[0].cause).not.toBeNull();
+    expect(body.rows[0].cause?.primary_category).toBe('concept');
+    expect(body.rows[0].cause?.user_notes).toBe('note');
+  });
 });
