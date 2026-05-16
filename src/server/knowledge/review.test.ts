@@ -1,5 +1,7 @@
 import { newId } from '@/core/ids';
+import { parseEvent } from '@/core/schema/event';
 import { dreaming_proposal, event, knowledge } from '@/db/schema';
+import { and, eq } from 'drizzle-orm';
 import { MockLanguageModelV3 } from 'ai/test';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -185,6 +187,156 @@ describe('streamReviewTask', () => {
     expect(capturedPrompt).toContain('attempt_capture'); // id from event projection
     expect(capturedPrompt).toContain('q_capture'); // question_id
     expect(capturedPrompt).toContain('concept'); // cause.primary_category
+  });
+
+  it('write_proposal with tree-mutation payload writes dreaming_proposal (not event)', async () => {
+    const db = testDb();
+    await seedKnowledgeNode('k_parent');
+
+    const mockModel = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: new ReadableStream({
+          start(controller) {
+            controller.enqueue({ type: 'stream-start', warnings: [] });
+            controller.enqueue({
+              type: 'tool-call',
+              toolCallId: 'tc_tree',
+              toolName: 'write_proposal',
+              input: JSON.stringify({
+                payload: {
+                  mutation: 'propose_new',
+                  name: '之-主谓间用法',
+                  parent_id: 'k_parent',
+                },
+                reasoning: 'attempt_event_e1 显示用户混淆此用法',
+              }),
+            });
+            controller.enqueue({
+              type: 'finish',
+              finishReason: { unified: 'stop', raw: 'end_turn' },
+              usage: makeV3Usage(),
+            });
+            controller.close();
+          },
+        }),
+      }),
+    });
+
+    const response = await streamReviewTask({ db, model: mockModel });
+    const reader = response.body?.getReader();
+    if (reader) {
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+    }
+
+    const proposals = await db.select().from(dreaming_proposal);
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0].kind).toBe('knowledge');
+    expect((proposals[0].payload as Record<string, unknown>).mutation).toBe('propose_new');
+
+    // No knowledge_edge event should have been written for tree-shape mutations.
+    const edgeEvents = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge_edge')));
+    expect(edgeEvents).toHaveLength(0);
+  });
+
+  it('write_proposal with propose_knowledge_edge mutation writes ProposeKnowledgeEdge event', async () => {
+    const db = testDb();
+    await seedKnowledgeNode('k_from');
+    const now = new Date();
+    await db.insert(knowledge).values({
+      id: 'k_to',
+      name: '虚词-之',
+      domain: 'wenyan',
+      parent_id: null,
+      merged_from: [],
+      proposed_by_ai: false,
+      approval_status: 'approved',
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+
+    const mockModel = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: new ReadableStream({
+          start(controller) {
+            controller.enqueue({ type: 'stream-start', warnings: [] });
+            controller.enqueue({
+              type: 'tool-call',
+              toolCallId: 'tc_edge',
+              toolName: 'write_proposal',
+              input: JSON.stringify({
+                payload: {
+                  mutation: 'propose_knowledge_edge',
+                  from_knowledge_id: 'k_from',
+                  to_knowledge_id: 'k_to',
+                  relation_type: 'prerequisite',
+                },
+                reasoning: 'attempt_event_e1 显示用户错答指向 k_from 是 k_to 的先决',
+              }),
+            });
+            controller.enqueue({
+              type: 'finish',
+              finishReason: { unified: 'stop', raw: 'end_turn' },
+              usage: makeV3Usage(),
+            });
+            controller.close();
+          },
+        }),
+      }),
+    });
+
+    const response = await streamReviewTask({ db, model: mockModel });
+    const reader = response.body?.getReader();
+    if (reader) {
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+    }
+
+    // No dreaming_proposal row — propose_knowledge_edge goes to event log
+    const proposals = await db.select().from(dreaming_proposal);
+    expect(proposals).toHaveLength(0);
+
+    const edgeEvents = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge_edge')));
+    expect(edgeEvents).toHaveLength(1);
+    const ev = edgeEvents[0];
+    expect(ev.actor_kind).toBe('agent');
+    expect(ev.actor_ref).toBe('dreaming');
+    expect(ev.outcome).toBe('success');
+    const payload = ev.payload as {
+      from_knowledge_id: string;
+      to_knowledge_id: string;
+      relation_type: string;
+      reasoning: string;
+    };
+    expect(payload.from_knowledge_id).toBe('k_from');
+    expect(payload.to_knowledge_id).toBe('k_to');
+    expect(payload.relation_type).toBe('prerequisite');
+    expect(payload.reasoning).toContain('先决');
+
+    // Roundtrip through Lane B parseEvent — guards schema compatibility.
+    const parsed = parseEvent({
+      actor_kind: ev.actor_kind,
+      actor_ref: ev.actor_ref,
+      action: ev.action,
+      subject_kind: ev.subject_kind,
+      subject_id: ev.subject_id,
+      outcome: ev.outcome,
+      payload: ev.payload,
+      caused_by_event_id: ev.caused_by_event_id ?? undefined,
+    }) as { action: string; subject_kind?: string };
+    expect(parsed.action).toBe('propose');
+    expect(parsed.subject_kind).toBe('knowledge_edge');
   });
 
   it('returns streaming Response even with no recent mistakes (empty input)', async () => {
