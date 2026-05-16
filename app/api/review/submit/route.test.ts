@@ -233,4 +233,43 @@ describe('POST /api/review/submit', () => {
       .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q1')));
     expect(events).toHaveLength(2);
   });
+
+  // Codex P1-G — concurrent double-submit must not produce torn FSRS state.
+  // Previously the FSRS read (getFsrsState) ran OUTSIDE the write transaction:
+  // two concurrent submissions both read the same prior state, both compute
+  // their `nextState` from it, and both upsert. The projection then reflects
+  // exactly one of the two — but it's not the state that should result from
+  // *both* reviews applied serially (lapses get lost, reps misincrement, etc).
+  it('concurrent double-submit: material_fsrs_state reflects exactly one review serially', async () => {
+    await seedQuestion('q1');
+    const db = testDb();
+
+    const [resA, resB] = await Promise.all([
+      POST(submitReq({ mistake_id: 'q1', rating: 'again' })),
+      POST(submitReq({ mistake_id: 'q1', rating: 'again' })),
+    ]);
+
+    expect(resA.status).toBe(200);
+    expect(resB.status).toBe(200);
+
+    // Both reviews must have written their event rows (event log is append-only).
+    const events = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q1')));
+    expect(events).toHaveLength(2);
+
+    // The projection row reflects exactly one review's final state — NOT a
+    // torn merge of both. With row-level locking, the second review computes
+    // its nextState from the first's (locked) result, so reps=2 (not 1).
+    const stateRows = await db
+      .select()
+      .from(material_fsrs_state)
+      .where(eq(material_fsrs_state.subject_id, 'q1'));
+    expect(stateRows).toHaveLength(1);
+    const finalState = stateRows[0].state as { reps: number };
+    // Without locking, both reads see reps=0 and both write reps=1 → finalState.reps=1 (torn).
+    // With locking, second sees reps=1 and writes reps=2.
+    expect(finalState.reps).toBe(2);
+  });
 });
