@@ -3,22 +3,17 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { db } from '@/db/client';
-import {
-  learning_session,
-  ingestion_session as legacy_ingestion_session,
-  source_asset,
-  source_document,
-} from '@/db/schema';
+import { learning_session, source_asset, source_document } from '@/db/schema';
 import { resetDb } from '../helpers/db';
 
-// Phase 1c.1 Step 5 — read-path roundtrip smoke. Seeds a learning_session
-// (type='ingestion') directly and exercises a real route handler against it.
-// Verifies the Step 5 caller migration actually reads from learning_session
-// (not from the legacy ingestion_session table — that path is retired in Step 9).
+// Phase 1c.1 Step 5 → Step 9 — read-path roundtrip smoke. Seeds a
+// learning_session (type='ingestion') directly and exercises a real route
+// handler against it. Verifies the route reads from learning_session.
 //
-// What this test specifically protects against: any route that "looks fine" in
-// code review but still has a stale `db.select().from(ingestion_session)` SELECT
-// that would silently 404 / 409 post-migration.
+// The legacy ingestion_session table was DROPped in Step 9; the negative-case
+// "legacy-only row is invisible" assertion is no longer feasible (the table
+// itself is gone). The route's 404 path for unknown ids is exercised by the
+// non-existent-id case instead.
 
 vi.mock('@/server/boss/client', () => ({
   createBoss: () => ({
@@ -87,40 +82,14 @@ describe('learning_session read-path roundtrip (post-Step-5 callers)', () => {
     expect(rows[0].status).toBe('queued');
   });
 
-  it('extract route returns 404 for a row that lives ONLY in legacy ingestion_session', async () => {
-    // Seed the legacy table only (no learning_session row). Post-Step-5 routes
-    // read learning_session, so a legacy-only row is correctly invisible —
-    // the migration runbook (Step 8) backfills these before the new code
-    // activates in prod.
-    const legacyId = createId();
-    const sourceDocId = createId();
-    const now = new Date();
-    await db.insert(source_document).values({
-      id: sourceDocId,
-      title: null,
-      source_asset_ids: [],
-      body_md: null,
-      provenance: {},
-      created_at: now,
-      updated_at: now,
-      version: 0,
-    });
-    await db.insert(legacy_ingestion_session).values({
-      id: legacyId,
-      source_document_id: sourceDocId,
-      source_asset_ids: ['a'],
-      status: 'uploaded',
-      entrypoint: 'vision_single',
-      error_message: null,
-      warnings: [],
-      created_at: now,
-      updated_at: now,
-      version: 0,
-    });
-
+  it('extract route returns 404 for unknown session id (legacy ingestion_session table dropped in Step 9)', async () => {
+    // Pre-Step-9 this test seeded the legacy ingestion_session table; that
+    // table is gone now. The 404 path remains exercised by simply pointing at
+    // a non-existent id.
+    const unknownId = createId();
     const { POST } = await import('@/../app/api/ingestion/[id]/extract/route');
     const resp = await POST(new Request('http://t/x', { method: 'POST' }), {
-      params: Promise.resolve({ id: legacyId }),
+      params: Promise.resolve({ id: unknownId }),
     });
     expect(resp.status).toBe(404);
   });

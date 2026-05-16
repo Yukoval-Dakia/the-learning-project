@@ -3,7 +3,7 @@
  * Uses real test DB (postgres-js) + in-memory R2.
  * Verifies that data exported from a seeded DB is fully restored after a wipe.
  */
-import { knowledge, mistake } from '@/db/schema';
+import { knowledge } from '@/db/schema';
 import { sql } from 'drizzle-orm';
 import { unzipSync } from 'fflate';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -24,7 +24,7 @@ describe('round-trip: export → import → DB state mirrored', () => {
     await resetDb();
   });
 
-  it('preserves knowledge + mistake rows end-to-end', async () => {
+  it('preserves knowledge rows end-to-end', async () => {
     const db = testDb();
 
     // 1. Seed DB with fixtures

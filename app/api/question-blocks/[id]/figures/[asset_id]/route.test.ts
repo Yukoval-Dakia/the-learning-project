@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 
 import { db } from '@/db/client';
-import { ingestion_session, question_block, source_document } from '@/db/schema';
+import { question_block, source_document } from '@/db/schema';
 import { PATCH } from './route';
 
 // biome-ignore lint/suspicious/noExplicitAny: tests pass arbitrary shapes through jsonb columns
@@ -20,18 +20,9 @@ async function seedBlock(figures: any[], structured: any) {
     updated_at: now,
     version: 0,
   });
-  await db.insert(ingestion_session).values({
-    id: sessionId,
-    source_document_id: sourceDocId,
-    source_asset_ids: [],
-    status: 'partial',
-    entrypoint: 'vision_single',
-    error_message: null,
-    warnings: [],
-    created_at: now,
-    updated_at: now,
-    version: 0,
-  });
+  // question_block.ingestion_session_id is a free-text column (no FK), so we
+  // don't need to seed a learning_session/ingestion_session row for these
+  // PATCH-focused tests. Just use a generated id.
   await db.insert(question_block).values({
     id: blockId,
     ingestion_session_id: sessionId,
@@ -59,7 +50,6 @@ async function seedBlock(figures: any[], structured: any) {
 
 async function cleanup(b: { sourceDocId: string; sessionId: string; blockId: string }) {
   await db.delete(question_block).where(eq(question_block.id, b.blockId));
-  await db.delete(ingestion_session).where(eq(ingestion_session.id, b.sessionId));
   await db.delete(source_document).where(eq(source_document.id, b.sourceDocId));
 }
 
