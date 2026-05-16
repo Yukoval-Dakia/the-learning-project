@@ -1,5 +1,6 @@
 'use client';
 
+import { TokenGate } from '@/ui/components/TokenGate';
 import { TabBar, type TabItem } from '@/ui/primitives/TabBar';
 import { type NavItem, TopNav } from '@/ui/primitives/TopNav';
 import { usePathname, useRouter } from 'next/navigation';
@@ -53,16 +54,18 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   };
 
   return (
-    <div className="app-shell">
-      <div className="app-shell-top-nav">
-        <TopNav active={active} onNav={handleNav} items={NAV_ITEMS} version="v0.1 · 1c.2" />
+    <TokenGate>
+      <div className="app-shell">
+        <div className="app-shell-top-nav">
+          <TopNav active={active} onNav={handleNav} items={NAV_ITEMS} version="v0.1 · 1c.2" />
+        </div>
+
+        <div className="app-shell-content">{children}</div>
+
+        <nav className="app-shell-bottom-tabs" aria-label="主导航">
+          <TabBar items={MOBILE_TAB_ITEMS} active={active} onSelect={handleNav} />
+        </nav>
       </div>
-
-      <div className="app-shell-content">{children}</div>
-
-      <nav className="app-shell-bottom-tabs" aria-label="主导航">
-        <TabBar items={MOBILE_TAB_ITEMS} active={active} onSelect={handleNav} />
-      </nav>
-    </div>
+    </TokenGate>
   );
 }
