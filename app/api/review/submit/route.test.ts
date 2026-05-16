@@ -1,4 +1,10 @@
-import { mistake, question, review_event } from '@/db/schema';
+// Phase 1c.1 Step 9.A — `/api/review/submit` over event stream.
+//
+// Pre-Step-9 tests seeded `mistake` + `review_event`. Post-Step-9 the legacy
+// tables are gone; seed question rows + (optionally) material_fsrs_state.
+
+import { event, material_fsrs_state, question } from '@/db/schema';
+import { eq, and } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST } from './route';
@@ -13,43 +19,36 @@ const QUESTION_BASE = {
   version: 0,
 };
 
-const MISTAKE_BASE = {
-  source: 'manual' as const,
-  knowledge_ids: ['k1'],
-  wrong_answer_image_refs: [] as string[],
-  variants: [],
-  variants_generated_count: 0,
-  variants_max: 3,
-  status: 'active' as const,
-};
-
-async function seedMistake(
-  id: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  fsrs_state: any = null,
-  overrides: Record<string, unknown> = {},
-) {
+async function seedQuestion(id: string) {
   const db = testDb();
   const now = new Date();
   await db.insert(question).values({
-    id: `q_${id}`,
+    id,
     prompt_md: `Prompt for ${id}`,
     created_at: now,
     updated_at: now,
     ...QUESTION_BASE,
   });
-  await db.insert(mistake).values({
-    id,
-    question_id: `q_${id}`,
+}
+
+async function seedFsrsState(
+  question_id: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  state: any,
+  due_at: Date,
+) {
+  const db = testDb();
+  const now = new Date();
+  await db.insert(material_fsrs_state).values({
+    id: `f_${question_id}`,
+    subject_kind: 'question',
+    subject_id: question_id,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    fsrs_state: fsrs_state as any,
-    created_at: now,
+    state: state as any,
+    due_at,
+    last_review_event_id: null,
     updated_at: now,
-    version: 0,
-    ...MISTAKE_BASE,
-    ...overrides,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  } as any);
+  });
 }
 
 function submitReq(body: unknown) {
@@ -65,60 +64,62 @@ describe('POST /api/review/submit', () => {
     await resetDb();
   });
 
-  it('first review (null fsrs_state) → inserts review_event and updates mistake', async () => {
-    await seedMistake('m1');
+  it('first review (no prior fsrs_state) → writes review event + upserts material_fsrs_state', async () => {
+    await seedQuestion('q1');
 
-    const res = await POST(submitReq({ mistake_id: 'm1', rating: 'good', latency_ms: 5000 }));
+    const res = await POST(submitReq({ mistake_id: 'q1', rating: 'good', latency_ms: 5000 }));
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       next_due_at: number;
       new_state: { reps: number; scheduled_days: number };
-      review_event: unknown;
+      review_event: { id: string; rating: string; latency_ms: number | null };
     };
 
     expect(typeof body.next_due_at).toBe('number');
     expect(body.next_due_at).toBeGreaterThan(0);
     expect(body.new_state.reps).toBeGreaterThanOrEqual(1);
-    expect(body.review_event).toBeDefined();
+    expect(body.review_event.rating).toBe('good');
+    expect(body.review_event.latency_ms).toBe(5000);
 
     const db = testDb();
-    // Verify review_event in DB
     const events = await db
       .select()
-      .from(review_event)
-      .where((await import('drizzle-orm')).eq(review_event.mistake_id, 'm1'));
+      .from(event)
+      .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q1')));
     expect(events).toHaveLength(1);
-    expect(events[0].rating).toBe('good');
-    expect(events[0].latency_ms).toBe(5000);
-    expect(events[0].fsrs_state_before).toBeNull();
-    expect(events[0].fsrs_state_after).toBeTruthy();
+    expect(events[0].outcome).toBe('success');
+    expect((events[0].payload as Record<string, unknown>).fsrs_rating).toBe('good');
 
-    // Verify mistake updated
-    const mistakes = await db
+    const fsrs = await db
       .select()
-      .from(mistake)
-      .where((await import('drizzle-orm')).eq(mistake.id, 'm1'));
-    expect(mistakes[0].version).toBe(1);
-    expect(mistakes[0].fsrs_state).toBeTruthy();
+      .from(material_fsrs_state)
+      .where(eq(material_fsrs_state.subject_id, 'q1'));
+    expect(fsrs).toHaveLength(1);
+    expect(fsrs[0].last_review_event_id).toBe(events[0].id);
   });
 
   it('second review (existing fsrs_state with ISO string dates) → Plan F1 coercion works', async () => {
+    await seedQuestion('q1');
     const dueIso = '2026-05-09T12:00:00.000Z';
     const dueDate = new Date(dueIso);
-    await seedMistake('m1', {
-      due: dueIso,
-      stability: 1.5,
-      difficulty: 5,
-      elapsed_days: 0,
-      scheduled_days: 1,
-      learning_steps: 0,
-      reps: 1,
-      lapses: 0,
-      state: 'review',
-      last_review: '2026-05-08T12:00:00.000Z',
-    });
+    await seedFsrsState(
+      'q1',
+      {
+        due: dueIso,
+        stability: 1.5,
+        difficulty: 5,
+        elapsed_days: 0,
+        scheduled_days: 1,
+        learning_steps: 0,
+        reps: 1,
+        lapses: 0,
+        state: 'review',
+        last_review: '2026-05-08T12:00:00.000Z',
+      },
+      dueDate,
+    );
 
-    const res = await POST(submitReq({ mistake_id: 'm1', rating: 'again' }));
+    const res = await POST(submitReq({ mistake_id: 'q1', rating: 'again' }));
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       next_due_at: number;
@@ -128,19 +129,20 @@ describe('POST /api/review/submit', () => {
     expect(body.next_due_at).toBeGreaterThan(0);
     expect(Number.isFinite(body.new_state.scheduled_days)).toBe(true);
     expect(Number.isFinite(body.new_state.stability)).toBe(true);
+    expect(body.new_state.lapses).toBeGreaterThanOrEqual(1);
 
-    // Check due_at_before was set in the review event
     const db = testDb();
-    const { eq } = await import('drizzle-orm');
-    const events = await db.select().from(review_event).where(eq(review_event.mistake_id, 'm1'));
+    const events = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q1')));
     expect(events).toHaveLength(1);
-    expect(events[0].due_at_before).toEqual(dueDate);
-    expect(events[0].fsrs_state_before).toBeTruthy();
+    expect(events[0].outcome).toBe('failure'); // again → failure invariant
   });
 
   it('returns 400 when rating is invalid (e.g. "easy")', async () => {
-    await seedMistake('m1');
-    const res = await POST(submitReq({ mistake_id: 'm1', rating: 'easy' }));
+    await seedQuestion('q1');
+    const res = await POST(submitReq({ mistake_id: 'q1', rating: 'easy' }));
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe('validation_error');
@@ -153,133 +155,82 @@ describe('POST /api/review/submit', () => {
     expect(body.error).toBe('validation_error');
   });
 
-  it('returns 404 when mistake not found', async () => {
-    const res = await POST(submitReq({ mistake_id: 'm_missing', rating: 'good' }));
-    expect(res.status).toBe(404);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe('not_found');
-  });
-
-  it('returns 404 when mistake is archived', async () => {
-    const now = new Date();
-    await seedMistake('m1', null, { archived_at: now });
-    const res = await POST(submitReq({ mistake_id: 'm1', rating: 'good' }));
+  it('returns 404 when question not found', async () => {
+    const res = await POST(submitReq({ mistake_id: 'q_missing', rating: 'good' }));
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe('not_found');
   });
 
   it('returns null for response_md and latency_ms when not provided', async () => {
-    await seedMistake('m1');
-    const res = await POST(submitReq({ mistake_id: 'm1', rating: 'good' }));
+    await seedQuestion('q1');
+    const res = await POST(submitReq({ mistake_id: 'q1', rating: 'good' }));
     expect(res.status).toBe(200);
-
-    const db = testDb();
-    const { eq } = await import('drizzle-orm');
-    const events = await db.select().from(review_event).where(eq(review_event.mistake_id, 'm1'));
-    expect(events[0].response_md).toBeNull();
-    expect(events[0].latency_ms).toBeNull();
+    const body = (await res.json()) as {
+      review_event: { response_md: string | null; latency_ms: number | null };
+    };
+    expect(body.review_event.response_md).toBeNull();
+    expect(body.review_event.latency_ms).toBeNull();
   });
 
   it('includes response_md when provided', async () => {
-    await seedMistake('m1');
+    await seedQuestion('q1');
     const res = await POST(
-      submitReq({ mistake_id: 'm1', rating: 'hard', response_md: 'my answer' }),
+      submitReq({ mistake_id: 'q1', rating: 'hard', response_md: 'my answer' }),
     );
     expect(res.status).toBe(200);
+    const body = (await res.json()) as { review_event: { response_md: string | null } };
+    expect(body.review_event.response_md).toBe('my answer');
 
     const db = testDb();
-    const { eq } = await import('drizzle-orm');
-    const events = await db.select().from(review_event).where(eq(review_event.mistake_id, 'm1'));
-    expect(events[0].response_md).toBe('my answer');
-  });
-
-  it('returns 409 conflict on version mismatch and audit review_event is still inserted', async () => {
-    const db = testDb();
-    const { eq } = await import('drizzle-orm');
-    const now = new Date();
-    // Directly insert mistake with version=5 to simulate concurrent modification
-    await db.insert(question).values({
-      id: 'q_m5',
-      prompt_md: 'P',
-      created_at: now,
-      updated_at: now,
-      ...QUESTION_BASE,
-    });
-    await db.insert(mistake).values({
-      id: 'm5',
-      question_id: 'q_m5',
-      fsrs_state: null,
-      created_at: now,
-      updated_at: now,
-      version: 5,
-      ...MISTAKE_BASE,
-    });
-
-    // First submit: grabs version=5, succeeds → mistake becomes version=6
-    const res1 = await POST(submitReq({ mistake_id: 'm5', rating: 'good' }));
-    expect(res1.status).toBe(200);
-
-    // Manually reset version back to 5 to force next submit to conflict
-    await db.update(mistake).set({ version: 5 }).where(eq(mistake.id, 'm5'));
-
-    // Second submit: will try version=5 but another "virtual" concurrency already moved it
-    // Actually easier: use a fresh fetch that still sees version 5, but the update uses wrong version
-    // Since test is sequential, let's insert a second mistake specifically for conflict testing:
-    // We'll insert with version=0 then manually update to version=1 before the conflict-prone submit
-
-    // Simpler approach: insert fresh mistake, then race with manual update
-    await db.insert(question).values({
-      id: 'q_mconflict',
-      prompt_md: 'P conflict',
-      created_at: now,
-      updated_at: now,
-      ...QUESTION_BASE,
-    });
-    await db.insert(mistake).values({
-      id: 'mconflict',
-      question_id: 'q_mconflict',
-      fsrs_state: null,
-      created_at: now,
-      updated_at: now,
-      version: 0,
-      ...MISTAKE_BASE,
-    });
-
-    // First submit succeeds (version 0 → 1)
-    const res2 = await POST(submitReq({ mistake_id: 'mconflict', rating: 'good' }));
-    expect(res2.status).toBe(200);
-
-    // Second submit: re-fetch sees version=1 now, but let's pretend a stale client sends again
-    // The second POST will fetch version=1 from DB, try to update to version=2
-    // That should succeed. For a real conflict, we need to update version externally between fetch and update.
-    // Let's just test that re-submitting with same data still works (no artificial conflict possible in integration test).
-    // Instead, test that review_event count increases.
     const events = await db
       .select()
-      .from(review_event)
-      .where(eq(review_event.mistake_id, 'mconflict'));
-    expect(events).toHaveLength(1);
+      .from(event)
+      .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q1')));
+    expect((events[0].payload as Record<string, unknown>).user_response_md).toBe('my answer');
   });
 
   it('rating transitions: again increases lapses, good increases reps', async () => {
-    const dueDate = new Date(Date.now() - 86400 * 1000).toISOString();
-    await seedMistake('m_again', {
-      due: dueDate,
-      stability: 2,
-      difficulty: 5,
-      elapsed_days: 1,
-      scheduled_days: 2,
-      learning_steps: 0,
-      reps: 2,
-      lapses: 0,
-      state: 'review',
-      last_review: null,
-    });
+    await seedQuestion('q1');
+    const dueDate = new Date(Date.now() - 86400 * 1000);
+    await seedFsrsState(
+      'q1',
+      {
+        due: dueDate.toISOString(),
+        stability: 2,
+        difficulty: 5,
+        elapsed_days: 1,
+        scheduled_days: 2,
+        learning_steps: 0,
+        reps: 2,
+        lapses: 0,
+        state: 'review',
+        last_review: null,
+      },
+      dueDate,
+    );
 
-    const res = await POST(submitReq({ mistake_id: 'm_again', rating: 'again' }));
+    const res = await POST(submitReq({ mistake_id: 'q1', rating: 'again' }));
     expect(res.status).toBe(200);
     const body = (await res.json()) as { new_state: { lapses: number; reps: number } };
     expect(body.new_state.lapses).toBeGreaterThan(0);
+  });
+
+  it('multiple reviews on same question keep one material_fsrs_state row (upsert behaviour)', async () => {
+    await seedQuestion('q1');
+    await POST(submitReq({ mistake_id: 'q1', rating: 'good' }));
+    await POST(submitReq({ mistake_id: 'q1', rating: 'hard' }));
+
+    const db = testDb();
+    const rows = await db
+      .select()
+      .from(material_fsrs_state)
+      .where(eq(material_fsrs_state.subject_id, 'q1'));
+    expect(rows).toHaveLength(1);
+    const events = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q1')));
+    expect(events).toHaveLength(2);
   });
 });
