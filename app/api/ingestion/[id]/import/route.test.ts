@@ -12,8 +12,8 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  ingestion_session,
   knowledge,
+  learning_session,
   mistake,
   question,
   question_block,
@@ -95,13 +95,16 @@ async function setupSession(
     version: 0,
   });
 
-  await db.insert(ingestion_session).values({
+  await db.insert(learning_session).values({
     id: sessionId,
+    type: 'ingestion',
     source_document_id: sourceDocId,
     source_asset_ids: assetIds,
     status: opts.status ?? 'extracted',
     entrypoint: 'vision_single',
     error_message: null,
+    warnings: [],
+    started_at: now,
     created_at: now,
     updated_at: now,
     version: 0,
@@ -227,8 +230,8 @@ describe('POST /api/ingestion/[id]/import', () => {
 
     const sessions = await db
       .select()
-      .from(ingestion_session)
-      .where(eq(ingestion_session.id, sessionId));
+      .from(learning_session)
+      .where(eq(learning_session.id, sessionId));
     expect(sessions[0].status).toBe('imported');
 
     // Block updated

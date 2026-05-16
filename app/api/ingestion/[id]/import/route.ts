@@ -23,7 +23,7 @@ import { z } from 'zod';
 import { PageSpan } from '@/core/schema';
 import { type Cause, CauseCategory, QuestionKind } from '@/core/schema/business';
 import { db } from '@/db/client';
-import { ingestion_session, knowledge, mistake, question, question_block } from '@/db/schema';
+import { knowledge, learning_session, mistake, question, question_block } from '@/db/schema';
 import { runTask } from '@/server/ai/runner';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
@@ -31,6 +31,7 @@ import { runAttributionAndWriteJudgeEvent } from '@/server/knowledge/attribute';
 import { runProposeAndWrite } from '@/server/knowledge/propose';
 import { loadTreeSnapshot } from '@/server/knowledge/tree';
 import { getR2 } from '@/server/r2';
+import { Ingestion } from '@/server/session';
 
 export const runtime = 'nodejs';
 
@@ -74,22 +75,44 @@ export async function POST(
     }
     const body = parsed.data;
 
-    // 1. Validate session exists and is in an importable state
+    // 1. Validate session exists and is in an importable state. Reads from
+    //    learning_session (Step 5 post-migration). Status-machine guard is
+    //    applied a second time at commit time by Ingestion.commitImport (also
+    //    holds a FOR UPDATE lock).
     const sessionRows = await db
       .select()
-      .from(ingestion_session)
-      .where(eq(ingestion_session.id, sessionId));
+      .from(learning_session)
+      .where(and(eq(learning_session.id, sessionId), eq(learning_session.type, 'ingestion')));
     const session = sessionRows[0] ?? null;
     if (!session) {
-      throw new ApiError('not_found', `ingestion_session ${sessionId} not found`, 404);
+      throw new ApiError('not_found', `learning_session ${sessionId} not found`, 404);
     }
     if (session.status !== 'extracted' && session.status !== 'reviewed') {
       throw new ApiError(
         'conflict',
-        `ingestion_session ${sessionId} is in status '${session.status}'; only 'extracted' or 'reviewed' can be imported`,
+        `learning_session ${sessionId} is in status '${session.status}'; only 'extracted' or 'reviewed' can be imported`,
         409,
       );
     }
+    // type='ingestion' invariant — these fields are required for the import flow.
+    // The DB schema marks them nullable because learning_session is polymorphic;
+    // an ingestion-flavored session always has both set (initiateUpload enforces it).
+    if (session.entrypoint === null) {
+      throw new ApiError(
+        'validation_error',
+        `learning_session ${sessionId} (type=ingestion) is missing entrypoint`,
+        400,
+      );
+    }
+    const sessionEntrypoint: string = session.entrypoint;
+    if (session.source_document_id === null) {
+      throw new ApiError(
+        'validation_error',
+        `learning_session ${sessionId} (type=ingestion) is missing source_document_id`,
+        400,
+      );
+    }
+    const sessionSourceDocumentId: string = session.source_document_id;
 
     const sessionAssetIds = session.source_asset_ids as string[];
     const sessionAssetSet = new Set(sessionAssetIds);
@@ -213,7 +236,7 @@ export async function POST(
         await db.insert(question_block).values({
           id: importedBlockId,
           ingestion_session_id: sessionId,
-          source_document_id: session.source_document_id,
+          source_document_id: sessionSourceDocumentId,
           source_asset_ids: block.image_refs,
           page_spans: block.page_spans,
           extracted_prompt_md: block.final_prompt_md,
@@ -256,7 +279,7 @@ export async function POST(
       const questionMetadata = {
         prompt_image_refs: block.image_refs,
         prompt_image_ref_kind: 'source_asset_id',
-        source_document_id: session.source_document_id,
+        source_document_id: sessionSourceDocumentId,
         ingestion_session_id: sessionId,
         question_block_id: importedBlockId,
       };
@@ -267,7 +290,7 @@ export async function POST(
         reference_md: block.final_reference_md,
         knowledge_ids: block.knowledge_ids,
         difficulty: block.difficulty,
-        source: session.entrypoint,
+        source: sessionEntrypoint,
         variant_depth: 0,
         metadata: questionMetadata,
         created_at: now,
@@ -294,7 +317,7 @@ export async function POST(
         knowledge_ids: block.knowledge_ids,
         cause: causeJson,
         wrong_answer_image_refs: wrongAnswerImageRefs,
-        source: session.entrypoint,
+        source: sessionEntrypoint,
         variants: [],
         variants_generated_count: 0,
         variants_max: 3,
@@ -372,11 +395,10 @@ export async function POST(
         .where(eq(question_block.id, sid));
     }
 
-    // UPDATE ingestion_session → status='imported'
-    await db
-      .update(ingestion_session)
-      .set({ status: 'imported', updated_at: now, version: sql`${ingestion_session.version} + 1` })
-      .where(eq(ingestion_session.id, sessionId));
+    // Terminal transition extracted | reviewed → imported. Single-owner writes
+    // happen inside Ingestion.commitImport — keeps the learning_session UPDATE
+    // and its job_events row atomic with the FOR UPDATE re-check.
+    await db.transaction((tx) => Ingestion.commitImport(tx, sessionId));
 
     // Queue post-write tasks (fire-and-forget with Promise.allSettled)
     const r2 = getR2();

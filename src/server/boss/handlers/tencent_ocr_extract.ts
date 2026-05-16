@@ -3,15 +3,11 @@ import sharp from 'sharp';
 
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
-import { ingestion_session, source_asset } from '@/db/schema';
+import { learning_session, source_asset } from '@/db/schema';
 import { writeCostLedger } from '@/server/ai/log';
 import { type PreAttachFigure, cropAndUploadFigures } from '@/server/ingestion/crop';
 import { assignFigures } from '@/server/ingestion/figure_attach';
-import {
-  applyExtractionResult,
-  markExtractionFailed,
-  markExtractionStarted,
-} from '@/server/ingestion/session';
+import { Ingestion } from '@/server/session';
 import {
   type DescribeResponse,
   pollUntilDone,
@@ -20,7 +16,7 @@ import {
 import { mapTencentError } from '@/server/ingestion/tencent_mark_errors';
 import { parseMarkAgentResponse } from '@/server/ingestion/tencent_mark_parser';
 import type { R2Client } from '@/server/r2';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 
 export type TencentOcrJobData = { sessionId: string };
 
@@ -52,11 +48,13 @@ async function processOneOcrJob(
   const submit = deps.submitFn ?? submitOcrJob;
   const poll = deps.pollFn ?? pollUntilDone;
 
-  // 1. Load session + asset (first asset; v0 单页 only)
+  // 1. Load session + asset (first asset; v0 单页 only). Post-Step 5: read from
+  //    learning_session with type='ingestion' filter — old `ingestion_session`
+  //    rows are migrated; new writes go to learning_session.
   const sessionRows = await deps.db
     .select()
-    .from(ingestion_session)
-    .where(eq(ingestion_session.id, sessionId));
+    .from(learning_session)
+    .where(and(eq(learning_session.id, sessionId), eq(learning_session.type, 'ingestion')));
   const session = sessionRows[0];
   if (!session) {
     // Don't markExtractionFailed (session doesn't exist); just throw Permanent
@@ -85,7 +83,7 @@ async function processOneOcrJob(
   }
 
   // 2. markExtractionStarted
-  await deps.db.transaction((tx) => markExtractionStarted(tx, sessionId));
+  await deps.db.transaction((tx) => Ingestion.markExtractionStarted(tx, sessionId));
 
   try {
     // 3. Download asset
@@ -162,7 +160,7 @@ async function processOneOcrJob(
     }
 
     await deps.db.transaction((tx) =>
-      applyExtractionResult(tx, {
+      Ingestion.applyExtractionResult(tx, {
         sessionId,
         sourceDocumentId,
         blocks,
@@ -199,7 +197,7 @@ async function markFailedAndLogCost(
   const outcome = mapped instanceof RetryableError ? 'failed_retryable' : 'failed_permanent';
 
   try {
-    await deps.db.transaction((tx) => markExtractionFailed(tx, sessionId, mapped.message));
+    await deps.db.transaction((tx) => Ingestion.markExtractionFailed(tx, sessionId, mapped.message));
   } catch (innerErr) {
     // markExtractionFailed itself can throw if state guard rejects (e.g. session already failed
     // from earlier retry). Log and continue —— pg-boss already knows.

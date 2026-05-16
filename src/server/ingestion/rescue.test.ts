@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { describe, expect, it, vi } from 'vitest';
 
 import { db } from '@/db/client';
-import { ingestion_session, question_block, source_asset, source_document } from '@/db/schema';
+import { event, learning_session, question_block, source_asset, source_document } from '@/db/schema';
 import { ApiError } from '@/server/http/errors';
 import type { R2Client } from '@/server/r2';
 import { runRescue } from './rescue';
@@ -32,14 +32,16 @@ async function seed() {
     provenance: {},
     created_at: now,
   });
-  await db.insert(ingestion_session).values({
+  await db.insert(learning_session).values({
     id: sessionId,
+    type: 'ingestion',
     source_document_id: sourceDocId,
     source_asset_ids: [assetId],
     status: 'partial',
     entrypoint: 'vision_single',
     error_message: null,
     warnings: [],
+    started_at: now,
     created_at: now,
     updated_at: now,
     version: 0,
@@ -125,8 +127,9 @@ describe('runRescue', () => {
     expect(after[0].version).toBe(1);
 
     // cleanup
+    await db.delete(event).where(eq(event.session_id, sessionId));
     await db.delete(question_block).where(eq(question_block.id, blockId));
-    await db.delete(ingestion_session).where(eq(ingestion_session.id, sessionId));
+    await db.delete(learning_session).where(eq(learning_session.id, sessionId));
     await db.delete(source_asset).where(eq(source_asset.id, assetId));
     await db.delete(source_document).where(eq(source_document.id, sourceDocId));
   });
@@ -165,8 +168,9 @@ describe('runRescue', () => {
     });
     expect(runTaskFn).toHaveBeenCalled();
 
+    await db.delete(event).where(eq(event.session_id, sessionId));
     await db.delete(question_block).where(eq(question_block.id, blockId));
-    await db.delete(ingestion_session).where(eq(ingestion_session.id, sessionId));
+    await db.delete(learning_session).where(eq(learning_session.id, sessionId));
     await db.delete(source_asset).where(eq(source_asset.id, assetId));
     await db.delete(source_document).where(eq(source_document.id, sourceDocId));
   });
