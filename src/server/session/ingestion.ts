@@ -480,6 +480,37 @@ export async function markReviewed(db: Db, sessionId: string): Promise<void> {
   });
 }
 
+// ---------- assertSessionAvailableForImport ----------
+
+/**
+ * Acquires `SELECT … FOR UPDATE` lock on the session row and asserts it is in
+ * an importable state. Must be called at the start of an import transaction
+ * (Codex P1-A): otherwise the route's INSERTs run outside any concurrency
+ * guard, and two simultaneous POSTs both pass the status check, both write
+ * question / mistake / question_block rows, then race in commitImport — the
+ * loser throws 409 *after* its writes have already committed.
+ *
+ * Held until the surrounding transaction commits or rolls back. Concurrent
+ * callers serialise on the row lock; the second to acquire sees `imported`
+ * and throws.
+ */
+export async function assertSessionAvailableForImport(
+  tx: Tx,
+  sessionId: string,
+): Promise<{ source_document_id: string | null }> {
+  const current = await loadSessionForUpdate(tx, sessionId);
+  if (!current) {
+    throw new ApiError('not_found', `learning_session ${sessionId} not found`, 404);
+  }
+  assertFromState(
+    current.status,
+    ['extracted', 'reviewed'] as const,
+    sessionId,
+    'Ingestion.assertSessionAvailableForImport',
+  );
+  return { source_document_id: current.source_document_id };
+}
+
 // ---------- commitImport ----------
 
 /**
@@ -491,6 +522,11 @@ export async function markReviewed(db: Db, sessionId: string): Promise<void> {
  * KnownEvent has no 'import' action; the user-facing "I imported these"
  * footprint is the attempt events the route already writes per-block. Reconsider
  * a session-level 'import' event in Phase 1d if the timeline UI surfaces a need.
+ *
+ * **Concurrency** (Codex P1-A): callers MUST run this inside a transaction
+ * that already holds the session lock via `assertSessionAvailableForImport`
+ * (or accept that a fresh load + lock here is the only guard — the route uses
+ * the first pattern so writes ride the same lock).
  */
 export async function commitImport(tx: Db | Tx, sessionId: string): Promise<void> {
   const current = await loadSessionForUpdate(tx, sessionId);
