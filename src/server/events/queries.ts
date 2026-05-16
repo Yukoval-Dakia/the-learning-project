@@ -365,7 +365,16 @@ export interface GetEventsFilter {
 const DEFAULT_EVENTS_LIMIT = 50;
 const MAX_EVENTS_LIMIT = 200;
 
-export async function getEvents(db: DbLike, filter: GetEventsFilter = {}): Promise<EventT[]> {
+// EventT plus the envelope fields callers need to identify the row (id) or
+// order things along time (created_at). Phase 1c.2 added these because the
+// /api/events consumers (notably the edge-proposal decide flow) need the
+// event id to address proposals on the wire.
+export type EnvelopedEvent = EventT & { id: string; created_at: Date };
+
+export async function getEvents(
+  db: DbLike,
+  filter: GetEventsFilter = {},
+): Promise<EnvelopedEvent[]> {
   const limit = Math.min(filter.limit ?? DEFAULT_EVENTS_LIMIT, MAX_EVENTS_LIMIT);
   const conditions = [];
   if (filter.action) conditions.push(eq(event.action, filter.action));
@@ -380,7 +389,11 @@ export async function getEvents(db: DbLike, filter: GetEventsFilter = {}): Promi
   const filtered = conditions.length > 0 ? baseQuery.where(and(...conditions)) : baseQuery;
   const rows = await filtered.orderBy(desc(event.created_at)).limit(limit);
 
-  return rows.map((r) => parseEvent(rowToParseInput(r)));
+  return rows.map((r) => ({
+    ...parseEvent(rowToParseInput(r)),
+    id: r.id,
+    created_at: r.created_at,
+  })) as EnvelopedEvent[];
 }
 
 // ============================================================================
