@@ -15,11 +15,11 @@ describe('parseAttributionOutput', () => {
     expect(out.confidence).toBe(0.85);
   });
 
-  it('bridges legacy ai_analysis_md → analysis_md (Step 7 will cut over fully)', () => {
+  it('rejects legacy ai_analysis_md (Step 7 removed the Zod bridge)', () => {
     const text =
       '{"primary_category":"concept","secondary_categories":[],"ai_analysis_md":"legacy field name","confidence":0.5}';
-    const out = parseAttributionOutput(text);
-    expect(out.analysis_md).toBe('legacy field name');
+    // Bridge removed — schema now requires analysis_md natively.
+    expect(() => parseAttributionOutput(text)).toThrow();
   });
 
   it('extracts JSON from text with surrounding prose', () => {
@@ -49,7 +49,7 @@ describe('parseAttributionOutput', () => {
     expect(() => parseAttributionOutput(text)).toThrow();
   });
 
-  it('throws when both analysis_md and ai_analysis_md missing', () => {
+  it('throws when analysis_md missing', () => {
     const text = '{"primary_category":"concept","confidence":0.5}';
     expect(() => parseAttributionOutput(text)).toThrow();
   });
@@ -133,7 +133,7 @@ describe('runAttributionAndWriteJudgeEvent', () => {
     expect(payload.cause.confidence).toBe(0.8);
   });
 
-  it('bridges legacy ai_analysis_md from LLM output to Lane B analysis_md', async () => {
+  it('does NOT bridge legacy ai_analysis_md — surfaces as parse error (no judge written)', async () => {
     const db = testDb();
     const attemptId = 'attempt_e_legacy';
     await insertAttemptEvent({ attemptId, questionId: 'q_legacy' });
@@ -147,8 +147,8 @@ describe('runAttributionAndWriteJudgeEvent', () => {
       runTaskFn: fakeRunTask,
     });
     const judgeRows = await db.select().from(event).where(eq(event.caused_by_event_id, attemptId));
-    const payload = judgeRows[0].payload as { cause: { analysis_md: string } };
-    expect(payload.cause.analysis_md).toBe('forgot');
+    // Step 7 removed the Zod bridge; legacy field name fails parse, no judge event written.
+    expect(judgeRows).toHaveLength(0);
   });
 
   it('swallows runTask error (no judge event written; no throw)', async () => {

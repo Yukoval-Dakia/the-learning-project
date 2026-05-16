@@ -15,25 +15,17 @@ import type { Db } from '@/db/client';
 import { z } from 'zod';
 import { getJudgeForAttempt, writeEvent } from '../events/queries';
 
-// Lane B `CauseSchema` uses `analysis_md`, but legacy AttributionTask prompts in
-// src/ai/registry.ts still emit `ai_analysis_md`. Bridge by accepting both names.
-// Step 7 will rewrite the prompts to emit `analysis_md` natively, at which point
-// the bridge can be removed.
-const AttributionOutputSchema = z.preprocess(
-  (raw) => {
-    if (raw && typeof raw === 'object' && 'ai_analysis_md' in raw && !('analysis_md' in raw)) {
-      const r = raw as Record<string, unknown>;
-      return { ...r, analysis_md: r.ai_analysis_md };
-    }
-    return raw;
-  },
-  z.object({
-    primary_category: CauseCategory,
-    secondary_categories: z.array(CauseCategory).default([]),
-    analysis_md: z.string().min(1).max(2000),
-    confidence: z.number().min(0).max(1),
-  }),
-);
+// Lane B `CauseSchema` uses `analysis_md`. Step 7 cut over: the AttributionTask
+// prompt now emits `analysis_md` natively, so the Step 4 `z.preprocess` bridge
+// has been removed. Legacy LLM outputs emitting `ai_analysis_md` will fail
+// schema parse and surface as a no-op (no judge event written) — see
+// runAttributionAndWriteJudgeEvent's parse-error catch path.
+const AttributionOutputSchema = z.object({
+  primary_category: CauseCategory,
+  secondary_categories: z.array(CauseCategory).default([]),
+  analysis_md: z.string().min(1).max(2000),
+  confidence: z.number().min(0).max(1),
+});
 
 export type AttributionOutput = z.infer<typeof AttributionOutputSchema>;
 
