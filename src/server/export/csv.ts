@@ -163,13 +163,15 @@ function buildMistakesCsvFromEvents(tables: Record<string, Row[]>): string {
     ((tables.knowledge ?? []) as Array<{ id: string; name: string }>).map((k) => [k.id, k.name]),
   );
   const questionById = new Map(
-    ((tables.question ?? []) as Array<{
-      id: string;
-      prompt_md: string;
-      reference_md: string | null;
-      knowledge_ids?: string;
-      difficulty?: number;
-    }>).map((q) => [q.id, q]),
+    (
+      (tables.question ?? []) as Array<{
+        id: string;
+        prompt_md: string;
+        reference_md: string | null;
+        knowledge_ids?: string;
+        difficulty?: number;
+      }>
+    ).map((q) => [q.id, q]),
   );
 
   const events = (tables.event ?? []) as Row[];
@@ -329,17 +331,17 @@ function buildReviewEventsCsvFromEvents(tables: Record<string, Row[]>): string {
     ((tables.knowledge ?? []) as Array<{ id: string; name: string }>).map((k) => [k.id, k.name]),
   );
   const questionById = new Map(
-    ((tables.question ?? []) as Array<{
-      id: string;
-      prompt_md: string;
-      knowledge_ids?: string;
-    }>).map((q) => [q.id, q]),
+    (
+      (tables.question ?? []) as Array<{
+        id: string;
+        prompt_md: string;
+        knowledge_ids?: string;
+      }>
+    ).map((q) => [q.id, q]),
   );
 
   const events = (tables.event ?? []) as Row[];
-  const reviews = events.filter(
-    (e) => e.action === 'review' && e.subject_kind === 'question',
-  );
+  const reviews = events.filter((e) => e.action === 'review' && e.subject_kind === 'question');
 
   const lines: string[] = [REVIEW_HEADERS.join(',')];
 
