@@ -427,7 +427,10 @@ describe('writeEvent', () => {
       created_at: new Date('2026-05-01T00:00:00Z'),
     };
     const id1 = await writeEvent(db, base);
-    const id2 = await writeEvent(db, { ...base, payload: { ...base.payload, answer_md: 'different' } });
+    const id2 = await writeEvent(db, {
+      ...base,
+      payload: { ...base.payload, answer_md: 'different' },
+    });
     expect(id1).toBe(id);
     expect(id2).toBe(id);
     const rows = await db.select().from(event).where(eq(event.id, id));

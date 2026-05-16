@@ -21,12 +21,7 @@ import { getJudgeForAttempt, writeEvent } from '../events/queries';
 // the bridge can be removed.
 const AttributionOutputSchema = z.preprocess(
   (raw) => {
-    if (
-      raw &&
-      typeof raw === 'object' &&
-      'ai_analysis_md' in raw &&
-      !('analysis_md' in raw)
-    ) {
+    if (raw && typeof raw === 'object' && 'ai_analysis_md' in raw && !('analysis_md' in raw)) {
       const r = raw as Record<string, unknown>;
       return { ...r, analysis_md: r.ai_analysis_md };
     }

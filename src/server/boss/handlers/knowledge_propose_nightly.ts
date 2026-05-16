@@ -72,10 +72,7 @@ export async function runKnowledgeProposeNightly(
       });
       processed += 1;
     } catch (err) {
-      console.error(
-        `[knowledge_propose_nightly] attempt ${a.attempt_event_id} failed`,
-        err,
-      );
+      console.error(`[knowledge_propose_nightly] attempt ${a.attempt_event_id} failed`, err);
       failed += 1;
     }
   }
