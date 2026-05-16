@@ -1,16 +1,30 @@
+// Phase 1c.1 Step 4 — KnowledgeReviewTask input rewrite.
+//
+// PREVIOUSLY: buildReviewInput read mistake table (latest 100). NOW: reads
+// failure attempts via getFailureAttempts (single-owner read API per ADR-0005)
+// and projects each FailureAttempt to mistake-shape so the prompt stays stable.
+//
+// Step 7 will rewrite the AI prompt to natively speak event-stream language;
+// Step 4 only switches the data source.
+
 import type { Db } from '@/db/client';
-import { knowledge, mistake } from '@/db/schema';
+import { knowledge } from '@/db/schema';
 import type { LanguageModel, ToolSet } from 'ai';
 import { streamText } from 'ai';
-import { desc, isNull } from 'drizzle-orm';
 import { z } from 'zod';
+import { getFailureAttempts } from '../events/queries';
 import { type KnowledgeMutationPayload, writeDreamingProposal } from './proposals';
 
 const RECENT_MISTAKES_LIMIT = 100;
 
 /**
  * Builds the input payload (tree + recent mistakes) for KnowledgeReviewTask.
- * Pre-fetches both so the LLM has full context as input rather than via tool calls.
+ * recent_mistakes is now projected from the event stream (attempt + chained
+ * judge) but keeps the same shape the prompt expects:
+ *   { id, question_id, knowledge_ids, cause }
+ * `id` is the attempt event id, `knowledge_ids` is the attempt payload's
+ * referenced_knowledge_ids, `cause` is the chained judge's cause (or null when
+ * attribution hasn't run yet).
  */
 async function buildReviewInput(db: Db) {
   const tree = await db
@@ -25,19 +39,18 @@ async function buildReviewInput(db: Db) {
     })
     .from(knowledge)
     .orderBy(knowledge.created_at);
-  const mistakes = await db
-    .select({
-      id: mistake.id,
-      question_id: mistake.question_id,
-      knowledge_ids: mistake.knowledge_ids,
-      cause: mistake.cause,
-    })
-    .from(mistake)
-    .orderBy(desc(mistake.created_at))
-    .limit(RECENT_MISTAKES_LIMIT);
+
+  const attempts = await getFailureAttempts(db, { limit: RECENT_MISTAKES_LIMIT });
+  const recent_mistakes = attempts.map((fa) => ({
+    id: fa.attempt_event_id,
+    question_id: fa.question_id,
+    knowledge_ids: fa.referenced_knowledge_ids,
+    cause: fa.judge?.cause ?? null,
+  }));
+
   return {
     tree,
-    recent_mistakes: mistakes,
+    recent_mistakes,
   };
 }
 
