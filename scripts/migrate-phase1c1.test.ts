@@ -6,7 +6,16 @@
 // must pass `parseEvent` (verified inside the migrate fn) — this guards against
 // silent drift from Lane B's locked KnownEvent contract.
 
-import { question, mistake, event, review_event, material_fsrs_state, dreaming_proposal, ingestion_session, learning_session } from '@/db/schema';
+import {
+  dreaming_proposal,
+  event,
+  ingestion_session,
+  learning_session,
+  material_fsrs_state,
+  mistake,
+  question,
+  review_event,
+} from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../tests/helpers/db';
@@ -87,7 +96,10 @@ describe('migrateMistakes — no-cause path (3.A)', () => {
 
     await migrateMistakes(db);
 
-    const events = await db.select().from(event).where(eq(event.id, `evt_mistake_${mistakeId}`));
+    const events = await db
+      .select()
+      .from(event)
+      .where(eq(event.id, `evt_mistake_${mistakeId}`));
     expect(events).toHaveLength(1);
     expect(events[0].payload).toEqual({
       answer_md: null,
@@ -187,7 +199,9 @@ describe('migrateMistakes — cause bridge (3.B)', () => {
 
     const judge = (await db.select().from(event)).find((e) => e.action === 'judge');
     expect(judge).toBeDefined();
-    const payload = judge?.payload as { cause: { confidence: number; secondary_categories: string[] } };
+    const payload = judge?.payload as {
+      cause: { confidence: number; secondary_categories: string[] };
+    };
     expect(payload.cause.confidence).toBe(0.5);
     expect(payload.cause.secondary_categories).toEqual([]);
   });
@@ -261,7 +275,11 @@ describe('migrateReviewEvents — review events + FSRS projection (3.C)', () => 
       expect(re.action).toBe('review');
       expect(re.subject_kind).toBe('question');
       expect(re.subject_id).toBe(QUESTION_ID);
-      const payload = re.payload as { fsrs_rating: string; user_response_md: string | null; referenced_knowledge_ids: string[] };
+      const payload = re.payload as {
+        fsrs_rating: string;
+        user_response_md: string | null;
+        referenced_knowledge_ids: string[];
+      };
       expect(payload.referenced_knowledge_ids).toEqual(['k_topic_a']);
       expect(payload.user_response_md).toMatch(/^response /);
       // outcome invariant: again→failure, hard/good→success
@@ -338,9 +356,24 @@ describe('migrateDreamingProposals — propose event (3.D)', () => {
     const proposedAt = new Date('2026-04-01T00:00:00Z');
 
     const fixtures = [
-      { id: 'dp_pending', status: 'pending', expectedOutcome: 'partial', expectReasoningPrefix: false },
-      { id: 'dp_accepted', status: 'accepted', expectedOutcome: 'success', expectReasoningPrefix: false },
-      { id: 'dp_rejected', status: 'rejected', expectedOutcome: 'partial', expectReasoningPrefix: true },
+      {
+        id: 'dp_pending',
+        status: 'pending',
+        expectedOutcome: 'partial',
+        expectReasoningPrefix: false,
+      },
+      {
+        id: 'dp_accepted',
+        status: 'accepted',
+        expectedOutcome: 'success',
+        expectReasoningPrefix: false,
+      },
+      {
+        id: 'dp_rejected',
+        status: 'rejected',
+        expectedOutcome: 'partial',
+        expectReasoningPrefix: true,
+      },
     ] as const;
 
     for (const f of fixtures) {
@@ -428,7 +461,7 @@ describe('assertJudgmentEmpty — data-assumptions §O2 precheck (3.F)', () => {
     await resetDb();
   });
 
-  it("returns ok=true when judgment table is absent (dropped at Step 1.4) — production state", async () => {
+  it('returns ok=true when judgment table is absent (dropped at Step 1.4) — production state', async () => {
     const db = testDb();
     const { assertJudgmentEmpty } = await import('./migrate-phase1c1');
     const result = await assertJudgmentEmpty(db);
@@ -436,7 +469,7 @@ describe('assertJudgmentEmpty — data-assumptions §O2 precheck (3.F)', () => {
     // Discriminated union narrowed; no error field on ok=true branch.
   });
 
-  it("returns ok=true when judgment table exists but is empty", async () => {
+  it('returns ok=true when judgment table exists but is empty', async () => {
     const db = testDb();
     const { sql } = await import('drizzle-orm');
     // Temporarily recreate the table (it was DROPped at Step 1.4) to exercise
@@ -452,7 +485,7 @@ describe('assertJudgmentEmpty — data-assumptions §O2 precheck (3.F)', () => {
     }
   });
 
-  it("returns ok=false with stable error marker when judgment has rows (data-assumptions §O2 violation)", async () => {
+  it('returns ok=false with stable error marker when judgment has rows (data-assumptions §O2 violation)', async () => {
     const db = testDb();
     const { sql } = await import('drizzle-orm');
     await db.execute(sql.raw(`CREATE TABLE IF NOT EXISTS "judgment" (id text PRIMARY KEY)`));
