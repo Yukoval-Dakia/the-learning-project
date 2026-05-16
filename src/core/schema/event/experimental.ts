@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { CauseCategory } from './blocks';
 
 // ====================================================================
 // ToolUseExperimental — ADR-0011 §1 (待稳)
@@ -31,6 +32,38 @@ export const ToolUseExperimental = z.object({
 export type ToolUseExperimentalT = z.infer<typeof ToolUseExperimental>;
 
 // ====================================================================
+// UserCauseExperimental — Phase 1c.2 (待稳)
+// ====================================================================
+//
+// 用户在 POST /api/mistakes 时手填错因。actor_kind='user'，作用在 attempt event 上
+// （subject_kind='event' / subject_id=<attempt_event_id> / caused_by=<同 id>）。
+// 与 KnownEvent.JudgeOnEvent (actor_kind='agent') 并存：当两者都对同一 attempt
+// 存在时，业务层 cause 投影优先 user_cause（用户判断盖过 AI）。
+//
+// Stabilization criteria：1c.2 落地 + 真实使用 4 周后 promote 为 KnownEvent.UserCauseOnEvent
+// （去 experimental: 前缀；payload shape 已经 locked 在这里）。
+
+export const UserCausePayload = z.object({
+  primary_category: CauseCategory,
+  user_notes: z.string().nullable().optional(),
+});
+export type UserCausePayloadT = z.infer<typeof UserCausePayload>;
+
+export const UserCauseExperimental = z.object({
+  actor_kind: z.literal('user'),
+  actor_ref: z.string(),
+  action: z.literal('experimental:user_cause'),
+  subject_kind: z.literal('event'),
+  subject_id: z.string(),
+  outcome: z.enum(['success']).nullable().optional(),
+  payload: UserCausePayload,
+  caused_by_event_id: z.string().optional(),
+  task_run_id: z.string().optional(),
+  cost_micro_usd: z.number().int().optional(),
+});
+export type UserCauseExperimentalT = z.infer<typeof UserCauseExperimental>;
+
+// ====================================================================
 // Reserved experimental actions
 // ====================================================================
 //
@@ -43,6 +76,7 @@ export type ToolUseExperimentalT = z.infer<typeof ToolUseExperimental>;
 
 export const RESERVED_EXPERIMENTAL_ACTIONS = new Set<string>([
   'experimental:tool_use',
+  'experimental:user_cause',
 ]);
 
 // ====================================================================

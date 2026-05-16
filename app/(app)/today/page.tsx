@@ -12,7 +12,7 @@ interface DueRow {
   question_id: string;
 }
 interface MistakeRow {
-  cause: { primary_category: string } | null;
+  cause: { source?: 'user' | 'agent'; primary_category: string } | null;
 }
 interface LearningItem {
   id: string;

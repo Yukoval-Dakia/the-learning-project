@@ -14,7 +14,11 @@ interface MistakeRow {
   prompt_md: string;
   wrong_answer_md: string;
   knowledge_ids: string[];
-  cause: { primary_category: string; user_notes: string | null } | null;
+  cause: {
+    source?: 'user' | 'agent';
+    primary_category: string;
+    user_notes: string | null;
+  } | null;
   created_at: number; // unix seconds
 }
 
@@ -95,7 +99,10 @@ function MistakeCard({ row }: { row: MistakeRow }) {
   const createdAt = new Date(row.created_at * 1000);
   const pendingSince = Math.max(0, Math.floor((Date.now() - createdAt.getTime()) / 1000));
   const cause = row.cause
-    ? { actor_kind: 'agent' as const, primary: row.cause.primary_category }
+    ? {
+        actor_kind: row.cause.source === 'user' ? ('user' as const) : ('agent' as const),
+        primary: row.cause.primary_category,
+      }
     : null;
   return (
     <Card pad="lg" style={{ marginBottom: 'var(--s-3)' }}>

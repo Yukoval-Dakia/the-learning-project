@@ -24,7 +24,11 @@ interface MistakeRow {
   prompt_md: string;
   wrong_answer_md: string;
   knowledge_ids: string[];
-  cause: { primary_category: string; user_notes: string | null } | null;
+  cause: {
+    source?: 'user' | 'agent';
+    primary_category: string;
+    user_notes: string | null;
+  } | null;
   created_at: number;
 }
 
@@ -130,7 +134,12 @@ export default function KnowledgeDetailPage({
                   <span style={metaTextStyle}>{formatRelTime(new Date(m.created_at * 1000))}</span>
                   <CauseBadge
                     cause={
-                      m.cause ? { actor_kind: 'agent', primary: m.cause.primary_category } : null
+                      m.cause
+                        ? {
+                            actor_kind: m.cause.source === 'user' ? 'user' : 'agent',
+                            primary: m.cause.primary_category,
+                          }
+                        : null
                     }
                   />
                 </div>

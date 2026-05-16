@@ -90,6 +90,34 @@ async function seedJudge(opts: {
   });
 }
 
+async function seedUserCause(opts: {
+  id: string;
+  attempt_event_id: string;
+  primary_category?: string;
+  user_notes?: string | null;
+  created_at?: Date;
+}): Promise<void> {
+  const db = testDb();
+  await db.insert(event).values({
+    id: opts.id,
+    session_id: null,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'experimental:user_cause',
+    subject_kind: 'event',
+    subject_id: opts.attempt_event_id,
+    outcome: null,
+    payload: {
+      primary_category: opts.primary_category ?? 'carelessness',
+      user_notes: opts.user_notes ?? null,
+    },
+    caused_by_event_id: opts.attempt_event_id,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: opts.created_at ?? new Date(),
+  });
+}
+
 describe('GET /api/mistakes/recent (event-stream projection)', () => {
   beforeEach(async () => {
     await resetDb();
@@ -125,11 +153,11 @@ describe('GET /api/mistakes/recent (event-stream projection)', () => {
     expect(r.prompt_md).toHaveLength(200);
     expect(r.wrong_answer_md).toHaveLength(200);
     expect(r.knowledge_ids).toEqual(['k1', 'k2']);
-    expect(r.cause).toEqual({ primary_category: 'concept', user_notes: null });
+    expect(r.cause).toEqual({ source: 'agent', primary_category: 'concept', user_notes: null });
     expect(typeof r.created_at).toBe('number');
   });
 
-  it('returns cause = null when attempt has no chained judge', async () => {
+  it('returns cause = null when attempt has no chained judge or user_cause', async () => {
     await seedQuestion('q1', 'p');
     await seedAttempt({ id: 'a1', question_id: 'q1' });
 
@@ -138,16 +166,41 @@ describe('GET /api/mistakes/recent (event-stream projection)', () => {
     expect(body.rows[0].cause).toBeNull();
   });
 
-  it('cause.user_notes is null for back-compat (Lane B dropped the field)', async () => {
+  it('agent cause carries source="agent" and user_notes=null', async () => {
     await seedQuestion('q1', 'p');
     await seedAttempt({ id: 'a1', question_id: 'q1' });
     await seedJudge({ id: 'j1', attempt_event_id: 'a1' });
 
     const res = await GET(new Request('http://localhost/api/mistakes/recent'));
     const body = (await res.json()) as {
-      rows: Array<{ cause: { user_notes: string | null } }>;
+      rows: Array<{ cause: { source: string; user_notes: string | null } }>;
     };
+    expect(body.rows[0].cause.source).toBe('agent');
     expect(body.rows[0].cause.user_notes).toBeNull();
+  });
+
+  it('user_cause overrides agent judge in the projection', async () => {
+    await seedQuestion('q1', 'p');
+    await seedAttempt({ id: 'a1', question_id: 'q1' });
+    await seedJudge({ id: 'j1', attempt_event_id: 'a1' });
+    await seedUserCause({
+      id: 'uc1',
+      attempt_event_id: 'a1',
+      primary_category: 'memory',
+      user_notes: '记错了',
+    });
+
+    const res = await GET(new Request('http://localhost/api/mistakes/recent'));
+    const body = (await res.json()) as {
+      rows: Array<{
+        cause: { source: string; primary_category: string; user_notes: string | null };
+      }>;
+    };
+    expect(body.rows[0].cause).toEqual({
+      source: 'user',
+      primary_category: 'memory',
+      user_notes: '记错了',
+    });
   });
 
   it('respects limit query param', async () => {

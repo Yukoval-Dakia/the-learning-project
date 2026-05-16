@@ -38,15 +38,23 @@ export async function GET(req: Request): Promise<Response> {
       .where(inArray(question.id, questionIds));
     const promptByQid = new Map(questions.map((q) => [q.id, q.prompt_md]));
 
-    // Codex P1-B fix retired in Step 9 — the legacy `mistake` table was
-    // DROPped, so the fallback no longer applies. User-supplied causes
-    // (from POST /api/mistakes with body.cause !== null) are not currently
-    // recoverable from the event stream; Phase 1c.2 will introduce an
-    // `experimental:user_cause` event path.
+    // Phase 1c.2 — cause projection prefers the user_cause event (the user has
+    // the last word) and falls back to the agent judge. `source` is added to
+    // the wire so the UI can render provenance.
     const rows = fails.map((f) => {
-      const cause = f.judge
-        ? { primary_category: f.judge.cause.primary_category, user_notes: null }
-        : null;
+      const cause = f.user_cause
+        ? {
+            source: 'user' as const,
+            primary_category: f.user_cause.primary_category,
+            user_notes: f.user_cause.user_notes,
+          }
+        : f.judge
+          ? {
+              source: 'agent' as const,
+              primary_category: f.judge.cause.primary_category,
+              user_notes: null,
+            }
+          : null;
       return {
         id: f.attempt_event_id,
         question_id: f.question_id,
