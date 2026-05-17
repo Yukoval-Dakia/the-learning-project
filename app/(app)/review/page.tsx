@@ -2,8 +2,6 @@
 
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
 import { Badge } from '@/ui/primitives/Badge';
-import { Button } from '@/ui/primitives/Button';
-import { Card } from '@/ui/primitives/Card';
 import { CauseBadge } from '@/ui/primitives/CauseBadge';
 import { PageHeader } from '@/ui/primitives/PageHeader';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -33,25 +31,31 @@ type Phase = 'answering' | 'feedback';
 type Rating = 'again' | 'hard' | 'good' | 'easy';
 
 const RATING_LABELS: Record<Rating, string> = {
-  again: '不会 (1)',
-  hard: '勉强 (2)',
-  good: '会 (3)',
-  easy: '熟练 (4)',
+  again: '不会',
+  hard: '勉强',
+  good: '会',
+  easy: '熟练',
 };
 
-const RATING_VARIANT: Record<Rating, 'good' | 'hard' | 'coral' | 'danger'> = {
-  again: 'danger',
+const RATING_CLASS: Record<Rating, string> = {
+  again: 'again',
   hard: 'hard',
-  good: 'coral',
-  easy: 'good',
+  good: 'good',
+  easy: 'coral',
+};
+
+const RATING_KEY: Record<Rating, string> = {
+  again: '1',
+  hard: '2',
+  good: '3',
+  easy: '4',
 };
 
 export default function ReviewPage() {
   const qc = useQueryClient();
 
   // ADR-0013 — open a learning_session(type='review') on mount; close on
-  // pagehide via sendBeacon (so it survives tab close). Session id is held in
-  // a ref because we need it in async callbacks without re-rendering.
+  // pagehide via sendBeacon (so it survives tab close).
   const [sessionId, setSessionId] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -62,8 +66,6 @@ export default function ReviewPage() {
           method: 'POST',
         });
         if (cancelled) {
-          // Mounted-then-unmounted before we got the id back; close immediately.
-          // ApiAuthError path: token absent — the close call would also 401, swallow.
           void apiJson(`/api/review/sessions/${data.session_id}/end`, {
             method: 'POST',
             body: JSON.stringify({ status: 'abandoned' }),
@@ -73,11 +75,9 @@ export default function ReviewPage() {
         createdId = data.session_id;
         setSessionId(data.session_id);
       } catch {
-        // Session couldn't be opened — review still works without one (server
-        // accepts null session_id), just no session-end summary surface.
+        // Session couldn't be opened — review still works without one.
       }
     })();
-
     const onPageHide = () => {
       if (!createdId) return;
       const body = new Blob([JSON.stringify({ status: 'completed' })], {
@@ -86,11 +86,9 @@ export default function ReviewPage() {
       navigator.sendBeacon(`/api/review/sessions/${createdId}/end`, body);
     };
     window.addEventListener('pagehide', onPageHide);
-
     return () => {
       cancelled = true;
       window.removeEventListener('pagehide', onPageHide);
-      // SPA navigation away: close via fetch instead of sendBeacon.
       if (createdId) {
         void apiJson(`/api/review/sessions/${createdId}/end`, {
           method: 'POST',
@@ -105,8 +103,6 @@ export default function ReviewPage() {
     queryFn: () => apiJson<{ rows: DueRow[] }>('/api/review/due?limit=50'),
   });
 
-  // Build a question_id -> cause map from /api/mistakes so we can surface
-  // the AI cause inline after the user submits each answer.
   const causeMapQ = useQuery({
     queryKey: ['review-cause-map'],
     queryFn: async () => {
@@ -122,6 +118,7 @@ export default function ReviewPage() {
   const [index, setIndex] = useState(0);
   const [phase, setPhase] = useState<Phase>('answering');
   const [answer, setAnswer] = useState('');
+  const [showRef, setShowRef] = useState(false);
 
   const rows = dueQ.data?.rows ?? [];
   const total = rows.length;
@@ -145,13 +142,13 @@ export default function ReviewPage() {
       setIndex((i) => i + 1);
       setPhase('answering');
       setAnswer('');
+      setShowRef(false);
       qc.invalidateQueries({ queryKey: ['review-due'] });
     },
   });
 
-  const handleSubmit = useCallback(() => {
-    if (phase !== 'answering' || !current) return;
-    setPhase('feedback');
+  const handleReveal = useCallback(() => {
+    if (phase === 'answering' && current) setPhase('feedback');
   }, [phase, current]);
 
   const handleRate = useCallback(
@@ -162,12 +159,11 @@ export default function ReviewPage() {
     [phase, submitM],
   );
 
-  // Keyboard: Cmd/Ctrl+Enter submits the answer; 1/2/3/4 picks the rating.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (phase === 'answering' && (e.metaKey || e.ctrlKey) && e.key === 'Enter') {
         e.preventDefault();
-        handleSubmit();
+        handleReveal();
         return;
       }
       if (phase === 'feedback' && !submitM.isPending) {
@@ -179,297 +175,155 @@ export default function ReviewPage() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [phase, submitM.isPending, handleSubmit, handleRate]);
+  }, [phase, submitM.isPending, handleReveal, handleRate]);
 
   const cause = current ? (causeMapQ.data?.get(current.question_id) ?? null) : null;
 
+  const eyebrow =
+    total > 0 && !isDone
+      ? `REVIEW · session=${sessionId ?? '—'} · ${Math.min(index + 1, total)} / ${total}`
+      : 'REVIEW';
+
   return (
-    <main
-      style={{
-        minHeight: '100vh',
-        background: 'var(--paper)',
-        padding: '36px 28px',
-        maxWidth: 'var(--cap-prose, 780px)',
-        margin: '0 auto',
-        width: '100%',
-        boxSizing: 'border-box',
-      }}
-    >
+    <main className="page prose">
       <PageHeader
         title="复习"
-        eyebrow="/review"
-        sub={total === 0 ? undefined : `进度 ${Math.min(index + 1, total)} / ${total} · FSRS 队列`}
+        eyebrow={eyebrow}
+        sub="按下 1 / 2 / 3 / 4 写一条 action=review 事件，FSRS 状态投影表同事务更新。"
       />
 
       {dueQ.isLoading && (
-        <Card>
-          <p style={loadingStyle}>正在加载复习队列…</p>
-        </Card>
+        <section className="review-stage">
+          <p className="empty">正在加载复习队列…</p>
+        </section>
       )}
 
       {dueQ.isError && (
-        <Card>
-          <p style={errorStyle}>
+        <section className="review-stage">
+          <p className="empty" style={{ color: 'var(--again-ink)' }}>
             {dueQ.error instanceof ApiAuthError
               ? `${dueQ.error.message} — 请重新进入页面输入 token`
               : `加载失败：${(dueQ.error as Error).message}`}
           </p>
-        </Card>
+        </section>
       )}
 
       {dueQ.isSuccess && total === 0 && (
-        <Card pad="lg">
-          <p style={{ ...emptyStyle, margin: 0 }}>今日没有复习任务。</p>
-          <p style={{ ...subEmptyStyle, marginTop: 'var(--s-2)' }}>
-            新错题归因后会自动进入这里；或去{' '}
-            <a href="/record" style={linkStyle}>
-              /record
-            </a>{' '}
-            录入。
-          </p>
-        </Card>
+        <section className="review-stage">
+          <p className="empty">今天没有要复习的，太好了。</p>
+        </section>
       )}
 
       {dueQ.isSuccess && isDone && (
-        <Card pad="lg">
-          <p style={{ ...emptyStyle, margin: 0 }}>本轮 {total} 道全部复习完毕。</p>
-          <p style={{ ...subEmptyStyle, marginTop: 'var(--s-2)' }}>
-            FSRS 已根据评分更新到期时间。可以稍后再回来。
-          </p>
-        </Card>
+        <section className="review-stage">
+          <p className="empty">本轮 {total} 道全部复习完毕。FSRS 已根据评分更新到期时间。</p>
+        </section>
       )}
 
       {current && !isDone && (
-        <>
-          <ProgressBar current={index + 1} total={total} />
+        <section className="review-stage">
+          <div className="progress">
+            <span>
+              {index + 1} / {total} · FSRS
+              {current.knowledge_ids[0] && ` · ${current.knowledge_ids[0]}`}
+            </span>
+            <span>{cause && `上次归因 ${cause.primary_category}`}</span>
+          </div>
 
-          <Card pad="lg" style={{ marginTop: 'var(--s-4)' }}>
-            <SectionLabel>题面</SectionLabel>
-            <PreText>{current.prompt_md}</PreText>
+          <div className="qbody">{current.prompt_md}</div>
 
-            {current.knowledge_ids.length > 0 && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 'var(--s-3)' }}>
-                {current.knowledge_ids.map((id) => (
-                  <Badge key={id} tone="neutral">
-                    {id}
-                  </Badge>
-                ))}
-              </div>
-            )}
-          </Card>
+          {current.knowledge_ids.length > 0 && (
+            <div className="knowledge-chips">
+              {current.knowledge_ids.map((kid) => (
+                <Badge key={kid} tone="neutral">
+                  {kid}
+                </Badge>
+              ))}
+            </div>
+          )}
 
           {phase === 'answering' && (
-            <Card pad="lg" style={{ marginTop: 'var(--s-4)' }}>
-              <SectionLabel>你的答案</SectionLabel>
+            <>
+              <div className="label-mono">你的答案</div>
               <textarea
+                placeholder="不看参考，先答…… Cmd/Ctrl + Enter 进入对照"
                 value={answer}
                 onChange={(e) => setAnswer(e.target.value)}
-                placeholder="回答完按 Cmd/Ctrl + Enter 提交（可留空，直接进入对照）"
-                rows={6}
-                style={textareaStyle}
               />
-              <div
-                style={{
-                  marginTop: 'var(--s-3)',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                }}
+              <details
+                className="ref-reveal"
+                open={showRef}
+                onToggle={(e) => setShowRef((e.target as HTMLDetailsElement).open)}
               >
-                <span style={hintStyle}>Cmd/Ctrl + Enter 提交</span>
-                <Button onClick={handleSubmit}>提交 →</Button>
+                <summary>参考答 ▾（提前看会减分）</summary>
+                <div className="ref-text">{current.reference_md ?? '(无)'}</div>
+              </details>
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <button type="button" className="btn-rating coral" onClick={handleReveal}>
+                  <span>进入对照</span>
+                  <kbd>⌘↵</kbd>
+                </button>
               </div>
-            </Card>
+            </>
           )}
 
           {phase === 'feedback' && (
             <>
-              <Card pad="lg" style={{ marginTop: 'var(--s-4)' }}>
-                <div style={splitStyle}>
-                  <div style={{ minWidth: 0 }}>
-                    <SectionLabel>你的答案</SectionLabel>
-                    <PreText>{answer.trim() || '(空)'}</PreText>
-                  </div>
-                  <div style={{ minWidth: 0 }}>
-                    <SectionLabel>参考答案</SectionLabel>
-                    <PreText>{current.reference_md ?? '(无)'}</PreText>
-                  </div>
-                </div>
-              </Card>
-
-              <Card pad="lg" style={{ marginTop: 'var(--s-4)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s-3)' }}>
-                  <SectionLabel>归因</SectionLabel>
-                  <CauseBadge
-                    cause={
-                      cause
-                        ? {
-                            actor_kind: cause.source === 'user' ? 'user' : 'agent',
-                            primary: cause.primary_category,
-                            secondary: cause.secondary_categories ?? [],
-                            confidence: cause.confidence ?? null,
-                          }
-                        : null
-                    }
-                  />
-                </div>
-                {!cause && (
-                  <p style={{ ...subEmptyStyle, marginTop: 'var(--s-2)' }}>
-                    这道题暂时还没有归因记录。
+              <div className="feedback-split">
+                <div>
+                  <div className="label-mono">你的答案</div>
+                  <p className={`feedback-prose${answer.trim() ? '' : ' muted'}`}>
+                    {answer.trim() || '（空）'}
                   </p>
-                )}
-              </Card>
-
-              <Card pad="lg" style={{ marginTop: 'var(--s-4)' }}>
-                <SectionLabel>FSRS 评分</SectionLabel>
-                <div style={ratingRowStyle}>
-                  {(['again', 'hard', 'good', 'easy'] as Rating[]).map((r) => (
-                    <Button
-                      key={r}
-                      variant={RATING_VARIANT[r]}
-                      onClick={() => handleRate(r)}
-                      disabled={submitM.isPending}
-                    >
-                      {RATING_LABELS[r]}
-                    </Button>
-                  ))}
                 </div>
-                <p style={{ ...hintStyle, marginTop: 'var(--s-3)' }}>键盘 1 / 2 / 3 / 4 也行</p>
-                {submitM.isError && (
-                  <p style={{ ...errorStyle, marginTop: 'var(--s-2)' }}>
-                    提交失败：{(submitM.error as Error).message}
+                <div>
+                  <div className="label-mono">参考答案</div>
+                  <p className={`feedback-prose${current.reference_md ? '' : ' muted'}`}>
+                    {current.reference_md ?? '（无）'}
                   </p>
-                )}
-              </Card>
+                </div>
+              </div>
+
+              <div className="cause-row">
+                <span className="label-mono">归因</span>
+                <CauseBadge
+                  cause={
+                    cause
+                      ? {
+                          actor_kind: cause.source === 'user' ? 'user' : 'agent',
+                          primary: cause.primary_category,
+                          secondary: cause.secondary_categories ?? [],
+                          confidence: cause.confidence ?? null,
+                        }
+                      : null
+                  }
+                />
+                {!cause && <span className="label-mono">暂无归因记录</span>}
+              </div>
+
+              <div className="rating-row">
+                {(['again', 'hard', 'good', 'easy'] as Rating[]).map((r) => (
+                  <button
+                    type="button"
+                    key={r}
+                    className={`btn-rating ${RATING_CLASS[r]}`}
+                    onClick={() => handleRate(r)}
+                    disabled={submitM.isPending}
+                  >
+                    <span>{RATING_LABELS[r]}</span>
+                    <kbd>{RATING_KEY[r]}</kbd>
+                  </button>
+                ))}
+              </div>
+              {submitM.isError && (
+                <p className="empty" style={{ color: 'var(--again-ink)' }}>
+                  提交失败：{(submitM.error as Error).message}
+                </p>
+              )}
             </>
           )}
-        </>
+        </section>
       )}
     </main>
   );
 }
-
-function ProgressBar({ current, total }: { current: number; total: number }) {
-  const pct = total === 0 ? 0 : Math.round((current / total) * 100);
-  return (
-    <div
-      aria-label={`进度 ${current} / ${total}`}
-      style={{
-        height: 4,
-        background: 'var(--paper-sunk)',
-        borderRadius: 'var(--r-pill)',
-        overflow: 'hidden',
-        marginTop: 'var(--s-3)',
-      }}
-    >
-      <div
-        style={{
-          height: '100%',
-          width: `${pct}%`,
-          background: 'var(--coral)',
-          transition: 'width var(--dur-base) var(--ease-out)',
-        }}
-      />
-    </div>
-  );
-}
-
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <span
-      style={{
-        fontFamily: 'var(--font-mono)',
-        fontSize: 'var(--fs-meta)',
-        color: 'var(--ink-4)',
-        letterSpacing: 'var(--ls-wide)',
-        display: 'block',
-        marginBottom: 'var(--s-2)',
-      }}
-    >
-      {children}
-    </span>
-  );
-}
-
-function PreText({ children }: { children: React.ReactNode }) {
-  return (
-    <pre
-      style={{
-        margin: 0,
-        whiteSpace: 'pre-wrap',
-        wordBreak: 'break-word',
-        fontFamily: 'var(--font-serif)',
-        fontSize: 'var(--fs-body)',
-        lineHeight: 'var(--lh-prose)',
-        color: 'var(--ink)',
-      }}
-    >
-      {children}
-    </pre>
-  );
-}
-
-const loadingStyle: React.CSSProperties = {
-  margin: 0,
-  fontSize: 'var(--fs-body)',
-  color: 'var(--ink-3)',
-};
-
-const errorStyle: React.CSSProperties = {
-  margin: 0,
-  fontSize: 'var(--fs-body)',
-  color: 'var(--again-ink)',
-};
-
-const emptyStyle: React.CSSProperties = {
-  fontSize: 'var(--fs-h4)',
-  color: 'var(--ink-2)',
-  fontFamily: 'var(--font-serif)',
-};
-
-const subEmptyStyle: React.CSSProperties = {
-  fontSize: 'var(--fs-caption)',
-  color: 'var(--ink-3)',
-  margin: 0,
-  lineHeight: 'var(--lh-prose)',
-};
-
-const linkStyle: React.CSSProperties = {
-  color: 'var(--coral)',
-};
-
-const textareaStyle: React.CSSProperties = {
-  width: '100%',
-  minHeight: 130,
-  padding: '12px 14px',
-  fontFamily: 'var(--font-serif)',
-  fontSize: 'var(--fs-body)',
-  lineHeight: 'var(--lh-prose)',
-  background: 'var(--paper-sunk)',
-  color: 'var(--ink)',
-  border: '1px solid var(--line)',
-  borderRadius: 'var(--r-2)',
-  outline: 'none',
-  boxSizing: 'border-box',
-  resize: 'vertical',
-};
-
-const splitStyle: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
-  gap: 'var(--s-4)',
-};
-
-const hintStyle: React.CSSProperties = {
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-meta)',
-  color: 'var(--ink-4)',
-  letterSpacing: 'var(--ls-wide)',
-  margin: 0,
-};
-
-const ratingRowStyle: React.CSSProperties = {
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: 'var(--s-2)',
-};
