@@ -124,12 +124,19 @@ export default function ReviewPage() {
     };
   }, []);
 
-  // Phase 2A — Review Orchestrator: single fetch returns queue + per-card
-  // priority/rationale/cause + session_intent. Replaces the older split call
-  // to /api/review/due + /api/mistakes (cause is inlined now).
+  // Phase 2A — Review Orchestrator. Two fetches so the queue can render in
+  // ~50ms while the LLM session_intent (mimo, ~15-20s) loads in the background.
+  // `?intent=skip` short-circuits the LLM call inside the orchestrator.
   const planQ = useQuery({
     queryKey: ['review-plan'],
-    queryFn: () => apiJson<ReviewPlan>('/api/review/plan?limit=50'),
+    queryFn: () => apiJson<ReviewPlan>('/api/review/plan?limit=50&intent=skip'),
+  });
+  const intentQ = useQuery({
+    queryKey: ['review-intent'],
+    queryFn: () => apiJson<ReviewPlan>('/api/review/plan?limit=50').then((p) => p.session_intent),
+    // Only chase the intent once the queue exists + is non-empty.
+    enabled: !!planQ.data && (planQ.data.queue?.length ?? 0) > 0,
+    staleTime: 1000 * 60 * 5,
   });
 
   const [index, setIndex] = useState(0);
@@ -141,7 +148,7 @@ export default function ReviewPage() {
   const total = rows.length;
   const current = rows[index];
   const isDone = total > 0 && index >= total;
-  const intent = planQ.data?.session_intent ?? null;
+  const intent = intentQ.data ?? planQ.data?.session_intent ?? null;
 
   const submitM = useMutation({
     mutationFn: (rating: Rating) => {
