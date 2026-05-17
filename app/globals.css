@@ -678,6 +678,174 @@ ol {
 }
 
 /* ------------------------------------------------------------ */
+/* /coach — weekly review report (Phase 1d)                      */
+/* ------------------------------------------------------------ */
+
+.coach-window-tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--paper-sunk);
+  border-radius: var(--r-2);
+  margin-bottom: var(--s-5);
+}
+.coach-window-tabs button {
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-3);
+  border-radius: var(--r-2);
+  font-family: inherit;
+  cursor: pointer;
+  border: 0;
+  background: transparent;
+}
+.coach-window-tabs button.is-on {
+  background: var(--paper-raised);
+  color: var(--ink);
+  box-shadow: var(--shadow-1);
+}
+
+.coach-daily {
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  padding: 18px 22px 14px;
+  margin-bottom: var(--s-5);
+}
+.coach-daily h4 {
+  margin: 0 0 var(--s-4);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-3);
+  letter-spacing: var(--ls-wide);
+}
+.coach-daily-bars {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 6px;
+  align-items: end;
+  height: 120px;
+  padding-bottom: var(--s-2);
+  border-bottom: 1px solid var(--line-soft);
+}
+.coach-daily-bar {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: stretch;
+  min-width: 0;
+  height: 100%;
+}
+.coach-daily-bar .stack {
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r-2) var(--r-2) 0 0;
+  overflow: hidden;
+  flex: 1;
+  min-height: 2px;
+}
+.coach-daily-bar .stack .correct {
+  background: var(--good);
+}
+.coach-daily-bar .stack .wrong {
+  background: var(--again);
+}
+.coach-daily-bar.empty .stack {
+  background: var(--paper-sunk);
+}
+.coach-daily-labels {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 6px;
+  margin-top: var(--s-2);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-4);
+  letter-spacing: 0.02em;
+}
+.coach-daily-labels .lbl {
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.coach-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-4);
+  margin-bottom: var(--s-5);
+}
+
+.coach-panel {
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  padding: 18px 20px;
+}
+.coach-panel h4 {
+  margin: 0 0 var(--s-3);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-3);
+  letter-spacing: var(--ls-wide);
+}
+.coach-panel .row {
+  display: grid;
+  grid-template-columns: 1fr auto 80px;
+  gap: 12px;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 14px;
+  color: var(--ink-2);
+}
+.coach-panel .row:last-child {
+  border-bottom: 0;
+}
+.coach-panel .row .name {
+  font-family: var(--font-wenyan);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.coach-panel .row .count {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-4);
+  white-space: nowrap;
+}
+.coach-panel .row .meter {
+  height: 4px;
+  background: var(--paper-sunk);
+  border-radius: var(--r-pill);
+  overflow: hidden;
+}
+.coach-panel .row .meter span {
+  display: block;
+  height: 100%;
+  background: var(--coral);
+}
+.coach-panel .empty {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-5);
+  padding: 4px 0;
+}
+
+@media (max-width: 759.98px) {
+  .coach-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ------------------------------------------------------------ */
 /* /learning-sessions/[id] — session detail (Phase 1d)           */
 /* ------------------------------------------------------------ */
 
