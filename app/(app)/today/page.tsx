@@ -4,7 +4,7 @@ import { apiJson } from '@/ui/lib/api';
 import { Badge } from '@/ui/primitives/Badge';
 import { Button } from '@/ui/primitives/Button';
 import { PageHeader } from '@/ui/primitives/PageHeader';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 
 interface DueRow {
@@ -20,6 +20,26 @@ interface LearningItem {
 interface KnowledgeNode {
   id: string;
 }
+interface KnowledgeProposal {
+  id: string;
+}
+interface EventRow {
+  id: string;
+  outcome?: string;
+  caused_by_event_id?: string | null;
+}
+interface LearningSessionRow {
+  id: string;
+  type: string;
+  status: 'started' | 'completed' | 'abandoned' | string;
+  summary_md: string | null;
+  started_at: number;
+  ended_at: number | null;
+  duration_ms: number | null;
+  reviewed_count: number;
+  rating_counts: { again: number; hard: number; good: number };
+  knowledge_touched: string[];
+}
 
 interface CostSummary {
   window: { from: number; to: number; label: string };
@@ -34,6 +54,8 @@ interface CostSummary {
 }
 
 export default function TodayPage() {
+  const queryClient = useQueryClient();
+
   const dueQ = useQuery({
     queryKey: ['today-due'],
     queryFn: () => apiJson<{ rows: DueRow[] }>('/api/review/due?limit=200'),
@@ -50,9 +72,46 @@ export default function TodayPage() {
     queryKey: ['today-knowledge'],
     queryFn: () => apiJson<{ rows: KnowledgeNode[] }>('/api/knowledge'),
   });
+  const nodeProposalsQ = useQuery({
+    queryKey: ['today-knowledge-proposals', 'pending'],
+    queryFn: () =>
+      apiJson<{ rows: KnowledgeProposal[] }>('/api/knowledge/proposals?status=pending'),
+  });
+  const edgeProposalsQ = useQuery({
+    queryKey: ['today-knowledge-edge-proposals'],
+    queryFn: () =>
+      apiJson<{ rows: EventRow[] }>(
+        '/api/events?action=propose&subject_kind=knowledge_edge&limit=200',
+      ),
+  });
+  const edgeRatesQ = useQuery({
+    queryKey: ['today-knowledge-edge-rates'],
+    queryFn: () =>
+      apiJson<{ rows: EventRow[] }>(
+        '/api/events?action=rate&subject_kind=knowledge_edge&limit=200',
+      ),
+  });
+  const artifactEventsQ = useQuery({
+    queryKey: ['today-artifact-generations'],
+    queryFn: () =>
+      apiJson<{ rows: EventRow[] }>(
+        '/api/events?action=generate&subject_kind=artifact&actor_kind=agent&limit=200',
+      ),
+  });
+  const eventRatesQ = useQuery({
+    queryKey: ['today-event-rates'],
+    queryFn: () =>
+      apiJson<{ rows: EventRow[] }>('/api/events?action=rate&subject_kind=event&limit=200'),
+  });
   const costQ = useQuery({
     queryKey: ['today-cost'],
     queryFn: () => apiJson<CostSummary>('/api/cost/today'),
+    refetchInterval: 60_000,
+  });
+  const sessionsQ = useQuery({
+    queryKey: ['today-review-sessions'],
+    queryFn: () =>
+      apiJson<{ rows: LearningSessionRow[] }>('/api/learning-sessions?type=review&limit=6'),
     refetchInterval: 60_000,
   });
 
@@ -61,6 +120,30 @@ export default function TodayPage() {
   const pendingAttrCount = mistakeRows.filter((m) => m.cause === null).length;
   const activeItemsCount = itemsQ.data?.rows.filter((i) => i.status !== 'done').length ?? 0;
   const knowledgeCount = knowledgeQ.data?.rows.length ?? 0;
+  const edgeRatedIds = new Set(
+    (edgeRatesQ.data?.rows ?? [])
+      .map((row) => row.caused_by_event_id)
+      .filter((id): id is string => Boolean(id)),
+  );
+  const eventRatedIds = new Set(
+    (eventRatesQ.data?.rows ?? [])
+      .map((row) => row.caused_by_event_id)
+      .filter((id): id is string => Boolean(id)),
+  );
+  const pendingEdgeCount = (edgeProposalsQ.data?.rows ?? []).filter(
+    (row) => !edgeRatedIds.has(row.id),
+  ).length;
+  const pendingNodeCount = nodeProposalsQ.data?.rows.length ?? 0;
+  const pendingArtifactCount = (artifactEventsQ.data?.rows ?? []).filter(
+    (row) => row.outcome === 'success' && !eventRatedIds.has(row.id),
+  ).length;
+  const pendingAiCount = pendingEdgeCount + pendingNodeCount + pendingArtifactCount;
+  const pendingAiLoading =
+    nodeProposalsQ.isLoading ||
+    edgeProposalsQ.isLoading ||
+    edgeRatesQ.isLoading ||
+    artifactEventsQ.isLoading ||
+    eventRatesQ.isLoading;
 
   const causeCounts = new Map<string, number>();
   for (const m of mistakeRows) {
@@ -74,12 +157,21 @@ export default function TodayPage() {
   const topCauses = [...causeCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
 
   return (
-    <main className="page wide">
+    <main className="page wide today-page">
       <PageHeader
         title="今日"
-        eyebrow="/today"
-        sub="学习控制面 · 错题归因 + FSRS 复习 + AI 提议汇集"
-      />
+        eyebrow={`TODAY · ${new Date().toISOString().slice(0, 10)} · phase 1c`}
+        sub="昨晚 Dreaming agent 跑过；下面是它想让你看的几件事，再加你自己排的复习队列。"
+      >
+        <Button variant="secondary" icon="refresh" onClick={() => queryClient.invalidateQueries()}>
+          刷新
+        </Button>
+        <Link href="/record" style={{ textDecoration: 'none' }}>
+          <Button variant="primary" icon="pen">
+            录入
+          </Button>
+        </Link>
+      </PageHeader>
 
       <div className="kpi-strip">
         <Kpi
@@ -97,11 +189,16 @@ export default function TodayPage() {
           trend={pendingAttrCount > 0 ? 'attempt:failure 无 judge' : '全部已归因'}
         />
         <Kpi
-          label="学习项 · 在途"
-          value={activeItemsCount}
-          loading={itemsQ.isLoading}
-          href="/learning-items"
-          trend="pending + in_progress"
+          label="AI 提议 · 待审"
+          value={pendingAiCount}
+          loading={pendingAiLoading}
+          href="/inbox"
+          trend={
+            pendingAiCount > 0
+              ? `关系 ${pendingEdgeCount} · 新节点 ${pendingNodeCount} · 内容 ${pendingArtifactCount}`
+              : '全部清空'
+          }
+          trendUp={pendingAiCount > 0}
         />
         <Kpi
           label="知识点"
@@ -111,6 +208,15 @@ export default function TodayPage() {
           trend="tree + mesh"
         />
       </div>
+
+      <SessionStrip sessions={sessionsQ.data?.rows ?? []} loading={sessionsQ.isLoading} />
+
+      <InboxStrip
+        total={pendingAiCount}
+        edges={pendingEdgeCount}
+        nodes={pendingNodeCount}
+        artifacts={pendingArtifactCount}
+      />
 
       <div className="lanes">
         <Lane
@@ -191,6 +297,157 @@ export default function TodayPage() {
         error={costQ.error as Error | null}
       />
     </main>
+  );
+}
+
+function SessionStrip({
+  sessions,
+  loading,
+}: {
+  sessions: LearningSessionRow[];
+  loading: boolean;
+}) {
+  const active = sessions.find((s) => s.status === 'started');
+  const completed = sessions.find((s) => s.status === 'completed');
+  if (!active && !completed) {
+    if (!loading) return null;
+    return (
+      <div className="session-strip">
+        <div className="ss-row">
+          <div className="ss-line">
+            <Badge tone="neutral">sessions</Badge>
+            <span className="ss-stat">正在加载 review session…</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="session-strip">
+      {completed && (
+        <div className="ss-row ss-completed">
+          <div className="ss-line">
+            <Badge tone="good" dot dotStatic>
+              completed
+            </Badge>
+            <span className="ss-id">
+              <code>{completed.id.slice(0, 12)}</code>
+            </span>
+            <span className="ss-stat">
+              {completed.reviewed_count} 卡 · {formatDuration(completed.duration_ms)} ·{' '}
+              {formatDay(completed.ended_at ?? completed.started_at)}
+            </span>
+            <span style={{ flex: 1 }} />
+            <Link href="/review" style={{ textDecoration: 'none' }}>
+              <Button variant="quiet" size="sm" iconRight="arrowR">
+                开新 session
+              </Button>
+            </Link>
+          </div>
+          <p className="ss-summary">
+            {completed.summary_md ??
+              `不会 ${completed.rating_counts.again} · 模糊 ${completed.rating_counts.hard} · 会了 ${completed.rating_counts.good}`}
+          </p>
+        </div>
+      )}
+
+      {active && (
+        <div className="ss-row ss-active">
+          <div className="ss-line">
+            <Badge tone="info" dot>
+              started
+            </Badge>
+            <span className="ss-id">
+              <code>{active.id.slice(0, 12)}</code>
+            </span>
+            <span className="ss-stat">
+              eager 创建 · 已复习 {active.reviewed_count} · 退出 sendBeacon → completed · cron 6h
+              兜底 abandoned
+            </span>
+            <span style={{ flex: 1 }} />
+            <Link href="/review" style={{ textDecoration: 'none' }}>
+              <Button variant="quiet" size="sm" iconRight="arrowR">
+                回到当前 session
+              </Button>
+            </Link>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatDuration(ms: number | null): string {
+  if (!ms || ms < 0) return '0 分钟';
+  const minutes = Math.max(1, Math.round(ms / 60_000));
+  return `${minutes} 分钟`;
+}
+
+function formatDay(seconds: number): string {
+  const date = new Date(seconds * 1000);
+  if (Number.isNaN(date.getTime())) return '未知';
+  const today = new Date();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const startOfDay = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const deltaDays = Math.round((startOfToday - startOfDay) / 86_400_000);
+  if (deltaDays === 0) return '今天';
+  if (deltaDays === 1) return '昨天';
+  return `${deltaDays} 天前`;
+}
+
+function InboxStrip({
+  total,
+  edges,
+  nodes,
+  artifacts,
+}: {
+  total: number;
+  edges: number;
+  nodes: number;
+  artifacts: number;
+}) {
+  if (total === 0) return null;
+
+  return (
+    <div className="inbox-strip">
+      <div className="inbox-text">
+        <div className="src">
+          <Badge tone="coral">agent</Badge> · pending only · event stream
+        </div>
+        <h3>昨晚 AI 提议了 {total} 条，要看吗？</h3>
+        <div className="breakdown">
+          {artifacts > 0 && (
+            <div>
+              <b>{artifacts}</b>
+              <span>内容生成</span>
+            </div>
+          )}
+          {nodes > 0 && (
+            <div>
+              <b>{nodes}</b>
+              <span>新知识点</span>
+            </div>
+          )}
+          {edges > 0 && (
+            <div>
+              <b>{edges}</b>
+              <span>关系建议</span>
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="inbox-strip-actions">
+        <Link href="/knowledge" style={{ textDecoration: 'none' }}>
+          <Button variant="secondary">分散审批</Button>
+        </Link>
+        <Link href="/inbox" style={{ textDecoration: 'none' }}>
+          <Button variant="primary" iconRight="arrowR">
+            集中审批 (全部 {total})
+          </Button>
+        </Link>
+      </div>
+    </div>
   );
 }
 

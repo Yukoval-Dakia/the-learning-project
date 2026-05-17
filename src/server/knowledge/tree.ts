@@ -1,6 +1,6 @@
 import type { Db } from '@/db/client';
-import { knowledge } from '@/db/schema';
-import { isNull } from 'drizzle-orm';
+import { knowledge, knowledge_mastery } from '@/db/schema';
+import { eq, isNull, sql } from 'drizzle-orm';
 
 interface KnowledgeRow {
   id: string;
@@ -8,6 +8,10 @@ interface KnowledgeRow {
   domain: string | null;
   parent_id: string | null;
   archived_at: Date | null;
+  mastery: number | null;
+  evidence_count: number;
+  last_evidence_at: Date | null;
+  last_active_at: Date;
 }
 
 export interface KnowledgeNode extends KnowledgeRow {
@@ -22,8 +26,13 @@ export async function loadTreeSnapshot(db: Db): Promise<KnowledgeNode[]> {
       domain: knowledge.domain,
       parent_id: knowledge.parent_id,
       archived_at: knowledge.archived_at,
+      mastery: knowledge_mastery.mastery,
+      evidence_count: sql<number>`COALESCE(${knowledge_mastery.evidence_count}, 0)`,
+      last_evidence_at: knowledge_mastery.last_evidence_at,
+      last_active_at: sql<Date>`COALESCE(${knowledge_mastery.last_active_at}, ${knowledge.created_at})`,
     })
     .from(knowledge)
+    .leftJoin(knowledge_mastery, eq(knowledge_mastery.knowledge_id, knowledge.id))
     .where(isNull(knowledge.archived_at));
   const byId = new Map<string, KnowledgeRow>();
   for (const r of rows) byId.set(r.id, r);

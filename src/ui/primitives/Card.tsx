@@ -17,6 +17,7 @@ export const Card = forwardRef<HTMLDivElement, CardProps>(function Card(
     <div
       ref={ref}
       className={[
+        'loom-card',
         'bg-[var(--paper-raised)]',
         'border border-[var(--line)]',
         'rounded-[var(--r-3)]',

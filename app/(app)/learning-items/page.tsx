@@ -169,18 +169,12 @@ export default function LearningItemsPage() {
   const rows = itemsQ.data?.rows ?? [];
 
   return (
-    <main
-      style={{
-        minHeight: '100vh',
-        background: 'var(--paper)',
-        padding: '36px 28px',
-        maxWidth: 'var(--cap-prose, 780px)',
-        margin: '0 auto',
-        width: '100%',
-        boxSizing: 'border-box',
-      }}
-    >
-      <PageHeader title="学习项" eyebrow="/learning-items" sub="自由 TODO，不进入 FSRS 排程" />
+    <main className="page prose">
+      <PageHeader
+        title="学习项"
+        eyebrow="ITEMS · free queue"
+        sub="自由 TODO，不进入 FSRS 排程。intent 可以拆成 hub + atomic learning items。"
+      />
 
       {/* Phase 2B — Learning Intent input */}
       <section className="intent-input-section">
@@ -251,13 +245,11 @@ export default function LearningItemsPage() {
         )}
       </section>
 
-      <div style={{ marginTop: 'var(--s-4)' }}>
-        <TabBar
-          items={FILTER_TABS.map((t) => ({ id: t.id, label: t.label }))}
-          active={filter}
-          onSelect={(id) => setFilter(id as StatusFilter)}
-        />
-      </div>
+      <TabBar
+        items={FILTER_TABS.map((t) => ({ id: t.id, label: t.label }))}
+        active={filter}
+        onSelect={(id) => setFilter(id as StatusFilter)}
+      />
 
       <details open style={{ marginTop: 'var(--s-4)' }}>
         <summary style={summaryStyle}>新增学习项</summary>

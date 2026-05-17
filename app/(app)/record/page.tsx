@@ -46,33 +46,29 @@ type QuestionKindId = (typeof QUESTION_KINDS)[number]['id'];
 type CauseCategoryId = (typeof CAUSE_CATEGORIES)[number]['id'];
 
 const MODE_TABS = [
-  { id: 'manual' as ModeTab, label: '手动录入' },
+  { id: 'manual' as ModeTab, label: '手输' },
   { id: 'vision_single' as ModeTab, label: '拍单题' },
-  { id: 'vision_paper' as ModeTab, label: '拍整页' },
+  { id: 'vision_paper' as ModeTab, label: '拍试卷' },
 ];
 
 export default function RecordPage() {
-  const [mode, setMode] = useState<ModeTab>('manual');
+  const [mode, setMode] = useState<ModeTab>('vision_paper');
 
   return (
-    <main
-      style={{
-        minHeight: '100vh',
-        background: 'var(--paper)',
-        padding: '36px 28px',
-        maxWidth: 'var(--cap-prose, 780px)',
-        margin: '0 auto',
-        width: '100%',
-        boxSizing: 'border-box',
-      }}
-    >
-      <PageHeader title="录入" eyebrow="/record" sub="手动 / 视觉（拍单题 + 拍整页）" />
+    <main className="page record-page">
+      <PageHeader
+        title="录入"
+        eyebrow="RECORD · LearningSession(type='ingestion')"
+        sub="同一 learning_session 包三种入口；extraction 是异步 job，进度走 SSE。"
+      >
+        <Button variant="ghost" icon="cog">
+          设置
+        </Button>
+      </PageHeader>
 
-      <div style={{ marginTop: 'var(--s-4)' }}>
-        <TabBar items={MODE_TABS} active={mode} onSelect={(id) => setMode(id as ModeTab)} />
-      </div>
+      <TabBar items={MODE_TABS} active={mode} onSelect={(id) => setMode(id as ModeTab)} />
 
-      <div style={{ marginTop: 'var(--s-4)' }}>
+      <div className="record-tab-body">
         {mode === 'manual' && <ManualForm />}
         {mode === 'vision_single' && <VisionTab mode="vision_single" />}
         {mode === 'vision_paper' && <VisionTab mode="vision_paper" />}
@@ -147,7 +143,7 @@ function ManualForm() {
   };
 
   return (
-    <Card pad="lg">
+    <Card pad="lg" className="record-card manual-card">
       <FieldLabel>题型</FieldLabel>
       <div style={chipRowStyle}>
         {QUESTION_KINDS.map((k) => (

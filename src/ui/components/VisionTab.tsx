@@ -23,6 +23,7 @@ import { formatRelTime } from '@/ui/lib/utils';
 import { Badge } from '@/ui/primitives/Badge';
 import { Button } from '@/ui/primitives/Button';
 import { Card } from '@/ui/primitives/Card';
+import { Icon } from '@/ui/primitives/Icon';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -370,10 +371,10 @@ export function VisionTab({ mode }: { mode: Mode }) {
   };
 
   return (
-    <Card pad="lg">
-      <div style={headStyle}>
-        <h2 style={titleStyle}>{mode === 'vision_single' ? '单题拍照' : '整页拍照'}</h2>
-        <span style={metaStyle}>
+    <Card pad="lg" className="record-card vision-card">
+      <div className="record-card-head">
+        <h2>{mode === 'vision_single' ? '单题拍照' : '整页拍照'}</h2>
+        <span className="meta">
           {mode === 'vision_single' ? '1 张图' : '1–5 张试卷照'} · {phaseLabel(phase, sse.status)}
         </span>
       </div>
@@ -388,19 +389,31 @@ export function VisionTab({ mode }: { mode: Mode }) {
             style={{ display: 'none' }}
             onChange={(e) => onPickFiles(e.target.files)}
           />
-          <button type="button" onClick={() => fileInputRef.current?.click()} style={dropzoneStyle}>
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="dropzone record-dropzone"
+          >
+            <Icon name={mode === 'vision_single' ? 'camera' : 'upload'} size={32} />
             {files.length > 0 ? (
-              <span>已选 {files.length} 张 — 点击重选</span>
+              <span className="dropzone-title">已选 {files.length} 张 · 点击重选</span>
             ) : (
-              <span>点击选择图片（{mode === 'vision_single' ? '1 张' : '1–5 张'}）</span>
+              <span className="dropzone-title">
+                {mode === 'vision_single' ? '拍一题就好' : '拖照片到此处 · 或点这里上传'}
+              </span>
             )}
+            <span className="hint">
+              {mode === 'vision_single'
+                ? '单题直接走 Vision；不经 Tencent Mark Agent'
+                : 'JPEG / PNG / WebP · 单次最多 5 页 · 抽取进度走 SSE'}
+            </span>
           </button>
           {files.length > 0 && (
-            <ul style={fileListStyle}>
+            <ul className="record-file-list">
               {files.map((f) => (
-                <li key={f.name} style={fileItemStyle}>
+                <li key={f.name}>
                   <span>{f.name}</span>
-                  <span style={metaStyle}>{(f.size / 1024).toFixed(1)} KB</span>
+                  <span className="meta">{(f.size / 1024).toFixed(1)} KB</span>
                 </li>
               ))}
             </ul>
@@ -886,24 +899,59 @@ function SSETimeline({
   status: string;
 }) {
   return (
-    <ol style={timelineStyle}>
-      {events.map((e) => (
-        <li key={e.event_id} style={timelineItemStyle}>
-          <code style={timelineCodeStyle}>{e.event_type}</code>
-          {e.payload.block_count !== undefined && (
-            <span style={metaStyle}> · {String(e.payload.block_count)} blocks</span>
-          )}
-          {typeof e.payload.layout_quality === 'string' && (
-            <span style={metaStyle}> · {e.payload.layout_quality}</span>
-          )}
-          {typeof e.payload.error_message === 'string' && (
-            <span style={errorStyle}> · {e.payload.error_message}</span>
-          )}
-        </li>
-      ))}
-      {events.length === 0 && <li style={metaStyle}>等待事件… ({status})</li>}
-    </ol>
+    <section className="sse-feed">
+      <div className="head">
+        <h4>抽取进度</h4>
+        <span className="conn">
+          <span className="dot" />
+          SSE · {status}
+        </span>
+      </div>
+      <div className="sse-rows">
+        {events.map((e) => (
+          <div
+            key={e.event_id}
+            className={[
+              'sse-row',
+              e.event_type.includes('failed') ? 'fail' : '',
+              e.event_type.includes('completed') || e.event_type.includes('imported')
+                ? 'success'
+                : '',
+            ]
+              .filter(Boolean)
+              .join(' ')}
+          >
+            <span className="t">#{e.event_id}</span>
+            <span className="msg">
+              <code>{e.event_type}</code>
+              {e.payload.block_count !== undefined && (
+                <span className="meta"> · {String(e.payload.block_count)} blocks</span>
+              )}
+              {typeof e.payload.layout_quality === 'string' && (
+                <span className="meta"> · {e.payload.layout_quality}</span>
+              )}
+              {typeof e.payload.error_message === 'string' && (
+                <span className="record-error"> · {e.payload.error_message}</span>
+              )}
+            </span>
+            <code>{eventShortId(e.event_type)}</code>
+          </div>
+        ))}
+        {events.length === 0 && (
+          <div className="sse-row">
+            <span className="t">--</span>
+            <span className="msg muted">等待事件…</span>
+            <code>{status}</code>
+          </div>
+        )}
+      </div>
+    </section>
   );
+}
+
+function eventShortId(eventType: string): string {
+  const parts = eventType.split('.');
+  return parts.at(-1) ?? eventType;
 }
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
@@ -936,55 +984,11 @@ function formatError(err: unknown): string {
   return String(err);
 }
 
-const headStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'baseline',
-  justifyContent: 'space-between',
-  gap: 'var(--s-3)',
-  marginBottom: 'var(--s-3)',
-};
-
-const titleStyle: React.CSSProperties = {
-  margin: 0,
-  fontFamily: 'var(--font-serif)',
-  fontSize: 'var(--fs-h4)',
-  fontWeight: 500,
-  color: 'var(--ink)',
-};
-
 const metaStyle: React.CSSProperties = {
   fontFamily: 'var(--font-mono)',
   fontSize: 'var(--fs-meta)',
   color: 'var(--ink-4)',
   letterSpacing: 'var(--ls-wide)',
-};
-
-const dropzoneStyle: React.CSSProperties = {
-  width: '100%',
-  padding: '32px 24px',
-  border: '2px dashed var(--line)',
-  borderRadius: 'var(--r-2)',
-  background: 'var(--paper-sunk)',
-  color: 'var(--ink-3)',
-  cursor: 'pointer',
-  fontFamily: 'var(--font-serif)',
-  fontSize: 'var(--fs-body)',
-};
-
-const fileListStyle: React.CSSProperties = {
-  margin: 'var(--s-3) 0 0',
-  listStyle: 'none',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 4,
-};
-
-const fileItemStyle: React.CSSProperties = {
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-  fontSize: 'var(--fs-caption)',
-  color: 'var(--ink-2)',
 };
 
 const mutedStyle: React.CSSProperties = {
@@ -1079,20 +1083,6 @@ const chipStyle = (active: boolean): React.CSSProperties => ({
   whiteSpace: 'nowrap',
   letterSpacing: 'var(--ls-wide)',
 });
-
-const timelineStyle: React.CSSProperties = {
-  listStyle: 'none',
-  margin: 'var(--s-2) 0 0',
-  padding: 0,
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 2,
-};
-
-const timelineItemStyle: React.CSSProperties = {
-  padding: '4px 0',
-  borderBottom: '1px dotted var(--line-soft)',
-};
 
 const timelineCodeStyle: React.CSSProperties = {
   fontFamily: 'var(--font-mono)',

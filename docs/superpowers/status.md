@@ -147,6 +147,7 @@
 | 项目能干什么 / 如何启动 | `CLAUDE.md` |
 | 架构总览 | `docs/architecture.md` |
 | 长期 orchestrator 设计 | `docs/superpowers/specs/2026-05-09-learning-orchestrator-long-term-design.md` |
+| Agent runtime tool / graph context 设计 | `docs/superpowers/specs/2026-05-17-agent-context-tools-design.md` |
 | 单个模块详情 | `docs/modules/*.md`（每个文件开头有 §0 实施现状） |
 | 设计决策 | `docs/adr/ADR-*.md` |
 | Phase 计划 + 收尾记录 | `docs/superpowers/plans/*.md` + `docs/superpowers/brainstorms/*.md`（MVP 防漂移） |

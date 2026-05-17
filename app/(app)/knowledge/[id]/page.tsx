@@ -5,6 +5,7 @@ import { formatRelTime } from '@/ui/lib/utils';
 import { Badge } from '@/ui/primitives/Badge';
 import { Card } from '@/ui/primitives/Card';
 import { CauseBadge } from '@/ui/primitives/CauseBadge';
+import { MasteryBadge } from '@/ui/primitives/MasteryBadge';
 import { PageHeader } from '@/ui/primitives/PageHeader';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
@@ -16,6 +17,10 @@ interface KnowledgeNode {
   domain: string | null;
   parent_id: string | null;
   effective_domain: string | null;
+  mastery: number | null;
+  evidence_count: number;
+  last_evidence_at: string | null;
+  last_active_at: string;
 }
 
 interface MistakeRow {
@@ -58,17 +63,7 @@ export default function KnowledgeDetailPage({
   const linkedMistakes = (mistakesQ.data?.rows ?? []).filter((m) => m.knowledge_ids.includes(id));
 
   return (
-    <main
-      style={{
-        minHeight: '100vh',
-        background: 'var(--paper)',
-        padding: '36px 28px',
-        maxWidth: 'var(--cap-prose, 780px)',
-        margin: '0 auto',
-        width: '100%',
-        boxSizing: 'border-box',
-      }}
-    >
+    <main className="page prose">
       <p style={breadcrumbStyle}>
         <Link href="/knowledge" style={{ color: 'var(--coral)' }}>
           ← 知识图谱
@@ -102,7 +97,16 @@ export default function KnowledgeDetailPage({
       {node && (
         <>
           <Card pad="lg" style={{ marginTop: 'var(--s-4)' }}>
-            <SectionLabel>元信息</SectionLabel>
+            <div style={sectionHeaderStyle}>
+              <SectionLabel>元信息</SectionLabel>
+              <MasteryBadge
+                data={{
+                  mastery: node.mastery,
+                  evidence_count: node.evidence_count,
+                  last_evidence_at: node.last_evidence_at,
+                }}
+              />
+            </div>
             <dl style={dlStyle}>
               <Row label="id" value={node.id} mono />
               <Row label="name" value={node.name} />
@@ -213,6 +217,14 @@ const mutedStyle: React.CSSProperties = {
   margin: 0,
   fontSize: 'var(--fs-caption)',
   color: 'var(--ink-3)',
+};
+
+const sectionHeaderStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 'var(--s-3)',
+  marginBottom: 'var(--s-3)',
 };
 
 const dlStyle: React.CSSProperties = {
