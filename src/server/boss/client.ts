@@ -22,9 +22,19 @@ export function createBoss(): PgBoss {
   if (!connectionString) {
     throw new Error('DATABASE_URL is required to create PgBoss instance');
   }
+  // Under vitest, cap the internal connection pool aggressively. Multiple test
+  // files re-create the singleton via _resetBossForTests; pg-boss's default
+  // pool (~10) + testcontainer Postgres's default `max_connections=100` leave
+  // little headroom once the dozens of test files have each cycled through a
+  // boss instance. Capping at 2 inside vitest keeps the total well below the
+  // ceiling and removes the "too many clients already" flake seen in
+  // boss/client.test when run with the full suite. Production (worker /
+  // route processes) keeps the library default.
+  const isVitest = !!process.env.VITEST;
   bossInstance = new PgBoss({
     connectionString,
     schema: 'pgboss',
+    ...(isVitest ? { max: 2 } : {}),
   });
   return bossInstance;
 }
