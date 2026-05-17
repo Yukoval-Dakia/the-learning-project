@@ -7,6 +7,7 @@ import { Card } from '@/ui/primitives/Card';
 import { CauseBadge } from '@/ui/primitives/CauseBadge';
 import { PageHeader } from '@/ui/primitives/PageHeader';
 import { useQuery } from '@tanstack/react-query';
+import Link from 'next/link';
 
 interface MistakeRow {
   id: string;
@@ -130,6 +131,11 @@ function MistakeCard({ row }: { row: MistakeRow }) {
           ))}
         </div>
       )}
+      <p style={{ ...metaStyle, marginTop: 'var(--s-2)' }}>
+        <Link href={`/events/${row.id}`} style={{ color: 'var(--coral)' }}>
+          → 事件链
+        </Link>
+      </p>
     </Card>
   );
 }

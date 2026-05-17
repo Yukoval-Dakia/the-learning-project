@@ -335,11 +335,15 @@ function rowToParseInput(row: typeof event.$inferSelect): Parameters<typeof pars
  * via parseEvent — failures throw, never silently swallowed). Returns null
  * when the row is absent.
  */
-export async function getEventById(db: DbLike, id: string): Promise<EventT | null> {
+export async function getEventById(db: DbLike, id: string): Promise<EnvelopedEvent | null> {
   const rows = await db.select().from(event).where(eq(event.id, id)).limit(1);
   const row = rows[0];
   if (!row) return null;
-  return parseEvent(rowToParseInput(row));
+  return {
+    ...parseEvent(rowToParseInput(row)),
+    id: row.id,
+    created_at: row.created_at,
+  } as EnvelopedEvent;
 }
 
 // ============================================================================
@@ -406,8 +410,8 @@ export async function getEvents(
 // ============================================================================
 
 export type EventChain = {
-  caused_by: EventT | null;
-  caused_events: EventT[];
+  caused_by: EnvelopedEvent | null;
+  caused_events: EnvelopedEvent[];
 };
 
 export async function getEventChain(db: DbLike, id: string): Promise<EventChain> {
@@ -432,7 +436,14 @@ export async function getEventChain(db: DbLike, id: string): Promise<EventChain>
     .from(event)
     .where(eq(event.caused_by_event_id, id))
     .orderBy(desc(event.created_at));
-  const caused_events = reverseRows.map((r) => parseEvent(rowToParseInput(r)));
+  const caused_events = reverseRows.map(
+    (r) =>
+      ({
+        ...parseEvent(rowToParseInput(r)),
+        id: r.id,
+        created_at: r.created_at,
+      }) as EnvelopedEvent,
+  );
 
   return { caused_by, caused_events };
 }

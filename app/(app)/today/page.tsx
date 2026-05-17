@@ -22,6 +22,18 @@ interface KnowledgeNode {
   id: string;
 }
 
+interface CostSummary {
+  window: { from: number; to: number; label: string };
+  today: {
+    spend: number;
+    tokens_in: number;
+    tokens_out: number;
+    ledger_rows: number;
+    tool_calls: number;
+    by_task: Array<{ task_kind: string; spend: number; calls: number }>;
+  };
+}
+
 export default function TodayPage() {
   const dueQ = useQuery({
     queryKey: ['today-due'],
@@ -38,6 +50,11 @@ export default function TodayPage() {
   const knowledgeQ = useQuery({
     queryKey: ['today-knowledge'],
     queryFn: () => apiJson<{ rows: KnowledgeNode[] }>('/api/knowledge'),
+  });
+  const costQ = useQuery({
+    queryKey: ['today-cost'],
+    queryFn: () => apiJson<CostSummary>('/api/cost/today'),
+    refetchInterval: 60_000,
   });
 
   const dueCount = dueQ.data?.rows.length ?? 0;
@@ -137,12 +154,11 @@ export default function TodayPage() {
         </p>
       </details>
 
-      <p style={costRibbonStyle}>
-        Cost guard · CostLedger 今日（Phase 1d 接入） · ToolCallLog 详见{' '}
-        <a href="/api/_/logs/jobs" style={{ color: 'var(--coral)' }}>
-          /api/_/logs/jobs
-        </a>
-      </p>
+      <CostRibbon
+        cost={costQ.data ?? null}
+        loading={costQ.isLoading}
+        error={costQ.error as Error | null}
+      />
     </main>
   );
 }
@@ -186,6 +202,45 @@ function LaneItem({ phase, name, description, reason, active, disabled, action }
       {reason && <p style={laneReasonStyle}>{reason}</p>}
       {action && <div style={{ marginTop: 'var(--s-2)' }}>{action}</div>}
     </li>
+  );
+}
+
+function CostRibbon({
+  cost,
+  loading,
+  error,
+}: {
+  cost: CostSummary | null;
+  loading: boolean;
+  error: Error | null;
+}) {
+  if (loading) {
+    return <p style={costRibbonStyle}>Cost guard · 加载中…</p>;
+  }
+  if (error) {
+    return <p style={costRibbonStyle}>Cost guard · 暂时不可用 ({error.message})</p>;
+  }
+  if (!cost) return null;
+
+  const fmtUsd = (n: number) => `$${n.toFixed(n < 0.01 ? 5 : 3)}`;
+  const top = cost.today.by_task
+    .slice()
+    .sort((a, b) => b.spend - a.spend)
+    .slice(0, 3);
+
+  return (
+    <div style={costRibbonWrapStyle}>
+      <span style={costRibbonStyle}>
+        Cost guard · CostLedger 今日 {fmtUsd(cost.today.spend)} · {cost.today.ledger_rows} ledger ·{' '}
+        {cost.today.tool_calls} tool calls · tokens in/out {cost.today.tokens_in}/
+        {cost.today.tokens_out}
+      </span>
+      {top.length > 0 && (
+        <span style={costRibbonStyle}>
+          top: {top.map((t) => `${t.task_kind} ${fmtUsd(t.spend)} (${t.calls})`).join(' · ')}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -291,9 +346,15 @@ const dispatcherBodyStyle: React.CSSProperties = {
 };
 
 const costRibbonStyle: React.CSSProperties = {
-  marginTop: 'var(--s-5)',
   fontFamily: 'var(--font-mono)',
   fontSize: 'var(--fs-meta)',
   color: 'var(--ink-4)',
   letterSpacing: 'var(--ls-wide)',
+};
+
+const costRibbonWrapStyle: React.CSSProperties = {
+  marginTop: 'var(--s-5)',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 2,
 };
