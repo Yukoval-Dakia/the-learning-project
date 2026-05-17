@@ -508,6 +508,59 @@ ol {
   box-shadow: var(--shadow-1);
 }
 
+.kf-title {
+  margin: 0 0 var(--s-3);
+  font-family: var(--font-serif);
+  font-size: var(--fs-h4);
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.kf-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: var(--s-3);
+}
+
+.kf-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+  letter-spacing: var(--ls-wide);
+}
+
+.kf-select,
+.kf-textarea {
+  font-family: var(--font-serif);
+  font-size: var(--fs-body);
+  padding: 8px 10px;
+  background: var(--paper-sunk);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  outline: none;
+}
+
+.kf-textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+.kf-error {
+  margin: var(--s-2) 0 0;
+  font-size: var(--fs-caption);
+  color: var(--again-ink);
+}
+
+.kf-actions {
+  margin-top: var(--s-3);
+  display: flex;
+  justify-content: flex-end;
+}
+
 .knowledge-page .knowledge-btn-primary {
   background: var(--coral);
   border-color: var(--coral);
