@@ -1,41 +1,81 @@
-import { MockLanguageModelV3 } from 'ai/test';
-import { beforeEach, describe, expect, it } from 'vitest';
-import { z } from 'zod';
+// Runner tests — two-tier adapter (raw Anthropic SDK + Claude Agent SDK).
+//
+// Single-turn `runTask` is mocked at the @anthropic-ai/sdk module boundary
+// so we don't make real HTTP. Tool-call `runAgentTask` is mocked at the
+// claude-agent-sdk module so we don't spawn the `claude` binary subprocess.
+
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { memR2 } from '../../../tests/helpers/r2';
-import { runTask, streamTask } from './runner';
 
-// AI SDK v6 provider-level (LanguageModelV3) shapes.
-function makeMockGenerateResult(text: string, unifiedReason: 'stop' | 'length' = 'stop') {
-  return {
-    finishReason: { unified: unifiedReason, raw: unifiedReason },
-    usage: {
-      inputTokens: { total: 100, noCache: 100, cacheRead: undefined, cacheWrite: undefined },
-      outputTokens: { total: 50, text: 50, reasoning: undefined },
-    },
-    content: [{ type: 'text' as const, text }],
-    warnings: [],
-  };
-}
+// ---------- @anthropic-ai/sdk mock ----------
+const mockAnthropic = vi.hoisted(() => ({
+  capturedRequest: undefined as
+    | undefined
+    | {
+        model: string;
+        system: string;
+        messages: unknown[];
+      },
+  response: {
+    content: [{ type: 'text', text: 'OK' }],
+    stop_reason: 'end_turn',
+    usage: { input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 0 },
+  },
+}));
 
-describe('runTask (single-shot, no tools)', () => {
+vi.mock('@anthropic-ai/sdk', () => {
+  class AnthropicMock {
+    constructor(_opts: unknown) {
+      void _opts;
+    }
+    messages = {
+      create: vi.fn(async (req: { model: string; system: string; messages: unknown[] }) => {
+        mockAnthropic.capturedRequest = req;
+        return mockAnthropic.response;
+      }),
+    };
+  }
+  return { default: AnthropicMock };
+});
+
+// ---------- @anthropic-ai/claude-agent-sdk mock ----------
+const mockAgentSdk = vi.hoisted(() => ({
+  messages: [] as unknown[],
+  capturedOptions: undefined as unknown,
+}));
+
+vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+  query: vi.fn(({ options }: { prompt: unknown; options: unknown }) => {
+    mockAgentSdk.capturedOptions = options;
+    const iter = (async function* () {
+      for (const m of mockAgentSdk.messages) yield m;
+    })();
+    return iter;
+  }),
+}));
+
+import { runAgentTask, runTask } from './runner';
+
+describe('runTask (raw @anthropic-ai/sdk)', () => {
   beforeEach(async () => {
     await resetDb();
+    mockAnthropic.capturedRequest = undefined;
+    process.env.XIAOMI_API_KEY = 'sk-test-key';
   });
 
-  it('calls model and returns text + writes CostLedger', async () => {
-    const mockModel = new MockLanguageModelV3({
-      doGenerate: async () => makeMockGenerateResult('归因结果：concept'),
-    });
-
+  it('returns text + writes cost ledger', async () => {
     const result = await runTask(
       'AttributionTask',
       { question: '...', wrong_answer: '...' },
-      { db: testDb(), r2: memR2(), model: mockModel },
+      { db: testDb(), r2: memR2() },
     );
 
-    expect(result.text).toBe('归因结果：concept');
-    // Verify cost_ledger row was written.
+    expect(result.text).toBe('OK');
+    expect(result.finishReason).toBe('end_turn');
+    expect(result.usage.inputTokens).toBe(100);
+    expect(result.usage.outputTokens).toBe(50);
+
     const { cost_ledger } = await import('@/db/schema');
     const { eq } = await import('drizzle-orm');
     const rows = await testDb()
@@ -45,12 +85,39 @@ describe('runTask (single-shot, no tools)', () => {
     expect(rows).toHaveLength(1);
   });
 
-  it('returns finishReason in result', async () => {
-    const mockModel = new MockLanguageModelV3({
-      doGenerate: async () => makeMockGenerateResult('ok'),
-    });
-    const r = await runTask('AttributionTask', {}, { db: testDb(), r2: memR2(), model: mockModel });
-    expect(r.finishReason).toBe('stop');
+  it('passes systemPrompt + model + JSON-stringified input', async () => {
+    await runTask('AttributionTask', { test: 'payload' }, { db: testDb(), r2: memR2() });
+
+    expect(mockAnthropic.capturedRequest?.model).toBe('mimo-v2.5-pro');
+    expect(typeof mockAnthropic.capturedRequest?.system).toBe('string');
+    const messages = mockAnthropic.capturedRequest?.messages as Array<{
+      role: string;
+      content: unknown;
+    }>;
+    expect(messages[0].role).toBe('user');
+    expect(messages[0].content).toBe('{"test":"payload"}');
+  });
+
+  it('honours middleware.beforeRun + afterRun', async () => {
+    const beforeRun = vi.fn(async (_kind: string, input: unknown) => ({
+      ...(input as Record<string, unknown>),
+      injected: 'memory-context',
+    }));
+    const afterRun = vi.fn(async () => {});
+
+    await runTask(
+      'AttributionTask',
+      { original: 'data' },
+      { db: testDb(), r2: memR2(), middleware: { beforeRun, afterRun } },
+    );
+
+    expect(beforeRun).toHaveBeenCalledOnce();
+    expect(afterRun).toHaveBeenCalledOnce();
+    const messages = mockAnthropic.capturedRequest?.messages as Array<{
+      role: string;
+      content: string;
+    }>;
+    expect(messages[0].content).toContain('memory-context');
   });
 
   it('throws for unknown task kind', async () => {
@@ -58,151 +125,82 @@ describe('runTask (single-shot, no tools)', () => {
       /unknown task/i,
     );
   });
-
-  it('passes image content parts when input is multimodal (AI SDK v6 normalizes image→file)', async () => {
-    let seenPrompt: unknown;
-    const mockModel = new MockLanguageModelV3({
-      doGenerate: async (options) => {
-        seenPrompt = options.prompt;
-        return makeMockGenerateResult('{"blocks":[]}');
-      },
-    });
-
-    await runTask(
-      'VisionExtractTask',
-      {
-        text: 'Extract blocks from page_index=0. Return strict JSON.',
-        images: [{ data: new Uint8Array([1, 2, 3]), mediaType: 'image/png' }],
-      },
-      { db: testDb(), r2: memR2(), model: mockModel },
-    );
-
-    const serialized = JSON.stringify(seenPrompt);
-    expect(serialized).toContain('"type":"file"');
-    expect(serialized).toContain('image/png');
-  });
 });
 
-// V3 stream chunk usage / finishReason shape.
-function makeV3Usage() {
-  return {
-    inputTokens: { total: 10, noCache: 10, cacheRead: undefined, cacheWrite: undefined },
-    outputTokens: { total: 5, text: 5, reasoning: undefined },
-  };
-}
-
-describe('runTask streaming with tools', () => {
+describe('runAgentTask (claude-agent-sdk subprocess)', () => {
   beforeEach(async () => {
     await resetDb();
+    mockAgentSdk.messages = [];
+    mockAgentSdk.capturedOptions = undefined;
+    process.env.XIAOMI_API_KEY = 'sk-test-key';
   });
 
-  it('streams text and writes ToolCallLog per tool call', async () => {
-    const mockModel = new MockLanguageModelV3({
-      doStream: async () => ({
-        stream: new ReadableStream({
-          start(controller) {
-            controller.enqueue({ type: 'stream-start', warnings: [] });
-            controller.enqueue({
-              type: 'tool-call',
-              toolCallId: 'tc1',
-              toolName: 'echo_tool',
-              input: JSON.stringify({ msg: 'hi' }),
-            });
-            controller.enqueue({
-              type: 'finish',
-              finishReason: { unified: 'tool-calls', raw: 'tool_use' },
-              usage: makeV3Usage(),
-            });
-            controller.close();
-          },
-        }),
-      }),
-    });
-
-    const stream = streamTask(
-      'AttributionTask',
-      { test: true },
+  it('returns final text from result message + writes cost ledger', async () => {
+    mockAgentSdk.messages = [
       {
-        db: testDb(),
-        r2: memR2(),
-        model: mockModel,
-        tools: {
-          echo_tool: {
-            description: 'echo input back',
-            inputSchema: z.object({ msg: z.string() }),
-            execute: async ({ msg }: { msg: string }) => ({ echoed: msg }),
-          },
-        },
+        type: 'result',
+        subtype: 'success',
+        result: 'agent-text',
+        stop_reason: 'end_turn',
+        total_cost_usd: 0.001,
+        usage: { input_tokens: 200, output_tokens: 30, cache_read_input_tokens: 0 },
       },
+    ];
+
+    const result = await runAgentTask(
+      'AttributionTask',
+      { test: 'x' },
+      { db: testDb(), r2: memR2() },
     );
 
-    // Drain the stream so onStepFinish + onFinish fire.
-    const reader = stream.body?.getReader();
-    if (reader) {
-      while (true) {
-        const { done } = await reader.read();
-        if (done) break;
-      }
-    }
+    expect(result.text).toBe('agent-text');
+    expect(result.cost_usd).toBe(0.001);
+    expect(result.usage.inputTokens).toBe(200);
 
-    const { tool_call_log, cost_ledger } = await import('@/db/schema');
+    const { cost_ledger } = await import('@/db/schema');
     const { eq } = await import('drizzle-orm');
-
-    // Verify ToolCallLog was written.
-    const toolRows = await testDb()
-      .select()
-      .from(tool_call_log)
-      .where(eq(tool_call_log.tool_name, 'echo_tool'));
-    expect(toolRows.length).toBeGreaterThanOrEqual(1);
-    expect(toolRows[0].task_kind).toBe('AttributionTask');
-
-    // Verify CostLedger row was also written by onFinish.
-    const costRows = await testDb()
+    const rows = await testDb()
       .select()
       .from(cost_ledger)
       .where(eq(cost_ledger.task_kind, 'AttributionTask'));
-    expect(costRows).toHaveLength(1);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].cost).toBe(1000); // 0.001 USD → 1000 micro-USD
   });
 
-  it('returns a Response with a streaming body', async () => {
-    const mockModel = new MockLanguageModelV3({
-      doStream: async () => ({
-        stream: new ReadableStream({
-          start(controller) {
-            controller.enqueue({ type: 'stream-start', warnings: [] });
-            controller.enqueue({ type: 'text-start', id: 't0' });
-            controller.enqueue({ type: 'text-delta', id: 't0', delta: 'hello' });
-            controller.enqueue({ type: 'text-end', id: 't0' });
-            controller.enqueue({
-              type: 'finish',
-              finishReason: { unified: 'stop', raw: 'end_turn' },
-              usage: makeV3Usage(),
-            });
-            controller.close();
-          },
-        }),
-      }),
-    });
+  it('sets ANTHROPIC_BASE_URL + API key in agent env', async () => {
+    mockAgentSdk.messages = [
+      {
+        type: 'result',
+        subtype: 'success',
+        result: 'ok',
+        usage: { input_tokens: 0, output_tokens: 0 },
+      },
+    ];
 
-    const stream = streamTask(
-      'AttributionTask',
-      {},
-      { db: testDb(), r2: memR2(), model: mockModel },
-    );
+    await runAgentTask('AttributionTask', {}, { db: testDb(), r2: memR2() });
 
-    expect(stream).toBeInstanceOf(Response);
-    expect(stream.body).toBeTruthy();
+    const opts = mockAgentSdk.capturedOptions as {
+      env: Record<string, string>;
+      model: string;
+      systemPrompt: string;
+    };
+    expect(opts.env.ANTHROPIC_API_KEY).toBe('sk-test-key');
+    expect(opts.env.ANTHROPIC_BASE_URL).toBe('https://api.xiaomimimo.com/anthropic');
+    expect(opts.env.CLAUDE_CONFIG_DIR).toMatch(/loom-claude-/);
+    expect(opts.model).toBe('mimo-v2.5-pro');
+  });
 
-    // Drain stream.
-    const reader = stream.body?.getReader();
-    let total = '';
-    if (reader) {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        total += new TextDecoder().decode(value);
-      }
-    }
-    expect(total).toContain('hello');
+  it('throws when SDK emits result_error', async () => {
+    mockAgentSdk.messages = [
+      {
+        type: 'result',
+        subtype: 'error_during_execution',
+        usage: { input_tokens: 0, output_tokens: 0 },
+      },
+    ];
+
+    await expect(
+      runAgentTask('AttributionTask', {}, { db: testDb(), r2: memR2() }),
+    ).rejects.toThrow(/error_during_execution/);
   });
 });
