@@ -5,8 +5,8 @@
 > 维护规则：每完成一个 Phase 就 update 一次；不维护周度进度。
 
 **最后更新**：2026-05-17
-**当前 Phase**：1d 进行中 + 2 开局（dreaming edge proposer 上线）
-**主分支**：`main` clean、与 `origin` 同步
+**当前 Phase**：1d 收尾 + 2 开局（dreaming edge + maintenance 待）
+**主分支**：`main` clean、未推 `origin`（本次会话 11 个 commit）
 
 ---
 
@@ -19,8 +19,8 @@
 ✅  1b  AI surface                         /api/ai/[task] 流式 + 工具调用统一入口
 ✅  1c.1 Event-driven core                 event 表替代 mistake/review_event/dreaming_proposal
 ✅  1c.2 UI main（read + write + Vision）  /record /mistakes /knowledge /learning-items /study-log
-🟡  1d  Observation surface                /events/[id] ✅ + 成本带 ✅；session detail / weekly review 待
-🟡  2   Dreaming agent                     node propose nightly ✅；edge propose nightly ✅；Batch API 暂跳过（单用户低体量）
+✅  1d  Observation surface                /events/[id] ✅ + 成本带 ✅ + ADR-0013 session lifecycle ✅ + learning_session detail ✅ + /coach 周度报表 ✅ + SessionSummaryTask ✅；UI 全部按 design 语义 class 迁移
+🟡  2   Dreaming agent                     node propose nightly ✅；edge propose nightly ✅；Maintenance agent / variant gen 待
 ⬜  3   Note artifact + Quiz JudgeRouter   AI 生 / 用户改 / embedded check
 ⬜  4   Multi-subject 扩展                 wenyan 之外的科目
 ```
@@ -49,23 +49,26 @@
 mistakes / learning-items / progress / quiz / lanes / notes 全部加 §0 实施现状头表，
 立即可见哪些设计概念已落地、哪些是 Phase 2/3 sketch。
 
-### 🟡 进行中：Phase 1d Observation
-- ✅ `/events/[id]` 事件链浏览器
-- ✅ `/today` 成本带（BJT 0 点结算）
+### ✅ 收尾：Phase 1d Observation
+- ✅ `/events/[id]` 事件链浏览器（design polish 完成）
+- ✅ `/today` 成本带（BJT 0 点结算）+ 按 design 重写 KPI strip / lanes
 - ✅ ADR-0013 review session lifecycle：`/review` eager 开 session + sendBeacon close + 6h orphan cron
-- ⬜ `learning_session` detail 页（数据已通，UI 待开）
-- ⬜ 周度 review 报表
-- ⬜ SessionSummaryTask（依赖 ADR-0013 已通，AI 生成 session 结束总结）
+- ✅ `/review` 页按 design ReviewScreen 重写：`.review-stage` / `.btn-rating` 三段式
+- ✅ `learning_session` detail 页 + GET /api/learning-sessions/[id]
+- ✅ `/coach` 周度报表 + GET /api/review/weekly（每日柱状图 + 易错知识点 + 归因分布）
+- ✅ SessionSummaryTask：session close → pg-boss enqueue → haiku 生成 ≤120 字总结 → summary_md
 
 ### ⬜ 未启动 Top 3（按推荐顺序）
-1. **SessionSummaryTask**：依赖 ADR-0013 已通；AI 生成 review session 结束总结
-2. **Phase 2 Maintenance agent**：reparent / merge / split / archive 的自动提议（当前只有节点 + 边 propose）
-3. **周度 review 报表**：跨 session / 跨日聚合
+1. **Phase 2 Maintenance agent**：reparent / merge / split / archive 的自动提议（当前只有节点 + 边 propose）
+2. **Variant generation**：根据 mistake propose 变式题
+3. **测试基础设施修复**：`src/server/boss/client.test.ts` 在全套 pnpm test 中偶发 "too many clients"（pg-boss 内部 poller 累积），需要 explicit cleanup 或限制 max_connections
 
-### ✅ 本会话三连发完成
+### ✅ 本会话累计
 - Phase 2 Dreaming edge proposer（KnowledgeEdgeProposeTask + nightly cron）
 - ADR-0013 + 实施：`/review` eager 开 session + sendBeacon close + orphan cron
-- LearningItem hub + atomic 层级激活：GET /api/learning-items/[id] + parent/child 双向支持 + /learning-items/[id] 详情页 + cycle prevention
+- LearningItem hub + atomic：parent_learning_item_id 激活 + cycle prevention + 详情页
+- UI 全套对齐 design：`/today` `/review` `/events/[id]` + 新增 `/learning-sessions/[id]` `/coach`
+- SessionSummaryTask 后端：pg-boss enqueue → haiku 生成 → summary_md 落库
 
 ---
 
