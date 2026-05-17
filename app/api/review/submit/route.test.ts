@@ -83,6 +83,8 @@ describe('POST /api/review/submit', () => {
     expect(events).toHaveLength(1);
     expect(events[0].outcome).toBe('success');
     expect((events[0].payload as Record<string, unknown>).fsrs_rating).toBe('good');
+    // 2026-05-17 wire `latency_ms` lands as `duration_ms` in event.payload
+    expect((events[0].payload as Record<string, unknown>).duration_ms).toBe(5000);
 
     const fsrs = await db
       .select()
@@ -170,7 +172,12 @@ describe('POST /api/review/submit', () => {
   it('includes response_md when provided', async () => {
     await seedQuestion('q1');
     const res = await POST(
-      submitReq({ mistake_id: 'q1', rating: 'hard', response_md: 'my answer' }),
+      submitReq({
+        mistake_id: 'q1',
+        rating: 'hard',
+        response_md: 'my answer',
+        referenced_knowledge_ids: ['k1', 'k2'],
+      }),
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { review_event: { response_md: string | null } };
@@ -182,6 +189,10 @@ describe('POST /api/review/submit', () => {
       .from(event)
       .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q1')));
     expect((events[0].payload as Record<string, unknown>).user_response_md).toBe('my answer');
+    expect((events[0].payload as Record<string, unknown>).referenced_knowledge_ids).toEqual([
+      'k1',
+      'k2',
+    ]);
   });
 
   it('rating transitions: again increases lapses, good increases reps', async () => {

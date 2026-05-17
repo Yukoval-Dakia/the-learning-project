@@ -79,6 +79,10 @@ export const ReviewOnQuestion = z
       user_response_md: z.string().nullable(),
       // feeds knowledge_mastery view (ADR-0012)
       referenced_knowledge_ids: z.array(z.string()).default([]),
+      // Wall-clock time from when the question was first shown to when the
+      // user rated. Optional because legacy events (pre-2026-05-17) don't
+      // have it and we don't want to break the discriminated union.
+      duration_ms: z.number().int().nonnegative().optional(),
     }),
     ...baseOptionalFields,
   })

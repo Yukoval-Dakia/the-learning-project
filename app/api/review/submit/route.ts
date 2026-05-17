@@ -44,6 +44,8 @@ const SubmitBody = z.object({
   // ADR-0013 — optional review session id; UI passes the session created on
   // /review mount. server falls back to null when absent for backwards compat.
   session_id: z.string().min(1).nullable().optional(),
+  // ADR-0012 — review events feed the derived knowledge_mastery view.
+  referenced_knowledge_ids: z.array(z.string().min(1)).default([]),
 });
 
 export async function POST(req: Request): Promise<Response> {
@@ -134,7 +136,11 @@ export async function POST(req: Request): Promise<Response> {
           fsrs_rating: body.rating,
           fsrs_state_after: fsrsStateAfter,
           user_response_md: body.response_md ?? null,
-          referenced_knowledge_ids: [] as string[],
+          referenced_knowledge_ids: body.referenced_knowledge_ids,
+          // Wire `latency_ms` from the UI lands here as `duration_ms` per the
+          // ReviewOnQuestion Zod schema (2026-05-17). Optional — omitted for
+          // legacy callers that never sent it.
+          ...(typeof body.latency_ms === 'number' ? { duration_ms: body.latency_ms } : {}),
         },
         caused_by_event_id: null,
         task_run_id: null,

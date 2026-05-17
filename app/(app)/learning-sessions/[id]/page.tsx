@@ -225,6 +225,7 @@ function outcomeTone(outcome: string): BadgeTone {
 function SessionEventCard({ event }: { event: SessionEvent }) {
   const ratingFromPayload = (event.payload as { fsrs_rating?: string }).fsrs_rating;
   const responseMd = (event.payload as { user_response_md?: string | null }).user_response_md;
+  const durationMs = (event.payload as { duration_ms?: number }).duration_ms;
   return (
     <article className="event-card">
       <div className="ec-head">
@@ -233,6 +234,9 @@ function SessionEventCard({ event }: { event: SessionEvent }) {
         {event.outcome && <Badge tone={outcomeTone(event.outcome)}>{event.outcome}</Badge>}
         {ratingFromPayload && (
           <Badge tone={outcomeTone(event.outcome ?? '')}>{ratingFromPayload}</Badge>
+        )}
+        {typeof durationMs === 'number' && (
+          <Badge tone="neutral">⏱ {formatDuration(durationMs)}</Badge>
         )}
         <span className="when">{formatRelTime(new Date(event.created_at * 1000))}</span>
       </div>
