@@ -2437,3 +2437,103 @@ ol {
     margin-left: 0;
   }
 }
+
+/* ============================================================
+ * Phase 2C — Active Teaching chat
+ * ============================================================ */
+.teach-chat-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.teach-chat-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-4);
+}
+
+.teach-chat-stream {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.teach-msg {
+  border-radius: var(--r-2);
+  padding: 10px 14px;
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  font-family: var(--font-wenyan);
+}
+
+.teach-msg.user {
+  background: var(--paper);
+  border: 1px solid var(--line-soft);
+  align-self: flex-end;
+  max-width: 90%;
+}
+
+.teach-msg.agent {
+  background: var(--coral-soft);
+  border: 1px solid var(--coral-line);
+  border-left: 3px solid var(--coral-line);
+  align-self: flex-start;
+  max-width: 95%;
+}
+
+.teach-msg .turn-kind {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-4);
+  text-transform: lowercase;
+  margin-right: 6px;
+}
+
+.teach-chat-input {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.teach-chat-input textarea {
+  flex: 1;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-2);
+  padding: 10px 12px;
+  font-family: var(--font-wenyan);
+  font-size: 14px;
+  background: var(--paper);
+  color: var(--ink);
+  resize: vertical;
+  min-height: 60px;
+}
+
+.teach-chat-input textarea:focus-visible {
+  outline: 2px solid var(--coral-line);
+  outline-offset: 2px;
+}
+
+.teach-chat-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.teach-chat-end-banner {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-2);
+  padding: 10px 14px;
+  background: var(--paper);
+  color: var(--ink-2);
+  font-size: 13px;
+}
