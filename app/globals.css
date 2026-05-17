@@ -2439,18 +2439,116 @@ ol {
 }
 
 /* ============================================================
- * Phase 2C — Active Teaching chat
- * 镜像 loom-design-v2.1 CopilotDrawer 的 .msg / .actor-line /
- * .composer / .suggest-chip 词汇，scope 到 `.teach-chat-page` 下避免
- * 跟其它 surface 抢类名。
+ * Phase 2C — Active Teaching side drawer
+ * 镜像 loom-design-v2.1 CopilotDrawer 的 .drawer / .drawer-head /
+ * .drawer-feed / .msg / .actor-line / .composer / .suggest-chip
+ * 词汇。`.teach-drawer` 是抽屉根容器；`.teach-chat-page` 是 feed
+ * 滚动区内层（保留以复用历史样式）。
+ *
+ * Layout (per docs/design/loom-design-v2.1/app.css:1152+)：
+ *   - 宽屏 (≥1280px): fixed 右侧 420px，阴影 -8px 0 24px
+ *   - 窄屏 (≤760px): fixed 100vw 全屏覆盖
  * ============================================================ */
+.teach-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100vh;
+  width: min(420px, 100%);
+  background: var(--paper-raised);
+  border-left: 1px solid var(--line);
+  box-shadow: -8px 0 24px -8px rgba(60, 50, 30, 0.12);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+}
+
+.teach-drawer .drawer-head {
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.teach-drawer .drawer-head .title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+}
+
+.teach-drawer .drawer-head .title h3 {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 17px;
+  font-weight: 500;
+}
+
+.teach-drawer .drawer-head .brand-mark {
+  color: var(--coral);
+  font-size: 18px;
+}
+
+.teach-drawer .drawer-head .context-chip {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--coral-ink);
+  background: var(--coral-soft);
+  padding: 3px 8px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--coral-line);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teach-drawer .drawer-close {
+  border: none;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: var(--r-2);
+}
+
+.teach-drawer .drawer-close:hover {
+  background: var(--paper-sunk);
+  color: var(--ink);
+}
+
+.teach-drawer .drawer-feed {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 18px;
+}
+
+.teach-drawer .drawer-foot {
+  border-top: 1px solid var(--line);
+  padding: 12px 14px;
+  background: var(--paper-raised);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+@media (max-width: 760px) {
+  .teach-drawer {
+    width: 100%;
+  }
+}
+
 .teach-chat-page {
   display: flex;
   flex-direction: column;
   gap: var(--s-4);
 }
 
-.teach-chat-page .session-banner {
+:is(.teach-chat-page, .teach-drawer) .session-banner {
   font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: var(--ls-wide);
@@ -2459,29 +2557,29 @@ ol {
   padding: var(--s-2) 0;
 }
 
-.teach-chat-page .session-banner.ended {
+:is(.teach-chat-page, .teach-drawer) .session-banner.ended {
   color: var(--again-ink);
 }
 
-.teach-chat-page .msg-stream {
+:is(.teach-chat-page, .teach-drawer) .msg-stream {
   display: flex;
   flex-direction: column;
   gap: var(--s-4);
 }
 
-.teach-chat-page .msg {
+:is(.teach-chat-page, .teach-drawer) .msg {
   display: flex;
   flex-direction: column;
   gap: 4px;
   max-width: 90%;
 }
 
-.teach-chat-page .msg.user {
+:is(.teach-chat-page, .teach-drawer) .msg.user {
   align-self: flex-end;
   align-items: flex-end;
 }
 
-.teach-chat-page .msg .actor-line {
+:is(.teach-chat-page, .teach-drawer) .msg .actor-line {
   font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: var(--ls-wide);
@@ -2491,7 +2589,7 @@ ol {
   gap: 6px;
 }
 
-.teach-chat-page .msg .body {
+:is(.teach-chat-page, .teach-drawer) .msg .body {
   font-size: 14px;
   line-height: 1.6;
   color: var(--ink);
@@ -2499,14 +2597,14 @@ ol {
   font-family: var(--font-wenyan);
 }
 
-.teach-chat-page .msg.agent .body {
+:is(.teach-chat-page, .teach-drawer) .msg.agent .body {
   background: var(--paper);
   border: 1px solid var(--line-soft);
   padding: 10px 14px;
   border-radius: var(--r-3);
 }
 
-.teach-chat-page .msg.user .body {
+:is(.teach-chat-page, .teach-drawer) .msg.user .body {
   background: var(--coral-soft);
   border: 1px solid var(--coral-line);
   color: var(--coral-ink);
@@ -2514,7 +2612,7 @@ ol {
   border-radius: var(--r-3);
 }
 
-.teach-chat-page .typing {
+:is(.teach-chat-page, .teach-drawer) .typing {
   font-family: var(--font-mono);
   font-size: 12px;
   color: var(--ink-4);
@@ -2524,7 +2622,7 @@ ol {
   gap: 6px;
 }
 
-.teach-chat-page .typing .dot {
+:is(.teach-chat-page, .teach-drawer) .typing .dot {
   width: 5px;
   height: 5px;
   background: var(--ink-4);
@@ -2544,7 +2642,7 @@ ol {
   }
 }
 
-.teach-chat-page .suggestions {
+:is(.teach-chat-page, .teach-drawer) .suggestions {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -2552,7 +2650,7 @@ ol {
   padding-top: var(--s-3);
 }
 
-.teach-chat-page .suggest-chip {
+:is(.teach-chat-page, .teach-drawer) .suggest-chip {
   font-size: 12.5px;
   color: var(--ink-2);
   padding: 6px 12px;
@@ -2563,25 +2661,23 @@ ol {
   transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 
-.teach-chat-page .suggest-chip:hover {
+:is(.teach-chat-page, .teach-drawer) .suggest-chip:hover {
   border-color: var(--coral);
   color: var(--coral-ink);
 }
 
-.teach-chat-page .suggest-chip:disabled {
+:is(.teach-chat-page, .teach-drawer) .suggest-chip:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.teach-chat-page .composer {
+:is(.teach-chat-page, .teach-drawer) .composer {
   display: flex;
   gap: 8px;
   align-items: flex-end;
-  border-top: 1px solid var(--line);
-  padding-top: var(--s-3);
 }
 
-.teach-chat-page .composer textarea {
+:is(.teach-chat-page, .teach-drawer) .composer textarea {
   flex: 1;
   border: 1px solid var(--line);
   border-radius: var(--r-2);
@@ -2596,19 +2692,19 @@ ol {
   color: var(--ink);
 }
 
-.teach-chat-page .composer textarea:focus-visible {
+:is(.teach-chat-page, .teach-drawer) .composer textarea:focus-visible {
   outline: none;
   border-color: var(--coral);
   box-shadow: var(--shadow-focus);
 }
 
-.teach-chat-page .composer .actions {
+:is(.teach-chat-page, .teach-drawer) .composer .actions {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
-.teach-chat-page .footer-line {
+:is(.teach-chat-page, .teach-drawer) .footer-line {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -2618,15 +2714,15 @@ ol {
   letter-spacing: var(--ls-wide);
 }
 
-.teach-chat-page .footer-line .hint {
+:is(.teach-chat-page, .teach-drawer) .footer-line .hint {
   color: var(--coral-ink);
 }
 
-.teach-chat-page .footer-line .error {
+:is(.teach-chat-page, .teach-drawer) .footer-line .error {
   color: var(--again-ink);
 }
 
-.teach-chat-page .end-banner {
+:is(.teach-chat-page, .teach-drawer) .end-banner {
   border: 1px solid var(--line-soft);
   border-radius: var(--r-3);
   padding: 12px 16px;
