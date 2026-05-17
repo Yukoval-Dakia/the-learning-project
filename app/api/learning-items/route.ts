@@ -9,14 +9,8 @@ import { z } from 'zod';
 export const runtime = 'nodejs';
 
 const ListQuery = z.object({
-  status: z.enum(['pending', 'in_progress', 'done']).optional(),
+  status: z.enum(['pending', 'in_progress', 'done', 'dismissed', 'resting', 'archived']).optional(),
 });
-
-const STATUS_ORDER: Record<string, number> = {
-  pending: 0,
-  in_progress: 1,
-  done: 2,
-};
 
 export async function GET(req: Request): Promise<Response> {
   try {
@@ -35,9 +29,14 @@ export async function GET(req: Request): Promise<Response> {
     }
     const status = parsedStatus.data.status;
 
-    const filters = [isNull(learning_item.archived_at), ne(learning_item.status, 'dismissed')];
+    // Default list excludes archived + dismissed (they're the "out of sight"
+    // pile). Explicit ?status=archived / dismissed surfaces them on demand.
+    const filters = [];
     if (status) {
       filters.push(eq(learning_item.status, status));
+    } else {
+      filters.push(isNull(learning_item.archived_at));
+      filters.push(ne(learning_item.status, 'dismissed'));
     }
 
     const rows = await db
@@ -59,7 +58,10 @@ export async function GET(req: Request): Promise<Response> {
           when 'pending' then 0
           when 'in_progress' then 1
           when 'done' then 2
-          else 3
+          when 'resting' then 3
+          when 'dismissed' then 4
+          when 'archived' then 5
+          else 6
         end asc`,
         desc(learning_item.updated_at),
       )

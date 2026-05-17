@@ -8,19 +8,33 @@ import { z } from 'zod';
 
 export const runtime = 'nodejs';
 
+// LearningItem 6 状态 (Phase 1c.2 加 resting + archived；dismissed 已有 schema 列但
+// 没用，保留作 Phase 1d 拒绝 dreaming 提议时用)。
+type LearningItemStatus = 'pending' | 'in_progress' | 'done' | 'dismissed' | 'resting' | 'archived';
+
 const PatchBody = z.object({
   version: z.number().int().min(0),
   title: z.string().min(1).max(200).optional(),
   content: z.string().max(10_000).optional(),
   knowledge_ids: z.array(z.string().min(1)).optional(),
-  status: z.enum(['pending', 'in_progress', 'done']).optional(),
+  status: z.enum(['pending', 'in_progress', 'done', 'dismissed', 'resting', 'archived']).optional(),
   user_notes: z.string().max(2000).optional(),
 });
 
-const VALID_TRANSITIONS: Record<string, Set<'pending' | 'in_progress' | 'done'>> = {
-  pending: new Set(['in_progress', 'done']),
-  in_progress: new Set(['done', 'pending']),
-  done: new Set(['in_progress']),
+// 设计意图（per memory + modules/learning-items.md）:
+//   pending     ↔ in_progress  ↔ done
+//   any         → archived        (用户手动归档，单向，不再出现在主列表)
+//   done        → resting         (完成后进入"养护"状态，dreaming 会从这里挑复学)
+//   resting     → in_progress     (用户/dreaming 触发复学)
+//   archived    → pending         (复活)
+//   dismissed   → pending         (恢复 AI 提议被拒的 item)
+const VALID_TRANSITIONS: Record<string, Set<LearningItemStatus>> = {
+  pending: new Set(['in_progress', 'done', 'archived', 'dismissed']),
+  in_progress: new Set(['done', 'pending', 'archived']),
+  done: new Set(['in_progress', 'resting', 'archived']),
+  resting: new Set(['in_progress', 'archived']),
+  dismissed: new Set(['pending', 'archived']),
+  archived: new Set(['pending']),
 };
 
 type RouteParams = { params: Promise<{ id: string }> };
@@ -52,7 +66,10 @@ export async function PATCH(req: Request, { params }: RouteParams): Promise<Resp
       .where(eq(learning_item.id, id));
 
     const row = rows[0];
-    if (!row || row.archived_at !== null) {
+    // archived_at is set when the row is in archived state; we still serve
+    // PATCHes against it so the user can revive to pending. 404 only when
+    // the row genuinely doesn't exist.
+    if (!row) {
       return Response.json(
         { error: 'not_found', message: `learning_item ${id} not found` },
         { status: 404 },
@@ -61,7 +78,7 @@ export async function PATCH(req: Request, { params }: RouteParams): Promise<Resp
 
     if (body.status !== undefined && body.status !== row.status) {
       const allowed = VALID_TRANSITIONS[row.status];
-      if (!allowed || !allowed.has(body.status as 'pending' | 'in_progress' | 'done')) {
+      if (!allowed || !allowed.has(body.status as LearningItemStatus)) {
         return Response.json(
           {
             error: 'invalid_transition',
@@ -90,6 +107,12 @@ export async function PATCH(req: Request, { params }: RouteParams): Promise<Resp
     const transitioningToDone = body.status === 'done' && row.status !== 'done';
     const transitioningOutOfDone =
       row.status === 'done' && body.status !== undefined && body.status !== 'done';
+    const transitioningToArchived = body.status === 'archived' && row.status !== 'archived';
+    const transitioningOutOfArchived =
+      row.status === 'archived' && body.status !== undefined && body.status !== 'archived';
+    const transitioningToDismissed = body.status === 'dismissed' && row.status !== 'dismissed';
+    const transitioningOutOfDismissed =
+      row.status === 'dismissed' && body.status !== undefined && body.status !== 'dismissed';
 
     if (body.user_notes !== undefined && !transitioningToDone) {
       return Response.json(
@@ -111,6 +134,10 @@ export async function PATCH(req: Request, { params }: RouteParams): Promise<Resp
     if (body.status !== undefined) setValues.status = body.status;
     if (transitioningToDone) setValues.completed_at = now;
     if (transitioningOutOfDone) setValues.completed_at = null;
+    if (transitioningToArchived) setValues.archived_at = now;
+    if (transitioningOutOfArchived) setValues.archived_at = null;
+    if (transitioningToDismissed) setValues.dismissed_at = now;
+    if (transitioningOutOfDismissed) setValues.dismissed_at = null;
 
     // Use raw SQL for version increment with optimistic-locking WHERE version = body.version
     const updateResult = await db
