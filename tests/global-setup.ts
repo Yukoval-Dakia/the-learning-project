@@ -24,7 +24,15 @@ function ensureDockerHost() {
 
 export async function setup() {
   ensureDockerHost();
-  container = await new PostgreSqlContainer('postgres:16').start();
+  // Bump max_connections: default Postgres allows 100; with `pool: 'forks'` +
+  // `singleFork: true`, all 100+ test files share one fork but accumulate
+  // pg-boss + drizzle connections across boss instance recycles. With 100
+  // we hit "sorry, too many clients already" once 8-10 files have cycled a
+  // boss instance. 500 leaves comfortable headroom without measurable cost
+  // on a single-developer testcontainer.
+  container = await new PostgreSqlContainer('postgres:16')
+    .withCommand(['postgres', '-c', 'max_connections=500'])
+    .start();
   const uri = container.getConnectionUri();
   process.env.TEST_DATABASE_URL = uri;
   process.env.DATABASE_URL = uri;
