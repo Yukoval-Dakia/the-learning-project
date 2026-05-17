@@ -14,6 +14,7 @@ import { PgBoss } from 'pg-boss';
 //   - newJobCheckIntervalSeconds（per-worker poll interval；测试用低值，生产用默认 2s）
 
 let bossInstance: PgBoss | null = null;
+let startPromise: Promise<PgBoss> | null = null;
 
 export function createBoss(): PgBoss {
   if (bossInstance) return bossInstance;
@@ -29,6 +30,30 @@ export function createBoss(): PgBoss {
 }
 
 /**
+ * Lazily start the singleton pg-boss client and return it ready to use.
+ *
+ * Why this exists: pg-boss v12 requires `boss.start()` to be called before
+ * `boss.send()` (otherwise it throws "Database not opened"). The worker
+ * process calls start() at boot in scripts/worker.ts. App processes (Next
+ * route handlers) need to enqueue without dragging pg-boss into the
+ * instrumentation bundle — webpack can't trace pg's Node built-ins through
+ * the instrumentation hook compile path. So routes call this at request time
+ * the first time they need to send; the promise is cached so subsequent
+ * calls are O(1).
+ *
+ * App processes only call boss.send/schedule via this getter — they never
+ * call boss.work(), so jobs aren't pulled in this process even though
+ * pg-boss is "started" here.
+ */
+export async function getStartedBoss(): Promise<PgBoss> {
+  if (!startPromise) {
+    const boss = createBoss();
+    startPromise = boss.start().then(() => boss);
+  }
+  return startPromise;
+}
+
+/**
  * Reset the singleton —— **test-only**.
  *
  * Production code must never call this; the singleton's lifecycle is tied to
@@ -37,4 +62,5 @@ export function createBoss(): PgBoss {
  */
 export function _resetBossForTests(): void {
   bossInstance = null;
+  startPromise = null;
 }

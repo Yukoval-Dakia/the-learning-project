@@ -6,7 +6,7 @@
 import { z } from 'zod';
 
 import { db } from '@/db/client';
-import { createBoss } from '@/server/boss/client';
+import { getStartedBoss } from '@/server/boss/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { Review } from '@/server/session';
 
@@ -65,7 +65,7 @@ export async function POST(
       // covered by its own unit test (src/server/session/summary.test.ts).
       if (!process.env.VITEST) {
         try {
-          const boss = createBoss();
+          const boss = await getStartedBoss();
           await boss.send('session_summary', { session_id: id });
         } catch (err) {
           console.warn(`session_summary enqueue failed for ${id}:`, err);
