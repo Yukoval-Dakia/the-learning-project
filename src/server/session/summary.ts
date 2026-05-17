@@ -179,7 +179,7 @@ export async function runSessionSummary(
     notable_attempts: notableAttempts,
   };
 
-  const result = await runTaskFn('SessionSummaryTask', input, {});
+  const result = await runTaskFn('SessionSummaryTask', input, { db });
   // Trim + soft-cap to 240 chars (allows ~120 Chinese chars; prompt asks for
   // ≤120 but we don't reject — clamp instead so the model occasionally going
   // slightly over doesn't lose the whole summary).

@@ -1,6 +1,5 @@
 import { type TaskKind, tasks } from '@/ai/registry';
 import type { Db } from '@/db/client';
-import { anthropic } from '@ai-sdk/anthropic';
 import { createId } from '@paralleldrive/cuid2';
 import {
   type LanguageModel,
@@ -12,11 +11,13 @@ import {
 } from 'ai';
 import type { R2Client } from '../r2';
 import { writeCostLedger, writeToolCallLog } from './log';
+import { resolveTaskModel } from './providers';
 
 export interface RunTaskCtx {
   db: Db;
-  r2: R2Client;
-  /** Override model for testing (defaults to anthropic provider with task's defaultModel). */
+  /** Optional — only vision/ingestion paths use this. runTask itself doesn't dereference it. */
+  r2?: R2Client;
+  /** Override model for testing (defaults to provider resolved from task registry). */
   model?: LanguageModel;
 }
 
@@ -83,7 +84,7 @@ export async function runTask(
     throw new Error(`Unknown task kind: ${kind}`);
   }
   const def = tasks[kind];
-  const model = ctx.model ?? anthropic(def.defaultModel);
+  const model = ctx.model ?? resolveTaskModel(kind);
   const taskRunId = createId();
 
   const baseOptions = {
@@ -144,7 +145,7 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
     throw new Error(`Unknown task kind: ${kind}`);
   }
   const def = tasks[kind];
-  const model = ctx.model ?? anthropic(def.defaultModel);
+  const model = ctx.model ?? resolveTaskModel(kind);
   const taskRunId = createId();
   let iteration = 0;
   let stepStartTime = Date.now();
