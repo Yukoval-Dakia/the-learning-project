@@ -199,6 +199,10 @@ export default function LearningItemDetailPage() {
             </Link>
           </>
         )}
+        <span style={{ margin: '0 var(--s-2)', color: 'var(--ink-4)' }}>·</span>
+        <Link href={`/learn/${data.id}/chat`} style={linkStyle}>
+          → 对话教学
+        </Link>
       </div>
 
       <Card pad="lg" style={{ marginTop: 'var(--s-4)' }}>
