@@ -282,13 +282,17 @@ export async function GET(req: Request): Promise<Response> {
         ? {
             source: 'user' as const,
             primary_category: f.user_cause.primary_category,
+            secondary_categories: [] as string[],
             user_notes: f.user_cause.user_notes,
+            confidence: null,
           }
         : f.judge
           ? {
               source: 'agent' as const,
               primary_category: f.judge.cause.primary_category,
+              secondary_categories: (f.judge.cause.secondary_categories ?? []) as string[],
               user_notes: null,
+              confidence: f.judge.cause.confidence,
             }
           : null;
       return {

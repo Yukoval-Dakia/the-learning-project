@@ -153,7 +153,13 @@ describe('GET /api/mistakes/recent (event-stream projection)', () => {
     expect(r.prompt_md).toHaveLength(200);
     expect(r.wrong_answer_md).toHaveLength(200);
     expect(r.knowledge_ids).toEqual(['k1', 'k2']);
-    expect(r.cause).toEqual({ source: 'agent', primary_category: 'concept', user_notes: null });
+    expect(r.cause).toEqual({
+      source: 'agent',
+      primary_category: 'concept',
+      secondary_categories: [],
+      user_notes: null,
+      confidence: 0.85,
+    });
     expect(typeof r.created_at).toBe('number');
   });
 
@@ -199,7 +205,9 @@ describe('GET /api/mistakes/recent (event-stream projection)', () => {
     expect(body.rows[0].cause).toEqual({
       source: 'user',
       primary_category: 'memory',
+      secondary_categories: [],
       user_notes: '记错了',
+      confidence: null,
     });
   });
 

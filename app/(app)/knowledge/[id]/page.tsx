@@ -27,7 +27,9 @@ interface MistakeRow {
   cause: {
     source?: 'user' | 'agent';
     primary_category: string;
+    secondary_categories?: string[];
     user_notes: string | null;
+    confidence?: number | null;
   } | null;
   created_at: number;
 }
@@ -138,6 +140,8 @@ export default function KnowledgeDetailPage({
                         ? {
                             actor_kind: m.cause.source === 'user' ? 'user' : 'agent',
                             primary: m.cause.primary_category,
+                            secondary: m.cause.secondary_categories ?? [],
+                            confidence: m.cause.confidence ?? null,
                           }
                         : null
                     }

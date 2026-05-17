@@ -23,7 +23,9 @@ interface MistakeRow {
   cause: {
     source?: 'user' | 'agent';
     primary_category: string;
+    secondary_categories?: string[];
     user_notes: string | null;
+    confidence?: number | null;
   } | null;
 }
 
@@ -252,6 +254,8 @@ export default function ReviewPage() {
                         ? {
                             actor_kind: cause.source === 'user' ? 'user' : 'agent',
                             primary: cause.primary_category,
+                            secondary: cause.secondary_categories ?? [],
+                            confidence: cause.confidence ?? null,
                           }
                         : null
                     }

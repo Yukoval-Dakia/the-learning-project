@@ -17,7 +17,9 @@ interface MistakeRow {
   cause: {
     source?: 'user' | 'agent';
     primary_category: string;
+    secondary_categories?: string[];
     user_notes: string | null;
+    confidence?: number | null;
   } | null;
   created_at: number; // unix seconds
 }
@@ -102,6 +104,8 @@ function MistakeCard({ row }: { row: MistakeRow }) {
     ? {
         actor_kind: row.cause.source === 'user' ? ('user' as const) : ('agent' as const),
         primary: row.cause.primary_category,
+        secondary: row.cause.secondary_categories ?? [],
+        confidence: row.cause.confidence ?? null,
       }
     : null;
   return (
