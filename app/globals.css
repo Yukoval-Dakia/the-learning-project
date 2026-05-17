@@ -1130,6 +1130,39 @@ ol {
 }
 
 /* ------------------------------------------------------------ */
+/* Phase 2A — /review session_intent ribbon + per-card priority  */
+/* ------------------------------------------------------------ */
+
+.review-intent {
+  margin: 0 0 var(--s-4);
+  padding: 12px 16px;
+  background: linear-gradient(180deg, var(--coral-soft) 0%, var(--paper-tint) 100%);
+  border: 1px solid var(--coral-line);
+  border-radius: var(--r-3);
+  font-family: var(--font-serif);
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--coral-ink);
+}
+
+.review-card-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  background: var(--paper-sunk);
+  border-radius: var(--r-2);
+  border: 1px solid var(--line-soft);
+}
+.review-card-meta .rationale {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+  letter-spacing: var(--ls-wide);
+}
+
+/* ------------------------------------------------------------ */
 /* /review — FSRS review stage + rating triplet                  */
 /* ------------------------------------------------------------ */
 
