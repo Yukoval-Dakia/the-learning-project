@@ -9,6 +9,7 @@
       "docs/design/loom-design-v2.1",
       ".claude",
       ".next",
+      ".remember",
       "next-env.d.ts"
     ]
   },
