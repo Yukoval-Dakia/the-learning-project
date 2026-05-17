@@ -264,14 +264,6 @@ export default function KnowledgePage() {
             Graph
           </button>
         </div>
-        <Button
-          variant="primary"
-          icon="plus"
-          title="节点创建表单待 Phase 1d 接入"
-          className="knowledge-btn-primary"
-        >
-          新建节点
-        </Button>
       </PageHeader>
 
       {knowledgeQ.error && <LoadError error={knowledgeQ.error} />}

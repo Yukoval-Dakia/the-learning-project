@@ -66,7 +66,7 @@ export default function RecordPage() {
         boxSizing: 'border-box',
       }}
     >
-      <PageHeader title="录入" eyebrow="/record" sub="手动 / 视觉 (vision tab 在 Phase 1c.2.B)" />
+      <PageHeader title="录入" eyebrow="/record" sub="手动 / 视觉（拍单题 + 拍整页）" />
 
       <div style={{ marginTop: 'var(--s-4)' }}>
         <TabBar items={MODE_TABS} active={mode} onSelect={(id) => setMode(id as ModeTab)} />
