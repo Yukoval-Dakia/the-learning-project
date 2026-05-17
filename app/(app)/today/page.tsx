@@ -168,19 +168,20 @@ export default function TodayPage() {
           </div>
         </Lane>
 
-        <Lane
-          eyebrow="LANE C"
-          title="Coach · 周度报表"
-          badge={
-            <Badge tone="neutral" dot dotStatic>
-              stub
-            </Badge>
-          }
-          stub
-        >
-          <p className="lane-empty">
-            周度 review 报表（Phase 1d 计划项）尚未落地；下次会话或专门会话补。
-          </p>
+        <Lane eyebrow="LANE C" title="Coach · 周度报表" badge={<Badge tone="info">7d</Badge>}>
+          <div className="lane-body">
+            <div className="lane-item">
+              <div className="top">
+                <span>过去 7 天的 FSRS / 错题 / 归因 / 成本</span>
+              </div>
+              <div className="body muted">正确率趋势、易错知识点、cause 分布。</div>
+            </div>
+          </div>
+          <div className="lane-cta">
+            <Link href="/coach" style={{ textDecoration: 'none' }}>
+              <Button variant="secondary">查看 →</Button>
+            </Link>
+          </div>
         </Lane>
       </div>
 
