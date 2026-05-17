@@ -1,5 +1,5 @@
 import { db } from '@/db/client';
-import { completion_evidence, learning_item } from '@/db/schema';
+import { artifact, completion_evidence, learning_item } from '@/db/schema';
 import { errorResponse } from '@/server/http/errors';
 import { assertKnowledgeIdsExist } from '@/server/knowledge/validate';
 import { createId } from '@paralleldrive/cuid2';
@@ -42,10 +42,11 @@ const VALID_TRANSITIONS: Record<string, Set<LearningItemStatus>> = {
 
 type RouteParams = { params: Promise<{ id: string }> };
 
-// GET — single item + parent breadcrumb (1 hop) + immediate children. Used by
-// /learning-items/[id] detail page. Children are derived from WHERE
-// parent_learning_item_id = id (we do NOT use the denormalised
-// child_learning_item_ids column — it's stub per scripts/audit-schema-allowlist).
+// GET — single item + parent breadcrumb (1 hop) + immediate children +
+// primary artifact (when present). Used by /learning-items/[id] detail page.
+// Children are derived from WHERE parent_learning_item_id = id (we do NOT use
+// the denormalised child_learning_item_ids column — it's stub per
+// scripts/audit-schema-allowlist).
 export async function GET(_req: Request, { params }: RouteParams): Promise<Response> {
   try {
     const { id } = await params;
@@ -57,6 +58,7 @@ export async function GET(_req: Request, { params }: RouteParams): Promise<Respo
         knowledge_ids: learning_item.knowledge_ids,
         status: learning_item.status,
         parent_learning_item_id: learning_item.parent_learning_item_id,
+        primary_artifact_id: learning_item.primary_artifact_id,
         completed_at: learning_item.completed_at,
         archived_at: learning_item.archived_at,
         created_at: learning_item.created_at,
@@ -98,6 +100,29 @@ export async function GET(_req: Request, { params }: RouteParams): Promise<Respo
       .where(eq(learning_item.parent_learning_item_id, id))
       .orderBy(asc(learning_item.created_at));
 
+    // Pull primary artifact for Phase 2B note display.
+    let primaryArtifact: {
+      id: string;
+      type: string;
+      sections: unknown;
+      outline_json: unknown;
+      generation_status: string;
+    } | null = null;
+    if (row.primary_artifact_id) {
+      const aRows = await db
+        .select({
+          id: artifact.id,
+          type: artifact.type,
+          sections: artifact.sections,
+          outline_json: artifact.outline_json,
+          generation_status: artifact.generation_status,
+        })
+        .from(artifact)
+        .where(eq(artifact.id, row.primary_artifact_id))
+        .limit(1);
+      if (aRows[0]) primaryArtifact = aRows[0];
+    }
+
     return Response.json({
       id: row.id,
       title: row.title,
@@ -105,6 +130,8 @@ export async function GET(_req: Request, { params }: RouteParams): Promise<Respo
       knowledge_ids: row.knowledge_ids,
       status: row.status,
       parent_learning_item_id: row.parent_learning_item_id,
+      primary_artifact_id: row.primary_artifact_id,
+      primary_artifact: primaryArtifact,
       parent,
       children,
       completed_at: row.completed_at ? Math.floor(row.completed_at.getTime() / 1000) : null,
