@@ -1,30 +1,40 @@
 'use client';
 
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
-import { Badge } from '@/ui/primitives/Badge';
+import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
 import { CauseBadge } from '@/ui/primitives/CauseBadge';
 import { PageHeader } from '@/ui/primitives/PageHeader';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useState } from 'react';
 
-interface DueRow {
-  id: string;
+type CauseCategory =
+  | 'concept'
+  | 'knowledge_gap'
+  | 'calculation'
+  | 'reading'
+  | 'memory'
+  | 'expression'
+  | 'method'
+  | 'carelessness'
+  | 'time_pressure'
+  | 'other';
+
+interface PlanQueueItem {
   question_id: string;
   prompt_md: string;
   reference_md: string | null;
   knowledge_ids: string[];
   fsrs_state: unknown;
+  cause: CauseCategory | null;
+  priority: 1 | 2 | 3 | 4 | 5;
+  rationale: string;
+  last_failure_at: number | null;
 }
 
-interface MistakeRow {
-  question_id: string;
-  cause: {
-    source?: 'user' | 'agent';
-    primary_category: string;
-    secondary_categories?: string[];
-    user_notes: string | null;
-    confidence?: number | null;
-  } | null;
+interface ReviewPlan {
+  queue: PlanQueueItem[];
+  session_intent: string | null;
+  window: { computed_at: number; limit: number };
 }
 
 type Phase = 'answering' | 'feedback';
@@ -49,6 +59,22 @@ const RATING_KEY: Record<Rating, string> = {
   hard: '2',
   good: '3',
   easy: '4',
+};
+
+const PRIORITY_TONE: Record<1 | 2 | 3 | 4 | 5, BadgeTone> = {
+  5: 'coral',
+  4: 'hard',
+  3: 'info',
+  2: 'neutral',
+  1: 'neutral',
+};
+
+const PRIORITY_LABEL: Record<1 | 2 | 3 | 4 | 5, string> = {
+  5: 'P5 · 最优先',
+  4: 'P4 · 优先',
+  3: 'P3 · 常规',
+  2: 'P2 · 弱',
+  1: 'P1 · 弱',
 };
 
 export default function ReviewPage() {
@@ -98,21 +124,12 @@ export default function ReviewPage() {
     };
   }, []);
 
-  const dueQ = useQuery({
-    queryKey: ['review-due'],
-    queryFn: () => apiJson<{ rows: DueRow[] }>('/api/review/due?limit=50'),
-  });
-
-  const causeMapQ = useQuery({
-    queryKey: ['review-cause-map'],
-    queryFn: async () => {
-      const data = await apiJson<{ rows: MistakeRow[] }>('/api/mistakes?limit=200');
-      const map = new Map<string, MistakeRow['cause']>();
-      for (const r of data.rows) {
-        if (!map.has(r.question_id)) map.set(r.question_id, r.cause);
-      }
-      return map;
-    },
+  // Phase 2A — Review Orchestrator: single fetch returns queue + per-card
+  // priority/rationale/cause + session_intent. Replaces the older split call
+  // to /api/review/due + /api/mistakes (cause is inlined now).
+  const planQ = useQuery({
+    queryKey: ['review-plan'],
+    queryFn: () => apiJson<ReviewPlan>('/api/review/plan?limit=50'),
   });
 
   const [index, setIndex] = useState(0);
@@ -120,10 +137,11 @@ export default function ReviewPage() {
   const [answer, setAnswer] = useState('');
   const [showRef, setShowRef] = useState(false);
 
-  const rows = dueQ.data?.rows ?? [];
+  const rows = planQ.data?.queue ?? [];
   const total = rows.length;
   const current = rows[index];
   const isDone = total > 0 && index >= total;
+  const intent = planQ.data?.session_intent ?? null;
 
   const submitM = useMutation({
     mutationFn: (rating: Rating) => {
@@ -143,7 +161,7 @@ export default function ReviewPage() {
       setPhase('answering');
       setAnswer('');
       setShowRef(false);
-      qc.invalidateQueries({ queryKey: ['review-due'] });
+      qc.invalidateQueries({ queryKey: ['review-plan'] });
     },
   });
 
@@ -177,7 +195,7 @@ export default function ReviewPage() {
     return () => window.removeEventListener('keydown', onKey);
   }, [phase, submitM.isPending, handleReveal, handleRate]);
 
-  const cause = current ? (causeMapQ.data?.get(current.question_id) ?? null) : null;
+  const cause = current?.cause ?? null;
 
   const eyebrow =
     total > 0 && !isDone
@@ -192,29 +210,35 @@ export default function ReviewPage() {
         sub="按下 1 / 2 / 3 / 4 写一条 action=review 事件，FSRS 状态投影表同事务更新。"
       />
 
-      {dueQ.isLoading && (
+      {intent && (
+        <div className="review-intent" aria-label="session intent">
+          {intent}
+        </div>
+      )}
+
+      {planQ.isLoading && (
         <section className="review-stage">
           <p className="empty">正在加载复习队列…</p>
         </section>
       )}
 
-      {dueQ.isError && (
+      {planQ.isError && (
         <section className="review-stage">
           <p className="empty" style={{ color: 'var(--again-ink)' }}>
-            {dueQ.error instanceof ApiAuthError
-              ? `${dueQ.error.message} — 请重新进入页面输入 token`
-              : `加载失败：${(dueQ.error as Error).message}`}
+            {planQ.error instanceof ApiAuthError
+              ? `${planQ.error.message} — 请重新进入页面输入 token`
+              : `加载失败：${(planQ.error as Error).message}`}
           </p>
         </section>
       )}
 
-      {dueQ.isSuccess && total === 0 && (
+      {planQ.isSuccess && total === 0 && (
         <section className="review-stage">
           <p className="empty">今天没有要复习的，太好了。</p>
         </section>
       )}
 
-      {dueQ.isSuccess && isDone && (
+      {planQ.isSuccess && isDone && (
         <section className="review-stage">
           <p className="empty">本轮 {total} 道全部复习完毕。FSRS 已根据评分更新到期时间。</p>
         </section>
@@ -227,7 +251,12 @@ export default function ReviewPage() {
               {index + 1} / {total} · FSRS
               {current.knowledge_ids[0] && ` · ${current.knowledge_ids[0]}`}
             </span>
-            <span>{cause && `上次归因 ${cause.primary_category}`}</span>
+            <span>{cause && `上次归因 ${cause}`}</span>
+          </div>
+
+          <div className="review-card-meta">
+            <Badge tone={PRIORITY_TONE[current.priority]}>{PRIORITY_LABEL[current.priority]}</Badge>
+            <span className="rationale">{current.rationale}</span>
           </div>
 
           <div className="qbody">{current.prompt_md}</div>
@@ -290,10 +319,10 @@ export default function ReviewPage() {
                   cause={
                     cause
                       ? {
-                          actor_kind: cause.source === 'user' ? 'user' : 'agent',
-                          primary: cause.primary_category,
-                          secondary: cause.secondary_categories ?? [],
-                          confidence: cause.confidence ?? null,
+                          actor_kind: 'agent',
+                          primary: cause,
+                          secondary: [],
+                          confidence: null,
                         }
                       : null
                   }

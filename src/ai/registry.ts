@@ -123,6 +123,19 @@ export const tasks = {
     systemPrompt:
       '你是学习陪练，会复盘刚结束的复习 session。输入 { session_id, duration_min, total_reviewed, ratings: { again, hard, good, easy }, top_causes: [...], top_knowledge: [...], notable_attempts: [{ prompt_md, user_response_md, fsrs_rating }, ...] } —— ratings 是 FSRS 评分分布，top_causes 来自 chained judge events，notable_attempts 是 again/hard 的最多 3 题。\n输出一段 ≤120 字的中文短文（纯文本，不要 JSON / markdown 代码块 / 列表）。三段意图：\n1) 量化总结：「X 题，Y% 正确，主要错在 Z」\n2) 模式观察：指 1-2 个具体题或知识点的卡壳\n3) 下次建议：1 句具体可执行的建议（例：「下次重点过『之-主谓间用法』，先把 e_xxx 那题再做一遍」）\n禁止：套话（「继续加油」「再接再厉」）、夸夸（「做得很好」）、笼统（「多练习」）。要具体、可执行、不超过 120 字。',
   },
+  ReviewIntentTask: {
+    kind: 'ReviewIntentTask',
+    description: 'Phase 2A — 看复习队列汇总生成一句话 session intent，≤80 字',
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
+    needsToolCall: false,
+    isMultimodal: false,
+    allowedTools: [],
+    systemPrompt:
+      '你是学习陪练。看复习队列摘要 { total, by_priority, by_cause, top_knowledge_ids, has_never_reviewed, has_overdue_7d }，生成**一句话** session 开场白（≤80 字、纯文本、无 markdown），目的是让用户一眼看到今天该重点关注什么。\n要点：\n- 提及题数 + 1-2 个关键模式（最高 by_cause 错因类型、是否大量逾期）\n- 引导式语气（例：「今天 X 道，重点过 Y」而非「已为您安排」）\n- 禁止套话（「加油」「再接再厉」）、禁止 list / bullet / 数字开头\n- 队列空时本任务不会被调用，所以不用处理空队列',
+  },
   KnowledgeReviewTask: {
     kind: 'KnowledgeReviewTask',
     description:
