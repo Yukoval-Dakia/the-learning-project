@@ -1,7 +1,32 @@
 # 错题管理
 
-> 见 [架构基础](../architecture.md) 了解 `Mistake` / `Question` schema、FSRS state 和 AI 任务层。
-> 题面统一在 `Question` 表（见 [`quiz.md`](quiz.md)），Mistake 只记「做错事件 + 复习态 + 错因」。
+> 见 [架构基础](../architecture.md) 了解 `event` / `question` / `material_fsrs_state` schema、FSRS state 和 AI 任务层。
+> 题面统一在 `question` 表（见 [`quiz.md`](quiz.md)），「错题」是 event 流的一种视图。
+
+---
+
+## 0. 数据模型现状（2026-05-17，post-1c.1 Step 9）
+
+> ⚠️ 下面 §1–§6 的 `Mistake` / `mistake_id` / `Mistake.cause` 等命名是 Phase 1 sketch 期写的，**实际表已 DROP**（1c.1 Step 9）。整篇 doc 的"错题"概念在落地实现里是 event 流的一个视图。读完本节心里替换即可，后续段落保留作为概念语义参考。
+
+**当前真实存储**：
+
+| Phase 1 sketch 词 | 实际存储 | 备注 |
+|---|---|---|
+| `Mistake(question_id, wrong_answer_md, source, …)` | `event(action='attempt', subject_kind='question', outcome='failure', payload={answer_md, answer_image_refs, referenced_knowledge_ids})` | 一行 event = 一次答错 |
+| `Mistake.cause`（user 手填或 AI 归因） | AI: `event(action='judge', subject_kind='event', caused_by=<attempt id>, payload.cause)`。<br>User: `event(action='experimental:user_cause', subject_kind='event', caused_by=<attempt id>, payload={primary_category, user_notes})` | 用户优先 |
+| `Mistake.fsrs_state` | `material_fsrs_state(subject_kind='question', subject_id=<qid>, state, due_at, last_review_event_id)` | 一行 / 题 |
+| `Mistake.source = 'quiz_answer' / 'manual' / 'vision_*' / 'reverse_mark'` | 当前只跑 `manual` (POST /api/mistakes) + `vision_single` / `vision_paper`（OCR → import）；`quiz_answer` 自动管线 + `reverse_mark` 留到 Phase 2 quiz 时再展开 | |
+| `Mistake.variants[]` / 变式繁殖 | 未实现 | Phase 2 |
+| `judgment` 表 + `JudgeRouter` | DROPped（1c.1 Step 1.4）；判分走 `event(action='judge')` 替代 | |
+| `mistake.deleted_at` soft-delete | 未实现（event 流没有 retraction 机制）；申诉翻盘 Phase 1d 再设计 | |
+
+**用户面文案保留**："错题"在 UI / wire 上仍是错题（`GET /api/mistakes?...` 返回 mistake-shape JSON），仅内部存储换了。
+
+**实际录入入口（v0.1 上线）**：
+- `manual` —— POST /api/mistakes（手填题面 + 错答 + 知识点 + 可选 cause）
+- `vision_single` —— 1 张图 → /api/assets → /api/ingestion → /api/ingestion/[id]/extract → SSE → /api/ingestion/[id]/blocks → /api/ingestion/[id]/import
+- `vision_paper` —— 1-5 张图，同上 + 跨页 block 合并 UI（vision 1c.2.C）
 
 ---
 
