@@ -2,6 +2,7 @@
 
 import { TokenGate } from '@/ui/components/TokenGate';
 import { TabBar, type TabItem } from '@/ui/primitives/TabBar';
+import { ThemeToggle } from '@/ui/primitives/ThemeToggle';
 import { type NavItem, TopNav } from '@/ui/primitives/TopNav';
 import { usePathname, useRouter } from 'next/navigation';
 
@@ -60,7 +61,13 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
     <TokenGate>
       <div className="app-shell">
         <div className="app-shell-top-nav">
-          <TopNav active={active} onNav={handleNav} items={NAV_ITEMS} version="v0.1 · 1c.2" />
+          <TopNav
+            active={active}
+            onNav={handleNav}
+            items={NAV_ITEMS}
+            version="v0.1 · 1c.2"
+            trailing={<ThemeToggle />}
+          />
         </div>
 
         <div className="app-shell-content">{children}</div>
