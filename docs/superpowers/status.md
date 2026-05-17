@@ -5,7 +5,7 @@
 > 维护规则：每完成一个 Phase 就 update 一次；不维护周度进度。
 
 **最后更新**：2026-05-17
-**当前 Phase**：1d 开局（事件链 UI + 成本观测）
+**当前 Phase**：1d 进行中 + 2 开局（dreaming edge proposer 上线）
 **主分支**：`main` clean、与 `origin` 同步
 
 ---
@@ -20,7 +20,7 @@
 ✅  1c.1 Event-driven core                 event 表替代 mistake/review_event/dreaming_proposal
 ✅  1c.2 UI main（read + write + Vision）  /record /mistakes /knowledge /learning-items /study-log
 🟡  1d  Observation surface                /events/[id] ✅ + 成本带 ✅；session detail / weekly review 待
-⬜  2   Dreaming agent                     cron + Anthropic Batch + propose knowledge / knowledge_edge
+🟡  2   Dreaming agent                     node propose nightly ✅；edge propose nightly ✅；Batch API 暂跳过（单用户低体量）
 ⬜  3   Note artifact + Quiz JudgeRouter   AI 生 / 用户改 / embedded check
 ⬜  4   Multi-subject 扩展                 wenyan 之外的科目
 ```
@@ -37,6 +37,7 @@
 | 0010 | 知识 mesh | knowledge_edge 取代 prerequisite/tag 体系 |
 | 0011 v2 | tool_use + suggestion + edge events | agent 的所有写入都过 event |
 | 0012 | mastery view | DROP 双层 mastery；改用 derived view |
+| 0013 | /review session lifecycle | eager 开 session + sendBeacon close + 6h orphan cron 兜底 |
 
 新 ADR 模板见 `docs/adr/`。改弦更张前先翻当时的 ADR 别重新论证。
 
@@ -51,13 +52,22 @@ mistakes / learning-items / progress / quiz / lanes / notes 全部加 §0 实施
 ### 🟡 进行中：Phase 1d Observation
 - ✅ `/events/[id]` 事件链浏览器
 - ✅ `/today` 成本带（BJT 0 点结算）
-- ⬜ `learning_session` detail 页（先要决定 `/review` 是否开 session row）
-- ⬜ 周度 review 报表（cron 还没有调度器）
+- ✅ ADR-0013 review session lifecycle：`/review` eager 开 session + sendBeacon close + 6h orphan cron
+- ⬜ `learning_session` detail 页（数据已通，UI 待开）
+- ⬜ 周度 review 报表
+- ⬜ SessionSummaryTask（依赖 ADR-0013 已通，AI 生成 session 结束总结）
 
 ### ⬜ 未启动 Top 3（按推荐顺序）
-1. **Phase 2 Dreaming worker**：cron 选型 → Anthropic Batch wrapper → propose handler 串联
-2. **session lifecycle 决策**：`/review` 是否开 `learning_session(type='review')` 行
-3. **LearningItem hub + atomic 层级**：schema 已留字段，UI 待开
+1. **session lifecycle 决策**：`/review` 是否开 `learning_session(type='review')` 行
+2. **LearningItem hub + atomic 层级**：schema 已留字段，UI 待开
+3. **Phase 2 Maintenance agent**：reparent / merge / split / archive 的自动提议（当前只有节点 + 边 propose）
+
+### ✅ 刚刚收尾：Phase 2 Dreaming edge proposer
+- `KnowledgeEdgeProposeTask` 注册（sonnet, 单次结构化输出）
+- `runEdgeProposeAndWrite` 验证 + 去重（self-loop / 未知节点 / 已存在边 / pending 重复）
+- `knowledge_edge_propose_nightly` pg-boss cron @ BJT 02:30
+- 21 个新测试 + 全套 742 测试通过
+- 跳过 Anthropic Batch API：单用户 24h 失败量低，单次同步调用足矣
 
 ---
 
