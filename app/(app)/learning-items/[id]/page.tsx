@@ -1,5 +1,6 @@
 'use client';
 
+import { TeachingDrawer } from '@/ui/components/TeachingDrawer';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
 import { Badge } from '@/ui/primitives/Badge';
 import { Button } from '@/ui/primitives/Button';
@@ -104,6 +105,7 @@ export default function LearningItemDetailPage() {
 
   const [titleDraft, setTitleDraft] = useState<string | null>(null);
   const [contentDraft, setContentDraft] = useState<string | null>(null);
+  const [teachOpen, setTeachOpen] = useState(false);
 
   const data = detailQ.data;
   useEffect(() => {
@@ -200,9 +202,20 @@ export default function LearningItemDetailPage() {
           </>
         )}
         <span style={{ margin: '0 var(--s-2)', color: 'var(--ink-4)' }}>·</span>
-        <Link href={`/learn/${data.id}/chat`} style={linkStyle}>
+        <button
+          type="button"
+          onClick={() => setTeachOpen(true)}
+          style={{
+            ...linkStyle,
+            background: 'none',
+            border: 'none',
+            padding: 0,
+            cursor: 'pointer',
+            font: 'inherit',
+          }}
+        >
           → 对话教学
-        </Link>
+        </button>
       </div>
 
       <Card pad="lg" style={{ marginTop: 'var(--s-4)' }}>
@@ -347,6 +360,13 @@ export default function LearningItemDetailPage() {
           </ul>
         )}
       </Card>
+      {teachOpen && (
+        <TeachingDrawer
+          learningItemId={data.id}
+          learningItemTitle={data.title}
+          onClose={() => setTeachOpen(false)}
+        />
+      )}
     </Shell>
   );
 }
