@@ -1,6 +1,7 @@
 import type { Db } from '@/db/client';
 import { getR2 } from '@/server/r2';
 import type { PgBoss } from 'pg-boss';
+import { buildAttributionFollowupHandler } from './handlers/attribution_followup';
 import { buildEchoHandler } from './handlers/echo';
 import { buildKnowledgeEdgeProposeNightlyHandler } from './handlers/knowledge_edge_propose_nightly';
 import { buildKnowledgePropoNightlyHandler } from './handlers/knowledge_propose_nightly';
@@ -61,6 +62,16 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     'note_generate',
     { pollingIntervalSeconds: 2, batchSize: 1 },
     buildNoteGenerateHandler(db),
+  );
+
+  // Task #16: async attribution for new failure attempts. Replaces the
+  // inline `next/server.after()` call in /api/mistakes + /api/ingestion/[id]/
+  // import. Worker process, durable, retryable.
+  await boss.createQueue('attribution_followup');
+  await boss.work(
+    'attribution_followup',
+    { pollingIntervalSeconds: 2, batchSize: 1 },
+    buildAttributionFollowupHandler(db),
   );
 
   // Step 9: Tencent OCR Mark Agent —— 生产 async job

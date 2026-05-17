@@ -24,11 +24,10 @@ import { CauseCategory, QuestionKind } from '@/core/schema/business';
 import { db } from '@/db/client';
 import { knowledge, learning_session, question, question_block } from '@/db/schema';
 import { runTask } from '@/server/ai/runner';
+import { getStartedBoss } from '@/server/boss/client';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { runAttributionAndWriteJudgeEvent } from '@/server/knowledge/attribute';
 import { runProposeAndWrite } from '@/server/knowledge/propose';
-import { loadTreeSnapshot } from '@/server/knowledge/tree';
 import { getR2 } from '@/server/r2';
 import { Ingestion } from '@/server/session';
 
@@ -418,33 +417,19 @@ export async function POST(
             console.error('propose prep failed (mistake unaffected)', err);
           }),
         );
-        if (q.cause === null) {
+        // Task #16: attribution via pg-boss instead of inline. Worker process
+        // owns the LLM call; ingestion route returns as soon as DB writes
+        // commit.
+        if (q.cause === null && !process.env.VITEST) {
           tasks.push(
             (async () => {
               try {
-                const tree = await loadTreeSnapshot(db);
-                const pickedNodes = tree.filter((n) => q.knowledge_ids.includes(n.id));
-                await runAttributionAndWriteJudgeEvent({
-                  db,
-                  attemptEventId: q.attemptEventId,
-                  input: {
-                    prompt_md: q.prompt_md,
-                    reference_md: q.reference_md,
-                    wrong_answer_md: q.wrong_answer_md,
-                    knowledge_context: pickedNodes.map((n) => ({
-                      id: n.id,
-                      name: n.name,
-                      effective_domain: n.effective_domain,
-                    })),
-                  },
-                  referencedKnowledgeIds: q.knowledge_ids,
-                  runTaskFn: async (kind: string, input: unknown) => {
-                    const result = await runTask(kind, input, { db, r2 });
-                    return { text: result.text };
-                  },
+                const boss = await getStartedBoss();
+                await boss.send('attribution_followup', {
+                  attempt_event_id: q.attemptEventId,
                 });
               } catch (err) {
-                console.error('attribution prep failed (mistake unaffected)', err);
+                console.warn(`attribution_followup enqueue failed for ${q.attemptEventId}:`, err);
               }
             })(),
           );

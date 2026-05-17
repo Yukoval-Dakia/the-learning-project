@@ -6,11 +6,10 @@ import { type Cause, CauseCategory, QuestionKind } from '@/core/schema/business'
 import { db } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
 import { runTask } from '@/server/ai/runner';
+import { getStartedBoss } from '@/server/boss/client';
 import { getFailureAttempts, writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { runAttributionAndWriteJudgeEvent } from '@/server/knowledge/attribute';
 import { runProposeAndWrite } from '@/server/knowledge/propose';
-import { loadTreeSnapshot } from '@/server/knowledge/tree';
 import { and, desc, inArray, isNull } from 'drizzle-orm';
 
 export const runtime = 'nodejs';
@@ -174,34 +173,18 @@ export async function POST(req: Request): Promise<Response> {
       });
     });
 
-    if (body.cause === null) {
-      after(async () => {
-        try {
-          const tree = await loadTreeSnapshot(db);
-          const pickedNodes = tree.filter((n) => body.knowledge_ids.includes(n.id));
-          await runAttributionAndWriteJudgeEvent({
-            db,
-            attemptEventId,
-            input: {
-              prompt_md: body.prompt_md,
-              reference_md: body.reference_md,
-              wrong_answer_md: body.wrong_answer_md,
-              knowledge_context: pickedNodes.map((n) => ({
-                id: n.id,
-                name: n.name,
-                effective_domain: n.effective_domain,
-              })),
-            },
-            referencedKnowledgeIds: body.knowledge_ids,
-            runTaskFn: async (kind, input, ctx) => {
-              const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
-              return { text: result.text };
-            },
-          });
-        } catch (err) {
-          console.error('attribution prep failed (mistake unaffected)', err);
-        }
-      });
+    // Async attribution via pg-boss (Task #16): user-supplied cause skips this,
+    // otherwise the worker picks up the job and calls AttributionTask. Durable
+    // + retryable + doesn't tie up the web container. VITEST-gated to keep test
+    // suite from accumulating boss state (same posture as session_summary +
+    // note_generate enqueue).
+    if (body.cause === null && !process.env.VITEST) {
+      try {
+        const boss = await getStartedBoss();
+        await boss.send('attribution_followup', { attempt_event_id: attemptEventId });
+      } catch (err) {
+        console.warn(`attribution_followup enqueue failed for ${attemptEventId}:`, err);
+      }
     }
 
     return Response.json({
