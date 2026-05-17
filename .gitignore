@@ -34,3 +34,6 @@ tsconfig.tsbuildinfo
 # Subagent worktrees (created by Agent tool with isolation:"worktree")
 .claude/worktrees/
 .playwright-mcp/
+
+# remember skill hook logs
+.remember/

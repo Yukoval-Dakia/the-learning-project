@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:worker": "esbuild scripts/worker.ts --bundle --platform=node --target=node22 --format=cjs --outfile=.next/standalone/worker.cjs --external:pg-native --external:sharp --external:bufferutil --external:utf-8-validate --define:process.env.NODE_ENV=\\\"production\\\"",
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
@@ -58,6 +59,7 @@
     "@vitest/coverage-v8": "^2.1.5",
     "dotenv": "^17.4.2",
     "drizzle-kit": "^0.31.10",
+    "esbuild": "^0.28.0",
     "tailwindcss": "^4.0.0",
     "testcontainers": "^10.13.0",
     "tsx": "^4.22.0",

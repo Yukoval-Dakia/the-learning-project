@@ -105,7 +105,9 @@ describe('runSessionSummary', () => {
     await seedReviewEvent(sessionId, 'q1', 'again');
     await seedReviewEvent(sessionId, 'q1', 'good');
 
-    const runTaskFn = vi.fn(async () => ({ text: '复习了 2 题，1 对 1 错。下次重点过 q1。' }));
+    const runTaskFn = vi.fn(async (_kind: string, _input: unknown, _ctx: unknown) => ({
+      text: '复习了 2 题，1 对 1 错。下次重点过 q1。',
+    }));
     const result = await runSessionSummary({ db, sessionId, runTaskFn });
 
     expect(result.status).toBe('written');
@@ -165,7 +167,9 @@ describe('runSessionSummary', () => {
     await seedReviewEvent(sessionId, 'q2', 'hard', '勉强');
     await seedReviewEvent(sessionId, 'q3', 'good', '对了');
 
-    const runTaskFn = vi.fn(async () => ({ text: 'summary' }));
+    const runTaskFn = vi.fn(async (_kind: string, _input: unknown, _ctx: unknown) => ({
+      text: 'summary',
+    }));
     await runSessionSummary({ db, sessionId, runTaskFn });
 
     const input = runTaskFn.mock.calls[0][1] as {

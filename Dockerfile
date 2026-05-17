@@ -23,6 +23,19 @@ COPY . .
 # page data (Next.js never actually connects at build time).
 RUN DATABASE_URL=postgres://build:build@localhost:5432/build pnpm build
 
+# Bundle pg-boss worker entrypoint into a single CJS file co-located with
+# the Next standalone server. The same image runs as either:
+#   CMD ["node", "server.js"]  → web/app process
+#   CMD ["node", "worker.js"]  → pg-boss worker process (crons + handlers)
+RUN pnpm build:worker
+
+# Stage 2.5: install sharp into a clean flat node_modules so it can be
+# composed into the runner image without colliding with the Next standalone
+# layout (whose node_modules is curated by the tracer).
+FROM node:24-bookworm-slim AS sharpdeps
+WORKDIR /sharp
+RUN npm install --omit=dev --no-audit --no-fund sharp@^0.34.5
+
 # Stage 3: Production runner
 FROM node:24-bookworm-slim AS runner
 WORKDIR /app
@@ -42,6 +55,23 @@ RUN addgroup --system --gid 1001 nodejs && \
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+
+# `pnpm build:worker` writes worker.cjs into .next/standalone/ which is copied
+# above; .cjs because package.json sets "type": "module" but the esbuild bundle
+# emits CommonJS. This line is purely a no-op assert so the file is present.
+RUN test -f ./worker.cjs || (echo "worker.cjs missing — check pnpm build:worker output" && exit 1)
+
+# sharp is a native module used by the tencent_ocr_extract handler in the
+# worker process and by /api/assets/* in the app process. Next standalone
+# tracer only includes what route code imports — worker handlers aren't traced
+# — and pnpm's symlinked layout doesn't survive a plain COPY. The dedicated
+# `sharpdeps` stage installs sharp via npm into a clean flat node_modules; we
+# overlay it here so the runner's node_modules is the standalone curated set
+# PLUS sharp + its @img/* native deps.
+COPY --from=sharpdeps --chown=nextjs:nodejs /sharp/node_modules/sharp ./node_modules/sharp
+COPY --from=sharpdeps --chown=nextjs:nodejs /sharp/node_modules/@img ./node_modules/@img
+COPY --from=sharpdeps --chown=nextjs:nodejs /sharp/node_modules/detect-libc ./node_modules/detect-libc
+COPY --from=sharpdeps --chown=nextjs:nodejs /sharp/node_modules/semver ./node_modules/semver
 
 USER nextjs
 

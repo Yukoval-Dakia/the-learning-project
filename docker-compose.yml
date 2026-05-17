@@ -3,6 +3,31 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: the-learning-project-app
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+    restart: unless-stopped
+
+  worker:
+    # Same image as `app` — esbuild bundles scripts/worker.ts to worker.cjs
+    # alongside the Next standalone server.js (see Dockerfile + pnpm
+    # build:worker). Runs pg-boss queues + crons:
+    #   - knowledge_propose_nightly (cron BJT 02:00)
+    #   - knowledge_edge_propose_nightly (cron BJT 02:30)
+    #   - prune_orphan_review_sessions (cron BJT 04:15)
+    #   - session_summary (event-triggered from /api/review/sessions/[id]/end)
+    #   - tencent_ocr_extract (event-triggered from ingestion)
+    #   - echo (golden E2E queue)
+    image: the-learning-project-app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["node", "worker.cjs"]
     env_file:
       - .env
     depends_on:
