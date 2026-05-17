@@ -6,9 +6,10 @@
 //   - On mount, POST /api/teaching-sessions { learning_item_id } to create
 //     a fresh conversation session.
 //   - Renders message stream (agent ↔ user) of experimental:teach_message
-//     events for the session.
+//     events for the session, using the v2.1 design vocabulary
+//     (.msg / .actor-line / .body / .composer / .suggest-chip).
 //   - Input box → POST /api/teaching-sessions/[id]/turn { text_md }.
-//   - "结束会话" button → POST /api/teaching-sessions/[id]/end and disables input.
+//   - 结束 button → POST /api/teaching-sessions/[id]/end and disables input.
 //
 // MVP: 1 session per page mount. Refresh = new session. History view lives
 // elsewhere (Phase 3 timeline).
@@ -22,11 +23,13 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 
+type TurnKind = 'explain' | 'ask_check' | 'end';
+
 interface ChatMessage {
   id: string;
   role: 'agent' | 'user';
   text_md: string;
-  turn_kind: 'explain' | 'ask_check' | 'end' | null;
+  turn_kind: TurnKind | null;
 }
 
 interface StartResponse {
@@ -41,6 +44,18 @@ interface TurnResponse {
   suggested_next: 'continue' | 'end';
 }
 
+const TURN_KIND_LABEL: Record<TurnKind, string> = {
+  explain: '讲解',
+  ask_check: '追问',
+  end: '收尾',
+};
+
+const SUGGESTIONS = [
+  { label: '再讲一遍', text: '上一段没完全跟上，能不能换一种说法再讲一遍？' },
+  { label: '出题考我', text: '出一道相关的题考我一下。' },
+  { label: '我懂了', text: '我懂了，继续下一个要点吧。' },
+];
+
 export default function TeachChatPage() {
   const params = useParams<{ learning_item_id: string }>();
   const learningItemId = params.learning_item_id;
@@ -52,6 +67,7 @@ export default function TeachChatPage() {
   const [ended, setEnded] = useState(false);
   const [bootError, setBootError] = useState<string | null>(null);
   const startCalledRef = useRef(false);
+  const streamRef = useRef<HTMLDivElement | null>(null);
 
   // Start the session once on mount.
   useEffect(() => {
@@ -103,16 +119,26 @@ export default function TeachChatPage() {
     onSuccess: () => setEnded(true),
   });
 
-  const onSend = () => {
-    const text = draft.trim();
-    if (!text || turnM.isPending || ended) return;
-    turnM.mutate(text);
+  // Auto-scroll on each new bubble / typing toggle. Read both inputs inside
+  // the effect so biome's exhaustive-deps rule accepts them as observed state.
+  const msgCount = messages.length;
+  const isTyping = turnM.isPending;
+  useEffect(() => {
+    void msgCount;
+    void isTyping;
+    const el = streamRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [msgCount, isTyping]);
+
+  const send = (text: string) => {
+    if (!text.trim() || turnM.isPending || ended) return;
+    turnM.mutate(text.trim());
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      onSend();
+      send(draft);
     }
   };
 
@@ -122,7 +148,7 @@ export default function TeachChatPage() {
         minHeight: '100vh',
         background: 'var(--paper)',
         padding: '36px 28px',
-        maxWidth: 'var(--cap-prose, 780px)',
+        maxWidth: 'var(--cap-prose, 720px)',
         margin: '0 auto',
         width: '100%',
         boxSizing: 'border-box',
@@ -138,7 +164,7 @@ export default function TeachChatPage() {
         </Link>
       </div>
 
-      <div className="teach-chat-page" style={{ marginTop: 'var(--s-4)' }}>
+      <div className="teach-chat-page" style={{ marginTop: 'var(--s-6)' }}>
         {bootError && (
           <Card>
             <p style={{ margin: 0, color: 'var(--again-ink)' }}>{bootError}</p>
@@ -153,43 +179,65 @@ export default function TeachChatPage() {
 
         {sessionId && (
           <>
-            <div className="teach-chat-meta">
-              <span>session={sessionId}</span>
-              {ended ? <span style={{ color: 'var(--again-ink)' }}>· 已结束</span> : null}
+            <div className={`session-banner${ended ? ' ended' : ''}`}>
+              ── learning_session(type='conversation'
+              {ended ? ', status=ended' : ', status=active'}) ──
             </div>
 
-            <div className="teach-chat-stream">
+            <div className="msg-stream" ref={streamRef}>
               {messages.map((m) => (
-                <div key={m.id} className={`teach-msg ${m.role}`}>
-                  {m.role === 'agent' && m.turn_kind && (
-                    <span className="turn-kind">[{m.turn_kind}]</span>
-                  )}
-                  {m.text_md}
+                <div key={m.id} className={`msg ${m.role}`}>
+                  <div className="actor-line">
+                    <span>{m.role === 'agent' ? 'agent · TeachingTurnTask' : 'user · self'}</span>
+                    {m.turn_kind && <span>· {TURN_KIND_LABEL[m.turn_kind]}</span>}
+                  </div>
+                  <div className="body">{m.text_md}</div>
                 </div>
               ))}
               {turnM.isPending && (
-                <div className="teach-msg agent" style={{ opacity: 0.6 }}>
-                  …
+                <div className="msg agent">
+                  <div className="actor-line">
+                    <span>agent · TeachingTurnTask</span>
+                    <span>· 思考中…</span>
+                  </div>
+                  <div className="typing">
+                    <span className="dot" />
+                    <span className="dot" style={{ animationDelay: '0.2s' }} />
+                    <span className="dot" style={{ animationDelay: '0.4s' }} />
+                  </div>
                 </div>
               )}
             </div>
 
             {ended ? (
-              <div className="teach-chat-end-banner">
-                会话已结束。下次需要时刷新页面开启新对话。
-              </div>
+              <div className="end-banner">会话已结束。下次需要时刷新页面开启新对话。</div>
             ) : (
               <>
-                <div className="teach-chat-input">
+                <div className="suggestions">
+                  {SUGGESTIONS.map((s) => (
+                    <button
+                      key={s.label}
+                      type="button"
+                      className="suggest-chip"
+                      onClick={() => send(s.text)}
+                      disabled={turnM.isPending}
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="composer">
                   <textarea
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
                     onKeyDown={onKeyDown}
-                    placeholder="说点什么…（⌘/Ctrl+Enter 发送）"
+                    placeholder="说点什么…（Enter 发送，Shift+Enter 换行）"
                     disabled={turnM.isPending}
+                    rows={2}
                   />
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    <Button onClick={onSend} disabled={!draft.trim() || turnM.isPending}>
+                  <div className="actions">
+                    <Button onClick={() => send(draft)} disabled={!draft.trim() || turnM.isPending}>
                       发送
                     </Button>
                     <Button onClick={() => endM.mutate()} disabled={endM.isPending} variant="ghost">
@@ -197,12 +245,17 @@ export default function TeachChatPage() {
                     </Button>
                   </div>
                 </div>
-                <div className="teach-chat-footer">
-                  {suggestedNext === 'end' ? '教练建议结束 — 你可继续追问或点结束。' : ''}
+
+                <div className="footer-line">
+                  <span>
+                    {suggestedNext === 'end' ? (
+                      <span className="hint">教练建议结束 — 可继续追问或点结束</span>
+                    ) : (
+                      <span>session={sessionId.slice(0, 8)}…</span>
+                    )}
+                  </span>
                   {turnM.isError ? (
-                    <span style={{ color: 'var(--again-ink)' }}>
-                      发送失败：{(turnM.error as Error)?.message}
-                    </span>
+                    <span className="error">发送失败：{(turnM.error as Error)?.message}</span>
                   ) : null}
                 </div>
               </>
