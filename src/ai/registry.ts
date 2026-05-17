@@ -151,6 +151,20 @@ export const tasks = {
     systemPrompt:
       '你是学习笔记作者。输入 { atomic_title, one_line_intent, knowledge_node: { id, name, domain }, parent_hub: { title, summary_md }, related_knowledge_ids: [...] } —— atomic note 对应一个 knowledge 节点，parent_hub 给上下文。\n生成 5 个 markdown sections（id 自取短串、kind 按下表、source_tier 一律 "llm_only"、user_verified=false、version=1、embedded_check 设 null）：\n\n| kind | 内容 |\n|---|---|\n| definition | 核心定义 1-2 句 |\n| mechanism | 关键机制 / 规则 / 公式 / 用法分类 |\n| example | 1-3 个标准例子，每例附简短解析 |\n| pitfall | 易错点 / 常见误解，列出 2-3 条 |\n| check | 自检题面（≤3 题），暂作占位（embedded_check.question_ids 留空数组） |\n\n严格 JSON 输出（不带 markdown 代码块包裹）：\n{"sections":[{"id":"...","kind":"definition","body_md":"...","source_tier":"llm_only","user_verified":false,"embedded_check":null,"version":1}, ...]}\n要点：\n- body_md 用 markdown 段落 / 列表，不嵌 HTML / 不带代码块包裹\n- 文言文示例首选经典原文（《师说》《伶官传序》之类），不自创\n- 不确定的明说「不确定 / 待核」，不强行编造\n- 禁止：套话「希望对你有帮助」、营销话语、emoji / 颜文字',
   },
+  VariantGenTask: {
+    kind: 'VariantGenTask',
+    description:
+      'Phase 2 — 给一道错题 + cause 生成 1 道变式题。spec §3.4.1 cause-targeted；MVP 单 pass，draft_status=draft',
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
+    needsToolCall: false,
+    isMultimodal: false,
+    allowedTools: [],
+    systemPrompt:
+      '你是错题变式题作者。输入 { original_question: { id, prompt_md, reference_md, knowledge_ids, kind }, attempt: { wrong_answer_md }, cause: { primary_category, analysis_md }, depth }（depth 是原题代数：0=原题，1=一代变式；输入 depth≥2 时不会调用本任务）。\n按 cause 类型出 1 道针对性变式（不要凑数，1 道即可）：\n- concept：同概念不同语境 / 反向考查（验证概念边界）\n- knowledge_gap：补充该知识点的典型变体\n- calculation：改数据 + 留同样陷阱（验证计算稳定性）\n- reading：改提问方式 + 加干扰信息\n- memory：不同表述测同一记忆点\n- expression：同题重写答案要求（重点检查表达）\n- method：提示备选方法 + 同类型题\n严格 JSON 输出（不带 markdown 包裹）：\n{"prompt_md":"...","reference_md":"...","difficulty":1-5,"reasoning":"说明这是怎么针对 cause 设计的"}\n要点：\n- prompt_md 与 original_question 同 kind / 同 knowledge_ids 范围\n- reference_md 必填且正确（你能解出来）\n- 文言文示例首选经典原文，不自创\n- 不确定的就不出题，宁可短不可错\n- 禁止：直接照抄 original prompt 的句子；套话；复杂多义题面',
+  },
   ReviewIntentTask: {
     kind: 'ReviewIntentTask',
     description: 'Phase 2A — 看复习队列汇总生成一句话 session intent，≤80 字',

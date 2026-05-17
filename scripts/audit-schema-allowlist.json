@@ -23,18 +23,6 @@
     "reason": "Provenance ref unused; ADR-0006 v2 后 event.payload.source 替代",
     "resolves_when": "Phase 1c.1 落地，决定 keep or drop"
   },
-  "question.draft_status": {
-    "reason": "ADR-0004 lifecycle promise (draft/active); Sub 0d MaintenanceProposeTask",
-    "resolves_when": "Sub 0d Step 13 MaintenanceProposeTask implemented"
-  },
-  "question.root_question_id": {
-    "reason": "Variant family tree backbone; Sub 0d Step 14 VariantGenTask",
-    "resolves_when": "Sub 0d Step 14 VariantGenTask implemented"
-  },
-  "question.parent_variant_id": {
-    "reason": "Same as root_question_id",
-    "resolves_when": "Sub 0d Step 14 VariantGenTask implemented"
-  },
   "question.created_by": {
     "reason": "Provenance for AI-generated questions; ADR-0006 v2 will fill via event(action='generate', subject_kind='question')",
     "resolves_when": "Phase 1c.1 event generation path implemented"

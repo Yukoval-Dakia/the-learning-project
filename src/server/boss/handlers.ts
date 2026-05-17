@@ -10,6 +10,7 @@ import { buildPruneJobEventsHandler } from './handlers/prune_job_events';
 import { buildPruneOrphanReviewSessionsHandler } from './handlers/prune_orphan_review_sessions';
 import { buildSessionSummaryHandler } from './handlers/session_summary';
 import { buildTencentOcrHandler } from './handlers/tencent_ocr_extract';
+import { buildVariantGenHandler } from './handlers/variant_gen';
 
 /**
  * Register all pg-boss queue handlers + schedules.
@@ -72,6 +73,17 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     'attribution_followup',
     { pollingIntervalSeconds: 2, batchSize: 1 },
     buildAttributionFollowupHandler(db),
+  );
+
+  // Task #17: variant generation. Enqueued by attribution_followup after
+  // a judge event is written; consumes ~30-60s LLM call to produce a 1-shot
+  // variant question (mistakes spec §3.4). batchSize=1 keeps mimo
+  // rate-limit friendly.
+  await boss.createQueue('variant_gen');
+  await boss.work(
+    'variant_gen',
+    { pollingIntervalSeconds: 2, batchSize: 1 },
+    buildVariantGenHandler(db),
   );
 
   // Step 9: Tencent OCR Mark Agent —— 生产 async job
