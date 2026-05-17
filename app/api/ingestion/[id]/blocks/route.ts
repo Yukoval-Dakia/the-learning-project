@@ -41,6 +41,7 @@ export async function GET(
         source_asset_ids: question_block.source_asset_ids,
         page_spans: question_block.page_spans,
         extracted_prompt_md: question_block.extracted_prompt_md,
+        structured: question_block.structured,
         reference_md: question_block.reference_md,
         wrong_answer_md: question_block.wrong_answer_md,
         image_refs: question_block.image_refs,
