@@ -332,6 +332,12 @@ export default function KnowledgePage() {
               size="sm"
               iconRight="arrowR"
               className="knowledge-btn-primary"
+              onClick={() => {
+                // Jump to the first node with pending edge proposals and open
+                // its drawer; user can step through subsequent nodes manually.
+                const firstId = edgeProposalsByNode.keys().next().value ?? null;
+                if (firstId) setSelectedId(firstId);
+              }}
             >
               集中审批
             </Button>
