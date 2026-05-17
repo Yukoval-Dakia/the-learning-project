@@ -45,7 +45,10 @@ export async function runProposeAndWrite(params: RunProposeAndWriteParams): Prom
         effective_domain: n.effective_domain,
       })),
     };
-    const result = await params.runTaskFn('KnowledgeProposeTask', input, { env: params.env });
+    const result = await params.runTaskFn('KnowledgeProposeTask', input, {
+      db: params.db,
+      env: params.env,
+    });
     const parsed = parseProposeOutput(result.text);
     for (const p of parsed.proposals) {
       const parentExists = (

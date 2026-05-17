@@ -4,10 +4,11 @@
 // 详见 docs/architecture.md § 五 AI 任务层。
 
 // Sub 0c: widen provider union to enable future routing through OpenRouter /
-// Vercel AI Gateway / OpenAI without breaking registry consumers. Only
-// 'anthropic' is wired in runner.ts; others throw 'not implemented' until
-// Sub 0d's Provider Manager lands (see ADR-0003 2026-05-11 update + ADR-0004).
-export type Provider = 'anthropic' | 'openrouter' | 'gateway' | 'openai';
+// Vercel AI Gateway / OpenAI without breaking registry consumers. Sub 0d Step 0
+// landed Provider Manager (src/server/ai/providers.ts); 'anthropic' + 'xiaomi'
+// are wired, others throw 'not implemented' until a real trigger from ADR-0003
+// fires (see ADR-0003 2026-05-11 update + ADR-0004).
+export type Provider = 'anthropic' | 'xiaomi' | 'openrouter' | 'gateway' | 'openai';
 export type ModelId = string;
 
 export interface TaskBudget {
@@ -44,9 +45,9 @@ export const tasks = {
   AttributionTask: {
     kind: 'AttributionTask',
     description: '错题归因 + 知识点挂载（10 类 cause）',
-    defaultProvider: 'anthropic',
-    defaultModel: 'claude-sonnet-4-6',
-    fallbackChain: [{ provider: 'anthropic', model: 'claude-haiku-4-5-20251001' }],
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 4 },
     needsToolCall: false,
     isMultimodal: false,
@@ -57,8 +58,8 @@ export const tasks = {
   VisionExtractTask: {
     kind: 'VisionExtractTask',
     description: '错题图片 → 切块 + 题面 + 答案 + bbox（manual rescue only after Sub 0c）',
-    defaultProvider: 'anthropic',
-    defaultModel: 'claude-haiku-4-5-20251001',
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5',
     fallbackChain: [],
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
@@ -70,9 +71,9 @@ export const tasks = {
   },
   VisionExtractTaskHeavy: {
     kind: 'VisionExtractTaskHeavy',
-    description: '错题图片 → 切块（heavy / Tier 3 — sonnet manual rescue）',
-    defaultProvider: 'anthropic',
-    defaultModel: 'claude-sonnet-4-6',
+    description: '错题图片 → 切块（heavy / Tier 3 — mimo-v2.5 multimodal manual rescue）',
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5',
     fallbackChain: [],
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 90_000 },
     needsToolCall: false,
@@ -85,9 +86,9 @@ export const tasks = {
   KnowledgeProposeTask: {
     kind: 'KnowledgeProposeTask',
     description: '看新录入的 mistake 提议 0-3 个 propose_new 知识点（挂在合适 parent 下）',
-    defaultProvider: 'anthropic',
-    defaultModel: 'claude-sonnet-4-6',
-    fallbackChain: [{ provider: 'anthropic', model: 'claude-haiku-4-5-20251001' }],
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 2 },
     needsToolCall: false,
     isMultimodal: false,
@@ -98,9 +99,9 @@ export const tasks = {
   KnowledgeEdgeProposeTask: {
     kind: 'KnowledgeEdgeProposeTask',
     description: '看 tree + 最近 failure attempts + 已有 edge，提议 0-5 条新 knowledge_edge',
-    defaultProvider: 'anthropic',
-    defaultModel: 'claude-sonnet-4-6',
-    fallbackChain: [{ provider: 'anthropic', model: 'claude-haiku-4-5-20251001' }],
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 2 },
     needsToolCall: false,
     isMultimodal: false,
@@ -111,10 +112,11 @@ export const tasks = {
   SessionSummaryTask: {
     kind: 'SessionSummaryTask',
     description: '复习 session 结束后生成 ≤120 字短结：今天哪几题、哪个 cause 多、给 1 句下次建议',
-    defaultProvider: 'anthropic',
-    defaultModel: 'claude-haiku-4-5-20251001',
-    fallbackChain: [{ provider: 'anthropic', model: 'claude-sonnet-4-6' }],
-    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 30_000 },
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
+    // mimo-v2.5-pro 比 Anthropic haiku 慢，60s 给点余量
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
@@ -125,9 +127,9 @@ export const tasks = {
     kind: 'KnowledgeReviewTask',
     description:
       '看完整 tree + 最近 mistakes，提议任意 mutation（reparent/merge/split/archive/propose_new）让 tree 更合理',
-    defaultProvider: 'anthropic',
-    defaultModel: 'claude-sonnet-4-6',
-    fallbackChain: [{ provider: 'anthropic', model: 'claude-haiku-4-5-20251001' }],
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 12, timeout: 120_000 },
     needsToolCall: true,
     isMultimodal: false,
