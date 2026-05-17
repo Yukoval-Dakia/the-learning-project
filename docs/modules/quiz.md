@@ -1,8 +1,26 @@
 # Artifact: Tool — `tool_quiz`
 
-> 见 [架构基础](../architecture.md) 了解 Artifact 多态化、`Question` / `Answer` / `Judgment` / `UserAppeal` schema 和相关 Task 注册。
+> 见 [架构基础](../architecture.md) 了解 Artifact 多态化、`question` / `event` / `material_fsrs_state` schema 和相关 Task 注册。
 
 `tool_quiz` 是 Tool-type Artifact 的**当前唯一实例**。本文档同时是 tool_quiz artifact 的实现规范——题目生产、答题、判定、申诉的完整生命周期。
+
+---
+
+## 0. 实施现状（2026-05-17）
+
+> 本 doc 描述的 `tool_quiz` 完整闭环（artifact 多态 / JudgeRouter / Answer / Judgment / UserAppeal）**都还没落**。下面 §1+ 是 Phase 1 sketch + Phase 2 roadmap。
+
+| 设计概念 | 现状 |
+|---|---|
+| `question` 表（统一题库） | ✅ 落地，被 `event(action='attempt', subject_kind='question')` 引用 |
+| Answer / Judgment / UserAppeal 三表 | ❌ DROPped 或从未建过；判分走 `event(action='judge', subject_kind='event')` 替代 |
+| JudgeRouter + 7 种 judge kind | ❌ 现只有 `exact` 这一种 judge（`src/server/ai/judges/exact.ts`） |
+| `tool_quiz` artifact 类型 + standalone vs embedded | ❌ artifact 表 schema 在但 0 写入 / 0 UI |
+| 复习 = standalone tool_quiz session | ❌ 现在 `/review` 直接走 `/api/review/due` + `/api/review/submit`，无 session 实体 |
+| 变式题双 pass + 三层防"错题繁殖" | ❌ Phase 2 |
+| AttributionTask 写 cause | ✅ 落地 `src/server/knowledge/attribute.ts`；输出走 `event(action='judge')`，payload 含 10 类 cause |
+
+**当前真"答题"路径**：手动录入（`POST /api/mistakes`） + FSRS 复习（`GET /api/review/due` → `POST /api/review/submit`）。整套 quiz session / Answer / Judgment 仪式感推到 Phase 2。
 
 ---
 
