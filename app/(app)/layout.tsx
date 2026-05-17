@@ -11,10 +11,11 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'review', label: '复习' },
   { id: 'mistakes', label: '错题' },
   { id: 'items', label: '学习项' },
+  { id: 'log', label: '日志' },
   { id: 'knowledge', label: '知识' },
 ];
 
-// Mobile drops /learning-items per plan Step 0 (≤5 tabs comfortable at thumb reach).
+// Mobile drops /learning-items + /study-log per plan Step 0 (≤5 tabs comfortable at thumb reach).
 const MOBILE_TAB_ITEMS: TabItem[] = [
   { id: 'today', label: '今日' },
   { id: 'record', label: '录入' },
@@ -29,12 +30,14 @@ const ROUTE_MAP: Record<string, string> = {
   review: '/review',
   mistakes: '/mistakes',
   items: '/learning-items',
+  log: '/study-log',
   knowledge: '/knowledge',
 };
 
 function activeFromPath(path: string): string {
   // Order matters: /learning-items before /knowledge etc.
   if (path.startsWith('/learning-items')) return 'items';
+  if (path.startsWith('/study-log')) return 'log';
   if (path.startsWith('/today')) return 'today';
   if (path.startsWith('/record')) return 'record';
   if (path.startsWith('/review')) return 'review';
