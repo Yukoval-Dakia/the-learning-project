@@ -678,6 +678,151 @@ ol {
 }
 
 /* ------------------------------------------------------------ */
+/* /events/[id] — single event detail + chain rails              */
+/* Ported subset of design's .event-card + .chain idiom          */
+/* ------------------------------------------------------------ */
+
+.event-rail-label {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+  margin: var(--s-5) 0 var(--s-2);
+}
+
+.event-card {
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: var(--s-2);
+}
+.event-card.is-focal {
+  border-color: var(--coral-line);
+  background: linear-gradient(180deg, var(--coral-soft) 0%, var(--paper-raised) 50%);
+  box-shadow: var(--shadow-2);
+}
+.event-card.is-upstream {
+  border-left: 3px solid var(--info);
+}
+.event-card.is-downstream {
+  border-left: 3px solid var(--ink-5);
+}
+
+.event-card .ec-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.event-card .ec-head .when {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--ink-4);
+  letter-spacing: 0.01em;
+}
+.event-card .ec-row {
+  font-size: var(--fs-caption);
+  color: var(--ink-2);
+  margin: 0;
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.event-card .ec-row .lbl {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+  white-space: nowrap;
+}
+.event-card .ec-row code,
+.event-card .ec-row a {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--paper-sunk);
+  padding: 2px 6px;
+  border-radius: var(--r-1);
+  color: var(--ink-2);
+}
+.event-card .ec-row a {
+  color: var(--coral);
+  text-decoration: none;
+  background: transparent;
+  padding: 0;
+}
+.event-card .ec-row a:hover {
+  text-decoration: underline;
+}
+
+.event-card details.ec-payload {
+  margin-top: 4px;
+}
+.event-card details.ec-payload summary {
+  list-style: none;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+  letter-spacing: var(--ls-wide);
+  padding: 4px 0;
+}
+.event-card details.ec-payload summary::-webkit-details-marker {
+  display: none;
+}
+.event-card details.ec-payload[open] summary {
+  color: var(--coral-ink);
+}
+.event-card details.ec-payload pre {
+  margin: 6px 0 0;
+  padding: var(--s-3);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: auto;
+  max-height: 360px;
+  line-height: 1.5;
+}
+
+.event-card .ec-jump {
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  letter-spacing: var(--ls-wide);
+}
+.event-card .ec-jump a {
+  color: var(--coral);
+  text-decoration: none;
+}
+.event-card .ec-jump a:hover {
+  text-decoration: underline;
+}
+
+.breadcrumb {
+  margin: 0 0 var(--s-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  letter-spacing: var(--ls-wide);
+}
+.breadcrumb a {
+  color: var(--coral);
+  text-decoration: none;
+}
+.breadcrumb a:hover {
+  text-decoration: underline;
+}
+
+/* ------------------------------------------------------------ */
 /* /review — FSRS review stage + rating triplet                  */
 /* ------------------------------------------------------------ */
 
