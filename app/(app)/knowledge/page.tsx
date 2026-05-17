@@ -241,6 +241,28 @@ export default function KnowledgePage() {
   const optionalDataError =
     edgesQ.error ?? proposalsQ.error ?? edgeProposalsQ.error ?? mistakesQ.error;
 
+  const createEdgeM = useMutation({
+    mutationFn: (vars: {
+      from_knowledge_id: string;
+      to_knowledge_id: string;
+      relation_type: RelationType;
+      reasoning?: string;
+    }) =>
+      apiJson('/api/knowledge/edges', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...vars,
+          created_by: { actor_kind: 'user', actor_ref: 'self' },
+          reasoning: vars.reasoning ?? null,
+        }),
+      }),
+    onSuccess: () => {
+      setShowEdgeCreate(false);
+      queryClient.invalidateQueries({ queryKey: ['knowledge-edges'] });
+    },
+  });
+  const [showEdgeCreate, setShowEdgeCreate] = useState(false);
+
   return (
     <main className="knowledge-page">
       <PageHeader
@@ -264,7 +286,26 @@ export default function KnowledgePage() {
             Graph
           </button>
         </div>
+        <Button
+          variant="primary"
+          icon="plus"
+          onClick={() => setShowEdgeCreate((v) => !v)}
+          className="knowledge-btn-primary"
+        >
+          {showEdgeCreate ? '取消' : '新建关系'}
+        </Button>
       </PageHeader>
+
+      {showEdgeCreate && (
+        <Card pad="lg" style={{ marginBottom: 'var(--s-4)' }}>
+          <EdgeCreateForm
+            nodes={nodes}
+            onSubmit={(vars) => createEdgeM.mutate(vars)}
+            pending={createEdgeM.isPending}
+            error={createEdgeM.error as Error | null}
+          />
+        </Card>
+      )}
 
       {knowledgeQ.error && <LoadError error={knowledgeQ.error} />}
 
@@ -736,6 +777,104 @@ function KnowledgeRelation({
           <Icon name="info" size={12} />
         </span>
       )}
+    </div>
+  );
+}
+
+function EdgeCreateForm({
+  nodes,
+  onSubmit,
+  pending,
+  error,
+}: {
+  nodes: KnowledgeNode[];
+  onSubmit: (vars: {
+    from_knowledge_id: string;
+    to_knowledge_id: string;
+    relation_type: RelationType;
+    reasoning?: string;
+  }) => void;
+  pending: boolean;
+  error: Error | null;
+}) {
+  const [fromId, setFromId] = useState<string>('');
+  const [toId, setToId] = useState<string>('');
+  const [relation, setRelation] = useState<RelationType>('related_to');
+  const [reasoning, setReasoning] = useState('');
+  const sortedNodes = useMemo(
+    () => [...nodes].sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN')),
+    [nodes],
+  );
+  const canSubmit = fromId && toId && fromId !== toId && !pending;
+  return (
+    <div>
+      <h4 className="kf-title">新建知识关系</h4>
+      <div className="kf-row">
+        <label className="kf-label">
+          From
+          <select value={fromId} onChange={(e) => setFromId(e.target.value)} className="kf-select">
+            <option value="">—</option>
+            {sortedNodes.map((n) => (
+              <option key={n.id} value={n.id}>
+                {n.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="kf-label">
+          关系
+          <select
+            value={relation}
+            onChange={(e) => setRelation(e.target.value as RelationType)}
+            className="kf-select"
+          >
+            {Object.entries(RELATION_TYPES).map(([k, v]) => (
+              <option key={k} value={k}>
+                {v.label} ({k})
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="kf-label">
+          To
+          <select value={toId} onChange={(e) => setToId(e.target.value)} className="kf-select">
+            <option value="">—</option>
+            {sortedNodes.map((n) => (
+              <option key={n.id} value={n.id}>
+                {n.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <label className="kf-label" style={{ marginTop: 'var(--s-3)' }}>
+        Reasoning（可选）
+        <textarea
+          value={reasoning}
+          onChange={(e) => setReasoning(e.target.value)}
+          rows={2}
+          className="kf-textarea"
+          placeholder="为什么这两个节点是这种关系"
+        />
+      </label>
+      {fromId && toId && fromId === toId && <p className="kf-error">From 和 To 不能是同一节点</p>}
+      {error && <p className="kf-error">创建失败：{error.message}</p>}
+      <div className="kf-actions">
+        <Button
+          variant="primary"
+          disabled={!canSubmit}
+          onClick={() =>
+            onSubmit({
+              from_knowledge_id: fromId,
+              to_knowledge_id: toId,
+              relation_type: relation,
+              reasoning: reasoning.trim() ? reasoning.trim() : undefined,
+            })
+          }
+        >
+          {pending ? '创建中…' : '创建关系'}
+        </Button>
+      </div>
     </div>
   );
 }
