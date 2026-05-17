@@ -1,24 +1,23 @@
 'use client';
 
-// Phase 1c.2 Vision MVP — /record vision_single + vision_paper tab body.
+// Phase 1c.2 Vision — /record vision_single + vision_paper tab body.
 //
-// State machine, mirrors what the addendum/spec calls Vision flow A path:
-//   idle           — file picker only, no files selected
-//   uploading      — uploading assets to /api/assets in parallel
-//   creating       — POST /api/ingestion to create the learning_session
-//   extracting     — extract triggered, listening SSE on /api/ingestion/[id]/events
-//   reviewing      — extraction completed; blocks fetched; user editing per-block
-//   importing      — POST /api/ingestion/[id]/import in flight
-//   error          — any step above bailed; user can reset
-//
-// Defers (planned for 1c.2.C):
-//   - cross-page block merge UI (manual merge button + selection)
-//   - Tier 2 / Tier 3 rescue button per block (calls /api/ingestion/[id]/rescue)
-//   - bbox-on-image overlay + tencent_grading evidence chip
-//   - structured tree preview (currently we render extracted_prompt_md only)
+// 1c.2.B MVP shipped the happy path (upload → SSE → review → import).
+// 1c.2.C added (this file):
+//   - Per-block image preview via /api/assets/[id]/content (blob URL) with
+//     SVG bbox overlay per page_span.
+//   - Tier 2 / Tier 3 rescue buttons per block, calling
+//     /api/ingestion/[id]/rescue and invalidating the blocks query.
+//   - Cross-page block merge: each block past the first can be merged into
+//     the previous bucket; followers render as a compact pill, the primary
+//     keeps the editor; at import time we concatenate source_block_ids /
+//     page_spans / image_refs into one ImportBlock per bucket.
+//   - Read-only collapsible preview of the Tencent Mark Agent structured
+//     tree (block.structured) — sub_questions / options / answers /
+//     question_no — sits above the editable prompt textarea.
 
 import { ApiAuthError, ApiError, apiJson } from '@/ui/lib/api';
-import { uploadAsset } from '@/ui/lib/assets';
+import { uploadAsset, useAssetUrl } from '@/ui/lib/assets';
 import { useIngestionSSE } from '@/ui/lib/sse';
 import { formatRelTime } from '@/ui/lib/utils';
 import { Badge } from '@/ui/primitives/Badge';
@@ -84,6 +83,16 @@ interface KnowledgeNode {
   effective_domain: string | null;
 }
 
+interface StructuredNode {
+  id: string;
+  role: 'stem' | 'sub' | 'standalone';
+  question_no?: string;
+  prompt_text: string;
+  options?: { label: string; text: string }[];
+  answers?: string[];
+  sub_questions?: StructuredNode[];
+}
+
 interface BlockRow {
   id: string;
   ingestion_session_id: string;
@@ -94,6 +103,7 @@ interface BlockRow {
     role?: string;
   }>;
   extracted_prompt_md: string | null;
+  structured: StructuredNode | null;
   reference_md: string | null;
   wrong_answer_md: string | null;
   image_refs: string[];
@@ -105,7 +115,7 @@ interface BlockRow {
 }
 
 interface BlockFormState {
-  prompt_md: string; // editable copy seeded from extracted_prompt_md
+  prompt_md: string;
   reference_md: string;
   wrong_answer_md: string;
   knowledge_ids: string[];
@@ -130,16 +140,18 @@ export function VisionTab({ mode }: { mode: Mode }) {
 
   const [phase, setPhase] = useState<Phase>('idle');
   const [files, setFiles] = useState<File[]>([]);
-  const [assetIds, setAssetIds] = useState<string[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [blockForms, setBlockForms] = useState<Record<string, BlockFormState>>({});
+  // bucketByBlockId[blockId] = primary block id of the merge bucket. Initially
+  // every block points at itself. "合并到上一个块" rewrites this to the
+  // previous block's bucket. Followers render as a compact pill and their
+  // form state is ignored at import time.
+  const [bucketByBlockId, setBucketByBlockId] = useState<Record<string, string>>({});
   const seededBlockIdsRef = useRef<Set<string>>(new Set());
 
-  // SSE listener — opens once sessionId is set. Hook auto-cleans on unmount.
   const sse = useIngestionSSE(phase === 'extracting' ? sessionId : null);
 
-  // Once any terminal event arrives, flip to reviewing (or surface error).
   useEffect(() => {
     if (phase !== 'extracting') return;
     const terminal = sse.events.find((e) => SSE_TERMINAL[e.event_type]);
@@ -156,7 +168,6 @@ export function VisionTab({ mode }: { mode: Mode }) {
     setPhase('reviewing');
   }, [phase, sse.events]);
 
-  // Fetch blocks once we move into reviewing (or when sessionId changes).
   const blocksQ = useQuery<{ rows: BlockRow[] }>({
     queryKey: ['ingestion-blocks', sessionId],
     queryFn: () => apiJson<{ rows: BlockRow[] }>(`/api/ingestion/${sessionId}/blocks`),
@@ -168,7 +179,6 @@ export function VisionTab({ mode }: { mode: Mode }) {
     queryFn: () => apiJson<{ rows: KnowledgeNode[] }>('/api/knowledge'),
   });
 
-  // Seed per-block form state once blocks arrive.
   useEffect(() => {
     const rows = blocksQ.data?.rows ?? [];
     if (rows.length === 0) return;
@@ -191,16 +201,20 @@ export function VisionTab({ mode }: { mode: Mode }) {
       }
       return next;
     });
+    setBucketByBlockId((prev) => {
+      const next = { ...prev };
+      for (const b of rows) {
+        if (!(b.id in next)) next[b.id] = b.id;
+      }
+      return next;
+    });
   }, [blocksQ.data]);
 
   const startMutation = useMutation({
     mutationFn: async (selectedFiles: File[]) => {
-      // 1. upload all assets
       setPhase('uploading');
       const assets = await Promise.all(selectedFiles.map((f) => uploadAsset(f)));
       const ids = assets.map((a) => a.id);
-      setAssetIds(ids);
-      // 2. create session
       setPhase('creating');
       const session = await apiJson<{
         session: { id: string };
@@ -208,7 +222,6 @@ export function VisionTab({ mode }: { mode: Mode }) {
         method: 'POST',
         body: JSON.stringify({ entrypoint: mode, asset_ids: ids }),
       });
-      // 3. trigger extract
       await apiJson(`/api/ingestion/${session.session.id}/extract`, { method: 'POST' });
       return session.session.id;
     },
@@ -222,27 +235,64 @@ export function VisionTab({ mode }: { mode: Mode }) {
     },
   });
 
+  // groups = primary block + followers in source order. Used by both the
+  // reviewing UI (one editor per primary) and the import handler (one
+  // ImportBlock per bucket).
+  const groups = useMemo(() => {
+    const rows = blocksQ.data?.rows ?? [];
+    const byPrimary = new Map<string, { primary: BlockRow; followers: BlockRow[] }>();
+    for (const b of rows) {
+      const bucket = bucketByBlockId[b.id] ?? b.id;
+      if (bucket === b.id) {
+        const existing = byPrimary.get(b.id);
+        if (existing) existing.primary = b;
+        else byPrimary.set(b.id, { primary: b, followers: [] });
+      } else {
+        const cur = byPrimary.get(bucket);
+        if (cur) cur.followers.push(b);
+        else
+          byPrimary.set(bucket, {
+            primary: rows.find((r) => r.id === bucket) ?? b,
+            followers: [b],
+          });
+      }
+    }
+    // Preserve original source order based on the primary's index.
+    return rows
+      .filter((b) => (bucketByBlockId[b.id] ?? b.id) === b.id)
+      .map((b) => byPrimary.get(b.id))
+      .filter((g): g is { primary: BlockRow; followers: BlockRow[] } => Boolean(g));
+  }, [blocksQ.data, bucketByBlockId]);
+
   const importMutation = useMutation({
     mutationFn: async () => {
       if (!sessionId) throw new Error('no session');
-      const rows = blocksQ.data?.rows ?? [];
-      const importable = rows
-        .filter((b) => !blockForms[b.id]?.ignored)
-        .map((b) => {
-          const f = blockForms[b.id];
-          if (!f) throw new Error(`block ${b.id} form missing`);
-          if (!f.prompt_md.trim()) throw new Error(`block ${b.id}: 题面不能空`);
-          if (!f.wrong_answer_md.trim()) throw new Error(`block ${b.id}: 错答不能空`);
-          if (f.knowledge_ids.length === 0) throw new Error(`block ${b.id}: 至少选 1 个知识点`);
-          const pageSpans =
-            b.page_spans.length > 0
-              ? b.page_spans
+      const importable = groups
+        .filter((g) => !blockForms[g.primary.id]?.ignored)
+        .map((g) => {
+          const f = blockForms[g.primary.id];
+          if (!f) throw new Error(`block ${g.primary.id} form missing`);
+          if (!f.prompt_md.trim()) throw new Error(`block ${g.primary.id}: 题面不能空`);
+          if (!f.wrong_answer_md.trim()) throw new Error(`block ${g.primary.id}: 错答不能空`);
+          if (f.knowledge_ids.length === 0)
+            throw new Error(`block ${g.primary.id}: 至少选 1 个知识点`);
+          const members = [g.primary, ...g.followers];
+          const sourceBlockIds = members.map((m) => m.id);
+          const pageSpans = members.flatMap((m) => m.page_spans);
+          const ensuredSpans =
+            pageSpans.length > 0
+              ? pageSpans
               : [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 } }];
+          const imageRefs = Array.from(
+            new Set(
+              members.flatMap((m) => (m.image_refs.length > 0 ? m.image_refs : m.source_asset_ids)),
+            ),
+          );
           return {
-            block_id: b.id,
-            source_block_ids: [b.id],
-            page_spans: pageSpans,
-            image_refs: b.image_refs.length > 0 ? b.image_refs : b.source_asset_ids,
+            block_id: g.primary.id,
+            source_block_ids: sourceBlockIds,
+            page_spans: ensuredSpans,
+            image_refs: imageRefs,
             final_prompt_md: f.prompt_md.trim(),
             final_reference_md: f.reference_md.trim() ? f.reference_md.trim() : null,
             final_wrong_answer_md: f.wrong_answer_md.trim(),
@@ -270,6 +320,24 @@ export function VisionTab({ mode }: { mode: Mode }) {
     onError: (err) => setErrorMessage(formatError(err)),
   });
 
+  const rescueMutation = useMutation({
+    mutationFn: async (vars: { block: BlockRow; tier: 2 | 3 }) => {
+      if (!sessionId) throw new Error('no session');
+      const page = vars.block.page_spans[0]?.page_index ?? 0;
+      return apiJson(`/api/ingestion/${sessionId}/rescue`, {
+        method: 'POST',
+        body: JSON.stringify({
+          block_id: vars.block.id,
+          page,
+          tier: vars.tier,
+        }),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ingestion-blocks', sessionId] });
+    },
+  });
+
   const onPickFiles = (list: FileList | null) => {
     if (!list || list.length === 0) return;
     const picked = Array.from(list).slice(0, maxFiles);
@@ -280,14 +348,26 @@ export function VisionTab({ mode }: { mode: Mode }) {
   const reset = () => {
     setPhase('idle');
     setFiles([]);
-    setAssetIds([]);
     setSessionId(null);
     setBlockForms({});
+    setBucketByBlockId({});
     seededBlockIdsRef.current = new Set();
     setErrorMessage(null);
   };
 
   const blocks = blocksQ.data?.rows ?? [];
+  const rowIndexById = new Map(blocks.map((b, i) => [b.id, i]));
+
+  const mergeIntoPrev = (blockId: string) => {
+    const idx = rowIndexById.get(blockId);
+    if (idx === undefined || idx === 0) return;
+    const prevId = blocks[idx - 1].id;
+    const prevBucket = bucketByBlockId[prevId] ?? prevId;
+    setBucketByBlockId((cur) => ({ ...cur, [blockId]: prevBucket }));
+  };
+  const splitMerge = (blockId: string) => {
+    setBucketByBlockId((cur) => ({ ...cur, [blockId]: blockId }));
+  };
 
   return (
     <Card pad="lg">
@@ -357,22 +437,33 @@ export function VisionTab({ mode }: { mode: Mode }) {
           {blocksQ.isSuccess && blocks.length === 0 && (
             <p style={mutedStyle}>抽取完成但没有产出任何块；可能是 OCR 没有识别到题目。</p>
           )}
-          {blocks.map((b, idx) => (
+          {groups.map((g) => (
             <BlockEditor
-              key={b.id}
-              index={idx}
-              block={b}
-              form={blockForms[b.id]}
+              key={g.primary.id}
+              primary={g.primary}
+              followers={g.followers}
+              primaryIndex={rowIndexById.get(g.primary.id) ?? 0}
+              canMergeIntoPrev={
+                (rowIndexById.get(g.primary.id) ?? 0) > 0 && mode === 'vision_paper'
+              }
+              form={blockForms[g.primary.id]}
               setForm={(updater) =>
                 setBlockForms((prev) => {
-                  const cur = prev[b.id];
+                  const cur = prev[g.primary.id];
                   if (!cur) return prev;
-                  return { ...prev, [b.id]: updater(cur) };
+                  return { ...prev, [g.primary.id]: updater(cur) };
                 })
               }
               knowledgeNodes={knowledgeQ.data?.rows ?? []}
+              onMergeIntoPrev={() => mergeIntoPrev(g.primary.id)}
+              onSplitMerge={splitMerge}
+              onRescue={(block, tier) => rescueMutation.mutate({ block, tier })}
+              rescuing={rescueMutation.isPending}
             />
           ))}
+          {rescueMutation.isError && (
+            <p style={errorStyle}>救援失败：{formatError(rescueMutation.error)}</p>
+          )}
           {errorMessage && <p style={errorStyle}>{errorMessage}</p>}
           {importMutation.isError && (
             <p style={errorStyle}>导入失败：{formatError(importMutation.error)}</p>
@@ -390,11 +481,11 @@ export function VisionTab({ mode }: { mode: Mode }) {
             </Button>
             <Button
               onClick={() => importMutation.mutate()}
-              disabled={blocks.length === 0 || importMutation.isPending}
+              disabled={groups.length === 0 || importMutation.isPending}
             >
               {importMutation.isPending
                 ? '导入中…'
-                : `批量导入 · ${blocks.filter((b) => !blockForms[b.id]?.ignored).length} 道 → /mistakes`}
+                : `批量导入 · ${groups.filter((g) => !blockForms[g.primary.id]?.ignored).length} 道 → /mistakes`}
             </Button>
           </div>
         </div>
@@ -415,14 +506,32 @@ export function VisionTab({ mode }: { mode: Mode }) {
 }
 
 interface BlockEditorProps {
-  index: number;
-  block: BlockRow;
+  primary: BlockRow;
+  followers: BlockRow[];
+  primaryIndex: number;
+  canMergeIntoPrev: boolean;
   form: BlockFormState | undefined;
   setForm: (updater: (cur: BlockFormState) => BlockFormState) => void;
   knowledgeNodes: KnowledgeNode[];
+  onMergeIntoPrev: () => void;
+  onSplitMerge: (followerId: string) => void;
+  onRescue: (block: BlockRow, tier: 2 | 3) => void;
+  rescuing: boolean;
 }
 
-function BlockEditor({ index, block, form, setForm, knowledgeNodes }: BlockEditorProps) {
+function BlockEditor({
+  primary,
+  followers,
+  primaryIndex,
+  canMergeIntoPrev,
+  form,
+  setForm,
+  knowledgeNodes,
+  onMergeIntoPrev,
+  onSplitMerge,
+  onRescue,
+  rescuing,
+}: BlockEditorProps) {
   const [kFilter, setKFilter] = useState('');
   const filteredNodes = useMemo(() => {
     const f = kFilter.trim().toLowerCase();
@@ -444,6 +553,8 @@ function BlockEditor({ index, block, form, setForm, knowledgeNodes }: BlockEdito
         : [...cur.knowledge_ids, id],
     }));
 
+  const members = [primary, ...followers];
+
   return (
     <div
       style={{
@@ -452,11 +563,45 @@ function BlockEditor({ index, block, form, setForm, knowledgeNodes }: BlockEdito
       }}
     >
       <div style={blockHeadStyle}>
-        <span style={blockIndexStyle}>#{index + 1}</span>
-        <LayoutQualityBadge q={block.layout_quality} />
-        <Badge tone="neutral">conf {(block.extraction_confidence * 100).toFixed(0)}%</Badge>
-        <span style={metaStyle}>{formatRelTime(new Date(block.created_at * 1000))}</span>
+        <span style={blockIndexStyle}>#{primaryIndex + 1}</span>
+        <LayoutQualityBadge q={primary.layout_quality} />
+        <Badge tone="neutral">conf {(primary.extraction_confidence * 100).toFixed(0)}%</Badge>
+        <span style={metaStyle}>{formatRelTime(new Date(primary.created_at * 1000))}</span>
+        {followers.length > 0 && <Badge tone="info">merged · {followers.length + 1} blocks</Badge>}
         <span style={{ flex: 1 }} />
+        {canMergeIntoPrev && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onMergeIntoPrev}
+            disabled={form.ignored}
+            title="把本块作为上一块的延续"
+          >
+            合并到上块
+          </Button>
+        )}
+        {primary.layout_quality !== 'structured' && (
+          <>
+            <Button
+              variant="hard"
+              size="sm"
+              onClick={() => onRescue(primary, 2)}
+              disabled={form.ignored || rescuing}
+              title="haiku rescue"
+            >
+              {rescuing ? '…' : 'Tier 2'}
+            </Button>
+            <Button
+              variant="coral"
+              size="sm"
+              onClick={() => onRescue(primary, 3)}
+              disabled={form.ignored || rescuing}
+              title="sonnet rescue"
+            >
+              {rescuing ? '…' : 'Tier 3'}
+            </Button>
+          </>
+        )}
         <label style={{ display: 'flex', alignItems: 'center', gap: 4, ...metaStyle }}>
           <input
             type="checkbox"
@@ -466,6 +611,34 @@ function BlockEditor({ index, block, form, setForm, knowledgeNodes }: BlockEdito
           忽略本块
         </label>
       </div>
+
+      {/* Image strip — one preview per source asset across all merged members. */}
+      <BlockImageStrip members={members} />
+
+      {followers.length > 0 && (
+        <div style={mergeStripStyle}>
+          {followers.map((f) => (
+            <span key={f.id} style={followerPillStyle}>
+              <code style={timelineCodeStyle}>{f.id.slice(0, 6)}</code>
+              <button
+                type="button"
+                onClick={() => onSplitMerge(f.id)}
+                style={splitBtnStyle}
+                title="解除合并"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {primary.structured && (
+        <details style={{ marginTop: 'var(--s-3)' }}>
+          <summary style={metaStyle}>OCR structured 树（只读，调试）</summary>
+          <StructuredOutline node={primary.structured} />
+        </details>
+      )}
 
       <FieldLabel>题面（OCR 已填，可改）</FieldLabel>
       <textarea
@@ -579,6 +752,123 @@ function BlockEditor({ index, block, form, setForm, knowledgeNodes }: BlockEdito
         />
       )}
     </div>
+  );
+}
+
+// One image preview per (assetId, page_index) combination across all merged
+// blocks. Each preview overlays the bbox(es) that landed on that page.
+function BlockImageStrip({ members }: { members: BlockRow[] }) {
+  // Build a unique list of (assetId, page_index) tuples with their bboxes.
+  type ImgKey = { assetId: string; page: number; bboxes: BlockRow['page_spans'] };
+  const groups = useMemo(() => {
+    const out: ImgKey[] = [];
+    for (const m of members) {
+      const assets = m.image_refs.length > 0 ? m.image_refs : m.source_asset_ids;
+      for (const a of assets) {
+        for (const span of m.page_spans.length > 0
+          ? m.page_spans
+          : [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 } }]) {
+          const existing = out.find((e) => e.assetId === a && e.page === span.page_index);
+          if (existing) existing.bboxes.push(span);
+          else out.push({ assetId: a, page: span.page_index, bboxes: [span] });
+        }
+      }
+    }
+    return out;
+  }, [members]);
+
+  if (groups.length === 0) return null;
+  return (
+    <div style={imageStripStyle}>
+      {groups.map((g) => (
+        <BlockImagePreview key={`${g.assetId}#${g.page}`} assetId={g.assetId} bboxes={g.bboxes} />
+      ))}
+    </div>
+  );
+}
+
+function BlockImagePreview({
+  assetId,
+  bboxes,
+}: {
+  assetId: string;
+  bboxes: BlockRow['page_spans'];
+}) {
+  const { url, loading, error } = useAssetUrl(assetId);
+  const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
+
+  if (loading) {
+    return <div style={imageThumbLoadingStyle}>加载图…</div>;
+  }
+  if (error || !url) {
+    return <div style={imageThumbErrorStyle}>图加载失败</div>;
+  }
+
+  // Bboxes are stored normalized (0..1). SVG viewBox matches that so the
+  // overlay scales 1:1 regardless of the rendered image size.
+  return (
+    <div style={imageThumbWrapStyle}>
+      <img
+        src={url}
+        alt=""
+        style={imageThumbStyle}
+        onLoad={(e) =>
+          setDims({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })
+        }
+      />
+      {dims && bboxes.length > 0 && (
+        <svg
+          viewBox="0 0 1 1"
+          preserveAspectRatio="none"
+          style={imageOverlayStyle}
+          aria-hidden="true"
+        >
+          {bboxes.map((b, i) => (
+            <rect
+              // biome-ignore lint/suspicious/noArrayIndexKey: bboxes are stable per render of this preview
+              key={i}
+              x={b.bbox.x}
+              y={b.bbox.y}
+              width={b.bbox.width}
+              height={b.bbox.height}
+              fill="rgba(215,119,87,0.18)"
+              stroke="var(--coral)"
+              strokeWidth={0.004}
+              vectorEffect="non-scaling-stroke"
+            />
+          ))}
+        </svg>
+      )}
+    </div>
+  );
+}
+
+function StructuredOutline({ node, depth = 0 }: { node: StructuredNode; depth?: number }) {
+  const headerBits = [node.role, node.question_no].filter(Boolean).join(' · ');
+  return (
+    <ul style={{ ...structuredListStyle, marginLeft: depth === 0 ? 0 : 'var(--s-3)' }}>
+      <li>
+        <span style={structuredHeaderStyle}>{headerBits || node.role}</span>
+        <span style={structuredPromptStyle}>{node.prompt_text}</span>
+        {node.options && node.options.length > 0 && (
+          <ul style={{ ...structuredListStyle, marginTop: 2 }}>
+            {node.options.map((o) => (
+              <li key={o.label} style={structuredOptionStyle}>
+                <code style={timelineCodeStyle}>{o.label}.</code> {o.text}
+              </li>
+            ))}
+          </ul>
+        )}
+        {node.answers && node.answers.length > 0 && (
+          <span style={structuredAnswerStyle}> · answer: {node.answers.join(', ')}</span>
+        )}
+        {node.sub_questions &&
+          node.sub_questions.length > 0 &&
+          node.sub_questions.map((s) => (
+            <StructuredOutline key={s.id} node={s} depth={depth + 1} />
+          ))}
+      </li>
+    </ul>
   );
 }
 
@@ -808,4 +1098,114 @@ const timelineCodeStyle: React.CSSProperties = {
   fontFamily: 'var(--font-mono)',
   fontSize: 'var(--fs-meta)',
   color: 'var(--ink-2)',
+};
+
+const imageStripStyle: React.CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 'var(--s-2)',
+  marginTop: 'var(--s-2)',
+};
+
+const imageThumbWrapStyle: React.CSSProperties = {
+  position: 'relative',
+  display: 'inline-block',
+  maxWidth: 220,
+  background: 'var(--paper-sunk)',
+  border: '1px solid var(--line)',
+  borderRadius: 'var(--r-2)',
+  overflow: 'hidden',
+};
+
+const imageThumbStyle: React.CSSProperties = {
+  display: 'block',
+  width: '100%',
+  height: 'auto',
+};
+
+const imageOverlayStyle: React.CSSProperties = {
+  position: 'absolute',
+  inset: 0,
+  width: '100%',
+  height: '100%',
+  pointerEvents: 'none',
+};
+
+const imageThumbLoadingStyle: React.CSSProperties = {
+  width: 200,
+  height: 80,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  background: 'var(--paper-sunk)',
+  border: '1px dashed var(--line)',
+  borderRadius: 'var(--r-2)',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 'var(--fs-meta)',
+  color: 'var(--ink-4)',
+};
+
+const imageThumbErrorStyle: React.CSSProperties = {
+  ...imageThumbLoadingStyle,
+  color: 'var(--again-ink)',
+};
+
+const mergeStripStyle: React.CSSProperties = {
+  marginTop: 'var(--s-2)',
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 4,
+};
+
+const followerPillStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+  padding: '2px 6px',
+  border: '1px solid var(--line)',
+  borderRadius: 'var(--r-pill)',
+  background: 'var(--paper-sunk)',
+};
+
+const splitBtnStyle: React.CSSProperties = {
+  fontFamily: 'var(--font-mono)',
+  fontSize: 12,
+  color: 'var(--ink-3)',
+  cursor: 'pointer',
+};
+
+const structuredListStyle: React.CSSProperties = {
+  listStyle: 'none',
+  margin: 'var(--s-2) 0 0',
+  padding: 0,
+  borderLeft: '2px solid var(--line-soft)',
+  paddingLeft: 'var(--s-2)',
+};
+
+const structuredHeaderStyle: React.CSSProperties = {
+  fontFamily: 'var(--font-mono)',
+  fontSize: 'var(--fs-meta)',
+  color: 'var(--ink-3)',
+  letterSpacing: 'var(--ls-wide)',
+  marginRight: 'var(--s-2)',
+};
+
+const structuredPromptStyle: React.CSSProperties = {
+  fontFamily: 'var(--font-serif)',
+  fontSize: 'var(--fs-caption)',
+  color: 'var(--ink-2)',
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
+};
+
+const structuredOptionStyle: React.CSSProperties = {
+  fontFamily: 'var(--font-serif)',
+  fontSize: 'var(--fs-caption)',
+  color: 'var(--ink-2)',
+};
+
+const structuredAnswerStyle: React.CSSProperties = {
+  fontFamily: 'var(--font-mono)',
+  fontSize: 'var(--fs-meta)',
+  color: 'var(--good-ink)',
 };
