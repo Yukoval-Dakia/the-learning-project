@@ -6,6 +6,7 @@ import { buildKnowledgeEdgeProposeNightlyHandler } from './handlers/knowledge_ed
 import { buildKnowledgePropoNightlyHandler } from './handlers/knowledge_propose_nightly';
 import { buildPruneJobEventsHandler } from './handlers/prune_job_events';
 import { buildPruneOrphanReviewSessionsHandler } from './handlers/prune_orphan_review_sessions';
+import { buildSessionSummaryHandler } from './handlers/session_summary';
 import { buildTencentOcrHandler } from './handlers/tencent_ocr_extract';
 
 /**
@@ -40,6 +41,16 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   await boss.createQueue('prune_orphan_review_sessions');
   await boss.work('prune_orphan_review_sessions', buildPruneOrphanReviewSessionsHandler(db));
   await boss.schedule('prune_orphan_review_sessions', '15 4 * * *', {}, { tz: 'Asia/Shanghai' });
+
+  // Phase 1d: SessionSummaryTask — enqueued by /api/review/sessions/[id]/end
+  // after a review session transitions to completed. async so the LLM call
+  // doesn't block the close request.
+  await boss.createQueue('session_summary');
+  await boss.work(
+    'session_summary',
+    { pollingIntervalSeconds: 2, batchSize: 1 },
+    buildSessionSummaryHandler(db),
+  );
 
   // Step 9: Tencent OCR Mark Agent —— 生产 async job
   // R2 in worker process needs env config; getR2() throws if missing — call inside

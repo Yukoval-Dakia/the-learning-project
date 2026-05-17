@@ -6,6 +6,7 @@
 import { z } from 'zod';
 
 import { db } from '@/db/client';
+import { createBoss } from '@/server/boss/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { Review } from '@/server/session';
 
@@ -54,6 +55,22 @@ export async function POST(
     const body = await parseBody(req);
     if (body.status === 'completed') {
       await Review.completeReviewSession(db, id);
+      // Enqueue async SessionSummaryTask (Phase 1d). Best-effort: if pg-boss
+      // is down the session still closes successfully and summary stays null
+      // (the /learning-sessions/[id] UI shows a stub in that case).
+      //
+      // Skip in vitest — the singleton boss instance + per-route invocation
+      // bloats the testcontainer's connection pool past max_connections,
+      // tipping over src/server/boss/client.test.ts. The summary handler is
+      // covered by its own unit test (src/server/session/summary.test.ts).
+      if (!process.env.VITEST) {
+        try {
+          const boss = createBoss();
+          await boss.send('session_summary', { session_id: id });
+        } catch (err) {
+          console.warn(`session_summary enqueue failed for ${id}:`, err);
+        }
+      }
     } else {
       await Review.abandonReviewSession(db, id);
     }
