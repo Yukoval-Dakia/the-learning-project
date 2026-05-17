@@ -21,7 +21,9 @@ export type CausePrimary =
 export interface Cause {
   actor_kind: CauseActorKind;
   primary: CausePrimary | string;
-  confidence?: number;
+  /** Phase 1c.2: secondary categories surfaced when the agent judge attached them. */
+  secondary?: string[] | null;
+  confidence?: number | null;
   ai_analysis_md?: string;
 }
 
@@ -53,10 +55,26 @@ export function CauseBadge({ cause, pendingSinceSec, className }: CauseBadgeProp
   const tone = isAi ? 'info' : 'good';
   const conf = cause.confidence != null ? ` (${Math.round(cause.confidence * 100)}%)` : '';
   const label = isAi ? `AI · ${cause.primary}${conf}` : `用户 · ${cause.primary}`;
+  const secondary = (cause.secondary ?? []).filter((s) => s && s !== cause.primary);
+
+  if (secondary.length === 0) {
+    return (
+      <Badge tone={tone} className={className}>
+        {label}
+      </Badge>
+    );
+  }
 
   return (
-    <Badge tone={tone} className={className}>
-      {label}
-    </Badge>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+      <Badge tone={tone} className={className}>
+        {label}
+      </Badge>
+      {secondary.map((s) => (
+        <Badge key={s} tone="neutral">
+          +{s}
+        </Badge>
+      ))}
+    </span>
   );
 }

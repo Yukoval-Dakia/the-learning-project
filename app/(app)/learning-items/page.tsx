@@ -8,7 +8,19 @@ import { PageHeader } from '@/ui/primitives/PageHeader';
 import { StatusBadge } from '@/ui/primitives/StatusBadge';
 import { TabBar } from '@/ui/primitives/TabBar';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import Link from 'next/link';
 import { useState } from 'react';
+
+function matchesKnowledgeFilter(
+  node: { name: string; effective_domain: string | null },
+  filter: string,
+): boolean {
+  const f = filter.trim().toLowerCase();
+  if (!f) return true;
+  return (
+    node.name.toLowerCase().includes(f) || (node.effective_domain ?? '').toLowerCase().includes(f)
+  );
+}
 
 type ItemStatus = 'pending' | 'in_progress' | 'done';
 type StatusFilter = 'all' | ItemStatus;
@@ -32,11 +44,21 @@ const FILTER_TABS: { id: StatusFilter; label: string }[] = [
   { id: 'done', label: '已完成' },
 ];
 
+interface KnowledgeNode {
+  id: string;
+  name: string;
+  effective_domain: string | null;
+}
+
 export default function LearningItemsPage() {
   const qc = useQueryClient();
   const [filter, setFilter] = useState<StatusFilter>('all');
   const [newTitle, setNewTitle] = useState('');
+  const [newKnowledgeIds, setNewKnowledgeIds] = useState<string[]>([]);
+  const [knowledgeFilter, setKnowledgeFilter] = useState('');
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [editingKnowledgeId, setEditingKnowledgeId] = useState<string | null>(null);
+  const [draftKnowledgeIds, setDraftKnowledgeIds] = useState<string[]>([]);
 
   const itemsQ = useQuery({
     queryKey: ['learning-items', filter],
@@ -49,25 +71,44 @@ export default function LearningItemsPage() {
     },
   });
 
+  const knowledgeQ = useQuery({
+    queryKey: ['knowledge'],
+    queryFn: () => apiJson<{ rows: KnowledgeNode[] }>('/api/knowledge'),
+  });
+  const knowledgeById = new Map(knowledgeQ.data?.rows.map((n) => [n.id, n]) ?? []);
+
   const createM = useMutation({
-    mutationFn: (title: string) =>
+    mutationFn: (payload: { title: string; knowledge_ids: string[] }) =>
       apiJson<{ id: string }>('/api/learning-items', {
         method: 'POST',
-        body: JSON.stringify({ title }),
+        body: JSON.stringify(payload),
       }),
     onSuccess: () => {
       setNewTitle('');
+      setNewKnowledgeIds([]);
       qc.invalidateQueries({ queryKey: ['learning-items'] });
     },
   });
 
   const updateM = useMutation({
-    mutationFn: (vars: { id: string; version: number; status: ItemStatus }) =>
+    mutationFn: (vars: {
+      id: string;
+      version: number;
+      status?: ItemStatus;
+      knowledge_ids?: string[];
+    }) =>
       apiJson(`/api/learning-items/${vars.id}`, {
         method: 'PATCH',
-        body: JSON.stringify({ version: vars.version, status: vars.status }),
+        body: JSON.stringify({
+          version: vars.version,
+          ...(vars.status ? { status: vars.status } : {}),
+          ...(vars.knowledge_ids ? { knowledge_ids: vars.knowledge_ids } : {}),
+        }),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['learning-items'] }),
+    onSuccess: () => {
+      setEditingKnowledgeId(null);
+      qc.invalidateQueries({ queryKey: ['learning-items'] });
+    },
   });
 
   const deleteM = useMutation({
@@ -113,11 +154,46 @@ export default function LearningItemsPage() {
             maxLength={200}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && newTitle.trim() && !createM.isPending) {
-                createM.mutate(newTitle.trim());
+                createM.mutate({ title: newTitle.trim(), knowledge_ids: newKnowledgeIds });
               }
             }}
             style={inputStyle}
           />
+
+          <p style={{ ...metaStyle, marginTop: 'var(--s-3)' }}>
+            知识点（可选，已选 {newKnowledgeIds.length}）
+          </p>
+          <input
+            type="text"
+            value={knowledgeFilter}
+            onChange={(e) => setKnowledgeFilter(e.target.value)}
+            placeholder="搜索知识点"
+            style={{ ...inputStyle, marginTop: 4 }}
+          />
+          <div style={chipRowStyle}>
+            {(knowledgeQ.data?.rows ?? [])
+              .filter((n) => matchesKnowledgeFilter(n, knowledgeFilter))
+              .slice(0, 30)
+              .map((n) => {
+                const selected = newKnowledgeIds.includes(n.id);
+                return (
+                  <button
+                    type="button"
+                    key={n.id}
+                    onClick={() =>
+                      setNewKnowledgeIds((cur) =>
+                        cur.includes(n.id) ? cur.filter((x) => x !== n.id) : [...cur, n.id],
+                      )
+                    }
+                    style={chipStyle(selected)}
+                    title={n.effective_domain ?? ''}
+                  >
+                    {n.name}
+                  </button>
+                );
+              })}
+          </div>
+
           <div
             style={{
               marginTop: 'var(--s-3)',
@@ -127,7 +203,10 @@ export default function LearningItemsPage() {
             }}
           >
             <Button
-              onClick={() => newTitle.trim() && createM.mutate(newTitle.trim())}
+              onClick={() =>
+                newTitle.trim() &&
+                createM.mutate({ title: newTitle.trim(), knowledge_ids: newKnowledgeIds })
+              }
               disabled={!newTitle.trim() || createM.isPending}
             >
               {createM.isPending ? '创建中…' : '创建'}
@@ -176,6 +255,91 @@ export default function LearningItemsPage() {
               <StatusBadge status={item.status} />
             </div>
             {item.content && <p style={contentStyle}>{item.content}</p>}
+
+            {/* knowledge_ids display + inline editor */}
+            {editingKnowledgeId === item.id ? (
+              <div style={{ marginTop: 'var(--s-2)' }}>
+                <p style={metaStyle}>编辑知识点（已选 {draftKnowledgeIds.length}）</p>
+                <input
+                  type="text"
+                  value={knowledgeFilter}
+                  onChange={(e) => setKnowledgeFilter(e.target.value)}
+                  placeholder="搜索"
+                  style={{ ...inputStyle, marginTop: 4 }}
+                />
+                <div style={chipRowStyle}>
+                  {(knowledgeQ.data?.rows ?? [])
+                    .filter((n) => matchesKnowledgeFilter(n, knowledgeFilter))
+                    .slice(0, 30)
+                    .map((n) => {
+                      const selected = draftKnowledgeIds.includes(n.id);
+                      return (
+                        <button
+                          type="button"
+                          key={n.id}
+                          onClick={() =>
+                            setDraftKnowledgeIds((cur) =>
+                              cur.includes(n.id) ? cur.filter((x) => x !== n.id) : [...cur, n.id],
+                            )
+                          }
+                          style={chipStyle(selected)}
+                        >
+                          {n.name}
+                        </button>
+                      );
+                    })}
+                </div>
+                <div
+                  style={{
+                    marginTop: 'var(--s-2)',
+                    display: 'flex',
+                    justifyContent: 'flex-end',
+                    gap: 'var(--s-2)',
+                  }}
+                >
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setEditingKnowledgeId(null)}
+                    disabled={updateM.isPending}
+                  >
+                    取消
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() =>
+                      updateM.mutate({
+                        id: item.id,
+                        version: item.version,
+                        knowledge_ids: draftKnowledgeIds,
+                      })
+                    }
+                    disabled={updateM.isPending}
+                  >
+                    {updateM.isPending ? '保存中…' : '保存'}
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              item.knowledge_ids.length > 0 && (
+                <div style={knowledgeChipsStyle}>
+                  {item.knowledge_ids.map((kid) => {
+                    const node = knowledgeById.get(kid);
+                    return (
+                      <Link
+                        key={kid}
+                        href={`/knowledge/${kid}`}
+                        style={knowledgeChipLinkStyle}
+                        title={node?.effective_domain ?? kid}
+                      >
+                        #{node?.name ?? kid}
+                      </Link>
+                    );
+                  })}
+                </div>
+              )
+            )}
+
             <div style={actionsStyle}>
               {item.status === 'pending' && (
                 <>
@@ -238,6 +402,19 @@ export default function LearningItemsPage() {
                 </Button>
               )}
               <span style={{ flex: 1 }} />
+              {editingKnowledgeId !== item.id && (
+                <Button
+                  variant="quiet"
+                  size="sm"
+                  onClick={() => {
+                    setEditingKnowledgeId(item.id);
+                    setDraftKnowledgeIds(item.knowledge_ids);
+                    setKnowledgeFilter('');
+                  }}
+                >
+                  改知识点
+                </Button>
+              )}
               {pendingDeleteId === item.id ? (
                 <>
                   <span style={confirmStyle}>确认删除？</span>
@@ -359,5 +536,44 @@ const confirmStyle: React.CSSProperties = {
   fontFamily: 'var(--font-mono)',
   fontSize: 'var(--fs-meta)',
   color: 'var(--again-ink)',
+  letterSpacing: 'var(--ls-wide)',
+};
+
+const chipRowStyle: React.CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 4,
+  marginTop: 'var(--s-2)',
+};
+
+const chipStyle = (active: boolean): React.CSSProperties => ({
+  fontFamily: 'var(--font-mono)',
+  fontSize: 'var(--fs-meta)',
+  padding: '4px 10px',
+  borderRadius: 'var(--r-pill)',
+  border: `1px solid ${active ? 'var(--coral)' : 'var(--line)'}`,
+  background: active ? 'var(--coral-soft)' : 'var(--paper-sunk)',
+  color: active ? 'var(--coral-ink)' : 'var(--ink-2)',
+  cursor: 'pointer',
+  whiteSpace: 'nowrap',
+  letterSpacing: 'var(--ls-wide)',
+});
+
+const knowledgeChipsStyle: React.CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 4,
+  marginTop: 'var(--s-2)',
+};
+
+const knowledgeChipLinkStyle: React.CSSProperties = {
+  fontFamily: 'var(--font-mono)',
+  fontSize: 'var(--fs-meta)',
+  padding: '2px 8px',
+  borderRadius: 'var(--r-pill)',
+  border: '1px solid var(--line)',
+  background: 'var(--paper-sunk)',
+  color: 'var(--coral)',
+  textDecoration: 'none',
   letterSpacing: 'var(--ls-wide)',
 };

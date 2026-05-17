@@ -331,7 +331,13 @@ async function seedAttempt(opts: {
   });
 }
 
-async function seedJudge(opts: { id: string; attempt_event_id: string }): Promise<void> {
+async function seedJudge(opts: {
+  id: string;
+  attempt_event_id: string;
+  primary_category?: string;
+  secondary_categories?: string[];
+  confidence?: number;
+}): Promise<void> {
   const db = testDb();
   await db.insert(event).values({
     id: opts.id,
@@ -344,10 +350,10 @@ async function seedJudge(opts: { id: string; attempt_event_id: string }): Promis
     outcome: 'success',
     payload: {
       cause: {
-        primary_category: 'concept',
-        secondary_categories: [],
+        primary_category: opts.primary_category ?? 'concept',
+        secondary_categories: opts.secondary_categories ?? [],
         analysis_md: 'analysis',
-        confidence: 0.9,
+        confidence: opts.confidence ?? 0.9,
       },
       referenced_knowledge_ids: ['k1'],
     },
@@ -426,9 +432,37 @@ describe('GET /api/mistakes', () => {
     expect(body.rows[0].cause).toEqual({
       source: 'agent',
       primary_category: 'concept',
+      secondary_categories: [],
       user_notes: null,
+      confidence: 0.9,
     });
     expect(typeof body.rows[0].created_at).toBe('number');
+  });
+
+  it('surfaces agent judge secondary_categories + confidence on the wire', async () => {
+    await seedQuestion('q1', 'p1');
+    await seedAttempt({ id: 'a1', question_id: 'q1' });
+    await seedJudge({
+      id: 'j1',
+      attempt_event_id: 'a1',
+      primary_category: 'concept',
+      secondary_categories: ['memory', 'careless_mistake'],
+      confidence: 0.72,
+    });
+
+    const res = await getMistakes();
+    const body = (await res.json()) as {
+      rows: Array<{
+        cause: {
+          source: string;
+          primary_category: string;
+          secondary_categories: string[];
+          confidence: number | null;
+        };
+      }>;
+    };
+    expect(body.rows[0].cause.secondary_categories).toEqual(['memory', 'careless_mistake']);
+    expect(body.rows[0].cause.confidence).toBe(0.72);
   });
 
   it('user_cause overrides agent judge in the GET projection', async () => {
@@ -445,13 +479,21 @@ describe('GET /api/mistakes', () => {
     const res = await getMistakes();
     const body = (await res.json()) as {
       rows: Array<{
-        cause: { source: string; primary_category: string; user_notes: string | null } | null;
+        cause: {
+          source: string;
+          primary_category: string;
+          secondary_categories: string[];
+          user_notes: string | null;
+          confidence: number | null;
+        } | null;
       }>;
     };
     expect(body.rows[0].cause).toEqual({
       source: 'user',
       primary_category: 'memory',
+      secondary_categories: [],
       user_notes: '记错了',
+      confidence: null,
     });
   });
 
