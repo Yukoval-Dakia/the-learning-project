@@ -414,6 +414,270 @@ ol {
 }
 
 /* ------------------------------------------------------------ */
+/* Page chrome (ported from loom-design-v2.1/app.css §"Page chrome") */
+/* ------------------------------------------------------------ */
+
+.page {
+  padding: 36px 28px 56px;
+  max-width: 880px;
+  margin: 0 auto;
+}
+.page.wide {
+  max-width: 1140px;
+}
+.page.prose {
+  max-width: 720px;
+}
+
+.page-head {
+  margin-bottom: var(--s-6);
+}
+.page-head .meta {
+  margin-bottom: 4px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+}
+.page-head-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-4);
+  flex-wrap: wrap;
+}
+.page-head h1 {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h1);
+  font-weight: 500;
+  line-height: var(--lh-tight);
+  letter-spacing: var(--ls-tight);
+  margin: 0;
+  color: var(--ink);
+}
+.page-head .sub {
+  margin: 6px 0 0;
+  font-size: 14.5px;
+  color: var(--ink-3);
+  line-height: 1.55;
+  max-width: 56ch;
+}
+.page-head-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* ------------------------------------------------------------ */
+/* /today — KPI strip + lanes + cost ribbon                      */
+/* ------------------------------------------------------------ */
+
+.kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--s-3);
+  margin-bottom: var(--s-6);
+}
+.kpi {
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  font-family: inherit;
+}
+.kpi.kpi-clickable {
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast)
+    var(--ease-out), transform var(--dur-fast) var(--ease-out);
+  text-decoration: none;
+  color: inherit;
+}
+.kpi.kpi-clickable:hover {
+  border-color: var(--coral-line);
+  background: var(--paper-tint);
+}
+.kpi.kpi-clickable:active {
+  transform: scale(0.99);
+}
+.kpi .kpi-num {
+  font-family: var(--font-serif);
+  font-size: 30px;
+  font-weight: 500;
+  line-height: 1.1;
+  color: var(--ink);
+  letter-spacing: var(--ls-tight);
+}
+.kpi .kpi-num small {
+  font-size: 16px;
+  color: var(--ink-4);
+  margin-left: 4px;
+  font-weight: 400;
+}
+.kpi .kpi-label {
+  font-size: 12.5px;
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+}
+.kpi .kpi-trend {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--ink-3);
+  margin-top: 2px;
+}
+.kpi .kpi-trend.up {
+  color: var(--good-ink);
+}
+.kpi .kpi-trend.down {
+  color: var(--again-ink);
+}
+
+.lanes {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr;
+  gap: var(--s-4);
+  margin-top: var(--s-3);
+}
+.lane {
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  padding: 18px 18px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 280px;
+}
+.lane.is-stub {
+  background: var(--paper-sunk);
+  border-style: dashed;
+}
+.lane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.lane-head h3 {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--ink);
+}
+.lane-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+}
+.lane-empty {
+  font-size: 13.5px;
+  color: var(--ink-4);
+  padding: 14px 0;
+}
+.lane-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.lane-item {
+  background: var(--paper);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-2);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.lane-item:hover {
+  border-color: var(--line);
+}
+.lane-item .top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-4);
+}
+.lane-item .body {
+  font-size: 14px;
+  color: var(--ink-2);
+  line-height: 1.45;
+}
+.lane-item .body.muted {
+  color: var(--ink-3);
+}
+.lane-item .reason {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--ink-3);
+  letter-spacing: var(--ls-wide);
+}
+.lane-cta {
+  margin-top: auto;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* Cost ribbon */
+.cost-ribbon {
+  margin: var(--s-8) 0 0;
+  padding: 12px 16px;
+  border-top: 1px solid var(--line-soft);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-4);
+  display: flex;
+  gap: var(--s-4);
+  flex-wrap: wrap;
+  align-items: center;
+}
+.cost-ribbon b {
+  color: var(--ink-2);
+  font-weight: 500;
+}
+.cost-ribbon .bar {
+  flex: 1;
+  max-width: 240px;
+  height: 4px;
+  background: var(--paper-sunk);
+  border-radius: var(--r-pill);
+  overflow: hidden;
+}
+.cost-ribbon .bar > span {
+  display: block;
+  height: 100%;
+  background: var(--coral);
+}
+
+/* Section labels (mono, wide-spaced, ink-4) — reused across pages */
+.section-label {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+  display: block;
+  margin-bottom: var(--s-3);
+}
+
+@media (max-width: 759.98px) {
+  .page {
+    padding: 20px 14px 40px;
+  }
+  .kpi-strip {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .lanes {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ------------------------------------------------------------ */
 /* App shell — desktop TopNav + mobile fixed bottom TabBar      */
 /* Breakpoint 760px per Phase 1c.2 plan Step 0.                  */
 /* ------------------------------------------------------------ */
