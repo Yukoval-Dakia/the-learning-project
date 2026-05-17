@@ -226,6 +226,140 @@
   --cap-prose: 680px;
   --cap-app: 960px;
   --cap-wide: 1200px;
+
+  /* Tell the UA which color schemes are supported so native UI (scrollbars,
+     form controls) follows the active theme rather than fighting it. */
+  color-scheme: light dark;
+}
+
+/* ============================================================
+   Dark mode tokens — warm-charcoal night counterpart to the
+   warm-paper light palette. Surfaces never reach pure black:
+   `#1a1612` keeps the brushed-stone / ink-grinding atmosphere
+   that the wenyan content lives in. Coral lifts ~2 steps for
+   eye comfort; semantic tints invert to deep-tinted backgrounds.
+
+   Activation:
+     - 系统跟随：`@media (prefers-color-scheme: dark)` on
+       :root WITHOUT `[data-theme]` set (so explicit light wins).
+     - 显式：`[data-theme="dark"]` on <html> forces dark.
+   ============================================================ */
+@mixin loom-dark-tokens {
+  /* placeholder — actual rules below; CSS doesn't have @mixin but
+     keeping the block-comment marker so future eyes can find it. */
+}
+
+:where(:root[data-theme="dark"]),
+:where(:root:not([data-theme])) {
+  /* no-op default; overridden by media block when system is dark. */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #1a1612;
+    --paper-sunk: #13100c;
+    --paper-raised: #221d18;
+    --paper-tint: #2a241e;
+
+    --ink: #f0e8d8;
+    --ink-2: #d4cbb8;
+    --ink-3: #a89e8a;
+    --ink-4: #7a705e;
+    --ink-5: #4a4438;
+
+    --line: #3a3329;
+    --line-strong: #4d4538;
+    --line-soft: #28231d;
+
+    --coral: #e89572;
+    --coral-hover: #f0a784;
+    --coral-press: #d27e58;
+    --coral-soft: #3a241a;
+    --coral-line: #7a3f24;
+    --coral-ink: #f5c8b0;
+
+    --again: #e87a5a;
+    --again-soft: #3a1f1a;
+    --again-line: #7a3424;
+    --again-ink: #f5b8a0;
+
+    --hard: #d4a04a;
+    --hard-soft: #2f2a1a;
+    --hard-line: #5c4a1f;
+    --hard-ink: #e8d090;
+
+    --good: #7aa888;
+    --good-soft: #1f2a22;
+    --good-line: #3a4f3f;
+    --good-ink: #b8d4bd;
+
+    --info: #7a96b8;
+    --info-soft: #1f2832;
+    --info-ink: #b8c8dc;
+
+    --shadow-1: 0 1px 0 rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-2: 0 1px 0 rgba(0, 0, 0, 0.4), 0 4px 14px -4px rgba(0, 0, 0, 0.55);
+    --shadow-3: 0 2px 0 rgba(0, 0, 0, 0.4), 0 12px 32px -8px rgba(0, 0, 0, 0.7);
+    --shadow-focus: 0 0 0 3px rgba(232, 149, 114, 0.32);
+    --shadow-inset: inset 0 1px 0 rgba(255, 245, 225, 0.04);
+  }
+}
+
+:root[data-theme="dark"] {
+  --paper: #1a1612;
+  --paper-sunk: #13100c;
+  --paper-raised: #221d18;
+  --paper-tint: #2a241e;
+
+  --ink: #f0e8d8;
+  --ink-2: #d4cbb8;
+  --ink-3: #a89e8a;
+  --ink-4: #7a705e;
+  --ink-5: #4a4438;
+
+  --line: #3a3329;
+  --line-strong: #4d4538;
+  --line-soft: #28231d;
+
+  --coral: #e89572;
+  --coral-hover: #f0a784;
+  --coral-press: #d27e58;
+  --coral-soft: #3a241a;
+  --coral-line: #7a3f24;
+  --coral-ink: #f5c8b0;
+
+  --again: #e87a5a;
+  --again-soft: #3a1f1a;
+  --again-line: #7a3424;
+  --again-ink: #f5b8a0;
+
+  --hard: #d4a04a;
+  --hard-soft: #2f2a1a;
+  --hard-line: #5c4a1f;
+  --hard-ink: #e8d090;
+
+  --good: #7aa888;
+  --good-soft: #1f2a22;
+  --good-line: #3a4f3f;
+  --good-ink: #b8d4bd;
+
+  --info: #7a96b8;
+  --info-soft: #1f2832;
+  --info-ink: #b8c8dc;
+
+  --shadow-1: 0 1px 0 rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 1px 0 rgba(0, 0, 0, 0.4), 0 4px 14px -4px rgba(0, 0, 0, 0.55);
+  --shadow-3: 0 2px 0 rgba(0, 0, 0, 0.4), 0 12px 32px -8px rgba(0, 0, 0, 0.7);
+  --shadow-focus: 0 0 0 3px rgba(232, 149, 114, 0.32);
+  --shadow-inset: inset 0 1px 0 rgba(255, 245, 225, 0.04);
+}
+
+/* Smooth swap when the user clicks the toggle. ~200ms keeps it gentle
+   without making the transition feel laggy. */
+html,
+body {
+  transition: background-color var(--dur-base) var(--ease-soft), color var(--dur-base)
+    var(--ease-soft);
 }
 
 /* ============================================================
@@ -2743,4 +2877,50 @@ input[type="checkbox"],
 input[type="radio"],
 progress {
   accent-color: var(--coral);
+}
+
+/* ============================================================
+ * ThemeToggle pill — mono chip in TopNav trailing slot.
+ * Three states: auto / 淡 / 深. The dot signals current state via
+ * color; the label confirms via text. Sized to align with the
+ * v0.1·1c.2 version chip beside it.
+ * ============================================================ */
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink-3);
+  border-radius: var(--r-pill);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: var(--ls-wide);
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+
+.theme-toggle:hover {
+  border-color: var(--coral-line);
+  color: var(--coral-ink);
+  background: var(--coral-soft);
+}
+
+.theme-toggle .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--paper) 50%, var(--ink) 50%);
+  border: 1px solid var(--line-strong);
+  flex: 0 0 auto;
+}
+
+:root[data-theme="light"] .theme-toggle .dot {
+  background: var(--paper);
+}
+
+:root[data-theme="dark"] .theme-toggle .dot {
+  background: var(--ink);
 }
