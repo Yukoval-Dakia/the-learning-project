@@ -1,9 +1,9 @@
 import { db } from '@/db/client';
 import { completion_evidence, learning_item } from '@/db/schema';
-import { ApiError, errorResponse } from '@/server/http/errors';
+import { errorResponse } from '@/server/http/errors';
 import { assertKnowledgeIdsExist } from '@/server/knowledge/validate';
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 
 export const runtime = 'nodejs';
@@ -19,6 +19,9 @@ const PatchBody = z.object({
   knowledge_ids: z.array(z.string().min(1)).optional(),
   status: z.enum(['pending', 'in_progress', 'done', 'dismissed', 'resting', 'archived']).optional(),
   user_notes: z.string().max(2000).optional(),
+  // hub/atomic linkage: null clears parent (item becomes top-level / its own hub),
+  // string sets parent. Cycle-checked below.
+  parent_learning_item_id: z.string().min(1).nullable().optional(),
 });
 
 // 设计意图（per memory + modules/learning-items.md）:
@@ -38,6 +41,82 @@ const VALID_TRANSITIONS: Record<string, Set<LearningItemStatus>> = {
 };
 
 type RouteParams = { params: Promise<{ id: string }> };
+
+// GET — single item + parent breadcrumb (1 hop) + immediate children. Used by
+// /learning-items/[id] detail page. Children are derived from WHERE
+// parent_learning_item_id = id (we do NOT use the denormalised
+// child_learning_item_ids column — it's stub per scripts/audit-schema-allowlist).
+export async function GET(_req: Request, { params }: RouteParams): Promise<Response> {
+  try {
+    const { id } = await params;
+    const rows = await db
+      .select({
+        id: learning_item.id,
+        title: learning_item.title,
+        content: learning_item.content,
+        knowledge_ids: learning_item.knowledge_ids,
+        status: learning_item.status,
+        parent_learning_item_id: learning_item.parent_learning_item_id,
+        completed_at: learning_item.completed_at,
+        archived_at: learning_item.archived_at,
+        created_at: learning_item.created_at,
+        updated_at: learning_item.updated_at,
+        version: learning_item.version,
+      })
+      .from(learning_item)
+      .where(eq(learning_item.id, id));
+    const row = rows[0];
+    if (!row) {
+      return Response.json(
+        { error: 'not_found', message: `learning_item ${id} not found` },
+        { status: 404 },
+      );
+    }
+
+    let parent: { id: string; title: string; status: string } | null = null;
+    if (row.parent_learning_item_id) {
+      const parentRows = await db
+        .select({
+          id: learning_item.id,
+          title: learning_item.title,
+          status: learning_item.status,
+        })
+        .from(learning_item)
+        .where(eq(learning_item.id, row.parent_learning_item_id));
+      const p = parentRows[0];
+      if (p) parent = { id: p.id, title: p.title, status: p.status };
+    }
+
+    const children = await db
+      .select({
+        id: learning_item.id,
+        title: learning_item.title,
+        status: learning_item.status,
+        knowledge_ids: learning_item.knowledge_ids,
+      })
+      .from(learning_item)
+      .where(eq(learning_item.parent_learning_item_id, id))
+      .orderBy(asc(learning_item.created_at));
+
+    return Response.json({
+      id: row.id,
+      title: row.title,
+      content: row.content,
+      knowledge_ids: row.knowledge_ids,
+      status: row.status,
+      parent_learning_item_id: row.parent_learning_item_id,
+      parent,
+      children,
+      completed_at: row.completed_at ? Math.floor(row.completed_at.getTime() / 1000) : null,
+      archived_at: row.archived_at ? Math.floor(row.archived_at.getTime() / 1000) : null,
+      created_at: Math.floor(row.created_at.getTime() / 1000),
+      updated_at: Math.floor(row.updated_at.getTime() / 1000),
+      version: row.version,
+    });
+  } catch (err) {
+    return errorResponse(err);
+  }
+}
 
 export async function PATCH(req: Request, { params }: RouteParams): Promise<Response> {
   try {
@@ -104,6 +183,51 @@ export async function PATCH(req: Request, { params }: RouteParams): Promise<Resp
       }
     }
 
+    // parent_learning_item_id mutation — verify target exists + no cycle.
+    // body.parent_learning_item_id === null means "clear parent".
+    // body.parent_learning_item_id === undefined means "leave unchanged".
+    if (body.parent_learning_item_id !== undefined && body.parent_learning_item_id !== null) {
+      const target = body.parent_learning_item_id;
+      if (target === id) {
+        return Response.json(
+          { error: 'validation_error', message: 'parent_learning_item_id cannot reference self' },
+          { status: 400 },
+        );
+      }
+      // Walk up the proposed parent's chain — if `id` appears, this assignment
+      // would create a cycle. Bound the walk at 100 hops as a safety net.
+      let cursor: string | null = target;
+      let hops = 0;
+      while (cursor !== null && hops < 100) {
+        if (cursor === id) {
+          return Response.json(
+            {
+              error: 'validation_error',
+              message: 'parent_learning_item_id assignment would create a cycle',
+            },
+            { status: 400 },
+          );
+        }
+        const parentRows = await db
+          .select({ pid: learning_item.parent_learning_item_id })
+          .from(learning_item)
+          .where(eq(learning_item.id, cursor));
+        const pRow = parentRows[0];
+        if (!pRow) {
+          // Target id or some ancestor doesn't exist.
+          return Response.json(
+            {
+              error: 'validation_error',
+              message: `parent_learning_item_id ${cursor} not found`,
+            },
+            { status: 400 },
+          );
+        }
+        cursor = pRow.pid;
+        hops += 1;
+      }
+    }
+
     const transitioningToDone = body.status === 'done' && row.status !== 'done';
     const transitioningOutOfDone =
       row.status === 'done' && body.status !== undefined && body.status !== 'done';
@@ -132,6 +256,9 @@ export async function PATCH(req: Request, { params }: RouteParams): Promise<Resp
     if (body.content !== undefined) setValues.content = body.content;
     if (body.knowledge_ids !== undefined) setValues.knowledge_ids = body.knowledge_ids;
     if (body.status !== undefined) setValues.status = body.status;
+    if (body.parent_learning_item_id !== undefined) {
+      setValues.parent_learning_item_id = body.parent_learning_item_id;
+    }
     if (transitioningToDone) setValues.completed_at = now;
     if (transitioningOutOfDone) setValues.completed_at = null;
     if (transitioningToArchived) setValues.archived_at = now;
@@ -175,6 +302,7 @@ export async function PATCH(req: Request, { params }: RouteParams): Promise<Resp
         content: learning_item.content,
         knowledge_ids: learning_item.knowledge_ids,
         status: learning_item.status,
+        parent_learning_item_id: learning_item.parent_learning_item_id,
         completed_at: learning_item.completed_at,
         created_at: learning_item.created_at,
         updated_at: learning_item.updated_at,
@@ -198,6 +326,7 @@ export async function PATCH(req: Request, { params }: RouteParams): Promise<Resp
       content: updated.content,
       knowledge_ids: updated.knowledge_ids,
       status: updated.status,
+      parent_learning_item_id: updated.parent_learning_item_id,
       completed_at: updated.completed_at ? Math.floor(updated.completed_at.getTime() / 1000) : null,
       created_at: Math.floor(updated.created_at.getTime() / 1000),
       updated_at: Math.floor(updated.updated_at.getTime() / 1000),

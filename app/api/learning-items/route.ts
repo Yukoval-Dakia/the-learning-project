@@ -89,6 +89,7 @@ const CreateBody = z.object({
   title: z.string().min(1).max(200),
   content: z.string().max(10_000).optional().default(''),
   knowledge_ids: z.array(z.string().min(1)).default([]),
+  parent_learning_item_id: z.string().min(1).nullable().optional(),
 });
 
 export async function POST(req: Request): Promise<Response> {
@@ -119,6 +120,24 @@ export async function POST(req: Request): Promise<Response> {
       }
     }
 
+    // Validate parent exists (cycle check unnecessary — the new item has no
+    // children yet so no cycle is reachable).
+    if (body.parent_learning_item_id) {
+      const parentRows = await db
+        .select({ id: learning_item.id })
+        .from(learning_item)
+        .where(eq(learning_item.id, body.parent_learning_item_id));
+      if (parentRows.length === 0) {
+        return Response.json(
+          {
+            error: 'validation_error',
+            message: `parent_learning_item_id ${body.parent_learning_item_id} not found`,
+          },
+          { status: 400 },
+        );
+      }
+    }
+
     const id = createId();
     const now = new Date();
 
@@ -128,6 +147,7 @@ export async function POST(req: Request): Promise<Response> {
       title: body.title,
       content: body.content,
       knowledge_ids: body.knowledge_ids,
+      parent_learning_item_id: body.parent_learning_item_id ?? null,
       status: 'pending',
       user_pinned: false,
       created_at: now,
@@ -140,6 +160,7 @@ export async function POST(req: Request): Promise<Response> {
       title: body.title,
       content: body.content,
       knowledge_ids: body.knowledge_ids,
+      parent_learning_item_id: body.parent_learning_item_id ?? null,
       status: 'pending',
       completed_at: null,
       created_at: Math.floor(now.getTime() / 1000),

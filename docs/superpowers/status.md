@@ -58,16 +58,14 @@ mistakes / learning-items / progress / quiz / lanes / notes 全部加 §0 实施
 - ⬜ SessionSummaryTask（依赖 ADR-0013 已通，AI 生成 session 结束总结）
 
 ### ⬜ 未启动 Top 3（按推荐顺序）
-1. **session lifecycle 决策**：`/review` 是否开 `learning_session(type='review')` 行
-2. **LearningItem hub + atomic 层级**：schema 已留字段，UI 待开
-3. **Phase 2 Maintenance agent**：reparent / merge / split / archive 的自动提议（当前只有节点 + 边 propose）
+1. **SessionSummaryTask**：依赖 ADR-0013 已通；AI 生成 review session 结束总结
+2. **Phase 2 Maintenance agent**：reparent / merge / split / archive 的自动提议（当前只有节点 + 边 propose）
+3. **周度 review 报表**：跨 session / 跨日聚合
 
-### ✅ 刚刚收尾：Phase 2 Dreaming edge proposer
-- `KnowledgeEdgeProposeTask` 注册（sonnet, 单次结构化输出）
-- `runEdgeProposeAndWrite` 验证 + 去重（self-loop / 未知节点 / 已存在边 / pending 重复）
-- `knowledge_edge_propose_nightly` pg-boss cron @ BJT 02:30
-- 21 个新测试 + 全套 742 测试通过
-- 跳过 Anthropic Batch API：单用户 24h 失败量低，单次同步调用足矣
+### ✅ 本会话三连发完成
+- Phase 2 Dreaming edge proposer（KnowledgeEdgeProposeTask + nightly cron）
+- ADR-0013 + 实施：`/review` eager 开 session + sendBeacon close + orphan cron
+- LearningItem hub + atomic 层级激活：GET /api/learning-items/[id] + parent/child 双向支持 + /learning-items/[id] 详情页 + cycle prevention
 
 ---
 
