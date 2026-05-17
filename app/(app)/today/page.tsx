@@ -3,7 +3,6 @@
 import { apiJson } from '@/ui/lib/api';
 import { Badge } from '@/ui/primitives/Badge';
 import { Button } from '@/ui/primitives/Button';
-import { Card } from '@/ui/primitives/Card';
 import { PageHeader } from '@/ui/primitives/PageHeader';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
@@ -75,84 +74,115 @@ export default function TodayPage() {
   const topCauses = [...causeCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
 
   return (
-    <main
-      style={{
-        minHeight: '100vh',
-        background: 'var(--paper)',
-        padding: '36px 28px',
-        maxWidth: 'var(--cap-prose, 900px)',
-        margin: '0 auto',
-        width: '100%',
-        boxSizing: 'border-box',
-      }}
-    >
-      <PageHeader title="Today" eyebrow="/today" sub="学习控制面" />
+    <main className="page wide">
+      <PageHeader
+        title="今日"
+        eyebrow="/today"
+        sub="学习控制面 · 错题归因 + FSRS 复习 + AI 提议汇集"
+      />
 
-      <div style={kpiStripStyle}>
-        <KpiCell label="FSRS 到期" value={dueCount} loading={dueQ.isLoading} href="/review" />
-        <KpiCell
-          label="归因中"
+      <div className="kpi-strip">
+        <Kpi
+          label="FSRS · 到期"
+          value={dueCount}
+          loading={dueQ.isLoading}
+          href="/review"
+          trendUp={dueCount > 0}
+        />
+        <Kpi
+          label="错题 · 待归因"
           value={pendingAttrCount}
           loading={mistakesQ.isLoading}
           href="/mistakes"
+          trend={pendingAttrCount > 0 ? 'attempt:failure 无 judge' : '全部已归因'}
         />
-        <KpiCell
-          label="学习项"
+        <Kpi
+          label="学习项 · 在途"
           value={activeItemsCount}
           loading={itemsQ.isLoading}
           href="/learning-items"
+          trend="pending + in_progress"
         />
-        <KpiCell
+        <Kpi
           label="知识点"
           value={knowledgeCount}
           loading={knowledgeQ.isLoading}
           href="/knowledge"
+          trend="tree + mesh"
         />
       </div>
 
-      <Card pad="lg" style={{ marginTop: 'var(--s-5)' }}>
-        <SectionLabel>今日学习安排</SectionLabel>
-        <ol style={laneListStyle}>
-          <LaneItem
-            phase="Phase 2A"
-            name="Review"
-            active
-            description={dueCount > 0 ? `复习 ${dueCount} 道错题` : '没有到期的复习任务'}
-            reason={
-              topCauses.length === 0
-                ? '尚无归因数据'
-                : `按 cause 分布：${topCauses.map(([k, v]) => `${k} ${v}`).join(' · ')}`
-            }
-            action={
-              <Link href="/review" style={{ textDecoration: 'none' }}>
-                <Button variant="coral" disabled={dueCount === 0}>
-                  开始 review_session →
-                </Button>
-              </Link>
-            }
-          />
-          <LaneItem
-            phase="Phase 2B · spec"
-            name="Learning Intent"
-            description="我想学…（未实现）"
-            disabled
-          />
-          <LaneItem
-            phase="Phase 3 · spec"
-            name="Coach"
-            description="查看本周报告（未实现）"
-            disabled
-          />
-        </ol>
-      </Card>
+      <div className="lanes">
+        <Lane
+          eyebrow="LANE A"
+          title="复习队列 · FSRS"
+          badge={<Badge tone="coral">{dueCount} 到期</Badge>}
+        >
+          <p className="lane-empty" hidden={dueCount > 0}>
+            没有到期的复习任务。
+          </p>
+          {dueCount > 0 && (
+            <div className="lane-body">
+              <div className="lane-item">
+                <div className="top">
+                  <span>共 {dueCount} 题待复习</span>
+                </div>
+                <div className="body">
+                  {topCauses.length === 0
+                    ? '尚无归因数据 — 先去 /mistakes 归因，FSRS 复习权重会更准。'
+                    : `按 cause 分布：${topCauses.map(([k, v]) => `${k} ${v}`).join(' · ')}`}
+                </div>
+              </div>
+            </div>
+          )}
+          <div className="lane-cta">
+            <Link href="/review" style={{ textDecoration: 'none' }}>
+              <Button variant="coral" disabled={dueCount === 0}>
+                开始 review_session →
+              </Button>
+            </Link>
+          </div>
+        </Lane>
 
-      <details style={dispatcherStyle}>
-        <summary style={dispatcherSummaryStyle}>Task Dispatcher</summary>
-        <p style={dispatcherBodyStyle}>
-          已注册 task：AttributionTask、KnowledgeProposeTask、KnowledgeReviewTask、
-          OCRExtractTask、IngestionImportTask。状态详见 <code>/api/_/logs/jobs</code>。
-        </p>
-      </details>
+        <Lane
+          eyebrow="LANE B"
+          title="学习意图"
+          badge={<Badge tone="neutral">{activeItemsCount} 在途</Badge>}
+        >
+          {activeItemsCount === 0 ? (
+            <p className="lane-empty">没有在途学习项 — 去 /learning-items 加。</p>
+          ) : (
+            <div className="lane-body">
+              <div className="lane-item">
+                <div className="top">
+                  <span>{activeItemsCount} 个 pending + in_progress</span>
+                </div>
+                <div className="body muted">挂在 /learning-items；hub 与子项已通。</div>
+              </div>
+            </div>
+          )}
+          <div className="lane-cta">
+            <Link href="/learning-items" style={{ textDecoration: 'none' }}>
+              <Button variant="secondary">打开 →</Button>
+            </Link>
+          </div>
+        </Lane>
+
+        <Lane
+          eyebrow="LANE C"
+          title="Coach · 周度报表"
+          badge={
+            <Badge tone="neutral" dot dotStatic>
+              stub
+            </Badge>
+          }
+          stub
+        >
+          <p className="lane-empty">
+            周度 review 报表（Phase 1d 计划项）尚未落地；下次会话或专门会话补。
+          </p>
+        </Lane>
+      </div>
 
       <CostRibbon
         cost={costQ.data ?? null}
@@ -163,45 +193,48 @@ export default function TodayPage() {
   );
 }
 
-interface KpiCellProps {
+interface KpiProps {
   label: string;
   value: number;
   loading: boolean;
   href: string;
+  trend?: string;
+  trendUp?: boolean;
 }
 
-function KpiCell({ label, value, loading, href }: KpiCellProps) {
+function Kpi({ label, value, loading, href, trend, trendUp }: KpiProps) {
   return (
-    <Link href={href} style={{ textDecoration: 'none', display: 'block' }}>
-      <Card pad="lg" elevated style={{ cursor: 'pointer' }}>
-        <span style={kpiLabelStyle}>{label}</span>
-        <span style={kpiValueStyle}>{loading ? '—' : value}</span>
-      </Card>
+    <Link href={href} className="kpi kpi-clickable">
+      <div className="kpi-label">{label}</div>
+      <div className="kpi-num">
+        {loading ? '—' : value}
+        <small> 条</small>
+      </div>
+      {trend && <div className={`kpi-trend${trendUp ? ' up' : ''}`}>{trend}</div>}
     </Link>
   );
 }
 
-interface LaneItemProps {
-  phase: string;
-  name: string;
-  description: string;
-  reason?: string;
-  active?: boolean;
-  disabled?: boolean;
-  action?: React.ReactNode;
+interface LaneProps {
+  eyebrow: string;
+  title: string;
+  badge?: React.ReactNode;
+  stub?: boolean;
+  children?: React.ReactNode;
 }
 
-function LaneItem({ phase, name, description, reason, active, disabled, action }: LaneItemProps) {
+function Lane({ eyebrow, title, badge, stub, children }: LaneProps) {
   return (
-    <li style={{ ...laneItemStyle, opacity: disabled ? 0.55 : 1 }}>
-      <div style={laneHeadStyle}>
-        <Badge tone={active ? 'coral' : 'neutral'}>{phase}</Badge>
-        <span style={laneNameStyle}>{name}</span>
+    <section className={`lane${stub ? ' is-stub' : ''}`}>
+      <div className="lane-head">
+        <div>
+          <div className="lane-eyebrow">{eyebrow}</div>
+          <h3>{title}</h3>
+        </div>
+        {badge}
       </div>
-      <p style={laneDescStyle}>{description}</p>
-      {reason && <p style={laneReasonStyle}>{reason}</p>}
-      {action && <div style={{ marginTop: 'var(--s-2)' }}>{action}</div>}
-    </li>
+      {children}
+    </section>
   );
 }
 
@@ -215,10 +248,10 @@ function CostRibbon({
   error: Error | null;
 }) {
   if (loading) {
-    return <p style={costRibbonStyle}>Cost guard · 加载中…</p>;
+    return <div className="cost-ribbon">Cost guard · 加载中…</div>;
   }
   if (error) {
-    return <p style={costRibbonStyle}>Cost guard · 暂时不可用 ({error.message})</p>;
+    return <div className="cost-ribbon">Cost guard · 暂时不可用 ({error.message})</div>;
   }
   if (!cost) return null;
 
@@ -227,134 +260,26 @@ function CostRibbon({
     .slice()
     .sort((a, b) => b.spend - a.spend)
     .slice(0, 3);
+  const budget = 5;
+  const pct = Math.min(100, Math.round((cost.today.spend / budget) * 100));
 
   return (
-    <div style={costRibbonWrapStyle}>
-      <span style={costRibbonStyle}>
-        Cost guard · CostLedger 今日 {fmtUsd(cost.today.spend)} · {cost.today.ledger_rows} ledger ·{' '}
-        {cost.today.tool_calls} tool calls · tokens in/out {cost.today.tokens_in}/
-        {cost.today.tokens_out}
+    <div className="cost-ribbon">
+      <span>
+        <b>${cost.today.spend.toFixed(3)}</b> / ${budget.toFixed(2)} 今日
+      </span>
+      <span className="bar" aria-label={`成本 ${pct}%`}>
+        <span style={{ width: `${pct}%` }} />
+      </span>
+      <span>
+        {cost.today.ledger_rows} ledger · {cost.today.tool_calls} tool calls · tokens{' '}
+        {cost.today.tokens_in}/{cost.today.tokens_out}
       </span>
       {top.length > 0 && (
-        <span style={costRibbonStyle}>
+        <span>
           top: {top.map((t) => `${t.task_kind} ${fmtUsd(t.spend)} (${t.calls})`).join(' · ')}
         </span>
       )}
     </div>
   );
 }
-
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <span
-      style={{
-        fontFamily: 'var(--font-mono)',
-        fontSize: 'var(--fs-meta)',
-        color: 'var(--ink-4)',
-        letterSpacing: 'var(--ls-wide)',
-        display: 'block',
-        marginBottom: 'var(--s-3)',
-      }}
-    >
-      {children}
-    </span>
-  );
-}
-
-const kpiStripStyle: React.CSSProperties = {
-  marginTop: 'var(--s-4)',
-  display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-  gap: 'var(--s-3)',
-};
-
-const kpiLabelStyle: React.CSSProperties = {
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-meta)',
-  color: 'var(--ink-4)',
-  letterSpacing: 'var(--ls-wide)',
-  display: 'block',
-};
-
-const kpiValueStyle: React.CSSProperties = {
-  marginTop: 'var(--s-2)',
-  fontFamily: 'var(--font-serif)',
-  fontSize: 32,
-  fontWeight: 500,
-  color: 'var(--ink)',
-  letterSpacing: 'var(--ls-tight)',
-};
-
-const laneListStyle: React.CSSProperties = {
-  listStyle: 'none',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 'var(--s-3)',
-};
-
-const laneItemStyle: React.CSSProperties = {
-  padding: 'var(--s-3) var(--s-4)',
-  background: 'var(--paper)',
-  border: '1px solid var(--line-soft)',
-  borderRadius: 'var(--r-2)',
-};
-
-const laneHeadStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 'var(--s-2)',
-  marginBottom: 'var(--s-2)',
-};
-
-const laneNameStyle: React.CSSProperties = {
-  fontFamily: 'var(--font-serif)',
-  fontSize: 'var(--fs-h4)',
-  color: 'var(--ink)',
-};
-
-const laneDescStyle: React.CSSProperties = {
-  margin: 0,
-  fontSize: 'var(--fs-body)',
-  color: 'var(--ink-2)',
-};
-
-const laneReasonStyle: React.CSSProperties = {
-  margin: '4px 0 0',
-  fontSize: 'var(--fs-caption)',
-  color: 'var(--ink-3)',
-  fontFamily: 'var(--font-mono)',
-  letterSpacing: 'var(--ls-wide)',
-};
-
-const dispatcherStyle: React.CSSProperties = {
-  marginTop: 'var(--s-5)',
-};
-
-const dispatcherSummaryStyle: React.CSSProperties = {
-  cursor: 'pointer',
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-meta)',
-  color: 'var(--ink-3)',
-  letterSpacing: 'var(--ls-wide)',
-};
-
-const dispatcherBodyStyle: React.CSSProperties = {
-  marginTop: 'var(--s-2)',
-  fontSize: 'var(--fs-caption)',
-  color: 'var(--ink-3)',
-  lineHeight: 'var(--lh-prose)',
-};
-
-const costRibbonStyle: React.CSSProperties = {
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-meta)',
-  color: 'var(--ink-4)',
-  letterSpacing: 'var(--ls-wide)',
-};
-
-const costRibbonWrapStyle: React.CSSProperties = {
-  marginTop: 'var(--s-5)',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 2,
-};
