@@ -1,30 +1,25 @@
-// Provider Manager (Sub 0d Step 0.1) — single source of truth for which
-// upstream serves each AI task. The registry (src/ai/registry.ts) declares
-// `defaultProvider + defaultModel` per task; `resolveTaskModel()` looks up the
-// provider here, instantiates a Vercel AI SDK LanguageModel pointed at the
-// right base URL + auth, and returns it ready to pass into generateText /
-// streamText.
+// Provider Manager — single source of truth for which upstream serves each
+// AI task. The registry (src/ai/registry.ts) declares `defaultProvider +
+// defaultModel` per task; `resolveTaskProvider()` looks up the provider here
+// and returns `{ baseUrl, apiKey, model }` for the Claude Agent SDK runner
+// to forward via ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY env in the spawned
+// `claude` subprocess.
 //
-// Adding a new provider: append an entry to PROVIDERS, set the env-var name +
-// optional baseURL. Adding a new task: edit registry.ts only — runner.ts
-// already calls resolveTaskModel(kind). No changes here.
+// Pre-2026-05-17 this module returned a Vercel AI SDK `LanguageModel`
+// instance; the migration to @anthropic-ai/claude-agent-sdk replaces that
+// with a plain config record because the SDK accepts no model handle —
+// it reads its target from env vars when spawning the CLI.
 //
-// ADR-0003 (defer provider abstraction) — this lands the Step 0 spec from
-// docs/superpowers/plans/2026-05-11-sub0d-agent-layer.md; xiaomi added for
-// the Mimo Anthropic-compat endpoint (single-user budget routing, 2026-05-17).
-
-import { createAnthropic } from '@ai-sdk/anthropic';
-import type { LanguageModel } from 'ai';
+// Adding a new provider: append an entry to PROVIDERS, set the env-var
+// name + baseURL.  Adding a new task: edit registry.ts only.
 
 import { type Provider, type TaskKind, tasks } from '@/ai/registry';
 
 interface ProviderConfig {
-  /** Override AI SDK default baseURL. Anthropic direct doesn't need one. */
-  baseURL?: string;
+  /** Override ANTHROPIC_BASE_URL. Anthropic direct doesn't need one. */
+  baseUrl?: string;
   /** Env var holding the bearer / x-api-key value. */
   apiKeyEnv: string;
-  /** Header to send the key under. AI SDK defaults to `x-api-key` (Anthropic). */
-  apiKeyHeader?: 'x-api-key' | 'authorization';
   /** Optional human-readable note shown in errors when the env is missing. */
   description?: string;
 }
@@ -35,20 +30,20 @@ const PROVIDERS: Record<Provider, ProviderConfig> = {
     description: 'Anthropic direct (pay-as-you-go API)',
   },
   xiaomi: {
-    baseURL: 'https://api.xiaomimimo.com/anthropic/v1',
+    // No `/v1` suffix — both @anthropic-ai/sdk and the agent SDK append the
+    // `/v1/messages` path themselves. Doubling up gives a 404.
+    baseUrl: 'https://api.xiaomimimo.com/anthropic',
     apiKeyEnv: 'XIAOMI_API_KEY',
     description: 'Xiaomi Mimo Anthropic-protocol-compat endpoint (mimo-v2.5* models)',
   },
   openrouter: {
-    baseURL: 'https://openrouter.ai/api/v1',
+    baseUrl: 'https://openrouter.ai/api/v1',
     apiKeyEnv: 'OPENROUTER_API_KEY',
-    apiKeyHeader: 'authorization',
     description: 'OpenRouter unified multi-provider gateway (not currently in use)',
   },
   gateway: {
-    baseURL: 'https://ai-gateway.vercel.sh',
+    baseUrl: 'https://ai-gateway.vercel.sh',
     apiKeyEnv: 'VERCEL_AI_GATEWAY_TOKEN',
-    apiKeyHeader: 'authorization',
     description: 'Vercel AI Gateway (not currently in use)',
   },
   openai: {
@@ -57,21 +52,27 @@ const PROVIDERS: Record<Provider, ProviderConfig> = {
   },
 };
 
+export interface ResolvedProvider {
+  provider: Provider;
+  model: string;
+  apiKey: string;
+  /** undefined for Anthropic direct (uses SDK default). */
+  baseUrl?: string;
+}
+
 /**
- * Resolve a task to its concrete LanguageModel binding, ready for the AI SDK.
+ * Resolve a task to its concrete provider binding.
  *
  * Lookup order:
  *   1. `override.provider` / `override.model` if supplied (test/dev escape hatch)
  *   2. Task registry's `defaultProvider` + `defaultModel`
  *
- * Throws if the resolved provider's env var isn't set. This is intentional —
- * silent fallback to Anthropic on a missing xiaomi key would surprise the
- * caller; better to surface "XIAOMI_API_KEY is required for task X" loudly.
+ * Throws if the resolved provider's env var isn't set.
  */
-export function resolveTaskModel(
+export function resolveTaskProvider(
   kind: TaskKind,
   override?: { provider?: Provider; model?: string },
-): LanguageModel {
+): ResolvedProvider {
   const def = tasks[kind];
   const providerName: Provider = override?.provider ?? def.defaultProvider;
   const modelId = override?.model ?? def.defaultModel;
@@ -90,20 +91,20 @@ export function resolveTaskModel(
     );
   }
 
-  // Only anthropic + xiaomi are wired through createAnthropic (both speak the
-  // Anthropic Messages protocol). openrouter / gateway / openai land here as
-  // "not implemented" because their wire shapes differ enough to need their
-  // own AI SDK provider import + cost-harvesting logic; revisit if a real
-  // trigger from ADR-0003 fires.
+  // Only anthropic + xiaomi are wired; both speak the Anthropic Messages
+  // protocol and so are transparently routable via ANTHROPIC_BASE_URL.
+  // openrouter / gateway / openai land here as "not implemented" because
+  // their wire shapes differ; revisit if a real trigger fires.
   if (providerName !== 'anthropic' && providerName !== 'xiaomi') {
     throw new Error(
       `Provider '${providerName}' is reserved but not implemented; only 'anthropic' and 'xiaomi' are wired.`,
     );
   }
 
-  const provider = createAnthropic({
+  return {
+    provider: providerName,
+    model: modelId,
     apiKey,
-    ...(config.baseURL ? { baseURL: config.baseURL } : {}),
-  });
-  return provider(modelId);
+    baseUrl: config.baseUrl,
+  };
 }
