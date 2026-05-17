@@ -678,6 +678,145 @@ ol {
 }
 
 /* ------------------------------------------------------------ */
+/* /learning-sessions/[id] — session detail (Phase 1d)           */
+/* ------------------------------------------------------------ */
+
+.session-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--s-3);
+  margin-bottom: var(--s-5);
+}
+.session-meta .meta-cell {
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.session-meta .meta-cell .lbl {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+}
+.session-meta .meta-cell .val {
+  font-family: var(--font-serif);
+  font-size: 22px;
+  font-weight: 500;
+  color: var(--ink);
+  letter-spacing: var(--ls-tight);
+  line-height: 1.2;
+}
+.session-meta .meta-cell .val small {
+  font-size: 13px;
+  color: var(--ink-4);
+  margin-left: 4px;
+  font-weight: 400;
+}
+
+.session-summary {
+  margin-bottom: var(--s-5);
+  padding: 18px 20px;
+  background: linear-gradient(180deg, var(--coral-soft) 0%, var(--paper-raised) 100%);
+  border: 1px solid var(--coral-line);
+  border-radius: var(--r-3);
+}
+.session-summary.is-stub {
+  background: var(--paper-sunk);
+  border-style: dashed;
+  border-color: var(--line-strong);
+}
+.session-summary h4 {
+  margin: 0 0 6px;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--coral-ink);
+  letter-spacing: var(--ls-wide);
+}
+.session-summary.is-stub h4 {
+  color: var(--ink-3);
+}
+.session-summary p {
+  margin: 0;
+  font-family: var(--font-wenyan);
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--ink-2);
+}
+
+.session-rating-bar {
+  display: flex;
+  gap: 0;
+  height: 18px;
+  border-radius: var(--r-pill);
+  overflow: hidden;
+  background: var(--paper-sunk);
+  margin-bottom: var(--s-2);
+}
+.session-rating-bar .seg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #fff;
+  letter-spacing: var(--ls-wide);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.session-rating-bar .seg.again {
+  background: var(--again);
+}
+.session-rating-bar .seg.hard {
+  background: var(--hard);
+}
+.session-rating-bar .seg.good {
+  background: var(--good);
+}
+.session-rating-bar .seg.easy {
+  background: var(--coral);
+}
+
+.session-rating-legend {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+  margin-bottom: var(--s-5);
+}
+.session-rating-legend .item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.session-rating-legend .swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  display: inline-block;
+}
+.session-rating-legend .swatch.again {
+  background: var(--again);
+}
+.session-rating-legend .swatch.hard {
+  background: var(--hard);
+}
+.session-rating-legend .swatch.good {
+  background: var(--good);
+}
+.session-rating-legend .swatch.easy {
+  background: var(--coral);
+}
+
+/* ------------------------------------------------------------ */
 /* /events/[id] — single event detail + chain rails              */
 /* Ported subset of design's .event-card + .chain idiom          */
 /* ------------------------------------------------------------ */
