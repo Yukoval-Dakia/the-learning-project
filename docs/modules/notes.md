@@ -9,6 +9,23 @@ Tool 互动型分支当前唯一实例是 `tool_quiz`（见 [`quiz.md`](quiz.md)
 
 ---
 
+## 0. 实施现状（2026-05-17）
+
+> 整条 Note artifact 链路（生成 / 渲染 / embedded check / hub ↔ atomic）**还没落地**。`artifact` 表 schema 存在（1c.1 Step 9 保留作 "C 档 AI 主动产出落点"），但当前 0 写入 0 UI。下面 §1+ 是 Phase 1d/2 设计参考。
+
+| 设计概念 | 现状 |
+|---|---|
+| `artifact` 表 | ✅ schema 在；激活为 C 档 AI 产出落点（per ADR-0006 v2） |
+| `NoteGenerateTask` / `NoteRefineTask` / `NoteVerifyTask` | ❌ AI runner 注册表里都没有这些 task kind |
+| `note_hub` / `note_atomic` 类型 | ❌ artifact.type enum 还没在 schema 体现 |
+| Hub ↔ LearningItem hub 1:1 / atomic ↔ LearningItem atomic 1:1 | ❌ LearningItem 层级字段也未启用 |
+| TipTap 编辑器 | ❌ Phase 1d/2 |
+| Embedded check（inline tool_quiz） | ❌ 同上，quiz 系统本身也未跑 |
+
+**当前唯一 "AI 产出"**：`event(action='judge')`（cause 归因）+ `event(action='propose', subject_kind='knowledge'/'knowledge_edge')`（mesh 提议；agent 还没真在产）。这些都不走 `artifact` 表。
+
+---
+
 ## 1. 生成触发
 
 三个入口都汇入同一 pipeline：

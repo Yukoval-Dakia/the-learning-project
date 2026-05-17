@@ -1,7 +1,30 @@
 # 学习进度追踪
 
-> 见 [架构基础](../architecture.md) 了解 `Knowledge` / `Session` / `WeeklyReview` / `StudyLog` schema。
+> 见 [架构基础](../architecture.md) 了解 `knowledge` / `knowledge_mastery` view / `learning_session` / `study_log` schema。
 > Quiz 评分喂 mastery 详见 [`quiz.md`](quiz.md)。
+
+---
+
+## 0. 实施现状（2026-05-17）
+
+> Phase 1 sketch 期的"掌握度双层"模型在 1c.1 Step 1（ADR-0012）拍板转**单层 derived view**。下面 §1+ 还是历史叙述。
+
+| 设计概念 | 现状 | 备注 |
+|---|---|---|
+| Mastery 双层（base_mastery + ai_delta_mastery） | ❌ DROPped (ADR-0012) | 两列 1c.1 Step 1 同步删除 |
+| Mastery derived view (`knowledge_mastery`) | ✅ Phase 1c.1 Step 1 落地 | 30 天指数衰减，权重 attempts/reviews |
+| StudyLog 5 kind | ✅ schema + UI (`/study-log`, Cand 3 commit `d279089`) | highlight / insight / question / reflection / observation |
+| 学习时间线视图（统一 auto event + StudyLog） | ❌ Phase 2 | 现在 /today KPI strip 是简单聚合，没真 timeline |
+| WeeklyReview Cron 跑批 | ❌ Phase 2 | 整个 Dreaming/Maintenance lane 都未跑 |
+| 按 cause 差异化复习权重 / mastery 衰减 | ❌ Phase 2 | 跑数据后才决定权重 |
+| 周复盘 / Coach Orchestrator | ❌ Phase 3 | `/today` Phase 3 lane 是 disabled stub |
+
+**当前可看进度的 UI**：
+- `/today` KPI strip（4 KPI + 3 lane stub） — Phase 1c.2 落地（commit `4eab5f9`）
+- `/today` cost ribbon — Phase 1d 接 cost_ledger（commit `6da0fa1`）
+- `/knowledge/[id]` per-node mistake 列表
+- `/study-log` 5 kind 记录 — Phase 1c.2 Cand 3
+- `/events/[id]` 单事件 chain 浏览 — Phase 1d Cand 4a
 
 ---
 
