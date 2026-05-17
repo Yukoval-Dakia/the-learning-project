@@ -1,22 +1,43 @@
 # Phase 1c.2 Implementation Plan — UI 主切片（六页，loom 对齐版）
 
-> ⚠️ **REFRESH REQUIRED — 2026-05-15 v2**
+> ✅ **SHIPPED 2026-05-17**
 >
-> 数据访问语言从 `encounter` 改成 event 视图（per ADR-0006 v2）。具体影响：
-> - "错题列表"（/mistakes）= `events WHERE action='attempt' AND outcome='failure' AND subject_kind='question'`
-> - cause 来源 = 该 attempt 的 caused_by `judge` event 的 payload.cause
-> - UI 大体不变（loom 6 页结构保留），只改数据 fetch / state shape
-> - C 档新增 UI 元素：用户可以**审查 AI event 链**（"AI 为什么提议这个" → 沿 caused_by_event_id 看 reasoning）—— 未在 loom design 中画，**1c.2 收尾前再 sub-grill 是否本 phase 做**
-> - 1c.1 后端落定后，Encounter 命名全替换 event；本 plan 各 Step 描述待 refresh
+> 这份 plan 是 1c.2 启动时的 sketch（"REFRESH REQUIRED" banner 没动；正文沿用 `encounter` 命名，是历史快照，不要按字面读）。下面是实际落地清单，正文部分作为历史保留。
 >
-> **Status**: sketch — REFRESH REQUIRED before execution (1c.1 落定后)
+> **运行模型差异**：plan body 里 `encounter` 在落地时已经全部走 event 流（ADR-0006 v2）。映射：
+> - `Encounter where outcome='wrong'` → `event WHERE action='attempt' AND subject_kind='question' AND outcome='failure'`
+> - `encounter.evidence.cause` → 沿 `caused_by_event_id` 的 `judge` event payload.cause（或 1c.2 加的 `experimental:user_cause` event）
+> - `/api/encounters?...` → `/api/mistakes?...` + `/api/events?...`（wire 形保留"错题"用户语义）
+> - "review_session encounter" → `event(action='review', subject_kind='question')` + `material_fsrs_state` 投影
 >
-> **重要 — 2026-05-15 refresh**（per `docs/superpowers/specs/2026-05-15-phase1c-loom-design-addendum.md`）：
+> **实际 commits（origin/main）**：
+> - `01670bf` /knowledge tree + mesh (codex)
+> - `d33bf3e` experimental:user_cause event path
+> - `35073e4` accept knowledge-edge proposal handler
+> - `fe8ecd7` lint baseline → 0/0
+> - `7d39c72` /record vision_single + vision_paper MVP
+> - `caa5237` vision review polish (image preview + bbox + Tier 2/3 rescue + cross-page merge + structured tree)
+> - `abfee21` stale placeholder cleanup
+> - 加上前面 `3cb420e..bfa81f9` 的 Step 0–8 + `c73eb71` merge commit
+>
+> **Deferred 到 Phase 1d**（非本 phase scope）：
+> - `/encounters/[id]` / `/events/[id]` 单事件详情页（chain navigation UI）
+> - Session summary AI 生成 + 显示
+> - CostLedger UI 真接 /today（现仅文案占位）
+> - `/knowledge/proposals` 独立路由 + 节点创建表单
+> - history / 过往 session 列表（per addendum: `/today` KPI strip 暂代替）
+> - Goal 链接（`learning_session.goal_id` + Goal 表 + UI）
+>
+> **历史 refresh 标记**（写于 1c.2 启动前，已被实际实施推翻）：
+>
+> ~~⚠️ REFRESH REQUIRED — 2026-05-15 v2~~
+>
+> 1c.2 启动 sketch 时数据访问语言是 `encounter` 单表，1c.1 Step 4-6 把它换成 event 流。本 plan body 沿用 `encounter` 命名，读时心里换 `event(action='attempt'/'judge'/'review')` 即可。
+>
+> **历史 design refresh**（per `docs/superpowers/specs/2026-05-15-phase1c-loom-design-addendum.md`）：
 > - 页面从 5 变 6：drop `/history`（用 `/today` 顶部"近期"区块替代），drop `/capture` 与 `/inbox` 独立路由（合并进 `/record` 三 tab unified），新增 `/today` orchestrator + `/mistakes` + `/learning-items`
 > - drop shadcn → 用 1c.1 已 port 的 **loom Primitives**（`src/ui/primitives/`），icon = `lucide-react`
 > - design tokens 已在 1c.1 lift 进 `app/globals.css` `@theme`，本 phase 不再调
->
-> **For agentic workers**：开干前请确认 1c.1 PR 已 merge 到 main，UI 脚手架（Next.js routing / Zustand / TanStack Query / Tailwind v4 + loom tokens / 10 个 loom Primitives）就位。
 
 **Goal**：把 Phase 1c.1 建好的"无人触达的完整后端"接到人类眼前。**六个页面**（per loom L2）：
 - `/today` —— Learning Orchestrator 控制面（KPI strip + 3 lane A/B/C + Task Dispatcher + cost ledger 链接）
