@@ -41,6 +41,9 @@ const SubmitBody = z.object({
   rating: FsrsRating,
   response_md: z.string().nullable().optional(),
   latency_ms: z.number().int().min(0).max(3_600_000).nullable().optional(),
+  // ADR-0013 — optional review session id; UI passes the session created on
+  // /review mount. server falls back to null when absent for backwards compat.
+  session_id: z.string().min(1).nullable().optional(),
 });
 
 export async function POST(req: Request): Promise<Response> {
@@ -120,7 +123,7 @@ export async function POST(req: Request): Promise<Response> {
 
       await writeEvent(tx, {
         id: eventId,
-        session_id: null,
+        session_id: body.session_id ?? null,
         actor_kind: 'user',
         actor_ref: 'self',
         action: 'review',

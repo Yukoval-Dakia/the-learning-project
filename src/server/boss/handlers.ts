@@ -2,8 +2,10 @@ import type { Db } from '@/db/client';
 import { getR2 } from '@/server/r2';
 import type { PgBoss } from 'pg-boss';
 import { buildEchoHandler } from './handlers/echo';
+import { buildKnowledgeEdgeProposeNightlyHandler } from './handlers/knowledge_edge_propose_nightly';
 import { buildKnowledgePropoNightlyHandler } from './handlers/knowledge_propose_nightly';
 import { buildPruneJobEventsHandler } from './handlers/prune_job_events';
+import { buildPruneOrphanReviewSessionsHandler } from './handlers/prune_orphan_review_sessions';
 import { buildTencentOcrHandler } from './handlers/tencent_ocr_extract';
 
 /**
@@ -13,6 +15,7 @@ import { buildTencentOcrHandler } from './handlers/tencent_ocr_extract';
  *   - Step 4 ✓: echo (golden E2E)
  *   - Step 5 ✓: knowledge_propose_nightly + prune_job_events (cron)
  *   - Step 9 ✓: tencent_ocr_extract (生产 OCR async job)
+ *   - Phase 2 ✓: knowledge_edge_propose_nightly (cron — dreaming mesh)
  */
 export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   // Step 4: echo golden E2E queue
@@ -26,6 +29,17 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   await boss.work('prune_job_events', buildPruneJobEventsHandler(db));
   await boss.schedule('knowledge_propose_nightly', '0 2 * * *', {}, { tz: 'Asia/Shanghai' });
   await boss.schedule('prune_job_events', '0 4 * * *', {}, { tz: 'Asia/Shanghai' });
+
+  // Phase 2 Dreaming: knowledge_edge mesh propose (BJT 02:30, after node propose)
+  await boss.createQueue('knowledge_edge_propose_nightly');
+  await boss.work('knowledge_edge_propose_nightly', buildKnowledgeEdgeProposeNightlyHandler(db));
+  await boss.schedule('knowledge_edge_propose_nightly', '30 2 * * *', {}, { tz: 'Asia/Shanghai' });
+
+  // ADR-0013: abandon review sessions stuck in 'started' >6h (sendBeacon
+  // fallback when normal close didn't fire). BJT 04:15 after prune_job_events.
+  await boss.createQueue('prune_orphan_review_sessions');
+  await boss.work('prune_orphan_review_sessions', buildPruneOrphanReviewSessionsHandler(db));
+  await boss.schedule('prune_orphan_review_sessions', '15 4 * * *', {}, { tz: 'Asia/Shanghai' });
 
   // Step 9: Tencent OCR Mark Agent —— 生产 async job
   // R2 in worker process needs env config; getR2() throws if missing — call inside

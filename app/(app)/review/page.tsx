@@ -49,6 +49,57 @@ const RATING_VARIANT: Record<Rating, 'good' | 'hard' | 'coral' | 'danger'> = {
 export default function ReviewPage() {
   const qc = useQueryClient();
 
+  // ADR-0013 — open a learning_session(type='review') on mount; close on
+  // pagehide via sendBeacon (so it survives tab close). Session id is held in
+  // a ref because we need it in async callbacks without re-rendering.
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    let createdId: string | null = null;
+    (async () => {
+      try {
+        const data = await apiJson<{ session_id: string }>('/api/review/sessions', {
+          method: 'POST',
+        });
+        if (cancelled) {
+          // Mounted-then-unmounted before we got the id back; close immediately.
+          // ApiAuthError path: token absent — the close call would also 401, swallow.
+          void apiJson(`/api/review/sessions/${data.session_id}/end`, {
+            method: 'POST',
+            body: JSON.stringify({ status: 'abandoned' }),
+          }).catch(() => {});
+          return;
+        }
+        createdId = data.session_id;
+        setSessionId(data.session_id);
+      } catch {
+        // Session couldn't be opened — review still works without one (server
+        // accepts null session_id), just no session-end summary surface.
+      }
+    })();
+
+    const onPageHide = () => {
+      if (!createdId) return;
+      const body = new Blob([JSON.stringify({ status: 'completed' })], {
+        type: 'application/json',
+      });
+      navigator.sendBeacon(`/api/review/sessions/${createdId}/end`, body);
+    };
+    window.addEventListener('pagehide', onPageHide);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener('pagehide', onPageHide);
+      // SPA navigation away: close via fetch instead of sendBeacon.
+      if (createdId) {
+        void apiJson(`/api/review/sessions/${createdId}/end`, {
+          method: 'POST',
+          body: JSON.stringify({ status: 'completed' }),
+        }).catch(() => {});
+      }
+    };
+  }, []);
+
   const dueQ = useQuery({
     queryKey: ['review-due'],
     queryFn: () => apiJson<{ rows: DueRow[] }>('/api/review/due?limit=50'),
@@ -86,6 +137,7 @@ export default function ReviewPage() {
           mistake_id: current.question_id,
           rating,
           response_md: answer || null,
+          session_id: sessionId,
         }),
       });
     },
