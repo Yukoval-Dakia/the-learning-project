@@ -36,6 +36,20 @@ FROM node:24-bookworm-slim AS sharpdeps
 WORKDIR /sharp
 RUN npm install --omit=dev --no-audit --no-fund sharp@^0.34.5
 
+# Stage 2.6: install Claude Agent SDK into its own clean node_modules.
+# Same reasoning as sharp — Next's tracer can't see the platform-specific
+# `claude` binary that ships via optionalDependencies (only the right
+# linux-{arch} sub-package is installed at deps-resolution time), and the
+# SDK is loaded lazily by the runner via dynamic spawn so the tracer
+# doesn't follow it. Use npm here for the same flat-layout reason sharpdeps
+# does; pnpm's symlinks won't survive a plain COPY into the runner image.
+FROM node:24-bookworm-slim AS sdkdeps
+WORKDIR /sdk
+RUN npm install --omit=dev --no-audit --no-fund \
+    @anthropic-ai/claude-agent-sdk@^0.3.143 \
+    @anthropic-ai/sdk@^0.96.0 \
+    @modelcontextprotocol/sdk@^1.29.0
+
 # Stage 3: Production runner
 FROM node:24-bookworm-slim AS runner
 WORKDIR /app
@@ -72,6 +86,13 @@ COPY --from=sharpdeps --chown=nextjs:nodejs /sharp/node_modules/sharp ./node_mod
 COPY --from=sharpdeps --chown=nextjs:nodejs /sharp/node_modules/@img ./node_modules/@img
 COPY --from=sharpdeps --chown=nextjs:nodejs /sharp/node_modules/detect-libc ./node_modules/detect-libc
 COPY --from=sharpdeps --chown=nextjs:nodejs /sharp/node_modules/semver ./node_modules/semver
+
+# Claude Agent SDK + its peer @anthropic-ai/sdk + @modelcontextprotocol/sdk.
+# The flat npm layout from `sdkdeps` includes the platform-correct
+# claude-agent-sdk-linux-{x64|arm64}/ sub-package; copying the whole @anthropic-ai
+# namespace picks it up.
+COPY --from=sdkdeps --chown=nextjs:nodejs /sdk/node_modules/@anthropic-ai ./node_modules/@anthropic-ai
+COPY --from=sdkdeps --chown=nextjs:nodejs /sdk/node_modules/@modelcontextprotocol ./node_modules/@modelcontextprotocol
 
 USER nextjs
 
