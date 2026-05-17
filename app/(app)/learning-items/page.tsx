@@ -250,7 +250,14 @@ export default function LearningItemsPage() {
           <Card key={item.id} pad="lg" style={{ marginBottom: 'var(--s-3)' }}>
             <div style={itemHeadStyle}>
               <div style={{ minWidth: 0, flex: 1 }}>
-                <h3 style={titleStyle}>{item.title}</h3>
+                <h3 style={titleStyle}>
+                  <Link
+                    href={`/learning-items/${item.id}`}
+                    style={{ color: 'inherit', textDecoration: 'none' }}
+                  >
+                    {item.title}
+                  </Link>
+                </h3>
                 <p style={metaStyle}>
                   创建 {formatRelTime(item.created_at)} · v{item.version}
                 </p>

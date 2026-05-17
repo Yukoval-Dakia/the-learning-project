@@ -254,4 +254,19 @@ describe('POST /api/learning-items', () => {
     );
     expect(res.status).toBe(400);
   });
+
+  it('creates with parent_learning_item_id when target exists', async () => {
+    const db = testDb();
+    await db.insert(learning_item).values(baseLearningItem({ id: 'hub' }));
+
+    const res = await POST(postReq({ title: 'Child', parent_learning_item_id: 'hub' }));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { parent_learning_item_id: string | null };
+    expect(body.parent_learning_item_id).toBe('hub');
+  });
+
+  it('400 when parent_learning_item_id target does not exist', async () => {
+    const res = await POST(postReq({ title: 'Child', parent_learning_item_id: 'does_not_exist' }));
+    expect(res.status).toBe(400);
+  });
 });

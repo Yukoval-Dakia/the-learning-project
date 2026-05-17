@@ -56,9 +56,13 @@ caa5237 feat(1c.2.C): vision review — image preview + bbox + rescue + merge + 
    - `prune_orphan_review_sessions` cron @ BJT 04:15 把 6h+ started 标 abandoned
    - session-end AI 总结现在可以挂上 —— 但本次没做，下次拿了 session_id 后写一个 `SessionSummaryTask` 即可
 
-3. **LearningItem hub + atomic 层级** — schema 已有 `parent_item_id` 字段（待激活），UI 完全没有。需要：
-   - 数据：决定 hub 是不是即 LearningItem.kind='hub'；
-   - UI：`/learning-items/[id]` 详情页 + 子项展开树。
+3. ~~LearningItem hub + atomic 层级~~ — **本次会话已完成**：
+   - 数据：不引入 `kind` 字段；hub vs atomic 是结构性派生（有子项的就是 hub）
+   - 用 `parent_learning_item_id` 单一真理源，`child_learning_item_ids` 仅留 schema 不写（allowlist 已更新说明）
+   - GET `/api/learning-items/[id]` 返回 item + parent + children
+   - PATCH 支持 set/clear `parent_learning_item_id`，server-side cycle prevention（self / descendant）
+   - POST 接 `parent_learning_item_id` optional + 存在性校验
+   - UI：`/learning-items/[id]` 详情页 —— 标题/状态/内容内联编辑 + parent breadcrumb + children 列表 + parent picker
 
 4. **Note artifact 系统** — 0 写入 0 UI。是 Phase 1d/2 的大坑（生成 / 编辑 / embedded check / hub↔atomic 链接）。等 #3 hub/atomic 落地后再做。
 

@@ -2,7 +2,7 @@ import { completion_evidence, knowledge, learning_item } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { DELETE, PATCH } from './route';
+import { DELETE, GET, PATCH } from './route';
 
 const BASE_KNOWLEDGE = {
   name: 'test',
@@ -37,6 +37,10 @@ function patchReq(id: string, body: unknown) {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
+}
+
+function getReq(id: string) {
+  return new Request(`http://localhost/api/learning-items/${id}`, { method: 'GET' });
 }
 
 function deleteReq(id: string, version?: number) {
@@ -400,5 +404,151 @@ describe('DELETE /api/learning-items/[id]', () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe('validation_error');
+  });
+});
+
+describe('GET /api/learning-items/[id]', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('returns 404 for unknown id', async () => {
+    const res = await GET(getReq('does_not_exist'), {
+      params: Promise.resolve({ id: 'does_not_exist' }),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it('returns item with parent=null and children=[] when standalone', async () => {
+    const db = testDb();
+    await db.insert(learning_item).values(baseItem('li1'));
+
+    const res = await GET(getReq('li1'), { params: Promise.resolve({ id: 'li1' }) });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      id: string;
+      parent: unknown;
+      children: unknown[];
+      parent_learning_item_id: string | null;
+    };
+    expect(body.id).toBe('li1');
+    expect(body.parent).toBeNull();
+    expect(body.children).toEqual([]);
+    expect(body.parent_learning_item_id).toBeNull();
+  });
+
+  it('returns parent breadcrumb when item has a parent', async () => {
+    const db = testDb();
+    await db.insert(learning_item).values(baseItem('hub', { title: 'The Hub' }));
+    await db.insert(learning_item).values(
+      baseItem('child', {
+        title: 'Atomic',
+        parent_learning_item_id: 'hub',
+      }),
+    );
+
+    const res = await GET(getReq('child'), { params: Promise.resolve({ id: 'child' }) });
+    const body = (await res.json()) as {
+      parent: { id: string; title: string; status: string } | null;
+    };
+    expect(body.parent?.id).toBe('hub');
+    expect(body.parent?.title).toBe('The Hub');
+  });
+
+  it('returns children list when item is a hub', async () => {
+    const db = testDb();
+    await db.insert(learning_item).values(baseItem('hub'));
+    await db
+      .insert(learning_item)
+      .values(baseItem('c1', { title: 'A', parent_learning_item_id: 'hub' }));
+    await db
+      .insert(learning_item)
+      .values(baseItem('c2', { title: 'B', parent_learning_item_id: 'hub' }));
+
+    const res = await GET(getReq('hub'), { params: Promise.resolve({ id: 'hub' }) });
+    const body = (await res.json()) as { children: { id: string }[] };
+    expect(body.children.map((c) => c.id).sort()).toEqual(['c1', 'c2']);
+  });
+});
+
+describe('PATCH /api/learning-items/[id] — parent_learning_item_id', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('sets parent_learning_item_id when target exists', async () => {
+    const db = testDb();
+    await db.insert(learning_item).values(baseItem('hub'));
+    await db.insert(learning_item).values(baseItem('child'));
+
+    const res = await PATCH(patchReq('child', { version: 0, parent_learning_item_id: 'hub' }), {
+      params: Promise.resolve({ id: 'child' }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { parent_learning_item_id: string | null };
+    expect(body.parent_learning_item_id).toBe('hub');
+
+    const rows = await db
+      .select({ pid: learning_item.parent_learning_item_id })
+      .from(learning_item)
+      .where(eq(learning_item.id, 'child'));
+    expect(rows[0].pid).toBe('hub');
+  });
+
+  it('clears parent when parent_learning_item_id=null', async () => {
+    const db = testDb();
+    await db.insert(learning_item).values(baseItem('hub'));
+    await db.insert(learning_item).values(baseItem('child', { parent_learning_item_id: 'hub' }));
+
+    const res = await PATCH(patchReq('child', { version: 0, parent_learning_item_id: null }), {
+      params: Promise.resolve({ id: 'child' }),
+    });
+    expect(res.status).toBe(200);
+    const rows = await db
+      .select({ pid: learning_item.parent_learning_item_id })
+      .from(learning_item)
+      .where(eq(learning_item.id, 'child'));
+    expect(rows[0].pid).toBeNull();
+  });
+
+  it('rejects self-cycle (parent === id)', async () => {
+    const db = testDb();
+    await db.insert(learning_item).values(baseItem('li1'));
+
+    const res = await PATCH(patchReq('li1', { version: 0, parent_learning_item_id: 'li1' }), {
+      params: Promise.resolve({ id: 'li1' }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe('validation_error');
+    expect(body.message).toContain('cannot reference self');
+  });
+
+  it('rejects descendant-cycle (assigning a descendant as parent would create a loop)', async () => {
+    const db = testDb();
+    // top → mid → bot
+    await db.insert(learning_item).values(baseItem('top'));
+    await db.insert(learning_item).values(baseItem('mid', { parent_learning_item_id: 'top' }));
+    await db.insert(learning_item).values(baseItem('bot', { parent_learning_item_id: 'mid' }));
+
+    // Try to make top.parent = bot. Walking up from bot: bot → mid → top — top found.
+    const res = await PATCH(patchReq('top', { version: 0, parent_learning_item_id: 'bot' }), {
+      params: Promise.resolve({ id: 'top' }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe('validation_error');
+    expect(body.message).toContain('cycle');
+  });
+
+  it('rejects unknown parent_learning_item_id', async () => {
+    const db = testDb();
+    await db.insert(learning_item).values(baseItem('li1'));
+
+    const res = await PATCH(
+      patchReq('li1', { version: 0, parent_learning_item_id: 'does_not_exist' }),
+      { params: Promise.resolve({ id: 'li1' }) },
+    );
+    expect(res.status).toBe(400);
   });
 });

@@ -48,13 +48,9 @@
     "reason": "ADR-0004 Phase 2 — learning_item ↔ artifact 双向关联",
     "resolves_when": "Sub 0d Phase 2 (artifact generation lane) implemented"
   },
-  "learning_item.parent_learning_item_id": {
-    "reason": "ADR-0004 Phase 2 — learning_item tree structure",
-    "resolves_when": "Sub 0d Phase 2 implemented"
-  },
   "learning_item.child_learning_item_ids": {
-    "reason": "Same as parent_learning_item_id",
-    "resolves_when": "Sub 0d Phase 2 implemented"
+    "reason": "Denormalised counterpart to parent_learning_item_id; children are derived via SELECT WHERE parent_learning_item_id=X. Keep the column for forward-compat (Phase 2 may activate it for ordering) but no write path planned.",
+    "resolves_when": "Phase 2 — if/when ordered child arrays become a UX need; otherwise drop"
   },
   "learning_item.ai_score": {
     "reason": "AI-assessed value score; not yet implemented",
