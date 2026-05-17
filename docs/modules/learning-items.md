@@ -10,21 +10,23 @@
 
 ## 0. 实施现状（2026-05-17）
 
-> 下面 §1–§N 是 Phase 1 sketch 期写的。**当前实际**只兑现了 schema 表 + 6 状态机 + 知识点关联 + 完成 evidence 自我宣告；高级特性（dreaming 集成 / hub+atomic 层级 / 优先级 score / note 联动）都在 Phase 2 / Phase 1d。读完本节心里替换即可。
+> 下面 §1–§N 是 Phase 1 sketch 期写的。**当前实际**已兑现 schema + 6 状态机 + 知识点关联 + 完成 evidence 自我宣告 + hub+atomic 结构性 UI；高级特性（dreaming 集成 / 优先级 score / note 联动）都在 Phase 2 / Phase 1d。读完本节心里替换即可。
 
 | 设计概念 | 已落地 | 备注 |
 |---|---|---|
 | `learning_item` 表 + `completion_evidence` 表 | ✅ schema | 1c.1 已存在 |
 | 6 状态机 `pending / in_progress / done / dismissed / resting / archived` | ✅ Phase 1c.2 Cand 2 落定（commit `7fb58e0`） | 转换矩阵 + UI tabs + revival 流程 |
 | `knowledge_ids` 关联 + UI 显示 | ✅ Phase 1c.2 commit `dd50a3a` | 创建 + per-row "改知识点" 内联编辑 |
-| `parent_learning_item_id` / `child_learning_item_ids[]`（hub+atomic 层级） | ⚠️ schema 字段在；UI 0 触点 | Phase 1d/2 |
+| `parent_learning_item_id` / `child_learning_item_ids[]`（hub+atomic 层级） | ✅ Phase 1d commit `ac4d4e3` | GET /api/learning-items/[id] 返 parent + children；PATCH 支持 set/clear parent（cycle prevention）；POST 接 optional parent；/learning-items/[id] 详情页 inline 编辑 + parent breadcrumb + children list + parent picker。**派生约定**：有子项 = hub，没子项 = atomic；不引入 `kind` enum |
 | 优先级 score 公式（urgency·0.4 / weakness·0.3 / recency·0.3 / pin） | ❌ 现按 status + updated_at 排序 | Phase 1d |
 | AI 主动提议完成（DreamingProposal.kind='learning_item_completion'） | ❌ | Phase 2 dreaming worker |
 | 复学机制（done → resting → propose relearn） | ⚠️ resting 状态在；触发链未接 | Phase 2 |
-| Note artifact 联动（hub ↔ note_hub 1:1; atomic ↔ note_atomic 1:1） | ❌ | Phase 1d note artifact 系统 |
-| 4 个来源（quiz_answer / manual / note_gen / dreaming） | ⚠️ 现只跑 `manual` 一个 source | quiz_answer 等 Phase 2 |
+| Note artifact 联动（hub ↔ note_hub 1:1; atomic ↔ note_atomic 1:1） | ❌ | Phase 2B Learning Intent Orchestrator |
+| 4 个来源（quiz_answer / manual / note_gen / dreaming） | ⚠️ 现只跑 `manual` 一个 source；`learning_intent` 入口 Phase 2B 加 | quiz_answer 等 Phase 2 |
 
-**当前 UI 入口**：`/learning-items` — 创建 + 6 状态切换 + knowledge_ids 编辑 + 软删除。
+**当前 UI 入口**：
+- `/learning-items` — 创建 + 6 状态切换 + knowledge_ids 编辑 + 软删除 + title 跳转 detail
+- `/learning-items/[id]` — 内联编辑 + 状态转移 + parent breadcrumb + children list + parent picker（hub/atomic 层级 read+write）
 
 ---
 

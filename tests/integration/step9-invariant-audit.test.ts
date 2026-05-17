@@ -138,16 +138,22 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
     });
   }
 
-  it('artifact table writes: documented as Phase 1c.2 pending (no AI generate handler yet)', async () => {
+  it('artifact table writes: confined to Phase 2B Learning Intent Orchestrator + note_generate handler', async () => {
     // 'artifact' is the C-tier AI production landing point per ADR-0006 v2.
-    // Step 9 keeps the schema and removes the legacy mistake-id ambiguity in
-    // its comments; the actual writer lands in Phase 1c.2 with
-    // NoteGenerateTask / BlockAssemblyTask. This test simply asserts that
-    // status today: NO writes anywhere in src/ + app/.
+    // Phase 2B (Learning Intent Orchestrator, commit landing 2026-05-17)
+    // activated the write path. New invariant: writes live in exactly two
+    // places — the orchestrator's accept handler + the pg-boss async
+    // note_generate handler. Anything else writing `artifact` should be
+    // reviewed for fit.
     const hits = await findWriteHits('artifact', { roots: SCAN_RUNTIME_ROOTS });
+    const ALLOWED = [
+      'src/server/orchestrator/learning_intent.ts',
+      'src/server/boss/handlers/note_generate.ts',
+    ];
+    const unexpected = hits.filter((h) => !ALLOWED.includes(h.split(path.sep).join('/')));
     expect(
-      hits,
-      `Phase 1c.2-pending invariant: artifact writes should be deferred. Hits:\n  ${hits.join('\n  ')}`,
+      unexpected,
+      `Unexpected artifact writers. Expected only ${ALLOWED.join(' + ')}. Found:\n  ${unexpected.join('\n  ')}`,
     ).toEqual([]);
   });
 });

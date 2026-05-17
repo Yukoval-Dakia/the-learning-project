@@ -9,6 +9,7 @@ import { StatusBadge } from '@/ui/primitives/StatusBadge';
 import { TabBar } from '@/ui/primitives/TabBar';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
 function matchesKnowledgeFilter(
@@ -53,8 +54,17 @@ interface KnowledgeNode {
   effective_domain: string | null;
 }
 
+interface IntentProposal {
+  proposal_id: string;
+  topic: string;
+  knowledge_node: { id: string; name: string; domain: string | null };
+  hub: { title: string; summary_md: string };
+  atomics: Array<{ knowledge_id: string; title: string; one_line_intent: string }>;
+}
+
 export default function LearningItemsPage() {
   const qc = useQueryClient();
+  const router = useRouter();
   const [filter, setFilter] = useState<StatusFilter>('all');
   const [newTitle, setNewTitle] = useState('');
   const [newKnowledgeIds, setNewKnowledgeIds] = useState<string[]>([]);
@@ -62,6 +72,40 @@ export default function LearningItemsPage() {
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [editingKnowledgeId, setEditingKnowledgeId] = useState<string | null>(null);
   const [draftKnowledgeIds, setDraftKnowledgeIds] = useState<string[]>([]);
+
+  // Phase 2B intent flow state
+  const [intentTopic, setIntentTopic] = useState('');
+  const [intentProposal, setIntentProposal] = useState<IntentProposal | null>(null);
+  const [intentError, setIntentError] = useState<string | null>(null);
+
+  const intentPlanM = useMutation({
+    mutationFn: (topic: string) =>
+      apiJson<IntentProposal>('/api/learning-intents', {
+        method: 'POST',
+        body: JSON.stringify({ topic }),
+      }),
+    onSuccess: (data) => {
+      setIntentProposal(data);
+      setIntentError(null);
+    },
+    onError: (err: Error) => {
+      setIntentError(err.message);
+      setIntentProposal(null);
+    },
+  });
+
+  const intentAcceptM = useMutation({
+    mutationFn: (proposalId: string) =>
+      apiJson<{ hub_learning_item_id: string }>(`/api/learning-intents/${proposalId}/accept`, {
+        method: 'POST',
+      }),
+    onSuccess: (data) => {
+      setIntentProposal(null);
+      setIntentTopic('');
+      qc.invalidateQueries({ queryKey: ['learning-items'] });
+      router.push(`/learning-items/${data.hub_learning_item_id}`);
+    },
+  });
 
   const itemsQ = useQuery({
     queryKey: ['learning-items', filter],
@@ -137,6 +181,75 @@ export default function LearningItemsPage() {
       }}
     >
       <PageHeader title="学习项" eyebrow="/learning-items" sub="自由 TODO，不进入 FSRS 排程" />
+
+      {/* Phase 2B — Learning Intent input */}
+      <section className="intent-input-section">
+        <h4 className="intent-section-label">我想学…</h4>
+        <div className="intent-input-row">
+          <input
+            type="text"
+            value={intentTopic}
+            onChange={(e) => setIntentTopic(e.target.value)}
+            placeholder="例：虚词、文言句式、氧化还原反应"
+            maxLength={80}
+            disabled={intentPlanM.isPending || intentAcceptM.isPending}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && intentTopic.trim() && !intentPlanM.isPending) {
+                intentPlanM.mutate(intentTopic.trim());
+              }
+            }}
+            className="intent-input"
+          />
+          <Button
+            onClick={() => intentTopic.trim() && intentPlanM.mutate(intentTopic.trim())}
+            disabled={!intentTopic.trim() || intentPlanM.isPending || intentAcceptM.isPending}
+          >
+            {intentPlanM.isPending ? '生成提议中…' : '提议拆分'}
+          </Button>
+        </div>
+        {intentError && <p className="intent-error">{intentError}</p>}
+        {intentProposal && (
+          <div className="intent-proposal-panel">
+            <div className="intent-proposal-hub">
+              <span className="intent-proposal-tag">HUB</span>
+              <strong>{intentProposal.hub.title}</strong>
+              <span className="intent-proposal-knowledge">
+                #{intentProposal.knowledge_node.name}
+              </span>
+            </div>
+            <p className="intent-proposal-summary">{intentProposal.hub.summary_md}</p>
+            <ul className="intent-proposal-atomics">
+              {intentProposal.atomics.map((a) => (
+                <li key={a.knowledge_id}>
+                  <span className="intent-proposal-tag-sm">ATOMIC</span>
+                  <strong>{a.title}</strong>
+                  <span className="intent-proposal-intent">{a.one_line_intent}</span>
+                </li>
+              ))}
+            </ul>
+            <div className="intent-proposal-actions">
+              <Button
+                variant="secondary"
+                onClick={() => setIntentProposal(null)}
+                disabled={intentAcceptM.isPending}
+              >
+                取消
+              </Button>
+              <Button
+                onClick={() => intentAcceptM.mutate(intentProposal.proposal_id)}
+                disabled={intentAcceptM.isPending}
+              >
+                {intentAcceptM.isPending
+                  ? '正在创建 + 入队…'
+                  : `接受（1 hub + ${intentProposal.atomics.length} atomic）`}
+              </Button>
+            </div>
+            {intentAcceptM.isError && (
+              <p className="intent-error">Accept 失败：{(intentAcceptM.error as Error).message}</p>
+            )}
+          </div>
+        )}
+      </section>
 
       <div style={{ marginTop: 'var(--s-4)' }}>
         <TabBar

@@ -26,6 +26,24 @@ interface ParentRow {
   status: ItemStatus;
 }
 
+interface NoteSection {
+  id: string;
+  kind: 'definition' | 'mechanism' | 'example' | 'pitfall' | 'check';
+  body_md: string;
+  source_tier: 'llm_only' | 'search_grounded' | 'textbook' | 'user_verified';
+  user_verified: boolean;
+  embedded_check: { question_ids: string[] } | null;
+  version: number;
+}
+
+interface PrimaryArtifact {
+  id: string;
+  type: string;
+  sections: NoteSection[] | null;
+  outline_json: Record<string, unknown> | null;
+  generation_status: 'pending' | 'ready' | 'failed';
+}
+
 interface Detail {
   id: string;
   title: string;
@@ -33,6 +51,8 @@ interface Detail {
   knowledge_ids: string[];
   status: ItemStatus;
   parent_learning_item_id: string | null;
+  primary_artifact_id: string | null;
+  primary_artifact: PrimaryArtifact | null;
   parent: ParentRow | null;
   children: ChildRow[];
   completed_at: number | null;
@@ -290,6 +310,9 @@ export default function LearningItemDetailPage() {
         )}
       </Card>
 
+      {/* Phase 2B — primary artifact (note) sections when present */}
+      {data.primary_artifact && <ArtifactView artifact={data.primary_artifact} />}
+
       {/* Children */}
       <Card pad="lg" style={{ marginTop: 'var(--s-4)' }}>
         <Label>子项（atomic）</Label>
@@ -321,6 +344,67 @@ export default function LearningItemDetailPage() {
         )}
       </Card>
     </Shell>
+  );
+}
+
+const SECTION_LABEL: Record<NoteSection['kind'], string> = {
+  definition: '定义',
+  mechanism: '机制 / 规则',
+  example: '例',
+  pitfall: '易错',
+  check: '自检',
+};
+
+const SOURCE_TIER_LABEL: Record<NoteSection['source_tier'], string> = {
+  llm_only: 'AI 单 pass',
+  search_grounded: 'search-grounded',
+  textbook: '教材',
+  user_verified: '已核',
+};
+
+function ArtifactView({ artifact }: { artifact: PrimaryArtifact }) {
+  return (
+    <section className="artifact-view">
+      <div className="artifact-view-head">
+        <Label inline>note · {artifact.type}</Label>
+        <span className={`artifact-status ${artifact.generation_status}`}>
+          {artifact.generation_status === 'pending'
+            ? '生成中…'
+            : artifact.generation_status === 'failed'
+              ? '生成失败'
+              : '已就绪'}
+        </span>
+      </div>
+      {artifact.generation_status === 'pending' && (
+        <p className="artifact-stub">
+          NoteGenerateTask 异步生成中（每条 atomic 约 30-60s）。刷新本页可见进度。
+        </p>
+      )}
+      {artifact.generation_status === 'failed' && (
+        <p className="artifact-stub" style={{ color: 'var(--again-ink)' }}>
+          生成失败。可在 pg-boss UI / worker 日志查看错误，或手动 enqueue 重跑。
+        </p>
+      )}
+      {artifact.generation_status === 'ready' && artifact.sections && (
+        <div className="artifact-sections">
+          {artifact.sections.map((s) => (
+            <div key={s.id} className="artifact-section">
+              <div className="artifact-section-head">
+                <strong>{SECTION_LABEL[s.kind]}</strong>
+                <span className="artifact-section-tier">{SOURCE_TIER_LABEL[s.source_tier]}</span>
+              </div>
+              <pre className="artifact-section-body">{s.body_md}</pre>
+              {s.kind === 'check' && s.embedded_check && (
+                <p className="artifact-section-stub">
+                  embedded check · {s.embedded_check.question_ids.length} 题（Phase 3 启用 quiz
+                  引擎）
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 

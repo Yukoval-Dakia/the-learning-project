@@ -1130,6 +1130,232 @@ ol {
 }
 
 /* ------------------------------------------------------------ */
+/* Phase 2B — /learning-items/[id] artifact (note) view          */
+/* ------------------------------------------------------------ */
+
+.artifact-view {
+  margin-top: var(--s-4);
+  padding: 18px 20px;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+}
+.artifact-view-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  margin-bottom: var(--s-3);
+}
+.artifact-status {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  letter-spacing: var(--ls-wide);
+  padding: 3px 8px;
+  border-radius: var(--r-pill);
+}
+.artifact-status.pending {
+  color: var(--info-ink);
+  background: var(--info-soft);
+}
+.artifact-status.ready {
+  color: var(--good-ink);
+  background: var(--good-soft);
+}
+.artifact-status.failed {
+  color: var(--again-ink);
+  background: var(--again-soft);
+}
+.artifact-stub {
+  margin: var(--s-2) 0 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  color: var(--ink-3);
+}
+.artifact-sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+.artifact-section {
+  padding: 12px 14px;
+  background: var(--paper-sunk);
+  border-radius: var(--r-2);
+  border-left: 2px solid var(--coral-line);
+}
+.artifact-section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: 6px;
+}
+.artifact-section-head strong {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  color: var(--ink);
+  font-weight: 600;
+}
+.artifact-section-tier {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+  background: var(--paper-raised);
+  padding: 1px 6px;
+  border-radius: var(--r-1);
+}
+.artifact-section-body {
+  margin: 0;
+  font-family: var(--font-wenyan);
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.artifact-section-stub {
+  margin: 6px 0 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
+
+/* ------------------------------------------------------------ */
+/* Phase 2B — /learning-items intent input + proposal panel      */
+/* ------------------------------------------------------------ */
+
+.intent-input-section {
+  margin: var(--s-4) 0;
+  padding: 16px 20px;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+}
+.intent-section-label {
+  margin: 0 0 var(--s-3);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-3);
+  letter-spacing: var(--ls-wide);
+}
+.intent-input-row {
+  display: flex;
+  gap: var(--s-2);
+  align-items: center;
+}
+.intent-input {
+  flex: 1;
+  padding: 9px 12px;
+  font-family: var(--font-serif);
+  font-size: var(--fs-body);
+  background: var(--paper-sunk);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  outline: none;
+}
+.intent-input:focus {
+  border-color: var(--coral);
+  box-shadow: var(--shadow-focus);
+}
+.intent-error {
+  margin: var(--s-2) 0 0;
+  font-size: var(--fs-caption);
+  color: var(--again-ink);
+}
+
+.intent-proposal-panel {
+  margin-top: var(--s-4);
+  padding: 14px 16px;
+  background: linear-gradient(180deg, var(--coral-soft) 0%, var(--paper-raised) 100%);
+  border: 1px solid var(--coral-line);
+  border-radius: var(--r-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.intent-proposal-hub {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+.intent-proposal-hub strong {
+  font-family: var(--font-serif);
+  font-size: 18px;
+  color: var(--coral-ink);
+}
+.intent-proposal-tag {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: var(--ls-wide);
+  color: var(--coral-ink);
+  background: var(--paper-raised);
+  border: 1px solid var(--coral-line);
+  border-radius: var(--r-pill);
+  padding: 2px 8px;
+}
+.intent-proposal-tag-sm {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: var(--ls-wide);
+  color: var(--ink-4);
+  background: var(--paper-sunk);
+  border-radius: var(--r-pill);
+  padding: 2px 6px;
+  margin-right: 6px;
+}
+.intent-proposal-knowledge {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+}
+.intent-proposal-summary {
+  margin: 0;
+  font-family: var(--font-wenyan);
+  font-size: 14.5px;
+  color: var(--ink-2);
+  line-height: 1.55;
+}
+.intent-proposal-atomics {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.intent-proposal-atomics li {
+  padding: 8px 10px;
+  background: var(--paper);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-2);
+  font-size: 13.5px;
+  color: var(--ink-2);
+  line-height: 1.5;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.intent-proposal-atomics li strong {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  color: var(--ink);
+  font-weight: 600;
+}
+.intent-proposal-intent {
+  color: var(--ink-3);
+  font-size: 13px;
+}
+.intent-proposal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s-2);
+}
+
+/* ------------------------------------------------------------ */
 /* Phase 2A — /review session_intent ribbon + per-card priority  */
 /* ------------------------------------------------------------ */
 

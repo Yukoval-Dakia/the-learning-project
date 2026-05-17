@@ -4,6 +4,7 @@ import type { PgBoss } from 'pg-boss';
 import { buildEchoHandler } from './handlers/echo';
 import { buildKnowledgeEdgeProposeNightlyHandler } from './handlers/knowledge_edge_propose_nightly';
 import { buildKnowledgePropoNightlyHandler } from './handlers/knowledge_propose_nightly';
+import { buildNoteGenerateHandler } from './handlers/note_generate';
 import { buildPruneJobEventsHandler } from './handlers/prune_job_events';
 import { buildPruneOrphanReviewSessionsHandler } from './handlers/prune_orphan_review_sessions';
 import { buildSessionSummaryHandler } from './handlers/session_summary';
@@ -50,6 +51,16 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     'session_summary',
     { pollingIntervalSeconds: 2, batchSize: 1 },
     buildSessionSummaryHandler(db),
+  );
+
+  // Phase 2B: NoteGenerateTask — enqueued by /api/learning-intents/[id]/accept,
+  // one job per atomic artifact. Each job runs ~30-60s LLM call and updates
+  // the artifact row in place. batchSize=1 keeps mimo rate-limit friendly.
+  await boss.createQueue('note_generate');
+  await boss.work(
+    'note_generate',
+    { pollingIntervalSeconds: 2, batchSize: 1 },
+    buildNoteGenerateHandler(db),
   );
 
   // Step 9: Tencent OCR Mark Agent —— 生产 async job
