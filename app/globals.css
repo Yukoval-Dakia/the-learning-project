@@ -2635,3 +2635,16 @@ ol {
   font-size: 14px;
   text-align: center;
 }
+
+/* ============================================================
+ * Form inputs — global accent-color so native range / checkbox /
+ * radio inherit the coral brand instead of the browser default
+ * (was blue on Chromium). Hits /record difficulty slider + /record
+ * vision sliders + any future native input.
+ * ============================================================ */
+input[type="range"],
+input[type="checkbox"],
+input[type="radio"],
+progress {
+  accent-color: var(--coral);
+}
