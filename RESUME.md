@@ -5,9 +5,9 @@
 
 ## 当前状态（2026-05-17）
 
-**分支**：`main`（本次会话刚加 Phase 2 dreaming edge proposer 一个 commit）。
-**Phase**：1c.2 ✅ / 1d 进行中 / 2 开局 —— dreaming 的节点 + 边 nightly cron 都活了。
-**部署**：本地 OrbStack 已 smoke 过 4 个候选；NAS 推送由你手动做。
+**分支**：`main`（本会话累计 11 commits，未推 origin）。
+**Phase**：1c.2 ✅ / 1d ✅ 收尾 / 2 开局。
+**部署**：本地 OrbStack 已 smoke；本会话 UI 改动需新一轮 NAS 部署确认视觉。
 
 ## 最近一段的成果（按时间倒序）
 
