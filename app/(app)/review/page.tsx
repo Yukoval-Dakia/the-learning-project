@@ -1,11 +1,16 @@
 'use client';
 
+import {
+  type ReviewRatingCounts,
+  ReviewSessionRibbon,
+  SessionEndSummary,
+} from '@/ui/components/ReviewSessionChrome';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
 import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
 import { CauseBadge } from '@/ui/primitives/CauseBadge';
 import { PageHeader } from '@/ui/primitives/PageHeader';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 type CauseCategory =
   | 'concept'
@@ -38,27 +43,24 @@ interface ReviewPlan {
 }
 
 type Phase = 'answering' | 'feedback';
-type Rating = 'again' | 'hard' | 'good' | 'easy';
+type Rating = 'again' | 'hard' | 'good';
 
 const RATING_LABELS: Record<Rating, string> = {
   again: '不会',
-  hard: '勉强',
-  good: '会',
-  easy: '熟练',
+  hard: '模糊',
+  good: '会了',
 };
 
 const RATING_CLASS: Record<Rating, string> = {
   again: 'again',
   hard: 'hard',
   good: 'good',
-  easy: 'coral',
 };
 
 const RATING_KEY: Record<Rating, string> = {
   again: '1',
   hard: '2',
   good: '3',
-  easy: '4',
 };
 
 const PRIORITY_TONE: Record<1 | 2 | 3 | 4 | 5, BadgeTone> = {
@@ -83,6 +85,9 @@ export default function ReviewPage() {
   // ADR-0013 — open a learning_session(type='review') on mount; close on
   // pagehide via sendBeacon (so it survives tab close).
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionStartedAt, setSessionStartedAt] = useState<number | null>(null);
+  const [sessionStatus, setSessionStatus] = useState<'started' | 'completed'>('started');
+  const sessionClosedRef = useRef(false);
   useEffect(() => {
     let cancelled = false;
     let createdId: string | null = null;
@@ -100,12 +105,14 @@ export default function ReviewPage() {
         }
         createdId = data.session_id;
         setSessionId(data.session_id);
+        setSessionStartedAt(Date.now());
       } catch {
         // Session couldn't be opened — review still works without one.
       }
     })();
     const onPageHide = () => {
-      if (!createdId) return;
+      if (!createdId || sessionClosedRef.current) return;
+      sessionClosedRef.current = true;
       const body = new Blob([JSON.stringify({ status: 'completed' })], {
         type: 'application/json',
       });
@@ -115,7 +122,8 @@ export default function ReviewPage() {
     return () => {
       cancelled = true;
       window.removeEventListener('pagehide', onPageHide);
-      if (createdId) {
+      if (createdId && !sessionClosedRef.current) {
+        sessionClosedRef.current = true;
         void apiJson(`/api/review/sessions/${createdId}/end`, {
           method: 'POST',
           body: JSON.stringify({ status: 'completed' }),
@@ -143,6 +151,12 @@ export default function ReviewPage() {
   const [phase, setPhase] = useState<Phase>('answering');
   const [answer, setAnswer] = useState('');
   const [showRef, setShowRef] = useState(false);
+  const [ratingCounts, setRatingCounts] = useState<ReviewRatingCounts>({
+    again: 0,
+    hard: 0,
+    good: 0,
+  });
+  const [knowledgeTouched, setKnowledgeTouched] = useState<string[]>([]);
 
   const rows = planQ.data?.queue ?? [];
   const total = rows.length;
@@ -150,9 +164,19 @@ export default function ReviewPage() {
   const isDone = total > 0 && index >= total;
   const intent = intentQ.data ?? planQ.data?.session_intent ?? null;
 
+  // Per-question wall-clock timer. Reset every time we land on a new question
+  // (index changes OR the queue loads for the first time). Posted as
+  // `latency_ms` to /api/review/submit which writes it to event.payload.duration_ms.
+  // useRef → no re-render churn while the user reads + types.
+  const questionShownAtRef = useRef<number>(Date.now());
+  useEffect(() => {
+    if (current) questionShownAtRef.current = Date.now();
+  }, [current]);
+
   const submitM = useMutation({
     mutationFn: (rating: Rating) => {
       if (!current) throw new Error('no current question');
+      const latencyMs = Math.max(0, Date.now() - questionShownAtRef.current);
       return apiJson<{ next_due_at: number }>('/api/review/submit', {
         method: 'POST',
         body: JSON.stringify({
@@ -160,10 +184,18 @@ export default function ReviewPage() {
           rating,
           response_md: answer || null,
           session_id: sessionId,
+          latency_ms: latencyMs,
+          referenced_knowledge_ids: current.knowledge_ids,
         }),
       });
     },
-    onSuccess: () => {
+    onSuccess: (_data, rating) => {
+      setRatingCounts((counts) => ({ ...counts, [rating]: counts[rating] + 1 }));
+      setKnowledgeTouched((prev) => {
+        const next = new Set(prev);
+        for (const kid of current?.knowledge_ids ?? []) next.add(kid);
+        return [...next];
+      });
       setIndex((i) => i + 1);
       setPhase('answering');
       setAnswer('');
@@ -195,7 +227,6 @@ export default function ReviewPage() {
         if (e.key === '1') handleRate('again');
         else if (e.key === '2') handleRate('hard');
         else if (e.key === '3') handleRate('good');
-        else if (e.key === '4') handleRate('easy');
       }
     };
     window.addEventListener('keydown', onKey);
@@ -203,6 +234,20 @@ export default function ReviewPage() {
   }, [phase, submitM.isPending, handleReveal, handleRate]);
 
   const cause = current?.cause ?? null;
+  const reviewedCount = Math.min(index, total);
+  const session = sessionId
+    ? { id: sessionId, status: isDone ? 'completed' : sessionStatus, started_at: sessionStartedAt }
+    : null;
+
+  useEffect(() => {
+    if (!isDone || !sessionId || sessionClosedRef.current) return;
+    sessionClosedRef.current = true;
+    setSessionStatus('completed');
+    void apiJson(`/api/review/sessions/${sessionId}/end`, {
+      method: 'POST',
+      body: JSON.stringify({ status: 'completed' }),
+    }).catch(() => {});
+  }, [isDone, sessionId]);
 
   const eyebrow =
     total > 0 && !isDone
@@ -214,7 +259,7 @@ export default function ReviewPage() {
       <PageHeader
         title="复习"
         eyebrow={eyebrow}
-        sub="按下 1 / 2 / 3 / 4 写一条 action=review 事件，FSRS 状态投影表同事务更新。"
+        sub="按下 1 / 2 / 3 写一条 action=review 事件，FSRS 状态投影表同事务更新。"
       />
 
       {intent && (
@@ -222,6 +267,8 @@ export default function ReviewPage() {
           {intent}
         </div>
       )}
+
+      <ReviewSessionRibbon session={session} reviewedCount={reviewedCount} totalCount={total} />
 
       {planQ.isLoading && (
         <section className="review-stage">
@@ -246,9 +293,15 @@ export default function ReviewPage() {
       )}
 
       {planQ.isSuccess && isDone && (
-        <section className="review-stage">
-          <p className="empty">本轮 {total} 道全部复习完毕。FSRS 已根据评分更新到期时间。</p>
-        </section>
+        <SessionEndSummary
+          session={session}
+          reviewedCount={total}
+          ratings={ratingCounts}
+          durationSec={
+            sessionStartedAt ? Math.max(0, Math.floor((Date.now() - sessionStartedAt) / 1000)) : 0
+          }
+          knowledgeTouched={knowledgeTouched}
+        />
       )}
 
       {current && !isDone && (
@@ -338,7 +391,7 @@ export default function ReviewPage() {
               </div>
 
               <div className="rating-row">
-                {(['again', 'hard', 'good', 'easy'] as Rating[]).map((r) => (
+                {(['again', 'hard', 'good'] as Rating[]).map((r) => (
                   <button
                     type="button"
                     key={r}
