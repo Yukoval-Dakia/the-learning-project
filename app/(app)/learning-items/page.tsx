@@ -22,7 +22,7 @@ function matchesKnowledgeFilter(
   );
 }
 
-type ItemStatus = 'pending' | 'in_progress' | 'done';
+type ItemStatus = 'pending' | 'in_progress' | 'done' | 'resting' | 'dismissed' | 'archived';
 type StatusFilter = 'all' | ItemStatus;
 
 interface LearningItem {
@@ -42,6 +42,9 @@ const FILTER_TABS: { id: StatusFilter; label: string }[] = [
   { id: 'pending', label: '待办' },
   { id: 'in_progress', label: '进行中' },
   { id: 'done', label: '已完成' },
+  { id: 'resting', label: '养护' },
+  { id: 'dismissed', label: '已拒' },
+  { id: 'archived', label: '归档' },
 ];
 
 interface KnowledgeNode {
@@ -390,6 +393,31 @@ export default function LearningItemsPage() {
                 </>
               )}
               {item.status === 'done' && (
+                <>
+                  <Button
+                    variant="info"
+                    size="sm"
+                    onClick={() =>
+                      updateM.mutate({ id: item.id, version: item.version, status: 'in_progress' })
+                    }
+                    disabled={updateM.isPending}
+                  >
+                    重学
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() =>
+                      updateM.mutate({ id: item.id, version: item.version, status: 'resting' })
+                    }
+                    disabled={updateM.isPending}
+                    title="进入养护 — dreaming 会从这里挑复学"
+                  >
+                    去养护
+                  </Button>
+                </>
+              )}
+              {item.status === 'resting' && (
                 <Button
                   variant="info"
                   size="sm"
@@ -398,7 +426,44 @@ export default function LearningItemsPage() {
                   }
                   disabled={updateM.isPending}
                 >
-                  重学
+                  复学
+                </Button>
+              )}
+              {item.status === 'dismissed' && (
+                <Button
+                  variant="info"
+                  size="sm"
+                  onClick={() =>
+                    updateM.mutate({ id: item.id, version: item.version, status: 'pending' })
+                  }
+                  disabled={updateM.isPending}
+                >
+                  恢复
+                </Button>
+              )}
+              {item.status === 'archived' && (
+                <Button
+                  variant="info"
+                  size="sm"
+                  onClick={() =>
+                    updateM.mutate({ id: item.id, version: item.version, status: 'pending' })
+                  }
+                  disabled={updateM.isPending}
+                >
+                  取出归档
+                </Button>
+              )}
+              {item.status !== 'archived' && (
+                <Button
+                  variant="quiet"
+                  size="sm"
+                  onClick={() =>
+                    updateM.mutate({ id: item.id, version: item.version, status: 'archived' })
+                  }
+                  disabled={updateM.isPending}
+                  title="归档 — 不在主列表显示"
+                >
+                  归档
                 </Button>
               )}
               <span style={{ flex: 1 }} />

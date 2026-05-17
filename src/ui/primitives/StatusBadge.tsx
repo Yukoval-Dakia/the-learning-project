@@ -3,9 +3,14 @@ import type { BadgeTone } from './Badge';
 import { Badge } from './Badge';
 
 export type StatusValue =
+  // LearningItem 6 状态
   | 'pending'
   | 'in_progress'
   | 'done'
+  | 'resting'
+  | 'dismissed'
+  | 'archived'
+  // ingestion session
   | 'extracted'
   | 'partial'
   | 'failed'
@@ -20,6 +25,9 @@ const STATUS_MAP: Record<StatusValue, [BadgeTone, string]> = {
   pending: ['neutral', '待办'],
   in_progress: ['hard', '进行中'],
   done: ['good', '已完成'],
+  resting: ['info', '养护'],
+  dismissed: ['neutral', '已拒'],
+  archived: ['neutral', '归档'],
   extracted: ['info', 'extracted'],
   partial: ['hard', 'partial'],
   failed: ['again', 'failed'],

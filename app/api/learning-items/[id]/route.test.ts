@@ -187,14 +187,50 @@ describe('PATCH /api/learning-items/[id]', () => {
     expect(body.error).toBe('invalid_transition');
   });
 
-  it('400 when status="archived" rejected by zod', async () => {
+  it('200 when status="archived" — sets archived_at and persists the status', async () => {
     const db = testDb();
-    await db.insert(learning_item).values(baseItem('li1'));
+    await db.insert(learning_item).values(baseItem('li1', { status: 'pending' }));
 
     const res = await PATCH(patchReq('li1', { version: 0, status: 'archived' }), {
       params: Promise.resolve({ id: 'li1' }),
     });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
+
+    const [row] = await db.select().from(learning_item).where(eq(learning_item.id, 'li1'));
+    expect(row.status).toBe('archived');
+    expect(row.archived_at).not.toBeNull();
+  });
+
+  it('200 when archived → pending — clears archived_at (revive flow)', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db
+      .insert(learning_item)
+      .values(baseItem('li1', { status: 'archived', archived_at: now }));
+
+    const res = await PATCH(patchReq('li1', { version: 0, status: 'pending' }), {
+      params: Promise.resolve({ id: 'li1' }),
+    });
+    expect(res.status).toBe(200);
+
+    const [row] = await db.select().from(learning_item).where(eq(learning_item.id, 'li1'));
+    expect(row.status).toBe('pending');
+    expect(row.archived_at).toBeNull();
+  });
+
+  it('200 when done → resting — schema-supported transition', async () => {
+    const db = testDb();
+    await db
+      .insert(learning_item)
+      .values(baseItem('li1', { status: 'done', completed_at: new Date() }));
+
+    const res = await PATCH(patchReq('li1', { version: 0, status: 'resting' }), {
+      params: Promise.resolve({ id: 'li1' }),
+    });
+    expect(res.status).toBe(200);
+
+    const [row] = await db.select().from(learning_item).where(eq(learning_item.id, 'li1'));
+    expect(row.status).toBe('resting');
   });
 
   it('400 on user_notes without transitioning to done', async () => {
@@ -240,15 +276,17 @@ describe('PATCH /api/learning-items/[id]', () => {
     expect(res.status).toBe(404);
   });
 
-  it('404 when item is archived', async () => {
+  it('archived items are still PATCHable — required for the revive flow', async () => {
     const db = testDb();
     const now = new Date();
-    await db.insert(learning_item).values(baseItem('li1', { archived_at: now }));
+    await db
+      .insert(learning_item)
+      .values(baseItem('li1', { status: 'archived', archived_at: now }));
 
     const res = await PATCH(patchReq('li1', { version: 0, content: 'x' }), {
       params: Promise.resolve({ id: 'li1' }),
     });
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(200);
   });
 
   it('409 on version mismatch — no completion_evidence created', async () => {
