@@ -11,6 +11,7 @@
 
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
 import { Button } from '@/ui/primitives/Button';
+import { type SuggestionKind, SuggestionKindTag } from '@/ui/primitives/SuggestionKindTag';
 import { useMutation } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 
@@ -41,10 +42,14 @@ const TURN_KIND_LABEL: Record<TurnKind, string> = {
   end: '收尾',
 };
 
-const SUGGESTIONS = [
-  { label: '再讲一遍', text: '上一段没完全跟上，能不能换一种说法再讲一遍？' },
-  { label: '出题考我', text: '出一道相关的题考我一下。' },
-  { label: '我懂了', text: '我懂了，继续下一个要点吧。' },
+const SUGGESTIONS: Array<{ label: string; text: string; suggestion_kind: SuggestionKind }> = [
+  {
+    label: '再讲一遍',
+    text: '上一段没完全跟上，能不能换一种说法再讲一遍？',
+    suggestion_kind: 'corrective',
+  },
+  { label: '出题考我', text: '出一道相关的题考我一下。', suggestion_kind: 'proactive' },
+  { label: '我懂了', text: '我懂了，继续下一个要点吧。', suggestion_kind: 'proactive' },
 ];
 
 export interface TeachingDrawerProps {
@@ -211,11 +216,12 @@ export function TeachingDrawer({
               <button
                 key={s.label}
                 type="button"
-                className="suggest-chip"
+                className={`suggest-chip ${s.suggestion_kind === 'corrective' ? 'is-corrective' : ''}`}
                 onClick={() => send(s.text)}
                 disabled={turnM.isPending}
               >
                 {s.label}
+                <SuggestionKindTag kind={s.suggestion_kind} />
               </button>
             ))}
           </div>

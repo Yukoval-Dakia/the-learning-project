@@ -132,29 +132,43 @@ Question (统一题库，single source of truth)
 
 需要"边看数据边决策"的 Task 走 multi-turn tool call；输入已固定的 Task 走单轮 structured output。
 
-**Tool 分组（按权限）**
+> **2026-05-17 alignment**: 现行 runner 在 `src/server/ai/runner.ts`，所有路径走 `@anthropic-ai/claude-agent-sdk`。Tool transport 使用 Claude Agent SDK 的 `mcpServers + allowedTools + maxTurns`。领域边界不是 MCP 本身，而是项目内的 Domain Tool Registry。详见 [`docs/superpowers/specs/2026-05-17-agent-context-tools-design.md`](superpowers/specs/2026-05-17-agent-context-tools-design.md)。
+
+**Tool 分组（按语义和权限）**
 
 ```
-Read（任何 Task 可用）：
-  search_knowledge_by_concept / get_knowledge_node / get_node_neighbors
-  find_similar_mistakes / get_recent_mistakes / get_weak_points
-  get_review_due / get_learning_history / get_artifact / get_question
-  get_study_log
+Read（按 Task allowlist 注入）：
+  get_subject_graph_overview / query_knowledge / expand_knowledge_subgraph
+  find_knowledge_paths / query_events / query_mistakes
+  get_review_due / get_learning_history / get_artifact / get_question / get_study_log
 
-Write（Task 白名单）：
-  create_knowledge_node           # AttributionTask, NoteGenerateTask (atomic 级)
-  link_mistake_to_node            # AttributionTask
-  create_question                 # 录入 / VariantGenTask
-  create_learning_item            # NoteGenerateTask (hub+atomic)
-  update_ai_delta_mastery         # 限定 Task，可回滚
+Propose-only（产生待审核 event，不立即执行）：
+  propose_knowledge_edge / propose_knowledge_mutation
+  propose_variant / attribute_mistake / propose_learning_item_completion
 
-Propose-only（产生待审核记录，不立即执行）：
-  propose_completion / propose_merge / propose_archive
-  propose_delete_mistake / propose_new_knowledge_node (hub 级)
-  propose_learning_item_completion / propose_learning_item_relearn
+Write（极少数、低风险、已有事务边界）：
+  write_agent_message / write_tool_trace
 ```
 
-破坏性操作（删错题、合并节点）**没有直接 tool**——AI 只能 propose，走 MaintenanceSuggestion 流程。
+破坏性操作（删错题、合并节点、reparent、merge、archive）**没有直接 write tool**。AI 只能 propose；用户 accept route 再执行真实 mutation。
+
+**DomainTool 合约**
+
+```ts
+type ToolEffect = 'read' | 'propose' | 'write';
+
+interface DomainTool<Input, Output> {
+  name: string;
+  effect: ToolEffect;
+  inputSchema: z.ZodType<Input>;
+  outputSchema: z.ZodType<Output>;
+  execute(ctx: ToolContext, input: Input): Promise<Output>;
+  summarize(input: Input, output: Output): string; // ToolUseCard folded summary
+  mirrorEvent: 'never' | 'when_user_visible' | 'when_causal' | 'always';
+}
+```
+
+`src/server/ai/tools/registry.ts` 是领域工具源头；`src/server/ai/tools/mcp.ts` 把选中的 DomainTool 包成 in-process MCP server 给 Claude Agent SDK 使用。独立远程 MCP server 推后，不作为当前产品内 tool 架构核心。
 
 **循环控制**
 
@@ -170,11 +184,12 @@ TaskBudget {
 
 超 budget → 1 轮 nudge（"必须给出最终答案"）→ 仍不收敛则 fallback 到确定性逻辑，记录 `degraded` 标记。
 
-**实现**：tool-calling 循环、provider 兼容、流式都是成熟问题，**直接用开源方案**（Vercel AI SDK / LangChain / 自选），不自建。重点是把这四件做对：
-- Tool 注册（含权限）
-- Task → 允许 tool 白名单
+**实现重点**：
+- Domain Tool 注册（含权限、schema、summary、mirror policy）
+- Task → allowedTools 白名单
 - Budget 与降级
-- ToolCallLog（必须）
+- `tool_call_log` 原始调用日志
+- 用户可见 / 因果相关 tool-use mirror 到 `event(action='experimental:tool_use')`
 
 ### 5.3 成本控制
 
@@ -186,36 +201,38 @@ TaskBudget {
 - **预算天花板**：日 $5 / 周 $30（自用规模兜底，跑数据后调）；超了自动降级（顶级 → 中级 → 暂停 dreaming）
 - 每次调用记录 `CostLedger`，按 `(task, provider, model)` 聚合可见
 
-### 5.4 Skill / MCP Server / Plugin（推后）
+### 5.4 Skill / MCP Server / Plugin
 
-这三块概念保留但不在 Phase 1 实现：
+这些概念保留，但不要和产品内 runtime tool 混在一起：
 
 - **Skill**（提示词包，markdown + frontmatter）：Phase 2 在 prompt 重复多了之后再抽
-- **MCP Server**（对外暴露 resources + tools）：Phase 2 等核心闭环稳了再 expose；Phase 1 在代码层面分好"以后能 expose"和"内部"目录
+- **in-process MCP bridge**（当前可用）：DomainTool → Claude Agent SDK `mcpServers` 的内部适配层，不对外暴露
+- **Standalone MCP Server**（对外暴露 resources + tools）：等核心闭环稳了、且确实需要外部客户端时再 expose；复用 DomainTool registry，不重写工具定义
 - **Plugin**（学科 bundle）：Phase 3 真有第二学科再做；Phase 1 划好 `core/` vs `subjects/wenyan/` 的目录边界
 - **外部 MCP 消费**（Calendar / Search / FS）：Phase 2 按需接
 
 ### 5.5 Tool calling 循环位置
 
-**决策**：tool calling 多步循环跑在 **worker 端**（Cloudflare Workers），client 只负责发起请求 + 接 stream。
+**决策**：tool calling 多步循环跑在 **server 端**（Next route / pg-boss worker / scripts worker），client 只负责发起请求 + 接收 JSON 或 stream。浏览器永远不持 provider key，也不直接执行 tool。
 
 #### 实现
 
-- worker `/api/ai/:task`：
-  - `needsToolCall: false` 的 task → `generateText` 单轮 → 返 JSON
-  - `needsToolCall: true` 的 task → `streamText({ tools, stopWhen: stepCountIs(N) })` → 返 stream Response
-- AI SDK 的 `streamText` 自带 tool call 循环（multi-step），每步完成调 `onStepFinish`，每个 tool call 写一条 `ToolCallLog`
-- 总 finish 时 `onFinish` 写一条 `CostLedger`（按 task / provider / model 聚合）
+- `app/api/ai/[task]/route.ts`：
+  - `needsToolCall: false` 的 task → `runTask()` → JSON / buffered text
+  - `needsToolCall: true` 的 task → `runAgentTask()` 或 `streamTask()`，注入 `allowedTools + mcpServers`
+- Claude Agent SDK 负责 multi-turn tool loop；`maxTurns` 来自 `TaskBudget.maxIterations`
+- assistant tool-use blocks 写 `tool_call_log`
+- 总 finish 写 `cost_ledger`（按 task / provider / model 聚合）
 - client `src/ai/client.ts` 用 `fetch` + `ReadableStream`，按 `content-type` 分流：JSON 走 `res.json()`，stream 走 reader 循环（Phase 1 buffer 全文，未来 UI 消费 progress 再加 callback）
 
 #### 为什么不在 client 跑
 
 - Anthropic API key 不能暴露到浏览器
-- 跨请求保留 turn state 复杂（要 KV / Durable Objects），server 一次跑完最简
+- Tool 需要 DB transaction、event guard、权限 allowlist、成本日志，必须留在 server 侧
 
 #### 与 Dreaming 实施栈的关系
 
-Dreaming / Maintenance lane（见 § 5.6 Dreaming / Maintenance 实施栈—— Phase 2 加）也复用这套 runner：cron worker / queue consumer 调 `runTask` / `streamTask` 同样的入口；区别只是触发方式（HTTP 请求 vs cron / queue message）和是否走 Anthropic Batch API（重批量任务）。
+Dreaming / Maintenance lane 也复用这套 runner：cron / pg-boss worker 调 `runTask` / `runAgentTask` / `streamTask` 同样入口；区别只是触发方式（HTTP 请求 vs cron / queue message）和是否走 batch。
 
 ---
 
@@ -531,10 +548,13 @@ CostLedger
 In-code registries (not DB)：
 
 ```
-Tool {                            // LLM 调用的函数原语，跟 tool_* artifact 是不同概念
-  name, description, input/output_schema, handler
-  permission: read | write | propose
-  cost_estimate
+DomainTool {                      // LLM 调用的函数原语，跟 tool_* artifact 是不同概念
+  name, description
+  effect: read | propose | write
+  input_schema, output_schema
+  execute(ctx, input)
+  summarize(input, output)        // ToolUseCard folded summary
+  mirror_event: never | when_user_visible | when_causal | always
 }
 
 Task {
@@ -604,6 +624,15 @@ FSRS 投影表 `material_fsrs_state` 从 event 流派生，每次 `action='revie
 **propose 路径**（通过 event 流）：
 1. `ProposeKnowledgeEdge` event（AI 提议，dry-run）→ 用户 accept
 2. `RateKnowledgeEdge` event（rating='accept'）→ 触发 `GenerateKnowledgeEdge` event + `knowledge_edge` INSERT
+
+**agent 读图路径**：不要把整张 `knowledge` / `knowledge_edge` 表直接塞进 prompt。使用语义化 graph reader：
+
+- `get_subject_graph_overview`：subject 图例、root clusters、relation type 语义
+- `query_knowledge`：按 query/id 找节点，返回 path、neighbors、stats、recent failures
+- `expand_knowledge_subgraph`：围绕中心节点展开 bounded local subgraph
+- `find_knowledge_paths`：解释两个节点之间的路径和关系
+
+这些 tool 的完整设计见 [`docs/superpowers/specs/2026-05-17-agent-context-tools-design.md`](superpowers/specs/2026-05-17-agent-context-tools-design.md)。
 
 参考 `src/server/knowledge/edges.ts`，ADR-0010，ADR-0011 §3-5。
 

@@ -1,14 +1,21 @@
 # Pattern C — 两类 Agent + 共享薄 harness
 
-**决策**：所有 LLM agent 调用统一走 `runAgent()` 共享 harness（基于 Vercel AI SDK），不引入外部 agent 框架（Hermes / OpenClaw / Claude Agent SDK 均排除）。Agent 分两类：**后端目的型（Backend Purpose）** 和 **用户副驾驶（User Copilot）**。
+**决策**：Agent 分两类：**后端目的型（Backend Purpose）** 和 **用户副驾驶（User Copilot）**。两类共享 task registry、provider/model selection、budget、tool allowlist 和审计表，但生命周期和会话语义不同。
+
+> **2026-05-17 implementation update**: 两类 agent 与 proposal-only 原则继续有效；runner 实现已从早期 Vercel AI SDK 方案切到 `@anthropic-ai/claude-agent-sdk`（见 `src/server/ai/runner.ts`）。Tool calling 通过 Claude Agent SDK 的 `mcpServers + allowedTools + maxTurns` 执行。旧文中对 Vercel AI SDK / Claude Agent SDK 的取舍是历史上下文，不再代表现行实现。
 
 ---
 
-## 调用约定（不自建 harness）
+## 调用约定
 
-> **Status (2026-05-16 audit)**: 下文描述的 **Provider Manager** (`src/server/ai/providers.ts`) 与 **Task Model Selector** (`resolveTaskModel()`) **尚未落地** —— 计划于 Sub 0d 中实现（见 `docs/superpowers/plans/2026-05-11-sub0d-agent-layer.md`，目前 DEFERRED）。下文为**目标形态**。当前 `src/server/ai/runner.ts` 直接 `import { anthropic } from '@ai-sdk/anthropic'`；`src/ai/registry.ts` 已预占 `defaultProvider` + `fallbackChain` 字段但 `fallbackChain` 是 dead config（无 reader），亦无 `resolveTaskModel()` 函数。
+> **Status (2026-05-17)**: Provider Manager 已在 `src/server/ai/providers.ts` 落地；`src/server/ai/runner.ts` 通过 Claude Agent SDK 调用 provider/model，并用独立 `CLAUDE_CONFIG_DIR` 隔离用户本机 Claude 配置。
 
-**不**自建 `runAgent()` wrapper。直接用 Vercel AI SDK `generateText / streamText + maxSteps`，通过 **Provider Manager** + **Task Model Selector** 管理 model 与 provider。
+**不**自建 tool-calling loop。直接用 Claude Agent SDK 的 query loop；项目只维护：
+
+- Provider Manager / Task Model Selector
+- `TaskDef.allowedTools`
+- Domain Tool Registry（见 `docs/superpowers/specs/2026-05-17-agent-context-tools-design.md`）
+- `tool_call_log` / `cost_ledger` / `event` mirror
 
 ### Provider Manager (`src/server/ai/providers.ts`)
 
@@ -35,9 +42,9 @@ export function resolveTaskModel(kind: TaskKind, override?: Partial<TaskModelCon
 每个 task 在 registry 里声明 `{ provider, model }`，runner 调 `resolveTaskModel(ctx.kind)` 取 model 实例。`override` 字段支持测试或临时切换，不影响默认配置。
 
 - `session` 是 opt-in 的上层抽象，仅 User Copilot 使用。
-- `tools` 来自共享工具池（`search*` / `write*` / `propose*`），由 purpose 决定 allowlist。
-- `budget` = `maxSteps`（tool call 步数上限）；Backend Purpose Agent 通常 3–8，Copilot 可到 15。
-- 注意：`cache_control` on tool definitions 有 vercel/ai #3820 bug，非 Anthropic 直连时 tool schema 缓存可能失效；system prompt 级 caching 透传正常。
+- `tools` 来自共享 Domain Tool Registry，由 task purpose 决定 allowlist。
+- `budget` = Claude Agent SDK `maxTurns`（tool call 步数上限）；Backend Purpose Agent 通常 3-8，Copilot 可到 15。
+- MCP 是当前 SDK 的 in-process transport adapter，不是产品级插件边界。
 
 ---
 
@@ -92,14 +99,14 @@ export function resolveTaskModel(kind: TaskKind, override?: Partial<TaskModelCon
 |---|---|
 | Hermes Agent | Python，语言栈不符（ADR-0001） |
 | OpenClaw | 个人助手形状，不可嵌入 |
-| Claude Agent SDK | 形状 OK，但 community provider（Max 订阅）不支持 custom tools |
+| Claude Agent SDK | **已采用为现行 runner**；旧版排除理由已被 2026-05-17 implementation update supersede |
 | OpenAI Codex CLI | coding agent CLI，非可嵌入框架 |
 
 ---
 
 ## 理由
 
-1. **Vercel AI SDK 已满足需求**：`generateText` / `streamText` + tool calling 已是完整 agent harness。手建 = 重复造轮子。
+1. **Claude Agent SDK 已满足需求**：query loop + MCP tools + maxTurns 已是完整 agent harness。手建 loop = 重复造轮子。
 2. **prompt caching 与 Anthropic 原生绑定**：system prompt 长时 90% 省；走代理层 caching 行为不稳。
 3. **两类 agent 形态差异显著**：budget / session / 触发方式三轴都不同，强行统一成一个框架比分开更复杂。
 4. **破坏性操作只走 propose**：AI 不直接 mutate，保证 evidence-first 原则（见 ADR-0002、`docs/architecture.md`）。

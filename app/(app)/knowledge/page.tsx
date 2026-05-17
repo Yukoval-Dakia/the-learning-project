@@ -4,7 +4,9 @@ import { ApiAuthError, apiJson } from '@/ui/lib/api';
 import { Button } from '@/ui/primitives/Button';
 import { Card } from '@/ui/primitives/Card';
 import { Icon } from '@/ui/primitives/Icon';
+import { MasteryBadge, type MasteryData } from '@/ui/primitives/MasteryBadge';
 import { PageHeader } from '@/ui/primitives/PageHeader';
+import { type SuggestionKind, SuggestionKindTag } from '@/ui/primitives/SuggestionKindTag';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 
@@ -15,6 +17,10 @@ interface KnowledgeNode {
   parent_id: string | null;
   archived_at: string | null;
   effective_domain: string | null;
+  mastery: number | null;
+  evidence_count: number;
+  last_evidence_at: string | null;
+  last_active_at: string;
 }
 
 interface TreeNode extends KnowledgeNode {
@@ -62,6 +68,7 @@ interface EdgeProposalEvent {
     relation_type?: RelationType;
     weight?: number;
     reasoning?: string;
+    suggestion_kind?: SuggestionKind;
   };
   task_run_id?: string;
   cost_micro_usd?: number;
@@ -428,6 +435,9 @@ export default function KnowledgePage() {
                 <code>{selected.id}</code> · depth {selected.depth}
                 {selected.parent_id ? ` · parent ${selected.parent_id}` : ' · root'}
               </div>
+              <div className="dd-mastery">
+                <MasteryBadge data={masteryData(selected)} />
+              </div>
             </div>
             <Button
               variant="ghost"
@@ -634,6 +644,14 @@ function edgeProposalFrom(event: EdgeProposalEvent): string | undefined {
 
 function edgeProposalTo(event: EdgeProposalEvent): string | undefined {
   return event.payload.to_knowledge_id ?? event.payload.to_id;
+}
+
+function masteryData(node: KnowledgeNode): MasteryData {
+  return {
+    mastery: node.mastery,
+    evidence_count: node.evidence_count,
+    last_evidence_at: node.last_evidence_at,
+  };
 }
 
 function edgeProposalKey(event: EdgeProposalEvent): string {
@@ -903,12 +921,18 @@ function EdgeProposalCard({
   const fromId = edgeProposalFrom(event);
   const toId = edgeProposalTo(event);
   const meta = relationMeta(event.payload.relation_type);
+  const suggestionKind = event.payload.suggestion_kind ?? 'proactive';
   const disabled = status !== undefined || pending;
   return (
-    <div className={`edge-proposal tone-${meta.tone} ${status ? `is-${status}` : ''}`}>
+    <div
+      className={`edge-proposal tone-${meta.tone} ${status ? `is-${status}` : ''} ${
+        suggestionKind === 'corrective' ? 'is-corrective' : ''
+      }`}
+    >
       <div className="edge-proposal-head">
         <span className="mini-badge info">
           <Icon name="link" size={11} /> AI · 关系
+          <SuggestionKindTag kind={suggestionKind} />
         </span>
         <span className="ep-graph">
           <code>{nodeName(nodesById, fromId)}</code>

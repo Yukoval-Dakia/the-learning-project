@@ -39,20 +39,10 @@ export default function MistakesPage() {
   const attributed = total - pending;
 
   return (
-    <main
-      style={{
-        minHeight: '100vh',
-        background: 'var(--paper)',
-        padding: '36px 28px',
-        maxWidth: 'var(--cap-prose, 780px)',
-        margin: '0 auto',
-        width: '100%',
-        boxSizing: 'border-box',
-      }}
-    >
+    <main className="page prose">
       <PageHeader
-        title="错题列表"
-        eyebrow="/mistakes"
+        title="错题"
+        eyebrow="MISTAKES · cause + event chain"
         sub={
           total === 0 ? undefined : `最近 ${total} 条 · 归因中 ${pending} / 已归因 ${attributed}`
         }

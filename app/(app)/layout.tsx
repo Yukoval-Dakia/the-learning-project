@@ -39,6 +39,7 @@ function activeFromPath(path: string): string {
   // Order matters: /learning-items before /knowledge etc.
   if (path.startsWith('/learning-items')) return 'items';
   if (path.startsWith('/study-log')) return 'log';
+  if (path.startsWith('/inbox')) return 'today';
   if (path.startsWith('/today')) return 'today';
   if (path.startsWith('/record')) return 'record';
   if (path.startsWith('/review')) return 'review';

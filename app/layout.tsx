@@ -7,11 +7,10 @@ export const metadata: Metadata = {
   description: 'A personal learning tool focused on classical Chinese (文言文)',
 };
 
-// No-FOUC theme boot: synchronously read localStorage *before* React hydrates
-// and apply `data-theme` to <html>. Inlined into <head> via `dangerouslySet…`
-// because it MUST run before first paint — defer/module attrs would let the
-// page flash light tokens before the dark attribute lands.
-const THEME_BOOT = `(function(){try{var t=localStorage.getItem('loom-theme');if(t==='light'||t==='dark'){document.documentElement.setAttribute('data-theme',t);}}catch(e){}})()`;
+// No-FOUC theme boot: the reference design is a light paper UI, so the
+// product defaults to `light` unless the user explicitly chose `dark` or
+// `auto`. This runs before hydration to avoid a system-dark first paint.
+const THEME_BOOT = `(function(){try{var t=localStorage.getItem('loom-theme');if(t==='dark'){document.documentElement.setAttribute('data-theme','dark');}else if(t==='auto'){document.documentElement.removeAttribute('data-theme');}else{document.documentElement.setAttribute('data-theme','light');}}catch(e){document.documentElement.setAttribute('data-theme','light');}})()`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

@@ -129,30 +129,18 @@ export default function StudyLogPage() {
   const rows = logsQ.data?.rows ?? [];
 
   return (
-    <main
-      style={{
-        minHeight: '100vh',
-        background: 'var(--paper)',
-        padding: '36px 28px',
-        maxWidth: 'var(--cap-prose, 780px)',
-        margin: '0 auto',
-        width: '100%',
-        boxSizing: 'border-box',
-      }}
-    >
+    <main className="page prose">
       <PageHeader
         title="学习日志"
-        eyebrow="/study-log"
+        eyebrow="STUDY LOG · notes + observations"
         sub="跨学科记录顿悟 / 疑问 / 反思 / 高亮 / 观察。Phase 2 会与自动事件统一进时间线。"
       />
 
-      <div style={{ marginTop: 'var(--s-4)' }}>
-        <TabBar
-          items={KIND_TABS.map((t) => ({ id: t.id, label: t.label }))}
-          active={filter}
-          onSelect={(id) => setFilter(id as KindFilter)}
-        />
-      </div>
+      <TabBar
+        items={KIND_TABS.map((t) => ({ id: t.id, label: t.label }))}
+        active={filter}
+        onSelect={(id) => setFilter(id as KindFilter)}
+      />
 
       <details open style={{ marginTop: 'var(--s-4)' }}>
         <summary style={summaryStyle}>新增记录</summary>

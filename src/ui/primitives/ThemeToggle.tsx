@@ -1,11 +1,11 @@
 'use client';
 
-// ThemeToggle — Loom 3-state cycle: auto → 淡 → 深 → auto.
+// ThemeToggle — Loom 3-state cycle: 淡 → 深 → auto → 淡.
 //
-// - auto (default): no `data-theme` attribute on <html>, follows
-//   prefers-color-scheme via @media in globals.css.
-// - 淡 (light): `data-theme="light"` forces light tokens.
+// - 淡 (default): `data-theme="light"` matches the reference design.
 // - 深 (dark): `data-theme="dark"` forces dark tokens.
+// - auto: no `data-theme` attribute on <html>, follows prefers-color-scheme
+//   via @media in globals.css.
 //
 // Persistence: `localStorage["loom-theme"]` keeps the choice across reloads.
 // No-FOUC: `app/layout.tsx` reads localStorage in a synchronous inline
@@ -25,16 +25,16 @@ const LABELS: Record<ThemePref, string> = {
 };
 
 const NEXT: Record<ThemePref, ThemePref> = {
-  auto: 'light',
   light: 'dark',
   dark: 'auto',
+  auto: 'light',
 };
 
 function readSavedTheme(): ThemePref {
-  if (typeof window === 'undefined') return 'auto';
+  if (typeof window === 'undefined') return 'light';
   const raw = window.localStorage.getItem(STORAGE_KEY);
   if (raw === 'light' || raw === 'dark' || raw === 'auto') return raw;
-  return 'auto';
+  return 'light';
 }
 
 function applyTheme(pref: ThemePref): void {
@@ -48,9 +48,9 @@ function applyTheme(pref: ThemePref): void {
 }
 
 export function ThemeToggle() {
-  // Start with 'auto' to keep SSR + first paint stable; the inline boot script
+  // Start with 'light' to keep SSR + first paint stable; the inline boot script
   // in app/layout.tsx has already applied the right attribute by now.
-  const [pref, setPref] = useState<ThemePref>('auto');
+  const [pref, setPref] = useState<ThemePref>('light');
 
   // Hydrate from localStorage on mount (after no-FOUC script has run).
   useEffect(() => {
