@@ -1,14 +1,18 @@
+// KnowledgeReviewTask HTTP entrypoint.
+//
+// 2026-05-17: dropped the `@ai-sdk/anthropic` model handle. The agent
+// runtime + provider routing now live in streamReviewTask, which calls
+// streamTask → Claude Agent SDK → xiaomi/mimo per Provider Manager.
+
 import { db } from '@/db/client';
 import { errorResponse } from '@/server/http/errors';
 import { streamReviewTask } from '@/server/knowledge/review';
-import { anthropic } from '@ai-sdk/anthropic';
 
 export const runtime = 'nodejs';
 
 export async function POST(): Promise<Response> {
   try {
-    const model = anthropic('claude-sonnet-4-6');
-    return await streamReviewTask({ db, model });
+    return await streamReviewTask({ db });
   } catch (err) {
     return errorResponse(err);
   }

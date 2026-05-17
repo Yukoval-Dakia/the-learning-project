@@ -1,39 +1,36 @@
-// Phase 1c.1 Step 7 — KnowledgeReviewTask write_proposal tool dispatch.
+// KnowledgeReviewTask — Maintenance Agent runtime.
 //
-// Step 4 switched the input data source to the event stream. Step 7 extended
-// the `write_proposal` tool to dispatch on mutation kind. Step 9 retired the
-// legacy dreaming_proposal table — both branches now write events:
+// 2026-05-17 migrated from Vercel AI SDK (`streamText` + inline ToolSet) to
+// Claude Agent SDK with an in-process MCP server. The tool dispatch logic
+// (tree-shape vs mesh-shape) is preserved verbatim; only the agent runtime
+// changes.
 //
-//   - Tree-shape mutations (propose_new / reparent / merge / split / archive) →
-//     writeKnowledgeProposeEvent writes a propose event (Lane B
-//     ProposeKnowledge for propose_new; experimental:knowledge_<mutation>
-//     namespace for the rest).
-//   - Mesh-shape mutation (propose_knowledge_edge per ADR-0010/0011) → writes a
-//     ProposeKnowledgeEdge event via writeEvent (Lane B).
+// Flow:
+//   1. Build the input payload (tree + recent failure attempts).
+//   2. Construct an in-process MCP server with one tool: `write_proposal`.
+//      The handler dispatches by `payload.mutation` (or top-level
+//      `mutation` arg) into:
+//        - propose_knowledge_edge → ProposeKnowledgeEdge event.
+//        - anything else → writeKnowledgeProposeEvent (tree mutation).
+//   3. Call `streamTask` which routes through the Claude Agent SDK
+//      subprocess, exposing the MCP tool as `mcp__loom__write_proposal`.
+//   4. Return the streamed Response.
 //
-// Discrimination: payload.mutation === 'propose_knowledge_edge' is the
-// discriminator; absent that, fall through to tree-mutation path.
+// The registry's `allowedTools: ['mcp__loom__write_proposal']` matches the
+// SDK-resolved name so the agent runner doesn't strip the tool from the
+// catalog before the model sees it.
 
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
-import type { LanguageModel, ToolSet } from 'ai';
-import { streamText } from 'ai';
+import { streamTask } from '@/server/ai/runner';
+import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { getFailureAttempts, writeEvent } from '../events/queries';
 import { type KnowledgeMutationPayload, writeKnowledgeProposeEvent } from './proposals';
 
 const RECENT_MISTAKES_LIMIT = 100;
 
-/**
- * Builds the input payload (tree + recent mistakes) for KnowledgeReviewTask.
- * recent_mistakes is now projected from the event stream (attempt + chained
- * judge) but keeps the same shape the prompt expects:
- *   { id, question_id, knowledge_ids, cause }
- * `id` is the attempt event id, `knowledge_ids` is the attempt payload's
- * referenced_knowledge_ids, `cause` is the chained judge's cause (or null when
- * attribution hasn't run yet).
- */
 async function buildReviewInput(db: Db) {
   const tree = await db
     .select({
@@ -62,118 +59,116 @@ async function buildReviewInput(db: Db) {
   };
 }
 
+// ---------- Pure dispatcher (testable without the SDK) ----------
+//
+// Exposed so tests can drive the dispatch logic on different payload shapes
+// without spawning the Claude CLI subprocess.
+
+export interface WriteProposalArgs {
+  mutation?: string;
+  payload: unknown;
+  reasoning: string;
+}
+
+export interface WriteProposalResult {
+  proposal_id?: string;
+  event_id?: string;
+  kind: 'tree_mutation' | 'knowledge_edge_propose';
+}
+
+export async function runWriteProposal(
+  db: Db,
+  args: WriteProposalArgs,
+): Promise<WriteProposalResult> {
+  const { mutation, payload, reasoning } = args;
+  const isEdgeProposal = mutation === 'propose_knowledge_edge' || isKnowledgeEdgeMutation(payload);
+  if (isEdgeProposal) {
+    const edgePayload = extractEdgePayload(payload);
+    if (!edgePayload) {
+      // Malformed edge proposal — fall through to dreaming path so we
+      // don't silently swallow it.
+      const id = await writeKnowledgeProposeEvent(db, {
+        payload: payload as KnowledgeMutationPayload,
+        reasoning,
+      });
+      return { proposal_id: id, kind: 'tree_mutation' };
+    }
+    const eventId = newId();
+    await writeEvent(db, {
+      id: eventId,
+      subject_id: newId(),
+      actor_kind: 'agent',
+      actor_ref: 'dreaming',
+      action: 'propose',
+      subject_kind: 'knowledge_edge',
+      outcome: 'success',
+      payload: {
+        from_knowledge_id: edgePayload.from_knowledge_id,
+        to_knowledge_id: edgePayload.to_knowledge_id,
+        relation_type: edgePayload.relation_type,
+        reasoning,
+      },
+      created_at: new Date(),
+    });
+    return { event_id: eventId, kind: 'knowledge_edge_propose' };
+  }
+  const id = await writeKnowledgeProposeEvent(db, {
+    payload: payload as KnowledgeMutationPayload,
+    reasoning,
+  });
+  return { proposal_id: id, kind: 'tree_mutation' };
+}
+
+// ---------- MCP server factory (built per-call, captures db) ----------
+
+const WriteProposalSchema = {
+  mutation: z.string().optional(),
+  payload: z.unknown(),
+  reasoning: z.string(),
+} as const;
+
+function buildKnowledgeReviewMcpServer(db: Db) {
+  return createSdkMcpServer({
+    name: 'loom',
+    tools: [
+      tool(
+        'write_proposal',
+        'Propose one knowledge graph mutation. Call once per mutation. payload.mutation distinguishes the kind: tree-shape (propose_new / reparent / merge / split / archive) writes a ProposeKnowledge / experimental:knowledge_<mutation> event; mesh-shape (propose_knowledge_edge) writes a ProposeKnowledgeEdge event with {from_knowledge_id, to_knowledge_id, relation_type, reasoning}. reasoning must be concrete.',
+        WriteProposalSchema,
+        async (args) => {
+          const result = await runWriteProposal(db, args as WriteProposalArgs);
+          return {
+            content: [{ type: 'text', text: JSON.stringify(result) }],
+          };
+        },
+      ),
+    ],
+  });
+}
+
+// ---------- Public entrypoint ----------
+
 export interface StreamReviewTaskCtx {
   db: Db;
-  model?: LanguageModel;
 }
 
 /**
- * Stream KnowledgeReviewTask with a single tool — write_proposal — that the LLM
- * calls once per mutation it wants to propose. Each call writes a dreaming_proposal
- * row with kind='knowledge' and status='pending'. Returns the streamText Response
- * (caller pipes to client).
+ * Stream KnowledgeReviewTask. The Claude Agent SDK runs the tool-call loop
+ * against an in-process MCP server; each `write_proposal` call lands as a
+ * knowledge / knowledge_edge propose event in the DB. Returns a Response
+ * with streamed assistant text deltas.
  */
 export async function streamReviewTask(ctx: StreamReviewTaskCtx): Promise<Response> {
   const input = await buildReviewInput(ctx.db);
+  const mcpServer = buildKnowledgeReviewMcpServer(ctx.db);
 
-  // Inline streamText (no task registry dependency in Next.js port).
-  //
-  // The `write_proposal` tool dispatches by payload.mutation:
-  //   - 'propose_knowledge_edge' → writeEvent (Lane B ProposeKnowledgeEdge).
-  //   - anything else → writeDreamingProposal (existing tree-mutation path).
-  // Codex P1-C — the prompt instructs the LLM to call
-  // `write_proposal({mutation, payload, reasoning})` with `mutation` at the top
-  // level. The previous inputSchema only declared `payload + reasoning`, so a
-  // top-level `mutation` was silently dropped — propose_knowledge_edge fell
-  // back to writeDreamingProposal. Accept `mutation` optionally for compat
-  // with the prompt + retain isKnowledgeEdgeMutation(payload) for the legacy
-  // case where the LLM puts the discriminator inside the payload.
-  const tools: ToolSet = {
-    write_proposal: {
-      description:
-        'Propose one knowledge graph mutation. Call once per mutation. payload.mutation distinguishes the kind: tree-shape (propose_new / reparent / merge / split / archive) writes a ProposeKnowledge / experimental:knowledge_<mutation> event; mesh-shape (propose_knowledge_edge) writes a ProposeKnowledgeEdge event with {from_knowledge_id, to_knowledge_id, relation_type, reasoning}. reasoning must be concrete.',
-      inputSchema: z.object({
-        mutation: z.string().optional(),
-        payload: z.unknown(),
-        reasoning: z.string(),
-      }),
-      execute: async ({
-        mutation,
-        payload,
-        reasoning,
-      }: {
-        mutation?: string;
-        payload: unknown;
-        reasoning: string;
-      }) => {
-        const isEdgeProposal =
-          mutation === 'propose_knowledge_edge' || isKnowledgeEdgeMutation(payload);
-        if (isEdgeProposal) {
-          // Edge fields may arrive on `payload` (top-level mutation case) OR
-          // baked into payload alongside the legacy `payload.mutation` field.
-          const edgePayload = extractEdgePayload(payload);
-          if (!edgePayload) {
-            // Malformed edge proposal — fall through to dreaming path so we
-            // don't silently swallow it; writeDreamingProposal will surface
-            // a clearer error.
-            const id = await writeKnowledgeProposeEvent(ctx.db, {
-              payload: payload as KnowledgeMutationPayload,
-              reasoning,
-            });
-            return { proposal_id: id, kind: 'tree_mutation' };
-          }
-          const eventId = newId();
-          await writeEvent(ctx.db, {
-            id: eventId,
-            // subject_id is the synthetic id of the proposed edge — the edge row
-            // doesn't exist yet (it's a *proposal*); a future user rate=accept
-            // would promote it. Per Lane B ProposeKnowledgeEdge.subject_kind =
-            // 'knowledge_edge'.
-            subject_id: newId(),
-            actor_kind: 'agent',
-            actor_ref: 'dreaming',
-            action: 'propose',
-            subject_kind: 'knowledge_edge',
-            outcome: 'success',
-            payload: {
-              from_knowledge_id: edgePayload.from_knowledge_id,
-              to_knowledge_id: edgePayload.to_knowledge_id,
-              relation_type: edgePayload.relation_type,
-              reasoning,
-            },
-            created_at: new Date(),
-          });
-          return { event_id: eventId, kind: 'knowledge_edge_propose' };
-        }
-        const id = await writeKnowledgeProposeEvent(ctx.db, {
-          payload: payload as KnowledgeMutationPayload,
-          reasoning,
-        });
-        return { proposal_id: id, kind: 'tree_mutation' };
-      },
-    },
-  };
-
-  if (!ctx.model) {
-    throw new Error('streamReviewTask: model is required (no default in Next.js port)');
-  }
-
-  const result = streamText({
-    model: ctx.model,
-    prompt: JSON.stringify(input),
-    tools,
+  return streamTask('KnowledgeReviewTask', input, {
+    db: ctx.db,
+    mcpServers: { loom: mcpServer },
   });
-
-  return result.toTextStreamResponse();
 }
 
 // ---------- mutation discriminator ----------
-//
-// LLM emits one of two payload shapes via the `write_proposal` tool. Tree-shape
-// payloads (propose_new / reparent / merge / split / archive) keep the legacy
-// dreaming_proposal path. Mesh-shape (propose_knowledge_edge) takes the new
-// event-write path. Discriminate explicitly so malformed/ambiguous payloads
-// default to the tree path (current behaviour — no silent edge writes).
 
 interface KnowledgeEdgeMutationShape {
   mutation: 'propose_knowledge_edge';
@@ -193,11 +188,6 @@ function isKnowledgeEdgeMutation(payload: unknown): payload is KnowledgeEdgeMuta
   );
 }
 
-/**
- * Extracts edge fields from either shape:
- *   1) top-level mutation case: payload = { from_knowledge_id, to_knowledge_id, relation_type }
- *   2) legacy case: payload = { mutation: 'propose_knowledge_edge', from_knowledge_id, ... }
- */
 function extractEdgePayload(
   payload: unknown,
 ): { from_knowledge_id: string; to_knowledge_id: string; relation_type: string } | null {

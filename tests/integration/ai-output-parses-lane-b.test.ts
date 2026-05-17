@@ -1,44 +1,26 @@
 // Phase 1c.1 Step 7 — integration: AI outputs parse through Lane B Event schema.
 //
-// Two LLM output flavours are wired to the production code paths and the
-// resulting event rows are roundtripped through parseEvent (Lane B contract
-// gate). Catches drift between (a) what AI prompts ask the LLM to emit and
-// (b) what Lane B's Zod schemas accept:
+// AI-generated event rows are roundtripped through parseEvent (Lane B contract
+// gate) to catch drift between (a) what AI prompts produce and (b) what
+// Lane B's Zod schemas accept:
 //
 //   1. AttributionTask output → runAttributionAndWriteJudgeEvent writes a
-//      JudgeOnEvent row; the row's envelope+payload roundtrips through
-//      parseEvent.
-//   2. KnowledgeReviewTask's write_proposal tool emits a propose_knowledge_edge
-//      mutation → streamReviewTask writes a ProposeKnowledgeEdge row; the row
-//      roundtrips through parseEvent.
+//      JudgeOnEvent row; the row roundtrips through parseEvent.
+//   2. KnowledgeReviewTask's write_proposal tool dispatcher (runWriteProposal,
+//      same code path the Claude Agent SDK MCP server hands off to) writes a
+//      ProposeKnowledgeEdge row; the row roundtrips through parseEvent.
 //
-// Mock LLM via MockLanguageModelV3 from 'ai/test' (matches existing
-// review.test.ts pattern).
+// Post-2026-05-17 migration: streamReviewTask no longer accepts a mock model
+// — the agent runtime is the Claude CLI subprocess. We call the dispatcher
+// runWriteProposal directly to assert DB shape.
 
 import { parseEvent } from '@/core/schema/event';
 import { event, knowledge, question } from '@/db/schema';
 import { runAttributionAndWriteJudgeEvent } from '@/server/knowledge/attribute';
-import { streamReviewTask } from '@/server/knowledge/review';
-import { MockLanguageModelV3 } from 'ai/test';
+import { runWriteProposal } from '@/server/knowledge/review';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../helpers/db';
-
-function makeV3Usage() {
-  return {
-    inputTokens: { total: 100, noCache: 100, cacheRead: undefined, cacheWrite: undefined },
-    outputTokens: { total: 50, text: 50, reasoning: undefined },
-  };
-}
-
-async function drainStream(response: Response): Promise<void> {
-  const reader = response.body?.getReader();
-  if (!reader) return;
-  while (true) {
-    const { done } = await reader.read();
-    if (done) break;
-  }
-}
 
 describe('AI outputs roundtrip through Lane B Event schema', () => {
   beforeEach(async () => {
@@ -151,38 +133,15 @@ describe('AI outputs roundtrip through Lane B Event schema', () => {
       },
     ]);
 
-    const mockModel = new MockLanguageModelV3({
-      doStream: async () => ({
-        stream: new ReadableStream({
-          start(controller) {
-            controller.enqueue({ type: 'stream-start', warnings: [] });
-            controller.enqueue({
-              type: 'tool-call',
-              toolCallId: 'tc_lane_b',
-              toolName: 'write_proposal',
-              input: JSON.stringify({
-                payload: {
-                  mutation: 'propose_knowledge_edge',
-                  from_knowledge_id: 'k_lane_b_from',
-                  to_knowledge_id: 'k_lane_b_to',
-                  relation_type: 'related_to',
-                },
-                reasoning: '虚词与助词在用户错答中频繁混淆 — related_to 反映概念上的关联',
-              }),
-            });
-            controller.enqueue({
-              type: 'finish',
-              finishReason: { unified: 'stop', raw: 'end_turn' },
-              usage: makeV3Usage(),
-            });
-            controller.close();
-          },
-        }),
-      }),
+    await runWriteProposal(db, {
+      payload: {
+        mutation: 'propose_knowledge_edge',
+        from_knowledge_id: 'k_lane_b_from',
+        to_knowledge_id: 'k_lane_b_to',
+        relation_type: 'related_to',
+      },
+      reasoning: '虚词与助词在用户错答中频繁混淆 — related_to 反映概念上的关联',
     });
-
-    const response = await streamReviewTask({ db, model: mockModel });
-    await drainStream(response);
 
     const edgeEvents = await db
       .select()
@@ -242,38 +201,15 @@ describe('AI outputs roundtrip through Lane B Event schema', () => {
       },
     ]);
 
-    const mockModel = new MockLanguageModelV3({
-      doStream: async () => ({
-        stream: new ReadableStream({
-          start(controller) {
-            controller.enqueue({ type: 'stream-start', warnings: [] });
-            controller.enqueue({
-              type: 'tool-call',
-              toolCallId: 'tc_exp',
-              toolName: 'write_proposal',
-              input: JSON.stringify({
-                payload: {
-                  mutation: 'propose_knowledge_edge',
-                  from_knowledge_id: 'k_exp_a',
-                  to_knowledge_id: 'k_exp_b',
-                  relation_type: 'experimental:complementary',
-                },
-                reasoning: '尝试性新关系',
-              }),
-            });
-            controller.enqueue({
-              type: 'finish',
-              finishReason: { unified: 'stop', raw: 'end_turn' },
-              usage: makeV3Usage(),
-            });
-            controller.close();
-          },
-        }),
-      }),
+    await runWriteProposal(db, {
+      payload: {
+        mutation: 'propose_knowledge_edge',
+        from_knowledge_id: 'k_exp_a',
+        to_knowledge_id: 'k_exp_b',
+        relation_type: 'experimental:complementary',
+      },
+      reasoning: '尝试性新关系',
     });
-
-    const response = await streamReviewTask({ db, model: mockModel });
-    await drainStream(response);
 
     const edgeEvents = await db
       .select()

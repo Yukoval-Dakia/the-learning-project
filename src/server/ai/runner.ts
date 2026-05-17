@@ -1,28 +1,27 @@
-// AI task runner — two-tier adapter:
+// AI task runner — Claude Agent SDK adapter.
 //
-//   - `runTask`  → @anthropic-ai/sdk direct HTTP. Fast (<100ms overhead),
-//     no subprocess, no Claude Code harness baggage. Handles every
-//     single-turn task currently registered (8/8).
+// All paths go through @anthropic-ai/claude-agent-sdk's `query()` (spawned
+// `claude` CLI subprocess, talked to over JSON-RPC). The SDK gives us:
+//   - native tool-call loop with mcpServers / allowedTools
+//   - PreToolUse / PostToolUse / SessionStart hook events
+//   - SDKMemoryRecallMessage events (auto-memory + auto-dream)
+//   - session persistence + resume
 //
-//   - `runAgentTask` → @anthropic-ai/claude-agent-sdk via subprocess.
-//     Used for tool-calling tasks (KnowledgeReviewTask, future Maintenance
-//     / Coach agents). Spawns the bundled `claude` CLI; honours
-//     mcpServers / allowedTools / hook events natively.
+// We bypass:
+//   - the Claude Code preset (we pass `systemPrompt: string` to replace it)
+//   - the user's personal `~/.claude/` config (we set CLAUDE_CONFIG_DIR to
+//     a fresh tmpdir per process so hooks/MCP/skills from dev machines
+//     never leak into a server task)
 //
-//   - `streamTask`  → returns a Response. Currently routes through the agent
-//     SDK so Phase 1+ tool-calling endpoints work; single-turn tasks could
-//     fall through to runTask + Response.json but we keep one path for
-//     simplicity.
+// Per ANTHROPIC_BASE_URL env var the SDK transparently routes to xiaomi/mimo
+// (Anthropic-protocol-compat). Model id ('mimo-v2.5-pro' / 'mimo-v2.5') is
+// passed via the `model` option.
 //
-// Both runners share:
-//   - Provider Manager via `resolveTaskProvider()` (xiaomi/mimo, anthropic).
-//   - `RunTaskCtx.middleware`: { beforeRun?, afterRun? } — memory-layer
-//     hook surface. Decorate inputs before the call, log observations after.
-//   - cost_ledger writes.
-//
-// Migration note (2026-05-17): pre-this-file we used `@ai-sdk/anthropic`
-// (Vercel AI SDK). That's been removed; this file is the only entry to the
-// model layer.
+// Memory-layer extensibility:
+//   - `RunTaskCtx.middleware: { beforeRun, afterRun }` — pre/post hooks
+//     applied uniformly across runTask / runAgentTask / streamTask.
+//     Memory module decorates input ahead of the model call and observes
+//     output after.
 
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -36,8 +35,7 @@ import {
   type SDKUserMessage,
   query as sdkQuery,
 } from '@anthropic-ai/claude-agent-sdk';
-import Anthropic from '@anthropic-ai/sdk';
-import type { ContentBlock, MessageParam } from '@anthropic-ai/sdk/resources/messages';
+import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
 import { createId } from '@paralleldrive/cuid2';
 import type { R2Client } from '../r2';
 import { writeCostLedger, writeToolCallLog } from './log';
@@ -52,20 +50,20 @@ export interface RunTaskResult {
   text: string;
   finishReason: string;
   usage: { inputTokens: number; outputTokens: number };
-  /** Total cost in USD as reported by the agent SDK (subprocess path only);
-   *  undefined when the call went through raw @anthropic-ai/sdk. */
+  /** Total cost in USD, as reported by the agent SDK. 0 when running
+   *  against an endpoint that doesn't surface cost (xiaomi mimo). */
   cost_usd?: number;
 }
 
 export interface TaskMiddleware {
   /**
-   * Called once before the model invocation. Can return a transformed input
-   * (e.g. memory module prepends "previously remembered: ..." context).
+   * Called once before the model invocation. Can return a transformed
+   * input (e.g. memory module prepends recall context).
    */
   beforeRun?: (kind: string, input: unknown, ctx: RunTaskCtx) => Promise<unknown> | unknown;
   /**
    * Called once with the resolved result. Side-effects only — observation
-   * logging, memory write. Errors are caught + logged, never thrown back.
+   * logging, memory write. Errors caught + logged, never thrown back.
    */
   afterRun?: (kind: string, result: RunTaskResult, ctx: RunTaskCtx) => Promise<void> | void;
 }
@@ -76,22 +74,23 @@ export interface RunTaskCtx {
   r2?: R2Client;
   /** Override provider/model for testing or per-call routing escapes. */
   override?: { provider?: ResolvedProvider['provider']; model?: string };
-  /** Memory-layer hook surface (Phase 3 extensibility point). */
+  /** Memory-layer hook surface. */
   middleware?: TaskMiddleware;
-}
-
-export interface RunAgentTaskCtx extends RunTaskCtx {
   /**
    * In-process MCP servers. Build with `createSdkMcpServer({ tools:
-   * [tool(name, desc, schema, handler)] })`. Tools are then referenced as
-   * `mcp__<serverName>__<toolName>` in `allowedTools`.
+   * [tool(name, desc, schema, handler)] })`. Tools are referenced as
+   * `mcp__<serverName>__<toolName>` in the registry's `allowedTools`.
    */
   mcpServers?: Options['mcpServers'];
-  /** Tools the model may use this call. Defaults to []  — no tools at all. */
+  /**
+   * Override allowedTools. When omitted, runner uses `tasks[kind].allowedTools`
+   * from the registry — single source of truth for what each task can call.
+   */
   allowedTools?: string[];
 }
 
-export type StreamTaskCtx = RunAgentTaskCtx & {
+export type RunAgentTaskCtx = RunTaskCtx;
+export type StreamTaskCtx = RunTaskCtx & {
   /** Reserved for back-compat with the old Vercel AI SDK shape; ignored. */
   tools?: Record<string, unknown>;
 };
@@ -136,270 +135,6 @@ function imageDataToBase64(data: MultimodalTaskInput['images'][number]['data']):
   return Buffer.from(data).toString('base64');
 }
 
-function buildMessageParams(input: unknown): MessageParam[] {
-  if (typeof input === 'string') {
-    return [{ role: 'user', content: input }];
-  }
-  if (isMultimodalTaskInput(input)) {
-    return [
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: input.text },
-          ...input.images.map((img) => {
-            const data = imageDataToBase64(img.data);
-            if (data.startsWith('http://') || data.startsWith('https://')) {
-              return {
-                type: 'image' as const,
-                source: { type: 'url' as const, url: data },
-              };
-            }
-            return {
-              type: 'image' as const,
-              source: {
-                type: 'base64' as const,
-                media_type: img.mediaType as
-                  | 'image/jpeg'
-                  | 'image/png'
-                  | 'image/gif'
-                  | 'image/webp',
-                data,
-              },
-            };
-          }),
-        ],
-      },
-    ];
-  }
-  return [{ role: 'user', content: JSON.stringify(input) }];
-}
-
-// Memoised isolated CLAUDE_CONFIG_DIR. The agent SDK reads `~/.claude/` by
-// default for hooks/MCP/skills; in a server we need a clean empty dir so
-// the subprocess can't pull in the developer's personal Claude config.
-let isolatedConfigDir: string | undefined;
-function getIsolatedClaudeConfigDir(): string {
-  if (!isolatedConfigDir) {
-    isolatedConfigDir = mkdtempSync(join(tmpdir(), 'loom-claude-'));
-  }
-  return isolatedConfigDir;
-}
-
-function buildAgentEnv(resolved: ResolvedProvider): Record<string, string> {
-  const base: Record<string, string> = {};
-  for (const [k, v] of Object.entries(process.env)) {
-    if (typeof v === 'string') base[k] = v;
-  }
-  base.ANTHROPIC_API_KEY = resolved.apiKey;
-  if (resolved.baseUrl) {
-    base.ANTHROPIC_BASE_URL = resolved.baseUrl;
-  } else {
-    // Empty string is treated as unset by the SDK's URL parser; avoids using
-    // `delete` (lint flags it).
-    base.ANTHROPIC_BASE_URL = '';
-  }
-  base.CLAUDE_CONFIG_DIR = getIsolatedClaudeConfigDir();
-  base.CLAUDE_AGENT_SDK_CLIENT_APP = base.CLAUDE_AGENT_SDK_CLIENT_APP ?? 'loom/0.1';
-  return base;
-}
-
-// ============================================================================
-// runTask — direct @anthropic-ai/sdk call. Default path; no tools, no agent.
-// ============================================================================
-
-export async function runTask(
-  kind: string,
-  input: unknown,
-  ctx: RunTaskCtx,
-): Promise<RunTaskResult> {
-  if (!isKnownTask(kind)) {
-    throw new Error(`Unknown task kind: ${kind}`);
-  }
-  const def = tasks[kind];
-  const taskRunId = createId();
-  const resolved = resolveTaskProvider(kind, ctx.override);
-
-  const actualInput = ctx.middleware?.beforeRun
-    ? await ctx.middleware.beforeRun(kind, input, ctx)
-    : input;
-
-  const client = new Anthropic({
-    apiKey: resolved.apiKey,
-    ...(resolved.baseUrl ? { baseURL: resolved.baseUrl } : {}),
-  });
-
-  const messages = buildMessageParams(actualInput);
-
-  const response = await client.messages.create(
-    {
-      model: resolved.model,
-      max_tokens: 4096,
-      system: def.systemPrompt,
-      messages,
-    },
-    {
-      timeout: def.budget.timeout,
-    },
-  );
-
-  let resultText = '';
-  for (const block of response.content) {
-    if (block.type === 'text') resultText += block.text;
-  }
-
-  const usage = {
-    inputTokens: (response.usage.input_tokens ?? 0) + (response.usage.cache_read_input_tokens ?? 0),
-    outputTokens: response.usage.output_tokens ?? 0,
-  };
-
-  try {
-    await writeCostLedger(ctx.db, {
-      task_kind: kind,
-      provider: resolved.provider,
-      model: resolved.model,
-      cost: 0,
-      tokens_in: usage.inputTokens,
-      tokens_out: usage.outputTokens,
-    });
-  } catch (err) {
-    console.error('[runTask] writeCostLedger failed', { task_run_id: taskRunId, kind, err });
-  }
-
-  const result: RunTaskResult = {
-    task_run_id: taskRunId,
-    text: resultText,
-    finishReason: response.stop_reason ?? 'unknown',
-    usage,
-  };
-
-  if (ctx.middleware?.afterRun) {
-    try {
-      await ctx.middleware.afterRun(kind, result, ctx);
-    } catch (err) {
-      console.error('[runTask] afterRun middleware failed', { task_run_id: taskRunId, kind, err });
-    }
-  }
-
-  return result;
-}
-
-// ============================================================================
-// runAgentTask — @anthropic-ai/claude-agent-sdk subprocess.
-// Use this when the task needs tool-calling (mcpServers + allowedTools) or
-// will hook into SDK lifecycle events (PreToolUse / PostToolUse / etc.).
-// ============================================================================
-
-export async function runAgentTask(
-  kind: string,
-  input: unknown,
-  ctx: RunAgentTaskCtx,
-): Promise<RunTaskResult> {
-  if (!isKnownTask(kind)) {
-    throw new Error(`Unknown task kind: ${kind}`);
-  }
-  const def = tasks[kind];
-  const taskRunId = createId();
-  const resolved = resolveTaskProvider(kind, ctx.override);
-
-  const actualInput = ctx.middleware?.beforeRun
-    ? await ctx.middleware.beforeRun(kind, input, ctx)
-    : input;
-
-  const abortController = new AbortController();
-  const timer = setTimeout(() => abortController.abort(), def.budget.timeout);
-
-  const queryOptions: Options = {
-    model: resolved.model,
-    systemPrompt: def.systemPrompt,
-    abortController,
-    env: buildAgentEnv(resolved),
-    tools: ctx.allowedTools ?? [],
-    mcpServers: ctx.mcpServers,
-    maxTurns: def.budget.maxIterations || 1,
-    permissionMode: 'bypassPermissions',
-    allowDangerouslySkipPermissions: true,
-    persistSession: false,
-    cwd: process.cwd(),
-  };
-
-  let resultText = '';
-  let usage = { inputTokens: 0, outputTokens: 0 };
-  let cost_usd: number | undefined;
-  let stopReason = 'unknown';
-
-  try {
-    const promptArg = isMultimodalTaskInput(actualInput)
-      ? multimodalPromptIterable(actualInput)
-      : typeof actualInput === 'string'
-        ? actualInput
-        : JSON.stringify(actualInput);
-    const q = sdkQuery({ prompt: promptArg, options: queryOptions });
-
-    for await (const msg of q as AsyncIterable<SDKMessage>) {
-      if (msg.type === 'result') {
-        if (msg.subtype === 'success') {
-          resultText = msg.result ?? '';
-          const u = msg.usage;
-          usage = {
-            inputTokens: (u?.input_tokens ?? 0) + (u?.cache_read_input_tokens ?? 0),
-            outputTokens: u?.output_tokens ?? 0,
-          };
-          cost_usd = msg.total_cost_usd;
-          stopReason = msg.stop_reason ?? 'stop';
-        } else {
-          const apiStatus =
-            'api_error_status' in msg && msg.api_error_status
-              ? ` http=${msg.api_error_status}`
-              : '';
-          throw new Error(`[${kind}] Agent SDK errored: subtype=${msg.subtype}${apiStatus}`);
-        }
-        break;
-      }
-    }
-  } finally {
-    clearTimeout(timer);
-  }
-
-  try {
-    await writeCostLedger(ctx.db, {
-      task_kind: kind,
-      provider: resolved.provider,
-      model: resolved.model,
-      cost: Math.round((cost_usd ?? 0) * 1_000_000),
-      tokens_in: usage.inputTokens,
-      tokens_out: usage.outputTokens,
-    });
-  } catch (err) {
-    console.error('[runAgentTask] writeCostLedger failed', {
-      task_run_id: taskRunId,
-      kind,
-      err,
-    });
-  }
-
-  const result: RunTaskResult = {
-    task_run_id: taskRunId,
-    text: resultText,
-    finishReason: stopReason,
-    usage,
-    cost_usd,
-  };
-
-  if (ctx.middleware?.afterRun) {
-    try {
-      await ctx.middleware.afterRun(kind, result, ctx);
-    } catch (err) {
-      console.error('[runAgentTask] afterRun middleware failed', {
-        task_run_id: taskRunId,
-        kind,
-        err,
-      });
-    }
-  }
-
-  return result;
-}
-
 async function* multimodalPromptIterable(
   input: MultimodalTaskInput,
 ): AsyncGenerator<SDKUserMessage> {
@@ -433,11 +168,180 @@ async function* multimodalPromptIterable(
   yield userMessage;
 }
 
+function promptFromInput(input: unknown): string | AsyncIterable<SDKUserMessage> {
+  if (isMultimodalTaskInput(input)) return multimodalPromptIterable(input);
+  if (typeof input === 'string') return input;
+  return JSON.stringify(input);
+}
+
+// Memoised isolated CLAUDE_CONFIG_DIR. The agent SDK reads `~/.claude/` by
+// default for hooks/MCP/skills; in a server we need a clean empty dir so
+// the subprocess can't pull in the developer's personal Claude config.
+let isolatedConfigDir: string | undefined;
+function getIsolatedClaudeConfigDir(): string {
+  if (!isolatedConfigDir) {
+    isolatedConfigDir = mkdtempSync(join(tmpdir(), 'loom-claude-'));
+  }
+  return isolatedConfigDir;
+}
+
+function buildAgentEnv(resolved: ResolvedProvider): Record<string, string> {
+  const base: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (typeof v === 'string') base[k] = v;
+  }
+  base.ANTHROPIC_API_KEY = resolved.apiKey;
+  if (resolved.baseUrl) {
+    base.ANTHROPIC_BASE_URL = resolved.baseUrl;
+  } else {
+    base.ANTHROPIC_BASE_URL = '';
+  }
+  base.CLAUDE_CONFIG_DIR = getIsolatedClaudeConfigDir();
+  base.CLAUDE_AGENT_SDK_CLIENT_APP = base.CLAUDE_AGENT_SDK_CLIENT_APP ?? 'loom/0.1';
+  return base;
+}
+
+/**
+ * Build the SDK query options for a task. Centralised so the 3 entry points
+ * (runTask / runAgentTask / streamTask) stay consistent on permission mode,
+ * config-dir isolation, tools-from-registry default, etc.
+ */
+function buildQueryOptions(
+  kind: TaskKind,
+  ctx: RunTaskCtx,
+  abortController: AbortController,
+): Options {
+  const def = tasks[kind];
+  const resolved = resolveTaskProvider(kind, ctx.override);
+  const allowedTools = ctx.allowedTools ?? def.allowedTools;
+  return {
+    model: resolved.model,
+    systemPrompt: def.systemPrompt,
+    abortController,
+    env: buildAgentEnv(resolved),
+    tools: allowedTools,
+    mcpServers: ctx.mcpServers,
+    maxTurns: def.budget.maxIterations || 1,
+    permissionMode: 'bypassPermissions',
+    allowDangerouslySkipPermissions: true,
+    persistSession: false,
+    cwd: process.cwd(),
+  };
+}
+
 // ============================================================================
-// streamTask — Response wrapper. Routes through the agent SDK so future
-// tool-calling clients (Copilot drawer, /api/ai/[task] for needsToolCall
-// tasks) inherit the full subprocess capabilities. Pure-stream single-turn
-// callers could go directly via Anthropic SDK; we keep one path here.
+// runTask — default path. Goes through the Claude Agent SDK like the other
+// entry points; tasks without `allowedTools` declared in registry just get
+// an empty tool list and behave like a single-turn query.
+// ============================================================================
+
+export async function runTask(
+  kind: string,
+  input: unknown,
+  ctx: RunTaskCtx,
+): Promise<RunTaskResult> {
+  if (!isKnownTask(kind)) {
+    throw new Error(`Unknown task kind: ${kind}`);
+  }
+  const def = tasks[kind];
+  const taskRunId = createId();
+  const resolved = resolveTaskProvider(kind, ctx.override);
+
+  const actualInput = ctx.middleware?.beforeRun
+    ? await ctx.middleware.beforeRun(kind, input, ctx)
+    : input;
+
+  const abortController = new AbortController();
+  const timer = setTimeout(() => abortController.abort(), def.budget.timeout);
+
+  let resultText = '';
+  let usage = { inputTokens: 0, outputTokens: 0 };
+  let cost_usd: number | undefined;
+  let stopReason = 'unknown';
+
+  try {
+    const q = sdkQuery({
+      prompt: promptFromInput(actualInput),
+      options: buildQueryOptions(kind, ctx, abortController),
+    });
+    for await (const msg of q as AsyncIterable<SDKMessage>) {
+      if (msg.type === 'result') {
+        if (msg.subtype === 'success') {
+          resultText = msg.result ?? '';
+          const u = msg.usage;
+          usage = {
+            inputTokens: (u?.input_tokens ?? 0) + (u?.cache_read_input_tokens ?? 0),
+            outputTokens: u?.output_tokens ?? 0,
+          };
+          cost_usd = msg.total_cost_usd;
+          stopReason = msg.stop_reason ?? 'stop';
+        } else {
+          const apiStatus =
+            'api_error_status' in msg && msg.api_error_status
+              ? ` http=${msg.api_error_status}`
+              : '';
+          throw new Error(`[${kind}] Agent SDK errored: subtype=${msg.subtype}${apiStatus}`);
+        }
+        break;
+      }
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+
+  // CostLedger: `cost_ledger.cost` is `real`, stored in USD (consistent
+  // with /api/cost/today which sums + renders as $<spend>). Write the
+  // raw USD float; do NOT multiply by 1e6.
+  try {
+    await writeCostLedger(ctx.db, {
+      task_kind: kind,
+      provider: resolved.provider,
+      model: resolved.model,
+      cost: cost_usd ?? 0,
+      tokens_in: usage.inputTokens,
+      tokens_out: usage.outputTokens,
+    });
+  } catch (err) {
+    console.error('[runTask] writeCostLedger failed', { task_run_id: taskRunId, kind, err });
+  }
+
+  const result: RunTaskResult = {
+    task_run_id: taskRunId,
+    text: resultText,
+    finishReason: stopReason,
+    usage,
+    cost_usd,
+  };
+
+  if (ctx.middleware?.afterRun) {
+    try {
+      await ctx.middleware.afterRun(kind, result, ctx);
+    } catch (err) {
+      console.error('[runTask] afterRun middleware failed', { task_run_id: taskRunId, kind, err });
+    }
+  }
+
+  return result;
+}
+
+// ============================================================================
+// runAgentTask — alias kept so callers that explicitly want the
+// "I'm doing a tool-call loop, here's my MCP server" form can phrase intent.
+// Behaviour is identical to runTask — pass ctx.mcpServers / ctx.allowedTools
+// or let the registry's `allowedTools` apply.
+// ============================================================================
+
+export async function runAgentTask(
+  kind: string,
+  input: unknown,
+  ctx: RunAgentTaskCtx,
+): Promise<RunTaskResult> {
+  return runTask(kind, input, ctx);
+}
+
+// ============================================================================
+// streamTask — text-stream Response. Same SDK path; pipes assistant text
+// deltas to the body. Tool-use blocks land in tool_call_log per turn.
 // ============================================================================
 
 export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Response {
@@ -453,35 +357,32 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
   const abortController = new AbortController();
   const timer = setTimeout(() => abortController.abort(), def.budget.timeout);
 
-  const promptArg = isMultimodalTaskInput(input)
-    ? multimodalPromptIterable(input)
-    : typeof input === 'string'
-      ? input
-      : JSON.stringify(input);
-
-  const queryOptions: Options = {
-    model: resolved.model,
-    systemPrompt: def.systemPrompt,
-    abortController,
-    env: buildAgentEnv(resolved),
-    tools: ctx.allowedTools ?? [],
-    mcpServers: ctx.mcpServers,
-    maxTurns: def.budget.maxIterations,
-    permissionMode: 'bypassPermissions',
-    allowDangerouslySkipPermissions: true,
-    persistSession: false,
-    cwd: process.cwd(),
-  };
-
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const encoder = new TextEncoder();
+      let usage = { inputTokens: 0, outputTokens: 0 };
+      let cost_usd: number | undefined;
+      let stopReason = 'unknown';
+      let resultText = '';
+
       try {
-        const q = sdkQuery({ prompt: promptArg, options: queryOptions });
+        // beforeRun middleware applies to streaming too — memory context
+        // should land before the first byte goes out.
+        const actualInput = ctx.middleware?.beforeRun
+          ? await ctx.middleware.beforeRun(kind, input, ctx)
+          : input;
+
+        const q = sdkQuery({
+          prompt: promptFromInput(actualInput),
+          options: buildQueryOptions(kind, ctx, abortController),
+        });
         for await (const msg of q as AsyncIterable<SDKMessage>) {
           if (msg.type === 'assistant') {
             const text = extractAssistantText(msg);
-            if (text) controller.enqueue(encoder.encode(text));
+            if (text) {
+              controller.enqueue(encoder.encode(text));
+              resultText += text;
+            }
             iteration += 1;
             const stepLatencyMs = Date.now() - stepStartTime;
             const blocks = (msg.message.content ?? []) as ContentBlock[];
@@ -512,14 +413,21 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
           } else if (msg.type === 'result') {
             if (msg.subtype === 'success') {
               const u = msg.usage;
+              usage = {
+                inputTokens: (u?.input_tokens ?? 0) + (u?.cache_read_input_tokens ?? 0),
+                outputTokens: u?.output_tokens ?? 0,
+              };
+              cost_usd = msg.total_cost_usd;
+              stopReason = msg.stop_reason ?? 'stop';
               try {
                 await writeCostLedger(ctx.db, {
                   task_kind: kind,
                   provider: resolved.provider,
                   model: resolved.model,
-                  cost: Math.round((msg.total_cost_usd ?? 0) * 1_000_000),
-                  tokens_in: (u?.input_tokens ?? 0) + (u?.cache_read_input_tokens ?? 0),
-                  tokens_out: u?.output_tokens ?? 0,
+                  // USD float; see runTask comment.
+                  cost: cost_usd ?? 0,
+                  tokens_in: usage.inputTokens,
+                  tokens_out: usage.outputTokens,
                 });
               } catch (err) {
                 console.error('[streamTask] writeCostLedger failed', {
@@ -530,6 +438,28 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
               }
             }
             break;
+          }
+        }
+
+        if (ctx.middleware?.afterRun) {
+          try {
+            await ctx.middleware.afterRun(
+              kind,
+              {
+                task_run_id: taskRunId,
+                text: resultText,
+                finishReason: stopReason,
+                usage,
+                cost_usd,
+              },
+              ctx,
+            );
+          } catch (err) {
+            console.error('[streamTask] afterRun middleware failed', {
+              task_run_id: taskRunId,
+              kind,
+              err,
+            });
           }
         }
       } catch (err) {
