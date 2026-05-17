@@ -29,9 +29,21 @@ export interface AttributionFollowupJobData {
 
 export type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
 
+export type EnqueueVariantGenFn = (attemptEventId: string) => Promise<void>;
+
 type DepsOverride = {
   runTaskFn?: RunTaskFn;
+  enqueueVariantGen?: EnqueueVariantGenFn;
 };
+
+async function defaultEnqueueVariantGen(attemptEventId: string): Promise<void> {
+  // Worker process already has boss started; getStartedBoss() returns the same
+  // instance. Caller catches errors — failure to enqueue should not abort the
+  // attribution that already succeeded.
+  const { getStartedBoss } = await import('@/server/boss/client');
+  const boss = await getStartedBoss();
+  await boss.send('variant_gen', { attempt_event_id: attemptEventId });
+}
 
 async function defaultRunTaskFn(
   kind: string,
@@ -47,6 +59,7 @@ export interface RunAttributionFollowupParams {
   db: Db;
   attemptEventId: string;
   runTaskFn: RunTaskFn;
+  enqueueVariantGen?: EnqueueVariantGenFn;
 }
 
 export interface RunAttributionFollowupResult {
@@ -132,6 +145,18 @@ export async function runAttributionFollowup(
     runTaskFn,
   });
 
+  // Task #17: fan out to variant_gen. Idempotent on the consumer side
+  // (variant_gen checks parent_variant_id uniqueness + cause eligibility),
+  // so enqueueing on retry is safe. Best-effort: a failed enqueue must not
+  // undo a successful attribution.
+  if (params.enqueueVariantGen) {
+    try {
+      await params.enqueueVariantGen(attemptEventId);
+    } catch (err) {
+      console.error('[attribution_followup] enqueue variant_gen failed', err);
+    }
+  }
+
   return { status: 'attempted' };
 }
 
@@ -140,6 +165,7 @@ export function buildAttributionFollowupHandler(
   deps: DepsOverride = {},
 ): (jobs: Job<AttributionFollowupJobData>[]) => Promise<void> {
   const runTaskFn = deps.runTaskFn ?? defaultRunTaskFn;
+  const enqueueVariantGen = deps.enqueueVariantGen ?? defaultEnqueueVariantGen;
   return async (jobs) => {
     for (const job of jobs) {
       const attemptEventId = job.data?.attempt_event_id;
@@ -148,7 +174,12 @@ export function buildAttributionFollowupHandler(
         continue;
       }
       try {
-        const result = await runAttributionFollowup({ db, attemptEventId, runTaskFn });
+        const result = await runAttributionFollowup({
+          db,
+          attemptEventId,
+          runTaskFn,
+          enqueueVariantGen,
+        });
         console.log(`[attribution_followup] ${attemptEventId} → ${result.status}`);
       } catch (err) {
         console.error(`[attribution_followup] ${attemptEventId} failed`, err);
