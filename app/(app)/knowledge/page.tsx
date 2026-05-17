@@ -252,7 +252,9 @@ export default function KnowledgePage() {
         method: 'POST',
         body: JSON.stringify({
           ...vars,
-          created_by: { actor_kind: 'user', actor_ref: 'self' },
+          // created_by accepts the literal 'user' (per AgentRefLike on the
+          // server) or any non-empty agent ref string — not an object.
+          created_by: 'user',
           reasoning: vars.reasoning ?? null,
         }),
       }),
