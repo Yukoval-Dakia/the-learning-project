@@ -38,9 +38,7 @@ describe('ActivityRef', () => {
   });
 
   it('rejects ref with unknown kind', () => {
-    expect(ActivityRef.safeParse({ kind: 'quiz', id: 'q_1' }).success).toBe(
-      false,
-    );
+    expect(ActivityRef.safeParse({ kind: 'quiz', id: 'q_1' }).success).toBe(false);
   });
 
   it('rejects ref without id', () => {
@@ -48,8 +46,6 @@ describe('ActivityRef', () => {
   });
 
   it('rejects ref with empty id', () => {
-    expect(ActivityRef.safeParse({ kind: 'question', id: '' }).success).toBe(
-      false,
-    );
+    expect(ActivityRef.safeParse({ kind: 'question', id: '' }).success).toBe(false);
   });
 });

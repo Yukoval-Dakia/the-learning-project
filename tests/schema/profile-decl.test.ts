@@ -25,16 +25,11 @@ describe('CauseCategoryDeclaration', () => {
   });
 
   it('rejects empty id', () => {
-    expect(
-      CauseCategoryDeclaration.safeParse({ id: '', label: 'x' }).success,
-    ).toBe(false);
+    expect(CauseCategoryDeclaration.safeParse({ id: '', label: 'x' }).success).toBe(false);
   });
 
   it('rejects id with spaces', () => {
-    expect(
-      CauseCategoryDeclaration.safeParse({ id: 'has space', label: 'x' })
-        .success,
-    ).toBe(false);
+    expect(CauseCategoryDeclaration.safeParse({ id: 'has space', label: 'x' }).success).toBe(false);
   });
 });
 

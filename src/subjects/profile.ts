@@ -115,8 +115,12 @@ export class SubjectRegistry {
 
   resolve(domain?: string | null): SubjectProfile {
     const key = domain ? normalizeSubjectKey(domain) : '';
-    const resolvedId = key ? this.aliases.get(key) ?? key : this.defaultId;
-    return this.profiles.get(resolvedId) ?? this.profiles.get(this.defaultId)!;
+    const resolvedId = key ? (this.aliases.get(key) ?? key) : this.defaultId;
+    const fallback = this.profiles.get(this.defaultId);
+    if (!fallback) {
+      throw new Error(`Default subject profile '${this.defaultId}' is not registered`);
+    }
+    return this.profiles.get(resolvedId) ?? fallback;
   }
 
   get(id: SubjectId): SubjectProfile | undefined {
