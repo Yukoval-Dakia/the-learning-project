@@ -46,4 +46,45 @@ CREATE TABLE "memory_brief_note" (
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX "memory_brief_note_scope_key_unique" ON "memory_brief_note" USING btree ("scope_key");--> statement-breakpoint
+INSERT INTO "learning_record" (
+	"id", "kind", "title", "content_md", "source", "capture_mode", "activity_kind",
+	"processing_status", "origin_event_id", "subject_id", "knowledge_ids",
+	"question_id", "attempt_event_id", "learning_item_id", "artifact_id",
+	"source_document_id", "asset_refs", "payload", "created_at", "updated_at",
+	"archived_at", "version"
+)
+SELECT
+	"id",
+	CASE "kind"
+		WHEN 'highlight'   THEN 'observation'
+		WHEN 'insight'     THEN 'insight'
+		WHEN 'question'    THEN 'open_question'
+		WHEN 'reflection'  THEN 'reflection'
+		WHEN 'observation' THEN 'observation'
+		ELSE 'observation'
+	END AS "kind",
+	NULL::text AS "title",
+	"content_md",
+	'manual' AS "source",
+	'text' AS "capture_mode",
+	CASE "kind"
+		WHEN 'question' THEN 'ask'
+		ELSE 'annotate'
+	END AS "activity_kind",
+	'raw' AS "processing_status",
+	NULL::text AS "origin_event_id",
+	NULL::text AS "subject_id",
+	"knowledge_ids",
+	"question_id",
+	"mistake_id" AS "attempt_event_id",
+	"learning_item_id",
+	"artifact_id",
+	NULL::text AS "source_document_id",
+	'[]'::jsonb AS "asset_refs",
+	'{}'::jsonb AS "payload",
+	"created_at",
+	"updated_at",
+	NULL::timestamp with time zone AS "archived_at",
+	"version"
+FROM "study_log";--> statement-breakpoint
 DROP TABLE "study_log" CASCADE;

@@ -146,6 +146,41 @@ describe('GET /api/records', () => {
     expect(body.rows[0].content_md).toBe('k2 record');
   });
 
+  it('supports repeated kind filters', async () => {
+    await postRecord({
+      kind: 'insight',
+      content_md: 'insight row',
+      source: 'manual',
+      capture_mode: 'text',
+      activity_kind: 'annotate',
+      knowledge_ids: [],
+      payload: {},
+    });
+    await postRecord({
+      kind: 'open_question',
+      content_md: 'question row',
+      source: 'manual',
+      capture_mode: 'text',
+      activity_kind: 'ask',
+      knowledge_ids: [],
+      payload: {},
+    });
+    await postRecord({
+      kind: 'resource_note',
+      content_md: 'resource row',
+      source: 'manual',
+      capture_mode: 'text',
+      activity_kind: 'read',
+      knowledge_ids: [],
+      payload: {},
+    });
+
+    const res = await listRecords('kind=insight&kind=open_question');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { rows: Array<{ kind: string }> };
+    expect(body.rows.map((row) => row.kind).sort()).toEqual(['insight', 'open_question']);
+  });
+
   it('returns 400 on invalid limit', async () => {
     const res = await listRecords('limit=abc');
     expect(res.status).toBe(400);

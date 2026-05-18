@@ -15,20 +15,18 @@ export async function listMistakeProjectionRows(db: Db, filter: ListMistakeProje
   const records = await listLearningRecords(db, {
     kind: ['mistake'],
     question_id: filter.questionIds?.[0],
+    since: filter.since,
     limit: filter.limit,
   });
-  const filteredRecords = filter.since
-    ? records.filter((record) => record.created_at >= (filter.since as Date))
-    : records;
-  if (filteredRecords.length === 0) return [];
+  if (records.length === 0) return [];
 
   const attemptIds = new Set(
-    filteredRecords
+    records
       .map((record) => record.attempt_event_id)
       .filter((id): id is string => typeof id === 'string' && id.length > 0),
   );
   const questionIds = [
-    ...new Set(filteredRecords.map((record) => record.question_id).filter(Boolean)),
+    ...new Set(records.map((record) => record.question_id).filter(Boolean)),
   ] as string[];
   const failures = await getFailureAttempts(db, {
     limit: Math.max(filter.limit * 4, 100),
@@ -45,7 +43,7 @@ export async function listMistakeProjectionRows(db: Db, filter: ListMistakeProje
       : [];
   const promptByQid = new Map(questions.map((q) => [q.id, q.prompt_md]));
 
-  return filteredRecords.flatMap((record) => {
+  return records.flatMap((record) => {
     if (!record.attempt_event_id || !attemptIds.has(record.attempt_event_id)) return [];
     const failure = failureByAttempt.get(record.attempt_event_id);
     if (!failure) return [];

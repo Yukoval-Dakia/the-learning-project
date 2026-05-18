@@ -79,6 +79,43 @@ Question (统一题库)
 
 题面去重、变式题平等入题库、复习与 quiz 共用引擎——都建立在这个统一抽象上。
 
+### 1.5 已入库题目的生命周期证据
+
+凡是进入 `question` 表的题，都必须能回答这些问题：
+
+| 问题 | canonical source |
+|---|---|
+| 这题什么时候进入系统？ | `question.created_at` |
+| 它从哪里来？ | `question.source` / `source_ref` / `created_by` / `metadata` |
+| 用户什么时候做过、做对还是做错？ | `event(action='attempt', subject_kind='question', subject_id=question.id)` |
+| 它什么时候被复习过？ | `event(action='review', subject_kind='question', subject_id=question.id)` |
+| 当前何时该复习？ | `material_fsrs_state(subject_kind='question', subject_id=question.id)` |
+| 它有没有被保留成学习上下文？ | `learning_record.question_id` / `origin_event_id` |
+
+不要把 `last_attempted_at`、`last_reviewed_at`、`review_count` 这类可派生字段直接塞回
+`question` 表。题面表只保存稳定材料和来源；生命周期汇总由 reader / view 派生，例如
+`QuestionActivitySummary`。
+
+建议 `QuestionActivitySummary` 至少包含：
+
+```ts
+{
+  question_id: string;
+  recorded_at: string;
+  source: string;
+  source_ref: string | null;
+  first_attempted_at: string | null;
+  last_attempted_at: string | null;
+  attempt_counts: { success: number; partial: number; failure: number };
+  first_reviewed_at: string | null;
+  last_reviewed_at: string | null;
+  review_count: number;
+  due_at: string | null;
+  last_review_ref: string | null;
+  linked_record_ids: string[];
+}
+```
+
 ---
 
 ## 2. 题型 (Question kinds)
@@ -279,11 +316,20 @@ Question
   → knowledge_ids[]
   difficulty: 1~5
   source: embedded | daily | final | dreaming | manual
-        | vision_capture | reverse_mark | mistake_variant
-  source_ref?            # mistake_id (variant) / artifact_id (reverse_mark) / null
+        | vision_single | vision_paper | reverse_mark | mistake_variant
+  source_ref?            # origin event / source document / artifact / attempt event / null
   draft_status?: draft | active   # 仅 mistake_variant 等需要双 pass 的题
   created_by: {task, version}
-  metadata?: { force_flexible?, expected_input_kind?, ... }
+  metadata?: {
+    force_flexible?,
+    expected_input_kind?,
+    source_document_id?,
+    source_asset_ids?,
+    crop_refs?,
+    origin_question_block_id?,
+    ...
+  }
+  created_at, updated_at, version
 ```
 
 ### 9.2 tool_quiz Artifact

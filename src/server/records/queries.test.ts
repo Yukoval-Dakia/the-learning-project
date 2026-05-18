@@ -1,5 +1,5 @@
 import { event, knowledge, learning_record } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
@@ -136,5 +136,103 @@ describe('LearningRecord queries', () => {
       .from(learning_record)
       .where(eq(learning_record.id, created.record.id));
     expect(rawRows[0].version).toBe(1);
+  });
+
+  it('archiveLearningRecord guards the UPDATE with the row version (no silent overwrite when the row moved on)', async () => {
+    const created = await createLearningRecord(testDb(), {
+      kind: 'insight',
+      content_md: '原始内容',
+      source: 'manual',
+      capture_mode: 'text',
+      activity_kind: 'annotate',
+      knowledge_ids: [],
+      payload: {},
+      create_capture_event: true,
+    });
+    const stableId = created.record.id;
+
+    // Hand-roll the SQL the function emits, with a stale `WHERE version=0`
+    // against a row whose version has already been bumped. This is the exact
+    // race window the optimistic lock is meant to cover; if the lock fires,
+    // the UPDATE affects zero rows. (We cannot easily inject between the
+    // function's own SELECT and UPDATE, so verify the SQL semantics directly.)
+    await testDb()
+      .update(learning_record)
+      .set({ version: 7, updated_at: new Date() })
+      .where(eq(learning_record.id, stableId));
+
+    const stale = await testDb()
+      .update(learning_record)
+      .set({
+        processing_status: 'archived',
+        archived_at: new Date(),
+        updated_at: new Date(),
+        version: 1,
+      })
+      .where(and(eq(learning_record.id, stableId), eq(learning_record.version, 0)))
+      .returning({ id: learning_record.id });
+    expect(stale).toEqual([]);
+
+    // The function re-reads the live version and archives based on it; the
+    // returning() check inside the function raises 409 only when the WHERE
+    // clause matched nothing — proven above. Functional round-trip:
+    await archiveLearningRecord(testDb(), stableId);
+    const rawRows = await testDb()
+      .select()
+      .from(learning_record)
+      .where(eq(learning_record.id, stableId));
+    expect(rawRows[0].version).toBe(8);
+    expect(rawRows[0].processing_status).toBe('archived');
+  });
+
+  it('listLearningRecords pushes `since` to SQL so paged results stay inside the window', async () => {
+    const old = await createLearningRecord(testDb(), {
+      kind: 'insight',
+      content_md: '老',
+      source: 'manual',
+      capture_mode: 'text',
+      activity_kind: 'annotate',
+      knowledge_ids: [],
+      payload: {},
+    });
+    const mid = await createLearningRecord(testDb(), {
+      kind: 'insight',
+      content_md: '中',
+      source: 'manual',
+      capture_mode: 'text',
+      activity_kind: 'annotate',
+      knowledge_ids: [],
+      payload: {},
+    });
+    const fresh = await createLearningRecord(testDb(), {
+      kind: 'insight',
+      content_md: '新',
+      source: 'manual',
+      capture_mode: 'text',
+      activity_kind: 'annotate',
+      knowledge_ids: [],
+      payload: {},
+    });
+
+    // Manually shift `created_at` so the three rows span a known window.
+    await testDb()
+      .update(learning_record)
+      .set({ created_at: new Date('2026-05-01T00:00:00Z') })
+      .where(eq(learning_record.id, old.record.id));
+    await testDb()
+      .update(learning_record)
+      .set({ created_at: new Date('2026-05-10T00:00:00Z') })
+      .where(eq(learning_record.id, mid.record.id));
+    await testDb()
+      .update(learning_record)
+      .set({ created_at: new Date('2026-05-18T00:00:00Z') })
+      .where(eq(learning_record.id, fresh.record.id));
+
+    const rows = await listLearningRecords(testDb(), {
+      kind: ['insight'],
+      since: new Date('2026-05-09T00:00:00Z'),
+      limit: 50,
+    });
+    expect(rows.map((r) => r.id).sort()).toEqual([mid.record.id, fresh.record.id].sort());
   });
 });

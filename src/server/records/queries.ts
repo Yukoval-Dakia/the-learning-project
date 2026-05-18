@@ -1,5 +1,5 @@
 import { createId } from '@paralleldrive/cuid2';
-import { type SQL, and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { type SQL, and, desc, eq, gte, inArray, isNull, sql } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
 import { knowledge, learning_record } from '@/db/schema';
@@ -32,10 +32,6 @@ async function assertKnowledgeIdsActive(db: DbLike, ids: string[]): Promise<void
       400,
     );
   }
-}
-
-function rowToRecord(row: LearningRecordRow): LearningRecordRow {
-  return row;
 }
 
 export async function createLearningRecord(
@@ -102,7 +98,7 @@ export async function createLearningRecord(
     })
     .returning();
 
-  return { record: rowToRecord(record), origin_event };
+  return { record, origin_event };
 }
 
 export async function listLearningRecords(
@@ -127,20 +123,19 @@ export async function listLearningRecords(
   if (filter.processing_status && filter.processing_status.length > 0) {
     conditions.push(inArray(learning_record.processing_status, filter.processing_status));
   }
+  if (filter.since) conditions.push(gte(learning_record.created_at, filter.since));
 
   const base = db.select().from(learning_record);
   const query =
     conditions.length > 0
       ? base.where(and(...conditions)).orderBy(desc(learning_record.created_at))
       : base.orderBy(desc(learning_record.created_at));
-  const rows = await query.limit(filter.limit ?? 50);
-
-  return rows.map(rowToRecord);
+  return await query.limit(filter.limit ?? 50);
 }
 
 export async function getLearningRecord(db: DbLike, id: string): Promise<LearningRecordRow | null> {
   const rows = await db.select().from(learning_record).where(eq(learning_record.id, id)).limit(1);
-  return rows[0] ? rowToRecord(rows[0]) : null;
+  return rows[0] ?? null;
 }
 
 export async function updateLearningRecord(
@@ -168,14 +163,14 @@ export async function updateLearningRecord(
   if (rows.length === 0) {
     throw new ApiError('conflict', `learning_record ${id} version mismatch`, 409);
   }
-  return rowToRecord(rows[0]);
+  return rows[0];
 }
 
 export async function archiveLearningRecord(db: DbLike, id: string): Promise<void> {
   const current = await getLearningRecord(db, id);
   if (!current) throw new ApiError('not_found', `learning_record ${id} not found`, 404);
   const now = new Date();
-  await db
+  const rows = await db
     .update(learning_record)
     .set({
       processing_status: 'archived',
@@ -183,5 +178,9 @@ export async function archiveLearningRecord(db: DbLike, id: string): Promise<voi
       updated_at: now,
       version: current.version + 1,
     })
-    .where(eq(learning_record.id, id));
+    .where(and(eq(learning_record.id, id), eq(learning_record.version, current.version)))
+    .returning({ id: learning_record.id });
+  if (rows.length === 0) {
+    throw new ApiError('conflict', `learning_record ${id} version mismatch`, 409);
+  }
 }

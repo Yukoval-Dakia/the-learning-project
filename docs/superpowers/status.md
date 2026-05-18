@@ -19,7 +19,8 @@
 ✅  1a  Subject MVP（文言文）              wenyan 数据集 + FSRS 复习闭环
 ✅  1b  AI surface                         /api/ai/[task] 流式 + 工具调用统一入口
 ✅  1c.1 Event-driven core                 event 表替代 mistake/review_event/dreaming_proposal
-✅  1c.2 UI main（read + write + Vision）  /record /mistakes /knowledge /learning-items /study-log
+✅  1c.2 UI main（read + write + Vision）  /record /mistakes /knowledge /learning-items
+⏳  Record model migration                   /record 统一 LearningRecord，替代 /study-log
 ✅  1d  Observation surface                /events/[id] / 成本带 / ADR-0013 session lifecycle / learning_session detail / /coach 周报 / SessionSummaryTask
 🟡  2   Three orchestrators
    ✅ 2A  Review Orchestrator               规则优先 + ReviewIntentTask
@@ -94,14 +95,14 @@
 | 路径 | 功能 | 备注 |
 |---|---|---|
 | `/today` | KPI + 成本带 | BJT 每天 0 点重算 |
-| `/record` | 手动错题 + Vision OCR | OCR 需 `.env` creds |
+| `/record` | LearningRecord 统一录入：错题 / 例题 / 疑问 / 顿悟 / 反思 / 资源摘录 | 2026-05-18 设计改为一次性迁移；OCR 仍是 capture mode |
 | `/mistakes` | 错题列表 + user_cause | cause 写为 experimental:user_cause event |
 | `/learning-items` | 6 状态机 + 我想学 X 入口 | hub+atomic 树 + intent proposal |
 | `/learning-items/[id]` | 详情 + artifact view + 父子链接 | atomic note sections 渲染 + 对话教学入口 |
 | `/learn/[id]/chat` | **Phase 2C 对话教学** | TeachingTurnTask 循环 |
 | `/knowledge` | Loom 树 + mesh + 手动建边 | 边提议 accept/reverse/change_type/dismiss |
 | `/knowledge/[id]` | 知识点详情 | edge proposals + 相邻边 |
-| `/study-log` | 5 kind 学习日志 | 写作 / 总结 / 错题集 / 工具 / 反思 |
+| `/records` | 学习记录列表 / timeline | 替代旧 `/study-log`，实现待迁移 |
 | `/events/[id]` | 事件链浏览器 | caused_by 上游 + 下游展开 |
 | `/review` | FSRS 复习闭环 | ADR-0013 session row + ReviewIntent 字幕 |
 | `/learning-sessions/[id]` | 复习会话详情 + 总结 | SessionSummaryTask 落 summary_md |
@@ -147,7 +148,9 @@
 | 项目能干什么 / 如何启动 | `CLAUDE.md` |
 | 架构总览 | `docs/architecture.md` |
 | 长期 orchestrator 设计 | `docs/superpowers/specs/2026-05-09-learning-orchestrator-long-term-design.md` |
-| Agent runtime tool / graph context 设计 | `docs/superpowers/specs/2026-05-17-agent-context-tools-design.md` |
+| Agent runtime tool / graph + event + learning context 设计 | `docs/superpowers/specs/2026-05-17-agent-context-tools-design.md` |
+| 学习记录 / `/record` 一次性迁移设计 | `docs/modules/records.md` |
+| 知识图谱 / Subject Graph Guide / proposal rubric | `docs/modules/knowledge.md` |
 | 单个模块详情 | `docs/modules/*.md`（每个文件开头有 §0 实施现状） |
 | 设计决策 | `docs/adr/ADR-*.md` |
 | Phase 计划 + 收尾记录 | `docs/superpowers/plans/*.md` + `docs/superpowers/brainstorms/*.md`（MVP 防漂移） |

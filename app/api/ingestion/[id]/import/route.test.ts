@@ -14,6 +14,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   event,
   knowledge,
+  learning_record,
   learning_session,
   question,
   question_block,
@@ -242,6 +243,35 @@ describe('POST /api/ingestion/[id]/import', () => {
     expect(blocks[0].status).toBe('imported');
     expect(blocks[0].imported_question_id).toBe(body.question_ids[0]);
     expect(blocks[0].imported_attempt_event_id).toBe(body.mistake_ids[0]);
+  });
+
+  it('writes a learning_record(kind=mistake) per imported attempt so GET /api/mistakes can surface it', async () => {
+    const db = testDb();
+    const { sessionId, sourceDocId } = await setupSession(db);
+    await insertBlock(db, { id: 'block_a', sessionId, docId: sourceDocId });
+    await insertKnowledge(db, 'k1');
+
+    const res = await post(sessionId, makeImportBody());
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      question_ids: string[];
+      mistake_ids: string[];
+      record_ids: string[];
+    };
+    expect(body.record_ids).toHaveLength(1);
+
+    const records = await db
+      .select()
+      .from(learning_record)
+      .where(eq(learning_record.id, body.record_ids[0]));
+    expect(records).toHaveLength(1);
+    expect(records[0].kind).toBe('mistake');
+    expect(records[0].source).toBe('import');
+    expect(records[0].activity_kind).toBe('attempt');
+    expect(records[0].attempt_event_id).toBe(body.mistake_ids[0]);
+    expect(records[0].question_id).toBe(body.question_ids[0]);
+    expect(records[0].origin_event_id).toBe(body.mistake_ids[0]);
+    expect(records[0].knowledge_ids).toEqual(['k1']);
   });
 
   it('cause provided → cause dropped in event stream (Lane B JudgeOnEvent requires actor=agent)', async () => {
