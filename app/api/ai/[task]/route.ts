@@ -1,6 +1,6 @@
 import { tasks } from '@/ai/registry';
 import { db } from '@/db/client';
-import { runTask, streamTask } from '@/server/ai/runner';
+import { runTask } from '@/server/ai/runner';
 import { errorResponse } from '@/server/http/errors';
 import { getR2 } from '@/server/r2';
 
@@ -17,7 +17,16 @@ export async function POST(
     const body = (await req.json().catch(() => ({}))) as { input?: unknown };
 
     if (def.needsToolCall) {
-      return streamTask(task, body.input ?? {}, { db, r2: getR2(), tools: {} });
+      return Response.json(
+        {
+          error: 'tool_task_requires_domain_route',
+          task,
+          message:
+            'Tool-calling tasks require a domain route that injects the correct MCP server and allowed tools.',
+          domain_route: task === 'KnowledgeReviewTask' ? '/api/knowledge/review' : null,
+        },
+        { status: 400 },
+      );
     }
     const result = await runTask(task, body.input ?? {}, { db, r2: getR2() });
     return Response.json(result);

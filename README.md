@@ -1,71 +1,75 @@
 # AI 学习工具 (the-learning-project)
 
-自用 AI 学习系统。规划与架构详见 [PLANNING.md](./PLANNING.md) 与 [docs/](./docs)。
+自用 AI 学习系统。当前实现是 Next.js + Postgres + pg-boss 的 self-hosted 单用户应用；规划与架构详见 [docs/architecture.md](./docs/architecture.md)、[docs/modules/](./docs/modules/) 与 [docs/superpowers/status.md](./docs/superpowers/status.md)。
 
-## 技术栈（Phase 1）
+## 技术栈
 
 | 层 | 选型 |
 | --- | --- |
-| 前端 | React 19 + TypeScript（strict） + Vite 6 |
-| 样式 | Tailwind v4（CSS-first 配置） |
-| 路由 | React Router 7 |
-| 状态 | TanStack Query + Zustand |
+| Web app | Next.js 15 App Router + React 19 + TypeScript strict |
+| 样式 | Tailwind v4（CSS-first） |
+| 状态 / 数据 | TanStack Query + Zustand |
 | Schema / 校验 | Zod |
-| ORM | Drizzle（SQLite dialect） |
-| 数据存储 | Cloudflare D1（Phase 1 远程优先；Phase 1.5 起 R2 存图片；Phase 4 加 PWA cache；Phase 3 Tauri 端 better-sqlite3 镜像） |
-| AI SDK | Vercel AI SDK + `@ai-sdk/anthropic` |
-| 边缘后端 | Cloudflare Workers + Hono（AI 代理 / 持 key；Phase 4 起接管同步） |
+| 数据库 | Postgres + Drizzle ORM (`postgresql` dialect, `postgres` driver) |
+| Blob 存储 | R2 / S3-compatible storage via `@aws-sdk/client-s3` |
+| AI runtime | AI SDK v6 package + Claude Agent SDK runner + `@ai-sdk/anthropic` provider package |
+| 后台任务 | pg-boss worker (`scripts/worker.ts`) |
+| 复习算法 | `ts-fsrs` |
 | Lint / Format | Biome |
 | 包管理 | pnpm |
 
-设计原则：用 OSS 解成熟问题，不自建 tool-calling 循环，不抽通用接口直到第二实例出现。详见 [docs/architecture.md § 六 技术栈](./docs/architecture.md#六技术栈)。
+设计原则：用成熟 OSS 解成熟问题；AI 调用按 task 抽象，不做聊天框；破坏性 AI 动作走 proposal + 用户确认。
 
 ## 开发
 
 ```bash
 pnpm install
-
-# 客户端
 pnpm dev
 
-# Workers AI 代理（另开终端）
-pnpm workers:dev
+# 后台 worker（另开终端，需要 DATABASE_URL）
+pnpm worker:dev
 ```
 
-把 Anthropic API key 放在 `workers/.dev.vars`：
+本地配置放在 `.env.local`；生产 / NAS compose 配置放在 `.env`。浏览器代码不持有 provider key，所有 AI 调用都通过 Next route handler 或 pg-boss worker 在服务端执行。
 
-```
-ANTHROPIC_API_KEY=sk-ant-...
+常用检查：
+
+```bash
+pnpm typecheck
+pnpm lint
+pnpm test
+pnpm audit:schema
 ```
 
-浏览器代码绝不持有 key —— 所有 AI 调用走 `/api/ai/<task>`，由 Workers 转发到 Anthropic。
+`pnpm test` 使用 `@testcontainers/postgresql` 启动真实 Postgres，运行前需要 Docker Desktop 或 OrbStack。
 
 ## Self-host on NAS
 
 ### Prerequisites
 
-- NAS with Docker support (绿联 UGOS Pro Docker panel, or any Docker Compose–capable host)
-- Cloudflare account with a domain you control
-- Cloudflare R2 bucket already provisioned (see `.env.example` for required keys)
+- NAS with Docker support（绿联 UGOS Pro Docker panel, or any Docker Compose capable host）
+- Cloudflare account with a domain you control（仅用于 Cloudflare Tunnel ingress）
+- R2 / S3-compatible bucket already provisioned（see `.env.example`）
 
 ### One-time setup
 
 1. **Create a Cloudflare Tunnel** in the [Zero Trust dashboard](https://one.dash.cloudflare.com) → Networks → Tunnels.
-   - Point the public hostname (e.g. `loom.<your-domain>`) to `http://app:3000`.
-   - Copy the **Tunnel Token** shown after creation.
+   - Point the public hostname, for example `loom.<your-domain>`, to `http://app:3000`.
+   - Copy the Tunnel Token shown after creation.
 
 2. **Configure environment variables** — copy `.env.example` to `.env` and fill in:
-   ```
+   ```bash
    DATABASE_URL=postgres://loom:loom@postgres:5432/loom
-   ANTHROPIC_API_KEY=...
    INTERNAL_TOKEN=...
+   XIAOMI_API_KEY=...
+   ANTHROPIC_API_KEY=...
    TUNNEL_TOKEN=<paste-token-here>
    # + R2 / Tencent OCR keys
    ```
 
 3. **Run database migrations** after first start:
    ```bash
-   docker compose exec app pnpm db:push
+   docker compose exec app pnpm db:migrate
    ```
 
 ### Deploy
@@ -75,7 +79,7 @@ docker compose build
 docker compose up -d
 ```
 
-All three services start: `postgres`, `app`, and `cloudflared`. The app is only reachable through the Cloudflare Tunnel — port 3000 is not bound to the host.
+The compose stack starts `postgres`, `app`, `worker`, and `cloudflared`. The app is reachable through the Cloudflare Tunnel; port 3000 is not bound to the host.
 
 ### Verify
 
@@ -89,30 +93,29 @@ curl https://loom.<your-domain>/api/health
 `db:dump` streams a `pg_dump` from the running `postgres` container to a timestamped SQL file on the host:
 
 ```bash
-pnpm db:dump          # writes /tmp/loom-YYYYMMDD-HHMMSS.sql on host
+pnpm db:dump
 ```
 
 To restore:
+
 ```bash
 pnpm db:restore < /tmp/loom-20260101-000000.sql
 ```
 
----
-
 ## 目录
 
-```
+```text
+app/             # Next App Router pages + API route handlers
 src/
-  core/          # 领域 Zod schema、id 工具、跨学科共享
-  db/            # Drizzle schema + client（D1 driver via Cloudflare Workers）
-  ai/            # Task 注册表 + 客户端调用器
-  ui/            # 共享 UI 组件
-  routes/        # PWA 路由（React Router）
+  core/          # Zod schemas, id helpers, cross-subject primitives
+  db/            # Drizzle schema + Postgres client
+  ai/            # Task registry + browser-side caller
+  server/        # Server-only AI, ingestion, review, export, R2, pg-boss helpers
   subjects/
-    wenyan/      # 文言文学科 bundle（Phase 1 首发数据集）
-workers/         # Cloudflare Workers（AI 代理；Phase 4 同步）
-docs/            # 架构与模块文档
-PLANNING.md      # 主索引
+    wenyan/      # Phase 1 subject bundle: classical Chinese
+  ui/            # Shared React components
+scripts/         # worker entrypoint, schema audit, maintenance scripts
+docs/            # architecture, modules, ADRs, planning
 ```
 
-`core/` 跨学科共享，`subjects/<name>/` 单学科特化。边界在 Phase 1 就划好。
+`core/` 是跨学科共享层；`subjects/<name>/` 是单学科特化层。当前 Phase 1 首发文言文，但架构边界必须保留给后续多科目。

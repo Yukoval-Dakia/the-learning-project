@@ -9,31 +9,31 @@ Tool 互动型分支当前唯一实例是 `tool_quiz`（见 [`quiz.md`](quiz.md)
 
 ---
 
-## 0. 实施现状（2026-05-17）
+## 0. 实施现状（2026-05-18）
 
-> 整条 Note artifact 链路（生成 / 渲染 / embedded check / hub ↔ atomic）**还没落地**。`artifact` 表 schema 存在（1c.1 Step 9 保留作 "C 档 AI 主动产出落点"），但当前 0 写入 0 UI。下面 §1+ 是 Phase 1d/2 设计参考。
+> Note 链路已有 MVP：Learning Intent 可以创建 hub/atomic LearningItem 与配套 artifact，pg-boss `note_generate` 会异步填充 atomic sections。尚未完成的是 grounding / verify / embedded check / editor / living-note proposal。
 
 | 设计概念 | 现状 |
 |---|---|
-| `artifact` 表 | ✅ schema 在；激活为 C 档 AI 产出落点（per ADR-0006 v2） |
-| `NoteGenerateTask` / `NoteRefineTask` / `NoteVerifyTask` | ❌ AI runner 注册表里都没有这些 task kind |
-| `note_hub` / `note_atomic` 类型 | ❌ artifact.type enum 还没在 schema 体现 |
-| Hub ↔ LearningItem hub 1:1 / atomic ↔ LearningItem atomic 1:1 | ❌ LearningItem 层级字段也未启用 |
-| TipTap 编辑器 | ❌ Phase 1d/2 |
-| Embedded check（inline tool_quiz） | ❌ 同上，quiz 系统本身也未跑 |
-
-**当前唯一 "AI 产出"**：`event(action='judge')`（cause 归因）+ `event(action='propose', subject_kind='knowledge'/'knowledge_edge')`（mesh 提议；agent 还没真在产）。这些都不走 `artifact` 表。
+| `artifact` 表 | ✅ schema 与 write path 已在 Learning Intent / note generation 路径启用 |
+| `NoteGenerateTask` | ✅ registry 已有；pg-boss `note_generate` handler 填 atomic sections |
+| `NoteRefineTask` / `NoteVerifyTask` | ❌ 未实现 |
+| `note_hub` / `note_atomic` 类型 | ✅ schema 已支持 |
+| Hub ↔ LearningItem hub 1:1 / atomic ↔ LearningItem atomic 1:1 | ✅ Learning Intent accept 时同步 materialize |
+| TipTap 编辑器 | ❌ 未实现；当前以只读/生成内容为主 |
+| Embedded check（inline tool_quiz） | ❌ schema 预留；生成时仍为空 |
+| Grounding / source verification | ❌ sections 目前默认 `source_tier='llm_only'`、`user_verified=false` |
 
 ---
 
 ## 1. 生成触发
 
-三个入口都汇入同一 pipeline：
+长期上三个入口都汇入同一 pipeline：
 - 用户声明意图（"我想学氧化还原反应"）
 - 错题归因发现缺口（AI propose："你似乎在 X 上有缺口，要生成笔记吗？"）
 - Dreaming 主动 propose
 
-每个入口都触发 `NoteGenerateTask` 产出 `note_hub` + N 个 `note_atomic` Artifact。`learning_intent` 来源会**同步创建 LearningItem 层级**：1 hub LearningItem + N atomic LearningItems，跟 note 层级一一对应（详见 [`learning-items.md`](learning-items.md) § 1.2）。其他来源（mistake / dreaming）默认创建 1 atomic LearningItem。
+当前已落地的是 `learning_intent` 来源：用户声明 topic → `LearningIntentOutlineTask` 产出 1 hub + N atomic outline → 用户 accept 后**同步创建 LearningItem 层级**与 `note_hub` / `note_atomic` artifact stubs → 入队 `NoteGenerateTask` 填 atomic sections。mistake / dreaming 来源仍是未来入口。
 
 ## 2. Hub + Atomic 双层结构
 
@@ -69,8 +69,9 @@ note_hub: 氧化还原反应
 
 ## 4. 生成节奏
 
-- **Hub outline + 第一节**：同步生成（~5s 出现）
-- **其他 atomic notes**：进 batch 队列，夜间产出
+- **Hub outline**：Learning Intent accept 后同步 materialize，立即可见。
+- **Atomic sections**：进 pg-boss `note_generate` job，异步填充。
+- **未来优化**：需要更强 grounding / verify 时再加 Search/RAG 与双 pass，不假设当前已经有 batch verify。
 
 用户立刻看到东西，敢相信系统在工作；昂贵的部分异步跑。
 

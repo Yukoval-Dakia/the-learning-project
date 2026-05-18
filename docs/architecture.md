@@ -114,7 +114,7 @@ Question (统一题库，single source of truth)
 | `SessionSummaryTask` | mimo-v2.5-pro | review session end | 否 | — | ≤120 字 session summary |
 | `LearningIntentOutlineTask` | mimo-v2.5-pro | `/api/learning-intents` | 否 | — | 1 hub + N atomic outline |
 | `NoteGenerateTask` | mimo-v2.5-pro | pg-boss `note_generate` | 否 | — | atomic artifact sections |
-| `VariantGenTask` | mimo-v2.5-pro | pg-boss `variant_gen` | 否 | — | 1 道 cause-targeted 变式题 |
+| `VariantGenTask` | mimo-v2.5-pro | pg-boss `variant_gen` | 否 | — | draft `question(source='mistake_variant')` |
 | `TeachingTurnTask` | mimo-v2.5-pro | `/api/teaching-sessions/*` | 否 | — | Active Teaching turn |
 | `ReviewIntentTask` | mimo-v2.5-pro | Review Orchestrator | 否 | — | 一句话 session intent |
 | `KnowledgeReviewTask` | mimo-v2.5-pro | maintenance | 是 | — | tree / mesh mutation proposal |
@@ -129,31 +129,15 @@ Question (统一题库，single source of truth)
 
 需要"边看数据边决策"的 Task 走 multi-turn tool call；输入已固定的 Task 走单轮 structured output。
 
-> **2026-05-17 alignment**: 现行 runner 在 `src/server/ai/runner.ts`，所有路径走 `@anthropic-ai/claude-agent-sdk`。Tool transport 使用 Claude Agent SDK 的 `mcpServers + allowedTools + maxTurns`。领域边界不是 MCP 本身，而是项目内的 Domain Tool Registry。详见 [`docs/superpowers/specs/2026-05-17-agent-context-tools-design.md`](superpowers/specs/2026-05-17-agent-context-tools-design.md)。
+> **2026-05-18 alignment**: 现行 runner 在 `src/server/ai/runner.ts`，所有 LLM task 都走 `@anthropic-ai/claude-agent-sdk`。Tool transport 使用 Claude Agent SDK 的 `mcpServers + allowedTools + maxTurns`。统一 Domain Tool Registry 仍是计划中设计；当前只有 `KnowledgeReviewTask` 在 `src/server/knowledge/review.ts` 内部创建本地 in-process MCP tool。
 
-**Tool 分组（按语义和权限）**
+**当前规则**：
 
-```
-Read（按 Task allowlist 注入）：
-  get_subject_graph_overview / query_knowledge / expand_knowledge_subgraph
-  find_knowledge_paths / query_events / query_mistakes
-  query_records / get_record_context / get_question_context / get_attempt_context
-  get_review_due / get_learning_item_context
+- `needsToolCall: false` 的 task 可走 generic `app/api/ai/[task]`，由 `runTask()` 返回 JSON。
+- `needsToolCall: true` 的 task **不能**走 generic route；必须走领域 route，由领域 route 注入 MCP server 和 allowlist。例如 `KnowledgeReviewTask` 走 `/api/knowledge/review`。
+- 破坏性操作（删题、合并节点、reparent、merge、archive）没有直接 write tool。AI 只能 propose；用户 accept route 再执行真实 mutation。
 
-Propose-only（产生待审核 event，不立即执行）：
-  propose_knowledge_edge / propose_knowledge_mutation
-  propose_learning_item_completion / propose_learning_item_relearn
-
-Action/write wrappers（只能包装已有 owner service）：
-  attribute_mistake / propose_variant
-
-Write（极少数、低风险、已有事务边界）：
-  write_agent_message / write_tool_trace
-```
-
-破坏性操作（删错题、合并节点、reparent、merge、archive）**没有直接 write tool**。AI 只能 propose；用户 accept route 再执行真实 mutation。
-
-**DomainTool 合约**
+**计划中的 DomainTool 合约**（未落地；第二个 tool-calling task 出现前不实现）：
 
 ```ts
 type ToolEffect = 'read' | 'propose' | 'write';
@@ -164,51 +148,32 @@ interface DomainTool<Input, Output> {
   inputSchema: z.ZodType<Input>;
   outputSchema: z.ZodType<Output>;
   execute(ctx: ToolContext, input: Input): Promise<Output>;
-  summarize(input: Input, output: Output): string; // ToolUseCard folded summary
+  summarize(input: Input, output: Output): string;
   mirrorEvent: 'never' | 'when_user_visible' | 'when_causal' | 'always';
 }
 ```
 
-`src/server/ai/tools/registry.ts` 是领域工具源头；`src/server/ai/tools/mcp.ts` 把选中的 DomainTool 包成 in-process MCP server 给 Claude Agent SDK 使用。独立远程 MCP server 推后，不作为当前产品内 tool 架构核心。
+未来 `src/server/ai/tools/registry.ts` 才会成为领域工具源头；`src/server/ai/tools/mcp.ts` 再把选中的 DomainTool 包成 in-process MCP server。独立远程 MCP server 推后，不作为当前产品内 tool 架构核心。
 
-**循环控制**
+**循环控制现状**：
 
-每个 Task 三层 budget：
-
-```
-TaskBudget {
-  maxIterations    // 最多几轮 tool call
-  maxCost          // 单次任务总成本上限
-  timeout          // 总超时
-}
-```
-
-超 budget → 1 轮 nudge（"必须给出最终答案"）→ 仍不收敛则 fallback 到确定性逻辑，记录 `degraded` 标记。
-
-**实现重点**：
-- Domain Tool 注册（含权限、schema、summary、mirror policy）
-- Task → allowedTools 白名单
-- Budget 与降级
-- `tool_call_log` 原始调用日志
-- 用户可见 / 因果相关 tool-use mirror 到 `event(action='experimental:tool_use')`
+`TaskBudget.maxIterations` 映射到 Claude Agent SDK `maxTurns`，`timeout` 由 runner 的 `AbortController` 执行。`maxCost` 与 `fallbackChain` 当前只是 registry metadata / future runtime policy；还没有执行预算 nudge、fallback、degraded 记录。
 
 ### 5.3 成本控制
 
-- 同步任务（用户操作时跑）：归因 + 挂载 + 视觉录入 + 答案判定（除 ai_flexible）
-- 异步 batch（夜间跑，50% 折扣）：变式生成、变式验证、dreaming、maintenance、周报、atomic note 生成、Note Verify
-- prompt caching：知识图谱 / 错题历史 / rubric 标准 / system prompt 作稳定 prefix
-- 模型分级：简单任务用便宜模型
-- 结果缓存：同 prompt 命中直接返回
-- **预算天花板**：日 $5 / 周 $30（自用规模兜底，跑数据后调）；超了自动降级（顶级 → 中级 → 暂停 dreaming）
-- 每次调用记录 `CostLedger`，按 `(task, provider, model)` 聚合可见
+- 同步任务（用户操作时跑）：归因、学习意图、review intent、teaching turn 等。
+- 异步任务（pg-boss）：OCR、session summary、knowledge proposal、knowledge edge proposal、note generation、variant generation、review-session pruning。
+- 模型分级：registry 用 `defaultProvider/defaultModel` 指定当前模型，Provider Manager 解析到 Claude Agent SDK 所需 env/baseUrl/model。
+- 每次调用写 `ai_task_runs` / `ai_cost_ledger`；tool 调用写 `ai_tool_calls`。
+- **尚未实现**：`maxCost` 硬预算、跨 provider fallback、degraded 标记、结果缓存、prompt caching 策略。不要在实现计划中假设这些已经生效。
 
 ### 5.4 Skill / MCP Server / Plugin
 
 这些概念保留，但不要和产品内 runtime tool 混在一起：
 
 - **Skill**（提示词包，markdown + frontmatter）：Phase 2 在 prompt 重复多了之后再抽
-- **in-process MCP bridge**（当前可用）：DomainTool → Claude Agent SDK `mcpServers` 的内部适配层，不对外暴露
-- **Standalone MCP Server**（对外暴露 resources + tools）：等核心闭环稳了、且确实需要外部客户端时再 expose；复用 DomainTool registry，不重写工具定义
+- **in-process MCP bridge**（当前可用）：领域 route 可手动创建 Claude Agent SDK `mcpServers`，不对外暴露
+- **Standalone MCP Server**（对外暴露 resources + tools）：等核心闭环稳了、且确实需要外部客户端时再 expose；未来复用 DomainTool registry，不重写工具定义
 - **Plugin**（学科 bundle）：Phase 3 真有第二学科再做；Phase 1 划好 `core/` vs `subjects/wenyan/` 的目录边界
 - **外部 MCP 消费**（Calendar / Search / FS）：Phase 2 按需接
 
@@ -220,7 +185,8 @@ TaskBudget {
 
 - `app/api/ai/[task]/route.ts`：
   - `needsToolCall: false` 的 task → `runTask()` → JSON / buffered text
-  - `needsToolCall: true` 的 task → `runAgentTask()` 或 `streamTask()`，注入 `allowedTools + mcpServers`
+  - `needsToolCall: true` 的 task → 400 `tool_task_requires_domain_route`
+- 领域 route（例如 `/api/knowledge/review`）调用 `streamTask()` / `runAgentTask()`，并注入 MCP server + allowlist。
 - Claude Agent SDK 负责 multi-turn tool loop；`maxTurns` 来自 `TaskBudget.maxIterations`
 - assistant tool-use blocks 写 `tool_call_log`
 - 总 finish 写 `cost_ledger`（按 task / provider / model 聚合）
@@ -228,81 +194,42 @@ TaskBudget {
 
 #### 为什么不在 client 跑
 
-- Anthropic API key 不能暴露到浏览器
+- Provider API key 不能暴露到浏览器
 - Tool 需要 DB transaction、event guard、权限 allowlist、成本日志，必须留在 server 侧
 
 #### 与 Dreaming 实施栈的关系
 
-Dreaming / Maintenance lane 也复用这套 runner：cron / pg-boss worker 调 `runTask` / `runAgentTask` / `streamTask` 同样入口；区别只是触发方式（HTTP 请求 vs cron / queue message）和是否走 batch。
+Dreaming / Maintenance lane 复用这套 runner：pg-boss schedule / job handler 调 `runTask` / `streamTask` 同样入口。区别只是触发方式（HTTP 请求 vs pg-boss scheduled job / queued job）和写入对象（event proposal、artifact、question draft 等）。
 
 ---
 
 ### 5.6 Dreaming / Maintenance 实施栈
 
-Dreaming 和 Maintenance lane 都是「定时触发 + 大批量产出 + 写 propose 表」的模式，跑在 Cloudflare 原生组件上。Phase 2 实施。
+Dreaming 和 Maintenance lane 当前跑在 self-hosted Node worker + pg-boss 上，不再使用旧 Workers 队列设计。
 
-#### 触发：Cloudflare Cron Triggers
+#### 触发与队列
 
-cron 表达式定义在 wrangler.toml：
+- `scripts/worker.ts` 启动 worker 进程。
+- `src/server/boss/handlers.ts` 注册 handlers 和 schedules。
+- pg-boss 与 Postgres 共用 `DATABASE_URL`；Docker compose 中 `worker` service 与 `app` 使用同一镜像。
 
-```toml
-[triggers]
-crons = [
-  "0 18 * * *",   # 每天 18:00 UTC = 北京 02:00，跑 dreaming 主流程
-  "0 19 * * 0"    # 每周日 19:00 UTC，跑 weekly review
-]
-```
+当前已注册的业务 job / schedule：
 
-cron worker 不直接生成 proposal，只负责 dispatch（扫 D1 找候选 + 推 Queue），30s 内退出。
-
-#### 任务分发：Cloudflare Queues
-
-`DreamingTaskQueue` / `MaintenanceTaskQueue` 两个队列。
-
-- Cron worker:
-  1. 扫 D1 找触发条件命中的对象（mastery>0.8/14d、7 天 0 错、相似度高的节点对、久未触达对象 ...）
-  2. 每个候选对象封装成一条 message 推 Queue
-  3. cron worker 30s 内退出
-- Consumer worker:
-  - 各自消费一条 message → 调 LLM 生成单条 proposal → 写 DreamingProposal / MaintenanceSuggestion
-  - 单 unit 30s budget 够（一次 LLM call + 写 DB）
-
-#### 真重批量：Anthropic Batch API
-
-针对真正大批量任务（变式题双 pass、周报全量分析、Note 全量 verify）：
-
-- Worker submit batch（HTTP）→ 返 `batch_id`
-- 24h 内 worker 主动轮询 / 用 Cloudflare Cron 第二天早晨拉结果
-- 拉到结果 → 写 DreamingProposal / 更新 Question.draft_status 等
-- 50% cost 折扣
-
-#### Queue vs Batch API 选哪
-
-| 场景 | 选哪 | 理由 |
+| Job | 触发 | 产出 |
 | --- | --- | --- |
-| 单 task 几秒、需要"明早就能看" | Queue | 一次 LLM call 即可，无折扣浪费 |
-| 单 task 较重 + 不急 | Batch API | 等 24h，省一半钱 |
-| 周报全量分析 | Batch API | 整周数据 prompt 长，缓存命中率低，靠 batch 折扣 |
-| 每日 quiz 生成 | Queue | 用户当天醒来要看到 |
-| 变式题双 pass | Batch API | 大量 + 不急 + 双 model verify |
-| Maintenance 提议（合并 / 删除） | Queue | 每日少量，靠 cron 触发 |
+| `knowledge_propose_nightly` | BJT 02:00 schedule | `event(action='propose', subject_kind='knowledge')` |
+| `knowledge_edge_propose_nightly` | BJT 02:30 schedule | `event(action='propose', subject_kind='knowledge_edge')` |
+| `note_generate` | learning-intent accept 后 enqueue | 填充 atomic artifact sections |
+| `variant_gen` | 复习 / 错因相关 enqueue | draft `question(source='mistake_variant')` |
+| `session_summary` | review session end | session summary |
+| `tencent_ocr_extract` | ingestion extract | OCR / block extraction pipeline |
+| `prune_orphan_review_sessions` | BJT 04:15 schedule | abandon stale review sessions |
 
-混用即可。
+#### 当前边界
 
-#### 调度文件目录
-
-所有 cron 入口、queue consumer、batch poller 都放在 `workers/src/dreaming/`：
-
-```
-workers/src/dreaming/
-  cron.ts            # cron 触发入口
-  consumer.ts        # queue 消费者
-  batch-submit.ts    # batch API 提交
-  batch-poll.ts      # batch API 结果拉取
-  scanners/          # D1 扫描器（mastery 阈值、错题密度等）
-```
-
-实际实施推到 Phase 2。
+- 产出提议写 event stream，不写旧 proposal 表。
+- 大批量 batch / 双 pass verify / weekly review 仍是未来能力，不要假设已存在。
+- Cloudflare Tunnel 只负责 ingress；不是 AI worker runtime。
 
 ---
 
@@ -310,26 +237,24 @@ workers/src/dreaming/
 
 | 层 | 选型 | 理由 |
 | --- | --- | --- |
-| 前端 | React / Svelte + Tailwind | 个人手感，两者都能 PWA |
-| 桌面壳 | **Tauri** | 比 Electron 轻一个数量级，自用够了 |
-| 移动 | PWA（先）→ 必要时 Capacitor 包装 | 不要一上来就 RN |
-| 数据存储 | Phase 1 = D1 远程；Phase 1.5 起 R2 存图片；Phase 4 = D1 + PWA cache 离线层；Phase 3 Tauri 端 = better-sqlite3 镜像 | 自用初期"能用"远比"离线"重要，避免 sqlite-wasm 集成的 1-2 周硬骨头 |
-| 云同步 | 与上同源（D1 + R2）；Phase 4 加 PWA cache 离线层 | 自用规模够，已有账号 |
-| AI 调用 | 见上节任务层 | |
-| Tool calling 循环 | Claude Agent SDK query loop + in-process MCP bridge | 不自建 loop；项目只维护 DomainTool registry / allowlist / logs |
+| Web app | Next.js 15 App Router + React 19 + Tailwind v4 | 当前实现；backend surface 在 `app/api/**` |
+| 数据库 | Postgres + Drizzle ORM (`postgresql` dialect, `postgres` driver) | 本地、测试、NAS compose 同一数据库形态 |
+| Blob 存储 | R2 / S3-compatible via `@aws-sdk/client-s3` | 图片 / 来源资产 |
+| 部署 | Docker compose on NAS：`app` + `worker` + `postgres` + `cloudflared` | 自托管单用户，Cloudflare Tunnel 只做 ingress |
+| 后台任务 | pg-boss + `scripts/worker.ts` | schedules、queues、OCR、proposal、note generation |
+| AI 调用 | Claude Agent SDK runner + AI SDK v6 package + provider packages | 见上节任务层 |
+| Tool calling 循环 | Claude Agent SDK query loop + in-process MCP bridge | 不自建 loop；当前由领域 route 手动注入 MCP，未来再抽 DomainTool registry |
 | Note 编辑器 | TipTap / Milkdown / Lexical（基于 ProseMirror） | 详见 [`modules/notes.md`](modules/notes.md) |
 | Note 渲染 | react-markdown / markdown-it | |
 | 数学公式 | KaTeX | |
 | 图表 | Mermaid | |
-| 视觉录入 | vision LLM（CMMMU + 自定义样本选型） | 跳过 OCR 中间层 |
-| 定时触发 | Cloudflare Cron Triggers | Phase 2 dreaming / weekly report 入口 |
-| 任务队列 | Cloudflare Queues | Phase 2 dreaming task 分发 + consumer |
-| 批量 LLM | Anthropic Batch API | Phase 2 重批量任务（变式题 / 周报 / Note verify），50% 折扣 |
+| 视觉录入 | Tencent QuestionMarkAgent async OCR + manual vision rescue | OCR 主路径已落地；vision rescue 手动触发 |
+| 复习算法 | `ts-fsrs` | 成熟 OSS |
 
 **反模式**：
 
 - 不要一开始就上多端原生（RN / Flutter）
-- 不要自建账号系统（自用没必要，需要时用 Cloudflare Access）
+- 不要自建账号系统（自用没必要；当前用 `INTERNAL_TOKEN` 单用户内网/隧道保护）
 - 不要把 AI 调用做成「聊天框」，做成后台管线
 - LLM 抽象层不要按 `chat()` 抽象，按任务抽象
 - 不自建 tool-calling 循环，用 OSS
@@ -343,7 +268,7 @@ workers/src/dreaming/
 
 ## 七、数据模型骨架
 
-> **Phase 1c.1 事件驱动核**（ADR-0006 v2）已落地。`event` + `learning_session` + `knowledge_edge` 是现行 schema 的三个新晋实体；下文骨架以现行 schema 为准，旧表（mistake / review_event / dreaming_proposal / ingestion_session）已在 Phase 1c.1 Step 9 DROP。骨架中的 Mistake / DreamingProposal / Session 块为**历史规划参考**（原始设计遗留），保留以维持 ADR 和 modules/ 文档引用的连贯性；代码层不再有这些表。
+> **Phase 1c.1 事件驱动核**（ADR-0006 v2）已落地。`event` + `learning_session` + `knowledge_edge` 是现行 schema 的三个新晋实体；下文骨架以现行 schema 为准，旧表（mistake / review_event / dreaming_proposal / ingestion_session）已在 Phase 1c.1 Step 9 DROP。旧实体名称只作为迁移背景出现；代码层不再有这些表。
 
 ```
 Knowledge                          // 知识树节点（backbone）
@@ -469,7 +394,7 @@ MemoryItem                         // future scope, not part of first LearningRe
   created_at, updated_at, refreshed_at?
 
 // ★ Phase 1c.1 实体：propose / generate 动作走 event（ADR-0006 v2）
-//    旧 DreamingProposal 表已 DROP；梦境流提议 = event WHERE action='propose' AND actor_kind='agent'
+//    旧 proposal 表已 DROP；梦境流提议 = event WHERE action='propose' AND actor_kind='agent'
 
 MaintenanceSuggestion               // ★ 保留 — 用户可回滚的维护建议（非 event，因需快照 + rollback_until）
   id, kind                        // merge_knowledge | archive | reset_fsrs | reset_mastery

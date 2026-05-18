@@ -8,12 +8,12 @@ import * as schema from './schema';
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
   throw new Error(
-    'DATABASE_URL is not set. Configure it in .env.local locally, or in Vercel env vars (auto-injected by the Neon integration).',
+    'DATABASE_URL is not set. Configure it in .env.local locally, or in the docker-compose .env file for NAS/self-hosted runtime.',
   );
 }
 
-// Singleton client. In Vercel functions, this module is cached across invocations
-// within a hot container; postgres-js handles connection pooling per process.
+// Singleton client. In Next dev, the standalone app container, and the worker
+// process, this module is cached per Node process; postgres-js handles pooling.
 // Disable SSL for local/test connections (localhost or 127.0.0.1) so testcontainers
 // and local dev containers work without a TLS certificate. Also honour an
 // explicit `sslmode=disable` in the URL — the option object otherwise wins over
@@ -23,7 +23,7 @@ const isLocalConnection = /localhost|127\.0\.0\.1/.test(databaseUrl);
 const hasSslDisable = /[?&]sslmode=disable\b/.test(databaseUrl);
 const queryClient = postgres(databaseUrl, {
   ssl: isLocalConnection || hasSslDisable ? false : 'require',
-  max: 10, // pool size; per-Vercel-function cap
+  max: 10, // pool size per app/worker process
 });
 
 export const db = drizzle(queryClient, { schema });
