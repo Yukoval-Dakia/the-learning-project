@@ -50,6 +50,13 @@
       "when": 1778917621778,
       "tag": "0006_drop_legacy_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1779104651000,
+      "tag": "0007_learning_record_loop",
+      "breakpoints": true
     }
   ]
 }

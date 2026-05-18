@@ -3,11 +3,16 @@
 // Surviving tests cover the schemas that still exist post-DROP.
 
 import { describe, expect, it } from 'vitest';
+import { parseEvent } from './event';
 import {
   CauseCategory,
   FsrsState,
   KnowledgeInsert,
   LearningItemInsert,
+  LearningRecord,
+  LearningRecordInsert,
+  MemoryBriefNote,
+  MemoryBriefNoteInsert,
   QuestionBlock,
   QuestionBlockInsert,
   SourceAsset,
@@ -106,7 +111,7 @@ describe('schema generated from drizzle', () => {
       knowledge_hint: null,
       merged_from_block_ids: [],
       imported_question_id: null,
-      imported_mistake_id: null,
+      imported_attempt_event_id: null,
       created_at: new Date(),
       updated_at: new Date(),
       version: 0,
@@ -138,7 +143,7 @@ describe('schema generated from drizzle', () => {
       knowledge_hint: null,
       merged_from_block_ids: ['qb_1', 'qb_2'],
       imported_question_id: null,
-      imported_mistake_id: null,
+      imported_attempt_event_id: null,
       created_at: new Date(),
       updated_at: new Date(),
       version: 0,
@@ -195,5 +200,135 @@ describe('schema generated from drizzle', () => {
       expect(result.data.due).toBeInstanceOf(Date);
       expect(result.data.last_review).toBeInstanceOf(Date);
     }
+  });
+
+  it('LearningRecord accepts a mistake row linked to an attempt event', () => {
+    const now = new Date();
+    const result = LearningRecord.safeParse({
+      id: 'lr1',
+      kind: 'mistake',
+      title: null,
+      content_md: '错题摘要',
+      source: 'manual',
+      capture_mode: 'text',
+      activity_kind: 'attempt',
+      processing_status: 'raw',
+      origin_event_id: 'attempt1',
+      subject_id: null,
+      knowledge_ids: ['k1'],
+      question_id: 'q1',
+      attempt_event_id: 'attempt1',
+      learning_item_id: null,
+      artifact_id: null,
+      source_document_id: null,
+      asset_refs: [],
+      payload: { wrong_answer_md: 'wrong' },
+      created_at: now,
+      updated_at: now,
+      archived_at: null,
+      version: 0,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.kind).toBe('mistake');
+  });
+
+  it('LearningRecordInsert accepts a manual open question record', () => {
+    const now = new Date();
+    const result = LearningRecordInsert.safeParse({
+      id: 'lr_open',
+      kind: 'open_question',
+      title: '辅助线疑问',
+      content_md: '为什么这里要取中点？',
+      source: 'manual',
+      capture_mode: 'text',
+      activity_kind: 'ask',
+      processing_status: 'raw',
+      origin_event_id: 'event_capture',
+      knowledge_ids: [],
+      payload: { question_md: '为什么这里要取中点？' },
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('MemoryBriefNote accepts the three prose memory windows', () => {
+    const now = new Date();
+    const result = MemoryBriefNote.safeParse({
+      id: 'mb1',
+      scope_key: 'global',
+      subject_id: null,
+      recent_week_md: '本周主要在复习立体几何截面。',
+      recent_months_md: '近几个月反复需要把定义、图形和证明步骤绑定起来。',
+      long_term_md: '长期策略：先画图定位关系，再写证明。',
+      recent_week_evidence_ids: ['event1', 'lr1'],
+      recent_months_evidence_ids: ['event2'],
+      long_term_evidence_ids: ['lr3'],
+      source_event_id: 'event_refresh',
+      refreshed_at: now,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('MemoryBriefNoteInsert accepts a global note draft', () => {
+    const now = new Date();
+    const result = MemoryBriefNoteInsert.safeParse({
+      id: 'mb_insert',
+      scope_key: 'global',
+      subject_id: null,
+      recent_week_md: '',
+      recent_months_md: '',
+      long_term_md: '',
+      recent_week_evidence_ids: [],
+      recent_months_evidence_ids: [],
+      long_term_evidence_ids: [],
+      source_event_id: null,
+      refreshed_at: null,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('parseEvent accepts record capture events', () => {
+    const parsed = parseEvent({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:record_capture',
+      subject_kind: 'record',
+      subject_id: 'lr1',
+      outcome: 'success',
+      payload: {
+        record_kind: 'open_question',
+        activity_kind: 'ask',
+        capture_mode: 'text',
+        summary_md: 'Why does this proof work?',
+      },
+    });
+    expect(parsed.action).toBe('experimental:record_capture');
+  });
+
+  it('parseEvent accepts memory brief refresh events', () => {
+    const parsed = parseEvent({
+      actor_kind: 'agent',
+      actor_ref: 'dreaming',
+      action: 'experimental:memory_brief_refresh',
+      subject_kind: 'memory_brief',
+      subject_id: 'mb1',
+      outcome: 'success',
+      payload: {
+        scope_key: 'global',
+        changed_sections: ['recent_week', 'recent_months'],
+        evidence_ids: ['event1', 'lr1'],
+        previous_version: 0,
+        next_version: 1,
+      },
+    });
+    expect(parsed.action).toBe('experimental:memory_brief_refresh');
   });
 });

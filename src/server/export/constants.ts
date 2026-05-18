@@ -1,6 +1,6 @@
 // Phase 1c.1 Step 9.J: legacy tables (mistake / review_event / dreaming_proposal /
 // ingestion_session) DROPped — major bump.
-export const SCHEMA_VERSION = '3.0';
+export const SCHEMA_VERSION = '4.0';
 
 // CF Worker free plan caps at 50 subrequests per request. We use 18 D1 SELECTs
 // + a few R2 reads for assets + future-proof headroom. Cap inline assets at 45;
@@ -33,9 +33,10 @@ export const FK_ORDER = [
   'question_block',
   'question',
   'material_fsrs_state',
+  'memory_brief_note',
+  'learning_record',
   'learning_item',
   'completion_evidence',
-  'study_log',
   'artifact',
   'answer',
   'event',

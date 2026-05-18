@@ -1,6 +1,7 @@
 # 学习进度追踪
 
-> 见 [架构基础](../architecture.md) 了解 `knowledge` / `knowledge_mastery` view / `learning_session` / `study_log` schema。
+> 见 [架构基础](../architecture.md) 了解 `knowledge` / `knowledge_mastery` view / `learning_session` / `learning_record` schema。
+> 活动上下文记录详见 [`records.md`](records.md)。
 > Quiz 评分喂 mastery 详见 [`quiz.md`](quiz.md)。
 
 ---
@@ -13,8 +14,9 @@
 |---|---|---|
 | Mastery 双层（base_mastery + ai_delta_mastery） | ❌ DROPped (ADR-0012) | 两列 1c.1 Step 1 同步删除 |
 | Mastery derived view (`knowledge_mastery`) | ✅ Phase 1c.1 Step 1 落地 | 30 天指数衰减，权重 attempts/reviews |
-| StudyLog 5 kind | ✅ schema + UI (`/study-log`, Cand 3 commit `d279089`) | highlight / insight / question / reflection / observation |
-| 学习时间线视图（统一 auto event + StudyLog） | ❌ Phase 2 | 现在 /today KPI strip 是简单聚合，没真 timeline |
+| StudyLog 5 kind | 🔴 废弃 | 2026-05-18 决策：无真实数据，直接迁移到 `LearningRecord` |
+| LearningRecord 统一活动上下文 | ⏳ 待一次性迁移 | `mistake / worked_example / open_question / insight / reflection / observation / resource_note` |
+| 学习时间线视图（统一 auto event + LearningRecord） | ❌ Phase 2 | 现在 /today KPI strip 是简单聚合，没真 timeline |
 | WeeklyReview Cron 跑批 | ❌ Phase 2 | 整个 Dreaming/Maintenance lane 都未跑 |
 | 按 cause 差异化复习权重 / mastery 衰减 | ❌ Phase 2 | 跑数据后才决定权重 |
 | 周复盘 / Coach Orchestrator | ❌ Phase 3 | `/today` Phase 3 lane 是 disabled stub |
@@ -23,7 +25,7 @@
 - `/today` KPI strip（4 KPI + 3 lane stub） — Phase 1c.2 落地（commit `4eab5f9`）
 - `/today` cost ribbon — Phase 1d 接 cost_ledger（commit `6da0fa1`）
 - `/knowledge/[id]` per-node mistake 列表
-- `/study-log` 5 kind 记录 — Phase 1c.2 Cand 3
+- `/record` 统一录入设计 — 见 [`records.md`](records.md)
 - `/events/[id]` 单事件 chain 浏览 — Phase 1d Cand 4a
 
 ---
@@ -80,61 +82,87 @@ AI 在以下场景 propose delta：
 - 复习按时率
 - artifact 触达 + 时长
 
-**关键原则**：行为信号只用作 dreaming / 周复盘的输入，**不直接喂 mastery**——避免"刷时长"成为掌握度信号。
+**关键原则**：阅读时长、点击、停留等行为信号只用作 dreaming / 周复盘的输入，**不直接喂 mastery**——避免"刷时长"成为掌握度信号。确认作答不是普通行为信号；`attempt(success/failure/partial)` 是表现信号，可以参与 mastery / 复习 / 周复盘。
 
 ---
 
-## 3. StudyLog（用户主动记录）
+## 3. LearningRecord（活动产生的学习上下文）
 
-学习过程不只是错题。用户做对的题、顿悟的瞬间、未解的疑问、阶段性反思——这些「非错题但值得记录」的内容由 `StudyLog` 承载。
+学习过程不只是错题。用户在系统内做题、订正、阅读、提问、上传材料、接受/拒绝 proposal、
+复盘、给知识点追加旁批时，都会创造学习上下文。值得保留的上下文由 `LearningRecord` 承载。
 
-### 3.1 5 种 kind
+`StudyLog` 这个概念已废弃。原因是它把“非错题内容”放成旁路文本桶，而 `/record` 又只录错题，导致 agent 看到的是两套割裂上下文。新模型中 `/record` 是统一入口，错题只是 `LearningRecord.kind='mistake'`。
+
+`LearningRecord` 不是未来的 memory 层，也不是自由笔记本。它是由用户活动产生、可追溯到
+`origin_event_id` 的原始学习上下文；memory 应该由 AI 从 `LearningRecord`、`event`、知识图谱和 proposal 反馈中提炼。用户不应承担手工维护长期画像的负担，只负责行动、捕获、确认和纠错。
+
+做对本身也是学习信号：系统确认一个题块是用户已作答且正确时，应写
+`event(action='attempt', outcome='success')`。但它不一定生成 `LearningRecord`。
+`LearningRecord(kind='worked_example')` 只表示这道做对的题还有可复用上下文，值得在
+records / agent context 中显式保留。
+
+### 3.1 Record kinds
 
 | kind | 用途 | 例子 |
 | --- | --- | --- |
-| `highlight` | 标记值得保留的内容 | "这题对了但思路很妙" |
+| `mistake` | 我做错了，需要归因/复习 | "这道题我把之当代词了" |
+| `worked_example` | 做对且值得保留的题/例题 | "这题对了但思路很妙" |
+| `open_question` | 疑问待解 | "为什么 sin² + cos² = 1 而不是别的？" |
 | `insight` | 顿悟瞬间 | "我终于搞懂了为什么 X = Y" |
-| `question` | 疑问待解 | "为什么 sin² + cos² = 1 而不是别的？" |
 | `reflection` | 阶段性反思 | "这周做错的题集中在 X，可能我对 Y 不熟" |
 | `observation` | 一般学习观察 | "做这类题用 method A 比 method B 快" |
+| `resource_note` | 资源摘录 | "讲义这一段解释了空间截面" |
 
 ### 3.2 关联（多对一）
 
-StudyLog 可挂任意学习对象（一对多关联）：
+LearningRecord 可挂任意学习对象：
 
 ```
-StudyLog
+LearningRecord
+  → origin_event_id        # 触发/物化该 record 的用户活动 event
   → knowledge_ids[]?       # 关联知识点（最常见）
   → question_id?           # 可挂题目（含做对的）
-  → mistake_id?            # 可挂错题（额外反思，跟 mistake.cause.user_notes 共存）
+  → attempt_event_id?      # 可挂错题 attempt event
   → artifact_id?           # 可挂 note / tool 旁批
+  → learning_item_id?      # 可挂学习项做反思
 ```
 
 至少关联一个对象，多对一允许（"针对这道错题 + 这个知识点的反思"）。
 
 ### 3.3 录入入口
 
-- 错题详情页 "+ 写学习日志"
-- 题目页（含做对）"+ 标记"
-- Note / atomic 阅读时 "+ 旁批"
-- 知识点详情页 "+ 反思"
-- 全局快捷入口 "记一笔"
+- `/record` 全局录入：选择 kind + capture mode
+- 错题详情页追加反思：创建 `LearningRecord(kind='reflection', attempt_event_id=...)`
+- 题目页（含做对）"+ 保留为例题"：创建 `worked_example`
+- Note / atomic 阅读时 "+ 旁批"：创建 `resource_note` 或 `observation`
+- 知识点详情页 "+ 反思"：创建 `reflection`
 
-### 3.4 跟 Mistake.cause.user_notes 的区别
+### 3.4 跟 user cause 的区别
 
-| | Mistake.cause.user_notes | StudyLog |
+| | user cause | LearningRecord |
 | --- | --- | --- |
-| 范围 | 局部，仅错题归因 | 全局，跨学习对象 |
-| 用途 | 补充错因分析 | 记录任意学习内容 |
-| 数据可发现性 | 错题详情页内 | 时间线 / 反思页 / 跨对象搜索 |
+| 范围 | 局部，仅解释某次 failure attempt 的错因 | 全局，跨学习对象 |
+| 用途 | 修正/补充归因 | 记录任意学习现场 |
+| 数据可发现性 | 错题详情页内 | timeline / records / agent context |
 
-两者共存。
+两者共存，但不混用：用户在错因框里写的是 attribution；用户在 `/record` 写的是学习记录。
+
+### 3.5 跟 Memory 的区别
+
+| | LearningRecord | Memory（future） |
+| --- | --- | --- |
+| 来源 | 用户捕获为主，AI 可辅助整理 | AI 从 records / events / graph 中提炼 |
+| 粒度 | 一条学习现场 | 跨时间的稳定模式 |
+| 可追溯性 | 直接保存原文、图片、题目、链接 | 必须引用 evidence ids |
+| 用户角色 | 录入、补充、纠错 | 接受/驳回关键更新，低风险摘要可自动刷新 |
+
+例子：用户记录三条关于立体几何截面的疑问，这三条是 `LearningRecord(kind='open_question')`；AI 后续提炼出“对截面构造缺少稳定策略”才是 memory。
 
 ---
 
 ## 4. 学习时间线视图
 
-整合所有学习事件 + StudyLog 到时间线（Phase 2 实施）：
+整合所有学习事件 + LearningRecord 到时间线（Phase 2 实施）：
 
 ```
 [自动事件]
@@ -146,14 +174,14 @@ StudyLog
 - 错题创建 / appeal 翻盘
 
 [用户主动]
-- StudyLog (5 种 kind)
+- LearningRecord (7 种 kind)
 ```
 
 **UI 视图**：
 
 ```
 2026-05-08 14:30  ✅ quiz_pass: "氧化还原反应 - 概念定义"
-2026-05-08 14:25  📝 insight (我写的): "电子转移和氧化还原是同一回事"
+2026-05-08 14:25  insight: "电子转移和氧化还原是同一回事"
 2026-05-08 14:10  ❌ mistake: 题 q-123（concept 错因）
 2026-05-08 13:50  📖 read note: "电子转移机制" (8 分钟)
 2026-05-08 12:00  🔄 review: 5 道到期错题，4 对 1 错
@@ -162,9 +190,9 @@ StudyLog
 **过滤维度**：
 - 时间范围（今天 / 本周 / 本月 / 自定义）
 - 知识点（按节点过滤）
-- 事件类型（quiz / 复习 / 错题 / artifact / StudyLog 等）
+- 事件类型（quiz / 复习 / 错题 / artifact / LearningRecord 等）
 - 学科（domain）
-- 仅 StudyLog（看自己写的反思）
+- 仅 LearningRecord（看自己写的反思 / 疑问 / 顿悟）
 
 ---
 
@@ -175,7 +203,7 @@ StudyLog
 - 反复错的题
 - 下周建议优先攻的知识点
 - **按 cause 类型统计错题分布**（"本周 60% 错题是 calculation 类，建议加强计算训练"）
-- **整合 StudyLog**（用户的 reflection / question 作为 weekly 输入信号）
+- **整合 LearningRecord**（用户的 reflection / open_question / insight 作为 weekly 输入信号）
 - 一段「人话总结」
 
 输出：
@@ -210,9 +238,9 @@ StudyLog
 | Quiz 通过硬跳升 | learning-item → progress | quiz_pass 路径触发 max(base, 0.7) |
 | AI delta propose | dreaming → progress | 走 propose 路径，可回滚，单次 ≤ ±0.15 |
 | 周报输出 | progress → reading flow | dreaming-like 推送 |
-| **StudyLog 喂时间线** | StudyLog → progress | 用户主动记录可见于时间线 |
-| **StudyLog 喂 dreaming** | StudyLog → dreaming (Phase 2+) | 未解 question / reflection 作为 dreaming 输入 |
-| **学习时间线整合** | progress ← all modules | 时间线视图整合所有事件 + StudyLog |
+| **LearningRecord 喂时间线** | LearningRecord → progress | 活动物化出的上下文可见于时间线 |
+| **LearningRecord 喂 dreaming** | LearningRecord → dreaming (Phase 2+) | open_question / reflection / insight 作为 dreaming 输入 |
+| **学习时间线整合** | progress ← all modules | 时间线视图整合所有事件 + LearningRecord |
 
 ---
 
@@ -223,10 +251,11 @@ StudyLog
 - AI delta mastery 单次最大幅度 → ±0.15
 - base mastery 公式 → `max(fsrs_retrievability, quiz_pass_floor=0.7)`
 - Hub mastery 聚合 → 按 `(错题数 + 学习项数 + 1)` 加权平均
-- 行为信号不直接喂 mastery → 仅用作 dreaming / 周复盘输入
-- **StudyLog 5 种 kind**（highlight / insight / question / reflection / observation）
-- **StudyLog 多对一关联**（knowledge / question / mistake / artifact 任一/多个）
-- **学习时间线视图**（Phase 2 整合自动事件 + StudyLog）
+- 非作答行为信号不直接喂 mastery → 仅用作 dreaming / 周复盘输入
+- **LearningRecord 7 种 kind**（mistake / worked_example / open_question / insight / reflection / observation / resource_note）
+- **LearningRecord 多对象关联**（knowledge / question / attempt event / artifact / learning item）
+- **成功作答事件**（confirmed correct answer → `event(action='attempt', outcome='success')`，不强制创建 record）
+- **学习时间线视图**（Phase 2 整合自动事件 + LearningRecord）
 - 复习权重 / mastery 衰减按 cause 差异化（具体权重 Phase 2 跑数据后调）
 
 ### 待 push

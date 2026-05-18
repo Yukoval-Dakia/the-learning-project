@@ -61,7 +61,7 @@ async function seedBlock(opts: {
     knowledge_hint: null,
     merged_from_block_ids: [],
     imported_question_id: null,
-    imported_mistake_id: null,
+    imported_attempt_event_id: null,
     created_at: now,
     updated_at: now,
     version: 0,

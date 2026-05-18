@@ -25,8 +25,11 @@ export const QuestionSelectGenerated = createSelectSchema(t.question);
 export const LearningItemInsertGenerated = createInsertSchema(t.learning_item);
 export const LearningItemSelectGenerated = createSelectSchema(t.learning_item);
 
-export const StudyLogInsertGenerated = createInsertSchema(t.study_log);
-export const StudyLogSelectGenerated = createSelectSchema(t.study_log);
+export const LearningRecordInsertGenerated = createInsertSchema(t.learning_record);
+export const LearningRecordSelectGenerated = createSelectSchema(t.learning_record);
+
+export const MemoryBriefNoteInsertGenerated = createInsertSchema(t.memory_brief_note);
+export const MemoryBriefNoteSelectGenerated = createSelectSchema(t.memory_brief_note);
 
 export const ArtifactInsertGenerated = createInsertSchema(t.artifact);
 export const ArtifactSelectGenerated = createSelectSchema(t.artifact);

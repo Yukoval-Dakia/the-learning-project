@@ -29,6 +29,7 @@ import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { runProposeAndWrite } from '@/server/knowledge/propose';
 import { getR2 } from '@/server/r2';
+import { createLearningRecord } from '@/server/records/queries';
 import { Ingestion } from '@/server/session';
 
 export const runtime = 'nodejs';
@@ -209,6 +210,7 @@ export async function POST(
 
     const questionIds: string[] = [];
     const mistakeIds: string[] = [];
+    const recordIds: string[] = [];
     const queueData: Array<{
       mistakeId: string;
       attemptEventId: string;
@@ -261,7 +263,7 @@ export async function POST(
             knowledge_hint: null,
             merged_from_block_ids: block.source_block_ids,
             imported_question_id: null,
-            imported_mistake_id: null,
+            imported_attempt_event_id: null,
             created_at: now,
             updated_at: now,
             version: 0,
@@ -323,7 +325,7 @@ export async function POST(
           .update(question_block)
           .set({
             imported_question_id: questionId,
-            imported_mistake_id: attemptEventId,
+            imported_attempt_event_id: attemptEventId,
             status: 'imported',
             updated_at: now,
             version: sql`${question_block.version} + 1`,
@@ -348,6 +350,31 @@ export async function POST(
           task_run_id: null,
           cost_micro_usd: null,
           created_at: now,
+        });
+
+        // Mirror POST /api/mistakes write path so ingestion-imported mistakes
+        // are visible to GET /api/mistakes (which reads from learning_record).
+        const recordId = createId();
+        recordIds.push(recordId);
+        await createLearningRecord(tx, {
+          id: recordId,
+          kind: 'mistake',
+          title: null,
+          content_md: block.final_wrong_answer_md,
+          source: 'import',
+          capture_mode: block.image_refs.length > 0 ? 'image' : 'text',
+          activity_kind: 'attempt',
+          processing_status: 'raw',
+          origin_event_id: attemptEventId,
+          knowledge_ids: block.knowledge_ids,
+          question_id: questionId,
+          attempt_event_id: attemptEventId,
+          source_document_id: sessionSourceDocumentId,
+          asset_refs: [...block.image_refs, ...wrongAnswerImageRefs],
+          payload: {
+            wrong_answer_md: block.final_wrong_answer_md,
+            wrong_answer_image_refs: wrongAnswerImageRefs,
+          },
         });
 
         queueData.push({
@@ -438,7 +465,11 @@ export async function POST(
       }),
     );
 
-    return Response.json({ question_ids: questionIds, mistake_ids: mistakeIds });
+    return Response.json({
+      question_ids: questionIds,
+      mistake_ids: mistakeIds,
+      record_ids: recordIds,
+    });
   } catch (err) {
     return errorResponse(err);
   }

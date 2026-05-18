@@ -2,18 +2,19 @@ import { describe, expect, it } from 'vitest';
 import { FK_ORDER, MAX_INLINE_ASSETS, SCHEMA_VERSION } from './constants';
 
 describe('export constants', () => {
-  it('SCHEMA_VERSION is "3.0" (Phase 1c.1 Step 9.J — legacy tables DROPped)', () => {
-    expect(SCHEMA_VERSION).toBe('3.0');
+  it('SCHEMA_VERSION is "4.0" (learning_record loop — study_log DROPped, learning_record + memory_brief_note added)', () => {
+    expect(SCHEMA_VERSION).toBe('4.0');
   });
 
   it('MAX_INLINE_ASSETS is 45 (legacy CF Worker 50 sub-request guardrail)', () => {
     expect(MAX_INLINE_ASSETS).toBe(45);
   });
 
-  it('FK_ORDER lists all 16 tables in topological order', () => {
-    // 20 → 16: Step 9.J DROPped mistake + review_event + dreaming_proposal +
-    // ingestion_session. knowledge_mastery view is read-only and excluded.
-    expect(FK_ORDER.length).toBe(16);
+  it('FK_ORDER lists all 17 tables in topological order', () => {
+    // 16 → 17: learning_record loop dropped study_log (-1) and added
+    // learning_record + memory_brief_note (+2). knowledge_mastery view is
+    // read-only and excluded.
+    expect(FK_ORDER.length).toBe(17);
     expect(FK_ORDER[0]).toBe('knowledge');
     expect(FK_ORDER[FK_ORDER.length - 1]).toBe('cost_ledger');
   });
