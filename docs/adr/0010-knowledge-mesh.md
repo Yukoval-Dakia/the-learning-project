@@ -64,6 +64,20 @@ subject_kind: 'question' | 'knowledge' | 'knowledge_edge' | 'artifact'
 
 KnowledgeProposeTask + KnowledgeReviewTask（已有）扩 prompt：rather than only propose new nodes, also propose edges between existing nodes.
 
+> **2026-05-18 修订**：上文"扩 KnowledgeProposeTask + KnowledgeReviewTask prompt"的实施做了**部分调整**：
+>
+> - `KnowledgeReviewTask` ✅ 按原计划扩 prompt——MCP tool `mcp__loom__write_proposal` 支持 mesh-shape mutation（`payload.mutation: 'propose_knowledge_edge'`），见 `src/ai/registry.ts:KnowledgeReviewTask` 的 system prompt + `src/server/knowledge/review.ts`
+> - `KnowledgeProposeTask` **未扩** prompt——边提议能力被剥离到独立 task `KnowledgeEdgeProposeTask`（`src/ai/registry.ts:KnowledgeEdgeProposeTask`，新建于 Phase 1c.1）
+>
+> 选独立 task 而非扩 prompt 的原因：
+>
+> 1. **输入数据不同**：node 提议看的是单个 mistake + tree_snapshot；edge 提议看的是 `recent_failures`（24h 窗）+ `existing_edges` 集合——是跨 attempt 的模式匹配，不是 per-attempt 的归因延伸
+> 2. **决策树清晰**：原 ADR 担心 prompt 复杂度（"建新节点 vs 建新边"），分成两 task 让每个 prompt 单一职责，节点提议保留低 maxIterations（=2）+ 快路径，边提议独立调优
+> 3. **触发节奏不同**：`KnowledgeProposeTask` 跟 attempt 即时触发（user action / pg-boss attribution_followup）；`KnowledgeEdgeProposeTask` 适合 batched / scheduled 触发（看模式需要积累），目前由 pg-boss 起，未来可移到 maintenance cron
+> 4. **审计颗粒度**：cost_ledger 按 task_kind 分桶；分两 task 能直接看出"节点提议"和"边提议"各自的 token 消耗、接受率，方便调 prompt
+>
+> 节点提议和边提议的 event 形态都按原 ADR 走 `subject_kind: 'knowledge' | 'knowledge_edge'`——event 层契约未变，只是产生 event 的 task 分了两个。
+
 ---
 
 ## 理由
