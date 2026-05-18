@@ -4,6 +4,8 @@ import {
   SchedulingHints,
 } from '@/core/schema/profile-decl';
 import {
+  KNOWN_SUBJECT_IDS,
+  SubjectRegistry,
   resolveSubjectProfile,
   subjectProfiles,
 } from '@/subjects/profile';
@@ -82,5 +84,76 @@ describe('SubjectProfile extensions', () => {
   it('resolveSubjectProfile defaults to wenyan for unknown domains', () => {
     expect(resolveSubjectProfile('unknown').id).toBe('wenyan');
     expect(resolveSubjectProfile(null).id).toBe('wenyan');
+  });
+});
+
+describe('SubjectRegistry', () => {
+  it('resolves known subject by id', () => {
+    const registry = new SubjectRegistry();
+    const wenyan = registry.resolve('wenyan');
+    expect(wenyan).toBeDefined();
+    expect(wenyan.displayName).toBe('文言文');
+  });
+
+  it('resolves subject by alias', () => {
+    const registry = new SubjectRegistry();
+    const result = registry.resolve('classical_chinese');
+    expect(result).toBeDefined();
+    expect(result.id).toBe('wenyan');
+  });
+
+  it('resolves math by alias "mathematics"', () => {
+    const registry = new SubjectRegistry();
+    const result = registry.resolve('mathematics');
+    expect(result).toBeDefined();
+    expect(result.id).toBe('math');
+  });
+
+  it('returns default profile for unknown subject', () => {
+    const registry = new SubjectRegistry();
+    const result = registry.resolve('unknown_subject');
+    expect(result).toBeDefined();
+    expect(result.id).toBe('wenyan');
+  });
+
+  it('returns default profile for null/undefined', () => {
+    const registry = new SubjectRegistry();
+    expect(registry.resolve(null).id).toBe('wenyan');
+    expect(registry.resolve(undefined).id).toBe('wenyan');
+  });
+
+  it('is case-insensitive', () => {
+    const registry = new SubjectRegistry();
+    expect(registry.resolve('WENYAN').id).toBe('wenyan');
+    expect(registry.resolve('Math').id).toBe('math');
+  });
+
+  it('lists all registered profile ids', () => {
+    const registry = new SubjectRegistry();
+    const ids = registry.listIds();
+    expect(ids).toContain('wenyan');
+    expect(ids).toContain('math');
+  });
+
+  it('registers a custom profile', () => {
+    const registry = new SubjectRegistry();
+    const physics = {
+      ...registry.resolve('math'),
+      id: 'physics',
+      version: '1.0.0',
+      displayName: '物理',
+    };
+    registry.register(physics, ['phys', 'physics_101']);
+
+    expect(registry.resolve('physics').displayName).toBe('物理');
+    expect(registry.resolve('phys').id).toBe('physics');
+    expect(registry.listIds()).toContain('physics');
+  });
+});
+
+describe('KNOWN_SUBJECT_IDS', () => {
+  it('contains wenyan and math', () => {
+    expect(KNOWN_SUBJECT_IDS).toContain('wenyan');
+    expect(KNOWN_SUBJECT_IDS).toContain('math');
   });
 });
