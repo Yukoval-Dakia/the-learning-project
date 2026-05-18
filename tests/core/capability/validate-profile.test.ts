@@ -41,25 +41,29 @@ function makeProfile(overrides: Partial<SubjectProfile> = {}): SubjectProfile {
     id: 'test',
     displayName: 'Test',
     version: '1.0.0',
-    languageStyle: '',
-    questionKinds: [],
-    judgePolicy: { preferredRoutes: [], notes: [] },
-    exampleSources: [],
+    languageStyle: '中文讲解',
+    questionKinds: ['short_answer'],
+    judgePolicy: { preferredRoutes: ['exact', 'keyword'], notes: [] },
+    exampleSources: ['fixture'],
     noteTemplate: {
-      definition: '',
-      mechanism: '',
-      example: '',
-      pitfall: '',
-      check: '',
+      definition: '定义',
+      mechanism: '机制',
+      example: '例子',
+      pitfall: '误区',
+      check: '检查',
     },
-    grounding: { requirement: '', allowedSources: [], uncertaintyPolicy: '' },
+    grounding: {
+      requirement: '可追溯',
+      allowedSources: ['fixture'],
+      uncertaintyPolicy: '不确定则说明',
+    },
     promptFragments: {
-      roleNoun: '',
-      noteExamplePolicy: '',
-      variantExamplePolicy: '',
-      teachingStyle: '',
-      checkQuestionPolicy: '',
-      learningIntentPolicy: '',
+      roleNoun: '测试教练',
+      noteExamplePolicy: '使用例子',
+      variantExamplePolicy: '保持同概念',
+      teachingStyle: '清晰解释',
+      checkQuestionPolicy: '短题',
+      learningIntentPolicy: '拆成原子项',
     },
     causeCategories: [
       { id: 'concept', label: '概念' },
@@ -114,13 +118,35 @@ describe('validateProfile', () => {
       makeRegistry('exact', 'keyword'),
     );
     expect(result.valid).toBe(false);
-    expect(result.errors.some((error) => error.includes('format'))).toBe(true);
+    expect(result.errors.some((error) => error.includes('causeCategories.0.id'))).toBe(true);
   });
 
   it('fails when version is empty', () => {
     const result = validateProfile(makeProfile({ version: '' }), makeRegistry('exact', 'keyword'));
     expect(result.valid).toBe(false);
     expect(result.errors.some((error) => error.includes('version'))).toBe(true);
+  });
+
+  it('fails before deep validation when required profile identity is malformed', () => {
+    const result = validateProfile(
+      makeProfile({ id: '', displayName: '' }),
+      makeRegistry('exact', 'keyword'),
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((error) => error.includes('id'))).toBe(true);
+    expect(result.errors.some((error) => error.includes('displayName'))).toBe(true);
+  });
+
+  it('fails when profile prompt fields are missing', () => {
+    const { promptFragments: _promptFragments, ...withoutPromptFragments } = makeProfile();
+    const result = validateProfile(
+      withoutPromptFragments as SubjectProfile,
+      makeRegistry('exact', 'keyword'),
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((error) => error.includes('promptFragments'))).toBe(true);
   });
 
   it('fails when causeCategories is empty', () => {

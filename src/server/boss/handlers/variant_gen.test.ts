@@ -82,11 +82,11 @@ async function seedJudgeForAttempt(attemptId: string, category: string) {
   });
 }
 
-async function seedKnowledge() {
+async function seedKnowledge(domain = 'wenyan') {
   await testDb().insert(knowledge).values({
     id: 'k_xuci',
     name: '虚词',
-    domain: 'wenyan',
+    domain,
     parent_id: null,
     merged_from: [],
     proposed_by_ai: false,
@@ -199,7 +199,9 @@ describe('runVariantGen', () => {
     await seedFailureAttempt(attemptId, 'q1');
     await seedJudgeForAttempt(attemptId, 'concept');
 
-    const runTaskFn = vi.fn(async () => ({ text: VALID_VARIANT_OUTPUT }));
+    const runTaskFn = vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({
+      text: VALID_VARIANT_OUTPUT,
+    }));
     const result = await runVariantGen({ db, attemptEventId: attemptId, runTaskFn });
     expect(result.status).toBe('generated');
     expect(result.variant_question_id).toBeTruthy();
@@ -215,6 +217,23 @@ describe('runVariantGen', () => {
     expect(variant.knowledge_ids).toEqual(['k_xuci']);
     expect(variant.difficulty).toBe(3);
     expect(variant.source_ref).toBe(attemptId);
+  });
+
+  it('passes the first knowledge subject profile to VariantGenTask', async () => {
+    const db = testDb();
+    await seedKnowledge('math');
+    await seedQuestion({ id: 'q1' });
+    const attemptId = createId();
+    await seedFailureAttempt(attemptId, 'q1');
+    await seedJudgeForAttempt(attemptId, 'concept');
+
+    const runTaskFn = vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({
+      text: VALID_VARIANT_OUTPUT,
+    }));
+    await runVariantGen({ db, attemptEventId: attemptId, runTaskFn });
+
+    const ctx = runTaskFn.mock.calls[0]?.[2] as unknown as { subjectProfile?: { id: string } };
+    expect(ctx.subjectProfile?.id).toBe('math');
   });
 
   it('returns skipped:already_has_variant on re-run (idempotency)', async () => {
