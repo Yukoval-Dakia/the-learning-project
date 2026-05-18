@@ -1,6 +1,6 @@
-import { judgeExact } from './exact';
+import { getDefaultRegistry } from '@/core/capability/judges';
+import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { AnswerInput, JudgeResult } from './exact';
-import { judgeKeyword } from './keyword';
 
 export type JudgeKind =
   | 'exact'
@@ -17,31 +17,40 @@ export interface JudgeRouterInput {
   answer: AnswerInput;
 }
 
-export function judgeRouter(input: JudgeRouterInput): JudgeResult {
-  switch (input.kind) {
-    case 'exact':
-      if (typeof input.question.reference !== 'string') {
-        throw new Error('judgeExact requires question.reference');
-      }
-      return judgeExact({ reference: input.question.reference }, input.answer);
-    case 'keyword':
-      if (!Array.isArray(input.question.keywords)) {
-        throw new Error('judgeKeyword requires question.keywords[]');
-      }
-      return judgeKeyword({ keywords: input.question.keywords }, input.answer);
-    case 'semantic':
-    case 'rubric':
-    case 'steps':
-    case 'multimodal_direct':
-    case 'ai_flexible':
-      throw new Error(`Judge kind '${input.kind}' not implemented (Phase 2 / quiz feature work)`);
-    default: {
-      const _exhaustive: never = input.kind;
-      void _exhaustive;
-      throw new Error(`Unknown judge kind: ${String(input.kind)}`);
-    }
+export function judgeRouterV2(input: JudgeRouterInput): JudgeResultV2T {
+  const registry = getDefaultRegistry();
+  const runner = registry.resolveJudge(input.kind);
+  if (!runner) {
+    throw new Error(
+      `Judge kind '${input.kind}' not found in capability registry (not implemented)`,
+    );
   }
+  return runner.run({ question: input.question, answer: input.answer });
 }
 
-export { judgeExact, judgeKeyword };
+function downgradeToV1(result: JudgeResultV2T): JudgeResult {
+  const verdictMap: Record<
+    JudgeResultV2T['coarse_outcome'],
+    JudgeResult['verdict']
+  > = {
+    correct: 'correct',
+    partial: 'partial',
+    incorrect: 'incorrect',
+    unsupported: 'incorrect',
+  };
+
+  return {
+    verdict: verdictMap[result.coarse_outcome],
+    score: result.score,
+    feedback_md: result.feedback_md,
+    evidence_json: result.evidence_json,
+  };
+}
+
+export function judgeRouter(input: JudgeRouterInput): JudgeResult {
+  return downgradeToV1(judgeRouterV2(input));
+}
+
+export { judgeExact } from './exact';
+export { judgeKeyword } from './keyword';
 export type { JudgeResult, AnswerInput };

@@ -1,6 +1,8 @@
 import { exactJudgeCapability } from '@/core/capability/judges/exact';
 import { keywordJudgeCapability } from '@/core/capability/judges/keyword';
 import { JudgeResultV2 } from '@/core/schema/capability';
+import { judgeRouter, judgeRouterV2 } from '@/server/ai/judges';
+import type { JudgeResult } from '@/server/ai/judges/exact';
 import { describe, expect, it } from 'vitest';
 
 describe('exactJudgeCapability', () => {
@@ -59,6 +61,61 @@ describe('exactJudgeCapability', () => {
         answer: { content: 'abc' },
       }),
     ).toThrow(/reference/);
+  });
+});
+
+describe('judgeRouter compatibility bridge', () => {
+  it('judgeRouter returns v1 shape for exact match', () => {
+    const result: JudgeResult = judgeRouter({
+      kind: 'exact',
+      question: { reference: '虚词' },
+      answer: { content: '虚词' },
+    });
+    expect(result.verdict).toBe('correct');
+    expect(result.score).toBe(1);
+    expect(typeof result.feedback_md).toBe('string');
+    expect(result.evidence_json).toBeDefined();
+  });
+
+  it('judgeRouter returns v1 shape for keyword', () => {
+    const result = judgeRouter({
+      kind: 'keyword',
+      question: { keywords: ['abc'] },
+      answer: { content: 'abc def' },
+    });
+    expect(result.verdict).toBe('correct');
+  });
+
+  it('judgeRouterV2 returns v2 shape for exact match', () => {
+    const result = judgeRouterV2({
+      kind: 'exact',
+      question: { reference: '虚词' },
+      answer: { content: '虚词' },
+    });
+    expect(result.coarse_outcome).toBe('correct');
+    expect(result.score_meaning).toBe('correctness');
+    expect(result.capability_ref.id).toBe('exact');
+    expect(result.confidence).toBe(1);
+  });
+
+  it('judgeRouterV2 returns v2 shape for keyword', () => {
+    const result = judgeRouterV2({
+      kind: 'keyword',
+      question: { keywords: ['abc'] },
+      answer: { content: 'abc def' },
+    });
+    expect(result.coarse_outcome).toBe('correct');
+    expect(result.capability_ref.id).toBe('keyword');
+  });
+
+  it('unimplemented judge kinds still throw', () => {
+    expect(() =>
+      judgeRouter({
+        kind: 'semantic',
+        question: {},
+        answer: { content: '' },
+      }),
+    ).toThrow(/not implemented|not found/i);
   });
 });
 
