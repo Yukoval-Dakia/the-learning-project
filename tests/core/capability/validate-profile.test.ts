@@ -1,9 +1,6 @@
 import { CapabilityRegistry } from '@/core/capability/registry';
 import type { JudgeCapabilityRunner } from '@/core/capability/types';
-import {
-  validateProfile,
-  type ProfileValidationResult,
-} from '@/core/capability/validate-profile';
+import { type ProfileValidationResult, validateProfile } from '@/core/capability/validate-profile';
 import type { CapabilityManifestT } from '@/core/schema/capability';
 import type { SubjectProfile } from '@/subjects/profile';
 import { describe, expect, it } from 'vitest';
@@ -106,9 +103,7 @@ describe('validateProfile', () => {
       makeRegistry('exact', 'keyword'),
     );
     expect(result.valid).toBe(false);
-    expect(result.errors.some((error) => error.includes('duplicate'))).toBe(
-      true,
-    );
+    expect(result.errors.some((error) => error.includes('duplicate'))).toBe(true);
   });
 
   it('fails when causeCategory id has invalid format', () => {
@@ -123,10 +118,7 @@ describe('validateProfile', () => {
   });
 
   it('fails when version is empty', () => {
-    const result = validateProfile(
-      makeProfile({ version: '' }),
-      makeRegistry('exact', 'keyword'),
-    );
+    const result = validateProfile(makeProfile({ version: '' }), makeRegistry('exact', 'keyword'));
     expect(result.valid).toBe(false);
     expect(result.errors.some((error) => error.includes('version'))).toBe(true);
   });
@@ -137,9 +129,7 @@ describe('validateProfile', () => {
       makeRegistry('exact', 'keyword'),
     );
     expect(result.valid).toBe(false);
-    expect(
-      result.errors.some((error) => error.includes('causeCategories')),
-    ).toBe(true);
+    expect(result.errors.some((error) => error.includes('causeCategories'))).toBe(true);
   });
 
   it('warns (but does not fail) for deprecated capability', () => {
@@ -173,8 +163,6 @@ describe('validateProfile', () => {
       registry,
     );
     expect(result.valid).toBe(true);
-    expect(
-      result.warnings.some((warning) => warning.includes('deprecated')),
-    ).toBe(true);
+    expect(result.warnings.some((warning) => warning.includes('deprecated'))).toBe(true);
   });
 });

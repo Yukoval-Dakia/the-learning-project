@@ -1,7 +1,4 @@
-import type {
-  CapabilityManifestT,
-  JudgeResultV2T,
-} from '@/core/schema/capability';
+import type { CapabilityManifestT, JudgeResultV2T } from '@/core/schema/capability';
 import { z } from 'zod';
 import type { JudgeCapabilityRunner, JudgeRunInput } from '../types';
 
@@ -37,12 +34,8 @@ function classifyScore(score: number): JudgeResultV2T['coarse_outcome'] {
 function run(input: JudgeRunInput): JudgeResultV2T {
   const { keywords } = KeywordJudgeQuestion.parse(input.question);
   const normalizedContent = normalize(input.answer.content);
-  const hits = keywords.filter((keyword) =>
-    normalizedContent.includes(normalize(keyword)),
-  );
-  const missing = keywords.filter(
-    (keyword) => !normalizedContent.includes(normalize(keyword)),
-  );
+  const hits = keywords.filter((keyword) => normalizedContent.includes(normalize(keyword)));
+  const missing = keywords.filter((keyword) => !normalizedContent.includes(normalize(keyword)));
   const total = keywords.length;
   const score = total === 0 ? 0 : hits.length / total;
   const coarseOutcome = classifyScore(score);

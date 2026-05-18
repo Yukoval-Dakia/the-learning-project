@@ -4,8 +4,7 @@ const CAUSE_ID_PATTERN = /^[a-z][a-z0-9_]*$/;
 
 export const CauseCategoryDeclaration = z.object({
   id: z.string().min(1).regex(CAUSE_ID_PATTERN, {
-    message:
-      'cause id must be lowercase alphanumeric + underscores, starting with a letter',
+    message: 'cause id must be lowercase alphanumeric + underscores, starting with a letter',
   }),
   label: z.string().min(1),
   description: z.string().optional(),
@@ -16,9 +15,7 @@ export const CauseCategoryDeclaration = z.object({
     })
     .optional(),
 });
-export type CauseCategoryDeclarationT = z.infer<
-  typeof CauseCategoryDeclaration
->;
+export type CauseCategoryDeclarationT = z.infer<typeof CauseCategoryDeclaration>;
 
 export const RenderConfig = z.object({
   font_family: z.string().min(1),

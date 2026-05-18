@@ -1,8 +1,4 @@
-import {
-  CapabilityManifest,
-  CapabilityRef,
-  CapabilityRunRef,
-} from '@/core/schema/capability';
+import { CapabilityManifest, CapabilityRef, CapabilityRunRef } from '@/core/schema/capability';
 import { describe, expect, it } from 'vitest';
 
 describe('CapabilityManifest', () => {
@@ -50,17 +46,13 @@ describe('CapabilityManifest', () => {
   });
 
   it('rejects unknown kind', () => {
-    expect(
-      CapabilityManifest.safeParse({ ...validManifest, kind: 'parser' })
-        .success,
-    ).toBe(false);
+    expect(CapabilityManifest.safeParse({ ...validManifest, kind: 'parser' }).success).toBe(false);
   });
 
   it('rejects unknown cost_class', () => {
-    expect(
-      CapabilityManifest.safeParse({ ...validManifest, cost_class: 'free' })
-        .success,
-    ).toBe(false);
+    expect(CapabilityManifest.safeParse({ ...validManifest, cost_class: 'free' }).success).toBe(
+      false,
+    );
   });
 
   it('rejects missing version', () => {
@@ -76,9 +68,7 @@ describe('CapabilityRef', () => {
   });
 
   it('rejects empty id', () => {
-    expect(CapabilityRef.safeParse({ id: '', version: '1.0.0' }).success).toBe(
-      false,
-    );
+    expect(CapabilityRef.safeParse({ id: '', version: '1.0.0' }).success).toBe(false);
   });
 });
 

@@ -29,10 +29,7 @@ export function judgeRouterV2(input: JudgeRouterInput): JudgeResultV2T {
 }
 
 function downgradeToV1(result: JudgeResultV2T): JudgeResult {
-  const verdictMap: Record<
-    JudgeResultV2T['coarse_outcome'],
-    JudgeResult['verdict']
-  > = {
+  const verdictMap: Record<JudgeResultV2T['coarse_outcome'], JudgeResult['verdict']> = {
     correct: 'correct',
     partial: 'partial',
     incorrect: 'incorrect',
