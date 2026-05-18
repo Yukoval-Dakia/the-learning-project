@@ -3,12 +3,7 @@ import { z } from 'zod';
 export const CapabilityKind = z.enum(['judge', 'renderer', 'scheduler']);
 export type CapabilityKindT = z.infer<typeof CapabilityKind>;
 
-export const CostClass = z.enum([
-  'local',
-  'cheap_llm',
-  'expensive_llm',
-  'external',
-]);
+export const CostClass = z.enum(['local', 'cheap_llm', 'expensive_llm', 'external']);
 export type CostClassT = z.infer<typeof CostClass>;
 
 export const LatencyClass = z.enum(['sync', 'async']);
@@ -54,12 +49,7 @@ export const ScoreMeaning = z.enum([
 ]);
 export type ScoreMeaningT = z.infer<typeof ScoreMeaning>;
 
-export const CoarseOutcome = z.enum([
-  'correct',
-  'partial',
-  'incorrect',
-  'unsupported',
-]);
+export const CoarseOutcome = z.enum(['correct', 'partial', 'incorrect', 'unsupported']);
 export type CoarseOutcomeT = z.infer<typeof CoarseOutcome>;
 
 export const JudgeResultV2 = z.object({

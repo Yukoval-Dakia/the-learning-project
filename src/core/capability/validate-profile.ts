@@ -59,18 +59,14 @@ function validateJudgeCapabilities(
       continue;
     }
     if (seenCapabilities.has(capabilityId)) {
-      errors.push(
-        `[${profile.id}] judgeCapability duplicate id: '${capabilityId}'`,
-      );
+      errors.push(`[${profile.id}] judgeCapability duplicate id: '${capabilityId}'`);
       continue;
     }
     seenCapabilities.add(capabilityId);
 
     const runner = registry.resolveJudge(capabilityId);
     if (!runner) {
-      errors.push(
-        `[${profile.id}] judgeCapability '${capabilityId}' not found in registry`,
-      );
+      errors.push(`[${profile.id}] judgeCapability '${capabilityId}' not found in registry`);
       continue;
     }
     if (runner.manifest.stability === 'deprecated') {
@@ -100,17 +96,13 @@ export function validateProfile(
 
   const renderConfig = RenderConfig.safeParse(profile.renderConfig);
   if (!renderConfig.success) {
-    errors.push(
-      `[${profile.id}] renderConfig is invalid: ${firstIssueMessage(renderConfig)}`,
-    );
+    errors.push(`[${profile.id}] renderConfig is invalid: ${firstIssueMessage(renderConfig)}`);
   }
 
   const schedulingHints = SchedulingHints.safeParse(profile.schedulingHints);
   if (!schedulingHints.success) {
     errors.push(
-      `[${profile.id}] schedulingHints is invalid: ${firstIssueMessage(
-        schedulingHints,
-      )}`,
+      `[${profile.id}] schedulingHints is invalid: ${firstIssueMessage(schedulingHints)}`,
     );
   }
 

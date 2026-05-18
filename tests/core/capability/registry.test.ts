@@ -36,7 +36,7 @@ describe('CapabilityRegistry', () => {
 
     const resolved = registry.resolveJudge('exact');
     expect(resolved).toBeDefined();
-    expect(resolved!.manifest.id).toBe('exact');
+    expect(resolved?.manifest.id).toBe('exact');
   });
 
   it('returns undefined for unregistered capability', () => {
@@ -57,9 +57,7 @@ describe('CapabilityRegistry', () => {
   it('throws on duplicate judge registration', () => {
     const registry = new CapabilityRegistry();
     registry.registerJudge(makeStubJudge('exact'));
-    expect(() => registry.registerJudge(makeStubJudge('exact'))).toThrow(
-      /already registered/,
-    );
+    expect(() => registry.registerJudge(makeStubJudge('exact'))).toThrow(/already registered/);
   });
 
   it('hasJudge returns true for registered, false for missing', () => {

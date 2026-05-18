@@ -43,9 +43,7 @@ describe('SubjectProfile extensions', () => {
 
   it('wenyan profile has schedulingHints', () => {
     const profile = subjectProfiles.wenyan;
-    expect(SchedulingHints.safeParse(profile.schedulingHints).success).toBe(
-      true,
-    );
+    expect(SchedulingHints.safeParse(profile.schedulingHints).success).toBe(true);
     expect(profile.schedulingHints.default_policy).toBe('fsrs');
   });
 
