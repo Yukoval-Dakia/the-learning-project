@@ -1,6 +1,6 @@
 // 浏览器侧 AI 调用入口。
-// 所有调用都走 /api/ai/<task>，Cloudflare Workers 持有 ANTHROPIC_API_KEY。
-// 浏览器代码绝不直接拿 API key。
+// 普通 single-shot task 走 /api/ai/<task>；tool-calling task 必须走各自领域
+// route，由服务端注入 MCP server / allowed tools。浏览器代码绝不直接拿 API key。
 
 const INTERNAL_TOKEN = import.meta.env.VITE_INTERNAL_TOKEN ?? '';
 
@@ -11,11 +11,11 @@ export interface RunTaskOptions {
 }
 
 /**
- * Run an AI task on the worker. Returns:
+ * Run a single-shot AI task through the generic route. Returns:
  * - For single-shot tasks (`needsToolCall: false` in registry): parsed JSON.
- * - For multi-step tasks: full text after stream completes (chunks delivered via onChunk).
  *
- * Worker decides which mode to use based on task registry.
+ * Tool-calling tasks are intentionally rejected by the generic route; call their
+ * domain route instead (for example `/api/knowledge/review`).
  */
 export async function runTask<TInput, TOutput = unknown>(
   taskKind: string,

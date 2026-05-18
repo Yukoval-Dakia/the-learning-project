@@ -6,9 +6,9 @@
 
 ---
 
-## 0. 实施现状（2026-05-17）
+## 0. 实施现状（2026-05-18）
 
-> 本 doc 描述的 `tool_quiz` 完整闭环（artifact 多态 / JudgeRouter / Answer / Judgment / UserAppeal）**都还没落**。下面 §1+ 是 Phase 1 sketch + Phase 2 roadmap。
+> 本 doc 描述的完整 `tool_quiz` artifact / JudgeRouter / Answer / Judgment / UserAppeal 仍是 roadmap；但当前 review 已经有 `learning_session(type='review')` 生命周期，答题事实走 `event` + FSRS 投影，不再是无 session 的裸 review flow。
 
 | 设计概念 | 现状 |
 |---|---|
@@ -16,11 +16,13 @@
 | Answer / Judgment / UserAppeal 三表 | ❌ DROPped 或从未建过；判分走 `event(action='judge', subject_kind='event')` 替代 |
 | JudgeRouter + 7 种 judge kind | ❌ 现只有 `exact` 这一种 judge（`src/server/ai/judges/exact.ts`） |
 | `tool_quiz` artifact 类型 + standalone vs embedded | ❌ artifact 表 schema 在但 0 写入 / 0 UI |
-| 复习 = standalone tool_quiz session | ❌ 现在 `/review` 直接走 `/api/review/due` + `/api/review/submit`，无 session 实体 |
-| 变式题双 pass + 三层防"错题繁殖" | ❌ Phase 2 |
+| Review session | ✅ ADR-0013 已落地：`/api/review/sessions` 创建，`/api/review/submit` 可带 `session_id`，结束/孤儿清理由 route + pg-boss 处理 |
+| 复习 = standalone tool_quiz artifact | ❌ 仍未实现；当前是 review session + due/submit API |
+| 变式题生成 | ✅ pg-boss `variant_gen` 写 draft `question(source='mistake_variant')` |
+| 变式题双 pass + 三层防"错题繁殖" | ❌ Phase 2+ |
 | AttributionTask 写 cause | ✅ 落地 `src/server/knowledge/attribute.ts`；输出走 `event(action='judge')`，payload 含 10 类 cause |
 
-**当前真"答题"路径**：手动录入（`POST /api/mistakes`） + FSRS 复习（`GET /api/review/due` → `POST /api/review/submit`）。整套 quiz session / Answer / Judgment 仪式感推到 Phase 2。
+**当前真"答题"路径**：手动录入（`POST /api/mistakes`） + FSRS 复习（`POST /api/review/sessions` → `GET /api/review/due` → `POST /api/review/submit` → session end）。整套 `tool_quiz` artifact / Answer / Judgment / appeal 仪式感推到 Phase 2。
 
 ---
 

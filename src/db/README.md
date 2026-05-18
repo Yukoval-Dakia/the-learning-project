@@ -1,23 +1,25 @@
 # db
 
-Drizzle schema —— SQLite dialect（跨 PWA / Tauri / D1 一致）。
+Drizzle schema for the current Postgres runtime.
 
-## 运行时 driver 路线
+## Runtime driver
 
-| Phase | 驱动 | 持久化 |
+| Environment | Driver | Persistence |
 | --- | --- | --- |
-| 1 (PWA) | `@sqlite.org/sqlite-wasm` + `drizzle-orm/sqlite-proxy` | OPFS |
-| 3 (Tauri) | `tauri-plugin-sql` 或 `better-sqlite3` | 本地文件 |
-| 4 (云同步) | `drizzle-orm/d1` | Cloudflare D1 + R2 |
+| Local dev | `postgres` + `drizzle-orm/postgres-js` | `DATABASE_URL` from `.env.local` |
+| Tests | `postgres` + `drizzle-orm/postgres-js` | `@testcontainers/postgresql` |
+| NAS / Docker compose | `postgres` + `drizzle-orm/postgres-js` | compose `postgres` service volume |
 
-## 迁移
+## Migrations
 
 ```bash
-pnpm db:generate   # schema diff → ./drizzle/*.sql
+pnpm db:generate   # schema diff -> ./drizzle/*.sql
+pnpm db:migrate    # apply committed migrations
+pnpm db:push       # push schema during local/dev setup
 ```
 
-迁移文件提交进 git，运行时按版本顺序 apply。
+Migration files are committed to git and applied in order. Tests run against a real Postgres container and apply migrations during global setup.
 
-## JSON 字段约定
+## JSON fields
 
-数组 / 对象一律 `text({ mode: 'json' })`，drizzle 自动 `JSON.parse`。**不**做关系展开（如知识点 join 表）—— 自用规模直接用嵌套 JSON 更省事，真要查再加索引或 view。
+Use Postgres `jsonb` for structured payloads and guard shapes at API/write boundaries with Zod. Do not duplicate derived lifecycle fields back into source tables; build readers or projections when the UI needs summaries.
