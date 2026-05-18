@@ -1,7 +1,8 @@
 # 错题管理
 
-> 见 [架构基础](../architecture.md) 了解 `event` / `question` / `material_fsrs_state` schema、FSRS state 和 AI 任务层。
+> 见 [架构基础](../architecture.md) 了解 `learning_record` / `event` / `question` / `material_fsrs_state` schema、FSRS state 和 AI 任务层。
 > 题面统一在 `question` 表（见 [`quiz.md`](quiz.md)），「错题」是 event 流的一种视图。
+> 用户活动上下文入口详见 [`records.md`](records.md)；错题是 `LearningRecord(kind='mistake')`。
 
 ---
 
@@ -9,7 +10,23 @@
 
 > ⚠️ 下面 §1–§6 的 `Mistake` / `mistake_id` / `Mistake.cause` 等命名是 Phase 1 sketch 期写的，**实际表已 DROP**（1c.1 Step 9）。整篇 doc 的"错题"概念在落地实现里是 event 流的一个视图。读完本节心里替换即可，后续段落保留作为概念语义参考。
 
-**当前真实存储**：
+**2026-05-18 目标存储**：
+
+| 概念 | 实际存储 | 备注 |
+|---|---|---|
+| 用户可见错题记录 | `learning_record(kind='mistake', activity_kind='attempt', origin_event_id=attempt_event_id, question_id, attempt_event_id, payload.wrong_answer_md, knowledge_ids)` | 用户答题活动物化出的一种 record kind |
+| 答错事实 / mastery signal | `event(action='attempt', subject_kind='question', outcome='failure')` | 一行 event = 一次答错 |
+| 做对事实 / mastery signal | `event(action='attempt', subject_kind='question', outcome='success')` | 一行 event = 一次确认做对；默认不是错题 record |
+| 题面 | `question` | 与变式题、worked example 共享题库 |
+| 错因 | AI `judge` event 或 user `experimental:user_cause` event，均 chain 到 `attempt_event_id` | 用户优先 |
+| 复习状态 | `material_fsrs_state(subject_kind='question', subject_id=<qid>)` | 一行 / 题 |
+
+拍照导入一页作业时，错题和做对题都应从 `question_block` 物化为 `question + attempt event`。
+区别是：`outcome='failure'` 会额外创建 `learning_record(kind='mistake')`；`outcome='success'`
+只作为学习表现信号，除非用户/agent 标记这题值得保留，才额外创建
+`learning_record(kind='worked_example')`。
+
+**当前已实现存储（迁移前）**：
 
 | Phase 1 sketch 词 | 实际存储 | 备注 |
 |---|---|---|

@@ -20,26 +20,24 @@
 ### Provider Manager (`src/server/ai/providers.ts`)
 
 ```typescript
-type ProviderName = 'anthropic' | 'openrouter' | 'vercel-gateway';
+type ProviderName = 'anthropic' | 'xiaomi' | 'openrouter' | 'gateway' | 'openai';
 
-export function getProvider(name: ProviderName) {
-  // 读各自 env var，构造 createAnthropic({ baseURL?, apiKey })
+export function resolveTaskProvider(kind: TaskKind, override?: { provider?: ProviderName; model?: string }) {
+  // 读 registry defaultProvider/defaultModel + provider env/baseUrl，
+  // 返回 Claude Agent SDK runner 需要注入的 { apiKey, baseUrl, model }
 }
 ```
 
-所有 Anthropic-compatible 端点（OpenRouter、Vercel AI Gateway）通过 `baseURL` 注入，不改任何业务代码。
+当前只 wired `anthropic` + `xiaomi`。`openrouter` / `gateway` / `openai` 是预留 provider，不应在没有真实触发前补抽象。
 
 ### Task Model Selector (`src/ai/registry.ts`)
 
 ```typescript
 type TaskModelConfig = { provider: ProviderName; model: string };
-const TASK_MODELS: Record<TaskKind, TaskModelConfig> = { ... };
-
-export function resolveTaskModel(kind: TaskKind, override?: Partial<TaskModelConfig>)
-  : LanguageModel
+const taskDef = tasks[kind]; // registry.ts declares defaultProvider/defaultModel
 ```
 
-每个 task 在 registry 里声明 `{ provider, model }`，runner 调 `resolveTaskModel(ctx.kind)` 取 model 实例。`override` 字段支持测试或临时切换，不影响默认配置。
+每个 task 在 registry 里声明 `{ defaultProvider, defaultModel }`，runner 调 `resolveTaskProvider(kind, ctx.override)` 取 Claude Agent SDK 环境配置。`override` 字段支持测试或临时切换，不影响默认配置。
 
 - `session` 是 opt-in 的上层抽象，仅 User Copilot 使用。
 - `tools` 来自共享 Domain Tool Registry，由 task purpose 决定 allowlist。
@@ -58,22 +56,24 @@ export function resolveTaskModel(kind: TaskKind, override?: Partial<TaskModelCon
 | 审计 | `ai_task_runs` + `ai_tool_calls` + `ai_cost_ledger` |
 | 输出 | 结构化对象，写 DB（Proposal / Suggestion / enriched rows） |
 
-**Task 现状（2026-05-16，参考 `src/ai/registry.ts`）：**
+**Task 现状（2026-05-17，参考 `src/ai/registry.ts`）：**
 
 | Task | 模型 | 状态 | 触发 | 输出 |
 |---|---|---|---|---|
-| `AttributionTask` | Sonnet | ✅ 已实装 | user action / pg-boss | 错题归因（10 类 cause）+ ai_analysis_md |
-| `KnowledgeProposeTask` | Sonnet | ✅ 已实装 | user action / pg-boss | 0-3 条 propose_new 知识点（挂在合适 parent 下） |
-| `KnowledgeReviewTask` | Sonnet | ✅ 已实装 | maintenance | tree mutation propose（reparent / merge / split / archive / propose_new） |
-| `VisionExtractTask` | Haiku | ✅ 已实装（manual rescue only after Sub 0c） | `POST /api/ingestion/[id]/rescue` | bbox blocks |
-| `VisionExtractTaskHeavy` | Sonnet | ✅ 已实装（heavy manual rescue） | 同上 | 同上 |
-| `JudgeMistakeTask` | Sonnet | ⏳ Sub 0d 计划 | pg-boss | 判题结论 |
-| `VariantGenTask` | Opus | ⏳ Sub 0d 计划 | pg-boss | `DreamingProposal kind='variant'` |
-| `DreamingTask` | Opus + Batch | ⏳ Sub 0d 计划 | pg-boss cron 每日 02:00 BJT | `DreamingProposal`（多种） |
-| `MaintenanceProposeTask` | Sonnet + Batch | ⏳ Sub 0d 计划 | pg-boss cron 每日 | `MaintenanceSuggestion` |
-| `BlockAssemblyTask` | Sonnet | ⏳ Sub 0d 计划 | pg-boss | `DreamingProposal kind='block_merge'` |
+| `AttributionTask` | mimo-v2.5-pro | ✅ 已实装 | user action / pg-boss | 错题归因（10 类 cause）+ analysis |
+| `KnowledgeProposeTask` | mimo-v2.5-pro | ✅ 已实装 | user action / pg-boss | 0-3 条 propose_new 知识点 |
+| `KnowledgeEdgeProposeTask` | mimo-v2.5-pro | ✅ 已注册 | maintenance / nightly | 0-5 条 knowledge_edge proposal |
+| `SessionSummaryTask` | mimo-v2.5-pro | ✅ 已注册 | review session end | ≤120 字 session summary |
+| `LearningIntentOutlineTask` | mimo-v2.5-pro | ✅ 已实装 | `/api/learning-intents` | 1 hub + N atomic outline |
+| `NoteGenerateTask` | mimo-v2.5-pro | ✅ 已实装 | pg-boss `note_generate` | atomic artifact sections |
+| `VariantGenTask` | mimo-v2.5-pro | ✅ 已注册 | pg-boss `variant_gen` | 1 道 cause-targeted 变式题 |
+| `TeachingTurnTask` | mimo-v2.5-pro | ✅ 已实装 | `/api/teaching-sessions/*` | Active Teaching turn |
+| `ReviewIntentTask` | mimo-v2.5-pro | ✅ 已实装 | Review Orchestrator | 一句话 session intent |
+| `KnowledgeReviewTask` | mimo-v2.5-pro | ✅ 已注册，tool-call | maintenance | tree / mesh mutation proposal |
+| `VisionExtractTask` | mimo-v2.5 | ✅ 已实装（manual rescue only） | `POST /api/ingestion/[id]/rescue` | bbox blocks |
+| `VisionExtractTaskHeavy` | mimo-v2.5 | ✅ 已实装（manual rescue only） | 同上 | bbox blocks |
 
-**与旧 ADR-0004 版本差异（2026-05-16 audit refresh）**：原计划的 `EnrichMistakeTask`（"归因 + 提议 + 知识点关联"）已**拆分**为 `AttributionTask`（归因）+ `KnowledgeProposeTask`（知识点提议）。新增 `KnowledgeReviewTask`（tree maintenance，原 ADR 未提）。VisionExtract* 在 ADR-0002 修订（2026-05-11）中改为 "manual rescue tool"，本表注明 `invocation: 'manual_rescue_only'`。其余 5 个 `Judge*/VariantGen/Dreaming/Maintenance/BlockAssembly` 仍在 Sub 0d 计划中，未实装（Sub 0d plan DEFERRED）。
+**与旧 ADR-0004 版本差异**：原计划的 `EnrichMistakeTask` 已拆分为 `AttributionTask`（归因）+ `KnowledgeProposeTask`（知识点提议）。VisionExtract* 在 ADR-0002 修订（2026-05-11）中改为 manual rescue tool，不参与自动 cascade。`DreamingTask` / `MaintenanceProposeTask` / `BlockAssemblyTask` 作为 lane 级编排概念保留，但当前 registry 以更具体的 task 和 pg-boss handler 承载。
 
 **破坏性操作（删题、合并节点）没有直接 tool**——AI 只能 propose，走 Proposal/Suggestion 流程，用户最终确认。
 

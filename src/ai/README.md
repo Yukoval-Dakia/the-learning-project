@@ -28,3 +28,4 @@ Task 层抽象。**不是 chat()** —— 每种产物一个 Task；tool-calling
 - Domain Tool Registry 是源头；MCP 只是 Claude Agent SDK 的 in-process 适配层。
 - Read tool 返回语义化上下文，例如 graph path、relation meaning、recent failure evidence。
 - Proposal tool 写 `event(action='propose')`，不直接改硬事实。
+- Action/write tool 只能包装已有 owner service（如 AttributionTask / VariantGenTask），不能让 LLM 传任意 mutation payload。

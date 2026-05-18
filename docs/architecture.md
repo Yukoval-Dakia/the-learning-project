@@ -102,29 +102,26 @@ Question (统一题库，single source of truth)
 
 ### 5.1 Task 注册
 
-> **Canonical source**: `src/ai/registry.ts` + `docs/adr/0004-pattern-c-two-type-agent-architecture.md` §"Task 现状"。本节为同步快照（2026-05-16），与 ADR-0004 lines 54-69 对齐。
+> **Canonical source**: `src/ai/registry.ts` + `docs/adr/0004-pattern-c-two-type-agent-architecture.md` §"Task 现状"。本节为同步快照（2026-05-17）。
 
-**Phase 1 已实装**（5 个，runner + registry 都通）：
+**当前 registry**（runner + registry 都通；实际触发看 route / pg-boss handler）：
 
 | Task | 模型 | 触发 | tool call | 多模态 | 产出 |
 | --- | --- | --- | --- | --- | --- |
-| `AttributionTask` | Sonnet | user action / pg-boss | 是 | — | 错题归因（10 类 cause）+ `ai_analysis_md` |
-| `KnowledgeProposeTask` | Sonnet | user action / pg-boss | 是 | — | 0-3 条 `propose_new` 知识点（挂在合适 parent 下） |
-| `KnowledgeReviewTask` | Sonnet | maintenance | 是 | — | tree mutation propose（reparent / merge / split / archive / propose_new） |
-| `VisionExtractTask` | Haiku | `POST /api/ingestion/[id]/rescue` (manual rescue only after Sub 0c) | 否 | 输入 | bbox blocks |
-| `VisionExtractTaskHeavy` | Sonnet | 同上（heavy manual rescue） | 否 | 输入 | bbox blocks |
+| `AttributionTask` | mimo-v2.5-pro | user action / pg-boss | 否 | — | 错题归因（10 类 cause）+ analysis |
+| `KnowledgeProposeTask` | mimo-v2.5-pro | user action / pg-boss | 否 | — | 0-3 条 `propose_new` 知识点 |
+| `KnowledgeEdgeProposeTask` | mimo-v2.5-pro | maintenance / nightly | 否 | — | 0-5 条 knowledge_edge proposal |
+| `SessionSummaryTask` | mimo-v2.5-pro | review session end | 否 | — | ≤120 字 session summary |
+| `LearningIntentOutlineTask` | mimo-v2.5-pro | `/api/learning-intents` | 否 | — | 1 hub + N atomic outline |
+| `NoteGenerateTask` | mimo-v2.5-pro | pg-boss `note_generate` | 否 | — | atomic artifact sections |
+| `VariantGenTask` | mimo-v2.5-pro | pg-boss `variant_gen` | 否 | — | 1 道 cause-targeted 变式题 |
+| `TeachingTurnTask` | mimo-v2.5-pro | `/api/teaching-sessions/*` | 否 | — | Active Teaching turn |
+| `ReviewIntentTask` | mimo-v2.5-pro | Review Orchestrator | 否 | — | 一句话 session intent |
+| `KnowledgeReviewTask` | mimo-v2.5-pro | maintenance | 是 | — | tree / mesh mutation proposal |
+| `VisionExtractTask` | mimo-v2.5 | `POST /api/ingestion/[id]/rescue` | 否 | 输入 | bbox blocks |
+| `VisionExtractTaskHeavy` | mimo-v2.5 | 同上（heavy manual rescue） | 否 | 输入 | bbox blocks |
 
-**Sub 0d 计划实装**（5 个，Sub 0d plan 当前 DEFERRED，等 Phase 1c.1 / 1c.2 落地后 refresh）：
-
-| Task | 模型 | 触发 | 产出 |
-| --- | --- | --- | --- |
-| `JudgeMistakeTask` | Sonnet | pg-boss | 判题结论 |
-| `VariantGenTask` | Opus | pg-boss | `DreamingProposal kind='variant'` |
-| `DreamingTask` | Opus + Batch | pg-boss cron 每日 02:00 BJT | `DreamingProposal`（多种） |
-| `MaintenanceProposeTask` | Sonnet + Batch | pg-boss cron 每日 | `MaintenanceSuggestion` |
-| `BlockAssemblyTask` | Sonnet | pg-boss | `DreamingProposal kind='block_merge'` |
-
-**与旧 ADR 版本差异**（2026-05-16 audit refresh）：原计划的 `EnrichMistakeTask`（"归因 + 提议 + 知识点关联"）已**拆分**为 `AttributionTask`（归因）+ `KnowledgeProposeTask`（知识点提议）。新增 `KnowledgeReviewTask`（tree maintenance）。`VisionExtract*` 在 ADR-0002 修订（2026-05-11）中改为 "manual rescue tool"（不再作为自动 cascade fallback）。早期文档中提到的 `Quiz*Task` / `Judge*Task`(细分) / `Note*Task` / `Weekly*Task` 在 Phase 1c.1 schema refresh 后形态待定，未进 registry。
+**与旧 ADR 版本差异**：原计划的 `EnrichMistakeTask` 已拆分为 `AttributionTask`（归因）+ `KnowledgeProposeTask`（知识点提议）。VisionExtract* 在 ADR-0002 修订（2026-05-11）中改为 manual rescue tool，不参与自动 cascade。`DreamingTask` / `MaintenanceProposeTask` / `BlockAssemblyTask` 作为 lane 级编排概念保留，但当前 registry 以更具体的 task 和 pg-boss handler 承载。
 
 **命名约定**：Task 一律 `PascalCase + 'Task'` 后缀；破坏性操作（删题、合并节点）走 Proposal/Suggestion 流程而非直接 tool（per ADR-0004）。
 
@@ -140,11 +137,15 @@ Question (统一题库，single source of truth)
 Read（按 Task allowlist 注入）：
   get_subject_graph_overview / query_knowledge / expand_knowledge_subgraph
   find_knowledge_paths / query_events / query_mistakes
-  get_review_due / get_learning_history / get_artifact / get_question / get_study_log
+  query_records / get_record_context / get_question_context / get_attempt_context
+  get_review_due / get_learning_item_context
 
 Propose-only（产生待审核 event，不立即执行）：
   propose_knowledge_edge / propose_knowledge_mutation
-  propose_variant / attribute_mistake / propose_learning_item_completion
+  propose_learning_item_completion / propose_learning_item_relearn
+
+Action/write wrappers（只能包装已有 owner service）：
+  attribute_mistake / propose_variant
 
 Write（极少数、低风险、已有事务边界）：
   write_agent_message / write_tool_trace
@@ -315,7 +316,7 @@ workers/src/dreaming/
 | 数据存储 | Phase 1 = D1 远程；Phase 1.5 起 R2 存图片；Phase 4 = D1 + PWA cache 离线层；Phase 3 Tauri 端 = better-sqlite3 镜像 | 自用初期"能用"远比"离线"重要，避免 sqlite-wasm 集成的 1-2 周硬骨头 |
 | 云同步 | 与上同源（D1 + R2）；Phase 4 加 PWA cache 离线层 | 自用规模够，已有账号 |
 | AI 调用 | 见上节任务层 | |
-| Tool calling 循环 | OSS 框架（Vercel AI SDK / LangChain） | 不自建 |
+| Tool calling 循环 | Claude Agent SDK query loop + in-process MCP bridge | 不自建 loop；项目只维护 DomainTool registry / allowlist / logs |
 | Note 编辑器 | TipTap / Milkdown / Lexical（基于 ProseMirror） | 详见 [`modules/notes.md`](modules/notes.md) |
 | Note 渲染 | react-markdown / markdown-it | |
 | 数学公式 | KaTeX | |
@@ -376,10 +377,29 @@ Question
   parent_variant_id?: string      // 直接上一代
   created_by: {task, version}
   metadata?: { force_flexible?, expected_input_kind?, ... }
-  created_at, updated_at, version
+  created_at, updated_at, version  // created_at = 题目进入统一题库的记录时间
 
-// ★ Phase 1c.1 实体：失败 attempt = event WHERE action='attempt' AND outcome='failure'
+// ★ Phase 1c.1 实体：attempt = event WHERE action='attempt'
+//    outcome='failure' 是错题视图；outcome='success' 也是学习表现信号。
 //    旧 Mistake 表已 DROP（ADR-0006 v2）；UI 保留"错题"称呼（用户语义不变）
+
+// 已入库题目的生命周期信息不复制到 Question 表：
+// - 入库/记录时间：Question.created_at
+// - 来源证据：Question.source / source_ref / metadata（source_document、asset、crop、origin block 等）
+// - 作答记录：event(action='attempt', subject_kind='question', subject_id=question.id)
+// - 复习记录：event(action='review', subject_kind='question', subject_id=question.id)
+// - 当前复习调度：material_fsrs_state(subject_kind='question', subject_id=question.id)
+// Reader/API 可以派生 QuestionActivitySummary；不要手写 last_reviewed_at 等漂移字段。
+QuestionActivitySummary            // derived/read model, not canonical storage
+  question_id
+  recorded_at                      // question.created_at
+  source, source_ref
+  first_attempted_at?, last_attempted_at?
+  attempt_counts: { success, partial, failure }
+  first_reviewed_at?, last_reviewed_at?
+  review_count
+  due_at?, last_review_ref?        // read-model ref to the latest review action
+  linked_record_ids[]
 
 // 待学习列表（含层级）—— 学习意图层，与 event 解耦
 LearningItem
@@ -411,18 +431,42 @@ CompletionEvidence
   user_overrode_low_evidence?: bool
   decided_at
 
-// 学习日志 — 用户主动记录的"非错题"学习内容（progress 模块详述）
-StudyLog
+// 学习记录 — 用户活动产生的学习上下文（records 模块详述）
+LearningRecord
   id
-  kind: highlight | insight | question | reflection | observation
+  kind: mistake | worked_example | open_question | insight | reflection | observation | resource_note
+  title?
   content_md
-  // 关联（任一/多个）
-  → knowledge_ids[]?
+  source: manual | ocr | import | conversation | agent
+  capture_mode: text | image | paper | voice | url | mixed
+  activity_kind: attempt | review | read | ask | annotate | import | conversation | plan
+  processing_status: raw | linked | actioned | archived
+  → origin_event_id                // 触发/物化该 record 的活动 event
+  subject_id?
+  → knowledge_ids[]
   → question_id?
-  → event_id?                     // 关联到 attempt event（替代旧 mistake_id）
+  → attempt_event_id?             // kind=mistake 时关联 failure attempt event
   → artifact_id?
-  → learning_item_id?             // 可挂学习项做反思
-  created_at, updated_at, version
+  → learning_item_id?
+  → source_document_id?
+  asset_refs[]
+  payload: jsonb                  // kind-specific, small and Zod-guarded at API boundary
+  created_at, updated_at, archived_at?, version
+
+// Future memory layer — AI-curated projection, not manual notes
+// LearningRecord is raw activity-grounded evidence. Memory is derived from records + events + graph + proposal feedback.
+// Users act, capture, and correct; agents link, summarize, detect recurring patterns, and propose updates.
+MemoryItem                         // future scope, not part of first LearningRecord migration
+  id
+  kind: learner_preference | recurring_misconception | durable_goal | strategy_note | subject_pattern
+  subject_id?
+  → knowledge_ids[]
+  summary_md
+  confidence
+  evidence_refs[]                  // learning_record / event / knowledge / artifact ids
+  status: active | stale | dismissed
+  created_by: agent
+  created_at, updated_at, refreshed_at?
 
 // ★ Phase 1c.1 实体：propose / generate 动作走 event（ADR-0006 v2）
 //    旧 DreamingProposal 表已 DROP；梦境流提议 = event WHERE action='propose' AND actor_kind='agent'
@@ -517,9 +561,9 @@ Event
   actor_kind: user | agent | cron | system
   actor_ref                       // 'self' (user) / task_kind (agent) / cron_name
   action: attempt | judge | propose | generate | review | rate | extract | ...
-  subject_kind: question | knowledge | knowledge_edge | artifact | source_document | event
+  subject_kind: question | knowledge | knowledge_edge | artifact | source_document | event | record
   subject_id
-  outcome: success | failure | partial | null
+  outcome: success | failure | partial | null  // attempt 的 success/failure/partial 都是学习信号
   payload: jsonb                  // Zod-guarded per action × subject_kind（见 ADR-0006 v2）
   caused_by_event_id → event      // 因果链：judge ← attempt，propose ← cron
   task_run_id → ai_task_runs
@@ -531,7 +575,7 @@ WeeklyReview
   → weak_points: knowledge_ids[]
   → recurring_attempt_event_ids[] // 反复答错的 attempt event（替代旧 recurring_mistakes）
   → cause_distribution            // 按 cause 类型的分布（来自 judge event payload）
-  → integrated_study_logs: study_log_ids[]    // 整合本周用户写的 reflection / question
+  → integrated_record_ids[]       // 整合本周用户写的 reflection / open_question / insight
 
 ToolCallLog                       // 运行时 LLM tool 调用观测
   id, task_run_id, task_kind
@@ -604,7 +648,7 @@ FSRS 投影表 `material_fsrs_state` 从 event 流派生，每次 `action='revie
 
 ## 九、knowledge_mesh — tree + typed edge
 
-> ADR-0010。`knowledge_edge` 表是 Phase 1c.1 加入的第二个新实体。
+> ADR-0010。`knowledge_edge` 表是 Phase 1c.1 加入的第二个新实体。模块细节见 [`docs/modules/knowledge.md`](modules/knowledge.md)。
 
 **结构**："tree 是骨架，mesh 是肌肉"——`knowledge.parent_id` 保留主层级 backbone（一棵树），`knowledge_edge` 表叠加有类型的横向链接。tree 用于 effective_domain 派生 + UI tree-view；mesh 用于 Dreaming agent 找"薄弱但邻近"复习候选。
 
@@ -631,6 +675,14 @@ FSRS 投影表 `material_fsrs_state` 从 event 流派生，每次 `action='revie
 - `query_knowledge`：按 query/id 找节点，返回 path、neighbors、stats、recent failures
 - `expand_knowledge_subgraph`：围绕中心节点展开 bounded local subgraph
 - `find_knowledge_paths`：解释两个节点之间的路径和关系
+
+**其他 runtime context tools**：事件、学习记录、错题、复习队列、LearningItem 也通过语义化 reader 进入 agent 上下文：
+
+- `query_events` / `get_question_context` / `query_mistakes` / `get_attempt_context`：读取 event timeline、题目生命周期和 failure attempt view
+- `query_records` / `get_record_context`：读取用户活动物化出的错题、例题、疑问、顿悟、反思、资源摘录
+- `get_review_due`：读取 FSRS due queue，不提交 review
+- `get_learning_item_context`：给 Teaching / Coach / Copilot 提供学习项上下文
+- `attribute_mistake` / `propose_variant`：包装现有 AttributionTask / VariantGenTask owner，不暴露任意 DB mutation
 
 这些 tool 的完整设计见 [`docs/superpowers/specs/2026-05-17-agent-context-tools-design.md`](superpowers/specs/2026-05-17-agent-context-tools-design.md)。
 

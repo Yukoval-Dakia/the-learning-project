@@ -53,13 +53,45 @@
     "resolves_when": "Sub 0d Phase 1 (review_event handler) implemented"
   },
 
-  "study_log.content_md": {
-    "reason": "study_log free-form content; not yet written by UI",
-    "resolves_when": "Phase 1c.2 study log UI implemented"
+  "memory_brief_note.scope_key": {
+    "reason": "Schema lands in the LearningRecord migration; scheduled Dreaming refresh writes the row in the next batch",
+    "resolves_when": "memory_brief_refresh boss handler implemented"
   },
-  "study_log.artifact_id": {
-    "reason": "study_log ↔ artifact link; ADR-0006 v2 likely converts study_log → event(action='generate', subject_kind='note')",
-    "resolves_when": "Phase 1c.1 ADR-0006 v2 study_log → event migration"
+  "memory_brief_note.subject_id": {
+    "reason": "Same as memory_brief_note.scope_key",
+    "resolves_when": "memory_brief_refresh boss handler implemented"
+  },
+  "memory_brief_note.recent_week_md": {
+    "reason": "Same as memory_brief_note.scope_key",
+    "resolves_when": "memory_brief_refresh boss handler implemented"
+  },
+  "memory_brief_note.recent_months_md": {
+    "reason": "Same as memory_brief_note.scope_key",
+    "resolves_when": "memory_brief_refresh boss handler implemented"
+  },
+  "memory_brief_note.long_term_md": {
+    "reason": "Same as memory_brief_note.scope_key",
+    "resolves_when": "memory_brief_refresh boss handler implemented"
+  },
+  "memory_brief_note.recent_week_evidence_ids": {
+    "reason": "Same as memory_brief_note.scope_key",
+    "resolves_when": "memory_brief_refresh boss handler implemented"
+  },
+  "memory_brief_note.recent_months_evidence_ids": {
+    "reason": "Same as memory_brief_note.scope_key",
+    "resolves_when": "memory_brief_refresh boss handler implemented"
+  },
+  "memory_brief_note.long_term_evidence_ids": {
+    "reason": "Same as memory_brief_note.scope_key",
+    "resolves_when": "memory_brief_refresh boss handler implemented"
+  },
+  "memory_brief_note.source_event_id": {
+    "reason": "Same as memory_brief_note.scope_key",
+    "resolves_when": "memory_brief_refresh boss handler implemented"
+  },
+  "memory_brief_note.refreshed_at": {
+    "reason": "Same as memory_brief_note.scope_key",
+    "resolves_when": "memory_brief_refresh boss handler implemented"
   },
 
   "answer.input_kind": {

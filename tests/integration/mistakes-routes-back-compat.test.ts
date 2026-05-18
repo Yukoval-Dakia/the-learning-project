@@ -5,7 +5,7 @@
 // `mistake`-table-backed shape. Field names + types must be stable; only the
 // underlying storage changed.
 
-import { event, knowledge, question } from '@/db/schema';
+import { event, knowledge, learning_record, question } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { GET as GET_RECENT } from '@/../app/api/mistakes/recent/route';
@@ -14,6 +14,41 @@ import { GET as GET_LIST } from '@/../app/api/mistakes/route';
 import { resetDb, testDb } from '../helpers/db';
 
 const FIXTURE_TIME = new Date('2026-05-15T12:00:00Z');
+
+async function insertMistakeRecord(opts: {
+  attemptEventId: string;
+  questionId: string;
+  answer_md: string;
+  knowledge_ids?: string[];
+  created_at?: Date;
+}) {
+  const db = testDb();
+  const createdAt = opts.created_at ?? FIXTURE_TIME;
+  await db.insert(learning_record).values({
+    id: `lr_${opts.attemptEventId}`,
+    kind: 'mistake',
+    title: null,
+    content_md: opts.answer_md,
+    source: 'manual',
+    capture_mode: 'text',
+    activity_kind: 'attempt',
+    processing_status: 'raw',
+    origin_event_id: opts.attemptEventId,
+    subject_id: null,
+    knowledge_ids: opts.knowledge_ids ?? ['k1'],
+    question_id: opts.questionId,
+    attempt_event_id: opts.attemptEventId,
+    learning_item_id: null,
+    artifact_id: null,
+    source_document_id: null,
+    asset_refs: [],
+    payload: { wrong_answer_md: opts.answer_md },
+    created_at: createdAt,
+    updated_at: createdAt,
+    archived_at: null,
+    version: 0,
+  });
+}
 
 async function seedFixture() {
   const db = testDb();
@@ -83,6 +118,11 @@ async function seedFixture() {
     task_run_id: null,
     cost_micro_usd: null,
     created_at: new Date(FIXTURE_TIME.getTime() + 60_000),
+  });
+  await insertMistakeRecord({
+    attemptEventId: 'evt_attempt_1',
+    questionId: 'q1',
+    answer_md: '错答内容',
   });
 }
 
@@ -176,6 +216,12 @@ describe('integration: /api/mistakes/* wire-shape back-compat', () => {
       caused_by_event_id: null,
       task_run_id: null,
       cost_micro_usd: null,
+      created_at: new Date(FIXTURE_TIME.getTime() + 120_000),
+    });
+    await insertMistakeRecord({
+      attemptEventId: 'evt_attempt_2',
+      questionId: 'q1',
+      answer_md: 'second wrong answer',
       created_at: new Date(FIXTURE_TIME.getTime() + 120_000),
     });
 

@@ -59,13 +59,41 @@ export const LearningItemStatus = z.enum([
   'archived',
 ]);
 
-export const StudyLogKind = z.enum([
-  'highlight',
+export const LearningRecordKind = z.enum([
+  'mistake',
+  'worked_example',
+  'open_question',
   'insight',
-  'question',
   'reflection',
   'observation',
+  'resource_note',
 ]);
+
+export const LearningRecordSource = z.enum(['manual', 'ocr', 'import', 'conversation', 'agent']);
+
+export const LearningRecordCaptureMode = z.enum([
+  'text',
+  'image',
+  'paper',
+  'voice',
+  'url',
+  'mixed',
+]);
+
+export const LearningRecordActivityKind = z.enum([
+  'attempt',
+  'review',
+  'read',
+  'ask',
+  'annotate',
+  'import',
+  'conversation',
+  'plan',
+]);
+
+export const LearningRecordProcessingStatus = z.enum(['raw', 'linked', 'actioned', 'archived']);
+
+export const MemoryBriefScopeKey = z.string().regex(/^(global|subject:[a-zA-Z0-9_-]+)$/);
 
 export const ArtifactType = z.enum(['note_hub', 'note_atomic', 'tool_quiz']);
 
