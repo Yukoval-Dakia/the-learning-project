@@ -7,10 +7,12 @@ import { db } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
 import { runTask } from '@/server/ai/runner';
 import { getStartedBoss } from '@/server/boss/client';
-import { getFailureAttempts, writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { runProposeAndWrite } from '@/server/knowledge/propose';
-import { and, desc, inArray, isNull } from 'drizzle-orm';
+import { listMistakeProjectionRows } from '@/server/records/mistakes';
+import { createLearningRecord } from '@/server/records/queries';
+import { and, inArray, isNull } from 'drizzle-orm';
 
 export const runtime = 'nodejs';
 
@@ -85,6 +87,7 @@ export async function POST(req: Request): Promise<Response> {
     // gone — the attempt event IS the mistake from the read-path's perspective).
     const attemptEventId = createId();
     const mistakeId = attemptEventId;
+    const recordId = createId();
 
     const questionMetadata =
       body.prompt_image_refs.length > 0
@@ -128,6 +131,25 @@ export async function POST(req: Request): Promise<Response> {
         task_run_id: null,
         cost_micro_usd: null,
         created_at: now,
+      });
+      await createLearningRecord(tx, {
+        id: recordId,
+        kind: 'mistake',
+        title: null,
+        content_md: body.wrong_answer_md,
+        source: 'manual',
+        capture_mode: body.prompt_image_refs.length > 0 ? 'image' : 'text',
+        activity_kind: 'attempt',
+        processing_status: 'raw',
+        origin_event_id: attemptEventId,
+        knowledge_ids: body.knowledge_ids,
+        question_id: questionId,
+        attempt_event_id: attemptEventId,
+        asset_refs: [...body.prompt_image_refs, ...body.wrong_answer_image_refs],
+        payload: {
+          wrong_answer_md: body.wrong_answer_md,
+          wrong_answer_image_refs: body.wrong_answer_image_refs,
+        },
       });
       // User-supplied cause → experimental:user_cause event (Phase 1c.2).
       // Lane B JudgeOnEvent requires actor_kind='agent', so user cause cannot
@@ -190,6 +212,7 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({
       question_id: questionId,
       mistake_id: mistakeId,
+      record_id: recordId,
       propose_task: 'queued' as const,
     });
   } catch (err) {
@@ -246,48 +269,7 @@ export async function GET(req: Request): Promise<Response> {
     const since = parsed.data.since ? new Date(parsed.data.since) : undefined;
     const questionIds = parsed.data.question_id ? [parsed.data.question_id] : undefined;
 
-    const fails = await getFailureAttempts(db, { limit, since, questionIds });
-    if (fails.length === 0) return Response.json({ rows: [] });
-
-    const uniqueQids = [...new Set(fails.map((f) => f.question_id))];
-    const questions = await db
-      .select({ id: question.id, prompt_md: question.prompt_md })
-      .from(question)
-      .where(inArray(question.id, uniqueQids));
-    const promptByQid = new Map(questions.map((q) => [q.id, q.prompt_md]));
-
-    // Phase 1c.2 — cause projection prefers the user_cause event (the user has
-    // the last word) and falls back to the agent judge. Both can coexist on
-    // the same attempt; `source` is added to the wire so the UI can render
-    // provenance.
-    const rows = fails.map((f) => {
-      const cause = f.user_cause
-        ? {
-            source: 'user' as const,
-            primary_category: f.user_cause.primary_category,
-            secondary_categories: [] as string[],
-            user_notes: f.user_cause.user_notes,
-            confidence: null,
-          }
-        : f.judge
-          ? {
-              source: 'agent' as const,
-              primary_category: f.judge.cause.primary_category,
-              secondary_categories: (f.judge.cause.secondary_categories ?? []) as string[],
-              user_notes: null,
-              confidence: f.judge.cause.confidence,
-            }
-          : null;
-      return {
-        id: f.attempt_event_id,
-        question_id: f.question_id,
-        prompt_md: (promptByQid.get(f.question_id) ?? '').slice(0, 200),
-        wrong_answer_md: (f.answer_md ?? '').slice(0, 200),
-        knowledge_ids: f.referenced_knowledge_ids,
-        cause,
-        created_at: Math.floor(f.created_at.getTime() / 1000),
-      };
-    });
+    const rows = await listMistakeProjectionRows(db, { limit, since, questionIds });
 
     return Response.json({ rows });
   } catch (err) {

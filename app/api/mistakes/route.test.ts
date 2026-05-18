@@ -1,6 +1,6 @@
-// Phase 1c.1 Step 9.F — POST /api/mistakes writes only events (no mistake row).
+// POST /api/mistakes writes question + attempt event + learning_record(kind='mistake').
 
-import { event, knowledge, question, source_asset } from '@/db/schema';
+import { event, knowledge, learning_record, question, source_asset } from '@/db/schema';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { GET, POST } from './route';
@@ -126,10 +126,12 @@ describe('POST /api/mistakes', () => {
     const body = (await res.json()) as {
       question_id: string;
       mistake_id: string;
+      record_id: string;
       propose_task: string;
     };
     expect(body.question_id).toBeTruthy();
     expect(body.mistake_id).toBeTruthy();
+    expect(body.record_id).toBeTruthy();
     // mistake_id == attempt event id post-Step-9 (opaque to clients)
     expect(body.mistake_id).toBe(body.mistake_id);
     expect(body.propose_task).toBe('queued');
@@ -143,6 +145,16 @@ describe('POST /api/mistakes', () => {
     expect(events).toHaveLength(1);
     expect(events[0].outcome).toBe('failure');
     expect(events[0].id).toBe(body.mistake_id);
+
+    const records = await db
+      .select()
+      .from(learning_record)
+      .where(and(eq(learning_record.attempt_event_id, body.mistake_id)));
+    expect(records).toHaveLength(1);
+    expect(records[0].id).toBe(body.record_id);
+    expect(records[0].kind).toBe('mistake');
+    expect(records[0].question_id).toBe(body.question_id);
+    expect(records[0].origin_event_id).toBe(body.mistake_id);
   });
 
   it('does not write any mistake row (legacy table dropped)', async () => {
@@ -310,6 +322,7 @@ async function seedAttempt(opts: {
   created_at?: Date;
 }): Promise<void> {
   const db = testDb();
+  const createdAt = opts.created_at ?? new Date();
   await db.insert(event).values({
     id: opts.id,
     session_id: null,
@@ -327,8 +340,34 @@ async function seedAttempt(opts: {
     caused_by_event_id: null,
     task_run_id: null,
     cost_micro_usd: null,
-    created_at: opts.created_at ?? new Date(),
+    created_at: createdAt,
   });
+  if ((opts.outcome ?? 'failure') === 'failure') {
+    await db.insert(learning_record).values({
+      id: `lr_${opts.id}`,
+      kind: 'mistake',
+      title: null,
+      content_md: opts.answer_md ?? 'wrong',
+      source: 'manual',
+      capture_mode: 'text',
+      activity_kind: 'attempt',
+      processing_status: 'raw',
+      origin_event_id: opts.id,
+      subject_id: null,
+      knowledge_ids: opts.knowledge_ids ?? ['k1'],
+      question_id: opts.question_id,
+      attempt_event_id: opts.id,
+      learning_item_id: null,
+      artifact_id: null,
+      source_document_id: null,
+      asset_refs: [],
+      payload: { wrong_answer_md: opts.answer_md ?? 'wrong' },
+      created_at: createdAt,
+      updated_at: createdAt,
+      archived_at: null,
+      version: 0,
+    });
+  }
 }
 
 async function seedJudge(opts: {
@@ -415,6 +454,7 @@ describe('GET /api/mistakes', () => {
     const body = (await res.json()) as {
       rows: Array<{
         id: string;
+        record_id: string;
         question_id: string;
         prompt_md: string;
         wrong_answer_md: string;
@@ -425,6 +465,7 @@ describe('GET /api/mistakes', () => {
     };
     expect(body.rows).toHaveLength(1);
     expect(body.rows[0].id).toBe('a1');
+    expect(body.rows[0].record_id).toBe('lr_a1');
     expect(body.rows[0].question_id).toBe('q1');
     expect(body.rows[0].prompt_md).toHaveLength(200);
     expect(body.rows[0].wrong_answer_md).toHaveLength(200);

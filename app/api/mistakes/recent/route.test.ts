@@ -1,8 +1,7 @@
-// Phase 1c.1 Step 6.F — `/api/mistakes/recent` reads from event stream.
-// Tests seed `event` rows directly (attempt + chained judge); the route projects
-// to legacy mistake-shape JSON for back-compat.
+// `/api/mistakes/recent` reads learning_record(kind='mistake') plus the
+// linked attempt event and projects legacy mistake-shape JSON for back-compat.
 
-import { event, question } from '@/db/schema';
+import { event, learning_record, question } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET } from './route';
@@ -37,6 +36,7 @@ async function seedAttempt(opts: {
   created_at?: Date;
 }): Promise<void> {
   const db = testDb();
+  const createdAt = opts.created_at ?? new Date();
   await db.insert(event).values({
     id: opts.id,
     session_id: null,
@@ -54,8 +54,34 @@ async function seedAttempt(opts: {
     caused_by_event_id: null,
     task_run_id: null,
     cost_micro_usd: null,
-    created_at: opts.created_at ?? new Date(),
+    created_at: createdAt,
   });
+  if ((opts.outcome ?? 'failure') === 'failure') {
+    await db.insert(learning_record).values({
+      id: `lr_${opts.id}`,
+      kind: 'mistake',
+      title: null,
+      content_md: opts.answer_md ?? 'wrong',
+      source: 'manual',
+      capture_mode: 'text',
+      activity_kind: 'attempt',
+      processing_status: 'raw',
+      origin_event_id: opts.id,
+      subject_id: null,
+      knowledge_ids: opts.knowledge_ids ?? ['k1'],
+      question_id: opts.question_id,
+      attempt_event_id: opts.id,
+      learning_item_id: null,
+      artifact_id: null,
+      source_document_id: null,
+      asset_refs: [],
+      payload: { wrong_answer_md: opts.answer_md ?? 'wrong' },
+      created_at: createdAt,
+      updated_at: createdAt,
+      archived_at: null,
+      version: 0,
+    });
+  }
 }
 
 async function seedJudge(opts: {
@@ -138,6 +164,7 @@ describe('GET /api/mistakes/recent (event-stream projection)', () => {
     const body = (await res.json()) as {
       rows: Array<{
         id: string;
+        record_id: string;
         question_id: string;
         prompt_md: string;
         wrong_answer_md: string;
@@ -149,6 +176,7 @@ describe('GET /api/mistakes/recent (event-stream projection)', () => {
     expect(body.rows).toHaveLength(1);
     const r = body.rows[0];
     expect(r.id).toBe('a1'); // id is the attempt event id (event-stream-native)
+    expect(r.record_id).toBe('lr_a1');
     expect(r.question_id).toBe('q1');
     expect(r.prompt_md).toHaveLength(200);
     expect(r.wrong_answer_md).toHaveLength(200);

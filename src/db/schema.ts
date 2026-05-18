@@ -128,7 +128,7 @@ export const question_block = pgTable(
     knowledge_hint: text('knowledge_hint'),
     merged_from_block_ids: jsonb('merged_from_block_ids').$type<string[]>().notNull().default([]),
     imported_question_id: text('imported_question_id'),
-    imported_mistake_id: text('imported_mistake_id'),
+    imported_attempt_event_id: text('imported_attempt_event_id'),
     created_at: timestamp('created_at', { withTimezone: true }).notNull(),
     updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
     version: integer('version').notNull().default(0),
@@ -207,19 +207,66 @@ export const learning_item = pgTable(
   ],
 );
 
-export const study_log = pgTable('study_log', {
-  id: text('id').primaryKey(),
-  kind: text('kind').notNull(),
-  content_md: text('content_md').notNull(),
-  knowledge_ids: jsonb('knowledge_ids').$type<string[]>().notNull().default([]),
-  question_id: text('question_id'),
-  mistake_id: text('mistake_id'),
-  artifact_id: text('artifact_id'),
-  learning_item_id: text('learning_item_id'),
-  created_at: timestamp('created_at', { withTimezone: true }).notNull(),
-  updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
-  version: integer('version').notNull().default(0),
-});
+export const learning_record = pgTable(
+  'learning_record',
+  {
+    id: text('id').primaryKey(),
+    kind: text('kind').notNull(),
+    title: text('title'),
+    content_md: text('content_md').notNull().default(''),
+    source: text('source').notNull(),
+    capture_mode: text('capture_mode').notNull(),
+    activity_kind: text('activity_kind').notNull(),
+    processing_status: text('processing_status').notNull().default('raw'),
+    origin_event_id: text('origin_event_id'),
+    subject_id: text('subject_id'),
+    knowledge_ids: jsonb('knowledge_ids').$type<string[]>().notNull().default([]),
+    question_id: text('question_id'),
+    attempt_event_id: text('attempt_event_id'),
+    learning_item_id: text('learning_item_id'),
+    artifact_id: text('artifact_id'),
+    source_document_id: text('source_document_id'),
+    asset_refs: jsonb('asset_refs').$type<string[]>().notNull().default([]),
+    payload: jsonb('payload').$type<JsonObject>().notNull().default({}),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+    archived_at: timestamp('archived_at', { withTimezone: true }),
+    version: integer('version').notNull().default(0),
+  },
+  (t) => [
+    index('learning_record_kind_created_idx').on(t.kind, t.created_at.desc()),
+    index('learning_record_question_idx').on(t.question_id),
+    index('learning_record_attempt_idx').on(t.attempt_event_id),
+    index('learning_record_origin_event_idx').on(t.origin_event_id),
+  ],
+);
+
+export const memory_brief_note = pgTable(
+  'memory_brief_note',
+  {
+    id: text('id').primaryKey(),
+    scope_key: text('scope_key').notNull(),
+    subject_id: text('subject_id'),
+    recent_week_md: text('recent_week_md').notNull().default(''),
+    recent_months_md: text('recent_months_md').notNull().default(''),
+    long_term_md: text('long_term_md').notNull().default(''),
+    recent_week_evidence_ids: jsonb('recent_week_evidence_ids')
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    recent_months_evidence_ids: jsonb('recent_months_evidence_ids')
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    long_term_evidence_ids: jsonb('long_term_evidence_ids').$type<string[]>().notNull().default([]),
+    source_event_id: text('source_event_id'),
+    refreshed_at: timestamp('refreshed_at', { withTimezone: true }),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+    version: integer('version').notNull().default(0),
+  },
+  (t) => [uniqueIndex('memory_brief_note_scope_key_unique').on(t.scope_key)],
+);
 
 // 激活 — C 档 AI 主动产出落点（per ADR-0006 v2 + Phase 1c.1）。
 // Phase 1c.1 brainstorm（2026-05-14 → ADR-0006 v2）拍板保留：作为 Note / 长答案 /

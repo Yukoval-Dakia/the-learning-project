@@ -261,7 +261,7 @@ export async function POST(
             knowledge_hint: null,
             merged_from_block_ids: block.source_block_ids,
             imported_question_id: null,
-            imported_mistake_id: null,
+            imported_attempt_event_id: null,
             created_at: now,
             updated_at: now,
             version: 0,
@@ -323,7 +323,7 @@ export async function POST(
           .update(question_block)
           .set({
             imported_question_id: questionId,
-            imported_mistake_id: attemptEventId,
+            imported_attempt_event_id: attemptEventId,
             status: 'imported',
             updated_at: now,
             version: sql`${question_block.version} + 1`,

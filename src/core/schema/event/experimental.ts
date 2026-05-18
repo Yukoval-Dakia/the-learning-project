@@ -1,4 +1,10 @@
 import { z } from 'zod';
+import {
+  LearningRecordActivityKind,
+  LearningRecordCaptureMode,
+  LearningRecordKind,
+  MemoryBriefScopeKey,
+} from '../business';
 import { CauseCategory } from './blocks';
 
 // ====================================================================
@@ -64,6 +70,61 @@ export const UserCauseExperimental = z.object({
 export type UserCauseExperimentalT = z.infer<typeof UserCauseExperimental>;
 
 // ====================================================================
+// RecordCaptureExperimental — Phase 1c.2 (待稳)
+// ====================================================================
+//
+// Direct /record entry is still an activity. The route writes this capture
+// event first, then materializes the user-visible LearningRecord linked by
+// origin_event_id.
+
+export const RecordCaptureExperimental = z.object({
+  actor_kind: z.enum(['user', 'agent']),
+  actor_ref: z.string(),
+  action: z.literal('experimental:record_capture'),
+  subject_kind: z.literal('record'),
+  subject_id: z.string(),
+  outcome: z.literal('success'),
+  payload: z.object({
+    record_kind: LearningRecordKind,
+    activity_kind: LearningRecordActivityKind,
+    capture_mode: LearningRecordCaptureMode,
+    summary_md: z.string().optional(),
+  }),
+  caused_by_event_id: z.string().optional(),
+  task_run_id: z.string().optional(),
+  cost_micro_usd: z.number().int().optional(),
+});
+export type RecordCaptureExperimentalT = z.infer<typeof RecordCaptureExperimental>;
+
+// ====================================================================
+// MemoryBriefRefreshExperimental — Phase 1c.2 (待稳)
+// ====================================================================
+//
+// Dreaming-maintained memory brief refresh trace. The scheduled handler lands
+// later; the event contract lands with the table so future writes are typed.
+
+export const MemoryBriefRefreshExperimental = z.object({
+  actor_kind: z.literal('agent'),
+  actor_ref: z.literal('dreaming'),
+  action: z.literal('experimental:memory_brief_refresh'),
+  subject_kind: z.literal('memory_brief'),
+  subject_id: z.string(),
+  outcome: z.enum(['success', 'partial', 'failure']),
+  payload: z.object({
+    scope_key: MemoryBriefScopeKey,
+    changed_sections: z.array(z.enum(['recent_week', 'recent_months', 'long_term'])),
+    evidence_ids: z.array(z.string()),
+    previous_version: z.number().int().nullable(),
+    next_version: z.number().int().nullable(),
+    failure_reason: z.string().optional(),
+  }),
+  caused_by_event_id: z.string().optional(),
+  task_run_id: z.string().optional(),
+  cost_micro_usd: z.number().int().optional(),
+});
+export type MemoryBriefRefreshExperimentalT = z.infer<typeof MemoryBriefRefreshExperimental>;
+
+// ====================================================================
 // Reserved experimental actions
 // ====================================================================
 //
@@ -77,6 +138,8 @@ export type UserCauseExperimentalT = z.infer<typeof UserCauseExperimental>;
 export const RESERVED_EXPERIMENTAL_ACTIONS = new Set<string>([
   'experimental:tool_use',
   'experimental:user_cause',
+  'experimental:record_capture',
+  'experimental:memory_brief_refresh',
 ]);
 
 // ====================================================================

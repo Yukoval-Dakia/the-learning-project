@@ -141,7 +141,7 @@ async function insertBlock(
     knowledge_hint: null,
     merged_from_block_ids: [],
     imported_question_id: null,
-    imported_mistake_id: null,
+    imported_attempt_event_id: null,
     created_at: now,
     updated_at: now,
     version: 0,
@@ -241,7 +241,7 @@ describe('POST /api/ingestion/[id]/import', () => {
     const blocks = await db.select().from(question_block).where(eq(question_block.id, 'block_a'));
     expect(blocks[0].status).toBe('imported');
     expect(blocks[0].imported_question_id).toBe(body.question_ids[0]);
-    expect(blocks[0].imported_mistake_id).toBe(body.mistake_ids[0]);
+    expect(blocks[0].imported_attempt_event_id).toBe(body.mistake_ids[0]);
   });
 
   it('cause provided → cause dropped in event stream (Lane B JudgeOnEvent requires actor=agent)', async () => {

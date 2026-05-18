@@ -19,6 +19,8 @@ export const SubjectKind = z.enum([
   'knowledge_edge',
   'artifact',
   'source_document',
+  'record',
+  'memory_brief',
   'event',
   'chip',
   'query',
@@ -36,6 +38,8 @@ export const MaterialRef = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('knowledge_edge'), id: z.string() }),
   z.object({ kind: z.literal('artifact'), id: z.string() }),
   z.object({ kind: z.literal('source_document'), id: z.string() }),
+  z.object({ kind: z.literal('record'), id: z.string() }),
+  z.object({ kind: z.literal('memory_brief'), id: z.string() }),
 ]);
 export type MaterialRefT = z.infer<typeof MaterialRef>;
 

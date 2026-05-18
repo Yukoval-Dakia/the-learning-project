@@ -90,11 +90,33 @@ export const LearningItem = g.LearningItemSelectGenerated.extend({
 });
 export type LearningItem = z.infer<typeof LearningItem>;
 
-// ---------- StudyLog ----------
-export const StudyLog = g.StudyLogSelectGenerated.extend({
-  kind: b.StudyLogKind,
+// ---------- LearningRecord ----------
+export const LearningRecordInsert = g.LearningRecordInsertGenerated.extend({
+  kind: b.LearningRecordKind,
+  source: b.LearningRecordSource,
+  capture_mode: b.LearningRecordCaptureMode,
+  activity_kind: b.LearningRecordActivityKind,
+  processing_status: b.LearningRecordProcessingStatus.nullish(),
 });
-export type StudyLog = z.infer<typeof StudyLog>;
+export const LearningRecord = g.LearningRecordSelectGenerated.extend({
+  kind: b.LearningRecordKind,
+  source: b.LearningRecordSource,
+  capture_mode: b.LearningRecordCaptureMode,
+  activity_kind: b.LearningRecordActivityKind,
+  processing_status: b.LearningRecordProcessingStatus,
+});
+export type LearningRecordInsert = z.infer<typeof LearningRecordInsert>;
+export type LearningRecord = z.infer<typeof LearningRecord>;
+
+// ---------- MemoryBriefNote ----------
+export const MemoryBriefNoteInsert = g.MemoryBriefNoteInsertGenerated.extend({
+  scope_key: b.MemoryBriefScopeKey,
+});
+export const MemoryBriefNote = g.MemoryBriefNoteSelectGenerated.extend({
+  scope_key: b.MemoryBriefScopeKey,
+});
+export type MemoryBriefNoteInsert = z.infer<typeof MemoryBriefNoteInsert>;
+export type MemoryBriefNote = z.infer<typeof MemoryBriefNote>;
 
 // ---------- Artifact ----------
 export const Artifact = g.ArtifactSelectGenerated.extend({
