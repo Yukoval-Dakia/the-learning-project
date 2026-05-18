@@ -199,7 +199,9 @@ describe('runVariantGen', () => {
     await seedFailureAttempt(attemptId, 'q1');
     await seedJudgeForAttempt(attemptId, 'concept');
 
-    const runTaskFn = vi.fn(async () => ({ text: VALID_VARIANT_OUTPUT }));
+    const runTaskFn = vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({
+      text: VALID_VARIANT_OUTPUT,
+    }));
     const result = await runVariantGen({ db, attemptEventId: attemptId, runTaskFn });
     expect(result.status).toBe('generated');
     expect(result.variant_question_id).toBeTruthy();
@@ -215,6 +217,9 @@ describe('runVariantGen', () => {
     expect(variant.knowledge_ids).toEqual(['k_xuci']);
     expect(variant.difficulty).toBe(3);
     expect(variant.source_ref).toBe(attemptId);
+
+    const ctx = runTaskFn.mock.calls[0]?.[2] as unknown as { subjectProfile?: { id: string } };
+    expect(ctx.subjectProfile?.id).toBe('wenyan');
   });
 
   it('returns skipped:already_has_variant on re-run (idempotency)', async () => {

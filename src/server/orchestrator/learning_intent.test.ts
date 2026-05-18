@@ -76,6 +76,9 @@ describe('planLearningIntent', () => {
     expect(proposal.atomics).toHaveLength(2);
     expect(proposal.atomics[0].knowledge_id).toBe('k_zhi');
     expect(proposal.proposal_id).toMatch(/.+/);
+
+    const ctx = runTaskFn.mock.calls[0]?.[2] as { subjectProfile?: { id: string } };
+    expect(ctx.subjectProfile?.id).toBe('wenyan');
   });
 
   it('rejects when LLM hallucinates a knowledge_id not in children', async () => {

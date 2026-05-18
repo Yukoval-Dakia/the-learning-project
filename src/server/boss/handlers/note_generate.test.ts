@@ -141,6 +141,9 @@ describe('runNoteGenerate', () => {
     expect(updated.generation_status).toBe('ready');
     expect(updated.sections).toHaveLength(5);
     expect((updated.sections as Array<{ kind: string }>)[0].kind).toBe('definition');
+
+    const ctx = runTaskFn.mock.calls[0]?.[2] as { subjectProfile?: { id: string } };
+    expect(ctx.subjectProfile?.id).toBe('wenyan');
   });
 
   it('marks generation_status=failed when LLM throws (and rethrows)', async () => {

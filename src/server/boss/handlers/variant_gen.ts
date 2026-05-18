@@ -24,7 +24,8 @@ import { z } from 'zod';
 
 import { type CauseCategory, QuestionKind } from '@/core/schema/business';
 import type { Db } from '@/db/client';
-import { event, question } from '@/db/schema';
+import { event, knowledge, question } from '@/db/schema';
+import { resolveSubjectProfile } from '@/subjects/profile';
 
 export interface VariantGenJobData {
   attempt_event_id: string;
@@ -187,6 +188,14 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
   }
 
   const payload = attempt.payload as { answer_md?: string | null };
+  const firstKnowledgeId = parent.knowledge_ids[0];
+  const knowledgeRows = firstKnowledgeId
+    ? await db
+        .select({ domain: knowledge.domain })
+        .from(knowledge)
+        .where(eq(knowledge.id, firstKnowledgeId))
+        .limit(1)
+    : [];
 
   const input = {
     original_question: {
@@ -204,7 +213,10 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
     depth: parent.variant_depth,
   };
 
-  const result = await runTaskFn('VariantGenTask', input, { db });
+  const result = await runTaskFn('VariantGenTask', input, {
+    db,
+    subjectProfile: resolveSubjectProfile(knowledgeRows[0]?.domain),
+  });
   const parsed = parseVariantOutput(result.text);
 
   // Persist new variant question
