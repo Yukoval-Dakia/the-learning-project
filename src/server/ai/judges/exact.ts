@@ -12,6 +12,7 @@ export interface JudgeResult {
   feedback_md: string;
   evidence_json: Record<string, unknown>;
 }
+export type JudgeResultV1 = JudgeResult;
 
 export function judgeExact(question: JudgeInput, answer: AnswerInput): JudgeResult {
   const normalize = (s: string) => s.trim().toLowerCase();
