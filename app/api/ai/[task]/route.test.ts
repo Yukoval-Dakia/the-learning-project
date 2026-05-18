@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildAuthedRequest } from '../../../../tests/helpers/request';
 
 vi.mock('@/db/client', () => ({ db: {} }));
@@ -25,6 +25,10 @@ vi.mock('@/ai/registry', () => ({
 import { POST } from './route';
 
 describe('POST /api/ai/[task]', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it('returns JSON for non-streaming task', async () => {
     const res = await POST(
       buildAuthedRequest('http://localhost/api/ai/cause_attribution', {
@@ -38,7 +42,9 @@ describe('POST /api/ai/[task]', () => {
     expect(body.task_run_id).toBe('r1');
   });
 
-  it('returns streaming Response for tool-calling task', async () => {
+  it('rejects tool-calling tasks on the generic route', async () => {
+    const { streamTask } = await import('@/server/ai/runner');
+
     const res = await POST(
       buildAuthedRequest('http://localhost/api/ai/judge_flexible', {
         method: 'POST',
@@ -46,9 +52,13 @@ describe('POST /api/ai/[task]', () => {
       }),
       { params: Promise.resolve({ task: 'judge_flexible' }) },
     );
-    expect(res.headers.get('content-type')).toContain('text/plain');
-    const text = await res.text();
-    expect(text).toContain('chunk1');
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: 'tool_task_requires_domain_route',
+      task: 'judge_flexible',
+    });
+    expect(streamTask).not.toHaveBeenCalled();
   });
 
   it('returns 404 for unknown task', async () => {

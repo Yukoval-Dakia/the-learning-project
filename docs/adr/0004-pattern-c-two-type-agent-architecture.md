@@ -14,7 +14,7 @@
 
 - Provider Manager / Task Model Selector
 - `TaskDef.allowedTools`
-- Domain Tool Registry（见 `docs/superpowers/specs/2026-05-17-agent-context-tools-design.md`）
+- Domain Tool Registry（计划中；当前只有 `KnowledgeReviewTask` 的本地 in-process MCP tool，见 `docs/superpowers/specs/2026-05-17-agent-context-tools-design.md`）
 - `tool_call_log` / `cost_ledger` / `event` mirror
 
 ### Provider Manager (`src/server/ai/providers.ts`)
@@ -40,7 +40,7 @@ const taskDef = tasks[kind]; // registry.ts declares defaultProvider/defaultMode
 每个 task 在 registry 里声明 `{ defaultProvider, defaultModel }`，runner 调 `resolveTaskProvider(kind, ctx.override)` 取 Claude Agent SDK 环境配置。`override` 字段支持测试或临时切换，不影响默认配置。
 
 - `session` 是 opt-in 的上层抽象，仅 User Copilot 使用。
-- `tools` 来自共享 Domain Tool Registry，由 task purpose 决定 allowlist。
+- `tools` 当前由领域 route 手动注入；未来第二个 tool-calling task 出现时再抽共享 Domain Tool Registry，由 task purpose 决定 allowlist。
 - `budget` = Claude Agent SDK `maxTurns`（tool call 步数上限）；Backend Purpose Agent 通常 3-8，Copilot 可到 15。
 - MCP 是当前 SDK 的 in-process transport adapter，不是产品级插件边界。
 
@@ -66,7 +66,7 @@ const taskDef = tasks[kind]; // registry.ts declares defaultProvider/defaultMode
 | `SessionSummaryTask` | mimo-v2.5-pro | ✅ 已注册 | review session end | ≤120 字 session summary |
 | `LearningIntentOutlineTask` | mimo-v2.5-pro | ✅ 已实装 | `/api/learning-intents` | 1 hub + N atomic outline |
 | `NoteGenerateTask` | mimo-v2.5-pro | ✅ 已实装 | pg-boss `note_generate` | atomic artifact sections |
-| `VariantGenTask` | mimo-v2.5-pro | ✅ 已注册 | pg-boss `variant_gen` | 1 道 cause-targeted 变式题 |
+| `VariantGenTask` | mimo-v2.5-pro | ✅ 已注册 | pg-boss `variant_gen` | draft `question(source='mistake_variant')` |
 | `TeachingTurnTask` | mimo-v2.5-pro | ✅ 已实装 | `/api/teaching-sessions/*` | Active Teaching turn |
 | `ReviewIntentTask` | mimo-v2.5-pro | ✅ 已实装 | Review Orchestrator | 一句话 session intent |
 | `KnowledgeReviewTask` | mimo-v2.5-pro | ✅ 已注册，tool-call | maintenance | tree / mesh mutation proposal |
