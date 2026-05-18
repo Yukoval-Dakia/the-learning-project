@@ -3,7 +3,7 @@ import {
   RenderConfig,
   SchedulingHints,
 } from '@/core/schema/profile-decl';
-import type { SubjectProfile } from '@/subjects/profile';
+import { type SubjectProfile, SubjectProfileSchema } from '@/subjects/profile';
 import type { CapabilityRegistry } from './registry';
 
 export interface ProfileValidationResult {
@@ -14,6 +14,11 @@ export interface ProfileValidationResult {
 
 function firstIssueMessage(result: { success: false; error: { issues: { message: string }[] } }) {
   return result.error.issues[0]?.message ?? 'invalid value';
+}
+
+function formatSchemaIssue(issue: { path: (string | number)[]; message: string }): string {
+  const path = issue.path.length > 0 ? issue.path.join('.') : '<root>';
+  return `SubjectProfile.${path}: ${issue.message}`;
 }
 
 function validateCauseCategories(profile: SubjectProfile, errors: string[]): void {
@@ -86,23 +91,32 @@ export function validateProfile(
 ): ProfileValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
+  const parsedProfile = SubjectProfileSchema.safeParse(profile);
+  if (!parsedProfile.success) {
+    return {
+      valid: false,
+      errors: parsedProfile.error.issues.map(formatSchemaIssue),
+      warnings,
+    };
+  }
+  const validProfile = parsedProfile.data;
 
-  if (typeof profile.version !== 'string' || profile.version.trim().length === 0) {
-    errors.push(`[${profile.id}] version must be a non-empty string`);
+  if (typeof validProfile.version !== 'string' || validProfile.version.trim().length === 0) {
+    errors.push(`[${validProfile.id}] version must be a non-empty string`);
   }
 
-  validateCauseCategories(profile, errors);
-  validateJudgeCapabilities(profile, registry, errors, warnings);
+  validateCauseCategories(validProfile, errors);
+  validateJudgeCapabilities(validProfile, registry, errors, warnings);
 
-  const renderConfig = RenderConfig.safeParse(profile.renderConfig);
+  const renderConfig = RenderConfig.safeParse(validProfile.renderConfig);
   if (!renderConfig.success) {
-    errors.push(`[${profile.id}] renderConfig is invalid: ${firstIssueMessage(renderConfig)}`);
+    errors.push(`[${validProfile.id}] renderConfig is invalid: ${firstIssueMessage(renderConfig)}`);
   }
 
-  const schedulingHints = SchedulingHints.safeParse(profile.schedulingHints);
+  const schedulingHints = SchedulingHints.safeParse(validProfile.schedulingHints);
   if (!schedulingHints.success) {
     errors.push(
-      `[${profile.id}] schedulingHints is invalid: ${firstIssueMessage(schedulingHints)}`,
+      `[${validProfile.id}] schedulingHints is invalid: ${firstIssueMessage(schedulingHints)}`,
     );
   }
 

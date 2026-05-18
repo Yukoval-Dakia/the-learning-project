@@ -27,7 +27,9 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type TaskKind, tasks } from '@/ai/registry';
+import { getTaskSystemPrompt } from '@/ai/task-prompts';
 import type { Db } from '@/db/client';
+import type { SubjectProfile } from '@/subjects/profile';
 import {
   type Options,
   type SDKAssistantMessage,
@@ -87,6 +89,8 @@ export interface RunTaskCtx {
    * from the registry — single source of truth for what each task can call.
    */
   allowedTools?: string[];
+  /** Subject context for prompts that are rendered from SubjectProfile. */
+  subjectProfile?: SubjectProfile;
 }
 
 export type RunAgentTaskCtx = RunTaskCtx;
@@ -216,7 +220,7 @@ function buildQueryOptions(
   const allowedTools = ctx.allowedTools ?? def.allowedTools;
   return {
     model: resolved.model,
-    systemPrompt: def.systemPrompt,
+    systemPrompt: getTaskSystemPrompt(kind, ctx.subjectProfile),
     abortController,
     env: buildAgentEnv(resolved),
     tools: allowedTools,

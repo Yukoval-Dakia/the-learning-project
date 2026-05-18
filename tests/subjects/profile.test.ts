@@ -147,6 +147,22 @@ describe('SubjectRegistry', () => {
     expect(registry.resolve('phys').id).toBe('physics');
     expect(registry.listIds()).toContain('physics');
   });
+
+  it('throws instead of silently overwriting duplicate profile ids', () => {
+    const registry = new SubjectRegistry();
+    const firstPhysics = {
+      ...registry.resolve('math'),
+      id: 'physics',
+      version: '1.0.0',
+      displayName: '物理',
+    };
+    const secondPhysics = { ...firstPhysics, displayName: '覆盖物理' };
+
+    registry.register(firstPhysics);
+
+    expect(() => registry.register(secondPhysics)).toThrow(/already registered/i);
+    expect(registry.resolve('physics').displayName).toBe('物理');
+  });
 });
 
 describe('KNOWN_SUBJECT_IDS', () => {

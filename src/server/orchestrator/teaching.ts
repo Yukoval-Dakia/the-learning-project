@@ -15,6 +15,7 @@ import { z } from 'zod';
 
 import type { Db } from '@/db/client';
 import { artifact, event, knowledge, learning_item } from '@/db/schema';
+import { resolveSubjectProfile } from '@/subjects/profile';
 
 // ---------- Schemas ----------
 
@@ -100,11 +101,11 @@ async function loadTeachingContext(db: Db, learningItemId: string) {
     throw new TeachingError('learning_item_not_found', `learning_item ${learningItemId} not found`);
   }
 
-  let knowledgeNode: { id: string; name: string } | null = null;
+  let knowledgeNode: { id: string; name: string; domain: string | null } | null = null;
   const firstKnowledgeId = (li.knowledge_ids as string[])[0];
   if (firstKnowledgeId) {
     const kRows = await db
-      .select({ id: knowledge.id, name: knowledge.name })
+      .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
       .from(knowledge)
       .where(eq(knowledge.id, firstKnowledgeId))
       .limit(1);
@@ -149,10 +150,11 @@ async function loadTeachingContext(db: Db, learningItemId: string) {
     learning_item: {
       title: li.title,
       one_line_intent: li.content,
-      knowledge_node: knowledgeNode,
+      knowledge_node: knowledgeNode ? { id: knowledgeNode.id, name: knowledgeNode.name } : null,
     },
     parent_hub_summary: parentHubSummary,
     atomic_sections: atomicSections,
+    subjectProfile: resolveSubjectProfile(knowledgeNode?.domain),
   };
 }
 
@@ -188,6 +190,9 @@ export async function planTeachingTurn(
     atomic_sections: context.atomic_sections,
     messages,
   };
-  const result = await runTaskFn('TeachingTurnTask', input, { db });
+  const result = await runTaskFn('TeachingTurnTask', input, {
+    db,
+    subjectProfile: context.subjectProfile,
+  });
   return parseTurnOutput(result.text);
 }

@@ -4,14 +4,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { runNoteGenerate } from './note_generate';
 
-async function seedAtomic(opts: { artifactId: string; pending?: boolean; knowledgeId?: string }) {
+async function seedAtomic(opts: {
+  artifactId: string;
+  pending?: boolean;
+  knowledgeId?: string;
+  domain?: string | null;
+}) {
   const db = testDb();
   const now = new Date();
   if (opts.knowledgeId) {
     await db.insert(knowledge).values({
       id: opts.knowledgeId,
       name: '之',
-      domain: 'wenyan',
+      domain: opts.domain ?? 'wenyan',
       parent_id: null,
       merged_from: [],
       proposed_by_ai: false,
@@ -141,6 +146,22 @@ describe('runNoteGenerate', () => {
     expect(updated.generation_status).toBe('ready');
     expect(updated.sections).toHaveLength(5);
     expect((updated.sections as Array<{ kind: string }>)[0].kind).toBe('definition');
+  });
+
+  it('passes the knowledge subject profile to NoteGenerateTask', async () => {
+    await seedAtomic({ artifactId: 'a1', knowledgeId: 'k_math', domain: 'math' });
+    const runTaskFn = vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({
+      text: VALID_SECTIONS,
+    }));
+
+    await runNoteGenerate({
+      db: testDb(),
+      artifactId: 'a1',
+      runTaskFn,
+    });
+
+    const ctx = runTaskFn.mock.calls[0]?.[2] as unknown as { subjectProfile?: { id: string } };
+    expect(ctx.subjectProfile?.id).toBe('math');
   });
 
   it('marks generation_status=failed when LLM throws (and rethrows)', async () => {
