@@ -33,6 +33,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   tool: vi.fn((name: string, description: string) => ({ name, description })),
 }));
 
+import { resolveSubjectProfile } from '@/subjects/profile';
 import { runAgentTask, runTask, streamTask } from './runner';
 
 function successResult(text: string, cost_usd = 0.001) {
@@ -100,6 +101,21 @@ describe('runTask (Claude Agent SDK adapter)', () => {
     // Registry's allowedTools picks up automatically when ctx doesn't override.
     expect(opts.tools).toEqual([]);
     expect(mockSdk.capturedPrompt).toBe('{"test":"payload"}');
+  });
+
+  it('uses ctx.subjectProfile to build the runtime system prompt', async () => {
+    mockSdk.messages = [successResult('ok')];
+
+    await runTask(
+      'NoteGenerateTask',
+      { test: 'payload' },
+      { db: testDb(), r2: memR2(), subjectProfile: resolveSubjectProfile('math') },
+    );
+
+    const opts = mockSdk.capturedOptions as { systemPrompt: string };
+    expect(opts.systemPrompt).toContain('你是数学学习笔记作者');
+    expect(opts.systemPrompt).toContain('每一步变形依据');
+    expect(opts.systemPrompt).not.toContain('古文');
   });
 
   it('honours registry-declared allowedTools (KnowledgeReviewTask → mcp__loom__write_proposal)', async () => {

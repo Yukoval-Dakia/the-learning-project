@@ -6,14 +6,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { LearningIntentError, acceptLearningIntent, planLearningIntent } from './learning_intent';
 
-async function seedKnowledge(rows: Array<{ id: string; name: string; parent_id?: string | null }>) {
+async function seedKnowledge(
+  rows: Array<{ id: string; name: string; parent_id?: string | null; domain?: string | null }>,
+) {
   const db = testDb();
   const now = new Date();
   for (const r of rows) {
     await db.insert(knowledge).values({
       id: r.id,
       name: r.name,
-      domain: 'wenyan',
+      domain: r.domain ?? 'wenyan',
       parent_id: r.parent_id ?? null,
       merged_from: [],
       proposed_by_ai: false,
@@ -76,6 +78,30 @@ describe('planLearningIntent', () => {
     expect(proposal.atomics).toHaveLength(2);
     expect(proposal.atomics[0].knowledge_id).toBe('k_zhi');
     expect(proposal.proposal_id).toMatch(/.+/);
+  });
+
+  it('passes the topic subject profile to LearningIntentOutlineTask', async () => {
+    await seedKnowledge([
+      { id: 'k_hub', name: '一元二次方程', domain: 'math' },
+      { id: 'k_formula', name: '公式法', parent_id: 'k_hub', domain: 'math' },
+    ]);
+    const runTaskFn = vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({
+      text: JSON.stringify({
+        hub: { title: '方程总览', summary_md: '一元二次方程的解法概览。' },
+        atomics: [
+          {
+            knowledge_id: 'k_formula',
+            title: '公式法',
+            one_line_intent: '能用求根公式解一元二次方程。',
+          },
+        ],
+      }),
+    }));
+
+    await planLearningIntent({ db: testDb(), topic: '一元二次方程', runTaskFn });
+
+    const ctx = runTaskFn.mock.calls[0]?.[2] as unknown as { subjectProfile?: { id: string } };
+    expect(ctx.subjectProfile?.id).toBe('math');
   });
 
   it('rejects when LLM hallucinates a knowledge_id not in children', async () => {

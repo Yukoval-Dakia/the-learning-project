@@ -54,13 +54,26 @@ describe('exactJudgeCapability', () => {
     expect(result.coarse_outcome).toBe('correct');
   });
 
-  it('throws on missing reference', () => {
-    expect(() =>
-      exactJudgeCapability.run({
-        question: {},
-        answer: { content: 'abc' },
-      }),
-    ).toThrow(/reference/);
+  it('returns unsupported instead of throwing on invalid input', () => {
+    const result = exactJudgeCapability.run({
+      question: {},
+      answer: { content: 'abc' },
+    });
+
+    expect(result.coarse_outcome).toBe('unsupported');
+    expect(result.score).toBeNull();
+    expect(result.feedback_md).toMatch(/reference/);
+    expect(JudgeResultV2.safeParse(result).success).toBe(true);
+  });
+
+  it('normalizes full-width characters before exact comparison', () => {
+    const result = exactJudgeCapability.run({
+      question: { reference: 'ＡＢＣ' },
+      answer: { content: 'abc' },
+    });
+
+    expect(result.coarse_outcome).toBe('correct');
+    expect(result.score).toBe(1);
   });
 });
 
@@ -106,6 +119,18 @@ describe('judgeRouter compatibility bridge', () => {
     });
     expect(result.coarse_outcome).toBe('correct');
     expect(result.capability_ref.id).toBe('keyword');
+  });
+
+  it('downgrades unsupported v2 results to v1 incorrect without throwing', () => {
+    const result = judgeRouter({
+      kind: 'exact',
+      question: {},
+      answer: { content: 'abc' },
+    });
+
+    expect(result.verdict).toBe('incorrect');
+    expect(result.score).toBe(0);
+    expect(result.feedback_md).toMatch(/reference/);
   });
 
   it('unimplemented judge kinds still throw', () => {
@@ -166,12 +191,27 @@ describe('keywordJudgeCapability', () => {
     expect(result.coarse_outcome).toBe('correct');
   });
 
-  it('throws on missing keywords', () => {
-    expect(() =>
-      keywordJudgeCapability.run({
-        question: {},
+  it('returns unsupported when keywords are missing or empty', () => {
+    for (const question of [{}, { keywords: [] }]) {
+      const result = keywordJudgeCapability.run({
+        question,
         answer: { content: 'abc' },
-      }),
-    ).toThrow(/keywords/);
+      });
+
+      expect(result.coarse_outcome).toBe('unsupported');
+      expect(result.score).toBeNull();
+      expect(result.feedback_md).toMatch(/keywords|关键词/);
+      expect(JudgeResultV2.safeParse(result).success).toBe(true);
+    }
+  });
+
+  it('normalizes full-width keyword characters', () => {
+    const result = keywordJudgeCapability.run({
+      question: { keywords: ['ＡＢＣ'] },
+      answer: { content: 'abc def' },
+    });
+
+    expect(result.coarse_outcome).toBe('correct');
+    expect(result.score).toBe(1);
   });
 });

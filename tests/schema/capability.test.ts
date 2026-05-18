@@ -1,4 +1,9 @@
-import { CapabilityManifest, CapabilityRef, CapabilityRunRef } from '@/core/schema/capability';
+import {
+  CapabilityManifest,
+  CapabilityRef,
+  CapabilityRunRef,
+  JudgeResultV2,
+} from '@/core/schema/capability';
 import { describe, expect, it } from 'vitest';
 
 describe('CapabilityManifest', () => {
@@ -93,5 +98,70 @@ describe('CapabilityRunRef', () => {
       config_hash: 'def456',
     });
     expect(result.success).toBe(true);
+  });
+});
+
+describe('JudgeResultV2', () => {
+  const baseResult = {
+    score_meaning: 'correctness',
+    confidence: 1,
+    capability_ref: { id: 'exact', version: '1.0.0' },
+    feedback_md: '反馈',
+    evidence_json: {},
+  };
+
+  it('accepts semantically valid correct, partial, incorrect, and unsupported results', () => {
+    expect(
+      JudgeResultV2.safeParse({ ...baseResult, coarse_outcome: 'correct', score: 1 }).success,
+    ).toBe(true);
+    expect(
+      JudgeResultV2.safeParse({ ...baseResult, coarse_outcome: 'partial', score: 0.5 }).success,
+    ).toBe(true);
+    expect(
+      JudgeResultV2.safeParse({ ...baseResult, coarse_outcome: 'incorrect', score: 0 }).success,
+    ).toBe(true);
+    expect(
+      JudgeResultV2.safeParse({
+        ...baseResult,
+        coarse_outcome: 'unsupported',
+        score: null,
+        confidence: 0,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects impossible outcome and score combinations', () => {
+    expect(
+      JudgeResultV2.safeParse({ ...baseResult, coarse_outcome: 'correct', score: 0 }).success,
+    ).toBe(false);
+    expect(
+      JudgeResultV2.safeParse({ ...baseResult, coarse_outcome: 'partial', score: 0 }).success,
+    ).toBe(false);
+    expect(
+      JudgeResultV2.safeParse({ ...baseResult, coarse_outcome: 'incorrect', score: 0.5 }).success,
+    ).toBe(false);
+    expect(
+      JudgeResultV2.safeParse({ ...baseResult, coarse_outcome: 'unsupported', score: 0 }).success,
+    ).toBe(false);
+  });
+
+  it('requires feedback for non-correct outcomes', () => {
+    expect(
+      JudgeResultV2.safeParse({
+        ...baseResult,
+        coarse_outcome: 'incorrect',
+        score: 0,
+        feedback_md: '',
+      }).success,
+    ).toBe(false);
+    expect(
+      JudgeResultV2.safeParse({
+        ...baseResult,
+        coarse_outcome: 'unsupported',
+        score: null,
+        confidence: 0,
+        feedback_md: '',
+      }).success,
+    ).toBe(false);
   });
 });

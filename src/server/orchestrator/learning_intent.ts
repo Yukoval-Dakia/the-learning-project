@@ -22,6 +22,7 @@ import { z } from 'zod';
 import type { Db } from '@/db/client';
 import { artifact, knowledge, learning_item } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
+import { resolveSubjectProfile } from '@/subjects/profile';
 
 // ---------- Public types ----------
 
@@ -197,7 +198,10 @@ export async function planLearningIntent(
     existing_descendants_count: children.length,
   };
 
-  const result = await runTaskFn('LearningIntentOutlineTask', input, { db });
+  const result = await runTaskFn('LearningIntentOutlineTask', input, {
+    db,
+    subjectProfile: resolveSubjectProfile(node.domain),
+  });
   const outline = parseOutlineOutput(result.text);
 
   // Validate LLM didn't hallucinate child knowledge_ids

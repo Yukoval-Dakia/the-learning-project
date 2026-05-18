@@ -16,6 +16,7 @@ import { z } from 'zod';
 import { NoteSection } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
+import { resolveSubjectProfile } from '@/subjects/profile';
 
 export interface NoteGenerateJobData {
   artifact_id: string;
@@ -141,7 +142,10 @@ export async function runNoteGenerate(
   };
 
   try {
-    const result = await runTaskFn('NoteGenerateTask', input, { db });
+    const result = await runTaskFn('NoteGenerateTask', input, {
+      db,
+      subjectProfile: resolveSubjectProfile(kNode?.domain),
+    });
     const parsed = parseSectionsOutput(result.text);
 
     await db

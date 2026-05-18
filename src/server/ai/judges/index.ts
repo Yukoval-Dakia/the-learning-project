@@ -38,7 +38,7 @@ function downgradeToV1(result: JudgeResultV2T): JudgeResult {
 
   return {
     verdict: verdictMap[result.coarse_outcome],
-    score: result.score,
+    score: result.score ?? 0,
     feedback_md: result.feedback_md,
     evidence_json: result.evidence_json,
   };
