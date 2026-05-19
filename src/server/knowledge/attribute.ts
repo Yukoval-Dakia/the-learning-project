@@ -12,7 +12,7 @@
 import { newId } from '@/core/ids';
 import { CauseSchema, validateCauseAgainstProfile } from '@/core/schema/business';
 import type { Db } from '@/db/client';
-import { defaultSubjectProfile, type SubjectProfile } from '@/subjects/profile';
+import { type SubjectProfile, defaultSubjectProfile } from '@/subjects/profile';
 import { z } from 'zod';
 import { getJudgeForAttempt, writeEvent } from '../events/queries';
 import { writeRetryableAiFailureLedger } from './ai_failure_log';
@@ -96,7 +96,10 @@ export async function runAttributionAndWriteJudgeEvent(
       env: params.env,
       subjectProfile: params.subjectProfile,
     });
-    const parsed = parseAttributionOutput(result.text, params.subjectProfile ?? defaultSubjectProfile);
+    const parsed = parseAttributionOutput(
+      result.text,
+      params.subjectProfile ?? defaultSubjectProfile,
+    );
 
     const judgeId = newId();
     await writeEvent(params.db, {

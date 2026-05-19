@@ -69,11 +69,7 @@ function parseVariantOutput(text: string): z.infer<typeof VariantOutputSchema> {
   return VariantOutputSchema.parse(json);
 }
 
-const SKIP_CAUSES: ReadonlySet<string> = new Set([
-  'carelessness',
-  'time_pressure',
-  'other',
-]);
+const SKIP_CAUSES: ReadonlySet<string> = new Set(['carelessness', 'time_pressure', 'other']);
 
 export interface RunVariantGenParams {
   db: Db;
