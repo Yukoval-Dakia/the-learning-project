@@ -82,4 +82,15 @@ describe('resolveSubjectRenderModel', () => {
       fontFamily: 'var(--font-wenyan)',
     });
   });
+
+  it('lets caller options override model className order and style fields', () => {
+    const props = subjectContentProps(baseProfile, {
+      className: 'qbody',
+      style: { fontFamily: 'var(--font-mono)' },
+    });
+
+    expect(props.className.endsWith('qbody')).toBe(true);
+    expect(props.className.startsWith('subject-content')).toBe(true);
+    expect(props.style.fontFamily).toBe('var(--font-mono)');
+  });
 });
