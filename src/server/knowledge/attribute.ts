@@ -12,6 +12,7 @@
 import { newId } from '@/core/ids';
 import { CauseCategory } from '@/core/schema/business';
 import type { Db } from '@/db/client';
+import type { SubjectProfile } from '@/subjects/profile';
 import { z } from 'zod';
 import { getJudgeForAttempt, writeEvent } from '../events/queries';
 
@@ -58,6 +59,7 @@ export interface RunAttributionAndWriteJudgeEventParams {
   input: AttributionInput;
   runTaskFn: (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
   env?: unknown;
+  subjectProfile?: SubjectProfile;
   /**
    * Optional: knowledge ids the judge referenced. Defaults to []. Used to populate
    * JudgeOnEvent.payload.referenced_knowledge_ids; caller (route layer) typically
@@ -89,7 +91,10 @@ export async function runAttributionAndWriteJudgeEvent(
       return;
     }
 
-    const result = await params.runTaskFn('AttributionTask', params.input, { env: params.env });
+    const result = await params.runTaskFn('AttributionTask', params.input, {
+      env: params.env,
+      subjectProfile: params.subjectProfile,
+    });
     const parsed = parseAttributionOutput(result.text);
 
     const judgeId = newId();

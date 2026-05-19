@@ -1,12 +1,17 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { db } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
+import { resetDb } from '../../../../tests/helpers/db';
 import { runKnowledgeEdgeProposeNightly } from './knowledge_edge_propose_nightly';
 
 describe('knowledge_edge_propose_nightly handler', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
   it('returns empty stats when no failure attempts in window', async () => {
     const runTaskFn = vi.fn(async () => ({ text: '{"proposals":[]}' }));
     const result = await runKnowledgeEdgeProposeNightly(db, { runTaskFn });
@@ -23,7 +28,7 @@ describe('knowledge_edge_propose_nightly handler', () => {
       {
         id: k1,
         name: 'K1',
-        domain: 'wenyan',
+        domain: 'math',
         parent_id: null,
         created_at: now,
         updated_at: now,
@@ -31,7 +36,7 @@ describe('knowledge_edge_propose_nightly handler', () => {
       {
         id: k2,
         name: 'K2',
-        domain: 'wenyan',
+        domain: 'math',
         parent_id: null,
         created_at: now,
         updated_at: now,
@@ -69,7 +74,7 @@ describe('knowledge_edge_propose_nightly handler', () => {
       created_at: now,
     });
 
-    const runTaskFn = vi.fn(async () => ({
+    const runTaskFn = vi.fn(async (_kind: string, _input: unknown, _ctx: unknown) => ({
       text: JSON.stringify({
         proposals: [
           {
@@ -87,6 +92,9 @@ describe('knowledge_edge_propose_nightly handler', () => {
     expect(result.attempts_considered).toBe(1);
     expect(result.proposed).toBe(1);
     expect(runTaskFn).toHaveBeenCalledTimes(1);
+    expect(runTaskFn.mock.calls[0]?.[2]).toMatchObject({
+      subjectProfile: { id: 'math' },
+    });
 
     // Verify event written
     const events = await db

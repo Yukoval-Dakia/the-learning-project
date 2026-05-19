@@ -10,11 +10,23 @@ import type { Job } from 'pg-boss';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
 import { getFailureAttempts } from '@/server/events/queries';
+import { getEffectiveDomain } from '@/server/knowledge/domain';
 import { type RunTaskFn, runProposeAndWrite } from '@/server/knowledge/propose';
+import { resolveSubjectProfile } from '@/subjects/profile';
 
 type DepsOverride = {
   runTaskFn?: RunTaskFn;
 };
+
+async function resolveFirstKnowledgeSubjectProfile(db: Db, knowledgeIds: string[] | null) {
+  const firstKnowledgeId = knowledgeIds?.find((id) => id.length > 0);
+  if (!firstKnowledgeId) return resolveSubjectProfile(null);
+  try {
+    return resolveSubjectProfile(await getEffectiveDomain(db, firstKnowledgeId));
+  } catch {
+    return resolveSubjectProfile(null);
+  }
+}
 
 /**
  * Nightly cron handler — scan the last 24h of failure attempt events and run
@@ -69,6 +81,10 @@ export async function runKnowledgeProposeNightly(
           knowledge_ids_picked: a.referenced_knowledge_ids ?? [],
         },
         runTaskFn,
+        subjectProfile: await resolveFirstKnowledgeSubjectProfile(
+          db,
+          a.referenced_knowledge_ids ?? [],
+        ),
       });
       processed += 1;
     } catch (err) {

@@ -13,6 +13,7 @@ import type { Db } from '@/db/client';
 import { event, knowledge_edge } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import type { FailureAttempt } from '@/server/events/queries';
+import type { SubjectProfile } from '@/subjects/profile';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { loadTreeSnapshot } from './tree';
@@ -38,6 +39,7 @@ export interface RunEdgeProposeAndWriteParams {
   recentFailures: FailureAttempt[];
   runTaskFn: RunTaskFn;
   env?: unknown;
+  subjectProfile?: SubjectProfile;
 }
 
 export interface RunEdgeProposeAndWriteResult {
@@ -102,6 +104,7 @@ export async function runEdgeProposeAndWrite(
     const result = await params.runTaskFn('KnowledgeEdgeProposeTask', input, {
       db: params.db,
       env: params.env,
+      subjectProfile: params.subjectProfile,
     });
     const parsed = parseEdgeProposeOutput(result.text);
 

@@ -1,5 +1,6 @@
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
+import type { SubjectProfile } from '@/subjects/profile';
 import { and, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import { writeKnowledgeProposeEvent } from './proposals';
@@ -31,6 +32,7 @@ export interface RunProposeAndWriteParams {
   mistakeContent: MistakeContent;
   runTaskFn: RunTaskFn;
   env?: unknown;
+  subjectProfile?: SubjectProfile;
 }
 
 export async function runProposeAndWrite(params: RunProposeAndWriteParams): Promise<void> {
@@ -48,6 +50,7 @@ export async function runProposeAndWrite(params: RunProposeAndWriteParams): Prom
     const result = await params.runTaskFn('KnowledgeProposeTask', input, {
       db: params.db,
       env: params.env,
+      subjectProfile: params.subjectProfile,
     });
     const parsed = parseProposeOutput(result.text);
     for (const p of parsed.proposals) {

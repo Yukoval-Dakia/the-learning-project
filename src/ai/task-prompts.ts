@@ -17,6 +17,32 @@ function noteTemplateTable(profile: SubjectProfile): string {
 | check | ${profile.noteTemplate.check} |`;
 }
 
+function causeTaxonomyList(profile: SubjectProfile): string {
+  return profile.causeCategories
+    .map((category) => {
+      const description = category.description ? `：${category.description}` : '';
+      return `- ${category.id}（${category.label}）${description}`;
+    })
+    .join('\n');
+}
+
+function causeIdList(profile: SubjectProfile): string {
+  return profile.causeCategories.map((category) => category.id).join(' | ');
+}
+
+function buildAttributionPrompt(profile: SubjectProfile): string {
+  return `你是错题归因助手。输入字段 { prompt_md, reference_md, wrong_answer_md, knowledge_context }（来自一个 attempt event outcome='failure'）—— 即用户做错的一道题，含 wrong_answer_md（用户错答）、参考答案 reference_md、挂的 knowledge_context，分析错因。
+科目上下文：${profile.displayName}。${profile.languageStyle}
+归因 taxonomy 完全来自当前 SubjectProfile：
+${causeTaxonomyList(profile)}
+证据要求：${profile.grounding.requirement}
+不确定性策略：${profile.grounding.uncertaintyPolicy}
+归因结果作为 judge event 写入 (action='judge', subject_kind='event', caused_by_event_id=<attempt event id>)；payload.cause 即此输出。
+输出严格 JSON 格式（不带 markdown 代码块包裹）：
+{"primary_category": "<${causeIdList(profile)} 之一>", "secondary_categories": [...], "analysis_md": "<分析过程，含错答与参考答案差异 + 涉及的知识点 / 概念>", "confidence": 0.0-1.0}
+低信心走 other（若 profile 有 other）或最接近的类别，并在 analysis_md 里说明不确定点。`;
+}
+
 function buildLearningIntentOutlinePrompt(profile: SubjectProfile): string {
   return `你是学习规划助手。用户声明「我想学 X」，输入 { topic, knowledge_node: { id, name, domain }, child_nodes: [{id, name}], existing_descendants_count } —— knowledge_node 是 topic 在知识图谱里的对应节点，child_nodes 是它的直接子节点。
 科目上下文：${profile.displayName}。${profile.promptFragments.learningIntentPolicy}
@@ -67,6 +93,34 @@ function buildVariantGenPrompt(profile: SubjectProfile): string {
 - 禁止：直接照抄 original prompt 的句子；套话；复杂多义题面`;
 }
 
+function buildKnowledgeProposePrompt(profile: SubjectProfile): string {
+  return `你是知识图谱编辑助手。用户新写入了一个 attempt event (outcome='failure')。
+科目上下文：${profile.displayName}。${profile.languageStyle}
+输入字段 { mistake_content: { prompt_md, reference_md, wrong_answer_md, knowledge_ids_picked }, tree_snapshot } —— mistake_content.knowledge_ids_picked 即 attempt 的 referenced_knowledge_ids（用户自选）。
+看 mistake_content (prompt_md + wrong_answer_md) + tree_snapshot，如果你认为 tree 里缺一个**更精确**的子节点能挂这条 attempt，就 propose 它。0-3 条，不必凑数。
+证据要求：${profile.grounding.requirement}
+不确定性策略：${profile.grounding.uncertaintyPolicy}
+每条返回 { name, parent_id, reasoning }。parent_id 必须是 tree 里已有节点 id；若找不到合适 parent，跳过这条。
+严格 JSON 输出（不带 markdown 代码块包裹）：{"proposals":[{"name":"...","parent_id":"...","reasoning":"..."}]}
+禁止：把节点挂成 root；编造 tree_snapshot 不存在的 parent_id；写泛化到无法练习的抽象节点。`;
+}
+
+function buildKnowledgeEdgeProposePrompt(profile: SubjectProfile): string {
+  return `你是知识图谱 mesh 编辑助手。输入 { tree_snapshot, existing_edges, recent_failures } —— recent_failures 是过去 24h 的 attempt event (outcome='failure')，每条含 referenced_knowledge_ids + cause（来自 chained judge / user_cause）。
+科目上下文：${profile.displayName}。${profile.languageStyle}
+当前 SubjectProfile cause taxonomy：
+${causeTaxonomyList(profile)}
+看 recent_failures 找跨 attempt 的模式：哪些 knowledge 总是同时被引用？哪些是 prerequisite？哪些是易混淆 contrasts_with？哪些是应用关系？基于此提议 0-5 条新 knowledge_edge。
+证据要求：${profile.grounding.requirement}
+不确定性策略：${profile.grounding.uncertaintyPolicy}
+每条返回 { from_knowledge_id, to_knowledge_id, relation_type, weight, reasoning }。
+relation_type 5 选 1：prerequisite（A 是学 B 的先决）/ related_to（弱关联）/ contrasts_with（易混淆对比）/ applied_in（A 应用于 B）/ derived_from（B 由 A 推导）。新型关系用 experimental:* 命名空间。
+weight 0-1：模式有几次 attempt 支持就给多高（1 次→0.3 / 2-3 次→0.6 / 4+ 次→0.9）。
+reasoning 必须具体：引用 attempt event id 或指出 cause pattern。
+禁止：from === to；relation_type 不在合法集合；已存在于 existing_edges 的同向同型 (from, to, relation_type) 三元组。
+严格 JSON 输出（不带 markdown 代码块包裹）：{"proposals":[{"from_knowledge_id":"...","to_knowledge_id":"...","relation_type":"...","weight":0.6,"reasoning":"..."}]}。0 条也行，不必凑数。`;
+}
+
 function buildTeachingTurnPrompt(profile: SubjectProfile): string {
   return `你是${profile.promptFragments.roleNoun}，正在以对话教学方式辅导用户掌握一个具体 LearningItem。
 输入：{ learning_item: { title, one_line_intent, knowledge_node:{id,name} }, parent_hub_summary, atomic_sections(definition/mechanism/example/pitfall/check), messages: [{role:agent|user,text_md,turn_kind?}] }
@@ -93,6 +147,12 @@ export function getTaskSystemPrompt(
   profile: SubjectProfile = defaultSubjectProfile,
 ): string {
   switch (task) {
+    case 'AttributionTask':
+      return buildAttributionPrompt(profile);
+    case 'KnowledgeProposeTask':
+      return buildKnowledgeProposePrompt(profile);
+    case 'KnowledgeEdgeProposeTask':
+      return buildKnowledgeEdgeProposePrompt(profile);
     case 'LearningIntentOutlineTask':
       return buildLearningIntentOutlinePrompt(profile);
     case 'NoteGenerateTask':

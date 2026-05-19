@@ -31,9 +31,20 @@ describe('getTaskSystemPrompt', () => {
     expect(math).not.toContain('文言文');
   });
 
-  it('keeps unsupported tasks on their registry prompt', () => {
+  it('builds subject-specific AttributionTask prompts', () => {
     const prompt = getTaskSystemPrompt('AttributionTask', resolveSubjectProfile('math'));
 
+    expect(prompt).toContain('科目上下文：数学');
+    expect(prompt).toContain('数学定义、定理、条件');
     expect(prompt).toContain('你是错题归因助手');
+    expect(prompt).not.toContain('文言文');
+  });
+
+  it('builds subject-specific KnowledgeProposeTask prompts', () => {
+    const prompt = getTaskSystemPrompt('KnowledgeProposeTask', resolveSubjectProfile('math'));
+
+    expect(prompt).toContain('科目上下文：数学');
+    expect(prompt).toContain('题面条件、定义、定理或用户已有步骤');
+    expect(prompt).not.toContain('虚词');
   });
 });

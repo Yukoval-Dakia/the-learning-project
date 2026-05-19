@@ -8,11 +8,35 @@ import type { Job } from 'pg-boss';
 
 import type { Db } from '@/db/client';
 import { getFailureAttempts } from '@/server/events/queries';
+import { getEffectiveDomain } from '@/server/knowledge/domain';
 import { type RunTaskFn, runEdgeProposeAndWrite } from '@/server/knowledge/propose_edge';
+import { resolveSubjectProfile } from '@/subjects/profile';
 
 type DepsOverride = {
   runTaskFn?: RunTaskFn;
 };
+
+async function resolveDominantSubjectProfile(
+  db: Db,
+  attempts: Awaited<ReturnType<typeof getFailureAttempts>>,
+) {
+  const domains = new Set<string>();
+  for (const attempt of attempts) {
+    const firstKnowledgeId = attempt.referenced_knowledge_ids?.find((id) => id.length > 0);
+    if (!firstKnowledgeId) continue;
+    try {
+      domains.add(await getEffectiveDomain(db, firstKnowledgeId));
+    } catch {
+      // Missing or malformed knowledge refs fall back below.
+    }
+  }
+  if (domains.size === 1) {
+    return resolveSubjectProfile([...domains][0]);
+  }
+  // Graph-wide edge proposal can span multiple subjects. Until the task input
+  // carries per-attempt profiles, use the default profile for mixed/unknown batches.
+  return resolveSubjectProfile(null);
+}
 
 export interface NightlyResult {
   proposed: number;
@@ -49,6 +73,7 @@ export async function runKnowledgeEdgeProposeNightly(
     db,
     recentFailures: attempts,
     runTaskFn,
+    subjectProfile: await resolveDominantSubjectProfile(db, attempts),
   });
 
   return { ...stats, attempts_considered: attempts.length };

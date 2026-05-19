@@ -11,8 +11,8 @@
 // knowledge_ids, cause, fsrs_state, created_at }] }. The `id` semantically
 // changes from mistake.id to question.id (opaque to clients).
 
+import { type ActivityRefT, questionRef } from '@/core/schema/activity';
 import { db } from '@/db/client';
-import { questionRef, type ActivityRefT } from '@/core/schema/activity';
 import { material_fsrs_state, question } from '@/db/schema';
 import { getFailureAttempts, getJudgeForAttempt } from '@/server/events/queries';
 import { errorResponse } from '@/server/http/errors';
