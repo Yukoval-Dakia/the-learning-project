@@ -113,10 +113,10 @@ export function subjectContentProps(
   const model = isRenderModel(profileOrModel)
     ? profileOrModel
     : resolveSubjectRenderModel(profileOrModel);
-  const className = [options.className, model.contentClassName].filter(Boolean).join(' ');
+  const className = [model.contentClassName, options.className].filter(Boolean).join(' ');
   return {
     className,
-    style: { ...options.style, ...model.contentStyle },
+    style: { ...model.contentStyle, ...options.style },
     'data-subject': model.id,
     ...(model.renderConfig.notation ? { 'data-notation': model.renderConfig.notation } : {}),
   };
