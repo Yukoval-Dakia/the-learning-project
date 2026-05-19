@@ -42,12 +42,38 @@ interface NoteSection {
   version: number;
 }
 
+type VerificationStatus =
+  | 'not_required'
+  | 'not_started'
+  | 'queued'
+  | 'verified'
+  | 'needs_review'
+  | 'failed';
+
+interface NoteVerificationIssue {
+  section_id: string | null;
+  severity: 'info' | 'warn' | 'error';
+  category: 'factuality' | 'coverage' | 'clarity' | 'subject_fit' | 'format' | 'safety';
+  message: string;
+  suggested_fix_md?: string;
+}
+
+interface NoteVerificationSummary {
+  verdict: 'pass' | 'needs_review';
+  summary_md: string;
+  issues: NoteVerificationIssue[];
+  confidence: number;
+}
+
 interface PrimaryArtifact {
   id: string;
   type: string;
   sections: NoteSection[] | null;
   outline_json: Record<string, unknown> | null;
   generation_status: 'pending' | 'ready' | 'failed';
+  verification_status: VerificationStatus;
+  verification_summary: NoteVerificationSummary | null;
+  verified_by: Record<string, unknown> | null;
 }
 
 interface Detail {
@@ -91,6 +117,15 @@ const STATUS_LABEL: Record<ItemStatus, string> = {
   resting: '养护',
   dismissed: '已拒',
   archived: '归档',
+};
+
+const VERIFICATION_LABEL: Record<VerificationStatus, string> = {
+  not_required: '无需验证',
+  not_started: '待验证',
+  queued: '验证中...',
+  verified: '已验证',
+  needs_review: '需复核',
+  failed: '验证失败',
 };
 
 export default function LearningItemDetailPage() {
@@ -410,13 +445,18 @@ function ArtifactView({
     <section className="artifact-view">
       <div className="artifact-view-head">
         <Label inline>note · {artifact.type}</Label>
-        <span className={`artifact-status ${artifact.generation_status}`}>
-          {artifact.generation_status === 'pending'
-            ? '生成中…'
-            : artifact.generation_status === 'failed'
-              ? '生成失败'
-              : '已就绪'}
-        </span>
+        <div className="artifact-status-row">
+          <span className={`artifact-status ${artifact.generation_status}`}>
+            {artifact.generation_status === 'pending'
+              ? '生成中...'
+              : artifact.generation_status === 'failed'
+                ? '生成失败'
+                : '已就绪'}
+          </span>
+          <span className={`artifact-status verify-${artifact.verification_status}`}>
+            {VERIFICATION_LABEL[artifact.verification_status]}
+          </span>
+        </div>
       </div>
       {artifact.generation_status === 'pending' && (
         <p className="artifact-stub">
@@ -429,28 +469,49 @@ function ArtifactView({
         </p>
       )}
       {artifact.generation_status === 'ready' && artifact.sections && (
-        <div className="artifact-sections">
-          {artifact.sections.map((s) => {
-            const sectionBodyProps = subjectContentProps(subjectProfile, {
-              className: 'artifact-section-body',
-            });
-            return (
-              <div key={s.id} className="artifact-section">
-                <div className="artifact-section-head">
-                  <strong>{SECTION_LABEL[s.kind]}</strong>
-                  <span className="artifact-section-tier">{SOURCE_TIER_LABEL[s.source_tier]}</span>
+        <>
+          <div className="artifact-sections">
+            {artifact.sections.map((s) => {
+              const sectionBodyProps = subjectContentProps(subjectProfile, {
+                className: 'artifact-section-body',
+              });
+              return (
+                <div key={s.id} className="artifact-section">
+                  <div className="artifact-section-head">
+                    <strong>{SECTION_LABEL[s.kind]}</strong>
+                    <span className="artifact-section-tier">
+                      {SOURCE_TIER_LABEL[s.source_tier]}
+                    </span>
+                  </div>
+                  <pre {...sectionBodyProps}>{s.body_md}</pre>
+                  {s.kind === 'check' && s.embedded_check && (
+                    <p className="artifact-section-stub">
+                      embedded check · {s.embedded_check.question_ids.length} 题（Phase 3 启用 quiz
+                      引擎）
+                    </p>
+                  )}
                 </div>
-                <pre {...sectionBodyProps}>{s.body_md}</pre>
-                {s.kind === 'check' && s.embedded_check && (
-                  <p className="artifact-section-stub">
-                    embedded check · {s.embedded_check.question_ids.length} 题（Phase 3 启用 quiz
-                    引擎）
-                  </p>
-                )}
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+          {artifact.verification_summary && (
+            <div className="artifact-verification">
+              <p>{artifact.verification_summary.summary_md}</p>
+              {artifact.verification_summary.issues.length > 0 && (
+                <ul>
+                  {artifact.verification_summary.issues.map((issue, idx) => (
+                    <li key={`${issue.section_id ?? 'global'}-${idx}`}>
+                      <strong>{issue.severity}</strong>
+                      <span>{issue.category}</span>
+                      <p>{issue.message}</p>
+                      {issue.suggested_fix_md && <pre>{issue.suggested_fix_md}</pre>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </>
       )}
     </section>
   );

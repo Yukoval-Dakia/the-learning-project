@@ -1,4 +1,4 @@
-import { completion_evidence, knowledge, learning_item } from '@/db/schema';
+import { artifact, completion_evidence, knowledge, learning_item } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -510,6 +510,71 @@ describe('GET /api/learning-items/[id]', () => {
     };
     expect(body.children.map((c) => c.id).sort()).toEqual(['c1', 'c2']);
     expect(body.children.some((c) => 'subject_profile' in c)).toBe(false);
+  });
+
+  it('returns primary artifact verification fields', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(artifact).values({
+      id: 'a1',
+      type: 'note_atomic',
+      title: '之的用法',
+      knowledge_id: null,
+      parent_artifact_id: null,
+      child_artifact_ids: [],
+      intent_source: 'learning_intent',
+      source: 'ai_generated',
+      source_ref: null,
+      outline_json: null,
+      sections: null,
+      tool_kind: null,
+      tool_state: null,
+      generation_status: 'ready',
+      verification_status: 'needs_review',
+      verification_summary: {
+        verdict: 'needs_review',
+        summary_md: '例子部分需要人工复核。',
+        issues: [
+          {
+            section_id: null,
+            severity: 'warn',
+            category: 'factuality',
+            message: '缺少文本证据。',
+          },
+        ],
+        confidence: 0.58,
+      } as never,
+      generated_by: { by: 'ai', task_kind: 'NoteGenerateTask' } as never,
+      verified_by: { by: 'ai', task_kind: 'NoteVerifyTask' } as never,
+      history: [],
+      archived_at: null,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    await db
+      .insert(learning_item)
+      .values(baseItem('li1', { primary_artifact_id: 'a1', status: 'in_progress' }));
+
+    const res = await GET(getReq('li1'), { params: Promise.resolve({ id: 'li1' }) });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      primary_artifact: {
+        verification_status: string;
+        verification_summary: {
+          verdict: string;
+          issues: Array<{ category: string; message: string }>;
+        };
+        verified_by: { task_kind: string };
+      } | null;
+    };
+    expect(body.primary_artifact?.verification_status).toBe('needs_review');
+    expect(body.primary_artifact?.verification_summary).toMatchObject({
+      verdict: 'needs_review',
+      issues: [{ category: 'factuality', message: '缺少文本证据。' }],
+    });
+    expect(body.primary_artifact?.verified_by).toMatchObject({ task_kind: 'NoteVerifyTask' });
   });
 });
 
