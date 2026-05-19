@@ -10,9 +10,9 @@
 // per ADR-0005 — never call db.insert(event) directly; goes through writeEvent.
 
 import { newId } from '@/core/ids';
-import { CauseCategory } from '@/core/schema/business';
+import { CauseSchema, validateCauseAgainstProfile } from '@/core/schema/business';
 import type { Db } from '@/db/client';
-import type { SubjectProfile } from '@/subjects/profile';
+import { defaultSubjectProfile, type SubjectProfile } from '@/subjects/profile';
 import { z } from 'zod';
 import { getJudgeForAttempt, writeEvent } from '../events/queries';
 import { writeRetryableAiFailureLedger } from './ai_failure_log';
@@ -22,16 +22,16 @@ import { writeRetryableAiFailureLedger } from './ai_failure_log';
 // has been removed. Legacy LLM outputs emitting `ai_analysis_md` will fail
 // schema parse and surface as a no-op (no judge event written) — see
 // runAttributionAndWriteJudgeEvent's parse-error catch path.
-const AttributionOutputSchema = z.object({
-  primary_category: CauseCategory,
-  secondary_categories: z.array(CauseCategory).default([]),
+const AttributionOutputSchema = CauseSchema.extend({
   analysis_md: z.string().min(1).max(2000),
-  confidence: z.number().min(0).max(1),
 });
 
 export type AttributionOutput = z.infer<typeof AttributionOutputSchema>;
 
-export function parseAttributionOutput(text: string): AttributionOutput {
+export function parseAttributionOutput(
+  text: string,
+  profile: SubjectProfile = defaultSubjectProfile,
+): AttributionOutput {
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
   if (start === -1 || end === -1 || end < start) {
@@ -44,7 +44,7 @@ export function parseAttributionOutput(text: string): AttributionOutput {
   } catch (e) {
     throw new Error(`parseAttributionOutput: JSON.parse failed: ${(e as Error).message}`);
   }
-  return AttributionOutputSchema.parse(json);
+  return validateCauseAgainstProfile(AttributionOutputSchema.parse(json), profile);
 }
 
 export interface AttributionInput {
@@ -96,7 +96,7 @@ export async function runAttributionAndWriteJudgeEvent(
       env: params.env,
       subjectProfile: params.subjectProfile,
     });
-    const parsed = parseAttributionOutput(result.text);
+    const parsed = parseAttributionOutput(result.text, params.subjectProfile ?? defaultSubjectProfile);
 
     const judgeId = newId();
     await writeEvent(params.db, {

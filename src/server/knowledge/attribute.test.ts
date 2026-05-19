@@ -1,4 +1,5 @@
 import { cost_ledger, event, question } from '@/db/schema';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -39,9 +40,19 @@ describe('parseAttributionOutput', () => {
     expect(() => parseAttributionOutput('完全不是 JSON')).toThrow();
   });
 
-  it('throws on invalid primary_category', () => {
+  it('accepts math-specific primary_category against the math profile', () => {
+    const text =
+      '{"primary_category":"unit_error","secondary_categories":["calculation"],"analysis_md":"单位换算错误","confidence":0.8}';
+    const out = parseAttributionOutput(text, resolveSubjectProfile('math'));
+    expect(out.primary_category).toBe('unit_error');
+    expect(out.secondary_categories).toEqual(['calculation']);
+  });
+
+  it('degrades profile-invalid primary_category to other while preserving analysis', () => {
     const text = '{"primary_category":"bogus","analysis_md":"r","confidence":0.5}';
-    expect(() => parseAttributionOutput(text)).toThrow();
+    const out = parseAttributionOutput(text, resolveSubjectProfile('math'));
+    expect(out.primary_category).toBe('other');
+    expect(out.analysis_md).toBe('r');
   });
 
   it('throws when confidence out of range', () => {
@@ -131,6 +142,29 @@ describe('runAttributionAndWriteJudgeEvent', () => {
     expect(payload.cause.primary_category).toBe('concept');
     expect(payload.cause.analysis_md).toBe('why');
     expect(payload.cause.confidence).toBe(0.8);
+  });
+
+  it('writes math-specific attribution causes when subjectProfile is math', async () => {
+    const db = testDb();
+    const attemptId = 'attempt_e_math';
+    await insertAttemptEvent({ attemptId, questionId: 'q_math' });
+    const fakeRunTask = async () => ({
+      text: '{"primary_category":"unit_error","secondary_categories":[],"analysis_md":"单位换算错误","confidence":0.8}',
+    });
+    await runAttributionAndWriteJudgeEvent({
+      db,
+      attemptEventId: attemptId,
+      input: validInput,
+      runTaskFn: fakeRunTask,
+      subjectProfile: resolveSubjectProfile('math'),
+    });
+    const judgeRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'judge'), eq(event.caused_by_event_id, attemptId)));
+    expect(judgeRows).toHaveLength(1);
+    const payload = judgeRows[0].payload as { cause: { primary_category: string } };
+    expect(payload.cause.primary_category).toBe('unit_error');
   });
 
   it('does NOT bridge legacy ai_analysis_md — surfaces as parse error (no judge written)', async () => {
