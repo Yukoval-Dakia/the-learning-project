@@ -11,7 +11,8 @@
 import { and, asc, eq, inArray } from 'drizzle-orm';
 
 import type { Db } from '@/db/client';
-import { event, learning_session, question } from '@/db/schema';
+import { event, knowledge, learning_session, question } from '@/db/schema';
+import { resolveSubjectProfile } from '@/subjects/profile';
 
 const NOTABLE_LIMIT = 3;
 
@@ -97,6 +98,16 @@ export async function runSessionSummary(
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5)
     .map(([id, count]) => ({ id, count }));
+  const firstKnowledgeId = knowledgeCounts.keys().next().value as string | undefined;
+  const firstDomain = firstKnowledgeId
+    ? (
+        await db
+          .select({ domain: knowledge.domain })
+          .from(knowledge)
+          .where(eq(knowledge.id, firstKnowledgeId))
+          .limit(1)
+      )[0]?.domain
+    : null;
 
   // Cause distribution from chained judge events (judges on the original
   // failure attempts — not session-bound, but joined by question).
@@ -179,7 +190,10 @@ export async function runSessionSummary(
     notable_attempts: notableAttempts,
   };
 
-  const result = await runTaskFn('SessionSummaryTask', input, { db });
+  const result = await runTaskFn('SessionSummaryTask', input, {
+    db,
+    subjectProfile: resolveSubjectProfile(firstDomain),
+  });
   // Trim + soft-cap to 240 chars (allows ~120 Chinese chars; prompt asks for
   // ≤120 but we don't reject — clamp instead so the model occasionally going
   // slightly over doesn't lose the whole summary).

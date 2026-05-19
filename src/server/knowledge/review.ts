@@ -24,6 +24,7 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { streamTask } from '@/server/ai/runner';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { getFailureAttempts, writeEvent } from '../events/queries';
@@ -54,9 +55,19 @@ async function buildReviewInput(db: Db) {
   }));
 
   return {
-    tree,
-    recent_mistakes,
+    input: {
+      tree,
+      recent_mistakes,
+    },
+    subjectProfile: resolveSubjectProfile(resolveSingleTreeDomain(tree)),
   };
+}
+
+function resolveSingleTreeDomain(tree: Array<{ domain: string | null }>): string | null {
+  const domains = new Set(
+    tree.map((row) => row.domain).filter((domain): domain is string => Boolean(domain)),
+  );
+  return domains.size === 1 ? ([...domains][0] ?? null) : null;
 }
 
 // ---------- Pure dispatcher (testable without the SDK) ----------
@@ -159,11 +170,12 @@ export interface StreamReviewTaskCtx {
  * with streamed assistant text deltas.
  */
 export async function streamReviewTask(ctx: StreamReviewTaskCtx): Promise<Response> {
-  const input = await buildReviewInput(ctx.db);
+  const { input, subjectProfile } = await buildReviewInput(ctx.db);
   const mcpServer = buildKnowledgeReviewMcpServer(ctx.db);
 
   return streamTask('KnowledgeReviewTask', input, {
     db: ctx.db,
+    subjectProfile,
     mcpServers: { loom: mcpServer },
   });
 }

@@ -121,6 +121,36 @@ reasoning 必须具体：引用 attempt event id 或指出 cause pattern。
 严格 JSON 输出（不带 markdown 代码块包裹）：{"proposals":[{"from_knowledge_id":"...","to_knowledge_id":"...","relation_type":"...","weight":0.6,"reasoning":"..."}]}。0 条也行，不必凑数。`;
 }
 
+function buildSessionSummaryPrompt(profile: SubjectProfile): string {
+  return `你是学习陪练，会复盘刚结束的复习 session。
+科目上下文：${profile.displayName}。${profile.languageStyle}
+输入 { session_id, duration_min, total_reviewed, ratings: { again, hard, good, easy }, top_causes: [...], top_knowledge: [...], notable_attempts: [{ prompt_md, user_response_md, fsrs_rating }, ...] } —— ratings 是 FSRS 评分分布，top_causes 来自 chained judge events，notable_attempts 是 again/hard 的最多 3 题。
+当前 SubjectProfile cause taxonomy：
+${causeTaxonomyList(profile)}
+证据要求：${profile.grounding.requirement}
+学科表达策略：${profile.promptFragments.teachingStyle}
+输出一段 ≤120 字的中文短文（纯文本，不要 JSON / markdown 代码块 / 列表）。三段意图：
+1) 量化总结：「X 题，Y% 正确，主要错在 Z」
+2) 模式观察：指 1-2 个具体题或知识点的卡壳
+3) 下次建议：1 句具体可执行的建议，必须贴合本学科的条件、目标、知识点或方法触发信号
+禁止：套话（「继续加油」「再接再厉」）、夸夸（「做得很好」）、笼统（「多练习」）。要具体、可执行、不超过 120 字。`;
+}
+
+function buildKnowledgeReviewPrompt(profile: SubjectProfile): string {
+  return `你是知识图谱维护助手。看完整 tree（含层级 / archived / merged_from）+ 最近 attempt events (action='attempt', outcome='failure' 的事件，含 cause via chained judge event)，propose 让知识图谱更合理的 mutation。
+科目上下文：${profile.displayName}。${profile.languageStyle}
+关注本学科的知识粒度：数学定义、条件、方法或易错模式；非数学 profile 则按对应 SubjectProfile 的概念边界和练习粒度判断。
+当前 SubjectProfile cause taxonomy：
+${causeTaxonomyList(profile)}
+证据要求：${profile.grounding.requirement}
+可选 mutation 分两类:
+- Tree-shape: propose_new（加新子节点）/ reparent（移到别 parent 下）/ merge（合并冗余）/ split（拆解过粗）/ archive（archive 没用的）。
+- Mesh-shape (ADR-0010): propose_knowledge_edge —— payload = { from_knowledge_id, to_knowledge_id, relation_type, reasoning }。relation_type 是 5 个核心 enum 之一: prerequisite / related_to / contrasts_with / applied_in / derived_from；新型关系用 experimental:* 命名空间逃逸阀。
+每 propose 一条，调一次 mcp__loom__write_proposal（工具名 write_proposal；payload.mutation 区分 tree / mesh）。reasoning 必须具体：引用 attempt event id、知识点 id、cause pattern，或指出 tree 结构问题。
+不必凑数；如果 tree 已经合理，0 条也行。
+禁止：把节点挂成 root；编造 tree 不存在的 node id；没有 event evidence 时做破坏性 mutation；跨 subject 混图时强行套单一学科判断。`;
+}
+
 function buildTeachingTurnPrompt(profile: SubjectProfile): string {
   return `你是${profile.promptFragments.roleNoun}，正在以对话教学方式辅导用户掌握一个具体 LearningItem。
 输入：{ learning_item: { title, one_line_intent, knowledge_node:{id,name} }, parent_hub_summary, atomic_sections(definition/mechanism/example/pitfall/check), messages: [{role:agent|user,text_md,turn_kind?}] }
@@ -153,6 +183,10 @@ export function getTaskSystemPrompt(
       return buildKnowledgeProposePrompt(profile);
     case 'KnowledgeEdgeProposeTask':
       return buildKnowledgeEdgeProposePrompt(profile);
+    case 'SessionSummaryTask':
+      return buildSessionSummaryPrompt(profile);
+    case 'KnowledgeReviewTask':
+      return buildKnowledgeReviewPrompt(profile);
     case 'LearningIntentOutlineTask':
       return buildLearningIntentOutlinePrompt(profile);
     case 'NoteGenerateTask':
