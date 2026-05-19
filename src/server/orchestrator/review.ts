@@ -13,8 +13,13 @@
 // is purely the planner.
 
 import type { Db } from '@/db/client';
-import { material_fsrs_state, question } from '@/db/schema';
+import { knowledge, material_fsrs_state, question } from '@/db/schema';
 import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
+import {
+  type SlimSubjectProfile,
+  resolveSubjectProfile,
+  toSlimSubjectProfile,
+} from '@/subjects/profile';
 import { and, eq, inArray, lte } from 'drizzle-orm';
 
 import type { CauseCategoryT, FsrsStateSchemaT } from '@/core/schema/event/blocks';
@@ -36,6 +41,8 @@ export interface PlanQueueItem {
   rationale: string;
   /** Last failure attempt time (sec). Null if no failure on record. */
   last_failure_at: number | null;
+  /** Slim subject rendering/profile metadata resolved from knowledge_ids[0]. */
+  subject_profile: SlimSubjectProfile;
 }
 
 export interface ReviewPlan {
@@ -141,6 +148,84 @@ function buildRationale(input: {
     parts.push(`${input.lapses} 次 lapse`);
   }
   return parts.join(' · ');
+}
+
+type QueueItemWithoutSubject = Omit<PlanQueueItem, 'subject_profile'>;
+
+const FALLBACK_SUBJECT_PROFILE = toSlimSubjectProfile(resolveSubjectProfile(null));
+
+async function resolveEffectiveDomainsForKnowledgeIds(
+  db: Db,
+  knowledgeIds: string[],
+): Promise<Map<string, string | null>> {
+  const uniqueIds = [...new Set(knowledgeIds.filter((id) => id.length > 0))];
+  const out = new Map<string, string | null>();
+  if (uniqueIds.length === 0) return out;
+
+  const unresolved = new Set(uniqueIds);
+  const cursorByOriginal = new Map(uniqueIds.map((id) => [id, id]));
+
+  for (let depth = 0; depth < 32 && unresolved.size > 0; depth += 1) {
+    const cursorIds = [...new Set([...unresolved].map((id) => cursorByOriginal.get(id) ?? id))];
+    if (cursorIds.length === 0) break;
+
+    const rows = await db
+      .select({ id: knowledge.id, domain: knowledge.domain, parent_id: knowledge.parent_id })
+      .from(knowledge)
+      .where(inArray(knowledge.id, cursorIds));
+    const rowById = new Map(rows.map((row) => [row.id, row]));
+
+    for (const originalId of [...unresolved]) {
+      const cursorId = cursorByOriginal.get(originalId) ?? originalId;
+      const row = rowById.get(cursorId);
+      if (!row) {
+        out.set(originalId, null);
+        unresolved.delete(originalId);
+        continue;
+      }
+      if (row.domain !== null) {
+        out.set(originalId, row.domain);
+        unresolved.delete(originalId);
+        continue;
+      }
+      if (row.parent_id === null) {
+        out.set(originalId, null);
+        unresolved.delete(originalId);
+        continue;
+      }
+      cursorByOriginal.set(originalId, row.parent_id);
+    }
+  }
+
+  for (const unresolvedId of unresolved) {
+    out.set(unresolvedId, null);
+  }
+  return out;
+}
+
+async function resolveSubjectProfilesForQueueItems(
+  db: Db,
+  items: QueueItemWithoutSubject[],
+): Promise<Map<string, SlimSubjectProfile>> {
+  const firstKnowledgeIds = items
+    .map((item) => item.knowledge_ids[0])
+    .filter((id): id is string => typeof id === 'string' && id.length > 0);
+  const domainByKnowledgeId = await resolveEffectiveDomainsForKnowledgeIds(db, firstKnowledgeIds);
+  return new Map(
+    [...new Set(firstKnowledgeIds)].map((knowledgeId) => [
+      knowledgeId,
+      toSlimSubjectProfile(resolveSubjectProfile(domainByKnowledgeId.get(knowledgeId) ?? null)),
+    ]),
+  );
+}
+
+function subjectProfileForKnowledgeIds(
+  knowledgeIds: string[],
+  subjectByKnowledgeId: Map<string, SlimSubjectProfile>,
+): SlimSubjectProfile {
+  const firstKnowledgeId = knowledgeIds[0];
+  if (!firstKnowledgeId) return FALLBACK_SUBJECT_PROFILE;
+  return subjectByKnowledgeId.get(firstKnowledgeId) ?? FALLBACK_SUBJECT_PROFILE;
 }
 
 // ---------- Cause lookup (latest failure per question) ----------
@@ -250,7 +335,7 @@ export async function planReviewSession(params: PlanReviewSessionParams): Promis
 
   // Project to PlanQueueItem with priority + rationale. Never-reviewed first
   // (preserve current /due ordering contract), then due slice ordered by due_at.
-  const items: PlanQueueItem[] = [];
+  const items: QueueItemWithoutSubject[] = [];
   for (const n of newRows) {
     const cause = causeByQid.get(n.question_id)?.cause ?? null;
     const lastFailureAt = causeByQid.get(n.question_id)?.created_at ?? null;
@@ -284,7 +369,15 @@ export async function planReviewSession(params: PlanReviewSessionParams): Promis
       last_failure_at: lastFailureAt ? Math.floor(lastFailureAt.getTime() / 1000) : null,
     });
   }
-  const queue = items.slice(0, limit);
+  const queueWithoutSubject = items.slice(0, limit);
+  const subjectByKnowledgeId = await resolveSubjectProfilesForQueueItems(
+    params.db,
+    queueWithoutSubject,
+  );
+  const queue: PlanQueueItem[] = queueWithoutSubject.map((item) => ({
+    ...item,
+    subject_profile: subjectProfileForKnowledgeIds(item.knowledge_ids, subjectByKnowledgeId),
+  }));
 
   // Optional LLM session_intent — best-effort, never blocks queue return.
   let session_intent: string | null = null;
