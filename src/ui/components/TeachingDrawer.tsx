@@ -10,6 +10,11 @@
 // 同一 LearningItem 一次会话；mounted=open，unmounted=close。父组件控制开关。
 
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
+import {
+  type SlimSubjectProfile,
+  resolveSubjectRenderModel,
+  subjectContentProps,
+} from '@/ui/lib/subject';
 import { Button } from '@/ui/primitives/Button';
 import { type SuggestionKind, SuggestionKindTag } from '@/ui/primitives/SuggestionKindTag';
 import { useMutation } from '@tanstack/react-query';
@@ -55,12 +60,14 @@ const SUGGESTIONS: Array<{ label: string; text: string; suggestion_kind: Suggest
 export interface TeachingDrawerProps {
   learningItemId: string;
   learningItemTitle: string;
+  subjectProfile?: SlimSubjectProfile | null;
   onClose: () => void;
 }
 
 export function TeachingDrawer({
   learningItemId,
   learningItemTitle,
+  subjectProfile,
   onClose,
 }: TeachingDrawerProps) {
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -137,6 +144,9 @@ export function TeachingDrawer({
     turnM.mutate(text.trim());
   };
 
+  const subjectModel = resolveSubjectRenderModel(subjectProfile);
+  const messageBodyProps = subjectContentProps(subjectModel, { className: 'body' });
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -154,7 +164,7 @@ export function TeachingDrawer({
           <h3>对话教学</h3>
         </div>
         <span className="context-chip" title={`context = ${learningItemId}`}>
-          {learningItemTitle}
+          {learningItemTitle} · {subjectModel.displayName}
         </span>
         <button type="button" className="drawer-close" onClick={onClose} aria-label="关闭抽屉">
           ×
@@ -184,7 +194,7 @@ export function TeachingDrawer({
                     <span>{m.role === 'agent' ? 'agent · TeachingTurnTask' : 'user · self'}</span>
                     {m.turn_kind && <span>· {TURN_KIND_LABEL[m.turn_kind]}</span>}
                   </div>
-                  <div className="body">{m.text_md}</div>
+                  <div {...messageBodyProps}>{m.text_md}</div>
                 </div>
               ))}
               {turnM.isPending && (
