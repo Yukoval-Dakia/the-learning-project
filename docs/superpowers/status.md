@@ -4,35 +4,102 @@
 > 这里记的是 **项目走到了哪、下一站去哪、为什么这么走**，不是 commit log。
 > 维护规则：每完成一个 Phase 就 update 一次；不维护周度进度。
 
-**最后更新**：2026-05-17（Phase 2A/2B/2C MVP 收尾 + Provider Manager + xiaomi/mimo 迁移）
-**当前 Phase**：2 主干已搭（review / learning intent / teaching 三循环全 ship）；剩 Maintenance agent + variant double-pass + Phase 3 Coach
+**最后更新**：2026-05-19（roadmap 重排：ADR-0014 anchor 进 main + v0.3 §1.5 Foundation/Product Track 结构落地；PR #63 N+1 前端 subject awareness 已合）
+**当前 Phase**：Foundation A 部分 ship（capability registry + judge router v2）+ Foundation B 部分 ship（前端 subject awareness, PR #63）；下一步收 Foundation A/B 剩余 + 启动 Foundation C correction event
 **主分支**：`main` 已推 `origin`
+**路线图源**：[`docs/planning/v0.3-generalized-ai-learning-framework.md`](../planning/v0.3-generalized-ai-learning-framework.md) §1.5 是当前执行清单；root `PLANNING.md` v0.12 Phase 1-4 已标 historical
 
 ---
 
-## 1. Phase 路线图
+## 1. Phase 路线图（Foundation → Product Track → Later，2026-05-19 重排）
+
+### Shipped baseline（v0.12 时期落地，事实保留）
 
 ```
-✅  0   Bootstrap                          Next 15 App Router + Postgres + Drizzle + R2 落地
-✅  0z  Self-host                          OrbStack 本地 + NAS 部署（Cloudflare Tunnel ingress）
-✅  0d  Provider Manager                   xiaomi/mimo Anthropic-compat endpoint；7 个 task 全切
-✅  1a  Subject MVP（文言文）              wenyan 数据集 + FSRS 复习闭环
-✅  1b  AI surface                         /api/ai/[task] 流式 + 工具调用统一入口
-✅  1c.1 Event-driven core                 event 表替代 mistake/review_event/dreaming_proposal
-✅  1c.2 UI main（read + write + Vision）  /record /mistakes /knowledge /learning-items
-⏳  Record model migration                   /record 统一 LearningRecord，替代 /study-log
-✅  1d  Observation surface                /events/[id] / 成本带 / ADR-0013 session lifecycle / learning_session detail / /coach 周报 / SessionSummaryTask
-🟡  2   Three orchestrators
-   ✅ 2A  Review Orchestrator               规则优先 + ReviewIntentTask
-   ✅ 2B  Learning Intent Orchestrator      我想学 X → hub+atomic LearningItem + NoteGenerateTask
-   ✅ 2C  Active Teaching Session           /learn/[id]/chat → TeachingTurnTask 循环
-   ✅ 错题闭环                              attribution_followup pg-boss handler（替换 next/server.after）
-   ✅ Variant generation                    variant_gen handler + cause-targeted prompt + 3 层防繁殖
-   ⬜ Maintenance agent                     KnowledgeReviewTask 已注册；只差 cron + accept UI
-   ⬜ VariantVerifyTask Pass 2              variant 双 pass + variants_max 计数
-⬜  3   Coach Orchestrator                  daily lane + 推迟 / 拆小 / 重学 plan suggestions
-⬜  4   Multi-subject 扩展                  wenyan 之外的科目
+✅  0     Bootstrap                Next 15 App Router + Postgres + Drizzle + R2
+✅  0z    Self-host                OrbStack 本地 + NAS 部署（Cloudflare Tunnel ingress）
+✅  0d    Provider Manager         xiaomi/mimo Anthropic-compat；7 个 task 全切
+✅  1a    Subject MVP（文言文）    wenyan 数据集 + FSRS 复习闭环
+✅  1b    AI surface               /api/ai/[task] 流式 + 工具调用统一入口
+✅  1c.1  Event-driven core        event 表替代 mistake/review_event/dreaming_proposal
+✅  1c.2  UI main                  /record /mistakes /knowledge /learning-items（read + write + Vision）
+✅  1d    Observation surface      /events/[id] / 成本带 / ADR-0013 session lifecycle / /coach 周报
+✅  2A    Review Orchestrator      规则优先 + ReviewIntentTask
+✅  2B    Learning Intent          我想学 X → hub+atomic LearningItem + NoteGenerateTask
+✅  2C    Active Teaching          /learn/[id]/chat → TeachingTurnTask 循环
+✅  错题闭环                     attribution_followup pg-boss handler
+✅  Variant generation             variant_gen handler + cause-targeted prompt + 3 层防繁殖
 ```
+
+### Foundation A — Unified Activity + Capability Registry（ADR-0014 §1/§2/§4 + N+1）
+
+```
+🟡  ActivityRef / ActivityKind schemas          ✅ src/core/schema/activity.ts
+🟡  CapabilityManifest / CapabilityRef          ✅ src/core/schema/capability.ts
+🟡  CapabilityRegistry + 默认 registry          ✅ src/core/capability/registry.ts
+🟡  exact + keyword judges 注册为 capability    ✅ src/core/capability/judges/{exact,keyword}.ts
+🟡  JudgeResultV2 (score + scoreMeaning + ref)  ✅ src/core/schema/capability.ts
+🟡  JudgeRouter v2 delegates to registry        ✅ src/server/ai/judges/router.ts
+⬜  老代码路径 question_id → ActivityRef shim    剩余 call sites 不统一
+⬜  subject identity normalization 完成度回查
+```
+
+### Foundation B — SubjectProfile + Frontend Subject Awareness（ADR-0014 §3/§10 + N+1）
+
+```
+🟡  SubjectProfile 扩展（version, causeCategories, renderConfig, schedulingHints, judgeCapabilities）
+                                                ✅ src/subjects/profile.ts + wenyan/profile.ts
+🟡  Build-time profile validator                ✅ src/core/capability/validate-profile.ts
+🟡  Frontend 读 renderConfig 渲染               ✅ PR #63 — 前端字体 / metadata / API 不再硬编码 wenyan
+🟡  API 暴露 subject profile（review / learning-item）  ✅ PR #63
+⬜  剩余 AI task prompt 抽 profileFragments     attribution / variant / teaching 还有硬编码 wenyan
+⬜  非 wenyan 第二科目 profile（math 或 english）作为 pressure test
+```
+
+### Foundation C — Judge Result Contract + Correction Event（ADR-0014 §4/§6）
+
+```
+✅  JudgeResultV2 schema + scoreMeaning + coarseOutcome  随 Foundation A 落地
+⬜  CorrectEventPayload as KnownEvent（supersede / retract / mark_wrong / restore）
+⬜  Projection 层 consult correction events
+⬜  UI 撤回 / 标错 / 恢复入口
+```
+
+注：Codex R7 把 correction event 从 N+3 提到 N+2，因为 semantic / external judge 上线后 evidence 累积快，需要先有撤回机制。
+
+### Product Track 1 — Review / Learning Item / Teaching Loop 收口（v0.3 Track A）
+
+```
+⬜  NoteVerifyTask Pass 2           笔记内容双 pass 验证
+⬜  Embedded check（atomic notes）  inline 选择题 / fill-blank
+⬜  Note 编辑 / 阅读 UX 完善
+⬜  VariantVerifyTask Pass 2        variant 双 pass + variants_max=3 计数
+⬜  Learning-item proposal rollback UI
+⬜  Teaching session idle state machine
+⬜  Record → proposal evidence loop  /record 条目能 surface 为 graph / item proposal
+```
+
+### Product Track 2 — Maintenance Agent + Proposal Inbox（v0.3 Track D）
+
+```
+⬜  统一 AiProposalPayload          kind / target / reason_md / evidence_refs / rollback_plan / cooldown_key
+⬜  Maintenance agent               KnowledgeReviewTask cron + accept UI（cron + UI 缺）
+⬜  Dreaming lane                   daily AI 主动 proposal（reuse inbox）
+⬜  Acceptance-rate / dismiss-reason 信号 → 未来 ranking
+⬜  Bad accepted proposal 显式 retraction / rollback 流程
+```
+
+### Later — Standalone MCP / Plugin / Multi-Subject 扩展
+
+```
+🚫  公共 MCP server / Plugin platform   v0.3 §6 Non-Goal；产品内 runtime tool 走 in-process MCP adapter
+🚫  外部 MCP 消费                       延后到内部 loop 稳定 + 真有外部客户端需要
+⏳  Multi-subject 扩展                  阻塞于 Foundation A+B 收口 + 非 wenyan pressure profile
+⏳  Source / Grounding / Multimodal     v0.3 Track F；presume Foundation A/B/C ready
+```
+
+**遗留迁移项**（独立于 Foundation/Track 顺序）：
+- ⏳ Record model migration：`/record` 统一 LearningRecord，替代 `/study-log`（Phase 1c.2 后续）
 
 ---
 
@@ -47,8 +114,11 @@
 | 0011 v2 | tool_use + suggestion + edge events | agent 的所有写入都过 event |
 | 0012 | mastery view | DROP 双层 mastery；改用 derived view |
 | 0013 | /review session lifecycle | eager 开 session + sendBeacon close + 6h orphan cron 兜底 |
+| 0014 | Generalized Activity + Capability Registry | `ActivityRef` 取代 question_id；judge/renderer/scheduler 注册制；SubjectProfile 纯数据 + 完全 profile-driven 归因；JudgeResult v2 连续分数；correction event 一等公民；FSRS 是 scheduling policy 之一 |
 
 新 ADR 模板见 `docs/adr/`。改弦更张前先翻当时的 ADR 别重新论证。
+
+ADR-0014 配套：[7 轮讨论 + 10 决议 summary](../discussion/summary.md)、[N+1 实施计划（2125 行）](plans/2026-05-18-capability-registry-foundation.md)。
 
 ---
 
@@ -145,6 +215,10 @@
 
 | 看什么 | 去哪 |
 |---|---|
+| **当前路线图** | [`docs/planning/v0.3-generalized-ai-learning-framework.md`](../planning/v0.3-generalized-ai-learning-framework.md) §1.5 — Foundation A/B/C → Product Track 1/2 → Later |
+| **Anchor 决议** | [ADR-0014 — Generalized Activity + Capability Registry](../adr/0014-generalized-activity-and-capability-registry.md) + [discussion/summary.md](../discussion/summary.md)（10 决议） |
+| Phase N+1 详细实施 | [`plans/2026-05-18-capability-registry-foundation.md`](plans/2026-05-18-capability-registry-foundation.md) |
+| Historical roadmap（v0.12） | root `PLANNING.md`（保留作历史决策记录，**不要按此顺序认领新工作**） |
 | 项目能干什么 / 如何启动 | `CLAUDE.md` |
 | 架构总览 | `docs/architecture.md` |
 | 长期 orchestrator 设计 | `docs/superpowers/specs/2026-05-09-learning-orchestrator-long-term-design.md` |

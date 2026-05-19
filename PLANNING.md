@@ -5,6 +5,20 @@
 
 ---
 
+## ⚠️ 当前路线图位置（2026-05-19 更新）
+
+**Current roadmap → [`docs/planning/v0.3-generalized-ai-learning-framework.md`](docs/planning/v0.3-generalized-ai-learning-framework.md) §1.5**（Foundation A/B/C → Product Track 1/2 → Later）
+
+**Anchor ADR → [ADR-0014 — Generalized Learning Activity + Capability Registry](docs/adr/0014-generalized-activity-and-capability-registry.md)**（proposed, 2026-05-18；10 决议见 [`docs/discussion/summary.md`](docs/discussion/summary.md)；N+1 实施步骤见 [`docs/superpowers/plans/2026-05-18-capability-registry-foundation.md`](docs/superpowers/plans/2026-05-18-capability-registry-foundation.md)）
+
+**Phase 进度索引 → [`docs/superpowers/status.md`](docs/superpowers/status.md)**
+
+下面 Phase 1 / 1a / 1b / 1.5 / 2 / 3 / 4 是 **v0.12 historical roadmap**，整段保留作为历史决策记录，但**已被 v0.3 superseded**。理由：v0.12 假设"文言文先 → 其他学科 Phase 4 再说"；现在 SubjectProfile / CapabilityRegistry / renderConfig 已经成为基础层，Phase 顺序必须重排，否则后续实现会继续半泛化半硬编码。
+
+新工作请按 v0.3 §1.5 Foundation A/B/C → Product Track 1/2 → Later 顺序排。
+
+---
+
 ## 定位
 
 不是「错题本 + 进度统计 + 笔记工具」三件套的拼盘，而是围绕**知识点图谱**这一根锚组织起来的个人学习系统。
@@ -57,7 +71,11 @@ the-learning-project/
 
 ---
 
-## 阶段路线图
+## 阶段路线图（v0.12 historical, superseded by [v0.3 §1.5](docs/planning/v0.3-generalized-ai-learning-framework.md)）
+
+> 下面 Phase 1 / 1a / 1b / 1.5 / 2 / 3 / 4 是 2026-05 重构前的执行计划。许多 checkbox 项已落地（详见 [`docs/superpowers/status.md`](docs/superpowers/status.md)），剩余项的优先级和顺序已在 v0.3 中重排。**不要再按下面顺序认领新工作**——按 v0.3 §1.5 Foundation A/B/C → Product Track 1/2 → Later 走。
+>
+> 保留这段是为了：① 不丢历史决策的 why；② 让 v0.12 时期的引用（specs / brainstorms / 旧 PR 描述）仍有 anchor 可指。
 
 ### Phase 1 · 让一个闭环跑起来（最小可用）
 
