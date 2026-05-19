@@ -12,8 +12,10 @@
 import { newId } from '@/core/ids';
 import { CauseCategory } from '@/core/schema/business';
 import type { Db } from '@/db/client';
+import type { SubjectProfile } from '@/subjects/profile';
 import { z } from 'zod';
 import { getJudgeForAttempt, writeEvent } from '../events/queries';
+import { writeRetryableAiFailureLedger } from './ai_failure_log';
 
 // Lane B `CauseSchema` uses `analysis_md`. Step 7 cut over: the AttributionTask
 // prompt now emits `analysis_md` natively, so the Step 4 `z.preprocess` bridge
@@ -58,6 +60,7 @@ export interface RunAttributionAndWriteJudgeEventParams {
   input: AttributionInput;
   runTaskFn: (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
   env?: unknown;
+  subjectProfile?: SubjectProfile;
   /**
    * Optional: knowledge ids the judge referenced. Defaults to []. Used to populate
    * JudgeOnEvent.payload.referenced_knowledge_ids; caller (route layer) typically
@@ -89,7 +92,10 @@ export async function runAttributionAndWriteJudgeEvent(
       return;
     }
 
-    const result = await params.runTaskFn('AttributionTask', params.input, { env: params.env });
+    const result = await params.runTaskFn('AttributionTask', params.input, {
+      env: params.env,
+      subjectProfile: params.subjectProfile,
+    });
     const parsed = parseAttributionOutput(result.text);
 
     const judgeId = newId();
@@ -118,5 +124,6 @@ export async function runAttributionAndWriteJudgeEvent(
     });
   } catch (err) {
     console.error('runAttributionAndWriteJudgeEvent: failed (attempt unaffected)', err);
+    await writeRetryableAiFailureLedger(params.db, 'AttributionTask');
   }
 }

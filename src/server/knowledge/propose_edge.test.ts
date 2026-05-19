@@ -1,7 +1,7 @@
 // Phase 2 Dreaming — knowledge_edge nightly propose tests.
 
 import { tasks } from '@/ai/registry';
-import { event, knowledge, knowledge_edge } from '@/db/schema';
+import { cost_ledger, event, knowledge, knowledge_edge } from '@/db/schema';
 import type { FailureAttempt } from '@/server/events/queries';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -355,6 +355,12 @@ describe('runEdgeProposeAndWrite', () => {
       .from(event)
       .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge_edge')));
     expect(events).toHaveLength(0);
+    const ledgerRows = await db
+      .select()
+      .from(cost_ledger)
+      .where(eq(cost_ledger.task_kind, 'KnowledgeEdgeProposeTask'));
+    expect(ledgerRows).toHaveLength(1);
+    expect(ledgerRows[0].outcome).toBe('failed_retryable');
   });
 
   it('swallows parse error (no inserts; no throw)', async () => {

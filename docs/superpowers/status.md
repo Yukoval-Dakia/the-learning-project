@@ -4,8 +4,8 @@
 > 这里记的是 **项目走到了哪、下一站去哪、为什么这么走**，不是 commit log。
 > 维护规则：每完成一个 Phase 就 update 一次；不维护周度进度。
 
-**最后更新**：2026-05-19（roadmap 重排：ADR-0014 anchor 进 main + v0.3 §1.5 Foundation/Product Track 结构落地；PR #63 N+1 前端 subject awareness 已合）
-**当前 Phase**：Foundation A 部分 ship（capability registry + judge router v2）+ Foundation B 部分 ship（前端 subject awareness, PR #63）；下一步收 Foundation A/B 剩余 + 启动 Foundation C correction event
+**最后更新**：2026-05-19（Foundation A/B closeout slice + Foundation C correction event substrate 已验证；等待合入 main）
+**当前 Phase**：Foundation A/B 进入收口阶段（review read paths + high-use AI prompts 已补 shim/profile）；Foundation C correction event 已有 schema/projection/API/UI；下一步做第二科目 pressure fixture + N+2/Product Track 拆分
 **主分支**：`main` 已推 `origin`
 **路线图源**：[`docs/planning/v0.3-generalized-ai-learning-framework.md`](../planning/v0.3-generalized-ai-learning-framework.md) §1.5 是当前执行清单；root `PLANNING.md` v0.12 Phase 1-4 已标 historical
 
@@ -40,7 +40,7 @@
 🟡  exact + keyword judges 注册为 capability    ✅ src/core/capability/judges/{exact,keyword}.ts
 🟡  JudgeResultV2 (score + scoreMeaning + ref)  ✅ src/core/schema/capability.ts
 🟡  JudgeRouter v2 delegates to registry        ✅ src/server/ai/judges/router.ts
-⬜  老代码路径 question_id → ActivityRef shim    剩余 call sites 不统一
+🟡  老代码路径 question_id → ActivityRef shim    review plan/due 已暴露 activity_ref；其余 legacy call sites 待统一
 ⬜  subject identity normalization 完成度回查
 ```
 
@@ -52,7 +52,7 @@
 🟡  Build-time profile validator                ✅ src/core/capability/validate-profile.ts
 🟡  Frontend 读 renderConfig 渲染               ✅ PR #63 — 前端字体 / metadata / API 不再硬编码 wenyan
 🟡  API 暴露 subject profile（review / learning-item）  ✅ PR #63
-⬜  剩余 AI task prompt 抽 profileFragments     attribution / variant / teaching 还有硬编码 wenyan
+✅  剩余 high-use AI task prompt 抽 profileFragments  attribution / graph proposal / variant / teaching / summary / knowledge review 已走 SubjectProfile
 ⬜  非 wenyan 第二科目 profile（math 或 english）作为 pressure test
 ```
 
@@ -60,9 +60,9 @@
 
 ```
 ✅  JudgeResultV2 schema + scoreMeaning + coarseOutcome  随 Foundation A 落地
-⬜  CorrectEventPayload as KnownEvent（supersede / retract / mark_wrong / restore）
-⬜  Projection 层 consult correction events
-⬜  UI 撤回 / 标错 / 恢复入口
+✅  CorrectEventPayload as KnownEvent（supersede / retract / mark_wrong / restore）
+✅  Projection 层 consult correction events
+✅  UI 撤回 / 标错 / 恢复入口
 ```
 
 注：Codex R7 把 correction event 从 N+3 提到 N+2，因为 semantic / external judge 上线后 evidence 累积快，需要先有撤回机制。
@@ -173,7 +173,7 @@ ADR-0014 配套：[7 轮讨论 + 10 决议 summary](../discussion/summary.md)、
 | `/knowledge` | Loom 树 + mesh + 手动建边 | 边提议 accept/reverse/change_type/dismiss |
 | `/knowledge/[id]` | 知识点详情 | edge proposals + 相邻边 |
 | `/records` | 学习记录列表 / timeline | 替代旧 `/study-log`，实现待迁移 |
-| `/events/[id]` | 事件链浏览器 | caused_by 上游 + 下游展开 |
+| `/events/[id]` | 事件链浏览器 | caused_by 上游 + 下游展开 + correction status/actions |
 | `/review` | FSRS 复习闭环 | ADR-0013 session row + ReviewIntent 字幕 |
 | `/learning-sessions/[id]` | 复习会话详情 + 总结 | SessionSummaryTask 落 summary_md |
 | `/coach` | 周度报表 | 柱状图 + 易错知识点 + 归因分布 |

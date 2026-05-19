@@ -5,7 +5,7 @@ This project uses a **single-context** layout.
 ## Layout
 
 - **Context file**: `CONTEXT.md` at repo root — 领域术语表（领域专家视角的术语，不收纯实现概念）
-- **ADR directory**: `docs/adr/` at repo root — 当前 12 个 ADR（0001–0013，跳过 0009）
+- **ADR directory**: `docs/adr/` at repo root — 当前 13 个 ADR（0001–0014，跳过 0009）；ADR-0014 是当前 generalized framework / capability registry roadmap anchor
 
 ## Consumer Rules
 

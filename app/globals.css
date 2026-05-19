@@ -1633,6 +1633,9 @@ ol {
 .event-card.is-downstream {
   border-left: 3px solid var(--ink-5);
 }
+.event-card.is-correction {
+  border-left: 3px solid var(--again);
+}
 
 .event-card .ec-head {
   display: flex;
@@ -1728,6 +1731,64 @@ ol {
 }
 .event-card .ec-jump a:hover {
   text-decoration: underline;
+}
+
+.ec-correction-panel {
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--paper-raised);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 var(--s-3);
+}
+.ec-correction-head,
+.ec-correction-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ec-correction-head a {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--coral);
+  text-decoration: none;
+}
+.ec-correction-panel textarea {
+  min-height: 72px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--paper-sunk);
+  color: var(--ink-2);
+  padding: 8px;
+  font: inherit;
+}
+.ec-correction-actions button {
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--paper);
+  color: var(--ink-2);
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.ec-correction-actions button:disabled {
+  cursor: not-allowed;
+  color: var(--ink-5);
+  background: var(--paper-sunk);
+}
+.ec-muted,
+.ec-error {
+  margin: 0;
+  font-size: var(--fs-caption);
+}
+.ec-muted {
+  color: var(--ink-4);
+}
+.ec-error {
+  color: var(--again-ink);
 }
 
 .breadcrumb {

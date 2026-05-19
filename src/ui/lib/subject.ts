@@ -116,7 +116,7 @@ export function subjectContentProps(
   const className = [model.contentClassName, options.className].filter(Boolean).join(' ');
   return {
     className,
-    style: { ...model.contentStyle, ...options.style },
+    style: { ...options.style, ...model.contentStyle },
     'data-subject': model.id,
     ...(model.renderConfig.notation ? { 'data-notation': model.renderConfig.notation } : {}),
   };

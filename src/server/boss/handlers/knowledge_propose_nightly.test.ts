@@ -1,12 +1,17 @@
 import { createId } from '@paralleldrive/cuid2';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { db } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
 import { and, eq } from 'drizzle-orm';
+import { resetDb } from '../../../../tests/helpers/db';
 import { runKnowledgeProposeNightly } from './knowledge_propose_nightly';
 
 describe('knowledge_propose_nightly handler', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
   it('processes recent failure attempts via runProposeAndWrite (per-attempt try-catch)', async () => {
     // Seed knowledge node so propose has a tree
     const kId = createId();
@@ -14,7 +19,7 @@ describe('knowledge_propose_nightly handler', () => {
     await db.insert(knowledge).values({
       id: kId,
       name: 'TestKnowledge',
-      domain: 'wenyan',
+      domain: 'math',
       parent_id: null,
       created_at: now,
       updated_at: now,
@@ -53,7 +58,7 @@ describe('knowledge_propose_nightly handler', () => {
     });
 
     // Mock runTaskFn that returns valid propose output
-    const runTaskFn = vi.fn(async () => ({
+    const runTaskFn = vi.fn(async (_kind: string, _input: unknown, _ctx: unknown) => ({
       text: JSON.stringify({
         proposals: [{ name: 'NewSubNode', parent_id: kId, reasoning: 'because reasons' }],
       }),
@@ -62,6 +67,9 @@ describe('knowledge_propose_nightly handler', () => {
     const result = await runKnowledgeProposeNightly(db, { runTaskFn });
     expect(result.processed).toBeGreaterThanOrEqual(1);
     expect(runTaskFn).toHaveBeenCalled();
+    expect(runTaskFn.mock.calls[0]?.[2]).toMatchObject({
+      subjectProfile: { id: 'math' },
+    });
 
     // Verify propose event written (event-based proposals post-Step-9)
     const proposals = await db

@@ -12,6 +12,7 @@
 // projection all happen via the existing /api/review/submit path; this module
 // is purely the planner.
 
+import { type ActivityRefT, questionRef } from '@/core/schema/activity';
 import type { Db } from '@/db/client';
 import { knowledge, material_fsrs_state, question } from '@/db/schema';
 import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
@@ -27,6 +28,7 @@ import type { CauseCategoryT, FsrsStateSchemaT } from '@/core/schema/event/block
 // ---------- Public types ----------
 
 export interface PlanQueueItem {
+  activity_ref: ActivityRefT;
   question_id: string;
   prompt_md: string;
   reference_md: string | null;
@@ -340,6 +342,7 @@ export async function planReviewSession(params: PlanReviewSessionParams): Promis
     const cause = causeByQid.get(n.question_id)?.cause ?? null;
     const lastFailureAt = causeByQid.get(n.question_id)?.created_at ?? null;
     items.push({
+      activity_ref: questionRef(n.question_id),
       question_id: n.question_id,
       prompt_md: n.prompt_md.slice(0, 1000),
       reference_md: n.reference_md ? n.reference_md.slice(0, 1000) : null,
@@ -358,6 +361,7 @@ export async function planReviewSession(params: PlanReviewSessionParams): Promis
     const overdue = daysOverdue(r.due_at, now);
     const lapses = state?.lapses ?? 0;
     items.push({
+      activity_ref: questionRef(r.question_id),
       question_id: r.question_id,
       prompt_md: r.prompt_md.slice(0, 1000),
       reference_md: r.reference_md ? r.reference_md.slice(0, 1000) : null,

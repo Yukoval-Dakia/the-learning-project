@@ -27,7 +27,7 @@ function normalize(value: string): string {
 
 function classifyScore(score: number): 'correct' | 'partial' | 'incorrect' {
   if (score >= 0.85) return 'correct';
-  if (score > 0) return 'partial';
+  if (score > 0.4) return 'partial';
   return 'incorrect';
 }
 

@@ -1,7 +1,7 @@
 // Phase 1c.1 Step 9.I — propose.test updated for event-based proposals.
 
 import { tasks } from '@/ai/registry';
-import { event, knowledge } from '@/db/schema';
+import { cost_ledger, event, knowledge } from '@/db/schema';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -158,6 +158,12 @@ describe('runProposeAndWrite', () => {
       .from(event)
       .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge')));
     expect(proposals).toHaveLength(0);
+    const ledgerRows = await db
+      .select()
+      .from(cost_ledger)
+      .where(eq(cost_ledger.task_kind, 'KnowledgeProposeTask'));
+    expect(ledgerRows).toHaveLength(1);
+    expect(ledgerRows[0].outcome).toBe('failed_retryable');
   });
 
   it('swallows parseProposeOutput error (no inserts; no throw)', async () => {

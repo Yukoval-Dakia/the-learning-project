@@ -180,6 +180,36 @@ async function seedFixture() {
   });
 }
 
+async function seedCorrectionEvent(opts: {
+  id: string;
+  target_event_id: string;
+  correction_kind: 'retract' | 'mark_wrong' | 'restore' | 'supersede';
+  replacement_event_id?: string;
+  created_at: Date;
+}) {
+  const db = testDb();
+  await db.insert(event).values({
+    id: opts.id,
+    session_id: null,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'correct',
+    subject_kind: 'event',
+    subject_id: opts.target_event_id,
+    outcome: 'success',
+    payload: {
+      correction_kind: opts.correction_kind,
+      replacement_event_id: opts.replacement_event_id,
+      reason_md: 'manual correction',
+      affected_refs: [{ kind: 'question', id: 'q1' }],
+    },
+    caused_by_event_id: null,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: opts.created_at,
+  });
+}
+
 describe('integration: mistake read-path back-compat (event stream → mistake-shape projection)', () => {
   beforeEach(async () => {
     await resetDb();
@@ -236,6 +266,37 @@ describe('integration: mistake read-path back-compat (event stream → mistake-s
       referenced_knowledge_ids: noJudge.referenced_knowledge_ids,
       judge_present: noJudge.judge !== undefined,
     }).toEqual(noJudgeBaseline);
+  });
+
+  it('getFailureAttempts and getRecentReviewEvents ignore corrected rows in active projections', async () => {
+    await seedFixture();
+    const db = testDb();
+    await seedCorrectionEvent({
+      id: 'evt_correct_attempt_no_judge',
+      target_event_id: 'evt_attempt_no_judge',
+      correction_kind: 'retract',
+      created_at: new Date(FIXTURE_TIME.getTime() + 240_000),
+    });
+    await seedCorrectionEvent({
+      id: 'evt_correct_judge_1',
+      target_event_id: 'evt_judge_for_attempt_1',
+      correction_kind: 'mark_wrong',
+      created_at: new Date(FIXTURE_TIME.getTime() + 300_000),
+    });
+    await seedCorrectionEvent({
+      id: 'evt_correct_review_1',
+      target_event_id: 'evt_review_1',
+      correction_kind: 'retract',
+      created_at: new Date(FIXTURE_TIME.getTime() + 360_000),
+    });
+
+    const attempts = await getFailureAttempts(db);
+    const reviews = await getRecentReviewEvents(db, { questionIds: ['q1'] });
+
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0].attempt_event_id).toBe('evt_attempt_with_judge');
+    expect(attempts[0].judge).toBeUndefined();
+    expect(reviews).toHaveLength(0);
   });
 
   it('getRecentReviewEvents returns the seeded review with parsed FSRS state', async () => {
