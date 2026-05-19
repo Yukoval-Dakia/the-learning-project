@@ -218,6 +218,58 @@ describe('runAttributionFollowup', () => {
     });
   });
 
+  it('writes a math-specific unit_error judge event from AttributionTask output', async () => {
+    const db = testDb();
+    await db.insert(knowledge).values({
+      id: 'k_math',
+      name: '单位换算',
+      domain: 'math',
+      parent_id: null,
+      merged_from: [],
+      proposed_by_ai: false,
+      approval_status: 'approved',
+      created_at: new Date(),
+      updated_at: new Date(),
+      version: 0,
+    });
+    await seedQuestion('q_math', ['k_math']);
+    const attemptId = createId();
+    await seedFailureAttempt(attemptId, 'q_math', ['k_math']);
+
+    const runTaskFn = vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({
+      text: JSON.stringify({
+        primary_category: 'unit_error',
+        secondary_categories: ['calculation'],
+        analysis_md: '用户把厘米和米混用，最终答案量纲不一致。',
+        confidence: 0.9,
+      }),
+    }));
+
+    const result = await runAttributionFollowup({
+      db,
+      attemptEventId: attemptId,
+      runTaskFn,
+    });
+
+    expect(result.status).toBe('attempted');
+    const judges = await db
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'judge'),
+          eq(event.subject_kind, 'event'),
+          eq(event.caused_by_event_id, attemptId),
+        ),
+      );
+    expect(judges).toHaveLength(1);
+    const payload = judges[0].payload as {
+      cause: { primary_category: string; secondary_categories: string[] };
+    };
+    expect(payload.cause.primary_category).toBe('unit_error');
+    expect(payload.cause.secondary_categories).toEqual(['calculation']);
+  });
+
   it('is idempotent — re-running after a judge already exists is a no-op', async () => {
     const db = testDb();
     await db.insert(knowledge).values({
