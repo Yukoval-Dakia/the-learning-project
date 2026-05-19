@@ -450,9 +450,7 @@ describe('GET /api/learning-items/[id]', () => {
       created_at: now,
       updated_at: now,
     });
-    await db
-      .insert(learning_item)
-      .values(baseItem('li1', { knowledge_ids: ['k_math'] }));
+    await db.insert(learning_item).values(baseItem('li1', { knowledge_ids: ['k_math'] }));
 
     const res = await GET(getReq('li1'), { params: Promise.resolve({ id: 'li1' }) });
     expect(res.status).toBe(200);

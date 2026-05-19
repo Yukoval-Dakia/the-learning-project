@@ -2,6 +2,11 @@
 
 import { TeachingDrawer } from '@/ui/components/TeachingDrawer';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
+import {
+  type SlimSubjectProfile,
+  resolveSubjectRenderModel,
+  subjectContentProps,
+} from '@/ui/lib/subject';
 import { Badge } from '@/ui/primitives/Badge';
 import { Button } from '@/ui/primitives/Button';
 import { Card } from '@/ui/primitives/Card';
@@ -50,6 +55,7 @@ interface Detail {
   title: string;
   content: string;
   knowledge_ids: string[];
+  subject_profile: SlimSubjectProfile;
   status: ItemStatus;
   parent_learning_item_id: string | null;
   primary_artifact_id: string | null;
@@ -185,6 +191,9 @@ export default function LearningItemDetailPage() {
       !data.children.some((c) => c.id === r.id),
   );
   const allowedStatusTargets = STATUS_TRANSITIONS[data.status] ?? [];
+  const subjectModel = resolveSubjectRenderModel(data.subject_profile);
+  const titleInputProps = subjectContentProps(subjectModel, { style: inputStyle });
+  const contentTextareaProps = subjectContentProps(subjectModel, { style: textareaStyle });
 
   return (
     <Shell>
@@ -221,6 +230,7 @@ export default function LearningItemDetailPage() {
       <Card pad="lg" style={{ marginTop: 'var(--s-4)' }}>
         <Label>标题</Label>
         <input
+          {...titleInputProps}
           type="text"
           value={titleDraft ?? data.title}
           maxLength={200}
@@ -232,7 +242,6 @@ export default function LearningItemDetailPage() {
               setTitleDraft(null);
             }
           }}
-          style={inputStyle}
         />
 
         <div
@@ -246,6 +255,7 @@ export default function LearningItemDetailPage() {
         >
           <Label inline>状态</Label>
           <StatusBadge status={data.status as never} />
+          <Badge tone="info">{subjectModel.displayName}</Badge>
           {allowedStatusTargets.map((t) => (
             <Button
               key={t}
@@ -261,6 +271,7 @@ export default function LearningItemDetailPage() {
         <div style={{ marginTop: 'var(--s-3)' }}>
           <Label>内容</Label>
           <textarea
+            {...contentTextareaProps}
             value={contentDraft ?? data.content}
             rows={8}
             maxLength={10_000}
@@ -272,7 +283,6 @@ export default function LearningItemDetailPage() {
                 setContentDraft(null);
               }
             }}
-            style={textareaStyle}
           />
         </div>
 
@@ -328,7 +338,9 @@ export default function LearningItemDetailPage() {
       </Card>
 
       {/* Phase 2B — primary artifact (note) sections when present */}
-      {data.primary_artifact && <ArtifactView artifact={data.primary_artifact} />}
+      {data.primary_artifact && (
+        <ArtifactView artifact={data.primary_artifact} subjectProfile={data.subject_profile} />
+      )}
 
       {/* Children */}
       <Card pad="lg" style={{ marginTop: 'var(--s-4)' }}>
@@ -364,6 +376,7 @@ export default function LearningItemDetailPage() {
         <TeachingDrawer
           learningItemId={data.id}
           learningItemTitle={data.title}
+          subjectProfile={data.subject_profile}
           onClose={() => setTeachOpen(false)}
         />
       )}
@@ -386,7 +399,13 @@ const SOURCE_TIER_LABEL: Record<NoteSection['source_tier'], string> = {
   user_verified: '已核',
 };
 
-function ArtifactView({ artifact }: { artifact: PrimaryArtifact }) {
+function ArtifactView({
+  artifact,
+  subjectProfile,
+}: {
+  artifact: PrimaryArtifact;
+  subjectProfile: SlimSubjectProfile;
+}) {
   return (
     <section className="artifact-view">
       <div className="artifact-view-head">
@@ -411,21 +430,26 @@ function ArtifactView({ artifact }: { artifact: PrimaryArtifact }) {
       )}
       {artifact.generation_status === 'ready' && artifact.sections && (
         <div className="artifact-sections">
-          {artifact.sections.map((s) => (
-            <div key={s.id} className="artifact-section">
-              <div className="artifact-section-head">
-                <strong>{SECTION_LABEL[s.kind]}</strong>
-                <span className="artifact-section-tier">{SOURCE_TIER_LABEL[s.source_tier]}</span>
+          {artifact.sections.map((s) => {
+            const sectionBodyProps = subjectContentProps(subjectProfile, {
+              className: 'artifact-section-body',
+            });
+            return (
+              <div key={s.id} className="artifact-section">
+                <div className="artifact-section-head">
+                  <strong>{SECTION_LABEL[s.kind]}</strong>
+                  <span className="artifact-section-tier">{SOURCE_TIER_LABEL[s.source_tier]}</span>
+                </div>
+                <pre {...sectionBodyProps}>{s.body_md}</pre>
+                {s.kind === 'check' && s.embedded_check && (
+                  <p className="artifact-section-stub">
+                    embedded check · {s.embedded_check.question_ids.length} 题（Phase 3 启用 quiz
+                    引擎）
+                  </p>
+                )}
               </div>
-              <pre className="artifact-section-body">{s.body_md}</pre>
-              {s.kind === 'check' && s.embedded_check && (
-                <p className="artifact-section-stub">
-                  embedded check · {s.embedded_check.question_ids.length} 题（Phase 3 启用 quiz
-                  引擎）
-                </p>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </section>

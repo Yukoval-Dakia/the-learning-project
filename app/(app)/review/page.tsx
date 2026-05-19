@@ -6,6 +6,11 @@ import {
   SessionEndSummary,
 } from '@/ui/components/ReviewSessionChrome';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
+import {
+  type SlimSubjectProfile,
+  resolveSubjectRenderModel,
+  subjectContentProps,
+} from '@/ui/lib/subject';
 import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
 import { CauseBadge } from '@/ui/primitives/CauseBadge';
 import { PageHeader } from '@/ui/primitives/PageHeader';
@@ -34,6 +39,7 @@ interface PlanQueueItem {
   priority: 1 | 2 | 3 | 4 | 5;
   rationale: string;
   last_failure_at: number | null;
+  subject_profile: SlimSubjectProfile;
 }
 
 interface ReviewPlan {
@@ -234,6 +240,10 @@ export default function ReviewPage() {
   }, [phase, submitM.isPending, handleReveal, handleRate]);
 
   const cause = current?.cause ?? null;
+  const currentSubjectModel = resolveSubjectRenderModel(current?.subject_profile ?? null);
+  const qbodyProps = subjectContentProps(currentSubjectModel, { className: 'qbody' });
+  const answerInputProps = subjectContentProps(currentSubjectModel);
+  const refTextProps = subjectContentProps(currentSubjectModel, { className: 'ref-text' });
   const reviewedCount = Math.min(index, total);
   const session = sessionId
     ? { id: sessionId, status: isDone ? 'completed' : sessionStatus, started_at: sessionStartedAt }
@@ -309,6 +319,7 @@ export default function ReviewPage() {
           <div className="progress">
             <span>
               {index + 1} / {total} · FSRS
+              {` · ${currentSubjectModel.displayName}`}
               {current.knowledge_ids[0] && ` · ${current.knowledge_ids[0]}`}
             </span>
             <span>{cause && `上次归因 ${cause}`}</span>
@@ -319,7 +330,7 @@ export default function ReviewPage() {
             <span className="rationale">{current.rationale}</span>
           </div>
 
-          <div className="qbody">{current.prompt_md}</div>
+          <div {...qbodyProps}>{current.prompt_md}</div>
 
           {current.knowledge_ids.length > 0 && (
             <div className="knowledge-chips">
@@ -335,6 +346,7 @@ export default function ReviewPage() {
             <>
               <div className="label-mono">你的答案</div>
               <textarea
+                {...answerInputProps}
                 placeholder="不看参考，先答…… Cmd/Ctrl + Enter 进入对照"
                 value={answer}
                 onChange={(e) => setAnswer(e.target.value)}
@@ -345,7 +357,7 @@ export default function ReviewPage() {
                 onToggle={(e) => setShowRef((e.target as HTMLDetailsElement).open)}
               >
                 <summary>参考答 ▾（提前看会减分）</summary>
-                <div className="ref-text">{current.reference_md ?? '(无)'}</div>
+                <div {...refTextProps}>{current.reference_md ?? '(无)'}</div>
               </details>
               <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                 <button type="button" className="btn-rating coral" onClick={handleReveal}>
@@ -361,13 +373,21 @@ export default function ReviewPage() {
               <div className="feedback-split">
                 <div>
                   <div className="label-mono">你的答案</div>
-                  <p className={`feedback-prose${answer.trim() ? '' : ' muted'}`}>
+                  <p
+                    {...subjectContentProps(currentSubjectModel, {
+                      className: `feedback-prose${answer.trim() ? '' : ' muted'}`,
+                    })}
+                  >
                     {answer.trim() || '（空）'}
                   </p>
                 </div>
                 <div>
                   <div className="label-mono">参考答案</div>
-                  <p className={`feedback-prose${current.reference_md ? '' : ' muted'}`}>
+                  <p
+                    {...subjectContentProps(currentSubjectModel, {
+                      className: `feedback-prose${current.reference_md ? '' : ' muted'}`,
+                    })}
+                  >
                     {current.reference_md ?? '（无）'}
                   </p>
                 </div>

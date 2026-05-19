@@ -22,6 +22,11 @@ export interface SubjectContentProps {
   'data-notation'?: string;
 }
 
+export interface SubjectContentOptions {
+  className?: string;
+  style?: CSSProperties;
+}
+
 export const DEFAULT_SLIM_SUBJECT_PROFILE: SlimSubjectProfile = {
   id: 'wenyan',
   displayName: '文言文',
@@ -93,18 +98,25 @@ export function resolveSubjectRenderModel(profile?: SlimSubjectProfile | null): 
 function isRenderModel(
   profileOrModel: SlimSubjectProfile | SubjectRenderModel | null | undefined,
 ): profileOrModel is SubjectRenderModel {
-  return typeof profileOrModel?.contentClassName === 'string';
+  return (
+    profileOrModel !== null &&
+    profileOrModel !== undefined &&
+    'contentClassName' in profileOrModel &&
+    typeof profileOrModel.contentClassName === 'string'
+  );
 }
 
 export function subjectContentProps(
   profileOrModel?: SlimSubjectProfile | SubjectRenderModel | null,
+  options: SubjectContentOptions = {},
 ): SubjectContentProps {
   const model = isRenderModel(profileOrModel)
     ? profileOrModel
     : resolveSubjectRenderModel(profileOrModel);
+  const className = [options.className, model.contentClassName].filter(Boolean).join(' ');
   return {
-    className: model.contentClassName,
-    style: model.contentStyle,
+    className,
+    style: { ...options.style, ...model.contentStyle },
     'data-subject': model.id,
     ...(model.renderConfig.notation ? { 'data-notation': model.renderConfig.notation } : {}),
   };
