@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { parseEvent } from './event';
 import {
   CauseCategory,
+  CauseSchema,
   FsrsState,
   KnowledgeInsert,
   LearningItemInsert,
@@ -30,9 +31,25 @@ describe('schema generated from drizzle', () => {
     expect(result.success).toBe(true);
   });
 
-  it('CauseCategory rejects unknown category', () => {
-    const result = CauseCategory.safeParse('not_a_real_category');
+  it('CauseCategory accepts subject-specific cause ids with the shared id grammar', () => {
+    const result = CauseCategory.safeParse('unit_error');
+    expect(result.success).toBe(true);
+  });
+
+  it('CauseCategory rejects invalid cause id syntax', () => {
+    const result = CauseCategory.safeParse('Unit Error');
     expect(result.success).toBe(false);
+  });
+
+  it('CauseSchema accepts universal and subject-specific cause ids', () => {
+    expect(
+      CauseSchema.safeParse({
+        primary_category: 'time_pressure',
+        secondary_categories: ['unit_error'],
+        analysis_md: '单位换算错误导致最终答案量纲不一致。',
+        confidence: 0.8,
+      }).success,
+    ).toBe(true);
   });
 
   it('LearningItemInsert accepts minimal payload', () => {
