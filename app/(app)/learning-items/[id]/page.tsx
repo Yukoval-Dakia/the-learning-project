@@ -558,7 +558,6 @@ const errorStyle: React.CSSProperties = {
 const inputStyle: React.CSSProperties = {
   width: '100%',
   padding: '8px 12px',
-  fontFamily: 'var(--font-serif)',
   fontSize: 'var(--fs-body)',
   background: 'var(--paper-sunk)',
   color: 'var(--ink)',
@@ -571,7 +570,6 @@ const inputStyle: React.CSSProperties = {
 const textareaStyle: React.CSSProperties = {
   ...inputStyle,
   minHeight: 140,
-  fontFamily: 'var(--font-serif)',
   lineHeight: 'var(--lh-prose)',
   resize: 'vertical',
 };

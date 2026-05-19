@@ -83,14 +83,23 @@ describe('resolveSubjectRenderModel', () => {
     });
   });
 
-  it('lets caller options override model className order and style fields', () => {
-    const props = subjectContentProps(baseProfile, {
-      className: 'qbody',
-      style: { fontFamily: 'var(--font-mono)' },
-    });
+  it('keeps subject font when caller options include a legacy fontFamily', () => {
+    const props = subjectContentProps(
+      {
+        ...baseProfile,
+        id: 'math',
+        displayName: '数学',
+        renderConfig: { font_family: 'system', notation: null, code_highlight: null },
+      },
+      {
+        className: 'qbody',
+        style: { fontFamily: 'var(--font-serif)', whiteSpace: 'pre-wrap' },
+      },
+    );
 
     expect(props.className.endsWith('qbody')).toBe(true);
     expect(props.className.startsWith('subject-content')).toBe(true);
-    expect(props.style.fontFamily).toBe('var(--font-mono)');
+    expect(props.style.fontFamily).toBe('var(--font-sans)');
+    expect(props.style.whiteSpace).toBe('pre-wrap');
   });
 });
