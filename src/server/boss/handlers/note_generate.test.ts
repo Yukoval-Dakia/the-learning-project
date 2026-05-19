@@ -2,7 +2,7 @@ import { artifact, knowledge } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { runNoteGenerate } from './note_generate';
+import { buildNoteGenerateHandler, runNoteGenerate } from './note_generate';
 
 async function seedAtomic(opts: {
   artifactId: string;
@@ -144,8 +144,22 @@ describe('runNoteGenerate', () => {
     const db = testDb();
     const updated = (await db.select().from(artifact).where(eq(artifact.id, 'a1')))[0];
     expect(updated.generation_status).toBe('ready');
+    expect(updated.verification_status).toBe('queued');
     expect(updated.sections).toHaveLength(5);
     expect((updated.sections as Array<{ kind: string }>)[0].kind).toBe('definition');
+  });
+
+  it('buildNoteGenerateHandler calls onReady after ready generation', async () => {
+    await seedAtomic({ artifactId: 'a1', knowledgeId: 'k1' });
+    const runTaskFn = vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({
+      text: VALID_SECTIONS,
+    }));
+    const onReady = vi.fn(async (_artifactId: string) => {});
+    const handler = buildNoteGenerateHandler(testDb(), { runTaskFn, onReady });
+
+    await handler([{ id: 'job1', data: { artifact_id: 'a1' } } as never]);
+
+    expect(onReady).toHaveBeenCalledWith('a1');
   });
 
   it('passes the knowledge subject profile to NoteGenerateTask', async () => {
