@@ -518,6 +518,41 @@ describe('CorrectEvent', () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it('rejects replacement_event_id for non-supersede corrections', () => {
+    const result = CorrectEvent.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: 'evt_old',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'restore',
+        replacement_event_id: 'evt_new',
+        reason_md: 'Restoring should not point at replacement evidence.',
+        affected_refs: [{ kind: 'question', id: 'q1' }],
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('caps reason_md length', () => {
+    const result = CorrectEvent.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: 'evt_old',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'retract',
+        reason_md: 'x'.repeat(2001),
+        affected_refs: [{ kind: 'question', id: 'q1' }],
+      },
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 // ====================================================================

@@ -62,7 +62,13 @@ export async function getCorrectionStatuses(
 
   for (const row of rows) {
     const parsed = CorrectEvent.safeParse(rowToCorrectEventInput(row));
-    if (!parsed.success) continue;
+    if (!parsed.success) {
+      console.warn('getCorrectionStatuses: skipping malformed correction event', {
+        event_id: row.id,
+        error: parsed.error,
+      });
+      continue;
+    }
 
     const targetEventId = parsed.data.subject_id;
     const { correction_kind, replacement_event_id } = parsed.data.payload;

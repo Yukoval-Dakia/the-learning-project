@@ -147,7 +147,10 @@ describe('GET /api/events/[id]', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       correction_status: { state: string; correction_event_id: string | null };
-      chain: { corrections: Array<{ id: string; action: string }> };
+      chain: {
+        caused_events: Array<{ id: string; action: string }>;
+        corrections: Array<{ id: string; action: string }>;
+      };
     };
     expect(body.correction_status).toEqual({
       state: 'retracted',
@@ -157,6 +160,7 @@ describe('GET /api/events/[id]', () => {
     expect(body.chain.corrections).toHaveLength(1);
     expect(body.chain.corrections[0].id).toBe('c1');
     expect(body.chain.corrections[0].action).toBe('correct');
+    expect(body.chain.caused_events.map((e) => e.id)).not.toContain('c1');
   });
 
   it('returns 404 when the event id is unknown', async () => {

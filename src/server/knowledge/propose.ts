@@ -3,6 +3,7 @@ import { knowledge } from '@/db/schema';
 import type { SubjectProfile } from '@/subjects/profile';
 import { and, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
+import { writeRetryableAiFailureLedger } from './ai_failure_log';
 import { writeKnowledgeProposeEvent } from './proposals';
 import { loadTreeSnapshot } from './tree';
 
@@ -74,6 +75,7 @@ export async function runProposeAndWrite(params: RunProposeAndWriteParams): Prom
     }
   } catch (err) {
     console.error('runProposeAndWrite: failed (mistake unaffected)', err);
+    await writeRetryableAiFailureLedger(params.db, 'KnowledgeProposeTask');
   }
 }
 

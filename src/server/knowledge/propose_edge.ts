@@ -16,6 +16,7 @@ import type { FailureAttempt } from '@/server/events/queries';
 import type { SubjectProfile } from '@/subjects/profile';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
+import { writeRetryableAiFailureLedger } from './ai_failure_log';
 import { loadTreeSnapshot } from './tree';
 
 const EdgeProposalSchema = z.object({
@@ -160,6 +161,7 @@ export async function runEdgeProposeAndWrite(
     return stats;
   } catch (err) {
     console.error('runEdgeProposeAndWrite: failed (no proposals written)', err);
+    await writeRetryableAiFailureLedger(params.db, 'KnowledgeEdgeProposeTask');
     return { ...EMPTY_RESULT };
   }
 }

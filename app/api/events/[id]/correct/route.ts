@@ -11,7 +11,7 @@ const CorrectBody = z
   .object({
     correction_kind: z.enum(['supersede', 'retract', 'mark_wrong', 'restore']),
     replacement_event_id: z.string().min(1).optional(),
-    reason_md: z.string().trim().min(1),
+    reason_md: z.string().trim().min(1).max(2000),
     affected_refs: z.array(ActivityRef).min(1),
   })
   .superRefine((data, ctx) => {
@@ -19,6 +19,13 @@ const CorrectBody = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "replacement_event_id is required when correction_kind='supersede'",
+        path: ['replacement_event_id'],
+      });
+    }
+    if (data.correction_kind !== 'supersede' && data.replacement_event_id) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "replacement_event_id is only allowed when correction_kind='supersede'",
         path: ['replacement_event_id'],
       });
     }

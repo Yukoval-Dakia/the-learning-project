@@ -112,7 +112,12 @@ export function buildKnowledgePropoNightlyHandler(
   db: Db,
 ): (jobs: Job<Record<string, never>>[]) => Promise<void> {
   return async () => {
-    const result = await runKnowledgeProposeNightly(db);
-    console.log('[knowledge_propose_nightly] result', result);
+    try {
+      const result = await runKnowledgeProposeNightly(db);
+      console.log('[knowledge_propose_nightly] result', result);
+    } catch (err) {
+      console.error('[knowledge_propose_nightly] failed', err);
+      throw err;
+    }
   };
 }

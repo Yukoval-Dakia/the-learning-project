@@ -1,5 +1,5 @@
 import { event } from '@/db/schema';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { getCorrectionStatus, getCorrectionStatuses } from './corrections';
 import { writeEvent } from './queries';
@@ -162,6 +162,7 @@ describe('correction status projection', () => {
 
   it('ignores malformed correction rows instead of throwing in status projection', async () => {
     const db = testDb();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     await seedAttempt('evt_target');
     await db.insert(event).values({
       id: 'evt_malformed_correct',
@@ -184,5 +185,10 @@ describe('correction status projection', () => {
       correction_event_id: null,
       replacement_event_id: null,
     });
+    expect(warnSpy).toHaveBeenCalledWith(
+      'getCorrectionStatuses: skipping malformed correction event',
+      expect.objectContaining({ event_id: 'evt_malformed_correct' }),
+    );
+    warnSpy.mockRestore();
   });
 });

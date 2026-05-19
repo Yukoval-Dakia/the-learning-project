@@ -93,7 +93,12 @@ export function buildKnowledgeEdgeProposeNightlyHandler(
   db: Db,
 ): (jobs: Job<Record<string, never>>[]) => Promise<void> {
   return async () => {
-    const result = await runKnowledgeEdgeProposeNightly(db);
-    console.log('[knowledge_edge_propose_nightly] result', result);
+    try {
+      const result = await runKnowledgeEdgeProposeNightly(db);
+      console.log('[knowledge_edge_propose_nightly] result', result);
+    } catch (err) {
+      console.error('[knowledge_edge_propose_nightly] failed', err);
+      throw err;
+    }
   };
 }

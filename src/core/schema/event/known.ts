@@ -184,7 +184,7 @@ export const CorrectEvent = z
     payload: z.object({
       correction_kind: CorrectionKind,
       replacement_event_id: z.string().optional(),
-      reason_md: z.string().min(1),
+      reason_md: z.string().min(1).max(2000),
       affected_refs: z.array(ActivityRef).min(1),
     }),
     ...baseOptionalFields,
@@ -194,6 +194,13 @@ export const CorrectEvent = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "replacement_event_id is required when correction_kind='supersede'",
+        path: ['payload', 'replacement_event_id'],
+      });
+    }
+    if (data.payload.correction_kind !== 'supersede' && data.payload.replacement_event_id) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "replacement_event_id is only allowed when correction_kind='supersede'",
         path: ['payload', 'replacement_event_id'],
       });
     }

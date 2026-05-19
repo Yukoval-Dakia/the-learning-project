@@ -8,6 +8,7 @@
 // flows (rate, accept, etc.) keep their existing entry points.
 
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
+import { type ActivityRefInput, affectedRefsForCorrection } from '@/ui/lib/event-corrections';
 import { formatRelTime } from '@/ui/lib/utils';
 import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
 import { PageHeader } from '@/ui/primitives/PageHeader';
@@ -21,20 +22,6 @@ interface CorrectionStatus {
   state: CorrectionState;
   correction_event_id: string | null;
   replacement_event_id: string | null;
-}
-
-type ActivityKind =
-  | 'question'
-  | 'question_part'
-  | 'record'
-  | 'recall_prompt'
-  | 'practice_log'
-  | 'project_milestone'
-  | 'open_inquiry';
-
-interface ActivityRefInput {
-  kind: ActivityKind;
-  id: string;
 }
 
 interface EventRow {
@@ -116,7 +103,6 @@ export default function EventDetailPage({
           <EventCard event={q.data.event} kind="focal" />
           <CorrectionControls
             event={q.data.event}
-            causedBy={q.data.chain.caused_by}
             onChanged={() => qc.invalidateQueries({ queryKey: ['event', id] })}
           />
 
@@ -230,35 +216,15 @@ function EventCard({ event, kind }: { event: EventRow; kind: EventKind }) {
   );
 }
 
-const ACTIVITY_KINDS = new Set<ActivityKind>([
-  'question',
-  'question_part',
-  'record',
-  'recall_prompt',
-  'practice_log',
-  'project_milestone',
-  'open_inquiry',
-]);
-
-function activityRefFromEvent(event: EventRow | null): ActivityRefInput | null {
-  if (!event) return null;
-  if (!ACTIVITY_KINDS.has(event.subject_kind as ActivityKind)) return null;
-  return { kind: event.subject_kind as ActivityKind, id: event.subject_id };
-}
-
 function CorrectionControls({
   event,
-  causedBy,
   onChanged,
 }: {
   event: EventRow;
-  causedBy: EventRow | null;
   onChanged: () => Promise<unknown>;
 }) {
   const [reasonMd, setReasonMd] = useState('');
-  const directRef = activityRefFromEvent(event);
-  const parentRef = activityRefFromEvent(causedBy);
-  const affectedRefs = directRef ? [directRef] : parentRef ? [parentRef] : [];
+  const affectedRefs = affectedRefsForCorrection(event);
   const correctionM = useMutation({
     mutationFn: (correction_kind: 'retract' | 'mark_wrong' | 'restore') =>
       apiJson<{ correction_event_id: string }>(`/api/events/${event.id}/correct`, {

@@ -126,6 +126,7 @@ async function seedCorrectionEvent(opts: {
   target_event_id: string;
   correction_kind?: 'supersede' | 'retract' | 'mark_wrong' | 'restore';
   replacement_event_id?: string;
+  caused_by_event_id?: string | null;
   created_at?: Date;
 }): Promise<string> {
   const db = testDb();
@@ -145,7 +146,7 @@ async function seedCorrectionEvent(opts: {
       reason_md: 'manual correction',
       affected_refs: [{ kind: 'question', id: 'q1' }],
     },
-    caused_by_event_id: null,
+    caused_by_event_id: opts.caused_by_event_id ?? null,
     task_run_id: null,
     cost_micro_usd: null,
     created_at: opts.created_at ?? new Date(),
@@ -237,6 +238,37 @@ describe('getFailureAttempts', () => {
     }
     const results = await getFailureAttempts(db, { limit: 3 });
     expect(results).toHaveLength(3);
+  });
+
+  it('continues scanning after corrected attempts instead of silently returning fewer than limit', async () => {
+    const db = testDb();
+    const baseTime = new Date('2026-05-01T12:00:00Z');
+    for (let i = 0; i < 6; i++) {
+      const attemptId = await seedAttemptEvent({
+        id: `evt_corrected_${i}`,
+        question_id: `q_corrected_${i}`,
+        created_at: new Date(baseTime.getTime() + (10 - i) * 60_000),
+      });
+      await seedCorrectionEvent({
+        target_event_id: attemptId,
+        correction_kind: 'retract',
+        created_at: new Date(baseTime.getTime() + (20 + i) * 60_000),
+      });
+    }
+    await seedAttemptEvent({
+      id: 'evt_active_1',
+      question_id: 'q_active_1',
+      created_at: new Date(baseTime.getTime() + 1_000),
+    });
+    await seedAttemptEvent({
+      id: 'evt_active_2',
+      question_id: 'q_active_2',
+      created_at: baseTime,
+    });
+
+    const results = await getFailureAttempts(db, { limit: 2 });
+
+    expect(results.map((r) => r.question_id)).toEqual(['q_active_1', 'q_active_2']);
   });
 
   it('excludes non-failure attempts', async () => {
@@ -598,6 +630,43 @@ describe('getRecentReviewEvents', () => {
     }
     const results = await getRecentReviewEvents(db, { limit: 2 });
     expect(results).toHaveLength(2);
+  });
+
+  it('continues scanning after corrected reviews instead of silently returning fewer than limit', async () => {
+    const db = testDb();
+    const baseTime = new Date('2026-05-01T12:00:00Z');
+    for (let i = 0; i < 6; i++) {
+      await seedReviewEvent({
+        id: `evt_review_corrected_${i}`,
+        question_id: 'q1',
+        rating: 'good',
+        created_at: new Date(baseTime.getTime() + (10 - i) * 60_000),
+      });
+      await seedCorrectionEvent({
+        target_event_id: `evt_review_corrected_${i}`,
+        correction_kind: 'retract',
+        created_at: new Date(baseTime.getTime() + (20 + i) * 60_000),
+      });
+    }
+    await seedReviewEvent({
+      id: 'evt_review_active_1',
+      question_id: 'q1',
+      rating: 'hard',
+      created_at: new Date(baseTime.getTime() + 1_000),
+    });
+    await seedReviewEvent({
+      id: 'evt_review_active_2',
+      question_id: 'q1',
+      rating: 'again',
+      created_at: baseTime,
+    });
+
+    const results = await getRecentReviewEvents(db, { questionIds: ['q1'], limit: 2 });
+
+    expect(results.map((r) => r.review_event_id)).toEqual([
+      'evt_review_active_1',
+      'evt_review_active_2',
+    ]);
   });
 
   it('filters by since', async () => {
@@ -982,10 +1051,12 @@ describe('getEventChain', () => {
     const correctionId = await seedCorrectionEvent({
       target_event_id: attemptId,
       correction_kind: 'retract',
+      caused_by_event_id: attemptId,
     });
 
     const chain = await getEventChain(db, attemptId);
 
+    expect(chain.caused_events.map((e) => e.id)).not.toContain(correctionId);
     expect(chain.corrections).toHaveLength(1);
     expect(chain.corrections[0].id).toBe(correctionId);
     expect(chain.corrections[0].action).toBe('correct');

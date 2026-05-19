@@ -1,4 +1,4 @@
-import { event, question } from '@/db/schema';
+import { cost_ledger, event, question } from '@/db/schema';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -168,6 +168,12 @@ describe('runAttributionAndWriteJudgeEvent', () => {
     ).resolves.toBeUndefined();
     const rows = await db.select().from(event).where(eq(event.caused_by_event_id, attemptId));
     expect(rows).toHaveLength(0);
+    const ledgerRows = await db
+      .select()
+      .from(cost_ledger)
+      .where(eq(cost_ledger.task_kind, 'AttributionTask'));
+    expect(ledgerRows).toHaveLength(1);
+    expect(ledgerRows[0].outcome).toBe('failed_retryable');
   });
 
   it('swallows parse error (no judge event written)', async () => {

@@ -21,11 +21,10 @@ import { type EventT, parseEvent } from '@/core/schema/event';
 import type { CauseCategoryT, CauseSchemaT, FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
-import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, ne, sql } from 'drizzle-orm';
 import {
   type CorrectionStatus,
   activeCorrectionStatus,
-  getCorrectionStatus,
   getCorrectionStatuses,
 } from './corrections';
 
@@ -112,13 +111,19 @@ export async function getFailureAttempts(
 
   if (attemptRows.length === 0) return [];
 
-  const attemptStatuses = await getCorrectionStatuses(
+  const activeAttemptRows = await takeActiveRows(
     db,
-    attemptRows.map((r) => r.id),
+    attemptRows,
+    limit,
+    async (nextLimit, offset) =>
+      db
+        .select()
+        .from(event)
+        .where(and(...conditions))
+        .orderBy(desc(event.created_at))
+        .limit(nextLimit)
+        .offset(offset),
   );
-  const activeAttemptRows = attemptRows
-    .filter((r) => hasActiveCorrectionStatus(attemptStatuses.get(r.id)))
-    .slice(0, limit);
 
   if (activeAttemptRows.length === 0) return [];
 
@@ -325,13 +330,15 @@ export async function getRecentReviewEvents(
     .orderBy(desc(event.created_at))
     .limit(limit * 3);
 
-  const statuses = await getCorrectionStatuses(
-    db,
-    rows.map((r) => r.id),
+  const activeRows = await takeActiveRows(db, rows, limit, async (nextLimit, offset) =>
+    db
+      .select()
+      .from(event)
+      .where(and(...conditions))
+      .orderBy(desc(event.created_at))
+      .limit(nextLimit)
+      .offset(offset),
   );
-  const activeRows = rows
-    .filter((r) => hasActiveCorrectionStatus(statuses.get(r.id)))
-    .slice(0, limit);
 
   return activeRows.map((r) => {
     const payload = r.payload as {
@@ -383,14 +390,8 @@ function rowToParseInput(row: typeof event.$inferSelect): Parameters<typeof pars
  */
 export async function getEventById(db: DbLike, id: string): Promise<EnvelopedEvent | null> {
   const rows = await db.select().from(event).where(eq(event.id, id)).limit(1);
-  const row = rows[0];
-  if (!row) return null;
-  return {
-    ...parseEvent(rowToParseInput(row)),
-    id: row.id,
-    created_at: row.created_at,
-    correction_status: await getCorrectionStatus(db, row.id),
-  } as EnvelopedEvent;
+  const enveloped = await rowsToEnvelopedEvents(db, rows);
+  return enveloped[0] ?? null;
 }
 
 // ============================================================================
@@ -440,6 +441,36 @@ async function rowsToEnvelopedEvents(db: DbLike, rows: EventRow[]): Promise<Enve
         correction_status: statuses.get(r.id) ?? activeCorrectionStatus(),
       }) as EnvelopedEvent,
   );
+}
+
+async function takeActiveRows(
+  db: DbLike,
+  firstRows: EventRow[],
+  limit: number,
+  fetchNextRows: (limit: number, offset: number) => Promise<EventRow[]>,
+): Promise<EventRow[]> {
+  const batchSize = Math.max(limit * 3, limit);
+  const activeRows: EventRow[] = [];
+  let rows = firstRows;
+  let offset = firstRows.length;
+
+  while (rows.length > 0) {
+    const statuses = await getCorrectionStatuses(
+      db,
+      rows.map((r) => r.id),
+    );
+    for (const row of rows) {
+      if (hasActiveCorrectionStatus(statuses.get(row.id))) {
+        activeRows.push(row);
+        if (activeRows.length >= limit) return activeRows;
+      }
+    }
+    if (rows.length < batchSize) break;
+    rows = await fetchNextRows(batchSize, offset);
+    offset += rows.length;
+  }
+
+  return activeRows;
 }
 
 export async function getEvents(
@@ -498,7 +529,7 @@ export async function getEventChain(db: DbLike, id: string): Promise<EventChain>
   const reverseRows = await db
     .select()
     .from(event)
-    .where(eq(event.caused_by_event_id, id))
+    .where(and(eq(event.caused_by_event_id, id), ne(event.action, 'correct')))
     .orderBy(desc(event.created_at));
   const caused_events = await rowsToEnvelopedEvents(db, reverseRows);
 

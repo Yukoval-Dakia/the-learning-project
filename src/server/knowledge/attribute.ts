@@ -15,6 +15,7 @@ import type { Db } from '@/db/client';
 import type { SubjectProfile } from '@/subjects/profile';
 import { z } from 'zod';
 import { getJudgeForAttempt, writeEvent } from '../events/queries';
+import { writeRetryableAiFailureLedger } from './ai_failure_log';
 
 // Lane B `CauseSchema` uses `analysis_md`. Step 7 cut over: the AttributionTask
 // prompt now emits `analysis_md` natively, so the Step 4 `z.preprocess` bridge
@@ -123,5 +124,6 @@ export async function runAttributionAndWriteJudgeEvent(
     });
   } catch (err) {
     console.error('runAttributionAndWriteJudgeEvent: failed (attempt unaffected)', err);
+    await writeRetryableAiFailureLedger(params.db, 'AttributionTask');
   }
 }
