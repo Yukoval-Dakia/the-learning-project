@@ -1,7 +1,13 @@
 import { db } from '@/db/client';
 import { artifact, completion_evidence, learning_item } from '@/db/schema';
 import { errorResponse } from '@/server/http/errors';
+import { getEffectiveDomain } from '@/server/knowledge/domain';
 import { assertKnowledgeIdsExist } from '@/server/knowledge/validate';
+import {
+  type SlimSubjectProfile,
+  resolveSubjectProfile,
+  toSlimSubjectProfile,
+} from '@/subjects/profile';
 import { createId } from '@paralleldrive/cuid2';
 import { and, asc, eq } from 'drizzle-orm';
 import { z } from 'zod';
@@ -41,6 +47,22 @@ const VALID_TRANSITIONS: Record<string, Set<LearningItemStatus>> = {
 };
 
 type RouteParams = { params: Promise<{ id: string }> };
+
+async function resolveSlimProfileForKnowledgeIds(
+  knowledgeIds: string[],
+): Promise<SlimSubjectProfile> {
+  const firstKnowledgeId = knowledgeIds[0];
+  if (!firstKnowledgeId) {
+    return toSlimSubjectProfile(resolveSubjectProfile(null));
+  }
+
+  try {
+    const domain = await getEffectiveDomain(db, firstKnowledgeId);
+    return toSlimSubjectProfile(resolveSubjectProfile(domain));
+  } catch {
+    return toSlimSubjectProfile(resolveSubjectProfile(null));
+  }
+}
 
 // GET — single item + parent breadcrumb (1 hop) + immediate children +
 // primary artifact (when present). Used by /learning-items/[id] detail page.
@@ -122,12 +144,14 @@ export async function GET(_req: Request, { params }: RouteParams): Promise<Respo
         .limit(1);
       if (aRows[0]) primaryArtifact = aRows[0];
     }
+    const subjectProfile = await resolveSlimProfileForKnowledgeIds(row.knowledge_ids ?? []);
 
     return Response.json({
       id: row.id,
       title: row.title,
       content: row.content,
       knowledge_ids: row.knowledge_ids,
+      subject_profile: subjectProfile,
       status: row.status,
       parent_learning_item_id: row.parent_learning_item_id,
       primary_artifact_id: row.primary_artifact_id,
