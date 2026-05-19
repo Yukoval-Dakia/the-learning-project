@@ -1,7 +1,9 @@
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
+import type { SubjectProfile } from '@/subjects/profile';
 import { and, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
+import { writeRetryableAiFailureLedger } from './ai_failure_log';
 import { writeKnowledgeProposeEvent } from './proposals';
 import { loadTreeSnapshot } from './tree';
 
@@ -31,6 +33,7 @@ export interface RunProposeAndWriteParams {
   mistakeContent: MistakeContent;
   runTaskFn: RunTaskFn;
   env?: unknown;
+  subjectProfile?: SubjectProfile;
 }
 
 export async function runProposeAndWrite(params: RunProposeAndWriteParams): Promise<void> {
@@ -48,6 +51,7 @@ export async function runProposeAndWrite(params: RunProposeAndWriteParams): Prom
     const result = await params.runTaskFn('KnowledgeProposeTask', input, {
       db: params.db,
       env: params.env,
+      subjectProfile: params.subjectProfile,
     });
     const parsed = parseProposeOutput(result.text);
     for (const p of parsed.proposals) {
@@ -71,6 +75,7 @@ export async function runProposeAndWrite(params: RunProposeAndWriteParams): Prom
     }
   } catch (err) {
     console.error('runProposeAndWrite: failed (mistake unaffected)', err);
+    await writeRetryableAiFailureLedger(params.db, 'KnowledgeProposeTask');
   }
 }
 

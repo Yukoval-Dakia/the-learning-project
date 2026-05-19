@@ -11,6 +11,7 @@
 // knowledge_ids, cause, fsrs_state, created_at }] }. The `id` semantically
 // changes from mistake.id to question.id (opaque to clients).
 
+import { type ActivityRefT, questionRef } from '@/core/schema/activity';
 import { db } from '@/db/client';
 import { material_fsrs_state, question } from '@/db/schema';
 import { getFailureAttempts, getJudgeForAttempt } from '@/server/events/queries';
@@ -114,6 +115,7 @@ export async function GET(req: Request): Promise<Response> {
 
     type OutRow = {
       id: string;
+      activity_ref: ActivityRefT;
       question_id: string;
       prompt_md: string;
       reference_md: string | null;
@@ -127,6 +129,7 @@ export async function GET(req: Request): Promise<Response> {
     const combined: OutRow[] = [
       ...newRows.map((n) => ({
         id: n.question_id,
+        activity_ref: questionRef(n.question_id),
         question_id: n.question_id,
         prompt_md: n.prompt_md.slice(0, 1000),
         reference_md: n.reference_md ? n.reference_md.slice(0, 1000) : null,
@@ -137,6 +140,7 @@ export async function GET(req: Request): Promise<Response> {
       })),
       ...dueRows.map((r) => ({
         id: r.question_id,
+        activity_ref: questionRef(r.question_id),
         question_id: r.question_id,
         prompt_md: r.prompt_md.slice(0, 1000),
         reference_md: r.reference_md ? r.reference_md.slice(0, 1000) : null,

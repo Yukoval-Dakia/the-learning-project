@@ -13,8 +13,10 @@ import type { Db } from '@/db/client';
 import { event, knowledge_edge } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import type { FailureAttempt } from '@/server/events/queries';
+import type { SubjectProfile } from '@/subjects/profile';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
+import { writeRetryableAiFailureLedger } from './ai_failure_log';
 import { loadTreeSnapshot } from './tree';
 
 const EdgeProposalSchema = z.object({
@@ -38,6 +40,7 @@ export interface RunEdgeProposeAndWriteParams {
   recentFailures: FailureAttempt[];
   runTaskFn: RunTaskFn;
   env?: unknown;
+  subjectProfile?: SubjectProfile;
 }
 
 export interface RunEdgeProposeAndWriteResult {
@@ -102,6 +105,7 @@ export async function runEdgeProposeAndWrite(
     const result = await params.runTaskFn('KnowledgeEdgeProposeTask', input, {
       db: params.db,
       env: params.env,
+      subjectProfile: params.subjectProfile,
     });
     const parsed = parseEdgeProposeOutput(result.text);
 
@@ -157,6 +161,7 @@ export async function runEdgeProposeAndWrite(
     return stats;
   } catch (err) {
     console.error('runEdgeProposeAndWrite: failed (no proposals written)', err);
+    await writeRetryableAiFailureLedger(params.db, 'KnowledgeEdgeProposeTask');
     return { ...EMPTY_RESULT };
   }
 }

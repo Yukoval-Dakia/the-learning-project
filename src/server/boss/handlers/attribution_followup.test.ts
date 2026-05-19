@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { runAttributionFollowup } from './attribution_followup';
 
-async function seedQuestion(id: string) {
+async function seedQuestion(id: string, knowledgeIds = ['k_xuci']) {
   const db = testDb();
   const now = new Date();
   await db.insert(question).values({
@@ -17,13 +17,13 @@ async function seedQuestion(id: string) {
     prompt_md: '「之」在「古之学者必有师」中的用法',
     reference_md: '助词，相当于"的"',
     source: 'manual',
-    knowledge_ids: ['k_xuci'],
+    knowledge_ids: knowledgeIds,
     created_at: now,
     updated_at: now,
   });
 }
 
-async function seedFailureAttempt(attemptId: string, qid: string) {
+async function seedFailureAttempt(attemptId: string, qid: string, knowledgeIds = ['k_xuci']) {
   await writeEvent(testDb(), {
     id: attemptId,
     session_id: null,
@@ -36,7 +36,7 @@ async function seedFailureAttempt(attemptId: string, qid: string) {
     payload: {
       answer_md: '助词，主谓间',
       answer_image_refs: [],
-      referenced_knowledge_ids: ['k_xuci'],
+      referenced_knowledge_ids: knowledgeIds,
     },
     created_at: new Date(),
   });
@@ -182,6 +182,40 @@ describe('runAttributionFollowup', () => {
     expect(judges).toHaveLength(1);
     const p = judges[0].payload as { cause: { primary_category: string } };
     expect(p.cause.primary_category).toBe('concept');
+  });
+
+  it('passes the first referenced knowledge subject profile to AttributionTask', async () => {
+    const db = testDb();
+    await db.insert(knowledge).values({
+      id: 'k_math',
+      name: '函数',
+      domain: 'math',
+      parent_id: null,
+      merged_from: [],
+      proposed_by_ai: false,
+      approval_status: 'approved',
+      created_at: new Date(),
+      updated_at: new Date(),
+      version: 0,
+    });
+    await seedQuestion('q_math', ['k_math']);
+    const attemptId = createId();
+    await seedFailureAttempt(attemptId, 'q_math', ['k_math']);
+
+    const runTaskFn = vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({
+      text: VALID_ATTRIBUTION_OUTPUT,
+    }));
+
+    const result = await runAttributionFollowup({
+      db,
+      attemptEventId: attemptId,
+      runTaskFn,
+    });
+
+    expect(result.status).toBe('attempted');
+    expect(runTaskFn.mock.calls[0]?.[2]).toMatchObject({
+      subjectProfile: { id: 'math' },
+    });
   });
 
   it('is idempotent — re-running after a judge already exists is a no-op', async () => {

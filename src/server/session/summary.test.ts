@@ -1,6 +1,6 @@
 // SessionSummaryTask runner tests.
 
-import { event, learning_session, question } from '@/db/schema';
+import { event, knowledge, learning_session, question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { Review } from '@/server/session';
 import { createId } from '@paralleldrive/cuid2';
@@ -28,6 +28,7 @@ async function seedReviewEvent(
   questionId: string,
   rating: 'again' | 'hard' | 'good' | 'easy',
   responseMd: string | null = null,
+  referencedKnowledgeIds: string[] = [],
 ) {
   const db = testDb();
   const now = new Date();
@@ -55,9 +56,26 @@ async function seedReviewEvent(
         last_review: now,
       },
       user_response_md: responseMd,
-      referenced_knowledge_ids: [],
+      referenced_knowledge_ids: referencedKnowledgeIds,
     },
     created_at: now,
+  });
+}
+
+async function seedKnowledge(id: string, domain: string | null) {
+  const db = testDb();
+  const now = new Date();
+  await db.insert(knowledge).values({
+    id,
+    name: id,
+    domain,
+    parent_id: null,
+    merged_from: [],
+    proposed_by_ai: false,
+    approval_status: 'approved',
+    created_at: now,
+    updated_at: now,
+    version: 0,
   });
 }
 
@@ -126,6 +144,22 @@ describe('runSessionSummary', () => {
       .from(learning_session)
       .where(eq(learning_session.id, sessionId));
     expect(rows[0].summary_md).toBe('复习了 2 题，1 对 1 错。下次重点过 q1。');
+  });
+
+  it('passes the first reviewed knowledge subject profile to SessionSummaryTask', async () => {
+    const db = testDb();
+    const { sessionId } = await Review.startReviewSession(db);
+    await seedKnowledge('k_math', 'math');
+    await seedQuestion('q_math', '求解 x^2 - 1 = 0');
+    await seedReviewEvent(sessionId, 'q_math', 'again', 'x=1', ['k_math']);
+
+    const runTaskFn = vi.fn(async (_kind: string, _input: unknown, _ctx: unknown) => ({
+      text: '这次卡在因式分解的条件检查。',
+    }));
+    await runSessionSummary({ db, sessionId, runTaskFn });
+
+    const ctx = runTaskFn.mock.calls[0]?.[2] as unknown as { subjectProfile?: { id: string } };
+    expect(ctx.subjectProfile?.id).toBe('math');
   });
 
   it('clamps summary to 240 chars when LLM goes long', async () => {

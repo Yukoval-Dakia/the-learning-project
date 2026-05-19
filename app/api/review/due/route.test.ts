@@ -136,7 +136,7 @@ describe('GET /api/review/due', () => {
     const res = await getReview();
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      rows: Array<{ id: string; fsrs_state: unknown }>;
+      rows: Array<{ id: string; question_id: string; fsrs_state: unknown; activity_ref: unknown }>;
     };
 
     const ids = body.rows.map((r) => r.id);
@@ -145,6 +145,10 @@ describe('GET /api/review/due', () => {
     expect(ids).not.toContain('q_future');
     // Null-state comes first
     expect(body.rows[0].id).toBe('q_null');
+    expect(body.rows[0].activity_ref).toEqual({
+      kind: 'question',
+      id: body.rows[0].question_id,
+    });
     expect(body.rows[0].fsrs_state).toBeNull();
   });
 

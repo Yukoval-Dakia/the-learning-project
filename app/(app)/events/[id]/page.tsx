@@ -8,12 +8,21 @@
 // flows (rate, accept, etc.) keep their existing entry points.
 
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
+import { type ActivityRefInput, affectedRefsForCorrection } from '@/ui/lib/event-corrections';
 import { formatRelTime } from '@/ui/lib/utils';
 import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
 import { PageHeader } from '@/ui/primitives/PageHeader';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
-import { use } from 'react';
+import { use, useState } from 'react';
+
+type CorrectionState = 'active' | 'retracted' | 'marked_wrong' | 'superseded';
+
+interface CorrectionStatus {
+  state: CorrectionState;
+  correction_event_id: string | null;
+  replacement_event_id: string | null;
+}
 
 interface EventRow {
   id: string;
@@ -28,13 +37,16 @@ interface EventRow {
   task_run_id?: string;
   cost_micro_usd?: number;
   created_at: string;
+  correction_status: CorrectionStatus;
 }
 
 interface EventChainResponse {
   event: EventRow;
+  correction_status: CorrectionStatus;
   chain: {
     caused_by: EventRow | null;
     caused_events: EventRow[];
+    corrections: EventRow[];
   };
 }
 
@@ -44,6 +56,7 @@ export default function EventDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
+  const qc = useQueryClient();
   const q = useQuery({
     queryKey: ['event', id],
     queryFn: () => apiJson<EventChainResponse>(`/api/events/${id}`),
@@ -88,6 +101,10 @@ export default function EventDetailPage({
 
           <p className="event-rail-label">focal · 当前事件</p>
           <EventCard event={q.data.event} kind="focal" />
+          <CorrectionControls
+            event={q.data.event}
+            onChanged={() => qc.invalidateQueries({ queryKey: ['event', id] })}
+          />
 
           {q.data.chain.caused_events.length > 0 && (
             <>
@@ -97,13 +114,22 @@ export default function EventDetailPage({
               ))}
             </>
           )}
+
+          {q.data.chain.corrections.length > 0 && (
+            <>
+              <p className="event-rail-label">corrections · {q.data.chain.corrections.length} 条</p>
+              {q.data.chain.corrections.map((e) => (
+                <EventCard key={e.id} event={e} kind="correction" />
+              ))}
+            </>
+          )}
         </>
       )}
     </main>
   );
 }
 
-type EventKind = 'focal' | 'upstream' | 'downstream';
+type EventKind = 'focal' | 'upstream' | 'downstream' | 'correction';
 
 function actionTone(action: string): BadgeTone {
   if (action === 'attempt') return 'again';
@@ -121,6 +147,13 @@ function outcomeTone(outcome: string): BadgeTone {
   return 'neutral';
 }
 
+function correctionTone(state: CorrectionState): BadgeTone {
+  if (state === 'active') return 'good';
+  if (state === 'retracted' || state === 'marked_wrong') return 'again';
+  if (state === 'superseded') return 'hard';
+  return 'neutral';
+}
+
 function EventCard({ event, kind }: { event: EventRow; kind: EventKind }) {
   return (
     <article className={`event-card is-${kind}`}>
@@ -128,6 +161,9 @@ function EventCard({ event, kind }: { event: EventRow; kind: EventKind }) {
         <Badge tone={actionTone(event.action)}>{event.action}</Badge>
         <Badge tone="neutral">{event.subject_kind}</Badge>
         {event.outcome && <Badge tone={outcomeTone(event.outcome)}>{event.outcome}</Badge>}
+        <Badge tone={correctionTone(event.correction_status.state)}>
+          {event.correction_status.state}
+        </Badge>
         <span className="when">{formatRelTime(new Date(event.created_at))}</span>
       </div>
 
@@ -177,5 +213,79 @@ function EventCard({ event, kind }: { event: EventRow; kind: EventKind }) {
         </p>
       )}
     </article>
+  );
+}
+
+function CorrectionControls({
+  event,
+  onChanged,
+}: {
+  event: EventRow;
+  onChanged: () => Promise<unknown>;
+}) {
+  const [reasonMd, setReasonMd] = useState('');
+  const affectedRefs = affectedRefsForCorrection(event);
+  const correctionM = useMutation({
+    mutationFn: (correction_kind: 'retract' | 'mark_wrong' | 'restore') =>
+      apiJson<{ correction_event_id: string }>(`/api/events/${event.id}/correct`, {
+        method: 'POST',
+        body: JSON.stringify({
+          correction_kind,
+          reason_md: reasonMd.trim(),
+          affected_refs: affectedRefs,
+        }),
+      }),
+    onSuccess: async () => {
+      setReasonMd('');
+      await onChanged();
+    },
+  });
+  const canSubmit = reasonMd.trim().length > 0 && affectedRefs.length > 0 && !correctionM.isPending;
+
+  return (
+    <section className="ec-correction-panel">
+      <div className="ec-correction-head">
+        <Badge tone={correctionTone(event.correction_status.state)}>
+          {event.correction_status.state}
+        </Badge>
+        {event.correction_status.correction_event_id && (
+          <Link href={`/events/${event.correction_status.correction_event_id}`}>
+            {event.correction_status.correction_event_id.slice(0, 8)}…
+          </Link>
+        )}
+      </div>
+
+      <textarea
+        value={reasonMd}
+        onChange={(e) => setReasonMd(e.target.value)}
+        rows={3}
+        placeholder="reason_md"
+      />
+
+      <div className="ec-correction-actions">
+        <button type="button" disabled={!canSubmit} onClick={() => correctionM.mutate('retract')}>
+          撤回
+        </button>
+        <button
+          type="button"
+          disabled={!canSubmit}
+          onClick={() => correctionM.mutate('mark_wrong')}
+        >
+          标错
+        </button>
+        <button
+          type="button"
+          disabled={!canSubmit || event.correction_status.state === 'active'}
+          onClick={() => correctionM.mutate('restore')}
+        >
+          恢复
+        </button>
+      </div>
+
+      {affectedRefs.length === 0 && <p className="ec-muted">无法推断 affected_ref</p>}
+      {correctionM.isError && (
+        <p className="ec-error">写入失败：{(correctionM.error as Error).message}</p>
+      )}
+    </section>
   );
 }

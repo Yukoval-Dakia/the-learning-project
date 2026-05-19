@@ -168,10 +168,10 @@ describe('keywordJudgeCapability', () => {
   it('returns partial for some keyword hits', () => {
     const result = keywordJudgeCapability.run({
       question: { keywords: ['虚词', '代词', '连词'] },
-      answer: { content: '虚词分析' },
+      answer: { content: '虚词和代词分析' },
     });
     expect(result.coarse_outcome).toBe('partial');
-    expect(result.score).toBeCloseTo(1 / 3);
+    expect(result.score).toBeCloseTo(2 / 3);
   });
 
   it('returns incorrect for zero hits', () => {
@@ -181,6 +181,17 @@ describe('keywordJudgeCapability', () => {
     });
     expect(result.coarse_outcome).toBe('incorrect');
     expect(result.score).toBe(0);
+  });
+
+  it('keeps low keyword hit ratios incorrect', () => {
+    const result = keywordJudgeCapability.run({
+      question: { keywords: ['a', 'b', 'c', 'd', 'e'] },
+      answer: { content: 'a only' },
+    });
+    expect(result.coarse_outcome).toBe('incorrect');
+    expect(result.score).toBe(0);
+    expect(result.evidence_json.hits).toEqual(['a']);
+    expect(result.evidence_json.total).toBe(5);
   });
 
   it('returns correct at 85% threshold', () => {

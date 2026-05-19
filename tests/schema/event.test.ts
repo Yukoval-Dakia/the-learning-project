@@ -1,6 +1,7 @@
 import {
   AcceptSuggestionChip,
   AttemptOnQuestion,
+  CorrectEvent,
   Event,
   ExperimentalEvent,
   ExtractSourceDocument,
@@ -457,6 +458,98 @@ describe('RateEvent', () => {
       subject_id: 'e_propose_1',
       outcome: 'failure',
       payload: { rating: 'dismiss' },
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+// ====================================================================
+// 6b. CorrectEvent
+// ====================================================================
+
+describe('CorrectEvent', () => {
+  it('accepts retract correction with affected refs', () => {
+    const result = CorrectEvent.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: 'evt_bad',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'retract',
+        reason_md: 'Wrong judge result attached to this attempt.',
+        affected_refs: [{ kind: 'question', id: 'q1' }],
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('parses retract correction through KnownEvent', () => {
+    const result = KnownEvent.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: 'evt_bad',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'retract',
+        reason_md: 'Wrong judge result attached to this attempt.',
+        affected_refs: [{ kind: 'question', id: 'q1' }],
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('requires replacement_event_id for supersede', () => {
+    const result = CorrectEvent.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: 'evt_old',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'supersede',
+        reason_md: 'New event has corrected content.',
+        affected_refs: [{ kind: 'question', id: 'q1' }],
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects replacement_event_id for non-supersede corrections', () => {
+    const result = CorrectEvent.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: 'evt_old',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'restore',
+        replacement_event_id: 'evt_new',
+        reason_md: 'Restoring should not point at replacement evidence.',
+        affected_refs: [{ kind: 'question', id: 'q1' }],
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('caps reason_md length', () => {
+    const result = CorrectEvent.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: 'evt_old',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'retract',
+        reason_md: 'x'.repeat(2001),
+        affected_refs: [{ kind: 'question', id: 'q1' }],
+      },
     });
     expect(result.success).toBe(false);
   });

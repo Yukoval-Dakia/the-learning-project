@@ -22,6 +22,7 @@ import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { runAttributionAndWriteJudgeEvent } from '@/server/knowledge/attribute';
 import { loadTreeSnapshot } from '@/server/knowledge/tree';
+import { resolveSubjectProfile } from '@/subjects/profile';
 
 export interface AttributionFollowupJobData {
   attempt_event_id: string;
@@ -131,6 +132,7 @@ export async function runAttributionFollowup(
   const pickedNodes = tree
     .filter((n) => referencedSet.has(n.id))
     .map((n) => ({ id: n.id, name: n.name, effective_domain: n.effective_domain }));
+  const subjectProfile = resolveSubjectProfile(pickedNodes[0]?.effective_domain ?? null);
 
   await runAttributionAndWriteJudgeEvent({
     db,
@@ -143,6 +145,7 @@ export async function runAttributionFollowup(
     },
     referencedKnowledgeIds,
     runTaskFn,
+    subjectProfile,
   });
 
   // Task #17: fan out to variant_gen. Idempotent on the consumer side

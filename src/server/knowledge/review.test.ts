@@ -71,13 +71,13 @@ describe('KnowledgeReviewTask system prompt', () => {
   });
 });
 
-async function seedKnowledgeNode(id: string) {
+async function seedKnowledgeNode(id: string, domain = 'wenyan') {
   const db = testDb();
   const now = new Date();
   await db.insert(knowledge).values({
     id,
     name: '虚词',
-    domain: 'wenyan',
+    domain,
     parent_id: null,
     merged_from: [],
     proposed_by_ai: false,
@@ -372,5 +372,23 @@ describe('streamReviewTask — SDK wiring smoke', () => {
     expect(promptStr).toContain('attempt_capture');
     expect(promptStr).toContain('q_capture');
     expect(promptStr).toContain('concept');
+  });
+
+  it('passes the dominant tree subject profile into KnowledgeReviewTask', async () => {
+    const db = testDb();
+    await seedKnowledgeNode('k_math', 'math');
+
+    const response = await streamReviewTask({ db });
+    const reader = response.body?.getReader();
+    if (reader) {
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+    }
+
+    const queryOpts = mockAgentSdk.capturedQueryOptions as { systemPrompt?: string };
+    expect(queryOpts.systemPrompt).toContain('科目上下文：数学');
+    expect(queryOpts.systemPrompt).not.toContain('文言文');
   });
 });

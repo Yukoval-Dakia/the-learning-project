@@ -118,6 +118,7 @@ describe('planReviewSession', () => {
     expect(plan.queue).toHaveLength(1);
     const item = plan.queue[0];
     expect(item.question_id).toBe('q1');
+    expect(item.activity_ref).toEqual({ kind: 'question', id: 'q1' });
     expect(item.fsrs_state).toBeNull();
     expect(item.cause).toBeNull();
     expect(item.priority).toBe(3); // null cause = base 3, no overdue/lapse bonus

@@ -3,7 +3,12 @@
 // GET /api/events/:id
 //   → {
 //       event: KnownEventT,
-//       chain: { caused_by: KnownEventT | null, caused_events: Array<KnownEventT> }
+//       correction_status: CorrectionStatus,
+//       chain: {
+//         caused_by: KnownEventT | null,
+//         caused_events: Array<KnownEventT>,
+//         corrections: Array<KnownEventT>
+//       }
 //     }
 //   → 404 when the focal event id is unknown
 //
@@ -36,7 +41,7 @@ export async function GET(
     // under db pool (no transaction); for a single-user tool the race window
     // is irrelevant.
     const chain = await getEventChain(db, id);
-    return Response.json({ event: focal, chain });
+    return Response.json({ event: focal, correction_status: focal.correction_status, chain });
   } catch (err) {
     return errorResponse(err);
   }
