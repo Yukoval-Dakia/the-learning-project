@@ -91,9 +91,11 @@ export function validateCauseAgainstProfile<T extends CauseSchemaT>(
 }
 
 export function getCauseLabel(causeId: string, profile?: CauseProfileLike | null): string {
+  if (causeId in UNIVERSAL_CAUSE_LABELS) {
+    return UNIVERSAL_CAUSE_LABELS[causeId as UniversalCauseId];
+  }
   const profileCategory = profile?.causeCategories?.find((category) => category.id === causeId);
-  if (profileCategory?.label) return profileCategory.label;
-  return UNIVERSAL_CAUSE_LABELS[causeId as UniversalCauseId] ?? UNIVERSAL_CAUSE_LABELS.other;
+  return profileCategory?.label ?? UNIVERSAL_CAUSE_LABELS.other;
 }
 
 export function getCausePriority(

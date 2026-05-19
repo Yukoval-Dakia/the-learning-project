@@ -22,7 +22,7 @@ import { and, eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { z } from 'zod';
 
-import { type CauseCategory, QuestionKind } from '@/core/schema/business';
+import { QuestionKind } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -69,7 +69,7 @@ function parseVariantOutput(text: string): z.infer<typeof VariantOutputSchema> {
   return VariantOutputSchema.parse(json);
 }
 
-const SKIP_CAUSES = new Set<z.infer<typeof CauseCategory>>([
+const SKIP_CAUSES: ReadonlySet<string> = new Set([
   'carelessness',
   'time_pressure',
   'other',
@@ -136,7 +136,7 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
   const judge = judgeRows[0];
   if (!judge) return { status: 'skipped:no_judge_yet' };
   const judgePayload = judge.payload as {
-    cause?: { primary_category?: z.infer<typeof CauseCategory>; analysis_md?: string };
+    cause?: { primary_category?: string; analysis_md?: string };
   };
   const cause = judgePayload.cause;
   if (!cause?.primary_category) return { status: 'skipped:cause_not_targetable' };

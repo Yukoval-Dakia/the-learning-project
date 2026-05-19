@@ -1,12 +1,12 @@
 // Phase 2A — Review Orchestrator unit tests.
 
-import { event, material_fsrs_state, question } from '@/db/schema';
+import { event, knowledge, material_fsrs_state, question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { planReviewSession } from './review';
 
-async function seedQuestion(id: string, prompt = `q ${id}`) {
+async function seedQuestion(id: string, prompt = `q ${id}`, knowledgeIds: string[] = []) {
   const db = testDb();
   const now = new Date();
   await db.insert(question).values({
@@ -15,6 +15,7 @@ async function seedQuestion(id: string, prompt = `q ${id}`) {
     prompt_md: prompt,
     reference_md: 'ref',
     source: 'manual',
+    knowledge_ids: knowledgeIds,
     created_at: now,
     updated_at: now,
   });
@@ -133,6 +134,29 @@ describe('planReviewSession', () => {
     expect(plan.queue[0].cause).toBe('concept');
     expect(plan.queue[0].priority).toBe(5); // concept base = 5
     expect(plan.queue[0].rationale).toContain('概念 错因');
+  });
+
+  it('keeps math-specific unit_error cause visible in review priority and rationale', async () => {
+    await testDb().insert(knowledge).values({
+      id: 'k_math',
+      name: '单位换算',
+      domain: 'math',
+      parent_id: null,
+      merged_from: [],
+      proposed_by_ai: false,
+      approval_status: 'approved',
+      created_at: new Date(),
+      updated_at: new Date(),
+      version: 0,
+    });
+    await seedQuestion('q_math', '单位换算题', ['k_math']);
+    await seedFailureAttempt('a_math', 'q_math', 'unit_error');
+
+    const plan = await planReviewSession({ db: testDb() });
+
+    expect(plan.queue[0].cause).toBe('unit_error');
+    expect(plan.queue[0].priority).toBe(2);
+    expect(plan.queue[0].rationale).toContain('单位错误 错因');
   });
 
   it('uses user_cause over judge when both present', async () => {
