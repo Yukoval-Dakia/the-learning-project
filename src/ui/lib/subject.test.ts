@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  type SlimSubjectProfile,
-  resolveSubjectRenderModel,
-  subjectContentProps,
-} from './subject';
+import { type SlimSubjectProfile, resolveSubjectRenderModel, subjectContentProps } from './subject';
 
 const baseProfile: SlimSubjectProfile = {
   id: 'wenyan',
@@ -71,5 +67,19 @@ describe('resolveSubjectRenderModel', () => {
     expect(props.className).toBe(model.contentClassName);
     expect(props['data-subject']).toBe('math');
     expect(props['data-notation']).toBe('katex');
+  });
+
+  it('merges component className and style with subject content props', () => {
+    const props = subjectContentProps(baseProfile, {
+      className: 'qbody',
+      style: { whiteSpace: 'pre-wrap' },
+    });
+
+    expect(props.className).toContain('qbody');
+    expect(props.className).toContain('subject-content--font-serif-cjk');
+    expect(props.style).toEqual({
+      whiteSpace: 'pre-wrap',
+      fontFamily: 'var(--font-wenyan)',
+    });
   });
 });
