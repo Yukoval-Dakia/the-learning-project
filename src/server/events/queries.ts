@@ -22,8 +22,19 @@ import type { CauseCategoryT, CauseSchemaT, FsrsStateSchemaT } from '@/core/sche
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
+import {
+  type CorrectionStatus,
+  activeCorrectionStatus,
+  getCorrectionStatus,
+  getCorrectionStatuses,
+} from './corrections';
 
 type DbLike = Db | Tx;
+type EventRow = typeof event.$inferSelect;
+
+function hasActiveCorrectionStatus(status: CorrectionStatus | undefined): boolean {
+  return status?.state === 'active';
+}
 
 // ============================================================================
 // FailureAttempt — user-facing "mistake" view projected from the event stream.
@@ -80,6 +91,7 @@ export async function getFailureAttempts(
   opts: GetFailureAttemptsOpts = {},
 ): Promise<FailureAttempt[]> {
   const limit = opts.limit ?? DEFAULT_FAILURE_ATTEMPTS_LIMIT;
+  if (limit <= 0) return [];
   const conditions = [
     eq(event.action, 'attempt'),
     eq(event.subject_kind, 'question'),
@@ -96,11 +108,21 @@ export async function getFailureAttempts(
     .from(event)
     .where(and(...conditions))
     .orderBy(desc(event.created_at))
-    .limit(limit);
+    .limit(limit * 3);
 
   if (attemptRows.length === 0) return [];
 
-  const attemptIds = attemptRows.map((r) => r.id);
+  const attemptStatuses = await getCorrectionStatuses(
+    db,
+    attemptRows.map((r) => r.id),
+  );
+  const activeAttemptRows = attemptRows
+    .filter((r) => hasActiveCorrectionStatus(attemptStatuses.get(r.id)))
+    .slice(0, limit);
+
+  if (activeAttemptRows.length === 0) return [];
+
+  const attemptIds = activeAttemptRows.map((r) => r.id);
   // One round-trip fetches BOTH judge events (action='judge') and user_cause
   // events (action='experimental:user_cause'). Both chain via caused_by_event_id
   // and have subject_kind='event'.
@@ -114,20 +136,29 @@ export async function getFailureAttempts(
         inArray(event.action, ['judge', 'experimental:user_cause']),
       ),
     );
+  const chainedStatuses = await getCorrectionStatuses(
+    db,
+    chainedRows.map((r) => r.id),
+  );
 
   // Group by (action, caused_by_event_id); keep newest within each group.
   const judgeByAttempt = new Map<string, (typeof chainedRows)[number]>();
   const userCauseByAttempt = new Map<string, (typeof chainedRows)[number]>();
   for (const row of chainedRows) {
+    if (!hasActiveCorrectionStatus(chainedStatuses.get(row.id))) continue;
     const key = row.caused_by_event_id as string;
     const bucket = row.action === 'judge' ? judgeByAttempt : userCauseByAttempt;
     const existing = bucket.get(key);
-    if (!existing || row.created_at > existing.created_at) {
+    if (
+      !existing ||
+      row.created_at > existing.created_at ||
+      (row.created_at.getTime() === existing.created_at.getTime() && row.id > existing.id)
+    ) {
       bucket.set(key, row);
     }
   }
 
-  return attemptRows.map((a) => {
+  return activeAttemptRows.map((a) => {
     const payload = a.payload as {
       answer_md: string | null;
       answer_image_refs: string[];
@@ -189,9 +220,12 @@ export async function getJudgeForAttempt(
         eq(event.caused_by_event_id, attemptEventId),
       ),
     )
-    .orderBy(desc(event.created_at))
-    .limit(1);
-  const j = rows[0];
+    .orderBy(desc(event.created_at), desc(event.id));
+  const statuses = await getCorrectionStatuses(
+    db,
+    rows.map((r) => r.id),
+  );
+  const j = rows.find((row) => hasActiveCorrectionStatus(statuses.get(row.id)));
   if (!j) return null;
   const jPayload = j.payload as {
     cause: CauseSchemaT;
@@ -224,9 +258,12 @@ export async function getUserCauseForAttempt(
         eq(event.caused_by_event_id, attemptEventId),
       ),
     )
-    .orderBy(desc(event.created_at))
-    .limit(1);
-  const uc = rows[0];
+    .orderBy(desc(event.created_at), desc(event.id));
+  const statuses = await getCorrectionStatuses(
+    db,
+    rows.map((r) => r.id),
+  );
+  const uc = rows.find((row) => hasActiveCorrectionStatus(statuses.get(row.id)));
   if (!uc) return null;
   const ucPayload = uc.payload as {
     primary_category: CauseCategoryT;
@@ -273,6 +310,7 @@ export async function getRecentReviewEvents(
   opts: GetRecentReviewEventsOpts = {},
 ): Promise<ReviewEvent[]> {
   const limit = opts.limit ?? DEFAULT_REVIEW_EVENTS_LIMIT;
+  if (limit <= 0) return [];
   const conditions = [eq(event.action, 'review'), eq(event.subject_kind, 'question')];
   if (opts.questionIds && opts.questionIds.length > 0) {
     conditions.push(inArray(event.subject_id, opts.questionIds));
@@ -285,9 +323,17 @@ export async function getRecentReviewEvents(
     .from(event)
     .where(and(...conditions))
     .orderBy(desc(event.created_at))
-    .limit(limit);
+    .limit(limit * 3);
 
-  return rows.map((r) => {
+  const statuses = await getCorrectionStatuses(
+    db,
+    rows.map((r) => r.id),
+  );
+  const activeRows = rows
+    .filter((r) => hasActiveCorrectionStatus(statuses.get(r.id)))
+    .slice(0, limit);
+
+  return activeRows.map((r) => {
     const payload = r.payload as {
       fsrs_rating: 'again' | 'hard' | 'good';
       fsrs_state_after: FsrsStateSchemaT;
@@ -343,6 +389,7 @@ export async function getEventById(db: DbLike, id: string): Promise<EnvelopedEve
     ...parseEvent(rowToParseInput(row)),
     id: row.id,
     created_at: row.created_at,
+    correction_status: await getCorrectionStatus(db, row.id),
   } as EnvelopedEvent;
 }
 
@@ -373,7 +420,27 @@ const MAX_EVENTS_LIMIT = 200;
 // order things along time (created_at). Phase 1c.2 added these because the
 // /api/events consumers (notably the edge-proposal decide flow) need the
 // event id to address proposals on the wire.
-export type EnvelopedEvent = EventT & { id: string; created_at: Date };
+export type EnvelopedEvent = EventT & {
+  id: string;
+  created_at: Date;
+  correction_status: CorrectionStatus;
+};
+
+async function rowsToEnvelopedEvents(db: DbLike, rows: EventRow[]): Promise<EnvelopedEvent[]> {
+  const statuses = await getCorrectionStatuses(
+    db,
+    rows.map((r) => r.id),
+  );
+  return rows.map(
+    (r) =>
+      ({
+        ...parseEvent(rowToParseInput(r)),
+        id: r.id,
+        created_at: r.created_at,
+        correction_status: statuses.get(r.id) ?? activeCorrectionStatus(),
+      }) as EnvelopedEvent,
+  );
+}
 
 export async function getEvents(
   db: DbLike,
@@ -393,11 +460,7 @@ export async function getEvents(
   const filtered = conditions.length > 0 ? baseQuery.where(and(...conditions)) : baseQuery;
   const rows = await filtered.orderBy(desc(event.created_at)).limit(limit);
 
-  return rows.map((r) => ({
-    ...parseEvent(rowToParseInput(r)),
-    id: r.id,
-    created_at: r.created_at,
-  })) as EnvelopedEvent[];
+  return rowsToEnvelopedEvents(db, rows);
 }
 
 // ============================================================================
@@ -412,6 +475,7 @@ export async function getEvents(
 export type EventChain = {
   caused_by: EnvelopedEvent | null;
   caused_events: EnvelopedEvent[];
+  corrections: EnvelopedEvent[];
 };
 
 export async function getEventChain(db: DbLike, id: string): Promise<EventChain> {
@@ -436,16 +500,18 @@ export async function getEventChain(db: DbLike, id: string): Promise<EventChain>
     .from(event)
     .where(eq(event.caused_by_event_id, id))
     .orderBy(desc(event.created_at));
-  const caused_events = reverseRows.map(
-    (r) =>
-      ({
-        ...parseEvent(rowToParseInput(r)),
-        id: r.id,
-        created_at: r.created_at,
-      }) as EnvelopedEvent,
-  );
+  const caused_events = await rowsToEnvelopedEvents(db, reverseRows);
 
-  return { caused_by, caused_events };
+  const correctionRows = await db
+    .select()
+    .from(event)
+    .where(
+      and(eq(event.action, 'correct'), eq(event.subject_kind, 'event'), eq(event.subject_id, id)),
+    )
+    .orderBy(desc(event.created_at), desc(event.id));
+  const corrections = await rowsToEnvelopedEvents(db, correctionRows);
+
+  return { caused_by, caused_events, corrections };
 }
 
 // ============================================================================
