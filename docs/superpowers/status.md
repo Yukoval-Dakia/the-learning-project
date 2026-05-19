@@ -70,7 +70,7 @@
 ### Product Track 1 — Review / Learning Item / Teaching Loop 收口（v0.3 Track A）
 
 ```
-⬜  NoteVerifyTask Pass 2           笔记内容双 pass 验证
+🟡  NoteVerifyTask Pass 2           `note_verify` queue + artifact verification metadata landed; proposal-inbox rollback remains later
 ⬜  Embedded check（atomic notes）  inline 选择题 / fill-blank
 ⬜  Note 编辑 / 阅读 UX 完善
 ⬜  VariantVerifyTask Pass 2        variant 双 pass + variants_max=3 计数
