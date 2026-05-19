@@ -129,12 +129,13 @@ Question (统一题库，single source of truth)
 
 需要"边看数据边决策"的 Task 走 multi-turn tool call；输入已固定的 Task 走单轮 structured output。
 
-> **2026-05-18 alignment**: 现行 runner 在 `src/server/ai/runner.ts`，所有 LLM task 都走 `@anthropic-ai/claude-agent-sdk`。Tool transport 使用 Claude Agent SDK 的 `mcpServers + allowedTools + maxTurns`。统一 Domain Tool Registry 仍是计划中设计；当前只有 `KnowledgeReviewTask` 在 `src/server/knowledge/review.ts` 内部创建本地 in-process MCP tool。
+> **2026-05-19 alignment**: 现行 runner 在 `src/server/ai/runner.ts`，所有 LLM task 都走 `@anthropic-ai/claude-agent-sdk`。Tool transport 使用 Claude Agent SDK 的 `mcpServers + allowedTools + maxTurns`。统一 Domain Tool Registry 仍是计划中设计；当前只有 `KnowledgeReviewTask` 在 `src/server/knowledge/review.ts` 内部创建本地 in-process MCP tool。
 
 **当前规则**：
 
 - `needsToolCall: false` 的 task 可走 generic `app/api/ai/[task]`，由 `runTask()` 返回 JSON。
 - `needsToolCall: true` 的 task **不能**走 generic route；必须走领域 route，由领域 route 注入 MCP server 和 allowlist。例如 `KnowledgeReviewTask` 走 `/api/knowledge/review`。
+- 当前唯一实际 MCP server 是每次 review 请求内创建的本地 `loom` server；唯一 tool 是 `mcp__loom__write_proposal`，用于写 proposal event，不对外暴露 endpoint。
 - 破坏性操作（删题、合并节点、reparent、merge、archive）没有直接 write tool。AI 只能 propose；用户 accept route 再执行真实 mutation。
 
 **计划中的 DomainTool 合约**（未落地；第二个 tool-calling task 出现前不实现）：

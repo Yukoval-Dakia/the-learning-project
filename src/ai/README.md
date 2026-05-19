@@ -23,7 +23,17 @@ Task 层抽象。**不是 chat()** —— 每种产物一个 Task；tool-calling
 
 ## Tool 设计
 
-产品内 tool 的长期领域设计见 [Agent Context Tools Design](../../docs/superpowers/specs/2026-05-17-agent-context-tools-design.md)。当前实现只有 `KnowledgeReviewTask` 的本地 in-process MCP tool；统一 Domain Tool Registry 尚未落地。核心原则：
+产品内 tool 的长期领域设计见 [Agent Context Tools Design](../../docs/superpowers/specs/2026-05-17-agent-context-tools-design.md)。当前实现只有 `KnowledgeReviewTask` 的本地 in-process MCP tool；统一 Domain Tool Registry 尚未落地。
+
+当前已落地的 MCP/tool-call 状态：
+
+- `src/server/ai/runner.ts` 支持 `mcpServers`、`allowedTools`、`maxTurns`，并把所有 task 统一送进 Claude Agent SDK `query()`。
+- `src/ai/registry.ts` 只给 `KnowledgeReviewTask` 开了 `allowedTools: ['mcp__loom__write_proposal']`。
+- `src/server/knowledge/review.ts` 在每次 `/api/knowledge/review` 请求内创建本地 `loom` MCP server，只暴露 `write_proposal` 一个 proposal tool。
+- generic `app/api/ai/[task]` 遇到 `needsToolCall: true` 会返回 `tool_task_requires_domain_route`，不会尝试裸跑缺少 MCP server 的 tool task。
+- 尚未实现：公共/standalone MCP server、外部 MCP 消费、统一 `DomainTool` registry、read tool 套件。
+
+核心原则：
 
 - Domain Tool Registry 是计划中的源头；MCP 只是 Claude Agent SDK 的 in-process 适配层。
 - Read tool 返回语义化上下文，例如 graph path、relation meaning、recent failure evidence。
