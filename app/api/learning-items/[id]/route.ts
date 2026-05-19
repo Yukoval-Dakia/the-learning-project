@@ -59,7 +59,11 @@ async function resolveSlimProfileForKnowledgeIds(
   try {
     const domain = await getEffectiveDomain(db, firstKnowledgeId);
     return toSlimSubjectProfile(resolveSubjectProfile(domain));
-  } catch {
+  } catch (err) {
+    console.error(
+      '[learning-items GET] getEffectiveDomain failed; falling back to default subject',
+      { knowledge_id: firstKnowledgeId, err },
+    );
     return toSlimSubjectProfile(resolveSubjectProfile(null));
   }
 }
