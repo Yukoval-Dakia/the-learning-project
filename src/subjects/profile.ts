@@ -73,6 +73,7 @@ export const SubjectProfileSchema = z.object({
   judgeCapabilities: z.array(z.string().trim().min(1)),
 });
 export type SubjectProfile = z.infer<typeof SubjectProfileSchema>;
+export type SlimSubjectProfile = Pick<SubjectProfile, 'id' | 'displayName' | 'renderConfig'>;
 
 const DEFAULT_SUBJECT_ID: KnownSubjectId = 'wenyan';
 
@@ -161,4 +162,12 @@ export function resolveSubjectProfile(domain?: string | null): SubjectProfile {
 
 export function getDefaultSubjectRegistry(): SubjectRegistry {
   return defaultRegistry;
+}
+
+export function toSlimSubjectProfile(profile: SubjectProfile): SlimSubjectProfile {
+  return {
+    id: profile.id,
+    displayName: profile.displayName,
+    renderConfig: profile.renderConfig,
+  };
 }

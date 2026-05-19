@@ -430,11 +430,52 @@ describe('GET /api/learning-items/[id]', () => {
       parent: unknown;
       children: unknown[];
       parent_learning_item_id: string | null;
+      subject_profile: { id: string; displayName: string };
     };
     expect(body.id).toBe('li1');
     expect(body.parent).toBeNull();
     expect(body.children).toEqual([]);
     expect(body.parent_learning_item_id).toBeNull();
+    expect(body.subject_profile.id).toBe('wenyan');
+    expect(body.subject_profile.displayName).toBe('文言文');
+  });
+
+  it('returns a slim subject profile resolved from the first knowledge id', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(knowledge).values({
+      id: 'k_math',
+      ...BASE_KNOWLEDGE,
+      domain: 'math',
+      created_at: now,
+      updated_at: now,
+    });
+    await db
+      .insert(learning_item)
+      .values(baseItem('li1', { knowledge_ids: ['k_math'] }));
+
+    const res = await GET(getReq('li1'), { params: Promise.resolve({ id: 'li1' }) });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      subject_profile: {
+        id: string;
+        displayName: string;
+        renderConfig: {
+          font_family: string;
+          notation: string | null;
+          code_highlight: string | null;
+        };
+      };
+    };
+    expect(body.subject_profile).toEqual({
+      id: 'math',
+      displayName: '数学',
+      renderConfig: {
+        font_family: 'system',
+        notation: 'katex',
+        code_highlight: null,
+      },
+    });
   });
 
   it('returns parent breadcrumb when item has a parent', async () => {
@@ -466,8 +507,11 @@ describe('GET /api/learning-items/[id]', () => {
       .values(baseItem('c2', { title: 'B', parent_learning_item_id: 'hub' }));
 
     const res = await GET(getReq('hub'), { params: Promise.resolve({ id: 'hub' }) });
-    const body = (await res.json()) as { children: { id: string }[] };
+    const body = (await res.json()) as {
+      children: Array<{ id: string; subject_profile?: unknown }>;
+    };
     expect(body.children.map((c) => c.id).sort()).toEqual(['c1', 'c2']);
+    expect(body.children.some((c) => 'subject_profile' in c)).toBe(false);
   });
 });
 
