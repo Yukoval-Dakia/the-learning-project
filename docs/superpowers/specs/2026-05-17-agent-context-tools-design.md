@@ -16,6 +16,27 @@ The tool layer should help an agent answer three questions:
 
 This follows the existing Orchestrator boundary: read state, choose strategy, dispatch registered tasks, and write proposal/evidence. It must not become a generic plugin system or a database editor.
 
+## Current Implementation Snapshot (2026-05-19)
+
+This document is still the target design for the next agent-tool iteration. The repository currently has only the first MCP-backed runtime slice:
+
+- `src/server/ai/runner.ts` routes `runTask`, `runAgentTask`, and `streamTask` through Claude Agent SDK `query()`.
+- The runner accepts `mcpServers` and uses task-level `allowedTools` from `src/ai/registry.ts`; `TaskBudget.maxIterations` maps to SDK `maxTurns`.
+- `KnowledgeReviewTask` is the only `needsToolCall: true` task. Its allowlist is `mcp__loom__write_proposal`.
+- `/api/knowledge/review` builds a per-request in-process MCP server named `loom` in `src/server/knowledge/review.ts`.
+- The only live tool is `write_proposal`. It writes proposal events for knowledge tree mutations and knowledge-edge proposals; it does not execute destructive graph mutations directly.
+- generic `/api/ai/[task]` rejects tool-calling tasks with `tool_task_requires_domain_route` so callers cannot run a task with an allowlist but no matching MCP server.
+
+Not implemented yet:
+
+- the shared `src/server/ai/tools/*` Domain Tool Registry described below,
+- read tools such as `query_knowledge`, `query_events`, or `get_question_context`,
+- a reusable MCP bridge over registered DomainTools,
+- a standalone/public MCP server,
+- external MCP consumption.
+
+The next implementation step should add the registry/read-tool layer before adding a second tool-calling task. That keeps `KnowledgeReviewTask` from becoming the implicit registry.
+
 ## Design Principles
 
 1. **Domain tools first, MCP second**.
