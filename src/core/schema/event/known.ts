@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ActivityRef } from '../activity';
 import { CauseSchema, FsrsStateSchema, RelationTypeSchema } from './blocks';
 
 // ---------- 通用 envelope 字段 ----------
@@ -162,6 +163,42 @@ export const RateEvent = z.object({
   ...baseOptionalFields,
 });
 export type RateEventT = z.infer<typeof RateEvent>;
+
+// 6b. CorrectEvent — actor=user / action='correct' / subject='event'
+//
+// First-class semantic correction for append-only event history. Unlike
+// RateEvent.rating='rollback', this says how projections should treat a prior
+// event: superseded, retracted, marked wrong, or restored.
+
+export const CorrectionKind = z.enum(['supersede', 'retract', 'mark_wrong', 'restore']);
+export type CorrectionKindT = z.infer<typeof CorrectionKind>;
+
+export const CorrectEvent = z
+  .object({
+    actor_kind: z.literal('user'),
+    actor_ref: z.literal('self'),
+    action: z.literal('correct'),
+    subject_kind: z.literal('event'),
+    subject_id: z.string(),
+    outcome: z.literal('success'),
+    payload: z.object({
+      correction_kind: CorrectionKind,
+      replacement_event_id: z.string().optional(),
+      reason_md: z.string().min(1),
+      affected_refs: z.array(ActivityRef).min(1),
+    }),
+    ...baseOptionalFields,
+  })
+  .superRefine((data, ctx) => {
+    if (data.payload.correction_kind === 'supersede' && !data.payload.replacement_event_id) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "replacement_event_id is required when correction_kind='supersede'",
+        path: ['payload', 'replacement_event_id'],
+      });
+    }
+  });
+export type CorrectEventT = z.infer<typeof CorrectEvent>;
 
 // 7. ExtractSourceDocument — actor=agent / action='extract' / subject='source_document'
 //
@@ -344,6 +381,7 @@ export const KnownEvent = z.union([
   ProposeKnowledgeEdge,
   GenerateArtifact,
   GenerateKnowledgeEdge,
+  CorrectEvent,
   RateEvent,
   RateKnowledgeEdge,
   AcceptSuggestionChip,
