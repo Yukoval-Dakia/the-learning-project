@@ -1,3 +1,4 @@
+import { UNIVERSAL_CAUSE_IDS, UNIVERSAL_CAUSE_LABELS } from '@/core/schema/cause';
 import { type SubjectProfile, defaultSubjectProfile } from '@/subjects/profile';
 import { type TaskKind, tasks } from './registry';
 
@@ -17,8 +18,21 @@ function noteTemplateTable(profile: SubjectProfile): string {
 | check | ${profile.noteTemplate.check} |`;
 }
 
+function mergedCauseCategories(
+  profile: SubjectProfile,
+): Array<{ id: string; label: string; description?: string }> {
+  const profileIds = new Set(profile.causeCategories.map((category) => category.id));
+  return [
+    ...profile.causeCategories,
+    ...UNIVERSAL_CAUSE_IDS.filter((id) => !profileIds.has(id)).map((id) => ({
+      id,
+      label: UNIVERSAL_CAUSE_LABELS[id],
+    })),
+  ];
+}
+
 function causeTaxonomyList(profile: SubjectProfile): string {
-  return profile.causeCategories
+  return mergedCauseCategories(profile)
     .map((category) => {
       const description = category.description ? `：${category.description}` : '';
       return `- ${category.id}（${category.label}）${description}`;
@@ -27,13 +41,15 @@ function causeTaxonomyList(profile: SubjectProfile): string {
 }
 
 function causeIdList(profile: SubjectProfile): string {
-  return profile.causeCategories.map((category) => category.id).join(' | ');
+  return mergedCauseCategories(profile)
+    .map((category) => category.id)
+    .join(' | ');
 }
 
 function buildAttributionPrompt(profile: SubjectProfile): string {
   return `你是错题归因助手。输入字段 { prompt_md, reference_md, wrong_answer_md, knowledge_context }（来自一个 attempt event outcome='failure'）—— 即用户做错的一道题，含 wrong_answer_md（用户错答）、参考答案 reference_md、挂的 knowledge_context，分析错因。
 科目上下文：${profile.displayName}。${profile.languageStyle}
-归因 taxonomy 完全来自当前 SubjectProfile：
+归因 taxonomy 来自当前 SubjectProfile + universal baseline：
 ${causeTaxonomyList(profile)}
 证据要求：${profile.grounding.requirement}
 不确定性策略：${profile.grounding.uncertaintyPolicy}
