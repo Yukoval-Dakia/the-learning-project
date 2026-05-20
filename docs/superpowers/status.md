@@ -4,7 +4,7 @@
 > 这里记的是 **项目走到了哪、下一站去哪、为什么这么走**，不是 commit log。
 > 维护规则：每完成一个 Phase 就 update 一次；不维护周度进度。
 
-**最后更新**：2026-05-20（Foundation A/B final drift closeout：ActivityRef submit、subject identity、math pressure profile 已验证；Foundation C correction event substrate 已在 main）
+**最后更新**：2026-05-21（Product Track 1 Slice 1 Embedded Check MVP：verified atomic notes 生成 inline self-check question，/api/embedded-check/attempt 写 attempt event + learning_record mistake）
 **当前 Phase**：Foundation gate 已收口；下一步进入 Product Track 1（NoteVerify / embedded check / variant verify 等），Product Track 2 仍等 proposal inbox slice
 **主分支**：`main` 已推 `origin`
 **路线图源**：[`docs/planning/v0.3-generalized-ai-learning-framework.md`](../planning/v0.3-generalized-ai-learning-framework.md) §1.5 是当前执行清单；root `PLANNING.md` v0.12 Phase 1-4 已标 historical
@@ -71,7 +71,7 @@
 
 ```
 🟡  NoteVerifyTask Pass 2           `note_verify` queue + artifact verification metadata landed; proposal-inbox rollback remains later
-⬜  Embedded check（atomic notes）  inline 选择题 / fill-blank
+✅  Embedded check（atomic notes）  inline 选择题 / fill-blank — `embedded_check_generate` handler + `/api/embedded-check/attempt` + UI
 ⬜  Note 编辑 / 阅读 UX 完善
 ⬜  VariantVerifyTask Pass 2        variant 双 pass + variants_max=3 计数
 ⬜  Learning-item proposal rollback UI
@@ -190,6 +190,8 @@ ADR-0014 配套：[7 轮讨论 + 10 决议 summary](../discussion/summary.md)、
 | `prune_orphan_review_sessions` | cron @ BJT 04:15 | 6h+ started 标 abandoned（ADR-0013） |
 | `session_summary` | review session end | SessionSummaryTask → summary_md |
 | `note_generate` | learning-intent accept | NoteGenerateTask → atomic artifact.sections |
+| `note_verify` | note_generate ready | NoteVerifyTask → artifact verification metadata / event |
+| `embedded_check_generate` | note_verify pass | EmbeddedCheckGenerateTask → 1-3 embedded question rows + artifact embedded_check metadata |
 | `attribution_followup` | 失败 attempt | AttributionTask → judge event |
 | `variant_gen` | attribution_followup done | VariantGenTask → mistake_variant question |
 | `tencent_ocr_extract` | /record vision 提交 | Tencent QuestionMarkAgent OCR |
