@@ -20,9 +20,7 @@ describe('local dev DB env', () => {
         POSTGRES_DB: 'learning db',
         LOCAL_POSTGRES_PORT: '15433',
       }),
-    ).toBe(
-      'postgres://dev%20user:dev%2Fpass@127.0.0.1:15433/learning%20db?sslmode=disable',
-    );
+    ).toBe('postgres://dev%20user:dev%2Fpass@127.0.0.1:15433/learning%20db?sslmode=disable');
   });
 
   it('builds Next dev env without reading stale .env.local DATABASE_URL', () => {
