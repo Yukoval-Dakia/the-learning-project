@@ -30,6 +30,28 @@ function causeIdList(profile: SubjectProfile): string {
   return profile.causeCategories.map((category) => category.id).join(' | ');
 }
 
+const VARIANT_CAUSE_STRATEGIES: Record<string, string> = {
+  concept: '同概念不同语境 / 反向考查（验证概念边界）',
+  knowledge_gap: '补充该知识点的典型变体',
+  calculation: '改数据 + 留同样陷阱（验证计算稳定性）',
+  reading: '改提问方式 + 加干扰信息',
+  memory: '不同表述测同一记忆点',
+  expression: '同题重写答案要求（重点检查表达）',
+  method: '提示备选方法 + 同类型题',
+  unit_error: '改变单位、量纲或换算条件，检查单位一致性',
+};
+
+function variantCauseStrategyList(profile: SubjectProfile): string {
+  return profile.causeCategories
+    .map((category) => {
+      const strategy =
+        VARIANT_CAUSE_STRATEGIES[category.id] ??
+        `围绕「${category.label}」设计同知识点、同能力目标的针对性变式`;
+      return `- ${category.id}（${category.label}）：${strategy}`;
+    })
+    .join('\n');
+}
+
 function buildAttributionPrompt(profile: SubjectProfile): string {
   return `你是错题归因助手。输入字段 { prompt_md, reference_md, wrong_answer_md, knowledge_context }（来自一个 attempt event outcome='failure'）—— 即用户做错的一道题，含 wrong_answer_md（用户错答）、参考答案 reference_md、挂的 knowledge_context，分析错因。
 科目上下文：${profile.displayName}。${profile.languageStyle}
@@ -75,14 +97,11 @@ ${noteTemplateTable(profile)}
 
 function buildVariantGenPrompt(profile: SubjectProfile): string {
   return `你是错题变式题作者。输入 { original_question: { id, prompt_md, reference_md, knowledge_ids, kind }, attempt: { wrong_answer_md }, cause: { primary_category, analysis_md }, depth }（depth 是原题代数：0=原题，1=一代变式；输入 depth≥2 时不会调用本任务）。
-按 cause 类型出 1 道针对性变式（不要凑数，1 道即可）：
-- concept：同概念不同语境 / 反向考查（验证概念边界）
-- knowledge_gap：补充该知识点的典型变体
-- calculation：改数据 + 留同样陷阱（验证计算稳定性）
-- reading：改提问方式 + 加干扰信息
-- memory：不同表述测同一记忆点
-- expression：同题重写答案要求（重点检查表达）
-- method：提示备选方法 + 同类型题
+科目上下文：${profile.displayName}。${profile.languageStyle}
+当前 SubjectProfile cause taxonomy：
+${causeTaxonomyList(profile)}
+按 cause 类型出 1 道针对性变式（不要凑数，1 道即可）。策略参考：
+${variantCauseStrategyList(profile)}
 严格 JSON 输出（不带 markdown 包裹）：
 {"prompt_md":"...","reference_md":"...","difficulty":1-5,"reasoning":"说明这是怎么针对 cause 设计的"}
 要点：

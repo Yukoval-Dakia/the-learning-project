@@ -2,6 +2,7 @@
 
 import { VisionTab } from '@/ui/components/VisionTab';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
+import { causeOptionsForSelectedKnowledge } from '@/ui/lib/cause-options';
 import { Badge } from '@/ui/primitives/Badge';
 import { Button } from '@/ui/primitives/Button';
 import { Card } from '@/ui/primitives/Card';
@@ -9,7 +10,7 @@ import { PageHeader } from '@/ui/primitives/PageHeader';
 import { TabBar } from '@/ui/primitives/TabBar';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 type ModeTab = 'context' | 'manual' | 'vision_single' | 'vision_paper';
 
@@ -30,21 +31,8 @@ const QUESTION_KINDS = [
   { id: 'translation', label: '翻译' },
 ] as const;
 
-const CAUSE_CATEGORIES = [
-  { id: 'concept', label: '概念' },
-  { id: 'knowledge_gap', label: '知识盲点' },
-  { id: 'calculation', label: '计算' },
-  { id: 'reading', label: '阅读理解' },
-  { id: 'memory', label: '记忆' },
-  { id: 'expression', label: '表达' },
-  { id: 'method', label: '方法' },
-  { id: 'carelessness', label: '粗心' },
-  { id: 'time_pressure', label: '时间' },
-  { id: 'other', label: '其它' },
-] as const;
-
 type QuestionKindId = (typeof QUESTION_KINDS)[number]['id'];
-type CauseCategoryId = (typeof CAUSE_CATEGORIES)[number]['id'];
+type CauseCategoryId = string;
 
 const RECORD_KINDS = [
   { id: 'open_question', label: '疑问', tone: 'info' },
@@ -475,6 +463,17 @@ function ManualForm() {
       )
       .slice(0, 50);
   }, [allNodes, knowledgeFilter]);
+  const causeOptions = useMemo(
+    () => causeOptionsForSelectedKnowledge(allNodes, selectedKnowledge),
+    [allNodes, selectedKnowledge],
+  );
+
+  useEffect(() => {
+    if (causePrimary && !causeOptions.some((option) => option.id === causePrimary)) {
+      setCausePrimary('');
+      setCauseNotes('');
+    }
+  }, [causeOptions, causePrimary]);
 
   const submitM = useMutation({
     mutationFn: async () =>
@@ -611,7 +610,7 @@ function ManualForm() {
         >
           不指定
         </button>
-        {CAUSE_CATEGORIES.map((c) => (
+        {causeOptions.map((c) => (
           <button
             type="button"
             key={c.id}

@@ -10,6 +10,10 @@ import { getStartedBoss } from '@/server/boss/client';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { runProposeAndWrite } from '@/server/knowledge/propose';
+import {
+  assertCauseAllowedForSubjectProfile,
+  resolveSubjectProfileForKnowledgeIds,
+} from '@/server/knowledge/subject-profile';
 import { listMistakeProjectionRows } from '@/server/records/mistakes';
 import { createLearningRecord } from '@/server/records/queries';
 import { and, inArray, isNull } from 'drizzle-orm';
@@ -75,6 +79,8 @@ export async function POST(req: Request): Promise<Response> {
         400,
       );
     }
+    const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, body.knowledge_ids);
+    assertCauseAllowedForSubjectProfile(body.cause, subjectProfile);
 
     // Validate asset refs
     await assertAssetsExist(body.prompt_image_refs, 'prompt_image_refs');
@@ -192,6 +198,7 @@ export async function POST(req: Request): Promise<Response> {
           const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
           return { text: result.text };
         },
+        subjectProfile,
       });
     });
 

@@ -149,12 +149,12 @@ async function insertBlock(
   });
 }
 
-async function insertKnowledge(db: ReturnType<typeof testDb>, id: string) {
+async function insertKnowledge(db: ReturnType<typeof testDb>, id: string, domain = 'wenyan') {
   const now = new Date();
   await db.insert(knowledge).values({
     id,
     name: `K-${id}`,
-    domain: 'wenyan',
+    domain,
     parent_id: null,
     archived_at: null,
     created_at: now,
@@ -294,6 +294,43 @@ describe('POST /api/ingestion/[id]/import', () => {
     const events = await db.select().from(event).where(eq(event.id, body.mistake_ids[0]));
     expect(events).toHaveLength(1);
     expect(events[0].action).toBe('attempt');
+  });
+
+  it('passes the imported block subject profile to KnowledgeProposeTask', async () => {
+    const db = testDb();
+    const { sessionId, sourceDocId } = await setupSession(db);
+    await insertBlock(db, { id: 'block_a', sessionId, docId: sourceDocId });
+    await insertKnowledge(db, 'k1', 'math');
+
+    const res = await post(sessionId, makeImportBody());
+    expect(res.status).toBe(200);
+    await vi.waitFor(() => {
+      expect(mockRunProposeAndWrite).toHaveBeenCalled();
+    });
+    const params = (mockRunProposeAndWrite.mock.calls as unknown[][])[0]?.[0] as
+      | { subjectProfile?: { id: string } }
+      | undefined;
+    expect(params?.subjectProfile?.id).toBe('math');
+  });
+
+  it('rejects a provided cause outside the imported block subject profile', async () => {
+    const db = testDb();
+    const { sessionId, sourceDocId } = await setupSession(db);
+    await insertBlock(db, { id: 'block_a', sessionId, docId: sourceDocId });
+    await insertKnowledge(db, 'k1', 'math');
+
+    const res = await post(
+      sessionId,
+      makeImportBody({ cause: { primary_category: 'time_pressure', user_notes: null } }),
+    );
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe('validation_error');
+    expect(body.message).toContain('time_pressure');
+    expect(body.message).toContain('math');
+    const questions = await db.select().from(question);
+    expect(questions).toHaveLength(0);
   });
 
   it('knowledge_ids missing/archived → 400, NO inserts', async () => {
