@@ -226,7 +226,7 @@ describe('runEmbeddedCheckGenerate', () => {
   });
 
   // Test 5: Skipped — already ready (idempotent)
-  it('returns skipped:already_ready when embedded_check_status is already ready', async () => {
+  it('returns skipped:already_in_progress when embedded_check_status is already ready', async () => {
     await seedAtomic({ artifactId: 'a1', embeddedCheckStatus: 'ready' });
     const runTaskFn = vi.fn();
 
@@ -236,7 +236,22 @@ describe('runEmbeddedCheckGenerate', () => {
       runTaskFn,
     });
 
-    expect(result.status).toBe('skipped:already_ready');
+    expect(result.status).toBe('skipped:already_in_progress');
+    expect(runTaskFn).not.toHaveBeenCalled();
+  });
+
+  // Test 5b: Skipped — already pending (pg-boss re-delivery guard)
+  it('returns skipped:already_in_progress when embedded_check_status is pending', async () => {
+    await seedAtomic({ artifactId: 'a1', embeddedCheckStatus: 'pending' });
+    const runTaskFn = vi.fn();
+
+    const result = await runEmbeddedCheckGenerate({
+      db: testDb(),
+      artifactId: 'a1',
+      runTaskFn,
+    });
+
+    expect(result.status).toBe('skipped:already_in_progress');
     expect(runTaskFn).not.toHaveBeenCalled();
   });
 

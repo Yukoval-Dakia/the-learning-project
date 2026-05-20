@@ -8,7 +8,7 @@
 // a spaced-rep surface.
 
 import { createId } from '@paralleldrive/cuid2';
-import { eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { z } from 'zod';
 
@@ -82,7 +82,8 @@ export type RunEmbeddedCheckGenerateStatus =
   | 'skipped:not_found'
   | 'skipped:not_ready'
   | 'skipped:no_check_section'
-  | 'skipped:already_ready';
+  | 'skipped:already_ready'
+  | 'skipped:already_in_progress';
 
 export interface RunEmbeddedCheckGenerateResult {
   status: RunEmbeddedCheckGenerateStatus;
@@ -109,7 +110,6 @@ export async function runEmbeddedCheckGenerate(
   const row = rows[0];
   if (!row) return { status: 'skipped:not_found' };
   if (row.generation_status !== 'ready') return { status: 'skipped:not_ready' };
-  if (row.embedded_check_status === 'ready') return { status: 'skipped:already_ready' };
 
   const sections = (row.sections ?? []) as Array<{
     id: string;
@@ -118,6 +118,25 @@ export async function runEmbeddedCheckGenerate(
   }>;
   const checkSection = sections.find((s) => s.kind === 'check');
   if (!checkSection) return { status: 'skipped:no_check_section' };
+
+  // Atomically claim the artifact only if status is in a re-runnable state.
+  // 'not_required' = first attempt; 'failed' = retry after prior failure.
+  // 'ready' and 'pending' are excluded, preventing duplicate work on re-delivery.
+  //
+  // Note: a crashed handler leaves status='pending' permanently. For this
+  // single-user MVP that is acceptable — reset via SQL if it happens:
+  //   UPDATE artifact SET embedded_check_status='not_required' WHERE id='<id>';
+  const claim = await db
+    .update(artifact)
+    .set({ embedded_check_status: 'pending', updated_at: new Date() })
+    .where(
+      and(
+        eq(artifact.id, artifactId),
+        inArray(artifact.embedded_check_status, ['not_required', 'failed']),
+      ),
+    )
+    .returning({ id: artifact.id });
+  if (claim.length === 0) return { status: 'skipped:already_in_progress' };
 
   // Resolve subject profile for prompt
   let kNode: { id: string; name: string; domain: string | null } | null = null;
@@ -130,12 +149,6 @@ export async function runEmbeddedCheckGenerate(
     kNode = kRows[0] ?? null;
   }
   const subjectProfile = resolveSubjectProfile(kNode?.domain);
-
-  // Mark pending so the UI shows "正在生成..." while AI runs
-  await db
-    .update(artifact)
-    .set({ embedded_check_status: 'pending', updated_at: new Date() })
-    .where(eq(artifact.id, artifactId));
 
   const input = {
     artifact_id: row.id,
@@ -207,25 +220,33 @@ export async function runEmbeddedCheckGenerate(
 
     return { status: 'ready', question_ids: questionIds };
   } catch (err) {
-    await db
-      .update(artifact)
-      .set({ embedded_check_status: 'failed', updated_at: new Date() })
-      .where(eq(artifact.id, artifactId));
-    await writeEvent(db, {
-      id: createId(),
-      session_id: null,
-      actor_kind: 'agent',
-      actor_ref: 'embedded_check_generate',
-      action: 'experimental:embedded_check_generate',
-      subject_kind: 'artifact',
-      subject_id: artifactId,
-      outcome: 'failure',
-      payload: { error: String((err as Error).message ?? err) },
-      caused_by_event_id: null,
-      task_run_id: null,
-      cost_micro_usd: null,
-      created_at: new Date(),
-    });
+    try {
+      await db
+        .update(artifact)
+        .set({ embedded_check_status: 'failed', updated_at: new Date() })
+        .where(eq(artifact.id, artifactId));
+      await writeEvent(db, {
+        id: createId(),
+        session_id: null,
+        actor_kind: 'agent',
+        actor_ref: 'embedded_check_generate',
+        action: 'experimental:embedded_check_generate',
+        subject_kind: 'artifact',
+        subject_id: artifactId,
+        outcome: 'failure',
+        payload: { error: String((err as Error).message ?? err) },
+        caused_by_event_id: null,
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: new Date(),
+      });
+    } catch (cleanupErr) {
+      console.error(
+        '[embedded_check_generate] catch-block cleanup failed for',
+        artifactId,
+        cleanupErr,
+      );
+    }
     throw err;
   }
 }
