@@ -6,6 +6,7 @@ import { buildEchoHandler } from './handlers/echo';
 import { buildKnowledgeEdgeProposeNightlyHandler } from './handlers/knowledge_edge_propose_nightly';
 import { buildKnowledgePropoNightlyHandler } from './handlers/knowledge_propose_nightly';
 import { buildNoteGenerateHandler } from './handlers/note_generate';
+import { buildNoteVerifyHandler } from './handlers/note_verify';
 import { buildPruneJobEventsHandler } from './handlers/prune_job_events';
 import { buildPruneOrphanReviewSessionsHandler } from './handlers/prune_orphan_review_sessions';
 import { buildSessionSummaryHandler } from './handlers/session_summary';
@@ -55,6 +56,16 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     buildSessionSummaryHandler(db),
   );
 
+  // Product Track 1: NoteVerifyTask — enqueued after note_generate marks an
+  // atomic note ready. Keeps note generation and verification as separate
+  // lifecycle axes.
+  await boss.createQueue('note_verify');
+  await boss.work(
+    'note_verify',
+    { pollingIntervalSeconds: 2, batchSize: 1 },
+    buildNoteVerifyHandler(db),
+  );
+
   // Phase 2B: NoteGenerateTask — enqueued by /api/learning-intents/[id]/accept,
   // one job per atomic artifact. Each job runs ~30-60s LLM call and updates
   // the artifact row in place. batchSize=1 keeps mimo rate-limit friendly.
@@ -62,7 +73,11 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   await boss.work(
     'note_generate',
     { pollingIntervalSeconds: 2, batchSize: 1 },
-    buildNoteGenerateHandler(db),
+    buildNoteGenerateHandler(db, {
+      onReady: async (artifactId) => {
+        await boss.send('note_verify', { artifact_id: artifactId });
+      },
+    }),
   );
 
   // Task #16: async attribution for new failure attempts. Replaces the

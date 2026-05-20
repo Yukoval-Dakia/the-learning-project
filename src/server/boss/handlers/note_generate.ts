@@ -26,6 +26,7 @@ export type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<
 
 type DepsOverride = {
   runTaskFn?: RunTaskFn;
+  onReady?: (artifactId: string) => Promise<void>;
 };
 
 async function defaultRunTaskFn(
@@ -153,6 +154,7 @@ export async function runNoteGenerate(
       .set({
         sections: parsed.sections,
         generation_status: 'ready',
+        verification_status: 'queued',
         generated_by: {
           by: 'ai',
           task_kind: 'NoteGenerateTask',
@@ -178,6 +180,7 @@ export function buildNoteGenerateHandler(
   deps: DepsOverride = {},
 ): (jobs: Job<NoteGenerateJobData>[]) => Promise<void> {
   const runTaskFn = deps.runTaskFn ?? defaultRunTaskFn;
+  const onReady = deps.onReady;
   return async (jobs) => {
     for (const job of jobs) {
       const artifactId = job.data?.artifact_id;
@@ -187,6 +190,9 @@ export function buildNoteGenerateHandler(
       }
       try {
         const result = await runNoteGenerate({ db, artifactId, runTaskFn });
+        if (result.status === 'ready') {
+          await onReady?.(artifactId);
+        }
         console.log(`[note_generate] ${artifactId} → ${result.status}`);
       } catch (err) {
         console.error(`[note_generate] ${artifactId} failed`, err);
