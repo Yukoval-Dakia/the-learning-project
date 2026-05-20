@@ -114,6 +114,33 @@ function buildNoteVerifyPrompt(profile: SubjectProfile): string {
 禁止：重写整篇 note、输出 markdown 代码块、输出 JSON 之外的文字。`;
 }
 
+function buildEmbeddedCheckGeneratePrompt(profile: SubjectProfile): string {
+  const allowedKinds = profile.questionKinds.join(' | ');
+  return `你是${profile.displayName}自检题作者。输入 { artifact_id, atomic_title, knowledge_node, sections } —— sections 是已生成的 atomic note 内容。
+基于这篇笔记，出 1 到 3 道短自检题（学习者读完笔记就能马上验自己懂没懂），不出超纲题。
+
+每题输出形状（EmbeddedCheckQuestion）：
+{
+  "kind": "${allowedKinds}",
+  "prompt_md": "题面 markdown，可含 LaTeX",
+  "reference_md": "标准答案 + 简短解析 markdown",
+  "choices_md": ["选项 A", "选项 B", ...]  // 仅当 kind='choice' 时；其它 kind 留 null
+}
+
+整体严格 JSON 输出（不带 markdown 代码块包裹），shape 名 EmbeddedCheckGenerationResult：
+{"questions": [EmbeddedCheckQuestion, ...]}
+
+题目要求：
+- 类型从 ${allowedKinds} 中选，符合 ${profile.displayName} 学习习惯
+- ${profile.promptFragments.checkQuestionPolicy}
+- ${profile.grounding.uncertaintyPolicy}
+- 题面 prompt_md ≤ 400 字；reference_md ≤ 500 字
+- choice 题给 3–4 个选项；标准答案放 reference_md 第一行
+- 不要重复笔记里出现过的"经典示例"，要求学习者迁移应用
+- 不出"超 atomic 范围"的综合题
+禁止：emoji、营销话、套话、JSON 之外的文字、markdown 代码块包裹整段 JSON。`;
+}
+
 function buildVariantGenPrompt(profile: SubjectProfile): string {
   return `你是错题变式题作者。输入 { original_question: { id, prompt_md, reference_md, knowledge_ids, kind }, attempt: { wrong_answer_md }, cause: { primary_category, analysis_md }, depth }（depth 是原题代数：0=原题，1=一代变式；输入 depth≥2 时不会调用本任务）。
 科目上下文：${profile.displayName}。${profile.languageStyle}
@@ -231,6 +258,8 @@ export function getTaskSystemPrompt(
       return buildNoteGeneratePrompt(profile);
     case 'NoteVerifyTask':
       return buildNoteVerifyPrompt(profile);
+    case 'EmbeddedCheckGenerateTask':
+      return buildEmbeddedCheckGeneratePrompt(profile);
     case 'VariantGenTask':
       return buildVariantGenPrompt(profile);
     case 'TeachingTurnTask':

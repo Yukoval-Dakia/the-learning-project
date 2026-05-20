@@ -90,4 +90,19 @@ describe('getTaskSystemPrompt', () => {
     expect(prompt).toContain('mcp__loom__write_proposal');
     expect(prompt).not.toContain('文言文');
   });
+
+  it('builds EmbeddedCheckGenerateTask prompt from the subject profile', () => {
+    const wenyan = getTaskSystemPrompt('EmbeddedCheckGenerateTask');
+    const math = getTaskSystemPrompt('EmbeddedCheckGenerateTask', resolveSubjectProfile('math'));
+
+    expect(wenyan).toContain('文言文');
+    expect(wenyan).toMatch(/choice|translation/i);
+    expect(math).toContain('数学');
+    expect(math).toMatch(/fill_blank|computation|calculation/i);
+    for (const prompt of [wenyan, math]) {
+      expect(prompt).toContain('EmbeddedCheckQuestion');
+      expect(prompt).toContain('kind');
+      expect(prompt).toContain('reference_md');
+    }
+  });
 });
