@@ -1149,7 +1149,7 @@ describe('UserCauseExperimental', () => {
     expect(b.success).toBe(true);
   });
 
-  it('rejects unknown primary_category', () => {
+  it('accepts syntactically valid open primary_category ids', () => {
     const result = UserCauseExperimental.safeParse({
       actor_kind: 'user',
       actor_ref: 'self',
@@ -1157,6 +1157,18 @@ describe('UserCauseExperimental', () => {
       subject_kind: 'event',
       subject_id: 'a3',
       payload: { primary_category: 'not_a_real_category' },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects invalid primary_category syntax', () => {
+    const result = UserCauseExperimental.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:user_cause',
+      subject_kind: 'event',
+      subject_id: 'a3',
+      payload: { primary_category: 'Not A Real Category' },
     });
     expect(result.success).toBe(false);
   });
@@ -1288,14 +1300,14 @@ describe('Event (top-level union) + parseEvent', () => {
     expect(parsed.action).toBe('experimental:user_cause');
   });
 
-  it('rejects malformed experimental:user_cause (unknown primary_category) — does not fall through to generic', () => {
+  it('rejects malformed experimental:user_cause (invalid primary_category syntax) — does not fall through to generic', () => {
     const result = Event.safeParse({
       actor_kind: 'user',
       actor_ref: 'self',
       action: 'experimental:user_cause',
       subject_kind: 'event',
       subject_id: 'uc_bad',
-      payload: { primary_category: 'made_up' },
+      payload: { primary_category: 'Made Up' },
     });
     expect(result.success).toBe(false);
   });

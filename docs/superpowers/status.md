@@ -4,8 +4,8 @@
 > 这里记的是 **项目走到了哪、下一站去哪、为什么这么走**，不是 commit log。
 > 维护规则：每完成一个 Phase 就 update 一次；不维护周度进度。
 
-**最后更新**：2026-05-19（Foundation A/B closeout slice + Foundation C correction event substrate 已验证；等待合入 main）
-**当前 Phase**：Foundation A/B 进入收口阶段（review read paths + high-use AI prompts 已补 shim/profile）；Foundation C correction event 已有 schema/projection/API/UI；下一步做第二科目 pressure fixture + N+2/Product Track 拆分
+**最后更新**：2026-05-20（Foundation A/B final drift closeout：ActivityRef submit、subject identity、math pressure profile 已验证；Foundation C correction event substrate 已在 main）
+**当前 Phase**：Foundation gate 已收口；下一步进入 Product Track 1（NoteVerify / embedded check / variant verify 等），Product Track 2 仍等 proposal inbox slice
 **主分支**：`main` 已推 `origin`
 **路线图源**：[`docs/planning/v0.3-generalized-ai-learning-framework.md`](../planning/v0.3-generalized-ai-learning-framework.md) §1.5 是当前执行清单；root `PLANNING.md` v0.12 Phase 1-4 已标 historical
 
@@ -40,8 +40,8 @@
 🟡  exact + keyword judges 注册为 capability    ✅ src/core/capability/judges/{exact,keyword}.ts
 🟡  JudgeResultV2 (score + scoreMeaning + ref)  ✅ src/core/schema/capability.ts
 🟡  JudgeRouter v2 delegates to registry        ✅ src/server/ai/judges/router.ts
-🟡  老代码路径 question_id → ActivityRef shim    review plan/due/submit 已接入 activity_ref；question_id/mistake_id 仅作 compat/storage
-⬜  subject identity normalization 完成度回查
+✅  老代码路径 question_id → ActivityRef shim    review plan/due/submit 已接入 activity_ref；question_id/mistake_id 仅作 compat/storage
+✅  subject identity normalization 完成度回查    src/subjects/profile.ts + tests/subjects/profile.test.ts
 ```
 
 ### Foundation B — SubjectProfile + Frontend Subject Awareness（ADR-0014 §3/§10 + N+1）
@@ -53,7 +53,7 @@
 🟡  Frontend 读 renderConfig 渲染               ✅ PR #63 — 前端字体 / metadata / API 不再硬编码 wenyan
 🟡  API 暴露 subject profile（review / learning-item）  ✅ PR #63
 ✅  剩余 high-use AI task prompt 抽 profileFragments  attribution / graph proposal / variant / teaching / summary / knowledge review 已走 SubjectProfile
-⬜  非 wenyan 第二科目 profile（math 或 english）作为 pressure test
+✅  非 wenyan 第二科目 profile（math）作为 pressure test  attribution / review / variant / manual-import cause validation 覆盖 math
 ```
 
 ### Foundation C — Judge Result Contract + Correction Event（ADR-0014 §4/§6）

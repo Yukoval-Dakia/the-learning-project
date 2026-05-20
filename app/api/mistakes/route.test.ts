@@ -65,6 +65,11 @@ async function postMistake(body: unknown) {
   );
 }
 
+async function runAfterCallbacks() {
+  const callbacks = afterCallbacks.splice(0);
+  await Promise.all(callbacks.map((cb) => cb()));
+}
+
 describe('POST /api/mistakes', () => {
   beforeEach(async () => {
     afterCallbacks.length = 0;
@@ -232,6 +237,23 @@ describe('POST /api/mistakes', () => {
     await new Promise((r) => setTimeout(r, 50));
   });
 
+  it('passes the selected knowledge subject profile to KnowledgeProposeTask', async () => {
+    const { runProposeAndWrite } = await import('@/server/knowledge/propose');
+    vi.mocked(runProposeAndWrite).mockClear();
+    const db = testDb();
+    const { eq } = await import('drizzle-orm');
+    await db.update(knowledge).set({ domain: 'math' }).where(eq(knowledge.id, 'k1'));
+
+    const res = await postMistake(validBody({ cause: null }));
+    expect(res.status).toBe(200);
+    await runAfterCallbacks();
+
+    const params = vi.mocked(runProposeAndWrite).mock.calls[0]?.[0] as
+      | { subjectProfile?: { id: string } }
+      | undefined;
+    expect(params?.subjectProfile?.id).toBe('math');
+  });
+
   it('queues only propose when cause is provided manually', async () => {
     const { runAttributionAndWriteJudgeEvent } = await import('@/server/knowledge/attribute');
     vi.mocked(runAttributionAndWriteJudgeEvent).mockClear();
@@ -271,6 +293,52 @@ describe('POST /api/mistakes', () => {
     expect(userCauseRows[0].payload).toEqual({
       primary_category: 'carelessness',
       user_notes: '看错题号了',
+    });
+  });
+
+  it('rejects a manual cause outside the selected knowledge subject profile', async () => {
+    const db = testDb();
+    const { eq } = await import('drizzle-orm');
+    await db.update(knowledge).set({ domain: 'math' }).where(eq(knowledge.id, 'k1'));
+
+    const res = await postMistake(
+      validBody({
+        cause: { primary_category: 'time_pressure', user_notes: null },
+      }),
+    );
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe('validation_error');
+    expect(body.message).toContain('time_pressure');
+    expect(body.message).toContain('math');
+  });
+
+  it('accepts a manual math-specific cause from the selected knowledge subject profile', async () => {
+    const db = testDb();
+    const { eq, and } = await import('drizzle-orm');
+    await db.update(knowledge).set({ domain: 'math' }).where(eq(knowledge.id, 'k1'));
+
+    const res = await postMistake(
+      validBody({
+        cause: { primary_category: 'unit_error', user_notes: '单位换算错' },
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { mistake_id: string };
+
+    const userCauseRows = await db
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'experimental:user_cause'),
+          eq(event.caused_by_event_id, body.mistake_id),
+        ),
+      );
+    expect(userCauseRows[0].payload).toEqual({
+      primary_category: 'unit_error',
+      user_notes: '单位换算错',
     });
   });
 

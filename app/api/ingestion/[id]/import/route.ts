@@ -28,9 +28,14 @@ import { getStartedBoss } from '@/server/boss/client';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { runProposeAndWrite } from '@/server/knowledge/propose';
+import {
+  assertCauseAllowedForSubjectProfile,
+  resolveSubjectProfileForKnowledgeIds,
+} from '@/server/knowledge/subject-profile';
 import { getR2 } from '@/server/r2';
 import { createLearningRecord } from '@/server/records/queries';
 import { Ingestion } from '@/server/session';
+import type { SubjectProfile } from '@/subjects/profile';
 
 export const runtime = 'nodejs';
 
@@ -192,6 +197,14 @@ export async function POST(
         }
       }
     }
+    const blockSubjectProfiles = await Promise.all(
+      body.blocks.map(async (block) =>
+        resolveSubjectProfileForKnowledgeIds(db, block.knowledge_ids),
+      ),
+    );
+    for (const [index, block] of body.blocks.entries()) {
+      assertCauseAllowedForSubjectProfile(block.cause, blockSubjectProfiles[index]);
+    }
 
     // ---- All validation passed; build and execute batch ----
     // Codex P1-A: write phase + commitImport MUST share a transaction so the
@@ -219,6 +232,7 @@ export async function POST(
       wrong_answer_md: string;
       knowledge_ids: string[];
       cause: { primary_category: string; user_notes: string | null } | null;
+      subjectProfile: SubjectProfile;
     }> = [];
 
     await db.transaction(async (tx) => {
@@ -229,7 +243,8 @@ export async function POST(
 
       const toIgnore = new Set<string>();
 
-      for (const block of body.blocks) {
+      for (const [blockIndex, block] of body.blocks.entries()) {
+        const subjectProfile = blockSubjectProfiles[blockIndex];
         let importedBlockId: string;
 
         if (block.block_id !== undefined) {
@@ -385,6 +400,7 @@ export async function POST(
           wrong_answer_md: block.final_wrong_answer_md,
           knowledge_ids: block.knowledge_ids,
           cause: block.cause,
+          subjectProfile,
         });
       }
 
@@ -437,9 +453,14 @@ export async function POST(
               knowledge_ids_picked: q.knowledge_ids,
             },
             runTaskFn: async (kind, input) => {
-              const result = await runTask(kind, input, { db, r2 });
+              const result = await runTask(kind, input, {
+                db,
+                r2,
+                subjectProfile: q.subjectProfile,
+              });
               return { text: result.text };
             },
+            subjectProfile: q.subjectProfile,
           }).catch((err) => {
             console.error('propose prep failed (mistake unaffected)', err);
           }),
