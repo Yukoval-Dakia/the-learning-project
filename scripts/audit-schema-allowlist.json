@@ -188,6 +188,15 @@
     "resolves_when": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands"
   },
 
+  "artifact.embedded_check_status": {
+    "reason": "Slice 1 schema foundation; write path lands in Task 3 embedded_check_generate handler",
+    "resolves_when": "Slice 1 embedded_check_generate handler writes embedded_check_status"
+  },
+  "question.choices_md": {
+    "reason": "Slice 1 schema foundation; write path lands in Task 3 embedded_check_generate handler",
+    "resolves_when": "Slice 1 embedded_check_generate handler writes choices_md"
+  },
+
   "echo_jobs.error_md": {
     "reason": "Sub 0c golden E2E hard-fail path not implemented; echo handler only writes success path. error_md reserved for explicit failure scenarios test",
     "resolves_when": "Sub 0c echo hard-fail E2E test added OR field dropped"

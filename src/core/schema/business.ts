@@ -107,6 +107,14 @@ export const ArtifactVerificationStatus = z.enum([
 ]);
 export type ArtifactVerificationStatusT = z.infer<typeof ArtifactVerificationStatus>;
 
+export const ArtifactEmbeddedCheckStatus = z.enum([
+  'not_required',
+  'pending',
+  'ready',
+  'failed',
+]);
+export type ArtifactEmbeddedCheckStatusT = z.infer<typeof ArtifactEmbeddedCheckStatus>;
+
 export const SourceAssetKind = z.enum(['image', 'pdf', 'text', 'web']);
 
 export const IngestionSessionStatus = z.enum([

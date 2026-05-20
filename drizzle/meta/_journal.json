@@ -64,6 +64,13 @@
       "when": 1779279568288,
       "tag": "0008_futuristic_magneto",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1779284266124,
+      "tag": "0009_modern_shape",
+      "breakpoints": true
     }
   ]
 }

@@ -67,6 +67,7 @@ export const Question = g.QuestionSelectGenerated.extend({
   kind: b.QuestionKind,
   source: b.QuestionSource,
   rubric_json: b.Rubric.nullable(),
+  choices_md: z.array(z.string()).nullable(),
   visual_complexity: z.enum(['low', 'medium', 'high']).nullable(),
 });
 export type Question = z.infer<typeof Question>;
@@ -129,6 +130,7 @@ export const Artifact = g.ArtifactSelectGenerated.extend({
   verification_status: b.ArtifactVerificationStatus,
   verification_summary: b.NoteVerificationResult.nullable(),
   verified_by: b.AgentRef.nullable(),
+  embedded_check_status: b.ArtifactEmbeddedCheckStatus,
 });
 export type Artifact = z.infer<typeof Artifact>;
 
