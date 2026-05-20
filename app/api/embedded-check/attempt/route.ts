@@ -98,6 +98,11 @@ export async function POST(req: Request): Promise<Response> {
     // Map judge coarse_outcome → event outcome
     const outcome: 'success' | 'failure' =
       judgeResult.coarse_outcome === 'correct' ? 'success' : 'failure';
+    const responseJudge = {
+      route: judgeKind,
+      score: judgeResult.score,
+      reason_md: judgeResult.feedback_md,
+    };
 
     const now = new Date();
     const attemptEventId = newId();
@@ -127,6 +132,7 @@ export async function POST(req: Request): Promise<Response> {
           latency_ms: body.latency_ms ?? null,
           judge_route: judgeKind,
           judge_score: judgeResult.score,
+          judge: responseJudge,
         },
         caused_by_event_id: null,
         task_run_id: null,
@@ -155,6 +161,7 @@ export async function POST(req: Request): Promise<Response> {
             wrong_answer_md: body.answer_md,
             judge_route: judgeKind,
             judge_score: judgeResult.score,
+            judge: responseJudge,
           },
         });
       }
@@ -174,11 +181,7 @@ export async function POST(req: Request): Promise<Response> {
 
     return Response.json({
       outcome,
-      judge: {
-        route: judgeKind,
-        score: judgeResult.score,
-        reason_md: judgeResult.feedback_md,
-      },
+      judge: responseJudge,
       ...(recordId !== undefined ? { mistake_id: recordId } : {}),
     });
   } catch (err) {
