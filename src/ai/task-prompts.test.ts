@@ -96,7 +96,7 @@ describe('getTaskSystemPrompt', () => {
     const math = getTaskSystemPrompt('EmbeddedCheckGenerateTask', resolveSubjectProfile('math'));
 
     expect(wenyan).toContain('文言文');
-    expect(wenyan).toMatch(/choice|translation/i);
+    expect(wenyan).toContain('single_choice');
     expect(math).toContain('数学');
     expect(math).toMatch(/fill_blank|computation|calculation/i);
     for (const prompt of [wenyan, math]) {
