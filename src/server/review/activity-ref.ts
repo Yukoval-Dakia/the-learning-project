@@ -1,4 +1,4 @@
-import { questionRef, type ActivityRefT } from '@/core/schema/activity';
+import { type ActivityRefT, questionRef } from '@/core/schema/activity';
 import { ApiError } from '@/server/http/errors';
 
 export interface ReviewSubmitIdentityInput {
