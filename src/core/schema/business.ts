@@ -1,19 +1,17 @@
 import { z } from 'zod';
+import { CauseCategory } from './cause';
+export {
+  CauseCategory,
+  CauseCategoryId,
+  CauseSchema,
+  getAllowedCauseIds,
+  getCauseLabel,
+  getCausePriority,
+  validateCauseAgainstProfile,
+} from './cause';
+export type { CauseCategoryT, CauseSchemaT } from './cause';
 
 // ---------- 业务 enum ----------
-
-export const CauseCategory = z.enum([
-  'concept',
-  'knowledge_gap',
-  'calculation',
-  'reading',
-  'memory',
-  'expression',
-  'method',
-  'carelessness',
-  'time_pressure',
-  'other',
-]);
 
 export const QuestionKind = z.enum([
   'choice',

@@ -3,6 +3,7 @@
 import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { runAttributionAndWriteJudgeEvent } from '@/server/knowledge/attribute';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -57,7 +58,7 @@ async function seedFailureAttempt(attemptId: string, qid: string) {
   });
 }
 
-async function seedJudgeForAttempt(attemptId: string, category: string) {
+async function seedJudgeForAttempt(attemptId: string, category: string, domain = 'wenyan') {
   // Use runAttributionAndWriteJudgeEvent so the chained-event shape stays
   // consistent with production write path.
   const runTaskFn = vi.fn(async () => ({
@@ -79,6 +80,7 @@ async function seedJudgeForAttempt(attemptId: string, category: string) {
     },
     referencedKnowledgeIds: ['k_xuci'],
     runTaskFn,
+    subjectProfile: resolveSubjectProfile(domain),
   });
 }
 
@@ -234,6 +236,32 @@ describe('runVariantGen', () => {
 
     const ctx = runTaskFn.mock.calls[0]?.[2] as unknown as { subjectProfile?: { id: string } };
     expect(ctx.subjectProfile?.id).toBe('math');
+  });
+
+  it('generates a math variant when the judge cause is unit_error', async () => {
+    const db = testDb();
+    await seedKnowledge('math');
+    await seedQuestion({ id: 'q1' });
+    const attemptId = createId();
+    await seedFailureAttempt(attemptId, 'q1');
+    await seedJudgeForAttempt(attemptId, 'unit_error', 'math');
+
+    const runTaskFn = vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({
+      text: JSON.stringify({
+        prompt_md: '把 120 cm 换算成 m 后代入公式。',
+        reference_md: '120 cm = 1.2 m，再代入公式计算。',
+        difficulty: 2,
+        reasoning: '针对单位换算错误，保持同一核心方法并改变数值。',
+      }),
+    }));
+
+    const result = await runVariantGen({ db, attemptEventId: attemptId, runTaskFn });
+
+    expect(result.status).toBe('generated');
+    const input = runTaskFn.mock.calls[0]?.[1] as {
+      cause?: { primary_category?: string };
+    };
+    expect(input.cause?.primary_category).toBe('unit_error');
   });
 
   it('returns skipped:already_has_variant on re-run (idempotency)', async () => {

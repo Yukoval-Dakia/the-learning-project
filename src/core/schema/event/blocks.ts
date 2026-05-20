@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { CauseCategoryId, CauseSchema as CauseSchemaBase } from '../cause';
 
 // ---------- ActorKind ----------
 //
@@ -45,30 +46,14 @@ export type MaterialRefT = z.infer<typeof MaterialRef>;
 
 // ---------- CauseSchema ----------
 //
-// ADR-0006 v2 原 10 类 cause + analysis_md + confidence(0-1)。
-// 与 src/core/schema/business.ts 的 Cause 等价但更紧 —— 这里用于 event.payload，
-// 走 jsonb roundtrip，字段命名按 v2 spec 对齐（analysis_md / confidence 顶级）。
+// profile-scoped cause id + analysis_md + confidence(0-1)。
+// 与 src/core/schema/business.ts 从同一 cause.ts re-export，避免多份 taxonomy drift。
+// 这里用于 event.payload，走 jsonb roundtrip，字段命名按 v2 spec 对齐
+//（analysis_md / confidence 顶级）。
 
-export const CauseCategory = z.enum([
-  'concept',
-  'knowledge_gap',
-  'calculation',
-  'reading',
-  'memory',
-  'expression',
-  'method',
-  'carelessness',
-  'time_pressure',
-  'other',
-]);
+export const CauseCategory = CauseCategoryId;
+export const CauseSchema = CauseSchemaBase;
 export type CauseCategoryT = z.infer<typeof CauseCategory>;
-
-export const CauseSchema = z.object({
-  primary_category: CauseCategory,
-  secondary_categories: z.array(CauseCategory).default([]),
-  analysis_md: z.string(),
-  confidence: z.number().min(0).max(1),
-});
 export type CauseSchemaT = z.infer<typeof CauseSchema>;
 
 // ---------- FsrsStateSchema ----------

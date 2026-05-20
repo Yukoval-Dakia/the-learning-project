@@ -8,6 +8,9 @@ export const CauseCategoryDeclaration = z.object({
   }),
   label: z.string().min(1),
   description: z.string().optional(),
+  review_priority: z
+    .union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)])
+    .optional(),
   source_pack: z
     .object({
       id: z.string().min(1),

@@ -13,11 +13,13 @@
 // is purely the planner.
 
 import { type ActivityRefT, questionRef } from '@/core/schema/activity';
+import { getCauseLabel, getCausePriority } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { knowledge, material_fsrs_state, question } from '@/db/schema';
 import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
 import {
   type SlimSubjectProfile,
+  type SubjectProfile,
   resolveSubjectProfile,
   toSlimSubjectProfile,
 } from '@/subjects/profile';
@@ -77,20 +79,6 @@ export interface PlanReviewSessionParams {
 // Score = base(cause) + days_overdue_bonus + lapses_bonus, clamped 1-5.
 // Tunables here, not in the prompt — this is rule-based by design.
 
-const CAUSE_BASE: Record<CauseCategoryT | 'null', number> = {
-  concept: 5,
-  knowledge_gap: 4,
-  method: 4,
-  calculation: 3,
-  reading: 3,
-  memory: 3,
-  expression: 3,
-  carelessness: 2,
-  time_pressure: 2,
-  other: 2,
-  null: 3, // never-reviewed-yet defaults to mid
-};
-
 const DAY_MS = 86_400_000;
 
 function daysOverdue(dueAt: Date | null, now: Date): number {
@@ -107,33 +95,21 @@ function computePriority(input: {
   cause: CauseCategoryT | null;
   days_overdue: number;
   lapses: number;
+  subjectProfile?: SubjectProfile | null;
 }): 1 | 2 | 3 | 4 | 5 {
-  const baseKey = (input.cause ?? 'null') as keyof typeof CAUSE_BASE;
-  const base = CAUSE_BASE[baseKey];
+  const base = getCausePriority(input.cause, input.subjectProfile);
   // ≥7d overdue = +1; ≥3d lapses ≥ 3 = +1. Capped at 5.
   const overdueBonus = input.days_overdue >= 7 ? 1 : 0;
   const lapseBonus = input.lapses >= 3 ? 1 : 0;
   return clamp(base + overdueBonus + lapseBonus, 1, 5) as 1 | 2 | 3 | 4 | 5;
 }
 
-const CAUSE_LABEL_CN: Record<CauseCategoryT, string> = {
-  concept: '概念',
-  knowledge_gap: '知识缺',
-  calculation: '运算',
-  reading: '审题',
-  memory: '记忆',
-  expression: '表达',
-  method: '方法',
-  carelessness: '手滑',
-  time_pressure: '时间',
-  other: '其它',
-};
-
 function buildRationale(input: {
   cause: CauseCategoryT | null;
   days_overdue: number;
   lapses: number;
   never_reviewed: boolean;
+  subjectProfile?: SubjectProfile | null;
 }): string {
   const parts: string[] = [];
   if (input.never_reviewed) {
@@ -144,7 +120,7 @@ function buildRationale(input: {
     parts.push('到期');
   }
   if (input.cause) {
-    parts.push(`${CAUSE_LABEL_CN[input.cause]} 错因`);
+    parts.push(`${getCauseLabel(input.cause, input.subjectProfile)} 错因`);
   }
   if (input.lapses >= 2) {
     parts.push(`${input.lapses} 次 lapse`);
@@ -228,6 +204,15 @@ function subjectProfileForKnowledgeIds(
   const firstKnowledgeId = knowledgeIds[0];
   if (!firstKnowledgeId) return FALLBACK_SUBJECT_PROFILE;
   return subjectByKnowledgeId.get(firstKnowledgeId) ?? FALLBACK_SUBJECT_PROFILE;
+}
+
+function fullSubjectProfileForKnowledgeIds(
+  knowledgeIds: string[],
+  domainByKnowledgeId: Map<string, string | null>,
+): SubjectProfile {
+  const firstKnowledgeId = knowledgeIds[0];
+  if (!firstKnowledgeId) return resolveSubjectProfile(null);
+  return resolveSubjectProfile(domainByKnowledgeId.get(firstKnowledgeId) ?? null);
 }
 
 // ---------- Cause lookup (latest failure per question) ----------
@@ -334,6 +319,13 @@ export async function planReviewSession(params: PlanReviewSessionParams): Promis
     });
     causeByQid = pickLatestCausePerQuestion(candidatesFailures);
   }
+  const firstKnowledgeIdsForCause = [...newRows, ...dueRows]
+    .map((row) => row.knowledge_ids?.[0])
+    .filter((id): id is string => typeof id === 'string' && id.length > 0);
+  const domainByKnowledgeIdForCause = await resolveEffectiveDomainsForKnowledgeIds(
+    params.db,
+    firstKnowledgeIdsForCause,
+  );
 
   // Project to PlanQueueItem with priority + rationale. Never-reviewed first
   // (preserve current /due ordering contract), then due slice ordered by due_at.
@@ -341,6 +333,10 @@ export async function planReviewSession(params: PlanReviewSessionParams): Promis
   for (const n of newRows) {
     const cause = causeByQid.get(n.question_id)?.cause ?? null;
     const lastFailureAt = causeByQid.get(n.question_id)?.created_at ?? null;
+    const subjectProfile = fullSubjectProfileForKnowledgeIds(
+      n.knowledge_ids,
+      domainByKnowledgeIdForCause,
+    );
     items.push({
       activity_ref: questionRef(n.question_id),
       question_id: n.question_id,
@@ -349,8 +345,14 @@ export async function planReviewSession(params: PlanReviewSessionParams): Promis
       knowledge_ids: n.knowledge_ids,
       fsrs_state: null,
       cause,
-      priority: computePriority({ cause, days_overdue: 0, lapses: 0 }),
-      rationale: buildRationale({ cause, days_overdue: 0, lapses: 0, never_reviewed: true }),
+      priority: computePriority({ cause, days_overdue: 0, lapses: 0, subjectProfile }),
+      rationale: buildRationale({
+        cause,
+        days_overdue: 0,
+        lapses: 0,
+        never_reviewed: true,
+        subjectProfile,
+      }),
       last_failure_at: lastFailureAt ? Math.floor(lastFailureAt.getTime() / 1000) : null,
     });
   }
@@ -360,16 +362,27 @@ export async function planReviewSession(params: PlanReviewSessionParams): Promis
     const lastFailureAt = causeByQid.get(r.question_id)?.created_at ?? null;
     const overdue = daysOverdue(r.due_at, now);
     const lapses = state?.lapses ?? 0;
+    const knowledgeIds = (r.knowledge_ids as string[]) ?? [];
+    const subjectProfile = fullSubjectProfileForKnowledgeIds(
+      knowledgeIds,
+      domainByKnowledgeIdForCause,
+    );
     items.push({
       activity_ref: questionRef(r.question_id),
       question_id: r.question_id,
       prompt_md: r.prompt_md.slice(0, 1000),
       reference_md: r.reference_md ? r.reference_md.slice(0, 1000) : null,
-      knowledge_ids: (r.knowledge_ids as string[]) ?? [],
+      knowledge_ids: knowledgeIds,
       fsrs_state: state,
       cause,
-      priority: computePriority({ cause, days_overdue: overdue, lapses }),
-      rationale: buildRationale({ cause, days_overdue: overdue, lapses, never_reviewed: false }),
+      priority: computePriority({ cause, days_overdue: overdue, lapses, subjectProfile }),
+      rationale: buildRationale({
+        cause,
+        days_overdue: overdue,
+        lapses,
+        never_reviewed: false,
+        subjectProfile,
+      }),
       last_failure_at: lastFailureAt ? Math.floor(lastFailureAt.getTime() / 1000) : null,
     });
   }
