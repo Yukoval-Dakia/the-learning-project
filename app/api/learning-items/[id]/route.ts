@@ -186,7 +186,11 @@ export async function GET(_req: Request, { params }: RouteParams): Promise<Respo
               })
               .from(question)
               .where(inArray(question.id, ids));
-            embeddedQuestions = qRows;
+            // Preserve the order declared in the artifact's check section.
+            const byId = new Map(qRows.map((r) => [r.id, r]));
+            embeddedQuestions = ids
+              .map((id) => byId.get(id))
+              .filter((r): r is NonNullable<typeof r> => r !== undefined);
           }
         }
 

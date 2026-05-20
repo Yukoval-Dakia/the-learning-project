@@ -662,11 +662,14 @@ describe('GET /api/learning-items/[id]', () => {
     };
     expect(body.primary_artifact?.embedded_check_status).toBe('ready');
     expect(body.primary_artifact?.embedded_questions).toHaveLength(2);
+    // Order must match question_ids declared in the check section (['q1', 'q2']).
+    expect(body.primary_artifact?.embedded_questions[0].id).toBe('q1');
+    expect(body.primary_artifact?.embedded_questions[1].id).toBe('q2');
     expect(body.primary_artifact?.embedded_questions[0]).toMatchObject({
-      id: expect.any(String),
-      kind: expect.any(String),
-      prompt_md: expect.any(String),
-      choices_md: expect.anything(),
+      id: 'q1',
+      kind: 'mcq',
+      prompt_md: 'What does 之 mean?',
+      choices_md: ['A', 'B', 'C', 'D'],
     });
     // SECURITY: reference_md must not be exposed
     for (const q of body.primary_artifact?.embedded_questions ?? []) {
@@ -718,7 +721,7 @@ describe('GET /api/learning-items/[id]', () => {
       } | null;
     };
     expect(body.primary_artifact?.embedded_check_status).toBe('pending');
-    expect(body.primary_artifact?.embedded_questions ?? []).toHaveLength(0);
+    expect(body.primary_artifact?.embedded_questions).toEqual([]);
   });
 });
 
