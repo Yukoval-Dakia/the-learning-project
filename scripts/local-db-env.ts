@@ -1,4 +1,5 @@
 export interface LocalEnvInput {
+  [key: string]: string | undefined;
   POSTGRES_USER?: string;
   POSTGRES_PASSWORD?: string;
   POSTGRES_DB?: string;
