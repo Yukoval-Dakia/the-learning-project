@@ -1,5 +1,5 @@
 import { db } from '@/db/client';
-import { artifact, completion_evidence, learning_item } from '@/db/schema';
+import { artifact, completion_evidence, learning_item, question } from '@/db/schema';
 import { errorResponse } from '@/server/http/errors';
 import { getEffectiveDomain } from '@/server/knowledge/domain';
 import { assertKnowledgeIdsExist } from '@/server/knowledge/validate';
@@ -9,7 +9,7 @@ import {
   toSlimSubjectProfile,
 } from '@/subjects/profile';
 import { createId } from '@paralleldrive/cuid2';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 
 export const runtime = 'nodejs';
@@ -136,6 +136,13 @@ export async function GET(_req: Request, { params }: RouteParams): Promise<Respo
       verification_status: string;
       verification_summary: unknown;
       verified_by: unknown;
+      embedded_check_status: string;
+      embedded_questions: Array<{
+        id: string;
+        kind: string;
+        prompt_md: string;
+        choices_md: string[] | null;
+      }>;
     } | null = null;
     if (row.primary_artifact_id) {
       const aRows = await db
@@ -148,11 +155,43 @@ export async function GET(_req: Request, { params }: RouteParams): Promise<Respo
           verification_status: artifact.verification_status,
           verification_summary: artifact.verification_summary,
           verified_by: artifact.verified_by,
+          embedded_check_status: artifact.embedded_check_status,
         })
         .from(artifact)
         .where(eq(artifact.id, row.primary_artifact_id))
         .limit(1);
-      if (aRows[0]) primaryArtifact = aRows[0];
+      if (aRows[0]) {
+        const primary = aRows[0];
+
+        // Embedded check question payload (only when ready)
+        let embeddedQuestions: Array<{
+          id: string;
+          kind: string;
+          prompt_md: string;
+          choices_md: string[] | null;
+        }> = [];
+        if (primary.embedded_check_status === 'ready') {
+          const checkSection = ((primary.sections ?? []) as Array<{
+            kind: string;
+            embedded_check?: { question_ids: string[] } | null;
+          }>).find((s) => s.kind === 'check');
+          const ids = checkSection?.embedded_check?.question_ids ?? [];
+          if (ids.length > 0) {
+            const qRows = await db
+              .select({
+                id: question.id,
+                kind: question.kind,
+                prompt_md: question.prompt_md,
+                choices_md: question.choices_md,
+              })
+              .from(question)
+              .where(inArray(question.id, ids));
+            embeddedQuestions = qRows;
+          }
+        }
+
+        primaryArtifact = { ...primary, embedded_questions: embeddedQuestions };
+      }
     }
     const subjectProfile = await resolveSlimProfileForKnowledgeIds(row.knowledge_ids ?? []);
 
