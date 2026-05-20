@@ -151,7 +151,7 @@ export const question = pgTable(
     prompt_md: text('prompt_md').notNull(),
     reference_md: text('reference_md'),
     rubric_json: jsonb('rubric_json').$type<RubricT>(),
-    choices_md: jsonb('choices_md').$type<string[] | null>(),
+    choices_md: jsonb('choices_md').$type<string[]>(),
     judge_kind_override: text('judge_kind_override'),
     visual_complexity: text('visual_complexity'),
     knowledge_ids: jsonb('knowledge_ids').$type<string[]>().notNull().default([]),

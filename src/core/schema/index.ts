@@ -60,6 +60,7 @@ export const QuestionInsert = g.QuestionInsertGenerated.extend({
   kind: b.QuestionKind,
   source: b.QuestionSource,
   rubric_json: b.Rubric.nullish(),
+  choices_md: z.array(z.string()).nullish(),
   visual_complexity: z.enum(['low', 'medium', 'high']).nullish(),
   draft_status: z.enum(['draft', 'active']).nullish(),
 });
