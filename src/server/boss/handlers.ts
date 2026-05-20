@@ -74,7 +74,7 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     'note_verify',
     { pollingIntervalSeconds: 2, batchSize: 1 },
     buildNoteVerifyHandler(db, {
-      onVerified: async (artifactId) => {
+      onPassed: async (artifactId) => {
         await boss.send('embedded_check_generate', { artifact_id: artifactId });
       },
     }),

@@ -24,7 +24,6 @@ export interface RunNoteVerifyParams {
   db: Db;
   artifactId: string;
   runTaskFn: RunTaskFn;
-  onVerified?: (artifactId: string) => Promise<void>;
 }
 
 export interface RunNoteVerifyResult {
@@ -39,7 +38,7 @@ export interface RunNoteVerifyResult {
 
 type DepsOverride = {
   runTaskFn?: RunTaskFn;
-  onVerified?: (artifactId: string) => Promise<void>;
+  onPassed?: (artifactId: string) => Promise<void>;
 };
 
 async function defaultRunTaskFn(
@@ -74,7 +73,7 @@ function parseVerificationOutput(text: string): NoteVerificationResultT {
 }
 
 export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNoteVerifyResult> {
-  const { db, artifactId, runTaskFn, onVerified } = params;
+  const { db, artifactId, runTaskFn } = params;
 
   const rows = await db
     .select({
@@ -146,10 +145,6 @@ export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNot
       created_at: new Date(),
     });
 
-    if (parsed.verdict === 'pass' && onVerified) {
-      await onVerified(artifactId);
-    }
-
     return { status, issues_count: parsed.issues.length };
   } catch (err) {
     await db
@@ -165,7 +160,7 @@ export function buildNoteVerifyHandler(
   deps: DepsOverride = {},
 ): (jobs: Job<NoteVerifyJobData>[]) => Promise<void> {
   const runTaskFn = deps.runTaskFn ?? defaultRunTaskFn;
-  const { onVerified } = deps;
+  const { onPassed } = deps;
   return async (jobs) => {
     for (const job of jobs) {
       const artifactId = job.data?.artifact_id;
@@ -173,7 +168,10 @@ export function buildNoteVerifyHandler(
         console.warn('[note_verify] job missing artifact_id', job.id);
         continue;
       }
-      const result = await runNoteVerify({ db, artifactId, runTaskFn, onVerified });
+      const result = await runNoteVerify({ db, artifactId, runTaskFn });
+      if (result.status === 'verified') {
+        await onPassed?.(artifactId);
+      }
       console.log(`[note_verify] ${artifactId} -> ${result.status}`);
     }
   };
