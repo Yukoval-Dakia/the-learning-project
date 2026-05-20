@@ -18,6 +18,7 @@ import type {
   ArtifactHistoryEntry,
   FsrsState,
   NoteSection,
+  NoteVerificationResult,
   Provenance,
   Rubric,
   ToolState,
@@ -36,6 +37,7 @@ type AgentRefT = z.infer<typeof AgentRef>;
 type ArtifactHistoryEntryT = z.infer<typeof ArtifactHistoryEntry>;
 type FsrsStateT = z.infer<typeof FsrsState>;
 type NoteSectionT = z.infer<typeof NoteSection>;
+type NoteVerificationResultT = z.infer<typeof NoteVerificationResult>;
 type ProvenanceT = z.infer<typeof Provenance>;
 type RubricT = z.infer<typeof Rubric>;
 type ToolStateT = z.infer<typeof ToolState>;
@@ -287,7 +289,10 @@ export const artifact = pgTable('artifact', {
   tool_kind: text('tool_kind'),
   tool_state: jsonb('tool_state').$type<ToolStateT>(),
   generation_status: text('generation_status').notNull().default('pending'),
+  verification_status: text('verification_status').notNull().default('not_required'),
+  verification_summary: jsonb('verification_summary').$type<NoteVerificationResultT>(),
   generated_by: jsonb('generated_by').$type<AgentRefT>(),
+  verified_by: jsonb('verified_by').$type<AgentRefT>(),
   history: jsonb('history').$type<ArtifactHistoryEntryT[]>().notNull().default([]),
   archived_at: timestamp('archived_at', { withTimezone: true }),
   created_at: timestamp('created_at', { withTimezone: true }).notNull(),

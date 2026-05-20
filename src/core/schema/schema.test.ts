@@ -6,6 +6,7 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 import { describe, expect, it } from 'vitest';
 import { parseEvent } from './event';
 import {
+  Artifact,
   CauseCategory,
   CauseSchema,
   FsrsState,
@@ -15,6 +16,7 @@ import {
   LearningRecordInsert,
   MemoryBriefNote,
   MemoryBriefNoteInsert,
+  NoteVerificationResult,
   QuestionBlock,
   QuestionBlockInsert,
   SourceAsset,
@@ -328,6 +330,53 @@ describe('schema generated from drizzle', () => {
       version: 0,
     });
     expect(result.success).toBe(true);
+  });
+
+  it('Artifact accepts runtime generation + verification statuses', () => {
+    const now = new Date();
+    const result = Artifact.safeParse({
+      id: 'a1',
+      type: 'note_atomic',
+      title: '之的用法',
+      knowledge_id: null,
+      parent_artifact_id: null,
+      child_artifact_ids: [],
+      intent_source: 'learning_intent',
+      source: 'ai_generated',
+      source_ref: null,
+      outline_json: null,
+      sections: null,
+      tool_kind: null,
+      tool_state: null,
+      generation_status: 'ready',
+      verification_status: 'verified',
+      verification_summary: {
+        verdict: 'pass',
+        summary_md: '结构完整，未发现明显问题。',
+        issues: [],
+        confidence: 0.82,
+      },
+      generated_by: null,
+      verified_by: { by: 'ai', task_kind: 'NoteVerifyTask' },
+      history: [],
+      archived_at: null,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it('NoteVerificationResult rejects invalid confidence', () => {
+    const result = NoteVerificationResult.safeParse({
+      verdict: 'pass',
+      summary_md: 'ok',
+      issues: [],
+      confidence: 2,
+    });
+
+    expect(result.success).toBe(false);
   });
 
   it('parseEvent accepts record capture events', () => {

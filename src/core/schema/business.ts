@@ -94,6 +94,18 @@ export const LearningRecordProcessingStatus = z.enum(['raw', 'linked', 'actioned
 export const MemoryBriefScopeKey = z.string().regex(/^(global|subject:[a-zA-Z0-9_-]+)$/);
 
 export const ArtifactType = z.enum(['note_hub', 'note_atomic', 'tool_quiz']);
+export const ArtifactGenerationStatus = z.enum(['pending', 'ready', 'failed']);
+export type ArtifactGenerationStatusT = z.infer<typeof ArtifactGenerationStatus>;
+
+export const ArtifactVerificationStatus = z.enum([
+  'not_required',
+  'not_started',
+  'queued',
+  'verified',
+  'needs_review',
+  'failed',
+]);
+export type ArtifactVerificationStatusT = z.infer<typeof ArtifactVerificationStatus>;
 
 export const SourceAssetKind = z.enum(['image', 'pdf', 'text', 'web']);
 
@@ -192,6 +204,23 @@ export const NoteSection = z.object({
   embedded_check: z.object({ question_ids: z.array(z.string()) }).nullish(),
   version: z.number().int().nonnegative(),
 });
+
+export const NoteVerificationIssue = z.object({
+  section_id: z.string().nullable(),
+  severity: z.enum(['info', 'warn', 'error']),
+  category: z.enum(['factuality', 'coverage', 'clarity', 'subject_fit', 'format', 'safety']),
+  message: z.string().min(1),
+  suggested_fix_md: z.string().min(1).optional(),
+});
+export type NoteVerificationIssueT = z.infer<typeof NoteVerificationIssue>;
+
+export const NoteVerificationResult = z.object({
+  verdict: z.enum(['pass', 'needs_review']),
+  summary_md: z.string().min(1).max(1000),
+  issues: z.array(NoteVerificationIssue).max(10),
+  confidence: z.number().min(0).max(1),
+});
+export type NoteVerificationResultT = z.infer<typeof NoteVerificationResult>;
 
 export const ToolState = z.object({
   question_ids: z.array(z.string()),
