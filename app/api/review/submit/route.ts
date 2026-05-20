@@ -4,9 +4,8 @@
 //   UPDATE mistake.fsrs_state under optimistic lock.
 //
 // Post-Step-9:
-//   1. Treat `mistake_id` as the question id (opaque to clients; the legacy
-//      mistake table is gone, semantics map 1:1 because mistake.question_id
-//      was an FK with on-disk equality after the Step 3 migration).
+//   1. Resolve review identity through ActivityRef first, with `question_id`
+//      and `mistake_id` accepted only by the compatibility shim.
 //   2. Read latest material_fsrs_state for that question.
 //   3. Compute next FSRS state via ts-fsrs.
 //   4. Write a `review` event (action='review', subject='question') via
@@ -21,23 +20,26 @@
 import { z } from 'zod';
 
 import { newId } from '@/core/ids';
+import { ActivityRef } from '@/core/schema/activity';
 import { FsrsRating } from '@/core/schema/business';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { ApiError, errorResponse } from '@/server/http/errors';
+import { normalizeReviewSubmitActivityRef } from '@/server/review/activity-ref';
 import { scheduleReview } from '@/server/review/fsrs';
 import { eq, sql } from 'drizzle-orm';
 
 export const runtime = 'nodejs';
 
-// `mistake_id` is preserved on the wire for client back-compat; post-Step-9 it
-// is semantically the question id (the mistake row is gone). Test fixtures and
-// callers may pass either historical mistake ids OR question ids — the only
-// constraint is that material_fsrs_state keys on the resolved question id.
+// New callers send `activity_ref`. `question_id` and `mistake_id` are accepted
+// only as compatibility inputs while the storage/policy layer remains backed by
+// question rows.
 const SubmitBody = z.object({
-  mistake_id: z.string().min(1),
+  activity_ref: ActivityRef.optional(),
+  question_id: z.string().min(1).optional(),
+  mistake_id: z.string().min(1).optional(),
   rating: FsrsRating,
   response_md: z.string().nullable().optional(),
   latency_ms: z.number().int().min(0).max(3_600_000).nullable().optional(),
@@ -60,7 +62,8 @@ export async function POST(req: Request): Promise<Response> {
     }
     const body = parsed.data;
     const now = new Date();
-    const questionId = body.mistake_id;
+    const identity = normalizeReviewSubmitActivityRef(body);
+    const questionId = identity.question_id;
 
     // Confirm the question exists; otherwise the review is for nothing.
     const qRows = await db
@@ -169,6 +172,7 @@ export async function POST(req: Request): Promise<Response> {
       new_state: finalResult.nextState,
       review_event: {
         id: eventId,
+        activity_ref: identity.activity_ref,
         question_id: questionId,
         rating: body.rating,
         response_md: body.response_md ?? null,
