@@ -95,6 +95,25 @@ ${noteTemplateTable(profile)}
 - 禁止：套话「希望对你有帮助」、营销话语、emoji / 颜文字`;
 }
 
+function buildNoteVerifyPrompt(profile: SubjectProfile): string {
+  return `你是${profile.displayName}学习笔记质检员。输入 { artifact_id, title, knowledge_node, sections }，其中 sections 是 NoteGenerateTask 产出的 atomic note sections。
+科目上下文：${profile.displayName}。${profile.languageStyle}
+证据要求：${profile.grounding.requirement}
+输出严格 JSON（不带 markdown 代码块包裹），shape 名称为 NoteVerificationResult：
+{"verdict":"pass"|"needs_review","summary_md":"...","issues":[{"section_id":"s1"|null,"severity":"info"|"warn"|"error","category":"factuality"|"coverage"|"clarity"|"subject_fit"|"format"|"safety","message":"...","suggested_fix_md":"..."}],"confidence":0.0-1.0}
+检查标准：
+- factuality：内容是否自洽，是否明显编造；${profile.grounding.uncertaintyPolicy}
+- coverage：definition/mechanism/example/pitfall/check 是否覆盖 atomic intent
+- clarity：学习者是否能按 section 读懂，不要空泛套话
+- subject_fit：是否符合 ${profile.displayName} 的表达、例子和检查题风格
+- format：section_id 必须引用输入 section id；找不到具体 section 时用 null
+判定：
+- 没有 error 且 warn 不超过 2 条：verdict="pass"
+- 任一 error，或 warn 超过 2 条，或 confidence < 0.6：verdict="needs_review"
+- issues 最多 10 条；message 必须可执行；suggested_fix_md 只在有明确改法时填写
+禁止：重写整篇 note、输出 markdown 代码块、输出 JSON 之外的文字。`;
+}
+
 function buildVariantGenPrompt(profile: SubjectProfile): string {
   return `你是错题变式题作者。输入 { original_question: { id, prompt_md, reference_md, knowledge_ids, kind }, attempt: { wrong_answer_md }, cause: { primary_category, analysis_md }, depth }（depth 是原题代数：0=原题，1=一代变式；输入 depth≥2 时不会调用本任务）。
 科目上下文：${profile.displayName}。${profile.languageStyle}
@@ -210,6 +229,8 @@ export function getTaskSystemPrompt(
       return buildLearningIntentOutlinePrompt(profile);
     case 'NoteGenerateTask':
       return buildNoteGeneratePrompt(profile);
+    case 'NoteVerifyTask':
+      return buildNoteVerifyPrompt(profile);
     case 'VariantGenTask':
       return buildVariantGenPrompt(profile);
     case 'TeachingTurnTask':
