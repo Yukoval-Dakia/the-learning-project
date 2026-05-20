@@ -20,6 +20,17 @@ describe('getTaskSystemPrompt', () => {
     expect(prompt).not.toContain('古文');
   });
 
+  it('builds NoteVerifyTask prompt from the subject profile', () => {
+    const prompt = getTaskSystemPrompt('NoteVerifyTask', resolveSubjectProfile('math'));
+
+    expect(prompt).toContain('你是数学学习笔记质检员');
+    expect(prompt).toContain('NoteVerificationResult');
+    expect(prompt).toContain('factuality');
+    expect(prompt).toContain('subject_fit');
+    expect(prompt).toContain('条件不足时指出缺少的条件');
+    expect(prompt).not.toContain('文言文经典原文');
+  });
+
   it('builds subject-specific TeachingTurnTask prompts', () => {
     const wenyan = getTaskSystemPrompt('TeachingTurnTask');
     const math = getTaskSystemPrompt('TeachingTurnTask', resolveSubjectProfile('math'));

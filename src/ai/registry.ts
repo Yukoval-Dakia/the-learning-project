@@ -157,6 +157,20 @@ export const tasks = {
     systemPrompt:
       '你是学习笔记作者。输入 { atomic_title, one_line_intent, knowledge_node: { id, name, domain }, parent_hub: { title, summary_md }, related_knowledge_ids: [...] } —— atomic note 对应一个 knowledge 节点，parent_hub 给上下文。\n生成 5 个 markdown sections（id 自取短串、kind 按下表、source_tier 一律 "llm_only"、user_verified=false、version=1、embedded_check 设 null）：\n\n| kind | 内容 |\n|---|---|\n| definition | 核心定义 1-2 句 |\n| mechanism | 关键机制 / 规则 / 公式 / 用法分类 |\n| example | 1-3 个标准例子，每例附简短解析 |\n| pitfall | 易错点 / 常见误解，列出 2-3 条 |\n| check | 自检题面（≤3 题），暂作占位（embedded_check.question_ids 留空数组） |\n\n严格 JSON 输出（不带 markdown 代码块包裹）：\n{"sections":[{"id":"...","kind":"definition","body_md":"...","source_tier":"llm_only","user_verified":false,"embedded_check":null,"version":1}, ...]}\n要点：\n- body_md 用 markdown 段落 / 列表，不嵌 HTML / 不带代码块包裹\n- 文言文示例首选经典原文（《师说》《伶官传序》之类），不自创\n- 不确定的明说「不确定 / 待核」，不强行编造\n- 禁止：套话「希望对你有帮助」、营销话语、emoji / 颜文字',
   },
+  NoteVerifyTask: {
+    kind: 'NoteVerifyTask',
+    description: 'Product Track 1 — second-pass verification for generated atomic note sections',
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
+    needsToolCall: false,
+    isMultimodal: false,
+    allowedTools: [],
+    // fallback only; runtime uses getTaskSystemPrompt(task, profile)
+    systemPrompt:
+      '你是学习笔记质检员。检查 generated note sections 是否准确、完整、清晰、适合当前科目。严格输出 NoteVerificationResult JSON。',
+  },
   VariantGenTask: {
     kind: 'VariantGenTask',
     description:
