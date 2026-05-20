@@ -142,20 +142,14 @@ describe('runEmbeddedCheckGenerate', () => {
     expect(result.question_ids).toHaveLength(2);
 
     // questions inserted with source='embedded'
-    const questions = await testDb()
-      .select()
-      .from(question)
-      .where(eq(question.source, 'embedded'));
+    const questions = await testDb().select().from(question).where(eq(question.source, 'embedded'));
     expect(questions).toHaveLength(2);
     expect(questions[0].source_ref).toBe('a1');
     expect(questions[0].knowledge_ids).toEqual(['k1']);
     expect(questions[0].difficulty).toBe(2);
 
     // artifact updated to embedded_check_status='ready'
-    const [updatedArtifact] = await testDb()
-      .select()
-      .from(artifact)
-      .where(eq(artifact.id, 'a1'));
+    const [updatedArtifact] = await testDb().select().from(artifact).where(eq(artifact.id, 'a1'));
     expect(updatedArtifact.embedded_check_status).toBe('ready');
 
     // check section updated with question_ids
@@ -268,10 +262,7 @@ describe('runEmbeddedCheckGenerate', () => {
       }),
     ).rejects.toThrow(/parseOutput/);
 
-    const [updatedArtifact] = await testDb()
-      .select()
-      .from(artifact)
-      .where(eq(artifact.id, 'a1'));
+    const [updatedArtifact] = await testDb().select().from(artifact).where(eq(artifact.id, 'a1'));
     expect(updatedArtifact.embedded_check_status).toBe('failed');
 
     const events = await testDb().select().from(event).where(eq(event.subject_id, 'a1'));
@@ -296,10 +287,7 @@ describe('runEmbeddedCheckGenerate', () => {
       }),
     ).rejects.toThrow(/parseOutput/);
 
-    const [updatedArtifact] = await testDb()
-      .select()
-      .from(artifact)
-      .where(eq(artifact.id, 'a1'));
+    const [updatedArtifact] = await testDb().select().from(artifact).where(eq(artifact.id, 'a1'));
     expect(updatedArtifact.embedded_check_status).toBe('failed');
 
     const events = await testDb().select().from(event).where(eq(event.subject_id, 'a1'));

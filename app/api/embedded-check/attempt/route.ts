@@ -11,8 +11,8 @@
 //   - attribution_followup enqueue happens AFTER the DB transaction, not inside it.
 //   - VITEST guard on boss.send mirrors /api/mistakes/route.ts:213.
 
-import { z } from 'zod';
 import { eq } from 'drizzle-orm';
+import { z } from 'zod';
 
 import { newId } from '@/core/ids';
 import { db } from '@/db/client';
@@ -49,7 +49,9 @@ function resolveJudgeKind(
   // persist reference_md but not a dedicated keywords field, so exact is the
   // deterministic default. Keep profile resolution in the call path so future
   // subject policies can opt into keyword / ai_flexible once those inputs exist.
-  const preferredLocalRoute = preferredRoutes.find((route) => route === 'exact' || route === 'keyword');
+  const preferredLocalRoute = preferredRoutes.find(
+    (route) => route === 'exact' || route === 'keyword',
+  );
   return (preferredLocalRoute as JudgeKind | undefined) ?? 'exact';
 }
 

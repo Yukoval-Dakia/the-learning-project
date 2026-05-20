@@ -21,7 +21,10 @@ const QUESTION_BASE = {
   version: 0,
 };
 
-async function seedEmbeddedQuestion(id = 'q1', overrides: Partial<typeof question.$inferInsert> = {}) {
+async function seedEmbeddedQuestion(
+  id = 'q1',
+  overrides: Partial<typeof question.$inferInsert> = {},
+) {
   const db = testDb();
   const now = new Date();
   await db.insert(question).values({
@@ -71,10 +74,7 @@ describe('POST /api/embedded-check/attempt', () => {
     expect(body.mistake_id).toBeUndefined();
 
     const db = testDb();
-    const events = await db
-      .select()
-      .from(event)
-      .where(eq(event.subject_id, 'q1'));
+    const events = await db.select().from(event).where(eq(event.subject_id, 'q1'));
     expect(events).toHaveLength(1);
     expect(events[0].action).toBe('attempt');
     expect(events[0].outcome).toBe('success');
@@ -100,10 +100,7 @@ describe('POST /api/embedded-check/attempt', () => {
 
     const db = testDb();
 
-    const events = await db
-      .select()
-      .from(event)
-      .where(eq(event.subject_id, 'q1'));
+    const events = await db.select().from(event).where(eq(event.subject_id, 'q1'));
     expect(events).toHaveLength(1);
     expect(events[0].action).toBe('attempt');
     expect(events[0].outcome).toBe('failure');
@@ -183,10 +180,7 @@ describe('POST /api/embedded-check/attempt', () => {
 
     const db = testDb();
 
-    const events = await db
-      .select()
-      .from(event)
-      .where(eq(event.subject_id, 'q1'));
+    const events = await db.select().from(event).where(eq(event.subject_id, 'q1'));
     expect(events).toHaveLength(2);
 
     const records = await db

@@ -171,10 +171,12 @@ export async function GET(_req: Request, { params }: RouteParams): Promise<Respo
           choices_md: string[] | null;
         }> = [];
         if (primary.embedded_check_status === 'ready') {
-          const checkSection = ((primary.sections ?? []) as Array<{
-            kind: string;
-            embedded_check?: { question_ids: string[] } | null;
-          }>).find((s) => s.kind === 'check');
+          const checkSection = (
+            (primary.sections ?? []) as Array<{
+              kind: string;
+              embedded_check?: { question_ids: string[] } | null;
+            }>
+          ).find((s) => s.kind === 'check');
           const ids = checkSection?.embedded_check?.question_ids ?? [];
           if (ids.length > 0) {
             const qRows = await db

@@ -642,9 +642,9 @@ describe('GET /api/learning-items/[id]', () => {
       updated_at: now,
       version: 0,
     });
-    await db.insert(learning_item).values(
-      baseItem('li_ec', { primary_artifact_id: 'a_ec', status: 'in_progress' }),
-    );
+    await db
+      .insert(learning_item)
+      .values(baseItem('li_ec', { primary_artifact_id: 'a_ec', status: 'in_progress' }));
 
     const res = await GET(getReq('li_ec'), { params: Promise.resolve({ id: 'li_ec' }) });
     expect(res.status).toBe(200);
@@ -706,9 +706,11 @@ describe('GET /api/learning-items/[id]', () => {
       updated_at: now,
       version: 0,
     });
-    await db.insert(learning_item).values(
-      baseItem('li_pending_ec', { primary_artifact_id: 'a_pending', status: 'in_progress' }),
-    );
+    await db
+      .insert(learning_item)
+      .values(
+        baseItem('li_pending_ec', { primary_artifact_id: 'a_pending', status: 'in_progress' }),
+      );
 
     const res = await GET(getReq('li_pending_ec'), {
       params: Promise.resolve({ id: 'li_pending_ec' }),

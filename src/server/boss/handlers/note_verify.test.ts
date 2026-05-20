@@ -262,9 +262,7 @@ describe('buildNoteVerifyHandler — onPassed callback', () => {
     const runTaskFn = vi.fn(async () => ({ text: 'not json' }));
     const onPassed = vi.fn(async (_id: string) => {});
     const handler = buildNoteVerifyHandler(testDb(), { runTaskFn, onPassed });
-    await expect(
-      handler([{ id: 'job1', data: { artifact_id: 'a1' } } as never]),
-    ).rejects.toThrow();
+    await expect(handler([{ id: 'job1', data: { artifact_id: 'a1' } } as never])).rejects.toThrow();
     expect(onPassed).not.toHaveBeenCalled();
   });
 });
