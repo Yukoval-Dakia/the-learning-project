@@ -2,7 +2,7 @@ import { artifact, event, knowledge } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { runNoteVerify } from './note_verify';
+import { buildNoteVerifyHandler, runNoteVerify } from './note_verify';
 
 const NOTE_SECTIONS = [
   {
@@ -231,5 +231,40 @@ describe('runNoteVerify', () => {
 
     const [updated] = await testDb().select().from(artifact).where(eq(artifact.id, 'a1'));
     expect(updated.verification_status).toBe('failed');
+  });
+});
+
+describe('buildNoteVerifyHandler — onVerified callback', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('onVerified fires when verdict=pass', async () => {
+    await seedAtomic({ artifactId: 'a1', knowledgeId: 'k1' });
+    const runTaskFn = vi.fn(async () => ({ text: PASS_OUTPUT }));
+    const onVerified = vi.fn(async (_id: string) => {});
+    const handler = buildNoteVerifyHandler(testDb(), { runTaskFn, onVerified });
+    await handler([{ id: 'job1', data: { artifact_id: 'a1' } } as never]);
+    expect(onVerified).toHaveBeenCalledWith('a1');
+  });
+
+  it('onVerified does NOT fire when verdict=needs_review', async () => {
+    await seedAtomic({ artifactId: 'a1', knowledgeId: 'k1' });
+    const runTaskFn = vi.fn(async () => ({ text: NEEDS_REVIEW_OUTPUT }));
+    const onVerified = vi.fn(async (_id: string) => {});
+    const handler = buildNoteVerifyHandler(testDb(), { runTaskFn, onVerified });
+    await handler([{ id: 'job1', data: { artifact_id: 'a1' } } as never]);
+    expect(onVerified).not.toHaveBeenCalled();
+  });
+
+  it('onVerified does NOT fire when runner throws', async () => {
+    await seedAtomic({ artifactId: 'a1' });
+    const runTaskFn = vi.fn(async () => ({ text: 'not json' }));
+    const onVerified = vi.fn(async (_id: string) => {});
+    const handler = buildNoteVerifyHandler(testDb(), { runTaskFn, onVerified });
+    await expect(
+      handler([{ id: 'job1', data: { artifact_id: 'a1' } } as never]),
+    ).rejects.toThrow();
+    expect(onVerified).not.toHaveBeenCalled();
   });
 });
