@@ -121,11 +121,14 @@ export type MemoryBriefNote = z.infer<typeof MemoryBriefNote>;
 // ---------- Artifact ----------
 export const Artifact = g.ArtifactSelectGenerated.extend({
   type: b.ArtifactType,
-  intent_source: z.enum(['declared', 'from_mistake', 'from_dream']),
+  intent_source: z.enum(['learning_intent', 'declared', 'from_mistake', 'from_dream']),
   sections: z.array(b.NoteSection).nullable(),
   tool_state: b.ToolState.nullable(),
   tool_kind: z.enum(['quiz']).nullable(),
-  generation_status: z.enum(['pending', 'partial', 'complete']),
+  generation_status: b.ArtifactGenerationStatus,
+  verification_status: b.ArtifactVerificationStatus,
+  verification_summary: b.NoteVerificationResult.nullable(),
+  verified_by: b.AgentRef.nullable(),
 });
 export type Artifact = z.infer<typeof Artifact>;
 

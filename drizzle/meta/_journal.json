@@ -57,6 +57,13 @@
       "when": 1779104651000,
       "tag": "0007_learning_record_loop",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1779279568288,
+      "tag": "0008_futuristic_magneto",
+      "breakpoints": true
     }
   ]
 }
