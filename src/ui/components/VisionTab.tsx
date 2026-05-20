@@ -18,6 +18,7 @@
 
 import { ApiAuthError, ApiError, apiJson } from '@/ui/lib/api';
 import { uploadAsset, useAssetUrl } from '@/ui/lib/assets';
+import { causeOptionsForSelectedKnowledge } from '@/ui/lib/cause-options';
 import { useIngestionSSE } from '@/ui/lib/sse';
 import { formatRelTime } from '@/ui/lib/utils';
 import { Badge } from '@/ui/primitives/Badge';
@@ -42,17 +43,7 @@ type QuestionKindId =
   | 'reading'
   | 'translation';
 
-type CauseCategoryId =
-  | 'concept'
-  | 'knowledge_gap'
-  | 'calculation'
-  | 'reading'
-  | 'memory'
-  | 'expression'
-  | 'method'
-  | 'carelessness'
-  | 'time_pressure'
-  | 'other';
+type CauseCategoryId = string;
 
 const QUESTION_KINDS: { id: QuestionKindId; label: string }[] = [
   { id: 'choice', label: '选择' },
@@ -63,19 +54,6 @@ const QUESTION_KINDS: { id: QuestionKindId; label: string }[] = [
   { id: 'computation', label: '计算' },
   { id: 'reading', label: '阅读' },
   { id: 'translation', label: '翻译' },
-];
-
-const CAUSE_CATEGORIES: { id: CauseCategoryId; label: string }[] = [
-  { id: 'concept', label: '概念' },
-  { id: 'knowledge_gap', label: '知识盲点' },
-  { id: 'calculation', label: '计算' },
-  { id: 'reading', label: '阅读理解' },
-  { id: 'memory', label: '记忆' },
-  { id: 'expression', label: '表达' },
-  { id: 'method', label: '方法' },
-  { id: 'carelessness', label: '粗心' },
-  { id: 'time_pressure', label: '时间' },
-  { id: 'other', label: '其它' },
 ];
 
 interface KnowledgeNode {
@@ -556,6 +534,17 @@ function BlockEditor({
       )
       .slice(0, 30);
   }, [knowledgeNodes, kFilter]);
+  const selectedKnowledgeIds = form?.knowledge_ids;
+  const causeOptions = useMemo(
+    () => causeOptionsForSelectedKnowledge(knowledgeNodes, selectedKnowledgeIds ?? []),
+    [knowledgeNodes, selectedKnowledgeIds],
+  );
+
+  useEffect(() => {
+    if (!form?.cause_primary) return;
+    if (causeOptions.some((option) => option.id === form.cause_primary)) return;
+    setForm((cur) => ({ ...cur, cause_primary: '', cause_notes: '' }));
+  }, [causeOptions, form?.cause_primary, setForm]);
 
   if (!form) return null;
   const toggleKid = (id: string) =>
@@ -742,7 +731,7 @@ function BlockEditor({
         >
           不指定
         </button>
-        {CAUSE_CATEGORIES.map((c) => (
+        {causeOptions.map((c) => (
           <button
             type="button"
             key={c.id}

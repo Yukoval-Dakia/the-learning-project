@@ -53,6 +53,16 @@ describe('getTaskSystemPrompt', () => {
     expect(prompt).not.toContain('虚词');
   });
 
+  it('builds VariantGenTask prompt from the subject cause taxonomy', () => {
+    const prompt = getTaskSystemPrompt('VariantGenTask', resolveSubjectProfile('math'));
+
+    expect(prompt).toContain('科目上下文：数学');
+    expect(prompt).toContain('unit_error');
+    expect(prompt).toContain('单位错误');
+    expect(prompt).toContain('当前 SubjectProfile cause taxonomy');
+    expect(prompt).not.toContain('time_pressure');
+  });
+
   it('builds subject-specific SessionSummaryTask prompts', () => {
     const prompt = getTaskSystemPrompt('SessionSummaryTask', resolveSubjectProfile('math'));
 
