@@ -44,7 +44,7 @@ const DEFAULT_BUDGET: TaskBudget = { maxIterations: 6, maxCost: 0.5, timeout: 60
 export const tasks = {
   AttributionTask: {
     kind: 'AttributionTask',
-    description: '错题归因 + 知识点挂载（10 类 cause）',
+    description: '错题归因 + 知识点挂载（profile-scoped cause）',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
     fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
@@ -54,7 +54,7 @@ export const tasks = {
     allowedTools: [],
     // fallback only; runtime uses getTaskSystemPrompt(task, profile)
     systemPrompt:
-      '你是错题归因助手。输入字段 { prompt_md, reference_md, wrong_answer_md, knowledge_context }（来自一个 attempt event outcome=\'failure\'）—— 即用户做错的一道题，含 wrong_answer_md（用户错答）、参考答案 reference_md、挂的 knowledge_context，分析错因。归因结果作为 judge event 写入 (action=\'judge\', subject_kind=\'event\', caused_by_event_id=<attempt event id>)；payload.cause 即此输出。\n输出严格 JSON 格式（不带 markdown 代码块包裹）：\n{"primary_category": "<10 类之一>", "secondary_categories": [...], "analysis_md": "<分析过程，含错答与参考答案差异 + 涉及的知识点 / 概念>", "confidence": 0.0-1.0}\n10 类 cause: concept | knowledge_gap | calculation | reading | memory | expression | method | carelessness | time_pressure | other。低信心走 other + 详细 analysis_md。',
+      '你是错题归因助手。输入字段 { prompt_md, reference_md, wrong_answer_md, knowledge_context }（来自一个 attempt event outcome=\'failure\'）—— 即用户做错的一道题，含 wrong_answer_md（用户错答）、参考答案 reference_md、挂的 knowledge_context，分析错因。归因结果作为 judge event 写入 (action=\'judge\', subject_kind=\'event\', caused_by_event_id=<attempt event id>)；payload.cause 即此输出。\n输出严格 JSON 格式（不带 markdown 代码块包裹）：\n{"primary_category": "<profile cause taxonomy 之一>", "secondary_categories": [...], "analysis_md": "<分析过程，含错答与参考答案差异 + 涉及的知识点 / 概念>", "confidence": 0.0-1.0}\n低信心走 profile 的 other（若存在）或最接近类别，并写详细 analysis_md。',
   },
   VisionExtractTask: {
     kind: 'VisionExtractTask',

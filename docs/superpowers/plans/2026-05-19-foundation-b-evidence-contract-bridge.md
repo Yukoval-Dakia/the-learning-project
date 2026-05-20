@@ -4,7 +4,7 @@
 
 **Goal:** Make subject-scoped attribution cause ids flow end-to-end from `AttributionTask` output through parsing, judge-event writes, review planning, and variant generation.
 
-**Architecture:** Introduce `src/core/schema/cause.ts` as the single source of truth for universal cause ids, labels, priorities, and runtime validation. Keep universal causes as historical cross-subject baseline, let `SubjectProfile.causeCategories` extend or override them, and validate attribution output against `profile.causeCategories ∪ UNIVERSAL_CAUSE_IDS`.
+**Architecture:** Introduce `src/core/schema/cause.ts` as the single source of truth for cause id grammar, cause payload shape, profile-scoped labels/priorities, and runtime validation. There is no runtime universal baseline: each `SubjectProfile.causeCategories` is the complete taxonomy for that subject, and attribution output is validated only against the active profile.
 
 **Tech Stack:** TypeScript, Zod, Drizzle/Postgres event rows, pg-boss handlers, existing SubjectProfile registry, Vitest.
 
@@ -12,7 +12,7 @@
 
 ## Scope
 
-- In scope: universal cause bridge, profile-scoped validation, math `unit_error` end-to-end tests, profile-aware review label/priority lookup, registry fallback comments.
+- In scope: profile-scoped validation, math `unit_error` end-to-end tests, profile-aware review label/priority lookup, registry fallback comments.
 - Out of scope: profile-specific variant skip policy, ActivityRef shim, CorrectEvent, Maintenance/Inbox/Product Track, README drift, math dataset import, math manual cause UI.
 
 ## Files
@@ -37,15 +37,11 @@
 
 ### Task 1: Cause Schema Single Source
 
-- [ ] Add failing tests in `src/core/schema/schema.test.ts` proving `CauseSchema` accepts universal `time_pressure` and subject-specific `unit_error` string ids.
+- [ ] Add failing tests in `src/core/schema/schema.test.ts` proving `CauseSchema` accepts syntactically valid cause string ids while profile validation rejects ids outside the active profile.
 - [ ] Run `pnpm vitest run src/core/schema/schema.test.ts` and confirm failure.
 - [ ] Create `src/core/schema/cause.ts` with:
-  - `UNIVERSAL_CAUSE_IDS`
-  - `UniversalCauseId`
   - `CauseCategoryId`
   - `CauseSchema`
-  - `UNIVERSAL_CAUSE_LABELS`
-  - `UNIVERSAL_CAUSE_PRIORITY`
   - `validateCauseAgainstProfile(cause, profile)`
   - `getCauseLabel(causeId, profile?)`
   - `getCausePriority(causeId, profile?)`
@@ -57,9 +53,9 @@
 - [ ] Add failing tests in `src/server/knowledge/attribute.test.ts`:
   - math profile accepts `unit_error`
   - invalid category degrades to `other`, preserves `analysis_md`, and does not throw
-  - wenyan historical categories still parse
+  - ids absent from the active profile do not parse as hidden shared categories
 - [ ] Run `pnpm vitest run src/server/knowledge/attribute.test.ts` and confirm failure.
-- [ ] Change `parseAttributionOutput(text, profile = defaultSubjectProfile)` to validate against profile union universal ids.
+- [ ] Change `parseAttributionOutput(text, profile = defaultSubjectProfile)` to validate only against the active profile.
 - [ ] Ensure `runAttributionAndWriteJudgeEvent` passes `params.subjectProfile` into parser.
 - [ ] Run tests and commit.
 
@@ -77,13 +73,13 @@
 - [ ] Run:
   - `pnpm vitest run src/server/orchestrator/review.test.ts`
   - `pnpm vitest run src/server/boss/handlers/variant_gen.test.ts`
-- [ ] Update review cause priority/label lookup to use baseline + profile override + fallback.
-- [ ] Remove hard `CauseCategory` enum typing from variant consumer paths; keep existing universal skip set unchanged.
+- [ ] Update review cause priority/label lookup to use active profile category metadata + fallback.
+- [ ] Remove hard `CauseCategory` enum typing from variant consumer paths; keep existing legacy skip set unchanged.
 - [ ] Run tests and commit.
 
 ### Task 5: Prompt And Registry Drift Guard
 
-- [ ] Strengthen `src/ai/task-prompts.test.ts` so math Attribution prompt includes `unit_error`, excludes `time_pressure` removal assumptions, and does not contain `文言/古文`.
+- [ ] Strengthen `src/ai/task-prompts.test.ts` so math Attribution prompt includes `unit_error`, excludes `time_pressure`, and does not contain `文言/古文`.
 - [ ] Add `// fallback only; runtime uses getTaskSystemPrompt(task, profile)` comments above registry `systemPrompt` fields for profile-builder tasks.
 - [ ] Run `pnpm vitest run src/ai/task-prompts.test.ts src/ai/registry.test.ts`.
 - [ ] Commit.

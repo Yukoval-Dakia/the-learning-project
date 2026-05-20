@@ -7,12 +7,9 @@ export {
   getAllowedCauseIds,
   getCauseLabel,
   getCausePriority,
-  UNIVERSAL_CAUSE_IDS,
-  UNIVERSAL_CAUSE_LABELS,
-  UNIVERSAL_CAUSE_PRIORITY,
   validateCauseAgainstProfile,
 } from './cause';
-export type { CauseCategoryT, CauseSchemaT, UniversalCauseId } from './cause';
+export type { CauseCategoryT, CauseSchemaT } from './cause';
 
 // ---------- 业务 enum ----------
 

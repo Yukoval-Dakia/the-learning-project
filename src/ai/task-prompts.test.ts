@@ -37,7 +37,9 @@ describe('getTaskSystemPrompt', () => {
     expect(prompt).toContain('科目上下文：数学');
     expect(prompt).toContain('数学定义、定理、条件');
     expect(prompt).toContain('unit_error');
-    expect(prompt).toContain('time_pressure');
+    expect(prompt).toContain('当前 SubjectProfile');
+    expect(prompt).not.toContain('universal baseline');
+    expect(prompt).not.toContain('time_pressure');
     expect(prompt).toContain('你是错题归因助手');
     expect(prompt).not.toContain('文言文');
     expect(prompt).not.toContain('古文');

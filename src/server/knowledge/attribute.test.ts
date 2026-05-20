@@ -55,6 +55,15 @@ describe('parseAttributionOutput', () => {
     expect(out.analysis_md).toBe('r');
   });
 
+  it('does not accept non-profile universal-looking causes for math', () => {
+    const text =
+      '{"primary_category":"time_pressure","secondary_categories":["unit_error","method"],"analysis_md":"时间压力不是 math profile 的错因类目","confidence":0.5}';
+    const out = parseAttributionOutput(text, resolveSubjectProfile('math'));
+    expect(out.primary_category).toBe('other');
+    expect(out.secondary_categories).toEqual(['unit_error', 'method']);
+    expect(out.analysis_md).toBe('时间压力不是 math profile 的错因类目');
+  });
+
   it('throws when confidence out of range', () => {
     const text = '{"primary_category":"concept","analysis_md":"r","confidence":1.5}';
     expect(() => parseAttributionOutput(text)).toThrow();

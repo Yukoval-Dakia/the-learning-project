@@ -46,9 +46,10 @@ export type MaterialRefT = z.infer<typeof MaterialRef>;
 
 // ---------- CauseSchema ----------
 //
-// ADR-0006 v2 原 10 类 cause + analysis_md + confidence(0-1)。
-// 与 src/core/schema/business.ts 的 Cause 等价但更紧 —— 这里用于 event.payload，
-// 走 jsonb roundtrip，字段命名按 v2 spec 对齐（analysis_md / confidence 顶级）。
+// profile-scoped cause id + analysis_md + confidence(0-1)。
+// 与 src/core/schema/business.ts 从同一 cause.ts re-export，避免多份 taxonomy drift。
+// 这里用于 event.payload，走 jsonb roundtrip，字段命名按 v2 spec 对齐
+//（analysis_md / confidence 顶级）。
 
 export const CauseCategory = CauseCategoryId;
 export const CauseSchema = CauseSchemaBase;

@@ -2,6 +2,7 @@
 // (Mistake / ReviewEvent / IngestionSession / DreamingProposal) removed.
 // Surviving tests cover the schemas that still exist post-DROP.
 
+import { resolveSubjectProfile } from '@/subjects/profile';
 import { describe, expect, it } from 'vitest';
 import { parseEvent } from './event';
 import {
@@ -17,6 +18,7 @@ import {
   QuestionBlock,
   QuestionBlockInsert,
   SourceAsset,
+  validateCauseAgainstProfile,
 } from './index';
 
 describe('schema generated from drizzle', () => {
@@ -41,7 +43,7 @@ describe('schema generated from drizzle', () => {
     expect(result.success).toBe(false);
   });
 
-  it('CauseSchema accepts universal and subject-specific cause ids', () => {
+  it('CauseSchema accepts syntactically valid cause ids; profile validation owns membership', () => {
     expect(
       CauseSchema.safeParse({
         primary_category: 'time_pressure',
@@ -50,6 +52,22 @@ describe('schema generated from drizzle', () => {
         confidence: 0.8,
       }).success,
     ).toBe(true);
+  });
+
+  it('profile validation rejects causes outside the current SubjectProfile', () => {
+    const parsed = CauseSchema.parse({
+      primary_category: 'time_pressure',
+      secondary_categories: ['unit_error', 'carelessness'],
+      analysis_md: '时间压力不是数学 profile 的错因类目。',
+      confidence: 0.8,
+    });
+
+    expect(validateCauseAgainstProfile(parsed, resolveSubjectProfile('math'))).toEqual({
+      primary_category: 'other',
+      secondary_categories: ['unit_error', 'carelessness'],
+      analysis_md: '时间压力不是数学 profile 的错因类目。',
+      confidence: 0.8,
+    });
   });
 
   it('LearningItemInsert accepts minimal payload', () => {

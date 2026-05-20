@@ -133,7 +133,7 @@ describe('planReviewSession', () => {
     const plan = await planReviewSession({ db: testDb() });
     expect(plan.queue[0].cause).toBe('concept');
     expect(plan.queue[0].priority).toBe(5); // concept base = 5
-    expect(plan.queue[0].rationale).toContain('概念 错因');
+    expect(plan.queue[0].rationale).toContain('概念理解 错因');
   });
 
   it('keeps math-specific unit_error cause visible in review priority and rationale', async () => {
@@ -157,6 +157,29 @@ describe('planReviewSession', () => {
     expect(plan.queue[0].cause).toBe('unit_error');
     expect(plan.queue[0].priority).toBe(2);
     expect(plan.queue[0].rationale).toContain('单位错误 错因');
+  });
+
+  it('falls back to the profile other label for cause ids outside the subject profile', async () => {
+    await testDb().insert(knowledge).values({
+      id: 'k_math',
+      name: '单位换算',
+      domain: 'math',
+      parent_id: null,
+      merged_from: [],
+      proposed_by_ai: false,
+      approval_status: 'approved',
+      created_at: new Date(),
+      updated_at: new Date(),
+      version: 0,
+    });
+    await seedQuestion('q_math', '单位换算题', ['k_math']);
+    await seedFailureAttempt('a_math', 'q_math', 'time_pressure');
+
+    const plan = await planReviewSession({ db: testDb() });
+
+    expect(plan.queue[0].cause).toBe('time_pressure');
+    expect(plan.queue[0].rationale).toContain('其它 错因');
+    expect(plan.queue[0].rationale).not.toContain('时间 错因');
   });
 
   it('uses user_cause over judge when both present', async () => {
@@ -188,7 +211,7 @@ describe('planReviewSession', () => {
   it('adds overdue bonus when ≥7 days past due', async () => {
     await seedQuestion('q1');
     await seedFsrsState('q1', new Date(Date.now() - 10 * 86_400_000), { lapses: 0 });
-    await seedFailureAttempt('a1', 'q1', 'calculation'); // base = 3
+    await seedFailureAttempt('a1', 'q1', 'reading'); // base = 3
 
     const plan = await planReviewSession({ db: testDb() });
     expect(plan.queue[0].priority).toBe(4); // 3 + 1 overdue bonus
