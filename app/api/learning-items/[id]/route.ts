@@ -133,6 +133,9 @@ export async function GET(_req: Request, { params }: RouteParams): Promise<Respo
       sections: unknown;
       outline_json: unknown;
       generation_status: string;
+      verification_status: string;
+      verification_summary: unknown;
+      verified_by: unknown;
     } | null = null;
     if (row.primary_artifact_id) {
       const aRows = await db
@@ -142,6 +145,9 @@ export async function GET(_req: Request, { params }: RouteParams): Promise<Respo
           sections: artifact.sections,
           outline_json: artifact.outline_json,
           generation_status: artifact.generation_status,
+          verification_status: artifact.verification_status,
+          verification_summary: artifact.verification_summary,
+          verified_by: artifact.verified_by,
         })
         .from(artifact)
         .where(eq(artifact.id, row.primary_artifact_id))
