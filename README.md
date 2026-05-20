@@ -22,15 +22,27 @@
 
 ## 开发
 
+Local development uses the docker-compose Postgres database as the source of truth.
+Inside compose, services use `postgres:5432`; host-side commands use the local overlay
+port `127.0.0.1:5433`.
+
 ```bash
 pnpm install
-pnpm dev
-
-# 后台 worker（另开终端，需要 DATABASE_URL）
-pnpm worker:dev
+docker compose -f docker-compose.yml -f docker-compose.local.yml up postgres -d
+pnpm db:migrate:local
+pnpm dev:local
 ```
 
-本地配置放在 `.env.local`；生产 / NAS compose 配置放在 `.env`。浏览器代码不持有 provider key，所有 AI 调用都通过 Next route handler 或 pg-boss worker 在服务端执行。
+`pnpm dev` is still available for non-standard environments, but the canonical host-side
+path is `pnpm dev:local`. Do not use a stale `.env.local` remote `DATABASE_URL` for UI smoke.
+
+```bash
+pnpm smoke:local
+```
+
+生产 / NAS compose 配置放在 `.env`；host-side local dev 也从 `.env` 的 `POSTGRES_*`
+派生本地连接串。浏览器代码不持有 provider key，所有 AI 调用都通过 Next route handler 或
+pg-boss worker 在服务端执行。
 
 常用检查：
 
@@ -59,7 +71,7 @@ pnpm audit:schema
 
 2. **Configure environment variables** — copy `.env.example` to `.env` and fill in:
    ```bash
-   DATABASE_URL=postgres://loom:loom@postgres:5432/loom
+   DATABASE_URL=postgres://loom:loom@postgres:5432/loom?sslmode=disable
    INTERNAL_TOKEN=...
    XIAOMI_API_KEY=...
    ANTHROPIC_API_KEY=...
