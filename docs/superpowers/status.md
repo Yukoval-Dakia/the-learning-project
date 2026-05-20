@@ -40,7 +40,7 @@
 🟡  exact + keyword judges 注册为 capability    ✅ src/core/capability/judges/{exact,keyword}.ts
 🟡  JudgeResultV2 (score + scoreMeaning + ref)  ✅ src/core/schema/capability.ts
 🟡  JudgeRouter v2 delegates to registry        ✅ src/server/ai/judges/router.ts
-🟡  老代码路径 question_id → ActivityRef shim    review plan/due 已暴露 activity_ref；其余 legacy call sites 待统一
+🟡  老代码路径 question_id → ActivityRef shim    review plan/due/submit 已接入 activity_ref；question_id/mistake_id 仅作 compat/storage
 ⬜  subject identity normalization 完成度回查
 ```
 

@@ -77,6 +77,7 @@ describe('GET /api/review/plan', () => {
     expect(body.queue).toHaveLength(1);
     expect(body.queue[0].question_id).toBe('q1');
     expect(body.queue[0].activity_ref).toEqual({ kind: 'question', id: 'q1' });
+    expect(body.queue[0].activity_ref.id).toBe(body.queue[0].question_id);
     expect(body.queue[0].priority).toBeGreaterThanOrEqual(1);
     expect(body.queue[0].rationale).toContain('首次复习');
     expect(body.queue[0].subject_profile.id).toBe('wenyan');

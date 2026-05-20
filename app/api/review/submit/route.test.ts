@@ -136,6 +136,37 @@ describe('POST /api/review/submit', () => {
     expect(events[0].outcome).toBe('failure'); // again → failure invariant
   });
 
+  it('accepts activity_ref as the primary review identity', async () => {
+    await seedQuestion('q1');
+
+    const res = await POST(
+      submitReq({
+        activity_ref: { kind: 'question', id: 'q1' },
+        rating: 'good',
+        latency_ms: 5000,
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      review_event: {
+        activity_ref: { kind: string; id: string };
+        question_id: string;
+        rating: string;
+      };
+    };
+
+    expect(body.review_event.activity_ref).toEqual({ kind: 'question', id: 'q1' });
+    expect(body.review_event.question_id).toBe('q1');
+    expect(body.review_event.rating).toBe('good');
+
+    const db = testDb();
+    const events = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q1')));
+    expect(events).toHaveLength(1);
+  });
+
   it('returns 400 when rating is invalid (e.g. "easy")', async () => {
     await seedQuestion('q1');
     const res = await POST(submitReq({ mistake_id: 'q1', rating: 'easy' }));
@@ -144,11 +175,39 @@ describe('POST /api/review/submit', () => {
     expect(body.error).toBe('validation_error');
   });
 
-  it('returns 400 when mistake_id is missing', async () => {
+  it('returns 400 when review identity is missing', async () => {
     const res = await POST(submitReq({ rating: 'good' }));
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
+    const body = (await res.json()) as { error: string; message: string };
     expect(body.error).toBe('validation_error');
+    expect(body.message).toContain('activity_ref, question_id, or mistake_id is required');
+  });
+
+  it('returns 400 when activity_ref kind is not supported by the question adapter', async () => {
+    const res = await POST(
+      submitReq({
+        activity_ref: { kind: 'record', id: 'r1' },
+        rating: 'good',
+      }),
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe('unsupported_activity_kind');
+    expect(body.message).toContain('question activities only');
+  });
+
+  it('returns 400 when activity_ref conflicts with legacy identity fields', async () => {
+    const res = await POST(
+      submitReq({
+        activity_ref: { kind: 'question', id: 'q1' },
+        question_id: 'q2',
+        rating: 'good',
+      }),
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe('validation_error');
+    expect(body.message).toContain('must reference the same question');
   });
 
   it('returns 404 when question not found', async () => {

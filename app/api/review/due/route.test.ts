@@ -149,6 +149,7 @@ describe('GET /api/review/due', () => {
       kind: 'question',
       id: body.rows[0].question_id,
     });
+    expect((body.rows[0].activity_ref as { id: string }).id).toBe(body.rows[0].question_id);
     expect(body.rows[0].fsrs_state).toBeNull();
   });
 
