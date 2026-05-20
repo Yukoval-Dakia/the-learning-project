@@ -29,7 +29,20 @@ type CauseCategory =
   | 'time_pressure'
   | 'other';
 
+type ActivityRef = {
+  kind:
+    | 'question'
+    | 'question_part'
+    | 'record'
+    | 'recall_prompt'
+    | 'practice_log'
+    | 'project_milestone'
+    | 'open_inquiry';
+  id: string;
+};
+
 interface PlanQueueItem {
+  activity_ref: ActivityRef;
   question_id: string;
   prompt_md: string;
   reference_md: string | null;
@@ -186,7 +199,7 @@ export default function ReviewPage() {
       return apiJson<{ next_due_at: number }>('/api/review/submit', {
         method: 'POST',
         body: JSON.stringify({
-          mistake_id: current.question_id,
+          activity_ref: current.activity_ref,
           rating,
           response_md: answer || null,
           session_id: sessionId,
