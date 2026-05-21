@@ -80,12 +80,42 @@ Inventory of `question_id` / `questionId` occurrences (excluding tests):
 
 ## Concrete M1 plan
 
-Given the empty in-math-path list, **M1 scope as originally written is no-op**. Recommend:
+**User decision 2026-05-21**: M1 仍按计划走。math 没触发 ≠ 不该做——技术债收口，提前清理；不希望 phase 序列出现"deferred forward"导致后续多 phase 并行。
 
-1. **Re-scope M1**: skip M1 phase entirely; M0 drift inventory shows nothing needs migration for deterministic judge math.
-2. **Or repurpose M1** as a "M2 prep" phase: refactor `semanticInput()` to be profile-aware (currently hardcoded subject-blind) so M2's vision steps@1 can drop in cleanly.
-3. **Or defer everything to M3** sweep + treat M2 as the trigger for real profile-driven prompt work.
+### Revised M1 scope（foundation cleanup ahead of M2）
 
-User decision needed before kicking off M1 / M2.
+M1 不再是"沿 math 路径迁移"——math 路径已无对象。M1 重新定义为：**在 M2 vision judge 引入前把 Foundation 层的债务收口**。
 
-**Recommendation**: skip M1 as separate phase; jump directly to **M2 (vision judge + steps@1 capability)**. Drift items B + C above naturally surface during M2 implementation. Treat M3 as a dedicated cleanup of registry dead-code + non-path question_id refactors.
+具体 scope：
+
+1. **§A 处理**（dead-code wenyan-hardcoded prompts in `src/ai/registry.ts`）
+   - 给 NoteGenerateTask / VariantGenTask / TeachingTurnTask / KnowledgeReviewTask 的 `systemPrompt` 字段加强 deprecation 注释（明文 "do not edit here; runtime uses task-prompts.ts"），或将字段类型改为 optional 以反映非 source-of-truth。
+   - 决策点（M1 开始前确认）：(a) 加强注释 vs (b) 字段改 optional vs (c) 字段直接删除。建议 (a) 最小破坏。
+
+2. **§B 处理**（`getTaskSystemPrompt` default branch）
+   - `task-prompts.ts:303-304` 的 default 分支：把 `tasks[task].systemPrompt` fallback 替换为 (a) `assertNever(task)` 编译期检查，或 (b) 显式 throw with warning。
+   - 当前 12 个 task 全在 switch 内，default 不应被命中——TypeScript 端补强即可。
+
+3. **§C 子集处理**（可在 M1 内做的 question_id 重构）
+   - `semanticInput()` (`src/server/ai/judges/question-contract.ts:140`) 改为 profile-aware（接收 `subjectProfile` 参数，用于 M2 vision judge 可以直接消费同接口）—— 这是 M2 prep 的真正价值。
+   - 其它 §C 表里的 question_id 引用大多是 DB schema-layer / 合法用法，**不动**（留 M3 sweep / 后续 ADR 决定）。
+
+4. **顺手处理**（2026-05-20 drift audit 的 2 条 finding）：
+   - ADR-0015（`learning_record` + `memory_brief_note` 无 ADR）—— 起草并 merge。
+   - registry.ts 死代码 deprecated 注释（与 §A 合并处理）。
+
+### M1 exit criteria
+
+- `src/ai/registry.ts` 所有未迁移 task 的 `systemPrompt` 字段有强 deprecation 注释，或字段类型重构。
+- `getTaskSystemPrompt` default 分支不再悄默 fallback 到 registry 字符串（switch exhaustive 或 throw）。
+- `semanticInput()` 接受 subjectProfile 参数（M2 prep）。
+- ADR-0015 merged。
+- `/audit-drift` 报告中 2026-05-20 的 2 条 finding 清零。
+
+### 投入估计
+
+约 1-2 day。比原计划 M1（2-3 day "沿路径迁移"）小，因为 math 没触发的 question_id 引用大多是合法的——不需要全部迁移。
+
+### M3 后续
+
+M3 仍保留为最终 sweep phase，处理 M1 没收口的 (a) 非 math 非 M2 路径的 question_id refactor、(b) `EmbeddedCheckSection.tsx` 的 UI 层 question_id（math 引入 embedded check 后才有对象）。M3 可能因 M1 提前清理而 scope 进一步缩小。
