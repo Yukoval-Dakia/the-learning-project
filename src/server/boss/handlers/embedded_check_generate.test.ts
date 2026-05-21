@@ -367,10 +367,7 @@ describe('runEmbeddedCheckGenerate', () => {
     expect(['skipped:already_in_progress', 'skipped:already_ready']).toContain(slowResult.status);
 
     // The artifact must reference exactly the reclaim handler's question ids.
-    const [finalArtifact] = await testDb()
-      .select()
-      .from(artifact)
-      .where(eq(artifact.id, 'a-race'));
+    const [finalArtifact] = await testDb().select().from(artifact).where(eq(artifact.id, 'a-race'));
     expect(finalArtifact.embedded_check_status).toBe('ready');
     const finalSections = finalArtifact.sections as Array<{
       kind: string;
@@ -465,10 +462,7 @@ describe('runEmbeddedCheckGenerate', () => {
     ).rejects.toThrow(/schema invalid/i);
 
     // The artifact status must be 'failed' (set by the catch block before re-throwing).
-    const [updated] = await testDb()
-      .select()
-      .from(artifact)
-      .where(eq(artifact.id, 'a-reject'));
+    const [updated] = await testDb().select().from(artifact).where(eq(artifact.id, 'a-reject'));
     expect(updated.embedded_check_status).toBe('failed');
 
     // No question rows should have been inserted.
