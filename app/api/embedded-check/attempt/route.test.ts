@@ -2,10 +2,15 @@
 // Tests for the embedded check attempt endpoint.
 
 import { event, learning_record, material_fsrs_state, question } from '@/db/schema';
+import { runTask } from '@/server/ai/runner';
 import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST } from './route';
+
+vi.mock('@/server/ai/runner', () => ({
+  runTask: vi.fn(),
+}));
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -55,6 +60,7 @@ async function postAttempt(body: unknown) {
 describe('POST /api/embedded-check/attempt', () => {
   beforeEach(async () => {
     await resetDb();
+    vi.mocked(runTask).mockReset();
   });
 
   // Test 1: Happy path correct
@@ -204,5 +210,124 @@ describe('POST /api/embedded-check/attempt', () => {
 
     const countAfter = await db.select().from(material_fsrs_state);
     expect(countAfter.length).toBe(countBefore.length);
+  });
+
+  it('keyword partial → outcome=partial, no learning_record', async () => {
+    await seedEmbeddedQuestion('q_keyword', {
+      reference_md: '虚词；代词；连词',
+      judge_kind_override: 'keyword',
+      rubric_json: {
+        criteria: [{ name: 'correctness', weight: 1, descriptor: '命中关键词' }],
+        keywords: ['虚词', '代词', '连词'],
+      },
+    });
+
+    const res = await postAttempt({ question_id: 'q_keyword', answer_md: '虚词和代词' });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      outcome: string;
+      judge: { route: string; score: number; coarse_outcome: string };
+      mistake_id?: string;
+    };
+    expect(body.outcome).toBe('partial');
+    expect(body.judge).toMatchObject({ route: 'keyword', coarse_outcome: 'partial' });
+    expect(body.mistake_id).toBeUndefined();
+
+    const events = await testDb().select().from(event).where(eq(event.subject_id, 'q_keyword'));
+    expect(events[0].outcome).toBe('partial');
+    const records = await testDb()
+      .select()
+      .from(learning_record)
+      .where(eq(learning_record.question_id, 'q_keyword'));
+    expect(records).toHaveLength(0);
+  });
+
+  it('semantic correct/partial/incorrect outcomes use SemanticJudgeTask', async () => {
+    await seedEmbeddedQuestion('q_semantic', {
+      kind: 'short_answer',
+      reference_md: '之在这里作代词，指代前文的人或事。',
+      judge_kind_override: 'semantic',
+      rubric_json: {
+        criteria: [{ name: 'correctness', weight: 1, descriptor: '覆盖核心要点' }],
+        required_points: ['说明之作代词', '说明指代前文'],
+      },
+    });
+    vi.mocked(runTask)
+      .mockResolvedValueOnce({
+        text: JSON.stringify({
+          score: 0.9,
+          coarse_outcome: 'correct',
+          confidence: 0.8,
+          feedback_md: '要点完整。',
+          evidence_json: { matched_points: ['说明之作代词'], missing_points: [] },
+        }),
+        cost: 0,
+        usage: null,
+        model: 'mock',
+      } as never)
+      .mockResolvedValueOnce({
+        text: JSON.stringify({
+          score: 0.5,
+          coarse_outcome: 'partial',
+          confidence: 0.8,
+          feedback_md: '还缺少指代对象。',
+          evidence_json: { matched_points: ['说明之作代词'], missing_points: ['说明指代前文'] },
+        }),
+        cost: 0,
+        usage: null,
+        model: 'mock',
+      } as never)
+      .mockResolvedValueOnce({
+        text: JSON.stringify({
+          score: 0,
+          coarse_outcome: 'incorrect',
+          confidence: 0.9,
+          feedback_md: '未命中核心要点。',
+          evidence_json: { matched_points: [], missing_points: ['说明之作代词'] },
+        }),
+        cost: 0,
+        usage: null,
+        model: 'mock',
+      } as never);
+
+    const correct = await postAttempt({ question_id: 'q_semantic', answer_md: '之作代词。' });
+    const partial = await postAttempt({ question_id: 'q_semantic', answer_md: '是代词。' });
+    const incorrect = await postAttempt({ question_id: 'q_semantic', answer_md: '不知道。' });
+
+    expect((await correct.json()).outcome).toBe('success');
+    expect((await partial.json()).outcome).toBe('partial');
+    expect((await incorrect.json()).outcome).toBe('failure');
+    expect(vi.mocked(runTask)).toHaveBeenCalledTimes(3);
+  });
+
+  it('semantic provider failure returns partial unsupported and creates no learning_record', async () => {
+    await seedEmbeddedQuestion('q_semantic_fail', {
+      kind: 'short_answer',
+      reference_md: '之在这里作代词。',
+      judge_kind_override: 'semantic',
+      rubric_json: {
+        criteria: [{ name: 'correctness', weight: 1, descriptor: '覆盖核心要点' }],
+        required_points: ['说明之作代词'],
+      },
+    });
+    vi.mocked(runTask).mockRejectedValueOnce(new Error('provider down'));
+
+    const res = await postAttempt({ question_id: 'q_semantic_fail', answer_md: '之作代词。' });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      outcome: string;
+      judge: { coarse_outcome: string; score: number | null };
+      mistake_id?: string;
+    };
+    expect(body.outcome).toBe('partial');
+    expect(body.judge.coarse_outcome).toBe('unsupported');
+    expect(body.judge.score).toBeNull();
+    expect(body.mistake_id).toBeUndefined();
+
+    const records = await testDb()
+      .select()
+      .from(learning_record)
+      .where(eq(learning_record.question_id, 'q_semantic_fail'));
+    expect(records).toHaveLength(0);
   });
 });

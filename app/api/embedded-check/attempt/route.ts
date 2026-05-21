@@ -1,7 +1,7 @@
 // POST /api/embedded-check/attempt
 //
-// Accepts an answer to an embedded check question, judges it (exact/keyword
-// judge), writes an attempt event, and — on failure — creates a learning_record
+// Accepts an answer to an embedded check question, judges it through the Judge v2
+// light service, writes an attempt event, and — on failure — creates a learning_record
 // (kind='mistake') and enqueues attribution_followup via pg-boss.
 //
 // Design invariants:
@@ -17,8 +17,7 @@ import { z } from 'zod';
 import { newId } from '@/core/ids';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
-import { judgeRouterV2 } from '@/server/ai/judges';
-import type { JudgeKind } from '@/server/ai/judges';
+import { judgeAnswer } from '@/server/ai/judges/question-contract';
 import { getStartedBoss } from '@/server/boss/client';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
@@ -33,26 +32,12 @@ const Body = z.object({
   latency_ms: z.number().int().min(0).max(3_600_000).nullable().optional(),
 });
 
-function resolveJudgeKind(
-  q: {
-    kind: string;
-    judge_kind_override: string | null | undefined;
-    reference_md: string | null | undefined;
-  },
-  preferredRoutes: readonly string[],
-): JudgeKind {
-  if (q.judge_kind_override) {
-    return q.judge_kind_override as JudgeKind;
-  }
-
-  // Registry-backed routes today: exact, keyword. Embedded questions currently
-  // persist reference_md but not a dedicated keywords field, so exact is the
-  // deterministic default. Keep profile resolution in the call path so future
-  // subject policies can opt into keyword / ai_flexible once those inputs exist.
-  const preferredLocalRoute = preferredRoutes.find(
-    (route) => route === 'exact' || route === 'keyword',
-  );
-  return (preferredLocalRoute as JudgeKind | undefined) ?? 'exact';
+function eventOutcomeForJudge(
+  coarseOutcome: 'correct' | 'partial' | 'incorrect' | 'unsupported',
+): 'success' | 'partial' | 'failure' {
+  if (coarseOutcome === 'correct') return 'success';
+  if (coarseOutcome === 'incorrect') return 'failure';
+  return 'partial';
 }
 
 export async function POST(req: Request): Promise<Response> {
@@ -87,23 +72,24 @@ export async function POST(req: Request): Promise<Response> {
 
     // Judge the answer
     const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids);
-    const judgeKind = resolveJudgeKind(q, subjectProfile.judgePolicy.preferredRoutes);
-    const judgeResult = judgeRouterV2({
-      kind: judgeKind,
-      question: {
-        reference: q.reference_md ?? '',
-        keywords: [],
-      },
-      answer: { content: body.answer_md },
+    const judged = await judgeAnswer({
+      db,
+      question: q,
+      answer_md: body.answer_md,
+      subjectProfile,
     });
+    const judgeKind = judged.route;
+    const judgeResult = judged.result;
 
     // Map judge coarse_outcome → event outcome
-    const outcome: 'success' | 'failure' =
-      judgeResult.coarse_outcome === 'correct' ? 'success' : 'failure';
+    const outcome = eventOutcomeForJudge(judgeResult.coarse_outcome);
     const responseJudge = {
       route: judgeKind,
       score: judgeResult.score,
+      coarse_outcome: judgeResult.coarse_outcome,
+      confidence: judgeResult.confidence,
       reason_md: judgeResult.feedback_md,
+      evidence_json: judgeResult.evidence_json,
     };
 
     const now = new Date();

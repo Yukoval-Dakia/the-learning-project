@@ -12,14 +12,17 @@ export interface EmbeddedCheckQuestion {
 
 type EmbeddedCheckStatus = 'not_required' | 'pending' | 'ready' | 'failed';
 
-type AttemptOutcome = 'success' | 'failure';
+type AttemptOutcome = 'success' | 'partial' | 'failure';
 
 interface AttemptResult {
   outcome: AttemptOutcome;
   judge: {
     route: string;
     score: number | null;
+    coarse_outcome?: string;
+    confidence?: number;
     reason_md?: string;
+    evidence_json?: Record<string, unknown>;
   };
   mistake_id?: string;
 }
@@ -136,8 +139,12 @@ export function EmbeddedCheckSection({ status, questions }: EmbeddedCheckSection
             </button>
             {currentFeedback && (
               <div className={`embedded-check-feedback outcome-${currentFeedback.outcome}`}>
-                {currentFeedback.outcome === 'success' ? '答对了' : '需复习'} · score{' '}
-                {currentFeedback.judge.score ?? 'n/a'}
+                {currentFeedback.outcome === 'success'
+                  ? '答对了'
+                  : currentFeedback.outcome === 'partial'
+                    ? '部分正确'
+                    : '需复习'}{' '}
+                · score {currentFeedback.judge.score ?? 'n/a'}
                 {currentFeedback.judge.reason_md && <p>{currentFeedback.judge.reason_md}</p>}
               </div>
             )}
