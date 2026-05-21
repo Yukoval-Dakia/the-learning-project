@@ -22,6 +22,7 @@
     "db:migrate:local": "tsx scripts/migrate-local-db.ts",
     "worker:dev": "tsx scripts/worker.ts",
     "audit:schema": "tsx scripts/audit-schema-writes.ts",
+    "preflight:vision": "tsx scripts/preflight-vision.ts",
     "compose:up": "docker compose up -d",
     "compose:down": "docker compose down",
     "compose:build": "docker compose build",
