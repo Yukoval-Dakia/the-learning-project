@@ -303,10 +303,36 @@ export async function POST(
           ),
         ];
 
-        // INSERT question
+        // INSERT question — M-1 (2026-05-21): write figures / image_refs / structured
+        // first-class. Derive from source question_block row(s):
+        // - direct import: read from sourceBlockRows[block_id]
+        // - virtual card (merged): concat figures from all source rows; structured
+        //   has no clean merge semantic so it's null (a merged card is a new question
+        //   created by the user, not an extraction tree)
+        // - manual block: nothing to derive from; both empty/null
+        // `metadata.prompt_image_refs` remains for legacy reader compat (M3+ removal).
+        let importedFigures: typeof question_block.$inferSelect.figures = [];
+        let importedStructured: typeof question_block.$inferSelect.structured = null;
+        if (block.block_id !== undefined) {
+          const sourceRow = sourceBlockRows.get(block.block_id);
+          if (sourceRow) {
+            importedFigures = sourceRow.figures;
+            importedStructured = sourceRow.structured;
+          }
+        } else if (block.source_block_ids.length > 0) {
+          // virtual card from merge: concat figures, structured=null
+          const sourceRows = block.source_block_ids
+            .map((sid) => sourceBlockRows.get(sid))
+            .filter((r): r is typeof question_block.$inferSelect => r !== undefined);
+          importedFigures = sourceRows.flatMap((r) => r.figures);
+        }
+        // else: manual block (no source) — figures=[], structured=null (defaults)
+
         const questionId = createId();
         questionIds.push(questionId);
         const questionMetadata = {
+          // deprecated (M-1 / 2026-05-21): new code reads question.image_refs (first-class).
+          // Kept for legacy reader compat; M3 后视使用情况移除。
           prompt_image_refs: block.image_refs,
           prompt_image_ref_kind: 'source_asset_id',
           source_document_id: sessionSourceDocumentId,
@@ -322,6 +348,9 @@ export async function POST(
           difficulty: block.difficulty,
           source: sessionEntrypoint,
           variant_depth: 0,
+          figures: importedFigures,
+          image_refs: block.image_refs,
+          structured: importedStructured,
           metadata: questionMetadata,
           created_at: now,
           updated_at: now,
