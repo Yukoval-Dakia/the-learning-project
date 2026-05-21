@@ -95,6 +95,16 @@ export function resolveQuestionJudgeRoute(
   const override = parseRoute(q.judge_kind_override);
   if (override) return override;
 
+  // A question with persisted choices is structurally a multiple/single-choice
+  // item regardless of the kind string the subject profile uses
+  // (e.g. wenyan exposes 'single_choice' / 'multiple_choice' while the
+  // QuestionKind enum still calls the canonical kind 'choice'). The structure
+  // is the source of truth: if there are choices, the only safe default is
+  // exact match against reference_md — never spend LLM budget on a semantic
+  // judge for what is fundamentally a string compare.
+  const choices = q.choices_md ?? [];
+  if (choices.length > 0) return 'exact';
+
   const kind = QuestionKind.safeParse(q.kind).success ? q.kind : 'short_answer';
   const rubric = parseRubric(q.rubric_json);
   const keywords = nonEmpty(rubric?.keywords);

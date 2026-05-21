@@ -270,6 +270,28 @@ describe('question contract routing', () => {
     );
     expect(
       resolveQuestionJudgeRoute(
+        {
+          ...baseQuestion,
+          kind: 'single_choice',
+          choices_md: ['语气词', '随机标点', '现代逗号'],
+          reference_md: '语气词',
+        },
+        profile,
+      ),
+    ).toBe('exact');
+    expect(
+      resolveQuestionJudgeRoute(
+        {
+          ...baseQuestion,
+          kind: 'multiple_choice',
+          choices_md: ['A', 'B', 'C'],
+          reference_md: 'A',
+        },
+        profile,
+      ),
+    ).toBe('exact');
+    expect(
+      resolveQuestionJudgeRoute(
         { ...baseQuestion, kind: 'short_answer', judge_kind_override: 'keyword' },
         profile,
       ),
