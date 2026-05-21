@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { JudgeKind as JudgeKindSchema, QuestionKind, Rubric } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
+import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import type { SubjectProfile } from '@/subjects/profile';
 import { type JudgeKind, judgeRouterV2 } from '.';
@@ -38,6 +39,13 @@ export interface JudgeQuestionRow {
   choices_md: string[] | null;
   judge_kind_override: string | null;
   knowledge_ids?: string[] | null;
+  // M-1 (2026-05-21): first-class multimodal carriers.
+  // Runnable routes (exact / keyword / semantic) IGNORE these fields — they're
+  // wired in for future vision-aware capabilities (steps@1 in M2, etc.).
+  // See docs/superpowers/specs/2026-05-21-math-mvp-vision-design.md §7.
+  figures?: FigureRefT[];
+  image_refs?: string[];
+  structured?: StructuredQuestionT | null;
 }
 
 export interface JudgeAnswerParams {
