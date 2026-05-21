@@ -1,5 +1,6 @@
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { describe, expect, it } from 'vitest';
+import { tasks } from './registry';
 import { getTaskSystemPrompt } from './task-prompts';
 
 describe('getTaskSystemPrompt', () => {
@@ -119,6 +120,39 @@ describe('getTaskSystemPrompt', () => {
       expect(prompt).not.toMatch(/\bcalculation\b/);
       expect(prompt).not.toMatch(/\bword_problem\b/);
       expect(prompt).not.toMatch(/\bproof\b/);
+    }
+  });
+});
+
+describe('getTaskSystemPrompt exhaustiveness (M1)', () => {
+  const allTaskKinds = Object.keys(tasks) as Array<keyof typeof tasks>;
+
+  it('renders a non-empty prompt for every registered TaskKind (default profile)', () => {
+    for (const kind of allTaskKinds) {
+      const prompt = getTaskSystemPrompt(kind);
+      expect(prompt, `TaskKind '${kind}' returned empty prompt`).toBeTruthy();
+      expect(prompt.length, `TaskKind '${kind}' returned too-short prompt`).toBeGreaterThan(20);
+    }
+  });
+
+  it('renders a non-empty prompt for every registered TaskKind (math profile)', () => {
+    const mathProfile = resolveSubjectProfile('math');
+    for (const kind of allTaskKinds) {
+      const prompt = getTaskSystemPrompt(kind, mathProfile);
+      expect(prompt, `TaskKind '${kind}' returned empty prompt (math)`).toBeTruthy();
+    }
+  });
+
+  it('Vision* and ReviewIntentTask use subject-neutral registry strings', () => {
+    // These 3 tasks pass through to registry.ts. Their prompts should be
+    // identical regardless of profile.
+    const wenyanProfile = resolveSubjectProfile('wenyan');
+    const mathProfile = resolveSubjectProfile('math');
+    for (const kind of ['VisionExtractTask', 'VisionExtractTaskHeavy', 'ReviewIntentTask'] as const) {
+      const w = getTaskSystemPrompt(kind, wenyanProfile);
+      const m = getTaskSystemPrompt(kind, mathProfile);
+      expect(w, `${kind} profile-coupling regression`).toBe(m);
+      expect(w).toBe(tasks[kind].systemPrompt);
     }
   });
 });
