@@ -46,6 +46,7 @@ pnpm test:legacy      # old single Vitest config, retained during rollout
 pnpm db:generate      # drizzle-kit generate (migrations from src/db/schema.ts)
 pnpm db:push          # drizzle-kit push (uses DATABASE_URL from .env.local)
 pnpm audit:schema     # 检查 schema 字段是否都有 write path（防漂移 lint）
+pnpm audit:partition  # 检查 *.test.ts 在 unit/db 分区是否正确（file-level lint）
 ```
 
 `pnpm audit:schema` 扫描 `src/db/schema.ts` 所有业务字段，验证每个都有 INSERT 或 UPDATE write path。例外字段须在 `scripts/audit-schema-allowlist.json` 显式声明（含 reason + resolves_when）。引入新表 / 字段时，要么实现 write path，要么加入 allowlist 并标资源解除条件。详见 `docs/design/2026-05-15-data-assumptions.md`。
@@ -58,7 +59,7 @@ Development loop:
 - UI/core/schema/prompt/parser changes: run `pnpm test:unit:watch <test-file>` and touched-file Biome.
 - API/DB/route/job changes: run `pnpm test:db:watch <test-file>`.
 - Migration SQL changes: run `pnpm test:migration`.
-- Before PR: run `pnpm typecheck`, `pnpm lint`, `pnpm audit:schema`, and `pnpm test`.
+- Before PR: run `pnpm typecheck`, `pnpm lint`, `pnpm audit:schema`, `pnpm audit:partition`, and `pnpm test`.
 
 Single test: `pnpm vitest run --config vitest.unit.config.ts path/to/file.test.ts -t 'name'` for no-DB tests, or `pnpm vitest run --config vitest.db.config.ts path/to/file.test.ts -t 'name'` for DB/API tests.
 
