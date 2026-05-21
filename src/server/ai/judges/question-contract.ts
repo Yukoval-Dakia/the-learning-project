@@ -134,7 +134,10 @@ function buildLocalJudgeQuestion(q: JudgeQuestionRow, route: JudgeKind): Record<
   return { reference: q.reference_md ?? '' };
 }
 
-function semanticInput(q: JudgeQuestionRow): Record<string, unknown> {
+function semanticInput(
+  q: JudgeQuestionRow,
+  subjectProfile: SubjectProfile,
+): Record<string, unknown> {
   const rubric = parseRubric(q.rubric_json);
   return {
     question_id: q.id,
@@ -146,6 +149,21 @@ function semanticInput(q: JudgeQuestionRow): Record<string, unknown> {
     required_points: nonEmpty(rubric?.required_points),
     acceptable_answers: nonEmpty(rubric?.acceptable_answers),
     keywords: nonEmpty(rubric?.keywords),
+    // M1 (2026-05-22): profile metadata for downstream LLM tasks.
+    // M2 vision judge (steps@1) consumes subject_id / language_style to route
+    // image-bearing prompts correctly. SemanticJudgeTask current builder
+    // ignores these fields; field is forward-compat.
+    subject_profile: {
+      id: subjectProfile.id,
+      display_name: subjectProfile.displayName,
+      language_style: subjectProfile.languageStyle,
+    },
+    // M-1 (2026-05-21): multimodal carriers — passed through for future
+    // vision-aware semantic / steps judges. Current SemanticJudgeTask
+    // builder does not consume them; behaviour unchanged.
+    figures: q.figures ?? [],
+    image_refs: q.image_refs ?? [],
+    structured: q.structured ?? null,
   };
 }
 
@@ -209,7 +227,7 @@ async function runSemanticJudge(params: JudgeAnswerParams): Promise<JudgeResultV
     const result = await runTaskFn(
       'SemanticJudgeTask',
       {
-        question: semanticInput(params.question),
+        question: semanticInput(params.question, params.subjectProfile),
         answer: { content: params.answer_md },
       },
       {
