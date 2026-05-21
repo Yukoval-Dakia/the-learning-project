@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
 import type { Db } from '@/db/client';
 import { resolveSubjectProfile } from '@/subjects/profile';
+import { describe, expect, it } from 'vitest';
 import { type JudgeQuestionRow, judgeAnswer } from './question-contract';
 
 // judgeAnswer for exact / keyword routes is pure (no DB / no LLM), so a
