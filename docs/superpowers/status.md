@@ -4,7 +4,7 @@
 > 这里记的是 **项目走到了哪、下一站去哪、为什么这么走**，不是 commit log。
 > 维护规则：每完成一个 Phase 就 update 一次；不维护周度进度。
 
-**最后更新**：2026-05-21（Product Track 1 Slice 1 Embedded Check MVP：verified atomic notes 生成 inline self-check question，/api/embedded-check/attempt 写 attempt event + learning_record mistake）
+**最后更新**：2026-05-21（Product Track 1 Slice 1 Embedded Check MVP + Judge v2 light：embedded questions carry judge contracts；/api/embedded-check/attempt preserves partial/unsupported semantics）
 **当前 Phase**：Foundation gate 已收口；下一步进入 Product Track 1（NoteVerify / embedded check / variant verify 等），Product Track 2 仍等 proposal inbox slice
 **主分支**：`main` 已推 `origin`
 **路线图源**：[`docs/planning/v0.3-generalized-ai-learning-framework.md`](../planning/v0.3-generalized-ai-learning-framework.md) §1.5 是当前执行清单；root `PLANNING.md` v0.12 Phase 1-4 已标 historical
@@ -60,6 +60,7 @@
 
 ```
 ✅  JudgeResultV2 schema + scoreMeaning + coarseOutcome  随 Foundation A 落地
+✅  Judge v2 light async service                `judgeAnswer` compiles question contract; exact/keyword local + semantic via `SemanticJudgeTask`
 ✅  CorrectEventPayload as KnownEvent（supersede / retract / mark_wrong / restore）
 ✅  Projection 层 consult correction events
 ✅  UI 撤回 / 标错 / 恢复入口
@@ -71,7 +72,7 @@
 
 ```
 🟡  NoteVerifyTask Pass 2           `note_verify` queue + artifact verification metadata landed; proposal-inbox rollback remains later
-✅  Embedded check（atomic notes）  inline 选择题 / fill-blank — `embedded_check_generate` handler + `/api/embedded-check/attempt` + UI
+✅  Embedded check（atomic notes）  inline 选择题 / fill-blank / prose semantic check — `embedded_check_generate` persists judge contract；attempt route writes success/partial/failure without polluting mistakes on unsupported
 ⬜  Note 编辑 / 阅读 UX 完善
 ⬜  VariantVerifyTask Pass 2        variant 双 pass + variants_max=3 计数
 ⬜  Learning-item proposal rollback UI
@@ -205,6 +206,7 @@ ADR-0014 配套：[7 轮讨论 + 10 决议 summary](../discussion/summary.md)、
 |---|---|---|
 | Phase 2C UI 未真机验证 | 本地 ship 完没 E2E 跑过浏览器；NAS 容器还是旧 build | **高** |
 | user_cause 与 agent judge 合并策略 | 当前 "user 优先"；dreaming 大量产 judge 时需重审 | 中 |
+| Full judge capability expansion | `semantic` 已通过 async service 可用；`rubric` / `steps` / `multimodal_direct` / `ai_flexible` 仍需独立 capability runner 和 score policy | 中 |
 | Dependabot moderate 警告 | GitHub 报 5 条；未处理 | 中 |
 | variants_max 计数表 | MVP 一道 parent 只生 1 道变式（per parent_variant_id 唯一性）；多道变式留 Phase 3 | 低 |
 | `app/api/_/*` 不进 prod build | 私有路由需要从 UI 调用就得移出 `_` 前缀 | 低 |
