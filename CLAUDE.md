@@ -52,6 +52,8 @@ pnpm audit:schema     # 检查 schema 字段是否都有 write path（防漂移 
 
 `/audit-drift` skill（`.claude/skills/audit-drift/SKILL.md`）扫描 **ADR / planning-doc ↔ 代码实现**结构性漂移（不重审 schema），输出到 `docs/audit/YYYY-MM-DD-drift.md`，命令式手动触发；不自动开 issue / PR / cron。配套 `pnpm audit:schema` 形成 schema 层 + 决策层双 lint。
 
+**行为变更（2026-05-21）**：`pnpm test:watch` 不再跑全量 + 启 docker，现在是 `pnpm test:unit:watch` 的 alias。如果要 DB watch loop 请用 `pnpm test:db:watch`；如果要旧的单 config 全量行为请用 `pnpm test:legacy`（rollout 期保留的退路）。
+
 Development loop:
 - UI/core/schema/prompt/parser changes: run `pnpm test:unit:watch <test-file>` and touched-file Biome.
 - API/DB/route/job changes: run `pnpm test:db:watch <test-file>`.

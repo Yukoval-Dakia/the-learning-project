@@ -7,7 +7,7 @@ import {
   sharedExclude,
 } from './vitest.shared';
 
-const isListCommand = process.argv.includes('list');
+const isListCommand = process.argv[2] === 'list';
 if (isListCommand) {
   const dummyUrl = 'postgres://loom:loom@127.0.0.1:5432/loom?sslmode=disable';
   process.env.DATABASE_URL ??= dummyUrl;
