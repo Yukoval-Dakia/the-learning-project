@@ -1,3 +1,8 @@
+import type { Db } from '@/db/client';
+import { knowledge, question } from '@/db/schema';
+import { type JudgeQuestionRow, judgeAnswer } from '@/server/ai/judges/question-contract';
+import { resolveSubjectProfile } from '@/subjects/profile';
+import { eq } from 'drizzle-orm';
 /**
  * M0 Task 13 — e2e smoke for math fixture happy path.
  *
@@ -7,11 +12,6 @@
  * route + capability_ref.
  */
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { eq } from 'drizzle-orm';
-import type { Db } from '@/db/client';
-import { knowledge, question } from '@/db/schema';
-import { type JudgeQuestionRow, judgeAnswer } from '@/server/ai/judges/question-contract';
-import { resolveSubjectProfile } from '@/subjects/profile';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { loadMathFixtures } from './index';
 

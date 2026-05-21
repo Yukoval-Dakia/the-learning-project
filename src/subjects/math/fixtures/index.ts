@@ -1,5 +1,5 @@
-import { z } from 'zod';
 import { Rubric } from '@/core/schema/business';
+import { z } from 'zod';
 import fixtureData from './data.json' with { type: 'json' };
 
 export const MathFixtureItemSchema = z.object({

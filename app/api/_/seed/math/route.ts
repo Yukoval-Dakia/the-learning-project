@@ -1,3 +1,7 @@
+import { db } from '@/db/client';
+import { knowledge, question } from '@/db/schema';
+import { errorResponse } from '@/server/http/errors';
+import { loadMathFixtures } from '@/subjects/math/fixtures';
 /**
  * Dev / bootstrap endpoint — seed 10 math fixture questions for M0 e2e smoke.
  *
@@ -11,10 +15,6 @@
  */
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
-import { db } from '@/db/client';
-import { knowledge, question } from '@/db/schema';
-import { errorResponse } from '@/server/http/errors';
-import { loadMathFixtures } from '@/subjects/math/fixtures';
 
 const ROOT_KNOWLEDGE_ID = 'k-math-seed-root';
 

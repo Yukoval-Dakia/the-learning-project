@@ -24,8 +24,8 @@
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { config } from 'dotenv';
 import Anthropic from '@anthropic-ai/sdk';
+import { config } from 'dotenv';
 
 config({ path: '.env' });
 
