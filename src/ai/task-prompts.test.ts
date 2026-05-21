@@ -148,7 +148,11 @@ describe('getTaskSystemPrompt exhaustiveness (M1)', () => {
     // identical regardless of profile.
     const wenyanProfile = resolveSubjectProfile('wenyan');
     const mathProfile = resolveSubjectProfile('math');
-    for (const kind of ['VisionExtractTask', 'VisionExtractTaskHeavy', 'ReviewIntentTask'] as const) {
+    for (const kind of [
+      'VisionExtractTask',
+      'VisionExtractTaskHeavy',
+      'ReviewIntentTask',
+    ] as const) {
       const w = getTaskSystemPrompt(kind, wenyanProfile);
       const m = getTaskSystemPrompt(kind, mathProfile);
       expect(w, `${kind} profile-coupling regression`).toBe(m);
