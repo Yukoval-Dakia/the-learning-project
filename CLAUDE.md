@@ -35,20 +35,37 @@ pnpm build            # next build
 pnpm typecheck        # tsc --noEmit
 pnpm lint             # biome check .
 pnpm format           # biome format --write .
-pnpm test             # vitest run (spins up a Postgres testcontainer)
-pnpm test:watch
+pnpm test             # full pre-PR gate: unit + DB + migration-smoke
+pnpm test:unit        # fast no-DB tests
+pnpm test:unit:watch  # fast watch loop for UI/core/schema/AI parser work
+pnpm test:watch       # alias for pnpm test:unit:watch
+pnpm test:db          # DB/API tests with shared Postgres testcontainer
+pnpm test:db:watch    # targeted DB/API watch loop
+pnpm test:migration   # migration DDL smoke; owns its own testcontainer
+pnpm test:legacy      # old single Vitest config, retained during rollout
 pnpm db:generate      # drizzle-kit generate (migrations from src/db/schema.ts)
 pnpm db:push          # drizzle-kit push (uses DATABASE_URL from .env.local)
 pnpm audit:schema     # 检查 schema 字段是否都有 write path（防漂移 lint）
+pnpm audit:partition  # 检查 *.test.ts 在 unit/db 分区是否正确（file-level lint）
 ```
 
 `pnpm audit:schema` 扫描 `src/db/schema.ts` 所有业务字段，验证每个都有 INSERT 或 UPDATE write path。例外字段须在 `scripts/audit-schema-allowlist.json` 显式声明（含 reason + resolves_when）。引入新表 / 字段时，要么实现 write path，要么加入 allowlist 并标资源解除条件。详见 `docs/design/2026-05-15-data-assumptions.md`。
 
 `/audit-drift` skill（`.claude/skills/audit-drift/SKILL.md`）扫描 **ADR / planning-doc ↔ 代码实现**结构性漂移（不重审 schema），输出到 `docs/audit/YYYY-MM-DD-drift.md`，命令式手动触发；不自动开 issue / PR / cron。配套 `pnpm audit:schema` 形成 schema 层 + 决策层双 lint。
 
-Single test: `pnpm vitest run path/to/file.test.ts -t 'name'`.
+**行为变更（2026-05-21）**：`pnpm test:watch` 不再跑全量 + 启 docker，现在是 `pnpm test:unit:watch` 的 alias。如果要 DB watch loop 请用 `pnpm test:db:watch`；如果要旧的单 config 全量行为请用 `pnpm test:legacy`（rollout 期保留的退路）。
 
-Tests use a real Postgres via `@testcontainers/postgresql` — Docker must be running. `tests/global-setup.ts` auto-detects OrbStack / Docker Desktop socket on macOS and runs `pnpm db:push --force` against the container before tests. Vitest is configured with `pool: 'forks'` + `singleFork: true` so the container is shared across files; do not parallelise tests in a way that assumes isolated DBs.
+Development loop:
+- UI/core/schema/prompt/parser changes: run `pnpm test:unit:watch <test-file>` and touched-file Biome.
+- API/DB/route/job changes: run `pnpm test:db:watch <test-file>`.
+- Migration SQL changes: run `pnpm test:migration`.
+- Before PR: run `pnpm typecheck`, `pnpm lint`, `pnpm audit:schema`, `pnpm audit:partition`, and `pnpm test`.
+
+Single test: `pnpm vitest run --config vitest.unit.config.ts path/to/file.test.ts -t 'name'` for no-DB tests, or `pnpm vitest run --config vitest.db.config.ts path/to/file.test.ts -t 'name'` for DB/API tests.
+
+DB tests use a real Postgres via `@testcontainers/postgresql` — Docker must be running. `tests/global-setup.ts` auto-detects OrbStack / Docker Desktop socket on macOS and runs `pnpm db:migrate` against the container before DB tests. Vitest DB config is configured with `pool: 'forks'` + `singleFork: true` so the container is shared across files; do not parallelise DB tests in a way that assumes isolated databases.
+
+Do not put tests that import `tests/helpers/db`, `@/db/client`, `postgres`, `drizzle`, or live `PgBoss` into the unit config. Route tests may be unit tests only when DB/R2/AI dependencies are mocked before importing the route module.
 
 ## Architecture
 

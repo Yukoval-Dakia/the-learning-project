@@ -839,4 +839,268 @@ describe('POST /api/ingestion/[id]/import', () => {
       .where(eq(learning_session.id, sessionId));
     expect(sessions[0].status).toBe('imported');
   });
+
+  it('M-1: import writes figures / image_refs / structured to question first-class', async () => {
+    const db = testDb();
+    const { sessionId, sourceDocId } = await setupSession(db);
+
+    // Insert a block carrying multimodal data (figures + structured)
+    const now = new Date();
+    await db.insert(question_block).values({
+      id: 'block_a',
+      ingestion_session_id: sessionId,
+      source_document_id: sourceDocId,
+      source_asset_ids: ['asset_1'],
+      page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' }],
+      extracted_prompt_md: null,
+      structured: {
+        id: 'q1-stem',
+        role: 'standalone',
+        prompt_text: 'What is 2+2?',
+      },
+      reference_md: null,
+      wrong_answer_md: null,
+      image_refs: ['asset_1'],
+      figures: [
+        {
+          asset_id: 'asset_1',
+          role: 'diagram',
+          source_page_index: 0,
+          source_bbox: { x: 0, y: 0, width: 0.5, height: 0.5 },
+          attached_to_index: 'q1-stem',
+          attach_confidence: 'high',
+        },
+      ],
+      crop_refs: [],
+      visual_complexity: 'low',
+      extraction_confidence: 0.9,
+      status: 'draft',
+      knowledge_hint: null,
+      merged_from_block_ids: [],
+      imported_question_id: null,
+      imported_attempt_event_id: null,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    await insertKnowledge(db, 'k1');
+
+    // Body uses final_prompt_md equal to structuredToPromptMarkdown(structured)
+    // (i.e. user did NOT edit the prompt) — structured should carry through.
+    const res = await post(sessionId, makeImportBody({ final_prompt_md: 'What is 2+2?' }));
+    expect(res.status).toBe(200);
+
+    // The imported question must carry all 3 first-class multimodal fields
+    const questions = await db.select().from(question);
+    expect(questions).toHaveLength(1);
+    const q = questions[0];
+    expect(q.image_refs).toEqual(['asset_1']);
+    expect(q.figures).toHaveLength(1);
+    expect(q.figures[0].asset_id).toBe('asset_1');
+    expect(q.figures[0].attached_to_index).toBe('q1-stem');
+    expect(q.structured).not.toBeNull();
+    expect(q.structured?.id).toBe('q1-stem');
+    expect(q.structured?.prompt_text).toBe('What is 2+2?');
+
+    // metadata.prompt_image_refs is still written for legacy reader compat
+    const meta = q.metadata as { prompt_image_refs?: string[] } | null;
+    expect(meta?.prompt_image_refs).toEqual(['asset_1']);
+  });
+
+  it('M-1: direct import with edited final_prompt_md → structured dropped (ADR-0002 invariant)', async () => {
+    const db = testDb();
+    const { sessionId, sourceDocId } = await setupSession(db);
+
+    // Source block has structured.prompt_text = 'Original prompt'
+    const now = new Date();
+    await db.insert(question_block).values({
+      id: 'block_a',
+      ingestion_session_id: sessionId,
+      source_document_id: sourceDocId,
+      source_asset_ids: ['asset_1'],
+      page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' }],
+      extracted_prompt_md: null,
+      structured: {
+        id: 'q1-stem',
+        role: 'standalone',
+        prompt_text: 'Original prompt',
+      },
+      reference_md: null,
+      wrong_answer_md: null,
+      image_refs: ['asset_1'],
+      figures: [],
+      crop_refs: [],
+      visual_complexity: 'low',
+      extraction_confidence: 0.9,
+      status: 'draft',
+      knowledge_hint: null,
+      merged_from_block_ids: [],
+      imported_question_id: null,
+      imported_attempt_event_id: null,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    await insertKnowledge(db, 'k1');
+
+    // User edited the prompt before import → final_prompt_md differs from
+    // structuredToPromptMarkdown(structured). Per ADR-0002 revision 2026-05-21,
+    // structured must be dropped (cannot guarantee derivation invariant).
+    const res = await post(
+      sessionId,
+      makeImportBody({ final_prompt_md: 'Edited: what is 2+2 really?' }),
+    );
+    expect(res.status).toBe(200);
+
+    const questions = await db.select().from(question);
+    expect(questions).toHaveLength(1);
+    const q = questions[0];
+    expect(q.prompt_md).toBe('Edited: what is 2+2 really?');
+    // structured must be null because final_prompt_md diverged
+    expect(q.structured).toBeNull();
+  });
+
+  it('M-1: merged virtual card concatenates figures from source rows; structured=null', async () => {
+    const db = testDb();
+    const { sessionId, sourceDocId } = await setupSession(db, { assetIds: ['asset_1', 'asset_2'] });
+
+    const now = new Date();
+    // Source block 1 with one figure
+    await db.insert(question_block).values({
+      id: 'block_a',
+      ingestion_session_id: sessionId,
+      source_document_id: sourceDocId,
+      source_asset_ids: ['asset_1'],
+      page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' }],
+      extracted_prompt_md: 'A',
+      structured: { id: 'sa', role: 'standalone', prompt_text: 'A' },
+      reference_md: null,
+      wrong_answer_md: null,
+      image_refs: ['asset_1'],
+      figures: [
+        {
+          asset_id: 'asset_1',
+          role: 'diagram',
+          source_page_index: 0,
+          source_bbox: { x: 0, y: 0, width: 0.4, height: 0.4 },
+          attached_to_index: 'sa',
+          attach_confidence: 'high',
+        },
+      ],
+      crop_refs: [],
+      visual_complexity: 'low',
+      extraction_confidence: 0.9,
+      status: 'draft',
+      knowledge_hint: null,
+      merged_from_block_ids: [],
+      imported_question_id: null,
+      imported_attempt_event_id: null,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    // Source block 2 with another figure
+    await db.insert(question_block).values({
+      id: 'block_b',
+      ingestion_session_id: sessionId,
+      source_document_id: sourceDocId,
+      source_asset_ids: ['asset_2'],
+      page_spans: [{ page_index: 1, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' }],
+      extracted_prompt_md: 'B',
+      structured: { id: 'sb', role: 'standalone', prompt_text: 'B' },
+      reference_md: null,
+      wrong_answer_md: null,
+      image_refs: ['asset_2'],
+      figures: [
+        {
+          asset_id: 'asset_2',
+          role: 'diagram',
+          source_page_index: 1,
+          source_bbox: { x: 0.1, y: 0.1, width: 0.4, height: 0.4 },
+          attached_to_index: 'sb',
+          attach_confidence: 'high',
+        },
+      ],
+      crop_refs: [],
+      visual_complexity: 'low',
+      extraction_confidence: 0.9,
+      status: 'draft',
+      knowledge_hint: null,
+      merged_from_block_ids: [],
+      imported_question_id: null,
+      imported_attempt_event_id: null,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    await insertKnowledge(db, 'k1');
+
+    // Virtual card merging block_a + block_b (block_id undefined, source_block_ids has both)
+    const body = {
+      blocks: [
+        {
+          source_block_ids: ['block_a', 'block_b'],
+          page_spans: [
+            { page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' },
+          ],
+          image_refs: ['asset_1', 'asset_2'],
+          final_prompt_md: 'Merged',
+          final_reference_md: null,
+          final_wrong_answer_md: 'WA',
+          knowledge_ids: ['k1'],
+          cause: null,
+          difficulty: 3,
+          question_kind: 'short_answer',
+        },
+      ],
+    };
+    const res = await post(sessionId, body);
+    expect(res.status).toBe(200);
+
+    const questions = await db.select().from(question);
+    expect(questions).toHaveLength(1);
+    const q = questions[0];
+    // figures concatenated from both source rows
+    expect(q.figures).toHaveLength(2);
+    const assetIds = q.figures.map((f) => f.asset_id).sort();
+    expect(assetIds).toEqual(['asset_1', 'asset_2']);
+    // structured is null for merged cards (no clean merge semantic)
+    expect(q.structured).toBeNull();
+    // image_refs carries both
+    expect(q.image_refs).toEqual(['asset_1', 'asset_2']);
+  });
+
+  it('M-1: manual block (no source) → figures=[] + structured=null', async () => {
+    const db = testDb();
+    const { sessionId } = await setupSession(db);
+    await insertKnowledge(db, 'k1');
+
+    // Manual block: block_id undefined + source_block_ids=[] (Tier 4 fallback)
+    const body = {
+      blocks: [
+        {
+          source_block_ids: [],
+          page_spans: [
+            { page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' },
+          ],
+          image_refs: ['asset_1'],
+          final_prompt_md: 'Manual',
+          final_reference_md: null,
+          final_wrong_answer_md: 'WA',
+          knowledge_ids: ['k1'],
+          cause: null,
+          difficulty: 3,
+          question_kind: 'short_answer',
+        },
+      ],
+    };
+    const res = await post(sessionId, body);
+    expect(res.status).toBe(200);
+
+    const questions = await db.select().from(question);
+    expect(questions).toHaveLength(1);
+    expect(questions[0].figures).toEqual([]);
+    expect(questions[0].structured).toBeNull();
+    expect(questions[0].image_refs).toEqual(['asset_1']);
+  });
 });

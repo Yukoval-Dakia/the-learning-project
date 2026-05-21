@@ -1,0 +1,96 @@
+{
+  "version": "2026-05-21",
+  "subject_id": "math",
+  "items": [
+    {
+      "ref": "math-choice-001",
+      "kind": "single_choice",
+      "prompt_md": "下列哪个数是质数？",
+      "choices_md": ["4", "6", "7", "9"],
+      "reference_md": "7",
+      "difficulty": 1,
+      "knowledge_hint": "质数定义"
+    },
+    {
+      "ref": "math-choice-002",
+      "kind": "single_choice",
+      "prompt_md": "$2^{10}$ 等于多少？",
+      "choices_md": ["512", "1024", "2048", "4096"],
+      "reference_md": "1024",
+      "difficulty": 1,
+      "knowledge_hint": "幂运算"
+    },
+    {
+      "ref": "math-choice-003",
+      "kind": "single_choice",
+      "prompt_md": "三角形内角和是多少度？",
+      "choices_md": ["90", "180", "270", "360"],
+      "reference_md": "180",
+      "difficulty": 1,
+      "knowledge_hint": "三角形内角和"
+    },
+    {
+      "ref": "math-choice-004",
+      "kind": "single_choice",
+      "prompt_md": "$\\sqrt{144}$ 等于多少？",
+      "choices_md": ["10", "11", "12", "13"],
+      "reference_md": "12",
+      "difficulty": 1,
+      "knowledge_hint": "平方根"
+    },
+    {
+      "ref": "math-choice-005",
+      "kind": "single_choice",
+      "prompt_md": "若 $x^2 = 25$，则 $x$ 的所有可能取值是？",
+      "choices_md": ["5", "-5", "5 或 -5", "0"],
+      "reference_md": "5 或 -5",
+      "difficulty": 2,
+      "knowledge_hint": "平方根的双重性"
+    },
+    {
+      "ref": "math-fill-001",
+      "kind": "fill_blank",
+      "prompt_md": "计算：$3 + 4 \\times 2 = $ ____",
+      "reference_md": "11",
+      "rubric_json": { "criteria": [], "keywords": ["11"] },
+      "difficulty": 1,
+      "knowledge_hint": "四则运算优先级"
+    },
+    {
+      "ref": "math-fill-002",
+      "kind": "fill_blank",
+      "prompt_md": "$f(x) = 2x + 1$，则 $f(3) = $ ____",
+      "reference_md": "7",
+      "rubric_json": { "criteria": [], "keywords": ["7"] },
+      "difficulty": 1,
+      "knowledge_hint": "函数求值"
+    },
+    {
+      "ref": "math-fill-003",
+      "kind": "fill_blank",
+      "prompt_md": "半径为 2 的圆面积是 ____（用 $\\pi$ 表示）",
+      "reference_md": "4π",
+      "rubric_json": { "criteria": [], "keywords": ["4π", "4*pi", "4*\\pi"] },
+      "difficulty": 1,
+      "knowledge_hint": "圆面积公式"
+    },
+    {
+      "ref": "math-fill-004",
+      "kind": "fill_blank",
+      "prompt_md": "$\\log_{10} 1000 = $ ____",
+      "reference_md": "3",
+      "rubric_json": { "criteria": [], "keywords": ["3"] },
+      "difficulty": 2,
+      "knowledge_hint": "对数定义"
+    },
+    {
+      "ref": "math-fill-005",
+      "kind": "fill_blank",
+      "prompt_md": "等差数列 $2, 5, 8, 11, \\ldots$ 的第 10 项是 ____",
+      "reference_md": "29",
+      "rubric_json": { "criteria": [], "keywords": ["29"] },
+      "difficulty": 2,
+      "knowledge_hint": "等差数列通项"
+    }
+  ]
+}

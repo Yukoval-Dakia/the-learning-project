@@ -8,6 +8,7 @@
       "docs/design/loom-design-v2",
       "docs/design/loom-design-v2.1",
       ".claude",
+      ".mcp.json",
       ".next",
       ".remember",
       "next-env.d.ts"
