@@ -185,6 +185,21 @@ export const tasks = {
     systemPrompt:
       '你是自检题作者。基于 atomic note 输出 1-3 道短自检题。严格输出 EmbeddedCheckGenerationResult JSON。',
   },
+  SemanticJudgeTask: {
+    kind: 'SemanticJudgeTask',
+    description:
+      'Judge v2 light — semantic answer scoring for prose embedded checks using rubric_json.required_points',
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
+    needsToolCall: false,
+    isMultimodal: false,
+    allowedTools: [],
+    // fallback only; runtime uses getTaskSystemPrompt(task, profile)
+    systemPrompt:
+      '你是答案判分器。输入 { question, answer }，按 rubric_json.required_points 语义判分。严格输出 SemanticJudgeTask JSON。',
+  },
   VariantGenTask: {
     kind: 'VariantGenTask',
     description:

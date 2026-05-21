@@ -124,7 +124,14 @@ function buildEmbeddedCheckGeneratePrompt(profile: SubjectProfile): string {
   "kind": "${allowedKinds}",
   "prompt_md": "题面 markdown，可含 LaTeX",
   "reference_md": "标准答案 + 简短解析 markdown",
-  "choices_md": ["选项 A", "选项 B", ...]  // 仅当 kind='choice' 时；其它 kind 留 null
+  "choices_md": ["选项 A", "选项 B", ...],
+  "judge_kind_override": "exact"|"keyword"|"semantic",
+  "rubric_json": {
+    "criteria": [{"name":"correctness","weight":1,"descriptor":"评分标准"}],
+    "keywords": ["关键词"],
+    "acceptable_answers": ["可接受答案"],
+    "required_points": ["必须覆盖的要点"]
+  }
 }
 
 整体严格 JSON 输出（不带 markdown 代码块包裹），shape 名 EmbeddedCheckGenerationResult：
@@ -135,10 +142,30 @@ function buildEmbeddedCheckGeneratePrompt(profile: SubjectProfile): string {
 - ${profile.promptFragments.checkQuestionPolicy}
 - ${profile.grounding.uncertaintyPolicy}
 - 题面 prompt_md ≤ 400 字；reference_md ≤ 500 字
-- choice 题给 3–4 个选项；标准答案放 reference_md 第一行
+- choice / true_false：judge_kind_override="exact"，给 3–4 个选项，reference_md 第一行必须是正确选项原文
+- fill_blank：可用 exact；如果有多个合理表述，用 judge_kind_override="keyword" 并在 rubric_json.keywords 写 1–5 个必须命中的短关键词
+- short_answer / reading / translation / essay：judge_kind_override="semantic"，rubric_json.required_points 必填 1–5 个可核查要点
+- computation：若只检查最终答案可 exact；若检查方法要点，用 semantic 并写 required_points
 - 不要重复笔记里出现过的"经典示例"，要求学习者迁移应用
 - 不出"超 atomic 范围"的综合题
 禁止：emoji、营销话、套话、JSON 之外的文字、markdown 代码块包裹整段 JSON。`;
+}
+
+function buildSemanticJudgePrompt(profile: SubjectProfile): string {
+  return `你是${profile.displayName}答案判分器。输入 { question, answer }，question 包含 prompt_md、reference_md、rubric_json、required_points、acceptable_answers、keywords。
+科目上下文：${profile.displayName}。${profile.languageStyle}
+评分原则：
+- 只判断 answer 是否满足题面和 rubric，不做错因归因
+- required_points 是主要证据；matched_points / missing_points 必须来自这些要点或等价表述
+- reference_md 是参考答案，不要求逐字相同
+- ${profile.grounding.uncertaintyPolicy}
+严格 JSON 输出（不带 markdown 代码块包裹）：
+{"score":0.0-1.0,"coarse_outcome":"correct"|"partial"|"incorrect","confidence":0.0-1.0,"feedback_md":"给学习者的简短反馈","evidence_json":{"matched_points":["..."],"missing_points":["..."],"notes":"可选说明"}}
+判定：
+- correct：核心要点齐全，score ≥ 0.85
+- partial：答到部分核心要点或表达不完整，0 < score < 0.85
+- incorrect：核心要点基本未命中，score = 0
+禁止：输出 JSON 之外的文字、给错因分类、把不确定答案强行判错。`;
 }
 
 function buildVariantGenPrompt(profile: SubjectProfile): string {
@@ -260,6 +287,8 @@ export function getTaskSystemPrompt(
       return buildNoteVerifyPrompt(profile);
     case 'EmbeddedCheckGenerateTask':
       return buildEmbeddedCheckGeneratePrompt(profile);
+    case 'SemanticJudgeTask':
+      return buildSemanticJudgePrompt(profile);
     case 'VariantGenTask':
       return buildVariantGenPrompt(profile);
     case 'TeachingTurnTask':
