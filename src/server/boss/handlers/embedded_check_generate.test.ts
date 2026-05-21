@@ -343,6 +343,54 @@ describe('runEmbeddedCheckGenerate', () => {
     });
   });
 
+  // Regression for PR #76 review P1: if any future prompt drift makes the AI
+  // emit subject-level kinds (single_choice / reading_comprehension /
+  // calculation / proof / word_problem), the handler must mark the artifact
+  // as 'failed' rather than silently writing rows with an invalid kind.
+  // This is the contract that protects downstream judges + UI from kind
+  // values they cannot interpret.
+  it('rejects AI output that uses subject-level kinds; artifact ends in failed state', async () => {
+    await seedAtomic({ artifactId: 'a-reject', knowledgeId: 'k-reject' });
+    const runTaskFn = vi.fn(async () => ({
+      text: JSON.stringify({
+        questions: [
+          {
+            kind: 'single_choice', // subject-only — must be rejected
+            prompt_md: '「之」作代词时指代什么？',
+            reference_md: '前文提及的人、事、物。',
+            choices_md: ['前文提及的人事物', '助词', '动词', '介词'],
+            judge_kind_override: 'exact',
+            rubric_json: null,
+          },
+        ],
+      }),
+    }));
+
+    await expect(
+      runEmbeddedCheckGenerate({ db: testDb(), artifactId: 'a-reject', runTaskFn }),
+    ).rejects.toThrow(/schema invalid/i);
+
+    // The artifact status must be 'failed' (set by the catch block before re-throwing).
+    const [updated] = await testDb()
+      .select()
+      .from(artifact)
+      .where(eq(artifact.id, 'a-reject'));
+    expect(updated.embedded_check_status).toBe('failed');
+
+    // No question rows should have been inserted.
+    const questions = await testDb()
+      .select()
+      .from(question)
+      .where(eq(question.source_ref, 'a-reject'));
+    expect(questions).toHaveLength(0);
+
+    // A failure event should have been written.
+    const events = await testDb().select().from(event).where(eq(event.subject_id, 'a-reject'));
+    expect(events).toHaveLength(1);
+    expect(events[0].outcome).toBe('failure');
+    expect(events[0].action).toBe('experimental:embedded_check_generate');
+  });
+
   it('rejects prose questions without semantic judge contract', async () => {
     await seedAtomic({ artifactId: 'a1' });
     const runTaskFn = vi.fn(async () => ({ text: PROSE_WITHOUT_CONTRACT_OUTPUT }));
