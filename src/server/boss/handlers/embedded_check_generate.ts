@@ -12,7 +12,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { z } from 'zod';
 
-import { QuestionKind } from '@/core/schema/business';
+import { JudgeKind, QuestionKind, Rubric } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
@@ -31,6 +31,8 @@ const EmbeddedCheckQuestionSchema = z.object({
   prompt_md: z.string().min(1).max(400),
   reference_md: z.string().min(1).max(500),
   choices_md: z.array(z.string().min(1)).max(6).nullable().optional(),
+  judge_kind_override: JudgeKind.nullable().optional(),
+  rubric_json: Rubric.nullable().optional(),
 });
 
 const EmbeddedCheckOutputSchema = z.object({
@@ -38,6 +40,42 @@ const EmbeddedCheckOutputSchema = z.object({
 });
 
 type EmbeddedCheckOutput = z.infer<typeof EmbeddedCheckOutputSchema>;
+
+const PROSE_KINDS = new Set(['short_answer', 'reading', 'translation', 'essay']);
+const PENDING_STALE_MS = 30 * 60 * 1000;
+
+function nonEmpty(values: string[] | undefined): string[] {
+  return (values ?? []).map((v) => v.trim()).filter((v) => v.length > 0);
+}
+
+function defaultJudgeKindForQuestion(q: z.infer<typeof EmbeddedCheckQuestionSchema>) {
+  if (q.judge_kind_override) return q.judge_kind_override;
+  if (q.kind === 'choice' || q.kind === 'true_false') return 'exact';
+  if (q.kind === 'fill_blank') {
+    return nonEmpty(q.rubric_json?.keywords).length > 0 ? 'keyword' : 'exact';
+  }
+  if (q.kind === 'computation') {
+    return nonEmpty(q.rubric_json?.keywords).length > 0 ? 'keyword' : 'semantic';
+  }
+  return PROSE_KINDS.has(q.kind) ? 'semantic' : 'exact';
+}
+
+function assertGeneratedQuestionHasJudgeContract(
+  q: z.infer<typeof EmbeddedCheckQuestionSchema>,
+): void {
+  const route = defaultJudgeKindForQuestion(q);
+  if (route === 'keyword' && nonEmpty(q.rubric_json?.keywords).length === 0) {
+    throw new Error(`embedded question '${q.prompt_md}' uses keyword judge without keywords`);
+  }
+  if (route === 'semantic' && nonEmpty(q.rubric_json?.required_points).length === 0) {
+    throw new Error(
+      `embedded question '${q.prompt_md}' uses semantic judge without required_points`,
+    );
+  }
+  if (PROSE_KINDS.has(q.kind) && route === 'exact') {
+    throw new Error(`embedded prose question '${q.prompt_md}' cannot use exact judge`);
+  }
+}
 
 function parseOutput(text: string): EmbeddedCheckOutput {
   const start = text.indexOf('{');
@@ -56,6 +94,9 @@ function parseOutput(text: string): EmbeddedCheckOutput {
     throw new Error(
       `parseOutput: schema invalid: ${parsed.error.issues.map((i) => i.message).join('; ')}`,
     );
+  }
+  for (const question of parsed.data.questions) {
+    assertGeneratedQuestionHasJudgeContract(question);
   }
   return parsed.data;
 }
@@ -103,6 +144,7 @@ export async function runEmbeddedCheckGenerate(
       sections: artifact.sections,
       generation_status: artifact.generation_status,
       embedded_check_status: artifact.embedded_check_status,
+      updated_at: artifact.updated_at,
     })
     .from(artifact)
     .where(eq(artifact.id, artifactId))
@@ -121,18 +163,21 @@ export async function runEmbeddedCheckGenerate(
 
   // Atomically claim the artifact only if status is in a re-runnable state.
   // 'not_required' = first attempt; 'failed' = retry after prior failure.
-  // 'ready' and 'pending' are excluded, preventing duplicate work on re-delivery.
-  //
-  // Note: a crashed handler leaves status='pending' permanently. For this
-  // single-user MVP that is acceptable — reset via SQL if it happens:
-  //   UPDATE artifact SET embedded_check_status='not_required' WHERE id='<id>';
+  // A pending claim older than 30 minutes is considered stale and can be
+  // reclaimed; fresh pending still prevents duplicate work on pg-boss re-delivery.
+  const pendingIsStale =
+    row.embedded_check_status === 'pending' &&
+    Date.now() - row.updated_at.getTime() > PENDING_STALE_MS;
+  const claimableStatuses = pendingIsStale
+    ? (['not_required', 'failed', 'pending'] as const)
+    : (['not_required', 'failed'] as const);
   const claim = await db
     .update(artifact)
     .set({ embedded_check_status: 'pending', updated_at: new Date() })
     .where(
       and(
         eq(artifact.id, artifactId),
-        inArray(artifact.embedded_check_status, ['not_required', 'failed']),
+        inArray(artifact.embedded_check_status, [...claimableStatuses]),
       ),
     )
     .returning({ id: artifact.id });
@@ -169,13 +214,16 @@ export async function runEmbeddedCheckGenerate(
     await db.transaction(async (tx) => {
       for (const q of parsed.questions) {
         const id = createId();
+        const judgeKind = defaultJudgeKindForQuestion(q);
         await tx.insert(question).values({
           id,
           kind: q.kind,
           source: 'embedded',
           prompt_md: q.prompt_md,
           reference_md: q.reference_md,
+          rubric_json: q.rubric_json ?? null,
           choices_md: q.choices_md ?? null,
+          judge_kind_override: judgeKind,
           knowledge_ids: row.knowledge_id ? [row.knowledge_id] : [],
           difficulty: 2,
           source_ref: row.id,

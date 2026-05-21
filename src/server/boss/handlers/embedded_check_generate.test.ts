@@ -56,12 +56,32 @@ const VALID_OUTPUT = JSON.stringify({
       prompt_md: '请解释「之」作代词时的用法。',
       reference_md: '「之」作代词时，指代前文提及的人、事、物。',
       choices_md: null,
+      judge_kind_override: 'semantic',
+      rubric_json: {
+        criteria: [{ name: 'correctness', weight: 1, descriptor: '覆盖代词用法核心要点' }],
+        required_points: ['说明「之」作代词', '说明它指代前文提及的人、事、物'],
+      },
     },
     {
       kind: 'choice',
       prompt_md: '下列句中「之」属于哪种用法？',
-      reference_md: '此处「之」是助词，用于主谓之间。',
+      reference_md: '助词',
       choices_md: ['助词', '代词', '动词'],
+      judge_kind_override: 'exact',
+      rubric_json: {
+        criteria: [{ name: 'correctness', weight: 1, descriptor: '选择正确选项' }],
+      },
+    },
+  ],
+});
+
+const PROSE_WITHOUT_CONTRACT_OUTPUT = JSON.stringify({
+  questions: [
+    {
+      kind: 'short_answer',
+      prompt_md: '请解释「之」作代词时的用法。',
+      reference_md: '「之」作代词时，指代前文提及的人、事、物。',
+      choices_md: null,
     },
   ],
 });
@@ -77,9 +97,11 @@ async function seedAtomic(opts: {
   sections?: unknown[] | null;
   knowledgeId?: string;
   domain?: string | null;
+  updatedAt?: Date;
 }) {
   const db = testDb();
   const now = new Date();
+  const updatedAt = opts.updatedAt ?? now;
   if (opts.knowledgeId) {
     await db.insert(knowledge).values({
       id: opts.knowledgeId,
@@ -117,7 +139,7 @@ async function seedAtomic(opts: {
     history: [],
     archived_at: null,
     created_at: now,
-    updated_at: now,
+    updated_at: updatedAt,
     version: 0,
   });
 }
@@ -147,6 +169,11 @@ describe('runEmbeddedCheckGenerate', () => {
     expect(questions[0].source_ref).toBe('a1');
     expect(questions[0].knowledge_ids).toEqual(['k1']);
     expect(questions[0].difficulty).toBe(2);
+    expect(questions[0].judge_kind_override).toBe('semantic');
+    expect(questions[0].rubric_json).toMatchObject({
+      required_points: ['说明「之」作代词', '说明它指代前文提及的人、事、物'],
+    });
+    expect(questions[1].judge_kind_override).toBe('exact');
 
     // artifact updated to embedded_check_status='ready'
     const [updatedArtifact] = await testDb().select().from(artifact).where(eq(artifact.id, 'a1'));
@@ -249,6 +276,24 @@ describe('runEmbeddedCheckGenerate', () => {
     expect(runTaskFn).not.toHaveBeenCalled();
   });
 
+  it('reclaims stale pending embedded_check_status after 30 minutes', async () => {
+    await seedAtomic({
+      artifactId: 'a1',
+      embeddedCheckStatus: 'pending',
+      updatedAt: new Date(Date.now() - 31 * 60 * 1000),
+    });
+    const runTaskFn = vi.fn(async () => ({ text: VALID_OUTPUT }));
+
+    const result = await runEmbeddedCheckGenerate({
+      db: testDb(),
+      artifactId: 'a1',
+      runTaskFn,
+    });
+
+    expect(result.status).toBe('ready');
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+  });
+
   // Test 6: AI returns 0 questions — Zod rejects (min:1), handler sets failed, writes failure event, throws
   it('sets embedded_check_status=failed, writes failure event, and throws when AI returns 0 questions', async () => {
     await seedAtomic({ artifactId: 'a1' });
@@ -296,6 +341,22 @@ describe('runEmbeddedCheckGenerate', () => {
       action: 'experimental:embedded_check_generate',
       outcome: 'failure',
     });
+  });
+
+  it('rejects prose questions without semantic judge contract', async () => {
+    await seedAtomic({ artifactId: 'a1' });
+    const runTaskFn = vi.fn(async () => ({ text: PROSE_WITHOUT_CONTRACT_OUTPUT }));
+
+    await expect(
+      runEmbeddedCheckGenerate({
+        db: testDb(),
+        artifactId: 'a1',
+        runTaskFn,
+      }),
+    ).rejects.toThrow(/semantic judge without required_points|cannot use exact judge/);
+
+    const [updatedArtifact] = await testDb().select().from(artifact).where(eq(artifact.id, 'a1'));
+    expect(updatedArtifact.embedded_check_status).toBe('failed');
   });
 
   // Test 8: Profile drives prompt — math path
