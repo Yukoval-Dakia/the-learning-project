@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { Rubric } from '@/core/schema/business';
 import fixtureData from './data.json' with { type: 'json' };
 
 export const MathFixtureItemSchema = z.object({
@@ -7,12 +8,7 @@ export const MathFixtureItemSchema = z.object({
   prompt_md: z.string().min(1),
   choices_md: z.array(z.string().min(1)).optional(),
   reference_md: z.string().min(1),
-  rubric_json: z
-    .object({
-      criteria: z.array(z.unknown()).default([]),
-      keywords: z.array(z.string().min(1)).optional(),
-    })
-    .optional(),
+  rubric_json: Rubric.optional(),
   difficulty: z.number().int().min(1).max(5),
   knowledge_hint: z.string().min(1),
 });
