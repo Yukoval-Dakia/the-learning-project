@@ -3,6 +3,7 @@ import { getR2 } from '@/server/r2';
 import type { PgBoss } from 'pg-boss';
 import { buildAttributionFollowupHandler } from './handlers/attribution_followup';
 import { buildEchoHandler } from './handlers/echo';
+import { buildEmbeddedCheckGenerateHandler } from './handlers/embedded_check_generate';
 import { buildKnowledgeEdgeProposeNightlyHandler } from './handlers/knowledge_edge_propose_nightly';
 import { buildKnowledgePropoNightlyHandler } from './handlers/knowledge_propose_nightly';
 import { buildNoteGenerateHandler } from './handlers/note_generate';
@@ -56,6 +57,15 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     buildSessionSummaryHandler(db),
   );
 
+  // Product Track 1: EmbeddedCheckGenerateTask — chained behind note_verify so
+  // that only verified notes spend LLM tokens on inline self-test generation.
+  await boss.createQueue('embedded_check_generate');
+  await boss.work(
+    'embedded_check_generate',
+    { pollingIntervalSeconds: 2, batchSize: 1 },
+    buildEmbeddedCheckGenerateHandler(db),
+  );
+
   // Product Track 1: NoteVerifyTask — enqueued after note_generate marks an
   // atomic note ready. Keeps note generation and verification as separate
   // lifecycle axes.
@@ -63,7 +73,11 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   await boss.work(
     'note_verify',
     { pollingIntervalSeconds: 2, batchSize: 1 },
-    buildNoteVerifyHandler(db),
+    buildNoteVerifyHandler(db, {
+      onPassed: async (artifactId) => {
+        await boss.send('embedded_check_generate', { artifact_id: artifactId });
+      },
+    }),
   );
 
   // Phase 2B: NoteGenerateTask — enqueued by /api/learning-intents/[id]/accept,

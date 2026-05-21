@@ -3,7 +3,13 @@ import { keywordJudgeCapability } from '@/core/capability/judges/keyword';
 import { JudgeResultV2 } from '@/core/schema/capability';
 import { judgeRouter, judgeRouterV2 } from '@/server/ai/judges';
 import type { JudgeResult } from '@/server/ai/judges/exact';
-import { describe, expect, it } from 'vitest';
+import {
+  type JudgeQuestionRow,
+  judgeAnswer,
+  resolveQuestionJudgeRoute,
+} from '@/server/ai/judges/question-contract';
+import { resolveSubjectProfile } from '@/subjects/profile';
+import { describe, expect, it, vi } from 'vitest';
 
 describe('exactJudgeCapability', () => {
   it('has a valid manifest', () => {
@@ -224,5 +230,182 @@ describe('keywordJudgeCapability', () => {
 
     expect(result.coarse_outcome).toBe('correct');
     expect(result.score).toBe(1);
+  });
+});
+
+describe('question contract routing', () => {
+  const profile = resolveSubjectProfile('wenyan');
+  const baseQuestion: JudgeQuestionRow = {
+    id: 'q1',
+    kind: 'fill_blank',
+    prompt_md: '填空',
+    reference_md: '答案',
+    rubric_json: null,
+    choices_md: null,
+    judge_kind_override: null,
+  };
+
+  it('selects route by override, kind, and rubric contract', () => {
+    expect(
+      resolveQuestionJudgeRoute(
+        { ...baseQuestion, kind: 'choice', choices_md: ['A', 'B'], reference_md: 'A' },
+        profile,
+      ),
+    ).toBe('exact');
+    expect(
+      resolveQuestionJudgeRoute(
+        {
+          ...baseQuestion,
+          kind: 'fill_blank',
+          rubric_json: {
+            criteria: [{ name: 'correctness', weight: 1, descriptor: 'hit terms' }],
+            keywords: ['虚词'],
+          },
+        },
+        profile,
+      ),
+    ).toBe('keyword');
+    expect(resolveQuestionJudgeRoute({ ...baseQuestion, kind: 'translation' }, profile)).toBe(
+      'semantic',
+    );
+    expect(
+      resolveQuestionJudgeRoute(
+        {
+          ...baseQuestion,
+          kind: 'single_choice',
+          choices_md: ['语气词', '随机标点', '现代逗号'],
+          reference_md: '语气词',
+        },
+        profile,
+      ),
+    ).toBe('exact');
+    expect(
+      resolveQuestionJudgeRoute(
+        {
+          ...baseQuestion,
+          kind: 'multiple_choice',
+          choices_md: ['A', 'B', 'C'],
+          reference_md: 'A',
+        },
+        profile,
+      ),
+    ).toBe('exact');
+    expect(
+      resolveQuestionJudgeRoute(
+        { ...baseQuestion, kind: 'short_answer', judge_kind_override: 'keyword' },
+        profile,
+      ),
+    ).toBe('keyword');
+  });
+
+  it('does not map unsupported judge results to failure semantics', async () => {
+    const result = await judgeAnswer({
+      db: {} as never,
+      question: { ...baseQuestion, kind: 'short_answer', judge_kind_override: 'steps' },
+      answer_md: '答案',
+      subjectProfile: profile,
+    });
+
+    expect(result.route).toBe('steps');
+    expect(result.result.coarse_outcome).toBe('unsupported');
+    expect(result.result.score).toBeNull();
+  });
+
+  it('parses semantic judge correct, partial, and incorrect outputs', async () => {
+    const question: JudgeQuestionRow = {
+      ...baseQuestion,
+      kind: 'short_answer',
+      judge_kind_override: 'semantic',
+      rubric_json: {
+        criteria: [{ name: 'correctness', weight: 1, descriptor: 'core points' }],
+        required_points: ['指出之是代词', '说明指代前文'],
+      },
+    };
+    const runTaskFn = vi
+      .fn()
+      .mockResolvedValueOnce({
+        text: JSON.stringify({
+          score: 0.9,
+          coarse_outcome: 'correct',
+          confidence: 0.8,
+          feedback_md: '要点完整。',
+          evidence_json: { matched_points: ['指出之是代词'], missing_points: [] },
+        }),
+      })
+      .mockResolvedValueOnce({
+        text: JSON.stringify({
+          score: 0.5,
+          coarse_outcome: 'partial',
+          confidence: 0.7,
+          feedback_md: '答到一部分。',
+          evidence_json: { matched_points: ['指出之是代词'], missing_points: ['说明指代前文'] },
+        }),
+      })
+      .mockResolvedValueOnce({
+        text: JSON.stringify({
+          score: 0,
+          coarse_outcome: 'incorrect',
+          confidence: 0.9,
+          feedback_md: '未命中核心要点。',
+          evidence_json: { matched_points: [], missing_points: ['指出之是代词'] },
+        }),
+      });
+
+    await expect(
+      judgeAnswer({
+        db: {} as never,
+        question,
+        answer_md: '代词',
+        subjectProfile: profile,
+        runTaskFn,
+      }),
+    ).resolves.toMatchObject({ result: { coarse_outcome: 'correct' } });
+    await expect(
+      judgeAnswer({
+        db: {} as never,
+        question,
+        answer_md: '代词',
+        subjectProfile: profile,
+        runTaskFn,
+      }),
+    ).resolves.toMatchObject({ result: { coarse_outcome: 'partial' } });
+    await expect(
+      judgeAnswer({
+        db: {} as never,
+        question,
+        answer_md: '不知道',
+        subjectProfile: profile,
+        runTaskFn,
+      }),
+    ).resolves.toMatchObject({ result: { coarse_outcome: 'incorrect' } });
+  });
+
+  it('turns malformed semantic output and provider failure into unsupported', async () => {
+    const question: JudgeQuestionRow = {
+      ...baseQuestion,
+      kind: 'short_answer',
+      judge_kind_override: 'semantic',
+      rubric_json: {
+        criteria: [{ name: 'correctness', weight: 1, descriptor: 'core points' }],
+        required_points: ['指出之是代词'],
+      },
+    };
+    const malformed = await judgeAnswer({
+      db: {} as never,
+      question,
+      answer_md: '代词',
+      subjectProfile: profile,
+      runTaskFn: vi.fn().mockResolvedValue({ text: 'not json' }),
+    });
+    expect(malformed.result.coarse_outcome).toBe('unsupported');
+
+    const failed = await judgeAnswer({
+      db: {} as never,
+      question,
+      answer_md: '代词',
+      subjectProfile: profile,
+      runTaskFn: vi.fn().mockRejectedValue(new Error('provider down')),
+    });
+    expect(failed.result.coarse_outcome).toBe('unsupported');
   });
 });
