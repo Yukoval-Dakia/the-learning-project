@@ -180,8 +180,13 @@ export async function runEmbeddedCheckGenerate(
         inArray(artifact.embedded_check_status, [...claimableStatuses]),
       ),
     )
-    .returning({ id: artifact.id });
+    .returning({ id: artifact.id, updated_at: artifact.updated_at });
   if (claim.length === 0) return { status: 'skipped:already_in_progress' };
+  // Capture the claim's updated_at; the final UPDATE + catch-block UPDATE
+  // both gate on this so that if another (stale-pending reclaim) handler
+  // takes over while this one is mid-LLM-call, we don't stomp the reclaim
+  // and we don't leave orphan question rows behind.
+  const claimedUpdatedAt = claim[0].updated_at;
 
   // Resolve subject profile for prompt
   let kNode: { id: string; name: string; domain: string | null } | null = null;
@@ -240,14 +245,23 @@ export async function runEmbeddedCheckGenerate(
       const updatedSections = sections.map((s) =>
         s.id === checkSection.id ? { ...s, embedded_check: { question_ids: questionIds } } : s,
       );
-      await tx
+      const finalUpdate = await tx
         .update(artifact)
         .set({
           sections: updatedSections as never,
           embedded_check_status: 'ready',
           updated_at: new Date(),
         })
-        .where(eq(artifact.id, artifactId));
+        .where(and(eq(artifact.id, artifactId), eq(artifact.updated_at, claimedUpdatedAt)))
+        .returning({ id: artifact.id });
+      if (finalUpdate.length === 0) {
+        // Another handler (stale-pending reclaim) moved updated_at forward
+        // between our claim and our commit. Throw to abort the transaction
+        // and roll back the question INSERTs above.
+        throw new Error(
+          `embedded_check_generate: artifact ${artifactId} was reclaimed by another handler; rolling back`,
+        );
+      }
     });
 
     await writeEvent(db, {
@@ -269,10 +283,13 @@ export async function runEmbeddedCheckGenerate(
     return { status: 'ready', question_ids: questionIds };
   } catch (err) {
     try {
+      // Gate the 'failed' write on the claim timestamp so that if a reclaim
+      // handler successfully moved the artifact to 'ready' (or to its own
+      // 'pending'), our catch path doesn't stomp it back to 'failed'.
       await db
         .update(artifact)
         .set({ embedded_check_status: 'failed', updated_at: new Date() })
-        .where(eq(artifact.id, artifactId));
+        .where(and(eq(artifact.id, artifactId), eq(artifact.updated_at, claimedUpdatedAt)));
       await writeEvent(db, {
         id: createId(),
         session_id: null,

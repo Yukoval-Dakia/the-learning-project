@@ -294,6 +294,100 @@ describe('runEmbeddedCheckGenerate', () => {
     expect(runTaskFn).toHaveBeenCalledTimes(1);
   });
 
+  // Regression for PR #76 review P3: when stale-pending reclaim fires, the
+  // original (slow) handler's eventual commit must not leave orphan question
+  // rows pointing to the artifact while the artifact references a different
+  // question_ids set written by the reclaiming handler.
+  //
+  // After the optimistic-lock fix, the slow handler's claim attempt will be
+  // refused (artifact status is already 'ready'), so it can never insert
+  // orphan rows. This test pins that post-condition.
+  it('stale-pending reclaim does not leave orphan question rows', async () => {
+    const PENDING_STALE_MS = 30 * 60 * 1000;
+    const stalePendingAt = new Date(Date.now() - PENDING_STALE_MS - 60_000);
+    await seedAtomic({
+      artifactId: 'a-race',
+      knowledgeId: 'k-race',
+      embeddedCheckStatus: 'pending',
+      updatedAt: stalePendingAt,
+    });
+
+    // The reclaiming handler runs to completion first, advancing updated_at
+    // and writing its 1 question row.
+    const reclaimRunTask = vi.fn(async () => ({
+      text: JSON.stringify({
+        questions: [
+          {
+            kind: 'short_answer',
+            prompt_md: 'reclaim Q1',
+            reference_md: 'reclaim A1',
+            choices_md: null,
+            judge_kind_override: 'semantic',
+            rubric_json: {
+              criteria: [{ name: 'correctness', weight: 1, descriptor: 'core point' }],
+              required_points: ['point'],
+            },
+          },
+        ],
+      }),
+    }));
+    const reclaimResult = await runEmbeddedCheckGenerate({
+      db: testDb(),
+      artifactId: 'a-race',
+      runTaskFn: reclaimRunTask,
+    });
+    expect(reclaimResult.status).toBe('ready');
+
+    // The "slow" original handler now tries to commit its own work. Because
+    // the artifact is no longer in a claimable status, the call returns a
+    // skip outcome and inserts nothing. Either skip outcome is acceptable
+    // — both prove no orphan rows can be written.
+    const slowRunTask = vi.fn(async () => ({
+      text: JSON.stringify({
+        questions: [
+          {
+            kind: 'short_answer',
+            prompt_md: 'slow Q1',
+            reference_md: 'slow A1',
+            choices_md: null,
+            judge_kind_override: 'semantic',
+            rubric_json: {
+              criteria: [{ name: 'correctness', weight: 1, descriptor: 'core point' }],
+              required_points: ['point'],
+            },
+          },
+        ],
+      }),
+    }));
+    const slowResult = await runEmbeddedCheckGenerate({
+      db: testDb(),
+      artifactId: 'a-race',
+      runTaskFn: slowRunTask,
+    });
+    expect(['skipped:already_in_progress', 'skipped:already_ready']).toContain(slowResult.status);
+
+    // The artifact must reference exactly the reclaim handler's question ids.
+    const [finalArtifact] = await testDb()
+      .select()
+      .from(artifact)
+      .where(eq(artifact.id, 'a-race'));
+    expect(finalArtifact.embedded_check_status).toBe('ready');
+    const finalSections = finalArtifact.sections as Array<{
+      kind: string;
+      embedded_check?: { question_ids: string[] } | null;
+    }>;
+    const checkSection = finalSections.find((s) => s.kind === 'check');
+    expect(checkSection?.embedded_check?.question_ids).toEqual(reclaimResult.question_ids);
+
+    // And the question table must contain ONLY the reclaim's row — no orphans.
+    const questions = await testDb()
+      .select()
+      .from(question)
+      .where(eq(question.source_ref, 'a-race'));
+    expect(questions).toHaveLength(1);
+    expect(questions[0].prompt_md).toBe('reclaim Q1');
+  });
+
   // Test 6: AI returns 0 questions — Zod rejects (min:1), handler sets failed, writes failure event, throws
   it('sets embedded_check_status=failed, writes failure event, and throws when AI returns 0 questions', async () => {
     await seedAtomic({ artifactId: 'a1' });
