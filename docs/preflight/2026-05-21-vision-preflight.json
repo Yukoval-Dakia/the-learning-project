@@ -1,0 +1,13 @@
+{
+  "timestamp": "2026-05-21T15:03:38.109Z",
+  "model": "mimo-v2.5",
+  "base_url": "https://api.xiaomimimo.com/anthropic",
+  "elapsed_ms": 7663,
+  "error": null,
+  "raw_text": "{\"saw_image\": true, \"color_guess\": \"yellow\"}",
+  "parsed_json": {
+    "saw_image": true,
+    "color_guess": "yellow"
+  },
+  "vision_supported": true
+}

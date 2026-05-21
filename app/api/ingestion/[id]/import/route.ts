@@ -21,6 +21,7 @@ import { z } from 'zod';
 
 import { PageSpan } from '@/core/schema';
 import { CauseCategory, QuestionKind } from '@/core/schema/business';
+import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
 import { db } from '@/db/client';
 import { knowledge, learning_session, question, question_block } from '@/db/schema';
 import { runTask } from '@/server/ai/runner';
@@ -303,10 +304,46 @@ export async function POST(
           ),
         ];
 
-        // INSERT question
+        // INSERT question — M-1 (2026-05-21): write figures / image_refs / structured
+        // first-class. Derive from source question_block row(s):
+        // - direct import: read from sourceBlockRows[block_id]
+        // - virtual card (merged): concat figures from all source rows; structured
+        //   has no clean merge semantic so it's null (a merged card is a new question
+        //   created by the user, not an extraction tree)
+        // - manual block: nothing to derive from; both empty/null
+        // `metadata.prompt_image_refs` remains for legacy reader compat (M3+ removal).
+        let importedFigures: typeof question_block.$inferSelect.figures = [];
+        let importedStructured: typeof question_block.$inferSelect.structured = null;
+        if (block.block_id !== undefined) {
+          const sourceRow = sourceBlockRows.get(block.block_id);
+          if (sourceRow) {
+            importedFigures = sourceRow.figures;
+            // Carry `structured` only if `final_prompt_md` still matches what
+            // would be derived from `structured`. If the user edited the prompt
+            // pre-import, structured's prompt_text is stale and would violate
+            // ADR-0002 revision 2026-05-21 ("when structured is non-null,
+            // prompt_md MUST be regenerable from structured"). Drop structured
+            // in that case — a future structured edit must go through the
+            // domain tool path, not bulk import.
+            if (sourceRow.structured) {
+              const derived = structuredToPromptMarkdown(sourceRow.structured);
+              importedStructured = derived === block.final_prompt_md ? sourceRow.structured : null;
+            }
+          }
+        } else if (block.source_block_ids.length > 0) {
+          // virtual card from merge: concat figures, structured=null
+          const sourceRows = block.source_block_ids
+            .map((sid) => sourceBlockRows.get(sid))
+            .filter((r): r is typeof question_block.$inferSelect => r !== undefined);
+          importedFigures = sourceRows.flatMap((r) => r.figures);
+        }
+        // else: manual block (no source) — figures=[], structured=null (defaults)
+
         const questionId = createId();
         questionIds.push(questionId);
         const questionMetadata = {
+          // deprecated (M-1 / 2026-05-21): new code reads question.image_refs (first-class).
+          // Kept for legacy reader compat; M3 后视使用情况移除。
           prompt_image_refs: block.image_refs,
           prompt_image_ref_kind: 'source_asset_id',
           source_document_id: sessionSourceDocumentId,
@@ -322,6 +359,9 @@ export async function POST(
           difficulty: block.difficulty,
           source: sessionEntrypoint,
           variant_depth: 0,
+          figures: importedFigures,
+          image_refs: block.image_refs,
+          structured: importedStructured,
           metadata: questionMetadata,
           created_at: now,
           updated_at: now,
