@@ -25,3 +25,23 @@
 - **手写错答（HandwriteInfo + HandwriteInfoPositions）也归 extraction_evidence**。原计划 Sub 1 让用户手动输入错答，现在 Sub 0c 直接捕获。这是新 endpoint 带来的能力提升。
 - **当 Mark Agent 都失败时**（layout_quality='text_only' 或 'partial'，例如非常规手写涂改），UI 仍走"用户手动救援" —— `POST /api/ingestion/[id]/rescue` 同步触发 Vision Tier 2/3。救援路径是用户授权的、付费可见的、可选的，**不是自动 fallback**。
 - **Vision Tier 2/3 永远是用户触发的救援工具**，原则不变。
+
+---
+
+**修订（2026-05-21）— 推广 "structured 派生 markdown" 原则到 `question` 表（M-1）**
+
+**Trigger**：math MVP（vision-as-input）要求 `question` 表自身承载多模态结构，不再只是 markdown 派生的下游消费表。Migration 0010_fair_selene 给 `question` 加了 `figures` / `image_refs` / `structured` 三个 jsonb 字段。
+
+**Rule update**：原决策"`extracted_prompt_md` 不持久化，所有 markdown 视图由 structured 现场派生"从 `question_block` 推广到 `question`：
+
+- `question.structured`（jsonb，nullable）是题目结构的 source of truth（**当 non-null 时**）。
+- `question.prompt_md` / `question.reference_md` 仍持久化，但当 `structured` non-null 时**必须**能由 `structuredToPromptMarkdown` / `structuredToReferenceMarkdown` 现场派生出来（写入时保证一致）。
+- `question.figures`（`FigureRef[]`）承载结构化图片元数据（含 bbox / role / attach 归属），给 vision-aware judge 用（M2 `steps@1` 是第一个消费者）。
+- `question.image_refs`（`string[]`，扁平 asset_id list）给简单读取场景用，**不需要 bbox / attach 信息**的 caller 直接读这个。
+- `question.metadata.prompt_image_refs` **deprecated**（M-1 / 2026-05-21）：保留以兼容老 reader（answer history rendering 等），新代码 SHOULD 读 `question.image_refs`。M3 后视使用情况移除。
+
+**Scope**：`question_block` 语义不变（它仍是 ingestion 侧的结构化承载）。变的是 `question` 现在镜像同一套字段，让下游 judge / agent / 渲染层不必绕路回 question_block 拿结构化数据。
+
+**Agent 修改约束沿用**：修改 `question.structured` 必须走领域工具集，version 递增 + provenance 留痕，不开放裸 jsonb 编辑。
+
+**See also**：`docs/superpowers/specs/2026-05-21-math-mvp-vision-design.md` §4 + `docs/superpowers/plans/2026-05-21-math-mvp-m-1-m0.md` Task 1-4。
