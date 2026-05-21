@@ -164,6 +164,16 @@ export const question = pgTable(
     parent_variant_id: text('parent_variant_id'),
     created_by: jsonb('created_by').$type<AgentRefT>(),
     metadata: jsonb('metadata').$type<JsonObject>(),
+    // M-1 (2026-05-21): first-class multimodal carriers.
+    // `metadata.prompt_image_refs` is the legacy simple-image-ref path (still
+    // written by ingestion for backwards-compatible readers; new code SHOULD
+    // read from `image_refs` instead). See docs/superpowers/specs/2026-05-21-
+    // math-mvp-vision-design.md §4 + docs/adr/0002 revision 2026-05-21.
+    figures: jsonb('figures').$type<FigureRefT[]>().notNull().default([]),
+    image_refs: jsonb('image_refs').$type<string[]>().notNull().default([]),
+    // `structured` is the recursive StructuredQuestion tree (stem/sub/standalone);
+    // nullable for non-structured questions (variant_gen / embedded_check / etc).
+    structured: jsonb('structured').$type<StructuredQuestionT | null>(),
     created_at: timestamp('created_at', { withTimezone: true }).notNull(),
     updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
     version: integer('version').notNull().default(0),
