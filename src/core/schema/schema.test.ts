@@ -19,6 +19,7 @@ import {
   NoteVerificationResult,
   QuestionBlock,
   QuestionBlockInsert,
+  Rubric,
   SourceAsset,
   validateCauseAgainstProfile,
 } from './index';
@@ -37,6 +38,22 @@ describe('schema generated from drizzle', () => {
 
   it('CauseCategory accepts subject-specific cause ids with the shared id grammar', () => {
     const result = CauseCategory.safeParse('unit_error');
+    expect(result.success).toBe(true);
+  });
+
+  it('Rubric accepts judge contract fields while preserving old criteria shape', () => {
+    expect(
+      Rubric.safeParse({
+        criteria: [{ name: 'correctness', weight: 1, descriptor: '答出核心即可' }],
+      }).success,
+    ).toBe(true);
+
+    const result = Rubric.safeParse({
+      criteria: [{ name: 'correctness', weight: 1, descriptor: '覆盖所有要点' }],
+      keywords: ['虚词', '代词'],
+      acceptable_answers: ['代词'],
+      required_points: ['指出它指代前文内容'],
+    });
     expect(result.success).toBe(true);
   });
 

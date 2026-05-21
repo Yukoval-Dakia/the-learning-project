@@ -161,6 +161,9 @@ export const Rubric = z.object({
       descriptor: z.string(),
     }),
   ),
+  keywords: z.array(z.string().min(1)).optional(),
+  acceptable_answers: z.array(z.string().min(1)).optional(),
+  required_points: z.array(z.string().min(1)).optional(),
 });
 
 export const Cause = z.object({
