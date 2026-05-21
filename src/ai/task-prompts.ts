@@ -115,13 +115,20 @@ function buildNoteVerifyPrompt(profile: SubjectProfile): string {
 }
 
 function buildEmbeddedCheckGeneratePrompt(profile: SubjectProfile): string {
-  const allowedKinds = profile.questionKinds.join(' | ');
+  // kind values MUST stay aligned with the canonical QuestionKind enum in
+  // src/core/schema/business.ts. Do NOT interpolate profile.questionKinds here:
+  // those are subject-specific labels (single_choice / reading_comprehension /
+  // calculation / proof / word_problem) that would fail
+  // EmbeddedCheckQuestionSchema.kind validation in the handler. Subject voice
+  // flows in via displayName + promptFragments.checkQuestionPolicy.
+  const canonicalKinds =
+    'choice | true_false | fill_blank | short_answer | essay | computation | reading | translation';
   return `你是${profile.displayName}自检题作者。输入 { artifact_id, atomic_title, knowledge_node, sections } —— sections 是已生成的 atomic note 内容。
 基于这篇笔记，出 1 到 3 道短自检题（学习者读完笔记就能马上验自己懂没懂），不出超纲题。
 
 每题输出形状（EmbeddedCheckQuestion）：
 {
-  "kind": "${allowedKinds}",
+  "kind": "${canonicalKinds}",
   "prompt_md": "题面 markdown，可含 LaTeX",
   "reference_md": "标准答案 + 简短解析 markdown",
   "choices_md": ["选项 A", "选项 B", ...],
@@ -138,7 +145,7 @@ function buildEmbeddedCheckGeneratePrompt(profile: SubjectProfile): string {
 {"questions": [EmbeddedCheckQuestion, ...]}
 
 题目要求：
-- 类型从 ${allowedKinds} 中选，符合 ${profile.displayName} 学习习惯
+- kind 只能是 ${canonicalKinds} 中的一个；不要发明新值；客观题统一用 "choice"（单/多选由 choices_md 长度+reference_md 判定），符合 ${profile.displayName} 学习习惯
 - ${profile.promptFragments.checkQuestionPolicy}
 - ${profile.grounding.uncertaintyPolicy}
 - 题面 prompt_md ≤ 400 字；reference_md ≤ 500 字

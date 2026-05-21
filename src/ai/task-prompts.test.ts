@@ -95,14 +95,30 @@ describe('getTaskSystemPrompt', () => {
     const wenyan = getTaskSystemPrompt('EmbeddedCheckGenerateTask');
     const math = getTaskSystemPrompt('EmbeddedCheckGenerateTask', resolveSubjectProfile('math'));
 
+    // Subject voice still flows in via displayName + checkQuestionPolicy
     expect(wenyan).toContain('文言文');
-    expect(wenyan).toContain('single_choice');
+    expect(wenyan).toContain('检查题应短小，聚焦一个词义、句式或翻译判断。');
     expect(math).toContain('数学');
-    expect(math).toMatch(/fill_blank|computation|calculation/i);
+    expect(math).toContain('检查题应聚焦一个公式、条件判断或关键变形。');
+
+    // Prompt must only reference canonical QuestionKind values — subject-only
+    // kinds like 'single_choice'/'multiple_choice'/'reading_comprehension'/
+    // 'calculation'/'proof'/'word_problem' fail EmbeddedCheckQuestionSchema and
+    // must NOT leak into the prompt instructions (PR #76 review P1).
     for (const prompt of [wenyan, math]) {
       expect(prompt).toContain('EmbeddedCheckQuestion');
       expect(prompt).toContain('kind');
       expect(prompt).toContain('reference_md');
+      // Canonical kinds appear (at least one must be referenced explicitly)
+      expect(prompt).toMatch(/\bchoice\b/);
+      expect(prompt).toMatch(/\bfill_blank\b/);
+      // Subject-only kinds must NOT appear
+      expect(prompt).not.toMatch(/\bsingle_choice\b/);
+      expect(prompt).not.toMatch(/\bmultiple_choice\b/);
+      expect(prompt).not.toMatch(/\breading_comprehension\b/);
+      expect(prompt).not.toMatch(/\bcalculation\b/);
+      expect(prompt).not.toMatch(/\bword_problem\b/);
+      expect(prompt).not.toMatch(/\bproof\b/);
     }
   });
 });
