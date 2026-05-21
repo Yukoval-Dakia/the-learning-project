@@ -138,17 +138,24 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
     });
   }
 
-  it('artifact table writes: confined to Phase 2B Learning Intent Orchestrator + note_generate handler', async () => {
+  it('artifact table writes: confined to Phase 2B + note lifecycle handlers (Pass 2 + embedded check)', async () => {
     // 'artifact' is the C-tier AI production landing point per ADR-0006 v2.
-    // Phase 2B (Learning Intent Orchestrator, commit landing 2026-05-17)
-    // activated the write path. New invariant: writes live in exactly two
-    // places — the orchestrator's accept handler + the pg-boss async
-    // note_generate handler. Anything else writing `artifact` should be
-    // reviewed for fit.
+    // Phase 2B (Learning Intent Orchestrator) activated the write path with
+    // the accept handler + the `note_generate` pg-boss handler. The note
+    // lifecycle later grew two more single-owner writers, each touching a
+    // distinct status axis on the artifact row:
+    //   - `note_verify`: writes `verification_status` / `verification_summary` /
+    //     `verified_by` after the Pass 2 verifier judges generated sections.
+    //   - `embedded_check_generate`: writes `embedded_check_status` and
+    //     mirrors the generated question ids back onto the `check` section
+    //     after Judge v2 light's question contract is satisfied.
+    // Anything else writing `artifact` should still be reviewed.
     const hits = await findWriteHits('artifact', { roots: SCAN_RUNTIME_ROOTS });
     const ALLOWED = [
       'src/server/orchestrator/learning_intent.ts',
       'src/server/boss/handlers/note_generate.ts',
+      'src/server/boss/handlers/note_verify.ts',
+      'src/server/boss/handlers/embedded_check_generate.ts',
     ];
     const unexpected = hits.filter((h) => !ALLOWED.includes(h.split(path.sep).join('/')));
     expect(

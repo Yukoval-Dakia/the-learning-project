@@ -19,6 +19,7 @@ import {
   NoteVerificationResult,
   QuestionBlock,
   QuestionBlockInsert,
+  Rubric,
   SourceAsset,
   validateCauseAgainstProfile,
 } from './index';
@@ -37,6 +38,22 @@ describe('schema generated from drizzle', () => {
 
   it('CauseCategory accepts subject-specific cause ids with the shared id grammar', () => {
     const result = CauseCategory.safeParse('unit_error');
+    expect(result.success).toBe(true);
+  });
+
+  it('Rubric accepts judge contract fields while preserving old criteria shape', () => {
+    expect(
+      Rubric.safeParse({
+        criteria: [{ name: 'correctness', weight: 1, descriptor: '答出核心即可' }],
+      }).success,
+    ).toBe(true);
+
+    const result = Rubric.safeParse({
+      criteria: [{ name: 'correctness', weight: 1, descriptor: '覆盖所有要点' }],
+      keywords: ['虚词', '代词'],
+      acceptable_answers: ['代词'],
+      required_points: ['指出它指代前文内容'],
+    });
     expect(result.success).toBe(true);
   });
 
@@ -363,9 +380,82 @@ describe('schema generated from drizzle', () => {
       created_at: now,
       updated_at: now,
       version: 0,
+      embedded_check_status: 'not_required',
     });
 
     expect(result.success).toBe(true);
+  });
+
+  it('Artifact accepts runtime embedded_check_status values', () => {
+    for (const status of ['not_required', 'pending', 'ready', 'failed'] as const) {
+      const result = Artifact.safeParse({
+        id: 'a1',
+        type: 'note_atomic',
+        title: '之的用法',
+        knowledge_id: null,
+        parent_artifact_id: null,
+        child_artifact_ids: [],
+        intent_source: 'learning_intent',
+        source: 'ai_generated',
+        source_ref: null,
+        outline_json: null,
+        sections: null,
+        tool_kind: null,
+        tool_state: null,
+        generation_status: 'ready',
+        verification_status: 'verified',
+        verification_summary: {
+          verdict: 'pass',
+          summary_md: '结构完整，未发现明显问题。',
+          issues: [],
+          confidence: 0.82,
+        },
+        generated_by: null,
+        verified_by: { by: 'ai', task_kind: 'NoteVerifyTask' },
+        history: [],
+        archived_at: null,
+        created_at: new Date(),
+        updated_at: new Date(),
+        version: 0,
+        embedded_check_status: status,
+      });
+      expect(result.success, `status=${status}`).toBe(true);
+    }
+  });
+
+  it('Artifact rejects unknown embedded_check_status', () => {
+    const result = Artifact.safeParse({
+      id: 'a1',
+      type: 'note_atomic',
+      title: '之的用法',
+      knowledge_id: null,
+      parent_artifact_id: null,
+      child_artifact_ids: [],
+      intent_source: 'learning_intent',
+      source: 'ai_generated',
+      source_ref: null,
+      outline_json: null,
+      sections: null,
+      tool_kind: null,
+      tool_state: null,
+      generation_status: 'ready',
+      verification_status: 'verified',
+      verification_summary: {
+        verdict: 'pass',
+        summary_md: '结构完整，未发现明显问题。',
+        issues: [],
+        confidence: 0.82,
+      },
+      generated_by: null,
+      verified_by: { by: 'ai', task_kind: 'NoteVerifyTask' },
+      history: [],
+      archived_at: null,
+      created_at: new Date(),
+      updated_at: new Date(),
+      version: 0,
+      embedded_check_status: 'bogus',
+    });
+    expect(result.success).toBe(false);
   });
 
   it('NoteVerificationResult rejects invalid confidence', () => {

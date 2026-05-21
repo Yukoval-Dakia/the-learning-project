@@ -11,17 +11,17 @@ Tool 互动型分支当前唯一实例是 `tool_quiz`（见 [`quiz.md`](quiz.md)
 
 ## 0. 实施现状（2026-05-18）
 
-> Note 链路已有 MVP：Learning Intent 可以创建 hub/atomic LearningItem 与配套 artifact，pg-boss `note_generate` 会异步填充 atomic sections。尚未完成的是 grounding / verify / embedded check / editor / living-note proposal。
+> Note 链路已有 MVP：Learning Intent 可以创建 hub/atomic LearningItem 与配套 artifact，pg-boss `note_generate` 会异步填充 atomic sections；`note_verify` 已做二次检查；verified atomic note 会生成 embedded check。尚未完成的是 stronger grounding / editor / living-note proposal。
 
 | 设计概念 | 现状 |
 |---|---|
 | `artifact` 表 | ✅ schema 与 write path 已在 Learning Intent / note generation 路径启用 |
 | `NoteGenerateTask` | ✅ registry 已有；pg-boss `note_generate` handler 填 atomic sections |
-| `NoteRefineTask` / `NoteVerifyTask` | ❌ 未实现 |
+| `NoteRefineTask` / `NoteVerifyTask` | 🟡 `NoteVerifyTask` 已实现；`NoteRefineTask` 仍未实现 |
 | `note_hub` / `note_atomic` 类型 | ✅ schema 已支持 |
 | Hub ↔ LearningItem hub 1:1 / atomic ↔ LearningItem atomic 1:1 | ✅ Learning Intent accept 时同步 materialize |
 | TipTap 编辑器 | ❌ 未实现；当前以只读/生成内容为主 |
-| Embedded check（inline tool_quiz） | ❌ schema 预留；生成时仍为空 |
+| Embedded check（inline tool_quiz） | ✅ verified atomic note 后生成 1–3 题，写 `question(source='embedded')` + judge contract |
 | Grounding / source verification | ❌ sections 目前默认 `source_tier='llm_only'`、`user_verified=false` |
 
 ---

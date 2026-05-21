@@ -1,4 +1,4 @@
-import { artifact, completion_evidence, knowledge, learning_item } from '@/db/schema';
+import { artifact, completion_evidence, knowledge, learning_item, question } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -575,6 +575,155 @@ describe('GET /api/learning-items/[id]', () => {
       issues: [{ category: 'factuality', message: '缺少文本证据。' }],
     });
     expect(body.primary_artifact?.verified_by).toMatchObject({ task_kind: 'NoteVerifyTask' });
+  });
+
+  it('returns embedded check questions when status is ready', async () => {
+    const db = testDb();
+    const now = new Date();
+    // Insert two question rows with source='embedded'
+    await db.insert(question).values({
+      id: 'q1',
+      kind: 'mcq',
+      prompt_md: 'What does 之 mean?',
+      reference_md: 'SECRET ANSWER — must not appear in response',
+      choices_md: ['A', 'B', 'C', 'D'],
+      knowledge_ids: [],
+      source: 'embedded',
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    await db.insert(question).values({
+      id: 'q2',
+      kind: 'short_answer',
+      prompt_md: 'Translate: 学而时习之',
+      reference_md: 'ANOTHER SECRET',
+      choices_md: null,
+      knowledge_ids: [],
+      source: 'embedded',
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    // Insert artifact with embedded_check_status='ready' and a check section
+    await db.insert(artifact).values({
+      id: 'a_ec',
+      type: 'note_atomic',
+      title: '之的用法',
+      knowledge_id: null,
+      parent_artifact_id: null,
+      child_artifact_ids: [],
+      intent_source: 'learning_intent',
+      source: 'ai_generated',
+      source_ref: null,
+      outline_json: null,
+      sections: [
+        {
+          id: 's1',
+          kind: 'check',
+          body_md: '',
+          source_tier: 'llm_only',
+          user_verified: false,
+          embedded_check: { question_ids: ['q1', 'q2'] },
+          version: 0,
+        },
+      ] as never,
+      tool_kind: null,
+      tool_state: null,
+      generation_status: 'ready',
+      verification_status: 'not_required',
+      verification_summary: null,
+      generated_by: null,
+      verified_by: null,
+      embedded_check_status: 'ready',
+      history: [],
+      archived_at: null,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    await db
+      .insert(learning_item)
+      .values(baseItem('li_ec', { primary_artifact_id: 'a_ec', status: 'in_progress' }));
+
+    const res = await GET(getReq('li_ec'), { params: Promise.resolve({ id: 'li_ec' }) });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      primary_artifact: {
+        embedded_check_status: string;
+        embedded_questions: Array<{
+          id: string;
+          kind: string;
+          prompt_md: string;
+          choices_md: string[] | null;
+          reference_md?: string;
+        }>;
+      } | null;
+    };
+    expect(body.primary_artifact?.embedded_check_status).toBe('ready');
+    expect(body.primary_artifact?.embedded_questions).toHaveLength(2);
+    // Order must match question_ids declared in the check section (['q1', 'q2']).
+    expect(body.primary_artifact?.embedded_questions[0].id).toBe('q1');
+    expect(body.primary_artifact?.embedded_questions[1].id).toBe('q2');
+    expect(body.primary_artifact?.embedded_questions[0]).toMatchObject({
+      id: 'q1',
+      kind: 'mcq',
+      prompt_md: 'What does 之 mean?',
+      choices_md: ['A', 'B', 'C', 'D'],
+    });
+    // SECURITY: reference_md must not be exposed
+    for (const q of body.primary_artifact?.embedded_questions ?? []) {
+      expect(q.reference_md).toBeUndefined();
+    }
+  });
+
+  it('omits embedded questions when status is pending', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(artifact).values({
+      id: 'a_pending',
+      type: 'note_atomic',
+      title: '之的用法 pending',
+      knowledge_id: null,
+      parent_artifact_id: null,
+      child_artifact_ids: [],
+      intent_source: 'learning_intent',
+      source: 'ai_generated',
+      source_ref: null,
+      outline_json: null,
+      sections: null,
+      tool_kind: null,
+      tool_state: null,
+      generation_status: 'ready',
+      verification_status: 'not_required',
+      verification_summary: null,
+      generated_by: null,
+      verified_by: null,
+      embedded_check_status: 'pending',
+      history: [],
+      archived_at: null,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    await db
+      .insert(learning_item)
+      .values(
+        baseItem('li_pending_ec', { primary_artifact_id: 'a_pending', status: 'in_progress' }),
+      );
+
+    const res = await GET(getReq('li_pending_ec'), {
+      params: Promise.resolve({ id: 'li_pending_ec' }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      primary_artifact: {
+        embedded_check_status: string;
+        embedded_questions?: unknown[];
+      } | null;
+    };
+    expect(body.primary_artifact?.embedded_check_status).toBe('pending');
+    expect(body.primary_artifact?.embedded_questions).toEqual([]);
   });
 });
 

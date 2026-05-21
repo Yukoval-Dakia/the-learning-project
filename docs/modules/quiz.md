@@ -14,7 +14,7 @@
 |---|---|
 | `question` 表（统一题库） | ✅ 落地，被 `event(action='attempt', subject_kind='question')` 引用 |
 | Answer / Judgment / UserAppeal 三表 | ❌ DROPped 或从未建过；判分走 `event(action='judge', subject_kind='event')` 替代 |
-| JudgeRouter + 7 种 judge kind | ❌ 现只有 `exact` 这一种 judge（`src/server/ai/judges/exact.ts`） |
+| JudgeRouter + 7 种 judge kind | 🟡 `exact` / `keyword` 是 registry-backed local judge；`semantic` 通过 async `judgeAnswer` + `SemanticJudgeTask` 用于 prose embedded checks；`rubric` / `steps` / `multimodal_direct` / `ai_flexible` 仍是未来能力 |
 | `tool_quiz` artifact 类型 + standalone vs embedded | ❌ artifact 表 schema 在但 0 写入 / 0 UI |
 | Review session | ✅ ADR-0013 已落地：`/api/review/sessions` 创建，`/api/review/submit` 可带 `session_id`，结束/孤儿清理由 route + pg-boss 处理 |
 | 复习 = standalone tool_quiz artifact | ❌ 仍未实现；当前是 review session + due/submit API |
@@ -53,7 +53,7 @@ Artifact (AI 产出物)
 - Note `check` section 末尾的 1~3 题自检
 - 跟 section 1:1 强耦合，不另建 Artifact 行；section 直接持 `question_ids[]`
 
-两种形态共用同一套 `JudgeRouter` / Judge*Task / 申诉流程。
+两种形态共用同一套 Judge v2 light 判题入口：同步 exact/keyword 走 registry；语义题走 `SemanticJudgeTask`；判题失败返回 `unsupported`，不直接记错。
 
 ### 1.3 职责与边界
 

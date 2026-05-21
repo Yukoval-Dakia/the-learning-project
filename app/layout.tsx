@@ -14,7 +14,7 @@ const THEME_BOOT = `(function(){try{var t=localStorage.getItem('loom-theme');if(
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="zh">
+    <html lang="zh" suppressHydrationWarning>
       {/* zh-Hans for CJK Simplified — Biome only accepts ISO 639-1 */}
       <head>
         {/* biome-ignore lint/security/noDangerouslySetInnerHtml: needed to land

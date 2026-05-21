@@ -38,6 +38,7 @@ export interface RunNoteVerifyResult {
 
 type DepsOverride = {
   runTaskFn?: RunTaskFn;
+  onPassed?: (artifactId: string) => Promise<void>;
 };
 
 async function defaultRunTaskFn(
@@ -159,6 +160,7 @@ export function buildNoteVerifyHandler(
   deps: DepsOverride = {},
 ): (jobs: Job<NoteVerifyJobData>[]) => Promise<void> {
   const runTaskFn = deps.runTaskFn ?? defaultRunTaskFn;
+  const { onPassed } = deps;
   return async (jobs) => {
     for (const job of jobs) {
       const artifactId = job.data?.artifact_id;
@@ -167,6 +169,9 @@ export function buildNoteVerifyHandler(
         continue;
       }
       const result = await runNoteVerify({ db, artifactId, runTaskFn });
+      if (result.status === 'verified') {
+        await onPassed?.(artifactId);
+      }
       console.log(`[note_verify] ${artifactId} -> ${result.status}`);
     }
   };

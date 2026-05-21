@@ -2,7 +2,7 @@ import { artifact, event, knowledge } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { runNoteVerify } from './note_verify';
+import { buildNoteVerifyHandler, runNoteVerify } from './note_verify';
 
 const NOTE_SECTIONS = [
   {
@@ -231,5 +231,38 @@ describe('runNoteVerify', () => {
 
     const [updated] = await testDb().select().from(artifact).where(eq(artifact.id, 'a1'));
     expect(updated.verification_status).toBe('failed');
+  });
+});
+
+describe('buildNoteVerifyHandler — onPassed callback', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('onPassed fires when verdict=pass', async () => {
+    await seedAtomic({ artifactId: 'a1', knowledgeId: 'k1' });
+    const runTaskFn = vi.fn(async () => ({ text: PASS_OUTPUT }));
+    const onPassed = vi.fn(async (_id: string) => {});
+    const handler = buildNoteVerifyHandler(testDb(), { runTaskFn, onPassed });
+    await handler([{ id: 'job1', data: { artifact_id: 'a1' } } as never]);
+    expect(onPassed).toHaveBeenCalledWith('a1');
+  });
+
+  it('onPassed does NOT fire when verdict=needs_review', async () => {
+    await seedAtomic({ artifactId: 'a1', knowledgeId: 'k1' });
+    const runTaskFn = vi.fn(async () => ({ text: NEEDS_REVIEW_OUTPUT }));
+    const onPassed = vi.fn(async (_id: string) => {});
+    const handler = buildNoteVerifyHandler(testDb(), { runTaskFn, onPassed });
+    await handler([{ id: 'job1', data: { artifact_id: 'a1' } } as never]);
+    expect(onPassed).not.toHaveBeenCalled();
+  });
+
+  it('onPassed does NOT fire when runner throws', async () => {
+    await seedAtomic({ artifactId: 'a1' });
+    const runTaskFn = vi.fn(async () => ({ text: 'not json' }));
+    const onPassed = vi.fn(async (_id: string) => {});
+    const handler = buildNoteVerifyHandler(testDb(), { runTaskFn, onPassed });
+    await expect(handler([{ id: 'job1', data: { artifact_id: 'a1' } } as never])).rejects.toThrow();
+    expect(onPassed).not.toHaveBeenCalled();
   });
 });

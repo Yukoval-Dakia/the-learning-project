@@ -21,7 +21,7 @@ The README still describes the original Phase-1 stack (Vite + React Router + Clo
 - **Next.js 15 App Router** (`app/`), self-hosted on NAS via Docker (sub-0z) — `next dev` for dev, Next standalone build runs in container for prod
 - **Postgres + Drizzle ORM** (`postgresql` dialect, `postgres` driver) — connection from `DATABASE_URL`
 - **R2 / S3-compatible blob** via `@aws-sdk/client-s3` (`src/server/r2.ts`)
-- **AI SDK v6** (`ai` package) + `@ai-sdk/anthropic` — SDK only; runtime is self-hosted Node, not Vercel Functions
+- **Claude Agent SDK** (`@anthropic-ai/claude-agent-sdk`) via xiaomi/mimo Anthropic-compatible endpoint; runtime is self-hosted Node, not Vercel Functions
 - **React 19, Tailwind v4 (CSS-first), Zustand, TanStack Query, Zod, ts-fsrs**
 - **Biome** for lint + format, **Vitest** for tests, **pnpm** package manager
 
