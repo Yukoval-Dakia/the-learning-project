@@ -21,6 +21,7 @@ import { z } from 'zod';
 
 import { PageSpan } from '@/core/schema';
 import { CauseCategory, QuestionKind } from '@/core/schema/business';
+import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
 import { db } from '@/db/client';
 import { knowledge, learning_session, question, question_block } from '@/db/schema';
 import { runTask } from '@/server/ai/runner';
@@ -317,7 +318,17 @@ export async function POST(
           const sourceRow = sourceBlockRows.get(block.block_id);
           if (sourceRow) {
             importedFigures = sourceRow.figures;
-            importedStructured = sourceRow.structured;
+            // Carry `structured` only if `final_prompt_md` still matches what
+            // would be derived from `structured`. If the user edited the prompt
+            // pre-import, structured's prompt_text is stale and would violate
+            // ADR-0002 revision 2026-05-21 ("when structured is non-null,
+            // prompt_md MUST be regenerable from structured"). Drop structured
+            // in that case — a future structured edit must go through the
+            // domain tool path, not bulk import.
+            if (sourceRow.structured) {
+              const derived = structuredToPromptMarkdown(sourceRow.structured);
+              importedStructured = derived === block.final_prompt_md ? sourceRow.structured : null;
+            }
           }
         } else if (block.source_block_ids.length > 0) {
           // virtual card from merge: concat figures, structured=null

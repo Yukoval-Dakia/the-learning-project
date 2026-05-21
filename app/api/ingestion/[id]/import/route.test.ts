@@ -885,7 +885,9 @@ describe('POST /api/ingestion/[id]/import', () => {
     });
     await insertKnowledge(db, 'k1');
 
-    const res = await post(sessionId, makeImportBody());
+    // Body uses final_prompt_md equal to structuredToPromptMarkdown(structured)
+    // (i.e. user did NOT edit the prompt) — structured should carry through.
+    const res = await post(sessionId, makeImportBody({ final_prompt_md: 'What is 2+2?' }));
     expect(res.status).toBe(200);
 
     // The imported question must carry all 3 first-class multimodal fields
@@ -903,6 +905,59 @@ describe('POST /api/ingestion/[id]/import', () => {
     // metadata.prompt_image_refs is still written for legacy reader compat
     const meta = q.metadata as { prompt_image_refs?: string[] } | null;
     expect(meta?.prompt_image_refs).toEqual(['asset_1']);
+  });
+
+  it('M-1: direct import with edited final_prompt_md → structured dropped (ADR-0002 invariant)', async () => {
+    const db = testDb();
+    const { sessionId, sourceDocId } = await setupSession(db);
+
+    // Source block has structured.prompt_text = 'Original prompt'
+    const now = new Date();
+    await db.insert(question_block).values({
+      id: 'block_a',
+      ingestion_session_id: sessionId,
+      source_document_id: sourceDocId,
+      source_asset_ids: ['asset_1'],
+      page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' }],
+      extracted_prompt_md: null,
+      structured: {
+        id: 'q1-stem',
+        role: 'standalone',
+        prompt_text: 'Original prompt',
+      },
+      reference_md: null,
+      wrong_answer_md: null,
+      image_refs: ['asset_1'],
+      figures: [],
+      crop_refs: [],
+      visual_complexity: 'low',
+      extraction_confidence: 0.9,
+      status: 'draft',
+      knowledge_hint: null,
+      merged_from_block_ids: [],
+      imported_question_id: null,
+      imported_attempt_event_id: null,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    await insertKnowledge(db, 'k1');
+
+    // User edited the prompt before import → final_prompt_md differs from
+    // structuredToPromptMarkdown(structured). Per ADR-0002 revision 2026-05-21,
+    // structured must be dropped (cannot guarantee derivation invariant).
+    const res = await post(
+      sessionId,
+      makeImportBody({ final_prompt_md: 'Edited: what is 2+2 really?' }),
+    );
+    expect(res.status).toBe(200);
+
+    const questions = await db.select().from(question);
+    expect(questions).toHaveLength(1);
+    const q = questions[0];
+    expect(q.prompt_md).toBe('Edited: what is 2+2 really?');
+    // structured must be null because final_prompt_md diverged
+    expect(q.structured).toBeNull();
   });
 
   it('M-1: merged virtual card concatenates figures from source rows; structured=null', async () => {

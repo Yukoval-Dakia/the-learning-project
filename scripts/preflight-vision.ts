@@ -109,7 +109,10 @@ async function main(): Promise<void> {
   const visionSupported =
     errorMessage === null &&
     parsedJson !== null &&
-    typeof (parsedJson as { saw_image?: unknown }).saw_image === 'boolean';
+    // Codex P2 review: `saw_image: false` means model explicitly said it could
+    // NOT see the image — that's a FAIL, not just "didn't crash". Require
+    // strict true.
+    (parsedJson as { saw_image?: unknown }).saw_image === true;
 
   const result = {
     timestamp: new Date().toISOString(),
