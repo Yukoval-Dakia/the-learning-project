@@ -31,6 +31,9 @@ tsconfig.tsbuildinfo
 # Claude Code per-user local overrides (project shared settings go in settings.json)
 .claude/settings.local.json
 
+# Per-user local MCP server config (machine-specific tokens / paths)
+.mcp.json
+
 # Subagent worktrees (created by Agent tool with isolation:"worktree")
 .claude/worktrees/
 .playwright-mcp/
