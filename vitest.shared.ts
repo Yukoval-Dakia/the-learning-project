@@ -38,6 +38,7 @@ export const fastTestInclude = [
   'src/server/session/index.test.ts',
   'src/subjects/math/fixtures/index.test.ts',
   'src/subjects/math/fixtures/derivation.test.ts',
+  'src/subjects/math/fixtures/derivation-with-images.test.ts',
   'src/ui/**/*.test.ts',
   'src/ui/**/*.test.tsx',
   'app/api/ai/*/route.test.ts',
