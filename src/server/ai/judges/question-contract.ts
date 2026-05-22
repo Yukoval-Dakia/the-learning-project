@@ -7,11 +7,10 @@ import type { Db } from '@/db/client';
 import type { SubjectProfile } from '@/subjects/profile';
 import { type JudgeKind, judgeRouterV2 } from '.';
 
-const RUNNABLE_ROUTES = new Set<JudgeKind>(['exact', 'keyword', 'semantic']);
+export const RUNNABLE_ROUTES = new Set<JudgeKind>(['exact', 'keyword', 'semantic', 'steps']);
 
 export const FUTURE_JUDGE_ROUTES = {
   rubric: 'future: rubric judge needs weighted criteria runner and score semantics',
-  steps: 'future: steps judge needs step-level evidence and math/proof policy',
   multimodal_direct: 'future: multimodal answer judging needs image/audio inputs',
   ai_flexible: 'future: fallback LLM judge needs stronger audit and cost policy',
 } as const satisfies Record<string, string>;
@@ -52,6 +51,17 @@ export interface JudgeAnswerParams {
   db: Db;
   question: JudgeQuestionRow;
   answer_md: string;
+  /**
+   * M2.2 fix: student-submitted answer images (NOT question.image_refs which
+   * are prompt figures). For steps@1 derivation judging, these are photos
+   * of the learner's handwritten work. Spec §7.1 — at least one of
+   * { answer_md, student_image_refs } non-empty; runtime asserted by judge.
+   *
+   * Default `undefined` ⇒ treated as `[]`. M2.3 UI populates this from the
+   * answer submission payload; pre-M2.3 callers (no image upload UI yet)
+   * leave it unset.
+   */
+  student_image_refs?: string[];
   subjectProfile: SubjectProfile;
   runTaskFn?: (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
 }
@@ -122,7 +132,7 @@ export function resolveQuestionJudgeRoute(
   if (kind === 'computation') return keywords.length > 0 ? 'keyword' : 'semantic';
   // M2.1 (2026-05-22): derivation always routes via steps@1 for profiles that
   // declare it (math); other profiles fall back to semantic if preferred, else
-  // keyword. judgeAnswer's RUNNABLE_ROUTES gates 'steps' at runtime until M2.2.
+  // keyword. M2.2 made 'steps' runnable via runStepsJudge (vision LLM call).
   if (kind === 'derivation') {
     if (isPreferred(subjectProfile, 'steps')) return 'steps';
     return isPreferred(subjectProfile, 'semantic') ? 'semantic' : 'keyword';
@@ -271,6 +281,20 @@ export async function judgeAnswer(params: JudgeAnswerParams): Promise<JudgeAnswe
 
   if (route === 'semantic') {
     return { route, result: await runSemanticJudge(params) };
+  }
+  if (route === 'steps') {
+    const { runStepsJudge } = await import('./steps-judge');
+    return {
+      route,
+      result: await runStepsJudge({
+        db: params.db,
+        question: params.question,
+        answer_md: params.answer_md,
+        student_image_refs: params.student_image_refs,
+        subjectProfile: params.subjectProfile,
+        runTaskFn: params.runTaskFn,
+      }),
+    };
   }
 
   const result = judgeRouterV2({

@@ -181,6 +181,31 @@ function buildSemanticJudgePrompt(profile: SubjectProfile): string {
 禁止：输出 JSON 之外的文字、给错因分类、把不确定答案强行判错。`;
 }
 
+function buildStepsJudgePrompt(profile: SubjectProfile): string {
+  return `你是${profile.displayName}视觉判分器。输入 { prompt_md, reference_solution: { expected_signals, final_answer, answer_equivalents }, student_image_refs（学生答题的 0..N 张图片已附在 user message 中；不是题面 prompt 图）, student_text_steps?, student_final_answer_text?, step_weight }。
+科目上下文：${profile.displayName}。${profile.languageStyle}
+证据要求：${profile.grounding.requirement}
+不确定性策略：${profile.grounding.uncertaintyPolicy}
+
+任务：
+1. 从图片 / text_steps / final_answer_text 提取学生的实际作答内容（OCR + 结构理解隐式完成）
+2. 对照 reference_solution.expected_signals 逐项判 verdict（correct / partial / wrong / skipped）—— signal_verdicts.length 必须等于 expected_signals.length
+3. 比对 final_answer：若学生 final_answer_text 给出，做 deterministic 比对（caller 已用 answer_equivalents 处理加速分支，本任务总是会被调一次；你不需要再考虑 answer_equivalents）；若仅图，从图提取并比对
+4. 输出 extracted_steps（自由切分学生步骤，给学习者反馈用，length 不约束）+ extracted_final_answer（图里答案文本化，evidence 用）
+
+严格 JSON 输出（不带 markdown 代码块包裹），shape 名 StepsLlmOutput：
+{"extracted_steps":[{"idx":0,"content":"...","verdict":"correct|partial|wrong|skipped","comment":"..."}],"extracted_final_answer":"...","signal_verdicts":[{"signal_idx":0,"verdict":"correct|partial|wrong|skipped","comment":"..."}],"final_answer_match":true|false,"final_answer_comment":"...","confidence":0.0-1.0}
+
+要点：
+- verdict 4 选 1；signal_verdicts 顺序必须与 expected_signals 严格对齐（按 index）
+- final_answer_match 是 boolean；caller 用它和 signal_verdicts 加权合成 partial credit
+- extracted_final_answer 即使图模糊也尽量给出，给学生 evidence 看
+- 不确定时 verdict='partial' + 写 comment 说明原因，不要强行判 correct/wrong
+- ${profile.grounding.uncertaintyPolicy}
+- confidence 反映你判分时的把握，0.5 表示模棱两可
+禁止：输出 JSON 之外的文字、verdict 用非合法值、signal_verdicts 长度与 expected_signals 不等。`;
+}
+
 function buildVariantGenPrompt(profile: SubjectProfile): string {
   return `你是错题变式题作者。输入 { original_question: { id, prompt_md, reference_md, knowledge_ids, kind }, attempt: { wrong_answer_md }, cause: { primary_category, analysis_md }, depth }（depth 是原题代数：0=原题，1=一代变式；输入 depth≥2 时不会调用本任务）。
 科目上下文：${profile.displayName}。${profile.languageStyle}
@@ -302,6 +327,8 @@ export function getTaskSystemPrompt(
       return buildEmbeddedCheckGeneratePrompt(profile);
     case 'SemanticJudgeTask':
       return buildSemanticJudgePrompt(profile);
+    case 'StepsJudgeTask':
+      return buildStepsJudgePrompt(profile);
     case 'VariantGenTask':
       return buildVariantGenPrompt(profile);
     case 'TeachingTurnTask':

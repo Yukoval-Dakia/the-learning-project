@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { getDefaultRegistry } from '@/core/capability/judges';
-import { FUTURE_JUDGE_ROUTES } from '@/server/ai/judges/question-contract';
+import { FUTURE_JUDGE_ROUTES, RUNNABLE_ROUTES } from '@/server/ai/judges/question-contract';
 import { subjectProfiles } from '@/subjects/profile';
 import { describe, expect, it } from 'vitest';
 
@@ -37,7 +37,9 @@ async function walkFiles(root: string): Promise<string[]> {
 describe('Judge v2 light gap-prevention audit', () => {
   it('subject judgeCapabilities resolve and future preferredRoutes are explicitly allowlisted', () => {
     const registry = getDefaultRegistry();
-    const runnable = new Set(['exact', 'keyword', 'semantic']);
+    // M2.2 (2026-05-22): use canonical RUNNABLE_ROUTES export — adding routes
+    // (e.g. 'steps') no longer requires updating this audit's hardcoded set.
+    const runnable = RUNNABLE_ROUTES;
     for (const profile of Object.values(subjectProfiles)) {
       for (const capability of profile.judgeCapabilities) {
         expect(

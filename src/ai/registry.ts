@@ -227,6 +227,33 @@ export const tasks = {
     systemPrompt:
       '你是答案判分器。输入 { question, answer }，按 rubric_json.required_points 语义判分。严格输出 SemanticJudgeTask JSON。',
   },
+  StepsJudgeTask: {
+    kind: 'StepsJudgeTask',
+    description:
+      'Math derivation vision-aware step judging — single vision LLM call with structured output (StepsLlmOutput)',
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5',
+    // MVP: no fallback. If mimo-v2.5 has transient outage, runStepsJudge
+    // returns 'unsupported' (see steps-judge.ts catch path) — caller surfaces
+    // appealable result; user retries later. M2.3 evaluates adding
+    // mimo-v2.5-pro as fallback after volume baseline.
+    fallbackChain: [],
+    // vision call latency: M0 preflight 7.6s for trivial; derivation prompts will run longer
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 90_000 },
+    needsToolCall: false,
+    isMultimodal: true,
+    // invocation intentionally omitted (defaults to 'auto'): called from
+    // question-contract.ts runStepsJudge on every derivation grading attempt.
+    // Vision sibling tasks (VisionExtractTask*) are 'manual_rescue_only' because
+    // a human initiates them; this judge runs as part of the grading flow.
+    allowedTools: [],
+    // DEPRECATED (2026-05-22 M1): do not edit. Runtime renders via
+    // getTaskSystemPrompt(task, profile) in src/ai/task-prompts.ts; this
+    // string is kept only as type-required fallback. New tasks MUST add a
+    // builder in task-prompts.ts.
+    systemPrompt:
+      '你是数学题视觉判分器（vision LLM）。输入：题面 + reference_solution (expected_signals + final_answer) + 学生图/文本步骤/文本 final_answer。严格 JSON 输出 StepsLlmOutput。',
+  },
   VariantGenTask: {
     kind: 'VariantGenTask',
     description:
