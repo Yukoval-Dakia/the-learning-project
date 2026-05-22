@@ -233,11 +233,19 @@ export const tasks = {
       'Math derivation vision-aware step judging — single vision LLM call with structured output (StepsLlmOutput)',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5',
+    // MVP: no fallback. If mimo-v2.5 has transient outage, runStepsJudge
+    // returns 'unsupported' (see steps-judge.ts catch path) — caller surfaces
+    // appealable result; user retries later. M2.3 evaluates adding
+    // mimo-v2.5-pro as fallback after volume baseline.
     fallbackChain: [],
     // vision call latency: M0 preflight 7.6s for trivial; derivation prompts will run longer
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 90_000 },
     needsToolCall: false,
     isMultimodal: true,
+    // invocation intentionally omitted (defaults to 'auto'): called from
+    // question-contract.ts runStepsJudge on every derivation grading attempt.
+    // Vision sibling tasks (VisionExtractTask*) are 'manual_rescue_only' because
+    // a human initiates them; this judge runs as part of the grading flow.
     allowedTools: [],
     // DEPRECATED (2026-05-22 M1): do not edit. Runtime renders via
     // getTaskSystemPrompt(task, profile) in src/ai/task-prompts.ts; this

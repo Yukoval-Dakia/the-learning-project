@@ -190,7 +190,7 @@ function buildStepsJudgePrompt(profile: SubjectProfile): string {
 任务：
 1. 从图片 / text_steps / final_answer_text 提取学生的实际作答内容（OCR + 结构理解隐式完成）
 2. 对照 reference_solution.expected_signals 逐项判 verdict（correct / partial / wrong / skipped）—— signal_verdicts.length 必须等于 expected_signals.length
-3. 比对 final_answer：若学生 final_answer_text 给出，做 deterministic 比对（caller 已处理加速分支，本任务总是会被调一次）；若仅图，从图提取并比对
+3. 比对 final_answer：若学生 final_answer_text 给出，做 deterministic 比对（caller 已用 answer_equivalents 处理加速分支，本任务总是会被调一次；你不需要再考虑 answer_equivalents）；若仅图，从图提取并比对
 4. 输出 extracted_steps（自由切分学生步骤，给学习者反馈用，length 不约束）+ extracted_final_answer（图里答案文本化，evidence 用）
 
 严格 JSON 输出（不带 markdown 代码块包裹），shape 名 StepsLlmOutput：
