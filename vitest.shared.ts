@@ -37,6 +37,7 @@ export const fastTestInclude = [
   'src/server/session/guards.test.ts',
   'src/server/session/index.test.ts',
   'src/subjects/math/fixtures/index.test.ts',
+  'src/subjects/math/fixtures/derivation.test.ts',
   'src/ui/**/*.test.ts',
   'app/api/ai/*/route.test.ts',
   'app/api/study-log/route.test.ts',
