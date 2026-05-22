@@ -136,6 +136,15 @@ Standard triage labels are used. See `docs/agents/triage-labels.md`.
 
 Single-context layout with CONTEXT.md and docs/adr/ at repo root. See `docs/agents/domain.md`.
 
+### Codebase search (auggie)
+
+User-level MCP server `auggie`（`~/.claude.json` 顶层 `mcpServers`，命令 `auggie --mcp`）提供 `mcp__auggie__codebase-retrieval` —— 跨文件语义检索，召回质量优于 grep。SessionStart hook (`.claude/hooks/auggie-preload.sh`) 会注入提示让 agent 用 ToolSearch 把 schema 拉进主工具列表。
+
+使用准则：
+- 跨文件 / 不知道目标文件在哪 / 想了解某 feature 整体实现 → 优先 `mcp__auggie__codebase-retrieval`。
+- 已知确切符号 / 已知文件 / 想列举所有引用 → 仍用 `grep` 或 `Read`，不要走 auggie。
+- 工具默认 deferred，第一次用前先 `ToolSearch({ query: "select:mcp__auggie__codebase-retrieval" })` 加载 schema。
+
 ## Known Limitations
 
 ### Settings File Edits

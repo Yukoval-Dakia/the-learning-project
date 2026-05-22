@@ -10,6 +10,7 @@
 // 同一 LearningItem 一次会话；mounted=open，unmounted=close。父组件控制开关。
 
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
+import { MathMarkdown } from '@/ui/lib/math-markdown';
 import {
   type SlimSubjectProfile,
   resolveSubjectRenderModel,
@@ -194,7 +195,19 @@ export function TeachingDrawer({
                     <span>{m.role === 'agent' ? 'agent · TeachingTurnTask' : 'user · self'}</span>
                     {m.turn_kind && <span>· {TURN_KIND_LABEL[m.turn_kind]}</span>}
                   </div>
-                  <div {...messageBodyProps}>{m.text_md}</div>
+                  <MathMarkdown
+                    notation={
+                      (subjectModel.renderConfig.notation ?? undefined) as
+                        | 'latex'
+                        | 'wenyan'
+                        | 'plaintext'
+                        | 'code'
+                        | undefined
+                    }
+                    {...messageBodyProps}
+                  >
+                    {m.text_md}
+                  </MathMarkdown>
                 </div>
               ))}
               {turnM.isPending && (
