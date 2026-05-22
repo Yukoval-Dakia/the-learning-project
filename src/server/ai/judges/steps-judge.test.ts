@@ -242,4 +242,19 @@ describe('runStepsJudge — error paths', () => {
     expect(result.coarse_outcome).toBe('unsupported');
     expect(result.feedback_md).toContain('LLM call failed');
   });
+
+  it('returns unsupported when imageFetchFn throws', async () => {
+    const result = await runStepsJudge({
+      db: mockDb,
+      question: makeDerivationRow({ image_refs: ['asset-1'] }),
+      answer_md: 'foo',
+      subjectProfile: mathProfile,
+      runTaskFn: async () => ({ text: '{}' }),
+      imageFetchFn: async () => {
+        throw new Error('R2 unavailable');
+      },
+    });
+    expect(result.coarse_outcome).toBe('unsupported');
+    expect(result.feedback_md).toContain('image fetch failed');
+  });
 });
