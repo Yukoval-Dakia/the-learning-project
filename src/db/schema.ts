@@ -341,6 +341,31 @@ export const completion_evidence = pgTable('completion_evidence', {
 // event(action='propose', subject_kind='knowledge') (Lane B ProposeKnowledge)
 // plus experimental:knowledge_<mutation> namespace events.
 
+export const ai_task_runs = pgTable(
+  'ai_task_runs',
+  {
+    id: text('id').primaryKey(),
+    task_kind: text('task_kind').notNull(),
+    provider: text('provider').notNull(),
+    model: text('model').notNull(),
+    input_hash: text('input_hash').notNull(),
+    status: text('status').notNull().default('running'),
+    finish_reason: text('finish_reason'),
+    usage_json: jsonb('usage_json')
+      .$type<{ inputTokens: number; outputTokens: number }>()
+      .notNull()
+      .default({ inputTokens: 0, outputTokens: 0 }),
+    cost_usd: real('cost_usd'),
+    error_message: text('error_message'),
+    started_at: timestamp('started_at', { withTimezone: true }).notNull(),
+    finished_at: timestamp('finished_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('ai_task_runs_task_kind_idx').on(t.task_kind, t.started_at.desc()),
+    index('ai_task_runs_status_idx').on(t.status, t.started_at.desc()),
+  ],
+);
+
 export const tool_call_log = pgTable('tool_call_log', {
   id: text('id').primaryKey(),
   task_run_id: text('task_run_id').notNull(),
@@ -354,18 +379,23 @@ export const tool_call_log = pgTable('tool_call_log', {
   occurred_at: timestamp('occurred_at', { withTimezone: true }).notNull(),
 });
 
-export const cost_ledger = pgTable('cost_ledger', {
-  id: text('id').primaryKey(),
-  task_kind: text('task_kind').notNull(),
-  provider: text('provider').notNull(),
-  model: text('model').notNull(),
-  cost: real('cost').notNull(),
-  tokens_in: integer('tokens_in').notNull(),
-  tokens_out: integer('tokens_out').notNull(),
-  outcome: text('outcome').notNull().default('success'),
-  pgboss_job_id: text('pgboss_job_id'),
-  occurred_at: timestamp('occurred_at', { withTimezone: true }).notNull(),
-});
+export const cost_ledger = pgTable(
+  'cost_ledger',
+  {
+    id: text('id').primaryKey(),
+    task_run_id: text('task_run_id'),
+    task_kind: text('task_kind').notNull(),
+    provider: text('provider').notNull(),
+    model: text('model').notNull(),
+    cost: real('cost').notNull(),
+    tokens_in: integer('tokens_in').notNull(),
+    tokens_out: integer('tokens_out').notNull(),
+    outcome: text('outcome').notNull().default('success'),
+    pgboss_job_id: text('pgboss_job_id'),
+    occurred_at: timestamp('occurred_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [index('cost_ledger_task_run_idx').on(t.task_run_id)],
+);
 
 // pg-boss 之上的"业务事件流"：每次状态迁移同事务 INSERT 一行 + pg_notify。
 // SSE replay 根据 (business_table, business_id, id) 索引查 since-id 增量事件。

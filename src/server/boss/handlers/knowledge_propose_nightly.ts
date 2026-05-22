@@ -105,10 +105,10 @@ async function defaultRunTaskFn(
   kind: string,
   input: unknown,
   ctx: unknown,
-): Promise<{ text: string }> {
+): Promise<Awaited<ReturnType<RunTaskFn>>> {
   const { runTask } = await import('@/server/ai/runner');
   const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
-  return { text: result.text };
+  return result;
 }
 
 /**

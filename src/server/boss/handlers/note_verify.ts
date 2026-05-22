@@ -11,6 +11,7 @@ import type { Job } from 'pg-boss';
 import { NoteVerificationResult, type NoteVerificationResultT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
+import { type TaskTextRunFn, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { writeEvent } from '@/server/events/queries';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
@@ -18,7 +19,7 @@ export interface NoteVerifyJobData {
   artifact_id: string;
 }
 
-export type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
+export type RunTaskFn = TaskTextRunFn;
 
 export interface RunNoteVerifyParams {
   db: Db;
@@ -45,10 +46,10 @@ async function defaultRunTaskFn(
   kind: string,
   input: unknown,
   ctx: unknown,
-): Promise<{ text: string }> {
+): Promise<Awaited<ReturnType<RunTaskFn>>> {
   const { runTask } = await import('@/server/ai/runner');
   const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
-  return { text: result.text };
+  return result;
 }
 
 function parseVerificationOutput(text: string): NoteVerificationResultT {
@@ -121,10 +122,7 @@ export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNot
       .set({
         verification_status: status,
         verification_summary: parsed as never,
-        verified_by: {
-          by: 'ai',
-          task_kind: 'NoteVerifyTask',
-        } as never,
+        verified_by: aiAgentRef('NoteVerifyTask', result) as never,
         updated_at: new Date(),
       })
       .where(eq(artifact.id, artifactId));
@@ -140,8 +138,8 @@ export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNot
       outcome: parsed.verdict === 'pass' ? 'success' : 'partial',
       payload: parsed,
       caused_by_event_id: null,
-      task_run_id: null,
-      cost_micro_usd: null,
+      task_run_id: result.task_run_id ?? null,
+      cost_micro_usd: costUsdToMicroUsd(result.cost_usd),
       created_at: new Date(),
     });
 

@@ -83,6 +83,14 @@ function validateJudgeCapabilities(
       );
     }
   }
+
+  for (const route of profile.judgePolicy.preferredRoutes) {
+    if (registry.resolveJudge(route) && !seenCapabilities.has(route)) {
+      errors.push(
+        `[${profile.id}] judgePolicy.preferredRoutes includes registry-backed route '${route}' but judgeCapabilities does not declare it`,
+      );
+    }
+  }
 }
 
 export function validateProfile(

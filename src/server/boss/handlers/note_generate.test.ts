@@ -132,6 +132,7 @@ describe('runNoteGenerate', () => {
     await seedAtomic({ artifactId: 'a1', knowledgeId: 'k1' });
     const runTaskFn = vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({
       text: VALID_SECTIONS,
+      task_run_id: 'tr_note_generate_1',
     }));
     const result = await runNoteGenerate({
       db: testDb(),
@@ -147,6 +148,9 @@ describe('runNoteGenerate', () => {
     expect(updated.verification_status).toBe('queued');
     expect(updated.sections).toHaveLength(5);
     expect((updated.sections as Array<{ kind: string }>)[0].kind).toBe('definition');
+    expect((updated.generated_by as { task_run_id?: string } | null)?.task_run_id).toBe(
+      'tr_note_generate_1',
+    );
   });
 
   it('buildNoteGenerateHandler calls onReady after ready generation', async () => {

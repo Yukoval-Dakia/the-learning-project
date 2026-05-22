@@ -11,6 +11,7 @@ import { newId } from '@/core/ids';
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
 import type { Db } from '@/db/client';
 import { event, knowledge_edge } from '@/db/schema';
+import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { writeEvent } from '@/server/events/queries';
 import type { FailureAttempt } from '@/server/events/queries';
 import type { SubjectProfile } from '@/subjects/profile';
@@ -33,7 +34,7 @@ const EdgeOutputSchema = z.object({
 
 export type EdgeProposeOutput = z.infer<typeof EdgeOutputSchema>;
 
-export type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
+export type RunTaskFn = TaskTextRunFn;
 
 export interface RunEdgeProposeAndWriteParams {
   db: Db;
@@ -149,8 +150,8 @@ export async function runEdgeProposeAndWrite(
           reasoning: p.reasoning,
         },
         caused_by_event_id: null,
-        task_run_id: null,
-        cost_micro_usd: null,
+        task_run_id: result.task_run_id ?? null,
+        cost_micro_usd: costUsdToMicroUsd(result.cost_usd),
         created_at: new Date(),
       });
       // 同一 batch 内防同向同型重复

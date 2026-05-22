@@ -96,6 +96,23 @@ describe('validateProfile', () => {
     expect(result.errors.some((error) => error.includes('semantic'))).toBe(true);
   });
 
+  it('fails when a registry-backed preferred route is missing from judgeCapabilities', () => {
+    const result = validateProfile(
+      makeProfile({
+        judgePolicy: { preferredRoutes: ['exact', 'semantic'], notes: [] },
+        judgeCapabilities: ['exact'],
+      }),
+      makeRegistry('exact', 'semantic'),
+    );
+
+    expect(result.valid).toBe(false);
+    expect(
+      result.errors.some(
+        (error) => error.includes('preferredRoutes') && error.includes('semantic'),
+      ),
+    ).toBe(true);
+  });
+
   it('fails when causeCategories has duplicate ids', () => {
     const result = validateProfile(
       makeProfile({

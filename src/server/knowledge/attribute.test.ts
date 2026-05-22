@@ -55,13 +55,13 @@ describe('parseAttributionOutput', () => {
     expect(out.analysis_md).toBe('r');
   });
 
-  it('does not accept non-profile universal-looking causes for math', () => {
+  it('accepts math profile time_pressure after cause taxonomy closeout', () => {
     const text =
-      '{"primary_category":"time_pressure","secondary_categories":["unit_error","method"],"analysis_md":"时间压力不是 math profile 的错因类目","confidence":0.5}';
+      '{"primary_category":"time_pressure","secondary_categories":["unit_error","method"],"analysis_md":"限时条件下节奏失衡","confidence":0.5}';
     const out = parseAttributionOutput(text, resolveSubjectProfile('math'));
-    expect(out.primary_category).toBe('other');
+    expect(out.primary_category).toBe('time_pressure');
     expect(out.secondary_categories).toEqual(['unit_error', 'method']);
-    expect(out.analysis_md).toBe('时间压力不是 math profile 的错因类目');
+    expect(out.analysis_md).toBe('限时条件下节奏失衡');
   });
 
   it('throws when confidence out of range', () => {
@@ -151,6 +151,32 @@ describe('runAttributionAndWriteJudgeEvent', () => {
     expect(payload.cause.primary_category).toBe('concept');
     expect(payload.cause.analysis_md).toBe('why');
     expect(payload.cause.confidence).toBe(0.8);
+  });
+
+  it('copies task provenance from AttributionTask onto the judge event', async () => {
+    const db = testDb();
+    const attemptId = 'attempt_e_provenance';
+    await insertAttemptEvent({ attemptId, questionId: 'q_provenance' });
+    const fakeRunTask = async () => ({
+      text: '{"primary_category":"concept","secondary_categories":[],"analysis_md":"why","confidence":0.8}',
+      task_run_id: 'tr_attr_1',
+      cost_usd: 0.0042,
+    });
+
+    await runAttributionAndWriteJudgeEvent({
+      db,
+      attemptEventId: attemptId,
+      input: validInput,
+      runTaskFn: fakeRunTask,
+    });
+
+    const judgeRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'judge'), eq(event.caused_by_event_id, attemptId)));
+    expect(judgeRows).toHaveLength(1);
+    expect(judgeRows[0].task_run_id).toBe('tr_attr_1');
+    expect(judgeRows[0].cost_micro_usd).toBe(4200);
   });
 
   it('writes math-specific attribution causes when subjectProfile is math', async () => {

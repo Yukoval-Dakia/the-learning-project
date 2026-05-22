@@ -84,6 +84,32 @@ async function seedJudgeForAttempt(attemptId: string, category: string, domain =
   });
 }
 
+async function seedRawJudgeForAttempt(attemptId: string, category: string) {
+  await writeEvent(testDb(), {
+    id: createId(),
+    session_id: null,
+    actor_kind: 'agent',
+    actor_ref: 'attribution',
+    action: 'judge',
+    subject_kind: 'event',
+    subject_id: attemptId,
+    outcome: 'success',
+    payload: {
+      cause: {
+        primary_category: category,
+        secondary_categories: [],
+        analysis_md: '...',
+        confidence: 0.8,
+      },
+      referenced_knowledge_ids: ['k_xuci'],
+    },
+    caused_by_event_id: attemptId,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: new Date(),
+  });
+}
+
 async function seedKnowledge(domain = 'wenyan') {
   await testDb().insert(knowledge).values({
     id: 'k_xuci',
@@ -262,6 +288,32 @@ describe('runVariantGen', () => {
       cause?: { primary_category?: string };
     };
     expect(input.cause?.primary_category).toBe('unit_error');
+  });
+
+  it('uses the subject profile, not a global skip list, for time_pressure variants', async () => {
+    const db = testDb();
+    await seedKnowledge('math');
+    await seedQuestion({ id: 'q1' });
+    const attemptId = createId();
+    await seedFailureAttempt(attemptId, 'q1');
+    await seedRawJudgeForAttempt(attemptId, 'time_pressure');
+
+    const runTaskFn = vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({
+      text: JSON.stringify({
+        prompt_md: '限时完成同类计算，先写关键步骤再代入。',
+        reference_md: '在限定时间内完成核心步骤并给出答案。',
+        difficulty: 2,
+        reasoning: 'math profile treats time pressure as targetable pacing practice.',
+      }),
+    }));
+
+    const result = await runVariantGen({ db, attemptEventId: attemptId, runTaskFn });
+
+    expect(result.status).toBe('generated');
+    const input = runTaskFn.mock.calls[0]?.[1] as {
+      cause?: { primary_category?: string };
+    };
+    expect(input.cause?.primary_category).toBe('time_pressure');
   });
 
   it('returns skipped:already_has_variant on re-run (idempotency)', async () => {

@@ -12,6 +12,7 @@
 import { newId } from '@/core/ids';
 import { CauseSchema, validateCauseAgainstProfile } from '@/core/schema/business';
 import type { Db } from '@/db/client';
+import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { type SubjectProfile, defaultSubjectProfile } from '@/subjects/profile';
 import { z } from 'zod';
 import { getJudgeForAttempt, writeEvent } from '../events/queries';
@@ -58,7 +59,7 @@ export interface RunAttributionAndWriteJudgeEventParams {
   db: Db;
   attemptEventId: string; // was mistakeId + expectedVersion
   input: AttributionInput;
-  runTaskFn: (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
+  runTaskFn: TaskTextRunFn;
   env?: unknown;
   subjectProfile?: SubjectProfile;
   /**
@@ -121,8 +122,8 @@ export async function runAttributionAndWriteJudgeEvent(
         referenced_knowledge_ids: params.referencedKnowledgeIds ?? [],
       },
       caused_by_event_id: params.attemptEventId,
-      task_run_id: null,
-      cost_micro_usd: null,
+      task_run_id: result.task_run_id ?? null,
+      cost_micro_usd: costUsdToMicroUsd(result.cost_usd),
       created_at: new Date(),
     });
   } catch (err) {

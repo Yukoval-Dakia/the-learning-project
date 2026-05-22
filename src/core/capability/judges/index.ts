@@ -1,12 +1,14 @@
 import { CapabilityRegistry } from '../registry';
 import { exactJudgeCapability } from './exact';
 import { keywordJudgeCapability } from './keyword';
+import { semanticJudgeCapability } from './semantic';
 import { stepsV1Capability } from './steps';
 
 export function createDefaultRegistry(): CapabilityRegistry {
   const registry = new CapabilityRegistry();
   registry.registerJudge(exactJudgeCapability);
   registry.registerJudge(keywordJudgeCapability);
+  registry.registerJudge(semanticJudgeCapability);
   // M2.1 (2026-05-22): steps@1 skeleton — run() returns 'unsupported' until
   // M2.2 wires the vision LLM call. Registration is required so
   // mathProfile.judgeCapabilities = [..., 'steps'] passes validateProfile.
@@ -25,4 +27,5 @@ export function getDefaultRegistry(): CapabilityRegistry {
 
 export { exactJudgeCapability } from './exact';
 export { keywordJudgeCapability } from './keyword';
+export { semanticJudgeCapability } from './semantic';
 export { stepsV1Capability } from './steps';

@@ -37,6 +37,7 @@ const ALL_TABLES = [
   'source_document',
   'source_asset',
   'knowledge',
+  'ai_task_runs',
   'tool_call_log',
   'cost_ledger',
 ] as const;
