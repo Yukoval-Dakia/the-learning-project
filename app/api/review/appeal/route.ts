@@ -1,5 +1,6 @@
 import { db } from '@/db/client';
 import { event } from '@/db/schema';
+import { writeEvent } from '@/server/events/queries';
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { type NextRequest, NextResponse } from 'next/server';
@@ -50,9 +51,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'caused_by_must_be_judge_or_attempt' }, { status: 400 });
   }
 
-  const appealEventId = createId();
-  await db.insert(event).values({
-    id: appealEventId,
+  // ADR-0005 single-owner: all event inserts go through writeEvent
+  // (which calls parseEvent() against the experimental:* schema and
+  // throws on shape mismatch).
+  const appealEventId = await writeEvent(db, {
+    id: createId(),
     session_id: judgeEvent.session_id,
     actor_kind: 'user',
     actor_ref: 'self',
