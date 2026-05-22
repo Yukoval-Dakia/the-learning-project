@@ -78,7 +78,39 @@
 
 P-1 评估 P2 实现路径，**不引依赖**。决策推迟到 P2 plan 启动时由 user / agent 在 P2 task 1 确认。
 
-<填入 mathjs 评估表，Task 3 跑完时更新>
+### Option A: mathjs unit 库（倾向推荐）
+
+| 项 | 值 |
+|---|---|
+| npm package | `mathjs@15.2.0`（latest published 2026-04-07） |
+| 当前是否引入 | ❌ 未引（pre-flight `jq '.dependencies + .devDependencies' package.json` 验证；只有 `remark-math@6` 是 KaTeX 渲染相关） |
+| Unpacked size | 8 MB（latest tarball；偏大） |
+| License | Apache-2.0 |
+| Repository | github.com/josdejong/mathjs（active，最近 release 2026-04-07，距今约 1.5 个月） |
+| Unit API smoke | `math.unit('30 km/h').to('m/s').toNumber()` → 8.333... |
+| Bundle bloat 风险 | **server-only 路径**（unit judge 不在 client bundle）；8 MB 会进 Next standalone build / Docker image，P2 测一次 build size diff |
+| Sub-module 可能性 | mathjs 支持 ES module + tree-shake；P2 evaluate `import { unit } from 'mathjs'` 是否能只 pull unit 子模块降低 footprint |
+| 中文单位风险 | mathjs 不支持 "米/秒"、"公里" 等中文 → 需要 LLM fallback 预处理（spec §3 P2 #2 已规划，与库选型正交） |
+
+### Option B: 自写 SI base-7 量纲分析
+
+| 项 | 值 |
+|---|---|
+| 思路 | 7 维向量 `(M, L, T, I, Θ, N, J)` + 有理数指数；解析器把 `"30 km/h"` → `{ value: 30, base: 'm/s', mult: 1000/3600 }` |
+| 工作量估算 | ~2-3 day（接近 P2 整 phase 预算 50%） |
+| 维护成本 | 单位别名 / SI prefix / 复合单位的覆盖 long tail；命中率短期难到 90%+ |
+| 优势 | 0 依赖；TypeScript 类型严格；可控 |
+| 风险 | 工作量挤占 P2 核心 deliverable（4 错误路径 score 合成）；自写解析器命中率比 mathjs 难做到等价 |
+
+### Recommendation for P2
+
+倾向 **Option A（mathjs）**，理由：
+1. Deterministic accelerator 主路径"包装现成 API"工作量远小于"实现量纲库"
+2. LLM fallback 必须做（中文单位 / 复合形式），与库选型正交
+3. Option B 的 2-3 day 工作量挤占 P2 核心 deliverable（4 错误路径 score 合成 + LLM fallback mock 测试）
+4. 8 MB 是 server-only 影响 + Next standalone build 已经接受 Postgres / SDK 等大依赖，相对增量可控
+
+**Final decision** 在 P2 plan task 1 由 user / agent 确认；触发回退条件：Option A 实测 Next standalone build size 增 > 10 MB（含 transitive deps）/ 或 P2 启动时 mathjs > 6 个月无 release / 或 unit 模块 tree-shake 不可行（必须打全包）。
 
 ---
 
