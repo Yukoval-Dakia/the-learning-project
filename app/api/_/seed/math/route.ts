@@ -2,8 +2,10 @@ import { db } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
 import { errorResponse } from '@/server/http/errors';
 import { loadMathFixtures } from '@/subjects/math/fixtures';
+import { loadMathDerivationFixtures } from '@/subjects/math/fixtures/derivation';
 /**
- * Dev / bootstrap endpoint — seed 10 math fixture questions for M0 e2e smoke.
+ * Dev / bootstrap endpoint — seed 10 math fixture questions (choice/fill_blank)
+ * + 5 derivation fixture questions for M2.2 smoke.
  *
  * Idempotent: skips questions whose metadata.fixture_ref is already present.
  * Also ensures a single placeholder knowledge node 'k-math-seed-root' (math
@@ -12,6 +14,7 @@ import { loadMathFixtures } from '@/subjects/math/fixtures';
  * 调用：`curl -X POST -H "x-internal-token: $TOKEN" http://localhost:3000/api/_/seed/math`
  *
  * See: docs/superpowers/plans/2026-05-21-math-mvp-m-1-m0.md Task 12.
+ *      M2.2 Task 7 extends with derivation fixtures.
  */
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
@@ -82,7 +85,41 @@ export async function POST(_req: Request): Promise<Response> {
       created.push(id);
     }
 
-    return Response.json({ created, skipped, total: fixtures.length });
+    // --- derivation fixtures (M2.2 Task 7) ---
+    const derivationFixtures = loadMathDerivationFixtures();
+    for (const item of derivationFixtures) {
+      if (seenRefs.has(item.ref)) {
+        skipped.push(item.ref);
+        continue;
+      }
+      const id = createId();
+      await db.insert(question).values({
+        id,
+        kind: item.kind,
+        prompt_md: item.prompt_md,
+        reference_md: item.reference_md,
+        choices_md: null,
+        rubric_json: item.rubric_json,
+        knowledge_ids: [ROOT_KNOWLEDGE_ID],
+        difficulty: item.difficulty,
+        source: 'math_fixture',
+        variant_depth: 0,
+        figures: [],
+        image_refs: [],
+        structured: null,
+        metadata: { fixture_ref: item.ref, knowledge_hint: item.knowledge_hint },
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      });
+      created.push(id);
+    }
+
+    return Response.json({
+      created,
+      skipped,
+      total: fixtures.length + derivationFixtures.length,
+    });
   } catch (err) {
     return errorResponse(err);
   }
