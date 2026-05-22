@@ -84,6 +84,9 @@ export function EmbeddedCheckSection({ status, questions, notation }: EmbeddedCh
     try {
       const result = await apiJson<AttemptResult>('/api/embedded-check/attempt', {
         method: 'POST',
+        // M3 closeout (2026-05-22): canonical UI→API contract field name.
+        // /api/embedded-check/attempt expects `question_id`; renaming would
+        // require coordinated client+server change. NOT ActivityRef legacy.
         body: JSON.stringify({ question_id: question.id, answer_md: answer }),
       });
       setFeedback((prev) => ({ ...prev, [question.id]: result }));

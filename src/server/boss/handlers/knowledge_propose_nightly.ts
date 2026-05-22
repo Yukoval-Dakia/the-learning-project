@@ -45,6 +45,12 @@ export async function runKnowledgeProposeNightly(
 
   // Join question by subject_id to get prompt/reference. Single IN query
   // for the question lookup is cheaper than N round-trips.
+  //
+  // M3 closeout (2026-05-22): canonical use of learning_record.question_id
+  // hub field (ADR-0015 §1) — NOT ActivityRef legacy. The shim at
+  // src/server/review/activity-ref.ts bridges when an ActivityRef view is
+  // needed; this reader stays on the canonical column. Lines 48 + downstream
+  // `a.question_id` lookups inherit this justification.
   const questionIds = Array.from(new Set(attempts.map((a) => a.question_id)));
   const questionRows = await db
     .select({
