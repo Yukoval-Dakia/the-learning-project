@@ -7,7 +7,7 @@ import type { Db } from '@/db/client';
 import type { SubjectProfile } from '@/subjects/profile';
 import { type JudgeKind, judgeRouterV2 } from '.';
 
-const RUNNABLE_ROUTES = new Set<JudgeKind>(['exact', 'keyword', 'semantic']);
+const RUNNABLE_ROUTES = new Set<JudgeKind>(['exact', 'keyword', 'semantic', 'steps']);
 
 export const FUTURE_JUDGE_ROUTES = {
   rubric: 'future: rubric judge needs weighted criteria runner and score semantics',
@@ -271,6 +271,19 @@ export async function judgeAnswer(params: JudgeAnswerParams): Promise<JudgeAnswe
 
   if (route === 'semantic') {
     return { route, result: await runSemanticJudge(params) };
+  }
+  if (route === 'steps') {
+    const { runStepsJudge } = await import('./steps-judge');
+    return {
+      route,
+      result: await runStepsJudge({
+        db: params.db,
+        question: params.question,
+        answer_md: params.answer_md,
+        subjectProfile: params.subjectProfile,
+        runTaskFn: params.runTaskFn,
+      }),
+    };
   }
 
   const result = judgeRouterV2({
