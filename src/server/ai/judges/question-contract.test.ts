@@ -197,7 +197,9 @@ describe('M2.1: resolveQuestionJudgeRoute — derivation kind', () => {
     expect(route).toBe('semantic');
   });
 
-  it('judgeAnswer returns unsupported for derivation route (M2.1 skeleton)', async () => {
+  it('judgeAnswer routes derivation to steps; returns unsupported when rubric lacks reference_solution', async () => {
+    // M2.2: 'steps' is now runnable. With no reference_solution in rubric,
+    // runStepsJudge short-circuits to unsupported BEFORE any LLM call.
     const mathProfile = resolveSubjectProfile('math');
     const result = await judgeAnswer({
       db: mockDb,
@@ -215,6 +217,6 @@ describe('M2.1: resolveQuestionJudgeRoute — derivation kind', () => {
     });
     expect(result.route).toBe('steps');
     expect(result.result.coarse_outcome).toBe('unsupported');
-    expect(result.result.feedback_md).toContain("judge route 'steps' is not implemented");
+    expect(result.result.feedback_md).toContain('reference_solution missing');
   });
 });

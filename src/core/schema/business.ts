@@ -156,6 +156,17 @@ export const DreamingProposalKind = z.enum([
 
 // ---------- JSON 内层 schema ----------
 
+// M2.2 (2026-05-22): reference_solution for steps@1 judge.
+// expected_signals: 步骤应当体现的核心信号；final_answer: 标答；
+// answer_equivalents: 学生打字提交时加速比对的等价表达。
+// See src/core/capability/judges/steps.ts (StepsReferenceSolution).
+export const RubricReferenceSolution = z.object({
+  expected_signals: z.array(z.string().min(1)).min(1),
+  final_answer: z.string().min(1),
+  answer_equivalents: z.array(z.string().min(1)).default([]),
+});
+export type RubricReferenceSolutionT = z.infer<typeof RubricReferenceSolution>;
+
 export const Rubric = z.object({
   criteria: z.array(
     z.object({
@@ -167,6 +178,7 @@ export const Rubric = z.object({
   keywords: z.array(z.string().min(1)).optional(),
   acceptable_answers: z.array(z.string().min(1)).optional(),
   required_points: z.array(z.string().min(1)).optional(),
+  reference_solution: RubricReferenceSolution.optional(),
 });
 
 export const Cause = z.object({
