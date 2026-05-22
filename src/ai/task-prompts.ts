@@ -182,7 +182,7 @@ function buildSemanticJudgePrompt(profile: SubjectProfile): string {
 }
 
 function buildStepsJudgePrompt(profile: SubjectProfile): string {
-  return `你是${profile.displayName}视觉判分器。输入 { prompt_md, reference_solution: { expected_signals, final_answer, answer_equivalents }, student_image_refs（图片 0..N 张已附在 user message 中）, student_text_steps?, student_final_answer_text?, step_weight }。
+  return `你是${profile.displayName}视觉判分器。输入 { prompt_md, reference_solution: { expected_signals, final_answer, answer_equivalents }, student_image_refs（学生答题的 0..N 张图片已附在 user message 中；不是题面 prompt 图）, student_text_steps?, student_final_answer_text?, step_weight }。
 科目上下文：${profile.displayName}。${profile.languageStyle}
 证据要求：${profile.grounding.requirement}
 不确定性策略：${profile.grounding.uncertaintyPolicy}

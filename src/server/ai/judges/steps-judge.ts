@@ -31,6 +31,8 @@ export interface RunStepsJudgeParams {
   db: Db;
   question: JudgeQuestionRow;
   answer_md: string;
+  /** M2.2 fix: student-submitted answer images, NOT question.image_refs. */
+  student_image_refs?: string[];
   subjectProfile: SubjectProfile;
   runTaskFn?: StepsRunTaskFn;
   imageFetchFn?: StepsImageFetchFn;
@@ -166,7 +168,11 @@ export async function runStepsJudge(params: RunStepsJudgeParams): Promise<JudgeR
     });
   }
 
-  const imageRefs = params.question.image_refs ?? [];
+  // M2.2 fix (post-PR82 review): use student-submitted answer images,
+  // NOT question.image_refs which are prompt/stem figures (different
+  // semantic channel per spec §7.1 + §7.4). Prompt images may be sent
+  // alongside in M2.3 with explicit role labeling.
+  const imageRefs = params.student_image_refs ?? [];
 
   // Accelerator path — Spec §7.5 #2:
   // 学生主动打字 final_answer + 命中 answer_equivalents (或 final_answer 本身) → skip LLM.

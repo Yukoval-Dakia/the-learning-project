@@ -246,8 +246,9 @@ describe('runStepsJudge — error paths', () => {
   it('returns unsupported when imageFetchFn throws', async () => {
     const result = await runStepsJudge({
       db: mockDb,
-      question: makeDerivationRow({ image_refs: ['asset-1'] }),
+      question: makeDerivationRow({}), // no question.image_refs needed
       answer_md: 'foo',
+      student_image_refs: ['asset-1'], // ← move to student channel
       subjectProfile: mathProfile,
       runTaskFn: async () => ({ text: '{}' }),
       imageFetchFn: async () => {
@@ -256,5 +257,41 @@ describe('runStepsJudge — error paths', () => {
     });
     expect(result.coarse_outcome).toBe('unsupported');
     expect(result.feedback_md).toContain('image fetch failed');
+  });
+
+  it('passes student_image_refs (NOT question.image_refs) to imageFetchFn', async () => {
+    // M2.2 fix: question.image_refs are prompt figures; student_image_refs
+    // are answer photos. The judge must consume student channel.
+    const calls: string[][] = [];
+    const imageFetchFn = vi.fn(async (assetIds: string[]) => {
+      calls.push(assetIds);
+      return assetIds.map((_id) => ({ data: 'AAA', mediaType: 'image/png' }));
+    });
+    await runStepsJudge({
+      db: mockDb,
+      question: { ...makeDerivationRow({ image_refs: ['prompt-figure-1'] }) },
+      answer_md: 'student writes something that does not hit equivalents',
+      student_image_refs: ['student-photo-1', 'student-photo-2'],
+      subjectProfile: mathProfile,
+      runTaskFn: async () => ({
+        text: JSON.stringify({
+          extracted_steps: [],
+          extracted_final_answer: '',
+          signal_verdicts: [
+            { signal_idx: 0, verdict: 'partial', comment: '' },
+            { signal_idx: 1, verdict: 'partial', comment: '' },
+            { signal_idx: 2, verdict: 'partial', comment: '' },
+          ],
+          final_answer_match: false,
+          final_answer_comment: '',
+          confidence: 0.5,
+        }),
+      }),
+      imageFetchFn,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual(['student-photo-1', 'student-photo-2']);
+    // Specifically NOT the prompt figure:
+    expect(calls[0]).not.toContain('prompt-figure-1');
   });
 });

@@ -51,6 +51,17 @@ export interface JudgeAnswerParams {
   db: Db;
   question: JudgeQuestionRow;
   answer_md: string;
+  /**
+   * M2.2 fix: student-submitted answer images (NOT question.image_refs which
+   * are prompt figures). For steps@1 derivation judging, these are photos
+   * of the learner's handwritten work. Spec §7.1 — at least one of
+   * { answer_md, student_image_refs } non-empty; runtime asserted by judge.
+   *
+   * Default `undefined` ⇒ treated as `[]`. M2.3 UI populates this from the
+   * answer submission payload; pre-M2.3 callers (no image upload UI yet)
+   * leave it unset.
+   */
+  student_image_refs?: string[];
   subjectProfile: SubjectProfile;
   runTaskFn?: (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
 }
@@ -279,6 +290,7 @@ export async function judgeAnswer(params: JudgeAnswerParams): Promise<JudgeAnswe
         db: params.db,
         question: params.question,
         answer_md: params.answer_md,
+        student_image_refs: params.student_image_refs,
         subjectProfile: params.subjectProfile,
         runTaskFn: params.runTaskFn,
       }),
