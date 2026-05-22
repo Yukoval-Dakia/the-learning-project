@@ -14,6 +14,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Long-session task tracking**：当前请求涉及 ≥3 个独立步骤、或预期跨多次工具调用时，主动 `ToolSearch` 加载 `TaskCreate/TaskUpdate` 并维护任务列表；不要凭记忆推进多步工作。
 - **Environment-sensitive tasks**：涉及外部 SaaS / 本机权限 / 第三方 CLI（Cloudflare、computer-use、waifu2x 之类）时，先跑 30 秒 pre-flight—— `which` / 版本 / token 在不在 env / 本地化应用名是否解析 —— 打印 pass/fail checklist，全 pass 才进主任务。
 
+## UI Design Compliance
+
+写任何 UI 代码（新组件 / 改既有组件 / 布局 / 交互）**之前**，先做 design-doc pre-flight，等用户批准后才动手：
+
+1. **逐字引用**相关 design doc 段落 —— 给文件路径 + 章节锚点或行号，不要从上下文推断；找不到就停下问，不要自己编。
+2. **声明组件类型**：drawer / route / modal / page / 其它。
+3. **列出将要 touch 的文件**：标明创建 vs 修改。
+
+不适用：纯文档 / 纯后端 / 纯 schema / 纯测试 / 已经在批准过的 plan 实现步骤里。Pre-flight 完成后仍需按既有的 design-system tokens / primitives 规则落地，二者叠加生效。
+
 ## Stack note (README is stale)
 
 The README still describes the original Phase-1 stack (Vite + React Router + Cloudflare Workers + Hono + D1). That migration is done — see commit `4c324b8 chore(sub-0b1): delete workers/, drop hono/wrangler/@cloudflare/workers-types`. Current stack:
