@@ -1,4 +1,5 @@
 import type { CapabilityManifestT, JudgeResultV2T } from '@/core/schema/capability';
+import { RubricReferenceSolution as StepsReferenceSolution } from '@/core/schema/business';
 import { z } from 'zod';
 import type { JudgeCapabilityRunner, JudgeRunInput } from '../types';
 
@@ -15,13 +16,13 @@ import type { JudgeCapabilityRunner, JudgeRunInput } from '../types';
  *   - expected_signals: 步骤应当体现的核心信号（不是死答案文本）
  *   - final_answer: 最终答案
  *   - answer_equivalents: 学生若打字提交可加速比对的等价表达
+ *
+ * Single source of truth in @/core/schema/business (M2.2 fix per code review).
+ * Re-exported here as `StepsReferenceSolution` to keep the capability-layer
+ * naming convention; consumers of either name see the same Zod instance.
  */
-export const StepsReferenceSolution = z.object({
-  expected_signals: z.array(z.string().min(1)).min(1),
-  final_answer: z.string().min(1),
-  answer_equivalents: z.array(z.string().min(1)).default([]),
-});
-export type StepsReferenceSolutionT = z.infer<typeof StepsReferenceSolution>;
+export { RubricReferenceSolution as StepsReferenceSolution } from '@/core/schema/business';
+export type { RubricReferenceSolutionT as StepsReferenceSolutionT } from '@/core/schema/business';
 
 /**
  * Judge runner input — what `stepsV1Capability.run()` receives. M2.1 stub

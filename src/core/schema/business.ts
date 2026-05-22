@@ -165,6 +165,7 @@ export const RubricReferenceSolution = z.object({
   final_answer: z.string().min(1),
   answer_equivalents: z.array(z.string().min(1)).default([]),
 });
+export type RubricReferenceSolutionT = z.infer<typeof RubricReferenceSolution>;
 
 export const Rubric = z.object({
   criteria: z.array(
