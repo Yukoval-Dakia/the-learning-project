@@ -1,5 +1,10 @@
 # Math M1 — Drift Migration Targets
 
+**Status**: ✅ Closed (M3, 2026-05-22). All items addressed:
+- §A registry.ts wenyan-hardcoded prompts → M1 §A annotated as DEPRECATED (commit 204cbf3, PR #80)
+- §B `getTaskSystemPrompt` default branch → M1 §B replaced with `assertNever(task)` (commit 7495c2c, PR #80)
+- §C `question_id` table → most entries are canonical (DB hub / type def / LLM payload / event projection / FSRS state); 3 deferred-to-M3 positions inspected and annotated as canonical in M3 closeout (commit b2dac68).
+
 **Generated**: 2026-05-21 (M0 exit gate output)
 **Trigger**: M0 e2e smoke ran math choice + fill_blank end-to-end. Positions math actually touched but still using `question_id` / wenyan-coupled prompts / legacy patterns are listed here for M1 migration. Out-of-path positions are listed under M3 sweep.
 
