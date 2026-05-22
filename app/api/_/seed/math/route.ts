@@ -3,6 +3,7 @@ import { knowledge, question } from '@/db/schema';
 import { errorResponse } from '@/server/http/errors';
 import { loadMathFixtures } from '@/subjects/math/fixtures';
 import { loadMathDerivationFixtures } from '@/subjects/math/fixtures/derivation';
+import { loadMathDerivationImageFixtures } from '@/subjects/math/fixtures/derivation-with-images';
 /**
  * Dev / bootstrap endpoint — seed 10 math fixture questions (choice/fill_blank)
  * + 5 derivation fixture questions for M2.2 smoke.
@@ -115,10 +116,44 @@ export async function POST(_req: Request): Promise<Response> {
       created.push(id);
     }
 
+    // --- derivation-with-images fixtures (M2.3 Task 9) ---
+    // image_refs are 'placeholder-*' strings — they do NOT resolve in R2.
+    // Purpose: exercise the image_refs carrier all the way through the seed
+    // path. runStepsJudge's defaultImageFetch silently skips missing assets,
+    // so judging falls back to text-only mode (no real LLM image input).
+    const derivationImageFixtures = loadMathDerivationImageFixtures();
+    for (const item of derivationImageFixtures) {
+      if (seenRefs.has(item.ref)) {
+        skipped.push(item.ref);
+        continue;
+      }
+      const id = createId();
+      await db.insert(question).values({
+        id,
+        kind: item.kind,
+        prompt_md: item.prompt_md,
+        reference_md: item.reference_md,
+        choices_md: null,
+        rubric_json: item.rubric_json,
+        knowledge_ids: [ROOT_KNOWLEDGE_ID],
+        difficulty: item.difficulty,
+        source: 'math_fixture',
+        variant_depth: 0,
+        figures: [],
+        image_refs: item.image_refs,
+        structured: null,
+        metadata: { fixture_ref: item.ref, knowledge_hint: item.knowledge_hint },
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      });
+      created.push(id);
+    }
+
     return Response.json({
       created,
       skipped,
-      total: fixtures.length + derivationFixtures.length,
+      total: fixtures.length + derivationFixtures.length + derivationImageFixtures.length,
     });
   } catch (err) {
     return errorResponse(err);

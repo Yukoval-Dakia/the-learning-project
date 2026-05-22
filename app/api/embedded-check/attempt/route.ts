@@ -170,6 +170,11 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({
       outcome,
       judge: responseJudge,
+      // M2.3: surface attempt event id so the UI can wire appeals
+      // (POST /api/review/appeal with judge_event_id = attempt_event_id;
+      // embedded-check flow embeds judge result inside the attempt event's
+      // payload rather than writing a separate judge event).
+      attempt_event_id: attemptEventId,
       ...(recordId !== undefined ? { mistake_id: recordId } : {}),
     });
   } catch (err) {
