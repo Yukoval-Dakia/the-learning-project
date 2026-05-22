@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import fixtureData from './data.json' with { type: 'json' };
-import {
-  ExpectedSignal,
-  PhysicsFixtureFileSchema,
-  loadPhysicsFixtures,
-} from './index';
+import { ExpectedSignal, PhysicsFixtureFileSchema, loadPhysicsFixtures } from './index';
 
 describe('physics fixtures', () => {
   it('data.json conforms to PhysicsFixtureFileSchema', () => {
