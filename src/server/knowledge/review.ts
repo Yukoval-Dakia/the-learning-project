@@ -49,6 +49,9 @@ async function buildReviewInput(db: Db) {
   const attempts = await getFailureAttempts(db, { limit: RECENT_MISTAKES_LIMIT });
   const recent_mistakes = attempts.map((fa) => ({
     id: fa.attempt_event_id,
+    // M3 closeout (2026-05-22): canonical LLM payload field name —
+    // KnowledgeReviewTask prompt (src/ai/task-prompts.ts buildKnowledgeReviewPrompt)
+    // documents `question_id` as the recipe field. NOT ActivityRef legacy.
     question_id: fa.question_id,
     knowledge_ids: fa.referenced_knowledge_ids,
     cause: fa.judge?.cause ?? null,
