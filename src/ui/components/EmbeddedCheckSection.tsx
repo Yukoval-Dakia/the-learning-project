@@ -1,7 +1,10 @@
 'use client';
 
+import type { JudgeResultV2T } from '@/core/schema/capability';
 import { apiJson } from '@/ui/lib/api';
+import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { useState } from 'react';
+import { JudgeResultPanel } from './JudgeResultPanel';
 
 export interface EmbeddedCheckQuestion {
   id: string;
@@ -24,6 +27,8 @@ interface AttemptResult {
     reason_md?: string;
     evidence_json?: Record<string, unknown>;
   };
+  /** M2.3: attempt event id — used as appeal target. */
+  attempt_event_id?: string;
   mistake_id?: string;
 }
 
@@ -37,6 +42,8 @@ export function EmbeddedCheckSection({ status, questions }: EmbeddedCheckSection
   const [feedback, setFeedback] = useState<Record<string, AttemptResult>>({});
   const [submitting, setSubmitting] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
+  // M2.3: track which questions have been appealed (per-session optimistic UI).
+  const [appealed, setAppealed] = useState<Record<string, boolean>>({});
 
   if (status === 'not_required') return null;
 
@@ -96,7 +103,9 @@ export function EmbeddedCheckSection({ status, questions }: EmbeddedCheckSection
         const disabled = submitting[question.id] || currentFeedback !== undefined;
         return (
           <div key={question.id} className="embedded-check-question">
-            <p className="embedded-check-question__prompt">{question.prompt_md}</p>
+            <MathMarkdown className="embedded-check-question__prompt">
+              {question.prompt_md}
+            </MathMarkdown>
             {question.kind === 'choice' || question.kind === 'single_choice' ? (
               <div className="embedded-check-question__choices">
                 {(question.choices_md ?? []).map((choice) => (
@@ -137,17 +146,68 @@ export function EmbeddedCheckSection({ status, questions }: EmbeddedCheckSection
             >
               {currentFeedback ? '已提交' : submitting[question.id] ? '提交中…' : '提交'}
             </button>
-            {currentFeedback && (
-              <div className={`embedded-check-feedback outcome-${currentFeedback.outcome}`}>
-                {currentFeedback.outcome === 'success'
-                  ? '答对了'
-                  : currentFeedback.outcome === 'partial'
-                    ? '部分正确'
-                    : '需复习'}{' '}
-                · score {currentFeedback.judge.score ?? 'n/a'}
-                {currentFeedback.judge.reason_md && <p>{currentFeedback.judge.reason_md}</p>}
-              </div>
-            )}
+            {currentFeedback &&
+              (currentFeedback.judge.route === 'steps' ? (
+                <JudgeResultPanel
+                  result={
+                    {
+                      score: currentFeedback.judge.score,
+                      score_meaning: 'steps_v1_weighted',
+                      coarse_outcome:
+                        (currentFeedback.judge.coarse_outcome as
+                          | 'correct'
+                          | 'partial'
+                          | 'incorrect'
+                          | 'unsupported') ?? 'unsupported',
+                      confidence: currentFeedback.judge.confidence ?? 0,
+                      capability_ref: { id: currentFeedback.judge.route, version: '1.0.0' },
+                      feedback_md: currentFeedback.judge.reason_md ?? '',
+                      evidence_json: currentFeedback.judge.evidence_json ?? {},
+                    } as JudgeResultV2T
+                  }
+                  /**
+                   * M2.3: signal text comes from rubric_json.reference_solution.expected_signals,
+                   * which the EmbeddedCheckQuestion shape doesn't currently carry. Pass [] so
+                   * JudgeResultPanel skips the per-signal list; score / outcome / route /
+                   * extracted_final_answer / feedback still render. Extending the question
+                   * shape with expected_signals is a follow-up.
+                   */
+                  expectedSignals={[]}
+                  appealable={
+                    !appealed[question.id] && currentFeedback.attempt_event_id !== undefined
+                  }
+                  onAppeal={async () => {
+                    if (!currentFeedback.attempt_event_id) return;
+                    try {
+                      await apiJson('/api/review/appeal', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                          judge_event_id: currentFeedback.attempt_event_id,
+                          reason_md: '',
+                        }),
+                      });
+                      setAppealed((prev) => ({ ...prev, [question.id]: true }));
+                    } catch (err) {
+                      setErrors((prev) => ({
+                        ...prev,
+                        [question.id]: err instanceof Error ? err.message : '申诉失败',
+                      }));
+                    }
+                  }}
+                />
+              ) : (
+                <div className={`embedded-check-feedback outcome-${currentFeedback.outcome}`}>
+                  {currentFeedback.outcome === 'success'
+                    ? '答对了'
+                    : currentFeedback.outcome === 'partial'
+                      ? '部分正确'
+                      : '需复习'}{' '}
+                  · score {currentFeedback.judge.score ?? 'n/a'}
+                  {currentFeedback.judge.reason_md && (
+                    <MathMarkdown>{currentFeedback.judge.reason_md}</MathMarkdown>
+                  )}
+                </div>
+              ))}
             {errors[question.id] && <p className="embedded-check-error">{errors[question.id]}</p>}
           </div>
         );

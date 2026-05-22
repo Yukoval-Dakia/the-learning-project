@@ -8,18 +8,20 @@ import { POST } from './route';
 
 async function seedJudgeEvent(): Promise<string> {
   const id = createId();
-  await testDb().insert(event).values({
-    id,
-    session_id: null,
-    actor_kind: 'agent',
-    actor_ref: 'judge_runner',
-    action: 'judge',
-    subject_kind: 'event',
-    subject_id: 'attempt-evt-1',
-    outcome: 'success',
-    payload: { coarse_outcome: 'partial' },
-    caused_by_event_id: 'attempt-evt-1',
-  });
+  await testDb()
+    .insert(event)
+    .values({
+      id,
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'judge_runner',
+      action: 'judge',
+      subject_kind: 'event',
+      subject_id: 'attempt-evt-1',
+      outcome: 'success',
+      payload: { coarse_outcome: 'partial' },
+      caused_by_event_id: 'attempt-evt-1',
+    });
   return id;
 }
 
@@ -60,16 +62,38 @@ describe('POST /api/review/appeal', () => {
     expect(res.status).toBe(404);
   });
 
-  it('returns 400 when caused_by event is not a judge event', async () => {
+  it('accepts attempt event (embedded-check embeds judge in payload)', async () => {
+    // M2.3: embedded-check/attempt writes judge result inside attempt event's
+    // payload, not as a separate judge event. Appeal endpoint must accept it.
+    const id = createId();
+    await testDb()
+      .insert(event)
+      .values({
+        id,
+        session_id: null,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'attempt',
+        subject_kind: 'question',
+        subject_id: 'q-1',
+        outcome: 'partial',
+        payload: { judge: { route: 'steps', score: 0.4 } },
+        caused_by_event_id: null,
+      });
+    const res = await POST(makeReq({ judge_event_id: id, reason_md: '步骤判错' }));
+    expect(res.status).toBe(200);
+  });
+
+  it('returns 400 when caused_by event is neither judge nor attempt', async () => {
     const id = createId();
     await testDb().insert(event).values({
       id,
       session_id: null,
-      actor_kind: 'user',
-      actor_ref: 'self',
-      action: 'attempt',
-      subject_kind: 'question',
-      subject_id: 'q-1',
+      actor_kind: 'agent',
+      actor_ref: 'note_generate',
+      action: 'note_generate',
+      subject_kind: 'artifact',
+      subject_id: 'a-1',
       outcome: 'success',
       payload: {},
       caused_by_event_id: null,
