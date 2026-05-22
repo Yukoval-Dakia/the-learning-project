@@ -1,3 +1,4 @@
+import { RubricReferenceSolution } from '@/core/schema/business';
 import { z } from 'zod';
 import fixtureData from './derivation-data.json' with { type: 'json' };
 
@@ -8,11 +9,9 @@ export const DerivationFixtureItemSchema = z.object({
   reference_md: z.string().min(1),
   rubric_json: z.object({
     criteria: z.array(z.object({ name: z.string(), weight: z.number(), descriptor: z.string() })),
-    reference_solution: z.object({
-      expected_signals: z.array(z.string().min(1)).min(1),
-      final_answer: z.string().min(1),
-      answer_equivalents: z.array(z.string().min(1)),
-    }),
+    // M2.2 reviewer note: reuse canonical RubricReferenceSolution to avoid
+    // drift between fixture schema and the source of truth in business.ts.
+    reference_solution: RubricReferenceSolution,
   }),
   difficulty: z.number().int().min(1).max(5),
   knowledge_hint: z.string().min(1),

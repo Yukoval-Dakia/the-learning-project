@@ -28,7 +28,7 @@
         "reference_solution": {
           "expected_signals": ["对 2x 应用幂法则得 x^2", "对常数 3 积分得 3x", "添加积分常数 C"],
           "final_answer": "x^2 + 3x + C",
-          "answer_equivalents": ["x² + 3x + C", "x*x + 3x + C"]
+          "answer_equivalents": ["x^2 + 3x + C", "x² + 3x + C", "x*x + 3x + C"]
         }
       },
       "difficulty": 2,
