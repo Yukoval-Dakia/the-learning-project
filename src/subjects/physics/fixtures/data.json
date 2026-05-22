@@ -1,0 +1,161 @@
+{
+  "version": "2026-05-22",
+  "subject_id": "physics",
+  "items": [
+    {
+      "ref": "physics-unit-001",
+      "kind": "calculation",
+      "prompt_md": "将 $30 \\text{ km/h}$ 换算为 SI 单位（m/s），保留 2 位小数。",
+      "reference_md": "8.33 m/s",
+      "reference_value": 8.33,
+      "reference_unit": "m/s",
+      "tolerance": 0.05,
+      "difficulty": 1,
+      "knowledge_hint": "速度单位换算",
+      "expected_signals": [
+        { "case": "数值近", "student_answer": "8.30 m/s", "expected_signal": "numeric_close" },
+        { "case": "数值远", "student_answer": "50 m/s", "expected_signal": "numeric_off" },
+        { "case": "单位错量纲对", "student_answer": "30 km/h", "expected_signal": "unit_mismatch_same_dimension" },
+        { "case": "量纲错", "student_answer": "8.33 m", "expected_signal": "dimension_mismatch" },
+        { "case": "缺单位", "student_answer": "8.33", "expected_signal": "missing_unit" }
+      ]
+    },
+    {
+      "ref": "physics-unit-002",
+      "kind": "calculation",
+      "prompt_md": "将 $1 \\text{ atm}$ 换算为 SI 压强单位 Pa。",
+      "reference_md": "101325 Pa",
+      "reference_value": 101325,
+      "reference_unit": "Pa",
+      "tolerance": 0.001,
+      "difficulty": 2,
+      "knowledge_hint": "压强单位换算",
+      "expected_signals": [
+        { "case": "数值近", "student_answer": "101300 Pa", "expected_signal": "numeric_close" },
+        { "case": "单位错量纲对", "student_answer": "1.013 bar", "expected_signal": "unit_mismatch_same_dimension" },
+        { "case": "缺单位", "student_answer": "101325", "expected_signal": "missing_unit" }
+      ]
+    },
+    {
+      "ref": "physics-unit-003",
+      "kind": "calculation",
+      "prompt_md": "将 $2 \\text{ cal}$ 换算为 J（取 $1 \\text{ cal} = 4.184 \\text{ J}$）。",
+      "reference_md": "8.368 J",
+      "reference_value": 8.368,
+      "reference_unit": "J",
+      "tolerance": 0.01,
+      "difficulty": 1,
+      "knowledge_hint": "能量单位换算",
+      "expected_signals": [
+        { "case": "全对", "student_answer": "8.368 J", "expected_signal": "numeric_close" },
+        { "case": "单位错", "student_answer": "8.368 cal", "expected_signal": "unit_mismatch_same_dimension" },
+        { "case": "量纲错", "student_answer": "8.368 W", "expected_signal": "dimension_mismatch" }
+      ]
+    },
+    {
+      "ref": "physics-unit-004",
+      "kind": "calculation",
+      "prompt_md": "$1.5 \\text{ mol}$ 物质大约含有多少个粒子？取阿伏伽德罗常数 $N_A = 6.022 \\times 10^{23} \\text{ mol}^{-1}$。",
+      "reference_md": "9.033e23",
+      "reference_value": 9.033e23,
+      "tolerance": 0.005,
+      "difficulty": 2,
+      "knowledge_hint": "阿伏伽德罗常数",
+      "expected_signals": [
+        { "case": "数值近", "student_answer": "9.03e23", "expected_signal": "numeric_close" },
+        { "case": "数值远", "student_answer": "6.022e23", "expected_signal": "numeric_off" }
+      ]
+    },
+    {
+      "ref": "physics-unit-005",
+      "kind": "calculation",
+      "prompt_md": "汽车以 $108 \\text{ km/h}$ 行驶，转换为 m/s。",
+      "reference_md": "30 m/s",
+      "reference_value": 30,
+      "reference_unit": "m/s",
+      "tolerance": 0.01,
+      "difficulty": 1,
+      "knowledge_hint": "速度单位换算",
+      "expected_signals": [
+        { "case": "全对", "student_answer": "30 m/s", "expected_signal": "numeric_close" },
+        { "case": "单位错量纲对", "student_answer": "108 km/h", "expected_signal": "unit_mismatch_same_dimension" },
+        { "case": "缺单位", "student_answer": "30", "expected_signal": "missing_unit" }
+      ]
+    },
+    {
+      "ref": "physics-dim-001",
+      "kind": "single_choice",
+      "prompt_md": "下列哪个物理量的量纲是 $M \\cdot L \\cdot T^{-2}$？",
+      "choices_md": ["速度", "加速度", "力", "能量"],
+      "reference_md": "力",
+      "tolerance": 0,
+      "difficulty": 2,
+      "knowledge_hint": "力的量纲分析",
+      "expected_signals": [
+        { "case": "全对", "student_answer": "力", "expected_signal": "numeric_close" },
+        { "case": "量纲错(选速度)", "student_answer": "速度", "expected_signal": "dimension_mismatch" }
+      ]
+    },
+    {
+      "ref": "physics-dim-002",
+      "kind": "single_choice",
+      "prompt_md": "速度 $v$ 的量纲为？",
+      "choices_md": ["$L \\cdot T^{-1}$", "$L \\cdot T$", "$L^2 \\cdot T^{-1}$", "$L \\cdot T^{-2}$"],
+      "reference_md": "$L \\cdot T^{-1}$",
+      "tolerance": 0,
+      "difficulty": 1,
+      "knowledge_hint": "速度量纲",
+      "expected_signals": [
+        { "case": "全对", "student_answer": "L·T^{-1}", "expected_signal": "numeric_close" },
+        { "case": "量纲错(指数错)", "student_answer": "L·T^{-2}", "expected_signal": "dimension_mismatch" }
+      ]
+    },
+    {
+      "ref": "physics-dim-003",
+      "kind": "calculation",
+      "prompt_md": "$E = mc^2$ 中 $c^2$ 的量纲是？（用 SI 基本量）",
+      "reference_md": "$L^2 \\cdot T^{-2}$",
+      "tolerance": 0,
+      "difficulty": 3,
+      "knowledge_hint": "$E=mc^2$ 量纲检验",
+      "expected_signals": [
+        { "case": "全对", "student_answer": "L^2 T^{-2}", "expected_signal": "numeric_close" },
+        { "case": "量纲错", "student_answer": "L T^{-1}", "expected_signal": "dimension_mismatch" }
+      ]
+    },
+    {
+      "ref": "physics-formula-001",
+      "kind": "calculation",
+      "prompt_md": "自由落体 $3 \\text{ s}$ 后速度（取 $g = 9.8 \\text{ m/s}^2$，初速度为零）。",
+      "reference_md": "29.4 m/s",
+      "reference_value": 29.4,
+      "reference_unit": "m/s",
+      "tolerance": 0.02,
+      "difficulty": 1,
+      "knowledge_hint": "$v = gt$",
+      "expected_signals": [
+        { "case": "全对", "student_answer": "29.4 m/s", "expected_signal": "numeric_close" },
+        { "case": "数值远", "student_answer": "98 m/s", "expected_signal": "numeric_off" },
+        { "case": "量纲错", "student_answer": "29.4 m", "expected_signal": "dimension_mismatch" },
+        { "case": "缺单位", "student_answer": "29.4", "expected_signal": "missing_unit" }
+      ]
+    },
+    {
+      "ref": "physics-formula-002",
+      "kind": "calculation",
+      "prompt_md": "$F = ma$，已知 $m = 2 \\text{ kg}$，$a = 5 \\text{ m/s}^2$，求 $F$。",
+      "reference_md": "10 N",
+      "reference_value": 10,
+      "reference_unit": "N",
+      "tolerance": 0.01,
+      "difficulty": 1,
+      "knowledge_hint": "牛顿第二定律",
+      "expected_signals": [
+        { "case": "全对", "student_answer": "10 N", "expected_signal": "numeric_close" },
+        { "case": "单位错量纲对", "student_answer": "10 kg·m/s^2", "expected_signal": "unit_mismatch_same_dimension" },
+        { "case": "量纲错", "student_answer": "10 J", "expected_signal": "dimension_mismatch" },
+        { "case": "缺单位", "student_answer": "10", "expected_signal": "missing_unit" }
+      ]
+    }
+  ]
+}
