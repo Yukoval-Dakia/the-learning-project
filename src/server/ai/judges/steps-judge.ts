@@ -173,7 +173,7 @@ export async function runStepsJudge(params: RunStepsJudgeParams): Promise<JudgeR
   // Conservative: 没有 LLM 走过步骤，无法给 step credit。只按 final 部分计 (1−step_weight)*1.
   // 默认 step_weight=0.6 → score 0.4，落 partial。要 'correct' 必须走 LLM。
   const studentFinalText = params.answer_md.trim();
-  if (studentFinalText.length > 0) {
+  if (studentFinalText.length > 0 && referenceSolution.answer_equivalents.length > 0) {
     const studentNorm = normalize(studentFinalText);
     const referenceNorm = normalize(referenceSolution.final_answer);
     const equivNorms = referenceSolution.answer_equivalents.map(normalize);

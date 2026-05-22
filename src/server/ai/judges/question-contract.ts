@@ -11,7 +11,6 @@ const RUNNABLE_ROUTES = new Set<JudgeKind>(['exact', 'keyword', 'semantic', 'ste
 
 export const FUTURE_JUDGE_ROUTES = {
   rubric: 'future: rubric judge needs weighted criteria runner and score semantics',
-  steps: 'future: steps judge needs step-level evidence and math/proof policy',
   multimodal_direct: 'future: multimodal answer judging needs image/audio inputs',
   ai_flexible: 'future: fallback LLM judge needs stronger audit and cost policy',
 } as const satisfies Record<string, string>;
@@ -122,7 +121,7 @@ export function resolveQuestionJudgeRoute(
   if (kind === 'computation') return keywords.length > 0 ? 'keyword' : 'semantic';
   // M2.1 (2026-05-22): derivation always routes via steps@1 for profiles that
   // declare it (math); other profiles fall back to semantic if preferred, else
-  // keyword. judgeAnswer's RUNNABLE_ROUTES gates 'steps' at runtime until M2.2.
+  // keyword. M2.2 made 'steps' runnable via runStepsJudge (vision LLM call).
   if (kind === 'derivation') {
     if (isPreferred(subjectProfile, 'steps')) return 'steps';
     return isPreferred(subjectProfile, 'semantic') ? 'semantic' : 'keyword';
