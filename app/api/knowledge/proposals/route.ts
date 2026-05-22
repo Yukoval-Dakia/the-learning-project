@@ -11,10 +11,12 @@
 //   - 'dismissed' ⇔ rate event with rating='dismiss' chained
 //   - 'stale'     ⇔ rate event with rating='rollback' chained (rare)
 //
-// Wire contract preserved: { rows: [{ id, kind, payload, reasoning, status,
-// proposed_at, decided_at }] }. id is the propose event id (opaque to clients).
+// Wire contract: { rows: [{ id, kind, payload, reasoning, status, proposed_at,
+// decided_at }] }. id is the propose event id (opaque to clients). The inbox
+// projects both tree-shape knowledge proposals and mesh-shape knowledge_edge
+// proposals so UI callers do not need to stitch two event streams.
 
-import { and, desc, eq, inArray, isNotNull, or } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull } from 'drizzle-orm';
 
 import { db } from '@/db/client';
 import { event } from '@/db/schema';
@@ -33,25 +35,20 @@ export async function GET(req: Request): Promise<Response> {
     const url = new URL(req.url);
     const status = (url.searchParams.get('status') ?? 'pending') as LegacyStatus;
 
-    // 1. Pull all propose-knowledge events (both Lane B ProposeKnowledge AND
-    //    experimental:knowledge_<mutation> namespace). Both share
-    //    subject_kind='knowledge', differ on action.
+    // 1. Pull proposal events:
+    //    - knowledge tree proposals: action='propose' or experimental:knowledge_*
+    //    - knowledge_edge mesh proposals: action='propose'
     const proposeRows = await db
       .select()
       .from(event)
-      .where(
-        or(
-          and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge')),
-          // experimental:knowledge_<mutation> uses subject_kind='knowledge' too
-          // but action is the namespaced string. Filter at the JS layer to keep
-          // the SQL simple — propose events are bounded by the dreaming cadence.
-          eq(event.subject_kind, 'knowledge'),
-        ),
-      )
+      .where(inArray(event.subject_kind, ['knowledge', 'knowledge_edge']))
       .orderBy(desc(event.created_at));
 
     const proposeFiltered = proposeRows.filter(
-      (r) => r.action === 'propose' || isExperimentalKnowledgeMutation(r.action),
+      (r) =>
+        (r.subject_kind === 'knowledge' &&
+          (r.action === 'propose' || isExperimentalKnowledgeMutation(r.action))) ||
+        (r.subject_kind === 'knowledge_edge' && r.action === 'propose'),
     );
 
     if (proposeFiltered.length === 0) return Response.json({ rows: [] });
@@ -66,7 +63,7 @@ export async function GET(req: Request): Promise<Response> {
       .where(
         and(
           eq(event.action, 'rate'),
-          eq(event.subject_kind, 'event'),
+          inArray(event.subject_kind, ['event', 'knowledge_edge']),
           inArray(event.caused_by_event_id, proposeIds),
           isNotNull(event.caused_by_event_id),
         ),
@@ -85,6 +82,8 @@ export async function GET(req: Request): Promise<Response> {
       const ratePayload = rate.payload as { rating?: string };
       switch (ratePayload.rating) {
         case 'accept':
+        case 'reverse':
+        case 'change_type':
           return 'accepted';
         case 'dismiss':
           return 'dismissed';
@@ -109,7 +108,16 @@ export async function GET(req: Request): Promise<Response> {
         const payload = p.payload as Record<string, unknown>;
         let legacyPayload: Record<string, unknown>;
         let reasoning: string;
-        if (p.action === 'propose') {
+        if (p.subject_kind === 'knowledge_edge') {
+          legacyPayload = {
+            mutation: 'propose_knowledge_edge',
+            from_knowledge_id: payload.from_knowledge_id,
+            to_knowledge_id: payload.to_knowledge_id,
+            relation_type: payload.relation_type,
+            weight: payload.weight,
+          };
+          reasoning = String(payload.reasoning ?? '');
+        } else if (p.action === 'propose') {
           // Lane B ProposeKnowledge — { name, parent_id, reasoning }
           legacyPayload = {
             mutation: 'propose_new',
@@ -127,7 +135,7 @@ export async function GET(req: Request): Promise<Response> {
 
         return {
           id: p.id,
-          kind: 'knowledge',
+          kind: p.subject_kind,
           payload: legacyPayload,
           reasoning,
           status: s,

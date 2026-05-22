@@ -1,6 +1,7 @@
 import type { Db } from '@/db/client';
-import { cost_ledger, tool_call_log } from '@/db/schema';
+import { ai_task_runs, cost_ledger, tool_call_log } from '@/db/schema';
 import { createId } from '@paralleldrive/cuid2';
+import { eq } from 'drizzle-orm';
 
 export interface ToolCallLogEntry {
   task_run_id: string;
@@ -29,6 +30,7 @@ export async function writeToolCallLog(db: Db, entry: ToolCallLogEntry): Promise
 }
 
 export interface CostLedgerEntry {
+  task_run_id?: string;
   task_kind: string;
   provider: string;
   model: string;
@@ -43,6 +45,7 @@ export interface CostLedgerEntry {
 export async function writeCostLedger(db: Db, entry: CostLedgerEntry): Promise<void> {
   await db.insert(cost_ledger).values({
     id: createId(),
+    task_run_id: entry.task_run_id ?? null,
     task_kind: entry.task_kind,
     provider: entry.provider,
     model: entry.model,
@@ -53,4 +56,54 @@ export async function writeCostLedger(db: Db, entry: CostLedgerEntry): Promise<v
     pgboss_job_id: entry.pgboss_job_id ?? null,
     occurred_at: new Date(),
   });
+}
+
+export interface AiTaskRunStartEntry {
+  id: string;
+  task_kind: string;
+  provider: string;
+  model: string;
+  input_hash: string;
+  started_at?: Date;
+}
+
+export async function writeAiTaskRunStarted(db: Db, entry: AiTaskRunStartEntry): Promise<void> {
+  await db.insert(ai_task_runs).values({
+    id: entry.id,
+    task_kind: entry.task_kind,
+    provider: entry.provider,
+    model: entry.model,
+    input_hash: entry.input_hash,
+    status: 'running',
+    finish_reason: null,
+    usage_json: { inputTokens: 0, outputTokens: 0 },
+    cost_usd: null,
+    error_message: null,
+    started_at: entry.started_at ?? new Date(),
+    finished_at: null,
+  });
+}
+
+export interface AiTaskRunFinishEntry {
+  id: string;
+  status: 'success' | 'failure';
+  finish_reason?: string | null;
+  usage?: { inputTokens: number; outputTokens: number };
+  cost_usd?: number;
+  error_message?: string | null;
+  finished_at?: Date;
+}
+
+export async function writeAiTaskRunFinished(db: Db, entry: AiTaskRunFinishEntry): Promise<void> {
+  await db
+    .update(ai_task_runs)
+    .set({
+      status: entry.status,
+      finish_reason: entry.finish_reason ?? null,
+      usage_json: entry.usage ?? { inputTokens: 0, outputTokens: 0 },
+      cost_usd: entry.cost_usd ?? null,
+      error_message: entry.error_message ?? null,
+      finished_at: entry.finished_at ?? new Date(),
+    })
+    .where(eq(ai_task_runs.id, entry.id));
 }

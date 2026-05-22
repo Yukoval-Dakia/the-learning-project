@@ -86,8 +86,16 @@ export const mathProfile: SubjectProfile = {
       label: '粗心',
       description: '非知识性的计算笔误或抄写错误',
       review_priority: 2,
+      variant_targetable: false,
     },
-    { id: 'other', label: '其它', review_priority: 2 },
+    {
+      id: 'time_pressure',
+      label: '时间压力',
+      description: '限时条件下步骤选择、节奏或计算稳定性下降',
+      review_priority: 2,
+      variant_targetable: true,
+    },
+    { id: 'other', label: '其它', review_priority: 2, variant_targetable: false },
   ],
   renderConfig: {
     font_family: 'system',
@@ -99,5 +107,5 @@ export const mathProfile: SubjectProfile = {
   },
   // M2.1 (2026-05-22): + 'steps' for derivation question kind.
   // steps@1 capability is registered in default registry; run() body lands in M2.2.
-  judgeCapabilities: ['exact', 'keyword', 'steps'],
+  judgeCapabilities: ['exact', 'keyword', 'semantic', 'steps'],
 };

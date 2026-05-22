@@ -16,13 +16,14 @@ import { z } from 'zod';
 import { NoteSection } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
+import { type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 export interface NoteGenerateJobData {
   artifact_id: string;
 }
 
-export type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
+export type RunTaskFn = TaskTextRunFn;
 
 type DepsOverride = {
   runTaskFn?: RunTaskFn;
@@ -33,10 +34,10 @@ async function defaultRunTaskFn(
   kind: string,
   input: unknown,
   ctx: unknown,
-): Promise<{ text: string }> {
+): Promise<Awaited<ReturnType<RunTaskFn>>> {
   const { runTask } = await import('@/server/ai/runner');
   const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
-  return { text: result.text };
+  return result;
 }
 
 const SectionsOutputSchema = z.object({
@@ -156,8 +157,7 @@ export async function runNoteGenerate(
         generation_status: 'ready',
         verification_status: 'queued',
         generated_by: {
-          by: 'ai',
-          task_kind: 'NoteGenerateTask',
+          ...aiAgentRef('NoteGenerateTask', result),
         } as never,
         updated_at: new Date(),
       })

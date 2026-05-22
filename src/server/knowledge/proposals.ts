@@ -16,6 +16,7 @@
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge } from '@/db/schema';
+import { costUsdToMicroUsd } from '@/server/ai/provenance';
 import { writeEvent } from '@/server/events/queries';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 
@@ -70,6 +71,8 @@ export type KnowledgeMutationPayload =
 export interface WriteProposalEntry {
   payload: KnowledgeMutationPayload;
   reasoning: string;
+  task_run_id?: string;
+  cost_usd?: number;
 }
 
 // =============================================================================
@@ -111,8 +114,8 @@ export async function writeKnowledgeProposeEvent(
         reasoning,
       },
       caused_by_event_id: null,
-      task_run_id: null,
-      cost_micro_usd: null,
+      task_run_id: entry.task_run_id ?? null,
+      cost_micro_usd: costUsdToMicroUsd(entry.cost_usd),
       created_at: now,
     });
     return id;
@@ -146,8 +149,8 @@ export async function writeKnowledgeProposeEvent(
       reasoning,
     },
     caused_by_event_id: null,
-    task_run_id: null,
-    cost_micro_usd: null,
+    task_run_id: entry.task_run_id ?? null,
+    cost_micro_usd: costUsdToMicroUsd(entry.cost_usd),
     created_at: now,
   });
   return id;

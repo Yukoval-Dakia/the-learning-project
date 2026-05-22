@@ -71,7 +71,7 @@ describe('runTask (Claude Agent SDK adapter)', () => {
     expect(result.usage.outputTokens).toBe(50);
     expect(result.cost_usd).toBe(0.001);
 
-    const { cost_ledger } = await import('@/db/schema');
+    const { ai_task_runs, cost_ledger } = await import('@/db/schema');
     const { eq } = await import('drizzle-orm');
     const rows = await testDb()
       .select()
@@ -80,6 +80,24 @@ describe('runTask (Claude Agent SDK adapter)', () => {
     expect(rows).toHaveLength(1);
     // codex P1 fix: cost_ledger.cost is USD float, NOT micro-USD ints.
     expect(rows[0].cost).toBeCloseTo(0.001, 6);
+    expect(rows[0].task_run_id).toBe(result.task_run_id);
+
+    const runRows = await testDb()
+      .select()
+      .from(ai_task_runs)
+      .where(eq(ai_task_runs.id, result.task_run_id));
+    expect(runRows).toHaveLength(1);
+    expect(runRows[0]).toMatchObject({
+      task_kind: 'AttributionTask',
+      provider: 'xiaomi',
+      model: 'mimo-v2.5-pro',
+      status: 'success',
+      finish_reason: 'end_turn',
+    });
+    expect(runRows[0].input_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(runRows[0].usage_json).toEqual({ inputTokens: 100, outputTokens: 50 });
+    expect(runRows[0].cost_usd).toBeCloseTo(0.001, 6);
+    expect(runRows[0].finished_at).toBeTruthy();
   });
 
   it('passes systemPrompt + model + env via options + tools from registry', async () => {
@@ -165,6 +183,17 @@ describe('runTask (Claude Agent SDK adapter)', () => {
     await expect(runTask('AttributionTask', {}, { db: testDb(), r2: memR2() })).rejects.toThrow(
       /error_during_execution/,
     );
+
+    const { ai_task_runs } = await import('@/db/schema');
+    const { eq } = await import('drizzle-orm');
+    const runRows = await testDb()
+      .select()
+      .from(ai_task_runs)
+      .where(eq(ai_task_runs.task_kind, 'AttributionTask'));
+    expect(runRows).toHaveLength(1);
+    expect(runRows[0].status).toBe('failure');
+    expect(runRows[0].error_message).toContain('error_during_execution');
+    expect(runRows[0].finished_at).toBeTruthy();
   });
 
   it('runAgentTask is an alias of runTask', async () => {
@@ -228,7 +257,7 @@ describe('streamTask middleware + cost', () => {
       }
     }
 
-    const { cost_ledger } = await import('@/db/schema');
+    const { ai_task_runs, cost_ledger } = await import('@/db/schema');
     const { eq } = await import('drizzle-orm');
     const rows = await testDb()
       .select()
@@ -236,5 +265,19 @@ describe('streamTask middleware + cost', () => {
       .where(eq(cost_ledger.task_kind, 'AttributionTask'));
     expect(rows).toHaveLength(1);
     expect(rows[0].cost).toBeCloseTo(0.005, 6);
+    const taskRunId = rows[0].task_run_id;
+    expect(taskRunId).toBeTruthy();
+    if (!taskRunId) throw new Error('expected cost_ledger.task_run_id');
+
+    const runRows = await testDb()
+      .select()
+      .from(ai_task_runs)
+      .where(eq(ai_task_runs.id, taskRunId));
+    expect(runRows).toHaveLength(1);
+    expect(runRows[0]).toMatchObject({
+      task_kind: 'AttributionTask',
+      status: 'success',
+      finish_reason: 'end_turn',
+    });
   });
 });

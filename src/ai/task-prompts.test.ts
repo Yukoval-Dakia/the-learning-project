@@ -51,7 +51,7 @@ describe('getTaskSystemPrompt', () => {
     expect(prompt).toContain('unit_error');
     expect(prompt).toContain('当前 SubjectProfile');
     expect(prompt).not.toContain('universal baseline');
-    expect(prompt).not.toContain('time_pressure');
+    expect(prompt).toContain('time_pressure');
     expect(prompt).toContain('你是错题归因助手');
     expect(prompt).not.toContain('文言文');
     expect(prompt).not.toContain('古文');
@@ -72,7 +72,7 @@ describe('getTaskSystemPrompt', () => {
     expect(prompt).toContain('unit_error');
     expect(prompt).toContain('单位错误');
     expect(prompt).toContain('当前 SubjectProfile cause taxonomy');
-    expect(prompt).not.toContain('time_pressure');
+    expect(prompt).toContain('time_pressure');
   });
 
   it('builds subject-specific SessionSummaryTask prompts', () => {

@@ -23,6 +23,7 @@
 //     Memory module decorates input ahead of the model call and observes
 //     output after.
 
+import { createHash } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -40,7 +41,12 @@ import {
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
 import { createId } from '@paralleldrive/cuid2';
 import type { R2Client } from '../r2';
-import { writeCostLedger, writeToolCallLog } from './log';
+import {
+  writeAiTaskRunFinished,
+  writeAiTaskRunStarted,
+  writeCostLedger,
+  writeToolCallLog,
+} from './log';
 import { type ResolvedProvider, resolveTaskProvider } from './providers';
 
 // ============================================================================
@@ -178,6 +184,30 @@ function promptFromInput(input: unknown): string | AsyncIterable<SDKUserMessage>
   return JSON.stringify(input);
 }
 
+function stableInputForHash(value: unknown): unknown {
+  if (value instanceof URL) return value.toString();
+  if (value instanceof Uint8Array) return { _type: 'bytes', byteLength: value.byteLength };
+  if (Array.isArray(value)) return value.map(stableInputForHash);
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+      out[key] = stableInputForHash((value as Record<string, unknown>)[key]);
+    }
+    return out;
+  }
+  return value;
+}
+
+function inputHash(input: unknown): string {
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(stableInputForHash(input)) ?? 'null';
+  } catch {
+    serialized = String(input);
+  }
+  return createHash('sha256').update(serialized).digest('hex');
+}
+
 // Memoised isolated CLAUDE_CONFIG_DIR. The agent SDK reads `~/.claude/` by
 // default for hooks/MCP/skills; in a server we need a clean empty dir so
 // the subprocess can't pull in the developer's personal Claude config.
@@ -254,6 +284,18 @@ export async function runTask(
   const actualInput = ctx.middleware?.beforeRun
     ? await ctx.middleware.beforeRun(kind, input, ctx)
     : input;
+  try {
+    await writeAiTaskRunStarted(ctx.db, {
+      id: taskRunId,
+      task_kind: kind,
+      provider: resolved.provider,
+      model: resolved.model,
+      input_hash: inputHash(actualInput),
+      started_at: new Date(),
+    });
+  } catch (err) {
+    console.error('[runTask] writeAiTaskRunStarted failed', { task_run_id: taskRunId, kind, err });
+  }
 
   const abortController = new AbortController();
   const timer = setTimeout(() => abortController.abort(), def.budget.timeout);
@@ -289,6 +331,24 @@ export async function runTask(
         break;
       }
     }
+  } catch (err) {
+    try {
+      await writeAiTaskRunFinished(ctx.db, {
+        id: taskRunId,
+        status: 'failure',
+        finish_reason: 'error',
+        usage,
+        cost_usd,
+        error_message: err instanceof Error ? err.message : String(err),
+      });
+    } catch (finishErr) {
+      console.error('[runTask] writeAiTaskRunFinished failure failed', {
+        task_run_id: taskRunId,
+        kind,
+        err: finishErr,
+      });
+    }
+    throw err;
   } finally {
     clearTimeout(timer);
   }
@@ -298,6 +358,7 @@ export async function runTask(
   // raw USD float; do NOT multiply by 1e6.
   try {
     await writeCostLedger(ctx.db, {
+      task_run_id: taskRunId,
       task_kind: kind,
       provider: resolved.provider,
       model: resolved.model,
@@ -316,6 +377,22 @@ export async function runTask(
     usage,
     cost_usd,
   };
+
+  try {
+    await writeAiTaskRunFinished(ctx.db, {
+      id: taskRunId,
+      status: 'success',
+      finish_reason: stopReason,
+      usage,
+      cost_usd,
+    });
+  } catch (err) {
+    console.error('[runTask] writeAiTaskRunFinished success failed', {
+      task_run_id: taskRunId,
+      kind,
+      err,
+    });
+  }
 
   if (ctx.middleware?.afterRun) {
     try {
@@ -375,6 +452,22 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
         const actualInput = ctx.middleware?.beforeRun
           ? await ctx.middleware.beforeRun(kind, input, ctx)
           : input;
+        try {
+          await writeAiTaskRunStarted(ctx.db, {
+            id: taskRunId,
+            task_kind: kind,
+            provider: resolved.provider,
+            model: resolved.model,
+            input_hash: inputHash(actualInput),
+            started_at: new Date(),
+          });
+        } catch (err) {
+          console.error('[streamTask] writeAiTaskRunStarted failed', {
+            task_run_id: taskRunId,
+            kind,
+            err,
+          });
+        }
 
         const q = sdkQuery({
           prompt: promptFromInput(actualInput),
@@ -425,6 +518,7 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
               stopReason = msg.stop_reason ?? 'stop';
               try {
                 await writeCostLedger(ctx.db, {
+                  task_run_id: taskRunId,
                   task_kind: kind,
                   provider: resolved.provider,
                   model: resolved.model,
@@ -435,6 +529,21 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
                 });
               } catch (err) {
                 console.error('[streamTask] writeCostLedger failed', {
+                  task_run_id: taskRunId,
+                  kind,
+                  err,
+                });
+              }
+              try {
+                await writeAiTaskRunFinished(ctx.db, {
+                  id: taskRunId,
+                  status: 'success',
+                  finish_reason: stopReason,
+                  usage,
+                  cost_usd,
+                });
+              } catch (err) {
+                console.error('[streamTask] writeAiTaskRunFinished success failed', {
                   task_run_id: taskRunId,
                   kind,
                   err,
@@ -469,6 +578,22 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
       } catch (err) {
         const message =
           err instanceof Error ? `[streamTask] ${err.message}` : '[streamTask] unknown error';
+        try {
+          await writeAiTaskRunFinished(ctx.db, {
+            id: taskRunId,
+            status: 'failure',
+            finish_reason: 'error',
+            usage,
+            cost_usd,
+            error_message: err instanceof Error ? err.message : String(err),
+          });
+        } catch (finishErr) {
+          console.error('[streamTask] writeAiTaskRunFinished failure failed', {
+            task_run_id: taskRunId,
+            kind,
+            err: finishErr,
+          });
+        }
         controller.enqueue(new TextEncoder().encode(`\n\n${message}\n`));
       } finally {
         clearTimeout(timer);

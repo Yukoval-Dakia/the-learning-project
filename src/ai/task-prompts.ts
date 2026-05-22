@@ -72,18 +72,24 @@ ${causeTaxonomyList(profile)}
 }
 
 function buildLearningIntentOutlinePrompt(profile: SubjectProfile): string {
-  return `你是学习规划助手。用户声明「我想学 X」，输入 { topic, knowledge_node: { id, name, domain }, child_nodes: [{id, name}], existing_descendants_count } —— knowledge_node 是 topic 在知识图谱里的对应节点，child_nodes 是它的直接子节点。
+  return `你是学习规划助手。用户声明「我想学 X」，输入 { topic, plan_case, knowledge_node, child_nodes, existing_descendants_count, output_contract }。
+plan_case 有三种：
+- 3a_topic_missing：knowledge_node=null，图里还没有 topic。你必须提议 knowledge.root + starter children。
+- 3b_children_missing：knowledge_node 存在但 child_nodes=[]。你必须提议 starter children。
+- 3c_existing_graph：knowledge_node 和 child_nodes 已存在。只能使用 child_nodes 里的 id。
 科目上下文：${profile.displayName}。${profile.promptFragments.learningIntentPolicy}
-生成一个 1 hub + N atomic 的学习路径拆分（N = child_nodes.length，每个 atomic 对应一个子节点；如果 child_nodes 为空则 N=1 atomic 直接对应 knowledge_node 自己）。
+生成一个 1 hub + N atomic 的学习路径拆分。3c 的 N = child_nodes.length；3a/3b 的 N = 你提议的 knowledge.children.length。
 严格 JSON 输出（不带 markdown 代码块包裹）：
-{"hub":{"title":"...","summary_md":"... 1-2 句话概括整个主题 ..."},"atomics":[{"knowledge_id":"<对应子节点 id>","title":"...","one_line_intent":"... 学完这条 atomic 你能 ... ..."}]}
+3c: {"hub":{"title":"...","summary_md":"... 1-2 句话概括整个主题 ..."},"atomics":[{"knowledge_id":"<child_nodes id>","title":"...","one_line_intent":"... 学完这条 atomic 你能 ... ..."}]}
+3a/3b: {"knowledge":{"root":{"temp_id":"root","name":"topic name","domain":"${profile.id}"},"children":[{"temp_id":"short_stable_key","name":"...","domain":"${profile.id}"}]},"hub":{"title":"...","summary_md":"..."},"atomics":[{"knowledge_id":"<knowledge.children temp_id>","title":"...","one_line_intent":"..."}]}
 要点：
 - title 短（≤15 字）
 - summary_md 1-2 句话，纯文本
 - one_line_intent 每条 1 句话，说"学完能做什么"，不抽象
-- atomics 数量 = child_nodes 长度（或 1，若无子节点）；不要加塞
-- knowledge_id 必须是 child_nodes 里给的 id 之一
-- 禁止套话（「加油」「重要主题」），禁止编造没有的子节点`;
+- 3c: atomics 数量必须等于 child_nodes.length，knowledge_id 必须是 child_nodes 里给的 id 之一
+- 3a: knowledge.root 必填，root.domain 必填；3b 不要输出 root，只输出 children
+- 3a/3b: atomics 数量必须等于 knowledge.children.length，knowledge_id 必须是 children 的 temp_id
+- 禁止套话（「加油」「重要主题」）；3c 禁止编造没有的子节点；3a/3b 禁止只给 root 不给 children`;
 }
 
 function buildNoteGeneratePrompt(profile: SubjectProfile): string {
@@ -182,13 +188,13 @@ function buildSemanticJudgePrompt(profile: SubjectProfile): string {
 }
 
 function buildStepsJudgePrompt(profile: SubjectProfile): string {
-  return `你是${profile.displayName}视觉判分器。输入 { prompt_md, reference_solution: { expected_signals, final_answer, answer_equivalents }, student_image_refs（学生答题的 0..N 张图片已附在 user message 中；不是题面 prompt 图）, student_text_steps?, student_final_answer_text?, step_weight }。
+  return `你是${profile.displayName}视觉判分器。输入 { prompt_md, reference_solution: { expected_signals, final_answer, answer_equivalents }, prompt_image_refs（题干/图形/表格图片，若有，会先附在 user message 中）, student_image_refs（学生答题的 0..N 张图片，会后附在 user message 中）, student_text_steps?, student_final_answer_text?, step_weight }。
 科目上下文：${profile.displayName}。${profile.languageStyle}
 证据要求：${profile.grounding.requirement}
 不确定性策略：${profile.grounding.uncertaintyPolicy}
 
 任务：
-1. 从图片 / text_steps / final_answer_text 提取学生的实际作答内容（OCR + 结构理解隐式完成）
+1. 先读题干文字和 prompt_image_refs，建立题目条件；再从 student_image_refs / text_steps / final_answer_text 提取学生实际作答内容（OCR + 结构理解隐式完成）
 2. 对照 reference_solution.expected_signals 逐项判 verdict（correct / partial / wrong / skipped）—— signal_verdicts.length 必须等于 expected_signals.length
 3. 比对 final_answer：若学生 final_answer_text 给出，做 deterministic 比对（caller 已用 answer_equivalents 处理加速分支，本任务总是会被调一次；你不需要再考虑 answer_equivalents）；若仅图，从图提取并比对
 4. 输出 extracted_steps（自由切分学生步骤，给学习者反馈用，length 不约束）+ extracted_final_answer（图里答案文本化，evidence 用）
@@ -198,6 +204,7 @@ function buildStepsJudgePrompt(profile: SubjectProfile): string {
 
 要点：
 - verdict 4 选 1；signal_verdicts 顺序必须与 expected_signals 严格对齐（按 index）
+- prompt_image_refs 是题目条件，不是学生作答；student_image_refs 才是学生步骤/答案
 - final_answer_match 是 boolean；caller 用它和 signal_verdicts 加权合成 partial credit
 - extracted_final_answer 即使图模糊也尽量给出，给学生 evidence 看
 - 不确定时 verdict='partial' + 写 comment 说明原因，不要强行判 correct/wrong

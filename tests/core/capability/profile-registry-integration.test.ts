@@ -11,6 +11,18 @@ describe('Profile ↔ Registry integration', () => {
     expect(profiles.length).toBeGreaterThanOrEqual(2);
   });
 
+  it('registers every implemented judge route used by built-in subject profiles', () => {
+    expect(registry.resolveJudge('semantic')).toBeTruthy();
+
+    for (const [id, profile] of profiles) {
+      for (const route of profile.judgePolicy.preferredRoutes) {
+        if (registry.resolveJudge(route)) {
+          expect(profile.judgeCapabilities, `${id} should declare ${route}`).toContain(route);
+        }
+      }
+    }
+  });
+
   for (const [id, profile] of profiles) {
     describe(`${id} profile`, () => {
       it('passes validation against the default registry', () => {

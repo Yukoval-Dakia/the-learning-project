@@ -1,5 +1,6 @@
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
+import type { TaskTextRunFn } from '@/server/ai/provenance';
 import type { SubjectProfile } from '@/subjects/profile';
 import { and, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
@@ -26,7 +27,7 @@ export interface MistakeContent {
   knowledge_ids_picked: string[];
 }
 
-export type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
+export type RunTaskFn = TaskTextRunFn;
 
 export interface RunProposeAndWriteParams {
   db: Db;
@@ -71,6 +72,8 @@ export async function runProposeAndWrite(params: RunProposeAndWriteParams): Prom
       await writeKnowledgeProposeEvent(params.db, {
         payload: { mutation: 'propose_new', name: p.name, parent_id: p.parent_id },
         reasoning: p.reasoning,
+        task_run_id: result.task_run_id,
+        cost_usd: result.cost_usd,
       });
     }
   } catch (err) {
