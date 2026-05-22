@@ -3,6 +3,12 @@ import { type TaskKind, tasks } from './registry';
 
 export type AiTaskKind = TaskKind;
 
+function assertNever(value: never): never {
+  throw new Error(
+    `getTaskSystemPrompt: unhandled TaskKind — add a case to the switch. value=${JSON.stringify(value)}`,
+  );
+}
+
 function noteWriterRole(profile: SubjectProfile): string {
   return profile.id === 'wenyan' ? '学习笔记作者' : `${profile.displayName}学习笔记作者`;
 }
@@ -300,7 +306,16 @@ export function getTaskSystemPrompt(
       return buildVariantGenPrompt(profile);
     case 'TeachingTurnTask':
       return buildTeachingTurnPrompt(profile);
-    default:
+    // Subject-neutral pass-throughs — no profile builder required.
+    // VisionExtract* runs OCR on raw images; ReviewIntent generates a
+    // session opener whose subject voice is already injected via summary
+    // payload, not prompt text. If any of these later needs a profile
+    // builder, add one above and remove the pass-through here.
+    case 'VisionExtractTask':
+    case 'VisionExtractTaskHeavy':
+    case 'ReviewIntentTask':
       return tasks[task].systemPrompt;
+    default:
+      return assertNever(task);
   }
 }

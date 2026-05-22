@@ -108,3 +108,54 @@ describe('M-1 regression: runnable routes ignore multimodal fields', () => {
     expect(r1.result.score).toBe(r2.result.score);
   });
 });
+
+describe('M1 §C: semanticInput threads subjectProfile into LLM payload', () => {
+  it('SemanticJudgeTask receives subject_profile and multimodal carriers', async () => {
+    const captured: { kind: string; input: unknown; ctx: unknown }[] = [];
+    const runTaskFn = async (kind: string, input: unknown, ctx: unknown) => {
+      captured.push({ kind, input, ctx });
+      return {
+        text: JSON.stringify({
+          score: 0.9,
+          coarse_outcome: 'correct',
+          confidence: 0.9,
+          feedback_md: 'ok',
+          evidence_json: { matched_points: ['p1'], missing_points: [] },
+        }),
+      };
+    };
+
+    const mathProfile = resolveSubjectProfile('math');
+    const row: JudgeQuestionRow = {
+      id: 'q-m1c',
+      kind: 'short_answer',
+      prompt_md: 'Why?',
+      reference_md: 'Because.',
+      rubric_json: { required_points: ['p1'] },
+      choices_md: null,
+      judge_kind_override: 'semantic',
+      figures: [],
+      image_refs: ['asset_42'],
+      structured: null,
+    };
+
+    await judgeAnswer({
+      db: mockDb,
+      question: row,
+      answer_md: 'Because of p1.',
+      subjectProfile: mathProfile,
+      runTaskFn,
+    });
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0].kind).toBe('SemanticJudgeTask');
+    const semanticPayload = (captured[0].input as { question: Record<string, unknown> }).question;
+    expect(semanticPayload.subject_profile).toMatchObject({
+      id: 'math',
+      display_name: expect.any(String),
+    });
+    expect(semanticPayload.image_refs).toEqual(['asset_42']);
+    expect(semanticPayload.figures).toEqual([]);
+    expect(semanticPayload.structured).toBeNull();
+  });
+});
