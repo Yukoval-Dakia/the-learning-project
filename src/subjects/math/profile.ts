@@ -97,5 +97,7 @@ export const mathProfile: SubjectProfile = {
   schedulingHints: {
     default_policy: 'fsrs',
   },
-  judgeCapabilities: ['exact', 'keyword'],
+  // M2.1 (2026-05-22): + 'steps' for derivation question kind.
+  // steps@1 capability is registered in default registry; run() body lands in M2.2.
+  judgeCapabilities: ['exact', 'keyword', 'steps'],
 };

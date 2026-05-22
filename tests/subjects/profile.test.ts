@@ -171,3 +171,29 @@ describe('KNOWN_SUBJECT_IDS', () => {
     expect(KNOWN_SUBJECT_IDS).toContain('math');
   });
 });
+
+describe('M2.1: mathProfile + steps@1', () => {
+  it('mathProfile passes validateProfile against default registry', async () => {
+    const { createDefaultRegistry } = await import('@/core/capability/judges');
+    const { validateProfile } = await import('@/core/capability/validate-profile');
+    const { mathProfile } = await import('@/subjects/math/profile');
+    const registry = createDefaultRegistry();
+    const result = validateProfile(mathProfile, registry);
+    expect(result.errors, JSON.stringify(result.errors)).toEqual([]);
+    expect(result.valid).toBe(true);
+  });
+
+  it('mathProfile.judgeCapabilities includes steps', async () => {
+    const { mathProfile } = await import('@/subjects/math/profile');
+    expect(mathProfile.judgeCapabilities).toContain('steps');
+  });
+
+  it('default registry exposes steps@1 with experimental stability', async () => {
+    const { createDefaultRegistry } = await import('@/core/capability/judges');
+    const registry = createDefaultRegistry();
+    const runner = registry.resolveJudge('steps');
+    expect(runner).toBeDefined();
+    expect(runner?.manifest.version).toBe('1.0.0');
+    expect(runner?.manifest.stability).toBe('experimental');
+  });
+});
