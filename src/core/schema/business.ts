@@ -22,6 +22,9 @@ export const QuestionKind = z.enum([
   'computation',
   'reading',
   'translation',
+  // M2.1 (2026-05-22): math derivation — vision-aware steps@1 judge target.
+  // See docs/superpowers/specs/2026-05-21-math-mvp-vision-design.md §7.
+  'derivation',
 ]);
 
 export const QuestionSource = z.enum([

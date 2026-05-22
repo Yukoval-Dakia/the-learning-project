@@ -57,6 +57,15 @@ function defaultJudgeKindForQuestion(q: z.infer<typeof EmbeddedCheckQuestionSche
   if (q.kind === 'computation') {
     return nonEmpty(q.rubric_json?.keywords).length > 0 ? 'keyword' : 'semantic';
   }
+  // M2.1 (2026-05-22): derivation must NEVER fall through to exact — step-by-step
+  // answers cannot be graded by string equality. Embedded-check derivation runs
+  // through semantic (required_points-driven); 'steps' route is reserved for
+  // first-class math questions with reference_solution shape (see
+  // src/core/capability/judges/steps.ts), not embedded checks. The
+  // EmbeddedCheckGenerate prompt does not advertise 'derivation' as an option
+  // (see canonicalKinds in src/ai/task-prompts.ts), but defense-in-depth covers
+  // LLM hallucination + future prompt changes.
+  if (q.kind === 'derivation') return 'semantic';
   return PROSE_KINDS.has(q.kind) ? 'semantic' : 'exact';
 }
 
@@ -72,8 +81,11 @@ function assertGeneratedQuestionHasJudgeContract(
       `embedded question '${q.prompt_md}' uses semantic judge without required_points`,
     );
   }
-  if (PROSE_KINDS.has(q.kind) && route === 'exact') {
-    throw new Error(`embedded prose question '${q.prompt_md}' cannot use exact judge`);
+  if ((PROSE_KINDS.has(q.kind) || q.kind === 'derivation') && route === 'exact') {
+    // M2.1: derivation joins prose in the exact-forbidden set — graded step-by-step,
+    // not by string equality. judge_kind_override='exact' on derivation is rejected
+    // even if the LLM provides one (defense against LLM hallucination).
+    throw new Error(`embedded ${q.kind} question '${q.prompt_md}' cannot use exact judge`);
   }
 }
 

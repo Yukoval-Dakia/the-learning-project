@@ -90,6 +90,39 @@ const ZERO_QUESTIONS_OUTPUT = JSON.stringify({
   questions: [],
 });
 
+// M2.1 (2026-05-22): derivation kind defense — LLM normally doesn't emit
+// 'derivation' (canonicalKinds in task-prompts.ts excludes it), but if it
+// hallucinates we want semantic judging with required_points, not silent exact.
+const DERIVATION_WITH_CONTRACT_OUTPUT = JSON.stringify({
+  questions: [
+    {
+      kind: 'derivation',
+      prompt_md: '化简 $\\\\frac{a^2 - b^2}{a - b}$（$a \\\\neq b$）',
+      reference_md: '$a + b$，步骤：分子用平方差公式因式分解，再约去 $a - b$。',
+      choices_md: null,
+      judge_kind_override: 'semantic',
+      rubric_json: {
+        criteria: [{ name: 'method', weight: 1, descriptor: '识别平方差并约分' }],
+        required_points: ['用平方差公式因式分解分子', '约去 a−b', '得到 a+b'],
+      },
+    },
+  ],
+});
+
+const DERIVATION_EXACT_OVERRIDE_OUTPUT = JSON.stringify({
+  questions: [
+    {
+      kind: 'derivation',
+      prompt_md: '化简 $\\\\frac{a^2 - b^2}{a - b}$',
+      reference_md: 'a + b',
+      choices_md: null,
+      // LLM hallucinated 'exact' for a step-by-step kind — must be rejected.
+      judge_kind_override: 'exact',
+      rubric_json: { criteria: [{ name: 'final', weight: 1, descriptor: '最终答案' }] },
+    },
+  ],
+});
+
 async function seedAtomic(opts: {
   artifactId: string;
   generationStatus?: string;
@@ -493,6 +526,46 @@ describe('runEmbeddedCheckGenerate', () => {
 
     const [updatedArtifact] = await testDb().select().from(artifact).where(eq(artifact.id, 'a1'));
     expect(updatedArtifact.embedded_check_status).toBe('failed');
+  });
+
+  // M2.1: derivation defense-in-depth
+  it('accepts derivation kind when required_points provided (routed to semantic)', async () => {
+    await seedAtomic({ artifactId: 'a_deriv_ok', knowledgeId: 'k_deriv_ok', domain: 'math' });
+    const runTaskFn = vi.fn(async () => ({ text: DERIVATION_WITH_CONTRACT_OUTPUT }));
+
+    await runEmbeddedCheckGenerate({
+      db: testDb(),
+      artifactId: 'a_deriv_ok',
+      runTaskFn,
+    });
+
+    const [art] = await testDb().select().from(artifact).where(eq(artifact.id, 'a_deriv_ok'));
+    expect(art.embedded_check_status).toBe('ready');
+
+    const qs = await testDb().select().from(question).where(eq(question.source_ref, 'a_deriv_ok'));
+    expect(qs).toHaveLength(1);
+    expect(qs[0].kind).toBe('derivation');
+    // judge_kind_override propagated through — semantic, not silent exact.
+    expect(qs[0].judge_kind_override).toBe('semantic');
+  });
+
+  it('rejects derivation question with exact override (defense against LLM hallucination)', async () => {
+    await seedAtomic({ artifactId: 'a_deriv_bad' });
+    const runTaskFn = vi.fn(async () => ({ text: DERIVATION_EXACT_OVERRIDE_OUTPUT }));
+
+    await expect(
+      runEmbeddedCheckGenerate({
+        db: testDb(),
+        artifactId: 'a_deriv_bad',
+        runTaskFn,
+      }),
+    ).rejects.toThrow(/cannot use exact judge/);
+
+    const [art] = await testDb().select().from(artifact).where(eq(artifact.id, 'a_deriv_bad'));
+    expect(art.embedded_check_status).toBe('failed');
+
+    const qs = await testDb().select().from(question).where(eq(question.source_ref, 'a_deriv_bad'));
+    expect(qs).toHaveLength(0);
   });
 
   // Test 8: Profile drives prompt — math path

@@ -159,3 +159,62 @@ describe('M1 §C: semanticInput threads subjectProfile into LLM payload', () => 
     expect(semanticPayload.structured).toBeNull();
   });
 });
+
+describe('M2.1: resolveQuestionJudgeRoute — derivation kind', () => {
+  it('routes derivation to steps for math profile (preferredRoutes includes steps)', async () => {
+    const { resolveQuestionJudgeRoute } = await import('./question-contract');
+    const mathProfile = resolveSubjectProfile('math');
+    const route = resolveQuestionJudgeRoute(
+      {
+        id: 'q-d1',
+        kind: 'derivation',
+        prompt_md: '求 ∫(2x+3)dx',
+        reference_md: 'x² + 3x + C',
+        rubric_json: null,
+        choices_md: null,
+        judge_kind_override: null,
+      },
+      mathProfile,
+    );
+    expect(route).toBe('steps');
+  });
+
+  it('routes derivation to semantic for wenyan profile (no steps in preferredRoutes)', async () => {
+    const { resolveQuestionJudgeRoute } = await import('./question-contract');
+    const route = resolveQuestionJudgeRoute(
+      {
+        id: 'q-d2',
+        kind: 'derivation',
+        prompt_md: 'derivation in wenyan context',
+        reference_md: 'ref',
+        rubric_json: null,
+        choices_md: null,
+        judge_kind_override: null,
+      },
+      wenyanProfile,
+    );
+    // wenyan profile preferredRoutes does NOT include 'steps' — falls back to semantic
+    expect(route).toBe('semantic');
+  });
+
+  it('judgeAnswer returns unsupported for derivation route (M2.1 skeleton)', async () => {
+    const mathProfile = resolveSubjectProfile('math');
+    const result = await judgeAnswer({
+      db: mockDb,
+      question: {
+        id: 'q-d3',
+        kind: 'derivation',
+        prompt_md: '求导',
+        reference_md: 'x',
+        rubric_json: null,
+        choices_md: null,
+        judge_kind_override: null,
+      },
+      answer_md: '答案',
+      subjectProfile: mathProfile,
+    });
+    expect(result.route).toBe('steps');
+    expect(result.result.coarse_outcome).toBe('unsupported');
+    expect(result.result.feedback_md).toContain("judge route 'steps' is not implemented");
+  });
+});

@@ -120,6 +120,13 @@ export function resolveQuestionJudgeRoute(
   if (kind === 'choice' || kind === 'true_false') return 'exact';
   if (kind === 'fill_blank') return keywords.length > 0 ? 'keyword' : 'exact';
   if (kind === 'computation') return keywords.length > 0 ? 'keyword' : 'semantic';
+  // M2.1 (2026-05-22): derivation always routes via steps@1 for profiles that
+  // declare it (math); other profiles fall back to semantic if preferred, else
+  // keyword. judgeAnswer's RUNNABLE_ROUTES gates 'steps' at runtime until M2.2.
+  if (kind === 'derivation') {
+    if (isPreferred(subjectProfile, 'steps')) return 'steps';
+    return isPreferred(subjectProfile, 'semantic') ? 'semantic' : 'keyword';
+  }
   if (kind === 'short_answer' || kind === 'reading' || kind === 'translation' || kind === 'essay') {
     return isPreferred(subjectProfile, 'semantic') ? 'semantic' : 'keyword';
   }
