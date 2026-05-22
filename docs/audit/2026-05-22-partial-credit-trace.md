@@ -17,18 +17,43 @@
 | Review submit route | `body.rating: FsrsRating` — UI 4 按钮点击 | ❌ **rating 由用户手点，judge.score 不参与映射** | `app/api/review/submit/route.ts:53` (`POST`) |
 | `outcome` 推断 | `body.rating === 'again' ? 'failure' : 'success'` | ❌ **二元，partial 信号丢** | `app/api/review/submit/route.ts:88` |
 | FSRS scheduler | `scheduleReview(prevState, body.rating, now)` | ❌ **接收 rating 不接收 score** | `src/server/review/fsrs.ts:35` |
-| Mastery view | 读 event.payload.outcome（二元） | ❌ **partial 不进 mastery 计算** | (not found — N+1 verify：`src/server/review/` 只有 `activity-ref.ts` + `fsrs.ts`，mastery view 模块尚未落地代码；ADR-0012 是设计稿，本 closeout 不实施 mastery view) |
+| Mastery view | 读 event.payload.outcome（二元） | ❌ **partial 不进 mastery 计算** | PG view `knowledge_mastery`（DDL 在 `drizzle/0005_phase1c1_event_payload_gin_and_mastery_view.sql`；设计 ADR-0012；smoke test `tests/integration/mastery-view.test.ts`）—— **180d hard window + 30d 指数衰减 + 二元 outcome 聚合**；partial credit 不接入是预期行为，spec §1 已声明"partial → mastery view 这一段是 N+1" |
 
 **结论**：判分 → 留痕 → 显示链路通；判分 → 调度链路在 review submit 那里断了。**P3 修这一段**（rating advisor + UI advisory + submit event payload `judge_advice` 字段）；mastery view 这一段（partial → mastery）是 N+1 / 后续 closeout。
 
 ## §2 Framework LOC Baseline
 
-**Baseline SHA**: `<填入 git rev-parse HEAD 输出，Task 2 跑完时更新>`
+**Baseline SHA**: `4b8ae51aead2ce6113bf0b9586cd01700b7e0c47` (P-1 working baseline; merge 后更新为 main HEAD)
 **Date frozen**: 2026-05-22
 
-后续 P0 / P1 / P2 / P3 acid test 与本表对比；`framework diff = 0` 判定基于以下文件 LOC 不变（除 spec 明确允许的 1-2 行 register 调用 / enum +1 项 / route 分支）。
+后续 P0 / P1 / P2 / P3 acid test 与本表对比；`framework diff = 0` 判定基于以下文件 LOC 不变（除下方"允许差异"表明确允许的几行变化）。
 
-<填入 LOC 表，Task 2 跑完时更新>
+| File | LOC | Notes |
+|---|---|---|
+| `src/core/capability/registry.ts` | 26 | acid test 2: P1 LOC change = 0（主体） |
+| `src/core/capability/types.ts` | 13 | |
+| `src/core/capability/validate-profile.ts` | 136 | |
+| `src/core/capability/judges/exact.ts` | 87 | |
+| `src/core/capability/judges/keyword.ts` | 104 | |
+| `src/core/capability/judges/semantic.ts` | 33 | |
+| `src/core/capability/judges/steps.ts` | 122 | |
+| `src/core/capability/judges/index.ts` | 31 | acid test 2: P1 允许 +1 行 registerJudge(unitDimensionV1) |
+| `src/core/schema/activity.ts` | 23 | |
+| `src/core/schema/capability.ts` | 89 | P1 允许 ScoreMeaning enum +1 项 `'unit_dimension_v1'` |
+| `src/core/schema/event/**.ts` (dir total) | 707 | |
+| `src/server/ai/judges/index.ts` | 53 | acid test 2: P1 LOC change = 0（主体） |
+| `src/server/ai/judges/question-contract.ts` | 306 | P1 允许 +1 行 route 分支（physics + calculation → 'unit_dimension'） |
+| `src/server/ai/judges/router.ts` | (not found) | spec §3 P-1 #2 列了此路径但代码中不存在；router 逻辑在 `question-contract.ts` 内 `resolveQuestionJudgeRoute`。**N+1 verify**：是否需要后续抽出独立 router 文件 |
+| `src/server/ai/judges/steps-judge.ts` | 285 | |
+| `src/server/review/fsrs.ts` | 77 | acid test 3: P3 LOC change = 0（FSRS 内核 / scheduleReview ABI 不变） |
+| `src/server/review/activity-ref.ts` | 54 | |
+| `src/ui/lib/subject.ts` | 123 | |
+| `src/ui/lib/math-markdown.tsx` | 45 | |
+| `src/subjects/profile.ts` | 173 | P0 允许 `this.register(physicsProfile)` + DEFAULT_ALIASES 加 `'physics' / 'physical'` 几行 |
+| `app/api/review/submit/route.ts` | 188 | P3 允许 +1 optional body 字段 + event payload `judge_advice` |
+| `app/api/review/plan/route.ts` | 48 | |
+| `app/api/review/due/route.ts` | 166 | |
+| `app/api/review/appeal/route.ts` | 71 | |
 
 ### Notes / 允许的 phase 差异
 
