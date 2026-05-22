@@ -7,9 +7,7 @@ export const DerivationFixtureItemSchema = z.object({
   prompt_md: z.string().min(1),
   reference_md: z.string().min(1),
   rubric_json: z.object({
-    criteria: z.array(
-      z.object({ name: z.string(), weight: z.number(), descriptor: z.string() }),
-    ),
+    criteria: z.array(z.object({ name: z.string(), weight: z.number(), descriptor: z.string() })),
     reference_solution: z.object({
       expected_signals: z.array(z.string().min(1)).min(1),
       final_answer: z.string().min(1),

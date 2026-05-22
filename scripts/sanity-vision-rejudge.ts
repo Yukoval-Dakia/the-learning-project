@@ -18,14 +18,14 @@
  * Output: JSON saved to docs/preflight/YYYY-MM-DD-vision-rejudge.json
  * (gitignored; run locally at phase exit, do not commit output).
  */
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { config } from 'dotenv';
-import { loadMathDerivationFixtures } from '../src/subjects/math/fixtures/derivation';
-import { runStepsJudge } from '../src/server/ai/judges/steps-judge';
-import { resolveSubjectProfile } from '../src/subjects/profile';
-import type { JudgeQuestionRow } from '../src/server/ai/judges/question-contract';
 import type { Db } from '../src/db/client';
+import type { JudgeQuestionRow } from '../src/server/ai/judges/question-contract';
+import { runStepsJudge } from '../src/server/ai/judges/steps-judge';
+import { loadMathDerivationFixtures } from '../src/subjects/math/fixtures/derivation';
+import { resolveSubjectProfile } from '../src/subjects/profile';
 
 config({ path: '.env' });
 
@@ -100,9 +100,7 @@ async function main() {
   }
 
   const maxDiff =
-    scores.length >= 2
-      ? Math.max(...scores) - Math.min(...scores)
-      : Number.POSITIVE_INFINITY;
+    scores.length >= 2 ? Math.max(...scores) - Math.min(...scores) : Number.POSITIVE_INFINITY;
   const pass = scores.length >= 2 && maxDiff < 0.1;
 
   mkdirSync(OUT_DIR, { recursive: true });

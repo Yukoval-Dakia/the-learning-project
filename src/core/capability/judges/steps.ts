@@ -1,5 +1,5 @@
-import type { CapabilityManifestT, JudgeResultV2T } from '@/core/schema/capability';
 import { RubricReferenceSolution as StepsReferenceSolution } from '@/core/schema/business';
+import type { CapabilityManifestT, JudgeResultV2T } from '@/core/schema/capability';
 import { z } from 'zod';
 import type { JudgeCapabilityRunner, JudgeRunInput } from '../types';
 

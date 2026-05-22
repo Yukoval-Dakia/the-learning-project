@@ -10,11 +10,7 @@
       "rubric_json": {
         "criteria": [{ "name": "method", "weight": 1, "descriptor": "识别平方差并约分" }],
         "reference_solution": {
-          "expected_signals": [
-            "用平方差公式因式分解分子",
-            "约去 a−b",
-            "得到 a+b"
-          ],
+          "expected_signals": ["用平方差公式因式分解分子", "约去 a−b", "得到 a+b"],
           "final_answer": "a + b",
           "answer_equivalents": ["a+b", "(a+b)", "b + a"]
         }
@@ -30,11 +26,7 @@
       "rubric_json": {
         "criteria": [{ "name": "method", "weight": 1, "descriptor": "幂法则分项积分" }],
         "reference_solution": {
-          "expected_signals": [
-            "对 2x 应用幂法则得 x^2",
-            "对常数 3 积分得 3x",
-            "添加积分常数 C"
-          ],
+          "expected_signals": ["对 2x 应用幂法则得 x^2", "对常数 3 积分得 3x", "添加积分常数 C"],
           "final_answer": "x^2 + 3x + C",
           "answer_equivalents": ["x² + 3x + C", "x*x + 3x + C"]
         }
