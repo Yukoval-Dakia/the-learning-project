@@ -6,6 +6,7 @@ import {
   SessionEndSummary,
 } from '@/ui/components/ReviewSessionChrome';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
+import { MathMarkdown } from '@/ui/lib/math-markdown';
 import {
   type SlimSubjectProfile,
   resolveSubjectRenderModel,
@@ -343,7 +344,7 @@ export default function ReviewPage() {
             <span className="rationale">{current.rationale}</span>
           </div>
 
-          <div {...qbodyProps}>{current.prompt_md}</div>
+          <MathMarkdown {...qbodyProps}>{current.prompt_md}</MathMarkdown>
 
           {current.knowledge_ids.length > 0 && (
             <div className="knowledge-chips">
@@ -370,7 +371,11 @@ export default function ReviewPage() {
                 onToggle={(e) => setShowRef((e.target as HTMLDetailsElement).open)}
               >
                 <summary>参考答 ▾（提前看会减分）</summary>
-                <div {...refTextProps}>{current.reference_md ?? '(无)'}</div>
+                {current.reference_md ? (
+                  <MathMarkdown {...refTextProps}>{current.reference_md}</MathMarkdown>
+                ) : (
+                  <div {...refTextProps}>(无)</div>
+                )}
               </details>
               <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                 <button type="button" className="btn-rating coral" onClick={handleReveal}>
@@ -396,13 +401,23 @@ export default function ReviewPage() {
                 </div>
                 <div>
                   <div className="label-mono">参考答案</div>
-                  <p
-                    {...subjectContentProps(currentSubjectModel, {
-                      className: `feedback-prose${current.reference_md ? '' : ' muted'}`,
-                    })}
-                  >
-                    {current.reference_md ?? '（无）'}
-                  </p>
+                  {current.reference_md ? (
+                    <MathMarkdown
+                      {...subjectContentProps(currentSubjectModel, {
+                        className: 'feedback-prose',
+                      })}
+                    >
+                      {current.reference_md}
+                    </MathMarkdown>
+                  ) : (
+                    <p
+                      {...subjectContentProps(currentSubjectModel, {
+                        className: 'feedback-prose muted',
+                      })}
+                    >
+                      （无）
+                    </p>
+                  )}
                 </div>
               </div>
 
