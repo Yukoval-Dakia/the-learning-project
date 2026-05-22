@@ -195,7 +195,19 @@ export function TeachingDrawer({
                     <span>{m.role === 'agent' ? 'agent · TeachingTurnTask' : 'user · self'}</span>
                     {m.turn_kind && <span>· {TURN_KIND_LABEL[m.turn_kind]}</span>}
                   </div>
-                  <MathMarkdown {...messageBodyProps}>{m.text_md}</MathMarkdown>
+                  <MathMarkdown
+                    notation={
+                      (subjectModel.renderConfig.notation ?? undefined) as
+                        | 'latex'
+                        | 'wenyan'
+                        | 'plaintext'
+                        | 'code'
+                        | undefined
+                    }
+                    {...messageBodyProps}
+                  >
+                    {m.text_md}
+                  </MathMarkdown>
                 </div>
               ))}
               {turnM.isPending && (

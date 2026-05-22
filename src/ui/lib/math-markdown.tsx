@@ -7,10 +7,14 @@ export interface MathMarkdownProps extends Omit<HTMLAttributes<HTMLDivElement>, 
   /** Markdown source. Supports inline `$...$` and block `$$...$$` math. */
   children: string;
   /**
-   * Profile rendering hint. If 'latex' (math), KaTeX plugin chain is enabled.
-   * Otherwise pure markdown rendering (wenyan profile renderConfig.notation = 'wenyan').
+   * Subject's renderConfig.notation. KaTeX plugin chain only activates when
+   * notation === 'latex'. Other values (or undefined) skip math parsing —
+   * `$...$` text passes through as raw markdown.
    *
-   * Default 'latex' for backwards-compat at callers that already opt into LaTeX.
+   * Callers should thread this from their subject's render model
+   * (e.g. `currentSubjectModel.renderConfig.notation`). Defaulting to 'latex'
+   * was rejected (Codex P1, PR #83): it would silently enable LaTeX parsing
+   * for wenyan content where `$...$` is incidental punctuation.
    */
   notation?: 'latex' | 'wenyan' | 'plaintext' | 'code';
 }
@@ -24,11 +28,7 @@ export interface MathMarkdownProps extends Omit<HTMLAttributes<HTMLDivElement>, 
  * arbitrary HTMLAttributes (className, style, data-*) so subjectContentProps-style
  * helpers can be spread directly.
  */
-export function MathMarkdown({
-  children,
-  notation = 'latex',
-  ...divProps
-}: MathMarkdownProps): ReactElement {
+export function MathMarkdown({ children, notation, ...divProps }: MathMarkdownProps): ReactElement {
   const remarkPlugins: ComponentProps<typeof ReactMarkdown>['remarkPlugins'] = [];
   const rehypePlugins: ComponentProps<typeof ReactMarkdown>['rehypePlugins'] = [];
   if (notation === 'latex') {

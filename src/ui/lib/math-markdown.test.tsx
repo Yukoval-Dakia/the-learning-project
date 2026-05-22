@@ -3,8 +3,17 @@ import { describe, expect, it } from 'vitest';
 import { MathMarkdown } from './math-markdown';
 
 describe('MathMarkdown — KaTeX rendering', () => {
-  it('renders inline math with KaTeX classes when notation=latex (default)', () => {
-    const html = renderToString(<MathMarkdown>{'square root: $\\sqrt{2}$'}</MathMarkdown>);
+  it('skips KaTeX plugin chain by default (notation undefined)', () => {
+    const html = renderToString(<MathMarkdown>{'wenyan: $\\sqrt{2}$ as text'}</MathMarkdown>);
+    // No notation prop → no KaTeX parsing
+    expect(html).not.toContain('class="katex"');
+    expect(html).toContain('wenyan:');
+  });
+
+  it('renders inline math with KaTeX classes when notation=latex', () => {
+    const html = renderToString(
+      <MathMarkdown notation="latex">{'square root: $\\sqrt{2}$'}</MathMarkdown>,
+    );
     expect(html).toContain('class="katex"');
     expect(html).toContain('square root:');
   });
@@ -13,7 +22,9 @@ describe('MathMarkdown — KaTeX rendering', () => {
     // remark-math treats `$$...$$` as block when it's on its own paragraph
     // (surrounded by blank lines or at edges). Inline form `$$x$$` mid-text
     // would parse as inline.
-    const html = renderToString(<MathMarkdown>{'\n$$\nx^2 + 1\n$$\n'}</MathMarkdown>);
+    const html = renderToString(
+      <MathMarkdown notation="latex">{'\n$$\nx^2 + 1\n$$\n'}</MathMarkdown>,
+    );
     expect(html).toContain('katex-display');
   });
 

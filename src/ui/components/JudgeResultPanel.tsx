@@ -17,6 +17,8 @@ export interface JudgeResultPanelProps {
   onAppeal?: () => void;
   /** Whether appeal button shows; disabled if already appealed in this session. */
   appealable?: boolean;
+  /** Subject's renderConfig.notation — passed through to MathMarkdown. */
+  notation?: 'latex' | 'wenyan' | 'plaintext' | 'code';
 }
 
 const OUTCOME_TONE: Record<JudgeResultV2T['coarse_outcome'], string> = {
@@ -44,6 +46,7 @@ export function JudgeResultPanel({
   expectedSignals,
   onAppeal,
   appealable = true,
+  notation,
 }: JudgeResultPanelProps) {
   const evidence = extractStepsEvidence(result);
   const verdictRows =
@@ -69,7 +72,9 @@ export function JudgeResultPanel({
       </div>
 
       {result.feedback_md && (
-        <MathMarkdown className="judge-result-panel__feedback">{result.feedback_md}</MathMarkdown>
+        <MathMarkdown notation={notation} className="judge-result-panel__feedback">
+          {result.feedback_md}
+        </MathMarkdown>
       )}
 
       {isStepsRoute && verdictRows.length > 0 && (
@@ -77,9 +82,13 @@ export function JudgeResultPanel({
           {verdictRows.map((row) => (
             <li key={row.signal_idx} className={`verdict-row verdict-${row.verdict}`}>
               <span className="verdict-row__label">{verdictLabel(row.verdict)}</span>
-              <MathMarkdown className="verdict-row__signal">{row.signal_text}</MathMarkdown>
+              <MathMarkdown notation={notation} className="verdict-row__signal">
+                {row.signal_text}
+              </MathMarkdown>
               {row.comment && (
-                <MathMarkdown className="verdict-row__comment">{row.comment}</MathMarkdown>
+                <MathMarkdown notation={notation} className="verdict-row__comment">
+                  {row.comment}
+                </MathMarkdown>
               )}
             </li>
           ))}
@@ -89,7 +98,7 @@ export function JudgeResultPanel({
       {isStepsRoute && evidence.extracted_final_answer && (
         <div className="judge-result-panel__extracted">
           <span className="label-mono">提取的最终答案</span>
-          <MathMarkdown>{evidence.extracted_final_answer}</MathMarkdown>
+          <MathMarkdown notation={notation}>{evidence.extracted_final_answer}</MathMarkdown>
         </div>
       )}
 

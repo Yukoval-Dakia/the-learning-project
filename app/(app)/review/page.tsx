@@ -344,7 +344,19 @@ export default function ReviewPage() {
             <span className="rationale">{current.rationale}</span>
           </div>
 
-          <MathMarkdown {...qbodyProps}>{current.prompt_md}</MathMarkdown>
+          <MathMarkdown
+            notation={
+              (currentSubjectModel.renderConfig.notation ?? undefined) as
+                | 'latex'
+                | 'wenyan'
+                | 'plaintext'
+                | 'code'
+                | undefined
+            }
+            {...qbodyProps}
+          >
+            {current.prompt_md}
+          </MathMarkdown>
 
           {current.knowledge_ids.length > 0 && (
             <div className="knowledge-chips">
@@ -372,7 +384,19 @@ export default function ReviewPage() {
               >
                 <summary>参考答 ▾（提前看会减分）</summary>
                 {current.reference_md ? (
-                  <MathMarkdown {...refTextProps}>{current.reference_md}</MathMarkdown>
+                  <MathMarkdown
+                    notation={
+                      (currentSubjectModel.renderConfig.notation ?? undefined) as
+                        | 'latex'
+                        | 'wenyan'
+                        | 'plaintext'
+                        | 'code'
+                        | undefined
+                    }
+                    {...refTextProps}
+                  >
+                    {current.reference_md}
+                  </MathMarkdown>
                 ) : (
                   <div {...refTextProps}>(无)</div>
                 )}
@@ -403,6 +427,14 @@ export default function ReviewPage() {
                   <div className="label-mono">参考答案</div>
                   {current.reference_md ? (
                     <MathMarkdown
+                      notation={
+                        (currentSubjectModel.renderConfig.notation ?? undefined) as
+                          | 'latex'
+                          | 'wenyan'
+                          | 'plaintext'
+                          | 'code'
+                          | undefined
+                      }
                       {...subjectContentProps(currentSubjectModel, {
                         className: 'feedback-prose',
                       })}

@@ -35,9 +35,11 @@ interface AttemptResult {
 interface EmbeddedCheckSectionProps {
   status: EmbeddedCheckStatus;
   questions: EmbeddedCheckQuestion[];
+  /** Subject's renderConfig.notation — passed through to MathMarkdown for KaTeX gating. */
+  notation?: 'latex' | 'wenyan' | 'plaintext' | 'code';
 }
 
-export function EmbeddedCheckSection({ status, questions }: EmbeddedCheckSectionProps) {
+export function EmbeddedCheckSection({ status, questions, notation }: EmbeddedCheckSectionProps) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [feedback, setFeedback] = useState<Record<string, AttemptResult>>({});
   const [submitting, setSubmitting] = useState<Record<string, boolean>>({});
@@ -103,7 +105,7 @@ export function EmbeddedCheckSection({ status, questions }: EmbeddedCheckSection
         const disabled = submitting[question.id] || currentFeedback !== undefined;
         return (
           <div key={question.id} className="embedded-check-question">
-            <MathMarkdown className="embedded-check-question__prompt">
+            <MathMarkdown notation={notation} className="embedded-check-question__prompt">
               {question.prompt_md}
             </MathMarkdown>
             {question.kind === 'choice' || question.kind === 'single_choice' ? (
@@ -173,6 +175,7 @@ export function EmbeddedCheckSection({ status, questions }: EmbeddedCheckSection
                    * shape with expected_signals is a follow-up.
                    */
                   expectedSignals={[]}
+                  notation={notation}
                   appealable={
                     !appealed[question.id] && currentFeedback.attempt_event_id !== undefined
                   }
@@ -204,7 +207,9 @@ export function EmbeddedCheckSection({ status, questions }: EmbeddedCheckSection
                       : '需复习'}{' '}
                   · score {currentFeedback.judge.score ?? 'n/a'}
                   {currentFeedback.judge.reason_md && (
-                    <MathMarkdown>{currentFeedback.judge.reason_md}</MathMarkdown>
+                    <MathMarkdown notation={notation}>
+                      {currentFeedback.judge.reason_md}
+                    </MathMarkdown>
                   )}
                 </div>
               ))}

@@ -1,7 +1,11 @@
 'use client';
 
 import { MathMarkdown } from '@/ui/lib/math-markdown';
-import { type SlimSubjectProfile, subjectContentProps } from '@/ui/lib/subject';
+import {
+  type SlimSubjectProfile,
+  resolveSubjectRenderModel,
+  subjectContentProps,
+} from '@/ui/lib/subject';
 import { type EmbeddedCheckQuestion, EmbeddedCheckSection } from './EmbeddedCheckSection';
 
 export type { EmbeddedCheckQuestion };
@@ -48,10 +52,11 @@ export function ArtifactSections({
   embeddedQuestions,
   embeddedCheckStatus,
 }: ArtifactSectionsProps) {
+  const subjectModel = resolveSubjectRenderModel(subjectProfile);
   return (
     <div className="artifact-sections">
       {sections.map((s) => {
-        const sectionBodyProps = subjectContentProps(subjectProfile, {
+        const sectionBodyProps = subjectContentProps(subjectModel, {
           className: 'artifact-section-body',
         });
         return (
@@ -60,9 +65,32 @@ export function ArtifactSections({
               <strong>{SECTION_LABEL[s.kind]}</strong>
               <span className="artifact-section-tier">{SOURCE_TIER_LABEL[s.source_tier]}</span>
             </div>
-            <MathMarkdown {...sectionBodyProps}>{s.body_md}</MathMarkdown>
+            <MathMarkdown
+              notation={
+                (subjectModel.renderConfig.notation ?? undefined) as
+                  | 'latex'
+                  | 'wenyan'
+                  | 'plaintext'
+                  | 'code'
+                  | undefined
+              }
+              {...sectionBodyProps}
+            >
+              {s.body_md}
+            </MathMarkdown>
             {s.kind === 'check' && (
-              <EmbeddedCheckSection status={embeddedCheckStatus} questions={embeddedQuestions} />
+              <EmbeddedCheckSection
+                status={embeddedCheckStatus}
+                questions={embeddedQuestions}
+                notation={
+                  (subjectModel.renderConfig.notation ?? undefined) as
+                    | 'latex'
+                    | 'wenyan'
+                    | 'plaintext'
+                    | 'code'
+                    | undefined
+                }
+              />
             )}
           </div>
         );
