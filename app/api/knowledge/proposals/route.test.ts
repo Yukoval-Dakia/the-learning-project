@@ -60,6 +60,7 @@ async function seedRateEvent(opts: {
   id: string;
   propose_event_id: string;
   rating: 'accept' | 'dismiss' | 'rollback';
+  subject_kind?: 'event' | 'knowledge_edge';
   created_at?: Date;
 }) {
   const db = testDb();
@@ -69,11 +70,43 @@ async function seedRateEvent(opts: {
     actor_kind: 'user',
     actor_ref: 'self',
     action: 'rate',
-    subject_kind: 'event',
+    subject_kind: opts.subject_kind ?? 'event',
     subject_id: opts.propose_event_id,
     outcome: 'success',
     payload: { rating: opts.rating },
     caused_by_event_id: opts.propose_event_id,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: opts.created_at ?? new Date(),
+  });
+}
+
+async function seedEdgeProposeEvent(opts: {
+  id: string;
+  from: string;
+  to: string;
+  relation_type?: string;
+  reasoning: string;
+  created_at?: Date;
+}) {
+  const db = testDb();
+  await db.insert(event).values({
+    id: opts.id,
+    session_id: null,
+    actor_kind: 'agent',
+    actor_ref: 'dreaming',
+    action: 'propose',
+    subject_kind: 'knowledge_edge',
+    subject_id: `edge_${opts.id}`,
+    outcome: 'partial',
+    payload: {
+      from_knowledge_id: opts.from,
+      to_knowledge_id: opts.to,
+      relation_type: opts.relation_type ?? 'prerequisite',
+      weight: 0.6,
+      reasoning: opts.reasoning,
+    },
+    caused_by_event_id: null,
     task_run_id: null,
     cost_micro_usd: null,
     created_at: opts.created_at ?? new Date(),
@@ -176,5 +209,52 @@ describe('GET /api/knowledge/proposals', () => {
     const body = (await res.json()) as { rows: Array<{ id: string; status: string }> };
     expect(body.rows).toHaveLength(1);
     expect(body.rows[0].status).toBe('accepted');
+  });
+
+  it('includes knowledge_edge proposals and resolves their rate status', async () => {
+    await seedKnowledge('k1');
+    await seedKnowledge('k2');
+    await seedEdgeProposeEvent({
+      id: 'edge_p1',
+      from: 'k1',
+      to: 'k2',
+      reasoning: 'k1 unlocks k2',
+    });
+    await seedRateEvent({
+      id: 'edge_rate_1',
+      propose_event_id: 'edge_p1',
+      rating: 'accept',
+      subject_kind: 'knowledge_edge',
+    });
+
+    const res = await getProposals('status=accepted');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      rows: Array<{
+        id: string;
+        kind: string;
+        payload: {
+          mutation: string;
+          from_knowledge_id: string;
+          to_knowledge_id: string;
+          relation_type: string;
+        };
+        reasoning: string;
+        status: string;
+      }>;
+    };
+    expect(body.rows).toHaveLength(1);
+    expect(body.rows[0]).toMatchObject({
+      id: 'edge_p1',
+      kind: 'knowledge_edge',
+      reasoning: 'k1 unlocks k2',
+      status: 'accepted',
+    });
+    expect(body.rows[0].payload).toMatchObject({
+      mutation: 'propose_knowledge_edge',
+      from_knowledge_id: 'k1',
+      to_knowledge_id: 'k2',
+      relation_type: 'prerequisite',
+    });
   });
 });

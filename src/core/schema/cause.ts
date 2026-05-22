@@ -24,6 +24,7 @@ export type CauseProfileLike = {
     label?: string;
     description?: string;
     review_priority?: 1 | 2 | 3 | 4 | 5;
+    variant_targetable?: boolean;
   }>;
 };
 

@@ -72,8 +72,9 @@ export const wenyanProfile: SubjectProfile = {
       label: '粗心',
       description: '非知识性的笔误或遗漏',
       review_priority: 2,
+      variant_targetable: false,
     },
-    { id: 'other', label: '其它', review_priority: 2 },
+    { id: 'other', label: '其它', review_priority: 2, variant_targetable: false },
   ],
   renderConfig: {
     font_family: 'serif-cjk',
@@ -83,5 +84,5 @@ export const wenyanProfile: SubjectProfile = {
   schedulingHints: {
     default_policy: 'fsrs',
   },
-  judgeCapabilities: ['exact', 'keyword'],
+  judgeCapabilities: ['exact', 'keyword', 'semantic'],
 };

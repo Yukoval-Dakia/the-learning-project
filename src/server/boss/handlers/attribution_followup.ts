@@ -20,6 +20,7 @@ import type { Job } from 'pg-boss';
 
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
+import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { runAttributionAndWriteJudgeEvent } from '@/server/knowledge/attribute';
 import { loadTreeSnapshot } from '@/server/knowledge/tree';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -28,7 +29,7 @@ export interface AttributionFollowupJobData {
   attempt_event_id: string;
 }
 
-export type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
+export type RunTaskFn = TaskTextRunFn;
 
 export type EnqueueVariantGenFn = (attemptEventId: string) => Promise<void>;
 
@@ -50,10 +51,10 @@ async function defaultRunTaskFn(
   kind: string,
   input: unknown,
   ctx: unknown,
-): Promise<{ text: string }> {
+): Promise<Awaited<ReturnType<RunTaskFn>>> {
   const { runTask } = await import('@/server/ai/runner');
   const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
-  return { text: result.text };
+  return result;
 }
 
 export interface RunAttributionFollowupParams {

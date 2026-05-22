@@ -106,7 +106,7 @@ function extractJsonObject(text: string): unknown {
 function composeJudgeResult(
   output: StepsLlmOutputT,
   stepWeight: number,
-  imageRefs: string[],
+  refs: { prompt_image_refs: string[]; student_image_refs: string[] },
 ): JudgeResultV2T {
   const N = output.signal_verdicts.length;
   const stepScoreRaw =
@@ -123,7 +123,9 @@ function composeJudgeResult(
     final_answer_comment: output.final_answer_comment,
     step_score_raw: stepScoreRaw,
     step_weight: stepWeight,
-    image_refs: imageRefs,
+    image_refs: refs.student_image_refs,
+    prompt_image_refs: refs.prompt_image_refs,
+    student_image_refs: refs.student_image_refs,
   };
 
   if (score >= 0.85) {
@@ -168,11 +170,8 @@ export async function runStepsJudge(params: RunStepsJudgeParams): Promise<JudgeR
     });
   }
 
-  // M2.2 fix (post-PR82 review): use student-submitted answer images,
-  // NOT question.image_refs which are prompt/stem figures (different
-  // semantic channel per spec §7.1 + §7.4). Prompt images may be sent
-  // alongside in M2.3 with explicit role labeling.
-  const imageRefs = params.student_image_refs ?? [];
+  const promptImageRefs = params.question.image_refs ?? [];
+  const studentImageRefs = params.student_image_refs ?? [];
 
   // Accelerator path — Spec §7.5 #2:
   // 学生主动打字 final_answer + 命中 answer_equivalents (或 final_answer 本身) → skip LLM.
@@ -198,7 +197,9 @@ export async function runStepsJudge(params: RunStepsJudgeParams): Promise<JudgeR
           accelerator: 'final_answer_match',
           student_final_answer_text: studentFinalText,
           reference_final_answer: referenceSolution.final_answer,
-          image_refs: imageRefs,
+          image_refs: studentImageRefs,
+          prompt_image_refs: promptImageRefs,
+          student_image_refs: studentImageRefs,
           step_score_raw: null,
           step_weight: STEP_WEIGHT_DEFAULT,
         },
@@ -208,23 +209,33 @@ export async function runStepsJudge(params: RunStepsJudgeParams): Promise<JudgeR
 
   // LLM path
   const imageFetchFn = params.imageFetchFn ?? defaultImageFetch;
-  let images: Array<{ data: string; mediaType: string }> = [];
+  let promptImages: Array<{ data: string; mediaType: string }> = [];
+  let studentImages: Array<{ data: string; mediaType: string }> = [];
   try {
-    images = await imageFetchFn(imageRefs, params.db);
+    promptImages = promptImageRefs.length > 0 ? await imageFetchFn(promptImageRefs, params.db) : [];
+    studentImages =
+      studentImageRefs.length > 0 ? await imageFetchFn(studentImageRefs, params.db) : [];
   } catch (err) {
     return unsupportedResult('image fetch failed', {
       error: err instanceof Error ? err.message : String(err),
-      image_refs: imageRefs,
+      image_refs: studentImageRefs,
+      prompt_image_refs: promptImageRefs,
+      student_image_refs: studentImageRefs,
     });
   }
+  const images = [...promptImages, ...studentImages];
 
   const llmTextPayload = JSON.stringify({
     prompt_md: params.question.prompt_md,
     reference_solution: referenceSolution,
+    prompt_image_refs: promptImageRefs,
+    student_image_refs: studentImageRefs,
     student_text_steps: undefined,
     student_final_answer_text: studentFinalText || undefined,
     step_weight: STEP_WEIGHT_DEFAULT,
     image_count: images.length,
+    prompt_image_count: promptImages.length,
+    student_image_count: studentImages.length,
   });
 
   const runTaskFn = params.runTaskFn ?? defaultRunTaskFn;
@@ -239,7 +250,9 @@ export async function runStepsJudge(params: RunStepsJudgeParams): Promise<JudgeR
   } catch (err) {
     return unsupportedResult('LLM call failed', {
       error: err instanceof Error ? err.message : String(err),
-      image_refs: imageRefs,
+      image_refs: studentImageRefs,
+      prompt_image_refs: promptImageRefs,
+      student_image_refs: studentImageRefs,
     });
   }
 
@@ -259,9 +272,14 @@ export async function runStepsJudge(params: RunStepsJudgeParams): Promise<JudgeR
     return unsupportedResult('signal_verdicts length mismatch', {
       expected: referenceSolution.expected_signals.length,
       got: parsed.signal_verdicts.length,
-      image_refs: imageRefs,
+      image_refs: studentImageRefs,
+      prompt_image_refs: promptImageRefs,
+      student_image_refs: studentImageRefs,
     });
   }
 
-  return composeJudgeResult(parsed, STEP_WEIGHT_DEFAULT, imageRefs);
+  return composeJudgeResult(parsed, STEP_WEIGHT_DEFAULT, {
+    prompt_image_refs: promptImageRefs,
+    student_image_refs: studentImageRefs,
+  });
 }

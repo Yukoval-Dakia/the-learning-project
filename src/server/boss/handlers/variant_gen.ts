@@ -1,9 +1,8 @@
 // Phase 2 (Task #17) — async variant question generation.
 //
 // Triggered after attribution_followup writes a judge event for a failure
-// attempt. If the cause's primary_category is in the "worth varying" set
-// (concept / knowledge_gap / method / calculation / reading / memory /
-// expression), generate one variant question and persist it with
+// attempt. If the active SubjectProfile marks the cause's primary_category as
+// targetable, generate one variant question and persist it with
 // source='mistake_variant', draft_status='draft', variant_depth=parent+1.
 //
 // MVP — single pass (no VariantVerifyTask), no UI surface beyond the
@@ -14,8 +13,7 @@
 //   1. variant_depth >= 2 → skip (spec §3.4.4 cap)
 //   2. parent question.source === 'mistake_variant' → skip (variants do not
 //      themselves spawn variants — spec §3.4.4 chain termination)
-//   3. cause.primary_category ∈ {carelessness, time_pressure, other} → skip
-//      (spec §3.4.1 — these don't benefit from variants)
+//   3. SubjectProfile cause category can set variant_targetable=false.
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
@@ -25,13 +23,14 @@ import { z } from 'zod';
 import { QuestionKind } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
+import { type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 export interface VariantGenJobData {
   attempt_event_id: string;
 }
 
-export type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
+export type RunTaskFn = TaskTextRunFn;
 
 type DepsOverride = {
   runTaskFn?: RunTaskFn;
@@ -41,10 +40,10 @@ async function defaultRunTaskFn(
   kind: string,
   input: unknown,
   ctx: unknown,
-): Promise<{ text: string }> {
+): Promise<Awaited<ReturnType<RunTaskFn>>> {
   const { runTask } = await import('@/server/ai/runner');
   const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
-  return { text: result.text };
+  return result;
 }
 
 const VariantOutputSchema = z.object({
@@ -68,8 +67,6 @@ function parseVariantOutput(text: string): z.infer<typeof VariantOutputSchema> {
   }
   return VariantOutputSchema.parse(json);
 }
-
-const SKIP_CAUSES: ReadonlySet<string> = new Set(['carelessness', 'time_pressure', 'other']);
 
 export interface RunVariantGenParams {
   db: Db;
@@ -136,9 +133,6 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
   };
   const cause = judgePayload.cause;
   if (!cause?.primary_category) return { status: 'skipped:cause_not_targetable' };
-  if (SKIP_CAUSES.has(cause.primary_category)) {
-    return { status: 'skipped:cause_not_targetable' };
-  }
 
   // Load the parent question
   const qRows = await db
@@ -192,6 +186,13 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
         .where(eq(knowledge.id, firstKnowledgeId))
         .limit(1)
     : [];
+  const subjectProfile = resolveSubjectProfile(knowledgeRows[0]?.domain);
+  const causeCategory = subjectProfile.causeCategories.find(
+    (category) => category.id === cause.primary_category,
+  );
+  if (!causeCategory || causeCategory.variant_targetable === false) {
+    return { status: 'skipped:cause_not_targetable' };
+  }
 
   const input = {
     original_question: {
@@ -211,7 +212,7 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
 
   const result = await runTaskFn('VariantGenTask', input, {
     db,
-    subjectProfile: resolveSubjectProfile(knowledgeRows[0]?.domain),
+    subjectProfile,
   });
   const parsed = parseVariantOutput(result.text);
 
@@ -237,10 +238,7 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
     variant_depth: parent.variant_depth + 1,
     root_question_id: rootId,
     parent_variant_id: parent.id,
-    created_by: {
-      by: 'ai',
-      task_kind: 'VariantGenTask',
-    } as never,
+    created_by: aiAgentRef('VariantGenTask', result) as never,
     metadata: { reasoning: parsed.reasoning, source_attempt: attemptEventId } as never,
     created_at: now,
     updated_at: now,
