@@ -1,5 +1,6 @@
 'use client';
 
+import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { type SlimSubjectProfile, subjectContentProps } from '@/ui/lib/subject';
 import { type EmbeddedCheckQuestion, EmbeddedCheckSection } from './EmbeddedCheckSection';
 
@@ -59,7 +60,7 @@ export function ArtifactSections({
               <strong>{SECTION_LABEL[s.kind]}</strong>
               <span className="artifact-section-tier">{SOURCE_TIER_LABEL[s.source_tier]}</span>
             </div>
-            <pre {...sectionBodyProps}>{s.body_md}</pre>
+            <MathMarkdown {...sectionBodyProps}>{s.body_md}</MathMarkdown>
             {s.kind === 'check' && (
               <EmbeddedCheckSection status={embeddedCheckStatus} questions={embeddedQuestions} />
             )}
