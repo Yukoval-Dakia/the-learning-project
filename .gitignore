@@ -40,3 +40,6 @@ tsconfig.tsbuildinfo
 
 # remember skill hook logs
 .remember/
+
+# Manual sanity / preflight output — run locally, not committed
+docs/preflight/*-vision-rejudge.json

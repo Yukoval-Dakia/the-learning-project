@@ -30,6 +30,7 @@
     "audit:schema": "tsx scripts/audit-schema-writes.ts",
     "audit:partition": "tsx scripts/audit-test-partition.ts",
     "preflight:vision": "tsx scripts/preflight-vision.ts",
+    "sanity:vision-rejudge": "tsx scripts/sanity-vision-rejudge.ts",
     "compose:up": "docker compose up -d",
     "compose:down": "docker compose down",
     "compose:build": "docker compose build",
