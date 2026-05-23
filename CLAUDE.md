@@ -138,7 +138,7 @@ Self-hosted on NAS via `docker-compose.yml` (sub-0z): app container (Next.js sta
 
 Issues are tracked in Linear (`Yukoval Studios` / `YUK`). GitHub Issues are historical only; do not create new planning / triage / roadmap work with `gh issue create`. See `docs/agents/issue-tracker.md`.
 
-For linked work, include `YUK-XX` in PR titles, PR descriptions, and commit messages; prefer Linear's branch name format `yuk-xx-...`; do not use bare `#N` for new work.
+For linked work, include `YUK-XX` in PR titles, PR descriptions, and commit messages; prefer Linear's branch name format `yuk-xx-...`; do not use bare `#N` for new work. When one commit/PR references multiple issues, repeat the Linear keyword for each issue (`Closes YUK-27` + `Closes YUK-28`), never shorthand like `Closes YUK-27 + YUK-28`.
 
 Before the final response for any implementation, audit, planning, or migration task, run the Linear issue capture gate:
 - create or update Linear issues for actionable follow-ups discovered in the current work, after searching for duplicates;
