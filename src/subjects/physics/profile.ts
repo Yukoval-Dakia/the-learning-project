@@ -14,12 +14,7 @@ export const physicsProfile: SubjectProfile = {
   version: '1.0.0',
   displayName: '物理',
   languageStyle: '中文讲解，强调物理量定义、单位与量纲、推导链路。',
-  questionKinds: [
-    'single_choice',
-    'multiple_choice',
-    'short_answer',
-    'calculation',
-  ],
+  questionKinds: ['single_choice', 'multiple_choice', 'short_answer', 'calculation'],
   judgePolicy: {
     preferredRoutes: ['exact', 'semantic'],
     notes: [
