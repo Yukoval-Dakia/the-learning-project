@@ -13,6 +13,7 @@
  * 实现：纯 TS file-walk（无 shell exec），扫描 src/ + app/ 内所有 .ts/.tsx。
  */
 
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,8 +26,38 @@ const SEARCH_DIRS = ['src', 'app'].map((d) => resolve(REPO_ROOT, d));
 const EXCLUDE_DIRS = new Set(['node_modules', '.next', 'dist', '.git']);
 
 type Field = { table: string; field: string; type: string };
-type AllowlistEntry = { reason: string; resolves_when: string };
+type ResolveKind = 'pr' | 'phase' | 'manual';
+type ResolvesWhen = {
+  kind: ResolveKind;
+  ref: string;
+  expected_by: string;
+};
+type AllowlistEntry = { reason: string; resolves_when: ResolvesWhen };
 type Allowlist = Record<string, AllowlistEntry>;
+type AllowlistHygieneIssueCode =
+  | 'invalid_entry'
+  | 'missing_reason'
+  | 'invalid_resolves_when'
+  | 'invalid_kind'
+  | 'invalid_ref'
+  | 'invalid_expected_by'
+  | 'expired_expected_by'
+  | 'merged_pr'
+  | 'shipped_phase';
+export type AllowlistHygieneIssue = {
+  key: string;
+  code: AllowlistHygieneIssueCode;
+  message: string;
+};
+type AllowlistHygieneOptions = {
+  today: string;
+  mergedPrRefs: Set<string>;
+  statusText: string;
+};
+type AllowlistHygieneResult = {
+  allowlist: Allowlist;
+  issues: AllowlistHygieneIssue[];
+};
 type WriteHit = {
   table: string;
   field: string;
@@ -37,6 +68,185 @@ type WriteHit = {
 };
 
 const TRIVIAL_FIELDS = new Set(['id', 'created_at', 'updated_at', 'version', 'archived_at']);
+const RESOLVE_KINDS = new Set<ResolveKind>(['pr', 'phase', 'manual']);
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function normalizePrRef(ref: string): string | null {
+  const match = ref.match(/(?:#|pull\/|PR\s*)?(\d+)/i);
+  return match?.[1] ?? null;
+}
+
+function normalizePhaseText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^\p{Letter}\p{Number}]+/gu, ' ')
+    .trim();
+}
+
+function isShippedStatusLine(line: string): boolean {
+  return line.includes('✅') || /已\s*ship|shipped|done/i.test(line);
+}
+
+function isPhaseShipped(ref: string, statusText: string): boolean {
+  const normalizedRef = normalizePhaseText(ref);
+  if (!normalizedRef) return false;
+  const refTokens = normalizedRef.split(/\s+/).filter(Boolean);
+  return statusText
+    .split('\n')
+    .filter(isShippedStatusLine)
+    .some((line) => {
+      const normalizedLine = normalizePhaseText(line);
+      return (
+        normalizedLine.includes(normalizedRef) ||
+        refTokens.every((token) => normalizedLine.includes(token))
+      );
+    });
+}
+
+export function extractMergedPrRefsFromGitLog(log: string): Set<string> {
+  const refs = new Set<string>();
+  for (const match of log.matchAll(/\(#(\d+)\)|Merge pull request #(\d+)/gi)) {
+    const ref = match[1] ?? match[2];
+    if (ref) refs.add(ref);
+  }
+  return refs;
+}
+
+function readMergedPrRefs(): Set<string> {
+  try {
+    const log = execFileSync(
+      'git',
+      ['log', '--oneline', '--first-parent', '--decorate=short', '-n', '2000'],
+      { cwd: REPO_ROOT, encoding: 'utf8' },
+    );
+    return extractMergedPrRefsFromGitLog(log);
+  } catch {
+    return new Set();
+  }
+}
+
+function readStatusText(): string {
+  const statusPath = resolve(REPO_ROOT, 'docs/superpowers/status.md');
+  if (!existsSync(statusPath)) return '';
+  return readFileSync(statusPath, 'utf8');
+}
+
+function issue(
+  key: string,
+  code: AllowlistHygieneIssueCode,
+  message: string,
+): AllowlistHygieneIssue {
+  return { key, code, message };
+}
+
+export function validateAllowlistHygiene(
+  raw: unknown,
+  options: AllowlistHygieneOptions,
+): AllowlistHygieneResult {
+  const allowlist: Allowlist = {};
+  const issues: AllowlistHygieneIssue[] = [];
+
+  if (!isRecord(raw)) {
+    return {
+      allowlist,
+      issues: [issue('<root>', 'invalid_entry', 'allowlist root must be a JSON object')],
+    };
+  }
+
+  for (const [key, value] of Object.entries(raw)) {
+    if (key.startsWith('_')) continue;
+
+    if (!isRecord(value)) {
+      issues.push(issue(key, 'invalid_entry', 'allowlist entry must be an object'));
+      continue;
+    }
+
+    const reason = value.reason;
+    if (typeof reason !== 'string' || reason.trim().length === 0) {
+      issues.push(issue(key, 'missing_reason', 'allowlist entry requires non-empty reason'));
+      continue;
+    }
+
+    const resolvesWhen = value.resolves_when;
+    if (!isRecord(resolvesWhen)) {
+      issues.push(
+        issue(
+          key,
+          'invalid_resolves_when',
+          'resolves_when must be { kind, ref, expected_by }, not a legacy string',
+        ),
+      );
+      continue;
+    }
+
+    const kind = resolvesWhen.kind;
+    const ref = resolvesWhen.ref;
+    const expectedBy = resolvesWhen.expected_by;
+
+    if (typeof kind !== 'string' || !RESOLVE_KINDS.has(kind as ResolveKind)) {
+      issues.push(
+        issue(key, 'invalid_kind', "resolves_when.kind must be 'pr', 'phase', or 'manual'"),
+      );
+      continue;
+    }
+    if (typeof ref !== 'string' || ref.trim().length === 0) {
+      issues.push(issue(key, 'invalid_ref', 'resolves_when.ref must be a non-empty string'));
+      continue;
+    }
+    if (typeof expectedBy !== 'string' || !ISO_DATE_RE.test(expectedBy)) {
+      issues.push(
+        issue(key, 'invalid_expected_by', 'resolves_when.expected_by must be YYYY-MM-DD'),
+      );
+      continue;
+    }
+    if (expectedBy < options.today) {
+      issues.push(
+        issue(
+          key,
+          'expired_expected_by',
+          `resolves_when.expected_by ${expectedBy} is before ${options.today}`,
+        ),
+      );
+      continue;
+    }
+
+    if (kind === 'pr') {
+      const prRef = normalizePrRef(ref);
+      if (!prRef) {
+        issues.push(issue(key, 'invalid_ref', 'pr resolves_when.ref must contain a PR number'));
+        continue;
+      }
+      if (options.mergedPrRefs.has(prRef)) {
+        issues.push(issue(key, 'merged_pr', `resolves_when PR #${prRef} is already merged`));
+        continue;
+      }
+    }
+
+    if (kind === 'phase' && isPhaseShipped(ref, options.statusText)) {
+      issues.push(issue(key, 'shipped_phase', `resolves_when phase "${ref}" is already shipped`));
+      continue;
+    }
+
+    allowlist[key] = {
+      reason,
+      resolves_when: {
+        kind: kind as ResolveKind,
+        ref,
+        expected_by: expectedBy,
+      },
+    };
+  }
+
+  return { allowlist, issues };
+}
 
 function parseSchema(src: string): Field[] {
   const fields: Field[] = [];
@@ -66,7 +276,7 @@ function parseSchema(src: string): Field[] {
   return fields;
 }
 
-function loadAllowlist(): Allowlist {
+function loadAllowlist(): unknown {
   if (!existsSync(ALLOWLIST_PATH)) return {};
   return JSON.parse(readFileSync(ALLOWLIST_PATH, 'utf8'));
 }
@@ -149,14 +359,25 @@ function main() {
   const listOnly = args.includes('--list');
 
   const results = audit();
-  const allowlist = loadAllowlist();
+  const hygiene = validateAllowlistHygiene(loadAllowlist(), {
+    today: todayIso(),
+    mergedPrRefs: readMergedPrRefs(),
+    statusText: readStatusText(),
+  });
+  const allowlist = hygiene.allowlist;
   const stubs = results.filter((r) => r.status === 'stub');
   const unallowedStubs = stubs.filter((s) => !allowlist[`${s.table}.${s.field}`]);
   const allowedStubs = stubs.filter((s) => allowlist[`${s.table}.${s.field}`]);
 
   if (asJson) {
-    console.log(JSON.stringify({ results, unallowedStubs, allowedStubs }, null, 2));
-    process.exit(listOnly ? 0 : unallowedStubs.length > 0 ? 1 : 0);
+    console.log(
+      JSON.stringify(
+        { results, unallowedStubs, allowedStubs, allowlistIssues: hygiene.issues },
+        null,
+        2,
+      ),
+    );
+    process.exit(listOnly ? 0 : unallowedStubs.length > 0 || hygiene.issues.length > 0 ? 1 : 0);
   }
 
   console.log('\n=== Schema 字段健康表（仅显示非 live）===\n');
@@ -179,6 +400,17 @@ function main() {
     `  stub (unallowed): ${unallowedStubs.length}${unallowedStubs.length > 0 ? ' ⚠️' : ''}`,
   );
 
+  if (hygiene.issues.length > 0 && !listOnly) {
+    console.log('\n⚠️  Allowlist hygiene issues found:\n');
+    for (const item of hygiene.issues) {
+      console.log(`  - ${item.key}: ${item.code} — ${item.message}`);
+    }
+    console.log(
+      "\nUse resolves_when: { kind: 'pr' | 'phase' | 'manual', ref: string, expected_by: 'YYYY-MM-DD' }.",
+    );
+    process.exit(1);
+  }
+
   if (unallowedStubs.length > 0 && !listOnly) {
     console.log('\n⚠️  Unallowed stubs found:\n');
     for (const s of unallowedStubs) {
@@ -191,4 +423,6 @@ function main() {
   }
 }
 
-main();
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main();
+}
