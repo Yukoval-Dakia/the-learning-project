@@ -314,6 +314,25 @@ export async function judgeAnswer(params: JudgeAnswerParams): Promise<JudgeAnswe
       }),
     };
   }
+  if (route === 'unit_dimension') {
+    const { runUnitDimensionJudge } = await import('@/core/capability/judges/unit_dimension');
+    return {
+      route,
+      result: await runUnitDimensionJudge(
+        {
+          question: buildLocalJudgeQuestion(params.question, route),
+          answer: { content: params.answer_md },
+        },
+        {
+          runTaskFn: params.runTaskFn ?? defaultRunTaskFn,
+          runTaskCtx: {
+            db: params.db,
+            subjectProfile: params.subjectProfile,
+          },
+        },
+      ),
+    };
+  }
 
   const result = await judgeRouterV2({
     kind: route,

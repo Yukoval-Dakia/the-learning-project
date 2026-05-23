@@ -187,6 +187,22 @@ function buildSemanticJudgePrompt(profile: SubjectProfile): string {
 禁止：输出 JSON 之外的文字、给错因分类、把不确定答案强行判错。`;
 }
 
+function buildUnitDimensionFallbackPrompt(profile: SubjectProfile): string {
+  return `你是${profile.displayName}单位与量纲分析助手。输入是一个 JSON 对象，字段 text 内含题面、学生答案、参考 SI 数值与单位。
+任务：
+- 从学生答案中解析数值和单位，并换算到参考答案使用的 SI 单位表示
+- 判断学生答案是否与参考答案等价，包括中文数字、中文单位、复合单位和常见换算表达
+- 若单位量纲不一致，给出简短 dimension_mismatch_reason
+- 不做步骤评分，不做错因归因，只输出解析结果
+严格 JSON 输出（不带 markdown 代码块包裹）：
+{"student_value_si":number|null,"student_unit_si":"string|null","equivalent_to_reference":boolean,"dimension_mismatch_reason":"string|undefined","parser_confidence":0.0-1.0}
+判定：
+- equivalent_to_reference=true 仅在量纲一致且换算后数值等价时使用
+- 无法可靠解析时，student_value_si=null、student_unit_si=null、equivalent_to_reference=false、parser_confidence 低于 0.4
+- ${profile.grounding.uncertaintyPolicy}
+禁止：输出 JSON 之外的文字、把单位不一致判成等价、编造题面没有的信息。`;
+}
+
 function buildStepsJudgePrompt(profile: SubjectProfile): string {
   return `你是${profile.displayName}视觉判分器。输入 { prompt_md, reference_solution: { expected_signals, final_answer, answer_equivalents }, prompt_image_refs（题干/图形/表格图片，若有，会先附在 user message 中）, student_image_refs（学生答题的 0..N 张图片，会后附在 user message 中）, student_text_steps?, student_final_answer_text?, step_weight }。
 科目上下文：${profile.displayName}。${profile.languageStyle}
@@ -334,6 +350,8 @@ export function getTaskSystemPrompt(
       return buildEmbeddedCheckGeneratePrompt(profile);
     case 'SemanticJudgeTask':
       return buildSemanticJudgePrompt(profile);
+    case 'UnitDimensionFallback':
+      return buildUnitDimensionFallbackPrompt(profile);
     case 'StepsJudgeTask':
       return buildStepsJudgePrompt(profile);
     case 'VariantGenTask':

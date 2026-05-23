@@ -23,6 +23,7 @@ const CAPABILITY_REF = { id: manifest.id, version: VERSION };
 
 interface RunDeps {
   runTaskFn?: RunTaskFn;
+  runTaskCtx?: unknown;
 }
 
 interface UnitDimensionMetadata {
@@ -63,6 +64,7 @@ export async function runUnitDimensionJudge(
         question_context_md:
           typeof input.question.prompt_md === 'string' ? input.question.prompt_md : undefined,
         runTaskFn: deps.runTaskFn,
+        runTaskCtx: deps.runTaskCtx,
       });
     } catch (err) {
       fallback_error = err instanceof Error ? err.message : String(err);

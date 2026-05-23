@@ -11,6 +11,7 @@ export interface LlmFallbackParams {
   reference: { value: number; unit: string };
   question_context_md?: string;
   runTaskFn?: RunTaskFn;
+  runTaskCtx?: unknown;
 }
 
 const PROMPT_TEMPLATE = `你是物理单位与量纲分析助手。给定学生答案 + 参考答案，输出 JSON：
@@ -38,7 +39,7 @@ export async function runLlmFallback(params: LlmFallbackParams): Promise<LlmFall
       params.question_context_md ? `题面: ${params.question_context_md}` : '',
     );
 
-  const result = await runTask('UnitDimensionFallback', { text: prompt }, {});
+  const result = await runTask('UnitDimensionFallback', { text: prompt }, params.runTaskCtx ?? {});
   const parsed = LlmFallbackOutput.parse(JSON.parse(result.text));
   return parsed;
 }
