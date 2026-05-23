@@ -124,6 +124,14 @@ Pedagogy preserved: signal still surfaced in `evidence_json.signal`; `coarse_out
 
 `pnpm test:unit` surfaced two baseline test-expectation drifts unrelated to `unit_dimension`: `origin/main`'s `mathProfile` already includes `time_pressure`, while `src/core/schema/schema.test.ts` and `src/ui/lib/cause-options.test.ts` still expected `time_pressure` to be outside math cause options. P2 updates those tests only to match the implemented profile; no runtime cause/profile code changes.
 
+Task 7 acid-test-2 observed deltas against `9191c160a20d8e5afabf11503c6851f510bd2182`:
+- `src/core/capability/registry.ts`: empty diff (hard zero satisfied).
+- `src/core/capability/types.ts`: numstat `1 insert / 1 delete` — `JudgeCapabilityRunner.run()` sync return widened to sync-or-Promise.
+- `src/server/ai/judges/index.ts`: numstat `5 insert / 4 delete` — P1 `unit_dimension` kind addition plus P2 `judgeRouterV2` / `judgeRouter` async widening.
+- `src/server/ai/judges/question-contract.ts`: numstat `20 insert / 2 delete` — P1 runnable route + physics route branch plus P2 `metadata` pass-through and `await judgeRouterV2`.
+
+Final D1 build-size sanity after the real runner import: `pnpm build` passed; `.next/standalone` remained 74M and no `mathjs` package path was traced into standalone output. The +10M rollback threshold did not trigger.
+
 ---
 
 ## Boundaries (P2 不做)
