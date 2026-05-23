@@ -3,7 +3,7 @@ import {
   RenderConfig,
   SchedulingHints,
 } from '@/core/schema/profile-decl';
-import { type SubjectProfile, SubjectProfileSchema } from '@/subjects/profile';
+import { type SubjectProfile, SubjectProfileSchema } from '@/subjects/profile-schema';
 import type { CapabilityRegistry } from './registry';
 
 export interface ProfileValidationResult {

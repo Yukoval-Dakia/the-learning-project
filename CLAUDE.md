@@ -46,7 +46,7 @@ pnpm build            # next build
 pnpm typecheck        # tsc --noEmit
 pnpm lint             # biome check .
 pnpm format           # biome format --write .
-pnpm test             # full pre-PR gate: unit + DB + migration-smoke
+pnpm test             # full pre-PR gate: profile audit + unit + DB + migration-smoke
 pnpm test:unit        # fast no-DB tests
 pnpm test:unit:watch  # fast watch loop for UI/core/schema/AI parser work
 pnpm test:watch       # alias for pnpm test:unit:watch
@@ -58,9 +58,12 @@ pnpm db:generate      # drizzle-kit generate (migrations from src/db/schema.ts)
 pnpm db:push          # drizzle-kit push (uses DATABASE_URL from .env.local)
 pnpm audit:schema     # 检查 schema 字段是否都有 write path（防漂移 lint）
 pnpm audit:partition  # 检查 *.test.ts 在 unit/db 分区是否正确（file-level lint）
+pnpm audit:profile    # 检查所有 SubjectProfile 是否通过 schema + capability registry 验证
 ```
 
 `pnpm audit:schema` 扫描 `src/db/schema.ts` 所有业务字段，验证每个都有 INSERT 或 UPDATE write path。例外字段须在 `scripts/audit-schema-allowlist.json` 显式声明 `reason` + `resolves_when`，其中 `resolves_when` 必须是 `{ "kind": "pr" | "phase" | "manual", "ref": string, "expected_by": "YYYY-MM-DD" }`。`kind: "pr"` 的 `ref` 写 GitHub PR 号或 `#N`，若本地 git history 已包含该 PR 会 fail；`kind: "phase"` 的 `ref` 要能匹配 `docs/superpowers/status.md` 的已 ship 行；`kind: "manual"` 只用于无法机器判定的历史解除条件，仍受 `expected_by` 到期约束。引入新表 / 字段时，要么实现 write path，要么加入 allowlist 并标注可检查的解除条件。详见 `docs/design/2026-05-15-data-assumptions.md`。
+
+`pnpm audit:profile` 调用 `scripts/audit-profile.ts`，遍历 `subjectProfiles` 并复用 `validateProfile()` 检查 `SubjectProfileSchema`、`causeCategories` 唯一性、`judgeCapabilities` 是否已在默认 capability registry 注册，以及 registry-backed preferred route 是否已声明。新增或修改 subject profile 后必须先跑 `pnpm audit:profile`；坏 profile 也会在 `SubjectRegistry.register()` 启动期直接抛错。
 
 `/audit-drift` skill（`.claude/skills/audit-drift/SKILL.md`）扫描 **ADR / planning-doc ↔ 代码实现**结构性漂移（不重审 schema），输出到 `docs/audit/YYYY-MM-DD-drift.md`，命令式手动触发；不自动开 issue / PR / cron。配套 `pnpm audit:schema` 形成 schema 层 + 决策层双 lint。
 
@@ -70,7 +73,7 @@ Development loop:
 - UI/core/schema/prompt/parser changes: run `pnpm test:unit:watch <test-file>` and touched-file Biome.
 - API/DB/route/job changes: run `pnpm test:db:watch <test-file>`.
 - Migration SQL changes: run `pnpm test:migration`.
-- Before PR: run `pnpm typecheck`, `pnpm lint`, `pnpm audit:schema`, `pnpm audit:partition`, and `pnpm test`.
+- Before PR: run `pnpm typecheck`, `pnpm lint`, `pnpm audit:schema`, `pnpm audit:partition`, `pnpm audit:profile`, and `pnpm test`.
 
 Single test: `pnpm vitest run --config vitest.unit.config.ts path/to/file.test.ts -t 'name'` for no-DB tests, or `pnpm vitest run --config vitest.db.config.ts path/to/file.test.ts -t 'name'` for DB/API tests.
 

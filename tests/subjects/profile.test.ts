@@ -5,11 +5,37 @@ import {
 } from '@/core/schema/profile-decl';
 import {
   KNOWN_SUBJECT_IDS,
+  type SubjectProfile,
   SubjectRegistry,
   resolveSubjectProfile,
   subjectProfiles,
 } from '@/subjects/profile';
 import { describe, expect, it } from 'vitest';
+
+function makeCustomProfile(overrides: Partial<SubjectProfile> = {}): SubjectProfile {
+  const base = subjectProfiles.math;
+  return {
+    ...base,
+    id: 'test_subject',
+    version: '1.0.0',
+    displayName: '测试学科',
+    judgePolicy: {
+      preferredRoutes: [...base.judgePolicy.preferredRoutes],
+      notes: [...base.judgePolicy.notes],
+    },
+    noteTemplate: { ...base.noteTemplate },
+    grounding: {
+      ...base.grounding,
+      allowedSources: [...base.grounding.allowedSources],
+    },
+    promptFragments: { ...base.promptFragments },
+    causeCategories: base.causeCategories.map((category) => ({ ...category })),
+    renderConfig: { ...base.renderConfig },
+    schedulingHints: { ...base.schedulingHints },
+    judgeCapabilities: [...base.judgeCapabilities],
+    ...overrides,
+  };
+}
 
 describe('SubjectProfile extensions', () => {
   it('wenyan profile has version field', () => {
@@ -137,12 +163,7 @@ describe('SubjectRegistry', () => {
     const registry = new SubjectRegistry();
     // Use a synthetic id (not a real subject) so this test doesn't collide
     // with profiles added to the default registry over time.
-    const testSubject = {
-      ...registry.resolve('math'),
-      id: 'test_subject',
-      version: '1.0.0',
-      displayName: '测试学科',
-    };
+    const testSubject = makeCustomProfile();
     registry.register(testSubject, ['test_alias', 'test_subject_101']);
 
     expect(registry.resolve('test_subject').displayName).toBe('测试学科');
@@ -152,18 +173,51 @@ describe('SubjectRegistry', () => {
 
   it('throws instead of silently overwriting duplicate profile ids', () => {
     const registry = new SubjectRegistry();
-    const firstSubject = {
-      ...registry.resolve('math'),
-      id: 'test_subject',
-      version: '1.0.0',
-      displayName: '测试学科',
-    };
+    const firstSubject = makeCustomProfile();
     const secondSubject = { ...firstSubject, displayName: '覆盖测试学科' };
 
     registry.register(firstSubject);
 
     expect(() => registry.register(secondSubject)).toThrow(/already registered/i);
     expect(registry.resolve('test_subject').displayName).toBe('测试学科');
+  });
+
+  it('rejects invalid custom profiles during registration', () => {
+    const registry = new SubjectRegistry();
+    const invalidSubject = makeCustomProfile({
+      id: 'invalid_subject',
+      judgeCapabilities: [...subjectProfiles.math.judgeCapabilities, 'ghost_judge'],
+    });
+
+    expect(() => registry.register(invalidSubject)).toThrow(
+      /Subject profile 'invalid_subject' failed validation:[\s\S]*ghost_judge/,
+    );
+    expect(registry.get('invalid_subject')).toBeUndefined();
+  });
+
+  it('rejects duplicate cause ids during registration', () => {
+    const registry = new SubjectRegistry();
+    const duplicate = {
+      ...subjectProfiles.math.causeCategories[0],
+      label: 'Duplicate cause',
+    };
+    const invalidSubject = makeCustomProfile({
+      id: 'duplicate_cause_subject',
+      causeCategories: [subjectProfiles.math.causeCategories[0], duplicate],
+    });
+
+    expect(() => registry.register(invalidSubject)).toThrow(/duplicate id/);
+    expect(registry.get('duplicate_cause_subject')).toBeUndefined();
+  });
+
+  it('rejects missing prompt fragments during registration', () => {
+    const registry = new SubjectRegistry();
+    const { promptFragments: _promptFragments, ...invalidSubject } = makeCustomProfile({
+      id: 'missing_prompt_subject',
+    });
+
+    expect(() => registry.register(invalidSubject as SubjectProfile)).toThrow(/promptFragments/);
+    expect(registry.get('missing_prompt_subject')).toBeUndefined();
   });
 });
 
