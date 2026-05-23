@@ -1,6 +1,7 @@
 import { type AiProposalPayloadT, parseAiProposalPayload } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
+import { getCorrectionStatuses } from '@/server/events/corrections';
 import { and, desc, eq, inArray, isNotNull, like, or } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
@@ -61,6 +62,11 @@ function rateStatus(rate: EventRow | undefined): ProposalStatus {
   }
 }
 
+interface ProposalCorrectionDecision {
+  status: ProposalStatus;
+  decided_at: Date | null;
+}
+
 async function loadProposalEvents(db: DbLike): Promise<EventRow[]> {
   return await db
     .select()
@@ -101,6 +107,33 @@ async function loadLatestRateByProposal(
     if (proposalId && !latest.has(proposalId)) latest.set(proposalId, row);
   }
   return latest;
+}
+
+async function loadCorrectionDecisionByProposal(
+  db: DbLike,
+  proposalIds: string[],
+): Promise<Map<string, ProposalCorrectionDecision>> {
+  if (proposalIds.length === 0) return new Map();
+  const correctionStatuses = await getCorrectionStatuses(db, proposalIds);
+  const correctionIds = [...correctionStatuses.values()]
+    .map((status) => status.correction_event_id)
+    .filter((id): id is string => Boolean(id));
+  const correctionRows =
+    correctionIds.length === 0
+      ? []
+      : await db.select().from(event).where(inArray(event.id, correctionIds));
+  const correctionCreatedById = new Map(correctionRows.map((row) => [row.id, row.created_at]));
+
+  const out = new Map<string, ProposalCorrectionDecision>();
+  for (const proposalId of proposalIds) {
+    const status = correctionStatuses.get(proposalId);
+    if (!status || status.state === 'active') continue;
+    out.set(proposalId, {
+      status: 'stale',
+      decided_at: correctionCreatedById.get(status.correction_event_id) ?? null,
+    });
+  }
+  return out;
 }
 
 function deriveLegacyAiProposal(row: EventRow): AiProposalPayloadT | null {
@@ -153,11 +186,16 @@ export async function listProposalInboxRows(
     db,
     proposalRows.map((row) => row.id),
   );
+  const correctionDecisionByProposal = await loadCorrectionDecisionByProposal(
+    db,
+    proposalRows.map((row) => row.id),
+  );
 
   const out: ProposalInboxRow[] = [];
   for (const row of proposalRows) {
     const rate = latestRateByProposal.get(row.id);
-    const status = rateStatus(rate);
+    const correction = correctionDecisionByProposal.get(row.id);
+    const status = correction?.status ?? rateStatus(rate);
     if (opts.status && status !== opts.status) continue;
     const payload = deriveLegacyAiProposal(row);
     if (!payload) continue;
@@ -168,7 +206,7 @@ export async function listProposalInboxRows(
       payload,
       status,
       proposed_at: row.created_at,
-      decided_at: rate?.created_at ?? null,
+      decided_at: correction?.decided_at ?? rate?.created_at ?? null,
       actor_ref: row.actor_ref,
       task_run_id: row.task_run_id,
       cost_micro_usd: row.cost_micro_usd,
@@ -178,6 +216,14 @@ export async function listProposalInboxRows(
     if (opts.limit !== undefined && out.length >= opts.limit) break;
   }
   return out;
+}
+
+export async function getProposalInboxRow(
+  db: DbLike,
+  proposalId: string,
+): Promise<ProposalInboxRow | null> {
+  const rows = await listProposalInboxRows(db);
+  return rows.find((row) => row.id === proposalId) ?? null;
 }
 
 function legacyPayloadFor(row: EventRow): { payload: Record<string, unknown>; reasoning: string } {
@@ -228,11 +274,16 @@ export async function listLegacyKnowledgeProposals(
     db,
     proposalRows.map((row) => row.id),
   );
+  const correctionDecisionByProposal = await loadCorrectionDecisionByProposal(
+    db,
+    proposalRows.map((row) => row.id),
+  );
 
   const out: LegacyKnowledgeProposalRow[] = [];
   for (const row of proposalRows) {
     const rate = latestRateByProposal.get(row.id);
-    const status = rateStatus(rate);
+    const correction = correctionDecisionByProposal.get(row.id);
+    const status = correction?.status ?? rateStatus(rate);
     if (opts.status && status !== opts.status) continue;
     const projected = legacyPayloadFor(row);
     out.push({
@@ -242,7 +293,7 @@ export async function listLegacyKnowledgeProposals(
       reasoning: projected.reasoning,
       status,
       proposed_at: row.created_at,
-      decided_at: rate?.created_at ?? null,
+      decided_at: correction?.decided_at ?? rate?.created_at ?? null,
     });
     if (opts.limit !== undefined && out.length >= opts.limit) break;
   }
