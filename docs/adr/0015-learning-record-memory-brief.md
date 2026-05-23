@@ -11,7 +11,7 @@
 2026-05-18 `learning-data-loop` plan 引入了两张持久化表（migration `drizzle/0007_learning_record_loop.sql`）：
 
 - `learning_record`（`src/db/schema.ts:223-255`）：一行 = 一次具体的学习活动 tag（做了某题 / 读了某 atomic note / Active Teaching 一个 turn 完成）。挂多种外键 — `origin_event_id` / `attempt_event_id` / `question_id` / `learning_item_id` / `artifact_id` / `source_document_id` / `subject_id`，是 event 链路在用户视角的"语义聚合点"。
-- `memory_brief_note`（`src/db/schema.ts:257-282`）：按 `scope_key` 唯一的滚动学习记忆摘要，三段窗口（`recent_week_md` / `recent_months_md` / `long_term_md`）+ 对应的 evidence id 列表。预期由 Dreaming agent 周期重算后写入。
+- `memory_brief_note`（`src/db/schema.ts:257-282`）：按 `scope_key` 唯一的滚动学习记忆摘要，三段窗口（`recent_week_md` / `recent_months_md` / `long_term_md`）+ 对应的 evidence id 列表。**写路径由 ADR-0017 接管**，归一 `src/server/memory/brief.ts`（per ADR-0017，Phase B per YUK-37）；Dreaming agent 仍是逻辑 owner，但实施位置从原文的 `src/server/dreaming/` 迁至 `src/server/memory/`。
 
 但 ADR 序列只覆盖到 ADR-0014：
 
@@ -48,7 +48,7 @@
 - `subject_id` 必填语义（与 `event.subject_id` 对齐 / fallback 'wenyan'）。
 - `processing_status` 状态机：`raw` → ... → terminal（具体状态见 `src/server/records/types.ts`）；流转单调，不回退。
 
-### 2. `memory_brief_note` — 滚动学习记忆摘要（Dreaming-owned，写路径待定）
+### 2. `memory_brief_note` — 滚动学习记忆摘要（Dreaming-owned，写路径由 ADR-0017 接管）
 
 **定位**：用户在某个 scope（`scope_key`，例：`subject:math` / `topic:幂运算`）下的"最近学了什么、卡在哪、长期沉淀什么"的三段窗口短文。供 ReviewIntentTask / SessionSummaryTask / TeachingTurnTask 等下游任务读作为上下文。**不接收用户直接输入** — 完全由 Dreaming agent 派生。
 
@@ -60,10 +60,10 @@
 **唯一性**：每个 `scope_key` **至多一行**（`memory_brief_note_scope_key_unique` 唯一索引）。Dreaming 重算时 upsert，不堆历史版本（`refreshed_at` 标记最新刷新时间；历史 brief 不保留）。
 
 **单一所有者（forward-locking）**：
-- ⚠️ 当前 codebase 中 **memory_brief_note 没有任何写路径**（仅在 `src/server/export/constants.ts` 引用为 export 表列表）。Dreaming agent 写入器尚未实现，属于 Phase 2C 范围。
-- 本 ADR 锁定决策：**memory_brief_note 的所有写路径必须归一个 Dreaming-owned 模块**（预期路径 `src/server/dreaming/brief.ts`，Phase 2C 落地后定位）。
-- 在 Dreaming agent 落地前：禁止任何模块（route handler / orchestrator / cron / migration）直接 insert / update memory_brief_note。如有临时回填需求，必须先开 ADR-0015 revise 讨论。
-- Dreaming agent 落地时本 ADR 不需要 revise（决策不变），只是把"待定写路径"具体化到代码位置。
+- ⚠️ 当前 codebase 中 **memory_brief_note 没有任何写路径**（仅在 `src/server/export/constants.ts` 引用为 export 表列表）。**写入器由 ADR-0017 接管落地**（YUK-37 Phase B 实施段）。
+- 本 ADR 锁定决策：**memory_brief_note 的所有写路径必须归一个 Dreaming-owned 模块**。**实际代码位置由 ADR-0017 修订为 `src/server/memory/brief.ts`**（原文 `src/server/dreaming/brief.ts` 已 superseded by ADR-0017，timing "Phase 2C" 改为 "Phase B per YUK-37"）。
+- 在该写入器落地前：禁止任何模块（route handler / orchestrator / cron / migration）直接 insert / update memory_brief_note。如有临时回填需求，必须先开 ADR-0015 revise 讨论。
+- ADR-0017 落地不需要再 revise 本 §2（决策不变），仅把"待定写路径"具体化到 `src/server/memory/brief.ts`。
 
 ### 3. 四张主表的关系图
 
@@ -77,8 +77,8 @@ event (ADR-0006 v2)      — 不可变 action log，所有持久化必经
   │  (origin_event_id /  事件链上的活动 tag / 可变 processing_status
   │   attempt_event_id)
   │
-  └─ (派生 evidence) ─→ memory_brief_note (ADR-0015 §2)
-                        Dreaming 重算 / 唯一 scope_key / 写路径待定
+  └─ (派生 evidence) ─→ memory_brief_note (ADR-0015 §2 / ADR-0017)
+                        Dreaming 重算 / 唯一 scope_key / 写路径 src/server/memory/brief.ts
 ```
 
 ## Consequences
@@ -86,7 +86,7 @@ event (ADR-0006 v2)      — 不可变 action log，所有持久化必经
 - ✅ ADR 序列补齐：未来 Agent / 新人通过 ADR-0006 v2 → 0008 → 0014 → 0015 完整理解四张主表。
 - ✅ `learning_record` 单一所有者明文约束到 `src/server/records/queries.ts`，与 ADR-0005 一致。
 - ✅ `memory_brief_note` 在 Dreaming agent 落地前显式禁止其它模块写 — 避免临时回填污染语义。
-- ⚠️ `memory_brief_note` 写路径仍 TBD（Phase 2C）。本 ADR 是 forward-locking decision；Dreaming 设计若大改（例如改为按 event 实时增量而非周期重算），需 revise §2 的"周期重算 / upsert 不留历史"约束。
+- ✅ `memory_brief_note` 写路径**已由 ADR-0017 接管**（归一 `src/server/memory/brief.ts`，per ADR-0017 Phase B / YUK-37）。本 ADR 的 forward-locking decision 仍生效；Dreaming 设计若大改（例如改为按 event 实时增量而非周期重算），需同步 revise §2 的"周期重算 / upsert 不留历史"约束 + ADR-0017。
 - ⚠️ 当前没有 schema-level enforcement（trigger / RLS）阻止其它模块绕过 queries 模块写 learning_record；依赖代码 review。Phase N+1 评估是否需要 schema-level 保护。
 
 ## Notes
