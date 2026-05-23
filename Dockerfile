@@ -46,9 +46,9 @@ RUN npm install --omit=dev --no-audit --no-fund sharp@^0.34.5
 FROM node:24-bookworm-slim AS sdkdeps
 WORKDIR /sdk
 RUN npm install --omit=dev --no-audit --no-fund \
-    @anthropic-ai/claude-agent-sdk@^0.3.143 \
-    @anthropic-ai/sdk@^0.96.0 \
-    @modelcontextprotocol/sdk@^1.29.0
+    @anthropic-ai/claude-agent-sdk@0.3.143 \
+    @anthropic-ai/sdk@0.96.0 \
+    @modelcontextprotocol/sdk@1.29.0
 
 # Stage 3: Production runner
 FROM node:24-bookworm-slim AS runner
