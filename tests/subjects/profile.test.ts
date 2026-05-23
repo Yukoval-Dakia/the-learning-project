@@ -224,9 +224,18 @@ describe('P0: physics SubjectProfile', () => {
     expect(causeIds).toContain('dimension');
   });
 
-  it('judgeCapabilities at P0: exact + semantic', async () => {
+  it('judgeCapabilities at P1: exact + semantic + unit_dimension', async () => {
     const { physicsProfile } = await import('@/subjects/physics/profile');
-    expect(physicsProfile.judgeCapabilities).toEqual(['exact', 'semantic']);
+    expect(physicsProfile.judgeCapabilities).toEqual(['exact', 'semantic', 'unit_dimension']);
+  });
+
+  it('prefers unit_dimension for P1 physics numeric answers', async () => {
+    const { physicsProfile } = await import('@/subjects/physics/profile');
+    expect(physicsProfile.judgePolicy.preferredRoutes).toEqual([
+      'exact',
+      'semantic',
+      'unit_dimension',
+    ]);
   });
 
   it('appears in registry.listIds()', async () => {

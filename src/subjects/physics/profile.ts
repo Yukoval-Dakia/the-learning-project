@@ -6,7 +6,8 @@ import type { SubjectProfile } from '../profile';
 //   - schedulingHints needs default_policy (spec draft showed empty {})
 //   - questionKinds excludes 'derivation' (not in SubjectQuestionKindSchema;
 //     adding it = framework schema change, deferred to N+2)
-// judgeCapabilities: ['exact', 'semantic'] at P0; 'unit_dimension' lands in P1.
+// judgeCapabilities: ['exact', 'semantic', 'unit_dimension'] at P1. The
+// unit_dimension runner is a skeleton until P2 implements real judging.
 // See docs/superpowers/specs/2026-05-22-foundation-true-closeout-design.md §5
 
 export const physicsProfile: SubjectProfile = {
@@ -16,7 +17,7 @@ export const physicsProfile: SubjectProfile = {
   languageStyle: '中文讲解，强调物理量定义、单位与量纲、推导链路。',
   questionKinds: ['single_choice', 'multiple_choice', 'short_answer', 'calculation'],
   judgePolicy: {
-    preferredRoutes: ['exact', 'semantic'],
+    preferredRoutes: ['exact', 'semantic', 'unit_dimension'],
     notes: [
       '数值题优先 unit_dimension（P1+ capability 落地后）。',
       '推导题复用 steps@1（与 math 共享 capability，不重写）。',
@@ -98,6 +99,5 @@ export const physicsProfile: SubjectProfile = {
   schedulingHints: {
     default_policy: 'fsrs',
   },
-  // P0 (2026-05-23): start with exact + semantic; P1 adds 'unit_dimension'.
-  judgeCapabilities: ['exact', 'semantic'],
+  judgeCapabilities: ['exact', 'semantic', 'unit_dimension'],
 };

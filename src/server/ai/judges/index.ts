@@ -8,6 +8,7 @@ export type JudgeKind =
   | 'semantic'
   | 'rubric'
   | 'steps'
+  | 'unit_dimension'
   | 'multimodal_direct'
   | 'ai_flexible';
 

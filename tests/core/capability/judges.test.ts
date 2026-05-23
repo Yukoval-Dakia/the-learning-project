@@ -142,7 +142,7 @@ describe('judgeRouter compatibility bridge', () => {
   it('unimplemented judge kinds still throw', () => {
     expect(() =>
       judgeRouter({
-        kind: 'semantic',
+        kind: 'rubric',
         question: {},
         answer: { content: '' },
       }),
@@ -235,6 +235,7 @@ describe('keywordJudgeCapability', () => {
 
 describe('question contract routing', () => {
   const profile = resolveSubjectProfile('wenyan');
+  const physicsProfile = resolveSubjectProfile('physics');
   const baseQuestion: JudgeQuestionRow = {
     id: 'q1',
     kind: 'fill_blank',
@@ -296,6 +297,66 @@ describe('question contract routing', () => {
         profile,
       ),
     ).toBe('keyword');
+  });
+
+  it('routes physics calculation and short_answer questions to unit_dimension', () => {
+    expect(
+      resolveQuestionJudgeRoute(
+        {
+          ...baseQuestion,
+          kind: 'calculation',
+          prompt_md: '将 30 km/h 换算为 m/s',
+          reference_md: '8.33 m/s',
+        },
+        physicsProfile,
+      ),
+    ).toBe('unit_dimension');
+    expect(
+      resolveQuestionJudgeRoute(
+        {
+          ...baseQuestion,
+          kind: 'short_answer',
+          prompt_md: '自由落体 3s 后速度是多少？',
+          reference_md: '29.4 m/s',
+        },
+        physicsProfile,
+      ),
+    ).toBe('unit_dimension');
+  });
+
+  it('keeps physics choices on exact route before unit_dimension routing', () => {
+    expect(
+      resolveQuestionJudgeRoute(
+        {
+          ...baseQuestion,
+          kind: 'single_choice',
+          choices_md: ['速度', '加速度', '力', '能量'],
+          reference_md: '力',
+        },
+        physicsProfile,
+      ),
+    ).toBe('exact');
+  });
+
+  it('returns unsupported instead of invoking semantic for physics calculation skeleton', async () => {
+    const runTaskFn = vi.fn();
+    const result = await judgeAnswer({
+      db: {} as never,
+      question: {
+        ...baseQuestion,
+        kind: 'calculation',
+        prompt_md: '将 30 km/h 换算为 m/s',
+        reference_md: '8.33 m/s',
+      },
+      answer_md: '30 km/h',
+      subjectProfile: physicsProfile,
+      runTaskFn,
+    });
+
+    expect(result.route).toBe('unit_dimension');
+    expect(result.result.coarse_outcome).toBe('unsupported');
+    expect(result.result.capability_ref.id).toBe('unit_dimension');
+    expect(runTaskFn).not.toHaveBeenCalled();
   });
 
   it('does not map unsupported judge results to failure semantics', async () => {
