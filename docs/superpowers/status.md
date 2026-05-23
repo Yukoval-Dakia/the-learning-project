@@ -4,8 +4,8 @@
 > 这里记的是 **项目走到了哪、下一站去哪、为什么这么走**，不是 commit log。
 > 维护规则：每完成一个 Phase 就 update 一次；不维护周度进度。
 
-**最后更新**：2026-05-21（Product Track 1 Slice 1 Embedded Check MVP + Judge v2 light：embedded questions carry judge contracts；/api/embedded-check/attempt preserves partial/unsupported semantics）
-**当前 Phase**：Foundation gate 已收口；下一步进入 Product Track 1（NoteVerify / embedded check / variant verify 等），Product Track 2 仍等 proposal inbox slice
+**最后更新**：2026-05-23（Linear migration + docs freshness gate；math MVP M3 已收口；Foundation closeout P-1 + P0 已 ship — PR #86 / #91；physics profile 已注册 + acid test 1 通过）
+**当前 Phase**：Foundation B 第三科目 acid test 1 已过（physics P0 via PR #91）。下一步 P1：`unit_dimension@1` capability skeleton + Foundation A acid test 2（registry / router 主体 0 行 diff）。Product Track 1 继续排 Teaching / Note / Variant / Review UX；Product Track 2 仍等 proposal inbox slice。Linear 文档/issue 管理面同期收口（本 PR）。
 **主分支**：`main` 已推 `origin`
 **路线图源**：[`docs/planning/v0.3-generalized-ai-learning-framework.md`](../planning/v0.3-generalized-ai-learning-framework.md) §1.5 是当前执行清单；root `PLANNING.md` v0.12 Phase 1-4 已标 historical
 
@@ -53,7 +53,8 @@
 🟡  Frontend 读 renderConfig 渲染               ✅ PR #63 — 前端字体 / metadata / API 不再硬编码 wenyan
 🟡  API 暴露 subject profile（review / learning-item）  ✅ PR #63
 ✅  剩余 high-use AI task prompt 抽 profileFragments  attribution / graph proposal / variant / teaching / summary / knowledge review 已走 SubjectProfile
-✅  非 wenyan 第二科目 profile（math）作为 pressure test  attribution / review / variant / manual-import cause validation 覆盖 math
+✅  非 wenyan 第二科目 profile（math）作为 pressure test  math profile + KaTeX renderConfig + steps@1 + partial credit UI 已收口（#77/#80/#81/#82/#83/#84）
+✅  第三科目 profile（physics）Foundation B acid test 1  PR #91（`13485be`）已 ship — `src/subjects/physics/profile.ts` 落地 + `src/subjects/profile.ts` 注册 + `KNOWN_SUBJECT_IDS += 'physics'` + 8 profile tests + 5 e2e smoke + framework diff = 0（acid test 1 ✓）
 ```
 
 ### Foundation C — Judge Result Contract + Correction Event（ADR-0014 §4/§6）
@@ -71,7 +72,7 @@
 ### Product Track 1 — Review / Learning Item / Teaching Loop 收口（v0.3 Track A）
 
 ```
-🟡  NoteVerifyTask Pass 2           `note_verify` queue + artifact verification metadata landed; proposal-inbox rollback remains later
+✅  NoteVerifyTask Pass 2           `note_verify` queue + artifact verification metadata landed; proposal-inbox rollback remains later
 ✅  Embedded check（atomic notes）  inline 选择题 / fill-blank / prose semantic check — `embedded_check_generate` persists judge contract；attempt route writes success/partial/failure without polluting mistakes on unsupported
 ⬜  Note 编辑 / 阅读 UX 完善
 ⬜  VariantVerifyTask Pass 2        variant 双 pass + variants_max=3 计数
@@ -95,7 +96,7 @@
 ```
 🚫  公共 MCP server / Plugin platform   v0.3 §6 Non-Goal；产品内 runtime tool 走 in-process MCP adapter
 🚫  外部 MCP 消费                       延后到内部 loop 稳定 + 真有外部客户端需要
-⏳  Multi-subject 扩展                  阻塞于 Foundation A+B 收口 + 非 wenyan pressure profile
+⏳  Multi-subject 扩展                  math + physics P0 已注册；physics P1（`unit_dimension@1` skeleton）+ P2（impl）排在 Foundation closeout 序列下一步
 ⏳  Source / Grounding / Multimodal     v0.3 Track F；presume Foundation A/B/C ready
 ```
 
@@ -212,6 +213,7 @@ ADR-0014 配套：[7 轮讨论 + 10 决议 summary](../discussion/summary.md)、
 | `app/api/_/*` 不进 prod build | 私有路由需要从 UI 调用就得移出 `_` 前缀 | 低 |
 | `.env.local` 是 symlink | `ln -s ~/.env.local`；不同机器需要重新建 | 低 |
 | README.md 过时 | 仍写 Vite + Workers 栈；CLAUDE.md 有 stack note 兜底 | 低 |
+| Linear 文档迁移 | Repo 仍是 SoT；Linear 仅迁 current status / roadmap summary / historical index；完整映射由 `pnpm docs:linear-manifest` 生成 | 中 |
 
 ---
 
@@ -234,6 +236,7 @@ ADR-0014 配套：[7 轮讨论 + 10 决议 summary](../discussion/summary.md)、
 | Phase 计划 + 收尾记录 | `docs/superpowers/plans/*.md` + `docs/superpowers/brainstorms/*.md`（MVP 防漂移） |
 | 工具命令 | `pnpm` script 见 `package.json`；`pnpm audit:schema` 防 schema 漂移 |
 | 下次会话从哪接 | `RESUME.md`（一次性 scratch） |
+| Linear 文档迁移规则 | [`docs/agents/linear-doc-migration.md`](../agents/linear-doc-migration.md) + `pnpm docs:linear-manifest` |
 
 ---
 

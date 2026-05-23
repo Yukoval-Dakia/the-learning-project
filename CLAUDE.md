@@ -136,7 +136,15 @@ Self-hosted on NAS via `docker-compose.yml` (sub-0z): app container (Next.js sta
 
 ### Issue tracker
 
-Issues are tracked in GitHub Issues. See `docs/agents/issue-tracker.md`.
+Issues are tracked in Linear (`Yukoval Studios` / `YUK`). GitHub Issues are historical only; do not create new planning / triage / roadmap work with `gh issue create`. See `docs/agents/issue-tracker.md`.
+
+For linked work, include `YUK-XX` in PR titles, PR descriptions, and commit messages; prefer Linear's branch name format `yuk-xx-...`; do not use bare `#N` for new work.
+
+Before the final response for any implementation, audit, planning, or migration task, run the Linear issue capture gate:
+- create or update Linear issues for actionable follow-ups discovered in the current work, after searching for duplicates;
+- or explicitly state that no Linear issue is needed and why.
+
+Do not leave verified follow-ups only in the final prose, local TODOs, or scratch docs.
 
 ### Triage labels
 
