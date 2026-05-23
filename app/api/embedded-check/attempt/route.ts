@@ -17,10 +17,10 @@ import { z } from 'zod';
 import { newId } from '@/core/ids';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
-import { judgeAnswer } from '@/server/ai/judges/question-contract';
 import { getStartedBoss } from '@/server/boss/client';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
+import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
 import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject-profile';
 import { createLearningRecord } from '@/server/records/queries';
 
@@ -72,7 +72,7 @@ export async function POST(req: Request): Promise<Response> {
 
     // Judge the answer
     const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids);
-    const judged = await judgeAnswer({
+    const judged = await createDefaultJudgeInvoker().invoke({
       db,
       question: q,
       answer_md: body.answer_md,
@@ -90,6 +90,7 @@ export async function POST(req: Request): Promise<Response> {
       confidence: judgeResult.confidence,
       reason_md: judgeResult.feedback_md,
       evidence_json: judgeResult.evidence_json,
+      telemetry: judged.telemetry,
     };
 
     const now = new Date();
@@ -120,6 +121,7 @@ export async function POST(req: Request): Promise<Response> {
           latency_ms: body.latency_ms ?? null,
           judge_route: judgeKind,
           judge_score: judgeResult.score,
+          judge_elapsed_ms: judged.telemetry.elapsed_ms,
           judge: responseJudge,
         },
         caused_by_event_id: null,
@@ -149,6 +151,7 @@ export async function POST(req: Request): Promise<Response> {
             wrong_answer_md: body.answer_md,
             judge_route: judgeKind,
             judge_score: judgeResult.score,
+            judge_elapsed_ms: judged.telemetry.elapsed_ms,
             judge: responseJudge,
           },
         });
