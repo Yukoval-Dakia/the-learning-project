@@ -173,13 +173,13 @@ describe('planReviewSession', () => {
       version: 0,
     });
     await seedQuestion('q_math', '单位换算题', ['k_math']);
-    await seedFailureAttempt('a_math', 'q_math', 'time_pressure');
+    await seedFailureAttempt('a_math', 'q_math', 'grammar');
 
     const plan = await planReviewSession({ db: testDb() });
 
-    expect(plan.queue[0].cause).toBe('time_pressure');
+    expect(plan.queue[0].cause).toBe('grammar');
     expect(plan.queue[0].rationale).toContain('其它 错因');
-    expect(plan.queue[0].rationale).not.toContain('时间 错因');
+    expect(plan.queue[0].rationale).not.toContain('grammar 错因');
   });
 
   it('uses user_cause over judge when both present', async () => {
