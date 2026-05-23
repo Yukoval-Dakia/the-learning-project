@@ -132,7 +132,7 @@ export function resolveQuestionJudgeRoute(
   if (
     subjectProfile.id === 'physics' &&
     isPreferred(subjectProfile, 'unit_dimension') &&
-    (q.kind === 'calculation' || q.kind === 'computation' || q.kind === 'short_answer')
+    (q.kind === 'calculation' || q.kind === 'computation')
   ) {
     return 'unit_dimension';
   }

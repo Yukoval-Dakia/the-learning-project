@@ -299,7 +299,7 @@ describe('question contract routing', () => {
     ).toBe('keyword');
   });
 
-  it('routes physics calculation and short_answer questions to unit_dimension', () => {
+  it('routes physics numeric calculation questions to unit_dimension', () => {
     expect(
       resolveQuestionJudgeRoute(
         {
@@ -315,13 +315,27 @@ describe('question contract routing', () => {
       resolveQuestionJudgeRoute(
         {
           ...baseQuestion,
-          kind: 'short_answer',
-          prompt_md: '自由落体 3s 后速度是多少？',
-          reference_md: '29.4 m/s',
+          kind: 'computation',
+          prompt_md: '将 30 km/h 换算为 m/s',
+          reference_md: '8.33 m/s',
         },
         physicsProfile,
       ),
     ).toBe('unit_dimension');
+  });
+
+  it('keeps physics conceptual short_answer questions on semantic route', () => {
+    expect(
+      resolveQuestionJudgeRoute(
+        {
+          ...baseQuestion,
+          kind: 'short_answer',
+          prompt_md: '简述惯性定律的含义。',
+          reference_md: '物体在不受外力或合外力为零时保持静止或匀速直线运动状态。',
+        },
+        physicsProfile,
+      ),
+    ).toBe('semantic');
   });
 
   it('keeps physics choices on exact route before unit_dimension routing', () => {
