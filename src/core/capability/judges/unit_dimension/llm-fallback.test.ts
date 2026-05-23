@@ -4,19 +4,30 @@ import { runLlmFallback } from './llm-fallback';
 
 describe('unit_dimension LLM fallback', () => {
   it('parses Chinese unit "三十米每秒" -> 30 m/s', async () => {
-    const mockTask = async () => ({
-      text: JSON.stringify({
-        student_value_si: 30,
-        student_unit_si: 'm/s',
-        equivalent_to_reference: true,
-        parser_confidence: 0.95,
-      }),
-    });
+    const captured: { kind: string; input: unknown; ctx: unknown }[] = [];
+    const mockTask = async (kind: string, input: unknown, ctx: unknown) => {
+      captured.push({ kind, input, ctx });
+      return {
+        text: JSON.stringify({
+          student_value_si: 30,
+          student_unit_si: 'm/s',
+          equivalent_to_reference: true,
+          parser_confidence: 0.95,
+        }),
+      };
+    };
     const r = await runLlmFallback({
       student_answer: '三十米每秒',
       reference: { value: 30, unit: 'm/s' },
       runTaskFn: mockTask,
+      runTaskCtx: { subjectProfile: { id: 'physics' } },
     });
+    expect(captured).toHaveLength(1);
+    expect(captured[0].kind).toBe('UnitDimensionFallback');
+    expect(captured[0].input).toMatchObject({
+      text: expect.stringContaining('三十米每秒'),
+    });
+    expect(captured[0].ctx).toMatchObject({ subjectProfile: { id: 'physics' } });
     expect(r.equivalent_to_reference).toBe(true);
     expect(r.student_value_si).toBe(30);
   });
@@ -38,6 +49,27 @@ describe('unit_dimension LLM fallback', () => {
     });
     expect(r.equivalent_to_reference).toBe(false);
     expect(r.dimension_mismatch_reason).toContain('length');
+  });
+
+  it('parses a fenced JSON object from the fallback model', async () => {
+    const mockTask = async () => ({
+      text: `Here is the result:
+\`\`\`json
+{
+  "student_value_si": 30,
+  "student_unit_si": "m/s",
+  "equivalent_to_reference": true,
+  "parser_confidence": 0.95
+}
+\`\`\``,
+    });
+    const r = await runLlmFallback({
+      student_answer: '三十米每秒',
+      reference: { value: 30, unit: 'm/s' },
+      runTaskFn: mockTask,
+    });
+    expect(r.equivalent_to_reference).toBe(true);
+    expect(r.student_value_si).toBe(30);
   });
 
   it('returns null fields when LLM cannot parse', async () => {

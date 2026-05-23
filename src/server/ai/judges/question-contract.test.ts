@@ -160,6 +160,52 @@ describe('M1 §C: semanticInput threads subjectProfile into LLM payload', () => 
   });
 });
 
+describe('YUK-36 regression: unit_dimension LLM fallback uses registered task with runtime ctx', () => {
+  it('passes UnitDimensionFallback through judgeAnswer with db + subjectProfile ctx', async () => {
+    const captured: { kind: string; input: unknown; ctx: unknown }[] = [];
+    const runTaskFn = async (kind: string, input: unknown, ctx: unknown) => {
+      captured.push({ kind, input, ctx });
+      return {
+        text: JSON.stringify({
+          student_value_si: 30,
+          student_unit_si: 'm/s',
+          equivalent_to_reference: true,
+          parser_confidence: 0.95,
+        }),
+      };
+    };
+    const physicsProfile = resolveSubjectProfile('physics');
+    const result = await judgeAnswer({
+      db: mockDb,
+      question: {
+        id: 'q-unit-fallback',
+        kind: 'calculation',
+        prompt_md: '速度是多少？',
+        reference_md: '30 m/s',
+        rubric_json: null,
+        choices_md: null,
+        judge_kind_override: null,
+        metadata: { reference_value: 30, reference_unit: 'm/s' },
+      },
+      answer_md: '三十米每秒',
+      subjectProfile: physicsProfile,
+      runTaskFn,
+    });
+
+    expect(result.route).toBe('unit_dimension');
+    expect(result.result.coarse_outcome).toBe('correct');
+    expect(captured).toHaveLength(1);
+    expect(captured[0].kind).toBe('UnitDimensionFallback');
+    expect(captured[0].input).toMatchObject({
+      text: expect.stringContaining('三十米每秒'),
+    });
+    expect(captured[0].ctx).toMatchObject({
+      db: mockDb,
+      subjectProfile: { id: 'physics' },
+    });
+  });
+});
+
 describe('M2.1: resolveQuestionJudgeRoute — derivation kind', () => {
   it('routes derivation to steps for math profile (preferredRoutes includes steps)', async () => {
     const { resolveQuestionJudgeRoute } = await import('./question-contract');

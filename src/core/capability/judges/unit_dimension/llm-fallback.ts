@@ -11,6 +11,7 @@ export interface LlmFallbackParams {
   reference: { value: number; unit: string };
   question_context_md?: string;
   runTaskFn?: RunTaskFn;
+  runTaskCtx?: unknown;
 }
 
 const PROMPT_TEMPLATE = `你是物理单位与量纲分析助手。给定学生答案 + 参考答案，输出 JSON：
@@ -38,9 +39,18 @@ export async function runLlmFallback(params: LlmFallbackParams): Promise<LlmFall
       params.question_context_md ? `题面: ${params.question_context_md}` : '',
     );
 
-  const result = await runTask('UnitDimensionFallback', { text: prompt }, {});
-  const parsed = LlmFallbackOutput.parse(JSON.parse(result.text));
+  const result = await runTask('UnitDimensionFallback', { text: prompt }, params.runTaskCtx ?? {});
+  const parsed = LlmFallbackOutput.parse(JSON.parse(extractJsonObject(result.text)));
   return parsed;
+}
+
+function extractJsonObject(text: string): string {
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start === -1 || end === -1 || end < start) {
+    throw new Error('unit_dimension fallback output did not contain a JSON object');
+  }
+  return text.slice(start, end + 1);
 }
 
 async function defaultRunTaskFn(
