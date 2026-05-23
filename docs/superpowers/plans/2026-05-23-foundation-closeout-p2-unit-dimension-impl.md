@@ -88,9 +88,9 @@ Project convention (steps-judge.ts / math vision judge) uses **mimo-v2.5** via C
 
 ## Spec deltas observed (after D1-D4 confirmed, fill in actual deviations)
 
-- D1 confirmed: <fill at P2/0>
-- D2 confirmed: <fill at P2/0>; `JudgeQuestionRow` += `metadata?: unknown` field — this is framework delta per Foundation A acid test 2 strict reading. Pre-existing 1-row delta in question-contract.ts from P1 already established precedent.
-- D3 confirmed: <fill at P2/0>; **scope expanded** per codex review #98 round 2 (line 922): D3 is not just a manifest `latency_class` string change. To support async LLM fallback inside the runner, the framework runner contract must allow async return:
+- D1 confirmed: Option A, `mathjs@15.2.0`. Rationale: Context7/current docs confirm `math.unit(...)`, `.to(...)`, `.toNumber(...)`, and `.equalBase(...)` cover the deterministic accelerator needs; `pnpm build` passed after adding the dependency. Standalone output was 74M before any `mathjs` import was traced, so final imported-size impact is rechecked in Task 7.
+- D2 confirmed: D2a, metadata pass-through; `JudgeQuestionRow` += `metadata?: unknown` field — this is framework delta per Foundation A acid test 2 strict reading. Pre-existing 1-row delta in question-contract.ts from P1 already established precedent.
+- D3 confirmed: D3b, manifest `latency_class: 'async'`; **scope expanded** per codex review #98 round 2 (line 922): D3 is not just a manifest `latency_class` string change. To support async LLM fallback inside the runner, the framework runner contract must allow async return:
   - `src/core/capability/types.ts`: `JudgeCapabilityRunner.run()` signature relaxed to `JudgeResultV2T | Promise<JudgeResultV2T>` (1-line type change)
   - `src/server/ai/judges/index.ts`: `judgeRouterV2` becomes `async` + `await runner.run(...)` + return type `Promise<JudgeResultV2T>` (3-line change)
   - `src/server/ai/judges/question-contract.ts`: any path calling `judgeRouterV2` adds `await` (1-3 lines)
