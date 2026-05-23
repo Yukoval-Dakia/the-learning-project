@@ -65,7 +65,7 @@
 
 ### L2 — SubjectProfile Zod schema + startup validator
 
-**已有 Linear issue**：[YUK-7 — build-time profile validator](https://linear.app/yukoval-studios/issue/YUK-7) (Backlog, 3pts) + [YUK-8 — profile validator 接入 pnpm test pre-PR gate](https://linear.app/yukoval-studios/issue/YUK-8) (Backlog, 1pt)。本 lane **不新建 Linear issue**，把这两条 parent 到 epic 即可。
+**已有 Linear issue**：[YUK-7 — build-time profile validator](https://linear.app/yukoval-studios/issue/YUK-7) (Backlog, 3pts) + [YUK-8 — profile validator 接入 pnpm test pre-PR gate](https://linear.app/yukoval-studios/issue/YUK-8) (Backlog, 1pt)。本 lane **不新建 Linear issue**，把这两条挂到本 Project 的 M2 Milestone 即可。
 
 **问题**：[src/subjects/wenyan/profile.ts](../../../src/subjects/wenyan/profile.ts) / [math/profile.ts](../../../src/subjects/math/profile.ts) / [physics/profile.ts](../../../src/subjects/physics/profile.ts) 各自定义 `SlimSubjectProfile`，[src/subjects/profile.ts](../../../src/subjects/profile.ts) 的 `SubjectRegistry` 不在启动期验证 `judgeCapabilities` 是否都已注册、`causeCategories` id 是否唯一、`renderConfig` 字段是否齐。下一个 subject（english / programming）只能靠人肉对照。Foundation B v0.3 §1.5 明确写过的 "build-time profile validator" 至今未做。
 
@@ -138,12 +138,12 @@
 
 ### L5 — AiProposalPayload union + 统一 inbox lifecycle（Product Track 2 anchor）
 
-**已有相关 Linear issue（related, 不 parent）**：
+**已有相关 Linear issue（related, 不属于本 Project）**：
 
 - [YUK-15 — record → proposal evidence loop 接通](https://linear.app/yukoval-studios/issue/YUK-15) (Backlog, 5pts, Product Track 1)：record 作为 evidence_ref 浮现成 proposal。L5 统一 inbox 是其基础，L5 完工后 YUK-15 才能落地。
 - [YUK-19 — Learning-item proposal rollback UI](https://linear.app/yukoval-studios/issue/YUK-19) (Backlog, 3pts, Product Track 1)：learning-item proposal 误 accept 的 retract UI。复用 L5.2 retract 路径 + L3 correction event。
 
-两者 belong Product Track 1，不 parent 到本 closeout epic，但本 outline 注明 L5 是它们的前置框架。
+两者 belong Product Track 1 Project，不在本 closeout Project 范围内，但本 outline 注明 L5 是它们的前置框架。
 
 **问题**：v0.3 §1.5 Product Track 2 标 ⬜ 未起步。当前 `action='propose'` 事件各 producer（knowledge_node / knowledge_edge / variant generation / note update / completion / archive）各自写 payload，没有 `AiProposalPayload` discriminated union，也没共享 writer/reader/lifecycle。**梦境流**与**维护流**都规划要走同一个 inbox。
 
