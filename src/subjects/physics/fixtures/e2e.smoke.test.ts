@@ -148,10 +148,7 @@ describe('physics fixture e2e smoke', () => {
   // land in DB but P0 does NOT judge them — judge route would be 'semantic'
   // (LLM) or 'unit_dimension' (P1+). Verify only that they're insertable.
   it('calculation fixtures are inserted (judging deferred to P1)', async () => {
-    const rows = await db
-      .select()
-      .from(question)
-      .where(eq(question.kind, 'calculation'));
+    const rows = await db.select().from(question).where(eq(question.kind, 'calculation'));
     expect(rows.length).toBeGreaterThanOrEqual(7);
   });
 });
