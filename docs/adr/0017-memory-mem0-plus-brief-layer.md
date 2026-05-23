@@ -31,9 +31,11 @@ Implement memory as **two coupled layers** with clear write-path ownership:
 ### Layer 2 — Brief layer (per-scope 3-window markdown)
 
 - `memory_brief_note` table (already defined in `src/db/schema.ts:257-282`) holds one row per `scope_key`.
-- Each row = three semi-structured markdown windows (`recent_week_md` / `recent_months_md` / `long_term_md`) + evidence_ids pointing back to the SoT events / Mem0 facts that informed the summary.
+- Each row = three semi-structured markdown windows (`recent_week_md` / `recent_months_md` / `long_term_md`) + evidence_ids pointing back to SoT rows only.
 - Single-owner write path: `src/server/memory/brief.ts` — satisfies ADR-0015 §2's "Dreaming-owned" forward lock.
 - Brief regen reads **Mem0 curated facts + raw recent_week events** (per-design "Brief layer input mode (b)" 2026-05-23) → LLM summarizes per prefix-specific template → integer upsert. Dedup/supersede is implicit via wholesale row overwrite (ADR-0015 §2 already mandates "upsert 不留历史").
+
+**Evidence contract — keep SoT and Mem0 namespaces separate**. ADR-0015 §2 defines `recent_*_evidence_ids: string[]` as references to `event` / `learning_record` rows (audit-replay-safe SoT ids). This ADR preserves that contract — `memory_brief_note.recent_*_evidence_ids` continues to hold **SoT ids only**. Mem0 fact-ids that informed a regen are **not** stored in the brief row; they live in Mem0's own metadata (Mem0 tracks its own provenance internally). If a future audit needs the "which Mem0 facts contributed to this brief at refresh time T" trail, that has to come from re-querying Mem0 with the same scope + a time filter — not from `evidence_ids`. Rationale: SoT ids are auditable / immutable; Mem0 facts are derived state that can supersede over time, so storing their ids in brief rows would create a dangling-reference class of bug. **If this turns out to be insufficient at impl time**, the right escape is to add a separate column (e.g. `recent_week_mem0_fact_refs jsonb`) — **do not** widen `evidence_ids` to mix namespaces.
 
 ### Scope taxonomy — 5 fixed prefix, LLM-dynamic suffix
 
@@ -53,7 +55,7 @@ Prefix set is **fixed at the framework level** — LLM cannot invent new prefixe
 
 1. **Event-ingest** — every event write path tags the event with `affected_scopes: string[]` (new column on `event` table, GIN-indexed). A pg-boss subscriber on event creation calls `mem0.add(event)` and enqueues brief regen for affected scopes.
 2. **Chat-derived** — Copilot conversation turns can produce user-preference facts ("user prefers analogies", "user wants reasoning chain shown"). Per turn, the orchestrator decides whether to call `mem0.add(chat_message, scope='meta:orchestrator_self')`. Mem0's internal extraction filters non-signal turns.
-3. **Cron daily sweep** — nightly job iterates all `memory_brief_note` rows where `refreshed_at > 24h`, enqueues brief regen. Catches anything missed by event triggers + ensures even dormant scopes get re-evaluated.
+3. **Cron daily sweep** — nightly job iterates **stale** `memory_brief_note` rows — concretely `WHERE refreshed_at IS NULL OR refreshed_at < now() - interval '24 hours'` — and enqueues brief regen for each. Catches anything missed by event triggers + ensures even dormant scopes get re-evaluated (an old, untouched brief is the signal "this scope has been quiet" — orchestrator reads the staleness via `refreshed_at` / `latest_evidence_at` metadata, separate from the freshness-check that gates regen).
 
 ### Anti-storm
 
