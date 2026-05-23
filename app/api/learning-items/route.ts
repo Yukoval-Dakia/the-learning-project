@@ -2,6 +2,7 @@ import { db } from '@/db/client';
 import { learning_item } from '@/db/schema';
 import { errorResponse } from '@/server/http/errors';
 import { assertKnowledgeIdsExist } from '@/server/knowledge/validate';
+import { getEffectiveTruths } from '@/server/review/effective-truth';
 import { createId } from '@paralleldrive/cuid2';
 import { and, asc, desc, eq, isNull, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
@@ -42,6 +43,8 @@ export async function GET(req: Request): Promise<Response> {
     const rows = await db
       .select({
         id: learning_item.id,
+        source: learning_item.source,
+        source_ref: learning_item.source_ref,
         title: learning_item.title,
         content: learning_item.content,
         knowledge_ids: learning_item.knowledge_ids,
@@ -66,9 +69,21 @@ export async function GET(req: Request): Promise<Response> {
         desc(learning_item.updated_at),
       )
       .limit(limit);
+    const sourceRefs = rows
+      .map((row) => row.source_ref)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0);
+    const truthBySourceRef = await getEffectiveTruths(db, sourceRefs);
 
     const out = rows.map((r) => ({
       id: r.id,
+      source: r.source,
+      source_ref: r.source_ref,
+      source_event: r.source_ref
+        ? {
+            id: r.source_ref,
+            correction_state: truthBySourceRef.get(r.source_ref) ?? null,
+          }
+        : null,
       title: r.title,
       content: r.content,
       knowledge_ids: r.knowledge_ids,

@@ -1,6 +1,7 @@
 // POST /api/mistakes writes question + attempt event + learning_record(kind='mistake').
 
 import { event, knowledge, learning_record, question, source_asset } from '@/db/schema';
+import { writeEvent } from '@/server/events/queries';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { GET, POST } from './route';
@@ -444,6 +445,8 @@ async function seedJudge(opts: {
   primary_category?: string;
   secondary_categories?: string[];
   confidence?: number;
+  caused_by_event_id?: string | null;
+  created_at?: Date;
 }): Promise<void> {
   const db = testDb();
   await db.insert(event).values({
@@ -464,10 +467,11 @@ async function seedJudge(opts: {
       },
       referenced_knowledge_ids: ['k1'],
     },
-    caused_by_event_id: opts.attempt_event_id,
+    caused_by_event_id:
+      'caused_by_event_id' in opts ? opts.caused_by_event_id : opts.attempt_event_id,
     task_run_id: null,
     cost_micro_usd: null,
-    created_at: new Date(),
+    created_at: opts.created_at ?? new Date(),
   });
 }
 
@@ -495,6 +499,32 @@ async function seedUserCause(opts: {
     task_run_id: null,
     cost_micro_usd: null,
     created_at: new Date(),
+  });
+}
+
+async function seedCorrection(opts: {
+  id: string;
+  target_event_id: string;
+  correction_kind: 'supersede' | 'retract' | 'mark_wrong' | 'restore';
+  replacement_event_id?: string;
+  created_at?: Date;
+}): Promise<void> {
+  const db = testDb();
+  await writeEvent(db, {
+    id: opts.id,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'correct',
+    subject_kind: 'event',
+    subject_id: opts.target_event_id,
+    outcome: 'success',
+    payload: {
+      correction_kind: opts.correction_kind,
+      replacement_event_id: opts.replacement_event_id,
+      reason_md: 'manual correction',
+      affected_refs: [{ kind: 'question', id: 'q1' }],
+    },
+    created_at: opts.created_at ?? new Date(),
   });
 }
 
@@ -528,6 +558,7 @@ describe('GET /api/mistakes', () => {
         wrong_answer_md: string;
         knowledge_ids: string[];
         cause: { primary_category: string; user_notes: string | null } | null;
+        correction_state: { state: string; terminal_state: string };
         created_at: number;
       }>;
     };
@@ -545,7 +576,54 @@ describe('GET /api/mistakes', () => {
       user_notes: null,
       confidence: 0.9,
     });
+    expect(body.rows[0].correction_state.state).toBe('active');
+    expect(body.rows[0].correction_state.terminal_state).toBe('active');
     expect(typeof body.rows[0].created_at).toBe('number');
+  });
+
+  it('excludes attempts that have been retracted', async () => {
+    await seedQuestion('q1', 'p1');
+    await seedAttempt({ id: 'a1', question_id: 'q1' });
+    await seedCorrection({
+      id: 'correct_a1',
+      target_event_id: 'a1',
+      correction_kind: 'retract',
+    });
+
+    const res = await getMistakes();
+    const body = (await res.json()) as { rows: Array<{ id: string }> };
+    expect(body.rows).toEqual([]);
+  });
+
+  it('follows superseded judge replacements when projecting cause', async () => {
+    await seedQuestion('q1', 'p1');
+    await seedAttempt({ id: 'a1', question_id: 'q1' });
+    await seedJudge({
+      id: 'j_old',
+      attempt_event_id: 'a1',
+      primary_category: 'concept',
+      created_at: new Date('2026-05-20T00:00:00Z'),
+    });
+    await seedJudge({
+      id: 'j_replacement',
+      attempt_event_id: 'a1',
+      primary_category: 'memory',
+      caused_by_event_id: null,
+      created_at: new Date('2026-05-19T00:00:00Z'),
+    });
+    await seedCorrection({
+      id: 'correct_j_old',
+      target_event_id: 'j_old',
+      correction_kind: 'supersede',
+      replacement_event_id: 'j_replacement',
+      created_at: new Date('2026-05-21T00:00:00Z'),
+    });
+
+    const res = await getMistakes();
+    const body = (await res.json()) as {
+      rows: Array<{ cause: { primary_category: string } | null }>;
+    };
+    expect(body.rows[0].cause?.primary_category).toBe('memory');
   });
 
   it('surfaces agent judge secondary_categories + confidence on the wire', async () => {

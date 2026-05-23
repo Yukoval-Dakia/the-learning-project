@@ -66,7 +66,12 @@ describe('POST /api/review/submit', () => {
     const body = (await res.json()) as {
       next_due_at: number;
       new_state: { reps: number; scheduled_days: number };
-      review_event: { id: string; rating: string; latency_ms: number | null };
+      review_event: {
+        id: string;
+        rating: string;
+        latency_ms: number | null;
+        correction_state: { state: string; terminal_state: string };
+      };
     };
 
     expect(typeof body.next_due_at).toBe('number');
@@ -74,6 +79,9 @@ describe('POST /api/review/submit', () => {
     expect(body.new_state.reps).toBeGreaterThanOrEqual(1);
     expect(body.review_event.rating).toBe('good');
     expect(body.review_event.latency_ms).toBe(5000);
+    expect(body.review_event.correction_state).toEqual(
+      expect.objectContaining({ state: 'active', terminal_state: 'active' }),
+    );
 
     const db = testDb();
     const events = await db

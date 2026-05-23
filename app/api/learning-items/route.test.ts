@@ -1,4 +1,5 @@
 import { knowledge, learning_item } from '@/db/schema';
+import { writeEvent } from '@/server/events/queries';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { GET, POST } from './route';
@@ -173,6 +174,48 @@ describe('GET /api/learning-items', () => {
     const body = (await res.json()) as { rows: Array<{ knowledge_ids: unknown }> };
     expect(Array.isArray(body.rows[0].knowledge_ids)).toBe(true);
     expect(body.rows[0].knowledge_ids).toEqual(['k1']);
+  });
+
+  it('attaches effective correction state for source_ref event rows', async () => {
+    const db = testDb();
+    const now = new Date();
+    await writeEvent(db, {
+      id: 'evt_source',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: 'q1',
+      outcome: 'failure',
+      payload: {
+        answer_md: 'wrong',
+        answer_image_refs: [],
+        referenced_knowledge_ids: [],
+      },
+      created_at: now,
+    });
+    await db.insert(learning_item).values(
+      baseLearningItem({
+        id: 'li_source',
+        source: 'ai_generated',
+        source_ref: 'evt_source',
+      }),
+    );
+
+    const res = await GET(new Request('http://localhost/api/learning-items'));
+    const body = (await res.json()) as {
+      rows: Array<{
+        source: string;
+        source_ref: string | null;
+        source_event: { id: string; correction_state: { state: string } } | null;
+      }>;
+    };
+    expect(body.rows[0].source).toBe('ai_generated');
+    expect(body.rows[0].source_ref).toBe('evt_source');
+    expect(body.rows[0].source_event).toEqual({
+      id: 'evt_source',
+      correction_state: expect.objectContaining({ state: 'active' }),
+    });
   });
 });
 

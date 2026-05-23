@@ -28,6 +28,7 @@ import { writeEvent } from '@/server/events/queries';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { normalizeReviewSubmitActivityRef } from '@/server/review/activity-ref';
+import { activeEffectiveTruth } from '@/server/review/effective-truth';
 import { scheduleReview } from '@/server/review/fsrs';
 import { eq, sql } from 'drizzle-orm';
 
@@ -180,6 +181,7 @@ export async function POST(req: Request): Promise<Response> {
         fsrs_state_after: finalFsrsStateAfter,
         due_at_next: finalResult.dueAt,
         created_at: now,
+        correction_state: activeEffectiveTruth(eventId),
       },
     });
   } catch (err) {

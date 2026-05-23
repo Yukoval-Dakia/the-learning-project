@@ -1,5 +1,9 @@
 'use client';
 
+import {
+  CorrectionStateRenderer,
+  type CorrectionStateSnapshot,
+} from '@/ui/correction/CorrectionStateRenderer';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
 import { formatRelTime } from '@/ui/lib/utils';
 import { Button } from '@/ui/primitives/Button';
@@ -28,6 +32,9 @@ type StatusFilter = 'all' | ItemStatus;
 
 interface LearningItem {
   id: string;
+  source: string;
+  source_ref: string | null;
+  source_event: { id: string; correction_state: CorrectionStateSnapshot | null } | null;
   title: string;
   content: string;
   knowledge_ids: string[];
@@ -366,6 +373,15 @@ export default function LearningItemsPage() {
                 <p style={metaStyle}>
                   创建 {formatRelTime(item.created_at)} · v{item.version}
                 </p>
+                {item.source_event && (
+                  <p style={metaStyle}>
+                    source event{' '}
+                    <Link href={`/events/${item.source_event.id}`} style={metaLinkStyle}>
+                      {item.source_event.id.slice(0, 8)}…
+                    </Link>{' '}
+                    <CorrectionStateRenderer state={item.source_event.correction_state} compact />
+                  </p>
+                )}
               </div>
               <StatusBadge status={item.status} />
             </div>
@@ -678,6 +694,11 @@ const metaStyle: React.CSSProperties = {
   fontSize: 'var(--fs-meta)',
   color: 'var(--ink-4)',
   letterSpacing: 'var(--ls-wide)',
+};
+
+const metaLinkStyle: React.CSSProperties = {
+  color: 'var(--coral)',
+  textDecoration: 'none',
 };
 
 const contentStyle: React.CSSProperties = {

@@ -100,6 +100,30 @@ async function seedFailureAttempt(
   }
 }
 
+async function seedCorrection(opts: {
+  id: string;
+  target_event_id: string;
+  correction_kind: 'supersede' | 'retract' | 'mark_wrong' | 'restore';
+  replacement_event_id?: string;
+}) {
+  await writeEvent(testDb(), {
+    id: opts.id,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'correct',
+    subject_kind: 'event',
+    subject_id: opts.target_event_id,
+    outcome: 'success',
+    payload: {
+      correction_kind: opts.correction_kind,
+      replacement_event_id: opts.replacement_event_id,
+      reason_md: 'manual correction',
+      affected_refs: [{ kind: 'question', id: 'q1' }],
+    },
+    created_at: new Date(),
+  });
+}
+
 describe('planReviewSession', () => {
   beforeEach(async () => {
     await resetDb();
@@ -124,6 +148,19 @@ describe('planReviewSession', () => {
     expect(item.cause).toBeNull();
     expect(item.priority).toBe(3); // null cause = base 3, no overdue/lapse bonus
     expect(item.rationale).toContain('首次复习');
+    expect(item.last_failure_event).toEqual({
+      id: 'a1',
+      correction_state: expect.objectContaining({ state: 'active' }),
+    });
+  });
+
+  it('does not queue a never-reviewed question when its failure attempt is retracted', async () => {
+    await seedQuestion('q1', '虚词 之');
+    await seedFailureAttempt('a1', 'q1', null);
+    await seedCorrection({ id: 'correct_a1', target_event_id: 'a1', correction_kind: 'retract' });
+
+    const plan = await planReviewSession({ db: testDb() });
+    expect(plan.queue).toEqual([]);
   });
 
   it('boosts priority for concept-type cause', async () => {
