@@ -135,33 +135,35 @@ describe('SubjectRegistry', () => {
 
   it('registers a custom profile', () => {
     const registry = new SubjectRegistry();
-    const physics = {
+    // Use a synthetic id (not a real subject) so this test doesn't collide
+    // with profiles added to the default registry over time.
+    const testSubject = {
       ...registry.resolve('math'),
-      id: 'physics',
+      id: 'test_subject',
       version: '1.0.0',
-      displayName: '物理',
+      displayName: '测试学科',
     };
-    registry.register(physics, ['phys', 'physics_101']);
+    registry.register(testSubject, ['test_alias', 'test_subject_101']);
 
-    expect(registry.resolve('physics').displayName).toBe('物理');
-    expect(registry.resolve('phys').id).toBe('physics');
-    expect(registry.listIds()).toContain('physics');
+    expect(registry.resolve('test_subject').displayName).toBe('测试学科');
+    expect(registry.resolve('test_alias').id).toBe('test_subject');
+    expect(registry.listIds()).toContain('test_subject');
   });
 
   it('throws instead of silently overwriting duplicate profile ids', () => {
     const registry = new SubjectRegistry();
-    const firstPhysics = {
+    const firstSubject = {
       ...registry.resolve('math'),
-      id: 'physics',
+      id: 'test_subject',
       version: '1.0.0',
-      displayName: '物理',
+      displayName: '测试学科',
     };
-    const secondPhysics = { ...firstPhysics, displayName: '覆盖物理' };
+    const secondSubject = { ...firstSubject, displayName: '覆盖测试学科' };
 
-    registry.register(firstPhysics);
+    registry.register(firstSubject);
 
-    expect(() => registry.register(secondPhysics)).toThrow(/already registered/i);
-    expect(registry.resolve('physics').displayName).toBe('物理');
+    expect(() => registry.register(secondSubject)).toThrow(/already registered/i);
+    expect(registry.resolve('test_subject').displayName).toBe('测试学科');
   });
 });
 
@@ -195,5 +197,55 @@ describe('M2.1: mathProfile + steps@1', () => {
     expect(runner).toBeDefined();
     expect(runner?.manifest.version).toBe('1.0.0');
     expect(runner?.manifest.stability).toBe('experimental');
+  });
+});
+
+describe('P0: physics SubjectProfile', () => {
+  it('is registered in the default registry', () => {
+    const profile = resolveSubjectProfile('physics');
+    expect(profile.id).toBe('physics');
+    expect(profile.displayName).toBe('物理');
+  });
+
+  it('resolves via the physical alias', () => {
+    const profile = resolveSubjectProfile('physical');
+    expect(profile.id).toBe('physics');
+  });
+
+  it('declares katex renderConfig', async () => {
+    const { physicsProfile } = await import('@/subjects/physics/profile');
+    expect(physicsProfile.renderConfig.notation).toBe('katex');
+  });
+
+  it('declares cause categories including unit and dimension', async () => {
+    const { physicsProfile } = await import('@/subjects/physics/profile');
+    const causeIds = physicsProfile.causeCategories.map((c) => c.id);
+    expect(causeIds).toContain('unit');
+    expect(causeIds).toContain('dimension');
+  });
+
+  it('judgeCapabilities at P0: exact + semantic', async () => {
+    const { physicsProfile } = await import('@/subjects/physics/profile');
+    expect(physicsProfile.judgeCapabilities).toEqual(['exact', 'semantic']);
+  });
+
+  it('appears in registry.listIds()', async () => {
+    const { getDefaultSubjectRegistry } = await import('@/subjects/profile');
+    const registry = getDefaultSubjectRegistry();
+    expect(registry.listIds()).toContain('physics');
+  });
+
+  it('KNOWN_SUBJECT_IDS contains physics', () => {
+    expect(KNOWN_SUBJECT_IDS).toContain('physics');
+  });
+
+  it('physicsProfile passes validateProfile against default registry', async () => {
+    const { createDefaultRegistry } = await import('@/core/capability/judges');
+    const { validateProfile } = await import('@/core/capability/validate-profile');
+    const { physicsProfile } = await import('@/subjects/physics/profile');
+    const registry = createDefaultRegistry();
+    const result = validateProfile(physicsProfile, registry);
+    expect(result.errors, JSON.stringify(result.errors)).toEqual([]);
+    expect(result.valid).toBe(true);
   });
 });
