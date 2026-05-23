@@ -5,6 +5,7 @@ import { buildAttributionFollowupHandler } from './handlers/attribution_followup
 import { buildEchoHandler } from './handlers/echo';
 import { buildEmbeddedCheckGenerateHandler } from './handlers/embedded_check_generate';
 import { buildKnowledgeEdgeProposeNightlyHandler } from './handlers/knowledge_edge_propose_nightly';
+import { buildKnowledgeMaintenanceNightlyHandler } from './handlers/knowledge_maintenance_nightly';
 import { buildKnowledgePropoNightlyHandler } from './handlers/knowledge_propose_nightly';
 import { buildNoteGenerateHandler } from './handlers/note_generate';
 import { buildNoteVerifyHandler } from './handlers/note_verify';
@@ -40,6 +41,16 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   await boss.createQueue('knowledge_edge_propose_nightly');
   await boss.work('knowledge_edge_propose_nightly', buildKnowledgeEdgeProposeNightlyHandler(db));
   await boss.schedule('knowledge_edge_propose_nightly', '30 2 * * *', {}, { tz: 'Asia/Shanghai' });
+
+  // YUK-48: broader KnowledgeReviewTask maintenance producer (BJT 03:00,
+  // after the cheaper node/edge structured-output proposers).
+  await boss.createQueue('knowledge_maintenance_nightly');
+  await boss.work(
+    'knowledge_maintenance_nightly',
+    { pollingIntervalSeconds: 2, batchSize: 1 },
+    buildKnowledgeMaintenanceNightlyHandler(db),
+  );
+  await boss.schedule('knowledge_maintenance_nightly', '0 3 * * *', {}, { tz: 'Asia/Shanghai' });
 
   // ADR-0013: abandon review sessions stuck in 'started' >6h (sendBeacon
   // fallback when normal close didn't fire). BJT 04:15 after prune_job_events.

@@ -117,7 +117,7 @@ Question (统一题库，single source of truth)
 | `VariantGenTask` | mimo-v2.5-pro | pg-boss `variant_gen` | 否 | — | draft `question(source='mistake_variant')` |
 | `TeachingTurnTask` | mimo-v2.5-pro | `/api/teaching-sessions/*` | 否 | — | Active Teaching turn |
 | `ReviewIntentTask` | mimo-v2.5-pro | Review Orchestrator | 否 | — | 一句话 session intent |
-| `KnowledgeReviewTask` | mimo-v2.5-pro | maintenance | 是 | — | tree / mesh mutation proposal |
+| `KnowledgeReviewTask` | mimo-v2.5-pro | pg-boss `knowledge_maintenance_nightly` / manual maintenance | 是 | — | tree / mesh mutation proposal |
 | `VisionExtractTask` | mimo-v2.5 | `POST /api/ingestion/[id]/rescue` | 否 | 输入 | bbox blocks |
 | `VisionExtractTaskHeavy` | mimo-v2.5 | 同上（heavy manual rescue） | 否 | 输入 | bbox blocks |
 
@@ -220,6 +220,7 @@ Dreaming 和 Maintenance lane 当前跑在 self-hosted Node worker + pg-boss 上
 | --- | --- | --- |
 | `knowledge_propose_nightly` | BJT 02:00 schedule | `event(action='propose', subject_kind='knowledge')` |
 | `knowledge_edge_propose_nightly` | BJT 02:30 schedule | `event(action='propose', subject_kind='knowledge_edge')` |
+| `knowledge_maintenance_nightly` | BJT 03:00 schedule | `KnowledgeReviewTask` tool calls → proposal inbox rows |
 | `note_generate` | learning-intent accept 后 enqueue | 填充 atomic artifact sections |
 | `variant_gen` | 复习 / 错因相关 enqueue | draft `question(source='mistake_variant')` |
 | `session_summary` | review session end | session summary |
