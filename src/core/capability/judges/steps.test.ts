@@ -116,8 +116,8 @@ describe('stepsV1Capability manifest', () => {
     expect(stepsV1Capability.manifest.stability).toBe('experimental');
   });
 
-  it('run() returns unsupported skeleton response (M2.1 placeholder)', () => {
-    const result = stepsV1Capability.run({
+  it('run() returns unsupported skeleton response (M2.1 placeholder)', async () => {
+    const result = await stepsV1Capability.run({
       question: { foo: 'bar' },
       answer: { content: 'student answer' },
     });
