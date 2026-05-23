@@ -23,6 +23,13 @@ describe('middleware', () => {
     expect(body).toEqual({ error: 'unauthorized' });
   });
 
+  it('returns 401 for /api/admin routes without token', async () => {
+    const res = middleware(reqOf('/api/admin/runs'));
+    expect(res?.status).toBe(401);
+    const body = await res?.json();
+    expect(body).toEqual({ error: 'unauthorized' });
+  });
+
   it('returns 401 when x-internal-token does not match', async () => {
     const res = middleware(reqOf('/api/learning-items', { 'x-internal-token': 'wrong' }));
     expect(res?.status).toBe(401);
