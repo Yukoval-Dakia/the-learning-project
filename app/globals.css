@@ -1006,6 +1006,24 @@ ol {
   flex-direction: column;
   gap: var(--s-3);
 }
+.proposal-kind-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+}
+.proposal-kind-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.proposal-kind-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-4);
+}
 .inbox-empty {
   margin: 0;
   font-family: var(--font-mono);
@@ -1027,6 +1045,70 @@ ol {
 .inbox-node-proposal {
   background: linear-gradient(180deg, var(--info-soft) 0%, var(--paper-raised) 100%);
   border-color: rgba(79, 110, 142, 0.28);
+}
+.proposal-generic {
+  background: var(--paper-raised);
+  border-color: var(--line);
+}
+.proposal-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-2);
+  background: var(--paper);
+  padding: 8px 10px;
+}
+.proposal-summary strong {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-4);
+  font-weight: 500;
+}
+.proposal-json {
+  margin: 0;
+  max-height: 180px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.proposal-status-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-4);
+}
+.proposal-status-row span {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.proposal-status-row span:not(:last-child)::after {
+  content: "·";
+  margin-left: 6px;
+  color: var(--line-strong);
+}
+.proposal-retract {
+  margin-left: 2px;
+}
+@media (max-width: 759.98px) {
+  .proposal-summary {
+    padding: 7px 8px;
+  }
+  .proposal-json {
+    max-height: 112px;
+  }
+  .proposal-actions,
+  .edge-proposal .ep-actions {
+    row-gap: 8px;
+  }
 }
 .artifact-proposal {
   display: flex;
@@ -3198,6 +3280,7 @@ ol {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
   font-family: var(--font-sans);
   font-size: 14px;
   min-width: 0;
@@ -3211,7 +3294,8 @@ ol {
   padding: 3px 8px;
   color: var(--ink);
   font-size: 13px;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .edge-proposal .ep-arrow {
