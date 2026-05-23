@@ -1,3 +1,4 @@
+import { unitDimensionV1Capability } from '@/core/capability/judges/unit_dimension';
 import type { Db } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
 import { type JudgeQuestionRow, judgeAnswer } from '@/server/ai/judges/question-contract';
@@ -48,7 +49,13 @@ async function seedPhysicsFixtures(db: Db): Promise<void> {
       figures: [],
       image_refs: [],
       structured: null,
-      metadata: { fixture_ref: item.ref, knowledge_hint: item.knowledge_hint },
+      metadata: {
+        fixture_ref: item.ref,
+        knowledge_hint: item.knowledge_hint,
+        ...(item.reference_value == null ? {} : { reference_value: item.reference_value }),
+        ...(item.reference_unit == null ? {} : { reference_unit: item.reference_unit }),
+        reference_tolerance: item.tolerance,
+      },
       created_at: now,
       updated_at: now,
       version: 0,
@@ -68,6 +75,7 @@ function toJudgeRow(row: typeof question.$inferSelect): JudgeQuestionRow {
     figures: row.figures,
     image_refs: row.image_refs,
     structured: row.structured,
+    metadata: row.metadata as Record<string, unknown> | null,
   };
 }
 
@@ -147,7 +155,7 @@ describe('physics fixture e2e smoke', () => {
     expect(rows.length).toBeGreaterThanOrEqual(7);
   });
 
-  it('answering physics-unit-001 → unit_dimension route → unsupported skeleton', async () => {
+  it('answering physics-unit-001 → unit_dimension route → real unit mismatch partial', async () => {
     const [row] = await db
       .select()
       .from(question)
@@ -160,7 +168,40 @@ describe('physics fixture e2e smoke', () => {
       subjectProfile: physicsProfile,
     });
     expect(route).toBe('unit_dimension');
-    expect(result.coarse_outcome).toBe('unsupported');
+    expect(result.coarse_outcome).toBe('partial');
     expect(result.capability_ref.id).toBe('unit_dimension');
+    expect((result.evidence_json as { signal?: string }).signal).toBe(
+      'unit_mismatch_same_dimension',
+    );
   });
+});
+
+describe('physics fixture real judging — expected_signals validation', () => {
+  for (const fixture of loadPhysicsFixtures()) {
+    if (fixture.reference_value == null || fixture.reference_unit == null) continue;
+
+    for (const tc of fixture.expected_signals) {
+      it(`${fixture.ref} :: ${tc.case} → ${tc.expected_signal}`, async () => {
+        const result = await unitDimensionV1Capability.run({
+          answer: { content: tc.student_answer },
+          question: {
+            metadata: {
+              reference_value: fixture.reference_value,
+              reference_unit: fixture.reference_unit,
+              reference_tolerance: fixture.tolerance,
+            },
+          },
+        });
+        const signal = (result.evidence_json as { signal?: string }).signal ?? null;
+
+        if (tc.expected_signal === 'correct') {
+          expect(signal).toBeNull();
+          expect(result.coarse_outcome).toBe('correct');
+          expect(result.score).toBe(1.0);
+        } else {
+          expect(signal).toBe(tc.expected_signal);
+        }
+      });
+    }
+  }
 });

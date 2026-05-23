@@ -13,7 +13,7 @@
       "difficulty": 1,
       "knowledge_hint": "速度单位换算",
       "expected_signals": [
-        { "case": "数值近", "student_answer": "8.30 m/s", "expected_signal": "numeric_close" },
+        { "case": "数值近", "student_answer": "7.50 m/s", "expected_signal": "numeric_close" },
         { "case": "数值远", "student_answer": "50 m/s", "expected_signal": "numeric_off" },
         {
           "case": "单位错量纲对",
@@ -35,7 +35,7 @@
       "difficulty": 2,
       "knowledge_hint": "压强单位换算",
       "expected_signals": [
-        { "case": "数值近", "student_answer": "101300 Pa", "expected_signal": "numeric_close" },
+        { "case": "数值近", "student_answer": "101000 Pa", "expected_signal": "numeric_close" },
         {
           "case": "单位错量纲对",
           "student_answer": "1.013 bar",
@@ -55,10 +55,10 @@
       "difficulty": 1,
       "knowledge_hint": "能量单位换算",
       "expected_signals": [
-        { "case": "全对", "student_answer": "8.368 J", "expected_signal": "numeric_close" },
+        { "case": "全对", "student_answer": "8.368 J", "expected_signal": "correct" },
         {
           "case": "单位错",
-          "student_answer": "8.368 cal",
+          "student_answer": "0.008368 kJ",
           "expected_signal": "unit_mismatch_same_dimension"
         },
         { "case": "量纲错", "student_answer": "8.368 W", "expected_signal": "dimension_mismatch" }
@@ -89,7 +89,7 @@
       "difficulty": 1,
       "knowledge_hint": "速度单位换算",
       "expected_signals": [
-        { "case": "全对", "student_answer": "30 m/s", "expected_signal": "numeric_close" },
+        { "case": "全对", "student_answer": "30 m/s", "expected_signal": "correct" },
         {
           "case": "单位错量纲对",
           "student_answer": "108 km/h",
@@ -108,7 +108,7 @@
       "difficulty": 2,
       "knowledge_hint": "力的量纲分析",
       "expected_signals": [
-        { "case": "全对", "student_answer": "力", "expected_signal": "numeric_close" },
+        { "case": "全对", "student_answer": "力", "expected_signal": "correct" },
         {
           "case": "量纲错(选速度)",
           "student_answer": "速度",
@@ -131,7 +131,7 @@
       "difficulty": 1,
       "knowledge_hint": "速度量纲",
       "expected_signals": [
-        { "case": "全对", "student_answer": "L·T^{-1}", "expected_signal": "numeric_close" },
+        { "case": "全对", "student_answer": "L·T^{-1}", "expected_signal": "correct" },
         {
           "case": "量纲错(指数错)",
           "student_answer": "L·T^{-2}",
@@ -148,7 +148,7 @@
       "difficulty": 3,
       "knowledge_hint": "$E=mc^2$ 量纲检验",
       "expected_signals": [
-        { "case": "全对", "student_answer": "L^2 T^{-2}", "expected_signal": "numeric_close" },
+        { "case": "全对", "student_answer": "L^2 T^{-2}", "expected_signal": "correct" },
         { "case": "量纲错", "student_answer": "L T^{-1}", "expected_signal": "dimension_mismatch" }
       ]
     },
@@ -163,7 +163,7 @@
       "difficulty": 1,
       "knowledge_hint": "$v = gt$",
       "expected_signals": [
-        { "case": "全对", "student_answer": "29.4 m/s", "expected_signal": "numeric_close" },
+        { "case": "全对", "student_answer": "29.4 m/s", "expected_signal": "correct" },
         { "case": "数值远", "student_answer": "98 m/s", "expected_signal": "numeric_off" },
         { "case": "量纲错", "student_answer": "29.4 m", "expected_signal": "dimension_mismatch" },
         { "case": "缺单位", "student_answer": "29.4", "expected_signal": "missing_unit" }
@@ -180,10 +180,10 @@
       "difficulty": 1,
       "knowledge_hint": "牛顿第二定律",
       "expected_signals": [
-        { "case": "全对", "student_answer": "10 N", "expected_signal": "numeric_close" },
+        { "case": "全对", "student_answer": "10 N", "expected_signal": "correct" },
         {
           "case": "单位错量纲对",
-          "student_answer": "10 kg·m/s^2",
+          "student_answer": "10 kg*m/s^2",
           "expected_signal": "unit_mismatch_same_dimension"
         },
         { "case": "量纲错", "student_answer": "10 J", "expected_signal": "dimension_mismatch" },
