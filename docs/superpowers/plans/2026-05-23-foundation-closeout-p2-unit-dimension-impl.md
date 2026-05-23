@@ -88,9 +88,9 @@ Project convention (steps-judge.ts / math vision judge) uses **mimo-v2.5** via C
 
 ## Spec deltas observed (after D1-D4 confirmed, fill in actual deviations)
 
-- D1 confirmed: <fill at P2/0>
-- D2 confirmed: <fill at P2/0>; `JudgeQuestionRow` += `metadata?: unknown` field — this is framework delta per Foundation A acid test 2 strict reading. Pre-existing 1-row delta in question-contract.ts from P1 already established precedent.
-- D3 confirmed: <fill at P2/0>; **scope expanded** per codex review #98 round 2 (line 922): D3 is not just a manifest `latency_class` string change. To support async LLM fallback inside the runner, the framework runner contract must allow async return:
+- D1 confirmed: Option A, `mathjs@15.2.0`. Rationale: Context7/current docs confirm `math.unit(...)`, `.to(...)`, `.toNumber(...)`, and `.equalBase(...)` cover the deterministic accelerator needs; `pnpm build` passed after adding the dependency. Standalone output was 74M before any `mathjs` import was traced, so final imported-size impact is rechecked in Task 7.
+- D2 confirmed: D2a, metadata pass-through; `JudgeQuestionRow` += `metadata?: unknown` field — this is framework delta per Foundation A acid test 2 strict reading. Pre-existing 1-row delta in question-contract.ts from P1 already established precedent.
+- D3 confirmed: D3b, manifest `latency_class: 'async'`; **scope expanded** per codex review #98 round 2 (line 922): D3 is not just a manifest `latency_class` string change. To support async LLM fallback inside the runner, the framework runner contract must allow async return:
   - `src/core/capability/types.ts`: `JudgeCapabilityRunner.run()` signature relaxed to `JudgeResultV2T | Promise<JudgeResultV2T>` (1-line type change)
   - `src/server/ai/judges/index.ts`: `judgeRouterV2` becomes `async` + `await runner.run(...)` + return type `Promise<JudgeResultV2T>` (3-line change)
   - `src/server/ai/judges/question-contract.ts`: any path calling `judgeRouterV2` adds `await` (1-3 lines)
@@ -119,6 +119,18 @@ Spec §7.4 line 411 says `numeric_off` → score `0.3` + `incorrect` — **confl
 | unparseable + fallback fails | unsupported | unsupported | null, confidence=0 |
 
 Pedagogy preserved: signal still surfaced in `evidence_json.signal`; `coarse_outcome=partial` for "partially understood" cases (numeric error, wrong unit but right dim) gives a clearer FSRS / UX signal than the schema-illegal score=0.3 incorrect.
+
+### Task 7 regression note (2026-05-23)
+
+`pnpm test:unit` surfaced two baseline test-expectation drifts unrelated to `unit_dimension`: `origin/main`'s `mathProfile` already includes `time_pressure`, while `src/core/schema/schema.test.ts` and `src/ui/lib/cause-options.test.ts` still expected `time_pressure` to be outside math cause options. P2 updates those tests only to match the implemented profile; no runtime cause/profile code changes.
+
+Task 7 acid-test-2 observed deltas against `9191c160a20d8e5afabf11503c6851f510bd2182`:
+- `src/core/capability/registry.ts`: empty diff (hard zero satisfied).
+- `src/core/capability/types.ts`: numstat `1 insert / 1 delete` — `JudgeCapabilityRunner.run()` sync return widened to sync-or-Promise.
+- `src/server/ai/judges/index.ts`: numstat `5 insert / 4 delete` — P1 `unit_dimension` kind addition plus P2 `judgeRouterV2` / `judgeRouter` async widening.
+- `src/server/ai/judges/question-contract.ts`: numstat `20 insert / 2 delete` — P1 runnable route + physics route branch plus P2 `metadata` pass-through and `await judgeRouterV2`.
+
+Final D1 build-size sanity after the real runner import: `pnpm build` passed; `.next/standalone` remained 74M and no `mathjs` package path was traced into standalone output. The +10M rollback threshold did not trigger.
 
 ---
 

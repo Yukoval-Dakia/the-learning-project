@@ -9,5 +9,5 @@ export interface JudgeRunInput {
 
 export interface JudgeCapabilityRunner {
   readonly manifest: CapabilityManifestT;
-  run(input: JudgeRunInput): JudgeResultV2T;
+  run(input: JudgeRunInput): JudgeResultV2T | Promise<JudgeResultV2T>;
 }

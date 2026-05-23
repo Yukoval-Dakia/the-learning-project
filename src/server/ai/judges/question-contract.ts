@@ -44,6 +44,7 @@ export interface JudgeQuestionRow {
   choices_md: string[] | null;
   judge_kind_override: string | null;
   knowledge_ids?: string[] | null;
+  metadata?: Record<string, unknown> | null;
   // M-1 (2026-05-21): first-class multimodal carriers.
   // Runnable routes (exact / keyword / semantic) IGNORE these fields — they're
   // wired in for future vision-aware capabilities (steps@1 in M2, etc.).
@@ -161,6 +162,9 @@ function buildLocalJudgeQuestion(q: JudgeQuestionRow, route: JudgeKind): Record<
   const rubric = parseRubric(q.rubric_json);
   if (route === 'keyword') {
     return { keywords: nonEmpty(rubric?.keywords) };
+  }
+  if (route === 'unit_dimension') {
+    return { metadata: q.metadata ?? null, prompt_md: q.prompt_md };
   }
   return { reference: q.reference_md ?? '' };
 }
@@ -311,7 +315,7 @@ export async function judgeAnswer(params: JudgeAnswerParams): Promise<JudgeAnswe
     };
   }
 
-  const result = judgeRouterV2({
+  const result = await judgeRouterV2({
     kind: route,
     question: buildLocalJudgeQuestion(params.question, route),
     answer: { content: params.answer_md },

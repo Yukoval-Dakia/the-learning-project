@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { judgeRouter } from './index';
 
 describe('judgeRouter', () => {
-  it('dispatches to judgeExact for kind=exact', () => {
-    const r = judgeRouter({
+  it('dispatches to judgeExact for kind=exact', async () => {
+    const r = await judgeRouter({
       kind: 'exact',
       question: { reference: 'A' },
       answer: { content: 'A' },
@@ -11,8 +11,8 @@ describe('judgeRouter', () => {
     expect(r.verdict).toBe('correct');
   });
 
-  it('dispatches to judgeKeyword for kind=keyword', () => {
-    const r = judgeRouter({
+  it('dispatches to judgeKeyword for kind=keyword', async () => {
+    const r = await judgeRouter({
       kind: 'keyword',
       question: { keywords: ['A', 'B'] },
       answer: { content: 'A and B' },
@@ -20,13 +20,13 @@ describe('judgeRouter', () => {
     expect(r.verdict).toBe('correct');
   });
 
-  it('throws for unimplemented kinds', () => {
-    expect(() =>
+  it('throws for unimplemented kinds', async () => {
+    await expect(
       judgeRouter({
-        kind: 'semantic',
+        kind: 'rubric',
         question: { reference: 'A' },
         answer: { content: 'A' },
       }),
-    ).toThrow(/not implemented/i);
+    ).rejects.toThrow(/not implemented|not found/i);
   });
 });

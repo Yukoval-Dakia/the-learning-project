@@ -75,16 +75,16 @@ describe('schema generated from drizzle', () => {
 
   it('profile validation rejects causes outside the current SubjectProfile', () => {
     const parsed = CauseSchema.parse({
-      primary_category: 'time_pressure',
+      primary_category: 'grammar',
       secondary_categories: ['unit_error', 'carelessness'],
-      analysis_md: '时间压力不是数学 profile 的错因类目。',
+      analysis_md: '语法错误不是数学 profile 的错因类目。',
       confidence: 0.8,
     });
 
     expect(validateCauseAgainstProfile(parsed, resolveSubjectProfile('math'))).toEqual({
       primary_category: 'other',
       secondary_categories: ['unit_error', 'carelessness'],
-      analysis_md: '时间压力不是数学 profile 的错因类目。',
+      analysis_md: '语法错误不是数学 profile 的错因类目。',
       confidence: 0.8,
     });
   });
