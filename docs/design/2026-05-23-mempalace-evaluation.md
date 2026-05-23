@@ -149,11 +149,11 @@ This alternative path satisfies both real needs without violating ADR-0001's "Py
 
 ### Phase B cost estimate (declined)
 
-For record, had we gone GO, Phase B would have been: docker-compose update (sub-0z) + sync pipeline scaffold (~3-5 days) + Dreaming rewire to call mempalace MCP (~2 days) + ADR-0016 (mempalace as derived memory index) + retrieval-quality tuning. Estimate ~5-8 engineering days, ongoing maintenance cost for the second runtime stack. Not justified by the PoC findings.
+For record, had we gone GO, Phase B would have been: docker-compose update (sub-0z) + sync pipeline scaffold (~3-5 days) + Dreaming rewire to call mempalace MCP (~2 days) + a follow-up ADR (mempalace as derived memory index) + retrieval-quality tuning. Estimate ~5-8 engineering days, ongoing maintenance cost for the second runtime stack. Not justified by the PoC findings.
 
 ## Implications for ADR-0015 §2 forward lock
 
-ADR-0015 §2 forward-locked `memory_brief_note` write path to "Dreaming agent, expected path `src/server/dreaming/brief.ts`, Phase 2C". This evaluation **does not change** that decision — only narrows the implementation language to TS (no Python sidecar). The Dreaming agent design is still TBD and remains a Phase 2C deliverable. A future ADR-0016 could codify "Dreaming agent runs in TS via the existing AI runner; no external memory subsystem; semantic-retrieval needs are met by pgvector embedding store on `event` table" — but that ADR is **not** part of Phase A scope.
+ADR-0015 §2 forward-locked `memory_brief_note` write path to "Dreaming agent, expected path `src/server/dreaming/brief.ts`, Phase 2C". This evaluation **does not change** that decision — only narrows the implementation language to TS (no Python sidecar). The Dreaming agent design is still TBD and remains a Phase 2C deliverable. The actual follow-up ADR codifying the TS-native memory path is **ADR-0017** ([0017-memory-mem0-plus-brief-layer.md](../adr/0017-memory-mem0-plus-brief-layer.md), draft on PR #102, tracked by [YUK-37](https://linear.app/yukoval-studios/issue/YUK-37)). The number `ADR-0016` is **not** the memory ADR — it was already taken by `0016-openai-codex-subscription-provider-evaluation.md` at the time of this doc's writing — but that ADR is **not** part of Phase A scope.
 
 ## References
 
