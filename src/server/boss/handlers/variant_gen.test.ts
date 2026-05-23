@@ -219,7 +219,7 @@ describe('runVariantGen', () => {
     expect(runTaskFn).not.toHaveBeenCalled();
   });
 
-  it('generates a depth=1 variant on the happy path', async () => {
+  it('proposes a depth=1 variant on the happy path', async () => {
     const db = testDb();
     await seedKnowledge();
     await seedQuestion({ id: 'q1' });
@@ -231,20 +231,33 @@ describe('runVariantGen', () => {
       text: VALID_VARIANT_OUTPUT,
     }));
     const result = await runVariantGen({ db, attemptEventId: attemptId, runTaskFn });
-    expect(result.status).toBe('generated');
-    expect(result.variant_question_id).toBeTruthy();
+    expect(result.status).toBe('proposed');
+    expect(result.proposal_id).toBeTruthy();
     expect(runTaskFn).toHaveBeenCalledTimes(1);
 
-    const variantId = result.variant_question_id ?? '';
-    const variant = (await db.select().from(question).where(eq(question.id, variantId)))[0];
-    expect(variant.source).toBe('mistake_variant');
-    expect(variant.draft_status).toBe('draft');
-    expect(variant.variant_depth).toBe(1);
-    expect(variant.parent_variant_id).toBe('q1');
-    expect(variant.root_question_id).toBe('q1');
-    expect(variant.knowledge_ids).toEqual(['k_xuci']);
-    expect(variant.difficulty).toBe(3);
-    expect(variant.source_ref).toBe(attemptId);
+    const proposal = (
+      await db
+        .select()
+        .from(event)
+        .where(eq(event.id, result.proposal_id ?? ''))
+    )[0];
+    const aiProposal = (
+      proposal.payload as {
+        ai_proposal?: { kind?: string; proposed_change?: Record<string, unknown> };
+      }
+    ).ai_proposal;
+    expect(aiProposal?.kind).toBe('variant_question');
+    expect(aiProposal?.proposed_change).toMatchObject({
+      source_question_id: 'q1',
+      source_attempt_event_id: attemptId,
+      variant_depth: 1,
+      parent_variant_id: 'q1',
+      root_question_id: 'q1',
+      knowledge_ids: ['k_xuci'],
+      difficulty: 3,
+    });
+    const questions = await db.select().from(question);
+    expect(questions).toHaveLength(1);
   });
 
   it('passes the first knowledge subject profile to VariantGenTask', async () => {
@@ -283,7 +296,7 @@ describe('runVariantGen', () => {
 
     const result = await runVariantGen({ db, attemptEventId: attemptId, runTaskFn });
 
-    expect(result.status).toBe('generated');
+    expect(result.status).toBe('proposed');
     const input = runTaskFn.mock.calls[0]?.[1] as {
       cause?: { primary_category?: string };
     };
@@ -309,7 +322,7 @@ describe('runVariantGen', () => {
 
     const result = await runVariantGen({ db, attemptEventId: attemptId, runTaskFn });
 
-    expect(result.status).toBe('generated');
+    expect(result.status).toBe('proposed');
     const input = runTaskFn.mock.calls[0]?.[1] as {
       cause?: { primary_category?: string };
     };
@@ -326,7 +339,7 @@ describe('runVariantGen', () => {
 
     const runTaskFn = vi.fn(async () => ({ text: VALID_VARIANT_OUTPUT }));
     const first = await runVariantGen({ db, attemptEventId: attemptId, runTaskFn });
-    expect(first.status).toBe('generated');
+    expect(first.status).toBe('proposed');
 
     const second = await runVariantGen({ db, attemptEventId: attemptId, runTaskFn });
     expect(second.status).toBe('skipped:already_has_variant');
@@ -348,10 +361,17 @@ describe('runVariantGen', () => {
 
     const runTaskFn = vi.fn(async () => ({ text: VALID_VARIANT_OUTPUT }));
     const result = await runVariantGen({ db, attemptEventId: attemptId, runTaskFn });
-    expect(result.status).toBe('generated');
-    const variantId = result.variant_question_id ?? '';
-    const variant = (await db.select().from(question).where(eq(question.id, variantId)))[0];
-    expect(variant.root_question_id).toBe('q_root');
+    expect(result.status).toBe('proposed');
+    const proposal = (
+      await db
+        .select()
+        .from(event)
+        .where(eq(event.id, result.proposal_id ?? ''))
+    )[0];
+    const aiProposal = (
+      proposal.payload as { ai_proposal?: { proposed_change?: Record<string, unknown> } }
+    ).ai_proposal;
+    expect(aiProposal?.proposed_change?.root_question_id).toBe('q_root');
   });
 
   it('throws when LLM output is not valid JSON', async () => {

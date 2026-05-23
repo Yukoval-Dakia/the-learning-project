@@ -48,6 +48,14 @@
       "expected_by": "2026-07-31"
     }
   },
+  "question.draft_status": {
+    "reason": "YUK-44 moved variant_gen from direct question inserts to variant_question proposals; draft_status is retained for the future proposal acceptance/materialization path or column drop decision.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "variant_question acceptance materializes question.draft_status OR draft_status is dropped",
+      "expected_by": "2026-07-31"
+    }
+  },
   "learning_item.source_ref": {
     "reason": "Provenance ref; same as question.source_ref",
     "resolves_when": {

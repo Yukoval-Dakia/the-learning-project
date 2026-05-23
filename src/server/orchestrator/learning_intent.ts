@@ -22,6 +22,7 @@ import type { Db } from '@/db/client';
 import { artifact, knowledge, learning_item } from '@/db/schema';
 import { type TaskTextRunFn, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { writeEvent } from '@/server/events/queries';
+import { writeLearningItemProposal } from '@/server/proposals/producers';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 // ---------- Public types ----------
@@ -320,34 +321,29 @@ export async function planLearningIntent(
       : { id: root?.temp_id ?? 'root', name: root?.name ?? topic, domain: root?.domain ?? null };
   }
 
-  // Persist as propose event. We use action='propose', subject_kind='artifact'
-  // because the proposal's ultimate output is an artifact hierarchy
-  // (note_hub + note_atomic); 3a/3b knowledge writes happen only after accept.
-  // experimental: namespace because Lane B ProposeArtifact isn't defined yet.
-  const proposalId = newId();
-  await writeEvent(db, {
-    id: proposalId,
-    session_id: null,
-    actor_kind: 'user',
-    actor_ref: 'self',
-    action: 'experimental:propose_learning_intent',
-    subject_kind: 'artifact',
-    subject_id: newId(), // synthetic — hub artifact id assigned at accept
-    outcome: 'partial',
-    payload: {
-      topic,
-      plan_case: planCase,
-      knowledge_node_id: node?.id ?? null,
-      knowledge_node: knowledgeNode,
-      proposed_knowledge: proposedKnowledge,
-      task_run_id: result.task_run_id ?? null,
-      cost_micro_usd: costUsdToMicroUsd(result.cost_usd),
-      hub: outline.hub,
-      atomics: outline.atomics,
-    },
-    caused_by_event_id: null,
+  const legacyPayload = {
+    topic,
+    plan_case: planCase,
+    knowledge_node_id: node?.id ?? null,
+    knowledge_node: knowledgeNode,
+    proposed_knowledge: proposedKnowledge,
     task_run_id: result.task_run_id ?? null,
     cost_micro_usd: costUsdToMicroUsd(result.cost_usd),
+    hub: outline.hub,
+    atomics: outline.atomics,
+  };
+  const proposalId = await writeLearningItemProposal(db, {
+    topic,
+    plan_case: planCase,
+    knowledge_node: knowledgeNode,
+    proposed_knowledge: proposedKnowledge,
+    hub: outline.hub,
+    atomics: outline.atomics,
+    reason_md: `学习路径提议：${topic}`,
+    legacy_subject_id: newId(), // synthetic — hub artifact id assigned at accept
+    legacy_event_payload: legacyPayload,
+    task_run_id: result.task_run_id ?? null,
+    cost_usd: result.cost_usd,
     created_at: new Date(),
   });
 

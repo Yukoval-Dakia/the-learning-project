@@ -2,11 +2,13 @@
 //
 // Triggered after attribution_followup writes a judge event for a failure
 // attempt. If the active SubjectProfile marks the cause's primary_category as
-// targetable, generate one variant question and persist it with
-// source='mistake_variant', draft_status='draft', variant_depth=parent+1.
+// targetable, generate one variant_question proposal. YUK-44 moved this from
+// direct question materialization to the proposal inbox; accepting the proposal
+// can later create a question with source='mistake_variant', draft_status, and
+// variant lineage.
 //
-// MVP — single pass (no VariantVerifyTask), no UI surface beyond the
-// question row, no per-mistake variants_max counter. Counter / verify
+// MVP — single pass (no VariantVerifyTask), no dedicated variant UI beyond
+// proposal inbox review, no per-mistake variants_max counter. Counter / verify
 // double pass / "再来几道" button are spec'd Phase 3 features.
 //
 // Defense against "错题繁殖":
@@ -15,15 +17,15 @@
 //      themselves spawn variants — spec §3.4.4 chain termination)
 //   3. SubjectProfile cause category can set variant_targetable=false.
 
-import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { z } from 'zod';
 
-import { QuestionKind } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
-import { type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
+import type { TaskTextRunFn } from '@/server/ai/provenance';
+import { listProposalInboxRows } from '@/server/proposals/inbox';
+import { writeVariantQuestionProposal } from '@/server/proposals/producers';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 export interface VariantGenJobData {
@@ -76,7 +78,7 @@ export interface RunVariantGenParams {
 
 export interface RunVariantGenResult {
   status:
-    | 'generated'
+    | 'proposed'
     | 'skipped:attempt_not_found'
     | 'skipped:not_a_failure_attempt'
     | 'skipped:no_judge_yet'
@@ -85,7 +87,7 @@ export interface RunVariantGenResult {
     | 'skipped:variant_chain_terminus'
     | 'skipped:cause_not_targetable'
     | 'skipped:already_has_variant';
-  variant_question_id?: string;
+  proposal_id?: string;
 }
 
 export async function runVariantGen(params: RunVariantGenParams): Promise<RunVariantGenResult> {
@@ -176,6 +178,16 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
   if (existingVariants.length > 0) {
     return { status: 'skipped:already_has_variant' };
   }
+  const cooldownKey = `variant_question:${parent.id}:${attemptEventId}`;
+  const pendingProposals = await listProposalInboxRows(db, { status: 'pending' });
+  if (
+    pendingProposals.some(
+      (proposal) =>
+        proposal.kind === 'variant_question' && proposal.payload.cooldown_key === cooldownKey,
+    )
+  ) {
+    return { status: 'skipped:already_has_variant' };
+  }
 
   const payload = attempt.payload as { answer_md?: string | null };
   const firstKnowledgeId = parent.knowledge_ids[0];
@@ -216,36 +228,25 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
   });
   const parsed = parseVariantOutput(result.text);
 
-  // Persist new variant question
-  const variantId = createId();
-  const now = new Date();
   const rootId = parent.root_question_id ?? parent.id;
 
-  // Validate parent.kind is a known QuestionKind (Zod-coerce)
-  const kindParsed = QuestionKind.safeParse(parent.kind);
-  const kind = kindParsed.success ? kindParsed.data : 'short_answer';
-
-  await db.insert(question).values({
-    id: variantId,
-    kind,
+  const proposalId = await writeVariantQuestionProposal(db, {
+    source_question_id: parent.id,
+    source_attempt_event_id: attemptEventId,
     prompt_md: parsed.prompt_md,
     reference_md: parsed.reference_md,
-    knowledge_ids: parent.knowledge_ids,
     difficulty: parsed.difficulty,
-    source: 'mistake_variant',
-    source_ref: attemptEventId,
-    draft_status: 'draft',
-    variant_depth: parent.variant_depth + 1,
-    root_question_id: rootId,
+    knowledge_ids: parent.knowledge_ids,
     parent_variant_id: parent.id,
-    created_by: aiAgentRef('VariantGenTask', result) as never,
-    metadata: { reasoning: parsed.reasoning, source_attempt: attemptEventId } as never,
-    created_at: now,
-    updated_at: now,
-    version: 0,
+    root_question_id: rootId,
+    variant_depth: parent.variant_depth + 1,
+    reason_md: parsed.reasoning,
+    task_run_id: result.task_run_id ?? null,
+    cost_usd: result.cost_usd,
+    created_at: new Date(),
   });
 
-  return { status: 'generated', variant_question_id: variantId };
+  return { status: 'proposed', proposal_id: proposalId };
 }
 
 export function buildVariantGenHandler(

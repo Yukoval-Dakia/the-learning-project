@@ -191,8 +191,13 @@ describe('runNoteVerify', () => {
     });
 
     const rows = await testDb().select().from(event).where(eq(event.subject_id, 'a1'));
-    expect(rows).toHaveLength(1);
-    expect(rows[0].outcome).toBe('partial');
+    expect(rows).toHaveLength(2);
+    const verifyEvent = rows.find((row) => row.action === 'experimental:note_verify');
+    expect(verifyEvent?.outcome).toBe('partial');
+    const proposalEvent = rows.find((row) => row.action === 'experimental:proposal');
+    expect((proposalEvent?.payload as { ai_proposal?: { kind?: string } }).ai_proposal?.kind).toBe(
+      'note_update',
+    );
   });
 
   it('passes subject profile from knowledge.domain to NoteVerifyTask', async () => {

@@ -11,6 +11,7 @@ import { writeEvent } from '@/server/events/queries';
 import { ApiError } from '@/server/http/errors';
 import { acceptProposal, dismissProposal } from '@/server/knowledge/proposals';
 import { type ProposalInboxRow, getProposalInboxRow } from './inbox';
+import { recordProposalDecisionSignal } from './signals';
 
 export type EdgeProposalDecision = 'accept' | 'reverse' | 'change_type' | 'dismiss';
 
@@ -109,6 +110,7 @@ export async function decideKnowledgeEdgeProposal(
       400,
     );
   }
+  const proposal = await getProposalInboxRow(db, proposeEventId);
   const proposePayload = proposeRow.payload as {
     from_knowledge_id: string;
     to_knowledge_id: string;
@@ -179,6 +181,9 @@ export async function decideKnowledgeEdgeProposal(
       caused_by_event_id: proposeEventId,
       created_at: now,
     });
+    if (proposal) {
+      await recordProposalDecisionSignal(db, proposal, 'dismiss', user_note);
+    }
     return {
       kind: 'knowledge_edge',
       rate_event_id: rateEventId,
@@ -281,6 +286,10 @@ export async function decideKnowledgeEdgeProposal(
     throw err;
   }
 
+  if (proposal) {
+    await recordProposalDecisionSignal(db, proposal, 'accept', user_note);
+  }
+
   return {
     kind: 'knowledge_edge',
     rate_event_id: rateEventId,
@@ -307,6 +316,7 @@ export async function acceptAiProposal(
         );
       }
       const result = await acceptProposal(db, proposalId);
+      await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
       return { kind: 'knowledge_node', result };
     }
     case 'knowledge_edge':
@@ -380,6 +390,7 @@ export async function dismissAiProposal(
   switch (proposal.kind) {
     case 'knowledge_node':
       await dismissProposal(db, proposalId);
+      await recordProposalDecisionSignal(db, proposal, 'dismiss', opts.user_note);
       return { kind: 'dismissed', rate_event_id: null };
     case 'knowledge_edge':
       return await decideKnowledgeEdgeProposal(db, proposalId, {
@@ -388,6 +399,9 @@ export async function dismissAiProposal(
       });
     default: {
       const result = await writeGenericRateEvent(db, proposalId, 'dismiss', opts.user_note);
+      if (!result.idempotent) {
+        await recordProposalDecisionSignal(db, proposal, 'dismiss', opts.user_note);
+      }
       return { kind: 'dismissed', ...result };
     }
   }

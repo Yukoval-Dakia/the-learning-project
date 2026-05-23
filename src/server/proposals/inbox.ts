@@ -2,6 +2,10 @@ import { type AiProposalPayloadT, parseAiProposalPayload } from '@/core/schema/p
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { getCorrectionStatuses } from '@/server/events/corrections';
+import {
+  type ProposalSignalSnapshot,
+  loadProposalSignalsForRows,
+} from '@/server/proposals/signals';
 import { and, desc, eq, inArray, isNotNull, like, or } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
@@ -22,6 +26,7 @@ export interface ProposalInboxRow {
   cost_micro_usd: number | null;
   source_action: string;
   source_subject_kind: string;
+  signals: ProposalSignalSnapshot | null;
 }
 
 export interface ListProposalInboxOpts {
@@ -177,6 +182,23 @@ function deriveLegacyAiProposal(row: EventRow): AiProposalPayloadT | null {
   return null;
 }
 
+function sortProposalRowsBySignals(rows: ProposalInboxRow[]): void {
+  const now = new Date();
+  rows.sort((a, b) => {
+    const aCooldown = Number(Boolean(a.signals?.cooldown_until && a.signals.cooldown_until > now));
+    const bCooldown = Number(Boolean(b.signals?.cooldown_until && b.signals.cooldown_until > now));
+    if (aCooldown !== bCooldown) return aCooldown - bCooldown;
+
+    const aRate = a.signals?.acceptance_rate ?? 0.5;
+    const bRate = b.signals?.acceptance_rate ?? 0.5;
+    if (aRate !== bRate) return bRate - aRate;
+
+    const proposedAtDelta = b.proposed_at.getTime() - a.proposed_at.getTime();
+    if (proposedAtDelta !== 0) return proposedAtDelta;
+    return b.id.localeCompare(a.id);
+  });
+}
+
 export async function listProposalInboxRows(
   db: DbLike,
   opts: ListProposalInboxOpts = {},
@@ -212,10 +234,16 @@ export async function listProposalInboxRows(
       cost_micro_usd: row.cost_micro_usd,
       source_action: row.action,
       source_subject_kind: row.subject_kind,
+      signals: null,
     });
-    if (opts.limit !== undefined && out.length >= opts.limit) break;
   }
-  return out;
+
+  const signalsByProposalId = await loadProposalSignalsForRows(db, out);
+  for (const row of out) {
+    row.signals = signalsByProposalId.get(row.id) ?? null;
+  }
+  sortProposalRowsBySignals(out);
+  return opts.limit !== undefined ? out.slice(0, opts.limit) : out;
 }
 
 export async function getProposalInboxRow(

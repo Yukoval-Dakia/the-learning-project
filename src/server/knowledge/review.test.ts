@@ -189,6 +189,8 @@ describe('runWriteProposal — pure dispatch', () => {
     const proposeEvents = await db.select().from(event).where(eq(event.actor_ref, 'dreaming'));
     expect(proposeEvents).toHaveLength(1);
     expect(proposeEvents[0].action).toBe('experimental:knowledge_archive');
+    const payload = proposeEvents[0].payload as { ai_proposal?: { kind?: string } };
+    expect(payload.ai_proposal?.kind).toBe('archive');
   });
 
   it('payload-embedded propose_knowledge_edge writes ProposeKnowledgeEdge event', async () => {
@@ -234,11 +236,13 @@ describe('runWriteProposal — pure dispatch', () => {
       to_knowledge_id: string;
       relation_type: string;
       reasoning: string;
+      ai_proposal?: { kind?: string };
     };
     expect(payload.from_knowledge_id).toBe('k_from');
     expect(payload.to_knowledge_id).toBe('k_to');
     expect(payload.relation_type).toBe('prerequisite');
     expect(payload.reasoning).toContain('先决');
+    expect(payload.ai_proposal?.kind).toBe('knowledge_edge');
 
     // Roundtrip through Lane B parseEvent — guards schema compatibility.
     const parsed = parseEvent({
@@ -288,6 +292,9 @@ describe('runWriteProposal — pure dispatch', () => {
       .from(event)
       .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge_edge')));
     expect(edgeEvents).toHaveLength(1);
+    expect((edgeEvents[0].payload as { ai_proposal?: { kind?: string } }).ai_proposal?.kind).toBe(
+      'knowledge_edge',
+    );
   });
 
   it('payload without recognised edge fields falls through to tree path', async () => {
@@ -302,6 +309,8 @@ describe('runWriteProposal — pure dispatch', () => {
     const proposeEvents = await db.select().from(event).where(eq(event.actor_ref, 'dreaming'));
     expect(proposeEvents).toHaveLength(1);
     expect(proposeEvents[0].action).toBe('experimental:knowledge_archive');
+    const payload = proposeEvents[0].payload as { ai_proposal?: { kind?: string } };
+    expect(payload.ai_proposal?.kind).toBe('archive');
   });
 });
 
