@@ -1,5 +1,9 @@
 'use client';
 
+import {
+  CorrectionStateRenderer,
+  type CorrectionStateSnapshot,
+} from '@/ui/correction/CorrectionStateRenderer';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
 import { formatRelTime } from '@/ui/lib/utils';
 import { Badge } from '@/ui/primitives/Badge';
@@ -22,6 +26,7 @@ interface MistakeRow {
     user_notes: string | null;
     confidence?: number | null;
   } | null;
+  correction_state: CorrectionStateSnapshot;
   created_at: number; // unix seconds
 }
 
@@ -103,7 +108,10 @@ function MistakeCard({ row }: { row: MistakeRow }) {
     <Card pad="lg" style={{ marginBottom: 'var(--s-3)' }}>
       <div style={cardHeadStyle}>
         <span style={metaStyle}>{formatRelTime(createdAt)}</span>
-        <CauseBadge cause={cause} pendingSinceSec={pendingSince} />
+        <span style={stateClusterStyle}>
+          <CorrectionStateRenderer state={row.correction_state} compact />
+          <CauseBadge cause={cause} pendingSinceSec={pendingSince} />
+        </span>
       </div>
       <p style={promptStyle}>{row.prompt_md}</p>
       {row.wrong_answer_md && (
@@ -168,6 +176,15 @@ const cardHeadStyle: React.CSSProperties = {
   alignItems: 'center',
   justifyContent: 'space-between',
   gap: 'var(--s-2)',
+};
+
+const stateClusterStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  flexWrap: 'wrap',
+  justifyContent: 'flex-end',
+  gap: 6,
+  minWidth: 0,
 };
 
 const metaStyle: React.CSSProperties = {

@@ -21,6 +21,11 @@ import { type EventT, parseEvent } from '@/core/schema/event';
 import type { CauseCategoryT, CauseSchemaT, FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
+import {
+  type EffectiveTruth,
+  activeEffectiveTruth,
+  getEffectiveTruths,
+} from '@/server/review/effective-truth';
 import { and, desc, eq, gte, inArray, ne, sql } from 'drizzle-orm';
 import {
   type CorrectionStatus,
@@ -46,6 +51,7 @@ export type FailureAttemptJudge = {
   cause: CauseSchemaT;
   referenced_knowledge_ids: string[];
   created_at: Date;
+  correction_state: EffectiveTruth;
 };
 
 // User-supplied cause via experimental:user_cause event (Phase 1c.2). Lives
@@ -56,6 +62,7 @@ export type FailureAttemptUserCause = {
   primary_category: CauseCategoryT;
   user_notes: string | null;
   created_at: Date;
+  correction_state: EffectiveTruth;
 };
 
 export type FailureAttempt = {
@@ -65,6 +72,7 @@ export type FailureAttempt = {
   answer_image_refs: string[];
   referenced_knowledge_ids: string[];
   created_at: Date;
+  correction_state: EffectiveTruth;
   judge?: FailureAttemptJudge;
   user_cause?: FailureAttemptUserCause;
 };
@@ -76,6 +84,50 @@ export interface GetFailureAttemptsOpts {
 }
 
 const DEFAULT_FAILURE_ATTEMPTS_LIMIT = 100;
+
+async function rowsById(db: DbLike, ids: string[]): Promise<Map<string, EventRow>> {
+  const uniqueIds = [...new Set(ids)];
+  if (uniqueIds.length === 0) return new Map();
+  const rows = await db.select().from(event).where(inArray(event.id, uniqueIds));
+  return new Map(rows.map((row) => [row.id, row]));
+}
+
+async function resolveEffectiveActiveRows(
+  db: DbLike,
+  rows: EventRow[],
+): Promise<Map<string, { row: EventRow; truth: EffectiveTruth }>> {
+  const truthByOriginal = await getEffectiveTruths(
+    db,
+    rows.map((row) => row.id),
+  );
+  const rowById = new Map(rows.map((row) => [row.id, row]));
+  const missingEffectiveIds = [...truthByOriginal.values()]
+    .map((truth) => truth.effective_event_id)
+    .filter((id): id is string => typeof id === 'string' && !rowById.has(id));
+  for (const [id, row] of await rowsById(db, missingEffectiveIds)) {
+    rowById.set(id, row);
+  }
+
+  const out = new Map<string, { row: EventRow; truth: EffectiveTruth }>();
+  for (const original of rows) {
+    const truth = truthByOriginal.get(original.id) ?? activeEffectiveTruth(original.id);
+    if (truth.terminal_state !== 'active' || !truth.effective_event_id) continue;
+    const effectiveRow = rowById.get(truth.effective_event_id);
+    if (!effectiveRow) continue;
+    if (effectiveRow.action !== original.action) continue;
+    if (effectiveRow.subject_kind !== original.subject_kind) continue;
+    if (effectiveRow.subject_id !== original.subject_id) continue;
+    out.set(original.id, { row: effectiveRow, truth });
+  }
+  return out;
+}
+
+function newerEventRow(a: EventRow, b: EventRow): boolean {
+  return (
+    a.created_at > b.created_at ||
+    (a.created_at.getTime() === b.created_at.getTime() && a.id > b.id)
+  );
+}
 
 /**
  * Returns failure attempts (with chained judges populated when present), ordered
@@ -141,25 +193,20 @@ export async function getFailureAttempts(
         inArray(event.action, ['judge', 'experimental:user_cause']),
       ),
     );
-  const chainedStatuses = await getCorrectionStatuses(
-    db,
-    chainedRows.map((r) => r.id),
-  );
+  const effectiveChainedRows = await resolveEffectiveActiveRows(db, chainedRows);
+  const attemptTruths = await getEffectiveTruths(db, attemptIds);
 
   // Group by (action, caused_by_event_id); keep newest within each group.
-  const judgeByAttempt = new Map<string, (typeof chainedRows)[number]>();
-  const userCauseByAttempt = new Map<string, (typeof chainedRows)[number]>();
-  for (const row of chainedRows) {
-    if (!hasActiveCorrectionStatus(chainedStatuses.get(row.id))) continue;
-    const key = row.caused_by_event_id as string;
-    const bucket = row.action === 'judge' ? judgeByAttempt : userCauseByAttempt;
+  const judgeByAttempt = new Map<string, { row: EventRow; truth: EffectiveTruth }>();
+  const userCauseByAttempt = new Map<string, { row: EventRow; truth: EffectiveTruth }>();
+  for (const originalRow of chainedRows) {
+    const effective = effectiveChainedRows.get(originalRow.id);
+    if (!effective) continue;
+    const key = originalRow.caused_by_event_id as string;
+    const bucket = effective.row.action === 'judge' ? judgeByAttempt : userCauseByAttempt;
     const existing = bucket.get(key);
-    if (
-      !existing ||
-      row.created_at > existing.created_at ||
-      (row.created_at.getTime() === existing.created_at.getTime() && row.id > existing.id)
-    ) {
-      bucket.set(key, row);
+    if (!existing || newerEventRow(effective.row, existing.row)) {
+      bucket.set(key, effective);
     }
   }
 
@@ -176,31 +223,34 @@ export async function getFailureAttempts(
       answer_image_refs: payload.answer_image_refs ?? [],
       referenced_knowledge_ids: payload.referenced_knowledge_ids ?? [],
       created_at: a.created_at,
+      correction_state: attemptTruths.get(a.id) ?? activeEffectiveTruth(a.id),
     };
     const j = judgeByAttempt.get(a.id);
     if (j) {
-      const jPayload = j.payload as {
+      const jPayload = j.row.payload as {
         cause: CauseSchemaT;
         referenced_knowledge_ids: string[];
       };
       result.judge = {
-        judge_event_id: j.id,
+        judge_event_id: j.row.id,
         cause: jPayload.cause,
         referenced_knowledge_ids: jPayload.referenced_knowledge_ids ?? [],
-        created_at: j.created_at,
+        created_at: j.row.created_at,
+        correction_state: j.truth,
       };
     }
     const uc = userCauseByAttempt.get(a.id);
     if (uc) {
-      const ucPayload = uc.payload as {
+      const ucPayload = uc.row.payload as {
         primary_category: CauseCategoryT;
         user_notes?: string | null;
       };
       result.user_cause = {
-        user_cause_event_id: uc.id,
+        user_cause_event_id: uc.row.id,
         primary_category: ucPayload.primary_category,
         user_notes: ucPayload.user_notes ?? null,
-        created_at: uc.created_at,
+        created_at: uc.row.created_at,
+        correction_state: uc.truth,
       };
     }
     return result;
@@ -226,21 +276,26 @@ export async function getJudgeForAttempt(
       ),
     )
     .orderBy(desc(event.created_at), desc(event.id));
-  const statuses = await getCorrectionStatuses(
-    db,
-    rows.map((r) => r.id),
-  );
-  const j = rows.find((row) => hasActiveCorrectionStatus(statuses.get(row.id)));
+  const effectiveRows = await resolveEffectiveActiveRows(db, rows);
+  const j = rows
+    .map((row) => effectiveRows.get(row.id))
+    .filter((row): row is { row: EventRow; truth: EffectiveTruth } => row !== undefined)
+    .sort((a, b) => {
+      if (newerEventRow(a.row, b.row)) return -1;
+      if (newerEventRow(b.row, a.row)) return 1;
+      return 0;
+    })[0];
   if (!j) return null;
-  const jPayload = j.payload as {
+  const jPayload = j.row.payload as {
     cause: CauseSchemaT;
     referenced_knowledge_ids: string[];
   };
   return {
-    judge_event_id: j.id,
+    judge_event_id: j.row.id,
     cause: jPayload.cause,
     referenced_knowledge_ids: jPayload.referenced_knowledge_ids ?? [],
-    created_at: j.created_at,
+    created_at: j.row.created_at,
+    correction_state: j.truth,
   };
 }
 
@@ -264,21 +319,26 @@ export async function getUserCauseForAttempt(
       ),
     )
     .orderBy(desc(event.created_at), desc(event.id));
-  const statuses = await getCorrectionStatuses(
-    db,
-    rows.map((r) => r.id),
-  );
-  const uc = rows.find((row) => hasActiveCorrectionStatus(statuses.get(row.id)));
+  const effectiveRows = await resolveEffectiveActiveRows(db, rows);
+  const uc = rows
+    .map((row) => effectiveRows.get(row.id))
+    .filter((row): row is { row: EventRow; truth: EffectiveTruth } => row !== undefined)
+    .sort((a, b) => {
+      if (newerEventRow(a.row, b.row)) return -1;
+      if (newerEventRow(b.row, a.row)) return 1;
+      return 0;
+    })[0];
   if (!uc) return null;
-  const ucPayload = uc.payload as {
+  const ucPayload = uc.row.payload as {
     primary_category: CauseCategoryT;
     user_notes?: string | null;
   };
   return {
-    user_cause_event_id: uc.id,
+    user_cause_event_id: uc.row.id,
     primary_category: ucPayload.primary_category,
     user_notes: ucPayload.user_notes ?? null,
-    created_at: uc.created_at,
+    created_at: uc.row.created_at,
+    correction_state: uc.truth,
   };
 }
 
