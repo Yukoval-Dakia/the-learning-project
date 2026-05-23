@@ -10,11 +10,9 @@ import { eq } from 'drizzle-orm';
  * app/api/_/seed/physics/route.ts — that would break acid test 1 since
  * `app/api` is a framework path.
  *
- * P0 judges single_choice fixtures only (physics-dim-001 / physics-dim-002 —
- * exact route via choices_md). Calculation fixtures land in the table but
- * P0 does NOT judge them — `calculation` kind with profile.preferredRoutes=
- * ['exact', 'semantic'] would call semantic LLM route. unit_dimension lands
- * in P1; calculation judging is P1+.
+ * P1 judges single_choice fixtures via exact and routes calculation fixtures
+ * to unit_dimension@1. The P1 capability is a skeleton, so calculation answers
+ * return unsupported until P2 implements deterministic + fallback judging.
  */
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -144,11 +142,25 @@ describe('physics fixture e2e smoke', () => {
     expect(result.coarse_outcome).toBe('correct');
   });
 
-  // Calculation fixtures (physics-unit-*, physics-formula-*, physics-dim-003)
-  // land in DB but P0 does NOT judge them — judge route would be 'semantic'
-  // (LLM) or 'unit_dimension' (P1+). Verify only that they're insertable.
-  it('calculation fixtures are inserted (judging deferred to P1)', async () => {
+  it('calculation fixtures are inserted', async () => {
     const rows = await db.select().from(question).where(eq(question.kind, 'calculation'));
     expect(rows.length).toBeGreaterThanOrEqual(7);
+  });
+
+  it('answering physics-unit-001 → unit_dimension route → unsupported skeleton', async () => {
+    const [row] = await db
+      .select()
+      .from(question)
+      .where(eq(question.id, 'q-smoke-physics-unit-001'));
+    expect(row).toBeDefined();
+    const { route, result } = await judgeAnswer({
+      db,
+      question: toJudgeRow(row),
+      answer_md: '30 km/h',
+      subjectProfile: physicsProfile,
+    });
+    expect(route).toBe('unit_dimension');
+    expect(result.coarse_outcome).toBe('unsupported');
+    expect(result.capability_ref.id).toBe('unit_dimension');
   });
 });

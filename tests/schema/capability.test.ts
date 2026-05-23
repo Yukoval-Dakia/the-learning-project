@@ -3,6 +3,7 @@ import {
   CapabilityRef,
   CapabilityRunRef,
   JudgeResultV2,
+  ScoreMeaning,
 } from '@/core/schema/capability';
 import { describe, expect, it } from 'vitest';
 
@@ -163,5 +164,11 @@ describe('JudgeResultV2', () => {
         feedback_md: '',
       }).success,
     ).toBe(false);
+  });
+});
+
+describe('ScoreMeaning', () => {
+  it('accepts unit_dimension_v1 for physics unit/dimension judging', () => {
+    expect(ScoreMeaning.safeParse('unit_dimension_v1').success).toBe(true);
   });
 });
