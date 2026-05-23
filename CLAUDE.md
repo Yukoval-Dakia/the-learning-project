@@ -24,18 +24,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 不适用：纯文档 / 纯后端 / 纯 schema / 纯测试 / 已经在批准过的 plan 实现步骤里。Pre-flight 完成后仍需按既有的 design-system tokens / primitives 规则落地，二者叠加生效。
 
-## Stack note (README is stale)
+## Stack note
 
-The README still describes the original Phase-1 stack (Vite + React Router + Cloudflare Workers + Hono + D1). That migration is done — see commit `4c324b8 chore(sub-0b1): delete workers/, drop hono/wrangler/@cloudflare/workers-types`. Current stack:
+README was refreshed during Project Ops closeout and is now the project entrance for current stack + local/NAS setup. Keep it aligned with this note when the runtime stack changes. Current stack:
 
 - **Next.js 15 App Router** (`app/`), self-hosted on NAS via Docker (sub-0z) — `next dev` for dev, Next standalone build runs in container for prod
 - **Postgres + Drizzle ORM** (`postgresql` dialect, `postgres` driver) — connection from `DATABASE_URL`
 - **R2 / S3-compatible blob** via `@aws-sdk/client-s3` (`src/server/r2.ts`)
 - **Claude Agent SDK** (`@anthropic-ai/claude-agent-sdk`) via xiaomi/mimo Anthropic-compatible endpoint; runtime is self-hosted Node, not Vercel Functions
 - **React 19, Tailwind v4 (CSS-first), Zustand, TanStack Query, Zod, ts-fsrs**
+- **pg-boss** worker (`scripts/worker.ts`) for durable background jobs
 - **Biome** for lint + format, **Vitest** for tests, **pnpm** package manager
 
-The `workers/` directory still exists on disk but is no longer part of the build; the Hono AI proxy was inlined into Next route handlers. Treat `app/api/**` as the only backend surface.
+Historical docs and audits may still mention the old Vite/Workers/Hono/D1 stack. Treat those as historical unless a current doc or code path says otherwise. Treat `app/api/**` as the backend surface.
 
 ## Commands
 

@@ -68,11 +68,10 @@ The command maps every `git ls-files --cached --others --exclude-standard
 - `migration_action`
 - `notes`
 
-As of HEAD `ced8f75`, the repo has 153 tracked Markdown files before this
-migration control file, and the generated manifest also includes untracked
-Markdown created during the current migration session. The generated
-manifest is the complete path-level mapping; this file defines the policy and
-the Linear destinations.
+As of the 2026-05-23 Project Ops closeout, `README.md` has been refreshed to
+the current Next/Postgres/pg-boss stack and the generated manifest is the
+complete path-level mapping. This file defines the policy and the Linear
+destinations; rerun the command before every Linear document refresh.
 
 ## Current Migration Decisions
 
@@ -82,8 +81,8 @@ the Linear destinations.
 | `docs/planning/v0.3-generalized-ai-learning-framework.md` | `current` after 2026-05-23 refresh | `Roadmap Execution Map` | Summary with source link. |
 | `docs/agents/*.md` | `current` | `Doc Catalog — Repo ↔ Linear Manifest` | Mirror operational docs or link from catalog. |
 | `PLANNING.md` | `historical-reference` | `Historical References Index` | Link only; not active roadmap. |
-| `RESUME.md` | `scratch-do-not-migrate` | Linear issues | Extract only still-valid leftovers. |
-| `README.md` | `needs-refresh` | Catalog only | Refresh before any Linear current doc. |
+| `RESUME.md` | `scratch-do-not-migrate` | Linear issues | Reviewed 2026-05-23; still-valid leftovers mapped to `YUK-13`, `YUK-14`, `YUK-15`, `YUK-17`, `YUK-47`, `YUK-48`, `YUK-49`, `YUK-50`, and `YUK-51`; scratch/local notes are not mirrored. |
+| `README.md` | `current` | Catalog only | Current project entrance after 2026-05-23 refresh; do not duplicate full README in Linear unless a future mirror is explicitly needed. |
 | `docs/adr/*.md` | `historical-reference` | `Historical References Index` | Link only. |
 | `docs/audit/*.md` | `historical-reference` | `Historical References Index` | Link only. |
 | `docs/superpowers/{plans,specs,brainstorms,audits}/*.md` | `historical-reference` or `current-reference` | `Historical References Index` | Link only. |
