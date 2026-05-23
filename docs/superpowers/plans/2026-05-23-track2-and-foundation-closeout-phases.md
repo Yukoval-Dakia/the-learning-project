@@ -69,13 +69,14 @@
 
 **问题**：[src/subjects/wenyan/profile.ts](../../../src/subjects/wenyan/profile.ts) / [math/profile.ts](../../../src/subjects/math/profile.ts) / [physics/profile.ts](../../../src/subjects/physics/profile.ts) 各自定义 `SlimSubjectProfile`，[src/subjects/profile.ts](../../../src/subjects/profile.ts) 的 `SubjectRegistry` 不在启动期验证 `judgeCapabilities` 是否都已注册、`causeCategories` id 是否唯一、`renderConfig` 字段是否齐。下一个 subject（english / programming）只能靠人肉对照。Foundation B v0.3 §1.5 明确写过的 "build-time profile validator" 至今未做。
 
-**Scope**（合并 YUK-7 build-time 路径 + 本 outline runtime startup 路径）：
+**注意**：[`SubjectProfileSchema`](../../../src/subjects/profile.ts) (line 41-77) + [`validateProfile()`](../../../src/core/capability/validate-profile.ts) (line 96-) **已存在**。本 lane **不新建** schema/validator，只补 missing 接入。
 
-- Zod `SubjectProfile` schema（`src/subjects/profile.schema.ts`）—— 两条路径共用此 schema
-- YUK-7：`scripts/audit-profile.ts` build-time 脚本，跑同一 schema 校验
-- YUK-8：`audit:profile` 接入 `pnpm test` pre-PR gate
-- 本 outline 增量：`validateProfile()` 在 `SubjectRegistry` 启动时遍历每个 profile，失败抛错而不是默默继续（runtime safeguard，build-time 漏的也能在 boot 时挡）
-- CI test：profile 改坏（漏字段 / 不存在的 capability id / 重复 cause id）时 typecheck + audit + runtime test 都失败
+**Scope**（YUK-7 + YUK-8 + 接入 startup validator）：
+
+- YUK-7：`scripts/audit-profile.ts` build-time 脚本，调用现有 `validateProfile()` 遍历所有注册 profile（仿 `scripts/audit-schema-writes.ts` 风格）
+- YUK-8：`audit:profile` script 接入 `pnpm test` pre-PR gate
+- 本 outline 增量：在 [`SubjectRegistry.register()`](../../../src/subjects/profile.ts) (profile.ts:112) 或 `getDefaultSubjectRegistry()` (profile.ts:168) 调 `validateProfile()`，失败抛错；当前 register 只检查 id 非空/重复，**完全不调** validateProfile
+- CI test：profile 改坏（漏字段 / 不存在的 capability id / 重复 cause id）时 audit + runtime startup 都失败
 
 **Exit criteria**：
 
@@ -116,15 +117,16 @@
 
 **Scope**：
 
-- `/admin/runs` route（`app/(admin)/admin/runs/page.tsx`）—— task run 列表 + 单 run 时间线
-- `/admin/cost` route —— 每日 cost 折线 + 按 task kind 分组
-- `/admin/failures` route —— 失败 reason 聚类（按 `finish_reason` + 截断的 error message 头部 N 字符）
+- `/admin/runs` + `/admin/cost` + `/admin/failures` page routes（`app/(admin)/admin/*/page.tsx`）
+- **Auth**：新增 `app/(admin)/layout.tsx` 包 `<TokenGate>`（复用 `app/(app)/layout.tsx` 已用的 client gate 组件），或写独立 `<AdminTokenGate>`。**[middleware.ts](../../../middleware.ts) 现行 matcher 是 `/api/:path*`，不 cover page route**，因此 page 层必须自己接 gate；middleware matcher 不变
+- 数据通过 `app/api/_/admin/*` 内部 API 路由读，API 自动受 middleware INTERNAL_TOKEN 守
 - Read model only，不动 SoT
-- 受 `INTERNAL_TOKEN` 守，符合 `middleware.ts` 现行约束
 
 **Exit criteria**：
 
 - [ ] 三个 admin 路由 typecheck + render 通过
+- [ ] admin pages 在 token 缺失时被 TokenGate 拦截（不能直接看到内容）
+- [ ] middleware.ts matcher 不变（继续只 cover `/api/*`），admin page 的 token 守在 layout 层
 - [ ] 单 run 时间线含 pg-boss job id + tool_call_log 时间轴
 - [ ] cost 折线按日/按 task kind 都能看
 - [ ] 失败聚类对 ≥3 个真实 failure 样本能正确分组
@@ -242,7 +244,9 @@ L6 ─┘                   弱依赖 L3 (correction event for retract)
 
 总 issue 计数：epic + 7 新 sub + 2 复用 sub = **10**。
 
-**Linear capture gate**：本 outline 落地后，开 epic + 6+3 = ~10 个 sub-issue，挂当前 commit。
+**Linear capture gate**：本 outline 落地后，开 epic + 7 新 sub + 2 复用 sub = 10 个 issue，挂当前 commit。
+
+> **注**（2026-05-23 codex review）：项目惯例（[docs/agents/issue-tracker.md](../../agents/issue-tracker.md) §"Layer mapping"）建议 phase 用 Linear Project + Milestone 而非 Issue/epic tree。本 epic 暂保留 issue tree 形态（YUK-7/8 已挂 Foundation B Project，重 model 成本较高）；下次 phase 启动时按 Project + Milestone 建模。
 
 ## ADR 触发条件
 
