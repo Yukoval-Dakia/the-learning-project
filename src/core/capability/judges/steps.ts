@@ -5,8 +5,8 @@ import type { JudgeCapabilityRunner, JudgeRunInput } from '../types';
 
 // ----------------------------------------------------------------------------
 // Schemas — input from judge runner, LLM output, reference solution shape.
-// M2.1 defines these so M2.2 (vision LLM impl) can parse / validate without
-// re-designing the contract. The shapes follow spec
+// Runtime execution lives in src/server/ai/judges/steps-judge.ts and is reached
+// through src/server/judge/invoker.ts. The shapes follow spec
 // docs/superpowers/specs/2026-05-21-math-mvp-vision-design.md §7.
 // ----------------------------------------------------------------------------
 
@@ -25,8 +25,8 @@ export { RubricReferenceSolution as StepsReferenceSolution } from '@/core/schema
 export type { RubricReferenceSolutionT as StepsReferenceSolutionT } from '@/core/schema/business';
 
 /**
- * Judge runner input — what `stepsV1Capability.run()` receives. M2.1 stub
- * does not consume student_* fields beyond shape validation.
+ * Judge runner input — what the server-side steps runner validates before it
+ * composes a weighted JudgeResultV2.
  */
 export const StepsJudgeInput = z.object({
   prompt_md: z.string().min(1),
@@ -42,8 +42,7 @@ export type StepsJudgeInputT = z.infer<typeof StepsJudgeInput>;
 
 /**
  * LLM structured output schema — what the vision LLM returns, parsed and
- * validated before composing JudgeResultV2 in M2.2. M2.1 defines the shape
- * so M2.2 wires `runTaskFn('StepsJudgeTask', ...)` against it.
+ * validated before composing JudgeResultV2.
  */
 export const StepsLlmOutput = z.object({
   extracted_steps: z.array(
@@ -71,7 +70,7 @@ export const StepsLlmOutput = z.object({
 export type StepsLlmOutputT = z.infer<typeof StepsLlmOutput>;
 
 // ----------------------------------------------------------------------------
-// Manifest + runner stub.
+// Manifest + core registry fallback.
 // ----------------------------------------------------------------------------
 
 const VERSION = '1.0.0';
@@ -86,21 +85,16 @@ const manifest: CapabilityManifestT = {
   cost_class: 'expensive_llm',
   // Vision LLM call is sync from the runner's POV (awaited inside runner).
   latency_class: 'sync',
-  // Until M2.2 ships the real LLM call + sanity check.
   stability: 'experimental',
 };
 
 const CAPABILITY_REF = { id: manifest.id, version: VERSION };
 
 /**
- * M2.1 stub — capability registered, route resolvable, but actual execution
- * still gated behind RUNNABLE_ROUTES in question-contract.ts. judgeAnswer
- * never reaches this run() in M2.1 because RUNNABLE_ROUTES = {exact, keyword,
- * semantic} excludes 'steps'. The stub exists so:
- *   1. CapabilityRegistry can register stepsV1Capability
- *   2. SubjectProfile.judgeCapabilities can reference 'steps' and pass validateProfile
- *   3. M2.2 replaces this body with the vision LLM call without touching the
- *      registry / profile / route layer.
+ * Core registry fallback. steps@1 needs DB access and image loading, so runtime
+ * judging must go through JudgeInvoker -> runStepsJudge. Keeping this fallback
+ * unsupported prevents callers from accidentally bypassing the server runtime
+ * boundary while still allowing profile validation to resolve the capability.
  */
 function run(input: JudgeRunInput): JudgeResultV2T {
   return {
@@ -110,10 +104,9 @@ function run(input: JudgeRunInput): JudgeResultV2T {
     confidence: 0,
     capability_ref: CAPABILITY_REF,
     feedback_md:
-      'steps@1 judge skeleton: vision LLM impl ships in M2.2. See docs/superpowers/plans/2026-05-22-math-mvp-m2-1-steps-skeleton.md.',
+      'steps@1 requires server JudgeInvoker runtime context. Use src/server/judge/invoker.ts.',
     evidence_json: {
-      phase: 'M2.1-skeleton',
-      reason: 'capability registered but run() not yet implemented',
+      reason: 'server_runtime_required',
       question: input.question,
     },
   };

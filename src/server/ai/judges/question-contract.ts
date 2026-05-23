@@ -5,7 +5,7 @@ import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import type { SubjectProfile } from '@/subjects/profile';
-import { type JudgeKind, judgeRouterV2 } from '.';
+import type { JudgeKind } from '.';
 
 export const RUNNABLE_ROUTES = new Set<JudgeKind>([
   'exact',
@@ -78,7 +78,7 @@ export interface JudgeAnswerResult {
   result: JudgeResultV2T;
 }
 
-function unsupportedResult(
+export function unsupportedResult(
   route: JudgeKind,
   feedback: string,
   evidence: Record<string, unknown>,
@@ -158,7 +158,10 @@ export function resolveQuestionJudgeRoute(
   return 'exact';
 }
 
-function buildLocalJudgeQuestion(q: JudgeQuestionRow, route: JudgeKind): Record<string, unknown> {
+export function buildLocalJudgeQuestion(
+  q: JudgeQuestionRow,
+  route: JudgeKind,
+): Record<string, unknown> {
   const rubric = parseRubric(q.rubric_json);
   if (route === 'keyword') {
     return { keywords: nonEmpty(rubric?.keywords) };
@@ -169,7 +172,7 @@ function buildLocalJudgeQuestion(q: JudgeQuestionRow, route: JudgeKind): Record<
   return { reference: q.reference_md ?? '' };
 }
 
-function semanticInput(
+export function semanticInput(
   q: JudgeQuestionRow,
   subjectProfile: SubjectProfile,
 ): Record<string, unknown> {
@@ -194,7 +197,7 @@ function semanticInput(
       language_style: subjectProfile.languageStyle,
     },
     // M-1 (2026-05-21): multimodal carriers — passed through for future
-    // vision-aware semantic / steps judges. Current SemanticJudgeTask
+    // vision-aware semantic / steps routes. Current SemanticJudgeTask
     // builder does not consume them; behaviour unchanged.
     figures: q.figures ?? [],
     image_refs: q.image_refs ?? [],
@@ -246,7 +249,7 @@ function normalizeSemanticResult(output: SemanticJudgeOutputT): JudgeResultV2T {
   };
 }
 
-async function defaultRunTaskFn(
+export async function defaultRunTaskFn(
   kind: string,
   input: unknown,
   ctx: unknown,
@@ -256,7 +259,7 @@ async function defaultRunTaskFn(
   return { text: result.text };
 }
 
-async function runSemanticJudge(params: JudgeAnswerParams): Promise<JudgeResultV2T> {
+export async function runSemanticJudge(params: JudgeAnswerParams): Promise<JudgeResultV2T> {
   const runTaskFn = params.runTaskFn ?? defaultRunTaskFn;
   try {
     const result = await runTaskFn(
@@ -286,58 +289,7 @@ async function runSemanticJudge(params: JudgeAnswerParams): Promise<JudgeResultV
 }
 
 export async function judgeAnswer(params: JudgeAnswerParams): Promise<JudgeAnswerResult> {
-  const route = resolveQuestionJudgeRoute(params.question, params.subjectProfile);
-  if (!RUNNABLE_ROUTES.has(route)) {
-    return {
-      route,
-      result: unsupportedResult(route, `judge route '${route}' is not implemented`, {
-        route,
-        allowed_future_routes: FUTURE_JUDGE_ROUTES,
-      }),
-    };
-  }
-
-  if (route === 'semantic') {
-    return { route, result: await runSemanticJudge(params) };
-  }
-  if (route === 'steps') {
-    const { runStepsJudge } = await import('./steps-judge');
-    return {
-      route,
-      result: await runStepsJudge({
-        db: params.db,
-        question: params.question,
-        answer_md: params.answer_md,
-        student_image_refs: params.student_image_refs,
-        subjectProfile: params.subjectProfile,
-        runTaskFn: params.runTaskFn,
-      }),
-    };
-  }
-  if (route === 'unit_dimension') {
-    const { runUnitDimensionJudge } = await import('@/core/capability/judges/unit_dimension');
-    return {
-      route,
-      result: await runUnitDimensionJudge(
-        {
-          question: buildLocalJudgeQuestion(params.question, route),
-          answer: { content: params.answer_md },
-        },
-        {
-          runTaskFn: params.runTaskFn ?? defaultRunTaskFn,
-          runTaskCtx: {
-            db: params.db,
-            subjectProfile: params.subjectProfile,
-          },
-        },
-      ),
-    };
-  }
-
-  const result = await judgeRouterV2({
-    kind: route,
-    question: buildLocalJudgeQuestion(params.question, route),
-    answer: { content: params.answer_md },
-  });
-  return { route, result };
+  const { createDefaultJudgeInvoker } = await import('@/server/judge/invoker');
+  const invoked = await createDefaultJudgeInvoker().invoke(params);
+  return { route: invoked.route, result: invoked.result };
 }

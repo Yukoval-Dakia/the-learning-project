@@ -10,9 +10,9 @@ export function createDefaultRegistry(): CapabilityRegistry {
   registry.registerJudge(exactJudgeCapability);
   registry.registerJudge(keywordJudgeCapability);
   registry.registerJudge(semanticJudgeCapability);
-  // M2.1 (2026-05-22): steps@1 skeleton — run() returns 'unsupported' until
-  // M2.2 wires the vision LLM call. Registration is required so
-  // mathProfile.judgeCapabilities = [..., 'steps'] passes validateProfile.
+  // steps@1 is registered for profile validation and route resolution. Server
+  // execution goes through JudgeInvoker, which supplies DB/runtime context to
+  // runStepsJudge instead of calling the core registry runner directly.
   registry.registerJudge(stepsV1Capability);
   registry.registerJudge(unitDimensionV1Capability);
   return registry;
