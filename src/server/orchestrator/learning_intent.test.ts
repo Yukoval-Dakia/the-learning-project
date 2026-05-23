@@ -1,6 +1,6 @@
 // Phase 2B — Learning Intent Orchestrator tests.
 
-import { artifact, knowledge, learning_item } from '@/db/schema';
+import { artifact, event, knowledge, learning_item } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -126,6 +126,14 @@ describe('planLearningIntent', () => {
     expect(proposal.atomics).toHaveLength(2);
     expect(proposal.atomics[0].knowledge_id).toBe('k_zhi');
     expect(proposal.proposal_id).toMatch(/.+/);
+
+    const proposalEvent = (
+      await testDb().select().from(event).where(eq(event.id, proposal.proposal_id))
+    )[0];
+    expect(proposalEvent.action).toBe('experimental:propose_learning_intent');
+    expect((proposalEvent.payload as { ai_proposal?: { kind?: string } }).ai_proposal?.kind).toBe(
+      'learning_item',
+    );
   });
 
   it('passes the topic subject profile to LearningIntentOutlineTask', async () => {

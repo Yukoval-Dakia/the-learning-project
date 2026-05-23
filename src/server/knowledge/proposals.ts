@@ -18,6 +18,7 @@ import type { Db, Tx } from '@/db/client';
 import { event, knowledge } from '@/db/schema';
 import { costUsdToMicroUsd } from '@/server/ai/provenance';
 import { writeEvent } from '@/server/events/queries';
+import { writeArchiveProposal } from '@/server/proposals/producers';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 
@@ -121,7 +122,36 @@ export async function writeKnowledgeProposeEvent(
     return id;
   }
 
-  // Other mutations (reparent / merge / split / archive) → experimental:knowledge_<mutation>.
+  if (entry.payload.mutation === 'archive') {
+    const { mutation: _omit, ...rest } = entry.payload;
+    void _omit;
+    await writeArchiveProposal(db, {
+      id,
+      actor_ref: 'dreaming',
+      target_subject_kind: 'knowledge',
+      target_subject_id: entry.payload.node_id,
+      proposed_change: {
+        node_id: entry.payload.node_id,
+        expected_version: entry.payload.expected_version,
+      },
+      reason_md: reasoning,
+      legacy_event_override: {
+        action: 'experimental:knowledge_archive',
+        subject_kind: 'knowledge',
+        subject_id: entry.payload.node_id,
+        payload: {
+          ...rest,
+          reasoning,
+        },
+      },
+      task_run_id: entry.task_run_id ?? null,
+      cost_usd: entry.cost_usd,
+      created_at: now,
+    });
+    return id;
+  }
+
+  // Other mutations (reparent / merge / split) → experimental:knowledge_<mutation>.
   // The ExperimentalEvent escape hatch accepts any payload record.
   const action = `experimental:knowledge_${entry.payload.mutation}` as const;
   const { mutation: _omit, ...rest } = entry.payload;

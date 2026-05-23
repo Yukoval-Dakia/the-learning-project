@@ -1,4 +1,4 @@
-import { event, knowledge, knowledge_edge } from '@/db/schema';
+import { event, knowledge, knowledge_edge, proposal_signals } from '@/db/schema';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -54,6 +54,7 @@ describe('proposal lifecycle owner service', () => {
           name: '通假字',
           parent_id: 'parent_1',
         },
+        cooldown_key: 'knowledge_node:parent_1:通假字',
       },
     });
 
@@ -70,6 +71,16 @@ describe('proposal lifecycle owner service', () => {
       .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'node_p1')));
     expect(rateRows).toHaveLength(1);
     expect((rateRows[0].payload as { rating?: string }).rating).toBe('accept');
+
+    const signals = await db.select().from(proposal_signals);
+    expect(signals).toHaveLength(1);
+    expect(signals[0]).toMatchObject({
+      kind: 'knowledge_node',
+      cooldown_key: 'knowledge_node:parent_1:通假字',
+      accept_count: 1,
+      dismiss_count: 0,
+      acceptance_rate: 1,
+    });
   });
 
   it('acceptAiProposal materializes a knowledge_edge proposal through the edge owner service', async () => {
@@ -151,6 +162,7 @@ describe('proposal lifecycle owner service', () => {
         reason_md: 'Create a focused review item',
         evidence_refs: [],
         proposed_change: { title: '虚词复习' },
+        cooldown_key: 'learning_item:虚词复习',
       },
     });
 
@@ -164,6 +176,18 @@ describe('proposal lifecycle owner service', () => {
     expect(rateRows).toHaveLength(1);
     expect(rateRows[0].subject_kind).toBe('event');
     expect(rateRows[0].payload).toMatchObject({ rating: 'dismiss', user_note: 'not now' });
+
+    const signals = await db.select().from(proposal_signals);
+    expect(signals).toHaveLength(1);
+    expect(signals[0]).toMatchObject({
+      kind: 'learning_item',
+      cooldown_key: 'learning_item:虚词复习',
+      accept_count: 0,
+      dismiss_count: 1,
+      acceptance_rate: 0,
+      dismiss_reason: 'not now',
+    });
+    expect(signals[0].cooldown_until).toBeInstanceOf(Date);
   });
 
   it('retractAiProposal writes a CorrectEvent chained to the proposal event', async () => {
