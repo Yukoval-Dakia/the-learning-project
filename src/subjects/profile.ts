@@ -5,10 +5,11 @@ import {
 } from '@/core/schema/profile-decl';
 import { z } from 'zod';
 import { mathProfile } from './math/profile';
+import { physicsProfile } from './physics/profile';
 import { wenyanProfile } from './wenyan/profile';
 
 export type SubjectId = string;
-export const KNOWN_SUBJECT_IDS = ['wenyan', 'math'] as const;
+export const KNOWN_SUBJECT_IDS = ['wenyan', 'math', 'physics'] as const;
 export type KnownSubjectId = (typeof KNOWN_SUBJECT_IDS)[number];
 
 export const SubjectQuestionKindSchema = z.enum([
@@ -84,6 +85,8 @@ const DEFAULT_ALIASES: Record<string, SubjectId> = {
   mathematics: 'math',
   maths: 'math',
   wenyan: 'wenyan',
+  physics: 'physics',
+  physical: 'physics',
 };
 
 function normalizeSubjectKey(value: string): string {
@@ -99,6 +102,7 @@ export class SubjectRegistry {
     this.defaultId = defaultId;
     this.register(wenyanProfile);
     this.register(mathProfile);
+    this.register(physicsProfile);
     for (const [alias, id] of Object.entries(DEFAULT_ALIASES)) {
       this.aliases.set(normalizeSubjectKey(alias), normalizeSubjectKey(id));
     }

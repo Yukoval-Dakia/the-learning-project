@@ -23,8 +23,8 @@
 
 ## §2 Framework LOC Baseline
 
-**Baseline SHA**: `4b8ae51aead2ce6113bf0b9586cd01700b7e0c47` (P-1 working baseline; merge 后更新为 main HEAD)
-**Date frozen**: 2026-05-22
+**Baseline SHA**: `9191c160a20d8e5afabf11503c6851f510bd2182` (P-1 squash-merge SHA on `main`, locked at P0 startup 2026-05-23. Pre-merge working baseline `4b8ae51` superseded.)
+**Date frozen**: 2026-05-22 (baseline content) / 2026-05-23 (SHA locked after merge)
 
 后续 P0 / P1 / P2 / P3 acid test 与本表对比；`framework diff = 0` 判定基于以下文件 LOC 不变（除下方"允许差异"表明确允许的几行变化）。
 
