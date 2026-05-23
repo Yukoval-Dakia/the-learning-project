@@ -96,3 +96,13 @@ describe('Vision tasks (unchanged in Step 7)', () => {
     expect(tasks.VisionExtractTaskHeavy.invocation).toBe('manual_rescue_only');
   });
 });
+
+describe('UnitDimensionFallback registry entry', () => {
+  it('is registered so runTask can execute the unit_dimension fallback path', () => {
+    expect(tasks.UnitDimensionFallback.kind).toBe('UnitDimensionFallback');
+    expect(tasks.UnitDimensionFallback.needsToolCall).toBe(false);
+    expect(tasks.UnitDimensionFallback.isMultimodal).toBe(false);
+    expect(tasks.UnitDimensionFallback.allowedTools).toEqual([]);
+    expect(tasks.UnitDimensionFallback.systemPrompt).toContain('量纲');
+  });
+});

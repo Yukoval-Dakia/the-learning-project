@@ -227,6 +227,24 @@ export const tasks = {
     systemPrompt:
       '你是答案判分器。输入 { question, answer }，按 rubric_json.required_points 语义判分。严格输出 SemanticJudgeTask JSON。',
   },
+  UnitDimensionFallback: {
+    kind: 'UnitDimensionFallback',
+    description:
+      'Judge v2 physics fallback — parse natural-language units/dimensions when mathjs accelerator cannot parse',
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
+    needsToolCall: false,
+    isMultimodal: false,
+    allowedTools: [],
+    // DEPRECATED (2026-05-22 M1): do not edit. Runtime renders via
+    // getTaskSystemPrompt(task, profile) in src/ai/task-prompts.ts; this
+    // string is kept only as type-required fallback. New tasks MUST add a
+    // builder in task-prompts.ts.
+    systemPrompt:
+      '你是物理单位与量纲分析助手。输入学生答案、参考 SI 数值和单位，严格输出 UnitDimensionFallback JSON。',
+  },
   StepsJudgeTask: {
     kind: 'StepsJudgeTask',
     description:
