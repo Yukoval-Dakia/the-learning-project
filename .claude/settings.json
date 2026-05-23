@@ -16,6 +16,10 @@
           {
             "type": "command",
             "command": "node .claude/hooks/git-guard.mjs"
+          },
+          {
+            "type": "command",
+            "command": "node .claude/hooks/linear-guard.mjs"
           }
         ]
       }
@@ -27,6 +31,25 @@
           {
             "type": "command",
             "command": "f=$(jq -r '.tool_input.file_path // empty'); [ -z \"$f\" ] && exit 0; case \"$f\" in *.json) jq . \"$f\" >/dev/null 2>&1 || echo 'JSON invalid: '\"$f\" >&2 ;; *.ts|*.tsx|*.js|*.jsx|*.mjs) pnpm exec biome check --no-errors-on-unmatched \"$f\" 2>&1 | head -40 ;; esac"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cmd=$(jq -r '.tool_input.command // empty'); case \"$cmd\" in *'git fetch'*|*'git pull'*) br=$(git branch --show-current 2>/dev/null); up=$(git rev-parse --abbrev-ref @{upstream} 2>/dev/null); if [ -n \"$up\" ]; then ah=$(git rev-list --count $up..HEAD 2>/dev/null); be=$(git rev-list --count HEAD..$up 2>/dev/null); if [ \"${ah:-0}\" -gt 0 ] || [ \"${be:-0}\" -gt 0 ]; then echo \"branch-delta: $br vs $up — ahead $ah / behind $be\" >&2; if [ \"${be:-0}\" -gt 0 ]; then authors=$(git log --format='%an' HEAD..$up 2>/dev/null | sort -u | tr '\\n' ',' | sed 's/,$//'); echo \"  upstream authors: $authors\" >&2; fi; fi; fi ;; esac"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/linear-closeout-reminder.sh"
           }
         ]
       }
