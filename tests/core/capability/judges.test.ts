@@ -21,8 +21,8 @@ describe('exactJudgeCapability', () => {
     expect(manifest.stability).toBe('stable');
   });
 
-  it('returns correct for exact match', () => {
-    const result = exactJudgeCapability.run({
+  it('returns correct for exact match', async () => {
+    const result = await exactJudgeCapability.run({
       question: { reference: '虚词' },
       answer: { content: '虚词' },
     });
@@ -34,8 +34,8 @@ describe('exactJudgeCapability', () => {
     expect(JudgeResultV2.safeParse(result).success).toBe(true);
   });
 
-  it('returns incorrect for non-match', () => {
-    const result = exactJudgeCapability.run({
+  it('returns incorrect for non-match', async () => {
+    const result = await exactJudgeCapability.run({
       question: { reference: '虚词' },
       answer: { content: '实词' },
     });
@@ -43,8 +43,8 @@ describe('exactJudgeCapability', () => {
     expect(result.score).toBe(0);
   });
 
-  it('is case-insensitive', () => {
-    const result = exactJudgeCapability.run({
+  it('is case-insensitive', async () => {
+    const result = await exactJudgeCapability.run({
       question: { reference: 'ABC' },
       answer: { content: 'abc' },
     });
@@ -52,16 +52,16 @@ describe('exactJudgeCapability', () => {
     expect(result.score).toBe(1);
   });
 
-  it('trims whitespace', () => {
-    const result = exactJudgeCapability.run({
+  it('trims whitespace', async () => {
+    const result = await exactJudgeCapability.run({
       question: { reference: '虚词' },
       answer: { content: '  虚词  ' },
     });
     expect(result.coarse_outcome).toBe('correct');
   });
 
-  it('returns unsupported instead of throwing on invalid input', () => {
-    const result = exactJudgeCapability.run({
+  it('returns unsupported instead of throwing on invalid input', async () => {
+    const result = await exactJudgeCapability.run({
       question: {},
       answer: { content: 'abc' },
     });
@@ -72,8 +72,8 @@ describe('exactJudgeCapability', () => {
     expect(JudgeResultV2.safeParse(result).success).toBe(true);
   });
 
-  it('normalizes full-width characters before exact comparison', () => {
-    const result = exactJudgeCapability.run({
+  it('normalizes full-width characters before exact comparison', async () => {
+    const result = await exactJudgeCapability.run({
       question: { reference: 'ＡＢＣ' },
       answer: { content: 'abc' },
     });
@@ -84,8 +84,8 @@ describe('exactJudgeCapability', () => {
 });
 
 describe('judgeRouter compatibility bridge', () => {
-  it('judgeRouter returns v1 shape for exact match', () => {
-    const result: JudgeResult = judgeRouter({
+  it('judgeRouter returns v1 shape for exact match', async () => {
+    const result: JudgeResult = await judgeRouter({
       kind: 'exact',
       question: { reference: '虚词' },
       answer: { content: '虚词' },
@@ -96,8 +96,8 @@ describe('judgeRouter compatibility bridge', () => {
     expect(result.evidence_json).toBeDefined();
   });
 
-  it('judgeRouter returns v1 shape for keyword', () => {
-    const result = judgeRouter({
+  it('judgeRouter returns v1 shape for keyword', async () => {
+    const result = await judgeRouter({
       kind: 'keyword',
       question: { keywords: ['abc'] },
       answer: { content: 'abc def' },
@@ -105,8 +105,8 @@ describe('judgeRouter compatibility bridge', () => {
     expect(result.verdict).toBe('correct');
   });
 
-  it('judgeRouterV2 returns v2 shape for exact match', () => {
-    const result = judgeRouterV2({
+  it('judgeRouterV2 returns v2 shape for exact match', async () => {
+    const result = await judgeRouterV2({
       kind: 'exact',
       question: { reference: '虚词' },
       answer: { content: '虚词' },
@@ -117,8 +117,8 @@ describe('judgeRouter compatibility bridge', () => {
     expect(result.confidence).toBe(1);
   });
 
-  it('judgeRouterV2 returns v2 shape for keyword', () => {
-    const result = judgeRouterV2({
+  it('judgeRouterV2 returns v2 shape for keyword', async () => {
+    const result = await judgeRouterV2({
       kind: 'keyword',
       question: { keywords: ['abc'] },
       answer: { content: 'abc def' },
@@ -127,8 +127,8 @@ describe('judgeRouter compatibility bridge', () => {
     expect(result.capability_ref.id).toBe('keyword');
   });
 
-  it('downgrades unsupported v2 results to v1 incorrect without throwing', () => {
-    const result = judgeRouter({
+  it('downgrades unsupported v2 results to v1 incorrect without throwing', async () => {
+    const result = await judgeRouter({
       kind: 'exact',
       question: {},
       answer: { content: 'abc' },
@@ -139,14 +139,14 @@ describe('judgeRouter compatibility bridge', () => {
     expect(result.feedback_md).toMatch(/reference/);
   });
 
-  it('unimplemented judge kinds still throw', () => {
-    expect(() =>
+  it('unimplemented judge kinds still throw', async () => {
+    await expect(
       judgeRouter({
         kind: 'rubric',
         question: {},
         answer: { content: '' },
       }),
-    ).toThrow(/not implemented|not found/i);
+    ).rejects.toThrow(/not implemented|not found/i);
   });
 });
 
@@ -159,8 +159,8 @@ describe('keywordJudgeCapability', () => {
     expect(manifest.stability).toBe('stable');
   });
 
-  it('returns correct when all keywords hit', () => {
-    const result = keywordJudgeCapability.run({
+  it('returns correct when all keywords hit', async () => {
+    const result = await keywordJudgeCapability.run({
       question: { keywords: ['虚词', '代词'] },
       answer: { content: '虚词是一种代词' },
     });
@@ -171,8 +171,8 @@ describe('keywordJudgeCapability', () => {
     expect(JudgeResultV2.safeParse(result).success).toBe(true);
   });
 
-  it('returns partial for some keyword hits', () => {
-    const result = keywordJudgeCapability.run({
+  it('returns partial for some keyword hits', async () => {
+    const result = await keywordJudgeCapability.run({
       question: { keywords: ['虚词', '代词', '连词'] },
       answer: { content: '虚词和代词分析' },
     });
@@ -180,8 +180,8 @@ describe('keywordJudgeCapability', () => {
     expect(result.score).toBeCloseTo(2 / 3);
   });
 
-  it('returns incorrect for zero hits', () => {
-    const result = keywordJudgeCapability.run({
+  it('returns incorrect for zero hits', async () => {
+    const result = await keywordJudgeCapability.run({
       question: { keywords: ['虚词'] },
       answer: { content: '完全无关' },
     });
@@ -189,8 +189,8 @@ describe('keywordJudgeCapability', () => {
     expect(result.score).toBe(0);
   });
 
-  it('keeps low keyword hit ratios incorrect', () => {
-    const result = keywordJudgeCapability.run({
+  it('keeps low keyword hit ratios incorrect', async () => {
+    const result = await keywordJudgeCapability.run({
       question: { keywords: ['a', 'b', 'c', 'd', 'e'] },
       answer: { content: 'a only' },
     });
@@ -200,17 +200,17 @@ describe('keywordJudgeCapability', () => {
     expect(result.evidence_json.total).toBe(5);
   });
 
-  it('returns correct at 85% threshold', () => {
-    const result = keywordJudgeCapability.run({
+  it('returns correct at 85% threshold', async () => {
+    const result = await keywordJudgeCapability.run({
       question: { keywords: ['a', 'b', 'c', 'd', 'e', 'f', 'g'] },
       answer: { content: 'a b c d e f missing_last' },
     });
     expect(result.coarse_outcome).toBe('correct');
   });
 
-  it('returns unsupported when keywords are missing or empty', () => {
+  it('returns unsupported when keywords are missing or empty', async () => {
     for (const question of [{}, { keywords: [] }]) {
-      const result = keywordJudgeCapability.run({
+      const result = await keywordJudgeCapability.run({
         question,
         answer: { content: 'abc' },
       });
@@ -222,8 +222,8 @@ describe('keywordJudgeCapability', () => {
     }
   });
 
-  it('normalizes full-width keyword characters', () => {
-    const result = keywordJudgeCapability.run({
+  it('normalizes full-width keyword characters', async () => {
+    const result = await keywordJudgeCapability.run({
       question: { keywords: ['ＡＢＣ'] },
       answer: { content: 'abc def' },
     });

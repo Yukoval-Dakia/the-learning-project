@@ -18,7 +18,7 @@ export interface JudgeRouterInput {
   answer: AnswerInput;
 }
 
-export function judgeRouterV2(input: JudgeRouterInput): JudgeResultV2T {
+export async function judgeRouterV2(input: JudgeRouterInput): Promise<JudgeResultV2T> {
   const registry = getDefaultRegistry();
   const runner = registry.resolveJudge(input.kind);
   if (!runner) {
@@ -26,7 +26,7 @@ export function judgeRouterV2(input: JudgeRouterInput): JudgeResultV2T {
       `Judge kind '${input.kind}' not found in capability registry (not implemented)`,
     );
   }
-  return runner.run({ question: input.question, answer: input.answer });
+  return await runner.run({ question: input.question, answer: input.answer });
 }
 
 function downgradeToV1(result: JudgeResultV2T): JudgeResult {
@@ -45,8 +45,8 @@ function downgradeToV1(result: JudgeResultV2T): JudgeResult {
   };
 }
 
-export function judgeRouter(input: JudgeRouterInput): JudgeResult {
-  return downgradeToV1(judgeRouterV2(input));
+export async function judgeRouter(input: JudgeRouterInput): Promise<JudgeResult> {
+  return downgradeToV1(await judgeRouterV2(input));
 }
 
 export { judgeExact } from './exact';

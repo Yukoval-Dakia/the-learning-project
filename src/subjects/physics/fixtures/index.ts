@@ -8,6 +8,7 @@ import fixtureData from './data.json' with { type: 'json' };
 // See docs/superpowers/specs/2026-05-22-foundation-true-closeout-design.md §3 P-1 #3.
 
 export const ExpectedSignal = z.enum([
+  'correct',
   'numeric_close',
   'numeric_off',
   'unit_mismatch_same_dimension',

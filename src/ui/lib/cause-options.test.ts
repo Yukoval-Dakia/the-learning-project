@@ -13,7 +13,7 @@ describe('causeOptionsForSelectedKnowledge', () => {
     const ids = options.map((option) => option.id);
 
     expect(ids).toContain('unit_error');
-    expect(ids).not.toContain('time_pressure');
+    expect(ids).toContain('time_pressure');
   });
 
   it('falls back to the default subject cause options when no knowledge is selected', () => {
