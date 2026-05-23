@@ -303,14 +303,14 @@ describe('POST /api/mistakes', () => {
 
     const res = await postMistake(
       validBody({
-        cause: { primary_category: 'time_pressure', user_notes: null },
+        cause: { primary_category: 'grammar', user_notes: null },
       }),
     );
 
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string; message: string };
     expect(body.error).toBe('validation_error');
-    expect(body.message).toContain('time_pressure');
+    expect(body.message).toContain('grammar');
     expect(body.message).toContain('math');
   });
 
