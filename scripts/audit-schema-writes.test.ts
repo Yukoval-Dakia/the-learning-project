@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { extractMergedPrRefsFromGitLog, validateAllowlistHygiene } from './audit-schema-writes';
+import {
+  extractMergedPrRefsFromGitLog,
+  todayIso,
+  validateAllowlistHygiene,
+} from './audit-schema-writes';
 
 const OPTIONS = {
   today: '2026-05-23',
@@ -64,6 +68,10 @@ describe('audit-schema allowlist hygiene', () => {
     ]);
   });
 
+  it('formats today using the local calendar date instead of UTC', () => {
+    expect(todayIso(new Date(2026, 4, 23, 0, 30))).toBe('2026-05-23');
+  });
+
   it('extracts merged PR refs from squash-merge and merge-commit subjects', () => {
     const refs = extractMergedPrRefsFromGitLog(
       [
@@ -102,6 +110,29 @@ describe('audit-schema allowlist hygiene', () => {
     ]);
   });
 
+  it('rejects pr entries whose ref is not an anchored PR reference', () => {
+    const result = validateAllowlistHygiene(
+      {
+        'artifact.title': {
+          reason: 'Same as artifact.id',
+          resolves_when: {
+            kind: 'pr',
+            ref: 'Phase 1c.1 follow-up',
+            expected_by: '2026-07-31',
+          },
+        },
+      },
+      OPTIONS,
+    );
+
+    expect(result.issues).toEqual([
+      expect.objectContaining({
+        key: 'artifact.title',
+        code: 'invalid_ref',
+      }),
+    ]);
+  });
+
   it('rejects phase entries whose ref appears in a shipped status line', () => {
     const result = validateAllowlistHygiene(
       {
@@ -127,6 +158,28 @@ describe('audit-schema allowlist hygiene', () => {
         code: 'shipped_phase',
       }),
     ]);
+  });
+
+  it('does not treat an in-progress status row as shipped because a child file is checked off', () => {
+    const result = validateAllowlistHygiene(
+      {
+        'artifact.generated_by': {
+          reason: 'Same as artifact.id',
+          resolves_when: {
+            kind: 'phase',
+            ref: 'CapabilityRegistry',
+            expected_by: '2026-07-31',
+          },
+        },
+      },
+      {
+        ...OPTIONS,
+        statusText:
+          '🟡  CapabilityRegistry + 默认 registry          ✅ src/core/capability/registry.ts',
+      },
+    );
+
+    expect(result.issues).toEqual([]);
   });
 
   it('accepts manual entries that preserve the current legacy text as ref', () => {

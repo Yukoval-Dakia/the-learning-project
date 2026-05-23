@@ -75,12 +75,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+function pad2(value: number): string {
+  return String(value).padStart(2, '0');
+}
+
+export function todayIso(now = new Date()): string {
+  return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
 }
 
 function normalizePrRef(ref: string): string | null {
-  const match = ref.match(/(?:#|pull\/|PR\s*)?(\d+)/i);
+  const trimmed = ref.trim();
+  const match =
+    trimmed.match(/^#?(\d+)$/) ??
+    trimmed.match(/^PR\s+#?(\d+)$/i) ??
+    trimmed.match(/^pull\/(\d+)$/i) ??
+    trimmed.match(/^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/(\d+)(?:[/?#].*)?$/i);
   return match?.[1] ?? null;
 }
 
@@ -92,7 +101,8 @@ function normalizePhaseText(value: string): string {
 }
 
 function isShippedStatusLine(line: string): boolean {
-  return line.includes('✅') || /已\s*ship|shipped|done/i.test(line);
+  const trimmed = line.trim();
+  return trimmed.startsWith('✅') || /已\s*ship|shipped|done/i.test(trimmed);
 }
 
 function isPhaseShipped(ref: string, statusText: string): boolean {
