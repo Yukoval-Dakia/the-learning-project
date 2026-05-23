@@ -6,7 +6,7 @@
   - 编辑 JSON 前 (`.codex/hooks/codex-apply-patch-json-guard.mjs`) + 后 (`codex-post-edit-check.mjs`) 保持可解析
   - 编辑 TS/JS 后对 touched files 跑 Biome
   - Bash 中禁止危险 git 操作 (`.claude/hooks/git-guard.mjs`)：force push、force delete branch、main/master 上 commit、force remove worktree
-  - Linear-tracked branch (yuk-*/foundation-*/p\<N\>-*) 上 commit 必须含 `YUK-NN` (`.claude/hooks/linear-guard.mjs`)
+  - Linear-tracked branch (yuk-*/foundation-*/p\<N\>-*) 上 commit 必须含 `YUK-NN`，多个 issue 必须逐个重复 Linear keyword（例如 `Closes YUK-27` + `Closes YUK-28`，不要写 `Closes YUK-27 + YUK-28`）(`.claude/hooks/linear-guard.mjs`)
   - `git fetch` / `git pull` 后 echo upstream divergence + 上游 author (`.claude/hooks/post-fetch-divergence.sh`)
 - ⚠️ Codex 当前不支持 Stop event hook —— Claude 侧的 `linear-closeout-reminder.sh` (Stop hook) 在 codex 会话里**不会自动跑**。codex 会话交付前请手动按 `docs/agents/issue-tracker.md` "Closeout issue capture gate" 检查 Linear 状态同步。
 - 如果 hooks 尚未被当前 Codex 会话加载或 trust，仍需手动遵守上述约束，并在交付前对 touched files 运行等价检查。

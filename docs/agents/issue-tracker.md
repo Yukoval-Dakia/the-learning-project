@@ -159,6 +159,15 @@ Integration scans **commit messages**, not PR descriptions alone, for link trigg
 
 **Use `YUK-XX` in commit messages, PR titles, and PR descriptions for all new work — never bare `#N`.** Linear recognises `Closes YUK-XX` / `Fixes YUK-XX` / `Resolves YUK-XX` / `Part of YUK-XX`. Legacy `#N` is reserved for historical GitHub-issue references during archaeology.
 
+When one commit or PR references multiple Linear issues, repeat the keyword for every issue. Do:
+
+```text
+Closes YUK-27
+Closes YUK-28
+```
+
+Do **not** write `Closes YUK-27 + YUK-28` / `Fixes YUK-27, YUK-28` / `Part of YUK-27 and YUK-28`. Observed failure (2026-05-23): Linear linked the first issue and missed the later bare `YUK-XX` references. `.claude/hooks/linear-guard.mjs` blocks this shorthand on Linear-tracked branches.
+
 ### Manual overrides — when you still need to call `save_issue`
 
 The integration does not know when **you start** a task. These transitions stay manual:
