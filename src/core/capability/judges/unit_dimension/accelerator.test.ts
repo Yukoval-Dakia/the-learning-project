@@ -14,6 +14,16 @@ describe('unit_dimension accelerator', () => {
     expect(r.signal).toBe(null);
   });
 
+  it('exact match remains correct with zero tolerance', () => {
+    const r = runAccelerator({
+      student_answer: '30 m/s',
+      reference: { value: 30, unit: 'm/s', tolerance: 0 },
+    });
+    expect(r.value_match).toBe(true);
+    expect(r.value_close).toBe(false);
+    expect(r.signal).toBe(null);
+  });
+
   it('value_match within tolerance (3% off -> correct)', () => {
     const r = runAccelerator({ student_answer: '29.1 m/s', reference });
     expect(r.value_match).toBe(true);

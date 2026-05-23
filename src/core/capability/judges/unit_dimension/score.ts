@@ -30,9 +30,15 @@ export function composeScore(input: {
       return mkCorrect(1.0, 0.95, '单位 + 数值全对', evidence);
     }
     if (accelerator.value_close) {
-      return mkPartial(0.7, 'numeric_close', 0.9, '单位对，数值偏差 5-50%', evidence);
+      return mkPartial(
+        0.7,
+        'numeric_close',
+        0.9,
+        `单位对，${formatCloseBand(reference)}`,
+        evidence,
+      );
     }
-    return mkPartial(0.3, 'numeric_off', 0.85, '单位对，数值偏差 >50%', evidence);
+    return mkPartial(0.3, 'numeric_off', 0.85, `单位对，${formatOffBand(reference)}`, evidence);
   }
 
   if (accelerator.signal === 'missing_unit') {
@@ -59,7 +65,7 @@ export function composeScore(input: {
   if (fallback.student_value_si !== null && fallback.student_unit_si !== null && reference) {
     const diff = Math.abs(fallback.student_value_si - reference.value);
     const error = reference.value === 0 ? diff : diff / Math.abs(reference.value);
-    const valueMatch = error < reference.tolerance;
+    const valueMatch = error <= reference.tolerance;
     const valueClose = !valueMatch && error < reference.tolerance * 10;
     const unitExactMatch = fallback.student_unit_si === reference.unit;
 
@@ -83,7 +89,7 @@ export function composeScore(input: {
         0.7,
         'numeric_close',
         fallback.parser_confidence,
-        'LLM fallback 解析后数值偏差 5-50%',
+        `LLM fallback 解析后${formatCloseBand(reference)}`,
         { ...evidence, fallback },
       );
     }
@@ -91,12 +97,37 @@ export function composeScore(input: {
       0.3,
       'numeric_off',
       fallback.parser_confidence,
-      'LLM fallback 解析后数值偏差 >50%',
+      `LLM fallback 解析后${formatOffBand(reference)}`,
       { ...evidence, fallback },
     );
   }
 
   return unsupported('accelerator + LLM fallback 均不能解析', { ...evidence, fallback });
+}
+
+function formatCloseBand(reference?: { value: number; tolerance: number }): string {
+  if (!reference) return '数值偏差超过容差但仍接近';
+  const lower = formatErrorThreshold(reference.tolerance, reference.value);
+  const upper = formatErrorThreshold(reference.tolerance * 10, reference.value);
+  const mode = reference.value === 0 ? '绝对偏差' : '相对偏差';
+  return `${mode}在 ${lower}-${upper}`;
+}
+
+function formatOffBand(reference?: { value: number; tolerance: number }): string {
+  if (!reference) return '数值偏差超过接近阈值';
+  const upper = formatErrorThreshold(reference.tolerance * 10, reference.value);
+  const mode = reference.value === 0 ? '绝对偏差' : '相对偏差';
+  return `${mode} ≥ ${upper}`;
+}
+
+function formatErrorThreshold(value: number, referenceValue: number): string {
+  if (referenceValue === 0) return formatNumber(value);
+  return `${formatNumber(value * 100)}%`;
+}
+
+function formatNumber(value: number): string {
+  if (Number.isInteger(value)) return String(value);
+  return String(Number(value.toPrecision(6)));
 }
 
 function mkCorrect(

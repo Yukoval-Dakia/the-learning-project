@@ -51,6 +51,27 @@ describe('unit_dimension LLM fallback', () => {
     expect(r.dimension_mismatch_reason).toContain('length');
   });
 
+  it('parses a fenced JSON object from the fallback model', async () => {
+    const mockTask = async () => ({
+      text: `Here is the result:
+\`\`\`json
+{
+  "student_value_si": 30,
+  "student_unit_si": "m/s",
+  "equivalent_to_reference": true,
+  "parser_confidence": 0.95
+}
+\`\`\``,
+    });
+    const r = await runLlmFallback({
+      student_answer: '三十米每秒',
+      reference: { value: 30, unit: 'm/s' },
+      runTaskFn: mockTask,
+    });
+    expect(r.equivalent_to_reference).toBe(true);
+    expect(r.student_value_si).toBe(30);
+  });
+
   it('returns null fields when LLM cannot parse', async () => {
     const mockTask = async () => ({
       text: JSON.stringify({

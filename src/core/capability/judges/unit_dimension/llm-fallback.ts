@@ -40,8 +40,17 @@ export async function runLlmFallback(params: LlmFallbackParams): Promise<LlmFall
     );
 
   const result = await runTask('UnitDimensionFallback', { text: prompt }, params.runTaskCtx ?? {});
-  const parsed = LlmFallbackOutput.parse(JSON.parse(result.text));
+  const parsed = LlmFallbackOutput.parse(JSON.parse(extractJsonObject(result.text)));
   return parsed;
+}
+
+function extractJsonObject(text: string): string {
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start === -1 || end === -1 || end < start) {
+    throw new Error('unit_dimension fallback output did not contain a JSON object');
+  }
+  return text.slice(start, end + 1);
 }
 
 async function defaultRunTaskFn(

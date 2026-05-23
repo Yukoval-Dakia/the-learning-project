@@ -48,7 +48,7 @@ export function runAccelerator(input: {
     const residual = Math.abs(studentValueInReferenceUnit - input.reference.value);
     const error =
       input.reference.value === 0 ? residual : residual / Math.abs(input.reference.value);
-    const valueMatch = error < input.reference.tolerance;
+    const valueMatch = error <= input.reference.tolerance;
     const valueClose = !valueMatch && error < input.reference.tolerance * 10;
 
     return {
