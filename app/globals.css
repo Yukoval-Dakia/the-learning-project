@@ -719,6 +719,36 @@ ol {
   color: var(--again-ink);
 }
 
+/* ------------------------------------------------------------ */
+/* /admin — observability surfaces                              */
+/* ------------------------------------------------------------ */
+
+.admin-two-column {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
+  gap: var(--s-4);
+  align-items: start;
+}
+.admin-two-column > * {
+  min-width: 0;
+}
+.admin-bar-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.7fr) minmax(160px, 1fr) minmax(92px, auto);
+  gap: 10px;
+  align-items: center;
+  font-size: 13px;
+}
+.admin-sample-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  font-size: 12.5px;
+}
+.admin-sample-grid > * {
+  overflow-wrap: anywhere;
+}
+
 .inbox-strip {
   display: flex;
   align-items: center;
@@ -1276,6 +1306,18 @@ ol {
   }
   .kpi-strip {
     grid-template-columns: repeat(2, 1fr);
+  }
+  .admin-two-column {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .admin-bar-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .admin-bar-track {
+    grid-column: 1 / -1;
+  }
+  .admin-sample-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
   .lanes {
     grid-template-columns: 1fr;
