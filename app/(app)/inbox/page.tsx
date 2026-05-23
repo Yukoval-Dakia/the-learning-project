@@ -9,6 +9,7 @@ import { Icon } from '@/ui/primitives/Icon';
 import { PageHeader } from '@/ui/primitives/PageHeader';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
+import type { ReactNode } from 'react';
 
 interface KnowledgeNode {
   id: string;
@@ -16,31 +17,26 @@ interface KnowledgeNode {
   parent_id: string | null;
 }
 
-interface KnowledgeProposal {
-  id: string;
-  payload: {
-    mutation: string;
-    name?: string;
-    parent_id?: string | null;
-  };
-  reasoning: string;
-  status: 'pending' | 'accepted' | 'dismissed' | 'stale';
-  proposed_at: string;
+type ProposalStatus = 'pending' | 'accepted' | 'dismissed' | 'stale';
+type ProposalKind =
+  | 'knowledge_node'
+  | 'knowledge_edge'
+  | 'learning_item'
+  | 'note_update'
+  | 'variant_question'
+  | 'completion'
+  | 'relearn'
+  | 'archive'
+  | 'judge_retraction';
+
+interface ProposalTarget {
+  subject_kind: string;
+  subject_id: string | null;
 }
 
-interface EventRow {
+interface ProposalEvidenceRef {
+  kind: 'event' | 'question' | 'knowledge' | 'artifact' | 'record';
   id: string;
-  actor_kind: string;
-  actor_ref: string;
-  action: string;
-  subject_kind: string;
-  subject_id: string;
-  outcome: string;
-  payload: Record<string, unknown>;
-  caused_by_event_id?: string | null;
-  task_run_id?: string | null;
-  cost_micro_usd?: number | null;
-  created_at: string;
 }
 
 type RelationType =
@@ -51,8 +47,58 @@ type RelationType =
   | 'derived_from'
   | `experimental:${string}`;
 
-type EdgeDecision = 'accept' | 'reverse' | 'change_type' | 'dismiss';
-type ArtifactRating = 'accept' | 'dismiss';
+interface BaseProposalPayload {
+  kind: ProposalKind;
+  target: ProposalTarget;
+  reason_md: string;
+  evidence_refs: ProposalEvidenceRef[];
+  proposed_change: Record<string, unknown>;
+  rollback_plan?: unknown;
+  cooldown_key?: string;
+}
+
+interface KnowledgeNodeProposalPayload extends BaseProposalPayload {
+  kind: 'knowledge_node';
+  target: { subject_kind: 'knowledge'; subject_id: string | null };
+  proposed_change: {
+    mutation: 'propose_new';
+    name: string;
+    parent_id: string;
+  };
+}
+
+interface KnowledgeEdgeProposalPayload extends BaseProposalPayload {
+  kind: 'knowledge_edge';
+  target: { subject_kind: 'knowledge_edge'; subject_id: string | null };
+  proposed_change: {
+    from_knowledge_id: string;
+    to_knowledge_id: string;
+    relation_type: RelationType;
+    weight: number;
+  };
+}
+
+type ProposalPayload =
+  | KnowledgeNodeProposalPayload
+  | KnowledgeEdgeProposalPayload
+  | BaseProposalPayload;
+
+interface ProposalInboxRow {
+  id: string;
+  kind: ProposalKind;
+  target: ProposalTarget;
+  payload: ProposalPayload;
+  status: ProposalStatus;
+  proposed_at: string;
+  decided_at: string | null;
+  actor_ref: string;
+  task_run_id: string | null;
+  cost_micro_usd: number | null;
+  source_action: string;
+  source_subject_kind: string;
+}
+
+type EdgeDecision = 'accept' | 'reverse' | 'change_type';
 
 const RELATION_TYPES: Record<
   string,
@@ -71,6 +117,18 @@ const RELATION_TYPES: Record<
 
 const RELATION_ORDER = Object.keys(RELATION_TYPES) as RelationType[];
 
+const KIND_LABELS: Record<ProposalKind, string> = {
+  knowledge_node: '新知识节点',
+  knowledge_edge: '知识关系',
+  learning_item: '学习项',
+  note_update: '笔记更新',
+  variant_question: '变式题',
+  completion: '完成状态',
+  relearn: '重学安排',
+  archive: '归档',
+  judge_retraction: '判题撤回',
+};
+
 export default function InboxPage() {
   const queryClient = useQueryClient();
 
@@ -78,151 +136,85 @@ export default function InboxPage() {
     queryKey: ['inbox', 'knowledge'],
     queryFn: () => apiJson<{ rows: KnowledgeNode[] }>('/api/knowledge'),
   });
-  const nodeProposalsQ = useQuery({
-    queryKey: ['inbox', 'knowledge-proposals', 'pending'],
-    queryFn: () =>
-      apiJson<{ rows: KnowledgeProposal[] }>('/api/knowledge/proposals?status=pending'),
-  });
-  const edgeProposalsQ = useQuery({
-    queryKey: ['inbox', 'knowledge-edge-proposals'],
-    queryFn: () =>
-      apiJson<{ rows: EventRow[] }>(
-        '/api/events?action=propose&subject_kind=knowledge_edge&limit=200',
-      ),
-  });
-  const edgeRatesQ = useQuery({
-    queryKey: ['inbox', 'knowledge-edge-rates'],
-    queryFn: () =>
-      apiJson<{ rows: EventRow[] }>(
-        '/api/events?action=rate&subject_kind=knowledge_edge&limit=200',
-      ),
-  });
-  const artifactEventsQ = useQuery({
-    queryKey: ['inbox', 'artifact-generations'],
-    queryFn: () =>
-      apiJson<{ rows: EventRow[] }>(
-        '/api/events?action=generate&subject_kind=artifact&actor_kind=agent&limit=200',
-      ),
-  });
-  const eventRatesQ = useQuery({
-    queryKey: ['inbox', 'event-rates'],
-    queryFn: () =>
-      apiJson<{ rows: EventRow[] }>('/api/events?action=rate&subject_kind=event&limit=200'),
+  const proposalsQ = useQuery({
+    queryKey: ['inbox', 'proposals', 'pending'],
+    queryFn: () => apiJson<{ rows: ProposalInboxRow[] }>('/api/proposals?status=pending&limit=200'),
   });
 
-  const nodesById = new Map((knowledgeQ.data?.rows ?? []).map((node) => [node.id, node]));
-  const edgeRatedIds = new Set(
-    (edgeRatesQ.data?.rows ?? [])
-      .map((row) => row.caused_by_event_id)
-      .filter((id): id is string => Boolean(id)),
-  );
-  const eventRatedIds = new Set(
-    (eventRatesQ.data?.rows ?? [])
-      .map((row) => row.caused_by_event_id)
-      .filter((id): id is string => Boolean(id)),
-  );
+  const refreshInbox = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['inbox', 'proposals', 'pending'] }),
+      queryClient.invalidateQueries({ queryKey: ['inbox', 'knowledge'] }),
+    ]);
+  };
 
-  const edgeProposals = (edgeProposalsQ.data?.rows ?? []).filter(
-    (row) => !edgeRatedIds.has(row.id),
-  );
-  const nodeProposals = nodeProposalsQ.data?.rows ?? [];
-  const artifacts = (artifactEventsQ.data?.rows ?? []).filter(
-    (row) => row.outcome === 'success' && !eventRatedIds.has(row.id),
-  );
-  const pendingTotal = edgeProposals.length + nodeProposals.length + artifacts.length;
-  const totalCostUsd =
-    edgeProposals.concat(artifacts).reduce((sum, row) => sum + (row.cost_micro_usd ?? 0), 0) /
-    1_000_000;
-
-  const edgeDecision = useMutation({
+  const acceptMutation = useMutation({
     mutationFn: ({
       id,
       decision,
       new_relation_type,
     }: {
       id: string;
-      decision: EdgeDecision;
+      decision?: EdgeDecision;
       new_relation_type?: RelationType;
     }) =>
-      apiJson(`/api/knowledge/edges/proposals/${id}`, {
+      apiJson(`/api/proposals/${id}/accept`, {
         method: 'POST',
         body: JSON.stringify({
-          decision,
+          ...(decision ? { decision } : {}),
           ...(new_relation_type ? { new_relation_type } : {}),
         }),
       }),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['inbox', 'knowledge-edge-proposals'] }),
-        queryClient.invalidateQueries({ queryKey: ['inbox', 'knowledge-edge-rates'] }),
-        queryClient.invalidateQueries({ queryKey: ['inbox', 'knowledge'] }),
-      ]);
-    },
+    onSuccess: refreshInbox,
   });
 
-  const nodeDecision = useMutation({
-    mutationFn: ({ id, decision }: { id: string; decision: 'accept' | 'reject' }) =>
-      apiJson(`/api/knowledge/proposals/${id}`, {
+  const dismissMutation = useMutation({
+    mutationFn: ({ id }: { id: string }) =>
+      apiJson(`/api/proposals/${id}/dismiss`, {
         method: 'POST',
-        body: JSON.stringify({ decision }),
+        body: JSON.stringify({}),
       }),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['inbox', 'knowledge-proposals', 'pending'] }),
-        queryClient.invalidateQueries({ queryKey: ['inbox', 'knowledge'] }),
-      ]);
-    },
+    onSuccess: refreshInbox,
   });
 
-  const artifactDecision = useMutation({
-    mutationFn: ({ id, rating }: { id: string; rating: ArtifactRating }) =>
-      apiJson(`/api/events/${id}/rate`, {
+  const retractMutation = useMutation({
+    mutationFn: ({ id }: { id: string }) =>
+      apiJson(`/api/proposals/${id}/retract`, {
         method: 'POST',
-        body: JSON.stringify({ rating }),
+        body: JSON.stringify({ reason_md: '用户在收件箱撤回该提议。' }),
       }),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['inbox', 'artifact-generations'] }),
-        queryClient.invalidateQueries({ queryKey: ['inbox', 'event-rates'] }),
-      ]);
-    },
+    onSuccess: refreshInbox,
   });
 
-  const loading =
-    knowledgeQ.isLoading ||
-    nodeProposalsQ.isLoading ||
-    edgeProposalsQ.isLoading ||
-    edgeRatesQ.isLoading ||
-    artifactEventsQ.isLoading ||
-    eventRatesQ.isLoading;
-  const firstError =
-    knowledgeQ.error ??
-    nodeProposalsQ.error ??
-    edgeProposalsQ.error ??
-    edgeRatesQ.error ??
-    artifactEventsQ.error ??
-    eventRatesQ.error;
+  const nodesById = new Map((knowledgeQ.data?.rows ?? []).map((node) => [node.id, node]));
+  const proposals = proposalsQ.data?.rows ?? [];
+  const proposalGroups = groupByKind(proposals);
+  const pendingTotal = proposals.length;
+  const totalCostUsd =
+    proposals.reduce((sum, row) => sum + (row.cost_micro_usd ?? 0), 0) / 1_000_000;
+  const mutating =
+    acceptMutation.isPending || dismissMutation.isPending || retractMutation.isPending;
+
+  const loading = knowledgeQ.isLoading || proposalsQ.isLoading;
+  const firstError = knowledgeQ.error ?? proposalsQ.error;
 
   return (
     <main className="page inbox-page">
       <PageHeader
         title="AI 提议收件箱"
-        eyebrow="INBOX · 24h · events action IN (propose, generate) · 未 rate"
-        sub="集中决断。每一行你 accept / dismiss 一次，写入一条 action=rate 事件，下次不再露面。"
+        eyebrow="INBOX · /api/proposals · pending"
+        sub="统一处理 AI proposal。接受、忽略或撤回都会写入事件链，处理后从待审队列移除。"
       >
         <Link href="/today" style={{ textDecoration: 'none' }}>
           <Button variant="ghost" icon="arrowL">
             回今日
           </Button>
         </Link>
-        <Button variant="secondary" disabled={pendingTotal === 0}>
-          全部忽略
-        </Button>
       </PageHeader>
 
       <div className="inbox-meta-line">
-        {pendingTotal} 条待审 · 累计成本 ${totalCostUsd.toFixed(3)} · 大部分来自夜间 Dreaming
-        session
+        {pendingTotal} 条待审 · 累计成本 ${totalCostUsd.toFixed(3)} · 包含 Dreaming 与后续 producer
+        写入的 proposal
       </div>
 
       {loading && (
@@ -242,59 +234,64 @@ export default function InboxPage() {
       )}
 
       {!loading && !firstError && (
-        <>
-          <InboxSection
-            title="关系建议"
-            count={edgeProposals.length}
-            empty="没有待审知识关系。"
-            note="subject_kind=knowledge_edge · ADR-0010 mesh"
-          >
-            {edgeProposals.map((event) => (
-              <EdgeProposalCard
-                key={event.id}
-                event={event}
-                nodesById={nodesById}
-                pending={edgeDecision.isPending}
-                onDecision={(decision, new_relation_type) =>
-                  edgeDecision.mutate({ id: event.id, decision, new_relation_type })
-                }
-              />
+        <InboxSection
+          title="待审提议"
+          count={pendingTotal}
+          empty="没有待审提议。"
+          note="按 proposal kind 分组；当前 node / edge 可直接接受，其他 kind 先支持忽略与撤回。"
+        >
+          <div className="proposal-kind-list">
+            {proposalGroups.map((group) => (
+              <section className="proposal-kind-group" key={group.kind}>
+                <div className="proposal-kind-head">
+                  <Badge tone={kindTone(group.kind)}>{kindLabel(group.kind)}</Badge>
+                  <span>{group.rows.length} 条</span>
+                </div>
+                <div className="inbox-card-list">
+                  {group.rows.map((row) => {
+                    if (isKnowledgeEdgeProposal(row)) {
+                      return (
+                        <EdgeProposalCard
+                          key={row.id}
+                          proposal={row}
+                          nodesById={nodesById}
+                          pending={mutating}
+                          onAccept={(decision, new_relation_type) =>
+                            acceptMutation.mutate({ id: row.id, decision, new_relation_type })
+                          }
+                          onDismiss={() => dismissMutation.mutate({ id: row.id })}
+                          onRetract={() => retractMutation.mutate({ id: row.id })}
+                        />
+                      );
+                    }
+                    if (isKnowledgeNodeProposal(row)) {
+                      return (
+                        <NodeProposalCard
+                          key={row.id}
+                          proposal={row}
+                          nodesById={nodesById}
+                          pending={mutating}
+                          onAccept={() => acceptMutation.mutate({ id: row.id })}
+                          onDismiss={() => dismissMutation.mutate({ id: row.id })}
+                          onRetract={() => retractMutation.mutate({ id: row.id })}
+                        />
+                      );
+                    }
+                    return (
+                      <GenericProposalCard
+                        key={row.id}
+                        proposal={row}
+                        pending={mutating}
+                        onDismiss={() => dismissMutation.mutate({ id: row.id })}
+                        onRetract={() => retractMutation.mutate({ id: row.id })}
+                      />
+                    );
+                  })}
+                </div>
+              </section>
             ))}
-          </InboxSection>
-
-          <InboxSection
-            title="新节点"
-            count={nodeProposals.length}
-            empty="没有待审知识节点。"
-            note="subject_kind=knowledge · 加到 tree backbone"
-          >
-            {nodeProposals.map((proposal) => (
-              <NodeProposalCard
-                key={proposal.id}
-                proposal={proposal}
-                nodesById={nodesById}
-                pending={nodeDecision.isPending}
-                onDecision={(decision) => nodeDecision.mutate({ id: proposal.id, decision })}
-              />
-            ))}
-          </InboxSection>
-
-          <InboxSection
-            title="内容生成"
-            count={artifacts.length}
-            empty="没有待审内容生成。"
-            note="action=generate subject_kind=artifact · 变式 / 笔记 / 小测 / 总结"
-          >
-            {artifacts.map((event) => (
-              <ArtifactProposalCard
-                key={event.id}
-                event={event}
-                pending={artifactDecision.isPending}
-                onRate={(rating) => artifactDecision.mutate({ id: event.id, rating })}
-              />
-            ))}
-          </InboxSection>
-        </>
+          </div>
+        </InboxSection>
       )}
     </main>
   );
@@ -311,7 +308,7 @@ function InboxSection({
   count: number;
   empty: string;
   note: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <section className="section inbox-section">
@@ -321,31 +318,29 @@ function InboxSection({
         </h2>
         <div className="meta">{note}</div>
       </div>
-      {count === 0 ? (
-        <p className="inbox-empty">{empty}</p>
-      ) : (
-        <div className="inbox-card-list">{children}</div>
-      )}
+      {count === 0 ? <p className="inbox-empty">{empty}</p> : children}
     </section>
   );
 }
 
 function EdgeProposalCard({
-  event,
+  proposal,
   nodesById,
   pending,
-  onDecision,
+  onAccept,
+  onDismiss,
+  onRetract,
 }: {
-  event: EventRow;
+  proposal: ProposalInboxRow & { payload: KnowledgeEdgeProposalPayload };
   nodesById: Map<string, KnowledgeNode>;
   pending: boolean;
-  onDecision: (decision: EdgeDecision, new_relation_type?: RelationType) => void;
+  onAccept: (decision: EdgeDecision, new_relation_type?: RelationType) => void;
+  onDismiss: () => void;
+  onRetract: () => void;
 }) {
-  const fromId = edgeEndpoint(event, 'from');
-  const toId = edgeEndpoint(event, 'to');
-  const relationType = stringField(event.payload, 'relation_type') as RelationType | undefined;
-  const meta = relationMeta(relationType);
-  const nextRelation = RELATION_ORDER.find((type) => type !== relationType) ?? 'related_to';
+  const change = proposal.payload.proposed_change;
+  const meta = relationMeta(change.relation_type);
+  const nextRelation = RELATION_ORDER.find((type) => type !== change.relation_type) ?? 'related_to';
   return (
     <article className={`edge-proposal tone-${meta.tone}`}>
       <div className="edge-proposal-head">
@@ -353,25 +348,26 @@ function EdgeProposalCard({
           <Icon name="link" size={11} /> AI · 关系
         </span>
         <span className="ep-graph">
-          <code>{nodeName(nodesById, fromId)}</code>
+          <code>{nodeName(nodesById, change.from_knowledge_id)}</code>
           <span className={`ep-arrow tone-${meta.tone}`}>
             <span className="ep-arrow-glyph">{meta.arrow}</span>
             <sub className="ep-arrow-lbl">{meta.label}</sub>
           </span>
-          <code>{nodeName(nodesById, toId)}</code>
+          <code>{nodeName(nodesById, change.to_knowledge_id)}</code>
         </span>
-        <span className="meta-row">{eventMeta(event)}</span>
+        <span className="meta-row">{proposalMeta(proposal)}</span>
       </div>
-      {stringField(event.payload, 'reasoning') && (
-        <div className="ep-reason">推理 — {stringField(event.payload, 'reasoning')}</div>
+      {proposal.payload.reason_md && (
+        <div className="ep-reason">推理 — {proposal.payload.reason_md}</div>
       )}
+      <ProposalStatusRow proposal={proposal} />
       <div className="ep-actions">
         <Button
           variant="good"
           size="sm"
           icon="check"
           disabled={pending}
-          onClick={() => onDecision('accept')}
+          onClick={() => onAccept('accept')}
         >
           接受
         </Button>
@@ -379,7 +375,7 @@ function EdgeProposalCard({
           variant="secondary"
           size="sm"
           disabled={pending}
-          onClick={() => onDecision('reverse')}
+          onClick={() => onAccept('reverse')}
         >
           改方向
         </Button>
@@ -387,20 +383,24 @@ function EdgeProposalCard({
           variant="secondary"
           size="sm"
           disabled={pending}
-          onClick={() => onDecision('change_type', nextRelation)}
+          onClick={() => onAccept('change_type', nextRelation)}
         >
           改关系
         </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          icon="x"
-          disabled={pending}
-          onClick={() => onDecision('dismiss')}
-        >
+        <Button variant="ghost" size="sm" icon="x" disabled={pending} onClick={onDismiss}>
           忽略
         </Button>
-        <Link href={`/events/${event.id}`} className="inbox-inline-link">
+        <Button
+          variant="danger"
+          size="sm"
+          icon="trash"
+          className="proposal-retract"
+          disabled={pending}
+          onClick={onRetract}
+        >
+          撤回
+        </Button>
+        <Link href={`/events/${proposal.id}`} className="inbox-inline-link">
           事件链
         </Link>
       </div>
@@ -412,45 +412,47 @@ function NodeProposalCard({
   proposal,
   nodesById,
   pending,
-  onDecision,
+  onAccept,
+  onDismiss,
+  onRetract,
 }: {
-  proposal: KnowledgeProposal;
+  proposal: ProposalInboxRow & { payload: KnowledgeNodeProposalPayload };
   nodesById: Map<string, KnowledgeNode>;
   pending: boolean;
-  onDecision: (decision: 'accept' | 'reject') => void;
+  onAccept: () => void;
+  onDismiss: () => void;
+  onRetract: () => void;
 }) {
-  const parentId = proposal.payload.parent_id ?? null;
+  const change = proposal.payload.proposed_change;
   return (
     <article className="proposal inbox-node-proposal">
       <div className="proposal-head">
         <span className="mini-badge info">
           <Icon name="network" size={11} /> AI · 新节点
         </span>
-        <span className="title">{proposal.payload.name ?? '未命名节点'}</span>
+        <span className="title">{change.name}</span>
         <span className="inbox-card-meta">
-          {parentId ? `parent · ${nodeName(nodesById, parentId)}` : 'root'} ·{' '}
-          {formatRelTime(proposal.proposed_at)}
+          parent · {nodeName(nodesById, change.parent_id)} · {formatRelTime(proposal.proposed_at)}
         </span>
       </div>
-      <div className="body">{proposal.reasoning || '无推理说明'}</div>
+      <div className="body">{proposal.payload.reason_md || '无推理说明'}</div>
+      <ProposalStatusRow proposal={proposal} />
       <div className="proposal-actions">
-        <Button
-          variant="good"
-          size="sm"
-          icon="check"
-          disabled={pending}
-          onClick={() => onDecision('accept')}
-        >
+        <Button variant="good" size="sm" icon="check" disabled={pending} onClick={onAccept}>
           接受
         </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          icon="x"
-          disabled={pending}
-          onClick={() => onDecision('reject')}
-        >
+        <Button variant="ghost" size="sm" icon="x" disabled={pending} onClick={onDismiss}>
           忽略
+        </Button>
+        <Button
+          variant="danger"
+          size="sm"
+          icon="trash"
+          className="proposal-retract"
+          disabled={pending}
+          onClick={onRetract}
+        >
+          撤回
         </Button>
         <Link href={`/events/${proposal.id}`} className="inbox-inline-link">
           事件链
@@ -460,56 +462,71 @@ function NodeProposalCard({
   );
 }
 
-function ArtifactProposalCard({
-  event,
+function GenericProposalCard({
+  proposal,
   pending,
-  onRate,
+  onDismiss,
+  onRetract,
 }: {
-  event: EventRow;
+  proposal: ProposalInboxRow;
   pending: boolean;
-  onRate: (rating: ArtifactRating) => void;
+  onDismiss: () => void;
+  onRetract: () => void;
 }) {
-  const kind = stringField(event.payload, 'artifact_kind') ?? 'artifact';
-  const title = stringField(event.payload, 'title') ?? event.subject_id;
-  const body = stringField(event.payload, 'body_md') ?? '';
-  const refs = arrayField(event.payload, 'referenced_event_ids');
   return (
-    <article className="artifact-proposal">
-      <div className="artifact-proposal-head">
-        <Badge tone={artifactTone(kind)}>{artifactLabel(kind)}</Badge>
-        <h3>{title}</h3>
-        <span className="inbox-card-meta">{eventMeta(event)}</span>
+    <article className="proposal proposal-generic">
+      <div className="proposal-head">
+        <Badge tone={kindTone(proposal.kind)}>{kindLabel(proposal.kind)}</Badge>
+        <span className="title">{targetLabel(proposal.target)}</span>
+        <span className="inbox-card-meta">{proposalMeta(proposal)}</span>
       </div>
-      {body && <p className="artifact-proposal-body">{body}</p>}
-      {refs.length > 0 && (
+      <div className="body">{proposal.payload.reason_md || '无推理说明'}</div>
+      <ProposalStatusRow proposal={proposal} />
+      <div className="proposal-summary">
+        <strong>proposed_change</strong>
+        <pre className="proposal-json">
+          {JSON.stringify(proposal.payload.proposed_change, null, 2)}
+        </pre>
+      </div>
+      {proposal.payload.evidence_refs.length > 0 && (
         <div className="artifact-ref-row">
-          {refs.slice(0, 4).map((ref) => (
-            <Link href={`/events/${ref}`} key={ref}>
-              {ref.slice(0, 8)}…
-            </Link>
-          ))}
+          {proposal.payload.evidence_refs.slice(0, 5).map((ref) =>
+            ref.kind === 'event' ? (
+              <Link href={`/events/${ref.id}`} key={`${ref.kind}:${ref.id}`}>
+                {ref.kind}:{ref.id.slice(0, 8)}…
+              </Link>
+            ) : (
+              <span key={`${ref.kind}:${ref.id}`}>
+                {ref.kind}:{ref.id.slice(0, 8)}…
+              </span>
+            ),
+          )}
         </div>
       )}
       <div className="proposal-actions">
         <Button
-          variant="good"
+          variant="secondary"
           size="sm"
           icon="check"
-          disabled={pending}
-          onClick={() => onRate('accept')}
+          disabled
+          title="YUK-44 接入 owner-service 后启用"
         >
-          接受
+          待接入
         </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          icon="x"
-          disabled={pending}
-          onClick={() => onRate('dismiss')}
-        >
+        <Button variant="ghost" size="sm" icon="x" disabled={pending} onClick={onDismiss}>
           忽略
         </Button>
-        <Link href={`/events/${event.id}`} className="inbox-inline-link">
+        <Button
+          variant="danger"
+          size="sm"
+          icon="trash"
+          className="proposal-retract"
+          disabled={pending}
+          onClick={onRetract}
+        >
+          撤回
+        </Button>
+        <Link href={`/events/${proposal.id}`} className="inbox-inline-link">
           事件链
         </Link>
       </div>
@@ -517,10 +534,45 @@ function ArtifactProposalCard({
   );
 }
 
-function edgeEndpoint(event: EventRow, side: 'from' | 'to'): string | undefined {
+function ProposalStatusRow({ proposal }: { proposal: ProposalInboxRow }) {
   return (
-    stringField(event.payload, `${side}_knowledge_id`) ?? stringField(event.payload, `${side}_id`)
+    <div className="proposal-status-row">
+      <span>{proposal.source_action}</span>
+      <span>{proposal.source_subject_kind}</span>
+      <span>{targetLabel(proposal.target)}</span>
+      {proposal.task_run_id && <span>{proposal.task_run_id.slice(0, 12)}</span>}
+      {typeof proposal.cost_micro_usd === 'number' && proposal.cost_micro_usd > 0 && (
+        <span>${(proposal.cost_micro_usd / 1_000_000).toFixed(4)}</span>
+      )}
+    </div>
   );
+}
+
+function groupByKind(
+  rows: ProposalInboxRow[],
+): Array<{ kind: ProposalKind; rows: ProposalInboxRow[] }> {
+  const groups = new Map<ProposalKind, ProposalInboxRow[]>();
+  for (const row of rows) {
+    const current = groups.get(row.kind);
+    if (current) {
+      current.push(row);
+    } else {
+      groups.set(row.kind, [row]);
+    }
+  }
+  return [...groups.entries()].map(([kind, groupRows]) => ({ kind, rows: groupRows }));
+}
+
+function isKnowledgeNodeProposal(
+  row: ProposalInboxRow,
+): row is ProposalInboxRow & { payload: KnowledgeNodeProposalPayload } {
+  return row.kind === 'knowledge_node';
+}
+
+function isKnowledgeEdgeProposal(
+  row: ProposalInboxRow,
+): row is ProposalInboxRow & { payload: KnowledgeEdgeProposalPayload } {
+  return row.kind === 'knowledge_edge';
 }
 
 function relationMeta(type: RelationType | undefined) {
@@ -539,56 +591,40 @@ function nodeName(nodesById: Map<string, KnowledgeNode>, id: string | null | und
   return nodesById.get(id)?.name ?? id;
 }
 
-function stringField(payload: Record<string, unknown>, key: string): string | undefined {
-  const value = payload[key];
-  return typeof value === 'string' ? value : undefined;
-}
-
-function arrayField(payload: Record<string, unknown>, key: string): string[] {
-  const value = payload[key];
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === 'string')
-    : [];
-}
-
-function eventMeta(event: EventRow): string {
+function proposalMeta(proposal: ProposalInboxRow): string {
   const parts = [
-    event.actor_ref,
-    event.task_run_id ? event.task_run_id.slice(0, 12) : null,
-    typeof event.cost_micro_usd === 'number' && event.cost_micro_usd > 0
-      ? `$${(event.cost_micro_usd / 1_000_000).toFixed(4)}`
+    proposal.actor_ref,
+    proposal.task_run_id ? proposal.task_run_id.slice(0, 12) : null,
+    typeof proposal.cost_micro_usd === 'number' && proposal.cost_micro_usd > 0
+      ? `$${(proposal.cost_micro_usd / 1_000_000).toFixed(4)}`
       : null,
-    formatRelTime(event.created_at),
+    formatRelTime(proposal.proposed_at),
   ].filter(Boolean);
   return parts.join(' · ');
 }
 
-function artifactLabel(kind: string): string {
-  switch (kind) {
-    case 'note':
-      return '笔记';
-    case 'quiz':
-      return '小测';
-    case 'variant':
-      return '变式';
-    case 'summary':
-      return '总结';
-    default:
-      return kind;
-  }
+function kindLabel(kind: ProposalKind): string {
+  return KIND_LABELS[kind] ?? kind;
 }
 
-function artifactTone(kind: string): 'info' | 'good' | 'hard' | 'coral' | 'neutral' {
+function kindTone(kind: ProposalKind): 'info' | 'good' | 'hard' | 'coral' | 'neutral' {
   switch (kind) {
-    case 'note':
+    case 'knowledge_node':
       return 'info';
-    case 'quiz':
-      return 'hard';
-    case 'variant':
+    case 'knowledge_edge':
       return 'coral';
-    case 'summary':
+    case 'learning_item':
+    case 'completion':
       return 'good';
+    case 'judge_retraction':
+      return 'hard';
+    case 'variant_question':
+      return 'coral';
     default:
       return 'neutral';
   }
+}
+
+function targetLabel(target: ProposalTarget): string {
+  return target.subject_id ? `${target.subject_kind}:${target.subject_id}` : target.subject_kind;
 }
