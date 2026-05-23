@@ -13,6 +13,7 @@ import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
 import { type TaskTextRunFn, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { writeEvent } from '@/server/events/queries';
+import { writeNoteUpdateProposal } from '@/server/proposals/producers';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 export interface NoteVerifyJobData {
@@ -127,8 +128,9 @@ export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNot
       })
       .where(eq(artifact.id, artifactId));
 
+    const verifyEventId = createId();
     await writeEvent(db, {
-      id: createId(),
+      id: verifyEventId,
       session_id: null,
       actor_kind: 'agent',
       actor_ref: 'note_verify',
@@ -142,6 +144,18 @@ export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNot
       cost_micro_usd: costUsdToMicroUsd(result.cost_usd),
       created_at: new Date(),
     });
+
+    if (status === 'needs_review') {
+      await writeNoteUpdateProposal(db, {
+        artifact_id: artifactId,
+        verification_event_id: verifyEventId,
+        summary_md: parsed.summary_md,
+        issues: parsed.issues,
+        reason_md: parsed.summary_md,
+        task_run_id: result.task_run_id ?? null,
+        cost_usd: result.cost_usd,
+      });
+    }
 
     return { status, issues_count: parsed.issues.length };
   } catch (err) {

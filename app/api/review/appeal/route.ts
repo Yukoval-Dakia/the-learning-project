@@ -1,6 +1,7 @@
 import { db } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
+import { writeJudgeRetractionProposal } from '@/server/proposals/producers';
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { type NextRequest, NextResponse } from 'next/server';
@@ -65,6 +66,12 @@ export async function POST(req: NextRequest) {
     outcome: null,
     payload: { reason_md: reason_md ?? '' },
     caused_by_event_id: judge_event_id,
+  });
+
+  await writeJudgeRetractionProposal(db, {
+    judge_event_id,
+    appeal_event_id: appealEventId,
+    reason_md: reason_md?.trim() || '用户申诉该判题结果，需要撤回或重判。',
   });
 
   return NextResponse.json({ appeal_event_id: appealEventId });

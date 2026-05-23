@@ -504,6 +504,27 @@ export const event = pgTable(
   ],
 );
 
+export const proposal_signals = pgTable(
+  'proposal_signals',
+  {
+    id: text('id').primaryKey(),
+    kind: text('kind').notNull(),
+    cooldown_key: text('cooldown_key').notNull(),
+    accept_count: integer('accept_count').notNull().default(0),
+    dismiss_count: integer('dismiss_count').notNull().default(0),
+    acceptance_rate: real('acceptance_rate').notNull().default(0.5),
+    dismiss_reason: text('dismiss_reason'),
+    cooldown_until: timestamp('cooldown_until', { withTimezone: true }),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('proposal_signals_key_unique').on(t.kind, t.cooldown_key),
+    index('proposal_signals_kind_rate_idx').on(t.kind, t.acceptance_rate.desc()),
+    index('proposal_signals_cooldown_idx').on(t.cooldown_key, t.cooldown_until),
+  ],
+);
+
 // FSRS state projection per material (currently only 'question').
 // Latest FSRS card state derived from `event(action='review', subject_kind='question')`.
 export const material_fsrs_state = pgTable(

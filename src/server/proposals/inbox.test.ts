@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { getProposalInboxRow, listLegacyKnowledgeProposals, listProposalInboxRows } from './inbox';
+import { recordProposalDecisionSignal } from './signals';
 import { writeAiProposal } from './writer';
 
 describe('proposal inbox reader', () => {
@@ -232,5 +233,57 @@ describe('proposal inbox reader', () => {
       status: 'stale',
     });
     expect(stale[0].decided_at?.toISOString()).toBe('2026-05-23T02:00:00.000Z');
+  });
+
+  it('ranks active high-acceptance proposals before default rows and cooled rows', async () => {
+    const db = testDb();
+    await writeAiProposal(db, {
+      id: 'default_p1',
+      created_at: new Date('2026-05-23T03:00:00.000Z'),
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'li_default' },
+        reason_md: 'Default row',
+        evidence_refs: [],
+        proposed_change: { learning_item_id: 'li_default' },
+        cooldown_key: 'completion:default',
+      },
+    });
+    await writeAiProposal(db, {
+      id: 'cooled_p1',
+      created_at: new Date('2026-05-23T04:00:00.000Z'),
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'li_cooled' },
+        reason_md: 'Cooled row',
+        evidence_refs: [],
+        proposed_change: { learning_item_id: 'li_cooled' },
+        cooldown_key: 'completion:cooled',
+      },
+    });
+    await writeAiProposal(db, {
+      id: 'high_p1',
+      created_at: new Date('2026-05-23T01:00:00.000Z'),
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'li_high' },
+        reason_md: 'High rate row',
+        evidence_refs: [],
+        proposed_change: { learning_item_id: 'li_high' },
+        cooldown_key: 'completion:high',
+      },
+    });
+
+    const beforeSignals = await listProposalInboxRows(db, { status: 'pending' });
+    const high = beforeSignals.find((row) => row.id === 'high_p1');
+    const cooled = beforeSignals.find((row) => row.id === 'cooled_p1');
+    if (!high || !cooled) throw new Error('missing seeded proposals');
+    await recordProposalDecisionSignal(db, high, 'accept');
+    await recordProposalDecisionSignal(db, cooled, 'dismiss', 'not now');
+
+    const rows = await listProposalInboxRows(db, { status: 'pending' });
+    expect(rows.map((row) => row.id)).toEqual(['high_p1', 'default_p1', 'cooled_p1']);
+    expect(rows[0].signals?.acceptance_rate).toBe(1);
+    expect(rows[2].signals?.cooldown_until).toBeInstanceOf(Date);
   });
 });

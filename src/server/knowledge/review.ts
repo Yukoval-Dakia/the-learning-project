@@ -20,14 +20,14 @@
 // SDK-resolved name so the agent runner doesn't strip the tool from the
 // catalog before the model sees it.
 
-import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { streamTask } from '@/server/ai/runner';
+import { writeAiProposal } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import { getFailureAttempts, writeEvent } from '../events/queries';
+import { getFailureAttempts } from '../events/queries';
 import { type KnowledgeMutationPayload, writeKnowledgeProposeEvent } from './proposals';
 
 const RECENT_MISTAKES_LIMIT = 100;
@@ -107,22 +107,22 @@ export async function runWriteProposal(
       });
       return { proposal_id: id, kind: 'tree_mutation' };
     }
-    const eventId = newId();
-    await writeEvent(db, {
-      id: eventId,
-      subject_id: newId(),
-      actor_kind: 'agent',
+    const eventId = await writeAiProposal(db, {
       actor_ref: 'dreaming',
-      action: 'propose',
-      subject_kind: 'knowledge_edge',
       outcome: 'success',
       payload: {
-        from_knowledge_id: edgePayload.from_knowledge_id,
-        to_knowledge_id: edgePayload.to_knowledge_id,
-        relation_type: edgePayload.relation_type,
-        reasoning,
+        kind: 'knowledge_edge',
+        target: { subject_kind: 'knowledge_edge', subject_id: null },
+        reason_md: reasoning,
+        evidence_refs: [],
+        proposed_change: {
+          from_knowledge_id: edgePayload.from_knowledge_id,
+          to_knowledge_id: edgePayload.to_knowledge_id,
+          relation_type: edgePayload.relation_type,
+          weight: 1,
+        },
+        cooldown_key: `knowledge_edge:${edgePayload.from_knowledge_id}|${edgePayload.to_knowledge_id}|${edgePayload.relation_type}`,
       },
-      created_at: new Date(),
     });
     return { event_id: eventId, kind: 'knowledge_edge_propose' };
   }

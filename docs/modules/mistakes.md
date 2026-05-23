@@ -34,7 +34,7 @@
 | `Mistake.cause`（user 手填或 AI 归因） | AI: `event(action='judge', subject_kind='event', caused_by=<attempt id>, payload.cause)`。<br>User: `event(action='experimental:user_cause', subject_kind='event', caused_by=<attempt id>, payload={primary_category, user_notes})` | 用户优先 |
 | `Mistake.fsrs_state` | `material_fsrs_state(subject_kind='question', subject_id=<qid>, state, due_at, last_review_event_id)` | 一行 / 题 |
 | `Mistake.source = 'quiz_answer' / 'manual' / 'vision_*' / 'reverse_mark'` | 当前只跑 `manual` (POST /api/mistakes) + `vision_single` / `vision_paper`（OCR → import）；`quiz_answer` 自动管线 + `reverse_mark` 留到 Phase 2 quiz 时再展开 | |
-| `Mistake.variants[]` / 变式繁殖 | Phase 2 Task #17 ✅：`variant_gen` pg-boss handler 由 `attribution_followup` 链路触发，写 `question(source='mistake_variant', draft_status='draft', variant_depth, root_question_id, parent_variant_id)`。MVP 单 pass（无 VariantVerifyTask），每个 parent 单变式 cap，3 层防繁殖（depth≤1 / variant 不再生变式 / cause∈{carelessness,time_pressure,other} 跳过）。UI 0 触点（变式仅在题库存在，复习引擎自动捞）。详见 §3.4 | |
+| `Mistake.variants[]` / 变式繁殖 | Phase 2 Task #17 + YUK-44 ✅：`variant_gen` pg-boss handler 由 `attribution_followup` 链路触发，先写 `ai_proposal.kind='variant_question'` 到 proposal inbox，不再直接物化 `question`。MVP 单 pass（无 VariantVerifyTask），每个 parent 单变式 cap，3 层防繁殖（depth≤1 / variant 不再生变式 / cause∈{carelessness,time_pressure,other} 跳过）。接受 proposal 后的 `question(source='mistake_variant', draft_status, variant_depth, root_question_id, parent_variant_id)` 物化路径留给后续 owner flow。详见 §3.4 | |
 | `judgment` 表 + `JudgeRouter` | DROPped（1c.1 Step 1.4）；判分走 `event(action='judge')` 替代 | |
 | `mistake.deleted_at` soft-delete | 未实现（event 流没有 retraction 机制）；申诉翻盘 Phase 1d 再设计 | |
 
@@ -245,7 +245,7 @@ Mistake.create({source: 'reverse_mark', source_ref: artifact_id})
 
 ### 3.4 异步：变式题生成（双 pass + 防"错题繁殖"）
 
-**v0 状态（Task #17，2026-05-17）**：MVP **单 pass** 已上线 —— `attribution_followup` 写完 judge 后入队 `variant_gen`（pg-boss），worker 拉 `VariantGenTask`（mimo-v2.5-pro）出一道 `source='mistake_variant'`，`draft_status='draft'`，`variant_depth=parent+1` 的 `question`。VariantVerifyTask 双 pass、variants_max 计数表、UI 显式列表都留待 Phase 3 跑数据后决定。
+**v0 状态（Task #17 + YUK-44，2026-05-23）**：MVP **单 pass** 已上线 —— `attribution_followup` 写完 judge 后入队 `variant_gen`（pg-boss），worker 拉 `VariantGenTask`（mimo-v2.5-pro）产出一条 `variant_question` proposal。YUK-44 后不再直接写 `question` 行；接受 proposal 后再物化 `source='mistake_variant'`、`draft_status`、`variant_depth=parent+1` 的 question。VariantVerifyTask 双 pass、variants_max 计数表、UI 显式列表都留待 Phase 3 跑数据后决定。
 
 变式 Question 跟主题库平级——`source: mistake_variant`，可被 daily quiz 抽，也可入 standalone tool_quiz。
 
@@ -269,7 +269,8 @@ Mistake.create({source: 'reverse_mark', source_ref: artifact_id})
 #### 3.4.2 双 pass 验证
 
 ```
-Pass 1  VariantGenTask    → 候选变式 (新 Question 实例，draft_status='draft')
+Pass 1  VariantGenTask    → 候选变式 proposal (ai_proposal.kind='variant_question')
+                            accept 后再物化 Question(draft_status='draft' 或 active)
                             provider: Sonnet + batch
 Pass 2  VariantVerifyTask → 验证（不同 model，如 Opus + batch）：
                             · AI 自己尝试解一遍，是否得到 reference_md

@@ -124,7 +124,7 @@ describe('writeKnowledgeProposeEvent', () => {
     expect((rows[0]?.payload as Record<string, unknown>).name).toBe('通假字');
   });
 
-  it('writes experimental:knowledge_<mutation> event for non-propose_new mutations', async () => {
+  it('writes archive proposals through the shared ai_proposal envelope', async () => {
     const db = testDb();
     const id = await writeKnowledgeProposeEvent(db, {
       payload: { mutation: 'archive', node_id: 'k_node', expected_version: 5 },
@@ -134,7 +134,9 @@ describe('writeKnowledgeProposeEvent', () => {
     expect(rows[0]?.action).toBe('experimental:knowledge_archive');
     expect(rows[0]?.subject_kind).toBe('knowledge');
     expect(rows[0]?.subject_id).toBe('k_node');
-    expect((rows[0]?.payload as Record<string, unknown>).node_id).toBe('k_node');
+    const payload = rows[0]?.payload as Record<string, unknown>;
+    expect(payload.node_id).toBe('k_node');
+    expect((payload.ai_proposal as { kind?: string }).kind).toBe('archive');
   });
 
   it('rejects propose_new with parent_id=null', async () => {

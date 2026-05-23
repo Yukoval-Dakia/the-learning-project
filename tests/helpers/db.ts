@@ -23,6 +23,7 @@ export function testDb(): Db {
 // user_appeal previously dropped per data-assumptions §O2.
 const ALL_TABLES = [
   'event',
+  'proposal_signals',
   'material_fsrs_state',
   'knowledge_edge',
   'learning_session',

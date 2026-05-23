@@ -162,4 +162,38 @@ describe('writeAiProposal', () => {
         .sort(),
     ).toEqual(samples.map((sample) => sample.kind).sort());
   });
+
+  it('preserves a legacy event envelope while attaching ai_proposal', async () => {
+    const db = testDb();
+    const id = await writeAiProposal(db, {
+      payload: {
+        ...base,
+        kind: 'learning_item',
+        target: { subject_kind: 'learning_item', subject_id: null },
+        proposed_change: {
+          topic: '虚词',
+          hub: { title: '虚词总览' },
+        },
+        cooldown_key: 'learning_item:intent:虚词',
+      },
+      event_override: {
+        action: 'experimental:propose_learning_intent',
+        subject_kind: 'artifact',
+        subject_id: 'synthetic_artifact',
+        payload: {
+          topic: '虚词',
+          hub: { title: '虚词总览' },
+          atomics: [],
+        },
+      },
+    });
+
+    const row = (await db.select().from(event).where(eq(event.id, id)))[0];
+    expect(row.action).toBe('experimental:propose_learning_intent');
+    expect(row.subject_kind).toBe('artifact');
+    expect(row.subject_id).toBe('synthetic_artifact');
+    const payload = row.payload as Record<string, unknown>;
+    expect(payload.topic).toBe('虚词');
+    expect((payload.ai_proposal as { kind?: string }).kind).toBe('learning_item');
+  });
 });

@@ -16,6 +16,12 @@ export interface WriteAiProposalInput {
   actor_ref?: string;
   outcome?: 'success' | 'partial';
   payload: AiProposalPayloadInputT;
+  event_override?: {
+    action: string;
+    subject_kind: string;
+    subject_id?: string;
+    payload?: Record<string, unknown>;
+  };
   caused_by_event_id?: string | null;
   task_run_id?: string | null;
   cost_usd?: number;
@@ -78,7 +84,17 @@ function eventShapeForProposal(payload: AiProposalPayloadT): {
 export async function writeAiProposal(db: DbLike, input: WriteAiProposalInput): Promise<string> {
   const payload = parseAiProposalPayload(input.payload);
   const eventId = input.id ?? newId();
-  const eventShape = eventShapeForProposal(payload);
+  const eventShape = input.event_override
+    ? {
+        action: input.event_override.action,
+        subject_kind: input.event_override.subject_kind,
+        subject_id: input.event_override.subject_id ?? proposalSubjectId(payload),
+        event_payload: {
+          ...(input.event_override.payload ?? {}),
+          ai_proposal: payload,
+        },
+      }
+    : eventShapeForProposal(payload);
 
   await writeEvent(db, {
     id: eventId,

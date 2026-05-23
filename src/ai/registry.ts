@@ -275,7 +275,7 @@ export const tasks = {
   VariantGenTask: {
     kind: 'VariantGenTask',
     description:
-      'Phase 2 — 给一道错题 + cause 生成 1 道变式题。spec §3.4.1 cause-targeted；MVP 单 pass，draft_status=draft',
+      'Phase 2 — 给一道错题 + cause 生成 1 条 variant_question proposal。spec §3.4.1 cause-targeted；接受后再物化 question/draft_status',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
     fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
