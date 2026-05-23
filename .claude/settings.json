@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cmd=$(jq -r '.tool_input.command // empty'); case \"$cmd\" in *'git fetch'*|*'git pull'*) br=$(git branch --show-current 2>/dev/null); up=$(git rev-parse --abbrev-ref @{upstream} 2>/dev/null); if [ -n \"$up\" ]; then ah=$(git rev-list --count $up..HEAD 2>/dev/null); be=$(git rev-list --count HEAD..$up 2>/dev/null); if [ \"${ah:-0}\" -gt 0 ] || [ \"${be:-0}\" -gt 0 ]; then echo \"branch-delta: $br vs $up — ahead $ah / behind $be\" >&2; if [ \"${be:-0}\" -gt 0 ]; then authors=$(git log --format='%an' HEAD..$up 2>/dev/null | sort -u | tr '\\n' ',' | sed 's/,$//'); echo \"  upstream authors: $authors\" >&2; fi; fi; fi ;; esac"
+            "command": "bash .claude/hooks/post-fetch-divergence.sh"
           }
         ]
       }
