@@ -17,6 +17,7 @@ import { getCauseLabel, getCausePriority } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { knowledge, material_fsrs_state, question } from '@/db/schema';
 import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
+import type { EffectiveTruth } from '@/server/review/effective-truth';
 import {
   type SlimSubjectProfile,
   type SubjectProfile,
@@ -45,6 +46,8 @@ export interface PlanQueueItem {
   rationale: string;
   /** Last failure attempt time (sec). Null if no failure on record. */
   last_failure_at: number | null;
+  /** Last failure attempt event plus effective correction state. */
+  last_failure_event: { id: string; correction_state: EffectiveTruth } | null;
   /** Slim subject rendering/profile metadata resolved from knowledge_ids[0]. */
   subject_profile: SlimSubjectProfile;
 }
@@ -217,17 +220,36 @@ function fullSubjectProfileForKnowledgeIds(
 
 // ---------- Cause lookup (latest failure per question) ----------
 
-function pickLatestCausePerQuestion(
-  failures: FailureAttempt[],
-): Map<string, { cause: CauseCategoryT | null; created_at: Date }> {
-  const out = new Map<string, { cause: CauseCategoryT | null; created_at: Date }>();
+function pickLatestCausePerQuestion(failures: FailureAttempt[]): Map<
+  string,
+  {
+    cause: CauseCategoryT | null;
+    created_at: Date;
+    attempt_event_id: string;
+    correction_state: EffectiveTruth;
+  }
+> {
+  const out = new Map<
+    string,
+    {
+      cause: CauseCategoryT | null;
+      created_at: Date;
+      attempt_event_id: string;
+      correction_state: EffectiveTruth;
+    }
+  >();
   for (const f of failures) {
     const existing = out.get(f.question_id);
     if (existing && existing.created_at > f.created_at) continue;
     // user_cause has precedence over judge (user has the last word) per project memory.
     const cause: CauseCategoryT | null =
       f.user_cause?.primary_category ?? f.judge?.cause.primary_category ?? null;
-    out.set(f.question_id, { cause, created_at: f.created_at });
+    out.set(f.question_id, {
+      cause,
+      created_at: f.created_at,
+      attempt_event_id: f.attempt_event_id,
+      correction_state: f.correction_state,
+    });
   }
   return out;
 }
@@ -311,7 +333,15 @@ export async function planReviewSession(params: PlanReviewSessionParams): Promis
 
   // Cause lookup — one batched pull for all candidate qids.
   const allCandidateQids = [...projectedQids, ...newRows.map((n) => n.question_id)];
-  let causeByQid = new Map<string, { cause: CauseCategoryT | null; created_at: Date }>();
+  let causeByQid = new Map<
+    string,
+    {
+      cause: CauseCategoryT | null;
+      created_at: Date;
+      attempt_event_id: string;
+      correction_state: EffectiveTruth;
+    }
+  >();
   if (allCandidateQids.length > 0) {
     const candidatesFailures = await getFailureAttempts(params.db, {
       questionIds: allCandidateQids,
@@ -332,7 +362,8 @@ export async function planReviewSession(params: PlanReviewSessionParams): Promis
   const items: QueueItemWithoutSubject[] = [];
   for (const n of newRows) {
     const cause = causeByQid.get(n.question_id)?.cause ?? null;
-    const lastFailureAt = causeByQid.get(n.question_id)?.created_at ?? null;
+    const latestFailure = causeByQid.get(n.question_id) ?? null;
+    const lastFailureAt = latestFailure?.created_at ?? null;
     const subjectProfile = fullSubjectProfileForKnowledgeIds(
       n.knowledge_ids,
       domainByKnowledgeIdForCause,
@@ -354,12 +385,19 @@ export async function planReviewSession(params: PlanReviewSessionParams): Promis
         subjectProfile,
       }),
       last_failure_at: lastFailureAt ? Math.floor(lastFailureAt.getTime() / 1000) : null,
+      last_failure_event: latestFailure
+        ? {
+            id: latestFailure.attempt_event_id,
+            correction_state: latestFailure.correction_state,
+          }
+        : null,
     });
   }
   for (const r of dueRows) {
     const state = r.state as FsrsStateSchemaT | null;
     const cause = causeByQid.get(r.question_id)?.cause ?? null;
-    const lastFailureAt = causeByQid.get(r.question_id)?.created_at ?? null;
+    const latestFailure = causeByQid.get(r.question_id) ?? null;
+    const lastFailureAt = latestFailure?.created_at ?? null;
     const overdue = daysOverdue(r.due_at, now);
     const lapses = state?.lapses ?? 0;
     const knowledgeIds = (r.knowledge_ids as string[]) ?? [];
@@ -384,6 +422,12 @@ export async function planReviewSession(params: PlanReviewSessionParams): Promis
         subjectProfile,
       }),
       last_failure_at: lastFailureAt ? Math.floor(lastFailureAt.getTime() / 1000) : null,
+      last_failure_event: latestFailure
+        ? {
+            id: latestFailure.attempt_event_id,
+            correction_state: latestFailure.correction_state,
+          }
+        : null,
     });
   }
   const queueWithoutSubject = items.slice(0, limit);

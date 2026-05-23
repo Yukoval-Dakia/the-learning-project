@@ -71,6 +71,7 @@ describe('GET /api/review/plan', () => {
         activity_ref: { kind: string; id: string };
         priority: number;
         rationale: string;
+        last_failure_event: { id: string; correction_state: { state: string } } | null;
         subject_profile: { id: string; displayName: string };
       }>;
     };
@@ -80,6 +81,10 @@ describe('GET /api/review/plan', () => {
     expect(body.queue[0].activity_ref.id).toBe(body.queue[0].question_id);
     expect(body.queue[0].priority).toBeGreaterThanOrEqual(1);
     expect(body.queue[0].rationale).toContain('首次复习');
+    expect(body.queue[0].last_failure_event).toEqual({
+      id: expect.any(String),
+      correction_state: expect.objectContaining({ state: 'active' }),
+    });
     expect(body.queue[0].subject_profile.id).toBe('wenyan');
     expect(body.queue[0].subject_profile.displayName).toBe('文言文');
   });

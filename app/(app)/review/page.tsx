@@ -5,6 +5,10 @@ import {
   ReviewSessionRibbon,
   SessionEndSummary,
 } from '@/ui/components/ReviewSessionChrome';
+import {
+  CorrectionStateRenderer,
+  type CorrectionStateSnapshot,
+} from '@/ui/correction/CorrectionStateRenderer';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import {
@@ -53,6 +57,7 @@ interface PlanQueueItem {
   priority: 1 | 2 | 3 | 4 | 5;
   rationale: string;
   last_failure_at: number | null;
+  last_failure_event: { id: string; correction_state: CorrectionStateSnapshot } | null;
   subject_profile: SlimSubjectProfile;
 }
 
@@ -342,6 +347,7 @@ export default function ReviewPage() {
           <div className="review-card-meta">
             <Badge tone={PRIORITY_TONE[current.priority]}>{PRIORITY_LABEL[current.priority]}</Badge>
             <span className="rationale">{current.rationale}</span>
+            <CorrectionStateRenderer state={current.last_failure_event?.correction_state} compact />
           </div>
 
           <MathMarkdown

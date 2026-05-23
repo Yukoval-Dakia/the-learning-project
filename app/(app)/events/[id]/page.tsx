@@ -7,6 +7,10 @@
 // + payload pretty-printed". This page is the chain explorer; downstream
 // flows (rate, accept, etc.) keep their existing entry points.
 
+import {
+  CorrectionStateRenderer,
+  type CorrectionStateSnapshot,
+} from '@/ui/correction/CorrectionStateRenderer';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
 import { type ActivityRefInput, affectedRefsForCorrection } from '@/ui/lib/event-corrections';
 import { formatRelTime } from '@/ui/lib/utils';
@@ -16,10 +20,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { use, useState } from 'react';
 
-type CorrectionState = 'active' | 'retracted' | 'marked_wrong' | 'superseded';
-
-interface CorrectionStatus {
-  state: CorrectionState;
+interface CorrectionStatus extends CorrectionStateSnapshot {
   correction_event_id: string | null;
   replacement_event_id: string | null;
 }
@@ -147,13 +148,6 @@ function outcomeTone(outcome: string): BadgeTone {
   return 'neutral';
 }
 
-function correctionTone(state: CorrectionState): BadgeTone {
-  if (state === 'active') return 'good';
-  if (state === 'retracted' || state === 'marked_wrong') return 'again';
-  if (state === 'superseded') return 'hard';
-  return 'neutral';
-}
-
 function EventCard({ event, kind }: { event: EventRow; kind: EventKind }) {
   return (
     <article className={`event-card is-${kind}`}>
@@ -161,9 +155,7 @@ function EventCard({ event, kind }: { event: EventRow; kind: EventKind }) {
         <Badge tone={actionTone(event.action)}>{event.action}</Badge>
         <Badge tone="neutral">{event.subject_kind}</Badge>
         {event.outcome && <Badge tone={outcomeTone(event.outcome)}>{event.outcome}</Badge>}
-        <Badge tone={correctionTone(event.correction_status.state)}>
-          {event.correction_status.state}
-        </Badge>
+        <CorrectionStateRenderer state={event.correction_status} showActive compact />
         <span className="when">{formatRelTime(new Date(event.created_at))}</span>
       </div>
 
@@ -245,14 +237,7 @@ function CorrectionControls({
   return (
     <section className="ec-correction-panel">
       <div className="ec-correction-head">
-        <Badge tone={correctionTone(event.correction_status.state)}>
-          {event.correction_status.state}
-        </Badge>
-        {event.correction_status.correction_event_id && (
-          <Link href={`/events/${event.correction_status.correction_event_id}`}>
-            {event.correction_status.correction_event_id.slice(0, 8)}…
-          </Link>
-        )}
+        <CorrectionStateRenderer state={event.correction_status} showActive />
       </div>
 
       <textarea

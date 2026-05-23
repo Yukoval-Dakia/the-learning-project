@@ -12,13 +12,46 @@
 // changes from mistake.id to question.id (opaque to clients).
 
 import { type ActivityRefT, questionRef } from '@/core/schema/activity';
+import type { CauseCategoryT } from '@/core/schema/event/blocks';
 import { db } from '@/db/client';
 import { material_fsrs_state, question } from '@/db/schema';
-import { getFailureAttempts, getJudgeForAttempt } from '@/server/events/queries';
+import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
 import { errorResponse } from '@/server/http/errors';
-import { and, desc, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';
+import type { EffectiveTruth } from '@/server/review/effective-truth';
+import { and, eq, inArray, lte } from 'drizzle-orm';
 
 export const runtime = 'nodejs';
+
+function pickLatestFailureByQuestion(failures: FailureAttempt[]): Map<
+  string,
+  {
+    id: string;
+    cause: CauseCategoryT | null;
+    created_at: Date;
+    correction_state: EffectiveTruth;
+  }
+> {
+  const out = new Map<
+    string,
+    {
+      id: string;
+      cause: CauseCategoryT | null;
+      created_at: Date;
+      correction_state: EffectiveTruth;
+    }
+  >();
+  for (const failure of failures) {
+    const existing = out.get(failure.question_id);
+    if (existing && existing.created_at > failure.created_at) continue;
+    out.set(failure.question_id, {
+      id: failure.attempt_event_id,
+      cause: failure.user_cause?.primary_category ?? failure.judge?.cause.primary_category ?? null,
+      created_at: failure.created_at,
+      correction_state: failure.correction_state,
+    });
+  }
+  return out;
+}
 
 export async function GET(req: Request): Promise<Response> {
   try {
@@ -112,6 +145,15 @@ export async function GET(req: Request): Promise<Response> {
         }
       }
     }
+    const dueQuestionIds = dueRows.map((row) => row.question_id);
+    const dueAttempts =
+      dueQuestionIds.length > 0
+        ? await getFailureAttempts(db, {
+            questionIds: dueQuestionIds,
+            limit: Math.max(dueQuestionIds.length * 4, 100),
+          })
+        : [];
+    const latestFailureByQid = pickLatestFailureByQuestion([...newAttempts, ...dueAttempts]);
 
     type OutRow = {
       id: string;
@@ -123,32 +165,45 @@ export async function GET(req: Request): Promise<Response> {
       cause: unknown;
       fsrs_state: unknown;
       created_at: Date;
+      last_failure_event: { id: string; correction_state: EffectiveTruth } | null;
     };
 
     // Null-state (never reviewed) rows come first, then the already-due slice.
     const combined: OutRow[] = [
-      ...newRows.map((n) => ({
-        id: n.question_id,
-        activity_ref: questionRef(n.question_id),
-        question_id: n.question_id,
-        prompt_md: n.prompt_md.slice(0, 1000),
-        reference_md: n.reference_md ? n.reference_md.slice(0, 1000) : null,
-        knowledge_ids: n.knowledge_ids,
-        cause: null,
-        fsrs_state: null,
-        created_at: n.created_at,
-      })),
-      ...dueRows.map((r) => ({
-        id: r.question_id,
-        activity_ref: questionRef(r.question_id),
-        question_id: r.question_id,
-        prompt_md: r.prompt_md.slice(0, 1000),
-        reference_md: r.reference_md ? r.reference_md.slice(0, 1000) : null,
-        knowledge_ids: (r.knowledge_ids as string[]) ?? [],
-        cause: null,
-        fsrs_state: r.state ?? null,
-        created_at: r.created_at,
-      })),
+      ...newRows.map((n) => {
+        const latestFailure = latestFailureByQid.get(n.question_id) ?? null;
+        return {
+          id: n.question_id,
+          activity_ref: questionRef(n.question_id),
+          question_id: n.question_id,
+          prompt_md: n.prompt_md.slice(0, 1000),
+          reference_md: n.reference_md ? n.reference_md.slice(0, 1000) : null,
+          knowledge_ids: n.knowledge_ids,
+          cause: latestFailure?.cause ?? null,
+          fsrs_state: null,
+          created_at: n.created_at,
+          last_failure_event: latestFailure
+            ? { id: latestFailure.id, correction_state: latestFailure.correction_state }
+            : null,
+        };
+      }),
+      ...dueRows.map((r) => {
+        const latestFailure = latestFailureByQid.get(r.question_id) ?? null;
+        return {
+          id: r.question_id,
+          activity_ref: questionRef(r.question_id),
+          question_id: r.question_id,
+          prompt_md: r.prompt_md.slice(0, 1000),
+          reference_md: r.reference_md ? r.reference_md.slice(0, 1000) : null,
+          knowledge_ids: (r.knowledge_ids as string[]) ?? [],
+          cause: latestFailure?.cause ?? null,
+          fsrs_state: r.state ?? null,
+          created_at: r.created_at,
+          last_failure_event: latestFailure
+            ? { id: latestFailure.id, correction_state: latestFailure.correction_state }
+            : null,
+        };
+      }),
     ];
 
     return Response.json({ rows: combined.slice(0, limit) });
@@ -156,11 +211,3 @@ export async function GET(req: Request): Promise<Response> {
     return errorResponse(err);
   }
 }
-
-// Silence unused-import warnings while keeping helpers available for future
-// projections (cause via judge events, etc.)
-void getJudgeForAttempt;
-void desc;
-void isNull;
-void or;
-void sql;

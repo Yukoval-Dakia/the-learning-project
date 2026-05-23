@@ -73,6 +73,7 @@ export async function listMistakeProjectionRows(db: Db, filter: ListMistakeProje
         wrong_answer_md: (failure.answer_md ?? '').slice(0, 200),
         knowledge_ids: failure.referenced_knowledge_ids,
         cause,
+        correction_state: failure.correction_state,
         created_at: Math.floor(failure.created_at.getTime() / 1000),
       },
     ];

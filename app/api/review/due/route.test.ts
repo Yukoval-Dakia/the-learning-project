@@ -121,6 +121,7 @@ describe('GET /api/review/due', () => {
     // q_null: failure attempt, no fsrs state
     await seedFailureAttempt('q_null');
     // q_due: already-reviewed but overdue
+    await seedFailureAttempt('q_due');
     await seedFsrsState({
       question_id: 'q_due',
       due_at: new Date(pastIso),
@@ -136,7 +137,13 @@ describe('GET /api/review/due', () => {
     const res = await getReview();
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      rows: Array<{ id: string; question_id: string; fsrs_state: unknown; activity_ref: unknown }>;
+      rows: Array<{
+        id: string;
+        question_id: string;
+        fsrs_state: unknown;
+        activity_ref: unknown;
+        last_failure_event: { id: string; correction_state: { state: string } } | null;
+      }>;
     };
 
     const ids = body.rows.map((r) => r.id);
@@ -151,6 +158,10 @@ describe('GET /api/review/due', () => {
     });
     expect((body.rows[0].activity_ref as { id: string }).id).toBe(body.rows[0].question_id);
     expect(body.rows[0].fsrs_state).toBeNull();
+    expect(body.rows.find((row) => row.id === 'q_due')?.last_failure_event).toEqual({
+      id: 'evt_attempt_q_due',
+      correction_state: expect.objectContaining({ state: 'active' }),
+    });
   });
 
   it('returns empty rows when no cards are due', async () => {
