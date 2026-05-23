@@ -135,33 +135,35 @@ describe('SubjectRegistry', () => {
 
   it('registers a custom profile', () => {
     const registry = new SubjectRegistry();
-    const physics = {
+    // Use a synthetic id (not a real subject) so this test doesn't collide
+    // with profiles added to the default registry over time.
+    const testSubject = {
       ...registry.resolve('math'),
-      id: 'physics',
+      id: 'test_subject',
       version: '1.0.0',
-      displayName: '物理',
+      displayName: '测试学科',
     };
-    registry.register(physics, ['phys', 'physics_101']);
+    registry.register(testSubject, ['test_alias', 'test_subject_101']);
 
-    expect(registry.resolve('physics').displayName).toBe('物理');
-    expect(registry.resolve('phys').id).toBe('physics');
-    expect(registry.listIds()).toContain('physics');
+    expect(registry.resolve('test_subject').displayName).toBe('测试学科');
+    expect(registry.resolve('test_alias').id).toBe('test_subject');
+    expect(registry.listIds()).toContain('test_subject');
   });
 
   it('throws instead of silently overwriting duplicate profile ids', () => {
     const registry = new SubjectRegistry();
-    const firstPhysics = {
+    const firstSubject = {
       ...registry.resolve('math'),
-      id: 'physics',
+      id: 'test_subject',
       version: '1.0.0',
-      displayName: '物理',
+      displayName: '测试学科',
     };
-    const secondPhysics = { ...firstPhysics, displayName: '覆盖物理' };
+    const secondSubject = { ...firstSubject, displayName: '覆盖测试学科' };
 
-    registry.register(firstPhysics);
+    registry.register(firstSubject);
 
-    expect(() => registry.register(secondPhysics)).toThrow(/already registered/i);
-    expect(registry.resolve('physics').displayName).toBe('物理');
+    expect(() => registry.register(secondSubject)).toThrow(/already registered/i);
+    expect(registry.resolve('test_subject').displayName).toBe('测试学科');
   });
 });
 
