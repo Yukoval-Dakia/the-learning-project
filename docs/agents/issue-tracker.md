@@ -60,6 +60,42 @@ Default labels:
 - `needs-triage` when the project or milestone is not clear yet;
 - `drift` when the issue is about code/doc/status mismatch.
 
+### Issue body template
+
+When the issue maps to a plan-doc task (the common case for phase work), use this 6-section template. It is the shape that worked for the P0 milestone (YUK-27..33). Skip sections that don't apply rather than leaving them empty.
+
+```markdown
+## Files
+- Create: <abs path>
+- Modify: <abs path>:<line range>
+
+## Acceptance
+- <verifiable bullet — command + expected output>
+- ...
+
+## Spec
+- spec: <doc path + section anchor>
+- plan: <doc path + Task #>
+
+## Commit
+- <commit message hint + `Closes YUK-NN`>
+
+## Depends on
+- <YUK-NN that must complete first>
+
+## Boundaries (out of scope)
+- <thing this issue explicitly does NOT do; point to the issue that will>
+```
+
+Title format: `[<phase>/<task#>] <verb phrase>` (e.g. `[P0/4] Physics e2e smoke test`). Makes filtering by phase trivial in the Linear UI and keeps phase order visible.
+
+### Granularity
+
+- **Merge** two plan tasks into one issue when they must commit together (e.g. P0/1 + P0/2 — profile literal + registration — would leave the registry in an inconsistent half-state if shipped separately).
+- **Split** a plan task into multiple issues when each step is independently reviewable / mergeable.
+- Floor: ≥ 3 issues per milestone. Fewer and the granularity is too coarse to give meaningful progress signal.
+- Ceiling: avoid 1 issue per commit. Debugging fixes / formatter passes / rebase collateral don't get their own issue — mention them in the parent issue's PR body or commit trailer.
+
 ### 创建 issue
 
 通过当前 agent runtime 暴露的 Linear MCP / app connector（不要再用 `gh issue create`）：
@@ -98,14 +134,48 @@ Fibonacci 1 / 2 / 3 / 5 / 8 points。> 8 的 issue 应拆分。
 
 ## PR ↔ Issue link
 
-Linear 的 GitHub integration 已开启。当前仓库 webhook 只订阅 `push`，用于 commit magic-word link；PR / branch link 由 Linear GitHub integration 处理。预期行为：
+Linear 的 GitHub integration 已开启。当前仓库 webhook 只订阅 `push`，用于 commit magic-word link；PR / branch link 由 Linear GitHub integration 处理。
 
-- PR 标题或描述里包含 `YUK-XX` → 自动 link issue。
-- PR 进 review → issue 自动转 "In Review"。
-- PR merged → issue 自动转 "Done"。
-- branch 名以 `yuk-xx-` 开头（Linear `save_issue` 返回的 `gitBranchName`）也会自动 link。
+### Confirmed behaviours
 
-**Commit message / PR title / PR description 写 `YUK-XX`，不要给新工作写裸 `#N`。** `Closes YUK-XX` / `Fixes YUK-XX` / `Part of YUK-XX` 会由 Linear 处理。旧 GitHub issue 的 `#N` 只在追溯历史上下文时使用。
+These are observed working in the YUK-27..33 (P0 milestone) execution:
+
+- ✅ **commit message** containing `Closes YUK-XX` → integration auto-adds the commit as an attachment on the issue, and auto-sets the issue assignee to the commit author.
+- ✅ PR title / description containing `YUK-XX` → integration auto-adds the PR as an attachment on the issue (separate from commit attachments).
+
+### Unconfirmed (verify before relying on)
+
+The following are advertised behaviours of Linear's GitHub integration but were **not** observable in the YUK-27..33 run, because the issues were manually moved to Done before the PR merged. The Linear settings may or may not have the matching automation enabled — verify by leaving one issue in `In Progress`, merging its PR, and observing the state after ~1 minute.
+
+- ❓ PR moved to review state → issue auto-transitions to `In Review`
+- ❓ PR merged → issue auto-transitions to `Done`
+- ❓ Branch named `yuk-xx-<slug>` (Linear's `gitBranchName`) auto-links to the issue. Our branches used `<phase>/<slug>` form instead of `yuk-xx-`, so this was never exercised.
+
+### Important nuance: commit > PR body
+
+Integration scans **commit messages**, not PR descriptions alone, for link triggers. Observed in YUK-33: its PR body said `Closes YUK-33 (this PR)` but no commit message referenced YUK-33, and the issue got no auto-attachment. Put `Closes YUK-XX` in at least one commit message on the branch, not only in the PR body.
+
+### Keyword convention
+
+**Use `YUK-XX` in commit messages, PR titles, and PR descriptions for all new work — never bare `#N`.** Linear recognises `Closes YUK-XX` / `Fixes YUK-XX` / `Resolves YUK-XX` / `Part of YUK-XX`. Legacy `#N` is reserved for historical GitHub-issue references during archaeology.
+
+### Manual overrides — when you still need to call `save_issue`
+
+The integration does not know when **you start** a task. These transitions stay manual:
+
+- `Todo → In Progress` when you write the first line of code / open the first tool call for the issue. The integration has no signal for this. Call `save_issue` once.
+- Adding a PR URL as a Linear attachment via `links` field on `save_issue` — only useful if the PR body / commits don't reference the issue (the integration would otherwise add it for you). Rare.
+- Re-opening / cancelling an issue mid-work because scope shifted.
+
+After `Closes YUK-XX` lands in a commit and the PR merges, the integration **should** finish the loop. If the issue is still `In Progress` an hour after merge, that's a real desync — file it as feedback so this doc can be tightened.
+
+### What we don't auto-sync (intentional YAGNI)
+
+These would add infra without solving an observed problem; do **not** build them unless a concrete failure forces it:
+
+- **No reverse sync** (Linear → git). E.g. moving an issue to In Progress should not auto-create a branch / checkout. Treats git as the source of truth; Linear UI actions shouldn't have repo side-effects.
+- **No commit-hook parser** that calls Linear API on every commit. The integration already covers magic words; doubling up causes duplicate attachments / re-toggled state.
+- **No cron reconcile**. If a desync is observed, write it in plain text first; introduce automation after the second instance, not the first.
 
 ## Migration note (2026-05-23)
 
