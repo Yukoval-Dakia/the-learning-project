@@ -199,3 +199,53 @@ describe('M2.1: mathProfile + steps@1', () => {
     expect(runner?.manifest.stability).toBe('experimental');
   });
 });
+
+describe('P0: physics SubjectProfile', () => {
+  it('is registered in the default registry', () => {
+    const profile = resolveSubjectProfile('physics');
+    expect(profile.id).toBe('physics');
+    expect(profile.displayName).toBe('物理');
+  });
+
+  it('resolves via the physical alias', () => {
+    const profile = resolveSubjectProfile('physical');
+    expect(profile.id).toBe('physics');
+  });
+
+  it('declares katex renderConfig', async () => {
+    const { physicsProfile } = await import('@/subjects/physics/profile');
+    expect(physicsProfile.renderConfig.notation).toBe('katex');
+  });
+
+  it('declares cause categories including unit and dimension', async () => {
+    const { physicsProfile } = await import('@/subjects/physics/profile');
+    const causeIds = physicsProfile.causeCategories.map((c) => c.id);
+    expect(causeIds).toContain('unit');
+    expect(causeIds).toContain('dimension');
+  });
+
+  it('judgeCapabilities at P0: exact + semantic', async () => {
+    const { physicsProfile } = await import('@/subjects/physics/profile');
+    expect(physicsProfile.judgeCapabilities).toEqual(['exact', 'semantic']);
+  });
+
+  it('appears in registry.listIds()', async () => {
+    const { getDefaultSubjectRegistry } = await import('@/subjects/profile');
+    const registry = getDefaultSubjectRegistry();
+    expect(registry.listIds()).toContain('physics');
+  });
+
+  it('KNOWN_SUBJECT_IDS contains physics', () => {
+    expect(KNOWN_SUBJECT_IDS).toContain('physics');
+  });
+
+  it('physicsProfile passes validateProfile against default registry', async () => {
+    const { createDefaultRegistry } = await import('@/core/capability/judges');
+    const { validateProfile } = await import('@/core/capability/validate-profile');
+    const { physicsProfile } = await import('@/subjects/physics/profile');
+    const registry = createDefaultRegistry();
+    const result = validateProfile(physicsProfile, registry);
+    expect(result.errors, JSON.stringify(result.errors)).toEqual([]);
+    expect(result.valid).toBe(true);
+  });
+});
