@@ -12,6 +12,10 @@
 // notices when reconciling Linear state much later. This hook is the cheap
 // deterministic catch.
 //
+// Also blocks shorthand like `Closes YUK-27 + YUK-28`: observed 2026-05-23,
+// Linear only attached/closed the first issue. Repeat the keyword per issue:
+// `Closes YUK-27` + `Closes YUK-28`.
+//
 // Exit 2 + stderr to block. Bypass = rewrite the commit message to include
 // YUK-NN, or commit from your own shell (hook only inspects Claude Bash calls).
 // Internal failures exit 0 so a buggy guard never blocks unrelated work —
@@ -73,6 +77,30 @@ const branchSuggestsLinear = (branch) => {
 };
 
 const YUK_REGEX = /\bYUK-\d+\b/;
+const LINEAR_KEYWORD_REFERENCE_REGEX =
+  /\b(?:closes?|closed|fix(?:e[sd])?|resolve[sd]?|part of|refs?|references?)\s+YUK-\d+\b/gi;
+
+const findAmbiguousLinearKeywordList = (text) => {
+  const matches = Array.from(text.matchAll(LINEAR_KEYWORD_REFERENCE_REGEX));
+  for (let i = 0; i < matches.length; i += 1) {
+    const match = matches[i];
+    const segmentStart = match.index + match[0].length;
+    const segmentEnd =
+      i + 1 < matches.length ? matches[i + 1].index : text.length;
+    const trailingSegment = text.slice(segmentStart, segmentEnd);
+    const bareIssue = trailingSegment.match(YUK_REGEX);
+    if (!bareIssue) continue;
+
+    return {
+      issue: bareIssue[0],
+      snippet: `${match[0]}${trailingSegment}`
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 160),
+    };
+  }
+  return null;
+};
 
 // ---------- tokenizer ----------
 // Whitespace split with awareness of single / double quoted segments.
@@ -333,6 +361,16 @@ const main = async () => {
       inv.cwdOverride,
     );
     if (opaque) process.exit(0);
+    const ambiguousKeywordList = findAmbiguousLinearKeywordList(text);
+    if (ambiguousKeywordList) {
+      block(
+        `commit on Linear-tracked branch \`${branch}\` uses one Linear keyword for multiple issues.\n` +
+          `Problem segment: \`${ambiguousKeywordList.snippet}\`\n` +
+          `Repeat the magic keyword before \`${ambiguousKeywordList.issue}\`, e.g. ` +
+          '`Closes YUK-27` and `Closes YUK-28`.\n' +
+          'Linear may only attach / close the first issue in shorthand like `Closes YUK-27 + YUK-28`.',
+      );
+    }
     if (YUK_REGEX.test(text)) process.exit(0);
 
     block(
