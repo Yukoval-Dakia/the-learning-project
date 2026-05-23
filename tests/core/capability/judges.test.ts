@@ -1,5 +1,6 @@
 import { exactJudgeCapability } from '@/core/capability/judges/exact';
 import { keywordJudgeCapability } from '@/core/capability/judges/keyword';
+import { stepsV1Capability } from '@/core/capability/judges/steps';
 import { JudgeResultV2 } from '@/core/schema/capability';
 import { judgeRouter, judgeRouterV2 } from '@/server/ai/judges';
 import type { JudgeResult } from '@/server/ai/judges/exact';
@@ -230,6 +231,20 @@ describe('keywordJudgeCapability', () => {
 
     expect(result.coarse_outcome).toBe('correct');
     expect(result.score).toBe(1);
+  });
+});
+
+describe('stepsV1Capability', () => {
+  it('keeps the core registry fallback explicit about JudgeInvoker runtime context', async () => {
+    const result = await stepsV1Capability.run({
+      question: { prompt_md: '解方程', reference_solution: { expected_signals: ['x=1'] } },
+      answer: { content: 'x=1' },
+    });
+
+    expect(result.coarse_outcome).toBe('unsupported');
+    expect(result.feedback_md).toContain('JudgeInvoker');
+    expect(result.feedback_md).not.toMatch(/skeleton|M2\.1|M2\.2/i);
+    expect(result.evidence_json).toMatchObject({ reason: 'server_runtime_required' });
   });
 });
 

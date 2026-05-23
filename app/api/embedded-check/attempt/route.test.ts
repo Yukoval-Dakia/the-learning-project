@@ -84,6 +84,17 @@ describe('POST /api/embedded-check/attempt', () => {
     expect(events).toHaveLength(1);
     expect(events[0].action).toBe('attempt');
     expect(events[0].outcome).toBe('success');
+    const payload = events[0].payload as Record<string, unknown>;
+    expect(typeof payload.judge_elapsed_ms).toBe('number');
+    expect(payload.judge).toMatchObject({
+      route: 'exact',
+      telemetry: {
+        route: 'exact',
+        coarse_outcome: 'correct',
+        question_id: 'q1',
+        subject_id: 'wenyan',
+      },
+    });
 
     const records = await db.select().from(learning_record);
     expect(records).toHaveLength(0);

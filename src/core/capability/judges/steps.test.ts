@@ -116,7 +116,7 @@ describe('stepsV1Capability manifest', () => {
     expect(stepsV1Capability.manifest.stability).toBe('experimental');
   });
 
-  it('run() returns unsupported skeleton response (M2.1 placeholder)', async () => {
+  it('run() returns unsupported server-runtime-required response', async () => {
     const result = await stepsV1Capability.run({
       question: { foo: 'bar' },
       answer: { content: 'student answer' },
@@ -125,6 +125,8 @@ describe('stepsV1Capability manifest', () => {
     expect(result.score).toBeNull();
     expect(result.score_meaning).toBe('steps_v1_weighted');
     expect(result.capability_ref).toEqual({ id: 'steps', version: '1.0.0' });
-    expect(result.feedback_md).toContain('M2.2');
+    expect(result.feedback_md).toContain('JudgeInvoker');
+    expect(result.feedback_md).not.toMatch(/skeleton|M2\.1|M2\.2/i);
+    expect(result.evidence_json).toMatchObject({ reason: 'server_runtime_required' });
   });
 });
