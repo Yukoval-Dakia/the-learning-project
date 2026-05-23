@@ -272,22 +272,38 @@ export function runAccelerator(input: {
 }
 ```
 
-Implementation guide (per spec §7.4 table):
+Implementation guide (per spec §7.4 table) — **revised 2026-05-23 per codex review #98 P1 finding line 284**:
+
+Semantics clarified:
+- `dimension_match`: true iff student's physical dimension equals reference's dimension family (velocity == velocity even if `km/h` vs `m/s`). Unit conversion irrelevant — same family is what counts.
+- `unit_exact_match`: true iff student's literal unit string equals reference's literal unit string (`m/s` == `m/s`, but `km/h` != `m/s` even if SI-equivalent).
+- `value_match`: true iff `|student_si − reference_si| / |reference_si| < tolerance` (default 0.05 = 5%). Only meaningful when `dimension_match=true`.
+- `value_close`: true iff value_match=false AND error ∈ [tolerance, 10×tolerance) ≈ [5%, 50%).
+- Signal derivation priority **(unit mismatch outranks numeric closeness when dim matches)**:
 
 ```
-parsed=true & dimension_match=true:
-  if value within tolerance:              signal = null (caller composes correct)
-  elif value within tolerance * 10 (5-50% off):  signal = numeric_close
-  else:                                   signal = numeric_off
+parsed=true & dimension_match=true & unit_exact_match=true:
+  if value_match:                       signal = null         (caller composes correct, score=1.0)
+  elif value_close:                     signal = numeric_close (5-50% off — partial 0.7)
+  else:                                 signal = numeric_off   (>50% off — incorrect 0.3)
+
+parsed=true & dimension_match=true & unit_exact_match=false:
+  signal = unit_mismatch_same_dimension                       (partial 0.4, REGARDLESS of value match)
+  # Educational concept: writing wrong unit IS the error to surface, even if numerically equivalent.
+  # Per spec §7.4 example: '30 km/h' vs ref '30 m/s' is dimension_match=true (both velocity),
+  # unit_exact_match=false, and result is unit_mismatch (not numeric_off after conversion).
+
 parsed=true & dimension_match=false:
-  if same dimension family (mass vs mass): signal = unit_mismatch_same_dimension
-  else:                                   signal = dimension_mismatch
-parsed=false:
-  if student answer purely numeric (no unit text): signal = missing_unit
-  else:                                   signal = unparseable (→ LLM fallback)
+  signal = dimension_mismatch                                 (incorrect 0.0)
+
+parsed=false & student answer purely numeric (no unit text):
+  signal = missing_unit                                       (incorrect 0.0)
+
+parsed=false (Chinese / compound / unrecognized form):
+  signal = unparseable                                        (→ LLM fallback)
 ```
 
-Tolerance semantics: `tolerance: 0.05` = 5% relative. So `|student - reference| / |reference| < 0.05` for value_match; `< 0.50` for value_close.
+Tolerance semantics: `tolerance: 0.05` = 5% relative. `|student − reference| / |reference| < 0.05` ⇒ value_match. Within `[0.05, 0.50)` ⇒ value_close. ≥ 0.50 ⇒ neither.
 
 - [ ] **Step 2**: Write `accelerator.test.ts` — pure-function tests:
 
@@ -303,40 +319,59 @@ describe('unit_dimension accelerator', () => {
     expect(r.parsed).toBe(true);
     expect(r.value_match).toBe(true);
     expect(r.dimension_match).toBe(true);
+    expect(r.unit_exact_match).toBe(true);
     expect(r.signal).toBe(null);
   });
 
-  it('numeric_close (3% off)', () => {
+  it('value_match within tolerance (3% off → correct)', () => {
+    // 29.1 vs 30 → 3% off → within 5% tolerance → value_match=true, signal=null
     const r = runAccelerator({ student_answer: '29.1 m/s', reference });
+    expect(r.value_match).toBe(true);
+    expect(r.signal).toBe(null);
+  });
+
+  it('numeric_close (16.7% off — in [5%, 50%) band)', () => {
+    // 25 vs 30 → 16.7% off → outside tolerance, within close band
+    const r = runAccelerator({ student_answer: '25 m/s', reference });
+    expect(r.value_match).toBe(false);
+    expect(r.value_close).toBe(true);
     expect(r.signal).toBe('numeric_close');
   });
 
   it('numeric_off (>50% off)', () => {
+    // 50 vs 30 → 66.7% off → outside both bands
     const r = runAccelerator({ student_answer: '50 m/s', reference });
+    expect(r.value_match).toBe(false);
+    expect(r.value_close).toBe(false);
     expect(r.signal).toBe('numeric_off');
   });
 
-  it('unit_mismatch_same_dimension (km/h vs m/s)', () => {
+  it('unit_mismatch_same_dimension (km/h vs m/s; signal outranks value match)', () => {
+    // 108 km/h = 30 m/s after SI conversion. But student literally wrote km/h ≠ m/s.
+    // Per revised semantics: dimension_match=true (both velocity), unit_exact_match=false
+    // → signal = unit_mismatch_same_dimension, irrespective of post-conversion value.
+    // Educational concept: surface the unit-conversion habit, not the (post-conv) numeric accuracy.
     const r = runAccelerator({ student_answer: '108 km/h', reference });
-    // 108 km/h = 30 m/s exact → wait, this is numeric_close because unit IS auto-converted by mathjs.
-    // Adjust: use 108 km/h vs ref 50 m/s → after conv = 30 m/s, |30-50|/50=0.4 → numeric_off (or unit_mismatch?)
-    // Decision: spec §7.4 says km/h vs m/s → unit_mismatch_same_dimension with score 0.4.
-    // Interpretation: detect that student wrote km/h (non-SI), even though value normalizes correctly.
-    // Implementation: compare student's literal unit string vs reference unit string.
+    expect(r.parsed).toBe(true);
+    expect(r.dimension_match).toBe(true);
+    expect(r.unit_exact_match).toBe(false);
     expect(r.signal).toBe('unit_mismatch_same_dimension');
   });
 
-  it('dimension_mismatch (m vs m/s)', () => {
+  it('dimension_mismatch (m vs m/s — different dimension family)', () => {
     const r = runAccelerator({ student_answer: '30 m', reference });
+    expect(r.parsed).toBe(true);
+    expect(r.dimension_match).toBe(false);
     expect(r.signal).toBe('dimension_mismatch');
   });
 
-  it('missing_unit (numeric only)', () => {
+  it('missing_unit (numeric only, no unit text)', () => {
     const r = runAccelerator({ student_answer: '30', reference });
+    expect(r.parsed).toBe(false);
     expect(r.signal).toBe('missing_unit');
   });
 
-  it('unparseable (Chinese / non-numeric)', () => {
+  it('unparseable (Chinese / non-numeric → LLM fallback)', () => {
     const r = runAccelerator({ student_answer: '忘了', reference });
     expect(r.parsed).toBe(false);
     expect(r.signal).toBe('unparseable');
@@ -350,7 +385,7 @@ describe('unit_dimension accelerator', () => {
 pnpm vitest run --config vitest.unit.config.ts src/core/capability/judges/unit_dimension/accelerator.test.ts
 ```
 
-Expected: 7/7 PASS. If `unit_mismatch_same_dimension` semantics off, see test inline note for design clarification — may need spec deltas note.
+Expected: 8/8 PASS (was 7; added `value_match within tolerance` for the band-boundary case).
 
 - [ ] **Step 4**: Defer commit to Task 3 / 4 (atomic with full runner).
 
@@ -495,7 +530,7 @@ Expected: 3/3 PASS.
 - Create: `src/core/capability/judges/unit_dimension/score.ts`
 - Create: `src/core/capability/judges/unit_dimension/score.test.ts`
 
-- [ ] **Step 1**: Write `score.ts`:
+- [ ] **Step 1**: Write `score.ts` (revised 2026-05-23 per codex review #98 P1 line 539 + P2 line 522 — unit_mismatch lives under dim_match=true; fallback non-equivalent細分):
 
 ```ts
 import type { AcceleratorResult } from './accelerator';
@@ -507,49 +542,92 @@ const CAPABILITY_REF = { id: 'unit_dimension', version: '1.0.0' };
 export function composeScore(input: {
   accelerator: AcceleratorResult;
   fallback?: LlmFallbackOutputT;
+  /** Reference value/unit needed for fallback numeric/unit comparison when accelerator unparseable */
+  reference?: { value: number; unit: string; tolerance: number };
   evidence: Record<string, unknown>;
 }): JudgeResultV2T {
-  const { accelerator, fallback, evidence } = input;
+  const { accelerator, fallback, reference, evidence } = input;
 
-  // Per spec §7.4 table
-  if (accelerator.parsed && accelerator.dimension_match) {
+  // ----- accelerator parsed successfully -----
+  if (accelerator.parsed) {
+    if (!accelerator.dimension_match) {
+      return mk(0.0, 'incorrect', 'dimension_mismatch', 0.85, '量纲错', evidence);
+    }
+    // dim_match=true; unit_exact takes precedence over value
+    if (!accelerator.unit_exact_match) {
+      return mk(
+        0.4, 'partial', 'unit_mismatch_same_dimension', 0.85,
+        '单位写错（量纲对，单位非 SI 形式或同 family 异单位）', evidence,
+      );
+    }
+    // dim_match + unit_exact: classify by value band
     if (accelerator.value_match) {
-      return mk(1.0, 'correct', null, 0.95, 'unit + value 全对', evidence);
+      return mk(1.0, 'correct', null, 0.95, '单位 + 数值全对', evidence);
     }
     if (accelerator.value_close) {
-      return mk(0.7, 'partial', 'numeric_close', 0.9, '单位对，数值近 (<5% off)', evidence);
+      return mk(
+        0.7, 'partial', 'numeric_close', 0.9,
+        '单位对，数值偏差 5-50%', evidence,
+      );
     }
-    return mk(0.3, 'incorrect', 'numeric_off', 0.85, '单位对，数值远 (>5% off)', evidence);
+    return mk(
+      0.3, 'incorrect', 'numeric_off', 0.85,
+      '单位对，数值偏差 >50%', evidence,
+    );
   }
-  if (accelerator.parsed && !accelerator.dimension_match) {
-    if (accelerator.signal === 'unit_mismatch_same_dimension') {
-      return mk(0.4, 'partial', 'unit_mismatch_same_dimension', 0.85, '单位错，量纲对', evidence);
-    }
-    return mk(0.0, 'incorrect', 'dimension_mismatch', 0.85, '量纲错', evidence);
-  }
+
+  // ----- accelerator NOT parsed -----
   if (accelerator.signal === 'missing_unit') {
     return mk(0.0, 'incorrect', 'missing_unit', 0.8, '只有数值，缺单位', evidence);
   }
-  // unparseable → fallback used
-  if (fallback?.equivalent_to_reference) {
-    return mk(1.0, 'correct', null, fallback.parser_confidence, 'LLM fallback 判同 (含中文 / 复合形式)', { ...evidence, fallback });
+
+  // unparseable → fallback should have been called
+  if (!fallback) {
+    return unsupported('accelerator unparseable, fallback not invoked', { ...evidence });
   }
-  if (fallback && fallback.student_value_si !== null && !fallback.equivalent_to_reference) {
-    return mk(0.0, 'incorrect', 'dimension_mismatch',
-      fallback.parser_confidence,
-      `LLM fallback 判不同: ${fallback.dimension_mismatch_reason ?? '量纲不对齐'}`,
-      { ...evidence, fallback });
+  if (fallback.equivalent_to_reference) {
+    return mk(
+      1.0, 'correct', null, fallback.parser_confidence,
+      'LLM fallback 判等价 (含中文 / 复合形式)', { ...evidence, fallback },
+    );
+  }
+  // fallback parsed but not equivalent —细分 per codex P1 finding line 539:
+  // - if fallback explicitly flagged dimension mismatch → dimension_mismatch
+  // - else compute numeric / unit relation from fallback's si values
+  if (fallback.dimension_mismatch_reason) {
+    return mk(
+      0.0, 'incorrect', 'dimension_mismatch', fallback.parser_confidence,
+      `LLM fallback 判量纲不一致: ${fallback.dimension_mismatch_reason}`,
+      { ...evidence, fallback },
+    );
+  }
+  if (fallback.student_value_si !== null && fallback.student_unit_si !== null && reference) {
+    // dim assumed OK (no dim_mismatch_reason). Decide by numeric band + unit literal.
+    const tol = reference.tolerance;
+    const rel = Math.abs(fallback.student_value_si - reference.value) / Math.abs(reference.value || 1);
+    const valueMatch = rel < tol;
+    const valueClose = !valueMatch && rel < tol * 10;
+    const unitExactMatch = fallback.student_unit_si === reference.unit;
+    if (!unitExactMatch) {
+      return mk(
+        0.4, 'partial', 'unit_mismatch_same_dimension', fallback.parser_confidence,
+        `LLM fallback 解析单位 ${fallback.student_unit_si} ≠ ref ${reference.unit}`,
+        { ...evidence, fallback },
+      );
+    }
+    if (valueClose) {
+      return mk(
+        0.7, 'partial', 'numeric_close', fallback.parser_confidence,
+        'LLM fallback 解析数值偏差 5-50%', { ...evidence, fallback },
+      );
+    }
+    return mk(
+      0.3, 'incorrect', 'numeric_off', fallback.parser_confidence,
+      'LLM fallback 解析数值偏差 >50%', { ...evidence, fallback },
+    );
   }
   // fallback couldn't parse either
-  return {
-    score: null,
-    score_meaning: 'unit_dimension_v1',
-    coarse_outcome: 'unsupported',
-    confidence: 0.1,
-    capability_ref: CAPABILITY_REF,
-    feedback_md: 'accelerator + LLM fallback 均不能解析',
-    evidence_json: { ...evidence, fallback },
-  };
+  return unsupported('accelerator + LLM fallback 均不能解析', { ...evidence, fallback });
 }
 
 function mk(
@@ -570,97 +648,230 @@ function mk(
     evidence_json: { ...evidence, signal },
   };
 }
+
+function unsupported(reason: string, evidence: Record<string, unknown>): JudgeResultV2T {
+  return {
+    score: null,
+    score_meaning: 'unit_dimension_v1',
+    coarse_outcome: 'unsupported',
+    confidence: 0.1,
+    capability_ref: CAPABILITY_REF,
+    feedback_md: reason,
+    evidence_json: evidence,
+  };
+}
 ```
 
-- [ ] **Step 2**: Write `score.test.ts` covering each of the 7 branches:
+- [ ] **Step 2**: Write `score.test.ts` covering all branches (revised 2026-05-23 per codex review #98 — added fallback non-equivalent細分 cases):
 
 ```ts
 import { describe, expect, it } from 'vitest';
 import { composeScore } from './score';
 
-const baseAcc = { value_si: 30, unit_si: 'm/s' } as const;
+const ref = { value: 30, unit: 'm/s', tolerance: 0.05 };
 
 describe('unit_dimension score composition', () => {
-  it('correct: parsed + dim_match + value_match → 1.0', () => {
+  // ---- accelerator parsed paths ----
+  it('correct: dim_match + unit_exact + value_match → 1.0', () => {
     const r = composeScore({
-      accelerator: { ...baseAcc, parsed: true, dimension_match: true, unit_exact_match: true, value_match: true, value_close: false, signal: null },
+      accelerator: {
+        value_si: 30, unit_si: 'm/s',
+        parsed: true, dimension_match: true, unit_exact_match: true,
+        value_match: true, value_close: false, signal: null,
+      },
+      reference: ref,
       evidence: {},
     });
     expect(r.score).toBe(1.0);
     expect(r.coarse_outcome).toBe('correct');
   });
 
-  it('numeric_close → 0.7 partial', () => {
+  it('numeric_close: dim_match + unit_exact + value_close → 0.7 partial', () => {
     const r = composeScore({
-      accelerator: { ...baseAcc, parsed: true, dimension_match: true, unit_exact_match: true, value_match: false, value_close: true, signal: 'numeric_close' },
-      evidence: {},
+      accelerator: {
+        value_si: 25, unit_si: 'm/s',
+        parsed: true, dimension_match: true, unit_exact_match: true,
+        value_match: false, value_close: true, signal: 'numeric_close',
+      },
+      reference: ref, evidence: {},
     });
     expect(r.score).toBe(0.7);
     expect(r.coarse_outcome).toBe('partial');
+    expect((r.evidence_json as { signal?: string }).signal).toBe('numeric_close');
   });
 
-  it('numeric_off → 0.3 incorrect', () => {
+  it('numeric_off: dim_match + unit_exact + neither match nor close → 0.3 incorrect', () => {
     const r = composeScore({
-      accelerator: { ...baseAcc, parsed: true, dimension_match: true, unit_exact_match: true, value_match: false, value_close: false, signal: 'numeric_off' },
-      evidence: {},
+      accelerator: {
+        value_si: 50, unit_si: 'm/s',
+        parsed: true, dimension_match: true, unit_exact_match: true,
+        value_match: false, value_close: false, signal: 'numeric_off',
+      },
+      reference: ref, evidence: {},
     });
     expect(r.score).toBe(0.3);
     expect(r.coarse_outcome).toBe('incorrect');
   });
 
-  it('unit_mismatch_same_dimension → 0.4 partial', () => {
+  it('unit_mismatch_same_dimension: dim_match=true + unit_exact=false → 0.4 partial (signal outranks value)', () => {
+    // km/h vs m/s: same dimension family, but literal unit differs.
+    // Even if SI-converted value matches, signal is unit_mismatch_same_dimension.
     const r = composeScore({
-      accelerator: { ...baseAcc, parsed: true, dimension_match: false, unit_exact_match: false, value_match: false, value_close: false, signal: 'unit_mismatch_same_dimension' },
-      evidence: {},
+      accelerator: {
+        value_si: 30, unit_si: 'm/s',  // post-conv value happens to match
+        parsed: true, dimension_match: true, unit_exact_match: false,
+        value_match: true, value_close: false, signal: 'unit_mismatch_same_dimension',
+      },
+      reference: ref, evidence: {},
     });
     expect(r.score).toBe(0.4);
     expect(r.coarse_outcome).toBe('partial');
+    expect((r.evidence_json as { signal?: string }).signal).toBe('unit_mismatch_same_dimension');
   });
 
-  it('dimension_mismatch → 0.0 incorrect', () => {
+  it('dimension_mismatch: dim_match=false → 0.0 incorrect', () => {
     const r = composeScore({
-      accelerator: { value_si: null, unit_si: null, parsed: true, dimension_match: false, unit_exact_match: false, value_match: false, value_close: false, signal: 'dimension_mismatch' },
-      evidence: {},
+      accelerator: {
+        value_si: 30, unit_si: 'm',
+        parsed: true, dimension_match: false, unit_exact_match: false,
+        value_match: false, value_close: false, signal: 'dimension_mismatch',
+      },
+      reference: ref, evidence: {},
     });
     expect(r.score).toBe(0.0);
-    expect(r.coarse_outcome).toBe('incorrect');
+    expect((r.evidence_json as { signal?: string }).signal).toBe('dimension_mismatch');
   });
 
-  it('missing_unit → 0.0 incorrect', () => {
+  it('missing_unit: parsed=false, signal=missing_unit → 0.0 incorrect', () => {
     const r = composeScore({
-      accelerator: { value_si: 30, unit_si: null, parsed: false, dimension_match: false, unit_exact_match: false, value_match: false, value_close: false, signal: 'missing_unit' },
-      evidence: {},
+      accelerator: {
+        value_si: 30, unit_si: null,
+        parsed: false, dimension_match: false, unit_exact_match: false,
+        value_match: false, value_close: false, signal: 'missing_unit',
+      },
+      reference: ref, evidence: {},
     });
     expect(r.score).toBe(0.0);
+    expect((r.evidence_json as { signal?: string }).signal).toBe('missing_unit');
   });
 
+  // ---- fallback paths ----
   it('unparseable + fallback equivalent → 1.0 correct', () => {
     const r = composeScore({
-      accelerator: { value_si: null, unit_si: null, parsed: false, dimension_match: false, unit_exact_match: false, value_match: false, value_close: false, signal: 'unparseable' },
-      fallback: { student_value_si: 30, student_unit_si: 'm/s', equivalent_to_reference: true, parser_confidence: 0.9 },
-      evidence: {},
+      accelerator: {
+        value_si: null, unit_si: null,
+        parsed: false, dimension_match: false, unit_exact_match: false,
+        value_match: false, value_close: false, signal: 'unparseable',
+      },
+      fallback: {
+        student_value_si: 30, student_unit_si: 'm/s',
+        equivalent_to_reference: true, parser_confidence: 0.92,
+      },
+      reference: ref, evidence: {},
     });
     expect(r.score).toBe(1.0);
     expect(r.coarse_outcome).toBe('correct');
   });
 
-  it('unparseable + fallback parsed but dim mismatch → 0.0 incorrect', () => {
+  it('fallback non-equiv + dim_mismatch_reason → dimension_mismatch 0.0', () => {
     const r = composeScore({
-      accelerator: { value_si: null, unit_si: null, parsed: false, dimension_match: false, unit_exact_match: false, value_match: false, value_close: false, signal: 'unparseable' },
-      fallback: { student_value_si: 30, student_unit_si: 'm', equivalent_to_reference: false, dimension_mismatch_reason: 'length vs velocity', parser_confidence: 0.85 },
-      evidence: {},
+      accelerator: {
+        value_si: null, unit_si: null,
+        parsed: false, dimension_match: false, unit_exact_match: false,
+        value_match: false, value_close: false, signal: 'unparseable',
+      },
+      fallback: {
+        student_value_si: 30, student_unit_si: 'm',
+        equivalent_to_reference: false,
+        dimension_mismatch_reason: 'length (m) vs velocity (m/s)',
+        parser_confidence: 0.88,
+      },
+      reference: ref, evidence: {},
     });
     expect(r.score).toBe(0.0);
+    expect((r.evidence_json as { signal?: string }).signal).toBe('dimension_mismatch');
   });
 
-  it('unparseable + fallback also unparseable → unsupported', () => {
+  it('fallback non-equiv + no dim_reason + unit differs → unit_mismatch 0.4 (per codex P1 finding)', () => {
+    // Chinese fallback parses to '50 km/h' (same dim as m/s but different unit literal).
     const r = composeScore({
-      accelerator: { value_si: null, unit_si: null, parsed: false, dimension_match: false, unit_exact_match: false, value_match: false, value_close: false, signal: 'unparseable' },
-      fallback: { student_value_si: null, student_unit_si: null, equivalent_to_reference: false, parser_confidence: 0 },
-      evidence: {},
+      accelerator: {
+        value_si: null, unit_si: null,
+        parsed: false, dimension_match: false, unit_exact_match: false,
+        value_match: false, value_close: false, signal: 'unparseable',
+      },
+      fallback: {
+        student_value_si: 50, student_unit_si: 'km/h',
+        equivalent_to_reference: false, parser_confidence: 0.85,
+      },
+      reference: ref, evidence: {},
+    });
+    expect(r.score).toBe(0.4);
+    expect((r.evidence_json as { signal?: string }).signal).toBe('unit_mismatch_same_dimension');
+  });
+
+  it('fallback non-equiv + unit matches + value 16% off → numeric_close 0.7 (per codex P1 finding)', () => {
+    // Chinese fallback resolves to '25 m/s' — same unit as ref, 16% off → numeric_close
+    const r = composeScore({
+      accelerator: {
+        value_si: null, unit_si: null,
+        parsed: false, dimension_match: false, unit_exact_match: false,
+        value_match: false, value_close: false, signal: 'unparseable',
+      },
+      fallback: {
+        student_value_si: 25, student_unit_si: 'm/s',
+        equivalent_to_reference: false, parser_confidence: 0.85,
+      },
+      reference: ref, evidence: {},
+    });
+    expect(r.score).toBe(0.7);
+    expect((r.evidence_json as { signal?: string }).signal).toBe('numeric_close');
+  });
+
+  it('fallback non-equiv + unit matches + value 67% off → numeric_off 0.3', () => {
+    const r = composeScore({
+      accelerator: {
+        value_si: null, unit_si: null,
+        parsed: false, dimension_match: false, unit_exact_match: false,
+        value_match: false, value_close: false, signal: 'unparseable',
+      },
+      fallback: {
+        student_value_si: 50, student_unit_si: 'm/s',
+        equivalent_to_reference: false, parser_confidence: 0.82,
+      },
+      reference: ref, evidence: {},
+    });
+    expect(r.score).toBe(0.3);
+    expect((r.evidence_json as { signal?: string }).signal).toBe('numeric_off');
+  });
+
+  it('unparseable + fallback also fails (null values) → unsupported', () => {
+    const r = composeScore({
+      accelerator: {
+        value_si: null, unit_si: null,
+        parsed: false, dimension_match: false, unit_exact_match: false,
+        value_match: false, value_close: false, signal: 'unparseable',
+      },
+      fallback: {
+        student_value_si: null, student_unit_si: null,
+        equivalent_to_reference: false, parser_confidence: 0,
+      },
+      reference: ref, evidence: {},
     });
     expect(r.coarse_outcome).toBe('unsupported');
     expect(r.score).toBeNull();
+  });
+
+  it('unparseable + no fallback called → unsupported', () => {
+    const r = composeScore({
+      accelerator: {
+        value_si: null, unit_si: null,
+        parsed: false, dimension_match: false, unit_exact_match: false,
+        value_match: false, value_close: false, signal: 'unparseable',
+      },
+      reference: ref, evidence: {},
+    });
+    expect(r.coarse_outcome).toBe('unsupported');
   });
 });
 ```
@@ -671,7 +882,7 @@ describe('unit_dimension score composition', () => {
 pnpm vitest run --config vitest.unit.config.ts src/core/capability/judges/unit_dimension/score.test.ts
 ```
 
-Expected: 9/9 PASS.
+Expected: 13/13 PASS (expanded from 9; added 3 fallback非等价細分 cases + 1 dim_match=true + unit_mismatch case for the signal-outranks-value path).
 
 - [ ] **Step 4**: Defer commit.
 
@@ -736,7 +947,12 @@ async function run(input: JudgeRunInput, deps: RunDeps = {}): Promise<JudgeResul
     }
   }
 
-  return composeScore({ accelerator, fallback, evidence: { input_summary: { student, refValue, refUnit } } });
+  return composeScore({
+    accelerator,
+    fallback,
+    reference: { value: refValue, unit: refUnit, tolerance: refTolerance },
+    evidence: { input_summary: { student, refValue, refUnit } },
+  });
 }
 
 function unsupported(reason: string, evidence: Record<string, unknown>): JudgeResultV2T {
@@ -815,7 +1031,7 @@ git commit -F /tmp/p2-commit-msg-impl.txt    # message describes accelerator + f
 
 P-1 fixtures (`data.json`) already declare `expected_signals` arrays — each fixture lists `{ case, student_answer, expected_signal }` triples. Use these as test inputs.
 
-- [ ] **Step 1**: Add real-judging cases. Per fixture's `expected_signals`, assert that judging student_answer produces the expected signal + score:
+- [ ] **Step 1**: Add real-judging cases. Per fixture's `expected_signals`, assert that judging student_answer produces the expected signal. **Always strict-assert signal match** (per codex review #98 P2 line 844: weakening assertion masks signal-mapping regressions). If a fixture's `expected_signal` doesn't reflect new logic (e.g. '全对' cases mislabeled as `numeric_close`), **fix the fixture data**, not the test. Same applies to the `reference_value == null` filter (per codex review #98 P2 line 826: use explicit nullish check, not falsy — physics 中合法的 `0` 参考值会被 `!fixture.reference_value` 误过滤):
 
 ```ts
 import { loadPhysicsFixtures } from './index';
@@ -823,7 +1039,11 @@ import { unitDimensionV1Capability } from '@/core/capability/judges/unit_dimensi
 
 describe('physics fixture real judging — expected_signals validation', () => {
   for (const fixture of loadPhysicsFixtures()) {
-    if (!fixture.reference_value || !fixture.reference_unit) continue;  // skip dim-only choice fixtures
+    // Use explicit nullish check, NOT `!fixture.reference_value`. A fixture
+    // with reference_value=0 is legitimate (e.g. baseline-temperature problem)
+    // and should still get unit_dimension judging.
+    if (fixture.reference_value == null || fixture.reference_unit == null) continue;
+
     for (const tc of fixture.expected_signals) {
       it(`${fixture.ref} :: ${tc.case} → ${tc.expected_signal}`, async () => {
         const result = await unitDimensionV1Capability.run({
@@ -837,14 +1057,14 @@ describe('physics fixture real judging — expected_signals validation', () => {
           } as any,
           subjectProfile: {} as any,
         });
-        // signal lives in evidence_json.signal per composeScore
-        const signal = (result.evidence_json as { signal?: string }).signal;
-        if (tc.expected_signal === 'numeric_close' && result.score === 1.0) {
-          // 全对 case (case === '全对') has expected_signal=numeric_close in some fixtures
-          expect(['correct', 'partial']).toContain(result.coarse_outcome);
-        } else {
-          expect(signal).toBe(tc.expected_signal);
-        }
+        const signal = (result.evidence_json as { signal?: string }).signal ?? null;
+
+        // Map the fixture's expected_signal to either signal-strict or
+        // coarse_outcome assertion. Spec rule: numeric_close = partial 0.7;
+        // null signal = correct 1.0. If fixture says numeric_close but our
+        // accelerator scored 1.0, the FIXTURE is wrong (case='全对' shouldn't
+        // be labeled numeric_close). Fix the data.json, not the test.
+        expect(signal).toBe(tc.expected_signal);
       });
     }
   }
@@ -853,19 +1073,29 @@ describe('physics fixture real judging — expected_signals validation', () => {
 
 This is data-driven: each fixture's expected_signals → one test case each. With P-1's 10 fixtures × ~3-4 signals each, this generates ~30 test cases automatically.
 
+**Expected fixture-data churn**: with strict signal assertion (post codex review #98 P2 fix), some P-1 fixture entries may surface as mislabeled. For example, `physics-unit-001` has `{case: "数值近", student_answer: "8.30 m/s", expected_signal: "numeric_close"}` but with `tolerance: 0.05`, 8.30 vs 8.33 is 0.36% off → within tolerance → actually `value_match=true` (signal=null, correct). Options when a fixture row fails:
+
+| Fix | Apply when |
+|---|---|
+| Update fixture `case` label + `expected_signal` to match what current tolerance + answer actually produces | The student_answer is the canonical exemplar; tolerance is right |
+| Tighten the fixture's `tolerance` so the answer falls outside `value_match` band | The "近" intent is real but tolerance was too loose |
+| Change `student_answer` to be further off (e.g. `7.0 m/s` for ~16% off) | The "近" intent is real, tolerance is right, answer was too close |
+
+Pick per fixture's pedagogical intent. **Do not weaken the test** to accept ambiguity (per codex review #98 P2 line 844). Capture each fixture tweak in the commit.
+
 - [ ] **Step 2**: Run via DB config:
 
 ```bash
 pnpm test:db src/subjects/physics/fixtures/e2e.smoke.test.ts
 ```
 
-Expected: existing 5 P0 tests + ~30 new real-judging tests all PASS. Investigate any failures — likely indicates accelerator edge cases not handled (good signal for additional unit tests).
+Expected: existing 5 P0 tests + ~25-30 new real-judging tests all PASS (after fixture relabels). Each failure indicates either (a) fixture mislabel — fix data.json; (b) accelerator edge case — extend unit tests + accelerator.
 
-- [ ] **Step 3**: Commit:
+- [ ] **Step 3**: Commit (fixture changes + test additions atomic):
 
 ```bash
-git add src/subjects/physics/fixtures/e2e.smoke.test.ts
-git commit -m "test(physics): e2e real judging per expected_signals (P2 YUK-XX)"
+git add src/subjects/physics/fixtures/e2e.smoke.test.ts src/subjects/physics/fixtures/data.json
+git commit -m "test(physics): e2e real judging per expected_signals + fixture relabels (P2 YUK-XX)"
 ```
 
 ---
