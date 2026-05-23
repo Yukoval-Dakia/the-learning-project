@@ -29,6 +29,7 @@
     "worker:dev": "tsx scripts/worker.ts",
     "audit:schema": "tsx scripts/audit-schema-writes.ts",
     "audit:partition": "tsx scripts/audit-test-partition.ts",
+    "docs:linear-manifest": "tsx scripts/linear-doc-manifest.ts",
     "preflight:vision": "tsx scripts/preflight-vision.ts",
     "sanity:vision-rejudge": "tsx scripts/sanity-vision-rejudge.ts",
     "compose:up": "docker compose up -d",
