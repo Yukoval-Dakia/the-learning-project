@@ -12,7 +12,7 @@
 | Schema / 校验 | Zod |
 | 数据库 | Postgres + Drizzle ORM (`postgresql` dialect, `postgres` driver) |
 | Blob 存储 | R2 / S3-compatible storage via `@aws-sdk/client-s3` |
-| AI runtime | AI SDK v6 package + Claude Agent SDK runner + `@ai-sdk/anthropic` provider package |
+| AI runtime | AI SDK v6 (`ai`) + Claude Agent SDK runner + `@ai-sdk/anthropic` provider package |
 | 后台任务 | pg-boss worker (`scripts/worker.ts`) |
 | 复习算法 | `ts-fsrs` |
 | Lint / Format | Biome |
@@ -125,9 +125,11 @@ src/
   server/        # Server-only AI, ingestion, review, export, R2, pg-boss helpers
   subjects/
     wenyan/      # Phase 1 subject bundle: classical Chinese
+    math/        # Non-wenyan pressure subject: KaTeX + steps judging
+    physics/     # Foundation closeout subject: units/dimensions pressure test
   ui/            # Shared React components
 scripts/         # worker entrypoint, schema audit, maintenance scripts
 docs/            # architecture, modules, ADRs, planning
 ```
 
-`core/` 是跨学科共享层；`subjects/<name>/` 是单学科特化层。当前 Phase 1 首发文言文，但架构边界必须保留给后续多科目。
+`core/` 是跨学科共享层；`subjects/<name>/` 是单学科特化层。当前已从文言文扩展到 math / physics pressure subjects，新增科目应优先新增 profile 与能力声明，不 fork framework 路径。
