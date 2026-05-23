@@ -220,6 +220,9 @@ describe('runWriteProposal — pure dispatch', () => {
       reasoning: 'attempt_event_e1 显示用户错答指向 k_from 是 k_to 的先决',
     });
     expect(result.kind).toBe('knowledge_edge_propose');
+    if (result.kind !== 'knowledge_edge_propose') {
+      throw new Error(`expected knowledge_edge_propose, got ${result.kind}`);
+    }
     expect(result.event_id).toBeTruthy();
 
     const edgeEvents = await db

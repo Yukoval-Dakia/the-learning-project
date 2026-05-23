@@ -189,6 +189,7 @@ ADR-0014 配套：[7 轮讨论 + 10 决议 summary](../discussion/summary.md)、
 |---|---|---|
 | `knowledge_propose_nightly` | cron @ BJT 02:00 | 节点提议 |
 | `knowledge_edge_propose_nightly` | cron @ BJT 02:30 | 边提议 |
+| `knowledge_maintenance_nightly` | cron @ BJT 03:00 | KnowledgeReviewTask → tree / mesh maintenance proposals |
 | `prune_job_events` | cron @ BJT 04:00 | 旧 job_events 清理 |
 | `prune_orphan_review_sessions` | cron @ BJT 04:15 | 6h+ started 标 abandoned（ADR-0013） |
 | `session_summary` | review session end | SessionSummaryTask → summary_md |
