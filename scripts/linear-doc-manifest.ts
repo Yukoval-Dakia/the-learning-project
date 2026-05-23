@@ -80,21 +80,23 @@ function classify(path: string): Omit<ManifestRow, 'repoPath' | 'lastSourceCommi
     return {
       role: 'scratch',
       freshness: 'scratch-do-not-migrate',
-      verifiedAgainst: 'git log + status.md',
+      verifiedAgainst: 'git log + status.md + Linear issue extraction 2026-05-23',
       linearDestination: 'issue extraction only',
       migrationAction: 'issue-extraction',
-      notes: 'Extract still-valid leftovers into Linear issues.',
+      notes:
+        'Reviewed 2026-05-23: valid leftovers mapped to YUK-13, YUK-14, YUK-15, YUK-17, YUK-47, YUK-48, YUK-49, YUK-50, and YUK-51; scratch/local notes are not mirrored.',
     };
   }
 
   if (path === 'README.md') {
     return {
       role: 'current',
-      freshness: 'needs-refresh',
-      verifiedAgainst: 'package.json + CLAUDE.md stack note',
+      freshness: 'current',
+      verifiedAgainst: 'package.json + CLAUDE.md + app/ + src/',
       linearDestination: 'Doc Catalog - Repo Linear Manifest',
       migrationAction: 'catalog-only',
-      notes: 'Known stale project door; refresh before mirroring.',
+      notes:
+        'Current project entrance after 2026-05-23 refresh; link from Linear catalog unless a full mirror is explicitly needed.',
     };
   }
 
