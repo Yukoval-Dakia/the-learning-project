@@ -50,6 +50,9 @@ export const ScoreMeaning = z.enum([
   // score = step_weight × Σ verdict_weight / N + (1 − step_weight) × (final_answer_match ? 1 : 0)
   // See docs/superpowers/specs/2026-05-21-math-mvp-vision-design.md §7.4.
   'steps_v1_weighted',
+  // P1 (2026-05-23): unit_dimension@1 skeleton. P2 supplies the real
+  // deterministic unit/dimension score composition.
+  'unit_dimension_v1',
 ]);
 export type ScoreMeaningT = z.infer<typeof ScoreMeaning>;
 

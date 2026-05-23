@@ -32,6 +32,7 @@ export const JudgeRouteKindSchema = z.enum([
   'semantic',
   'rubric',
   'steps',
+  'unit_dimension',
   'multimodal_direct',
   'ai_flexible',
 ]);

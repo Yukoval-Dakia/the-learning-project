@@ -7,7 +7,13 @@ import type { Db } from '@/db/client';
 import type { SubjectProfile } from '@/subjects/profile';
 import { type JudgeKind, judgeRouterV2 } from '.';
 
-export const RUNNABLE_ROUTES = new Set<JudgeKind>(['exact', 'keyword', 'semantic', 'steps']);
+export const RUNNABLE_ROUTES = new Set<JudgeKind>([
+  'exact',
+  'keyword',
+  'semantic',
+  'steps',
+  'unit_dimension',
+]);
 
 export const FUTURE_JUDGE_ROUTES = {
   rubric: 'future: rubric judge needs weighted criteria runner and score semantics',
@@ -122,6 +128,14 @@ export function resolveQuestionJudgeRoute(
   // judge for what is fundamentally a string compare.
   const choices = q.choices_md ?? [];
   if (choices.length > 0) return 'exact';
+
+  if (
+    subjectProfile.id === 'physics' &&
+    isPreferred(subjectProfile, 'unit_dimension') &&
+    (q.kind === 'calculation' || q.kind === 'computation')
+  ) {
+    return 'unit_dimension';
+  }
 
   const kind = QuestionKind.safeParse(q.kind).success ? q.kind : 'short_answer';
   const rubric = parseRubric(q.rubric_json);
