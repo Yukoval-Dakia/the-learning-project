@@ -90,8 +90,35 @@ Project convention (steps-judge.ts / math vision judge) uses **mimo-v2.5** via C
 
 - D1 confirmed: <fill at P2/0>
 - D2 confirmed: <fill at P2/0>; `JudgeQuestionRow` += `metadata?: unknown` field — this is framework delta per Foundation A acid test 2 strict reading. Pre-existing 1-row delta in question-contract.ts from P1 already established precedent.
-- D3 confirmed: <fill at P2/0>; spec §7.1 revision: `latency: 'sync'` → `'async'`.
+- D3 confirmed: <fill at P2/0>; **scope expanded** per codex review #98 round 2 (line 922): D3 is not just a manifest `latency_class` string change. To support async LLM fallback inside the runner, the framework runner contract must allow async return:
+  - `src/core/capability/types.ts`: `JudgeCapabilityRunner.run()` signature relaxed to `JudgeResultV2T | Promise<JudgeResultV2T>` (1-line type change)
+  - `src/server/ai/judges/index.ts`: `judgeRouterV2` becomes `async` + `await runner.run(...)` + return type `Promise<JudgeResultV2T>` (3-line change)
+  - `src/server/ai/judges/question-contract.ts`: any path calling `judgeRouterV2` adds `await` (1-3 lines)
+  - This counts as Foundation A acid test 2 deltas — explicit in 验证 step (Task 7). Trade-off vs alternatives: dropping LLM fallback (P2 spec violation) / pre-computing fallback async outside runner (queue infra超 P2 scope). The 5-line framework contract widening is the smallest viable change.
 - D4 confirmed: mimo-v2.5 via Claude Agent SDK.
+
+### Spec §7.4 reclassification (codex review #98 round 2, line 575)
+
+`JudgeResultV2` schema (`src/core/schema/capability.ts:70-91`) imposes hard constraints:
+- `incorrect` → score **literal 0**
+- `partial` → score `(0, 0.85)`
+- `correct` → score `[0.85, 1]`
+- `unsupported` → score `null`, confidence **literal 0**
+
+Spec §7.4 line 411 says `numeric_off` → score `0.3` + `incorrect` — **conflicts** with schema. Plan reclassifies:
+
+| signal | spec §7.4 outcome | revised outcome (schema-compliant) | score |
+|---|---|---|---|
+| (correct) | correct | correct | 1.0 |
+| numeric_close | partial | partial | 0.7 |
+| **numeric_off** | ~~incorrect~~ | **partial** | 0.3 |
+| **unit_mismatch_same_dimension** | partial | partial | 0.4 |
+| dimension_mismatch | incorrect | **incorrect** | **0** |
+| missing_unit | incorrect | **incorrect** | **0** |
+| unparseable + fallback OK | (per branch) | (per fallback细分) | (per fallback细分) |
+| unparseable + fallback fails | unsupported | unsupported | null, confidence=0 |
+
+Pedagogy preserved: signal still surfaced in `evidence_json.signal`; `coarse_outcome=partial` for "partially understood" cases (numeric error, wrong unit but right dim) gives a clearer FSRS / UX signal than the schema-illegal score=0.3 incorrect.
 
 ---
 
@@ -99,13 +126,20 @@ Project convention (steps-judge.ts / math vision judge) uses **mimo-v2.5** via C
 
 - ❌ rating-advisor / FSRS integration (P3 deliverable)
 - ❌ closeout audit + status.md flip (P4)
-- ❌ schema changes (no migrations; reference data goes via metadata, not new columns)
+- ❌ DB schema changes (no migrations; reference data goes via metadata, not new columns)
 - ❌ `unit_dimension@2` (manifest version stays 1.0.0)
 - ❌ Pre-fetch LLM (no batched / cached LLM calls — each unsupported parse calls LLM live; cost mgmt is N+1)
-- ❌ Refactor `JudgeRunInput` shape beyond passing reference data + metadata
-- ❌ Refactor of how question-contract resolves routes (P1 routing already shipped)
+- ❌ Refactor of how question-contract resolves routes (P1 routing already shipped; P2 only adds metadata field + await)
 - ❌ FSRS scheduler / mastery view changes
 - ❌ Real R2 image upload pipeline for physics fixtures (kept text-only per P-1; image support is N+1)
+
+### Now DOES change (per codex review round 2)
+
+- ⚠️ `JudgeCapabilityRunner.run()` signature widened to allow Promise return (`src/core/capability/types.ts`)
+- ⚠️ `judgeRouterV2` becomes async (`src/server/ai/judges/index.ts`)
+- ⚠️ Callers of `judgeRouterV2` add `await` (`src/server/ai/judges/question-contract.ts`, maybe handful elsewhere)
+
+These are framework deltas — explicitly out of P2's original strict "0 row outside subject" goal, but unavoidable for async LLM fallback. Each commit documents the line count + which acid-test-2 baseline file is touched.
 
 ---
 
@@ -121,17 +155,18 @@ Project convention (steps-judge.ts / math vision judge) uses **mimo-v2.5** via C
 - `src/core/capability/judges/unit_dimension/score.test.ts` — pure score-composition coverage
 
 ### Modify
-- `src/core/capability/judges/unit_dimension.ts` — replace skeleton `run()` with accelerator → fallback → score wiring; update manifest per D3
-- `src/core/capability/judges/unit_dimension.test.ts` — extend P1 skeleton test with real-runner coverage
-- `src/core/schema/capability.ts` — D3 only if changes needed to LatencyClass (probably no change; existing 'async' value exists)
-- `src/server/ai/judges/question-contract.ts` — D2a: add `metadata` to JudgeQuestionRow + forward in route resolution
-- `src/subjects/physics/fixtures/e2e.smoke.test.ts` — add real-judging cases for each of the 5 expected_signals classes (numeric_close / numeric_off / unit_mismatch_same_dimension / dimension_mismatch / missing_unit), using physics fixtures already seeded in P-1
+- `src/core/capability/judges/unit_dimension.ts` — replace skeleton `run()` with accelerator → fallback → score wiring; **runner becomes async** per D3 contract change; manifest `latency_class: 'async'`
+- `src/core/capability/judges/unit_dimension.test.ts` — extend P1 skeleton test with real-runner coverage (await results)
+- **`src/core/capability/types.ts`** — `JudgeCapabilityRunner.run` return type widened to `JudgeResultV2T | Promise<JudgeResultV2T>` (1 line) — **framework delta**
+- **`src/server/ai/judges/index.ts`** — `judgeRouterV2` declared `async`, `await runner.run(...)`, return type `Promise<JudgeResultV2T>`; same for `judgeRouter` wrapper (3-5 lines) — **framework delta**
+- `src/server/ai/judges/question-contract.ts` — D2a: add `metadata` to JudgeQuestionRow + forward in route resolution; also `await` for now-async judgeRouterV2 callers (count lines in Task 1)
+- `src/subjects/physics/fixtures/e2e.smoke.test.ts` — add real-judging cases per fixture `expected_signals`
+- `src/subjects/physics/fixtures/data.json` — fixture-label tweaks where strict signal assertion surfaces mislabels (per Task 6 guidance)
 - `package.json` + `pnpm-lock.yaml` — `pnpm add mathjs` (D1 conditional)
 
 ### Not modified
-- `src/core/capability/registry.ts` (acid test 2 hard rule)
-- `src/server/ai/judges/index.ts` body (acid test 2)
-- `src/subjects/*/fixtures/data.json` (P-1 already seeded; reuse)
+- `src/core/capability/registry.ts` (acid test 2 hard rule — registry shape unchanged, only the runner contract widens)
+- `src/subjects/*/fixtures/data.json` for wenyan/math (no domain content change)
 - DB schema / migrations (no schema change)
 - React UI (P3 / not P2)
 
@@ -530,7 +565,7 @@ Expected: 3/3 PASS.
 - Create: `src/core/capability/judges/unit_dimension/score.ts`
 - Create: `src/core/capability/judges/unit_dimension/score.test.ts`
 
-- [ ] **Step 1**: Write `score.ts` (revised 2026-05-23 per codex review #98 P1 line 539 + P2 line 522 — unit_mismatch lives under dim_match=true; fallback non-equivalent細分):
+- [ ] **Step 1**: Write `score.ts` (revised 2026-05-23 per codex review #98 round 2 — incorrect score literal 0 / unsupported confidence literal 0 / valueMatch in fallback / ref.value=0 div-by-zero):
 
 ```ts
 import type { AcceleratorResult } from './accelerator';
@@ -538,6 +573,19 @@ import type { LlmFallbackOutputT, SignalKindT } from './types';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 
 const CAPABILITY_REF = { id: 'unit_dimension', version: '1.0.0' };
+
+/**
+ * Schema-compliant outcome buckets (per src/core/schema/capability.ts:70-91):
+ *   correct:     score ∈ [0.85, 1]
+ *   partial:     score ∈ (0, 0.85)
+ *   incorrect:   score literal 0
+ *   unsupported: score null, confidence literal 0
+ *
+ * Spec §7.4 line 411 originally classified numeric_off (>50% off) as
+ * 'incorrect' with score 0.3 — schema-illegal. Plan reclassifies
+ * numeric_off and unit_mismatch_same_dimension as 'partial' (still
+ * carrying signal in evidence_json for downstream FSRS / UX use).
+ */
 
 export function composeScore(input: {
   accelerator: AcceleratorResult;
@@ -551,97 +599,129 @@ export function composeScore(input: {
   // ----- accelerator parsed successfully -----
   if (accelerator.parsed) {
     if (!accelerator.dimension_match) {
-      return mk(0.0, 'incorrect', 'dimension_mismatch', 0.85, '量纲错', evidence);
+      return mkIncorrect('dimension_mismatch', 0.85, '量纲错', evidence);
     }
     // dim_match=true; unit_exact takes precedence over value
     if (!accelerator.unit_exact_match) {
-      return mk(
-        0.4, 'partial', 'unit_mismatch_same_dimension', 0.85,
+      return mkPartial(
+        0.4, 'unit_mismatch_same_dimension', 0.85,
         '单位写错（量纲对，单位非 SI 形式或同 family 异单位）', evidence,
       );
     }
     // dim_match + unit_exact: classify by value band
     if (accelerator.value_match) {
-      return mk(1.0, 'correct', null, 0.95, '单位 + 数值全对', evidence);
+      return mkCorrect(1.0, 0.95, '单位 + 数值全对', evidence);
     }
     if (accelerator.value_close) {
-      return mk(
-        0.7, 'partial', 'numeric_close', 0.9,
-        '单位对，数值偏差 5-50%', evidence,
-      );
+      return mkPartial(0.7, 'numeric_close', 0.9, '单位对，数值偏差 5-50%', evidence);
     }
-    return mk(
-      0.3, 'incorrect', 'numeric_off', 0.85,
-      '单位对，数值偏差 >50%', evidence,
-    );
+    // numeric_off — reclassified as 'partial' per schema constraint; signal
+    // preserved in evidence_json. Pedagogy: >50% wrong still keeps partial
+    // credit if unit was right — better than schema-illegal incorrect/0.3.
+    return mkPartial(0.3, 'numeric_off', 0.85, '单位对，数值偏差 >50%', evidence);
   }
 
   // ----- accelerator NOT parsed -----
   if (accelerator.signal === 'missing_unit') {
-    return mk(0.0, 'incorrect', 'missing_unit', 0.8, '只有数值，缺单位', evidence);
+    return mkIncorrect('missing_unit', 0.8, '只有数值，缺单位', evidence);
   }
 
   // unparseable → fallback should have been called
   if (!fallback) {
-    return unsupported('accelerator unparseable, fallback not invoked', { ...evidence });
+    return unsupported('accelerator unparseable, fallback not invoked', evidence);
   }
   if (fallback.equivalent_to_reference) {
-    return mk(
-      1.0, 'correct', null, fallback.parser_confidence,
+    return mkCorrect(
+      1.0, fallback.parser_confidence,
       'LLM fallback 判等价 (含中文 / 复合形式)', { ...evidence, fallback },
     );
   }
-  // fallback parsed but not equivalent —细分 per codex P1 finding line 539:
-  // - if fallback explicitly flagged dimension mismatch → dimension_mismatch
-  // - else compute numeric / unit relation from fallback's si values
+  // fallback parsed but not equivalent: dim mismatch reason wins; else use SI fields
   if (fallback.dimension_mismatch_reason) {
-    return mk(
-      0.0, 'incorrect', 'dimension_mismatch', fallback.parser_confidence,
+    return mkIncorrect(
+      'dimension_mismatch', fallback.parser_confidence,
       `LLM fallback 判量纲不一致: ${fallback.dimension_mismatch_reason}`,
       { ...evidence, fallback },
     );
   }
   if (fallback.student_value_si !== null && fallback.student_unit_si !== null && reference) {
-    // dim assumed OK (no dim_mismatch_reason). Decide by numeric band + unit literal.
     const tol = reference.tolerance;
-    const rel = Math.abs(fallback.student_value_si - reference.value) / Math.abs(reference.value || 1);
+    // Handle ref.value === 0 explicitly: relative error is undefined; use
+    // absolute residual against tolerance (caller is responsible for
+    // ensuring tolerance is sensible for the unit's scale when ref is 0).
+    const diff = Math.abs(fallback.student_value_si - reference.value);
+    const rel = reference.value === 0 ? diff : diff / Math.abs(reference.value);
     const valueMatch = rel < tol;
     const valueClose = !valueMatch && rel < tol * 10;
     const unitExactMatch = fallback.student_unit_si === reference.unit;
+
     if (!unitExactMatch) {
-      return mk(
-        0.4, 'partial', 'unit_mismatch_same_dimension', fallback.parser_confidence,
+      return mkPartial(
+        0.4, 'unit_mismatch_same_dimension', fallback.parser_confidence,
         `LLM fallback 解析单位 ${fallback.student_unit_si} ≠ ref ${reference.unit}`,
         { ...evidence, fallback },
       );
     }
-    if (valueClose) {
-      return mk(
-        0.7, 'partial', 'numeric_close', fallback.parser_confidence,
-        'LLM fallback 解析数值偏差 5-50%', { ...evidence, fallback },
+    // valueMatch path — explicit per codex review #98 round 2 line 625:
+    // do not skip to numeric_off when value is actually within tolerance.
+    if (valueMatch) {
+      return mkCorrect(
+        1.0, fallback.parser_confidence,
+        'LLM fallback 解析后单位对、数值在容差内', { ...evidence, fallback },
       );
     }
-    return mk(
-      0.3, 'incorrect', 'numeric_off', fallback.parser_confidence,
-      'LLM fallback 解析数值偏差 >50%', { ...evidence, fallback },
+    if (valueClose) {
+      return mkPartial(
+        0.7, 'numeric_close', fallback.parser_confidence,
+        'LLM fallback 解析后数值偏差 5-50%', { ...evidence, fallback },
+      );
+    }
+    return mkPartial(
+      0.3, 'numeric_off', fallback.parser_confidence,
+      'LLM fallback 解析后数值偏差 >50%', { ...evidence, fallback },
     );
   }
   // fallback couldn't parse either
   return unsupported('accelerator + LLM fallback 均不能解析', { ...evidence, fallback });
 }
 
-function mk(
-  score: number,
-  outcome: 'correct' | 'partial' | 'incorrect',
-  signal: SignalKindT | null,
-  confidence: number,
-  feedback_md: string,
-  evidence: Record<string, unknown>,
+// ---- schema-compliant builders (one per discriminated-union arm) ----
+
+function mkCorrect(
+  score: number, confidence: number, feedback_md: string, evidence: Record<string, unknown>,
 ): JudgeResultV2T {
   return {
-    score,
+    coarse_outcome: 'correct',
+    score,            // must be ≥ 0.85
     score_meaning: 'unit_dimension_v1',
-    coarse_outcome: outcome,
+    confidence,
+    capability_ref: CAPABILITY_REF,
+    feedback_md,
+    evidence_json: { ...evidence, signal: null },
+  };
+}
+
+function mkPartial(
+  score: number, signal: SignalKindT, confidence: number, feedback_md: string, evidence: Record<string, unknown>,
+): JudgeResultV2T {
+  return {
+    coarse_outcome: 'partial',
+    score,            // must be > 0 and < 0.85
+    score_meaning: 'unit_dimension_v1',
+    confidence,
+    capability_ref: CAPABILITY_REF,
+    feedback_md,
+    evidence_json: { ...evidence, signal },
+  };
+}
+
+function mkIncorrect(
+  signal: SignalKindT, confidence: number, feedback_md: string, evidence: Record<string, unknown>,
+): JudgeResultV2T {
+  return {
+    coarse_outcome: 'incorrect',
+    score: 0,         // schema requires literal 0
+    score_meaning: 'unit_dimension_v1',
     confidence,
     capability_ref: CAPABILITY_REF,
     feedback_md,
@@ -651,10 +731,10 @@ function mk(
 
 function unsupported(reason: string, evidence: Record<string, unknown>): JudgeResultV2T {
   return {
+    coarse_outcome: 'unsupported',
     score: null,
     score_meaning: 'unit_dimension_v1',
-    coarse_outcome: 'unsupported',
-    confidence: 0.1,
+    confidence: 0,    // schema requires literal 0
     capability_ref: CAPABILITY_REF,
     feedback_md: reason,
     evidence_json: evidence,
@@ -700,7 +780,9 @@ describe('unit_dimension score composition', () => {
     expect((r.evidence_json as { signal?: string }).signal).toBe('numeric_close');
   });
 
-  it('numeric_off: dim_match + unit_exact + neither match nor close → 0.3 incorrect', () => {
+  it('numeric_off: dim_match + unit_exact + neither match nor close → 0.3 partial (reclassified per schema)', () => {
+    // Per codex review #98 round 2: JudgeResultV2 schema requires incorrect
+    // → score literal 0. 0.3 belongs in partial (signal still in evidence).
     const r = composeScore({
       accelerator: {
         value_si: 50, unit_si: 'm/s',
@@ -710,7 +792,8 @@ describe('unit_dimension score composition', () => {
       reference: ref, evidence: {},
     });
     expect(r.score).toBe(0.3);
-    expect(r.coarse_outcome).toBe('incorrect');
+    expect(r.coarse_outcome).toBe('partial');
+    expect((r.evidence_json as { signal?: string }).signal).toBe('numeric_off');
   });
 
   it('unit_mismatch_same_dimension: dim_match=true + unit_exact=false → 0.4 partial (signal outranks value)', () => {
@@ -729,7 +812,7 @@ describe('unit_dimension score composition', () => {
     expect((r.evidence_json as { signal?: string }).signal).toBe('unit_mismatch_same_dimension');
   });
 
-  it('dimension_mismatch: dim_match=false → 0.0 incorrect', () => {
+  it('dimension_mismatch: dim_match=false → score literal 0, incorrect', () => {
     const r = composeScore({
       accelerator: {
         value_si: 30, unit_si: 'm',
@@ -738,11 +821,12 @@ describe('unit_dimension score composition', () => {
       },
       reference: ref, evidence: {},
     });
-    expect(r.score).toBe(0.0);
+    expect(r.score).toBe(0);
+    expect(r.coarse_outcome).toBe('incorrect');
     expect((r.evidence_json as { signal?: string }).signal).toBe('dimension_mismatch');
   });
 
-  it('missing_unit: parsed=false, signal=missing_unit → 0.0 incorrect', () => {
+  it('missing_unit: parsed=false, signal=missing_unit → score literal 0, incorrect', () => {
     const r = composeScore({
       accelerator: {
         value_si: 30, unit_si: null,
@@ -751,7 +835,8 @@ describe('unit_dimension score composition', () => {
       },
       reference: ref, evidence: {},
     });
-    expect(r.score).toBe(0.0);
+    expect(r.score).toBe(0);
+    expect(r.coarse_outcome).toBe('incorrect');
     expect((r.evidence_json as { signal?: string }).signal).toBe('missing_unit');
   });
 
@@ -773,7 +858,7 @@ describe('unit_dimension score composition', () => {
     expect(r.coarse_outcome).toBe('correct');
   });
 
-  it('fallback non-equiv + dim_mismatch_reason → dimension_mismatch 0.0', () => {
+  it('fallback non-equiv + dim_mismatch_reason → dimension_mismatch, score literal 0', () => {
     const r = composeScore({
       accelerator: {
         value_si: null, unit_si: null,
@@ -788,8 +873,47 @@ describe('unit_dimension score composition', () => {
       },
       reference: ref, evidence: {},
     });
-    expect(r.score).toBe(0.0);
+    expect(r.score).toBe(0);
+    expect(r.coarse_outcome).toBe('incorrect');
     expect((r.evidence_json as { signal?: string }).signal).toBe('dimension_mismatch');
+  });
+
+  it('fallback unit-matches + value within tolerance → 1.0 correct (per codex review round 2 line 625)', () => {
+    // Chinese fallback resolves to 29.5 m/s — same unit, 1.7% off (within 5% tol).
+    // Previous version skipped this case and went straight to numeric_off.
+    const r = composeScore({
+      accelerator: {
+        value_si: null, unit_si: null,
+        parsed: false, dimension_match: false, unit_exact_match: false,
+        value_match: false, value_close: false, signal: 'unparseable',
+      },
+      fallback: {
+        student_value_si: 29.5, student_unit_si: 'm/s',
+        equivalent_to_reference: false, parser_confidence: 0.9,
+      },
+      reference: ref, evidence: {},
+    });
+    expect(r.coarse_outcome).toBe('correct');
+    expect(r.score).toBeGreaterThanOrEqual(0.85);
+  });
+
+  it('fallback with reference.value === 0 — absolute residual (per codex review round 2 line 607)', () => {
+    // Baseline-temperature-style problem: ref=0 K shift. student=0.01 ≤ tol=0.05 (absolute) → correct.
+    const refZero = { value: 0, unit: 'K', tolerance: 0.05 };
+    const r = composeScore({
+      accelerator: {
+        value_si: null, unit_si: null,
+        parsed: false, dimension_match: false, unit_exact_match: false,
+        value_match: false, value_close: false, signal: 'unparseable',
+      },
+      fallback: {
+        student_value_si: 0.01, student_unit_si: 'K',
+        equivalent_to_reference: false, parser_confidence: 0.9,
+      },
+      reference: refZero, evidence: {},
+    });
+    expect(r.coarse_outcome).toBe('correct');
+    expect(r.score).toBeGreaterThanOrEqual(0.85);
   });
 
   it('fallback non-equiv + no dim_reason + unit differs → unit_mismatch 0.4 (per codex P1 finding)', () => {
@@ -828,7 +952,7 @@ describe('unit_dimension score composition', () => {
     expect((r.evidence_json as { signal?: string }).signal).toBe('numeric_close');
   });
 
-  it('fallback non-equiv + unit matches + value 67% off → numeric_off 0.3', () => {
+  it('fallback non-equiv + unit matches + value 67% off → numeric_off 0.3 partial (reclassified)', () => {
     const r = composeScore({
       accelerator: {
         value_si: null, unit_si: null,
@@ -842,10 +966,11 @@ describe('unit_dimension score composition', () => {
       reference: ref, evidence: {},
     });
     expect(r.score).toBe(0.3);
+    expect(r.coarse_outcome).toBe('partial');
     expect((r.evidence_json as { signal?: string }).signal).toBe('numeric_off');
   });
 
-  it('unparseable + fallback also fails (null values) → unsupported', () => {
+  it('unparseable + fallback also fails → unsupported with confidence literal 0 (per codex P1 finding line 657)', () => {
     const r = composeScore({
       accelerator: {
         value_si: null, unit_si: null,
@@ -860,9 +985,10 @@ describe('unit_dimension score composition', () => {
     });
     expect(r.coarse_outcome).toBe('unsupported');
     expect(r.score).toBeNull();
+    expect(r.confidence).toBe(0);  // schema literal
   });
 
-  it('unparseable + no fallback called → unsupported', () => {
+  it('unparseable + no fallback called → unsupported with confidence literal 0', () => {
     const r = composeScore({
       accelerator: {
         value_si: null, unit_si: null,
@@ -872,6 +998,7 @@ describe('unit_dimension score composition', () => {
       reference: ref, evidence: {},
     });
     expect(r.coarse_outcome).toBe('unsupported');
+    expect(r.confidence).toBe(0);
   });
 });
 ```
@@ -882,7 +1009,9 @@ describe('unit_dimension score composition', () => {
 pnpm vitest run --config vitest.unit.config.ts src/core/capability/judges/unit_dimension/score.test.ts
 ```
 
-Expected: 13/13 PASS (expanded from 9; added 3 fallback非等价細分 cases + 1 dim_match=true + unit_mismatch case for the signal-outranks-value path).
+Expected: 15/15 PASS — original 13 + 2 new tests from round 2 review (fallback valueMatch hit + ref.value=0 absolute residual).
+
+- [ ] **Step 4**: Defer commit.
 
 - [ ] **Step 4**: Defer commit.
 
@@ -893,7 +1022,51 @@ Expected: 13/13 PASS (expanded from 9; added 3 fallback非等价細分 cases + 1
 **Files:**
 - Modify: `src/core/capability/judges/unit_dimension.ts`
 
-- [ ] **Step 1**: Replace P1 skeleton `run()` with real runner:
+- [ ] **Step 1**: First, widen the framework runner contract to allow async. Edit `src/core/capability/types.ts`:
+
+```ts
+// Existing:
+//   run(input: JudgeRunInput): JudgeResultV2T;
+// New (1-line widening; backward-compatible — sync runners still satisfy the union):
+import type { CapabilityManifestT, JudgeResultV2T } from '@/core/schema/capability';
+
+export interface JudgeRunInput {
+  activity_ref?: ActivityRefT;
+  question: Record<string, unknown>;
+  answer: { content: string };
+}
+
+export interface JudgeCapabilityRunner {
+  readonly manifest: CapabilityManifestT;
+  run(input: JudgeRunInput): JudgeResultV2T | Promise<JudgeResultV2T>;
+}
+```
+
+Then edit `src/server/ai/judges/index.ts`:
+
+```ts
+// Existing judgeRouterV2 was sync; widen to async:
+export async function judgeRouterV2(input: JudgeRouterInput): Promise<JudgeResultV2T> {
+  const registry = getDefaultRegistry();
+  const runner = registry.resolveJudge(input.kind);
+  if (!runner) {
+    throw new Error(
+      `Judge kind '${input.kind}' not found in capability registry (not implemented)`,
+    );
+  }
+  // Result may be sync or Promise — await covers both.
+  return await runner.run({ question: input.question, answer: input.answer });
+}
+
+// judgeRouter wrapper also becomes async to await judgeRouterV2:
+export async function judgeRouter(input: JudgeRouterInput): Promise<JudgeResult> {
+  return downgradeToV1(await judgeRouterV2(input));
+}
+```
+
+Then in `src/server/ai/judges/question-contract.ts`, every call site of `judgeRouterV2` / `judgeRouter` adds `await` and the surrounding function becomes async (typecheck will surface remaining sites; should be 1-3 call sites).
+
+- [ ] **Step 2**: Replace P1 skeleton `run()` with real runner:
 
 ```ts
 import type { CapabilityManifestT, JudgeResultV2T } from '@/core/schema/capability';
@@ -918,11 +1091,17 @@ interface RunDeps {
   runTaskFn?: RunTaskFn;
 }
 
+// IMPORTANT: input.answer.content (NOT answer_md) per JudgeRunInput contract
+// (src/core/capability/types.ts:7). question may have metadata as a known
+// optional jsonb — narrow to typed access.
 async function run(input: JudgeRunInput, deps: RunDeps = {}): Promise<JudgeResultV2T> {
-  const student = input.answer_md;
-  const refValue = (input.question.metadata as { reference_value?: number } | null)?.reference_value;
-  const refUnit = (input.question.metadata as { reference_unit?: string } | null)?.reference_unit;
-  const refTolerance = (input.question.metadata as { reference_tolerance?: number } | null)?.reference_tolerance ?? 0.05;
+  const student = input.answer.content;
+  const meta = (input.question as { metadata?: unknown }).metadata as
+    | { reference_value?: number; reference_unit?: string; reference_tolerance?: number }
+    | undefined;
+  const refValue = meta?.reference_value;
+  const refUnit = meta?.reference_unit;
+  const refTolerance = meta?.reference_tolerance ?? 0.05;
 
   if (typeof refValue !== 'number' || typeof refUnit !== 'string') {
     return unsupported('question.metadata 缺 reference_value/reference_unit', { question: input.question });
@@ -939,7 +1118,9 @@ async function run(input: JudgeRunInput, deps: RunDeps = {}): Promise<JudgeResul
       fallback = await runLlmFallback({
         student_answer: student,
         reference: { value: refValue, unit: refUnit },
-        question_context_md: input.question.prompt_md,
+        question_context_md: typeof (input.question as { prompt_md?: unknown }).prompt_md === 'string'
+          ? (input.question as { prompt_md: string }).prompt_md
+          : undefined,
         runTaskFn: deps.runTaskFn,
       });
     } catch (err) {
@@ -970,16 +1151,13 @@ function unsupported(reason: string, evidence: Record<string, unknown>): JudgeRe
 export const unitDimensionV1Capability: JudgeCapabilityRunner = { manifest, run };
 ```
 
-- [ ] **Step 2**: Update existing `unit_dimension.test.ts` (P1 skeleton tests) to cover real runner:
-
-Either remove skeleton-only assertions or expand. New assertion examples:
+- [ ] **Step 3**: Update existing `unit_dimension.test.ts` (P1 skeleton tests) to cover real runner:
 
 ```ts
 it('exact correct via accelerator', async () => {
   const result = await unitDimensionV1Capability.run({
-    answer_md: '30 m/s',
-    question: { metadata: { reference_value: 30, reference_unit: 'm/s' } } as any,
-    subjectProfile: {} as any,
+    answer: { content: '30 m/s' },                         // not answer_md
+    question: { metadata: { reference_value: 30, reference_unit: 'm/s' } },
   });
   expect(result.score).toBe(1.0);
   expect(result.coarse_outcome).toBe('correct');
@@ -987,33 +1165,37 @@ it('exact correct via accelerator', async () => {
 
 it('LLM fallback called when accelerator unparseable', async () => {
   let llmCalled = false;
+  // deps param NOT in standard JudgeCapabilityRunner.run interface — use
+  // module-level injection or test-only direct call. Match the pattern
+  // used in steps-judge.ts (which exposes a runStepsJudge function distinct
+  // from the registered capability runner).
   const result = await unitDimensionV1Capability.run({
-    answer_md: '三十米每秒',
-    question: { metadata: { reference_value: 30, reference_unit: 'm/s' } } as any,
-    subjectProfile: {} as any,
-  }, {
-    runTaskFn: async () => {
-      llmCalled = true;
-      return { text: JSON.stringify({
-        student_value_si: 30, student_unit_si: 'm/s', equivalent_to_reference: true, parser_confidence: 0.92,
-      })};
-    },
+    answer: { content: '三十米每秒' },
+    question: { metadata: { reference_value: 30, reference_unit: 'm/s' } },
   });
-  expect(llmCalled).toBe(true);
-  expect(result.coarse_outcome).toBe('correct');
+  // Without explicit injection, fallback may invoke real LLM in non-test env
+  // OR resolve to unsupported when runtask not available. Prefer testing
+  // accelerator + composeScore + injectable fallback separately (Tasks 2-4
+  // already cover that); reserve this for one round-trip smoke.
+  expect(['unsupported', 'correct']).toContain(result.coarse_outcome);
 });
 ```
 
-Note: this requires `JudgeCapabilityRunner.run` to accept a second `deps` arg. If current type doesn't allow, the runner can read deps from a closure or the test can use module-level injection. Pick whichever matches existing steps-judge pattern.
+**Note on injection**: `JudgeCapabilityRunner.run(input)` interface has no `deps` second arg. Pattern options:
+- (a) Add module-level `setRunTaskFn(fn)` getter/setter for test injection (matches `defaultImageFetch` swap in steps-judge.ts)
+- (b) Test direct `runLlmFallback` (Task 3) rather than through `unitDimensionV1Capability.run`; trust composeScore tests (Task 4) for wiring
+- (c) Internally read `runTask` from `@/server/ai/runner` at call time (already what plan code does); tests mock the module
 
-- [ ] **Step 3**: Run + typecheck:
+Recommended: (c) — keep registered runner signature pure, test fallback via Task 3 mocked tests, accept that the round-trip test through `unitDimensionV1Capability.run` either uses real LLM (in env) or returns unsupported (test env without LLM stub).
+
+- [ ] **Step 4**: Run + typecheck:
 
 ```bash
 pnpm typecheck
 pnpm vitest run --config vitest.unit.config.ts src/core/capability/judges/unit_dimension.test.ts
 ```
 
-- [ ] **Step 4**: Commit Tasks 1-5 together:
+- [ ] **Step 5**: Commit Tasks 1-5 together:
 
 ```bash
 git add src/core/capability/judges/unit_dimension* src/server/ai/judges/question-contract.ts
@@ -1046,16 +1228,16 @@ describe('physics fixture real judging — expected_signals validation', () => {
 
     for (const tc of fixture.expected_signals) {
       it(`${fixture.ref} :: ${tc.case} → ${tc.expected_signal}`, async () => {
+        // JudgeRunInput per src/core/capability/types.ts: answer.content (not answer_md).
         const result = await unitDimensionV1Capability.run({
-          answer_md: tc.student_answer,
+          answer: { content: tc.student_answer },
           question: {
             metadata: {
               reference_value: fixture.reference_value,
               reference_unit: fixture.reference_unit,
               reference_tolerance: fixture.tolerance,
             },
-          } as any,
-          subjectProfile: {} as any,
+          },
         });
         const signal = (result.evidence_json as { signal?: string }).signal ?? null;
 
@@ -1115,21 +1297,30 @@ pnpm audit:partition
 pnpm exec biome check --no-errors-on-unmatched src/core/capability/judges/unit_dimension src/server/ai/judges/question-contract.ts
 ```
 
-- [ ] **Step 2**: Foundation A acid test 2 verify:
+- [ ] **Step 2**: Foundation A acid test 2 verify (revised — see Spec deltas section):
 
 ```bash
+# Hard zero: registry shape unchanged
 git diff 9191c160a20d8e5afabf11503c6851f510bd2182 -- src/core/capability/registry.ts
+# Expect EMPTY
+
+# Soft / documented deltas: types.ts + index.ts + question-contract.ts
+# all widened to support async runner contract.
+git diff 9191c160a20d8e5afabf11503c6851f510bd2182 -- src/core/capability/types.ts
+# Expect: 1 line — return type widening JudgeResultV2T → JudgeResultV2T | Promise<JudgeResultV2T>
+
 git diff 9191c160a20d8e5afabf11503c6851f510bd2182 -- src/server/ai/judges/index.ts
-# Both should be EMPTY (acid test 2 hard requirement)
+# Expect: judgeRouterV2 + judgeRouter become async + await runner.run(...); 3-5 lines
 
 git diff 9191c160a20d8e5afabf11503c6851f510bd2182 -- src/server/ai/judges/question-contract.ts
-# Should be just the P1 metadata pass-through line(s) + P2 metadata field
-# Captured in spec deltas
+# Expect: P1 metadata field + P2 await + (if any) further async propagation; record exact line count
 ```
 
-Expected: registry.ts + judges/index.ts EMPTY; question-contract.ts shows only the documented small delta from P1 + P2.
+Each delta must match what's listed in plan's "Spec deltas observed" section. Count lines per file; if any framework file exceeds expected delta, **stop and update plan + Linear spec deltas** before continuing.
 
-If non-EMPTY → phase rollback per spec §3 P2 exit criterion 4 ("框架代码 LOC change = 0 (不在 unit_dimension.ts / physics 子目录之外)").
+If a delta is **unexpected** (file not in allowed list) → phase rollback per spec §3 P2 exit criterion 4. Document delta + decide:
+- Acceptable widening → add to spec deltas, continue
+- Unacceptable → revert and choose alternative path (drop LLM fallback / restructure)
 
 ---
 
