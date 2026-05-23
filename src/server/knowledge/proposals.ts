@@ -18,6 +18,7 @@ import type { Db, Tx } from '@/db/client';
 import { event, knowledge } from '@/db/schema';
 import { costUsdToMicroUsd } from '@/server/ai/provenance';
 import { writeEvent } from '@/server/events/queries';
+import { writeAiProposal } from '@/server/proposals/writer';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
@@ -97,25 +98,24 @@ export async function writeKnowledgeProposeEvent(
         'writeKnowledgeProposeEvent: propose_new with parent_id=null not supported (PR A scope)',
       );
     }
-    await writeEvent(db, {
+    await writeAiProposal(db, {
       id,
-      session_id: null,
-      actor_kind: 'agent',
       actor_ref: 'dreaming',
-      action: 'propose',
-      subject_kind: 'knowledge',
-      // subject_id is a synthetic id of the proposed knowledge node — the row
-      // doesn't exist yet (it's a proposal); accept materialises the row.
-      subject_id: newId(),
       outcome: 'partial', // 'partial' = pending; 'success' = accepted (set by rate handler)
       payload: {
-        name: entry.payload.name,
-        parent_id: entry.payload.parent_id,
-        reasoning,
+        kind: 'knowledge_node',
+        target: { subject_kind: 'knowledge', subject_id: null },
+        reason_md: reasoning,
+        evidence_refs: [],
+        proposed_change: {
+          mutation: 'propose_new',
+          name: entry.payload.name,
+          parent_id: entry.payload.parent_id,
+        },
+        cooldown_key: `knowledge_node:${entry.payload.parent_id}:${entry.payload.name}`,
       },
-      caused_by_event_id: null,
       task_run_id: entry.task_run_id ?? null,
-      cost_micro_usd: costUsdToMicroUsd(entry.cost_usd),
+      cost_usd: entry.cost_usd,
       created_at: now,
     });
     return id;

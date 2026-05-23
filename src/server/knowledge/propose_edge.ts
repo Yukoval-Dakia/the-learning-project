@@ -7,13 +7,12 @@
 // 不复用 KnowledgeReviewTask 的 streaming + tool-calling 路径 —— ReviewTask 是
 // 交互式 12 iter 设计，nightly cron 用单次结构化输出更便宜可控。
 
-import { newId } from '@/core/ids';
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
 import type { Db } from '@/db/client';
 import { event, knowledge_edge } from '@/db/schema';
-import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
-import { writeEvent } from '@/server/events/queries';
+import type { TaskTextRunFn } from '@/server/ai/provenance';
 import type { FailureAttempt } from '@/server/events/queries';
+import { writeAiProposal } from '@/server/proposals/writer';
 import type { SubjectProfile } from '@/subjects/profile';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
@@ -132,26 +131,27 @@ export async function runEdgeProposeAndWrite(
         continue;
       }
       // Write ProposeKnowledgeEdge event (Lane B).
-      await writeEvent(params.db, {
-        id: newId(),
-        session_id: null,
-        actor_kind: 'agent',
+      await writeAiProposal(params.db, {
         actor_ref: 'dreaming',
-        action: 'propose',
-        subject_kind: 'knowledge_edge',
-        // subject_id 是合成 id —— 边还不存在，accept 时落库才有真 id。
-        subject_id: newId(),
         outcome: 'success',
         payload: {
-          from_knowledge_id: p.from_knowledge_id,
-          to_knowledge_id: p.to_knowledge_id,
-          relation_type: p.relation_type,
-          weight: p.weight,
-          reasoning: p.reasoning,
+          kind: 'knowledge_edge',
+          target: { subject_kind: 'knowledge_edge', subject_id: null },
+          reason_md: p.reasoning,
+          evidence_refs: params.recentFailures.map((failure) => ({
+            kind: 'event' as const,
+            id: failure.attempt_event_id,
+          })),
+          proposed_change: {
+            from_knowledge_id: p.from_knowledge_id,
+            to_knowledge_id: p.to_knowledge_id,
+            relation_type: p.relation_type,
+            weight: p.weight,
+          },
+          cooldown_key: `knowledge_edge:${key}`,
         },
-        caused_by_event_id: null,
         task_run_id: result.task_run_id ?? null,
-        cost_micro_usd: costUsdToMicroUsd(result.cost_usd),
+        cost_usd: result.cost_usd,
         created_at: new Date(),
       });
       // 同一 batch 内防同向同型重复

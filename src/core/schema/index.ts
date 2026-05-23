@@ -3,6 +3,7 @@ import * as b from './business';
 import * as g from './generated';
 
 export * from './business';
+export * from './proposal';
 
 // ---------- Knowledge ----------
 export const KnowledgeInsert = g.KnowledgeInsertGenerated.extend({
