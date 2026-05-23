@@ -1,7 +1,7 @@
 # ADR-0017: Memory layer = Mem0 (facts) + brief layer (per-scope markdown)
 
-**Status:** Draft
-**Date:** 2026-05-23
+**Status:** Accepted
+**Date:** 2026-05-23 (accepted 2026-05-23 via PR #102)
 **Supersedes:** —
 **Superseded by:** —
 **Related:** ADR-0001（TS monolith + Python sidecar escape hatch）/ ADR-0006 v2（events 不可变 action log）/ ADR-0007（single-user）/ ADR-0012（mastery as derived view）/ ADR-0015（learning_record + memory_brief_note 一等领域实体）
