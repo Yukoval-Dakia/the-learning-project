@@ -4,8 +4,8 @@
 > 这里记的是 **项目走到了哪、下一站去哪、为什么这么走**，不是 commit log。
 > 维护规则：每完成一个 Phase 就 update 一次；不维护周度进度。
 
-**最后更新**：2026-05-23（Linear migration + docs freshness gate；math MVP M3 已收口；Foundation closeout P-1 已落；当前分支写了 physics SubjectProfile P0 plan，但 physics profile 代码尚未注册）
-**当前 Phase**：Foundation B/C 已被 math MVP 验证到第二科目；下一步是 Foundation B acid test 1（physics P0）+ Linear 文档/issue 管理面收口。Product Track 1 继续排 Teaching / Note / Variant / Review UX；Product Track 2 仍等 proposal inbox slice。
+**最后更新**：2026-05-23（Linear migration + docs freshness gate；math MVP M3 已收口；Foundation closeout P-1 + P0 已 ship — PR #86 / #91；physics profile 已注册 + acid test 1 通过）
+**当前 Phase**：Foundation B 第三科目 acid test 1 已过（physics P0 via PR #91）。下一步 P1：`unit_dimension@1` capability skeleton + Foundation A acid test 2（registry / router 主体 0 行 diff）。Product Track 1 继续排 Teaching / Note / Variant / Review UX；Product Track 2 仍等 proposal inbox slice。Linear 文档/issue 管理面同期收口（本 PR）。
 **主分支**：`main` 已推 `origin`
 **路线图源**：[`docs/planning/v0.3-generalized-ai-learning-framework.md`](../planning/v0.3-generalized-ai-learning-framework.md) §1.5 是当前执行清单；root `PLANNING.md` v0.12 Phase 1-4 已标 historical
 
@@ -54,7 +54,7 @@
 🟡  API 暴露 subject profile（review / learning-item）  ✅ PR #63
 ✅  剩余 high-use AI task prompt 抽 profileFragments  attribution / graph proposal / variant / teaching / summary / knowledge review 已走 SubjectProfile
 ✅  非 wenyan 第二科目 profile（math）作为 pressure test  math profile + KaTeX renderConfig + steps@1 + partial credit UI 已收口（#77/#80/#81/#82/#83/#84）
-⏳  第三科目 profile（physics）Foundation B acid test 1  当前分支仅有 P0 plan；`src/subjects/profile.ts` 尚未注册 physics
+✅  第三科目 profile（physics）Foundation B acid test 1  PR #91（`13485be`）已 ship — `src/subjects/physics/profile.ts` 落地 + `src/subjects/profile.ts` 注册 + `KNOWN_SUBJECT_IDS += 'physics'` + 8 profile tests + 5 e2e smoke + framework diff = 0（acid test 1 ✓）
 ```
 
 ### Foundation C — Judge Result Contract + Correction Event（ADR-0014 §4/§6）
@@ -96,7 +96,7 @@
 ```
 🚫  公共 MCP server / Plugin platform   v0.3 §6 Non-Goal；产品内 runtime tool 走 in-process MCP adapter
 🚫  外部 MCP 消费                       延后到内部 loop 稳定 + 真有外部客户端需要
-⏳  Multi-subject 扩展                  math pressure profile 已完成；physics P0/P1/P2 用于验证第三科目 + unit_dimension route
+⏳  Multi-subject 扩展                  math + physics P0 已注册；physics P1（`unit_dimension@1` skeleton）+ P2（impl）排在 Foundation closeout 序列下一步
 ⏳  Source / Grounding / Multimodal     v0.3 Track F；presume Foundation A/B/C ready
 ```
 
