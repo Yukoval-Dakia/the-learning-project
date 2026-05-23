@@ -120,6 +120,10 @@ Spec §7.4 line 411 says `numeric_off` → score `0.3` + `incorrect` — **confl
 
 Pedagogy preserved: signal still surfaced in `evidence_json.signal`; `coarse_outcome=partial` for "partially understood" cases (numeric error, wrong unit but right dim) gives a clearer FSRS / UX signal than the schema-illegal score=0.3 incorrect.
 
+### Task 7 regression note (2026-05-23)
+
+`pnpm test:unit` surfaced two baseline test-expectation drifts unrelated to `unit_dimension`: `origin/main`'s `mathProfile` already includes `time_pressure`, while `src/core/schema/schema.test.ts` and `src/ui/lib/cause-options.test.ts` still expected `time_pressure` to be outside math cause options. P2 updates those tests only to match the implemented profile; no runtime cause/profile code changes.
+
 ---
 
 ## Boundaries (P2 不做)
