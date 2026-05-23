@@ -235,18 +235,27 @@ L6 ─┘                   弱依赖 L3 (correction event for retract)
 | W5 | L5.3 | 剩余 producer + signals |
 | W6 | 收口 | audit-drift + status.md + v0.3 doc §1.5 状态更新 |
 
-## Linear issue 关联
+## Linear 项目结构
 
-- 主 issue（Epic 级别）：[YUK-38 — Track 2 起步 + Foundation 末尾收口](https://linear.app/yukoval-studios/issue/YUK-38) —— 链入本 doc，本 outline doc 是其 SoT
-- 新建 sub-issue：L1 / L3 / L4 / L5.1 / L5.2 / L5.3 / L6（**7 个**）
-- 复用 + parent 到 epic：[YUK-7](https://linear.app/yukoval-studios/issue/YUK-7) + [YUK-8](https://linear.app/yukoval-studios/issue/YUK-8) → 覆盖 L2
-- Related（不 parent）：[YUK-15](https://linear.app/yukoval-studios/issue/YUK-15) + [YUK-19](https://linear.app/yukoval-studios/issue/YUK-19) → L5 完工后才能落地
+按项目惯例（[docs/agents/issue-tracker.md](../../agents/issue-tracker.md) §"Layer mapping"）model 为 **Linear Project + Milestone**：
 
-总 issue 计数：epic + 7 新 sub + 2 复用 sub = **10**。
+- **Project**：[Track 2 起步 + Foundation 末尾收口](https://linear.app/yukoval-studios/project/track-2-起步-foundation-末尾收口-6ecf1ce05315) (priority=Medium, start=2026-05-23, target=2026-07-31)
+- **6 Milestones**（lane → Milestone → issue 映射）：
 
-**Linear capture gate**：本 outline 落地后，开 epic + 7 新 sub + 2 复用 sub = 10 个 issue，挂当前 commit。
+  | Milestone | Lane | Issue | Target |
+  |---|---|---|---|
+  | M1 — Capability Registry 单 invoker | L1 | [YUK-39](https://linear.app/yukoval-studios/issue/YUK-39) | 2026-05-30 |
+  | M2 — SubjectProfile validator | L2 | [YUK-7](https://linear.app/yukoval-studios/issue/YUK-7) + [YUK-8](https://linear.app/yukoval-studios/issue/YUK-8) | 2026-05-30 |
+  | M3 — Correction state read model | L3 | [YUK-40](https://linear.app/yukoval-studios/issue/YUK-40) | 2026-06-06 |
+  | M4 — AI 运行可观测性 admin surface | L4 | [YUK-41](https://linear.app/yukoval-studios/issue/YUK-41) | 2026-06-06 |
+  | M5 — Proposal Inbox (Track 2 anchor) | L5 | [YUK-42](https://linear.app/yukoval-studios/issue/YUK-42) + [YUK-43](https://linear.app/yukoval-studios/issue/YUK-43) + [YUK-44](https://linear.app/yukoval-studios/issue/YUK-44) | 2026-06-27 |
+  | M6 — allowlist 过期约束 | L6 | [YUK-45](https://linear.app/yukoval-studios/issue/YUK-45) | 2026-05-30 |
 
-> **注**（2026-05-23 codex review）：项目惯例（[docs/agents/issue-tracker.md](../../agents/issue-tracker.md) §"Layer mapping"）建议 phase 用 Linear Project + Milestone 而非 Issue/epic tree。本 epic 暂保留 issue tree 形态（YUK-7/8 已挂 Foundation B Project，重 model 成本较高）；下次 phase 启动时按 Project + Milestone 建模。
+- **Related**（不在本 Project 内）：[YUK-15](https://linear.app/yukoval-studios/issue/YUK-15) + [YUK-19](https://linear.app/yukoval-studios/issue/YUK-19) → M5 完工后才能落地（属 Product Track 1）
+
+总计：1 Project + 6 Milestone + 9 Issues。
+
+**历史记录**：原 [YUK-38](https://linear.app/yukoval-studios/issue/YUK-38) issue/epic 已 Cancel，superseded by 上述 Project（按 2026-05-23 codex review on PR #105 的 F3b 反馈重 model）。
 
 ## ADR 触发条件
 
