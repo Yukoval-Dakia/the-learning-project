@@ -183,18 +183,21 @@
 
 ### L6 — `audit:schema` allowlist 过期约束
 
-**问题**：[scripts/audit-schema-allowlist.json](../../../scripts/audit-schema-allowlist.json) 35 条 entry 都带 `resolves_when`（指向某 PR / phase），但 CI 不校验过期，可无限累积。memory_brief_note（8）/ artifact（11）/ knowledge_edge（6）/ learning_session+event（13）四簇。
+**问题**：[scripts/audit-schema-allowlist.json](../../../scripts/audit-schema-allowlist.json) 67 条业务 entry（共 69 keys，含 2 个 `_comment` marker）都带 `resolves_when`（指向某 PR / phase），但 CI 不校验过期，可无限累积。Top 簇（2026-05-23 基线）：artifact（18）/ memory_brief_note（10）/ event（8）/ learning_item（6）/ answer（5）/ knowledge_edge（5）/ learning_session（4）/ material_fsrs_state（4）/ question（4）/ 其他 3。
+
+> 启动 L6 前重新跑 `jq '. | with_entries(select(.key | startswith("_") | not)) | length'` 复核基线 —— 数字会随其他 lane 落地变化。
 
 **Scope**：
 
 - `pnpm audit:schema` 加一段：解析 `resolves_when`，如果指向已合 PR 或已 ship phase 则 fail
 - 给 `resolves_when` 一个最小 schema：`{ kind: 'pr' | 'phase' | 'manual', ref: string, expected_by: 'YYYY-MM-DD' }`
-- 现有 35 entry 一次性按新 schema reformat（不实质改 allowlist，只改格式）
+- 现有所有业务 entry 一次性按新 schema reformat（不实质改 allowlist，只改格式）
 
 **Exit criteria**：
 
 - [ ] 故意把一个 `resolves_when` 指向已合 PR，CI 失败
-- [ ] 35 条 entry 全部按新格式
+- [ ] 全部业务 entry（按启动时实际基线 `jq` 重新统计）按新格式
+- [ ] `_comment` marker 保持不动（不强制 `resolves_when`）
 - [ ] CLAUDE.md 的 "pnpm audit:schema" 段更新说明新格式
 - [ ] 一次 PR 解决
 
@@ -232,7 +235,7 @@ L6 ─┘                   弱依赖 L3 (correction event for retract)
 
 ## Linear issue 关联
 
-- 主 issue（Epic 级别）：`YUK-NN — Track 2 起步 + Foundation 末尾收口` —— 链入本 doc，本 outline doc 是其 SoT
+- 主 issue（Epic 级别）：[YUK-38 — Track 2 起步 + Foundation 末尾收口](https://linear.app/yukoval-studios/issue/YUK-38) —— 链入本 doc，本 outline doc 是其 SoT
 - 新建 sub-issue：L1 / L3 / L4 / L5.1 / L5.2 / L5.3 / L6（**7 个**）
 - 复用 + parent 到 epic：[YUK-7](https://linear.app/yukoval-studios/issue/YUK-7) + [YUK-8](https://linear.app/yukoval-studios/issue/YUK-8) → 覆盖 L2
 - Related（不 parent）：[YUK-15](https://linear.app/yukoval-studios/issue/YUK-15) + [YUK-19](https://linear.app/yukoval-studios/issue/YUK-19) → L5 完工后才能落地
