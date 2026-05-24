@@ -59,6 +59,25 @@ describe('runPruneOrphanReviewSessions', () => {
     expect(result.abandoned).toBe(0);
   });
 
+  // YUK-57: paused sessions older than 6h are abandoned too
+  it('abandons review sessions in paused state older than 6h', async () => {
+    const db = testDb();
+    const { sessionId: pausedOld } = await Review.startReviewSession(db);
+    await Review.pauseReviewSession(db, pausedOld);
+    await ageSession(pausedOld, 7 * 60 * 60 * 1000);
+
+    const { sessionId: pausedFresh } = await Review.startReviewSession(db);
+    await Review.pauseReviewSession(db, pausedFresh);
+
+    const result = await runPruneOrphanReviewSessions(db);
+    expect(result.abandoned).toBe(1);
+
+    const rows = await db.select().from(learning_session);
+    const byId = new Map(rows.map((r) => [r.id, r.status]));
+    expect(byId.get(pausedOld)).toBe('abandoned');
+    expect(byId.get(pausedFresh)).toBe('paused');
+  });
+
   // suppress unused-import in case sql gets dropped later
   void sql;
 });
