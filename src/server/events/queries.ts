@@ -155,11 +155,15 @@ export async function getFailureAttempts(
   if (opts.since) {
     conditions.push(gte(event.created_at, opts.since));
   }
+  // YUK-76 codex P2 — secondary `desc(event.id)` makes the order
+  // deterministic when two failure attempts share the same `created_at`.
+  // Without it, callers like `/api/review/due`'s per-question cap pick a
+  // non-deterministic representative across requests.
   const attemptQuery = db
     .select()
     .from(event)
     .where(and(...conditions))
-    .orderBy(desc(event.created_at));
+    .orderBy(desc(event.created_at), desc(event.id));
   const attemptRows = unbounded ? await attemptQuery : await attemptQuery.limit(limit * 3);
 
   if (attemptRows.length === 0) return [];
@@ -171,7 +175,7 @@ export async function getFailureAttempts(
           .select()
           .from(event)
           .where(and(...conditions))
-          .orderBy(desc(event.created_at))
+          .orderBy(desc(event.created_at), desc(event.id))
           .limit(nextLimit)
           .offset(offset),
       );

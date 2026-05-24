@@ -273,6 +273,44 @@ describe('getFailureAttempts', () => {
     expect(results.map((r) => r.question_id)).toEqual(['q_active_1', 'q_active_2']);
   });
 
+  // YUK-76 codex P2 — deterministic tie-break on equal `created_at`.
+  // Without `desc(event.id)` as secondary sort key, two failures sharing the
+  // same timestamp returned in non-deterministic order, which destabilises the
+  // per-question cap in `/api/review/due`'s `getFailureAttemptsPerQuestion`.
+  it('returns deterministic order when failures share created_at (id desc tie-break)', async () => {
+    const db = testDb();
+    const sharedTime = new Date('2026-05-01T12:00:00Z');
+    // Insert in reverse-id order — if the secondary sort were absent, the
+    // server might return them in insertion order rather than id-desc.
+    await seedAttemptEvent({
+      id: 'evt_tie_a',
+      question_id: 'q_tie_a',
+      created_at: sharedTime,
+    });
+    await seedAttemptEvent({
+      id: 'evt_tie_c',
+      question_id: 'q_tie_c',
+      created_at: sharedTime,
+    });
+    await seedAttemptEvent({
+      id: 'evt_tie_b',
+      question_id: 'q_tie_b',
+      created_at: sharedTime,
+    });
+
+    const first = await getFailureAttempts(db);
+    const second = await getFailureAttempts(db);
+    // Stable across two reads, and ordered by id desc within the tie.
+    expect(first.map((r) => r.attempt_event_id)).toEqual([
+      'evt_tie_c',
+      'evt_tie_b',
+      'evt_tie_a',
+    ]);
+    expect(second.map((r) => r.attempt_event_id)).toEqual(
+      first.map((r) => r.attempt_event_id),
+    );
+  });
+
   it('excludes non-failure attempts', async () => {
     const db = testDb();
     await seedAttemptEvent({ question_id: 'q_fail', outcome: 'failure' });
