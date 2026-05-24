@@ -219,24 +219,12 @@ export async function decideKnowledgeEdgeProposal(
   };
   const proposeSubjectId = proposeRow.subject_id;
 
-  const existingRateRows = await db
-    .select()
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'rate'),
-        eq(event.subject_kind, 'knowledge_edge'),
-        eq(event.caused_by_event_id, proposeEventId),
-      ),
-    )
-    .limit(1);
-  const existingRate = existingRateRows[0];
+  const existingRate = await findExistingRateEvent(db, proposeEventId);
   if (existingRate) {
-    const ratePayload = existingRate.payload as { rating?: string };
-    if (ratePayload.rating !== decision) {
+    if (existingRate.decision !== decision) {
       throw new ApiError(
         'conflict',
-        `proposal ${proposeEventId} already decided as ${ratePayload.rating}`,
+        `proposal ${proposeEventId} already decided as ${existingRate.decision}`,
         409,
       );
     }

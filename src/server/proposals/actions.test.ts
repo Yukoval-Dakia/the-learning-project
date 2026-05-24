@@ -164,6 +164,66 @@ describe('proposal lifecycle owner service', () => {
     expect(edges[0].to_knowledge_id).toBe('k1');
   });
 
+  it('decideKnowledgeEdgeProposal treats generic rate events as idempotent decisions', async () => {
+    const db = testDb();
+    await seedKnowledge(['k1', 'k2']);
+    await writeAiProposal(db, {
+      id: 'edge_p1',
+      payload: {
+        kind: 'knowledge_edge',
+        target: { subject_kind: 'knowledge_edge', subject_id: null },
+        reason_md: 'k1 unlocks k2',
+        evidence_refs: [],
+        proposed_change: {
+          from_knowledge_id: 'k1',
+          to_knowledge_id: 'k2',
+          relation_type: 'prerequisite',
+          weight: 1,
+        },
+      },
+    });
+    await db.insert(event).values({
+      id: 'rate_edge_p1',
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'event',
+      subject_id: 'edge_p1',
+      outcome: 'success',
+      payload: { rating: 'accept' },
+      caused_by_event_id: 'edge_p1',
+      created_at: new Date(),
+    });
+    await db.insert(event).values({
+      id: 'gen_edge_p1',
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'generate',
+      subject_kind: 'knowledge_edge',
+      subject_id: 'edge_existing',
+      outcome: 'success',
+      payload: { propose_event_id: 'edge_p1' },
+      caused_by_event_id: 'edge_p1',
+      created_at: new Date(),
+    });
+
+    const result = await decideKnowledgeEdgeProposal(db, 'edge_p1', { decision: 'accept' });
+
+    expect(result).toMatchObject({
+      rate_event_id: 'rate_edge_p1',
+      generate_event_id: 'gen_edge_p1',
+      edge_id: 'edge_existing',
+      idempotent: true,
+    });
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'edge_p1')));
+    expect(rateRows).toHaveLength(1);
+  });
+
   it('dismissAiProposal records a generic RateEvent for future proposal kinds', async () => {
     const db = testDb();
     await writeAiProposal(db, {

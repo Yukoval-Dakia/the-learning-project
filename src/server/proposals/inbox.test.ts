@@ -1,7 +1,7 @@
 import { event } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { getProposalInboxRow, listLegacyKnowledgeProposals, listProposalInboxRows } from './inbox';
 import { recordProposalDecisionSignal } from './signals';
@@ -135,6 +135,85 @@ describe('proposal inbox reader', () => {
       name: '古今异义',
       parent_id: 'parent_1',
     });
+  });
+
+  it('normalizes bare experimental knowledge propose events into unified inbox rows', async () => {
+    const db = testDb();
+    await db.insert(event).values({
+      id: 'legacy_experimental_node',
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'dreaming',
+      action: 'experimental:knowledge_propose',
+      subject_kind: 'knowledge',
+      subject_id: 'synthetic_node',
+      outcome: 'partial',
+      payload: {
+        name: '判断句',
+        parent_id: 'parent_1',
+        reasoning: 'Older writer used the experimental namespace',
+      },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: new Date(),
+    });
+
+    const rows = await listProposalInboxRows(db);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: 'legacy_experimental_node',
+      kind: 'knowledge_node',
+      payload: {
+        kind: 'knowledge_node',
+        proposed_change: {
+          mutation: 'propose_new',
+          name: '判断句',
+          parent_id: 'parent_1',
+        },
+      },
+      source_action: 'experimental:knowledge_propose',
+    });
+  });
+
+  it('skips and logs invalid proposal payloads without failing the whole inbox', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const db = testDb();
+    await writeAiProposal(db, {
+      id: 'valid_p1',
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'li_ok' },
+        reason_md: 'valid row',
+        evidence_refs: [],
+        proposed_change: { learning_item_id: 'li_ok' },
+      },
+    });
+    await db.insert(event).values({
+      id: 'bad_p1',
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'bad_writer',
+      action: 'experimental:proposal',
+      subject_kind: 'learning_item',
+      subject_id: 'li_bad',
+      outcome: 'partial',
+      payload: { ai_proposal: { kind: 'completion' } },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: new Date(Date.now() + 1_000),
+    });
+
+    const rows = await listProposalInboxRows(db);
+
+    expect(rows.map((row) => row.id)).toEqual(['valid_p1']);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('skipping invalid proposal event bad_p1'),
+      expect.anything(),
+    );
+    warn.mockRestore();
   });
 
   it('preserves the legacy knowledge proposal API projection', async () => {
