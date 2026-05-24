@@ -48,33 +48,60 @@ function formatProfileRegistrationError(id: string, errors: string[]): string {
   ].join('\n');
 }
 
+export interface SubjectRegistrationResult {
+  id: string;
+  valid: boolean;
+  errors: string[];
+}
+
+export interface SubjectRegistrationOptions {
+  throwOnInvalid?: boolean;
+}
+
+export interface SubjectRegistryOptions {
+  throwOnInvalid?: boolean;
+}
+
 export class SubjectRegistry {
   private profiles = new Map<SubjectId, SubjectProfile>();
   private aliases = new Map<string, SubjectId>();
   private defaultId: SubjectId;
 
-  constructor(defaultId: SubjectId = DEFAULT_SUBJECT_ID) {
+  constructor(defaultId: SubjectId = DEFAULT_SUBJECT_ID, opts: SubjectRegistryOptions = {}) {
     this.defaultId = defaultId;
-    this.register(wenyanProfile);
-    this.register(mathProfile);
-    this.register(physicsProfile);
+    const throwOnInvalid = opts.throwOnInvalid ?? true;
+    this.register(wenyanProfile, [], { throwOnInvalid });
+    this.register(mathProfile, [], { throwOnInvalid });
+    this.register(physicsProfile, [], { throwOnInvalid });
     for (const [alias, id] of Object.entries(DEFAULT_ALIASES)) {
       this.aliases.set(normalizeSubjectKey(alias), normalizeSubjectKey(id));
     }
   }
 
-  register(profile: SubjectProfile, aliases: string[] = []): void {
+  register(
+    profile: SubjectProfile,
+    aliases: string[] = [],
+    opts: SubjectRegistrationOptions = {},
+  ): SubjectRegistrationResult {
+    const throwOnInvalid = opts.throwOnInvalid ?? true;
     const id = normalizeSubjectKey(profile.id);
     if (id.length === 0) {
-      throw new Error('SubjectProfile.id must be a non-empty string');
+      const errors = ['SubjectProfile.id must be a non-empty string'];
+      if (throwOnInvalid) throw new Error(errors[0]);
+      return { id: '<missing-id>', valid: false, errors };
     }
     if (this.profiles.has(id)) {
-      throw new Error(`Subject profile '${id}' already registered`);
+      const errors = [`Subject profile '${id}' already registered`];
+      if (throwOnInvalid) throw new Error(errors[0]);
+      return { id, valid: false, errors };
     }
     const normalizedProfile = id === profile.id ? profile : { ...profile, id };
     const validation = validateProfile(normalizedProfile, getDefaultRegistry());
     if (!validation.valid) {
-      throw new Error(formatProfileRegistrationError(id, validation.errors));
+      if (throwOnInvalid) {
+        throw new Error(formatProfileRegistrationError(id, validation.errors));
+      }
+      return { id, valid: false, errors: validation.errors };
     }
 
     this.profiles.set(id, normalizedProfile);
@@ -87,6 +114,7 @@ export class SubjectRegistry {
       }
       this.aliases.set(key, id);
     }
+    return { id, valid: true, errors: [] };
   }
 
   resolve(domain?: string | null): SubjectProfile {
