@@ -838,32 +838,30 @@ describe('YUK-15 record evidence flip on accept / retract', () => {
 
   async function seedRecord(id: string): Promise<void> {
     const now = new Date();
-    await testDb()
-      .insert(learning_record)
-      .values({
-        id,
-        kind: 'open_question',
-        title: null,
-        content_md: 'why?',
-        source: 'manual',
-        capture_mode: 'text',
-        activity_kind: 'ask',
-        processing_status: 'raw',
-        origin_event_id: null,
-        subject_id: null,
-        knowledge_ids: [],
-        question_id: null,
-        attempt_event_id: null,
-        learning_item_id: null,
-        artifact_id: null,
-        source_document_id: null,
-        asset_refs: [],
-        payload: {},
-        created_at: now,
-        updated_at: now,
-        archived_at: null,
-        version: 0,
-      });
+    await testDb().insert(learning_record).values({
+      id,
+      kind: 'open_question',
+      title: null,
+      content_md: 'why?',
+      source: 'manual',
+      capture_mode: 'text',
+      activity_kind: 'ask',
+      processing_status: 'raw',
+      origin_event_id: null,
+      subject_id: null,
+      knowledge_ids: [],
+      question_id: null,
+      attempt_event_id: null,
+      learning_item_id: null,
+      artifact_id: null,
+      source_document_id: null,
+      asset_refs: [],
+      payload: {},
+      created_at: now,
+      updated_at: now,
+      archived_at: null,
+      version: 0,
+    });
   }
 
   async function getRecordStatus(id: string): Promise<string | null> {
