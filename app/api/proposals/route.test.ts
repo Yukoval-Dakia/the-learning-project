@@ -146,6 +146,51 @@ describe('GET /api/proposals', () => {
     expect(secondBody.next_cursor).toBeNull();
   });
 
+  it('continues scanning past rated rows when paginating pending proposals', async () => {
+    const db = testDb();
+    for (const [id, createdAt] of [
+      ['accepted_newest', '2026-05-24T03:00:00.000Z'],
+      ['accepted_newer', '2026-05-24T02:00:00.000Z'],
+      ['pending_older', '2026-05-24T01:00:00.000Z'],
+    ] as const) {
+      await writeAiProposal(db, {
+        id,
+        created_at: new Date(createdAt),
+        payload: {
+          kind: 'completion',
+          target: { subject_kind: 'learning_item', subject_id: id },
+          reason_md: id,
+          evidence_refs: [],
+          proposed_change: { learning_item_id: id },
+        },
+      });
+    }
+    for (const id of ['accepted_newest', 'accepted_newer']) {
+      await writeEvent(db, {
+        id: `rate_${id}`,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'rate',
+        subject_kind: 'event',
+        subject_id: id,
+        outcome: 'success',
+        payload: { rating: 'accept' },
+        caused_by_event_id: id,
+        created_at: new Date(),
+      });
+    }
+
+    const res = await getProposals('status=pending&limit=1');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      rows: Array<{ id: string }>;
+      next_cursor: string | null;
+    };
+
+    expect(body.rows.map((row) => row.id)).toEqual(['pending_older']);
+    expect(body.next_cursor).toBeNull();
+  });
+
   it('returns 400 for an invalid status filter', async () => {
     const res = await getProposals('status=maybe');
     expect(res.status).toBe(400);

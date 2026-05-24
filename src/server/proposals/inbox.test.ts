@@ -3,7 +3,12 @@ import { writeEvent } from '@/server/events/queries';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import { getProposalInboxRow, listLegacyKnowledgeProposals, listProposalInboxRows } from './inbox';
+import {
+  getProposalInboxRow,
+  listLegacyKnowledgeProposals,
+  listProposalInboxPage,
+  listProposalInboxRows,
+} from './inbox';
 import { recordProposalDecisionSignal } from './signals';
 import { writeAiProposal } from './writer';
 
@@ -364,6 +369,73 @@ describe('proposal inbox reader', () => {
     expect(rows.map((row) => row.id)).toEqual(['high_p1', 'default_p1', 'cooled_p1']);
     expect(rows[0].signals?.acceptance_rate).toBe(1);
     expect(rows[2].signals?.cooldown_until).toBeInstanceOf(Date);
+  });
+
+  it('paginates using the same signal-aware order as the inbox ranking', async () => {
+    const db = testDb();
+    await writeAiProposal(db, {
+      id: 'default_p1',
+      created_at: new Date('2026-05-23T03:00:00.000Z'),
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'li_default' },
+        reason_md: 'Default row',
+        evidence_refs: [],
+        proposed_change: { learning_item_id: 'li_default' },
+        cooldown_key: 'completion:default',
+      },
+    });
+    await writeAiProposal(db, {
+      id: 'high_p1',
+      created_at: new Date('2026-05-23T01:00:00.000Z'),
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'li_high' },
+        reason_md: 'Older row with better historical signal',
+        evidence_refs: [],
+        proposed_change: { learning_item_id: 'li_high' },
+        cooldown_key: 'completion:high',
+      },
+    });
+    await writeAiProposal(db, {
+      id: 'cooled_p1',
+      created_at: new Date('2026-05-23T04:00:00.000Z'),
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'li_cooled' },
+        reason_md: 'Newest but cooled row',
+        evidence_refs: [],
+        proposed_change: { learning_item_id: 'li_cooled' },
+        cooldown_key: 'completion:cooled',
+      },
+    });
+
+    const allRows = await listProposalInboxRows(db, { status: 'pending' });
+    const high = allRows.find((row) => row.id === 'high_p1');
+    const cooled = allRows.find((row) => row.id === 'cooled_p1');
+    if (!high || !cooled) throw new Error('missing seeded proposals');
+    await recordProposalDecisionSignal(db, high, 'accept');
+    await recordProposalDecisionSignal(db, cooled, 'dismiss', 'not now');
+
+    const first = await listProposalInboxPage(db, { status: 'pending', limit: 1 });
+    expect(first.rows.map((row) => row.id)).toEqual(['high_p1']);
+    expect(first.next_cursor).toEqual(expect.any(String));
+
+    const second = await listProposalInboxPage(db, {
+      status: 'pending',
+      limit: 1,
+      cursor: first.next_cursor ?? undefined,
+    });
+    expect(second.rows.map((row) => row.id)).toEqual(['default_p1']);
+    expect(second.next_cursor).toEqual(expect.any(String));
+
+    const third = await listProposalInboxPage(db, {
+      status: 'pending',
+      limit: 1,
+      cursor: second.next_cursor ?? undefined,
+    });
+    expect(third.rows.map((row) => row.id)).toEqual(['cooled_p1']);
+    expect(third.next_cursor).toBeNull();
   });
 
   // YUK-19 — planLearningIntent writes proposals with the legacy

@@ -17,6 +17,7 @@ import { tasks } from '@/ai/registry';
 import { newId } from '@/core/ids';
 import { parseEvent } from '@/core/schema/event';
 import { event, knowledge } from '@/db/schema';
+import { writeAiProposal } from '@/server/proposals/writer';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -341,6 +342,42 @@ describe('runWriteProposal — pure dispatch', () => {
     expect(proposeEvents[0].action).toBe('experimental:knowledge_archive');
     const payload = proposeEvents[0].payload as { ai_proposal?: { kind?: string } };
     expect(payload.ai_proposal?.kind).toBe('archive');
+  });
+
+  it('skips duplicate pending proposals even when the prior proposal is older than the lookback window', async () => {
+    const db = testDb();
+    await seedKnowledgeNode('k_parent');
+    await writeAiProposal(db, {
+      id: 'old_duplicate_p1',
+      created_at: new Date('2026-04-01T00:00:00.000Z'),
+      payload: {
+        kind: 'knowledge_node',
+        target: { subject_kind: 'knowledge', subject_id: null },
+        reason_md: 'old duplicate',
+        evidence_refs: [],
+        proposed_change: {
+          mutation: 'propose_new',
+          name: '重复节点',
+          parent_id: 'k_parent',
+        },
+        cooldown_key: 'knowledge_node:k_parent:重复节点',
+      },
+    });
+
+    const result = await runWriteProposal(db, {
+      payload: {
+        mutation: 'propose_new',
+        name: '重复节点',
+        parent_id: 'k_parent',
+      },
+      reasoning: 'same proposal more than 30 days later',
+    });
+
+    expect(result).toMatchObject({
+      kind: 'skipped_duplicate',
+      proposal_id: 'old_duplicate_p1',
+      cooldown_key: 'knowledge_node:k_parent:重复节点',
+    });
   });
 });
 

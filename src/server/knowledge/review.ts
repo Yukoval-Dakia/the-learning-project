@@ -29,14 +29,13 @@ import type { ProposalInboxRow } from '@/server/proposals/inbox';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import { and, desc, eq, gte, inArray, isNotNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { effectiveCauseForFailureAttempt } from '../events/cause-policy';
 import { getFailureAttempts } from '../events/queries';
 import { type KnowledgeMutationPayload, writeKnowledgeProposeEvent } from './proposals';
 
 const RECENT_MISTAKES_LIMIT = 100;
-const PROPOSAL_GATE_LOOKBACK_DAYS = 30;
 type DbLike = Db | Tx;
 
 async function buildReviewInput(db: Db) {
@@ -167,7 +166,7 @@ async function checkProposalGate(
 > | null> {
   const now = new Date();
   const signal = await lockProposalSignal(db, candidate);
-  const duplicate = await findPendingProposalForGate(db, candidate, now);
+  const duplicate = await findPendingProposalForGate(db, candidate);
   if (duplicate) {
     return {
       proposal_id: duplicate.id,
@@ -176,7 +175,7 @@ async function checkProposalGate(
     };
   }
   if (signal.cooldown_until && signal.cooldown_until > now) {
-    const sourceProposal = await findLatestProposalForGate(db, candidate, now);
+    const sourceProposal = await findLatestProposalForGate(db, candidate);
     return {
       proposal_id: sourceProposal?.id ?? signal.id,
       kind: 'skipped_cooldown',
@@ -244,18 +243,16 @@ async function lockProposalSignal(
 async function findLatestProposalForGate(
   db: DbLike,
   candidate: ProposalGateCandidate,
-  now: Date,
 ): Promise<{ id: string } | null> {
-  const rows = await findRecentProposalRowsForGate(db, candidate, now);
+  const rows = await findProposalRowsForGate(db, candidate);
   return rows[0] ?? null;
 }
 
 async function findPendingProposalForGate(
   db: DbLike,
   candidate: ProposalGateCandidate,
-  now: Date,
 ): Promise<{ id: string } | null> {
-  const proposalRows = await findRecentProposalRowsForGate(db, candidate, now);
+  const proposalRows = await findProposalRowsForGate(db, candidate);
   if (proposalRows.length === 0) return null;
 
   const proposalIds = proposalRows.map((row) => row.id);
@@ -287,18 +284,15 @@ async function findPendingProposalForGate(
   return null;
 }
 
-async function findRecentProposalRowsForGate(
+async function findProposalRowsForGate(
   db: DbLike,
   candidate: ProposalGateCandidate,
-  now: Date,
 ): Promise<Array<{ id: string }>> {
-  const since = new Date(now.getTime() - PROPOSAL_GATE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
   return await db
     .select({ id: event.id })
     .from(event)
     .where(
       and(
-        gte(event.created_at, since),
         sql`${event.payload}->'ai_proposal'->>'kind' = ${candidate.kind}`,
         sql`${event.payload}->'ai_proposal'->>'cooldown_key' = ${candidate.cooldown_key}`,
       ),
