@@ -62,6 +62,71 @@ async function seedReviewEvent(
   });
 }
 
+async function seedFailureAttemptWithCause(opts: {
+  attemptId: string;
+  questionId: string;
+  judgeCategory: string;
+  userCategory?: string;
+}) {
+  const db = testDb();
+  const now = new Date();
+  await writeEvent(db, {
+    id: opts.attemptId,
+    session_id: null,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'attempt',
+    subject_kind: 'question',
+    subject_id: opts.questionId,
+    outcome: 'failure',
+    payload: {
+      answer_md: 'wrong',
+      answer_image_refs: [],
+      referenced_knowledge_ids: [],
+    },
+    created_at: now,
+  });
+  await writeEvent(db, {
+    id: `${opts.attemptId}_judge`,
+    session_id: null,
+    actor_kind: 'agent',
+    actor_ref: 'attribution',
+    action: 'judge',
+    subject_kind: 'event',
+    subject_id: opts.attemptId,
+    outcome: 'success',
+    payload: {
+      cause: {
+        primary_category: opts.judgeCategory,
+        secondary_categories: [],
+        analysis_md: 'agent analysis',
+        confidence: 0.8,
+      },
+      referenced_knowledge_ids: [],
+    },
+    caused_by_event_id: opts.attemptId,
+    created_at: now,
+  });
+  if (opts.userCategory) {
+    await writeEvent(db, {
+      id: `${opts.attemptId}_user_cause`,
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:user_cause',
+      subject_kind: 'event',
+      subject_id: opts.attemptId,
+      outcome: null,
+      payload: {
+        primary_category: opts.userCategory,
+        user_notes: 'manual correction',
+      },
+      caused_by_event_id: opts.attemptId,
+      created_at: now,
+    });
+  }
+}
+
 async function seedKnowledge(id: string, domain: string | null) {
   const db = testDb();
   const now = new Date();
@@ -215,5 +280,28 @@ describe('runSessionSummary', () => {
     expect(ratings).toEqual(['again', 'hard']);
     // suppress unused-import
     void event;
+  });
+
+  it('counts top causes through the effective user-first cause policy', async () => {
+    const db = testDb();
+    const { sessionId } = await Review.startReviewSession(db);
+    await seedQuestion('q1', '题一');
+    await seedReviewEvent(sessionId, 'q1', 'again');
+    await seedFailureAttemptWithCause({
+      attemptId: 'attempt_summary',
+      questionId: 'q1',
+      judgeCategory: 'concept',
+      userCategory: 'memory',
+    });
+
+    const runTaskFn = vi.fn(async (_kind: string, _input: unknown, _ctx: unknown) => ({
+      text: 'summary',
+    }));
+    await runSessionSummary({ db, sessionId, runTaskFn });
+
+    const input = runTaskFn.mock.calls[0][1] as {
+      top_causes: Array<{ category: string; count: number }>;
+    };
+    expect(input.top_causes).toEqual([{ category: 'memory', count: 1 }]);
   });
 });

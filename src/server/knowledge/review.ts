@@ -28,6 +28,7 @@ import { writeAiProposal } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import { effectiveCauseForFailureAttempt } from '../events/cause-policy';
 import { getFailureAttempts } from '../events/queries';
 import { type KnowledgeMutationPayload, writeKnowledgeProposeEvent } from './proposals';
 
@@ -48,15 +49,26 @@ async function buildReviewInput(db: Db) {
     .orderBy(knowledge.created_at);
 
   const attempts = await getFailureAttempts(db, { limit: RECENT_MISTAKES_LIMIT });
-  const recent_mistakes = attempts.map((fa) => ({
-    id: fa.attempt_event_id,
-    // M3 closeout (2026-05-22): canonical LLM payload field name —
-    // KnowledgeReviewTask prompt (src/ai/task-prompts.ts buildKnowledgeReviewPrompt)
-    // documents `question_id` as the recipe field. NOT ActivityRef legacy.
-    question_id: fa.question_id,
-    knowledge_ids: fa.referenced_knowledge_ids,
-    cause: fa.judge?.cause ?? null,
-  }));
+  const recent_mistakes = attempts.map((fa) => {
+    const cause = effectiveCauseForFailureAttempt(fa);
+    return {
+      id: fa.attempt_event_id,
+      // M3 closeout (2026-05-22): canonical LLM payload field name —
+      // KnowledgeReviewTask prompt (src/ai/task-prompts.ts buildKnowledgeReviewPrompt)
+      // documents `question_id` as the recipe field. NOT ActivityRef legacy.
+      question_id: fa.question_id,
+      knowledge_ids: fa.referenced_knowledge_ids,
+      cause: cause
+        ? {
+            source: cause.source,
+            primary_category: cause.primary_category,
+            secondary_categories: cause.secondary_categories,
+            analysis_md: cause.analysis_md ?? cause.user_notes,
+            confidence: cause.confidence,
+          }
+        : null,
+    };
+  });
 
   return {
     input: {

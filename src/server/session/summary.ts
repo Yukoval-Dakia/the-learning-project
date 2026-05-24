@@ -12,6 +12,8 @@ import { and, asc, eq, inArray } from 'drizzle-orm';
 
 import type { Db } from '@/db/client';
 import { event, knowledge, learning_session, question } from '@/db/schema';
+import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
+import { getFailureAttempts } from '@/server/events/queries';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 const NOTABLE_LIMIT = 3;
@@ -109,40 +111,18 @@ export async function runSessionSummary(
       )[0]?.domain
     : null;
 
-  // Cause distribution from chained judge events (judges on the original
-  // failure attempts — not session-bound, but joined by question).
+  // Cause distribution from original failure attempts joined by reviewed question.
+  // Effective cause policy keeps user-authored cause ahead of agent attribution.
   const questionIds = Array.from(new Set(reviewEvents.map((r) => r.subject_id)));
   const causeCounts = new Map<string, number>();
   if (questionIds.length > 0) {
-    const attemptIds = (
-      await db
-        .select({ id: event.id })
-        .from(event)
-        .where(
-          and(
-            eq(event.action, 'attempt'),
-            eq(event.subject_kind, 'question'),
-            eq(event.outcome, 'failure'),
-            inArray(event.subject_id, questionIds),
-          ),
-        )
-    ).map((r) => r.id);
-    if (attemptIds.length > 0) {
-      const judges = await db
-        .select({ payload: event.payload })
-        .from(event)
-        .where(
-          and(
-            eq(event.action, 'judge'),
-            eq(event.subject_kind, 'event'),
-            inArray(event.caused_by_event_id, attemptIds),
-          ),
-        );
-      for (const j of judges) {
-        const cat = (j.payload as { cause?: { primary_category?: string } }).cause
-          ?.primary_category;
-        if (cat) causeCounts.set(cat, (causeCounts.get(cat) ?? 0) + 1);
-      }
+    const failures = await getFailureAttempts(db, {
+      questionIds,
+      limit: Math.max(questionIds.length * 10, 100),
+    });
+    for (const failure of failures) {
+      const cat = effectiveCauseForFailureAttempt(failure)?.primary_category;
+      if (cat) causeCounts.set(cat, (causeCounts.get(cat) ?? 0) + 1);
     }
   }
   const topCauses = [...causeCounts.entries()]

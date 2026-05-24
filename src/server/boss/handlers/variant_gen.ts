@@ -1,7 +1,7 @@
 // Phase 2 (Task #17) — async variant question generation.
 //
-// Triggered after attribution_followup writes a judge event for a failure
-// attempt. If the active SubjectProfile marks the cause's primary_category as
+// Triggered after a failure attempt has an effective cause. If the active
+// SubjectProfile marks the cause's primary_category as
 // targetable, generate one variant_question proposal. YUK-44 moved this from
 // direct question materialization to the proposal inbox; accepting the proposal
 // can later create a question with source='mistake_variant', draft_status, and
@@ -17,13 +17,15 @@
 //      themselves spawn variants — spec §3.4.4 chain termination)
 //   3. SubjectProfile cause category can set variant_targetable=false.
 
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { z } from 'zod';
 
 import type { Db } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
+import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
+import { getFailureAttemptById } from '@/server/events/queries';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { writeVariantQuestionProposal } from '@/server/proposals/producers';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -81,6 +83,7 @@ export interface RunVariantGenResult {
     | 'proposed'
     | 'skipped:attempt_not_found'
     | 'skipped:not_a_failure_attempt'
+    | 'skipped:attempt_not_active'
     | 'skipped:no_judge_yet'
     | 'skipped:question_not_found'
     | 'skipped:max_depth'
@@ -116,25 +119,11 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
     return { status: 'skipped:not_a_failure_attempt' };
   }
 
-  // Load chained judge event (cause)
-  const judgeRows = await db
-    .select({ payload: event.payload })
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'judge'),
-        eq(event.subject_kind, 'event'),
-        eq(event.caused_by_event_id, attemptEventId),
-      ),
-    )
-    .limit(1);
-  const judge = judgeRows[0];
-  if (!judge) return { status: 'skipped:no_judge_yet' };
-  const judgePayload = judge.payload as {
-    cause?: { primary_category?: string; analysis_md?: string };
-  };
-  const cause = judgePayload.cause;
-  if (!cause?.primary_category) return { status: 'skipped:cause_not_targetable' };
+  const failure = await getFailureAttemptById(db, attemptEventId);
+  if (!failure) return { status: 'skipped:attempt_not_active' };
+  const cause = effectiveCauseForFailureAttempt(failure);
+  if (!cause) return { status: 'skipped:no_judge_yet' };
+  if (!cause.primary_category) return { status: 'skipped:cause_not_targetable' };
 
   // Load the parent question
   const qRows = await db
@@ -217,7 +206,7 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
     attempt: { wrong_answer_md: payload.answer_md ?? '' },
     cause: {
       primary_category: cause.primary_category,
-      analysis_md: cause.analysis_md ?? '',
+      analysis_md: cause.analysis_md ?? cause.user_notes ?? '',
     },
     depth: parent.variant_depth,
   };
