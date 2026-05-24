@@ -33,6 +33,7 @@ const ALL_TABLES = [
   'learning_record',
   'artifact',
   'learning_item',
+  'mistake_variant',
   'question_block',
   'question',
   'source_document',

@@ -272,6 +272,24 @@ export const tasks = {
     systemPrompt:
       '你是数学题视觉判分器（vision LLM）。输入：题面 + reference_solution (expected_signals + final_answer) + 学生图/文本步骤/文本 final_answer。严格 JSON 输出 StepsLlmOutput。',
   },
+  VariantVerifyTask: {
+    kind: 'VariantVerifyTask',
+    description:
+      'YUK-17 / ADR-0018 — second-pass content alignment check for an accepted mistake variant. Decides whether the variant still targets the original failure cause; verdict="fail" flips mistake_variant.status to "broken".',
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
+    needsToolCall: false,
+    isMultimodal: false,
+    allowedTools: [],
+    // DEPRECATED (2026-05-22 M1): do not edit. Runtime renders via
+    // getTaskSystemPrompt(task, profile) in src/ai/task-prompts.ts; this
+    // string is kept only as type-required fallback. New tasks MUST add a
+    // builder in task-prompts.ts.
+    systemPrompt:
+      '你是变式题质检员。检查 variant 是否仍然针对原 cause / 未飘出范围。严格输出 VariantVerificationResult JSON。',
+  },
   VariantGenTask: {
     kind: 'VariantGenTask',
     description:

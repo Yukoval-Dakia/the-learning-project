@@ -244,6 +244,18 @@ export const NoteVerificationResult = z.object({
 });
 export type NoteVerificationResultT = z.infer<typeof NoteVerificationResult>;
 
+// YUK-17 / ADR-0018 — VariantVerifyTask second-pass output.
+// Used by `runVariantVerify` to decide whether to flip
+// `mistake_variant.status` from 'active' to 'broken'.
+export const VariantVerificationResult = z.object({
+  verdict: z.enum(['pass', 'fail']),
+  failure_reasons: z.array(z.string().min(1).max(500)).max(10).default([]),
+  cause_targeting: z.enum(['on_target', 'off_target', 'unclear']),
+  summary_md: z.string().min(1).max(1000),
+  confidence: z.number().min(0).max(1),
+});
+export type VariantVerificationResultT = z.infer<typeof VariantVerificationResult>;
+
 export const ToolState = z.object({
   question_ids: z.array(z.string()),
   session_meta: z.record(z.unknown()).nullish(),
