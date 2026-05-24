@@ -175,6 +175,8 @@ export async function ensureProposalDecisionSignal(
 ): Promise<void> {
   const cooldownKey = proposal.payload.cooldown_key;
   if (!cooldownKey) return;
+  const lockKey = `${proposal.kind}:${cooldownKey}`;
+  await db.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
 
   const existing = (
     await db
