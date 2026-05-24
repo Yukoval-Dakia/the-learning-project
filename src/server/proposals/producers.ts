@@ -1,5 +1,8 @@
 import type { ProposalEvidenceRefT } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
+import { event } from '@/db/schema';
+import { ApiError } from '@/server/http/errors';
+import { inArray } from 'drizzle-orm';
 import { writeAiProposal } from './writer';
 
 type DbLike = Db | Tx;
@@ -258,10 +261,46 @@ export interface WriteJudgeRetractionProposalInput extends CommonProducerInput {
   appeal_event_id?: string;
 }
 
+async function assertJudgeRetractionEvidenceRefs(
+  db: DbLike,
+  evidenceRefs: ProposalEvidenceRefT[],
+): Promise<void> {
+  const eventRefs = evidenceRefs.filter((ref) => ref.kind === 'event');
+  if (eventRefs.length !== evidenceRefs.length) {
+    throw new ApiError(
+      'evidence_ref_must_be_judge_event',
+      'judge_retraction evidence_refs must all point to judge events',
+      422,
+    );
+  }
+  const ids = [...new Set(eventRefs.map((ref) => ref.id))];
+  const rows =
+    ids.length === 0
+      ? []
+      : await db
+          .select({ id: event.id, action: event.action })
+          .from(event)
+          .where(inArray(event.id, ids));
+  const judgeIds = new Set(rows.filter((row) => row.action === 'judge').map((row) => row.id));
+  const invalid = ids.filter((id) => !judgeIds.has(id));
+  if (invalid.length > 0) {
+    throw new ApiError(
+      'evidence_ref_must_be_judge_event',
+      `judge_retraction evidence_refs must point to judge events: ${invalid.join(', ')}`,
+      422,
+    );
+  }
+}
+
 export async function writeJudgeRetractionProposal(
   db: DbLike,
   input: WriteJudgeRetractionProposalInput,
 ): Promise<string> {
+  const evidence_refs = input.evidence_refs ?? [
+    { kind: 'event' as const, id: input.judge_event_id },
+  ];
+  await assertJudgeRetractionEvidenceRefs(db, evidence_refs);
+
   return writeAiProposal(db, {
     id: input.id,
     actor_ref: 'appeal',
@@ -269,10 +308,7 @@ export async function writeJudgeRetractionProposal(
       kind: 'judge_retraction',
       target: { subject_kind: 'event', subject_id: input.judge_event_id },
       reason_md: input.reason_md,
-      evidence_refs: input.evidence_refs ?? [
-        ...(input.appeal_event_id ? [{ kind: 'event' as const, id: input.appeal_event_id }] : []),
-        { kind: 'event' as const, id: input.judge_event_id },
-      ],
+      evidence_refs,
       proposed_change: {
         judge_event_id: input.judge_event_id,
         ...(input.appeal_event_id ? { appeal_event_id: input.appeal_event_id } : {}),

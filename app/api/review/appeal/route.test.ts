@@ -73,9 +73,7 @@ describe('POST /api/review/appeal', () => {
     expect(res.status).toBe(404);
   });
 
-  it('accepts attempt event (embedded-check embeds judge in payload)', async () => {
-    // M2.3: embedded-check/attempt writes judge result inside attempt event's
-    // payload, not as a separate judge event. Appeal endpoint must accept it.
+  it('returns 422 when judge_event_id points at a non-judge attempt event', async () => {
     const id = createId();
     await testDb()
       .insert(event)
@@ -92,10 +90,11 @@ describe('POST /api/review/appeal', () => {
         caused_by_event_id: null,
       });
     const res = await POST(makeReq({ judge_event_id: id, reason_md: '步骤判错' }));
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(422);
+    await expect(res.json()).resolves.toMatchObject({ error: 'evidence_ref_must_be_judge_event' });
   });
 
-  it('returns 400 when caused_by event is neither judge nor attempt', async () => {
+  it('returns 422 when caused_by event is not a judge event', async () => {
     const id = createId();
     await testDb().insert(event).values({
       id,
@@ -110,7 +109,7 @@ describe('POST /api/review/appeal', () => {
       caused_by_event_id: null,
     });
     const res = await POST(makeReq({ judge_event_id: id }));
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(422);
   });
 
   it('returns 400 on invalid body', async () => {
