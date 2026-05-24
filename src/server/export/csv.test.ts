@@ -119,6 +119,56 @@ describe('buildMistakesCsv', () => {
     expect(csv).toContain('knowledge_gap');
   });
 
+  it('uses active user cause before judge cause in projected row', () => {
+    const tables = fixture();
+    tables.event.push({
+      id: 'evt_user_cause_1',
+      action: 'experimental:user_cause',
+      subject_kind: 'event',
+      subject_id: 'evt_attempt_1',
+      outcome: 'success',
+      payload: '{"primary_category":"concept","user_notes":"manual correction"}',
+      caused_by_event_id: 'evt_attempt_1',
+      created_at: 1699007200,
+    });
+
+    const csv = buildMistakesCsv(tables);
+    const cols = csv.split('\n')[1].split(',');
+    expect(cols[6]).toBe('concept');
+    expect(cols[7]).toBe('manual correction');
+  });
+
+  it('falls back to judge cause when user cause is retracted', () => {
+    const tables = fixture();
+    tables.event.push(
+      {
+        id: 'evt_user_cause_1',
+        action: 'experimental:user_cause',
+        subject_kind: 'event',
+        subject_id: 'evt_attempt_1',
+        outcome: 'success',
+        payload: '{"primary_category":"concept","user_notes":"manual correction"}',
+        caused_by_event_id: 'evt_attempt_1',
+        created_at: 1699007200,
+      },
+      {
+        id: 'evt_correct_user_cause_1',
+        action: 'correct',
+        subject_kind: 'event',
+        subject_id: 'evt_user_cause_1',
+        outcome: 'success',
+        payload: '{"correction_kind":"retract","reason_md":"wrong"}',
+        caused_by_event_id: null,
+        created_at: 1699007300,
+      },
+    );
+
+    const csv = buildMistakesCsv(tables);
+    const cols = csv.split('\n')[1].split(',');
+    expect(cols[6]).toBe('knowledge_gap');
+    expect(cols[7]).toBe('');
+  });
+
   it('decomposes fsrs_state JSON columns from material_fsrs_state', () => {
     const csv = buildMistakesCsv(fixture());
     expect(csv).toContain('1700000000');

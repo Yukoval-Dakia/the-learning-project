@@ -235,8 +235,13 @@ LearningItem
   child_learning_item_ids[]?     # 层级：hub 持有 atomic
   status: pending | in_progress | done | dismissed | resting | archived
   completed_at? / dismissed_at? / archived_at?
-  archived_reason?: maintenance | user
+  archived_reason?: maintenance | user | proposal_retracted
 ```
+
+`archived_reason = proposal_retracted` 是 YUK-19 引入的：当用户从待审区
+撤回一个 `learning_intent` proposal 时，已物化的 hub + atomic LearningItems
++ 配套 artifact stub 会被同事务 tombstone。L3 correction event 链 +
+`retractAiProposal()`（`src/server/proposals/actions.ts`）实现。
 
 ---
 

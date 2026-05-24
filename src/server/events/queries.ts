@@ -342,6 +342,56 @@ export async function getUserCauseForAttempt(
   };
 }
 
+/**
+ * Returns one active failure attempt projection by id, including active user
+ * cause / judge channels. This is for queue consumers that already know the
+ * attempt id and must not scan by question recency.
+ */
+export async function getFailureAttemptById(
+  db: DbLike,
+  attemptEventId: string,
+): Promise<FailureAttempt | null> {
+  const rows = await db.select().from(event).where(eq(event.id, attemptEventId)).limit(1);
+  const attempt = rows[0];
+  if (!attempt) return null;
+  if (
+    attempt.action !== 'attempt' ||
+    attempt.subject_kind !== 'question' ||
+    attempt.outcome !== 'failure'
+  ) {
+    return null;
+  }
+
+  const attemptTruth =
+    (await getEffectiveTruths(db, [attempt.id])).get(attempt.id) ??
+    activeEffectiveTruth(attempt.id);
+  if (attemptTruth.terminal_state !== 'active' || attemptTruth.effective_event_id !== attempt.id) {
+    return null;
+  }
+
+  const payload = attempt.payload as {
+    answer_md: string | null;
+    answer_image_refs: string[];
+    referenced_knowledge_ids: string[];
+  };
+  const [judge, userCause] = await Promise.all([
+    getJudgeForAttempt(db, attempt.id),
+    getUserCauseForAttempt(db, attempt.id),
+  ]);
+  const failure: FailureAttempt = {
+    attempt_event_id: attempt.id,
+    question_id: attempt.subject_id,
+    answer_md: payload.answer_md ?? null,
+    answer_image_refs: payload.answer_image_refs ?? [],
+    referenced_knowledge_ids: payload.referenced_knowledge_ids ?? [],
+    created_at: attempt.created_at,
+    correction_state: attemptTruth,
+  };
+  if (judge) failure.judge = judge;
+  if (userCause) failure.user_cause = userCause;
+  return failure;
+}
+
 // ============================================================================
 // ReviewEvent — FSRS review log view.
 // ============================================================================

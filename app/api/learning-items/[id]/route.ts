@@ -3,6 +3,7 @@ import { artifact, completion_evidence, learning_item, question } from '@/db/sch
 import { errorResponse } from '@/server/http/errors';
 import { getEffectiveDomain } from '@/server/knowledge/domain';
 import { assertKnowledgeIdsExist } from '@/server/knowledge/validate';
+import { getEffectiveTruth } from '@/server/review/effective-truth';
 import {
   type SlimSubjectProfile,
   resolveSubjectProfile,
@@ -79,6 +80,8 @@ export async function GET(_req: Request, { params }: RouteParams): Promise<Respo
     const rows = await db
       .select({
         id: learning_item.id,
+        source: learning_item.source,
+        source_ref: learning_item.source_ref,
         title: learning_item.title,
         content: learning_item.content,
         knowledge_ids: learning_item.knowledge_ids,
@@ -87,6 +90,7 @@ export async function GET(_req: Request, { params }: RouteParams): Promise<Respo
         primary_artifact_id: learning_item.primary_artifact_id,
         completed_at: learning_item.completed_at,
         archived_at: learning_item.archived_at,
+        archived_reason: learning_item.archived_reason,
         created_at: learning_item.created_at,
         updated_at: learning_item.updated_at,
         version: learning_item.version,
@@ -201,8 +205,23 @@ export async function GET(_req: Request, { params }: RouteParams): Promise<Respo
     }
     const subjectProfile = await resolveSlimProfileForKnowledgeIds(row.knowledge_ids ?? []);
 
+    // YUK-19 — surface effective-truth correction state for the source event,
+    // mirroring the list route response shape. The detail page reuses
+    // CorrectionStateRenderer + a retract CTA when the originating proposal
+    // is still active.
+    const sourceEvent =
+      row.source_ref && row.source_ref.length > 0
+        ? {
+            id: row.source_ref,
+            correction_state: await getEffectiveTruth(db, row.source_ref),
+          }
+        : null;
+
     return Response.json({
       id: row.id,
+      source: row.source,
+      source_ref: row.source_ref,
+      source_event: sourceEvent,
       title: row.title,
       content: row.content,
       knowledge_ids: row.knowledge_ids,
@@ -215,6 +234,7 @@ export async function GET(_req: Request, { params }: RouteParams): Promise<Respo
       children,
       completed_at: row.completed_at ? Math.floor(row.completed_at.getTime() / 1000) : null,
       archived_at: row.archived_at ? Math.floor(row.archived_at.getTime() / 1000) : null,
+      archived_reason: row.archived_reason,
       created_at: Math.floor(row.created_at.getTime() / 1000),
       updated_at: Math.floor(row.updated_at.getTime() / 1000),
       version: row.version,

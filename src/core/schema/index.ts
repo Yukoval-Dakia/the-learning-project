@@ -81,15 +81,18 @@ export type Question = z.infer<typeof Question>;
 // src/core/schema/event/known.ts (Lane B).
 
 // ---------- LearningItem ----------
+// YUK-19 — `proposal_retracted` is set when a learning_intent proposal's L3
+// correction tombstones the hub + atomic LearningItems it materialized. See
+// `retractAiProposal()` in src/server/proposals/actions.ts.
 export const LearningItemInsert = g.LearningItemInsertGenerated.extend({
   source: b.LearningItemSource,
   status: b.LearningItemStatus.nullish(),
-  archived_reason: z.enum(['maintenance', 'user']).nullish(),
+  archived_reason: z.enum(['maintenance', 'user', 'proposal_retracted']).nullish(),
 });
 export const LearningItem = g.LearningItemSelectGenerated.extend({
   source: b.LearningItemSource,
   status: b.LearningItemStatus,
-  archived_reason: z.enum(['maintenance', 'user']).nullable(),
+  archived_reason: z.enum(['maintenance', 'user', 'proposal_retracted']).nullable(),
 });
 export type LearningItem = z.infer<typeof LearningItem>;
 

@@ -24,6 +24,7 @@ export const fastTestInclude = [
   'src/ai/**/*.test.ts',
   'src/core/**/*.test.ts',
   'src/server/ai/judges/**/*.test.ts',
+  'src/server/events/cause-policy.test.ts',
   'src/server/export/**/*.test.ts',
   'src/server/http/**/*.test.ts',
   'src/server/ingestion/crop.test.ts',

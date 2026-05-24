@@ -84,6 +84,11 @@ async function loadProposalEvents(db: DbLike): Promise<EventRow[]> {
         ),
         like(event.action, 'experimental:knowledge_%'),
         eq(event.action, 'experimental:proposal'),
+        // YUK-19 — planLearningIntent writes proposals with the legacy
+        // `experimental:propose_learning_intent` action via event_override (see
+        // writeLearningItemProposal in src/server/proposals/producers.ts).
+        // Surface them in the unified inbox so the rollback / accept UI sees them.
+        eq(event.action, 'experimental:propose_learning_intent'),
       ),
     )
     .orderBy(desc(event.created_at), desc(event.id));

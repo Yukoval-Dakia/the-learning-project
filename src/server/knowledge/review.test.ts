@@ -141,6 +141,33 @@ async function seedAttemptWithJudge(opts: {
   });
 }
 
+async function seedUserCause(opts: {
+  id?: string;
+  attemptId: string;
+  primary_category: string;
+  user_notes?: string | null;
+}) {
+  const db = testDb();
+  await db.insert(event).values({
+    id: opts.id ?? newId(),
+    session_id: null,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'experimental:user_cause',
+    subject_kind: 'event',
+    subject_id: opts.attemptId,
+    outcome: null,
+    payload: {
+      primary_category: opts.primary_category,
+      user_notes: opts.user_notes ?? null,
+    },
+    caused_by_event_id: opts.attemptId,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: new Date(),
+  });
+}
+
 describe('runWriteProposal — pure dispatch', () => {
   beforeEach(async () => {
     await resetDb();
@@ -384,6 +411,38 @@ describe('streamReviewTask — SDK wiring smoke', () => {
     expect(promptStr).toContain('attempt_capture');
     expect(promptStr).toContain('q_capture');
     expect(promptStr).toContain('concept');
+  });
+
+  it('passes active user cause to KnowledgeReviewTask instead of the agent judge cause', async () => {
+    const db = testDb();
+    await seedKnowledgeNode('k1');
+    await seedAttemptWithJudge({
+      attemptId: 'attempt_user_cause',
+      questionId: 'q_user_cause',
+      knowledgeIds: ['k1'],
+      primary_category: 'concept',
+      analysis_md: 'agent-only analysis',
+    });
+    await seedUserCause({
+      attemptId: 'attempt_user_cause',
+      primary_category: 'memory',
+      user_notes: '用户确认是记忆问题',
+    });
+
+    const response = await streamReviewTask({ db });
+    const reader = response.body?.getReader();
+    if (reader) {
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+    }
+
+    const promptStr = String(mockAgentSdk.capturedQueryPrompt ?? '');
+    expect(promptStr).toContain('attempt_user_cause');
+    expect(promptStr).toContain('"source":"user"');
+    expect(promptStr).toContain('memory');
+    expect(promptStr).not.toContain('agent-only analysis');
   });
 
   it('passes the dominant tree subject profile into KnowledgeReviewTask', async () => {

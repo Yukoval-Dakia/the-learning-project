@@ -4,7 +4,7 @@
 //   - Per-day count + correct rate
 //   - Overall FSRS rating distribution
 //   - Top knowledge_ids by attempt:failure count in window
-//   - Top cause categories from chained judge events
+//   - Top cause categories from effective failure causes
 //   - Total AI cost (cost_micro_usd sum across events in window)
 //
 // Single-shot per page load; computed at request time (no view). Acceptable for
@@ -14,6 +14,8 @@ import { and, eq, gte, inArray, sql } from 'drizzle-orm';
 
 import { db } from '@/db/client';
 import { event, knowledge } from '@/db/schema';
+import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
+import { getFailureAttempts } from '@/server/events/queries';
 import { errorResponse } from '@/server/http/errors';
 
 export const runtime = 'nodejs';
@@ -72,23 +74,16 @@ export async function GET(req: Request): Promise<Response> {
       .where(gte(event.created_at, cutoff));
     const totalCostMicroUsd = Number(costRows[0]?.sum ?? 0);
 
-    // 4) Causes from judge events chained to in-window failure attempts.
+    // 4) Effective causes from in-window failure attempts.
     const failureIds = failures.map((f) => f.id);
     const causeCounts = new Map<string, number>();
     if (failureIds.length > 0) {
-      const judges = await db
-        .select({ payload: event.payload })
-        .from(event)
-        .where(
-          and(
-            eq(event.action, 'judge'),
-            eq(event.subject_kind, 'event'),
-            inArray(event.caused_by_event_id, failureIds),
-          ),
-        );
-      for (const j of judges) {
-        const p = j.payload as { cause?: { primary_category?: string } };
-        const cat = p.cause?.primary_category;
+      const activeFailures = await getFailureAttempts(db, {
+        since: cutoff,
+        limit: Math.max(failureIds.length * 2, 100),
+      });
+      for (const failure of activeFailures) {
+        const cat = effectiveCauseForFailureAttempt(failure)?.primary_category;
         if (cat) causeCounts.set(cat, (causeCounts.get(cat) ?? 0) + 1);
       }
     }

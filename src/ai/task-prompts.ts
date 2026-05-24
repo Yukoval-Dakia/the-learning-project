@@ -229,6 +229,32 @@ function buildStepsJudgePrompt(profile: SubjectProfile): string {
 禁止：输出 JSON 之外的文字、verdict 用非合法值、signal_verdicts 长度与 expected_signals 不等。`;
 }
 
+function buildVariantVerifyPrompt(profile: SubjectProfile): string {
+  return `你是${profile.displayName}变式题质检员。输入 { parent_question: { id, prompt_md, reference_md, knowledge_ids }, variant_question: { id, prompt_md, reference_md, knowledge_ids, difficulty }, original_cause: { primary_category, analysis_md, source }, original_attempt: { wrong_answer_md } }。
+科目上下文：${profile.displayName}。${profile.languageStyle}
+当前 SubjectProfile cause taxonomy：
+${causeTaxonomyList(profile)}
+任务：variant 是 VariantGenTask 第一遍生成、用户接受后落地的"变式题"。你要回答两个问题：
+1. variant 是否仍然在测同一 cause（cause_targeting）？
+2. variant 自身是否可解、有标准答案、不偏离学科范围（verdict）？
+判定要点：
+- 同知识点 / 同核心能力 → 'on_target'
+- 飘到无关知识点 / 难度跳跃太大 / 让 cause 无法重现 → 'off_target'
+- 信息不足 / variant 看起来合理但跟 cause 关联弱 → 'unclear'
+- variant.prompt 或 reference 明显错误 / 自相矛盾 / 不可解 → verdict='fail'
+- variant 解得开、与 parent 知识点连贯、cause_targeting != 'off_target' → verdict='pass'
+- ${profile.grounding.requirement}
+- ${profile.grounding.uncertaintyPolicy}
+严格 JSON 输出（不带 markdown 代码块包裹），shape 名 VariantVerificationResult：
+{"verdict":"pass"|"fail","failure_reasons":["..."],"cause_targeting":"on_target"|"off_target"|"unclear","summary_md":"<≤200 字结论 + 关键证据>","confidence":0.0-1.0}
+要点：
+- failure_reasons 只在 verdict='fail' 时填，每条 1 句话指出具体问题；verdict='pass' 时留空数组
+- cause_targeting='off_target' 强烈倾向 verdict='fail'，除非 variant 自身仍然有教学价值（极少数）
+- summary_md 必须可执行，写"为什么 pass / fail"和"对应的证据"，不写套话
+- ${profile.grounding.uncertaintyPolicy}
+禁止：输出 JSON 之外的文字、重写 variant 题面、给学习者建议（这是质检 not 教学）。`;
+}
+
 function buildVariantGenPrompt(profile: SubjectProfile): string {
   return `你是错题变式题作者。输入 { original_question: { id, prompt_md, reference_md, knowledge_ids, kind }, attempt: { wrong_answer_md }, cause: { primary_category, analysis_md }, depth }（depth 是原题代数：0=原题，1=一代变式；输入 depth≥2 时不会调用本任务）。
 科目上下文：${profile.displayName}。${profile.languageStyle}
@@ -277,7 +303,7 @@ reasoning 必须具体：引用 attempt event id 或指出 cause pattern。
 function buildSessionSummaryPrompt(profile: SubjectProfile): string {
   return `你是学习陪练，会复盘刚结束的复习 session。
 科目上下文：${profile.displayName}。${profile.languageStyle}
-输入 { session_id, duration_min, total_reviewed, ratings: { again, hard, good, easy }, top_causes: [...], top_knowledge: [...], notable_attempts: [{ prompt_md, user_response_md, fsrs_rating }, ...] } —— ratings 是 FSRS 评分分布，top_causes 来自 chained judge events，notable_attempts 是 again/hard 的最多 3 题。
+输入 { session_id, duration_min, total_reviewed, ratings: { again, hard, good, easy }, top_causes: [...], top_knowledge: [...], notable_attempts: [{ prompt_md, user_response_md, fsrs_rating }, ...] } —— ratings 是 FSRS 评分分布，top_causes 来自 effective cause（active user_cause 优先，否则 latest active judge），notable_attempts 是 again/hard 的最多 3 题。
 当前 SubjectProfile cause taxonomy：
 ${causeTaxonomyList(profile)}
 证据要求：${profile.grounding.requirement}
@@ -290,7 +316,7 @@ ${causeTaxonomyList(profile)}
 }
 
 function buildKnowledgeReviewPrompt(profile: SubjectProfile): string {
-  return `你是知识图谱维护助手。看完整 tree（含层级 / archived / merged_from）+ 最近 attempt events (action='attempt', outcome='failure' 的事件，含 cause via chained judge event)，propose 让知识图谱更合理的 mutation。
+  return `你是知识图谱维护助手。看完整 tree（含层级 / archived / merged_from）+ 最近 attempt events (action='attempt', outcome='failure' 的事件，含 effective cause：active user_cause 优先，否则 latest active judge)，propose 让知识图谱更合理的 mutation。
 科目上下文：${profile.displayName}。${profile.languageStyle}
 关注本学科的知识粒度：数学定义、条件、方法或易错模式；非数学 profile 则按对应 SubjectProfile 的概念边界和练习粒度判断。
 当前 SubjectProfile cause taxonomy：
@@ -356,6 +382,8 @@ export function getTaskSystemPrompt(
       return buildStepsJudgePrompt(profile);
     case 'VariantGenTask':
       return buildVariantGenPrompt(profile);
+    case 'VariantVerifyTask':
+      return buildVariantVerifyPrompt(profile);
     case 'TeachingTurnTask':
       return buildTeachingTurnPrompt(profile);
     // Subject-neutral pass-throughs — no profile builder required.

@@ -13,6 +13,13 @@
 //   5. Upsert material_fsrs_state via upsertFsrsState (single-owner per
 //      Step 9.A new module).
 //
+// YUK-56 (2026-05-24): wire `JudgeInvoker` (CC-3) for auto-rating. When the
+// caller submits `response_md`, run the judge and embed the result in the
+// review event's `payload.judge` (mirrors embedded-check pattern). When
+// `auto_rate: true`, the suggested rating wins over body.rating. CC-1: this
+// route never writes `experimental:user_cause` — rating-only overrides do not
+// signal cause disagreement.
+//
 // Wire JSON shape preserved: { next_due_at, new_state, review_event }.
 // The `review_event` field shape changes (now an event row, not a
 // review_event row); `id` semantics shift from review_event.id → event.id.
@@ -22,11 +29,14 @@ import { z } from 'zod';
 import { newId } from '@/core/ids';
 import { ActivityRef } from '@/core/schema/activity';
 import { FsrsRating } from '@/core/schema/business';
+import type { JudgeResultV2T } from '@/core/schema/capability';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { ApiError, errorResponse } from '@/server/http/errors';
+import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
+import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject-profile';
 import { normalizeReviewSubmitActivityRef } from '@/server/review/activity-ref';
 import { activeEffectiveTruth } from '@/server/review/effective-truth';
 import { scheduleReview } from '@/server/review/fsrs';
@@ -49,7 +59,34 @@ const SubmitBody = z.object({
   session_id: z.string().min(1).nullable().optional(),
   // ADR-0012 — review events feed the derived knowledge_mastery view.
   referenced_knowledge_ids: z.array(z.string().min(1)).default([]),
+  // YUK-56 — when true, the judge runs and its suggested rating (mapped from
+  // coarse_outcome) overrides `rating`. Requires `response_md` non-empty.
+  // Rejects with 422 when the judge returns coarse_outcome='unsupported'.
+  auto_rate: z.boolean().default(false),
 });
+
+type CoarseOutcome = JudgeResultV2T['coarse_outcome'];
+type Rating = z.infer<typeof FsrsRating>;
+
+/**
+ * YUK-56 — Map judge coarse_outcome to FSRS rating used by `/review`.
+ *
+ * 3-state rating space (again/hard/good) — Review UI does not surface 'easy'
+ * so 'good' covers both correct and very-correct. 'unsupported' returns null
+ * (caller decides: 422 in auto_rate mode, ignored in manual mode).
+ */
+function ratingFromCoarseOutcome(outcome: CoarseOutcome): Rating | null {
+  switch (outcome) {
+    case 'correct':
+      return 'good';
+    case 'partial':
+      return 'hard';
+    case 'incorrect':
+      return 'again';
+    case 'unsupported':
+      return null;
+  }
+}
 
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -66,14 +103,62 @@ export async function POST(req: Request): Promise<Response> {
     const identity = normalizeReviewSubmitActivityRef(body);
     const questionId = identity.question_id;
 
-    // Confirm the question exists; otherwise the review is for nothing.
-    const qRows = await db
-      .select({ id: question.id })
-      .from(question)
-      .where(eq(question.id, questionId))
-      .limit(1);
-    if (qRows.length === 0) {
+    // Confirm the question exists + load full row for judge (YUK-56). The
+    // judge needs kind / prompt_md / reference_md / rubric_json / choices_md /
+    // judge_kind_override / knowledge_ids / metadata / figures / image_refs /
+    // structured — i.e. everything in the question table.
+    const qRows = await db.select().from(question).where(eq(question.id, questionId)).limit(1);
+    const q = qRows[0];
+    if (!q) {
       throw new ApiError('not_found', `question ${questionId} not found`, 404);
+    }
+
+    // YUK-56 — Run the judge BEFORE the FSRS transaction when an answer was
+    // submitted. The judge is read-only against the DB (no events written) so
+    // it doesn't need to share the txn. We need the result up-front to:
+    //   1. Decide final rating when auto_rate=true (suggested wins).
+    //   2. Reject 422 when auto_rate=true but judge returned 'unsupported'.
+    //   3. Embed result in review event's payload.judge.
+    //
+    // CC-3 invariant: route through `createDefaultJudgeInvoker()`; never call
+    // `judgeExact` / `judgeKeyword` / `judgeRouter` directly.
+    const answerMd = body.response_md?.trim() ?? '';
+    let judgeResult: JudgeResultV2T | null = null;
+    let judgeRoute: string | null = null;
+    let judgeTelemetry:
+      | Awaited<ReturnType<ReturnType<typeof createDefaultJudgeInvoker>['invoke']>>['telemetry']
+      | null = null;
+    if (answerMd.length > 0) {
+      const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids);
+      const invoked = await createDefaultJudgeInvoker().invoke({
+        db,
+        question: q,
+        answer_md: answerMd,
+        subjectProfile,
+      });
+      judgeResult = invoked.result;
+      judgeRoute = invoked.route;
+      judgeTelemetry = invoked.telemetry;
+    }
+
+    // YUK-56 — Resolve final rating. In auto_rate mode the judge's suggested
+    // rating overrides body.rating. If the judge can't auto-rate (unsupported,
+    // or no answer was submitted), reject 422 so the UI falls back to manual.
+    const suggestedRating =
+      judgeResult !== null ? ratingFromCoarseOutcome(judgeResult.coarse_outcome) : null;
+    let finalRating: Rating = body.rating;
+    if (body.auto_rate) {
+      if (suggestedRating === null) {
+        // Either no answer submitted, or judge returned 'unsupported'.
+        throw new ApiError(
+          'unsupported_judge_route',
+          answerMd.length === 0
+            ? 'auto_rate requires response_md to be non-empty'
+            : `judge route '${judgeRoute}' returned coarse_outcome='unsupported'; please rate manually`,
+          422,
+        );
+      }
+      finalRating = suggestedRating;
     }
 
     // Codex P1-G — FSRS read + compute + write must all share a transaction
@@ -86,7 +171,7 @@ export async function POST(req: Request): Promise<Response> {
     // even when no material_fsrs_state row exists yet — first-review case
     // would otherwise race on the unique constraint and only one write would
     // survive, dropping the other's effect.
-    const outcome: 'success' | 'failure' = body.rating === 'again' ? 'failure' : 'success';
+    const outcome: 'success' | 'failure' = finalRating === 'again' ? 'failure' : 'success';
     const eventId = newId();
     let result: ReturnType<typeof scheduleReview>;
     let fsrsStateAfter: ReturnType<typeof scheduleReview>['nextState'] & {
@@ -109,7 +194,7 @@ export async function POST(req: Request): Promise<Response> {
                 last_review: prevStateRow.state.last_review ?? null,
               }
             : null,
-          body.rating,
+          finalRating,
           now,
         );
       } catch (err) {
@@ -127,6 +212,34 @@ export async function POST(req: Request): Promise<Response> {
         last_review: result.nextState.last_review ?? null,
       };
 
+      // YUK-56 — Embed judge result on the review event's payload (mirrors
+      // embedded-check pattern at app/api/embedded-check/attempt/route.ts:122).
+      // Extra keys are stored via jsonb; ReviewOnQuestion Zod schema strips
+      // unknown keys on parse, but writeEvent inserts the raw input.payload.
+      //
+      // Why not a separate action='judge' event chained via caused_by?
+      // JudgeOnEvent requires payload.cause (cause attribution is a downstream
+      // 'attribution' agent's job; this route only writes the assessment
+      // trail). Embedding mirrors the embedded-check pattern and keeps the
+      // judge event channel clean for cause-bearing events.
+      const judgePayload =
+        judgeResult !== null && judgeRoute !== null && judgeTelemetry !== null
+          ? {
+              judge: {
+                route: judgeRoute,
+                score: judgeResult.score,
+                coarse_outcome: judgeResult.coarse_outcome,
+                confidence: judgeResult.confidence,
+                feedback_md: judgeResult.feedback_md,
+                evidence_json: judgeResult.evidence_json,
+                capability_ref: judgeResult.capability_ref,
+                suggested_rating: suggestedRating,
+                auto_rated: body.auto_rate,
+                telemetry: judgeTelemetry,
+              },
+            }
+          : {};
+
       await writeEvent(tx, {
         id: eventId,
         session_id: body.session_id ?? null,
@@ -137,7 +250,7 @@ export async function POST(req: Request): Promise<Response> {
         subject_id: questionId,
         outcome,
         payload: {
-          fsrs_rating: body.rating,
+          fsrs_rating: finalRating,
           fsrs_state_after: fsrsStateAfter,
           user_response_md: body.response_md ?? null,
           referenced_knowledge_ids: body.referenced_knowledge_ids,
@@ -145,6 +258,7 @@ export async function POST(req: Request): Promise<Response> {
           // ReviewOnQuestion Zod schema (2026-05-17). Optional — omitted for
           // legacy callers that never sent it.
           ...(typeof body.latency_ms === 'number' ? { duration_ms: body.latency_ms } : {}),
+          ...judgePayload,
         },
         caused_by_event_id: null,
         task_run_id: null,
@@ -168,6 +282,27 @@ export async function POST(req: Request): Promise<Response> {
 
     // Response shape kept: review_event is now the event row (shape changed
     // but documented as opaque to clients).
+    //
+    // YUK-56 — additive `judge` field carries auto-rating provenance + the
+    // suggested_rating so the UI can highlight which button corresponds to
+    // the judge suggestion. `judge` is null when no answer was submitted
+    // (manual-only path).
+    const judgeResponse =
+      judgeResult !== null && judgeRoute !== null && judgeTelemetry !== null
+        ? {
+            route: judgeRoute,
+            score: judgeResult.score,
+            coarse_outcome: judgeResult.coarse_outcome,
+            confidence: judgeResult.confidence,
+            feedback_md: judgeResult.feedback_md,
+            evidence_json: judgeResult.evidence_json,
+            capability_ref: judgeResult.capability_ref,
+            suggested_rating: suggestedRating,
+            auto_rated: body.auto_rate,
+            telemetry: judgeTelemetry,
+          }
+        : null;
+
     return Response.json({
       next_due_at: Math.floor(finalResult.dueAt.getTime() / 1000),
       new_state: finalResult.nextState,
@@ -175,7 +310,7 @@ export async function POST(req: Request): Promise<Response> {
         id: eventId,
         activity_ref: identity.activity_ref,
         question_id: questionId,
-        rating: body.rating,
+        rating: finalRating,
         response_md: body.response_md ?? null,
         latency_ms: body.latency_ms ?? null,
         fsrs_state_after: finalFsrsStateAfter,
@@ -183,6 +318,7 @@ export async function POST(req: Request): Promise<Response> {
         created_at: now,
         correction_state: activeEffectiveTruth(eventId),
       },
+      judge: judgeResponse,
     });
   } catch (err) {
     return errorResponse(err);

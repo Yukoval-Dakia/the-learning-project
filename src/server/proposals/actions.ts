@@ -1,17 +1,39 @@
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 
 import { newId } from '@/core/ids';
 import type { ActivityRefT } from '@/core/schema/activity';
 import type { RelationTypeSchemaT } from '@/core/schema/event/blocks';
 import type { AiProposalPayloadT } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
-import { event, knowledge, knowledge_edge } from '@/db/schema';
+import {
+  artifact,
+  event,
+  knowledge,
+  knowledge_edge,
+  learning_item,
+  mistake_variant,
+  question,
+} from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError } from '@/server/http/errors';
 import { acceptProposal, dismissProposal } from '@/server/knowledge/proposals';
+import {
+  type LearningIntentMaterializeResult,
+  acceptLearningIntent,
+} from '@/server/orchestrator/learning_intent';
 import { type ProposalInboxRow, getProposalInboxRow } from './inbox';
 import { recordProposalDecisionSignal } from './signals';
+
+// YUK-17 / ADR-0018 — swappable enqueue hook so DB tests can drive
+// variant_question accept without spinning up pg-boss.
+export type EnqueueVariantVerifyFn = (mistakeVariantId: string) => Promise<void>;
+
+async function defaultEnqueueVariantVerify(mistakeVariantId: string): Promise<void> {
+  const { getStartedBoss } = await import('@/server/boss/client');
+  const boss = await getStartedBoss();
+  await boss.send('variant_verify', { mistake_variant_id: mistakeVariantId });
+}
 
 export type EdgeProposalDecision = 'accept' | 'reverse' | 'change_type' | 'dismiss';
 
@@ -34,7 +56,34 @@ export type AcceptAiProposalResult =
       kind: 'knowledge_node';
       result: Awaited<ReturnType<typeof acceptProposal>>;
     }
-  | KnowledgeEdgeProposalDecisionResult;
+  | KnowledgeEdgeProposalDecisionResult
+  | VariantQuestionAcceptResult
+  | LearningItemAcceptResult;
+
+export interface VariantQuestionAcceptResult {
+  kind: 'variant_question';
+  rate_event_id: string;
+  question_id: string;
+  mistake_variant_id: string;
+  idempotent?: boolean;
+}
+
+export interface LearningItemAcceptResult {
+  kind: 'learning_item';
+  /**
+   * Rate event id chained to the proposal. For learning_item the rate event
+   * is written by acceptLearningIntent() inside its own transaction, so this
+   * field is filled by re-querying after materialization.
+   */
+  rate_event_id: string;
+  hub_learning_item_id: string;
+  atomic_learning_item_ids: string[];
+  hub_artifact_id: string;
+  atomic_artifact_ids: string[];
+  root_knowledge_id: string;
+  created_knowledge_ids: string[];
+  idempotent?: boolean;
+}
 
 export type DismissAiProposalResult =
   | KnowledgeEdgeProposalDecisionResult
@@ -53,6 +102,8 @@ export interface AcceptAiProposalOpts {
   decision?: Exclude<EdgeProposalDecision, 'dismiss'>;
   new_relation_type?: RelationTypeSchemaT;
   user_note?: string;
+  // YUK-17 — swappable enqueue (DB tests inject a no-op or vi.fn).
+  enqueueVariantVerify?: EnqueueVariantVerifyFn;
 }
 
 export interface DismissAiProposalOpts {
@@ -325,6 +376,10 @@ export async function acceptAiProposal(
         new_relation_type: opts.new_relation_type,
         user_note: opts.user_note,
       });
+    case 'variant_question':
+      return await acceptVariantQuestionProposal(db, proposalId, proposal, opts);
+    case 'learning_item':
+      return await acceptLearningItemProposal(db, proposalId, proposal, opts);
     default:
       throw new ApiError(
         'unsupported_proposal_kind',
@@ -332,6 +387,325 @@ export async function acceptAiProposal(
         400,
       );
   }
+}
+
+/**
+ * YUK-19 — learning_item accept materializes a 1-hub + N-atomic LearningItem
+ * hierarchy + paired note artifacts through the existing acceptLearningIntent
+ * owner service (Phase 2B). acceptLearningIntent writes its own rate event
+ * inside the same transaction as the hierarchy/artifact inserts, so this
+ * branch must not write a second rate event.
+ *
+ * If the proposal already has an accept rate event (idempotency) we re-derive
+ * the materialization result from the persisted rows. acceptLearningIntent's
+ * own `proposal_already_rated` guard would otherwise throw on the second
+ * call — we beat it to the punch.
+ */
+async function acceptLearningItemProposal(
+  db: Db,
+  proposalId: string,
+  proposal: ProposalInboxRow,
+  opts: AcceptAiProposalOpts,
+): Promise<LearningItemAcceptResult> {
+  if (opts.decision && opts.decision !== 'accept') {
+    throw new ApiError(
+      'validation_error',
+      `learning_item proposal only supports accept, got ${opts.decision}`,
+      400,
+    );
+  }
+
+  const existingRateRows = await db
+    .select()
+    .from(event)
+    .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId)))
+    .limit(1);
+  const existingRate = existingRateRows[0];
+  if (existingRate) {
+    const ratePayload = existingRate.payload as { rating?: string };
+    if (ratePayload.rating !== 'accept') {
+      throw new ApiError(
+        'conflict',
+        `proposal ${proposalId} already decided as ${ratePayload.rating}`,
+        409,
+      );
+    }
+    const summary = await summarizeLearningItemMaterialization(db, proposalId);
+    return {
+      kind: 'learning_item',
+      rate_event_id: existingRate.id,
+      ...summary,
+      idempotent: true,
+    };
+  }
+
+  const result: LearningIntentMaterializeResult = await acceptLearningIntent({ db, proposalId });
+  await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+
+  const rateRows = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId)))
+    .limit(1);
+  const rateEventId = rateRows[0]?.id;
+  if (!rateEventId) {
+    throw new ApiError(
+      'inconsistent_state',
+      `acceptLearningIntent for ${proposalId} returned without writing a rate event`,
+      500,
+    );
+  }
+
+  return {
+    kind: 'learning_item',
+    rate_event_id: rateEventId,
+    hub_learning_item_id: result.hub_learning_item_id,
+    atomic_learning_item_ids: result.atomic_learning_item_ids,
+    hub_artifact_id: result.hub_artifact_id,
+    atomic_artifact_ids: result.atomic_artifact_ids,
+    root_knowledge_id: result.root_knowledge_id,
+    created_knowledge_ids: result.created_knowledge_ids,
+  };
+}
+
+/**
+ * Re-derive the LearningIntentMaterializeResult from persisted rows for the
+ * idempotent return path. Hub is the row whose `parent_learning_item_id` is
+ * null among the learning_items rooted at the proposal id; atomics are its
+ * children. Artifacts mirror.
+ */
+async function summarizeLearningItemMaterialization(
+  db: Db,
+  proposalId: string,
+): Promise<Omit<LearningIntentMaterializeResult, 'enqueued_note_generate_jobs'>> {
+  const liRows = await db
+    .select({
+      id: learning_item.id,
+      parent_learning_item_id: learning_item.parent_learning_item_id,
+      primary_artifact_id: learning_item.primary_artifact_id,
+      knowledge_ids: learning_item.knowledge_ids,
+    })
+    .from(learning_item)
+    .where(eq(learning_item.source_ref, proposalId));
+  const hub = liRows.find((row) => row.parent_learning_item_id === null);
+  if (!hub) {
+    throw new ApiError(
+      'inconsistent_state',
+      `no hub learning_item found for proposal ${proposalId}`,
+      500,
+    );
+  }
+  const atomics = liRows.filter((row) => row.id !== hub.id);
+
+  const hubArtifactId = hub.primary_artifact_id ?? null;
+  if (!hubArtifactId) {
+    throw new ApiError(
+      'inconsistent_state',
+      `hub learning_item ${hub.id} has no primary_artifact_id`,
+      500,
+    );
+  }
+  const rootKnowledgeId = hub.knowledge_ids[0] ?? null;
+  if (!rootKnowledgeId) {
+    throw new ApiError(
+      'inconsistent_state',
+      `hub learning_item ${hub.id} has no knowledge_id`,
+      500,
+    );
+  }
+
+  const atomicArtifactIds = atomics
+    .map((row) => row.primary_artifact_id)
+    .filter((id): id is string => Boolean(id));
+
+  return {
+    hub_learning_item_id: hub.id,
+    atomic_learning_item_ids: atomics.map((row) => row.id),
+    hub_artifact_id: hubArtifactId,
+    atomic_artifact_ids: atomicArtifactIds,
+    root_knowledge_id: rootKnowledgeId,
+    created_knowledge_ids: [],
+  };
+}
+
+/**
+ * YUK-17 / ADR-0018 — variant_question accept materializes the question row
+ * (source='mistake_variant', draft_status='active'), flips the mistake_variant
+ * row from 'draft' to 'active', writes the rate event, and enqueues
+ * VariantVerifyTask. The question + mistake_variant + rate-event writes share
+ * one transaction so the row never sits half-materialized.
+ */
+async function acceptVariantQuestionProposal(
+  db: Db,
+  proposalId: string,
+  proposal: ProposalInboxRow,
+  opts: AcceptAiProposalOpts,
+): Promise<VariantQuestionAcceptResult> {
+  if (opts.decision && opts.decision !== 'accept') {
+    throw new ApiError(
+      'validation_error',
+      `variant_question proposal only supports accept, got ${opts.decision}`,
+      400,
+    );
+  }
+
+  // Already-accepted idempotency: a rate event exists.
+  const existingRateRows = await db
+    .select()
+    .from(event)
+    .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId)))
+    .limit(1);
+  const existingRate = existingRateRows[0];
+  if (existingRate) {
+    const ratePayload = existingRate.payload as { rating?: string };
+    if (ratePayload.rating !== 'accept') {
+      throw new ApiError(
+        'conflict',
+        `proposal ${proposalId} already decided as ${ratePayload.rating}`,
+        409,
+      );
+    }
+    const existingMv = (
+      await db
+        .select()
+        .from(mistake_variant)
+        .where(eq(mistake_variant.proposal_event_id, proposalId))
+        .limit(1)
+    )[0];
+    if (!existingMv || !existingMv.variant_question_id) {
+      // Rate was written but materialization did not complete — caller should
+      // retract + re-run, not silently fix up. Surface explicitly.
+      throw new ApiError(
+        'inconsistent_state',
+        `proposal ${proposalId} has a rate event but no materialized variant; retract + retry`,
+        500,
+      );
+    }
+    return {
+      kind: 'variant_question',
+      rate_event_id: existingRate.id,
+      question_id: existingMv.variant_question_id,
+      mistake_variant_id: existingMv.id,
+      idempotent: true,
+    };
+  }
+
+  const proposedChange = proposal.payload.proposed_change as {
+    source_question_id?: string;
+    source_attempt_event_id?: string;
+    prompt_md?: string;
+    reference_md?: string;
+    difficulty?: number;
+    knowledge_ids?: string[];
+    parent_variant_id?: string;
+    root_question_id?: string;
+    variant_depth?: number;
+  };
+  if (
+    !proposedChange?.prompt_md ||
+    !proposedChange.reference_md ||
+    typeof proposedChange.difficulty !== 'number' ||
+    !proposedChange.source_question_id
+  ) {
+    throw new ApiError(
+      'validation_error',
+      `variant_question proposal ${proposalId} is missing required proposed_change fields`,
+      400,
+    );
+  }
+
+  const mvRows = await db
+    .select()
+    .from(mistake_variant)
+    .where(eq(mistake_variant.proposal_event_id, proposalId))
+    .limit(1);
+  const mv = mvRows[0];
+  if (!mv) {
+    throw new ApiError(
+      'not_found',
+      `no mistake_variant draft row found for proposal ${proposalId}; variant_gen may not have written it`,
+      404,
+    );
+  }
+  if (mv.status !== 'draft') {
+    throw new ApiError(
+      'conflict',
+      `mistake_variant ${mv.id} is in status ${mv.status}, expected 'draft'`,
+      409,
+    );
+  }
+
+  const now = new Date();
+  const newQuestionId = createId();
+  const rateEventId = newId();
+
+  await db.transaction(async (tx) => {
+    await tx.insert(question).values({
+      id: newQuestionId,
+      kind: 'short_answer',
+      prompt_md: proposedChange.prompt_md as string,
+      reference_md: proposedChange.reference_md ?? null,
+      knowledge_ids: proposedChange.knowledge_ids ?? [],
+      difficulty: proposedChange.difficulty as number,
+      source: 'mistake_variant',
+      draft_status: 'active',
+      variant_depth: proposedChange.variant_depth ?? 1,
+      root_question_id: proposedChange.root_question_id ?? null,
+      parent_variant_id: proposedChange.parent_variant_id ?? null,
+      created_by: {
+        by: 'ai',
+        task_kind: 'VariantGenTask',
+        propose_event_id: proposalId,
+      } as never,
+      created_at: now,
+      updated_at: now,
+    });
+
+    await tx
+      .update(mistake_variant)
+      .set({
+        status: 'active',
+        variant_question_id: newQuestionId,
+        updated_at: now,
+      })
+      .where(eq(mistake_variant.id, mv.id));
+
+    await writeEvent(tx, {
+      id: rateEventId,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'event',
+      subject_id: proposalId,
+      outcome: 'success',
+      payload: {
+        rating: 'accept',
+        ...(opts.user_note ? { user_note: opts.user_note } : {}),
+        materialized_question_id: newQuestionId,
+        mistake_variant_id: mv.id,
+      },
+      caused_by_event_id: proposalId,
+      created_at: now,
+    });
+  });
+
+  await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+
+  const enqueue = opts.enqueueVariantVerify ?? defaultEnqueueVariantVerify;
+  try {
+    await enqueue(mv.id);
+  } catch (err) {
+    // Mirror attribution_followup → variant_gen wiring: enqueue failure must
+    // not roll back the accepted variant. Operator can re-enqueue later.
+    console.error('[acceptVariantQuestionProposal] enqueue variant_verify failed', err);
+  }
+
+  return {
+    kind: 'variant_question',
+    rate_event_id: rateEventId,
+    question_id: newQuestionId,
+    mistake_variant_id: mv.id,
+  };
 }
 
 async function writeGenericRateEvent(
@@ -397,6 +771,35 @@ export async function dismissAiProposal(
         decision: 'dismiss',
         user_note: opts.user_note,
       });
+    case 'variant_question': {
+      const result = await writeGenericRateEvent(db, proposalId, 'dismiss', opts.user_note);
+      if (!result.idempotent) {
+        // Flip the draft mistake_variant row to 'dismissed' so the in-flight
+        // count (variants_max=3) frees up the slot.
+        await db
+          .update(mistake_variant)
+          .set({ status: 'dismissed', updated_at: new Date() })
+          .where(
+            and(
+              eq(mistake_variant.proposal_event_id, proposalId),
+              eq(mistake_variant.status, 'draft'),
+            ),
+          );
+        await recordProposalDecisionSignal(db, proposal, 'dismiss', opts.user_note);
+      }
+      return { kind: 'dismissed', ...result };
+    }
+    case 'learning_item': {
+      // YUK-19 — dismiss before accept just writes a rate event. There are no
+      // materialized learning_items yet (the writeLearningItemProposal +
+      // acceptLearningIntent transaction is the only producer of those rows),
+      // so there's nothing to tombstone here.
+      const result = await writeGenericRateEvent(db, proposalId, 'dismiss', opts.user_note);
+      if (!result.idempotent) {
+        await recordProposalDecisionSignal(db, proposal, 'dismiss', opts.user_note);
+      }
+      return { kind: 'dismissed', ...result };
+    }
     default: {
       const result = await writeGenericRateEvent(db, proposalId, 'dismiss', opts.user_note);
       if (!result.idempotent) {
@@ -459,6 +862,48 @@ export async function retractAiProposal(
     caused_by_event_id: proposalId,
     created_at: new Date(),
   });
+
+  // YUK-17 / ADR-0018 — retracting a variant_question proposal frees the
+  // in-flight slot regardless of where the row was in its lifecycle. We
+  // intentionally accept that this also retracts already-active variants:
+  // the proposal-level retract is an L3 correction and outweighs the
+  // mistake_variant row, mirroring how retracted knowledge proposals also
+  // tombstone their materialized rows.
+  if (proposal.kind === 'variant_question') {
+    await db
+      .update(mistake_variant)
+      .set({ status: 'dismissed', updated_at: new Date() })
+      .where(
+        and(
+          eq(mistake_variant.proposal_event_id, proposalId),
+          inArray(mistake_variant.status, ['draft', 'active']),
+        ),
+      );
+  }
+
+  // YUK-19 — retracting a learning_item proposal tombstones any materialized
+  // hub + atomic learning_items + paired artifacts. Mirrors the variant_question
+  // policy above: proposal-level retract is an L3 correction and outweighs the
+  // downstream rows. Idempotent: rows that are already archived stay put so a
+  // second retract doesn't bump archived_at / archived_reason.
+  if (proposal.kind === 'learning_item') {
+    const now = new Date();
+    await db
+      .update(learning_item)
+      .set({
+        archived_at: now,
+        archived_reason: 'proposal_retracted',
+        updated_at: now,
+      })
+      .where(and(eq(learning_item.source_ref, proposalId), isNull(learning_item.archived_at)));
+    await db
+      .update(artifact)
+      .set({
+        archived_at: now,
+        updated_at: now,
+      })
+      .where(and(eq(artifact.source_ref, proposalId), isNull(artifact.archived_at)));
+  }
 
   return { kind: 'retracted', correction_event_id: correctionEventId };
 }
