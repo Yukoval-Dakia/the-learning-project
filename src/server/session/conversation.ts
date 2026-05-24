@@ -10,15 +10,29 @@ import { assertFromState } from './guards';
 
 // LearningSession.Conversation.* — Phase 2C Active Teaching Session.
 //
-// State machine (ADR-0008):
-//   active → ended
+// State machine (ADR-0008 + YUK-14
+// docs/design/2026-05-24-teaching-idle-state-machine.md):
 //
-// MVP 不实装 `idle`（spec 三态留作 Phase 3 idle-timeout 触发）。Conversation
-// sessions 跟 Review sessions 一样是 state envelope —— message events 由 route
-// 层用 writeEvent 直接写，session_id 链回这里。
+//                +----------+
+//                |  active  |◀───────────┐ (T2b: user msg in /turn)
+//                +----+-----+            │
+//             T4 (5min idle)             │
+//                     │                  │
+//                     ▼                  │
+//                +----------+            │
+//                |   idle   |────────────┘
+//                +----+--+--+
+//                     │  │
+//          T5 (end)   │  │  T6/T7 (pagehide-from-idle / orphan cron 6h)
+//                     │  │
+//                     ▼  ▼
+//             +-------+  +------------+
+//             | ended |  | abandoned  |
+//             +-------+  +------------+
 //
-// Single-owner invariant (ADR-0005)：本模块是 type='conversation' 的
-// learning_session 唯一写路径；route / handler 不许直接 update。
+// All five transitions live in this module per ADR-0005 single-owner
+// invariant; routes / boss handlers MUST NOT update learning_session for
+// type='conversation' directly.
 
 const SESSION_TABLE = 'learning_session' as const;
 
@@ -77,8 +91,56 @@ export async function startConversation(
   });
 }
 
-// ---------- endConversation ----------
+// ---------- idleConversation (T4) ----------
 
+/**
+ * active → idle. Called by `promote_conversation_idle` boss handler after the
+ * 5min no-user-input threshold. No-op-safe: if another caller already moved
+ * the session to a different status (e.g. T2b race), throws 409 — handler
+ * skips per design §"Edge cases" E10.
+ */
+export async function idleConversation(db: Db, sessionId: string): Promise<void> {
+  await db.transaction(async (tx) => {
+    const current = await loadConversationSessionForUpdate(tx, sessionId);
+    if (!current) {
+      throw new ApiError(
+        'not_found',
+        `learning_session ${sessionId} (type=conversation) not found`,
+        404,
+      );
+    }
+    assertFromState(
+      current.status,
+      ['active'] as const,
+      sessionId,
+      'Conversation.idleConversation',
+    );
+
+    const now = new Date();
+    await tx
+      .update(learning_session)
+      .set({
+        status: 'idle',
+        updated_at: now,
+        version: sql`${learning_session.version} + 1`,
+      })
+      .where(eq(learning_session.id, sessionId));
+
+    await writeJobEvent(tx, {
+      business_table: SESSION_TABLE,
+      business_id: sessionId,
+      event_type: 'conversation.idle',
+      payload: { idle_at: now.toISOString() },
+    });
+  });
+}
+
+// ---------- endConversation (T5) ----------
+
+/**
+ * active|idle → ended. Used by explicit user close, drawer unmount, and
+ * pagehide-while-active (E5: pagehide-while-idle uses abandonConversation).
+ */
 export async function endConversation(db: Db, sessionId: string): Promise<void> {
   await db.transaction(async (tx) => {
     const current = await loadConversationSessionForUpdate(tx, sessionId);
@@ -89,7 +151,12 @@ export async function endConversation(db: Db, sessionId: string): Promise<void> 
         404,
       );
     }
-    assertFromState(current.status, ['active'] as const, sessionId, 'Conversation.endConversation');
+    assertFromState(
+      current.status,
+      ['active', 'idle'] as const,
+      sessionId,
+      'Conversation.endConversation',
+    );
 
     const now = new Date();
     await tx
@@ -106,16 +173,122 @@ export async function endConversation(db: Db, sessionId: string): Promise<void> 
       business_table: SESSION_TABLE,
       business_id: sessionId,
       event_type: 'conversation.ended',
-      payload: {},
+      payload: { from_status: current.status },
     });
   });
 }
 
-// ---------- assertActive ----------
+// ---------- abandonConversation (T6/T7) ----------
+
+export type AbandonReason = 'orphan_cron' | 'pagehide_idle' | 'pagehide_explicit';
 
 /**
- * Throw `ApiError('conflict', ..., 409)` unless the conversation session is
- * status='active'. Used by /turn route to gate further messages.
+ * active|idle → abandoned. Triggered by orphan cron (>6h) or sendBeacon with
+ * `{status:'abandoned'}` (typically pagehide-while-drawer-showed-idle).
+ */
+export async function abandonConversation(
+  db: Db,
+  sessionId: string,
+  reason: AbandonReason = 'orphan_cron',
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    const current = await loadConversationSessionForUpdate(tx, sessionId);
+    if (!current) {
+      throw new ApiError(
+        'not_found',
+        `learning_session ${sessionId} (type=conversation) not found`,
+        404,
+      );
+    }
+    assertFromState(
+      current.status,
+      ['active', 'idle'] as const,
+      sessionId,
+      'Conversation.abandonConversation',
+    );
+
+    const now = new Date();
+    await tx
+      .update(learning_session)
+      .set({
+        status: 'abandoned',
+        ended_at: now,
+        updated_at: now,
+        version: sql`${learning_session.version} + 1`,
+      })
+      .where(eq(learning_session.id, sessionId));
+
+    await writeJobEvent(tx, {
+      business_table: SESSION_TABLE,
+      business_id: sessionId,
+      event_type: 'conversation.abandoned',
+      payload: { from_status: current.status, reason },
+    });
+  });
+}
+
+// ---------- assertAcceptingTurns (T2 + T2b inline resume) ----------
+
+/**
+ * Verify the conversation accepts a new user turn. If the session is `idle`,
+ * inline-resume it (idle → active) inside the same transaction. Returns
+ * `{ goalId, wasIdle }` so the caller can communicate the resume to the UI
+ * (was_idle=true → drawer clears its idle banner).
+ *
+ * Terminal states (ended/abandoned) throw 409.
+ */
+export async function assertAcceptingTurns(
+  db: Db,
+  sessionId: string,
+): Promise<{ goalId: string | null; wasIdle: boolean }> {
+  return db.transaction(async (tx) => {
+    const current = await loadConversationSessionForUpdate(tx, sessionId);
+    if (!current) {
+      throw new ApiError(
+        'not_found',
+        `learning_session ${sessionId} (type=conversation) not found`,
+        404,
+      );
+    }
+    if (current.status !== 'active' && current.status !== 'idle') {
+      throw new ApiError(
+        'conflict',
+        `learning_session ${sessionId} status=${current.status}, expected active|idle`,
+        409,
+      );
+    }
+
+    let wasIdle = false;
+    if (current.status === 'idle') {
+      wasIdle = true;
+      const now = new Date();
+      await tx
+        .update(learning_session)
+        .set({
+          status: 'active',
+          updated_at: now,
+          version: sql`${learning_session.version} + 1`,
+        })
+        .where(eq(learning_session.id, sessionId));
+
+      await writeJobEvent(tx, {
+        business_table: SESSION_TABLE,
+        business_id: sessionId,
+        event_type: 'conversation.resumed',
+        payload: { resumed_at: now.toISOString() },
+      });
+    }
+    return { goalId: current.goal_id, wasIdle };
+  });
+}
+
+// ---------- assertActive (deprecated) ----------
+
+/**
+ * @deprecated YUK-14 — use `assertAcceptingTurns` instead, which also accepts
+ *   `idle` (auto-resume) and reports wasIdle to the caller. Kept temporarily
+ *   to keep this PR's diff focused; a follow-up PR removes this fn entirely.
+ *   New call sites MUST use `assertAcceptingTurns`.
  */
 export async function assertActive(db: Db, sessionId: string): Promise<{ goalId: string | null }> {
   const rows = await db
