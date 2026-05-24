@@ -10,6 +10,8 @@ import {
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { createLearningRecord, listLearningRecords } from '@/server/records/queries';
+// YUK-15 — surface "已产生 N 条 AI 提议" backlink count on each record row.
+import { getProposalCountsForRecords } from '@/server/records/record_processing';
 
 export const runtime = 'nodejs';
 
@@ -102,7 +104,15 @@ export async function GET(req: Request): Promise<Response> {
         : undefined,
       limit,
     });
-    return Response.json({ rows: rows.map(serializeRecord) });
+    // YUK-15 — attach proposal_count per record so the list card can show
+    // "已产生 N 条 AI 提议" backlink.
+    const counts = await getProposalCountsForRecords(
+      db,
+      rows.map((r) => r.id),
+    );
+    return Response.json({
+      rows: rows.map((r) => ({ ...serializeRecord(r), proposal_count: counts.get(r.id) ?? 0 })),
+    });
   } catch (err) {
     return errorResponse(err);
   }

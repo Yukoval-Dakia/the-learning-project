@@ -1,4 +1,5 @@
 import { knowledge, learning_record } from '@/db/schema';
+import { writeAiProposal } from '@/server/proposals/writer';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { GET, POST } from './route';
@@ -184,5 +185,53 @@ describe('GET /api/records', () => {
   it('returns 400 on invalid limit', async () => {
     const res = await listRecords('limit=abc');
     expect(res.status).toBe(400);
+  });
+
+  // YUK-15 — record list rows surface proposal_count for inbox backlinks.
+  it('includes proposal_count derived from propose events citing each record', async () => {
+    const createRes = await postRecord({
+      kind: 'insight',
+      content_md: '反思一下',
+      source: 'manual',
+      capture_mode: 'text',
+      activity_kind: 'annotate',
+      knowledge_ids: [],
+      payload: {},
+    });
+    expect(createRes.status).toBe(200);
+    const created = (await createRes.json()) as { id: string };
+
+    // Two propose events cite this record; one cites a different record.
+    await writeAiProposal(testDb(), {
+      payload: {
+        kind: 'learning_item',
+        target: { subject_kind: 'learning_item', subject_id: null },
+        reason_md: 'cited',
+        evidence_refs: [{ kind: 'record', id: created.id }],
+        proposed_change: { topic: 'a' },
+      },
+      event_override: {
+        action: 'experimental:propose_learning_intent',
+        subject_kind: 'artifact',
+        payload: {},
+      },
+    });
+    await writeAiProposal(testDb(), {
+      payload: {
+        kind: 'note_update',
+        target: { subject_kind: 'artifact', subject_id: 'other' },
+        reason_md: 'cited again',
+        evidence_refs: [{ kind: 'record', id: created.id }],
+        proposed_change: { artifact_id: 'other', summary_md: 'x' },
+      },
+    });
+
+    const res = await listRecords();
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      rows: Array<{ id: string; proposal_count: number }>;
+    };
+    const row = body.rows.find((r) => r.id === created.id);
+    expect(row?.proposal_count).toBe(2);
   });
 });
