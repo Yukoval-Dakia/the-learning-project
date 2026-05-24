@@ -301,14 +301,8 @@ describe('getFailureAttempts', () => {
     const first = await getFailureAttempts(db);
     const second = await getFailureAttempts(db);
     // Stable across two reads, and ordered by id desc within the tie.
-    expect(first.map((r) => r.attempt_event_id)).toEqual([
-      'evt_tie_c',
-      'evt_tie_b',
-      'evt_tie_a',
-    ]);
-    expect(second.map((r) => r.attempt_event_id)).toEqual(
-      first.map((r) => r.attempt_event_id),
-    );
+    expect(first.map((r) => r.attempt_event_id)).toEqual(['evt_tie_c', 'evt_tie_b', 'evt_tie_a']);
+    expect(second.map((r) => r.attempt_event_id)).toEqual(first.map((r) => r.attempt_event_id));
   });
 
   it('excludes non-failure attempts', async () => {
