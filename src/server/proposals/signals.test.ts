@@ -166,6 +166,271 @@ describe('proposal signals', () => {
     expect(rows[0].acceptance_rate).toBe(1);
   });
 
+  // YUK-76 codex round-3 P1-B + P1-C — rebuild must consult the **latest**
+  // decision across all proposals on `(kind, cooldown_key)`, not just the
+  // existence of any dismiss in history. With dismiss followed by accept,
+  // the cooldown should be cleared.
+  it('clears cooldown_until when latest rate across the key is accept (dismiss then accept)', async () => {
+    const db = testDb();
+    await writeAiProposal(db, {
+      id: 'proposal_dismiss_first',
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'li_dismiss' },
+        reason_md: 'old dismissed proposal',
+        evidence_refs: [],
+        proposed_change: { learning_item_id: 'li_dismiss' },
+        cooldown_key: 'completion:rotate',
+      },
+    });
+    await writeAiProposal(db, {
+      id: 'proposal_accept_last',
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'li_accept' },
+        reason_md: 'newer accepted proposal',
+        evidence_refs: [],
+        proposed_change: { learning_item_id: 'li_accept' },
+        cooldown_key: 'completion:rotate',
+      },
+    });
+    await db.insert(event).values([
+      {
+        id: 'rate_dismiss_first',
+        session_id: null,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'rate',
+        subject_kind: 'event',
+        subject_id: 'proposal_dismiss_first',
+        outcome: 'success',
+        payload: { rating: 'dismiss', user_note: 'too early' },
+        caused_by_event_id: 'proposal_dismiss_first',
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: new Date('2026-05-23T00:00:00.000Z'),
+      },
+      {
+        id: 'rate_accept_last',
+        session_id: null,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'rate',
+        subject_kind: 'event',
+        subject_id: 'proposal_accept_last',
+        outcome: 'success',
+        payload: { rating: 'accept' },
+        caused_by_event_id: 'proposal_accept_last',
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: new Date('2026-05-24T00:00:00.000Z'),
+      },
+    ]);
+
+    await ensureProposalDecisionSignal(
+      db,
+      {
+        id: 'proposal_accept_last',
+        kind: 'completion',
+        payload: { cooldown_key: 'completion:rotate' },
+      },
+      'accept',
+    );
+
+    const rows = await db
+      .select()
+      .from(proposal_signals)
+      .where(
+        and(
+          eq(proposal_signals.kind, 'completion'),
+          eq(proposal_signals.cooldown_key, 'completion:rotate'),
+        ),
+      );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      accept_count: 1,
+      dismiss_count: 1,
+      acceptance_rate: 0.5,
+      cooldown_until: null,
+      dismiss_reason: null,
+    });
+  });
+
+  it('sets cooldown_until when latest rate across the key is dismiss (accept then dismiss)', async () => {
+    const db = testDb();
+    await writeAiProposal(db, {
+      id: 'proposal_accept_first',
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'li_accept_first' },
+        reason_md: 'old accepted proposal',
+        evidence_refs: [],
+        proposed_change: { learning_item_id: 'li_accept_first' },
+        cooldown_key: 'completion:cooldown',
+      },
+    });
+    await writeAiProposal(db, {
+      id: 'proposal_dismiss_last',
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'li_dismiss_last' },
+        reason_md: 'newer dismissed proposal',
+        evidence_refs: [],
+        proposed_change: { learning_item_id: 'li_dismiss_last' },
+        cooldown_key: 'completion:cooldown',
+      },
+    });
+    const dismissAt = new Date('2026-05-24T00:00:00.000Z');
+    await db.insert(event).values([
+      {
+        id: 'rate_accept_first',
+        session_id: null,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'rate',
+        subject_kind: 'event',
+        subject_id: 'proposal_accept_first',
+        outcome: 'success',
+        payload: { rating: 'accept' },
+        caused_by_event_id: 'proposal_accept_first',
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: new Date('2026-05-23T00:00:00.000Z'),
+      },
+      {
+        id: 'rate_dismiss_last',
+        session_id: null,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'rate',
+        subject_kind: 'event',
+        subject_id: 'proposal_dismiss_last',
+        outcome: 'success',
+        payload: { rating: 'dismiss', user_note: 'no longer relevant' },
+        caused_by_event_id: 'proposal_dismiss_last',
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: dismissAt,
+      },
+    ]);
+
+    await ensureProposalDecisionSignal(
+      db,
+      {
+        id: 'proposal_dismiss_last',
+        kind: 'completion',
+        payload: { cooldown_key: 'completion:cooldown' },
+      },
+      'dismiss',
+      'no longer relevant',
+    );
+
+    const rows = await db
+      .select()
+      .from(proposal_signals)
+      .where(
+        and(
+          eq(proposal_signals.kind, 'completion'),
+          eq(proposal_signals.cooldown_key, 'completion:cooldown'),
+        ),
+      );
+    expect(rows).toHaveLength(1);
+    const expectedCooldown =
+      dismissAt.getTime() + PROPOSAL_DISMISS_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
+    expect(rows[0]).toMatchObject({
+      accept_count: 1,
+      dismiss_count: 1,
+      acceptance_rate: 0.5,
+      dismiss_reason: 'no longer relevant',
+    });
+    expect(rows[0].cooldown_until?.getTime()).toBe(expectedCooldown);
+  });
+
+  it('clears cooldown when latest rate is a non-dismiss action (reverse)', async () => {
+    const db = testDb();
+    await writeAiProposal(db, {
+      id: 'proposal_dismiss_old',
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'li_dismiss_old' },
+        reason_md: 'old dismissed',
+        evidence_refs: [],
+        proposed_change: { learning_item_id: 'li_dismiss_old' },
+        cooldown_key: 'completion:reverse',
+      },
+    });
+    await writeAiProposal(db, {
+      id: 'proposal_reverse_last',
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'li_reverse' },
+        reason_md: 'reverse comes later',
+        evidence_refs: [],
+        proposed_change: { learning_item_id: 'li_reverse' },
+        cooldown_key: 'completion:reverse',
+      },
+    });
+    await db.insert(event).values([
+      {
+        id: 'rate_dismiss_old',
+        session_id: null,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'rate',
+        subject_kind: 'event',
+        subject_id: 'proposal_dismiss_old',
+        outcome: 'success',
+        payload: { rating: 'dismiss', user_note: 'old skip' },
+        caused_by_event_id: 'proposal_dismiss_old',
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: new Date('2026-05-23T00:00:00.000Z'),
+      },
+      {
+        id: 'rate_reverse_last',
+        session_id: null,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'rate',
+        subject_kind: 'event',
+        subject_id: 'proposal_reverse_last',
+        outcome: 'success',
+        // `reverse` maps to 'accept' in decisionFromRate — sanity-check that
+        // the cooldown is cleared, not just for the literal 'accept' rating.
+        payload: { rating: 'reverse' },
+        caused_by_event_id: 'proposal_reverse_last',
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: new Date('2026-05-24T12:00:00.000Z'),
+      },
+    ]);
+
+    await ensureProposalDecisionSignal(
+      db,
+      {
+        id: 'proposal_reverse_last',
+        kind: 'completion',
+        payload: { cooldown_key: 'completion:reverse' },
+      },
+      'accept',
+    );
+
+    const rows = await db
+      .select()
+      .from(proposal_signals)
+      .where(
+        and(
+          eq(proposal_signals.kind, 'completion'),
+          eq(proposal_signals.cooldown_key, 'completion:reverse'),
+        ),
+      );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      cooldown_until: null,
+      dismiss_reason: null,
+    });
+  });
+
   it('backfills the current proposal decision when the same key already has history', async () => {
     const db = testDb();
     await writeAiProposal(db, {

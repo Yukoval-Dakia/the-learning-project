@@ -275,33 +275,48 @@ async function rebuildProposalDecisionSignal(
     }
   }
 
+  // YUK-76 codex round-3 P1-B + P1-C — `cooldown_until` must reflect the
+  // **key-wide latest** decision, not just the existence of any prior dismiss.
+  // Same `(kind, cooldown_key)` can carry a history like dismiss→accept (user
+  // changed their mind / accepted a different proposal on the same key). The
+  // cooldown should only apply when the most recent decision across all
+  // proposals on that key is still `dismiss`. If a later accept/reverse/
+  // change_type has landed, the cooldown is cleared.
+  //
+  // Tie-break on equal created_at uses `newerRate`'s `id`-desc fallback so
+  // two simultaneous rates resolve deterministically.
   let acceptCount = 0;
   let dismissCount = 0;
-  let latestDismiss: EventRow | null = null;
+  let keyLatestRate: EventRow | null = null;
   for (const row of latestRateByProposal.values()) {
     const decision = decisionFromRate(row);
     if (decision === 'accept') {
       acceptCount += 1;
     } else if (decision === 'dismiss') {
       dismissCount += 1;
-      latestDismiss = newerRate(latestDismiss, row);
+    } else {
+      continue;
     }
+    keyLatestRate = newerRate(keyLatestRate, row);
   }
   const total = acceptCount + dismissCount;
   if (total === 0) return;
 
   const acceptanceRate = acceptCount / total;
-  const latestDismissPayload = (latestDismiss?.payload ?? {}) as { user_note?: unknown };
-  const nextDismissReason = latestDismiss
+  const latestIsDismiss =
+    keyLatestRate !== null && decisionFromRate(keyLatestRate) === 'dismiss';
+  const latestDismissPayload = (keyLatestRate?.payload ?? {}) as { user_note?: unknown };
+  const nextDismissReason = latestIsDismiss
     ? typeof latestDismissPayload.user_note === 'string'
       ? latestDismissPayload.user_note
-      : latestDismiss.caused_by_event_id === proposal.id
+      : keyLatestRate?.caused_by_event_id === proposal.id
         ? (dismissReason ?? null)
         : null
     : null;
-  const cooldownUntilIso = latestDismiss
-    ? dismissCooldownUntilFromRate(latestDismiss).toISOString()
-    : null;
+  const cooldownUntilIso =
+    latestIsDismiss && keyLatestRate
+      ? dismissCooldownUntilFromRate(keyLatestRate).toISOString()
+      : null;
   const nowIso = new Date().toISOString();
 
   await db.execute(sql`
