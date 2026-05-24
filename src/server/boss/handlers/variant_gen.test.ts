@@ -110,6 +110,27 @@ async function seedRawJudgeForAttempt(attemptId: string, category: string) {
   });
 }
 
+async function seedUserCauseForAttempt(attemptId: string, category: string, notes = 'manual fix') {
+  await writeEvent(testDb(), {
+    id: createId(),
+    session_id: null,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'experimental:user_cause',
+    subject_kind: 'event',
+    subject_id: attemptId,
+    outcome: 'success',
+    payload: {
+      primary_category: category,
+      user_notes: notes,
+    },
+    caused_by_event_id: attemptId,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: new Date(),
+  });
+}
+
 async function seedKnowledge(domain = 'wenyan') {
   await testDb().insert(knowledge).values({
     id: 'k_xuci',
@@ -301,6 +322,31 @@ describe('runVariantGen', () => {
       cause?: { primary_category?: string };
     };
     expect(input.cause?.primary_category).toBe('unit_error');
+  });
+
+  it('uses active user cause before the agent judge for variant targeting', async () => {
+    const db = testDb();
+    await seedKnowledge();
+    await seedQuestion({ id: 'q1' });
+    const attemptId = createId();
+    await seedFailureAttempt(attemptId, 'q1');
+    await seedJudgeForAttempt(attemptId, 'carelessness');
+    await seedUserCauseForAttempt(attemptId, 'concept', '用户确认是概念混淆');
+
+    const runTaskFn = vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({
+      text: VALID_VARIANT_OUTPUT,
+    }));
+
+    const result = await runVariantGen({ db, attemptEventId: attemptId, runTaskFn });
+
+    expect(result.status).toBe('proposed');
+    const input = runTaskFn.mock.calls[0]?.[1] as {
+      cause?: { primary_category?: string; analysis_md?: string };
+    };
+    expect(input.cause).toMatchObject({
+      primary_category: 'concept',
+      analysis_md: '用户确认是概念混淆',
+    });
   });
 
   it('uses the subject profile, not a global skip list, for time_pressure variants', async () => {

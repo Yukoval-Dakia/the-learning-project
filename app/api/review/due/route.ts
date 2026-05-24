@@ -15,6 +15,7 @@ import { type ActivityRefT, questionRef } from '@/core/schema/activity';
 import type { CauseCategoryT } from '@/core/schema/event/blocks';
 import { db } from '@/db/client';
 import { material_fsrs_state, question } from '@/db/schema';
+import { effectiveCauseCategoryForFailureAttempt } from '@/server/events/cause-policy';
 import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
 import { errorResponse } from '@/server/http/errors';
 import type { EffectiveTruth } from '@/server/review/effective-truth';
@@ -45,7 +46,7 @@ function pickLatestFailureByQuestion(failures: FailureAttempt[]): Map<
     if (existing && existing.created_at > failure.created_at) continue;
     out.set(failure.question_id, {
       id: failure.attempt_event_id,
-      cause: failure.user_cause?.primary_category ?? failure.judge?.cause.primary_category ?? null,
+      cause: effectiveCauseCategoryForFailureAttempt(failure),
       created_at: failure.created_at,
       correction_state: failure.correction_state,
     });

@@ -16,6 +16,7 @@ import { type ActivityRefT, questionRef } from '@/core/schema/activity';
 import { getCauseLabel, getCausePriority } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { knowledge, material_fsrs_state, question } from '@/db/schema';
+import { effectiveCauseCategoryForFailureAttempt } from '@/server/events/cause-policy';
 import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
 import type { EffectiveTruth } from '@/server/review/effective-truth';
 import {
@@ -241,11 +242,8 @@ function pickLatestCausePerQuestion(failures: FailureAttempt[]): Map<
   for (const f of failures) {
     const existing = out.get(f.question_id);
     if (existing && existing.created_at > f.created_at) continue;
-    // user_cause has precedence over judge (user has the last word) per project memory.
-    const cause: CauseCategoryT | null =
-      f.user_cause?.primary_category ?? f.judge?.cause.primary_category ?? null;
     out.set(f.question_id, {
-      cause,
+      cause: effectiveCauseCategoryForFailureAttempt(f),
       created_at: f.created_at,
       attempt_event_id: f.attempt_event_id,
       correction_state: f.correction_state,
