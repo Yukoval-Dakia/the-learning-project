@@ -74,6 +74,39 @@ describe('auditProfiles', () => {
     ).toBe(true);
   });
 
+  it('accumulates all invalid profiles in one audit result', () => {
+    const missingFragments = makeAuditProfile({ id: 'missing_fragments' });
+    const { promptFragments: _promptFragments, ...missingFragmentsBody } = missingFragments;
+    const result = auditProfiles(
+      [
+        makeAuditProfile({
+          id: 'bad_capability',
+          judgeCapabilities: ['ghost_judge'],
+        }),
+        makeAuditProfile({
+          id: 'bad_duplicate_cause',
+          causeCategories: [
+            subjectProfiles.math.causeCategories[0],
+            {
+              ...subjectProfiles.math.causeCategories[0],
+              label: 'Duplicate cause',
+            },
+          ],
+        }),
+        missingFragmentsBody as SubjectProfile,
+      ],
+      getDefaultRegistry(),
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.invalid).toBe(3);
+    expect(result.entries.map((entry) => entry.id)).toEqual([
+      'bad_capability',
+      'bad_duplicate_cause',
+      'missing_fragments',
+    ]);
+  });
+
   it('formats invalid profiles with readable details', () => {
     const result = auditProfiles(
       [

@@ -3,7 +3,10 @@ import { fileURLToPath } from 'node:url';
 import { getDefaultRegistry } from '@/core/capability/judges';
 import type { CapabilityRegistry } from '@/core/capability/registry';
 import { validateProfile } from '@/core/capability/validate-profile';
-import { type SubjectProfile, subjectProfiles } from '@/subjects/profile';
+import { mathProfile } from '@/subjects/math/profile';
+import { physicsProfile } from '@/subjects/physics/profile';
+import type { SubjectProfile } from '@/subjects/profile-schema';
+import { wenyanProfile } from '@/subjects/wenyan/profile';
 
 export interface ProfileAuditEntry {
   id: string;
@@ -22,6 +25,12 @@ export interface ProfileAuditResult {
 
 export type ProfileAuditInput = readonly SubjectProfile[] | Record<string, SubjectProfile>;
 
+export const auditSubjectProfiles: Record<string, SubjectProfile> = {
+  wenyan: wenyanProfile,
+  math: mathProfile,
+  physics: physicsProfile,
+};
+
 function profileId(profile: SubjectProfile): string {
   return typeof profile.id === 'string' && profile.id.trim().length > 0
     ? profile.id
@@ -33,7 +42,7 @@ function toProfileList(profiles: ProfileAuditInput): SubjectProfile[] {
 }
 
 export function auditProfiles(
-  profiles: ProfileAuditInput = subjectProfiles,
+  profiles: ProfileAuditInput = auditSubjectProfiles,
   registry: CapabilityRegistry = getDefaultRegistry(),
 ): ProfileAuditResult {
   const entries = toProfileList(profiles).map((profile) => {

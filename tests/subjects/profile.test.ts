@@ -219,6 +219,20 @@ describe('SubjectRegistry', () => {
     expect(() => registry.register(invalidSubject as SubjectProfile)).toThrow(/promptFragments/);
     expect(registry.get('missing_prompt_subject')).toBeUndefined();
   });
+
+  it('can report invalid registration without throwing for audit callers', () => {
+    const registry = new SubjectRegistry();
+    const invalidSubject = makeCustomProfile({
+      id: 'audit_invalid_subject',
+      judgeCapabilities: [...subjectProfiles.math.judgeCapabilities, 'ghost_judge'],
+    });
+
+    const result = registry.register(invalidSubject, [], { throwOnInvalid: false });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((error) => error.includes('ghost_judge'))).toBe(true);
+    expect(registry.get('audit_invalid_subject')).toBeUndefined();
+  });
 });
 
 describe('KNOWN_SUBJECT_IDS', () => {
