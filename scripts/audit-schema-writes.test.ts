@@ -68,6 +68,29 @@ describe('audit-schema allowlist hygiene', () => {
     ]);
   });
 
+  it('rejects entries whose expected_by date is beyond the 12 month hygiene window', () => {
+    const result = validateAllowlistHygiene(
+      {
+        'answer.input_kind': {
+          reason: 'Answer table currently unused; review submit will write',
+          resolves_when: {
+            kind: 'manual',
+            ref: 'Phase 1c.2 review submit path implemented',
+            expected_by: '2028-01-01',
+          },
+        },
+      },
+      OPTIONS,
+    );
+
+    expect(result.issues).toEqual([
+      expect.objectContaining({
+        key: 'answer.input_kind',
+        code: 'invalid_expected_by',
+      }),
+    ]);
+  });
+
   it('formats today using the local calendar date instead of UTC', () => {
     expect(todayIso(new Date(2026, 4, 23, 0, 30))).toBe('2026-05-23');
   });
@@ -147,8 +170,13 @@ describe('audit-schema allowlist hygiene', () => {
       },
       {
         ...OPTIONS,
-        statusText:
-          '**最后更新**：2026-05-23（Foundation closeout P-1 + P0 已 ship — PR #86 / #91）',
+        statusText: [
+          '## 1. Phase 路线图（Foundation → Product Track → Later，2026-05-19 重排）',
+          '',
+          '```',
+          '✅  Foundation closeout P0    PR #91 已 ship',
+          '```',
+        ].join('\n'),
       },
     );
 
@@ -158,6 +186,57 @@ describe('audit-schema allowlist hygiene', () => {
         code: 'shipped_phase',
       }),
     ]);
+  });
+
+  it('does not treat quoted shipped-looking text as a shipped status line', () => {
+    const result = validateAllowlistHygiene(
+      {
+        'artifact.generated_by': {
+          reason: 'Same as artifact.id',
+          resolves_when: {
+            kind: 'phase',
+            ref: 'Foundation closeout P0',
+            expected_by: '2026-07-31',
+          },
+        },
+      },
+      {
+        ...OPTIONS,
+        statusText:
+          '> ✅  Foundation closeout P0 shipped is only quoted historical discussion, not status',
+      },
+    );
+
+    expect(result.issues).toEqual([]);
+  });
+
+  it('does not match phase refs that only appear outside the phase status section', () => {
+    const result = validateAllowlistHygiene(
+      {
+        'artifact.generated_by': {
+          reason: 'Same as artifact.id',
+          resolves_when: {
+            kind: 'phase',
+            ref: 'CapabilityRegistry',
+            expected_by: '2026-07-31',
+          },
+        },
+      },
+      {
+        ...OPTIONS,
+        statusText: [
+          '## Notes',
+          '✅  CapabilityRegistry shipped appears in an unrelated note',
+          '',
+          '## 1. Phase 路线图（Foundation → Product Track → Later，2026-05-19 重排）',
+          '```',
+          '🟡  CapabilityRegistry + 默认 registry          ✅ src/core/capability/registry.ts',
+          '```',
+        ].join('\n'),
+      },
+    );
+
+    expect(result.issues).toEqual([]);
   });
 
   it('does not treat an in-progress status row as shipped because a child file is checked off', () => {
