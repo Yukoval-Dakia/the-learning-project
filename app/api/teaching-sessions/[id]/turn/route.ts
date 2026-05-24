@@ -44,7 +44,14 @@ export async function POST(
       );
     }
 
-    const { goalId: learningItemId } = await Conversation.assertActive(db, sessionId);
+    // YUK-14 — accept both 'active' and 'idle' (inline resume on idle).
+    // assertAcceptingTurns runs inside its own tx and bumps status idle→active
+    // + writes conversation.resumed before returning. wasIdle propagates to
+    // the response so the drawer can clear its idle banner.
+    const { goalId: learningItemId, wasIdle } = await Conversation.assertAcceptingTurns(
+      db,
+      sessionId,
+    );
     if (!learningItemId) {
       throw new ApiError(
         'invalid_state',
@@ -97,6 +104,7 @@ export async function POST(
           turn_kind: turn.kind,
         },
         suggested_next: turn.suggested_next,
+        was_idle: wasIdle,
       });
     } catch (err) {
       if (err instanceof TeachingError) {
