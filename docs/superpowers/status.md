@@ -85,8 +85,8 @@
 ### Product Track 2 — Maintenance Agent + Proposal Inbox（v0.3 Track D）
 
 ```
-⬜  统一 AiProposalPayload          kind / target / reason_md / evidence_refs / rollback_plan / cooldown_key
-⬜  Maintenance agent               KnowledgeReviewTask cron + accept UI（cron + UI 缺）
+✅  统一 AiProposalPayload          YUK-42 — `src/core/schema/proposal.ts` discriminated union (kind / target / reason_md / evidence_refs / rollback_plan / cooldown_key) + writer / inbox / producers / signals
+🟡  Maintenance agent               YUK-48 cron ✅ (`knowledge_maintenance_nightly` BJT 03:00); accept UI ⬜ (deferred)
 ⬜  Dreaming lane                   daily AI 主动 proposal（reuse inbox）
 ⬜  Acceptance-rate / dismiss-reason 信号 → 未来 ranking
 ⬜  Bad accepted proposal 显式 retraction / rollback 流程
