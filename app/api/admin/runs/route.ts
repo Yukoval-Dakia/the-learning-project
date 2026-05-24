@@ -1,5 +1,5 @@
 import { db } from '@/db/client';
-import { type AdminRunStatus, listAdminRuns } from '@/server/admin/ai-observability';
+import { type AdminRunStatus, listAdminRunsPage } from '@/server/admin/ai-observability';
 import { errorResponse } from '@/server/http/errors';
 
 export const runtime = 'nodejs';
@@ -15,8 +15,8 @@ export async function GET(req: Request): Promise<Response> {
     const limit = Number.parseInt(url.searchParams.get('limit') ?? '50', 10);
     const status = parseStatus(url.searchParams.get('status'));
     const taskKind = url.searchParams.get('task_kind') ?? undefined;
-    const rows = await listAdminRuns(db, { limit, status, taskKind });
-    return Response.json({ rows, limit: Math.min(Math.max(limit || 50, 1), 200) });
+    const page = await listAdminRunsPage(db, { limit, status, taskKind });
+    return Response.json(page);
   } catch (err) {
     return errorResponse(err);
   }

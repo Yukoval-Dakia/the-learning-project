@@ -29,6 +29,13 @@ interface AdminRunRow {
   pgboss_job_ids: string[];
 }
 
+interface AdminRunsResponse {
+  rows: AdminRunRow[];
+  limit: number;
+  total: number;
+  truncated: boolean;
+}
+
 interface TimelineEvent {
   type: 'run_started' | 'tool_call' | 'cost_ledger' | 'run_finished';
   at: string;
@@ -166,15 +173,28 @@ function AdminLinks() {
 export function AdminRunsSurface() {
   const queryClient = useQueryClient();
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [staleRunId, setStaleRunId] = useState<string | null>(null);
   const runsQ = useQuery({
     queryKey: ['admin-runs'],
-    queryFn: () => apiJson<{ rows: AdminRunRow[] }>('/api/admin/runs?limit=100'),
+    queryFn: () => apiJson<AdminRunsResponse>('/api/admin/runs?limit=100'),
     refetchInterval: 60_000,
   });
   const runs = runsQ.data?.rows ?? [];
+  const shownLimit = runsQ.data?.limit ?? 100;
+  const totalRuns = runsQ.data?.total ?? runs.length;
+  const isTruncated = Boolean(runsQ.data?.truncated);
   useEffect(() => {
+    if (!runsQ.isSuccess) return;
+    if (staleRunId && runs.some((run) => run.id === staleRunId)) {
+      setStaleRunId(null);
+    }
+    if (selectedRunId && !runs.some((run) => run.id === selectedRunId)) {
+      setStaleRunId(selectedRunId);
+      setSelectedRunId(runs[0]?.id ?? null);
+      return;
+    }
     if (!selectedRunId && runs.length > 0) setSelectedRunId(runs[0].id);
-  }, [runs, selectedRunId]);
+  }, [runs, runsQ.isSuccess, selectedRunId, staleRunId]);
 
   const detailQ = useQuery({
     queryKey: ['admin-run-detail', selectedRunId],
@@ -190,6 +210,18 @@ export function AdminRunsSurface() {
     return { failed, running, spend, toolCalls };
   }, [runs]);
 
+  const selectRun = (runId: string) => {
+    setStaleRunId(null);
+    setSelectedRunId(runId);
+  };
+
+  const refreshRuns = () => {
+    void queryClient.invalidateQueries({ queryKey: ['admin-runs'] });
+    if (selectedRunId) {
+      void queryClient.invalidateQueries({ queryKey: ['admin-run-detail', selectedRunId] });
+    }
+  };
+
   return (
     <main className="page wide">
       <PageHeader
@@ -198,19 +230,13 @@ export function AdminRunsSurface() {
         sub="AI task run 列表、单 run 时间线、pg-boss job id 与 tool_call_log 串联视图。"
       >
         <AdminLinks />
-        <Button
-          variant="secondary"
-          icon="refresh"
-          onClick={() => {
-            void queryClient.invalidateQueries({ queryKey: ['admin-runs'] });
-          }}
-        >
+        <Button variant="secondary" icon="refresh" onClick={refreshRuns}>
           刷新
         </Button>
       </PageHeader>
 
       <div className="kpi-strip">
-        <Kpi label="runs" value={runs.length} note="latest 100" />
+        <Kpi label="runs" value={runs.length} note={`${runs.length} / ${totalRuns} shown`} />
         <Kpi label="failed" value={totals.failed} note={totals.failed ? 'needs triage' : 'clear'} />
         <Kpi label="running" value={totals.running} note="currently open" />
         <Kpi label="spend" value={formatMoney(totals.spend)} note={`${totals.toolCalls} tools`} />
@@ -224,7 +250,12 @@ export function AdminRunsSurface() {
           <Card pad="lg">
             <div style={sectionHeadStyle}>
               <h2 style={sectionTitleStyle}>Recent runs</h2>
-              <Badge tone="neutral">{runs.length}</Badge>
+              <div style={badgeRowStyle}>
+                <Badge tone="neutral">
+                  {runs.length} / {totalRuns}
+                </Badge>
+                {isTruncated && <Badge tone="info">limit {shownLimit}</Badge>}
+              </div>
             </div>
             <div style={tableWrapStyle}>
               <table style={tableStyle}>
@@ -243,7 +274,7 @@ export function AdminRunsSurface() {
                       <td style={tdStyle}>
                         <button
                           type="button"
-                          onClick={() => setSelectedRunId(run.id)}
+                          onClick={() => selectRun(run.id)}
                           style={{
                             ...rowButtonStyle,
                             color: selectedRunId === run.id ? 'var(--coral)' : 'var(--ink)',
@@ -275,6 +306,12 @@ export function AdminRunsSurface() {
             </div>
             {detailQ.isLoading && <p style={mutedTextStyle}>timeline 加载中...</p>}
             {detailQ.error && <ErrorCard error={detailQ.error} />}
+            {staleRunId && (
+              <p style={warningTextStyle}>
+                run {shortId(staleRunId)} left the current list after refresh; showing the latest
+                listed run.
+              </p>
+            )}
             {detailQ.data && (
               <div style={timelineStyle}>
                 <div style={metaGridStyle}>
@@ -504,6 +541,14 @@ const sectionTitleStyle: CSSProperties = {
   letterSpacing: 'var(--ls-tight)',
 };
 
+const badgeRowStyle: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'flex-end',
+  gap: 6,
+  flexWrap: 'wrap',
+};
+
 const tableWrapStyle: CSSProperties = {
   overflowX: 'auto',
 };
@@ -547,6 +592,13 @@ const mutedTextStyle: CSSProperties = {
   color: 'var(--ink-3)',
   fontSize: 13,
   lineHeight: 1.55,
+};
+
+const warningTextStyle: CSSProperties = {
+  margin: '0 0 var(--s-3)',
+  color: 'var(--ink)',
+  fontSize: 14,
+  lineHeight: 1.5,
 };
 
 const timelineStyle: CSSProperties = {
