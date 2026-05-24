@@ -19,9 +19,11 @@ import {
   subjectContentProps,
 } from '@/ui/lib/subject';
 import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
+import { Button } from '@/ui/primitives/Button';
 import { CauseBadge } from '@/ui/primitives/CauseBadge';
 import { PageHeader } from '@/ui/primitives/PageHeader';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 type CauseCategory =
@@ -127,17 +129,51 @@ const PRIORITY_LABEL: Record<1 | 2 | 3 | 4 | 5, string> = {
 
 export default function ReviewPage() {
   const qc = useQueryClient();
+  const searchParams = useSearchParams();
+  const resumeIdParam = searchParams.get('session');
 
   // ADR-0013 — open a learning_session(type='review') on mount; close on
   // pagehide via sendBeacon (so it survives tab close).
+  //
+  // YUK-57: status union extended with 'paused'. sessionStatusRef mirrors the
+  // React state so the pagehide listener (called from a closure) reads the
+  // latest status synchronously — without the ref, paused sessions would
+  // incorrectly fire a completion beacon on tab close.
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionStartedAt, setSessionStartedAt] = useState<number | null>(null);
-  const [sessionStatus, setSessionStatus] = useState<'started' | 'completed'>('started');
+  const [sessionStatus, setSessionStatus] = useState<'started' | 'paused' | 'completed'>('started');
+  const sessionStatusRef = useRef<'started' | 'paused' | 'completed'>('started');
+  const updateStatus = useCallback((next: 'started' | 'paused' | 'completed') => {
+    sessionStatusRef.current = next;
+    setSessionStatus(next);
+  }, []);
   const sessionClosedRef = useRef(false);
   useEffect(() => {
     let cancelled = false;
     let createdId: string | null = null;
     (async () => {
+      // YUK-57: ?session=<id> resume path. Verify the session exists + is in
+      // paused state before adopting it; otherwise fall through to eager-create.
+      if (resumeIdParam) {
+        try {
+          const existing = await apiJson<{ id: string; type: string; status: string }>(
+            `/api/learning-sessions/${resumeIdParam}`,
+          );
+          if (existing.type === 'review' && existing.status === 'paused') {
+            await apiJson(`/api/review/sessions/${resumeIdParam}/resume`, { method: 'POST' });
+            if (cancelled) return;
+            createdId = resumeIdParam;
+            setSessionId(resumeIdParam);
+            setSessionStartedAt(Date.now());
+            updateStatus('started');
+            return;
+          }
+          // type=review but status != paused (already completed/abandoned, or
+          // currently started in another tab). Fall through to fresh session.
+        } catch {
+          // 404 / unauthorised / network — fall through to fresh session.
+        }
+      }
       try {
         const data = await apiJson<{ session_id: string }>('/api/review/sessions', {
           method: 'POST',
@@ -152,12 +188,18 @@ export default function ReviewPage() {
         createdId = data.session_id;
         setSessionId(data.session_id);
         setSessionStartedAt(Date.now());
+        updateStatus('started');
       } catch {
         // Session couldn't be opened — review still works without one.
       }
     })();
     const onPageHide = () => {
       if (!createdId || sessionClosedRef.current) return;
+      // YUK-57: do NOT fire the completion beacon when the session is paused.
+      // The user explicitly stepped away; the orphan cron (6h) decides when
+      // it counts as abandoned. Without this guard, closing a tab on a paused
+      // session would silently complete it (PR #122 stale issue).
+      if (sessionStatusRef.current === 'paused') return;
       sessionClosedRef.current = true;
       const body = new Blob([JSON.stringify({ status: 'completed' })], {
         type: 'application/json',
@@ -168,7 +210,9 @@ export default function ReviewPage() {
     return () => {
       cancelled = true;
       window.removeEventListener('pagehide', onPageHide);
-      if (createdId && !sessionClosedRef.current) {
+      // Skip the explicit close call when paused — same reasoning as the
+      // pagehide guard above.
+      if (createdId && !sessionClosedRef.current && sessionStatusRef.current !== 'paused') {
         sessionClosedRef.current = true;
         void apiJson(`/api/review/sessions/${createdId}/end`, {
           method: 'POST',
@@ -176,7 +220,7 @@ export default function ReviewPage() {
         }).catch(() => {});
       }
     };
-  }, []);
+  }, [resumeIdParam, updateStatus]);
 
   // Phase 2A — Review Orchestrator. Two fetches so the queue can render in
   // ~50ms while the LLM session_intent (mimo, ~15-20s) loads in the background.
@@ -320,6 +364,46 @@ export default function ReviewPage() {
     setAutoRateError(null);
   }, []);
 
+  // YUK-57 — Skip: pure UI state advance. Does NOT call /api/review/submit, so
+  // no event row is written and FSRS state is untouched. Semantics: "I don't
+  // know but don't want to mark fail". User can still come back to the
+  // question later if it's due again per the existing scheduler.
+  const handleSkip = useCallback(() => {
+    if (!current || submitM.isPending) return;
+    setIndex((i) => i + 1);
+    setPhase('answering');
+    setAnswer('');
+    setShowRef(false);
+    setLastJudge(null);
+    setAutoRateError(null);
+  }, [current, submitM.isPending]);
+
+  // YUK-57 — Pause: started -> paused. Suppresses the pagehide completion
+  // beacon (via sessionStatusRef). The session stays in paused state until
+  // user resumes, sendBeacon-completes via abandon button, or orphan cron
+  // hits the 6h cutoff.
+  const pauseM = useMutation({
+    mutationFn: async () => {
+      if (!sessionId) throw new Error('no session');
+      await apiJson(`/api/review/sessions/${sessionId}/pause`, { method: 'POST' });
+    },
+    onSuccess: () => {
+      updateStatus('paused');
+    },
+  });
+
+  // YUK-57 — Resume: paused -> started. Re-enables the pagehide completion
+  // beacon path.
+  const resumeM = useMutation({
+    mutationFn: async () => {
+      if (!sessionId) throw new Error('no session');
+      await apiJson(`/api/review/sessions/${sessionId}/resume`, { method: 'POST' });
+    },
+    onSuccess: () => {
+      updateStatus('started');
+    },
+  });
+
   // YUK-56 — clear judge preview + auto-rate error when the next question loads
   // so we don't carry stale state into the next attempt. `index` is the trigger;
   // biome's exhaustive-deps doesn't see the index-as-trigger pattern.
@@ -331,9 +415,23 @@ export default function ReviewPage() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // YUK-57 — don't intercept keystrokes inside text inputs / textareas.
+      // (`s` / `p` would otherwise stop users from typing those letters in
+      // their answer.)
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      const isTyping =
+        tag === 'INPUT' || tag === 'TEXTAREA' || (target?.isContentEditable ?? false);
+
       if (phase === 'answering' && (e.metaKey || e.ctrlKey) && e.key === 'Enter') {
         e.preventDefault();
         handleReveal();
+        return;
+      }
+      // YUK-57 — 's' to skip the current question (answering phase only).
+      if (phase === 'answering' && !isTyping && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault();
+        handleSkip();
         return;
       }
       if (phase === 'feedback' && !submitM.isPending) {
@@ -353,7 +451,16 @@ export default function ReviewPage() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [phase, submitM.isPending, lastJudge, handleReveal, handleRate, handleAutoRate, handleNext]);
+  }, [
+    phase,
+    submitM.isPending,
+    lastJudge,
+    handleReveal,
+    handleRate,
+    handleAutoRate,
+    handleNext,
+    handleSkip,
+  ]);
 
   const cause = current?.cause ?? null;
   const currentSubjectModel = resolveSubjectRenderModel(current?.subject_profile ?? null);
@@ -361,19 +468,26 @@ export default function ReviewPage() {
   const answerInputProps = subjectContentProps(currentSubjectModel);
   const refTextProps = subjectContentProps(currentSubjectModel, { className: 'ref-text' });
   const reviewedCount = Math.min(index, total);
+  // YUK-57 — paused takes precedence over isDone in the ribbon so the user
+  // sees the explicit pause state rather than auto-flipping to "completed".
+  const ribbonStatus: string =
+    sessionStatus === 'paused' ? 'paused' : isDone ? 'completed' : sessionStatus;
   const session = sessionId
-    ? { id: sessionId, status: isDone ? 'completed' : sessionStatus, started_at: sessionStartedAt }
+    ? { id: sessionId, status: ribbonStatus, started_at: sessionStartedAt }
     : null;
+  const isPaused = sessionStatus === 'paused';
 
   useEffect(() => {
-    if (!isDone || !sessionId || sessionClosedRef.current) return;
+    // YUK-57 — don't auto-complete from paused (user may resume, finish or
+    // re-pause; queue exhaustion isn't a meaningful signal while paused).
+    if (!isDone || !sessionId || sessionClosedRef.current || isPaused) return;
     sessionClosedRef.current = true;
-    setSessionStatus('completed');
+    updateStatus('completed');
     void apiJson(`/api/review/sessions/${sessionId}/end`, {
       method: 'POST',
       body: JSON.stringify({ status: 'completed' }),
     }).catch(() => {});
-  }, [isDone, sessionId]);
+  }, [isDone, sessionId, isPaused, updateStatus]);
 
   const eyebrow =
     total > 0 && !isDone
@@ -396,13 +510,29 @@ export default function ReviewPage() {
 
       <ReviewSessionRibbon session={session} reviewedCount={reviewedCount} totalCount={total} />
 
-      {planQ.isLoading && (
+      {/* YUK-57 — paused overlay. Hides the question/feedback view so the
+         user explicitly chooses to resume; ?session= URL param is the
+         alternate path that auto-resumes on next visit. */}
+      {isPaused && (
+        <section className="review-stage" aria-label="paused">
+          <p className="empty">
+            ⏸ Session 已暂停。继续刷题点下面恢复，或者直接离开 — cron 6h 兜底。
+          </p>
+          <div style={{ display: 'flex', justifyContent: 'center', marginTop: 'var(--s-2)' }}>
+            <Button variant="primary" onClick={() => resumeM.mutate()} disabled={resumeM.isPending}>
+              继续刷题
+            </Button>
+          </div>
+        </section>
+      )}
+
+      {!isPaused && planQ.isLoading && (
         <section className="review-stage">
           <p className="empty">正在加载复习队列…</p>
         </section>
       )}
 
-      {planQ.isError && (
+      {!isPaused && planQ.isError && (
         <section className="review-stage">
           <p className="empty" style={{ color: 'var(--again-ink)' }}>
             {planQ.error instanceof ApiAuthError
@@ -412,13 +542,13 @@ export default function ReviewPage() {
         </section>
       )}
 
-      {planQ.isSuccess && total === 0 && (
+      {!isPaused && planQ.isSuccess && total === 0 && (
         <section className="review-stage">
           <p className="empty">今天没有要复习的，太好了。</p>
         </section>
       )}
 
-      {planQ.isSuccess && isDone && (
+      {!isPaused && planQ.isSuccess && isDone && (
         <SessionEndSummary
           session={session}
           reviewedCount={total}
@@ -430,7 +560,7 @@ export default function ReviewPage() {
         />
       )}
 
-      {current && !isDone && (
+      {!isPaused && current && !isDone && (
         <section className="review-stage">
           <div className="progress">
             <span>
@@ -445,6 +575,21 @@ export default function ReviewPage() {
             <Badge tone={PRIORITY_TONE[current.priority]}>{PRIORITY_LABEL[current.priority]}</Badge>
             <span className="rationale">{current.rationale}</span>
             <CorrectionStateRenderer state={current.last_failure_event?.correction_state} compact />
+            {/* YUK-57 — Pause button. Lives in the card meta row so it's
+               always reachable regardless of phase. Disabled when there's
+               no session row to pause against (rare; e.g. eager-create
+               failed). */}
+            <span style={{ marginLeft: 'auto' }}>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => pauseM.mutate()}
+                disabled={!sessionId || pauseM.isPending}
+                title="暂停 session（已答题进度保留）"
+              >
+                暂停
+              </Button>
+            </span>
           </div>
 
           <MathMarkdown
@@ -504,7 +649,25 @@ export default function ReviewPage() {
                   <div {...refTextProps}>(无)</div>
                 )}
               </details>
-              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  gap: 'var(--s-2)',
+                  alignItems: 'center',
+                }}
+              >
+                {/* YUK-57 — Skip button. Pure UI advance (no submit / no
+                   FSRS write). Mnemonic: 's' key shortcut. */}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleSkip}
+                  disabled={!current || submitM.isPending}
+                  title="跳过这道题（不记录、不影响 FSRS）"
+                >
+                  跳过
+                </Button>
                 <button type="button" className="btn-rating coral" onClick={handleReveal}>
                   <span>进入对照</span>
                   <kbd>⌘↵</kbd>
