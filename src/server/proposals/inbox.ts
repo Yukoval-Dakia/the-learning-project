@@ -1,13 +1,13 @@
 import { type AiProposalPayloadT, parseAiProposalPayload } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
-import { event } from '@/db/schema';
+import { event, proposal_signals } from '@/db/schema';
 import { getCorrectionStatuses } from '@/server/events/corrections';
 import { ApiError } from '@/server/http/errors';
 import {
   type ProposalSignalSnapshot,
   loadProposalSignalsForRows,
 } from '@/server/proposals/signals';
-import { and, desc, eq, inArray, isNotNull, like, lt, or } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, like, or, sql } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;
@@ -77,6 +77,13 @@ interface ProposalCorrectionDecision {
 interface ProposalCursor {
   created_at: Date;
   id: string;
+  cooldown_active: number;
+  acceptance_rate: number;
+}
+
+interface LoadedProposalEvent {
+  row: EventRow;
+  cursor: ProposalCursor;
 }
 
 export interface ProposalInboxPage {
@@ -97,15 +104,22 @@ function proposalWhere() {
   );
 }
 
-function encodeProposalCursor(row: Pick<EventRow, 'created_at' | 'id'>): string {
+function encodeProposalCursor(row: ProposalCursor): string {
   return Buffer.from(
-    JSON.stringify({ created_at: row.created_at.toISOString(), id: row.id }),
+    JSON.stringify({
+      acceptance_rate: row.acceptance_rate,
+      cooldown_active: row.cooldown_active,
+      created_at: row.created_at.toISOString(),
+      id: row.id,
+    }),
   ).toString('base64url');
 }
 
 function decodeProposalCursor(cursor: string): ProposalCursor {
   try {
     const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as {
+      acceptance_rate?: unknown;
+      cooldown_active?: unknown;
       created_at?: unknown;
       id?: unknown;
     };
@@ -116,7 +130,20 @@ function decodeProposalCursor(cursor: string): ProposalCursor {
     if (Number.isNaN(createdAt.getTime())) {
       throw new Error('invalid created_at');
     }
-    return { created_at: createdAt, id: parsed.id };
+    const cooldownActive =
+      typeof parsed.cooldown_active === 'number' && Number.isFinite(parsed.cooldown_active)
+        ? parsed.cooldown_active
+        : 0;
+    const acceptanceRate =
+      typeof parsed.acceptance_rate === 'number' && Number.isFinite(parsed.acceptance_rate)
+        ? parsed.acceptance_rate
+        : 0.5;
+    return {
+      acceptance_rate: acceptanceRate,
+      cooldown_active: cooldownActive,
+      created_at: createdAt,
+      id: parsed.id,
+    };
   } catch (err) {
     throw new ApiError(
       'validation_error',
@@ -126,26 +153,90 @@ function decodeProposalCursor(cursor: string): ProposalCursor {
   }
 }
 
+function proposalPayloadKindExpr() {
+  return sql<string>`(${event.payload}->'ai_proposal'->>'kind')`;
+}
+
+function proposalPayloadCooldownKeyExpr() {
+  return sql<string>`(${event.payload}->'ai_proposal'->>'cooldown_key')`;
+}
+
+function proposalCooldownActiveExpr(nowIso: string) {
+  return sql<number>`CASE
+    WHEN ${proposal_signals.cooldown_until} IS NOT NULL
+      AND ${proposal_signals.cooldown_until} > ${nowIso}::timestamptz
+    THEN 1
+    ELSE 0
+  END`;
+}
+
+function proposalAcceptanceRateExpr() {
+  return sql<number>`COALESCE(${proposal_signals.acceptance_rate}, 0.5)`;
+}
+
+function proposalCursorWhere(cursor: ProposalCursor, nowIso: string) {
+  const cooldownActive = proposalCooldownActiveExpr(nowIso);
+  const acceptanceRate = proposalAcceptanceRateExpr();
+  const cursorCreatedAtIso = cursor.created_at.toISOString();
+  return sql`
+    (
+      ${cooldownActive} > ${cursor.cooldown_active}
+      OR (
+        ${cooldownActive} = ${cursor.cooldown_active}
+        AND ${acceptanceRate} < ${cursor.acceptance_rate}
+      )
+      OR (
+        ${cooldownActive} = ${cursor.cooldown_active}
+        AND ${acceptanceRate} = ${cursor.acceptance_rate}
+        AND ${event.created_at} < ${cursorCreatedAtIso}::timestamptz
+      )
+      OR (
+        ${cooldownActive} = ${cursor.cooldown_active}
+        AND ${acceptanceRate} = ${cursor.acceptance_rate}
+        AND ${event.created_at} = ${cursorCreatedAtIso}::timestamptz
+        AND ${event.id} < ${cursor.id}
+      )
+    )
+  `;
+}
+
 async function loadProposalEvents(
   db: DbLike,
   opts: Pick<ListProposalInboxOpts, 'limit' | 'cursor'> = {},
-): Promise<EventRow[]> {
+): Promise<LoadedProposalEvent[]> {
+  const nowIso = new Date().toISOString();
   const cursor = opts.cursor ? decodeProposalCursor(opts.cursor) : null;
+  const cooldownActive = proposalCooldownActiveExpr(nowIso);
+  const acceptanceRate = proposalAcceptanceRateExpr();
   const where = cursor
-    ? and(
-        proposalWhere(),
-        or(
-          lt(event.created_at, cursor.created_at),
-          and(eq(event.created_at, cursor.created_at), lt(event.id, cursor.id)),
-        ),
-      )
+    ? and(proposalWhere(), proposalCursorWhere(cursor, nowIso))
     : proposalWhere();
   const query = db
-    .select()
+    .select({
+      acceptance_rate: acceptanceRate,
+      cooldown_active: cooldownActive,
+      row: event,
+    })
     .from(event)
+    .leftJoin(
+      proposal_signals,
+      and(
+        eq(proposal_signals.kind, proposalPayloadKindExpr()),
+        eq(proposal_signals.cooldown_key, proposalPayloadCooldownKeyExpr()),
+      ),
+    )
     .where(where)
-    .orderBy(desc(event.created_at), desc(event.id));
-  return opts.limit === undefined ? await query : await query.limit(opts.limit);
+    .orderBy(cooldownActive, desc(acceptanceRate), desc(event.created_at), desc(event.id));
+  const rows = opts.limit === undefined ? await query : await query.limit(opts.limit);
+  return rows.map((loaded) => ({
+    row: loaded.row,
+    cursor: {
+      acceptance_rate: loaded.acceptance_rate,
+      cooldown_active: loaded.cooldown_active,
+      created_at: loaded.row.created_at,
+      id: loaded.row.id,
+    },
+  }));
 }
 
 async function loadProposalEventById(db: DbLike, proposalId: string): Promise<EventRow | null> {
@@ -288,23 +379,6 @@ function safeDeriveLegacyAiProposal(row: EventRow): AiProposalPayloadT | null {
   }
 }
 
-function sortProposalRowsBySignals(rows: ProposalInboxRow[]): void {
-  const now = new Date();
-  rows.sort((a, b) => {
-    const aCooldown = Number(Boolean(a.signals?.cooldown_until && a.signals.cooldown_until > now));
-    const bCooldown = Number(Boolean(b.signals?.cooldown_until && b.signals.cooldown_until > now));
-    if (aCooldown !== bCooldown) return aCooldown - bCooldown;
-
-    const aRate = a.signals?.acceptance_rate ?? 0.5;
-    const bRate = b.signals?.acceptance_rate ?? 0.5;
-    if (aRate !== bRate) return bRate - aRate;
-
-    const proposedAtDelta = b.proposed_at.getTime() - a.proposed_at.getTime();
-    if (proposedAtDelta !== 0) return proposedAtDelta;
-    return b.id.localeCompare(a.id);
-  });
-}
-
 export async function listProposalInboxRows(
   db: DbLike,
   opts: ListProposalInboxOpts = {},
@@ -312,14 +386,12 @@ export async function listProposalInboxRows(
   return (await listProposalInboxPage(db, opts)).rows;
 }
 
-export async function listProposalInboxPage(
+async function projectLoadedProposalRows(
   db: DbLike,
-  opts: ListProposalInboxOpts = {},
-): Promise<ProposalInboxPage> {
-  const rawLimit = opts.limit === undefined ? undefined : opts.limit + 1;
-  const loadedRows = await loadProposalEvents(db, { limit: rawLimit, cursor: opts.cursor });
-  const hasMore = opts.limit !== undefined && loadedRows.length > opts.limit;
-  const proposalRows = hasMore ? loadedRows.slice(0, opts.limit) : loadedRows;
+  loadedProposalRows: LoadedProposalEvent[],
+  status?: ProposalStatus,
+): Promise<ProposalInboxRow[]> {
+  const proposalRows = loadedProposalRows.map((loaded) => loaded.row);
   const latestRateByProposal = await loadLatestRateByProposal(
     db,
     proposalRows.map((row) => row.id),
@@ -333,8 +405,8 @@ export async function listProposalInboxPage(
   for (const row of proposalRows) {
     const rate = latestRateByProposal.get(row.id);
     const correction = correctionDecisionByProposal.get(row.id);
-    const status = correction?.status ?? rateStatus(rate);
-    if (opts.status && status !== opts.status) continue;
+    const rowStatus = correction?.status ?? rateStatus(rate);
+    if (status && rowStatus !== status) continue;
     const payload = safeDeriveLegacyAiProposal(row);
     if (!payload) continue;
     out.push({
@@ -342,7 +414,7 @@ export async function listProposalInboxPage(
       kind: payload.kind,
       target: payload.target,
       payload,
-      status,
+      status: rowStatus,
       proposed_at: row.created_at,
       decided_at: correction?.decided_at ?? rate?.created_at ?? null,
       actor_ref: row.actor_ref,
@@ -358,10 +430,49 @@ export async function listProposalInboxPage(
   for (const row of out) {
     row.signals = signalsByProposalId.get(row.id) ?? null;
   }
-  sortProposalRowsBySignals(out);
+  return out;
+}
+
+export async function listProposalInboxPage(
+  db: DbLike,
+  opts: ListProposalInboxOpts = {},
+): Promise<ProposalInboxPage> {
+  const pageLimit = opts.limit;
+  if (pageLimit === undefined) {
+    const loadedProposalRows = await loadProposalEvents(db, { cursor: opts.cursor });
+    return {
+      rows: await projectLoadedProposalRows(db, loadedProposalRows, opts.status),
+      next_cursor: null,
+    };
+  }
+
+  const cursorById = new Map<string, ProposalCursor>();
+  const out: ProposalInboxRow[] = [];
+  const targetRows = pageLimit + 1;
+  const batchLimit = Math.max(targetRows, 50);
+  let cursor = opts.cursor;
+
+  while (out.length < targetRows) {
+    const loadedProposalRows = await loadProposalEvents(db, {
+      cursor,
+      limit: batchLimit,
+    });
+    if (loadedProposalRows.length === 0) break;
+    for (const loaded of loadedProposalRows) {
+      cursorById.set(loaded.row.id, loaded.cursor);
+    }
+    out.push(...(await projectLoadedProposalRows(db, loadedProposalRows, opts.status)));
+    if (loadedProposalRows.length < batchLimit) break;
+    cursor = encodeProposalCursor(loadedProposalRows[loadedProposalRows.length - 1].cursor);
+  }
+
+  const hasMore = out.length > pageLimit;
+  const pageRows = hasMore ? out.slice(0, pageLimit) : out;
+  const nextCursorRow = hasMore ? pageRows.at(-1) : null;
+  const nextCursor = nextCursorRow ? cursorById.get(nextCursorRow.id) : null;
   return {
-    rows: out,
-    next_cursor: hasMore ? encodeProposalCursor(proposalRows[proposalRows.length - 1]) : null,
+    rows: pageRows,
+    next_cursor: nextCursor ? encodeProposalCursor(nextCursor) : null,
   };
 }
 
@@ -435,12 +546,14 @@ export async function listLegacyKnowledgeProposals(
   db: DbLike,
   opts: ListProposalInboxOpts = {},
 ): Promise<LegacyKnowledgeProposalRow[]> {
-  const proposalRows = (await loadProposalEvents(db)).filter(
-    (row) =>
-      (row.subject_kind === 'knowledge' &&
-        (row.action === 'propose' || row.action.startsWith('experimental:knowledge_'))) ||
-      (row.subject_kind === 'knowledge_edge' && row.action === 'propose'),
-  );
+  const proposalRows = (await loadProposalEvents(db))
+    .map((loaded) => loaded.row)
+    .filter(
+      (row) =>
+        (row.subject_kind === 'knowledge' &&
+          (row.action === 'propose' || row.action.startsWith('experimental:knowledge_'))) ||
+        (row.subject_kind === 'knowledge_edge' && row.action === 'propose'),
+    );
   const latestRateByProposal = await loadLatestRateByProposal(
     db,
     proposalRows.map((row) => row.id),

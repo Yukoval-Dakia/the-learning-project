@@ -79,18 +79,13 @@ async function getFailureAttemptsPerQuestion(
   questionIds: string[],
   perQuestionLimit: number,
 ): Promise<FailureAttempt[]> {
-  const batches = await Promise.all(
-    questionIds.map((questionId) =>
-      getFailureAttempts(db, { questionIds: [questionId], limit: perQuestionLimit }),
-    ),
-  );
-  return batches
-    .flat()
-    .sort(
-      (a, b) =>
-        b.created_at.getTime() - a.created_at.getTime() ||
-        b.attempt_event_id.localeCompare(a.attempt_event_id),
-    );
+  if (questionIds.length === 0 || perQuestionLimit <= 0) return [];
+  // YUK-76 codex round-3 P1 — push per-question cap into SQL via the new
+  // `perQuestionLimit` opt so each question gets its own bounded slice. The
+  // previous `limit: qids*cap*3` was a global active-rows cap and let one
+  // hot question saturate the window, dropping quiet questions from the
+  // never-reviewed slice entirely.
+  return await getFailureAttempts(db, { questionIds, perQuestionLimit });
 }
 
 export async function GET(req: Request): Promise<Response> {
