@@ -10,10 +10,12 @@ import { event, material_fsrs_state } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
+import { effectiveCauseForFailureAttempt } from './cause-policy';
 import {
   getEventById,
   getEventChain,
   getEvents,
+  getFailureAttemptById,
   getFailureAttempts,
   getJudgeForAttempt,
   getRecentReviewEvents,
@@ -351,6 +353,8 @@ describe('getFailureAttempts', () => {
     expect(results).toHaveLength(1);
     expect(results[0].judge?.cause.primary_category).toBe('concept');
     expect(results[0].user_cause?.primary_category).toBe('memory');
+    expect(effectiveCauseForFailureAttempt(results[0])?.source).toBe('user');
+    expect(effectiveCauseForFailureAttempt(results[0])?.primary_category).toBe('memory');
   });
 
   it('keeps newest user_cause when multiple exist (latest user judgement wins)', async () => {
@@ -411,6 +415,77 @@ describe('getFailureAttempts', () => {
 
     expect(results[0].judge?.cause.primary_category).toBe('concept');
     expect(results[0].user_cause?.primary_category).toBe('carelessness');
+    expect(effectiveCauseForFailureAttempt(results[0])).toMatchObject({
+      source: 'user',
+      primary_category: 'carelessness',
+    });
+  });
+
+  it('effective cause falls back to judge when the user cause is retracted', async () => {
+    const db = testDb();
+    const baseTime = new Date('2026-05-01T12:00:00Z');
+    const attemptId = await seedAttemptEvent({ question_id: 'q1', created_at: baseTime });
+    await seedJudgeEvent({
+      attempt_event_id: attemptId,
+      primary_category: 'concept',
+      created_at: new Date(baseTime.getTime() + 60_000),
+    });
+    const userCauseId = await seedUserCauseEvent({
+      attempt_event_id: attemptId,
+      primary_category: 'memory',
+      created_at: new Date(baseTime.getTime() + 120_000),
+    });
+    await seedCorrectionEvent({
+      target_event_id: userCauseId,
+      correction_kind: 'retract',
+      created_at: new Date(baseTime.getTime() + 180_000),
+    });
+
+    const results = await getFailureAttempts(db);
+
+    expect(results[0].user_cause).toBeUndefined();
+    expect(effectiveCauseForFailureAttempt(results[0])).toMatchObject({
+      source: 'agent',
+      primary_category: 'concept',
+    });
+  });
+
+  it('getFailureAttemptById returns the same user-first effective cause projection', async () => {
+    const db = testDb();
+    const baseTime = new Date('2026-05-01T12:00:00Z');
+    const attemptId = await seedAttemptEvent({ question_id: 'q1', created_at: baseTime });
+    await seedJudgeEvent({
+      attempt_event_id: attemptId,
+      primary_category: 'concept',
+      created_at: new Date(baseTime.getTime() + 60_000),
+    });
+    await seedUserCauseEvent({
+      attempt_event_id: attemptId,
+      primary_category: 'memory',
+      user_notes: 'user override',
+      created_at: new Date(baseTime.getTime() + 120_000),
+    });
+
+    const failure = await getFailureAttemptById(db, attemptId);
+
+    expect(failure?.attempt_event_id).toBe(attemptId);
+    if (!failure) throw new Error('expected failure attempt projection');
+    expect(effectiveCauseForFailureAttempt(failure)).toMatchObject({
+      source: 'user',
+      primary_category: 'memory',
+      user_notes: 'user override',
+    });
+  });
+
+  it('getFailureAttemptById returns null for corrected failure attempts', async () => {
+    const db = testDb();
+    const attemptId = await seedAttemptEvent({ question_id: 'q1' });
+    await seedCorrectionEvent({
+      target_event_id: attemptId,
+      correction_kind: 'retract',
+    });
+
+    await expect(getFailureAttemptById(db, attemptId)).resolves.toBeNull();
   });
 });
 

@@ -11,6 +11,7 @@ import { RelationTypeSchema } from '@/core/schema/event/blocks';
 import type { Db } from '@/db/client';
 import { event, knowledge_edge } from '@/db/schema';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
+import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 import type { FailureAttempt } from '@/server/events/queries';
 import { writeAiProposal } from '@/server/proposals/writer';
 import type { SubjectProfile } from '@/subjects/profile';
@@ -93,13 +94,16 @@ export async function runEdgeProposeAndWrite(
         effective_domain: n.effective_domain,
       })),
       existing_edges: existingEdges,
-      recent_failures: params.recentFailures.map((fa) => ({
-        attempt_event_id: fa.attempt_event_id,
-        referenced_knowledge_ids: fa.referenced_knowledge_ids,
-        // 优先 user_cause（用户改写过的归因），fallback 到 judge.cause
-        cause: fa.user_cause?.primary_category ?? fa.judge?.cause.primary_category ?? null,
-        analysis_md: fa.judge?.cause.analysis_md ?? null,
-      })),
+      recent_failures: params.recentFailures.map((fa) => {
+        const cause = effectiveCauseForFailureAttempt(fa);
+        return {
+          attempt_event_id: fa.attempt_event_id,
+          referenced_knowledge_ids: fa.referenced_knowledge_ids,
+          cause: cause?.primary_category ?? null,
+          cause_source: cause?.source ?? null,
+          analysis_md: cause?.analysis_md ?? cause?.user_notes ?? null,
+        };
+      }),
     };
 
     const result = await params.runTaskFn('KnowledgeEdgeProposeTask', input, {

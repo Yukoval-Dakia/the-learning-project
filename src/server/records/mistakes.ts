@@ -2,6 +2,7 @@ import { inArray } from 'drizzle-orm';
 
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
+import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 import { getFailureAttempts } from '@/server/events/queries';
 import { listLearningRecords } from './queries';
 
@@ -47,23 +48,16 @@ export async function listMistakeProjectionRows(db: Db, filter: ListMistakeProje
     if (!record.attempt_event_id || !attemptIds.has(record.attempt_event_id)) return [];
     const failure = failureByAttempt.get(record.attempt_event_id);
     if (!failure) return [];
-    const cause = failure.user_cause
+    const effectiveCause = effectiveCauseForFailureAttempt(failure);
+    const cause = effectiveCause
       ? {
-          source: 'user' as const,
-          primary_category: failure.user_cause.primary_category,
-          secondary_categories: [] as string[],
-          user_notes: failure.user_cause.user_notes,
-          confidence: null,
+          source: effectiveCause.source,
+          primary_category: effectiveCause.primary_category,
+          secondary_categories: effectiveCause.secondary_categories,
+          user_notes: effectiveCause.user_notes,
+          confidence: effectiveCause.confidence,
         }
-      : failure.judge
-        ? {
-            source: 'agent' as const,
-            primary_category: failure.judge.cause.primary_category,
-            secondary_categories: (failure.judge.cause.secondary_categories ?? []) as string[],
-            user_notes: null,
-            confidence: failure.judge.cause.confidence,
-          }
-        : null;
+      : null;
     return [
       {
         id: failure.attempt_event_id,

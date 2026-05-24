@@ -57,6 +57,59 @@ async function seedFailureAttempt(question_id: string) {
   });
 }
 
+async function seedJudge(question_id: string, primary_category = 'concept') {
+  const db = testDb();
+  const now = new Date();
+  const attemptId = `evt_attempt_${question_id}`;
+  await db.insert(event).values({
+    id: `evt_judge_${question_id}`,
+    session_id: null,
+    actor_kind: 'agent',
+    actor_ref: 'attribution',
+    action: 'judge',
+    subject_kind: 'event',
+    subject_id: attemptId,
+    outcome: 'success',
+    payload: {
+      cause: {
+        primary_category,
+        secondary_categories: [],
+        analysis_md: 'agent analysis',
+        confidence: 0.8,
+      },
+      referenced_knowledge_ids: ['k1'],
+    },
+    caused_by_event_id: attemptId,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: now,
+  });
+}
+
+async function seedUserCause(question_id: string, primary_category = 'memory') {
+  const db = testDb();
+  const now = new Date();
+  const attemptId = `evt_attempt_${question_id}`;
+  await db.insert(event).values({
+    id: `evt_user_cause_${question_id}`,
+    session_id: null,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'experimental:user_cause',
+    subject_kind: 'event',
+    subject_id: attemptId,
+    outcome: null,
+    payload: {
+      primary_category,
+      user_notes: 'manual correction',
+    },
+    caused_by_event_id: attemptId,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: now,
+  });
+}
+
 function makeFsrsState(overrides: {
   due: string;
   stability?: number;
@@ -169,6 +222,18 @@ describe('GET /api/review/due', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { rows: unknown[] };
     expect(body.rows).toHaveLength(0);
+  });
+
+  it('uses user cause before agent judge cause in due-card projection', async () => {
+    await seedQuestion('q_user_cause');
+    await seedFailureAttempt('q_user_cause');
+    await seedJudge('q_user_cause', 'concept');
+    await seedUserCause('q_user_cause', 'memory');
+
+    const res = await getReview();
+    const body = (await res.json()) as { rows: Array<{ cause: string | null }> };
+
+    expect(body.rows[0].cause).toBe('memory');
   });
 
   it('does NOT include questions that have no attempt events and no FSRS state', async () => {

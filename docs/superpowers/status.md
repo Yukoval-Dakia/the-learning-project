@@ -208,7 +208,7 @@ ADR-0014 配套：[7 轮讨论 + 10 决议 summary](../discussion/summary.md)、
 | 项 | 描述 | 严重度 |
 |---|---|---|
 | Phase 2C UI 未真机验证 | 本地 ship 完没 E2E 跑过浏览器；NAS 容器还是旧 build | **高** |
-| user_cause 与 agent judge 合并策略 | 当前 "user 优先"；dreaming 大量产 judge 时需重审 | 中 |
+| user_cause 与 agent judge 合并策略 | YUK-51 锁定 shared projection：active user_cause 优先，否则 latest active agent judge；dreaming/maintenance 只能提议不能静默覆盖 | 中 |
 | Full judge capability expansion | `semantic` 已通过 async service 可用；`rubric` / `steps` / `multimodal_direct` / `ai_flexible` 仍需独立 capability runner 和 score policy | 中 |
 | Dependabot moderate 警告 | GitHub 报 5 条；未处理 | 中 |
 | variants_max 计数表 | MVP 一道 parent 只生 1 道变式（per parent_variant_id 唯一性）；多道变式留 Phase 3 | 低 |

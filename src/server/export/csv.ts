@@ -70,10 +70,104 @@ function parseJsonCell<T>(v: unknown): T | null {
   return v as T;
 }
 
+type CorrectionStatus =
+  | { state: 'active'; replacement_event_id: null }
+  | { state: 'retracted'; replacement_event_id: null }
+  | { state: 'marked_wrong'; replacement_event_id: null }
+  | { state: 'superseded'; replacement_event_id: string };
+
+function rowId(row: Row): string {
+  return String(row.id);
+}
+
+function rowCreatedAtValue(row: Row): number {
+  const value = row.created_at;
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return numeric;
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+function newerRow(a: Row, b: Row): boolean {
+  const aTime = rowCreatedAtValue(a);
+  const bTime = rowCreatedAtValue(b);
+  return aTime > bTime || (aTime === bTime && rowId(a) > rowId(b));
+}
+
+function correctionStatuses(events: Row[]): Map<string, CorrectionStatus> {
+  const statuses = new Map<string, CorrectionStatus>();
+  const corrections = events
+    .filter((e) => e.action === 'correct' && e.subject_kind === 'event' && e.subject_id)
+    .sort((a, b) => {
+      if (newerRow(a, b)) return 1;
+      if (newerRow(b, a)) return -1;
+      return 0;
+    });
+
+  for (const correction of corrections) {
+    const payload = parseJsonCell<{
+      correction_kind?: string;
+      replacement_event_id?: string | null;
+    }>(correction.payload);
+    const targetId = String(correction.subject_id);
+    switch (payload?.correction_kind) {
+      case 'retract':
+        statuses.set(targetId, { state: 'retracted', replacement_event_id: null });
+        break;
+      case 'mark_wrong':
+        statuses.set(targetId, { state: 'marked_wrong', replacement_event_id: null });
+        break;
+      case 'supersede':
+        if (payload.replacement_event_id) {
+          statuses.set(targetId, {
+            state: 'superseded',
+            replacement_event_id: payload.replacement_event_id,
+          });
+        }
+        break;
+      case 'restore':
+        statuses.set(targetId, { state: 'active', replacement_event_id: null });
+        break;
+    }
+  }
+
+  return statuses;
+}
+
+function activeEffectiveRow(
+  original: Row,
+  rowsById: Map<string, Row>,
+  statuses: Map<string, CorrectionStatus>,
+): Row | null {
+  let current = original;
+  const seen = new Set<string>();
+
+  for (let depth = 0; depth < 16; depth += 1) {
+    const currentId = rowId(current);
+    if (seen.has(currentId)) return null;
+    seen.add(currentId);
+
+    const status = statuses.get(currentId);
+    if (!status || status.state === 'active') return current;
+    if (status.state === 'retracted' || status.state === 'marked_wrong') return null;
+
+    const replacement = rowsById.get(status.replacement_event_id);
+    if (!replacement) return null;
+    current = replacement;
+  }
+
+  return null;
+}
+
 /**
  * Build the mistakes CSV from the event stream:
  *   - One row per `event(action='attempt', outcome='failure', subject_kind='question')`
- *   - cause comes from chained `event(action='judge', caused_by_event_id=attempt.id)`
+ *   - cause comes from the effective chained user_cause first, then judge
  *   - review_count counts `event(action='review', subject_id=question_id)` for the same question
  *   - fsrs_state comes from the matching `material_fsrs_state` row (when present).
  */
@@ -94,14 +188,36 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
   );
 
   const events = (tables.event ?? []) as Row[];
+  const eventsById = new Map(events.filter((e) => e.id).map((e) => [rowId(e), e]));
+  const statuses = correctionStatuses(events);
   const attempts = events.filter(
     (e) => e.action === 'attempt' && e.subject_kind === 'question' && e.outcome === 'failure',
   );
-  // Index judges by caused_by_event_id for chained lookup
+  // Index active/effective cause events by caused_by_event_id for chained lookup.
   const judgesByAttempt = new Map<string, Row>();
+  const userCausesByAttempt = new Map<string, Row>();
   for (const e of events) {
-    if (e.action === 'judge' && e.subject_kind === 'event' && e.caused_by_event_id) {
-      judgesByAttempt.set(e.caused_by_event_id as string, e);
+    if (
+      (e.action === 'judge' || e.action === 'experimental:user_cause') &&
+      e.subject_kind === 'event' &&
+      e.caused_by_event_id
+    ) {
+      const effective = activeEffectiveRow(e, eventsById, statuses);
+      if (
+        !effective ||
+        effective.action !== e.action ||
+        effective.subject_kind !== e.subject_kind ||
+        effective.subject_id !== e.subject_id ||
+        effective.caused_by_event_id !== e.caused_by_event_id
+      ) {
+        continue;
+      }
+      const bucket = e.action === 'judge' ? judgesByAttempt : userCausesByAttempt;
+      const attemptId = String(e.caused_by_event_id);
+      const existing = bucket.get(attemptId);
+      if (!existing || newerRow(effective, existing)) {
+        bucket.set(attemptId, effective);
+      }
     }
   }
   // Index reviews per question
@@ -135,13 +251,22 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
     const knowledgeIds = attemptPayload?.referenced_knowledge_ids ?? [];
     const kNames = knowledgeIds.map((id) => knowledgeById.get(id) ?? id).join('; ');
 
-    const judge = judgesByAttempt.get(a.id as string);
+    const userCause = userCausesByAttempt.get(rowId(a));
+    const userCausePayload = userCause
+      ? parseJsonCell<{
+          primary_category: string;
+          user_notes?: string | null;
+        }>(userCause.payload)
+      : null;
+    const judge = judgesByAttempt.get(rowId(a));
     const judgePayload = judge
       ? parseJsonCell<{
           cause: { primary_category: string; analysis_md: string; confidence: number };
         }>(judge.payload)
       : null;
-    const cause = judgePayload?.cause ?? null;
+    const causePrimary =
+      userCausePayload?.primary_category ?? judgePayload?.cause.primary_category ?? '';
+    const causeUserNotes = userCausePayload?.user_notes ?? '';
 
     const reviews = reviewsByQuestion.get(qid) ?? [];
     const lastReview =
@@ -160,9 +285,8 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
         csvEscape(q?.reference_md ?? ''),
         csvEscape(attemptPayload?.answer_md ?? ''),
         csvEscape(kNames),
-        // No user_notes in event-stream cause (Lane B dropped that field — analysis_md replaces it)
-        csvEscape(cause?.primary_category ?? ''),
-        csvEscape(''),
+        csvEscape(causePrimary),
+        csvEscape(causeUserNotes),
         csvEscape(q?.difficulty ?? ''),
         csvEscape(fsrsState?.due ?? ''),
         csvEscape(fsrsState?.reps ?? ''),
