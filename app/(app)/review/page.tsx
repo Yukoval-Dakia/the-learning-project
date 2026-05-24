@@ -1,10 +1,7 @@
 'use client';
 
 import type { JudgeResultV2T } from '@/core/schema/capability';
-import {
-  AttemptTimeline,
-  type AttemptTimelineEvent,
-} from '@/ui/components/AttemptTimeline';
+import { AttemptTimeline, type AttemptTimelineEvent } from '@/ui/components/AttemptTimeline';
 import { JudgeResultPanel } from '@/ui/components/JudgeResultPanel';
 import {
   type ReviewRatingCounts,

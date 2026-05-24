@@ -525,14 +525,18 @@ export async function getQuestionTimeline(
 
   if (firstRows.length === 0) return [];
 
-  const activeRows = await takeActiveRows(db, firstRows, effectiveLimit, async (nextLimit, offset) =>
-    db
-      .select()
-      .from(event)
-      .where(and(...conditions))
-      .orderBy(desc(event.created_at))
-      .limit(nextLimit)
-      .offset(offset),
+  const activeRows = await takeActiveRows(
+    db,
+    firstRows,
+    effectiveLimit,
+    async (nextLimit, offset) =>
+      db
+        .select()
+        .from(event)
+        .where(and(...conditions))
+        .orderBy(desc(event.created_at))
+        .limit(nextLimit)
+        .offset(offset),
   );
 
   if (activeRows.length === 0) return [];
