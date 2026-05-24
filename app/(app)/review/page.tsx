@@ -1,5 +1,7 @@
 'use client';
 
+import type { JudgeResultV2T } from '@/core/schema/capability';
+import { JudgeResultPanel } from '@/ui/components/JudgeResultPanel';
 import {
   type ReviewRatingCounts,
   ReviewSessionRibbon,
@@ -69,6 +71,25 @@ interface ReviewPlan {
 
 type Phase = 'answering' | 'feedback';
 type Rating = 'again' | 'hard' | 'good';
+
+// YUK-56 — server-returned judge metadata. Mirrors the `judge` field on
+// `POST /api/review/submit`'s response shape (route.ts JudgeResponse).
+interface SubmitJudgeResponse {
+  route: string;
+  score: number | null;
+  coarse_outcome: 'correct' | 'partial' | 'incorrect' | 'unsupported';
+  confidence: number;
+  feedback_md: string;
+  evidence_json: Record<string, unknown>;
+  capability_ref: { id: string; version: string };
+  suggested_rating: Rating | null;
+  auto_rated: boolean;
+}
+
+interface SubmitResponse {
+  next_due_at: number;
+  judge?: SubmitJudgeResponse | null;
+}
 
 const RATING_LABELS: Record<Rating, string> = {
   again: '不会',
@@ -182,6 +203,12 @@ export default function ReviewPage() {
     good: 0,
   });
   const [knowledgeTouched, setKnowledgeTouched] = useState<string[]>([]);
+  // YUK-56 — preview judge result for the *current* question. Set after a
+  // submit returns judge != null; cleared when the next question loads. Used
+  // both to show the JudgeResultPanel briefly before advance AND to surface
+  // "judge couldn't auto-rate, rate manually" when auto_rate returns 422.
+  const [lastJudge, setLastJudge] = useState<SubmitJudgeResponse | null>(null);
+  const [autoRateError, setAutoRateError] = useState<string | null>(null);
 
   const rows = planQ.data?.queue ?? [];
   const total = rows.length;
@@ -198,34 +225,67 @@ export default function ReviewPage() {
     if (current) questionShownAtRef.current = Date.now();
   }, [current]);
 
+  // YUK-56 — submit accepts both manual ratings (auto_rate=false; server still
+  // runs judge for telemetry + suggestion) and "自动判分" mode (auto_rate=true;
+  // server's suggested rating is the final rating). On 422 unsupported, surface
+  // a message + keep the user in feedback phase so they can rate manually.
   const submitM = useMutation({
-    mutationFn: (rating: Rating) => {
+    mutationFn: async (input: { rating: Rating; autoRate: boolean }) => {
       if (!current) throw new Error('no current question');
       const latencyMs = Math.max(0, Date.now() - questionShownAtRef.current);
-      return apiJson<{ next_due_at: number }>('/api/review/submit', {
+      return await apiJson<SubmitResponse>('/api/review/submit', {
         method: 'POST',
         body: JSON.stringify({
           activity_ref: current.activity_ref,
-          rating,
+          rating: input.rating,
           response_md: answer || null,
           session_id: sessionId,
           latency_ms: latencyMs,
           referenced_knowledge_ids: current.knowledge_ids,
+          auto_rate: input.autoRate,
         }),
       });
     },
-    onSuccess: (_data, rating) => {
-      setRatingCounts((counts) => ({ ...counts, [rating]: counts[rating] + 1 }));
+    onSuccess: (data, input) => {
+      // YUK-56 — final rating may differ from input.rating when auto_rate=true.
+      // Trust the server's judge.suggested_rating if present; otherwise fall
+      // back to the request rating.
+      const finalRating: Rating =
+        input.autoRate && data.judge?.suggested_rating ? data.judge.suggested_rating : input.rating;
+      setRatingCounts((counts) => ({ ...counts, [finalRating]: counts[finalRating] + 1 }));
       setKnowledgeTouched((prev) => {
         const next = new Set(prev);
         for (const kid of current?.knowledge_ids ?? []) next.add(kid);
         return [...next];
       });
-      setIndex((i) => i + 1);
-      setPhase('answering');
-      setAnswer('');
-      setShowRef(false);
+      setLastJudge(data.judge ?? null);
+      setAutoRateError(null);
+      // YUK-56 — auto_rate path: don't auto-advance. User needs to see the
+      // judge result + reasoning before moving on (it's the basis for the
+      // rating they didn't pick). They press "下一题" / Enter to advance.
+      //
+      // Manual rating path: auto-advance as before (existing UX). The
+      // judge result is informational and gets cleared by the index-change
+      // useEffect.
+      if (input.autoRate && data.judge) {
+        setPhase('feedback');
+        // Stay on current question; UI shows JudgeResultPanel + "下一题".
+      } else {
+        setIndex((i) => i + 1);
+        setPhase('answering');
+        setAnswer('');
+        setShowRef(false);
+      }
       qc.invalidateQueries({ queryKey: ['review-plan'] });
+    },
+    onError: (err) => {
+      // YUK-56 — 422 unsupported_judge_route in auto_rate mode: keep the user
+      // in feedback phase so they can rate manually. Distinguished by message
+      // shape (errorResponse() formats as `${error}: ${message}`).
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes('unsupported_judge_route')) {
+        setAutoRateError('无法自动判分，请手动评分');
+      }
     },
   });
 
@@ -236,10 +296,38 @@ export default function ReviewPage() {
   const handleRate = useCallback(
     (r: Rating) => {
       if (phase !== 'feedback' || submitM.isPending) return;
-      submitM.mutate(r);
+      submitM.mutate({ rating: r, autoRate: false });
     },
     [phase, submitM],
   );
+
+  // YUK-56 — "自动判分" CTA: server runs judge + uses suggested rating as final.
+  // Sends rating='good' as placeholder (server ignores it under auto_rate=true).
+  const handleAutoRate = useCallback(() => {
+    if (phase !== 'feedback' || submitM.isPending) return;
+    setAutoRateError(null);
+    submitM.mutate({ rating: 'good', autoRate: true });
+  }, [phase, submitM]);
+
+  // YUK-56 — after auto-rate save, user presses Enter / clicks "下一题" to
+  // advance. Mutation already committed the review; this is pure UI navigation.
+  const handleNext = useCallback(() => {
+    setIndex((i) => i + 1);
+    setPhase('answering');
+    setAnswer('');
+    setShowRef(false);
+    setLastJudge(null);
+    setAutoRateError(null);
+  }, []);
+
+  // YUK-56 — clear judge preview + auto-rate error when the next question loads
+  // so we don't carry stale state into the next attempt. `index` is the trigger;
+  // biome's exhaustive-deps doesn't see the index-as-trigger pattern.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: index drives this effect, setters are stable
+  useEffect(() => {
+    setLastJudge(null);
+    setAutoRateError(null);
+  }, [index]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -249,14 +337,23 @@ export default function ReviewPage() {
         return;
       }
       if (phase === 'feedback' && !submitM.isPending) {
+        // YUK-56 — when judge result is shown after auto-rate, Enter advances.
+        // (Avoid eating Enter when typing in an answer; phase guard handles it.)
+        if (lastJudge && e.key === 'Enter') {
+          e.preventDefault();
+          handleNext();
+          return;
+        }
         if (e.key === '1') handleRate('again');
         else if (e.key === '2') handleRate('hard');
         else if (e.key === '3') handleRate('good');
+        // YUK-56 — "a" / "A" key triggers auto-judge (mnemonic: auto)
+        else if (e.key === 'a' || e.key === 'A') handleAutoRate();
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [phase, submitM.isPending, handleReveal, handleRate]);
+  }, [phase, submitM.isPending, lastJudge, handleReveal, handleRate, handleAutoRate, handleNext]);
 
   const cause = current?.cause ?? null;
   const currentSubjectModel = resolveSubjectRenderModel(current?.subject_profile ?? null);
@@ -476,21 +573,93 @@ export default function ReviewPage() {
                 {!cause && <span className="label-mono">暂无归因记录</span>}
               </div>
 
+              {/* YUK-56 — judge result panel + auto-rate feedback. Mounts:
+                 - whenever a previous submit returned judge != null (manual rating: shown briefly until index changes; auto-rate: shown until 下一题).
+                 - explicit unsupported message when auto-rate returned 422. */}
+              {lastJudge && (
+                <JudgeResultPanel
+                  result={
+                    {
+                      score: lastJudge.score,
+                      score_meaning: 'correctness',
+                      coarse_outcome: lastJudge.coarse_outcome,
+                      confidence: lastJudge.confidence,
+                      capability_ref: lastJudge.capability_ref,
+                      feedback_md: lastJudge.feedback_md,
+                      evidence_json: lastJudge.evidence_json,
+                    } as JudgeResultV2T
+                  }
+                  expectedSignals={[]}
+                  appealable={false}
+                  notation={
+                    (currentSubjectModel.renderConfig.notation ?? undefined) as
+                      | 'latex'
+                      | 'wenyan'
+                      | 'plaintext'
+                      | 'code'
+                      | undefined
+                  }
+                />
+              )}
+              {autoRateError && (
+                <p className="empty" style={{ color: 'var(--again-ink)' }}>
+                  {autoRateError}
+                </p>
+              )}
+
               <div className="rating-row">
-                {(['again', 'hard', 'good'] as Rating[]).map((r) => (
-                  <button
-                    type="button"
-                    key={r}
-                    className={`btn-rating ${RATING_CLASS[r]}`}
-                    onClick={() => handleRate(r)}
-                    disabled={submitM.isPending}
-                  >
-                    <span>{RATING_LABELS[r]}</span>
-                    <kbd>{RATING_KEY[r]}</kbd>
-                  </button>
-                ))}
+                {/* YUK-56 — "自动判分" CTA. Disabled after a successful auto-rate
+                   (lastJudge from auto path) — UI is in "下一题" state.
+                   Disabled when no answer typed (judge can't run). */}
+                <button
+                  type="button"
+                  className="btn-rating coral"
+                  onClick={handleAutoRate}
+                  disabled={submitM.isPending || !answer.trim() || lastJudge !== null}
+                  title={
+                    answer.trim()
+                      ? '让 AI 判分（exact / keyword 本地秒回；semantic 走 LLM）'
+                      : '需要先填答案才能自动判分'
+                  }
+                >
+                  <span>自动判分</span>
+                  <kbd>A</kbd>
+                </button>
+                {(['again', 'hard', 'good'] as Rating[]).map((r) => {
+                  const isSuggested = lastJudge?.suggested_rating === r;
+                  return (
+                    <button
+                      type="button"
+                      key={r}
+                      className={`btn-rating ${RATING_CLASS[r]}`}
+                      onClick={() => handleRate(r)}
+                      disabled={submitM.isPending || lastJudge !== null}
+                      // YUK-56 — soft hint: outline the rating the judge suggested
+                      style={
+                        isSuggested
+                          ? { boxShadow: '0 0 0 2px var(--info-ink)', position: 'relative' }
+                          : undefined
+                      }
+                      title={isSuggested ? 'AI 建议此评分' : undefined}
+                    >
+                      <span>{RATING_LABELS[r]}</span>
+                      <kbd>{RATING_KEY[r]}</kbd>
+                    </button>
+                  );
+                })}
               </div>
-              {submitM.isError && (
+
+              {/* YUK-56 — after auto-rate save, "下一题" CTA replaces rating row UX. */}
+              {lastJudge && (
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button type="button" className="btn-rating good" onClick={handleNext}>
+                    <span>下一题</span>
+                    <kbd>↵</kbd>
+                  </button>
+                </div>
+              )}
+
+              {submitM.isError && !autoRateError && (
                 <p className="empty" style={{ color: 'var(--again-ink)' }}>
                   提交失败：{(submitM.error as Error).message}
                 </p>
