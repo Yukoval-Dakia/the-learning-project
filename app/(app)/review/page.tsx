@@ -3,6 +3,7 @@
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import { AttemptTimeline, type AttemptTimelineEvent } from '@/ui/components/AttemptTimeline';
 import { JudgeResultPanel } from '@/ui/components/JudgeResultPanel';
+import { ReviewAnswerPreview, shouldShowAnswerPreview } from '@/ui/components/ReviewAnswerPreview';
 import {
   type ReviewRatingCounts,
   ReviewSessionRibbon,
@@ -494,6 +495,7 @@ export default function ReviewPage() {
       : null;
   const qbodyProps = subjectContentProps(currentSubjectModel, { className: 'qbody' });
   const answerInputProps = subjectContentProps(currentSubjectModel);
+  const answerPreviewEnabled = shouldShowAnswerPreview(currentSubjectModel.renderConfig.notation);
   const refTextProps = subjectContentProps(currentSubjectModel, { className: 'ref-text' });
   const reviewedCount = Math.min(index, total);
   // YUK-57 — paused takes precedence over isDone in the ribbon so the user
@@ -656,12 +658,22 @@ export default function ReviewPage() {
           {phase === 'answering' && (
             <>
               <div className="label-mono">你的答案</div>
-              <textarea
-                {...answerInputProps}
-                placeholder="不看参考，先答…… Cmd/Ctrl + Enter 进入对照"
-                value={answer}
-                onChange={(e) => setAnswer(e.target.value)}
-              />
+              <div
+                className={`answer-compose${answerPreviewEnabled ? ' answer-compose--preview' : ''}`}
+              >
+                <div className="answer-compose__editor">
+                  <textarea
+                    {...answerInputProps}
+                    placeholder="不看参考，先答…… Cmd/Ctrl + Enter 进入对照"
+                    value={answer}
+                    onChange={(e) => setAnswer(e.target.value)}
+                  />
+                </div>
+                <ReviewAnswerPreview
+                  value={answer}
+                  notation={currentSubjectModel.renderConfig.notation}
+                />
+              </div>
               <details
                 className="ref-reveal"
                 open={showRef}
