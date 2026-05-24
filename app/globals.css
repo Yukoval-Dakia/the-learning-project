@@ -2560,6 +2560,39 @@ ol {
   justify-content: space-between;
   align-items: center;
 }
+.review-subject-switch {
+  display: grid;
+  gap: 3px;
+  padding: 10px 14px;
+  border: 1px solid var(--coral-line);
+  border-left: 3px solid var(--info);
+  border-radius: var(--r-2);
+  background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--info-soft) 78%, var(--paper-raised)) 0%,
+      color-mix(in srgb, var(--paper-raised) 78%, var(--coral-soft)) 100%
+    ), var(--info-soft);
+  color: var(--ink-2);
+}
+.review-subject-switch__eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1;
+  color: var(--info-ink);
+  letter-spacing: var(--ls-wide);
+  text-transform: uppercase;
+}
+.review-subject-switch strong {
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.review-subject-switch span:last-child {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
 .review-stage .qbody {
   font-family: var(--font-wenyan);
   font-size: 21px;
