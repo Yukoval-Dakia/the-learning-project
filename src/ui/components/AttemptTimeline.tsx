@@ -133,11 +133,7 @@ export function AttemptTimeline({ events, now_sec }: AttemptTimelineProps) {
             );
           }
           return (
-            <li
-              key={entry.event_id}
-              className="attempt-timeline-row"
-              data-kind="review"
-            >
+            <li key={entry.event_id} className="attempt-timeline-row" data-kind="review">
               <span className="attempt-timeline-time label-mono">{time}</span>
               <Badge tone={RATING_TONE[entry.fsrs_rating]}>
                 复习 · {RATING_LABEL[entry.fsrs_rating]}
