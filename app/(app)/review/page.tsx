@@ -1,6 +1,10 @@
 'use client';
 
 import type { JudgeResultV2T } from '@/core/schema/capability';
+import {
+  AttemptTimeline,
+  type AttemptTimelineEvent,
+} from '@/ui/components/AttemptTimeline';
 import { JudgeResultPanel } from '@/ui/components/JudgeResultPanel';
 import {
   type ReviewRatingCounts,
@@ -259,6 +263,28 @@ export default function ReviewPage() {
   const current = rows[index];
   const isDone = total > 0 && index >= total;
   const intent = intentQ.data ?? planQ.data?.session_intent ?? null;
+
+  // YUK-58 — current-question attempt timeline. Only fires when the user is in
+  // feedback phase so we don't churn the DB during answering. Limited to the
+  // last 10 events; sufficient signal for cause-repetition detection.
+  const currentQuestionId = current?.question_id;
+  const timelineQ = useQuery({
+    queryKey: ['question-timeline', currentQuestionId ?? null],
+    enabled: !!currentQuestionId && phase === 'feedback',
+    queryFn: async (): Promise<{
+      question_id: string;
+      events: AttemptTimelineEvent[];
+      computed_at_sec: number;
+    }> => {
+      // `enabled` guarantees currentQuestionId is set at fetch time.
+      const qid = currentQuestionId as string;
+      return apiJson<{
+        question_id: string;
+        events: AttemptTimelineEvent[];
+        computed_at_sec: number;
+      }>(`/api/questions/${encodeURIComponent(qid)}/timeline?limit=10`);
+    },
+  });
 
   // Per-question wall-clock timer. Reset every time we land on a new question
   // (index changes OR the queue loads for the first time). Posted as
@@ -735,6 +761,17 @@ export default function ReviewPage() {
                 />
                 {!cause && <span className="label-mono">暂无归因记录</span>}
               </div>
+
+              {/* YUK-58 — current-question attempt history. Surfaces repeated
+                 cause patterns and recent rating trend so the user can decide
+                 whether to escalate (variants / record review) instead of
+                 grinding the same misconception. */}
+              {timelineQ.data && (
+                <AttemptTimeline
+                  events={timelineQ.data.events}
+                  now_sec={timelineQ.data.computed_at_sec}
+                />
+              )}
 
               {/* YUK-56 — judge result panel + auto-rate feedback. Mounts:
                  - whenever a previous submit returned judge != null (manual rating: shown briefly until index changes; auto-rate: shown until 下一题).
