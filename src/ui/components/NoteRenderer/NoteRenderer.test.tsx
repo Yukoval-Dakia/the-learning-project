@@ -5,7 +5,9 @@ import { NoteRenderer } from './NoteRenderer';
 describe('NoteRenderer — basic markdown contract', () => {
   it('renders bullet lists into <ul><li>', () => {
     const html = renderToString(
-      <NoteRenderer kind="note" notation="wenyan">{'- first\n- second\n- third'}</NoteRenderer>,
+      <NoteRenderer kind="note" notation="wenyan">
+        {'- first\n- second\n- third'}
+      </NoteRenderer>,
     );
     expect(html).toContain('<ul>');
     expect(html).toMatch(/<li>first<\/li>/);
@@ -15,7 +17,11 @@ describe('NoteRenderer — basic markdown contract', () => {
 
   it('renders fenced code with language class', () => {
     const md = '```ts\nconst x = 1;\n```';
-    const html = renderToString(<NoteRenderer kind="note" notation="code">{md}</NoteRenderer>);
+    const html = renderToString(
+      <NoteRenderer kind="note" notation="code">
+        {md}
+      </NoteRenderer>,
+    );
     expect(html).toContain('<pre>');
     expect(html).toContain('<code class="language-ts">');
     expect(html).toContain('const x = 1;');
@@ -53,14 +59,18 @@ describe('NoteRenderer — basic markdown contract', () => {
 
   it('keeps KaTeX gating: latex notation parses $...$', () => {
     const html = renderToString(
-      <NoteRenderer kind="note" notation="latex">{'energy is $E = mc^2$'}</NoteRenderer>,
+      <NoteRenderer kind="note" notation="latex">
+        {'energy is $E = mc^2$'}
+      </NoteRenderer>,
     );
     expect(html).toContain('class="katex"');
   });
 
   it('skips KaTeX when notation is wenyan (raw $...$ text)', () => {
     const html = renderToString(
-      <NoteRenderer kind="note" notation="wenyan">{'文言：$\\sqrt{2}$'}</NoteRenderer>,
+      <NoteRenderer kind="note" notation="wenyan">
+        {'文言：$\\sqrt{2}$'}
+      </NoteRenderer>,
     );
     expect(html).not.toContain('class="katex"');
     expect(html).toContain('文言：');
@@ -80,7 +90,9 @@ describe('NoteRenderer — basic markdown contract', () => {
 
   it('forwards user className alongside note-prose', () => {
     const html = renderToString(
-      <NoteRenderer kind="note" className="custom-x">hello</NoteRenderer>,
+      <NoteRenderer kind="note" className="custom-x">
+        hello
+      </NoteRenderer>,
     );
     expect(html).toContain('note-prose');
     expect(html).toContain('custom-x');

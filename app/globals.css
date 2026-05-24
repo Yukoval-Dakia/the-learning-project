@@ -2035,8 +2035,138 @@ ol {
   font-size: 15px;
   line-height: 1.7;
   color: var(--ink);
-  white-space: pre-wrap;
-  word-break: break-word;
+  /* YUK-52 — white-space + word-break removed because react-markdown emits
+     real block elements (<p>/<ul>/<pre>); pre-wrap was injecting extra
+     blank lines between blocks and breaking list indentation. overflow-wrap
+     still handles unbreakable long tokens. */
+  overflow-wrap: anywhere;
+}
+
+/* ─── YUK-52 — note-prose: scoped rules for NoteRenderer ───────────────────
+   Targets <NoteRenderer kind="note">. Sits beside .artifact-section-body
+   so atomic note bodies get list / code / image / blockquote rhythm without
+   leaking into TeachingDrawer / JudgeResultPanel / EmbeddedCheckSection
+   prompts (those still consume <MathMarkdown> directly).
+*/
+.note-prose p {
+  margin: 0 0 var(--s-2);
+}
+.note-prose p:last-child {
+  margin-bottom: 0;
+}
+.note-prose ul,
+.note-prose ol {
+  margin: var(--s-2) 0;
+  padding-left: 1.4em;
+}
+.note-prose li {
+  margin: 2px 0;
+  line-height: var(--lh-prose);
+}
+.note-prose li > p {
+  margin: 0;
+}
+.note-prose code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  background: var(--paper-raised);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-1);
+  padding: 0 4px;
+}
+.note-prose pre {
+  margin: var(--s-3) 0;
+  padding: var(--s-3);
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  overflow-x: auto;
+  white-space: pre;
+}
+.note-prose pre code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-size: inherit;
+  color: inherit;
+}
+.note-prose blockquote {
+  margin: var(--s-3) 0;
+  padding: 6px var(--s-3);
+  border-left: 2px solid var(--coral-line);
+  color: var(--ink-2);
+  background: var(--paper-raised);
+  border-radius: 0 var(--r-1) var(--r-1) 0;
+}
+.note-prose blockquote p:last-child {
+  margin-bottom: 0;
+}
+.note-prose img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: var(--s-3) 0;
+  border-radius: var(--r-2);
+  border: 1px solid var(--line-soft);
+}
+.note-prose strong {
+  font-weight: 600;
+  color: var(--ink);
+}
+.note-prose em {
+  font-style: italic;
+}
+.note-prose hr {
+  border: 0;
+  border-top: 1px solid var(--line-soft);
+  margin: var(--s-3) 0;
+}
+.note-prose a {
+  color: var(--coral);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.note-prose h1,
+.note-prose h2,
+.note-prose h3,
+.note-prose h4 {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  margin: var(--s-3) 0 var(--s-2);
+  line-height: 1.35;
+  color: var(--ink);
+}
+.note-prose h1 {
+  font-size: 1.25em;
+}
+.note-prose h2 {
+  font-size: 1.15em;
+}
+.note-prose h3 {
+  font-size: 1.05em;
+}
+.note-prose h4 {
+  font-size: 1em;
+  color: var(--ink-2);
+}
+
+/* Verification variant — denser, switches font from wenyan to sans for the
+   verification-summary panel which uses sans elsewhere. */
+.note-prose--verification {
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  line-height: var(--lh-prose);
+}
+.note-prose--verification p {
+  margin: 0 0 var(--s-2);
+}
+.note-prose--verification pre {
+  font-size: 12px;
+  padding: var(--s-2);
 }
 .artifact-section-stub {
   margin: 6px 0 0;
