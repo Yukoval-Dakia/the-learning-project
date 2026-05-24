@@ -8,7 +8,7 @@ import { type NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 
 const AppealRequestSchema = z.object({
-  /** The evidence event being appealed (judge/attempt compatibility). */
+  /** The judge event being appealed (must exist + action='judge'). */
   judge_event_id: z.string().min(1),
   /** Optional learner-provided note. */
   reason_md: z.string().max(2000).optional(),
@@ -44,11 +44,8 @@ export async function POST(req: NextRequest) {
   if (!judgeEvent) {
     return NextResponse.json({ error: 'judge_event_not_found' }, { status: 404 });
   }
-  if (judgeEvent.action !== 'judge' && judgeEvent.action !== 'attempt') {
-    return NextResponse.json(
-      { error: 'evidence_ref_must_be_judge_or_attempt_event' },
-      { status: 422 },
-    );
+  if (judgeEvent.action !== 'judge') {
+    return NextResponse.json({ error: 'evidence_ref_must_be_judge_event' }, { status: 422 });
   }
 
   // ADR-0005 single-owner: all event inserts go through writeEvent

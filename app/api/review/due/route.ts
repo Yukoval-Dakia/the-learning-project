@@ -97,7 +97,10 @@ async function getFailureAttemptsPerQuestion(
       WHERE action = 'attempt'
         AND subject_kind = 'question'
         AND outcome = 'failure'
-        AND subject_id = ANY(${questionIds}::text[])
+        AND subject_id IN (${sql.join(
+          questionIds.map((questionId) => sql`${questionId}`),
+          sql`, `,
+        )})
     ) ranked
     WHERE rn <= ${perQuestionLimit}
   `)) as unknown as Array<{ attempt_event_id: string; question_id: string }>;
