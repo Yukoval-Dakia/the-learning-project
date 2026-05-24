@@ -8,6 +8,8 @@ import {
   getLearningRecord,
   updateLearningRecord,
 } from '@/server/records/queries';
+// YUK-15 — attach proposal_count on GET so the detail card shows the backlink.
+import { getProposalCountsForRecords } from '@/server/records/record_processing';
 
 export const runtime = 'nodejs';
 
@@ -40,7 +42,11 @@ export async function GET(_req: Request, { params }: RouteParams): Promise<Respo
     const { id } = await params;
     const record = await getLearningRecord(db, id);
     if (!record) throw new ApiError('not_found', `learning_record ${id} not found`, 404);
-    return Response.json(serializeRecord(record));
+    const counts = await getProposalCountsForRecords(db, [record.id]);
+    return Response.json({
+      ...serializeRecord(record),
+      proposal_count: counts.get(record.id) ?? 0,
+    });
   } catch (err) {
     return errorResponse(err);
   }
