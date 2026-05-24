@@ -9,7 +9,9 @@ import { buildKnowledgeMaintenanceNightlyHandler } from './handlers/knowledge_ma
 import { buildKnowledgePropoNightlyHandler } from './handlers/knowledge_propose_nightly';
 import { buildNoteGenerateHandler } from './handlers/note_generate';
 import { buildNoteVerifyHandler } from './handlers/note_verify';
+import { buildPromoteConversationIdleHandler } from './handlers/promote_conversation_idle';
 import { buildPruneJobEventsHandler } from './handlers/prune_job_events';
+import { buildPruneOrphanConversationSessionsHandler } from './handlers/prune_orphan_conversation_sessions';
 import { buildPruneOrphanReviewSessionsHandler } from './handlers/prune_orphan_review_sessions';
 import { buildSessionSummaryHandler } from './handlers/session_summary';
 import { buildTencentOcrHandler } from './handlers/tencent_ocr_extract';
@@ -58,6 +60,28 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   await boss.createQueue('prune_orphan_review_sessions');
   await boss.work('prune_orphan_review_sessions', buildPruneOrphanReviewSessionsHandler(db));
   await boss.schedule('prune_orphan_review_sessions', '15 4 * * *', {}, { tz: 'Asia/Shanghai' });
+
+  // YUK-14 (docs/design/2026-05-24-teaching-idle-state-machine.md): promote
+  // active conversation sessions to 'idle' after 5min of no user input.
+  // Runs every minute; cheap SELECT + per-row single-owner transition.
+  await boss.createQueue('promote_conversation_idle');
+  await boss.work('promote_conversation_idle', buildPromoteConversationIdleHandler(db));
+  await boss.schedule('promote_conversation_idle', '* * * * *', {}, { tz: 'Asia/Shanghai' });
+
+  // YUK-14: abandon conversation sessions stuck in 'active'|'idle' >6h
+  // (sendBeacon fallback). BJT 04:25, offset 10min from review prune to
+  // avoid lock contention on learning_session.
+  await boss.createQueue('prune_orphan_conversation_sessions');
+  await boss.work(
+    'prune_orphan_conversation_sessions',
+    buildPruneOrphanConversationSessionsHandler(db),
+  );
+  await boss.schedule(
+    'prune_orphan_conversation_sessions',
+    '25 4 * * *',
+    {},
+    { tz: 'Asia/Shanghai' },
+  );
 
   // Phase 1d: SessionSummaryTask — enqueued by /api/review/sessions/[id]/end
   // after a review session transitions to completed. async so the LLM call
