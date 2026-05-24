@@ -75,7 +75,7 @@ type Rating = z.infer<typeof FsrsRating>;
  * so 'good' covers both correct and very-correct. 'unsupported' returns null
  * (caller decides: 422 in auto_rate mode, ignored in manual mode).
  */
-export function ratingFromCoarseOutcome(outcome: CoarseOutcome): Rating | null {
+function ratingFromCoarseOutcome(outcome: CoarseOutcome): Rating | null {
   switch (outcome) {
     case 'correct':
       return 'good';
