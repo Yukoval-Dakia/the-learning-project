@@ -402,11 +402,7 @@ function RecordContextPanel() {
           {rows.map((row) => {
             const isFocused = focusId !== null && focusId === row.id;
             return (
-              <Card
-                key={row.id}
-                elevated
-                className={isFocused ? 'record-card-focused' : undefined}
-              >
+              <Card key={row.id} elevated className={isFocused ? 'record-card-focused' : undefined}>
                 <div style={recordRowHeadStyle}>
                   <div style={recordTitleBlockStyle}>
                     <Badge tone={RECORD_KIND_TONE[row.kind]}>{RECORD_KIND_LABEL[row.kind]}</Badge>

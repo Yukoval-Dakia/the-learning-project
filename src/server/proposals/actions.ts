@@ -427,9 +427,7 @@ export async function acceptAiProposal(
 
 function isDismissedEdgeResult(result: AcceptAiProposalResult): boolean {
   return (
-    result.kind === 'knowledge_edge' &&
-    result.generate_event_id === null &&
-    result.edge_id === null
+    result.kind === 'knowledge_edge' && result.generate_event_id === null && result.edge_id === null
   );
 }
 
