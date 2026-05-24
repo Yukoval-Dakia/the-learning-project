@@ -118,7 +118,7 @@ export async function runSessionSummary(
   if (questionIds.length > 0) {
     const failures = await getFailureAttempts(db, {
       questionIds,
-      limit: Math.max(questionIds.length * 10, 100),
+      limit: null,
     });
     for (const failure of failures) {
       const cat = effectiveCauseForFailureAttempt(failure)?.primary_category;
