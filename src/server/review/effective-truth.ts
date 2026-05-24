@@ -3,9 +3,9 @@ import { event } from '@/db/schema';
 import {
   type CorrectionStatus,
   activeCorrectionStatus,
-  getCorrectionStatus,
+  getCorrectionStatuses,
 } from '@/server/events/corrections';
-import { eq } from 'drizzle-orm';
+import { inArray } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
 
@@ -33,8 +33,6 @@ export interface EffectiveTruth {
   replacement_event_id: string | null;
   chain: EffectiveTruthStep[];
 }
-
-const MAX_SUPERSEDE_DEPTH = 16;
 
 function stepFromStatus(eventId: string, status: CorrectionStatus): EffectiveTruthStep {
   return {
@@ -113,37 +111,10 @@ function finalTruth(
   };
 }
 
-async function eventExists(db: DbLike, eventId: string): Promise<boolean> {
-  const rows = await db.select({ id: event.id }).from(event).where(eq(event.id, eventId)).limit(1);
-  return rows.length > 0;
-}
-
 export async function getEffectiveTruth(db: DbLike, eventId: string): Promise<EffectiveTruth> {
-  let currentEventId = eventId;
-  const seen = new Set<string>();
-  const chain: EffectiveTruthStep[] = [];
-
-  for (let depth = 0; depth < MAX_SUPERSEDE_DEPTH; depth += 1) {
-    if (seen.has(currentEventId)) {
-      return cycleEffectiveTruth(eventId, chain);
-    }
-    seen.add(currentEventId);
-
-    if (!(await eventExists(db, currentEventId))) {
-      return missingEffectiveTruth(eventId, chain);
-    }
-
-    const status = await getCorrectionStatus(db, currentEventId);
-    chain.push(stepFromStatus(currentEventId, status));
-
-    if (status.state !== 'superseded') {
-      return finalTruth(eventId, currentEventId, status, chain);
-    }
-
-    currentEventId = status.replacement_event_id;
-  }
-
-  return cycleEffectiveTruth(eventId, chain);
+  return (
+    (await getEffectiveTruths(db, [eventId])).get(eventId) ?? missingEffectiveTruth(eventId, [])
+  );
 }
 
 export async function getEffectiveTruths(
@@ -151,8 +122,55 @@ export async function getEffectiveTruths(
   eventIds: string[],
 ): Promise<Map<string, EffectiveTruth>> {
   const uniqueIds = [...new Set(eventIds)];
-  const entries = await Promise.all(
-    uniqueIds.map(async (eventId) => [eventId, await getEffectiveTruth(db, eventId)] as const),
+  const out = new Map<string, EffectiveTruth>();
+  const pending = new Map(
+    uniqueIds.map((eventId) => [
+      eventId,
+      {
+        original_event_id: eventId,
+        current_event_id: eventId,
+        seen: new Set<string>(),
+        chain: [] as EffectiveTruthStep[],
+      },
+    ]),
   );
-  return new Map(entries);
+
+  while (pending.size > 0) {
+    const currentIds = [...new Set([...pending.values()].map((cursor) => cursor.current_event_id))];
+    const existingRows =
+      currentIds.length === 0
+        ? []
+        : await db.select({ id: event.id }).from(event).where(inArray(event.id, currentIds));
+    const existingIds = new Set(existingRows.map((row) => row.id));
+    const statuses = await getCorrectionStatuses(db, currentIds);
+
+    for (const [originalEventId, cursor] of pending) {
+      const currentEventId = cursor.current_event_id;
+      if (cursor.seen.has(currentEventId)) {
+        out.set(originalEventId, cycleEffectiveTruth(originalEventId, cursor.chain));
+        pending.delete(originalEventId);
+        continue;
+      }
+      cursor.seen.add(currentEventId);
+
+      if (!existingIds.has(currentEventId)) {
+        out.set(originalEventId, missingEffectiveTruth(originalEventId, cursor.chain));
+        pending.delete(originalEventId);
+        continue;
+      }
+
+      const status = statuses.get(currentEventId) ?? activeCorrectionStatus();
+      cursor.chain.push(stepFromStatus(currentEventId, status));
+
+      if (status.state !== 'superseded') {
+        out.set(originalEventId, finalTruth(originalEventId, currentEventId, status, cursor.chain));
+        pending.delete(originalEventId);
+        continue;
+      }
+
+      cursor.current_event_id = status.replacement_event_id;
+    }
+  }
+
+  return out;
 }

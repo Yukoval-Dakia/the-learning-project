@@ -103,6 +103,29 @@ describe('getEffectiveTruth', () => {
     expect(truth.chain.map((step) => step.event_id)).toEqual(['evt_1', 'evt_2', 'evt_3']);
   });
 
+  it('follows deep supersede chains without treating depth as a cycle', async () => {
+    const ids = Array.from({ length: 18 }, (_, index) => `evt_deep_${index}`);
+    for (const id of ids) {
+      await seedAttempt(id);
+    }
+    for (let index = 0; index < ids.length - 1; index += 1) {
+      await seedCorrection({
+        id: `corr_deep_${index}`,
+        target_event_id: ids[index],
+        correction_kind: 'supersede',
+        replacement_event_id: ids[index + 1],
+        created_at: new Date(BASE_TIME.getTime() + (index + 1) * 1_000),
+      });
+    }
+
+    const truth = await getEffectiveTruth(testDb(), ids[0]);
+
+    expect(truth.state).toBe('superseded');
+    expect(truth.terminal_state).toBe('active');
+    expect(truth.effective_event_id).toBe(ids.at(-1));
+    expect(truth.chain.map((step) => step.event_id)).toEqual(ids);
+  });
+
   it('returns the terminal non-active state when a replacement is retracted', async () => {
     await seedAttempt('evt_1');
     await seedAttempt('evt_2');
