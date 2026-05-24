@@ -1,5 +1,5 @@
 import type { AiProposalPayloadInputT } from '@/core/schema/proposal';
-import { event } from '@/db/schema';
+import { event, learning_record } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -161,6 +161,55 @@ describe('writeAiProposal', () => {
         )
         .sort(),
     ).toEqual(samples.map((sample) => sample.kind).sort());
+  });
+
+  // YUK-15 — record→proposal evidence loop.
+  it('flips cited records raw → linked when proposal evidence_refs include kind=record', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(learning_record).values({
+      id: 'r1',
+      kind: 'open_question',
+      title: null,
+      content_md: 'why?',
+      source: 'manual',
+      capture_mode: 'text',
+      activity_kind: 'ask',
+      processing_status: 'raw',
+      origin_event_id: null,
+      subject_id: null,
+      knowledge_ids: [],
+      question_id: null,
+      attempt_event_id: null,
+      learning_item_id: null,
+      artifact_id: null,
+      source_document_id: null,
+      asset_refs: [],
+      payload: {},
+      created_at: now,
+      updated_at: now,
+      archived_at: null,
+      version: 0,
+    });
+
+    await writeAiProposal(db, {
+      payload: {
+        ...base,
+        kind: 'learning_item',
+        evidence_refs: [
+          { kind: 'event', id: 'attempt_1' },
+          { kind: 'record', id: 'r1' },
+        ],
+        target: { subject_kind: 'learning_item', subject_id: null },
+        proposed_change: { topic: '虚词' },
+      },
+    });
+
+    const rows = await db
+      .select({ status: learning_record.processing_status })
+      .from(learning_record)
+      .where(eq(learning_record.id, 'r1'));
+    expect(rows[0].status).toBe('linked');
   });
 
   it('preserves a legacy event envelope while attaching ai_proposal', async () => {

@@ -7,6 +7,13 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { costUsdToMicroUsd } from '@/server/ai/provenance';
 import { writeEvent } from '@/server/events/queries';
+// YUK-15 — record→proposal evidence loop: flip records cited as evidence
+// from raw → linked in the same DbLike scope as the propose event so the
+// projection stays consistent (caller can pass a tx to make this atomic).
+import {
+  extractRecordEvidenceIds,
+  markRecordsLinked,
+} from '@/server/records/record_processing';
 
 type DbLike = Db | Tx;
 
@@ -111,6 +118,13 @@ export async function writeAiProposal(db: DbLike, input: WriteAiProposalInput): 
     cost_micro_usd: costUsdToMicroUsd(input.cost_usd),
     created_at: input.created_at,
   });
+
+  // YUK-15 — flip cited records raw→linked. Safe no-op when no record refs;
+  // shares db scope with the writeEvent call above (tx-aware via DbLike).
+  const recordIds = extractRecordEvidenceIds(payload.evidence_refs);
+  if (recordIds.length > 0) {
+    await markRecordsLinked(db, recordIds);
+  }
 
   return eventId;
 }
