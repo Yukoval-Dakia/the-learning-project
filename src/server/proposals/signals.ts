@@ -1,7 +1,7 @@
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { proposal_signals } from '@/db/schema';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
 
@@ -35,11 +35,6 @@ function toSnapshot(row: typeof proposal_signals.$inferSelect): ProposalSignalSn
     accept_count: row.accept_count,
     dismiss_count: row.dismiss_count,
   };
-}
-
-function computeAcceptanceRate(acceptCount: number, dismissCount: number): number {
-  const total = acceptCount + dismissCount;
-  return total === 0 ? 0.5 : acceptCount / total;
 }
 
 function dismissCooldownUntil(now: Date): Date {
@@ -83,37 +78,120 @@ export async function recordProposalDecisionSignal(
   if (!cooldownKey) return;
 
   const now = new Date();
-  const existingRows = await db
-    .select()
-    .from(proposal_signals)
-    .where(
-      and(eq(proposal_signals.kind, proposal.kind), eq(proposal_signals.cooldown_key, cooldownKey)),
-    )
-    .limit(1);
-  const existing = existingRows[0];
+  const acceptDelta = decision === 'accept' ? 1 : 0;
+  const dismissDelta = decision === 'dismiss' ? 1 : 0;
+  const initialAcceptanceRate = acceptDelta / (acceptDelta + dismissDelta);
+  const nowIso = now.toISOString();
 
-  const acceptCount = (existing?.accept_count ?? 0) + (decision === 'accept' ? 1 : 0);
-  const dismissCount = (existing?.dismiss_count ?? 0) + (decision === 'dismiss' ? 1 : 0);
-  const values = {
-    accept_count: acceptCount,
-    dismiss_count: dismissCount,
-    acceptance_rate: computeAcceptanceRate(acceptCount, dismissCount),
-    dismiss_reason:
-      decision === 'dismiss' ? (dismissReason ?? null) : (existing?.dismiss_reason ?? null),
-    cooldown_until: decision === 'dismiss' ? dismissCooldownUntil(now) : null,
-    updated_at: now,
-  };
-
-  if (!existing) {
-    await db.insert(proposal_signals).values({
-      id: newId(),
-      kind: proposal.kind,
-      cooldown_key: cooldownKey,
-      ...values,
-      created_at: now,
-    });
+  if (decision === 'accept') {
+    await db.execute(sql`
+      INSERT INTO proposal_signals (
+        id,
+        kind,
+        cooldown_key,
+        accept_count,
+        dismiss_count,
+        acceptance_rate,
+        dismiss_reason,
+        cooldown_until,
+        created_at,
+        updated_at
+      )
+      VALUES (
+        ${newId()},
+        ${proposal.kind},
+        ${cooldownKey},
+        ${acceptDelta},
+        ${dismissDelta},
+        ${initialAcceptanceRate},
+        NULL,
+        NULL,
+        ${nowIso}::timestamptz,
+        ${nowIso}::timestamptz
+      )
+      ON CONFLICT (kind, cooldown_key) DO UPDATE SET
+        accept_count = proposal_signals.accept_count + ${acceptDelta},
+        dismiss_count = proposal_signals.dismiss_count + ${dismissDelta},
+        acceptance_rate =
+          (proposal_signals.accept_count + ${acceptDelta})::real
+          / NULLIF(
+            proposal_signals.accept_count + proposal_signals.dismiss_count + ${acceptDelta} + ${dismissDelta},
+            0
+          ),
+        dismiss_reason = proposal_signals.dismiss_reason,
+        cooldown_until = NULL,
+        updated_at = ${nowIso}::timestamptz
+    `);
     return;
   }
 
-  await db.update(proposal_signals).set(values).where(eq(proposal_signals.id, existing.id));
+  const nextCooldownUntilIso = dismissCooldownUntil(now).toISOString();
+  const nextDismissReason = dismissReason ?? null;
+  await db.execute(sql`
+    INSERT INTO proposal_signals (
+      id,
+      kind,
+      cooldown_key,
+      accept_count,
+      dismiss_count,
+      acceptance_rate,
+      dismiss_reason,
+      cooldown_until,
+      created_at,
+      updated_at
+    )
+    VALUES (
+      ${newId()},
+      ${proposal.kind},
+      ${cooldownKey},
+      ${acceptDelta},
+      ${dismissDelta},
+      ${initialAcceptanceRate},
+      ${nextDismissReason},
+      ${nextCooldownUntilIso}::timestamptz,
+      ${nowIso}::timestamptz,
+      ${nowIso}::timestamptz
+    )
+    ON CONFLICT (kind, cooldown_key) DO UPDATE SET
+      accept_count = proposal_signals.accept_count + ${acceptDelta},
+      dismiss_count = proposal_signals.dismiss_count + ${dismissDelta},
+      acceptance_rate =
+        (proposal_signals.accept_count + ${acceptDelta})::real
+        / NULLIF(
+          proposal_signals.accept_count + proposal_signals.dismiss_count + ${acceptDelta} + ${dismissDelta},
+          0
+        ),
+      dismiss_reason = ${nextDismissReason},
+      cooldown_until = ${nextCooldownUntilIso}::timestamptz,
+      updated_at = ${nowIso}::timestamptz
+  `);
+}
+
+export async function ensureProposalDecisionSignal(
+  db: DbLike,
+  proposal: ProposalSignalSource,
+  decision: 'accept' | 'dismiss',
+  dismissReason?: string,
+): Promise<void> {
+  const cooldownKey = proposal.payload.cooldown_key;
+  if (!cooldownKey) return;
+
+  const existing = (
+    await db
+      .select({
+        accept_count: proposal_signals.accept_count,
+        dismiss_count: proposal_signals.dismiss_count,
+      })
+      .from(proposal_signals)
+      .where(
+        and(
+          eq(proposal_signals.kind, proposal.kind),
+          eq(proposal_signals.cooldown_key, cooldownKey),
+        ),
+      )
+      .limit(1)
+  )[0];
+  if (existing && existing.accept_count + existing.dismiss_count > 0) return;
+
+  await recordProposalDecisionSignal(db, proposal, decision, dismissReason);
 }

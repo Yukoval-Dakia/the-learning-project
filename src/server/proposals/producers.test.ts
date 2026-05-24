@@ -64,6 +64,19 @@ describe('proposal producer helpers', () => {
       proposed_change: { status: 'archived', archived_reason: 'maintenance' },
       reason_md: 'stale item should leave the active queue',
     });
+    await db.insert(event).values({
+      id: 'judge_1',
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'judge_runner',
+      action: 'judge',
+      subject_kind: 'event',
+      subject_id: 'attempt_1',
+      outcome: 'success',
+      payload: { coarse_outcome: 'partial' },
+      caused_by_event_id: 'attempt_1',
+      created_at: new Date(),
+    });
     await writeJudgeRetractionProposal(db, {
       judge_event_id: 'judge_1',
       appeal_event_id: 'appeal_1',
@@ -83,6 +96,33 @@ describe('proposal producer helpers', () => {
       ].sort(),
     );
     expect(rows.every((row) => row.payload.cooldown_key)).toBe(true);
+  });
+
+  it('rejects judge_retraction evidence refs that do not point to judge events', async () => {
+    const db = testDb();
+    await db.insert(event).values({
+      id: 'attempt_1',
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: 'q1',
+      outcome: 'partial',
+      payload: { answer: 'x' },
+      caused_by_event_id: null,
+      created_at: new Date(),
+    });
+
+    await expect(
+      writeJudgeRetractionProposal(db, {
+        judge_event_id: 'attempt_1',
+        reason_md: 'attempt is not a judge event',
+      }),
+    ).rejects.toMatchObject({
+      code: 'evidence_ref_must_be_judge_event',
+      status: 422,
+    });
   });
 
   it('preserves the learning intent legacy action when requested', async () => {

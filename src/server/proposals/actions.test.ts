@@ -202,6 +202,91 @@ describe('proposal lifecycle owner service', () => {
     expect(signals[0].cooldown_until).toBeInstanceOf(Date);
   });
 
+  it('dismiss retry backfills a missing signal after the rate event already exists', async () => {
+    const db = testDb();
+    await writeAiProposal(db, {
+      id: 'learning_p1',
+      payload: {
+        kind: 'learning_item',
+        target: { subject_kind: 'learning_item', subject_id: null },
+        reason_md: 'Create a focused review item',
+        evidence_refs: [],
+        proposed_change: { title: '虚词复习' },
+        cooldown_key: 'learning_item:虚词复习',
+      },
+    });
+    await db.insert(event).values({
+      id: createId(),
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'event',
+      subject_id: 'learning_p1',
+      outcome: 'success',
+      payload: { rating: 'dismiss', user_note: 'first try' },
+      caused_by_event_id: 'learning_p1',
+      created_at: new Date(),
+    });
+
+    const result = await dismissAiProposal(db, 'learning_p1');
+    expect(result).toMatchObject({ kind: 'dismissed', idempotent: true });
+
+    const signals = await db.select().from(proposal_signals);
+    expect(signals).toHaveLength(1);
+    expect(signals[0]).toMatchObject({
+      kind: 'learning_item',
+      cooldown_key: 'learning_item:虚词复习',
+      dismiss_count: 1,
+      accept_count: 0,
+    });
+  });
+
+  it('accept retry backfills a missing signal before returning the duplicate decision error', async () => {
+    const db = testDb();
+    await writeAiProposal(db, {
+      id: 'completion_p1',
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'li_xx' },
+        reason_md: 'item appears mastered',
+        evidence_refs: [],
+        proposed_change: {
+          learning_item_id: 'li_xx',
+          triggering_signals: ['mastery_high_persisted_14d'],
+          evidence_json: {},
+        },
+        cooldown_key: 'completion:li_xx',
+      },
+    });
+    await db.insert(event).values({
+      id: createId(),
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'event',
+      subject_id: 'completion_p1',
+      outcome: 'success',
+      payload: { rating: 'accept' },
+      caused_by_event_id: 'completion_p1',
+      created_at: new Date(),
+    });
+
+    await expect(acceptAiProposal(db, 'completion_p1')).rejects.toMatchObject({
+      code: 'unsupported_proposal_kind',
+    });
+
+    const signals = await db.select().from(proposal_signals);
+    expect(signals).toHaveLength(1);
+    expect(signals[0]).toMatchObject({
+      kind: 'completion',
+      cooldown_key: 'completion:li_xx',
+      accept_count: 1,
+      dismiss_count: 0,
+    });
+  });
+
   it('retractAiProposal writes a CorrectEvent chained to the proposal event', async () => {
     const db = testDb();
     await writeAiProposal(db, {
@@ -438,13 +523,19 @@ describe('learning_item proposal lifecycle', () => {
     }
   });
 
-  it('accept idempotent: second accept rejects with not_pending after the first writes a rate event', async () => {
+  it('accept idempotent: second accept returns the existing materialization after the first writes a rate event', async () => {
     const { proposalId } = await seedLearningItemProposal();
     const first = await acceptAiProposal(testDb(), proposalId);
-    expect(first.kind).toBe('learning_item');
+    if (first.kind !== 'learning_item') throw new Error('expected learning_item');
 
-    await expect(acceptAiProposal(testDb(), proposalId)).rejects.toMatchObject({
-      code: 'not_pending',
+    const second = await acceptAiProposal(testDb(), proposalId);
+    expect(second).toMatchObject({
+      kind: 'learning_item',
+      idempotent: true,
+      hub_learning_item_id: first.hub_learning_item_id,
+      atomic_learning_item_ids: first.atomic_learning_item_ids,
+      hub_artifact_id: first.hub_artifact_id,
+      atomic_artifact_ids: first.atomic_artifact_ids,
     });
 
     // Hub + atomics still exist exactly once.
@@ -636,16 +727,13 @@ describe('variant_question proposal lifecycle', () => {
 
     const first = await acceptAiProposal(testDb(), proposalId, { enqueueVariantVerify: enqueue });
     if (first.kind !== 'variant_question') throw new Error('unexpected');
-    // Re-trigger via the inbox path. Because the proposal now has an accept
-    // rate event, listProposalInboxRows surfaces status='accepted'; acceptAiProposal
-    // therefore short-circuits before reaching our owner branch (assertPending).
-    // Use the lower-level acceptVariantQuestionProposal indirectly: a fresh
-    // accept on the same id throws not_pending. So we instead assert that calling
-    // acceptAiProposal again rejects with not_pending — that's the correct
-    // contract because idempotency at the inbox layer means "no double-write".
-    await expect(
-      acceptAiProposal(testDb(), proposalId, { enqueueVariantVerify: enqueue }),
-    ).rejects.toMatchObject({ code: 'not_pending' });
+    const second = await acceptAiProposal(testDb(), proposalId, { enqueueVariantVerify: enqueue });
+    expect(second).toMatchObject({
+      kind: 'variant_question',
+      idempotent: true,
+      question_id: first.question_id,
+      mistake_variant_id: mistakeVariantId,
+    });
 
     const questions = await testDb()
       .select()

@@ -55,6 +55,25 @@ describe('proposal signals', () => {
     expect(rows[0].cooldown_until?.getTime()).toBeGreaterThanOrEqual(minCooldown);
   });
 
+  it('applies concurrent decision updates atomically', async () => {
+    await Promise.all(
+      Array.from({ length: 10 }, (_, index) =>
+        recordProposalDecisionSignal(testDb(), source, 'dismiss', `dismiss ${index}`),
+      ),
+    );
+
+    const rows = await testDb()
+      .select()
+      .from(proposal_signals)
+      .where(eq(proposal_signals.cooldown_key, 'completion:li1'));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      accept_count: 0,
+      dismiss_count: 10,
+      acceptance_rate: 0,
+    });
+  });
+
   it('loads signals by proposal id and ignores rows without cooldown keys', async () => {
     await recordProposalDecisionSignal(testDb(), source, 'dismiss', 'skip');
 
