@@ -6,6 +6,7 @@ import {
   type EmbeddedCheckQuestion,
   type ArtifactSection as NoteSection,
 } from '@/ui/components/ArtifactSections';
+import { NoteRenderer } from '@/ui/components/NoteRenderer';
 import { TeachingDrawer } from '@/ui/components/TeachingDrawer';
 import {
   CorrectionStateRenderer,
@@ -511,7 +512,24 @@ function ArtifactView({
           />
           {artifact.verification_summary && (
             <div className="artifact-verification">
-              <p>{artifact.verification_summary.summary_md}</p>
+              {/* YUK-52 — summary_md + suggested_fix_md are markdown per
+                  NoteVerificationResult zod schema (src/core/schema/business.ts).
+                  Render via NoteRenderer with verification variant so the
+                  denser sans-font prose style applies; issue.message stays
+                  plain text (no _md suffix on schema). */}
+              <NoteRenderer
+                kind="verification"
+                notation={
+                  (subjectProfile.renderConfig?.notation ?? undefined) as
+                    | 'latex'
+                    | 'wenyan'
+                    | 'plaintext'
+                    | 'code'
+                    | undefined
+                }
+              >
+                {artifact.verification_summary.summary_md}
+              </NoteRenderer>
               {artifact.verification_summary.issues.length > 0 && (
                 <ul>
                   {artifact.verification_summary.issues.map((issue, idx) => (
@@ -519,7 +537,21 @@ function ArtifactView({
                       <strong>{issue.severity}</strong>
                       <span>{issue.category}</span>
                       <p>{issue.message}</p>
-                      {issue.suggested_fix_md && <pre>{issue.suggested_fix_md}</pre>}
+                      {issue.suggested_fix_md && (
+                        <NoteRenderer
+                          kind="verification"
+                          notation={
+                            (subjectProfile.renderConfig?.notation ?? undefined) as
+                              | 'latex'
+                              | 'wenyan'
+                              | 'plaintext'
+                              | 'code'
+                              | undefined
+                          }
+                        >
+                          {issue.suggested_fix_md}
+                        </NoteRenderer>
+                      )}
                     </li>
                   ))}
                 </ul>
