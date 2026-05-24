@@ -44,12 +44,8 @@ export async function POST(req: NextRequest) {
   if (!judgeEvent) {
     return NextResponse.json({ error: 'judge_event_not_found' }, { status: 404 });
   }
-  // M2.3: also accept 'attempt' events. The embedded-check flow
-  // (app/api/embedded-check/attempt/route.ts) embeds judge result inside
-  // the attempt event payload rather than writing a separate judge event.
-  // M3+ may split this if a dedicated judge-event chain is needed.
-  if (judgeEvent.action !== 'judge' && judgeEvent.action !== 'attempt') {
-    return NextResponse.json({ error: 'caused_by_must_be_judge_or_attempt' }, { status: 400 });
+  if (judgeEvent.action !== 'judge') {
+    return NextResponse.json({ error: 'evidence_ref_must_be_judge_event' }, { status: 422 });
   }
 
   // ADR-0005 single-owner: all event inserts go through writeEvent

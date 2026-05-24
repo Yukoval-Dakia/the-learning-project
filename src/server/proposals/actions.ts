@@ -23,7 +23,7 @@ import {
   acceptLearningIntent,
 } from '@/server/orchestrator/learning_intent';
 import { type ProposalInboxRow, getProposalInboxRow } from './inbox';
-import { recordProposalDecisionSignal } from './signals';
+import { ensureProposalDecisionSignal, recordProposalDecisionSignal } from './signals';
 
 // YUK-17 / ADR-0018 — swappable enqueue hook so DB tests can drive
 // variant_question accept without spinning up pg-boss.
@@ -135,6 +135,54 @@ function assertPending(proposal: ProposalInboxRow): void {
   }
 }
 
+type ExistingRateDecision = 'accept' | 'dismiss' | 'reverse' | 'change_type' | 'rollback';
+
+async function findExistingRateEvent(
+  db: Db,
+  proposalId: string,
+): Promise<(typeof event.$inferSelect & { decision: ExistingRateDecision }) | null> {
+  const existingRows = await db
+    .select()
+    .from(event)
+    .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId)))
+    .limit(1);
+  const existing = existingRows[0];
+  const rating = (existing?.payload as { rating?: unknown } | undefined)?.rating;
+  if (
+    !existing ||
+    (rating !== 'accept' &&
+      rating !== 'dismiss' &&
+      rating !== 'reverse' &&
+      rating !== 'change_type' &&
+      rating !== 'rollback')
+  ) {
+    return null;
+  }
+  const decision: ExistingRateDecision = rating;
+  return Object.assign(existing, { decision });
+}
+
+async function reconcileExistingRateSignal(
+  db: Db,
+  proposal: ProposalInboxRow,
+  userNote?: string,
+): Promise<void> {
+  const existingRate = await findExistingRateEvent(db, proposal.id);
+  if (!existingRate) return;
+  if (existingRate.decision === 'dismiss') {
+    const ratePayload = existingRate.payload as { user_note?: string };
+    await ensureProposalDecisionSignal(db, proposal, 'dismiss', userNote ?? ratePayload.user_note);
+    return;
+  }
+  if (
+    existingRate.decision === 'accept' ||
+    existingRate.decision === 'reverse' ||
+    existingRate.decision === 'change_type'
+  ) {
+    await ensureProposalDecisionSignal(db, proposal, 'accept', userNote);
+  }
+}
+
 function assertEdgeDecisionInput(input: EdgeProposalDecisionInput): void {
   if (input.decision === 'change_type' && !input.new_relation_type) {
     throw new ApiError('validation_error', 'change_type requires new_relation_type', 400);
@@ -190,6 +238,14 @@ export async function decideKnowledgeEdgeProposal(
         'conflict',
         `proposal ${proposeEventId} already decided as ${ratePayload.rating}`,
         409,
+      );
+    }
+    if (proposal) {
+      await ensureProposalDecisionSignal(
+        db,
+        proposal,
+        decision === 'dismiss' ? 'dismiss' : 'accept',
+        user_note,
       );
     }
     const existingGenRows = await db
@@ -355,10 +411,13 @@ export async function acceptAiProposal(
   opts: AcceptAiProposalOpts = {},
 ): Promise<AcceptAiProposalResult> {
   const proposal = await requireProposal(db, proposalId);
-  assertPending(proposal);
+  if (proposal.status !== 'pending') {
+    await reconcileExistingRateSignal(db, proposal, opts.user_note);
+  }
 
   switch (proposal.kind) {
     case 'knowledge_node': {
+      assertPending(proposal);
       if (opts.decision && opts.decision !== 'accept') {
         throw new ApiError(
           'validation_error',
@@ -430,6 +489,7 @@ async function acceptLearningItemProposal(
         409,
       );
     }
+    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
     const summary = await summarizeLearningItemMaterialization(db, proposalId);
     return {
       kind: 'learning_item',
@@ -565,6 +625,7 @@ async function acceptVariantQuestionProposal(
         409,
       );
     }
+    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
     const existingMv = (
       await db
         .select()
@@ -758,7 +819,16 @@ export async function dismissAiProposal(
 ): Promise<DismissAiProposalResult> {
   const proposal = await requireProposal(db, proposalId);
   if (proposal.status !== 'pending') {
-    return { kind: 'dismissed', rate_event_id: null, idempotent: true };
+    const existingRate = await findExistingRateEvent(db, proposalId);
+    if (existingRate?.decision && existingRate.decision !== 'dismiss') {
+      throw new ApiError(
+        'conflict',
+        `proposal ${proposalId} already decided as ${existingRate.decision}`,
+        409,
+      );
+    }
+    await reconcileExistingRateSignal(db, proposal, opts.user_note);
+    return { kind: 'dismissed', rate_event_id: existingRate?.id ?? null, idempotent: true };
   }
 
   switch (proposal.kind) {
