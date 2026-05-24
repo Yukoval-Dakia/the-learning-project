@@ -80,35 +80,14 @@ async function getFailureAttemptsPerQuestion(
   perQuestionLimit: number,
 ): Promise<FailureAttempt[]> {
   if (questionIds.length === 0 || perQuestionLimit <= 0) return [];
-  const cappedRows = (await db.execute(sql<{
-    attempt_event_id: string;
-    question_id: string;
-  }>`
-    SELECT attempt_event_id, question_id
-    FROM (
-      SELECT
-        id AS attempt_event_id,
-        subject_id AS question_id,
-        row_number() OVER (
-          PARTITION BY subject_id
-          ORDER BY created_at DESC, id DESC
-        ) AS rn
-      FROM event
-      WHERE action = 'attempt'
-        AND subject_kind = 'question'
-        AND outcome = 'failure'
-        AND subject_id IN (${sql.join(
-          questionIds.map((questionId) => sql`${questionId}`),
-          sql`, `,
-        )})
-    ) ranked
-    WHERE rn <= ${perQuestionLimit}
-  `)) as unknown as Array<{ attempt_event_id: string; question_id: string }>;
-  const attemptIds = cappedRows.map((row) => row.attempt_event_id);
-  if (attemptIds.length === 0) return [];
   const attempts = await getFailureAttempts(db, { questionIds, limit: null });
-  const allowed = new Set(attemptIds);
-  return attempts.filter((attempt) => allowed.has(attempt.attempt_event_id));
+  const countByQuestion = new Map<string, number>();
+  return attempts.filter((attempt) => {
+    const count = countByQuestion.get(attempt.question_id) ?? 0;
+    if (count >= perQuestionLimit) return false;
+    countByQuestion.set(attempt.question_id, count + 1);
+    return true;
+  });
 }
 
 export async function GET(req: Request): Promise<Response> {

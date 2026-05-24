@@ -1,9 +1,10 @@
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
-import { proposal_signals } from '@/db/schema';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { event, proposal_signals } from '@/db/schema';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
+type EventRow = typeof event.$inferSelect;
 
 export const PROPOSAL_DISMISS_COOLDOWN_DAYS = 7;
 
@@ -39,6 +40,10 @@ function toSnapshot(row: typeof proposal_signals.$inferSelect): ProposalSignalSn
 
 function dismissCooldownUntil(now: Date): Date {
   return new Date(now.getTime() + PROPOSAL_DISMISS_COOLDOWN_DAYS * 24 * 60 * 60 * 1000);
+}
+
+function dismissCooldownUntilFromRate(rate: EventRow): Date {
+  return new Date(rate.created_at.getTime() + PROPOSAL_DISMISS_COOLDOWN_DAYS * 24 * 60 * 60 * 1000);
 }
 
 export async function loadProposalSignalsForRows(
@@ -167,33 +172,130 @@ export async function recordProposalDecisionSignal(
   `);
 }
 
+type ProposalSignalDecision = 'accept' | 'dismiss';
+
+function decisionFromRate(row: EventRow): ProposalSignalDecision | null {
+  const rating = (row.payload as { rating?: unknown }).rating;
+  if (rating === 'accept' || rating === 'reverse' || rating === 'change_type') return 'accept';
+  if (rating === 'dismiss') return 'dismiss';
+  return null;
+}
+
+function newerRate(a: EventRow | null, b: EventRow): EventRow {
+  if (!a) return b;
+  return b.created_at > a.created_at ||
+    (b.created_at.getTime() === a.created_at.getTime() && b.id > a.id)
+    ? b
+    : a;
+}
+
+async function rebuildProposalDecisionSignal(
+  db: DbLike,
+  proposal: ProposalSignalSource,
+  dismissReason?: string,
+): Promise<void> {
+  const cooldownKey = proposal.payload.cooldown_key;
+  if (!cooldownKey) return;
+  const proposalRows = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(
+      and(
+        sql`${event.payload}->'ai_proposal'->>'kind' = ${proposal.kind}`,
+        sql`${event.payload}->'ai_proposal'->>'cooldown_key' = ${cooldownKey}`,
+      ),
+    );
+  const proposalIds = [...new Set([...proposalRows.map((row) => row.id), proposal.id])];
+  const rateRows =
+    proposalIds.length === 0
+      ? []
+      : await db
+          .select()
+          .from(event)
+          .where(and(eq(event.action, 'rate'), inArray(event.caused_by_event_id, proposalIds)))
+          .orderBy(desc(event.created_at), desc(event.id));
+
+  const latestRateByProposal = new Map<string, EventRow>();
+  for (const row of rateRows) {
+    const proposalId = row.caused_by_event_id;
+    if (proposalId && !latestRateByProposal.has(proposalId)) {
+      latestRateByProposal.set(proposalId, row);
+    }
+  }
+
+  let acceptCount = 0;
+  let dismissCount = 0;
+  let latestDismiss: EventRow | null = null;
+  for (const row of latestRateByProposal.values()) {
+    const decision = decisionFromRate(row);
+    if (decision === 'accept') {
+      acceptCount += 1;
+    } else if (decision === 'dismiss') {
+      dismissCount += 1;
+      latestDismiss = newerRate(latestDismiss, row);
+    }
+  }
+  const total = acceptCount + dismissCount;
+  if (total === 0) return;
+
+  const acceptanceRate = acceptCount / total;
+  const latestDismissPayload = (latestDismiss?.payload ?? {}) as { user_note?: unknown };
+  const nextDismissReason = latestDismiss
+    ? typeof latestDismissPayload.user_note === 'string'
+      ? latestDismissPayload.user_note
+      : latestDismiss.caused_by_event_id === proposal.id
+        ? (dismissReason ?? null)
+        : null
+    : null;
+  const cooldownUntilIso = latestDismiss
+    ? dismissCooldownUntilFromRate(latestDismiss).toISOString()
+    : null;
+  const nowIso = new Date().toISOString();
+
+  await db.execute(sql`
+    INSERT INTO proposal_signals (
+      id,
+      kind,
+      cooldown_key,
+      accept_count,
+      dismiss_count,
+      acceptance_rate,
+      dismiss_reason,
+      cooldown_until,
+      created_at,
+      updated_at
+    )
+    VALUES (
+      ${newId()},
+      ${proposal.kind},
+      ${cooldownKey},
+      ${acceptCount},
+      ${dismissCount},
+      ${acceptanceRate},
+      ${nextDismissReason},
+      ${cooldownUntilIso}::timestamptz,
+      ${nowIso}::timestamptz,
+      ${nowIso}::timestamptz
+    )
+    ON CONFLICT (kind, cooldown_key) DO UPDATE SET
+      accept_count = ${acceptCount},
+      dismiss_count = ${dismissCount},
+      acceptance_rate = ${acceptanceRate},
+      dismiss_reason = ${nextDismissReason},
+      cooldown_until = ${cooldownUntilIso}::timestamptz,
+      updated_at = ${nowIso}::timestamptz
+  `);
+}
+
 export async function ensureProposalDecisionSignal(
   db: DbLike,
   proposal: ProposalSignalSource,
-  decision: 'accept' | 'dismiss',
+  _decision: 'accept' | 'dismiss',
   dismissReason?: string,
 ): Promise<void> {
   const cooldownKey = proposal.payload.cooldown_key;
   if (!cooldownKey) return;
   const lockKey = `${proposal.kind}:${cooldownKey}`;
   await db.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
-
-  const existing = (
-    await db
-      .select({
-        accept_count: proposal_signals.accept_count,
-        dismiss_count: proposal_signals.dismiss_count,
-      })
-      .from(proposal_signals)
-      .where(
-        and(
-          eq(proposal_signals.kind, proposal.kind),
-          eq(proposal_signals.cooldown_key, cooldownKey),
-        ),
-      )
-      .limit(1)
-  )[0];
-  if (existing && existing.accept_count + existing.dismiss_count > 0) return;
-
-  await recordProposalDecisionSignal(db, proposal, decision, dismissReason);
+  await rebuildProposalDecisionSignal(db, proposal, dismissReason);
 }

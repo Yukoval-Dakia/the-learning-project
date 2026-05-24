@@ -60,10 +60,14 @@ async function seedFailureAttempt(
   });
 }
 
-async function seedJudge(question_id: string, primary_category = 'concept') {
+async function seedJudge(
+  question_id: string,
+  primary_category = 'concept',
+  opts: { attemptId?: string } = {},
+) {
   const db = testDb();
   const now = new Date();
-  const attemptId = `evt_attempt_${question_id}`;
+  const attemptId = opts.attemptId ?? `evt_attempt_${question_id}`;
   await db.insert(event).values({
     id: `evt_judge_${question_id}`,
     session_id: null,
@@ -111,6 +115,30 @@ async function seedUserCause(question_id: string, primary_category = 'memory') {
     cost_micro_usd: null,
     created_at: now,
   });
+}
+
+async function retractAttempt(attemptId: string, createdAt: Date) {
+  await testDb()
+    .insert(event)
+    .values({
+      id: `correct_${attemptId}`,
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: attemptId,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'retract',
+        reason_md: 'covered by correction',
+        affected_refs: [{ kind: 'question', id: attemptId }],
+      },
+      caused_by_event_id: attemptId,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: createdAt,
+    });
 }
 
 function makeFsrsState(overrides: {
@@ -283,6 +311,39 @@ describe('GET /api/review/due', () => {
     const body = (await res.json()) as { rows: Array<{ id: string }> };
 
     expect(body.rows.map((row) => row.id)).toEqual(['q_hot', 'q_cold']);
+  });
+
+  it('filters corrected attempts before applying the per-question failure cap', async () => {
+    const base = Date.now();
+    await seedQuestion('q_corrected_cap');
+    await seedFailureAttempt('q_corrected_cap', {
+      id: 'evt_attempt_q_corrected_cap_active',
+      created_at: new Date(base),
+    });
+    await seedJudge('q_corrected_cap', 'memory', {
+      attemptId: 'evt_attempt_q_corrected_cap_active',
+    });
+    for (let index = 0; index < 4; index += 1) {
+      const attemptId = `evt_attempt_q_corrected_cap_retracted_${index}`;
+      const createdAt = new Date(base + (index + 1) * 1_000);
+      await seedFailureAttempt('q_corrected_cap', {
+        id: attemptId,
+        created_at: createdAt,
+      });
+      await retractAttempt(attemptId, new Date(createdAt.getTime() + 1));
+    }
+
+    const res = await getReview('limit=1');
+    const body = (await res.json()) as {
+      rows: Array<{ id: string; cause: string | null; last_failure_event: { id: string } | null }>;
+    };
+
+    expect(body.rows).toHaveLength(1);
+    expect(body.rows[0]).toMatchObject({
+      id: 'q_corrected_cap',
+      cause: 'memory',
+      last_failure_event: { id: 'evt_attempt_q_corrected_cap_active' },
+    });
   });
 
   it('clamps limit=0 to 1', async () => {

@@ -1,9 +1,11 @@
-import { proposal_signals } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { event, proposal_signals } from '@/db/schema';
+import { writeAiProposal } from '@/server/proposals/writer';
+import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
   PROPOSAL_DISMISS_COOLDOWN_DAYS,
+  ensureProposalDecisionSignal,
   loadProposalSignalsForRows,
   recordProposalDecisionSignal,
 } from './signals';
@@ -88,5 +90,100 @@ describe('proposal signals', () => {
       dismiss_reason: 'skip',
     });
     expect(signals.has('proposal_2')).toBe(false);
+  });
+
+  it('backfills the current proposal decision when the same key already has history', async () => {
+    const db = testDb();
+    await writeAiProposal(db, {
+      id: 'proposal_old',
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'li_old' },
+        reason_md: 'old proposal',
+        evidence_refs: [],
+        proposed_change: { learning_item_id: 'li_old' },
+        cooldown_key: 'completion:li1',
+      },
+    });
+    await writeAiProposal(db, {
+      id: 'proposal_current',
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'li_current' },
+        reason_md: 'current proposal',
+        evidence_refs: [],
+        proposed_change: { learning_item_id: 'li_current' },
+        cooldown_key: 'completion:li1',
+      },
+    });
+    await db.insert(event).values([
+      {
+        id: 'rate_old',
+        session_id: null,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'rate',
+        subject_kind: 'event',
+        subject_id: 'proposal_old',
+        outcome: 'success',
+        payload: { rating: 'accept' },
+        caused_by_event_id: 'proposal_old',
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: new Date('2026-05-23T00:00:00.000Z'),
+      },
+      {
+        id: 'rate_current',
+        session_id: null,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'rate',
+        subject_kind: 'event',
+        subject_id: 'proposal_current',
+        outcome: 'success',
+        payload: { rating: 'dismiss', user_note: 'skip' },
+        caused_by_event_id: 'proposal_current',
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: new Date('2026-05-24T00:00:00.000Z'),
+      },
+    ]);
+    await recordProposalDecisionSignal(
+      db,
+      {
+        id: 'proposal_old',
+        kind: 'completion',
+        payload: { cooldown_key: 'completion:li1' },
+      },
+      'accept',
+    );
+
+    await ensureProposalDecisionSignal(
+      db,
+      {
+        id: 'proposal_current',
+        kind: 'completion',
+        payload: { cooldown_key: 'completion:li1' },
+      },
+      'dismiss',
+      'skip',
+    );
+
+    const rows = await db
+      .select()
+      .from(proposal_signals)
+      .where(
+        and(
+          eq(proposal_signals.kind, 'completion'),
+          eq(proposal_signals.cooldown_key, 'completion:li1'),
+        ),
+      );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      accept_count: 1,
+      dismiss_count: 1,
+      acceptance_rate: 0.5,
+      dismiss_reason: 'skip',
+    });
   });
 });
