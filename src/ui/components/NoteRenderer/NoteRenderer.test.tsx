@@ -98,3 +98,21 @@ describe('NoteRenderer — basic markdown contract', () => {
     expect(html).toContain('custom-x');
   });
 });
+
+describe('NoteRenderer — verification variant', () => {
+  it('verification kind renders markdown in summary copy', () => {
+    const html = renderToString(
+      <NoteRenderer kind="verification">{'Summary: see **issues** below.'}</NoteRenderer>,
+    );
+    expect(html).toContain('note-prose--verification');
+    expect(html).toContain('<strong>issues</strong>');
+  });
+
+  it('verification kind handles inline code in suggested-fix block', () => {
+    const html = renderToString(
+      <NoteRenderer kind="verification">{'replace `foo` with `bar`'}</NoteRenderer>,
+    );
+    expect(html).toContain('<code>foo</code>');
+    expect(html).toContain('<code>bar</code>');
+  });
+});
