@@ -303,8 +303,7 @@ async function rebuildProposalDecisionSignal(
   if (total === 0) return;
 
   const acceptanceRate = acceptCount / total;
-  const latestIsDismiss =
-    keyLatestRate !== null && decisionFromRate(keyLatestRate) === 'dismiss';
+  const latestIsDismiss = keyLatestRate !== null && decisionFromRate(keyLatestRate) === 'dismiss';
   const latestDismissPayload = (keyLatestRate?.payload ?? {}) as { user_note?: unknown };
   const nextDismissReason = latestIsDismiss
     ? typeof latestDismissPayload.user_note === 'string'
