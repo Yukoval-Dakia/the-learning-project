@@ -1,14 +1,18 @@
-// ADR-0013 — abandon review sessions left in status='started' for >6h.
+// ADR-0013 — abandon review sessions left in started/paused for >6h.
+// YUK-57: extended to scan paused too. A paused session is still "live" from
+// the user's POV but we apply the same 6h cutoff as started — past 6h it's
+// effectively abandoned regardless of which state it's stuck in.
 //
 // /review page sendBeacon close handles 99% of normal exits; this cron catches:
 //   - browser hard-killed (no pagehide fired)
 //   - sendBeacon dropped (network down / extension blocked)
 //   - dev hot-reload abandoning a session without closing
+//   - YUK-57: user paused then never came back
 //
-// Selection: type='review' AND status='started' AND started_at < now() - 6h.
+// Selection: type='review' AND status IN ('started','paused') AND started_at < now() - 6h.
 // Action: abandon via Review.abandonReviewSession (single-owner transition).
 
-import { and, eq, lt } from 'drizzle-orm';
+import { and, eq, inArray, lt } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
 import type { Db } from '@/db/client';
@@ -25,7 +29,7 @@ export async function runPruneOrphanReviewSessions(db: Db): Promise<{ abandoned:
     .where(
       and(
         eq(learning_session.type, 'review'),
-        eq(learning_session.status, 'started'),
+        inArray(learning_session.status, ['started', 'paused']),
         lt(learning_session.started_at, cutoff),
       ),
     );
