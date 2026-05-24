@@ -308,8 +308,11 @@ function SessionStrip({
   loading: boolean;
 }) {
   const active = sessions.find((s) => s.status === 'started');
+  // YUK-57 — paused session row. Picked separately from started so the user
+  // can resume an explicit pause from /today.
+  const paused = sessions.find((s) => s.status === 'paused');
   const completed = sessions.find((s) => s.status === 'completed');
-  if (!active && !completed) {
+  if (!active && !paused && !completed) {
     if (!loading) return null;
     return (
       <div className="session-strip">
@@ -369,6 +372,29 @@ function SessionStrip({
             <Link href="/review" style={{ textDecoration: 'none' }}>
               <Button variant="quiet" size="sm" iconRight="arrowR">
                 回到当前 session
+              </Button>
+            </Link>
+          </div>
+        </div>
+      )}
+
+      {/* YUK-57 — paused session entry. Resume via ?session=<id> on /review. */}
+      {paused && (
+        <div className="ss-row ss-active">
+          <div className="ss-line">
+            <Badge tone="info" dot dotStatic>
+              paused
+            </Badge>
+            <span className="ss-id">
+              <code>{paused.id.slice(0, 12)}</code>
+            </span>
+            <span className="ss-stat">
+              已暂停 · 已复习 {paused.reviewed_count} · 6h 不恢复则 cron 兜底 abandoned
+            </span>
+            <span style={{ flex: 1 }} />
+            <Link href={`/review?session=${paused.id}`} style={{ textDecoration: 'none' }}>
+              <Button variant="quiet" size="sm" iconRight="arrowR">
+                恢复 session
               </Button>
             </Link>
           </div>
