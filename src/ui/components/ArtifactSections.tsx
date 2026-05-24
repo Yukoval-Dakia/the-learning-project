@@ -1,12 +1,12 @@
 'use client';
 
-import { MathMarkdown } from '@/ui/lib/math-markdown';
 import {
   type SlimSubjectProfile,
   resolveSubjectRenderModel,
   subjectContentProps,
 } from '@/ui/lib/subject';
 import { type EmbeddedCheckQuestion, EmbeddedCheckSection } from './EmbeddedCheckSection';
+import { NoteRenderer } from './NoteRenderer';
 
 export type { EmbeddedCheckQuestion };
 
@@ -65,7 +65,8 @@ export function ArtifactSections({
               <strong>{SECTION_LABEL[s.kind]}</strong>
               <span className="artifact-section-tier">{SOURCE_TIER_LABEL[s.source_tier]}</span>
             </div>
-            <MathMarkdown
+            <NoteRenderer
+              kind="note"
               notation={
                 (subjectModel.renderConfig.notation ?? undefined) as
                   | 'latex'
@@ -77,7 +78,7 @@ export function ArtifactSections({
               {...sectionBodyProps}
             >
               {s.body_md}
-            </MathMarkdown>
+            </NoteRenderer>
             {s.kind === 'check' && (
               <EmbeddedCheckSection
                 status={embeddedCheckStatus}
