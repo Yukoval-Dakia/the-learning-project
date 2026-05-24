@@ -6,6 +6,7 @@ import {
   getAdminFailureClusters,
   getAdminRunTimeline,
   listAdminRuns,
+  listAdminRunsPage,
 } from './ai-observability';
 
 const db = testDb();
@@ -88,6 +89,21 @@ describe('AI observability admin read model', () => {
     expect(rows[0].duration_ms).toBe(60_000);
   });
 
+  it('returns run list limit metadata for truncated admin views', async () => {
+    await seedRun({ id: 'run_1', started_at: at(1) });
+    await seedRun({ id: 'run_2', started_at: at(2) });
+    await seedRun({ id: 'run_3', started_at: at(3) });
+
+    const page = await listAdminRunsPage(db, { limit: 2 });
+
+    expect(page.rows.map((row) => row.id)).toEqual(['run_3', 'run_2']);
+    expect(page).toMatchObject({
+      limit: 2,
+      total: 3,
+      truncated: true,
+    });
+  });
+
   it('returns a single run timeline with pg-boss job id and tool calls in time order', async () => {
     await seedRun({ id: 'run_1', finished_at: at(3), cost_usd: 0.031 });
     await seedCost({ id: 'cost_1', occurred_at: at(2), pgboss_job_id: 'job_alpha' });
@@ -108,6 +124,21 @@ describe('AI observability admin read model', () => {
       pgboss_job_id: 'job_alpha',
       cost: 0.01,
     });
+  });
+
+  it('sorts same-timestamp timeline events by id for stable refresh order', async () => {
+    await seedRun({ id: 'run_1', finished_at: at(2) });
+    await seedTool({ id: 'a_tool', occurred_at: at(1), tool_name: 'query_events' });
+    await seedCost({ id: 'z_cost', occurred_at: at(1), pgboss_job_id: 'job_alpha' });
+
+    const detail = await getAdminRunTimeline(db, 'run_1');
+
+    expect(detail?.timeline.map((event) => event.id)).toEqual([
+      'run_1',
+      'a_tool',
+      'z_cost',
+      'run_1',
+    ]);
   });
 
   it('aggregates cost by day and task kind', async () => {

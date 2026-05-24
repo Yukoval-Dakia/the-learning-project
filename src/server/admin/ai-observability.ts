@@ -32,6 +32,13 @@ export interface AdminRunListRow {
   pgboss_job_ids: string[];
 }
 
+export interface AdminRunListPage {
+  rows: AdminRunListRow[];
+  limit: number;
+  total: number;
+  truncated: boolean;
+}
+
 export interface AdminRunTimelineEvent {
   type: 'run_started' | 'tool_call' | 'cost_ledger' | 'run_finished';
   at: Date;
@@ -189,24 +196,44 @@ export async function listAdminRuns(
   db: DbLike,
   opts: AdminRunListOpts = {},
 ): Promise<AdminRunListRow[]> {
+  return (await listAdminRunsPage(db, opts)).rows;
+}
+
+export async function listAdminRunsPage(
+  db: DbLike,
+  opts: AdminRunListOpts = {},
+): Promise<AdminRunListPage> {
   const conditions = [];
   if (opts.status) conditions.push(eq(ai_task_runs.status, opts.status));
   if (opts.taskKind) conditions.push(eq(ai_task_runs.task_kind, opts.taskKind));
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+  const limit = normalizeLimit(opts.limit);
 
   const rows = await db
     .select()
     .from(ai_task_runs)
-    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .where(where)
     .orderBy(desc(ai_task_runs.started_at), desc(ai_task_runs.id))
-    .limit(normalizeLimit(opts.limit));
+    .limit(limit);
+
+  const totalRows = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(ai_task_runs)
+    .where(where);
+  const total = totalRows[0]?.count ?? rows.length;
 
   const runIds = rows.map((row) => row.id);
   const ledgerByRun = await ledgerRowsByRunId(db, runIds);
   const toolCounts = await toolCountsByRunId(db, runIds);
 
-  return rows.map((row) =>
-    projectRun(row, ledgerByRun.get(row.id) ?? [], toolCounts.get(row.id) ?? 0),
-  );
+  return {
+    rows: rows.map((row) =>
+      projectRun(row, ledgerByRun.get(row.id) ?? [], toolCounts.get(row.id) ?? 0),
+    ),
+    limit,
+    total,
+    truncated: total > rows.length,
+  };
 }
 
 export async function getAdminRunTimeline(
@@ -271,7 +298,12 @@ export async function getAdminRunTimeline(
       cost: runRow.cost_usd ?? undefined,
     });
   }
-  timeline.sort((a, b) => a.at.getTime() - b.at.getTime() || a.type.localeCompare(b.type));
+  timeline.sort(
+    (a, b) =>
+      a.at.getTime() - b.at.getTime() ||
+      (a.id ?? '').localeCompare(b.id ?? '') ||
+      a.type.localeCompare(b.type),
+  );
 
   return {
     run: projectRun(runRow, ledger, toolCalls.length),
