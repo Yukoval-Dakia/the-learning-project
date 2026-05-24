@@ -6,7 +6,7 @@ import {
   type EmbeddedCheckQuestion,
   type ArtifactSection as NoteSection,
 } from '@/ui/components/ArtifactSections';
-import { NoteRenderer } from '@/ui/components/NoteRenderer';
+import { NoteRenderer, VerificationBadge } from '@/ui/components/NoteRenderer';
 import { TeachingDrawer } from '@/ui/components/TeachingDrawer';
 import {
   CorrectionStateRenderer,
@@ -124,15 +124,6 @@ const STATUS_LABEL: Record<ItemStatus, string> = {
   resting: '养护',
   dismissed: '已拒',
   archived: '归档',
-};
-
-const VERIFICATION_LABEL: Record<VerificationStatus, string> = {
-  not_required: '无需验证',
-  not_started: '待验证',
-  queued: '验证中...',
-  verified: '已验证',
-  needs_review: '需复核',
-  failed: '验证失败',
 };
 
 export default function LearningItemDetailPage() {
@@ -487,9 +478,11 @@ function ArtifactView({
                 ? '生成失败'
                 : '已就绪'}
           </span>
-          <span className={`artifact-status verify-${artifact.verification_status}`}>
-            {VERIFICATION_LABEL[artifact.verification_status]}
-          </span>
+          <VerificationBadge
+            status={artifact.verification_status}
+            summary={artifact.verification_summary?.summary_md}
+            issues={artifact.verification_summary?.issues ?? []}
+          />
         </div>
       </div>
       {artifact.generation_status === 'pending' && (
