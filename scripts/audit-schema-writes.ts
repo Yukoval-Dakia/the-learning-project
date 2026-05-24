@@ -83,6 +83,26 @@ export function todayIso(now = new Date()): string {
   return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
 }
 
+function parseIsoDateStrict(value: string): Date | null {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
+    return null;
+  }
+  return date;
+}
+
+function addMonthsIso(value: string, months: number): string {
+  const date = parseIsoDateStrict(value);
+  if (!date) return value;
+  date.setMonth(date.getMonth() + months);
+  return todayIso(date);
+}
+
 function normalizePrRef(ref: string): string | null {
   const trimmed = ref.trim();
   const match =
@@ -101,24 +121,41 @@ function normalizePhaseText(value: string): string {
 }
 
 function isShippedStatusLine(line: string): boolean {
-  const trimmed = line.trim();
-  return trimmed.startsWith('✅') || /已\s*ship|shipped|done/i.test(trimmed);
+  return /^✅\s+(?:Phase\s+)?[\p{Letter}\p{Number}]/u.test(line);
+}
+
+function shippedPhaseStatusLines(statusText: string): string[] {
+  const lines = statusText.split('\n');
+  const out: string[] = [];
+  let inPhaseSection = false;
+  let inFence = false;
+
+  for (const line of lines) {
+    if (/^##\s+/.test(line)) {
+      inPhaseSection = /Phase\s*路线图|Phase\s+roadmap/i.test(line);
+      inFence = false;
+      continue;
+    }
+    if (!inPhaseSection) continue;
+    if (line.trim().startsWith('```')) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence && isShippedStatusLine(line)) {
+      out.push(line);
+    }
+  }
+
+  return out;
 }
 
 function isPhaseShipped(ref: string, statusText: string): boolean {
   const normalizedRef = normalizePhaseText(ref);
   if (!normalizedRef) return false;
-  const refTokens = normalizedRef.split(/\s+/).filter(Boolean);
-  return statusText
-    .split('\n')
-    .filter(isShippedStatusLine)
-    .some((line) => {
-      const normalizedLine = normalizePhaseText(line);
-      return (
-        normalizedLine.includes(normalizedRef) ||
-        refTokens.every((token) => normalizedLine.includes(token))
-      );
-    });
+  return shippedPhaseStatusLines(statusText).some((line) => {
+    const normalizedLine = normalizePhaseText(line);
+    return ` ${normalizedLine} `.includes(` ${normalizedRef} `);
+  });
 }
 
 export function extractMergedPrRefsFromGitLog(log: string): Set<string> {
@@ -217,12 +254,29 @@ export function validateAllowlistHygiene(
       );
       continue;
     }
+    if (!parseIsoDateStrict(expectedBy)) {
+      issues.push(
+        issue(key, 'invalid_expected_by', 'resolves_when.expected_by must be a valid date'),
+      );
+      continue;
+    }
     if (expectedBy < options.today) {
       issues.push(
         issue(
           key,
           'expired_expected_by',
           `resolves_when.expected_by ${expectedBy} is before ${options.today}`,
+        ),
+      );
+      continue;
+    }
+    const maxExpectedBy = addMonthsIso(options.today, 12);
+    if (expectedBy > maxExpectedBy) {
+      issues.push(
+        issue(
+          key,
+          'invalid_expected_by',
+          `resolves_when.expected_by ${expectedBy} is more than 12 months after ${options.today}`,
         ),
       );
       continue;
