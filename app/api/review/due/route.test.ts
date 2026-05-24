@@ -33,11 +33,14 @@ async function seedQuestion(id: string, overrides: Partial<Record<string, unknow
   });
 }
 
-async function seedFailureAttempt(question_id: string) {
+async function seedFailureAttempt(
+  question_id: string,
+  opts: { id?: string; created_at?: Date } = {},
+) {
   const db = testDb();
-  const now = new Date();
+  const now = opts.created_at ?? new Date();
   await db.insert(event).values({
-    id: `evt_attempt_${question_id}`,
+    id: opts.id ?? `evt_attempt_${question_id}`,
     session_id: null,
     actor_kind: 'user',
     actor_ref: 'self',
@@ -259,6 +262,27 @@ describe('GET /api/review/due', () => {
     const res = await getReview('limit=2');
     const body = (await res.json()) as { rows: unknown[] };
     expect(body.rows).toHaveLength(2);
+  });
+
+  it('does not let one question consume the failure-attempt limit before another subject appears', async () => {
+    const base = Date.now();
+    await seedQuestion('q_hot');
+    await seedQuestion('q_cold');
+    for (let index = 0; index < 6; index += 1) {
+      await seedFailureAttempt('q_hot', {
+        id: `evt_attempt_q_hot_${index}`,
+        created_at: new Date(base + index * 1_000),
+      });
+    }
+    await seedFailureAttempt('q_cold', {
+      id: 'evt_attempt_q_cold',
+      created_at: new Date(base - 1_000),
+    });
+
+    const res = await getReview('limit=2');
+    const body = (await res.json()) as { rows: Array<{ id: string }> };
+
+    expect(body.rows.map((row) => row.id)).toEqual(['q_hot', 'q_cold']);
   });
 
   it('clamps limit=0 to 1', async () => {

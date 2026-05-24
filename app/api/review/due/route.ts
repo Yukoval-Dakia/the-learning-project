@@ -14,12 +14,12 @@
 import { type ActivityRefT, questionRef } from '@/core/schema/activity';
 import type { CauseCategoryT } from '@/core/schema/event/blocks';
 import { db } from '@/db/client';
-import { material_fsrs_state, question } from '@/db/schema';
+import { event, material_fsrs_state, question } from '@/db/schema';
 import { effectiveCauseCategoryForFailureAttempt } from '@/server/events/cause-policy';
 import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
 import { errorResponse } from '@/server/http/errors';
 import type { EffectiveTruth } from '@/server/review/effective-truth';
-import { and, eq, inArray, lte } from 'drizzle-orm';
+import { and, eq, inArray, lte, sql } from 'drizzle-orm';
 
 export const runtime = 'nodejs';
 
@@ -52,6 +52,45 @@ function pickLatestFailureByQuestion(failures: FailureAttempt[]): Map<
     });
   }
   return out;
+}
+
+async function loadLatestFailureQuestionIds(candidateLimit: number): Promise<string[]> {
+  const rows = (await db.execute(sql<{ question_id: string }>`
+    SELECT subject_id AS question_id
+    FROM (
+      SELECT
+        subject_id,
+        created_at,
+        id,
+        row_number() OVER (PARTITION BY subject_id ORDER BY created_at DESC, id DESC) AS rn
+      FROM event
+      WHERE action = 'attempt'
+        AND subject_kind = 'question'
+        AND outcome = 'failure'
+    ) ranked
+    WHERE rn = 1
+    ORDER BY created_at DESC, id DESC
+    LIMIT ${candidateLimit}
+  `)) as unknown as Array<{ question_id: string }>;
+  return rows.map((row) => row.question_id);
+}
+
+async function getFailureAttemptsPerQuestion(
+  questionIds: string[],
+  perQuestionLimit: number,
+): Promise<FailureAttempt[]> {
+  const batches = await Promise.all(
+    questionIds.map((questionId) =>
+      getFailureAttempts(db, { questionIds: [questionId], limit: perQuestionLimit }),
+    ),
+  );
+  return batches
+    .flat()
+    .sort(
+      (a, b) =>
+        b.created_at.getTime() - a.created_at.getTime() ||
+        b.attempt_event_id.localeCompare(a.attempt_event_id),
+    );
 }
 
 export async function GET(req: Request): Promise<Response> {
@@ -92,7 +131,10 @@ export async function GET(req: Request): Promise<Response> {
     // question has no FSRS state row yet. Use the existing event-stream read
     // path (getFailureAttempts) and filter out already-projected ids.
     const projectedQids = new Set(dueRows.map((r) => r.question_id));
-    const newAttempts = await getFailureAttempts(db, { limit: limit * 2 });
+    const candidateQuestionIds = (
+      await loadLatestFailureQuestionIds(Math.min(Math.max(limit * 4, 100), 400))
+    ).filter((questionId) => !projectedQids.has(questionId));
+    const newAttempts = await getFailureAttemptsPerQuestion(candidateQuestionIds, 4);
     const newQuestionIds: string[] = [];
     for (const a of newAttempts) {
       if (!projectedQids.has(a.question_id) && !newQuestionIds.includes(a.question_id)) {
@@ -147,13 +189,7 @@ export async function GET(req: Request): Promise<Response> {
       }
     }
     const dueQuestionIds = dueRows.map((row) => row.question_id);
-    const dueAttempts =
-      dueQuestionIds.length > 0
-        ? await getFailureAttempts(db, {
-            questionIds: dueQuestionIds,
-            limit: Math.max(dueQuestionIds.length * 4, 100),
-          })
-        : [];
+    const dueAttempts = await getFailureAttemptsPerQuestion(dueQuestionIds, 4);
     const latestFailureByQid = pickLatestFailureByQuestion([...newAttempts, ...dueAttempts]);
 
     type OutRow = {
