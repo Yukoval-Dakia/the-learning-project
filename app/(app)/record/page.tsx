@@ -9,7 +9,8 @@ import { Card } from '@/ui/primitives/Card';
 import { PageHeader } from '@/ui/primitives/PageHeader';
 import { TabBar } from '@/ui/primitives/TabBar';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 
 type ModeTab = 'context' | 'manual' | 'vision_single' | 'vision_paper';
@@ -83,6 +84,9 @@ interface LearningRecordRow {
   updated_at: number;
   archived_at: number | null;
   version: number;
+  // YUK-15 — count of propose events whose ai_proposal.evidence_refs cite
+  // this record. Drives the "已产生 N 条 AI 提议" backlink on each card.
+  proposal_count?: number;
 }
 
 const MODE_TABS = [
@@ -121,6 +125,12 @@ export default function RecordPage() {
 
 function RecordContextPanel() {
   const qc = useQueryClient();
+  // YUK-15 — `/record?focus=<id>` lands here from inbox evidence backlinks.
+  // We scroll the matching card into view and highlight it; if the focus id
+  // doesn't appear in the current page (filter mismatch / archived), we
+  // silently no-op.
+  const searchParams = useSearchParams();
+  const focusId = searchParams?.get('focus') ?? null;
   const [kind, setKind] = useState<RecordKind>('open_question');
   const [filter, setFilter] = useState<RecordKindFilter>('all');
   const [title, setTitle] = useState('');
@@ -389,46 +399,67 @@ function RecordContextPanel() {
         )}
 
         <div style={recordListStyle}>
-          {rows.map((row) => (
-            <Card key={row.id} elevated>
-              <div style={recordRowHeadStyle}>
-                <div style={recordTitleBlockStyle}>
-                  <Badge tone={RECORD_KIND_TONE[row.kind]}>{RECORD_KIND_LABEL[row.kind]}</Badge>
-                  <strong style={recordTitleStyle}>
-                    {row.title?.trim() || row.content_md.split('\n')[0].slice(0, 42)}
-                  </strong>
+          {rows.map((row) => {
+            const isFocused = focusId !== null && focusId === row.id;
+            return (
+              <Card
+                key={row.id}
+                elevated
+                className={isFocused ? 'record-card-focused' : undefined}
+              >
+                <div style={recordRowHeadStyle}>
+                  <div style={recordTitleBlockStyle}>
+                    <Badge tone={RECORD_KIND_TONE[row.kind]}>{RECORD_KIND_LABEL[row.kind]}</Badge>
+                    <strong style={recordTitleStyle}>
+                      {row.title?.trim() || row.content_md.split('\n')[0].slice(0, 42)}
+                    </strong>
+                  </div>
+                  <span style={recordDateStyle}>{formatRecordTime(row.created_at)}</span>
                 </div>
-                <span style={recordDateStyle}>{formatRecordTime(row.created_at)}</span>
-              </div>
 
-              <p style={recordContentStyle}>{row.content_md}</p>
+                <p style={recordContentStyle}>{row.content_md}</p>
 
-              {row.knowledge_ids.length > 0 && (
-                <div style={chipRowStyle}>
-                  {row.knowledge_ids.map((id) => (
-                    <span key={id} style={knowledgePillStyle}>
-                      {knowledgeById.get(id)?.name ?? id}
-                    </span>
-                  ))}
+                {row.knowledge_ids.length > 0 && (
+                  <div style={chipRowStyle}>
+                    {row.knowledge_ids.map((id) => (
+                      <span key={id} style={knowledgePillStyle}>
+                        {knowledgeById.get(id)?.name ?? id}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {/* YUK-15 — AI proposal backlink: shown only when at least one
+                    propose event cites this record. Tone is muted so it
+                    doesn't compete with title/content. */}
+                {(row.proposal_count ?? 0) > 0 && (
+                  <p style={recordProposalBacklinkStyle}>
+                    <Link
+                      href={`/inbox?evidence_record=${encodeURIComponent(row.id)}`}
+                      className="inbox-inline-link"
+                    >
+                      已产生 {row.proposal_count} 条 AI 提议 →
+                    </Link>
+                  </p>
+                )}
+
+                <div style={recordActionRowStyle}>
+                  <Button variant="quiet" size="sm" icon="pen" onClick={() => startEdit(row)}>
+                    编辑
+                  </Button>
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    icon="trash"
+                    onClick={() => archiveM.mutate(row.id)}
+                    disabled={archiveM.isPending}
+                  >
+                    归档
+                  </Button>
                 </div>
-              )}
-
-              <div style={recordActionRowStyle}>
-                <Button variant="quiet" size="sm" icon="pen" onClick={() => startEdit(row)}>
-                  编辑
-                </Button>
-                <Button
-                  variant="danger"
-                  size="sm"
-                  icon="trash"
-                  onClick={() => archiveM.mutate(row.id)}
-                  disabled={archiveM.isPending}
-                >
-                  归档
-                </Button>
-              </div>
-            </Card>
-          ))}
+              </Card>
+            );
+          })}
         </div>
       </section>
     </div>
@@ -725,6 +756,17 @@ const recordActionRowStyle: React.CSSProperties = {
   justifyContent: 'flex-end',
   gap: 'var(--s-2)',
   marginTop: 'var(--s-2)',
+};
+
+// YUK-15 — AI proposal backlink row style. Mirrors existing meta text tone
+// (mono / muted) so it sits between content and actions without stealing
+// visual weight from the record body.
+const recordProposalBacklinkStyle: React.CSSProperties = {
+  margin: 'var(--s-2) 0 0',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 'var(--fs-meta)',
+  color: 'var(--ink-3)',
+  letterSpacing: 'var(--ls-wide)',
 };
 
 const knowledgePillStyle: React.CSSProperties = {

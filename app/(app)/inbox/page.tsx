@@ -9,6 +9,7 @@ import { Icon } from '@/ui/primitives/Icon';
 import { PageHeader } from '@/ui/primitives/PageHeader';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import type { ReactNode } from 'react';
 
 interface KnowledgeNode {
@@ -131,6 +132,11 @@ const KIND_LABELS: Record<ProposalKind, string> = {
 
 export default function InboxPage() {
   const queryClient = useQueryClient();
+  // YUK-15 — `?evidence_record=<id>` filters the inbox to proposals citing
+  // that record. Used by the record list backlink to surface "已产生 N 条 AI
+  // 提议" navigation.
+  const searchParams = useSearchParams();
+  const evidenceRecordFilter = searchParams?.get('evidence_record') ?? null;
 
   const knowledgeQ = useQuery({
     queryKey: ['inbox', 'knowledge'],
@@ -187,7 +193,15 @@ export default function InboxPage() {
   });
 
   const nodesById = new Map((knowledgeQ.data?.rows ?? []).map((node) => [node.id, node]));
-  const proposals = proposalsQ.data?.rows ?? [];
+  const allProposals = proposalsQ.data?.rows ?? [];
+  // YUK-15 — client-side filter when `?evidence_record=<id>` is present.
+  const proposals = evidenceRecordFilter
+    ? allProposals.filter((row) =>
+        row.payload.evidence_refs.some(
+          (ref) => ref.kind === 'record' && ref.id === evidenceRecordFilter,
+        ),
+      )
+    : allProposals;
   const proposalGroups = groupByKind(proposals);
   const pendingTotal = proposals.length;
   const totalCostUsd =
@@ -216,6 +230,17 @@ export default function InboxPage() {
         {pendingTotal} 条待审 · 累计成本 ${totalCostUsd.toFixed(3)} · 包含 Dreaming 与后续 producer
         写入的 proposal
       </div>
+
+      {evidenceRecordFilter && (
+        <Card>
+          <p className="inbox-meta-line">
+            仅显示引用 record <code>{evidenceRecordFilter.slice(0, 12)}…</code> 的提议。
+            <Link href="/inbox" className="inbox-inline-link" style={{ marginLeft: 8 }}>
+              清除过滤
+            </Link>
+          </p>
+        </Card>
+      )}
 
       {loading && (
         <Card pad="lg">
@@ -490,17 +515,9 @@ function GenericProposalCard({
       </div>
       {proposal.payload.evidence_refs.length > 0 && (
         <div className="artifact-ref-row">
-          {proposal.payload.evidence_refs.slice(0, 5).map((ref) =>
-            ref.kind === 'event' ? (
-              <Link href={`/events/${ref.id}`} key={`${ref.kind}:${ref.id}`}>
-                {ref.kind}:{ref.id.slice(0, 8)}…
-              </Link>
-            ) : (
-              <span key={`${ref.kind}:${ref.id}`}>
-                {ref.kind}:{ref.id.slice(0, 8)}…
-              </span>
-            ),
-          )}
+          {proposal.payload.evidence_refs.slice(0, 5).map((ref) => (
+            <EvidenceRefChip ref={ref} key={`${ref.kind}:${ref.id}`} />
+          ))}
         </div>
       )}
       <div className="proposal-actions">
@@ -532,6 +549,30 @@ function GenericProposalCard({
       </div>
     </article>
   );
+}
+
+// YUK-15 — clickable backlinks for evidence_refs. `event` jumps to the
+// event-chain detail page (existing route). `record` jumps to the record
+// list focused on the cited id. `question` is currently uninked — there's
+// no per-question detail route yet (Linear follow-up if/when one lands).
+function EvidenceRefChip({ ref }: { ref: ProposalEvidenceRef }) {
+  const label = `${ref.kind}:${ref.id.slice(0, 8)}…`;
+  const key = `${ref.kind}:${ref.id}`;
+  if (ref.kind === 'event') {
+    return (
+      <Link href={`/events/${ref.id}`} key={key}>
+        {label}
+      </Link>
+    );
+  }
+  if (ref.kind === 'record') {
+    return (
+      <Link href={`/record?focus=${encodeURIComponent(ref.id)}`} key={key}>
+        {label}
+      </Link>
+    );
+  }
+  return <span key={key}>{label}</span>;
 }
 
 function ProposalStatusRow({ proposal }: { proposal: ProposalInboxRow }) {
