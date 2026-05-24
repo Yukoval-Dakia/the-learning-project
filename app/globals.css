@@ -3748,6 +3748,28 @@ ol {
   text-align: center;
 }
 
+/* YUK-14 — idle banner (conversation status='idle')
+   Tone: caution, not error. Reuses --hard-ink (existing warning token used by
+   mistake / hard contexts) instead of introducing a new color. */
+:is(.teach-chat-page, .teach-drawer) .session-banner.is-idle {
+  color: var(--hard-ink);
+}
+
+:is(.teach-chat-page, .teach-drawer) .idle-banner {
+  border: 1px solid var(--hard-ink);
+  border-radius: var(--r-3);
+  padding: 10px 14px;
+  background: var(--paper-raised);
+  color: var(--hard-ink);
+  font-size: 14px;
+  text-align: center;
+}
+
+:is(.teach-chat-page, .teach-drawer) .end-banner.is-abandoned {
+  border-color: var(--again-ink);
+  color: var(--again-ink);
+}
+
 /* ============================================================
  * Form inputs — global accent-color so native range / checkbox /
  * radio inherit the coral brand instead of the browser default
