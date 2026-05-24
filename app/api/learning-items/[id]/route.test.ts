@@ -1,4 +1,11 @@
-import { artifact, completion_evidence, knowledge, learning_item, question } from '@/db/schema';
+import {
+  artifact,
+  completion_evidence,
+  event,
+  knowledge,
+  learning_item,
+  question,
+} from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -724,6 +731,117 @@ describe('GET /api/learning-items/[id]', () => {
     };
     expect(body.primary_artifact?.embedded_check_status).toBe('pending');
     expect(body.primary_artifact?.embedded_questions).toEqual([]);
+  });
+
+  // YUK-19 — the detail page reuses CorrectionStateRenderer to show retract
+  // state for proposals that materialized this learning_item. The GET response
+  // surfaces source / source_ref / source_event (with correction_state from
+  // effective-truth), mirroring the list response shape.
+  it('returns source, source_ref, and source_event with correction_state for learning_intent items', async () => {
+    const db = testDb();
+    const now = new Date();
+    const proposalId = 'prop_intent_1';
+    await db.insert(event).values({
+      id: proposalId,
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'learning_intent',
+      action: 'experimental:propose_learning_intent',
+      subject_kind: 'artifact',
+      subject_id: 'art_synth',
+      outcome: 'partial',
+      payload: { topic: '虚词' },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: now,
+    });
+    await db.insert(learning_item).values(
+      baseItem('li_intent', {
+        source: 'learning_intent',
+        source_ref: proposalId,
+      }),
+    );
+
+    const res = await GET(getReq('li_intent'), { params: Promise.resolve({ id: 'li_intent' }) });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      source: string;
+      source_ref: string | null;
+      source_event: { id: string; correction_state: { state: string } | null } | null;
+    };
+    expect(body.source).toBe('learning_intent');
+    expect(body.source_ref).toBe(proposalId);
+    expect(body.source_event?.id).toBe(proposalId);
+    expect(body.source_event?.correction_state?.state).toBe('active');
+  });
+
+  it('returns source_event with retracted correction_state after the proposal is retracted', async () => {
+    const db = testDb();
+    const now = new Date();
+    const proposalId = 'prop_intent_2';
+    await db.insert(event).values({
+      id: proposalId,
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'learning_intent',
+      action: 'experimental:propose_learning_intent',
+      subject_kind: 'artifact',
+      subject_id: 'art_synth_2',
+      outcome: 'partial',
+      payload: { topic: '虚词' },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: now,
+    });
+    await db.insert(event).values({
+      id: 'correct_evt_1',
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: proposalId,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'retract',
+        reason_md: 'wrong path',
+        affected_refs: [{ kind: 'open_inquiry', id: proposalId }],
+      },
+      caused_by_event_id: proposalId,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: new Date(now.getTime() + 1000),
+    });
+    await db.insert(learning_item).values(
+      baseItem('li_intent_r', {
+        source: 'learning_intent',
+        source_ref: proposalId,
+      }),
+    );
+
+    const res = await GET(getReq('li_intent_r'), {
+      params: Promise.resolve({ id: 'li_intent_r' }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      source_event: { id: string; correction_state: { state: string } | null } | null;
+    };
+    expect(body.source_event?.correction_state?.state).toBe('retracted');
+  });
+
+  it('returns source_event null for source=manual items', async () => {
+    const db = testDb();
+    await db.insert(learning_item).values(baseItem('li_manual'));
+
+    const res = await GET(getReq('li_manual'), { params: Promise.resolve({ id: 'li_manual' }) });
+    const body = (await res.json()) as {
+      source: string;
+      source_event: { id: string } | null;
+    };
+    expect(body.source).toBe('manual');
+    expect(body.source_event).toBeNull();
   });
 });
 
