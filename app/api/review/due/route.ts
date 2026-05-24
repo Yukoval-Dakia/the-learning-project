@@ -80,21 +80,12 @@ async function getFailureAttemptsPerQuestion(
   perQuestionLimit: number,
 ): Promise<FailureAttempt[]> {
   if (questionIds.length === 0 || perQuestionLimit <= 0) return [];
-  // YUK-76 codex P2 — cap the inner scan to `questionIds * perQuestionLimit`
-  // rather than passing `limit: null`, which would unbound-scan the active
-  // failure history for the full candidate set. The active-filter inside
-  // `getFailureAttempts` may discard some rows, so request a small multiplier
-  // (×3 matches `getFailureAttempts`'s own pre-filter overhead) to keep
-  // per-question cap accurate even after corrections trim the head.
-  const innerLimit = Math.max(questionIds.length * perQuestionLimit * 3, perQuestionLimit);
-  const attempts = await getFailureAttempts(db, { questionIds, limit: innerLimit });
-  const countByQuestion = new Map<string, number>();
-  return attempts.filter((attempt) => {
-    const count = countByQuestion.get(attempt.question_id) ?? 0;
-    if (count >= perQuestionLimit) return false;
-    countByQuestion.set(attempt.question_id, count + 1);
-    return true;
-  });
+  // YUK-76 codex round-3 P1 — push per-question cap into SQL via the new
+  // `perQuestionLimit` opt so each question gets its own bounded slice. The
+  // previous `limit: qids*cap*3` was a global active-rows cap and let one
+  // hot question saturate the window, dropping quiet questions from the
+  // never-reviewed slice entirely.
+  return await getFailureAttempts(db, { questionIds, perQuestionLimit });
 }
 
 export async function GET(req: Request): Promise<Response> {

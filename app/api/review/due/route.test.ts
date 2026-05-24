@@ -313,6 +313,40 @@ describe('GET /api/review/due', () => {
     expect(body.rows.map((row) => row.id)).toEqual(['q_hot', 'q_cold']);
   });
 
+  // YUK-76 codex round-3 P1 — failure-lookup global limit misalignment.
+  //
+  // Before round-3 the route called `getFailureAttempts({ limit: qids*cap*3 })`,
+  // treating `limit` as if it were a per-question cap. But `limit` is the
+  // global active-rows cap. Seed a hot question dense enough that the first
+  // SQL window is filled entirely by its events, and a quiet question whose
+  // only failure is older. The quiet question should still surface in the
+  // never-reviewed slice.
+  it('does not drop quiet question when hot question saturates the failure window', async () => {
+    const base = Date.now();
+    await seedQuestion('q_hot');
+    await seedQuestion('q_quiet');
+    // q_hot has 50 failures (>> cap=4, >> SQL ×3 buffer for limit=2 → 24).
+    for (let index = 0; index < 50; index += 1) {
+      await seedFailureAttempt('q_hot', {
+        id: `evt_attempt_q_hot_dense_${index}`,
+        created_at: new Date(base + (100 + index) * 1_000),
+      });
+    }
+    // q_quiet has 1 older failure. Under the old global-limit semantics this
+    // would be lost behind q_hot's window saturation.
+    await seedFailureAttempt('q_quiet', {
+      id: 'evt_attempt_q_quiet',
+      created_at: new Date(base),
+    });
+
+    const res = await getReview('limit=2');
+    const body = (await res.json()) as { rows: Array<{ id: string }> };
+
+    const ids = body.rows.map((row) => row.id);
+    expect(ids).toContain('q_hot');
+    expect(ids).toContain('q_quiet');
+  });
+
   it('filters corrected attempts before applying the per-question failure cap', async () => {
     const base = Date.now();
     await seedQuestion('q_corrected_cap');

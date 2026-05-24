@@ -81,6 +81,22 @@ export interface GetFailureAttemptsOpts {
   limit?: number | null;
   questionIds?: string[];
   since?: Date;
+  // YUK-76 codex round-3 P1 — per-question SQL partition cap.
+  //
+  // When set, SQL filters via `ROW_NUMBER() OVER (PARTITION BY subject_id …)`
+  // so each question contributes at most `perQuestionLimit * 3` rows to the
+  // active-correction pre-filter (×3 mirrors the ×3 buffer the global-`limit`
+  // path uses for active-row overhead). The final per-question cap is then
+  // applied in JS after the active-correction filter so each question returns
+  // ≤ `perQuestionLimit` active failures.
+  //
+  // Mutually exclusive with `limit`: callers using per-question coverage
+  // semantics (e.g. `/api/review/due` building the never-reviewed slice) want
+  // each question represented, not a flat newest-first window. When provided,
+  // the function ignores `limit` and skips the offset-based batch loop because
+  // the partitioned slice is already bounded by `questionIds.length *
+  // perQuestionLimit * 3`.
+  perQuestionLimit?: number;
 }
 
 const DEFAULT_FAILURE_ATTEMPTS_LIMIT = 100;
@@ -143,7 +159,9 @@ export async function getFailureAttempts(
 ): Promise<FailureAttempt[]> {
   const unbounded = opts.limit === null;
   const limit = opts.limit ?? DEFAULT_FAILURE_ATTEMPTS_LIMIT;
-  if (!unbounded && limit <= 0) return [];
+  const perQuestionLimit = opts.perQuestionLimit;
+  if (perQuestionLimit !== undefined && perQuestionLimit <= 0) return [];
+  if (perQuestionLimit === undefined && !unbounded && limit <= 0) return [];
   const conditions = [
     eq(event.action, 'attempt'),
     eq(event.subject_kind, 'question'),
@@ -159,26 +177,50 @@ export async function getFailureAttempts(
   // deterministic when two failure attempts share the same `created_at`.
   // Without it, callers like `/api/review/due`'s per-question cap pick a
   // non-deterministic representative across requests.
-  const attemptQuery = db
-    .select()
-    .from(event)
-    .where(and(...conditions))
-    .orderBy(desc(event.created_at), desc(event.id));
-  const attemptRows = unbounded ? await attemptQuery : await attemptQuery.limit(limit * 3);
+  let activeAttemptRows: EventRow[];
 
-  if (attemptRows.length === 0) return [];
+  if (perQuestionLimit !== undefined) {
+    // YUK-76 codex round-3 P1 — partition-by-question SQL slice so each
+    // question gets its own bounded window, not a global newest-first feed.
+    // `getFailureAttempts({ limit })` would let a hot question saturate the
+    // global limit and silently drop quieter questions from the result. The
+    // `* 3` buffer matches the global-`limit` path's pre-filter overhead for
+    // active corrections (some head rows get retracted; over-sample so the
+    // final per-question cap still holds).
+    const partitionLimit = perQuestionLimit * 3;
+    const attemptRows = await getPartitionedFailureRows(db, conditions, partitionLimit);
+    if (attemptRows.length === 0) return [];
+    const filtered = await filterActiveRows(db, attemptRows);
+    // Final per-question cap in JS — `filterActiveRows` preserves SQL order.
+    const counts = new Map<string, number>();
+    activeAttemptRows = filtered.filter((row) => {
+      const count = counts.get(row.subject_id) ?? 0;
+      if (count >= perQuestionLimit) return false;
+      counts.set(row.subject_id, count + 1);
+      return true;
+    });
+  } else {
+    const attemptQuery = db
+      .select()
+      .from(event)
+      .where(and(...conditions))
+      .orderBy(desc(event.created_at), desc(event.id));
+    const attemptRows = unbounded ? await attemptQuery : await attemptQuery.limit(limit * 3);
 
-  const activeAttemptRows = unbounded
-    ? await filterActiveRows(db, attemptRows)
-    : await takeActiveRows(db, attemptRows, limit, async (nextLimit, offset) =>
-        db
-          .select()
-          .from(event)
-          .where(and(...conditions))
-          .orderBy(desc(event.created_at), desc(event.id))
-          .limit(nextLimit)
-          .offset(offset),
-      );
+    if (attemptRows.length === 0) return [];
+
+    activeAttemptRows = unbounded
+      ? await filterActiveRows(db, attemptRows)
+      : await takeActiveRows(db, attemptRows, limit, async (nextLimit, offset) =>
+          db
+            .select()
+            .from(event)
+            .where(and(...conditions))
+            .orderBy(desc(event.created_at), desc(event.id))
+            .limit(nextLimit)
+            .offset(offset),
+        );
+  }
 
   if (activeAttemptRows.length === 0) return [];
 
@@ -593,6 +635,63 @@ async function filterActiveRows(db: DbLike, rows: EventRow[]): Promise<EventRow[
     rows.map((r) => r.id),
   );
   return rows.filter((row) => hasActiveCorrectionStatus(statuses.get(row.id)));
+}
+
+// YUK-76 codex round-3 P1 — per-question partition for failure-attempt scan.
+//
+// `getFailureAttempts({ perQuestionLimit })` needs each question to contribute
+// at most `partitionLimit` rows (before active-correction filter), regardless
+// of how dense any single question's history is. We run `ROW_NUMBER()
+// PARTITION BY subject_id` and keep the partitioned slice; the caller applies
+// the post-filter cap in JS so behaviour mirrors the legacy global-`limit`
+// path (which over-samples by ×3 to absorb retraction overhead).
+//
+// We can't express `inArray` over a JS array cleanly inside a raw `sql` string
+// from drizzle, so we cap subject_id via the same `inArray` builder by doing a
+// CTE outer-select pattern. Easier: build the outer `SELECT *` in drizzle and
+// use a raw lateral subquery for the rownumber filter.
+async function getPartitionedFailureRows(
+  db: DbLike,
+  // biome-ignore lint/suspicious/noExplicitAny: drizzle condition tuple is heterogeneous.
+  conditions: any[],
+  partitionLimit: number,
+): Promise<EventRow[]> {
+  // We re-use the existing drizzle condition tuple by wrapping the partitioned
+  // CTE in a subquery and joining back to `event` on id. This keeps the
+  // condition predicates (action / outcome / questionIds / since) in one place
+  // and avoids re-implementing them in raw SQL.
+  const ranked = db
+    .select({
+      id: event.id,
+      rn: sql<number>`row_number() OVER (PARTITION BY ${event.subject_id} ORDER BY ${event.created_at} DESC, ${event.id} DESC)`.as(
+        'rn',
+      ),
+    })
+    .from(event)
+    .where(and(...conditions))
+    .as('ranked');
+
+  const rows = await db
+    .select({
+      id: event.id,
+      session_id: event.session_id,
+      actor_kind: event.actor_kind,
+      actor_ref: event.actor_ref,
+      action: event.action,
+      subject_kind: event.subject_kind,
+      subject_id: event.subject_id,
+      outcome: event.outcome,
+      payload: event.payload,
+      caused_by_event_id: event.caused_by_event_id,
+      task_run_id: event.task_run_id,
+      cost_micro_usd: event.cost_micro_usd,
+      created_at: event.created_at,
+    })
+    .from(event)
+    .innerJoin(ranked, eq(event.id, ranked.id))
+    .where(sql`${ranked.rn} <= ${partitionLimit}`)
+    .orderBy(desc(event.created_at), desc(event.id));
+  return rows as EventRow[];
 }
 
 export async function getEvents(

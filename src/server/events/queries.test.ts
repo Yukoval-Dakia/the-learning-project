@@ -314,6 +314,73 @@ describe('getFailureAttempts', () => {
     expect(results.map((r) => r.question_id)).toEqual(['q_fail']);
   });
 
+  // YUK-76 codex round-3 P1 — `perQuestionLimit` opt caps per question in SQL.
+  //
+  // The previous global `limit` is the active-rows-overall cap. When a hot
+  // question saturates the window, quieter questions get zero rows even though
+  // they have active failures. `perQuestionLimit` partitions inside SQL so each
+  // question gets its own slice, preserving coverage for `/api/review/due`'s
+  // never-reviewed slice.
+  it('returns up to perQuestionLimit failures per question and represents every requested question', async () => {
+    const db = testDb();
+    const baseTime = new Date('2026-05-01T12:00:00Z');
+    // q_hot has 6 failures (well above the cap); q_cold has 2.
+    for (let i = 0; i < 6; i++) {
+      await seedAttemptEvent({
+        id: `evt_hot_${i}`,
+        question_id: 'q_hot',
+        created_at: new Date(baseTime.getTime() + (100 + i) * 1_000),
+      });
+    }
+    for (let i = 0; i < 2; i++) {
+      await seedAttemptEvent({
+        id: `evt_cold_${i}`,
+        question_id: 'q_cold',
+        // Older than q_hot — would lose head-of-feed ranking under global limit.
+        created_at: new Date(baseTime.getTime() + i * 1_000),
+      });
+    }
+
+    const results = await getFailureAttempts(db, {
+      questionIds: ['q_hot', 'q_cold'],
+      perQuestionLimit: 2,
+    });
+    const hot = results.filter((r) => r.question_id === 'q_hot');
+    const cold = results.filter((r) => r.question_id === 'q_cold');
+    expect(hot).toHaveLength(2);
+    expect(cold).toHaveLength(2);
+    // Hot's slice is the two most recent attempts (ids ordered by created_at desc).
+    expect(hot.map((r) => r.attempt_event_id)).toEqual(['evt_hot_5', 'evt_hot_4']);
+    expect(cold.map((r) => r.attempt_event_id)).toEqual(['evt_cold_1', 'evt_cold_0']);
+  });
+
+  it('perQuestionLimit honours active-correction filter (skips retracted, keeps next active)', async () => {
+    const db = testDb();
+    const baseTime = new Date('2026-05-01T12:00:00Z');
+    // q_mix: newest 2 are retracted, older 2 are active. Expect cap=2 to land
+    // on the 2 active rows (not on the retracted head).
+    for (let i = 0; i < 4; i++) {
+      const attemptId = `evt_mix_${i}`;
+      await seedAttemptEvent({
+        id: attemptId,
+        question_id: 'q_mix',
+        created_at: new Date(baseTime.getTime() + i * 1_000),
+      });
+      if (i >= 2) {
+        await seedCorrectionEvent({
+          target_event_id: attemptId,
+          correction_kind: 'retract',
+          created_at: new Date(baseTime.getTime() + (10 + i) * 1_000),
+        });
+      }
+    }
+    const results = await getFailureAttempts(db, {
+      questionIds: ['q_mix'],
+      perQuestionLimit: 2,
+    });
+    expect(results.map((r) => r.attempt_event_id)).toEqual(['evt_mix_1', 'evt_mix_0']);
+  });
+
   it('excludes corrected attempts from the active mistake projection', async () => {
     const db = testDb();
     const baseTime = new Date('2026-05-01T12:00:00Z');
