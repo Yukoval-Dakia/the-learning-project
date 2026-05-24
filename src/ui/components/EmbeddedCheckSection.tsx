@@ -32,6 +32,30 @@ interface AttemptResult {
   mistake_id?: string;
 }
 
+interface EmbeddedCheckFeedbackInput {
+  outcome: AttemptOutcome;
+  judge: {
+    route: string;
+    score: number | null;
+    coarse_outcome?: string;
+  };
+}
+
+function isUnsupportedFeedback(result: EmbeddedCheckFeedbackInput) {
+  return result.judge.coarse_outcome === 'unsupported' || result.judge.route === 'unsupported';
+}
+
+export function getEmbeddedCheckFeedbackLabel(result: EmbeddedCheckFeedbackInput) {
+  if (isUnsupportedFeedback(result)) return '暂不支持自动判分';
+  if (result.outcome === 'success') return '答对了';
+  if (result.outcome === 'partial') return '部分正确';
+  return '需复习';
+}
+
+export function shouldHideEmbeddedCheckScore(result: EmbeddedCheckFeedbackInput) {
+  return isUnsupportedFeedback(result);
+}
+
 interface EmbeddedCheckSectionProps {
   status: EmbeddedCheckStatus;
   questions: EmbeddedCheckQuestion[];
@@ -73,6 +97,8 @@ export function EmbeddedCheckSection({ status, questions, notation }: EmbeddedCh
     );
   }
 
+  const readyLabel = `自检题 · ${questions.length} 题`;
+
   async function submit(question: EmbeddedCheckQuestion) {
     const answer = answers[question.id]?.trim();
     if (!answer) {
@@ -102,7 +128,7 @@ export function EmbeddedCheckSection({ status, questions, notation }: EmbeddedCh
 
   return (
     <div className="embedded-check-section">
-      <span className="embedded-check-status ready">自检题 · {questions.length} 题</span>
+      <span className="embedded-check-status ready">{readyLabel}</span>
       {questions.map((question) => {
         const currentFeedback = feedback[question.id];
         const disabled = submitting[question.id] || currentFeedback !== undefined;
@@ -203,12 +229,10 @@ export function EmbeddedCheckSection({ status, questions, notation }: EmbeddedCh
                 />
               ) : (
                 <div className={`embedded-check-feedback outcome-${currentFeedback.outcome}`}>
-                  {currentFeedback.outcome === 'success'
-                    ? '答对了'
-                    : currentFeedback.outcome === 'partial'
-                      ? '部分正确'
-                      : '需复习'}{' '}
-                  · score {currentFeedback.judge.score ?? 'n/a'}
+                  {getEmbeddedCheckFeedbackLabel(currentFeedback)}
+                  {!shouldHideEmbeddedCheckScore(currentFeedback) && (
+                    <> · score {currentFeedback.judge.score ?? 'n/a'}</>
+                  )}
                   {currentFeedback.judge.reason_md && (
                     <MathMarkdown notation={notation}>
                       {currentFeedback.judge.reason_md}

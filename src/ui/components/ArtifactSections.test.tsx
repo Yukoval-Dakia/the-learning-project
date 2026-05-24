@@ -101,4 +101,36 @@ describe('ArtifactSections — markdown rendering wiring', () => {
     expect(html).toContain('易错');
     expect(html).toContain('教材');
   });
+
+  it('mounts embedded check questions only on check sections', () => {
+    const sections: ArtifactSection[] = [
+      { ...baseSection, id: 's1', kind: 'definition', body_md: 'definition' },
+      {
+        ...baseSection,
+        id: 's2',
+        kind: 'check',
+        body_md: 'answer this',
+        embedded_check: { question_ids: ['q1'] },
+      },
+    ];
+    const html = renderToString(
+      <ArtifactSections
+        sections={sections}
+        subjectProfile={mathProfile}
+        embeddedQuestions={[
+          {
+            id: 'q1',
+            kind: 'single_choice',
+            prompt_md: 'Which one equals $2^2$?',
+            choices_md: ['3', '4'],
+          },
+        ]}
+        embeddedCheckStatus="ready"
+      />,
+    );
+    expect(html).toContain('自检题 · 1 题');
+    expect(html).toContain('Which one equals');
+    expect(html).toContain('class="katex"');
+    expect(html.match(/自检题 · 1 题/g)).toHaveLength(1);
+  });
 });
