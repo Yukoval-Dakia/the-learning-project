@@ -22,6 +22,13 @@ import {
   type LearningIntentMaterializeResult,
   acceptLearningIntent,
 } from '@/server/orchestrator/learning_intent';
+// YUK-15 — record→proposal evidence loop: accept flips cited records to
+// `actioned`, retract rolls them back to `linked`.
+import {
+  extractRecordEvidenceIds,
+  markRecordsActioned,
+  rollbackRecordsActioned,
+} from '@/server/records/record_processing';
 import { type ProposalInboxRow, getProposalInboxRow } from './inbox';
 import { ensureProposalDecisionSignal, recordProposalDecisionSignal } from './signals';
 
@@ -403,6 +410,35 @@ export async function acceptAiProposal(
     await reconcileExistingRateSignal(db, proposal, opts.user_note);
   }
 
+  const result = await dispatchAccept(db, proposalId, proposal, opts);
+
+  // YUK-15 — flip cited records linked/raw → actioned. Best-effort: kind
+  // handlers already committed their owner-service tx, so this runs after.
+  // For edge proposals decided as 'dismiss' (via decideKnowledgeEdgeProposal)
+  // we still call this — the helper's `from` filter ('linked' / 'raw') means
+  // dismissed records that never reached `actioned` are a no-op, and we don't
+  // want to thread decision info further down.
+  const recordIds = extractRecordEvidenceIds(proposal.payload.evidence_refs);
+  if (recordIds.length > 0 && !isDismissedEdgeResult(result)) {
+    await markRecordsActioned(db, recordIds);
+  }
+  return result;
+}
+
+function isDismissedEdgeResult(result: AcceptAiProposalResult): boolean {
+  return (
+    result.kind === 'knowledge_edge' &&
+    result.generate_event_id === null &&
+    result.edge_id === null
+  );
+}
+
+async function dispatchAccept(
+  db: Db,
+  proposalId: string,
+  proposal: ProposalInboxRow,
+  opts: AcceptAiProposalOpts,
+): Promise<AcceptAiProposalResult> {
   switch (proposal.kind) {
     case 'knowledge_node': {
       assertPending(proposal);
@@ -961,6 +997,14 @@ export async function retractAiProposal(
         updated_at: now,
       })
       .where(and(eq(artifact.source_ref, proposalId), isNull(artifact.archived_at)));
+  }
+
+  // YUK-15 — retract rolls cited records back from `actioned` to `linked`.
+  // We keep them at `linked` rather than `raw` because the same record may
+  // still be evidence for other active proposals (see follow-up B in plan).
+  const recordIds = extractRecordEvidenceIds(proposal.payload.evidence_refs);
+  if (recordIds.length > 0) {
+    await rollbackRecordsActioned(db, recordIds);
   }
 
   return { kind: 'retracted', correction_event_id: correctionEventId };

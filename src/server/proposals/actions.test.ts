@@ -4,6 +4,7 @@ import {
   knowledge,
   knowledge_edge,
   learning_item,
+  learning_record,
   mistake_variant,
   proposal_signals,
   question,
@@ -826,5 +827,105 @@ describe('variant_question proposal lifecycle', () => {
     await expect(
       acceptAiProposal(db, proposalId, { enqueueVariantVerify: async () => {} }),
     ).rejects.toMatchObject({ code: 'not_found' });
+  });
+});
+
+// YUK-15 — record→proposal evidence loop on accept/retract.
+describe('YUK-15 record evidence flip on accept / retract', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  async function seedRecord(id: string): Promise<void> {
+    const now = new Date();
+    await testDb()
+      .insert(learning_record)
+      .values({
+        id,
+        kind: 'open_question',
+        title: null,
+        content_md: 'why?',
+        source: 'manual',
+        capture_mode: 'text',
+        activity_kind: 'ask',
+        processing_status: 'raw',
+        origin_event_id: null,
+        subject_id: null,
+        knowledge_ids: [],
+        question_id: null,
+        attempt_event_id: null,
+        learning_item_id: null,
+        artifact_id: null,
+        source_document_id: null,
+        asset_refs: [],
+        payload: {},
+        created_at: now,
+        updated_at: now,
+        archived_at: null,
+        version: 0,
+      });
+  }
+
+  async function getRecordStatus(id: string): Promise<string | null> {
+    const rows = await testDb()
+      .select({ status: learning_record.processing_status })
+      .from(learning_record)
+      .where(eq(learning_record.id, id));
+    return rows[0]?.status ?? null;
+  }
+
+  it('writeAiProposal → raw=linked, acceptAiProposal → linked=actioned, retract → linked', async () => {
+    const db = testDb();
+    await seedKnowledge(['parent_1']);
+    await seedRecord('rec_1');
+
+    await writeAiProposal(db, {
+      id: 'node_p1',
+      payload: {
+        kind: 'knowledge_node',
+        target: { subject_kind: 'knowledge', subject_id: null },
+        reason_md: 'cited via record',
+        evidence_refs: [{ kind: 'record', id: 'rec_1' }],
+        proposed_change: {
+          mutation: 'propose_new',
+          name: '新节点',
+          parent_id: 'parent_1',
+        },
+      },
+    });
+    // After write: raw → linked
+    expect(await getRecordStatus('rec_1')).toBe('linked');
+
+    await acceptAiProposal(db, 'node_p1');
+    // After accept: linked → actioned
+    expect(await getRecordStatus('rec_1')).toBe('actioned');
+
+    await retractAiProposal(db, 'node_p1');
+    // After retract: actioned → linked
+    expect(await getRecordStatus('rec_1')).toBe('linked');
+  });
+
+  it('no-op when proposal has no record evidence', async () => {
+    const db = testDb();
+    await seedKnowledge(['parent_2']);
+    await seedRecord('rec_unrelated');
+
+    await writeAiProposal(db, {
+      id: 'node_p2',
+      payload: {
+        kind: 'knowledge_node',
+        target: { subject_kind: 'knowledge', subject_id: null },
+        reason_md: 'no record refs',
+        evidence_refs: [{ kind: 'event', id: 'evt_x' }],
+        proposed_change: {
+          mutation: 'propose_new',
+          name: '另一节点',
+          parent_id: 'parent_2',
+        },
+      },
+    });
+    await acceptAiProposal(db, 'node_p2');
+    // Unrelated record stays raw.
+    expect(await getRecordStatus('rec_unrelated')).toBe('raw');
   });
 });
