@@ -1,11 +1,14 @@
 import {
+  artifact,
   event,
   knowledge,
   knowledge_edge,
+  learning_item,
   mistake_variant,
   proposal_signals,
   question,
 } from '@/db/schema';
+import { planLearningIntent } from '@/server/orchestrator/learning_intent';
 import { writeVariantQuestionProposal } from '@/server/proposals/producers';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
@@ -234,21 +237,246 @@ describe('proposal lifecycle owner service', () => {
 
   it('acceptAiProposal rejects future proposal kinds until their owner services exist', async () => {
     const db = testDb();
+    // `completion` is one of the kinds that still has no owner-service accept path
+    // (writer/producer exist but materialization is not implemented yet).
     await writeAiProposal(db, {
-      id: 'learning_p1',
+      id: 'completion_p1',
       payload: {
-        kind: 'learning_item',
-        target: { subject_kind: 'learning_item', subject_id: null },
-        reason_md: 'Create a focused review item',
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'li_xx' },
+        reason_md: 'item appears mastered',
         evidence_refs: [],
-        proposed_change: { title: '虚词复习' },
+        proposed_change: {
+          learning_item_id: 'li_xx',
+          triggering_signals: ['mastery_high_persisted_14d'],
+          evidence_json: {},
+        },
       },
     });
 
-    await expect(acceptAiProposal(db, 'learning_p1')).rejects.toMatchObject({
+    await expect(acceptAiProposal(db, 'completion_p1')).rejects.toMatchObject({
       code: 'unsupported_proposal_kind',
       status: 400,
     });
+  });
+});
+
+// YUK-19 — learning_item lifecycle integration.
+//
+// learning_item proposals are produced by planLearningIntent (the
+// "我想学 X" flow). Acceptance materializes 1 hub + N atomic learning_items
+// plus paired note artifact stubs through the existing acceptLearningIntent
+// owner service. Retract after accept tombstones the materialized rows so
+// the L3 correction outweighs any downstream evidence.
+describe('learning_item proposal lifecycle', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  async function seedLearningItemProposal(): Promise<{ proposalId: string }> {
+    const db = testDb();
+    // Seed wenyan topic graph: hub `k_hub_xc` 虚词 + two children for atomic outline.
+    await db.insert(knowledge).values([
+      {
+        id: 'k_hub_xc',
+        name: '虚词',
+        domain: 'wenyan',
+        parent_id: null,
+        merged_from: [],
+        proposed_by_ai: false,
+        approval_status: 'approved',
+        created_at: new Date(),
+        updated_at: new Date(),
+        version: 0,
+      },
+      {
+        id: 'k_zhi_xc',
+        name: '之',
+        domain: 'wenyan',
+        parent_id: 'k_hub_xc',
+        merged_from: [],
+        proposed_by_ai: false,
+        approval_status: 'approved',
+        created_at: new Date(),
+        updated_at: new Date(),
+        version: 0,
+      },
+      {
+        id: 'k_qi_xc',
+        name: '其',
+        domain: 'wenyan',
+        parent_id: 'k_hub_xc',
+        merged_from: [],
+        proposed_by_ai: false,
+        approval_status: 'approved',
+        created_at: new Date(),
+        updated_at: new Date(),
+        version: 0,
+      },
+    ]);
+
+    const runTaskFn = vi.fn(async () => ({
+      text: JSON.stringify({
+        hub: { title: '虚词总览', summary_md: '虚词概览。' },
+        atomics: [
+          { knowledge_id: 'k_zhi_xc', title: '之', one_line_intent: '区分「之」用法' },
+          { knowledge_id: 'k_qi_xc', title: '其', one_line_intent: '区分「其」用法' },
+        ],
+      }),
+    }));
+    const proposal = await planLearningIntent({ db, topic: '虚词', runTaskFn });
+    return { proposalId: proposal.proposal_id };
+  }
+
+  it('accept materializes 1 hub + N atomic learning_items via acceptLearningIntent and records a single rate event', async () => {
+    const { proposalId } = await seedLearningItemProposal();
+    const result = await acceptAiProposal(testDb(), proposalId);
+    expect(result.kind).toBe('learning_item');
+    if (result.kind !== 'learning_item') throw new Error('unexpected result kind');
+    expect(result.hub_learning_item_id).toBeTruthy();
+    expect(result.atomic_learning_item_ids).toHaveLength(2);
+    expect(result.hub_artifact_id).toBeTruthy();
+    expect(result.atomic_artifact_ids).toHaveLength(2);
+
+    const lis = await testDb()
+      .select()
+      .from(learning_item)
+      .where(eq(learning_item.source_ref, proposalId));
+    expect(lis).toHaveLength(3);
+    const hub = lis.find((row) => row.id === result.hub_learning_item_id);
+    expect(hub?.parent_learning_item_id).toBeNull();
+    expect(hub?.source).toBe('learning_intent');
+    expect(hub?.archived_at).toBeNull();
+    const atomics = lis.filter((row) => row.id !== result.hub_learning_item_id);
+    for (const atomic of atomics) {
+      expect(atomic.parent_learning_item_id).toBe(result.hub_learning_item_id);
+      expect(atomic.archived_at).toBeNull();
+    }
+
+    // acceptLearningIntent owns rate-event writing inside its own transaction;
+    // acceptAiProposal must NOT write a second rate event.
+    const rateRows = await testDb()
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId)));
+    expect(rateRows).toHaveLength(1);
+    expect(rateRows[0].payload).toMatchObject({ rating: 'accept' });
+
+    // Signal still records (cooldown / acceptance-rate stay in sync with other kinds).
+    const signals = await testDb()
+      .select()
+      .from(proposal_signals)
+      .where(eq(proposal_signals.kind, 'learning_item'));
+    expect(signals).toHaveLength(1);
+    expect(signals[0]).toMatchObject({ accept_count: 1, dismiss_count: 0 });
+  });
+
+  it('dismiss writes a generic rate event without materializing learning_items', async () => {
+    const { proposalId } = await seedLearningItemProposal();
+    const result = await dismissAiProposal(testDb(), proposalId, { user_note: 'changed mind' });
+    expect(result.kind).toBe('dismissed');
+
+    const lis = await testDb()
+      .select()
+      .from(learning_item)
+      .where(eq(learning_item.source_ref, proposalId));
+    expect(lis).toHaveLength(0);
+
+    const rateRows = await testDb()
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId)));
+    expect(rateRows).toHaveLength(1);
+    expect(rateRows[0].payload).toMatchObject({ rating: 'dismiss', user_note: 'changed mind' });
+
+    const signals = await testDb()
+      .select()
+      .from(proposal_signals)
+      .where(eq(proposal_signals.kind, 'learning_item'));
+    expect(signals).toHaveLength(1);
+    expect(signals[0]).toMatchObject({ dismiss_count: 1, accept_count: 0 });
+  });
+
+  it('retract before accept writes only the correction event; nothing to tombstone', async () => {
+    const { proposalId } = await seedLearningItemProposal();
+    const result = await retractAiProposal(testDb(), proposalId, { reason_md: 'noise' });
+    expect(result.kind).toBe('retracted');
+
+    const lis = await testDb()
+      .select()
+      .from(learning_item)
+      .where(eq(learning_item.source_ref, proposalId));
+    expect(lis).toHaveLength(0);
+  });
+
+  it('retract after accept tombstones hub + atomic learning_items + artifacts with archived_reason=proposal_retracted', async () => {
+    const { proposalId } = await seedLearningItemProposal();
+    const accepted = await acceptAiProposal(testDb(), proposalId);
+    if (accepted.kind !== 'learning_item') throw new Error('expected learning_item accept');
+
+    const retracted = await retractAiProposal(testDb(), proposalId, { reason_md: 'rewrite' });
+    expect(retracted.kind).toBe('retracted');
+
+    const liRows = await testDb()
+      .select()
+      .from(learning_item)
+      .where(eq(learning_item.source_ref, proposalId));
+    expect(liRows).toHaveLength(3);
+    for (const li of liRows) {
+      expect(li.archived_at).not.toBeNull();
+      expect(li.archived_reason).toBe('proposal_retracted');
+    }
+
+    const artifactIds = [accepted.hub_artifact_id, ...accepted.atomic_artifact_ids];
+    const artifactRows = await testDb()
+      .select()
+      .from(artifact)
+      .where(eq(artifact.source_ref, proposalId));
+    expect(artifactRows.length).toBeGreaterThanOrEqual(artifactIds.length);
+    for (const art of artifactRows) {
+      expect(art.archived_at).not.toBeNull();
+    }
+  });
+
+  it('accept idempotent: second accept rejects with not_pending after the first writes a rate event', async () => {
+    const { proposalId } = await seedLearningItemProposal();
+    const first = await acceptAiProposal(testDb(), proposalId);
+    expect(first.kind).toBe('learning_item');
+
+    await expect(acceptAiProposal(testDb(), proposalId)).rejects.toMatchObject({
+      code: 'not_pending',
+    });
+
+    // Hub + atomics still exist exactly once.
+    const liRows = await testDb()
+      .select()
+      .from(learning_item)
+      .where(eq(learning_item.source_ref, proposalId));
+    expect(liRows).toHaveLength(3);
+  });
+
+  it('retract already-archived rows is idempotent — second retract leaves rows alone', async () => {
+    const { proposalId } = await seedLearningItemProposal();
+    await acceptAiProposal(testDb(), proposalId);
+    await retractAiProposal(testDb(), proposalId, { reason_md: 'first' });
+
+    const firstSnapshot = await testDb()
+      .select()
+      .from(learning_item)
+      .where(eq(learning_item.source_ref, proposalId));
+    const firstArchivedAt = firstSnapshot[0].archived_at;
+    const firstVersion = firstSnapshot[0].version;
+
+    await retractAiProposal(testDb(), proposalId, { reason_md: 'second' });
+
+    const secondSnapshot = await testDb()
+      .select()
+      .from(learning_item)
+      .where(eq(learning_item.source_ref, proposalId));
+    // archived_at + version should not change because we only tombstone rows
+    // that are not already archived.
+    expect(secondSnapshot[0].archived_at).toEqual(firstArchivedAt);
+    expect(secondSnapshot[0].version).toBe(firstVersion);
   });
 });
 

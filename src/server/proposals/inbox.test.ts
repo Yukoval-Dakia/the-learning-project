@@ -286,4 +286,41 @@ describe('proposal inbox reader', () => {
     expect(rows[0].signals?.acceptance_rate).toBe(1);
     expect(rows[2].signals?.cooldown_until).toBeInstanceOf(Date);
   });
+
+  // YUK-19 — planLearningIntent writes proposals with the legacy
+  // `experimental:propose_learning_intent` action. They must surface in the
+  // unified inbox so the rollback / accept UI can find them.
+  it('surfaces experimental:propose_learning_intent rows as kind=learning_item', async () => {
+    const db = testDb();
+    await writeAiProposal(db, {
+      id: 'intent_p1',
+      payload: {
+        kind: 'learning_item',
+        target: { subject_kind: 'learning_item', subject_id: null },
+        reason_md: '学习路径提议：虚词',
+        evidence_refs: [],
+        proposed_change: {
+          topic: '虚词',
+          knowledge_node: { id: 'k_hub', name: '虚词', domain: 'wenyan' },
+          hub: { title: '虚词总览', summary_md: '...' },
+          atomics: [{ knowledge_id: 'k_zhi', title: '之', one_line_intent: '...' }],
+        },
+      },
+      event_override: {
+        action: 'experimental:propose_learning_intent',
+        subject_kind: 'artifact',
+        subject_id: 'art_synthetic',
+        payload: { topic: '虚词' },
+      },
+    });
+
+    const rows = await listProposalInboxRows(db);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: 'intent_p1',
+      kind: 'learning_item',
+      status: 'pending',
+      source_action: 'experimental:propose_learning_intent',
+    });
+  });
 });

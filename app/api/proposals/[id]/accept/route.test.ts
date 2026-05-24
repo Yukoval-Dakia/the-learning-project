@@ -96,18 +96,23 @@ describe('POST /api/proposals/[id]/accept', () => {
   });
 
   it('returns 400 for future proposal kinds without owner-service semantics', async () => {
+    // `completion` accept is not implemented yet (YUK-19 ships learning_item only).
     await writeAiProposal(testDb(), {
-      id: 'learning_p1',
+      id: 'completion_p1',
       payload: {
-        kind: 'learning_item',
-        target: { subject_kind: 'learning_item', subject_id: null },
-        reason_md: 'Create a focused review item',
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'li_xx' },
+        reason_md: 'item appears mastered',
         evidence_refs: [],
-        proposed_change: { title: '虚词复习' },
+        proposed_change: {
+          learning_item_id: 'li_xx',
+          triggering_signals: ['mastery_high_persisted_14d'],
+          evidence_json: {},
+        },
       },
     });
 
-    const res = await acceptProposal('learning_p1');
+    const res = await acceptProposal('completion_p1');
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe('unsupported_proposal_kind');

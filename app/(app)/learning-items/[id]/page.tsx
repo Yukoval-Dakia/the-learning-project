@@ -7,6 +7,10 @@ import {
   type ArtifactSection as NoteSection,
 } from '@/ui/components/ArtifactSections';
 import { TeachingDrawer } from '@/ui/components/TeachingDrawer';
+import {
+  CorrectionStateRenderer,
+  type CorrectionStateSnapshot,
+} from '@/ui/correction/CorrectionStateRenderer';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
 import {
   type SlimSubjectProfile,
@@ -76,6 +80,9 @@ interface PrimaryArtifact {
 
 interface Detail {
   id: string;
+  source: string;
+  source_ref: string | null;
+  source_event: { id: string; correction_state: CorrectionStateSnapshot | null } | null;
   title: string;
   content: string;
   knowledge_ids: string[];
@@ -88,6 +95,7 @@ interface Detail {
   children: ChildRow[];
   completed_at: number | null;
   archived_at: number | null;
+  archived_reason: string | null;
   created_at: number;
   updated_at: number;
   version: number;
@@ -145,6 +153,29 @@ export default function LearningItemDetailPage() {
   const [titleDraft, setTitleDraft] = useState<string | null>(null);
   const [contentDraft, setContentDraft] = useState<string | null>(null);
   const [teachOpen, setTeachOpen] = useState(false);
+  // YUK-19 — retract CTA state. Mirrors the inbox UI retract pattern: button
+  // reveals reason textarea, second click confirms.
+  const [retractDraftReason, setRetractDraftReason] = useState<string | null>(null);
+
+  // YUK-19 — retract the originating learning_intent proposal. Reuses
+  // /api/proposals/[id]/retract (CC-4 invariant). On success the backend
+  // tombstones the materialized hub + atomic learning_items + artifacts,
+  // so we invalidate the learning-items caches.
+  const retractM = useMutation({
+    mutationFn: (vars: { proposalId: string; reason_md: string }) =>
+      apiJson<{ kind: 'retracted'; correction_event_id: string }>(
+        `/api/proposals/${vars.proposalId}/retract`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ reason_md: vars.reason_md }),
+        },
+      ),
+    onSuccess: () => {
+      setRetractDraftReason(null);
+      qc.invalidateQueries({ queryKey: ['learning-item', id] });
+      qc.invalidateQueries({ queryKey: ['learning-items'] });
+    },
+  });
 
   const data = detailQ.data;
   useEffect(() => {
@@ -259,6 +290,25 @@ export default function LearningItemDetailPage() {
           → 对话教学
         </button>
       </div>
+
+      {/* YUK-19 — source event block. Surface origin proposal + correction state
+          + retract CTA when the item came from a still-active learning_intent
+          proposal. Reuses CorrectionStateRenderer (CC-2) + the existing retract
+          route (CC-4). */}
+      {data.source_event && (
+        <SourceEventBlock
+          source={data.source}
+          sourceEvent={data.source_event}
+          archivedReason={data.archived_reason}
+          retractDraftReason={retractDraftReason}
+          setRetractDraftReason={setRetractDraftReason}
+          onRetract={(reason_md) =>
+            data.source_event && retractM.mutate({ proposalId: data.source_event.id, reason_md })
+          }
+          isPending={retractM.isPending}
+          error={retractM.isError ? (retractM.error as Error).message : null}
+        />
+      )}
 
       <Card pad="lg" style={{ marginTop: 'var(--s-4)' }}>
         <Label>标题</Label>
@@ -519,6 +569,108 @@ function ParentPicker({
         {filter && filtered.length === 0 && <span style={mutedStyle}>无匹配</span>}
       </div>
     </div>
+  );
+}
+
+// YUK-19 — source event block. Always shows the origin event link +
+// correction state badge. Adds a retract CTA only when source='learning_intent'
+// (the producer) and the proposal is still active (not yet retracted /
+// superseded). The retract button reveals a reason textarea, confirm dispatches
+// /api/proposals/[id]/retract.
+function SourceEventBlock({
+  source,
+  sourceEvent,
+  archivedReason,
+  retractDraftReason,
+  setRetractDraftReason,
+  onRetract,
+  isPending,
+  error,
+}: {
+  source: string;
+  sourceEvent: { id: string; correction_state: CorrectionStateSnapshot | null };
+  archivedReason: string | null;
+  retractDraftReason: string | null;
+  setRetractDraftReason: (value: string | null) => void;
+  onRetract: (reason_md: string) => void;
+  isPending: boolean;
+  error: string | null;
+}) {
+  const state = sourceEvent.correction_state?.state ?? 'active';
+  const canRetract = source === 'learning_intent' && state === 'active';
+
+  return (
+    <Card pad="lg" style={{ marginTop: 'var(--s-4)' }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 'var(--s-3)',
+          flexWrap: 'wrap',
+        }}
+      >
+        <Label inline>source event</Label>
+        <Link href={`/events/${sourceEvent.id}`} style={linkStyle}>
+          {sourceEvent.id.slice(0, 8)}…
+        </Link>
+        <CorrectionStateRenderer state={sourceEvent.correction_state} showActive />
+        {archivedReason === 'proposal_retracted' && (
+          <Badge tone="again">archive 因 proposal 撤回</Badge>
+        )}
+      </div>
+
+      {canRetract && retractDraftReason === null && (
+        <div style={{ marginTop: 'var(--s-3)' }}>
+          <Button variant="ghost" onClick={() => setRetractDraftReason('')}>
+            撤回此 proposal（连带归档已生成的 hub + atomic）
+          </Button>
+        </div>
+      )}
+      {canRetract && retractDraftReason !== null && (
+        <div style={{ marginTop: 'var(--s-3)' }}>
+          <Label>撤回原因</Label>
+          <textarea
+            value={retractDraftReason}
+            onChange={(e) => setRetractDraftReason(e.target.value)}
+            placeholder="例：方向走错了 / 拆分粒度不对 / 重做一遍"
+            rows={3}
+            maxLength={2000}
+            style={{
+              ...inputStyle,
+              minHeight: 80,
+              lineHeight: 'var(--lh-prose)',
+              resize: 'vertical',
+            }}
+          />
+          <div
+            style={{
+              marginTop: 'var(--s-2)',
+              display: 'flex',
+              gap: 'var(--s-2)',
+              justifyContent: 'flex-end',
+            }}
+          >
+            <Button
+              variant="ghost"
+              onClick={() => setRetractDraftReason(null)}
+              disabled={isPending}
+            >
+              取消
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() =>
+                onRetract(retractDraftReason.trim() || '撤回 learning_intent proposal')
+              }
+              disabled={isPending}
+            >
+              {isPending ? '撤回中…' : '确认撤回'}
+            </Button>
+          </div>
+          {error && <p style={errorStyle}>撤回失败：{error}</p>}
+        </div>
+      )}
+    </Card>
   );
 }
 
