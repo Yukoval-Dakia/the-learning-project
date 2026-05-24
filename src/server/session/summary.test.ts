@@ -304,4 +304,31 @@ describe('runSessionSummary', () => {
     };
     expect(input.top_causes).toEqual([{ category: 'memory', count: 1 }]);
   });
+
+  it('counts every failure cause for long sessions instead of truncating by question count', async () => {
+    const db = testDb();
+    const { sessionId } = await Review.startReviewSession(db);
+    for (let questionIndex = 0; questionIndex < 50; questionIndex += 1) {
+      const questionId = `q_long_${questionIndex}`;
+      await seedQuestion(questionId, `题 ${questionIndex}`);
+      await seedReviewEvent(sessionId, questionId, 'again');
+      for (let failureIndex = 0; failureIndex < 11; failureIndex += 1) {
+        await seedFailureAttemptWithCause({
+          attemptId: `attempt_long_${questionIndex}_${failureIndex}`,
+          questionId,
+          judgeCategory: 'memory',
+        });
+      }
+    }
+
+    const runTaskFn = vi.fn(async (_kind: string, _input: unknown, _ctx: unknown) => ({
+      text: 'summary',
+    }));
+    await runSessionSummary({ db, sessionId, runTaskFn });
+
+    const input = runTaskFn.mock.calls[0][1] as {
+      top_causes: Array<{ category: string; count: number }>;
+    };
+    expect(input.top_causes).toEqual([{ category: 'memory', count: 550 }]);
+  });
 });

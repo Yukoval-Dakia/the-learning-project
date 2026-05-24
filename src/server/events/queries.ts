@@ -78,7 +78,7 @@ export type FailureAttempt = {
 };
 
 export interface GetFailureAttemptsOpts {
-  limit?: number;
+  limit?: number | null;
   questionIds?: string[];
   since?: Date;
 }
@@ -141,8 +141,9 @@ export async function getFailureAttempts(
   db: DbLike,
   opts: GetFailureAttemptsOpts = {},
 ): Promise<FailureAttempt[]> {
+  const unbounded = opts.limit === null;
   const limit = opts.limit ?? DEFAULT_FAILURE_ATTEMPTS_LIMIT;
-  if (limit <= 0) return [];
+  if (!unbounded && limit <= 0) return [];
   const conditions = [
     eq(event.action, 'attempt'),
     eq(event.subject_kind, 'question'),
@@ -154,28 +155,26 @@ export async function getFailureAttempts(
   if (opts.since) {
     conditions.push(gte(event.created_at, opts.since));
   }
-  const attemptRows = await db
+  const attemptQuery = db
     .select()
     .from(event)
     .where(and(...conditions))
-    .orderBy(desc(event.created_at))
-    .limit(limit * 3);
+    .orderBy(desc(event.created_at));
+  const attemptRows = unbounded ? await attemptQuery : await attemptQuery.limit(limit * 3);
 
   if (attemptRows.length === 0) return [];
 
-  const activeAttemptRows = await takeActiveRows(
-    db,
-    attemptRows,
-    limit,
-    async (nextLimit, offset) =>
-      db
-        .select()
-        .from(event)
-        .where(and(...conditions))
-        .orderBy(desc(event.created_at))
-        .limit(nextLimit)
-        .offset(offset),
-  );
+  const activeAttemptRows = unbounded
+    ? await filterActiveRows(db, attemptRows)
+    : await takeActiveRows(db, attemptRows, limit, async (nextLimit, offset) =>
+        db
+          .select()
+          .from(event)
+          .where(and(...conditions))
+          .orderBy(desc(event.created_at))
+          .limit(nextLimit)
+          .offset(offset),
+      );
 
   if (activeAttemptRows.length === 0) return [];
 
@@ -581,6 +580,15 @@ async function takeActiveRows(
   }
 
   return activeRows;
+}
+
+async function filterActiveRows(db: DbLike, rows: EventRow[]): Promise<EventRow[]> {
+  if (rows.length === 0) return [];
+  const statuses = await getCorrectionStatuses(
+    db,
+    rows.map((r) => r.id),
+  );
+  return rows.filter((row) => hasActiveCorrectionStatus(statuses.get(row.id)));
 }
 
 export async function getEvents(
