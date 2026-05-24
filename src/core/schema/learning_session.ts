@@ -37,8 +37,14 @@ export type IngestionStatusT = z.infer<typeof IngestionStatus>;
 export const ReviewStatus = z.enum(['started', 'completed', 'abandoned']);
 export type ReviewStatusT = z.infer<typeof ReviewStatus>;
 
-// conversation 状态机 (ADR-0008 + ADR-0006 v2)：active → idle → ended
-export const ConversationStatus = z.enum(['active', 'idle', 'ended']);
+// conversation 状态机 (ADR-0008 + YUK-14 / docs/design/2026-05-24-teaching-idle-state-machine.md)：
+//   active <-> idle  → ended | abandoned
+//
+// active   : drawer open, recent user/agent activity
+// idle     : drawer still open, no user message for ≥ IDLE_MS (5 min default)
+// ended    : terminal — explicit close, drawer unmount, pagehide(active)
+// abandoned: terminal — pagehide(idle), orphan cron (>6h still active|idle)
+export const ConversationStatus = z.enum(['active', 'idle', 'ended', 'abandoned']);
 export type ConversationStatusT = z.infer<typeof ConversationStatus>;
 
 // tutor / explore / create —— 占位 enum，状态待定。**绝不**用 z.string() 兜底，
