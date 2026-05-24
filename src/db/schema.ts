@@ -579,6 +579,36 @@ export const knowledge_edge = pgTable(
   ],
 );
 
+// YUK-17 / ADR-0018 — variant lifecycle ledger.
+//
+// Each row tracks one AI-proposed mistake variant from "AI drafted" through
+// "user accepted + question materialized" or "verify pass 2 broke it" / "user
+// dismissed". variant_question proposals get a 'draft' row on write; accept
+// transitions to 'active' (and the question row is materialized in the same
+// txn); VariantVerifyTask second-pass verdict='fail' flips to 'broken'. See
+// docs/adr/0018-mistake-variant-lifecycle-and-variants-max.md.
+//
+// counting variants_max = 3 reads the in-flight set (status IN ('draft',
+// 'active')), so AI cannot flood the inbox even when the user defers review.
+export const mistake_variant = pgTable(
+  'mistake_variant',
+  {
+    id: text('id').primaryKey(),
+    parent_question_id: text('parent_question_id').notNull(),
+    variant_question_id: text('variant_question_id'),
+    proposal_event_id: text('proposal_event_id'),
+    status: text('status').notNull(),
+    failure_reasons: jsonb('failure_reasons').$type<string[]>().notNull().default([]),
+    cause_category: text('cause_category'),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    index('mistake_variant_parent_idx').on(t.parent_question_id),
+    index('mistake_variant_status_idx').on(t.status),
+  ],
+);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase 1c.1 Step 1.3 (Lane A) — knowledge_mastery derived view.
 //

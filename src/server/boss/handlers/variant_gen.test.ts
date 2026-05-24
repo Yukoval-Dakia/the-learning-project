@@ -1,6 +1,6 @@
 // Task #17 — variant_gen handler tests.
 
-import { event, knowledge, question } from '@/db/schema';
+import { event, knowledge, mistake_variant, question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { runAttributionAndWriteJudgeEvent } from '@/server/knowledge/attribute';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -418,6 +418,144 @@ describe('runVariantGen', () => {
       proposal.payload as { ai_proposal?: { proposed_change?: Record<string, unknown> } }
     ).ai_proposal;
     expect(aiProposal?.proposed_change?.root_question_id).toBe('q_root');
+  });
+
+  it('writes a draft mistake_variant row alongside the proposal (YUK-17)', async () => {
+    const db = testDb();
+    await seedKnowledge();
+    await seedQuestion({ id: 'q1' });
+    const attemptId = createId();
+    await seedFailureAttempt(attemptId, 'q1');
+    await seedJudgeForAttempt(attemptId, 'concept');
+
+    const runTaskFn = vi.fn(async () => ({ text: VALID_VARIANT_OUTPUT }));
+    const result = await runVariantGen({ db, attemptEventId: attemptId, runTaskFn });
+
+    expect(result.status).toBe('proposed');
+    expect(result.mistake_variant_id).toBeTruthy();
+    expect(result.proposal_id).toBeTruthy();
+
+    const mvRows = await db
+      .select()
+      .from(mistake_variant)
+      .where(eq(mistake_variant.id, result.mistake_variant_id ?? ''));
+    expect(mvRows).toHaveLength(1);
+    expect(mvRows[0]).toMatchObject({
+      parent_question_id: 'q1',
+      variant_question_id: null,
+      proposal_event_id: result.proposal_id,
+      status: 'draft',
+      cause_category: 'concept',
+      failure_reasons: [],
+    });
+  });
+
+  it('returns skipped:variants_max_reached when 3 in-flight rows already exist (YUK-17)', async () => {
+    const db = testDb();
+    await seedKnowledge();
+    await seedQuestion({ id: 'q1' });
+    // Seed 3 in-flight mistake_variant rows directly (mix of draft+active).
+    const now = new Date();
+    for (let i = 0; i < 3; i++) {
+      await db.insert(mistake_variant).values({
+        id: `mv_${i}`,
+        parent_question_id: 'q1',
+        variant_question_id: i === 0 ? `q_existing_${i}` : null,
+        proposal_event_id: `p_existing_${i}`,
+        status: i === 0 ? 'active' : 'draft',
+        failure_reasons: [],
+        cause_category: 'concept',
+        created_at: now,
+        updated_at: now,
+      });
+    }
+    const attemptId = createId();
+    await seedFailureAttempt(attemptId, 'q1');
+    await seedJudgeForAttempt(attemptId, 'concept');
+
+    const runTaskFn = vi.fn();
+    const result = await runVariantGen({ db, attemptEventId: attemptId, runTaskFn });
+    expect(result.status).toBe('skipped:variants_max_reached');
+    expect(runTaskFn).not.toHaveBeenCalled();
+  });
+
+  it('still proposes when in-flight count is 2 (variants_max headroom)', async () => {
+    const db = testDb();
+    await seedKnowledge();
+    await seedQuestion({ id: 'q1' });
+    const now = new Date();
+    for (let i = 0; i < 2; i++) {
+      await db.insert(mistake_variant).values({
+        id: `mv_${i}`,
+        parent_question_id: 'q1',
+        variant_question_id: null,
+        proposal_event_id: `p_existing_${i}`,
+        status: 'draft',
+        failure_reasons: [],
+        cause_category: 'concept',
+        created_at: now,
+        updated_at: now,
+      });
+    }
+    const attemptId = createId();
+    await seedFailureAttempt(attemptId, 'q1');
+    await seedJudgeForAttempt(attemptId, 'concept');
+
+    const runTaskFn = vi.fn(async () => ({ text: VALID_VARIANT_OUTPUT }));
+    const result = await runVariantGen({ db, attemptEventId: attemptId, runTaskFn });
+    expect(result.status).toBe('proposed');
+    const finalRows = await db
+      .select()
+      .from(mistake_variant)
+      .where(eq(mistake_variant.parent_question_id, 'q1'));
+    expect(finalRows).toHaveLength(3);
+  });
+
+  it('broken / dismissed rows do not count toward variants_max', async () => {
+    const db = testDb();
+    await seedKnowledge();
+    await seedQuestion({ id: 'q1' });
+    const now = new Date();
+    // 3 historical rows, all terminal — should not block a fresh proposal.
+    await db.insert(mistake_variant).values([
+      {
+        id: 'mv_old_1',
+        parent_question_id: 'q1',
+        status: 'broken',
+        failure_reasons: ['off target'],
+        proposal_event_id: 'p_old_1',
+        variant_question_id: 'q_old_1',
+        created_at: now,
+        updated_at: now,
+      },
+      {
+        id: 'mv_old_2',
+        parent_question_id: 'q1',
+        status: 'dismissed',
+        failure_reasons: [],
+        proposal_event_id: 'p_old_2',
+        variant_question_id: null,
+        created_at: now,
+        updated_at: now,
+      },
+      {
+        id: 'mv_old_3',
+        parent_question_id: 'q1',
+        status: 'dismissed',
+        failure_reasons: [],
+        proposal_event_id: 'p_old_3',
+        variant_question_id: null,
+        created_at: now,
+        updated_at: now,
+      },
+    ]);
+    const attemptId = createId();
+    await seedFailureAttempt(attemptId, 'q1');
+    await seedJudgeForAttempt(attemptId, 'concept');
+
+    const runTaskFn = vi.fn(async () => ({ text: VALID_VARIANT_OUTPUT }));
+    const result = await runVariantGen({ db, attemptEventId: attemptId, runTaskFn });
+    expect(result.status).toBe('proposed');
   });
 
   it('throws when LLM output is not valid JSON', async () => {

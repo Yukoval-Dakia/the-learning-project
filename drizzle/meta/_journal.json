@@ -92,6 +92,13 @@
       "when": 1779547957037,
       "tag": "0012_proposal_signals",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1779609307238,
+      "tag": "0013_mistake_variant",
+      "breakpoints": true
     }
   ]
 }

@@ -1,34 +1,44 @@
 // Phase 2 (Task #17) — async variant question generation.
 //
 // Triggered after a failure attempt has an effective cause. If the active
-// SubjectProfile marks the cause's primary_category as
-// targetable, generate one variant_question proposal. YUK-44 moved this from
-// direct question materialization to the proposal inbox; accepting the proposal
-// can later create a question with source='mistake_variant', draft_status, and
-// variant lineage.
+// SubjectProfile marks the cause's primary_category as targetable, generate
+// one variant_question proposal AND insert a `mistake_variant` row at
+// status='draft' to claim a slot in the per-parent in-flight ledger.
+// Accepting the proposal materializes the question + flips the row to 'active'
+// (see acceptAiProposal in src/server/proposals/actions.ts).
 //
-// MVP — single pass (no VariantVerifyTask), no dedicated variant UI beyond
-// proposal inbox review, no per-mistake variants_max counter. Counter / verify
-// double pass / "再来几道" button are spec'd Phase 3 features.
+// YUK-17 (ADR-0018) added: variants_max=3 cap counting all in-flight rows
+// (draft + active) and the VariantVerifyTask second pass — the verify handler
+// runs after accept and may flip 'active' → 'broken' if the variant drifted
+// off the original cause.
 //
 // Defense against "错题繁殖":
 //   1. variant_depth >= 2 → skip (spec §3.4.4 cap)
 //   2. parent question.source === 'mistake_variant' → skip (variants do not
 //      themselves spawn variants — spec §3.4.4 chain termination)
 //   3. SubjectProfile cause category can set variant_targetable=false.
+//   4. variants_max=3 counts in-flight (draft + active) mistake_variant rows.
+//   5. Per-(parent, attempt) cooldown via proposal cooldown_key — same attempt
+//      retrying variant_gen never produces a second proposal.
 
-import { eq } from 'drizzle-orm';
+import { createId } from '@paralleldrive/cuid2';
+import { and, count, eq, inArray } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { z } from 'zod';
 
 import type { Db } from '@/db/client';
-import { event, knowledge, question } from '@/db/schema';
+import { event, knowledge, mistake_variant, question } from '@/db/schema';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 import { getFailureAttemptById } from '@/server/events/queries';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { writeVariantQuestionProposal } from '@/server/proposals/producers';
 import { resolveSubjectProfile } from '@/subjects/profile';
+
+// YUK-17 / ADR-0018 — per-parent in-flight variant cap. Counts
+// mistake_variant rows where status IN ('draft', 'active') so AI cannot flood
+// the inbox even when the user defers review.
+export const VARIANTS_MAX_IN_FLIGHT = 3;
 
 export interface VariantGenJobData {
   attempt_event_id: string;
@@ -89,8 +99,10 @@ export interface RunVariantGenResult {
     | 'skipped:max_depth'
     | 'skipped:variant_chain_terminus'
     | 'skipped:cause_not_targetable'
-    | 'skipped:already_has_variant';
+    | 'skipped:already_has_variant'
+    | 'skipped:variants_max_reached';
   proposal_id?: string;
+  mistake_variant_id?: string;
 }
 
 export async function runVariantGen(params: RunVariantGenParams): Promise<RunVariantGenResult> {
@@ -153,20 +165,27 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
     return { status: 'skipped:max_depth' };
   }
 
-  // Idempotency: did we already generate a variant for this attempt? Check
-  // for an existing question whose parent_variant_id starts the chain at
-  // this attempt's parent (best signal we have without per-mistake counter).
-  // We use parent_variant_id = parent.id + a marker; simpler check: count
-  // existing variants of THIS parent and cap at 1 for MVP (no per-mistake
-  // counter; refine later).
-  const existingVariants = await db
-    .select({ id: question.id })
-    .from(question)
-    .where(eq(question.parent_variant_id, parent.id))
-    .limit(1);
-  if (existingVariants.length > 0) {
-    return { status: 'skipped:already_has_variant' };
+  // YUK-17 / ADR-0018 — per-parent in-flight cap. Counts both pending
+  // proposals (status='draft') AND accepted-but-not-broken variants
+  // (status='active'). This supersedes the MVP "1-per-parent" cap that
+  // checked question.parent_variant_id alone, since mistake_variant is now
+  // the canonical in-flight ledger.
+  const inFlightCountRows = await db
+    .select({ value: count() })
+    .from(mistake_variant)
+    .where(
+      and(
+        eq(mistake_variant.parent_question_id, parent.id),
+        inArray(mistake_variant.status, ['draft', 'active']),
+      ),
+    );
+  const inFlightCount = inFlightCountRows[0]?.value ?? 0;
+  if (inFlightCount >= VARIANTS_MAX_IN_FLIGHT) {
+    return { status: 'skipped:variants_max_reached' };
   }
+
+  // Per-(parent, attempt) idempotency: same attempt re-triggering variant_gen
+  // never spawns a second proposal — even if variants_max still has headroom.
   const cooldownKey = `variant_question:${parent.id}:${attemptEventId}`;
   const pendingProposals = await listProposalInboxRows(db, { status: 'pending' });
   if (
@@ -218,24 +237,47 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
   const parsed = parseVariantOutput(result.text);
 
   const rootId = parent.root_question_id ?? parent.id;
+  const now = new Date();
 
-  const proposalId = await writeVariantQuestionProposal(db, {
-    source_question_id: parent.id,
-    source_attempt_event_id: attemptEventId,
-    prompt_md: parsed.prompt_md,
-    reference_md: parsed.reference_md,
-    difficulty: parsed.difficulty,
-    knowledge_ids: parent.knowledge_ids,
-    parent_variant_id: parent.id,
-    root_question_id: rootId,
-    variant_depth: parent.variant_depth + 1,
-    reason_md: parsed.reasoning,
-    task_run_id: result.task_run_id ?? null,
-    cost_usd: result.cost_usd,
-    created_at: new Date(),
+  let proposalId = '';
+  const mistakeVariantId = createId();
+  await db.transaction(async (tx) => {
+    proposalId = await writeVariantQuestionProposal(tx, {
+      source_question_id: parent.id,
+      source_attempt_event_id: attemptEventId,
+      prompt_md: parsed.prompt_md,
+      reference_md: parsed.reference_md,
+      difficulty: parsed.difficulty,
+      knowledge_ids: parent.knowledge_ids,
+      parent_variant_id: parent.id,
+      root_question_id: rootId,
+      variant_depth: parent.variant_depth + 1,
+      reason_md: parsed.reasoning,
+      task_run_id: result.task_run_id ?? null,
+      cost_usd: result.cost_usd,
+      created_at: now,
+    });
+
+    // YUK-17 / ADR-0018 — claim a slot in the in-flight ledger so
+    // variants_max counting works while the proposal is pending.
+    await tx.insert(mistake_variant).values({
+      id: mistakeVariantId,
+      parent_question_id: parent.id,
+      variant_question_id: null,
+      proposal_event_id: proposalId,
+      status: 'draft',
+      failure_reasons: [],
+      cause_category: cause.primary_category,
+      created_at: now,
+      updated_at: now,
+    });
   });
 
-  return { status: 'proposed', proposal_id: proposalId };
+  return {
+    status: 'proposed',
+    proposal_id: proposalId,
+    mistake_variant_id: mistakeVariantId,
+  };
 }
 
 export function buildVariantGenHandler(

@@ -14,6 +14,7 @@ import { buildPruneOrphanReviewSessionsHandler } from './handlers/prune_orphan_r
 import { buildSessionSummaryHandler } from './handlers/session_summary';
 import { buildTencentOcrHandler } from './handlers/tencent_ocr_extract';
 import { buildVariantGenHandler } from './handlers/variant_gen';
+import { buildVariantVerifyHandler } from './handlers/variant_verify';
 
 /**
  * Register all pg-boss queue handlers + schedules.
@@ -124,6 +125,16 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     'variant_gen',
     { pollingIntervalSeconds: 2, batchSize: 1 },
     buildVariantGenHandler(db),
+  );
+
+  // YUK-17 / ADR-0018 — second-pass content alignment check for accepted
+  // variants. Enqueued by acceptAiProposal after a variant_question proposal
+  // is accepted; verdict='fail' flips mistake_variant.status to 'broken'.
+  await boss.createQueue('variant_verify');
+  await boss.work(
+    'variant_verify',
+    { pollingIntervalSeconds: 2, batchSize: 1 },
+    buildVariantVerifyHandler(db),
   );
 
   // Step 9: Tencent OCR Mark Agent —— 生产 async job

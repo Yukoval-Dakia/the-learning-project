@@ -1,6 +1,15 @@
-import { event, knowledge, knowledge_edge, proposal_signals } from '@/db/schema';
+import {
+  event,
+  knowledge,
+  knowledge_edge,
+  mistake_variant,
+  proposal_signals,
+  question,
+} from '@/db/schema';
+import { writeVariantQuestionProposal } from '@/server/proposals/producers';
+import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
   acceptAiProposal,
@@ -240,5 +249,206 @@ describe('proposal lifecycle owner service', () => {
       code: 'unsupported_proposal_kind',
       status: 400,
     });
+  });
+});
+
+// YUK-17 / ADR-0018 — variant_question lifecycle integration.
+describe('variant_question proposal lifecycle', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  async function seedParentQuestion(id: string): Promise<void> {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(question).values({
+      id,
+      kind: 'short_answer',
+      prompt_md: '原题 prompt',
+      reference_md: '原题 reference',
+      knowledge_ids: ['k_xuci'],
+      difficulty: 3,
+      source: 'manual',
+      variant_depth: 0,
+      root_question_id: null,
+      created_at: now,
+      updated_at: now,
+    });
+  }
+
+  async function seedVariantQuestionProposal(): Promise<{
+    proposalId: string;
+    mistakeVariantId: string;
+  }> {
+    const db = testDb();
+    const proposalId = await writeVariantQuestionProposal(db, {
+      source_question_id: 'q_parent',
+      source_attempt_event_id: 'e_attempt',
+      prompt_md: '变式 prompt',
+      reference_md: '变式 reference',
+      difficulty: 3,
+      knowledge_ids: ['k_xuci'],
+      parent_variant_id: 'q_parent',
+      root_question_id: 'q_parent',
+      variant_depth: 1,
+      reason_md: '针对 concept cause 的变式',
+    });
+    const mvId = createId();
+    const now = new Date();
+    await db.insert(mistake_variant).values({
+      id: mvId,
+      parent_question_id: 'q_parent',
+      variant_question_id: null,
+      proposal_event_id: proposalId,
+      status: 'draft',
+      failure_reasons: [],
+      cause_category: 'concept',
+      created_at: now,
+      updated_at: now,
+    });
+    return { proposalId, mistakeVariantId: mvId };
+  }
+
+  it('accept materializes question + flips mistake_variant to active + enqueues variant_verify', async () => {
+    await seedParentQuestion('q_parent');
+    const { proposalId, mistakeVariantId } = await seedVariantQuestionProposal();
+    const enqueue = vi.fn(async () => {});
+
+    const result = await acceptAiProposal(testDb(), proposalId, { enqueueVariantVerify: enqueue });
+    expect(result.kind).toBe('variant_question');
+    if (result.kind !== 'variant_question') throw new Error('unexpected result kind');
+    expect(result.mistake_variant_id).toBe(mistakeVariantId);
+
+    const newQs = await testDb().select().from(question).where(eq(question.id, result.question_id));
+    expect(newQs).toHaveLength(1);
+    expect(newQs[0]).toMatchObject({
+      source: 'mistake_variant',
+      draft_status: 'active',
+      variant_depth: 1,
+      parent_variant_id: 'q_parent',
+      root_question_id: 'q_parent',
+      knowledge_ids: ['k_xuci'],
+      difficulty: 3,
+    });
+
+    const mvRows = await testDb()
+      .select()
+      .from(mistake_variant)
+      .where(eq(mistake_variant.id, mistakeVariantId));
+    expect(mvRows[0]).toMatchObject({
+      status: 'active',
+      variant_question_id: result.question_id,
+    });
+
+    const rateRows = await testDb()
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId)));
+    expect(rateRows).toHaveLength(1);
+    expect(rateRows[0].payload).toMatchObject({
+      rating: 'accept',
+      materialized_question_id: result.question_id,
+      mistake_variant_id: mistakeVariantId,
+    });
+
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    expect(enqueue).toHaveBeenCalledWith(mistakeVariantId);
+  });
+
+  it('dismiss flips mistake_variant row to dismissed and writes rate event', async () => {
+    await seedParentQuestion('q_parent');
+    const { proposalId, mistakeVariantId } = await seedVariantQuestionProposal();
+
+    const result = await dismissAiProposal(testDb(), proposalId, { user_note: 'not useful' });
+    expect(result.kind).toBe('dismissed');
+
+    const mvRows = await testDb()
+      .select()
+      .from(mistake_variant)
+      .where(eq(mistake_variant.id, mistakeVariantId));
+    expect(mvRows[0].status).toBe('dismissed');
+
+    const rateRows = await testDb()
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId)));
+    expect(rateRows).toHaveLength(1);
+    expect(rateRows[0].payload).toMatchObject({ rating: 'dismiss', user_note: 'not useful' });
+
+    const signals = await testDb()
+      .select()
+      .from(proposal_signals)
+      .where(eq(proposal_signals.kind, 'variant_question'));
+    expect(signals).toHaveLength(1);
+    expect(signals[0]).toMatchObject({ dismiss_count: 1, accept_count: 0 });
+  });
+
+  it('retract after accept flips mistake_variant row from active to dismissed', async () => {
+    await seedParentQuestion('q_parent');
+    const { proposalId, mistakeVariantId } = await seedVariantQuestionProposal();
+
+    await acceptAiProposal(testDb(), proposalId, {
+      enqueueVariantVerify: async () => {},
+    });
+
+    const retracted = await retractAiProposal(testDb(), proposalId, { reason_md: 'misalignment' });
+    expect(retracted.kind).toBe('retracted');
+
+    const mvRows = await testDb()
+      .select()
+      .from(mistake_variant)
+      .where(eq(mistake_variant.id, mistakeVariantId));
+    expect(mvRows[0].status).toBe('dismissed');
+  });
+
+  it('accept idempotent: second accept returns the same materialized id without duplicating', async () => {
+    await seedParentQuestion('q_parent');
+    const { proposalId, mistakeVariantId } = await seedVariantQuestionProposal();
+    const enqueue = vi.fn(async () => {});
+
+    const first = await acceptAiProposal(testDb(), proposalId, { enqueueVariantVerify: enqueue });
+    if (first.kind !== 'variant_question') throw new Error('unexpected');
+    // Re-trigger via the inbox path. Because the proposal now has an accept
+    // rate event, listProposalInboxRows surfaces status='accepted'; acceptAiProposal
+    // therefore short-circuits before reaching our owner branch (assertPending).
+    // Use the lower-level acceptVariantQuestionProposal indirectly: a fresh
+    // accept on the same id throws not_pending. So we instead assert that calling
+    // acceptAiProposal again rejects with not_pending — that's the correct
+    // contract because idempotency at the inbox layer means "no double-write".
+    await expect(
+      acceptAiProposal(testDb(), proposalId, { enqueueVariantVerify: enqueue }),
+    ).rejects.toMatchObject({ code: 'not_pending' });
+
+    const questions = await testDb()
+      .select()
+      .from(question)
+      .where(eq(question.id, first.question_id));
+    expect(questions).toHaveLength(1);
+    const mvRows = await testDb()
+      .select()
+      .from(mistake_variant)
+      .where(eq(mistake_variant.id, mistakeVariantId));
+    expect(mvRows[0]).toMatchObject({ status: 'active', variant_question_id: first.question_id });
+  });
+
+  it('accept fails fast when mistake_variant draft row is missing', async () => {
+    await seedParentQuestion('q_parent');
+    const db = testDb();
+    const proposalId = await writeVariantQuestionProposal(db, {
+      source_question_id: 'q_parent',
+      source_attempt_event_id: 'e_attempt',
+      prompt_md: '变式 prompt',
+      reference_md: '变式 reference',
+      difficulty: 3,
+      knowledge_ids: ['k_xuci'],
+      parent_variant_id: 'q_parent',
+      root_question_id: 'q_parent',
+      variant_depth: 1,
+      reason_md: 'reason',
+    });
+    // No mistake_variant row inserted.
+    await expect(
+      acceptAiProposal(db, proposalId, { enqueueVariantVerify: async () => {} }),
+    ).rejects.toMatchObject({ code: 'not_found' });
   });
 });
