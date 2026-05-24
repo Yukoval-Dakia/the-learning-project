@@ -471,6 +471,138 @@ export async function getRecentReviewEvents(
 }
 
 // ============================================================================
+// getQuestionTimeline — YUK-58: per-question attempt + review history.
+//
+// Aggregates `event(action IN ('attempt','review'), subject_kind='question',
+// subject_id=$1)` ordered desc by created_at, with chained judge cause
+// (action='judge', subject_kind='event') hydrated onto attempt entries.
+//
+// Filters out retracted / superseded events via takeActiveRows. Limit defaults
+// to 10, hard cap at MAX_QUESTION_TIMELINE_LIMIT (50). Powered by existing
+// `event_subject_idx` and `event_caused_by_idx` — no new indexes.
+// ============================================================================
+
+export type QuestionTimelineEntry =
+  | {
+      kind: 'attempt';
+      event_id: string;
+      created_at: Date;
+      outcome: 'success' | 'failure' | 'partial';
+      duration_ms: number | null;
+      cause: { primary: string; confidence: number | null } | null;
+    }
+  | {
+      kind: 'review';
+      event_id: string;
+      created_at: Date;
+      fsrs_rating: 'again' | 'hard' | 'good';
+      outcome: 'success' | 'failure';
+      duration_ms: number | null;
+    };
+
+const DEFAULT_QUESTION_TIMELINE_LIMIT = 10;
+const MAX_QUESTION_TIMELINE_LIMIT = 50;
+
+export async function getQuestionTimeline(
+  db: DbLike,
+  questionId: string,
+  limit: number = DEFAULT_QUESTION_TIMELINE_LIMIT,
+): Promise<QuestionTimelineEntry[]> {
+  const effectiveLimit = Math.min(Math.max(limit, 1), MAX_QUESTION_TIMELINE_LIMIT);
+
+  const conditions = [
+    eq(event.subject_kind, 'question'),
+    eq(event.subject_id, questionId),
+    inArray(event.action, ['attempt', 'review']),
+  ];
+
+  const firstRows = await db
+    .select()
+    .from(event)
+    .where(and(...conditions))
+    .orderBy(desc(event.created_at))
+    .limit(effectiveLimit * 3);
+
+  if (firstRows.length === 0) return [];
+
+  const activeRows = await takeActiveRows(db, firstRows, effectiveLimit, async (nextLimit, offset) =>
+    db
+      .select()
+      .from(event)
+      .where(and(...conditions))
+      .orderBy(desc(event.created_at))
+      .limit(nextLimit)
+      .offset(offset),
+  );
+
+  if (activeRows.length === 0) return [];
+
+  // Pull chained judge events for attempts in this slice (one round-trip).
+  const attemptIds = activeRows.filter((r) => r.action === 'attempt').map((r) => r.id);
+  const judgeByAttempt = new Map<string, EventRow>();
+  if (attemptIds.length > 0) {
+    const judgeRows = await db
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.subject_kind, 'event'),
+          eq(event.action, 'judge'),
+          inArray(event.caused_by_event_id, attemptIds),
+        ),
+      );
+    const activeJudgeRows = await filterActiveRows(db, judgeRows);
+    // Keep newest judge per attempt.
+    for (const row of activeJudgeRows) {
+      const key = row.caused_by_event_id as string;
+      const existing = judgeByAttempt.get(key);
+      if (!existing || newerEventRow(row, existing)) judgeByAttempt.set(key, row);
+    }
+  }
+
+  return activeRows.map((row): QuestionTimelineEntry => {
+    if (row.action === 'attempt') {
+      const payload = row.payload as {
+        answer_md: string | null;
+        answer_image_refs: string[];
+        duration_ms?: number;
+        referenced_knowledge_ids: string[];
+      };
+      const judge = judgeByAttempt.get(row.id);
+      let cause: { primary: string; confidence: number | null } | null = null;
+      if (judge) {
+        const jPayload = judge.payload as { cause: CauseSchemaT };
+        cause = {
+          primary: jPayload.cause.primary_category,
+          confidence: jPayload.cause.confidence ?? null,
+        };
+      }
+      return {
+        kind: 'attempt',
+        event_id: row.id,
+        created_at: row.created_at,
+        outcome: (row.outcome as 'success' | 'failure' | 'partial') ?? 'failure',
+        duration_ms: payload.duration_ms ?? null,
+        cause,
+      };
+    }
+    // review
+    const payload = row.payload as {
+      fsrs_rating: 'again' | 'hard' | 'good';
+      duration_ms?: number;
+    };
+    return {
+      kind: 'review',
+      event_id: row.id,
+      created_at: row.created_at,
+      fsrs_rating: payload.fsrs_rating,
+      outcome: (row.outcome as 'success' | 'failure') ?? 'success',
+      duration_ms: payload.duration_ms ?? null,
+    };
+  });
+}
+
+// ============================================================================
 // getEventById — single event lookup (caused_by chain navigation).
 // ============================================================================
 
