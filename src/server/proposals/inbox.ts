@@ -316,10 +316,7 @@ export async function listProposalInboxPage(
   db: DbLike,
   opts: ListProposalInboxOpts = {},
 ): Promise<ProposalInboxPage> {
-  const rawLimit = opts.limit === undefined ? undefined : opts.limit + 1;
-  const loadedRows = await loadProposalEvents(db, { limit: rawLimit, cursor: opts.cursor });
-  const hasMore = opts.limit !== undefined && loadedRows.length > opts.limit;
-  const proposalRows = hasMore ? loadedRows.slice(0, opts.limit) : loadedRows;
+  const proposalRows = await loadProposalEvents(db, { cursor: opts.cursor });
   const latestRateByProposal = await loadLatestRateByProposal(
     db,
     proposalRows.map((row) => row.id),
@@ -359,9 +356,15 @@ export async function listProposalInboxPage(
     row.signals = signalsByProposalId.get(row.id) ?? null;
   }
   sortProposalRowsBySignals(out);
+  const pageLimit = opts.limit;
+  const hasMore = pageLimit !== undefined && out.length > pageLimit;
+  const pageRows = hasMore && pageLimit !== undefined ? out.slice(0, pageLimit) : out;
+  const nextCursorRow = hasMore && pageLimit !== undefined ? out[pageLimit] : null;
   return {
-    rows: out,
-    next_cursor: hasMore ? encodeProposalCursor(proposalRows[proposalRows.length - 1]) : null,
+    rows: pageRows,
+    next_cursor: nextCursorRow
+      ? encodeProposalCursor({ created_at: nextCursorRow.proposed_at, id: nextCursorRow.id })
+      : null,
   };
 }
 
