@@ -2,7 +2,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { db } from '@/db/client';
-import { knowledge } from '@/db/schema';
+import { knowledge, proposal_signals } from '@/db/schema';
 import { type WriteProposalResult, runWriteProposal } from '@/server/knowledge/review';
 import { dismissAiProposal } from '@/server/proposals/actions';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
@@ -70,6 +70,83 @@ describe('knowledge_maintenance_nightly handler', () => {
 
     const knowledgeRows = await db.select().from(knowledge);
     expect(knowledgeRows.map((row) => row.id)).toEqual([parentId]);
+  });
+
+  it('rethrows stream body errors so pg-boss can mark the job failed', async () => {
+    await expect(
+      runKnowledgeMaintenanceNightly(db, {
+        streamReviewTaskFn: async () =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.error(new Error('maintenance stream failed'));
+              },
+            }),
+          ),
+      }),
+    ).rejects.toThrow('maintenance stream failed');
+  });
+
+  it('does not create duplicate proposals when concurrent runs race the same cooldown key', async () => {
+    const parentId = await seedParentKnowledge();
+    let waiting = 0;
+    let releaseBoth: (() => void) | null = null;
+    const bothWaiting = new Promise<void>((resolve) => {
+      releaseBoth = resolve;
+    });
+    const waitForBoth = async () => {
+      waiting += 1;
+      if (waiting === 2) releaseBoth?.();
+      await bothWaiting;
+    };
+
+    const run = () =>
+      runKnowledgeMaintenanceNightly(db, {
+        streamReviewTaskFn: async ({ db }) => {
+          await waitForBoth();
+          await runWriteProposal(db, {
+            payload: { mutation: 'propose_new', parent_id: parentId, name: 'Raced child' },
+            reasoning: 'same concurrent maintenance proposal',
+          });
+          return new Response('done');
+        },
+      });
+
+    await Promise.all([run(), run()]);
+
+    const rows = await listProposalInboxRows(db, { status: 'pending' });
+    expect(
+      rows.filter((row) => row.payload.cooldown_key === `knowledge_node:${parentId}:Raced child`),
+    ).toHaveLength(1);
+  });
+
+  it('honors active cooldown rows without scanning the proposal inbox', async () => {
+    const parentId = await seedParentKnowledge();
+    const cooldownKey = `knowledge_node:${parentId}:Cooled by signal`;
+    await db.insert(proposal_signals).values({
+      id: createId(),
+      kind: 'knowledge_node',
+      cooldown_key: cooldownKey,
+      accept_count: 0,
+      dismiss_count: 1,
+      acceptance_rate: 0,
+      dismiss_reason: 'recently dismissed',
+      cooldown_until: new Date(Date.now() + 60_000),
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+
+    const result = await runWriteProposal(db, {
+      payload: { mutation: 'propose_new', parent_id: parentId, name: 'Cooled by signal' },
+      reasoning: 'active cooldown should skip this proposal',
+    });
+
+    expect(result).toMatchObject({
+      kind: 'skipped_cooldown',
+      cooldown_key: cooldownKey,
+    });
+    const rows = await listProposalInboxRows(db);
+    expect(rows).toHaveLength(0);
   });
 
   it('does not create a second proposal when the same cooldown key is already pending', async () => {
