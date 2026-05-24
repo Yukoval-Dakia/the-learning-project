@@ -37,6 +37,10 @@ export function ReviewSessionRibbon({
 }) {
   if (!session) return null;
   const durMin = Math.floor(secondsSince(session.started_at) / 60);
+  // YUK-57 — paused gets a different hint: pagehide listener intentionally
+  // skips the completion beacon, and resume comes from in-page button or
+  // /today SessionStrip's ?session= entry.
+  const isPaused = session.status === 'paused';
   return (
     <div className="review-session-ribbon" aria-live="polite">
       <div className="rsr-left">
@@ -49,10 +53,16 @@ export function ReviewSessionRibbon({
           已复习 <b>{reviewedCount}</b> / {totalCount}
         </span>
         <span className="rsr-sep">·</span>
-        <span className="rsr-stat">{durMin} 分钟前 started</span>
+        <span className="rsr-stat">
+          {durMin} 分钟前 {isPaused ? 'paused' : 'started'}
+        </span>
       </div>
       <div className="rsr-right">
-        <span className="rsr-hint">退出页 → sendBeacon · cron 6h 兜底 abandon</span>
+        <span className="rsr-hint">
+          {isPaused
+            ? '⏸ 已暂停 · 点上方"继续刷题"或 /today 恢复 · cron 6h 兜底 abandon'
+            : '退出页 → sendBeacon · cron 6h 兜底 abandon'}
+        </span>
       </div>
     </div>
   );
