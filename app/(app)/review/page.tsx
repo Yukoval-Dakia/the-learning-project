@@ -8,6 +8,7 @@ import {
   ReviewSessionRibbon,
   SessionEndSummary,
 } from '@/ui/components/ReviewSessionChrome';
+import { ReviewSubjectSwitchMarker } from '@/ui/components/ReviewSubjectSwitchMarker';
 import {
   CorrectionStateRenderer,
   type CorrectionStateSnapshot,
@@ -487,6 +488,10 @@ export default function ReviewPage() {
 
   const cause = current?.cause ?? null;
   const currentSubjectModel = resolveSubjectRenderModel(current?.subject_profile ?? null);
+  const previousSubjectModel =
+    index > 0 && rows[index - 1]
+      ? resolveSubjectRenderModel(rows[index - 1]?.subject_profile ?? null)
+      : null;
   const qbodyProps = subjectContentProps(currentSubjectModel, { className: 'qbody' });
   const answerInputProps = subjectContentProps(currentSubjectModel);
   const refTextProps = subjectContentProps(currentSubjectModel, { className: 'ref-text' });
@@ -593,6 +598,15 @@ export default function ReviewPage() {
             </span>
             <span>{cause && `上次归因 ${cause}`}</span>
           </div>
+
+          <ReviewSubjectSwitchMarker
+            from={
+              previousSubjectModel
+                ? { id: previousSubjectModel.id, displayName: previousSubjectModel.displayName }
+                : null
+            }
+            to={{ id: currentSubjectModel.id, displayName: currentSubjectModel.displayName }}
+          />
 
           <div className="review-card-meta">
             <Badge tone={PRIORITY_TONE[current.priority]}>{PRIORITY_LABEL[current.priority]}</Badge>
