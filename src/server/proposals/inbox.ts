@@ -2,11 +2,12 @@ import { type AiProposalPayloadT, parseAiProposalPayload } from '@/core/schema/p
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { getCorrectionStatuses } from '@/server/events/corrections';
+import { ApiError } from '@/server/http/errors';
 import {
   type ProposalSignalSnapshot,
   loadProposalSignalsForRows,
 } from '@/server/proposals/signals';
-import { and, desc, eq, inArray, isNotNull, like, or } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, like, lt, or } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;
@@ -32,6 +33,7 @@ export interface ProposalInboxRow {
 export interface ListProposalInboxOpts {
   status?: ProposalStatus;
   limit?: number;
+  cursor?: string;
 }
 
 export interface LegacyKnowledgeProposalRow {
@@ -72,26 +74,87 @@ interface ProposalCorrectionDecision {
   decided_at: Date | null;
 }
 
-async function loadProposalEvents(db: DbLike): Promise<EventRow[]> {
-  return await db
+interface ProposalCursor {
+  created_at: Date;
+  id: string;
+}
+
+export interface ProposalInboxPage {
+  rows: ProposalInboxRow[];
+  next_cursor: string | null;
+}
+
+function proposalWhere() {
+  return or(
+    and(eq(event.action, 'propose'), inArray(event.subject_kind, ['knowledge', 'knowledge_edge'])),
+    like(event.action, 'experimental:knowledge_%'),
+    eq(event.action, 'experimental:proposal'),
+    // YUK-19 — planLearningIntent writes proposals with the legacy
+    // `experimental:propose_learning_intent` action via event_override (see
+    // writeLearningItemProposal in src/server/proposals/producers.ts).
+    // Surface them in the unified inbox so the rollback / accept UI sees them.
+    eq(event.action, 'experimental:propose_learning_intent'),
+  );
+}
+
+function encodeProposalCursor(row: Pick<EventRow, 'created_at' | 'id'>): string {
+  return Buffer.from(
+    JSON.stringify({ created_at: row.created_at.toISOString(), id: row.id }),
+  ).toString('base64url');
+}
+
+function decodeProposalCursor(cursor: string): ProposalCursor {
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as {
+      created_at?: unknown;
+      id?: unknown;
+    };
+    if (typeof parsed.id !== 'string' || typeof parsed.created_at !== 'string') {
+      throw new Error('missing id or created_at');
+    }
+    const createdAt = new Date(parsed.created_at);
+    if (Number.isNaN(createdAt.getTime())) {
+      throw new Error('invalid created_at');
+    }
+    return { created_at: createdAt, id: parsed.id };
+  } catch (err) {
+    throw new ApiError(
+      'validation_error',
+      `invalid proposal cursor: ${(err as Error).message}`,
+      400,
+    );
+  }
+}
+
+async function loadProposalEvents(
+  db: DbLike,
+  opts: Pick<ListProposalInboxOpts, 'limit' | 'cursor'> = {},
+): Promise<EventRow[]> {
+  const cursor = opts.cursor ? decodeProposalCursor(opts.cursor) : null;
+  const where = cursor
+    ? and(
+        proposalWhere(),
+        or(
+          lt(event.created_at, cursor.created_at),
+          and(eq(event.created_at, cursor.created_at), lt(event.id, cursor.id)),
+        ),
+      )
+    : proposalWhere();
+  const query = db
     .select()
     .from(event)
-    .where(
-      or(
-        and(
-          eq(event.action, 'propose'),
-          inArray(event.subject_kind, ['knowledge', 'knowledge_edge']),
-        ),
-        like(event.action, 'experimental:knowledge_%'),
-        eq(event.action, 'experimental:proposal'),
-        // YUK-19 — planLearningIntent writes proposals with the legacy
-        // `experimental:propose_learning_intent` action via event_override (see
-        // writeLearningItemProposal in src/server/proposals/producers.ts).
-        // Surface them in the unified inbox so the rollback / accept UI sees them.
-        eq(event.action, 'experimental:propose_learning_intent'),
-      ),
-    )
+    .where(where)
     .orderBy(desc(event.created_at), desc(event.id));
+  return opts.limit === undefined ? await query : await query.limit(opts.limit);
+}
+
+async function loadProposalEventById(db: DbLike, proposalId: string): Promise<EventRow | null> {
+  const rows = await db
+    .select()
+    .from(event)
+    .where(and(eq(event.id, proposalId), proposalWhere()))
+    .limit(1);
+  return rows[0] ?? null;
 }
 
 async function loadLatestRateByProposal(
@@ -154,6 +217,35 @@ function deriveLegacyAiProposal(row: EventRow): AiProposalPayloadT | null {
   if (row.action === 'experimental:proposal') {
     return parseAiProposalPayload(payload);
   }
+  if (row.action.startsWith('experimental:knowledge_') && row.subject_kind === 'knowledge') {
+    const mutation = String(payload.mutation ?? row.action.replace(/^experimental:knowledge_/, ''));
+    if (mutation === 'propose' || mutation === 'propose_new') {
+      return parseAiProposalPayload({
+        kind: 'knowledge_node',
+        target: { subject_kind: 'knowledge', subject_id: row.subject_id },
+        reason_md: String(payload.reasoning ?? 'Legacy knowledge proposal'),
+        evidence_refs: [],
+        proposed_change: {
+          mutation: 'propose_new',
+          name: String(payload.name ?? ''),
+          parent_id: String(payload.parent_id ?? ''),
+        },
+      });
+    }
+    const { ai_proposal: _aiProposal, reasoning, ...proposedChange } = payload;
+    void _aiProposal;
+    return parseAiProposalPayload({
+      kind: 'archive',
+      target: { subject_kind: 'knowledge', subject_id: row.subject_id },
+      reason_md: String(reasoning ?? `Legacy knowledge ${mutation} proposal`),
+      evidence_refs: [],
+      proposed_change: {
+        mutation,
+        ...proposedChange,
+      },
+      cooldown_key: `legacy_knowledge:${mutation}:${row.subject_id ?? row.id}`,
+    });
+  }
   if (row.action === 'propose' && row.subject_kind === 'knowledge') {
     return parseAiProposalPayload({
       kind: 'knowledge_node',
@@ -187,6 +279,15 @@ function deriveLegacyAiProposal(row: EventRow): AiProposalPayloadT | null {
   return null;
 }
 
+function safeDeriveLegacyAiProposal(row: EventRow): AiProposalPayloadT | null {
+  try {
+    return deriveLegacyAiProposal(row);
+  } catch (err) {
+    console.warn(`[listProposalInboxRows] skipping invalid proposal event ${row.id}`, err);
+    return null;
+  }
+}
+
 function sortProposalRowsBySignals(rows: ProposalInboxRow[]): void {
   const now = new Date();
   rows.sort((a, b) => {
@@ -208,7 +309,17 @@ export async function listProposalInboxRows(
   db: DbLike,
   opts: ListProposalInboxOpts = {},
 ): Promise<ProposalInboxRow[]> {
-  const proposalRows = await loadProposalEvents(db);
+  return (await listProposalInboxPage(db, opts)).rows;
+}
+
+export async function listProposalInboxPage(
+  db: DbLike,
+  opts: ListProposalInboxOpts = {},
+): Promise<ProposalInboxPage> {
+  const rawLimit = opts.limit === undefined ? undefined : opts.limit + 1;
+  const loadedRows = await loadProposalEvents(db, { limit: rawLimit, cursor: opts.cursor });
+  const hasMore = opts.limit !== undefined && loadedRows.length > opts.limit;
+  const proposalRows = hasMore ? loadedRows.slice(0, opts.limit) : loadedRows;
   const latestRateByProposal = await loadLatestRateByProposal(
     db,
     proposalRows.map((row) => row.id),
@@ -224,7 +335,7 @@ export async function listProposalInboxRows(
     const correction = correctionDecisionByProposal.get(row.id);
     const status = correction?.status ?? rateStatus(rate);
     if (opts.status && status !== opts.status) continue;
-    const payload = deriveLegacyAiProposal(row);
+    const payload = safeDeriveLegacyAiProposal(row);
     if (!payload) continue;
     out.push({
       id: row.id,
@@ -248,15 +359,42 @@ export async function listProposalInboxRows(
     row.signals = signalsByProposalId.get(row.id) ?? null;
   }
   sortProposalRowsBySignals(out);
-  return opts.limit !== undefined ? out.slice(0, opts.limit) : out;
+  return {
+    rows: out,
+    next_cursor: hasMore ? encodeProposalCursor(proposalRows[proposalRows.length - 1]) : null,
+  };
 }
 
 export async function getProposalInboxRow(
   db: DbLike,
   proposalId: string,
 ): Promise<ProposalInboxRow | null> {
-  const rows = await listProposalInboxRows(db);
-  return rows.find((row) => row.id === proposalId) ?? null;
+  const proposalRow = await loadProposalEventById(db, proposalId);
+  if (!proposalRow) return null;
+  const latestRateByProposal = await loadLatestRateByProposal(db, [proposalId]);
+  const correctionDecisionByProposal = await loadCorrectionDecisionByProposal(db, [proposalId]);
+  const rate = latestRateByProposal.get(proposalId);
+  const correction = correctionDecisionByProposal.get(proposalId);
+  const payload = safeDeriveLegacyAiProposal(proposalRow);
+  if (!payload) return null;
+  const row: ProposalInboxRow = {
+    id: proposalRow.id,
+    kind: payload.kind,
+    target: payload.target,
+    payload,
+    status: correction?.status ?? rateStatus(rate),
+    proposed_at: proposalRow.created_at,
+    decided_at: correction?.decided_at ?? rate?.created_at ?? null,
+    actor_ref: proposalRow.actor_ref,
+    task_run_id: proposalRow.task_run_id,
+    cost_micro_usd: proposalRow.cost_micro_usd,
+    source_action: proposalRow.action,
+    source_subject_kind: proposalRow.subject_kind,
+    signals: null,
+  };
+  const signalsByProposalId = await loadProposalSignalsForRows(db, [row]);
+  row.signals = signalsByProposalId.get(row.id) ?? null;
+  return row;
 }
 
 function legacyPayloadFor(row: EventRow): { payload: Record<string, unknown>; reasoning: string } {

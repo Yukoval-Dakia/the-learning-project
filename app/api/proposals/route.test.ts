@@ -100,6 +100,52 @@ describe('GET /api/proposals', () => {
     expect(body.rows).toEqual([]);
   });
 
+  it('returns a cursor for the next proposal page', async () => {
+    const db = testDb();
+    await writeAiProposal(db, {
+      id: 'newer_p1',
+      created_at: new Date('2026-05-24T02:00:00.000Z'),
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'li_newer' },
+        reason_md: 'newer row',
+        evidence_refs: [],
+        proposed_change: { learning_item_id: 'li_newer' },
+      },
+    });
+    await writeAiProposal(db, {
+      id: 'older_p1',
+      created_at: new Date('2026-05-24T01:00:00.000Z'),
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'li_older' },
+        reason_md: 'older row',
+        evidence_refs: [],
+        proposed_change: { learning_item_id: 'li_older' },
+      },
+    });
+
+    const first = await getProposals('status=pending&limit=1');
+    expect(first.status).toBe(200);
+    const firstBody = (await first.json()) as {
+      rows: Array<{ id: string }>;
+      next_cursor: string | null;
+    };
+    expect(firstBody.rows.map((row) => row.id)).toEqual(['newer_p1']);
+    expect(firstBody.next_cursor).toEqual(expect.any(String));
+
+    const second = await getProposals(
+      `status=pending&limit=1&cursor=${encodeURIComponent(firstBody.next_cursor ?? '')}`,
+    );
+    expect(second.status).toBe(200);
+    const secondBody = (await second.json()) as {
+      rows: Array<{ id: string }>;
+      next_cursor: string | null;
+    };
+    expect(secondBody.rows.map((row) => row.id)).toEqual(['older_p1']);
+    expect(secondBody.next_cursor).toBeNull();
+  });
+
   it('returns 400 for an invalid status filter', async () => {
     const res = await getProposals('status=maybe');
     expect(res.status).toBe(400);

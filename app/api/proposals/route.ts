@@ -1,6 +1,6 @@
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { type ProposalStatus, listProposalInboxRows } from '@/server/proposals/inbox';
+import { type ProposalStatus, listProposalInboxPage } from '@/server/proposals/inbox';
 
 export const runtime = 'nodejs';
 
@@ -24,11 +24,12 @@ function parseLimit(value: string | null): number {
 export async function GET(req: Request): Promise<Response> {
   try {
     const url = new URL(req.url);
-    const rows = await listProposalInboxRows(db, {
+    const page = await listProposalInboxPage(db, {
       status: parseStatus(url.searchParams.get('status')),
       limit: parseLimit(url.searchParams.get('limit')),
+      cursor: url.searchParams.get('cursor') ?? undefined,
     });
-    return Response.json({ rows });
+    return Response.json(page);
   } catch (err) {
     return errorResponse(err);
   }
