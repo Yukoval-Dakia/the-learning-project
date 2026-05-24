@@ -40,7 +40,27 @@ interface TurnResponse {
   user_message: ChatMessage;
   agent_message: ChatMessage;
   suggested_next: 'continue' | 'end';
+  was_idle?: boolean;
 }
+
+// YUK-14 — conversation lifecycle status mirrors the server enum
+// (ConversationStatus in src/core/schema/learning_session.ts).
+type SessionStatus = 'active' | 'idle' | 'ended' | 'abandoned';
+
+interface SessionPoll {
+  session: {
+    id: string;
+    type: 'conversation';
+    status: SessionStatus;
+    learning_item_id: string | null;
+    started_at: string;
+    ended_at: string | null;
+  };
+}
+
+// design doc Open Q #3 default — UI polls every 30s for status changes
+// (idle promote runs every 1min server-side, so 30s catches it within ~30s).
+const STATUS_POLL_MS = 30 * 1000;
 
 const TURN_KIND_LABEL: Record<TurnKind, string> = {
   explain: '讲解',
@@ -75,10 +95,19 @@ export function TeachingDrawer({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [suggestedNext, setSuggestedNext] = useState<'continue' | 'end'>('continue');
   const [draft, setDraft] = useState('');
-  const [ended, setEnded] = useState(false);
+  const [status, setStatus] = useState<SessionStatus>('active');
   const [bootError, setBootError] = useState<string | null>(null);
   const startCalledRef = useRef(false);
   const streamRef = useRef<HTMLDivElement | null>(null);
+  // YUK-14 — design §"Pagehide / sendBeacon" E5: pagehide decision needs the
+  // *last seen* status (drawer-was-idle → abandoned, otherwise → ended). We
+  // mirror status into a ref so the event listener stays stable.
+  const statusRef = useRef<SessionStatus>('active');
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
+
+  const ended = status === 'ended' || status === 'abandoned';
 
   // Start the session once on mount.
   useEffect(() => {
@@ -93,7 +122,8 @@ export function TeachingDrawer({
         setSessionId(res.session_id);
         setMessages([res.initial_message]);
         setSuggestedNext(res.suggested_next);
-        if (res.initial_message.turn_kind === 'end') setEnded(true);
+        // turn_kind='end' is an LLM hint, not a state transition (design §T8).
+        // The session stays 'active' until the user explicitly ends it.
       } catch (err) {
         if (err instanceof ApiAuthError) {
           setBootError(`${err.message} — 请重新进入页面输入 token`);
@@ -112,10 +142,18 @@ export function TeachingDrawer({
         body: JSON.stringify({ text_md }),
       });
     },
+    onMutate: () => {
+      // YUK-14 — Optimistic resume: if we last saw the session as idle, the
+      // server will auto-resume on this turn (T2b). Flip the local banner
+      // immediately so the UI doesn't show "走开了吗" while we're typing.
+      if (statusRef.current === 'idle') setStatus('active');
+    },
     onSuccess: (data) => {
       setMessages((prev) => [...prev, data.user_message, data.agent_message]);
       setSuggestedNext(data.suggested_next);
-      if (data.agent_message.turn_kind === 'end') setEnded(true);
+      // was_idle: server confirmation that idle→active happened (we already
+      // flipped optimistically; this is the receipt). turn_kind='end' is just
+      // a coach hint, not a state transition.
       setDraft('');
     },
   });
@@ -125,10 +163,70 @@ export function TeachingDrawer({
       if (!sessionId) throw new Error('session not ready');
       return apiJson<{ ok: boolean }>(`/api/teaching-sessions/${sessionId}/end`, {
         method: 'POST',
+        body: JSON.stringify({ status: 'ended' }),
       });
     },
-    onSuccess: () => setEnded(true),
+    onSuccess: () => setStatus('ended'),
   });
+
+  // YUK-14 — Poll session GET every 30s for server-side status flips
+  // (idle promote, abandoned cron). Stop polling once the session is in a
+  // terminal state.
+  useEffect(() => {
+    if (!sessionId) return;
+    if (status === 'ended' || status === 'abandoned') return;
+    const poll = async () => {
+      try {
+        const res = await apiJson<SessionPoll>(`/api/teaching-sessions/${sessionId}`, {
+          method: 'GET',
+        });
+        const next = res.session.status;
+        if (next !== statusRef.current) setStatus(next);
+      } catch {
+        // Network blip — keep last known status, will retry next interval.
+      }
+    };
+    const interval = window.setInterval(poll, STATUS_POLL_MS);
+    // Run once immediately in addition to the interval, but skip the first
+    // poll for ~5s to avoid races with the start response.
+    const initial = window.setTimeout(poll, 5000);
+    return () => {
+      window.clearInterval(interval);
+      window.clearTimeout(initial);
+    };
+  }, [sessionId, status]);
+
+  // YUK-14 — pagehide listener (design §"Pagehide / sendBeacon"): if the
+  // drawer was visibly idle, send abandoned; otherwise ended. unmount cleanup
+  // (clicking close / leaving page via SPA nav without reload) always sends
+  // ended per E5.
+  const closeViaBeaconRef = useRef(false);
+  useEffect(() => {
+    if (!sessionId) return;
+    const onPageHide = () => {
+      if (closeViaBeaconRef.current) return;
+      closeViaBeaconRef.current = true;
+      const finalStatus: 'ended' | 'abandoned' =
+        statusRef.current === 'idle' ? 'abandoned' : 'ended';
+      const body = new Blob([JSON.stringify({ status: finalStatus })], {
+        type: 'application/json',
+      });
+      navigator.sendBeacon(`/api/teaching-sessions/${sessionId}/end`, body);
+    };
+    window.addEventListener('pagehide', onPageHide);
+    return () => {
+      window.removeEventListener('pagehide', onPageHide);
+      // Drawer unmount via SPA nav / parent unmount: send ended best-effort.
+      // Skip if already sent a beacon, or session is already terminal.
+      if (closeViaBeaconRef.current) return;
+      if (statusRef.current === 'ended' || statusRef.current === 'abandoned') return;
+      closeViaBeaconRef.current = true;
+      void apiJson(`/api/teaching-sessions/${sessionId}/end`, {
+        method: 'POST',
+        body: JSON.stringify({ status: 'ended' }),
+      }).catch(() => {});
+    };
+  }, [sessionId]);
 
   // Auto-scroll on each new bubble / typing toggle.
   const msgCount = messages.length;
@@ -183,10 +281,21 @@ export function TeachingDrawer({
 
         {sessionId && (
           <>
-            <div className={`session-banner${ended ? ' ended' : ''}`}>
-              ── learning_session(type='conversation'
-              {ended ? ', status=ended' : ', status=active'}) ──
+            <div
+              className={`session-banner${
+                status === 'ended' || status === 'abandoned' ? ' ended' : ''
+              }${status === 'idle' ? ' is-idle' : ''}${
+                status === 'abandoned' ? ' is-abandoned' : ''
+              }`}
+            >
+              ── learning_session(type='conversation', status={status}) ──
             </div>
+
+            {status === 'idle' && (
+              <div className="idle-banner" role="status">
+                <strong>走开了吗？</strong> 敲字继续，或点「结束」收尾。
+              </div>
+            )}
 
             <div className="msg-stream">
               {messages.map((m) => (
@@ -225,8 +334,13 @@ export function TeachingDrawer({
               )}
             </div>
 
-            {ended && (
+            {status === 'ended' && (
               <div className="end-banner">会话已结束。关闭抽屉再点「对话教学」开启新对话。</div>
+            )}
+            {status === 'abandoned' && (
+              <div className="end-banner is-abandoned">
+                会话已过期（&gt;6 小时未活动）。关闭抽屉再点「对话教学」开启新对话。
+              </div>
             )}
           </>
         )}
