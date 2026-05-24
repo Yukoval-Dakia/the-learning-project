@@ -2,12 +2,24 @@
 //
 // Pre-Step-9 tests seeded `mistake` + `review_event`. Post-Step-9 the legacy
 // tables are gone; seed question rows + (optionally) material_fsrs_state.
+//
+// YUK-56 (2026-05-24) — auto-rating via JudgeInvoker (CC-3). Tests cover:
+//   - exact / keyword / semantic judges → coarse_outcome → suggested_rating
+//   - auto_rate=true uses suggestion; manual rating wins when auto_rate=false
+//   - unsupported route → 422 in auto_rate mode
+//   - no answer (response_md null/empty) → no judge invoked, no payload.judge
+//   - CC-1 invariant: rating-only override does NOT write experimental:user_cause
 
 import { event, material_fsrs_state, question } from '@/db/schema';
+import { runTask } from '@/server/ai/runner';
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST } from './route';
+
+vi.mock('@/server/ai/runner', () => ({
+  runTask: vi.fn(),
+}));
 
 const QUESTION_BASE = {
   kind: 'short_answer' as const,
@@ -19,7 +31,7 @@ const QUESTION_BASE = {
   version: 0,
 };
 
-async function seedQuestion(id: string) {
+async function seedQuestion(id: string, overrides: Partial<typeof question.$inferInsert> = {}) {
   const db = testDb();
   const now = new Date();
   await db.insert(question).values({
@@ -28,6 +40,7 @@ async function seedQuestion(id: string) {
     created_at: now,
     updated_at: now,
     ...QUESTION_BASE,
+    ...overrides,
   });
 }
 
@@ -56,6 +69,7 @@ function submitReq(body: unknown) {
 describe('POST /api/review/submit', () => {
   beforeEach(async () => {
     await resetDb();
+    vi.mocked(runTask).mockReset();
   });
 
   it('first review (no prior fsrs_state) → writes review event + upserts material_fsrs_state', async () => {
@@ -304,6 +318,304 @@ describe('POST /api/review/submit', () => {
       .from(event)
       .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q1')));
     expect(events).toHaveLength(2);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // YUK-56 — auto-rating via JudgeInvoker (CC-3)
+  // ──────────────────────────────────────────────────────────────────────────
+
+  describe('YUK-56 auto-rating via JudgeInvoker', () => {
+    it('exact judge auto-rate correct → final rating="good" + payload.judge embedded', async () => {
+      await seedQuestion('q_exact_correct', {
+        kind: 'fill_blank',
+        reference_md: '答案',
+        knowledge_ids: [],
+      });
+
+      const res = await POST(
+        submitReq({
+          activity_ref: { kind: 'question', id: 'q_exact_correct' },
+          rating: 'again', // ignored — auto_rate overrides
+          response_md: '答案',
+          auto_rate: true,
+        }),
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        review_event: { rating: string };
+        judge: {
+          route: string;
+          coarse_outcome: string;
+          suggested_rating: string;
+          auto_rated: boolean;
+          telemetry: { route: string; question_id: string; subject_id: string };
+        };
+      };
+      expect(body.review_event.rating).toBe('good');
+      expect(body.judge.route).toBe('exact');
+      expect(body.judge.coarse_outcome).toBe('correct');
+      expect(body.judge.suggested_rating).toBe('good');
+      expect(body.judge.auto_rated).toBe(true);
+      // CC-3 invariant — telemetry comes from the invoker (only path that
+      // populates question_id + subject_id on the telemetry block).
+      expect(body.judge.telemetry.route).toBe('exact');
+      expect(body.judge.telemetry.question_id).toBe('q_exact_correct');
+      expect(body.judge.telemetry.subject_id).toBe('wenyan');
+
+      const events = await testDb()
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_exact_correct')));
+      expect(events).toHaveLength(1);
+      expect((events[0].payload as Record<string, unknown>).fsrs_rating).toBe('good');
+      const payloadJudge = (events[0].payload as Record<string, unknown>).judge as Record<
+        string,
+        unknown
+      >;
+      expect(payloadJudge).toMatchObject({
+        route: 'exact',
+        coarse_outcome: 'correct',
+        suggested_rating: 'good',
+        auto_rated: true,
+      });
+    });
+
+    it('exact judge auto-rate wrong → final rating="again" + outcome=failure', async () => {
+      await seedQuestion('q_exact_wrong', {
+        kind: 'fill_blank',
+        reference_md: '答案',
+        knowledge_ids: [],
+      });
+
+      const res = await POST(
+        submitReq({
+          activity_ref: { kind: 'question', id: 'q_exact_wrong' },
+          rating: 'good', // ignored
+          response_md: '错',
+          auto_rate: true,
+        }),
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        review_event: { rating: string };
+        judge: { coarse_outcome: string; suggested_rating: string };
+      };
+      expect(body.review_event.rating).toBe('again');
+      expect(body.judge.coarse_outcome).toBe('incorrect');
+      expect(body.judge.suggested_rating).toBe('again');
+
+      const events = await testDb()
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_exact_wrong')));
+      expect(events[0].outcome).toBe('failure');
+    });
+
+    it('keyword judge partial → suggested_rating="hard"', async () => {
+      await seedQuestion('q_keyword', {
+        kind: 'fill_blank',
+        reference_md: '虚词；代词；连词',
+        judge_kind_override: 'keyword',
+        knowledge_ids: [],
+        rubric_json: {
+          criteria: [{ name: 'correctness', weight: 1, descriptor: '命中关键词' }],
+          keywords: ['虚词', '代词', '连词'],
+        },
+      });
+
+      const res = await POST(
+        submitReq({
+          activity_ref: { kind: 'question', id: 'q_keyword' },
+          rating: 'good',
+          response_md: '虚词和代词',
+          auto_rate: true,
+        }),
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        review_event: { rating: string };
+        judge: { route: string; coarse_outcome: string; suggested_rating: string };
+      };
+      expect(body.judge.route).toBe('keyword');
+      expect(body.judge.coarse_outcome).toBe('partial');
+      expect(body.judge.suggested_rating).toBe('hard');
+      expect(body.review_event.rating).toBe('hard');
+    });
+
+    it('semantic judge runs SemanticJudgeTask via runTask and respects auto_rate', async () => {
+      await seedQuestion('q_semantic', {
+        kind: 'short_answer',
+        reference_md: '之在这里作代词，指代前文的人或事。',
+        judge_kind_override: 'semantic',
+        knowledge_ids: [],
+        rubric_json: {
+          criteria: [{ name: 'correctness', weight: 1, descriptor: '覆盖核心要点' }],
+          required_points: ['说明之作代词', '说明指代前文'],
+        },
+      });
+      vi.mocked(runTask).mockResolvedValueOnce({
+        text: JSON.stringify({
+          score: 0.9,
+          coarse_outcome: 'correct',
+          confidence: 0.85,
+          feedback_md: '要点完整。',
+          evidence_json: { matched_points: ['说明之作代词'], missing_points: [] },
+        }),
+        cost: 0,
+        usage: null,
+        model: 'mock',
+      } as never);
+
+      const res = await POST(
+        submitReq({
+          activity_ref: { kind: 'question', id: 'q_semantic' },
+          rating: 'again',
+          response_md: '之作代词。',
+          auto_rate: true,
+        }),
+      );
+      expect(res.status).toBe(200);
+      expect(vi.mocked(runTask)).toHaveBeenCalledTimes(1);
+      const body = (await res.json()) as {
+        review_event: { rating: string };
+        judge: { route: string; suggested_rating: string };
+      };
+      expect(body.judge.route).toBe('semantic');
+      expect(body.judge.suggested_rating).toBe('good');
+      expect(body.review_event.rating).toBe('good');
+    });
+
+    it('semantic judge failure → unsupported in auto_rate mode → 422', async () => {
+      await seedQuestion('q_semantic_unsupported', {
+        kind: 'short_answer',
+        reference_md: '之作代词。',
+        judge_kind_override: 'semantic',
+        knowledge_ids: [],
+      });
+      vi.mocked(runTask).mockRejectedValueOnce(new Error('provider down'));
+
+      const res = await POST(
+        submitReq({
+          activity_ref: { kind: 'question', id: 'q_semantic_unsupported' },
+          rating: 'good',
+          response_md: '之作代词。',
+          auto_rate: true,
+        }),
+      );
+      expect(res.status).toBe(422);
+      const body = (await res.json()) as { error: string; message: string };
+      expect(body.error).toBe('unsupported_judge_route');
+      expect(body.message).toContain("'semantic'");
+
+      // No review event written — txn never opened.
+      const events = await testDb()
+        .select()
+        .from(event)
+        .where(eq(event.subject_id, 'q_semantic_unsupported'));
+      expect(events).toHaveLength(0);
+    });
+
+    it('manual override (auto_rate=false): user rating wins, judge still runs + embedded, no user_cause written', async () => {
+      await seedQuestion('q_override', {
+        kind: 'fill_blank',
+        reference_md: '答案',
+        knowledge_ids: [],
+      });
+
+      // Judge would say 'correct' → suggest 'good', but user picks 'again'.
+      const res = await POST(
+        submitReq({
+          activity_ref: { kind: 'question', id: 'q_override' },
+          rating: 'again',
+          response_md: '答案',
+          // auto_rate defaults to false
+        }),
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        review_event: { rating: string };
+        judge: { suggested_rating: string; auto_rated: boolean; coarse_outcome: string };
+      };
+      // User wins
+      expect(body.review_event.rating).toBe('again');
+      // Judge still ran + suggested 'good' (auto_rated flag reflects request mode)
+      expect(body.judge.coarse_outcome).toBe('correct');
+      expect(body.judge.suggested_rating).toBe('good');
+      expect(body.judge.auto_rated).toBe(false);
+
+      // CC-1 invariant — rating-only override must NOT write
+      // experimental:user_cause; cause overrides happen via a separate channel.
+      const userCauseEvents = await testDb()
+        .select()
+        .from(event)
+        .where(eq(event.action, 'experimental:user_cause'));
+      expect(userCauseEvents).toHaveLength(0);
+    });
+
+    it('no response_md → no judge invoked, response.judge=null, no payload.judge', async () => {
+      await seedQuestion('q_no_answer', {
+        kind: 'fill_blank',
+        reference_md: '答案',
+        knowledge_ids: [],
+      });
+
+      const res = await POST(
+        submitReq({
+          activity_ref: { kind: 'question', id: 'q_no_answer' },
+          rating: 'good',
+          // response_md omitted
+        }),
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { judge: unknown };
+      expect(body.judge).toBeNull();
+
+      const events = await testDb()
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_no_answer')));
+      expect((events[0].payload as Record<string, unknown>).judge).toBeUndefined();
+    });
+
+    it('empty response_md (whitespace) → no judge invoked', async () => {
+      await seedQuestion('q_blank_answer', {
+        kind: 'fill_blank',
+        reference_md: '答案',
+        knowledge_ids: [],
+      });
+
+      const res = await POST(
+        submitReq({
+          activity_ref: { kind: 'question', id: 'q_blank_answer' },
+          rating: 'good',
+          response_md: '   ',
+        }),
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { judge: unknown };
+      expect(body.judge).toBeNull();
+    });
+
+    it('auto_rate=true with no response_md → 422 unsupported_judge_route', async () => {
+      await seedQuestion('q_no_answer_auto', {
+        kind: 'fill_blank',
+        reference_md: '答案',
+        knowledge_ids: [],
+      });
+
+      const res = await POST(
+        submitReq({
+          activity_ref: { kind: 'question', id: 'q_no_answer_auto' },
+          rating: 'good',
+          auto_rate: true,
+          // response_md omitted
+        }),
+      );
+      expect(res.status).toBe(422);
+      const body = (await res.json()) as { error: string; message: string };
+      expect(body.error).toBe('unsupported_judge_route');
+      expect(body.message).toContain('response_md');
+    });
   });
 
   // Codex P1-G — concurrent double-submit must not produce torn FSRS state.
