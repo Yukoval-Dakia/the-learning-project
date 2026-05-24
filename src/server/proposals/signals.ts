@@ -8,6 +8,43 @@ type EventRow = typeof event.$inferSelect;
 
 export const PROPOSAL_DISMISS_COOLDOWN_DAYS = 7;
 
+// YUK-76 codex P1 — serialize concurrent writers on `(kind, cooldown_key)`.
+//
+// `pg_advisory_xact_lock` releases at txn commit. When the caller passes a
+// plain `Db` handle, each `db.execute(...)` runs in its own autocommit txn,
+// so the lock would release between statements. We must open one explicit
+// txn around lock-acquire + body so both rebuild and incremental writers
+// hold the same lock across their full work.
+//
+// Both `ensureProposalDecisionSignal` (absolute rebuild) and
+// `recordProposalDecisionSignal` (additive upsert) take the same lock key
+// derived from `(kind, cooldown_key)`. Otherwise a rebuild based on a
+// stale snapshot could land *after* a fresh incremental write and
+// clobber it, walking `accept_count`/`dismiss_count` backwards.
+async function withProposalSignalLock<T>(
+  db: DbLike,
+  kind: string,
+  cooldownKey: string,
+  fn: (tx: DbLike) => Promise<T>,
+): Promise<T> {
+  const lockKey = `${kind}:${cooldownKey}`;
+  const acquireLock = (handle: DbLike) =>
+    handle.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+
+  // Detect Tx vs Db. `Tx` strips `$client`; `Db` exposes it. We use that as
+  // the discriminator to avoid nested-tx pitfalls when callers already opened
+  // one (callers in `actions.ts` sometimes pass `tx` directly).
+  if (!('$client' in db)) {
+    // Already inside a txn — acquire lock + run body in-place.
+    await acquireLock(db);
+    return await fn(db);
+  }
+  return await (db as Db).transaction(async (tx) => {
+    await acquireLock(tx);
+    return await fn(tx);
+  });
+}
+
 export interface ProposalSignalSnapshot {
   acceptance_rate: number;
   dismiss_reason: string | null;
@@ -82,6 +119,21 @@ export async function recordProposalDecisionSignal(
   const cooldownKey = proposal.payload.cooldown_key;
   if (!cooldownKey) return;
 
+  // YUK-76 codex P1 — serialize with `ensureProposalDecisionSignal` rebuilds
+  // on the same `(kind, cooldown_key)` so rebuild snapshots can't clobber a
+  // freshly-recorded increment.
+  await withProposalSignalLock(db, proposal.kind, cooldownKey, async (tx) => {
+    await recordProposalDecisionSignalLocked(tx, proposal, cooldownKey, decision, dismissReason);
+  });
+}
+
+async function recordProposalDecisionSignalLocked(
+  db: DbLike,
+  proposal: ProposalSignalSource,
+  cooldownKey: string,
+  decision: 'accept' | 'dismiss',
+  dismissReason?: string,
+): Promise<void> {
   const now = new Date();
   const acceptDelta = decision === 'accept' ? 1 : 0;
   const dismissDelta = decision === 'dismiss' ? 1 : 0;
@@ -295,7 +347,12 @@ export async function ensureProposalDecisionSignal(
 ): Promise<void> {
   const cooldownKey = proposal.payload.cooldown_key;
   if (!cooldownKey) return;
-  const lockKey = `${proposal.kind}:${cooldownKey}`;
-  await db.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
-  await rebuildProposalDecisionSignal(db, proposal, dismissReason);
+  // YUK-76 codex P1 — `pg_advisory_xact_lock` releases at txn boundary. If
+  // we let the previous implementation run on a plain `Db` handle, the lock
+  // and the rebuild upsert lived in two separate autocommit txns, so the
+  // lock did not actually protect the rebuild. `withProposalSignalLock`
+  // opens one explicit txn (when needed) so lock + rebuild commit together.
+  await withProposalSignalLock(db, proposal.kind, cooldownKey, async (tx) => {
+    await rebuildProposalDecisionSignal(tx, proposal, dismissReason);
+  });
 }
