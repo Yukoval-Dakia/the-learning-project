@@ -20,19 +20,24 @@
 // SDK-resolved name so the agent runner doesn't strip the tool from the
 // catalog before the model sees it.
 
-import type { Db } from '@/db/client';
-import { knowledge } from '@/db/schema';
+import { newId } from '@/core/ids';
+import type { Db, Tx } from '@/db/client';
+import { event, knowledge, proposal_signals } from '@/db/schema';
 import { streamTask } from '@/server/ai/runner';
-import { type ProposalInboxRow, listProposalInboxRows } from '@/server/proposals/inbox';
+import { getCorrectionStatuses } from '@/server/events/corrections';
+import type { ProposalInboxRow } from '@/server/proposals/inbox';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import { and, desc, eq, gte, inArray, isNotNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { effectiveCauseForFailureAttempt } from '../events/cause-policy';
 import { getFailureAttempts } from '../events/queries';
 import { type KnowledgeMutationPayload, writeKnowledgeProposeEvent } from './proposals';
 
 const RECENT_MISTAKES_LIMIT = 100;
+const PROPOSAL_GATE_LOOKBACK_DAYS = 30;
+type DbLike = Db | Tx;
 
 async function buildReviewInput(db: Db) {
   const tree = await db
@@ -154,47 +159,174 @@ function proposalGateCandidate(args: WriteProposalArgs): ProposalGateCandidate |
 }
 
 async function checkProposalGate(
-  db: Db,
-  args: WriteProposalArgs,
+  db: DbLike,
+  candidate: ProposalGateCandidate,
 ): Promise<Extract<
   WriteProposalResult,
   { kind: 'skipped_duplicate' | 'skipped_cooldown' }
 > | null> {
-  const candidate = proposalGateCandidate(args);
-  if (!candidate) return null;
-
   const now = new Date();
-  const rows = await listProposalInboxRows(db);
-  for (const row of rows) {
-    if (row.kind !== candidate.kind) continue;
-    if (row.payload.cooldown_key !== candidate.cooldown_key) continue;
-    if (row.status === 'pending') {
-      return {
-        proposal_id: row.id,
-        kind: 'skipped_duplicate',
-        cooldown_key: candidate.cooldown_key,
-      };
-    }
-    const cooldownUntil = row.signals?.cooldown_until;
-    if (cooldownUntil && cooldownUntil > now) {
-      return {
-        proposal_id: row.id,
-        kind: 'skipped_cooldown',
-        cooldown_key: candidate.cooldown_key,
-        cooldown_until: cooldownUntil.toISOString(),
-      };
-    }
+  const signal = await lockProposalSignal(db, candidate);
+  const duplicate = await findPendingProposalForGate(db, candidate, now);
+  if (duplicate) {
+    return {
+      proposal_id: duplicate.id,
+      kind: 'skipped_duplicate',
+      cooldown_key: candidate.cooldown_key,
+    };
+  }
+  if (signal.cooldown_until && signal.cooldown_until > now) {
+    const sourceProposal = await findLatestProposalForGate(db, candidate, now);
+    return {
+      proposal_id: sourceProposal?.id ?? signal.id,
+      kind: 'skipped_cooldown',
+      cooldown_key: candidate.cooldown_key,
+      cooldown_until: signal.cooldown_until.toISOString(),
+    };
   }
   return null;
+}
+
+async function lockProposalSignal(
+  db: DbLike,
+  candidate: ProposalGateCandidate,
+): Promise<{ id: string; cooldown_until: Date | null }> {
+  await db.execute(sql`
+    INSERT INTO proposal_signals (
+      id,
+      kind,
+      cooldown_key,
+      accept_count,
+      dismiss_count,
+      acceptance_rate,
+      created_at,
+      updated_at
+    )
+    VALUES (
+      ${newId()},
+      ${candidate.kind},
+      ${candidate.cooldown_key},
+      0,
+      0,
+      0.5,
+      NOW(),
+      NOW()
+    )
+    ON CONFLICT (kind, cooldown_key) DO NOTHING
+  `);
+  await db.execute(sql`
+    SELECT id
+    FROM proposal_signals
+    WHERE kind = ${candidate.kind}
+      AND cooldown_key = ${candidate.cooldown_key}
+    FOR UPDATE
+  `);
+
+  const row = (
+    await db
+      .select({
+        id: proposal_signals.id,
+        cooldown_until: proposal_signals.cooldown_until,
+      })
+      .from(proposal_signals)
+      .where(
+        and(
+          eq(proposal_signals.kind, candidate.kind),
+          eq(proposal_signals.cooldown_key, candidate.cooldown_key),
+        ),
+      )
+      .limit(1)
+  )[0];
+  if (!row) throw new Error(`proposal signal lock row missing: ${candidate.cooldown_key}`);
+  return row;
+}
+
+async function findLatestProposalForGate(
+  db: DbLike,
+  candidate: ProposalGateCandidate,
+  now: Date,
+): Promise<{ id: string } | null> {
+  const rows = await findRecentProposalRowsForGate(db, candidate, now);
+  return rows[0] ?? null;
+}
+
+async function findPendingProposalForGate(
+  db: DbLike,
+  candidate: ProposalGateCandidate,
+  now: Date,
+): Promise<{ id: string } | null> {
+  const proposalRows = await findRecentProposalRowsForGate(db, candidate, now);
+  if (proposalRows.length === 0) return null;
+
+  const proposalIds = proposalRows.map((row) => row.id);
+  const latestRateByProposal = new Map<string, typeof event.$inferSelect>();
+  const rateRows = await db
+    .select()
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'rate'),
+        inArray(event.caused_by_event_id, proposalIds),
+        isNotNull(event.caused_by_event_id),
+      ),
+    )
+    .orderBy(desc(event.created_at), desc(event.id));
+  for (const row of rateRows) {
+    const proposalId = row.caused_by_event_id;
+    if (proposalId && !latestRateByProposal.has(proposalId)) {
+      latestRateByProposal.set(proposalId, row);
+    }
+  }
+
+  const correctionStatuses = await getCorrectionStatuses(db, proposalIds);
+  for (const row of proposalRows) {
+    const correctionStatus = correctionStatuses.get(row.id);
+    if (correctionStatus && correctionStatus.state !== 'active') continue;
+    if (!latestRateByProposal.has(row.id)) return row;
+  }
+  return null;
+}
+
+async function findRecentProposalRowsForGate(
+  db: DbLike,
+  candidate: ProposalGateCandidate,
+  now: Date,
+): Promise<Array<{ id: string }>> {
+  const since = new Date(now.getTime() - PROPOSAL_GATE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+  return await db
+    .select({ id: event.id })
+    .from(event)
+    .where(
+      and(
+        gte(event.created_at, since),
+        sql`${event.payload}->'ai_proposal'->>'kind' = ${candidate.kind}`,
+        sql`${event.payload}->'ai_proposal'->>'cooldown_key' = ${candidate.cooldown_key}`,
+      ),
+    )
+    .orderBy(desc(event.created_at), desc(event.id))
+    .limit(20);
 }
 
 export async function runWriteProposal(
   db: Db,
   args: WriteProposalArgs,
 ): Promise<WriteProposalResult> {
-  const gate = await checkProposalGate(db, args);
-  if (gate) return gate;
+  const candidate = proposalGateCandidate(args);
+  if (candidate) {
+    return await db.transaction(async (tx) => {
+      const gate = await checkProposalGate(tx, candidate);
+      if (gate) return gate;
+      return await writeProposalAfterGate(tx, args);
+    });
+  }
 
+  return await writeProposalAfterGate(db, args);
+}
+
+async function writeProposalAfterGate(
+  db: DbLike,
+  args: WriteProposalArgs,
+): Promise<WriteProposalResult> {
   const { mutation, payload, reasoning } = args;
   const isEdgeProposal = mutation === 'propose_knowledge_edge' || isKnowledgeEdgeMutation(payload);
   if (isEdgeProposal) {
