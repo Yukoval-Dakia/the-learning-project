@@ -1,5 +1,6 @@
 import { Badge } from '@/ui/primitives/Badge';
-import { Button } from '@/ui/primitives/Button';
+import { Button, type ButtonVariant } from '@/ui/primitives/Button';
+import type { IconName } from '@/ui/primitives/Icon';
 import Link from 'next/link';
 
 export type ReviewRating = 'again' | 'hard' | 'good';
@@ -85,6 +86,45 @@ export function SessionEndSummary({
 }) {
   const mm = Math.floor(Math.max(0, durationSec) / 60);
   const ss = Math.max(0, durationSec) % 60;
+  const summaryReady = Boolean(aiSummary?.trim());
+  const summaryHref = session?.id ? `/learning-sessions/${session.id}` : '/learning-sessions';
+  const ctas: Array<{
+    href: string;
+    label: string;
+    detail: string;
+    icon: IconName;
+    variant: ButtonVariant;
+  }> = [
+    {
+      href: summaryHref,
+      label: summaryReady ? '看本次 session summary' : 'summary 生成中',
+      detail: summaryReady ? '查看 AI 复盘与事件流' : '进入详情页等待异步复盘',
+      icon: 'list',
+      variant: 'info',
+    },
+    {
+      href: '/coach',
+      label: '去 /coach 看周报',
+      detail: '看近期卡点与趋势',
+      icon: 'layout',
+      variant: 'secondary',
+    },
+    {
+      href: '/learning-items',
+      label: '接着学',
+      detail: '回到 learning items',
+      icon: 'note',
+      variant: 'secondary',
+    },
+    {
+      href: '/knowledge',
+      label: '整理知识网',
+      detail: '查看知识点与关系',
+      icon: 'network',
+      variant: 'secondary',
+    },
+  ];
+
   return (
     <div className="session-end-summary">
       <header className="ses-head">
@@ -142,13 +182,16 @@ export function SessionEndSummary({
             'SessionSummaryTask 会基于本 session 的 review events 生成短复盘；没有生成前先展示本地统计。'}
         </div>
       </div>
-      {session?.id && (
-        <Link href={`/learning-sessions/${session.id}`} className="ses-link">
-          <Button variant="secondary" size="sm" iconRight="arrowR">
-            查看事件流
-          </Button>
-        </Link>
-      )}
+      <div className="ses-cta-grid" aria-label="session next steps">
+        {ctas.map((cta) => (
+          <Link key={cta.href} href={cta.href} className="ses-cta-link">
+            <Button variant={cta.variant} size="sm" icon={cta.icon} iconRight="arrowR">
+              {cta.label}
+            </Button>
+            <span>{cta.detail}</span>
+          </Link>
+        ))}
+      </div>
     </div>
   );
 }
