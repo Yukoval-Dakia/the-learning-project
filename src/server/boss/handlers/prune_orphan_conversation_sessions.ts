@@ -27,10 +27,7 @@ export async function runPruneOrphanConversationSessions(
     .where(
       and(
         eq(learning_session.type, 'conversation'),
-        or(
-          eq(learning_session.status, 'active'),
-          eq(learning_session.status, 'idle'),
-        ),
+        or(eq(learning_session.status, 'active'), eq(learning_session.status, 'idle')),
         lt(learning_session.started_at, cutoff),
       ),
     );
