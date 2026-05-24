@@ -18,6 +18,7 @@ import {
   getFailureAttemptById,
   getFailureAttempts,
   getJudgeForAttempt,
+  getQuestionTimeline,
   getRecentReviewEvents,
   getUserCauseForAttempt,
   writeEvent,
@@ -1149,5 +1150,148 @@ describe('getEventChain', () => {
     expect(chain.caused_by).toBeNull();
     expect(chain.caused_events).toEqual([]);
     expect(chain.corrections).toEqual([]);
+  });
+});
+
+// ============================================================================
+// getQuestionTimeline — YUK-58: aggregate attempt + review history per question
+// ordered desc by created_at, with chained judge cause hydrated for attempts.
+// Hides corrected/retracted events. Limit defaults to 10, max 50.
+// ============================================================================
+
+describe('getQuestionTimeline', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('returns empty when no events for the question', async () => {
+    const db = testDb();
+    const events = await getQuestionTimeline(db, 'q_missing');
+    expect(events).toEqual([]);
+  });
+
+  it('returns attempts and reviews ordered desc by created_at', async () => {
+    const db = testDb();
+    const base = new Date('2026-05-01T00:00:00Z').getTime();
+    await seedAttemptEvent({
+      question_id: 'q1',
+      outcome: 'failure',
+      created_at: new Date(base + 0),
+    });
+    await seedReviewEvent({
+      question_id: 'q1',
+      rating: 'hard',
+      created_at: new Date(base + 60_000),
+    });
+    await seedAttemptEvent({
+      question_id: 'q1',
+      outcome: 'success',
+      created_at: new Date(base + 120_000),
+    });
+
+    const events = await getQuestionTimeline(db, 'q1');
+    expect(events).toHaveLength(3);
+    expect(events.map((e) => e.kind)).toEqual(['attempt', 'review', 'attempt']);
+    expect(events[0].created_at.getTime()).toBe(base + 120_000);
+    expect(events[2].created_at.getTime()).toBe(base + 0);
+  });
+
+  it('hydrates chained judge cause onto the attempt entry', async () => {
+    const db = testDb();
+    const attemptId = await seedAttemptEvent({ question_id: 'q1', outcome: 'failure' });
+    await seedJudgeEvent({
+      attempt_event_id: attemptId,
+      primary_category: 'careless_mistake',
+      confidence: 0.92,
+    });
+
+    const events = await getQuestionTimeline(db, 'q1');
+    expect(events).toHaveLength(1);
+    const entry = events[0];
+    expect(entry.kind).toBe('attempt');
+    if (entry.kind !== 'attempt') throw new Error('expected attempt');
+    expect(entry.cause?.primary).toBe('careless_mistake');
+    expect(entry.cause?.confidence).toBeCloseTo(0.92);
+    expect(entry.outcome).toBe('failure');
+  });
+
+  it('excludes retracted attempts', async () => {
+    const db = testDb();
+    const liveAttemptId = await seedAttemptEvent({
+      question_id: 'q1',
+      created_at: new Date('2026-05-02T00:00:00Z'),
+    });
+    const retractedAttemptId = await seedAttemptEvent({
+      question_id: 'q1',
+      created_at: new Date('2026-05-03T00:00:00Z'),
+    });
+    await seedCorrectionEvent({
+      target_event_id: retractedAttemptId,
+      correction_kind: 'retract',
+    });
+
+    const events = await getQuestionTimeline(db, 'q1');
+    expect(events).toHaveLength(1);
+    expect(events[0].kind).toBe('attempt');
+    if (events[0].kind !== 'attempt') throw new Error('expected attempt');
+    expect(events[0].event_id).toBe(liveAttemptId);
+  });
+
+  it('respects the limit parameter', async () => {
+    const db = testDb();
+    const base = new Date('2026-05-01T00:00:00Z').getTime();
+    for (let i = 0; i < 6; i++) {
+      await seedAttemptEvent({
+        question_id: 'q1',
+        outcome: 'failure',
+        created_at: new Date(base + i * 60_000),
+      });
+    }
+    const events = await getQuestionTimeline(db, 'q1', 3);
+    expect(events).toHaveLength(3);
+  });
+
+  it('extracts duration_ms from review payload', async () => {
+    const db = testDb();
+    // Manually seed review with duration_ms in payload — seedReviewEvent doesn't expose it.
+    const id = newId();
+    await db.insert(event).values({
+      id,
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'review',
+      subject_kind: 'question',
+      subject_id: 'q1',
+      outcome: 'success',
+      payload: {
+        fsrs_rating: 'good',
+        fsrs_state_after: {
+          due: new Date('2026-06-01T00:00:00Z').toISOString(),
+          stability: 2,
+          difficulty: 5,
+          elapsed_days: 1,
+          scheduled_days: 3,
+          learning_steps: 0,
+          reps: 1,
+          lapses: 0,
+          state: 'review',
+          last_review: new Date('2026-05-15T00:00:00Z').toISOString(),
+        },
+        user_response_md: null,
+        referenced_knowledge_ids: [],
+        duration_ms: 8_500,
+      },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: new Date(),
+    });
+
+    const events = await getQuestionTimeline(db, 'q1');
+    expect(events).toHaveLength(1);
+    if (events[0].kind !== 'review') throw new Error('expected review');
+    expect(events[0].duration_ms).toBe(8_500);
+    expect(events[0].fsrs_rating).toBe('good');
   });
 });
