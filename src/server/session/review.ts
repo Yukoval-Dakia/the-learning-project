@@ -10,8 +10,14 @@ import { assertFromState } from './guards';
 
 // LearningSession.Review.* — Phase 1c.1 Step 5 minimal state envelope.
 //
-// State machine (ADR-0008):
-//   started → completed | abandoned
+// State machine (ADR-0008 + YUK-57 expansion):
+//   started ⇄ paused
+//        ↘ ↙
+//      completed | abandoned
+//
+// YUK-57: paused is a user-initiated transient state from /review page. Both
+// started and paused are "live" states — orphan cron (6h) sweeps both, and
+// sendBeacon close / explicit complete can terminate either.
 //
 // Review sessions in Phase 1c.1 are state envelopes only. Per-question review
 // events (FSRS rating + state) are written by the review route in Step 6 using
@@ -96,9 +102,12 @@ export async function completeReviewSession(db: Db, sessionId: string): Promise<
     if (!current) {
       throw new ApiError('not_found', `learning_session ${sessionId} (type=review) not found`, 404);
     }
+    // YUK-57: completion is allowed from both started AND paused. A paused
+    // session that pagehide-fired sendBeacon-end OR cron-sweeps closes via
+    // this path; user can also click "complete" from the paused UI.
     assertFromState(
       current.status,
-      ['started'] as const,
+      ['started', 'paused'] as const,
       sessionId,
       'Review.completeReviewSession',
     );
@@ -138,7 +147,14 @@ export async function abandonReviewSession(db: Db, sessionId: string): Promise<v
     if (!current) {
       throw new ApiError('not_found', `learning_session ${sessionId} (type=review) not found`, 404);
     }
-    assertFromState(current.status, ['started'] as const, sessionId, 'Review.abandonReviewSession');
+    // YUK-57: abandon allowed from started AND paused. Orphan cron (6h)
+    // sweeps both; this fn is the single transition point.
+    assertFromState(
+      current.status,
+      ['started', 'paused'] as const,
+      sessionId,
+      'Review.abandonReviewSession',
+    );
 
     const now = new Date();
     await tx
@@ -155,6 +171,77 @@ export async function abandonReviewSession(db: Db, sessionId: string): Promise<v
       business_table: SESSION_TABLE,
       business_id: sessionId,
       event_type: 'review.abandoned',
+      payload: {},
+    });
+  });
+}
+
+// ---------- pauseReviewSession (YUK-57) ----------
+
+/**
+ * started → paused. Pause is a user-initiated transient state from /review.
+ * Does NOT set ended_at — the session is still "live" semantically. Version
+ * bumps so optimistic-concurrency consumers see the change.
+ *
+ * sendBeacon on pagehide must skip emit when status='paused' (handled
+ * client-side); orphan cron still abandons paused sessions older than 6h.
+ */
+export async function pauseReviewSession(db: Db, sessionId: string): Promise<void> {
+  await db.transaction(async (tx) => {
+    const current = await loadReviewSessionForUpdate(tx, sessionId);
+    if (!current) {
+      throw new ApiError('not_found', `learning_session ${sessionId} (type=review) not found`, 404);
+    }
+    assertFromState(current.status, ['started'] as const, sessionId, 'Review.pauseReviewSession');
+
+    const now = new Date();
+    await tx
+      .update(learning_session)
+      .set({
+        status: 'paused',
+        updated_at: now,
+        version: sql`${learning_session.version} + 1`,
+      })
+      .where(eq(learning_session.id, sessionId));
+
+    await writeJobEvent(tx, {
+      business_table: SESSION_TABLE,
+      business_id: sessionId,
+      event_type: 'review.paused',
+      payload: {},
+    });
+  });
+}
+
+// ---------- resumeReviewSession (YUK-57) ----------
+
+/**
+ * paused → started. Resumes from /today SessionStrip or via `?session=<id>`
+ * URL param on /review mount. Version bumps; ended_at stays null (was null
+ * during paused too).
+ */
+export async function resumeReviewSession(db: Db, sessionId: string): Promise<void> {
+  await db.transaction(async (tx) => {
+    const current = await loadReviewSessionForUpdate(tx, sessionId);
+    if (!current) {
+      throw new ApiError('not_found', `learning_session ${sessionId} (type=review) not found`, 404);
+    }
+    assertFromState(current.status, ['paused'] as const, sessionId, 'Review.resumeReviewSession');
+
+    const now = new Date();
+    await tx
+      .update(learning_session)
+      .set({
+        status: 'started',
+        updated_at: now,
+        version: sql`${learning_session.version} + 1`,
+      })
+      .where(eq(learning_session.id, sessionId));
+
+    await writeJobEvent(tx, {
+      business_table: SESSION_TABLE,
+      business_id: sessionId,
+      event_type: 'review.resumed',
       payload: {},
     });
   });
