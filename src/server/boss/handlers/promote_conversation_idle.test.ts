@@ -20,10 +20,7 @@ async function backdateStartedAt(sessionId: string, ageMs: number) {
 async function backdateLastUserMessage(sessionId: string, ageMs: number) {
   const db = testDb();
   const newCreatedAt = new Date(Date.now() - ageMs);
-  await db
-    .update(event)
-    .set({ created_at: newCreatedAt })
-    .where(eq(event.session_id, sessionId));
+  await db.update(event).set({ created_at: newCreatedAt }).where(eq(event.session_id, sessionId));
 }
 
 async function insertUserMessage(sessionId: string) {

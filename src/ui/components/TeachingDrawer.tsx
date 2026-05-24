@@ -292,9 +292,9 @@ export function TeachingDrawer({
             </div>
 
             {status === 'idle' && (
-              <div className="idle-banner" role="status">
+              <output className="idle-banner">
                 <strong>走开了吗？</strong> 敲字继续，或点「结束」收尾。
-              </div>
+              </output>
             )}
 
             <div className="msg-stream">

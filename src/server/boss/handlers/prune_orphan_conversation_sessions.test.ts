@@ -23,8 +23,12 @@ describe('runPruneOrphanConversationSessions', () => {
 
   it('abandons conversation sessions in active state older than 6h', async () => {
     const db = testDb();
-    const { sessionId: old1 } = await Conversation.startConversation(db, { learningItemId: 'li_a' });
-    const { sessionId: old2 } = await Conversation.startConversation(db, { learningItemId: 'li_b' });
+    const { sessionId: old1 } = await Conversation.startConversation(db, {
+      learningItemId: 'li_a',
+    });
+    const { sessionId: old2 } = await Conversation.startConversation(db, {
+      learningItemId: 'li_b',
+    });
     const { sessionId: fresh } = await Conversation.startConversation(db, {
       learningItemId: 'li_c',
     });
