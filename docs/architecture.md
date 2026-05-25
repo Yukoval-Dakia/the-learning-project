@@ -139,8 +139,10 @@ Question (统一题库，single source of truth)
 
 **当前规则**：
 
-- `needsToolCall: false` 的 task 可走 generic `app/api/ai/[task]`，由 `runTask()` 返回 JSON。
+- generic `app/api/ai/[task]` 仅接受 `ReviewIntentTask`，由 `runTask()` 返回 JSON。
+- SubjectProfile-driven task **不能**走 generic route；必须走领域 route / worker，由该入口解析并传入正确 `SubjectProfile`。
 - `needsToolCall: true` 的 task **不能**走 generic route；必须走领域 route，由领域 route 注入 MCP server 和 allowlist。例如 `KnowledgeReviewTask` 走 `/api/knowledge/review`。
+- `invocation: 'manual_rescue_only'` 的 VisionExtract* task 只能走 ingestion rescue 入口，不通过 generic route 暴露。
 - 当前唯一实际 MCP server 是每次 review 请求内创建的本地 `loom` server；唯一 tool 是 `mcp__loom__write_proposal`，用于写 proposal event，不对外暴露 endpoint。
 - 破坏性操作（删题、合并节点、reparent、merge、archive）没有直接 write tool。AI 只能 propose；用户 accept route 再执行真实 mutation。
 
@@ -191,13 +193,15 @@ interface DomainTool<Input, Output> {
 #### 实现
 
 - `app/api/ai/[task]/route.ts`：
-  - `needsToolCall: false` 的 task → `runTask()` → JSON / buffered text
+  - `ReviewIntentTask` → `runTask()` → JSON
+  - SubjectProfile-driven task → 400 `profile_required`
+  - VisionExtract* manual-rescue task → 400 `requires_domain_route`
   - `needsToolCall: true` 的 task → 400 `tool_task_requires_domain_route`
 - 领域 route（例如 `/api/knowledge/review`）调用 `streamTask()` / `runAgentTask()`，并注入 MCP server + allowlist。
 - Claude Agent SDK 负责 multi-turn tool loop；`maxTurns` 来自 `TaskBudget.maxIterations`
 - assistant tool-use blocks 写 `tool_call_log`
 - 总 finish 写 `cost_ledger`（按 task / provider / model 聚合）
-- client `src/ai/client.ts` 用 `fetch` + `ReadableStream`，按 `content-type` 分流：JSON 走 `res.json()`，stream 走 reader 循环（Phase 1 buffer 全文，未来 UI 消费 progress 再加 callback）
+- 浏览器侧不再有 `src/ai/client.ts` 通用 helper；UI 调用具体领域 route，避免绕开 profile / tool / ingestion context。
 
 #### 为什么不在 client 跑
 
