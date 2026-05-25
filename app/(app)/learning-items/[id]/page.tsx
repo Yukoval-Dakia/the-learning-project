@@ -69,6 +69,7 @@ interface NoteVerificationSummary {
 interface PrimaryArtifact {
   id: string;
   type: string;
+  version: number;
   sections: NoteSection[] | null;
   outline_json: Record<string, unknown> | null;
   generation_status: 'pending' | 'ready' | 'failed';
@@ -414,7 +415,14 @@ export default function LearningItemDetailPage() {
 
       {/* Phase 2B — primary artifact (note) sections when present */}
       {data.primary_artifact && (
-        <ArtifactView artifact={data.primary_artifact} subjectProfile={data.subject_profile} />
+        <ArtifactView
+          artifact={data.primary_artifact}
+          subjectProfile={data.subject_profile}
+          onSectionSaved={() => {
+            qc.invalidateQueries({ queryKey: ['learning-item', id] });
+            qc.invalidateQueries({ queryKey: ['learning-items'] });
+          }}
+        />
       )}
 
       {/* Children */}
@@ -462,9 +470,11 @@ export default function LearningItemDetailPage() {
 function ArtifactView({
   artifact,
   subjectProfile,
+  onSectionSaved,
 }: {
   artifact: PrimaryArtifact;
   subjectProfile: SlimSubjectProfile;
+  onSectionSaved: () => void;
 }) {
   return (
     <section className="artifact-view">
@@ -498,10 +508,13 @@ function ArtifactView({
       {artifact.generation_status === 'ready' && artifact.sections && (
         <>
           <ArtifactSections
+            artifactId={artifact.id}
+            artifactVersion={artifact.version}
             sections={artifact.sections}
             subjectProfile={subjectProfile}
             embeddedQuestions={artifact.embedded_questions}
             embeddedCheckStatus={artifact.embedded_check_status}
+            onSectionSaved={onSectionSaved}
           />
           {artifact.verification_summary && (
             <div className="artifact-verification">

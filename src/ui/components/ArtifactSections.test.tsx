@@ -1,7 +1,12 @@
 import type { SlimSubjectProfile } from '@/ui/lib/subject';
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { type ArtifactSection, ArtifactSections } from './ArtifactSections';
+import {
+  type ArtifactSection,
+  ArtifactSections,
+  createOptimisticSectionEdit,
+  getArtifactSectionEditMinHeight,
+} from './ArtifactSections';
 
 const wenyanProfile: SlimSubjectProfile = {
   id: 'wenyan',
@@ -132,5 +137,71 @@ describe('ArtifactSections — markdown rendering wiring', () => {
     expect(html).toContain('Which one equals');
     expect(html).toContain('class="katex"');
     expect(html.match(/自检题 · 1 题/g)).toHaveLength(1);
+  });
+
+  it('renders explicit edit controls when artifact id/version are provided', () => {
+    const sections: ArtifactSection[] = [
+      { ...baseSection, id: 's1', kind: 'definition', body_md: 'definition' },
+    ];
+    const html = renderToString(
+      <ArtifactSections
+        artifactId="a1"
+        artifactVersion={0}
+        sections={sections}
+        subjectProfile={wenyanProfile}
+        embeddedQuestions={[]}
+        embeddedCheckStatus="not_required"
+      />,
+    );
+    expect(html).toContain('Edit');
+    expect(html).toContain('artifact-section-edit-slot');
+  });
+
+  it('renders textarea + Save/Cancel in edit mode without dropping the stable slot', () => {
+    const sections: ArtifactSection[] = [
+      { ...baseSection, id: 's1', kind: 'definition', body_md: 'first line\nsecond line' },
+    ];
+    const html = renderToString(
+      <ArtifactSections
+        artifactId="a1"
+        artifactVersion={0}
+        initialEditingSectionId="s1"
+        sections={sections}
+        subjectProfile={wenyanProfile}
+        embeddedQuestions={[]}
+        embeddedCheckStatus="not_required"
+      />,
+    );
+    expect(html).toContain('<textarea');
+    expect(html).toContain('first line');
+    expect(html).toContain('Save');
+    expect(html).toContain('Cancel');
+    expect(html).toContain('artifact-section-edit-slot');
+  });
+
+  it('builds optimistic edit state and keeps a rollback snapshot', () => {
+    const sections: ArtifactSection[] = [
+      { ...baseSection, id: 's1', kind: 'definition', body_md: 'old', version: 2 },
+      { ...baseSection, id: 's2', kind: 'example', body_md: 'other', version: 1 },
+    ];
+
+    const edit = createOptimisticSectionEdit({ artifactVersion: 5, sections }, 's1', 'new body');
+
+    expect(edit.optimistic.artifactVersion).toBe(6);
+    expect(edit.optimistic.sections[0]).toMatchObject({
+      id: 's1',
+      body_md: 'new body',
+      version: 3,
+    });
+    expect(edit.optimistic.sections[1]).toBe(sections[1]);
+    expect(edit.rollback.artifactVersion).toBe(5);
+    expect(edit.rollback.sections[0]).toMatchObject({ id: 's1', body_md: 'old', version: 2 });
+  });
+
+  it('derives a bounded edit min-height from markdown shape', () => {
+    expect(getArtifactSectionEditMinHeight('short')).toBeGreaterThanOrEqual(112);
+    expect(
+      getArtifactSectionEditMinHeight(Array.from({ length: 20 }, () => 'line').join('\n')),
+    ).toBeLessThanOrEqual(360);
   });
 });
