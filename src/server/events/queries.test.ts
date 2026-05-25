@@ -382,6 +382,41 @@ describe('getFailureAttempts', () => {
     expect(results.map((r) => r.attempt_event_id)).toEqual(['evt_mix_1', 'evt_mix_0']);
   });
 
+  it('perQuestionLimit continues past a fully corrected partition head', async () => {
+    const db = testDb();
+    const baseTime = new Date('2026-05-01T12:00:00Z');
+
+    for (let i = 0; i < 7; i++) {
+      const attemptId = `evt_corrected_head_${i}`;
+      await seedAttemptEvent({
+        id: attemptId,
+        question_id: 'q_correction_heavy',
+        created_at: new Date(baseTime.getTime() + (100 + i) * 1_000),
+      });
+      await seedCorrectionEvent({
+        target_event_id: attemptId,
+        correction_kind: 'retract',
+        created_at: new Date(baseTime.getTime() + (200 + i) * 1_000),
+      });
+    }
+    for (let i = 0; i < 2; i++) {
+      await seedAttemptEvent({
+        id: `evt_active_deep_${i}`,
+        question_id: 'q_correction_heavy',
+        created_at: new Date(baseTime.getTime() + i * 1_000),
+      });
+    }
+
+    const results = await getFailureAttempts(db, {
+      questionIds: ['q_correction_heavy'],
+      perQuestionLimit: 2,
+    });
+    expect(results.map((r) => r.attempt_event_id)).toEqual([
+      'evt_active_deep_1',
+      'evt_active_deep_0',
+    ]);
+  });
+
   it('excludes corrected attempts from the active mistake projection', async () => {
     const db = testDb();
     const baseTime = new Date('2026-05-01T12:00:00Z');
