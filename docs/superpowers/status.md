@@ -58,6 +58,24 @@
 ✅  `unit_dimension@1` P1/P2                         YUK-35 / YUK-36 已 ship — capability skeleton、router contract、mathjs accelerator、LLM fallback、4-path score 组合与 regression tests 落地
 ```
 
+**M1 closeout archeology（YUK-12）**：
+
+Lane A prompt/profile coverage audit: [`docs/audit/2026-05-25-prompt-profile-coverage.md`](../audit/2026-05-25-prompt-profile-coverage.md)。
+
+Profile LOC snapshots checked with `git show ${sha}:src/subjects/math/profile.ts | wc -l`: `903009c` 94, `da906a4` 101, `b42c03a` 101, `77b969c` 103, `fda9785` 103, `a23694a` 103, `dff8f34` 103, `9191c160` 111, `main` 111. Per-PR numstat below counts text additions/deletions only; no binary or rename rows appeared in the selected output.
+
+| SHA | PR | math/profile.ts LOC | Subject-private | Schema extension | Framework hook | Subject-driven framework feature | Note |
+|---|---:|---:|---:|---:|---:|---:|---|
+| `903009c` | genesis | 94 | +94 / -0 | +173 / -0 | +0 / -0 | +0 / -0 | `SubjectProfile` schema + math profile introduced together. |
+| `da906a4` | #77 | 101 | +408 / -0 | +0 / -0 | +118 / -0 | +305 / -1 | Math seed/fixtures plus multimodal ingestion/question-contract support. |
+| `b42c03a` | #80 | 101 | +0 / -0 | +0 / -0 | +135 / -15 | +0 / -0 | Registry/prompt and question-contract cleanup before vision judge. |
+| `77b969c` | #81 | 103 | +29 / -1 | +7 / -0 | +323 / -0 | +0 / -0 | `steps@1` capability skeleton and profile regression coverage. |
+| `fda9785` | #82 | 103 | +324 / -2 | +12 / -0 | +92 / -11 | +564 / -0 | `steps@1` vision judge implementation plus derivation fixtures. |
+| `a23694a` | #83 | 103 | +182 / -1 | +0 / -0 | +0 / -0 | +697 / -18 | KaTeX, partial-credit UI surfaces, and appeal flow. |
+| `dff8f34` | #84 | 103 | +0 / -0 | +0 / -0 | +0 / -0 | +3 / -0 | M3 closeout UI polish. |
+
+Conclusion: Foundation B schema extension and math profile were introduced in the same commit (`903009c`), so YUK-12's old "math profile <=50 lines and 0 framework changes" acceptance was not a realistic audit target. Math MVP across six PRs added 2256 lines of framework changes (668 framework-hook + 19 schema-extension + 1569 subject-driven-feature) and 943 lines of math-private code. The acid test of true generalization is physics PR #91: physics landing produced framework diff = 0 (per this Foundation B section), proving the hooks + extensions really generalize.
+
 ### Foundation C — Judge Result Contract + Correction Event（ADR-0014 §4/§6）
 
 ```
