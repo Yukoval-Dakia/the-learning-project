@@ -20,7 +20,7 @@
 ✅  0z    Self-host                OrbStack 本地 + NAS 部署（Cloudflare Tunnel ingress）
 ✅  0d    Provider Manager         xiaomi/mimo Anthropic-compat；7 个 task 全切
 ✅  1a    Subject MVP（文言文）    wenyan 数据集 + FSRS 复习闭环
-✅  1b    AI surface               /api/ai/[task] 流式 + 工具调用统一入口
+✅  1b    AI surface               /api/ai/[task] 仅保留 ReviewIntentTask；profile/tool/manual-rescue 任务走领域入口
 ✅  1c.1  Event-driven core        event 表替代 mistake/review_event/dreaming_proposal
 ✅  1c.2  UI main                  /record /mistakes /knowledge /learning-items（read + write + Vision）
 ✅  1d    Observation surface      /events/[id] / 成本带 / ADR-0013 session lifecycle / /coach 周报
@@ -161,7 +161,7 @@ ADR-0014 配套：[7 轮讨论 + 10 决议 summary](../discussion/summary.md)、
 - `src/server/ai/providers.ts` —— `PROVIDERS` 映射 + `resolveTaskModel`
 - 7 个 task 全切到 xiaomi (`https://api.xiaomimimo.com/anthropic/v1`)，model：mimo-v2.5-pro（文本）/ mimo-v2.5（多模态）
 - Anthropic 订阅 OAuth 因 ToS 受限；mimo 是 Anthropic-protocol-compat 第三方，**ToS 干净** + 单用户体量 OK
-- 浏览器代码不持 API key —— 一律走 `/api/ai/[task]`，server 端读 env
+- 浏览器代码不持 API key —— UI 调用具体领域 route；generic `/api/ai/[task]` 仅允许 `ReviewIntentTask`，server 端读 env
 
 ---
 
