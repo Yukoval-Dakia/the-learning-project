@@ -153,6 +153,9 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
     //     proposal tombstones the paired artifact stubs alongside the materialized
     //     hub + atomic learning_items (archived_at + version+1 only — no semantic
     //     content rewrite). Mirrors the variant_question retract tombstone policy.
+    //   - YUK-54 `src/server/artifacts/sections.ts`: the single owner-service for
+    //     user section edits. Routes must call this service so sections/history
+    //     updates and `experimental:artifact_section_edit` stay atomic.
     // Anything else writing `artifact` should still be reviewed.
     const hits = await findWriteHits('artifact', { roots: SCAN_RUNTIME_ROOTS });
     const ALLOWED = [
@@ -161,6 +164,7 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
       'src/server/boss/handlers/note_verify.ts',
       'src/server/boss/handlers/embedded_check_generate.ts',
       'src/server/proposals/actions.ts',
+      'src/server/artifacts/sections.ts',
     ];
     const unexpected = hits.filter((h) => !ALLOWED.includes(h.split(path.sep).join('/')));
     expect(

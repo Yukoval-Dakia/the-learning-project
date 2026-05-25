@@ -2011,8 +2011,15 @@ ol {
 .artifact-section-head {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: var(--s-2);
   margin-bottom: 6px;
+}
+.artifact-section-labels {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
 }
 .artifact-section-head strong {
   font-family: var(--font-sans);
@@ -2040,6 +2047,46 @@ ol {
      blank lines between blocks and breaking list indentation. overflow-wrap
      still handles unbreakable long tokens. */
   overflow-wrap: anywhere;
+}
+.artifact-section-edit-slot {
+  min-height: var(--artifact-section-min-height, 112px);
+}
+.artifact-section-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-height: var(--artifact-section-min-height, 112px);
+}
+.artifact-section-textarea {
+  width: 100%;
+  min-height: calc(var(--artifact-section-min-height, 112px) - 42px);
+  padding: 10px 12px;
+  box-sizing: border-box;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-family: var(--font-wenyan);
+  font-size: 15px;
+  line-height: 1.7;
+  outline: none;
+}
+.artifact-section-textarea:focus-visible {
+  border-color: var(--coral-line);
+  box-shadow: var(--shadow-focus);
+}
+.artifact-section-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+.artifact-section-error {
+  margin: var(--s-2) 0 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  color: var(--again-ink);
 }
 
 /* ─── YUK-52 — note-prose: scoped rules for NoteRenderer ───────────────────
