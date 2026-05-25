@@ -197,15 +197,30 @@ export default function ReviewPage() {
     let cancelled = false;
     let createdId: string | null = null;
     (async () => {
-      // YUK-57: ?session=<id> resume path. Verify the session exists + is in
-      // paused state before adopting it; otherwise fall through to eager-create.
+      // YUK-57/YUK-63: ?session=<id> resume path. Verify the session exists,
+      // then adopt started sessions, resume paused sessions, or reopen
+      // abandoned sessions before using the same session id.
       if (resumeId) {
         try {
-          const existing = await apiJson<{ id: string; type: string; status: string }>(
-            `/api/learning-sessions/${encodeURIComponent(resumeId)}`,
-          );
+          const existing = await apiJson<{
+            id: string;
+            type: string;
+            status: string;
+            started_at: number;
+          }>(`/api/learning-sessions/${encodeURIComponent(resumeId)}`);
           if (existing.type === 'review' && existing.status === 'paused') {
             await apiJson(`/api/review/sessions/${encodeURIComponent(resumeId)}/resume`, {
+              method: 'POST',
+            });
+            if (cancelled) return;
+            createdId = resumeId;
+            setSessionId(resumeId);
+            setSessionStartedAt(existing.started_at * 1000);
+            updateStatus('started');
+            return;
+          }
+          if (existing.type === 'review' && existing.status === 'abandoned') {
+            await apiJson(`/api/review/sessions/${encodeURIComponent(resumeId)}/reopen`, {
               method: 'POST',
             });
             if (cancelled) return;
@@ -215,8 +230,16 @@ export default function ReviewPage() {
             updateStatus('started');
             return;
           }
-          // type=review but status != paused (already completed/abandoned, or
-          // currently started in another tab). Fall through to fresh session.
+          if (existing.type === 'review' && existing.status === 'started') {
+            if (cancelled) return;
+            createdId = resumeId;
+            setSessionId(resumeId);
+            setSessionStartedAt(existing.started_at * 1000);
+            updateStatus('started');
+            return;
+          }
+          // type=review but terminal/completed, or non-review. Fall through to
+          // fresh session.
         } catch {
           // 404 / unauthorised / network — fall through to fresh session.
         }

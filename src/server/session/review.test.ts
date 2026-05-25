@@ -9,6 +9,7 @@ import {
   abandonReviewSession,
   completeReviewSession,
   pauseReviewSession,
+  reopenAbandonedReviewSession,
   resumeReviewSession,
   startReviewSession,
 } from './review';
@@ -234,6 +235,40 @@ describe('Review.abandonReviewSession from paused', () => {
     const rows = await db.select().from(learning_session).where(eq(learning_session.id, sessionId));
     expect(rows[0].status).toBe('abandoned');
     expect(rows[0].ended_at).toBeTruthy();
+    await cleanup(sessionId);
+  });
+});
+
+// ---------- YUK-63: abandoned → started ----------
+
+describe('Review.reopenAbandonedReviewSession', () => {
+  it('abandoned → started + clears ended_at + version bump', async () => {
+    const { sessionId } = await startReviewSession(db);
+    await abandonReviewSession(db, sessionId);
+    await reopenAbandonedReviewSession(db, sessionId);
+    const rows = await db.select().from(learning_session).where(eq(learning_session.id, sessionId));
+    expect(rows[0].status).toBe('started');
+    expect(rows[0].ended_at).toBeNull();
+    expect(rows[0].version).toBe(2);
+    await cleanup(sessionId);
+  });
+
+  it('writes a job_events row review.reopened', async () => {
+    const { sessionId } = await startReviewSession(db);
+    await abandonReviewSession(db, sessionId);
+    await reopenAbandonedReviewSession(db, sessionId);
+    const jevents = await db.select().from(job_events).where(eq(job_events.business_id, sessionId));
+    expect(jevents.find((e) => e.event_type === 'review.reopened')).toBeTruthy();
+    await cleanup(sessionId);
+  });
+
+  it('rejects reopen when session is only paused', async () => {
+    const { sessionId } = await startReviewSession(db);
+    await pauseReviewSession(db, sessionId);
+    await expect(reopenAbandonedReviewSession(db, sessionId)).rejects.toMatchObject({
+      code: 'conflict',
+      status: 409,
+    });
     await cleanup(sessionId);
   });
 });

@@ -1857,6 +1857,36 @@ ol {
   text-decoration: underline;
 }
 
+.learning-session-list {
+  display: grid;
+  gap: var(--s-3);
+}
+.learning-session-row .ec-head code {
+  font-family: var(--font-mono);
+  color: var(--ink-2);
+}
+.learning-session-chips {
+  display: flex;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  margin-top: var(--s-2);
+}
+.learning-session-chips code {
+  padding: 3px 7px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-2);
+  background: var(--paper-sunk);
+  color: var(--ink-3);
+  font-size: var(--fs-meta);
+}
+.learning-session-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s-2);
+  margin-top: var(--s-3);
+  flex-wrap: wrap;
+}
+
 .ec-correction-panel {
   border: 1px solid var(--line);
   border-radius: var(--r-2);
