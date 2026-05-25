@@ -4,8 +4,8 @@
 > 这里记的是 **项目走到了哪、下一站去哪、为什么这么走**，不是 commit log。
 > 维护规则：每完成一个 Phase 就 update 一次；不维护周度进度。
 
-**最后更新**：2026-05-23（Project Ops closeout；README freshness 关闭；RESUME 残留已抽 Linear issues；Foundation closeout P0/P1/P2 已 ship；Track 2 L6 hygiene 已 ship）
-**当前 Phase**：Foundation B 第三科目 acid test 已推进到 physics P2：physics profile 已注册，`unit_dimension@1` skeleton + mathjs accelerator + LLM fallback 已落地。Foundation A 继续收尾单 invoker / broader call-site migration；Product Track 1 继续排 Teaching / Note / Variant / Review UX；Product Track 2 proposal inbox 已拆到 Linear 项目。
+**最后更新**：2026-05-25（Product Track 1 Wave 1-4 已 chain-merge 到 main；Wave 5 closeout 刷新路线图 / audit / retrospective；Track 2 proposal inbox 与 maintenance cron 已 ship）
+**当前 Phase**：Product Track 1 收口完成：Teaching idle、record→proposal、Note read/edit UX、VariantVerifyTask、review polish、learning-item rollback、Phase 2C E2E 均已落地到 main。下一站应从明确 follow-up 中选择：YUK-66 teaching ask_check artifact、Living Note refinement、Note 申诉/标错、Dreaming agent 或 subject #4。
 **主分支**：`main` 已推 `origin`
 **路线图源**：[`docs/planning/v0.3-generalized-ai-learning-framework.md`](../planning/v0.3-generalized-ai-learning-framework.md) §1.5 是当前执行清单；root `PLANNING.md` v0.12 Phase 1-4 已标 historical
 
@@ -75,18 +75,20 @@
 ```
 ✅  NoteVerifyTask Pass 2           `note_verify` queue + artifact verification metadata landed; proposal-inbox rollback remains later
 ✅  Embedded check（atomic notes）  inline 选择题 / fill-blank / prose semantic check — `embedded_check_generate` persists judge contract；attempt route writes success/partial/failure without polluting mistakes on unsupported
-⬜  Note 编辑 / 阅读 UX 完善
-⬜  VariantVerifyTask Pass 2        variant 双 pass + variants_max=3 计数
-⬜  Learning-item proposal rollback UI
-⬜  Teaching session idle state machine
-⬜  Record → proposal evidence loop  /record 条目能 surface 为 graph / item proposal
+✅  Note 编辑 / 阅读 UX 完善          markdown renderer / embedded check inline / verification badge / section edit-in-place 已 ship
+✅  VariantVerifyTask Pass 2        variant 双 pass + variants_max=3 计数已 ship
+✅  Learning-item proposal rollback UI
+✅  Teaching session idle state machine
+✅  Record → proposal evidence loop  /record 条目能 surface 为 graph / item proposal
+✅  Review session UX polish         judge auto-rating / skip + pause/resume / attempt timeline / end CTA / subject marker / answer preview / intent banner / abandoned resume
+✅  Phase 2C chat deploy + E2E       NAS rebuild + 3 轮 browser chat E2E，DB-level admin obs retest 由 YUK-65 跟踪
 ```
 
 ### Product Track 2 — Maintenance Agent + Proposal Inbox（v0.3 Track D）
 
 ```
 ✅  统一 AiProposalPayload          YUK-42 — `src/core/schema/proposal.ts` discriminated union (kind / target / reason_md / evidence_refs / rollback_plan / cooldown_key) + writer / inbox / producers / signals
-🟡  Maintenance agent               YUK-48 cron ✅ (`knowledge_maintenance_nightly` BJT 03:00); accept UI ⬜ (deferred)
+🟡  Maintenance agent               YUK-48 cron ✅ (`knowledge_maintenance_nightly` BJT 03:00); accept UI uses unified proposal lifecycle, richer ranking remains later
 ⬜  Dreaming lane                   daily AI 主动 proposal（reuse inbox）
 ⬜  Acceptance-rate / dismiss-reason 信号 → 未来 ranking
 ⬜  Bad accepted proposal 显式 retraction / rollback 流程
