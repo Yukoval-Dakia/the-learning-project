@@ -407,7 +407,18 @@ export async function acceptAiProposal(
 ): Promise<AcceptAiProposalResult> {
   const proposal = await requireProposal(db, proposalId);
   if (proposal.status !== 'pending') {
-    await reconcileExistingRateSignal(db, proposal, opts.user_note);
+    const existingRate = await findExistingRateEvent(db, proposal.id);
+    if (!existingRate) {
+      assertPending(proposal);
+    }
+    if (existingRate.decision !== 'accept') {
+      throw new ApiError(
+        'conflict',
+        `proposal ${proposalId} already decided as ${existingRate.decision}`,
+        409,
+      );
+    }
+    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
   }
 
   const result = await dispatchAccept(db, proposalId, proposal, opts);
