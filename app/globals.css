@@ -1857,6 +1857,36 @@ ol {
   text-decoration: underline;
 }
 
+.learning-session-list {
+  display: grid;
+  gap: var(--s-3);
+}
+.learning-session-row .ec-head code {
+  font-family: var(--font-mono);
+  color: var(--ink-2);
+}
+.learning-session-chips {
+  display: flex;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  margin-top: var(--s-2);
+}
+.learning-session-chips code {
+  padding: 3px 7px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-2);
+  background: var(--paper-sunk);
+  color: var(--ink-3);
+  font-size: var(--fs-meta);
+}
+.learning-session-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s-2);
+  margin-top: var(--s-3);
+  flex-wrap: wrap;
+}
+
 .ec-correction-panel {
   border: 1px solid var(--line);
   border-radius: var(--r-2);
@@ -2011,8 +2041,15 @@ ol {
 .artifact-section-head {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: var(--s-2);
   margin-bottom: 6px;
+}
+.artifact-section-labels {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
 }
 .artifact-section-head strong {
   font-family: var(--font-sans);
@@ -2040,6 +2077,46 @@ ol {
      blank lines between blocks and breaking list indentation. overflow-wrap
      still handles unbreakable long tokens. */
   overflow-wrap: anywhere;
+}
+.artifact-section-edit-slot {
+  min-height: var(--artifact-section-min-height, 112px);
+}
+.artifact-section-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-height: var(--artifact-section-min-height, 112px);
+}
+.artifact-section-textarea {
+  width: 100%;
+  min-height: calc(var(--artifact-section-min-height, 112px) - 42px);
+  padding: 10px 12px;
+  box-sizing: border-box;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-family: var(--font-wenyan);
+  font-size: 15px;
+  line-height: 1.7;
+  outline: none;
+}
+.artifact-section-textarea:focus-visible {
+  border-color: var(--coral-line);
+  box-shadow: var(--shadow-focus);
+}
+.artifact-section-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+.artifact-section-error {
+  margin: var(--s-2) 0 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  color: var(--again-ink);
 }
 
 /* ─── YUK-52 — note-prose: scoped rules for NoteRenderer ───────────────────
@@ -2510,6 +2587,10 @@ ol {
 /* ------------------------------------------------------------ */
 
 .review-intent {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
   margin: 0 0 var(--s-4);
   padding: 12px 16px;
   background: linear-gradient(180deg, var(--coral-soft) 0%, var(--paper-tint) 100%);
@@ -2519,6 +2600,28 @@ ol {
   font-size: 15px;
   line-height: 1.55;
   color: var(--coral-ink);
+}
+.review-intent-copy {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+.review-intent-copy > span:first-child {
+  overflow-wrap: anywhere;
+}
+.review-intent-stale {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
+.review-intent-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
 }
 
 .review-card-meta {

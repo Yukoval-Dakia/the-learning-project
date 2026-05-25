@@ -76,4 +76,18 @@ describe('GET /api/learning-sessions', () => {
     expect(body.rows[0].rating_counts.good).toBe(1);
     expect(body.rows[0].knowledge_touched).toEqual(['k1']);
   });
+
+  it('includes abandoned review sessions for resume entrypoints', async () => {
+    const db = testDb();
+    const { sessionId } = await Review.startReviewSession(db);
+    await Review.abandonReviewSession(db, sessionId);
+
+    const res = await GET(req('http://localhost/api/learning-sessions?type=review&limit=5'));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      rows: Array<{ id: string; status: string; ended_at: number | null }>;
+    };
+    expect(body.rows[0]).toMatchObject({ id: sessionId, status: 'abandoned' });
+    expect(body.rows[0].ended_at).toBeGreaterThan(0);
+  });
 });

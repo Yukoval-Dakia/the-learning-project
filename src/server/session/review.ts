@@ -12,8 +12,9 @@ import { assertFromState } from './guards';
 //
 // State machine (ADR-0008 + YUK-57 expansion):
 //   started ⇄ paused
-//        ↘ ↙
+//        ↘ ↙     ↑
 //      completed | abandoned
+//                  ↳ reopened → started (YUK-63)
 //
 // YUK-57: paused is a user-initiated transient state from /review page. Both
 // started and paused are "live" states — orphan cron (6h) sweeps both, and
@@ -242,6 +243,48 @@ export async function resumeReviewSession(db: Db, sessionId: string): Promise<vo
       business_table: SESSION_TABLE,
       business_id: sessionId,
       event_type: 'review.resumed',
+      payload: {},
+    });
+  });
+}
+
+// ---------- reopenAbandonedReviewSession (YUK-63) ----------
+
+/**
+ * abandoned → started. Used when the user returns to an orphan-cron-abandoned
+ * review session from `/learning-sessions`. Re-bases started_at and clears
+ * ended_at because the session is live again; per-question review events remain
+ * chained by session_id.
+ */
+export async function reopenAbandonedReviewSession(db: Db, sessionId: string): Promise<void> {
+  await db.transaction(async (tx) => {
+    const current = await loadReviewSessionForUpdate(tx, sessionId);
+    if (!current) {
+      throw new ApiError('not_found', `learning_session ${sessionId} (type=review) not found`, 404);
+    }
+    assertFromState(
+      current.status,
+      ['abandoned'] as const,
+      sessionId,
+      'Review.reopenAbandonedReviewSession',
+    );
+
+    const now = new Date();
+    await tx
+      .update(learning_session)
+      .set({
+        status: 'started',
+        started_at: now,
+        ended_at: null,
+        updated_at: now,
+        version: sql`${learning_session.version} + 1`,
+      })
+      .where(eq(learning_session.id, sessionId));
+
+    await writeJobEvent(tx, {
+      business_table: SESSION_TABLE,
+      business_id: sessionId,
+      event_type: 'review.reopened',
       payload: {},
     });
   });

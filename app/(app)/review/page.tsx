@@ -4,6 +4,7 @@ import type { JudgeResultV2T } from '@/core/schema/capability';
 import { AttemptTimeline, type AttemptTimelineEvent } from '@/ui/components/AttemptTimeline';
 import { JudgeResultPanel } from '@/ui/components/JudgeResultPanel';
 import { ReviewAnswerPreview, shouldShowAnswerPreview } from '@/ui/components/ReviewAnswerPreview';
+import { ReviewIntentBanner } from '@/ui/components/ReviewIntentBanner';
 import {
   type ReviewRatingCounts,
   ReviewSessionRibbon,
@@ -28,6 +29,45 @@ import { PageHeader } from '@/ui/primitives/PageHeader';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
+
+const REVIEW_INTENT_DISMISS_STORAGE_KEY = 'loom.reviewIntent.dismissed.v1';
+
+interface DismissedReviewIntent {
+  date: string;
+  intent: string;
+}
+
+function todayKey(date = new Date()): string {
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function readDismissedReviewIntent(): string | null {
+  if (typeof window === 'undefined') return null;
+  const raw = window.localStorage.getItem(REVIEW_INTENT_DISMISS_STORAGE_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as DismissedReviewIntent;
+    return parsed.date === todayKey() && parsed.intent ? parsed.intent : null;
+  } catch {
+    window.localStorage.removeItem(REVIEW_INTENT_DISMISS_STORAGE_KEY);
+    return null;
+  }
+}
+
+function writeDismissedReviewIntent(intent: string): void {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(
+    REVIEW_INTENT_DISMISS_STORAGE_KEY,
+    JSON.stringify({ date: todayKey(), intent }),
+  );
+}
+
+function clearDismissedReviewIntent(): void {
+  if (typeof window === 'undefined') return;
+  window.localStorage.removeItem(REVIEW_INTENT_DISMISS_STORAGE_KEY);
+}
 
 type CauseCategory =
   | 'concept'
@@ -157,15 +197,30 @@ export default function ReviewPage() {
     let cancelled = false;
     let createdId: string | null = null;
     (async () => {
-      // YUK-57: ?session=<id> resume path. Verify the session exists + is in
-      // paused state before adopting it; otherwise fall through to eager-create.
+      // YUK-57/YUK-63: ?session=<id> resume path. Verify the session exists,
+      // then adopt started sessions, resume paused sessions, or reopen
+      // abandoned sessions before using the same session id.
       if (resumeId) {
         try {
-          const existing = await apiJson<{ id: string; type: string; status: string }>(
-            `/api/learning-sessions/${encodeURIComponent(resumeId)}`,
-          );
+          const existing = await apiJson<{
+            id: string;
+            type: string;
+            status: string;
+            started_at: number;
+          }>(`/api/learning-sessions/${encodeURIComponent(resumeId)}`);
           if (existing.type === 'review' && existing.status === 'paused') {
             await apiJson(`/api/review/sessions/${encodeURIComponent(resumeId)}/resume`, {
+              method: 'POST',
+            });
+            if (cancelled) return;
+            createdId = resumeId;
+            setSessionId(resumeId);
+            setSessionStartedAt(existing.started_at * 1000);
+            updateStatus('started');
+            return;
+          }
+          if (existing.type === 'review' && existing.status === 'abandoned') {
+            await apiJson(`/api/review/sessions/${encodeURIComponent(resumeId)}/reopen`, {
               method: 'POST',
             });
             if (cancelled) return;
@@ -175,8 +230,16 @@ export default function ReviewPage() {
             updateStatus('started');
             return;
           }
-          // type=review but status != paused (already completed/abandoned, or
-          // currently started in another tab). Fall through to fresh session.
+          if (existing.type === 'review' && existing.status === 'started') {
+            if (cancelled) return;
+            createdId = resumeId;
+            setSessionId(resumeId);
+            setSessionStartedAt(existing.started_at * 1000);
+            updateStatus('started');
+            return;
+          }
+          // type=review but terminal/completed, or non-review. Fall through to
+          // fresh session.
         } catch {
           // 404 / unauthorised / network — fall through to fresh session.
         }
@@ -266,6 +329,29 @@ export default function ReviewPage() {
   const current = rows[index];
   const isDone = total > 0 && index >= total;
   const intent = intentQ.data ?? planQ.data?.session_intent ?? null;
+  const intentUpdatedAtMs = intentQ.data ? intentQ.dataUpdatedAt : planQ.dataUpdatedAt;
+  const [dismissedIntent, setDismissedIntent] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!intent) {
+      setDismissedIntent(null);
+      return;
+    }
+    setDismissedIntent(readDismissedReviewIntent());
+  }, [intent]);
+
+  const dismissIntent = useCallback(() => {
+    if (!intent) return;
+    writeDismissedReviewIntent(intent);
+    setDismissedIntent(intent);
+  }, [intent]);
+
+  const refreshIntent = useCallback(() => {
+    clearDismissedReviewIntent();
+    setDismissedIntent(null);
+    void intentQ.refetch();
+  }, [intentQ.refetch]);
+  const visibleIntent = intent && dismissedIntent !== intent ? intent : null;
 
   // YUK-58 — current-question attempt timeline. Only fires when the user is in
   // feedback phase so we don't churn the DB during answering. Limited to the
@@ -536,10 +622,14 @@ export default function ReviewPage() {
         sub="按下 1 / 2 / 3 写一条 action=review 事件，FSRS 状态投影表同事务更新。"
       />
 
-      {intent && (
-        <div className="review-intent" aria-label="session intent">
-          {intent}
-        </div>
+      {visibleIntent && (
+        <ReviewIntentBanner
+          intent={visibleIntent}
+          updatedAtMs={intentUpdatedAtMs}
+          refreshing={intentQ.isFetching}
+          onDismiss={dismissIntent}
+          onRefresh={refreshIntent}
+        />
       )}
 
       <ReviewSessionRibbon session={session} reviewedCount={reviewedCount} totalCount={total} />

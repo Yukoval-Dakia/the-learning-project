@@ -134,6 +134,7 @@ export async function GET(_req: Request, { params }: RouteParams): Promise<Respo
     let primaryArtifact: {
       id: string;
       type: string;
+      version: number;
       sections: unknown;
       outline_json: unknown;
       generation_status: string;
@@ -153,6 +154,7 @@ export async function GET(_req: Request, { params }: RouteParams): Promise<Respo
         .select({
           id: artifact.id,
           type: artifact.type,
+          version: artifact.version,
           sections: artifact.sections,
           outline_json: artifact.outline_json,
           generation_status: artifact.generation_status,
