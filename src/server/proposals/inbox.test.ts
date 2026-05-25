@@ -1,4 +1,4 @@
-import { event } from '@/db/schema';
+import { event, proposal_signals } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -436,6 +436,92 @@ describe('proposal inbox reader', () => {
     });
     expect(third.rows.map((row) => row.id)).toEqual(['cooled_p1']);
     expect(third.next_cursor).toBeNull();
+  });
+
+  it('keeps cooldown ranking time stable across sparse multi-batch pagination', async () => {
+    const db = testDb();
+    const baseTime = new Date('2026-05-23T00:00:00.000Z');
+
+    for (let i = 0; i < 50; i++) {
+      await writeAiProposal(db, {
+        id: `pending_p${i}`,
+        created_at: new Date(baseTime.getTime() + (100 + i) * 1_000),
+        payload: {
+          kind: 'completion',
+          target: { subject_kind: 'learning_item', subject_id: `li_pending_${i}` },
+          reason_md: 'Pending row ahead of accepted sparse match',
+          evidence_refs: [],
+          proposed_change: { learning_item_id: `li_pending_${i}` },
+          cooldown_key: `completion:pending:${i}`,
+        },
+      });
+    }
+    await writeAiProposal(db, {
+      id: 'accepted_cooled',
+      created_at: new Date(baseTime.getTime() + 1_000),
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'li_accepted' },
+        reason_md: 'Accepted row initially sorted after non-cooled rows',
+        evidence_refs: [],
+        proposed_change: { learning_item_id: 'li_accepted' },
+        cooldown_key: 'completion:accepted',
+      },
+    });
+    await db.insert(event).values({
+      id: 'rate_accepted_cooled',
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'event',
+      subject_id: 'accepted_cooled',
+      outcome: 'success',
+      payload: { rating: 'accept' },
+      caused_by_event_id: 'accepted_cooled',
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: new Date(baseTime.getTime() + 2_000),
+    });
+    await db.insert(proposal_signals).values({
+      id: 'signal_accepted_cooled',
+      kind: 'completion',
+      cooldown_key: 'completion:accepted',
+      accept_count: 1,
+      dismiss_count: 0,
+      acceptance_rate: 1,
+      dismiss_reason: null,
+      cooldown_until: new Date('2026-05-23T00:00:01.000Z'),
+      created_at: baseTime,
+      updated_at: baseTime,
+    });
+
+    const realDate = Date;
+    let callCount = 0;
+    class StepDate extends realDate {
+      constructor(...args: [] | [string | number | Date]) {
+        if (args.length === 0) {
+          const instant =
+            callCount++ === 0 ? '2026-05-23T00:00:00.500Z' : '2026-05-23T00:00:02.000Z';
+          super(instant);
+        } else {
+          super(args[0]);
+        }
+      }
+
+      static now() {
+        return new StepDate().getTime();
+      }
+    }
+
+    vi.stubGlobal('Date', StepDate);
+    try {
+      const page = await listProposalInboxPage(db, { status: 'accepted', limit: 1 });
+      expect(page.rows.map((row) => row.id)).toEqual(['accepted_cooled']);
+      expect(page.next_cursor).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   // YUK-19 — planLearningIntent writes proposals with the legacy

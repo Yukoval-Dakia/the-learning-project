@@ -186,19 +186,41 @@ export async function getFailureAttempts(
     // global limit and silently drop quieter questions from the result. The
     // `* 3` buffer matches the global-`limit` path's pre-filter overhead for
     // active corrections (some head rows get retracted; over-sample so the
-    // final per-question cap still holds).
-    const partitionLimit = perQuestionLimit * 3;
-    const attemptRows = await getPartitionedFailureRows(db, conditions, partitionLimit);
-    if (attemptRows.length === 0) return [];
-    const filtered = await filterActiveRows(db, attemptRows);
-    // Final per-question cap in JS — `filterActiveRows` preserves SQL order.
-    const counts = new Map<string, number>();
-    activeAttemptRows = filtered.filter((row) => {
-      const count = counts.get(row.subject_id) ?? 0;
-      if (count >= perQuestionLimit) return false;
-      counts.set(row.subject_id, count + 1);
-      return true;
-    });
+    // final per-question cap still holds). If a partition head is fully
+    // retracted, keep fetching deeper windows for that question.
+    const partitionBatchLimit = perQuestionLimit * 3;
+    const activeRowsByQuestion = new Map<string, EventRow[]>();
+    const targetQuestionIds =
+      opts.questionIds && opts.questionIds.length > 0 ? [...new Set(opts.questionIds)] : null;
+    let partitionOffset = 0;
+    for (;;) {
+      const attemptRows = await getPartitionedFailureRows(
+        db,
+        conditions,
+        partitionOffset,
+        partitionBatchLimit,
+      );
+      if (attemptRows.length === 0) break;
+      const filtered = await filterActiveRows(db, attemptRows);
+      for (const row of filtered) {
+        const rows = activeRowsByQuestion.get(row.subject_id) ?? [];
+        if (rows.length >= perQuestionLimit) continue;
+        rows.push(row);
+        activeRowsByQuestion.set(row.subject_id, rows);
+      }
+      if (
+        targetQuestionIds?.every((questionId) => {
+          const rows = activeRowsByQuestion.get(questionId);
+          return rows !== undefined && rows.length >= perQuestionLimit;
+        }) === true
+      ) {
+        break;
+      }
+      partitionOffset += partitionBatchLimit;
+    }
+    activeAttemptRows = [...activeRowsByQuestion.values()]
+      .flat()
+      .sort((a, b) => b.created_at.getTime() - a.created_at.getTime() || b.id.localeCompare(a.id));
   } else {
     const attemptQuery = db
       .select()
@@ -790,6 +812,7 @@ async function getPartitionedFailureRows(
   db: DbLike,
   // biome-ignore lint/suspicious/noExplicitAny: drizzle condition tuple is heterogeneous.
   conditions: any[],
+  partitionOffset: number,
   partitionLimit: number,
 ): Promise<EventRow[]> {
   // We re-use the existing drizzle condition tuple by wrapping the partitioned
@@ -825,7 +848,9 @@ async function getPartitionedFailureRows(
     })
     .from(event)
     .innerJoin(ranked, eq(event.id, ranked.id))
-    .where(sql`${ranked.rn} <= ${partitionLimit}`)
+    .where(
+      sql`${ranked.rn} > ${partitionOffset} AND ${ranked.rn} <= ${partitionOffset + partitionLimit}`,
+    )
     .orderBy(desc(event.created_at), desc(event.id));
   return rows as EventRow[];
 }
