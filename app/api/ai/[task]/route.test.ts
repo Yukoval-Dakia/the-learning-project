@@ -19,7 +19,12 @@ vi.mock('@/server/ai/runner', () => ({
 }));
 
 vi.mock('@/ai/registry', () => ({
-  tasks: { cause_attribution: { needsToolCall: false }, judge_flexible: { needsToolCall: true } },
+  tasks: {
+    ReviewIntentTask: { needsToolCall: false, invocation: 'auto' },
+    NoteGenerateTask: { needsToolCall: false, invocation: 'auto' },
+    VisionExtractTask: { needsToolCall: false, invocation: 'manual_rescue_only' },
+    KnowledgeReviewTask: { needsToolCall: true, invocation: 'auto' },
+  },
 }));
 
 import { POST } from './route';
@@ -29,35 +34,79 @@ describe('POST /api/ai/[task]', () => {
     vi.clearAllMocks();
   });
 
-  it('returns JSON for non-streaming task', async () => {
+  it('allows ReviewIntentTask on the generic route', async () => {
+    const { runTask } = await import('@/server/ai/runner');
+
     const res = await POST(
-      buildAuthedRequest('http://localhost/api/ai/cause_attribution', {
+      buildAuthedRequest('http://localhost/api/ai/ReviewIntentTask', {
         method: 'POST',
-        body: JSON.stringify({ input: {} }),
+        body: JSON.stringify({ input: { total: 3 } }),
       }),
-      { params: Promise.resolve({ task: 'cause_attribution' }) },
+      { params: Promise.resolve({ task: 'ReviewIntentTask' }) },
     );
+
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.task_run_id).toBe('r1');
+    expect(runTask).toHaveBeenCalledWith('ReviewIntentTask', { total: 3 }, expect.any(Object));
   });
 
-  it('rejects tool-calling tasks on the generic route', async () => {
-    const { streamTask } = await import('@/server/ai/runner');
+  it('rejects profile-driven tasks on the generic route', async () => {
+    const { runTask } = await import('@/server/ai/runner');
 
     const res = await POST(
-      buildAuthedRequest('http://localhost/api/ai/judge_flexible', {
+      buildAuthedRequest('http://localhost/api/ai/NoteGenerateTask', {
         method: 'POST',
         body: JSON.stringify({ input: {} }),
       }),
-      { params: Promise.resolve({ task: 'judge_flexible' }) },
+      { params: Promise.resolve({ task: 'NoteGenerateTask' }) },
+    );
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: 'profile_required',
+      task: 'NoteGenerateTask',
+    });
+    expect(runTask).not.toHaveBeenCalled();
+  });
+
+  it('rejects manual rescue tasks on the generic route', async () => {
+    const { runTask } = await import('@/server/ai/runner');
+
+    const res = await POST(
+      buildAuthedRequest('http://localhost/api/ai/VisionExtractTask', {
+        method: 'POST',
+        body: JSON.stringify({ input: {} }),
+      }),
+      { params: Promise.resolve({ task: 'VisionExtractTask' }) },
+    );
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: 'requires_domain_route',
+      task: 'VisionExtractTask',
+      domain_route: '/api/ingestion/[id]/extract',
+    });
+    expect(runTask).not.toHaveBeenCalled();
+  });
+
+  it('rejects tool-calling tasks on the generic route', async () => {
+    const { runTask, streamTask } = await import('@/server/ai/runner');
+
+    const res = await POST(
+      buildAuthedRequest('http://localhost/api/ai/KnowledgeReviewTask', {
+        method: 'POST',
+        body: JSON.stringify({ input: {} }),
+      }),
+      { params: Promise.resolve({ task: 'KnowledgeReviewTask' }) },
     );
 
     expect(res.status).toBe(400);
     await expect(res.json()).resolves.toMatchObject({
       error: 'tool_task_requires_domain_route',
-      task: 'judge_flexible',
+      task: 'KnowledgeReviewTask',
     });
+    expect(runTask).not.toHaveBeenCalled();
     expect(streamTask).not.toHaveBeenCalled();
   });
 

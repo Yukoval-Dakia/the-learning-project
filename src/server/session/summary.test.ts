@@ -308,7 +308,9 @@ describe('runSessionSummary', () => {
   it('counts every failure cause for long sessions instead of truncating by question count', async () => {
     const db = testDb();
     const { sessionId } = await Review.startReviewSession(db);
-    for (let questionIndex = 0; questionIndex < 50; questionIndex += 1) {
+    // 110 failure attempts is enough to prove `limit: null` bypasses the
+    // default getFailureAttempts cap of 100 without making the DB suite brittle.
+    for (let questionIndex = 0; questionIndex < 10; questionIndex += 1) {
       const questionId = `q_long_${questionIndex}`;
       await seedQuestion(questionId, `题 ${questionIndex}`);
       await seedReviewEvent(sessionId, questionId, 'again');
@@ -329,6 +331,6 @@ describe('runSessionSummary', () => {
     const input = runTaskFn.mock.calls[0][1] as {
       top_causes: Array<{ category: string; count: number }>;
     };
-    expect(input.top_causes).toEqual([{ category: 'memory', count: 550 }]);
+    expect(input.top_causes).toEqual([{ category: 'memory', count: 110 }]);
   });
 });
