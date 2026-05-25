@@ -408,17 +408,18 @@ export async function acceptAiProposal(
   const proposal = await requireProposal(db, proposalId);
   if (proposal.status !== 'pending') {
     const existingRate = await findExistingRateEvent(db, proposal.id);
-    if (!existingRate) {
+    if (existingRate) {
+      if (existingRate.decision !== 'accept') {
+        throw new ApiError(
+          'conflict',
+          `proposal ${proposalId} already decided as ${existingRate.decision}`,
+          409,
+        );
+      }
+      await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+    } else {
       assertPending(proposal);
     }
-    if (existingRate.decision !== 'accept') {
-      throw new ApiError(
-        'conflict',
-        `proposal ${proposalId} already decided as ${existingRate.decision}`,
-        409,
-      );
-    }
-    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
   }
 
   const result = await dispatchAccept(db, proposalId, proposal, opts);
