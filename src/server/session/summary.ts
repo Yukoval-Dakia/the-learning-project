@@ -17,6 +17,7 @@ import { getFailureAttempts } from '@/server/events/queries';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 const NOTABLE_LIMIT = 3;
+const SESSION_SUMMARY_FAILURE_SCAN_CAP = 2000;
 
 export type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
 
@@ -116,9 +117,10 @@ export async function runSessionSummary(
   const questionIds = Array.from(new Set(reviewEvents.map((r) => r.subject_id)));
   const causeCounts = new Map<string, number>();
   if (questionIds.length > 0) {
+    const failureScanLimit = Math.max(SESSION_SUMMARY_FAILURE_SCAN_CAP, questionIds.length * 20);
     const failures = await getFailureAttempts(db, {
       questionIds,
-      limit: null,
+      limit: failureScanLimit,
     });
     for (const failure of failures) {
       const cat = effectiveCauseForFailureAttempt(failure)?.primary_category;
