@@ -252,8 +252,9 @@ export async function resumeReviewSession(db: Db, sessionId: string): Promise<vo
 
 /**
  * abandoned → started. Used when the user returns to an orphan-cron-abandoned
- * review session from `/learning-sessions`. Clears ended_at because the session
- * is live again; per-question review events remain chained by session_id.
+ * review session from `/learning-sessions`. Re-bases started_at and clears
+ * ended_at because the session is live again; per-question review events remain
+ * chained by session_id.
  */
 export async function reopenAbandonedReviewSession(db: Db, sessionId: string): Promise<void> {
   await db.transaction(async (tx) => {
@@ -273,6 +274,7 @@ export async function reopenAbandonedReviewSession(db: Db, sessionId: string): P
       .update(learning_session)
       .set({
         status: 'started',
+        started_at: now,
         ended_at: null,
         updated_at: now,
         version: sql`${learning_session.version} + 1`,

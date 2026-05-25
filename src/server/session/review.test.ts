@@ -242,12 +242,21 @@ describe('Review.abandonReviewSession from paused', () => {
 // ---------- YUK-63: abandoned → started ----------
 
 describe('Review.reopenAbandonedReviewSession', () => {
-  it('abandoned → started + clears ended_at + version bump', async () => {
+  it('abandoned → started + re-bases started_at + clears ended_at + version bump', async () => {
     const { sessionId } = await startReviewSession(db);
+    const staleStartedAt = new Date('2026-01-01T00:00:00.000Z');
+    await db
+      .update(learning_session)
+      .set({ started_at: staleStartedAt })
+      .where(eq(learning_session.id, sessionId));
     await abandonReviewSession(db, sessionId);
+    const reopenStartedAtFloor = Date.now();
     await reopenAbandonedReviewSession(db, sessionId);
+    const reopenStartedAtCeiling = Date.now();
     const rows = await db.select().from(learning_session).where(eq(learning_session.id, sessionId));
     expect(rows[0].status).toBe('started');
+    expect(rows[0].started_at.getTime()).toBeGreaterThanOrEqual(reopenStartedAtFloor);
+    expect(rows[0].started_at.getTime()).toBeLessThanOrEqual(reopenStartedAtCeiling);
     expect(rows[0].ended_at).toBeNull();
     expect(rows[0].version).toBe(2);
     await cleanup(sessionId);
