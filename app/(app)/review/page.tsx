@@ -134,6 +134,8 @@ export default function ReviewPage() {
   const qc = useQueryClient();
   const searchParams = useSearchParams();
   const resumeIdParam = searchParams.get('session');
+  const resumeId =
+    resumeIdParam && /^[a-z0-9]+$/i.test(resumeIdParam.trim()) ? resumeIdParam.trim() : null;
 
   // ADR-0013 — open a learning_session(type='review') on mount; close on
   // pagehide via sendBeacon (so it survives tab close).
@@ -157,16 +159,18 @@ export default function ReviewPage() {
     (async () => {
       // YUK-57: ?session=<id> resume path. Verify the session exists + is in
       // paused state before adopting it; otherwise fall through to eager-create.
-      if (resumeIdParam) {
+      if (resumeId) {
         try {
           const existing = await apiJson<{ id: string; type: string; status: string }>(
-            `/api/learning-sessions/${resumeIdParam}`,
+            `/api/learning-sessions/${encodeURIComponent(resumeId)}`,
           );
           if (existing.type === 'review' && existing.status === 'paused') {
-            await apiJson(`/api/review/sessions/${resumeIdParam}/resume`, { method: 'POST' });
+            await apiJson(`/api/review/sessions/${encodeURIComponent(resumeId)}/resume`, {
+              method: 'POST',
+            });
             if (cancelled) return;
-            createdId = resumeIdParam;
-            setSessionId(resumeIdParam);
+            createdId = resumeId;
+            setSessionId(resumeId);
             setSessionStartedAt(Date.now());
             updateStatus('started');
             return;
@@ -223,7 +227,7 @@ export default function ReviewPage() {
         }).catch(() => {});
       }
     };
-  }, [resumeIdParam, updateStatus]);
+  }, [resumeId, updateStatus]);
 
   // Phase 2A — Review Orchestrator. Two fetches so the queue can render in
   // ~50ms while the LLM session_intent (mimo, ~15-20s) loads in the background.
