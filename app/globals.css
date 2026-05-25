@@ -2557,6 +2557,10 @@ ol {
 /* ------------------------------------------------------------ */
 
 .review-intent {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
   margin: 0 0 var(--s-4);
   padding: 12px 16px;
   background: linear-gradient(180deg, var(--coral-soft) 0%, var(--paper-tint) 100%);
@@ -2566,6 +2570,28 @@ ol {
   font-size: 15px;
   line-height: 1.55;
   color: var(--coral-ink);
+}
+.review-intent-copy {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+.review-intent-copy > span:first-child {
+  overflow-wrap: anywhere;
+}
+.review-intent-stale {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
+.review-intent-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
 }
 
 .review-card-meta {
