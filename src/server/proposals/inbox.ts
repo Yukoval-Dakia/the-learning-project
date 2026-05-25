@@ -202,9 +202,9 @@ function proposalCursorWhere(cursor: ProposalCursor, nowIso: string) {
 
 async function loadProposalEvents(
   db: DbLike,
-  opts: Pick<ListProposalInboxOpts, 'limit' | 'cursor'> = {},
+  opts: Pick<ListProposalInboxOpts, 'limit' | 'cursor'> & { nowIso?: string } = {},
 ): Promise<LoadedProposalEvent[]> {
-  const nowIso = new Date().toISOString();
+  const nowIso = opts.nowIso ?? new Date().toISOString();
   const cursor = opts.cursor ? decodeProposalCursor(opts.cursor) : null;
   const cooldownActive = proposalCooldownActiveExpr(nowIso);
   const acceptanceRate = proposalAcceptanceRateExpr();
@@ -437,9 +437,13 @@ export async function listProposalInboxPage(
   db: DbLike,
   opts: ListProposalInboxOpts = {},
 ): Promise<ProposalInboxPage> {
+  const rankingNowIso = new Date().toISOString();
   const pageLimit = opts.limit;
   if (pageLimit === undefined) {
-    const loadedProposalRows = await loadProposalEvents(db, { cursor: opts.cursor });
+    const loadedProposalRows = await loadProposalEvents(db, {
+      cursor: opts.cursor,
+      nowIso: rankingNowIso,
+    });
     return {
       rows: await projectLoadedProposalRows(db, loadedProposalRows, opts.status),
       next_cursor: null,
@@ -456,6 +460,7 @@ export async function listProposalInboxPage(
     const loadedProposalRows = await loadProposalEvents(db, {
       cursor,
       limit: batchLimit,
+      nowIso: rankingNowIso,
     });
     if (loadedProposalRows.length === 0) break;
     for (const loaded of loadedProposalRows) {
