@@ -1,6 +1,7 @@
 import {
   AcceptSuggestionChip,
   AttemptOnQuestion,
+  CorrectArtifactEvent,
   CorrectEvent,
   Event,
   ExperimentalEvent,
@@ -552,6 +553,178 @@ describe('CorrectEvent', () => {
       },
     });
     expect(result.success).toBe(false);
+  });
+});
+
+// ====================================================================
+// 6c. CorrectArtifactEvent
+// ====================================================================
+
+describe('CorrectArtifactEvent', () => {
+  it('accepts mark_wrong correction on whole artifact (no section_id)', () => {
+    const result = CorrectArtifactEvent.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'artifact',
+      subject_id: 'artifact_atomic_42',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'mark_wrong',
+        reason_md: 'This atomic note misstates the rule.',
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts mark_wrong correction targeting a specific section by section_id', () => {
+    const result = CorrectArtifactEvent.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'artifact',
+      subject_id: 'artifact_atomic_42',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'mark_wrong',
+        section_id: 'sec_pitfall',
+        reason_md: 'The pitfall example is wrong about the negation case.',
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('parses CorrectArtifactEvent through KnownEvent union', () => {
+    const result = KnownEvent.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'artifact',
+      subject_id: 'artifact_atomic_42',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'retract',
+        section_id: 'sec_example',
+        reason_md: 'Withdrawing this section while pending refine.',
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('requires replacement_artifact_id for supersede', () => {
+    const result = CorrectArtifactEvent.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'artifact',
+      subject_id: 'artifact_old',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'supersede',
+        reason_md: 'Replaced by a refined atomic.',
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects replacement_artifact_id for non-supersede corrections', () => {
+    const result = CorrectArtifactEvent.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'artifact',
+      subject_id: 'artifact_atomic_42',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'restore',
+        replacement_artifact_id: 'artifact_atomic_43',
+        reason_md: 'Restoring should not point at replacement.',
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects subject_kind=event (use CorrectEvent for event targets)', () => {
+    const result = CorrectArtifactEvent.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: 'evt_bad',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'mark_wrong',
+        reason_md: 'Wrong target kind.',
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('caps reason_md length at 2000 chars', () => {
+    const result = CorrectArtifactEvent.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'artifact',
+      subject_id: 'artifact_atomic_42',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'mark_wrong',
+        reason_md: 'x'.repeat(2001),
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects empty reason_md', () => {
+    const result = CorrectArtifactEvent.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'artifact',
+      subject_id: 'artifact_atomic_42',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'mark_wrong',
+        reason_md: '',
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects empty section_id (would create a nonsense bucket)', () => {
+    const result = CorrectArtifactEvent.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'artifact',
+      subject_id: 'artifact_atomic_42',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'mark_wrong',
+        section_id: '',
+        reason_md: 'Section toolbar accidentally sent blank id.',
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts supersede with replacement_artifact_id and section_id', () => {
+    const result = CorrectArtifactEvent.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'artifact',
+      subject_id: 'artifact_atomic_42',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'supersede',
+        section_id: 'sec_pitfall',
+        replacement_artifact_id: 'artifact_atomic_43',
+        reason_md: 'Section moved to refined atomic.',
+      },
+    });
+    expect(result.success).toBe(true);
   });
 });
 
