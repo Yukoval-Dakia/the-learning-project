@@ -207,6 +207,59 @@ export const CorrectEvent = z
   });
 export type CorrectEventT = z.infer<typeof CorrectEvent>;
 
+// 6c. CorrectArtifactEvent — actor=user / action='correct' / subject='artifact'
+//
+// Section-grained correction for atomic note artifacts. Parallel to CorrectEvent;
+// kept as a separate schema (not a union variant of CorrectEvent) because the
+// payload shape differs — artifact targets have no natural `affected_refs`
+// (those live on activity refs, not artifacts) and supersede replacement is an
+// artifact_id, not an event_id.
+//
+// `section_id` is optional:
+//   - omitted → correction applies to the whole atomic artifact
+//   - present → correction applies to a single section, using NoteSection.id
+//               (stable string per ADR-0019, not array index)
+//
+// See ADR-0019 — "Correction event extends to artifact-section subject".
+//
+// `corrections.ts:getCorrectionStatuses` filters on subject_kind='event' and
+// does NOT see these rows. Artifact-scoped composition lives in a sibling
+// module (src/server/events/artifact-corrections.ts).
+
+export const CorrectArtifactEvent = z
+  .object({
+    actor_kind: z.literal('user'),
+    actor_ref: z.literal('self'),
+    action: z.literal('correct'),
+    subject_kind: z.literal('artifact'),
+    subject_id: z.string(),
+    outcome: z.literal('success'),
+    payload: z.object({
+      correction_kind: CorrectionKind,
+      section_id: z.string().optional(),
+      reason_md: z.string().min(1).max(2000),
+      replacement_artifact_id: z.string().optional(),
+    }),
+    ...baseOptionalFields,
+  })
+  .superRefine((data, ctx) => {
+    if (data.payload.correction_kind === 'supersede' && !data.payload.replacement_artifact_id) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "replacement_artifact_id is required when correction_kind='supersede'",
+        path: ['payload', 'replacement_artifact_id'],
+      });
+    }
+    if (data.payload.correction_kind !== 'supersede' && data.payload.replacement_artifact_id) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "replacement_artifact_id is only allowed when correction_kind='supersede'",
+        path: ['payload', 'replacement_artifact_id'],
+      });
+    }
+  });
+export type CorrectArtifactEventT = z.infer<typeof CorrectArtifactEvent>;
+
 // 7. ExtractSourceDocument — actor=agent / action='extract' / subject='source_document'
 //
 // Tencent OCR 抽取一份 source_document → 一组 question_block。outcome='success'（全成功）/
@@ -389,6 +442,7 @@ export const KnownEvent = z.union([
   GenerateArtifact,
   GenerateKnowledgeEdge,
   CorrectEvent,
+  CorrectArtifactEvent,
   RateEvent,
   RateKnowledgeEdge,
   AcceptSuggestionChip,
