@@ -21,18 +21,31 @@ interface DepsOverride {
   streamReviewTaskFn?: StreamReviewTaskFn;
 }
 
-async function drainResponse(response: Response): Promise<void> {
+// YUK-68 (PR #117 codex P1): streamTask encodes failures in the stream body
+// (see src/server/ai/runner.ts ~L597 — `\n\n[streamTask] <msg>\n`). The
+// previous drainResponse only consumed bytes, so timeout / auth / network
+// failures returned `{ processed: 1 }` and pg-boss marked the run successful;
+// nightly maintenance silently stopped producing proposals. We now capture
+// the body and throw on the error marker so pg-boss retries / alerts.
+async function drainResponseText(response: Response): Promise<string> {
   const reader = response.body?.getReader();
-  if (!reader) return;
+  if (!reader) return '';
+  const decoder = new TextDecoder();
+  let acc = '';
   try {
     while (true) {
-      const { done } = await reader.read();
-      if (done) return;
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value) acc += decoder.decode(value, { stream: true });
     }
+    acc += decoder.decode();
   } finally {
     reader.releaseLock();
   }
+  return acc;
 }
+
+const STREAM_ERROR_MARKER = /\[streamTask\][^\n]*/;
 
 export async function runKnowledgeMaintenanceNightly(
   db: Db,
@@ -43,7 +56,11 @@ export async function runKnowledgeMaintenanceNightly(
   const run = deps.streamReviewTaskFn ?? streamReviewTask;
 
   const response = await run({ db });
-  await drainResponse(response);
+  const body = await drainResponseText(response);
+  const errorMatch = body.match(STREAM_ERROR_MARKER);
+  if (errorMatch) {
+    throw new Error(`knowledge_maintenance_nightly streamTask failure: ${errorMatch[0].trim()}`);
+  }
 
   const afterRows = await listProposalInboxRows(db);
   return {
