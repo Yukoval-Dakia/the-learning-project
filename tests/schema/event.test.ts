@@ -676,6 +676,39 @@ describe('CorrectArtifactEvent', () => {
     expect(result.success).toBe(false);
   });
 
+  it('rejects empty reason_md', () => {
+    const result = CorrectArtifactEvent.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'artifact',
+      subject_id: 'artifact_atomic_42',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'mark_wrong',
+        reason_md: '',
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects empty section_id (would create a nonsense bucket)', () => {
+    const result = CorrectArtifactEvent.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'artifact',
+      subject_id: 'artifact_atomic_42',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'mark_wrong',
+        section_id: '',
+        reason_md: 'Section toolbar accidentally sent blank id.',
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
   it('accepts supersede with replacement_artifact_id and section_id', () => {
     const result = CorrectArtifactEvent.safeParse({
       actor_kind: 'user',

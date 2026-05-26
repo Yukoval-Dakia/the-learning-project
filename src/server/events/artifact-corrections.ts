@@ -51,11 +51,18 @@ function rowToCorrectArtifactEventInput(row: EventRow): unknown {
 function applyCorrection(
   current: ArtifactCorrectionStatus,
   correctionEventId: string,
-  payload: { correction_kind: 'supersede' | 'retract' | 'mark_wrong' | 'restore'; replacement_artifact_id?: string },
+  payload: {
+    correction_kind: 'supersede' | 'retract' | 'mark_wrong' | 'restore';
+    replacement_artifact_id?: string;
+  },
 ): ArtifactCorrectionStatus {
   switch (payload.correction_kind) {
     case 'retract':
-      return { state: 'retracted', correction_event_id: correctionEventId, replacement_artifact_id: null };
+      return {
+        state: 'retracted',
+        correction_event_id: correctionEventId,
+        replacement_artifact_id: null,
+      };
     case 'mark_wrong':
       return {
         state: 'marked_wrong',
@@ -63,6 +70,8 @@ function applyCorrection(
         replacement_artifact_id: null,
       };
     case 'supersede':
+      // Unreachable post-safeParse — CorrectArtifactEvent superRefine
+      // enforces replacement_artifact_id for supersede. Defensive only.
       if (!payload.replacement_artifact_id) return current;
       return {
         state: 'superseded',

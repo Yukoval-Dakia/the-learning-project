@@ -165,7 +165,7 @@ describe('artifact correction projection', () => {
     expect(state.sections.size).toBe(0);
   });
 
-  it('applies events in (created_at, id) order so later restore can reactivate', async () => {
+  it('applies events in (created_at, id) order so later mark_wrong overrides earlier restore', async () => {
     const db = testDb();
     // Insert restore first chronologically, then mark_wrong later — final state should be marked_wrong.
     await seedArtifactCorrection({
@@ -185,6 +185,32 @@ describe('artifact correction projection', () => {
     expect(state.whole).toEqual({
       state: 'marked_wrong',
       correction_event_id: 'corr_mark_late',
+      replacement_artifact_id: null,
+    });
+  });
+
+  it('breaks identical created_at ties by event id (lexicographic ascending)', async () => {
+    const db = testDb();
+    const sameTime = new Date(BASE_TIME.getTime() + 5_000);
+    await seedArtifactCorrection({
+      id: 'corr_a',
+      artifact_id: 'artifact_42',
+      correction_kind: 'retract',
+      created_at: sameTime,
+    });
+    await seedArtifactCorrection({
+      id: 'corr_b',
+      artifact_id: 'artifact_42',
+      correction_kind: 'mark_wrong',
+      created_at: sameTime,
+    });
+
+    const state = await getArtifactCorrectionState(db, 'artifact_42');
+    // Both rows share created_at; ORDER BY (created_at, id) ASC means corr_a
+    // is applied first, then corr_b overrides — final state reflects corr_b.
+    expect(state.whole).toEqual({
+      state: 'marked_wrong',
+      correction_event_id: 'corr_b',
       replacement_artifact_id: null,
     });
   });

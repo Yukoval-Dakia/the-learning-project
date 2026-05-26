@@ -236,7 +236,10 @@ export const CorrectArtifactEvent = z
     outcome: z.literal('success'),
     payload: z.object({
       correction_kind: CorrectionKind,
-      section_id: z.string().optional(),
+      // section_id min(1): empty string would create a nonsense `''` bucket in
+      // the per-section projection Map (distinguishable from `undefined`
+      // whole-artifact corrections) — reject at the schema boundary.
+      section_id: z.string().min(1).optional(),
       reason_md: z.string().min(1).max(2000),
       replacement_artifact_id: z.string().optional(),
     }),
