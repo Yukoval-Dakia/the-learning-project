@@ -45,4 +45,25 @@ describe('summarizeTodayProposalKpi', () => {
     expect(summary.has_more).toBe(true);
     expect(summary.limit).toBe(1);
   });
+
+  it('reports has_more=false at the cap when no overflow row exists (exactly 500)', () => {
+    const rows = Array.from({ length: 500 }, () => row('knowledge_node'));
+    const summary = summarizeTodayProposalKpi(rows, { hasMore: false, limit: 500 });
+
+    expect(summary.total).toBe(500);
+    expect(summary.has_more).toBe(false);
+    expect(summary.by_kind.knowledge_node).toBe(500);
+  });
+
+  it('reports has_more=true at the cap when overflow row exists (501+ pending)', () => {
+    // listProposalInboxPage reads limit+1 rows internally and reports has_more
+    // separately from the capped row list. summarize should pass that through
+    // without inflating `total` past the cap.
+    const rows = Array.from({ length: 500 }, () => row('knowledge_edge'));
+    const summary = summarizeTodayProposalKpi(rows, { hasMore: true, limit: 500 });
+
+    expect(summary.total).toBe(500);
+    expect(summary.has_more).toBe(true);
+    expect(summary.by_kind.knowledge_edge).toBe(500);
+  });
 });

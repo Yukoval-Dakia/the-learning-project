@@ -1,5 +1,6 @@
 'use client';
 
+import type { AiProposalKindT } from '@/core/schema/proposal';
 import { apiJson } from '@/ui/lib/api';
 import { Badge } from '@/ui/primitives/Badge';
 import { Button } from '@/ui/primitives/Button';
@@ -45,17 +46,10 @@ interface CostSummary {
   };
 }
 
-interface ProposalKindCounts {
-  knowledge_node: number;
-  knowledge_edge: number;
-  learning_item: number;
-  note_update: number;
-  variant_question: number;
-  completion: number;
-  relearn: number;
-  archive: number;
-  judge_retraction: number;
-}
+// Derived from `aiProposalKinds` in src/core/schema/proposal — adding a new
+// kind there forces a TS error in `KIND_TO_GROUP` below, preventing silent
+// breakdown drift when the server emits a previously-unseen `by_kind` key.
+type ProposalKindCounts = Record<AiProposalKindT, number>;
 
 interface TodayProposalKpi {
   total: number;
@@ -402,14 +396,27 @@ const emptyProposalGroups: ProposalGroups = {
   review: 0,
 };
 
+// Static map from every AiProposalKind to its UI group. TS enforces the
+// Record's domain matches `aiProposalKinds` — a new kind without an entry
+// fails typecheck, so breakdown stays in sync with the server-side enum.
+const KIND_TO_GROUP: Record<AiProposalKindT, keyof ProposalGroups> = {
+  knowledge_node: 'nodes',
+  knowledge_edge: 'edges',
+  learning_item: 'learning',
+  completion: 'learning',
+  relearn: 'learning',
+  archive: 'learning',
+  note_update: 'content',
+  variant_question: 'content',
+  judge_retraction: 'review',
+};
+
 function proposalGroupCounts(counts: ProposalKindCounts): ProposalGroups {
-  return {
-    nodes: counts.knowledge_node,
-    edges: counts.knowledge_edge,
-    learning: counts.learning_item + counts.completion + counts.relearn + counts.archive,
-    content: counts.note_update + counts.variant_question,
-    review: counts.judge_retraction,
-  };
+  const groups: ProposalGroups = { ...emptyProposalGroups };
+  for (const [kind, count] of Object.entries(counts) as [AiProposalKindT, number][]) {
+    groups[KIND_TO_GROUP[kind]] += count;
+  }
+  return groups;
 }
 
 function proposalTrend(kpi: TodayProposalKpi | null, groups: ProposalGroups): string {
