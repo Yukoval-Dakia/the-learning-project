@@ -175,6 +175,48 @@ describe('queryMistakesTool', () => {
     expect(output.filter_applied.due_within_days).toBe(7);
   });
 
+  it('applies dueWithinDays when the value is zero', async () => {
+    await seedQuestion('q1', ['k_xuci']);
+    await seedQuestion('q2', ['k_xuci']);
+    await seedFailureAttempt('att_1', 'q1', ['k_xuci']);
+    await seedFailureAttempt('att_2', 'q2', ['k_xuci']);
+    await seedFsrsState('q1', new Date(Date.now() - 1_000));
+    await seedFsrsState('q2', new Date(Date.now() + 86_400_000));
+
+    const output = await queryMistakesTool.execute(ctx(), {
+      filter: { dueWithinDays: 0 },
+    });
+
+    expect(output.total).toBe(1);
+    expect(output.mistakes[0].question_id).toBe('q1');
+    expect(output.filter_applied.due_within_days).toBe(0);
+  });
+
+  it('continues scanning until selective filters fill the requested limit', async () => {
+    const base = Date.now();
+    for (let i = 0; i < 6; i += 1) {
+      const questionId = `q_noise_${i}`;
+      await seedQuestion(questionId, ['k_shici']);
+      await seedFailureAttempt(
+        `att_noise_${i}`,
+        questionId,
+        ['k_shici'],
+        new Date(base - i * 1_000),
+      );
+    }
+    await seedQuestion('q_match_1', ['k_xuci']);
+    await seedQuestion('q_match_2', ['k_xuci']);
+    await seedFailureAttempt('att_match_1', 'q_match_1', ['k_xuci'], new Date(base - 10_000));
+    await seedFailureAttempt('att_match_2', 'q_match_2', ['k_xuci'], new Date(base - 11_000));
+
+    const output = await queryMistakesTool.execute(ctx(), {
+      filter: { knowledgeId: 'k_xuci', limit: 2 },
+    });
+
+    expect(output.total).toBe(2);
+    expect(output.mistakes.map((m) => m.question_id)).toEqual(['q_match_1', 'q_match_2']);
+  });
+
   it('includes variants when includeVariants=true', async () => {
     await seedQuestion('q1', ['k_xuci']);
     await seedFailureAttempt('att_1', 'q1', ['k_xuci']);
@@ -239,6 +281,25 @@ describe('queryMistakesTool', () => {
     expect(summary).toContain('1 due');
     expect(summary).toContain('cause=concept');
     expect(summary).toContain('due≤7d');
+  });
+
+  it('summarize includes dueWithinDays when the value is zero', () => {
+    const summary = queryMistakesTool.summarize(
+      { filter: { dueWithinDays: 0 } },
+      {
+        mistakes: [],
+        total: 0,
+        filter_applied: {
+          cause: null,
+          knowledge: null,
+          due_within_days: 0,
+          since_days: null,
+          limit: 20,
+        },
+      },
+    );
+
+    expect(summary).toContain('due≤0d');
   });
 
   it('contract: mirrorEvent / effect / costClass match spec', () => {

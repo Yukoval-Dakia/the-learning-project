@@ -149,6 +149,47 @@ describe('buildMcpServerFromRegistry', () => {
     expect(log.error_reason).toBeUndefined();
   });
 
+  it('keeps successful execution successful when summarize throws', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    registerTool(
+      makeReadTool<{ q: string }, { len: number }>(
+        'demo_summary_err',
+        { q: z.string() },
+        (i) => ({ len: i.q.length }),
+        () => {
+          throw new Error('summary exploded');
+        },
+      ),
+    );
+
+    buildMcpServerFromRegistry({
+      ctx: { ...ctx, callerActor: { kind: 'agent', ref: 'agent:copilot' } },
+      serverName: 'loom_v2',
+      toolNames: ['demo_summary_err'],
+    });
+    const def = mockAgentSdk.toolDefs[0];
+    const result = (await def.handler({ q: 'hi' })) as {
+      content: Array<{ type: string; text: string }>;
+    };
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.error).toBeUndefined();
+    expect(parsed.output.len).toBe(2);
+    expect(parsed.summary).toContain('summary unavailable: summary exploded');
+
+    const log = captured.toolCallLogs[0] as Record<string, unknown>;
+    expect(log.error_reason).toBeUndefined();
+    expect(log.output_json).toEqual({ len: 2 });
+
+    const ev = captured.events[0] as Record<string, unknown>;
+    expect(ev.outcome).toBe('success');
+    expect(consoleError).toHaveBeenCalledWith(
+      '[mcp-bridge] tool summarize failed',
+      expect.objectContaining({ tool: 'demo_summary_err', task_run_id: 'tr_test' }),
+    );
+    consoleError.mockRestore();
+  });
+
   it('captures hard-fail in tool_call_log error_reason without crashing the loop', async () => {
     registerTool(
       makeReadTool<{ q: string }, never>(
@@ -326,9 +367,12 @@ describe('__resolveMirrorPolicy', () => {
     );
   });
 
-  it('when_user_visible: only copilot / teaching agent refs', () => {
+  it('when_user_visible: accepts prefixed and bare copilot / teaching agent refs', () => {
     expect(
       __resolveMirrorPolicy('when_user_visible', { kind: 'agent', ref: 'agent:copilot' }, 'read'),
+    ).toBe(true);
+    expect(
+      __resolveMirrorPolicy('when_user_visible', { kind: 'agent', ref: 'copilot' }, 'read'),
     ).toBe(true);
     expect(
       __resolveMirrorPolicy(
@@ -338,11 +382,14 @@ describe('__resolveMirrorPolicy', () => {
       ),
     ).toBe(true);
     expect(
+      __resolveMirrorPolicy('when_user_visible', { kind: 'agent', ref: 'teaching:active' }, 'read'),
+    ).toBe(true);
+    expect(
       __resolveMirrorPolicy('when_user_visible', { kind: 'agent', ref: 'agent:dreaming' }, 'read'),
     ).toBe(false);
   });
 
-  it('when_causal: dreaming OR propose/write effect', () => {
+  it('when_causal: prefixed or bare dreaming OR propose/write effect', () => {
     expect(
       __resolveMirrorPolicy(
         'when_causal',
@@ -350,6 +397,9 @@ describe('__resolveMirrorPolicy', () => {
         'read',
       ),
     ).toBe(true);
+    expect(__resolveMirrorPolicy('when_causal', { kind: 'agent', ref: 'dreaming' }, 'read')).toBe(
+      true,
+    );
     expect(
       __resolveMirrorPolicy('when_causal', { kind: 'agent', ref: 'agent:misc' }, 'propose'),
     ).toBe(true);

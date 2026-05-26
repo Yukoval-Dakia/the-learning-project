@@ -144,11 +144,12 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
   const limit = filter.limit ?? 20;
   const since = filter.sinceDays ? new Date(Date.now() - filter.sinceDays * 86_400_000) : undefined;
 
-  // Pull more candidates than `limit` because post-filtering by cause /
-  // knowledge / due may eliminate rows. Cap at 3× to keep memory bounded.
-  const candidateLimit = limit * 3;
+  const hasPostFilter =
+    filter.knowledgeId !== undefined ||
+    filter.causeCategoryId !== undefined ||
+    filter.dueWithinDays !== undefined;
   const candidates = await getFailureAttempts(ctx.db, {
-    limit: candidateLimit,
+    limit: hasPostFilter ? null : limit,
     since,
   });
 
@@ -172,9 +173,10 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
   // FSRS state lookup + dueWithinDays filter.
   const allQids = Array.from(new Set(byCause.map((x) => x.fa.question_id)));
   const fsrsMap = await loadFsrsStates(ctx.db, allQids);
-  const dueCutoff = filter.dueWithinDays
-    ? new Date(Date.now() + filter.dueWithinDays * 86_400_000)
-    : null;
+  const dueCutoff =
+    filter.dueWithinDays !== undefined
+      ? new Date(Date.now() + filter.dueWithinDays * 86_400_000)
+      : null;
   const byDue = dueCutoff
     ? byCause.filter((x) => {
         const state = fsrsMap.get(x.fa.question_id);
@@ -242,7 +244,7 @@ function summarize(input: Input, output: Output): string {
   if (due > 0) parts.push(`${due} due`);
   if (f.causeCategoryId) parts.push(`cause=${f.causeCategoryId}`);
   if (f.knowledgeId) parts.push(`k=${f.knowledgeId}`);
-  if (f.dueWithinDays) parts.push(`due≤${f.dueWithinDays}d`);
+  if (f.dueWithinDays !== undefined) parts.push(`due≤${f.dueWithinDays}d`);
   if (f.sinceDays) parts.push(`since≤${f.sinceDays}d`);
   return `mistakes · ${parts.join(' · ')}`;
 }

@@ -19,8 +19,8 @@ export type ToolEffect = 'read' | 'propose' | 'write';
  * `event(action='experimental:tool_use')` row for this tool's invocation.
  * The bridge resolves which path fires based on (effect, callerActor):
  *   - 'never'              → never mirror; tool_call_log only
- *   - 'when_user_visible'  → mirror when caller is `agent:copilot:*` or `agent:teaching:*`
- *   - 'when_causal'        → mirror when effect ∈ {propose, write} OR caller is `agent:dreaming:*`
+ *   - 'when_user_visible'  → mirror when caller is copilot / teaching, with or without `agent:`
+ *   - 'when_causal'        → mirror when effect ∈ {propose, write} OR caller is dreaming
  *   - 'always'             → mirror unconditionally
  */
 export type ToolMirrorPolicy = 'never' | 'when_user_visible' | 'when_causal' | 'always';
@@ -29,7 +29,7 @@ export type ToolCostClass = 'local' | 'cheap_llm' | 'expensive_llm';
 
 export interface ToolCallerActor {
   kind: 'user' | 'agent' | 'cron' | 'system';
-  /** `'agent:copilot'`, `'agent:dreaming:variant_propose'`, `'cron:knowledge_maintenance'`, ... */
+  /** `'agent:copilot'`, `'dreaming'`, `'cron:knowledge_maintenance'`, ... */
   ref: string;
 }
 
