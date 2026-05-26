@@ -87,6 +87,34 @@ describe('knowledge_maintenance_nightly handler', () => {
     ).rejects.toThrow('maintenance stream failed');
   });
 
+  // YUK-68 (PR #117 codex P1): streamTask encodes per-turn failures in the
+  // body text (`\n\n[streamTask] <msg>\n`) rather than throwing at the
+  // transport level. Previously drained-without-parsing → handler returned
+  // success and pg-boss never retried. Now we parse the body and throw.
+  it('throws when stream body contains a [streamTask] error marker', async () => {
+    await expect(
+      runKnowledgeMaintenanceNightly(db, {
+        streamReviewTaskFn: async () =>
+          new Response('some assistant text\n\n[streamTask] timeout exceeded after 120000ms\n'),
+      }),
+    ).rejects.toThrow(/streamTask failure: \[streamTask\] timeout/);
+  });
+
+  it('still succeeds when stream body has no error marker', async () => {
+    const parentId = await seedParentKnowledge();
+    const result = await runKnowledgeMaintenanceNightly(db, {
+      streamReviewTaskFn: async ({ db: innerDb }) => {
+        await runWriteProposal(innerDb, {
+          payload: { mutation: 'propose_new', parent_id: parentId, name: 'OK child' },
+          reasoning: 'no stream error',
+        });
+        return new Response('some normal assistant text without any markers\n');
+      },
+    });
+    expect(result.processed).toBe(1);
+    expect(result.proposals_created).toBe(1);
+  });
+
   it('does not create duplicate proposals when concurrent runs race the same cooldown key', async () => {
     const parentId = await seedParentKnowledge();
     let waiting = 0;
