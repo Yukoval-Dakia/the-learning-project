@@ -1,0 +1,979 @@
+# Master Roadmap & Autonomous Execution Driver
+
+> **Single source of truth** for all remaining work across the project.
+> 同时是"最大化 autonomy"执行的 driver doc。
+> **Companion**：YUK-88 autonomous driver (`docs/superpowers/plans/2026-05-26-yuk88-autonomous-driver.md`) 仍是 YUK-88 track 的执行手册；本文档负责跨 track + 跨优先级的 coordination。
+> 共用规则（skills / MCP / 行为标准 / hard NO）：见 YUK-88 driver §4-§6 + §11，本文档不重复，仅给 cross-track delta。
+
+**Doc 日期**：2026-05-27
+**Owner**：yukoval（single user, NAS self-host）
+**State**：v1 draft，未经优先级 grill；建议读完后跑 `/grill-with-docs` 拍板 §5 推荐顺序
+
+---
+
+# Part 1 — Roadmap (the WHAT)
+
+## §0 Mission + 完成定义 + 当前快照
+
+### 0.1 一句话目标
+
+把 "AI 不是聊天助手，是与用户对等的 first-class actor" 这个 v0.3/v0.4 承诺**全量兑现**：8 层架构 1-7 已基本 ship，**第 8 层（Global Copilot Orchestrator）整层未启动**；同时清掉 P1 学科 / P2 闭环 / P3 Track F / P4 文档债。
+
+### 0.2 完成定义（整体项目 closeout）
+
+| 维度 | 标准 |
+|---|---|
+| Layer 1-4 | 已 ship（仅余 P1.1 八个 judges / P1.2 question_part / P1.4 wenyan 100% / P1.6 3a-3b 残余） |
+| Layer 5 (Artifact 多态) | YUK-88 P0-P7 全 ship + ADR-0020/0021 accepted |
+| Layer 6 (AI Decision Inbox) | P2.1 acceptance ranking + P2.2 PR-level revert + Dreaming lane 实接 inbox |
+| Layer 7 (Memory Layer) | ADR-0017 Phase B (YUK-37) ship + Dreaming brief refresh live |
+| Layer 8 (Global Copilot Orchestrator) | 21 DomainTool 建齐 + Drawer 跨 6 routes 常驻 + Phase 3 Global Coach cron live + `experimental:tool_use` promote 到 KnownEvent |
+| Track F (Source/Grounding/Multimodal) | P3.1-3.7 任选 ≥ 4 项 ship（不全做）|
+| Doc / Infra 债 | P4.1-4.13 sweep；status.md / ADR / modules 一致 |
+| Audit | `/audit-drift` 全绿 |
+
+### 0.3 当前快照（2026-05-27）
+
+**Shipped (从 status.md §1 + 2026-05-{20..26} commit log)**：
+- Foundation A/B/C 全完，含 math + physics acid test ✓ framework diff = 0
+- **Foundation D M1 ship**（2026-05-26）：DomainTool registry + 3 read tools + bridge + `experimental:tool_use` mirror
+- Product Track 1 wave 1-4 ship + W5 closeout audit
+- Track 1 follow-up M1: wenyan causeCategories (YUK-83) / today KPI (YUK-84) / Note 申诉 (YUK-85)
+- pg-boss 12 队列在跑（含 maintenance / variant / OCR / session-summary）
+
+**In-flight (current branch `docs/yuk-88-yuk-89-note-followup`)**：
+- YUK-88 planning：post-grill spec + ADR-0020 + 3 driver docs（master roadmap = 本文档）
+- YUK-37 brief writer Phase B：🟡 in progress
+
+**Critical 缺位（按 v0.4 §6）**：
+- Layer 8 整层 ⬜（4 条 P0 line：DomainTool M2-M6 / Drawer / Dreaming / Global Coach）
+- 8 个 judges + question_part + 3a-3b LearningIntent + Subject #4
+- Track 2 ranking / retraction / scheduling
+- Track F Source / Grounding / Multimodal
+- 13 项 P4 doc/infra 债
+
+---
+
+## §1 Authority sources（cross-track 必读）
+
+按优先级。
+
+| Pri | File / Command | Role |
+|---|---|---|
+| 1 | `omc ultragoal status`（每条 track 一个 ledger 或 共用 master，见 §6.3） | Roadmap state |
+| 2 | `docs/planning/v0.4-complete-form-roadmap.md` | 完全体合成 SoT（§3 八层 + §6 P0-P5 priority + §10 漂移清单 + §11 风险） |
+| 3 | `docs/superpowers/status.md` | Shipped baseline + 当前 phase（事实）|
+| 4 | `docs/adr/0001..0020`（17 + 1 = 18 accepted ADR）+ pending ADR-0021 | 决议层 |
+| 5 | `CONTEXT.md` | 跨 agent 术语表（含 ADR-0020 新术语：block_id / body_blocks / knowledge_ids label） |
+| 6 | `docs/planning/2026-05-26-note-rich-doc.md` §0 | YUK-88 post-grill 决策矩阵 |
+| 7 | `docs/superpowers/plans/2026-05-26-yuk88-*.md` (3 份) | YUK-88 track 完整 plan + driver |
+| 8 | `docs/superpowers/plans/2026-05-26-track-1-followup-phase.md` | Track 1 follow-up 残余（W2.1 / W2.2） |
+| 9 | `docs/superpowers/specs/2026-05-17-agent-context-tools-design.md` | 21 DomainTool 完整 spec（1241 行）|
+| 10 | `docs/superpowers/specs/2026-05-09-learning-orchestrator-long-term-design.md` §Phase 3 | Global Coach 形态 |
+| 11 | `docs/design/2026-05-15-design-brief-v2.1.md` §1.6 + `docs/design/loom-design-v2.1/` | Copilot Drawer + Tweaks + 新 UI primitives |
+| 12 | `CLAUDE.md` + `.claude/CLAUDE.md` | 项目级行为规则 |
+| 13 | Linear（YUK-88 + sub-issues + YUK-37 等已建 issue） | Issue acceptance 权威 |
+
+### 1.1 Session start ritual（master coordinator session）
+
+```bash
+# 1. Master state
+ls .omc/ultragoal/  # 看有几个 ledger 在跑
+
+# 2. 每个 active track 的 ultragoal status
+for d in .omc/ultragoal/*/; do
+  echo "=== $d ==="
+  omc ultragoal --workdir "$d" status 2>/dev/null || omc ultragoal status
+done
+
+# 3. Git state
+git status -uno && git log --oneline -10 && git worktree list
+
+# 4. Linear scan
+# mcp__claude_ai_Linear__list_issues --parentId YUK-88 + 其他 active project
+
+# 5. Latest audit-drift（必看，>= 1 月没跑就立即跑一次）
+ls -lt docs/audit/*drift* 2>/dev/null | head -3
+```
+
+任一异常 → 报告 + 停。
+
+---
+
+## §2 完整 Track 清单（status quo 全表）
+
+### 2.0 图例
+
+- ✅ Ship 在 main
+- 🟡 In progress（branch / draft）
+- ⬜ 未启动
+- 🔄 被其他 track 吸收（避免重复）
+- ⏳ deferred / 等触发条件
+
+每条 track 列：**名 / status / pts 估 / forward-locks（这条 block 谁）/ blocked-by（谁 block 这条）/ Linear**
+
+### 2.1 ✅ Shipped baseline（事实保留，不展开）
+
+详见 `docs/superpowers/status.md` §1 全表 + v0.4 §5.1。本文档不复制；以"shipped"作为下面 ⬜ track 的前置假设。
+
+### 2.2 🟡 In-Flight
+
+| Track | Status | pts 剩 | forward-locks | blocked-by | Linear |
+|---|---|---|---|---|---|
+| **T-37** ADR-0017 brief writer Phase B | 🟡 in progress | ~5 | Layer 7 Memory writer + Dreaming brief refresh | (none) | [YUK-37](https://linear.app/yukoval-studios/issue/YUK-37) |
+| **T-88** Block-Tree Note Rebuild (YUK-88) | 🟡 planning done | 61 | Layer 5 完全体 + Living Note v0 | (none) | [YUK-88](https://linear.app/yukoval-studios/issue/YUK-88) + YUK-90~97 |
+
+### 2.3 ⬜ P0 — Critical (阻塞 first-class AI actor 承诺)
+
+| Track | Status | pts | forward-locks | blocked-by | Linear |
+|---|---|---|---|---|---|
+| **T-D2** DomainTool Registry M2 (10 read tools 补完) | ⬜ | ~25 | Drawer / Dreaming / Coach 三条全 | M1 ship ✓ | ⬜ 待建 |
+| **T-D3** Copilot Drawer MVP (1 route 试点) | ⬜ | ~13 | Drawer 全 6 routes 铺开 | T-D2 (≥6 read tools) | ⬜ 待建 |
+| **T-D4** DomainTool Propose/Write Tools (8 个) | ⬜ | ~24 | Dreaming + Coach proposal 写入 | T-D2 done | ⬜ 待建 |
+| **T-D5** Drawer 跨 6 routes 常驻 | ⬜ | ~13 | Layer 8 用户级兑现 | T-D3 试点验证 | ⬜ 待建 |
+| **T-D6** Phase 3 Global Coach Orchestrator | ⬜ | ~15 | Layer 8 自动产出"今日安排" | T-D2 + T-DR (Dreaming) | ⬜ 待建 |
+| **T-D7** `experimental:tool_use` promote to KnownEvent | ⬜ | ~3 | ADR-0011 后续修订 | 3 tool stable + 2 周 | ⬜ 待建 |
+| **T-DR** Dreaming Lane | ⬜ | ~20 | Layer 7 brief refresh + T-D6 Coach | T-37 done + T-D2 (read tools) | ⬜ 待建 |
+
+**P0 小计**：~113 pts，~28-35 周（单人 raw）
+
+### 2.4 ⬜ P1 — 学科能力补完
+
+| Track | Status | pts | forward-locks | blocked-by | Linear |
+|---|---|---|---|---|---|
+| **T-J1** rubric judge | ⬜ | ~8 | essay / 论述题型 | (none，registry ✓) | ⬜ |
+| **T-J2** multimodal_direct judge | ⬜ | ~8 | 手写 / 图表 题型 | (none) | ⬜ |
+| **T-J3** ai_flexible judge | ⬜ | ~5 | borderline / appeal 强制 flex | (none) | ⬜ |
+| **T-J4** external_judge | ⬜ | ~13 | OJ / 外部认证；含 evidence provenance / trust level / privacy | (none) | ⬜ |
+| **T-J5** code_execution judge | ⬜ | ~13 | programming exercise | (none) | ⬜ |
+| **T-J6** speech_audio judge | ⬜ | ~13 | 语言口语 | (none) | ⬜ |
+| **T-J7** diagram_handwriting judge | ⬜ | ~8 | 几何 / 科学图表 | (none) | ⬜ |
+| **T-J8** human_review judge | ⬜ | ~5 | safety-critical / 高 uncertainty | (none) | ⬜ |
+| **T-J9** symbolic judge（可选 Python sidecar SymPy） | ⏳ | ~13 | math symbolic 等价 | ADR-0001 revise（引入 sidecar）| ⬜ |
+| **T-QP** `question_part` ActivityKind | ⬜ | ~8 | 英语阅读 / 物理多步独立调度 + cross-subject scheduling | (none) | ⬜ |
+| **T-S4** Subject #4 acid test | ⬜ | ~8 | 第 4 学科 onboard 流程定型 | (none) | ⬜ |
+| **T-LI** 3a/3b LearningIntent proposal flow | ⬜ | ~13 | "我想学 X" 路径完全体（主题不存在 / 不完整） | (none) | ⬜ |
+| **T-RA** Partial credit P3 RatingAdvisor | ⬜ | ~3 | review feedback advisory | (none，server 层 ✓) | ⬜ Track-1 W2.1 |
+| **T-66** YUK-66 Teaching ask_check artifact | ⬜ | ~5 | teaching loop 完全 closeout | (none) | [YUK-66](https://linear.app/yukoval-studios/issue/YUK-66) |
+| **T-W4** wenyan profile.causeCategories 100% | ✅ | (done) | — | — | [YUK-83](https://linear.app/yukoval-studios/issue/YUK-83) |
+
+**P1 小计**：~123 pts，~30-40 周（单人 raw；含 T-J9 13pt 如果做）
+
+### 2.5 ⬜ P2 — 闭环深化
+
+| Track | Status | pts | forward-locks | blocked-by | Linear |
+|---|---|---|---|---|---|
+| **T-AR** Acceptance-rate / dismiss-reason 信号 | ⬜ | ~5 | Maintenance ranking + Dreaming priorityization | (none) | ⬜ |
+| **T-RT** Bad accepted proposal PR-level revert event | ⬜ | ~8 | proposal full lifecycle | (none) | ⬜ |
+| **T-LN** Living Note 5 触发器 + NoteRefineTask | 🔄 | (T-88 P4) | — | T-88 P4 | (T-88 sub) |
+| **T-MW** Note appeal / mark-wrong UX | ✅ | (done) | — | — | YUK-85 PR #151/#153/#154 |
+| **T-CS** Cross-subject scheduling v1 (deterministic quotas) | ⬜ | ~13 | 多学科混排; P1.1 / P1.2 done 才有意义 | T-QP + ≥ 5 judges | ⬜ |
+| **T-MR** Maintenance ranking 深化 | ⬜ | ~5 | T-AR signal | T-AR | ⬜ |
+| **T-TE** TipTap 编辑器 + 自定义 block (Layer 5 P2.7) | 🔄 | (T-88 P2) | — | T-88 P2 | (T-88 sub) |
+| **T-TQ** standalone `tool_quiz` artifact + UI | ⬜ | ~8 | quiz 独立路径（模拟卷 / 每日 quiz / final quiz） | T-88 P3 done（EmbeddedCheck 拆分） | ⬜ |
+| **T-KG** Knowledge graph force-directed view | ⬜ | ~13 | v2.1 brief §2.3.b "必须" | (none，D3/cytoscape 待选) | ⬜ |
+| **T-IK** /inbox actionable Today KPI 第三格 | ✅ | (done) | — | — | YUK-84 PR #150 |
+
+**P2 小计**：~52 pts，~12-18 周（含 T-CS 13pt 如果做）
+
+### 2.6 ⬜ P3 — Track F (Source / Grounding / Multimodal)
+
+| Track | Status | pts | forward-locks | blocked-by | Linear |
+|---|---|---|---|---|---|
+| **T-SP** SourcePack + SourceResult | ⬜ | ~8 | grounded quiz / note 来源标签 | (none) | ⬜ |
+| **T-SQ** Search-grounded QuizGen + QuizVerify + QuizPlan | ⬜ | ~13 | Quiz agent 不再"上网找题" | T-SP | ⬜ |
+| **T-PS** Passage + referenced_span_ids | ⬜ | ~8 | 长阅读题 schema + 桌面/移动 UI | (none) | ⬜ |
+| **T-BA** BlockAssemblyTask AI auto-merge | ⬜ | ~5 | 相邻 block AI merge proposal | T-88 P3（artifact schema 改）| ⬜ |
+| **T-SG** Source grounding + textbook RAG | ⬜ | ~13 | source_tier write path + user_verified flip；与 ADR-0020 解耦 | (none) | ⬜ |
+| **T-MM** Multimodal first-class (audio / handwriting / 图表 / 表格) | ⬜ | ~20 | first-class material | T-J2 + T-J7（vision/diagram judge）| ⬜ |
+| **T-OC** OCR capture pipeline rebuild (Sub 0c handoffs §3) | ⬜ | ~15 | StructureTask / TaggingTask / WorkflowJudge / MistakeEnrollTask / 6 个 agent tools | T-D4 (propose tools) | ⬜ |
+
+**P3 小计**：~82 pts，~20-26 周
+
+### 2.7 ⬜ P4 — 文档与基础设施债
+
+详见 v0.4 §6 P4.1-P4.13。13 项小工作，pts 大多 1-3。
+
+| Track 群 | pts 估 |
+|---|---|
+| T-PD1 architecture.md Task 表 + audit gate | 2 |
+| T-PD2 `ai_task_runs` 决策 + `event.task_run_id` FK | 3 |
+| T-PD3 2026-05-18 5 条 doc drift 复检 | 3 |
+| T-PD4 `maxCost / fallbackChain` 实装 or 标 inactive | 2 |
+| T-PD5 `db/client.ts` Vercel/Neon/SQLite/D1 sweep | 1 |
+| T-PD6 `knowledge.approval_status` enum 缩减 | 1 |
+| T-PD7 ADR-0002 `extracted_prompt_md` 过渡注释 + revision | 2 |
+| T-PD8 Modules doc 主体 vs schema 漂移大 sweep | 8 |
+| T-PD9 旧 PLANNING.md Phase 2 承诺补 v0.3 入账 | 2 |
+| T-PD10 5-25 几份小 plan checkbox 跟 status.md 对账 | 1 |
+| T-PD11 ADR-0014 status proposed → accepted | 1 |
+| T-PD12 ADR metadata drift sweep (0012/0016/0004) | 2 |
+| T-PD13 Spec ledger Status 字段 + superseded banner | 3 |
+
+**P4 小计**：~31 pts，~6-8 周
+
+### 2.8 ⬜ P5 — Brainstorm → Spec
+
+| Track | pts | 来源 |
+|---|---|---|
+| T-CB Context Budget Policy spec | 2 | brainstorm 2026-05-17 |
+| T-SB Subject-scoped vs global brief 并行刷新 | 2 | brief brainstorm |
+| T-LS Long-term brief 段落 stale 规则 | 2 | brief brainstorm |
+| T-PQ Proposal Quality Rubric enforce 化 | 3 | modules/knowledge.md §4 |
+| T-TF Tool Eval Fixtures (10 个) | 5 | spec 已列 |
+| T-CL Copilot suggestion 语义 (proactive/corrective/accept) | 2 | ADR-0011 后续 |
+| T-EP `experimental:tool_use` promote 准则 | 1 | (= T-D7) |
+| T-FF 5 个完整 fixture (wenyan/math/Eng/prog/reading) | 8 | math ✓；其它 0 |
+
+**P5 小计**：~25 pts，~5-7 周（多数小，部分依赖 P0 done）
+
+### 2.9 总计
+
+| Bucket | pts | 周（单人 raw） |
+|---|---|---|
+| 🟡 In-Flight | ~66 | 17-22 |
+| ⬜ P0 Critical | ~113 | 28-35 |
+| ⬜ P1 学科 | ~123 | 30-40 |
+| ⬜ P2 闭环 | ~52 | 12-18 |
+| ⬜ P3 Track F | ~82 | 20-26 |
+| ⬜ P4 doc/infra 债 | ~31 | 6-8 |
+| ⬜ P5 brainstorm→spec | ~25 | 5-7 |
+| **Grand Total** | **~492 pts** | **~120-156 周 ≈ 2.5-3 年（单人 raw）** |
+
+**这是 brutal truth**。即使 AI-paired 把 raw velocity 翻 1.5-2x，也是 **1.5-2 年**整 closeout。所以**全 ship 不现实**，必须 prioritization + 接受不完整 closeout。
+
+---
+
+## §3 Cross-Track Dependency Graph
+
+### 3.1 完整依赖图（关键 forward-lock 链）
+
+```
+                                  ┌──────────────────────────────────────┐
+                                  │  Layer 8 — Global Copilot Orchestrator│
+                                  │  (CRITICAL：first-class AI actor 兑现处)│
+                                  └──────────────┬───────────────────────┘
+                                                 │ 全部 forward-locked by:
+                          ┌──────────────────────┼─────────────────────────────┐
+                          ↓                      ↓                             ↓
+                       T-D6 Coach            T-D5 Drawer×6                 T-D7 promote
+                          │                      │                             ↑ 3 tools 2 周 stable
+                          ↓                      ↑                             │
+            ┌──────────┴──────────┐         T-D3 Drawer MVP                    │
+            ↓                     ↓              ↑                             │
+        T-DR Dreaming         T-D2 read tools ───┴──────T-D4 propose tools ────┘
+            │                     ↑                          │
+            ↓                     │                          ↓
+        T-37 brief writer     M1 ✓ (3 tools)             T-OC OCR rebuild
+
+                          ─── 上面这段是 P0 critical path ───
+
+T-88 (YUK-88, Layer 5) ─── 独立，几乎无 forward-lock ─── 8 phase 内部已规划
+  └── P3 schema change forward-locks T-TQ standalone tool_quiz
+  └── P3 schema change forward-locks T-BA AI auto-merge
+  └── P4 absorbs T-LN Living Note 5 triggers
+
+P1 学科：
+T-J1..T-J8 judges ────→ T-CS cross-subject scheduling
+T-QP question_part ────→ T-CS
+T-S4 Subject #4 ────→ (验证 capability registry 真泛化)
+T-LI 3a/3b LearningIntent ────→ "我想学 X" 完全体
+T-RA RatingAdvisor (3pt) ────→ review feedback advisory (independent)
+T-66 ask_check (5pt) ────→ teaching loop closeout (independent)
+
+P2 闭环：
+T-AR ranking signal ────→ T-MR Maintenance ranking
+T-RT PR-level revert ────→ proposal full lifecycle (independent)
+T-KG graph view ────→ v2.1 brief §2.3.b 必须 (independent)
+
+P3 Track F：
+T-SP SourcePack ────→ T-SQ search-grounded quiz
+T-MM Multimodal ────→ blocks T-J2/T-J7 但 sub-J 各自可独立做
+T-OC OCR ────→ requires T-D4 propose tools (DomainTool 集成)
+T-SG grounding ────→ 与 ADR-0020 解耦，independent
+
+P4 doc/infra：
+独立，可任何时候插入；建议 P0 / P1 / P2 wave 间隙
+
+P5 brainstorm→spec：
+T-CB / T-PQ / T-CL ────→ blocks Copilot detail features
+T-FF fixtures ────→ blocks Eval / acceptance test 自动化
+```
+
+### 3.2 三条 forward-lock 长链（这些决定整体进度）
+
+```
+长链 1 (Layer 8 关键路径)：
+  T-D2 (10 read tools) → T-D3 (Drawer MVP) → T-D5 (Drawer×6)
+                       → T-DR (Dreaming) → T-D6 (Coach)
+                                           ↓
+                                     完成 Layer 8 兑现
+
+  关键瓶颈：T-D2 ~25pt + T-DR ~20pt + T-D6 ~15pt ≈ 60pt 必经路径
+  无法跳过；必须按序
+
+长链 2 (学科能力 → scheduling)：
+  T-J1..T-J5 (5 个核心 judge) → T-CS (cross-subject scheduling)
+                                ↑
+  T-QP (question_part) ────────┘
+
+  关键瓶颈：要做 T-CS 必须至少 5 个 judge + question_part；否则它是空架子
+  ~50pt 必经
+
+长链 3 (memory + dreaming)：
+  T-37 (brief writer Phase B) → T-DR (Dreaming agent 周期性 refresh) → T-D6 Coach
+                                ↓
+                              brief 真在用，T-D2 read tools 含 query_memory_brief
+
+  关键瓶颈：T-37 已 🟡 几个月，是 P0 整条链的 trigger
+```
+
+### 3.3 高度并行可能性（file-disjoint）
+
+可以同时跑两条 worktree 的组合：
+
+| A | B | 文件不冲突理由 |
+|---|---|---|
+| **T-88** YUK-88 | **T-D2** read tools | T-88 改 `src/server/{events,artifacts,notes}/` + TipTap UI；T-D2 改 `src/server/ai/tools/` |
+| **T-88** YUK-88 | **T-37** brief writer | T-88 改 artifact / event；T-37 改 `src/server/memory/brief.ts` |
+| **T-88** YUK-88 | **T-DR** Dreaming | T-DR 是新 pg-boss handler + brief writer 消费者 |
+| **T-D2** read tools | **T-37** brief writer | 文件分离；但 T-D2 含 query_memory_brief，最好等 T-37 先 |
+| **T-J1..J8** | **T-88 / T-D2 / etc** | judges 在 `src/core/capability/judges/` 独立 |
+| **T-PD\*** doc sweep | (任何主线) | doc only，不动 src/ |
+
+**不能并行**（撞 schema 或 invariant）：
+- T-88 P1 (schema) + T-37 (brief writer 写 event.affected_scopes) —— event schema 改动期间禁
+- T-88 P3 (AI pipeline) + T-D4 (propose tools) —— 都改 ai/task 路径
+- T-DR + T-37 —— Dreaming 读 brief，必须 brief writer 先 ship
+
+---
+
+## §4 Capacity model + 时间线
+
+### 4.1 单人 raw capacity
+
+- **理论值**：1pt ≈ 0.25 周 = ~10 小时（含 plan/impl/test/PR）
+- **实际**（按 YUK-88 P0-P7 历史拟合）：1pt ≈ 0.30-0.35 周
+- **492 pts**：~140-170 周 = **2.7-3.3 年**
+
+### 4.2 AI-paired capacity（含 Claude Code skills）
+
+**收益来源**：
+1. **Lane 内 impl 加速**：subagent 跑 impl 时人可 review / plan 下条 lane → ~1.4x
+2. **多 worktree 并行**（file-disjoint）：2 worktree → ~1.6x；3 worktree → ~1.8x（review capacity 是瓶颈）
+3. **过夜 / 周末**：AI 可在人不在时跑（前提：lane 已设好，无需 ADR 决策）→ ~1.2x
+4. **自动 audit / doc sweep**：P4 类工作几乎 100% AI → +30pt 不计入瓶颈
+
+**综合**：raw × 1.5-2x → **70-100 周 ≈ 1.5-2 年**
+
+### 4.3 三种时间线方案
+
+| 方案 | scope | 估时 | 缺什么 |
+|---|---|---|---|
+| **A. 极简（v1 closeout）** | Layer 5 (T-88) + Layer 7 (T-37) + Layer 8 critical path (T-D2/D3/DR/D6) + RatingAdvisor + ask_check + P4 doc sweep | ~250 pts / 70-90 周 = **18-20 个月** | 8 judges 大半 / Track F 全部 / cross-subject scheduling / graph view |
+| **B. 平衡（v2 closeout）** | A + 5 judges (rubric/multimodal/code/external/diagram) + question_part + Subject #4 + Drawer×6 + Coach + graph view + Track F 半套 (SourcePack/grounding/PassageUI) | ~380 pts / 100-130 周 = **2-2.7 年** | speech_audio / human_review / OCR rebuild / Multimodal first-class / cross-subject scheduling deep |
+| **C. 完全体（v3 closeout）** | 全 492 pts | **2.5-3.3 年** | 没了 |
+
+**Recommendation**：**方案 A 是真实 1-2 年内 ship 范围**；方案 B 是 2-3 年；C 不现实。
+
+---
+
+## §5 推荐 sequencing（grill 前的初稿）
+
+### 5.1 Wave 模型
+
+> ⚠️ 本 §5 是 **pre-grill** 推荐；正式启动前应跑 `/grill-with-docs` 拍板。理由见每条 wave 末尾的"open"。
+
+#### Wave 1 (2026-06，~4 周) — Critical unlock
+
+**目标**：把 P0 关键路径的 trigger 解掉。
+
+| Track | pts | worktree |
+|---|---|---|
+| T-37 brief writer Phase B（推完）| ~5 | A |
+| T-RA RatingAdvisor（Track-1 W2.1 quick win）| 3 | B |
+| T-66 ask_check artifact（Track-1 W2.2）| 5 | B |
+| T-88 P0 spike | 2 | A（接 T-37 后）|
+
+**预期**：~15 pts，~4 周。出口：T-37 ship → T-DR unblocked；T-88 P0 spike → 决定 ADR-0020 微调。
+
+**Open**：
+- T-RA + T-66 是不是真该跟 T-37 / T-88 P0 并行？还是先收 Track-1 follow-up 整 phase 再开新 wave？
+
+#### Wave 2 (2026-07~2026-09，~10 周) — Layer 8 critical path 启动 + YUK-88 主体
+
+**目标**：开 P0 critical path 主体 + YUK-88 schema 落地。
+
+| Track | pts | worktree | 说明 |
+|---|---|---|---|
+| T-88 P1 (schema + ADR-0020) | 5 | A | T-88 必走 |
+| T-D2 read tools (10 个) | ~25 | B | M2 整批，file-disjoint with T-88 |
+| T-88 P2 (TipTap editor) | 16 | A | T-D2 跑完 ≥6 read tools 后可并 T-D3 |
+
+**预期**：~45 pts，~10 周。出口：Layer 8 P0.1 M2 done + YUK-88 编辑器 ship。
+
+**Open**：
+- T-88 P2 16pt 是不是 over-investment？day1 完整 Notion-like editor 真需要？分两期（v0 readonly + v1 编辑器）会不会更省 4-6 周？
+
+#### Wave 3 (2026-10~2026-11，~6 周) — Drawer + Dreaming 起步
+
+**目标**：Copilot Drawer 试点 + Dreaming agent unblock。
+
+| Track | pts | worktree |
+|---|---|---|
+| T-D3 Drawer MVP (1 route 试点) | ~13 | A |
+| T-DR Dreaming Lane | ~20 | B |
+| T-88 P3 (AI pipeline rewrite) | 10 | (A 续) |
+
+**预期**：~43 pts，~6-9 周。出口：1 个 route 有 Drawer + Dreaming 真跑 + T-88 AI pipeline 改完。
+
+**Open**：
+- T-D3 试点选 `/today` vs `/mistakes`？
+- T-DR vs T-88 P3 并行还是 T-88 P3 优先？
+
+#### Wave 4 (2026-12~2027-02，~10 周) — Layer 5 + Layer 8 同步推进
+
+**目标**：YUK-88 后半 (P4-P7) + Drawer 铺开 + Coach 起步。
+
+| Track | pts | worktree |
+|---|---|---|
+| T-88 P4 Living Note | 10 | A |
+| T-D4 propose/write tools (8 个) | ~24 | B |
+| T-D5 Drawer×6 routes | ~13 | (A 续) |
+| T-D6 Global Coach Orchestrator | ~15 | B |
+| T-88 P5/P6/P7 | 18 | A |
+
+**预期**：~80 pts，~14-18 周。出口：**Layer 5 + Layer 8 双 ship**。
+
+**这是项目"vision 兑现"的真节点**：first-class AI actor 承诺基本实现。
+
+#### Wave 5 (2027-03~2027-04，~5 周) — P1 学科补完 + P4 doc sweep
+
+| Track | pts |
+|---|---|
+| T-J1 rubric + T-J2 multimodal + T-J5 code_execution + T-J4 external | ~42 |
+| T-QP question_part | 8 |
+| T-PD* doc sweep（全部 13 项） | ~31 |
+
+**预期**：~80 pts，~10-14 周。
+
+#### Wave 6 (2027-05+，optional) — Track F + 余裕项
+
+T-SP / T-SQ / T-PS / T-SG / T-KG / T-CS / T-MR / T-RT / T-AR + 余下 judges。
+
+**预期**：80+ pts；视一年后产品状态决定还做不做。
+
+### 5.2 砍 / 推后 candidates
+
+按"投入产出比 + 用户单人价值"评估：
+
+| 砍 / 推后 | 理由 |
+|---|---|
+| **T-J6 speech_audio / T-J7 diagram_handwriting / T-J8 human_review** | 当前数据集（wenyan + math + physics）用不到；等真有这类题再做 |
+| **T-J9 symbolic (Python sidecar)** | 需 ADR-0001 revise + 工程成本高；math symbolic 等价用 LLM ai_flexible 兜底足够 |
+| **T-MM Multimodal first-class** 完整版 | 当前 vision 是 user-triggered rescue（ADR-0002）；first-class 工程量太大，等真高频再做 |
+| **T-OC OCR pipeline rebuild** | 当前 Tencent Mark Agent + manual rescue 跑得动；rebuild 是 nice-to-have |
+| **T-CS cross-subject scheduling deep** | 单用户 + 学科 ≤ 3 时手动切换够用；deep scheduling 是 4+ subject 才有真痛点 |
+| **T-S4 Subject #4 acid test** | 不做新 subject，等 vision 兑现后再说 |
+| **T-LI 3a/3b LearningIntent** | 3c 已覆盖主流路径；3a/3b 是 edge case |
+
+砍这 7 条 → 减 ~80 pts → 综合时间线从 **2 年压到 ~1.5 年**。
+
+### 5.3 接受 unfinished state
+
+**永远不会 100% closeout**。这个项目的本质是单用户长期演化。"完成定义"应该改为：
+- Layer 5 + Layer 8 + Layer 7 critical 部分（=方案 A）= **product v1 closeout**
+- 其他 = 持续 maintenance backlog，按用户真需求触发
+
+---
+
+# Part 2 — Autonomous Driver (the HOW)
+
+## §6 执行架构
+
+### 6.1 三层模型
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Layer A — Master Coordinator (你 + 主 session)                  │
+│ - 看 master roadmap state                                       │
+│ - 决定下一个 wave / track                                       │
+│ - 跨 worktree gate decisions（ADR / UX / 优先级）               │
+│ - 写本 doc updates                                              │
+└──────────────────┬──────────────────────────────────────────────┘
+                   │ dispatches per-track
+                   ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ Layer B — Track Driver (1 个 / track，独立 worktree + session)  │
+│ - per-track ultragoal ledger (`.omc/ultragoal/<track-id>/`)     │
+│ - per-track autonomous driver doc（仿 YUK-88 driver）           │
+│ - 用 `/launch-phase` 执行 phase                                 │
+│ - 周期性回 Layer A 报状态                                       │
+└──────────────────┬──────────────────────────────────────────────┘
+                   │ dispatches per-phase
+                   ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ Layer C — Phase Orchestrator (`/launch-phase` skill)            │
+│ - 拆 lane → worktree per lane → superpowers loop                │
+│ - pre-merge gate                                                │
+│ - chain-merge sequential                                        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 6.2 Multi-track parallelism 规则
+
+**Hard cap**：**同时 active track ≤ 2**。理由：
+- review capacity（人 + AI 自审）
+- main branch 合并冲突风险
+- ADR / spec 决策的 cognitive load
+
+**例外**：P4 doc sweep 可作为第三条"low-touch" track 并行（不动 src/，纯 doc）。
+
+**Worktree allocation**：
+```
+worktrees/
+  track-88/          # YUK-88 主 worktree（or per-phase worktree as launch-phase 拆）
+  track-d2/          # DomainTool read tools
+  track-37/          # brief writer Phase B
+  track-doc/         # P4 doc sweep（low-touch）
+```
+
+**何时新开 worktree**：
+- 当前 active track ≥ 2 → 拒绝新开
+- 一条 track 进入 review-only state（等 PR merge）→ 可暂"挂起"开新 track
+
+### 6.3 ultragoal ledger 结构
+
+**Decision**：**per-track ultragoal**，不用 master ledger。理由：
+- ultragoal CLI 不直接支持多 plan 共存于同一目录（每 plan 期望 `.omc/ultragoal/goals.json` 唯一）
+- 跨 track 协调用本 doc + status.md（cross-track 状态查询 = 跑每个 track 的 status）
+
+**目录布局**（建议）：
+
+```
+.omc/ultragoal/                          # 当前 YUK-88 已占（goals.json）
+.omc/ultragoal-track-88/                 # （未来 migrate；当前先复用 .omc/ultragoal/ 作 track-88）
+.omc/ultragoal-track-d2/                 # T-D2 read tools
+.omc/ultragoal-track-37/                 # T-37 brief writer
+.omc/ultragoal-track-dr/                 # T-DR Dreaming
+.omc/ultragoal-track-d6/                 # T-D6 Coach
+```
+
+**当前妥协方案**：`omc ultragoal` CLI 默认读 `.omc/ultragoal/`，要 per-track 需要 wrapper script。**短期建议**：
+
+- T-88 占用 `.omc/ultragoal/`（已 init）
+- 第二条 track 启动时，写 wrapper：
+  ```bash
+  cd .omc && mv ultragoal ultragoal-track-88 && ln -s ultragoal-track-88 ultragoal
+  # 切到第二条 track 时 mv + relink
+  ```
+- 长期：等 ultragoal CLI 支持 `--workdir` 后真做 per-track
+
+### 6.4 Background polling / Schedule
+
+**Use case**：Layer A coordinator session 不常驻；用 schedule 周期性回来检查。
+
+| 触发 | 频率 | 动作 |
+|---|---|---|
+| 每个 active track 的 phase end (PR merged) | event-driven | 触发 Layer A 决定下一 phase / 下一 track |
+| Weekly audit | `/loop 7d` 或 cron | 跑 `/audit-drift`，看 status.md 是否需要 update |
+| Daily check | `/loop 1d`（optional） | `omc ultragoal status` × all ledgers，看 blockers |
+| Phase 启动前 preflight | manual | 见 YUK-88 driver §1.1 + 本 doc §1.1 |
+
+**实施**：
+- `/loop 1d <prompt>` 让一个常驻 session 每天醒一次检查
+- 或不开 loop，纯用户 trigger（session 起来跑 ritual）
+
+### 6.5 Session 模型（建议）
+
+**Master coordinator session**：1 个，持久；驱动本 doc 的 update + cross-track decision。
+
+**Per-track session**：每条 active track 一个，**独立 Claude Code session in own worktree**。track session 跑 `/launch-phase`，与 master 通信用：
+- 文件（commit / PR / ultragoal ledger）= 主同步通道
+- 不用 SendMessage / TeamCreate（per §6.2，2 track 上限不值得 team mode）
+
+**接力 ritual**：新 session 接力时，读：
+1. 本 doc §0.3 当前快照
+2. 各 track 的 `.omc/ultragoal-*/` status
+3. 本 doc §5 当前 wave 在哪
+4. （per track）该 track 的 YUK-88-style autonomous driver doc
+
+---
+
+## §7 Decision gates（必须人 trigger）
+
+| Gate | 时机 | 谁决定 |
+|---|---|---|
+| **G-priority**：wave 之间 priority 调整 | 每 wave 结束 | 用户 grill `/grill-with-docs` |
+| **G-ADR**：发现 ADR 需 revise | impl 期间撞到 | 用户 + `/grill-with-docs` |
+| **G-UI**：任何 UI 改动 | UI 代码动手前 | 用户 + UI design pre-flight（per CLAUDE.md） |
+| **G-scope**：phase 超 2x 估时 | escalation | 用户决定续做 / 拆分 / 砍 |
+| **G-track**：新 track 启动 | wave 节点 | 用户拍板该 track 真需要 |
+| **G-merge**：ff-merge 不可能 | launch-phase chain-merge 段 | 用户决定 rebase / merge commit |
+| **G-push**：push 到 remote main | chain-merge done | 用户手动 push（per YUK-88 driver §3.3 launch-phase 不自动 push） |
+| **G-non-goal**：触发"重新评估 non-goal" 条件 | v0.4 §1.3 + §9 列出的 5 条 | 用户 grill |
+| **G-spike-revise**：spike (P0 类) 结论说明 ADR 需调 | spike PR 描述 | 用户 review spike 结论 |
+| **G-cost**：当月 token cost > 用户阈值 | monthly review | 用户决定降级 model / 停 track |
+
+**所有其他决策都可 AI 自主**。
+
+---
+
+## §8 Skill + MCP usage（cross-track delta）
+
+> Common rules: 见 YUK-88 driver `2026-05-26-yuk88-autonomous-driver.md` §4 + §5。本节只给跨 track 的额外规则。
+
+### 8.1 跨 track 必用 skill
+
+| Skill | 何时 |
+|---|---|
+| `/audit-drift`（项目本地）| 每 wave 结束 / 每个 phase ship 后 |
+| `/grill-with-docs`（项目本地） | wave 切换 / 发现 ADR 冲突 / priority 评估 |
+| `omc ultragoal`（CLI） | per-track ledger 操作 |
+| `/launch-phase`（项目本地） | per-phase 拆 lane 执行 |
+| `/handoff`（superpowers）| 当前 session compact 前的接力 |
+| `/oh-my-claudecode:plan` (Opus) | 跨 track 优先级 grill / wave 规划 |
+
+### 8.2 cross-track 不要用
+
+- ❌ `/oh-my-claudecode:autopilot` —— 单 track 都不够用，跨 track 更不行
+- ❌ `/oh-my-claudecode:ralph` 跨 track —— 自循环不知道 track 边界
+- ❌ `/oh-my-claudecode:team` —— 2 track cap，team coordination overhead 无收益
+- ❌ `/oh-my-claudecode:ultrawork` —— 同上
+
+### 8.3 Cross-track Linear / MCP 规则
+
+| 操作 | 工具 | 频率 |
+|---|---|---|
+| Sub-issue 列表全扫 | `mcp__claude_ai_Linear__list_issues --parentId YUK-88` 等 | weekly |
+| 跨 track follow-up issue 新建 | `mcp__claude_ai_Linear__save_issue --parentId <relevant>` | as needed |
+| 跨 track audit 报告 | 不发 Linear comment；写 `docs/audit/YYYY-MM-DD-cross-track-audit.md` | bi-weekly |
+| Master coordinator update | 本 doc §0.3 当前快照 + §5 wave 进度 | 每个 wave 结束 |
+
+---
+
+## §9 Failure handling + Escalation（cross-track delta）
+
+> Common: YUK-88 driver §9
+
+### 9.1 跨 track 撞 schema / 文件
+
+- Track A 在 worktree A 改 X 文件；Track B 在 worktree B 也改 X 文件
+- launch-phase chain-merge 时 ff-merge 不可能 → G-merge gate
+- **mitigation**：在 §3.3 的"高度并行可能性"表里事先把可并行 pair 列死；不在列表内的不并行
+
+### 9.2 cross-track ADR 冲突
+
+- Track A 引入 ADR-0022（假设），Track B 的 spec 跟新 ADR 冲突
+- escalate: 停 Track B + 用 `/grill-with-docs` 重审 ADR-0022 + 看 B 是否需 revise spec
+- **不**让 Track B 自己 "在边缘绕"
+
+### 9.3 wave 估时 2x 超
+
+- 当前 wave 超时 2x → 停所有新 track 启动 + 用户重 prioritize 当前 wave 剩余项
+
+### 9.4 单 track session 死循环（subagent ≥ 2 同因 BLOCKED）
+
+- 该 track session 报告 Layer A
+- Layer A 决定：A 修 spec / B 拆 lane / C 砍 track
+
+---
+
+## §10 Logging + State Updates
+
+### 10.1 Per-wave update
+
+每个 wave 结束（≥ 1 track checkpoint complete）：
+
+1. 本 doc §0.3 当前快照 update
+2. 本 doc §5 wave 进度标 ✅
+3. `docs/superpowers/status.md` 加 wave ship 段
+4. 每个 ship 的 track：`omc ultragoal checkpoint --status complete --quality-gate-json ...`
+5. Linear: `Closes YUK-9N` in commits（auto-flip Done）
+
+### 10.2 Per-phase update（per track，跟 YUK-88 driver §10 同）
+
+### 10.3 Master roadmap update 触发
+
+- 每 wave 结束
+- 发现新 forward-lock / 依赖
+- 用户砍 / 加 track
+- 估时大幅修正（> 30% diff）
+
+### 10.4 Memory updates
+
+发现新 cross-track pattern → save memory（per CLAUDE.md auto memory 协议）：
+- "Track A + Track B 并行实证可 / 不可" → feedback memory
+- "ultragoal multi-ledger 实际 friction" → reference memory
+- "wave 切换的人 trigger 时机" → feedback memory
+
+---
+
+## §11 Per-Track Summary Cards
+
+> 每条 active / 即将 active 的 track 在这里有一张卡片。每张卡片链到该 track 的 detailed driver doc（如已存在）或 spec source。
+
+### Card T-88 — YUK-88 Block-Tree Note Rebuild
+
+- **Status**：planning ✓，0/8 phase shipped
+- **pts**：61
+- **Estimate**：17-20 周
+- **Driver doc**：[`docs/superpowers/plans/2026-05-26-yuk88-autonomous-driver.md`](2026-05-26-yuk88-autonomous-driver.md)
+- **Phase index**：[`docs/superpowers/plans/2026-05-26-yuk88-block-tree-rebuild-phase.md`](2026-05-26-yuk88-block-tree-rebuild-phase.md)
+- **ultragoal ledger**：`.omc/ultragoal/`（init 完成，per-story mode，G001-G008）
+- **Linear**：YUK-88 + YUK-90~97
+- **Forward-locks**：Layer 5 完全体；P3 schema 改动 → T-TQ / T-BA
+- **Blocked-by**：(none) —— 可立即跑
+
+### Card T-37 — ADR-0017 Brief Writer Phase B
+
+- **Status**：🟡 in progress (YUK-37)
+- **pts**：~5 剩
+- **Estimate**：1-2 周
+- **Driver doc**：⬜ 待写（建议仿 YUK-88 driver 简版）
+- **Forward-locks**：Layer 7 Memory writer + T-DR Dreaming + T-D2 query_memory_brief
+- **Blocked-by**：(none)
+- **Linear**：YUK-37
+
+### Card T-D2 — DomainTool Registry M2 (10 read tools 补完)
+
+- **Status**：⬜
+- **pts**：~25
+- **Estimate**：6-8 周
+- **Driver doc**：⬜ 待写
+- **Source spec**：`docs/superpowers/specs/2026-05-17-agent-context-tools-design.md` §Engineering Sequence step 5-6
+- **Tools (10 个)**：`get_subject_graph_overview` / `query_knowledge` / `expand_knowledge_subgraph` / `find_knowledge_paths` / `query_records` / `get_record_context` / `get_question_context` / `get_review_due` / `get_learning_item_context` / `query_memory_brief`（最后一个等 T-37）
+- **Forward-locks**：T-D3 / T-DR / T-D6 / T-OC
+- **Blocked-by**：M1 ✓
+- **Linear**：⬜ 待建（建议建一个 Foundation D M2 epic + 10 sub-issue）
+
+### Card T-DR — Dreaming Lane
+
+- **Status**：⬜
+- **pts**：~20
+- **Estimate**：5-6 周
+- **Driver doc**：⬜ 待写
+- **Source spec**：v0.3 §"Track D"；`docs/superpowers/specs/2026-05-09-learning-orchestrator-long-term-design.md` §Phase 3
+- **Forward-locks**：T-D6 Coach + Layer 7 brief refresh consumer
+- **Blocked-by**：T-37 done + T-D2 read tools（≥ 6 个）
+- **Linear**：⬜ 待建
+
+### Card T-D3 — Copilot Drawer MVP (1 route 试点)
+
+- **Status**：⬜
+- **pts**：~13
+- **Estimate**：3-4 周
+- **Driver doc**：⬜ 待写
+- **Source design**：`docs/design/2026-05-15-design-brief-v2.1.md` §1.6 + `docs/design/loom-design-v2.1/`
+- **Forward-locks**：T-D5 Drawer×6 routes
+- **Blocked-by**：T-D2 ≥ 6 read tools
+- **Linear**：⬜ 待建
+
+### Card T-D6 — Phase 3 Global Coach Orchestrator
+
+- **Status**：⬜
+- **pts**：~15
+- **Estimate**：4 周
+- **Driver doc**：⬜ 待写
+- **Source spec**：`docs/superpowers/specs/2026-05-09-learning-orchestrator-long-term-design.md` §Phase 3
+- **Forward-locks**：Layer 8 兑现
+- **Blocked-by**：T-DR + T-D4（propose tools）
+- **Linear**：⬜ 待建
+
+### Card T-RA — Partial credit P3 RatingAdvisor
+
+- **Status**：⬜
+- **pts**：3
+- **Estimate**：1 周
+- **Driver doc**：⬜（小 task，无需单独 driver；可在 Track-1 follow-up phase 内当 W2.1 跑）
+- **Linear**：⬜ Track-1 follow-up W2.1
+
+### Card T-66 — Teaching ask_check artifact (YUK-66)
+
+- **Status**：⬜
+- **pts**：5
+- **Estimate**：1-2 周
+- **Driver doc**：⬜
+- **Linear**：[YUK-66](https://linear.app/yukoval-studios/issue/YUK-66)
+
+### Card T-J1..T-J5 — Core judges (rubric / multimodal / ai_flexible / external / code_execution)
+
+- **Status**：⬜
+- **pts**：~5 + 8 + 5 + 13 + 13 = 44
+- **Estimate**：12-15 周（5 个串）
+- **Driver doc**：⬜（建议一份共用 judge driver，记 registry pattern）
+- **Linear**：⬜ 待建 5 个
+
+### 其他 cards 略
+
+T-D4 / T-D5 / T-D7 / T-J6..J9 / T-QP / T-S4 / T-LI / T-AR / T-RT / T-CS / T-MR / T-TQ / T-KG / T-SP / T-SQ / T-PS / T-BA / T-SG / T-MM / T-OC / T-PD1..PD13 / T-CB / T-SB / T-LS / T-PQ / T-TF / T-CL / T-EP / T-FF：
+
+启动时再写 card。模板：
+
+```
+### Card T-XX — <Name>
+- Status / pts / Estimate / Driver doc / Source spec / Forward-locks / Blocked-by / Linear
+```
+
+---
+
+## §12 Risk Inventory + Mitigations
+
+> Common risks 见 YUK-88 driver §9。本节是 cross-track / 项目级别。
+
+| Risk | Likelihood | Impact | Mitigation |
+|---|---|---|---|
+| **R-1 估时严重超** | High | 项目永远 close 不掉 | 接受方案 A (v1 closeout 范围) 而不是 C 完全体 |
+| **R-2 ADR-0014 仍 proposed 但被引用** | Medium | 后续 ADR drift | T-PD11 优先；或 wave 1 顺手 升 accepted |
+| **R-3 Dreaming forward-lock 链长期未解** | High（已发生）| Layer 8 永远 ⬜ | Wave 1 T-37 必 ship + Wave 3 T-DR 必启 |
+| **R-4 5 brainstorm open question 没转 spec** | Medium | Copilot detail 落地卡 | T-CB / T-PQ / T-CL 在 Wave 2-3 中插入 |
+| **R-5 用户审 capacity 是瓶颈**（不是 AI 算力） | High | 并行 cap = 2 worktree | 严格守 §6.2 cap；超了 ship 质量崩 |
+| **R-6 Token cost 累积** | Medium | 月开销 | per phase cost 估 + 月度 review (G-cost gate) |
+| **R-7 ADR-0020 / 0021 在 P2 跑通后需大 revision** | Medium | P3 / P4 stale | 接受 ADR revision 是 norm，不当 failure |
+| **R-8 stack pivot 残留**（v0.4 §10.2 列出多处） | Low | 新 onboard 误读 | T-PD3 / T-PD8 sweep |
+| **R-9 multi-subject pressure test 没真做** | Low | framework 假设不验证 | T-S4 可砍（不做也行，但记 R-9 残留） |
+| **R-10 ultragoal multi-ledger CLI 不直接支持** | Medium | per-track ledger friction | §6.3 wrapper 或等 CLI 升级 |
+| **R-11 git-guard hook 跟 cross-track 协调撞** | Low | commit 被拦 | per YUK-88 driver §9.2，触发即 escalate |
+| **R-12 Session compaction 跨 track 上下文丢** | High | 接力丢上下文 | 用 `/handoff` skill + 本 doc + per-track ultragoal status 三件套接力 |
+
+---
+
+## §13 Hard NO (anti-patterns，cross-track)
+
+> Common 见 YUK-88 driver §11。本节是 cross-track 特有。
+
+| ❌ | 为什么 |
+|---|---|
+| 同时启 ≥ 3 track active | 超人 review capacity；ship 质量必崩 |
+| 不验文件分离就并行两条 track | 撞 schema 必死；§3.3 已列死可并行 pair |
+| 跨 track 共用 ultragoal ledger | CLI 不支持；用 per-track |
+| 主 session 自己跑 `/launch-phase` 跨多 track | 主 session 是 coordinator，不亲手执行 |
+| track 启动不写 driver doc 就上 `/launch-phase` | 复用 YUK-88 driver 也行，但必须有 anchor doc |
+| ADR-0020/0021 撞了 track 自己绕 | 任何 ADR 冲突走 §9.2 escalate |
+| wave 切换不跑 `/audit-drift` | 跨 wave 必跑，否则漂移累积 |
+| 写新 ADR 不 link 进 v0.4 §2 ADR 表 | v0.4 是合成 SoT，新 ADR 要进表 |
+| Linear sub-issue 不跟 track ID 对应 | track-id → Linear epic + sub 一对一 |
+| 砍 track 不在本 doc §5.2 留痕 | 隐式砍会忘 |
+
+---
+
+## §14 Final Closeout（项目级）
+
+**触发条件**：
+- 方案 A 全部 ship（Layer 5 + Layer 7 + Layer 8 critical path + RatingAdvisor + ask_check + P4 sweep）
+- OR 用户显式宣布"close v1，剩下走 maintenance mode"
+
+**Closeout 动作**：
+1. 本 doc §0.3 当前快照 final update
+2. 写 `docs/superpowers/audits/2027-XX-XX-v1-closeout.md` —— v1 ship 表 + 遗留 backlog + 学到什么
+3. `docs/planning/v0.4-complete-form-roadmap.md` mark "v1 closeout achieved on YYYY-MM-DD"
+4. `docs/superpowers/status.md` 顶部加 "v1 closeout 完成" header
+5. 所有 v1 范围内 Linear issue closed
+6. 剩余 track 转 `maintenance backlog` Linear project
+7. 新建 `docs/planning/v0.5-maintenance-roadmap.md`（如继续）or `v1.0-product-anchor.md`（如 freeze 当前架构）
+
+---
+
+## Appendix A: Tool / Skill quick reference (cross-track delta)
+
+| 场景 | Tool |
+|---|---|
+| Master coordinator session 起 | 本 doc §1.1 ritual |
+| 启新 track | per-track driver doc（仿 YUK-88）+ ultragoal init + per-track wave 估时 |
+| Wave 切换 | `/grill-with-docs` + 本 doc §5 update |
+| 跨 track 撞 schema | §9.1 / §9.2 |
+| Phase ship | per-track ultragoal checkpoint + Linear commit close + 看本 doc §0.3 update |
+| Wave ship | 本 doc §0.3 + §5 update + `docs/superpowers/status.md` update + `/audit-drift` |
+| v1 closeout | §14 |
+
+## Appendix B: ultragoal command cheatsheet
+
+```bash
+# 单 track 操作（默认 .omc/ultragoal/）
+omc ultragoal status
+omc ultragoal complete-goals       # 拿下一 phase handoff
+omc ultragoal checkpoint --goal-id G00N --status complete --evidence "..." --claude-goal-json '...'
+omc ultragoal record-review-blockers --goal-id G00N --title "..." --objective "..." --evidence "..."
+omc ultragoal add-goal --title "..." --objective "..."
+
+# Multi-track（手动 swap，等 CLI --workdir 支持）
+cd .omc && rm ultragoal && ln -s ultragoal-track-d2 ultragoal
+omc ultragoal status  # 现在看的是 track-d2
+
+# 初始化新 track
+mkdir -p .omc/ultragoal-track-XX
+cd .omc && rm ultragoal && ln -s ultragoal-track-XX ultragoal
+omc ultragoal create-goals --brief-file <track driver doc> \
+  --claude-goal-mode per-story \
+  --goal "P0::..." --goal "P1::..." ...
+```
+
+## Appendix C: Session-start ritual（master coordinator）
+
+```
+我在驱动整个 the-learning-project roadmap autonomous execution。
+按 docs/superpowers/plans/2026-05-27-master-roadmap.md 执行。
+
+执行 §1.1 ritual：
+1. ls .omc/ultragoal*  — 看几个 track 在跑
+2. (per active track) omc ultragoal status
+3. git status -uno && git log --oneline -10 && git worktree list
+4. 看 Linear active YUK-88 / 其他 active issue
+5. 看 docs/audit/*drift* 最新一份
+
+读完本 doc §0.3 当前快照 + §5 当前 wave。
+按当前 wave 决定下一步动作。
+```
+
+## Appendix D: Master decision flowchart
+
+```
+session start
+  ↓
+master ritual §1.1
+  ↓
+any track 在 review-blocked? → yes → 优先解（不开新 track）
+  ↓ no
+any track 当前 phase done & 待 user trigger 下个 phase?
+  ↓ yes
+  trigger 下个 phase（同 track）→ delegate to track session
+  ↓ no
+当前 active track 数 < 2 (or <3 含 doc) ?
+  ↓ yes
+当前 wave 还有未启 track？ → yes → propose 启动 + user approve
+  ↓ no
+当前 wave done? → yes → wave 切换 ritual: /audit-drift + status.md + master doc update + propose next wave
+  ↓ no
+等 active track ship 更多 phase / 拿 ScheduleWakeup 周期回来
+```
+
+---
+
+## §15 立刻可行的下一步（你拍板后）
+
+按建议优先级：
+
+1. **立即（今天）**：用 `/grill-with-docs` grill 本 doc §5 推荐 sequencing —— 6 个 open question 列在 §5.1 each wave 末尾。grill 完拍板 Wave 1 范围。
+2. **本周**：
+   - 把当前 `.omc/ultragoal/` 改名为 `.omc/ultragoal-track-88/`（per §6.3）+ symlink
+   - 写 T-37 + T-RA + T-66 三条 quick-win track 的 driver doc（薄，复用 YUK-88 driver 大部分）
+   - 启动 Wave 1：T-37 + T-RA + T-66 + T-88 P0 并行
+3. **本月**：Wave 1 ship → Wave 2 grill → 启 T-D2 + T-88 P1/P2
+4. **每月**：master roadmap doc update + `/audit-drift` 一次 + ScheduleWakeup 每周回看 ultragoal status
+
+---
+
+## §16 维护规则
+
+- 每 wave 结束 update 一次（§0.3 / §5 / §11 cards）
+- 不复制 ADR / spec 内容；只 link
+- estimate 修正 > 30% 必须留痕（在本 doc 加 commit ref + 简述原因）
+- 砍 track 必须在 §5.2 留痕
+- 新 track 必须在 §2 + §11 加 entry
+- v1 closeout 后本 doc 标 "frozen，转 v0.5 maintenance"
+
+---
+
+**End of Master Roadmap & Autonomous Execution Driver v1**
+
+> 状态：v1 draft，pending grill。任何根据本 doc 的执行决策应先经 §15 step 1 grill 拍板。
