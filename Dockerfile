@@ -25,9 +25,11 @@ RUN DATABASE_URL=postgres://build:build@localhost:5432/build pnpm build
 
 # Bundle pg-boss worker entrypoint into a single CJS file co-located with
 # the Next standalone server. The same image runs as either:
-#   CMD ["node", "server.js"]  → web/app process
-#   CMD ["node", "worker.js"]  → pg-boss worker process (crons + handlers)
+#   CMD ["node", "server.js"]   → web/app process
+#   CMD ["node", "worker.cjs"]  → pg-boss worker process (crons + handlers)
+#   CMD ["node", "migrate.cjs"] → drizzle migration runner (YUK-65 init container)
 RUN pnpm build:worker
+RUN pnpm build:migrate
 
 # Stage 2.5: install sharp into a clean flat node_modules so it can be
 # composed into the runner image without colliding with the Next standalone
@@ -74,6 +76,12 @@ COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 # above; .cjs because package.json sets "type": "module" but the esbuild bundle
 # emits CommonJS. This line is purely a no-op assert so the file is present.
 RUN test -f ./worker.cjs || (echo "worker.cjs missing — check pnpm build:worker output" && exit 1)
+RUN test -f ./migrate.cjs || (echo "migrate.cjs missing — check pnpm build:migrate output" && exit 1)
+
+# YUK-65: drizzle migrations bundle. The `migrate` compose service (init
+# container) reads SQL files from this folder via drizzle-orm/postgres-js
+# migrator at runtime. Copying here keeps the runner image self-contained.
+COPY --from=builder --chown=nextjs:nodejs /app/drizzle ./drizzle
 
 # sharp is a native module used by the tencent_ocr_extract handler in the
 # worker process and by /api/assets/* in the app process. Next standalone
