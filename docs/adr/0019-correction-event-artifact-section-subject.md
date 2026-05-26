@@ -1,10 +1,12 @@
 # ADR-0019 — Correction event extends to artifact-section subject
 
-**Status**: accepted
+**Status**: superseded by [ADR-0020](0020-block-tree-note-rebuild.md)
 **Date**: 2026-05-26
 **Supersedes**: —
-**Superseded by**: —
+**Superseded by**: [ADR-0020](0020-block-tree-note-rebuild.md) — 2026-05-26（同日 grill-with-docs 后 Y 路径决策，section_id anchor 整体废止 → block_id anchor）
 **Related**: [ADR-0011 v2](0011-tool-use-and-edge-event-paths.md) (event channel taxonomy), [ADR-0014](0014-generalized-activity-and-capability-registry.md) §6 (correction event introduction), [ADR-0018](0018-mistake-variant-lifecycle-and-variants-max.md) (parallel artifact-lifecycle precedent)
+
+> **2026-05-26 同日 supersede 说明**：本 ADR 在 YUK-85 (PR #154) ship 时同日 accepted；当天下午 YUK-88 grill-with-docs session 后路径升级到 Y（atomic 也变 block tree），`section_id` anchor 整体废止，由 ADR-0020 的 `block_id` anchor 接管。文档保留作为决策演进档案；实施层 ADR-0020 是权威。
 
 ## Context
 
