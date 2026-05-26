@@ -52,10 +52,10 @@ description: 启动 phase 多 lane 实施 —— 把 phase spec 拆成独立 lan
 4. **Pre-merge gate**：`superpowers:verification-before-completion` 配项目 PR gate：
 
    ```bash
-   pnpm typecheck && pnpm lint && pnpm audit:schema && pnpm audit:partition && pnpm test
+   pnpm typecheck && pnpm lint && pnpm audit:schema && pnpm audit:partition && pnpm audit:profile && pnpm test && pnpm build
    ```
 
-   任一失败 → 回 step 3，**不进 step 5**。
+   任一失败 → 回 step 3，**不进 step 5**。`pnpm build` (= `next build`) catches Next.js route export validation + production-only checks that `tsc --noEmit` / biome / vitest all bypass (per YUK-67); also `pnpm audit:profile` 同步加入避免与 CLAUDE.md 的 pre-PR gate 漂移。
 5. **TaskUpdate** 标 lane `completed`，**不删 worktree 不删 branch**（chain-merge 阶段统一清理）。
 
 ### 3. 顺序 chain-merge
