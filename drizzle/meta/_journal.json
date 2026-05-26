@@ -99,6 +99,13 @@
       "when": 1779609307238,
       "tag": "0013_mistake_variant",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1779764428863,
+      "tag": "0014_curvy_richard_fisk",
+      "breakpoints": true
     }
   ]
 }

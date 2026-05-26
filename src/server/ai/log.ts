@@ -12,21 +12,44 @@ export interface ToolCallLogEntry {
   iteration: number;
   latency_ms: number;
   cost: number;
+  /** YUK-79: 'read' | 'propose' | 'write' for tools dispatched via DomainTool registry. Omit for legacy SDK auto-mirror. */
+  effect?: 'read' | 'propose' | 'write';
+  /** YUK-79: set when tool execution hard-fails (timeout / parse / unsupported). */
+  error_reason?: string;
+  /** YUK-79: set by Lane D when mirrorEvent policy writes an event mirror; FK to event.id. */
+  mirrored_event_id?: string;
 }
 
-export async function writeToolCallLog(db: Db, entry: ToolCallLogEntry): Promise<void> {
+export async function writeToolCallLog(db: Db, entry: ToolCallLogEntry): Promise<string> {
+  const id = createId();
   await db.insert(tool_call_log).values({
-    id: createId(),
+    id,
     task_run_id: entry.task_run_id,
     task_kind: entry.task_kind,
     tool_name: entry.tool_name,
+    effect: entry.effect ?? null,
     input_json: entry.input_json as Record<string, unknown>,
     output_json: entry.output_json as Record<string, unknown>,
+    error_reason: entry.error_reason ?? null,
     iteration: entry.iteration,
     latency_ms: entry.latency_ms,
     cost: entry.cost,
     occurred_at: new Date(),
+    mirrored_event_id: entry.mirrored_event_id ?? null,
   });
+  return id;
+}
+
+/** YUK-79: backfill `mirrored_event_id` after mirrorEvent policy fires. */
+export async function setToolCallLogMirroredEventId(
+  db: Db,
+  toolCallLogId: string,
+  eventId: string,
+): Promise<void> {
+  await db
+    .update(tool_call_log)
+    .set({ mirrored_event_id: eventId })
+    .where(eq(tool_call_log.id, toolCallLogId));
 }
 
 export interface CostLedgerEntry {

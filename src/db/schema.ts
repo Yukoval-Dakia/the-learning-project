@@ -371,12 +371,22 @@ export const tool_call_log = pgTable('tool_call_log', {
   task_run_id: text('task_run_id').notNull(),
   task_kind: text('task_kind').notNull(),
   tool_name: text('tool_name').notNull(),
+  // YUK-79 (Foundation D M1): DomainTool registry classification.
+  // null = pre-registry runner.ts auto-mirror (existing path).
+  // 'read' | 'propose' | 'write' = tool registered via src/server/ai/tools.
+  effect: text('effect'),
   input_json: jsonb('input_json').$type<JsonObject>(),
   output_json: jsonb('output_json').$type<JsonObject>(),
+  // YUK-79: hard-fail capture (timeout / parse error / unsupported input).
+  // Soft-fail (empty result) uses output_json + summary, not error_reason.
+  error_reason: text('error_reason'),
   iteration: integer('iteration').notNull(),
   latency_ms: real('latency_ms').notNull(),
   cost: real('cost').notNull(),
   occurred_at: timestamp('occurred_at', { withTimezone: true }).notNull(),
+  // YUK-79: FK to event when mirrorEvent policy fires.
+  // Lane D writes this when the bridge mirrors a tool_use into the event log.
+  mirrored_event_id: text('mirrored_event_id'),
 });
 
 export const cost_ledger = pgTable(
