@@ -6,12 +6,16 @@
 // is skipped, so re-imports across Next.js HMR cycles don't trip the
 // registerTool duplicate guard.
 
+import { getAttemptContextTool } from './get-attempt-context';
+import { queryEventsTool } from './query-events';
 import { queryMistakesTool } from './query-mistakes';
 import { getTool, registerTool } from './registry';
 import type { DomainTool } from './types';
 
 const CORE_TOOLS: ReadonlyArray<DomainTool<unknown, unknown>> = [
   queryMistakesTool as DomainTool<unknown, unknown>,
+  queryEventsTool as DomainTool<unknown, unknown>,
+  getAttemptContextTool as DomainTool<unknown, unknown>,
 ];
 
 let bootstrapped = false;
