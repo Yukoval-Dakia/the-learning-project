@@ -1,4 +1,4 @@
-// YUK-81 / Foundation D M1 Lane C
+// YUK-81 + YUK-82 / Foundation D M1 Lane C + Lane D
 //
 // Generic bridge: wrap any DomainTool from the registry into a Claude Agent
 // SDK MCP server tool. Replaces the per-task hand-written
@@ -11,20 +11,55 @@
 //      error path).
 //   2. execute the tool against the captured ToolContext.
 //   3. write a tool_call_log row with effect + error_reason populated.
-//   4. return an MCP-shaped { content: [{ type: 'text', text: <json> }] }
+//   4. resolve mirrorEvent policy and, when it fires, write an
+//      `experimental:tool_use` event mirror with payload
+//      { tool_name, args, result_summary, error_reason? } so Copilot /
+//      Dreaming / Coach can replay tool history from the event log.
+//      Lane D added this — schema is locked in src/core/schema/event/
+//      experimental.ts `ToolUseExperimental` (ADR-0011 §1).
+//   5. return an MCP-shaped { content: [{ type: 'text', text: <json> }] }
 //      result the LLM can read.
-//
-// Lane C deliberately does NOT yet write the `experimental:tool_use` event
-// mirror — that's Lane D (it requires mirrorEvent policy resolution + caller
-// actor introspection). The tool_call_log row already captures the run; the
-// mirror is the user-facing audit surface.
 
-import { writeToolCallLog } from '@/server/ai/log';
+import { setToolCallLogMirroredEventId, writeToolCallLog } from '@/server/ai/log';
+import { writeEvent } from '@/server/events/queries';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import { createId } from '@paralleldrive/cuid2';
 import { z } from 'zod';
 import { registerCoreTools } from './bootstrap';
 import { getTool } from './registry';
-import type { ToolContext } from './types';
+import type { ToolCallerActor, ToolContext, ToolEffect, ToolMirrorPolicy } from './types';
+
+/**
+ * Decide whether a tool invocation should mirror to the `event` table.
+ *
+ * `ToolUseExperimental` (the schema) requires actor_kind='agent' — so
+ * user-fired debug-endpoint calls never mirror, regardless of the tool's
+ * declared policy. The four declared policies then fan out:
+ *
+ *   - 'never'             → never
+ *   - 'always'            → always (provided caller is agent)
+ *   - 'when_user_visible' → caller_ref matches agent:copilot / agent:teaching
+ *   - 'when_causal'       → tool effect is 'propose' | 'write',
+ *                            OR caller_ref matches agent:dreaming
+ *
+ * Exported (with `__` prefix) so unit tests can pin the policy table without
+ * spinning up the full bridge.
+ */
+export function __resolveMirrorPolicy(
+  policy: ToolMirrorPolicy,
+  callerActor: ToolCallerActor,
+  effect: ToolEffect,
+): boolean {
+  if (callerActor.kind !== 'agent') return false;
+  if (policy === 'never') return false;
+  if (policy === 'always') return true;
+  if (policy === 'when_user_visible') {
+    return /^agent:(copilot|teaching)(:.*)?$/i.test(callerActor.ref);
+  }
+  // when_causal
+  if (effect === 'propose' || effect === 'write') return true;
+  return /^agent:dreaming(:.*)?$/i.test(callerActor.ref);
+}
 
 export type SdkMcpServer = ReturnType<typeof createSdkMcpServer>;
 
@@ -81,8 +116,9 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
       }
 
       const latencyMs = Date.now() - startedAt;
+      let toolCallLogId: string | undefined;
       try {
-        await writeToolCallLog(ctx.db, {
+        toolCallLogId = await writeToolCallLog(ctx.db, {
           task_run_id: ctx.taskRunId,
           task_kind: taskKind,
           tool_name: dt.name,
@@ -102,6 +138,55 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
           task_run_id: ctx.taskRunId,
           err: logErr,
         });
+      }
+
+      // YUK-82: experimental:tool_use event mirror per mirrorEvent policy.
+      // Schema (ToolUseExperimental) requires actor_kind='agent', so
+      // user-fired calls never mirror regardless of the tool's policy.
+      if (__resolveMirrorPolicy(dt.mirrorEvent, ctx.callerActor, dt.effect)) {
+        const mirrorPayload: Record<string, unknown> = {
+          tool_name: dt.name,
+          args: (parsedInput ?? {}) as Record<string, unknown>,
+        };
+        if (summary) mirrorPayload.result_summary = summary;
+        if (errorReason) mirrorPayload.error_reason = errorReason;
+
+        const mirrorId = `tool_use_${createId()}`;
+        try {
+          await writeEvent(ctx.db, {
+            id: mirrorId,
+            session_id: null,
+            actor_kind: 'agent',
+            actor_ref: ctx.callerActor.ref,
+            action: 'experimental:tool_use',
+            subject_kind: 'query',
+            subject_id: mirrorId,
+            outcome: errorReason ? 'failure' : 'success',
+            payload: mirrorPayload,
+            caused_by_event_id: ctx.causedByEventId ?? null,
+            task_run_id: ctx.taskRunId,
+            cost_micro_usd: 0,
+          });
+          if (toolCallLogId) {
+            try {
+              await setToolCallLogMirroredEventId(ctx.db, toolCallLogId, mirrorId);
+            } catch (linkErr) {
+              console.error('[mcp-bridge] setToolCallLogMirroredEventId failed', {
+                tool: dt.name,
+                tcl_id: toolCallLogId,
+                event_id: mirrorId,
+                err: linkErr,
+              });
+            }
+          }
+        } catch (mirrorErr) {
+          // Same principle — mirror failure must not crash the tool loop.
+          console.error('[mcp-bridge] experimental:tool_use mirror writeEvent failed', {
+            tool: dt.name,
+            task_run_id: ctx.taskRunId,
+            err: mirrorErr,
+          });
+        }
       }
 
       return {
