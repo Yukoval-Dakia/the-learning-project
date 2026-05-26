@@ -232,4 +232,17 @@ describe('GET /api/artifacts/[id]/correct', () => {
     const res = await getCorrect('artifact_missing');
     expect(res.status).toBe(404);
   });
+
+  it('returns whole=active and empty sections when artifact.sections is null', async () => {
+    await seedAtomic('artifact_42', { sections: null });
+
+    const res = await getCorrect('artifact_42');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      whole: { state: string };
+      sections: Record<string, unknown>;
+    };
+    expect(body.whole.state).toBe('active');
+    expect(body.sections).toEqual({});
+  });
 });

@@ -218,7 +218,8 @@ describe('ArtifactSections — markdown rendering wiring', () => {
         embeddedCheckStatus="not_required"
       />,
     );
-    expect(html).toContain('标错');
+    // Button label "标错" appears; no "已标错" badge while section is active.
+    expect(html).toMatch(/标错<\/button>/);
     expect(html).not.toContain('已标错');
   });
 
@@ -247,10 +248,12 @@ describe('ArtifactSections — markdown rendering wiring', () => {
         }}
       />,
     );
+    // s2: badge + restore button. s1 stays active → still shows mark-wrong button.
     expect(html).toContain('已标错');
-    expect(html).toContain('撤销标错');
-    // s1 stays active → still shows 标错 (not 已标错)
-    expect(html.match(/标错/g)?.length ?? 0).toBeGreaterThan(0);
+    expect(html).toMatch(/撤销标错<\/button>/);
+    // s1 (active) has a plain "标错" button — anchor on the closing tag so we
+    // don't accidentally match the badge text "已标错".
+    expect(html).toMatch(/(?<!已|撤销)标错<\/button>/);
   });
 
   it('omits 标错 controls when artifactId is not provided', () => {
@@ -265,6 +268,8 @@ describe('ArtifactSections — markdown rendering wiring', () => {
         embeddedCheckStatus="not_required"
       />,
     );
+    // Without artifactId no correction surface should render.
     expect(html).not.toContain('标错');
+    expect(html).not.toContain('撤销标错');
   });
 });

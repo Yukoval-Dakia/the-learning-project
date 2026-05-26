@@ -26,6 +26,9 @@ export async function GET(_req: Request, { params }: RouteParams): Promise<Respo
     }
 
     const state = await getArtifactCorrectionState(db, artifactId);
+    // Wire shape is Record<string, ArtifactCorrectionStatus>; we flatten the
+    // projection's Map<string, …> here so JSON serializes naturally. Direct
+    // server-side callers of getArtifactCorrectionState still get the Map.
     return Response.json({
       artifact_id: artifactId,
       whole: state.whole,

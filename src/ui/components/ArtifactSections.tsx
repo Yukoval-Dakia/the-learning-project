@@ -1,6 +1,6 @@
 'use client';
 
-import { type CSSProperties, useEffect, useState } from 'react';
+import { type CSSProperties, useEffect, useRef, useState } from 'react';
 
 import { apiJson } from '@/ui/lib/api';
 import {
@@ -156,6 +156,11 @@ export function ArtifactSections({
   const [correctionErrorBySectionId, setCorrectionErrorBySectionId] = useState<
     Record<string, string>
   >({});
+  // Monotonic counter bumped on every local correction mutation. The mount-time
+  // GET captures the value at fetch start and drops itself if a write has
+  // landed in the meantime, so a slow GET cannot clobber a fresh optimistic
+  // mark_wrong / restore. See ADR-0019 and PR #154 review.
+  const correctionWriteGenerationRef = useRef(0);
   const canEdit = Boolean(artifactId && artifactVersion !== undefined);
   const canCorrect = Boolean(artifactId);
 
@@ -170,9 +175,12 @@ export function ArtifactSections({
       return;
     }
     let canceled = false;
+    const startGeneration = correctionWriteGenerationRef.current;
     apiJson<ArtifactCorrectionStateResponse>(`/api/artifacts/${artifactId}/correct`)
       .then((state) => {
-        if (!canceled) setCorrectionState(state);
+        if (canceled) return;
+        if (correctionWriteGenerationRef.current !== startGeneration) return;
+        setCorrectionState(state);
       })
       .catch(() => {
         // best-effort; keep last-known state
@@ -291,6 +299,7 @@ export function ArtifactSections({
           }),
         },
       );
+      correctionWriteGenerationRef.current += 1;
       setCorrectionState((current) => {
         const baseSections = current?.sections ?? {};
         const nextSections: Record<string, ArtifactCorrectionStatus> = {
@@ -336,6 +345,7 @@ export function ArtifactSections({
           reason_md: '撤销标错',
         }),
       });
+      correctionWriteGenerationRef.current += 1;
       setCorrectionState((current) => {
         const baseSections = current?.sections ?? {};
         const nextSections = { ...baseSections };
@@ -383,7 +393,7 @@ export function ArtifactSections({
                 <strong>{SECTION_LABEL[s.kind]}</strong>
                 <span className="artifact-section-tier">{SOURCE_TIER_LABEL[s.source_tier]}</span>
                 {statusLabel && (
-                  <Badge tone={correctionStatusTone(status)} dotStatic>
+                  <Badge tone={correctionStatusTone(status)} dot dotStatic>
                     {statusLabel}
                   </Badge>
                 )}
