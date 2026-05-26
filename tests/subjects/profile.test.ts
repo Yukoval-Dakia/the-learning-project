@@ -60,6 +60,18 @@ describe('SubjectProfile extensions', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
+  it('wenyan profile declares subject-specific actionable cause categories', () => {
+    const profile = subjectProfiles.wenyan;
+    const categories = new Map(profile.causeCategories.map((category) => [category.id, category]));
+
+    expect(profile.causeCategories).toHaveLength(11);
+    expect(categories.get('grammar')?.label).toBe('语法判断');
+    expect(categories.get('word_meaning')?.label).toBe('词义混淆');
+    expect(categories.get('method')?.variant_targetable).toBe(true);
+    expect(categories.get('time_pressure')?.review_priority).toBe(2);
+    expect(categories.get('concept')?.description).not.toMatch(/词义|语法功能/);
+  });
+
   it('wenyan profile has renderConfig', () => {
     const profile = subjectProfiles.wenyan;
     expect(RenderConfig.safeParse(profile.renderConfig).success).toBe(true);

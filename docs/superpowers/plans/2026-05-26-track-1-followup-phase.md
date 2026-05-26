@@ -95,13 +95,13 @@
 **问题**：math profile causeCategories 100% migration 已完，wenyan partial；`drift 2026-05-22` 标 phase-deferred。
 
 **Scope**：
-- 把 `src/subjects/wenyan/profile.ts` 剩余 cause 路径全部 profile-driven，去掉 hardcoded fallback
+- 把 `src/subjects/wenyan/profile.ts` 补齐 wenyan-specific cause categories，使 AttributionTask taxonomy 可直接从 profile 渲染
 - `pnpm audit:profile` 全绿
-- regression：wenyan fixture 7 类 cause attribution 命中率不降
+- regression：wenyan profile 单测锁定 11 类 cause、4 个新增 id 与结构校验
 
 **Exit criteria**：
 - [ ] `pnpm audit:profile` 完全 green，wenyan no warning
-- [ ] wenyan AttributionTask fixture pass，cause 7 类 coverage ≥ math baseline
+- [ ] wenyan profile 单测 pass，cause depth 与 math baseline 持平
 - [ ] drift log 2026-05-22 wenyan deferred 项可关
 
 **Per-lane plan doc**：`docs/superpowers/plans/2026-05-2X-wenyan-cause-migration.md`

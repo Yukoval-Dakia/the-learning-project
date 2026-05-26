@@ -45,7 +45,7 @@ export const wenyanProfile: SubjectProfile = {
     {
       id: 'concept',
       label: '概念理解',
-      description: '对文言词义、语法功能的核心概念理解错误',
+      description: '对术语定义、文本理解框架或概念边界的抽象理解错误',
       review_priority: 5,
     },
     {
