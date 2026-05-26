@@ -2,7 +2,7 @@ import { artifact } from '@/db/schema';
 import { getArtifactCorrectionState } from '@/server/events/artifact-corrections';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
-import { POST } from './route';
+import { GET, POST } from './route';
 
 const NOTE_SECTIONS = [
   {
@@ -64,6 +64,12 @@ async function postCorrect(artifactId: string, body: unknown): Promise<Response>
     }),
     { params: Promise.resolve({ id: artifactId }) },
   );
+}
+
+async function getCorrect(artifactId: string): Promise<Response> {
+  return GET(new Request(`http://localhost/api/artifacts/${artifactId}/correct`), {
+    params: Promise.resolve({ id: artifactId }),
+  });
 }
 
 describe('POST /api/artifacts/[id]/correct', () => {
@@ -179,5 +185,51 @@ describe('POST /api/artifacts/[id]/correct', () => {
     const state = await getArtifactCorrectionState(testDb(), 'artifact_old');
     expect(state.whole.state).toBe('superseded');
     expect(state.whole.replacement_artifact_id).toBe('artifact_new');
+  });
+});
+
+describe('GET /api/artifacts/[id]/correct', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('returns whole=active and empty sections when artifact has no corrections', async () => {
+    await seedAtomic('artifact_42');
+
+    const res = await getCorrect('artifact_42');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      artifact_id: string;
+      whole: { state: string };
+      sections: Record<string, { state: string }>;
+    };
+    expect(body.artifact_id).toBe('artifact_42');
+    expect(body.whole.state).toBe('active');
+    expect(body.sections).toEqual({});
+  });
+
+  it('reflects a section mark_wrong written via POST', async () => {
+    await seedAtomic('artifact_42');
+    const post = await postCorrect('artifact_42', {
+      correction_kind: 'mark_wrong',
+      section_id: 's_pitfall',
+      reason_md: 'pitfall is wrong',
+    });
+    expect(post.status).toBe(200);
+
+    const res = await getCorrect('artifact_42');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      whole: { state: string };
+      sections: Record<string, { state: string; correction_event_id: string }>;
+    };
+    expect(body.whole.state).toBe('active');
+    expect(body.sections.s_pitfall?.state).toBe('marked_wrong');
+    expect(body.sections.s_pitfall?.correction_event_id).toBeTypeOf('string');
+  });
+
+  it('returns 404 when artifact does not exist', async () => {
+    const res = await getCorrect('artifact_missing');
+    expect(res.status).toBe(404);
   });
 });

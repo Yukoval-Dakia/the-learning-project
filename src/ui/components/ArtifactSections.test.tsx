@@ -204,4 +204,67 @@ describe('ArtifactSections — markdown rendering wiring', () => {
       getArtifactSectionEditMinHeight(Array.from({ length: 20 }, () => 'line').join('\n')),
     ).toBeLessThanOrEqual(360);
   });
+
+  it('renders 标错 control when artifact id is provided and section is active', () => {
+    const sections: ArtifactSection[] = [
+      { ...baseSection, id: 's1', kind: 'definition', body_md: 'definition' },
+    ];
+    const html = renderToString(
+      <ArtifactSections
+        artifactId="a1"
+        sections={sections}
+        subjectProfile={wenyanProfile}
+        embeddedQuestions={[]}
+        embeddedCheckStatus="not_required"
+      />,
+    );
+    expect(html).toContain('标错');
+    expect(html).not.toContain('已标错');
+  });
+
+  it('renders 已标错 badge and 撤销标错 control when initialCorrectionState marks the section wrong', () => {
+    const sections: ArtifactSection[] = [
+      { ...baseSection, id: 's1', kind: 'definition', body_md: 'definition' },
+      { ...baseSection, id: 's2', kind: 'pitfall', body_md: 'pitfall' },
+    ];
+    const html = renderToString(
+      <ArtifactSections
+        artifactId="a1"
+        sections={sections}
+        subjectProfile={wenyanProfile}
+        embeddedQuestions={[]}
+        embeddedCheckStatus="not_required"
+        initialCorrectionState={{
+          artifact_id: 'a1',
+          whole: { state: 'active', correction_event_id: null, replacement_artifact_id: null },
+          sections: {
+            s2: {
+              state: 'marked_wrong',
+              correction_event_id: 'corr_1',
+              replacement_artifact_id: null,
+            },
+          },
+        }}
+      />,
+    );
+    expect(html).toContain('已标错');
+    expect(html).toContain('撤销标错');
+    // s1 stays active → still shows 标错 (not 已标错)
+    expect(html.match(/标错/g)?.length ?? 0).toBeGreaterThan(0);
+  });
+
+  it('omits 标错 controls when artifactId is not provided', () => {
+    const sections: ArtifactSection[] = [
+      { ...baseSection, id: 's1', kind: 'definition', body_md: 'definition' },
+    ];
+    const html = renderToString(
+      <ArtifactSections
+        sections={sections}
+        subjectProfile={wenyanProfile}
+        embeddedQuestions={[]}
+        embeddedCheckStatus="not_required"
+      />,
+    );
+    expect(html).not.toContain('标错');
+  });
 });
