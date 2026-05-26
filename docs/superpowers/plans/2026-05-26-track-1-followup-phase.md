@@ -3,7 +3,7 @@
 > Phase-level outline，仿 [`2026-05-24-product-track-1-closeout.md`](2026-05-24-product-track-1-closeout.md) 模式。每条 lane 启动前另写 detailed plan doc。
 
 **Roadmap source**: [`docs/planning/v0.3-generalized-ai-learning-framework.md`](../../planning/v0.3-generalized-ai-learning-framework.md) §1.5 + [`docs/planning/v0.4-complete-form-roadmap.md`](../../planning/v0.4-complete-form-roadmap.md) §6
-**Linear Project**: TBD（outline 批准后建）
+**Linear Project**: [Track-1 Follow-up — Note / Teaching / Review polish](https://linear.app/yukoval-studios/project/track-1-follow-up-note-teaching-review-polish-b2d5cdc828e6)
 **Date**: 2026-05-26
 **Status**: outline only —— per-lane plan docs to follow as lanes start
 **Background**: [Product Track 1 — Review / Learning Item / Teaching 收口](https://linear.app/yukoval-studios/project/product-track-1-review-learning-item-teaching-收口-87f2e3007a16) Wave 1-4 全部 ship to main（2026-05-25 PR #133），Wave 5 closeout 已写（[`docs/audit/2026-05-25-product-track-1-wave5-closeout.md`](../../audit/2026-05-25-product-track-1-wave5-closeout.md)）。[YUK-65](https://linear.app/yukoval-studios/issue/YUK-65) NAS compose auto-migrate 2026-05-26 已 Done（PR #146）。本 phase 是 Track-1 closeout 大纲 §"后续 follow-ups" + v0.4 §6 P1/P2 中跟 Note / Teaching / Review feedback 闭环相关项的打包。
@@ -21,7 +21,7 @@
 | `/today` KPI 第三格 → "AI 提议·待审" | 替换 vanity metric「知识点数」 | 2 | v0.4 §6 P2.10；[`docs/design/2026-05-15-design-brief-v2.1.md`](../../design/2026-05-15-design-brief-v2.1.md) §1.3 |
 | wenyan `profile.causeCategories` 100% 迁移 | math 100%，wenyan partial 收尾 | 2 | v0.4 §6 P1.4；drift 2026-05-22 phase-deferred |
 
-**总估时**：2-3 周，~23 pts，单人节奏。沿用 Track-1 closeout "独立 PR + 独立 reviewer 关卡 + 独立 audit + chain-merge" 模式。
+**总估时**：2-3 周，~28 pts，单人节奏（YUK-85 W1.3 pre-flight 上修 3→8 pts，含 ADR-0019）。沿用 Track-1 closeout "独立 PR + 独立 reviewer 关卡 + 独立 audit + chain-merge" 模式。
 
 **不在本 outline 内**（已明确分流）：
 
@@ -35,13 +35,13 @@
 
 ## Phase 序列总览（按 Milestone）
 
-### M1 — Quick wins / 区域分散收尾（3 lane / 7 pts / target 2026-06-04）
+### M1 — Quick wins / 区域分散收尾（3 lane / 12 pts / target 2026-06-11）
 
 | Issue | 主题 | pts | priority | 启动可行性 | 依赖 |
 |---|---|---|---|---|---|
-| 新建 | wenyan `profile.causeCategories` 100% 迁移 | 2 | Medium | ✅ unblocked | — |
-| 新建 | `/today` KPI 第三格 → "AI 提议·待审" | 2 | Medium | ✅ unblocked | — |
-| 新建 | Note 申诉 / 标错 UX | 3 | Medium | ✅ unblocked（YUK-40 + ADR-0014 §6 已 ship） | — |
+| [YUK-83](https://linear.app/yukoval-studios/issue/YUK-83) | wenyan `profile.causeCategories` 100% 迁移 | 2 | Medium | ✅ shipped 2026-05-26（PR #149 merged）| — |
+| [YUK-84](https://linear.app/yukoval-studios/issue/YUK-84) | `/today` KPI 第三格 → "AI 提议·待审" | 2 | Medium | 🟡 PR #150 ready，待 merge | — |
+| [YUK-85](https://linear.app/yukoval-studios/issue/YUK-85) | Note 申诉 / 标错 UX（Path A, section_id 粒度 + ADR-0019）| 8 | Medium | ✅ unblocked，3 sub PR | — |
 
 ### M2 — Note / Teaching / Review 深化（3 lane / 16 pts / target 2026-06-18）
 
@@ -55,13 +55,13 @@
 
 按 **3 lane / wave** 节奏，**区域分散**降低 merge 冲突：
 
-### Wave 1 —— 3 lane / 7 pts / 全 unblocked
+### Wave 1 —— 3 lane / 12 pts / 全 unblocked
 
 | Lane | 主题 | pts | 区域 |
 |---|---|---|---|
 | W1.1 | wenyan causeCategories 100% | 2 | `src/subjects/wenyan/profile.ts` + `pnpm audit:profile` |
 | W1.2 | `/today` KPI 第三格 | 2 | `app/(app)/today/page.tsx` + `src/server/today/` summary helper |
-| W1.3 | Note 申诉 / 标错 UX | 3 | `src/ui/correction/` + `app/(app)/learning-items/[id]/page.tsx` |
+| W1.3 | Note 申诉 / 标错 UX (Path A) | 8 | `src/core/schema/event/known.ts` (CorrectArtifactEvent) + `src/server/review/effective-truth.ts` + `app/api/artifacts/[id]/correct/` + `src/ui/correction/` + `NoteRenderer` + ADR-0019 |
 
 **Chain-merge order**：W1.1 → W1.2 → W1.3（profile 改动先 land，UI 后续都依赖 profile validator pass；today / learning-items 是不同 page 文件互不冲突）。
 
@@ -127,23 +127,26 @@
 
 ---
 
-### W1.3 — Note 申诉 / 标错 UX
+### W1.3 — Note 申诉 / 标错 UX (Path A: section_id 粒度)
 
-**问题**：ADR-0014 §6 correction event（retract / mark_wrong / supersede）已 ship 在数据层，UI 仅在 learning-item proposal 列表暴露（[YUK-19](https://linear.app/yukoval-studios/issue/YUK-19) 落地）。Note section 用户标错入口缺位 —— 用户没法标"这段 atomic 内容有问题"。
+**问题**：ADR-0014 §6 correction event（retract / mark_wrong / supersede）已 ship 在数据层，但 [`CorrectEvent.subject_kind: z.literal('event')`](../../../src/core/schema/event/known.ts) 锁死 event-target；artifact / section 粒度入口缺位。UI 仅在 learning-item proposal 列表暴露（[YUK-19](https://linear.app/yukoval-studios/issue/YUK-19)）。
 
-**Scope**：
-- atomic note section 加 "申诉 / 标错" 按钮（隐藏在 `…` 菜单或 selection toolbar）
-- 触发 `experimental:correction_event { kind='mark_wrong', target_kind='artifact', target_id, section_idx, note_md }`
-- 列表 UI 显示 mark_wrong 状态走 `CorrectionStateRenderer`（YUK-40 已 ship）
-- 不引入新 correction kind，复用现有 4 类
+**Pre-flight 调研（2026-05-26）**：outline 原文 `section_idx` + 3 pts 估时与现有 schema 不匹配。**Path A 决议**：新建并行 `CorrectArtifactEvent` schema、用 `NoteSection.id`（stable string）作为 section identifier、独立 artifact-level effective-truth projection。详见 [`2026-05-26-note-appeal-mark-wrong.md`](2026-05-26-note-appeal-mark-wrong.md)。
+
+**Scope (3 sub PR)**：
+- **Sub 1 (server, 3 pts)**：`CorrectArtifactEvent` zod + `getArtifactCorrectionState` projection + ADR-0019
+- **Sub 2 (server, 2 pts)**：`POST /api/artifacts/[id]/correct` + DB tests
+- **Sub 3 (UI, 3 pts)**：section overflow menu + 状态徽章（Sub 3 启动时另做 UI design-doc pre-flight）
 
 **Exit criteria**：
-- [ ] atomic note section 有 mark_wrong 入口
-- [ ] event 写入后状态投射正确（`CorrectionStateRenderer` 显示已标错）
-- [ ] 不影响 proposal inbox 已有 retract UI
-- [ ] `pnpm test:db` + `pnpm audit:schema` 通过
+- [ ] ADR-0019 land（correction event 扩到 artifact-section subject）
+- [ ] Sub 1 / Sub 2 / Sub 3 各独立 PR chain-merge
+- [ ] atomic note section 有 mark_wrong 入口；状态投影正确
+- [ ] `CorrectionStateRenderer` 复用（或新 `<SectionCorrectionBadge>` 走同视觉规范）
+- [ ] `pnpm test` + `pnpm test:migration` + `pnpm audit:schema` 全绿
+- [ ] [YUK-87](https://linear.app/yukoval-studios/issue/YUK-87) Living Note `NoteRefineTask` 可读 `getArtifactCorrectionState` 作 trigger 6 信号源
 
-**Per-lane plan doc**：`docs/superpowers/plans/2026-05-2X-note-appeal-mark-wrong.md`
+**Per-lane plan doc**：[`docs/superpowers/plans/2026-05-26-note-appeal-mark-wrong.md`](2026-05-26-note-appeal-mark-wrong.md)
 
 ---
 
@@ -286,28 +289,28 @@ W2 ──┬─ W2.1 rating advisory ───────────→ (indep
 
 | Week | Wave | Lanes | 累计 pts | Cumulative coverage |
 |---|---|---|---|---|
-| W1 | Wave 1 | W1.1 wenyan / W1.2 today KPI / W1.3 Note 申诉 | 7 | 3/6 lanes |
-| W2 | Wave 2 | W2.1 rating advisory / W2.2 YUK-66 / W2.3 Living Note | 23 | 6/6 lanes |
+| W1 | Wave 1 | W1.1 wenyan / W1.2 today KPI / W1.3 Note 申诉 | 12 | 3/6 lanes |
+| W2 | Wave 2 | W2.1 rating advisory / W2.2 YUK-66 / W2.3 Living Note | 28 | 6/6 lanes |
 | W3 | 收口 | audit-drift + status.md update + v0.4 §6 P1.4/P1.5/P2.3/P2.4/P2.10 状态更新 + retrospective | — | — |
 
 **Wave 间 gate**：每 wave 结束 chain-merge 完后跑 `pnpm test` + `pnpm audit:schema` + `pnpm audit:partition` + `pnpm audit:profile` 全绿，再启下一 wave 的 `/launch-phase`。
 
 ## Linear 项目结构
 
-待 outline 批准后建：
+已建（2026-05-26）：
 
-- **Project**：`Track-1 Follow-up — Note / Teaching / Review polish`（priority=Medium, start=2026-05-26, target=2026-06-18）
+- **Project**：[Track-1 Follow-up — Note / Teaching / Review polish](https://linear.app/yukoval-studios/project/track-1-follow-up-note-teaching-review-polish-b2d5cdc828e6)（priority=Medium, start=2026-05-26, target=2026-06-18）
 - **2 Milestones / 6 issue**：
 
   | Milestone | Issue 数 | Issues |
   |---|---|---|
-  | M1 — Quick wins（target 2026-06-04） | 3 | wenyan causeCategories / today KPI / Note 申诉 UX |
+  | M1 — Quick wins（target 2026-06-11，从 06-04 滑后由 YUK-85 Path A 扩张） | 3 | wenyan causeCategories / today KPI / Note 申诉 UX |
   | M2 — Note/Teaching/Review 深化（target 2026-06-18） | 3 | rating advisory / [YUK-66](https://linear.app/yukoval-studios/issue/YUK-66) / Living Note |
 
 **新建 5 个 Linear issue**（YUK-66 已存在，移入本 project + M2）：
 - wenyan `causeCategories` 100% migration → M1 / Medium / 2pts
 - `/today` KPI inbox pending count → M1 / Medium / 2pts
-- Note 申诉 / 标错 UX (atomic section mark_wrong) → M1 / Medium / 3pts
+- Note 申诉 / 标错 UX (atomic section mark_wrong) → M1 / Medium / 8pts (Path A pre-flight 上修)
 - Partial credit P3 `<RatingAdvisor>` → M2 / Medium / 3pts
 - Living Note `NoteRefineTask` + 5 trigger producers → M2 / Medium / 8pts
 
