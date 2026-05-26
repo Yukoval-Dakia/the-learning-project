@@ -38,13 +38,18 @@ import type { ToolCallerActor, ToolContext, ToolEffect, ToolMirrorPolicy } from 
  *
  *   - 'never'             → never
  *   - 'always'            → always (provided caller is agent)
- *   - 'when_user_visible' → caller_ref matches agent:copilot / agent:teaching
+ *   - 'when_user_visible' → caller_ref matches copilot / teaching, with or without `agent:`
  *   - 'when_causal'       → tool effect is 'propose' | 'write',
- *                            OR caller_ref matches agent:dreaming
+ *                            OR caller_ref matches dreaming, with or without `agent:`
  *
  * Exported (with `__` prefix) so unit tests can pin the policy table without
  * spinning up the full bridge.
  */
+function matchesAgentRef(ref: string, family: string): boolean {
+  const bare = ref.replace(/^agent:/i, '').toLowerCase();
+  return bare === family || bare.startsWith(`${family}:`);
+}
+
 export function __resolveMirrorPolicy(
   policy: ToolMirrorPolicy,
   callerActor: ToolCallerActor,
@@ -54,11 +59,13 @@ export function __resolveMirrorPolicy(
   if (policy === 'never') return false;
   if (policy === 'always') return true;
   if (policy === 'when_user_visible') {
-    return /^agent:(copilot|teaching)(:.*)?$/i.test(callerActor.ref);
+    return (
+      matchesAgentRef(callerActor.ref, 'copilot') || matchesAgentRef(callerActor.ref, 'teaching')
+    );
   }
   // when_causal
   if (effect === 'propose' || effect === 'write') return true;
-  return /^agent:dreaming(:.*)?$/i.test(callerActor.ref);
+  return matchesAgentRef(callerActor.ref, 'dreaming');
 }
 
 export type SdkMcpServer = ReturnType<typeof createSdkMcpServer>;
@@ -108,10 +115,31 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
 
       try {
         parsedInput = dt.inputSchema.parse(rawArgs);
-        output = await dt.execute(ctx, parsedInput as never);
-        summary = dt.summarize(parsedInput as never, output as never);
       } catch (err) {
         errorReason = err instanceof Error ? err.message : String(err);
+      }
+
+      if (errorReason === undefined) {
+        try {
+          output = await dt.execute(ctx, parsedInput as never);
+        } catch (err) {
+          errorReason = err instanceof Error ? err.message : String(err);
+        }
+      }
+
+      if (errorReason === undefined) {
+        try {
+          summary = dt.summarize(parsedInput as never, output as never);
+        } catch (err) {
+          const summaryError = err instanceof Error ? err.message : String(err);
+          summary = `summary unavailable: ${summaryError}`;
+          console.error('[mcp-bridge] tool summarize failed', {
+            tool: dt.name,
+            task_run_id: ctx.taskRunId,
+            err,
+          });
+        }
+      } else {
         summary = `error: ${errorReason}`;
       }
 

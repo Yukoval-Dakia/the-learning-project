@@ -107,4 +107,20 @@ describe('POST /api/_/tools/[name]', () => {
     expect(body.error).toBe('invalid_input');
     expect(Array.isArray(body.issues)).toBe(true);
   });
+
+  it('returns 400 for malformed JSON without executing the tool', async () => {
+    const res = await POST(
+      buildAuthedRequest('http://localhost/api/_/tools/query_mistakes', {
+        method: 'POST',
+        body: '{"input":',
+      }),
+      { params: Promise.resolve({ name: 'query_mistakes' }) },
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe('invalid_json');
+
+    const rows = await testDb().select().from(tool_call_log);
+    expect(rows).toHaveLength(0);
+  });
 });

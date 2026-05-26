@@ -17,6 +17,11 @@ import { errorResponse } from '@/server/http/errors';
 import { createId } from '@paralleldrive/cuid2';
 
 type RouteParams = { name: string };
+type DebugToolBody = {
+  input?: unknown;
+  taskRunId?: string;
+  callerActor?: { kind?: string; ref?: string };
+};
 
 export async function POST(req: Request, { params }: { params: Promise<RouteParams> }) {
   try {
@@ -30,11 +35,25 @@ export async function POST(req: Request, { params }: { params: Promise<RoutePara
       );
     }
 
-    const body = (await req.json().catch(() => ({}))) as {
-      input?: unknown;
-      taskRunId?: string;
-      callerActor?: { kind?: string; ref?: string };
-    };
+    let body: DebugToolBody = {};
+    const rawBody = await req.text();
+    if (rawBody.trim().length > 0) {
+      try {
+        const parsed = JSON.parse(rawBody);
+        body =
+          parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+            ? (parsed as DebugToolBody)
+            : {};
+      } catch (err) {
+        return Response.json(
+          {
+            error: 'invalid_json',
+            message: err instanceof Error ? err.message : 'Malformed JSON request body',
+          },
+          { status: 400 },
+        );
+      }
+    }
 
     const parsedInput = tool.inputSchema.safeParse(body.input ?? {});
     if (!parsedInput.success) {
