@@ -4,8 +4,8 @@
 > 这里记的是 **项目走到了哪、下一站去哪、为什么这么走**，不是 commit log。
 > 维护规则：每完成一个 Phase 就 update 一次；不维护周度进度。
 
-**最后更新**：2026-05-25（Foundation B M1 真 closeout 已 merge — PR #135 / commit 6a69431 关 YUK-5/6/12/77；Foundation A/B 全部 line items 升 ✅；Product Track 1 / Track 2 状态不变）
-**当前 Phase**：Foundation A/B 收口完成（registry / profile / validator / renderConfig / generic AI route hardening 全 ship）。下一站候选：**Copilot DomainTool Registry foundation**（v0.4 §7 第一波，阻塞 first-class AI actor 承诺）、Dreaming lane、YUK-66 teaching ask_check artifact、Living Note refinement、Note 申诉/标错、subject #4、Foundation C P3 rating advisory。详见 [`docs/planning/v0.4-complete-form-roadmap.md`](../planning/v0.4-complete-form-roadmap.md) §6 优先级清单。
+**最后更新**：2026-05-26（Foundation D M1 ship — DomainTool registry + 3 read tools + in-process MCP bridge + `experimental:tool_use` mirror 全部 4 lane closeout，PR #139/#140/#141 + Lane D PR 关 YUK-78/79/80/81/82）
+**当前 Phase**：Foundation D M1 收口完成。下一站候选：**M2 read tool full coverage**（10 个剩余 read tool）、Dreaming agent lane（unblock by M1）、YUK-66 teaching ask_check artifact、Living Note refinement、Note 申诉/标错、subject #4、Foundation C P3 rating advisory。详见 [`docs/planning/v0.4-complete-form-roadmap.md`](../planning/v0.4-complete-form-roadmap.md) §6 优先级清单。
 **主分支**：`main` 已推 `origin`
 **路线图源**：[`docs/planning/v0.3-generalized-ai-learning-framework.md`](../planning/v0.3-generalized-ai-learning-framework.md) §1.5 是当前执行清单；root `PLANNING.md` v0.12 Phase 1-4 已标 historical
 
@@ -75,6 +75,26 @@ Profile LOC snapshots checked with `git show ${sha}:src/subjects/math/profile.ts
 | `dff8f34` | #84 | 103 | +0 / -0 | +0 / -0 | +0 / -0 | +3 / -0 | M3 closeout UI polish. |
 
 Conclusion: Foundation B schema extension and math profile were introduced in the same commit (`903009c`), so YUK-12's old "math profile <=50 lines and 0 framework changes" acceptance was not a realistic audit target. Math MVP across six PRs added 2256 lines of framework changes (668 framework-hook + 19 schema-extension + 1569 subject-driven-feature) and 943 lines of math-private code. The acid test of true generalization is physics PR #91: physics landing produced framework diff = 0 (per this Foundation B section), proving the hooks + extensions really generalize.
+
+### Foundation D — Copilot Orchestrator + DomainTool Registry（v0.4 §3 第 8 层）
+
+```
+✅  DomainTool interface + registry           src/server/ai/tools/{types,registry}.ts (YUK-79)
+✅  tool_call_log 表 effect / error_reason /  drizzle/0014 schema extension; runner.ts + bridge writers (YUK-79)
+    mirrored_event_id 列
+✅  query_mistakes read tool                  src/server/ai/tools/query-mistakes.ts (YUK-80)
+✅  debug endpoint POST /api/_/tools/[name]   admin-only, exec→tool_call_log (YUK-80)
+✅  in-process MCP bridge                     src/server/ai/tools/mcp-bridge.ts — generic wrap (YUK-81)
+✅  query_events / get_attempt_context        2 more read tools using bridge contract (YUK-81)
+✅  experimental:tool_use event mirror        ToolUseExperimental schema enforced; policy resolver + caller introspection (YUK-82)
+🟡  remaining 10 read tools                   M2 — subject_graph / knowledge / records / review_due / memory_brief variants
+⬜  Copilot drawer MVP                        M3
+⬜  propose / write DomainTools               M4
+⬜  Phase 3 Global Coach Orchestrator         M5
+⬜  experimental:tool_use → KnownEvent promote M6 (after 3 tools × 2 weeks stable)
+```
+
+M1 closeout audit: [`docs/audit/2026-05-26-copilot-tools-foundation.md`](../audit/2026-05-26-copilot-tools-foundation.md).
 
 ### Foundation C — Judge Result Contract + Correction Event（ADR-0014 §4/§6）
 
