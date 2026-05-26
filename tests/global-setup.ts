@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
+import { Wait } from 'testcontainers';
 
 let container: StartedPostgreSqlContainer | undefined;
 
@@ -30,8 +31,13 @@ export async function setup() {
   // we hit "sorry, too many clients already" once 8-10 files have cycled a
   // boss instance. 500 leaves comfortable headroom without measurable cost
   // on a single-developer testcontainer.
+  // testcontainers v12 默认会在容器内用 `nc` / `/dev/tcp` 做 internal-port 探测，
+  // 但 postgres:16 镜像没装 nc 且 initdb 期间端口未开，会持续 retry 直到超时。
+  // 显式改成 log-based wait，匹配 postgres 启动完成时的就绪日志（出现两次，
+  // 第一次是 initdb 阶段的临时 server，第二次才是面向客户端的连接监听）。
   container = await new PostgreSqlContainer('postgres:16')
     .withCommand(['postgres', '-c', 'max_connections=500'])
+    .withWaitStrategy(Wait.forLogMessage(/database system is ready to accept connections/, 2))
     .start();
   const uri = container.getConnectionUri();
   process.env.TEST_DATABASE_URL = uri;
