@@ -1,4 +1,23 @@
 services:
+  # YUK-65: init container that applies drizzle migrations before app + worker
+  # start. Uses the same runner image as app/worker (migrate.cjs is bundled
+  # by `pnpm build:migrate`; drizzle/ folder is copied into the runner image).
+  # Idempotent — drizzle's __drizzle_migrations table tracks applied state.
+  migrate:
+    image: the-learning-project-app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["node", "migrate.cjs"]
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+    restart: "no"
+
   app:
     build:
       context: .
@@ -9,6 +28,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     networks:
       - internal
     restart: unless-stopped
@@ -33,6 +54,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     networks:
       - internal
     restart: unless-stopped
