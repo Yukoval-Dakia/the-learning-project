@@ -45,7 +45,7 @@ export const wenyanProfile: SubjectProfile = {
     {
       id: 'concept',
       label: '概念理解',
-      description: '对文言词义、语法功能的核心概念理解错误',
+      description: '对术语定义、文本理解框架或概念边界的抽象理解错误',
       review_priority: 5,
     },
     {
@@ -66,6 +66,34 @@ export const wenyanProfile: SubjectProfile = {
       label: '表达不当',
       description: '理解正确但表述不清或不完整',
       review_priority: 3,
+    },
+    {
+      id: 'grammar',
+      label: '语法判断',
+      description: '词类活用、虚词功能、句式判断错误',
+      review_priority: 4,
+      variant_targetable: true,
+    },
+    {
+      id: 'word_meaning',
+      label: '词义混淆',
+      description: '古今异义、一词多义或固定搭配辨析错误',
+      review_priority: 4,
+      variant_targetable: true,
+    },
+    {
+      id: 'method',
+      label: '方法选择',
+      description: '翻译策略、审题方向或阅读分析方法选择不当',
+      review_priority: 3,
+      variant_targetable: true,
+    },
+    {
+      id: 'time_pressure',
+      label: '时间压力',
+      description: '限时阅读或翻译节奏失稳，步骤选择稳定性下降',
+      review_priority: 2,
+      variant_targetable: true,
     },
     {
       id: 'carelessness',
