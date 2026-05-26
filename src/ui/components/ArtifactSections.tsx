@@ -1,6 +1,6 @@
 'use client';
 
-import { type CSSProperties, useEffect, useState } from 'react';
+import { type CSSProperties, useEffect, useRef, useState } from 'react';
 
 import { apiJson } from '@/ui/lib/api';
 import {
@@ -8,6 +8,7 @@ import {
   resolveSubjectRenderModel,
   subjectContentProps,
 } from '@/ui/lib/subject';
+import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
 import { Button } from '@/ui/primitives/Button';
 import { type EmbeddedCheckQuestion, EmbeddedCheckSection } from './EmbeddedCheckSection';
 import { NoteRenderer } from './NoteRenderer';
@@ -40,6 +41,37 @@ export interface ArtifactSectionEditSnapshot {
   sections: ArtifactSection[];
 }
 
+export type ArtifactCorrectionStatus =
+  | { state: 'active'; correction_event_id: null; replacement_artifact_id: null }
+  | { state: 'retracted'; correction_event_id: string; replacement_artifact_id: null }
+  | { state: 'marked_wrong'; correction_event_id: string; replacement_artifact_id: null }
+  | { state: 'superseded'; correction_event_id: string; replacement_artifact_id: string };
+
+export interface ArtifactCorrectionStateResponse {
+  artifact_id: string;
+  whole: ArtifactCorrectionStatus;
+  sections: Record<string, ArtifactCorrectionStatus>;
+}
+
+const ACTIVE_CORRECTION_STATUS: ArtifactCorrectionStatus = {
+  state: 'active',
+  correction_event_id: null,
+  replacement_artifact_id: null,
+};
+
+function correctionStatusLabel(status: ArtifactCorrectionStatus): string | null {
+  if (status.state === 'active') return null;
+  if (status.state === 'marked_wrong') return '已标错';
+  if (status.state === 'retracted') return '已撤回';
+  return '已替换';
+}
+
+function correctionStatusTone(status: ArtifactCorrectionStatus): BadgeTone {
+  if (status.state === 'superseded') return 'hard';
+  if (status.state === 'retracted' || status.state === 'marked_wrong') return 'again';
+  return 'neutral';
+}
+
 const SECTION_LABEL: Record<ArtifactSectionKind, string> = {
   definition: '定义',
   mechanism: '机制 / 规则',
@@ -64,6 +96,7 @@ interface ArtifactSectionsProps {
   embeddedCheckStatus: ArtifactEmbeddedCheckStatus;
   onSectionSaved?: (result: ArtifactSectionEditResponse) => void;
   initialEditingSectionId?: string;
+  initialCorrectionState?: ArtifactCorrectionStateResponse | null;
 }
 
 export function getArtifactSectionEditMinHeight(bodyMd: string): number {
@@ -101,6 +134,7 @@ export function ArtifactSections({
   embeddedCheckStatus,
   onSectionSaved,
   initialEditingSectionId,
+  initialCorrectionState,
 }: ArtifactSectionsProps) {
   const subjectModel = resolveSubjectRenderModel(subjectProfile);
   const [localSections, setLocalSections] = useState<ArtifactSection[]>(sections);
@@ -113,12 +147,52 @@ export function ArtifactSections({
   );
   const [pendingSectionId, setPendingSectionId] = useState<string | null>(null);
   const [errorBySectionId, setErrorBySectionId] = useState<Record<string, string>>({});
+  const [correctionState, setCorrectionState] = useState<ArtifactCorrectionStateResponse | null>(
+    initialCorrectionState ?? null,
+  );
+  const [markingWrongSectionId, setMarkingWrongSectionId] = useState<string | null>(null);
+  const [markWrongReason, setMarkWrongReason] = useState('');
+  const [pendingCorrectionSectionId, setPendingCorrectionSectionId] = useState<string | null>(null);
+  const [correctionErrorBySectionId, setCorrectionErrorBySectionId] = useState<
+    Record<string, string>
+  >({});
+  // Monotonic counter bumped on every local correction mutation. The mount-time
+  // GET captures the value at fetch start and drops itself if a write has
+  // landed in the meantime, so a slow GET cannot clobber a fresh optimistic
+  // mark_wrong / restore. See ADR-0019 and PR #154 review.
+  const correctionWriteGenerationRef = useRef(0);
   const canEdit = Boolean(artifactId && artifactVersion !== undefined);
+  const canCorrect = Boolean(artifactId);
 
   useEffect(() => {
     setLocalSections(sections);
     setLocalArtifactVersion(artifactVersion ?? 0);
   }, [sections, artifactVersion]);
+
+  useEffect(() => {
+    if (!artifactId) {
+      setCorrectionState(null);
+      return;
+    }
+    let canceled = false;
+    const startGeneration = correctionWriteGenerationRef.current;
+    apiJson<ArtifactCorrectionStateResponse>(`/api/artifacts/${artifactId}/correct`)
+      .then((state) => {
+        if (canceled) return;
+        if (correctionWriteGenerationRef.current !== startGeneration) return;
+        setCorrectionState(state);
+      })
+      .catch(() => {
+        // best-effort; keep last-known state
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [artifactId]);
+
+  function sectionStatus(sectionId: string): ArtifactCorrectionStatus {
+    return correctionState?.sections?.[sectionId] ?? ACTIVE_CORRECTION_STATUS;
+  }
 
   function startEdit(section: ArtifactSection) {
     setEditingSectionId(section.id);
@@ -187,6 +261,116 @@ export function ArtifactSections({
     }
   }
 
+  function startMarkWrong(section: ArtifactSection) {
+    setMarkingWrongSectionId(section.id);
+    setMarkWrongReason('');
+    setCorrectionErrorBySectionId((current) => {
+      const next = { ...current };
+      delete next[section.id];
+      return next;
+    });
+  }
+
+  function cancelMarkWrong() {
+    setMarkingWrongSectionId(null);
+    setMarkWrongReason('');
+  }
+
+  async function submitMarkWrong(section: ArtifactSection) {
+    if (!artifactId) return;
+    const reason = markWrongReason.trim();
+    if (reason.length === 0) {
+      setCorrectionErrorBySectionId((current) => ({
+        ...current,
+        [section.id]: '请填写标错原因',
+      }));
+      return;
+    }
+    setPendingCorrectionSectionId(section.id);
+    try {
+      const result = await apiJson<{ correction_event_id: string }>(
+        `/api/artifacts/${artifactId}/correct`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            correction_kind: 'mark_wrong',
+            section_id: section.id,
+            reason_md: reason,
+          }),
+        },
+      );
+      correctionWriteGenerationRef.current += 1;
+      setCorrectionState((current) => {
+        const baseSections = current?.sections ?? {};
+        const nextSections: Record<string, ArtifactCorrectionStatus> = {
+          ...baseSections,
+          [section.id]: {
+            state: 'marked_wrong',
+            correction_event_id: result.correction_event_id,
+            replacement_artifact_id: null,
+          },
+        };
+        return {
+          artifact_id: artifactId,
+          whole: current?.whole ?? ACTIVE_CORRECTION_STATUS,
+          sections: nextSections,
+        };
+      });
+      setMarkingWrongSectionId(null);
+      setMarkWrongReason('');
+      setCorrectionErrorBySectionId((current) => {
+        const next = { ...current };
+        delete next[section.id];
+        return next;
+      });
+    } catch (err) {
+      setCorrectionErrorBySectionId((current) => ({
+        ...current,
+        [section.id]: err instanceof Error ? err.message : String(err),
+      }));
+    } finally {
+      setPendingCorrectionSectionId(null);
+    }
+  }
+
+  async function submitRestore(section: ArtifactSection) {
+    if (!artifactId) return;
+    setPendingCorrectionSectionId(section.id);
+    try {
+      await apiJson<{ correction_event_id: string }>(`/api/artifacts/${artifactId}/correct`, {
+        method: 'POST',
+        body: JSON.stringify({
+          correction_kind: 'restore',
+          section_id: section.id,
+          reason_md: '撤销标错',
+        }),
+      });
+      correctionWriteGenerationRef.current += 1;
+      setCorrectionState((current) => {
+        const baseSections = current?.sections ?? {};
+        const nextSections = { ...baseSections };
+        delete nextSections[section.id];
+        return {
+          artifact_id: artifactId,
+          whole: current?.whole ?? ACTIVE_CORRECTION_STATUS,
+          sections: nextSections,
+        };
+      });
+      setCorrectionErrorBySectionId((current) => {
+        const next = { ...current };
+        delete next[section.id];
+        return next;
+      });
+    } catch (err) {
+      setCorrectionErrorBySectionId((current) => ({
+        ...current,
+        [section.id]: err instanceof Error ? err.message : String(err),
+      }));
+    } finally {
+      setPendingCorrectionSectionId(null);
+    }
+  }
+
   return (
     <div className="artifact-sections">
       {localSections.map((s) => {
@@ -195,6 +379,10 @@ export function ArtifactSections({
         });
         const isEditing = editingSectionId === s.id;
         const isPending = pendingSectionId === s.id;
+        const status = sectionStatus(s.id);
+        const statusLabel = correctionStatusLabel(status);
+        const isMarkingWrong = markingWrongSectionId === s.id;
+        const isCorrectionPending = pendingCorrectionSectionId === s.id;
         const editSlotStyle = {
           '--artifact-section-min-height': `${getArtifactSectionEditMinHeight(s.body_md)}px`,
         } as CSSProperties;
@@ -204,18 +392,47 @@ export function ArtifactSections({
               <div className="artifact-section-labels">
                 <strong>{SECTION_LABEL[s.kind]}</strong>
                 <span className="artifact-section-tier">{SOURCE_TIER_LABEL[s.source_tier]}</span>
+                {statusLabel && (
+                  <Badge tone={correctionStatusTone(status)} dot dotStatic>
+                    {statusLabel}
+                  </Badge>
+                )}
               </div>
-              {canEdit && !isEditing && (
-                <Button
-                  variant="quiet"
-                  size="sm"
-                  icon="pen"
-                  onClick={() => startEdit(s)}
-                  disabled={pendingSectionId !== null}
-                >
-                  Edit
-                </Button>
-              )}
+              <div className="artifact-section-head-actions">
+                {canCorrect && !isEditing && !isMarkingWrong && status.state === 'active' && (
+                  <Button
+                    variant="quiet"
+                    size="sm"
+                    icon="alert"
+                    onClick={() => startMarkWrong(s)}
+                    disabled={pendingCorrectionSectionId !== null}
+                  >
+                    标错
+                  </Button>
+                )}
+                {canCorrect && !isEditing && !isMarkingWrong && status.state === 'marked_wrong' && (
+                  <Button
+                    variant="quiet"
+                    size="sm"
+                    icon="refresh"
+                    onClick={() => submitRestore(s)}
+                    disabled={isCorrectionPending}
+                  >
+                    {isCorrectionPending ? '撤销中...' : '撤销标错'}
+                  </Button>
+                )}
+                {canEdit && !isEditing && !isMarkingWrong && (
+                  <Button
+                    variant="quiet"
+                    size="sm"
+                    icon="pen"
+                    onClick={() => startEdit(s)}
+                    disabled={pendingSectionId !== null}
+                  >
+                    Edit
+                  </Button>
+                )}
+              </div>
             </div>
             <div className="artifact-section-edit-slot" style={editSlotStyle}>
               {isEditing ? (
@@ -260,8 +477,38 @@ export function ArtifactSections({
                 </NoteRenderer>
               )}
             </div>
+            {isMarkingWrong && (
+              <div className="artifact-section-mark-wrong-form">
+                <textarea
+                  className="artifact-section-textarea"
+                  value={markWrongReason}
+                  rows={3}
+                  maxLength={2000}
+                  placeholder="说明这段为什么不对（必填，≤ 2000 字符）"
+                  aria-label={`${SECTION_LABEL[s.kind]} mark wrong reason`}
+                  onChange={(event) => setMarkWrongReason(event.target.value)}
+                />
+                <div className="artifact-section-edit-actions">
+                  <Button variant="ghost" size="sm" icon="x" onClick={cancelMarkWrong}>
+                    取消
+                  </Button>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    icon="alert"
+                    onClick={() => submitMarkWrong(s)}
+                    disabled={isCorrectionPending || markWrongReason.trim().length === 0}
+                  >
+                    {isCorrectionPending ? '提交中...' : '提交标错'}
+                  </Button>
+                </div>
+              </div>
+            )}
             {errorBySectionId[s.id] && (
               <p className="artifact-section-error">保存失败：{errorBySectionId[s.id]}</p>
+            )}
+            {correctionErrorBySectionId[s.id] && (
+              <p className="artifact-section-error">标错失败：{correctionErrorBySectionId[s.id]}</p>
             )}
             {s.kind === 'check' && (
               <EmbeddedCheckSection

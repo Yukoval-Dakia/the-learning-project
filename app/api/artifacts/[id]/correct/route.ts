@@ -2,6 +2,7 @@ import { newId } from '@/core/ids';
 import { CorrectArtifactEvent } from '@/core/schema/event';
 import { db } from '@/db/client';
 import { artifact } from '@/db/schema';
+import { getArtifactCorrectionState } from '@/server/events/artifact-corrections';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { eq } from 'drizzle-orm';
@@ -9,6 +10,34 @@ import { eq } from 'drizzle-orm';
 export const runtime = 'nodejs';
 
 type RouteParams = { params: Promise<{ id: string }> };
+
+export async function GET(_req: Request, { params }: RouteParams): Promise<Response> {
+  try {
+    const { id: artifactId } = await params;
+    if (!artifactId) {
+      throw new ApiError('validation_error', 'artifact id is required', 400);
+    }
+    const [target] = await db
+      .select({ id: artifact.id })
+      .from(artifact)
+      .where(eq(artifact.id, artifactId));
+    if (!target) {
+      throw new ApiError('not_found', `artifact ${artifactId} not found`, 404);
+    }
+
+    const state = await getArtifactCorrectionState(db, artifactId);
+    // Wire shape is Record<string, ArtifactCorrectionStatus>; we flatten the
+    // projection's Map<string, …> here so JSON serializes naturally. Direct
+    // server-side callers of getArtifactCorrectionState still get the Map.
+    return Response.json({
+      artifact_id: artifactId,
+      whole: state.whole,
+      sections: Object.fromEntries(state.sections),
+    });
+  } catch (err) {
+    return errorResponse(err);
+  }
+}
 
 export async function POST(req: Request, { params }: RouteParams): Promise<Response> {
   try {

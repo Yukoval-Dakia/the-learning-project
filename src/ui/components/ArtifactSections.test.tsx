@@ -204,4 +204,72 @@ describe('ArtifactSections — markdown rendering wiring', () => {
       getArtifactSectionEditMinHeight(Array.from({ length: 20 }, () => 'line').join('\n')),
     ).toBeLessThanOrEqual(360);
   });
+
+  it('renders 标错 control when artifact id is provided and section is active', () => {
+    const sections: ArtifactSection[] = [
+      { ...baseSection, id: 's1', kind: 'definition', body_md: 'definition' },
+    ];
+    const html = renderToString(
+      <ArtifactSections
+        artifactId="a1"
+        sections={sections}
+        subjectProfile={wenyanProfile}
+        embeddedQuestions={[]}
+        embeddedCheckStatus="not_required"
+      />,
+    );
+    // Button label "标错" appears; no "已标错" badge while section is active.
+    expect(html).toMatch(/标错<\/button>/);
+    expect(html).not.toContain('已标错');
+  });
+
+  it('renders 已标错 badge and 撤销标错 control when initialCorrectionState marks the section wrong', () => {
+    const sections: ArtifactSection[] = [
+      { ...baseSection, id: 's1', kind: 'definition', body_md: 'definition' },
+      { ...baseSection, id: 's2', kind: 'pitfall', body_md: 'pitfall' },
+    ];
+    const html = renderToString(
+      <ArtifactSections
+        artifactId="a1"
+        sections={sections}
+        subjectProfile={wenyanProfile}
+        embeddedQuestions={[]}
+        embeddedCheckStatus="not_required"
+        initialCorrectionState={{
+          artifact_id: 'a1',
+          whole: { state: 'active', correction_event_id: null, replacement_artifact_id: null },
+          sections: {
+            s2: {
+              state: 'marked_wrong',
+              correction_event_id: 'corr_1',
+              replacement_artifact_id: null,
+            },
+          },
+        }}
+      />,
+    );
+    // s2: badge + restore button. s1 stays active → still shows mark-wrong button.
+    expect(html).toContain('已标错');
+    expect(html).toMatch(/撤销标错<\/button>/);
+    // s1 (active) has a plain "标错" button — anchor on the closing tag so we
+    // don't accidentally match the badge text "已标错".
+    expect(html).toMatch(/(?<!已|撤销)标错<\/button>/);
+  });
+
+  it('omits 标错 controls when artifactId is not provided', () => {
+    const sections: ArtifactSection[] = [
+      { ...baseSection, id: 's1', kind: 'definition', body_md: 'definition' },
+    ];
+    const html = renderToString(
+      <ArtifactSections
+        sections={sections}
+        subjectProfile={wenyanProfile}
+        embeddedQuestions={[]}
+        embeddedCheckStatus="not_required"
+      />,
+    );
+    // Without artifactId no correction surface should render.
+    expect(html).not.toContain('标错');
+    expect(html).not.toContain('撤销标错');
+  });
 });
