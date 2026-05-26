@@ -9,6 +9,7 @@
     "dev:local": "tsx scripts/dev-local.ts",
     "build": "next build",
     "build:worker": "esbuild scripts/worker.ts --bundle --platform=node --target=node22 --format=cjs --outfile=.next/standalone/worker.cjs --external:pg-native --external:sharp --external:bufferutil --external:utf-8-validate --define:process.env.NODE_ENV=\\\"production\\\"",
+    "build:migrate": "esbuild scripts/migrate.ts --bundle --platform=node --target=node22 --format=cjs --outfile=.next/standalone/migrate.cjs --external:pg-native --external:bufferutil --external:utf-8-validate --define:process.env.NODE_ENV=\\\"production\\\"",
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
