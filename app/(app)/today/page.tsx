@@ -20,14 +20,6 @@ interface LearningItem {
 interface KnowledgeNode {
   id: string;
 }
-interface KnowledgeProposal {
-  id: string;
-}
-interface EventRow {
-  id: string;
-  outcome?: string;
-  caused_by_event_id?: string | null;
-}
 interface LearningSessionRow {
   id: string;
   type: string;
@@ -53,6 +45,26 @@ interface CostSummary {
   };
 }
 
+interface ProposalKindCounts {
+  knowledge_node: number;
+  knowledge_edge: number;
+  learning_item: number;
+  note_update: number;
+  variant_question: number;
+  completion: number;
+  relearn: number;
+  archive: number;
+  judge_retraction: number;
+}
+
+interface TodayProposalKpi {
+  total: number;
+  by_kind: ProposalKindCounts;
+  has_more: boolean;
+  limit: number;
+  status: 'pending';
+}
+
 export default function TodayPage() {
   const queryClient = useQueryClient();
 
@@ -72,36 +84,10 @@ export default function TodayPage() {
     queryKey: ['today-knowledge'],
     queryFn: () => apiJson<{ rows: KnowledgeNode[] }>('/api/knowledge'),
   });
-  const nodeProposalsQ = useQuery({
-    queryKey: ['today-knowledge-proposals', 'pending'],
-    queryFn: () =>
-      apiJson<{ rows: KnowledgeProposal[] }>('/api/knowledge/proposals?status=pending'),
-  });
-  const edgeProposalsQ = useQuery({
-    queryKey: ['today-knowledge-edge-proposals'],
-    queryFn: () =>
-      apiJson<{ rows: EventRow[] }>(
-        '/api/events?action=propose&subject_kind=knowledge_edge&limit=200',
-      ),
-  });
-  const edgeRatesQ = useQuery({
-    queryKey: ['today-knowledge-edge-rates'],
-    queryFn: () =>
-      apiJson<{ rows: EventRow[] }>(
-        '/api/events?action=rate&subject_kind=knowledge_edge&limit=200',
-      ),
-  });
-  const artifactEventsQ = useQuery({
-    queryKey: ['today-artifact-generations'],
-    queryFn: () =>
-      apiJson<{ rows: EventRow[] }>(
-        '/api/events?action=generate&subject_kind=artifact&actor_kind=agent&limit=200',
-      ),
-  });
-  const eventRatesQ = useQuery({
-    queryKey: ['today-event-rates'],
-    queryFn: () =>
-      apiJson<{ rows: EventRow[] }>('/api/events?action=rate&subject_kind=event&limit=200'),
+  const proposalKpiQ = useQuery({
+    queryKey: ['today-proposal-kpi', 'pending'],
+    queryFn: () => apiJson<TodayProposalKpi>('/api/today/proposals'),
+    refetchInterval: 60_000,
   });
   const costQ = useQuery({
     queryKey: ['today-cost'],
@@ -120,30 +106,13 @@ export default function TodayPage() {
   const pendingAttrCount = mistakeRows.filter((m) => m.cause === null).length;
   const activeItemsCount = itemsQ.data?.rows.filter((i) => i.status !== 'done').length ?? 0;
   const knowledgeCount = knowledgeQ.data?.rows.length ?? 0;
-  const edgeRatedIds = new Set(
-    (edgeRatesQ.data?.rows ?? [])
-      .map((row) => row.caused_by_event_id)
-      .filter((id): id is string => Boolean(id)),
-  );
-  const eventRatedIds = new Set(
-    (eventRatesQ.data?.rows ?? [])
-      .map((row) => row.caused_by_event_id)
-      .filter((id): id is string => Boolean(id)),
-  );
-  const pendingEdgeCount = (edgeProposalsQ.data?.rows ?? []).filter(
-    (row) => !edgeRatedIds.has(row.id),
-  ).length;
-  const pendingNodeCount = nodeProposalsQ.data?.rows.length ?? 0;
-  const pendingArtifactCount = (artifactEventsQ.data?.rows ?? []).filter(
-    (row) => row.outcome === 'success' && !eventRatedIds.has(row.id),
-  ).length;
-  const pendingAiCount = pendingEdgeCount + pendingNodeCount + pendingArtifactCount;
-  const pendingAiLoading =
-    nodeProposalsQ.isLoading ||
-    edgeProposalsQ.isLoading ||
-    edgeRatesQ.isLoading ||
-    artifactEventsQ.isLoading ||
-    eventRatesQ.isLoading;
+  const proposalKpi = proposalKpiQ.data ?? null;
+  const proposalGroups = proposalKpi
+    ? proposalGroupCounts(proposalKpi.by_kind)
+    : emptyProposalGroups;
+  const pendingAiCount = proposalKpi?.total ?? 0;
+  const pendingAiValue = proposalKpi?.has_more ? `${proposalKpi.limit}+` : pendingAiCount;
+  const pendingAiLoading = proposalKpiQ.isLoading;
 
   const causeCounts = new Map<string, number>();
   for (const m of mistakeRows) {
@@ -190,14 +159,10 @@ export default function TodayPage() {
         />
         <Kpi
           label="AI 提议 · 待审"
-          value={pendingAiCount}
+          value={pendingAiValue}
           loading={pendingAiLoading}
           href="/inbox"
-          trend={
-            pendingAiCount > 0
-              ? `关系 ${pendingEdgeCount} · 新节点 ${pendingNodeCount} · 内容 ${pendingArtifactCount}`
-              : '全部清空'
-          }
+          trend={proposalTrend(proposalKpi, proposalGroups)}
           trendUp={pendingAiCount > 0}
         />
         <Kpi
@@ -213,9 +178,8 @@ export default function TodayPage() {
 
       <InboxStrip
         total={pendingAiCount}
-        edges={pendingEdgeCount}
-        nodes={pendingNodeCount}
-        artifacts={pendingArtifactCount}
+        groups={proposalGroups}
+        hasMore={proposalKpi?.has_more ?? false}
       />
 
       <div className="lanes">
@@ -422,54 +386,106 @@ function formatDay(seconds: number): string {
   return `${deltaDays} 天前`;
 }
 
+interface ProposalGroups {
+  nodes: number;
+  edges: number;
+  learning: number;
+  content: number;
+  review: number;
+}
+
+const emptyProposalGroups: ProposalGroups = {
+  nodes: 0,
+  edges: 0,
+  learning: 0,
+  content: 0,
+  review: 0,
+};
+
+function proposalGroupCounts(counts: ProposalKindCounts): ProposalGroups {
+  return {
+    nodes: counts.knowledge_node,
+    edges: counts.knowledge_edge,
+    learning: counts.learning_item + counts.completion + counts.relearn + counts.archive,
+    content: counts.note_update + counts.variant_question,
+    review: counts.judge_retraction,
+  };
+}
+
+function proposalTrend(kpi: TodayProposalKpi | null, groups: ProposalGroups): string {
+  if (!kpi || kpi.total === 0) return '全部清空';
+  const parts = [
+    groups.edges > 0 ? `关系 ${groups.edges}` : null,
+    groups.nodes > 0 ? `新节点 ${groups.nodes}` : null,
+    groups.learning > 0 ? `学习项 ${groups.learning}` : null,
+    groups.content > 0 ? `内容 ${groups.content}` : null,
+    groups.review > 0 ? `复核 ${groups.review}` : null,
+  ].filter((part): part is string => Boolean(part));
+  const suffix = kpi.has_more ? ' · 还有更多' : '';
+  return `${parts.length > 0 ? parts.join(' · ') : `待审 ${kpi.total}`}${suffix}`;
+}
+
 function InboxStrip({
   total,
-  edges,
-  nodes,
-  artifacts,
+  groups,
+  hasMore,
 }: {
   total: number;
-  edges: number;
-  nodes: number;
-  artifacts: number;
+  groups: ProposalGroups;
+  hasMore: boolean;
 }) {
   if (total === 0) return null;
+  const totalLabel = hasMore ? `${total}+` : String(total);
 
   return (
     <div className="inbox-strip">
       <div className="inbox-text">
         <div className="src">
-          <Badge tone="coral">agent</Badge> · pending only · event stream
+          <Badge tone="coral">agent</Badge> · pending only · unified inbox
         </div>
-        <h3>昨晚 AI 提议了 {total} 条，要看吗？</h3>
+        <h3>昨晚 AI 提议了 {totalLabel} 条，要看吗？</h3>
         <div className="breakdown">
-          {artifacts > 0 && (
+          {groups.content > 0 && (
             <div>
-              <b>{artifacts}</b>
+              <b>{groups.content}</b>
               <span>内容生成</span>
             </div>
           )}
-          {nodes > 0 && (
+          {groups.learning > 0 && (
             <div>
-              <b>{nodes}</b>
+              <b>{groups.learning}</b>
+              <span>学习项</span>
+            </div>
+          )}
+          {groups.nodes > 0 && (
+            <div>
+              <b>{groups.nodes}</b>
               <span>新知识点</span>
             </div>
           )}
-          {edges > 0 && (
+          {groups.edges > 0 && (
             <div>
-              <b>{edges}</b>
+              <b>{groups.edges}</b>
               <span>关系建议</span>
+            </div>
+          )}
+          {groups.review > 0 && (
+            <div>
+              <b>{groups.review}</b>
+              <span>复核</span>
             </div>
           )}
         </div>
       </div>
       <div className="inbox-strip-actions">
-        <Link href="/knowledge" style={{ textDecoration: 'none' }}>
-          <Button variant="secondary">分散审批</Button>
-        </Link>
+        {groups.nodes + groups.edges > 0 && (
+          <Link href="/knowledge" style={{ textDecoration: 'none' }}>
+            <Button variant="secondary">知识图谱</Button>
+          </Link>
+        )}
         <Link href="/inbox" style={{ textDecoration: 'none' }}>
           <Button variant="primary" iconRight="arrowR">
-            集中审批 (全部 {total})
+            集中审批 (全部 {totalLabel})
           </Button>
         </Link>
       </div>
@@ -479,7 +495,7 @@ function InboxStrip({
 
 interface KpiProps {
   label: string;
-  value: number;
+  value: number | string;
   loading: boolean;
   href: string;
   trend?: string;
