@@ -254,25 +254,33 @@ export async function POST(req: Request): Promise<Response> {
             }
           : {};
 
-      // YUK-98 (T-RA) — If the client supplied `judge_result_v2`, derive the
-      // partial-credit rating advisory and persist it on the event payload as
-      // `judge_advice`. This is informational only: the user's `body.rating`
-      // is still the committed rating (advisor never overrides). CC-1
-      // invariant: this route does not classify cause itself — it reads the
-      // SoT helper output via `effectiveCauseCategoryForFailureAttempt()`
-      // (resolved above as `adviceCauseCategory`) and threads it into the
-      // advisor so the partial-credit carelessness/conceptual lean fires.
-      // YUK-100 (W-05): this wiring replaced an inert pass-through where the
-      // advisor's `causeLean()` always saw `undefined` and never applied any
-      // lean. See `docs/audit/2026-05-27-wave1-postship-drift.md` §W-05.
-      const judgeAdvicePayload = suppliedJudgeResult
+      // YUK-98 (T-RA) — Derive the partial-credit rating advisory from
+      // whichever judge result is available (client-supplied OR server-run),
+      // and persist it on the event payload as `judge_advice`. Informational
+      // only: the user's `body.rating` is still the committed rating (advisor
+      // never overrides). CC-1 invariant: this route does not classify cause
+      // itself — it reads the SoT helper output via
+      // `effectiveCauseCategoryForFailureAttempt()` (resolved above as
+      // `adviceCauseCategory`) and threads it into the advisor so the
+      // partial-credit carelessness/conceptual lean fires.
+      //
+      // YUK-100 (W-05): pre-fix this wiring was inert because the advisor's
+      // `causeLean()` always saw `undefined`.
+      // YUK-101 (iter2 fix F1): pre-iter2 the gate was on `suppliedJudgeResult`
+      // (client-supplied only). When the server ran its own judge (no
+      // `judge_result_v2` in the body), `judgeAdvicePayload` was `{}` and the
+      // cause-aware advisor stayed dead for every server-judge caller — the
+      // same class of silent dead path YUK-100 set out to fix. Gate now keys
+      // on `judgeResult !== null` so both paths persist judge_advice.
+      // See `docs/audit/2026-05-27-wave1-postship-drift.md` §W-05.
+      const judgeAdvicePayload = judgeResult !== null
         ? {
             judge_advice: {
-              ...judgeResultToRatingAdvice(suppliedJudgeResult, {
+              ...judgeResultToRatingAdvice(judgeResult, {
                 causeCategory: adviceCauseCategory,
               }),
-              source_capability_ref: suppliedJudgeResult.capability_ref,
-              source_coarse_outcome: suppliedJudgeResult.coarse_outcome,
+              source_capability_ref: judgeResult.capability_ref,
+              source_coarse_outcome: judgeResult.coarse_outcome,
             },
           }
         : {};
