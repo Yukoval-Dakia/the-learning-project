@@ -5,6 +5,40 @@
 **Lane branch**：`lane/w-a-brief-writer-wire`（worktree at `worktrees/w-a-brief-writer-wire/`）。
 **Base**：fresh `main` at `c320446` (YUK-66 ship)。
 
+---
+
+## Erratum (YUK-101, 2026-05-27 iter2)
+
+Post-ship `/code-review` against PR #163 surfaced two false claims encoded
+in §1.1 / §1.3 / §2 below. They are not retroactively rewritten — the body
+remains the historical record of what was decided at lane-launch time —
+but readers must take the corrections below as authoritative:
+
+* **F2 (sweep is NOT the belt-and-braces)**: §1.1 #2 says "生产 worker 会
+  retry，event 本身已落 DB" and §1.1 idempotency note implies a daily-sweep
+  backstop. The implemented sweep handler (`buildMemoryBriefSweepHandler`
+  in `src/server/memory/triggers.ts`) iterates **stale brief_note rows**
+  via `listStaleBriefScopes`, not orphan events. A missed
+  `enqueueEventMemoryIngest` has **no automatic recovery in the current
+  architecture** — the Mem0 fact layer permanently misses the event. The
+  proper fix (transactional outbox: scan `event` rows where
+  `ingest_at IS NULL`) is captured in YUK-101.
+
+* **F14 (DB tests do NOT run the real boss path)**: §1.1 #3 + #4 claim
+  "DB test 路径：不 override，跑真 boss". Vitest sets `process.env.VITEST`
+  in **both** unit and DB pools (see `src/server/boss/client.ts:33` for
+  the established pattern), and `defaultMemoryIngestEnqueuer` early-returns
+  under `VITEST`. No vitest run — `pnpm test:unit`, `pnpm test:db`, nor
+  full `pnpm test` — exercises the real dynamic-import path. The iter2
+  band-aid is the module-resolution pin test
+  `iter2 F6: dynamic-import targets for defaultMemoryIngestEnqueuer still
+  resolve` in `queries.test.ts`; the structural fix is YUK-101.
+
+The follow-up plan that lands these corrections in code:
+[2026-05-27-wave1-postship-iter2-plan.md](./2026-05-27-wave1-postship-iter2-plan.md).
+
+---
+
 ## 0. 目标
 
 修两个 P1 silent dead path，让 ADR-0017 §"Write triggers (three paths)" #1 真正激活。范围 minimal：
