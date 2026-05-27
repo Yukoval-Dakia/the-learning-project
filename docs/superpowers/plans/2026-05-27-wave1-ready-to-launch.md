@@ -3,11 +3,13 @@
 > Master roadmap scenario A, Wave 1 之前的所有准备工作 checklist。
 > 下次 session 接力时按本 doc §3 起手 ritual 启动 Wave 1。
 
+**状态**：✅ archived 2026-05-27（Wave 1 已 ship，详见 §8 Ship outcome）
 **Doc 日期**：2026-05-27
 **前置**：scenario A locked（master-roadmap §5.0 Q5），grill 全 6 题拍板（commits 5c60f72 + 40a8972 + 01c27b2）
 **Wave 1 范围**：T-37 brief writer + T-88 P0 spike + T-RA RatingAdvisor + T-66 ask_check
 **估时**：~5 周（T-37 实际 13pt 拉长，非 master roadmap 原写 4 周）
 **Worktree allocation**：A = T-37 → T-88 P0 (~15pt)；B = T-RA → T-66 (~8pt)
+**实际启动**：launch doc 写完同日 (~10:00) 即起，到 2026-05-27 ~18:30 全部 ship 含 post-ship fix。实际跑通耗时大幅低于预估，因 driver doc + spike findings 把不确定性预消化。
 
 ---
 
@@ -255,4 +257,59 @@ worktree path / driver doc path / pre-flight context / audit baseline 引用。
 
 **End of Wave 1 Ready-to-Launch v1**
 
-> 状态：ready-to-launch as of 2026-05-27。Wave 1 任意时刻可启；启动前跑 §2 4 项 preflight + §5 拍板 6 个 open question。
+> 状态：~~ready-to-launch as of 2026-05-27~~ → **✅ archived 2026-05-27**（同日 ship 完，全部 4 track + 3 个 post-ship P1 fix 全部进 main）
+
+---
+
+## §8 Ship outcome（2026-05-27 18:30）
+
+### §8.1 Ship 顺序与 commit
+
+```
+caccd97  YUK-37  T-37 brief writer integration            (lane/t37-brief-writer → main)
+aaa534c  YUK-98  T-RA RatingAdvisor UI wiring             (lane/t-ra-rating-advisor → main)
+c320446  YUK-66  T-66 teaching ask_check question persist (lane/t66-teaching-ask-check → main)
+719c2b7  YUK-90  T-88 P0 TipTap spike                      (spike/yuk-90-tiptap-block-tree, PR #162, per design 不进 main)
+─── post-ship audit-drift incremental run → 3 P1 silent dead path ───
+f5e27ef  YUK-99   W-A: brief writer event ingest enqueue + env doc (W-01/W-04/W-06 fix)
+013a9ad  YUK-100  W-B: RatingAdvisor cause SoT wiring               (W-05 fix)
+```
+
+### §8.2 §4 退出条件 verification
+
+| 条件 | 状态 | 证据 |
+|---|---|---|
+| T-37 ship | ✅ | YUK-37 Done / src/server/memory/{client,brief,scope_tagger,triggers}.ts 全在 / spike findings doc + PR #159 |
+| T-88 P0 ship | ✅ | YUK-90 In Review / PR #162 含 4 invariant snapshot + ADR-0020 split-id-preserve 微调建议 / spike branch CI 全绿 |
+| T-RA ship | ✅ | YUK-98 Done / rating-advisor.ts + RatingAdvisor.tsx + 14 boundary test (远超 6 要求) |
+| T-66 ship | ✅ | YUK-66 Done / question.source=teaching_check + attempt→mistake→variant 链通 via embedded-check/attempt 复用 + arch.md cleanup |
+| Wave gate | ✅ | typecheck/lint/audit:{schema,partition,profile}/test/build 全绿，998+1004 unit/DB test + 10 migration smoke + audit-drift 跑一次 |
+| Track-1 phase closure | ⏳ | Track-1 follow-up project Linear 仍有 backlog 子项；不阻塞 Wave 1 ship |
+| Master roadmap update | ⏳ | status.md 同步在本次 closeout commit；master-roadmap.md §0.3/§5.1/§11 留 next session sweep |
+| 用户 retrospective | ⏳ | 用户拍板 Wave 2 时点 |
+
+### §8.3 Post-ship audit-drift findings
+
+完整报告：`docs/audit/2026-05-27-wave1-postship-drift.md`。
+
+**已修（合并 commit f5e27ef + 013a9ad）**：
+- W-01 ❌ ADR-0017 event-ingest 触发器没 wire to event writer → `writeEvent` 现在 fire-and-forget enqueue
+- W-04 ⚠️ .env.example 缺 OPENAI_API_KEY + 6 MEM0_* → 已补全 + README setup 段
+- W-05 ⚠️ advice/submit route 不传 causeCategory（YUK-98 立项目标 silent dead code）→ 已读 CC-1 SoT helper 并 thread ctx
+- W-06 ⚠️ meta:orchestrator_self chat-derived trigger 同 W-01 根因 → W-01 fix 自动激活
+
+**留 follow-up（非 Wave 1 blocker）**：
+- W-02 P3 driver doc T-37 §4 templates 路径与实装 mismatch → 合并到 P4.8 doc sweep
+- W-07 phase-deferred Mem0 Chinese embedding 召回测试 → 启 worker 跑一次 spike recall probe 后追评
+
+**baseline 15 finding 增量结论**：F-04 + F-RA P3 已 resolved；F-01/02/03/06-15 维持原状（YUK-88 / P4.8 sweep 范围）。
+
+### §8.4 经验教训
+
+- **Lane subagent 报告习惯**：subagent 启动 background ops 后倾向"等通知然后退出"，master coordinator 收不到内部 background；建议 lane prompt 显式要求 "wait until all background ops complete, only then return"，或 master 直接进 worktree 跑 closeout gate。本次两次 SendMessage 仍未拿到完整 report，最终 master 接管 worktree commit / merge。
+- **audit-drift incremental 高价值**：baseline + incremental 双 sweep 在 8 小时内发现 3 个 P1 silent dead path，"做了 80% 剩 20% 没收口" 是典型 ship 漏；推荐每 wave ship 后跑一次 incremental。
+- **多 lane chain-merge 顺序**：W-A → main ff → W-B rebase onto new main → ff，linear history 保留。Lane plan + commit message 互引 audit finding 编号，git history 自带 traceability。
+
+---
+
+**End of Wave 1 closeout v1**
