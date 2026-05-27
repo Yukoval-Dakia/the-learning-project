@@ -21,11 +21,6 @@ export const MEMORY_INGEST_OUTBOX_POLL_QUEUE = 'memory_ingest_outbox_poll';
 export const MEMORY_INGEST_OUTBOX_RECOVER_QUEUE = 'memory_ingest_outbox_recover';
 const OUTBOX_POLL_BATCH = 50;
 const REGEN_SINGLETON_SECONDS = 6 * 60;
-// YUK-101 (iter2 fix F4) — singletonKey window for `memory_event_ingest`.
-// Within this window pg-boss collapses duplicate sends for the same
-// `event_id` key into one job. Becomes dead code once the outbox poller is
-// the sole caller (Phase D drops it).
-const INGEST_SINGLETON_SECONDS = 6 * 60;
 
 type BossLike = {
   createQueue?(name: string): Promise<unknown>;
@@ -49,27 +44,13 @@ async function defaultLoadEvent(db: Db, eventId: string): Promise<MemoryEventInp
   };
 }
 
+// ADR-0021 — outbox poll handler is the sole producer. Dedup is enforced by
+// the `ingest_at IS NULL` partition (a row is enqueued exactly once and the
+// stamp commits in the same tx as the enqueue). singletonKey + the iter2
+// band-aids it required (writeEvent inline retry collapse, tx-rollback orphan
+// slot) are gone.
 export async function enqueueEventMemoryIngest(boss: Pick<BossLike, 'send'>, eventId: string) {
-  // YUK-101 (iter2 fix F4) — singletonKey dedupes ingest jobs for the same
-  // event id within INGEST_SINGLETON_SECONDS. Why:
-  //   1. `writeEvent` retries (deterministic id → onConflictDoNothing no-op)
-  //      re-enqueue the same event id; without singletonKey, each retry would
-  //      ingest into Mem0 again (Mem0 add is not content-hash idempotent).
-  //   2. Tx-rollback orphans: the enqueue commits independently of the caller
-  //      tx; if the surrounding tx rolls back, the worker handler no-ops on
-  //      the missing row. If the caller later retries writeEvent with the
-  //      same id, the second enqueue collapses into the orphan singleton slot
-  //      rather than producing a fresh duplicate.
-  // singletonNextSlot is intentionally omitted — for ingest we want the
-  // duplicate dropped, not queued for the next slot.
-  await boss.send(
-    MEMORY_EVENT_INGEST_QUEUE,
-    { event_id: eventId },
-    {
-      singletonKey: `memory.ingest.${eventId}`,
-      singletonSeconds: INGEST_SINGLETON_SECONDS,
-    },
-  );
+  await boss.send(MEMORY_EVENT_INGEST_QUEUE, { event_id: eventId });
 }
 
 export async function enqueueBriefRegen(boss: Pick<BossLike, 'send'>, scopeKey: string) {
