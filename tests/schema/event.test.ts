@@ -561,7 +561,7 @@ describe('CorrectEvent', () => {
 // ====================================================================
 
 describe('CorrectArtifactEvent', () => {
-  it('accepts mark_wrong correction on whole artifact (no section_id)', () => {
+  it('accepts mark_wrong correction on whole artifact (no block_id)', () => {
     const result = CorrectArtifactEvent.safeParse({
       actor_kind: 'user',
       actor_ref: 'self',
@@ -577,7 +577,7 @@ describe('CorrectArtifactEvent', () => {
     expect(result.success).toBe(true);
   });
 
-  it('accepts mark_wrong correction targeting a specific section by section_id', () => {
+  it('accepts mark_wrong correction targeting a specific block by block_id', () => {
     const result = CorrectArtifactEvent.safeParse({
       actor_kind: 'user',
       actor_ref: 'self',
@@ -587,7 +587,7 @@ describe('CorrectArtifactEvent', () => {
       outcome: 'success',
       payload: {
         correction_kind: 'mark_wrong',
-        section_id: 'sec_pitfall',
+        block_id: 'block_pitfall',
         reason_md: 'The pitfall example is wrong about the negation case.',
       },
     });
@@ -604,7 +604,7 @@ describe('CorrectArtifactEvent', () => {
       outcome: 'success',
       payload: {
         correction_kind: 'retract',
-        section_id: 'sec_example',
+        block_id: 'block_example',
         reason_md: 'Withdrawing this section while pending refine.',
       },
     });
@@ -692,7 +692,7 @@ describe('CorrectArtifactEvent', () => {
     expect(result.success).toBe(false);
   });
 
-  it('rejects empty section_id (would create a nonsense bucket)', () => {
+  it('rejects empty block_id (would create a nonsense bucket)', () => {
     const result = CorrectArtifactEvent.safeParse({
       actor_kind: 'user',
       actor_ref: 'self',
@@ -702,14 +702,31 @@ describe('CorrectArtifactEvent', () => {
       outcome: 'success',
       payload: {
         correction_kind: 'mark_wrong',
-        section_id: '',
-        reason_md: 'Section toolbar accidentally sent blank id.',
+        block_id: '',
+        reason_md: 'Block toolbar accidentally sent blank id.',
       },
     });
     expect(result.success).toBe(false);
   });
 
-  it('accepts supersede with replacement_artifact_id and section_id', () => {
+  it('rejects legacy section_id payloads after ADR-0020', () => {
+    const result = CorrectArtifactEvent.safeParse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'artifact',
+      subject_id: 'artifact_atomic_42',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'mark_wrong',
+        section_id: 'sec_pitfall',
+        reason_md: 'ADR-0020 uses block_id instead.',
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts supersede with replacement_artifact_id and block_id', () => {
     const result = CorrectArtifactEvent.safeParse({
       actor_kind: 'user',
       actor_ref: 'self',
@@ -719,7 +736,7 @@ describe('CorrectArtifactEvent', () => {
       outcome: 'success',
       payload: {
         correction_kind: 'supersede',
-        section_id: 'sec_pitfall',
+        block_id: 'block_pitfall',
         replacement_artifact_id: 'artifact_atomic_43',
         reason_md: 'Section moved to refined atomic.',
       },

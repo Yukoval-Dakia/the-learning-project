@@ -6,7 +6,21 @@
 // is skipped, so re-imports across Next.js HMR cycles don't trip the
 // registerTool duplicate guard.
 
+import {
+  getLearningItemContextTool,
+  getQuestionContextTool,
+  getRecordContextTool,
+  getReviewDueTool,
+  queryMemoryBriefTool,
+  queryRecordsTool,
+} from './context-readers';
 import { getAttemptContextTool } from './get-attempt-context';
+import {
+  expandKnowledgeSubgraphTool,
+  findKnowledgePathsTool,
+  getSubjectGraphOverviewTool,
+  queryKnowledgeTool,
+} from './knowledge-readers';
 import { queryEventsTool } from './query-events';
 import { queryMistakesTool } from './query-mistakes';
 import { getTool, registerTool } from './registry';
@@ -16,6 +30,16 @@ const CORE_TOOLS: ReadonlyArray<DomainTool<unknown, unknown>> = [
   queryMistakesTool as DomainTool<unknown, unknown>,
   queryEventsTool as DomainTool<unknown, unknown>,
   getAttemptContextTool as DomainTool<unknown, unknown>,
+  getSubjectGraphOverviewTool as DomainTool<unknown, unknown>,
+  queryKnowledgeTool as DomainTool<unknown, unknown>,
+  expandKnowledgeSubgraphTool as DomainTool<unknown, unknown>,
+  findKnowledgePathsTool as DomainTool<unknown, unknown>,
+  queryRecordsTool as DomainTool<unknown, unknown>,
+  getRecordContextTool as DomainTool<unknown, unknown>,
+  getQuestionContextTool as DomainTool<unknown, unknown>,
+  getReviewDueTool as DomainTool<unknown, unknown>,
+  getLearningItemContextTool as DomainTool<unknown, unknown>,
+  queryMemoryBriefTool as DomainTool<unknown, unknown>,
 ];
 
 let bootstrapped = false;

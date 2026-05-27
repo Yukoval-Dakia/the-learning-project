@@ -280,14 +280,6 @@
       "expected_by": "2026-07-31"
     }
   },
-  "artifact.child_artifact_ids": {
-    "reason": "Same as artifact.id (tree structure)",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands",
-      "expected_by": "2026-07-31"
-    }
-  },
   "artifact.intent_source": {
     "reason": "Same as artifact.id",
     "resolves_when": {
@@ -297,22 +289,6 @@
     }
   },
   "artifact.source_ref": {
-    "reason": "Same as artifact.id",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands",
-      "expected_by": "2026-07-31"
-    }
-  },
-  "artifact.outline_json": {
-    "reason": "Same as artifact.id",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands",
-      "expected_by": "2026-07-31"
-    }
-  },
-  "artifact.sections": {
     "reason": "Same as artifact.id",
     "resolves_when": {
       "kind": "manual",
@@ -358,6 +334,38 @@
       "kind": "manual",
       "ref": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands",
       "expected_by": "2026-07-31"
+    }
+  },
+  "artifact_block_ref.from_artifact_id": {
+    "reason": "ADR-0020 backlink index table lands in P1; write-through body_blocks cross-link scanner is P2/P3 work.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-88 P2/P3 cross-link write-through indexer lands",
+      "expected_by": "2026-08-31"
+    }
+  },
+  "artifact_block_ref.from_block_id": {
+    "reason": "Same as artifact_block_ref.from_artifact_id",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-88 P2/P3 cross-link write-through indexer lands",
+      "expected_by": "2026-08-31"
+    }
+  },
+  "artifact_block_ref.to_artifact_id": {
+    "reason": "Same as artifact_block_ref.from_artifact_id",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-88 P2/P3 cross-link write-through indexer lands",
+      "expected_by": "2026-08-31"
+    }
+  },
+  "artifact_block_ref.to_block_id": {
+    "reason": "Same as artifact_block_ref.from_artifact_id",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-88 P2/P3 cross-link write-through indexer lands",
+      "expected_by": "2026-08-31"
     }
   },
   "echo_jobs.error_md": {

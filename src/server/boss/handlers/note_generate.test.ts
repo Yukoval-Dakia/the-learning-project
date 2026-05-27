@@ -1,4 +1,5 @@
 import { artifact, knowledge } from '@/db/schema';
+import { bodyBlocksToNoteSections } from '@/server/artifacts/body-blocks';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -30,14 +31,13 @@ async function seedAtomic(opts: {
     id: opts.artifactId,
     type: 'note_atomic',
     title: '之的用法',
-    knowledge_id: opts.knowledgeId ?? null,
     parent_artifact_id: null,
-    child_artifact_ids: [],
+    knowledge_ids: opts.knowledgeId ? [opts.knowledgeId] : [],
     intent_source: 'learning_intent',
     source: 'ai_generated',
     source_ref: null,
-    outline_json: { one_line_intent: '区分「之」三种用法' } as never,
-    sections: null,
+    body_blocks: null,
+    attrs: { one_line_intent: '区分「之」三种用法' } as never,
     tool_kind: null,
     tool_state: null,
     generation_status: opts.pending === false ? 'ready' : 'pending',
@@ -146,8 +146,9 @@ describe('runNoteGenerate', () => {
     const updated = (await db.select().from(artifact).where(eq(artifact.id, 'a1')))[0];
     expect(updated.generation_status).toBe('ready');
     expect(updated.verification_status).toBe('queued');
-    expect(updated.sections).toHaveLength(5);
-    expect((updated.sections as Array<{ kind: string }>)[0].kind).toBe('definition');
+    const sections = bodyBlocksToNoteSections(updated.body_blocks);
+    expect(sections).toHaveLength(5);
+    expect(sections[0].kind).toBe('definition');
     expect((updated.generated_by as { task_run_id?: string } | null)?.task_run_id).toBe(
       'tr_note_generate_1',
     );

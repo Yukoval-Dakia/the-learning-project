@@ -209,18 +209,17 @@ export type CorrectEventT = z.infer<typeof CorrectEvent>;
 
 // 6c. CorrectArtifactEvent — actor=user / action='correct' / subject='artifact'
 //
-// Section-grained correction for atomic note artifacts. Parallel to CorrectEvent;
+// Block-grained correction for note artifacts. Parallel to CorrectEvent;
 // kept as a separate schema (not a union variant of CorrectEvent) because the
 // payload shape differs — artifact targets have no natural `affected_refs`
 // (those live on activity refs, not artifacts) and supersede replacement is an
 // artifact_id, not an event_id.
 //
-// `section_id` is optional:
+// `block_id` is optional:
 //   - omitted → correction applies to the whole atomic artifact
-//   - present → correction applies to a single section, using NoteSection.id
-//               (stable string per ADR-0019, not array index)
+//   - present → correction applies to a single body_blocks node id
 //
-// See ADR-0019 — "Correction event extends to artifact-section subject".
+// See ADR-0020 — ADR-0019 section anchors are superseded by block anchors.
 //
 // `corrections.ts:getCorrectionStatuses` filters on subject_kind='event' and
 // does NOT see these rows. Artifact-scoped composition lives in a sibling
@@ -234,15 +233,17 @@ export const CorrectArtifactEvent = z
     subject_kind: z.literal('artifact'),
     subject_id: z.string(),
     outcome: z.literal('success'),
-    payload: z.object({
-      correction_kind: CorrectionKind,
-      // section_id min(1): empty string would create a nonsense `''` bucket in
-      // the per-section projection Map (distinguishable from `undefined`
-      // whole-artifact corrections) — reject at the schema boundary.
-      section_id: z.string().min(1).optional(),
-      reason_md: z.string().min(1).max(2000),
-      replacement_artifact_id: z.string().optional(),
-    }),
+    payload: z
+      .object({
+        correction_kind: CorrectionKind,
+        // block_id min(1): empty string would create a nonsense `''` bucket in
+        // the per-block projection Map (distinguishable from `undefined`
+        // whole-artifact corrections) — reject at the schema boundary.
+        block_id: z.string().min(1).optional(),
+        reason_md: z.string().min(1).max(2000),
+        replacement_artifact_id: z.string().optional(),
+      })
+      .strict(),
     ...baseOptionalFields,
   })
   .superRefine((data, ctx) => {

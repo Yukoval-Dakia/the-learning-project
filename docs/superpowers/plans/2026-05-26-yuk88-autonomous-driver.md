@@ -16,7 +16,7 @@
 
 ### 0.1 一句话目标
 
-把 Note artifact 从"hub + atomic 5-section"两态架构重写成"hub + atomic + long 三态共用 body_blocks block tree + TipTap Notion-like 编辑器 + Living Note mutator-mode"，落 8 个 phase（P0-P7），每个 phase 单独可 ship，最终 supersede ADR-0019，落 ADR-0020 + ADR-0021。
+把 Note artifact 从"hub + atomic 5-section"两态架构重写成"hub + atomic + long 三态共用 body_blocks block tree + TipTap Notion-like 编辑器 + Living Note mutator-mode"，落 8 个 phase（P0-P7），每个 phase 单独可 ship，最终 supersede ADR-0019，落 ADR-0020 + ADR-0022。
 
 ### 0.2 不在范围内（hard out-of-scope）
 
@@ -30,7 +30,7 @@
 
 ### 0.3 完成定义
 
-8 phase 全 ship + ADR-0020 accepted + ADR-0021 written + status.md 标 YUK-88 ✅ + Linear YUK-88 close + `audit-drift` 跑一次绿。
+8 phase 全 ship + ADR-0020 accepted + ADR-0022 written + status.md 标 YUK-88 ✅ + Linear YUK-88 close + `audit-drift` 跑一次绿。
 
 ---
 
@@ -42,7 +42,7 @@
 |---|---|---|
 | 1 | `omc ultragoal status` | roadmap 当前 phase 在哪、哪些 done、哪些 blocked |
 | 2 | `docs/adr/0020-block-tree-note-rebuild.md` | 核心契约（block_id / body_blocks / knowledge_ids / Notion 位置规则 / archive 模型 / hub auto-sync） |
-| 3 | `docs/adr/0021-*.md`（P2 跑通后存在） | TipTap PM node schema 规约 |
+| 3 | `docs/adr/0022-tiptap-pm-node-schema.md`（P2 跑通后存在） | TipTap PM node schema 规约 |
 | 4 | `docs/planning/2026-05-26-note-rich-doc.md` §0 | post-grill 完整决策矩阵（Q1-Q19，C1-C4 拍板） |
 | 5 | `docs/superpowers/plans/2026-05-26-yuk88-block-tree-rebuild-phase.md` | Phase index（依赖图 / wave / cross-cutting / 启动建议） |
 | 6 | `docs/superpowers/plans/2026-05-26-yuk88-p{N}-*.md` | per-phase lane plan（启动 phase 时存在） |
@@ -100,8 +100,8 @@ P0 (G001, throwaway spike)
   ↓
 P1 (G002, schema + ADR-0020)
   ↓
-P2 (G003, editor) ── ADR-0021 ──┐
-  ↓ (after ADR-0021)             │
+P2 (G003, editor) ── ADR-0022 ──┐
+  ↓ (after ADR-0022)             │
   └─────────────────────────────── P3 (G004, AI pipeline)
                                           ↓
                                    P4 (G005, Living Note)
@@ -115,7 +115,7 @@ P2 (G003, editor) ── ADR-0021 ──┐
 
 ### 2.3 并发节点（hard rules）
 
-- **P2 // P3**：仅在 ADR-0021 written 且 P1 done 后；两条独立 worktree、两次独立 `/launch-phase` 调用；**不共享 TaskList**。
+- **P2 // P3**：仅在 ADR-0022 written 且 P1 done 后；两条独立 worktree、两次独立 `/launch-phase` 调用；**不共享 TaskList**。
 - **P3 → P4**：sequential 强制（P4 mutator op schema 依赖 P3 patch op 定型）。
 - **P5 deps double**：P5 必须等 P2 done AND P4 done。
 

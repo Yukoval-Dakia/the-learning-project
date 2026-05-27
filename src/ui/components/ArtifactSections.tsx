@@ -50,7 +50,7 @@ export type ArtifactCorrectionStatus =
 export interface ArtifactCorrectionStateResponse {
   artifact_id: string;
   whole: ArtifactCorrectionStatus;
-  sections: Record<string, ArtifactCorrectionStatus>;
+  blocks: Record<string, ArtifactCorrectionStatus>;
 }
 
 const ACTIVE_CORRECTION_STATUS: ArtifactCorrectionStatus = {
@@ -191,7 +191,7 @@ export function ArtifactSections({
   }, [artifactId]);
 
   function sectionStatus(sectionId: string): ArtifactCorrectionStatus {
-    return correctionState?.sections?.[sectionId] ?? ACTIVE_CORRECTION_STATUS;
+    return correctionState?.blocks?.[sectionId] ?? ACTIVE_CORRECTION_STATUS;
   }
 
   function startEdit(section: ArtifactSection) {
@@ -294,16 +294,16 @@ export function ArtifactSections({
           method: 'POST',
           body: JSON.stringify({
             correction_kind: 'mark_wrong',
-            section_id: section.id,
+            block_id: section.id,
             reason_md: reason,
           }),
         },
       );
       correctionWriteGenerationRef.current += 1;
       setCorrectionState((current) => {
-        const baseSections = current?.sections ?? {};
-        const nextSections: Record<string, ArtifactCorrectionStatus> = {
-          ...baseSections,
+        const baseBlocks = current?.blocks ?? {};
+        const nextBlocks: Record<string, ArtifactCorrectionStatus> = {
+          ...baseBlocks,
           [section.id]: {
             state: 'marked_wrong',
             correction_event_id: result.correction_event_id,
@@ -313,7 +313,7 @@ export function ArtifactSections({
         return {
           artifact_id: artifactId,
           whole: current?.whole ?? ACTIVE_CORRECTION_STATUS,
-          sections: nextSections,
+          blocks: nextBlocks,
         };
       });
       setMarkingWrongSectionId(null);
@@ -341,19 +341,19 @@ export function ArtifactSections({
         method: 'POST',
         body: JSON.stringify({
           correction_kind: 'restore',
-          section_id: section.id,
+          block_id: section.id,
           reason_md: '撤销标错',
         }),
       });
       correctionWriteGenerationRef.current += 1;
       setCorrectionState((current) => {
-        const baseSections = current?.sections ?? {};
-        const nextSections = { ...baseSections };
-        delete nextSections[section.id];
+        const baseBlocks = current?.blocks ?? {};
+        const nextBlocks = { ...baseBlocks };
+        delete nextBlocks[section.id];
         return {
           artifact_id: artifactId,
           whole: current?.whole ?? ACTIVE_CORRECTION_STATUS,
-          sections: nextSections,
+          blocks: nextBlocks,
         };
       });
       setCorrectionErrorBySectionId((current) => {

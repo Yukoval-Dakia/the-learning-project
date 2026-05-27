@@ -267,7 +267,9 @@ describe('acceptLearningIntent', () => {
     )[0];
     expect(hubArt.type).toBe('note_hub');
     expect(hubArt.generation_status).toBe('ready');
-    expect(hubArt.child_artifact_ids).toEqual(result.atomic_artifact_ids);
+    expect((hubArt.attrs as { linked_artifact_ids?: string[] }).linked_artifact_ids).toEqual(
+      result.atomic_artifact_ids,
+    );
 
     // Atomic artifacts are pending
     for (const atomicArtifactId of result.atomic_artifact_ids) {
@@ -275,7 +277,7 @@ describe('acceptLearningIntent', () => {
       expect(aArt.type).toBe('note_atomic');
       expect(aArt.generation_status).toBe('pending');
       expect(aArt.parent_artifact_id).toBe(result.hub_artifact_id);
-      expect(aArt.sections).toBeNull();
+      expect(aArt.body_blocks).toBeNull();
     }
   });
 
@@ -345,7 +347,7 @@ describe('acceptLearningIntent', () => {
     const atomicArtifact = (
       await db.select().from(artifact).where(eq(artifact.id, result.atomic_artifact_ids[0]))
     )[0];
-    expect(atomicArtifact.knowledge_id).toBe(child?.id);
+    expect(atomicArtifact.knowledge_ids).toEqual([child?.id]);
   });
 
   it('accepts a 3b proposal by creating children under the existing topic', async () => {
