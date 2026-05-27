@@ -273,6 +273,8 @@ export const memory_brief_note = pgTable(
       .default([]),
     long_term_evidence_ids: jsonb('long_term_evidence_ids').$type<string[]>().notNull().default([]),
     source_event_id: text('source_event_id'),
+    latest_evidence_at: timestamp('latest_evidence_at', { withTimezone: true }),
+    evidence_count: integer('evidence_count').notNull().default(0),
     refreshed_at: timestamp('refreshed_at', { withTimezone: true }),
     created_at: timestamp('created_at', { withTimezone: true }).notNull(),
     updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
@@ -497,6 +499,8 @@ export const event = pgTable(
     payload: jsonb('payload').$type<JsonObject>().notNull(),
     // chain link: judge ← attempt, propose ← cron, etc.
     caused_by_event_id: text('caused_by_event_id'),
+    // ADR-0017 brief writer scope tags; fixed prefixes, dynamic suffixes.
+    affected_scopes: text('affected_scopes').array().notNull().default(sql`ARRAY[]::text[]`),
     // AI task run association
     task_run_id: text('task_run_id'),
     cost_micro_usd: integer('cost_micro_usd'),
@@ -508,6 +512,7 @@ export const event = pgTable(
     index('event_session_idx').on(t.session_id, t.created_at),
     index('event_actor_idx').on(t.actor_kind, t.actor_ref, t.created_at),
     index('event_caused_by_idx').on(t.caused_by_event_id),
+    index('event_affected_scopes_idx').using('gin', t.affected_scopes),
     // GIN index on payload (jsonb_path_ops) — declared in hand-written migration
     // (drizzle-kit doesn't generate GIN on jsonb_path_ops natively at this version).
     // See drizzle/0005_phase1c1_event_payload_gin.sql.

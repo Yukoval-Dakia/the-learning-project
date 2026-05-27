@@ -1,4 +1,5 @@
 import type { Db } from '@/db/client';
+import { registerMemoryHandlers } from '@/server/memory/triggers';
 import { getR2 } from '@/server/r2';
 import type { PgBoss } from 'pg-boss';
 import { buildAttributionFollowupHandler } from './handlers/attribution_followup';
@@ -39,6 +40,9 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   await boss.work('prune_job_events', buildPruneJobEventsHandler(db));
   await boss.schedule('knowledge_propose_nightly', '0 2 * * *', {}, { tz: 'Asia/Shanghai' });
   await boss.schedule('prune_job_events', '0 4 * * *', {}, { tz: 'Asia/Shanghai' });
+
+  // T-37 / YUK-37: Mem0 fact ingest + per-scope brief regen queues.
+  await registerMemoryHandlers(boss, db);
 
   // Phase 2 Dreaming: knowledge_edge mesh propose (BJT 02:30, after node propose)
   await boss.createQueue('knowledge_edge_propose_nightly');

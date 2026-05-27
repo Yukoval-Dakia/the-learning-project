@@ -3,7 +3,7 @@
 **Doc 日期**：2026-05-27
 **Lane**：`lane/t37-brief-writer` (worktree A)
 **Parent driver**：[docs/superpowers/plans/2026-05-27-t37-brief-writer-driver.md](2026-05-27-t37-brief-writer-driver.md)
-**Status**：spike partial — embedder + sandbox blockers surfaced, escalating to master before further impl
+**Status**：implementation resumed — master decisions Q1-Q4 accepted; unit-testable Phase B pieces now proceeding in lane
 
 ---
 
@@ -131,9 +131,9 @@ Concrete options for Chinese embedding, ranked by impl effort:
 | **D. `ollama` embedder, `bge-m3` local** | No external API; Chinese-strong | Heavy on NAS (~2GB RAM); ollama runtime to deploy | None |
 | **E. `langchain` wrapper, custom HTTP client** | Maximum flexibility | Most code; new abstraction; LangChain dep | depends on backing service |
 
-**Recommendation pending master decision**: **B** (OpenAI direct) for PoC unless
-master rejects the new API key dependency. **D** (ollama bge-m3) is best for
-"zero external embedding dep" but adds NAS infra work outside T-37 scope.
+**Master decision 2026-05-27**: use **B** (OpenAI direct) for PoC. The wrapper
+requires `OPENAI_API_KEY` and configures `text-embedding-3-small`; missing key
+is a hard configuration error, not a fallback path.
 
 `OpenAIEmbedder` does accept `baseURL` config (`index.js:118-120`) so option A
 is verifiable with a single test call if xiaomi/mimo's `/v1/embeddings` is wired.
@@ -180,10 +180,8 @@ my call: **chose option (a) — add column + migration in this lane** because
 deliverable 4 (`scope_tagger.ts`) writes to it. Will tag the commit as
 "T-37 lane scope creep: add event.affected_scopes column per audit F-04 drift".
 
-**Status**: pending — blocked behind §3.1 + §3.2 decisions. If we agree to
-proceed despite §3.2 (skip live DB tests), I'll still add the schema column +
-drizzle migration so the deliverable 4 code can be reviewed even without
-green DB tests.
+**Status**: accepted into this lane. Phase B adds the schema column, GIN index,
+and write-path support because `scope_tagger` depends on this field.
 
 ---
 
@@ -221,14 +219,10 @@ green DB tests.
 
 ---
 
-## §7 Next steps awaiting master
+## §7 Implementation update after master answers
 
-1. Master answers Q1-Q4 above
-2. If Q1=A (xiaomi OpenAI-protocol), master confirms / disproves xiaomi has `/v1/embeddings` endpoint
-3. If proceed: lane subagent picks up:
-   - Add `event.affected_scopes` column + migration
-   - Add pgvector to `docker-compose.yml` (postgres image → `pgvector/pgvector:pg16`)
-   - Add pgvector to `tests/global-setup.ts` (test image → same)
-   - Write `src/server/memory/client.ts` + `brief.ts` + `scope_tagger.ts` + `triggers.ts` + 5 templates + anti-storm
-   - Unit tests greenable here; DB integration tests left for master host run
-4. If bail: master runs lane elsewhere with answers + cached docker images
+1. Q1: default OpenAI embedder + `text-embedding-3-small` + `OPENAI_API_KEY`.
+2. Q2: switch compose/testcontainers to `pgvector/pgvector:pg16`; any remaining
+   Docker/key failure is a verification blocker, not a workaround trigger.
+3. Q3: add `event.affected_scopes text[] default '{}' not null` in this lane.
+4. Q4: amend ADR-0017 with the TS SDK embedder errata above.

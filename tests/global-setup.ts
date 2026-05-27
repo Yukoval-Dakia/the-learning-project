@@ -30,7 +30,7 @@ export async function setup() {
   // we hit "sorry, too many clients already" once 8-10 files have cycled a
   // boss instance. 500 leaves comfortable headroom without measurable cost
   // on a single-developer testcontainer.
-  container = await new PostgreSqlContainer('postgres:16')
+  container = await new PostgreSqlContainer('pgvector/pgvector:pg16')
     .withCommand(['postgres', '-c', 'max_connections=500'])
     .start();
   const uri = container.getConnectionUri();

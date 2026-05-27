@@ -1005,6 +1005,32 @@ describe('writeEvent', () => {
     expect(returnedId).toBe(id);
     const rows = await db.select().from(event).where(eq(event.id, id));
     expect(rows).toHaveLength(1);
+    expect(rows[0].affected_scopes).toEqual(['global']);
+  });
+
+  it('writes explicit affected scopes when provided', async () => {
+    const db = testDb();
+    const id = newId();
+
+    await writeEvent(db, {
+      id,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: 'q1',
+      outcome: 'failure',
+      payload: {
+        answer_md: 'wrong',
+        answer_image_refs: [],
+        referenced_knowledge_ids: ['k1'],
+      },
+      affected_scopes: ['global', 'topic:k1'],
+      created_at: new Date(),
+    });
+
+    const rows = await db.select().from(event).where(eq(event.id, id));
+    expect(rows[0].affected_scopes).toEqual(['global', 'topic:k1']);
   });
 
   it('throws on invalid event payload (parseEvent guard)', async () => {
