@@ -8,11 +8,10 @@ import { deterministicId, newId } from '@/core/ids';
 import type { EventT } from '@/core/schema/event';
 import { event, material_fsrs_state } from '@/db/schema';
 import { eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { effectiveCauseForFailureAttempt } from './cause-policy';
 import {
-  _setMemoryIngestEnqueuerForTests,
   getEventById,
   getEventChain,
   getEvents,
@@ -980,10 +979,6 @@ describe('writeEvent', () => {
     await resetDb();
   });
 
-  afterEach(() => {
-    _setMemoryIngestEnqueuerForTests(null);
-  });
-
   it('parses + inserts a valid attempt event; returns the id', async () => {
     const db = testDb();
     const id = newId();
@@ -1097,21 +1092,18 @@ describe('writeEvent', () => {
     expect(payload.answer_md).toBe('wrong');
   });
 
-  // YUK-99 (W-01 / W-06) — ADR-0017 §"Write triggers (three paths)" #1: every
-  // event INSERT must enqueue a Mem0 ingest job carrying the event id, so the
-  // worker can fan out fact ingest + per-scope brief regen. This regression
-  // guards against the silent dead path that audit 2026-05-27 flagged: the
-  // ingest queue existed but no producer called `enqueueEventMemoryIngest`,
-  // so the fact layer never updated outside the daily sweep.
-  it('fires memory ingest enqueue after a successful INSERT', async () => {
+  // ADR-0021 outbox contract: writeEvent is INSERT-only — it must NOT enqueue
+  // memory ingest synchronously. The new row's `ingest_at` column starts
+  // NULL (pending); the per-minute outbox poll handler in
+  // `src/server/memory/triggers.ts` picks pending rows with
+  // SELECT...FOR UPDATE SKIP LOCKED, enqueues `memory_event_ingest`, and
+  // stamps `ingest_at = now()`. Integration tests for the full poller path
+  // live in `src/server/memory/triggers.outbox.test.ts` (Phase E).
+  it('leaves ingest_at NULL after writeEvent (outbox pending state)', async () => {
     const db = testDb();
     const id = newId();
-    const enqueue = vi.fn(async () => {});
-    _setMemoryIngestEnqueuerForTests(enqueue);
-
-    const returnedId = await writeEvent(db, {
+    await writeEvent(db, {
       id,
-      session_id: null,
       actor_kind: 'user',
       actor_ref: 'self',
       action: 'attempt',
@@ -1123,93 +1115,11 @@ describe('writeEvent', () => {
         answer_image_refs: [],
         referenced_knowledge_ids: [],
       },
-      caused_by_event_id: null,
-      task_run_id: null,
-      cost_micro_usd: null,
       created_at: new Date(),
     });
-
-    expect(returnedId).toBe(id);
-    expect(enqueue).toHaveBeenCalledTimes(1);
-    expect(enqueue).toHaveBeenCalledWith(id);
-  });
-
-  // YUK-99 — the enqueue MUST be fire-and-forget: the event row is the SoT and
-  // a failing background job must never roll back the INSERT or surface as a
-  // caller-visible exception.
-  //
-  // YUK-101 (iter2 fix F2) — Pre-iter2 this comment claimed "the daily brief
-  // sweep is the belt-and-braces" — that promise is structurally untrue.
-  // `buildMemoryBriefSweepHandler` (triggers.ts) iterates briefs, not events,
-  // so missed `enqueueEventMemoryIngest` calls have NO automatic recovery in
-  // the current architecture. The deep fix is the transactional outbox in
-  // YUK-101; until then, F4 `singletonKey` makes the failure modes
-  // idempotent-on-retry but does not recover from a single missed enqueue.
-  //
-  // YUK-101 (iter2 fix F3+F11) — writeEvent now uses
-  // `void memoryIngestEnqueuer(input.id).catch(...)` rather than `await` +
-  // outer try/catch. The .catch() runs asynchronously after writeEvent
-  // returns, so the test must flush microtasks before asserting errorSpy.
-  it('swallows memory ingest enqueuer errors (fire-and-forget) but still persists the row', async () => {
-    const db = testDb();
-    const id = newId();
-    const enqueue = vi.fn(async () => {
-      throw new Error('boss unavailable');
-    });
-    _setMemoryIngestEnqueuerForTests(enqueue);
-
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    try {
-      const returnedId = await writeEvent(db, {
-        id,
-        session_id: null,
-        actor_kind: 'user',
-        actor_ref: 'self',
-        action: 'attempt',
-        subject_kind: 'question',
-        subject_id: 'q1',
-        outcome: 'failure',
-        payload: {
-          answer_md: 'wrong',
-          answer_image_refs: [],
-          referenced_knowledge_ids: [],
-        },
-        caused_by_event_id: null,
-        task_run_id: null,
-        cost_micro_usd: null,
-        created_at: new Date(),
-      });
-
-      expect(returnedId).toBe(id);
-      expect(enqueue).toHaveBeenCalledWith(id);
-      // The row must be persisted regardless — YUK-101 outbox poller is the
-      // proper recovery path. F4 singletonKey collapses retry duplicates.
-      const rows = await db.select().from(event).where(eq(event.id, id));
-      expect(rows).toHaveLength(1);
-      // The swallowed failure should still be observable via the error log.
-      // F3 makes the rejection async — wait for the .catch() to run.
-      await vi.waitFor(() => expect(errorSpy).toHaveBeenCalled(), { timeout: 1000 });
-    } finally {
-      errorSpy.mockRestore();
-    }
-  });
-
-  // YUK-101 (iter2 fix F6) — pin the dynamic-import path that
-  // `defaultMemoryIngestEnqueuer` relies on. The VITEST short-circuit means
-  // the default path never runs under `pnpm test:db`, so future renames of
-  // `@/server/memory/triggers` exports or `@/server/boss/client` symbols
-  // would silently break ADR-0017 trigger #1 in production. This test
-  // resolves both modules statically and asserts the symbols the default
-  // enqueuer reads. A rename without updating defaultMemoryIngestEnqueuer
-  // will fail this test before reaching production.
-  it('iter2 F6: dynamic-import targets for defaultMemoryIngestEnqueuer still resolve', async () => {
-    const [bossModule, triggersModule] = await Promise.all([
-      import('@/server/boss/client'),
-      import('@/server/memory/triggers'),
-    ]);
-    expect(typeof bossModule.getStartedBoss).toBe('function');
-    expect(typeof triggersModule.enqueueEventMemoryIngest).toBe('function');
-    expect(triggersModule.MEMORY_EVENT_INGEST_QUEUE).toBe('memory_event_ingest');
+    const rows = await db.select().from(event).where(eq(event.id, id));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].ingest_at).toBeNull();
   });
 });
 

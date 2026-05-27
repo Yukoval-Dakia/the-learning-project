@@ -505,6 +505,14 @@ export const event = pgTable(
     task_run_id: text('task_run_id'),
     cost_micro_usd: integer('cost_micro_usd'),
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    // YUK-101 / ADR-0021 — transactional outbox cursor. `writeEvent` only
+    // INSERTs the row (ADR-0005 single-owner invariant); a separate poll
+    // handler in `src/server/memory/triggers.ts` picks pending rows
+    // (`ingest_at IS NULL`) with SELECT…FOR UPDATE SKIP LOCKED, enqueues
+    // `memory_event_ingest`, and stamps `ingest_at = now()` in the same tx.
+    // The partial index `event_ingest_pending_idx` keeps the pending scan
+    // cheap regardless of total event volume.
+    ingest_at: timestamp('ingest_at', { withTimezone: true }),
   },
   (t) => [
     index('event_subject_idx').on(t.subject_kind, t.subject_id, t.created_at.desc()),
@@ -513,6 +521,10 @@ export const event = pgTable(
     index('event_actor_idx').on(t.actor_kind, t.actor_ref, t.created_at),
     index('event_caused_by_idx').on(t.caused_by_event_id),
     index('event_affected_scopes_idx').using('gin', t.affected_scopes),
+    // YUK-101 — partial index for the outbox poll handler. Declared in
+    // hand-written migration drizzle/0017_outbox_event_ingest.sql because
+    // drizzle-kit doesn't generate partial-index `WHERE …` clauses natively
+    // at this version.
     // GIN index on payload (jsonb_path_ops) — declared in hand-written migration
     // (drizzle-kit doesn't generate GIN on jsonb_path_ops natively at this version).
     // See drizzle/0005_phase1c1_event_payload_gin.sql.

@@ -33,3 +33,5 @@
 **相关：** ADR-0002（抽取层 = 确定性 OCR）定义了进入会话的"内容"约束；本 ADR 定义了会话"生命周期"约束。两者正交、互补。
 
 **演化（2026-05-14）：** [[ADR-0008]] 把本 ADR 的 single-owner invariant 扩展到全 session type。`src/server/ingestion/session.ts` 演化为 `src/server/session/` 多态模块，ingestion 子状态机作为其中一支保留；本 ADR 的所有规约（守卫、事务原子性、`job_events` 同事务写入）在更大 scope 内继续有效。
+
+**演化（2026-05-27）：** [[ADR-0021]] 把本 ADR 的「single-owner INSERT 不带跨 tx 副作用」原则应用到 `event` 表 / `writeEvent`。PR #163 (YUK-99) 一度让 `writeEvent` inline 调 `enqueueEventMemoryIngest`，PR #165 用 7 个 band-aid 让它跑通——但跨 tx orphan job 问题不动。ADR-0021 用 `event.ingest_at` 列做 transactional outbox，恢复 `writeEvent` 单纯 INSERT 契约。本 ADR 仍是 single-owner 的 anchor。
