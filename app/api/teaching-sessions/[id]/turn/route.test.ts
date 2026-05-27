@@ -6,7 +6,8 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { job_events, learning_item, learning_session } from '@/db/schema';
+import { event, job_events, learning_item, learning_session, question } from '@/db/schema';
+import { planTeachingTurn } from '@/server/orchestrator/teaching';
 import { Conversation } from '@/server/session';
 
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
@@ -106,6 +107,75 @@ describe('POST /api/teaching-sessions/[id]/turn', () => {
 
     const jevents = await db.select().from(job_events).where(eq(job_events.business_id, sessionId));
     expect(jevents.find((e) => e.event_type === 'conversation.resumed')).toBeTruthy();
+  });
+
+  it('persists and returns a teaching_check question for ask_check turns', async () => {
+    const db = testDb();
+    await seedLearningItem('li_turn_check');
+    const { sessionId } = await Conversation.startConversation(db, {
+      learningItemId: 'li_turn_check',
+    });
+    vi.mocked(planTeachingTurn).mockResolvedValueOnce({
+      kind: 'ask_check',
+      text_md: '这里的“之”指代什么？',
+      suggested_next: 'continue',
+      structured_question: {
+        kind: 'short_answer',
+        prompt_md: '这里的“之”指代什么？',
+        reference_md: '之在这里作代词，指代前文的人或事。',
+        judge_kind_override: 'semantic',
+        rubric_json: {
+          criteria: [{ name: 'correctness', weight: 1, descriptor: '覆盖核心要点' }],
+          required_points: ['说明之作代词', '说明指代前文'],
+        },
+      },
+    });
+
+    const res = await POST(turnReq(sessionId, { text_md: '考我一下' }), {
+      params: paramsFor(sessionId),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      agent_message: {
+        id: string;
+        turn_kind: string;
+        question?: { id: string; kind: string; prompt_md: string; choices_md: string[] | null };
+      };
+    };
+    expect(body.agent_message.turn_kind).toBe('ask_check');
+    expect(body.agent_message.question).toMatchObject({
+      kind: 'short_answer',
+      prompt_md: '这里的“之”指代什么？',
+      choices_md: null,
+    });
+
+    const qRows = await db
+      .select()
+      .from(question)
+      .where(eq(question.id, body.agent_message.question?.id ?? 'missing'));
+    expect(qRows).toHaveLength(1);
+    expect(qRows[0]).toMatchObject({
+      source: 'teaching_check',
+      source_ref: body.agent_message.id,
+      reference_md: '之在这里作代词，指代前文的人或事。',
+      judge_kind_override: 'semantic',
+    });
+    expect(qRows[0].metadata).toMatchObject({
+      learning_item_id: 'li_turn_check',
+      session_id: sessionId,
+    });
+
+    const agentEvents = await db
+      .select()
+      .from(event)
+      .where(eq(event.subject_id, body.agent_message.id));
+    expect(agentEvents).toHaveLength(1);
+    expect(agentEvents[0].payload).toMatchObject({
+      role: 'agent',
+      turn_kind: 'ask_check',
+      question_id: body.agent_message.question?.id,
+      question: body.agent_message.question,
+    });
   });
 
   it('returns 409 when session is ended', async () => {

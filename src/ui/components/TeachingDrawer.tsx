@@ -20,6 +20,7 @@ import { Button } from '@/ui/primitives/Button';
 import { type SuggestionKind, SuggestionKindTag } from '@/ui/primitives/SuggestionKindTag';
 import { useMutation } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
+import { type EmbeddedCheckQuestion, EmbeddedCheckSection } from './EmbeddedCheckSection';
 
 type TurnKind = 'explain' | 'ask_check' | 'end';
 
@@ -28,6 +29,7 @@ interface ChatMessage {
   role: 'agent' | 'user';
   text_md: string;
   turn_kind: TurnKind | null;
+  question?: EmbeddedCheckQuestion | null;
 }
 
 interface StartResponse {
@@ -317,6 +319,21 @@ export function TeachingDrawer({
                   >
                     {m.text_md}
                   </MathMarkdown>
+                  {m.role === 'agent' && m.turn_kind === 'ask_check' && m.question ? (
+                    <EmbeddedCheckSection
+                      status="ready"
+                      questions={[m.question]}
+                      notation={
+                        (subjectModel.renderConfig.notation ?? undefined) as
+                          | 'latex'
+                          | 'wenyan'
+                          | 'plaintext'
+                          | 'code'
+                          | undefined
+                      }
+                      readyLabel="追问题 · 1 题"
+                    />
+                  ) : null}
                 </div>
               ))}
               {turnM.isPending && (

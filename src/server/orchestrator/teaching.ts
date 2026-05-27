@@ -7,12 +7,13 @@
 // MVP scope per docs/superpowers/brainstorms/2026-05-17-phase2c-active-teaching.md
 //   - single turn, no streaming
 //   - turn kinds: 'explain' | 'ask_check' | 'end'
-//   - no tool calls, no inline question persistence
+//   - no tool calls; ask_check may carry one structured question for the route to persist
 //   - reuses experimental:teach_message event shape
 
 import { asc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 
+import { JudgeKind, QuestionKind, Rubric } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, event, knowledge, learning_item } from '@/db/schema';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -22,11 +23,30 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 const TurnKind = z.enum(['explain', 'ask_check', 'end']);
 export type TurnKindT = z.infer<typeof TurnKind>;
 
-const TeachingTurnOutput = z.object({
-  kind: TurnKind,
+const TeachingStructuredQuestion = z.object({
+  kind: QuestionKind,
+  prompt_md: z.string().min(1).max(4000).optional(),
+  reference_md: z.string().min(1).max(4000),
+  choices_md: z.array(z.string().min(1)).nullable().optional(),
+  judge_kind_override: JudgeKind.nullish(),
+  rubric_json: Rubric.nullish(),
+});
+export type TeachingStructuredQuestionT = z.infer<typeof TeachingStructuredQuestion>;
+
+const TeachingTurnBase = {
   text_md: z.string().min(1).max(2000),
   suggested_next: z.enum(['continue', 'end']),
-});
+};
+
+const TeachingTurnOutput = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('explain'), ...TeachingTurnBase }),
+  z.object({
+    kind: z.literal('ask_check'),
+    ...TeachingTurnBase,
+    structured_question: TeachingStructuredQuestion,
+  }),
+  z.object({ kind: z.literal('end'), ...TeachingTurnBase }),
+]);
 export type TeachingTurnOutputT = z.infer<typeof TeachingTurnOutput>;
 
 const MessageInput = z.object({

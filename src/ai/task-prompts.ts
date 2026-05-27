@@ -335,10 +335,11 @@ function buildTeachingTurnPrompt(profile: SubjectProfile): string {
 输入：{ learning_item: { title, one_line_intent, knowledge_node:{id,name} }, parent_hub_summary, atomic_sections(definition/mechanism/example/pitfall/check), messages: [{role:agent|user,text_md,turn_kind?}] }
 职责：评估对话状态 → 决定下一步 → 输出 1 个 agent 消息。每轮只输出 1 个 turn，**不要**一次塞讲解+追问+总结。
 严格 JSON 输出（不带 markdown 包裹）：
-{"kind":"explain"|"ask_check"|"end","text_md":"...","suggested_next":"continue"|"end"}
+{"kind":"explain"|"ask_check"|"end","text_md":"...","suggested_next":"continue"|"end","structured_question":{...}}
+仅当 kind="ask_check" 时必须带 structured_question；explain/end 不要带。
 turn 类型：
 - explain：用 1-2 段讲清楚一个概念点 / 例题解析 / 用户上轮答案的反馈，**结尾不带问号**
-- ask_check：1 个检查题（${profile.promptFragments.checkQuestionPolicy}），让用户回答验证理解，**结尾必须是问号**
+- ask_check：1 个检查题（${profile.promptFragments.checkQuestionPolicy}），让用户回答验证理解，**结尾必须是问号**；structured_question = { kind, prompt_md, reference_md, choices_md?, judge_kind_override?, rubric_json? }，kind 取 choice/true_false/fill_blank/short_answer/essay/computation/reading/translation/derivation，prompt_md 通常等于 text_md，reference_md 必须给可判分参考答案
 - end：本次会话目标已达 → 给 1-2 句总结收尾，suggested_next 设 "end"
 节奏（强约束）：
 - 用户首轮（或没有 messages）：先 explain 引入主题，suggested_next="continue"
