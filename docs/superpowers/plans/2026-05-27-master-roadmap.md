@@ -41,12 +41,12 @@
 - Track 1 follow-up M1: wenyan causeCategories (YUK-83) / today KPI (YUK-84) / Note 申诉 (YUK-85)
 - pg-boss 12 队列在跑（含 maintenance / variant / OCR / session-summary）
 - **Wave 1 ship ✅（2026-05-27）**：
-  - T-37 brief writer Phase B (YUK-37) — `src/server/memory/{client,brief,scope_tagger,triggers}.ts` ship；F-04 dir-missing resolved
+  - T-37 brief writer Phase B (YUK-37) — `src/server/memory/{client,brief,scope_tagger,triggers}.ts` ship；F-04 memory-dir half resolved
   - T-RA RatingAdvisor (YUK-98) — `rating-advisor.ts` 纯函数 + UI + submit route advisory field
   - T-66 ask_check artifact (YUK-66) — `question(source='teaching_check')` 持久化 + judge invoker 接入
   - T-88 P0 spike (YUK-90) — TipTap block tree fixture + split/merge/mark_wrong invariant 全过（PR #162）
   - Wave 1 closeout (YUK-99 brief writer event ingest wire + env doc / YUK-100 RatingAdvisor cause SoT)：PR #163 + #165 (squash) merged
-- **F-04 audit baseline resolved**：`src/server/memory/` 目录已 ship；`src/server/dreaming/` 仍待 T-DR
+- **F-04 audit baseline split**：`src/server/memory/` 目录已 ship；`src/server/dreaming/` 仍 open，归 T-DR，不在 T-37 closeout 中关闭
 
 **In-flight / open**：
 - **YUK-101** Transactional outbox for `writeEvent` → memory event ingest（Wave 1 post-ship code-review 发现 architectural follow-up；iter2 PR #165 是 band-aids，**真正 outbox 重写未做**）— priority **High**，进 Wave 2 buffer 或独立处理
@@ -56,7 +56,7 @@
 **Audit baseline ack（per `docs/audit/2026-05-27-pre-yuk88-baseline-drift.md`, 2026-05-27）**：
 - **F-01** notes.md 整篇 ADR-0020 冲突 → YUK-88 P3 收尾前必须 rewrite（拆 YUK-{TBD-1}；不阻塞 Wave 2）
 - **F-02 / F-03** artifact 表 / `CorrectArtifactEvent.payload.section_id` pre-ADR-0020 形态 → YUK-88 P1 phase 范围内 resolve（Wave 2 内）
-- **F-04** ✅ resolved by T-37 (memory dir ship)；dreaming dir 仍待 T-DR
+- **F-04a** ✅ resolved by T-37 (`src/server/memory/` ship)；**F-04b** 🟡 still open until T-DR ships `src/server/dreaming/`
 
 **Critical 缺位（按 v0.4 §6）**：
 - Layer 8 整层 ⬜（4 条 P0 line：DomainTool M2-M6 / Drawer / Dreaming / Global Coach）
@@ -133,9 +133,7 @@ ls -lt docs/audit/*drift* 2>/dev/null | head -3
 
 | Track | Status | pts 剩 | forward-locks | blocked-by | Linear |
 |---|---|---|---|---|---|
-| **T-37** ADR-0017 brief writer Phase B | ⬜ pending 实施¹ | ~13 | Layer 7 Memory writer + Dreaming brief refresh | (none) | [YUK-37](https://linear.app/yukoval-studios/issue/YUK-37) ⚠️ Linear status 错标 Done |
-
-¹ T-37 status 校准 2026-05-27：原 5pt / 🟡 in progress；audit F-04 + commit 1bca5b9 commit body 双实证 `src/server/memory/` 未落地。YUK-37 acceptance 7 项独立实施项，重新估 13pt。Linear status flip 由用户在 UI 手动 reopen（commit message 在 Wave 1 ship 前不允许写 `Closes YUK-37`）。Driver：`docs/superpowers/plans/2026-05-27-t37-brief-writer-driver.md`。
+| **YUK-101** Transactional outbox for `writeEvent` → memory event ingest | 🟡 follow-up open | TBD | Memory ingest transactional integrity | Wave 1 closeout surfaced orphan-job risk | [YUK-101](https://linear.app/yukoval-studios/issue/YUK-101) |
 | **T-88** Block-Tree Note Rebuild (YUK-88) | 🟡 planning done | 61 | Layer 5 完全体 + Living Note v0 | (none) | [YUK-88](https://linear.app/yukoval-studios/issue/YUK-88) + YUK-90~97 |
 
 ### 2.3 ⬜ P0 — Critical (阻塞 first-class AI actor 承诺)
@@ -168,11 +166,11 @@ ls -lt docs/audit/*drift* 2>/dev/null | head -3
 | **T-QP** `question_part` ActivityKind | ⬜ | ~8 | 英语阅读 / 物理多步独立调度 + cross-subject scheduling | (none) | ⬜ |
 | **T-S4** Subject #4 acid test | ⬜ | ~8 | 第 4 学科 onboard 流程定型 | (none) | ⬜ |
 | **T-LI** 3a/3b LearningIntent proposal flow | ⬜ | ~13 | "我想学 X" 路径完全体（主题不存在 / 不完整） | (none) | ⬜ |
-| **T-RA** Partial credit P3 RatingAdvisor | ⬜ | ~3 | review feedback advisory | (none，server 层 ✓) | ⬜ Track-1 W2.1 |
-| **T-66** YUK-66 Teaching ask_check artifact | ⬜ | ~5 | teaching loop 完全 closeout | (none) | [YUK-66](https://linear.app/yukoval-studios/issue/YUK-66) |
+| **T-RA** Partial credit P3 RatingAdvisor | ✅ ship 2026-05-27 | (done) | review feedback advisory shipped | — | [YUK-98](https://linear.app/yukoval-studios/issue/YUK-98) |
+| **T-66** YUK-66 Teaching ask_check artifact | ✅ ship 2026-05-27 | (done) | teaching loop ask_check persistence shipped | — | [YUK-66](https://linear.app/yukoval-studios/issue/YUK-66) |
 | **T-W4** wenyan profile.causeCategories 100% | ✅ | (done) | — | — | [YUK-83](https://linear.app/yukoval-studios/issue/YUK-83) |
 
-**P1 小计**：~123 pts，~30-40 周（单人 raw；含 T-J9 13pt 如果做）
+**P1 小计**：~115 pts，~28-37 周（单人 raw；含 T-J9 13pt 如果做；T-RA/T-66 已从剩余量移除）
 
 ### 2.5 ⬜ P2 — 闭环深化
 
@@ -246,14 +244,14 @@ ls -lt docs/audit/*drift* 2>/dev/null | head -3
 
 | Bucket | pts | 周（单人 raw） |
 |---|---|---|
-| 🟡 In-Flight | ~66 | 17-22 |
+| 🟡 In-Flight | ~61 + YUK-101 TBD | 15-20 + follow-up |
 | ⬜ P0 Critical | ~113 | 28-35 |
-| ⬜ P1 学科 | ~123 | 30-40 |
+| ⬜ P1 学科 | ~115 | 28-37 |
 | ⬜ P2 闭环 | ~52 | 12-18 |
 | ⬜ P3 Track F | ~82 | 20-26 |
 | ⬜ P4 doc/infra 债 | ~31 | 6-8 |
 | ⬜ P5 brainstorm→spec | ~25 | 5-7 |
-| **Grand Total** | **~492 pts** | **~120-156 周 ≈ 2.5-3 年（单人 raw）** |
+| **Grand Total** | **~479 pts + YUK-101 TBD** | **~116-151 周 ≈ 2.4-3 年（单人 raw）** |
 
 **这是 brutal truth**。即使 AI-paired 把 raw velocity 翻 1.5-2x，也是 **1.5-2 年**整 closeout。所以**全 ship 不现实**，必须 prioritization + 接受不完整 closeout。
 
@@ -340,7 +338,7 @@ T-FF fixtures ────→ blocks Eval / acceptance test 自动化
                                 ↓
                               brief 真在用，T-D2 read tools 含 query_memory_brief
 
-  关键瓶颈：T-37 已 🟡 几个月，是 P0 整条链的 trigger
+  关键瓶颈：T-37 已 ship；现在瓶颈移到 T-D2 read tools + T-DR dreaming implementation
 ```
 
 ### 3.3 高度并行可能性（file-disjoint）
@@ -411,11 +409,11 @@ T-FF fixtures ────→ blocks Eval / acceptance test 自动化
 | Q1 | **Wave 1 = 4 tracks 并行**（T-37 + T-RA + T-66 + T-88 P0）| Worktree A: T-37 → T-88 P0；Worktree B: T-RA → T-66。File-disjoint 全覆盖。匹配 Track-1 follow-up wave-1 历史节奏（3+1 lane）；不推迟 T-37 critical path（避免 6+ 周 compounding）|
 | Q3 | **T-D3 Drawer MVP 试点 /today**（summary-driven）| 高频访问 + Layer 8 完全体核心模式（drawer 自动浮"今日 AI 建议"）；30s dwell trigger（v2.1 §1.2 锁定）。Deps：T-D2 query_review_due / query_memory_brief / query_learning_item_context 必先 ship；T-37 brief writer 必先 ship。比 /mistakes ask-driven 模式更激进但长期 vision 价值高 |
 
-**A 实际预算**：T-88 (61) + T-37 (5) + T-D2 (25) + T-D3 (13) + T-D4 full (24) + T-DR (20) + T-D6 (15) + T-D7 (3) + T-RA (3) + T-66 (5) + T-PD (31) + T-KG (13) = **218pt 主线** + ~30pt buffer = **~248pt**，@ 5-8 pt/wk → **7.5-12.5 月真实窗口**。
+**A 剩余预算（post-Wave 1）**：T-88 remaining (~59) + T-D2 (25) + T-D3 (13) + T-D4 full (24) + T-DR (20) + T-D6 (15) + T-D7 (3) + T-PD (31) + T-KG (13) = **~203pt 主线** + ~30pt buffer = **~233pt**，@ 5-8 pt/wk → **7-12 月真实窗口**。T-37 / T-RA / T-66 / T-88 P0 已在 Wave 1 shipped，不再计入剩余主线。
 
 ### §5.1 Wave 模型（post-grill 2026-05-27，scenario A）
 
-**所有 6 个 open question 已 grill 拍板**（见 §5.0）。Wave 结构基于 ~218pt 主线 + 30pt buffer = ~248pt（A）+ T-PD 31pt 分布到 wave 间隙。
+**所有 6 个 open question 已 grill 拍板**（见 §5.0）。Wave 结构基于 post-Wave-1 剩余 ~203pt 主线 + 30pt buffer = ~233pt（A）+ T-PD 31pt 分布到 wave 间隙。
 
 **总 elapsed 估**：8 waves × 平均 5-6 周 ≈ **40-50 周（10-12 月真实窗口）@ 5-7 pt/wk sustainable**。
 
