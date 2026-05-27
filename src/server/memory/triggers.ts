@@ -1,5 +1,5 @@
-import { eq, inArray, isNull } from 'drizzle-orm';
-import type { Job } from 'pg-boss';
+import { eq, inArray, isNull, sql } from 'drizzle-orm';
+import { type DrizzleTransactionLike, type Job, fromDrizzle } from 'pg-boss';
 
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
@@ -29,6 +29,32 @@ type BossLike = {
   send(name: string, data: object, options?: object): Promise<string | null>;
 };
 
+type ProjectDrizzleTx = {
+  execute(query: unknown): Promise<unknown>;
+};
+
+function hasRowsResult(value: unknown): value is { rows: unknown[] } {
+  return (
+    typeof value === 'object' && value !== null && Array.isArray((value as { rows?: unknown }).rows)
+  );
+}
+
+function fromPgBossDrizzleTx(tx: ProjectDrizzleTx) {
+  // pg-boss's Drizzle adapter expects node-postgres-style `{ rows }`, while
+  // this repo uses drizzle-orm/postgres-js where `execute()` returns the row
+  // array directly. Normalize only this driver shape before handing it to
+  // pg-boss so `send(..., { db })` stays in the caller transaction.
+  const txWithRows: DrizzleTransactionLike = {
+    async execute(query) {
+      const result = await tx.execute(query);
+      if (Array.isArray(result)) return { rows: result };
+      if (hasRowsResult(result)) return result;
+      throw new Error('pg-boss Drizzle tx adapter received an unsupported execute() result');
+    },
+  };
+  return fromDrizzle(txWithRows, sql);
+}
+
 async function defaultLoadEvent(db: Db, eventId: string): Promise<MemoryEventInput | null> {
   const rows = await db.select().from(event).where(eq(event.id, eventId)).limit(1);
   const row = rows[0];
@@ -49,8 +75,12 @@ async function defaultLoadEvent(db: Db, eventId: string): Promise<MemoryEventInp
 // stamp commits in the same tx as the enqueue). singletonKey + the iter2
 // band-aids it required (writeEvent inline retry collapse, tx-rollback orphan
 // slot) are gone.
-export async function enqueueEventMemoryIngest(boss: Pick<BossLike, 'send'>, eventId: string) {
-  await boss.send(MEMORY_EVENT_INGEST_QUEUE, { event_id: eventId });
+export async function enqueueEventMemoryIngest(
+  boss: Pick<BossLike, 'send'>,
+  eventId: string,
+  options?: object,
+) {
+  await boss.send(MEMORY_EVENT_INGEST_QUEUE, { event_id: eventId }, options);
 }
 
 export async function enqueueBriefRegen(boss: Pick<BossLike, 'send'>, scopeKey: string) {
@@ -150,7 +180,7 @@ export function buildMemoryIngestOutboxPollHandler(
         .for('update', { skipLocked: true });
       if (pending.length === 0) return;
       for (const row of pending) {
-        await enqueueEventMemoryIngest(boss, row.id);
+        await enqueueEventMemoryIngest(boss, row.id, { db: fromPgBossDrizzleTx(tx) });
       }
       await tx
         .update(event)

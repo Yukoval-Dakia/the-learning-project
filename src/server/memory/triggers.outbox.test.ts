@@ -10,8 +10,9 @@
 import { newId } from '@/core/ids';
 import { event } from '@/db/schema';
 import { eq, isNull } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
+import { _resetBossForTests, createBoss } from '../boss/client';
 import { writeEvent } from '../events/queries';
 import {
   MEMORY_EVENT_INGEST_QUEUE,
@@ -37,8 +38,24 @@ function attemptPayload(question_id = 'q1') {
 }
 
 describe('outbox poll handler (real-path)', () => {
+  let realBoss: ReturnType<typeof createBoss>;
+
+  beforeAll(async () => {
+    _resetBossForTests();
+    realBoss = createBoss();
+    await realBoss.start();
+    await realBoss.createQueue(MEMORY_EVENT_INGEST_QUEUE);
+  });
+
+  afterAll(async () => {
+    await realBoss.deleteAllJobs(MEMORY_EVENT_INGEST_QUEUE);
+    await realBoss.stop({ graceful: false, timeout: 1_000 });
+    _resetBossForTests();
+  });
+
   beforeEach(async () => {
     await resetDb();
+    await realBoss.deleteAllJobs(MEMORY_EVENT_INGEST_QUEUE);
   });
 
   it('happy path: writeEvent leaves ingest_at NULL; poll enqueues + stamps in one tx', async () => {
@@ -55,7 +72,11 @@ describe('outbox poll handler (real-path)', () => {
     await poll([]);
 
     expect(boss.send).toHaveBeenCalledTimes(1);
-    expect(boss.send).toHaveBeenCalledWith(MEMORY_EVENT_INGEST_QUEUE, { event_id: id });
+    expect(boss.send).toHaveBeenCalledWith(
+      MEMORY_EVENT_INGEST_QUEUE,
+      { event_id: id },
+      expect.objectContaining({ db: expect.any(Object) }),
+    );
 
     const after = await db.select().from(event).where(eq(event.id, id));
     expect(after[0].ingest_at).not.toBeNull();
@@ -102,7 +123,11 @@ describe('outbox poll handler (real-path)', () => {
     await poll([]);
 
     expect(boss.send).toHaveBeenCalledTimes(1);
-    expect(boss.send).toHaveBeenCalledWith(MEMORY_EVENT_INGEST_QUEUE, { event_id: id });
+    expect(boss.send).toHaveBeenCalledWith(
+      MEMORY_EVENT_INGEST_QUEUE,
+      { event_id: id },
+      expect.objectContaining({ db: expect.any(Object) }),
+    );
   });
 
   it('batch limit: poll handler drains up to OUTBOX_POLL_BATCH per invocation', async () => {
@@ -122,6 +147,26 @@ describe('outbox poll handler (real-path)', () => {
     expect(boss.send).toHaveBeenCalledTimes(50);
     const remaining = await db.select().from(event).where(isNull(event.ingest_at));
     expect(remaining).toHaveLength(25);
+  });
+
+  it('tx rollback: pg-boss send participates in the same poll transaction', async () => {
+    const db = testDb();
+    const id = newId();
+    await writeEvent(db, { id, ...attemptPayload() });
+    const boss = {
+      send: vi.fn(async (name: string, data: object, options?: object) => {
+        await realBoss.send(name, data, options);
+        throw new Error('force rollback after transactional send');
+      }),
+    };
+
+    const poll = buildMemoryIngestOutboxPollHandler(db, boss);
+    await expect(poll([])).rejects.toThrow('force rollback after transactional send');
+
+    const rows = await db.select().from(event).where(eq(event.id, id));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].ingest_at).toBeNull();
+    expect(await realBoss.fetch(MEMORY_EVENT_INGEST_QUEUE)).toHaveLength(0);
   });
 });
 
