@@ -2,30 +2,25 @@
   "hooks": {
     "SessionStart": [
       {
-        "matcher": "startup|resume|clear|compact",
+        "matcher": "startup|resume",
         "hooks": [
           {
             "type": "command",
             "command": "node \"$(git rev-parse --show-toplevel)/.codex/hooks/codex-session-start.mjs\"",
-            "statusMessage": "Loading repo search guidance"
+            "statusMessage": "Recording dirty-file baseline"
           }
         ]
       }
     ],
     "PreToolUse": [
       {
-        "matcher": "Edit|Write",
+        "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$(git rev-parse --show-toplevel)/.codex/hooks/codex-apply-patch-json-guard.mjs\"",
-            "statusMessage": "Checking JSON patch"
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
+            "command": "node \"$(git rev-parse --show-toplevel)/.codex/hooks/codex-bash-workflow-guard.mjs\"",
+            "statusMessage": "Checking workflow friction"
+          },
           {
             "type": "command",
             "command": "node \"$(git rev-parse --show-toplevel)/.claude/hooks/git-guard.mjs\"",
@@ -41,22 +36,23 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"$(git rev-parse --show-toplevel)/.codex/hooks/codex-post-edit-check.mjs\"",
-            "statusMessage": "Checking edited files"
-          }
-        ]
-      },
-      {
         "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
             "command": "bash \"$(git rev-parse --show-toplevel)/.claude/hooks/post-fetch-divergence.sh\"",
             "statusMessage": "Checking upstream divergence"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/.codex/hooks/codex-stop-edit-check.mjs\"",
+            "statusMessage": "Checking dirty JSON files"
           }
         ]
       }
