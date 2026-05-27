@@ -3,12 +3,24 @@
 // This endpoint runs the same JudgeInvoker path as submit, returns the derived
 // advisory, and deliberately avoids event/FSRS writes. The committed review
 // rating remains user-controlled through /api/review/submit.
+//
+// YUK-100 (W-05 follow-up, 2026-05-27): cause SoT wiring.
+// Per `src/server/review/rating-advisor.ts` head comments + driver T-RA §1.1,
+// callers MUST pass the effective cause category so the partial-credit lean
+// (carelessness → 'good' / conceptual_error → 'again') actually fires. We read
+// the latest active failure attempt for the same question and resolve cause
+// via `effectiveCauseCategoryForFailureAttempt()` (CC-1 single-owner helper —
+// active user_cause wins over latest active agent judge). When no prior
+// failure attempt exists or no cause is attached, `causeCategory` is null and
+// the advisor falls back to the default partial-credit bucket.
 
 import { z } from 'zod';
 
 import { ActivityRef } from '@/core/schema/activity';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
+import { effectiveCauseCategoryForFailureAttempt } from '@/server/events/cause-policy';
+import { getFailureAttempts } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
 import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject-profile';
@@ -63,7 +75,20 @@ export async function POST(req: Request): Promise<Response> {
       subjectProfile,
     });
     const suggestedRating = ratingFromCoarseOutcome(invoked.result.coarse_outcome);
-    const advice = judgeResultToRatingAdvice(invoked.result);
+
+    // YUK-100 (W-05) — Resolve effective cause for the latest active failure
+    // attempt on this question, then thread it into the advisor so the
+    // carelessness/conceptual lean from driver T-RA §1.1 actually fires for
+    // partial-credit judge results. `causeCategory = null` is a legal fallback
+    // when there's no prior failure attempt or no attached cause; the advisor
+    // then keeps the default partial-credit bucket.
+    const recentFailures = await getFailureAttempts(db, {
+      questionIds: [questionId],
+      limit: 1,
+    });
+    const causeCategory =
+      recentFailures.length > 0 ? effectiveCauseCategoryForFailureAttempt(recentFailures[0]) : null;
+    const advice = judgeResultToRatingAdvice(invoked.result, { causeCategory });
 
     return Response.json({
       activity_ref: identity.activity_ref,

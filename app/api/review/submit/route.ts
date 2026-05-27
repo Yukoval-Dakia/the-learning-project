@@ -32,7 +32,8 @@ import { FsrsRating } from '@/core/schema/business';
 import { JudgeResultV2, type JudgeResultV2T } from '@/core/schema/capability';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { effectiveCauseCategoryForFailureAttempt } from '@/server/events/cause-policy';
+import { getFailureAttempts, writeEvent } from '@/server/events/queries';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
@@ -132,6 +133,27 @@ export async function POST(req: Request): Promise<Response> {
       judgeRoute = invoked.route;
       judgeTelemetry = invoked.telemetry;
     }
+
+    // YUK-100 (W-05) — Resolve effective cause for the latest active failure
+    // attempt on this question so the advisor's partial-credit lean (driver
+    // T-RA §1.1: carelessness → 'good' / conceptual → 'again') actually fires
+    // in production. We read OUTSIDE the FSRS transaction because:
+    //   - This route writes a `review` event (not an `attempt`); the cause
+    //     SoT being read belongs to a prior attempt on this question.
+    //   - Cause is advisory only — it does not affect FSRS scheduling — so it
+    //     does not need FSRS-row serialisation.
+    //   - Reading inside the txn would extend lock-hold time pointlessly.
+    // CC-1 invariant: this route never classifies cause itself. It only reads
+    // the helper output. `causeCategory = null` is a legal fallback when the
+    // question has no prior failure attempt or no attached cause.
+    const recentFailuresForCause = await getFailureAttempts(db, {
+      questionIds: [questionId],
+      limit: 1,
+    });
+    const adviceCauseCategory =
+      recentFailuresForCause.length > 0
+        ? effectiveCauseCategoryForFailureAttempt(recentFailuresForCause[0])
+        : null;
 
     // YUK-56 — Resolve final rating. In auto_rate mode the judge's suggested
     // rating overrides body.rating. If the judge can't auto-rate (unsupported,
@@ -236,14 +258,19 @@ export async function POST(req: Request): Promise<Response> {
       // partial-credit rating advisory and persist it on the event payload as
       // `judge_advice`. This is informational only: the user's `body.rating`
       // is still the committed rating (advisor never overrides). CC-1
-      // invariant: this route does not classify cause itself. This submit
-      // payload is result-only; a future cause-aware call site must pass
-      // effectiveCauseCategoryForFailureAttempt() output into
-      // judgeResultToRatingAdvice(..., { causeCategory }) before persisting.
+      // invariant: this route does not classify cause itself — it reads the
+      // SoT helper output via `effectiveCauseCategoryForFailureAttempt()`
+      // (resolved above as `adviceCauseCategory`) and threads it into the
+      // advisor so the partial-credit carelessness/conceptual lean fires.
+      // YUK-100 (W-05): this wiring replaced an inert pass-through where the
+      // advisor's `causeLean()` always saw `undefined` and never applied any
+      // lean. See `docs/audit/2026-05-27-wave1-postship-drift.md` §W-05.
       const judgeAdvicePayload = suppliedJudgeResult
         ? {
             judge_advice: {
-              ...judgeResultToRatingAdvice(suppliedJudgeResult),
+              ...judgeResultToRatingAdvice(suppliedJudgeResult, {
+                causeCategory: adviceCauseCategory,
+              }),
               source_capability_ref: suppliedJudgeResult.capability_ref,
               source_coarse_outcome: suppliedJudgeResult.coarse_outcome,
             },
