@@ -8,10 +8,11 @@ import { deterministicId, newId } from '@/core/ids';
 import type { EventT } from '@/core/schema/event';
 import { event, material_fsrs_state } from '@/db/schema';
 import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { effectiveCauseForFailureAttempt } from './cause-policy';
 import {
+  _setMemoryIngestEnqueuerForTests,
   getEventById,
   getEventChain,
   getEvents,
@@ -979,6 +980,10 @@ describe('writeEvent', () => {
     await resetDb();
   });
 
+  afterEach(() => {
+    _setMemoryIngestEnqueuerForTests(null);
+  });
+
   it('parses + inserts a valid attempt event; returns the id', async () => {
     const db = testDb();
     const id = newId();
@@ -1090,6 +1095,88 @@ describe('writeEvent', () => {
     // First write wins (no overwrite on conflict)
     const payload = rows[0].payload as { answer_md: string };
     expect(payload.answer_md).toBe('wrong');
+  });
+
+  // YUK-99 (W-01 / W-06) — ADR-0017 §"Write triggers (three paths)" #1: every
+  // event INSERT must enqueue a Mem0 ingest job carrying the event id, so the
+  // worker can fan out fact ingest + per-scope brief regen. This regression
+  // guards against the silent dead path that audit 2026-05-27 flagged: the
+  // ingest queue existed but no producer called `enqueueEventMemoryIngest`,
+  // so the fact layer never updated outside the daily sweep.
+  it('fires memory ingest enqueue after a successful INSERT', async () => {
+    const db = testDb();
+    const id = newId();
+    const enqueue = vi.fn(async () => {});
+    _setMemoryIngestEnqueuerForTests(enqueue);
+
+    const returnedId = await writeEvent(db, {
+      id,
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: 'q1',
+      outcome: 'failure',
+      payload: {
+        answer_md: 'wrong',
+        answer_image_refs: [],
+        referenced_knowledge_ids: [],
+      },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: new Date(),
+    });
+
+    expect(returnedId).toBe(id);
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    expect(enqueue).toHaveBeenCalledWith(id);
+  });
+
+  // YUK-99 — the enqueue MUST be fire-and-forget: the event row is the SoT and
+  // a failing background job must never roll back the INSERT or surface as a
+  // caller-visible exception. The daily brief sweep is the belt-and-braces.
+  it('swallows memory ingest enqueuer errors (fire-and-forget) but still persists the row', async () => {
+    const db = testDb();
+    const id = newId();
+    const enqueue = vi.fn(async () => {
+      throw new Error('boss unavailable');
+    });
+    _setMemoryIngestEnqueuerForTests(enqueue);
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const returnedId = await writeEvent(db, {
+        id,
+        session_id: null,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'attempt',
+        subject_kind: 'question',
+        subject_id: 'q1',
+        outcome: 'failure',
+        payload: {
+          answer_md: 'wrong',
+          answer_image_refs: [],
+          referenced_knowledge_ids: [],
+        },
+        caused_by_event_id: null,
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: new Date(),
+      });
+
+      expect(returnedId).toBe(id);
+      expect(enqueue).toHaveBeenCalledWith(id);
+      // The row must be persisted regardless — daily sweep will reingest.
+      const rows = await db.select().from(event).where(eq(event.id, id));
+      expect(rows).toHaveLength(1);
+      // The swallowed failure should still be observable via the error log.
+      expect(errorSpy).toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 });
 

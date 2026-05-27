@@ -5,6 +5,13 @@
 // this module. Other modules import named fns; raw `db.insert(event)` outside this
 // module is forbidden.
 //
+// YUK-99 (Wave 1 post-ship fix) — `writeEvent` also fires
+// `enqueueEventMemoryIngest` after every successful INSERT, wiring ADR-0017
+// §"Write triggers (three paths)" #1. The enqueue is fire-and-forget (the SoT
+// is the `event` row; missed ingest jobs get picked up by the daily sweep), and
+// the boss client + trigger module are loaded via dynamic import to keep this
+// module unit-test friendly (no static pg-boss dependency).
+//
 // Read API:
 //   - getFailureAttempts(db, opts?) — failure attempts + chained judge (mistake view)
 //   - getJudgeForAttempt(db, attemptEventId) — single chained judge
@@ -932,6 +939,45 @@ export async function getEventChain(db: DbLike, id: string): Promise<EventChain>
 // writeEvent — single-owner INSERT path (ADR-0005).
 // ============================================================================
 
+// YUK-99 — ADR-0017 §"Write triggers" #1 wiring. The default enqueuer
+// dynamic-imports `getStartedBoss` + `enqueueEventMemoryIngest` so unit-test
+// bundles never pull pg-boss in statically; failures are swallowed because the
+// `event` row (SoT) is already committed and the daily brief sweep is a
+// belt-and-braces safety net. Tests can override via
+// `_setMemoryIngestEnqueuerForTests` to assert wiring or skip the dynamic
+// import path entirely.
+type MemoryIngestEnqueuer = (eventId: string) => Promise<void>;
+
+async function defaultMemoryIngestEnqueuer(eventId: string): Promise<void> {
+  // Under vitest the `memory_event_ingest` queue is not registered (worker
+  // process doesn't run during tests), so attempting to send would log noise
+  // on every writeEvent call. Tests that need to assert the wiring inject
+  // their own enqueuer via `_setMemoryIngestEnqueuerForTests`.
+  if (process.env.VITEST) return;
+  try {
+    const [{ getStartedBoss }, { enqueueEventMemoryIngest }] = await Promise.all([
+      import('@/server/boss/client'),
+      import('@/server/memory/triggers'),
+    ]);
+    const boss = await getStartedBoss();
+    await enqueueEventMemoryIngest(boss, eventId);
+  } catch (err) {
+    // Fire-and-forget — event is already persisted; the daily sweep will
+    // backfill any missed ingest jobs.
+    console.error('[writeEvent] memory ingest enqueue failed', { eventId, err });
+  }
+}
+
+let memoryIngestEnqueuer: MemoryIngestEnqueuer = defaultMemoryIngestEnqueuer;
+
+/**
+ * Test-only override for the memory ingest enqueuer. Call with `null` to
+ * restore the default dynamic-import path. Production code must not call this.
+ */
+export function _setMemoryIngestEnqueuerForTests(fn: MemoryIngestEnqueuer | null): void {
+  memoryIngestEnqueuer = fn ?? defaultMemoryIngestEnqueuer;
+}
+
 export interface WriteEventInput {
   id: string;
   session_id?: string | null;
@@ -999,6 +1045,19 @@ export async function writeEvent(db: DbLike, input: WriteEventInput): Promise<st
       created_at: input.created_at ?? new Date(),
     })
     .onConflictDoNothing({ target: event.id });
+
+  // YUK-99 — fire ADR-0017 §"Write triggers" #1 (event creation → Mem0 ingest +
+  // brief regen). Fire-and-forget by design: the `event` row is the SoT, and
+  // failure here must never surface to the caller or roll back the INSERT —
+  // the daily brief sweep (`MEMORY_BRIEF_SWEEP_QUEUE`) is the belt-and-braces.
+  // W-06: `affected_scopes` already carries any `meta:orchestrator_self` tag
+  // produced by `computeAffectedScopes`, so wiring this caller revives that
+  // path automatically — no separate orchestrator chat trigger needed.
+  try {
+    await memoryIngestEnqueuer(input.id);
+  } catch (err) {
+    console.error('[writeEvent] memory ingest enqueue failed', { eventId: input.id, err });
+  }
 
   // Drizzle's onConflictDoNothing returns an empty result on no-op. The caller's
   // id IS the row's id (deterministic or assigned), so return it directly.
