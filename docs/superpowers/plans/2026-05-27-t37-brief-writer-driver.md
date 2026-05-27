@@ -37,7 +37,7 @@ Wave 1 启动前必跑：
 3. **`src/server/memory/brief.ts`** —— brief regen routine，single-owner write path for brief layer（满足 ADR-0015 §2 forward lock）
 4. **`src/server/memory/scope_tagger.ts`** —— `computeAffectedScopes(event_partial)` helper；从所有 event writer 调用
 5. **`src/server/memory/triggers.ts`** —— pg-boss subscribers for event-tagged regen + chat-derived `mem0.add()` + cron daily sweep
-6. **Per-prefix brief templates** —— 5 fixed scope prefix（global / subject:* / topic:* / mistake_cluster:* / meta:orchestrator_self）的模板（实装：`brief.ts` 顶部 `BRIEF_TEMPLATES` const inline；当模板长度增加再拆 `templates/*.md`）
+6. **Per-prefix brief templates** —— 5 fixed scope prefix（`global` / `subject:*` / `topic:*` / `mistake_cluster:*` / `meta:orchestrator_self`）的模板（实装：`brief.ts` 顶部 `BRIEF_TEMPLATES` const inline；当模板长度增加再拆 `templates/*.md`）
 7. **Anti-storm** —— pg-boss singletonKey dedup on regen jobs + SoT diff threshold in brief regen handler
 
 ### §1.2 已 ship 的前置（不重做）
