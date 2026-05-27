@@ -2119,6 +2119,127 @@ ol {
   color: var(--again-ink);
 }
 
+.block-tree-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.block-tree-panel-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.block-tree-renderer .artifact-section-body p {
+  margin: 0 0 var(--s-2);
+}
+
+.block-tree-renderer .artifact-section-body p:last-child {
+  margin-bottom: 0;
+}
+
+.block-tree-link-card,
+.block-tree-callout,
+.block-tree-auto-links {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--paper-raised);
+}
+
+.block-tree-link-card span,
+.block-tree-auto-links > strong {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
+
+.block-tree-editor-shell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--paper-raised);
+}
+
+.block-tree-editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+.block-tree-editor-toolbar-spacer {
+  flex: 1 1 80px;
+}
+
+.block-tree-editor-content {
+  min-height: 280px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--paper);
+  color: var(--ink);
+  outline: none;
+}
+
+.block-tree-editor-content:focus-visible,
+.block-tree-editor-content:focus-within {
+  border-color: var(--coral-line);
+  box-shadow: var(--shadow-focus);
+}
+
+.block-tree-node-view {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-left: 2px solid var(--coral-line);
+  border-radius: var(--r-2);
+  background: var(--paper-sunk);
+}
+
+.block-tree-node-view-meta {
+  margin-bottom: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
+
+.block-tree-node-view-content p {
+  margin: 0 0 var(--s-2);
+}
+
+.block-tree-paste-box {
+  border-top: 1px solid var(--line);
+  padding-top: var(--s-2);
+}
+
+.block-tree-paste-box summary {
+  cursor: pointer;
+  color: var(--ink-3);
+  font-size: var(--fs-caption);
+}
+
+.block-tree-mark-wrong-inline {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+.block-tree-mark-wrong-inline input {
+  min-width: 180px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  background: var(--paper-raised);
+  color: var(--ink);
+}
+
 /* ─── YUK-52 — note-prose: scoped rules for NoteRenderer ───────────────────
    Targets <NoteRenderer kind="note">. Sits beside .artifact-section-body
    so atomic note bodies get list / code / image / blockquote rhythm without

@@ -24,7 +24,7 @@
 |---|---|---|---|---|
 | P0 | [YUK-90](https://linear.app/yukoval-studios/issue/YUK-90) | TipTap Spike（fixture + mark_wrong + idle mock） | 2 | High |
 | P1 | [YUK-91](https://linear.app/yukoval-studios/issue/YUK-91) | Schema + ADR-0020 核心契约 land | 5 | High |
-| P2 | [YUK-92](https://linear.app/yukoval-studios/issue/YUK-92) | TipTap 编辑器接入 + ADR-0021 | 16 | High |
+| P2 | [YUK-92](https://linear.app/yukoval-studios/issue/YUK-92) | TipTap 编辑器接入 + ADR-0022 | 16 | High |
 | P3 | [YUK-93](https://linear.app/yukoval-studios/issue/YUK-93) | AI pipeline 重写（NoteGenerate type switch + LearningIntent 改） | 10 | High |
 | P4 | [YUK-94](https://linear.app/yukoval-studios/issue/YUK-94) | Living Note v0（mutator + idle + undo + 集中入口 + 分级） | 10 | High |
 | P5 | [YUK-95](https://linear.app/yukoval-studios/issue/YUK-95) | 反链 + cross_link UI + hub auto-sync | 8 | High |
@@ -44,8 +44,8 @@ P0 (spike, throwaway)
    ↓
 P1 (schema + ADR-0020) ─────┐
    ↓                         │
-P2 (editor) ───── ADR-0021 ──┤
-   ↓ (after ADR-0021)        │
+P2 (editor) ───── ADR-0022 ──┤
+   ↓ (after ADR-0022)        │
    ├──────────────────────── P3 (AI pipeline)
    ↓                                ↓
    ↓                         P4 (Living Note)
@@ -58,14 +58,14 @@ P7 (tests rework)
 ```
 
 **关键并发节点**：
-- **P2 与 P3 在 ADR-0021 落地后可并行**（P2 跑通 → 补 ADR-0021 锁 PM node schema → P3 用 ADR-0021 写 prompt schema 约束）
+- **P2 与 P3 在 ADR-0022 落地后可并行**（P2 跑通 → 补 ADR-0022 锁 PM node schema → P3 用 ADR-0022 写 prompt schema 约束）
 - **P3 → P4 sequential**（Living Note 依赖 AI pipeline 重写后的 patch op schema）
 - **P5 需要 P2 + P4 双完成**（反链 UI 在编辑器内 + auto-sync nightly worker 用 P3/P4 的 block schema）
 
 **人 trigger / verifier gate 决策点**（半自主模式）：
 1. P0 done → 人看 spike 结论 → 决定是否需要调 ADR-0020 → trigger P1
 2. P1 done → schema land → trigger P2
-3. P2 done + ADR-0021 written → 同时 trigger P3 + P4 准备（双 worktree）
+3. P2 done + ADR-0022 written → 同时 trigger P3 + P4 准备（双 worktree）
 4. P3 done → trigger P4 启动（如未并发）
 5. P4 done + P2 done → trigger P5
 6. P5 done → trigger P6
@@ -81,7 +81,7 @@ P7 (tests rework)
 | Wave 0 | P0 | 单 lane（spike，不 merge main） | 2 |
 | Wave 1 | P1 | 单 lane（schema） | 7 |
 | Wave 2 | P2 | 多 lane（editor 内部 5 lane） | 23 |
-| Wave 3 | P3 // P4 准备 | P2 done + ADR-0021 后双 worktree | 23 (start) |
+| Wave 3 | P3 // P4 准备 | P2 done + ADR-0022 后双 worktree | 23 (start) |
 | Wave 4 | P3 ship + P4 | sequential within wave | 43 |
 | Wave 5 | P5 | 单大 lane（hub auto-sync 是核心） | 51 |
 | Wave 6 | P6 | 多 lane（read-view + 节点页） | 57 |
@@ -111,7 +111,7 @@ P7 (tests rework)
 **Chain-merge order**：A → B → C（schema 先 land，事件 schema 跟随，doc 收尾）。
 **Per-phase plan**：`docs/superpowers/plans/2026-05-26-yuk88-p1-schema.md`（启动 P1 时写）
 
-### P2 — TipTap 编辑器接入 + ADR-0021
+### P2 — TipTap 编辑器接入 + ADR-0022
 
 **🔄 2026-05-27 master grill Q2 决策**：拆 **P2-basic + P2-polish** 两 sub-wave。理由：P1 schema migration 让 YUK-54 立即失效，必须有可用编辑器；TipTap 学习曲线在 basic 阶段就遇上，polish 阶段是 incremental；basic ship 后 P3/P4 可在真编辑器上验证而非仅 fixture；polish 可灵活推到 maintenance 不伤核心 UX。
 
@@ -121,12 +121,12 @@ P7 (tests rework)
 - Lane A: TipTap StarterKit 集成 + bundle 拆分（editor lazy load / `<BlockTreeRenderer>` SSR）
 - Lane B: 自定义 nodes（SemanticBlock / CrossLinkBlock / ArtifactRefBlock / CalloutBlock / AutoLinksContainer）+ NodeView 最小可用 UI
 - Lane D1: paste markdown + undo/redo + inline marks（StarterKit 基础上加固）
-- Lane E1: ADR-0021 draft（PM node schema 锁定，基于 basic 验证）
+- Lane E1: ADR-0022 draft（PM node schema 锁定，基于 basic 验证）
 
 **P2-polish (~4pt，1.5 周，可推后)**：
 - Lane C: Slash command + inline mention + cross_link picker UI
 - Lane D2: Drag-drop（block 级 + nested block）
-- Lane E2: ADR-0021 amendments（如有 polish 阶段 schema 微调）
+- Lane E2: ADR-0022 amendments（如有 polish 阶段 schema 微调）
 
 **Chain-merge order**：
 - P2-basic: A → B → D1 → E1（同 phase 内顺序）
@@ -227,7 +227,7 @@ P7 (tests rework)
 
 以下情况需新 ADR：
 
-- **P2 跑通后** → 写 ADR-0021（TipTap PM node schema 规约）
+- **P2 跑通后** → 写 ADR-0022（TipTap PM node schema 规约）
 - **P5 hub auto-sync 性能不达标**（>10k knowledge nodes）→ ADR 记录 partial index 策略
 - **P3 prompt token 预算超限** → 不进 ADR，进 phase audit
 - **P4 mutator-mode 与 propose-mode 分级粒度调整** → 进 ADR-0020 revision（不新建 ADR）
@@ -242,7 +242,7 @@ P7 (tests rework)
 1. **现在**：ultragoal init + 写 P0 phase spec → `/launch-phase` 跑 P0
 2. **P0 done**：人看 spike 结论 → ADR-0020 微调（如需）→ 写 P1 lane plan → `/launch-phase` 跑 P1
 3. **P1 done**：写 P2 lane plan → `/launch-phase` 跑 P2（多 lane 内部并行）
-4. **P2 done + ADR-0021 written**：写 P3 + P4 lane plan（可并行准备）→ 双 worktree `/launch-phase` 起 P3 与 P4 准备 lane
+4. **P2 done + ADR-0022 written**：写 P3 + P4 lane plan（可并行准备）→ 双 worktree `/launch-phase` 起 P3 与 P4 准备 lane
 5. **P3/P4 done**：写 P5 lane plan → `/launch-phase`
 6. **P5 done**：写 P6 lane plan → `/launch-phase`
 7. **P6 done**：写 P7 lane plan → `/launch-phase`（tests sweep）

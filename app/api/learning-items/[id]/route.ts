@@ -136,6 +136,7 @@ export async function GET(_req: Request, { params }: RouteParams): Promise<Respo
       id: string;
       type: string;
       version: number;
+      body_blocks: unknown;
       sections: unknown;
       generation_status: string;
       verification_status: string;

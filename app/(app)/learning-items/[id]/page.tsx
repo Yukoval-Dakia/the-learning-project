@@ -1,10 +1,11 @@
 'use client';
 
-import {
-  type ArtifactEmbeddedCheckStatus,
-  ArtifactSections,
-  type EmbeddedCheckQuestion,
-  type ArtifactSection as NoteSection,
+import { ArtifactBlockTree } from '@/ui/block-tree/ArtifactBlockTree';
+import type { BlockTreeDoc } from '@/ui/block-tree/types';
+import type {
+  ArtifactEmbeddedCheckStatus,
+  EmbeddedCheckQuestion,
+  ArtifactSection as NoteSection,
 } from '@/ui/components/ArtifactSections';
 import { NoteRenderer, VerificationBadge } from '@/ui/components/NoteRenderer';
 import { TeachingDrawer } from '@/ui/components/TeachingDrawer';
@@ -70,6 +71,7 @@ interface PrimaryArtifact {
   id: string;
   type: string;
   version: number;
+  body_blocks: BlockTreeDoc | null;
   sections: NoteSection[] | null;
   generation_status: 'pending' | 'ready' | 'failed';
   verification_status: VerificationStatus;
@@ -412,7 +414,7 @@ export default function LearningItemDetailPage() {
         )}
       </Card>
 
-      {/* Phase 2B — primary artifact (note) sections when present */}
+      {/* YUK-92 P2-basic — primary artifact block-tree note when present */}
       {data.primary_artifact && (
         <ArtifactView
           artifact={data.primary_artifact}
@@ -506,13 +508,15 @@ function ArtifactView({
       )}
       {artifact.generation_status === 'ready' && artifact.sections && (
         <>
-          <ArtifactSections
+          <ArtifactBlockTree
             artifactId={artifact.id}
             artifactVersion={artifact.version}
+            bodyBlocks={artifact.body_blocks}
             sections={artifact.sections}
             subjectProfile={subjectProfile}
             embeddedQuestions={artifact.embedded_questions}
             embeddedCheckStatus={artifact.embedded_check_status}
+            onArtifactSaved={onSectionSaved}
             onSectionSaved={onSectionSaved}
           />
           {artifact.verification_summary && (

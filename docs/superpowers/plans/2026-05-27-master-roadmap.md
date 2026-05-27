@@ -76,7 +76,7 @@
 | 1 | `omc ultragoal status`（每条 track 一个 ledger 或 共用 master，见 §6.3） | Roadmap state |
 | 2 | `docs/planning/v0.4-complete-form-roadmap.md` | 完全体合成 SoT（§3 八层 + §6 P0-P5 priority + §10 漂移清单 + §11 风险） |
 | 3 | `docs/superpowers/status.md` | Shipped baseline + 当前 phase（事实）|
-| 4 | `docs/adr/0001..0020`（17 + 1 = 18 accepted ADR）+ pending ADR-0021 | 决议层 |
+| 4 | `docs/adr/0001..0022`（含 ADR-0021 outbox + ADR-0022 PM schema） | 决议层 |
 | 5 | `CONTEXT.md` | 跨 agent 术语表（含 ADR-0020 新术语：block_id / body_blocks / knowledge_ids label） |
 | 6 | `docs/planning/2026-05-26-note-rich-doc.md` §0 | YUK-88 post-grill 决策矩阵 |
 | 7 | `docs/superpowers/plans/2026-05-26-yuk88-*.md` (3 份) | YUK-88 track 完整 plan + driver |
@@ -442,7 +442,7 @@ T-FF fixtures ────→ blocks Eval / acceptance test 自动化
 | T-D2 read tools (10 个 M2 全 ship，含 /today drawer 需要的 query_review_due / query_memory_brief / query_learning_item_context) | 25 | B |
 | T-PD doc sweep gap-filler | ~4 | (任 worktree gap) |
 
-**预期**：~46 pts，~9-10 周。出口：YUK-88 编辑器 basic ship（用户可编辑无 UX hole）；Layer 8 read tools 全 ship；ADR-0021 draft（基于 basic 验证）。
+**预期**：~46 pts，~9-10 周。出口：YUK-88 编辑器 basic ship（用户可编辑无 UX hole）；Layer 8 read tools 全 ship；ADR-0022 draft（基于 basic 验证）。
 
 #### Wave 3 (~5 周) — Propose tools 集中 ship（registry 冻结准备期）
 
