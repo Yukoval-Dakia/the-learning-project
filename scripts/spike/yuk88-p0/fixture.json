@@ -1,0 +1,81 @@
+{
+  "type": "doc",
+  "content": [
+    {
+      "type": "semanticBlock",
+      "attrs": { "id": "b_def_1", "semantic_kind": "definition" },
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            { "type": "text", "text": "宾语前置：宾语在特定句式中移到谓语前。" }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "semanticBlock",
+      "attrs": { "id": "b_mech_1", "semantic_kind": "mechanism" },
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            { "type": "text", "text": "判断机制：先找否定词、疑问代词，再看代词宾语是否前置。" }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "semanticBlock",
+      "attrs": { "id": "b_example_1", "semantic_kind": "example" },
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            { "type": "text", "text": "例：古之人不余欺也。这里 " },
+            {
+              "type": "crossLink",
+              "attrs": {
+                "target": { "artifact_id": "art_fake_hub", "block_id": "b_mech_1" },
+                "label": "回看机制"
+              }
+            },
+            { "type": "text", "text": " 可帮助定位。" }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "semanticBlock",
+      "attrs": { "id": "b_pitfall_1", "semantic_kind": "pitfall" },
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            { "type": "text", "text": "易错点：看到“之”不要直接判成宾语前置，先确认句法角色。" }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "semanticBlock",
+      "attrs": { "id": "b_check_1", "semantic_kind": "check" },
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            { "type": "text", "text": "检查：解释“何陋之有”中的宾语前置结构。" }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "artifactRefBlock",
+      "attrs": {
+        "id": "b_artifact_ref_1",
+        "target": { "artifact_id": "tool_quiz_fake_1", "kind": "tool_quiz" },
+        "label": "关联自检 quiz"
+      }
+    }
+  ]
+}

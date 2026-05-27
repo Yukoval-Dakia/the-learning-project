@@ -1,0 +1,26 @@
+{
+  "name": "yuk88-p0-tiptap-spike",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "spike": "tsx index.tsx",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tiptap/core": "3.23.6",
+    "@tiptap/pm": "3.23.6",
+    "@tiptap/react": "3.23.6",
+    "@tiptap/starter-kit": "3.23.6",
+    "jsdom": "27.2.0",
+    "react": "19.2.6",
+    "react-dom": "19.2.6"
+  },
+  "devDependencies": {
+    "@types/jsdom": "28.0.3",
+    "@types/node": "25.9.1",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "tsx": "4.22.3",
+    "typescript": "6.0.3"
+  }
+}

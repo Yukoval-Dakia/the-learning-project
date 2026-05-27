@@ -1,0 +1,821 @@
+{
+  "tiptap_version": "3.23.6",
+  "fixture_shape": "TipTap/ProseMirror doc.toJSON()",
+  "editor_text": "\n宾语前置：宾语在特定句式中移到谓语前。\n\n判断机制：先找否定词、疑问代词，再看代词宾语是否前置。\n\n例：古之人不余欺也。这里  可帮助定位。\n\n易错点：看到“之”不要直接判成宾语前置，先确认句法角色。\n\n检查：解释“何陋之有”中的宾语前置结构。\n",
+  "editor_dom_html_sample": "<div contenteditable=\"true\" role=\"textbox\" translate=\"no\" class=\"tiptap ProseMirror\" tabindex=\"0\"><section id=\"b_def_1\" semantic_kind=\"definition\" data-type=\"semantic-block\"><p>宾语前置：宾语在特定句式中移到谓语前。</p></section><section id=\"b_mech_1\" semantic_kind=\"mechanism\" data-type=\"semantic-block\"><p>判断机制：先找否定词、疑问代词，再看代词宾语是否前置。</p></section><section id=\"b_example_1\" semantic_kind=\"example\" data-type=\"semantic-block\"><p>例：古之人不余欺也。这里 <span target=\"[object Object]\" label=\"回看机制\" data-type=\"cross-link\">↗ 回看机制</span> 可帮助定位。</p></section><section id=\"b_pitfall_1\" semantic_kind=\"pitfall\" data-type=\"semantic-block\"><p>易错点：看到“之”不要直接判成宾语前置，先确认句法角色。</p></section><section id=\"b_check_1\" semantic_kind=\"check\" data-type=\"semantic-block\"><p>检查：解释“何陋之有”中的宾语前置结构。</p></section><aside id=\"b_artifact_ref_1\" target=\"[object Object]\" label=\"关联自检 quiz\" data-type=\"artifact-ref\"></aside></div>",
+  "editor_html_sample": "<section id=\"b_def_1\" semantic_kind=\"definition\" data-type=\"semantic-block\"><p>宾语前置：宾语在特定句式中移到谓语前。</p></section><section id=\"b_mech_1\" semantic_kind=\"mechanism\" data-type=\"semantic-block\"><p>判断机制：先找否定词、疑问代词，再看代词宾语是否前置。</p></section><section id=\"b_example_1\" semantic_kind=\"example\" data-type=\"semantic-block\"><p>例：古之人不余欺也。这里 <span target=\"[object Object]\" label=\"回看机制\" data-type=\"cross-link\">↗ 回看机制</span> 可帮助定位。</p></section><section id=\"b_pitfall_1\" semantic_kind=\"pitfall\" data-type=\"semantic-block\"><p>易错点：看到“之”不要直接判成宾语前置，先确认句法角色。</p></section><section id=\"b_check_1\" semantic_kind=\"check\" data-type=\"semantic-block\"><p>检查：解释“何陋之有”中的宾语前置结构。</p></section><aside id=\"b_artifact_ref_1\" target=\"[object Object]\" label=\"关联自检 quiz\" data-type=\"artifact-ref\"></aside>",
+  "round_trip": {
+    "type": "doc",
+    "content": [
+      {
+        "type": "semanticBlock",
+        "attrs": {
+          "id": "b_def_1",
+          "semantic_kind": "definition"
+        },
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "宾语前置：宾语在特定句式中移到谓语前。"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "semanticBlock",
+        "attrs": {
+          "id": "b_mech_1",
+          "semantic_kind": "mechanism"
+        },
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "判断机制：先找否定词、疑问代词，再看代词宾语是否前置。"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "semanticBlock",
+        "attrs": {
+          "id": "b_example_1",
+          "semantic_kind": "example"
+        },
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "例：古之人不余欺也。这里 "
+              },
+              {
+                "type": "crossLink",
+                "attrs": {
+                  "target": {
+                    "artifact_id": "art_fake_hub",
+                    "block_id": "b_mech_1"
+                  },
+                  "label": "回看机制"
+                }
+              },
+              {
+                "type": "text",
+                "text": " 可帮助定位。"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "semanticBlock",
+        "attrs": {
+          "id": "b_pitfall_1",
+          "semantic_kind": "pitfall"
+        },
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "易错点：看到“之”不要直接判成宾语前置，先确认句法角色。"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "semanticBlock",
+        "attrs": {
+          "id": "b_check_1",
+          "semantic_kind": "check"
+        },
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "检查：解释“何陋之有”中的宾语前置结构。"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "artifactRefBlock",
+        "attrs": {
+          "id": "b_artifact_ref_1",
+          "target": {
+            "artifact_id": "tool_quiz_fake_1",
+            "kind": "tool_quiz"
+          },
+          "label": "关联自检 quiz"
+        }
+      }
+    ]
+  },
+  "split_merge_mark_wrong": {
+    "before": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "semanticBlock",
+          "attrs": {
+            "id": "b_def_1",
+            "semantic_kind": "definition"
+          },
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "宾语前置：宾语在特定句式中移到谓语前。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "semanticBlock",
+          "attrs": {
+            "id": "b_mech_1",
+            "semantic_kind": "mechanism"
+          },
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "判断机制：先找否定词、疑问代词，再看代词宾语是否前置。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "semanticBlock",
+          "attrs": {
+            "id": "b_example_1",
+            "semantic_kind": "example"
+          },
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "例：古之人不余欺也。这里 "
+                },
+                {
+                  "type": "crossLink",
+                  "attrs": {
+                    "target": {
+                      "artifact_id": "art_fake_hub",
+                      "block_id": "b_mech_1"
+                    },
+                    "label": "回看机制"
+                  }
+                },
+                {
+                  "type": "text",
+                  "text": " 可帮助定位。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "semanticBlock",
+          "attrs": {
+            "id": "b_pitfall_1",
+            "semantic_kind": "pitfall"
+          },
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "易错点：看到“之”不要直接判成宾语前置，先确认句法角色。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "semanticBlock",
+          "attrs": {
+            "id": "b_check_1",
+            "semantic_kind": "check"
+          },
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "检查：解释“何陋之有”中的宾语前置结构。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "artifactRefBlock",
+          "attrs": {
+            "id": "b_artifact_ref_1",
+            "target": {
+              "artifact_id": "tool_quiz_fake_1",
+              "kind": "tool_quiz"
+            },
+            "label": "关联自检 quiz"
+          }
+        }
+      ]
+    },
+    "split": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "semanticBlock",
+          "attrs": {
+            "id": "b_def_1",
+            "semantic_kind": "definition"
+          },
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "宾语前置：宾语在特定句式中移到谓语前。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "semanticBlock",
+          "attrs": {
+            "id": "b_def_new",
+            "semantic_kind": "definition"
+          },
+          "content": [
+            {
+              "type": "paragraph"
+            }
+          ]
+        },
+        {
+          "type": "semanticBlock",
+          "attrs": {
+            "id": "b_mech_1",
+            "semantic_kind": "mechanism"
+          },
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "判断机制：先找否定词、疑问代词，再看代词宾语是否前置。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "semanticBlock",
+          "attrs": {
+            "id": "b_example_1",
+            "semantic_kind": "example"
+          },
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "例：古之人不余欺也。这里 "
+                },
+                {
+                  "type": "crossLink",
+                  "attrs": {
+                    "target": {
+                      "artifact_id": "art_fake_hub",
+                      "block_id": "b_mech_1"
+                    },
+                    "label": "回看机制"
+                  }
+                },
+                {
+                  "type": "text",
+                  "text": " 可帮助定位。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "semanticBlock",
+          "attrs": {
+            "id": "b_pitfall_1",
+            "semantic_kind": "pitfall"
+          },
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "易错点：看到“之”不要直接判成宾语前置，先确认句法角色。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "semanticBlock",
+          "attrs": {
+            "id": "b_check_1",
+            "semantic_kind": "check"
+          },
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "检查：解释“何陋之有”中的宾语前置结构。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "artifactRefBlock",
+          "attrs": {
+            "id": "b_artifact_ref_1",
+            "target": {
+              "artifact_id": "tool_quiz_fake_1",
+              "kind": "tool_quiz"
+            },
+            "label": "关联自检 quiz"
+          }
+        }
+      ]
+    },
+    "splitProjection": [
+      {
+        "block_id": "b_def_1",
+        "wrong": true
+      },
+      {
+        "block_id": "b_def_new",
+        "wrong": false
+      },
+      {
+        "block_id": "b_mech_1",
+        "wrong": false
+      },
+      {
+        "block_id": "b_example_1",
+        "wrong": false
+      },
+      {
+        "block_id": "b_pitfall_1",
+        "wrong": false
+      },
+      {
+        "block_id": "b_check_1",
+        "wrong": false
+      },
+      {
+        "block_id": "b_artifact_ref_1",
+        "wrong": false
+      }
+    ],
+    "merged": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "semanticBlock",
+          "attrs": {
+            "id": "b_def_1",
+            "semantic_kind": "definition"
+          },
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "宾语前置：宾语在特定句式中移到谓语前。"
+                }
+              ]
+            },
+            {
+              "type": "paragraph"
+            }
+          ]
+        },
+        {
+          "type": "semanticBlock",
+          "attrs": {
+            "id": "b_mech_1",
+            "semantic_kind": "mechanism"
+          },
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "判断机制：先找否定词、疑问代词，再看代词宾语是否前置。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "semanticBlock",
+          "attrs": {
+            "id": "b_example_1",
+            "semantic_kind": "example"
+          },
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "例：古之人不余欺也。这里 "
+                },
+                {
+                  "type": "crossLink",
+                  "attrs": {
+                    "target": {
+                      "artifact_id": "art_fake_hub",
+                      "block_id": "b_mech_1"
+                    },
+                    "label": "回看机制"
+                  }
+                },
+                {
+                  "type": "text",
+                  "text": " 可帮助定位。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "semanticBlock",
+          "attrs": {
+            "id": "b_pitfall_1",
+            "semantic_kind": "pitfall"
+          },
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "易错点：看到“之”不要直接判成宾语前置，先确认句法角色。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "semanticBlock",
+          "attrs": {
+            "id": "b_check_1",
+            "semantic_kind": "check"
+          },
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "检查：解释“何陋之有”中的宾语前置结构。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "artifactRefBlock",
+          "attrs": {
+            "id": "b_artifact_ref_1",
+            "target": {
+              "artifact_id": "tool_quiz_fake_1",
+              "kind": "tool_quiz"
+            },
+            "label": "关联自检 quiz"
+          }
+        }
+      ]
+    },
+    "mergedProjection": [
+      {
+        "block_id": "b_def_1",
+        "wrong": true
+      },
+      {
+        "block_id": "b_mech_1",
+        "wrong": false
+      },
+      {
+        "block_id": "b_example_1",
+        "wrong": false
+      },
+      {
+        "block_id": "b_pitfall_1",
+        "wrong": false
+      },
+      {
+        "block_id": "b_check_1",
+        "wrong": false
+      },
+      {
+        "block_id": "b_artifact_ref_1",
+        "wrong": false
+      }
+    ]
+  },
+  "idle_mock": {
+    "deferred": {
+      "applied": false,
+      "reason": "deferred:editing"
+    },
+    "afterIdle": {
+      "presence": "idle",
+      "queued": 0,
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "semanticBlock",
+            "attrs": {
+              "id": "b_def_1",
+              "semantic_kind": "definition"
+            },
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "宾语前置：宾语在特定句式中移到谓语前。"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "semanticBlock",
+            "attrs": {
+              "id": "b_mech_1",
+              "semantic_kind": "mechanism"
+            },
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "判断机制：先找否定词、疑问代词，再看代词宾语是否前置。"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "semanticBlock",
+            "attrs": {
+              "id": "b_example_1",
+              "semantic_kind": "example"
+            },
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "例：古之人不余欺也。这里 "
+                  },
+                  {
+                    "type": "crossLink",
+                    "attrs": {
+                      "target": {
+                        "artifact_id": "art_fake_hub",
+                        "block_id": "b_mech_1"
+                      },
+                      "label": "回看机制"
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "text": " 可帮助定位。"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "semanticBlock",
+            "attrs": {
+              "id": "b_pitfall_1",
+              "semantic_kind": "pitfall"
+            },
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "AI patch deferred while user is editing."
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "semanticBlock",
+            "attrs": {
+              "id": "b_check_1",
+              "semantic_kind": "check"
+            },
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "检查：解释“何陋之有”中的宾语前置结构。"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "artifactRefBlock",
+            "attrs": {
+              "id": "b_artifact_ref_1",
+              "target": {
+                "artifact_id": "tool_quiz_fake_1",
+                "kind": "tool_quiz"
+              },
+              "label": "关联自检 quiz"
+            }
+          }
+        ]
+      }
+    },
+    "forced": 1,
+    "afterForced": {
+      "presence": "editing",
+      "queued": 0,
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "semanticBlock",
+            "attrs": {
+              "id": "b_def_1",
+              "semantic_kind": "definition"
+            },
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "宾语前置：宾语在特定句式中移到谓语前。"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "semanticBlock",
+            "attrs": {
+              "id": "b_mech_1",
+              "semantic_kind": "mechanism"
+            },
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "判断机制：先找否定词、疑问代词，再看代词宾语是否前置。"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "semanticBlock",
+            "attrs": {
+              "id": "b_example_1",
+              "semantic_kind": "example"
+            },
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "例：古之人不余欺也。这里 "
+                  },
+                  {
+                    "type": "crossLink",
+                    "attrs": {
+                      "target": {
+                        "artifact_id": "art_fake_hub",
+                        "block_id": "b_mech_1"
+                      },
+                      "label": "回看机制"
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "text": " 可帮助定位。"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "semanticBlock",
+            "attrs": {
+              "id": "b_pitfall_1",
+              "semantic_kind": "pitfall"
+            },
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "AI patch deferred while user is editing."
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "semanticBlock",
+            "attrs": {
+              "id": "b_check_1",
+              "semantic_kind": "check"
+            },
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "AI patch forced after timeout."
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "artifactRefBlock",
+            "attrs": {
+              "id": "b_artifact_ref_1",
+              "target": {
+                "artifact_id": "tool_quiz_fake_1",
+                "kind": "tool_quiz"
+              },
+              "label": "关联自检 quiz"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "conclusion": {
+    "pm_doc_shape": "viable",
+    "mark_wrong_anchor": "stable when split keeps original block id and creates one new id",
+    "idle_coordination": "defer while editing, flush on idle, force flush on timeout",
+    "adr_0020_adjustment": "P1/P2 should explicitly require editor split commands to preserve the left block attrs.id and mint a fresh id only for the new right block."
+  }
+}
