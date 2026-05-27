@@ -3,7 +3,8 @@
 // Pure-Node fs walker (mirrors tests/integration/session-single-owner.test.ts).
 // Three assertions:
 //   1. `db.insert(event)` only appears in the documented allowlist of writer
-//      modules.
+//      modules; `db.update(event)` stays confined to documented lifecycle
+//      owner modules.
 //   2. `db.update(learning_session)` only appears in src/server/session/.
 //   3. `db.insert/update(material_fsrs_state)` only appears in
 //      src/server/fsrs/state.ts (the new Step 9.A single-owner).
@@ -55,9 +56,14 @@ type Hit = string; // repo-relative path
 
 async function findWriteHits(
   tableName: string,
-  opts: { roots?: ReadonlyArray<string>; includeTests?: boolean } = {},
+  opts: {
+    roots?: ReadonlyArray<string>;
+    includeTests?: boolean;
+    ops?: ReadonlyArray<'insert' | 'update'>;
+  } = {},
 ): Promise<Hit[]> {
-  const re = new RegExp(`\\b(?:insert|update)\\s*\\(\\s*${tableName}\\s*[,)]`);
+  const ops = opts.ops ?? (['insert', 'update'] as const);
+  const re = new RegExp(`\\b(?:${ops.join('|')})\\s*\\(\\s*${tableName}\\s*[,)]`);
   const hits: Hit[] = [];
   for (const root of opts.roots ?? SCAN_ROOTS) {
     const files = await walkFiles(path.join(REPO_ROOT, root));
@@ -97,11 +103,24 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
       // Test fixture helpers
       'tests/helpers/',
     ] as const;
-    const hits = await findWriteHits('event');
+    const hits = await findWriteHits('event', { ops: ['insert'] });
     const violations = hits.filter((h) => !isAllowed(h, ALLOWED_EVENT_WRITERS));
     expect(
       violations,
       `Disallowed writers of \`event\` table found:\n  ${violations.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('db.update(event) appears only inside documented lifecycle owner modules', async () => {
+    const ALLOWED_EVENT_UPDATERS = [
+      // ADR-0021 transactional outbox stamp (`ingest_at`) owner.
+      'src/server/memory/triggers.ts',
+    ] as const;
+    const hits = await findWriteHits('event', { ops: ['update'] });
+    const violations = hits.filter((h) => !isAllowed(h, ALLOWED_EVENT_UPDATERS));
+    expect(
+      violations,
+      `Disallowed updaters of \`event\` table found:\n  ${violations.join('\n  ')}`,
     ).toEqual([]);
   });
 
