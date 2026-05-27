@@ -23,21 +23,24 @@ Foundation D M1 phase issue YUK-78 closes when this PR lands.
 |---|---|---|---|
 | 1 | LearningRecord migration | ✅ | ✅ |
 | 2 | doc alignment | 🟡 partial | 🟡 partial |
-| 3 | Read-only registry (first 6 read tools) | ⬜ | 🟡 3/6 (query_mistakes / query_events / get_attempt_context) |
+| 3 | Read-only registry (read tools) | ⬜ | ✅ 13/13 after M2 (M1 3 + M2 10) |
 | 4 | in-process MCP bridge over registry | ⬜ | ✅ |
-| 5 | context-specific readers | ⬜ | 🟡 1 composite reader (get_attempt_context) |
+| 5 | context-specific readers | ⬜ | ✅ get_attempt_context + record/question/review/item/memory composites |
 | 6 | proposal tools | ⬜ | ⬜ |
 | 7 | Copilot trace UI using `summarize()` | ⬜ | ⬜ |
 | 8 | remote MCP only if needed | ⬜ (Non-Goal) | ⬜ (Non-Goal) |
 
-M2 picks up step 3 completion (10 more read tools) + step 5 expansion. M3 lands step 7 Copilot drawer.
+M2 completed step 3 read coverage (10 more read tools) + step 5 expansion. M3 lands step 7 Copilot drawer.
 
-## 3. Read tool contract matrix (3 tools registered)
+## 3. Read tool contract matrix (13 read tools registered after M2)
 
 | Tool | input shape (filters) | output highlights | summarize sample | mirrorEvent | costClass |
 |---|---|---|---|---|---|
 | `query_mistakes` | `causeCategoryId? / knowledgeId? / dueWithinDays? / sinceDays? / limit? / includeVariants? / includeAttribution?` | mistake rows with cause + review_state + variants | `mistakes · 8 rows · 3 due · cause=concept` | when_user_visible | local |
 | `query_events` | `actorKind? / actorRef? / action? / subjectKind? / subjectId? / outcome? / causedByEventId? / sinceDays? / limit?` | event rows with `caused_by_event_id` for chain walking | `events · 12 rows · action=propose · since≤7d` | when_user_visible | local |
+| `get_subject_graph_overview` / `query_knowledge` / `expand_knowledge_subgraph` / `find_knowledge_paths` | subject / node / relation bounded graph filters | tree path + typed mesh summaries + local evidence | `knowledge · 之 · 1 nodes · 1 edges` | when_user_visible | local |
+| `query_records` / `get_record_context` / `get_question_context` | record/question/item ids + bounded include lists | LearningRecord, question lifecycle, attempt/review links | `record context · rec_x · mistake` | when_user_visible | local |
+| `get_review_due` / `get_learning_item_context` / `query_memory_brief` | due filters, learning_item id, memory scope | deterministic due queue, item context, derived memory brief | `review due · 2 rows · 1 new · 1 overdue` | when_user_visible | local |
 | `get_attempt_context` | `attemptEventId / timelineLimit?` | attempt + question + cause + per-question timeline + linked records | `attempt att_abcd · q=q_xx · cause=concept · timeline=4 · records=1` | when_user_visible | local |
 
 All three are Zod-guarded both ways (input + output). All three reuse existing readers (`getFailureAttempts`, raw `event` select, `getFailureAttemptById`, `getQuestionTimeline`, `listLearningRecords`) — zero new SQL.
@@ -85,7 +88,7 @@ Promotion task = M6 in the project. Until then, `experimental:tool_use` lives in
 ## 6. Deferred / known follow-ups
 
 - **KnowledgeReviewTask bridge migration**: Lane C deliberately did not refactor `KnowledgeReviewTask`'s custom `write_proposal` MCP server to use the new bridge. Its dispatcher contains inline routing for tree-shape vs mesh-shape mutations that don't map cleanly to a single DomainTool. Followup: register two DomainTools (`propose_knowledge_edge`, `propose_knowledge_mutation`) and switch the task when Lane M4 (propose tool registry) lands.
-- **Remaining read tools** (M2): `get_subject_graph_overview` / `query_knowledge` / `expand_knowledge_subgraph` / `find_knowledge_paths` (graph readers) + `get_review_due` / `query_records` / `get_record_context` / `get_question_context` / `get_learning_item_context` / `query_memory_brief`. Bridge already generic; each tool is ~150 LOC + db tests.
+- **Read tools M2**: `get_subject_graph_overview` / `query_knowledge` / `expand_knowledge_subgraph` / `find_knowledge_paths` (graph readers) + `get_review_due` / `query_records` / `get_record_context` / `get_question_context` / `get_learning_item_context` / `query_memory_brief` now registered via `registerCoreTools`; DB coverage lives in `src/server/ai/tools/read-tools-m2.test.ts`.
 - **Propose / write tools** (M4): `propose_knowledge_edge`, `propose_knowledge_mutation`, `attribute_mistake`, `propose_variant`, `propose_learning_item_completion`, `propose_learning_item_relearn`, `propose_record_links`, `propose_record_promotion`.
 - **Cost / latency budget**: `costClass` is declared but no enforcement layer reads it yet. Add budget caps when M3 Copilot drawer needs per-turn cost ceiling.
 - **soft-fail flag**: spec brief §1.6 #5 distinguishes soft-fail (`0 found`) from success in UI. Bridge currently treats both as `outcome='success'` with summary as the only differentiator. M3 ToolUseCard primitive should rely on `result_count`/`result_summary` to render distinctly.

@@ -802,15 +802,15 @@ worktrees/
 
 ### Card T-D2 — DomainTool Registry M2 (10 read tools 补完)
 
-- **Status**：⬜
+- **Status**：✅ implementation complete 2026-05-27
 - **pts**：~25
 - **Estimate**：6-8 周
-- **Driver doc**：⬜ 待写
+- **Driver doc**：本 card + Foundation D audit；standalone driver doc deferred
 - **Source spec**：`docs/superpowers/specs/2026-05-17-agent-context-tools-design.md` §Engineering Sequence step 5-6
 - **Tools (10 个)**：`get_subject_graph_overview` / `query_knowledge` / `expand_knowledge_subgraph` / `find_knowledge_paths` / `query_records` / `get_record_context` / `get_question_context` / `get_review_due` / `get_learning_item_context` / `query_memory_brief`（最后一个等 T-37）
-- **Forward-locks**：T-D3 / T-DR / T-D6 / T-OC
+- **Forward-locks**：T-D3 / T-DR / T-D6 / T-OC unblocked for read-context usage
 - **Blocked-by**：M1 ✓
-- **Linear**：⬜ 待建（建议建一个 Foundation D M2 epic + 10 sub-issue）
+- **Linear**：YUK-102 branch/commit marker；可后续拆 proposal/write M4 sub-issues
 
 ### Card T-DR — Dreaming Lane
 

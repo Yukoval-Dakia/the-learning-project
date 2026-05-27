@@ -4,8 +4,8 @@
 > 这里记的是 **项目走到了哪、下一站去哪、为什么这么走**，不是 commit log。
 > 维护规则：每完成一个 Phase 就 update 一次；不维护周度进度。
 
-**最后更新**：2026-05-27（**Wave 1 ship** —— T-37 brief writer + T-RA RatingAdvisor + T-66 teaching ask_check + T-88 P0 TipTap spike 同日全 ship；post-ship audit-drift 发现的 P1 silent dead path 当日合 closeout PR #163 (YUK-99/100) + iter2 PR #165 (YUK-101 13 findings band-aid)；Linear YUK-37/66/90/98/99/100 全 Done；详见 [`plans/2026-05-27-master-roadmap.md`](plans/2026-05-27-master-roadmap.md) §0.3）
-**当前 Phase**：Wave 1（master roadmap §5.1）✅ 收口。下一站候选（master roadmap §5.1 后续 Wave 顺序）：**Wave 2** YUK-88 Block Tree Note rebuild P1+P2（P0 spike findings → ADR-0020 微调 split-id-preserve）+ Foundation D M2 read tool full coverage (T-D2, 10 read tools)；~46pt / ~10 周。**Open architectural follow-up**：[YUK-101](https://linear.app/yukoval-studios/issue/YUK-101) transactional outbox for `writeEvent` → memory event ingest（iter2 PR 只是 band-aid，真正 outbox 重写未做）。详见 [`plans/2026-05-27-master-roadmap.md`](plans/2026-05-27-master-roadmap.md) §5.1 Wave 2。
+**最后更新**：2026-05-27（**Wave 2 implementation complete** —— YUK-88 P1 schema + ADR-0020、YUK-88 P2-basic TipTap block-tree editor + ADR-0022、Foundation D M2 10 read tools 全部落地；验证含 typecheck / lint / targeted DB + MCP bridge 回归）
+**当前 Phase**：Wave 2（master roadmap §5.1）✅ implementation complete；下一站候选：Wave 3 DomainTool propose tools / YUK-88 P3+P4 准备。**Open architectural follow-up**：[YUK-101](https://linear.app/yukoval-studios/issue/YUK-101) transactional outbox for `writeEvent` → memory event ingest（iter2 PR 只是 band-aid，真正 outbox 重写未做）。详见 [`plans/2026-05-27-master-roadmap.md`](plans/2026-05-27-master-roadmap.md) §5.1。
 **主分支**：`main` 已推 `origin`
 **路线图源**：[`docs/planning/v0.3-generalized-ai-learning-framework.md`](../planning/v0.3-generalized-ai-learning-framework.md) §1.5 是当前执行清单；root `PLANNING.md` v0.12 Phase 1-4 已标 historical
 
@@ -87,7 +87,7 @@ Conclusion: Foundation B schema extension and math profile were introduced in th
 ✅  in-process MCP bridge                     src/server/ai/tools/mcp-bridge.ts — generic wrap (YUK-81)
 ✅  query_events / get_attempt_context        2 more read tools using bridge contract (YUK-81)
 ✅  experimental:tool_use event mirror        ToolUseExperimental schema enforced; policy resolver + caller introspection (YUK-82)
-🟡  remaining 10 read tools                   M2 — subject_graph / knowledge / records / review_due / memory_brief variants
+✅  remaining 10 read tools                   M2 — graph / records / question / review_due / learning_item / memory_brief readers (YUK-102)
 ⬜  Copilot drawer MVP                        M3
 ⬜  propose / write DomainTools               M4
 ⬜  Phase 3 Global Coach Orchestrator         M5
@@ -108,6 +108,16 @@ M1 closeout audit: [`docs/audit/2026-05-26-copilot-tools-foundation.md`](../audi
 ```
 
 Wave 1 closeout doc：[`plans/2026-05-27-wave1-ready-to-launch.md`](plans/2026-05-27-wave1-ready-to-launch.md) §8 ship outcome。Post-ship audit-drift：[`docs/audit/2026-05-27-wave1-postship-drift.md`](../audit/2026-05-27-wave1-postship-drift.md)。
+
+### Wave 2 — YUK-88 P1/P2-basic + Foundation D M2 readers（2026-05-27）
+
+```
+✅  T-88 P1 schema + ADR-0020 block-tree contract     cde1ff4c (YUK-91) — body_blocks / knowledge_ids / artifact_block_ref / correction block_id rewrite
+✅  T-88 P2-basic TipTap block-tree editor            803901b0 (YUK-92) — lazy editor, JSON read renderer, block save API, ADR-0022
+✅  T-D2 DomainTool read tools full coverage          YUK-102 — 10 M2 readers registered; 13 read tools total with M1 bridge
+```
+
+T-D2 landed `get_subject_graph_overview`, `query_knowledge`, `expand_knowledge_subgraph`, `find_knowledge_paths`, `query_records`, `get_record_context`, `get_question_context`, `get_review_due`, `get_learning_item_context`, and `query_memory_brief` in `src/server/ai/tools/{knowledge-readers,context-readers}.ts`, covered by DB + MCP bridge regression tests.
 
 ### Foundation C — Judge Result Contract + Correction Event（ADR-0014 §4/§6）
 
