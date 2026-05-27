@@ -21,6 +21,7 @@ import { type EventT, parseEvent } from '@/core/schema/event';
 import type { CauseCategoryT, CauseSchemaT, FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
+import { computeAffectedScopes } from '@/server/memory/scope_tagger';
 import {
   type EffectiveTruth,
   activeEffectiveTruth,
@@ -942,6 +943,7 @@ export interface WriteEventInput {
   outcome?: string | null;
   payload: unknown;
   caused_by_event_id?: string | null;
+  affected_scopes?: string[];
   task_run_id?: string | null;
   cost_micro_usd?: number | null;
   created_at?: Date;
@@ -976,6 +978,8 @@ export async function writeEvent(db: DbLike, input: WriteEventInput): Promise<st
     cost_micro_usd: input.cost_micro_usd ?? undefined,
   });
 
+  const affectedScopes = input.affected_scopes ?? computeAffectedScopes(input);
+
   await db
     .insert(event)
     .values({
@@ -989,6 +993,7 @@ export async function writeEvent(db: DbLike, input: WriteEventInput): Promise<st
       outcome: input.outcome ?? null,
       payload: input.payload as Record<string, unknown>,
       caused_by_event_id: input.caused_by_event_id ?? null,
+      affected_scopes: affectedScopes,
       task_run_id: input.task_run_id ?? null,
       cost_micro_usd: input.cost_micro_usd ?? null,
       created_at: input.created_at ?? new Date(),
