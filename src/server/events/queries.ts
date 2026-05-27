@@ -942,29 +942,44 @@ export async function getEventChain(db: DbLike, id: string): Promise<EventChain>
 // YUK-99 — ADR-0017 §"Write triggers" #1 wiring. The default enqueuer
 // dynamic-imports `getStartedBoss` + `enqueueEventMemoryIngest` so unit-test
 // bundles never pull pg-boss in statically; failures are swallowed because the
-// `event` row (SoT) is already committed and the daily brief sweep is a
-// belt-and-braces safety net. Tests can override via
-// `_setMemoryIngestEnqueuerForTests` to assert wiring or skip the dynamic
-// import path entirely.
+// `event` row (SoT) is already committed. The proper recovery for missed
+// ingests (transactional outbox: scan `event` rows where `ingest_at IS NULL`,
+// enqueue, mark ingested) is captured in YUK-101 — until then, missed ingests
+// have NO automatic recovery; the daily brief sweep iterates briefs, not
+// orphaned events. Tests can override via `_setMemoryIngestEnqueuerForTests`.
 type MemoryIngestEnqueuer = (eventId: string) => Promise<void>;
 
 async function defaultMemoryIngestEnqueuer(eventId: string): Promise<void> {
-  // Under vitest the `memory_event_ingest` queue is not registered (worker
-  // process doesn't run during tests), so attempting to send would log noise
-  // on every writeEvent call. Tests that need to assert the wiring inject
-  // their own enqueuer via `_setMemoryIngestEnqueuerForTests`.
-  if (process.env.VITEST) return;
+  // YUK-101 (iter2 fix F15) — escape hatches:
+  //   VITEST: vitest sets this in both unit and DB pools; tests that need to
+  //   assert the wiring inject their own enqueuer via the setter.
+  //   SKIP_BOSS_INGEST: runtime opt-out for admin scripts (`pnpm tsx
+  //   scripts/...`) and REPL invocations that legitimately don't have a boss
+  //   worker available. Without this, every writeEvent in those contexts
+  //   logs an error.
+  if (process.env.VITEST || process.env.SKIP_BOSS_INGEST) return;
   try {
-    const [{ getStartedBoss }, { enqueueEventMemoryIngest }] = await Promise.all([
+    const [bossModule, triggersModule] = await Promise.all([
       import('@/server/boss/client'),
       import('@/server/memory/triggers'),
     ]);
-    const boss = await getStartedBoss();
-    await enqueueEventMemoryIngest(boss, eventId);
+    const boss = await bossModule.getStartedBoss();
+    // YUK-101 (iter2 fix F7) — cold-start race: app boots before worker has
+    // called registerMemoryHandlers' boss.createQueue. pg-boss send to an
+    // unregistered queue fails (PR YUK-99 self-documented this at line 953).
+    // Pre-creating the queue here is idempotent and dissolves the cold-start
+    // log flood. Cost: one extra small DB roundtrip per writeEvent call; the
+    // proper fix is to register queues at app boot, captured in YUK-101.
+    if (boss.createQueue) {
+      await boss.createQueue(triggersModule.MEMORY_EVENT_INGEST_QUEUE);
+    }
+    await triggersModule.enqueueEventMemoryIngest(boss, eventId);
   } catch (err) {
-    // Fire-and-forget — event is already persisted; the daily sweep will
-    // backfill any missed ingest jobs.
-    console.error('[writeEvent] memory ingest enqueue failed', { eventId, err });
+    // YUK-101 (iter2 fix F9) — prefix `[memory-ingest]` distinguishes the
+    // inner enqueuer failure (this branch) from any outer caller-supplied
+    // enqueuer rejection (logged via `.catch` at the writeEvent call site
+    // with prefix `[writeEvent]`).
+    console.error('[memory-ingest] enqueue failed', { eventId, err });
   }
 }
 
@@ -1046,18 +1061,37 @@ export async function writeEvent(db: DbLike, input: WriteEventInput): Promise<st
     })
     .onConflictDoNothing({ target: event.id });
 
-  // YUK-99 — fire ADR-0017 §"Write triggers" #1 (event creation → Mem0 ingest +
-  // brief regen). Fire-and-forget by design: the `event` row is the SoT, and
-  // failure here must never surface to the caller or roll back the INSERT —
-  // the daily brief sweep (`MEMORY_BRIEF_SWEEP_QUEUE`) is the belt-and-braces.
-  // W-06: `affected_scopes` already carries any `meta:orchestrator_self` tag
-  // produced by `computeAffectedScopes`, so wiring this caller revives that
-  // path automatically — no separate orchestrator chat trigger needed.
-  try {
-    await memoryIngestEnqueuer(input.id);
-  } catch (err) {
-    console.error('[writeEvent] memory ingest enqueue failed', { eventId: input.id, err });
-  }
+  // YUK-99 — fire ADR-0017 §"Write triggers" #1 (event creation → Mem0 ingest
+  // + brief regen). W-06: `affected_scopes` already carries any
+  // `meta:orchestrator_self` tag produced by `computeAffectedScopes`, so
+  // wiring this caller revives that path automatically.
+  //
+  // YUK-101 (iter2 fix F3) — true fire-and-forget: do NOT await the enqueue.
+  // Pre-iter2 the await blocked every writeEvent on a pg-boss.send round-trip
+  // and, when writeEvent ran inside `db.transaction(tx => ...)` (submit
+  // route, proposals/actions, mistakes, ingestion-import, ...), the await
+  // extended the surrounding lock-hold window. True fire-and-forget lets
+  // the INSERT commit on its own schedule and the enqueue races independently.
+  //
+  // YUK-101 (iter2 fix F11) — dropped the outer try/catch.
+  // `defaultMemoryIngestEnqueuer` already swallows in its own try/catch
+  // (logging via `[memory-ingest]`), so the outer was dead code in
+  // production. Test-injected enqueuers that throw surface here via
+  // `.catch(...)` and log via `[writeEvent]` — distinguishable from the
+  // inner default-path log.
+  //
+  // Known limitation (architectural — captured in YUK-101): the enqueue
+  // commits independently of `db` (when `db` is a `tx`, the enqueue still
+  // goes through the boss pool's own connection). A caller tx rollback after
+  // writeEvent returns leaves an orphan job; the worker no-ops on the
+  // missing row and the F4 `singletonKey` collapses subsequent duplicates.
+  // The transactional outbox in YUK-101 is the deep fix.
+  void memoryIngestEnqueuer(input.id).catch((err) => {
+    console.error('[writeEvent] memory ingest enqueue rejected', {
+      eventId: input.id,
+      err,
+    });
+  });
 
   // Drizzle's onConflictDoNothing returns an empty result on no-op. The caller's
   // id IS the row's id (deterministic or assigned), so return it directly.

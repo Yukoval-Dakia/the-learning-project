@@ -15,6 +15,12 @@ export const MEMORY_EVENT_INGEST_QUEUE = 'memory_event_ingest';
 export const MEMORY_BRIEF_REGEN_QUEUE = 'memory_brief_regen';
 export const MEMORY_BRIEF_SWEEP_QUEUE = 'memory_brief_sweep';
 const REGEN_SINGLETON_SECONDS = 6 * 60;
+// YUK-101 (iter2 fix F4) — singletonKey window for `memory_event_ingest`.
+// Within this window pg-boss collapses duplicate sends for the same
+// `event_id` key into one job. Mirrors REGEN_SINGLETON_SECONDS. The proper
+// idempotency fix (transactional outbox: event row carries ingest_at; a
+// separate poller enqueues once) is captured in YUK-101 follow-up.
+const INGEST_SINGLETON_SECONDS = 6 * 60;
 
 type BossLike = {
   createQueue?(name: string): Promise<unknown>;
@@ -39,7 +45,26 @@ async function defaultLoadEvent(db: Db, eventId: string): Promise<MemoryEventInp
 }
 
 export async function enqueueEventMemoryIngest(boss: Pick<BossLike, 'send'>, eventId: string) {
-  await boss.send(MEMORY_EVENT_INGEST_QUEUE, { event_id: eventId });
+  // YUK-101 (iter2 fix F4) — singletonKey dedupes ingest jobs for the same
+  // event id within INGEST_SINGLETON_SECONDS. Why:
+  //   1. `writeEvent` retries (deterministic id → onConflictDoNothing no-op)
+  //      re-enqueue the same event id; without singletonKey, each retry would
+  //      ingest into Mem0 again (Mem0 add is not content-hash idempotent).
+  //   2. Tx-rollback orphans: the enqueue commits independently of the caller
+  //      tx; if the surrounding tx rolls back, the worker handler no-ops on
+  //      the missing row. If the caller later retries writeEvent with the
+  //      same id, the second enqueue collapses into the orphan singleton slot
+  //      rather than producing a fresh duplicate.
+  // singletonNextSlot is intentionally omitted — for ingest we want the
+  // duplicate dropped, not queued for the next slot.
+  await boss.send(
+    MEMORY_EVENT_INGEST_QUEUE,
+    { event_id: eventId },
+    {
+      singletonKey: `memory.ingest.${eventId}`,
+      singletonSeconds: INGEST_SINGLETON_SECONDS,
+    },
+  );
 }
 
 export async function enqueueBriefRegen(boss: Pick<BossLike, 'send'>, scopeKey: string) {
