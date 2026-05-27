@@ -41,9 +41,15 @@
 - Track 1 follow-up M1: wenyan causeCategories (YUK-83) / today KPI (YUK-84) / Note 申诉 (YUK-85)
 - pg-boss 12 队列在跑（含 maintenance / variant / OCR / session-summary）
 
-**In-flight (current branch `docs/yuk-88-yuk-89-note-followup`)**：
-- YUK-88 planning：post-grill spec + ADR-0020 + 3 driver docs（master roadmap = 本文档）
-- YUK-37 brief writer Phase B：🟡 in progress
+**In-flight (current branch `claude/wave-1-launch-DHXfG`)**：
+- YUK-88 planning：post-grill spec + ADR-0020 + 4 driver docs + Wave 1 ready-to-launch doc（master roadmap = 本文档）
+- YUK-37 brief writer Phase B：⬜ pending 实施（audit F-04 + commit 1bca5b9 commit body 实证；估时 5pt → 13pt，per t37-brief-writer-driver §0.2）
+- Wave 1 launching：T-37 + T-RA worktree 并行 → T-88 P0 spike + T-66 接力
+
+**Audit baseline ack（per `docs/audit/2026-05-27-pre-yuk88-baseline-drift.md`, 2026-05-27）**：
+- **F-01** notes.md 整篇 ADR-0020 冲突 → YUK-88 P3 收尾前必须 rewrite（拆 YUK-{TBD-1}；不阻塞 Wave 1）
+- **F-02 / F-03** artifact 表 / `CorrectArtifactEvent.payload.section_id` pre-ADR-0020 形态 → YUK-88 P1 phase 范围内 resolve（expected baseline）
+- **F-04** `src/server/memory/` + `src/server/dreaming/` 目录缺失 → T-37 ship 时自然 resolve（Wave 1 worktree A 兑现）
 
 **Critical 缺位（按 v0.4 §6）**：
 - Layer 8 整层 ⬜（4 条 P0 line：DomainTool M2-M6 / Drawer / Dreaming / Global Coach）
@@ -120,7 +126,9 @@ ls -lt docs/audit/*drift* 2>/dev/null | head -3
 
 | Track | Status | pts 剩 | forward-locks | blocked-by | Linear |
 |---|---|---|---|---|---|
-| **T-37** ADR-0017 brief writer Phase B | 🟡 in progress | ~5 | Layer 7 Memory writer + Dreaming brief refresh | (none) | [YUK-37](https://linear.app/yukoval-studios/issue/YUK-37) |
+| **T-37** ADR-0017 brief writer Phase B | ⬜ pending 实施¹ | ~13 | Layer 7 Memory writer + Dreaming brief refresh | (none) | [YUK-37](https://linear.app/yukoval-studios/issue/YUK-37) ⚠️ Linear status 错标 Done |
+
+¹ T-37 status 校准 2026-05-27：原 5pt / 🟡 in progress；audit F-04 + commit 1bca5b9 commit body 双实证 `src/server/memory/` 未落地。YUK-37 acceptance 7 项独立实施项，重新估 13pt。Linear status flip 由用户在 UI 手动 reopen（commit message 在 Wave 1 ship 前不允许写 `Closes YUK-37`）。Driver：`docs/superpowers/plans/2026-05-27-t37-brief-writer-driver.md`。
 | **T-88** Block-Tree Note Rebuild (YUK-88) | 🟡 planning done | 61 | Layer 5 完全体 + Living Note v0 | (none) | [YUK-88](https://linear.app/yukoval-studios/issue/YUK-88) + YUK-90~97 |
 
 ### 2.3 ⬜ P0 — Critical (阻塞 first-class AI actor 承诺)
@@ -779,10 +787,10 @@ worktrees/
 
 ### Card T-37 — ADR-0017 Brief Writer Phase B
 
-- **Status**：🟡 in progress (YUK-37)
-- **pts**：~5 剩
-- **Estimate**：1-2 周
-- **Driver doc**：⬜ 待写（建议仿 YUK-88 driver 简版）
+- **Status**：⬜ pending 实施 (YUK-37) ⚠️ Linear 错标 Done，需用户在 Linear UI 手动 reopen → In Progress
+- **pts**：~13 剩（2026-05-27 重估；原 5pt 严重低估，audit F-04 + driver §0.2 实证）
+- **Estimate**：~3-4 周
+- **Driver doc**：[docs/superpowers/plans/2026-05-27-t37-brief-writer-driver.md](2026-05-27-t37-brief-writer-driver.md) ✓
 - **Forward-locks**：Layer 7 Memory writer + T-DR Dreaming + T-D2 query_memory_brief
 - **Blocked-by**：(none)
 - **Linear**：YUK-37
