@@ -3,7 +3,9 @@
 **Doc 日期**：2026-05-27
 **Lane**：`lane/t37-brief-writer` (worktree A)
 **Parent driver**：[docs/superpowers/plans/2026-05-27-t37-brief-writer-driver.md](2026-05-27-t37-brief-writer-driver.md)
-**Status**：implementation resumed — master decisions Q1-Q4 accepted; unit-testable Phase B pieces now proceeding in lane
+**Status**：implementation complete in lane; validation green except external
+Chinese embedding recall cannot be truthfully executed on this machine without an
+`OPENAI_API_KEY`.
 
 ---
 
@@ -190,9 +192,28 @@ and write-path support because `scope_tagger` depends on this field.
 - `mem0ai@3.0.4` added to `package.json` dependencies
 - `pnpm-lock.yaml` regenerated
 - This spike-findings doc
+- `src/server/memory/{client,brief,scope_tagger,triggers}.ts` implemented with
+  mocked unit coverage
+- `event.affected_scopes` schema column + GIN index landed in migration
+- `memory_brief_note.latest_evidence_at` + `evidence_count` landed in migration
+- `docker-compose.yml` Postgres image switched to `pgvector/pgvector:pg16`
 
-**No code under `src/server/memory/` yet** — withheld pending master decision on
-§3.1 embedder + §3.2 environment.
+### §4.1 Validation evidence from this lane
+
+- `pnpm view mem0ai version` -> `3.0.4`
+- Context7 `/mem0ai/mem0` docs confirm TypeScript `Memory` import from
+  `mem0ai/oss`, pgvector config shape, and `add` / `search` option shape.
+- `pnpm typecheck` passed.
+- `pnpm lint` passed.
+- `pnpm test:unit` passed: 79 files / 675 tests.
+- `pnpm test:db` passed with `pgvector/pgvector:pg16`: 125 files / 987 passed
+  + 1 todo.
+- `pnpm test:migration` passed: 10 migration-smoke tests, including vector
+  extension + `event.affected_scopes` GIN index.
+- `pnpm audit:schema` passed.
+- `pnpm audit:partition` passed.
+- `DATABASE_URL=postgres://loom:loom@127.0.0.1:5433/loom?sslmode=disable pnpm build`
+  passed.
 
 ---
 
@@ -212,9 +233,9 @@ and write-path support because `scope_tagger` depends on this field.
 | ADR-0017 risk | Spike verdict | Action |
 |---|---|---|
 | Mem0 OSS maturity | ✅ 3.0.4 GA, `Memory` class stable, `mem0ai/oss` submodule documented | Proceed; thin wrapper in `client.ts` preserves exit ladder |
-| Chinese embedding quality | ⚠️ **deferred** — depends on Q1 answer | Block deliverable 1 spike final verdict until master picks embedder |
+| Chinese embedding quality | ⚠️ **not executed on this machine** — Q1 is answered as OpenAI `text-embedding-3-small`, but the runtime has no `OPENAI_API_KEY` to run the 34-event recall probe | Do not claim recall pass until a host with `OPENAI_API_KEY` runs the PoC recall probe; wrapper fails fast when the key is missing |
 | Mem0 internal LLM bypass xiaomi | ✅ env-var swap works (§2.3) | Document in `client.ts` constructor: "Mutates process.env" |
-| Anti-storm singletonKey ineffective | not tested yet | unblock pending §3.2 — DB-backed pg-boss tests required |
+| Anti-storm singletonKey ineffective | ✅ unit-tested: `enqueueBriefRegen` sends per-scope `singletonKey` + 360s window | DB-backed pg-boss behavior is delegated to pg-boss; lane verifies our enqueue contract |
 | LLM cost overrun | not tested yet | unblock pending §3.2 |
 
 ---
