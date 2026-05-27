@@ -1,7 +1,7 @@
 import { knowledge, learning_item } from '@/db/schema';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import { planTeachingTurn } from './teaching';
+import { type TeachingError, planTeachingTurn } from './teaching';
 
 describe('planTeachingTurn', () => {
   beforeEach(async () => {
@@ -57,5 +57,98 @@ describe('planTeachingTurn', () => {
     expect(turn.kind).toBe('explain');
     const ctx = runTaskFn.mock.calls[0]?.[2] as unknown as { subjectProfile?: { id: string } };
     expect(ctx.subjectProfile?.id).toBe('math');
+  });
+
+  it('parses ask_check structured_question payload from TeachingTurnTask', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(learning_item).values({
+      id: 'li_check',
+      source: 'learning_intent',
+      title: '解释虚词之',
+      content: '能判断“之”的常见用法。',
+      knowledge_ids: [],
+      primary_artifact_id: null,
+      parent_learning_item_id: null,
+      child_learning_item_ids: [],
+      status: 'pending',
+      user_pinned: false,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+
+    const runTaskFn = vi.fn(async () => ({
+      text: JSON.stringify({
+        kind: 'ask_check',
+        text_md: '这里的“之”指代什么？',
+        suggested_next: 'continue',
+        structured_question: {
+          kind: 'short_answer',
+          prompt_md: '这里的“之”指代什么？',
+          reference_md: '之在这里作代词，指代前文的人或事。',
+          judge_kind_override: 'semantic',
+          rubric_json: {
+            criteria: [{ name: 'correctness', weight: 1, descriptor: '覆盖核心要点' }],
+            required_points: ['说明之作代词', '说明指代前文'],
+          },
+        },
+      }),
+    }));
+
+    const turn = await planTeachingTurn({
+      db,
+      sessionId: 's_check',
+      learningItemId: 'li_check',
+      runTaskFn,
+    });
+
+    expect(turn).toMatchObject({
+      kind: 'ask_check',
+      structured_question: {
+        kind: 'short_answer',
+        prompt_md: '这里的“之”指代什么？',
+        reference_md: '之在这里作代词，指代前文的人或事。',
+        judge_kind_override: 'semantic',
+      },
+    });
+  });
+
+  it('rejects ask_check output without structured_question', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(learning_item).values({
+      id: 'li_check_missing',
+      source: 'learning_intent',
+      title: '解释虚词之',
+      content: '能判断“之”的常见用法。',
+      knowledge_ids: [],
+      primary_artifact_id: null,
+      parent_learning_item_id: null,
+      child_learning_item_ids: [],
+      status: 'pending',
+      user_pinned: false,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+
+    await expect(
+      planTeachingTurn({
+        db,
+        sessionId: 's_check_missing',
+        learningItemId: 'li_check_missing',
+        runTaskFn: vi.fn(async () => ({
+          text: JSON.stringify({
+            kind: 'ask_check',
+            text_md: '这里的“之”指代什么？',
+            suggested_next: 'continue',
+          }),
+        })),
+      }),
+    ).rejects.toMatchObject({
+      name: 'TeachingError',
+      code: 'llm_parse_failed',
+    } satisfies Partial<TeachingError>);
   });
 });

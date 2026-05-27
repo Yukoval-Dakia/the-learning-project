@@ -37,6 +37,7 @@ export const QuestionSource = z.enum([
   'vision_paper',
   'reverse_mark',
   'mistake_variant',
+  'teaching_check',
 ]);
 
 export const MistakeSource = z.enum([

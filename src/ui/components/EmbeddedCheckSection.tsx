@@ -61,9 +61,15 @@ interface EmbeddedCheckSectionProps {
   questions: EmbeddedCheckQuestion[];
   /** Subject's renderConfig.notation — passed through to MathMarkdown for KaTeX gating. */
   notation?: 'latex' | 'wenyan' | 'plaintext' | 'code';
+  readyLabel?: string;
 }
 
-export function EmbeddedCheckSection({ status, questions, notation }: EmbeddedCheckSectionProps) {
+export function EmbeddedCheckSection({
+  status,
+  questions,
+  notation,
+  readyLabel: customReadyLabel,
+}: EmbeddedCheckSectionProps) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [feedback, setFeedback] = useState<Record<string, AttemptResult>>({});
   const [submitting, setSubmitting] = useState<Record<string, boolean>>({});
@@ -97,7 +103,7 @@ export function EmbeddedCheckSection({ status, questions, notation }: EmbeddedCh
     );
   }
 
-  const readyLabel = `自检题 · ${questions.length} 题`;
+  const readyLabel = customReadyLabel ?? `自检题 · ${questions.length} 题`;
 
   async function submit(question: EmbeddedCheckQuestion) {
     const answer = answers[question.id]?.trim();
