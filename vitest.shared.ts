@@ -38,6 +38,7 @@ export const fastTestInclude = [
   'src/server/r2.test.ts',
   'src/server/review/activity-ref.test.ts',
   'src/server/review/fsrs.test.ts',
+  'src/server/review/rating-advisor.test.ts',
   'src/server/session/guards.test.ts',
   'src/server/session/index.test.ts',
   'src/subjects/math/fixtures/index.test.ts',

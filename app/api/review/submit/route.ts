@@ -29,7 +29,7 @@ import { z } from 'zod';
 import { newId } from '@/core/ids';
 import { ActivityRef } from '@/core/schema/activity';
 import { FsrsRating } from '@/core/schema/business';
-import type { JudgeResultV2T } from '@/core/schema/capability';
+import { JudgeResultV2, type JudgeResultV2T } from '@/core/schema/capability';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
@@ -40,6 +40,7 @@ import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject
 import { normalizeReviewSubmitActivityRef } from '@/server/review/activity-ref';
 import { activeEffectiveTruth } from '@/server/review/effective-truth';
 import { scheduleReview } from '@/server/review/fsrs';
+import { judgeResultToRatingAdvice } from '@/server/review/rating-advisor';
 import { eq, sql } from 'drizzle-orm';
 
 export const runtime = 'nodejs';
@@ -63,6 +64,15 @@ const SubmitBody = z.object({
   // coarse_outcome) overrides `rating`. Requires `response_md` non-empty.
   // Rejects with 422 when the judge returns coarse_outcome='unsupported'.
   auto_rate: z.boolean().default(false),
+  // YUK-98 (T-RA, 2026-05-27) — optional client-supplied judge result. When the
+  // UI has already run a judge in the prior /judge step it can submit the
+  // result back here so the advisory derivation (rating-advisor.ts) gets a
+  // trace and the event payload retains `judge_advice` for later analysis.
+  // Old clients that don't send this field still work — advisor stays silent.
+  // The route NEVER auto-commits the advisory rating: `body.rating` remains
+  // the source-of-truth (advisor is informational; user override wins per
+  // YUK-98 driver §1.1).
+  judge_result_v2: JudgeResultV2.optional(),
 });
 
 type CoarseOutcome = JudgeResultV2T['coarse_outcome'];
@@ -240,6 +250,25 @@ export async function POST(req: Request): Promise<Response> {
             }
           : {};
 
+      // YUK-98 (T-RA) — If the client supplied `judge_result_v2`, derive the
+      // partial-credit rating advisory and persist it on the event payload as
+      // `judge_advice`. This is informational only: the user's `body.rating`
+      // is still the committed rating (advisor never overrides). CC-1
+      // invariant: this route does not classify cause itself — when a future
+      // call site has the effective cause from
+      // effectiveCauseCategoryForFailureAttempt() it should pass it via the
+      // judge_result_v2 surface. For now we derive from the judge result
+      // alone (cause-aware advisory is wired in §P3 follow-ups).
+      const judgeAdvicePayload = body.judge_result_v2
+        ? {
+            judge_advice: {
+              ...judgeResultToRatingAdvice(body.judge_result_v2),
+              source_capability_ref: body.judge_result_v2.capability_ref,
+              source_coarse_outcome: body.judge_result_v2.coarse_outcome,
+            },
+          }
+        : {};
+
       await writeEvent(tx, {
         id: eventId,
         session_id: body.session_id ?? null,
@@ -259,6 +288,7 @@ export async function POST(req: Request): Promise<Response> {
           // legacy callers that never sent it.
           ...(typeof body.latency_ms === 'number' ? { duration_ms: body.latency_ms } : {}),
           ...judgePayload,
+          ...judgeAdvicePayload,
         },
         caused_by_event_id: null,
         task_run_id: null,

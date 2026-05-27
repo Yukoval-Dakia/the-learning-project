@@ -656,4 +656,94 @@ describe('POST /api/review/submit', () => {
     // With locking, second sees reps=1 and writes reps=2.
     expect(finalState.reps).toBe(2);
   });
+
+  // YUK-98 (T-RA) — RatingAdvisor wiring on /api/review/submit. Body schema
+  // accepts an optional `judge_result_v2` so the UI can ship the prior judge
+  // result back for advisory derivation + event-payload trace. Old clients
+  // that do not send it stay green (backward-compat); the advisor never
+  // overrides body.rating (informational only).
+  describe('YUK-98 — judge_result_v2 advisory wiring', () => {
+    it('backward-compat: submit without judge_result_v2 still 200 and writes event without judge_advice', async () => {
+      await seedQuestion('q_ra_bc');
+
+      const res = await POST(submitReq({ mistake_id: 'q_ra_bc', rating: 'good' }));
+      expect(res.status).toBe(200);
+
+      const events = await testDb()
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_ra_bc')));
+      expect(events).toHaveLength(1);
+      const payload = events[0].payload as Record<string, unknown>;
+      expect(payload.judge_advice).toBeUndefined();
+    });
+
+    it('submits judge_result_v2=partial → event payload contains judge_advice with rating + reason + evidence_score', async () => {
+      await seedQuestion('q_ra_partial');
+
+      const res = await POST(
+        submitReq({
+          mistake_id: 'q_ra_partial',
+          rating: 'hard',
+          judge_result_v2: {
+            coarse_outcome: 'partial',
+            score: 0.6,
+            score_meaning: 'steps_v1_weighted',
+            confidence: 0.85,
+            capability_ref: { id: 'steps', version: '1' },
+            feedback_md: 'partial credit on step 2',
+            evidence_json: {},
+          },
+        }),
+      );
+      expect(res.status).toBe(200);
+
+      const events = await testDb()
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_ra_partial')));
+      expect(events).toHaveLength(1);
+      const payload = events[0].payload as {
+        judge_advice?: {
+          rating: string | null;
+          reason: string;
+          evidence_score: number | null;
+          source_coarse_outcome: string;
+          source_capability_ref: { id: string };
+        };
+        fsrs_rating: string;
+      };
+      expect(payload.judge_advice).toBeDefined();
+      expect(payload.judge_advice?.rating).toBe('good');
+      expect(payload.judge_advice?.evidence_score).toBe(0.6);
+      expect(payload.judge_advice?.reason).toMatch(/partial/i);
+      expect(payload.judge_advice?.source_coarse_outcome).toBe('partial');
+      expect(payload.judge_advice?.source_capability_ref.id).toBe('steps');
+      // CC-1 / advisor invariant: user's body.rating is the committed rating;
+      // advisor (good) does NOT override the user's 'hard' choice.
+      expect(payload.fsrs_rating).toBe('hard');
+    });
+
+    it('rejects malformed judge_result_v2 with 400 (zod validation)', async () => {
+      await seedQuestion('q_ra_bad');
+
+      const res = await POST(
+        submitReq({
+          mistake_id: 'q_ra_bad',
+          rating: 'good',
+          // coarse_outcome 'correct' requires score ≥ 0.85; 0.1 is invalid.
+          judge_result_v2: {
+            coarse_outcome: 'correct',
+            score: 0.1,
+            score_meaning: 'correctness',
+            confidence: 0.9,
+            capability_ref: { id: 'exact', version: '1' },
+            feedback_md: 'mismatched score',
+            evidence_json: {},
+          },
+        }),
+      );
+      expect(res.status).toBe(400);
+    });
+  });
 });
