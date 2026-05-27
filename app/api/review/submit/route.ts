@@ -265,17 +265,18 @@ export async function POST(req: Request): Promise<Response> {
       // same class of silent dead path YUK-100 set out to fix. Gate now keys
       // on `judgeResult !== null` so both paths persist judge_advice.
       // See `docs/audit/2026-05-27-wave1-postship-drift.md` §W-05.
-      const judgeAdvicePayload = judgeResult !== null
-        ? {
-            judge_advice: {
-              ...judgeResultToRatingAdvice(judgeResult, {
-                causeCategory: adviceCauseCategory,
-              }),
-              source_capability_ref: judgeResult.capability_ref,
-              source_coarse_outcome: judgeResult.coarse_outcome,
-            },
-          }
-        : {};
+      const judgeAdvicePayload =
+        judgeResult !== null
+          ? {
+              judge_advice: {
+                ...judgeResultToRatingAdvice(judgeResult, {
+                  causeCategory: adviceCauseCategory,
+                }),
+                source_capability_ref: judgeResult.capability_ref,
+                source_coarse_outcome: judgeResult.coarse_outcome,
+              },
+            }
+          : {};
 
       await writeEvent(tx, {
         id: eventId,
