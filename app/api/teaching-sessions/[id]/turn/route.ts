@@ -4,9 +4,11 @@
 // Writes user message event, plans + writes agent reply, returns the agent.
 
 import { createId } from '@paralleldrive/cuid2';
+import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { db } from '@/db/client';
+import { learning_item, question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { TeachingError, planTeachingTurn } from '@/server/orchestrator/teaching';
@@ -17,6 +19,13 @@ export const runtime = 'nodejs';
 const Body = z.object({
   text_md: z.string().min(1).max(2000),
 });
+
+type InlineTeachingQuestion = {
+  id: string;
+  kind: string;
+  prompt_md: string;
+  choices_md: string[] | null;
+};
 
 async function defaultRunTaskFn(
   kind: string,
@@ -83,17 +92,75 @@ export async function POST(
         runTaskFn: defaultRunTaskFn,
       });
       const agentMsgId = createId();
-      await writeEvent(db, {
-        id: agentMsgId,
-        session_id: sessionId,
-        actor_kind: 'agent',
-        actor_ref: 'TeachingTurnTask',
-        action: 'experimental:teach_message',
-        subject_kind: 'event',
-        subject_id: agentMsgId,
-        outcome: 'success',
-        payload: { role: 'agent', text_md: turn.text_md, turn_kind: turn.kind },
-        caused_by_event_id: userMsgId,
+      let inlineQuestion: InlineTeachingQuestion | null = null;
+
+      await db.transaction(async (tx) => {
+        if (turn.kind === 'ask_check' && turn.structured_question) {
+          const structured = turn.structured_question;
+          const qId = createId();
+          const liRows = await tx
+            .select({ knowledge_ids: learning_item.knowledge_ids })
+            .from(learning_item)
+            .where(eq(learning_item.id, learningItemId))
+            .limit(1);
+          const knowledgeIds = liRows[0]?.knowledge_ids ?? [];
+          const promptMd = structured.prompt_md ?? turn.text_md;
+          const choicesMd = structured.choices_md ?? null;
+          await tx.insert(question).values({
+            id: qId,
+            kind: structured.kind,
+            prompt_md: promptMd,
+            reference_md: structured.reference_md,
+            rubric_json: structured.rubric_json ?? null,
+            choices_md: choicesMd,
+            judge_kind_override: structured.judge_kind_override ?? null,
+            knowledge_ids: knowledgeIds,
+            difficulty: 2,
+            source: 'teaching_check',
+            source_ref: agentMsgId,
+            metadata: {
+              learning_item_id: learningItemId,
+              session_id: sessionId,
+            },
+            created_at: new Date(),
+            updated_at: new Date(),
+          });
+          inlineQuestion = {
+            id: qId,
+            kind: structured.kind,
+            prompt_md: promptMd,
+            choices_md: choicesMd,
+          };
+        }
+
+        const payload: {
+          role: 'agent';
+          text_md: string;
+          turn_kind: typeof turn.kind;
+          question_id?: string;
+          question?: InlineTeachingQuestion;
+        } = {
+          role: 'agent',
+          text_md: turn.text_md,
+          turn_kind: turn.kind,
+        };
+        if (inlineQuestion) {
+          payload.question_id = inlineQuestion.id;
+          payload.question = inlineQuestion;
+        }
+
+        await writeEvent(tx, {
+          id: agentMsgId,
+          session_id: sessionId,
+          actor_kind: 'agent',
+          actor_ref: 'TeachingTurnTask',
+          action: 'experimental:teach_message',
+          subject_kind: 'event',
+          subject_id: agentMsgId,
+          outcome: 'success',
+          payload,
+          caused_by_event_id: userMsgId,
+        });
       });
       return Response.json({
         user_message: { id: userMsgId, role: 'user', text_md: parsed.data.text_md },
@@ -102,6 +169,7 @@ export async function POST(
           role: 'agent',
           text_md: turn.text_md,
           turn_kind: turn.kind,
+          ...(inlineQuestion ? { question: inlineQuestion } : {}),
         },
         suggested_next: turn.suggested_next,
         was_idle: wasIdle,

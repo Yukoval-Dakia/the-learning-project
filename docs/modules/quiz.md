@@ -319,7 +319,8 @@ Question
   difficulty: 1~5
   source: embedded | daily | final | dreaming | manual
         | vision_single | vision_paper | reverse_mark | mistake_variant
-  source_ref?            # origin event / source document / artifact / attempt event / null
+        | teaching_check
+  source_ref?            # origin event / source document / artifact / attempt event / agent message / null
   draft_status?: draft | active   # 仅 mistake_variant 等需要双 pass 的题
   created_by: {task, version}
   metadata?: {

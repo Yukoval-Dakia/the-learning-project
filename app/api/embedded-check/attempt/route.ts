@@ -1,11 +1,11 @@
 // POST /api/embedded-check/attempt
 //
-// Accepts an answer to an embedded check question, judges it through the Judge v2
-// light service, writes an attempt event, and — on failure — creates a learning_record
-// (kind='mistake') and enqueues attribution_followup via pg-boss.
+// Accepts an answer to an inline check question, judges it through the Judge v2
+// light service, writes an attempt event, and — on failure — creates a
+// learning_record (kind='mistake') and enqueues attribution_followup via pg-boss.
 //
 // Design invariants:
-//   - Does NOT write material_fsrs_state. Embedded checks stay out of FSRS.
+//   - Does NOT write material_fsrs_state. Inline checks stay out of FSRS.
 //   - Each call creates a new event row + (on failure) a new learning_record row.
 //     No de-dup; UI shows latest verdict per question from event history.
 //   - attribution_followup enqueue happens AFTER the DB transaction, not inside it.
@@ -40,6 +40,12 @@ function eventOutcomeForJudge(
   return 'partial';
 }
 
+function inlineAttemptSource(questionSource: string): 'embedded_check' | 'teaching_check' | null {
+  if (questionSource === 'embedded') return 'embedded_check';
+  if (questionSource === 'teaching_check') return 'teaching_check';
+  return null;
+}
+
 export async function POST(req: Request): Promise<Response> {
   try {
     const raw = await req.json().catch(() => null);
@@ -62,10 +68,11 @@ export async function POST(req: Request): Promise<Response> {
     if (!q) {
       throw new ApiError('not_found', `question ${body.question_id} not found`, 404);
     }
-    if (q.source !== 'embedded') {
+    const attemptSource = inlineAttemptSource(q.source);
+    if (!attemptSource) {
       throw new ApiError(
         'question_not_embedded',
-        'this endpoint only accepts embedded check questions',
+        'this endpoint only accepts embedded or teaching check questions',
         422,
       );
     }
@@ -117,7 +124,7 @@ export async function POST(req: Request): Promise<Response> {
           answer_image_refs: [],
           referenced_knowledge_ids: q.knowledge_ids,
           // Extra provenance fields — stored in jsonb, not part of Zod contract
-          source: 'embedded_check',
+          source: attemptSource,
           latency_ms: body.latency_ms ?? null,
           judge_route: judgeKind,
           judge_score: judgeResult.score,
@@ -147,7 +154,7 @@ export async function POST(req: Request): Promise<Response> {
           attempt_event_id: attemptEventId,
           asset_refs: [],
           payload: {
-            from: 'embedded_check',
+            from: attemptSource,
             wrong_answer_md: body.answer_md,
             judge_route: judgeKind,
             judge_score: judgeResult.score,

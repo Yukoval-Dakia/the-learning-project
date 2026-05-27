@@ -182,11 +182,11 @@ ADR-0014 配套：[7 轮讨论 + 10 决议 summary](../discussion/summary.md)、
 
 ### Phase 2C — Active Teaching Session（A+B 合成的教学循环）
 - `learning_session(type='conversation', status='active'→'ended')`，`src/server/session/conversation.ts` 单 owner 写路径
-- `TeachingTurnTask` 输入 { learning_item, parent_hub_summary, atomic_sections, messages } → 输出 `{kind: 'explain'|'ask_check'|'end', text_md, suggested_next}`
+- `TeachingTurnTask` 输入 { learning_item, parent_hub_summary, atomic_sections, messages } → 输出 `{kind: 'explain'|'ask_check'|'end', text_md, suggested_next}`；`ask_check` 可附带 `structured_question`，由 turn route 落 `question(source='teaching_check')`
 - 4 routes：POST /api/teaching-sessions（start + 首 agent turn）、POST .../turn（user→agent）、POST .../end、GET ...（session + 消息列表）
 - `/learn/[learning_item_id]/chat` UI：消息流 + 输入 + 结束按钮；⌘/Ctrl+Enter 发送
 - 消息 = `event(action='experimental:teach_message', payload={role,text_md,turn_kind})`
-- MVP 不做：streaming / tool call / inline question 落库 / idle 状态机 / VariantVerifyTask Pass 2 都留 Phase 3
+- MVP 不做：streaming / tool call / VariantVerifyTask Pass 2 都留 Phase 3；inline ask_check 题目已走 `question(source='teaching_check')` + 现有 attempt/mistake 链路
 
 ### 错题闭环 + 变式生成（cross-cutting）
 - `attribution_followup` pg-boss handler：失败 attempt → 异步 AttributionTask → judge event（替换原 `next/server.after()`）

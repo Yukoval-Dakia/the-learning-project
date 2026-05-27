@@ -134,7 +134,39 @@ describe('POST /api/embedded-check/attempt', () => {
     expect((records[0].payload as Record<string, unknown>).from).toBe('embedded_check');
   });
 
-  // Test 3: 422 on non-embedded question
+  it('teaching_check wrong answer → failure event + mistake provenance from teaching_check', async () => {
+    await seedEmbeddedQuestion('q_teach', {
+      source: 'teaching_check',
+      reference_md: '答案',
+      source_ref: 'agent_msg_1',
+    });
+
+    const res = await postAttempt({ question_id: 'q_teach', answer_md: '错' });
+    expect(res.status).toBe(200);
+
+    const body = (await res.json()) as {
+      outcome: string;
+      mistake_id: string;
+    };
+    expect(body.outcome).toBe('failure');
+    expect(body.mistake_id).toBeTruthy();
+
+    const db = testDb();
+    const events = await db.select().from(event).where(eq(event.subject_id, 'q_teach'));
+    expect(events).toHaveLength(1);
+    expect(events[0].outcome).toBe('failure');
+    expect((events[0].payload as Record<string, unknown>).source).toBe('teaching_check');
+
+    const records = await db
+      .select()
+      .from(learning_record)
+      .where(eq(learning_record.question_id, 'q_teach'));
+    expect(records).toHaveLength(1);
+    expect(records[0].id).toBe(body.mistake_id);
+    expect((records[0].payload as Record<string, unknown>).from).toBe('teaching_check');
+  });
+
+  // Test 3: 422 on unsupported inline question source
   it('returns 422 when question source is not embedded', async () => {
     await seedEmbeddedQuestion('q1', { source: 'daily' });
 

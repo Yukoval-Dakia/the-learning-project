@@ -19,6 +19,7 @@ import {
   NoteVerificationResult,
   QuestionBlock,
   QuestionBlockInsert,
+  QuestionInsert,
   Rubric,
   SourceAsset,
   validateCauseAgainstProfile,
@@ -54,6 +55,22 @@ describe('schema generated from drizzle', () => {
       acceptable_answers: ['代词'],
       required_points: ['指出它指代前文内容'],
     });
+    expect(result.success).toBe(true);
+  });
+
+  it('QuestionInsert accepts teaching_check source', () => {
+    const result = QuestionInsert.safeParse({
+      id: 'q_teach',
+      kind: 'short_answer',
+      prompt_md: '这里的“之”指代什么？',
+      reference_md: '之在这里作代词，指代前文的人或事。',
+      source: 'teaching_check',
+      source_ref: 'agent_msg_1',
+      knowledge_ids: [],
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+    if (!result.success) console.error(result.error.format());
     expect(result.success).toBe(true);
   });
 
