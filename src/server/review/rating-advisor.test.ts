@@ -83,16 +83,16 @@ describe('judgeResultToRatingAdvice — six boundary cases', () => {
     expect(advice.reason).toMatch(/incorrect|again/i);
   });
 
-  it('case 2: score=0.4 partial, no cause → good (bucket 0.4-0.7 default)', () => {
+  it('case 2: score=0.4 partial, no cause → again (below 0.5)', () => {
     const advice = judgeResultToRatingAdvice(makePartial(0.4));
-    expect(advice.rating).toBe('good');
+    expect(advice.rating).toBe('again');
     expect(advice.evidence_score).toBe(0.4);
     expect(advice.reason).toMatch(/partial/i);
   });
 
-  it('case 3: score=0.7 partial, no cause → good (bucket 0.7-1.0 default)', () => {
+  it('case 3: score=0.7 partial, no cause → hard (partial credit still needs review)', () => {
     const advice = judgeResultToRatingAdvice(makePartial(0.7));
-    expect(advice.rating).toBe('good');
+    expect(advice.rating).toBe('hard');
     expect(advice.evidence_score).toBe(0.7);
   });
 
@@ -103,7 +103,7 @@ describe('judgeResultToRatingAdvice — six boundary cases', () => {
     expect(advice.reason).toMatch(/correct/i);
   });
 
-  it('case 5: score=0.4 partial + carelessness-leaning cause → good (bias preserves good)', () => {
+  it('case 5: score=0.4 partial + carelessness-leaning cause → good', () => {
     // physics profile uses cause id 'careless'; generic 'carelessness' also accepted.
     const advice = judgeResultToRatingAdvice(makePartial(0.4), { causeCategory: 'careless' });
     expect(advice.rating).toBe('good');
@@ -119,21 +119,18 @@ describe('judgeResultToRatingAdvice — six boundary cases', () => {
 });
 
 describe('judgeResultToRatingAdvice — non-boundary smoke', () => {
-  it('low partial (0.1) → hard default (bucket 0.0-0.4)', () => {
-    // Driver §1.1: bucket [0.0, 0.4) → "again | hard"; we pick 'hard' as
-    // default to keep room for cause lean to either side without collapsing
-    // immediately to the floor.
+  it('low partial (0.1) → again default', () => {
     const advice = judgeResultToRatingAdvice(makePartial(0.1));
-    expect(advice.rating).toBe('hard');
+    expect(advice.rating).toBe('again');
     expect(advice.evidence_score).toBe(0.1);
   });
 
-  it('low partial (0.1) + carelessness → good (one step up from hard)', () => {
+  it('low partial (0.1) + carelessness → good (carelessness-leaning cause)', () => {
     const advice = judgeResultToRatingAdvice(makePartial(0.1), { causeCategory: 'careless' });
     expect(advice.rating).toBe('good');
   });
 
-  it('low partial (0.1) + conceptual → again (two steps down from hard, clamped at again)', () => {
+  it('low partial (0.1) + conceptual → again', () => {
     const advice = judgeResultToRatingAdvice(makePartial(0.1), { causeCategory: 'concept' });
     expect(advice.rating).toBe('again');
   });
@@ -147,7 +144,7 @@ describe('judgeResultToRatingAdvice — non-boundary smoke', () => {
 
   it('unknown cause category does not change default bucket', () => {
     const advice = judgeResultToRatingAdvice(makePartial(0.4), { causeCategory: 'computation' });
-    expect(advice.rating).toBe('good');
+    expect(advice.rating).toBe('again');
   });
 
   it('correct score=0.85 (lower edge) → good', () => {
@@ -155,18 +152,17 @@ describe('judgeResultToRatingAdvice — non-boundary smoke', () => {
     expect(advice.rating).toBe('good');
   });
 
-  it('partial 0.6 mid-bucket → good', () => {
+  it('partial 0.6 mid-bucket → hard', () => {
     const advice = judgeResultToRatingAdvice(makePartial(0.6));
-    expect(advice.rating).toBe('good');
+    expect(advice.rating).toBe('hard');
   });
 
-  it('conceptual cause never raises rating above default (mid bucket stays or drops)', () => {
+  it('conceptual cause never raises rating above default', () => {
     const adviceNoCause = judgeResultToRatingAdvice(makePartial(0.6));
     const adviceConcept = judgeResultToRatingAdvice(makePartial(0.6), {
       causeCategory: 'concept',
     });
-    // default at 0.6 is 'good'; concept lean drops by one step max.
-    expect(['hard', 'again']).toContain(adviceConcept.rating);
-    expect(adviceNoCause.rating).toBe('good');
+    expect(adviceConcept.rating).toBe('again');
+    expect(adviceNoCause.rating).toBe('hard');
   });
 });

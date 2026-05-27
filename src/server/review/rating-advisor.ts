@@ -10,9 +10,8 @@
 // CC-1 invariant: this module never re-derives or re-classifies a cause —
 // callers MUST pass the result of effectiveCauseCategoryForFailureAttempt()
 // so the cause source-of-truth stays single-owner. The advisor's only job
-// is to nudge the rating bucket by ±1 step when the effective cause is
-// carelessness-leaning (lean up: 0.4 stays good rather than hard) or
-// conceptual-leaning (lean down: 0.4 becomes again rather than good).
+// is to nudge the rating bucket when the effective cause is carelessness-
+// leaning (prefer 'good') or conceptual-leaning (prefer 'again').
 //
 // ABI guarantee: scheduleReview(prevState, rating, now) is untouched. The
 // advisor surfaces a suggestion to the UI; the UI keeps user-override-wins.
@@ -47,15 +46,6 @@ export interface RatingAdvisorContext {
   causeCategory?: string | null;
 }
 
-// 3-step rating ladder used for cause-driven nudges.
-const RATING_LADDER: readonly FsrsRatingT[] = ['again', 'hard', 'good'] as const;
-
-function stepRating(rating: FsrsRatingT, delta: number): FsrsRatingT {
-  const idx = RATING_LADDER.indexOf(rating);
-  const next = Math.max(0, Math.min(RATING_LADDER.length - 1, idx + delta));
-  return RATING_LADDER[next] as FsrsRatingT;
-}
-
 /** Returns +1 for carelessness-leaning, -1 for conceptual-leaning, 0 otherwise. */
 function causeLean(causeCategory: string | null | undefined): -1 | 0 | 1 {
   if (!causeCategory) return 0;
@@ -69,20 +59,18 @@ function causeLean(causeCategory: string | null | undefined): -1 | 0 | 1 {
 }
 
 /**
- * Default rating per driver §1.1 bucket map (score in [0,1]):
- *   [0.0, 0.4) → hard   (partial low — likely retry needed)
- *   [0.4, 0.7) → good   (partial mid — mostly right)
- *   [0.7, 1.0] → good   (strong; spec §6.2 easy collapses to good)
+ * Default rating per source spec P3 (score in [0,0.85) for partial):
+ *   [0.0, 0.5)  → again  (partial low — large gap)
+ *   [0.5, 0.85) → hard   (partial mid/high — review soon)
  */
 function defaultPartialRating(score: number): FsrsRatingT {
-  if (score < 0.4) return 'hard';
-  return 'good';
+  if (score < 0.5) return 'again';
+  return 'hard';
 }
 
 function bucketLabel(score: number): string {
-  if (score < 0.4) return '0.0–0.4';
-  if (score < 0.7) return '0.4–0.7';
-  return '0.7–1.0';
+  if (score < 0.5) return '0.0–0.5';
+  return '0.5–0.85';
 }
 
 export function judgeResultToRatingAdvice(
@@ -124,14 +112,11 @@ export function judgeResultToRatingAdvice(
   let rating: FsrsRatingT = baseRating;
   let leanNote = '';
   if (lean === 1) {
-    // Carelessness-leaning: nudge up one step. Default 'good' clamps at good.
-    rating = stepRating(baseRating, 1);
-    leanNote = `；cause=${ctx.causeCategory}（粗心倾向），上调一档`;
+    rating = 'good';
+    leanNote = `；cause=${ctx.causeCategory}（粗心倾向），倾向 good`;
   } else if (lean === -1) {
-    // Conceptual-leaning: drop two steps to express "real misunderstanding".
-    // (good → again, hard → again; floor clamps at again.)
-    rating = stepRating(baseRating, -2);
-    leanNote = `；cause=${ctx.causeCategory}（概念错误倾向），下调两档`;
+    rating = 'again';
+    leanNote = `；cause=${ctx.causeCategory}（概念错误倾向），倾向 again`;
   }
 
   const reason = `${capabilityLabel} 给出 partial credit ${formatScore(result.score)}（bucket ${bucketLabel(result.score)}），默认推荐 ${baseRating}${leanNote}${

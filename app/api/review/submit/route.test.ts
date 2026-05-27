@@ -714,13 +714,13 @@ describe('POST /api/review/submit', () => {
         fsrs_rating: string;
       };
       expect(payload.judge_advice).toBeDefined();
-      expect(payload.judge_advice?.rating).toBe('good');
+      expect(payload.judge_advice?.rating).toBe('hard');
       expect(payload.judge_advice?.evidence_score).toBe(0.6);
       expect(payload.judge_advice?.reason).toMatch(/partial/i);
       expect(payload.judge_advice?.source_coarse_outcome).toBe('partial');
       expect(payload.judge_advice?.source_capability_ref.id).toBe('steps');
       // CC-1 / advisor invariant: user's body.rating is the committed rating;
-      // advisor (good) does NOT override the user's 'hard' choice.
+      // advisor does NOT override the user's choice.
       expect(payload.fsrs_rating).toBe('hard');
     });
 

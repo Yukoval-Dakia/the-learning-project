@@ -40,6 +40,7 @@ import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject
 import { normalizeReviewSubmitActivityRef } from '@/server/review/activity-ref';
 import { activeEffectiveTruth } from '@/server/review/effective-truth';
 import { scheduleReview } from '@/server/review/fsrs';
+import { ratingFromCoarseOutcome } from '@/server/review/judge-rating';
 import { judgeResultToRatingAdvice } from '@/server/review/rating-advisor';
 import { eq, sql } from 'drizzle-orm';
 
@@ -75,28 +76,7 @@ const SubmitBody = z.object({
   judge_result_v2: JudgeResultV2.optional(),
 });
 
-type CoarseOutcome = JudgeResultV2T['coarse_outcome'];
 type Rating = z.infer<typeof FsrsRating>;
-
-/**
- * YUK-56 — Map judge coarse_outcome to FSRS rating used by `/review`.
- *
- * 3-state rating space (again/hard/good) — Review UI does not surface 'easy'
- * so 'good' covers both correct and very-correct. 'unsupported' returns null
- * (caller decides: 422 in auto_rate mode, ignored in manual mode).
- */
-function ratingFromCoarseOutcome(outcome: CoarseOutcome): Rating | null {
-  switch (outcome) {
-    case 'correct':
-      return 'good';
-    case 'partial':
-      return 'hard';
-    case 'incorrect':
-      return 'again';
-    case 'unsupported':
-      return null;
-  }
-}
 
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -254,11 +234,10 @@ export async function POST(req: Request): Promise<Response> {
       // partial-credit rating advisory and persist it on the event payload as
       // `judge_advice`. This is informational only: the user's `body.rating`
       // is still the committed rating (advisor never overrides). CC-1
-      // invariant: this route does not classify cause itself — when a future
-      // call site has the effective cause from
-      // effectiveCauseCategoryForFailureAttempt() it should pass it via the
-      // judge_result_v2 surface. For now we derive from the judge result
-      // alone (cause-aware advisory is wired in §P3 follow-ups).
+      // invariant: this route does not classify cause itself. This submit
+      // payload is result-only; a future cause-aware call site must pass
+      // effectiveCauseCategoryForFailureAttempt() output into
+      // judgeResultToRatingAdvice(..., { causeCategory }) before persisting.
       const judgeAdvicePayload = body.judge_result_v2
         ? {
             judge_advice: {
