@@ -32,24 +32,31 @@
 | Doc / Infra 债 | P4.1-4.13 sweep；status.md / ADR / modules 一致 |
 | Audit | `/audit-drift` 全绿 |
 
-### 0.3 当前快照（2026-05-27）
+### 0.3 当前快照（2026-05-27 EOD post-Wave 1）
 
-**Shipped (从 status.md §1 + 2026-05-{20..26} commit log)**：
+**Shipped (从 status.md §1 + 2026-05-{20..27} commit log)**：
 - Foundation A/B/C 全完，含 math + physics acid test ✓ framework diff = 0
 - **Foundation D M1 ship**（2026-05-26）：DomainTool registry + 3 read tools + bridge + `experimental:tool_use` mirror
 - Product Track 1 wave 1-4 ship + W5 closeout audit
 - Track 1 follow-up M1: wenyan causeCategories (YUK-83) / today KPI (YUK-84) / Note 申诉 (YUK-85)
 - pg-boss 12 队列在跑（含 maintenance / variant / OCR / session-summary）
+- **Wave 1 ship ✅（2026-05-27）**：
+  - T-37 brief writer Phase B (YUK-37) — `src/server/memory/{client,brief,scope_tagger,triggers}.ts` ship；F-04 dir-missing resolved
+  - T-RA RatingAdvisor (YUK-98) — `rating-advisor.ts` 纯函数 + UI + submit route advisory field
+  - T-66 ask_check artifact (YUK-66) — `question(source='teaching_check')` 持久化 + judge invoker 接入
+  - T-88 P0 spike (YUK-90) — TipTap block tree fixture + split/merge/mark_wrong invariant 全过（PR #162）
+  - Wave 1 closeout (YUK-99 brief writer event ingest wire + env doc / YUK-100 RatingAdvisor cause SoT)：PR #163 + #165 (squash) merged
+- **F-04 audit baseline resolved**：`src/server/memory/` 目录已 ship；`src/server/dreaming/` 仍待 T-DR
 
-**In-flight (current branch `claude/wave-1-launch-DHXfG`)**：
-- YUK-88 planning：post-grill spec + ADR-0020 + 4 driver docs + Wave 1 ready-to-launch doc（master roadmap = 本文档）
-- YUK-37 brief writer Phase B：⬜ pending 实施（audit F-04 + commit 1bca5b9 commit body 实证；估时 5pt → 13pt，per t37-brief-writer-driver §0.2）
-- Wave 1 launching：T-37 + T-RA worktree 并行 → T-88 P0 spike + T-66 接力
+**In-flight / open**：
+- **YUK-101** Transactional outbox for `writeEvent` → memory event ingest（Wave 1 post-ship code-review 发现 architectural follow-up；iter2 PR #165 是 band-aids，**真正 outbox 重写未做**）— priority **High**，进 Wave 2 buffer 或独立处理
+- YUK-88 planning：post-grill spec + ADR-0020 + 4 driver docs；Wave 2 启动后进 P1 schema phase
+- Wave 2 待启动（用户 retrospective 拍板后）：T-88 P1 schema + P2-basic editor + T-D2 read tools，~46pt / ~10 周
 
 **Audit baseline ack（per `docs/audit/2026-05-27-pre-yuk88-baseline-drift.md`, 2026-05-27）**：
-- **F-01** notes.md 整篇 ADR-0020 冲突 → YUK-88 P3 收尾前必须 rewrite（拆 YUK-{TBD-1}；不阻塞 Wave 1）
-- **F-02 / F-03** artifact 表 / `CorrectArtifactEvent.payload.section_id` pre-ADR-0020 形态 → YUK-88 P1 phase 范围内 resolve（expected baseline）
-- **F-04** `src/server/memory/` + `src/server/dreaming/` 目录缺失 → T-37 ship 时自然 resolve（Wave 1 worktree A 兑现）
+- **F-01** notes.md 整篇 ADR-0020 冲突 → YUK-88 P3 收尾前必须 rewrite（拆 YUK-{TBD-1}；不阻塞 Wave 2）
+- **F-02 / F-03** artifact 表 / `CorrectArtifactEvent.payload.section_id` pre-ADR-0020 形态 → YUK-88 P1 phase 范围内 resolve（Wave 2 内）
+- **F-04** ✅ resolved by T-37 (memory dir ship)；dreaming dir 仍待 T-DR
 
 **Critical 缺位（按 v0.4 §6）**：
 - Layer 8 整层 ⬜（4 条 P0 line：DomainTool M2-M6 / Drawer / Dreaming / Global Coach）
@@ -414,17 +421,19 @@ T-FF fixtures ────→ blocks Eval / acceptance test 自动化
 
 **Worktree allocation 原则**：每 wave 2 worktree 上限（hard cap，per §6.2）；wave 内多 track 用 worktree A/B 并行；同 worktree 内 sequential。
 
-#### Wave 1 (~4 周) — Critical path unlock + Track-1 closure
+#### Wave 1 ✅ ship 2026-05-27 (1 天 actual elapsed — Critical path unlock + Track-1 closure)
 
-| Track | pts | worktree |
-|---|---|---|
-| T-37 brief writer Phase B（推完）| ~5 | A |
-| T-88 P0 spike（接 T-37 后）| 2 | A |
-| T-RA RatingAdvisor | 3 | B |
-| T-66 ask_check artifact | 5 | B |
-| T-PD doc sweep gap-filler | ~2 | (任 worktree gap) |
+| Track | pts | worktree | status |
+|---|---|---|---|
+| T-37 brief writer Phase B（推完）| ~5 | A | ✅ ship (PR #159 → main caccd97b) |
+| T-88 P0 spike（接 T-37 后）| 2 | A | ✅ ship (PR #162 → spike 719c2b73) |
+| T-RA RatingAdvisor | 3 | B | ✅ ship (PR #160 → main aaa534c7) |
+| T-66 ask_check artifact | 5 | B | ✅ ship (PR #161 → main c3204469) |
+| Wave 1 closeout YUK-99 / YUK-100 | — | — | ✅ ship (PR #163 → squash f1d5d9d2) |
+| Iter2 post-ship 13 findings (YUK-101 band-aids) | — | — | ✅ ship (PR #165 → squash d4d68864)；真正 outbox 重写 follow-up 仍 open |
 
-**预期**：~17 pts，~3-4 周。出口：T-37 ship → unblocks T-DR + query_memory_brief；T-88 P0 spike → 决定 ADR-0020 微调；Track-1 follow-up phase **关 phase**。
+**实际**：~17 pts shipped。出口实现：T-37 ✓ unblocks T-DR + query_memory_brief；T-88 P0 spike ✓ 验证 split/merge/mark_wrong/idle 4 invariants；Track-1 follow-up phase **关 phase**。
+**Open follow-up**：YUK-101 transactional outbox (architectural rewrite，进 Wave 2 buffer 或独立 mini-wave 处理)。
 
 #### Wave 2 (~10 周) — Schema + Editor basic + DomainTool M2
 
@@ -775,25 +784,23 @@ worktrees/
 
 ### Card T-88 — YUK-88 Block-Tree Note Rebuild
 
-- **Status**：planning ✓，0/8 phase shipped
-- **pts**：61
-- **Estimate**：17-20 周
+- **Status**：planning ✓，**P0 ✅ ship 2026-05-27**（PR #162 spike），P1-P7 ⬜（Wave 2 启动后）
+- **pts**：61 (剩 59)
+- **Estimate**：17-20 周（剩）
 - **Driver doc**：[`docs/superpowers/plans/2026-05-26-yuk88-autonomous-driver.md`](2026-05-26-yuk88-autonomous-driver.md)
 - **Phase index**：[`docs/superpowers/plans/2026-05-26-yuk88-block-tree-rebuild-phase.md`](2026-05-26-yuk88-block-tree-rebuild-phase.md)
 - **ultragoal ledger**：`.omc/ultragoal/`（init 完成，per-story mode，G001-G008）
-- **Linear**：YUK-88 + YUK-90~97
+- **Linear**：YUK-88 + YUK-90 ✅ + YUK-91~97
 - **Forward-locks**：Layer 5 完全体；P3 schema 改动 → T-TQ / T-BA
 - **Blocked-by**：(none) —— 可立即跑
 
 ### Card T-37 — ADR-0017 Brief Writer Phase B
 
-- **Status**：⬜ pending 实施 (YUK-37) ⚠️ Linear 错标 Done，需用户在 Linear UI 手动 reopen → In Progress
-- **pts**：~13 剩（2026-05-27 重估；原 5pt 严重低估，audit F-04 + driver §0.2 实证）
-- **Estimate**：~3-4 周
-- **Driver doc**：[docs/superpowers/plans/2026-05-27-t37-brief-writer-driver.md](2026-05-27-t37-brief-writer-driver.md) ✓
-- **Forward-locks**：Layer 7 Memory writer + T-DR Dreaming + T-D2 query_memory_brief
-- **Blocked-by**：(none)
-- **Linear**：YUK-37
+- **Status**：✅ ship 2026-05-27（PR #159 → main caccd97b；Linear YUK-37 Done）
+- **pts**：8（estimate 8pt 收口，per Linear field）
+- **Driver doc**：[docs/superpowers/plans/2026-05-27-t37-brief-writer-driver.md](2026-05-27-t37-brief-writer-driver.md)
+- **Forward-locks 已 unblock**：Layer 7 Memory writer ✓ + T-DR Dreaming(blocked-by T-37 解除) + T-D2 query_memory_brief 可建
+- **Linear**：YUK-37 ✅
 
 ### Card T-D2 — DomainTool Registry M2 (10 read tools 补完)
 
@@ -842,19 +849,18 @@ worktrees/
 
 ### Card T-RA — Partial credit P3 RatingAdvisor
 
-- **Status**：⬜
+- **Status**：✅ ship 2026-05-27（PR #160 → main aaa534c7；Linear YUK-98 Done）
 - **pts**：3
-- **Estimate**：1 周
-- **Driver doc**：⬜（小 task，无需单独 driver；可在 Track-1 follow-up phase 内当 W2.1 跑）
-- **Linear**：⬜ Track-1 follow-up W2.1
+- **Driver doc**：[`docs/superpowers/plans/2026-05-27-tra-rating-advisor-driver.md`](2026-05-27-tra-rating-advisor-driver.md)
+- **Linear**：YUK-98 ✅
+- **Post-ship**：YUK-100 cause SoT fix shipped via Wave 1 closeout PR #163
 
 ### Card T-66 — Teaching ask_check artifact (YUK-66)
 
-- **Status**：⬜
+- **Status**：✅ ship 2026-05-27（PR #161 → main c3204469；Linear YUK-66 Done）
 - **pts**：5
-- **Estimate**：1-2 周
-- **Driver doc**：⬜
-- **Linear**：[YUK-66](https://linear.app/yukoval-studios/issue/YUK-66)
+- **Driver doc**：[`docs/superpowers/plans/2026-05-27-t66-teaching-ask-check-driver.md`](2026-05-27-t66-teaching-ask-check-driver.md)
+- **Linear**：YUK-66 ✅
 
 ### Card T-J1..T-J5 — Core judges (rubric / multimodal / ai_flexible / external / code_execution)
 
