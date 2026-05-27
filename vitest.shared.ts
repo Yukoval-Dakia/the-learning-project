@@ -35,7 +35,14 @@ export const fastTestInclude = [
   'src/server/ingestion/tencent_mark_parser.test.ts',
   'src/server/ingestion/vision.test.ts',
   'src/server/judge/**/*.test.ts',
-  'src/server/memory/**/*.test.ts',
+  // Memory tests are mostly unit-mocked. The outbox real-path integration
+  // test (triggers.outbox.test.ts, YUK-101 / ADR-0021) hits live Postgres
+  // and runs in the DB partition — enumerate the unit tests here instead
+  // of globbing so the outbox test falls through.
+  'src/server/memory/brief.test.ts',
+  'src/server/memory/client.test.ts',
+  'src/server/memory/scope_tagger.test.ts',
+  'src/server/memory/triggers.test.ts',
   'src/server/r2.test.ts',
   'src/server/review/activity-ref.test.ts',
   'src/server/review/fsrs.test.ts',
