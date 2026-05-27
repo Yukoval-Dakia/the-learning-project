@@ -378,90 +378,142 @@ T-FF fixtures ────→ blocks Eval / acceptance test 自动化
 
 ---
 
-## §5 推荐 sequencing（grill 前的初稿）
+## §5 推荐 sequencing
 
-### 5.1 Wave 模型
+> Status: grill in progress（2026-05-27）。已 crystallize 决策见 §5.0；剩余 open question 见每条 wave 末尾。
 
-> ⚠️ 本 §5 是 **pre-grill** 推荐；正式启动前应跑 `/grill-with-docs` 拍板。理由见每条 wave 末尾的"open"。
+### §5.0 Decisions crystallized during grill（2026-05-27）
 
-#### Wave 1 (2026-06，~4 周) — Critical unlock
+| Q | Decision | Notes |
+|---|---|---|
+| Q5 | **v1 ship line @ Scenario A (~250pt)** + rolling commitment | A 打完做 retrospective 决定续 B / 转 maintenance / 暂停；不 upfront commit 2-3 年。Calibration baseline 5-8 pt/wk sustained → A 估 8-12 个月真实窗口。 |
+| Q6.a | **T-D4 full 8 propose tools 进 A**（24pt，不 trim） | 不为 -14pt 削弱 first-class AI actor surface 完整性 |
+| Q6.b | **T-D7 experimental:tool_use promote 进 A**（3pt） | 不 defer 到 maintenance；ADR-0011 promotion 闭环也是 v1 deliverable |
+| Q6.c | **T-PD doc sweep 分布到 wave 之间**（不集中） | AI 主导，每 wave 3-5pt gap-filler；保 cognitive load 低 |
+| Q6.d | **T-KG knowledge graph force-directed view 加进 A**（+13pt） | v2.1 brief §2.3.b 写"必须"= design contract；v1 不带 graph view = 未兑现 contract |
+| Q2 | **T-88 P2 拆 basic + polish 两 sub-wave** | P2-basic (~12pt): TipTap + NodeView + text edit/split/merge/paste-md/undo/marks → ship；P2-polish (~4pt): slash/drag-drop/mention picker/cross_link picker UI → 后续 wave。**v0 readonly 被结构 constraint 否决**（P1 schema migration 会立即让 YUK-54 失效，必须 ship 编辑器无 UX hole）。Polish 可灵活推到 maintenance |
+| Q4 | **T-DR // T-88 P3 并行**（with T-D4 propose tools merged 先）| File-disjoint (`src/server/dreaming/*` vs `src/server/ai/tasks/*`)；T-D4 merge 后冻结 registry.ts 直到两 track chain-merge 完；critical path 双线推进，整 schedule 省 4-6 周 |
+| Q1 | **Wave 1 = 4 tracks 并行**（T-37 + T-RA + T-66 + T-88 P0）| Worktree A: T-37 → T-88 P0；Worktree B: T-RA → T-66。File-disjoint 全覆盖。匹配 Track-1 follow-up wave-1 历史节奏（3+1 lane）；不推迟 T-37 critical path（避免 6+ 周 compounding）|
+| Q3 | **T-D3 Drawer MVP 试点 /today**（summary-driven）| 高频访问 + Layer 8 完全体核心模式（drawer 自动浮"今日 AI 建议"）；30s dwell trigger（v2.1 §1.2 锁定）。Deps：T-D2 query_review_due / query_memory_brief / query_learning_item_context 必先 ship；T-37 brief writer 必先 ship。比 /mistakes ask-driven 模式更激进但长期 vision 价值高 |
 
-**目标**：把 P0 关键路径的 trigger 解掉。
+**A 实际预算**：T-88 (61) + T-37 (5) + T-D2 (25) + T-D3 (13) + T-D4 full (24) + T-DR (20) + T-D6 (15) + T-D7 (3) + T-RA (3) + T-66 (5) + T-PD (31) + T-KG (13) = **218pt 主线** + ~30pt buffer = **~248pt**，@ 5-8 pt/wk → **7.5-12.5 月真实窗口**。
+
+### §5.1 Wave 模型（post-grill 2026-05-27，scenario A）
+
+**所有 6 个 open question 已 grill 拍板**（见 §5.0）。Wave 结构基于 ~218pt 主线 + 30pt buffer = ~248pt（A）+ T-PD 31pt 分布到 wave 间隙。
+
+**总 elapsed 估**：8 waves × 平均 5-6 周 ≈ **40-50 周（10-12 月真实窗口）@ 5-7 pt/wk sustainable**。
+
+**Worktree allocation 原则**：每 wave 2 worktree 上限（hard cap，per §6.2）；wave 内多 track 用 worktree A/B 并行；同 worktree 内 sequential。
+
+#### Wave 1 (~4 周) — Critical path unlock + Track-1 closure
 
 | Track | pts | worktree |
 |---|---|---|
 | T-37 brief writer Phase B（推完）| ~5 | A |
-| T-RA RatingAdvisor（Track-1 W2.1 quick win）| 3 | B |
-| T-66 ask_check artifact（Track-1 W2.2）| 5 | B |
-| T-88 P0 spike | 2 | A（接 T-37 后）|
+| T-88 P0 spike（接 T-37 后）| 2 | A |
+| T-RA RatingAdvisor | 3 | B |
+| T-66 ask_check artifact | 5 | B |
+| T-PD doc sweep gap-filler | ~2 | (任 worktree gap) |
 
-**预期**：~15 pts，~4 周。出口：T-37 ship → T-DR unblocked；T-88 P0 spike → 决定 ADR-0020 微调。
+**预期**：~17 pts，~3-4 周。出口：T-37 ship → unblocks T-DR + query_memory_brief；T-88 P0 spike → 决定 ADR-0020 微调；Track-1 follow-up phase **关 phase**。
 
-**Open**：
-- T-RA + T-66 是不是真该跟 T-37 / T-88 P0 并行？还是先收 Track-1 follow-up 整 phase 再开新 wave？
+#### Wave 2 (~10 周) — Schema + Editor basic + DomainTool M2
 
-#### Wave 2 (2026-07~2026-09，~10 周) — Layer 8 critical path 启动 + YUK-88 主体
+| Track | pts | worktree |
+|---|---|---|
+| T-88 P1 (schema + ADR-0020 land) | 5 | A |
+| T-88 P2-basic (TipTap NodeView + 基础 edit) | 12 | A（P1 后）|
+| T-D2 read tools (10 个 M2 全 ship，含 /today drawer 需要的 query_review_due / query_memory_brief / query_learning_item_context) | 25 | B |
+| T-PD doc sweep gap-filler | ~4 | (任 worktree gap) |
 
-**目标**：开 P0 critical path 主体 + YUK-88 schema 落地。
+**预期**：~46 pts，~9-10 周。出口：YUK-88 编辑器 basic ship（用户可编辑无 UX hole）；Layer 8 read tools 全 ship；ADR-0021 draft（基于 basic 验证）。
 
-| Track | pts | worktree | 说明 |
+#### Wave 3 (~5 周) — Propose tools 集中 ship（registry 冻结准备期）
+
+| Track | pts | worktree |
+|---|---|---|
+| T-D4 propose/write tools (8 个 full) | 24 | A（单 worktree focus；冻结其它 worktree 防 registry.ts 撞）|
+| T-PD doc sweep gap-filler | ~3 | A |
+
+**预期**：~27 pts，~4-5 周。出口：DomainTool 21 个全 ship；registry.ts 锁定；为 Wave 4 T-DR // T-88 P3 并行扫清 conflict。
+
+#### Wave 4 (~6 周) — T-DR // T-88 P3 并行（critical path 双线）
+
+| Track | pts | worktree |
+|---|---|---|
+| T-88 P3 AI pipeline rewrite | 10 | A |
+| T-DR Dreaming Lane | 20 | B |
+| T-PD doc sweep gap-filler | ~4 | (任 worktree gap) |
+
+**预期**：~34 pts，~5-6 周。出口：T-88 AI pipeline 完整改完 → unblocks P4；Dreaming agent 真跑 → unblocks T-D6 Coach + brief refresh 闭环。
+
+#### Wave 5 (~6 周) — Drawer /today MVP // Coach（Layer 8 vision 兑现起点）
+
+| Track | pts | worktree |
+|---|---|---|
+| T-D3 Copilot Drawer MVP on /today（summary-driven + 30s dwell + tool-use 三段式）| 13 | A |
+| T-D6 Phase 3 Global Coach Orchestrator | 15 | B |
+| T-PD doc sweep gap-filler | ~4 | (任 worktree gap) |
+
+**预期**：~32 pts，~5-6 周。出口：**Layer 8 vision 兑现起点** —— /today route 有真 Drawer + Coach 跑每日 / 每周 cron 出"今日安排" proposal。
+
+#### Wave 6 (~3 周) — Living Note + experimental promote
+
+| Track | pts | worktree |
+|---|---|---|
+| T-88 P4 Living Note v0 | 10 | A |
+| T-D7 experimental:tool_use → KnownEvent promote | 3 | B（小 PR）|
+| T-PD doc sweep gap-filler | ~5 | (任 worktree gap) |
+
+**预期**：~18 pts，~3 周。出口：Living Note mutator + idle + undo 全 ship；ADR-0011 promotion 闭环。
+
+#### Wave 7 (~5 周) — 反链 / hub auto-sync + Knowledge graph
+
+| Track | pts | worktree |
+|---|---|---|
+| T-88 P5 反链 + cross_link UI + hub auto-sync | 8 | A |
+| T-KG Knowledge graph force-directed view | 13 | B |
+| T-PD doc sweep gap-filler | ~4 | (任 worktree gap) |
+
+**预期**：~25 pts，~4-5 周。出口：cross_link + 反链 + auto-sync nightly worker ship；v2.1 brief §2.3.b graph view contract 兑现。
+
+#### Wave 8 (~4 周) — Read view + tests sweep + Editor polish + closeout
+
+| Track | pts | worktree |
+|---|---|---|
+| T-88 P6 read-view + 节点页 | 6 | A |
+| T-88 P7 tests rework | 4 | A（P6 后）|
+| T-88 P2-polish (slash / drag-drop / mention picker / cross_link picker UI) | 4 | B |
+| T-PD doc sweep 收尾 | ~5 | B |
+| v1 closeout audit + status.md update | — | (master coordinator) |
+
+**预期**：~19 pts，~3-4 周。出口：**v1 closeout** —— YUK-88 P0-P7 全 ship + Layer 8 critical path 全 ship + Layer 7 brief writer 闭环 + design brief contracts 兑现。Retrospective + 决定续 B / 转 maintenance / 暂停（per Q5 rolling commitment）。
+
+#### Wave 总览
+
+| Wave | Range | Major deliverable | pts |
 |---|---|---|---|
-| T-88 P1 (schema + ADR-0020) | 5 | A | T-88 必走 |
-| T-D2 read tools (10 个) | ~25 | B | M2 整批，file-disjoint with T-88 |
-| T-88 P2 (TipTap editor) | 16 | A | T-D2 跑完 ≥6 read tools 后可并 T-D3 |
+| 1 | ~4 周 | Track-1 closure + critical path unlock + spike | 17 |
+| 2 | ~10 周 | YUK-88 schema + editor basic + DomainTool read tools | 46 |
+| 3 | ~5 周 | DomainTool propose tools full | 27 |
+| 4 | ~6 周 | T-DR // T-88 P3 双线 | 34 |
+| 5 | ~6 周 | Drawer /today MVP // Coach（Layer 8 vision 兑现） | 32 |
+| 6 | ~3 周 | Living Note + promote | 18 |
+| 7 | ~5 周 | 反链 + hub auto-sync + graph view | 25 |
+| 8 | ~4 周 | read view + tests + polish + closeout | 19 |
+| **Total** | **~43 周 ≈ 10 月** | scenario A v1 closeout | **218 主线 + 30 buffer + 31 PD = ~279pt** |
 
-**预期**：~45 pts，~10 周。出口：Layer 8 P0.1 M2 done + YUK-88 编辑器 ship。
+注：~43 周是 5-7 pt/wk sustainable 估；如 5pt/wk → ~56 周（13 月）；如 8pt/wk → ~35 周（8 月）。
 
-**Open**：
-- T-88 P2 16pt 是不是 over-investment？day1 完整 Notion-like editor 真需要？分两期（v0 readonly + v1 编辑器）会不会更省 4-6 周？
-
-#### Wave 3 (2026-10~2026-11，~6 周) — Drawer + Dreaming 起步
-
-**目标**：Copilot Drawer 试点 + Dreaming agent unblock。
-
-| Track | pts | worktree |
-|---|---|---|
-| T-D3 Drawer MVP (1 route 试点) | ~13 | A |
-| T-DR Dreaming Lane | ~20 | B |
-| T-88 P3 (AI pipeline rewrite) | 10 | (A 续) |
-
-**预期**：~43 pts，~6-9 周。出口：1 个 route 有 Drawer + Dreaming 真跑 + T-88 AI pipeline 改完。
-
-**Open**：
-- T-D3 试点选 `/today` vs `/mistakes`？
-- T-DR vs T-88 P3 并行还是 T-88 P3 优先？
-
-#### Wave 4 (2026-12~2027-02，~10 周) — Layer 5 + Layer 8 同步推进
-
-**目标**：YUK-88 后半 (P4-P7) + Drawer 铺开 + Coach 起步。
-
-| Track | pts | worktree |
-|---|---|---|
-| T-88 P4 Living Note | 10 | A |
-| T-D4 propose/write tools (8 个) | ~24 | B |
-| T-D5 Drawer×6 routes | ~13 | (A 续) |
-| T-D6 Global Coach Orchestrator | ~15 | B |
-| T-88 P5/P6/P7 | 18 | A |
-
-**预期**：~80 pts，~14-18 周。出口：**Layer 5 + Layer 8 双 ship**。
-
-**这是项目"vision 兑现"的真节点**：first-class AI actor 承诺基本实现。
-
-#### Wave 5 (2027-03~2027-04，~5 周) — P1 学科补完 + P4 doc sweep
-
-| Track | pts |
-|---|---|
-| T-J1 rubric + T-J2 multimodal + T-J5 code_execution + T-J4 external | ~42 |
-| T-QP question_part | 8 |
-| T-PD* doc sweep（全部 13 项） | ~31 |
-
-**预期**：~80 pts，~10-14 周。
-
-#### Wave 6 (2027-05+，optional) — Track F + 余裕项
-
-T-SP / T-SQ / T-PS / T-SG / T-KG / T-CS / T-MR / T-RT / T-AR + 余下 judges。
-
-**预期**：80+ pts；视一年后产品状态决定还做不做。
+**Wave 间 gate**（每 wave 结束必跑）：
+1. `pnpm typecheck && pnpm lint && pnpm audit:schema && pnpm audit:partition && pnpm audit:profile && pnpm test && pnpm build` 全绿
+2. `/audit-drift` 跑一次
+3. `docs/superpowers/status.md` update（标 wave deliverable ✅）
+4. master roadmap §0.3 当前快照 update
+5. **新 ADR / ADR revision check** —— 跨 wave 新 ADR 必须 link 进 v0.4-complete-form-roadmap.md §2 ADR 表
+6. Linear sub-issue close（commit message `Closes YUK-9N`）
+7. 用户拍板下 wave 启动 OR retrospective（rolling commitment 决策点）
 
 ### 5.2 砍 / 推后 candidates
 

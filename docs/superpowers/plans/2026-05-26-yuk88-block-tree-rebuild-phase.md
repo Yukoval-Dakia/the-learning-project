@@ -113,15 +113,27 @@ P7 (tests rework)
 
 ### P2 — TipTap 编辑器接入 + ADR-0021
 
-**Lane 切分骨架**：
-- Lane A: TipTap StarterKit 集成 + bundle 拆分（editor lazy load / `<BlockTreeRenderer>` SSR）
-- Lane B: 自定义 nodes（SemanticBlock / CrossLinkBlock / ArtifactRefBlock / CalloutBlock / AutoLinksContainer）
-- Lane C: Slash command + inline mention + cross_link 选择器
-- Lane D: Drag-drop + paste markdown + undo/redo
-- Lane E: ADR-0021 写（基于 Lane A-D 验证后的 PM node schema）
+**🔄 2026-05-27 master grill Q2 决策**：拆 **P2-basic + P2-polish** 两 sub-wave。理由：P1 schema migration 让 YUK-54 立即失效，必须有可用编辑器；TipTap 学习曲线在 basic 阶段就遇上，polish 阶段是 incremental；basic ship 后 P3/P4 可在真编辑器上验证而非仅 fixture；polish 可灵活推到 maintenance 不伤核心 UX。
 
-**Chain-merge order**：A → B → C/D（并发可能）→ E。
-**Per-phase plan**：`docs/superpowers/plans/2026-05-26-yuk88-p2-editor.md`
+**Lane 切分骨架（按 sub-wave 重分组）**：
+
+**P2-basic (~12pt，3-4 周，必 ship)**：
+- Lane A: TipTap StarterKit 集成 + bundle 拆分（editor lazy load / `<BlockTreeRenderer>` SSR）
+- Lane B: 自定义 nodes（SemanticBlock / CrossLinkBlock / ArtifactRefBlock / CalloutBlock / AutoLinksContainer）+ NodeView 最小可用 UI
+- Lane D1: paste markdown + undo/redo + inline marks（StarterKit 基础上加固）
+- Lane E1: ADR-0021 draft（PM node schema 锁定，基于 basic 验证）
+
+**P2-polish (~4pt，1.5 周，可推后)**：
+- Lane C: Slash command + inline mention + cross_link picker UI
+- Lane D2: Drag-drop（block 级 + nested block）
+- Lane E2: ADR-0021 amendments（如有 polish 阶段 schema 微调）
+
+**Chain-merge order**：
+- P2-basic: A → B → D1 → E1（同 phase 内顺序）
+- P2-basic ship 之后，P3/P4 可启动
+- P2-polish 在后续 wave 接续：C → D2 → E2（可与 P3/P4 / 其他 track 并行）
+
+**Per-phase plan**：`docs/superpowers/plans/2026-05-26-yuk88-p2-basic.md` + `2026-05-26-yuk88-p2-polish.md`（启动时分别现场写）
 
 ### P3 — AI pipeline 重写
 
