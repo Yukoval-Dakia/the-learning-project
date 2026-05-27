@@ -26,6 +26,7 @@ import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
 import { Button } from '@/ui/primitives/Button';
 import { CauseBadge } from '@/ui/primitives/CauseBadge';
 import { PageHeader } from '@/ui/primitives/PageHeader';
+import { RatingAdvisor, type RatingAdvisorAdvice } from '@/ui/review/RatingAdvisor';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -136,6 +137,25 @@ interface SubmitResponse {
   judge?: SubmitJudgeResponse | null;
 }
 
+interface AdviceJudgeResponse {
+  route: string;
+  score: JudgeResultV2T['score'];
+  score_meaning: JudgeResultV2T['score_meaning'];
+  coarse_outcome: JudgeResultV2T['coarse_outcome'];
+  confidence: number;
+  feedback_md: string;
+  evidence_json: Record<string, unknown>;
+  capability_ref: { id: string; version: string };
+  suggested_rating: Rating | null;
+}
+
+interface RatingAdviceResponse {
+  activity_ref: ActivityRef;
+  question_id: string;
+  judge: AdviceJudgeResponse;
+  advice: RatingAdvisorAdvice;
+}
+
 const RATING_LABELS: Record<Rating, string> = {
   again: '不会',
   hard: '模糊',
@@ -153,6 +173,18 @@ const RATING_KEY: Record<Rating, string> = {
   hard: '2',
   good: '3',
 };
+
+function adviceJudgeToJudgeResult(judge: AdviceJudgeResponse): JudgeResultV2T {
+  return {
+    score: judge.score,
+    score_meaning: judge.score_meaning,
+    coarse_outcome: judge.coarse_outcome,
+    confidence: judge.confidence,
+    capability_ref: judge.capability_ref,
+    feedback_md: judge.feedback_md,
+    evidence_json: judge.evidence_json,
+  } as JudgeResultV2T;
+}
 
 const PRIORITY_TONE: Record<1 | 2 | 3 | 4 | 5, BadgeTone> = {
   5: 'coral',
@@ -323,6 +355,8 @@ export default function ReviewPage() {
   // "judge couldn't auto-rate, rate manually" when auto_rate returns 422.
   const [lastJudge, setLastJudge] = useState<SubmitJudgeResponse | null>(null);
   const [autoRateError, setAutoRateError] = useState<string | null>(null);
+  const [ratingAdvice, setRatingAdvice] = useState<RatingAdviceResponse | null>(null);
+  const [ratingAdviceError, setRatingAdviceError] = useState<string | null>(null);
 
   const rows = planQ.data?.queue ?? [];
   const total = rows.length;
@@ -384,12 +418,39 @@ export default function ReviewPage() {
     if (current) questionShownAtRef.current = Date.now();
   }, [current]);
 
+  const adviceM = useMutation({
+    mutationFn: async () => {
+      if (!current) throw new Error('no current question');
+      return await apiJson<RatingAdviceResponse>('/api/review/advice', {
+        method: 'POST',
+        body: JSON.stringify({
+          activity_ref: current.activity_ref,
+          response_md: answer,
+        }),
+      });
+    },
+    onSuccess: (data) => {
+      // Ignore a late response if the user has advanced while advice was running.
+      if (currentQuestionId && data.question_id !== currentQuestionId) return;
+      setRatingAdvice(data);
+      setRatingAdviceError(null);
+    },
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      setRatingAdviceError(message);
+    },
+  });
+
   // YUK-56 — submit accepts both manual ratings (auto_rate=false; server still
   // runs judge for telemetry + suggestion) and "自动判分" mode (auto_rate=true;
   // server's suggested rating is the final rating). On 422 unsupported, surface
   // a message + keep the user in feedback phase so they can rate manually.
   const submitM = useMutation({
-    mutationFn: async (input: { rating: Rating; autoRate: boolean }) => {
+    mutationFn: async (input: {
+      rating: Rating;
+      autoRate: boolean;
+      judgeResultV2?: JudgeResultV2T | null;
+    }) => {
       if (!current) throw new Error('no current question');
       const latencyMs = Math.max(0, Date.now() - questionShownAtRef.current);
       return await apiJson<SubmitResponse>('/api/review/submit', {
@@ -402,6 +463,7 @@ export default function ReviewPage() {
           latency_ms: latencyMs,
           referenced_knowledge_ids: current.knowledge_ids,
           auto_rate: input.autoRate,
+          ...(input.judgeResultV2 ? { judge_result_v2: input.judgeResultV2 } : {}),
         }),
       });
     },
@@ -419,6 +481,8 @@ export default function ReviewPage() {
       });
       setLastJudge(data.judge ?? null);
       setAutoRateError(null);
+      setRatingAdvice(null);
+      setRatingAdviceError(null);
       // YUK-56 — auto_rate path: don't auto-advance. User needs to see the
       // judge result + reasoning before moving on (it's the basis for the
       // rating they didn't pick). They press "下一题" / Enter to advance.
@@ -455,18 +519,27 @@ export default function ReviewPage() {
   const handleRate = useCallback(
     (r: Rating) => {
       if (phase !== 'feedback' || submitM.isPending) return;
-      submitM.mutate({ rating: r, autoRate: false });
+      submitM.mutate({
+        rating: r,
+        autoRate: false,
+        judgeResultV2: ratingAdvice?.judge ? adviceJudgeToJudgeResult(ratingAdvice.judge) : null,
+      });
     },
-    [phase, submitM],
+    [phase, ratingAdvice, submitM],
   );
 
-  // YUK-56 — "自动判分" CTA: server runs judge + uses suggested rating as final.
-  // Sends rating='good' as placeholder (server ignores it under auto_rate=true).
-  const handleAutoRate = useCallback(() => {
-    if (phase !== 'feedback' || submitM.isPending) return;
+  // YUK-98 — advice preview: run JudgeInvoker without committing FSRS state.
+  // The final rating is still user-controlled via handleRate().
+  const handleRequestAdvice = useCallback(() => {
+    if (phase !== 'feedback' || submitM.isPending || adviceM.isPending) return;
+    if (!answer.trim()) {
+      setRatingAdviceError('需要先填写答案才能生成评分建议');
+      return;
+    }
     setAutoRateError(null);
-    submitM.mutate({ rating: 'good', autoRate: true });
-  }, [phase, submitM]);
+    setRatingAdviceError(null);
+    adviceM.mutate();
+  }, [adviceM, answer, phase, submitM.isPending]);
 
   // YUK-56 — after auto-rate save, user presses Enter / clicks "下一题" to
   // advance. Mutation already committed the review; this is pure UI navigation.
@@ -477,6 +550,8 @@ export default function ReviewPage() {
     setShowRef(false);
     setLastJudge(null);
     setAutoRateError(null);
+    setRatingAdvice(null);
+    setRatingAdviceError(null);
   }, []);
 
   // YUK-57 — Skip: pure UI state advance. Does NOT call /api/review/submit, so
@@ -491,6 +566,8 @@ export default function ReviewPage() {
     setShowRef(false);
     setLastJudge(null);
     setAutoRateError(null);
+    setRatingAdvice(null);
+    setRatingAdviceError(null);
   }, [current, submitM.isPending]);
 
   // YUK-57 — Pause: started -> paused. Suppresses the pagehide completion
@@ -526,6 +603,8 @@ export default function ReviewPage() {
   useEffect(() => {
     setLastJudge(null);
     setAutoRateError(null);
+    setRatingAdvice(null);
+    setRatingAdviceError(null);
   }, [index]);
 
   useEffect(() => {
@@ -560,8 +639,8 @@ export default function ReviewPage() {
         if (e.key === '1') handleRate('again');
         else if (e.key === '2') handleRate('hard');
         else if (e.key === '3') handleRate('good');
-        // YUK-56 — "a" / "A" key triggers auto-judge (mnemonic: auto)
-        else if (e.key === 'a' || e.key === 'A') handleAutoRate();
+        // YUK-98 — "a" / "A" generates non-committing rating advice.
+        else if (e.key === 'a' || e.key === 'A') handleRequestAdvice();
       }
     };
     window.addEventListener('keydown', onKey);
@@ -572,7 +651,7 @@ export default function ReviewPage() {
     lastJudge,
     handleReveal,
     handleRate,
-    handleAutoRate,
+    handleRequestAdvice,
     handleNext,
     handleSkip,
   ]);
@@ -613,6 +692,8 @@ export default function ReviewPage() {
     total > 0 && !isDone
       ? `REVIEW · session=${sessionId ?? '—'} · ${Math.min(index + 1, total)} / ${total}`
       : 'REVIEW';
+  const ratingAdviceDisplayError =
+    ratingAdviceError ?? (adviceM.isError ? (adviceM.error as Error).message : null);
 
   return (
     <main className="page prose">
@@ -890,6 +971,14 @@ export default function ReviewPage() {
                 />
               )}
 
+              <RatingAdvisor
+                advice={ratingAdvice?.advice ?? null}
+                error={ratingAdviceDisplayError}
+                loading={adviceM.isPending}
+                disabled={!answer.trim() || submitM.isPending || lastJudge !== null}
+                onRequest={handleRequestAdvice}
+              />
+
               {/* YUK-56 — judge result panel + auto-rate feedback. Mounts:
                  - whenever a previous submit returned judge != null (manual rating: shown briefly until index changes; auto-rate: shown until 下一题).
                  - explicit unsupported message when auto-rate returned 422. */}
@@ -924,39 +1013,19 @@ export default function ReviewPage() {
                 </p>
               )}
 
-              <div className="rating-row">
-                {/* YUK-56 — "自动判分" CTA. Disabled after a successful auto-rate
-                   (lastJudge from auto path) — UI is in "下一题" state.
-                   Disabled when no answer typed (judge can't run). */}
-                <button
-                  type="button"
-                  className="btn-rating coral"
-                  onClick={handleAutoRate}
-                  disabled={submitM.isPending || !answer.trim() || lastJudge !== null}
-                  title={
-                    answer.trim()
-                      ? '让 AI 判分（exact / keyword 本地秒回；semantic 走 LLM）'
-                      : '需要先填答案才能自动判分'
-                  }
-                >
-                  <span>自动判分</span>
-                  <kbd>A</kbd>
-                </button>
+              <div className="rating-row cols-3">
                 {(['again', 'hard', 'good'] as Rating[]).map((r) => {
-                  const isSuggested = lastJudge?.suggested_rating === r;
+                  const isSuggested =
+                    ratingAdvice?.advice.rating === r || lastJudge?.suggested_rating === r;
                   return (
                     <button
                       type="button"
                       key={r}
-                      className={`btn-rating ${RATING_CLASS[r]}`}
+                      className={`btn-rating ${RATING_CLASS[r]}${
+                        isSuggested ? ' is-suggested' : ''
+                      }`}
                       onClick={() => handleRate(r)}
                       disabled={submitM.isPending || lastJudge !== null}
-                      // YUK-56 — soft hint: outline the rating the judge suggested
-                      style={
-                        isSuggested
-                          ? { boxShadow: '0 0 0 2px var(--info-ink)', position: 'relative' }
-                          : undefined
-                      }
                       title={isSuggested ? 'AI 建议此评分' : undefined}
                     >
                       <span>{RATING_LABELS[r]}</span>

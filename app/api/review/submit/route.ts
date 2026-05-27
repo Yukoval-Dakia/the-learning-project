@@ -29,7 +29,7 @@ import { z } from 'zod';
 import { newId } from '@/core/ids';
 import { ActivityRef } from '@/core/schema/activity';
 import { FsrsRating } from '@/core/schema/business';
-import type { JudgeResultV2T } from '@/core/schema/capability';
+import { JudgeResultV2, type JudgeResultV2T } from '@/core/schema/capability';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
@@ -40,6 +40,8 @@ import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject
 import { normalizeReviewSubmitActivityRef } from '@/server/review/activity-ref';
 import { activeEffectiveTruth } from '@/server/review/effective-truth';
 import { scheduleReview } from '@/server/review/fsrs';
+import { ratingFromCoarseOutcome } from '@/server/review/judge-rating';
+import { judgeResultToRatingAdvice } from '@/server/review/rating-advisor';
 import { eq, sql } from 'drizzle-orm';
 
 export const runtime = 'nodejs';
@@ -63,30 +65,18 @@ const SubmitBody = z.object({
   // coarse_outcome) overrides `rating`. Requires `response_md` non-empty.
   // Rejects with 422 when the judge returns coarse_outcome='unsupported'.
   auto_rate: z.boolean().default(false),
+  // YUK-98 (T-RA, 2026-05-27) — optional client-supplied judge result. When the
+  // UI has already run a judge in the prior /judge step it can submit the
+  // result back here so the advisory derivation (rating-advisor.ts) gets a
+  // trace and the event payload retains `judge_advice` for later analysis.
+  // Old clients that don't send this field still work — advisor stays silent.
+  // The route NEVER auto-commits the advisory rating: `body.rating` remains
+  // the source-of-truth (advisor is informational; user override wins per
+  // YUK-98 driver §1.1).
+  judge_result_v2: JudgeResultV2.optional(),
 });
 
-type CoarseOutcome = JudgeResultV2T['coarse_outcome'];
 type Rating = z.infer<typeof FsrsRating>;
-
-/**
- * YUK-56 — Map judge coarse_outcome to FSRS rating used by `/review`.
- *
- * 3-state rating space (again/hard/good) — Review UI does not surface 'easy'
- * so 'good' covers both correct and very-correct. 'unsupported' returns null
- * (caller decides: 422 in auto_rate mode, ignored in manual mode).
- */
-function ratingFromCoarseOutcome(outcome: CoarseOutcome): Rating | null {
-  switch (outcome) {
-    case 'correct':
-      return 'good';
-    case 'partial':
-      return 'hard';
-    case 'incorrect':
-      return 'again';
-    case 'unsupported':
-      return null;
-  }
-}
 
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -113,9 +103,10 @@ export async function POST(req: Request): Promise<Response> {
       throw new ApiError('not_found', `question ${questionId} not found`, 404);
     }
 
-    // YUK-56 — Run the judge BEFORE the FSRS transaction when an answer was
-    // submitted. The judge is read-only against the DB (no events written) so
-    // it doesn't need to share the txn. We need the result up-front to:
+    // YUK-56/YUK-98 — Resolve the judge result BEFORE the FSRS transaction.
+    // If the UI already generated advice, reuse its `judge_result_v2` so final
+    // submit doesn't call the judge twice. Otherwise, run the read-only judge
+    // outside the txn (no events written). We need the result up-front to:
     //   1. Decide final rating when auto_rate=true (suggested wins).
     //   2. Reject 422 when auto_rate=true but judge returned 'unsupported'.
     //   3. Embed result in review event's payload.judge.
@@ -123,12 +114,13 @@ export async function POST(req: Request): Promise<Response> {
     // CC-3 invariant: route through `createDefaultJudgeInvoker()`; never call
     // `judgeExact` / `judgeKeyword` / `judgeRouter` directly.
     const answerMd = body.response_md?.trim() ?? '';
-    let judgeResult: JudgeResultV2T | null = null;
-    let judgeRoute: string | null = null;
+    const suppliedJudgeResult = answerMd.length > 0 ? (body.judge_result_v2 ?? null) : null;
+    let judgeResult: JudgeResultV2T | null = suppliedJudgeResult;
+    let judgeRoute: string | null = suppliedJudgeResult?.capability_ref.id ?? null;
     let judgeTelemetry:
       | Awaited<ReturnType<ReturnType<typeof createDefaultJudgeInvoker>['invoke']>>['telemetry']
       | null = null;
-    if (answerMd.length > 0) {
+    if (answerMd.length > 0 && judgeResult === null) {
       const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids);
       const invoked = await createDefaultJudgeInvoker().invoke({
         db,
@@ -223,7 +215,7 @@ export async function POST(req: Request): Promise<Response> {
       // trail). Embedding mirrors the embedded-check pattern and keeps the
       // judge event channel clean for cause-bearing events.
       const judgePayload =
-        judgeResult !== null && judgeRoute !== null && judgeTelemetry !== null
+        judgeResult !== null && judgeRoute !== null
           ? {
               judge: {
                 route: judgeRoute,
@@ -235,10 +227,28 @@ export async function POST(req: Request): Promise<Response> {
                 capability_ref: judgeResult.capability_ref,
                 suggested_rating: suggestedRating,
                 auto_rated: body.auto_rate,
-                telemetry: judgeTelemetry,
+                ...(judgeTelemetry !== null ? { telemetry: judgeTelemetry } : {}),
               },
             }
           : {};
+
+      // YUK-98 (T-RA) — If the client supplied `judge_result_v2`, derive the
+      // partial-credit rating advisory and persist it on the event payload as
+      // `judge_advice`. This is informational only: the user's `body.rating`
+      // is still the committed rating (advisor never overrides). CC-1
+      // invariant: this route does not classify cause itself. This submit
+      // payload is result-only; a future cause-aware call site must pass
+      // effectiveCauseCategoryForFailureAttempt() output into
+      // judgeResultToRatingAdvice(..., { causeCategory }) before persisting.
+      const judgeAdvicePayload = suppliedJudgeResult
+        ? {
+            judge_advice: {
+              ...judgeResultToRatingAdvice(suppliedJudgeResult),
+              source_capability_ref: suppliedJudgeResult.capability_ref,
+              source_coarse_outcome: suppliedJudgeResult.coarse_outcome,
+            },
+          }
+        : {};
 
       await writeEvent(tx, {
         id: eventId,
@@ -259,6 +269,7 @@ export async function POST(req: Request): Promise<Response> {
           // legacy callers that never sent it.
           ...(typeof body.latency_ms === 'number' ? { duration_ms: body.latency_ms } : {}),
           ...judgePayload,
+          ...judgeAdvicePayload,
         },
         caused_by_event_id: null,
         task_run_id: null,
@@ -288,7 +299,7 @@ export async function POST(req: Request): Promise<Response> {
     // the judge suggestion. `judge` is null when no answer was submitted
     // (manual-only path).
     const judgeResponse =
-      judgeResult !== null && judgeRoute !== null && judgeTelemetry !== null
+      judgeResult !== null && judgeRoute !== null
         ? {
             route: judgeRoute,
             score: judgeResult.score,
@@ -299,7 +310,7 @@ export async function POST(req: Request): Promise<Response> {
             capability_ref: judgeResult.capability_ref,
             suggested_rating: suggestedRating,
             auto_rated: body.auto_rate,
-            telemetry: judgeTelemetry,
+            ...(judgeTelemetry !== null ? { telemetry: judgeTelemetry } : {}),
           }
         : null;
 
