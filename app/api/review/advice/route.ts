@@ -71,6 +71,7 @@ export async function POST(req: Request): Promise<Response> {
       judge: {
         route: invoked.route,
         score: invoked.result.score,
+        score_meaning: invoked.result.score_meaning,
         coarse_outcome: invoked.result.coarse_outcome,
         confidence: invoked.result.confidence,
         feedback_md: invoked.result.feedback_md,

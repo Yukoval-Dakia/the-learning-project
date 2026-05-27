@@ -61,11 +61,17 @@ describe('POST /api/review/advice', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       question_id: string;
-      judge: { route: string; coarse_outcome: string; suggested_rating: string | null };
+      judge: {
+        route: string;
+        score_meaning: string;
+        coarse_outcome: string;
+        suggested_rating: string | null;
+      };
       advice: { rating: string | null; evidence_score: number | null; reason: string };
     };
     expect(body.question_id).toBe('q_advice_exact');
     expect(body.judge.route).toBe('exact');
+    expect(body.judge.score_meaning).toBe('correctness');
     expect(body.judge.coarse_outcome).toBe('correct');
     expect(body.judge.suggested_rating).toBe('good');
     expect(body.advice.rating).toBe('good');

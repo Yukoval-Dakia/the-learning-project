@@ -103,9 +103,10 @@ export async function POST(req: Request): Promise<Response> {
       throw new ApiError('not_found', `question ${questionId} not found`, 404);
     }
 
-    // YUK-56 — Run the judge BEFORE the FSRS transaction when an answer was
-    // submitted. The judge is read-only against the DB (no events written) so
-    // it doesn't need to share the txn. We need the result up-front to:
+    // YUK-56/YUK-98 — Resolve the judge result BEFORE the FSRS transaction.
+    // If the UI already generated advice, reuse its `judge_result_v2` so final
+    // submit doesn't call the judge twice. Otherwise, run the read-only judge
+    // outside the txn (no events written). We need the result up-front to:
     //   1. Decide final rating when auto_rate=true (suggested wins).
     //   2. Reject 422 when auto_rate=true but judge returned 'unsupported'.
     //   3. Embed result in review event's payload.judge.
@@ -113,12 +114,13 @@ export async function POST(req: Request): Promise<Response> {
     // CC-3 invariant: route through `createDefaultJudgeInvoker()`; never call
     // `judgeExact` / `judgeKeyword` / `judgeRouter` directly.
     const answerMd = body.response_md?.trim() ?? '';
-    let judgeResult: JudgeResultV2T | null = null;
-    let judgeRoute: string | null = null;
+    const suppliedJudgeResult = answerMd.length > 0 ? (body.judge_result_v2 ?? null) : null;
+    let judgeResult: JudgeResultV2T | null = suppliedJudgeResult;
+    let judgeRoute: string | null = suppliedJudgeResult?.capability_ref.id ?? null;
     let judgeTelemetry:
       | Awaited<ReturnType<ReturnType<typeof createDefaultJudgeInvoker>['invoke']>>['telemetry']
       | null = null;
-    if (answerMd.length > 0) {
+    if (answerMd.length > 0 && judgeResult === null) {
       const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids);
       const invoked = await createDefaultJudgeInvoker().invoke({
         db,
@@ -213,7 +215,7 @@ export async function POST(req: Request): Promise<Response> {
       // trail). Embedding mirrors the embedded-check pattern and keeps the
       // judge event channel clean for cause-bearing events.
       const judgePayload =
-        judgeResult !== null && judgeRoute !== null && judgeTelemetry !== null
+        judgeResult !== null && judgeRoute !== null
           ? {
               judge: {
                 route: judgeRoute,
@@ -225,7 +227,7 @@ export async function POST(req: Request): Promise<Response> {
                 capability_ref: judgeResult.capability_ref,
                 suggested_rating: suggestedRating,
                 auto_rated: body.auto_rate,
-                telemetry: judgeTelemetry,
+                ...(judgeTelemetry !== null ? { telemetry: judgeTelemetry } : {}),
               },
             }
           : {};
@@ -238,12 +240,12 @@ export async function POST(req: Request): Promise<Response> {
       // payload is result-only; a future cause-aware call site must pass
       // effectiveCauseCategoryForFailureAttempt() output into
       // judgeResultToRatingAdvice(..., { causeCategory }) before persisting.
-      const judgeAdvicePayload = body.judge_result_v2
+      const judgeAdvicePayload = suppliedJudgeResult
         ? {
             judge_advice: {
-              ...judgeResultToRatingAdvice(body.judge_result_v2),
-              source_capability_ref: body.judge_result_v2.capability_ref,
-              source_coarse_outcome: body.judge_result_v2.coarse_outcome,
+              ...judgeResultToRatingAdvice(suppliedJudgeResult),
+              source_capability_ref: suppliedJudgeResult.capability_ref,
+              source_coarse_outcome: suppliedJudgeResult.coarse_outcome,
             },
           }
         : {};
@@ -297,7 +299,7 @@ export async function POST(req: Request): Promise<Response> {
     // the judge suggestion. `judge` is null when no answer was submitted
     // (manual-only path).
     const judgeResponse =
-      judgeResult !== null && judgeRoute !== null && judgeTelemetry !== null
+      judgeResult !== null && judgeRoute !== null
         ? {
             route: judgeRoute,
             score: judgeResult.score,
@@ -308,7 +310,7 @@ export async function POST(req: Request): Promise<Response> {
             capability_ref: judgeResult.capability_ref,
             suggested_rating: suggestedRating,
             auto_rated: body.auto_rate,
-            telemetry: judgeTelemetry,
+            ...(judgeTelemetry !== null ? { telemetry: judgeTelemetry } : {}),
           }
         : null;
 

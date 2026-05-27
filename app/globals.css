@@ -2839,6 +2839,94 @@ ol {
   gap: var(--s-2);
   flex-wrap: wrap;
 }
+.rating-advisor {
+  display: grid;
+  gap: var(--s-2);
+  padding: 12px 14px;
+  background: var(--paper-sunk);
+  border: 1px solid var(--line-soft);
+  border-left: 3px solid var(--info);
+  border-radius: var(--r-2);
+}
+.rating-advisor--again {
+  border-left-color: var(--again);
+}
+.rating-advisor--hard {
+  border-left-color: var(--hard);
+}
+.rating-advisor--good {
+  border-left-color: var(--good);
+}
+.rating-advisor__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+.rating-advisor__copy,
+.rating-advisor__reason,
+.rating-advisor__error {
+  margin: 0;
+}
+.rating-advisor__copy {
+  margin-top: 3px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+.rating-advisor__result {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.rating-advisor__badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  font-weight: 700;
+}
+.rating-advisor__badge.again {
+  color: var(--again-ink);
+  background: var(--again-soft);
+  border-color: var(--again-line);
+}
+.rating-advisor__badge.hard {
+  color: var(--hard-ink);
+  background: var(--hard-soft);
+  border-color: var(--hard-line);
+}
+.rating-advisor__badge.good {
+  color: var(--good-ink);
+  background: var(--good-soft);
+  border-color: var(--good-line);
+}
+.rating-advisor__badge.neutral {
+  color: var(--ink-3);
+  background: var(--paper-raised);
+  border-color: var(--line-soft);
+}
+.rating-advisor__score {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-4);
+}
+.rating-advisor__reason {
+  flex-basis: 100%;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.rating-advisor__error {
+  color: var(--again-ink);
+  font-size: 13px;
+  line-height: 1.5;
+}
 .review-stage .empty {
   text-align: center;
   color: var(--ink-4);
@@ -2926,6 +3014,10 @@ ol {
   cursor: not-allowed;
   opacity: 0.5;
 }
+.btn-rating.is-suggested {
+  position: relative;
+  box-shadow: 0 0 0 2px var(--info-ink);
+}
 .btn-rating kbd {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -2988,6 +3080,9 @@ ol {
   }
   .review-stage .answer-compose--preview {
     grid-template-columns: 1fr;
+  }
+  .rating-advisor__head {
+    flex-direction: column;
   }
   .rating-row,
   .rating-row.cols-3 {
