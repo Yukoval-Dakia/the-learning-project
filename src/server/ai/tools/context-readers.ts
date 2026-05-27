@@ -113,6 +113,13 @@ function recordKnowledgeContainsAny(ids: string[]) {
   return or(...conditions) ?? sql`FALSE`;
 }
 
+function questionKnowledgeContainsAny(ids: string[]) {
+  const conditions = ids.map(
+    (id) => sql`${question.knowledge_ids} @> ${JSON.stringify([id])}::jsonb`,
+  );
+  return or(...conditions) ?? sql`FALSE`;
+}
+
 function bodyBlockSummaries(bodyBlocks: unknown): string[] {
   if (!bodyBlocks || typeof bodyBlocks !== 'object') return [];
   const content = (bodyBlocks as { content?: unknown }).content;
@@ -716,6 +723,13 @@ async function executeGetReviewDue(
   const input = GetReviewDueInputSchema.parse(raw);
   const limit = input.limit ?? 20;
   const now = new Date();
+  const dueConditions = [
+    eq(material_fsrs_state.subject_kind, 'question'),
+    lte(material_fsrs_state.due_at, now),
+  ];
+  if (input.knowledgeIds?.length) {
+    dueConditions.push(questionKnowledgeContainsAny(input.knowledgeIds));
+  }
   const dueRows = await ctx.db
     .select({
       question_id: material_fsrs_state.subject_id,
@@ -726,9 +740,7 @@ async function executeGetReviewDue(
     })
     .from(material_fsrs_state)
     .innerJoin(question, eq(question.id, material_fsrs_state.subject_id))
-    .where(
-      and(eq(material_fsrs_state.subject_kind, 'question'), lte(material_fsrs_state.due_at, now)),
-    )
+    .where(and(...dueConditions))
     .orderBy(asc(material_fsrs_state.due_at), asc(question.created_at))
     .limit(limit);
 
@@ -785,12 +797,6 @@ async function executeGetReviewDue(
   }
   for (const due of dueRows) {
     if (rows.length >= limit) break;
-    if (
-      input.knowledgeIds?.length &&
-      !input.knowledgeIds.some((id) => (due.knowledge_ids ?? []).includes(id))
-    ) {
-      continue;
-    }
     rows.push({
       question_id: due.question_id,
       prompt_excerpt: excerpt(due.prompt_md),

@@ -228,12 +228,19 @@ export const NoteSection = z.object({
   version: z.number().int().nonnegative(),
 });
 
+export const TipTapMarkJson = z
+  .object({
+    type: z.string().min(1),
+    attrs: z.record(z.unknown()).optional(),
+  })
+  .passthrough();
+
 export const TipTapNodeJson: z.ZodType<Record<string, unknown>> = z
   .object({
     type: z.string().min(1),
     attrs: z.record(z.unknown()).optional(),
     content: z.array(z.lazy(() => TipTapNodeJson)).optional(),
-    marks: z.array(z.record(z.unknown())).optional(),
+    marks: z.array(TipTapMarkJson).optional(),
     text: z.string().optional(),
   })
   .passthrough();

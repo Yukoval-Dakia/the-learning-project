@@ -43,7 +43,7 @@ M2 completed step 3 read coverage (10 more read tools) + step 5 expansion. M3 la
 | `get_review_due` / `get_learning_item_context` / `query_memory_brief` | due filters, learning_item id, memory scope | deterministic due queue, item context, derived memory brief | `review due · 2 rows · 1 new · 1 overdue` | when_user_visible | local |
 | `get_attempt_context` | `attemptEventId / timelineLimit?` | attempt + question + cause + per-question timeline + linked records | `attempt att_abcd · q=q_xx · cause=concept · timeline=4 · records=1` | when_user_visible | local |
 
-All three are Zod-guarded both ways (input + output). All three reuse existing readers (`getFailureAttempts`, raw `event` select, `getFailureAttemptById`, `getQuestionTimeline`, `listLearningRecords`) — zero new SQL.
+All thirteen tools are Zod-guarded both ways (input + output). All thirteen reuse existing readers (`getFailureAttempts`, raw `event` select, `getFailureAttemptById`, `getQuestionTimeline`, `listLearningRecords`) — zero new SQL.
 
 ## 4. Bridge contract
 

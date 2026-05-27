@@ -85,6 +85,7 @@ export function ArtifactBlockTree({
   useEffect(() => {
     let canceled = false;
     const startGeneration = correctionWriteGenerationRef.current;
+    setCorrectionState(null);
     apiJson<ArtifactCorrectionStateResponse>(`/api/artifacts/${artifactId}/correct`)
       .then((state) => {
         if (canceled) return;

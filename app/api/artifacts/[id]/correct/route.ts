@@ -2,7 +2,7 @@ import { newId } from '@/core/ids';
 import { CorrectArtifactEvent } from '@/core/schema/event';
 import { db } from '@/db/client';
 import { artifact } from '@/db/schema';
-import { bodyBlocksToNoteSections } from '@/server/artifacts/body-blocks';
+import { bodyBlocksContainId } from '@/server/artifacts/body-blocks';
 import { getArtifactCorrectionState } from '@/server/events/artifact-corrections';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
@@ -10,7 +10,9 @@ import { eq } from 'drizzle-orm';
 
 export const runtime = 'nodejs';
 
-type RouteParams = { params: Promise<{ id: string }> };
+interface RouteParams {
+  params: Promise<{ id: string }>;
+}
 
 export async function GET(_req: Request, { params }: RouteParams): Promise<Response> {
   try {
@@ -78,8 +80,7 @@ export async function POST(req: Request, { params }: RouteParams): Promise<Respo
     const { correction_kind, block_id, replacement_artifact_id } = parsed.data.payload;
 
     if (block_id !== undefined) {
-      const sections = bodyBlocksToNoteSections(target.body_blocks);
-      if (!sections.some((sec) => sec.id === block_id)) {
+      if (!bodyBlocksContainId(target.body_blocks, block_id)) {
         throw new ApiError(
           'not_found',
           `artifact ${artifactId} has no block with id '${block_id}'`,

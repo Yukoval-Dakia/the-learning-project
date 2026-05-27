@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 
 import type { EmbeddedCheckQuestion } from '@/ui/components/ArtifactSections';
 import { EmbeddedCheckSection } from '@/ui/components/EmbeddedCheckSection';
+import { MathMarkdown } from '@/ui/lib/math-markdown';
 import {
   type SlimSubjectProfile,
   resolveSubjectRenderModel,
@@ -156,12 +157,20 @@ export function BlockTreeRenderer({
         if (node.type !== SEMANTIC_BLOCK_NODE) {
           return renderNode(node, `node-${index}`);
         }
-        const attrs = asRecord(node.attrs) as unknown as SemanticBlockAttrs;
+        const rawAttrs = asRecord(node.attrs);
+        const attrs = rawAttrs as unknown as SemanticBlockAttrs;
         const id = typeof attrs.id === 'string' ? attrs.id : `block_${index}`;
         const kind = attrs.semantic_kind ?? 'definition';
         const sourceTier = attrs.source_tier ?? 'llm_only';
         const status = correctionBlocks[id] ?? ACTIVE_STATUS;
         const label = statusLabel(status);
+        const sourceMarkdown =
+          typeof rawAttrs.source_markdown === 'string' ? rawAttrs.source_markdown : null;
+        const embeddedQuestionIds = attrs.embedded_check?.question_ids ?? [];
+        const embeddedQuestionIdSet = new Set(embeddedQuestionIds);
+        const blockQuestions = embeddedQuestions.filter((question) =>
+          embeddedQuestionIdSet.has(question.id),
+        );
         return (
           <section
             key={id}
@@ -184,13 +193,19 @@ export function BlockTreeRenderer({
                 </div>
               ) : null}
             </div>
-            <div {...bodyProps}>
-              {(node.content ?? []).map((child, idx) => renderNode(child, `${id}-${idx}`))}
-            </div>
+            {sourceMarkdown !== null ? (
+              <MathMarkdown {...bodyProps} notation={notation}>
+                {sourceMarkdown}
+              </MathMarkdown>
+            ) : (
+              <div {...bodyProps}>
+                {(node.content ?? []).map((child, idx) => renderNode(child, `${id}-${idx}`))}
+              </div>
+            )}
             {kind === 'check' ? (
               <EmbeddedCheckSection
                 status={embeddedCheckStatus}
-                questions={embeddedQuestions}
+                questions={blockQuestions}
                 notation={notation}
               />
             ) : null}

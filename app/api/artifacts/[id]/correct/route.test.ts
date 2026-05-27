@@ -26,7 +26,10 @@ const NOTE_SECTIONS = [
   },
 ];
 
-async function seedAtomic(artifactId: string, opts?: { sections?: unknown[] | null }) {
+async function seedAtomic(
+  artifactId: string,
+  opts?: { sections?: unknown[] | null; bodyBlocks?: unknown },
+) {
   const db = testDb();
   const now = new Date();
   await db.insert(artifact).values({
@@ -39,11 +42,13 @@ async function seedAtomic(artifactId: string, opts?: { sections?: unknown[] | nu
     source: 'ai_generated',
     source_ref: null,
     body_blocks:
-      opts?.sections === null
-        ? null
-        : noteSectionsToBodyBlocks(
-            (opts?.sections === undefined ? NOTE_SECTIONS : opts.sections) as never,
-          ),
+      opts?.bodyBlocks !== undefined
+        ? (opts.bodyBlocks as never)
+        : opts?.sections === null
+          ? null
+          : noteSectionsToBodyBlocks(
+              (opts?.sections === undefined ? NOTE_SECTIONS : opts.sections) as never,
+            ),
     attrs: { one_line_intent: 'test' } as never,
     tool_kind: null,
     tool_state: null,
@@ -113,6 +118,31 @@ describe('POST /api/artifacts/[id]/correct', () => {
     expect(state.whole.state).toBe('active');
     expect(state.blocks.get('s_pitfall')?.state).toBe('marked_wrong');
     expect(state.blocks.get('s_def')).toBeUndefined();
+  });
+
+  it('accepts correction targets on non-semantic body_blocks nodes', async () => {
+    await seedAtomic('artifact_42', {
+      bodyBlocks: {
+        type: 'doc',
+        content: [
+          {
+            type: 'calloutBlock',
+            attrs: { id: 'callout_1', tone: 'warn', title: '注意' },
+            content: [{ type: 'paragraph', content: [{ type: 'text', text: '这里有误' }] }],
+          },
+        ],
+      },
+    });
+
+    const res = await postCorrect('artifact_42', {
+      correction_kind: 'mark_wrong',
+      block_id: 'callout_1',
+      reason_md: 'callout itself is wrong.',
+    });
+    expect(res.status).toBe(200);
+
+    const state = await getArtifactCorrectionState(testDb(), 'artifact_42');
+    expect(state.blocks.get('callout_1')?.state).toBe('marked_wrong');
   });
 
   it('returns 404 when artifact does not exist', async () => {

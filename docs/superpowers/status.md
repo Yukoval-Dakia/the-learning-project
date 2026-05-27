@@ -111,7 +111,7 @@ Wave 1 closeout doc：[`plans/2026-05-27-wave1-ready-to-launch.md`](plans/2026-0
 
 ### Wave 2 — YUK-88 P1/P2-basic + Foundation D M2 readers（2026-05-27）
 
-```
+```text
 ✅  T-88 P1 schema + ADR-0020 block-tree contract     cde1ff4c (YUK-91) — body_blocks / knowledge_ids / artifact_block_ref / correction block_id rewrite
 ✅  T-88 P2-basic TipTap block-tree editor            803901b0 (YUK-92) — lazy editor, JSON read renderer, block save API, ADR-0022
 ✅  T-D2 DomainTool read tools full coverage          YUK-102 — 10 M2 readers registered; 13 read tools total with M1 bridge

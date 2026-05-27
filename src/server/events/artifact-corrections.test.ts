@@ -101,6 +101,32 @@ describe('artifact correction projection', () => {
     });
   });
 
+  it('projects legacy section_id correction payloads as block_id for existing rows', async () => {
+    const db = testDb();
+    await db.insert(event).values({
+      id: 'corr_legacy_section',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'artifact',
+      subject_id: 'artifact_42',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'mark_wrong',
+        section_id: 'legacy_section',
+        reason_md: 'legacy ADR-0019 row',
+      },
+      created_at: BASE_TIME,
+    });
+
+    const state = await getArtifactCorrectionState(db, 'artifact_42');
+    expect(state.blocks.get('legacy_section')).toEqual({
+      state: 'marked_wrong',
+      correction_event_id: 'corr_legacy_section',
+      replacement_artifact_id: null,
+    });
+  });
+
   it('returns to active after restore (latest event wins)', async () => {
     const db = testDb();
     await seedArtifactCorrection({

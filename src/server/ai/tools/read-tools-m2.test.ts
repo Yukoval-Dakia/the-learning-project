@@ -33,7 +33,7 @@ import {
 import { __resetRegistryForTests, getTool, listTools } from './registry';
 import type { ToolContext } from './types';
 
-const BASE = new Date('2026-05-27T08:00:00Z');
+const BASE = new Date(Date.now() - 60_000);
 
 function ctx(): ToolContext {
   return {
@@ -331,6 +331,12 @@ describe('Foundation D M2 read tools', () => {
     expect(overview.root_nodes).toEqual([{ id: 'k_root', name: '文言虚词' }]);
     expect(overview.clusters[0].edge_count).toBe(1);
 
+    const overviewWithWeakness = await getSubjectGraphOverviewTool.execute(ctx(), {
+      subjectId: 'wenyan',
+      includeWeaknessSummary: true,
+    });
+    expect(overviewWithWeakness.clusters[0].recent_failure_count_30d).toBe(1);
+
     const knowledgeRows = await queryKnowledgeTool.execute(ctx(), {
       subjectId: 'wenyan',
       query: '之',
@@ -338,7 +344,16 @@ describe('Foundation D M2 read tools', () => {
     });
     expect(knowledgeRows.nodes[0].id).toBe('k_zhi');
     expect(knowledgeRows.nodes[0].path).toEqual(['文言虚词', '之的用法']);
+    expect(knowledgeRows.nodes.map((node) => node.id)).toEqual(['k_zhi', 'k_er']);
     expect(knowledgeRows.recent_failures?.[0].event_id).toBe('att_new');
+
+    const expandedQuery = await queryKnowledgeTool.execute(ctx(), {
+      subjectId: 'wenyan',
+      nodeId: 'k_zhi',
+      include: ['ancestors', 'neighbors', 'stats'],
+    });
+    expect(expandedQuery.nodes.map((node) => node.id)).toEqual(['k_zhi', 'k_root', 'k_er']);
+    expect(expandedQuery.nodes[0].stats?.recent_failure_count_30d).toBe(1);
 
     const subgraph = await expandKnowledgeSubgraphTool.execute(ctx(), {
       centerNodeId: 'k_zhi',
@@ -347,6 +362,32 @@ describe('Foundation D M2 read tools', () => {
     });
     expect(subgraph.nodes.map((node) => node.id).sort()).toEqual(['k_er', 'k_root', 'k_zhi']);
     expect(subgraph.edges[0].relation_type).toBe('contrasts_with');
+
+    await testDb().insert(knowledge).values({
+      id: 'k_archived',
+      name: '旧节点',
+      domain: null,
+      parent_id: 'k_root',
+      archived_at: BASE,
+      created_at: BASE,
+      updated_at: BASE,
+    });
+    await testDb()
+      .insert(knowledge_edge)
+      .values({
+        id: 'edge_archived',
+        from_knowledge_id: 'k_zhi',
+        to_knowledge_id: 'k_archived',
+        relation_type: 'related_to',
+        weight: 0.1,
+        created_by: 'user' as never,
+        created_at: BASE,
+      });
+    const subgraphWithArchivedEdge = await expandKnowledgeSubgraphTool.execute(ctx(), {
+      centerNodeId: 'k_zhi',
+      include: ['neighbors'],
+    });
+    expect(subgraphWithArchivedEdge.nodes.map((node) => node.id)).not.toContain('k_archived');
 
     const paths = await findKnowledgePathsTool.execute(ctx(), {
       fromKnowledgeId: 'k_zhi',
@@ -400,6 +441,34 @@ describe('Foundation D M2 read tools', () => {
     expect(due.rows.map((row) => row.question_id)).toEqual(['q_new', 'q_due']);
     expect(due.queue_summary.never_reviewed_count).toBe(1);
     expect(due.queue_summary.overdue_count).toBe(1);
+
+    await testDb()
+      .insert(question)
+      .values({
+        id: 'q_due_zhi_only',
+        kind: 'short_answer',
+        prompt_md: '只考「之」',
+        reference_md: '结构助词。',
+        source: 'manual',
+        knowledge_ids: ['k_zhi'],
+        created_at: new Date(BASE.getTime() - 2_000),
+        updated_at: BASE,
+      });
+    await testDb()
+      .insert(material_fsrs_state)
+      .values({
+        id: 'fsrs_due_zhi_only',
+        subject_kind: 'question',
+        subject_id: 'q_due_zhi_only',
+        state: fsrsState(new Date(BASE.getTime() - 172_800_000)) as never,
+        due_at: new Date(BASE.getTime() - 172_800_000),
+        updated_at: BASE,
+      });
+    const filteredDue = await getReviewDueTool.execute(ctx(), {
+      limit: 1,
+      knowledgeIds: ['k_er'],
+    });
+    expect(filteredDue.rows.map((row) => row.question_id)).toEqual(['q_due']);
 
     const itemContext = await getLearningItemContextTool.execute(ctx(), {
       learningItemId: 'li_zhi',

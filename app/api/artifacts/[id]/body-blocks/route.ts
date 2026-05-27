@@ -7,7 +7,9 @@ import { ApiError, errorResponse } from '@/server/http/errors';
 
 export const runtime = 'nodejs';
 
-type RouteParams = { params: Promise<{ id: string }> };
+interface RouteParams {
+  params: Promise<{ id: string }>;
+}
 
 const PatchBody = z.object({
   artifact_version: z.number().int().nonnegative(),

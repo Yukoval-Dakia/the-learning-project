@@ -2,7 +2,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import type { z } from 'zod';
 
-import type { NoteSection } from '@/core/schema/business';
+import { ArtifactBodyBlocks, type NoteSection } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact } from '@/db/schema';
 import { bodyBlocksToNoteSections, replaceNoteSectionBody } from '@/server/artifacts/body-blocks';
@@ -33,6 +33,14 @@ export interface EditArtifactSectionResult {
 function parseSections(value: unknown, artifactId: string): NoteSectionT[] {
   if (value === null || value === undefined) {
     throw new ApiError('not_found', `artifact ${artifactId} has no sections`, 404);
+  }
+  const parsed = ArtifactBodyBlocks.safeParse(value);
+  if (!parsed.success) {
+    throw new ApiError(
+      'validation_error',
+      `artifact ${artifactId} body_blocks is malformed: ${parsed.error.issues.map((i) => i.message).join('; ')}`,
+      500,
+    );
   }
   return bodyBlocksToNoteSections(value);
 }

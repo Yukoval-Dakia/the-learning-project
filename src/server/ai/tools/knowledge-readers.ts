@@ -6,12 +6,13 @@
 
 import type { Db } from '@/db/client';
 import { event, knowledge, knowledge_edge, knowledge_mastery } from '@/db/schema';
-import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DomainTool, ToolContext } from './types';
 
 const TEXT_SNIPPET_MAX = 180;
 const MAX_NODES = 60;
+const RECENT_FAILURE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
 type KnowledgeRow = {
   id: string;
@@ -110,6 +111,23 @@ function edgeCount(id: string, edges: EdgeRow[]): number {
     .length;
 }
 
+function recentFailureCutoff(now = new Date()): Date {
+  return new Date(now.getTime() - RECENT_FAILURE_WINDOW_MS);
+}
+
+function knowledgePayloadContainsAny(ids: string[]) {
+  const conditions = ids.map(
+    (id) => sql`${event.payload}->'referenced_knowledge_ids' @> ${JSON.stringify([id])}::jsonb`,
+  );
+  return or(...conditions) ?? sql`FALSE`;
+}
+
+function payloadKnowledgeIds(payload: unknown): string[] {
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return [];
+  const ids = (payload as { referenced_knowledge_ids?: unknown }).referenced_knowledge_ids;
+  return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : [];
+}
+
 async function loadMasteryMap(
   db: Db,
   ids: string[],
@@ -148,10 +166,6 @@ async function loadRecentFailures(
   }>
 > {
   if (ids.length === 0) return [];
-  const knowledgeConditions = ids.map(
-    (id) => sql`${event.payload}->'referenced_knowledge_ids' @> ${JSON.stringify([id])}::jsonb`,
-  );
-  const knowledgeCondition = or(...knowledgeConditions) ?? sql`FALSE`;
   const rows = await db
     .select({
       id: event.id,
@@ -165,7 +179,7 @@ async function loadRecentFailures(
         eq(event.action, 'attempt'),
         eq(event.subject_kind, 'question'),
         eq(event.outcome, 'failure'),
-        knowledgeCondition,
+        knowledgePayloadContainsAny(ids),
       ),
     )
     .orderBy(sql`${event.created_at} DESC`)
@@ -180,6 +194,37 @@ async function loadRecentFailures(
       excerpt: excerpt(payload.answer_md),
     };
   });
+}
+
+async function loadRecentFailureCounts(
+  db: Db,
+  ids: string[],
+  since: Date,
+): Promise<Map<string, number>> {
+  const uniqueIds = Array.from(new Set(ids));
+  const counts = new Map(uniqueIds.map((id) => [id, 0]));
+  if (uniqueIds.length === 0) return counts;
+
+  const rows = await db
+    .select({ payload: event.payload })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'attempt'),
+        eq(event.subject_kind, 'question'),
+        eq(event.outcome, 'failure'),
+        gte(event.created_at, since),
+        knowledgePayloadContainsAny(uniqueIds),
+      ),
+    );
+
+  const idSet = new Set(uniqueIds);
+  for (const row of rows) {
+    for (const id of payloadKnowledgeIds(row.payload)) {
+      if (idSet.has(id)) counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+  }
+  return counts;
 }
 
 const RelationSchema = z.object({
@@ -240,6 +285,9 @@ async function executeOverview(ctx: ToolContext, raw: OverviewInput): Promise<Ov
   const ids = rows.map((row) => row.id);
   const edges = await loadEdges(ctx.db, ids);
   const mastery = input.includeWeaknessSummary ? await loadMasteryMap(ctx.db, ids) : new Map();
+  const recentFailureCounts = input.includeWeaknessSummary
+    ? await loadRecentFailureCounts(ctx.db, ids, recentFailureCutoff())
+    : new Map<string, number>();
   const roots = rows.filter((row) => !row.parent_id || !ids.includes(row.parent_id));
   const clusters = roots.map((root) => {
     const descendantIds = new Set<string>([root.id]);
@@ -267,7 +315,10 @@ async function executeOverview(ctx: ToolContext, raw: OverviewInput): Promise<Ov
         const m = mastery.get(id)?.mastery;
         return typeof m === 'number' && m < 0.55;
       }).length;
-      cluster.recent_failure_count_30d = 0;
+      cluster.recent_failure_count_30d = [...descendantIds].reduce(
+        (sum, id) => sum + (recentFailureCounts.get(id) ?? 0),
+        0,
+      );
     }
     return cluster;
   });
@@ -351,28 +402,61 @@ async function executeQueryKnowledge(
     rows.map((row) => row.id),
     input.relationTypes,
   );
-  let matches = rows;
+  let seedMatches = rows;
   if (input.nodeId) {
-    matches = rows.filter((row) => row.id === input.nodeId);
+    seedMatches = rows.filter((row) => row.id === input.nodeId);
   } else if (input.query) {
     const q = input.query.toLowerCase();
-    matches = rows.filter(
+    seedMatches = rows.filter(
       (row) => row.name.toLowerCase().includes(q) || row.id.toLowerCase().includes(q),
     );
   }
-  matches = matches.slice(0, limit);
+  const included = input.include ?? [];
+  const selected = new Map<string, KnowledgeRow>();
+  const addSelected = (id: string) => {
+    const row = byId.get(id);
+    if (row && !selected.has(row.id)) selected.set(row.id, row);
+  };
+  for (const row of seedMatches.slice(0, limit)) addSelected(row.id);
+  const seedIds = [...selected.keys()];
+
+  if (included.includes('ancestors')) {
+    for (const id of seedIds) {
+      let current = byId.get(id);
+      const seen = new Set<string>();
+      while (current?.parent_id && !seen.has(current.id)) {
+        seen.add(current.id);
+        addSelected(current.parent_id);
+        current = byId.get(current.parent_id);
+      }
+    }
+  }
+  if (included.includes('children')) {
+    for (const id of seedIds) {
+      for (const row of rows) {
+        if (row.parent_id === id) addSelected(row.id);
+      }
+    }
+  }
+  if (included.includes('neighbors')) {
+    const seedSet = new Set(seedIds);
+    for (const edge of allEdges) {
+      if (seedSet.has(edge.from_knowledge_id)) addSelected(edge.to_knowledge_id);
+      if (seedSet.has(edge.to_knowledge_id)) addSelected(edge.from_knowledge_id);
+    }
+  }
+
+  const matches = [...selected.values()].slice(0, limit);
   const ids = matches.map((row) => row.id);
-  const mastery = input.include?.includes('stats') ? await loadMasteryMap(ctx.db, ids) : new Map();
-  const failures = input.include?.includes('recent_failures')
+  const mastery = included.includes('stats') ? await loadMasteryMap(ctx.db, ids) : new Map();
+  const failureCounts = included.includes('stats')
+    ? await loadRecentFailureCounts(ctx.db, ids, recentFailureCutoff())
+    : new Map<string, number>();
+  const failures = included.includes('recent_failures')
     ? await loadRecentFailures(ctx.db, ids, 10)
     : undefined;
 
-  const neighborEdgeSet = new Set<string>();
-  for (const edge of allEdges) {
-    if (ids.includes(edge.from_knowledge_id) || ids.includes(edge.to_knowledge_id)) {
-      neighborEdgeSet.add(edge.id);
-    }
-  }
+  const selectedIds = new Set(ids);
 
   return QueryKnowledgeOutputSchema.parse({
     nodes: matches.map((row) => {
@@ -384,10 +468,10 @@ async function executeQueryKnowledge(
         path: pathFor(row.id, byId),
         children_count: childCount(row.id, rows),
         edge_count: edgeCount(row.id, allEdges),
-        ...(input.include?.includes('stats')
+        ...(included.includes('stats')
           ? {
               stats: {
-                recent_failure_count_30d: 0,
+                recent_failure_count_30d: failureCounts.get(row.id) ?? 0,
                 last_touched_at: m?.last_active_at ?? null,
                 mastery_estimate: m?.mastery ?? null,
               },
@@ -396,7 +480,9 @@ async function executeQueryKnowledge(
       };
     }),
     edges: allEdges
-      .filter((edge) => neighborEdgeSet.has(edge.id))
+      .filter(
+        (edge) => selectedIds.has(edge.from_knowledge_id) && selectedIds.has(edge.to_knowledge_id),
+      )
       .map((edge) => ({
         id: edge.id,
         from_knowledge_id: edge.from_knowledge_id,
@@ -492,8 +578,12 @@ async function executeExpand(ctx: ToolContext, raw: ExpandInput): Promise<Expand
   }
   if (included.includes('neighbors')) {
     for (const edge of allEdges) {
-      if (edge.from_knowledge_id === center.id) selected.set(edge.to_knowledge_id, 'neighbor');
-      if (edge.to_knowledge_id === center.id) selected.set(edge.from_knowledge_id, 'neighbor');
+      if (edge.from_knowledge_id === center.id && byId.has(edge.to_knowledge_id)) {
+        selected.set(edge.to_knowledge_id, 'neighbor');
+      }
+      if (edge.to_knowledge_id === center.id && byId.has(edge.from_knowledge_id)) {
+        selected.set(edge.from_knowledge_id, 'neighbor');
+      }
     }
   }
   const selectedIds = [...selected.keys()].slice(0, maxNodes);
@@ -522,7 +612,12 @@ async function executeExpand(ctx: ToolContext, raw: ExpandInput): Promise<Expand
         weight: edge.weight,
       })),
     paths: allEdges
-      .filter((edge) => edge.from_knowledge_id === center.id || edge.to_knowledge_id === center.id)
+      .filter(
+        (edge) =>
+          (edge.from_knowledge_id === center.id || edge.to_knowledge_id === center.id) &&
+          byId.has(edge.from_knowledge_id) &&
+          byId.has(edge.to_knowledge_id),
+      )
       .map((edge) => ({
         from: edge.from_knowledge_id,
         to: edge.to_knowledge_id,

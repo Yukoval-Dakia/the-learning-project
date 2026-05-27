@@ -169,4 +169,21 @@ describe('editArtifactSection', () => {
       }),
     ).rejects.toMatchObject({ code: 'not_found', status: 404 });
   });
+
+  it('rejects malformed body_blocks with validation_error instead of section not_found', async () => {
+    await seedArtifact({
+      body_blocks: { type: 'doc', content: [{ text: 'missing type' }] } as never,
+    });
+
+    await expect(
+      editArtifactSection({
+        db: testDb(),
+        artifactId: 'a1',
+        sectionId: 's1',
+        expectedArtifactVersion: 0,
+        expectedSectionVersion: 1,
+        nextBodyMd: 'next',
+      }),
+    ).rejects.toMatchObject({ code: 'validation_error', status: 500 });
+  });
 });

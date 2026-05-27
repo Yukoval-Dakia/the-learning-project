@@ -26,6 +26,17 @@ export function activeArtifactCorrectionStatus(): ArtifactCorrectionStatus {
   return { state: 'active', correction_event_id: null, replacement_artifact_id: null };
 }
 
+function normalizeLegacyPayload(payload: unknown): unknown {
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return payload;
+
+  const obj = payload as Record<string, unknown>;
+  if (!('section_id' in obj)) return payload;
+
+  const { section_id: sectionId, ...rest } = obj;
+  if ('block_id' in rest || typeof sectionId !== 'string') return rest;
+  return { ...rest, block_id: sectionId };
+}
+
 export interface ArtifactCorrectionState {
   /** Whole-artifact state — composed from correct events with payload.block_id omitted. */
   whole: ArtifactCorrectionStatus;
@@ -41,7 +52,7 @@ function rowToCorrectArtifactEventInput(row: EventRow): unknown {
     subject_kind: row.subject_kind,
     subject_id: row.subject_id,
     outcome: row.outcome,
-    payload: row.payload,
+    payload: normalizeLegacyPayload(row.payload),
     caused_by_event_id: row.caused_by_event_id ?? undefined,
     task_run_id: row.task_run_id ?? undefined,
     cost_micro_usd: row.cost_micro_usd ?? undefined,

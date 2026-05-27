@@ -52,6 +52,7 @@ export function noteSectionsToBodyBlocks(sections: NoteSectionT[]): ArtifactBody
         user_verified: section.user_verified,
         embedded_check: section.embedded_check ?? null,
         version: section.version,
+        source_markdown: section.body_md,
       },
       content: [paragraphNode(section.body_md)],
     })),
@@ -88,7 +89,10 @@ export function bodyBlocksToNoteSections(value: unknown): NoteSectionT[] {
     const candidate = {
       id,
       kind,
-      body_md: blockText(node),
+      body_md:
+        typeof (attrs as { source_markdown?: unknown }).source_markdown === 'string'
+          ? (attrs as { source_markdown: string }).source_markdown
+          : blockText(node),
       source_tier:
         typeof (attrs as { source_tier?: unknown }).source_tier === 'string'
           ? (attrs as { source_tier: string }).source_tier
@@ -113,6 +117,23 @@ export function bodyBlocksToNoteSections(value: unknown): NoteSectionT[] {
   return out;
 }
 
+export function bodyBlocksContainId(value: unknown, blockId: string): boolean {
+  const parsed = ArtifactBodyBlocks.safeParse(value);
+  if (!parsed.success) return false;
+
+  const visit = (node: Record<string, unknown>): boolean => {
+    const attrs = recordOrEmpty(node.attrs);
+    if (attrs.id === blockId) return true;
+    const content = Array.isArray(node.content) ? node.content : [];
+    return content.some(
+      (child) =>
+        child !== null && typeof child === 'object' && visit(child as Record<string, unknown>),
+    );
+  };
+
+  return (parsed.data.content ?? []).some((node) => visit(node));
+}
+
 export function replaceNoteSectionBody(
   value: unknown,
   sectionId: string,
@@ -127,7 +148,7 @@ export function replaceNoteSectionBody(
       const version = typeof attrs.version === 'number' ? attrs.version + 1 : 1;
       return {
         ...node,
-        attrs: { ...recordOrEmpty(node.attrs), version },
+        attrs: { ...recordOrEmpty(node.attrs), version, source_markdown: nextBodyMd },
         content: [paragraphNode(nextBodyMd)],
       };
     }),
