@@ -15,6 +15,8 @@ import { runTask } from '@/server/ai/runner';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+// YUK-101 (iter2 fix F12) — shared seeders from tests/helpers/event-seed.
+import { seedAttempt, seedUserCause } from '../../../../tests/helpers/event-seed';
 import { POST } from './route';
 
 vi.mock('@/server/ai/runner', () => ({
@@ -63,62 +65,6 @@ function submitReq(body: unknown) {
     method: 'POST',
     body: JSON.stringify(body),
     headers: { 'content-type': 'application/json' },
-  });
-}
-
-async function seedFailureAttempt(opts: {
-  id: string;
-  question_id: string;
-  answer_md?: string;
-  knowledge_ids?: string[];
-  created_at?: Date;
-}): Promise<void> {
-  const db = testDb();
-  const createdAt = opts.created_at ?? new Date();
-  await db.insert(event).values({
-    id: opts.id,
-    session_id: null,
-    actor_kind: 'user',
-    actor_ref: 'self',
-    action: 'attempt',
-    subject_kind: 'question',
-    subject_id: opts.question_id,
-    outcome: 'failure',
-    payload: {
-      answer_md: opts.answer_md ?? 'wrong',
-      answer_image_refs: [],
-      referenced_knowledge_ids: opts.knowledge_ids ?? [],
-    },
-    caused_by_event_id: null,
-    task_run_id: null,
-    cost_micro_usd: null,
-    created_at: createdAt,
-  });
-}
-
-async function seedUserCause(opts: {
-  id: string;
-  attempt_event_id: string;
-  primary_category: string;
-}): Promise<void> {
-  const db = testDb();
-  await db.insert(event).values({
-    id: opts.id,
-    session_id: null,
-    actor_kind: 'user',
-    actor_ref: 'self',
-    action: 'experimental:user_cause',
-    subject_kind: 'event',
-    subject_id: opts.attempt_event_id,
-    outcome: null,
-    payload: {
-      primary_category: opts.primary_category,
-      user_notes: null,
-    },
-    caused_by_event_id: opts.attempt_event_id,
-    task_run_id: null,
-    cost_micro_usd: null,
-    created_at: new Date(),
   });
 }
 
@@ -867,7 +813,7 @@ describe('POST /api/review/submit', () => {
   describe('YUK-100 — partial-credit cause lean on judge_advice (W-05 wiring)', () => {
     it('applies carelessness lean → judge_advice.rating="good" when prior user_cause=carelessness', async () => {
       await seedQuestion('q_sub_careless');
-      await seedFailureAttempt({
+      await seedAttempt({
         id: 'a_sub_careless',
         question_id: 'q_sub_careless',
       });
@@ -913,7 +859,7 @@ describe('POST /api/review/submit', () => {
 
     it('applies conceptual lean → judge_advice.rating="again" when prior user_cause=conceptual_error', async () => {
       await seedQuestion('q_sub_concept');
-      await seedFailureAttempt({
+      await seedAttempt({
         id: 'a_sub_concept',
         question_id: 'q_sub_concept',
       });
@@ -1010,7 +956,7 @@ describe('POST /api/review/submit', () => {
           keywords: ['虚词', '代词', '连词'],
         },
       });
-      await seedFailureAttempt({
+      await seedAttempt({
         id: 'a_sub_server_judge_careless',
         question_id: 'q_sub_server_judge_careless',
       });
