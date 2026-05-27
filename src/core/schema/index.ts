@@ -128,7 +128,9 @@ export type MemoryBriefNote = z.infer<typeof MemoryBriefNote>;
 export const Artifact = g.ArtifactSelectGenerated.extend({
   type: b.ArtifactType,
   intent_source: z.enum(['learning_intent', 'declared', 'from_mistake', 'from_dream']),
-  sections: z.array(b.NoteSection).nullable(),
+  body_blocks: b.ArtifactBodyBlocks.nullable(),
+  knowledge_ids: z.array(z.string()),
+  attrs: z.record(z.unknown()),
   tool_state: b.ToolState.nullable(),
   tool_kind: z.enum(['quiz']).nullable(),
   generation_status: b.ArtifactGenerationStatus,

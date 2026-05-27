@@ -2,6 +2,7 @@ import { newId } from '@/core/ids';
 import { CorrectArtifactEvent } from '@/core/schema/event';
 import { db } from '@/db/client';
 import { artifact } from '@/db/schema';
+import { bodyBlocksToNoteSections } from '@/server/artifacts/body-blocks';
 import { getArtifactCorrectionState } from '@/server/events/artifact-corrections';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
@@ -32,7 +33,7 @@ export async function GET(_req: Request, { params }: RouteParams): Promise<Respo
     return Response.json({
       artifact_id: artifactId,
       whole: state.whole,
-      sections: Object.fromEntries(state.sections),
+      blocks: Object.fromEntries(state.blocks),
     });
   } catch (err) {
     return errorResponse(err);
@@ -74,14 +75,14 @@ export async function POST(req: Request, { params }: RouteParams): Promise<Respo
       throw new ApiError('not_found', `artifact ${artifactId} not found`, 404);
     }
 
-    const { correction_kind, section_id, replacement_artifact_id } = parsed.data.payload;
+    const { correction_kind, block_id, replacement_artifact_id } = parsed.data.payload;
 
-    if (section_id !== undefined) {
-      const sections = target.sections ?? [];
-      if (!sections.some((sec) => sec.id === section_id)) {
+    if (block_id !== undefined) {
+      const sections = bodyBlocksToNoteSections(target.body_blocks);
+      if (!sections.some((sec) => sec.id === block_id)) {
         throw new ApiError(
           'not_found',
-          `artifact ${artifactId} has no section with id '${section_id}'`,
+          `artifact ${artifactId} has no block with id '${block_id}'`,
           404,
         );
       }

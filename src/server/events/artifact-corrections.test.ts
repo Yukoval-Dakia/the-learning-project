@@ -14,7 +14,7 @@ async function seedArtifactCorrection(opts: {
   id: string;
   artifact_id: string;
   correction_kind: 'supersede' | 'retract' | 'mark_wrong' | 'restore';
-  section_id?: string;
+  block_id?: string;
   replacement_artifact_id?: string;
   reason_md?: string;
   created_at?: Date;
@@ -30,7 +30,7 @@ async function seedArtifactCorrection(opts: {
     outcome: 'success',
     payload: {
       correction_kind: opts.correction_kind,
-      ...(opts.section_id !== undefined ? { section_id: opts.section_id } : {}),
+      ...(opts.block_id !== undefined ? { block_id: opts.block_id } : {}),
       ...(opts.replacement_artifact_id !== undefined
         ? { replacement_artifact_id: opts.replacement_artifact_id }
         : {}),
@@ -45,15 +45,15 @@ describe('artifact correction projection', () => {
     await resetDb();
   });
 
-  it('returns whole=active and empty sections when no correction events exist', async () => {
+  it('returns whole=active and empty blocks when no correction events exist', async () => {
     const db = testDb();
     const state = await getArtifactCorrectionState(db, 'artifact_42');
 
     expect(state.whole).toEqual(activeArtifactCorrectionStatus());
-    expect(state.sections.size).toBe(0);
+    expect(state.blocks.size).toBe(0);
   });
 
-  it('projects whole-artifact mark_wrong when section_id is omitted', async () => {
+  it('projects whole-artifact mark_wrong when block_id is omitted', async () => {
     const db = testDb();
     await seedArtifactCorrection({
       id: 'corr_1',
@@ -67,34 +67,34 @@ describe('artifact correction projection', () => {
       correction_event_id: 'corr_1',
       replacement_artifact_id: null,
     });
-    expect(state.sections.size).toBe(0);
+    expect(state.blocks.size).toBe(0);
   });
 
-  it('projects per-section state independently from whole-artifact state', async () => {
+  it('projects per-block state independently from whole-artifact state', async () => {
     const db = testDb();
     await seedArtifactCorrection({
       id: 'corr_1',
       artifact_id: 'artifact_42',
-      section_id: 'sec_pitfall',
+      block_id: 'block_pitfall',
       correction_kind: 'mark_wrong',
       created_at: new Date(BASE_TIME.getTime() + 1_000),
     });
     await seedArtifactCorrection({
       id: 'corr_2',
       artifact_id: 'artifact_42',
-      section_id: 'sec_example',
+      block_id: 'block_example',
       correction_kind: 'retract',
       created_at: new Date(BASE_TIME.getTime() + 2_000),
     });
 
     const state = await getArtifactCorrectionState(db, 'artifact_42');
     expect(state.whole).toEqual(activeArtifactCorrectionStatus());
-    expect(state.sections.get('sec_pitfall')).toEqual({
+    expect(state.blocks.get('block_pitfall')).toEqual({
       state: 'marked_wrong',
       correction_event_id: 'corr_1',
       replacement_artifact_id: null,
     });
-    expect(state.sections.get('sec_example')).toEqual({
+    expect(state.blocks.get('block_example')).toEqual({
       state: 'retracted',
       correction_event_id: 'corr_2',
       replacement_artifact_id: null,
@@ -106,20 +106,20 @@ describe('artifact correction projection', () => {
     await seedArtifactCorrection({
       id: 'corr_mark',
       artifact_id: 'artifact_42',
-      section_id: 'sec_pitfall',
+      block_id: 'block_pitfall',
       correction_kind: 'mark_wrong',
       created_at: new Date(BASE_TIME.getTime() + 1_000),
     });
     await seedArtifactCorrection({
       id: 'corr_restore',
       artifact_id: 'artifact_42',
-      section_id: 'sec_pitfall',
+      block_id: 'block_pitfall',
       correction_kind: 'restore',
       created_at: new Date(BASE_TIME.getTime() + 2_000),
     });
 
     const state = await getArtifactCorrectionState(db, 'artifact_42');
-    expect(state.sections.get('sec_pitfall') ?? activeArtifactCorrectionStatus()).toEqual(
+    expect(state.blocks.get('block_pitfall') ?? activeArtifactCorrectionStatus()).toEqual(
       activeArtifactCorrectionStatus(),
     );
   });
@@ -162,7 +162,7 @@ describe('artifact correction projection', () => {
 
     const state = await getArtifactCorrectionState(db, 'some_event_id');
     expect(state.whole).toEqual(activeArtifactCorrectionStatus());
-    expect(state.sections.size).toBe(0);
+    expect(state.blocks.size).toBe(0);
   });
 
   it('applies events in (created_at, id) order so later mark_wrong overrides earlier restore', async () => {
@@ -225,7 +225,7 @@ describe('artifact correction projection', () => {
     await seedArtifactCorrection({
       id: 'corr_b',
       artifact_id: 'artifact_b',
-      section_id: 'sec_pitfall',
+      block_id: 'block_pitfall',
       correction_kind: 'retract',
     });
 
@@ -235,7 +235,7 @@ describe('artifact correction projection', () => {
       'artifact_untouched',
     ]);
     expect(map.get('artifact_a')?.whole.state).toBe('marked_wrong');
-    expect(map.get('artifact_b')?.sections.get('sec_pitfall')?.state).toBe('retracted');
+    expect(map.get('artifact_b')?.blocks.get('block_pitfall')?.state).toBe('retracted');
     expect(map.get('artifact_untouched')).toBeUndefined();
   });
 });

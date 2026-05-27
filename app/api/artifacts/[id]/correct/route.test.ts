@@ -1,4 +1,5 @@
 import { artifact } from '@/db/schema';
+import { noteSectionsToBodyBlocks } from '@/server/artifacts/body-blocks';
 import { getArtifactCorrectionState } from '@/server/events/artifact-corrections';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
@@ -32,14 +33,18 @@ async function seedAtomic(artifactId: string, opts?: { sections?: unknown[] | nu
     id: artifactId,
     type: 'note_atomic',
     title: '测试 atomic',
-    knowledge_id: null,
     parent_artifact_id: null,
-    child_artifact_ids: [],
+    knowledge_ids: [],
     intent_source: 'learning_intent',
     source: 'ai_generated',
     source_ref: null,
-    outline_json: { one_line_intent: 'test' } as never,
-    sections: (opts?.sections === undefined ? NOTE_SECTIONS : opts.sections) as never,
+    body_blocks:
+      opts?.sections === null
+        ? null
+        : noteSectionsToBodyBlocks(
+            (opts?.sections === undefined ? NOTE_SECTIONS : opts.sections) as never,
+          ),
+    attrs: { one_line_intent: 'test' } as never,
     tool_kind: null,
     tool_state: null,
     generation_status: 'ready',
@@ -91,23 +96,23 @@ describe('POST /api/artifacts/[id]/correct', () => {
     const state = await getArtifactCorrectionState(testDb(), 'artifact_42');
     expect(state.whole.state).toBe('marked_wrong');
     expect(state.whole.correction_event_id).toBe(body.correction_event_id);
-    expect(state.sections.size).toBe(0);
+    expect(state.blocks.size).toBe(0);
   });
 
-  it('writes a section-scoped mark_wrong event when section_id resolves to a real section', async () => {
+  it('writes a block-scoped mark_wrong event when block_id resolves to a real block', async () => {
     await seedAtomic('artifact_42');
 
     const res = await postCorrect('artifact_42', {
       correction_kind: 'mark_wrong',
-      section_id: 's_pitfall',
+      block_id: 's_pitfall',
       reason_md: 'pitfall is wrong about negation.',
     });
     expect(res.status).toBe(200);
 
     const state = await getArtifactCorrectionState(testDb(), 'artifact_42');
     expect(state.whole.state).toBe('active');
-    expect(state.sections.get('s_pitfall')?.state).toBe('marked_wrong');
-    expect(state.sections.get('s_def')).toBeUndefined();
+    expect(state.blocks.get('s_pitfall')?.state).toBe('marked_wrong');
+    expect(state.blocks.get('s_def')).toBeUndefined();
   });
 
   it('returns 404 when artifact does not exist', async () => {
@@ -118,24 +123,24 @@ describe('POST /api/artifacts/[id]/correct', () => {
     expect(res.status).toBe(404);
   });
 
-  it('returns 404 when section_id is not present in artifact.sections', async () => {
+  it('returns 404 when block_id is not present in artifact body_blocks', async () => {
     await seedAtomic('artifact_42');
 
     const res = await postCorrect('artifact_42', {
       correction_kind: 'mark_wrong',
-      section_id: 's_nonexistent',
-      reason_md: 'targeting a section that does not exist.',
+      block_id: 's_nonexistent',
+      reason_md: 'targeting a block that does not exist.',
     });
     expect(res.status).toBe(404);
   });
 
-  it('returns 404 when artifact.sections is null and section_id is provided', async () => {
+  it('returns 404 when artifact.body_blocks is null and block_id is provided', async () => {
     await seedAtomic('artifact_42', { sections: null });
 
     const res = await postCorrect('artifact_42', {
       correction_kind: 'mark_wrong',
-      section_id: 's_anything',
-      reason_md: 'sections not yet generated.',
+      block_id: 's_anything',
+      reason_md: 'blocks not yet generated.',
     });
     expect(res.status).toBe(404);
   });
@@ -193,7 +198,7 @@ describe('GET /api/artifacts/[id]/correct', () => {
     await resetDb();
   });
 
-  it('returns whole=active and empty sections when artifact has no corrections', async () => {
+  it('returns whole=active and empty blocks when artifact has no corrections', async () => {
     await seedAtomic('artifact_42');
 
     const res = await getCorrect('artifact_42');
@@ -201,18 +206,18 @@ describe('GET /api/artifacts/[id]/correct', () => {
     const body = (await res.json()) as {
       artifact_id: string;
       whole: { state: string };
-      sections: Record<string, { state: string }>;
+      blocks: Record<string, { state: string }>;
     };
     expect(body.artifact_id).toBe('artifact_42');
     expect(body.whole.state).toBe('active');
-    expect(body.sections).toEqual({});
+    expect(body.blocks).toEqual({});
   });
 
-  it('reflects a section mark_wrong written via POST', async () => {
+  it('reflects a block mark_wrong written via POST', async () => {
     await seedAtomic('artifact_42');
     const post = await postCorrect('artifact_42', {
       correction_kind: 'mark_wrong',
-      section_id: 's_pitfall',
+      block_id: 's_pitfall',
       reason_md: 'pitfall is wrong',
     });
     expect(post.status).toBe(200);
@@ -221,11 +226,11 @@ describe('GET /api/artifacts/[id]/correct', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       whole: { state: string };
-      sections: Record<string, { state: string; correction_event_id: string }>;
+      blocks: Record<string, { state: string; correction_event_id: string }>;
     };
     expect(body.whole.state).toBe('active');
-    expect(body.sections.s_pitfall?.state).toBe('marked_wrong');
-    expect(body.sections.s_pitfall?.correction_event_id).toBeTypeOf('string');
+    expect(body.blocks.s_pitfall?.state).toBe('marked_wrong');
+    expect(body.blocks.s_pitfall?.correction_event_id).toBeTypeOf('string');
   });
 
   it('returns 404 when artifact does not exist', async () => {
@@ -233,16 +238,16 @@ describe('GET /api/artifacts/[id]/correct', () => {
     expect(res.status).toBe(404);
   });
 
-  it('returns whole=active and empty sections when artifact.sections is null', async () => {
+  it('returns whole=active and empty blocks when artifact.body_blocks is null', async () => {
     await seedAtomic('artifact_42', { sections: null });
 
     const res = await getCorrect('artifact_42');
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       whole: { state: string };
-      sections: Record<string, unknown>;
+      blocks: Record<string, unknown>;
     };
     expect(body.whole.state).toBe('active');
-    expect(body.sections).toEqual({});
+    expect(body.blocks).toEqual({});
   });
 });

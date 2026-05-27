@@ -71,7 +71,6 @@ interface PrimaryArtifact {
   type: string;
   version: number;
   sections: NoteSection[] | null;
-  outline_json: Record<string, unknown> | null;
   generation_status: 'pending' | 'ready' | 'failed';
   verification_status: VerificationStatus;
   embedded_check_status: ArtifactEmbeddedCheckStatus;

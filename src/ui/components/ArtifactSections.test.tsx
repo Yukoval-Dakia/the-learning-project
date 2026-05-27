@@ -238,7 +238,7 @@ describe('ArtifactSections — markdown rendering wiring', () => {
         initialCorrectionState={{
           artifact_id: 'a1',
           whole: { state: 'active', correction_event_id: null, replacement_artifact_id: null },
-          sections: {
+          blocks: {
             s2: {
               state: 'marked_wrong',
               correction_event_id: 'corr_1',

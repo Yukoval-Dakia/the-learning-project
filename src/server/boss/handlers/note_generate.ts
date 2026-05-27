@@ -2,8 +2,8 @@
 //
 // Enqueued by /api/learning-intents/[id]/accept (one job per atomic artifact).
 // Picks up { artifact_id }, loads context (artifact row + parent hub +
-// knowledge node), calls NoteGenerateTask, parses 5 sections, UPDATEs the
-// artifact row to generation_status='ready' + sections=[].
+// knowledge node), calls NoteGenerateTask, parses 5 semantic sections, UPDATEs
+// the artifact row to generation_status='ready' + body_blocks.
 //
 // Failures: mark artifact.generation_status='failed' so the UI can surface
 // the broken state instead of stuck-pending. pg-boss retries on throw per
@@ -17,6 +17,7 @@ import { NoteSection } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
 import { type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
+import { noteSectionsToBodyBlocks } from '@/server/artifacts/body-blocks';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 export interface NoteGenerateJobData {
@@ -80,7 +81,7 @@ export interface RunNoteGenerateResult {
  * Pure runner — extracted so unit tests can call without pg-boss.
  *
  * Loads the atomic artifact + its parent hub artifact + the knowledge node
- * for context, runs NoteGenerateTask, persists sections to the artifact row.
+ * for context, runs NoteGenerateTask, persists semantic blocks to the artifact row.
  * Idempotent: returns 'skipped:not_pending' if generation_status !== 'pending'.
  */
 export async function runNoteGenerate(
@@ -93,9 +94,9 @@ export async function runNoteGenerate(
       id: artifact.id,
       type: artifact.type,
       title: artifact.title,
-      knowledge_id: artifact.knowledge_id,
+      knowledge_ids: artifact.knowledge_ids,
       parent_artifact_id: artifact.parent_artifact_id,
-      outline_json: artifact.outline_json,
+      attrs: artifact.attrs,
       generation_status: artifact.generation_status,
     })
     .from(artifact)
@@ -106,12 +107,12 @@ export async function runNoteGenerate(
   if (row.generation_status !== 'pending') return { status: 'skipped:not_pending' };
 
   // Load parent hub (for context)
-  let parentHub: { title: string; outline_json: unknown } | null = null;
+  let parentHub: { title: string; attrs: unknown } | null = null;
   if (row.parent_artifact_id) {
     const parentRows = await db
       .select({
         title: artifact.title,
-        outline_json: artifact.outline_json,
+        attrs: artifact.attrs,
       })
       .from(artifact)
       .where(eq(artifact.id, row.parent_artifact_id))
@@ -121,19 +122,18 @@ export async function runNoteGenerate(
 
   // Load knowledge node for context
   let kNode: { id: string; name: string; domain: string | null } | null = null;
-  if (row.knowledge_id) {
+  const primaryKnowledgeId = row.knowledge_ids[0] ?? null;
+  if (primaryKnowledgeId) {
     const kRows = await db
       .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
       .from(knowledge)
-      .where(eq(knowledge.id, row.knowledge_id))
+      .where(eq(knowledge.id, primaryKnowledgeId))
       .limit(1);
     kNode = kRows[0] ?? null;
   }
 
-  const oneLine =
-    (row.outline_json as { one_line_intent?: string } | null)?.one_line_intent ?? null;
-  const parentSummary =
-    (parentHub?.outline_json as { summary_md?: string } | null)?.summary_md ?? null;
+  const oneLine = (row.attrs as { one_line_intent?: string } | null)?.one_line_intent ?? null;
+  const parentSummary = (parentHub?.attrs as { summary_md?: string } | null)?.summary_md ?? null;
 
   const input = {
     atomic_title: row.title,
@@ -153,7 +153,7 @@ export async function runNoteGenerate(
     await db
       .update(artifact)
       .set({
-        sections: parsed.sections,
+        body_blocks: noteSectionsToBodyBlocks(parsed.sections) as never,
         generation_status: 'ready',
         verification_status: 'queued',
         generated_by: {

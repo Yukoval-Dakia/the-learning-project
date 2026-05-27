@@ -1,10 +1,11 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
-import { z } from 'zod';
+import type { z } from 'zod';
 
-import { NoteSection } from '@/core/schema/business';
+import type { NoteSection } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact } from '@/db/schema';
+import { bodyBlocksToNoteSections, replaceNoteSectionBody } from '@/server/artifacts/body-blocks';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError } from '@/server/http/errors';
 
@@ -30,20 +31,10 @@ export interface EditArtifactSectionResult {
 }
 
 function parseSections(value: unknown, artifactId: string): NoteSectionT[] {
-  if (!Array.isArray(value)) {
+  if (value === null || value === undefined) {
     throw new ApiError('not_found', `artifact ${artifactId} has no sections`, 404);
   }
-  const parsed = z.array(NoteSection).safeParse(value);
-  if (!parsed.success) {
-    throw new ApiError(
-      'validation_error',
-      `artifact ${artifactId} has invalid sections: ${parsed.error.issues
-        .map((issue) => issue.message)
-        .join('; ')}`,
-      500,
-    );
-  }
-  return parsed.data;
+  return bodyBlocksToNoteSections(value);
 }
 
 export async function editArtifactSection(
@@ -57,7 +48,7 @@ export async function editArtifactSection(
     const rows = await tx
       .select({
         id: artifact.id,
-        sections: artifact.sections,
+        body_blocks: artifact.body_blocks,
         history: artifact.history,
         archived_at: artifact.archived_at,
         version: artifact.version,
@@ -76,7 +67,7 @@ export async function editArtifactSection(
       throw new ApiError('conflict', `artifact ${params.artifactId} concurrently modified`, 409);
     }
 
-    const sections = parseSections(row.sections, params.artifactId);
+    const sections = parseSections(row.body_blocks, params.artifactId);
     const sectionIndex = sections.findIndex((section) => section.id === params.sectionId);
     if (sectionIndex < 0) {
       throw new ApiError(
@@ -100,14 +91,11 @@ export async function editArtifactSection(
       body_md: params.nextBodyMd,
       version: previous.version + 1,
     };
-    const nextSections = sections.map((section, index) =>
-      index === sectionIndex ? nextSection : section,
-    );
     const nextArtifactVersion = row.version + 1;
     const payload = {
       artifact_id: params.artifactId,
-      section_id: params.sectionId,
-      section_index: sectionIndex,
+      block_id: params.sectionId,
+      block_index: sectionIndex,
       previous_body_md: previous.body_md,
       next_body_md: params.nextBodyMd,
       previous_version: previous.version,
@@ -118,8 +106,8 @@ export async function editArtifactSection(
       version: nextArtifactVersion,
       at: now,
       by: { by: 'user' },
-      summary_md: `Edited section ${params.sectionId}`,
-      action: 'section_edit',
+      summary_md: `Edited block ${params.sectionId}`,
+      action: 'block_edit',
       event_id: eventId,
       previous_artifact_version: row.version,
       next_artifact_version: nextArtifactVersion,
@@ -129,7 +117,11 @@ export async function editArtifactSection(
     const updated = await tx
       .update(artifact)
       .set({
-        sections: nextSections as never,
+        body_blocks: replaceNoteSectionBody(
+          row.body_blocks,
+          params.sectionId,
+          params.nextBodyMd,
+        ) as never,
         history: history as never,
         updated_at: now,
         version: nextArtifactVersion,

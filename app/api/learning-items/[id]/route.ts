@@ -1,5 +1,6 @@
 import { db } from '@/db/client';
 import { artifact, completion_evidence, learning_item, question } from '@/db/schema';
+import { bodyBlocksToNoteSections } from '@/server/artifacts/body-blocks';
 import { errorResponse } from '@/server/http/errors';
 import { getEffectiveDomain } from '@/server/knowledge/domain';
 import { assertKnowledgeIdsExist } from '@/server/knowledge/validate';
@@ -136,7 +137,6 @@ export async function GET(_req: Request, { params }: RouteParams): Promise<Respo
       type: string;
       version: number;
       sections: unknown;
-      outline_json: unknown;
       generation_status: string;
       verification_status: string;
       verification_summary: unknown;
@@ -155,8 +155,7 @@ export async function GET(_req: Request, { params }: RouteParams): Promise<Respo
           id: artifact.id,
           type: artifact.type,
           version: artifact.version,
-          sections: artifact.sections,
-          outline_json: artifact.outline_json,
+          body_blocks: artifact.body_blocks,
           generation_status: artifact.generation_status,
           verification_status: artifact.verification_status,
           verification_summary: artifact.verification_summary,
@@ -168,6 +167,7 @@ export async function GET(_req: Request, { params }: RouteParams): Promise<Respo
         .limit(1);
       if (aRows[0]) {
         const primary = aRows[0];
+        const sections = bodyBlocksToNoteSections(primary.body_blocks);
 
         // Embedded check question payload (only when ready)
         let embeddedQuestions: Array<{
@@ -177,12 +177,7 @@ export async function GET(_req: Request, { params }: RouteParams): Promise<Respo
           choices_md: string[] | null;
         }> = [];
         if (primary.embedded_check_status === 'ready') {
-          const checkSection = (
-            (primary.sections ?? []) as Array<{
-              kind: string;
-              embedded_check?: { question_ids: string[] } | null;
-            }>
-          ).find((s) => s.kind === 'check');
+          const checkSection = sections.find((s) => s.kind === 'check');
           const ids = checkSection?.embedded_check?.question_ids ?? [];
           if (ids.length > 0) {
             const qRows = await db
@@ -202,7 +197,7 @@ export async function GET(_req: Request, { params }: RouteParams): Promise<Respo
           }
         }
 
-        primaryArtifact = { ...primary, embedded_questions: embeddedQuestions };
+        primaryArtifact = { ...primary, sections, embedded_questions: embeddedQuestions };
       }
     }
     const subjectProfile = await resolveSlimProfileForKnowledgeIds(row.knowledge_ids ?? []);

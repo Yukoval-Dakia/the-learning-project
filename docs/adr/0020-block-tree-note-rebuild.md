@@ -46,6 +46,7 @@ artifact.type ∈ { note_hub, note_atomic, note_long, tool_quiz, tool_<future> }
 
 - block id 是稳定 UUID（生命周期内不变）
 - **Split**（用户在 paragraph 中间按 Enter）：**原 id 跟"上半"**，下半全新 id
+- **Split implementation rule**：P0 TipTap spike 确认必须用显式 command wrapper 固化上述 id 策略；不得依赖 generic ProseMirror split 默认行为隐式保 id。
 - **Merge**（开头按 Backspace 合并到上块）：**前 block id 保留**，后 block id 丢弃
 - **In-place edit**（改文本 / 加 mark）：id 不变
 - **删除 block**：annotation 与该 block 一起丢失（accepted tradeoff，与 Notion 一致）
