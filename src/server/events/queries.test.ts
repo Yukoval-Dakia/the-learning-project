@@ -1136,7 +1136,20 @@ describe('writeEvent', () => {
 
   // YUK-99 — the enqueue MUST be fire-and-forget: the event row is the SoT and
   // a failing background job must never roll back the INSERT or surface as a
-  // caller-visible exception. The daily brief sweep is the belt-and-braces.
+  // caller-visible exception.
+  //
+  // YUK-101 (iter2 fix F2) — Pre-iter2 this comment claimed "the daily brief
+  // sweep is the belt-and-braces" — that promise is structurally untrue.
+  // `buildMemoryBriefSweepHandler` (triggers.ts) iterates briefs, not events,
+  // so missed `enqueueEventMemoryIngest` calls have NO automatic recovery in
+  // the current architecture. The deep fix is the transactional outbox in
+  // YUK-101; until then, F4 `singletonKey` makes the failure modes
+  // idempotent-on-retry but does not recover from a single missed enqueue.
+  //
+  // YUK-101 (iter2 fix F3+F11) — writeEvent now uses
+  // `void memoryIngestEnqueuer(input.id).catch(...)` rather than `await` +
+  // outer try/catch. The .catch() runs asynchronously after writeEvent
+  // returns, so the test must flush microtasks before asserting errorSpy.
   it('swallows memory ingest enqueuer errors (fire-and-forget) but still persists the row', async () => {
     const db = testDb();
     const id = newId();
@@ -1169,14 +1182,34 @@ describe('writeEvent', () => {
 
       expect(returnedId).toBe(id);
       expect(enqueue).toHaveBeenCalledWith(id);
-      // The row must be persisted regardless — daily sweep will reingest.
+      // The row must be persisted regardless — YUK-101 outbox poller is the
+      // proper recovery path. F4 singletonKey collapses retry duplicates.
       const rows = await db.select().from(event).where(eq(event.id, id));
       expect(rows).toHaveLength(1);
       // The swallowed failure should still be observable via the error log.
-      expect(errorSpy).toHaveBeenCalled();
+      // F3 makes the rejection async — wait for the .catch() to run.
+      await vi.waitFor(() => expect(errorSpy).toHaveBeenCalled(), { timeout: 1000 });
     } finally {
       errorSpy.mockRestore();
     }
+  });
+
+  // YUK-101 (iter2 fix F6) — pin the dynamic-import path that
+  // `defaultMemoryIngestEnqueuer` relies on. The VITEST short-circuit means
+  // the default path never runs under `pnpm test:db`, so future renames of
+  // `@/server/memory/triggers` exports or `@/server/boss/client` symbols
+  // would silently break ADR-0017 trigger #1 in production. This test
+  // resolves both modules statically and asserts the symbols the default
+  // enqueuer reads. A rename without updating defaultMemoryIngestEnqueuer
+  // will fail this test before reaching production.
+  it('iter2 F6: dynamic-import targets for defaultMemoryIngestEnqueuer still resolve', async () => {
+    const [bossModule, triggersModule] = await Promise.all([
+      import('@/server/boss/client'),
+      import('@/server/memory/triggers'),
+    ]);
+    expect(typeof bossModule.getStartedBoss).toBe('function');
+    expect(typeof triggersModule.enqueueEventMemoryIngest).toBe('function');
+    expect(triggersModule.MEMORY_EVENT_INGEST_QUEUE).toBe('memory_event_ingest');
   });
 });
 

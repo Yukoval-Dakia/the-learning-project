@@ -15,6 +15,8 @@ import { runTask } from '@/server/ai/runner';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+// YUK-101 (iter2 fix F12) — shared seeders from tests/helpers/event-seed.
+import { seedAttempt, seedUserCause } from '../../../../tests/helpers/event-seed';
 import { POST } from './route';
 
 vi.mock('@/server/ai/runner', () => ({
@@ -63,62 +65,6 @@ function submitReq(body: unknown) {
     method: 'POST',
     body: JSON.stringify(body),
     headers: { 'content-type': 'application/json' },
-  });
-}
-
-async function seedFailureAttempt(opts: {
-  id: string;
-  question_id: string;
-  answer_md?: string;
-  knowledge_ids?: string[];
-  created_at?: Date;
-}): Promise<void> {
-  const db = testDb();
-  const createdAt = opts.created_at ?? new Date();
-  await db.insert(event).values({
-    id: opts.id,
-    session_id: null,
-    actor_kind: 'user',
-    actor_ref: 'self',
-    action: 'attempt',
-    subject_kind: 'question',
-    subject_id: opts.question_id,
-    outcome: 'failure',
-    payload: {
-      answer_md: opts.answer_md ?? 'wrong',
-      answer_image_refs: [],
-      referenced_knowledge_ids: opts.knowledge_ids ?? [],
-    },
-    caused_by_event_id: null,
-    task_run_id: null,
-    cost_micro_usd: null,
-    created_at: createdAt,
-  });
-}
-
-async function seedUserCause(opts: {
-  id: string;
-  attempt_event_id: string;
-  primary_category: string;
-}): Promise<void> {
-  const db = testDb();
-  await db.insert(event).values({
-    id: opts.id,
-    session_id: null,
-    actor_kind: 'user',
-    actor_ref: 'self',
-    action: 'experimental:user_cause',
-    subject_kind: 'event',
-    subject_id: opts.attempt_event_id,
-    outcome: null,
-    payload: {
-      primary_category: opts.primary_category,
-      user_notes: null,
-    },
-    caused_by_event_id: opts.attempt_event_id,
-    task_run_id: null,
-    cost_micro_usd: null,
-    created_at: new Date(),
   });
 }
 
@@ -867,7 +813,7 @@ describe('POST /api/review/submit', () => {
   describe('YUK-100 — partial-credit cause lean on judge_advice (W-05 wiring)', () => {
     it('applies carelessness lean → judge_advice.rating="good" when prior user_cause=carelessness', async () => {
       await seedQuestion('q_sub_careless');
-      await seedFailureAttempt({
+      await seedAttempt({
         id: 'a_sub_careless',
         question_id: 'q_sub_careless',
       });
@@ -913,7 +859,7 @@ describe('POST /api/review/submit', () => {
 
     it('applies conceptual lean → judge_advice.rating="again" when prior user_cause=conceptual_error', async () => {
       await seedQuestion('q_sub_concept');
-      await seedFailureAttempt({
+      await seedAttempt({
         id: 'a_sub_concept',
         question_id: 'q_sub_concept',
       });
@@ -989,6 +935,71 @@ describe('POST /api/review/submit', () => {
       // No prior cause → default partial-credit bucket for 0.6 is 'hard'.
       expect(payload.judge_advice?.rating).toBe('hard');
       expect(payload.judge_advice?.reason).not.toMatch(/careless|conceptual/i);
+    });
+
+    // YUK-101 (iter2 fix F1) — pre-iter2 the judge_advice payload was gated on
+    // `suppliedJudgeResult` (body.judge_result_v2). When the client did not
+    // pre-supply a judge result and the server invoked its own judge inside
+    // the route, the gate was false → `judgeAdvicePayload = {}` → judge_advice
+    // never landed on the event row. The cause-aware advisor was dead code
+    // for every server-judge caller. This test exercises the server-judge
+    // path: POST without judge_result_v2, server runs keyword judge, prior
+    // user_cause=carelessness still threads into the advisor and judge_advice
+    // appears on the event payload with the lean applied.
+    it('threads cause into judge_advice when SERVER runs the judge (no judge_result_v2 in body)', async () => {
+      await seedQuestion('q_sub_server_judge_careless', {
+        kind: 'fill_blank',
+        reference_md: '虚词；代词；连词',
+        judge_kind_override: 'keyword',
+        rubric_json: {
+          criteria: [{ name: 'correctness', weight: 1, descriptor: '命中关键词' }],
+          keywords: ['虚词', '代词', '连词'],
+        },
+      });
+      await seedAttempt({
+        id: 'a_sub_server_judge_careless',
+        question_id: 'q_sub_server_judge_careless',
+      });
+      await seedUserCause({
+        id: 'uc_sub_server_judge_careless',
+        attempt_event_id: 'a_sub_server_judge_careless',
+        primary_category: 'carelessness',
+      });
+
+      // No judge_result_v2 in body — server runs keyword judge against
+      // response '虚词和代词' (2/3 keywords) → partial credit ~0.67.
+      // Default partial-credit bucket for score ≥ 0.5 is 'hard'; carelessness
+      // lean promotes to 'good'.
+      const res = await POST(
+        submitReq({
+          mistake_id: 'q_sub_server_judge_careless',
+          rating: 'hard',
+          response_md: '虚词和代词',
+        }),
+      );
+      expect(res.status).toBe(200);
+
+      const events = await testDb()
+        .select()
+        .from(event)
+        .where(
+          and(eq(event.action, 'review'), eq(event.subject_id, 'q_sub_server_judge_careless')),
+        );
+      expect(events).toHaveLength(1);
+      const payload = events[0].payload as {
+        judge_advice?: { rating: string | null; reason: string };
+        judge?: { route: string; coarse_outcome: string };
+        fsrs_rating: string;
+      };
+      // Server ran the judge — judge envelope must be present on the payload.
+      expect(payload.judge?.route).toBe('keyword');
+      expect(payload.judge?.coarse_outcome).toBe('partial');
+      // Pre-iter2: judge_advice was missing entirely. Post-iter2: it lands
+      // with the carelessness lean from the prior user_cause attempt.
+      expect(payload.judge_advice?.rating).toBe('good');
+      expect(payload.judge_advice?.reason).toMatch(/careless|carelessness/i);
+      // CC-1 / advisor invariant: user's body.rating still wins.
+      expect(payload.fsrs_rating).toBe('hard');
     });
   });
 });

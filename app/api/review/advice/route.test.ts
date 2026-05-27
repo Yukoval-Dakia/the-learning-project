@@ -7,63 +7,12 @@ import { event, material_fsrs_state, question } from '@/db/schema';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+// YUK-101 (iter2 fix F12) — shared seeders from tests/helpers/event-seed.
+// Iter1 duplicated these byte-for-byte in advice + submit test files; the
+// helper also adds the paired learning_record(kind='mistake') mirror that
+// every other test in the repo creates alongside failure attempts.
+import { seedAttempt, seedUserCause } from '../../../../tests/helpers/event-seed';
 import { POST } from './route';
-
-async function seedFailureAttempt(opts: {
-  id: string;
-  question_id: string;
-  answer_md?: string;
-  knowledge_ids?: string[];
-  created_at?: Date;
-}): Promise<void> {
-  const db = testDb();
-  const createdAt = opts.created_at ?? new Date();
-  await db.insert(event).values({
-    id: opts.id,
-    session_id: null,
-    actor_kind: 'user',
-    actor_ref: 'self',
-    action: 'attempt',
-    subject_kind: 'question',
-    subject_id: opts.question_id,
-    outcome: 'failure',
-    payload: {
-      answer_md: opts.answer_md ?? 'wrong',
-      answer_image_refs: [],
-      referenced_knowledge_ids: opts.knowledge_ids ?? [],
-    },
-    caused_by_event_id: null,
-    task_run_id: null,
-    cost_micro_usd: null,
-    created_at: createdAt,
-  });
-}
-
-async function seedUserCause(opts: {
-  id: string;
-  attempt_event_id: string;
-  primary_category: string;
-}): Promise<void> {
-  const db = testDb();
-  await db.insert(event).values({
-    id: opts.id,
-    session_id: null,
-    actor_kind: 'user',
-    actor_ref: 'self',
-    action: 'experimental:user_cause',
-    subject_kind: 'event',
-    subject_id: opts.attempt_event_id,
-    outcome: null,
-    payload: {
-      primary_category: opts.primary_category,
-      user_notes: null,
-    },
-    caused_by_event_id: opts.attempt_event_id,
-    task_run_id: null,
-    cost_micro_usd: null,
-    created_at: new Date(),
-  });
-}
 
 const QUESTION_BASE = {
   kind: 'short_answer' as const,
@@ -212,7 +161,7 @@ describe('POST /api/review/advice', () => {
           keywords: ['虚词', '代词', '连词'],
         },
       });
-      await seedFailureAttempt({
+      await seedAttempt({
         id: 'a_advice_careless',
         question_id: 'q_advice_careless',
         answer_md: 'old wrong',
@@ -252,7 +201,7 @@ describe('POST /api/review/advice', () => {
           keywords: ['虚词', '代词', '连词'],
         },
       });
-      await seedFailureAttempt({
+      await seedAttempt({
         id: 'a_advice_concept',
         question_id: 'q_advice_concept',
         answer_md: 'old wrong',

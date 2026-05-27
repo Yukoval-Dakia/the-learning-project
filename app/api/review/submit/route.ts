@@ -32,13 +32,13 @@ import { FsrsRating } from '@/core/schema/business';
 import { JudgeResultV2, type JudgeResultV2T } from '@/core/schema/capability';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
-import { effectiveCauseCategoryForFailureAttempt } from '@/server/events/cause-policy';
-import { getFailureAttempts, writeEvent } from '@/server/events/queries';
+import { writeEvent } from '@/server/events/queries';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
 import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject-profile';
 import { normalizeReviewSubmitActivityRef } from '@/server/review/activity-ref';
+import { resolveAdviceCauseForQuestion } from '@/server/review/cause-context';
 import { activeEffectiveTruth } from '@/server/review/effective-truth';
 import { scheduleReview } from '@/server/review/fsrs';
 import { ratingFromCoarseOutcome } from '@/server/review/judge-rating';
@@ -134,26 +134,18 @@ export async function POST(req: Request): Promise<Response> {
       judgeTelemetry = invoked.telemetry;
     }
 
-    // YUK-100 (W-05) — Resolve effective cause for the latest active failure
-    // attempt on this question so the advisor's partial-credit lean (driver
-    // T-RA §1.1: carelessness → 'good' / conceptual → 'again') actually fires
-    // in production. We read OUTSIDE the FSRS transaction because:
-    //   - This route writes a `review` event (not an `attempt`); the cause
-    //     SoT being read belongs to a prior attempt on this question.
-    //   - Cause is advisory only — it does not affect FSRS scheduling — so it
-    //     does not need FSRS-row serialisation.
-    //   - Reading inside the txn would extend lock-hold time pointlessly.
-    // CC-1 invariant: this route never classifies cause itself. It only reads
-    // the helper output. `causeCategory = null` is a legal fallback when the
-    // question has no prior failure attempt or no attached cause.
-    const recentFailuresForCause = await getFailureAttempts(db, {
-      questionIds: [questionId],
-      limit: 1,
-    });
-    const adviceCauseCategory =
-      recentFailuresForCause.length > 0
-        ? effectiveCauseCategoryForFailureAttempt(recentFailuresForCause[0])
-        : null;
+    // YUK-100 (W-05) + YUK-101 (iter2 F8 / F13) — Resolve effective cause via
+    // the shared `resolveAdviceCauseForQuestion` helper. It scans the recent
+    // failure-attempt window and folds `effectiveCauseCategoryForFailureAttempt`
+    // (CC-1 single-owner — active user_cause wins over latest active agent
+    // judge) until it finds a non-null cause. Read happens OUTSIDE the FSRS
+    // transaction because cause is advisory only (no FSRS scheduling impact)
+    // and reading inside would extend lock-hold time pointlessly.
+    //
+    // CC-1 invariant preserved: this route never classifies cause itself; it
+    // only reads the helper output. `null` is a legal fallback when no recent
+    // failure within the scan window carries a cause.
+    const adviceCauseCategory = await resolveAdviceCauseForQuestion(db, questionId);
 
     // YUK-56 — Resolve final rating. In auto_rate mode the judge's suggested
     // rating overrides body.rating. If the judge can't auto-rate (unsupported,
@@ -254,25 +246,33 @@ export async function POST(req: Request): Promise<Response> {
             }
           : {};
 
-      // YUK-98 (T-RA) — If the client supplied `judge_result_v2`, derive the
-      // partial-credit rating advisory and persist it on the event payload as
-      // `judge_advice`. This is informational only: the user's `body.rating`
-      // is still the committed rating (advisor never overrides). CC-1
-      // invariant: this route does not classify cause itself — it reads the
-      // SoT helper output via `effectiveCauseCategoryForFailureAttempt()`
-      // (resolved above as `adviceCauseCategory`) and threads it into the
-      // advisor so the partial-credit carelessness/conceptual lean fires.
-      // YUK-100 (W-05): this wiring replaced an inert pass-through where the
-      // advisor's `causeLean()` always saw `undefined` and never applied any
-      // lean. See `docs/audit/2026-05-27-wave1-postship-drift.md` §W-05.
-      const judgeAdvicePayload = suppliedJudgeResult
+      // YUK-98 (T-RA) — Derive the partial-credit rating advisory from
+      // whichever judge result is available (client-supplied OR server-run),
+      // and persist it on the event payload as `judge_advice`. Informational
+      // only: the user's `body.rating` is still the committed rating (advisor
+      // never overrides). CC-1 invariant: this route does not classify cause
+      // itself — it reads the SoT helper output via
+      // `effectiveCauseCategoryForFailureAttempt()` (resolved above as
+      // `adviceCauseCategory`) and threads it into the advisor so the
+      // partial-credit carelessness/conceptual lean fires.
+      //
+      // YUK-100 (W-05): pre-fix this wiring was inert because the advisor's
+      // `causeLean()` always saw `undefined`.
+      // YUK-101 (iter2 fix F1): pre-iter2 the gate was on `suppliedJudgeResult`
+      // (client-supplied only). When the server ran its own judge (no
+      // `judge_result_v2` in the body), `judgeAdvicePayload` was `{}` and the
+      // cause-aware advisor stayed dead for every server-judge caller — the
+      // same class of silent dead path YUK-100 set out to fix. Gate now keys
+      // on `judgeResult !== null` so both paths persist judge_advice.
+      // See `docs/audit/2026-05-27-wave1-postship-drift.md` §W-05.
+      const judgeAdvicePayload = judgeResult !== null
         ? {
             judge_advice: {
-              ...judgeResultToRatingAdvice(suppliedJudgeResult, {
+              ...judgeResultToRatingAdvice(judgeResult, {
                 causeCategory: adviceCauseCategory,
               }),
-              source_capability_ref: suppliedJudgeResult.capability_ref,
-              source_coarse_outcome: suppliedJudgeResult.coarse_outcome,
+              source_capability_ref: judgeResult.capability_ref,
+              source_coarse_outcome: judgeResult.coarse_outcome,
             },
           }
         : {};
