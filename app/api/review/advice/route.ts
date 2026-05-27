@@ -5,26 +5,22 @@
 // rating remains user-controlled through /api/review/submit.
 //
 // YUK-100 (W-05 follow-up, 2026-05-27): cause SoT wiring.
-// Per `src/server/review/rating-advisor.ts` head comments + driver T-RA §1.1,
-// callers MUST pass the effective cause category so the partial-credit lean
-// (carelessness → 'good' / conceptual_error → 'again') actually fires. We read
-// the latest active failure attempt for the same question and resolve cause
-// via `effectiveCauseCategoryForFailureAttempt()` (CC-1 single-owner helper —
-// active user_cause wins over latest active agent judge). When no prior
-// failure attempt exists or no cause is attached, `causeCategory` is null and
-// the advisor falls back to the default partial-credit bucket.
+// YUK-101 (iter2 fix F8 / F13): cause resolution lives in
+// `resolveAdviceCauseForQuestion()` (src/server/review/cause-context.ts) so
+// this route and `submit/route.ts` share one read policy. F8 changed the
+// scan from limit:1 to a recent-attempt window so a user who labelled an
+// older failure isn't silently masked by a label-less re-failure.
 
 import { z } from 'zod';
 
 import { ActivityRef } from '@/core/schema/activity';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
-import { effectiveCauseCategoryForFailureAttempt } from '@/server/events/cause-policy';
-import { getFailureAttempts } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
 import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject-profile';
 import { normalizeReviewSubmitActivityRef } from '@/server/review/activity-ref';
+import { resolveAdviceCauseForQuestion } from '@/server/review/cause-context';
 import { ratingFromCoarseOutcome } from '@/server/review/judge-rating';
 import { judgeResultToRatingAdvice } from '@/server/review/rating-advisor';
 import { eq } from 'drizzle-orm';
@@ -76,18 +72,14 @@ export async function POST(req: Request): Promise<Response> {
     });
     const suggestedRating = ratingFromCoarseOutcome(invoked.result.coarse_outcome);
 
-    // YUK-100 (W-05) — Resolve effective cause for the latest active failure
-    // attempt on this question, then thread it into the advisor so the
-    // carelessness/conceptual lean from driver T-RA §1.1 actually fires for
-    // partial-credit judge results. `causeCategory = null` is a legal fallback
-    // when there's no prior failure attempt or no attached cause; the advisor
-    // then keeps the default partial-credit bucket.
-    const recentFailures = await getFailureAttempts(db, {
-      questionIds: [questionId],
-      limit: 1,
-    });
-    const causeCategory =
-      recentFailures.length > 0 ? effectiveCauseCategoryForFailureAttempt(recentFailures[0]) : null;
+    // YUK-100 (W-05) + YUK-101 (iter2 F8 / F13) — Resolve effective cause via
+    // the shared `resolveAdviceCauseForQuestion` helper. It scans the recent
+    // failure-attempt window and folds `effectiveCauseCategoryForFailureAttempt`
+    // (CC-1 single-owner helper — active user_cause wins over latest active
+    // agent judge) until it finds a non-null cause. Returns null when no
+    // recent failure carries any cause; the advisor then keeps the default
+    // partial-credit bucket.
+    const causeCategory = await resolveAdviceCauseForQuestion(db, questionId);
     const advice = judgeResultToRatingAdvice(invoked.result, { causeCategory });
 
     return Response.json({
