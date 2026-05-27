@@ -9,10 +9,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 // YUK-101 (iter2 fix F12) — shared seeders.
 import { seedAttempt, seedUserCause } from '../../../tests/helpers/event-seed';
-import {
-  ADVICE_CAUSE_SCAN_LIMIT,
-  resolveAdviceCauseForQuestion,
-} from './cause-context';
+import { ADVICE_CAUSE_SCAN_LIMIT, resolveAdviceCauseForQuestion } from './cause-context';
 
 describe('resolveAdviceCauseForQuestion', () => {
   beforeEach(async () => {

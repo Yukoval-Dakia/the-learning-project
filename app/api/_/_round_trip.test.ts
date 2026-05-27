@@ -3,8 +3,9 @@
  * Uses real test DB (postgres-js) + in-memory R2.
  * Verifies that data exported from a seeded DB is fully restored after a wipe.
  */
-import { knowledge } from '@/db/schema';
-import { sql } from 'drizzle-orm';
+import { event, knowledge } from '@/db/schema';
+import { writeEvent } from '@/server/events/queries';
+import { eq } from 'drizzle-orm';
 import { unzipSync } from 'fflate';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -24,7 +25,7 @@ describe('round-trip: export → import → DB state mirrored', () => {
     await resetDb();
   });
 
-  it('preserves knowledge rows end-to-end', async () => {
+  it('preserves knowledge rows and resets event ingest cursor end-to-end', async () => {
     const db = testDb();
 
     // 1. Seed DB with fixtures
@@ -42,6 +43,22 @@ describe('round-trip: export → import → DB state mirrored', () => {
       updated_at: now,
       version: 0,
     });
+    await writeEvent(db, {
+      id: 'e1',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: 'q1',
+      outcome: 'failure',
+      payload: {
+        answer_md: 'wrong',
+        answer_image_refs: [],
+        referenced_knowledge_ids: [],
+      },
+      created_at: now,
+    });
+    await db.update(event).set({ ingest_at: now }).where(eq(event.id, 'e1'));
 
     // 2. Export
     const exportRes = await GET(new Request('http://localhost/api/_/export'));
@@ -52,9 +69,11 @@ describe('round-trip: export → import → DB state mirrored', () => {
     expect(entries['manifest.json']).toBeDefined();
 
     const data = JSON.parse(new TextDecoder().decode(entries['data.json'])) as {
+      event: Array<{ ingest_at: string | null }>;
       knowledge: unknown[];
     };
     expect(data.knowledge).toHaveLength(1);
+    expect(data.event[0].ingest_at).not.toBeNull();
 
     // 3. Wipe DB
     await resetDb();
@@ -86,5 +105,8 @@ describe('round-trip: export → import → DB state mirrored', () => {
     expect(rowsAfterImport).toHaveLength(1);
     expect(rowsAfterImport[0].id).toBe('k1');
     expect(rowsAfterImport[0].name).toBe('虚词');
+    const eventsAfterImport = await db.select().from(event).where(eq(event.id, 'e1'));
+    expect(eventsAfterImport).toHaveLength(1);
+    expect(eventsAfterImport[0].ingest_at).toBeNull();
   });
 });

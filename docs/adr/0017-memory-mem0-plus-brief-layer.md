@@ -138,6 +138,28 @@ T-37 therefore defaults the fact layer to Mem0's `openai` embedder with
 provider compatible, routed through `ANTHROPIC_BASE_URL` plus `XIAOMI_API_KEY`
 for xiaomi/mimo.
 
+## Errata 2026-05-27 — Trigger #1 dispatch path
+
+§"Write triggers (three paths)" #1 originally read "a pg-boss subscriber on
+event creation calls `mem0.add(event)`". The post-ship implementation went
+through two iterations:
+
+1. **PR #163 (YUK-99 Wave 1 closeout)** — wired the trigger as a fire-and-
+   forget `enqueueEventMemoryIngest` call inside `writeEvent`. This satisfied
+   the literal "on event creation" requirement but violated ADR-0005 by
+   adding a cross-tx side-effect inside the single-owner INSERT path; PR #165
+   stacked 7 band-aids on top (singletonKey, dynamic-import pinning, cold-
+   start retry, `SKIP_BOSS_INGEST` env, etc.) without resolving the
+   structural issue.
+2. **PR for YUK-101 / [[ADR-0021]] (2026-05-27)** — replaced the inline
+   path with a transactional outbox: `event.ingest_at` column (NULL =
+   pending), per-minute poll handler that SELECT...FOR UPDATE SKIP LOCKED +
+   enqueue + UPDATE ingest_at in one tx. Caller tx rollback now leaves zero
+   orphan jobs; recovery sweep handles worker outage backlog.
+
+ADR-0017's anti-storm 6-min singleton lock still holds (it gates brief
+regen, not event ingest dispatch).
+
 ## One-line summary
 
 > **Memory = Mem0 facts (engineered) + thin brief layer (in-house) — neither is SoT; both are attention prior for the orchestrator LLM.**

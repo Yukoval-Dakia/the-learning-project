@@ -5,12 +5,14 @@
 // this module. Other modules import named fns; raw `db.insert(event)` outside this
 // module is forbidden.
 //
-// YUK-99 (Wave 1 post-ship fix) — `writeEvent` also fires
-// `enqueueEventMemoryIngest` after every successful INSERT, wiring ADR-0017
-// §"Write triggers (three paths)" #1. The enqueue is fire-and-forget (the SoT
-// is the `event` row; missed ingest jobs get picked up by the daily sweep), and
-// the boss client + trigger module are loaded via dynamic import to keep this
-// module unit-test friendly (no static pg-boss dependency).
+// YUK-101 / ADR-0021 — `writeEvent` is INSERT-only (ADR-0005 single-owner
+// invariant restored). Mem0 ingest is wired via the transactional outbox:
+// `event.ingest_at IS NULL` marks pending rows; a separate poll handler in
+// `src/server/memory/triggers.ts` picks them up with SELECT...FOR UPDATE
+// SKIP LOCKED, enqueues `memory_event_ingest`, and stamps `ingest_at = now()`.
+// Caller transactions that roll back leave zero `event` rows AND zero ingest
+// jobs (vs the pre-outbox model where enqueue committed independently of the
+// caller tx and produced orphan jobs).
 //
 // Read API:
 //   - getFailureAttempts(db, opts?) — failure attempts + chained judge (mistake view)
@@ -939,60 +941,6 @@ export async function getEventChain(db: DbLike, id: string): Promise<EventChain>
 // writeEvent — single-owner INSERT path (ADR-0005).
 // ============================================================================
 
-// YUK-99 — ADR-0017 §"Write triggers" #1 wiring. The default enqueuer
-// dynamic-imports `getStartedBoss` + `enqueueEventMemoryIngest` so unit-test
-// bundles never pull pg-boss in statically; failures are swallowed because the
-// `event` row (SoT) is already committed. The proper recovery for missed
-// ingests (transactional outbox: scan `event` rows where `ingest_at IS NULL`,
-// enqueue, mark ingested) is captured in YUK-101 — until then, missed ingests
-// have NO automatic recovery; the daily brief sweep iterates briefs, not
-// orphaned events. Tests can override via `_setMemoryIngestEnqueuerForTests`.
-type MemoryIngestEnqueuer = (eventId: string) => Promise<void>;
-
-async function defaultMemoryIngestEnqueuer(eventId: string): Promise<void> {
-  // YUK-101 (iter2 fix F15) — escape hatches:
-  //   VITEST: vitest sets this in both unit and DB pools; tests that need to
-  //   assert the wiring inject their own enqueuer via the setter.
-  //   SKIP_BOSS_INGEST: runtime opt-out for admin scripts (`pnpm tsx
-  //   scripts/...`) and REPL invocations that legitimately don't have a boss
-  //   worker available. Without this, every writeEvent in those contexts
-  //   logs an error.
-  if (process.env.VITEST || process.env.SKIP_BOSS_INGEST) return;
-  try {
-    const [bossModule, triggersModule] = await Promise.all([
-      import('@/server/boss/client'),
-      import('@/server/memory/triggers'),
-    ]);
-    const boss = await bossModule.getStartedBoss();
-    // YUK-101 (iter2 fix F7) — cold-start race: app boots before worker has
-    // called registerMemoryHandlers' boss.createQueue. pg-boss send to an
-    // unregistered queue fails (PR YUK-99 self-documented this at line 953).
-    // Pre-creating the queue here is idempotent and dissolves the cold-start
-    // log flood. Cost: one extra small DB roundtrip per writeEvent call; the
-    // proper fix is to register queues at app boot, captured in YUK-101.
-    if (boss.createQueue) {
-      await boss.createQueue(triggersModule.MEMORY_EVENT_INGEST_QUEUE);
-    }
-    await triggersModule.enqueueEventMemoryIngest(boss, eventId);
-  } catch (err) {
-    // YUK-101 (iter2 fix F9) — prefix `[memory-ingest]` distinguishes the
-    // inner enqueuer failure (this branch) from any outer caller-supplied
-    // enqueuer rejection (logged via `.catch` at the writeEvent call site
-    // with prefix `[writeEvent]`).
-    console.error('[memory-ingest] enqueue failed', { eventId, err });
-  }
-}
-
-let memoryIngestEnqueuer: MemoryIngestEnqueuer = defaultMemoryIngestEnqueuer;
-
-/**
- * Test-only override for the memory ingest enqueuer. Call with `null` to
- * restore the default dynamic-import path. Production code must not call this.
- */
-export function _setMemoryIngestEnqueuerForTests(fn: MemoryIngestEnqueuer | null): void {
-  memoryIngestEnqueuer = fn ?? defaultMemoryIngestEnqueuer;
-}
-
 export interface WriteEventInput {
   id: string;
   session_id?: string | null;
@@ -1061,43 +1009,13 @@ export async function writeEvent(db: DbLike, input: WriteEventInput): Promise<st
     })
     .onConflictDoNothing({ target: event.id });
 
-  // YUK-99 — fire ADR-0017 §"Write triggers" #1 (event creation → Mem0 ingest
-  // + brief regen). W-06: `affected_scopes` already carries any
-  // `meta:orchestrator_self` tag produced by `computeAffectedScopes`, so
-  // wiring this caller revives that path automatically.
+  // ADR-0021 — INSERT-only. The new row's `ingest_at` is NULL (pending). The
+  // outbox poll handler in `src/server/memory/triggers.ts` picks it up and
+  // enqueues `memory_event_ingest`. If `db` is a transaction that later rolls
+  // back, the row is gone and nothing was enqueued — no orphan jobs.
   //
-  // YUK-101 (iter2 fix F3) — true fire-and-forget: do NOT await the enqueue.
-  // Pre-iter2 the await blocked every writeEvent on a pg-boss.send round-trip
-  // and, when writeEvent ran inside `db.transaction(tx => ...)` (submit
-  // route, proposals/actions, mistakes, ingestion-import, ...), the await
-  // extended the surrounding lock-hold window. True fire-and-forget lets
-  // the INSERT commit on its own schedule and the enqueue races independently.
-  //
-  // YUK-101 (iter2 fix F11) — dropped the outer try/catch.
-  // `defaultMemoryIngestEnqueuer` already swallows in its own try/catch
-  // (logging via `[memory-ingest]`), so the outer was dead code in
-  // production. Test-injected enqueuers that throw surface here via
-  // `.catch(...)` and log via `[writeEvent]` — distinguishable from the
-  // inner default-path log.
-  //
-  // Known limitation (architectural — captured in YUK-101): the enqueue
-  // commits independently of `db` (when `db` is a `tx`, the enqueue still
-  // goes through the boss pool's own connection). A caller tx rollback after
-  // writeEvent returns leaves an orphan job; the worker no-ops on the
-  // missing row and the F4 `singletonKey` collapses subsequent duplicates.
-  // The transactional outbox in YUK-101 is the deep fix.
-  void memoryIngestEnqueuer(input.id).catch((err) => {
-    console.error('[writeEvent] memory ingest enqueue rejected', {
-      eventId: input.id,
-      err,
-    });
-  });
-
   // Drizzle's onConflictDoNothing returns an empty result on no-op. The caller's
   // id IS the row's id (deterministic or assigned), so return it directly.
   // First write wins — semantics documented at fn-doc.
   return input.id;
 }
-
-// suppress unused-import warning at module level (kept for future expansion)
-void sql;

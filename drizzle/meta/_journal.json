@@ -120,6 +120,13 @@
       "when": 1779864083414,
       "tag": "0016_far_whirlwind",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1779886136431,
+      "tag": "0017_outbox_event_ingest",
+      "breakpoints": true
     }
   ]
 }
