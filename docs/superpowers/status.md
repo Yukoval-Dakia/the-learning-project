@@ -4,8 +4,8 @@
 > 这里记的是 **项目走到了哪、下一站去哪、为什么这么走**，不是 commit log。
 > 维护规则：每完成一个 Phase 就 update 一次；不维护周度进度。
 
-**最后更新**：2026-05-27（**Wave 1 ship** —— T-37 brief writer + T-RA RatingAdvisor + T-66 teaching ask_check + T-88 P0 TipTap spike 同日全 ship；post-ship audit-drift 发现 3 个 P1 silent dead path 也在当日合并 fix；详见 [`plans/2026-05-27-wave1-ready-to-launch.md`](plans/2026-05-27-wave1-ready-to-launch.md) §8 ship outcome）
-**当前 Phase**：Wave 1（master roadmap §5.1）✅ 收口。下一站候选（master roadmap §5.1 后续 Wave 顺序）：**Wave 2** YUK-88 Block Tree Note rebuild P1+P2（P0 spike findings → ADR-0020 微调 split-id-preserve）；并行候选：Foundation D M2 read tool full coverage、Dreaming agent lane、subject #4、W-02/W-07 doc sweep（合并 P4.8）。详见 [`plans/2026-05-27-master-roadmap.md`](plans/2026-05-27-master-roadmap.md) §5.1 Wave 2。
+**最后更新**：2026-05-27（**Wave 1 ship** —— T-37 brief writer + T-RA RatingAdvisor + T-66 teaching ask_check + T-88 P0 TipTap spike 同日全 ship；post-ship audit-drift 发现的 P1 silent dead path 当日合 closeout PR #163 (YUK-99/100) + iter2 PR #165 (YUK-101 13 findings band-aid)；Linear YUK-37/66/90/98/99/100 全 Done；详见 [`plans/2026-05-27-master-roadmap.md`](plans/2026-05-27-master-roadmap.md) §0.3）
+**当前 Phase**：Wave 1（master roadmap §5.1）✅ 收口。下一站候选（master roadmap §5.1 后续 Wave 顺序）：**Wave 2** YUK-88 Block Tree Note rebuild P1+P2（P0 spike findings → ADR-0020 微调 split-id-preserve）+ Foundation D M2 read tool full coverage (T-D2, 10 read tools)；~46pt / ~10 周。**Open architectural follow-up**：[YUK-101](https://linear.app/yukoval-studios/issue/YUK-101) transactional outbox for `writeEvent` → memory event ingest（iter2 PR 只是 band-aid，真正 outbox 重写未做）。详见 [`plans/2026-05-27-master-roadmap.md`](plans/2026-05-27-master-roadmap.md) §5.1 Wave 2。
 **主分支**：`main` 已推 `origin`
 **路线图源**：[`docs/planning/v0.3-generalized-ai-learning-framework.md`](../planning/v0.3-generalized-ai-learning-framework.md) §1.5 是当前执行清单；root `PLANNING.md` v0.12 Phase 1-4 已标 historical
 

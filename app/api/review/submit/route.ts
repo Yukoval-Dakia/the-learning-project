@@ -272,8 +272,6 @@ export async function POST(req: Request): Promise<Response> {
                 ...judgeResultToRatingAdvice(judgeResult, {
                   causeCategory: adviceCauseCategory,
                 }),
-                source_capability_ref: judgeResult.capability_ref,
-                source_coarse_outcome: judgeResult.coarse_outcome,
               },
             }
           : {};
