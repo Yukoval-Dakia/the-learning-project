@@ -37,7 +37,7 @@ Wave 1 启动前必跑：
 3. **`src/server/memory/brief.ts`** —— brief regen routine，single-owner write path for brief layer（满足 ADR-0015 §2 forward lock）
 4. **`src/server/memory/scope_tagger.ts`** —— `computeAffectedScopes(event_partial)` helper；从所有 event writer 调用
 5. **`src/server/memory/triggers.ts`** —— pg-boss subscribers for event-tagged regen + chat-derived `mem0.add()` + cron daily sweep
-6. **Per-prefix brief templates** —— 5 fixed scope prefix（global / subject:* / topic:* / mistake_cluster:* / meta:orchestrator_self）的 markdown 模板
+6. **Per-prefix brief templates** —— 5 fixed scope prefix（global / subject:* / topic:* / mistake_cluster:* / meta:orchestrator_self）的模板（实装：`brief.ts` 顶部 `BRIEF_TEMPLATES` const inline；当模板长度增加再拆 `templates/*.md`）
 7. **Anti-storm** —— pg-boss singletonKey dedup on regen jobs + SoT diff threshold in brief regen handler
 
 ### §1.2 已 ship 的前置（不重做）
@@ -64,7 +64,7 @@ Wave 1 启动前必跑：
 - [ ] `src/server/memory/brief.ts` + unit test（LLM mocked）
 - [ ] `src/server/memory/scope_tagger.ts` + unit test
 - [ ] `src/server/memory/triggers.ts` + pg-boss subscriber registration
-- [ ] 5 个 scope prefix 的 brief templates（markdown 内嵌于 brief.ts 或独立 .md）
+- [x] 5 个 scope prefix 的 brief templates（实装为 `brief.ts` 内 `BRIEF_TEMPLATES` const inline；ship 2026-05-27）
 - [ ] Anti-storm singletonKey + SoT diff threshold 实装
 - [ ] Mem0 `user_id = 'self'` invariant test
 - [ ] `pnpm test` + `pnpm typecheck` + `pnpm lint` + `pnpm audit:schema` + `pnpm audit:partition` + `pnpm audit:profile` + `pnpm build` 全绿
@@ -89,15 +89,9 @@ Wave 1 启动前必跑：
 ```
 src/server/memory/
   client.ts        # Mem0 wrapper（新，~150 行）
-  brief.ts         # brief regen（新，~250 行）
+  brief.ts         # brief regen + 5 inline BRIEF_TEMPLATES const（新，~250 行）
   scope_tagger.ts  # computeAffectedScopes helper（新，~80 行）
   triggers.ts      # pg-boss subscribers（新，~150 行）
-  templates/
-    global.md          # brief template per scope prefix
-    subject.md
-    topic.md
-    mistake_cluster.md
-    meta_orchestrator.md
 docker-compose.yml  # (if pgvector needs version bump)
 package.json        # +mem0ai dep
 tests/server/memory/
@@ -106,6 +100,8 @@ tests/server/memory/
   scope_tagger.test.ts    # unit
   triggers.test.ts        # pg-boss handler test
 ```
+
+**注 (post-ship 2026-05-27)**：实装把 5 个 scope-prefix brief 模板做成 `brief.ts` 顶部 `BRIEF_TEMPLATES` const object 内联（5 个 1-liner string），未拆独立 `templates/*.md` 目录。理由：MVP 阶段每个模板仅 ~1 行 placeholder，独立文件 + 路径解析开销不值；若未来模板变长（>10 行 / 多段 markdown），再拆。本节原始结构（`templates/*.md`）已 obsolete。
 
 不动既有文件，除非：
 - `src/server/events/queries.ts` —— 加 affected_scopes 写入 hook（如果 event writer 还没传 affected_scopes）
