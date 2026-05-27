@@ -54,6 +54,10 @@ async function walkFiles(root: string): Promise<string[]> {
 
 type Hit = string; // repo-relative path
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 async function findWriteHits(
   tableName: string,
   opts: {
@@ -63,7 +67,9 @@ async function findWriteHits(
   } = {},
 ): Promise<Hit[]> {
   const ops = opts.ops ?? (['insert', 'update'] as const);
-  const re = new RegExp(`\\b(?:${ops.join('|')})\\s*\\(\\s*${tableName}\\s*[,)]`);
+  const re = new RegExp(
+    `\\b[\\w$]+\\s*\\.\\s*(?:${ops.join('|')})\\s*\\(\\s*${escapeRegExp(tableName)}\\s*[,)]`,
+  );
   const hits: Hit[] = [];
   for (const root of opts.roots ?? SCAN_ROOTS) {
     const files = await walkFiles(path.join(REPO_ROOT, root));

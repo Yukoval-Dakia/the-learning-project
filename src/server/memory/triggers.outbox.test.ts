@@ -175,17 +175,17 @@ describe('outbox recovery handler (real-path)', () => {
     await resetDb();
   });
 
-  it('drains all pending rows across multiple batch cycles', async () => {
+  it('drains all pending rows across more than two batch cycles', async () => {
     const db = testDb();
     const boss = { send: vi.fn(async () => 'job-x') };
-    for (let i = 0; i < 75; i += 1) {
+    for (let i = 0; i < 130; i += 1) {
       await writeEvent(db, { id: newId(), ...attemptPayload(`q-${i}`) });
     }
 
     const recover = buildMemoryIngestOutboxRecoverHandler(db, boss);
     await recover([]);
 
-    expect(boss.send).toHaveBeenCalledTimes(75);
+    expect(boss.send).toHaveBeenCalledTimes(130);
     const remaining = await db.select().from(event).where(isNull(event.ingest_at));
     expect(remaining).toHaveLength(0);
   });

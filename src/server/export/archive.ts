@@ -121,6 +121,9 @@ export async function buildBackupArchive({
 // ─── Import ────────────────────────────────────────────────────────────────
 
 const INSERT_BATCH_SIZE = 50;
+const TEXT_ARRAY_COLUMNS: Partial<Record<TableName, ReadonlySet<string>>> = {
+  event: new Set(['affected_scopes']),
+};
 
 export interface ImportManifest {
   schema_version: string;
@@ -151,6 +154,22 @@ export interface RestoreFromArchiveOpts {
   db: Db;
   r2: R2Client;
   bytes: Uint8Array;
+}
+
+function restoreValue(table: TableName, column: string, value: unknown) {
+  const isTextArray = TEXT_ARRAY_COLUMNS[table]?.has(column) ?? false;
+  if (isTextArray && Array.isArray(value)) {
+    if (value.length === 0) return sql`ARRAY[]::text[]`;
+    return sql`ARRAY[${sql.join(
+      value.map((item) => sql`${item}`),
+      sql`,`,
+    )}]::text[]`;
+  }
+  const bound =
+    Array.isArray(value) || (value !== null && typeof value === 'object')
+      ? JSON.stringify(value)
+      : (value ?? null);
+  return sql`${bound}`;
 }
 
 export async function restoreFromArchive({
@@ -224,6 +243,15 @@ export async function restoreFromArchive({
     };
   }
 
+  // `event.ingest_at` is an internal dispatch cursor, not restored memory
+  // state. A backup restore starts from an empty memory backend, so restored
+  // events must be considered pending for the outbox poller.
+  for (const row of data.event ?? []) {
+    if (Object.prototype.hasOwnProperty.call(row, 'ingest_at')) {
+      row.ingest_at = null;
+    }
+  }
+
   // Pre-flight: catch common shape errors BEFORE we wipe the DB.
   const validationErrors: string[] = [];
   for (const t of FK_ORDER) {
@@ -286,15 +314,11 @@ export async function restoreFromArchive({
         // Build INSERT using drizzle sql template to get proper parameterisation.
         // Arrays and objects must be serialised to JSON strings before binding —
         // drizzle's sql tag treats a bare JS array as a sql.join list which produces
-        // "()" for empty arrays, causing a Postgres syntax error.
+        // "()" for empty arrays, causing a Postgres syntax error. Known Postgres
+        // array columns are rebound explicitly in restoreValue().
         const colList = cols.map((c) => `"${c}"`).join(',');
         const rowFragments = chunk.map((row) => {
-          const valFragments = cols.map((col) => {
-            const v = row[col] ?? null;
-            const bound =
-              Array.isArray(v) || (v !== null && typeof v === 'object') ? JSON.stringify(v) : v;
-            return sql`${bound}`;
-          });
+          const valFragments = cols.map((col) => restoreValue(t, col, row[col] ?? null));
           return sql`(${sql.join(valFragments, sql`,`)})`;
         });
         const query = sql`insert into ${sql.raw(`"${t}"`)} (${sql.raw(colList)}) values ${sql.join(rowFragments, sql`,`)} on conflict do nothing`;

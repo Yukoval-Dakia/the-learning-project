@@ -218,11 +218,10 @@ export function buildMemoryIngestOutboxRecoverHandler(
 
 async function countPendingIngest(db: Db): Promise<number> {
   const rows = await db
-    .select({ id: event.id })
+    .select({ count: sql<number>`count(*)::int` })
     .from(event)
-    .where(isNull(event.ingest_at))
-    .limit(OUTBOX_POLL_BATCH + 1);
-  return rows.length;
+    .where(isNull(event.ingest_at));
+  return rows[0]?.count ?? 0;
 }
 
 async function defaultGenerateBrief(): Promise<never> {
