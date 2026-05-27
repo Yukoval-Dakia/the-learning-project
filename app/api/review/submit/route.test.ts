@@ -66,6 +66,62 @@ function submitReq(body: unknown) {
   });
 }
 
+async function seedFailureAttempt(opts: {
+  id: string;
+  question_id: string;
+  answer_md?: string;
+  knowledge_ids?: string[];
+  created_at?: Date;
+}): Promise<void> {
+  const db = testDb();
+  const createdAt = opts.created_at ?? new Date();
+  await db.insert(event).values({
+    id: opts.id,
+    session_id: null,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'attempt',
+    subject_kind: 'question',
+    subject_id: opts.question_id,
+    outcome: 'failure',
+    payload: {
+      answer_md: opts.answer_md ?? 'wrong',
+      answer_image_refs: [],
+      referenced_knowledge_ids: opts.knowledge_ids ?? [],
+    },
+    caused_by_event_id: null,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: createdAt,
+  });
+}
+
+async function seedUserCause(opts: {
+  id: string;
+  attempt_event_id: string;
+  primary_category: string;
+}): Promise<void> {
+  const db = testDb();
+  await db.insert(event).values({
+    id: opts.id,
+    session_id: null,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'experimental:user_cause',
+    subject_kind: 'event',
+    subject_id: opts.attempt_event_id,
+    outcome: null,
+    payload: {
+      primary_category: opts.primary_category,
+      user_notes: null,
+    },
+    caused_by_event_id: opts.attempt_event_id,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: new Date(),
+  });
+}
+
 describe('POST /api/review/submit', () => {
   beforeEach(async () => {
     await resetDb();
@@ -797,6 +853,142 @@ describe('POST /api/review/submit', () => {
         }),
       );
       expect(res.status).toBe(400);
+    });
+  });
+
+  // YUK-100 (W-05) — Cause wiring fix. Driver T-RA §1.1 says the partial-
+  // credit advisor must apply carelessness/conceptual lean using CC-1's
+  // effectiveCauseCategoryForFailureAttempt() helper. Pre-fix the submit
+  // route never threaded cause into `judgeResultToRatingAdvice()`, so the
+  // event payload's `judge_advice.rating` ignored prior cause and YUK-98's
+  // stated goal "cause-aware RatingAdvisor" was dead code in production.
+  // These tests pin the wiring at the route layer using prior user_cause
+  // events. See `docs/audit/2026-05-27-wave1-postship-drift.md` §W-05.
+  describe('YUK-100 — partial-credit cause lean on judge_advice (W-05 wiring)', () => {
+    it('applies carelessness lean → judge_advice.rating="good" when prior user_cause=carelessness', async () => {
+      await seedQuestion('q_sub_careless');
+      await seedFailureAttempt({
+        id: 'a_sub_careless',
+        question_id: 'q_sub_careless',
+      });
+      await seedUserCause({
+        id: 'uc_sub_careless',
+        attempt_event_id: 'a_sub_careless',
+        primary_category: 'carelessness',
+      });
+
+      // Score 0.6 → default 'hard'; carelessness lean should promote to 'good'.
+      const res = await POST(
+        submitReq({
+          mistake_id: 'q_sub_careless',
+          rating: 'hard',
+          response_md: 'partial answer',
+          judge_result_v2: {
+            coarse_outcome: 'partial',
+            score: 0.6,
+            score_meaning: 'steps_v1_weighted',
+            confidence: 0.85,
+            capability_ref: { id: 'steps', version: '1' },
+            feedback_md: 'partial credit',
+            evidence_json: {},
+          },
+        }),
+      );
+      expect(res.status).toBe(200);
+
+      const events = await testDb()
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_sub_careless')));
+      expect(events).toHaveLength(1);
+      const payload = events[0].payload as {
+        judge_advice?: { rating: string | null; reason: string };
+        fsrs_rating: string;
+      };
+      expect(payload.judge_advice?.rating).toBe('good');
+      expect(payload.judge_advice?.reason).toMatch(/careless|carelessness/i);
+      // CC-1 / advisor invariant: user's body.rating still wins.
+      expect(payload.fsrs_rating).toBe('hard');
+    });
+
+    it('applies conceptual lean → judge_advice.rating="again" when prior user_cause=conceptual_error', async () => {
+      await seedQuestion('q_sub_concept');
+      await seedFailureAttempt({
+        id: 'a_sub_concept',
+        question_id: 'q_sub_concept',
+      });
+      await seedUserCause({
+        id: 'uc_sub_concept',
+        attempt_event_id: 'a_sub_concept',
+        primary_category: 'conceptual_error',
+      });
+
+      // Score 0.6 → default 'hard'; conceptual lean should demote to 'again'.
+      const res = await POST(
+        submitReq({
+          mistake_id: 'q_sub_concept',
+          rating: 'hard',
+          response_md: 'partial answer',
+          judge_result_v2: {
+            coarse_outcome: 'partial',
+            score: 0.6,
+            score_meaning: 'steps_v1_weighted',
+            confidence: 0.85,
+            capability_ref: { id: 'steps', version: '1' },
+            feedback_md: 'partial credit',
+            evidence_json: {},
+          },
+        }),
+      );
+      expect(res.status).toBe(200);
+
+      const events = await testDb()
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_sub_concept')));
+      expect(events).toHaveLength(1);
+      const payload = events[0].payload as {
+        judge_advice?: { rating: string | null; reason: string };
+        fsrs_rating: string;
+      };
+      expect(payload.judge_advice?.rating).toBe('again');
+      expect(payload.judge_advice?.reason).toMatch(/concept|conceptual/i);
+      // CC-1 / advisor invariant: user's body.rating still wins.
+      expect(payload.fsrs_rating).toBe('hard');
+    });
+
+    it('keeps default bucket when question has no prior failure attempt (causeCategory=null fallback)', async () => {
+      await seedQuestion('q_sub_nocause');
+
+      const res = await POST(
+        submitReq({
+          mistake_id: 'q_sub_nocause',
+          rating: 'hard',
+          response_md: 'partial answer',
+          judge_result_v2: {
+            coarse_outcome: 'partial',
+            score: 0.6,
+            score_meaning: 'steps_v1_weighted',
+            confidence: 0.85,
+            capability_ref: { id: 'steps', version: '1' },
+            feedback_md: 'partial credit',
+            evidence_json: {},
+          },
+        }),
+      );
+      expect(res.status).toBe(200);
+
+      const events = await testDb()
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_sub_nocause')));
+      expect(events).toHaveLength(1);
+      const payload = events[0].payload as {
+        judge_advice?: { rating: string | null; reason: string };
+      };
+      // No prior cause → default partial-credit bucket for 0.6 is 'hard'.
+      expect(payload.judge_advice?.rating).toBe('hard');
+      expect(payload.judge_advice?.reason).not.toMatch(/careless|conceptual/i);
     });
   });
 });

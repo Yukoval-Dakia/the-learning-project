@@ -9,6 +9,62 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST } from './route';
 
+async function seedFailureAttempt(opts: {
+  id: string;
+  question_id: string;
+  answer_md?: string;
+  knowledge_ids?: string[];
+  created_at?: Date;
+}): Promise<void> {
+  const db = testDb();
+  const createdAt = opts.created_at ?? new Date();
+  await db.insert(event).values({
+    id: opts.id,
+    session_id: null,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'attempt',
+    subject_kind: 'question',
+    subject_id: opts.question_id,
+    outcome: 'failure',
+    payload: {
+      answer_md: opts.answer_md ?? 'wrong',
+      answer_image_refs: [],
+      referenced_knowledge_ids: opts.knowledge_ids ?? [],
+    },
+    caused_by_event_id: null,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: createdAt,
+  });
+}
+
+async function seedUserCause(opts: {
+  id: string;
+  attempt_event_id: string;
+  primary_category: string;
+}): Promise<void> {
+  const db = testDb();
+  await db.insert(event).values({
+    id: opts.id,
+    session_id: null,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'experimental:user_cause',
+    subject_kind: 'event',
+    subject_id: opts.attempt_event_id,
+    outcome: null,
+    payload: {
+      primary_category: opts.primary_category,
+      user_notes: null,
+    },
+    caused_by_event_id: opts.attempt_event_id,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: new Date(),
+  });
+}
+
 const QUESTION_BASE = {
   kind: 'short_answer' as const,
   reference_md: null,
@@ -135,5 +191,123 @@ describe('POST /api/review/advice', () => {
     const body = (await res.json()) as { error: string; message: string };
     expect(body.error).toBe('missing_answer');
     expect(body.message).toContain('response_md');
+  });
+
+  // YUK-100 (W-05) — Cause wiring fix. Driver T-RA §1.1 says partial-credit
+  // advisor must lean toward 'good' when effective cause is carelessness-like
+  // and toward 'again' when it's conceptual-like, sourced via CC-1's
+  // effectiveCauseCategoryForFailureAttempt() helper. Pre-fix the advice route
+  // never threaded cause into the advisor, so the lean was dead code in
+  // production. These tests pin the wiring at the route layer.
+  describe('YUK-100 — partial-credit cause lean (W-05 wiring)', () => {
+    it('applies carelessness lean when cause=carelessness on prior failure attempt', async () => {
+      // partial-credit keyword judge with prior carelessness user_cause should
+      // promote 'hard' default → 'good' per driver T-RA §1.1.
+      await seedQuestion('q_advice_careless', {
+        kind: 'fill_blank',
+        reference_md: '虚词；代词；连词',
+        judge_kind_override: 'keyword',
+        rubric_json: {
+          criteria: [{ name: 'correctness', weight: 1, descriptor: '命中关键词' }],
+          keywords: ['虚词', '代词', '连词'],
+        },
+      });
+      await seedFailureAttempt({
+        id: 'a_advice_careless',
+        question_id: 'q_advice_careless',
+        answer_md: 'old wrong',
+      });
+      await seedUserCause({
+        id: 'uc_advice_careless',
+        attempt_event_id: 'a_advice_careless',
+        primary_category: 'carelessness',
+      });
+
+      const res = await POST(
+        adviceReq({
+          activity_ref: { kind: 'question', id: 'q_advice_careless' },
+          response_md: '虚词和代词',
+        }),
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        judge: { route: string; coarse_outcome: string };
+        advice: { rating: string | null; reason: string };
+      };
+      expect(body.judge.route).toBe('keyword');
+      expect(body.judge.coarse_outcome).toBe('partial');
+      expect(body.advice.rating).toBe('good');
+      expect(body.advice.reason).toMatch(/careless|carelessness/i);
+    });
+
+    it('applies conceptual lean when cause=conceptual_error on prior failure attempt', async () => {
+      // partial-credit keyword judge with prior conceptual_error user_cause
+      // should demote 'hard' default → 'again' per driver T-RA §1.1.
+      await seedQuestion('q_advice_concept', {
+        kind: 'fill_blank',
+        reference_md: '虚词；代词；连词',
+        judge_kind_override: 'keyword',
+        rubric_json: {
+          criteria: [{ name: 'correctness', weight: 1, descriptor: '命中关键词' }],
+          keywords: ['虚词', '代词', '连词'],
+        },
+      });
+      await seedFailureAttempt({
+        id: 'a_advice_concept',
+        question_id: 'q_advice_concept',
+        answer_md: 'old wrong',
+      });
+      await seedUserCause({
+        id: 'uc_advice_concept',
+        attempt_event_id: 'a_advice_concept',
+        primary_category: 'conceptual_error',
+      });
+
+      const res = await POST(
+        adviceReq({
+          activity_ref: { kind: 'question', id: 'q_advice_concept' },
+          response_md: '虚词和代词',
+        }),
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        judge: { route: string; coarse_outcome: string };
+        advice: { rating: string | null; reason: string };
+      };
+      expect(body.judge.route).toBe('keyword');
+      expect(body.judge.coarse_outcome).toBe('partial');
+      expect(body.advice.rating).toBe('again');
+      expect(body.advice.reason).toMatch(/concept|conceptual/i);
+    });
+
+    it('falls back to default partial-credit bucket when no prior failure attempt exists', async () => {
+      // Sanity: no cause history → advisor keeps default partial-credit bucket
+      // (this is the legal fallback for `causeCategory = null`).
+      await seedQuestion('q_advice_nocause', {
+        kind: 'fill_blank',
+        reference_md: '虚词；代词；连词',
+        judge_kind_override: 'keyword',
+        rubric_json: {
+          criteria: [{ name: 'correctness', weight: 1, descriptor: '命中关键词' }],
+          keywords: ['虚词', '代词', '连词'],
+        },
+      });
+
+      const res = await POST(
+        adviceReq({
+          activity_ref: { kind: 'question', id: 'q_advice_nocause' },
+          response_md: '虚词和代词',
+        }),
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        judge: { coarse_outcome: string };
+        advice: { rating: string | null; reason: string };
+      };
+      expect(body.judge.coarse_outcome).toBe('partial');
+      // Default partial bucket for score ≥ 0.5 is 'hard' — no lean applied.
+      expect(body.advice.rating).toBe('hard');
+      expect(body.advice.reason).not.toMatch(/careless|conceptual/i);
+    });
   });
 });
