@@ -1,5 +1,5 @@
 // Verifies that the full chain of drizzle migrations (0000 → 0005) applies cleanly
-// to a fresh Postgres 16 testcontainer AND produces the expected post-1c.1-Lane-A
+// to a fresh pgvector/Postgres 16 testcontainer AND produces the expected post-1c.1-Lane-A
 // schema state. The global vitest setup uses `db:push --force` which bypasses
 // migration files — this test is the only thing that exercises the migrate path.
 //
@@ -38,7 +38,7 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
 
   beforeAll(async () => {
     ensureDockerHost();
-    container = await new PostgreSqlContainer('postgres:16').start();
+    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
     client = postgres(container.getConnectionUri(), { max: 1 });
     db = drizzle(client);
 
@@ -111,7 +111,14 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
     expect(gin?.indexdef).toMatch(/jsonb_path_ops/i);
   });
 
-  it('event table has all 13 expected columns', async () => {
+  it('installs pgvector extension for Mem0 pgvector backend', async () => {
+    const rows = await db.execute<{ extname: string }>(sql`
+      SELECT extname FROM pg_extension WHERE extname = 'vector'
+    `);
+    expect(rows.length).toBe(1);
+  });
+
+  it('event table has all expected columns including affected_scopes', async () => {
     const rows = await db.execute<{ column_name: string }>(sql`
       SELECT column_name FROM information_schema.columns
       WHERE table_schema = 'public' AND table_name = 'event'
@@ -130,11 +137,21 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
         'outcome',
         'payload',
         'caused_by_event_id',
+        'affected_scopes',
         'task_run_id',
         'cost_micro_usd',
         'created_at',
       ]),
     );
+  });
+
+  it('creates GIN index on event.affected_scopes', async () => {
+    const rows = await db.execute<{ indexname: string; indexdef: string }>(sql`
+      SELECT indexname, indexdef FROM pg_indexes
+      WHERE schemaname = 'public' AND tablename = 'event' AND indexname = 'event_affected_scopes_idx'
+    `);
+    expect(rows[0]?.indexdef).toMatch(/USING gin/i);
+    expect(rows[0]?.indexdef).toMatch(/affected_scopes/i);
   });
 
   it('knowledge_edge has FK to knowledge on both from and to', async () => {

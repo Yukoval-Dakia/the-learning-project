@@ -35,6 +35,7 @@ export const fastTestInclude = [
   'src/server/ingestion/tencent_mark_parser.test.ts',
   'src/server/ingestion/vision.test.ts',
   'src/server/judge/**/*.test.ts',
+  'src/server/memory/**/*.test.ts',
   'src/server/r2.test.ts',
   'src/server/review/activity-ref.test.ts',
   'src/server/review/fsrs.test.ts',

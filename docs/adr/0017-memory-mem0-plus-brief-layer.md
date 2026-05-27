@@ -125,6 +125,19 @@ This ADR **does not supersede** ADR-0015. §1 (`learning_record`) is untouched. 
 - Token economy of "always-loaded brief" hits orchestrator context limit → switch to retrieval-only mode (skip brief layer, query Mem0 facts on demand)
 - pgvector performance ceiling under our scale (~1k events) → migrate to Qdrant / managed Mem0 hosted
 
+## Errata 2026-05-27 — TS SDK embedder reality
+
+Phase B spike on `mem0ai@3.0.4` found that the OSS TypeScript embedder factory
+supports `openai` / `ollama` / `lmstudio` / `google` / `azure_openai` /
+`langchain` paths. The earlier risk text that proposed "Voyage / Anthropic via
+Mem0's provider hook" is not a valid current TS OSS embedder path; Anthropic
+does not expose embeddings, and Voyage is not wired in the SDK factory.
+
+T-37 therefore defaults the fact layer to Mem0's `openai` embedder with
+`text-embedding-3-small` and `OPENAI_API_KEY`. The LLM path remains Anthropic
+provider compatible, routed through `ANTHROPIC_BASE_URL` plus `XIAOMI_API_KEY`
+for xiaomi/mimo.
+
 ## One-line summary
 
 > **Memory = Mem0 facts (engineered) + thin brief layer (in-house) — neither is SoT; both are attention prior for the orchestrator LLM.**
