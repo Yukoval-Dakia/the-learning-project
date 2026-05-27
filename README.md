@@ -75,9 +75,21 @@ pnpm audit:schema
    INTERNAL_TOKEN=...
    XIAOMI_API_KEY=...
    ANTHROPIC_API_KEY=...
+   OPENAI_API_KEY=...            # Mem0 fact-layer embedder (ADR-0017)
    TUNNEL_TOKEN=<paste-token-here>
    # + R2 / Tencent OCR keys
+   # MEM0_* keys are optional — see .env.example for defaults
    ```
+
+   `OPENAI_API_KEY` is required as soon as the worker processes its first
+   `memory_event_ingest` job (every `writeEvent` enqueues one, per ADR-0017
+   §"Write triggers" #1). The fact layer defaults to Mem0's `openai` embedder
+   per ADR-0017 errata 2026-05-27 and the spike findings in
+   [docs/superpowers/plans/2026-05-27-t37-mem0-spike-findings.md](docs/superpowers/plans/2026-05-27-t37-mem0-spike-findings.md).
+   The `MEM0_*` overrides (embedding model / dims, LLM model, pgvector
+   collection + index toggles, Anthropic base URL) all have sensible defaults
+   baked into `src/server/memory/client.ts` and only need to be set if you are
+   diverging from those.
 
 3. **Run database migrations** after first start:
    ```bash

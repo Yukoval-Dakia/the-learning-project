@@ -4,8 +4,8 @@
 > 这里记的是 **项目走到了哪、下一站去哪、为什么这么走**，不是 commit log。
 > 维护规则：每完成一个 Phase 就 update 一次；不维护周度进度。
 
-**最后更新**：2026-05-26（Foundation D M1 ship — DomainTool registry + 3 read tools + in-process MCP bridge + `experimental:tool_use` mirror 全部 4 lane closeout，PR #139/#140/#141 + Lane D PR 关 YUK-78/79/80/81/82）
-**当前 Phase**：Foundation D M1 收口完成。下一站候选：**M2 read tool full coverage**（10 个剩余 read tool）、Dreaming agent lane（unblock by M1）、YUK-66 teaching ask_check artifact、Living Note refinement、Note 申诉/标错、subject #4、Foundation C P3 rating advisory。详见 [`docs/planning/v0.4-complete-form-roadmap.md`](../planning/v0.4-complete-form-roadmap.md) §6 优先级清单。
+**最后更新**：2026-05-27（**Wave 1 ship** —— T-37 brief writer + T-RA RatingAdvisor + T-66 teaching ask_check + T-88 P0 TipTap spike 同日全 ship；post-ship audit-drift 发现 3 个 P1 silent dead path 也在当日合并 fix；详见 [`plans/2026-05-27-wave1-ready-to-launch.md`](plans/2026-05-27-wave1-ready-to-launch.md) §8 ship outcome）
+**当前 Phase**：Wave 1（master roadmap §5.1）✅ 收口。下一站候选（master roadmap §5.1 后续 Wave 顺序）：**Wave 2** YUK-88 Block Tree Note rebuild P1+P2（P0 spike findings → ADR-0020 微调 split-id-preserve）；并行候选：Foundation D M2 read tool full coverage、Dreaming agent lane、subject #4、W-02/W-07 doc sweep（合并 P4.8）。详见 [`plans/2026-05-27-master-roadmap.md`](plans/2026-05-27-master-roadmap.md) §5.1 Wave 2。
 **主分支**：`main` 已推 `origin`
 **路线图源**：[`docs/planning/v0.3-generalized-ai-learning-framework.md`](../planning/v0.3-generalized-ai-learning-framework.md) §1.5 是当前执行清单；root `PLANNING.md` v0.12 Phase 1-4 已标 historical
 
@@ -95,6 +95,19 @@ Conclusion: Foundation B schema extension and math profile were introduced in th
 ```
 
 M1 closeout audit: [`docs/audit/2026-05-26-copilot-tools-foundation.md`](../audit/2026-05-26-copilot-tools-foundation.md).
+
+### Wave 1 — Master roadmap scenario A 第一波（2026-05-27 同日 ship）
+
+```
+✅  T-37 brief writer integration                    caccd97 (PR #159) — src/server/memory/{client,brief,scope_tagger,triggers}.ts + ADR-0017 + drizzle/0015+0016 + Mem0 spike findings
+✅  T-RA RatingAdvisor UI wiring                     aaa534c (PR #160) — rating-advisor.ts + RatingAdvisor.tsx + advice route + 14 boundary tests
+✅  T-66 teaching ask_check question persistence     c320446 (PR #161) — question.source=teaching_check + attempt→mistake→variant 链 + arch.md cleanup
+✅  T-88 P0 TipTap block-tree spike                  719c2b7 (PR #162) — 4 invariant snapshot + ADR-0020 split-id-preserve 微调建议，per design 不进 main
+✅  W-A post-ship: brief writer event ingest wire    f5e27ef (YUK-99)  — writeEvent → enqueueEventMemoryIngest + .env.example + README + regression test (修 W-01/W-04/W-06)
+✅  W-B post-ship: RatingAdvisor cause SoT wiring    013a9ad (YUK-100) — advice + submit route 读 effectiveCauseCategoryForFailureAttempt 并 thread ctx + integration test (修 W-05)
+```
+
+Wave 1 closeout doc：[`plans/2026-05-27-wave1-ready-to-launch.md`](plans/2026-05-27-wave1-ready-to-launch.md) §8 ship outcome。Post-ship audit-drift：[`docs/audit/2026-05-27-wave1-postship-drift.md`](../audit/2026-05-27-wave1-postship-drift.md)。
 
 ### Foundation C — Judge Result Contract + Correction Event（ADR-0014 §4/§6）
 
