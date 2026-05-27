@@ -36,6 +36,9 @@ tsconfig.tsbuildinfo
 
 # Subagent worktrees (created by Agent tool with isolation:"worktree")
 .claude/worktrees/
+
+# Manual git worktrees (e.g. launch-phase lane isolation under worktrees/wave*-*)
+worktrees/
 .playwright-mcp/
 
 # remember skill hook logs
