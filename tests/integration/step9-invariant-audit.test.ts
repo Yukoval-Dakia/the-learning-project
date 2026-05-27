@@ -181,6 +181,9 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
     //   - YUK-54 `src/server/artifacts/sections.ts`: the single owner-service for
     //     user section edits. Routes must call this service so sections/history
     //     updates and `experimental:artifact_section_edit` stay atomic.
+    //   - YUK-92 `src/server/artifacts/body-blocks-edit.ts`: the single owner-service
+    //     for whole-document block tree edits, keeping artifact.version, history,
+    //     and `experimental:artifact_body_blocks_edit` in one transaction.
     // Anything else writing `artifact` should still be reviewed.
     const hits = await findWriteHits('artifact', { roots: SCAN_RUNTIME_ROOTS });
     const ALLOWED = [
@@ -190,6 +193,7 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
       'src/server/boss/handlers/embedded_check_generate.ts',
       'src/server/proposals/actions.ts',
       'src/server/artifacts/sections.ts',
+      'src/server/artifacts/body-blocks-edit.ts',
     ];
     const unexpected = hits.filter((h) => !ALLOWED.includes(h.split(path.sep).join('/')));
     expect(

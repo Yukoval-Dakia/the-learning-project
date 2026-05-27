@@ -1,4 +1,5 @@
 import { artifact, event } from '@/db/schema';
+import { bodyBlocksToNoteSections, noteSectionsToBodyBlocks } from '@/server/artifacts/body-blocks';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -32,14 +33,13 @@ async function seedArtifact(overrides: Partial<typeof artifact.$inferInsert> = {
     id: 'a1',
     type: 'note_atomic',
     title: '原子笔记',
-    knowledge_id: null,
     parent_artifact_id: null,
-    child_artifact_ids: [],
+    knowledge_ids: [],
     intent_source: 'learning_intent',
     source: 'ai_generated',
     source_ref: null,
-    outline_json: null,
-    sections: NOTE_SECTIONS as never,
+    body_blocks: noteSectionsToBodyBlocks(NOTE_SECTIONS as never) as never,
+    attrs: {},
     tool_kind: null,
     tool_state: null,
     generation_status: 'ready',
@@ -88,7 +88,7 @@ describe('editArtifactSection', () => {
 
     const [row] = await testDb().select().from(artifact).where(eq(artifact.id, 'a1'));
     expect(row.version).toBe(1);
-    const sections = row.sections as Array<{ id: string; body_md: string; version: number }>;
+    const sections = bodyBlocksToNoteSections(row.body_blocks);
     expect(sections[0]).toMatchObject({ id: 's1', body_md: '新定义 **重点**', version: 2 });
     expect(sections[1]).toMatchObject({ id: 's2', body_md: '旧例子', version: 3 });
 
@@ -96,9 +96,9 @@ describe('editArtifactSection', () => {
     expect(history).toHaveLength(1);
     expect(history[0]).toMatchObject({
       version: 1,
-      action: 'section_edit',
-      section_id: 's1',
-      section_index: 0,
+      action: 'block_edit',
+      block_id: 's1',
+      block_index: 0,
       previous_body_md: '旧定义',
       next_body_md: '新定义 **重点**',
       previous_version: 1,
@@ -118,8 +118,8 @@ describe('editArtifactSection', () => {
     });
     expect(events[0].payload).toMatchObject({
       artifact_id: 'a1',
-      section_id: 's1',
-      section_index: 0,
+      block_id: 's1',
+      block_index: 0,
       previous_body_md: '旧定义',
       next_body_md: '新定义 **重点**',
       previous_version: 1,
@@ -144,7 +144,7 @@ describe('editArtifactSection', () => {
     ).rejects.toMatchObject({ code: 'conflict', status: 409 });
 
     const [row] = await testDb().select().from(artifact).where(eq(artifact.id, 'a1'));
-    const sections = row.sections as Array<{ id: string; body_md: string; version: number }>;
+    const sections = bodyBlocksToNoteSections(row.body_blocks);
     expect(row.version).toBe(4);
     expect(sections[0]).toMatchObject({ id: 's1', body_md: '旧定义', version: 1 });
 
@@ -156,7 +156,7 @@ describe('editArtifactSection', () => {
   });
 
   it('rejects missing sections with not_found', async () => {
-    await seedArtifact({ sections: null });
+    await seedArtifact({ body_blocks: null });
 
     await expect(
       editArtifactSection({
@@ -168,5 +168,22 @@ describe('editArtifactSection', () => {
         nextBodyMd: 'next',
       }),
     ).rejects.toMatchObject({ code: 'not_found', status: 404 });
+  });
+
+  it('rejects malformed body_blocks with validation_error instead of section not_found', async () => {
+    await seedArtifact({
+      body_blocks: { type: 'doc', content: [{ text: 'missing type' }] } as never,
+    });
+
+    await expect(
+      editArtifactSection({
+        db: testDb(),
+        artifactId: 'a1',
+        sectionId: 's1',
+        expectedArtifactVersion: 0,
+        expectedSectionVersion: 1,
+        nextBodyMd: 'next',
+      }),
+    ).rejects.toMatchObject({ code: 'validation_error', status: 500 });
   });
 });

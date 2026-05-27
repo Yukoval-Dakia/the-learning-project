@@ -16,6 +16,7 @@ import { z } from 'zod';
 import { JudgeKind, QuestionKind, Rubric } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, event, knowledge, learning_item } from '@/db/schema';
+import { bodyBlocksToNoteSections } from '@/server/artifacts/body-blocks';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 // ---------- Schemas ----------
@@ -135,11 +136,11 @@ async function loadTeachingContext(db: Db, learningItemId: string) {
   let atomicSections: unknown = null;
   if (li.primary_artifact_id) {
     const aRows = await db
-      .select({ sections: artifact.sections })
+      .select({ body_blocks: artifact.body_blocks })
       .from(artifact)
       .where(eq(artifact.id, li.primary_artifact_id))
       .limit(1);
-    if (aRows[0]) atomicSections = aRows[0].sections;
+    if (aRows[0]) atomicSections = bodyBlocksToNoteSections(aRows[0].body_blocks);
   }
 
   let parentHubSummary: string | null = null;
@@ -152,17 +153,12 @@ async function loadTeachingContext(db: Db, learningItemId: string) {
     const hubArtifactId = hubRows[0]?.primary_artifact_id;
     if (hubArtifactId) {
       const haRows = await db
-        .select({ sections: artifact.sections })
+        .select({ attrs: artifact.attrs })
         .from(artifact)
         .where(eq(artifact.id, hubArtifactId))
         .limit(1);
-      const sections = haRows[0]?.sections as {
-        sections?: Array<{ kind: string; body_md: string }>;
-      } | null;
-      if (sections?.sections) {
-        const def = sections.sections.find((s) => s.kind === 'definition');
-        parentHubSummary = def?.body_md ?? null;
-      }
+      parentHubSummary =
+        (haRows[0]?.attrs as { summary_md?: string } | undefined)?.summary_md ?? null;
     }
   }
 

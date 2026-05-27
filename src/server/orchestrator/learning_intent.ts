@@ -21,6 +21,7 @@ import { z } from 'zod';
 import type { Db } from '@/db/client';
 import { artifact, knowledge, learning_item } from '@/db/schema';
 import { type TaskTextRunFn, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
+import { summaryBodyBlocks } from '@/server/artifacts/body-blocks';
 import { writeEvent } from '@/server/events/queries';
 import { writeLearningItemProposal } from '@/server/proposals/producers';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -428,7 +429,7 @@ async function assertNotAlreadyRated(db: Db, proposalId: string): Promise<void> 
 /**
  * Materializes a proposal: creates 1 hub LearningItem + N atomic LearningItems
  * (parent_learning_item_id linked) + paired hub artifact + N atomic artifact
- * stubs (sections=null, generation_status='pending'), then writes a rate
+ * stubs (body_blocks=null, generation_status='pending'), then writes a rate
  * event chained to the proposal. Caller is responsible for enqueueing
  * note_generate jobs after this returns.
  *
@@ -585,14 +586,13 @@ export async function acceptLearningIntent(
       id: hubArtifactId,
       type: 'note_hub',
       title: hub.title,
-      knowledge_id: rootKnowledgeId,
       parent_artifact_id: null,
-      child_artifact_ids: atomicArtifactIds,
+      knowledge_ids: [rootKnowledgeId],
       intent_source: 'learning_intent',
       source: 'ai_generated',
       source_ref: proposalId,
-      outline_json: { topic, summary_md: hub.summary_md } as never,
-      sections: null,
+      body_blocks: summaryBodyBlocks(`${hubArtifactId}_summary`, hub.summary_md) as never,
+      attrs: { topic, summary_md: hub.summary_md, linked_artifact_ids: atomicArtifactIds } as never,
       tool_kind: null,
       tool_state: null,
       generation_status: 'ready', // hub is outline-only; ready immediately
@@ -615,14 +615,13 @@ export async function acceptLearningIntent(
         id: atomicArtifactIds[i],
         type: 'note_atomic',
         title: atomicNode.title,
-        knowledge_id: atomicNode.knowledge_id,
         parent_artifact_id: hubArtifactId,
-        child_artifact_ids: [],
+        knowledge_ids: [atomicNode.knowledge_id],
         intent_source: 'learning_intent',
         source: 'ai_generated',
         source_ref: proposalId,
-        outline_json: { one_line_intent: atomicNode.one_line_intent } as never,
-        sections: null,
+        body_blocks: null,
+        attrs: { one_line_intent: atomicNode.one_line_intent } as never,
         tool_kind: null,
         tool_state: null,
         generation_status: 'pending',

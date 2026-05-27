@@ -1,4 +1,5 @@
 import { artifact, event, knowledge, question } from '@/db/schema';
+import { bodyBlocksToNoteSections, noteSectionsToBodyBlocks } from '@/server/artifacts/body-blocks';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -153,14 +154,18 @@ async function seedAtomic(opts: {
     id: opts.artifactId,
     type: 'note_atomic',
     title: opts.domain === 'math' ? '配方法' : '之的用法',
-    knowledge_id: opts.knowledgeId ?? null,
     parent_artifact_id: null,
-    child_artifact_ids: [],
+    knowledge_ids: opts.knowledgeId ? [opts.knowledgeId] : [],
     intent_source: 'learning_intent',
     source: 'ai_generated',
     source_ref: null,
-    outline_json: { one_line_intent: '区分关键用法' } as never,
-    sections: (opts.sections === undefined ? NOTE_SECTIONS : opts.sections) as never,
+    body_blocks:
+      opts.sections === null
+        ? null
+        : noteSectionsToBodyBlocks(
+            (opts.sections === undefined ? NOTE_SECTIONS : opts.sections) as never,
+          ),
+    attrs: { one_line_intent: '区分关键用法' } as never,
     tool_kind: null,
     tool_state: null,
     generation_status: opts.generationStatus ?? 'ready',
@@ -213,11 +218,7 @@ describe('runEmbeddedCheckGenerate', () => {
     expect(updatedArtifact.embedded_check_status).toBe('ready');
 
     // check section updated with question_ids
-    const sections = updatedArtifact.sections as Array<{
-      id: string;
-      kind: string;
-      embedded_check?: { question_ids: string[] } | null;
-    }>;
+    const sections = bodyBlocksToNoteSections(updatedArtifact.body_blocks);
     const checkSection = sections.find((s) => s.kind === 'check');
     expect(checkSection?.embedded_check?.question_ids).toEqual(result.question_ids);
 
@@ -402,10 +403,7 @@ describe('runEmbeddedCheckGenerate', () => {
     // The artifact must reference exactly the reclaim handler's question ids.
     const [finalArtifact] = await testDb().select().from(artifact).where(eq(artifact.id, 'a-race'));
     expect(finalArtifact.embedded_check_status).toBe('ready');
-    const finalSections = finalArtifact.sections as Array<{
-      kind: string;
-      embedded_check?: { question_ids: string[] } | null;
-    }>;
+    const finalSections = bodyBlocksToNoteSections(finalArtifact.body_blocks);
     const checkSection = finalSections.find((s) => s.kind === 'check');
     expect(checkSection?.embedded_check?.question_ids).toEqual(reclaimResult.question_ids);
 

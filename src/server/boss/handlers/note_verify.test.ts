@@ -1,4 +1,5 @@
 import { artifact, event, knowledge } from '@/db/schema';
+import { noteSectionsToBodyBlocks } from '@/server/artifacts/body-blocks';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -74,14 +75,18 @@ async function seedAtomic(opts: {
     id: opts.artifactId,
     type: 'note_atomic',
     title: opts.domain === 'math' ? '配方法' : '之的用法',
-    knowledge_id: opts.knowledgeId ?? null,
     parent_artifact_id: null,
-    child_artifact_ids: [],
+    knowledge_ids: opts.knowledgeId ? [opts.knowledgeId] : [],
     intent_source: 'learning_intent',
     source: 'ai_generated',
     source_ref: null,
-    outline_json: { one_line_intent: '区分关键用法' } as never,
-    sections: (opts.sections === undefined ? NOTE_SECTIONS : opts.sections) as never,
+    body_blocks:
+      opts.sections === null
+        ? null
+        : noteSectionsToBodyBlocks(
+            (opts.sections === undefined ? NOTE_SECTIONS : opts.sections) as never,
+          ),
+    attrs: { one_line_intent: '区分关键用法' } as never,
     tool_kind: null,
     tool_state: null,
     generation_status: opts.generationStatus ?? 'ready',

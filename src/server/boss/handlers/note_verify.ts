@@ -12,6 +12,7 @@ import { NoteVerificationResult, type NoteVerificationResultT } from '@/core/sch
 import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
 import { type TaskTextRunFn, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
+import { bodyBlocksToNoteSections } from '@/server/artifacts/body-blocks';
 import { writeEvent } from '@/server/events/queries';
 import { writeNoteUpdateProposal } from '@/server/proposals/producers';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -81,8 +82,8 @@ export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNot
     .select({
       id: artifact.id,
       title: artifact.title,
-      knowledge_id: artifact.knowledge_id,
-      sections: artifact.sections,
+      knowledge_ids: artifact.knowledge_ids,
+      body_blocks: artifact.body_blocks,
       generation_status: artifact.generation_status,
     })
     .from(artifact)
@@ -91,14 +92,16 @@ export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNot
   const row = rows[0];
   if (!row) return { status: 'skipped:not_found' };
   if (row.generation_status !== 'ready') return { status: 'skipped:not_ready' };
-  if (!row.sections || row.sections.length === 0) return { status: 'skipped:no_sections' };
+  const sections = bodyBlocksToNoteSections(row.body_blocks);
+  if (sections.length === 0) return { status: 'skipped:no_sections' };
 
   let kNode: { id: string; name: string; domain: string | null } | null = null;
-  if (row.knowledge_id) {
+  const primaryKnowledgeId = row.knowledge_ids[0] ?? null;
+  if (primaryKnowledgeId) {
     const kRows = await db
       .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
       .from(knowledge)
-      .where(eq(knowledge.id, row.knowledge_id))
+      .where(eq(knowledge.id, primaryKnowledgeId))
       .limit(1);
     kNode = kRows[0] ?? null;
   }
@@ -107,7 +110,7 @@ export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNot
     artifact_id: row.id,
     title: row.title,
     knowledge_node: kNode,
-    sections: row.sections,
+    sections,
   };
 
   try {

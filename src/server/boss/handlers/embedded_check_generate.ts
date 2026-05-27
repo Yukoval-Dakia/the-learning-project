@@ -21,6 +21,10 @@ import {
   aiAgentRef,
   costUsdToMicroUsd,
 } from '@/server/ai/provenance';
+import {
+  bodyBlocksToNoteSections,
+  setNoteSectionEmbeddedCheck,
+} from '@/server/artifacts/body-blocks';
 import { writeEvent } from '@/server/events/queries';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
@@ -158,8 +162,8 @@ export async function runEmbeddedCheckGenerate(
     .select({
       id: artifact.id,
       title: artifact.title,
-      knowledge_id: artifact.knowledge_id,
-      sections: artifact.sections,
+      knowledge_ids: artifact.knowledge_ids,
+      body_blocks: artifact.body_blocks,
       generation_status: artifact.generation_status,
       embedded_check_status: artifact.embedded_check_status,
       updated_at: artifact.updated_at,
@@ -171,11 +175,7 @@ export async function runEmbeddedCheckGenerate(
   if (!row) return { status: 'skipped:not_found' };
   if (row.generation_status !== 'ready') return { status: 'skipped:not_ready' };
 
-  const sections = (row.sections ?? []) as Array<{
-    id: string;
-    kind: string;
-    embedded_check?: { question_ids: string[] } | null;
-  }>;
+  const sections = bodyBlocksToNoteSections(row.body_blocks);
   const checkSection = sections.find((s) => s.kind === 'check');
   if (!checkSection) return { status: 'skipped:no_check_section' };
 
@@ -208,11 +208,12 @@ export async function runEmbeddedCheckGenerate(
 
   // Resolve subject profile for prompt
   let kNode: { id: string; name: string; domain: string | null } | null = null;
-  if (row.knowledge_id) {
+  const primaryKnowledgeId = row.knowledge_ids[0] ?? null;
+  if (primaryKnowledgeId) {
     const kRows = await db
       .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
       .from(knowledge)
-      .where(eq(knowledge.id, row.knowledge_id))
+      .where(eq(knowledge.id, primaryKnowledgeId))
       .limit(1);
     kNode = kRows[0] ?? null;
   }
@@ -250,7 +251,7 @@ export async function runEmbeddedCheckGenerate(
           rubric_json: q.rubric_json ?? null,
           choices_md: q.choices_md ?? null,
           judge_kind_override: judgeKind,
-          knowledge_ids: row.knowledge_id ? [row.knowledge_id] : [],
+          knowledge_ids: row.knowledge_ids,
           difficulty: 2,
           source_ref: row.id,
           created_by: aiAgentRef('EmbeddedCheckGenerateTask', result) as never,
@@ -264,13 +265,14 @@ export async function runEmbeddedCheckGenerate(
         questionIds.push(id);
       }
 
-      const updatedSections = sections.map((s) =>
-        s.id === checkSection.id ? { ...s, embedded_check: { question_ids: questionIds } } : s,
-      );
       const finalUpdate = await tx
         .update(artifact)
         .set({
-          sections: updatedSections as never,
+          body_blocks: setNoteSectionEmbeddedCheck(
+            row.body_blocks,
+            checkSection.id,
+            questionIds,
+          ) as never,
           embedded_check_status: 'ready',
           updated_at: new Date(),
         })

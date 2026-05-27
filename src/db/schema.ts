@@ -15,9 +15,9 @@ import {
 import type { z } from 'zod';
 import type {
   AgentRef,
+  ArtifactBodyBlocks,
   ArtifactHistoryEntry,
   FsrsState,
-  NoteSection,
   NoteVerificationResult,
   Provenance,
   Rubric,
@@ -34,9 +34,9 @@ import type { FigureRefT, StructuredQuestionT } from '../core/schema/structured_
 // generated.ts wraps these tables with drizzle-zod for validation.
 
 type AgentRefT = z.infer<typeof AgentRef>;
+type ArtifactBodyBlocksT = z.infer<typeof ArtifactBodyBlocks>;
 type ArtifactHistoryEntryT = z.infer<typeof ArtifactHistoryEntry>;
 type FsrsStateT = z.infer<typeof FsrsState>;
-type NoteSectionT = z.infer<typeof NoteSection>;
 type NoteVerificationResultT = z.infer<typeof NoteVerificationResult>;
 type ProvenanceT = z.infer<typeof Provenance>;
 type RubricT = z.infer<typeof Rubric>;
@@ -291,14 +291,13 @@ export const artifact = pgTable('artifact', {
   id: text('id').primaryKey(),
   type: text('type').notNull(),
   title: text('title').notNull(),
-  knowledge_id: text('knowledge_id'),
   parent_artifact_id: text('parent_artifact_id'),
-  child_artifact_ids: jsonb('child_artifact_ids').$type<string[]>().notNull().default([]),
+  knowledge_ids: jsonb('knowledge_ids').$type<string[]>().notNull().default([]),
   intent_source: text('intent_source').notNull(),
   source: text('source').notNull(),
   source_ref: text('source_ref'),
-  outline_json: jsonb('outline_json').$type<JsonObject>(),
-  sections: jsonb('sections').$type<NoteSectionT[]>(),
+  body_blocks: jsonb('body_blocks').$type<ArtifactBodyBlocksT>(),
+  attrs: jsonb('attrs').$type<JsonObject>().notNull().default({}),
   tool_kind: text('tool_kind'),
   tool_state: jsonb('tool_state').$type<ToolStateT>(),
   generation_status: text('generation_status').notNull().default('pending'),
@@ -313,6 +312,29 @@ export const artifact = pgTable('artifact', {
   updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
   version: integer('version').notNull().default(0),
 });
+
+export const artifact_block_ref = pgTable(
+  'artifact_block_ref',
+  {
+    from_artifact_id: text('from_artifact_id')
+      .notNull()
+      .references(() => artifact.id, { onDelete: 'cascade' }),
+    from_block_id: text('from_block_id').notNull(),
+    to_artifact_id: text('to_artifact_id')
+      .notNull()
+      .references(() => artifact.id),
+    to_block_id: text('to_block_id'),
+  },
+  (t) => [
+    uniqueIndex('artifact_block_ref_unique').on(
+      t.from_artifact_id,
+      t.from_block_id,
+      t.to_artifact_id,
+      sql`COALESCE(${t.to_block_id}, '')`,
+    ),
+    index('artifact_block_ref_to_idx').on(t.to_artifact_id, t.to_block_id),
+  ],
+);
 
 export const answer = pgTable('answer', {
   id: text('id').primaryKey(),

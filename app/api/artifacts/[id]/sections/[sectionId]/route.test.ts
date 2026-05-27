@@ -1,4 +1,5 @@
 import { artifact, event, learning_item } from '@/db/schema';
+import { bodyBlocksToNoteSections, noteSectionsToBodyBlocks } from '@/server/artifacts/body-blocks';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../../../tests/helpers/db';
@@ -33,14 +34,13 @@ async function seedLearningItemWithArtifact() {
     id: 'a1',
     type: 'note_atomic',
     title: '原子笔记',
-    knowledge_id: null,
     parent_artifact_id: null,
-    child_artifact_ids: [],
+    knowledge_ids: [],
     intent_source: 'learning_intent',
     source: 'ai_generated',
     source_ref: null,
-    outline_json: null,
-    sections: NOTE_SECTIONS as never,
+    body_blocks: noteSectionsToBodyBlocks(NOTE_SECTIONS as never) as never,
+    attrs: {},
     tool_kind: null,
     tool_state: null,
     generation_status: 'ready',
@@ -159,7 +159,7 @@ describe('PATCH /api/artifacts/[id]/sections/[sectionId]', () => {
     expect(body.error).toBe('conflict');
 
     const [row] = await testDb().select().from(artifact).where(eq(artifact.id, 'a1'));
-    const sections = row.sections as Array<{ id: string; body_md: string }>;
+    const sections = bodyBlocksToNoteSections(row.body_blocks);
     expect(sections[0].body_md).toBe('旧定义');
   });
 });

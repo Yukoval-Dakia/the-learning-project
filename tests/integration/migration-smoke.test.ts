@@ -89,6 +89,36 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
     expect(rows.length).toBe(1);
   });
 
+  it('migrates artifact to ADR-0020 body_blocks shape and creates block-ref indexes', async () => {
+    const columns = await db.execute<{ column_name: string }>(sql`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'artifact'
+    `);
+    const names = new Set(columns.map((r) => r.column_name));
+    expect(names.has('body_blocks')).toBe(true);
+    expect(names.has('knowledge_ids')).toBe(true);
+    expect(names.has('attrs')).toBe(true);
+    expect(names.has('sections')).toBe(false);
+    expect(names.has('outline_json')).toBe(false);
+    expect(names.has('child_artifact_ids')).toBe(false);
+    expect(names.has('knowledge_id')).toBe(false);
+
+    const indexes = await db.execute<{ indexname: string; indexdef: string }>(sql`
+      SELECT indexname, indexdef FROM pg_indexes
+      WHERE schemaname = 'public'
+        AND tablename IN ('artifact_block_ref', 'event')
+        AND indexname IN (
+          'artifact_block_ref_to_idx',
+          'artifact_block_ref_unique',
+          'event_referenced_knowledge_gin'
+        )
+    `);
+    const byName = new Map(indexes.map((r) => [r.indexname, r.indexdef]));
+    expect(byName.get('artifact_block_ref_to_idx')).toMatch(/to_artifact_id/i);
+    expect(byName.get('artifact_block_ref_unique')).toMatch(/COALESCE/i);
+    expect(byName.get('event_referenced_knowledge_gin')).toMatch(/USING gin/i);
+  });
+
   it('creates knowledge_mastery view and view is queryable', async () => {
     const views = await db.execute<{ table_name: string }>(sql`
       SELECT table_name FROM information_schema.views

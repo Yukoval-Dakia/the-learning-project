@@ -97,7 +97,7 @@ export const LearningRecordProcessingStatus = z.enum(['raw', 'linked', 'actioned
 
 export const MemoryBriefScopeKey = z.string().regex(/^(global|subject:[a-zA-Z0-9_-]+)$/);
 
-export const ArtifactType = z.enum(['note_hub', 'note_atomic', 'tool_quiz']);
+export const ArtifactType = z.enum(['note_hub', 'note_atomic', 'note_long', 'tool_quiz']);
 export const ArtifactGenerationStatus = z.enum(['pending', 'ready', 'failed']);
 export type ArtifactGenerationStatusT = z.infer<typeof ArtifactGenerationStatus>;
 
@@ -227,6 +227,31 @@ export const NoteSection = z.object({
   embedded_check: z.object({ question_ids: z.array(z.string()) }).nullish(),
   version: z.number().int().nonnegative(),
 });
+
+export const TipTapMarkJson = z
+  .object({
+    type: z.string().min(1),
+    attrs: z.record(z.unknown()).optional(),
+  })
+  .passthrough();
+
+export const TipTapNodeJson: z.ZodType<Record<string, unknown>> = z
+  .object({
+    type: z.string().min(1),
+    attrs: z.record(z.unknown()).optional(),
+    content: z.array(z.lazy(() => TipTapNodeJson)).optional(),
+    marks: z.array(TipTapMarkJson).optional(),
+    text: z.string().optional(),
+  })
+  .passthrough();
+
+export const ArtifactBodyBlocks = z
+  .object({
+    type: z.literal('doc'),
+    content: z.array(TipTapNodeJson).default([]),
+  })
+  .passthrough();
+export type ArtifactBodyBlocksT = z.infer<typeof ArtifactBodyBlocks>;
 
 export const NoteVerificationIssue = z.object({
   section_id: z.string().nullable(),
