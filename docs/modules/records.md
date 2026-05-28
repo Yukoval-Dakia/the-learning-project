@@ -412,6 +412,6 @@ writing transitional migrations.
 | `memory_brief_note` schema | ✅ ship | `src/db/schema.ts` L257；三段 + evidence_ids 字段与 §7 对齐 |
 | `/api/records` + `/api/records/[id]` 路由 | ✅ ship | `app/api/records/route.ts` + `[id]/route.ts` |
 | `/api/mistakes` 路由 | 🟡 read alias 期 | `app/api/mistakes/route.ts` + `mistakes/recent/route.ts` 仍存在，按 §4 计划走 read-alias |
-| `/api/study-log` 路由 | ⚠️ 仍存在 | `app/api/study-log/[id]/route.ts` + `app/(app)/study-log` 页面尚未 410 / 删除（YUK 后续 cleanup） |
+| `/api/study-log` 路由 | ✅ 410 Gone | `app/api/study-log/route.ts` + `[id]/route.ts` 返回 `{ status: 410, error: 'gone', replacement: '/api/records' }`；`/app/(app)/study-log/page.tsx` 是 1-行 `redirect('/record')` —— 符合 §8 plan 步骤 2 + 5 |
 | `query_records` / `get_record_context` / `propose_record_links` agent tools | ✅ 注册 | `src/server/ai/tools/allowlists.ts` 已收录，调用路径走 read-tools / proposal-tools modules |
 | Memory dual-layer ingest (mem0 + brief sweep) | ✅ ship | `writeEvent` → outbox → `mem0.add(event)` (ADR-0017 + [ADR-0021](../adr/0021-event-write-outbox-pattern.md))；`memory_brief_note` 由 Dreaming refresh |
