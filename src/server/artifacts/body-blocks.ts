@@ -4,6 +4,17 @@ import { ArtifactBodyBlocks, NoteSection } from '@/core/schema/business';
 
 type NoteSectionT = z.infer<typeof NoteSection>;
 type ArtifactBodyBlocksT = z.infer<typeof ArtifactBodyBlocks>;
+interface ArtifactRefTarget {
+  artifact_id: string;
+  kind: string;
+}
+export interface ArtifactBlockSummary {
+  id?: string;
+  type: string;
+  semantic_kind?: string;
+  target?: ArtifactRefTarget;
+  text_excerpt: string;
+}
 
 const SEMANTIC_BLOCK_TYPE = 'semanticBlock';
 const SEMANTIC_KINDS = new Set(['definition', 'mechanism', 'example', 'pitfall', 'check']);
@@ -70,6 +81,95 @@ export function summaryBodyBlocks(blockId: string, summaryMd: string): ArtifactB
       },
     ],
   };
+}
+
+export function artifactRefBlock(
+  artifactId: string,
+  kind: string,
+  opts: { id?: string } = {},
+): Record<string, unknown> {
+  return {
+    type: 'artifactRefBlock',
+    attrs: {
+      ...(opts.id ? { id: opts.id } : {}),
+      artifact_id: artifactId,
+      artifact_type: kind,
+    },
+    content: [],
+  };
+}
+
+export function bodyBlocksHaveSemanticKinds(
+  value: unknown,
+  requiredKinds: string[],
+): { ok: boolean; missing: string[] } {
+  const parsed = ArtifactBodyBlocks.safeParse(value);
+  const found = new Set<string>();
+
+  if (parsed.success) {
+    for (const node of parsed.data.content ?? []) {
+      if (node.type !== SEMANTIC_BLOCK_TYPE) continue;
+      const attrs = recordOrEmpty(node.attrs);
+      if (typeof attrs.semantic_kind === 'string') found.add(attrs.semantic_kind);
+    }
+  }
+
+  const missing = requiredKinds.filter((kind) => !found.has(kind));
+  return { ok: missing.length === 0, missing };
+}
+
+function artifactRefTarget(value: unknown): ArtifactRefTarget | undefined {
+  const target = recordOrEmpty(value);
+  return typeof target.artifact_id === 'string' && typeof target.kind === 'string'
+    ? { artifact_id: target.artifact_id, kind: target.kind }
+    : undefined;
+}
+
+function artifactRefTargetFromAttrs(attrs: Record<string, unknown>): ArtifactRefTarget | undefined {
+  const nested = artifactRefTarget(attrs.target);
+  if (nested) return nested;
+  return typeof attrs.artifact_id === 'string' && typeof attrs.artifact_type === 'string'
+    ? { artifact_id: attrs.artifact_id, kind: attrs.artifact_type }
+    : undefined;
+}
+
+function textExcerpt(node: Record<string, unknown>, maxLength: number): string {
+  const text = blockText(node).replace(/\s+/g, ' ').trim();
+  return text.length > maxLength ? `${text.slice(0, Math.max(0, maxLength - 3))}...` : text;
+}
+
+export function bodyBlocksToBlockSummaries(
+  value: unknown,
+  maxTextLength = 180,
+): ArtifactBlockSummary[] {
+  const parsed = ArtifactBodyBlocks.safeParse(value);
+  if (!parsed.success) return [];
+
+  const summaries: ArtifactBlockSummary[] = [];
+  const visit = (node: Record<string, unknown>) => {
+    const attrs = recordOrEmpty(node.attrs);
+    const target = artifactRefTargetFromAttrs(attrs);
+    const id = typeof attrs.id === 'string' ? attrs.id : undefined;
+    const semanticKind = typeof attrs.semantic_kind === 'string' ? attrs.semantic_kind : undefined;
+
+    if (id || semanticKind || target) {
+      summaries.push({
+        ...(id ? { id } : {}),
+        type: typeof node.type === 'string' ? node.type : 'unknown',
+        ...(semanticKind ? { semantic_kind: semanticKind } : {}),
+        ...(target ? { target } : {}),
+        text_excerpt: textExcerpt(node, maxTextLength),
+      });
+    }
+
+    const content = Array.isArray(node.content) ? node.content : [];
+    for (const child of content) {
+      if (child !== null && typeof child === 'object') visit(child as Record<string, unknown>);
+    }
+  };
+
+  for (const node of parsed.data.content ?? []) visit(node);
+  return summaries;
 }
 
 export function bodyBlocksToNoteSections(value: unknown): NoteSectionT[] {
@@ -146,10 +246,18 @@ export function replaceNoteSectionBody(
       const attrs = node.attrs as { id?: unknown; version?: unknown } | undefined;
       if (node.type !== SEMANTIC_BLOCK_TYPE || attrs?.id !== sectionId) return node;
       const version = typeof attrs.version === 'number' ? attrs.version + 1 : 1;
+      const preservedRefs = Array.isArray(node.content)
+        ? node.content.filter(
+            (child) =>
+              child !== null &&
+              typeof child === 'object' &&
+              (child as Record<string, unknown>).type === 'artifactRefBlock',
+          )
+        : [];
       return {
         ...node,
         attrs: { ...recordOrEmpty(node.attrs), version, source_markdown: nextBodyMd },
-        content: [paragraphNode(nextBodyMd)],
+        content: [paragraphNode(nextBodyMd), ...preservedRefs],
       };
     }),
   };
@@ -172,6 +280,38 @@ export function setNoteSectionEmbeddedCheck(
           ...recordOrEmpty(node.attrs),
           embedded_check: { question_ids: questionIds },
         },
+      };
+    }),
+  };
+}
+
+export function setNoteSectionEmbeddedCheckArtifactRef(
+  value: unknown,
+  sectionId: string,
+  artifactId: string,
+  questionIds: string[],
+): ArtifactBodyBlocksT {
+  const parsed = ArtifactBodyBlocks.parse(value);
+  const refId = `${sectionId}_quiz_ref`;
+  return {
+    ...parsed,
+    content: parsed.content.map((node) => {
+      const attrs = node.attrs as { id?: unknown } | undefined;
+      if (node.type !== SEMANTIC_BLOCK_TYPE || attrs?.id !== sectionId) return node;
+      const content = Array.isArray(node.content)
+        ? node.content.filter((child) => {
+            if (child === null || typeof child !== 'object') return true;
+            const childAttrs = recordOrEmpty((child as Record<string, unknown>).attrs);
+            return childAttrs.id !== refId;
+          })
+        : [];
+      return {
+        ...node,
+        attrs: {
+          ...recordOrEmpty(node.attrs),
+          embedded_check: { question_ids: questionIds },
+        },
+        content: [...content, artifactRefBlock(artifactId, 'tool_quiz', { id: refId })],
       };
     }),
   };

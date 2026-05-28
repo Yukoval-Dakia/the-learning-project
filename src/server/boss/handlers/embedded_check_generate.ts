@@ -14,7 +14,7 @@ import { z } from 'zod';
 
 import { JudgeKind, QuestionKind, Rubric } from '@/core/schema/business';
 import type { Db } from '@/db/client';
-import { artifact, knowledge, question } from '@/db/schema';
+import { artifact, artifact_block_ref, knowledge, question } from '@/db/schema';
 import {
   type TaskTextResult,
   type TaskTextRunFn,
@@ -22,8 +22,9 @@ import {
   costUsdToMicroUsd,
 } from '@/server/ai/provenance';
 import {
+  bodyBlocksToBlockSummaries,
   bodyBlocksToNoteSections,
-  setNoteSectionEmbeddedCheck,
+  setNoteSectionEmbeddedCheckArtifactRef,
 } from '@/server/artifacts/body-blocks';
 import { writeEvent } from '@/server/events/queries';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -151,6 +152,7 @@ export type RunEmbeddedCheckGenerateStatus =
 export interface RunEmbeddedCheckGenerateResult {
   status: RunEmbeddedCheckGenerateStatus;
   question_ids?: string[];
+  tool_quiz_artifact_id?: string;
 }
 
 export async function runEmbeddedCheckGenerate(
@@ -164,6 +166,7 @@ export async function runEmbeddedCheckGenerate(
       title: artifact.title,
       knowledge_ids: artifact.knowledge_ids,
       body_blocks: artifact.body_blocks,
+      source_ref: artifact.source_ref,
       generation_status: artifact.generation_status,
       embedded_check_status: artifact.embedded_check_status,
       updated_at: artifact.updated_at,
@@ -223,6 +226,8 @@ export async function runEmbeddedCheckGenerate(
     artifact_id: row.id,
     atomic_title: row.title,
     knowledge_node: kNode,
+    body_blocks: row.body_blocks,
+    block_summaries: bodyBlocksToBlockSummaries(row.body_blocks),
     sections,
   };
 
@@ -238,6 +243,9 @@ export async function runEmbeddedCheckGenerate(
 
     // Insert question rows in a single transaction, then update artifact
     const questionIds: string[] = [];
+    const toolQuizArtifactId = createId();
+    const proposalSourceRef =
+      typeof row.source_ref === 'string' && row.source_ref.length > 0 ? row.source_ref : row.id;
     await db.transaction(async (tx) => {
       for (const q of parsed.questions) {
         const id = createId();
@@ -265,12 +273,49 @@ export async function runEmbeddedCheckGenerate(
         questionIds.push(id);
       }
 
+      await tx.insert(artifact).values({
+        id: toolQuizArtifactId,
+        type: 'tool_quiz',
+        title: `${row.title} 自检`,
+        parent_artifact_id: null,
+        knowledge_ids: row.knowledge_ids,
+        intent_source: 'embedded_check',
+        source: 'ai_generated',
+        source_ref: proposalSourceRef,
+        body_blocks: null,
+        attrs: {
+          embedded_for_artifact_id: row.id,
+          source_artifact_id: row.id,
+          check_block_id: checkSection.id,
+        } as never,
+        tool_kind: 'embedded_check',
+        tool_state: {
+          question_ids: questionIds,
+          session_meta: { source_artifact_id: row.id, check_block_id: checkSection.id },
+        } as never,
+        generation_status: 'ready',
+        verification_status: 'not_required',
+        generated_by: aiAgentRef('EmbeddedCheckGenerateTask', result) as never,
+        history: [],
+        created_at: new Date(),
+        updated_at: new Date(),
+        version: 0,
+      });
+
+      await tx.insert(artifact_block_ref).values({
+        from_artifact_id: row.id,
+        from_block_id: checkSection.id,
+        to_artifact_id: toolQuizArtifactId,
+        to_block_id: null,
+      });
+
       const finalUpdate = await tx
         .update(artifact)
         .set({
-          body_blocks: setNoteSectionEmbeddedCheck(
+          body_blocks: setNoteSectionEmbeddedCheckArtifactRef(
             row.body_blocks,
             checkSection.id,
+            toolQuizArtifactId,
             questionIds,
           ) as never,
           embedded_check_status: 'ready',
@@ -297,14 +342,22 @@ export async function runEmbeddedCheckGenerate(
       subject_kind: 'artifact',
       subject_id: artifactId,
       outcome: 'success',
-      payload: { question_ids: questionIds, count: questionIds.length },
+      payload: {
+        question_ids: questionIds,
+        tool_quiz_artifact_id: toolQuizArtifactId,
+        count: questionIds.length,
+      },
       caused_by_event_id: null,
       task_run_id: result.task_run_id ?? null,
       cost_micro_usd: costUsdToMicroUsd(result.cost_usd),
       created_at: new Date(),
     });
 
-    return { status: 'ready', question_ids: questionIds };
+    return {
+      status: 'ready',
+      question_ids: questionIds,
+      tool_quiz_artifact_id: toolQuizArtifactId,
+    };
   } catch (err) {
     try {
       // Gate the 'failed' write on the claim timestamp so that if a reclaim

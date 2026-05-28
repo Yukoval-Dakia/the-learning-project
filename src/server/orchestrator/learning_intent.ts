@@ -39,6 +39,12 @@ export interface AtomicProposal {
   one_line_intent: string;
 }
 
+export interface LongProposal {
+  knowledge_ids: string[];
+  title: string;
+  one_line_intent: string;
+}
+
 export type LearningIntentPlanCase =
   | '3a_topic_missing'
   | '3b_children_missing'
@@ -65,13 +71,16 @@ export interface LearningIntentProposal {
   proposed_knowledge?: ProposedKnowledgeGraph;
   hub: HubProposal;
   atomics: AtomicProposal[];
+  longs: LongProposal[];
 }
 
 export interface LearningIntentMaterializeResult {
   hub_learning_item_id: string;
   atomic_learning_item_ids: string[];
+  long_learning_item_ids: string[];
   hub_artifact_id: string;
   atomic_artifact_ids: string[];
+  long_artifact_ids: string[];
   enqueued_note_generate_jobs: number;
   root_knowledge_id: string;
   created_knowledge_ids: string[];
@@ -116,6 +125,12 @@ const AtomicProposalSchema = z.object({
   one_line_intent: z.string().min(1).max(200),
 });
 
+const LongProposalSchema = z.object({
+  knowledge_ids: z.array(z.string().min(1)).min(1).max(12),
+  title: z.string().min(1).max(80),
+  one_line_intent: z.string().min(1).max(200),
+});
+
 const ProposedKnowledgeNodeSchema = z.object({
   temp_id: z.string().min(1).max(80),
   name: z.string().min(1).max(120),
@@ -131,9 +146,10 @@ const OutlineSchema = z.object({
     .optional(),
   hub: HubProposalSchema,
   atomics: z.array(AtomicProposalSchema).min(1),
+  longs: z.array(LongProposalSchema).default([]),
 });
 
-function parseOutlineOutput(text: string): z.infer<typeof OutlineSchema> {
+export function parseLearningIntentOutline(text: string): z.infer<typeof OutlineSchema> {
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
   if (start === -1 || end === -1 || end < start) {
@@ -195,6 +211,16 @@ function validateAtomicKnowledgeIds(
         'invalid_atomic_knowledge_id',
         `${message}: ${atomic.knowledge_id}`,
       );
+    }
+  }
+}
+
+function validateLongKnowledgeIds(allowedIds: Set<string>, longs: LongProposal[], message: string) {
+  for (const long of longs) {
+    for (const knowledgeId of long.knowledge_ids) {
+      if (!allowedIds.has(knowledgeId)) {
+        throw new LearningIntentError('invalid_atomic_knowledge_id', `${message}: ${knowledgeId}`);
+      }
     }
   }
 }
@@ -268,7 +294,7 @@ export async function planLearningIntent(
     db,
     subjectProfile: resolveSubjectProfile(node?.domain),
   });
-  const outline = parseOutlineOutput(result.text);
+  const outline = parseLearningIntentOutline(result.text);
 
   let knowledgeNode: LearningIntentProposal['knowledge_node'];
   let proposedKnowledge: ProposedKnowledgeGraph | undefined;
@@ -283,6 +309,11 @@ export async function planLearningIntent(
       childIds,
       outline.atomics,
       "LLM proposed knowledge_id that is not in the topic's child nodes",
+    );
+    validateLongKnowledgeIds(
+      new Set([node.id, ...children.map((c) => c.id)]),
+      outline.longs,
+      'LLM proposed long.knowledge_ids entry that is not in the topic graph',
     );
     knowledgeNode = { id: node.id, name: node.name, domain: node.domain };
   } else {
@@ -312,6 +343,15 @@ export async function planLearningIntent(
       outline.atomics,
       'LLM proposed knowledge_id that is not in proposed knowledge.children',
     );
+    validateLongKnowledgeIds(
+      new Set([
+        ...(root ? [root.temp_id] : []),
+        ...(node ? [node.id] : []),
+        ...proposedChildren.map((child) => child.temp_id),
+      ]),
+      outline.longs,
+      'LLM proposed long.knowledge_ids entry that is not in proposed knowledge graph',
+    );
 
     proposedKnowledge = {
       ...(root ? { root } : {}),
@@ -332,6 +372,7 @@ export async function planLearningIntent(
     cost_micro_usd: costUsdToMicroUsd(result.cost_usd),
     hub: outline.hub,
     atomics: outline.atomics,
+    longs: outline.longs,
   };
   const proposalId = await writeLearningItemProposal(db, {
     topic,
@@ -340,6 +381,7 @@ export async function planLearningIntent(
     proposed_knowledge: proposedKnowledge,
     hub: outline.hub,
     atomics: outline.atomics,
+    longs: outline.longs,
     reason_md: `学习路径提议：${topic}`,
     legacy_subject_id: newId(), // synthetic — hub artifact id assigned at accept
     legacy_event_payload: legacyPayload,
@@ -356,6 +398,7 @@ export async function planLearningIntent(
     ...(proposedKnowledge ? { proposed_knowledge: proposedKnowledge } : {}),
     hub: outline.hub,
     atomics: outline.atomics,
+    longs: outline.longs,
   };
 }
 
@@ -378,6 +421,7 @@ interface ProposalEventRow {
     cost_micro_usd?: number | null;
     hub: HubProposal;
     atomics: AtomicProposal[];
+    longs?: LongProposal[];
   };
 }
 
@@ -451,6 +495,7 @@ export async function acceptLearningIntent(
     proposed_knowledge: proposedKnowledge,
     task_run_id: proposalTaskRunId,
     cost_micro_usd: proposalCostMicroUsd,
+    longs = [],
   } = proposal.payload;
   const now = new Date();
 
@@ -534,6 +579,23 @@ export async function acceptLearningIntent(
       }
       return { ...atomic, knowledge_id: resolvedKnowledgeId };
     });
+    const resolvedLongs = longs.map((long) => {
+      const resolvedKnowledgeIds = long.knowledge_ids.map((knowledgeId) => {
+        const resolvedKnowledgeId = tempIdToRealId.get(knowledgeId) ?? knowledgeId;
+        if (
+          (planCase === '3a_topic_missing' || planCase === '3b_children_missing') &&
+          !tempIdToRealId.has(knowledgeId) &&
+          knowledgeId !== rootKnowledgeId
+        ) {
+          throw new LearningIntentError(
+            'invalid_atomic_knowledge_id',
+            `proposal long note references unknown proposed knowledge_id=${knowledgeId}`,
+          );
+        }
+        return resolvedKnowledgeId;
+      });
+      return { ...long, knowledge_ids: resolvedKnowledgeIds };
+    });
 
     // Hub LearningItem
     const hubLiId = newId();
@@ -581,6 +643,32 @@ export async function acceptLearningIntent(
       });
     }
 
+    // Long LearningItems
+    const longLiIds: string[] = [];
+    const longArtifactIds: string[] = [];
+    for (const long of resolvedLongs) {
+      const longLiId = newId();
+      const longArtifactId = newId();
+      longLiIds.push(longLiId);
+      longArtifactIds.push(longArtifactId);
+
+      await tx.insert(learning_item).values({
+        id: longLiId,
+        source: 'learning_intent',
+        source_ref: proposalId,
+        title: long.title,
+        content: long.one_line_intent,
+        knowledge_ids: long.knowledge_ids,
+        primary_artifact_id: longArtifactId,
+        parent_learning_item_id: hubLiId,
+        child_learning_item_ids: [],
+        status: 'pending',
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      });
+    }
+
     // Hub artifact (synchronous summary; no async generation needed)
     await tx.insert(artifact).values({
       id: hubArtifactId,
@@ -592,7 +680,13 @@ export async function acceptLearningIntent(
       source: 'ai_generated',
       source_ref: proposalId,
       body_blocks: summaryBodyBlocks(`${hubArtifactId}_summary`, hub.summary_md) as never,
-      attrs: { topic, summary_md: hub.summary_md, linked_artifact_ids: atomicArtifactIds } as never,
+      attrs: {
+        topic,
+        summary_md: hub.summary_md,
+        linked_artifact_ids: [...atomicArtifactIds, ...longArtifactIds],
+        atomic_artifact_ids: atomicArtifactIds,
+        long_artifact_ids: longArtifactIds,
+      } as never,
       tool_kind: null,
       tool_state: null,
       generation_status: 'ready', // hub is outline-only; ready immediately
@@ -633,6 +727,31 @@ export async function acceptLearningIntent(
       });
     }
 
+    // Long artifact stubs (pending; worker fills body_blocks with free-form rich notes)
+    for (let i = 0; i < resolvedLongs.length; i++) {
+      const longNode = resolvedLongs[i];
+      await tx.insert(artifact).values({
+        id: longArtifactIds[i],
+        type: 'note_long',
+        title: longNode.title,
+        parent_artifact_id: hubArtifactId,
+        knowledge_ids: longNode.knowledge_ids,
+        intent_source: 'learning_intent',
+        source: 'ai_generated',
+        source_ref: proposalId,
+        body_blocks: null,
+        attrs: { one_line_intent: longNode.one_line_intent } as never,
+        tool_kind: null,
+        tool_state: null,
+        generation_status: 'pending',
+        generated_by: null,
+        history: [],
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      });
+    }
+
     // Rate event: marks proposal accepted, chains via caused_by_event_id
     await writeEvent(tx, {
       id: newId(),
@@ -653,8 +772,10 @@ export async function acceptLearningIntent(
     return {
       hub_learning_item_id: hubLiId,
       atomic_learning_item_ids: atomicLiIds,
+      long_learning_item_ids: longLiIds,
       hub_artifact_id: hubArtifactId,
       atomic_artifact_ids: atomicArtifactIds,
+      long_artifact_ids: longArtifactIds,
       enqueued_note_generate_jobs: 0, // caller enqueues
       root_knowledge_id: rootKnowledgeId,
       created_knowledge_ids: createdKnowledgeIds,

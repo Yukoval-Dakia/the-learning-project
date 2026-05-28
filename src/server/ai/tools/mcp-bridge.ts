@@ -70,6 +70,11 @@ export function __resolveMirrorPolicy(
 
 export type SdkMcpServer = ReturnType<typeof createSdkMcpServer>;
 
+export interface ToolExecutionGateInput {
+  name: string;
+  effect: ToolEffect;
+}
+
 export interface BuildMcpServerOptions {
   ctx: ToolContext;
   /** Logical name for the SDK MCP server; tools surface as `mcp__<name>__<tool>`. */
@@ -78,6 +83,8 @@ export interface BuildMcpServerOptions {
   toolNames: readonly string[];
   /** `task_kind` recorded on each tool_call_log row (defaults to ctx.callerActor.ref). */
   taskKind?: string;
+  /** Optional per-call runtime gate. Return a reason string to block execution. */
+  beforeExecute?: (tool: ToolExecutionGateInput) => string | undefined;
 }
 
 /**
@@ -117,6 +124,17 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
         parsedInput = dt.inputSchema.parse(rawArgs);
       } catch (err) {
         errorReason = err instanceof Error ? err.message : String(err);
+      }
+
+      if (errorReason === undefined) {
+        try {
+          const gateReason = opts.beforeExecute?.({ name: dt.name, effect: dt.effect });
+          if (typeof gateReason === 'string' && gateReason.length > 0) {
+            errorReason = gateReason;
+          }
+        } catch (err) {
+          errorReason = err instanceof Error ? err.message : String(err);
+        }
       }
 
       if (errorReason === undefined) {

@@ -243,6 +243,8 @@ describe('acceptLearningIntent', () => {
 
     expect(result.atomic_learning_item_ids).toHaveLength(2);
     expect(result.atomic_artifact_ids).toHaveLength(2);
+    expect(result.long_learning_item_ids).toEqual([]);
+    expect(result.long_artifact_ids).toEqual([]);
 
     // Hub LearningItem
     const hubLi = (
@@ -279,6 +281,60 @@ describe('acceptLearningIntent', () => {
       expect(aArt.parent_artifact_id).toBe(result.hub_artifact_id);
       expect(aArt.body_blocks).toBeNull();
     }
+  });
+
+  it('materializes optional long notes as child learning items and note_long artifacts', async () => {
+    const db = testDb();
+    await seedKnowledge([
+      { id: 'k_hub', name: '虚词' },
+      { id: 'k_zhi', name: '之', parent_id: 'k_hub' },
+      { id: 'k_qi', name: '其', parent_id: 'k_hub' },
+    ]);
+    const runTaskFn = vi.fn(async () => ({
+      text: JSON.stringify({
+        hub: { title: '虚词总览', summary_md: '虚词概览。' },
+        atomics: [{ knowledge_id: 'k_zhi', title: '之', one_line_intent: '区分「之」用法' }],
+        longs: [
+          {
+            knowledge_ids: ['k_zhi', 'k_qi'],
+            title: '之其综合',
+            one_line_intent: '能把「之」「其」放到同一段翻译里判断。',
+          },
+        ],
+      }),
+    }));
+    const proposal = await planLearningIntent({ db, topic: '虚词', runTaskFn });
+
+    const result = await acceptLearningIntent({ db, proposalId: proposal.proposal_id });
+
+    expect(result.atomic_learning_item_ids).toHaveLength(1);
+    expect(result.long_learning_item_ids).toHaveLength(1);
+    expect(result.long_artifact_ids).toHaveLength(1);
+
+    const hubArtifact = (
+      await db.select().from(artifact).where(eq(artifact.id, result.hub_artifact_id))
+    )[0];
+    expect((hubArtifact.attrs as { linked_artifact_ids?: string[] }).linked_artifact_ids).toEqual([
+      ...result.atomic_artifact_ids,
+      ...result.long_artifact_ids,
+    ]);
+
+    const longLi = (
+      await db
+        .select()
+        .from(learning_item)
+        .where(eq(learning_item.id, result.long_learning_item_ids[0]))
+    )[0];
+    expect(longLi.parent_learning_item_id).toBe(result.hub_learning_item_id);
+    expect(longLi.knowledge_ids).toEqual(['k_zhi', 'k_qi']);
+
+    const longArtifact = (
+      await db.select().from(artifact).where(eq(artifact.id, result.long_artifact_ids[0]))
+    )[0];
+    expect(longArtifact.type).toBe('note_long');
+    expect(longArtifact.generation_status).toBe('pending');
+    expect(longArtifact.parent_artifact_id).toBe(result.hub_artifact_id);
+    expect(longArtifact.knowledge_ids).toEqual(['k_zhi', 'k_qi']);
   });
 
   it('throws proposal_already_rated on double accept', async () => {

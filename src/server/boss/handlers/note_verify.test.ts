@@ -24,6 +24,33 @@ const NOTE_SECTIONS = [
     embedded_check: null,
     version: 1,
   },
+  {
+    id: 's3',
+    kind: 'example',
+    body_md: '例：师道之不传也久矣。',
+    source_tier: 'llm_only',
+    user_verified: false,
+    embedded_check: null,
+    version: 1,
+  },
+  {
+    id: 's4',
+    kind: 'pitfall',
+    body_md: '主谓之间的「之」常不译。',
+    source_tier: 'llm_only',
+    user_verified: false,
+    embedded_check: null,
+    version: 1,
+  },
+  {
+    id: 's5',
+    kind: 'check',
+    body_md: '自检：判断句中「之」的作用。',
+    source_tier: 'llm_only',
+    user_verified: false,
+    embedded_check: null,
+    version: 1,
+  },
 ];
 
 const PASS_OUTPUT = JSON.stringify({
@@ -50,6 +77,7 @@ const NEEDS_REVIEW_OUTPUT = JSON.stringify({
 
 async function seedAtomic(opts: {
   artifactId: string;
+  artifactType?: 'note_atomic' | 'note_long';
   generationStatus?: string;
   sections?: unknown[] | null;
   knowledgeId?: string;
@@ -73,7 +101,7 @@ async function seedAtomic(opts: {
   }
   await db.insert(artifact).values({
     id: opts.artifactId,
-    type: 'note_atomic',
+    type: opts.artifactType ?? 'note_atomic',
     title: opts.domain === 'math' ? '配方法' : '之的用法',
     parent_artifact_id: null,
     knowledge_ids: opts.knowledgeId ? [opts.knowledgeId] : [],
@@ -158,7 +186,11 @@ describe('runNoteVerify', () => {
       runTaskFn,
     });
 
-    expect(result).toEqual({ status: 'verified', issues_count: 0 });
+    expect(result).toMatchObject({
+      status: 'verified',
+      artifact_type: 'note_atomic',
+      issues_count: 0,
+    });
 
     const [updated] = await testDb().select().from(artifact).where(eq(artifact.id, 'a1'));
     expect(updated.verification_status).toBe('verified');
@@ -186,7 +218,11 @@ describe('runNoteVerify', () => {
       runTaskFn,
     });
 
-    expect(result).toEqual({ status: 'needs_review', issues_count: 1 });
+    expect(result).toMatchObject({
+      status: 'needs_review',
+      artifact_type: 'note_atomic',
+      issues_count: 1,
+    });
 
     const [updated] = await testDb().select().from(artifact).where(eq(artifact.id, 'a1'));
     expect(updated.verification_status).toBe('needs_review');
@@ -264,6 +300,17 @@ describe('buildNoteVerifyHandler — onPassed callback', () => {
     const onPassed = vi.fn(async (_id: string) => {});
     const handler = buildNoteVerifyHandler(testDb(), { runTaskFn, onPassed });
     await handler([{ id: 'job1', data: { artifact_id: 'a1' } } as never]);
+    expect(onPassed).not.toHaveBeenCalled();
+  });
+
+  it('onPassed does NOT fire for verified long notes', async () => {
+    await seedAtomic({ artifactId: 'a_long', artifactType: 'note_long', knowledgeId: 'k1' });
+    const runTaskFn = vi.fn(async () => ({ text: PASS_OUTPUT }));
+    const onPassed = vi.fn(async (_id: string) => {});
+    const handler = buildNoteVerifyHandler(testDb(), { runTaskFn, onPassed });
+
+    await handler([{ id: 'job1', data: { artifact_id: 'a_long' } } as never]);
+
     expect(onPassed).not.toHaveBeenCalled();
   });
 
