@@ -131,6 +131,7 @@ async function seedAtomic(opts: {
   sections?: unknown[] | null;
   knowledgeId?: string;
   domain?: string | null;
+  sourceRef?: string | null;
   updatedAt?: Date;
 }) {
   const db = testDb();
@@ -158,7 +159,7 @@ async function seedAtomic(opts: {
     knowledge_ids: opts.knowledgeId ? [opts.knowledgeId] : [],
     intent_source: 'learning_intent',
     source: 'ai_generated',
-    source_ref: null,
+    source_ref: opts.sourceRef ?? null,
     body_blocks:
       opts.sections === null
         ? null
@@ -233,6 +234,33 @@ describe('runEmbeddedCheckGenerate', () => {
     });
     expect(events[0].payload).toMatchObject({
       question_ids: result.question_ids,
+    });
+  });
+
+  it('keeps tool_quiz artifacts linked to the proposal source while preserving the atomic source artifact id', async () => {
+    await seedAtomic({ artifactId: 'a_proposal', knowledgeId: 'k1', sourceRef: 'proposal_1' });
+    const runTaskFn = vi.fn(async () => ({ text: VALID_OUTPUT }));
+
+    const result = await runEmbeddedCheckGenerate({
+      db: testDb(),
+      artifactId: 'a_proposal',
+      runTaskFn,
+    });
+
+    expect(result.tool_quiz_artifact_id).toBeTruthy();
+    const [quizArtifact] = await testDb()
+      .select()
+      .from(artifact)
+      .where(eq(artifact.id, result.tool_quiz_artifact_id as string));
+    expect(quizArtifact).toBeDefined();
+    expect(quizArtifact.source_ref).toBe('proposal_1');
+    expect(quizArtifact.attrs).toMatchObject({
+      embedded_for_artifact_id: 'a_proposal',
+      source_artifact_id: 'a_proposal',
+      check_block_id: 's2',
+    });
+    expect(quizArtifact.tool_state).toMatchObject({
+      session_meta: { source_artifact_id: 'a_proposal', check_block_id: 's2' },
     });
   });
 

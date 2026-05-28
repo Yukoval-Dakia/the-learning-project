@@ -108,6 +108,7 @@ export interface WriteLearningItemProposalInput extends CommonProducerInput {
   proposed_knowledge?: unknown;
   hub: unknown;
   atomics: unknown[];
+  longs?: unknown[];
   legacy_subject_id?: string;
   legacy_event_payload?: Record<string, unknown>;
 }
@@ -123,6 +124,7 @@ export async function writeLearningItemProposal(
     ...(input.proposed_knowledge ? { proposed_knowledge: input.proposed_knowledge } : {}),
     hub: input.hub,
     atomics: input.atomics,
+    longs: input.longs ?? [],
   };
 
   return writeAiProposal(db, {

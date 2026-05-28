@@ -3,6 +3,7 @@ import { registerMemoryHandlers } from '@/server/memory/triggers';
 import { getR2 } from '@/server/r2';
 import type { PgBoss } from 'pg-boss';
 import { buildAttributionFollowupHandler } from './handlers/attribution_followup';
+import { buildDreamingNightlyHandler } from './handlers/dreaming_nightly';
 import { buildEchoHandler } from './handlers/echo';
 import { buildEmbeddedCheckGenerateHandler } from './handlers/embedded_check_generate';
 import { buildKnowledgeEdgeProposeNightlyHandler } from './handlers/knowledge_edge_propose_nightly';
@@ -59,6 +60,16 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   );
   await boss.schedule('knowledge_maintenance_nightly', '0 3 * * *', {}, { tz: 'Asia/Shanghai' });
 
+  // YUK-114 / T-DR: bounded Dreaming producer using DomainTool MCP bridge.
+  // Runs after cheaper graph maintenance so it can see same-night proposal state.
+  await boss.createQueue('dreaming_nightly');
+  await boss.work(
+    'dreaming_nightly',
+    { pollingIntervalSeconds: 2, batchSize: 1 },
+    buildDreamingNightlyHandler(db),
+  );
+  await boss.schedule('dreaming_nightly', '15 3 * * *', {}, { tz: 'Asia/Shanghai' });
+
   // ADR-0013: abandon review sessions stuck in 'started' >6h (sendBeacon
   // fallback when normal close didn't fire). BJT 04:15 after prune_job_events.
   await boss.createQueue('prune_orphan_review_sessions');
@@ -106,8 +117,8 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     buildEmbeddedCheckGenerateHandler(db),
   );
 
-  // Product Track 1: NoteVerifyTask — enqueued after note_generate marks an
-  // atomic note ready. Keeps note generation and verification as separate
+  // Product Track 1: NoteVerifyTask — enqueued after note_generate marks a
+  // generated note ready. Keeps note generation and verification as separate
   // lifecycle axes.
   await boss.createQueue('note_verify');
   await boss.work(
@@ -121,7 +132,7 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   );
 
   // Phase 2B: NoteGenerateTask — enqueued by /api/learning-intents/[id]/accept,
-  // one job per atomic artifact. Each job runs ~30-60s LLM call and updates
+  // one job per atomic/long artifact. Each job runs ~30-60s LLM call and updates
   // the artifact row in place. batchSize=1 keeps mimo rate-limit friendly.
   await boss.createQueue('note_generate');
   await boss.work(

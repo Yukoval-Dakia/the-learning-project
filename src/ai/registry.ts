@@ -336,6 +336,23 @@ export const tasks = {
     systemPrompt:
       '你是学习陪练。看复习队列摘要 { total, by_priority, by_cause, top_knowledge_ids, has_never_reviewed, has_overdue_7d }，生成**一句话** session 开场白（≤80 字、纯文本、无 markdown），目的是让用户一眼看到今天该重点关注什么。\n要点：\n- 提及题数 + 1-2 个关键模式（最高 by_cause 错因类型、是否大量逾期）\n- 引导式语气（例：「今天 X 道，重点过 Y」而非「已为您安排」）\n- 禁止套话（「加油」「再接再厉」）、禁止 list / bullet / 数字开头\n- 队列空时本任务不会被调用，所以不用处理空队列',
   },
+  DreamingTask: {
+    kind: 'DreamingTask',
+    description:
+      'Foundation D — nightly Dreaming agent. Uses DomainTools to inspect learning signals and write bounded inbox proposals.',
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
+    budget: { ...DEFAULT_BUDGET, maxIterations: 12, timeout: 120_000 },
+    needsToolCall: true,
+    isMultimodal: false,
+    // The nightly handler supplies the surface-specific DomainTool allowlist
+    // from src/server/ai/tools/allowlists.ts so this registry default stays
+    // empty for tests and non-nightly callers.
+    allowedTools: [],
+    systemPrompt:
+      '你是 Dreaming agent。夜间读取学习信号，使用允许的 DomainTools 发现少量真正值得用户审核的建议，并通过 propose_* 工具写入 inbox。不要直接修改用户学习数据；没有高价值建议时停止。',
+  },
   KnowledgeReviewTask: {
     kind: 'KnowledgeReviewTask',
     description:
