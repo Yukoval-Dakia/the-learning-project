@@ -485,6 +485,14 @@ T-FF fixtures ────→ blocks Eval / acceptance test 自动化
 
 **预期**：~32 pts，~5-6 周。出口：**Layer 8 vision 兑现起点** —— /today route 有真 Drawer + Coach 跑每日 / 每周 cron 出"今日安排" proposal。
 
+**实现快照 (2026-05-28，single-PR wave)：**
+- T-D6/A (YUK-118): CoachTask + TodayPlan schema (`src/core/schema/coach.ts`) + registry/prompt (mimo-v2.5-pro default + mimo-v2.5 fallback)
+- T-D6/B (YUK-119): coach_daily (`45 3 * * *` — 30 min after dreaming_nightly, 15 min before prune_job_events) + coach_weekly (`30 4 * * 0`) pg-boss handlers + `experimental:trigger_coach_scan` / `experimental:coach_scan` events
+- T-D6/C (YUK-120): propose_learning_item_defer + propose_learning_item_archive tools；COACH allowlist +propose_knowledge_mutation；新增 `'defer'` proposal kind
+- T-D3/A (YUK-122): `<CopilotDrawer>` 通用 slide-out + `<ToolUseCard>` 三段式 + tweaks (chainRowCost / toolUseDetail) + 6 个 fixture
+- T-D3/B (YUK-123): `/today` 30s dwell hook + `GET /api/today/copilot-summary` (coach scan + dreaming preview + pending totals)
+- T-D3/C (YUK-124): CopilotTask + `POST /api/copilot/chat` 两面路由 (`triggered_by='chat'` → copilot allowlist + writes `experimental:copilot_user_ask`; `triggered_by='chip'` → copilot_user_suggested_mistake_action allowlist + 不写 user ask, 仅 `experimental:copilot_chip_trigger`)
+
 #### Wave 6 (~3 周) — Living Note + experimental promote
 
 | Track | pts | worktree |

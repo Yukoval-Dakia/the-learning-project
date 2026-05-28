@@ -22,9 +22,24 @@ describe('DomainTool allowlist policy', () => {
       'propose_variant',
       'propose_learning_item_completion',
       'propose_learning_item_relearn',
+      // T-D6/C (YUK-120) — Coach-driven defer/archive lane.
+      'propose_learning_item_defer',
+      'propose_learning_item_archive',
       'propose_record_links',
       'propose_record_promotion',
     ]);
+  });
+
+  it('expands Coach surface for plan_adjustments (defer / split / relearn / archive)', () => {
+    expect(DOMAIN_TOOL_ALLOWLISTS.coach).toContain('propose_learning_item_defer');
+    expect(DOMAIN_TOOL_ALLOWLISTS.coach).toContain('propose_learning_item_archive');
+    expect(DOMAIN_TOOL_ALLOWLISTS.coach).toContain('propose_knowledge_mutation');
+    expect(DOMAIN_TOOL_ALLOWLISTS.coach).toContain('propose_learning_item_relearn');
+    expect(DOMAIN_TOOL_ALLOWLISTS.coach).toContain('propose_learning_item_completion');
+    // Coach must not reach attribute_mistake / propose_variant — those stay
+    // behind the chip-triggered copilot surface.
+    expect(DOMAIN_TOOL_ALLOWLISTS.coach).not.toContain('attribute_mistake');
+    expect(DOMAIN_TOOL_ALLOWLISTS.coach).not.toContain('propose_variant');
   });
 
   it('keeps Copilot narrower than Maintenance for structural and mistake actions', () => {
@@ -49,6 +64,8 @@ describe('DomainTool allowlist policy', () => {
       'propose_knowledge_mutation',
       'propose_learning_item_completion',
       'propose_learning_item_relearn',
+      'propose_learning_item_defer',
+      'propose_learning_item_archive',
       'propose_record_links',
       'propose_record_promotion',
     ]);

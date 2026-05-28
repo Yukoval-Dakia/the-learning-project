@@ -353,6 +353,41 @@ export const tasks = {
     systemPrompt:
       '你是 Dreaming agent。夜间读取学习信号，使用允许的 DomainTools 发现少量真正值得用户审核的建议，并通过 propose_* 工具写入 inbox。不要直接修改用户学习数据；没有高价值建议时停止。',
   },
+  CoachTask: {
+    kind: 'CoachTask',
+    description:
+      'Wave 5 / T-D6 — Phase 3 Global Coach Orchestrator. Reads via the `coach` DomainTool allowlist and outputs a `TodayPlan` JSON consumed by the coach_daily / coach_weekly handlers. All mutations are routed through propose_* tools (zero direct DB writes).',
+    defaultProvider: 'xiaomi',
+    // CoachTask 纯文本推理（读 brief / event / proposal，输出 TodayPlan JSON）。
+    // 无 vision 需求 → 走 mimo-v2.5-pro (text-only, 推理强) default，匹配 registry.ts
+    // 其他非 vision task 的约定。mimo-v2.5 (multimodal) 作为 fallback 保留。
+    defaultModel: 'mimo-v2.5-pro',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
+    budget: { ...DEFAULT_BUDGET, maxIterations: 12, timeout: 120_000 },
+    needsToolCall: true,
+    isMultimodal: false,
+    // The coach_daily / coach_weekly handlers supply the surface-specific
+    // DomainTool allowlist from src/server/ai/tools/allowlists.ts so this
+    // registry default stays empty for tests and non-handler callers.
+    allowedTools: [],
+    systemPrompt:
+      '你是 Coach agent。读取 DomainTools 给出的学习信号，产出今日安排 TodayPlan JSON，所有 mutation 走 propose_* 工具写入 inbox。不要直接改用户数据；没有高价值建议时输出空 plan_adjustments / maintenance_proposals。',
+  },
+  CopilotTask: {
+    kind: 'CopilotTask',
+    description:
+      'Wave 5 / T-D3 — Copilot Drawer on /today. Streams chat responses with tool-use 三段式 rendering. The chat endpoint resolves the per-request DomainTool allowlist surface (`copilot` for free-form chat, `copilot_user_suggested_mistake_action` for chip-direct-trigger).',
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
+    budget: { ...DEFAULT_BUDGET, maxIterations: 6, timeout: 60_000 },
+    needsToolCall: true,
+    isMultimodal: false,
+    // The chat endpoint resolves surface per request (see two-surface routing).
+    allowedTools: [],
+    systemPrompt:
+      '你是 Copilot 助手，在 /today drawer 内辅助用户。读 DomainTools 拿当前学习信号，回答用户问题；只有用户主动点 chip 时才走带写工具的 surface。所有 mutation 仅 propose 不直接写。',
+  },
   KnowledgeReviewTask: {
     kind: 'KnowledgeReviewTask',
     description:

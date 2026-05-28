@@ -10,6 +10,8 @@ export const aiProposalKinds = [
   'variant_question',
   'completion',
   'relearn',
+  // T-D6/C (YUK-120) — Coach plan_adjustment 'defer' lane.
+  'defer',
   'record_links',
   'record_promotion',
   'archive',
@@ -120,6 +122,11 @@ export const AiProposalPayload = z.discriminatedUnion('kind', [
   }),
   BaseProposal.extend({
     kind: z.literal('relearn'),
+    proposed_change: NonEmptyObject,
+  }),
+  BaseProposal.extend({
+    kind: z.literal('defer'),
+    target: ProposalTarget.extend({ subject_kind: z.literal('learning_item') }),
     proposed_change: NonEmptyObject,
   }),
   BaseProposal.extend({

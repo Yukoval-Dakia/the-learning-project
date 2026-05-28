@@ -219,6 +219,46 @@ export async function writeRelearnProposal(
   });
 }
 
+export interface WriteDeferProposalInput extends CommonProducerInput {
+  actor_ref?: string;
+  learning_item_id: string;
+  defer_until?: string;
+  reason?: string;
+}
+
+/**
+ * Wave 5 / T-D6/C — Coach-driven `defer` plan adjustment.
+ * Writes a `defer` proposal so the user can review and apply (or dismiss)
+ * a request to postpone a LearningItem. No direct mutation; accept owner
+ * routes own the transition.
+ */
+export async function writeDeferProposal(
+  db: DbLike,
+  input: WriteDeferProposalInput,
+): Promise<string> {
+  return writeAiProposal(db, {
+    id: input.id,
+    actor_ref: input.actor_ref ?? 'coach',
+    payload: {
+      kind: 'defer',
+      target: { subject_kind: 'learning_item', subject_id: input.learning_item_id },
+      reason_md: input.reason_md,
+      evidence_refs: input.evidence_refs ?? [],
+      proposed_change: {
+        learning_item_id: input.learning_item_id,
+        ...(input.defer_until ? { defer_until: input.defer_until } : {}),
+        ...(input.reason ? { reason: input.reason } : {}),
+      },
+      rollback_plan: { action: 'dismiss proposal; learning_item remains active' },
+      cooldown_key: `defer:${input.learning_item_id}`,
+    },
+    task_run_id: input.task_run_id ?? null,
+    caused_by_event_id: input.caused_by_event_id ?? null,
+    cost_usd: input.cost_usd,
+    created_at: input.created_at,
+  });
+}
+
 export interface WriteArchiveProposalInput extends CommonProducerInput {
   actor_ref?: string;
   target_subject_kind: string;
