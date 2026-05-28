@@ -154,12 +154,14 @@ export async function runNoteRefine(params: RunNoteRefineParams): Promise<RunNot
       title: artifact.title,
       knowledge_ids: artifact.knowledge_ids,
       body_blocks: artifact.body_blocks,
+      archived_at: artifact.archived_at,
     })
     .from(artifact)
     .where(eq(artifact.id, artifactId))
     .limit(1);
   const row = rows[0];
   if (!row) return { status: 'skipped:not_found' };
+  if (row.archived_at) return { status: 'skipped:archived' };
   if (!row.body_blocks) return { status: 'skipped:no_body_blocks' };
 
   let kNode: { id: string; name: string; domain: string | null } | null = null;
