@@ -56,6 +56,34 @@ const ToolUseExperimental = z.object({
 
 ---
 
+## 1.1 Promotion record（T-D7 / YUK-126, 2026-05-28）
+
+`ToolUseExperimental` 已 promote 为 KnownEvent `ToolUseQuery`（去 `experimental:` 前缀），shape 完全保留 §1 中的形态。Promotion PR: Wave 6 Lane B（branch `yuk-TD7-tool-use-promote`）。
+
+**实施 diff（6 步）**
+
+1. `src/core/schema/event/known.ts` 新增 `ToolUseQuery`，`action: z.literal('tool_use')`，subject_kind='query'，payload `{ tool_name, args, result_summary?, result_count?, error_reason? }` 与原 ToolUseExperimental 完全相同。加入 `KnownEvent` z.union（第 14 个分支）。
+2. `src/core/schema/event/experimental.ts`：删除 `ToolUseExperimental` 与 `ToolUseExperimentalT` 导出，从 `RESERVED_EXPERIMENTAL_ACTIONS` 移除 `'experimental:tool_use'`，更新 generic `ExperimentalEvent` refine error 中的 reserved-action 例子。
+3. `src/core/schema/event/index.ts`：移除 ToolUseExperimental 的 top-level import 与 union 分支，KnownEvent 现在包含 ToolUseQuery；顶部 union 注释更新到 14 个分支。
+4. `drizzle/0019_promote_tool_use.sql`（DML-only，手写）：`UPDATE "event" SET "action" = 'tool_use' WHERE "action" = 'experimental:tool_use'`。无 DDL 变更，event table 列结构不动；meta/_journal.json 新增 idx=19 条目。
+5. `src/server/ai/tools/mcp-bridge.ts`：mirror writer 的 `action: 'experimental:tool_use'` → `'tool_use'`；`__resolveMirrorPolicy` docstring + 文件 banner + console.error label 一并更新。`src/server/ai/tools/types.ts` 中 `mirrorEvent` policy 注释指向新 action 名。
+6. Consumer sweep：`tests/schema/event.test.ts`（import + describe + 5 个 it + 3 个 top-level Event it 全部 rename 到 `ToolUseQuery` / `action: 'tool_use'`，并改原"rejects reserved action 'experimental:tool_use'"测试为 `experimental:user_cause`，因后者仍在 RESERVED 集合中），`src/server/ai/tools/mcp-bridge.test.ts`、`src/server/ai/tools/mcp-bridge.integration.test.ts`、`src/server/memory/scope_tagger.test.ts`、`src/server/events/queries.test.ts`、`src/ai/README.md` 同步。
+
+**Stabilization 证据**
+
+12 天（接近但未满 14 天临界，需 user-override 豁免，见下）
+- 3+ tool 真实落地：Wave 2/3 已交付 13+ read tools + 8 propose/write tools（见 Foundation D M2/M4），远超 ≥ 3 的 criterion。
+- v2.1 design 已实装：Wave 5 T-D3 已 ship Copilot drawer + tool-use 三段式 UI（PR #179 merged 2026-05-29）。
+- cost_micro_usd shape：保留原 ToolUseExperimental 中的 optional `cost_micro_usd` 字段（继承自 `baseOptionalFields`），ToolUseQuery 维持同等可选性。后续若改双写 cost_ledger 模式，另起 ADR。
+
+**User-override note**：原 ADR-0011 §1 stabilization criteria 第二条要求"payload shape 稳定 2 周"以 Wave 5 Drawer tool-use ship 日期为基准——按原计划晋升应等到 ~2026-07-21。该 2-周 stabilization 时序 gate 由 user 2026-05-28 explicitly waive；理由是 schema shape 自 YUK-82 (2026-05-16) 至今已 12 天无修改 + ≥ 3 tool 已落地 pre-condition 仍满足，gate 实质等价已通过。**Quality gates（typecheck / lint / audit:* / test / build）均未 waive，照常执行。**
+
+**Out of scope（deferred）**
+
+- Wave 5 closeout drift audit (`docs/audit/2026-05-29-wave5-closeout-drift.md`) 提及的 2 个其它 experimental action —— `experimental:copilot_user_ask` 与 `experimental:copilot_chip_trigger` —— 不在本 T-D7 范围内。它们未在本 ADR §1 拥有 dedicated schema，按 generic ExperimentalEvent 走，将在后续 ADR-0011 erratum 或 Wave 7+ 独立处理。
+
+---
+
 ## 2. AcceptSuggestionChip — stable
 
 **为什么 stable**：v2.1 designer 反馈采纳——chip 不模拟 user msg，而是写 first-class 事件。语义已稳：用户接受 agent 提议的结构化动作。

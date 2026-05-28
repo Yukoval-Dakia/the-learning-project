@@ -11,12 +11,13 @@
 //      error path).
 //   2. execute the tool against the captured ToolContext.
 //   3. write a tool_call_log row with effect + error_reason populated.
-//   4. resolve mirrorEvent policy and, when it fires, write an
-//      `experimental:tool_use` event mirror with payload
+//   4. resolve mirrorEvent policy and, when it fires, write a `tool_use`
+//      KnownEvent mirror with payload
 //      { tool_name, args, result_summary, error_reason? } so Copilot /
 //      Dreaming / Coach can replay tool history from the event log.
-//      Lane D added this — schema is locked in src/core/schema/event/
-//      experimental.ts `ToolUseExperimental` (ADR-0011 §1).
+//      Lane D added this; ADR-0011 §1.1 (T-D7 / YUK-126) promoted the
+//      former `experimental:tool_use` to KnownEvent `tool_use`
+//      (`ToolUseQuery` in `src/core/schema/event/known.ts`).
 //   5. return an MCP-shaped { content: [{ type: 'text', text: <json> }] }
 //      result the LLM can read.
 
@@ -32,9 +33,10 @@ import type { ToolCallerActor, ToolContext, ToolEffect, ToolMirrorPolicy } from 
 /**
  * Decide whether a tool invocation should mirror to the `event` table.
  *
- * `ToolUseExperimental` (the schema) requires actor_kind='agent' — so
- * user-fired debug-endpoint calls never mirror, regardless of the tool's
- * declared policy. The four declared policies then fan out:
+ * `ToolUseQuery` (the schema, promoted from `experimental:tool_use` per
+ * ADR-0011 §1.1) requires actor_kind='agent' — so user-fired debug-endpoint
+ * calls never mirror, regardless of the tool's declared policy. The four
+ * declared policies then fan out:
  *
  *   - 'never'             → never
  *   - 'always'            → always (provided caller is agent)
@@ -186,9 +188,10 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
         });
       }
 
-      // YUK-82: experimental:tool_use event mirror per mirrorEvent policy.
-      // Schema (ToolUseExperimental) requires actor_kind='agent', so
-      // user-fired calls never mirror regardless of the tool's policy.
+      // YUK-82 + ADR-0011 §1.1 (T-D7 / YUK-126): tool_use KnownEvent mirror
+      // per mirrorEvent policy. Schema (`ToolUseQuery`) requires
+      // actor_kind='agent', so user-fired calls never mirror regardless of
+      // the tool's policy.
       if (__resolveMirrorPolicy(dt.mirrorEvent, ctx.callerActor, dt.effect)) {
         const mirrorPayload: Record<string, unknown> = {
           tool_name: dt.name,
@@ -204,7 +207,7 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
             session_id: null,
             actor_kind: 'agent',
             actor_ref: ctx.callerActor.ref,
-            action: 'experimental:tool_use',
+            action: 'tool_use',
             subject_kind: 'query',
             subject_id: mirrorId,
             outcome: errorReason ? 'failure' : 'success',
@@ -227,7 +230,7 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
           }
         } catch (mirrorErr) {
           // Same principle — mirror failure must not crash the tool loop.
-          console.error('[mcp-bridge] experimental:tool_use mirror writeEvent failed', {
+          console.error('[mcp-bridge] tool_use mirror writeEvent failed', {
             tool: dt.name,
             task_run_id: ctx.taskRunId,
             err: mirrorErr,
