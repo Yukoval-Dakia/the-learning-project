@@ -35,25 +35,25 @@
 |---|---|---|---|---|---|
 | **T-D6/A** | `CoachTask` registration + prompt + `TodayPlan` result schema | 4 | [YUK-118](https://linear.app/yukoval-studios/issue/YUK-118) | `yuk-118-td6-coach-task` | A |
 | **T-D6/B** | `coach_daily` + `coach_weekly` pg-boss handlers + cron schedule | 4 | [YUK-119](https://linear.app/yukoval-studios/issue/YUK-119) | `yuk-119-td6-coach-cron` | A |
-| **T-D6/C** | Proposal writers for plan items (defer / split / relearn / archive)；全部走现有 `propose_*` DomainTools | 4 | [YUK-120](https://linear.app/yukoval-studios/issue/YUK-120) | `yuk-120-td6-coach-proposals` | A |
+| **T-D6/C** | Proposal writers for plan items (defer / split / relearn / archive)：`relearn` / `completion` 走现有工具；新增 `propose_learning_item_defer` + `propose_learning_item_archive` DomainTools 并把它们 + `propose_knowledge_mutation`（for `split`）加进 `COACH_TOOLS` allowlist | 6 | [YUK-120](https://linear.app/yukoval-studios/issue/YUK-120) | `yuk-120-td6-coach-proposals` | A |
 | **T-D6/D** | T-D6 closeout：tests / status / roadmap / allowlist policy doc | 3 | [YUK-121](https://linear.app/yukoval-studios/issue/YUK-121) | `yuk-121-td6-closeout` | A |
 | **T-D3/A** | `<CopilotDrawer>` + `<ToolUseCard>` primitives + tweaks (`chainRowCost` / `toolUseDetail`) | 4 | [YUK-122](https://linear.app/yukoval-studios/issue/YUK-122) | `yuk-122-td3-drawer-primitive` | B |
-| **T-D3/B** | `/today` 30s dwell trigger + drawer mount + summary endpoint（消费 `query_memory_brief` + `get_review_due` + `query_learning_item_context`） | 3 | [YUK-123](https://linear.app/yukoval-studios/issue/YUK-123) | `yuk-123-td3-today-mount` | B |
-| **T-D3/C** | Copilot chat endpoint + tool-use 三段式 流 + 6 tool SEED chip 直触发（不走 sendUser） | 4 | [YUK-124](https://linear.app/yukoval-studios/issue/YUK-124) | `yuk-124-td3-tool-use-flow` | B |
+| **T-D3/B** | `/today` 30s dwell trigger + drawer mount + summary endpoint（消费 `query_memory_brief` + `get_review_due` + `get_learning_item_context`） | 3 | [YUK-123](https://linear.app/yukoval-studios/issue/YUK-123) | `yuk-123-td3-today-mount` | B |
+| **T-D3/C** | Copilot chat endpoint + tool-use 三段式 流 + 6 tool SEED chip 直触发（不走 sendUser）。**Two-surface routing**：默认聊天用 `copilot` allowlist（reader + `propose_knowledge_edge`）；chip-direct-trigger 路由到 `copilot_user_suggested_mistake_action` surface（已含 `attribute_mistake` + `propose_variant`），无需改 allowlist | 4 | [YUK-124](https://linear.app/yukoval-studios/issue/YUK-124) | `yuk-124-td3-tool-use-flow` | B |
 | **T-D3/D** | T-D3 closeout：tests / status / roadmap / loom-design alignment audit | 2 | [YUK-125](https://linear.app/yukoval-studios/issue/YUK-125) | `yuk-125-td3-closeout` | B |
 | **T-PD** | Doc sweep gap-filler：archive stale Wave 2 plan docs；resolve [YUK-115](https://linear.app/yukoval-studios/issue/YUK-115)（NoteVerificationIssue half-migration，Option A 或 B） | ~4 | YUK-115 existing | doc-only / minor | gap (any worktree) |
 
-Parents: [YUK-116](https://linear.app/yukoval-studios/issue/YUK-116) (T-D6, 15 pts) + [YUK-117](https://linear.app/yukoval-studios/issue/YUK-117) (T-D3, 13 pts). Milestones: M3 (drawer, target 2026-06-26) + M5 (coach, target 2026-07-03).
+Parents: [YUK-116](https://linear.app/yukoval-studios/issue/YUK-116) (T-D6, 17 pts post-review-fix) + [YUK-117](https://linear.app/yukoval-studios/issue/YUK-117) (T-D3, 13 pts). Milestones: M3 (drawer, target 2026-06-26) + M5 (coach, target 2026-07-03).
 
-总计：**~32 pts**，符合 master roadmap §5.1 Wave 5 估算（~32 pts，~5-6 周）。
+总计：**~34 pts**（post-review-fix；原 ~32 pts；+2 pts 来自 T-D6/C 扩 scope 加 2 个新 propose 工具）。仍在 master roadmap §5.1 Wave 5 估算（~32 pts，~5-6 周）的 ±10% 范围内。
 
 ## Chain order
 
-1. Merge PR #175 (Wave 4 closeout docs) to `main` before branching any lane.
-2. **Worktree A (T-D6) starts before Worktree B (T-D3)** by ~1 week so `TodayPlan` result schema is in `main` when Drawer summary endpoint needs it. If parallel from day 1, T-D3/B can mock the contract for early dev.
-3. Inside A: A → B → C → D（sequential chain-merge）. `CoachTask` schema must land in `main` before cron handler writes proposals against it.
+1. Merge PR #175 (Wave 4 closeout docs) to `main` before branching any lane. **Already merged** as `2a8b68a3` 2026-05-28.
+2. **Worktree A (T-D6) starts before Worktree B (T-D3)** by ~1 week so `TodayPlan` result schema is in `main` when Drawer summary endpoint needs it. If parallel from day 1, T-D3/B can mock the contract for early dev — concretely, define a local `TodayPlanPlaceholder` type in `app/api/today/copilot-summary/route.ts` matching the §T-D6/A acceptance fields (`daily_focus`, `review_session_proposal`, `at_most_one_new_item`, `weekly_reflection`, `plan_adjustments[]`, `maintenance_proposals[]`), mark it `// TODO(YUK-118): replace with import from src/core/schema/coach once T-D6/A merges`, and use the same shape in tests. Remove the placeholder during T-D3/D closeout audit.
+3. Inside A: A → B → C → D（sequential chain-merge）. `CoachTask` schema must land in `main` before cron handler writes proposals against it. **T-D6/C now touches `src/server/ai/tools/allowlists.ts` non-trivially** (adds 3 entries to `COACH_TOOLS`) plus creates 2 new propose tools in `src/server/ai/tools/proposal-tools.ts`.
 4. Inside B: A → B → C → D（sequential chain-merge）. Primitive must land in `main` before mount + tool-use flow consume it.
-5. T-D6/C and T-D3/C both touch `src/server/ai/tools/allowlists.ts` (policy comment updates only — surfaces themselves are pre-staged). Schedule them across different days to avoid trivial merge conflicts; do not run them on the same wall-clock day.
+5. T-D6/C and T-D3/C ordering：T-D6/C must merge **before** T-D3/C kicks off. T-D6/C makes a real `COACH_TOOLS` change (3 additions) and creates 2 new propose tools; T-D3/C only routes between two pre-staged copilot surfaces (no allowlist change). Kicking off T-D3/C without T-D6/C merged risks duplicate `src/server/ai/tools/allowlists.ts` edits and possibly stepping on the new propose tool files. Enforce via lane gate: T-D3/C kickoff checklist starts with `git log origin/main --oneline -- src/server/ai/tools/allowlists.ts | grep YUK-120` — empty result blocks kickoff.
 6. T-PD lane runs in any capacity gap. YUK-115 resolution (drift follow-up from Wave 4 closeout) is the natural insert point.
 
 ## Wave gate
@@ -81,8 +81,8 @@ Then run `/audit-drift`, update `docs/superpowers/status.md`, refresh master-roa
 
 ## Human decision points
 
-- **`/today` summary first paint 内容选型**：默认走 §Q3 决议 = summary-driven（drawer 自动浮今日 AI 建议）。但 summary 首屏数据源（brief 摘录 vs Coach 提议 vs review_due 列表）需要在 T-D3/B kickoff 前确认顺序。建议默认：今日主目标（来自 Coach `TodayPlan`） > 今日复习摘要（来自 `get_review_due`）> 一条 dreaming proposal（来自 inbox）。
-- **CoachTask LLM 预算**：每天 1 次 daily + 每周 1 次 weekly = ~30 LLM 调用/月。按 mimo $0.02-0.05/call 估 < $1.5/月。若 budget 紧再考虑 model tier（Haiku 跑 daily，Sonnet 跑 weekly）。先按 Sonnet 全跑，观察 1 周后调。
+- **`/today` summary first paint 内容选型**：默认走 §Q3 决议 = summary-driven（drawer 自动浮今日 AI 建议）。但 summary 首屏数据源（brief 摘录 vs Coach 提议 vs review_due 列表）需要在 T-D3/B kickoff 前确认顺序。建议默认：今日主目标（来自 Coach `TodayPlan`） > 今日复习摘要（来自 `get_review_due`）> 一条 dreaming proposal（来自 inbox）。**Owner = user**（项目唯一决策人），**deadline = T-D3/B kickoff（M3 target 2026-06-26 倒推 ~2 周即 2026-06-12 前）**。Drawer summary endpoint 在该决策前用上述默认顺序实现，T-D3/D closeout 时校对最终顺序未变。
+- **CoachTask LLM 预算**：每天 1 次 daily + 每周 1 次 weekly = ~30 LLM 调用/月。按 xiaomi/mimo provider（Anthropic-compatible，CLAUDE.md 已 codify）的 Sonnet 等价价位 ~$0.02-0.05/call 估 < $1.5/月。若 budget 紧再考虑 model tier（Haiku 跑 daily，Sonnet 跑 weekly）。先按 Sonnet 全跑，观察 1 周后调。
 - **Coach 写 proposal 的 actor_ref**：`{ kind: 'agent', ref: 'coach' }` (新)。需要在 `proposal_signals` 或 `event` 的 actor_ref taxonomy 加一行（与 `dreaming` 同级）。这是 Wave 5 新引入的 actor，不复用 dreaming。
 - **YUK-115 (NoteVerificationIssue half-migration)**：Wave 4 drift 留下来的 follow-up。T-PD lane 优先级。Option A (完成 schema rename) vs Option B (ADR 加 erratum + 只修 UI type)；建议 A，1 pt。
 - **Drawer 跨 6 routes (T-D5)**：明确**不在本 wave**。T-D5 等 T-D3 试点 1-2 周稳定 + 用户反馈后再启，避免在 6 routes 上同时变动 UI 而无法回滚单点失败。
@@ -93,10 +93,25 @@ Then run `/audit-drift`, update `docs/superpowers/status.md`, refresh master-roa
 |---|---|---|---|
 | T-D6/A | ⬜ | none | Coach schema 落地，unblocks B/C |
 | T-D6/B | ⬜ | T-D6/A | cron 注册 + handler |
-| T-D6/C | ⬜ | T-D6/A | proposal 写路径 |
+| T-D6/C | ⬜ | T-D6/A | proposal 写路径 + 2 个新 propose tools + `COACH_TOOLS` 扩 3 项 (post-review-fix) |
 | T-D6/D | ⬜ | T-D6/A/B/C | closeout |
 | T-D3/A | ⬜ | none | primitives 落地，unblocks B/C |
 | T-D3/B | ⬜ | T-D3/A + (T-D6/A 推荐已 land) | drawer mount + summary fetch |
-| T-D3/C | ⬜ | T-D3/A | tool-use flow |
+| T-D3/C | ⬜ | T-D3/A + T-D6/C merged | tool-use flow + two-surface routing (`copilot` 默认 / `copilot_user_suggested_mistake_action` chip 触发) — gate per §Chain order #5 |
 | T-D3/D | ⬜ | T-D3/A/B/C | closeout |
 | T-PD | ⬜ | YUK-115 owner pick | gap-filler |
+
+## Post-merge review fixes (2026-05-28)
+
+PR #176 merged then received 3 P2 findings from Codex + 3 nitpicks from CodeRabbit. Applied via follow-up PR (Option B = expand scope to cover missing tools):
+
+| Finding | Source | Status |
+|---|---|---|
+| `query_learning_item_context` not in repo; real name `get_learning_item_context` | Codex line 41 | ✅ fixed in §Wave 5 scope row T-D3/B |
+| T-D6/C promised `defer / split / archive` proposals but `COACH_TOOLS` only has `relearn / completion` | Codex line 38 | ✅ scope expanded — T-D6/C now creates `propose_learning_item_defer` + `propose_learning_item_archive` DomainTools and adds them + `propose_knowledge_mutation` (for `split`) to `COACH_TOOLS`; +2 pts |
+| T-D3/C chip → `propose_variant` would fail under `copilot` surface | Codex line 42 | ✅ documented two-surface routing in §Wave 5 scope row T-D3/C; no allowlist change needed |
+| Stale evidence ref for wave4 drift report | Codex line 18 | ✅ resolved by PR #175 merge (`2a8b68a3`) |
+| "mimo" term unclear | CodeRabbit line 85 | ✅ expanded to "xiaomi/mimo provider (Anthropic-compatible, CLAUDE.md 已 codify)" in §Human decision points |
+| "T-D3/B mock contract" not spelled out | CodeRabbit line 53 | ✅ concrete `TodayPlanPlaceholder` recipe added in §Chain order #2 |
+| Summary order decision lacks owner+deadline | CodeRabbit line 84 | ✅ owner=user, deadline=2026-06-12 (T-D3/B kickoff -2 weeks from M3 target) added in §Human decision points |
+| T-D6/C ↔ T-D3/C wall-clock-day coord fragile | CodeRabbit line 56 | ✅ replaced with hard merge gate in §Chain order #5 — T-D3/C kickoff checklist runs `git log ... | grep YUK-120`; empty = blocked |
