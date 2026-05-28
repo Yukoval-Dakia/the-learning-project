@@ -1,12 +1,15 @@
 # 错题管理
 
+> Last reviewed: 2026-05-28 (T-PD8)
+>
 > 见 [架构基础](../architecture.md) 了解 `learning_record` / `event` / `question` / `material_fsrs_state` schema、FSRS state 和 AI 任务层。
 > 题面统一在 `question` 表（见 [`quiz.md`](quiz.md)），「错题」是 event 流的一种视图。
 > 用户活动上下文入口详见 [`records.md`](records.md)；错题是 `LearningRecord(kind='mistake')`。
+> 变式 lifecycle 详见 [ADR-0018](../adr/0018-mistake-variant-lifecycle-and-variants-max.md)；错因 cause taxonomy 详见 [ADR-0006](../adr/0006-encounter-replaces-mistake.md)。
 
 ---
 
-## 0. 数据模型现状（2026-05-17，post-1c.1 Step 9）
+## 0. 数据模型现状（2026-05-28，post-1c.1 Step 9 + ADR-0018）
 
 > ⚠️ 下面 §1–§6 的 `Mistake` / `mistake_id` / `Mistake.cause` 等命名是 Phase 1 sketch 期写的，**实际表已 DROP**（1c.1 Step 9）。整篇 doc 的"错题"概念在落地实现里是 event 流的一个视图。读完本节心里替换即可，后续段落保留作为概念语义参考。
 
@@ -34,7 +37,7 @@
 | `Mistake.cause`（user 手填或 AI 归因） | AI: `event(action='judge', subject_kind='event', caused_by=<attempt id>, payload.cause)`。<br>User: `event(action='experimental:user_cause', subject_kind='event', caused_by=<attempt id>, payload={primary_category, user_notes})` | 用户优先 |
 | `Mistake.fsrs_state` | `material_fsrs_state(subject_kind='question', subject_id=<qid>, state, due_at, last_review_event_id)` | 一行 / 题 |
 | `Mistake.source = 'quiz_answer' / 'manual' / 'vision_*' / 'reverse_mark'` | 当前只跑 `manual` (POST /api/mistakes) + `vision_single` / `vision_paper`（OCR → import）；`quiz_answer` 自动管线 + `reverse_mark` 留到 Phase 2 quiz 时再展开 | |
-| `Mistake.variants[]` / 变式繁殖 | Phase 2 Task #17 + YUK-44 ✅：`variant_gen` pg-boss handler 由 `attribution_followup` 链路触发，先写 `ai_proposal.kind='variant_question'` 到 proposal inbox，不再直接物化 `question`。MVP 单 pass（无 VariantVerifyTask），每个 parent 单变式 cap，3 层防繁殖（depth≤1 / variant 不再生变式 / cause∈{carelessness,time_pressure,other} 跳过）。接受 proposal 后的 `question(source='mistake_variant', draft_status, variant_depth, root_question_id, parent_variant_id)` 物化路径留给后续 owner flow。详见 §3.4 | |
+| `Mistake.variants[]` / 变式繁殖 | Phase 2 Task #17 + YUK-44 + ADR-0018 ✅：`variant_gen` pg-boss handler 由 `attribution_followup` 链路触发，先写 `event(action='propose', subject_kind='question')` payload `AiProposal.kind='variant_question'`（src/core/schema/proposal.ts；`ai_proposal` 表已 DROP），不再直接物化 `question`。**双 pass 已上线**：`variant_verify` handler（src/server/boss/handlers/variant_verify.ts）verdict='fail' 时翻 `mistake_variant.status='broken'`、verdict='pass' 时保持 `active`。`mistake_variant` ledger 表 track per-parent variants_max=3 防繁殖；3 层防繁殖（depth≤1 / variant 不再生变式 / cause∈{carelessness,time_pressure,other} 跳过）。接受 proposal 后物化 `question(source='mistake_variant', draft_status, variant_depth, root_question_id, parent_variant_id)`。详见 §3.4 + ADR-0018 | |
 | `judgment` 表 + `JudgeRouter` | DROPped（1c.1 Step 1.4）；判分走 `event(action='judge')` 替代 | |
 | `mistake.deleted_at` soft-delete | 未实现（event 流没有 retraction 机制）；申诉翻盘 Phase 1d 再设计 | |
 
@@ -147,7 +150,7 @@ N × AttributionTask 走 batch（夜间）
 - 所有题（含对的）都进 Question 题库（题库丰富）
 - 用户可勾选「保留为模拟卷」→ 整套 Question 包成 standalone `tool_quiz` Artifact，未来可重刷
 
-**图片存储**：vision_paper 单次上传 1~N 张图片（每张 2-5MB），用户审核完批量录入时图片必须可重复读取。卷子图片走 Cloudflare R2 持久化（worker `[[r2_buckets]]` binding `IMAGES`，PR 1 已加 wrangler.toml 占位字段）；DB 中 `Mistake.wrong_answer_image_refs[]` / `Answer.image_refs[]` 持的是 R2 object key。client 上传时走 worker `POST /api/upload/image` → 写 R2 → 返 r2 key（实际 endpoint 落地推 Phase 1.5 实施时）。
+**图片存储**：vision_paper 单次上传 1~N 张图片（每张 2-5MB），用户审核完批量录入时图片必须可重复读取。卷子图片走 R2 / S3-compat 持久化（`@aws-sdk/client-s3` via `src/server/r2.ts`，bucket 配置走 `R2_*` env vars，Next standalone build 在 NAS Docker 容器内运行，**不是** Cloudflare Worker 也没有 wrangler.toml）；DB 中 `source_asset.storage_key` 持的是 object key（旧 `Mistake.wrong_answer_image_refs[]` 已 collapse 到 `payload.wrong_answer_image_refs` per learning_record schema）。client 上传走 `POST /api/assets` → 写 R2 → 返 asset id（已落地，见 `app/api/assets/route.ts`）。
 
 ### 2.4 手动粘贴（manual）
 
@@ -245,7 +248,7 @@ Mistake.create({source: 'reverse_mark', source_ref: artifact_id})
 
 ### 3.4 异步：变式题生成（双 pass + 防"错题繁殖"）
 
-**v0 状态（Task #17 + YUK-44，2026-05-23）**：MVP **单 pass** 已上线 —— `attribution_followup` 写完 judge 后入队 `variant_gen`（pg-boss），worker 拉 `VariantGenTask`（mimo-v2.5-pro）产出一条 `variant_question` proposal。YUK-44 后不再直接写 `question` 行；接受 proposal 后再物化 `source='mistake_variant'`、`draft_status`、`variant_depth=parent+1` 的 question。VariantVerifyTask 双 pass、variants_max 计数表、UI 显式列表都留待 Phase 3 跑数据后决定。
+**当前状态（Task #17 + YUK-44 + ADR-0018，2026-05-28）**：**双 pass 已上线** —— `attribution_followup` 写完 judge 后入队 `variant_gen`（pg-boss），worker 拉 `VariantGenTask` 产出一条 `variant_question` proposal（写为 `event(action='propose')` payload `AiProposal.kind='variant_question'`）。YUK-44 后不再直接写 `question` 行；接受 proposal 后才物化 `source='mistake_variant'`、`draft_status`、`variant_depth=parent+1` 的 question 行，并 enqueue `variant_verify`（mistake_variant ledger 表 `status='draft' → 'active' | 'broken'`，见 `src/server/boss/handlers/variant_verify.ts`）。`mistake_variant` 表 track in-flight per-parent count = variants_max=3。UI 显式列表仍是后续 work。
 
 变式 Question 跟主题库平级——`source: mistake_variant`，可被 daily quiz 抽，也可入 standalone tool_quiz。
 

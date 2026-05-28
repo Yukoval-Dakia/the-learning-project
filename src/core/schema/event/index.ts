@@ -3,7 +3,6 @@ import {
   ExperimentalEvent,
   MemoryBriefRefreshExperimental,
   RecordCaptureExperimental,
-  ToolUseExperimental,
   UserCauseExperimental,
 } from './experimental';
 import { KnownEvent } from './known';
@@ -17,19 +16,18 @@ export * from './experimental';
 // ====================================================================
 //
 // Parse precedence（z.union 按顺序 try，第一个成功胜出）：
-//   1. KnownEvent — 11 个稳定分支
-//   2. ToolUseExperimental — experimental:tool_use 的特化（payload shape 已 locked）
-//   3. UserCauseExperimental — experimental:user_cause 的特化（payload shape 已 locked）
-//   4. RecordCaptureExperimental — experimental:record_capture
-//   5. MemoryBriefRefreshExperimental — experimental:memory_brief_refresh
-//   6. ExperimentalEvent — 通用 experimental:* 命名空间逃逸阀
+//   1. KnownEvent — 14 个稳定分支（含 ToolUseQuery，自 ADR-0011 §1.1 promote 自
+//      `experimental:tool_use`）
+//   2. UserCauseExperimental — experimental:user_cause 的特化（payload shape 已 locked）
+//   3. RecordCaptureExperimental — experimental:record_capture
+//   4. MemoryBriefRefreshExperimental — experimental:memory_brief_refresh
+//   5. ExperimentalEvent — 通用 experimental:* 命名空间逃逸阀
 //
 // 顺序要点：特化 experimental schemas 必须排在通用 ExperimentalEvent 之前，否则后者的
 // payload (任意 record) 会先 match 走，结构信息丢失。
 
 export const Event = z.union([
   KnownEvent,
-  ToolUseExperimental,
   UserCauseExperimental,
   RecordCaptureExperimental,
   MemoryBriefRefreshExperimental,

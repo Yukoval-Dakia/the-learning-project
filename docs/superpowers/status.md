@@ -91,7 +91,7 @@ Conclusion: Foundation B schema extension and math profile were introduced in th
 ⬜  Copilot drawer MVP                        M3
 ✅  propose / write DomainTools               M4 — Wave 3 T-D4 shipped in PR #170 (YUK-107..112)
 ⬜  Phase 3 Global Coach Orchestrator         M5
-⬜  experimental:tool_use → KnownEvent promote M6 (after 3 tools × 2 weeks stable)
+✅  experimental:tool_use → KnownEvent promote M6 — T-D7 / YUK-126, 2026-05-28 (ADR-0011 §1.1; stabilization 时序 gate user-waived 2026-05-28)
 ```
 
 M1 closeout audit: [`docs/audit/2026-05-26-copilot-tools-foundation.md`](../audit/2026-05-26-copilot-tools-foundation.md).

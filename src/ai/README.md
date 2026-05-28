@@ -30,7 +30,7 @@ Task 层抽象。**不是 chat()** —— 每种产物一个 Task；tool-calling
 - `src/server/ai/runner.ts` 支持 `mcpServers`、`allowedTools`、`maxTurns`，并把所有 task 统一送进 Claude Agent SDK `query()`。
 - `src/ai/registry.ts` 仍只给 legacy `KnowledgeReviewTask` 开了 `allowedTools: ['mcp__loom__write_proposal']`；新 DomainTool callers 应使用 `src/server/ai/tools/allowlists.ts` 生成 surface-specific `mcp__loom__*` allowlist。
 - `src/server/knowledge/review.ts` 在每次 `/api/knowledge/review` 请求内创建本地 `loom` MCP server，只暴露 `write_proposal` 一个 proposal tool。
-- `src/server/ai/tools/bootstrap.ts` 注册统一 DomainTools；`mcp-bridge.ts` 能把任意 allowlist 包成 in-process MCP server，并写 `tool_call_log` / `experimental:tool_use` mirror。
+- `src/server/ai/tools/bootstrap.ts` 注册统一 DomainTools；`mcp-bridge.ts` 能把任意 allowlist 包成 in-process MCP server，并写 `tool_call_log` / `tool_use` mirror（ADR-0011 §1.1 promote 自 `experimental:tool_use`）。
 - `src/server/ai/tools/knowledge-readers.ts`、`context-readers.ts`、`query-events.ts`、`query-mistakes.ts` 提供 read surface。
 - `src/server/ai/tools/proposal-tools.ts` 提供 T-D4 full 8：`propose_knowledge_edge`、`propose_knowledge_mutation`、`attribute_mistake`、`propose_variant`、`propose_learning_item_completion`、`propose_learning_item_relearn`、`propose_record_links`、`propose_record_promotion`。
 - generic `app/api/ai/[task]` 只允许 `ReviewIntentTask`；profile-driven task 返回 `profile_required`，manual-rescue task 返回 `requires_domain_route`，`needsToolCall: true` 返回 `tool_task_requires_domain_route`。

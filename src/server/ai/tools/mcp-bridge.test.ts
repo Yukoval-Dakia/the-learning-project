@@ -290,7 +290,7 @@ describe('buildMcpServerFromRegistry', () => {
     ).toThrow(/not registered/);
   });
 
-  it('writes experimental:tool_use mirror when caller is agent + policy fires', async () => {
+  it('writes tool_use mirror when caller is agent + policy fires', async () => {
     registerTool(
       makeReadTool<{ q: string }, { len: number }>(
         'demo_mirror_ok',
@@ -310,7 +310,7 @@ describe('buildMcpServerFromRegistry', () => {
 
     expect(captured.events).toHaveLength(1);
     const ev = captured.events[0] as Record<string, unknown>;
-    expect(ev.action).toBe('experimental:tool_use');
+    expect(ev.action).toBe('tool_use');
     expect(ev.actor_kind).toBe('agent');
     expect(ev.actor_ref).toBe('agent:copilot');
     expect(ev.subject_kind).toBe('query');

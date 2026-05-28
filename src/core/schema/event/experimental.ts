@@ -7,35 +7,10 @@ import {
 } from '../business';
 import { CauseCategory } from './blocks';
 
-// ====================================================================
-// ToolUseExperimental — ADR-0011 §1 (待稳)
-// ====================================================================
-//
-// Copilot tool-use 路径。subject_id 自标识（'tool_use_<cuid>'）。args 是任意 record
-// （tool 入参 shape 因 tool 而异）。outcome='failure' 时 error_reason 应填（业务层）。
-//
-// Stabilization criteria (ADR-0011 §1)：至少 3 个 tool 落地 + payload shape 稳定 2 周
-// 之后可 promote 为正式 ToolUseQuery (去 experimental: 前缀)。
-
-export const ToolUseExperimental = z.object({
-  actor_kind: z.literal('agent'),
-  actor_ref: z.string(),
-  action: z.literal('experimental:tool_use'),
-  subject_kind: z.literal('query'),
-  subject_id: z.string(),
-  outcome: z.enum(['success', 'failure']),
-  payload: z.object({
-    tool_name: z.string(),
-    args: z.record(z.string(), z.unknown()),
-    result_summary: z.string().optional(),
-    result_count: z.number().int().optional(),
-    error_reason: z.string().optional(),
-  }),
-  caused_by_event_id: z.string().optional(),
-  task_run_id: z.string().optional(),
-  cost_micro_usd: z.number().int().optional(),
-});
-export type ToolUseExperimentalT = z.infer<typeof ToolUseExperimental>;
+// Note (T-D7 / YUK-126, 2026-05-28): the former ToolUseExperimental schema +
+// `experimental:tool_use` reserved action have been promoted out of this file
+// into KnownEvent as `ToolUseQuery` / `action='tool_use'`. See
+// `src/core/schema/event/known.ts` and ADR-0011 §1.1 promotion record.
 
 // ====================================================================
 // UserCauseExperimental — Phase 1c.2 (待稳)
@@ -128,15 +103,17 @@ export type MemoryBriefRefreshExperimentalT = z.infer<typeof MemoryBriefRefreshE
 // Reserved experimental actions
 // ====================================================================
 //
-// Action names that have a dedicated typed schema (e.g., ToolUseExperimental). The generic
-// `ExperimentalEvent` fallback must REJECT these — otherwise a malformed event with a
-// reserved action name (e.g., `{ action: 'experimental:tool_use', payload: {} }`) would
-// silently fall through to generic parse and lose schema validation.
+// Action names that have a dedicated typed schema. The generic `ExperimentalEvent`
+// fallback must REJECT these — otherwise a malformed event with a reserved action
+// name (e.g., `{ action: 'experimental:user_cause', payload: {} }`) would silently
+// fall through to generic parse and lose schema validation.
 //
 // Adding a new specialised experimental schema? Add its action literal here too.
+//
+// Note (T-D7 / YUK-126, 2026-05-28): `'experimental:tool_use'` removed from this
+// set after promotion to KnownEvent `tool_use` (ADR-0011 §1.1).
 
 export const RESERVED_EXPERIMENTAL_ACTIONS = new Set<string>([
-  'experimental:tool_use',
   'experimental:user_cause',
   'experimental:record_capture',
   'experimental:memory_brief_refresh',
@@ -149,7 +126,8 @@ export const RESERVED_EXPERIMENTAL_ACTIONS = new Set<string>([
 // 新 action 探索期先用 experimental:<name> 命名空间，payload 是松守的任意 record。
 // 稳定后 promote 到 KnownEvent（写 Zod schema + 测试 + 数据迁移）。
 //
-// Parse 时 ToolUseExperimental 应该优先 try（它是 ExperimentalEvent 的特例，shape 更
+// Parse 时各 reserved experimental schema（UserCauseExperimental / RecordCaptureExperimental /
+// MemoryBriefRefreshExperimental）应优先 try（它们是 ExperimentalEvent 的特例，shape 更
 // 紧）—— 顶层 Event union 的顺序处理这点（见 ./index.ts）。此外，generic ExperimentalEvent
 // 拒绝 reserved action names 防止 malformed reserved-action event 绕过专用 schema 校验。
 
@@ -161,7 +139,7 @@ export const ExperimentalEvent = z.object({
     })
     .refine((s) => !RESERVED_EXPERIMENTAL_ACTIONS.has(s), {
       message:
-        'reserved experimental action — payload must satisfy the dedicated schema (e.g., experimental:tool_use → ToolUseExperimental)',
+        'reserved experimental action — payload must satisfy the dedicated schema (e.g., experimental:user_cause → UserCauseExperimental)',
     }),
   payload: z.record(z.string(), z.unknown()),
 });

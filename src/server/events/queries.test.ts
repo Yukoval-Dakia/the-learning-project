@@ -935,7 +935,7 @@ describe('getEventById', () => {
     const id = await seedAttemptEvent({ question_id: 'q1' });
     const evt = await getEventById(db, id);
     expect(evt).not.toBeNull();
-    // EventT is a union (KnownEvent | ToolUseExperimental | ExperimentalEvent).
+    // EventT is a union (KnownEvent | experimental schemas | ExperimentalEvent).
     // For a fresh seed-and-fetch on an attempt event we expect the KnownEvent
     // AttemptOnQuestion branch; narrow via property access on `as` cast.
     const narrowed = evt as Extract<typeof evt, { action: 'attempt' }>;

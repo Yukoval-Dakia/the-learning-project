@@ -48,7 +48,7 @@ describe('computeAffectedScopes', () => {
   it('routes chat and tool-use style events to orchestrator self memory', () => {
     expect(
       computeAffectedScopes({
-        action: 'experimental:tool_use',
+        action: 'tool_use',
         subject_kind: 'query',
         subject_id: 'q',
         payload: {},

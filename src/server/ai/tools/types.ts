@@ -6,8 +6,9 @@
 // (Lane C) so the Claude Agent SDK can call them as `mcp__<server>__<name>`.
 //
 // Out of scope for Lane A: actual tool implementations (Lane B), the MCP
-// bridge wrapper (Lane C), `experimental:tool_use` event mirror writer
-// (Lane D). This file is interface-only.
+// bridge wrapper (Lane C), `tool_use` event mirror writer (Lane D, promoted
+// out of `experimental:tool_use` per ADR-0011 §1.1). This file is
+// interface-only.
 
 import type { Db } from '@/db/client';
 import type { z } from 'zod';
@@ -16,7 +17,8 @@ export type ToolEffect = 'read' | 'propose' | 'write';
 
 /**
  * mirrorEvent policy — when the bridge (Lane C+D) should write an
- * `event(action='experimental:tool_use')` row for this tool's invocation.
+ * `event(action='tool_use')` row for this tool's invocation (promoted
+ * from `experimental:tool_use` per ADR-0011 §1.1, T-D7 / YUK-126).
  * The bridge resolves which path fires based on (effect, callerActor):
  *   - 'never'              → never mirror; tool_call_log only
  *   - 'when_user_visible'  → mirror when caller is copilot / teaching, with or without `agent:`
