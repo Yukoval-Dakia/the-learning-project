@@ -1,9 +1,12 @@
 # 学习记录（LearningRecord）
 
+> Last reviewed: 2026-05-28 (T-PD8)
+>
 > 本文替代旧 `StudyLog` 设计。由于当前没有真实数据，采用一次性破坏式迁移：删除
 > `study_log` 概念，重建 `/record`、API、schema 和 agent tools。
+> 落地决策与 memory dual-layer 关系详见 [ADR-0015](../adr/0015-learning-record-memory-brief.md) 与 [ADR-0017](../adr/0017-memory-mem0-plus-brief-layer.md)；事件流契约见 [ADR-0006 v2](../adr/0006-encounter-replaces-mistake.md)。
 
-## 0. 设计决策（2026-05-18）
+## 0. 设计决策（2026-05-28）
 
 `/record` 不是“录错题”，也不是一个自由笔记桶。学习上下文应该由用户在系统内的
 活动创造：做题、订正、阅读、提问、上传材料、接受/拒绝 proposal、复盘、给某个
@@ -400,3 +403,15 @@ Because there is no real data, do not build a compatibility bridge.
 
 No data backfill is required. Local dev databases can be reset if that is simpler than
 writing transitional migrations.
+
+## 9. 实施现状（2026-05-28）
+
+| 项 | 状态 | 备注 |
+|---|---|---|
+| `learning_record` schema | ✅ ship | `src/db/schema.ts` L223；字段与 §2 完全对齐（kind / origin_event_id / payload jsonb / asset_refs / processing_status / 等） |
+| `memory_brief_note` schema | ✅ ship | `src/db/schema.ts` L257；三段 + evidence_ids 字段与 §7 对齐 |
+| `/api/records` + `/api/records/[id]` 路由 | ✅ ship | `app/api/records/route.ts` + `[id]/route.ts` |
+| `/api/mistakes` 路由 | 🟡 read alias 期 | `app/api/mistakes/route.ts` + `mistakes/recent/route.ts` 仍存在，按 §4 计划走 read-alias |
+| `/api/study-log` 路由 | ⚠️ 仍存在 | `app/api/study-log/[id]/route.ts` + `app/(app)/study-log` 页面尚未 410 / 删除（YUK 后续 cleanup） |
+| `query_records` / `get_record_context` / `propose_record_links` agent tools | ✅ 注册 | `src/server/ai/tools/allowlists.ts` 已收录，调用路径走 read-tools / proposal-tools modules |
+| Memory dual-layer ingest (mem0 + brief sweep) | ✅ ship | `writeEvent` → outbox → `mem0.add(event)` (ADR-0017 + [ADR-0021](../adr/0021-event-write-outbox-pattern.md))；`memory_brief_note` 由 Dreaming refresh |
