@@ -208,7 +208,9 @@ describe('Wave 3 proposal/action DomainTools', () => {
     ).toEqual([
       'propose_knowledge_edge',
       'propose_knowledge_mutation',
+      'propose_learning_item_archive',
       'propose_learning_item_completion',
+      'propose_learning_item_defer',
       'propose_learning_item_relearn',
       'propose_record_links',
       'propose_record_promotion',

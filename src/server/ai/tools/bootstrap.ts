@@ -25,7 +25,9 @@ import {
   attributeMistakeTool,
   proposeKnowledgeEdgeTool,
   proposeKnowledgeMutationTool,
+  proposeLearningItemArchiveTool,
   proposeLearningItemCompletionTool,
+  proposeLearningItemDeferTool,
   proposeLearningItemRelearnTool,
   proposeRecordLinksTool,
   proposeRecordPromotionTool,
@@ -56,6 +58,8 @@ const CORE_TOOLS: ReadonlyArray<DomainTool<unknown, unknown>> = [
   proposeVariantTool as DomainTool<unknown, unknown>,
   proposeLearningItemCompletionTool as DomainTool<unknown, unknown>,
   proposeLearningItemRelearnTool as DomainTool<unknown, unknown>,
+  proposeLearningItemDeferTool as DomainTool<unknown, unknown>,
+  proposeLearningItemArchiveTool as DomainTool<unknown, unknown>,
   proposeRecordLinksTool as DomainTool<unknown, unknown>,
   proposeRecordPromotionTool as DomainTool<unknown, unknown>,
 ];

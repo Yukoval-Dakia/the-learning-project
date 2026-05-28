@@ -407,6 +407,8 @@ export function getTaskSystemPrompt(
     case 'VisionExtractTaskHeavy':
     case 'ReviewIntentTask':
     case 'DreamingTask':
+    case 'CoachTask':
+    case 'CopilotTask':
       return tasks[task].systemPrompt;
     default:
       return assertNever(task);

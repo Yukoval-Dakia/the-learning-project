@@ -5,6 +5,7 @@ import { apiJson } from '@/ui/lib/api';
 import { Badge } from '@/ui/primitives/Badge';
 import { Button } from '@/ui/primitives/Button';
 import { PageHeader } from '@/ui/primitives/PageHeader';
+import { TodayCopilotDrawer } from '@/ui/today/TodayCopilotDrawer';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 
@@ -126,6 +127,7 @@ export default function TodayPage() {
         eyebrow={`TODAY · ${new Date().toISOString().slice(0, 10)} · phase 1c`}
         sub="昨晚 Dreaming agent 跑过；下面是它想让你看的几件事，再加你自己排的复习队列。"
       >
+        <TodayCopilotDrawer />
         <Button variant="secondary" icon="refresh" onClick={() => queryClient.invalidateQueries()}>
           刷新
         </Button>
@@ -406,6 +408,7 @@ const KIND_TO_GROUP: Record<AiProposalKindT, keyof ProposalGroups> = {
   learning_item: 'learning',
   completion: 'learning',
   relearn: 'learning',
+  defer: 'learning',
   record_links: 'learning',
   record_promotion: 'learning',
   archive: 'learning',

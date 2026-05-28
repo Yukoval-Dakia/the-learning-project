@@ -4,8 +4,8 @@
 > 这里记的是 **项目走到了哪、下一站去哪、为什么这么走**，不是 commit log。
 > 维护规则：每完成一个 Phase 就 update 一次；不维护周度进度。
 
-**最后更新**：2026-05-28（**Wave 4 ship + closeout** —— PR merged as `d99c3bb1` to origin/main：YUK-93 T-88 P3 AI pipeline rewrite + YUK-114 T-DR Dreaming lane。Full gate post-merge 全绿：typecheck / lint / audit:schema / audit:partition / audit:profile / `pnpm test` 1052 + 11 migration / `pnpm build`。Drift audit 报告 [`docs/audit/2026-05-28-wave4-closeout-drift.md`](../audit/2026-05-28-wave4-closeout-drift.md)：0 contradicted / 2 undocumented (NoteVerificationIssue `section_id` half-migration) / 2 phase-deferred）
-**当前 Phase**：Wave 4（master roadmap §5.1）✅ closeout 完成。下一站：**Wave 5** —— Drawer `/today` MVP (T-D3) + Phase 3 Global Coach Orchestrator (T-D6)，~32 pts，Layer 8 vision 兑现起点。详见 [`plans/2026-05-27-master-roadmap.md`](plans/2026-05-27-master-roadmap.md) §5.1 Wave 5。
+**最后更新**：2026-05-28（**Wave 5 in flight** —— 单 PR 覆盖 T-D6 全 4 lane（A/B/C/D）+ T-D3 全 4 lane（A/B/C/D）：YUK-116 / YUK-117 / YUK-118 / YUK-119 / YUK-120 / YUK-121 / YUK-122 / YUK-123 / YUK-124 / YUK-125。Wave 4 PR `d99c3bb1` 已合 origin/main：YUK-93 T-88 P3 + YUK-114 T-DR。Wave 4 drift audit [`docs/audit/2026-05-28-wave4-closeout-drift.md`](../audit/2026-05-28-wave4-closeout-drift.md)：0 contradicted / 2 undocumented / 2 phase-deferred）
+**当前 Phase**：Wave 5（master roadmap §5.1）—— 实现中。T-D6 Phase 3 Global Coach Orchestrator（CoachTask + coach_daily / coach_weekly cron + 2 个新 propose tool: propose_learning_item_defer / propose_learning_item_archive + COACH allowlist 扩展 propose_knowledge_mutation）+ T-D3 Copilot Drawer MVP（CopilotDrawer / ToolUseCard 三段式 primitives + `/today` 30s dwell + summary endpoint + CopilotTask chat with 两面路由 chat ↔ chip-direct-trigger）。详见 [`plans/2026-05-29-wave5-ready-to-launch.md`](plans/2026-05-29-wave5-ready-to-launch.md) + [`plans/2026-05-27-master-roadmap.md`](plans/2026-05-27-master-roadmap.md) §5.1 Wave 5。
 **主分支**：`main` 已推 `origin`
 **路线图源**：[`docs/planning/v0.3-generalized-ai-learning-framework.md`](../planning/v0.3-generalized-ai-learning-framework.md) §1.5 是当前执行清单；root `PLANNING.md` v0.12 Phase 1-4 已标 historical
 

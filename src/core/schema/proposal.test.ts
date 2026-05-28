@@ -75,6 +75,16 @@ describe('AiProposalPayload', () => {
         target: { subject_kind: 'knowledge', subject_id: 'k1' },
         proposed_change: { knowledge_id: 'k1', priority: 'high' },
       },
+      defer: {
+        ...base,
+        kind: 'defer',
+        target: { subject_kind: 'learning_item', subject_id: 'item_2' },
+        proposed_change: {
+          learning_item_id: 'item_2',
+          defer_until: '2026-06-15T00:00:00.000Z',
+          reason: 'low energy this week',
+        },
+      },
       record_links: {
         ...base,
         kind: 'record_links',

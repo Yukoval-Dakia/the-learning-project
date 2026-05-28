@@ -3,6 +3,8 @@ import { registerMemoryHandlers } from '@/server/memory/triggers';
 import { getR2 } from '@/server/r2';
 import type { PgBoss } from 'pg-boss';
 import { buildAttributionFollowupHandler } from './handlers/attribution_followup';
+import { buildCoachDailyHandler } from './handlers/coach_daily';
+import { buildCoachWeeklyHandler } from './handlers/coach_weekly';
 import { buildDreamingNightlyHandler } from './handlers/dreaming_nightly';
 import { buildEchoHandler } from './handlers/echo';
 import { buildEmbeddedCheckGenerateHandler } from './handlers/embedded_check_generate';
@@ -69,6 +71,26 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     buildDreamingNightlyHandler(db),
   );
   await boss.schedule('dreaming_nightly', '15 3 * * *', {}, { tz: 'Asia/Shanghai' });
+
+  // Wave 5 / T-D6/B (YUK-119): coach_daily + coach_weekly.
+  // coach_daily runs nightly at BJT 04:00, 45 min after dreaming_nightly
+  // (15 3 * * *) to avoid IO storm with prune_*. coach_weekly runs Sunday
+  // BJT 04:30 to produce the weekly_reflection slot in TodayPlan.
+  await boss.createQueue('coach_daily');
+  await boss.work(
+    'coach_daily',
+    { pollingIntervalSeconds: 2, batchSize: 1 },
+    buildCoachDailyHandler(db),
+  );
+  await boss.schedule('coach_daily', '0 4 * * *', {}, { tz: 'Asia/Shanghai' });
+
+  await boss.createQueue('coach_weekly');
+  await boss.work(
+    'coach_weekly',
+    { pollingIntervalSeconds: 2, batchSize: 1 },
+    buildCoachWeeklyHandler(db),
+  );
+  await boss.schedule('coach_weekly', '30 4 * * 0', {}, { tz: 'Asia/Shanghai' });
 
   // ADR-0013: abandon review sessions stuck in 'started' >6h (sendBeacon
   // fallback when normal close didn't fire). BJT 04:15 after prune_job_events.
