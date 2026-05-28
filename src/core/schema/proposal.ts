@@ -9,6 +9,8 @@ export const aiProposalKinds = [
   'variant_question',
   'completion',
   'relearn',
+  'record_links',
+  'record_promotion',
   'archive',
   'judge_retraction',
 ] as const;
@@ -86,6 +88,16 @@ export const AiProposalPayload = z.discriminatedUnion('kind', [
   }),
   BaseProposal.extend({
     kind: z.literal('relearn'),
+    proposed_change: NonEmptyObject,
+  }),
+  BaseProposal.extend({
+    kind: z.literal('record_links'),
+    target: ProposalTarget.extend({ subject_kind: z.literal('record') }),
+    proposed_change: NonEmptyObject,
+  }),
+  BaseProposal.extend({
+    kind: z.literal('record_promotion'),
+    target: ProposalTarget.extend({ subject_kind: z.literal('record') }),
     proposed_change: NonEmptyObject,
   }),
   BaseProposal.extend({

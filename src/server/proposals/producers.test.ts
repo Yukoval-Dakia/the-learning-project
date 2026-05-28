@@ -18,7 +18,7 @@ describe('proposal producer helpers', () => {
     await resetDb();
   });
 
-  it('writes the remaining seven proposal kinds through the shared inbox reader', async () => {
+  it('writes the remaining seven producer-backed proposal kinds through the shared inbox reader', async () => {
     const db = testDb();
     await writeVariantQuestionProposal(db, {
       source_question_id: 'q1',

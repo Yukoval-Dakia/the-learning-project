@@ -4,8 +4,8 @@
 > 这里记的是 **项目走到了哪、下一站去哪、为什么这么走**，不是 commit log。
 > 维护规则：每完成一个 Phase 就 update 一次；不维护周度进度。
 
-**最后更新**：2026-05-27（**Wave 2 implementation complete** —— YUK-88 P1 schema + ADR-0020、YUK-88 P2-basic TipTap block-tree editor + ADR-0022、Foundation D M2 10 read tools 全部落地；验证含 typecheck / lint / targeted DB + MCP bridge 回归）
-**当前 Phase**：Wave 2（master roadmap §5.1）✅ implementation complete；下一站候选：Wave 3 DomainTool propose tools / YUK-88 P3+P4 准备。**Open architectural follow-up**：[YUK-101](https://linear.app/yukoval-studios/issue/YUK-101) transactional outbox for `writeEvent` → memory event ingest（iter2 PR 只是 band-aid，真正 outbox 重写未做）。详见 [`plans/2026-05-27-master-roadmap.md`](plans/2026-05-27-master-roadmap.md) §5.1。
+**最后更新**：2026-05-28（**Wave 3 T-D4 ship** —— PR #170 实装 DomainTool propose/write full 8；YUK-108..112 全 lane closeout；Wave 4 T-DR // YUK-88 P3 可进入准备）
+**当前 Phase**：Wave 3（master roadmap §5.1）✅ T-D4 implementation complete；下一站：Wave 4 T-DR // YUK-88 P3 并行准备。详见 [`plans/2026-05-28-wave3-ready-to-launch.md`](plans/2026-05-28-wave3-ready-to-launch.md)。
 **主分支**：`main` 已推 `origin`
 **路线图源**：[`docs/planning/v0.3-generalized-ai-learning-framework.md`](../planning/v0.3-generalized-ai-learning-framework.md) §1.5 是当前执行清单；root `PLANNING.md` v0.12 Phase 1-4 已标 historical
 
@@ -89,7 +89,7 @@ Conclusion: Foundation B schema extension and math profile were introduced in th
 ✅  experimental:tool_use event mirror        ToolUseExperimental schema enforced; policy resolver + caller introspection (YUK-82)
 ✅  remaining 10 read tools                   M2 — graph / records / question / review_due / learning_item / memory_brief readers (YUK-102)
 ⬜  Copilot drawer MVP                        M3
-⬜  propose / write DomainTools               M4
+✅  propose / write DomainTools               M4 — Wave 3 T-D4 shipped in PR #170 (YUK-107..112)
 ⬜  Phase 3 Global Coach Orchestrator         M5
 ⬜  experimental:tool_use → KnownEvent promote M6 (after 3 tools × 2 weeks stable)
 ```
@@ -118,6 +118,21 @@ Wave 1 closeout doc：[`plans/2026-05-27-wave1-ready-to-launch.md`](plans/2026-0
 ```
 
 T-D2 landed `get_subject_graph_overview`, `query_knowledge`, `expand_knowledge_subgraph`, `find_knowledge_paths`, `query_records`, `get_record_context`, `get_question_context`, `get_review_due`, `get_learning_item_context`, and `query_memory_brief` in `src/server/ai/tools/{knowledge-readers,context-readers}.ts`, covered by DB + MCP bridge regression tests.
+
+### Wave 3 — DomainTool propose/write tools（shipped 2026-05-28）
+
+```text
+✅  T-D4 M4 milestone shipped                          YUK-107 parent + YUK-108/YUK-109/YUK-110/YUK-111/YUK-112 lanes
+✅  YUK-108 graph proposal tools                       propose_knowledge_edge + propose_knowledge_mutation
+✅  YUK-109 mistake attribution + variant action tools  attribute_mistake + propose_variant
+✅  YUK-110 learning item proposal tools                propose_learning_item_completion + propose_learning_item_relearn
+✅  YUK-111 record link/promotion proposal tools        propose_record_links + propose_record_promotion
+✅  YUK-112 T-D4 closeout                               allowlist policy + docs/status/roadmap + Wave gate evidence
+```
+
+Implementation anchor：`src/server/ai/tools/proposal-tools.ts` registers 8 proposal/action DomainTools through `src/server/ai/tools/bootstrap.ts`; `src/server/ai/tools/allowlists.ts` pins the spec task/surface allowlist matrix; proposal schema/UI were extended for `record_links` and `record_promotion`.
+
+Validation anchor：proposal DB tests, registry/MCP/allowlist unit tests, proposal writer/inbox/accept regressions, `pnpm typecheck`, and Wave closeout audits. T-D4 driver：[`plans/2026-05-28-td4-propose-write-tools-driver.md`](plans/2026-05-28-td4-propose-write-tools-driver.md)。
 
 ### Foundation C — Judge Result Contract + Correction Event（ADR-0014 §4/§6）
 

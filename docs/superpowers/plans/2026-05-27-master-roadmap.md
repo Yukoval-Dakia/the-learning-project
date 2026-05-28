@@ -32,7 +32,7 @@
 | Doc / Infra 债 | P4.1-4.13 sweep；status.md / ADR / modules 一致 |
 | Audit | `/audit-drift` 全绿 |
 
-### 0.3 当前快照（2026-05-27 EOD post-Wave 1）
+### 0.3 当前快照（2026-05-28 post-Wave 3 / Wave 4 prep）
 
 **Shipped (从 status.md §1 + 2026-05-{20..27} commit log)**：
 - Foundation A/B/C 全完，含 math + physics acid test ✓ framework diff = 0
@@ -47,15 +47,20 @@
   - T-88 P0 spike (YUK-90) — TipTap block tree fixture + split/merge/mark_wrong invariant 全过（PR #162）
   - Wave 1 closeout (YUK-99 brief writer event ingest wire + env doc / YUK-100 RatingAdvisor cause SoT)：PR #163 + #165 (squash) merged
 - **F-04 audit baseline split**：`src/server/memory/` 目录已 ship；`src/server/dreaming/` 仍 open，归 T-DR，不在 T-37 closeout 中关闭
+- **Wave 2 ship ✅（2026-05-27）**：
+  - T-88 P1 schema + ADR-0020 block-tree contract (YUK-91)
+  - T-88 P2-basic TipTap block-tree editor + ADR-0022 (YUK-92)
+  - T-D2 DomainTool M2 read tools full coverage (YUK-102)
+  - PR #169 merged to `main` at `709152e6`
+- **YUK-101 outbox follow-up ✅**：transactional outbox landed through PR #168 / commit `72d77555`; no longer blocks Wave 3 prep
 
 **In-flight / open**：
-- **YUK-101** Transactional outbox for `writeEvent` → memory event ingest（Wave 1 post-ship code-review 发现 architectural follow-up；iter2 PR #165 是 band-aids，**真正 outbox 重写未做**）— priority **High**，进 Wave 2 buffer 或独立处理
-- YUK-88 planning：post-grill spec + ADR-0020 + 4 driver docs；Wave 2 启动后进 P1 schema phase
-- Wave 2 待启动（用户 retrospective 拍板后）：T-88 P1 schema + P2-basic editor + T-D2 read tools，~46pt / ~10 周
+- **Wave 3 shipped**：T-D4 propose/write tools full through PR #170 (YUK-107 parent + YUK-108..112 lanes)；8 个 DomainTool proposal/action surface + allowlist policy + proposal schema/UI coverage landed
+- YUK-88 next prep：P3/P4 can now consume the frozen DomainTool registry surface in Wave 4
 
 **Audit baseline ack（per `docs/audit/2026-05-27-pre-yuk88-baseline-drift.md`, 2026-05-27）**：
 - **F-01** notes.md 整篇 ADR-0020 冲突 → YUK-88 P3 收尾前必须 rewrite（拆 YUK-{TBD-1}；不阻塞 Wave 2）
-- **F-02 / F-03** artifact 表 / `CorrectArtifactEvent.payload.section_id` pre-ADR-0020 形态 → YUK-88 P1 phase 范围内 resolve（Wave 2 内）
+- **F-02 / F-03** artifact 表 / `CorrectArtifactEvent.payload.section_id` pre-ADR-0020 形态 → resolved by Wave 2 YUK-91/YUK-92 body-block migration
 - **F-04a** ✅ resolved by T-37 (`src/server/memory/` ship)；**F-04b** 🟡 still open until T-DR ships `src/server/dreaming/`
 
 **Critical 缺位（按 v0.4 §6）**：
@@ -133,16 +138,16 @@ ls -lt docs/audit/*drift* 2>/dev/null | head -3
 
 | Track | Status | pts 剩 | forward-locks | blocked-by | Linear |
 |---|---|---|---|---|---|
-| **YUK-101** Transactional outbox for `writeEvent` → memory event ingest | 🟡 follow-up open | TBD | Memory ingest transactional integrity | Wave 1 closeout surfaced orphan-job risk | [YUK-101](https://linear.app/yukoval-studios/issue/YUK-101) |
+| **YUK-101** Transactional outbox for `writeEvent` → memory event ingest | ✅ shipped | — | Memory ingest transactional integrity | Wave 1 closeout surfaced orphan-job risk | [YUK-101](https://linear.app/yukoval-studios/issue/YUK-101) |
 | **T-88** Block-Tree Note Rebuild (YUK-88) | 🟡 planning done | 61 | Layer 5 完全体 + Living Note v0 | (none) | [YUK-88](https://linear.app/yukoval-studios/issue/YUK-88) + YUK-90~97 |
 
 ### 2.3 ⬜ P0 — Critical (阻塞 first-class AI actor 承诺)
 
 | Track | Status | pts | forward-locks | blocked-by | Linear |
 |---|---|---|---|---|---|
-| **T-D2** DomainTool Registry M2 (10 read tools 补完) | ⬜ | ~25 | Drawer / Dreaming / Coach 三条全 | M1 ship ✓ | ⬜ 待建 |
+| **T-D2** DomainTool Registry M2 (10 read tools 补完) | ✅ shipped | ~25 | Drawer / Dreaming / Coach 三条全 | M1 ship ✓ | [YUK-102](https://linear.app/yukoval-studios/issue/YUK-102) + YUK-103~106 |
 | **T-D3** Copilot Drawer MVP (1 route 试点) | ⬜ | ~13 | Drawer 全 6 routes 铺开 | T-D2 (≥6 read tools) | ⬜ 待建 |
-| **T-D4** DomainTool Propose/Write Tools (8 个) | ⬜ | ~24 | Dreaming + Coach proposal 写入 | T-D2 done | ⬜ 待建 |
+| **T-D4** DomainTool Propose/Write Tools (8 个) | ✅ shipped | ~24 | Dreaming + Coach proposal 写入 | T-D2 done ✓ | [YUK-107](https://linear.app/yukoval-studios/issue/YUK-107) + YUK-108~112 |
 | **T-D5** Drawer 跨 6 routes 常驻 | ⬜ | ~13 | Layer 8 用户级兑现 | T-D3 试点验证 | ⬜ 待建 |
 | **T-D6** Phase 3 Global Coach Orchestrator | ⬜ | ~15 | Layer 8 自动产出"今日安排" | T-D2 + T-DR (Dreaming) | ⬜ 待建 |
 | **T-D7** `experimental:tool_use` promote to KnownEvent | ⬜ | ~3 | ADR-0011 后续修订 | 3 tool stable + 2 周 | ⬜ 待建 |
@@ -428,10 +433,10 @@ T-FF fixtures ────→ blocks Eval / acceptance test 自动化
 | T-RA RatingAdvisor | 3 | B | ✅ ship (PR #160 → main aaa534c7) |
 | T-66 ask_check artifact | 5 | B | ✅ ship (PR #161 → main c3204469) |
 | Wave 1 closeout YUK-99 / YUK-100 | — | — | ✅ ship (PR #163 → squash f1d5d9d2) |
-| Iter2 post-ship 13 findings (YUK-101 band-aids) | — | — | ✅ ship (PR #165 → squash d4d68864)；真正 outbox 重写 follow-up 仍 open |
+| Iter2 post-ship 13 findings (YUK-101 band-aids) | — | — | ✅ ship (PR #165 → squash d4d68864)；true outbox follow-up later shipped via PR #168 / `72d77555` |
 
 **实际**：~17 pts shipped。出口实现：T-37 ✓ unblocks T-DR + query_memory_brief；T-88 P0 spike ✓ 验证 split/merge/mark_wrong/idle 4 invariants；Track-1 follow-up phase **关 phase**。
-**Open follow-up**：YUK-101 transactional outbox (architectural rewrite，进 Wave 2 buffer 或独立 mini-wave 处理)。
+**Follow-up resolved**：YUK-101 transactional outbox architectural rewrite shipped before Wave 3 prep。
 
 #### Wave 2 (~10 周) — Schema + Editor basic + DomainTool M2
 
@@ -443,6 +448,7 @@ T-FF fixtures ────→ blocks Eval / acceptance test 自动化
 | T-PD doc sweep gap-filler | ~4 | (任 worktree gap) |
 
 **预期**：~46 pts，~9-10 周。出口：YUK-88 编辑器 basic ship（用户可编辑无 UX hole）；Layer 8 read tools 全 ship；ADR-0022 draft（基于 basic 验证）。
+**实际**：PR #169 merged 2026-05-27，YUK-91 / YUK-92 / YUK-102 全部 ship；Wave 3 prep 从 `origin/main@709152e6` 起跑。
 
 #### Wave 3 (~5 周) — Propose tools 集中 ship（registry 冻结准备期）
 
@@ -452,6 +458,8 @@ T-FF fixtures ────→ blocks Eval / acceptance test 自动化
 | T-PD doc sweep gap-filler | ~3 | A |
 
 **预期**：~27 pts，~4-5 周。出口：DomainTool 21 个全 ship；registry.ts 锁定；为 Wave 4 T-DR // T-88 P3 并行扫清 conflict。
+**实际**：PR #170 ships T-D4 full 8 tools (`propose_knowledge_edge`, `propose_knowledge_mutation`, `attribute_mistake`, `propose_variant`, `propose_learning_item_completion`, `propose_learning_item_relearn`, `propose_record_links`, `propose_record_promotion`), plus `src/server/ai/tools/allowlists.ts` for the spec task/surface matrix. Linear：YUK-107 parent + YUK-108..112 lanes。
+**Ready doc / closeout**：[`2026-05-28-wave3-ready-to-launch.md`](2026-05-28-wave3-ready-to-launch.md)。**Driver**：[`2026-05-28-td4-propose-write-tools-driver.md`](2026-05-28-td4-propose-write-tools-driver.md)。
 
 #### Wave 4 (~6 周) — T-DR // T-88 P3 并行（critical path 双线）
 
@@ -805,12 +813,12 @@ worktrees/
 - **Status**：✅ implementation complete 2026-05-27
 - **pts**：~25
 - **Estimate**：6-8 周
-- **Driver doc**：本 card + Foundation D audit；standalone driver doc deferred
+- **Driver doc**：[`docs/superpowers/plans/2026-05-27-td2-read-tools-driver.md`](2026-05-27-td2-read-tools-driver.md) was the lane driver during Wave 2; implementation shipped in PR #169
 - **Source spec**：`docs/superpowers/specs/2026-05-17-agent-context-tools-design.md` §Engineering Sequence step 5-6
 - **Tools (10 个)**：`get_subject_graph_overview` / `query_knowledge` / `expand_knowledge_subgraph` / `find_knowledge_paths` / `query_records` / `get_record_context` / `get_question_context` / `get_review_due` / `get_learning_item_context` / `query_memory_brief`（最后一个等 T-37）
 - **Forward-locks**：T-D3 / T-DR / T-D6 / T-OC unblocked for read-context usage
 - **Blocked-by**：M1 ✓
-- **Linear**：YUK-102 branch/commit marker；可后续拆 proposal/write M4 sub-issues
+- **Linear**：YUK-102 Done; proposal/write M4 split into YUK-107 parent + YUK-108..112 lanes
 
 ### Card T-DR — Dreaming Lane
 

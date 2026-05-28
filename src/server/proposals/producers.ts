@@ -11,6 +11,7 @@ interface CommonProducerInput {
   id?: string;
   reason_md: string;
   evidence_refs?: ProposalEvidenceRefT[];
+  caused_by_event_id?: string | null;
   task_run_id?: string | null;
   cost_usd?: number;
   created_at?: Date;
@@ -251,6 +252,7 @@ export async function writeArchiveProposal(
     },
     event_override: input.legacy_event_override,
     task_run_id: input.task_run_id ?? null,
+    caused_by_event_id: input.caused_by_event_id ?? null,
     cost_usd: input.cost_usd,
     created_at: input.created_at,
   });
