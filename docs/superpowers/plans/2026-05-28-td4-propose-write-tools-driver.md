@@ -4,10 +4,10 @@
 
 ## Context
 
-**Project**: Foundation D — Copilot Orchestrator + DomainTool Registry  
-**Milestone**: M4 — DomainTool propose/write tools full coverage  
-**Parent issue**: YUK-107  
-**Depends on**: YUK-102 / PR #169 (M2 read tools)  
+**Project**: Foundation D — Copilot Orchestrator + DomainTool Registry
+**Milestone**: M4 — DomainTool propose/write tools full coverage
+**Parent issue**: YUK-107
+**Depends on**: YUK-102 / PR #169 (M2 read tools)
 **Wave doc**: `docs/superpowers/plans/2026-05-28-wave3-ready-to-launch.md`
 
 Source contracts:
