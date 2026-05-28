@@ -7,6 +7,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import type { Job } from 'pg-boss';
 
+import { type TodayPlanT, parseTodayPlan } from '@/core/schema/coach';
 import type { Db } from '@/db/client';
 import { type RunTaskResult, runAgentTask } from '@/server/ai/runner';
 import {
@@ -155,6 +156,15 @@ export async function runCoach(
     const pendingAfter = afterRows.filter((row) => row.status === 'pending').length;
     const proposalsCreated = afterRows.filter((row) => !beforeIds.has(row.id)).length;
 
+    // Parse the CoachTask's TodayPlan JSON out of `taskResult.text`. The
+    // `/api/today/copilot-summary` reader looks for `payload.daily_focus`
+    // (and `payload.today_plan.daily_focus`) on the latest
+    // `experimental:coach_scan` event — so we need to persist the plan here
+    // for the drawer summary slot to render Coach's actual output. If the
+    // model returned non-JSON or schema-invalid output, fall through to the
+    // placeholder copy (copilot-summary handles the null/missing case).
+    const todayPlan = parseCoachOutputSafely(taskResult.text);
+
     await write(db, {
       id: `coach_scan_${createId()}`,
       actor_kind: 'agent',
@@ -168,6 +178,9 @@ export async function runCoach(
         proposals_created: proposalsCreated,
         pending_after: pendingAfter,
         tool_context_task_run_id: toolContextTaskRunId,
+        ...(todayPlan
+          ? { today_plan: todayPlan, daily_focus: todayPlan.daily_focus }
+          : { today_plan: null, plan_parse_error: true }),
       },
       caused_by_event_id: triggerEventId,
       task_run_id: taskResult.task_run_id,
@@ -202,6 +215,32 @@ export async function runCoach(
     });
     throw err;
   }
+}
+
+/**
+ * Best-effort `TodayPlan` parse from a CoachTask raw text result. CoachTask's
+ * registered prompt asks the model to emit a single JSON object matching the
+ * `TodayPlan` schema, but live models sometimes wrap it in prose, code fences,
+ * or partial JSON. We try a clean parse first, then a fenced-code extraction,
+ * and finally return `null` so the downstream reader can fall back to the
+ * placeholder copy instead of crashing the cron run.
+ */
+export function parseCoachOutputSafely(rawText: string): TodayPlanT | null {
+  if (!rawText) return null;
+  const candidates: string[] = [rawText];
+  const fenceMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch?.[1]) candidates.unshift(fenceMatch[1]);
+  for (const candidate of candidates) {
+    const trimmed = candidate.trim();
+    if (!trimmed) continue;
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      return parseTodayPlan(parsed);
+    } catch {
+      // Try the next candidate; final return below handles total failure.
+    }
+  }
+  return null;
 }
 
 export function buildCoachDailyHandler(

@@ -487,7 +487,7 @@ T-FF fixtures ────→ blocks Eval / acceptance test 自动化
 
 **实现快照 (2026-05-28，single-PR wave)：**
 - T-D6/A (YUK-118): CoachTask + TodayPlan schema (`src/core/schema/coach.ts`) + registry/prompt (mimo-v2.5-pro default + mimo-v2.5 fallback)
-- T-D6/B (YUK-119): coach_daily ("45 3 * * *" — 30 min after dreaming_nightly, 15 min before prune_job_events) + coach_weekly ("30 4 * * 0") pg-boss handlers + `experimental:trigger_coach_scan` / `experimental:coach_scan` events
+- T-D6/B (YUK-119): coach_daily (`45 3 * * *` — 30 min after dreaming_nightly, 15 min before prune_job_events) + coach_weekly (`30 4 * * 0`) pg-boss handlers + `experimental:trigger_coach_scan` / `experimental:coach_scan` events
 - T-D6/C (YUK-120): propose_learning_item_defer + propose_learning_item_archive tools；COACH allowlist +propose_knowledge_mutation；新增 `'defer'` proposal kind
 - T-D3/A (YUK-122): `<CopilotDrawer>` 通用 slide-out + `<ToolUseCard>` 三段式 + tweaks (chainRowCost / toolUseDetail) + 6 个 fixture
 - T-D3/B (YUK-123): `/today` 30s dwell hook + `GET /api/today/copilot-summary` (coach scan + dreaming preview + pending totals)

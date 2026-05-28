@@ -25,6 +25,8 @@ interface DreamingPreviewRow {
 interface CopilotSummary {
   daily_focus: string;
   plan_adjustments_count: number | null;
+  review_due_count: number;
+  brief_global_md: string | null;
   dreaming_preview: DreamingPreviewRow[];
   pending_proposals_total: number;
   coach_last_run_at: string | null;
@@ -57,10 +59,28 @@ export function TodayCopilotDrawer() {
         title="Copilot · 今日"
         summary={
           summaryQ.data ? (
+            // 4-slot order per Wave 5 ready-to-launch lock §Human decision
+            // points: Coach focus → review_due → brief → dreaming → footer.
             <div className="flex flex-col gap-[6px]">
               <p className="text-[13px] text-[var(--ink)] leading-[1.55]">
                 {summaryQ.data.daily_focus}
               </p>
+              {summaryQ.data.review_due_count > 0 ? (
+                <p
+                  className="text-[12.5px] text-[var(--ink-2)]"
+                  data-testid="copilot-summary-review-due"
+                >
+                  今日待复习 <strong>{summaryQ.data.review_due_count}</strong> 题
+                </p>
+              ) : null}
+              {summaryQ.data.brief_global_md ? (
+                <p
+                  className="text-[12px] text-[var(--ink-3)] italic leading-[1.5]"
+                  data-testid="copilot-summary-brief-global"
+                >
+                  {summaryQ.data.brief_global_md}
+                </p>
+              ) : null}
               {summaryQ.data.dreaming_preview.length > 0 ? (
                 <ul className="list-disc list-inside text-[12.5px] text-[var(--ink-2)]">
                   {summaryQ.data.dreaming_preview.map((row) => (

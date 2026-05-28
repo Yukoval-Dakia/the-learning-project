@@ -716,7 +716,11 @@ const GetReviewDueOutputSchema = z.object({
 type GetReviewDueInput = z.infer<typeof GetReviewDueInputSchema>;
 type GetReviewDueOutput = z.infer<typeof GetReviewDueOutputSchema>;
 
-async function executeGetReviewDue(
+// Exported so non-LLM read paths (e.g. /api/today/copilot-summary in Wave 5)
+// can reuse the exact predicate without duplicating SQL. Pass a minimal
+// ToolContext (`{ db, taskRunId: 'system', callerActor: ... }`) when calling
+// from a non-MCP surface; no events are written by this function.
+export async function executeGetReviewDue(
   ctx: ToolContext,
   raw: GetReviewDueInput,
 ): Promise<GetReviewDueOutput> {
@@ -1070,7 +1074,10 @@ const MemoryBriefOutputSchema = z.object({
 type MemoryBriefInput = z.infer<typeof MemoryBriefInputSchema>;
 type MemoryBriefOutput = z.infer<typeof MemoryBriefOutputSchema>;
 
-async function executeMemoryBrief(
+// Exported alongside `executeGetReviewDue` so the Copilot Drawer summary
+// (Wave 5 / T-D3/B) can read the memory_brief_note row directly without
+// mirroring the SQL or going through the MCP bridge. No event side effects.
+export async function executeMemoryBrief(
   ctx: ToolContext,
   raw: MemoryBriefInput,
 ): Promise<MemoryBriefOutput> {
