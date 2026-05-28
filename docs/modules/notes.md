@@ -14,17 +14,17 @@ Tool 互动型分支当前唯一实例是 `tool_quiz`（见 [`quiz.md`](quiz.md)
 
 ## 0. 实施现状（2026-05-28）
 
-> Note 链路已有 MVP：Learning Intent 可以创建 hub/atomic LearningItem 与配套 artifact，pg-boss `note_generate` 会异步填充 atomic body blocks；`note_verify` 已做二次检查；verified atomic note 会生成 embedded check。`NoteRefineTask`（patch-op based）正在 Lane 1（T-88 P4-A / YUK-127）落地。Living-note proposal 走 `AiProposal(kind='note_update')`（[`src/core/schema/proposal.ts`](../../src/core/schema/proposal.ts)）。
+> Note 链路已有 MVP：Learning Intent 可以创建 hub/atomic LearningItem 与配套 artifact，pg-boss `note_generate` 会异步填充 atomic body blocks；`note_verify` 已做二次检查；verified atomic note 会生成 embedded check。Wave 6 Living Note v0 已接入 `NoteRefineTask`：小 patch 走 mutator，超过阈值走 `AiProposal(kind='note_update')` 人工审批，编辑中 defer，idle/blur flush，并提供 AI 改动 timeline + undo。
 
 | 设计概念 | 现状 |
 |---|---|
 | `artifact` 表 | ✅ schema (`src/db/schema.ts` L290) 与 write path 已在 Learning Intent / note generation 路径启用；body 存 `body_blocks` (ProseMirror JSON), 而非 markdown 文件 |
 | `NoteGenerateTask` | ✅ registry 已有；pg-boss `note_generate` handler 填 atomic body blocks |
 | `NoteVerifyTask` | ✅ Pass-2 verify 把结果写 `artifact.verification_status` + `verification_summary` |
-| `NoteRefineTask` | 🟡 Lane 1 (T-88 P4-A / YUK-127) 进行中，输出 patch ops (`AiProposal(kind='note_update')`) |
+| `NoteRefineTask` | ✅ Wave 6 / T-88 P4：输出 patch ops；`≤3 ops && ≤2 new blocks` 自动 apply，其余写 `AiProposal(kind='note_update')` |
 | `note_hub` / `note_atomic` 类型 | ✅ artifact.type 二态 + `parent_artifact_id` 父子链 |
 | Hub ↔ LearningItem hub 1:1 / atomic ↔ LearningItem atomic 1:1 | ✅ Learning Intent accept 时同步 materialize |
-| TipTap 编辑器 | 🟡 ADR-0022 已锁 PM node schema；交互编辑器仍未上线（只读渲染） |
+| TipTap 编辑器 | ✅ ADR-0022 PM node schema + lazy editor；编辑中 heartbeat 防止 Living Note patch 打断用户 |
 | Embedded check（inline tool_quiz） | ✅ verified atomic note 后生成 1–3 题；attempt 走 `POST /api/embedded-check/attempt`；question 写 `source='embedded'` |
 | Grounding / source verification | ❌ sections 目前默认 `source_tier='llm_only'`、`user_verified=false`（Phase 2） |
 
@@ -37,7 +37,9 @@ Tool 互动型分支当前唯一实例是 `tool_quiz`（见 [`quiz.md`](quiz.md)
 - 错题归因发现缺口（AI propose："你似乎在 X 上有缺口，要生成笔记吗？"）
 - Dreaming 主动 propose
 
-当前已落地的是 `learning_intent` 来源：用户声明 topic → `LearningIntentOutlineTask` 产出 1 hub + N atomic outline → 用户 accept 后**同步创建 LearningItem 层级**与 `note_hub` / `note_atomic` artifact stubs → 入队 `NoteGenerateTask` 填 atomic sections。mistake / dreaming 来源仍是未来入口。
+当前已落地的是 `learning_intent` 来源：用户声明 topic → `LearningIntentOutlineTask` 产出 1 hub + N atomic outline → 用户 accept 后**同步创建 LearningItem 层级**与 `note_hub` / `note_atomic` artifact stubs → 入队 `NoteGenerateTask` 填 atomic sections。
+
+Living Note v0 的更新触发已接到同一个 `note_refine` 队列：artifact block `mark_wrong`、embedded check failure/error-rate、review mastery success（当 question 带 artifact `source_ref`）、editor dwell heartbeat、dreaming 新增 `note_update` 候选。每个触发器都有 `WAVE6_TRIGGER_*_ENABLED` kill switch；队列入口做 1h debounce，避免同一 artifact 被同类信号刷屏。
 
 ## 2. Hub + Atomic 双层结构
 
@@ -83,11 +85,11 @@ note_hub: 氧化还原反应
 
 | 信号 | AI 反应 |
 | --- | --- |
-| 在 atomic note A 上停留很久 | 标记为难点，下次复盘提一下 |
-| 在 A 对应知识点错题 | propose 更新 A 的 `pitfall` section |
+| 在 atomic note A 上停留很久 | `dwell` 触发 `note_refine`；默认小 patch 延后到用户 idle/blur 后 apply |
+| 在 A 对应知识点错题 | embedded failure / mark_wrong 触发 `note_refine`，小修自动 apply，大修进 proposal inbox |
 | 用户问"再举个例子" | 在 `example` section 追加，留版本 |
-| mastery 升高 | 自动生成 atomic note 的"精简复习版" |
-| embedded check 错误率持续 >50% | propose 重写整个 atomic（note 写错了的可能） |
+| mastery 升高 | `mastery_change` 触发精简/复盘向 patch 候选 |
+| embedded check 错误率持续 >50% | 大 patch 走 `AiProposal(kind='note_update')`，需用户审批 |
 
 这是相对静态笔记软件（Notion / Obsidian / Wikipedia）的护城河：内容跟随用户演化。
 

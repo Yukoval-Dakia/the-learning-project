@@ -32,6 +32,7 @@ import { FsrsRating } from '@/core/schema/business';
 import { JudgeResultV2, type JudgeResultV2T } from '@/core/schema/capability';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
+import { enqueueMasteryNoteRefine } from '@/server/artifacts/note-refine-triggers';
 import { writeEvent } from '@/server/events/queries';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { ApiError, errorResponse } from '@/server/http/errors';
@@ -316,6 +317,15 @@ export async function POST(req: Request): Promise<Response> {
     const finalResult = result!;
     // biome-ignore lint/style/noNonNullAssertion: assigned inside the txn
     const finalFsrsStateAfter = fsrsStateAfter!;
+
+    if (outcome === 'success' && q.source_ref) {
+      await enqueueMasteryNoteRefine({
+        db,
+        artifactId: q.source_ref,
+        questionId,
+        triggerEventId: eventId,
+      });
+    }
 
     // Response shape kept: review_event is now the event row (shape changed
     // but documented as opaque to clients).

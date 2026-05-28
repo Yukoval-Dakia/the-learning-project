@@ -816,6 +816,54 @@ ol {
   justify-content: flex-end;
 }
 
+.ai-change-strip {
+  margin: var(--s-4) 0 0;
+  padding: 14px 16px;
+  border: 1px solid rgba(79, 110, 142, 0.22);
+  border-radius: var(--r-2);
+  background: var(--info-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ai-change-strip-head,
+.ai-change-strip-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ai-change-strip-head {
+  justify-content: space-between;
+}
+.ai-change-strip-head > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.ai-change-strip h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 520;
+  color: var(--ink-2);
+}
+.ai-change-strip-row {
+  padding-top: 8px;
+  border-top: 1px solid rgba(79, 110, 142, 0.18);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.ai-change-strip-row a {
+  color: var(--info-ink);
+  text-decoration: none;
+}
+.ai-change-strip-row span {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
 .lanes {
   display: grid;
   grid-template-columns: 1.4fr 1fr 1fr;
@@ -2128,6 +2176,56 @@ ol {
 .block-tree-panel-actions {
   display: flex;
   justify-content: flex-end;
+}
+
+.ai-change-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(79, 110, 142, 0.22);
+  border-radius: var(--r-2);
+  background: var(--info-soft);
+}
+
+.ai-change-panel-head,
+.ai-change-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+.ai-change-panel-head {
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
+
+.ai-change-row {
+  padding-top: 8px;
+  border-top: 1px solid rgba(79, 110, 142, 0.18);
+}
+
+.ai-change-row > div {
+  flex: 1 1 260px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ai-change-row strong {
+  font-size: 13px;
+  font-weight: 560;
+  color: var(--ink-2);
+}
+
+.ai-change-row span {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
 }
 
 .block-tree-renderer .artifact-section-body p {
