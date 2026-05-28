@@ -21,7 +21,7 @@
 | StudyLog 5 kind | 🔴 废弃 | ADR-0015：无真实数据，已直接迁移到 `LearningRecord` |
 | LearningRecord 统一活动上下文 | ✅ 落地 | `learning_record` 表 (`src/db/schema.ts` L223)，7 个 kind，API `app/api/records/*` |
 | `memory_brief_note` 三段式画像 | ✅ schema 落地 (`src/db/schema.ts` L257)；Dreaming refresh 接 mem0 ingest (ADR-0017 / ADR-0021) | 三段：`recent_week_md` / `recent_months_md` / `long_term_md` |
-| 单题 timeline（`/api/questions/[id]/timeline`） | ✅ 落地 | 单 question 的 attempt + judge + review 事件链 |
+| 单题 timeline（`/api/questions/[id]/timeline`） | ✅ 落地 | 返回 attempt + review 事件链；judge cause hydrate 到 attempt |
 | 学习时间线视图（统一 auto event + LearningRecord） | 🟡 部分 | `/today` 与单题 timeline 已落，全局活动时间线 (cross-knowledge / cross-record) 仍 Phase 2 |
 | WeeklyReview Cron 跑批 | 🟡 Coach lane（`coach_weekly` boss handler）已 ship；advice route 在 `app/api/review/weekly` | 用户层"周复盘体验"仍在迭代 |
 | 按 cause 差异化复习权重 / mastery 衰减 | ❌ Phase 2 | 跑数据后才决定权重 |
@@ -30,7 +30,7 @@
 **当前可看进度的 UI**：
 - `/today` 主页 — Coach 摘要 + KPI strip + cost ribbon（`/api/today/copilot-summary` 接 cost_ledger + recent events）
 - `/coach` 页面 — Wave 5 落地的 coach 视图（PR #179）
-- `/inbox` — proposal inbox（AiProposal 14 kind 聚合视图）
+- `/inbox` — proposal inbox（AiProposal 13 kind 聚合视图）
 - `/knowledge/[id]` per-node mistake 列表
 - `/record` 统一录入入口 — 见 [`records.md`](records.md)
 - `/events/[id]` 单事件 chain 浏览 + `/api/questions/[id]/timeline` 单题事件链

@@ -151,7 +151,7 @@ event(action='propose', subject_kind='learning_item', actor_kind='agent')
 
 dreaming 夜间扫描写 `event(action='propose')`，payload 为 AiProposal `kind='completion'`：
 
-```
+```text
 event(action='propose', subject_kind='learning_item', subject_id=<learning_item_id>, actor_kind='agent')
   payload: AiProposal {
     kind: 'completion',
