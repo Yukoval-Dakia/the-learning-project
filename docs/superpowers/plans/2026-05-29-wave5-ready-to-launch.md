@@ -79,13 +79,15 @@ UI smoke (manual, pre-merge of T-D3/D)：
 
 Then run `/audit-drift`, update `docs/superpowers/status.md`, refresh master-roadmap §5.1 Wave 5 to "shipped" with PR refs, reconcile Linear states.
 
-## Human decision points
+## Human decision points (locked 2026-05-28)
 
-- **`/today` summary first paint 内容选型**：默认走 §Q3 决议 = summary-driven（drawer 自动浮今日 AI 建议）。但 summary 首屏数据源（brief 摘录 vs Coach 提议 vs review_due 列表）需要在 T-D3/B kickoff 前确认顺序。建议默认：今日主目标（来自 Coach `TodayPlan`） > 今日复习摘要（来自 `get_review_due`）> 一条 dreaming proposal（来自 inbox）。**Owner = user**（项目唯一决策人），**deadline = T-D3/B kickoff（M3 target 2026-06-26 倒推 ~2 周即 2026-06-12 前）**。Drawer summary endpoint 在该决策前用上述默认顺序实现，T-D3/D closeout 时校对最终顺序未变。
-- **CoachTask LLM 预算**：每天 1 次 daily + 每周 1 次 weekly = ~30 LLM 调用/月。按 xiaomi/mimo provider（Anthropic-compatible，CLAUDE.md 已 codify）的 Sonnet 等价价位 ~$0.02-0.05/call 估 < $1.5/月。若 budget 紧再考虑 model tier（Haiku 跑 daily，Sonnet 跑 weekly）。先按 Sonnet 全跑，观察 1 周后调。
-- **Coach 写 proposal 的 actor_ref**：`{ kind: 'agent', ref: 'coach' }` (新)。需要在 `proposal_signals` 或 `event` 的 actor_ref taxonomy 加一行（与 `dreaming` 同级）。这是 Wave 5 新引入的 actor，不复用 dreaming。
-- **YUK-115 (NoteVerificationIssue half-migration)**：Wave 4 drift 留下来的 follow-up。T-PD lane 优先级。Option A (完成 schema rename) vs Option B (ADR 加 erratum + 只修 UI type)；建议 A，1 pt。
-- **Drawer 跨 6 routes (T-D5)**：明确**不在本 wave**。T-D5 等 T-D3 试点 1-2 周稳定 + 用户反馈后再启，避免在 6 routes 上同时变动 UI 而无法回滚单点失败。
+All 5 points resolved before Wave 5 lane kickoff. Lane issues already synced.
+
+- **✅ `/today` summary first paint 内容选型** — **Locked: Coach > review_due > brief > dreaming**. Order: (1) Coach `TodayPlan.daily_focus`, (2) `get_review_due` 摘要, (3) `query_memory_brief(scope='global')` 首段, (4) 一条 dreaming proposal from inbox. T-D3/B implements this exact order; T-D3/D closeout audits unchanged. (§Q3 summary-driven default.)
+- **✅ CoachTask LLM model** — **Locked: `defaultModel: 'mimo-v2.5-pro'`, `fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }]`**. Matches project convention (registry.ts §所有非 vision task)：`mimo-v2.5-pro` 是 text-only 推理强 default，`mimo-v2.5` 是 multimodal fallback。CoachTask 无 vision 需求（读 brief / event / proposal 文本，输出 `TodayPlan` JSON），用 -pro 默认。每天 1 daily + 每周 1 weekly = ~30 calls/月。1 周后观察是否调。
+- **✅ Coach 写 proposal 的 actor_ref** — **Locked: `{ kind: 'agent', ref: 'coach' }`**（与 `dreaming` 同级，新 actor，不复用 dreaming）。T-D6/C 在 actor taxonomy 加这行。
+- **✅ YUK-115 (NoteVerificationIssue half-migration)** — **Locked: Option A (完成 schema rename, 1 pt)**。rename `NoteVerificationIssue.section_id` → `block_id`，sweep 所有 verifier 输出 + UI type call sites。T-PD lane 优先级，作为 Wave 5 gap-filler。
+- **✅ Drawer 跨 6 routes (T-D5)** — **Locked: NOT in Wave 5**。T-D5 等 T-D3 试点在 `/today` 跑 1-2 周稳定 + 用户反馈后再启 Wave 6+ scope。避免 6 routes 同时变 UI 而无法回滚单点失败。
 
 ## Final lane state (待 wave 跑完填写)
 
