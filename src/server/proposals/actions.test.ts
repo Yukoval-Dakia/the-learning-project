@@ -634,7 +634,9 @@ describe('learning_item proposal lifecycle', () => {
     await resetDb();
   });
 
-  async function seedLearningItemProposal(): Promise<{ proposalId: string }> {
+  async function seedLearningItemProposal(opts: { withLong?: boolean } = {}): Promise<{
+    proposalId: string;
+  }> {
     const db = testDb();
     // Seed wenyan topic graph: hub `k_hub_xc` 虚词 + two children for atomic outline.
     await db.insert(knowledge).values([
@@ -683,6 +685,15 @@ describe('learning_item proposal lifecycle', () => {
           { knowledge_id: 'k_zhi_xc', title: '之', one_line_intent: '区分「之」用法' },
           { knowledge_id: 'k_qi_xc', title: '其', one_line_intent: '区分「其」用法' },
         ],
+        longs: opts.withLong
+          ? [
+              {
+                knowledge_ids: ['k_zhi_xc', 'k_qi_xc'],
+                title: '之其综合',
+                one_line_intent: '能在同一段文言翻译里区分「之」「其」。',
+              },
+            ]
+          : [],
       }),
     }));
     const proposal = await planLearningIntent({ db, topic: '虚词', runTaskFn });
@@ -696,8 +707,10 @@ describe('learning_item proposal lifecycle', () => {
     if (result.kind !== 'learning_item') throw new Error('unexpected result kind');
     expect(result.hub_learning_item_id).toBeTruthy();
     expect(result.atomic_learning_item_ids).toHaveLength(2);
+    expect(result.long_learning_item_ids).toEqual([]);
     expect(result.hub_artifact_id).toBeTruthy();
     expect(result.atomic_artifact_ids).toHaveLength(2);
+    expect(result.long_artifact_ids).toEqual([]);
 
     const lis = await testDb()
       .select()
@@ -730,6 +743,25 @@ describe('learning_item proposal lifecycle', () => {
       .where(eq(proposal_signals.kind, 'learning_item'));
     expect(signals).toHaveLength(1);
     expect(signals[0]).toMatchObject({ accept_count: 1, dismiss_count: 0 });
+  });
+
+  it('accept returns long note materialization ids for learning_item proposals', async () => {
+    const { proposalId } = await seedLearningItemProposal({ withLong: true });
+    const result = await acceptAiProposal(testDb(), proposalId);
+    expect(result.kind).toBe('learning_item');
+    if (result.kind !== 'learning_item') throw new Error('unexpected result kind');
+
+    expect(result.atomic_artifact_ids).toHaveLength(2);
+    expect(result.long_learning_item_ids).toHaveLength(1);
+    expect(result.long_artifact_ids).toHaveLength(1);
+
+    const second = await acceptAiProposal(testDb(), proposalId);
+    expect(second).toMatchObject({
+      kind: 'learning_item',
+      idempotent: true,
+      long_learning_item_ids: result.long_learning_item_ids,
+      long_artifact_ids: result.long_artifact_ids,
+    });
   });
 
   it('dismiss writes a generic rate event without materializing learning_items', async () => {
@@ -810,8 +842,10 @@ describe('learning_item proposal lifecycle', () => {
       idempotent: true,
       hub_learning_item_id: first.hub_learning_item_id,
       atomic_learning_item_ids: first.atomic_learning_item_ids,
+      long_learning_item_ids: first.long_learning_item_ids,
       hub_artifact_id: first.hub_artifact_id,
       atomic_artifact_ids: first.atomic_artifact_ids,
+      long_artifact_ids: first.long_artifact_ids,
     });
 
     // Hub + atomics still exist exactly once.

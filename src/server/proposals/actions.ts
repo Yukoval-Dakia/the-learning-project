@@ -95,8 +95,10 @@ export interface LearningItemAcceptResult {
   rate_event_id: string;
   hub_learning_item_id: string;
   atomic_learning_item_ids: string[];
+  long_learning_item_ids: string[];
   hub_artifact_id: string;
   atomic_artifact_ids: string[];
+  long_artifact_ids: string[];
   root_knowledge_id: string;
   created_knowledge_ids: string[];
   idempotent?: boolean;
@@ -545,11 +547,11 @@ async function dispatchAccept(
 }
 
 /**
- * YUK-19 — learning_item accept materializes a 1-hub + N-atomic LearningItem
- * hierarchy + paired note artifacts through the existing acceptLearningIntent
- * owner service (Phase 2B). acceptLearningIntent writes its own rate event
- * inside the same transaction as the hierarchy/artifact inserts, so this
- * branch must not write a second rate event.
+ * YUK-19 / YUK-93 — learning_item accept materializes a 1-hub + child note
+ * LearningItem hierarchy + paired note artifacts through the existing
+ * acceptLearningIntent owner service (Phase 2B). acceptLearningIntent writes
+ * its own rate event inside the same transaction as the hierarchy/artifact
+ * inserts, so this branch must not write a second rate event.
  *
  * If the proposal already has an accept rate event (idempotency) we re-derive
  * the materialization result from the persisted rows. acceptLearningIntent's
@@ -617,8 +619,10 @@ async function acceptLearningItemProposal(
     rate_event_id: rateEventId,
     hub_learning_item_id: result.hub_learning_item_id,
     atomic_learning_item_ids: result.atomic_learning_item_ids,
+    long_learning_item_ids: result.long_learning_item_ids,
     hub_artifact_id: result.hub_artifact_id,
     atomic_artifact_ids: result.atomic_artifact_ids,
+    long_artifact_ids: result.long_artifact_ids,
     root_knowledge_id: result.root_knowledge_id,
     created_knowledge_ids: result.created_knowledge_ids,
   };
@@ -627,8 +631,8 @@ async function acceptLearningItemProposal(
 /**
  * Re-derive the LearningIntentMaterializeResult from persisted rows for the
  * idempotent return path. Hub is the row whose `parent_learning_item_id` is
- * null among the learning_items rooted at the proposal id; atomics are its
- * children. Artifacts mirror.
+ * null among the learning_items rooted at the proposal id; child note items are
+ * split by artifact type. Artifacts mirror.
  */
 async function summarizeLearningItemMaterialization(
   db: Db,
@@ -651,7 +655,7 @@ async function summarizeLearningItemMaterialization(
       500,
     );
   }
-  const atomics = liRows.filter((row) => row.id !== hub.id);
+  const childItems = liRows.filter((row) => row.id !== hub.id);
 
   const hubArtifactId = hub.primary_artifact_id ?? null;
   if (!hubArtifactId) {
@@ -670,15 +674,37 @@ async function summarizeLearningItemMaterialization(
     );
   }
 
-  const atomicArtifactIds = atomics
+  const childArtifactIds = childItems
     .map((row) => row.primary_artifact_id)
     .filter((id): id is string => Boolean(id));
+  const childArtifacts =
+    childArtifactIds.length > 0
+      ? await db
+          .select({ id: artifact.id, type: artifact.type })
+          .from(artifact)
+          .where(inArray(artifact.id, childArtifactIds))
+      : [];
+  const artifactTypeById = new Map(childArtifacts.map((row) => [row.id, row.type]));
+  const atomicItems = childItems.filter((row) => {
+    const artifactId = row.primary_artifact_id;
+    return !artifactId || artifactTypeById.get(artifactId) !== 'note_long';
+  });
+  const longItems = childItems.filter((row) => {
+    const artifactId = row.primary_artifact_id;
+    return artifactId ? artifactTypeById.get(artifactId) === 'note_long' : false;
+  });
 
   return {
     hub_learning_item_id: hub.id,
-    atomic_learning_item_ids: atomics.map((row) => row.id),
+    atomic_learning_item_ids: atomicItems.map((row) => row.id),
+    long_learning_item_ids: longItems.map((row) => row.id),
     hub_artifact_id: hubArtifactId,
-    atomic_artifact_ids: atomicArtifactIds,
+    atomic_artifact_ids: atomicItems
+      .map((row) => row.primary_artifact_id)
+      .filter((id): id is string => Boolean(id)),
+    long_artifact_ids: longItems
+      .map((row) => row.primary_artifact_id)
+      .filter((id): id is string => Boolean(id)),
     root_knowledge_id: rootKnowledgeId,
     created_knowledge_ids: [],
   };

@@ -31,15 +31,15 @@ export async function POST(_req: Request, { params }: RouteParams): Promise<Resp
       throw err;
     }
 
-    // Enqueue async note_generate jobs (one per atomic artifact). VITEST-gated
+    // Enqueue async note_generate jobs (one per generated note artifact). VITEST-gated
     // so test suite doesn't accumulate pg-boss state (same posture as
     // session_summary enqueue in /api/review/sessions/[id]/end).
     let enqueued = 0;
     if (!process.env.VITEST) {
       try {
         const boss = await getStartedBoss();
-        for (const atomicArtifactId of result.atomic_artifact_ids) {
-          await boss.send('note_generate', { artifact_id: atomicArtifactId });
+        for (const artifactId of [...result.atomic_artifact_ids, ...result.long_artifact_ids]) {
+          await boss.send('note_generate', { artifact_id: artifactId });
           enqueued += 1;
         }
       } catch (err) {

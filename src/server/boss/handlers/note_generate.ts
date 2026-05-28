@@ -1,6 +1,6 @@
-// Phase 2B — async per-atomic note generation.
+// Phase 2B — async per generated note artifact.
 //
-// Enqueued by /api/learning-intents/[id]/accept (one job per atomic artifact).
+// Enqueued by /api/learning-intents/[id]/accept (one job per atomic/long artifact).
 // Picks up { artifact_id }, loads context (artifact row + parent hub +
 // knowledge node), calls NoteGenerateTask, parses 5 semantic sections, UPDATEs
 // the artifact row to generation_status='ready' + body_blocks.
@@ -9,15 +9,15 @@
 // the broken state instead of stuck-pending. pg-boss retries on throw per
 // queue policy.
 
-import { type SQL, and, eq } from 'drizzle-orm';
+import { type SQL, and, eq, inArray } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { z } from 'zod';
 
-import { NoteSection } from '@/core/schema/business';
+import { ArtifactBodyBlocks, NoteSection } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
 import { type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
-import { noteSectionsToBodyBlocks } from '@/server/artifacts/body-blocks';
+import { bodyBlocksToNoteSections, noteSectionsToBodyBlocks } from '@/server/artifacts/body-blocks';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 export interface NoteGenerateJobData {
@@ -44,26 +44,59 @@ async function defaultRunTaskFn(
 const SectionsOutputSchema = z.object({
   sections: z.array(NoteSection).min(1).max(10),
 });
+const BodyBlocksOutputSchema = z.object({
+  body_blocks: ArtifactBodyBlocks,
+});
 
-function parseSectionsOutput(text: string): z.infer<typeof SectionsOutputSchema> {
+function parseJsonObject(text: string): unknown {
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
   if (start === -1 || end === -1 || end < start) {
-    throw new Error('parseSectionsOutput: no JSON object found in text');
+    throw new Error('parseNoteGenerateOutput: no JSON object found in text');
   }
-  let json: unknown;
   try {
-    json = JSON.parse(text.slice(start, end + 1));
+    return JSON.parse(text.slice(start, end + 1));
   } catch (e) {
-    throw new Error(`parseSectionsOutput: JSON.parse failed: ${(e as Error).message}`);
+    throw new Error(`parseNoteGenerateOutput: JSON.parse failed: ${(e as Error).message}`);
   }
-  const parsed = SectionsOutputSchema.safeParse(json);
-  if (!parsed.success) {
-    throw new Error(
-      `parseSectionsOutput: schema invalid: ${parsed.error.issues.map((i) => i.message).join('; ')}`,
-    );
+}
+
+export interface ParsedNoteGenerateOutput {
+  body_blocks: z.infer<typeof ArtifactBodyBlocks>;
+  blocks_count: number;
+  sections_count: number;
+}
+
+export function parseNoteGenerateOutput(text: string): ParsedNoteGenerateOutput {
+  const json = parseJsonObject(text);
+
+  const bodyBlocksParsed = BodyBlocksOutputSchema.safeParse(json);
+  if (bodyBlocksParsed.success) {
+    const bodyBlocks = bodyBlocksParsed.data.body_blocks;
+    return {
+      body_blocks: bodyBlocks,
+      blocks_count: bodyBlocks.content.length,
+      sections_count: bodyBlocksToNoteSections(bodyBlocks).length,
+    };
   }
-  return parsed.data;
+
+  const sectionsParsed = SectionsOutputSchema.safeParse(json);
+  if (sectionsParsed.success) {
+    const bodyBlocks = noteSectionsToBodyBlocks(sectionsParsed.data.sections);
+    return {
+      body_blocks: bodyBlocks,
+      blocks_count: bodyBlocks.content.length,
+      sections_count: sectionsParsed.data.sections.length,
+    };
+  }
+
+  throw new Error(
+    `parseNoteGenerateOutput: schema invalid: body_blocks=${bodyBlocksParsed.error.issues
+      .map((i) => i.message)
+      .join('; ')}; parseSectionsOutput=${sectionsParsed.error.issues
+      .map((i) => i.message)
+      .join('; ')}`,
+  );
 }
 
 export interface RunNoteGenerateParams {
@@ -75,6 +108,7 @@ export interface RunNoteGenerateParams {
 export interface RunNoteGenerateResult {
   status: 'ready' | 'skipped:not_pending' | 'skipped:not_found' | 'failed';
   sections_count?: number;
+  blocks_count?: number;
 }
 
 /**
@@ -122,25 +156,30 @@ export async function runNoteGenerate(
 
   // Load knowledge node for context
   let kNode: { id: string; name: string; domain: string | null } | null = null;
-  const primaryKnowledgeId = row.knowledge_ids[0] ?? null;
-  if (primaryKnowledgeId) {
+  let kNodes: Array<{ id: string; name: string; domain: string | null }> = [];
+  if (row.knowledge_ids.length > 0) {
     const kRows = await db
       .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
       .from(knowledge)
-      .where(eq(knowledge.id, primaryKnowledgeId))
-      .limit(1);
-    kNode = kRows[0] ?? null;
+      .where(inArray(knowledge.id, row.knowledge_ids));
+    const byId = new Map(kRows.map((node) => [node.id, node]));
+    kNodes = row.knowledge_ids.map((id) => byId.get(id)).filter((node) => node !== undefined);
+    kNode = kNodes[0] ?? null;
   }
 
   const oneLine = (row.attrs as { one_line_intent?: string } | null)?.one_line_intent ?? null;
   const parentSummary = (parentHub?.attrs as { summary_md?: string } | null)?.summary_md ?? null;
 
   const input = {
+    artifact_id: row.id,
+    artifact_type: row.type,
     atomic_title: row.title,
+    title: row.title,
     one_line_intent: oneLine,
     knowledge_node: kNode,
+    knowledge_nodes: kNodes,
     parent_hub: parentHub ? { title: parentHub.title, summary_md: parentSummary } : null,
-    related_knowledge_ids: [] as string[], // Phase 2.5: mesh-walk for related nodes
+    related_knowledge_ids: row.knowledge_ids.slice(1), // Phase 2.5: mesh-walk for related nodes
   };
 
   try {
@@ -148,12 +187,12 @@ export async function runNoteGenerate(
       db,
       subjectProfile: resolveSubjectProfile(kNode?.domain),
     });
-    const parsed = parseSectionsOutput(result.text);
+    const parsed = parseNoteGenerateOutput(result.text);
 
     await db
       .update(artifact)
       .set({
-        body_blocks: noteSectionsToBodyBlocks(parsed.sections) as never,
+        body_blocks: parsed.body_blocks as never,
         generation_status: 'ready',
         verification_status: 'queued',
         generated_by: {
@@ -163,7 +202,11 @@ export async function runNoteGenerate(
       })
       .where(and(eq(artifact.id, artifactId), eq(artifact.generation_status, 'pending')));
 
-    return { status: 'ready', sections_count: parsed.sections.length };
+    return {
+      status: 'ready',
+      sections_count: parsed.sections_count,
+      blocks_count: parsed.blocks_count,
+    };
   } catch (err) {
     // Mark failed so UI doesn't sit on "pending" forever; pg-boss will still
     // retry per policy because we rethrow.

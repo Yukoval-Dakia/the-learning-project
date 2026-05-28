@@ -78,47 +78,56 @@ plan_case 有三种：
 - 3b_children_missing：knowledge_node 存在但 child_nodes=[]。你必须提议 starter children。
 - 3c_existing_graph：knowledge_node 和 child_nodes 已存在。只能使用 child_nodes 里的 id。
 科目上下文：${profile.displayName}。${profile.promptFragments.learningIntentPolicy}
-生成一个 1 hub + N atomic 的学习路径拆分。3c 的 N = child_nodes.length；3a/3b 的 N = 你提议的 knowledge.children.length。
+生成一个 1 hub + N atomic + 0-M long 的学习路径拆分。3c 的 N = child_nodes.length；3a/3b 的 N = 你提议的 knowledge.children.length。longs 是可选综合笔记，用于跨多个 knowledge_ids 串联解题路径；没有必要时输出空数组。
 严格 JSON 输出（不带 markdown 代码块包裹）：
-3c: {"hub":{"title":"...","summary_md":"... 1-2 句话概括整个主题 ..."},"atomics":[{"knowledge_id":"<child_nodes id>","title":"...","one_line_intent":"... 学完这条 atomic 你能 ... ..."}]}
-3a/3b: {"knowledge":{"root":{"temp_id":"root","name":"topic name","domain":"${profile.id}"},"children":[{"temp_id":"short_stable_key","name":"...","domain":"${profile.id}"}]},"hub":{"title":"...","summary_md":"..."},"atomics":[{"knowledge_id":"<knowledge.children temp_id>","title":"...","one_line_intent":"..."}]}
+3c: {"hub":{"title":"...","summary_md":"... 1-2 句话概括整个主题 ..."},"atomics":[{"knowledge_id":"<child_nodes id>","title":"...","one_line_intent":"... 学完这条 atomic 你能 ... ..."}],"longs":[{"knowledge_ids":["<child_nodes id>", "..."],"title":"...","one_line_intent":"... 综合后你能 ..."}]}
+3a/3b: {"knowledge":{"root":{"temp_id":"root","name":"topic name","domain":"${profile.id}"},"children":[{"temp_id":"short_stable_key","name":"...","domain":"${profile.id}"}]},"hub":{"title":"...","summary_md":"..."},"atomics":[{"knowledge_id":"<knowledge.children temp_id>","title":"...","one_line_intent":"..."}],"longs":[{"knowledge_ids":["<knowledge.children temp_id>", "..."],"title":"...","one_line_intent":"..."}]}
 要点：
 - title 短（≤15 字）
 - summary_md 1-2 句话，纯文本
 - one_line_intent 每条 1 句话，说"学完能做什么"，不抽象
 - 3c: atomics 数量必须等于 child_nodes.length，knowledge_id 必须是 child_nodes 里给的 id 之一
+- 3c: longs[].knowledge_ids 只能使用 knowledge_node.id 或 child_nodes[].id
 - 3a: knowledge.root 必填，root.domain 必填；3b 不要输出 root，只输出 children
 - 3a/3b: atomics 数量必须等于 knowledge.children.length，knowledge_id 必须是 children 的 temp_id
+- 3a/3b: longs[].knowledge_ids 只能使用 knowledge.root.temp_id 或 knowledge.children[].temp_id
 - 禁止套话（「加油」「重要主题」）；3c 禁止编造没有的子节点；3a/3b 禁止只给 root 不给 children`;
 }
 
 function buildNoteGeneratePrompt(profile: SubjectProfile): string {
-  return `你是${noteWriterRole(profile)}。输入 { atomic_title, one_line_intent, knowledge_node: { id, name, domain }, parent_hub: { title, summary_md }, related_knowledge_ids: [...] } —— atomic note 对应一个 knowledge 节点，parent_hub 给上下文。
-生成 5 个 markdown sections（id 自取短串、kind 按下表、source_tier 一律 "llm_only"、user_verified=false、version=1、embedded_check 设 null）：
+  return `你是${noteWriterRole(profile)}。输入 { artifact_id, artifact_type, title, atomic_title, one_line_intent, knowledge_node: { id, name, domain }, knowledge_nodes: [...], parent_hub: { title, summary_md }, related_knowledge_ids: [...] }。
+artifact_type 只能是 note_atomic / note_long / note_hub；这是同一个 NoteGenerateTask 内的 type switch。
+严格 JSON 输出（不带 markdown 代码块包裹）：
+{"body_blocks":{"type":"doc","content":[...]}}
+
+按 artifact_type 生成 TipTap / ProseMirror JSON body_blocks：
+- note_atomic：至少 5 个 semanticBlock，每种 attrs.semantic_kind 至少 1 个：definition / mechanism / example / pitfall / check。attrs 必须包含 id、semantic_kind、source_tier="llm_only"、user_verified=false、version=1、source_markdown。
+- note_long：自由 block tree，可用 heading / paragraph / bulletList / calloutBlock / crossLinkBlock，综合 knowledge_nodes，不强制 semantic_kind。
+- note_hub：短 outline + 主题路线，可加入 crossLinkBlock 串起 atomic / long；不要假装是单知识点 atomic。
+
+note_atomic 的 semantic_kind 内容指南：
 
 ${noteTemplateTable(profile)}
 
-严格 JSON 输出（不带 markdown 代码块包裹）：
-{"sections":[{"id":"...","kind":"definition","body_md":"...","source_tier":"llm_only","user_verified":false,"embedded_check":null,"version":1}, ...]}
 要点：
-- body_md 用 markdown 段落 / 列表，不嵌 HTML / 不带代码块包裹
+- block content 用 paragraph / list 等 PM JSON 节点，不嵌 HTML / 不带代码块包裹
 - ${profile.promptFragments.noteExamplePolicy}
 - ${profile.grounding.uncertaintyPolicy}
 - 禁止：套话「希望对你有帮助」、营销话语、emoji / 颜文字`;
 }
 
 function buildNoteVerifyPrompt(profile: SubjectProfile): string {
-  return `你是${profile.displayName}学习笔记质检员。输入 { artifact_id, title, knowledge_node, sections }，其中 sections 是 NoteGenerateTask 产出的 atomic note sections。
+  return `你是${profile.displayName}学习笔记质检员。输入 { artifact_id, artifact_type, title, knowledge_node, body_blocks, block_summaries, sections }，其中 body_blocks 是 NoteGenerateTask 产出的 TipTap / ProseMirror JSON；sections 仅为旧兼容摘要。
 科目上下文：${profile.displayName}。${profile.languageStyle}
 证据要求：${profile.grounding.requirement}
 输出严格 JSON（不带 markdown 代码块包裹），shape 名称为 NoteVerificationResult：
-{"verdict":"pass"|"needs_review","summary_md":"...","issues":[{"section_id":"s1"|null,"severity":"info"|"warn"|"error","category":"factuality"|"coverage"|"clarity"|"subject_fit"|"format"|"safety","message":"...","suggested_fix_md":"..."}],"confidence":0.0-1.0}
+{"verdict":"pass"|"needs_review","summary_md":"...","issues":[{"section_id":"s1"|null,"block_id":"b1"|null,"severity":"info"|"warn"|"error","category":"factuality"|"coverage"|"clarity"|"subject_fit"|"format"|"safety","message":"...","suggested_fix_md":"..."}],"confidence":0.0-1.0}
 检查标准：
 - factuality：内容是否自洽，是否明显编造；${profile.grounding.uncertaintyPolicy}
-- coverage：definition/mechanism/example/pitfall/check 是否覆盖 atomic intent
-- clarity：学习者是否能按 section 读懂，不要空泛套话
+- coverage：note_atomic 必须覆盖 definition/mechanism/example/pitfall/check；note_hub 关注路线和 cross-link；note_long 关注综合范围是否完整
+- clarity：学习者是否能按 block_summaries 读懂，不要空泛套话
 - subject_fit：是否符合 ${profile.displayName} 的表达、例子和检查题风格
-- format：section_id 必须引用输入 section id；找不到具体 section 时用 null
+- format：优先用 block_id 引用 body_blocks 内 attrs.id；只有旧 sections 问题才填 section_id；找不到具体 block/section 时用 null
 判定：
 - 没有 error 且 warn 不超过 2 条：verdict="pass"
 - 任一 error，或 warn 超过 2 条，或 confidence < 0.6：verdict="needs_review"
@@ -135,8 +144,8 @@ function buildEmbeddedCheckGeneratePrompt(profile: SubjectProfile): string {
   // flows in via displayName + promptFragments.checkQuestionPolicy.
   const canonicalKinds =
     'choice | true_false | fill_blank | short_answer | essay | computation | reading | translation';
-  return `你是${profile.displayName}自检题作者。输入 { artifact_id, atomic_title, knowledge_node, sections } —— sections 是已生成的 atomic note 内容。
-基于这篇笔记，出 1 到 3 道短自检题（学习者读完笔记就能马上验自己懂没懂），不出超纲题。
+  return `你是${profile.displayName}自检题作者。输入 { artifact_id, atomic_title, knowledge_node, body_blocks, block_summaries, sections } —— body_blocks 是已生成的 atomic note 内容，sections 仅为旧兼容摘要。
+基于这篇笔记，出 1 到 3 道短自检题（学习者读完笔记就能马上验自己懂没懂），不出超纲题。运行时会把这些题包装成独立 tool_quiz artifact，并在 atomic check block 中写 artifactRefBlock；你只输出 questions。
 
 每题输出形状（EmbeddedCheckQuestion）：
 {
@@ -395,6 +404,7 @@ export function getTaskSystemPrompt(
     case 'VisionExtractTask':
     case 'VisionExtractTaskHeavy':
     case 'ReviewIntentTask':
+    case 'DreamingTask':
       return tasks[task].systemPrompt;
     default:
       return assertNever(task);

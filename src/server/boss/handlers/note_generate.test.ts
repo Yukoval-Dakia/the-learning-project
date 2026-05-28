@@ -203,7 +203,7 @@ describe('runNoteGenerate', () => {
       text: 'not json at all',
     }));
     await expect(runNoteGenerate({ db: testDb(), artifactId: 'a1', runTaskFn })).rejects.toThrow(
-      /parseSectionsOutput/,
+      /parseNoteGenerateOutput/,
     );
 
     const db = testDb();

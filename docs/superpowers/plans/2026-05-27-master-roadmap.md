@@ -32,7 +32,7 @@
 | Doc / Infra 债 | P4.1-4.13 sweep；status.md / ADR / modules 一致 |
 | Audit | `/audit-drift` 全绿 |
 
-### 0.3 当前快照（2026-05-28 post-Wave 3 / Wave 4 prep）
+### 0.3 当前快照（2026-05-28 post-Wave 4 implementation / final gate pending）
 
 **Shipped (从 status.md §1 + 2026-05-{20..27} commit log)**：
 - Foundation A/B/C 全完，含 math + physics acid test ✓ framework diff = 0
@@ -41,12 +41,12 @@
 - Track 1 follow-up M1: wenyan causeCategories (YUK-83) / today KPI (YUK-84) / Note 申诉 (YUK-85)
 - pg-boss 12 队列在跑（含 maintenance / variant / OCR / session-summary）
 - **Wave 1 ship ✅（2026-05-27）**：
-  - T-37 brief writer Phase B (YUK-37) — `src/server/memory/{client,brief,scope_tagger,triggers}.ts` ship；F-04 memory-dir half resolved
+  - T-37 brief writer Phase B (YUK-37) — `src/server/memory/{client,brief,scope_tagger,triggers}.ts` ship；F-04 memory side resolved
   - T-RA RatingAdvisor (YUK-98) — `rating-advisor.ts` 纯函数 + UI + submit route advisory field
   - T-66 ask_check artifact (YUK-66) — `question(source='teaching_check')` 持久化 + judge invoker 接入
   - T-88 P0 spike (YUK-90) — TipTap block tree fixture + split/merge/mark_wrong invariant 全过（PR #162）
   - Wave 1 closeout (YUK-99 brief writer event ingest wire + env doc / YUK-100 RatingAdvisor cause SoT)：PR #163 + #165 (squash) merged
-- **F-04 audit baseline split**：`src/server/memory/` 目录已 ship；`src/server/dreaming/` 仍 open，归 T-DR，不在 T-37 closeout 中关闭
+- **F-04 audit baseline split**：`src/server/memory/` 目录已 ship；Dreaming runtime now lives in `src/server/boss/handlers/dreaming_nightly.ts` with DomainTool/MCP bridge rather than a separate table.
 - **Wave 2 ship ✅（2026-05-27）**：
   - T-88 P1 schema + ADR-0020 block-tree contract (YUK-91)
   - T-88 P2-basic TipTap block-tree editor + ADR-0022 (YUK-92)
@@ -56,15 +56,18 @@
 
 **In-flight / open**：
 - **Wave 3 shipped**：T-D4 propose/write tools full through PR #170 (YUK-107 parent + YUK-108..112 lanes)；8 个 DomainTool proposal/action surface + allowlist policy + proposal schema/UI coverage landed
-- YUK-88 next prep：P3/P4 can now consume the frozen DomainTool registry surface in Wave 4
+- **Wave 4 implementation complete（branch）**：
+  - YUK-93 / T-88 P3 AI pipeline rewrite — `body_blocks` canonical note output, NoteGenerate type switch, NoteVerify structural verifier, LearningIntent 0-M long artifacts, embedded `tool_quiz` refs
+  - YUK-114 / T-DR Dreaming lane — `DreamingTask`, `dreaming_nightly` pg-boss producer, DomainTool MCP bridge, dreaming allowlist, proposal inbox delta evidence
+  - Final full gate / PR / Linear closeout still pending
 
 **Audit baseline ack（per `docs/audit/2026-05-27-pre-yuk88-baseline-drift.md`, 2026-05-27）**：
-- **F-01** notes.md 整篇 ADR-0020 冲突 → YUK-88 P3 收尾前必须 rewrite（拆 YUK-{TBD-1}；不阻塞 Wave 2）
+- **F-01** notes.md 整篇 ADR-0020 冲突 → YUK-88 P3 implementation branch 已改 AI pipeline；module doc rewrite remains final audit item before closeout if still stale
 - **F-02 / F-03** artifact 表 / `CorrectArtifactEvent.payload.section_id` pre-ADR-0020 形态 → resolved by Wave 2 YUK-91/YUK-92 body-block migration
-- **F-04a** ✅ resolved by T-37 (`src/server/memory/` ship)；**F-04b** 🟡 still open until T-DR ships `src/server/dreaming/`
+- **F-04a** ✅ resolved by T-37 (`src/server/memory/` ship)；**F-04b** ✅ functionally resolved by T-DR runtime (`dreaming_nightly` handler; no separate Dreaming table)
 
 **Critical 缺位（按 v0.4 §6）**：
-- Layer 8 整层 ⬜（4 条 P0 line：DomainTool M2-M6 / Drawer / Dreaming / Global Coach）
+- Layer 8 仍未全兑现；DomainTool M2/M4 + Dreaming 已落地，Drawer / Global Coach / tool_use promote 仍待
 - 8 个 judges + question_part + 3a-3b LearningIntent + Subject #4
 - Track 2 ranking / retraction / scheduling
 - Track F Source / Grounding / Multimodal
@@ -146,14 +149,14 @@ ls -lt docs/audit/*drift* 2>/dev/null | head -3
 | Track | Status | pts | forward-locks | blocked-by | Linear |
 |---|---|---|---|---|---|
 | **T-D2** DomainTool Registry M2 (10 read tools 补完) | ✅ shipped | — | Drawer / Dreaming / Coach 三条全 | M1 ship ✓ | [YUK-102](https://linear.app/yukoval-studios/issue/YUK-102) + YUK-103~106 |
-| **T-D3** Copilot Drawer MVP (1 route 试点) | ⬜ | ~13 | Drawer 全 6 routes 铺开 | T-D2 (≥6 read tools) | ⬜ 待建 |
+| **T-D3** Copilot Drawer MVP (1 route 试点) | ⬜ | ~13 | Drawer 全 6 routes 铺开 | T-D2 ✅ | ⬜ 待建 |
 | **T-D4** DomainTool Propose/Write Tools (8 个) | ✅ shipped | ~24 | Dreaming + Coach proposal 写入 | T-D2 done ✓ | [YUK-107](https://linear.app/yukoval-studios/issue/YUK-107) + YUK-108~112 |
 | **T-D5** Drawer 跨 6 routes 常驻 | ⬜ | ~13 | Layer 8 用户级兑现 | T-D3 试点验证 | ⬜ 待建 |
-| **T-D6** Phase 3 Global Coach Orchestrator | ⬜ | ~15 | Layer 8 自动产出"今日安排" | T-D2 + T-DR (Dreaming) | ⬜ 待建 |
+| **T-D6** Phase 3 Global Coach Orchestrator | ⬜ | ~15 | Layer 8 自动产出"今日安排" | T-D2 ✅ + T-DR ✅ | ⬜ 待建 |
 | **T-D7** `experimental:tool_use` promote to KnownEvent | ⬜ | ~3 | ADR-0011 后续修订 | 3 tool stable + 2 周 | ⬜ 待建 |
-| **T-DR** Dreaming Lane | ⬜ | ~20 | Layer 7 brief refresh + T-D6 Coach | T-37 done + T-D2 (read tools) | ⬜ 待建 |
+| **T-DR** Dreaming Lane | ✅ implementation complete | ~20 | Layer 7 brief refresh + T-D6 Coach | T-37 done + T-D2 done | [YUK-114](https://linear.app/yukoval-studios/issue/YUK-114) |
 
-**P0 小计**：~113 pts，~28-35 周（单人 raw）
+**P0 小计**：original ~113 pts；remaining critical path now centers on Drawer / Coach / promote after T-D2, T-D4, and T-DR landed.
 
 ### 2.4 ⬜ P1 — 学科能力补完
 
@@ -188,7 +191,7 @@ ls -lt docs/audit/*drift* 2>/dev/null | head -3
 | **T-CS** Cross-subject scheduling v1 (deterministic quotas) | ⬜ | ~13 | 多学科混排; P1.1 / P1.2 done 才有意义 | T-QP + ≥ 5 judges | ⬜ |
 | **T-MR** Maintenance ranking 深化 | ⬜ | ~5 | T-AR signal | T-AR | ⬜ |
 | **T-TE** TipTap 编辑器 + 自定义 block (Layer 5 P2.7) | 🔄 | (T-88 P2) | — | T-88 P2 | (T-88 sub) |
-| **T-TQ** standalone `tool_quiz` artifact + UI | ⬜ | ~8 | quiz 独立路径（模拟卷 / 每日 quiz / final quiz） | T-88 P3 done（EmbeddedCheck 拆分） | ⬜ |
+| **T-TQ** standalone `tool_quiz` artifact + UI | ⬜ | ~8 | quiz 独立路径（模拟卷 / 每日 quiz / final quiz） | T-88 P3 ✅（EmbeddedCheck 已拆成 `tool_quiz` ref；UI 仍待） | ⬜ |
 | **T-KG** Knowledge graph force-directed view | ⬜ | ~13 | v2.1 brief §2.3.b "必须" | (none，D3/cytoscape 待选) | ⬜ |
 | **T-IK** /inbox actionable Today KPI 第三格 | ✅ | (done) | — | — | YUK-84 PR #150 |
 
@@ -201,7 +204,7 @@ ls -lt docs/audit/*drift* 2>/dev/null | head -3
 | **T-SP** SourcePack + SourceResult | ⬜ | ~8 | grounded quiz / note 来源标签 | (none) | ⬜ |
 | **T-SQ** Search-grounded QuizGen + QuizVerify + QuizPlan | ⬜ | ~13 | Quiz agent 不再"上网找题" | T-SP | ⬜ |
 | **T-PS** Passage + referenced_span_ids | ⬜ | ~8 | 长阅读题 schema + 桌面/移动 UI | (none) | ⬜ |
-| **T-BA** BlockAssemblyTask AI auto-merge | ⬜ | ~5 | 相邻 block AI merge proposal | T-88 P3（artifact schema 改）| ⬜ |
+| **T-BA** BlockAssemblyTask AI auto-merge | ⬜ | ~5 | 相邻 block AI merge proposal | T-88 P3 ✅（artifact schema 改）| ⬜ |
 | **T-SG** Source grounding + textbook RAG | ⬜ | ~13 | source_tier write path + user_verified flip；与 ADR-0020 解耦 | (none) | ⬜ |
 | **T-MM** Multimodal first-class (audio / handwriting / 图表 / 表格) | ⬜ | ~20 | first-class material | T-J2 + T-J7（vision/diagram judge）| ⬜ |
 | **T-OC** OCR capture pipeline rebuild (Sub 0c handoffs §3) | ⬜ | ~15 | StructureTask / TaggingTask / WorkflowJudge / MistakeEnrollTask / 6 个 agent tools | T-D4 (propose tools) | ⬜ |
@@ -327,7 +330,7 @@ T-FF fixtures ────→ blocks Eval / acceptance test 自动化
                                            ↓
                                      完成 Layer 8 兑现
 
-  关键瓶颈：T-D2 ~25pt + T-DR ~20pt + T-D6 ~15pt ≈ 60pt 必经路径
+  关键瓶颈：T-D2 + T-DR 已落地；现在剩 T-D3 / T-D5 / T-D6 / T-D7
   无法跳过；必须按序
 
 长链 2 (学科能力 → scheduling)：
@@ -343,7 +346,7 @@ T-FF fixtures ────→ blocks Eval / acceptance test 自动化
                                 ↓
                               brief 真在用，T-D2 read tools 含 query_memory_brief
 
-  关键瓶颈：T-37 已 ship；现在瓶颈移到 T-D2 read tools + T-DR dreaming implementation
+  关键瓶颈：T-37 + T-D2 + T-DR 已落地；现在瓶颈移到 T-D6 Coach 消费 brief/Dreaming 输出
 ```
 
 ### 3.3 高度并行可能性（file-disjoint）
@@ -410,7 +413,7 @@ T-FF fixtures ────→ blocks Eval / acceptance test 自动化
 | Q6.c | **T-PD doc sweep 分布到 wave 之间**（不集中） | AI 主导，每 wave 3-5pt gap-filler；保 cognitive load 低 |
 | Q6.d | **T-KG knowledge graph force-directed view 加进 A**（+13pt） | v2.1 brief §2.3.b 写"必须"= design contract；v1 不带 graph view = 未兑现 contract |
 | Q2 | **T-88 P2 拆 basic + polish 两 sub-wave** | P2-basic (~12pt): TipTap + NodeView + text edit/split/merge/paste-md/undo/marks → ship；P2-polish (~4pt): slash/drag-drop/mention picker/cross_link picker UI → 后续 wave。**v0 readonly 被结构 constraint 否决**（P1 schema migration 会立即让 YUK-54 失效，必须 ship 编辑器无 UX hole）。Polish 可灵活推到 maintenance |
-| Q4 | **T-DR // T-88 P3 并行**（with T-D4 propose tools merged 先）| File-disjoint (`src/server/dreaming/*` vs `src/server/ai/tasks/*`)；T-D4 merge 后冻结 registry.ts 直到两 track chain-merge 完；critical path 双线推进，整 schedule 省 4-6 周 |
+| Q4 | **T-DR // T-88 P3 并行**（with T-D4 propose tools merged 先）| File-disjoint enough in practice (`src/server/boss/handlers/dreaming_nightly.ts` + DomainTool bridge vs note AI pipeline handlers)；T-D4 merge 后冻结 registry.ts 直到两 track chain-merge 完；critical path 双线推进，整 schedule 省 4-6 周 |
 | Q1 | **Wave 1 = 4 tracks 并行**（T-37 + T-RA + T-66 + T-88 P0）| Worktree A: T-37 → T-88 P0；Worktree B: T-RA → T-66。File-disjoint 全覆盖。匹配 Track-1 follow-up wave-1 历史节奏（3+1 lane）；不推迟 T-37 critical path（避免 6+ 周 compounding）|
 | Q3 | **T-D3 Drawer MVP 试点 /today**（summary-driven）| 高频访问 + Layer 8 完全体核心模式（drawer 自动浮"今日 AI 建议"）；30s dwell trigger（v2.1 §1.2 锁定）。Deps：T-D2 query_review_due / query_memory_brief / query_learning_item_context 必先 ship；T-37 brief writer 必先 ship。比 /mistakes ask-driven 模式更激进但长期 vision 价值高 |
 
@@ -461,15 +464,16 @@ T-FF fixtures ────→ blocks Eval / acceptance test 自动化
 **实际**：PR #170 ships T-D4 full 8 tools (`propose_knowledge_edge`, `propose_knowledge_mutation`, `attribute_mistake`, `propose_variant`, `propose_learning_item_completion`, `propose_learning_item_relearn`, `propose_record_links`, `propose_record_promotion`), plus `src/server/ai/tools/allowlists.ts` for the spec task/surface matrix. Linear：YUK-107 parent + YUK-108..112 lanes。
 **Ready doc / closeout**：[`2026-05-28-wave3-ready-to-launch.md`](2026-05-28-wave3-ready-to-launch.md)。**Driver**：[`2026-05-28-td4-propose-write-tools-driver.md`](2026-05-28-td4-propose-write-tools-driver.md)。
 
-#### Wave 4 (~6 周) — T-DR // T-88 P3 并行（critical path 双线）
+#### Wave 4 ✅ implementation complete 2026-05-28 — T-DR // T-88 P3 并行（critical path 双线）
 
-| Track | pts | worktree |
-|---|---|---|
-| T-88 P3 AI pipeline rewrite | 10 | A |
-| T-DR Dreaming Lane | 20 | B |
-| T-PD doc sweep gap-filler | ~4 | (任 worktree gap) |
+| Track | pts | worktree | status |
+|---|---|---|---|
+| T-88 P3 AI pipeline rewrite | 10 | A | ✅ YUK-93 implementation complete |
+| T-DR Dreaming Lane | 20 | B | ✅ YUK-114 implementation complete |
+| T-PD doc sweep gap-filler | ~4 | (任 worktree gap) | ✅ status/roadmap/lane docs updated |
 
 **预期**：~34 pts，~5-6 周。出口：T-88 AI pipeline 完整改完 → unblocks P4；Dreaming agent 真跑 → unblocks T-D6 Coach + brief refresh 闭环。
+**实际**：single Wave branch `yuk-114-yuk-93-wave4-autopilot` on `/private/tmp/tlp-wave4`；focused Vitest/Biome/`git diff --check` pass；full gate pending because local reused `node_modules` lacks `@tiptap/*` packages. Wave driver：[`2026-05-28-wave4-ready-to-launch.md`](2026-05-28-wave4-ready-to-launch.md)。
 
 #### Wave 5 (~6 周) — Drawer /today MVP // Coach（Layer 8 vision 兑现起点）
 
@@ -520,7 +524,7 @@ T-FF fixtures ────→ blocks Eval / acceptance test 自动化
 | 1 | ~4 周 | Track-1 closure + critical path unlock + spike | 17 |
 | 2 | ~10 周 | YUK-88 schema + editor basic + DomainTool read tools | 46 |
 | 3 | ~5 周 | DomainTool propose tools full | 27 |
-| 4 | ~6 周 | T-DR // T-88 P3 双线 | 34 |
+| 4 | ✅ implementation branch 2026-05-28 | T-DR // T-88 P3 双线 | 34 |
 | 5 | ~6 周 | Drawer /today MVP // Coach（Layer 8 vision 兑现） | 32 |
 | 6 | ~3 周 | Living Note + promote | 18 |
 | 7 | ~5 周 | 反链 + hub auto-sync + graph view | 25 |
@@ -790,14 +794,14 @@ worktrees/
 
 ### Card T-88 — YUK-88 Block-Tree Note Rebuild
 
-- **Status**：planning ✓，**P0 ✅ ship 2026-05-27**（PR #162 spike），P1-P7 ⬜（Wave 2 启动后）
-- **pts**：61 (剩 59)
-- **Estimate**：17-20 周（剩）
+- **Status**：planning ✓，**P0 ✅ ship 2026-05-27**（PR #162 spike），P1/P2 ✅ Wave 2，P3 ✅ implementation branch，P4-P7 ⬜
+- **pts**：61 (P4-P7 remaining)
+- **Estimate**：remaining scoped by P4-P7 + polish/read-view/test sweep
 - **Driver doc**：[`docs/superpowers/plans/2026-05-26-yuk88-autonomous-driver.md`](2026-05-26-yuk88-autonomous-driver.md)
 - **Phase index**：[`docs/superpowers/plans/2026-05-26-yuk88-block-tree-rebuild-phase.md`](2026-05-26-yuk88-block-tree-rebuild-phase.md)
 - **ultragoal ledger**：`.omc/ultragoal/`（init 完成，per-story mode，G001-G008）
-- **Linear**：YUK-88 + YUK-90 ✅ + YUK-91~97
-- **Forward-locks**：Layer 5 完全体；P3 schema 改动 → T-TQ / T-BA
+- **Linear**：YUK-88 + YUK-90 ✅ + YUK-91/YUK-92 ✅ + YUK-93 In Review pending PR + YUK-94~97
+- **Forward-locks**：Layer 5 完全体；P3 schema 改动已 unblock T-TQ / T-BA
 - **Blocked-by**：(none) —— 可立即跑
 
 ### Card T-37 — ADR-0017 Brief Writer Phase B
@@ -822,14 +826,14 @@ worktrees/
 
 ### Card T-DR — Dreaming Lane
 
-- **Status**：⬜
+- **Status**：✅ implementation complete 2026-05-28（final gate / PR pending）
 - **pts**：~20
-- **Estimate**：5-6 周
-- **Driver doc**：⬜ 待写
+- **Estimate**：landed in Wave 4 branch
+- **Driver doc**：[`docs/superpowers/plans/2026-05-28-tdr-dreaming-lane-driver.md`](2026-05-28-tdr-dreaming-lane-driver.md)
 - **Source spec**：v0.3 §"Track D"；`docs/superpowers/specs/2026-05-09-learning-orchestrator-long-term-design.md` §Phase 3
 - **Forward-locks**：T-D6 Coach + Layer 7 brief refresh consumer
-- **Blocked-by**：T-37 done + T-D2 read tools（≥ 6 个）
-- **Linear**：⬜ 待建
+- **Blocked-by**：T-37 done + T-D2 done
+- **Linear**：[YUK-114](https://linear.app/yukoval-studios/issue/YUK-114)
 
 ### Card T-D3 — Copilot Drawer MVP (1 route 试点)
 
@@ -850,7 +854,7 @@ worktrees/
 - **Driver doc**：⬜ 待写
 - **Source spec**：`docs/superpowers/specs/2026-05-09-learning-orchestrator-long-term-design.md` §Phase 3
 - **Forward-locks**：Layer 8 兑现
-- **Blocked-by**：T-DR + T-D4（propose tools）
+- **Blocked-by**：T-DR ✅ + T-D4 ✅（propose tools）
 - **Linear**：⬜ 待建
 
 ### Card T-RA — Partial credit P3 RatingAdvisor
@@ -897,7 +901,7 @@ T-D4 / T-D5 / T-D7 / T-J6..J9 / T-QP / T-S4 / T-LI / T-AR / T-RT / T-CS / T-MR /
 |---|---|---|---|
 | **R-1 估时严重超** | High | 项目永远 close 不掉 | 接受方案 A (v1 closeout 范围) 而不是 C 完全体 |
 | **R-2 ADR-0014 仍 proposed 但被引用** | Medium | 后续 ADR drift | T-PD11 优先；或 wave 1 顺手 升 accepted |
-| **R-3 Dreaming forward-lock 链长期未解** | High（已发生）| Layer 8 永远 ⬜ | Wave 1 T-37 必 ship + Wave 3 T-DR 必启 |
+| **R-3 Dreaming forward-lock 链长期未解** | Low（Wave 4 resolved implementation path）| Layer 8 仍需 Coach/Drawer 才兑现 | T-37 + T-D2 + T-D4 + T-DR 已落地；下一步集中到 T-D6 / T-D3 |
 | **R-4 5 brainstorm open question 没转 spec** | Medium | Copilot detail 落地卡 | T-CB / T-PQ / T-CL 在 Wave 2-3 中插入 |
 | **R-5 用户审 capacity 是瓶颈**（不是 AI 算力） | High | 并行 cap = 2 worktree | 严格守 §6.2 cap；超了 ship 质量崩 |
 | **R-6 Token cost 累积** | Medium | 月开销 | per phase cost 估 + 月度 review (G-cost gate) |

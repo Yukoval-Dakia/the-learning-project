@@ -8,6 +8,11 @@ describe('getTaskSystemPrompt', () => {
     const prompt = getTaskSystemPrompt('NoteGenerateTask');
 
     expect(prompt).toContain('你是学习笔记作者');
+    expect(prompt).toContain('artifact_type');
+    expect(prompt).toContain('body_blocks');
+    expect(prompt).toContain('note_atomic');
+    expect(prompt).toContain('note_long');
+    expect(prompt).toContain('note_hub');
     expect(prompt).toContain('优先使用原文短句');
     expect(prompt).toContain('材料不足时标注不确定');
   });
@@ -25,11 +30,30 @@ describe('getTaskSystemPrompt', () => {
     const prompt = getTaskSystemPrompt('NoteVerifyTask', resolveSubjectProfile('math'));
 
     expect(prompt).toContain('你是数学学习笔记质检员');
+    expect(prompt).toContain('artifact_type');
+    expect(prompt).toContain('body_blocks');
+    expect(prompt).toContain('block_summaries');
     expect(prompt).toContain('NoteVerificationResult');
     expect(prompt).toContain('factuality');
     expect(prompt).toContain('subject_fit');
     expect(prompt).toContain('条件不足时指出缺少的条件');
     expect(prompt).not.toContain('文言文经典原文');
+  });
+
+  it('builds LearningIntentOutlineTask prompt with optional long notes', () => {
+    const prompt = getTaskSystemPrompt('LearningIntentOutlineTask', resolveSubjectProfile('math'));
+
+    expect(prompt).toContain('longs');
+    expect(prompt).toContain('knowledge_ids');
+    expect(prompt).toContain('0-M');
+  });
+
+  it('keeps DreamingTask focused on bounded tool-written proposals', () => {
+    const prompt = getTaskSystemPrompt('DreamingTask');
+
+    expect(prompt).toContain('DomainTools');
+    expect(prompt).toContain('propose_*');
+    expect(prompt).toContain('不要直接修改');
   });
 
   it('builds subject-specific TeachingTurnTask prompts', () => {
@@ -98,6 +122,8 @@ describe('getTaskSystemPrompt', () => {
 
     // Subject voice still flows in via displayName + checkQuestionPolicy
     expect(wenyan).toContain('文言文');
+    expect(wenyan).toContain('body_blocks');
+    expect(wenyan).toContain('tool_quiz');
     expect(wenyan).toContain('检查题应短小，聚焦一个词义、句式或翻译判断。');
     expect(math).toContain('数学');
     expect(math).toContain('检查题应聚焦一个公式、条件判断或关键变形。');

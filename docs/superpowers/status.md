@@ -4,8 +4,8 @@
 > 这里记的是 **项目走到了哪、下一站去哪、为什么这么走**，不是 commit log。
 > 维护规则：每完成一个 Phase 就 update 一次；不维护周度进度。
 
-**最后更新**：2026-05-28（**Wave 3 T-D4 ship** —— PR #170 实装 DomainTool propose/write full 8；YUK-108..112 全 lane closeout；Wave 4 T-DR // YUK-88 P3 可进入准备）
-**当前 Phase**：Wave 3（master roadmap §5.1）✅ T-D4 implementation complete；下一站：Wave 4 T-DR // YUK-88 P3 并行准备。详见 [`plans/2026-05-28-wave3-ready-to-launch.md`](plans/2026-05-28-wave3-ready-to-launch.md)。
+**最后更新**：2026-05-28（**Wave 4 implementation branch** —— YUK-93 T-88 P3 AI pipeline rewrite + YUK-114 Dreaming lane 已落地；最终 full gate / PR 待验证）
+**当前 Phase**：Wave 4（master roadmap §5.1）✅ implementation complete；⏳ final gate / PR closeout。详见 [`plans/2026-05-28-wave4-ready-to-launch.md`](plans/2026-05-28-wave4-ready-to-launch.md)。
 **主分支**：`main` 已推 `origin`
 **路线图源**：[`docs/planning/v0.3-generalized-ai-learning-framework.md`](../planning/v0.3-generalized-ai-learning-framework.md) §1.5 是当前执行清单；root `PLANNING.md` v0.12 Phase 1-4 已标 historical
 
@@ -134,6 +134,18 @@ Implementation anchor：`src/server/ai/tools/proposal-tools.ts` registers 8 prop
 
 Validation anchor：proposal DB tests, registry/MCP/allowlist unit tests, proposal writer/inbox/accept regressions, `pnpm typecheck`, and Wave closeout audits. T-D4 driver：[`plans/2026-05-28-td4-propose-write-tools-driver.md`](plans/2026-05-28-td4-propose-write-tools-driver.md)。
 
+### Wave 4 — YUK-88 P3 AI pipeline + Dreaming lane（implementation branch 2026-05-28）
+
+```text
+✅  YUK-93 / T-88 P3 AI pipeline rewrite             body_blocks canonical output + NoteGenerate type switch + LearningIntent 0-M long + tool_quiz embedded refs
+✅  YUK-114 / T-DR Dreaming Lane                     DreamingTask + dreaming_nightly pg-boss producer + DomainTool MCP bridge + dreaming allowlist
+⏳  Wave 4 final gate                                focused tests/biome/git diff pass; full gate blocked until worktree node_modules has @tiptap/* deps
+```
+
+Implementation anchor：`src/server/boss/handlers/{note_generate,note_verify,embedded_check_generate,dreaming_nightly}.ts`, `src/server/orchestrator/learning_intent.ts`, `src/server/artifacts/body-blocks.ts`, `src/server/ai/tools/allowlists.ts`, and `src/server/boss/handlers.ts`.
+
+Validation anchor：focused fast unit set covers task prompts, body-block helpers, NoteGenerate parser, NoteVerify structural verifier, LearningIntent outline longs, Dreaming MCP/allowlist/failure behavior, and existing MCP bridge/allowlist policy. Wave driver：[`plans/2026-05-28-wave4-ready-to-launch.md`](plans/2026-05-28-wave4-ready-to-launch.md)。
+
 ### Foundation C — Judge Result Contract + Correction Event（ADR-0014 §4/§6）
 
 ```
@@ -165,7 +177,7 @@ Validation anchor：proposal DB tests, registry/MCP/allowlist unit tests, propos
 ```
 ✅  统一 AiProposalPayload          YUK-42 — `src/core/schema/proposal.ts` discriminated union (kind / target / reason_md / evidence_refs / rollback_plan / cooldown_key) + writer / inbox / producers / signals
 🟡  Maintenance agent               YUK-48 cron ✅ (`knowledge_maintenance_nightly` BJT 03:00); accept UI uses unified proposal lifecycle, richer ranking remains later
-⬜  Dreaming lane                   daily AI 主动 proposal（reuse inbox）
+✅  Dreaming lane                   YUK-114 `dreaming_nightly` BJT 03:15；DomainTool MCP bridge + unified proposal inbox
 ⬜  Acceptance-rate / dismiss-reason 信号 → 未来 ranking
 ⬜  Bad accepted proposal 显式 retraction / rollback 流程
 ```
@@ -211,11 +223,11 @@ ADR-0014 配套：[7 轮讨论 + 10 决议 summary](../discussion/summary.md)、
 - `/review` 页面顶部展示 intent 字幕
 
 ### Phase 2B — Learning Intent Orchestrator（B 档「我想学 X」）
-- `src/server/orchestrator/learning_intent.ts` —— 硬 fence：只 case 3c（topic 节点 + children 存在），3a/3b 返 422 引导用户去 /knowledge 建图
-- `LearningIntentOutlineTask` 出 1 hub + N atomic 拆分
+- `src/server/orchestrator/learning_intent.ts` —— 支持 3a/3b/3c proposal flow：缺 topic / 缺 children / 现有图均走 proposal → accept
+- `LearningIntentOutlineTask` 出 1 hub + N atomic + 0-M long 拆分
 - POST /api/learning-intents（plan）+ POST /api/learning-intents/[id]/accept
-- accept 在 DB 事务里：1 hub LearningItem + N atomic + 1 hub artifact(outline ready) + N atomic artifact(pending) + rate event
-- 落库后入队 N 个 `note_generate` 异步 job → `NoteGenerateTask` 填 atomic artifact.sections
+- accept 在 DB 事务里：1 hub LearningItem + N atomic + M long + 1 hub artifact(outline ready) + generated note artifacts(pending) + rate event
+- 落库后入队 `note_generate` 异步 job → `NoteGenerateTask` 按 artifact_type 填 `body_blocks`
 - `/learning-items` 页面顶部「我想学…」输入框 + inline proposal panel；accept → 跳详情页
 
 ### Phase 2C — Active Teaching Session（A+B 合成的教学循环）
@@ -268,12 +280,13 @@ ADR-0014 配套：[7 轮讨论 + 10 决议 summary](../discussion/summary.md)、
 | `knowledge_propose_nightly` | cron @ BJT 02:00 | 节点提议 |
 | `knowledge_edge_propose_nightly` | cron @ BJT 02:30 | 边提议 |
 | `knowledge_maintenance_nightly` | cron @ BJT 03:00 | KnowledgeReviewTask → tree / mesh maintenance proposals |
+| `dreaming_nightly` | cron @ BJT 03:15 | DreamingTask + DomainTools → proposal inbox |
 | `prune_job_events` | cron @ BJT 04:00 | 旧 job_events 清理 |
 | `prune_orphan_review_sessions` | cron @ BJT 04:15 | 6h+ started 标 abandoned（ADR-0013） |
 | `session_summary` | review session end | SessionSummaryTask → summary_md |
-| `note_generate` | learning-intent accept | NoteGenerateTask → atomic artifact.sections |
-| `note_verify` | note_generate ready | NoteVerifyTask → artifact verification metadata / event |
-| `embedded_check_generate` | note_verify pass | EmbeddedCheckGenerateTask → 1-3 embedded question rows + artifact embedded_check metadata |
+| `note_generate` | learning-intent accept | NoteGenerateTask → note artifact `body_blocks` |
+| `note_verify` | note_generate ready | NoteVerifyTask → structural body-block verifier + artifact verification metadata / event |
+| `embedded_check_generate` | note_verify pass | EmbeddedCheckGenerateTask → 1-3 embedded question rows + `tool_quiz` artifact ref |
 | `attribution_followup` | 失败 attempt | AttributionTask → judge event |
 | `variant_gen` | attribution_followup done | VariantGenTask → mistake_variant question |
 | `tencent_ocr_extract` | /record vision 提交 | Tencent QuestionMarkAgent OCR |
