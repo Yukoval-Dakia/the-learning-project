@@ -22,6 +22,7 @@ type ProposalStatus = 'pending' | 'accepted' | 'dismissed' | 'stale';
 type ProposalKind =
   | 'knowledge_node'
   | 'knowledge_edge'
+  | 'knowledge_mutation'
   | 'learning_item'
   | 'note_update'
   | 'variant_question'
@@ -123,6 +124,7 @@ const RELATION_ORDER = Object.keys(RELATION_TYPES) as RelationType[];
 const KIND_LABELS: Record<ProposalKind, string> = {
   knowledge_node: '新知识节点',
   knowledge_edge: '知识关系',
+  knowledge_mutation: '知识结构调整',
   learning_item: '学习项',
   note_update: '笔记更新',
   variant_question: '变式题',
@@ -657,6 +659,7 @@ function kindTone(kind: ProposalKind): 'info' | 'good' | 'hard' | 'coral' | 'neu
     case 'knowledge_node':
       return 'info';
     case 'knowledge_edge':
+    case 'knowledge_mutation':
       return 'coral';
     case 'learning_item':
     case 'completion':

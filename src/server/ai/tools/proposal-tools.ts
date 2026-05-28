@@ -29,7 +29,7 @@ import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { writeCompletionProposal, writeRelearnProposal } from '@/server/proposals/producers';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DomainTool, ToolContext } from './types';
 
@@ -51,6 +51,33 @@ async function pendingProposalWithCooldown(
 ): Promise<boolean> {
   const rows = await listProposalInboxRows(db, { status: 'pending' });
   return rows.some((row) => row.kind === kind && row.payload.cooldown_key === cooldownKey);
+}
+
+async function pendingProposalWithAnyCooldown(
+  db: Db,
+  kind: string,
+  cooldownKeys: string[],
+): Promise<boolean> {
+  const keys = new Set(cooldownKeys);
+  const rows = await listProposalInboxRows(db, { status: 'pending' });
+  return rows.some(
+    (row) => row.kind === kind && row.payload.cooldown_key && keys.has(row.payload.cooldown_key),
+  );
+}
+
+function isSymmetricRelation(relationType: string): boolean {
+  return relationType === 'related_to' || relationType === 'contrasts_with';
+}
+
+function edgeCooldownKeys(fromId: string, toId: string, relationType: string): string[] {
+  const directional = `knowledge_edge:${fromId}|${toId}|${relationType}`;
+  if (!isSymmetricRelation(relationType)) return [directional];
+  const normalized = [fromId, toId].sort().join('|');
+  return [
+    `knowledge_edge:${normalized}|${relationType}`,
+    directional,
+    `knowledge_edge:${toId}|${fromId}|${relationType}`,
+  ];
 }
 
 async function defaultRunTaskFn(
@@ -239,8 +266,21 @@ async function proposeKnowledgeEdgeExecute(
       .from(knowledge_edge)
       .where(
         and(
-          eq(knowledge_edge.from_knowledge_id, input.from_knowledge_id),
-          eq(knowledge_edge.to_knowledge_id, input.to_knowledge_id),
+          isSymmetricRelation(input.relation_type)
+            ? or(
+                and(
+                  eq(knowledge_edge.from_knowledge_id, input.from_knowledge_id),
+                  eq(knowledge_edge.to_knowledge_id, input.to_knowledge_id),
+                ),
+                and(
+                  eq(knowledge_edge.from_knowledge_id, input.to_knowledge_id),
+                  eq(knowledge_edge.to_knowledge_id, input.from_knowledge_id),
+                ),
+              )
+            : and(
+                eq(knowledge_edge.from_knowledge_id, input.from_knowledge_id),
+                eq(knowledge_edge.to_knowledge_id, input.to_knowledge_id),
+              ),
           eq(knowledge_edge.relation_type, input.relation_type),
           isNull(knowledge_edge.archived_at),
         ),
@@ -251,9 +291,13 @@ async function proposeKnowledgeEdgeExecute(
     return { status: 'skipped:duplicate_live_edge', reason: duplicateLiveEdge.id };
   }
 
-  const edgeKey = `${input.from_knowledge_id}|${input.to_knowledge_id}|${input.relation_type}`;
-  const cooldownKey = `knowledge_edge:${edgeKey}`;
-  if (await pendingProposalWithCooldown(ctx.db, 'knowledge_edge', cooldownKey)) {
+  const cooldownKeys = edgeCooldownKeys(
+    input.from_knowledge_id,
+    input.to_knowledge_id,
+    input.relation_type,
+  );
+  const cooldownKey = cooldownKeys[0];
+  if (await pendingProposalWithAnyCooldown(ctx.db, 'knowledge_edge', cooldownKeys)) {
     return { status: 'skipped:duplicate_pending', cooldown_key: cooldownKey };
   }
 
@@ -424,6 +468,17 @@ async function proposeKnowledgeMutationExecute(
   if (input.mutation === 'merge' && input.payload.from_ids.includes(input.payload.into_id)) {
     return { status: 'skipped:invalid_payload', reason: 'merge into_id cannot appear in from_ids' };
   }
+  if (input.mutation === 'merge') {
+    const missingExpectedVersions = input.payload.from_ids.filter(
+      (fromId) => !(fromId in input.payload.expected_versions),
+    );
+    if (missingExpectedVersions.length > 0) {
+      return {
+        status: 'skipped:invalid_payload',
+        reason: `expected_versions missing entry for ${missingExpectedVersions.join(',')}`,
+      };
+    }
+  }
 
   const ids = knowledgeIdsForMutation(input);
   const activeIds = await activeKnowledgeIds(ctx.db, ids);
@@ -576,6 +631,7 @@ async function attributeMistakeExecute(
     domainByKnowledgeId.get(knowledgeRows[0]?.id) ?? null,
   );
 
+  let attributionTaskRan = false;
   await runAttributionAndWriteJudgeEvent({
     db: ctx.db,
     attemptEventId: input.attempt_event_id,
@@ -589,8 +645,10 @@ async function attributeMistakeExecute(
         effective_domain: domainByKnowledgeId.get(row.id) ?? null,
       })),
     },
-    runTaskFn: (kind, taskInput, taskCtx) =>
-      defaultRunTaskFn(kind, taskInput, { ...(taskCtx as object), db: ctx.db }),
+    runTaskFn: (kind, taskInput, taskCtx) => {
+      attributionTaskRan = true;
+      return defaultRunTaskFn(kind, taskInput, { ...(taskCtx as object), db: ctx.db });
+    },
     subjectProfile,
     referencedKnowledgeIds: failure.referenced_knowledge_ids,
   });
@@ -598,6 +656,9 @@ async function attributeMistakeExecute(
   const writtenJudge = await getJudgeForAttempt(ctx.db, input.attempt_event_id);
   if (!writtenJudge) {
     return { status: 'failed', reason: 'AttributionTask completed without writing a judge event' };
+  }
+  if (!attributionTaskRan) {
+    return judgeOutput('skipped:existing_judge', writtenJudge);
   }
   return judgeOutput('written', writtenJudge);
 }

@@ -34,6 +34,17 @@ describe('AiProposalPayload', () => {
           weight: 0.7,
         },
       },
+      knowledge_mutation: {
+        ...base,
+        kind: 'knowledge_mutation',
+        target: { subject_kind: 'knowledge', subject_id: 'k2' },
+        proposed_change: {
+          mutation: 'merge',
+          from_ids: ['k1'],
+          into_id: 'k2',
+          expected_versions: { k1: 0 },
+        },
+      },
       learning_item: {
         ...base,
         kind: 'learning_item',

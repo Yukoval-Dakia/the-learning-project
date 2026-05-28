@@ -1,5 +1,6 @@
 import {
   artifact,
+  completion_evidence,
   event,
   knowledge,
   knowledge_edge,
@@ -9,6 +10,7 @@ import {
   proposal_signals,
   question,
 } from '@/db/schema';
+import { writeKnowledgeProposeEvent } from '@/server/knowledge/proposals';
 import { planLearningIntent } from '@/server/orchestrator/learning_intent';
 import { writeVariantQuestionProposal } from '@/server/proposals/producers';
 import { createId } from '@paralleldrive/cuid2';
@@ -303,49 +305,287 @@ describe('proposal lifecycle owner service', () => {
     });
   });
 
-  it('accept retry backfills a missing signal before returning the duplicate decision error', async () => {
+  it('acceptAiProposal materializes a knowledge_mutation proposal through the knowledge owner service', async () => {
     const db = testDb();
+    await seedKnowledge(['k_parent', 'k_child', 'k_new_parent']);
+    const proposalId = await writeKnowledgeProposeEvent(db, {
+      payload: {
+        mutation: 'reparent',
+        node_id: 'k_child',
+        new_parent_id: 'k_new_parent',
+        expected_version: 0,
+      },
+      reasoning: 'Move under the more precise parent.',
+    });
+
+    const result = await acceptAiProposal(db, proposalId);
+
+    expect(result.kind).toBe('knowledge_mutation');
+    const child = (
+      await db.select().from(knowledge).where(eq(knowledge.id, 'k_child')).limit(1)
+    )[0];
+    expect(child.parent_id).toBe('k_new_parent');
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId)));
+    expect(rateRows).toHaveLength(1);
+    expect(rateRows[0].payload).toMatchObject({ rating: 'accept' });
+  });
+
+  it('acceptAiProposal completes a LearningItem proposal with ai_propose evidence', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(learning_item).values({
+      id: 'li_complete',
+      source: 'manual',
+      title: '完成候选',
+      content: 'content',
+      knowledge_ids: [],
+      status: 'in_progress',
+      created_at: now,
+      updated_at: now,
+    });
     await writeAiProposal(db, {
       id: 'completion_p1',
       payload: {
         kind: 'completion',
-        target: { subject_kind: 'learning_item', subject_id: 'li_xx' },
+        target: { subject_kind: 'learning_item', subject_id: 'li_complete' },
         reason_md: 'item appears mastered',
         evidence_refs: [],
         proposed_change: {
-          learning_item_id: 'li_xx',
-          triggering_signals: ['mastery_high_persisted_14d'],
-          evidence_json: {},
+          learning_item_id: 'li_complete',
+          triggering_signals: ['check_all_passed'],
+          evidence_json: { check_event_id: 'ev_check' },
         },
-        cooldown_key: 'completion:li_xx',
+        cooldown_key: 'completion:li_complete',
       },
     });
-    await db.insert(event).values({
-      id: createId(),
-      session_id: null,
-      actor_kind: 'user',
-      actor_ref: 'self',
-      action: 'rate',
-      subject_kind: 'event',
-      subject_id: 'completion_p1',
-      outcome: 'success',
-      payload: { rating: 'accept' },
-      caused_by_event_id: 'completion_p1',
-      created_at: new Date(),
-    });
 
-    await expect(acceptAiProposal(db, 'completion_p1')).rejects.toMatchObject({
-      code: 'unsupported_proposal_kind',
+    const result = await acceptAiProposal(db, 'completion_p1');
+
+    expect(result).toMatchObject({ kind: 'completion', learning_item_id: 'li_complete' });
+    const item = (
+      await db.select().from(learning_item).where(eq(learning_item.id, 'li_complete')).limit(1)
+    )[0];
+    expect(item.status).toBe('done');
+    expect(item.completed_at).toBeInstanceOf(Date);
+    expect(item.version).toBe(1);
+    const evidenceRows = await db
+      .select()
+      .from(completion_evidence)
+      .where(eq(completion_evidence.learning_item_id, 'li_complete'));
+    expect(evidenceRows).toHaveLength(1);
+    expect(evidenceRows[0].path).toBe('ai_propose');
+    expect(evidenceRows[0].evidence_json).toMatchObject({
+      proposal_id: 'completion_p1',
+      triggering_signals: ['check_all_passed'],
+      check_event_id: 'ev_check',
     });
 
     const signals = await db.select().from(proposal_signals);
     expect(signals).toHaveLength(1);
     expect(signals[0]).toMatchObject({
       kind: 'completion',
-      cooldown_key: 'completion:li_xx',
+      cooldown_key: 'completion:li_complete',
       accept_count: 1,
       dismiss_count: 0,
     });
+  });
+
+  it('acceptAiProposal moves a relearn proposal back to in_progress', async () => {
+    const db = testDb();
+    const completedAt = new Date('2026-05-20T00:00:00.000Z');
+    await db.insert(learning_item).values({
+      id: 'li_relearn',
+      source: 'manual',
+      title: '复学候选',
+      content: 'content',
+      knowledge_ids: [],
+      status: 'done',
+      completed_at: completedAt,
+      created_at: completedAt,
+      updated_at: completedAt,
+    });
+    await writeAiProposal(db, {
+      id: 'relearn_p1',
+      payload: {
+        kind: 'relearn',
+        target: { subject_kind: 'learning_item', subject_id: 'li_relearn' },
+        reason_md: 'mastery decayed',
+        evidence_refs: [],
+        proposed_change: {
+          learning_item_id: 'li_relearn',
+          current_mastery: 0.3,
+          peak_mastery: 0.9,
+          days_since_done: 8,
+        },
+        cooldown_key: 'relearn:li_relearn',
+      },
+    });
+
+    const result = await acceptAiProposal(db, 'relearn_p1');
+
+    expect(result).toMatchObject({ kind: 'relearn', learning_item_id: 'li_relearn' });
+    const item = (
+      await db.select().from(learning_item).where(eq(learning_item.id, 'li_relearn')).limit(1)
+    )[0];
+    expect(item.status).toBe('in_progress');
+    expect(item.completed_at).toBeNull();
+    expect(item.version).toBe(1);
+  });
+
+  it('acceptAiProposal applies record_links by linking scalar record refs and metadata', async () => {
+    const db = testDb();
+    const now = new Date();
+    await seedKnowledge(['k1']);
+    await db.insert(question).values({
+      id: 'q1',
+      kind: 'short_answer',
+      prompt_md: 'prompt',
+      reference_md: 'ref',
+      knowledge_ids: ['k1'],
+      source: 'manual',
+      difficulty: 3,
+      created_at: now,
+      updated_at: now,
+    });
+    await db.insert(learning_item).values({
+      id: 'li1',
+      source: 'manual',
+      title: 'item',
+      content: 'content',
+      knowledge_ids: ['k1'],
+      status: 'pending',
+      created_at: now,
+      updated_at: now,
+    });
+    await db.insert(artifact).values({
+      id: 'art1',
+      type: 'note_long',
+      title: 'note',
+      knowledge_ids: ['k1'],
+      intent_source: 'declared',
+      source: 'manual',
+      generation_status: 'ready',
+      created_at: now,
+      updated_at: now,
+    });
+    await db.insert(learning_record).values({
+      id: 'rec1',
+      kind: 'open_question',
+      title: 'record',
+      content_md: 'content',
+      source: 'manual',
+      capture_mode: 'text',
+      activity_kind: 'ask',
+      processing_status: 'raw',
+      knowledge_ids: [],
+      payload: {},
+      created_at: now,
+      updated_at: now,
+    });
+    await writeAiProposal(db, {
+      id: 'record_links_p1',
+      payload: {
+        kind: 'record_links',
+        target: { subject_kind: 'record', subject_id: 'rec1' },
+        reason_md: 'link record',
+        evidence_refs: [{ kind: 'record', id: 'rec1' }],
+        proposed_change: {
+          record_id: 'rec1',
+          links: [
+            { target_kind: 'knowledge', target_id: 'k1', relation: 'about', confidence: 0.8 },
+            { target_kind: 'question', target_id: 'q1', relation: 'follow_up', confidence: 0.7 },
+            {
+              target_kind: 'learning_item',
+              target_id: 'li1',
+              relation: 'evidence_for',
+              confidence: 0.7,
+            },
+            { target_kind: 'artifact', target_id: 'art1', relation: 'source_for', confidence: 0.7 },
+          ],
+        },
+        cooldown_key: 'record_links:rec1:k1',
+      },
+    });
+
+    const result = await acceptAiProposal(db, 'record_links_p1');
+
+    expect(result).toMatchObject({ kind: 'record_links', record_id: 'rec1' });
+    const record = (
+      await db.select().from(learning_record).where(eq(learning_record.id, 'rec1')).limit(1)
+    )[0];
+    expect(record.processing_status).toBe('actioned');
+    expect(record.knowledge_ids).toEqual(['k1']);
+    expect(record.question_id).toBe('q1');
+    expect(record.learning_item_id).toBe('li1');
+    expect(record.artifact_id).toBe('art1');
+    expect(record.payload).toMatchObject({
+      accepted_record_links: expect.arrayContaining([
+        expect.objectContaining({ target_kind: 'knowledge', target_id: 'k1' }),
+      ]),
+    });
+  });
+
+  it('acceptAiProposal materializes record_promotion into a LearningItem draft', async () => {
+    const db = testDb();
+    const now = new Date();
+    await seedKnowledge(['k1']);
+    await db.insert(learning_record).values({
+      id: 'rec_promote',
+      kind: 'open_question',
+      title: 'record title',
+      content_md: 'record content',
+      source: 'manual',
+      capture_mode: 'text',
+      activity_kind: 'ask',
+      processing_status: 'raw',
+      knowledge_ids: ['k1'],
+      payload: {},
+      created_at: now,
+      updated_at: now,
+    });
+    await writeAiProposal(db, {
+      id: 'record_promotion_p1',
+      payload: {
+        kind: 'record_promotion',
+        target: { subject_kind: 'record', subject_id: 'rec_promote' },
+        reason_md: 'turn into item',
+        evidence_refs: [{ kind: 'record', id: 'rec_promote' }],
+        proposed_change: {
+          record_id: 'rec_promote',
+          target: 'learning_item',
+          draft: { title: 'AI 学习项', content: 'AI 内容', knowledge_ids: ['k1'] },
+        },
+        cooldown_key: 'record_promotion:rec_promote:learning_item',
+      },
+    });
+
+    const result = await acceptAiProposal(db, 'record_promotion_p1');
+
+    expect(result).toMatchObject({ kind: 'record_promotion', record_id: 'rec_promote' });
+    if (result.kind !== 'record_promotion') throw new Error('expected record_promotion result');
+    const item = (
+      await db
+        .select()
+        .from(learning_item)
+        .where(eq(learning_item.id, result.materialized_id))
+        .limit(1)
+    )[0];
+    expect(item).toMatchObject({
+      source: 'ai_dream',
+      source_ref: 'record_promotion_p1',
+      title: 'AI 学习项',
+      content: 'AI 内容',
+      knowledge_ids: ['k1'],
+      status: 'pending',
+    });
+    const record = (
+      await db.select().from(learning_record).where(eq(learning_record.id, 'rec_promote')).limit(1)
+    )[0];
+    expect(record.learning_item_id).toBe(result.materialized_id);
+    expect(record.processing_status).toBe('actioned');
   });
 
   it('retractAiProposal writes a CorrectEvent chained to the proposal event', async () => {
@@ -378,31 +618,6 @@ describe('proposal lifecycle owner service', () => {
     expect(correctionRows[0].payload).toMatchObject({
       correction_kind: 'retract',
       reason_md: 'bad suggestion',
-    });
-  });
-
-  it('acceptAiProposal rejects future proposal kinds until their owner services exist', async () => {
-    const db = testDb();
-    // `completion` is one of the kinds that still has no owner-service accept path
-    // (writer/producer exist but materialization is not implemented yet).
-    await writeAiProposal(db, {
-      id: 'completion_p1',
-      payload: {
-        kind: 'completion',
-        target: { subject_kind: 'learning_item', subject_id: 'li_xx' },
-        reason_md: 'item appears mastered',
-        evidence_refs: [],
-        proposed_change: {
-          learning_item_id: 'li_xx',
-          triggering_signals: ['mastery_high_persisted_14d'],
-          evidence_json: {},
-        },
-      },
-    });
-
-    await expect(acceptAiProposal(db, 'completion_p1')).rejects.toMatchObject({
-      code: 'unsupported_proposal_kind',
-      status: 400,
     });
   });
 });

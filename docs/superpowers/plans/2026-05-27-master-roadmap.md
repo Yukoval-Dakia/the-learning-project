@@ -145,7 +145,7 @@ ls -lt docs/audit/*drift* 2>/dev/null | head -3
 
 | Track | Status | pts | forward-locks | blocked-by | Linear |
 |---|---|---|---|---|---|
-| **T-D2** DomainTool Registry M2 (10 read tools 补完) | ✅ shipped | ~25 | Drawer / Dreaming / Coach 三条全 | M1 ship ✓ | [YUK-102](https://linear.app/yukoval-studios/issue/YUK-102) + YUK-103~106 |
+| **T-D2** DomainTool Registry M2 (10 read tools 补完) | ✅ shipped | — | Drawer / Dreaming / Coach 三条全 | M1 ship ✓ | [YUK-102](https://linear.app/yukoval-studios/issue/YUK-102) + YUK-103~106 |
 | **T-D3** Copilot Drawer MVP (1 route 试点) | ⬜ | ~13 | Drawer 全 6 routes 铺开 | T-D2 (≥6 read tools) | ⬜ 待建 |
 | **T-D4** DomainTool Propose/Write Tools (8 个) | ✅ shipped | ~24 | Dreaming + Coach proposal 写入 | T-D2 done ✓ | [YUK-107](https://linear.app/yukoval-studios/issue/YUK-107) + YUK-108~112 |
 | **T-D5** Drawer 跨 6 routes 常驻 | ⬜ | ~13 | Layer 8 用户级兑现 | T-D3 试点验证 | ⬜ 待建 |

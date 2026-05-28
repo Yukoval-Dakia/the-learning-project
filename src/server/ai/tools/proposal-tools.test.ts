@@ -9,6 +9,7 @@ import {
   question,
 } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
+import * as attributeModule from '@/server/knowledge/attribute';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -256,6 +257,15 @@ describe('Wave 3 proposal/action DomainTools', () => {
     });
     expect(pendingDup.status).toBe('skipped:duplicate_pending');
 
+    const reversePendingDup = await proposeKnowledgeEdgeTool.execute(ctx(), {
+      from_knowledge_id: 'k_er',
+      to_knowledge_id: 'k_zhi',
+      relation_type: 'contrasts_with',
+      weight: 0.7,
+      reasoning: 'same symmetric edge in reverse',
+    });
+    expect(reversePendingDup.status).toBe('skipped:duplicate_pending');
+
     await db.insert(knowledge_edge).values({
       id: 'edge_live',
       from_knowledge_id: 'k_er',
@@ -273,6 +283,24 @@ describe('Wave 3 proposal/action DomainTools', () => {
       reasoning: 'already real',
     });
     expect(liveDup.status).toBe('skipped:duplicate_live_edge');
+
+    await db.insert(knowledge_edge).values({
+      id: 'edge_live_symmetric',
+      from_knowledge_id: 'k_er',
+      to_knowledge_id: 'k_zhi',
+      relation_type: 'related_to',
+      weight: 1,
+      created_by: 'user' as never,
+      created_at: BASE,
+    });
+    const liveReverseDup = await proposeKnowledgeEdgeTool.execute(ctx(), {
+      from_knowledge_id: 'k_zhi',
+      to_knowledge_id: 'k_er',
+      relation_type: 'related_to',
+      weight: 1,
+      reasoning: 'same symmetric edge already exists in reverse',
+    });
+    expect(liveReverseDup.status).toBe('skipped:duplicate_live_edge');
 
     const parentOnly = await proposeKnowledgeEdgeTool.execute(ctx(), {
       from_knowledge_id: 'k_zhi',
@@ -326,6 +354,26 @@ describe('Wave 3 proposal/action DomainTools', () => {
     });
   });
 
+  it('propose_knowledge_mutation rejects merge proposals missing expected_versions entries', async () => {
+    await seedKnowledgeGraph();
+
+    const out = await proposeKnowledgeMutationTool.execute(ctx(), {
+      mutation: 'merge',
+      payload: {
+        from_ids: ['k_zhi', 'k_er'],
+        into_id: 'k_wenyan',
+        expected_versions: { k_zhi: 0 },
+      },
+      reasoning: 'Merge two redundant child nodes.',
+    });
+
+    expect(out).toMatchObject({
+      status: 'skipped:invalid_payload',
+      reason: expect.stringContaining('expected_versions'),
+    });
+    await expect(listProposalInboxRows(testDb(), { status: 'pending' })).resolves.toHaveLength(0);
+  });
+
   it('attribute_mistake delegates to AttributionTask and skips existing/non-failure attempts', async () => {
     const db = testDb();
     await seedKnowledgeGraph();
@@ -374,6 +422,47 @@ describe('Wave 3 proposal/action DomainTools', () => {
       attempt_event_id: 'att_success',
     });
     expect(nonFailure.status).toBe('skipped:not_failure_attempt');
+  });
+
+  it('attribute_mistake reports existing_judge when the owner path loses an attribution race', async () => {
+    const db = testDb();
+    await seedKnowledgeGraph();
+    await seedQuestionAndFailure();
+    const spy = vi
+      .spyOn(attributeModule, 'runAttributionAndWriteJudgeEvent')
+      .mockImplementationOnce(async ({ db: innerDb, attemptEventId }) => {
+        await writeEvent(innerDb, {
+          id: 'judge_race_winner',
+          actor_kind: 'agent',
+          actor_ref: 'attribution',
+          action: 'judge',
+          subject_kind: 'event',
+          subject_id: attemptEventId,
+          outcome: 'success',
+          payload: {
+            cause: {
+              primary_category: 'concept',
+              secondary_categories: [],
+              analysis_md: '另一条 attribution 调用先写入。',
+              confidence: 0.8,
+            },
+            referenced_knowledge_ids: ['k_zhi'],
+          },
+          caused_by_event_id: attemptEventId,
+          created_at: new Date(BASE.getTime() + 4_000),
+        });
+      });
+
+    const raced = await attributeMistakeTool.execute(ctx(), { attempt_event_id: 'att_failure' });
+
+    expect(raced).toMatchObject({
+      status: 'skipped:existing_judge',
+      judge_event_id: 'judge_race_winner',
+    });
+    expect(mockRunner.runTask).not.toHaveBeenCalled();
+    spy.mockRestore();
+    const judges = await db.select().from(event).where(eq(event.action, 'judge'));
+    expect(judges).toHaveLength(1);
   });
 
   it('propose_variant reuses runVariantGen rules and creates a variant proposal ledger row', async () => {

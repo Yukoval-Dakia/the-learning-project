@@ -4,6 +4,7 @@ import { RelationTypeSchema } from './event/blocks';
 export const aiProposalKinds = [
   'knowledge_node',
   'knowledge_edge',
+  'knowledge_mutation',
   'learning_item',
   'note_update',
   'variant_question',
@@ -59,6 +60,32 @@ export const KnowledgeEdgeProposalChange = z.object({
 });
 export type KnowledgeEdgeProposalChangeT = z.infer<typeof KnowledgeEdgeProposalChange>;
 
+export const KnowledgeMutationProposalChange = z.discriminatedUnion('mutation', [
+  z.object({
+    mutation: z.literal('reparent'),
+    node_id: z.string().min(1),
+    new_parent_id: z.string().min(1).nullable(),
+    expected_version: z.number().int().min(0),
+  }),
+  z.object({
+    mutation: z.literal('merge'),
+    from_ids: z.array(z.string().min(1)).min(1),
+    into_id: z.string().min(1),
+    expected_versions: z.record(z.string(), z.number().int().min(0)),
+  }),
+  z.object({
+    mutation: z.literal('split'),
+    from_id: z.string().min(1),
+    into: z
+      .array(
+        z.object({ name: z.string().min(1).max(120), parent_id: z.string().min(1).nullable() }),
+      )
+      .min(1),
+    expected_version: z.number().int().min(0),
+  }),
+]);
+export type KnowledgeMutationProposalChangeT = z.infer<typeof KnowledgeMutationProposalChange>;
+
 export const AiProposalPayload = z.discriminatedUnion('kind', [
   BaseProposal.extend({
     kind: z.literal('knowledge_node'),
@@ -69,6 +96,11 @@ export const AiProposalPayload = z.discriminatedUnion('kind', [
     kind: z.literal('knowledge_edge'),
     target: ProposalTarget.extend({ subject_kind: z.literal('knowledge_edge') }),
     proposed_change: KnowledgeEdgeProposalChange,
+  }),
+  BaseProposal.extend({
+    kind: z.literal('knowledge_mutation'),
+    target: ProposalTarget.extend({ subject_kind: z.literal('knowledge') }),
+    proposed_change: KnowledgeMutationProposalChange,
   }),
   BaseProposal.extend({
     kind: z.literal('learning_item'),
