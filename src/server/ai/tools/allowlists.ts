@@ -30,6 +30,9 @@ export const PROPOSE_WRITE_TOOLS = [
   'propose_variant',
   'propose_learning_item_completion',
   'propose_learning_item_relearn',
+  // T-D6/C (YUK-120) — Coach-driven defer/archive lane.
+  'propose_learning_item_defer',
+  'propose_learning_item_archive',
   'propose_record_links',
   'propose_record_promotion',
 ] as const;
@@ -83,6 +86,12 @@ const DREAMING_TOOLS = [
   'propose_record_promotion',
 ] as const satisfies readonly DomainToolName[];
 
+// T-D6/C (YUK-120) — Coach surface allowlist.
+// Coach reads via the same read tools as before, plus extra propose_* tools
+// covering the 4 plan_adjustments emitted by `CoachTask` (defer / split /
+// relearn / archive). `propose_knowledge_mutation` covers `split`;
+// `propose_learning_item_defer` and `propose_learning_item_archive` were
+// added by this lane.
 const COACH_TOOLS = [
   'query_memory_brief',
   'query_mistakes',
@@ -92,6 +101,9 @@ const COACH_TOOLS = [
   'get_question_context',
   'propose_learning_item_completion',
   'propose_learning_item_relearn',
+  'propose_learning_item_defer',
+  'propose_learning_item_archive',
+  'propose_knowledge_mutation',
 ] as const satisfies readonly DomainToolName[];
 
 const MAINTENANCE_TOOLS = [
@@ -100,6 +112,8 @@ const MAINTENANCE_TOOLS = [
   'propose_knowledge_mutation',
   'propose_learning_item_completion',
   'propose_learning_item_relearn',
+  'propose_learning_item_defer',
+  'propose_learning_item_archive',
   'propose_record_links',
   'propose_record_promotion',
 ] as const satisfies readonly DomainToolName[];
