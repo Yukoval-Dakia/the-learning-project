@@ -128,46 +128,48 @@ async function persistNoteVerificationResult(params: {
   const { db, artifactId, parsed, taskResult } = params;
   const status = parsed.verdict === 'pass' ? 'verified' : 'needs_review';
 
-  await db
-    .update(artifact)
-    .set({
-      verification_status: status,
-      verification_summary: parsed as never,
-      verified_by: taskResult
-        ? (aiAgentRef('NoteVerifyTask', taskResult) as never)
-        : ({ by: 'system', task_kind: 'NoteVerifyTask', model: 'body-block-contract' } as never),
-      updated_at: new Date(),
-    })
-    .where(eq(artifact.id, artifactId));
+  await db.transaction(async (tx) => {
+    await tx
+      .update(artifact)
+      .set({
+        verification_status: status,
+        verification_summary: parsed as never,
+        verified_by: taskResult
+          ? (aiAgentRef('NoteVerifyTask', taskResult) as never)
+          : ({ by: 'system', task_kind: 'NoteVerifyTask', model: 'body-block-contract' } as never),
+        updated_at: new Date(),
+      })
+      .where(eq(artifact.id, artifactId));
 
-  const verifyEventId = createId();
-  await writeEvent(db, {
-    id: verifyEventId,
-    session_id: null,
-    actor_kind: taskResult ? 'agent' : 'system',
-    actor_ref: 'note_verify',
-    action: 'experimental:note_verify',
-    subject_kind: 'artifact',
-    subject_id: artifactId,
-    outcome: parsed.verdict === 'pass' ? 'success' : 'partial',
-    payload: parsed,
-    caused_by_event_id: null,
-    task_run_id: taskResult?.task_run_id ?? null,
-    cost_micro_usd: costUsdToMicroUsd(taskResult?.cost_usd),
-    created_at: new Date(),
-  });
-
-  if (status === 'needs_review') {
-    await writeNoteUpdateProposal(db, {
-      artifact_id: artifactId,
-      verification_event_id: verifyEventId,
-      summary_md: parsed.summary_md,
-      issues: parsed.issues,
-      reason_md: parsed.summary_md,
+    const verifyEventId = createId();
+    await writeEvent(tx, {
+      id: verifyEventId,
+      session_id: null,
+      actor_kind: taskResult ? 'agent' : 'system',
+      actor_ref: 'note_verify',
+      action: 'experimental:note_verify',
+      subject_kind: 'artifact',
+      subject_id: artifactId,
+      outcome: parsed.verdict === 'pass' ? 'success' : 'partial',
+      payload: parsed,
+      caused_by_event_id: null,
       task_run_id: taskResult?.task_run_id ?? null,
-      cost_usd: taskResult?.cost_usd,
+      cost_micro_usd: costUsdToMicroUsd(taskResult?.cost_usd),
+      created_at: new Date(),
     });
-  }
+
+    if (status === 'needs_review') {
+      await writeNoteUpdateProposal(tx, {
+        artifact_id: artifactId,
+        verification_event_id: verifyEventId,
+        summary_md: parsed.summary_md,
+        issues: parsed.issues,
+        reason_md: parsed.summary_md,
+        task_run_id: taskResult?.task_run_id ?? null,
+        cost_usd: taskResult?.cost_usd,
+      });
+    }
+  });
 
   return status;
 }

@@ -4,14 +4,17 @@ import { ArtifactBodyBlocks, NoteSection } from '@/core/schema/business';
 
 type NoteSectionT = z.infer<typeof NoteSection>;
 type ArtifactBodyBlocksT = z.infer<typeof ArtifactBodyBlocks>;
-type ArtifactRefTarget = { artifact_id: string; kind: string };
-export type ArtifactBlockSummary = {
+interface ArtifactRefTarget {
+  artifact_id: string;
+  kind: string;
+}
+export interface ArtifactBlockSummary {
   id?: string;
   type: string;
   semantic_kind?: string;
   target?: ArtifactRefTarget;
   text_excerpt: string;
-};
+}
 
 const SEMANTIC_BLOCK_TYPE = 'semanticBlock';
 const SEMANTIC_KINDS = new Set(['definition', 'mechanism', 'example', 'pitfall', 'check']);
@@ -104,16 +107,11 @@ export function bodyBlocksHaveSemanticKinds(
   const found = new Set<string>();
 
   if (parsed.success) {
-    const visit = (node: Record<string, unknown>) => {
+    for (const node of parsed.data.content ?? []) {
+      if (node.type !== SEMANTIC_BLOCK_TYPE) continue;
       const attrs = recordOrEmpty(node.attrs);
       if (typeof attrs.semantic_kind === 'string') found.add(attrs.semantic_kind);
-      const content = Array.isArray(node.content) ? node.content : [];
-      for (const child of content) {
-        if (child !== null && typeof child === 'object') visit(child as Record<string, unknown>);
-      }
-    };
-
-    for (const node of parsed.data.content ?? []) visit(node);
+    }
   }
 
   const missing = requiredKinds.filter((kind) => !found.has(kind));
@@ -248,10 +246,18 @@ export function replaceNoteSectionBody(
       const attrs = node.attrs as { id?: unknown; version?: unknown } | undefined;
       if (node.type !== SEMANTIC_BLOCK_TYPE || attrs?.id !== sectionId) return node;
       const version = typeof attrs.version === 'number' ? attrs.version + 1 : 1;
+      const preservedRefs = Array.isArray(node.content)
+        ? node.content.filter(
+            (child) =>
+              child !== null &&
+              typeof child === 'object' &&
+              (child as Record<string, unknown>).type === 'artifactRefBlock',
+          )
+        : [];
       return {
         ...node,
         attrs: { ...recordOrEmpty(node.attrs), version, source_markdown: nextBodyMd },
-        content: [paragraphNode(nextBodyMd)],
+        content: [paragraphNode(nextBodyMd), ...preservedRefs],
       };
     }),
   };

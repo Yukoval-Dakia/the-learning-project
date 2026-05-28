@@ -73,6 +73,11 @@ export function parseNoteGenerateOutput(text: string): ParsedNoteGenerateOutput 
   const bodyBlocksParsed = BodyBlocksOutputSchema.safeParse(json);
   if (bodyBlocksParsed.success) {
     const bodyBlocks = bodyBlocksParsed.data.body_blocks;
+    if (bodyBlocks.content.length === 0) {
+      throw new Error(
+        'parseNoteGenerateOutput: body_blocks.content must contain at least one block',
+      );
+    }
     return {
       body_blocks: bodyBlocks,
       blocks_count: bodyBlocks.content.length,
@@ -189,7 +194,7 @@ export async function runNoteGenerate(
     });
     const parsed = parseNoteGenerateOutput(result.text);
 
-    await db
+    const updated = await db
       .update(artifact)
       .set({
         body_blocks: parsed.body_blocks as never,
@@ -200,7 +205,12 @@ export async function runNoteGenerate(
         } as never,
         updated_at: new Date(),
       })
-      .where(and(eq(artifact.id, artifactId), eq(artifact.generation_status, 'pending')));
+      .where(and(eq(artifact.id, artifactId), eq(artifact.generation_status, 'pending')))
+      .returning({ id: artifact.id });
+
+    if (updated.length === 0) {
+      return { status: 'skipped:not_pending' };
+    }
 
     return {
       status: 'ready',

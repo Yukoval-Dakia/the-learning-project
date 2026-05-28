@@ -39,8 +39,12 @@ export async function POST(_req: Request, { params }: RouteParams): Promise<Resp
       try {
         const boss = await getStartedBoss();
         for (const artifactId of [...result.atomic_artifact_ids, ...result.long_artifact_ids]) {
-          await boss.send('note_generate', { artifact_id: artifactId });
-          enqueued += 1;
+          try {
+            await boss.send('note_generate', { artifact_id: artifactId });
+            enqueued += 1;
+          } catch (err) {
+            console.warn(`note_generate enqueue failed for artifact ${artifactId}:`, err);
+          }
         }
       } catch (err) {
         console.warn(`note_generate enqueue failed for ${id}:`, err);

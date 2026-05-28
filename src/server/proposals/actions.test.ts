@@ -802,10 +802,46 @@ describe('learning_item proposal lifecycle', () => {
     expect(lis).toHaveLength(0);
   });
 
-  it('retract after accept tombstones hub + atomic learning_items + artifacts with archived_reason=proposal_retracted', async () => {
-    const { proposalId } = await seedLearningItemProposal();
+  it('retract after accept tombstones hub + atomic + long learning_items and all proposal-sourced artifacts', async () => {
+    const { proposalId } = await seedLearningItemProposal({ withLong: true });
     const accepted = await acceptAiProposal(testDb(), proposalId);
     if (accepted.kind !== 'learning_item') throw new Error('expected learning_item accept');
+    const sourceAtomicArtifactId = accepted.atomic_artifact_ids[0];
+    if (!sourceAtomicArtifactId) throw new Error('expected atomic artifact id');
+    const quizArtifactId = 'quiz_retract_1';
+    const now = new Date();
+    await testDb()
+      .insert(artifact)
+      .values({
+        id: quizArtifactId,
+        type: 'tool_quiz',
+        title: '之的用法 自检',
+        parent_artifact_id: null,
+        knowledge_ids: ['k_zhi_xc'],
+        intent_source: 'embedded_check',
+        source: 'ai_generated',
+        source_ref: proposalId,
+        body_blocks: null,
+        attrs: {
+          embedded_for_artifact_id: sourceAtomicArtifactId,
+          check_block_id: 's_check',
+        } as never,
+        tool_kind: 'embedded_check',
+        tool_state: {
+          question_ids: [],
+          session_meta: {
+            source_artifact_id: sourceAtomicArtifactId,
+            check_block_id: 's_check',
+          },
+        } as never,
+        generation_status: 'ready',
+        verification_status: 'not_required',
+        generated_by: null,
+        history: [],
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      });
 
     const retracted = await retractAiProposal(testDb(), proposalId, { reason_md: 'rewrite' });
     expect(retracted.kind).toBe('retracted');
@@ -814,18 +850,23 @@ describe('learning_item proposal lifecycle', () => {
       .select()
       .from(learning_item)
       .where(eq(learning_item.source_ref, proposalId));
-    expect(liRows).toHaveLength(3);
+    expect(liRows).toHaveLength(4);
     for (const li of liRows) {
       expect(li.archived_at).not.toBeNull();
       expect(li.archived_reason).toBe('proposal_retracted');
     }
 
-    const artifactIds = [accepted.hub_artifact_id, ...accepted.atomic_artifact_ids];
+    const artifactIds = [
+      accepted.hub_artifact_id,
+      ...accepted.atomic_artifact_ids,
+      ...accepted.long_artifact_ids,
+      quizArtifactId,
+    ];
     const artifactRows = await testDb()
       .select()
       .from(artifact)
       .where(eq(artifact.source_ref, proposalId));
-    expect(artifactRows.length).toBeGreaterThanOrEqual(artifactIds.length);
+    expect(new Set(artifactRows.map((row) => row.id))).toEqual(new Set(artifactIds));
     for (const art of artifactRows) {
       expect(art.archived_at).not.toBeNull();
     }

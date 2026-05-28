@@ -46,6 +46,13 @@ describe('getTaskSystemPrompt', () => {
     expect(prompt).toContain('longs');
     expect(prompt).toContain('knowledge_ids');
     expect(prompt).toContain('0-M');
+    expect(prompt).toContain('3b: {"knowledge":{"children"');
+    expect(prompt).toContain('3b 不要输出 root');
+    expect(prompt).toContain(
+      '3b: longs[].knowledge_ids 只能使用 knowledge_node.id 或 knowledge.children[].temp_id',
+    );
+    expect(prompt).not.toContain('3a/3b: {"knowledge":{"root"');
+    expect(prompt).not.toContain('3a/3b: longs[].knowledge_ids 只能使用 knowledge.root.temp_id');
   });
 
   it('keeps DreamingTask focused on bounded tool-written proposals', () => {

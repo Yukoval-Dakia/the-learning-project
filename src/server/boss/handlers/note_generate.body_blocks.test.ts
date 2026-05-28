@@ -50,6 +50,16 @@ describe('parseNoteGenerateOutput', () => {
     });
   });
 
+  it('rejects empty body_blocks output before marking an artifact ready', () => {
+    expect(() =>
+      parseNoteGenerateOutput(
+        JSON.stringify({
+          body_blocks: { type: 'doc', content: [] },
+        }),
+      ),
+    ).toThrow(/body_blocks\.content must contain at least one block/);
+  });
+
   it('converts legacy sections output for compatibility', () => {
     const parsed = parseNoteGenerateOutput(LEGACY_SECTIONS_OUTPUT);
 

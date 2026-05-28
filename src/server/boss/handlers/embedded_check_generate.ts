@@ -166,6 +166,7 @@ export async function runEmbeddedCheckGenerate(
       title: artifact.title,
       knowledge_ids: artifact.knowledge_ids,
       body_blocks: artifact.body_blocks,
+      source_ref: artifact.source_ref,
       generation_status: artifact.generation_status,
       embedded_check_status: artifact.embedded_check_status,
       updated_at: artifact.updated_at,
@@ -243,6 +244,8 @@ export async function runEmbeddedCheckGenerate(
     // Insert question rows in a single transaction, then update artifact
     const questionIds: string[] = [];
     const toolQuizArtifactId = createId();
+    const proposalSourceRef =
+      typeof row.source_ref === 'string' && row.source_ref.length > 0 ? row.source_ref : row.id;
     await db.transaction(async (tx) => {
       for (const q of parsed.questions) {
         const id = createId();
@@ -278,9 +281,13 @@ export async function runEmbeddedCheckGenerate(
         knowledge_ids: row.knowledge_ids,
         intent_source: 'embedded_check',
         source: 'ai_generated',
-        source_ref: row.id,
+        source_ref: proposalSourceRef,
         body_blocks: null,
-        attrs: { embedded_for_artifact_id: row.id, check_block_id: checkSection.id } as never,
+        attrs: {
+          embedded_for_artifact_id: row.id,
+          source_artifact_id: row.id,
+          check_block_id: checkSection.id,
+        } as never,
         tool_kind: 'embedded_check',
         tool_state: {
           question_ids: questionIds,

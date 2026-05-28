@@ -12,6 +12,8 @@ import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
 import { type ProposalInboxRow, listProposalInboxRows } from '@/server/proposals/inbox';
 
+export const DREAMING_MAX_PROPOSALS = 5;
+
 export interface DreamingNightlyResult {
   processed: number;
   proposals_created: number;
@@ -51,7 +53,7 @@ function buildDreamingInput(now: Date, beforeRows: ProposalSnapshotRow[]) {
       'Review recent learning signals with the provided DomainTools and create only actionable inbox proposals. Do not mutate user data directly.',
     budget: {
       max_tool_calls: 8,
-      max_proposals: 5,
+      max_proposals: DREAMING_MAX_PROPOSALS,
       stop_when_no_actionable_proposal: true,
     },
     proposal_policy: {
@@ -94,6 +96,7 @@ export async function runDreamingNightly(
 
   try {
     const toolNames = resolveDomainToolNames('dreaming');
+    let proposalWrites = 0;
     const mcpServer = buildMcpServer({
       ctx: {
         db,
@@ -104,6 +107,14 @@ export async function runDreamingNightly(
       serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
       toolNames,
       taskKind: 'DreamingTask',
+      beforeExecute: (tool) => {
+        if (tool.effect !== 'propose' && tool.effect !== 'write') return undefined;
+        if (proposalWrites >= DREAMING_MAX_PROPOSALS) {
+          return `dreaming proposal cap reached (${DREAMING_MAX_PROPOSALS}); stop creating proposals in this run`;
+        }
+        proposalWrites += 1;
+        return undefined;
+      },
     });
 
     const taskResult = await run('DreamingTask', buildDreamingInput(now, beforeRows), {

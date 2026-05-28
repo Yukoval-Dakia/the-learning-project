@@ -167,6 +167,24 @@ describe('runNoteGenerate', () => {
     expect(onReady).toHaveBeenCalledWith('a1');
   });
 
+  it('does not call onReady when another worker already claimed the pending artifact', async () => {
+    await seedAtomic({ artifactId: 'a1', knowledgeId: 'k1' });
+    const db = testDb();
+    const runTaskFn = vi.fn(async () => {
+      await db
+        .update(artifact)
+        .set({ generation_status: 'ready', updated_at: new Date() })
+        .where(eq(artifact.id, 'a1'));
+      return { text: VALID_SECTIONS };
+    });
+    const onReady = vi.fn(async (_artifactId: string) => {});
+    const handler = buildNoteGenerateHandler(db, { runTaskFn, onReady });
+
+    await handler([{ id: 'job1', data: { artifact_id: 'a1' } } as never]);
+
+    expect(onReady).not.toHaveBeenCalled();
+  });
+
   it('passes the knowledge subject profile to NoteGenerateTask', async () => {
     await seedAtomic({ artifactId: 'a1', knowledgeId: 'k_math', domain: 'math' });
     const runTaskFn = vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({

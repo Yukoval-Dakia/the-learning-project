@@ -2,6 +2,7 @@ import {
   artifactRefBlock,
   bodyBlocksHaveSemanticKinds,
   bodyBlocksToBlockSummaries,
+  replaceNoteSectionBody,
   setNoteSectionEmbeddedCheckArtifactRef,
 } from '@/server/artifacts/body-blocks';
 import { describe, expect, it } from 'vitest';
@@ -23,6 +24,41 @@ describe('body block helpers', () => {
     expect(bodyBlocksHaveSemanticKinds(bodyBlocks, ['definition', 'pitfall', 'check'])).toEqual({
       ok: false,
       missing: ['pitfall', 'check'],
+    });
+  });
+
+  it('ignores semantic_kind attrs outside top-level semantic blocks', () => {
+    const bodyBlocks = {
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          attrs: { semantic_kind: 'definition' },
+          content: [
+            {
+              type: 'text',
+              text: 'not a semantic block',
+              attrs: { semantic_kind: 'mechanism' },
+            },
+          ],
+        },
+        {
+          type: 'semanticBlock',
+          attrs: { id: 'b1', semantic_kind: 'example' },
+          content: [
+            {
+              type: 'paragraph',
+              attrs: { semantic_kind: 'pitfall' },
+              content: [{ type: 'text', text: '例子' }],
+            },
+          ],
+        },
+      ],
+    };
+
+    expect(bodyBlocksHaveSemanticKinds(bodyBlocks, ['definition', 'example', 'pitfall'])).toEqual({
+      ok: false,
+      missing: ['definition', 'pitfall'],
     });
   });
 
@@ -97,5 +133,36 @@ describe('body block helpers', () => {
       },
       content: [],
     });
+  });
+
+  it('preserves tool artifact refs when replacing section body text', () => {
+    const bodyBlocks = {
+      type: 'doc',
+      content: [
+        {
+          type: 'semanticBlock',
+          attrs: { id: 'check_1', semantic_kind: 'check', version: 1 },
+          content: [
+            { type: 'paragraph', content: [{ type: 'text', text: '旧自检' }] },
+            artifactRefBlock('quiz_1', 'tool_quiz', { id: 'check_1_quiz_ref' }),
+          ],
+        },
+      ],
+    };
+
+    const updated = replaceNoteSectionBody(bodyBlocks, 'check_1', '新自检');
+    const checkContent = updated.content[0]?.content as Array<unknown> | undefined;
+
+    expect(updated.content[0]?.attrs).toMatchObject({
+      version: 2,
+      source_markdown: '新自检',
+    });
+    expect(checkContent?.[0]).toEqual({
+      type: 'paragraph',
+      content: [{ type: 'text', text: '新自检' }],
+    });
+    expect(checkContent?.[1]).toEqual(
+      artifactRefBlock('quiz_1', 'tool_quiz', { id: 'check_1_quiz_ref' }),
+    );
   });
 });

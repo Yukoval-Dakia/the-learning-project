@@ -5,7 +5,11 @@ import {
   resolveDomainToolNames,
   resolveMcpAllowedTools,
 } from '@/server/ai/tools/allowlists';
-import { runDreamingNightly } from '@/server/boss/handlers/dreaming_nightly';
+import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
+import {
+  DREAMING_MAX_PROPOSALS,
+  runDreamingNightly,
+} from '@/server/boss/handlers/dreaming_nightly';
 
 describe('runDreamingNightly', () => {
   it('runs DreamingTask with the generic MCP bridge and dreaming allowlist', async () => {
@@ -18,7 +22,7 @@ describe('runDreamingNightly', () => {
         { id: 'p_before', status: 'pending' },
         { id: 'p_new', status: 'pending' },
       ]);
-    const buildMcpServerFn = vi.fn(() => mcpServer);
+    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
     const runAgentTaskFn = vi.fn(async () => ({
       task_run_id: 'task_dreaming_1',
       text: 'done',
@@ -53,11 +57,23 @@ describe('runDreamingNightly', () => {
         }),
       }),
     );
+    const buildOptions = buildMcpServerFn.mock.calls[0]?.[0];
+    if (!buildOptions?.beforeExecute) throw new Error('expected beforeExecute gate');
+    for (let i = 0; i < DREAMING_MAX_PROPOSALS; i++) {
+      expect(buildOptions.beforeExecute?.({ name: `propose_${i}`, effect: 'propose' })).toBe(
+        undefined,
+      );
+    }
+    expect(buildOptions.beforeExecute?.({ name: 'propose_over_cap', effect: 'propose' })).toMatch(
+      /proposal cap reached/,
+    );
+    expect(buildOptions.beforeExecute?.({ name: 'query_records', effect: 'read' })).toBeUndefined();
     expect(runAgentTaskFn).toHaveBeenCalledWith(
       'DreamingTask',
       expect.objectContaining({
         run_kind: 'nightly',
         pending_proposals_before: 1,
+        budget: expect.objectContaining({ max_proposals: DREAMING_MAX_PROPOSALS }),
       }),
       expect.objectContaining({
         mcpServers: { [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer },
