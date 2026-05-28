@@ -181,6 +181,40 @@ describe('buildMcpServerFromRegistry', () => {
     expect(log.output_json).toEqual({ error: 'quota exceeded' });
   });
 
+  it('records beforeExecute failures instead of escaping the handler', async () => {
+    const runFn = vi.fn((i: { q: string }) => ({ len: i.q.length }));
+    const beforeExecute = vi.fn(() => {
+      throw new Error('gate exploded');
+    });
+    registerTool(
+      makeReadTool<{ q: string }, { len: number }>(
+        'demo_gate_throw',
+        { q: z.string() },
+        runFn,
+        () => 'should not be summarized',
+      ),
+    );
+
+    buildMcpServerFromRegistry({
+      ctx,
+      serverName: 'loom_v2',
+      toolNames: ['demo_gate_throw'],
+      beforeExecute,
+    });
+    const result = (await mockAgentSdk.toolDefs[0].handler({ q: 'hello' })) as {
+      content: Array<{ type: string; text: string }>;
+    };
+
+    expect(runFn).not.toHaveBeenCalled();
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.error).toBe('gate exploded');
+
+    const log = captured.toolCallLogs[0] as Record<string, unknown>;
+    expect(log.tool_name).toBe('demo_gate_throw');
+    expect(log.error_reason).toBe('gate exploded');
+    expect(log.output_json).toEqual({ error: 'gate exploded' });
+  });
+
   it('keeps successful execution successful when summarize throws', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     registerTool(

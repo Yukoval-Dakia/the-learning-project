@@ -127,9 +127,13 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
       }
 
       if (errorReason === undefined) {
-        const gateReason = opts.beforeExecute?.({ name: dt.name, effect: dt.effect });
-        if (typeof gateReason === 'string' && gateReason.length > 0) {
-          errorReason = gateReason;
+        try {
+          const gateReason = opts.beforeExecute?.({ name: dt.name, effect: dt.effect });
+          if (typeof gateReason === 'string' && gateReason.length > 0) {
+            errorReason = gateReason;
+          }
+        } catch (err) {
+          errorReason = err instanceof Error ? err.message : String(err);
         }
       }
 

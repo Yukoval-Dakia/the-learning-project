@@ -247,10 +247,12 @@ describe('runEmbeddedCheckGenerate', () => {
       runTaskFn,
     });
 
+    expect(result.tool_quiz_artifact_id).toBeTruthy();
     const [quizArtifact] = await testDb()
       .select()
       .from(artifact)
-      .where(eq(artifact.id, result.tool_quiz_artifact_id ?? 'missing'));
+      .where(eq(artifact.id, result.tool_quiz_artifact_id as string));
+    expect(quizArtifact).toBeDefined();
     expect(quizArtifact.source_ref).toBe('proposal_1');
     expect(quizArtifact.attrs).toMatchObject({
       embedded_for_artifact_id: 'a_proposal',
