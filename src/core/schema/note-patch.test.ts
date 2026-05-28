@@ -101,10 +101,7 @@ describe('NotePatchDeleteBlock', () => {
     expect(parsed.target_block_id).toBe('b1');
   });
 
-  it('rejects delete_block with block field (delete carries no block)', () => {
-    // Strict not enforced — but discriminated union resolves by kind so an
-    // extra unknown field is allowed (passthrough). What we DO test is that
-    // missing target_block_id fails.
+  it('rejects delete_block when target_block_id is missing', () => {
     expect(() =>
       NotePatchDeleteBlock.parse({
         kind: 'delete_block',

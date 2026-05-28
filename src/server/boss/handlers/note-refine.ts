@@ -128,7 +128,9 @@ export type RunNoteRefineResult =
   | { status: 'proposed'; ops_count: number; new_blocks: number }
   | { status: 'skipped:empty_patch' }
   | { status: 'skipped:not_found' }
-  | { status: 'skipped:no_body_blocks' };
+  | { status: 'skipped:no_body_blocks' }
+  | { status: 'skipped:archived' }
+  | { status: 'skipped:version_conflict' };
 
 // PHASE-DEFERRED (P4-B): replace this default with the locked threshold gate
 // (`≤ 3 ops AND ≤ 2 new blocks → mutator; else propose`) + editing-session
@@ -219,10 +221,7 @@ export async function runNoteRefine(params: RunNoteRefineParams): Promise<RunNot
   });
 
   if (applyResult.status !== 'applied') {
-    // applied path either succeeds or the artifact vanished mid-flight.
-    return applyResult.status === 'skipped:not_found'
-      ? { status: 'skipped:not_found' }
-      : { status: 'skipped:empty_patch' };
+    return { status: applyResult.status };
   }
 
   return {

@@ -125,4 +125,15 @@ describe('applyNotePatch — pure ops', () => {
     });
     expect(before).toEqual(snapshot);
   });
+
+  it('does not share references between patch.ops blocks and the result', () => {
+    const insertBlock = paragraph('b2', 'inserted');
+    const before = doc(paragraph('b1', 'a'));
+    const result = applyNotePatch(before, {
+      ops: [{ kind: 'insert_after', target_block_id: 'b1', block: insertBlock }],
+    });
+    // Mutating the patch block must not affect the result
+    (insertBlock.content as { text: string }[])[0].text = 'MUTATED';
+    expect((result.content[1].content as { text: string }[])[0].text).toBe('inserted');
+  });
 });

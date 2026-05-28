@@ -30,6 +30,10 @@ export class NoteRefineApplyError extends Error {
   }
 }
 
+function cloneNode(node: Record<string, unknown>): Record<string, unknown> {
+  return JSON.parse(JSON.stringify(node)) as Record<string, unknown>;
+}
+
 function blockIdOf(node: Record<string, unknown>): string | undefined {
   const attrs = node.attrs;
   if (attrs === null || typeof attrs !== 'object' || Array.isArray(attrs)) return undefined;
@@ -46,8 +50,8 @@ export function applyNotePatch(bodyBlocks: unknown, patch: NotePatchT): Artifact
     );
   }
 
-  let content: Record<string, unknown>[] = (parsed.data.content ?? []).map(
-    (node) => ({ ...node }) as Record<string, unknown>,
+  let content: Record<string, unknown>[] = (parsed.data.content ?? []).map((node) =>
+    cloneNode(node as Record<string, unknown>),
   );
 
   for (const op of patch.ops) {
@@ -70,7 +74,11 @@ function applyOp(content: Record<string, unknown>[], op: NotePatchOpT): Record<s
           `insert_after: target_block_id "${op.target_block_id}" not found in doc root`,
         );
       }
-      return [...content.slice(0, idx + 1), op.block, ...content.slice(idx + 1)];
+      return [
+        ...content.slice(0, idx + 1),
+        cloneNode(op.block as Record<string, unknown>),
+        ...content.slice(idx + 1),
+      ];
     }
     case 'replace_block': {
       const idx = content.findIndex((node) => blockIdOf(node) === op.target_block_id);
@@ -80,7 +88,11 @@ function applyOp(content: Record<string, unknown>[], op: NotePatchOpT): Record<s
           `replace_block: target_block_id "${op.target_block_id}" not found in doc root`,
         );
       }
-      return [...content.slice(0, idx), op.block, ...content.slice(idx + 1)];
+      return [
+        ...content.slice(0, idx),
+        cloneNode(op.block as Record<string, unknown>),
+        ...content.slice(idx + 1),
+      ];
     }
     case 'delete_block': {
       const idx = content.findIndex((node) => blockIdOf(node) === op.target_block_id);
@@ -93,6 +105,6 @@ function applyOp(content: Record<string, unknown>[], op: NotePatchOpT): Record<s
       return [...content.slice(0, idx), ...content.slice(idx + 1)];
     }
     case 'append_block':
-      return [...content, op.block];
+      return [...content, cloneNode(op.block as Record<string, unknown>)];
   }
 }

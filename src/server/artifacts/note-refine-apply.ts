@@ -47,7 +47,12 @@ export interface PersistNoteRefineApplyParams {
 }
 
 export interface PersistNoteRefineApplyResult {
-  status: 'applied' | 'skipped:empty_patch' | 'skipped:not_found';
+  status:
+    | 'applied'
+    | 'skipped:empty_patch'
+    | 'skipped:not_found'
+    | 'skipped:archived'
+    | 'skipped:version_conflict';
   artifact_id: string;
   event_id?: string;
   ops_count?: number;
@@ -75,9 +80,7 @@ export async function persistNoteRefineApply(
     return { status: 'skipped:empty_patch', artifact_id: artifactId };
   }
 
-  const txDb = db as Db;
-
-  return txDb.transaction(async (tx) => {
+  const runInTx = async (tx: Tx): Promise<PersistNoteRefineApplyResult> => {
     const rows = await tx
       .select({
         id: artifact.id,
@@ -95,20 +98,33 @@ export async function persistNoteRefineApply(
         artifact_id: artifactId,
       };
     }
+    if (row.archived_at) {
+      return {
+        status: 'skipped:archived' as const,
+        artifact_id: artifactId,
+      };
+    }
 
     const newBodyBlocks = applyNotePatch(row.body_blocks, patch);
     const nowAt = now ?? new Date();
     const nextVersion = (row.version ?? 0) + 1;
     const id = eventId ?? createId();
 
-    await tx
+    const updated = await tx
       .update(artifact)
       .set({
         body_blocks: newBodyBlocks as never,
         version: nextVersion,
         updated_at: nowAt,
       })
-      .where(and(eq(artifact.id, artifactId), eq(artifact.version, row.version)));
+      .where(and(eq(artifact.id, artifactId), eq(artifact.version, row.version)))
+      .returning({ version: artifact.version });
+    if (updated.length === 0) {
+      return {
+        status: 'skipped:version_conflict' as const,
+        artifact_id: artifactId,
+      };
+    }
 
     const summary = summarizeNotePatch(patch);
 
@@ -148,5 +164,11 @@ export async function persistNoteRefineApply(
       new_blocks: countNewBlocks(patch),
       artifact_version: nextVersion,
     };
-  });
+  };
+
+  // Detect Tx vs Db: Tx strips `$client`, Db exposes it.
+  if (!('$client' in db)) {
+    return runInTx(db as Tx);
+  }
+  return (db as Db).transaction(runInTx);
 }
