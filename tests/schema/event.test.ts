@@ -15,7 +15,7 @@ import {
   RateEvent,
   RateKnowledgeEdge,
   ReviewOnQuestion,
-  ToolUseExperimental,
+  ToolUseQuery,
   UserCauseExperimental,
   parseEvent,
 } from '@/core/schema/event';
@@ -1197,10 +1197,10 @@ describe('ExperimentalEvent', () => {
     expect(result.success).toBe(false);
   });
 
-  it("rejects reserved action 'experimental:tool_use' (must use ToolUseExperimental)", () => {
+  it("rejects reserved action 'experimental:user_cause' (must use UserCauseExperimental)", () => {
     const result = ExperimentalEvent.safeParse({
-      action: 'experimental:tool_use',
-      payload: { tool_name: 'x', args: {} },
+      action: 'experimental:user_cause',
+      payload: { primary_category: 'concept' },
     });
     expect(result.success).toBe(false);
     if (!result.success) {
@@ -1210,15 +1210,16 @@ describe('ExperimentalEvent', () => {
 });
 
 // ====================================================================
-// ToolUseExperimental
+// ToolUseQuery — promoted out of `experimental:tool_use` per ADR-0011 §1.1
+// (T-D7 / YUK-126, 2026-05-28)
 // ====================================================================
 
-describe('ToolUseExperimental', () => {
+describe('ToolUseQuery', () => {
   it('accepts success outcome with result_summary', () => {
-    const result = ToolUseExperimental.safeParse({
+    const result = ToolUseQuery.safeParse({
       actor_kind: 'agent',
       actor_ref: 'copilot',
-      action: 'experimental:tool_use',
+      action: 'tool_use',
       subject_kind: 'query',
       subject_id: 'tool_use_abc',
       outcome: 'success',
@@ -1233,10 +1234,10 @@ describe('ToolUseExperimental', () => {
   });
 
   it('accepts various args records', () => {
-    const result = ToolUseExperimental.safeParse({
+    const result = ToolUseQuery.safeParse({
       actor_kind: 'agent',
       actor_ref: 'copilot',
-      action: 'experimental:tool_use',
+      action: 'tool_use',
       subject_kind: 'query',
       subject_id: 'tool_use_def',
       outcome: 'success',
@@ -1253,10 +1254,10 @@ describe('ToolUseExperimental', () => {
   });
 
   it('accepts failure outcome with error_reason', () => {
-    const result = ToolUseExperimental.safeParse({
+    const result = ToolUseQuery.safeParse({
       actor_kind: 'agent',
       actor_ref: 'copilot',
-      action: 'experimental:tool_use',
+      action: 'tool_use',
       subject_kind: 'query',
       subject_id: 'tool_use_ghi',
       outcome: 'failure',
@@ -1269,11 +1270,49 @@ describe('ToolUseExperimental', () => {
     expect(result.success).toBe(true);
   });
 
-  it('rejects missing payload.tool_name', () => {
-    const result = ToolUseExperimental.safeParse({
+  it("rejects outcome='failure' without error_reason (superRefine invariant)", () => {
+    const result = ToolUseQuery.safeParse({
       actor_kind: 'agent',
       actor_ref: 'copilot',
-      action: 'experimental:tool_use',
+      action: 'tool_use',
+      subject_kind: 'query',
+      subject_id: 'tool_use_ghi2',
+      outcome: 'failure',
+      payload: {
+        tool_name: 'query_events',
+        args: {},
+      },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0]?.message).toMatch(
+        /error_reason is required when outcome='failure'/,
+      );
+    }
+  });
+
+  it("rejects outcome='failure' with empty-string error_reason", () => {
+    const result = ToolUseQuery.safeParse({
+      actor_kind: 'agent',
+      actor_ref: 'copilot',
+      action: 'tool_use',
+      subject_kind: 'query',
+      subject_id: 'tool_use_ghi3',
+      outcome: 'failure',
+      payload: {
+        tool_name: 'query_events',
+        args: {},
+        error_reason: '',
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects missing payload.tool_name', () => {
+    const result = ToolUseQuery.safeParse({
+      actor_kind: 'agent',
+      actor_ref: 'copilot',
+      action: 'tool_use',
       subject_kind: 'query',
       subject_id: 'tool_use_jkl',
       outcome: 'success',
@@ -1285,10 +1324,10 @@ describe('ToolUseExperimental', () => {
   });
 
   it('rejects subject_kind other than query', () => {
-    const result = ToolUseExperimental.safeParse({
+    const result = ToolUseQuery.safeParse({
       actor_kind: 'agent',
       actor_ref: 'copilot',
-      action: 'experimental:tool_use',
+      action: 'tool_use',
       subject_kind: 'question',
       subject_id: 'tool_use_mno',
       outcome: 'success',
@@ -1418,17 +1457,17 @@ describe('Event (top-level union) + parseEvent', () => {
     expect(parsed.action).toBe('attempt');
   });
 
-  it('parses ToolUseExperimental through top-level Event (ahead of ExperimentalEvent generic)', () => {
+  it('parses ToolUseQuery through top-level Event (matches KnownEvent branch)', () => {
     const parsed = parseEvent({
       actor_kind: 'agent',
       actor_ref: 'copilot',
-      action: 'experimental:tool_use',
+      action: 'tool_use',
       subject_kind: 'query',
       subject_id: 'tu_1',
       outcome: 'success',
       payload: { tool_name: 'q', args: {} },
     });
-    // ToolUseExperimental has subject_kind, ExperimentalEvent does not — verify which schema matched
+    expect(parsed.action).toBe('tool_use');
     expect('subject_kind' in parsed).toBe(true);
   });
 
@@ -1452,22 +1491,20 @@ describe('Event (top-level union) + parseEvent', () => {
     expect(result.success).toBe(false);
   });
 
-  it('rejects malformed experimental:tool_use (missing tool_name) — must not fall through to generic ExperimentalEvent', () => {
-    // ToolUseExperimental requires payload.tool_name; generic ExperimentalEvent would
-    // otherwise accept this with arbitrary payload. The RESERVED_EXPERIMENTAL_ACTIONS
-    // guard in experimental.ts blocks that fallback.
+  it('rejects malformed tool_use (missing tool_name) — must not slip through KnownEvent', () => {
+    // ToolUseQuery requires payload.tool_name; no fallback path exists.
     const result = Event.safeParse({
-      action: 'experimental:tool_use',
+      action: 'tool_use',
       payload: {},
     });
     expect(result.success).toBe(false);
   });
 
-  it('rejects malformed experimental:tool_use even with extra envelope fields', () => {
+  it('rejects malformed tool_use even with extra envelope fields', () => {
     const result = Event.safeParse({
       actor_kind: 'agent',
       actor_ref: 'copilot',
-      action: 'experimental:tool_use',
+      action: 'tool_use',
       subject_kind: 'query',
       subject_id: 'tu_x',
       outcome: 'success',

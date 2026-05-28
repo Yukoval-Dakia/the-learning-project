@@ -1,5 +1,5 @@
 // db-level integration: drive the real bridge with a real DB so the
-// experimental:tool_use mirror event actually flows through Zod parse
+// tool_use mirror event actually flows through Zod parse
 // (`parseEvent` inside `writeEvent`) and the resulting row + the
 // `tool_call_log.mirrored_event_id` linkage land on disk.
 
@@ -67,7 +67,7 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
     registerCoreTools();
   });
 
-  it('agent:copilot caller writes experimental:tool_use event for query_mistakes', async () => {
+  it('agent:copilot caller writes tool_use event for query_mistakes', async () => {
     await seedAttempt();
 
     buildMcpServerFromRegistry({
@@ -84,7 +84,7 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
       .from(event)
       .where(
         and(
-          eq(event.action, 'experimental:tool_use'),
+          eq(event.action, 'tool_use'),
           eq(event.actor_kind, 'agent'),
           eq(event.actor_ref, 'agent:copilot'),
         ),
@@ -122,10 +122,7 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
     await def.handler({});
 
     const db = testDb();
-    const eventRows = await db
-      .select()
-      .from(event)
-      .where(eq(event.action, 'experimental:tool_use'));
+    const eventRows = await db.select().from(event).where(eq(event.action, 'tool_use'));
     expect(eventRows).toHaveLength(0);
 
     const tcl = await db
