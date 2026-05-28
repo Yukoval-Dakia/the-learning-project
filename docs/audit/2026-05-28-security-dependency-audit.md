@@ -3,7 +3,7 @@
 **Date**: 2026-05-28  
 **Scope**: Full codebase — Yukoval-Dakia/the-learning-project  
 **Method**: 10 parallel Devin sessions, each covering a distinct audit dimension  
-**Audited commit**: `main` @ HEAD
+**Audited commit**: `5c242f12f09456711caccf5663829250f36ff367` (short: `5c242f1`, branch: main)
 
 ---
 
@@ -16,6 +16,8 @@
 | Moderate | 22 |
 | Low | 12 |
 | Info | 10 |
+
+> **统计口径说明**：表中 Severity 为本次全审计（10 个维度）的发现总数，同一问题被多个维度独立发现时会去重；文中提及的 "9 vulnerabilities" 仅指 `pnpm audit` 输出的漏洞数量，两者口径不同。
 
 **Top risk**: `mem0ai@3.0.4` is the single largest source of vulnerability exposure — 7 of the 9 npm audit findings trace back to its transitive dependency tree (undici, protobufjs, uuid). The package also has low weekly downloads (87K) and a ~58 MB transitive footprint for a 1.8 MB SDK.
 
