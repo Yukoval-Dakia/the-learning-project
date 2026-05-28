@@ -1270,6 +1270,44 @@ describe('ToolUseQuery', () => {
     expect(result.success).toBe(true);
   });
 
+  it("rejects outcome='failure' without error_reason (superRefine invariant)", () => {
+    const result = ToolUseQuery.safeParse({
+      actor_kind: 'agent',
+      actor_ref: 'copilot',
+      action: 'tool_use',
+      subject_kind: 'query',
+      subject_id: 'tool_use_ghi2',
+      outcome: 'failure',
+      payload: {
+        tool_name: 'query_events',
+        args: {},
+      },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0]?.message).toMatch(
+        /error_reason is required when outcome='failure'/,
+      );
+    }
+  });
+
+  it("rejects outcome='failure' with empty-string error_reason", () => {
+    const result = ToolUseQuery.safeParse({
+      actor_kind: 'agent',
+      actor_ref: 'copilot',
+      action: 'tool_use',
+      subject_kind: 'query',
+      subject_id: 'tool_use_ghi3',
+      outcome: 'failure',
+      payload: {
+        tool_name: 'query_events',
+        args: {},
+        error_reason: '',
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
   it('rejects missing payload.tool_name', () => {
     const result = ToolUseQuery.safeParse({
       actor_kind: 'agent',

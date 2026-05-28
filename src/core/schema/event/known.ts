@@ -388,24 +388,39 @@ export type GenerateKnowledgeEdgeT = z.infer<typeof GenerateKnowledgeEdge>;
 // the bridge mirrors the call into `event` (when `mirrorEvent` policy fires)
 // with payload `{ tool_name, args, result_summary?, result_count?, error_reason? }`.
 // `subject_id` is self-identifying (`'tool_use_<cuid>'`); `outcome='failure'`
-// implies business layer should populate `error_reason`.
+// requires `error_reason` to be populated (enforced via superRefine below) so
+// failure mirrors always carry diagnostic information.
 
-export const ToolUseQuery = z.object({
-  actor_kind: z.literal('agent'),
-  actor_ref: z.string(),
-  action: z.literal('tool_use'),
-  subject_kind: z.literal('query'),
-  subject_id: z.string(),
-  outcome: z.enum(['success', 'failure']),
-  payload: z.object({
-    tool_name: z.string(),
-    args: z.record(z.string(), z.unknown()),
-    result_summary: z.string().optional(),
-    result_count: z.number().int().optional(),
-    error_reason: z.string().optional(),
-  }),
-  ...baseOptionalFields,
-});
+export const ToolUseQuery = z
+  .object({
+    actor_kind: z.literal('agent'),
+    actor_ref: z.string(),
+    action: z.literal('tool_use'),
+    subject_kind: z.literal('query'),
+    subject_id: z.string(),
+    outcome: z.enum(['success', 'failure']),
+    payload: z.object({
+      tool_name: z.string(),
+      args: z.record(z.string(), z.unknown()),
+      result_summary: z.string().optional(),
+      result_count: z.number().int().optional(),
+      error_reason: z.string().optional(),
+    }),
+    ...baseOptionalFields,
+  })
+  // outcome='failure' must carry a non-empty error_reason for diagnostic value
+  .superRefine((data, ctx) => {
+    if (
+      data.outcome === 'failure' &&
+      (!data.payload.error_reason || data.payload.error_reason.length === 0)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "error_reason is required when outcome='failure'",
+        path: ['payload', 'error_reason'],
+      });
+    }
+  });
 export type ToolUseQueryT = z.infer<typeof ToolUseQuery>;
 
 // 11. RateKnowledgeEdge — actor=user / action='rate' / subject='knowledge_edge'
