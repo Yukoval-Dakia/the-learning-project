@@ -15,16 +15,16 @@
 
 | Item | State | Evidence / action |
 |---|---|---|
-| `origin/main` | ✅ at Wave 5 ship tip (post PR #179 merge) | Re-verify main tip with `git fetch origin && git log --oneline origin/main -3` before branching lanes. |
+| `origin/main` | ✅ at Wave 6 partial ship tip | `c9bca758` includes PR #183 (YUK-126), #184 (YUK-132), #185 (YUK-127), plus audit PR #186. |
 | Wave 5 full gate | ✅ shipped 2026-05-29 | PR #179 merged to main. Drawer + Coach 全套交付；closeout drift audit `docs/audit/2026-05-29-wave5-closeout-drift.md` 已签 (0 contradicted / 1 undocumented deferred to T-D7 / 3 phase-deferred). |
 | T-88 P0-P3 | ✅ shipped Waves 1-4 | P0 spike (PR #162) + P1 schema (YUK-91) + P2-basic editor (YUK-92) + P3 AI pipeline (YUK-93, PR #174). |
 | T-88 P4 parent issue | ✅ [YUK-94](https://linear.app/yukoval-studios/issue/YUK-94) exists (Backlog) | Lane sub-issues created: [YUK-127](https://linear.app/yukoval-studios/issue/YUK-127) / [YUK-128](https://linear.app/yukoval-studios/issue/YUK-128) / [YUK-129](https://linear.app/yukoval-studios/issue/YUK-129) / [YUK-130](https://linear.app/yukoval-studios/issue/YUK-130) / [YUK-131](https://linear.app/yukoval-studios/issue/YUK-131). |
 | P3 → P4 sequential dep | ✅ P3 merged to main as `d99c3bb` | P4 mutator patch op schema depends on P3 patch op definitions — satisfied. |
-| NoteRefineTask queue slot | ⬜ to be created in P4 Lane A | pg-boss `note_refine` queue + handler registration. |
-| Editing session coordination | ⬜ no existing heartbeat / idle system | P4 Lane C builds this from scratch (ephemeral in-memory state). |
-| T-D7 stabilization criteria | ⬜ pending — needs 3 tools stable × 2 weeks post-Wave 5 | Per ADR-0011 §1: ≥ 3 tool 真实落地 + payload shape 稳定 2 周 + v2.1 design 已实装。Wave 5 T-D3 ships drawer tool-use → 2 weeks after that T-D7 can promote. |
+| NoteRefineTask queue slot | ✅ shipped in P4-A / PR #185 | pg-boss `note_refine` queue + handler registration + patch op schema. |
+| Editing session coordination | ✅ implemented in P4-C closeout branch | Ephemeral heartbeat state, 30s idle, blur flush, and force-apply timeout. |
+| T-D7 stabilization criteria | ✅ user-waived and shipped in PR #183 | `experimental:tool_use` promoted to KnownEvent `tool_use`; ADR-0011 updated. |
 | `experimental:tool_use` event count | ✅ schema live since YUK-82 | `src/core/schema/event/experimental.ts` ToolUseExperimental shape stable. |
-| T-PD gap-filler pool | ⬜ master roadmap §2.7 lists 13 items (~31pt total) | Pick ~5pt from pool for Wave 6 gaps. |
+| T-PD gap-filler pool | ✅ T-PD8 shipped in PR #184 | Modules doc sweep selected as the Wave 6 doc lane. |
 
 ## Wave 6 scope
 
@@ -110,17 +110,17 @@ All 4 points resolved before Wave 6 lane kickoff. Lane issues synced.
 - **✅ T-88 P4-E trigger v0 subset** — **Locked: ship all 5 (Devin default) + per-trigger kill switch**. All 5 triggers (mark_wrong / mastery / 错误率 / dwell / dreaming) ship in v0 via shared `note_refine` queue. ADDITIONALLY each trigger gets its own env/config flag (e.g. `WAVE6_TRIGGER_DWELL_ENABLED=true`) so a single misbehaving trigger can be disabled without affecting others. Implementation cost +~30 min on P4-E.
 - **✅ T-PD items selection** — **Locked: T-PD8 modules doc 主体大 sweep (8 pt)**. Devin's original picks (T-PD1+T-PD4+T-PD11, 5 pt) rejected in favor of one bigger sweep targeting R-8 stack pivot residue + 5-15 modules doc accumulated drift. +3 pt over original budget; cadence still ~3-3.5 weeks since T-PD8 is doc-only and parallel-safe.
 
-## Final lane state (待 wave 跑完填写)
+## Final lane state
 
 | Lane | Status | Blocked by | Notes |
 |---|---|---|---|
-| T-88/P4-A ([YUK-127](https://linear.app/yukoval-studios/issue/YUK-127)) | ⬜ | Wave 5 ✅ | NoteRefineTask + patch op schema |
-| T-88/P4-B ([YUK-128](https://linear.app/yukoval-studios/issue/YUK-128)) | ⬜ | P4-A | mutator + propose 分级 |
-| T-88/P4-C ([YUK-129](https://linear.app/yukoval-studios/issue/YUK-129)) | ⬜ | P4-B | editing session 协调 |
-| T-88/P4-D ([YUK-130](https://linear.app/yukoval-studios/issue/YUK-130)) | ⬜ | P4-C | undo UI |
-| T-88/P4-E ([YUK-131](https://linear.app/yukoval-studios/issue/YUK-131)) | ⬜ | P4-D | trigger producers |
-| T-D7 ([YUK-126](https://linear.app/yukoval-studios/issue/YUK-126)) | ⬜ | Wave 5 ✅ + 2 weeks stable | promote KnownEvent |
-| T-PD8 modules doc sweep | ⬜ | none (parallel-safe) | locked T-PD scope = T-PD8 alone, 8pt; dedicated YUK-132 created 2026-05-29 |
+| T-88/P4-A ([YUK-127](https://linear.app/yukoval-studios/issue/YUK-127)) | ✅ merged | Wave 5 ✅ | PR #185: NoteRefineTask + patch op schema |
+| T-88/P4-B ([YUK-128](https://linear.app/yukoval-studios/issue/YUK-128)) | ✅ closeout branch | P4-A ✅ | mutator/propose threshold (`≤3 ops && ≤2 new blocks`) |
+| T-88/P4-C ([YUK-129](https://linear.app/yukoval-studios/issue/YUK-129)) | ✅ closeout branch | P4-B ✅ | editing heartbeat + idle/blur flush |
+| T-88/P4-D ([YUK-130](https://linear.app/yukoval-studios/issue/YUK-130)) | ✅ closeout branch | P4-C ✅ | artifact AI-changes timeline + `/today` undo strip |
+| T-88/P4-E ([YUK-131](https://linear.app/yukoval-studios/issue/YUK-131)) | ✅ closeout branch | P4-D ✅ | mark_wrong / mastery / error_rate / dwell / dreaming producers + kill switches |
+| T-D7 ([YUK-126](https://linear.app/yukoval-studios/issue/YUK-126)) | ✅ merged | user-waived stabilization gate | PR #183: promote KnownEvent |
+| T-PD8 modules doc sweep | ✅ merged | none (parallel-safe) | PR #184: modules doc sweep |
 
 
 ## Post-launch decision lock log
