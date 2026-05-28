@@ -66,7 +66,12 @@ export async function loadCopilotSummary(
       outcome: 'success',
       limit: 1,
     }),
-    listProposalInboxPage(db, { status: 'pending', limit: 50 }),
+    // No `limit` — we need the exact total for `pending_proposals_total`.
+    // listProposalInboxPage with limit=undefined projects all pending rows
+    // in a single ranked query (see loadProposalEvents). On a single-user
+    // system this is bounded; if it grows we'll swap to a dedicated
+    // count(*) helper.
+    listProposalInboxPage(db, { status: 'pending' }),
   ]);
 
   const coachEvent = latestCoach[0] ?? null;

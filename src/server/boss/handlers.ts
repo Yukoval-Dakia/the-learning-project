@@ -73,16 +73,18 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   await boss.schedule('dreaming_nightly', '15 3 * * *', {}, { tz: 'Asia/Shanghai' });
 
   // Wave 5 / T-D6/B (YUK-119): coach_daily + coach_weekly.
-  // coach_daily runs nightly at BJT 04:00, 45 min after dreaming_nightly
-  // (15 3 * * *) to avoid IO storm with prune_*. coach_weekly runs Sunday
-  // BJT 04:30 to produce the weekly_reflection slot in TodayPlan.
+  // coach_daily runs nightly at BJT 03:45 — 30 min after dreaming_nightly
+  // (`15 3 * * *`) so Coach can read Dreaming's same-night proposals, and
+  // 15 min before prune_job_events (`0 4 * * *`) to avoid IO contention with
+  // the bulk DELETE pass. coach_weekly runs Sunday BJT 04:30 to produce the
+  // weekly_reflection slot in TodayPlan (after the prune storm settles).
   await boss.createQueue('coach_daily');
   await boss.work(
     'coach_daily',
     { pollingIntervalSeconds: 2, batchSize: 1 },
     buildCoachDailyHandler(db),
   );
-  await boss.schedule('coach_daily', '0 4 * * *', {}, { tz: 'Asia/Shanghai' });
+  await boss.schedule('coach_daily', '45 3 * * *', {}, { tz: 'Asia/Shanghai' });
 
   await boss.createQueue('coach_weekly');
   await boss.work(

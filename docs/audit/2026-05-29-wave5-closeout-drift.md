@@ -20,7 +20,7 @@
 
 - **声明**: master-roadmap §5.1 Wave 5 — "Coach 跑每日 / 每周 cron 出'今日安排' proposal".
 - **代码**:
-  - `src/server/boss/handlers.ts` registers `coach_daily` (cron `0 4 * * *` Asia/Shanghai) + `coach_weekly` (cron `30 4 * * 0` Asia/Shanghai).
+  - `src/server/boss/handlers.ts` registers `coach_daily` (cron `45 3 * * *` Asia/Shanghai — 30 min after `dreaming_nightly` so Coach can read same-night Dreaming proposals; 15 min before `prune_job_events` `0 4 * * *` to avoid bulk-DELETE IO contention) + `coach_weekly` (cron `30 4 * * 0` Asia/Shanghai).
   - `src/server/boss/handlers/coach_daily.ts:runCoach()` builds the COACH allowlist MCP bridge + runs `CoachTask` via `runAgentTask` + writes `experimental:trigger_coach_scan` + `experimental:coach_scan` events on entry/exit.
   - `src/server/boss/handlers/coach_weekly.ts` delegates to the same `runCoach()` with `runKind='weekly'`.
 - **状态**: aligned. Test coverage: `src/server/boss/handlers/coach_daily.test.ts` (3 cases).
