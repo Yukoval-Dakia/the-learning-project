@@ -1,0 +1,12 @@
+-- T-D7 / YUK-126 (ADR-0011 §1.1) — promote `experimental:tool_use` to
+-- KnownEvent `tool_use`.
+--
+-- The Zod schema for `tool_use` (formerly `ToolUseExperimental`, now
+-- `ToolUseQuery` in src/core/schema/event/known.ts) is shape-identical to its
+-- experimental predecessor — only the `action` literal changed. This
+-- migration is therefore DML-only: rewrite the `event.action` column for
+-- every prior tool-use mirror row so historical reads bind to the new typed
+-- KnownEvent branch. No DDL change to the `event` table.
+--
+-- Hand-written (drizzle-kit does not generate DML).
+UPDATE "event" SET "action" = 'tool_use' WHERE "action" = 'experimental:tool_use';
