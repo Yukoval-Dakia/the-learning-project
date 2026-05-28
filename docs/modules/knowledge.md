@@ -1,13 +1,16 @@
 # 知识图谱（Knowledge Graph）
 
+> Last reviewed: 2026-05-28 (T-PD8)
+>
 > 见 [架构基础](../architecture.md) 的 `knowledge_mesh`、[ADR-0010](../adr/0010-knowledge-mesh.md)、[ADR-0011](../adr/0011-tool-use-and-edge-event-paths.md)。
+> Mastery 见 [ADR-0012](../adr/0012-mastery-as-derived-view.md)（derived view）。
 > Agent runtime tool 设计见 [Agent Context Tools Design](../superpowers/specs/2026-05-17-agent-context-tools-design.md)。
 
 知识图谱是学习系统的解释骨架：`knowledge.parent_id` 表达主层级，`knowledge_edge` 表达有类型的横向 mesh。Agent 读图时必须读懂这两层语义，而不是只拿数据库行。
 
 ---
 
-## 0. 实施现状（2026-05-17）
+## 0. 实施现状（2026-05-28）
 
 | 设计概念 | 现状 | 备注 |
 |---|---|---|

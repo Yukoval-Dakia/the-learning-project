@@ -1,32 +1,39 @@
 # 学习进度追踪
 
+> Last reviewed: 2026-05-28 (T-PD8)
+>
 > 见 [架构基础](../architecture.md) 了解 `knowledge` / `knowledge_mastery` view / `learning_session` / `learning_record` schema。
-> 活动上下文记录详见 [`records.md`](records.md)。
+> Mastery 单层 derived view 决策见 [ADR-0012](../adr/0012-mastery-as-derived-view.md)。
+> LearningRecord 设计见 [ADR-0015](../adr/0015-learning-record-memory-brief.md)，活动上下文细节见 [`records.md`](records.md)。
 > Quiz 评分喂 mastery 详见 [`quiz.md`](quiz.md)。
+> Memory dual-layer 见 [ADR-0017](../adr/0017-memory-mem0-plus-brief-layer.md)。
 
 ---
 
-## 0. 实施现状（2026-05-17）
+## 0. 实施现状（2026-05-28）
 
-> Phase 1 sketch 期的"掌握度双层"模型在 1c.1 Step 1（ADR-0012）拍板转**单层 derived view**。下面 §1+ 还是历史叙述。
+> Phase 1 sketch 期的"掌握度双层"模型在 1c.1 Step 1（ADR-0012）拍板转**单层 derived view**。下面 §1+ 仍是历史叙述（"AI delta" / "base mastery 公式"是 sketch 期保留语义，read as conceptual reference）。
 
 | 设计概念 | 现状 | 备注 |
 |---|---|---|
 | Mastery 双层（base_mastery + ai_delta_mastery） | ❌ DROPped (ADR-0012) | 两列 1c.1 Step 1 同步删除 |
-| Mastery derived view (`knowledge_mastery`) | ✅ Phase 1c.1 Step 1 落地 | 30 天指数衰减，权重 attempts/reviews |
-| StudyLog 5 kind | 🔴 废弃 | 2026-05-18 决策：无真实数据，直接迁移到 `LearningRecord` |
-| LearningRecord 统一活动上下文 | ⏳ 待一次性迁移 | `mistake / worked_example / open_question / insight / reflection / observation / resource_note` |
-| 学习时间线视图（统一 auto event + LearningRecord） | ❌ Phase 2 | 现在 /today KPI strip 是简单聚合，没真 timeline |
-| WeeklyReview Cron 跑批 | ❌ Phase 2 | 整个 Dreaming/Maintenance lane 都未跑 |
+| Mastery derived view (`knowledge_mastery`) | ✅ Phase 1c.1 Step 1 落地 | 30 天指数衰减，权重 attempts/reviews（`src/db/schema.ts` L673） |
+| StudyLog 5 kind | 🔴 废弃 | ADR-0015：无真实数据，已直接迁移到 `LearningRecord` |
+| LearningRecord 统一活动上下文 | ✅ 落地 | `learning_record` 表 (`src/db/schema.ts` L223)，7 个 kind，API `app/api/records/*` |
+| `memory_brief_note` 三段式画像 | ✅ schema 落地 (`src/db/schema.ts` L257)；Dreaming refresh 接 mem0 ingest (ADR-0017 / ADR-0021) | 三段：`recent_week_md` / `recent_months_md` / `long_term_md` |
+| 单题 timeline（`/api/questions/[id]/timeline`） | ✅ 落地 | 返回 attempt + review 事件链；judge cause hydrate 到 attempt |
+| 学习时间线视图（统一 auto event + LearningRecord） | 🟡 部分 | `/today` 与单题 timeline 已落，全局活动时间线 (cross-knowledge / cross-record) 仍 Phase 2 |
+| WeeklyReview Cron 跑批 | 🟡 Coach lane（`coach_weekly` boss handler）已 ship；advice route 在 `app/api/review/weekly` | 用户层"周复盘体验"仍在迭代 |
 | 按 cause 差异化复习权重 / mastery 衰减 | ❌ Phase 2 | 跑数据后才决定权重 |
-| 周复盘 / Coach Orchestrator | ❌ Phase 3 | `/today` Phase 3 lane 是 disabled stub |
+| Coach Orchestrator | ✅ Wave 5 落地 | `coach_daily` / `coach_weekly` boss handlers + `/api/today/copilot-summary` + `/coach` 页面 + Copilot Drawer MVP (PR #179) |
 
 **当前可看进度的 UI**：
-- `/today` KPI strip（4 KPI + 3 lane stub） — Phase 1c.2 落地（commit `4eab5f9`）
-- `/today` cost ribbon — Phase 1d 接 cost_ledger（commit `6da0fa1`）
+- `/today` 主页 — Coach 摘要 + KPI strip + cost ribbon（`/api/today/copilot-summary` 接 cost_ledger + recent events）
+- `/coach` 页面 — Wave 5 落地的 coach 视图（PR #179）
+- `/inbox` — proposal inbox（AiProposal 13 kind 聚合视图）
 - `/knowledge/[id]` per-node mistake 列表
-- `/record` 统一录入设计 — 见 [`records.md`](records.md)
-- `/events/[id]` 单事件 chain 浏览 — Phase 1d Cand 4a
+- `/record` 统一录入入口 — 见 [`records.md`](records.md)
+- `/events/[id]` 单事件 chain 浏览 + `/api/questions/[id]/timeline` 单题事件链
 
 ---
 
@@ -162,7 +169,7 @@ LearningRecord
 
 ## 4. 学习时间线视图
 
-整合所有学习事件 + LearningRecord 到时间线（Phase 2 实施）：
+整合所有学习事件 + LearningRecord 到时间线。当前已落：单题 timeline (`GET /api/questions/[id]/timeline`，单 question 视图)；全局跨知识点 / 跨 record 的活动 timeline 仍是 Phase 2：
 
 ```
 [自动事件]
