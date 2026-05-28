@@ -184,6 +184,10 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
     //   - YUK-92 `src/server/artifacts/body-blocks-edit.ts`: the single owner-service
     //     for whole-document block tree edits, keeping artifact.version, history,
     //     and `experimental:artifact_body_blocks_edit` in one transaction.
+    //   - YUK-127 (T-88 P4-A) `src/server/artifacts/note-refine-apply.ts`: the
+    //     single owner-service for AI-side Living Note block-level patch
+    //     application — applies a NotePatch to body_blocks + bumps version +
+    //     writes `experimental:note_refine_apply` in one transaction.
     // Anything else writing `artifact` should still be reviewed.
     const hits = await findWriteHits('artifact', { roots: SCAN_RUNTIME_ROOTS });
     const ALLOWED = [
@@ -194,6 +198,7 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
       'src/server/proposals/actions.ts',
       'src/server/artifacts/sections.ts',
       'src/server/artifacts/body-blocks-edit.ts',
+      'src/server/artifacts/note-refine-apply.ts',
     ];
     const unexpected = hits.filter((h) => !ALLOWED.includes(h.split(path.sep).join('/')));
     expect(
