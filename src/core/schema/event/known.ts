@@ -381,6 +381,33 @@ export const GenerateKnowledgeEdge = z
   });
 export type GenerateKnowledgeEdgeT = z.infer<typeof GenerateKnowledgeEdge>;
 
+// 12. ToolUseQuery — actor=agent / action='tool_use' / subject='query'
+//
+// Promoted out of `experimental:tool_use` per ADR-0011 §1.1 (T-D7 / YUK-126,
+// 2026-05-28). Copilot tool-use path: agent invokes a registered DomainTool,
+// the bridge mirrors the call into `event` (when `mirrorEvent` policy fires)
+// with payload `{ tool_name, args, result_summary?, result_count?, error_reason? }`.
+// `subject_id` is self-identifying (`'tool_use_<cuid>'`); `outcome='failure'`
+// implies business layer should populate `error_reason`.
+
+export const ToolUseQuery = z.object({
+  actor_kind: z.literal('agent'),
+  actor_ref: z.string(),
+  action: z.literal('tool_use'),
+  subject_kind: z.literal('query'),
+  subject_id: z.string(),
+  outcome: z.enum(['success', 'failure']),
+  payload: z.object({
+    tool_name: z.string(),
+    args: z.record(z.string(), z.unknown()),
+    result_summary: z.string().optional(),
+    result_count: z.number().int().optional(),
+    error_reason: z.string().optional(),
+  }),
+  ...baseOptionalFields,
+});
+export type ToolUseQueryT = z.infer<typeof ToolUseQuery>;
+
 // 11. RateKnowledgeEdge — actor=user / action='rate' / subject='knowledge_edge'
 //
 // 用户对 propose / generate 的 edge 投票。rating='change_type' 时 new_relation_type 必填、
@@ -426,9 +453,9 @@ export type RateKnowledgeEdgeT = z.infer<typeof RateKnowledgeEdge>;
 // KnownEvent union
 // ====================================================================
 //
-// Zod discriminatedUnion 只支持单键判别，且要求每个分支 literal 唯一。我们的 11 个
-// 分支里有 3 个 action 重复（'propose' × {knowledge, knowledge_edge}、'generate' ×
-// {artifact, knowledge_edge}、'rate' × {event, knowledge_edge}），所以**用 z.union**。
+// Zod discriminatedUnion 只支持单键判别，且要求每个分支 literal 唯一。union 里有 3 个
+// action 重复（'propose' × {knowledge, knowledge_edge}、'generate' × {artifact,
+// knowledge_edge}、'rate' × {event, knowledge_edge}），所以**用 z.union**。
 //
 // 每个 schema 用 z.literal() 锁 (action, subject_kind) 组合，因此 parse 时仍单义解析 ——
 // Zod 会按 union 顺序尝试，第一个 matching schema 胜出。
@@ -451,5 +478,6 @@ export const KnownEvent = z.union([
   RateKnowledgeEdge,
   AcceptSuggestionChip,
   ExtractSourceDocument,
+  ToolUseQuery,
 ]);
 export type KnownEventT = z.infer<typeof KnownEvent>;
