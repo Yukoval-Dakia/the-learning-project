@@ -263,4 +263,17 @@ describe('loadCopilotSummary (db)', () => {
     expect(summary.brief_global_md).toBe('整体上：你这周对结构助词更熟，但对代词指代仍偶有混淆。');
     expect(summary.coach_last_run_at).toBe(FIXTURE_NOW.toISOString());
   });
+
+  it('clamps out-of-range opts so executeGetReviewDue never sees an invalid limit', async () => {
+    await seedFsrsRow({
+      questionId: 'q_due',
+      dueAt: new Date('2020-01-01T00:00:00.000Z'),
+    });
+
+    // 0 → floored to 1; 999 → clamped to 50; both must not throw.
+    await expect(
+      loadCopilotSummary(testDb(), { previewLimit: 0, briefCharCap: 0, reviewDueLimit: 0 }),
+    ).resolves.toBeDefined();
+    await expect(loadCopilotSummary(testDb(), { reviewDueLimit: 999 })).resolves.toBeDefined();
+  });
 });

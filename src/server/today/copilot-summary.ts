@@ -80,9 +80,12 @@ export async function loadCopilotSummary(
   db: DbLike,
   opts: CopilotSummaryOpts = {},
 ): Promise<CopilotSummary> {
-  const previewLimit = opts.previewLimit ?? 3;
-  const briefCharCap = opts.briefCharCap ?? 280;
-  const reviewDueLimit = opts.reviewDueLimit ?? 50;
+  // Clamp opts so out-of-range values (e.g. 0, negative, >50) never reach
+  // executeGetReviewDue's Zod schema and crash the drawer. previewLimit and
+  // briefCharCap floor at 1; reviewDueLimit fits the schema's 1..50 window.
+  const previewLimit = Math.max(1, opts.previewLimit ?? 3);
+  const briefCharCap = Math.max(1, opts.briefCharCap ?? 280);
+  const reviewDueLimit = Math.min(50, Math.max(1, opts.reviewDueLimit ?? 50));
 
   // Synthetic ToolContext for non-MCP read-path reuse. The execute fns
   // (executeGetReviewDue / executeMemoryBrief) only touch `ctx.db`; the
