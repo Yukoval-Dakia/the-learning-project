@@ -8,6 +8,7 @@ import { PageHeader } from '@/ui/primitives/PageHeader';
 import { TodayCopilotDrawer } from '@/ui/today/TodayCopilotDrawer';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
+import { useState } from 'react';
 
 interface DueRow {
   question_id: string;
@@ -47,6 +48,18 @@ interface CostSummary {
   };
 }
 
+interface AiChangeRow {
+  event_id: string;
+  artifact_id: string;
+  created_at: string;
+  actor_ref: string;
+  ops_count: number;
+  new_blocks: number;
+  previous_artifact_version: number;
+  next_artifact_version: number;
+  undone: boolean;
+}
+
 // Derived from `aiProposalKinds` in src/core/schema/proposal — adding a new
 // kind there forces a TS error in `KIND_TO_GROUP` below, preventing silent
 // breakdown drift when the server emits a previously-unseen `by_kind` key.
@@ -62,6 +75,7 @@ interface TodayProposalKpi {
 
 export default function TodayPage() {
   const queryClient = useQueryClient();
+  const [undoingAiChangeIds, setUndoingAiChangeIds] = useState<string[]>([]);
 
   const dueQ = useQuery({
     queryKey: ['today-due'],
@@ -95,6 +109,11 @@ export default function TodayPage() {
       apiJson<{ rows: LearningSessionRow[] }>('/api/learning-sessions?type=review&limit=6'),
     refetchInterval: 60_000,
   });
+  const aiChangesQ = useQuery({
+    queryKey: ['today-ai-changes'],
+    queryFn: () => apiJson<{ rows: AiChangeRow[] }>('/api/today/ai-changes'),
+    refetchInterval: 60_000,
+  });
 
   const dueCount = dueQ.data?.rows.length ?? 0;
   const mistakeRows = mistakesQ.data?.rows ?? [];
@@ -108,6 +127,19 @@ export default function TodayPage() {
   const pendingAiCount = proposalKpi?.total ?? 0;
   const pendingAiValue = proposalKpi?.has_more ? `${proposalKpi.limit}+` : pendingAiCount;
   const pendingAiLoading = proposalKpiQ.isLoading;
+
+  async function undoAiChanges(eventIds: string[]) {
+    setUndoingAiChangeIds(eventIds);
+    try {
+      await apiJson('/api/today/ai-changes', {
+        method: 'POST',
+        body: JSON.stringify({ event_ids: eventIds }),
+      });
+      await queryClient.invalidateQueries({ queryKey: ['today-ai-changes'] });
+    } finally {
+      setUndoingAiChangeIds([]);
+    }
+  }
 
   const causeCounts = new Map<string, number>();
   for (const m of mistakeRows) {
@@ -171,6 +203,13 @@ export default function TodayPage() {
       </div>
 
       <SessionStrip sessions={sessionsQ.data?.rows ?? []} loading={sessionsQ.isLoading} />
+
+      <AiChangeActivityStrip
+        rows={aiChangesQ.data?.rows ?? []}
+        loading={aiChangesQ.isLoading}
+        undoingIds={undoingAiChangeIds}
+        onUndo={undoAiChanges}
+      />
 
       <InboxStrip
         total={pendingAiCount}
@@ -364,6 +403,61 @@ function SessionStrip({
   );
 }
 
+function AiChangeActivityStrip({
+  rows,
+  loading,
+  undoingIds,
+  onUndo,
+}: {
+  rows: AiChangeRow[];
+  loading: boolean;
+  undoingIds: string[];
+  onUndo: (eventIds: string[]) => Promise<void>;
+}) {
+  const activeRows = rows.filter((row) => !row.undone);
+  const undoingSet = new Set(undoingIds);
+  if (!loading && rows.length === 0) return null;
+
+  return (
+    <div className="ai-change-strip">
+      <div className="ai-change-strip-head">
+        <div>
+          <Badge tone="info">Living Note</Badge>
+          <h3>过去 24 小时 AI 改过 {loading ? '...' : rows.length} 处笔记</h3>
+        </div>
+        <Button
+          variant="danger"
+          size="sm"
+          icon="refresh"
+          disabled={activeRows.length === 0 || undoingIds.length > 0}
+          onClick={() => onUndo(activeRows.map((row) => row.event_id))}
+        >
+          全部撤销
+        </Button>
+      </div>
+      {rows.slice(0, 6).map((row) => (
+        <div key={row.event_id} className="ai-change-strip-row">
+          <Link href={`/events/${row.event_id}`}>
+            <code>{row.artifact_id.slice(0, 12)}</code>
+          </Link>
+          <span>
+            {row.ops_count} ops · 新增 {row.new_blocks} block · {formatDateTime(row.created_at)}
+          </span>
+          <Button
+            variant={row.undone ? 'quiet' : 'danger'}
+            size="sm"
+            icon={row.undone ? 'check' : 'refresh'}
+            disabled={row.undone || undoingSet.has(row.event_id)}
+            onClick={() => onUndo([row.event_id])}
+          >
+            {row.undone ? '已撤销' : undoingSet.has(row.event_id) ? '撤销中...' : '撤销'}
+          </Button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function formatDuration(ms: number | null): string {
   if (!ms || ms < 0) return '0 分钟';
   const minutes = Math.max(1, Math.round(ms / 60_000));
@@ -380,6 +474,17 @@ function formatDay(seconds: number): string {
   if (deltaDays === 0) return '今天';
   if (deltaDays === 1) return '昨天';
   return `${deltaDays} 天前`;
+}
+
+function formatDateTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '未知';
+  return date.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 interface ProposalGroups {

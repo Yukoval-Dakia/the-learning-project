@@ -27,7 +27,9 @@ import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { bodyBlocksToBlockSummaries } from '@/server/artifacts/body-blocks';
-import { persistNoteRefineApply } from '@/server/artifacts/note-refine-apply';
+import { enqueueOrApplyNoteRefinePatch } from '@/server/artifacts/editing-session';
+import { decideNoteRefineMode } from '@/server/artifacts/note-refine-policy';
+import { writeNoteRefineProposal } from '@/server/artifacts/note-refine-proposals';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 export type NoteRefineTriggerKind =
@@ -115,6 +117,7 @@ export interface RunNoteRefineParams {
   runTaskFn: RunTaskFn;
   gate?: NoteRefineGate;
   onPropose?: DepsOverride['onPropose'];
+  now?: Date;
 }
 
 export type RunNoteRefineResult =
@@ -126,16 +129,14 @@ export type RunNoteRefineResult =
       artifact_version: number;
     }
   | { status: 'proposed'; ops_count: number; new_blocks: number }
+  | { status: 'deferred'; ops_count: number; new_blocks: number }
   | { status: 'skipped:empty_patch' }
   | { status: 'skipped:not_found' }
   | { status: 'skipped:no_body_blocks' }
   | { status: 'skipped:archived' }
   | { status: 'skipped:version_conflict' };
 
-// PHASE-DEFERRED (P4-B): replace this default with the locked threshold gate
-// (`≤ 3 ops AND ≤ 2 new blocks → mutator; else propose`) + editing-session
-// awareness in lane P4-B (YUK-128).
-const defaultGate: NoteRefineGate = () => 'mutator';
+const defaultGate: NoteRefineGate = decideNoteRefineMode;
 
 /**
  * Pure runner — extracted so unit tests can call without pg-boss. Loads the
@@ -205,22 +206,38 @@ export async function runNoteRefine(params: RunNoteRefineParams): Promise<RunNot
   const decision = gate(summary);
 
   if (decision === 'propose') {
-    await onPropose?.({
-      artifactId,
-      patch,
-      summary,
-      triggerEventId,
-    });
+    if (onPropose) {
+      await onPropose({
+        artifactId,
+        patch,
+        summary,
+        triggerEventId,
+      });
+    } else {
+      await writeNoteRefineProposal({
+        db,
+        artifactId,
+        patch,
+        summary,
+        triggerEventId,
+        taskResult,
+      });
+    }
     return { status: 'proposed', ops_count: summary.ops_count, new_blocks: summary.new_blocks };
   }
 
-  const applyResult = await persistNoteRefineApply({
+  const applyResult = await enqueueOrApplyNoteRefinePatch({
     db,
     artifactId,
     patch,
     taskResult,
     triggerEventId,
+    now: params.now,
   });
+
+  if (applyResult.status === 'deferred') {
+    return { status: 'deferred', ops_count: summary.ops_count, new_blocks: summary.new_blocks };
+  }
 
   if (applyResult.status !== 'applied') {
     return { status: applyResult.status };

@@ -493,15 +493,15 @@ T-FF fixtures ────→ blocks Eval / acceptance test 自动化
 - T-D3/B (YUK-123): `/today` 30s dwell hook + `GET /api/today/copilot-summary` (coach scan + dreaming preview + pending totals)
 - T-D3/C (YUK-124): CopilotTask + `POST /api/copilot/chat` 两面路由 (`triggered_by='chat'` → copilot allowlist + writes `experimental:copilot_user_ask`; `triggered_by='chip'` → copilot_user_suggested_mistake_action allowlist + 不写 user ask, 仅 `experimental:copilot_chip_trigger`)
 
-#### Wave 6 (~3 周) — Living Note + experimental promote
+#### Wave 6 — Living Note + experimental promote
 
 | Track | pts | worktree |
 |---|---|---|
-| T-88 P4 Living Note v0 | 10 | A |
-| T-D7 experimental:tool_use → KnownEvent promote | 3 | B（小 PR）|
-| T-PD doc sweep gap-filler | ~5 | (任 worktree gap) |
+| T-88 P4 Living Note v0 | 10 | A — P4-A merged PR #185; P4-B/C/D/E closeout branch |
+| T-D7 experimental:tool_use → KnownEvent promote | 3 | ✅ merged PR #183 |
+| T-PD8 modules doc sweep | 8 | ✅ merged PR #184 |
 
-**预期**：~18 pts，~3 周。出口：Living Note mutator + idle + undo 全 ship；ADR-0011 promotion 闭环。
+**实现快照（2026-05-28）**：Wave 6 scope upgraded to 21 pts after T-PD8 selection. T-D7 + T-PD8 + P4-A are already on `origin/main`; closeout branch finishes P4-B/C/D/E: mutator/propose gate, editing heartbeat + idle/blur flush, undo surfaces, and all 5 Living Note triggers.
 
 #### Wave 7 (~5 周) — 反链 / hub auto-sync + Knowledge graph
 

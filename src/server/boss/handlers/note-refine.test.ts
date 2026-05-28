@@ -3,6 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { artifact, event, knowledge } from '@/db/schema';
 import { noteSectionsToBodyBlocks } from '@/server/artifacts/body-blocks';
+import {
+  markArtifactIdleAndFlush,
+  recordEditingHeartbeat,
+  resetEditingSessionStateForTests,
+} from '@/server/artifacts/editing-session';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { buildNoteRefineHandler, parseNoteRefineOutput, runNoteRefine } from './note-refine';
@@ -121,6 +126,7 @@ describe('parseNoteRefineOutput', () => {
 describe('runNoteRefine', () => {
   beforeEach(async () => {
     await resetDb();
+    resetEditingSessionStateForTests();
   });
 
   it('returns skipped:not_found when artifact missing', async () => {
@@ -157,6 +163,7 @@ describe('runNoteRefine', () => {
       artifactId: 'a1',
       trigger: { kind: 'mark_wrong' },
       runTaskFn,
+      now: new Date('2026-05-28T12:00:10Z'),
     });
     expect(result.status).toBe('skipped:empty_patch');
     const rows = await testDb().select().from(event).where(eq(event.subject_id, 'a1'));
@@ -173,6 +180,7 @@ describe('runNoteRefine', () => {
       artifactId: 'a1',
       trigger: { kind: 'mark_wrong' },
       runTaskFn,
+      now: new Date('2026-05-28T12:00:10Z'),
     });
 
     expect(result).toMatchObject({
@@ -204,6 +212,8 @@ describe('runNoteRefine', () => {
       new_blocks: number;
       previous_artifact_version: number;
       next_artifact_version: number;
+      previous_body_blocks?: unknown;
+      reverse_patch?: unknown;
     };
     expect(payload).toMatchObject({
       ops_count: 1,
@@ -211,6 +221,8 @@ describe('runNoteRefine', () => {
       previous_artifact_version: 0,
       next_artifact_version: 1,
     });
+    expect(payload.previous_body_blocks).toBeTruthy();
+    expect(payload.reverse_patch).toMatchObject({ kind: 'restore_body_blocks' });
   });
 
   it('chains caused_by_event_id to trigger_event_id when provided', async () => {
@@ -291,6 +303,72 @@ describe('runNoteRefine', () => {
     expect(unchanged.version).toBe(0);
     const rows = await testDb().select().from(event).where(eq(event.subject_id, 'a1'));
     expect(rows).toHaveLength(0);
+  });
+
+  it('default gate: patches over the locked mutator threshold create a note_update proposal', async () => {
+    await seedArtifact({ artifactId: 'a1', knowledgeId: 'k1' });
+    const ops = [
+      { kind: 'append_block', block: paragraphBlock('b1', 'x') },
+      { kind: 'append_block', block: paragraphBlock('b2', 'y') },
+      { kind: 'append_block', block: paragraphBlock('b3', 'z') },
+    ];
+    const runTaskFn = vi.fn(async () => ({ text: refinePayload(ops) }));
+
+    const result = await runNoteRefine({
+      db: testDb(),
+      artifactId: 'a1',
+      trigger: { kind: 'mark_wrong' },
+      runTaskFn,
+    });
+
+    expect(result).toMatchObject({ status: 'proposed', ops_count: 3, new_blocks: 3 });
+    const [unchanged] = await testDb().select().from(artifact).where(eq(artifact.id, 'a1'));
+    expect(unchanged.version).toBe(0);
+    const proposals = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:proposal'));
+    expect(proposals).toHaveLength(1);
+    expect((proposals[0].payload as { ai_proposal?: { kind?: string } }).ai_proposal?.kind).toBe(
+      'note_update',
+    );
+  });
+
+  it('mutator path defers while the artifact is actively edited and flushes on idle', async () => {
+    await seedArtifact({ artifactId: 'a1', knowledgeId: 'k1' });
+    const now = new Date('2026-05-28T12:00:00Z');
+    recordEditingHeartbeat({ artifactId: 'a1', status: 'editing', now });
+    const runTaskFn = vi.fn(async () => ({
+      text: refinePayload([{ kind: 'append_block', block: paragraphBlock('b_deferred', 'x') }]),
+    }));
+
+    const result = await runNoteRefine({
+      db: testDb(),
+      artifactId: 'a1',
+      trigger: { kind: 'mark_wrong' },
+      runTaskFn,
+      now: new Date('2026-05-28T12:00:10Z'),
+    });
+
+    expect(result).toMatchObject({ status: 'deferred', ops_count: 1, new_blocks: 1 });
+    const [unchanged] = await testDb().select().from(artifact).where(eq(artifact.id, 'a1'));
+    expect(unchanged.version).toBe(0);
+
+    const flush = await markArtifactIdleAndFlush({
+      db: testDb(),
+      artifactId: 'a1',
+      now: new Date('2026-05-28T12:00:10Z'),
+    });
+
+    expect(flush.flushed).toBe(1);
+    const [updated] = await testDb().select().from(artifact).where(eq(artifact.id, 'a1'));
+    expect(updated.version).toBe(1);
+    const content = (
+      updated.body_blocks as unknown as {
+        content: { attrs: { id: string } }[];
+      }
+    ).content;
+    expect(content.some((n) => n.attrs.id === 'b_deferred')).toBe(true);
   });
 
   it('rethrows when AI output is unparseable (no partial DB state)', async () => {

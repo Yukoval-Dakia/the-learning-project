@@ -17,6 +17,7 @@ import { z } from 'zod';
 import { newId } from '@/core/ids';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
+import { enqueueErrorRateNoteRefine } from '@/server/artifacts/note-refine-triggers';
 import { getStartedBoss } from '@/server/boss/client';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
@@ -175,6 +176,14 @@ export async function POST(req: Request): Promise<Response> {
       } catch (err) {
         console.warn(`attribution_followup enqueue failed for ${attemptEventId}:`, err);
       }
+    }
+    if (outcome === 'failure' && attemptSource === 'embedded_check' && q.source_ref) {
+      await enqueueErrorRateNoteRefine({
+        db,
+        artifactId: q.source_ref,
+        questionId: q.id,
+        triggerEventId: attemptEventId,
+      });
     }
 
     return Response.json({

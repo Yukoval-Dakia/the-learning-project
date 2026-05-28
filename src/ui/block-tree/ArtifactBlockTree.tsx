@@ -1,6 +1,7 @@
 'use client';
 
 import dynamic from 'next/dynamic';
+import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 
 import type {
@@ -13,6 +14,7 @@ import type {
 import { ArtifactSections } from '@/ui/components/ArtifactSections';
 import { apiJson } from '@/ui/lib/api';
 import type { SlimSubjectProfile } from '@/ui/lib/subject';
+import { Badge } from '@/ui/primitives/Badge';
 import { Button } from '@/ui/primitives/Button';
 import { BlockTreeRenderer } from './BlockTreeRenderer';
 import { coerceBlockTreeDoc } from './pm';
@@ -31,6 +33,18 @@ interface ArtifactBodyBlocksSaveResponse {
   artifact_version: number;
   body_blocks: BlockTreeDoc;
   event_id: string;
+}
+
+interface AiChangeRow {
+  event_id: string;
+  artifact_id: string;
+  created_at: string;
+  actor_ref: string;
+  ops_count: number;
+  new_blocks: number;
+  previous_artifact_version: number;
+  next_artifact_version: number;
+  undone: boolean;
 }
 
 interface ArtifactBlockTreeProps {
@@ -62,6 +76,7 @@ export function ArtifactBlockTree({
   onArtifactSaved,
   onSectionSaved,
 }: ArtifactBlockTreeProps) {
+  const router = useRouter();
   const [localBodyBlocks, setLocalBodyBlocks] = useState<BlockTreeDoc | null>(
     bodyBlocks ? coerceBlockTreeDoc(bodyBlocks) : null,
   );
@@ -75,6 +90,9 @@ export function ArtifactBlockTree({
   const [markingWrongBlockId, setMarkingWrongBlockId] = useState<string | null>(null);
   const [markWrongReason, setMarkWrongReason] = useState('');
   const [pendingCorrectionBlockId, setPendingCorrectionBlockId] = useState<string | null>(null);
+  const [aiChanges, setAiChanges] = useState<AiChangeRow[]>([]);
+  const [aiChangesLoading, setAiChangesLoading] = useState(false);
+  const [undoingAiChangeId, setUndoingAiChangeId] = useState<string | null>(null);
   const correctionWriteGenerationRef = useRef(0);
 
   useEffect(() => {
@@ -97,6 +115,46 @@ export function ArtifactBlockTree({
       canceled = true;
     };
   }, [artifactId]);
+
+  useEffect(() => {
+    let canceled = false;
+    if (!localBodyBlocks) {
+      setAiChanges([]);
+      return () => {
+        canceled = true;
+      };
+    }
+    setAiChangesLoading(true);
+    apiJson<{ rows: AiChangeRow[] }>(`/api/artifacts/${artifactId}/ai-changes`)
+      .then((result) => {
+        if (!canceled) setAiChanges(result.rows);
+      })
+      .catch(() => {
+        if (!canceled) setAiChanges([]);
+      })
+      .finally(() => {
+        if (!canceled) setAiChangesLoading(false);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [artifactId, localBodyBlocks]);
+
+  useEffect(() => {
+    if (!editing) return;
+    const sendHeartbeat = () => {
+      void apiJson('/api/editing-session/heartbeat', {
+        method: 'POST',
+        body: JSON.stringify({ artifact_id: artifactId, status: 'editing' }),
+      }).catch(() => {});
+    };
+    sendHeartbeat();
+    const timer = window.setInterval(sendHeartbeat, 5000);
+    return () => {
+      window.clearInterval(timer);
+      void markEditorIdle();
+    };
+  }, [artifactId, editing]);
 
   if (!localBodyBlocks) {
     return (
@@ -129,11 +187,37 @@ export function ArtifactBlockTree({
       setLocalBodyBlocks(result.body_blocks);
       setLocalVersion(result.artifact_version);
       setEditing(false);
+      void markEditorIdle();
       onArtifactSaved?.(result);
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : String(err));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function markEditorIdle() {
+    await apiJson('/api/editing-session/blur', {
+      method: 'POST',
+      body: JSON.stringify({ artifact_id: artifactId }),
+    }).catch(() => {});
+  }
+
+  async function undoAiChange(eventId: string) {
+    setUndoingAiChangeId(eventId);
+    setSaveError(null);
+    try {
+      await apiJson(`/api/artifacts/${artifactId}/ai-changes/${eventId}/undo`, {
+        method: 'POST',
+      });
+      setAiChanges((current) =>
+        current.map((row) => (row.event_id === eventId ? { ...row, undone: true } : row)),
+      );
+      router.refresh();
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setUndoingAiChangeId(null);
     }
   }
 
@@ -215,7 +299,13 @@ export function ArtifactBlockTree({
           initialContent={localBodyBlocks}
           saving={saving}
           onSave={saveBodyBlocks}
-          onCancel={() => setEditing(false)}
+          onCancel={() => {
+            void markEditorIdle();
+            setEditing(false);
+          }}
+          onEditorBlur={() => {
+            void markEditorIdle();
+          }}
         />
       ) : (
         <BlockTreeRenderer
@@ -282,7 +372,50 @@ export function ArtifactBlockTree({
           }}
         />
       )}
+      {!editing && (aiChanges.length > 0 || aiChangesLoading) ? (
+        <div className="ai-change-panel">
+          <div className="ai-change-panel-head">
+            <Badge tone="info">AI 改动</Badge>
+            <span>{aiChangesLoading ? '加载中...' : `最近 ${aiChanges.length} 条`}</span>
+          </div>
+          {aiChanges.map((change) => (
+            <div key={change.event_id} className="ai-change-row">
+              <div>
+                <strong>{change.ops_count} ops</strong>
+                <span>
+                  v{change.previous_artifact_version} → v{change.next_artifact_version} · 新增{' '}
+                  {change.new_blocks} block · {formatAiChangeTime(change.created_at)}
+                </span>
+              </div>
+              <Button
+                variant={change.undone ? 'quiet' : 'danger'}
+                size="sm"
+                icon={change.undone ? 'check' : 'refresh'}
+                disabled={change.undone || undoingAiChangeId === change.event_id}
+                onClick={() => undoAiChange(change.event_id)}
+              >
+                {change.undone
+                  ? '已撤销'
+                  : undoingAiChangeId === change.event_id
+                    ? '撤销中...'
+                    : '撤销'}
+              </Button>
+            </div>
+          ))}
+        </div>
+      ) : null}
       {saveError ? <p className="artifact-section-error">保存失败：{saveError}</p> : null}
     </div>
   );
+}
+
+function formatAiChangeTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '未知时间';
+  return date.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }

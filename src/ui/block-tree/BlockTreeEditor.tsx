@@ -14,6 +14,7 @@ interface BlockTreeEditorProps {
   saving?: boolean;
   onSave: (content: BlockTreeDoc) => Promise<void> | void;
   onCancel: () => void;
+  onEditorBlur?: () => void;
 }
 
 export function BlockTreeEditor({
@@ -21,6 +22,7 @@ export function BlockTreeEditor({
   saving = false,
   onSave,
   onCancel,
+  onEditorBlur,
 }: BlockTreeEditorProps) {
   const [pasteDraft, setPasteDraft] = useState('');
   const extensions = useMemo(() => blockTreeEditorExtensions(), []);
@@ -58,7 +60,14 @@ export function BlockTreeEditor({
   }
 
   return (
-    <div className="block-tree-editor-shell">
+    <div
+      className="block-tree-editor-shell"
+      onBlurCapture={(event) => {
+        const nextTarget = event.relatedTarget;
+        if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
+        onEditorBlur?.();
+      }}
+    >
       <div className="block-tree-editor-toolbar" aria-label="Block tree editor toolbar">
         <Button
           variant="quiet"
@@ -110,7 +119,9 @@ export function BlockTreeEditor({
           {saving ? 'Saving...' : 'Save'}
         </Button>
       </div>
-      <EditorContent editor={activeEditor} />
+      <div>
+        <EditorContent editor={activeEditor} />
+      </div>
       <details className="block-tree-paste-box">
         <summary>Paste markdown</summary>
         <textarea

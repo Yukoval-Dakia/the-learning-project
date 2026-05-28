@@ -3,6 +3,7 @@ import { CorrectArtifactEvent } from '@/core/schema/event';
 import { db } from '@/db/client';
 import { artifact } from '@/db/schema';
 import { bodyBlocksContainId } from '@/server/artifacts/body-blocks';
+import { enqueueMarkWrongNoteRefine } from '@/server/artifacts/note-refine-triggers';
 import { getArtifactCorrectionState } from '@/server/events/artifact-corrections';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
@@ -118,6 +119,16 @@ export async function POST(req: Request, { params }: RouteParams): Promise<Respo
       payload: parsed.data.payload,
       created_at: new Date(),
     });
+
+    if (correction_kind === 'mark_wrong') {
+      await enqueueMarkWrongNoteRefine({
+        db,
+        artifactId,
+        blockId: block_id,
+        reasonMd: parsed.data.payload.reason_md,
+        triggerEventId: correctionEventId,
+      });
+    }
 
     return Response.json({ correction_event_id: correctionEventId });
   } catch (err) {

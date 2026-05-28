@@ -9,6 +9,7 @@ import {
   resolveMcpAllowedTools,
 } from '@/server/ai/tools/allowlists';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
+import { enqueueDreamingNoteRefine } from '@/server/artifacts/note-refine-triggers';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
 import { type ProposalInboxRow, listProposalInboxRows } from '@/server/proposals/inbox';
 
@@ -22,7 +23,8 @@ export interface DreamingNightlyResult {
   tool_context_task_run_id: string;
 }
 
-type ProposalSnapshotRow = Pick<ProposalInboxRow, 'id' | 'status'>;
+type ProposalSnapshotRow = Pick<ProposalInboxRow, 'id' | 'status'> &
+  Partial<Pick<ProposalInboxRow, 'kind' | 'target'>>;
 type RunAgentTaskFn = (
   kind: string,
   input: unknown,
@@ -126,6 +128,25 @@ export async function runDreamingNightly(
     const afterRows = await listRows(db);
     const pendingAfter = afterRows.filter((row) => row.status === 'pending').length;
     const proposalsCreated = afterRows.filter((row) => !beforeIds.has(row.id)).length;
+    const newDreamingNoteTargets = [
+      ...new Set(
+        afterRows
+          .filter((row) => !beforeIds.has(row.id))
+          .filter(
+            (row) =>
+              row.kind === 'note_update' &&
+              row.target?.subject_kind === 'artifact' &&
+              typeof row.target.subject_id === 'string',
+          )
+          .map((row) => row.target?.subject_id)
+          .filter((artifactId): artifactId is string => Boolean(artifactId)),
+      ),
+    ];
+    await Promise.all(
+      newDreamingNoteTargets.map((artifactId) =>
+        enqueueDreamingNoteRefine({ db, artifactId, triggerEventId }),
+      ),
+    );
 
     await write(db, {
       id: `dreaming_scan_${createId()}`,

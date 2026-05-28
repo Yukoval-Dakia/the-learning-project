@@ -34,6 +34,14 @@ const KNOWLEDGE_BASE = {
   version: 0,
 };
 
+function paragraphBlock(id: string, text: string) {
+  return {
+    type: 'paragraph',
+    attrs: { id },
+    content: [{ type: 'text', text }],
+  };
+}
+
 async function seedKnowledge(ids: string[]): Promise<void> {
   const db = testDb();
   const now = new Date();
@@ -135,6 +143,73 @@ describe('proposal lifecycle owner service', () => {
       relation_type: 'prerequisite',
       weight: 0.7,
     });
+  });
+
+  it('acceptAiProposal applies a note_update patch proposal and writes a rate event', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(artifact).values({
+      id: 'artifact_note',
+      type: 'note_atomic',
+      title: '之的用法',
+      parent_artifact_id: null,
+      knowledge_ids: [],
+      intent_source: 'learning_intent',
+      source: 'ai_generated',
+      source_ref: null,
+      body_blocks: {
+        type: 'doc',
+        content: [paragraphBlock('b1', '原文')],
+      } as never,
+      attrs: {} as never,
+      tool_kind: null,
+      tool_state: null,
+      generation_status: 'ready',
+      verification_status: 'verified',
+      verification_summary: null,
+      generated_by: { by: 'ai', task_kind: 'NoteGenerateTask' } as never,
+      verified_by: null,
+      history: [],
+      archived_at: null,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    await writeAiProposal(db, {
+      id: 'note_update_p1',
+      payload: {
+        kind: 'note_update',
+        target: { subject_kind: 'artifact', subject_id: 'artifact_note' },
+        reason_md: 'Living Note patch',
+        evidence_refs: [{ kind: 'artifact', id: 'artifact_note' }],
+        proposed_change: {
+          artifact_id: 'artifact_note',
+          source: 'note_refine',
+          patch: {
+            ops: [{ kind: 'append_block', block: paragraphBlock('b2', '新增') }],
+          },
+          summary: { ops_count: 1, new_blocks: 1 },
+        },
+      },
+    });
+
+    const result = await acceptAiProposal(db, 'note_update_p1');
+
+    expect(result).toMatchObject({ kind: 'note_update', artifact_id: 'artifact_note' });
+    const [updated] = await db.select().from(artifact).where(eq(artifact.id, 'artifact_note'));
+    expect(updated.version).toBe(1);
+    expect(
+      (
+        updated.body_blocks as {
+          content: Array<{ attrs?: { id?: string } }>;
+        }
+      ).content.some((node) => node.attrs?.id === 'b2'),
+    ).toBe(true);
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'note_update_p1')));
+    expect(rateRows).toHaveLength(1);
   });
 
   it('decideKnowledgeEdgeProposal preserves reverse/change_type decisions for edge proposals', async () => {
