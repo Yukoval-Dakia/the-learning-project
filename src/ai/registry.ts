@@ -191,6 +191,23 @@ export const tasks = {
     systemPrompt:
       '你是学习笔记质检员。检查 generated note sections 是否准确、完整、清晰、适合当前科目。严格输出 NoteVerificationResult JSON。',
   },
+  NoteRefineTask: {
+    kind: 'NoteRefineTask',
+    description:
+      'Wave 6 / T-88 P4-A — Living Note refine pass. Given an atomic/long/hub note + a refine trigger, output a NotePatch (insert_after / replace_block / delete_block / append_block ops) for the apply pipeline to execute or surface as a proposal.',
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
+    needsToolCall: false,
+    isMultimodal: false,
+    allowedTools: [],
+    // DEPRECATED (2026-05-22 M1): do not edit. Runtime renders via
+    // getTaskSystemPrompt(task, profile) in src/ai/task-prompts.ts; this
+    // string is kept only as type-required fallback. New tasks MUST add a
+    // builder in task-prompts.ts.
+    systemPrompt: '(see getTaskSystemPrompt(task, profile) - fallback not for runtime)',
+  },
   EmbeddedCheckGenerateTask: {
     kind: 'EmbeddedCheckGenerateTask',
     description: 'Product Track 1 — generate 1-3 self-test questions for an atomic note',

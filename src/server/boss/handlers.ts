@@ -11,6 +11,7 @@ import { buildEmbeddedCheckGenerateHandler } from './handlers/embedded_check_gen
 import { buildKnowledgeEdgeProposeNightlyHandler } from './handlers/knowledge_edge_propose_nightly';
 import { buildKnowledgeMaintenanceNightlyHandler } from './handlers/knowledge_maintenance_nightly';
 import { buildKnowledgePropoNightlyHandler } from './handlers/knowledge_propose_nightly';
+import { buildNoteRefineHandler } from './handlers/note-refine';
 import { buildNoteGenerateHandler } from './handlers/note_generate';
 import { buildNoteVerifyHandler } from './handlers/note_verify';
 import { buildPromoteConversationIdleHandler } from './handlers/promote_conversation_idle';
@@ -167,6 +168,22 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
         await boss.send('note_verify', { artifact_id: artifactId });
       },
     }),
+  );
+
+  // Wave 6 / T-88 P4-A (YUK-127): NoteRefineTask — Living Note refine pass.
+  // Producers (P4-E, YUK-131) enqueue { artifact_id, trigger } when one of
+  // the 5 trigger signals fires (mark_wrong / mastery_change / 错误率 /
+  // dwell / dreaming). Handler loads context, calls NoteRefineTask, and
+  // routes the resulting NotePatch to apply (mutator) or proposal (propose)
+  // per the locked threshold `≤ 3 ops AND ≤ 2 new blocks → mutator`.
+  //
+  // PHASE-DEFERRED: P4-B (YUK-128) plugs the real gate + editing-session
+  // deferral; P4-A ships mutator-only default so the apply path is wired.
+  await boss.createQueue('note_refine');
+  await boss.work(
+    'note_refine',
+    { pollingIntervalSeconds: 2, batchSize: 1 },
+    buildNoteRefineHandler(db),
   );
 
   // Task #16: async attribution for new failure attempts. Replaces the
