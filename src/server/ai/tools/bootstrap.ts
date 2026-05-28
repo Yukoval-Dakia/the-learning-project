@@ -21,6 +21,16 @@ import {
   getSubjectGraphOverviewTool,
   queryKnowledgeTool,
 } from './knowledge-readers';
+import {
+  attributeMistakeTool,
+  proposeKnowledgeEdgeTool,
+  proposeKnowledgeMutationTool,
+  proposeLearningItemCompletionTool,
+  proposeLearningItemRelearnTool,
+  proposeRecordLinksTool,
+  proposeRecordPromotionTool,
+  proposeVariantTool,
+} from './proposal-tools';
 import { queryEventsTool } from './query-events';
 import { queryMistakesTool } from './query-mistakes';
 import { getTool, registerTool } from './registry';
@@ -40,6 +50,14 @@ const CORE_TOOLS: ReadonlyArray<DomainTool<unknown, unknown>> = [
   getReviewDueTool as DomainTool<unknown, unknown>,
   getLearningItemContextTool as DomainTool<unknown, unknown>,
   queryMemoryBriefTool as DomainTool<unknown, unknown>,
+  proposeKnowledgeEdgeTool as DomainTool<unknown, unknown>,
+  proposeKnowledgeMutationTool as DomainTool<unknown, unknown>,
+  attributeMistakeTool as DomainTool<unknown, unknown>,
+  proposeVariantTool as DomainTool<unknown, unknown>,
+  proposeLearningItemCompletionTool as DomainTool<unknown, unknown>,
+  proposeLearningItemRelearnTool as DomainTool<unknown, unknown>,
+  proposeRecordLinksTool as DomainTool<unknown, unknown>,
+  proposeRecordPromotionTool as DomainTool<unknown, unknown>,
 ];
 
 let bootstrapped = false;

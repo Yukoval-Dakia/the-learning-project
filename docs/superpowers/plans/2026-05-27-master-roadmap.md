@@ -32,7 +32,7 @@
 | Doc / Infra 债 | P4.1-4.13 sweep；status.md / ADR / modules 一致 |
 | Audit | `/audit-drift` 全绿 |
 
-### 0.3 当前快照（2026-05-28 post-Wave 2 / Wave 3 prep）
+### 0.3 当前快照（2026-05-28 post-Wave 3 / Wave 4 prep）
 
 **Shipped (从 status.md §1 + 2026-05-{20..27} commit log)**：
 - Foundation A/B/C 全完，含 math + physics acid test ✓ framework diff = 0
@@ -55,8 +55,8 @@
 - **YUK-101 outbox follow-up ✅**：transactional outbox landed through PR #168 / commit `72d77555`; no longer blocks Wave 3 prep
 
 **In-flight / open**：
-- **Wave 3 ready-to-launch**：T-D4 propose/write tools full (YUK-107 parent + YUK-108..112 lanes)；driver docs：`2026-05-28-wave3-ready-to-launch.md` + `2026-05-28-td4-propose-write-tools-driver.md`
-- YUK-88 next prep：P3/P4 remains later-wave consumer after T-D4 registry freeze
+- **Wave 3 shipped**：T-D4 propose/write tools full through PR #170 (YUK-107 parent + YUK-108..112 lanes)；8 个 DomainTool proposal/action surface + allowlist policy + proposal schema/UI coverage landed
+- YUK-88 next prep：P3/P4 can now consume the frozen DomainTool registry surface in Wave 4
 
 **Audit baseline ack（per `docs/audit/2026-05-27-pre-yuk88-baseline-drift.md`, 2026-05-27）**：
 - **F-01** notes.md 整篇 ADR-0020 冲突 → YUK-88 P3 收尾前必须 rewrite（拆 YUK-{TBD-1}；不阻塞 Wave 2）
@@ -147,7 +147,7 @@ ls -lt docs/audit/*drift* 2>/dev/null | head -3
 |---|---|---|---|---|---|
 | **T-D2** DomainTool Registry M2 (10 read tools 补完) | ✅ shipped | ~25 | Drawer / Dreaming / Coach 三条全 | M1 ship ✓ | [YUK-102](https://linear.app/yukoval-studios/issue/YUK-102) + YUK-103~106 |
 | **T-D3** Copilot Drawer MVP (1 route 试点) | ⬜ | ~13 | Drawer 全 6 routes 铺开 | T-D2 (≥6 read tools) | ⬜ 待建 |
-| **T-D4** DomainTool Propose/Write Tools (8 个) | 🟡 ready to launch | ~24 | Dreaming + Coach proposal 写入 | T-D2 done ✓ | [YUK-107](https://linear.app/yukoval-studios/issue/YUK-107) + YUK-108~112 |
+| **T-D4** DomainTool Propose/Write Tools (8 个) | ✅ shipped | ~24 | Dreaming + Coach proposal 写入 | T-D2 done ✓ | [YUK-107](https://linear.app/yukoval-studios/issue/YUK-107) + YUK-108~112 |
 | **T-D5** Drawer 跨 6 routes 常驻 | ⬜ | ~13 | Layer 8 用户级兑现 | T-D3 试点验证 | ⬜ 待建 |
 | **T-D6** Phase 3 Global Coach Orchestrator | ⬜ | ~15 | Layer 8 自动产出"今日安排" | T-D2 + T-DR (Dreaming) | ⬜ 待建 |
 | **T-D7** `experimental:tool_use` promote to KnownEvent | ⬜ | ~3 | ADR-0011 后续修订 | 3 tool stable + 2 周 | ⬜ 待建 |
@@ -458,7 +458,8 @@ T-FF fixtures ────→ blocks Eval / acceptance test 自动化
 | T-PD doc sweep gap-filler | ~3 | A |
 
 **预期**：~27 pts，~4-5 周。出口：DomainTool 21 个全 ship；registry.ts 锁定；为 Wave 4 T-DR // T-88 P3 并行扫清 conflict。
-**Ready doc**：[`2026-05-28-wave3-ready-to-launch.md`](2026-05-28-wave3-ready-to-launch.md)。**Driver**：[`2026-05-28-td4-propose-write-tools-driver.md`](2026-05-28-td4-propose-write-tools-driver.md)。Linear：YUK-107 parent + YUK-108..112 lanes。
+**实际**：PR #170 ships T-D4 full 8 tools (`propose_knowledge_edge`, `propose_knowledge_mutation`, `attribute_mistake`, `propose_variant`, `propose_learning_item_completion`, `propose_learning_item_relearn`, `propose_record_links`, `propose_record_promotion`), plus `src/server/ai/tools/allowlists.ts` for the spec task/surface matrix. Linear：YUK-107 parent + YUK-108..112 lanes。
+**Ready doc / closeout**：[`2026-05-28-wave3-ready-to-launch.md`](2026-05-28-wave3-ready-to-launch.md)。**Driver**：[`2026-05-28-td4-propose-write-tools-driver.md`](2026-05-28-td4-propose-write-tools-driver.md)。
 
 #### Wave 4 (~6 周) — T-DR // T-88 P3 并行（critical path 双线）
 

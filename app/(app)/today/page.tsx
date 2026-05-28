@@ -405,6 +405,8 @@ const KIND_TO_GROUP: Record<AiProposalKindT, keyof ProposalGroups> = {
   learning_item: 'learning',
   completion: 'learning',
   relearn: 'learning',
+  record_links: 'learning',
+  record_promotion: 'learning',
   archive: 'learning',
   note_update: 'content',
   variant_question: 'content',

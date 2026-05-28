@@ -1,16 +1,28 @@
-# Wave 3 Ready-to-Launch — DomainTool Propose/Write Tools
+# Wave 3 Ship Outcome — DomainTool Propose/Write Tools
 
-> 状态：ready-to-launch draft as of 2026-05-28。Wave 2 已通过 PR #169 merge 到 `main`；Wave 3 的目标是集中 ship T-D4，完成 DomainTool proposal/action surface，为 Wave 4 的 T-DR // YUK-88 P3 并行扫清 registry conflict。
+> 状态：shipped via PR #170 as of 2026-05-28。Wave 2 已通过 PR #169 merge 到 `main`；Wave 3 集中 ship T-D4，完成 DomainTool proposal/action surface，为 Wave 4 的 T-DR // YUK-88 P3 并行扫清 registry conflict。
 
 ## Source of truth
 
-- `docs/superpowers/status.md` 当前 Phase 行：Wave 2 implementation complete，下一站为 Wave 3 DomainTool propose tools / YUK-88 P3+P4 准备。
+- `docs/superpowers/status.md` 当前 Phase 行：Wave 3 T-D4 implementation complete，下一站为 Wave 4 T-DR // YUK-88 P3 准备。
 - `docs/superpowers/plans/2026-05-27-master-roadmap.md` §5.1 Wave 3：T-D4 propose/write tools full + T-PD gap filler。
 - `docs/superpowers/specs/2026-05-17-agent-context-tools-design.md` §Knowledge Graph Proposal Tools、§Non-Graph Proposal And Action Tools、§Task Allowlist Defaults、§Engineering Sequence step 6。
 - `docs/superpowers/plans/2026-05-28-td4-propose-write-tools-driver.md`：T-D4 lane driver。
 - Linear milestone：Foundation D — Copilot Orchestrator + DomainTool Registry / `M4 — DomainTool propose/write tools full coverage`。
 
-## Preflight state
+## Ship outcome
+
+| Lane | Linear | Outcome | Evidence |
+|---|---|---|---|
+| T-D4/A graph proposal tools | YUK-108 | ✅ shipped | `propose_knowledge_edge`, `propose_knowledge_mutation` in `src/server/ai/tools/proposal-tools.ts` |
+| T-D4/B mistake attribution + variant tools | YUK-109 | ✅ shipped | `attribute_mistake` delegates to AttributionTask owner path; `propose_variant` wraps `runVariantGen` |
+| T-D4/C learning item proposal tools | YUK-110 | ✅ shipped | completion/relearn tools write proposal-only events and leave status changes to accept routes |
+| T-D4/D record link + promotion proposal tools | YUK-111 | ✅ shipped | `record_links` / `record_promotion` proposal kinds, inbox labels, record-evidence status flip |
+| T-D4/E closeout policies/docs/gate | YUK-112 | ✅ shipped | `src/server/ai/tools/allowlists.ts`, status/roadmap updates, focused unit + DB + typecheck gate |
+
+The implementation keeps all destructive mutations behind owner services or accept routes. Proposal tools write inbox-visible proposal events; `attribute_mistake` is the only `write` effect because the existing attribution owner path appends a judge event.
+
+## Historical preflight state
 
 | Item | State | Evidence / action |
 |---|---|---|
@@ -19,7 +31,7 @@
 | Wave 2 | ✅ implementation complete | YUK-91 / YUK-92 / YUK-102 merged through PR #169. |
 | YUK-101 outbox follow-up | ✅ Done | Linear YUK-101 completed; PR #168 / commit `72d77555` in `origin/main`. Older roadmap text claiming it is open was stale and is corrected by this prep. |
 | T-D4 Linear | ✅ prepared | Parent YUK-107, sub-issues YUK-108 through YUK-112, milestone M4 target 2026-07-02. |
-| T-D4 code | ⬜ not started | No proposal/action tools beyond existing M1/M2 read-tool surface. |
+| T-D4 code | ✅ shipped in PR #170 | Full 8 proposal/action DomainTools plus allowlist policy and proposal schema/UI coverage. |
 
 ## Wave 3 scope
 
@@ -61,12 +73,12 @@ Then run `/audit-drift` or the current equivalent drift scan, update `docs/super
 - `docs/superpowers/specs/2026-05-17-agent-context-tools-design.md` still asks whether Copilot should get `propose_knowledge_mutation`. Default for Wave 3: Copilot gets `propose_knowledge_edge` only; mutation tools stay Maintenance / KnowledgeReview unless the user explicitly changes that policy.
 - If a target owner service is missing, implement the thinnest owner-bound proposal/event wrapper required by the spec. Do not let an LLM tool perform hidden direct DB mutation as a shortcut.
 
-## Ready lane state
+## Final lane state
 
 | Lane | Status | Blocked by | Notes |
 |---|---|---|---|
-| YUK-108 | ready | none | Establishes proposal-event pattern. |
-| YUK-109 | ready after YUK-108 pattern | YUK-108 preferred | Reuses attribution / variant generation owners. |
-| YUK-110 | ready after YUK-108 pattern | YUK-108 preferred | Proposal-only LearningItem transitions. |
-| YUK-111 | ready after YUK-108 pattern | YUK-108 preferred | Proposal-only record link / promotion path. |
-| YUK-112 | blocked | YUK-108 / YUK-109 / YUK-110 / YUK-111 | Closeout, docs, and full gate only. |
+| YUK-108 | shipped | none | Graph proposal-event pattern established. |
+| YUK-109 | shipped | YUK-108 pattern | Attribution / variant owner paths reused. |
+| YUK-110 | shipped | YUK-108 pattern | Proposal-only LearningItem transitions. |
+| YUK-111 | shipped | YUK-108 pattern | Proposal-only record link / promotion path. |
+| YUK-112 | shipped | YUK-108 / YUK-109 / YUK-110 / YUK-111 | Closeout policy/docs/gate evidence captured. |

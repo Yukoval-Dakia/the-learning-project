@@ -130,7 +130,7 @@ pnpm exec vitest run app/api/records/**/*.test.ts
 
 ## Lane E — YUK-112 closeout
 
-Closeout only after YUK-108 through YUK-111 merge.
+Closeout only after YUK-108 through YUK-111 merge. PR #170 implements all four code lanes in one focused worktree, then applies the closeout lane in the same PR.
 
 Acceptance:
 
@@ -151,6 +151,13 @@ CODEX_FULL_GATE=1 pnpm audit:profile
 CODEX_FULL_GATE=1 pnpm test
 CODEX_FULL_GATE=1 pnpm build
 ```
+
+Closeout evidence as of 2026-05-28:
+
+- Registry/bootstrap: `src/server/ai/tools/proposal-tools.test.ts` proves all 8 T-D4 tools register; `src/server/ai/tools/bootstrap.ts` exposes them with the M1/M2 read tools.
+- Allowlist policy: `src/server/ai/tools/allowlists.ts` pins KnowledgeReview, Copilot, Copilot user-suggested mistake action, Dreaming, Coach, and Maintenance surfaces; `allowlists.test.ts` keeps Copilot narrower than Maintenance.
+- Proposal lifecycle: `src/core/schema/proposal.ts`, `/inbox`, and `/today` know `record_links` and `record_promotion`; proposal writer/inbox/accept regressions cover the expanded union.
+- Drift scan equivalent: status and roadmap now point to PR #170 as Wave 3 T-D4 ship outcome and keep Wave 4 as the next registry consumer.
 
 ## Notes for implementation agents
 
