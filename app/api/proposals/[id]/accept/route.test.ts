@@ -1,4 +1,4 @@
-import { event, knowledge, knowledge_edge } from '@/db/schema';
+import { completion_evidence, event, knowledge, knowledge_edge, learning_item } from '@/db/schema';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -95,8 +95,17 @@ describe('POST /api/proposals/[id]/accept', () => {
     expect(edges).toHaveLength(1);
   });
 
-  it('returns 400 for future proposal kinds without owner-service semantics', async () => {
-    // `completion` accept is not implemented yet (YUK-19 ships learning_item only).
+  it('accepts completion proposals through the real route and creates ai_propose evidence', async () => {
+    await testDb().insert(learning_item).values({
+      id: 'li_xx',
+      source: 'manual',
+      title: 'item',
+      content: 'content',
+      knowledge_ids: [],
+      status: 'in_progress',
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
     await writeAiProposal(testDb(), {
       id: 'completion_p1',
       payload: {
@@ -113,11 +122,20 @@ describe('POST /api/proposals/[id]/accept', () => {
     });
 
     const res = await acceptProposal('completion_p1');
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe('unsupported_proposal_kind');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { kind: string; learning_item_id: string };
+    expect(body).toMatchObject({ kind: 'completion', learning_item_id: 'li_xx' });
+
+    const [item] = await testDb().select().from(learning_item).where(eq(learning_item.id, 'li_xx'));
+    expect(item.status).toBe('done');
+    const evidenceRows = await testDb()
+      .select()
+      .from(completion_evidence)
+      .where(eq(completion_evidence.learning_item_id, 'li_xx'));
+    expect(evidenceRows).toHaveLength(1);
+    expect(evidenceRows[0].path).toBe('ai_propose');
 
     const rates = await testDb().select().from(event).where(eq(event.action, 'rate'));
-    expect(rates).toHaveLength(0);
+    expect(rates).toHaveLength(1);
   });
 });

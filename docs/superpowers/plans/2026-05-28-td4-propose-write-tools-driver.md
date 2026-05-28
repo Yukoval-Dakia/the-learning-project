@@ -26,8 +26,8 @@ Source contracts:
 |---|---|---|---|---|
 | `propose_knowledge_edge` | YUK-108 | propose | Write proposal event; do not insert `knowledge_edge`. | KnowledgeReview, Maintenance; Copilot edge-only when user-visible. |
 | `propose_knowledge_mutation` | YUK-108 | propose | Proposal-only tree maintenance; accept route owns real mutation. | KnowledgeReview, Maintenance. |
-| `attribute_mistake` | YUK-109 | write | Run existing attribution path; append judge event only when valid. | Copilot only on user suggestion; Maintenance where causal trace is visible. |
-| `propose_variant` | YUK-109 | write/propose | Reuse variant generation owner; cap MVP count at 1. | Copilot only on user suggestion; Maintenance. |
+| `attribute_mistake` | YUK-109 | write | Run existing attribution path; append judge event only when valid. | Copilot only on user suggestion. |
+| `propose_variant` | YUK-109 | write/propose | Reuse variant generation owner; cap MVP count at 1. | Copilot only on user suggestion. |
 | `propose_learning_item_completion` | YUK-110 | propose | Proposal-only; accept route creates completion evidence and guarded transition. | Dreaming, Coach, Maintenance. |
 | `propose_learning_item_relearn` | YUK-110 | propose | Proposal-only transition suggestion. | Dreaming, Coach, Maintenance. |
 | `propose_record_links` | YUK-111 | propose | Proposal-only links from LearningRecord to domain targets. | Dreaming, Maintenance. |
@@ -52,8 +52,8 @@ Implement:
 Acceptance:
 
 - Validate node existence, same-subject boundary, self-edge rejection, duplicate live-edge rejection, and parent-edge semantic duplication for `propose_knowledge_edge`.
-- `propose_knowledge_edge` writes `event(action='propose', subject_kind='knowledge_edge', actor_kind='agent')` or the current proposal payload equivalent.
-- `propose_knowledge_mutation` accepts `propose_new | reparent | merge | split | archive` and writes proposal-only payloads.
+- `propose_knowledge_edge` writes `event(action='propose', subject_kind='knowledge_edge', actor_kind='agent')` or the current proposal payload equivalent; `related_to` and `contrasts_with` dedupe both directions for live and pending edges.
+- `propose_knowledge_mutation` accepts `propose_new | reparent | merge | split | archive` and writes proposal-only payloads; `merge.from_ids` must all have `expected_versions` entries before a proposal is written.
 - Registry tests prove both tools register and summarize.
 - Allowed for Maintenance / KnowledgeReview; Copilot gets edge proposals only unless the open policy question is resolved.
 
@@ -61,6 +61,7 @@ Validation:
 
 ```bash
 pnpm exec vitest run src/server/ai/tools/registry.test.ts src/server/ai/tools/*proposal*.test.ts
+pnpm exec vitest run src/server/ai/tools/proposal-tools.test.ts
 pnpm exec vitest run src/server/ai/tools/mcp-bridge.test.ts
 ```
 
@@ -73,7 +74,7 @@ Implement:
 
 Acceptance:
 
-- `attribute_mistake` rejects non-failure attempts, skips when an active judge already exists, invokes the existing attribution path, and writes through the event owner path.
+- `attribute_mistake` rejects non-failure attempts, skips when an active judge already exists, invokes the existing attribution path, and writes through the event owner path; if owner-path idempotency observes a concurrent judge, the tool reports `skipped:existing_judge`, not `written`.
 - The tool never accepts `cause` from the calling agent; the LLM cannot smuggle its own attribution into storage.
 - `propose_variant` reuses existing variant generation rules, caps count at 1, respects non-targetable causes, max depth, and "already has variant" guards.
 - User-authored cause remains preferred in reader tools.
@@ -83,6 +84,7 @@ Validation:
 
 ```bash
 pnpm exec vitest run src/server/ai/tools/*mistake*.test.ts src/server/ai/tools/*variant*.test.ts
+pnpm exec vitest run src/server/ai/tools/proposal-tools.test.ts
 pnpm exec vitest run src/server/boss/handlers/variant_gen.test.ts src/server/boss/handlers/variant_verify.test.ts
 ```
 
@@ -97,7 +99,7 @@ Acceptance:
 
 - Completion proposal records `triggering_signals`, evidence event ids, and reasoning without changing `learning_item.status`.
 - Accept route remains the only path that creates `completion_evidence(path='ai_propose')` and performs the optimistic-lock status transition.
-- Relearn proposal handles `resting | done -> pending/in_progress` as a proposal only.
+- Relearn proposal handles `resting | done -> in_progress` as a proposal only.
 - Dismiss/cooldown signal prevents immediate repeat proposal.
 - Invalid/stale item states are tested.
 
@@ -105,6 +107,7 @@ Validation:
 
 ```bash
 pnpm exec vitest run src/server/ai/tools/*learning*.test.ts app/api/learning-items/[id]/route.test.ts
+pnpm exec vitest run app/api/proposals/[id]/accept/route.test.ts src/server/proposals/actions.test.ts
 ```
 
 ## Lane D — YUK-111 record link and promotion proposal tools
@@ -118,14 +121,14 @@ Acceptance:
 
 - `propose_record_links` validates target kinds (`knowledge`, `question`, `learning_item`, `artifact`) and bounded confidence/reasoning payloads.
 - `propose_record_promotion` supports `question`, `learning_item`, and `artifact` targets as proposal drafts only.
-- Accept routes / owner services perform actual record link updates or object creation.
+- Accept routes / owner services validate the source `record_id`, perform actual record link updates or object creation, and write the proposal rate/signal.
 - Tests cover invalid targets, duplicate proposal behavior, summary output, and event/proposal payload shape.
 
 Validation:
 
 ```bash
 pnpm exec vitest run src/server/ai/tools/*record*.test.ts
-pnpm exec vitest run app/api/records/**/*.test.ts
+pnpm exec vitest run src/server/proposals/actions.test.ts app/api/proposals/[id]/accept/route.test.ts
 ```
 
 ## Lane E — YUK-112 closeout

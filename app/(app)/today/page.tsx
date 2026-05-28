@@ -402,6 +402,7 @@ const emptyProposalGroups: ProposalGroups = {
 const KIND_TO_GROUP: Record<AiProposalKindT, keyof ProposalGroups> = {
   knowledge_node: 'nodes',
   knowledge_edge: 'edges',
+  knowledge_mutation: 'nodes',
   learning_item: 'learning',
   completion: 'learning',
   relearn: 'learning',

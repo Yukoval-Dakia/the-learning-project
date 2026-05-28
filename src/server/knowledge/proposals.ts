@@ -17,13 +17,26 @@ import { newId } from '@/core/ids';
 import type { ProposalEvidenceRefT } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge } from '@/db/schema';
-import { costUsdToMicroUsd } from '@/server/ai/provenance';
 import { writeEvent } from '@/server/events/queries';
 import { writeArchiveProposal } from '@/server/proposals/producers';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
+
+function mutationSubjectId(payload: KnowledgeMutationPayload): string {
+  switch (payload.mutation) {
+    case 'propose_new':
+      return payload.parent_id ?? newId();
+    case 'reparent':
+    case 'archive':
+      return payload.node_id;
+    case 'merge':
+      return payload.into_id;
+    case 'split':
+      return payload.from_id;
+  }
+}
 
 // =============================================================================
 // Mutation payload types (unchanged from pre-Step-9 — UI / KnowledgeReviewTask
@@ -160,37 +173,38 @@ export async function writeKnowledgeProposeEvent(
     return id;
   }
 
-  // Other mutations (reparent / merge / split) → experimental:knowledge_<mutation>.
-  // The ExperimentalEvent escape hatch accepts any payload record.
+  // Other mutations (reparent / merge / split) stay in the legacy
+  // experimental:knowledge_<mutation> event namespace for the knowledge owner,
+  // while carrying a typed ai_proposal payload for unified inbox semantics.
   const action = `experimental:knowledge_${entry.payload.mutation}` as const;
   const { mutation: _omit, ...rest } = entry.payload;
+  const subjectId = mutationSubjectId(entry.payload);
   void _omit;
-  await writeEvent(db, {
+  await writeAiProposal(db, {
     id,
-    session_id: null,
-    actor_kind: 'agent',
     actor_ref: actorRef,
-    action,
-    subject_kind: 'knowledge',
-    // For non-propose_new mutations we have a concrete node_id (or from_id /
-    // into_id) — use the most-natural anchor.
-    subject_id:
-      'node_id' in entry.payload
-        ? entry.payload.node_id
-        : 'into_id' in entry.payload
-          ? entry.payload.into_id
-          : 'from_id' in entry.payload
-            ? entry.payload.from_id
-            : newId(),
     outcome: 'partial',
     payload: {
-      ...rest,
-      reasoning,
+      kind: 'knowledge_mutation',
+      target: { subject_kind: 'knowledge', subject_id: subjectId },
+      reason_md: reasoning,
       evidence_refs: entry.evidence_refs ?? [],
+      proposed_change: entry.payload,
+      cooldown_key: `knowledge_mutation:${entry.payload.mutation}:${subjectId}`,
+    },
+    event_override: {
+      action,
+      subject_kind: 'knowledge',
+      subject_id: subjectId,
+      payload: {
+        ...rest,
+        reasoning,
+        evidence_refs: entry.evidence_refs ?? [],
+      },
     },
     caused_by_event_id: causedByEventId,
     task_run_id: entry.task_run_id ?? null,
-    cost_micro_usd: costUsdToMicroUsd(entry.cost_usd),
+    cost_usd: entry.cost_usd,
     created_at: now,
   });
   return id;
