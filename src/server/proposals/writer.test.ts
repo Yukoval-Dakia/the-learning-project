@@ -134,6 +134,25 @@ describe('writeAiProposal', () => {
       },
       {
         ...base,
+        kind: 'record_links',
+        target: { subject_kind: 'record', subject_id: 'record_1' },
+        proposed_change: {
+          record_id: 'record_1',
+          links: [{ target_kind: 'knowledge', target_id: 'k1', relation: 'about' }],
+        },
+      },
+      {
+        ...base,
+        kind: 'record_promotion',
+        target: { subject_kind: 'record', subject_id: 'record_1' },
+        proposed_change: {
+          record_id: 'record_1',
+          target: 'learning_item',
+          draft: { title: 'Study this later' },
+        },
+      },
+      {
+        ...base,
         kind: 'archive',
         target: { subject_kind: 'knowledge', subject_id: 'k1' },
         proposed_change: { subject_kind: 'knowledge', subject_id: 'k1', reason_md: 'Duplicate' },
@@ -151,9 +170,9 @@ describe('writeAiProposal', () => {
     }
 
     const rows = await db.select().from(event);
-    expect(rows).toHaveLength(9);
+    expect(rows).toHaveLength(11);
     const experimentalRows = rows.filter((row) => row.action === 'experimental:proposal');
-    expect(experimentalRows).toHaveLength(7);
+    expect(experimentalRows).toHaveLength(9);
     expect(
       rows
         .map(

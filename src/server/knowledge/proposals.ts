@@ -14,6 +14,7 @@
 // write to keep accept atomic.
 
 import { newId } from '@/core/ids';
+import type { ProposalEvidenceRefT } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge } from '@/db/schema';
 import { costUsdToMicroUsd } from '@/server/ai/provenance';
@@ -73,6 +74,9 @@ export type KnowledgeMutationPayload =
 export interface WriteProposalEntry {
   payload: KnowledgeMutationPayload;
   reasoning: string;
+  evidence_refs?: ProposalEvidenceRefT[];
+  actor_ref?: string;
+  caused_by_event_id?: string | null;
   task_run_id?: string;
   cost_usd?: number;
 }
@@ -90,6 +94,8 @@ export async function writeKnowledgeProposeEvent(
   const id = newId();
   const now = new Date();
   const reasoning = entry.reasoning;
+  const actorRef = entry.actor_ref ?? 'dreaming';
+  const causedByEventId = entry.caused_by_event_id ?? null;
   if (entry.payload.mutation === 'propose_new') {
     // Lane B ProposeKnowledge — payload locked to { name, parent_id, reasoning }.
     // parent_id is required (Lane B forbids null); PR A scope already enforced
@@ -101,13 +107,13 @@ export async function writeKnowledgeProposeEvent(
     }
     await writeAiProposal(db, {
       id,
-      actor_ref: 'dreaming',
+      actor_ref: actorRef,
       outcome: 'partial', // 'partial' = pending; 'success' = accepted (set by rate handler)
       payload: {
         kind: 'knowledge_node',
         target: { subject_kind: 'knowledge', subject_id: null },
         reason_md: reasoning,
-        evidence_refs: [],
+        evidence_refs: entry.evidence_refs ?? [],
         proposed_change: {
           mutation: 'propose_new',
           name: entry.payload.name,
@@ -116,6 +122,7 @@ export async function writeKnowledgeProposeEvent(
         cooldown_key: `knowledge_node:${entry.payload.parent_id}:${entry.payload.name}`,
       },
       task_run_id: entry.task_run_id ?? null,
+      caused_by_event_id: causedByEventId,
       cost_usd: entry.cost_usd,
       created_at: now,
     });
@@ -127,7 +134,7 @@ export async function writeKnowledgeProposeEvent(
     void _omit;
     await writeArchiveProposal(db, {
       id,
-      actor_ref: 'dreaming',
+      actor_ref: actorRef,
       target_subject_kind: 'knowledge',
       target_subject_id: entry.payload.node_id,
       proposed_change: {
@@ -135,6 +142,7 @@ export async function writeKnowledgeProposeEvent(
         expected_version: entry.payload.expected_version,
       },
       reason_md: reasoning,
+      evidence_refs: entry.evidence_refs,
       legacy_event_override: {
         action: 'experimental:knowledge_archive',
         subject_kind: 'knowledge',
@@ -145,6 +153,7 @@ export async function writeKnowledgeProposeEvent(
         },
       },
       task_run_id: entry.task_run_id ?? null,
+      caused_by_event_id: causedByEventId,
       cost_usd: entry.cost_usd,
       created_at: now,
     });
@@ -160,7 +169,7 @@ export async function writeKnowledgeProposeEvent(
     id,
     session_id: null,
     actor_kind: 'agent',
-    actor_ref: 'dreaming',
+    actor_ref: actorRef,
     action,
     subject_kind: 'knowledge',
     // For non-propose_new mutations we have a concrete node_id (or from_id /
@@ -177,8 +186,9 @@ export async function writeKnowledgeProposeEvent(
     payload: {
       ...rest,
       reasoning,
+      evidence_refs: entry.evidence_refs ?? [],
     },
-    caused_by_event_id: null,
+    caused_by_event_id: causedByEventId,
     task_run_id: entry.task_run_id ?? null,
     cost_micro_usd: costUsdToMicroUsd(entry.cost_usd),
     created_at: now,

@@ -64,6 +64,25 @@ describe('AiProposalPayload', () => {
         target: { subject_kind: 'knowledge', subject_id: 'k1' },
         proposed_change: { knowledge_id: 'k1', priority: 'high' },
       },
+      record_links: {
+        ...base,
+        kind: 'record_links',
+        target: { subject_kind: 'record', subject_id: 'record_1' },
+        proposed_change: {
+          record_id: 'record_1',
+          links: [{ target_kind: 'knowledge', target_id: 'k1', relation: 'about' }],
+        },
+      },
+      record_promotion: {
+        ...base,
+        kind: 'record_promotion',
+        target: { subject_kind: 'record', subject_id: 'record_1' },
+        proposed_change: {
+          record_id: 'record_1',
+          target: 'learning_item',
+          draft: { title: 'Turn the open question into a study item' },
+        },
+      },
       archive: {
         ...base,
         kind: 'archive',

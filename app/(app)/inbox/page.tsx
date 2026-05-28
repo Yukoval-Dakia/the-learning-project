@@ -27,6 +27,8 @@ type ProposalKind =
   | 'variant_question'
   | 'completion'
   | 'relearn'
+  | 'record_links'
+  | 'record_promotion'
   | 'archive'
   | 'judge_retraction';
 
@@ -126,6 +128,8 @@ const KIND_LABELS: Record<ProposalKind, string> = {
   variant_question: '变式题',
   completion: '完成状态',
   relearn: '重学安排',
+  record_links: '记录链接',
+  record_promotion: '记录升级',
   archive: '归档',
   judge_retraction: '判题撤回',
 };
@@ -656,6 +660,8 @@ function kindTone(kind: ProposalKind): 'info' | 'good' | 'hard' | 'coral' | 'neu
       return 'coral';
     case 'learning_item':
     case 'completion':
+    case 'record_links':
+    case 'record_promotion':
       return 'good';
     case 'judge_retraction':
       return 'hard';
