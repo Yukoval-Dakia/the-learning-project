@@ -182,6 +182,47 @@ describe('proposal inbox reader', () => {
     });
   });
 
+  it('projects legacy reparent/merge/split knowledge mutations as knowledge_mutation, not archive', async () => {
+    const db = testDb();
+    await db.insert(event).values({
+      id: 'legacy_reparent',
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'maintenance',
+      action: 'experimental:knowledge_reparent',
+      subject_kind: 'knowledge',
+      subject_id: 'k_child',
+      outcome: 'partial',
+      payload: {
+        node_id: 'k_child',
+        new_parent_id: 'k_parent',
+        expected_version: 0,
+        reasoning: 'Move this node under the more precise parent.',
+      },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: new Date(),
+    });
+
+    const row = await getProposalInboxRow(db, 'legacy_reparent');
+
+    expect(row).toMatchObject({
+      id: 'legacy_reparent',
+      kind: 'knowledge_mutation',
+      payload: {
+        kind: 'knowledge_mutation',
+        proposed_change: {
+          mutation: 'reparent',
+          node_id: 'k_child',
+          new_parent_id: 'k_parent',
+          expected_version: 0,
+        },
+      },
+      source_action: 'experimental:knowledge_reparent',
+    });
+  });
+
   it('skips and logs invalid proposal payloads without failing the whole inbox', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const db = testDb();

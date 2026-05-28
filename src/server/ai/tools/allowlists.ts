@@ -94,13 +94,23 @@ const COACH_TOOLS = [
   'propose_learning_item_relearn',
 ] as const satisfies readonly DomainToolName[];
 
+const MAINTENANCE_TOOLS = [
+  ...READ_TOOLS,
+  'propose_knowledge_edge',
+  'propose_knowledge_mutation',
+  'propose_learning_item_completion',
+  'propose_learning_item_relearn',
+  'propose_record_links',
+  'propose_record_promotion',
+] as const satisfies readonly DomainToolName[];
+
 export const DOMAIN_TOOL_ALLOWLISTS = {
   knowledge_review: KNOWLEDGE_REVIEW_TOOLS,
   copilot: COPILOT_TOOLS,
   copilot_user_suggested_mistake_action: [...COPILOT_TOOLS, 'attribute_mistake', 'propose_variant'],
   dreaming: DREAMING_TOOLS,
   coach: COACH_TOOLS,
-  maintenance: [...READ_TOOLS, ...PROPOSE_WRITE_TOOLS],
+  maintenance: MAINTENANCE_TOOLS,
 } as const satisfies Record<DomainToolSurface, readonly DomainToolName[]>;
 
 export function resolveDomainToolNames(surface: DomainToolSurface): readonly DomainToolName[] {

@@ -8,10 +8,12 @@ import type { AiProposalPayloadT } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
 import {
   artifact,
+  completion_evidence,
   event,
   knowledge,
   knowledge_edge,
   learning_item,
+  learning_record,
   mistake_variant,
   question,
 } from '@/db/schema';
@@ -63,9 +65,17 @@ export type AcceptAiProposalResult =
       kind: 'knowledge_node';
       result: Awaited<ReturnType<typeof acceptProposal>>;
     }
+  | {
+      kind: 'knowledge_mutation';
+      result: Awaited<ReturnType<typeof acceptProposal>>;
+    }
   | KnowledgeEdgeProposalDecisionResult
   | VariantQuestionAcceptResult
-  | LearningItemAcceptResult;
+  | LearningItemAcceptResult
+  | CompletionAcceptResult
+  | RelearnAcceptResult
+  | RecordLinksAcceptResult
+  | RecordPromotionAcceptResult;
 
 export interface VariantQuestionAcceptResult {
   kind: 'variant_question';
@@ -89,6 +99,37 @@ export interface LearningItemAcceptResult {
   atomic_artifact_ids: string[];
   root_knowledge_id: string;
   created_knowledge_ids: string[];
+  idempotent?: boolean;
+}
+
+export interface CompletionAcceptResult {
+  kind: 'completion';
+  rate_event_id: string;
+  learning_item_id: string;
+  idempotent?: boolean;
+}
+
+export interface RelearnAcceptResult {
+  kind: 'relearn';
+  rate_event_id: string;
+  learning_item_id: string;
+  idempotent?: boolean;
+}
+
+export interface RecordLinksAcceptResult {
+  kind: 'record_links';
+  rate_event_id: string;
+  record_id: string;
+  applied_links: number;
+  idempotent?: boolean;
+}
+
+export interface RecordPromotionAcceptResult {
+  kind: 'record_promotion';
+  rate_event_id: string;
+  record_id: string;
+  materialized_kind: 'question' | 'learning_item' | 'artifact';
+  materialized_id: string;
   idempotent?: boolean;
 }
 
@@ -463,6 +504,19 @@ async function dispatchAccept(
       await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
       return { kind: 'knowledge_node', result };
     }
+    case 'knowledge_mutation': {
+      assertPending(proposal);
+      if (opts.decision && opts.decision !== 'accept') {
+        throw new ApiError(
+          'validation_error',
+          `knowledge_mutation proposal only supports accept, got ${opts.decision}`,
+          400,
+        );
+      }
+      const result = await acceptProposal(db, proposalId);
+      await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+      return { kind: 'knowledge_mutation', result };
+    }
     case 'knowledge_edge':
       return await decideKnowledgeEdgeProposal(db, proposalId, {
         decision: opts.decision ?? 'accept',
@@ -473,6 +527,14 @@ async function dispatchAccept(
       return await acceptVariantQuestionProposal(db, proposalId, proposal, opts);
     case 'learning_item':
       return await acceptLearningItemProposal(db, proposalId, proposal, opts);
+    case 'completion':
+      return await acceptCompletionProposal(db, proposalId, proposal, opts);
+    case 'relearn':
+      return await acceptRelearnProposal(db, proposalId, proposal, opts);
+    case 'record_links':
+      return await acceptRecordLinksProposal(db, proposalId, proposal, opts);
+    case 'record_promotion':
+      return await acceptRecordPromotionProposal(db, proposalId, proposal, opts);
     default:
       throw new ApiError(
         'unsupported_proposal_kind',
@@ -619,6 +681,597 @@ async function summarizeLearningItemMaterialization(
     atomic_artifact_ids: atomicArtifactIds,
     root_knowledge_id: rootKnowledgeId,
     created_knowledge_ids: [],
+  };
+}
+
+function ensureAcceptOnly(kind: string, opts: AcceptAiProposalOpts): void {
+  if (opts.decision && opts.decision !== 'accept') {
+    throw new ApiError('validation_error', `${kind} proposal only supports accept`, 400);
+  }
+}
+
+function asPlainRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+async function existingAcceptRate(
+  db: Db,
+  proposalId: string,
+): Promise<(typeof event.$inferSelect & { decision: ExistingRateDecision }) | null> {
+  const existingRate = await findExistingRateEvent(db, proposalId);
+  if (!existingRate) return null;
+  if (existingRate.decision !== 'accept') {
+    throw new ApiError(
+      'conflict',
+      `proposal ${proposalId} already decided as ${existingRate.decision}`,
+      409,
+    );
+  }
+  return existingRate;
+}
+
+function requiredString(value: unknown, field: string, proposalId: string): string {
+  if (typeof value === 'string' && value.length > 0) return value;
+  throw new ApiError(
+    'validation_error',
+    `proposal ${proposalId} is missing required proposed_change.${field}`,
+    400,
+  );
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === 'string')
+    : [];
+}
+
+async function acceptCompletionProposal(
+  db: Db,
+  proposalId: string,
+  proposal: ProposalInboxRow,
+  opts: AcceptAiProposalOpts,
+): Promise<CompletionAcceptResult> {
+  ensureAcceptOnly('completion', opts);
+  const change = asPlainRecord(proposal.payload.proposed_change);
+  const learningItemId = requiredString(change.learning_item_id, 'learning_item_id', proposalId);
+
+  const existingRate = await existingAcceptRate(db, proposalId);
+  if (existingRate) {
+    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+    return {
+      kind: 'completion',
+      rate_event_id: existingRate.id,
+      learning_item_id: learningItemId,
+      idempotent: true,
+    };
+  }
+
+  const item = (
+    await db
+      .select()
+      .from(learning_item)
+      .where(and(eq(learning_item.id, learningItemId), isNull(learning_item.archived_at)))
+      .limit(1)
+  )[0];
+  if (!item) throw new ApiError('not_found', `learning_item ${learningItemId} not found`, 404);
+  if (item.status !== 'pending' && item.status !== 'in_progress') {
+    throw new ApiError(
+      'conflict',
+      `completion proposal ${proposalId} expected pending/in_progress item, got ${item.status}`,
+      409,
+    );
+  }
+
+  const now = new Date();
+  const rateEventId = newId();
+  const evidenceJson = {
+    ...asPlainRecord(change.evidence_json),
+    proposal_id: proposalId,
+    triggering_signals: stringArray(change.triggering_signals),
+  };
+
+  await db.transaction(async (tx) => {
+    const updated = await tx
+      .update(learning_item)
+      .set({
+        status: 'done',
+        completed_at: now,
+        updated_at: now,
+        version: item.version + 1,
+      })
+      .where(and(eq(learning_item.id, learningItemId), eq(learning_item.version, item.version)))
+      .returning({ id: learning_item.id });
+    if (updated.length !== 1) {
+      throw new ApiError('conflict', `learning_item ${learningItemId} concurrently modified`, 409);
+    }
+
+    await tx.insert(completion_evidence).values({
+      id: newId(),
+      learning_item_id: learningItemId,
+      path: 'ai_propose',
+      evidence_json: evidenceJson,
+      user_overrode_low_evidence: false,
+      decided_at: now,
+    });
+
+    await writeEvent(tx, {
+      id: rateEventId,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'event',
+      subject_id: proposalId,
+      outcome: 'success',
+      payload: {
+        rating: 'accept',
+        materialized_learning_item_id: learningItemId,
+        ...(opts.user_note ? { user_note: opts.user_note } : {}),
+      },
+      caused_by_event_id: proposalId,
+      created_at: now,
+    });
+  });
+
+  await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+  return { kind: 'completion', rate_event_id: rateEventId, learning_item_id: learningItemId };
+}
+
+async function acceptRelearnProposal(
+  db: Db,
+  proposalId: string,
+  proposal: ProposalInboxRow,
+  opts: AcceptAiProposalOpts,
+): Promise<RelearnAcceptResult> {
+  ensureAcceptOnly('relearn', opts);
+  const change = asPlainRecord(proposal.payload.proposed_change);
+  const learningItemId = requiredString(change.learning_item_id, 'learning_item_id', proposalId);
+
+  const existingRate = await existingAcceptRate(db, proposalId);
+  if (existingRate) {
+    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+    return {
+      kind: 'relearn',
+      rate_event_id: existingRate.id,
+      learning_item_id: learningItemId,
+      idempotent: true,
+    };
+  }
+
+  const item = (
+    await db
+      .select()
+      .from(learning_item)
+      .where(and(eq(learning_item.id, learningItemId), isNull(learning_item.archived_at)))
+      .limit(1)
+  )[0];
+  if (!item) throw new ApiError('not_found', `learning_item ${learningItemId} not found`, 404);
+  if (item.status !== 'done' && item.status !== 'resting') {
+    throw new ApiError(
+      'conflict',
+      `relearn proposal ${proposalId} expected done/resting item, got ${item.status}`,
+      409,
+    );
+  }
+
+  const now = new Date();
+  const rateEventId = newId();
+  await db.transaction(async (tx) => {
+    const updated = await tx
+      .update(learning_item)
+      .set({
+        status: 'in_progress',
+        completed_at: null,
+        updated_at: now,
+        version: item.version + 1,
+      })
+      .where(and(eq(learning_item.id, learningItemId), eq(learning_item.version, item.version)))
+      .returning({ id: learning_item.id });
+    if (updated.length !== 1) {
+      throw new ApiError('conflict', `learning_item ${learningItemId} concurrently modified`, 409);
+    }
+    await writeEvent(tx, {
+      id: rateEventId,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'event',
+      subject_id: proposalId,
+      outcome: 'success',
+      payload: {
+        rating: 'accept',
+        materialized_learning_item_id: learningItemId,
+        ...(opts.user_note ? { user_note: opts.user_note } : {}),
+      },
+      caused_by_event_id: proposalId,
+      created_at: now,
+    });
+  });
+
+  await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+  return { kind: 'relearn', rate_event_id: rateEventId, learning_item_id: learningItemId };
+}
+
+type RecordLinkTargetKind = 'knowledge' | 'question' | 'learning_item' | 'artifact';
+type RecordPromotionTarget = 'question' | 'learning_item' | 'artifact';
+
+interface RecordLinkInput {
+  target_kind: RecordLinkTargetKind;
+  target_id: string;
+  relation?: unknown;
+  confidence?: unknown;
+  reasoning?: unknown;
+}
+
+function parseRecordLinks(change: Record<string, unknown>, proposalId: string): RecordLinkInput[] {
+  if (!Array.isArray(change.links) || change.links.length === 0) {
+    throw new ApiError(
+      'validation_error',
+      `record_links proposal ${proposalId} is missing links`,
+      400,
+    );
+  }
+  return change.links.map((raw, index) => {
+    const link = asPlainRecord(raw);
+    const targetKind = link.target_kind;
+    if (
+      targetKind !== 'knowledge' &&
+      targetKind !== 'question' &&
+      targetKind !== 'learning_item' &&
+      targetKind !== 'artifact'
+    ) {
+      throw new ApiError(
+        'validation_error',
+        `record_links proposal ${proposalId} has invalid links[${index}].target_kind`,
+        400,
+      );
+    }
+    return {
+      target_kind: targetKind,
+      target_id: requiredString(link.target_id, `links[${index}].target_id`, proposalId),
+      relation: link.relation,
+      confidence: link.confidence,
+      reasoning: link.reasoning,
+    };
+  });
+}
+
+async function assertTargetExists(
+  db: Db,
+  targetKind: RecordLinkTargetKind,
+  targetId: string,
+): Promise<void> {
+  let exists = false;
+  switch (targetKind) {
+    case 'knowledge':
+      exists = Boolean(
+        (
+          await db
+            .select({ id: knowledge.id })
+            .from(knowledge)
+            .where(and(eq(knowledge.id, targetId), isNull(knowledge.archived_at)))
+            .limit(1)
+        )[0],
+      );
+      break;
+    case 'question':
+      exists = Boolean(
+        (
+          await db
+            .select({ id: question.id })
+            .from(question)
+            .where(eq(question.id, targetId))
+            .limit(1)
+        )[0],
+      );
+      break;
+    case 'learning_item':
+      exists = Boolean(
+        (
+          await db
+            .select({ id: learning_item.id })
+            .from(learning_item)
+            .where(and(eq(learning_item.id, targetId), isNull(learning_item.archived_at)))
+            .limit(1)
+        )[0],
+      );
+      break;
+    case 'artifact':
+      exists = Boolean(
+        (
+          await db
+            .select({ id: artifact.id })
+            .from(artifact)
+            .where(and(eq(artifact.id, targetId), isNull(artifact.archived_at)))
+            .limit(1)
+        )[0],
+      );
+      break;
+  }
+  if (!exists) {
+    throw new ApiError('not_found', `${targetKind} target ${targetId} not found`, 404);
+  }
+}
+
+async function acceptRecordLinksProposal(
+  db: Db,
+  proposalId: string,
+  proposal: ProposalInboxRow,
+  opts: AcceptAiProposalOpts,
+): Promise<RecordLinksAcceptResult> {
+  ensureAcceptOnly('record_links', opts);
+  const change = asPlainRecord(proposal.payload.proposed_change);
+  const recordId = requiredString(change.record_id, 'record_id', proposalId);
+  const links = parseRecordLinks(change, proposalId);
+
+  const existingRate = await existingAcceptRate(db, proposalId);
+  if (existingRate) {
+    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+    return {
+      kind: 'record_links',
+      rate_event_id: existingRate.id,
+      record_id: recordId,
+      applied_links: links.length,
+      idempotent: true,
+    };
+  }
+
+  const record = (
+    await db
+      .select()
+      .from(learning_record)
+      .where(and(eq(learning_record.id, recordId), isNull(learning_record.archived_at)))
+      .limit(1)
+  )[0];
+  if (!record) throw new ApiError('not_found', `record ${recordId} not found`, 404);
+  for (const link of links) {
+    await assertTargetExists(db, link.target_kind, link.target_id);
+  }
+
+  const now = new Date();
+  const rateEventId = newId();
+  const knowledgeIds = [
+    ...new Set([
+      ...record.knowledge_ids,
+      ...links.filter((link) => link.target_kind === 'knowledge').map((link) => link.target_id),
+    ]),
+  ];
+  const questionId =
+    record.question_id ?? links.find((link) => link.target_kind === 'question')?.target_id ?? null;
+  const learningItemId =
+    record.learning_item_id ??
+    links.find((link) => link.target_kind === 'learning_item')?.target_id ??
+    null;
+  const artifactId =
+    record.artifact_id ?? links.find((link) => link.target_kind === 'artifact')?.target_id ?? null;
+  const payload = {
+    ...asPlainRecord(record.payload),
+    accepted_record_links: [
+      ...(Array.isArray(asPlainRecord(record.payload).accepted_record_links)
+        ? (asPlainRecord(record.payload).accepted_record_links as unknown[])
+        : []),
+      ...links.map((link) => ({ ...link, proposal_id: proposalId })),
+    ],
+  };
+
+  await db.transaction(async (tx) => {
+    const updated = await tx
+      .update(learning_record)
+      .set({
+        processing_status: 'actioned',
+        knowledge_ids: knowledgeIds,
+        question_id: questionId,
+        learning_item_id: learningItemId,
+        artifact_id: artifactId,
+        payload,
+        updated_at: now,
+        version: record.version + 1,
+      })
+      .where(and(eq(learning_record.id, recordId), eq(learning_record.version, record.version)))
+      .returning({ id: learning_record.id });
+    if (updated.length !== 1) {
+      throw new ApiError('conflict', `record ${recordId} concurrently modified`, 409);
+    }
+    await writeEvent(tx, {
+      id: rateEventId,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'event',
+      subject_id: proposalId,
+      outcome: 'success',
+      payload: {
+        rating: 'accept',
+        record_id: recordId,
+        applied_links: links,
+        ...(opts.user_note ? { user_note: opts.user_note } : {}),
+      },
+      caused_by_event_id: proposalId,
+      created_at: now,
+    });
+  });
+
+  await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+  return {
+    kind: 'record_links',
+    rate_event_id: rateEventId,
+    record_id: recordId,
+    applied_links: links.length,
+  };
+}
+
+function parseRecordPromotionTarget(value: unknown, proposalId: string): RecordPromotionTarget {
+  if (value === 'question' || value === 'learning_item' || value === 'artifact') return value;
+  throw new ApiError(
+    'validation_error',
+    `record_promotion proposal ${proposalId} has invalid target`,
+    400,
+  );
+}
+
+function draftString(draft: Record<string, unknown>, key: string, fallback: string): string {
+  const value = draft[key];
+  return typeof value === 'string' && value.trim().length > 0 ? value : fallback;
+}
+
+function draftKnowledgeIds(draft: Record<string, unknown>, fallback: string[]): string[] {
+  const value = draft.knowledge_ids;
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
+    ? [...new Set(value)]
+    : fallback;
+}
+
+async function acceptRecordPromotionProposal(
+  db: Db,
+  proposalId: string,
+  proposal: ProposalInboxRow,
+  opts: AcceptAiProposalOpts,
+): Promise<RecordPromotionAcceptResult> {
+  ensureAcceptOnly('record_promotion', opts);
+  const change = asPlainRecord(proposal.payload.proposed_change);
+  const recordId = requiredString(change.record_id, 'record_id', proposalId);
+  const target = parseRecordPromotionTarget(change.target, proposalId);
+  const draft = asPlainRecord(change.draft);
+
+  const existingRate = await existingAcceptRate(db, proposalId);
+  if (existingRate) {
+    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+    return {
+      kind: 'record_promotion',
+      rate_event_id: existingRate.id,
+      record_id: recordId,
+      materialized_kind: target,
+      materialized_id: String(
+        (existingRate.payload as { materialized_id?: unknown }).materialized_id ?? '',
+      ),
+      idempotent: true,
+    };
+  }
+
+  const record = (
+    await db
+      .select()
+      .from(learning_record)
+      .where(and(eq(learning_record.id, recordId), isNull(learning_record.archived_at)))
+      .limit(1)
+  )[0];
+  if (!record) throw new ApiError('not_found', `record ${recordId} not found`, 404);
+
+  const now = new Date();
+  const rateEventId = newId();
+  const materializedId = newId();
+  const knowledgeIds = draftKnowledgeIds(draft, record.knowledge_ids);
+  const title = draftString(draft, 'title', record.title ?? record.content_md.slice(0, 80));
+  const content = draftString(
+    draft,
+    'content',
+    draftString(draft, 'content_md', record.content_md),
+  );
+  const payload = {
+    ...asPlainRecord(record.payload),
+    accepted_record_promotion: {
+      proposal_id: proposalId,
+      target,
+      materialized_id: materializedId,
+    },
+  };
+
+  await db.transaction(async (tx) => {
+    if (target === 'question') {
+      await tx.insert(question).values({
+        id: materializedId,
+        kind: 'short_answer',
+        prompt_md: draftString(draft, 'prompt_md', content),
+        reference_md:
+          typeof draft.reference_md === 'string' && draft.reference_md.length > 0
+            ? draft.reference_md
+            : null,
+        knowledge_ids: knowledgeIds,
+        difficulty: typeof draft.difficulty === 'number' ? draft.difficulty : 3,
+        source: 'dreaming',
+        source_ref: proposalId,
+        draft_status: 'active',
+        created_by: {
+          by: 'ai',
+          task_kind: 'record_promotion',
+          propose_event_id: proposalId,
+        } as never,
+        created_at: now,
+        updated_at: now,
+      });
+    } else if (target === 'learning_item') {
+      await tx.insert(learning_item).values({
+        id: materializedId,
+        source: 'ai_dream',
+        source_ref: proposalId,
+        title,
+        content,
+        knowledge_ids: knowledgeIds,
+        status: 'pending',
+        created_at: now,
+        updated_at: now,
+      });
+    } else {
+      await tx.insert(artifact).values({
+        id: materializedId,
+        type: 'note_long',
+        title,
+        knowledge_ids: knowledgeIds,
+        intent_source: 'from_dream',
+        source: 'ai_dream',
+        source_ref: proposalId,
+        generation_status: 'ready',
+        ...(draft.body_blocks !== undefined ? { body_blocks: draft.body_blocks as never } : {}),
+        created_at: now,
+        updated_at: now,
+      });
+    }
+
+    const updated = await tx
+      .update(learning_record)
+      .set({
+        processing_status: 'actioned',
+        question_id: target === 'question' ? materializedId : record.question_id,
+        learning_item_id: target === 'learning_item' ? materializedId : record.learning_item_id,
+        artifact_id: target === 'artifact' ? materializedId : record.artifact_id,
+        payload,
+        updated_at: now,
+        version: record.version + 1,
+      })
+      .where(and(eq(learning_record.id, recordId), eq(learning_record.version, record.version)))
+      .returning({ id: learning_record.id });
+    if (updated.length !== 1) {
+      throw new ApiError('conflict', `record ${recordId} concurrently modified`, 409);
+    }
+
+    await writeEvent(tx, {
+      id: rateEventId,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'event',
+      subject_id: proposalId,
+      outcome: 'success',
+      payload: {
+        rating: 'accept',
+        record_id: recordId,
+        materialized_kind: target,
+        materialized_id: materializedId,
+        ...(opts.user_note ? { user_note: opts.user_note } : {}),
+      },
+      caused_by_event_id: proposalId,
+      created_at: now,
+    });
+  });
+
+  await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+  return {
+    kind: 'record_promotion',
+    rate_event_id: rateEventId,
+    record_id: recordId,
+    materialized_kind: target,
+    materialized_id: materializedId,
   };
 }
 

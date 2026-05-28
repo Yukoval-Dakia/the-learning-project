@@ -41,10 +41,20 @@ describe('DomainTool allowlist policy', () => {
     );
   });
 
-  it('allows Maintenance to see every registered read/propose/write DomainTool', () => {
+  it('keeps Maintenance broad but excludes user-suggested mistake actions', () => {
     registerCoreTools();
-    expect(DOMAIN_TOOL_ALLOWLISTS.maintenance).toEqual(listTools().map((tool) => tool.name));
-    expect(DOMAIN_TOOL_ALLOWLISTS.maintenance).toEqual([...READ_TOOLS, ...PROPOSE_WRITE_TOOLS]);
+    expect(DOMAIN_TOOL_ALLOWLISTS.maintenance).toEqual([
+      ...READ_TOOLS,
+      'propose_knowledge_edge',
+      'propose_knowledge_mutation',
+      'propose_learning_item_completion',
+      'propose_learning_item_relearn',
+      'propose_record_links',
+      'propose_record_promotion',
+    ]);
+    expect(DOMAIN_TOOL_ALLOWLISTS.maintenance).not.toContain('attribute_mistake');
+    expect(DOMAIN_TOOL_ALLOWLISTS.maintenance).not.toContain('propose_variant');
+    expect(listTools().map((tool) => tool.name)).toEqual([...READ_TOOLS, ...PROPOSE_WRITE_TOOLS]);
   });
 
   it('renders MCP allowedTools names for the selected server', () => {

@@ -323,8 +323,27 @@ function deriveLegacyAiProposal(row: EventRow): AiProposalPayloadT | null {
         },
       });
     }
-    const { ai_proposal: _aiProposal, reasoning, ...proposedChange } = payload;
+    const {
+      ai_proposal: _aiProposal,
+      reasoning,
+      evidence_refs: _evidenceRefs,
+      ...proposedChange
+    } = payload;
     void _aiProposal;
+    void _evidenceRefs;
+    if (mutation === 'reparent' || mutation === 'merge' || mutation === 'split') {
+      return parseAiProposalPayload({
+        kind: 'knowledge_mutation',
+        target: { subject_kind: 'knowledge', subject_id: row.subject_id },
+        reason_md: String(reasoning ?? `Legacy knowledge ${mutation} proposal`),
+        evidence_refs: [],
+        proposed_change: {
+          mutation,
+          ...proposedChange,
+        },
+        cooldown_key: `legacy_knowledge:${mutation}:${row.subject_id ?? row.id}`,
+      });
+    }
     return parseAiProposalPayload({
       kind: 'archive',
       target: { subject_kind: 'knowledge', subject_id: row.subject_id },
