@@ -1,6 +1,6 @@
 # Wave 6 Ready-to-Launch — Living Note v0 + experimental:tool_use promote
 
-> 状态：ready-to-launch draft as of 2026-05-29。按 master roadmap §5.1 Wave 6，本 wave 把 Living Note mutator（T-88 P4）全 ship + ADR-0011 promotion 闭环（T-D7）。~3 周 cadence，收口后 Layer 5 Living Note v0 兑现 + Layer 8 experimental 命名空间闭环。
+> 状态：decisions locked 2026-05-29（4 human decision points 已 lock + T-PD scope 改成 T-PD8 modules doc 大 sweep）。按 master roadmap §5.1 Wave 6，本 wave 把 Living Note mutator（T-88 P4）全 ship + ADR-0011 promotion 闭环（T-D7）+ T-PD8 modules doc sweep。~3-3.5 周 cadence（pts 18→21 因 T-PD scope 升级）。收口后 Layer 5 Living Note v0 兑现 + Layer 8 experimental 命名空间闭环 + modules doc ↔ schema 漂移收口。
 
 ## Source of truth
 
@@ -15,8 +15,8 @@
 
 | Item | State | Evidence / action |
 |---|---|---|
-| `origin/main` | ✅ at `891b29a` (Wave 5 decisions locked) | Re-verify main tip before branching lanes. |
-| Wave 5 full gate | ⬜ pending — Wave 5 must ship before Wave 6 starts | Wave 6 lanes do NOT branch until Wave 5 closeout PR is merged and full gate green. |
+| `origin/main` | ✅ at Wave 5 ship tip (post PR #179 merge) | Re-verify main tip with `git fetch origin && git log --oneline origin/main -3` before branching lanes. |
+| Wave 5 full gate | ✅ shipped 2026-05-29 | PR #179 merged to main. Drawer + Coach 全套交付；closeout drift audit `docs/audit/2026-05-29-wave5-closeout-drift.md` 已签 (0 contradicted / 1 undocumented deferred to T-D7 / 3 phase-deferred). |
 | T-88 P0-P3 | ✅ shipped Waves 1-4 | P0 spike (PR #162) + P1 schema (YUK-91) + P2-basic editor (YUK-92) + P3 AI pipeline (YUK-93, PR #174). |
 | T-88 P4 parent issue | ✅ [YUK-94](https://linear.app/yukoval-studios/issue/YUK-94) exists (Backlog) | Lane sub-issues created: [YUK-127](https://linear.app/yukoval-studios/issue/YUK-127) / [YUK-128](https://linear.app/yukoval-studios/issue/YUK-128) / [YUK-129](https://linear.app/yukoval-studios/issue/YUK-129) / [YUK-130](https://linear.app/yukoval-studios/issue/YUK-130) / [YUK-131](https://linear.app/yukoval-studios/issue/YUK-131). |
 | P3 → P4 sequential dep | ✅ P3 merged to main as `d99c3bb` | P4 mutator patch op schema depends on P3 patch op definitions — satisfied. |
@@ -36,11 +36,11 @@
 | **T-88/P4-D** | Undo 集中入口 (`/today` 活动卡 + artifact 页 "AI 改动" tab + 批量 undo) | 1 | [YUK-130](https://linear.app/yukoval-studios/issue/YUK-130) | `yuk-P4D-undo-ui` | A |
 | **T-88/P4-E** | 5 trigger producers 接入 (mark_wrong / mastery / 错误率 / dwell / dreaming) | 2 | [YUK-131](https://linear.app/yukoval-studios/issue/YUK-131) | `yuk-P4E-trigger-producers` | A |
 | **T-D7** | `experimental:tool_use` → `tool_use` KnownEvent promote：Zod schema rename + DB migration + ADR-0011 revision + event consumer sweep | 3 | [YUK-126](https://linear.app/yukoval-studios/issue/YUK-126) | `yuk-TD7-tool-use-promote` | B |
-| **T-PD** | Doc sweep gap-filler (~5pt from §2.7 pool)：建议优先 T-PD8 modules doc 大 sweep 部分或 T-PD1 + T-PD4 + T-PD11 小项组合 | ~5 | N/A | doc-only / minor | gap (any worktree) |
+| **T-PD** | **T-PD8 modules doc 主体大 sweep**（locked 2026-05-29）—— modules doc vs current schema 漂移全面对齐，针对 R-8 stack pivot 残留 + 5-15 modules doc 累积 drift 一次性 sweep | 8 | [YUK-132](https://linear.app/yukoval-studios/issue/YUK-132) | `chore/td-pd8-modules-sweep` | gap (any worktree) |
 
-Parents: [YUK-94](https://linear.app/yukoval-studios/issue/YUK-94) (T-88 P4, 10 pts) + [YUK-126](https://linear.app/yukoval-studios/issue/YUK-126) (T-D7, 3 pts). Milestone: M6 — experimental:tool_use promote to KnownEvent (target 2026-07-24). T-PD uses existing issues or ad-hoc commits.
+Parents: [YUK-94](https://linear.app/yukoval-studios/issue/YUK-94) (T-88 P4, 10 pts) + [YUK-126](https://linear.app/yukoval-studios/issue/YUK-126) (T-D7, 3 pts) + [YUK-132](https://linear.app/yukoval-studios/issue/YUK-132) (T-PD8, 8 pts). Milestone: M6 — experimental:tool_use promote to KnownEvent (target 2026-07-24). T-PD8 standalone, no milestone.
 
-总计：**~18 pts**（master roadmap §5.1 Wave 6 估算一致）。
+总计：**~21 pts**（locked 2026-05-29；master roadmap §5.1 估算 18 pt 基础上 +3 pt 因 T-PD 从 5pt 小组合升级到 T-PD8 8pt 大 sweep）。Cadence 仍 ~3-3.5 周，T-PD8 可与 T-88 P4 并行（doc-only，文件不冲突）。
 
 ## Chain order
 
@@ -101,12 +101,14 @@ T-D7 smoke (post-promote)：
 
 Then run `/audit-drift`, update `docs/superpowers/status.md`, refresh master-roadmap §5.1 Wave 6 to "shipped" with PR refs, reconcile Linear states.
 
-## Human decision points (to lock before lane kickoff)
+## Human decision points (locked 2026-05-29)
 
-- **T-88 P4 mutator-mode threshold**: What constitutes "小 patch" (mutator-mode, 直接落库) vs "激进 mutation" (propose-mode, 需用户 accept)? Proposed rule: ≤ 3 patch ops AND ≤ 2 new blocks → mutator; else → propose. **Needs lock**.
-- **Editing session timeout**: How long without heartbeat before server considers user "idle"? Proposed: 15 seconds (matches YUK-94 description). **Needs lock**.
-- **T-88 P4-E trigger signals v0 subset**: All 5 triggers (mark_wrong / mastery / 错误率 / dwell / dreaming) in v0, or ship a subset first? Proposed: ship all 5 — they share the same `note_refine` queue interface. **Needs lock**.
-- **T-PD items selection**: Which of T-PD1..PD13 to pick for this wave's ~5pt budget? Proposed: T-PD1 (2pt) + T-PD4 (2pt) + T-PD11 (1pt) — small, independent, high leverage. **Needs lock**.
+All 4 points resolved before Wave 6 lane kickoff. Lane issues synced.
+
+- **✅ T-88 P4 mutator-mode threshold** — **Locked: Devin default `≤ 3 patch ops AND ≤ 2 new blocks` → mutator; else propose**. Count-based rule, simple to implement. Acknowledged gap: a single patch with semantically heavy content (e.g. replaces an entire heading) still counts as "small". Tolerated for v0; revisit after 2 weeks of mutator-mode in production.
+- **✅ Editing session idle timeout** — **Locked: 30s heartbeat-interval + revisit-on-blur extra rule**. Server considers user idle after 30s without heartbeat. ADDITIONALLY: when client editor loses focus (blur event), immediately flush queued patches without waiting 30s. Less jumpy than Devin's 15s default; more reactive than pure 90s timeout.
+- **✅ T-88 P4-E trigger v0 subset** — **Locked: ship all 5 (Devin default) + per-trigger kill switch**. All 5 triggers (mark_wrong / mastery / 错误率 / dwell / dreaming) ship in v0 via shared `note_refine` queue. ADDITIONALLY each trigger gets its own env/config flag (e.g. `WAVE6_TRIGGER_DWELL_ENABLED=true`) so a single misbehaving trigger can be disabled without affecting others. Implementation cost +~30 min on P4-E.
+- **✅ T-PD items selection** — **Locked: T-PD8 modules doc 主体大 sweep (8 pt)**. Devin's original picks (T-PD1+T-PD4+T-PD11, 5 pt) rejected in favor of one bigger sweep targeting R-8 stack pivot residue + 5-15 modules doc accumulated drift. +3 pt over original budget; cadence still ~3-3.5 weeks since T-PD8 is doc-only and parallel-safe.
 
 ## Final lane state (待 wave 跑完填写)
 
@@ -118,4 +120,16 @@ Then run `/audit-drift`, update `docs/superpowers/status.md`, refresh master-roa
 | T-88/P4-D ([YUK-130](https://linear.app/yukoval-studios/issue/YUK-130)) | ⬜ | P4-C | undo UI |
 | T-88/P4-E ([YUK-131](https://linear.app/yukoval-studios/issue/YUK-131)) | ⬜ | P4-D | trigger producers |
 | T-D7 ([YUK-126](https://linear.app/yukoval-studios/issue/YUK-126)) | ⬜ | Wave 5 ✅ + 2 weeks stable | promote KnownEvent |
-| T-PD | ⬜ | none | gap-filler |
+| T-PD8 modules doc sweep | ⬜ | none (parallel-safe) | locked T-PD scope = T-PD8 alone, 8pt; dedicated YUK-132 created 2026-05-29 |
+
+
+## Post-launch decision lock log
+
+| Decision | Original | Locked answer | Locked at |
+|---|---|---|---|
+| Mutator threshold | (open question) | `≤ 3 patch ops AND ≤ 2 new blocks` (Devin default) | 2026-05-29 |
+| Idle timeout | (open question, Devin proposed 15s) | 30s + revisit-on-blur extra rule | 2026-05-29 |
+| Trigger v0 subset | (open question, Devin proposed 5 all-in) | 5 all-in + per-trigger kill switch | 2026-05-29 |
+| T-PD picks | (open question, Devin proposed T-PD1+4+11 ≈ 5pt) | T-PD8 modules doc 大 sweep alone (8pt) | 2026-05-29 |
+
+Wave 6 total pts: **21** (up from Devin's initial 18 estimate because of T-PD8 scope upgrade).
