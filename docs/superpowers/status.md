@@ -4,8 +4,8 @@
 > 这里记的是 **项目走到了哪、下一站去哪、为什么这么走**，不是 commit log。
 > 维护规则：每完成一个 Phase 就 update 一次；不维护周度进度。
 
-**最后更新**：2026-05-28（**Wave 4 implementation branch** —— YUK-93 T-88 P3 AI pipeline rewrite + YUK-114 Dreaming lane 已落地；最终 full gate / PR 待验证）
-**当前 Phase**：Wave 4（master roadmap §5.1）✅ implementation complete；⏳ final gate / PR closeout。详见 [`plans/2026-05-28-wave4-ready-to-launch.md`](plans/2026-05-28-wave4-ready-to-launch.md)。
+**最后更新**：2026-05-28（**Wave 4 ship + closeout** —— PR merged as `d99c3bb1` to origin/main：YUK-93 T-88 P3 AI pipeline rewrite + YUK-114 T-DR Dreaming lane。Full gate post-merge 全绿：typecheck / lint / audit:schema / audit:partition / audit:profile / `pnpm test` 1052 + 11 migration / `pnpm build`。Drift audit 报告 [`docs/audit/2026-05-28-wave4-closeout-drift.md`](../audit/2026-05-28-wave4-closeout-drift.md)：0 contradicted / 2 undocumented (NoteVerificationIssue `section_id` half-migration) / 2 phase-deferred）
+**当前 Phase**：Wave 4（master roadmap §5.1）✅ closeout 完成。下一站：**Wave 5** —— Drawer `/today` MVP (T-D3) + Phase 3 Global Coach Orchestrator (T-D6)，~32 pts，Layer 8 vision 兑现起点。详见 [`plans/2026-05-27-master-roadmap.md`](plans/2026-05-27-master-roadmap.md) §5.1 Wave 5。
 **主分支**：`main` 已推 `origin`
 **路线图源**：[`docs/planning/v0.3-generalized-ai-learning-framework.md`](../planning/v0.3-generalized-ai-learning-framework.md) §1.5 是当前执行清单；root `PLANNING.md` v0.12 Phase 1-4 已标 historical
 
@@ -134,17 +134,19 @@ Implementation anchor：`src/server/ai/tools/proposal-tools.ts` registers 8 prop
 
 Validation anchor：proposal DB tests, registry/MCP/allowlist unit tests, proposal writer/inbox/accept regressions, `pnpm typecheck`, and Wave closeout audits. T-D4 driver：[`plans/2026-05-28-td4-propose-write-tools-driver.md`](plans/2026-05-28-td4-propose-write-tools-driver.md)。
 
-### Wave 4 — YUK-88 P3 AI pipeline + Dreaming lane（implementation branch 2026-05-28）
+### Wave 4 — YUK-88 P3 AI pipeline + Dreaming lane（shipped + closeout 2026-05-28）
 
 ```text
 ✅  YUK-93 / T-88 P3 AI pipeline rewrite             body_blocks canonical output + NoteGenerate type switch + LearningIntent 0-M long + tool_quiz embedded refs
 ✅  YUK-114 / T-DR Dreaming Lane                     DreamingTask + dreaming_nightly pg-boss producer + DomainTool MCP bridge + dreaming allowlist
-⏳  Wave 4 final gate                                focused tests/biome/git diff pass; full gate blocked until worktree node_modules has @tiptap/* deps
+✅  Wave 4 closeout full gate                        post-merge clean pnpm install → typecheck / lint / audit:schema / audit:partition / audit:profile / `pnpm test` (1052 + 11 migration) / `pnpm build` all green
 ```
 
 Implementation anchor：`src/server/boss/handlers/{note_generate,note_verify,embedded_check_generate,dreaming_nightly}.ts`, `src/server/orchestrator/learning_intent.ts`, `src/server/artifacts/body-blocks.ts`, `src/server/ai/tools/allowlists.ts`, and `src/server/boss/handlers.ts`.
 
-Validation anchor：focused fast unit set covers task prompts, body-block helpers, NoteGenerate parser, NoteVerify structural verifier, LearningIntent outline longs, Dreaming MCP/allowlist/failure behavior, and existing MCP bridge/allowlist policy. Wave driver：[`plans/2026-05-28-wave4-ready-to-launch.md`](plans/2026-05-28-wave4-ready-to-launch.md)。
+Merge anchor：origin/main `d99c3bb1` ("feat(ai): launch Wave 4 AI lanes (YUK-93 YUK-114)").
+
+Validation anchor：post-merge full gate ✅. Drift audit [`docs/audit/2026-05-28-wave4-closeout-drift.md`](../audit/2026-05-28-wave4-closeout-drift.md) — 0 contradicted, 2 undocumented (`NoteVerificationIssue.section_id` half-migration; legacy correction payload read shim), 2 phase-deferred (hub auto-sync nightly → Wave 7, P2-polish slash/drag/mention → Wave 6+). Wave driver：[`plans/2026-05-28-wave4-ready-to-launch.md`](plans/2026-05-28-wave4-ready-to-launch.md)。
 
 ### Foundation C — Judge Result Contract + Correction Event（ADR-0014 §4/§6）
 
