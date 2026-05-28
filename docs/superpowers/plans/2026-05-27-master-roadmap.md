@@ -135,7 +135,7 @@ ls -lt docs/audit/*drift* 2>/dev/null | head -3
 
 | Track | Status | pts | forward-locks | blocked-by | Linear |
 |---|---|---|---|---|---|
-| **T-D2** DomainTool Registry M2 (10 read tools 补完) | ⬜ | ~25 | Drawer / Dreaming / Coach 三条全 | M1 ship ✓ | ⬜ 待建 |
+| **T-D2** DomainTool Registry M2 (10 read tools 补完) | ⬜ ready to launch | ~25 | Drawer / Dreaming / Coach 三条全 | M1 ship ✓ | [YUK-102](https://linear.app/yukoval-studios/issue/YUK-102) + YUK-103~106 |
 | **T-D3** Copilot Drawer MVP (1 route 试点) | ⬜ | ~13 | Drawer 全 6 routes 铺开 | T-D2 (≥6 read tools) | ⬜ 待建 |
 | **T-D4** DomainTool Propose/Write Tools (8 个) | ⬜ | ~24 | Dreaming + Coach proposal 写入 | T-D2 done | ⬜ 待建 |
 | **T-D5** Drawer 跨 6 routes 常驻 | ⬜ | ~13 | Layer 8 用户级兑现 | T-D3 试点验证 | ⬜ 待建 |
@@ -800,12 +800,12 @@ worktrees/
 - **Status**：⬜
 - **pts**：~25
 - **Estimate**：6-8 周
-- **Driver doc**：⬜ 待写
+- **Driver doc**：[`docs/superpowers/plans/2026-05-27-td2-read-tools-driver.md`](2026-05-27-td2-read-tools-driver.md) ✓
 - **Source spec**：`docs/superpowers/specs/2026-05-17-agent-context-tools-design.md` §Engineering Sequence step 5-6
 - **Tools (10 个)**：`get_subject_graph_overview` / `query_knowledge` / `expand_knowledge_subgraph` / `find_knowledge_paths` / `query_records` / `get_record_context` / `get_question_context` / `get_review_due` / `get_learning_item_context` / `query_memory_brief`（最后一个等 T-37）
 - **Forward-locks**：T-D3 / T-DR / T-D6 / T-OC
 - **Blocked-by**：M1 ✓
-- **Linear**：⬜ 待建（建议建一个 Foundation D M2 epic + 10 sub-issue）
+- **Linear**：YUK-102 parent + YUK-103/YUK-104/YUK-105/YUK-106 lane issues（Foundation D M2 milestone）
 
 ### Card T-DR — Dreaming Lane
 
