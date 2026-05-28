@@ -71,7 +71,7 @@ const ToolUseExperimental = z.object({
 
 **Stabilization 证据**
 
-- `git log --since='14 days ago' -- src/core/schema/event/experimental.ts` 显示 ToolUseExperimental schema 自 2026-05-16 PR #37（`feat(1c.1 Lane B): Step 2.3-2.4 — ExperimentalEvent + ToolUseExperimental + top-level Event`）落地后无任何 field add/remove，已稳定 ≥ 12 天（远超 14 天临界，且无 fixes 跟进）。
+12 天（接近但未满 14 天临界，需 user-override 豁免，见下）
 - 3+ tool 真实落地：Wave 2/3 已交付 13+ read tools + 8 propose/write tools（见 Foundation D M2/M4），远超 ≥ 3 的 criterion。
 - v2.1 design 已实装：Wave 5 T-D3 已 ship Copilot drawer + tool-use 三段式 UI（PR #179 merged 2026-05-29）。
 - cost_micro_usd shape：保留原 ToolUseExperimental 中的 optional `cost_micro_usd` 字段（继承自 `baseOptionalFields`），ToolUseQuery 维持同等可选性。后续若改双写 cost_ledger 模式，另起 ADR。
