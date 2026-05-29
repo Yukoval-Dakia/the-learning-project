@@ -13,6 +13,13 @@ export type ModelId = string;
 
 export interface TaskBudget {
   maxIterations: number;
+  /**
+   * INACTIVE (phase-deferred, T-PD4 @ 2026-05-29): cost-cap not yet wired. The
+   * runner (`src/server/ai/runner.ts`) only enforces `maxIterations` (→ SDK
+   * `maxTurns`) and `timeout` (→ abort). No per-run USD accounting exists, so
+   * this value is declarative metadata only. Activate when a token/cost meter
+   * lands; see roadmap §2.7 T-PD4 ("maxCost / fallbackChain 实装 or 标 inactive").
+   */
   maxCost: number; // USD
   timeout: number; // ms
 }
@@ -22,6 +29,13 @@ export interface TaskDef {
   description: string;
   defaultProvider: Provider;
   defaultModel: ModelId;
+  /**
+   * INACTIVE (phase-deferred, T-PD4 @ 2026-05-29): provider fallback cascade not
+   * yet wired. The runner resolves a single provider/model via the Provider
+   * Manager (`src/server/ai/providers.ts`) and does not auto-retry down this
+   * chain on failure. Declarative metadata only until cascade routing lands;
+   * see roadmap §2.7 T-PD4.
+   */
   fallbackChain: Array<{ provider: Provider; model: ModelId }>;
   budget: TaskBudget;
   needsToolCall: boolean;

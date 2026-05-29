@@ -1,4 +1,7 @@
-# Pattern C — 两类 Agent + 共享薄 harness
+# ADR-0004 — Pattern C — 两类 Agent + 共享薄 harness
+
+**状态**：accepted
+**日期**：2026-05-15
 
 **决策**：Agent 分两类：**后端目的型（Backend Purpose）** 和 **用户副驾驶（User Copilot）**。两类共享 task registry、provider/model selection、budget、tool allowlist 和审计表，但生命周期和会话语义不同。
 
