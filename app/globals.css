@@ -2583,6 +2583,76 @@ ol {
   margin: 8px 0;
 }
 
+/* ─── YUK-150 P2-polish — drag handle + `/` slash-command menu ──────────────
+   Drag handle sits in the block meta row; ProseMirror handles the actual move
+   (block_id travels with the node). Slash menu reuses the cross-link-picker
+   floating-list shape. Tokens-only so it matches the editor surface.
+*/
+.block-tree-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  margin-right: var(--s-2);
+  padding: 0 2px;
+  color: var(--ink-4);
+  font-size: var(--fs-meta);
+  line-height: 1;
+  cursor: grab;
+  user-select: none;
+}
+
+.block-tree-drag-handle:active {
+  cursor: grabbing;
+}
+
+.slash-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 220px;
+  max-width: 320px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--paper-raised);
+  box-shadow: var(--shadow-pop, 0 8px 24px rgba(0, 0, 0, 0.12));
+}
+
+.slash-menu-empty {
+  padding: 8px 10px;
+  font-size: var(--fs-caption);
+  color: var(--ink-4);
+}
+
+.slash-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.slash-menu-item:hover,
+.slash-menu-item.is-active {
+  background: var(--paper-tint);
+}
+
+.slash-menu-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+}
+
 /* ─── YUK-52 — note-prose: scoped rules for NoteRenderer ───────────────────
    Targets <NoteRenderer kind="note">. Sits beside .artifact-section-body
    so atomic note bodies get list / code / image / blockquote rhythm without

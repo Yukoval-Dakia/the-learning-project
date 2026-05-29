@@ -127,6 +127,35 @@ export function mergeAdjacentSemanticBlocks(
   return withContent(doc, content);
 }
 
+/**
+ * Reorder a single top-level block from `fromIndex` to `toIndex`, leaving every
+ * other block in place. This is the JSON-level contract that mirrors the
+ * editor's ProseMirror-native node drag (YUK-150 P2-polish): reorder only moves
+ * the *same* node — its `attrs` (including `attrs.id`) travel with it — so each
+ * block's `block_id` is preserved (ADR-0022: "Block ids are stable semantic
+ * anchors, not array indexes"; `mark_wrong` / cross_link projections stay
+ * anchored). Out-of-range indices, or a no-op move, return the doc unchanged.
+ */
+export function reorderTopLevelBlock(
+  doc: BlockTreeDoc,
+  fromIndex: number,
+  toIndex: number,
+): BlockTreeDoc {
+  const content = [...(doc.content as BlockTreeNode[])];
+  if (
+    fromIndex === toIndex ||
+    fromIndex < 0 ||
+    toIndex < 0 ||
+    fromIndex >= content.length ||
+    toIndex >= content.length
+  ) {
+    return doc;
+  }
+  const [moved] = content.splice(fromIndex, 1);
+  content.splice(toIndex, 0, moved);
+  return withContent(doc, content);
+}
+
 export function markdownToBodyBlocks(markdown: string, idPrefix = 'paste'): BlockTreeDoc {
   const blocks = markdown
     .split(/\n{2,}/)
