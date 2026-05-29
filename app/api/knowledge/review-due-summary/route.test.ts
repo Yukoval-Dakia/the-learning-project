@@ -71,6 +71,8 @@ type SummaryBody = {
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
+// Mirrors DUE_SOON_WINDOW_HOURS (24) in the route — the exclusive upper bound.
+const DUE_SOON_WINDOW_MS = 24 * HOUR;
 
 describe('GET /api/knowledge/review-due-summary', () => {
   beforeEach(async () => {
@@ -130,6 +132,38 @@ describe('GET /api/knowledge/review-due-summary', () => {
     const res = await getSummary();
     const body = (await res.json()) as SummaryBody;
     expect(body.summary.k1).toBeUndefined();
+  });
+
+  it('excludes a card at the exclusive 24h upper bound (due_at >= now+24h dropped)', async () => {
+    // The inner subquery filter is `due_at < now + 24h` (EXCLUSIVE), so a card
+    // sitting exactly at the window edge must be dropped entirely — it is
+    // neither overdue nor due_soon. Seed a hair PAST the edge (the route
+    // computes `now` itself a few ms after this test's clock, so anything <=
+    // testNow+24h could slip just inside the route window; +1min pins it firmly
+    // at/over the exclusive boundary regardless of execution timing).
+    const now = Date.now();
+    await seedQuestion('q_edge', ['k1']);
+    await seedFsrs('q_edge', new Date(now + DUE_SOON_WINDOW_MS + 60_000));
+
+    const res = await getSummary();
+    const body = (await res.json()) as SummaryBody;
+    expect(body.summary.k1).toBeUndefined();
+  });
+
+  it('counts a card at the now-seam as overdue (inclusive due_at <= now)', async () => {
+    // Canonical executeGetReviewDue uses `lte(due_at, now)` — a card due at or
+    // before now is OVERDUE, not due_soon. Both a card exactly at the test clock
+    // and one 1ms before it are in the past relative to the route's own (later)
+    // `now`, so both must land in overdue with zero due_soon.
+    const now = Date.now();
+    await seedQuestion('q_seam', ['k1']);
+    await seedQuestion('q_just_before', ['k1']);
+    await seedFsrs('q_seam', new Date(now));
+    await seedFsrs('q_just_before', new Date(now - 1));
+
+    const res = await getSummary();
+    const body = (await res.json()) as SummaryBody;
+    expect(body.summary.k1).toEqual({ overdue: 2, due_soon: 0 });
   });
 
   it('ignores non-question fsrs subjects', async () => {
