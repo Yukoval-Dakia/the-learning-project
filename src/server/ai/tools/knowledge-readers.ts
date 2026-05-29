@@ -249,7 +249,7 @@ const DEFAULT_RELATIONS = [
   {
     type: 'derived_from',
     direction: 'directed' as const,
-    meaning: 'target concept extends source',
+    meaning: 'from concept is derived from / builds on the to concept',
   },
 ];
 
