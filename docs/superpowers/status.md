@@ -4,9 +4,11 @@
 > 这里记的是 **项目走到了哪、下一站去哪、为什么这么走**，不是 commit log。
 > 维护规则：每完成一个 Phase 就 update 一次；不维护周度进度。
 
-**最后更新**：2026-05-29（**Wave 7 ✅ shipped（本地 main，未 push）** —— T-88 P5 反链 + cross_link @-mention picker + nightly hub auto-sync worker (YUK-95) + T-KG 知识图谱 cytoscape 引擎 + 诊断/局部聚焦/AI 画布视图 (YUK-142) + 逐-commit review fix-pass（undo 版本冲突 / 裸 NUL / backlinks 404 / hub overlap）+ closeout single-owner 修复，全合并本地 main `17280d51`。**完整 wave gate 实测全绿**：typecheck / lint / audit:schema·partition·profile / `pnpm test` (144 files, 1137 tests + 1 todo) / migration-smoke (11) / build (55/55 static pages)。上一波 **Wave 6 ✅** `a419b2e6`（Living Note v0 + `tool_use` KnownEvent promote + modules doc sweep）仍是当前 origin/main HEAD。）
-**当前 Phase**：**Wave 8**（master roadmap §5.1，scenario A v1 closeout 末波）—— 出口目标：T-88 P6 read-view + 节点页 (YUK-96) + P7 tests sweep (YUK-97) + P2-polish (slash / drag-drop) + T-PD 收尾 + **v1 closeout**。详见 [`plans/2026-05-29-wave8-ready-to-launch.md`](plans/2026-05-29-wave8-ready-to-launch.md)。Wave 7 计划：[`plans/2026-05-29-wave7-ready-to-launch.md`](plans/2026-05-29-wave7-ready-to-launch.md)。
-**主分支**：`main` 本地领先 `origin` **19 commit**（完整 Wave 7 + closeout + north-star/T-OC spec + wave plans）；**未 push origin**（push 前停，待用户确认）。`origin/main` HEAD = `a419b2e6`（Wave 6）。
+**🎉 v1 closeout — scenario A 达成（2026-05-29）**：YUK-88 block-tree note 全栈 **P0-P7** + Layer 8 critical path（Drawer/Coach/tool_use promote）+ Living Note v0 + cross_link/反链/hub auto-sync + cytoscape 诊断图谱 全 ship。8 波 + Foundation A/B/C/D + Product Track 1/2 闭环。详见 [`audits/2026-05-29-v1-closeout.md`](audits/2026-05-29-v1-closeout.md)；v1 之后去向 [`../planning/v0.5-maintenance-roadmap.md`](../planning/v0.5-maintenance-roadmap.md)。
+
+**最后更新**：2026-05-29（**Wave 7 ✅ → origin `28dd48d6`**（P5 反链/cross_link/hub auto-sync YUK-95 + T-KG cytoscape 诊断图谱 YUK-142 + fix-pass + closeout）；**Wave 8 ✅ 实现完成**（末波 = P6 read-view+节点页 YUK-96 + P7 tests YUK-97 + P2-polish slash/drag-drop YUK-150 + 两轮用户 review-fix + T-PD 收尾 + v1 closeout，全 7 lane 各独立 opus reviewer + 完整 wave-gate 绿：145 test files / 1153 tests + 1 todo / migration 11 / build 55 pages），在 `wave8` 集成分支 `6c308bcd`，**PR `wave8 → main` 待 review/merge**。上一波 Wave 6 `a419b2e6`。）
+**当前 Phase**：**v1 closeout → scenario B**。scenario A v1 已达成；下一步 continue-to-scenario-B（**north-star YUK-143 + T-OC YUK-145** 为 top track，按 feature 价值重切，待 grill 拍板）。
+**主分支**：`origin/main` = `28dd48d6`（Wave 7）；`wave8` 集成分支 = `6c308bcd`（Wave 8 全 7 lane，gate 绿）—— **PR 待 merge**（走 PR 不直推，2026-05-29 用户定）。
 **路线图源**：[`docs/planning/v0.3-generalized-ai-learning-framework.md`](../planning/v0.3-generalized-ai-learning-framework.md) §1.5 是当前执行清单；root `PLANNING.md` v0.12 Phase 1-4 已标 historical
 
 ---
