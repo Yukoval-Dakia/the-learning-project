@@ -118,7 +118,7 @@ CREATE INDEX artifact_block_ref_to_idx ON artifact_block_ref (to_artifact_id, to
 
 - hub.body_blocks 内"手动区"（用户写）+"自动区"（系统填）；自动区在手动区**之后**
 - 自动区是 `AutoLinksContainer` block group：用户可重排顺序，但不可增删 children
-- **nightly worker**（与 `knowledge_edge_propose_nightly` 同时段 02:30 BJT）维护：scan hub + 挂同主题 atomic 不在 auto-zone 的差集 → upsert
+- **nightly worker** `hub_auto_sync_nightly` @ **02:45 BJT**（`knowledge_edge_propose_nightly` 02:30 之后 15min 错开，消费同夜新提议的边；Wave 7 D5）维护：scan hub + 挂同主题 atomic 不在 auto-zone 的差集 → upsert
 - **包含判定（iii-curated）**：
   1. `atomic.knowledge_ids ⊆ hub.knowledge_ids`（字面集合包含）
   2. atomic 挂的节点是 hub 任一 knowledge_id 的 **tree descendant**
