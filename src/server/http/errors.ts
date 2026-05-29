@@ -15,6 +15,11 @@ export function errorResponse(err: unknown): Response {
   }
   const message = err instanceof Error ? err.message : String(err);
   const stack = err instanceof Error ? err.stack : undefined;
+  // Log the real message + stack server-side, but never leak them to the client:
+  // unhandled errors can carry DB/internal detail. Return a fixed generic body.
   console.error('unhandled error', { message, stack, timestamp: new Date().toISOString() });
-  return Response.json({ error: 'internal_error', message }, { status: 500 });
+  return Response.json(
+    { error: 'internal_error', message: 'Internal Server Error' },
+    { status: 500 },
+  );
 }
