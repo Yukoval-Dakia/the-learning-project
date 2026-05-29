@@ -127,6 +127,13 @@ export async function persistHubLinkDismiss(
     throw new ApiError('validation_error', 'invalid suppress payload', 400);
   }
 
+  // FOR UPDATE row lock serializes concurrent dismisses + the nightly auto-sync
+  // on the SAME hub. Without it, two dismisses of different auto-links race on the
+  // read-modify-write of attrs.suppressed_block_refs (JS append) and the later
+  // commit silently drops the earlier suppressed entry (lost update); it also
+  // closes the stale window between this body_blocks read and persistNoteRefineApply
+  // re-reading the live body — while the lock is held no concurrent tx can mutate
+  // either field. The lock is released on tx commit/rollback.
   const [hub] = await tx
     .select({
       id: artifact.id,
@@ -135,7 +142,8 @@ export async function persistHubLinkDismiss(
       body_blocks: artifact.body_blocks,
     })
     .from(artifact)
-    .where(eq(artifact.id, hubId));
+    .where(eq(artifact.id, hubId))
+    .for('update');
   if (!hub) {
     throw new ApiError('not_found', `hub ${hubId} not found`, 404);
   }
