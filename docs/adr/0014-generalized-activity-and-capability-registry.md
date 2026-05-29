@@ -1,9 +1,11 @@
 # ADR-0014 — Generalized Learning Activity + Capability Registry
 
-**状态**：proposed
-**日期**：2026-05-18
+**状态**：accepted
+**日期**：2026-05-18（accepted 2026-05-29 — Foundation A/B/C 全 ship，core 抽象已落地）
 **前置**：ADR-0006 v2（event-driven core）、ADR-0008（multi-type session）、ADR-0010（knowledge mesh）、ADR-0012（mastery as view）
 **来源**：`docs/discussion/summary.md`（Claude Code + Codex + Human, 7 轮跨 agent 讨论）
+
+> **2026-05-29 status update (T-PD11)**：本 ADR 的核心决策已全部实现 —— `ActivityRef`/`ActivityKind`（`src/core/schema/activity.ts`）、Capability Registry（`src/core/capability/registry.ts` + `judges/index.ts` + `validate-profile.ts`，`pnpm audit:profile` 启动期强制校验）、SubjectProfile 纯数据（§3）、JudgeResult v2（§4）、correction event 一等公民（§6，`src/server/events/corrections.ts`）。status.md Foundation A/B/C 标 ✅。`§C 选项`早已自标 (**accepted**)，header 同步为 accepted（解除 §12 R-2 风险）。
 
 ---
 

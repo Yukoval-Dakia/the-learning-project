@@ -219,15 +219,15 @@ ls -lt docs/audit/*drift* 2>/dev/null | head -3
 | T-PD1 architecture.md Task 表 + audit gate | 2 |
 | T-PD2 `ai_task_runs` 决策 + `event.task_run_id` FK | 3 |
 | T-PD3 2026-05-18 5 条 doc drift 复检 | 3 |
-| T-PD4 `maxCost / fallbackChain` 实装 or 标 inactive | 2 |
-| T-PD5 `db/client.ts` Vercel/Neon/SQLite/D1 sweep | 1 |
-| T-PD6 `knowledge.approval_status` enum 缩减 | 1 |
+| T-PD4 `maxCost / fallbackChain` 实装 or 标 inactive | 2 ✅（Wave 8：标 inactive，`src/ai/registry.ts` 两字段加 phase-deferred 注释 —— runner 只消费 `maxIterations`/`timeout`，二者均 declarative-only）|
+| T-PD5 `db/client.ts` Vercel/Neon/SQLite/D1 sweep | 1 ✅（verify-close Wave 8：`src/db/client.ts` 已是纯 `drizzle-orm/postgres-js` + `postgres`，零 D1/Neon/SQLite/Vercel 分支，旧 multi-driver 代码已随 stack 迁移移除）|
+| T-PD6 `knowledge.approval_status` enum 缩减 | 1 ✅（verify-close Wave 8：`schema.ts` enum 已是紧凑 3 值 `['pending','approved','rejected']`，无冗余态）|
 | T-PD7 ADR-0002 `extracted_prompt_md` 过渡注释 + revision | 2 |
 | T-PD8 Modules doc 主体 vs schema 漂移大 sweep | 8 |
 | T-PD9 旧 PLANNING.md Phase 2 承诺补 v0.3 入账 | 2 |
 | T-PD10 5-25 几份小 plan checkbox 跟 status.md 对账 | 1 |
-| T-PD11 ADR-0014 status proposed → accepted | 1 |
-| T-PD12 ADR metadata drift sweep (0012/0016/0004) | 2 |
+| T-PD11 ADR-0014 status proposed → accepted | 1 ✅（Wave 8：ADR-0014 header proposed→accepted，Foundation A/B/C 全 ship 为证；解除 §12 R-2）|
+| T-PD12 ADR metadata drift sweep (0012/0016/0004) | 2 ✅（Wave 8：0004/0012 补 `**状态**: accepted` + `**日期**` header 对齐已 accepted ADR 格式；0016 保留 proposed —— 仍是 provider 评估阶段，未落地，header 已规范）|
 | T-PD13 Spec ledger Status 字段 + superseded banner | 3 |
 
 **P4 小计**：~31 pts，~6-8 周
@@ -246,6 +246,25 @@ ls -lt docs/audit/*drift* 2>/dev/null | head -3
 | T-FF 5 个完整 fixture (wenyan/math/Eng/prog/reading) | 8 | math ✓；其它 0 |
 
 **P5 小计**：~25 pts，~5-7 周（多数小，部分依赖 P0 done）
+
+### 2.8b ⬜ 2026-05-29 session 新增（scenario-B 种子 / post-v1 closeout follow-up）
+
+> Wave 8 territory-map + grill session 期间产出的新 spec / issue。**scenario A v1 closeout 不依赖这些**；它们是 scenario B（v0.5 maintenance-roadmap）的 top track 与 post-v1 follow-up。增量记录，详 card 见 §11 末「2026-05-29 新增 cards」。
+
+| Track / Issue | pts | status | scenario-B 归属 | 一句话 | 来源 |
+|---|---|---|---|---|---|
+| **YUK-143** North-Star 学习意图 | TBD | spec ✅ | **scenario B top track** | "我想学 X" 的 north-star 学习意图建模 + orchestration | `specs/2026-05-29-north-star-learning-intent-design.md` |
+| **YUK-145** T-OC OCR/ingestion 重建 | ~15 | spec ✅ | **scenario B top track** | OCR capture pipeline 重建（StructureTask/TaggingTask/WorkflowJudge/MistakeEnrollTask + 6 agent tools），替换 §2.6 T-OC 旧描述 | `specs/2026-05-29-t-oc-ocr-rebuild-design.md` |
+| **YUK-144** 多页 OCR bug | TBD | bug | scenario B（随 T-OC 重建解）| 多页文档 OCR 当前出错 | session 实测 |
+| **YUK-148** 跨进程 editing-guard | TBD | **High，需设计** | scenario B（Living Note 健壮性）| 跨进程（app + worker）编辑保护，防 Living Note mutator 与用户并发改冲突 | session grill |
+| **YUK-146** derived_from 注释 | 1 | follow-up | post-v1 doc 债 | `derived_from_block_id` 语义补注释 | session review |
+| **YUK-147** undo UX | TBD | follow-up | scenario B（Editor polish）| Living Note undo 的 UX 完善 | session review |
+| **YUK-149** Wave6 mediums | TBD | follow-up | post-v1 | Wave 6 closeout 遗留的 medium-priority 项 | Wave 6 closeout |
+| **YUK-150** P2-polish | 3 | child YUK-88 | v1 尾 / post-v1 | slash-command + drag-drop（generic mention defer，cross_link picker dropped，per W8-2）| Wave 8 lane |
+| **YUK-151** v1 closeout | — | coordinator | scenario A v1 末步 | §14 7 步 closeout audit + v0.5-maintenance-roadmap | Wave 8 |
+| **YUK-152** Dependabot follow-up | TBD | follow-up | post-v1 infra 债 | Dependabot 依赖更新跟进 | 2026-05-28 audit |
+
+> scenario-B project 切分原则（per 本 session 用户讨论）：north-star（YUK-143）+ T-OC（YUK-145）为 top track，其余按 feature 价值重切（5 judges / question_part / Subject#4 / Drawer×6 / Track-F 半套）。详见 §14.7 + `docs/planning/v0.5-maintenance-roadmap.md`（closeout 时写）。
 
 ### 2.9 总计
 
@@ -909,6 +928,30 @@ T-D4 / T-D5 / T-D7 / T-J6..J9 / T-QP / T-S4 / T-LI / T-AR / T-RT / T-CS / T-MR /
 ### Card T-XX — <Name>
 - Status / pts / Estimate / Driver doc / Source spec / Forward-locks / Blocked-by / Linear
 ```
+
+### 2026-05-29 新增 cards（scenario-B 种子，详 §2.8b）
+
+### Card YUK-143 — North-Star 学习意图
+
+- **Status**：spec ✅（设计完成，实现 ⬜）
+- **pts**：TBD
+- **Driver doc**：⬜（实现期再写）
+- **Source spec**：[`docs/superpowers/specs/2026-05-29-north-star-learning-intent-design.md`](../specs/2026-05-29-north-star-learning-intent-design.md)
+- **Forward-locks**：scenario B "我想学 X" 完全体（与 §2.4 T-LI 3a/3b 关联）
+- **Blocked-by**：scenario A v1 closeout（post-v1 top track）
+- **Linear**：[YUK-143](https://linear.app/yukoval-studios/issue/YUK-143)
+
+### Card YUK-145 — T-OC OCR/ingestion 重建
+
+- **Status**：spec ✅（设计完成，实现 ⬜；替换 §2.6 T-OC 旧条目描述）
+- **pts**：~15
+- **Driver doc**：⬜（实现期再写）
+- **Source spec**：[`docs/superpowers/specs/2026-05-29-t-oc-ocr-rebuild-design.md`](../specs/2026-05-29-t-oc-ocr-rebuild-design.md)
+- **Forward-locks**：StructureTask / TaggingTask / WorkflowJudge / MistakeEnrollTask + 6 agent tools；解 YUK-144 多页 bug
+- **Blocked-by**：T-D4 propose tools ✅（已 ship）；scenario A v1 closeout
+- **Linear**：[YUK-145](https://linear.app/yukoval-studios/issue/YUK-145)；关联 [YUK-144](https://linear.app/yukoval-studios/issue/YUK-144)（多页 OCR bug）
+
+> 其余本 session issue（YUK-146 derived_from 注释 / YUK-147 undo UX / YUK-148 跨进程 editing-guard High·需设计 / YUK-149 Wave6 mediums / YUK-150 P2-polish / YUK-151 v1 closeout / YUK-152 Dependabot）启动时再写 card；摘要见 §2.8b。
 
 ---
 
