@@ -8,7 +8,24 @@ import { MasteryBadge, type MasteryData } from '@/ui/primitives/MasteryBadge';
 import { PageHeader } from '@/ui/primitives/PageHeader';
 import { type SuggestionKind, SuggestionKindTag } from '@/ui/primitives/SuggestionKindTag';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import dynamic from 'next/dynamic';
 import { useMemo, useState } from 'react';
+
+// cytoscape touches window/document, so the graph primitive must never run
+// during SSR/prerender. It already guards itself (cytoscape init lives inside
+// useEffect), and we additionally load it ssr:false as a belt-and-suspenders
+// boundary so the module never even evaluates on the server.
+const KnowledgeGraph = dynamic(
+  () => import('@/ui/KnowledgeGraph').then((mod) => mod.KnowledgeGraph),
+  {
+    ssr: false,
+    loading: () => (
+      <section className="kg-stage" aria-label="知识关系图">
+        <div className="kg-canvas kg-canvas-loading">正在加载关系图...</div>
+      </section>
+    ),
+  },
+);
 
 interface KnowledgeNode {
   id: string;
@@ -97,12 +114,12 @@ const RELATION_TYPES: Record<
     label: string;
     arrow: string;
     directed: boolean;
-    tone: 'coral' | 'neutral' | 'hard' | 'info' | 'good';
+    tone: 'coral' | 'neutral' | 'hard' | 'info' | 'good' | 'contrasts';
   }
 > = {
   prerequisite: { label: '前置', arrow: '→', directed: true, tone: 'coral' },
   related_to: { label: '相关', arrow: '↔', directed: false, tone: 'neutral' },
-  contrasts_with: { label: '对照', arrow: '⇆', directed: false, tone: 'hard' },
+  contrasts_with: { label: '对照', arrow: '⇆', directed: false, tone: 'contrasts' },
   applied_in: { label: '应用于', arrow: '→', directed: true, tone: 'info' },
   derived_from: { label: '派生自', arrow: '↳', directed: true, tone: 'good' },
 };
@@ -421,7 +438,7 @@ export default function KnowledgePage() {
           nodes={flattened}
           edges={edges.filter((edge) => edge.archived_at === null)}
           selectedId={selectedId}
-          onSelect={setSelectedId}
+          onNodeClick={setSelectedId}
           mistakeCounts={mistakeCounts}
         />
       )}
@@ -998,252 +1015,4 @@ function EdgeProposalCard({
       </div>
     </div>
   );
-}
-
-function KnowledgeGraph({
-  nodes,
-  edges,
-  selectedId,
-  onSelect,
-  mistakeCounts,
-}: {
-  nodes: TreeNode[];
-  edges: KnowledgeEdgeRow[];
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-  mistakeCounts: Map<string, number>;
-}) {
-  const width = 1000;
-  const height = 520;
-  const positions = useMemo(() => layoutGraph(nodes, edges, width, height), [nodes, edges]);
-  const byPosition = new Map(positions.map((p) => [p.id, p]));
-  const treeEdges = nodes
-    .filter((node) => node.parent_id && byPosition.has(node.parent_id))
-    .map((node) => ({ id: `tree-${node.id}`, from: node.parent_id as string, to: node.id }));
-
-  const radius = (id: string) => 12 + Math.min(20, (mistakeCounts.get(id) ?? 0) * 4);
-
-  return (
-    <section className="kg-stage" aria-label="知识关系图">
-      <svg
-        className="kg-svg"
-        viewBox={`0 0 ${width} ${height}`}
-        width="100%"
-        height={height}
-        role="img"
-        aria-label="知识关系图"
-      >
-        <defs>
-          {RELATION_ORDER.map((type) => (
-            <marker
-              key={type}
-              id={`arrow-${type}`}
-              viewBox="0 0 10 10"
-              refX="9"
-              refY="5"
-              markerWidth="6"
-              markerHeight="6"
-              orient="auto"
-            >
-              <path d="M 0 0 L 10 5 L 0 10 z" fill={edgeColor(type)} />
-            </marker>
-          ))}
-        </defs>
-
-        {treeEdges.map((edge) => {
-          const from = byPosition.get(edge.from);
-          const to = byPosition.get(edge.to);
-          if (!from || !to) return null;
-          return (
-            <line
-              key={edge.id}
-              x1={from.x}
-              y1={from.y}
-              x2={to.x}
-              y2={to.y}
-              stroke="var(--ink-5)"
-              strokeWidth={1}
-              strokeDasharray="3 5"
-              opacity={0.45}
-            />
-          );
-        })}
-
-        {edges.map((edge) => {
-          const from = byPosition.get(edge.from_knowledge_id);
-          const to = byPosition.get(edge.to_knowledge_id);
-          if (!from || !to) return null;
-          const meta = relationMeta(edge.relation_type);
-          const dx = to.x - from.x;
-          const dy = to.y - from.y;
-          const len = Math.sqrt(dx * dx + dy * dy) || 1;
-          const targetRadius = radius(edge.to_knowledge_id);
-          const x2 = to.x - (dx / len) * targetRadius;
-          const y2 = to.y - (dy / len) * targetRadius;
-          const markerType = RELATION_TYPES[edge.relation_type] ? edge.relation_type : undefined;
-          return (
-            <line
-              key={edge.id}
-              x1={from.x}
-              y1={from.y}
-              x2={x2}
-              y2={y2}
-              stroke={edgeColor(edge.relation_type)}
-              strokeWidth={1 + edge.weight * 1.5}
-              strokeDasharray={edge.relation_type === 'related_to' ? '4 4' : undefined}
-              opacity={0.72}
-              markerEnd={meta.directed && markerType ? `url(#arrow-${markerType})` : undefined}
-            />
-          );
-        })}
-
-        {positions.map((position) => {
-          const node = nodes.find((item) => item.id === position.id);
-          const selected = position.id === selectedId;
-          const r = radius(position.id);
-          return (
-            <a
-              key={position.id}
-              className="kg-node"
-              href={`/knowledge/${position.id}`}
-              onClick={(event) => {
-                event.preventDefault();
-                onSelect(position.id);
-              }}
-              style={{ cursor: 'pointer' }}
-            >
-              <title>{node?.name ?? position.id}</title>
-              <circle
-                cx={position.x}
-                cy={position.y}
-                r={r}
-                fill={selected ? 'var(--coral-soft)' : 'var(--paper-raised)'}
-                stroke={selected ? 'var(--coral)' : 'var(--line-strong)'}
-                strokeWidth={selected ? 2 : 1}
-              />
-              <text
-                x={position.x}
-                y={position.y + r + 14}
-                textAnchor="middle"
-                fontFamily="var(--font-sans)"
-                fontSize="12"
-                fill="var(--ink-2)"
-              >
-                {node?.name ?? position.id}
-              </text>
-            </a>
-          );
-        })}
-      </svg>
-      <div className="kg-legend">
-        <span className="item">
-          <span className="swatch dashed" />
-          <span>tree (parent_id)</span>
-        </span>
-        {RELATION_ORDER.map((type) => {
-          const meta = RELATION_TYPES[type];
-          return (
-            <span className="item" key={type}>
-              <span className="swatch" style={{ borderTopColor: edgeColor(type) }} />
-              <span>
-                {meta.label} ({type})
-              </span>
-            </span>
-          );
-        })}
-        <span className="kg-legend-note">圆 = 节点 · 半径 ∝ mistake_count</span>
-      </div>
-    </section>
-  );
-}
-
-function layoutGraph(nodes: TreeNode[], edges: KnowledgeEdgeRow[], width: number, height: number) {
-  if (nodes.length === 0) return [];
-  type LayoutEdge = {
-    from_knowledge_id: string;
-    to_knowledge_id: string;
-    relation_type: string;
-    weight: number;
-  };
-  const treeEdges: LayoutEdge[] = nodes
-    .filter((node) => node.parent_id)
-    .map((node) => ({
-      from_knowledge_id: node.parent_id as string,
-      to_knowledge_id: node.id,
-      relation_type: '__tree__',
-      weight: 0.5,
-    }));
-  const allEdges: LayoutEdge[] = [...treeEdges, ...edges];
-  const positions = nodes.map((node, index) => ({
-    id: node.id,
-    x: width / 2 + Math.cos((index / nodes.length) * Math.PI * 2) * Math.min(width, height) * 0.32,
-    y: height / 2 + Math.sin((index / nodes.length) * Math.PI * 2) * Math.min(width, height) * 0.32,
-    vx: 0,
-    vy: 0,
-  }));
-  const indexById = new Map(positions.map((position, index) => [position.id, index]));
-
-  for (let iter = 0; iter < 220; iter++) {
-    for (let i = 0; i < positions.length; i++) {
-      for (let j = i + 1; j < positions.length; j++) {
-        const dx = positions[j].x - positions[i].x;
-        const dy = positions[j].y - positions[i].y;
-        const d2 = dx * dx + dy * dy + 0.01;
-        const d = Math.sqrt(d2);
-        const f = 2400 / d2;
-        const fx = (dx / d) * f;
-        const fy = (dy / d) * f;
-        positions[i].vx -= fx;
-        positions[i].vy -= fy;
-        positions[j].vx += fx;
-        positions[j].vy += fy;
-      }
-    }
-
-    for (const edge of allEdges) {
-      const a = indexById.get(edge.from_knowledge_id);
-      const b = indexById.get(edge.to_knowledge_id);
-      if (a === undefined || b === undefined) continue;
-      const dx = positions[b].x - positions[a].x;
-      const dy = positions[b].y - positions[a].y;
-      const d = Math.sqrt(dx * dx + dy * dy) + 0.01;
-      const isTree = edge.relation_type === '__tree__';
-      const rest = isTree ? 95 : edge.relation_type === 'prerequisite' ? 110 : 130;
-      const k = isTree ? 0.05 : edge.weight * 0.06;
-      const fx = ((d - rest) / d) * dx * k;
-      const fy = ((d - rest) / d) * dy * k;
-      positions[a].vx += fx;
-      positions[a].vy += fy;
-      positions[b].vx -= fx;
-      positions[b].vy -= fy;
-    }
-
-    for (const p of positions) {
-      p.vx += (width / 2 - p.x) * 0.005;
-      p.vy += (height / 2 - p.y) * 0.005;
-      p.vx *= 0.78;
-      p.vy *= 0.78;
-      p.x += p.vx;
-      p.y += p.vy;
-      p.x = Math.max(40, Math.min(width - 40, p.x));
-      p.y = Math.max(40, Math.min(height - 40, p.y));
-    }
-  }
-
-  return positions;
-}
-
-function edgeColor(type: string): string {
-  switch (type) {
-    case 'prerequisite':
-      return 'var(--coral)';
-    case 'contrasts_with':
-      return 'var(--hard)';
-    case 'applied_in':
-      return 'var(--info)';
-    case 'derived_from':
-      return 'var(--good)';
-    default:
-      return 'var(--ink-4)';
-  }
 }

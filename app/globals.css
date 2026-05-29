@@ -53,6 +53,13 @@
   --color-info-soft: #e2e9f1;
   --color-info-ink: #1f3247;
 
+  /* contrasts_with knowledge relation — muted warm violet, in the same
+     desaturated register as --info/--hard (see knowledge graph §2.3.b). */
+  --color-contrasts: #8a5a9e;
+  --color-contrasts-soft: #efe6f3;
+  --color-contrasts-line: #d4bce0;
+  --color-contrasts-ink: #3f2249;
+
   /* ── Type · Families ───────────────────────────────────── */
   --font-serif: "Source Serif 4", "Noto Serif SC", "Songti SC", "STSong", "FangSong", ui-serif,
     Georgia, serif;
@@ -161,6 +168,11 @@
   --info: #4f6e8e;
   --info-soft: #e2e9f1;
   --info-ink: #1f3247;
+
+  --contrasts: #8a5a9e;
+  --contrasts-soft: #efe6f3;
+  --contrasts-line: #d4bce0;
+  --contrasts-ink: #3f2249;
 
   --font-serif: "Source Serif 4", "Noto Serif SC", "Songti SC", "STSong", "FangSong", ui-serif,
     Georgia, serif;
@@ -297,6 +309,11 @@
     --info-soft: #1f2832;
     --info-ink: #b8c8dc;
 
+    --contrasts: #b98ac9;
+    --contrasts-soft: #2a1f30;
+    --contrasts-line: #4f3a5c;
+    --contrasts-ink: #d9bce4;
+
     --shadow-1: 0 1px 0 rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.4);
     --shadow-2: 0 1px 0 rgba(0, 0, 0, 0.4), 0 4px 14px -4px rgba(0, 0, 0, 0.55);
     --shadow-3: 0 2px 0 rgba(0, 0, 0, 0.4), 0 12px 32px -8px rgba(0, 0, 0, 0.7);
@@ -346,6 +363,11 @@
   --info: #7a96b8;
   --info-soft: #1f2832;
   --info-ink: #b8c8dc;
+
+  --contrasts: #b98ac9;
+  --contrasts-soft: #2a1f30;
+  --contrasts-line: #4f3a5c;
+  --contrasts-ink: #d9bce4;
 
   --shadow-1: 0 1px 0 rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-2: 0 1px 0 rgba(0, 0, 0, 0.4), 0 4px 14px -4px rgba(0, 0, 0, 0.55);
@@ -4033,13 +4055,21 @@ ol {
   overflow: hidden;
 }
 
-.kg-svg {
+/* cytoscape renders into an absolutely-positioned <canvas>, so the container
+   needs explicit dimensions. Height preserves the prior SVG stage (520px). */
+.kg-canvas {
   display: block;
+  width: 100%;
+  height: 520px;
 }
 
-.kg-node:hover circle {
-  stroke: var(--coral);
-  stroke-width: 2;
+.kg-canvas-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--ink-4);
 }
 
 .kg-legend {
@@ -4193,6 +4223,10 @@ ol {
   color: var(--hard);
 }
 
+.relation.tone-contrasts .rel-arrow {
+  color: var(--contrasts);
+}
+
 .relation .rel-type {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -4256,6 +4290,11 @@ ol {
 .edge-proposal.tone-hard {
   background: linear-gradient(180deg, var(--hard-soft) 0%, var(--paper-raised) 100%);
   border-color: var(--hard-line);
+}
+
+.edge-proposal.tone-contrasts {
+  background: linear-gradient(180deg, var(--contrasts-soft) 0%, var(--paper-raised) 100%);
+  border-color: var(--contrasts-line);
 }
 
 .edge-proposal.tone-neutral {
@@ -4327,6 +4366,10 @@ ol {
 
 .edge-proposal .ep-arrow.tone-hard {
   color: var(--hard);
+}
+
+.edge-proposal .ep-arrow.tone-contrasts {
+  color: var(--contrasts);
 }
 
 .edge-proposal .ep-arrow .ep-arrow-glyph {
@@ -5380,6 +5423,14 @@ progress {
       color-mix(in srgb, var(--hard-soft) 80%, var(--paper-raised)) 0%,
       color-mix(in srgb, var(--paper-raised) 78%, var(--hard-soft)) 100%
     ), var(--hard-soft);
+}
+
+.edge-proposal.tone-contrasts {
+  background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--contrasts-soft) 80%, var(--paper-raised)) 0%,
+      color-mix(in srgb, var(--paper-raised) 78%, var(--contrasts-soft)) 100%
+    ), var(--contrasts-soft);
 }
 
 .session-end-summary .ses-stat.tone-again {

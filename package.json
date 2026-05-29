@@ -55,6 +55,8 @@
     "@tiptap/suggestion": "^3.23.6",
     "ai": "^6.0.176",
     "client-zip": "^2.5.0",
+    "cytoscape": "^3.33.4",
+    "cytoscape-fcose": "^2.2.0",
     "drizzle-orm": "^0.45.2",
     "drizzle-zod": "^0.7.1",
     "fflate": "^0.8.2",
