@@ -9,7 +9,7 @@ import { PageHeader } from '@/ui/primitives/PageHeader';
 import { type SuggestionKind, SuggestionKindTag } from '@/ui/primitives/SuggestionKindTag';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import dynamic from 'next/dynamic';
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 // cytoscape touches window/document, so the graph primitive must never run
 // during SSR/prerender. It already guards itself (cytoscape init lives inside
@@ -256,6 +256,55 @@ export default function KnowledgePage() {
   // KnowledgeGraph.)
   const activeEdges = useMemo(() => edges.filter((edge) => edge.archived_at === null), [edges]);
 
+  // Slice 3 ("AI 画布") — normalize pending edge proposals into the KnowledgeGraph
+  // proposed-edge shape. Same stable-ref discipline as activeEdges: KnowledgeGraph
+  // includes `proposals` in its rebuild-effect deps, so an inline array literal
+  // here would re-init cytoscape (re-running the randomized fcose layout +
+  // discarding manual drag positions) on every KnowledgePage re-render. Memoize so
+  // the prop reference only changes when the pending set actually changes. We
+  // forward only proposals with both endpoints resolved (the graph guards on
+  // visibility too, but skipping endpoint-less ones keeps the array clean). `key`
+  // is the page's dedupe key so optimistic "already decided" hiding lines up.
+  const graphProposals = useMemo(
+    () =>
+      pendingEdgeProposals.flatMap((p) => {
+        const from = edgeProposalFrom(p);
+        const to = edgeProposalTo(p);
+        const relation = p.payload.relation_type;
+        if (!from || !to || !relation) return [];
+        return [
+          {
+            id: p.id,
+            key: edgeProposalKey(p),
+            from_knowledge_id: from,
+            to_knowledge_id: to,
+            relation_type: relation,
+          },
+        ];
+      }),
+    [pendingEdgeProposals],
+  );
+
+  // Inline graph decision — reuse the EXACT path the drawer's EdgeProposalCard
+  // uses: optimistically mark the proposal decided (so it vanishes from the
+  // pending set immediately) and fire edgeProposalDecision, which POSTs to
+  // /api/knowledge/edges/proposals/[id] and invalidates the edges + proposals
+  // queries on success. accept → server inserts the real knowledge_edge, which
+  // reappears as a solid mesh edge after refetch; dismiss → just gone. The graph
+  // only surfaces accept/dismiss inline (改方向/改关系 stay in the drawer).
+  const handleGraphProposalDecision = useCallback(
+    (proposalId: string, decision: 'accept' | 'dismiss') => {
+      const event = pendingEdgeProposals.find((p) => p.id === proposalId);
+      if (!event) return;
+      setEdgeProposalStatus((current) => ({
+        ...current,
+        [edgeProposalKey(event)]: decision,
+      }));
+      edgeProposalDecision.mutate({ id: proposalId, decision });
+    },
+    [pendingEdgeProposals, edgeProposalDecision],
+  );
+
   const proposalsByParent = useMemo(() => {
     const grouped = new Map<string | null, KnowledgeProposal[]>();
     for (const p of nodeProposals) {
@@ -474,6 +523,8 @@ export default function KnowledgePage() {
           onNodeClick={setSelectedId}
           mistakeCounts={mistakeCounts}
           dueCounts={dueCounts}
+          proposals={graphProposals}
+          onProposalDecision={handleGraphProposalDecision}
         />
       )}
 
