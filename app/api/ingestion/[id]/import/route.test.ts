@@ -274,6 +274,113 @@ describe('POST /api/ingestion/[id]/import', () => {
     expect(records[0].knowledge_ids).toEqual(['k1']);
   });
 
+  // T-OC slice 1 (YUK-145, OC-3): generalized capture — outcome is a signal.
+  it('outcome=success → attempt(success) + learning_record(worked_example), no FSRS review', async () => {
+    const db = testDb();
+    const { sessionId, sourceDocId } = await setupSession(db);
+    await insertBlock(db, { id: 'block_a', sessionId, docId: sourceDocId });
+    await insertKnowledge(db, 'k1');
+
+    const res = await post(
+      sessionId,
+      makeImportBody({ outcome: 'success', final_wrong_answer_md: 'correct answer' }),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      question_ids: string[];
+      mistake_ids: string[];
+      record_ids: string[];
+    };
+
+    // attempt event carries outcome='success' (positive mastery evidence)
+    const attempt = await db.select().from(event).where(eq(event.id, body.mistake_ids[0]));
+    expect(attempt[0].action).toBe('attempt');
+    expect(attempt[0].outcome).toBe('success');
+    expect(attempt[0].subject_id).toBe(body.question_ids[0]);
+
+    // generalized record kind=worked_example, not mistake
+    const records = await db
+      .select()
+      .from(learning_record)
+      .where(eq(learning_record.id, body.record_ids[0]));
+    expect(records[0].kind).toBe('worked_example');
+
+    // ADR-0024: a success capture does NOT advance FSRS — no review event
+    const reviewEvents = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'review'), eq(event.subject_id, body.question_ids[0])));
+    expect(reviewEvents).toHaveLength(0);
+  });
+
+  it('outcome=unanswered → no attempt event; learning_record(open_question) item-bank capture', async () => {
+    const db = testDb();
+    const { sessionId, sourceDocId } = await setupSession(db);
+    await insertBlock(db, { id: 'block_a', sessionId, docId: sourceDocId });
+    await insertKnowledge(db, 'k1');
+
+    const res = await post(
+      sessionId,
+      makeImportBody({ outcome: 'unanswered', final_wrong_answer_md: '' }),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { question_ids: string[]; record_ids: string[] };
+
+    // A question row is still created (item bank / to-practice)
+    const questions = await db.select().from(question).where(eq(question.id, body.question_ids[0]));
+    expect(questions).toHaveLength(1);
+
+    // No attempt event for the unanswered capture
+    const attempts = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'attempt'), eq(event.subject_id, body.question_ids[0])));
+    expect(attempts).toHaveLength(0);
+
+    // Generalized record kind=open_question, linked to the question, no attempt
+    const records = await db
+      .select()
+      .from(learning_record)
+      .where(eq(learning_record.id, body.record_ids[0]));
+    expect(records[0].kind).toBe('open_question');
+    expect(records[0].question_id).toBe(body.question_ids[0]);
+    expect(records[0].attempt_event_id).toBeNull();
+  });
+
+  it('outcome omitted → defaults to failure (back-compat regression)', async () => {
+    const db = testDb();
+    const { sessionId, sourceDocId } = await setupSession(db);
+    await insertBlock(db, { id: 'block_a', sessionId, docId: sourceDocId });
+    await insertKnowledge(db, 'k1');
+
+    const res = await post(sessionId, makeImportBody());
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { mistake_ids: string[]; record_ids: string[] };
+
+    const attempt = await db.select().from(event).where(eq(event.id, body.mistake_ids[0]));
+    expect(attempt[0].outcome).toBe('failure');
+    const records = await db
+      .select()
+      .from(learning_record)
+      .where(eq(learning_record.id, body.record_ids[0]));
+    expect(records[0].kind).toBe('mistake');
+  });
+
+  it('outcome!=unanswered with empty final_wrong_answer_md → 400', async () => {
+    const db = testDb();
+    const { sessionId, sourceDocId } = await setupSession(db);
+    await insertBlock(db, { id: 'block_a', sessionId, docId: sourceDocId });
+    await insertKnowledge(db, 'k1');
+
+    const res = await post(
+      sessionId,
+      makeImportBody({ outcome: 'failure', final_wrong_answer_md: '' }),
+    );
+    expect(res.status).toBe(400);
+    const questions = await db.select().from(question);
+    expect(questions).toHaveLength(0);
+  });
+
   it('cause provided → cause dropped in event stream (Lane B JudgeOnEvent requires actor=agent)', async () => {
     // Phase 1c.1 documented gap: user-provided cause cannot be written as a
     // Lane B JudgeOnEvent (actor_kind must be 'agent'). Pre-Step-9 it lived on
