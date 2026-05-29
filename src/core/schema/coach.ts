@@ -35,6 +35,26 @@ export const MaintenanceProposal = z.object({
 });
 export type MaintenanceProposalT = z.infer<typeof MaintenanceProposal>;
 
+// YUK-143 / ADR-0025 — North-Star goal strand. One item = "today's goal-oriented
+// action toward goal X, touching these knowledge nodes". This strand is PURELY
+// ADDITIVE to the plan (ND-5): it never suppresses FSRS-due reviews or other
+// capture tasks, never preempts daily quota, never changes due times. It only
+// adds direction + provenance tags (every item is traceable to a `serves_goal_id`
+// — that traceability is the "sense of direction" payoff, spec §5). It also
+// closes the graph-signals gap: plan items now carry `knowledge_ids` so Coach
+// output knows which nodes an action touches.
+export const GoalStrandItem = z.object({
+  // which active goal this action serves (← direction-sense provenance tag).
+  serves_goal_id: z.string().min(1),
+  // knowledge nodes this action touches (closes the no-knowledge_ids gap).
+  knowledge_ids: z.array(z.string().min(1)).default([]),
+  // one-line description of the goal-oriented action for the day.
+  focus: z.string().min(1).max(280),
+});
+export type GoalStrandItemT = z.infer<typeof GoalStrandItem>;
+
+export const COACH_MAX_GOAL_STRAND_ITEMS = 5;
+
 export const TodayPlan = z.object({
   daily_focus: z.string().min(1).max(280),
   review_session_proposal: ReviewSessionProposal,
@@ -43,6 +63,12 @@ export const TodayPlan = z.object({
   weekly_reflection: z.string().min(1).max(1200).optional(),
   plan_adjustments: z.array(PlanAdjustment).max(8),
   maintenance_proposals: z.array(MaintenanceProposal).max(8),
+  // YUK-143 / ADR-0025 — active goals this plan addresses + the goal-oriented
+  // strand. Both optional + default-empty so plans produced before North-Star
+  // (or by a model that emits no goal strand) parse unchanged. ND-5: these are
+  // additive direction tags only — the review backbone above is untouched.
+  goal_ids: z.array(z.string().min(1)).default([]),
+  goal_strand: z.array(GoalStrandItem).max(COACH_MAX_GOAL_STRAND_ITEMS).default([]),
 });
 export type TodayPlanT = z.infer<typeof TodayPlan>;
 

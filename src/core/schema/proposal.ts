@@ -16,6 +16,11 @@ export const aiProposalKinds = [
   'record_promotion',
   'archive',
   'judge_retraction',
+  // YUK-143 / ADR-0025 — North-Star: AI infers a goal's covered knowledge +
+  // rough ordering; user confirms via the proposal inbox (accept materializes
+  // the `goal` row). Surfaces through the existing `experimental:proposal`
+  // event path (writeAiProposal default) + inbox derive — no inbox.ts change.
+  'goal_scope',
 ] as const;
 
 export const AiProposalKind = z.enum(aiProposalKinds);
@@ -88,6 +93,20 @@ export const KnowledgeMutationProposalChange = z.discriminatedUnion('mutation', 
 ]);
 export type KnowledgeMutationProposalChangeT = z.infer<typeof KnowledgeMutationProposalChange>;
 
+// YUK-143 / ADR-0025 — goal_scope proposed_change. `scope_knowledge_ids` are
+// the AI-inferred + user-confirmable nodes the goal covers; `sequence_hint` is
+// AI-internal ordering (NOT a progress metric, ND-4). The user can edit any of
+// these before accepting (W10 inbox UI) — accept materializes the goal row.
+export const GoalScopeProposalChange = z.object({
+  title: z.string().min(1).max(280),
+  // nullable / optional — cross-subject goals allowed (ND-1).
+  subject_id: z.string().min(1).nullable().optional(),
+  scope_knowledge_ids: z.array(z.string().min(1)).default([]),
+  sequence_hint: z.number().int().min(0).default(0),
+  reasoning: z.string().min(1).max(4000),
+});
+export type GoalScopeProposalChangeT = z.infer<typeof GoalScopeProposalChange>;
+
 export const AiProposalPayload = z.discriminatedUnion('kind', [
   BaseProposal.extend({
     kind: z.literal('knowledge_node'),
@@ -146,6 +165,11 @@ export const AiProposalPayload = z.discriminatedUnion('kind', [
   BaseProposal.extend({
     kind: z.literal('judge_retraction'),
     proposed_change: NonEmptyObject,
+  }),
+  BaseProposal.extend({
+    kind: z.literal('goal_scope'),
+    target: ProposalTarget.extend({ subject_kind: z.literal('goal') }),
+    proposed_change: GoalScopeProposalChange,
   }),
 ]);
 export type AiProposalPayloadT = z.infer<typeof AiProposalPayload>;
