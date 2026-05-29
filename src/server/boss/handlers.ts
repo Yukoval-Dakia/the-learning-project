@@ -8,6 +8,7 @@ import { buildCoachWeeklyHandler } from './handlers/coach_weekly';
 import { buildDreamingNightlyHandler } from './handlers/dreaming_nightly';
 import { buildEchoHandler } from './handlers/echo';
 import { buildEmbeddedCheckGenerateHandler } from './handlers/embedded_check_generate';
+import { buildHubAutoSyncNightlyHandler } from './handlers/hub_auto_sync_nightly';
 import { buildKnowledgeEdgeProposeNightlyHandler } from './handlers/knowledge_edge_propose_nightly';
 import { buildKnowledgeMaintenanceNightlyHandler } from './handlers/knowledge_maintenance_nightly';
 import { buildKnowledgePropoNightlyHandler } from './handlers/knowledge_propose_nightly';
@@ -52,6 +53,20 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   await boss.createQueue('knowledge_edge_propose_nightly');
   await boss.work('knowledge_edge_propose_nightly', buildKnowledgeEdgeProposeNightlyHandler(db));
   await boss.schedule('knowledge_edge_propose_nightly', '30 2 * * *', {}, { tz: 'Asia/Shanghai' });
+
+  // Wave 7 / YUK-95 P5 Lane-C: nightly hub auto-sync (ADR-0020 §9 iii-curated
+  // mesh). Runs BJT 02:45 — 15 min AFTER knowledge_edge_propose_nightly
+  // (`30 2 * * *`) so it sees the same-night fresh edges before recomputing each
+  // hub's AutoLinksContainer auto-zone. Cross-process: relies on
+  // persistNoteRefineApply's optimistic version lock, NOT the in-memory editing
+  // heartbeat (Wave 7 D5).
+  await boss.createQueue('hub_auto_sync_nightly');
+  await boss.work(
+    'hub_auto_sync_nightly',
+    { pollingIntervalSeconds: 2, batchSize: 1 },
+    buildHubAutoSyncNightlyHandler(db),
+  );
+  await boss.schedule('hub_auto_sync_nightly', '45 2 * * *', {}, { tz: 'Asia/Shanghai' });
 
   // YUK-48: broader KnowledgeReviewTask maintenance producer (BJT 03:00,
   // after the cheaper node/edge structured-output proposers).
