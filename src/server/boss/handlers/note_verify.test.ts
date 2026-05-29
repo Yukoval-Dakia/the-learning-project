@@ -65,7 +65,7 @@ const NEEDS_REVIEW_OUTPUT = JSON.stringify({
   summary_md: '例子部分需要人工复核。',
   issues: [
     {
-      section_id: 's2',
+      block_id: 'b2',
       severity: 'warn',
       category: 'factuality',
       message: '例句解释缺少文本证据。',
@@ -228,7 +228,7 @@ describe('runNoteVerify', () => {
     expect(updated.verification_status).toBe('needs_review');
     expect(updated.verification_summary).toMatchObject({
       verdict: 'needs_review',
-      issues: [{ section_id: 's2', category: 'factuality' }],
+      issues: [{ block_id: 'b2', category: 'factuality' }],
     });
 
     const rows = await testDb().select().from(event).where(eq(event.subject_id, 'a1'));

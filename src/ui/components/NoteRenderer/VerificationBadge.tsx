@@ -9,7 +9,7 @@ export type VerificationBadgeStatus =
   | 'outdated';
 
 export interface VerificationBadgeIssue {
-  section_id: string | null;
+  block_id: string | null;
   severity: 'info' | 'warn' | 'error';
   category: string;
   message: string;
@@ -84,7 +84,7 @@ export function VerificationBadge({ status, summary, issues = [] }: Verification
         {issueCount > 0 && (
           <ul className="verification-badge__issues">
             {issues.map((issue, idx) => (
-              <li key={`${issue.section_id ?? 'global'}-${idx}`}>
+              <li key={`${issue.block_id ?? 'global'}-${idx}`}>
                 <span className={`verification-badge__severity ${issue.severity}`}>
                   {issue.severity}
                 </span>

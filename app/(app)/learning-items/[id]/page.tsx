@@ -53,7 +53,7 @@ type VerificationStatus =
   | 'failed';
 
 interface NoteVerificationIssue {
-  section_id: string | null;
+  block_id: string | null;
   severity: 'info' | 'warn' | 'error';
   category: 'factuality' | 'coverage' | 'clarity' | 'subject_fit' | 'format' | 'safety';
   message: string;
@@ -542,7 +542,7 @@ function ArtifactView({
               {artifact.verification_summary.issues.length > 0 && (
                 <ul>
                   {artifact.verification_summary.issues.map((issue, idx) => (
-                    <li key={`${issue.section_id ?? 'global'}-${idx}`}>
+                    <li key={`${issue.block_id ?? 'global'}-${idx}`}>
                       <strong>{issue.severity}</strong>
                       <span>{issue.category}</span>
                       <p>{issue.message}</p>
