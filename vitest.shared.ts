@@ -63,6 +63,9 @@ export const fastTestInclude = [
   'src/ui/**/*.test.ts',
   'src/ui/**/*.test.tsx',
   'app/api/ai/*/route.test.ts',
+  // Health route test mocks @/db/client before importing the route, so it has no
+  // live-Postgres dependency and belongs in the no-Docker unit partition (YUK-134).
+  'app/api/health/route.test.ts',
   'app/api/study-log/route.test.ts',
   'tests/core/**/*.test.ts',
   'tests/schema/**/*.test.ts',

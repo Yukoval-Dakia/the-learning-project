@@ -7,7 +7,6 @@ const DB_PROBE_TIMEOUT_MS = 5_000;
 
 export async function GET() {
   let db_ok = false;
-  let db_error: { code: string; message: string } | undefined;
 
   try {
     const probe = db.execute(sql`select 1 as ok`);
@@ -20,9 +19,10 @@ export async function GET() {
     const result = (await Promise.race([probe, timeout])) as unknown as Array<{ ok: number }>;
     db_ok = result[0]?.ok === 1;
   } catch (err) {
+    // /api/health is unauthenticated — log the DB exception code/message
+    // server-side only, never include it in the public payload.
     const message = err instanceof Error ? err.message : String(err);
     const code = err instanceof Error ? err.name : 'unknown';
-    db_error = { code, message };
     console.error('health: db check failed', {
       code,
       message,
@@ -38,7 +38,6 @@ export async function GET() {
     {
       ok: true,
       db_ok,
-      ...(db_error && { db_error }),
     },
     { status: db_ok ? 200 : 503 },
   );
