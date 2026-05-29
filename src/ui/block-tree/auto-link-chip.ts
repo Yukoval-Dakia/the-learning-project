@@ -27,12 +27,9 @@ const RELATION_CHIP_LABEL: Record<AutoLinkRelation, string> = {
 // "系统维护" marker shown alongside the relation chip for auto-links.
 export const AUTO_LINK_SYSTEM_LABEL = '系统维护';
 
-// CSS modifier class per relation (tokens applied in globals.css). NOTE: the
-// `--contrasts` purple token is being added in a parallel T-KG branch (not yet
-// on main). Until T-KG merges, the `contrasts_with` chip reuses the neutral
-// `--ink-4` tone (see .auto-link-chip--contrasts in globals.css). Phase-deferred:
-// switch that rule to `--contrasts` once T-KG lands — do NOT add the token here
-// (avoids a merge collision with T-KG). Tracked: YUK-95 follow-up.
+// CSS modifier class per relation (tokens applied in globals.css). The
+// `contrasts_with` chip uses the dedicated `--contrasts` purple token (landed
+// with T-KG; see .auto-link-chip--contrasts in globals.css).
 const RELATION_CHIP_TONE_CLASS: Record<AutoLinkRelation, string> = {
   subtopic: 'auto-link-chip--subtopic',
   prerequisite: 'auto-link-chip--prerequisite',

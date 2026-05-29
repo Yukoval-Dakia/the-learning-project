@@ -2414,15 +2414,13 @@ ol {
   border-color: var(--hard-line);
 }
 
-/* contrasts_with: phase-deferred tone. The dedicated `--contrasts` purple token
-   is being added in the parallel T-KG branch (not yet on main). Until T-KG
-   merges, reuse a neutral --ink-4 tone here; switch the three declarations below
-   to var(--contrasts*) once T-KG lands (do NOT add the token in this lane — it
-   would collide with T-KG). Tracked as a YUK-95 follow-up. */
+/* contrasts_with: the dedicated --contrasts purple token (defined in @theme +
+   :root above as part of the T-KG knowledge-graph relation palette). Follows the
+   --X-soft / --X-ink / --X-line convention of the sibling relation chips. */
 .auto-link-chip--contrasts {
-  background: var(--paper-sunk);
-  color: var(--ink-4);
-  border-color: var(--line-soft);
+  background: var(--contrasts-soft);
+  color: var(--contrasts-ink);
+  border-color: var(--contrasts-line);
 }
 
 /* Dismiss button — hidden until the card is hovered/focused (read view only;
