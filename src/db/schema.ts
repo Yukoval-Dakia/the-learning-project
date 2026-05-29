@@ -285,8 +285,11 @@ export const memory_brief_note = pgTable(
 
 // 激活 — C 档 AI 主动产出落点（per ADR-0006 v2 + Phase 1c.1）。
 // Phase 1c.1 brainstorm（2026-05-14 → ADR-0006 v2）拍板保留：作为 Note / 长答案 /
-// 工具产物等 AI 主动产出的统一落地表。当前仍零写入路径——Phase 1c.2 落地
-// AI 产出 handler 时启用（NoteGenerateTask / BlockAssemblyTask 等）。
+// 工具产物等 AI 主动产出的统一落地表。write path 已 ship（ADR-0020 §8 body_blocks
+// 三态 SOT）：NoteGenerateTask（note_generate handler）生成 / editArtifactBodyBlocks
+// （body-blocks-edit.ts）用户编辑 / persistNoteRefineApply（note-refine-apply.ts）AI
+// Living Note patch / persistHubLinkDismiss（hub-dismiss.ts）。单 owner 写入约束见
+// tests/integration/step9-invariant-audit.ts allowlist。
 export const artifact = pgTable('artifact', {
   id: text('id').primaryKey(),
   type: text('type').notNull(),
