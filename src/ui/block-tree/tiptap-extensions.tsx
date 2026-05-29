@@ -12,6 +12,7 @@ import {
   type CrossLinkSuggestionContext,
   createCrossLinkSuggestionExtension,
 } from './CrossLinkSuggestion';
+import { createSlashCommandSuggestionExtension } from './SlashCommandSuggestion';
 import { AUTO_LINK_SYSTEM_LABEL, autoLinkChip } from './auto-link-chip';
 import {
   ARTIFACT_REF_BLOCK_NODE,
@@ -28,6 +29,19 @@ function BlockNodeView({ node }: NodeViewProps) {
       data-block-id={String(node.attrs.id ?? '')}
     >
       <div className="block-tree-node-view-meta">
+        {/* YUK-150 P2-polish — drag handle for reorder. `data-drag-handle` +
+            `draggable: true` on the Node make ProseMirror move the whole node
+            (attrs incl. attrs.id travel with it → block_id stable, ADR-0022).
+            contentEditable=false so the handle isn't a text caret target. */}
+        <span
+          className="block-tree-drag-handle"
+          data-drag-handle
+          contentEditable={false}
+          aria-label="拖动以重排"
+          title="拖动以重排"
+        >
+          ⠿
+        </span>
         {node.type.name === SEMANTIC_BLOCK_NODE
           ? String(node.attrs.semantic_kind ?? 'block')
           : node.type.name}
@@ -59,6 +73,16 @@ function CrossLinkNodeView({ node }: NodeViewProps) {
     >
       <div className={`block-tree-link-card${chip.isAuto ? ' block-tree-link-card--auto' : ''}`}>
         <div className="block-tree-link-card-head">
+          {/* YUK-150 P2-polish — drag handle (see BlockNodeView). */}
+          <span
+            className="block-tree-drag-handle"
+            data-drag-handle
+            contentEditable={false}
+            aria-label="拖动以重排"
+            title="拖动以重排"
+          >
+            ⠿
+          </span>
           <span>cross_link</span>
           {chip.isAuto ? (
             <span className="auto-link-system-tag">{AUTO_LINK_SYSTEM_LABEL}</span>
@@ -81,6 +105,10 @@ export const SemanticBlock = Node.create({
   group: 'block',
   content: 'block+',
   defining: true,
+  // YUK-150 P2-polish — draggable for block reorder. ProseMirror moves the same
+  // node (attrs, incl. attrs.id, travel with it), so block_id stays stable
+  // (ADR-0022). The handle is the `data-drag-handle` element in BlockNodeView.
+  draggable: true,
 
   addAttributes() {
     return {
@@ -118,6 +146,8 @@ export const CrossLinkBlock = Node.create({
   name: CROSS_LINK_BLOCK_NODE,
   group: 'block',
   atom: true,
+  // YUK-150 P2-polish — reorder-only drag (block_id travels with the node).
+  draggable: true,
 
   // FIX 1 (YUK-95 P5 review) — `auto` + `relation` are flat provenance attrs the
   // nightly hub_auto_sync worker (Lane-C) writes on system-maintained auto-links.
@@ -156,6 +186,8 @@ export const ArtifactRefBlock = Node.create({
   name: ARTIFACT_REF_BLOCK_NODE,
   group: 'block',
   atom: true,
+  // YUK-150 P2-polish — reorder-only drag (block_id travels with the node).
+  draggable: true,
 
   addAttributes() {
     return {
@@ -184,6 +216,8 @@ export const CalloutBlock = Node.create({
   group: 'block',
   content: 'block+',
   defining: true,
+  // YUK-150 P2-polish — reorder-only drag (block_id travels with the node).
+  draggable: true,
 
   addAttributes() {
     return {
@@ -333,6 +367,11 @@ export function blockTreeEditorExtensions(crossLink?: CrossLinkSuggestionContext
     ArtifactRefBlock,
     CalloutBlock,
     AutoLinksContainer,
+    // `/`-triggered block-insert menu (YUK-150 P2-polish). Always wired —
+    // semantic/callout inserts need no artifact context; its cross_link item
+    // delegates to the `@` picker below (or degrades to a literal `@` when the
+    // picker isn't wired).
+    createSlashCommandSuggestionExtension(),
     // `@`-triggered cross_link picker (Wave 7 P5 Lane-A). Only wired when an
     // artifactId is provided so self-links can be excluded from search.
     ...(crossLink ? [createCrossLinkSuggestionExtension(crossLink)] : []),
