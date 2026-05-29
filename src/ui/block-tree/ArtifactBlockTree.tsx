@@ -1,6 +1,7 @@
 'use client';
 
 import dynamic from 'next/dynamic';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 
@@ -45,6 +46,17 @@ interface AiChangeRow {
   previous_artifact_version: number;
   next_artifact_version: number;
   undone: boolean;
+}
+
+// YUK-95 P5 Lane-B — one inbound cross-link row, as returned by
+// GET /api/artifacts/[id]/backlinks (source already filtered for archived /
+// non-ready / retracted-block per XC-5).
+interface BacklinkRow {
+  from_artifact_id: string;
+  from_title: string;
+  from_type: string;
+  from_block_id: string;
+  snippet: string | null;
 }
 
 interface ArtifactBlockTreeProps {
@@ -93,6 +105,9 @@ export function ArtifactBlockTree({
   const [aiChanges, setAiChanges] = useState<AiChangeRow[]>([]);
   const [aiChangesLoading, setAiChangesLoading] = useState(false);
   const [undoingAiChangeId, setUndoingAiChangeId] = useState<string | null>(null);
+  const [backlinksOpen, setBacklinksOpen] = useState(false);
+  const [backlinks, setBacklinks] = useState<BacklinkRow[] | null>(null);
+  const [backlinksLoading, setBacklinksLoading] = useState(false);
   const correctionWriteGenerationRef = useRef(0);
 
   useEffect(() => {
@@ -104,6 +119,9 @@ export function ArtifactBlockTree({
     let canceled = false;
     const startGeneration = correctionWriteGenerationRef.current;
     setCorrectionState(null);
+    // Reset the (lazily fetched) backlink panel when switching artifacts.
+    setBacklinksOpen(false);
+    setBacklinks(null);
     apiJson<ArtifactCorrectionStateResponse>(`/api/artifacts/${artifactId}/correct`)
       .then((state) => {
         if (canceled) return;
@@ -115,6 +133,27 @@ export function ArtifactBlockTree({
       canceled = true;
     };
   }, [artifactId]);
+
+  // Lazy fetch: only hit the read API once the user opens the panel, and only
+  // once per artifact (cached in `backlinks`). Mirrors the ai-changes fetch.
+  useEffect(() => {
+    if (!backlinksOpen || backlinks !== null) return;
+    let canceled = false;
+    setBacklinksLoading(true);
+    apiJson<{ rows: BacklinkRow[] }>(`/api/artifacts/${artifactId}/backlinks`)
+      .then((result) => {
+        if (!canceled) setBacklinks(result.rows);
+      })
+      .catch(() => {
+        if (!canceled) setBacklinks([]);
+      })
+      .finally(() => {
+        if (!canceled) setBacklinksLoading(false);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [artifactId, backlinksOpen, backlinks]);
 
   useEffect(() => {
     let canceled = false;
@@ -405,9 +444,68 @@ export function ArtifactBlockTree({
           ))}
         </div>
       ) : null}
+      {!editing ? (
+        <div className="backlink-panel">
+          <button
+            type="button"
+            className="backlink-panel-head"
+            aria-expanded={backlinksOpen}
+            onClick={() => setBacklinksOpen((v) => !v)}
+          >
+            <span className="backlink-panel-title">
+              <Badge tone="neutral">反向链接</Badge>
+              {backlinks !== null ? <span>{backlinks.length}</span> : null}
+            </span>
+            <span className="backlink-panel-chevron">{backlinksOpen ? '收起' : '展开'}</span>
+          </button>
+          {backlinksOpen ? (
+            <div className="backlink-panel-body">
+              {backlinksLoading ? (
+                <p className="backlink-empty">加载中...</p>
+              ) : backlinks && backlinks.length > 0 ? (
+                backlinks.map((row) => (
+                  <Link
+                    key={`${row.from_artifact_id}:${row.from_block_id}`}
+                    href={`/learning-items/${row.from_artifact_id}`}
+                    className="backlink-row"
+                  >
+                    <span className="backlink-row-head">
+                      <Badge tone={backlinkTypeTone(row.from_type)}>
+                        {backlinkTypeLabel(row.from_type)}
+                      </Badge>
+                      <strong>{row.from_title}</strong>
+                    </span>
+                    {row.snippet ? (
+                      <span className="backlink-row-snippet">{row.snippet}</span>
+                    ) : null}
+                  </Link>
+                ))
+              ) : (
+                <p className="backlink-empty">还没有其它笔记链接到这里。</p>
+              )}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {saveError ? <p className="artifact-section-error">保存失败：{saveError}</p> : null}
     </div>
   );
+}
+
+const BACKLINK_TYPE_LABELS: Record<string, string> = {
+  note_atomic: '原子',
+  note_hub: 'Hub',
+  tool_quiz: '测验',
+};
+
+function backlinkTypeLabel(type: string): string {
+  return BACKLINK_TYPE_LABELS[type] ?? type;
+}
+
+function backlinkTypeTone(type: string): 'info' | 'good' | 'neutral' {
+  if (type === 'note_hub') return 'good';
+  if (type === 'note_atomic') return 'info';
+  return 'neutral';
 }
 
 function formatAiChangeTime(value: string): string {

@@ -27,6 +27,7 @@ export const fastTestInclude = [
   'src/server/ai/tools/registry.test.ts',
   'src/server/ai/tools/allowlists.test.ts',
   'src/server/ai/tools/mcp-bridge.test.ts',
+  'src/server/artifacts/body-blocks-snippet.test.ts',
   'src/server/artifacts/note-refine-triggers.test.ts',
   'src/server/events/cause-policy.test.ts',
   'src/server/export/**/*.test.ts',
