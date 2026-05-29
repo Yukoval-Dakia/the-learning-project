@@ -116,6 +116,19 @@ describe('AiProposalPayload', () => {
         target: { subject_kind: 'event', subject_id: 'judge_1' },
         proposed_change: { judge_event_id: 'judge_1', reason_md: 'User correction superseded it.' },
       },
+      // YUK-143 / ADR-0025 — North-Star goal_scope proposal.
+      goal_scope: {
+        ...base,
+        kind: 'goal_scope',
+        target: { subject_kind: 'goal', subject_id: 'goal_1' },
+        proposed_change: {
+          title: '能流畅读《史记》',
+          subject_id: 'wenyan',
+          scope_knowledge_ids: ['k1', 'k2'],
+          sequence_hint: 0,
+          reasoning: 'k1 是 k2 的 prerequisite，两者共同构成该目标的覆盖范围。',
+        },
+      },
     } as const;
 
     expect(Object.keys(samples).sort()).toEqual([...aiProposalKinds].sort());

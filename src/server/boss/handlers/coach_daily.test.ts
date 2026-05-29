@@ -45,6 +45,9 @@ describe('runCoach', () => {
       buildMcpServerFn,
       runAgentTaskFn,
       writeEventFn,
+      // YUK-143 — North-Star: stub the active-goals reader so these no-DB unit
+      // tests don't hit the real listActiveGoals query (db is a {} stub).
+      listActiveGoalsFn: async () => [],
       now: () => new Date('2026-05-28T20:00:00.000Z'),
     });
 
@@ -146,6 +149,9 @@ describe('runCoach', () => {
       buildMcpServerFn,
       runAgentTaskFn,
       writeEventFn,
+      // YUK-143 — North-Star: stub the active-goals reader so these no-DB unit
+      // tests don't hit the real listActiveGoals query (db is a {} stub).
+      listActiveGoalsFn: async () => [],
       now: () => new Date('2026-05-31T20:00:00.000Z'),
     });
 
@@ -180,6 +186,8 @@ describe('runCoach', () => {
         buildMcpServerFn,
         runAgentTaskFn,
         writeEventFn,
+        // YUK-143 — stub the active-goals reader (db is a {} stub here).
+        listActiveGoalsFn: async () => [],
         now: () => new Date('2026-05-28T20:00:00.000Z'),
       }),
     ).rejects.toThrow('boom');
@@ -212,6 +220,9 @@ describe('runCoach', () => {
       buildMcpServerFn,
       runAgentTaskFn,
       writeEventFn,
+      // YUK-143 — North-Star: stub the active-goals reader so these no-DB unit
+      // tests don't hit the real listActiveGoals query (db is a {} stub).
+      listActiveGoalsFn: async () => [],
       now: () => new Date('2026-05-28T20:00:00.000Z'),
     });
 

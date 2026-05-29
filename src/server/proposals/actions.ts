@@ -11,6 +11,7 @@ import {
   artifact,
   completion_evidence,
   event,
+  goal,
   knowledge,
   knowledge_edge,
   learning_item,
@@ -20,6 +21,8 @@ import {
 } from '@/db/schema';
 import { persistNoteRefineApply } from '@/server/artifacts/note-refine-apply';
 import { writeEvent } from '@/server/events/queries';
+// YUK-143 / ADR-0024 — North-Star goal_scope accept materializer.
+import { type GoalScopeAcceptResult, acceptGoalScopeProposal } from '@/server/goals/accept';
 import { ApiError } from '@/server/http/errors';
 import { acceptProposal, dismissProposal } from '@/server/knowledge/proposals';
 import {
@@ -78,7 +81,8 @@ export type AcceptAiProposalResult =
   | RelearnAcceptResult
   | NoteUpdateAcceptResult
   | RecordLinksAcceptResult
-  | RecordPromotionAcceptResult;
+  | RecordPromotionAcceptResult
+  | GoalScopeAcceptResult;
 
 export interface VariantQuestionAcceptResult {
   kind: 'variant_question';
@@ -551,6 +555,19 @@ async function dispatchAccept(
       return await acceptRecordLinksProposal(db, proposalId, proposal, opts);
     case 'record_promotion':
       return await acceptRecordPromotionProposal(db, proposalId, proposal, opts);
+    case 'goal_scope': {
+      // YUK-143 / ADR-0024 — accept materializes the goal row + rate event.
+      ensureAcceptOnly('goal_scope', opts);
+      const result = await acceptGoalScopeProposal(db, proposalId, proposal, {
+        user_note: opts.user_note,
+      });
+      if (result.idempotent) {
+        await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+      } else {
+        await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+      }
+      return result;
+    }
     default:
       throw new ApiError(
         'unsupported_proposal_kind',
@@ -1797,6 +1814,20 @@ export async function retractAiProposal(
         updated_at: now,
       })
       .where(and(eq(artifact.source_ref, proposalId), isNull(artifact.archived_at)));
+  }
+
+  // YUK-143 / ADR-0024 — retracting a goal_scope proposal tombstones the
+  // materialized goal to 'dormant' (the goal is the downstream materialization;
+  // proposal-level retract is an L3 correction that outweighs it, mirroring the
+  // variant_question / learning_item policy above). We dormant rather than hard
+  // delete so the evidence chain (goal.source_ref → proposal) stays intact.
+  // Idempotent: a goal already non-active stays put.
+  if (proposal.kind === 'goal_scope' && proposal.target.subject_id) {
+    const now = new Date();
+    await db
+      .update(goal)
+      .set({ status: 'dormant', updated_at: now })
+      .where(and(eq(goal.id, proposal.target.subject_id), eq(goal.status, 'active')));
   }
 
   // YUK-15 — retract rolls cited records back from `actioned` to `linked`.
