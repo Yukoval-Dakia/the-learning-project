@@ -89,6 +89,22 @@ const TOKEN_NAMES = [
   '--again',
 ] as const;
 
+// ── Due indicator encoding choice (Slice 2; YUK-142) ─────────────────────────
+// Three signals can land on one node: (1) mastery band = node FILL color, (2)
+// shaky-prerequisite = a deep `--again` DOUBLE BORDER ring, (3) overdue review =
+// THIS coral UNDERLAY halo. We deliberately pick cytoscape's `underlay` (an
+// ellipse drawn BEHIND the node, bleeding past its edge via underlay-padding)
+// rather than another border or a fill tint, because:
+//   • border slot is already taken by select / focus-root / shaky-prereq rings;
+//   • background-color is already the mastery-band fill;
+//   • an underlay coral glow sits in its own visual layer, so a weak-band amber
+//     node with a shaky-prereq `--again` ring can ALSO show the coral due halo
+//     without any of the three encodings overwriting another.
+// Coral = the project's "needs action now" accent (matches the "看我哪里弱"
+// diagnose chip + node:selected ring hue), so "今天该复习" reads as urgent but
+// is distinguishable from the alarm-red `--again` prereq ring by layer (halo vs
+// border), style (soft glow vs hard double stroke), and saturation.
+
 type TokenMap = Record<(typeof TOKEN_NAMES)[number], string>;
 
 function readTokens(): TokenMap {
@@ -125,6 +141,12 @@ export interface KnowledgeGraphEdge {
   weight: number;
 }
 
+/** Per-node FSRS due counts from GET /api/knowledge/review-due-summary. */
+export interface NodeDueSummary {
+  overdue: number;
+  due_soon: number;
+}
+
 export interface KnowledgeGraphProps {
   nodes: KnowledgeGraphNode[];
   edges: KnowledgeGraphEdge[];
@@ -132,6 +154,12 @@ export interface KnowledgeGraphProps {
   onNodeClick: (id: string) => void;
   /** mistake_count per node id — drives node radius (∝ mistakes). */
   mistakeCounts: Map<string, number>;
+  /**
+   * Per-node review-due counts (overdue / due_soon). Nodes with overdue > 0 get
+   * the coral due halo + are the target of the "今天该复习" quick filter. Empty
+   * map when the summary endpoint is unavailable (graceful: no halos shown).
+   */
+  dueCounts?: Map<string, NodeDueSummary>;
 }
 
 // fcose layout options carry extension-specific keys not present in
@@ -150,6 +178,7 @@ function buildElements(
   nodes: KnowledgeGraphNode[],
   edges: KnowledgeGraphEdge[],
   mistakeCounts: Map<string, number>,
+  dueCounts: Map<string, NodeDueSummary>,
 ): ElementDefinition[] {
   const nodeIds = new Set(nodes.map((n) => n.id));
   const elements: ElementDefinition[] = [];
@@ -157,17 +186,25 @@ function buildElements(
   for (const node of nodes) {
     const r = nodeRadius(mistakeCounts.get(node.id) ?? 0);
     const band = masteryBand(node.mastery);
+    const due = dueCounts.get(node.id);
+    const overdue = due?.overdue ?? 0;
     elements.push({
       group: 'nodes',
       // `band` drives the diagnostic fill via a stylesheet data-selector.
       // `mistakes` lets the "看我哪里弱" filter rank high-mistake nodes too.
+      // `overdue` drives the coral due-halo (overdue > 0) via the `.kg-due`
+      // class (added below) — kept as data too so the "今天该复习" filter reads
+      // it without re-deriving from the map.
       data: {
         id: node.id,
         label: node.name,
         diameter: r * 2,
         band,
         mistakes: mistakeCounts.get(node.id) ?? 0,
+        overdue,
+        due_soon: due?.due_soon ?? 0,
       },
+      ...(overdue > 0 ? { classes: 'kg-due' } : {}),
     });
   }
 
@@ -285,6 +322,26 @@ function buildStylesheet(t: TokenMap): StylesheetJson {
         'z-index': 35,
       },
     },
+    // ── Review-due halo (Slice 2) ──────────────────────────────────────────
+    // Nodes with overdue review items (overdue > 0) get a coral UNDERLAY halo
+    // that bleeds past the node edge. underlay-opacity is set directly (not via
+    // :active) so the halo is always-on. Distinct LAYER from the mastery fill
+    // (background-color) and the shaky-prereq border ring, so all three signals
+    // can co-exist on one node without overwriting each other.
+    {
+      selector: 'node.kg-due',
+      style: {
+        'underlay-color': t['--coral'],
+        'underlay-opacity': 0.28,
+        'underlay-padding': 7,
+        'underlay-shape': 'ellipse',
+      },
+    },
+    // When a due node is also filtered/faded, fade its halo with it.
+    {
+      selector: 'node.kg-due.kg-faded',
+      style: { 'underlay-opacity': 0.05 },
+    },
     // Tree edges: --ink-5, dashed [3 5], NO arrow, visually receded (low
     // opacity), lowest z-index so mesh always paints over them. z-index-compare
     // 'manual' makes cytoscape honor edge-vs-edge z-index ordering (the default
@@ -341,6 +398,9 @@ interface FilterState {
   // null domain = "全部" (all domains); otherwise an effective_domain value.
   domain: string | null;
   mastery: MasteryFilter;
+  // "今天该复习" quick filter (Slice 2): when true, restrict to nodes with
+  // overdue review items. Orthogonal to domain/mastery so it composes with them.
+  dueOnly: boolean;
 }
 
 function distinctDomains(nodes: KnowledgeGraphNode[]): string[] {
@@ -352,11 +412,16 @@ function distinctDomains(nodes: KnowledgeGraphNode[]): string[] {
   return [...seen].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
 }
 
-function passesFilter(node: KnowledgeGraphNode, filter: FilterState): boolean {
+function passesFilter(
+  node: KnowledgeGraphNode,
+  filter: FilterState,
+  dueCounts: Map<string, NodeDueSummary>,
+): boolean {
   if (filter.domain !== null) {
     const d = node.effective_domain ?? node.domain ?? null;
     if (d !== filter.domain) return false;
   }
+  if (filter.dueOnly && (dueCounts.get(node.id)?.overdue ?? 0) === 0) return false;
   if (filter.mastery === 'all') return true;
   const band = masteryBand(node.mastery);
   if (filter.mastery === 'weak') return band === 'weak' || band === 'untrained';
@@ -383,6 +448,7 @@ export function KnowledgeGraph({
   selectedId,
   onNodeClick,
   mistakeCounts,
+  dueCounts,
 }: KnowledgeGraphProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
@@ -390,6 +456,15 @@ export function KnowledgeGraph({
   // re-renders with a new function identity.
   const onNodeClickRef = useRef(onNodeClick);
   onNodeClickRef.current = onNodeClick;
+
+  // Stable empty fallback so the build effect's dependency identity is steady
+  // when the summary endpoint is unavailable.
+  const due = useMemo(() => dueCounts ?? new Map<string, NodeDueSummary>(), [dueCounts]);
+  const totalOverdueNodes = useMemo(() => {
+    let n = 0;
+    for (const v of due.values()) if (v.overdue > 0) n += 1;
+    return n;
+  }, [due]);
 
   const domains = useMemo(() => distinctDomains(nodes), [nodes]);
 
@@ -400,6 +475,7 @@ export function KnowledgeGraph({
   const [filter, setFilter] = useState<FilterState>(() => ({
     domain: domains.length > 1 ? domains[0] : null,
     mastery: 'all',
+    dueOnly: false,
   }));
 
   // If the domain set changes (new data load) and the current domain filter is
@@ -422,7 +498,10 @@ export function KnowledgeGraph({
   const focusIdRef = useRef(focusId);
   focusIdRef.current = focusId;
 
-  const visibleNodes = useMemo(() => nodes.filter((n) => passesFilter(n, filter)), [nodes, filter]);
+  const visibleNodes = useMemo(
+    () => nodes.filter((n) => passesFilter(n, filter, due)),
+    [nodes, filter, due],
+  );
   const visibleNodeIds = useMemo(() => new Set(visibleNodes.map((n) => n.id)), [visibleNodes]);
   const visibleEdges = useMemo(
     () =>
@@ -495,7 +574,7 @@ export function KnowledgeGraph({
     const tokens = readTokens();
     const cy = cytoscape({
       container,
-      elements: buildElements(visibleNodes, visibleEdges, mistakeCounts),
+      elements: buildElements(visibleNodes, visibleEdges, mistakeCounts, due),
       style: buildStylesheet(tokens),
       layout: FCOSE_LAYOUT,
       minZoom: 0.1,
@@ -542,7 +621,7 @@ export function KnowledgeGraph({
       cy.destroy();
       cyRef.current = null;
     };
-  }, [visibleNodes, visibleEdges, mistakeCounts, applyFocus]);
+  }, [visibleNodes, visibleEdges, mistakeCounts, due, applyFocus]);
 
   // Reflect selection without rebuilding the graph.
   useEffect(() => {
@@ -571,7 +650,14 @@ export function KnowledgeGraph({
   }, [visibleNodeIds, focusId]);
 
   const showWeak = useCallback(() => {
-    setFilter((f) => ({ ...f, mastery: 'weak' }));
+    setFilter((f) => ({ ...f, mastery: 'weak', dueOnly: false }));
+    setFocusId(null);
+  }, []);
+
+  // "今天该复习" quick filter: toggle the overdue-only restriction across all
+  // domains so the user can step straight into the actionable review set.
+  const toggleDue = useCallback(() => {
+    setFilter((f) => ({ ...f, dueOnly: !f.dueOnly, domain: f.dueOnly ? f.domain : null }));
     setFocusId(null);
   }, []);
 
@@ -621,6 +707,14 @@ export function KnowledgeGraph({
             </button>
           ))}
         </fieldset>
+        <button
+          type="button"
+          className={`kg-chip kg-chip-due${filter.dueOnly ? ' is-on' : ''}`}
+          onClick={toggleDue}
+          aria-pressed={filter.dueOnly}
+        >
+          今天该复习{totalOverdueNodes > 0 ? ` · ${totalOverdueNodes}` : ''}
+        </button>
         <button type="button" className="kg-chip kg-chip-diagnose" onClick={showWeak}>
           看我哪里弱
         </button>
@@ -657,6 +751,11 @@ export function KnowledgeGraph({
             </span>
           </span>
         ))}
+        <span className="kg-legend-section">复习</span>
+        <span className="item">
+          <span className="swatch halo" />
+          <span>逾期 {totalOverdueNodes}</span>
+        </span>
         <span className="kg-legend-section">关系</span>
         <span className="item">
           <span className="swatch dashed" />
@@ -672,7 +771,8 @@ export function KnowledgeGraph({
           </span>
         ))}
         <span className="kg-legend-note">
-          圆 = 节点 · 填色 ∝ 掌握度 · 半径 ∝ mistake_count · 点节点聚焦 · 拖拽 / 滚轮缩放
+          圆 = 节点 · 填色 ∝ 掌握度 · 半径 ∝ mistake_count · 珊瑚光晕 = 有逾期复习 · 点节点聚焦 ·
+          拖拽 / 滚轮缩放
         </span>
       </div>
     </section>

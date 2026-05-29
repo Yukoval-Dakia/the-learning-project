@@ -4199,6 +4199,27 @@ ol {
   border-color: var(--coral);
 }
 
+/* "今天该复习" quick filter (Slice 2 / YUK-142). Mirrors the diagnose chip's
+   coral accent but stays a toggle: resting state is the neutral chip, is-on
+   pins the coral halo language used on overdue nodes. */
+.kg-chip-due.is-on {
+  color: var(--coral-ink);
+  background: var(--coral-soft);
+  border-color: var(--coral-line);
+  box-shadow: 0 0 0 2px var(--coral-soft);
+}
+
+/* Coral due-halo legend swatch — a hollow coral ring echoing the node underlay
+   glow (distinct from the line swatches used for relations). */
+.kg-legend .swatch.halo {
+  width: 12px;
+  height: 12px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--coral-soft);
+  box-shadow: 0 0 0 2px var(--coral);
+}
+
 .kg-focus-bar {
   display: flex;
   align-items: center;
