@@ -2338,6 +2338,70 @@ ol {
   color: var(--ink);
 }
 
+/* ─── YUK-95 P5 Lane-A — cross_link `@` picker ─────────────────────────────
+   Floating list mounted on document.body, positioned from the Suggestion
+   clientRect. Tokens-only so it matches the editor surface in light + dark.
+*/
+.cross-link-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 240px;
+  max-width: 360px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--paper-raised);
+  box-shadow: var(--shadow-pop, 0 8px 24px rgba(0, 0, 0, 0.12));
+}
+
+.cross-link-picker-empty {
+  padding: 8px 10px;
+  font-size: var(--fs-caption);
+  color: var(--ink-4);
+}
+
+.cross-link-picker-item {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.cross-link-picker-item:hover,
+.cross-link-picker-item.is-active {
+  background: var(--paper-tint);
+}
+
+.cross-link-picker-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+}
+
+.cross-link-picker-type {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
+
+.block-tree-node-view-crosslink {
+  margin: 8px 0;
+}
+
 /* ─── YUK-52 — note-prose: scoped rules for NoteRenderer ───────────────────
    Targets <NoteRenderer kind="note">. Sits beside .artifact-section-body
    so atomic note bodies get list / code / image / blockquote rhythm without

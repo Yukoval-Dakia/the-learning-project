@@ -296,6 +296,7 @@ export function ArtifactBlockTree({
       </div>
       {editing ? (
         <LazyBlockTreeEditor
+          artifactId={artifactId}
           initialContent={localBodyBlocks}
           saving={saving}
           onSave={saveBodyBlocks}

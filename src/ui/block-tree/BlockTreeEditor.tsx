@@ -10,6 +10,8 @@ import { blockTreeEditorExtensions } from './tiptap-extensions';
 import type { BlockTreeDoc } from './types';
 
 interface BlockTreeEditorProps {
+  /** Artifact being edited; enables the `@` cross_link picker (self-link excluded). */
+  artifactId?: string;
   initialContent: BlockTreeDoc;
   saving?: boolean;
   onSave: (content: BlockTreeDoc) => Promise<void> | void;
@@ -18,6 +20,7 @@ interface BlockTreeEditorProps {
 }
 
 export function BlockTreeEditor({
+  artifactId,
   initialContent,
   saving = false,
   onSave,
@@ -25,7 +28,10 @@ export function BlockTreeEditor({
   onEditorBlur,
 }: BlockTreeEditorProps) {
   const [pasteDraft, setPasteDraft] = useState('');
-  const extensions = useMemo(() => blockTreeEditorExtensions(), []);
+  const extensions = useMemo(
+    () => blockTreeEditorExtensions(artifactId ? { artifactId } : undefined),
+    [artifactId],
+  );
   const editor = useEditor({
     extensions,
     content: initialContent as JSONContent,
@@ -111,6 +117,17 @@ export function BlockTreeEditor({
         >
           Code
         </Button>
+        {artifactId ? (
+          <Button
+            variant="quiet"
+            size="sm"
+            icon="link"
+            title="插入 cross_link（也可直接输入 @）"
+            onClick={() => activeEditor.chain().focus().insertContent('@').run()}
+          >
+            Link
+          </Button>
+        ) : null}
         <div className="block-tree-editor-toolbar-spacer" />
         <Button variant="ghost" size="sm" icon="x" onClick={onCancel}>
           Cancel

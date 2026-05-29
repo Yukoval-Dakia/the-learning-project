@@ -51,6 +51,7 @@
     "@tiptap/extension-link": "^3.23.6",
     "@tiptap/react": "^3.23.6",
     "@tiptap/starter-kit": "^3.23.6",
+    "@tiptap/suggestion": "^3.23.6",
     "ai": "^6.0.176",
     "client-zip": "^2.5.0",
     "drizzle-orm": "^0.45.2",
