@@ -108,6 +108,11 @@ export function ArtifactBlockTree({
   const [backlinksOpen, setBacklinksOpen] = useState(false);
   const [backlinks, setBacklinks] = useState<BacklinkRow[] | null>(null);
   const [backlinksLoading, setBacklinksLoading] = useState(false);
+  // YUK-95 P5 Lane-D — artifact_ids the user just dismissed from the auto-zone
+  // (optimistic client-side hide; server removes the child + the next nightly
+  // run honors suppressed_block_refs).
+  const [dismissedAutoLinkIds, setDismissedAutoLinkIds] = useState<Set<string>>(new Set());
+  const [dismissingAutoLinkId, setDismissingAutoLinkId] = useState<string | null>(null);
   const correctionWriteGenerationRef = useRef(0);
 
   useEffect(() => {
@@ -122,6 +127,8 @@ export function ArtifactBlockTree({
     // Reset the (lazily fetched) backlink panel when switching artifacts.
     setBacklinksOpen(false);
     setBacklinks(null);
+    // Reset optimistic auto-link dismissals when switching artifacts.
+    setDismissedAutoLinkIds(new Set());
     apiJson<ArtifactCorrectionStateResponse>(`/api/artifacts/${artifactId}/correct`)
       .then((state) => {
         if (canceled) return;
@@ -326,6 +333,37 @@ export function ArtifactBlockTree({
     }
   }
 
+  // YUK-95 P5 Lane-D — dismiss one system-maintained auto-link. Optimistically
+  // hide it, then POST to the hub dismiss write-path (appends
+  // suppressed_block_refs + writes a suppress event + removes the child). On
+  // failure, un-hide and surface the error.
+  async function dismissAutoLink(target: { artifact_id: string; relation: string | null }) {
+    setDismissingAutoLinkId(target.artifact_id);
+    setSaveError(null);
+    setDismissedAutoLinkIds((current) => new Set(current).add(target.artifact_id));
+    try {
+      await apiJson(`/api/hubs/${artifactId}/dismiss-link`, {
+        method: 'POST',
+        body: JSON.stringify({
+          suppressed_artifact_id: target.artifact_id,
+          ...(target.relation ? { relation: target.relation } : {}),
+        }),
+      });
+      // Server removed the child + recorded the suppress; refresh to pull the
+      // canonical body_blocks (the optimistic hide bridges the gap until then).
+      router.refresh();
+    } catch (err) {
+      setDismissedAutoLinkIds((current) => {
+        const next = new Set(current);
+        next.delete(target.artifact_id);
+        return next;
+      });
+      setSaveError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDismissingAutoLinkId(null);
+    }
+  }
+
   return (
     <div className="block-tree-panel">
       <div className="block-tree-panel-actions">
@@ -354,6 +392,20 @@ export function ArtifactBlockTree({
           embeddedQuestions={embeddedQuestions}
           embeddedCheckStatus={embeddedCheckStatus}
           correctionBlocks={correctionState?.blocks ?? {}}
+          hiddenAutoLinkArtifactIds={dismissedAutoLinkIds}
+          renderAutoLinkDismiss={(target) => (
+            <Button
+              variant="ghost"
+              size="sm"
+              icon="x"
+              className="auto-link-dismiss"
+              title="不再自动链接此笔记"
+              disabled={dismissingAutoLinkId === target.artifact_id}
+              onClick={() => dismissAutoLink(target)}
+            >
+              {dismissingAutoLinkId === target.artifact_id ? '...' : '移除'}
+            </Button>
+          )}
           renderBlockActions={({ id, status }) => {
             const isPending = pendingCorrectionBlockId === id;
             if (markingWrongBlockId === id) {

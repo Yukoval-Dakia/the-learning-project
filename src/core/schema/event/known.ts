@@ -264,6 +264,38 @@ export const CorrectArtifactEvent = z
   });
 export type CorrectArtifactEventT = z.infer<typeof CorrectArtifactEvent>;
 
+// 6d. SuppressArtifactLink — actor=user / action='suppress' / subject='artifact'
+//
+// YUK-95 P5 Lane-D (Wave 7), ADR-0020 §9 dismiss. The user hides one
+// system-maintained auto-link from a hub's `AutoLinksContainer`. The dismiss
+// write path (POST /api/hubs/[id]/dismiss-link) appends the dismissed target to
+// `artifact.attrs.suppressed_block_refs[]` AND writes this event so the action
+// is traceable + reversible (XC-5 event-driven: dismiss is an event, not a
+// silent attrs mutation). The nightly `hub_auto_sync_nightly` worker reads
+// `suppressed_block_refs` and skips the suppressed atomic on the next run.
+//
+// `subject_id` is the HUB artifact_id (the artifact whose auto-zone is being
+// pruned). `payload.suppressed_artifact_id` is the TARGET atomic whose
+// crossLinkBlock is dismissed. `relation` is optional provenance (the chip's
+// relation at dismiss time) for audit display.
+
+export const SuppressArtifactLink = z.object({
+  actor_kind: z.literal('user'),
+  actor_ref: z.literal('self'),
+  action: z.literal('suppress'),
+  subject_kind: z.literal('artifact'),
+  subject_id: z.string(),
+  outcome: z.literal('success'),
+  payload: z
+    .object({
+      suppressed_artifact_id: z.string().min(1),
+      relation: z.enum(['subtopic', 'prerequisite', 'derived_from', 'contrasts_with']).optional(),
+    })
+    .strict(),
+  ...baseOptionalFields,
+});
+export type SuppressArtifactLinkT = z.infer<typeof SuppressArtifactLink>;
+
 // 7. ExtractSourceDocument — actor=agent / action='extract' / subject='source_document'
 //
 // Tencent OCR 抽取一份 source_document → 一组 question_block。outcome='success'（全成功）/
@@ -468,9 +500,11 @@ export type RateKnowledgeEdgeT = z.infer<typeof RateKnowledgeEdge>;
 // KnownEvent union
 // ====================================================================
 //
-// Zod discriminatedUnion 只支持单键判别，且要求每个分支 literal 唯一。union 里有 3 个
+// Zod discriminatedUnion 只支持单键判别，且要求每个分支 literal 唯一。union 里有 4 个
 // action 重复（'propose' × {knowledge, knowledge_edge}、'generate' × {artifact,
-// knowledge_edge}、'rate' × {event, knowledge_edge}），所以**用 z.union**。
+// knowledge_edge}、'rate' × {event, knowledge_edge}、'correct' × {event, artifact}），
+// 加上新增的 'suppress' × {artifact}（与 correct/artifact 同 subject 但 action 不同），
+// 所以**用 z.union**。
 //
 // 每个 schema 用 z.literal() 锁 (action, subject_kind) 组合，因此 parse 时仍单义解析 ——
 // Zod 会按 union 顺序尝试，第一个 matching schema 胜出。
@@ -489,6 +523,7 @@ export const KnownEvent = z.union([
   GenerateKnowledgeEdge,
   CorrectEvent,
   CorrectArtifactEvent,
+  SuppressArtifactLink,
   RateEvent,
   RateKnowledgeEdge,
   AcceptSuggestionChip,

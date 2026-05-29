@@ -16,8 +16,9 @@ export * from './experimental';
 // ====================================================================
 //
 // Parse precedence（z.union 按顺序 try，第一个成功胜出）：
-//   1. KnownEvent — 14 个稳定分支（含 ToolUseQuery，自 ADR-0011 §1.1 promote 自
-//      `experimental:tool_use`）
+//   1. KnownEvent — 15 个稳定分支（含 ToolUseQuery，自 ADR-0011 §1.1 promote 自
+//      `experimental:tool_use`；含 SuppressArtifactLink，YUK-95 P5 Lane-D
+//      ADR-0020 §9 dismiss）
 //   2. UserCauseExperimental — experimental:user_cause 的特化（payload shape 已 locked）
 //   3. RecordCaptureExperimental — experimental:record_capture
 //   4. MemoryBriefRefreshExperimental — experimental:memory_brief_refresh

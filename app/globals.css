@@ -2336,6 +2336,86 @@ ol {
   color: var(--ink-4);
 }
 
+/* ─── YUK-95 P5 Lane-D — AutoLinksContainer relation chip + dismiss ─────────
+   System-maintained auto-links (attrs.auto===true, written by the nightly
+   hub_auto_sync worker) show a "系统维护" marker + relation chip; hover surfaces
+   the dismiss (×) button. Tokens-only so it matches read + edit in light/dark.
+*/
+.block-tree-link-card--auto {
+  border-left: 2px solid var(--info-ink, var(--ink-4));
+}
+
+.block-tree-link-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+/* "系统维护" provenance marker. */
+.auto-link-system-tag {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  padding: 1px 6px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-pill);
+  background: var(--paper-sunk);
+}
+
+/* Relation chip ("via 子主题" / "via prerequisite" / "via 派生" / "via 对比"). */
+.auto-link-chip {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  line-height: 1;
+  padding: 2px 7px;
+  border-radius: var(--r-pill);
+  white-space: nowrap;
+  border: 1px solid var(--line-soft);
+}
+
+.auto-link-chip--subtopic {
+  background: var(--info-soft);
+  color: var(--info-ink);
+  border-color: rgba(79, 110, 142, 0.2);
+}
+
+.auto-link-chip--prerequisite {
+  background: var(--good-soft);
+  color: var(--good-ink);
+  border-color: var(--good-line);
+}
+
+.auto-link-chip--derived {
+  background: var(--hard-soft);
+  color: var(--hard-ink);
+  border-color: var(--hard-line);
+}
+
+/* contrasts_with: phase-deferred tone. The dedicated `--contrasts` purple token
+   is being added in the parallel T-KG branch (not yet on main). Until T-KG
+   merges, reuse a neutral --ink-4 tone here; switch the three declarations below
+   to var(--contrasts*) once T-KG lands (do NOT add the token in this lane — it
+   would collide with T-KG). Tracked as a YUK-95 follow-up. */
+.auto-link-chip--contrasts {
+  background: var(--paper-sunk);
+  color: var(--ink-4);
+  border-color: var(--line-soft);
+}
+
+/* Dismiss button — hidden until the card is hovered/focused (read view only;
+   the editor NodeView does not render it). */
+.block-tree-link-card-head .auto-link-dismiss {
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.block-tree-link-card:hover .auto-link-dismiss,
+.block-tree-link-card:focus-within .auto-link-dismiss {
+  opacity: 1;
+}
+
 .block-tree-editor-shell {
   display: flex;
   flex-direction: column;
