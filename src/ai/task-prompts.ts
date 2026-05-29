@@ -96,6 +96,25 @@ plan_case 有三种：
 - 禁止套话（「加油」「重要主题」）；3c 禁止编造没有的子节点；3a/3b 禁止只给 root 不给 children`;
 }
 
+// YUK-143 / ADR-0024 — North-Star GoalScopeTask (ND-2). AI infers which
+// knowledge nodes a fuzzy goal covers + a rough learning order, from the
+// knowledge-grid snapshot. Output is a `goal_scope` proposal (confirm/edit/
+// dismiss). Critically: this only ADDS direction — it never implies the goal
+// suppresses review (ND-5); sequence_hint is internal ordering, NOT progress.
+function buildGoalScopePrompt(profile: SubjectProfile): string {
+  return `你是学习目标规划助手。用户给一个模糊的学习目标标题（如「能流畅读《史记》」），输入 { goal_title, subject_id, grid: { nodes: [{ id, name, effective_domain, mastery, evidence_count }], edges: [{ from_knowledge_id, to_knowledge_id, relation_type }] } }。
+科目上下文：${profile.displayName}。${profile.languageStyle}
+任务：从 grid.nodes 里推断这个目标**覆盖**哪些知识节点（scope_knowledge_ids），并给一个粗略的学习顺序提示（sequence_hint，整数，越小越靠前）。利用 edges 的 prerequisite / related_to 关系判断先后；mastery 低的薄弱节点更值得纳入 scope。
+严格 JSON 输出（不带 markdown 代码块包裹）：
+{"scope_knowledge_ids":["<grid.nodes 里的 id>", "..."],"sequence_hint":0,"reasoning":"... 为什么这些节点构成这个目标的覆盖范围 + 顺序依据 ..."}
+要点：
+- scope_knowledge_ids 里的每个 id 必须是 grid.nodes 里真实存在的 id；禁止发明节点
+- sequence_hint 是一个整数排序提示，**不是**进度 / 完成度（不要输出百分比 / 完成率）
+- reasoning 具体：引用节点名 + prerequisite 关系或 mastery 证据，别空泛
+- 覆盖范围宁缺毋滥：只纳入真正服务于该目标的节点，不凑数
+- 禁止套话（「加油」「这是个好目标」）`;
+}
+
 function buildNoteGeneratePrompt(profile: SubjectProfile): string {
   return `你是${noteWriterRole(profile)}。输入 { artifact_id, artifact_type, title, atomic_title, one_line_intent, knowledge_node: { id, name, domain }, knowledge_nodes: [...], parent_hub: { title, summary_md }, related_knowledge_ids: [...] }。
 artifact_type 只能是 note_atomic / note_long / note_hub；这是同一个 NoteGenerateTask 内的 type switch。
@@ -417,6 +436,8 @@ export function getTaskSystemPrompt(
       return buildKnowledgeReviewPrompt(profile);
     case 'LearningIntentOutlineTask':
       return buildLearningIntentOutlinePrompt(profile);
+    case 'GoalScopeTask':
+      return buildGoalScopePrompt(profile);
     case 'NoteGenerateTask':
       return buildNoteGeneratePrompt(profile);
     case 'NoteVerifyTask':

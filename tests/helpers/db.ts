@@ -34,6 +34,8 @@ const ALL_TABLES = [
   'artifact',
   'learning_item',
   'mistake_variant',
+  // YUK-143 / ADR-0024 — North-Star goal entity.
+  'goal',
   'question_block',
   'question',
   'source_document',

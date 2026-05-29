@@ -440,6 +440,20 @@ export const tasks = {
     systemPrompt:
       "你是知识图谱维护助手。看完整 tree（含层级 / archived / merged_from）+ 最近 attempt events (action='attempt', outcome='failure' 的事件，含 effective cause：active user_cause 优先，否则 latest active judge)，propose 让知识图谱更合理的 mutation。\n可选 mutation 分两类:\n- Tree-shape: propose_new（加新子节点）/ reparent（移到别 parent 下）/ merge（合并冗余）/ split（拆解过粗）/ archive（archive 没用的）。\n- Mesh-shape (ADR-0010): propose_knowledge_edge —— payload = { from_knowledge_id, to_knowledge_id, relation_type, reasoning }。relation_type 是 5 个核心 enum 之一: prerequisite / related_to / contrasts_with / applied_in / derived_from；新型关系用 experimental:* 命名空间逃逸阀（先跑稳，后续 promote）。\n每 propose 一条，调一次 write_proposal({mutation, payload, reasoning})。reasoning 必须具体（指向 attempt event id 或 tree 结构）。不必凑数；如果 tree 已经合理，0 条也行。Phase 1a 单 domain wenyan：禁止 propose_new / reparent / split 把节点变 root（parent_id=null）。",
   },
+  GoalScopeTask: {
+    kind: 'GoalScopeTask',
+    description:
+      'YUK-143 / ADR-0024 — North-Star goal→scope translation (ND-2). Input = goal title + knowledge-grid snapshot (nodes + mastery + mesh edges). Output = inferred scope_knowledge_ids[] + rough sequence_hint + reasoning, written as a `goal_scope` AiProposal (confirm/edit/dismiss). Single structured-output call (no tool loop), mimo-v2.5-pro text.',
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
+    needsToolCall: false,
+    isMultimodal: false,
+    allowedTools: [],
+    systemPrompt:
+      '你是学习目标规划助手。用户给一个模糊的学习目标标题，你看知识网格快照（节点 + 掌握度 + mesh 边），推断这个目标覆盖哪些知识节点 + 一个粗略的学习顺序，输出严格 JSON。不要发明网格里没有的节点 id。',
+  },
   // 其余 Task（VariantGen / Judge* / Dreaming / Maintenance 等）见
   // docs/architecture.md § 五，按需补全。
 } satisfies Record<string, TaskDef>;

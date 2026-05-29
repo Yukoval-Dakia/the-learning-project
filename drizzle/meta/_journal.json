@@ -148,6 +148,13 @@
       "when": 1780050367235,
       "tag": "0020_greedy_firestar",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1780075058509,
+      "tag": "0021_yuk143_goal",
+      "breakpoints": true
     }
   ]
 }

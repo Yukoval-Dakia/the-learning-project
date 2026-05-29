@@ -520,6 +520,11 @@ const KIND_TO_GROUP: Record<AiProposalKindT, keyof ProposalGroups> = {
   note_update: 'content',
   variant_question: 'content',
   judge_retraction: 'review',
+  // YUK-143 / ADR-0024 — North-Star goal_scope proposals bucket under
+  // 'learning' for the W9 breakdown count. The dedicated /today goal card +
+  // goal-lens UI is Wave-10; this entry only keeps the exhaustive Record in
+  // sync with the server-side aiProposalKinds enum (no behavior change).
+  goal_scope: 'learning',
 };
 
 function proposalGroupCounts(counts: ProposalKindCounts): ProposalGroups {

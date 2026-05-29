@@ -17,13 +17,24 @@ import {
 } from '@/server/ai/tools/allowlists';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
+// YUK-143 / ADR-0025 — North-Star: feed active goals into the Coach input so it
+// can add a goal-oriented strand. Purely ADDITIVE (ND-5): the FSRS-due / review
+// backbone and other capture tasks are untouched; goals only add direction.
+import { type ActiveGoal, listActiveGoals } from '@/server/goals/queries';
 import { type ProposalInboxRow, listProposalInboxRows } from '@/server/proposals/inbox';
 
 export const COACH_MAX_PROPOSALS = 5;
-export const COACH_DAILY_OBJECTIVE =
-  'Produce a TodayPlan for the user via the provided DomainTools. Only write proposals (defer / split / relearn / archive / completion / maintenance); never mutate user data directly. Prefer doing nothing if the day has no actionable adjustments.';
-export const COACH_WEEKLY_OBJECTIVE =
-  'Produce a weekly TodayPlan with a `weekly_reflection` summary plus any plan adjustments / maintenance proposals via propose_* tools. Only write proposals; never mutate user data directly.';
+// YUK-143 / ADR-0025 — North-Star goal strand guidance appended to the Coach
+// objective. ND-5 is stated explicitly: the goal strand is ADDITIVE only — it
+// must NOT suppress FSRS-due reviews, hide other capture tasks, preempt the
+// daily quota, or change due times. When active_goals is present the model adds
+// a `goal_strand` (each item tagged `serves_goal_id` + `knowledge_ids`) and
+// lists the addressed goals in `goal_ids`, distributing effort across goals
+// (round-robin + weakest-scope first). When empty, omit the strand.
+const COACH_GOAL_STRAND_GUIDANCE =
+  ' If active_goals are provided, additionally add a goal-oriented strand: set TodayPlan.goal_ids to the goals you address and add goal_strand items (each tagged serves_goal_id + knowledge_ids). Distribute attention across active goals (round-robin + weakest-scope first). CRITICAL: the goal strand is purely additive direction — it must NOT suppress or replace the FSRS-due review backbone, hide other capture tasks, preempt the daily review quota, or change any due times. If there are no active goals, omit the goal strand.';
+export const COACH_DAILY_OBJECTIVE = `Produce a TodayPlan for the user via the provided DomainTools. Only write proposals (defer / split / relearn / archive / completion / maintenance); never mutate user data directly. Prefer doing nothing if the day has no actionable adjustments.${COACH_GOAL_STRAND_GUIDANCE}`;
+export const COACH_WEEKLY_OBJECTIVE = `Produce a weekly TodayPlan with a \`weekly_reflection\` summary plus any plan adjustments / maintenance proposals via propose_* tools. Only write proposals; never mutate user data directly.${COACH_GOAL_STRAND_GUIDANCE}`;
 
 export interface CoachRunResult {
   processed: number;
@@ -46,6 +57,8 @@ type RunAgentTaskFn = (
 type ListProposalInboxRowsFn = (db: Db) => Promise<ProposalSnapshotRow[]>;
 type BuildMcpServerFn = typeof buildMcpServerFromRegistry;
 type WriteEventFn = (db: Db, input: WriteEventInput) => Promise<string>;
+// YUK-143 / ADR-0025 — swappable active-goals reader (DB tests inject fixtures).
+type ListActiveGoalsFn = (db: Db) => Promise<ActiveGoal[]>;
 
 export type CoachRunKind = 'daily' | 'weekly';
 
@@ -54,6 +67,9 @@ export interface CoachRunDeps {
   listProposalInboxRowsFn?: ListProposalInboxRowsFn;
   buildMcpServerFn?: BuildMcpServerFn;
   writeEventFn?: WriteEventFn;
+  // YUK-143 / ADR-0025 — defaults to listActiveGoals; goals feed the additive
+  // goal strand only and never touch the review backbone (ND-5).
+  listActiveGoalsFn?: ListActiveGoalsFn;
   now?: () => Date;
 }
 
@@ -62,12 +78,23 @@ function buildCoachInput(
   now: Date,
   beforeRows: ProposalSnapshotRow[],
   objective: string,
+  activeGoals: ActiveGoal[],
 ) {
   return {
     run_kind: runKind,
     now: now.toISOString(),
     pending_proposals_before: beforeRows.filter((row) => row.status === 'pending').length,
     objective,
+    // YUK-143 / ADR-0025 — active goals for the additive goal strand (ND-5).
+    // Ordered by sequence_hint then created_at (listActiveGoals). Empty array
+    // when no goals exist → model omits the strand, plan is unchanged.
+    active_goals: activeGoals.map((g) => ({
+      id: g.id,
+      title: g.title,
+      subject_id: g.subject_id,
+      scope_knowledge_ids: g.scope_knowledge_ids,
+      sequence_hint: g.sequence_hint,
+    })),
     budget: {
       max_tool_calls: 12,
       max_proposals: COACH_MAX_PROPOSALS,
@@ -80,7 +107,7 @@ function buildCoachInput(
     },
     output_schema: {
       kind: 'TodayPlan',
-      hint: 'Return a JSON object with daily_focus, review_session_proposal, plan_adjustments[], maintenance_proposals[]. Weekly runs additionally set weekly_reflection.',
+      hint: 'Return a JSON object with daily_focus, review_session_proposal, plan_adjustments[], maintenance_proposals[]. Weekly runs additionally set weekly_reflection. When active_goals are present, also set goal_ids[] and goal_strand[] (each item: serves_goal_id, knowledge_ids[], focus) — additive only, never replacing review_session_proposal (ND-5).',
     },
   };
 }
@@ -95,11 +122,16 @@ export async function runCoach(
   const run = deps.runAgentTaskFn ?? runAgentTask;
   const buildMcpServer = deps.buildMcpServerFn ?? buildMcpServerFromRegistry;
   const write = deps.writeEventFn ?? writeEvent;
+  const listGoals = deps.listActiveGoalsFn ?? listActiveGoals;
   const triggerActorRef = runKind === 'daily' ? 'nightly_coach' : 'weekly_coach';
   const objective = runKind === 'daily' ? COACH_DAILY_OBJECTIVE : COACH_WEEKLY_OBJECTIVE;
 
   const beforeRows = await listRows(db);
   const beforeIds = new Set(beforeRows.map((row) => row.id));
+  // YUK-143 / ADR-0025 — read active goals for the additive goal strand. This is
+  // a read-only ADD to the Coach signal set; it does not read the FSRS-due queue
+  // or mutate any review state (ND-5).
+  const activeGoals = await listGoals(db);
   const triggerEventId = `coach_trigger_${createId()}`;
   const toolContextTaskRunId = `coach_tool_${createId()}`;
 
@@ -144,7 +176,7 @@ export async function runCoach(
 
     const taskResult = await run(
       'CoachTask',
-      buildCoachInput(runKind, now, beforeRows, objective),
+      buildCoachInput(runKind, now, beforeRows, objective, activeGoals),
       {
         db,
         mcpServers: { [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer },

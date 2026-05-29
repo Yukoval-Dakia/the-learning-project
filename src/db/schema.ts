@@ -667,6 +667,51 @@ export const mistake_variant = pgTable(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// YUK-143 / ADR-0025 — North-Star `goal` entity (Wave-9 core).
+//
+// A goal is a long-lived, usually subject-scoped learning intent ("能流畅读
+// 《史记》"). It is materialized from a `goal_scope` AiProposal being accepted
+// (evidence-first): create/confirm go through the event log, the goal row's
+// `source_ref` points at the propose event id. Multiple goals run in parallel
+// (ND-1); a goal only ADDS direction (soft bias + tags) and never suppresses
+// FSRS-due reviews or other capture tasks (ND-5 — see ADR-0025).
+//
+// `sequence_hint` is AI-internal ordering only — NOT surfaced as progress
+// (ND-4: no progress bar / % complete). `learning_session.goal_id` stays a
+// stub (NOT an FK to goal.id): a goal spans many sessions, so binding it to a
+// single session is the wrong cardinality (ADR-0025 decision 1).
+export const goal = pgTable(
+  'goal',
+  {
+    id: text('id').primaryKey(),
+    title: text('title').notNull(),
+    // nullable — cross-subject goals are allowed (ND-1).
+    subject_id: text('subject_id'),
+    // AI-inferred + user-confirmed knowledge nodes the goal covers.
+    scope_knowledge_ids: jsonb('scope_knowledge_ids').$type<string[]>().notNull().default([]),
+    // AI-internal sequencing hint; NOT a progress metric (ND-4).
+    sequence_hint: integer('sequence_hint').notNull().default(0),
+    // 'active' | 'dormant' | 'done'
+    status: text('status', { enum: ['active', 'dormant', 'done'] })
+      .notNull()
+      .default('active'),
+    // provenance: how this goal came to exist, e.g. 'goal_scope_proposal'.
+    // set-once at materialization (see audit-schema allowlist note).
+    source: text('source').notNull(),
+    // the propose event id that materialized this goal (evidence chain).
+    // set-once at materialization.
+    source_ref: text('source_ref'),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+    version: integer('version').notNull().default(0),
+  },
+  (t) => [
+    index('goal_status_idx').on(t.status, t.sequence_hint, t.created_at),
+    index('goal_subject_idx').on(t.subject_id),
+  ],
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Phase 1c.1 Step 1.3 (Lane A) — knowledge_mastery derived view.
 //
 // Per ADR-0012: mastery / last_active_at are derived from events, not stored
