@@ -417,4 +417,126 @@ describe('loadKnowledgeNodePage', () => {
     expect(page?.backlinks[0].from_artifact_id).toBe('a-source');
     expect(page?.backlinks[0].from_learning_item_id).toBeNull();
   });
+
+  // YUK-161 Bug 1: the primary atomic's title links to its owning learning_item.id
+  // (NOT the artifact id), same class as the backlink fix — linking by artifact id
+  // 404s. owning_learning_item_id resolves from learning_item.primary_artifact_id.
+  it('resolves primary atomic owning_learning_item_id from primary_artifact_id', async () => {
+    const db = testDb();
+    await seedKnowledge('k1', { name: '虚词' });
+    await seedAtomicArtifact('a1', 'k1', { type: 'doc', content: [] });
+    // owning learning_item whose primary_artifact_id points at the primary atomic
+    await seedLearningItem('li-1', 'a1');
+
+    const page = await loadKnowledgeNodePage(db, 'k1');
+    expect(page?.primary_atomic?.id).toBe('a1');
+    // the page-link target is the learning_item id, not the artifact id
+    expect(page?.primary_atomic?.owning_learning_item_id).toBe('li-1');
+    expect(page?.primary_atomic?.owning_learning_item_id).not.toBe('a1');
+  });
+
+  // YUK-161 Bug 1 edge: no non-archived owning learning_item → null so the title
+  // renders as a non-link (never a 404 href).
+  it('returns null primary atomic owning_learning_item_id when no owning learning_item exists', async () => {
+    const db = testDb();
+    await seedKnowledge('k1', { name: '虚词' });
+    await seedAtomicArtifact('a1', 'k1', { type: 'doc', content: [] });
+
+    const page = await loadKnowledgeNodePage(db, 'k1');
+    expect(page?.primary_atomic?.id).toBe('a1');
+    expect(page?.primary_atomic?.owning_learning_item_id).toBeNull();
+  });
+
+  it('returns null primary atomic owning_learning_item_id when the owning learning_item is archived', async () => {
+    const db = testDb();
+    await seedKnowledge('k1', { name: '虚词' });
+    await seedAtomicArtifact('a1', 'k1', { type: 'doc', content: [] });
+    await seedLearningItem('li-archived', 'a1', { archived: true });
+
+    const page = await loadKnowledgeNodePage(db, 'k1');
+    expect(page?.primary_atomic?.id).toBe('a1');
+    expect(page?.primary_atomic?.owning_learning_item_id).toBeNull();
+  });
+
+  // YUK-161 Bug 2: resolveEffectiveDomain must stop at an archived ancestor, the
+  // same archived-stop semantics loadTreeSnapshot uses (it only keeps non-archived
+  // rows in byId). A null-domain child under an archived ancestor that carries a
+  // domain must NOT inherit that domain — pre-fix the walk had no archived filter
+  // and returned the archived ancestor's domain, diverging from the tree.
+  it('does not inherit effective_domain from an archived ancestor', async () => {
+    const db = testDb();
+    const now = new Date();
+    // archived parent carrying a non-null domain
+    await db.insert(knowledge).values({
+      id: 'kp-archived',
+      name: '数学',
+      parent_id: null,
+      domain: 'math',
+      archived_at: now,
+      merged_from: [],
+      proposed_by_ai: false,
+      approval_status: 'approved',
+      version: 0,
+      created_at: now,
+      updated_at: now,
+    });
+    // live child with a null domain → would inherit from the parent chain
+    await db.insert(knowledge).values({
+      id: 'kc',
+      name: '虚词',
+      parent_id: 'kp-archived',
+      domain: null,
+      archived_at: null,
+      merged_from: [],
+      proposed_by_ai: false,
+      approval_status: 'approved',
+      version: 0,
+      created_at: now,
+      updated_at: now,
+    });
+
+    const page = await loadKnowledgeNodePage(db, 'kc');
+    expect(page).not.toBeNull();
+    expect(page?.domain).toBeNull();
+    // archived-stop semantics: the archived ancestor's domain must NOT leak through
+    expect(page?.effective_domain).not.toBe('math');
+    expect(page?.effective_domain).toBeNull();
+  });
+
+  // YUK-161 Bug 2 positive control: a NON-archived ancestor's domain is still
+  // inherited (the fix only stops at archived rows, not all walks).
+  it('still inherits effective_domain from a non-archived ancestor', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(knowledge).values({
+      id: 'kp-live',
+      name: '数学',
+      parent_id: null,
+      domain: 'math',
+      archived_at: null,
+      merged_from: [],
+      proposed_by_ai: false,
+      approval_status: 'approved',
+      version: 0,
+      created_at: now,
+      updated_at: now,
+    });
+    await db.insert(knowledge).values({
+      id: 'kc2',
+      name: '虚词',
+      parent_id: 'kp-live',
+      domain: null,
+      archived_at: null,
+      merged_from: [],
+      proposed_by_ai: false,
+      approval_status: 'approved',
+      version: 0,
+      created_at: now,
+      updated_at: now,
+    });
+
+    const page = await loadKnowledgeNodePage(db, 'kc2');
+    expect(page?.domain).toBeNull();
+    expect(page?.effective_domain).toBe('math');
+  });
 });

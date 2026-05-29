@@ -40,6 +40,12 @@ export interface NodePageEmbeddedQuestion {
 
 export interface NodePagePrimaryAtomic {
   id: string;
+  // owning learning_item.id for this atomic (primary_artifact_id == atomic.id),
+  // null when the atomic has no non-archived owning learning_item. The node page
+  // title links to /learning-items/<owning_learning_item_id> (that route queries
+  // by learning_item.id, NOT artifact.id; linking by the artifact id 404s — same
+  // class as the backlink rows); when null the title renders as a non-link. (Codex #193)
+  owning_learning_item_id: string | null;
   title: string;
   version: number;
   body_blocks: ArtifactBodyBlocksT | null;
@@ -231,8 +237,14 @@ export async function loadKnowledgeNodePage(
           .filter((r): r is NonNullable<typeof r> => r !== undefined);
       }
     }
+    // Resolve the primary atomic to its owning learning_item so the title links
+    // to /learning-items/<learning_item_id> instead of the artifact id (those are
+    // distinct ids; linking by artifact id 404s — Codex #193 / YUK-161). Mirrors
+    // the backlink-source resolution below; null when no non-archived owner.
+    const owningLearningItemForAtomic = await resolveOwningLearningItemIds(db, [atomic.id]);
     primaryAtomic = {
       id: atomic.id,
+      owning_learning_item_id: owningLearningItemForAtomic.get(atomic.id) ?? null,
       title: atomic.title,
       version: atomic.version,
       body_blocks: atomic.body_blocks,
@@ -355,8 +367,13 @@ async function loadNames(db: Db, ids: string[]): Promise<Map<string, string>> {
 }
 
 // Walk up the parent chain until a node carries an explicit domain. Mirrors
-// loadTreeSnapshot's effective-domain inheritance (depth-capped at 32 to guard
-// against cyclic parent_id data).
+// loadTreeSnapshot's effective-domain inheritance: it only keeps non-archived
+// rows in byId and stops at an archived ancestor, so the walk filters
+// isNull(archived_at) too — an archived (or missing) ancestor stops the walk
+// and returns null, matching the parent-name lookup above. Without this filter
+// the node detail page could inherit a domain from an archived ancestor that
+// the tree never would (divergent effective_domain — Codex #193 / YUK-161).
+// Depth-capped at 32 to guard against cyclic parent_id data.
 async function resolveEffectiveDomain(db: Db, startParentId: string): Promise<string | null> {
   let currentId: string | null = startParentId;
   let depth = 0;
@@ -364,7 +381,7 @@ async function resolveEffectiveDomain(db: Db, startParentId: string): Promise<st
     const rows: { domain: string | null; parent_id: string | null }[] = await db
       .select({ domain: knowledge.domain, parent_id: knowledge.parent_id })
       .from(knowledge)
-      .where(eq(knowledge.id, currentId))
+      .where(and(eq(knowledge.id, currentId), isNull(knowledge.archived_at)))
       .limit(1);
     const row = rows[0];
     if (!row) return null;

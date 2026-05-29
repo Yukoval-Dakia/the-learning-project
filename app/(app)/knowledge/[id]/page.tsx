@@ -28,6 +28,7 @@ interface MeshNeighbor {
 
 interface PrimaryAtomic {
   id: string;
+  owning_learning_item_id: string | null;
   title: string;
   version: number;
   body_blocks: BlockTreeDoc | null;
@@ -305,9 +306,20 @@ function PrimaryAtomicView({
   }
   return (
     <div style={{ marginTop: 'var(--s-2)' }}>
-      <Link href={`/learning-items/${atomic.id}`} style={{ color: 'var(--coral)' }}>
-        {atomic.title} →
-      </Link>
+      {/* Link to the owning learning_item (its detail route queries by
+          learning_item.id, not artifact.id). When unresolved (no non-archived
+          owning learning_item) render a non-link so we never emit a 404 href —
+          mirrors the backlink rows below. (Codex #193 / YUK-161) */}
+      {atomic.owning_learning_item_id ? (
+        <Link
+          href={`/learning-items/${atomic.owning_learning_item_id}`}
+          style={{ color: 'var(--coral)' }}
+        >
+          {atomic.title} →
+        </Link>
+      ) : (
+        <span style={{ color: 'var(--ink)' }}>{atomic.title}</span>
+      )}
       <div style={{ marginTop: 'var(--s-3)' }}>
         <BlockTreeRenderer
           bodyBlocks={atomic.body_blocks}
