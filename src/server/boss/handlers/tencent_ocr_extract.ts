@@ -2,18 +2,28 @@ import type { Job } from 'pg-boss';
 import sharp from 'sharp';
 
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
+import type { FigureRefT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { learning_session, source_asset } from '@/db/schema';
 import { writeCostLedger } from '@/server/ai/log';
 import { type PreAttachFigure, cropAndUploadFigures } from '@/server/ingestion/crop';
 import { assignFigures } from '@/server/ingestion/figure_attach';
+// T-OC slice 2 (YUK-145, OC-1/OC-2): VLM StructureTask owns the structure tree;
+// Tencent structure is demoted to a text hint. See
+// docs/superpowers/plans/2026-05-30-yuk145-toc-slice2-lane.md.
+import {
+  type StructureResult,
+  StructureTaskError,
+  renderTencentHint,
+  runStructureTask,
+} from '@/server/ingestion/structure';
 import {
   type DescribeResponse,
   pollUntilDone,
   submitOcrJob,
 } from '@/server/ingestion/tencent_mark';
 import { mapTencentError } from '@/server/ingestion/tencent_mark_errors';
-import { parseMarkAgentResponse } from '@/server/ingestion/tencent_mark_parser';
+import { type LayoutQuality, parseMarkAgentResponse } from '@/server/ingestion/tencent_mark_parser';
 import type { R2Client } from '@/server/r2';
 import { Ingestion } from '@/server/session';
 import { and, eq } from 'drizzle-orm';
@@ -28,6 +38,12 @@ export type TencentOcrDeps = {
   /** Test override: skip real Tencent SDK calls. */
   submitFn?: typeof submitOcrJob;
   pollFn?: typeof pollUntilDone;
+  /**
+   * Test override for the VLM StructureTask (OC-1/OC-2). Mirrors submitFn/pollFn:
+   * lets handler tests stub the VLM without a real multimodal LLM call. Defaults
+   * to the production `runStructureTask`.
+   */
+  runStructureFn?: typeof runStructureTask;
 };
 
 export function buildTencentOcrHandler(
@@ -47,10 +63,11 @@ async function processOneOcrJob(
 ): Promise<void> {
   const submit = deps.submitFn ?? submitOcrJob;
   const poll = deps.pollFn ?? pollUntilDone;
+  const runStructure = deps.runStructureFn ?? runStructureTask;
 
-  // 1. Load session + asset (first asset; v0 单页 only). Post-Step 5: read from
-  //    learning_session with type='ingestion' filter — old `ingestion_session`
-  //    rows are migrated; new writes go to learning_session.
+  // 1. Load session + ALL assets. T-OC slice 2 (OC-2): the VLM sees every page
+  //    so it can assemble 跨页大题 — no longer single-page (`[0]`). Read from
+  //    learning_session with type='ingestion' filter.
   const sessionRows = await deps.db
     .select()
     .from(learning_session)
@@ -60,8 +77,8 @@ async function processOneOcrJob(
     // Don't markExtractionFailed (session doesn't exist); just throw Permanent
     throw new PermanentError(`tencent_ocr_extract: session ${sessionId} not found`);
   }
-  const assetId = session.source_asset_ids[0];
-  if (!assetId) {
+  const assetIds = session.source_asset_ids;
+  if (assetIds.length === 0) {
     await markFailedAndLogCost(
       deps,
       sessionId,
@@ -70,93 +87,150 @@ async function processOneOcrJob(
     );
     return; // already failed, don't rethrow
   }
-  const assetRows = await deps.db.select().from(source_asset).where(eq(source_asset.id, assetId));
-  const asset = assetRows[0];
-  if (!asset) {
-    await markFailedAndLogCost(
-      deps,
-      sessionId,
-      bossJobId,
-      new PermanentError(`source_asset ${assetId} not found`),
-    );
-    return;
+  const assetById = new Map<string, typeof source_asset.$inferSelect>();
+  for (const id of assetIds) {
+    const assetRows = await deps.db.select().from(source_asset).where(eq(source_asset.id, id));
+    const asset = assetRows[0];
+    if (!asset) {
+      await markFailedAndLogCost(
+        deps,
+        sessionId,
+        bossJobId,
+        new PermanentError(`source_asset ${id} not found`),
+      );
+      return;
+    }
+    assetById.set(id, asset);
   }
 
   // 2. markExtractionStarted
   await deps.db.transaction((tx) => Ingestion.markExtractionStarted(tx, sessionId));
 
   try {
-    // 3. Download asset
-    const imageBytes = await deps.r2.get(asset.storage_key);
-    if (!imageBytes) {
-      throw new PermanentError(`R2 object missing: ${asset.storage_key}`);
-    }
-    const pageBuffer = Buffer.from(imageBytes);
-
-    // 4. Read page dimensions
-    const meta = await sharp(pageBuffer).metadata();
-    const pageWidth = meta.width;
-    const pageHeight = meta.height;
-    if (!pageWidth || !pageHeight) {
-      throw new PermanentError('sharp could not determine page image dimensions');
-    }
-
-    // 5. Submit OCR job
-    const base64 = pageBuffer.toString('base64');
-    const tencentJobId = await submit({ ImageBase64: base64 });
-
-    // 6. Poll
-    const ocrResp: DescribeResponse = await poll(tencentJobId);
-    if (ocrResp.JobStatus === 'FAIL') {
-      throw new RetryableError(
-        `Tencent OCR job ${tencentJobId} FAIL: ${ocrResp.JobErrorMsg ?? 'unknown'}`,
-      );
-    }
-
-    // 7. Parse
-    const parsed = parseMarkAgentResponse(ocrResp, {
-      pageWidth,
-      pageHeight,
-      pageIndex: 0,
-    });
-
-    // 8. Crop figures
-    let preFigures: PreAttachFigure[] = [];
-    if (parsed.figures.length > 0) {
-      preFigures = await cropAndUploadFigures({
-        pageImage: pageBuffer,
-        pageAssetId: assetId,
-        pageIndex: 0,
-        figureBoxes: parsed.figures.map((f) => f.bbox),
-        r2: deps.r2,
-      });
-    }
-
-    // 9. Assign figures heuristically
-    const figureRefs = assignFigures(preFigures, parsed.questions);
-
-    // 10. applyExtractionResult —— 单 block / 单 stem 假设：把所有 questions
-    //     合并入一个 question_block。多 top-level question 视为同 page 的多块。
     const sourceDocumentId = session.source_document_id ?? '';
-    const blocks = parsed.questions.map((q) => ({
+    const warnings: string[] = [];
+
+    // 3-9. Per-page: download → dims → Tencent OCR → parse → crop figures.
+    //      Tencent stays the character-level text OCR + figure-bbox source; its
+    //      STRUCTURE output is demoted to a hint (OC-1). Figures are still
+    //      cropped per page and attached via `assignFigures` (slice 2b will
+    //      replace that heuristic with VLM matching — see lane plan §DEFERRED).
+    const pageImages: Array<{ data: string; mediaType: string }> = [];
+    const tencentPages: Array<{
+      page_index: number;
+      questions: ReturnType<typeof parseMarkAgentResponse>['questions'];
+    }> = [];
+    let allPreFigures: PreAttachFigure[] = [];
+    // Worst-of layout_quality across pages, used only by the Tencent fallback
+    // path (the VLM emits its own layout_quality on the happy path).
+    let tencentLayout: LayoutQuality = 'structured';
+
+    for (let pageIndex = 0; pageIndex < assetIds.length; pageIndex++) {
+      const assetId = assetIds[pageIndex];
+      const asset = assetById.get(assetId);
+      if (!asset) {
+        throw new PermanentError(`source_asset ${assetId} not found`);
+      }
+
+      const imageBytes = await deps.r2.get(asset.storage_key);
+      if (!imageBytes) {
+        throw new PermanentError(`R2 object missing: ${asset.storage_key}`);
+      }
+      const pageBuffer = Buffer.from(imageBytes);
+
+      const meta = await sharp(pageBuffer).metadata();
+      const pageWidth = meta.width;
+      const pageHeight = meta.height;
+      if (!pageWidth || !pageHeight) {
+        throw new PermanentError('sharp could not determine page image dimensions');
+      }
+
+      pageImages.push({
+        data: pageBuffer.toString('base64'),
+        mediaType: asset.mime_type,
+      });
+
+      const tencentJobId = await submit({ ImageBase64: pageBuffer.toString('base64') });
+      const ocrResp: DescribeResponse = await poll(tencentJobId);
+      if (ocrResp.JobStatus === 'FAIL') {
+        throw new RetryableError(
+          `Tencent OCR job ${tencentJobId} FAIL: ${ocrResp.JobErrorMsg ?? 'unknown'}`,
+        );
+      }
+
+      const parsed = parseMarkAgentResponse(ocrResp, { pageWidth, pageHeight, pageIndex });
+      tencentPages.push({ page_index: pageIndex, questions: parsed.questions });
+      warnings.push(...parsed.warnings);
+      if (parsed.layout_quality !== 'structured' && tencentLayout === 'structured') {
+        tencentLayout = parsed.layout_quality;
+      }
+
+      if (parsed.figures.length > 0) {
+        const preFigures = await cropAndUploadFigures({
+          pageImage: pageBuffer,
+          pageAssetId: assetId,
+          pageIndex,
+          figureBoxes: parsed.figures.map((f) => f.bbox),
+          r2: deps.r2,
+        });
+        allPreFigures = allPreFigures.concat(preFigures);
+      }
+    }
+
+    // 10. VLM StructureTask (OC-2): all page images + the demoted Tencent text
+    //     hint → normalized cross-page structure tree. On failure (provider down
+    //     / unparseable / empty), fall back to the per-page concatenated Tencent
+    //     structure so extraction never hard-fails on a VLM outage (regression
+    //     safety — lane plan §5).
+    const tencentHintMd = renderTencentHint(tencentPages);
+    const tencentFallbackQuestions = tencentPages.flatMap((p) => p.questions);
+
+    let structure: StructureResult;
+    try {
+      structure = await runStructure({
+        pageImages,
+        tencentHintMd,
+        pageCount: assetIds.length,
+        ctx: { db: deps.db, r2: deps.r2 },
+      });
+    } catch (err) {
+      if (!(err instanceof StructureTaskError)) throw err;
+      if (tencentFallbackQuestions.length === 0) {
+        // VLM failed AND Tencent produced no structure → genuinely empty.
+        throw new PermanentError(
+          `StructureTask failed and Tencent produced 0 questions: ${err.message}`,
+        );
+      }
+      warnings.push(`StructureTask unavailable (${err.message}); fell back to Tencent structure`);
+      structure = {
+        questions: tencentFallbackQuestions,
+        layout_quality: tencentLayout,
+        warnings: [],
+      };
+    }
+    warnings.push(...structure.warnings);
+
+    // 11. Assign figures heuristically against the structure tree (slice 2b →
+    //     VLM matching). assignFigures needs ≥1 question; structure guarantees it.
+    const figureRefs: FigureRefT[] =
+      allPreFigures.length > 0 ? assignFigures(allPreFigures, structure.questions) : [];
+
+    // 12. applyExtractionResult —— one question_block per top-level structured
+    //     question. A cross-page stem is ONE block spanning its pages.
+    const blocks = structure.questions.map((q) => ({
       structured: q,
-      // figures.attached_to_index 指向某 question id；过滤匹配此 block 顶层 id
-      // 或其 sub 的 figures（简化：每 block 拿全部 figures，UI 内部 attached_to_index 区分）
       figures: figureRefs,
-      page_spans: [
-        {
-          page_index: 0,
-          bbox: q.bbox ?? { x: 0, y: 0, width: 1, height: 1 },
-          role: 'prompt',
-        },
-      ],
-      source_asset_ids: [assetId],
-      image_refs: [assetId],
+      // The VLM tree carries no per-question bbox (figure↔question matching +
+      // precise page spans are slice 2b — see lane plan §DEFERRED), so each
+      // block spans the whole document with a full-page span placeholder. The
+      // import route reads `structured` for content, not page_spans geometry.
+      page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' }],
+      source_asset_ids: assetIds,
+      image_refs: assetIds,
     }));
 
     if (blocks.length === 0) {
-      // parser returned 0 questions → failed
-      throw new PermanentError('parser returned 0 questions');
+      throw new PermanentError('structure produced 0 questions');
     }
 
     await deps.db.transaction((tx) =>
@@ -164,8 +238,8 @@ async function processOneOcrJob(
         sessionId,
         sourceDocumentId,
         blocks,
-        layoutQuality: parsed.layout_quality,
-        warnings: parsed.warnings,
+        layoutQuality: structure.layout_quality,
+        warnings,
       }),
     );
 

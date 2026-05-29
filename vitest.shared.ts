@@ -50,6 +50,10 @@ export const fastTestInclude = [
   'src/server/http/**/*.test.ts',
   'src/server/ingestion/crop.test.ts',
   'src/server/ingestion/figure_attach.test.ts',
+  // T-OC slice 2 (YUK-145): VLM StructureTask runner. Pure DI unit — injected
+  // runTaskFn, no live DB / AI / R2. (sibling tencent_ocr_extract handler test
+  // hits Postgres → db partition.)
+  'src/server/ingestion/structure.test.ts',
   'src/server/ingestion/tencent_mark.test.ts',
   'src/server/ingestion/tencent_mark_parser.test.ts',
   'src/server/ingestion/vision.test.ts',

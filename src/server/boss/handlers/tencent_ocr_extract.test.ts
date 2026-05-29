@@ -13,9 +13,31 @@ import {
   source_asset,
   source_document,
 } from '@/db/schema';
+import type { StructureResult } from '@/server/ingestion/structure';
+import { StructureTaskError } from '@/server/ingestion/structure';
 import type { R2Client } from '@/server/r2';
 import clozeFixture from '../../../../tests/fixtures/tencent_mark_agent_cloze_sample.json';
 import { buildTencentOcrHandler } from './tencent_ocr_extract';
+
+// T-OC slice 2 (YUK-145, OC-1/OC-2): the VLM StructureTask owns structure. The
+// handler injects `runStructureFn`; tests stub it so no real multimodal LLM
+// call happens. This default stub returns a single standalone VLM-authored
+// question — the structured tree of record.
+function makeVlmStub(): typeof import('@/server/ingestion/structure').runStructureTask {
+  return (async () =>
+    ({
+      questions: [
+        {
+          id: 'vlm-q-1',
+          role: 'standalone',
+          prompt_text: 'VLM structured prompt',
+          source: 'vlm_structure',
+        },
+      ],
+      layout_quality: 'structured',
+      warnings: [],
+    }) satisfies StructureResult) as typeof import('@/server/ingestion/structure').runStructureTask;
+}
 
 async function makeTestImage(): Promise<Buffer> {
   return sharp({
@@ -105,22 +127,23 @@ afterEach(async () => {
 });
 
 describe('tencent_ocr_extract handler', () => {
-  it('queued → extracted with question_block + cost_ledger success', async () => {
+  it('queued → extracted with VLM-owned question_block + cost_ledger success', async () => {
     const { sessionId, sourceDocId, assetId } = await seedSessionWithAsset();
     const pageImage = await makeTestImage();
     const r2 = makeR2WithImage(pageImage);
 
     const submitFn = vi.fn(async () => 'tencent-job-id');
     const pollFn = vi.fn(async () => clozeFixture as never);
+    const runStructureFn = makeVlmStub();
 
-    const handler = buildTencentOcrHandler({ db, r2, submitFn, pollFn });
+    const handler = buildTencentOcrHandler({ db, r2, submitFn, pollFn, runStructureFn });
     await handler([{ id: 'boss-job-1', data: { sessionId } } as never]);
 
     const session = await db
       .select()
       .from(learning_session)
       .where(eq(learning_session.id, sessionId));
-    expect(session[0].status).toBe('extracted'); // cloze fixture layout_quality='structured'
+    expect(session[0].status).toBe('extracted'); // VLM layout_quality='structured'
 
     const blocks = await db
       .select()
@@ -129,10 +152,52 @@ describe('tencent_ocr_extract handler', () => {
     expect(blocks.length).toBeGreaterThanOrEqual(1);
     expect(blocks[0].structured).toBeTruthy();
     expect(blocks[0].layout_quality).toBe('structured');
+    // OC-1/OC-2: the structure of record is the VLM tree, not Tencent's.
+    expect(blocks[0].structured?.source).toBe('vlm_structure');
+    // Tencent OCR was still run (text + figure bbox layer).
+    expect(submitFn).toHaveBeenCalledOnce();
 
     const cost = await db.select().from(cost_ledger);
     const ours = cost.find((c) => c.pgboss_job_id === 'boss-job-1');
     expect(ours).toBeTruthy();
+    expect(ours?.outcome).toBe('success');
+
+    await cleanup(sessionId, sourceDocId, assetId);
+    if (ours) await db.delete(cost_ledger).where(eq(cost_ledger.id, ours.id));
+  });
+
+  it('VLM StructureTask failure → falls back to Tencent structure + warning', async () => {
+    const { sessionId, sourceDocId, assetId } = await seedSessionWithAsset();
+    const r2 = makeR2WithImage(await makeTestImage());
+
+    const submitFn = vi.fn(async () => 'tencent-job-fallback');
+    const pollFn = vi.fn(async () => clozeFixture as never);
+    // VLM down → handler must degrade to the Tencent-parsed structure.
+    const runStructureFn = (async () => {
+      throw new StructureTaskError('provider unavailable');
+    }) as typeof import('@/server/ingestion/structure').runStructureTask;
+
+    const handler = buildTencentOcrHandler({ db, r2, submitFn, pollFn, runStructureFn });
+    await handler([{ id: 'boss-job-fb', data: { sessionId } } as never]);
+
+    const session = await db
+      .select()
+      .from(learning_session)
+      .where(eq(learning_session.id, sessionId));
+    expect(session[0].status).toBe('extracted');
+    // fallback warning surfaced on the session.
+    expect(session[0].warnings.some((w) => w.includes('fell back to Tencent'))).toBe(true);
+
+    const blocks = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.ingestion_session_id, sessionId));
+    expect(blocks.length).toBeGreaterThanOrEqual(1);
+    // structure of record is the Tencent tree on the fallback path.
+    expect(blocks[0].structured?.source).toBe('tencent_ocr');
+
+    const cost = await db.select().from(cost_ledger);
+    const ours = cost.find((c) => c.pgboss_job_id === 'boss-job-fb');
     expect(ours?.outcome).toBe('success');
 
     await cleanup(sessionId, sourceDocId, assetId);

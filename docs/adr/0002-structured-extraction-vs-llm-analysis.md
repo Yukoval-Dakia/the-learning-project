@@ -48,20 +48,25 @@
 
 ---
 
-**修订（2026-05-30）— 设定方向：VLM 全权拥有结构，腾讯降为纯文字 OCR hint（T-OC / YUK-145，OC-1/OC-2）**
+**修订（2026-05-30）— VLM 全权拥有结构，腾讯降为纯文字 OCR hint（T-OC / YUK-145，OC-1/OC-2）。slice 2 已实装。**
 
 **Trigger**：T-OC OCR/录入 pipeline 重建 design（`docs/superpowers/specs/2026-05-29-t-oc-ocr-rebuild-design.md`，design-approved 2026-05-29）。feature 探查暴露原"抽取层 = 确定性 OCR"在两类硬伤上扛不住：**跨页大题**腾讯结构提取搞不定（YUK-144），**题图匹配**靠易错的 bbox 启发式（`assignFigures`）。
 
-**Direction（未来，slice 2 落地，本次 slice 1 不实现）**：
-- **腾讯 OCR 退为纯文字底层**：保留腾讯的**字符级文字提取**（它准），但其**结构输出降为 hint**，不再是结构 source of truth。
-- **StructureTask（VLM mimo-v2.5 多模态）全权拥有结构**：输入 图(N页) + 腾讯文字 hint → 规范结构树；**可完全覆盖腾讯结构**；负责跨页大题组装 + 题图匹配（VLM 看图判图属哪题，替代 `assignFigures` 启发式）+ 布局规范。
-- 这是对本 ADR 原则"结构抽取是 deterministic problem，交给专用 OCR"的**演进**而非否定：结构/语义层在带手写、跨页、复杂版式的真实录入场景里**不是** deterministic problem，需要 reasoning。字符 OCR 仍是确定性的，仍归腾讯。
+**演进原则**：这是对本 ADR 原则"结构抽取是 deterministic problem，交给专用 OCR"的**演进**而非否定：结构/语义层在带手写、跨页、复杂版式的真实录入场景里**不是** deterministic problem，需要 reasoning。字符 OCR 仍是确定性的，仍归腾讯。
 
-**Status of this revision**：方向已锁（OC-1/OC-2），但**实现分 slice**。
-- **Slice 1（本次，YUK-145，已实现）**：只做 OC-3 泛化捕获 model fix（见 ADR-0024），**不**碰 VLM 结构层。腾讯降级 + StructureTask 是 future。
-- **Slice 2（future）**：StructureTask VLM 实装 + 腾讯结构降为 hint。届时本 ADR 此节从"direction"转"accepted 实装"。
-- `assignFigures` 启发式在 slice 2 落地前保持现状；slice 1 的 import path 仍消费现有 `question_block.figures`。
+**实装设计（slice 2 已落地，YUK-145）**：
+- **腾讯 OCR 退为纯文字底层**：腾讯 Mark Agent 仍**逐页**跑（字符级文字提取 + 手写答案 + 题图 bbox），但其**结构输出降为 text hint** —— 在 handler 里把每页 `parseMarkAgentResponse` 的 `questions` 用 `structuredToPromptMarkdown` 拍平成 `=== page K ===` 分隔的 markdown，作为 VLM 的参考文字，不再是结构 source of truth。
+- **StructureTask（VLM mimo-v2.5 多模态）拥有结构**：新 AI task（`src/ai/registry.ts` + `buildStructurePrompt` in `src/ai/task-prompts.ts`，`invocation:'auto'`，类比 `StepsJudgeTask`）。runner 实现：`src/server/ingestion/structure.ts` `runStructureTask` —— 输入 N 页图片（runner 多模态路径一条 user message 带多图，已验证支持）+ 腾讯文字 hint → 严格 JSON `StructureOutput`（Zod 校验）→ 规范结构树（`source:'vlm_structure'`，id 运行时补）。VLM 可完全覆盖腾讯切分。
+- **跨页大题组装（YUK-144 根治）**：handler 从单页（`source_asset_ids[0]`）改为**读全部 session 页**喂 VLM；prompt 明确要求把横跨多页的同一大题组装成**一个** stem。
+- **regression safety / evidence-first**：VLM 失败（provider down / 输出不可解 / 0 题）时抛 `StructureTaskError`，handler **回落到腾讯逐页拼接的结构**（即 slice 1 行为）并记一条 warning —— provider 故障降级而非硬失败。
+- **接缝（wiring）**：`src/server/boss/handlers/tencent_ocr_extract.ts` 把 VLM 树作为结构 of record 传给 `Ingestion.applyExtractionResult`；下游 import route + slice-1 `enrollCapturedBlock` 不变（仍读 `question_block.structured`）。
 
-**Agent 修改约束沿用**：VLM 写 `structured` 仍须走领域工具集（Zod 校验 + version + provenance）；裸 jsonb 不开放。
+**题图匹配 DEFER 到 slice 2b（未实装）**：OC-2 的 VLM 题图匹配（VLM 判图属哪题，替代 `assignFigures` 启发式）**本次没做**。原因：它要把 VLM 生成的 question-id 命名空间和 crop/bbox 命名空间耦合（VLM 给不出可靠像素 bbox，crop 仍需腾讯 bbox），半成品会导致图错挂且难审计。slice 2 仍用 `assignFigures`（腾讯 bbox 启发式）做题图归属；StructureTask prompt 已为 2b 留好扩展位（output schema 加 figures 块 + 串 id）。见 `docs/superpowers/plans/2026-05-30-yuk145-toc-slice2-lane.md` §DEFERRED。
 
-**See also**：`docs/superpowers/specs/2026-05-29-t-oc-ocr-rebuild-design.md` §2（OC-1/OC-2）+ `docs/superpowers/plans/2026-05-30-yuk145-toc-slice1-lane.md`（slice 边界）+ ADR-0024（slice 1 的 OC-3 model）。
+**Status**：
+- **Slice 1（YUK-145，已实现）**：OC-3 泛化捕获 model fix（见 ADR-0024）。
+- **Slice 2（YUK-145，本次已实现）**：StructureTask VLM 实装 + 腾讯结构降为 hint + 跨页大题组装。**题图匹配（slice 2b）+ TaggingTask/WorkflowJudge（slice 3）仍为 future。**
+
+**Agent 修改约束沿用**：VLM 写 `structured` 仍须走领域工具集（Zod 校验 + version + provenance）；裸 jsonb 不开放。本次 StructureTask 是 extraction-time 一次性写 `question_block.structured`（走 `applyExtractionResult`），不是 agent 在已物化 question 上的增量编辑。
+
+**See also**：`docs/superpowers/specs/2026-05-29-t-oc-ocr-rebuild-design.md` §2（OC-1/OC-2）+ `docs/superpowers/plans/2026-05-30-yuk145-toc-slice2-lane.md`（slice 2 边界 + slice 2b/3 DEFERRED）+ `docs/superpowers/plans/2026-05-30-yuk145-toc-slice1-lane.md` + ADR-0024（slice 1 的 OC-3 model）。
