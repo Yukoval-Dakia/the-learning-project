@@ -38,6 +38,10 @@ export const fastTestInclude = [
   'src/server/ingestion/tencent_mark_parser.test.ts',
   'src/server/ingestion/vision.test.ts',
   'src/server/judge/**/*.test.ts',
+  // Pure (no-DB) set-algebra unit for hub mesh curation (YUK-95 P5 Lane-C). The
+  // sibling DB handler test (boss/handlers/hub_auto_sync_nightly) stays in the
+  // db partition because it hits live Postgres.
+  'src/server/knowledge/hub-mesh.test.ts',
   // Memory tests are mostly unit-mocked. The outbox real-path integration
   // test (triggers.outbox.test.ts, YUK-101 / ADR-0021) hits live Postgres
   // and runs in the DB partition — enumerate the unit tests here instead
