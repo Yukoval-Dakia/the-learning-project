@@ -34,8 +34,12 @@ export const RELATION_VISUAL: Record<string, RelationVisual> = {
 
 // Chinese relation labels (mirror app/(app)/knowledge/page.tsx RELATION_TYPES)
 // for the Slice 3 inline proposal action so the on-graph popover reads the
-// proposed relation in the same words as the drawer's EdgeProposalCard. Unknown /
-// experimental types fall through to the raw relation_type at the call site.
+// proposed relation in the same words as the drawer's EdgeProposalCard. Note the
+// label is keyed off the cytoscape element's `relation` data, which is the
+// visualKey — buildProposedEdgeElements collapses unknown / experimental types
+// to the related_to visual, so they surface here as the related_to label ("相关"),
+// NOT the raw experimental:* relation_type. (The fallback below only kicks in for
+// a known-but-unlabeled visual key.)
 export const RELATION_LABEL: Record<string, string> = {
   prerequisite: '前置',
   related_to: '相关',
