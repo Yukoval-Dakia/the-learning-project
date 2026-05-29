@@ -12,6 +12,7 @@ async function seedArtifact(
   title: string,
   type = 'note_atomic',
   updatedAt = NOW,
+  opts: { generation_status?: string; archived_at?: Date | null } = {},
 ): Promise<void> {
   await testDb()
     .insert(artifact)
@@ -28,14 +29,14 @@ async function seedArtifact(
       attrs: {},
       tool_kind: null,
       tool_state: null,
-      generation_status: 'ready',
+      generation_status: opts.generation_status ?? 'ready',
       verification_status: 'verified',
       verification_summary: null,
       generated_by: null,
       verified_by: null,
       embedded_check_status: 'not_required',
       history: [],
-      archived_at: null,
+      archived_at: opts.archived_at ?? null,
       created_at: updatedAt,
       updated_at: updatedAt,
       version: 0,
@@ -74,6 +75,20 @@ describe('GET /api/artifacts/search', () => {
 
     const rows = await readRows(await GET(searchReq('q=论语&exclude=a1')));
     expect(rows.map((r) => r.id)).toEqual(['a2']);
+  });
+
+  it('excludes archived and non-ready artifacts as link targets (FIX 3)', async () => {
+    await seedArtifact('live', '论语 现行', 'note_atomic', NOW);
+    await seedArtifact('archived', '论语 归档', 'note_atomic', NOW, { archived_at: NOW });
+    await seedArtifact('pending', '论语 待生成', 'note_atomic', NOW, {
+      generation_status: 'pending',
+    });
+    await seedArtifact('failed', '论语 失败', 'note_atomic', NOW, {
+      generation_status: 'failed',
+    });
+
+    const rows = await readRows(await GET(searchReq('q=论语')));
+    expect(rows.map((r) => r.id)).toEqual(['live']);
   });
 
   it('returns empty rows when nothing matches', async () => {

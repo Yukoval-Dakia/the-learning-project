@@ -258,6 +258,69 @@ export function extractBlockSnippet(
   return textExcerpt(found, maxLength);
 }
 
+/**
+ * FIX 2 (YUK-95 P5 review) — context snippet for a backlink whose source block is
+ * a `crossLinkBlock`. The crossLinkBlock is `atom: true` with NO content, and the
+ * L2 index anchors `from_block_id` on the crossLinkBlock's OWN `attrs.id`, so
+ * `extractBlockSnippet` (which reads the matched node's text) always returned ''
+ * for a real cross-link.
+ *
+ * Instead we derive a useful "where the link lives" snippet by:
+ *   1. preferring the text of the ENCLOSING block (the paragraph / semantic
+ *      block that physically contains the crossLinkBlock), then
+ *   2. falling back to the cross-link's own `title` attr (always present for both
+ *      the manual picker and the nightly worker).
+ *
+ * Returns `null` only when the doc is unparseable, no crossLinkBlock matches, or
+ * neither source yields any text.
+ */
+export function extractCrossLinkSnippet(
+  value: unknown,
+  fromBlockId: string,
+  maxLength = 120,
+): string | null {
+  const parsed = ArtifactBodyBlocks.safeParse(value);
+  if (!parsed.success) return null;
+
+  // Walk the tree tracking the nearest enclosing block whose own text we can
+  // use. `enclosing` is the last ancestor we descended into; the crossLinkBlock
+  // itself is an atom, so its parent is the "where it lives" context.
+  let result: string | null = null;
+  const visit = (node: Record<string, unknown>, enclosing: Record<string, unknown> | null) => {
+    if (result !== null) return;
+    const attrs = recordOrEmpty(node.attrs);
+    if (node.type === 'crossLinkBlock' && attrs.id === fromBlockId) {
+      // 1. enclosing block text (collapsed, trimmed).
+      const enclosingText = enclosing ? textExcerpt(enclosing, maxLength) : '';
+      if (enclosingText.length > 0) {
+        result = enclosingText;
+        return;
+      }
+      // 2. fall back to the cross-link's own title.
+      if (typeof attrs.title === 'string' && attrs.title.trim().length > 0) {
+        const title = attrs.title.trim();
+        result =
+          title.length > maxLength ? `${title.slice(0, Math.max(0, maxLength - 3))}...` : title;
+      }
+      return;
+    }
+    const content = Array.isArray(node.content) ? node.content : [];
+    for (const child of content) {
+      if (child !== null && typeof child === 'object') {
+        // The current node becomes the enclosing block for its children.
+        visit(child as Record<string, unknown>, node);
+        if (result !== null) return;
+      }
+    }
+  };
+
+  for (const node of parsed.data.content ?? []) {
+    visit(node, null);
+    if (result !== null) break;
+  }
+  return result;
+}
+
 export function bodyBlocksContainId(value: unknown, blockId: string): boolean {
   const parsed = ArtifactBodyBlocks.safeParse(value);
   if (!parsed.success) return false;
