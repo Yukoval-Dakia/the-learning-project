@@ -72,6 +72,10 @@ export const QuestionOption = z.object({
 export const StructuredQuestionSource = z.enum([
   'tencent_ocr',
   'vision_rescue',
+  // T-OC slice 2 (YUK-145, OC-1/OC-2): VLM StructureTask owns the normalized
+  // structure tree; Tencent structure is demoted to a text hint. See
+  // docs/superpowers/plans/2026-05-30-yuk145-toc-slice2-lane.md.
+  'vlm_structure',
   'manual',
   'agent_edit',
 ]);
@@ -88,7 +92,7 @@ export type StructuredQuestionT = {
   bbox?: BBoxT;
   sub_questions?: StructuredQuestionT[];
   extraction_evidence?: z.infer<typeof ExtractionEvidence>;
-  source?: z.infer<typeof StructuredQuestionSource>;
+  source?: 'tencent_ocr' | 'vision_rescue' | 'vlm_structure' | 'manual' | 'agent_edit';
   last_modified_by?: string;
 };
 

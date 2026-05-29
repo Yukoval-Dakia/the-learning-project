@@ -101,6 +101,25 @@ export const tasks = {
     systemPrompt:
       '你是错题录入助手（heavy 模式，前两层 OCR / haiku 都失败）。给定一张题目图片（可能含手写 / 复杂版式 / 公式），输出严格 JSON（不带 markdown 代码块包裹）：\n{"blocks":[{"extracted_prompt_md":"...","reference_md":"...|null","wrong_answer_md":"...|null","page_index":0,"bbox":{"x":0.1,"y":0.2,"width":0.6,"height":0.3},"role":"prompt|answer_area|continuation","visual_complexity":"low|medium|high","extraction_confidence":0.0-1.0,"knowledge_hint":"...|null"}]}\n约束：bbox 坐标 0-1 归一化（不是像素）；page_index 由调用方覆盖；wrong_answer_md 仅当图上有用户错答 / 批改痕迹时填。',
   },
+  StructureTask: {
+    kind: 'StructureTask',
+    description:
+      'T-OC slice 2 (YUK-145, OC-1/OC-2) — VLM 全权拥有结构。输入 N 页图片 + 腾讯文字 OCR hint → 规范结构树（跨页大题组装 + 布局规范）。腾讯结构降为 hint，VLM 可完全覆盖。题图匹配 (assignFigures 替换) DEFERRED 到 slice 2b。自动调用（作为 extraction 一环，类比 StepsJudgeTask），非 manual rescue。',
+    defaultProvider: 'xiaomi',
+    // multimodal: mimo-v2.5 看图 + 文字 hint，输出结构 JSON。无 fallback —— VLM
+    // 失败时 handler 回落到腾讯结构（regression safety，见 lane plan §5）。
+    defaultModel: 'mimo-v2.5',
+    fallbackChain: [],
+    // 多页大题 = 多图大 prompt，给 120s（spec §7 open Q3 的 token 成本提示）。
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 120_000 },
+    needsToolCall: false,
+    isMultimodal: true,
+    allowedTools: [],
+    // invocation 故意省略（默认 'auto'）：StructureTask 在 OCR extraction job 内被
+    // tencent_ocr_extract handler 调用，不是用户手动触发的 rescue（VisionExtract*
+    // 才是 manual_rescue_only）。
+    systemPrompt: '(see getTaskSystemPrompt(task, profile) - fallback not for runtime)',
+  },
   KnowledgeProposeTask: {
     kind: 'KnowledgeProposeTask',
     description: '看新录入的 mistake 提议 0-3 个 propose_new 知识点（挂在合适 parent 下）',

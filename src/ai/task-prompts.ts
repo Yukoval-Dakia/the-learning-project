@@ -115,6 +115,40 @@ function buildGoalScopePrompt(profile: SubjectProfile): string {
 - 禁止套话（「加油」「这是个好目标」）`;
 }
 
+// T-OC slice 2 (YUK-145, OC-1/OC-2) — VLM StructureTask prompt. The VLM owns
+// the normalized structure tree: it sees all N page images (attached to the
+// user message in page order) + a Tencent text-OCR hint (demoted from
+// structure-of-record to advisory text), and assembles a normalized
+// stem/sub/standalone tree — including 跨页大题 split across pages into ONE
+// stem. Figure↔question matching is DEFERRED to slice 2b (see lane plan
+// §DEFERRED); this prompt does NOT ask the VLM to attach figures.
+function buildStructurePrompt(profile: SubjectProfile): string {
+  return `你是${profile.displayName}试卷结构化助手（多模态）。输入：
+- user message 里按页顺序附了 N 张试卷/作业页面图片（第 1 张 = page_index 0，依次类推）
+- 一段文字 { tencent_hint_md, page_count } —— tencent_hint_md 是腾讯字符级 OCR 的**文字提示**（已按页用 "=== page K ===" 分隔），仅作参考，**不是**结构真相
+科目上下文：${profile.displayName}。${profile.languageStyle}
+
+任务：以**图片为准**、腾讯文字为辅，输出一棵**规范化的题目结构树**。你对结构有完全裁量权，可以覆盖腾讯文字 hint 暗示的任何切分。
+关键能力：
+1. **跨页大题组装**：一道大题（passage / 阅读理解 / 完形 / 大题带多个小问）如果横跨多页，必须组装成**一个** stem 节点，它的 sub_questions 收齐所有页的小问。不要因为换页就把同一大题拆成两个顶层节点。
+2. **布局规范**：把题面、选项、答案规整到结构字段里；passage 进 stem 的 prompt_text，小问进 sub。
+3. 不抽取手写涂改 / 批改痕迹作为结构（那是作答证据，下游处理）。
+
+输出严格 JSON（不带 markdown 代码块包裹），shape 名 StructureOutput：
+{"layout_quality":"structured"|"partial"|"text_only","warnings":["..."],"questions":[StructureNode, ...]}
+
+StructureNode（递归，**不要**输出 id，运行时会补）：
+{"role":"stem"|"sub"|"standalone","question_no":"1"|null,"prompt_text":"...","options":[{"label":"A","text":"..."}]|null,"answers":["..."]|null,"analysis":"..."|null,"page_index":0,"sub_questions":[StructureNode, ...]|null}
+
+约束：
+- role 三选一：stem（容器，含 passage + sub_questions）/ sub（大题下的小问）/ standalone（独立单题）。只有 stem 能有 sub_questions；sub / standalone 的 sub_questions 必须为 null 或省略。
+- page_index 是 0-based 整数，指该节点主要出现在第几张图（跨页 stem 用它起始页）。
+- 顶层 questions 至少 1 个；如果整页无法识别出任何题，questions 给空数组并把 layout_quality 设 "text_only"。
+- layout_quality：结构清晰完整 → "structured"；能出题但版式残缺/有疑点 → "partial"；几乎认不出结构 → "text_only"。
+- options / answers / analysis 没有就给 null 或省略，不要编。
+- 禁止：输出 JSON 之外的文字、把跨页同一大题拆成多个顶层节点、把腾讯文字 hint 当成不可改的结构。`;
+}
+
 function buildNoteGeneratePrompt(profile: SubjectProfile): string {
   return `你是${noteWriterRole(profile)}。输入 { artifact_id, artifact_type, title, atomic_title, one_line_intent, knowledge_node: { id, name, domain }, knowledge_nodes: [...], parent_hub: { title, summary_md }, related_knowledge_ids: [...] }。
 artifact_type 只能是 note_atomic / note_long / note_hub；这是同一个 NoteGenerateTask 内的 type switch。
@@ -438,6 +472,8 @@ export function getTaskSystemPrompt(
       return buildLearningIntentOutlinePrompt(profile);
     case 'GoalScopeTask':
       return buildGoalScopePrompt(profile);
+    case 'StructureTask':
+      return buildStructurePrompt(profile);
     case 'NoteGenerateTask':
       return buildNoteGeneratePrompt(profile);
     case 'NoteVerifyTask':
