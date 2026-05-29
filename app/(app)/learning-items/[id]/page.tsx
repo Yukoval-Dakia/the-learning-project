@@ -477,25 +477,39 @@ function ArtifactView({
   subjectProfile: SlimSubjectProfile;
   onSectionSaved: () => void;
 }) {
+  // W8-1 / read-view DEFECT 5 (削减型) — 状态条只在异常态显形：
+  // generation 'ready' 不显示 chip（§5 line 111 of
+  // docs/design/2026-05-26-atomic-note-read-view.md，"ready + not_required 隐藏"）。
+  const showGenerationStatus = artifact.generation_status !== 'ready';
+  // verification chip 同理：仅 pending/queued/needs_review/failed/outdated/not_started
+  // 异常或进行态显形；'verified' + 'not_required' 99% 稳态收起。
+  const showVerificationStatus =
+    artifact.verification_status !== 'verified' && artifact.verification_status !== 'not_required';
+  const hasStatusRow = showGenerationStatus || showVerificationStatus;
+
   return (
     <section className="artifact-view">
-      <div className="artifact-view-head">
-        <Label inline>note · {artifact.type}</Label>
-        <div className="artifact-status-row">
-          <span className={`artifact-status ${artifact.generation_status}`}>
-            {artifact.generation_status === 'pending'
-              ? '生成中...'
-              : artifact.generation_status === 'failed'
-                ? '生成失败'
-                : '已就绪'}
-          </span>
-          <VerificationBadge
-            status={artifact.verification_status}
-            summary={artifact.verification_summary?.summary_md}
-            issues={artifact.verification_summary?.issues ?? []}
-          />
+      {/* W8-1 / read-view DEFECT 4 (纯删) — `note · note_atomic` eyebrow 技术词移除
+          (§5 line 112 of docs/design/2026-05-26-atomic-note-read-view.md,
+          "技术词不进 UI")。artifact.type 仍在数据层，只是不渲染给用户。 */}
+      {hasStatusRow && (
+        <div className="artifact-view-head">
+          <div className="artifact-status-row">
+            {showGenerationStatus && (
+              <span className={`artifact-status ${artifact.generation_status}`}>
+                {artifact.generation_status === 'pending' ? '生成中...' : '生成失败'}
+              </span>
+            )}
+            {showVerificationStatus && (
+              <VerificationBadge
+                status={artifact.verification_status}
+                summary={artifact.verification_summary?.summary_md}
+                issues={artifact.verification_summary?.issues ?? []}
+              />
+            )}
+          </div>
         </div>
-      </div>
+      )}
       {artifact.generation_status === 'pending' && (
         <p className="artifact-stub">
           NoteGenerateTask 异步生成中（每条 atomic 约 30-60s）。刷新本页可见进度。

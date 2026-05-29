@@ -1,43 +1,112 @@
 'use client';
 
+import { BlockTreeRenderer } from '@/ui/block-tree/BlockTreeRenderer';
+import type { BlockTreeDoc } from '@/ui/block-tree/types';
+import type {
+  ArtifactEmbeddedCheckStatus,
+  EmbeddedCheckQuestion,
+} from '@/ui/components/ArtifactSections';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
+import type { SlimSubjectProfile } from '@/ui/lib/subject';
 import { formatRelTime } from '@/ui/lib/utils';
 import { Badge } from '@/ui/primitives/Badge';
 import { Card } from '@/ui/primitives/Card';
-import { CauseBadge } from '@/ui/primitives/CauseBadge';
 import { MasteryBadge } from '@/ui/primitives/MasteryBadge';
 import { PageHeader } from '@/ui/primitives/PageHeader';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { use } from 'react';
 
-interface KnowledgeNode {
+interface MeshNeighbor {
+  edge_id: string;
+  knowledge_id: string;
+  name: string;
+  relation_type: string;
+  direction: 'out' | 'in';
+  weight: number;
+}
+
+interface PrimaryAtomic {
+  id: string;
+  title: string;
+  version: number;
+  body_blocks: BlockTreeDoc | null;
+  generation_status: string;
+  verification_status: string;
+  embedded_check_status: ArtifactEmbeddedCheckStatus;
+  embedded_questions: EmbeddedCheckQuestion[];
+}
+
+interface Backlink {
+  from_artifact_id: string;
+  from_title: string;
+  from_type: string;
+  from_block_id: string;
+}
+
+interface TimelineEntry {
+  event_id: string;
+  action: string;
+  subject_kind: string;
+  actor_kind: string;
+  outcome: string | null;
+  created_at: string;
+}
+
+interface KnowledgeNodePage {
   id: string;
   name: string;
   domain: string | null;
   parent_id: string | null;
+  parent_name: string | null;
   effective_domain: string | null;
   mastery: number | null;
   evidence_count: number;
   last_evidence_at: string | null;
-  last_active_at: string;
+  subject_profile: SlimSubjectProfile;
+  mesh_neighbors: MeshNeighbor[];
+  primary_atomic: PrimaryAtomic | null;
+  backlinks: Backlink[];
+  timeline: TimelineEntry[];
 }
 
-interface MistakeRow {
-  id: string;
-  question_id: string;
-  prompt_md: string;
-  wrong_answer_md: string;
-  knowledge_ids: string[];
-  cause: {
-    source?: 'user' | 'agent';
-    primary_category: string;
-    secondary_categories?: string[];
-    user_notes: string | null;
-    confidence?: number | null;
-  } | null;
-  created_at: number;
+// Relation chip labels — mirror the labels used on the /knowledge index drawer.
+const RELATION_LABEL: Record<string, string> = {
+  prerequisite: '前置',
+  related_to: '相关',
+  contrasts_with: '对照',
+  applied_in: '应用于',
+  derived_from: '派生自',
+};
+
+function relationLabel(type: string): string {
+  if (RELATION_LABEL[type]) return RELATION_LABEL[type];
+  return type.startsWith('experimental:') ? type.replace('experimental:', '') : type;
 }
+
+const ACTION_LABEL: Record<string, string> = {
+  attempt: '作答',
+  judge: '归因',
+  review: '复习',
+  propose: '提议',
+  accept: '接受',
+  correct: '修正',
+  note_generate: '生成笔记',
+  generate: '生成',
+  refine: '精修',
+  suppress: '隐藏',
+};
+
+function actionLabel(action: string): string {
+  return ACTION_LABEL[action] ?? action;
+}
+
+const BACKLINK_TYPE_LABEL: Record<string, string> = {
+  note_atomic: '原子',
+  note_hub: 'Hub',
+  note_long: '长文',
+  tool_quiz: '测验',
+};
 
 export default function KnowledgeDetailPage({
   params,
@@ -46,21 +115,13 @@ export default function KnowledgeDetailPage({
 }) {
   const { id } = use(params);
 
-  const knowledgeQ = useQuery({
-    queryKey: ['knowledge'],
-    queryFn: () => apiJson<{ rows: KnowledgeNode[] }>('/api/knowledge'),
+  const nodeQ = useQuery({
+    queryKey: ['knowledge-node', id],
+    queryFn: () => apiJson<KnowledgeNodePage>(`/api/knowledge/${id}`),
+    enabled: !!id,
   });
 
-  const mistakesQ = useQuery({
-    queryKey: ['mistakes'],
-    queryFn: () => apiJson<{ rows: MistakeRow[] }>('/api/mistakes?limit=200'),
-  });
-
-  const node = knowledgeQ.data?.rows.find((n) => n.id === id);
-  const parent = node?.parent_id
-    ? knowledgeQ.data?.rows.find((n) => n.id === node.parent_id)
-    : null;
-  const linkedMistakes = (mistakesQ.data?.rows ?? []).filter((m) => m.knowledge_ids.includes(id));
+  const node = nodeQ.data;
 
   return (
     <main className="page prose">
@@ -76,26 +137,19 @@ export default function KnowledgeDetailPage({
         sub={node?.effective_domain ? `domain · ${node.effective_domain}` : undefined}
       />
 
-      {knowledgeQ.isError && (
-        <Card>
-          <p style={errorStyle}>
-            {knowledgeQ.error instanceof ApiAuthError
-              ? `${knowledgeQ.error.message} — 请重新进入页面输入 token`
-              : `加载失败：${(knowledgeQ.error as Error).message}`}
-          </p>
-        </Card>
-      )}
-
-      {knowledgeQ.isSuccess && !node && (
+      {nodeQ.isError && (
         <Card pad="lg">
-          <p style={{ margin: 0, fontSize: 'var(--fs-body)', color: 'var(--ink-3)' }}>
-            找不到该节点（id={id}）。
+          <p style={errorStyle}>
+            {nodeQ.error instanceof ApiAuthError
+              ? `${nodeQ.error.message} — 请重新进入页面输入 token`
+              : `加载失败：${(nodeQ.error as Error).message}`}
           </p>
         </Card>
       )}
 
       {node && (
         <>
+          {/* 1. metadata + mastery + mesh neighbor chips (ADR-0020 §10) */}
           <Card pad="lg" style={{ marginTop: 'var(--s-4)' }}>
             <div style={sectionHeaderStyle}>
               <SectionLabel>元信息</SectionLabel>
@@ -114,9 +168,9 @@ export default function KnowledgeDetailPage({
               <Row
                 label="parent"
                 value={
-                  parent ? (
-                    <Link href={`/knowledge/${parent.id}`} style={{ color: 'var(--coral)' }}>
-                      {parent.name}
+                  node.parent_id ? (
+                    <Link href={`/knowledge/${node.parent_id}`} style={{ color: 'var(--coral)' }}>
+                      {node.parent_name ?? node.parent_id}
                     </Link>
                   ) : (
                     '(根节点)'
@@ -125,44 +179,145 @@ export default function KnowledgeDetailPage({
               />
               <Row label="effective_domain" value={node.effective_domain ?? '—'} />
             </dl>
-          </Card>
 
-          <Card pad="lg" style={{ marginTop: 'var(--s-4)' }}>
-            <SectionLabel>
-              错题（{linkedMistakes.length}）{mistakesQ.isLoading && ' · 加载中'}
-            </SectionLabel>
-            {mistakesQ.isSuccess && linkedMistakes.length === 0 && (
-              <p style={{ ...mutedStyle, margin: 0 }}>这个节点暂时没有挂错题。</p>
-            )}
-            {linkedMistakes.map((m) => (
-              <div key={m.id} style={mistakeRowStyle}>
-                <div style={mistakeMetaStyle}>
-                  <span style={metaTextStyle}>{formatRelTime(new Date(m.created_at * 1000))}</span>
-                  <CauseBadge
-                    cause={
-                      m.cause
-                        ? {
-                            actor_kind: m.cause.source === 'user' ? 'user' : 'agent',
-                            primary: m.cause.primary_category,
-                            secondary: m.cause.secondary_categories ?? [],
-                            confidence: m.cause.confidence ?? null,
-                          }
-                        : null
-                    }
-                  />
+            <div style={{ marginTop: 'var(--s-4)' }}>
+              <SectionLabel>mesh 邻居（{node.mesh_neighbors.length}）</SectionLabel>
+              {node.mesh_neighbors.length === 0 ? (
+                <p style={{ ...mutedStyle, margin: 0 }}>暂无横向关系。</p>
+              ) : (
+                <div style={chipRowStyle}>
+                  {node.mesh_neighbors.map((n) => (
+                    <Link
+                      key={n.edge_id}
+                      href={`/knowledge/${n.knowledge_id}`}
+                      style={meshChipStyle}
+                    >
+                      <span style={meshArrowStyle}>{n.direction === 'out' ? '→' : '←'}</span>
+                      <span style={meshRelStyle}>{relationLabel(n.relation_type)}</span>
+                      <span>{n.name}</span>
+                    </Link>
+                  ))}
                 </div>
-                <p style={mistakePromptStyle}>{m.prompt_md}</p>
-                {m.wrong_answer_md && <p style={mistakeAnswerStyle}>错答：{m.wrong_answer_md}</p>}
-              </div>
-            ))}
+              )}
+            </div>
           </Card>
 
+          {/* 2. primary atomic body_blocks inline — or placeholder when none */}
+          <Card pad="lg" style={{ marginTop: 'var(--s-4)' }}>
+            <SectionLabel>节点简介（atomic）</SectionLabel>
+            {node.primary_atomic ? (
+              <PrimaryAtomicView atomic={node.primary_atomic} profile={node.subject_profile} />
+            ) : (
+              <PrimaryAtomicPlaceholder />
+            )}
+          </Card>
+
+          {/* 3. backlinks panel (reuse listBacklinks via /api/knowledge/[id]) */}
+          <Card pad="lg" style={{ marginTop: 'var(--s-4)' }}>
+            <SectionLabel>反向链接（{node.backlinks.length}）</SectionLabel>
+            {node.backlinks.length === 0 ? (
+              <p style={{ ...mutedStyle, margin: 0 }}>还没有其它笔记链接到这个节点的简介。</p>
+            ) : (
+              <div style={backlinkListStyle}>
+                {node.backlinks.map((b) => (
+                  <Link
+                    key={`${b.from_artifact_id}:${b.from_block_id}`}
+                    href={`/learning-items/${b.from_artifact_id}`}
+                    style={backlinkRowStyle}
+                  >
+                    <Badge tone={b.from_type === 'note_hub' ? 'good' : 'info'}>
+                      {BACKLINK_TYPE_LABEL[b.from_type] ?? b.from_type}
+                    </Badge>
+                    <span style={{ color: 'var(--ink)' }}>{b.from_title}</span>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </Card>
+
+          {/* 4. activity timeline (event referenced_knowledge_ids) */}
+          <Card pad="lg" style={{ marginTop: 'var(--s-4)' }}>
+            <SectionLabel>最近活动（{node.timeline.length}）</SectionLabel>
+            {node.timeline.length === 0 ? (
+              <p style={{ ...mutedStyle, margin: 0 }}>暂无与此节点相关的事件。</p>
+            ) : (
+              <div style={timelineListStyle}>
+                {node.timeline.map((t) => (
+                  <div key={t.event_id} style={timelineRowStyle}>
+                    <span style={timelineMetaStyle}>{formatRelTime(new Date(t.created_at))}</span>
+                    <Badge tone={t.actor_kind === 'agent' ? 'info' : 'neutral'}>
+                      {t.actor_kind === 'agent'
+                        ? 'AI'
+                        : t.actor_kind === 'user'
+                          ? '用户'
+                          : t.actor_kind}
+                    </Badge>
+                    <span style={{ color: 'var(--ink)' }}>{actionLabel(t.action)}</span>
+                    {t.outcome === 'failure' && <Badge tone="again">失败</Badge>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+
+          {/* D graph 视图 placeholder — ADR-0020 §10: day1 不做，roadmap phase 2+ */}
           <p style={{ ...mutedStyle, marginTop: 'var(--s-5)', textAlign: 'center' }}>
-            单道题详情页待 Phase 1d 实现。
+            节点局部关系图（D graph）待 phase 2+ 实现。
           </p>
         </>
       )}
     </main>
+  );
+}
+
+function PrimaryAtomicView({
+  atomic,
+  profile,
+}: {
+  atomic: PrimaryAtomic;
+  profile: SlimSubjectProfile;
+}) {
+  if (atomic.generation_status === 'pending') {
+    return <p style={mutedStyle}>NoteGenerateTask 异步生成中（约 30-60s）。刷新本页可见进度。</p>;
+  }
+  if (atomic.generation_status === 'failed') {
+    return <p style={{ ...mutedStyle, color: 'var(--again-ink)' }}>生成失败。</p>;
+  }
+  if (!atomic.body_blocks) {
+    return <p style={mutedStyle}>这条 atomic 暂无内容。</p>;
+  }
+  return (
+    <div style={{ marginTop: 'var(--s-2)' }}>
+      <Link href={`/learning-items/${atomic.id}`} style={{ color: 'var(--coral)' }}>
+        {atomic.title} →
+      </Link>
+      <div style={{ marginTop: 'var(--s-3)' }}>
+        <BlockTreeRenderer
+          bodyBlocks={atomic.body_blocks}
+          subjectProfile={profile}
+          embeddedQuestions={atomic.embedded_questions}
+          embeddedCheckStatus={atomic.embedded_check_status}
+        />
+      </div>
+    </div>
+  );
+}
+
+// P6/D (W8-1 scope-down) — 无主 atomic 占位卡 + 引导。完整「一键生成」需先建
+// artifact stub + learning_item 脚手架（orchestrator scope，超出本 UI lane），
+// 故此处引导用户走现有 learning-intent propose 流程；完整 zero-scaffold 生成端点
+// 留 follow-up Linear issue。
+function PrimaryAtomicPlaceholder() {
+  return (
+    <div style={{ marginTop: 'var(--s-2)' }}>
+      <p style={{ ...mutedStyle, margin: '0 0 var(--s-3)' }}>
+        这个节点还没有 atomic 简介笔记。在「学习项」里提议拆分一个学习意图、接受后会异步生成 atomic
+        笔记（NoteGenerateTask）。
+      </p>
+      <Link href="/learning-items" style={generateCtaStyle}>
+        去生成节点笔记
+      </Link>
+    </div>
   );
 }
 
@@ -255,36 +410,80 @@ const ddMonoStyle: React.CSSProperties = {
   color: 'var(--ink-2)',
 };
 
-const mistakeRowStyle: React.CSSProperties = {
-  padding: 'var(--s-3) 0',
-  borderTop: '1px solid var(--line-soft)',
-};
-
-const mistakeMetaStyle: React.CSSProperties = {
+const chipRowStyle: React.CSSProperties = {
   display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
+  flexWrap: 'wrap',
   gap: 'var(--s-2)',
 };
 
-const metaTextStyle: React.CSSProperties = {
+const meshChipStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 'var(--s-1, 4px)',
+  fontSize: 'var(--fs-meta)',
+  padding: '4px 10px',
+  borderRadius: 'var(--r-pill)',
+  border: '1px solid var(--line)',
+  background: 'var(--paper-sunk)',
+  color: 'var(--ink-2)',
+  textDecoration: 'none',
+  whiteSpace: 'nowrap',
+};
+
+const meshArrowStyle: React.CSSProperties = {
+  color: 'var(--ink-4)',
+};
+
+const meshRelStyle: React.CSSProperties = {
+  fontFamily: 'var(--font-mono)',
+  color: 'var(--ink-4)',
+  letterSpacing: 'var(--ls-wide)',
+};
+
+const backlinkListStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 'var(--s-2)',
+};
+
+const backlinkRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 'var(--s-2)',
+  padding: 'var(--s-2) 0',
+  borderTop: '1px solid var(--line-soft)',
+  textDecoration: 'none',
+};
+
+const timelineListStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 'var(--s-2)',
+};
+
+const timelineRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 'var(--s-2)',
+  padding: 'var(--s-2) 0',
+  borderTop: '1px solid var(--line-soft)',
+  flexWrap: 'wrap',
+};
+
+const timelineMetaStyle: React.CSSProperties = {
   fontFamily: 'var(--font-mono)',
   fontSize: 'var(--fs-meta)',
   color: 'var(--ink-4)',
   letterSpacing: 'var(--ls-wide)',
 };
 
-const mistakePromptStyle: React.CSSProperties = {
-  margin: 'var(--s-2) 0 0',
-  fontFamily: 'var(--font-serif)',
+const generateCtaStyle: React.CSSProperties = {
+  display: 'inline-block',
   fontSize: 'var(--fs-body)',
-  color: 'var(--ink)',
-  whiteSpace: 'pre-wrap',
-  wordBreak: 'break-word',
-};
-
-const mistakeAnswerStyle: React.CSSProperties = {
-  margin: 'var(--s-2) 0 0',
-  fontSize: 'var(--fs-caption)',
-  color: 'var(--ink-2)',
+  padding: '6px 14px',
+  borderRadius: 'var(--r-2)',
+  border: '1px solid var(--line)',
+  background: 'var(--paper-sunk)',
+  color: 'var(--coral)',
+  textDecoration: 'none',
 };

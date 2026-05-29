@@ -20,7 +20,6 @@ import {
   CROSS_LINK_BLOCK_NODE,
   SEMANTIC_BLOCK_NODE,
   SEMANTIC_KIND_LABEL,
-  SOURCE_TIER_LABEL,
   type SemanticBlockAttrs,
 } from './types';
 
@@ -234,7 +233,6 @@ export function BlockTreeRenderer({
         const attrs = rawAttrs as unknown as SemanticBlockAttrs;
         const id = typeof attrs.id === 'string' ? attrs.id : `block_${index}`;
         const kind = attrs.semantic_kind ?? 'definition';
-        const sourceTier = attrs.source_tier ?? 'llm_only';
         const status = correctionBlocks[id] ?? ACTIVE_STATUS;
         const label = statusLabel(status);
         const sourceMarkdown =
@@ -251,9 +249,14 @@ export function BlockTreeRenderer({
             data-block-id={id}
           >
             <div className="artifact-section-head">
+              {/* W8-1 / read-view DEFECT 3 (纯删): `AI 单 pass` source_tier chip
+                  removed — §5 line 110 of docs/design/2026-05-26-atomic-note-read-view.md
+                  ("完全移除"). source_tier stays on the schema; it's just not surfaced.
+                  DEFERRED to claude design redraw (W8-1): the 5→3 semantic_kind idiom
+                  CSS (definition 字重 / example quote 风 / pitfall callout) — see
+                  §3 of that doc. Until then SEMANTIC_KIND_LABEL strong is the only chrome. */}
               <div className="artifact-section-labels">
                 <strong>{SEMANTIC_KIND_LABEL[kind]}</strong>
-                <span className="artifact-section-tier">{SOURCE_TIER_LABEL[sourceTier]}</span>
                 {label ? (
                   <Badge tone={status.state === 'superseded' ? 'hard' : 'again'} dot dotStatic>
                     {label}
