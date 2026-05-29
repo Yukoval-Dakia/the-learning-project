@@ -4,8 +4,8 @@
 > 这里记的是 **项目走到了哪、下一站去哪、为什么这么走**，不是 commit log。
 > 维护规则：每完成一个 Phase 就 update 一次；不维护周度进度。
 
-**最后更新**：2026-05-28（**Wave 6 closeout** —— T-D7 / YUK-126 已经 PR #183 合并，T-PD8 / YUK-132 已经 PR #184 合并，T-88 P4-A / YUK-127 已经 PR #185 合并；P4-B/C/D/E（YUK-128 / YUK-129 / YUK-130 / YUK-131）由 closeout branch 补齐 mutator/propose、editing session、undo UI、5 trigger producers。Wave 5 仍保留为上一完整 closeout baseline：[`docs/audit/2026-05-29-wave5-closeout-drift.md`](../audit/2026-05-29-wave5-closeout-drift.md)。）
-**当前 Phase**：Wave 6（master roadmap §5.1）—— **closeout branch in validation**。出口目标：Living Note v0 全 ship（NoteRefineTask + mutator/propose + idle/blur coordination + undo + 5 triggers）、`tool_use` KnownEvent promote、T-PD8 modules doc sweep。详见 [`plans/2026-05-29-wave6-ready-to-launch.md`](plans/2026-05-29-wave6-ready-to-launch.md)。
+**最后更新**：2026-05-29（**Wave 6 ✅ shipped** —— closeout `a419b2e6` 已合并 main：T-D7 / YUK-126 (PR #183) + T-PD8 / YUK-132 (PR #184) + T-88 P4-A / YUK-127 (PR #185) + P4-B/C/D/E (YUK-128/129/130/131) closeout commit。**完整 wave gate 实测全绿** @ `a419b2e6`：typecheck / lint / audit:schema (227 字段) / audit:partition / audit:profile (3 profiles) / build / `pnpm test` (138 files, 1091 tests + 1 todo) / migration-smoke (11)。Living Note v0 全 ship + `tool_use` KnownEvent promote + modules doc sweep 兑现。）
+**当前 Phase**：**Wave 7**（master roadmap §5.1）—— 启动中。出口目标：T-88 P5（反链 + cross_link UI + nightly hub auto-sync worker）+ T-KG（知识图谱 force-directed 视图，v2.1 brief §2.3.b contract）+ T-PD gap-filler。详见 [`plans/2026-05-29-wave7-ready-to-launch.md`](plans/2026-05-29-wave7-ready-to-launch.md)（规划中）。Wave 6 closeout baseline：[`plans/2026-05-29-wave6-ready-to-launch.md`](plans/2026-05-29-wave6-ready-to-launch.md)。
 **主分支**：`main` 已推 `origin`
 **路线图源**：[`docs/planning/v0.3-generalized-ai-learning-framework.md`](../planning/v0.3-generalized-ai-learning-framework.md) §1.5 是当前执行清单；root `PLANNING.md` v0.12 Phase 1-4 已标 historical
 
