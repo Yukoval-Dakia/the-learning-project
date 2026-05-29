@@ -26,38 +26,59 @@ import { db } from '@/db/client';
 import { knowledge, learning_session, question, question_block } from '@/db/schema';
 import { runTask } from '@/server/ai/runner';
 import { getStartedBoss } from '@/server/boss/client';
-import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
+// T-OC slice 1 (YUK-145, OC-3): generalized capture — outcome is a signal,
+// routed by enrollCapturedBlock instead of the old hardcoded
+// attempt(outcome='failure') + learning_record(kind='mistake'). See ADR-0024.
+import { enrollCapturedBlock } from '@/server/ingestion/enroll';
 import { runProposeAndWrite } from '@/server/knowledge/propose';
 import {
   assertCauseAllowedForSubjectProfile,
   resolveSubjectProfileForKnowledgeIds,
 } from '@/server/knowledge/subject-profile';
 import { getR2 } from '@/server/r2';
-import { createLearningRecord } from '@/server/records/queries';
 import { Ingestion } from '@/server/session';
 import type { SubjectProfile } from '@/subjects/profile';
 
 export const runtime = 'nodejs';
 
-const ImportBlock = z.object({
-  block_id: z.string().min(1).optional(),
-  source_block_ids: z.array(z.string().min(1)),
-  page_spans: z.array(PageSpan).min(1),
-  image_refs: z.array(z.string().min(1)),
-  final_prompt_md: z.string().min(1),
-  final_reference_md: z.string().nullable(),
-  final_wrong_answer_md: z.string().min(1),
-  knowledge_ids: z.array(z.string().min(1)).min(1),
-  cause: z
-    .object({
-      primary_category: CauseCategory,
-      user_notes: z.string().nullable(),
-    })
-    .nullable(),
-  difficulty: z.number().int().min(1).max(5).default(3),
-  question_kind: QuestionKind,
-});
+// T-OC slice 1 (YUK-145, OC-3): the capture outcome is a SIGNAL, not hardcoded.
+// See ADR-0024 + docs/superpowers/plans/2026-05-30-yuk145-toc-slice1-lane.md.
+// Default 'failure' keeps the current review UI (VisionTab) enrolling mistakes
+// byte-for-byte; new values come from the review UI / slice-3 WorkflowJudge.
+const EnrollOutcomeSchema = z.enum(['failure', 'success', 'partial', 'unanswered']);
+
+const ImportBlock = z
+  .object({
+    block_id: z.string().min(1).optional(),
+    source_block_ids: z.array(z.string().min(1)),
+    page_spans: z.array(PageSpan).min(1),
+    image_refs: z.array(z.string().min(1)),
+    final_prompt_md: z.string().min(1),
+    final_reference_md: z.string().nullable(),
+    // For an `unanswered` capture (item bank / to-practice) there is no answer,
+    // so empty is allowed; otherwise the answer markdown is required.
+    final_wrong_answer_md: z.string(),
+    outcome: EnrollOutcomeSchema.default('failure'),
+    knowledge_ids: z.array(z.string().min(1)).min(1),
+    cause: z
+      .object({
+        primary_category: CauseCategory,
+        user_notes: z.string().nullable(),
+      })
+      .nullable(),
+    difficulty: z.number().int().min(1).max(5).default(3),
+    question_kind: QuestionKind,
+  })
+  .superRefine((block, ctx) => {
+    if (block.outcome !== 'unanswered' && block.final_wrong_answer_md.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "final_wrong_answer_md is required unless outcome='unanswered'",
+        path: ['final_wrong_answer_md'],
+      });
+    }
+  });
 
 const ImportBody = z.object({
   blocks: z.array(ImportBlock).min(1),
@@ -368,80 +389,56 @@ export async function POST(
           version: 0,
         });
 
-        // Attempt event (failure) — Step 9 replaced the legacy mistake row INSERT.
-        // The attempt event id doubles as the back-compat `mistake_id` returned
-        // to clients (opaque token; semantics shifted post-Step-9).
-        const attemptEventId = createId();
-        const mistakeId = attemptEventId;
-        mistakeIds.push(mistakeId);
+        // T-OC slice 1 (YUK-145, OC-3): generalized capture. The capture's
+        // `outcome` is a SIGNAL routed by enrollCapturedBlock — failure → attempt
+        // (failure)+mistake (existing attribution chain); success/partial →
+        // attempt(success|partial)+worked_example (mastery evidence, NO FSRS
+        // advance — ADR-0024); unanswered → open_question item (no attempt event).
+        const enroll = await enrollCapturedBlock(tx, {
+          questionId,
+          outcome: block.outcome,
+          answerMd: block.final_wrong_answer_md,
+          answerImageRefs: wrongAnswerImageRefs,
+          knowledgeIds: block.knowledge_ids,
+          imageRefs: block.image_refs,
+          captureMode: block.image_refs.length > 0 ? 'image' : 'text',
+          sourceDocumentId: sessionSourceDocumentId,
+          now,
+        });
 
-        // UPDATE question_block: link to question + attempt event, transition to 'imported'.
+        // Back-compat `mistake_id` token: the attempt event id for
+        // failure/success/partial; the record id when unanswered has no attempt.
+        const mistakeId = enroll.attemptEventId ?? enroll.recordId;
+        mistakeIds.push(mistakeId);
+        recordIds.push(enroll.recordId);
+
+        // UPDATE question_block: link to question + attempt event (null for
+        // unanswered captures), transition to 'imported'.
         await tx
           .update(question_block)
           .set({
             imported_question_id: questionId,
-            imported_attempt_event_id: attemptEventId,
+            imported_attempt_event_id: enroll.attemptEventId,
             status: 'imported',
             updated_at: now,
             version: sql`${question_block.version} + 1`,
           })
           .where(eq(question_block.id, importedBlockId));
 
-        await writeEvent(tx, {
-          id: attemptEventId,
-          session_id: null,
-          actor_kind: 'user',
-          actor_ref: 'self',
-          action: 'attempt',
-          subject_kind: 'question',
-          subject_id: questionId,
-          outcome: 'failure',
-          payload: {
-            answer_md: block.final_wrong_answer_md,
-            answer_image_refs: wrongAnswerImageRefs,
-            referenced_knowledge_ids: block.knowledge_ids,
-          },
-          caused_by_event_id: null,
-          task_run_id: null,
-          cost_micro_usd: null,
-          created_at: now,
-        });
-
-        // Mirror POST /api/mistakes write path so ingestion-imported mistakes
-        // are visible to GET /api/mistakes (which reads from learning_record).
-        const recordId = createId();
-        recordIds.push(recordId);
-        await createLearningRecord(tx, {
-          id: recordId,
-          kind: 'mistake',
-          title: null,
-          content_md: block.final_wrong_answer_md,
-          source: 'import',
-          capture_mode: block.image_refs.length > 0 ? 'image' : 'text',
-          activity_kind: 'attempt',
-          processing_status: 'raw',
-          origin_event_id: attemptEventId,
-          knowledge_ids: block.knowledge_ids,
-          question_id: questionId,
-          attempt_event_id: attemptEventId,
-          source_document_id: sessionSourceDocumentId,
-          asset_refs: [...block.image_refs, ...wrongAnswerImageRefs],
-          payload: {
+        // Only failure captures have a cause to attribute. success/partial/
+        // unanswered never queue attribution_followup.
+        if (enroll.needsAttribution && enroll.attemptEventId !== null) {
+          queueData.push({
+            mistakeId,
+            attemptEventId: enroll.attemptEventId,
+            prompt_md: block.final_prompt_md,
+            reference_md: block.final_reference_md,
             wrong_answer_md: block.final_wrong_answer_md,
-            wrong_answer_image_refs: wrongAnswerImageRefs,
-          },
-        });
-
-        queueData.push({
-          mistakeId,
-          attemptEventId,
-          prompt_md: block.final_prompt_md,
-          reference_md: block.final_reference_md,
-          wrong_answer_md: block.final_wrong_answer_md,
-          knowledge_ids: block.knowledge_ids,
-          cause: block.cause,
-          subjectProfile,
-        });
+            knowledge_ids: block.knowledge_ids,
+            cause: block.cause,
+            subjectProfile,
+          });
+        }
       }
 
       // Sweep: mark any draft blocks user dropped as 'ignored'
