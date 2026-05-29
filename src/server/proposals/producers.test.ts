@@ -36,7 +36,7 @@ describe('proposal producer helpers', () => {
       artifact_id: 'artifact_1',
       verification_event_id: 'verify_1',
       summary_md: 'needs a fix',
-      issues: [{ section_id: 's1', suggested_fix_md: 'tighten the example' }],
+      issues: [{ block_id: 'b1', suggested_fix_md: 'tighten the example' }],
       reason_md: 'verifier found a factuality issue',
     });
     await writeLearningItemProposal(db, {

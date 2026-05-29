@@ -19,7 +19,6 @@ describe('note body block verifier contract', () => {
       verdict: 'needs_review',
       issues: [
         {
-          section_id: null,
           block_id: null,
           severity: 'error',
           category: 'coverage',

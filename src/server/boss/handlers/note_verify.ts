@@ -106,7 +106,6 @@ export function noteBodyBlockContractFailure(
     summary_md: `Atomic note body_blocks missing required semantic kinds: ${missingKinds}.`,
     issues: [
       {
-        section_id: null,
         block_id: null,
         severity: 'error',
         category: 'coverage',

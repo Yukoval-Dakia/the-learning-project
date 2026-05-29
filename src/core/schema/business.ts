@@ -254,8 +254,7 @@ export const ArtifactBodyBlocks = z
 export type ArtifactBodyBlocksT = z.infer<typeof ArtifactBodyBlocks>;
 
 export const NoteVerificationIssue = z.object({
-  section_id: z.string().nullable(),
-  block_id: z.string().nullable().optional(),
+  block_id: z.string().nullable(),
   severity: z.enum(['info', 'warn', 'error']),
   category: z.enum(['factuality', 'coverage', 'clarity', 'subject_fit', 'format', 'safety']),
   message: z.string().min(1),

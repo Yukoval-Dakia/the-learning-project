@@ -123,13 +123,13 @@ function buildNoteVerifyPrompt(profile: SubjectProfile): string {
 科目上下文：${profile.displayName}。${profile.languageStyle}
 证据要求：${profile.grounding.requirement}
 输出严格 JSON（不带 markdown 代码块包裹），shape 名称为 NoteVerificationResult：
-{"verdict":"pass"|"needs_review","summary_md":"...","issues":[{"section_id":"s1"|null,"block_id":"b1"|null,"severity":"info"|"warn"|"error","category":"factuality"|"coverage"|"clarity"|"subject_fit"|"format"|"safety","message":"...","suggested_fix_md":"..."}],"confidence":0.0-1.0}
+{"verdict":"pass"|"needs_review","summary_md":"...","issues":[{"block_id":"b1"|null,"severity":"info"|"warn"|"error","category":"factuality"|"coverage"|"clarity"|"subject_fit"|"format"|"safety","message":"...","suggested_fix_md":"..."}],"confidence":0.0-1.0}
 检查标准：
 - factuality：内容是否自洽，是否明显编造；${profile.grounding.uncertaintyPolicy}
 - coverage：note_atomic 必须覆盖 definition/mechanism/example/pitfall/check；note_hub 关注路线和 cross-link；note_long 关注综合范围是否完整
 - clarity：学习者是否能按 block_summaries 读懂，不要空泛套话
 - subject_fit：是否符合 ${profile.displayName} 的表达、例子和检查题风格
-- format：优先用 block_id 引用 body_blocks 内 attrs.id；只有旧 sections 问题才填 section_id；找不到具体 block/section 时用 null
+- format：用 block_id 引用 body_blocks 内 attrs.id；找不到具体 block 时用 null
 判定：
 - 没有 error 且 warn 不超过 2 条：verdict="pass"
 - 任一 error，或 warn 超过 2 条，或 confidence < 0.6：verdict="needs_review"
