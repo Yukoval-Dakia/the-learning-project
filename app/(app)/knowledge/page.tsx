@@ -98,6 +98,14 @@ interface MistakeRow {
   created_at: number;
 }
 
+// Slice 2 (YUK-142) — per-node FSRS due summary from
+// GET /api/knowledge/review-due-summary.
+interface ReviewDueSummary {
+  now: string;
+  due_soon_window_hours: number;
+  summary: Record<string, { overdue: number; due_soon: number }>;
+}
+
 type RelationType =
   | 'prerequisite'
   | 'related_to'
@@ -157,6 +165,10 @@ export default function KnowledgePage() {
   const mistakesQ = useQuery({
     queryKey: ['knowledge-mistakes'],
     queryFn: () => apiJson<{ rows: MistakeRow[] }>('/api/mistakes?limit=200'),
+  });
+  const reviewDueQ = useQuery({
+    queryKey: ['knowledge-review-due-summary'],
+    queryFn: () => apiJson<ReviewDueSummary>('/api/knowledge/review-due-summary'),
   });
 
   const proposalDecision = useMutation({
@@ -223,6 +235,15 @@ export default function KnowledgePage() {
     return counts;
   }, [mistakes]);
 
+  const dueCounts = useMemo(() => {
+    const counts = new Map<string, { overdue: number; due_soon: number }>();
+    const summary = reviewDueQ.data?.summary;
+    if (summary) {
+      for (const [id, v] of Object.entries(summary)) counts.set(id, v);
+    }
+    return counts;
+  }, [reviewDueQ.data]);
+
   const proposalsByParent = useMemo(() => {
     const grouped = new Map<string | null, KnowledgeProposal[]>();
     for (const p of nodeProposals) {
@@ -263,7 +284,7 @@ export default function KnowledgePage() {
     : [];
 
   const optionalDataError =
-    edgesQ.error ?? proposalsQ.error ?? edgeProposalsQ.error ?? mistakesQ.error;
+    edgesQ.error ?? proposalsQ.error ?? edgeProposalsQ.error ?? mistakesQ.error ?? reviewDueQ.error;
 
   const createEdgeM = useMutation({
     mutationFn: (vars: {
@@ -440,6 +461,7 @@ export default function KnowledgePage() {
           selectedId={selectedId}
           onNodeClick={setSelectedId}
           mistakeCounts={mistakeCounts}
+          dueCounts={dueCounts}
         />
       )}
 
