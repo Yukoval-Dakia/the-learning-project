@@ -2228,6 +2228,87 @@ ol {
   color: var(--ink-4);
 }
 
+/* YUK-95 P5 Lane-B — backlink panel, mirrors .ai-change-panel visual language. */
+.backlink-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(79, 110, 142, 0.22);
+  border-radius: var(--r-2);
+  background: var(--paper-sunk);
+}
+
+.backlink-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
+
+.backlink-panel-title {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.backlink-panel-chevron {
+  color: var(--ink-5);
+}
+
+.backlink-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.backlink-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(79, 110, 142, 0.18);
+  text-decoration: none;
+  color: inherit;
+}
+
+.backlink-row:hover .backlink-row-head strong {
+  text-decoration: underline;
+}
+
+.backlink-row-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+.backlink-row-head strong {
+  font-size: 13px;
+  font-weight: 560;
+  color: var(--ink-2);
+}
+
+.backlink-row-snippet {
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  line-height: 1.5;
+}
+
+.backlink-empty {
+  margin: 0;
+  font-size: var(--fs-meta);
+  color: var(--ink-5);
+}
+
 .block-tree-renderer .artifact-section-body p {
   margin: 0 0 var(--s-2);
 }

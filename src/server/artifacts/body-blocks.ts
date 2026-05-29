@@ -217,6 +217,47 @@ export function bodyBlocksToNoteSections(value: unknown): NoteSectionT[] {
   return out;
 }
 
+/**
+ * Locate the block whose `attrs.id === blockId` anywhere in `value`'s tree and
+ * return a single-line, whitespace-collapsed text snippet trimmed to `maxLength`
+ * (default 120). Returns `null` when the doc is unparseable or no block matches.
+ *
+ * Server-side counterpart to the UI `nodeText` walker in
+ * `src/ui/block-tree/pm.ts` — kept in the server layer so route handlers
+ * (YUK-95 Lane-B backlink panel) can derive a context snippet for a source
+ * block without importing the client `pm.ts` module. Reuses the same recursive
+ * `blockText` extraction used by the block summaries above.
+ */
+export function extractBlockSnippet(
+  value: unknown,
+  blockId: string,
+  maxLength = 120,
+): string | null {
+  const parsed = ArtifactBodyBlocks.safeParse(value);
+  if (!parsed.success) return null;
+
+  let found: Record<string, unknown> | null = null;
+  const visit = (node: Record<string, unknown>): boolean => {
+    const attrs = recordOrEmpty(node.attrs);
+    if (attrs.id === blockId) {
+      found = node;
+      return true;
+    }
+    const content = Array.isArray(node.content) ? node.content : [];
+    return content.some(
+      (child) =>
+        child !== null && typeof child === 'object' && visit(child as Record<string, unknown>),
+    );
+  };
+
+  for (const node of parsed.data.content ?? []) {
+    if (visit(node)) break;
+  }
+
+  if (found === null) return null;
+  return textExcerpt(found, maxLength);
+}
+
 export function bodyBlocksContainId(value: unknown, blockId: string): boolean {
   const parsed = ArtifactBodyBlocks.safeParse(value);
   if (!parsed.success) return false;
