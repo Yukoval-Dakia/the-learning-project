@@ -14,6 +14,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   type FilterState,
+  type KnowledgeEdgeProposal,
   type KnowledgeGraphEdge,
   type KnowledgeGraphNode,
   type NodeDueSummary,
@@ -21,6 +22,7 @@ import {
   TOKEN_NAMES,
   type TokenMap,
   buildElements,
+  buildProposedEdgeElements,
   buildStylesheet,
   distinctDomains,
   isWeakish,
@@ -267,6 +269,96 @@ describe('buildElements (Slice 1a)', () => {
   });
 });
 
+describe('buildProposedEdgeElements (Slice 3 — "AI 画布")', () => {
+  function proposal(
+    partial: Partial<KnowledgeEdgeProposal> & {
+      id: string;
+      from_knowledge_id: string;
+      to_knowledge_id: string;
+    },
+  ): KnowledgeEdgeProposal {
+    return {
+      key: `${partial.from_knowledge_id}:${partial.to_knowledge_id}`,
+      relation_type: 'related_to',
+      ...partial,
+    };
+  }
+
+  const visible = new Set(['a', 'b', 'c']);
+
+  it('emits one proposed edge per proposal whose both endpoints are visible', () => {
+    const els = buildProposedEdgeElements(
+      [
+        proposal({
+          id: 'p1',
+          from_knowledge_id: 'a',
+          to_knowledge_id: 'b',
+          relation_type: 'prerequisite',
+        }),
+        proposal({ id: 'p2', from_knowledge_id: 'b', to_knowledge_id: 'c' }),
+      ],
+      visible,
+    );
+    expect(els).toHaveLength(2);
+    const p1 = els.find((e) => e.data.proposalId === 'p1');
+    expect(p1?.data.kind).toBe('proposed');
+    expect(p1?.data.source).toBe('a');
+    expect(p1?.data.target).toBe('b');
+    expect(p1?.data.relation).toBe('prerequisite');
+    expect(p1?.classes).toBe('kg-proposed');
+  });
+
+  it('skips a proposal when either endpoint is not visible (filter/focus guard)', () => {
+    const els = buildProposedEdgeElements(
+      [
+        // target 'z' not visible → skipped
+        proposal({ id: 'p1', from_knowledge_id: 'a', to_knowledge_id: 'z' }),
+        // source 'z' not visible → skipped
+        proposal({ id: 'p2', from_knowledge_id: 'z', to_knowledge_id: 'b' }),
+        // both visible → kept
+        proposal({ id: 'p3', from_knowledge_id: 'a', to_knowledge_id: 'c' }),
+      ],
+      visible,
+    );
+    expect(els).toHaveLength(1);
+    expect(els[0].data.proposalId).toBe('p3');
+  });
+
+  it('prefixes element ids with proposed-<key> so they never collide with edge/tree ids', () => {
+    const els = buildProposedEdgeElements(
+      [
+        proposal({
+          id: 'p1',
+          key: 'subj:a:b:rel:actor',
+          from_knowledge_id: 'a',
+          to_knowledge_id: 'b',
+        }),
+      ],
+      visible,
+    );
+    expect(els[0].data.id).toBe('proposed-subj:a:b:rel:actor');
+  });
+
+  it('falls back unknown / experimental relation_type to related_to visual key', () => {
+    const els = buildProposedEdgeElements(
+      [
+        proposal({
+          id: 'px',
+          from_knowledge_id: 'a',
+          to_knowledge_id: 'b',
+          relation_type: 'experimental:co_occurs',
+        }),
+      ],
+      visible,
+    );
+    expect(els[0].data.relation).toBe('related_to');
+  });
+
+  it('returns empty array when there are no proposals', () => {
+    expect(buildProposedEdgeElements([], visible)).toEqual([]);
+  });
+});
+
 describe('buildStylesheet (Slice 1a)', () => {
   // A token map with each name mapped to a recognisable literal.
   const tokens = Object.fromEntries(TOKEN_NAMES.map((n) => [n, `value(${n})`])) as TokenMap;
@@ -307,5 +399,28 @@ describe('buildStylesheet (Slice 1a)', () => {
     const style = styleOf(sheet, 'node[band = "insufficient"]');
     expect(style?.['background-color']).toBe('value(--ink-5)');
     expect(style?.['background-opacity']).toBe(0.4);
+  });
+
+  it('proposed edges are dotted, faint, AI-marked, and sit just above mesh (Slice 3)', () => {
+    const sheet = buildStylesheet(tokens);
+    const proposed = styleOf(sheet, 'edge[kind = "proposed"]');
+    expect(proposed?.['line-style']).toBe('dotted');
+    expect(proposed?.opacity).toBe(0.5); // fainter than mesh's 0.72 → "tentative"
+    expect(proposed?.['source-arrow-color']).toBe('value(--info)'); // AI tone marker
+    expect(proposed?.['z-index']).toBe(6);
+    // Above mesh (5) but visually subordinate via dotted/opacity.
+    const mesh = styleOf(sheet, 'edge[kind = "mesh"]');
+    expect(proposed?.['z-index'] as number).toBeGreaterThan(mesh?.['z-index'] as number);
+  });
+
+  it('emits a per-relation tint for each proposed relation (color reads the proposed KIND)', () => {
+    const sheet = buildStylesheet(tokens);
+    for (const [relation, visual] of Object.entries(RELATION_VISUAL)) {
+      const style = styleOf(sheet, `edge[kind = "proposed"][relation = "${relation}"]`);
+      expect(style, `missing proposed style for ${relation}`).toBeDefined();
+      expect(style?.['line-color']).toBe(`value(${visual.token})`);
+      // line-style is NOT overridden here — it inherits dotted from the base block.
+      expect(style?.['line-style']).toBeUndefined();
+    }
   });
 });

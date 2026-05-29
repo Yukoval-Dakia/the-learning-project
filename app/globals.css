@@ -4235,6 +4235,84 @@ ol {
   font-weight: 500;
 }
 
+/* Slice 3 ("AI 画布") — proposed-edge legend swatch: a dotted --info line echoing
+   the proposed-edge stroke (distinct from the solid relation swatches + the
+   dashed tree swatch). */
+.kg-legend .swatch.proposed {
+  border-top: 2px dotted var(--info);
+}
+
+/* Positioning context for the inline proposal action popover — cytoscape's
+   <canvas> sits inside, so the popover (absolute, anchored at the edge's rendered
+   midpoint in container px) overlays the graph. */
+.kg-canvas-wrap {
+  position: relative;
+}
+
+/* Inline accept/dismiss surfaced when a proposed edge is tapped (Slice 3). Anchors
+   at the edge midpoint; transform centers it horizontally and lifts it above the
+   line. Reuses paper-raised + line + shadow design tokens (no new tokens). */
+.kg-proposal-action {
+  position: absolute;
+  transform: translate(-50%, calc(-100% - 8px));
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  /* reset <fieldset> UA defaults before applying the popover box */
+  margin: 0;
+  min-inline-size: auto;
+  padding: 8px 10px;
+  background: var(--paper-raised);
+  border: 1px solid var(--info);
+  border-radius: var(--r-2);
+  box-shadow: var(--shadow-2);
+  white-space: nowrap;
+  pointer-events: auto;
+}
+
+.kg-proposal-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+
+.kg-proposal-label code {
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+.kg-proposal-rel {
+  color: var(--info-ink);
+  font-weight: 600;
+}
+
+.kg-proposal-buttons {
+  display: inline-flex;
+  gap: 6px;
+}
+
+/* Accept = the affirmative verb (good-tone), dismiss = neutral ghost — mirrors
+   the drawer EdgeProposalCard's button tones without forking that component. */
+.kg-proposal-accept {
+  color: var(--good-ink);
+  background: var(--good-soft);
+  border-color: var(--good-line);
+}
+
+.kg-proposal-accept:hover {
+  color: #fff;
+  background: var(--good);
+  border-color: var(--good);
+}
+
+.kg-proposal-dismiss {
+  color: var(--ink-4);
+}
+
 .detail-drawer {
   position: fixed;
   top: 0;

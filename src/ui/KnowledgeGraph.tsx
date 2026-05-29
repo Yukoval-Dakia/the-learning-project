@@ -1,5 +1,6 @@
 'use client';
 
+import { Icon } from '@/ui/primitives/Icon';
 import cytoscape, { type Core, type ElementDefinition, type StylesheetJson } from 'cytoscape';
 import fcose, { type FcoseLayoutOptions } from 'cytoscape-fcose';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -29,6 +30,18 @@ export const RELATION_VISUAL: Record<string, RelationVisual> = {
   derived_from: { token: '--ink-5', arrow: true, dashed: false },
   contrasts_with: { token: '--contrasts', arrow: false, dashed: false },
   related_to: { token: '--ink-4', arrow: false, dashed: true },
+};
+
+// Chinese relation labels (mirror app/(app)/knowledge/page.tsx RELATION_TYPES)
+// for the Slice 3 inline proposal action so the on-graph popover reads the
+// proposed relation in the same words as the drawer's EdgeProposalCard. Unknown /
+// experimental types fall through to the raw relation_type at the call site.
+export const RELATION_LABEL: Record<string, string> = {
+  prerequisite: '前置',
+  related_to: '相关',
+  contrasts_with: '对照',
+  applied_in: '应用于',
+  derived_from: '派生自',
 };
 
 // ── Mastery bands (Slice 1b 诊断 overlay) ────────────────────────────────────
@@ -177,6 +190,23 @@ export interface NodeDueSummary {
   due_soon: number;
 }
 
+/**
+ * A pending AI edge proposal, normalized for the graph (Slice 3 — "AI 画布").
+ * page.tsx loads these from GET /api/events?action=propose&subject_kind=
+ * knowledge_edge and decides them via POST /api/knowledge/edges/proposals/[id].
+ * `id` is the propose-event id (the decision endpoint's path param). `key` is the
+ * page's stable dedupe key (subject:from:to:relation:actor) used so optimistic
+ * "already decided" hiding survives identical re-proposals. We carry both: `id`
+ * for the endpoint, `key` for element ids + the decided-set lookup.
+ */
+export interface KnowledgeEdgeProposal {
+  id: string;
+  key: string;
+  from_knowledge_id: string;
+  to_knowledge_id: string;
+  relation_type: string;
+}
+
 export interface KnowledgeGraphProps {
   nodes: KnowledgeGraphNode[];
   edges: KnowledgeGraphEdge[];
@@ -190,6 +220,22 @@ export interface KnowledgeGraphProps {
    * map when the summary endpoint is unavailable (graceful: no halos shown).
    */
   dueCounts?: Map<string, NodeDueSummary>;
+  /**
+   * Pending AI edge proposals (Slice 3 — "AI 画布"). Rendered as distinct dotted
+   * `kind: 'proposed'` edges between their endpoints when BOTH endpoints are
+   * visible under the current filter/focus. Tapping one surfaces an inline
+   * accept / dismiss that calls onProposalDecision (the SAME decision endpoint
+   * the drawer's EdgeProposalCard uses). Must be a stable/memoized ref from the
+   * page (see activeEdges memo) so it doesn't churn the cytoscape rebuild effect.
+   */
+  proposals?: KnowledgeEdgeProposal[];
+  /**
+   * Decide a proposal from the graph's inline action. `decision` reuses the
+   * drawer's verb set; only 'accept' / 'dismiss' are surfaced inline (改方向 /
+   * 改关系 stay in the drawer per Slice 3 scope). Same handler the page already
+   * wires for the drawer, so the round-trip + query invalidation is shared.
+   */
+  onProposalDecision?: (proposalId: string, decision: 'accept' | 'dismiss') => void;
 }
 
 // fcose layout options carry extension-specific keys not present in
@@ -274,6 +320,45 @@ export function buildElements(
     });
   }
 
+  return elements;
+}
+
+// Slice 3 ("AI 画布") — map pending edge proposals to distinct `kind: 'proposed'`
+// cytoscape edges. A proposal only renders when BOTH endpoints are visible under
+// the current filter/focus (visibleNodeIds), mirroring the mesh-edge dangling
+// guard; otherwise it would float to a node that isn't on screen. Element ids are
+// prefixed `proposed-<key>` so they never collide with real edge ids (which are
+// the raw knowledge_edge id) or tree ids (`tree-<node>`). `relation` carries the
+// proposed relation_type so the stylesheet can tint the dotted line with that
+// relation's color; unknown/experimental types fall back to related_to like mesh.
+// `proposalId` rides on the element so the tap handler can call the decision
+// endpoint without re-deriving it. z-index sits at/just above the mesh layer so
+// the proposal reads as "a connection being suggested over the mesh" but its
+// dotted + reduced-opacity + AI-marked styling keeps it from being mistaken for a
+// committed mesh edge.
+export function buildProposedEdgeElements(
+  proposals: KnowledgeEdgeProposal[],
+  visibleNodeIds: Set<string>,
+): ElementDefinition[] {
+  const elements: ElementDefinition[] = [];
+  for (const p of proposals) {
+    if (!visibleNodeIds.has(p.from_knowledge_id) || !visibleNodeIds.has(p.to_knowledge_id)) {
+      continue;
+    }
+    const visualKey = RELATION_VISUAL[p.relation_type] ? p.relation_type : 'related_to';
+    elements.push({
+      group: 'edges',
+      data: {
+        id: `proposed-${p.key}`,
+        source: p.from_knowledge_id,
+        target: p.to_knowledge_id,
+        kind: 'proposed',
+        relation: visualKey,
+        proposalId: p.id,
+      },
+      classes: 'kg-proposed',
+    });
+  }
   return elements;
 }
 
@@ -410,6 +495,41 @@ export function buildStylesheet(t: TokenMap): StylesheetJson {
         'z-index': 5,
       },
     },
+    // ── Proposed (AI-suggested) edges (Slice 3 — "AI 画布") ──────────────────
+    // An AI edge proposal surfaced ON the graph. It must read as "AI suggests
+    // this connection", NOT as a committed mesh edge, so it differs from mesh on
+    // THREE axes: (1) always DOTTED (line-style dotted, distinct from tree's
+    // dashed and from solid mesh), (2) reduced opacity (0.5 — fainter than
+    // mesh's 0.72, "tentative"), (3) an --info AI-tone target-arrow source/target
+    // marker. The per-relation block below tints the dotted line with the
+    // proposed relation's own color so the user still reads what KIND of relation
+    // is being proposed. z-index 6 sits just above mesh so a proposal between two
+    // already-meshed nodes is still visible, but the dotted/faint styling keeps
+    // mesh-over-tree legibility intact (proposed edges are visually subordinate
+    // to solid mesh despite the +1 z so they never look "more real").
+    {
+      selector: 'edge[kind = "proposed"]',
+      style: {
+        width: 2,
+        'curve-style': 'bezier',
+        'line-style': 'dotted',
+        opacity: 0.5,
+        // --info is the project's AI-attributed tone (matches the "AI · 关系"
+        // mini-badge + EdgeProposalCard tone-info). Source-arrow dot marks the
+        // edge as a suggestion emanating from the AI, not a directed mesh edge.
+        'source-arrow-shape': 'diamond',
+        'source-arrow-color': t['--info'],
+        'target-arrow-shape': 'triangle',
+        'z-index-compare': 'manual',
+        'z-index': 6,
+      },
+    },
+    // Hovered/active proposed edge: lift opacity so the inline-action affordance
+    // reads as interactive (the tap handler surfaces accept/dismiss).
+    {
+      selector: 'edge[kind = "proposed"]:active',
+      style: { opacity: 0.85, width: 3 },
+    },
   ];
 
   // Per-relation color / line-style / arrow, resolved from tokens.
@@ -423,6 +543,20 @@ export function buildStylesheet(t: TokenMap): StylesheetJson {
         ...(visual.arrow
           ? { 'target-arrow-shape': 'triangle', 'target-arrow-color': color }
           : { 'target-arrow-shape': 'none' }),
+      },
+    });
+    // Proposed-edge per-relation tint: same relation color so the user reads the
+    // proposed KIND, but the dotted line-style + reduced opacity (from the
+    // edge[kind="proposed"] base above) keep it visually "tentative/AI". The
+    // target arrow takes the relation color; the source --info diamond stays as
+    // the AI marker. Line-style is NOT overridden here — it inherits dotted from
+    // the base block so even a normally-dashed relation (related_to) reads as
+    // dotted-proposed, not dashed-tree-like.
+    sheet.push({
+      selector: `edge[kind = "proposed"][relation = "${relation}"]`,
+      style: {
+        'line-color': color,
+        'target-arrow-color': color,
       },
     });
   }
@@ -490,6 +624,8 @@ export function KnowledgeGraph({
   onNodeClick,
   mistakeCounts,
   dueCounts,
+  proposals,
+  onProposalDecision,
 }: KnowledgeGraphProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
@@ -497,10 +633,18 @@ export function KnowledgeGraph({
   // re-renders with a new function identity.
   const onNodeClickRef = useRef(onNodeClick);
   onNodeClickRef.current = onNodeClick;
+  // Same latest-ref trick for the proposal decision callback so the build effect
+  // doesn't re-init cytoscape when the parent passes a fresh function identity.
+  const onProposalDecisionRef = useRef(onProposalDecision);
+  onProposalDecisionRef.current = onProposalDecision;
 
   // Stable empty fallback so the build effect's dependency identity is steady
   // when the summary endpoint is unavailable.
   const due = useMemo(() => dueCounts ?? new Map<string, NodeDueSummary>(), [dueCounts]);
+  // Same stable-empty pattern for proposals — when the page passes nothing
+  // (proposals endpoint unavailable / no pending), keep a steady [] reference so
+  // the build effect's deps don't churn.
+  const allProposals = useMemo(() => proposals ?? ([] as KnowledgeEdgeProposal[]), [proposals]);
   const totalOverdueNodes = useMemo(() => {
     let n = 0;
     for (const v of due.values()) if (v.overdue > 0) n += 1;
@@ -530,6 +674,18 @@ export function KnowledgeGraph({
     });
   }, [domains]);
 
+  // Slice 3 inline action: which proposed edge is "open" for accept/dismiss, and
+  // where to anchor the floating action over the canvas (rendered midpoint of the
+  // edge, in container px). Cleared on decision, empty-canvas tap, or rebuild.
+  const [activeProposal, setActiveProposal] = useState<{
+    proposalId: string;
+    relation: string;
+    fromName: string;
+    toName: string;
+    x: number;
+    y: number;
+  } | null>(null);
+
   // focusId is the spatial complement to selectedId (the drawer). Tapping a
   // node does both. A node can be focused without the drawer (e.g. restored)
   // but in practice they move together via onNodeClick.
@@ -551,6 +707,16 @@ export function KnowledgeGraph({
       ),
     [edges, visibleNodeIds],
   );
+  // Proposals whose BOTH endpoints survive the current filter/focus — only these
+  // become proposed edges (buildProposedEdgeElements applies the same guard, but
+  // computing the visible set here drives the build-effect deps + the legend).
+  const visibleProposals = useMemo(
+    () =>
+      allProposals.filter(
+        (p) => visibleNodeIds.has(p.from_knowledge_id) && visibleNodeIds.has(p.to_knowledge_id),
+      ),
+    [allProposals, visibleNodeIds],
+  );
 
   // mastery + evidence lookup for prerequisite-weakness derivation. evidence is
   // carried so isWeakish() can treat a low-evidence prerequisite as shaky too
@@ -569,6 +735,27 @@ export function KnowledgeGraph({
     for (const n of visibleNodes) acc[masteryBand(n.mastery, n.evidence_count)]++;
     return acc;
   }, [visibleNodes]);
+
+  // Node-name lookup for the inline proposal popover (id → display name).
+  const nameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const n of nodes) m.set(n.id, n.name);
+    return m;
+  }, [nodes]);
+
+  // proposalId → its endpoints/relation, so the tap handler can label the inline
+  // action without re-scanning the proposals array on every tap.
+  const proposalMetaById = useMemo(() => {
+    const m = new Map<string, { from: string; to: string; relation: string }>();
+    for (const p of allProposals) {
+      m.set(p.id, {
+        from: p.from_knowledge_id,
+        to: p.to_knowledge_id,
+        relation: p.relation_type,
+      });
+    }
+    return m;
+  }, [allProposals]);
 
   // ── Focus mode + prerequisite-weakness overlay ──────────────────────────
   // When a node is focused: reveal its closed 1-hop neighborhood, fade
@@ -622,7 +809,13 @@ export function KnowledgeGraph({
     const tokens = readTokens();
     const cy = cytoscape({
       container,
-      elements: buildElements(visibleNodes, visibleEdges, mistakeCounts, due),
+      elements: [
+        ...buildElements(visibleNodes, visibleEdges, mistakeCounts, due),
+        // Slice 3: proposed edges layered onto the same scene. They reference the
+        // node ids built above; buildProposedEdgeElements already guards on the
+        // visible set so every endpoint exists as a node element.
+        ...buildProposedEdgeElements(visibleProposals, visibleNodeIds),
+      ],
       style: buildStylesheet(tokens),
       layout: FCOSE_LAYOUT,
       minZoom: 0.1,
@@ -635,14 +828,42 @@ export function KnowledgeGraph({
       const id = event.target.id();
       if (id) {
         // Tap = open drawer (preserved Slice 1a behavior) AND enter focus mode.
+        // A node tap also dismisses any open inline proposal action.
+        setActiveProposal(null);
         onNodeClickRef.current(id);
         setFocusId(id);
       }
     });
-    // Tapping empty canvas exits focus (but leaves the drawer to the page).
-    cy.on('tap', (event) => {
-      if (event.target === cy) setFocusId(null);
+    // Slice 3: tapping a proposed edge opens the inline accept/dismiss action
+    // anchored at the edge's rendered midpoint (container px). We DON'T open the
+    // drawer here — the inline action is the on-graph affordance.
+    cy.on('tap', 'edge[kind = "proposed"]', (event) => {
+      const edge = event.target;
+      const proposalId = edge.data('proposalId') as string | undefined;
+      const relation = (edge.data('relation') as string | undefined) ?? 'related_to';
+      if (!proposalId) return;
+      const meta = proposalMetaById.get(proposalId);
+      const mid = edge.renderedMidpoint();
+      setActiveProposal({
+        proposalId,
+        relation,
+        fromName: meta ? (nameById.get(meta.from) ?? meta.from) : edge.source().id(),
+        toName: meta ? (nameById.get(meta.to) ?? meta.to) : edge.target().id(),
+        x: mid.x,
+        y: mid.y,
+      });
     });
+    // Tapping empty canvas exits focus AND closes the inline proposal action
+    // (but leaves the drawer to the page).
+    cy.on('tap', (event) => {
+      if (event.target === cy) {
+        setFocusId(null);
+        setActiveProposal(null);
+      }
+    });
+    // Pan/zoom moves the edge under any open inline action — close it rather than
+    // leave the popover stranded at a stale position.
+    cy.on('pan zoom', () => setActiveProposal(null));
 
     // Re-read tokens + restyle on theme change so dark mode resolves. Watches
     // the <html data-theme> attribute (explicit toggle) and the OS dark-mode
@@ -663,13 +884,27 @@ export function KnowledgeGraph({
     // the prior focus classes). Selection is reflected by its own effect below.
     applyFocus(focusIdRef.current);
 
+    // A rebuild destroys the prior cy instance, so any open inline proposal
+    // action points at a stale edge — close it.
+    setActiveProposal(null);
+
     return () => {
       attrObserver.disconnect();
       media.removeEventListener('change', restyle);
       cy.destroy();
       cyRef.current = null;
     };
-  }, [visibleNodes, visibleEdges, mistakeCounts, due, applyFocus]);
+  }, [
+    visibleNodes,
+    visibleEdges,
+    visibleProposals,
+    visibleNodeIds,
+    mistakeCounts,
+    due,
+    applyFocus,
+    proposalMetaById,
+    nameById,
+  ]);
 
   // Reflect selection without rebuilding the graph.
   useEffect(() => {
@@ -711,7 +946,25 @@ export function KnowledgeGraph({
 
   const exitFocus = useCallback(() => setFocusId(null), []);
 
+  // Slice 3 inline decision: reuse the page's decision callback (the SAME handler
+  // the drawer's EdgeProposalCard wires through edgeProposalDecision → POST
+  // /api/knowledge/edges/proposals/[id]). We optimistically close the popover; the
+  // page's onSuccess invalidation refetches edges + proposals, so an accepted
+  // proposal disappears from `proposals` and reappears as a real mesh edge on the
+  // next render, and a dismissed one just disappears.
+  const decideActiveProposal = useCallback(
+    (decision: 'accept' | 'dismiss') => {
+      if (!activeProposal) return;
+      onProposalDecisionRef.current?.(activeProposal.proposalId, decision);
+      setActiveProposal(null);
+    },
+    [activeProposal],
+  );
+
   const focusName = focusId ? (nodes.find((n) => n.id === focusId)?.name ?? focusId) : null;
+  const activeRelationLabel = activeProposal
+    ? (RELATION_LABEL[activeProposal.relation] ?? activeProposal.relation)
+    : null;
 
   return (
     <section className="kg-stage" aria-label="知识关系图">
@@ -777,7 +1030,45 @@ export function KnowledgeGraph({
         </div>
       )}
 
-      <div ref={containerRef} className="kg-canvas" role="img" aria-label="知识关系图" />
+      <div className="kg-canvas-wrap">
+        <div ref={containerRef} className="kg-canvas" role="img" aria-label="知识关系图" />
+        {activeProposal && (
+          // Slice 3 inline action — minimal accept/dismiss anchored at the
+          // proposed edge's rendered midpoint. translate(-50%, …) centers it on
+          // the edge; the negative Y lifts it above the line. 改方向/改关系 stay
+          // in the drawer (Slice 3 scope), so only accept/dismiss are inline.
+          <fieldset
+            className="kg-proposal-action"
+            style={{ left: activeProposal.x, top: activeProposal.y }}
+            aria-label="AI 建议关系"
+          >
+            <span className="kg-proposal-label">
+              <span className="mini-badge info">
+                <Icon name="link" size={11} /> AI
+              </span>
+              <code>{activeProposal.fromName}</code>
+              <span className="kg-proposal-rel">{activeRelationLabel}</span>
+              <code>{activeProposal.toName}</code>
+            </span>
+            <div className="kg-proposal-buttons">
+              <button
+                type="button"
+                className="kg-chip kg-proposal-accept"
+                onClick={() => decideActiveProposal('accept')}
+              >
+                接受
+              </button>
+              <button
+                type="button"
+                className="kg-chip kg-proposal-dismiss"
+                onClick={() => decideActiveProposal('dismiss')}
+              >
+                忽略
+              </button>
+            </div>
+          </fieldset>
+        )}
+      </div>
 
       <div className="kg-legend">
         <span className="kg-legend-section">掌握度</span>
@@ -816,9 +1107,16 @@ export function KnowledgeGraph({
             <span>{relation}</span>
           </span>
         ))}
+        <span className="kg-legend-section">AI</span>
+        <span className="item">
+          {/* Dotted --info swatch = proposed (AI-suggested) edge; count = visible
+              pending proposals under the current filter/focus. */}
+          <span className="swatch proposed" />
+          <span>提议关系 {visibleProposals.length}</span>
+        </span>
         <span className="kg-legend-note">
-          圆 = 节点 · 填色 ∝ 掌握度 · 半径 ∝ mistake_count · 珊瑚光晕 = 有逾期复习 · 点节点聚焦 ·
-          拖拽 / 滚轮缩放
+          圆 = 节点 · 填色 ∝ 掌握度 · 半径 ∝ mistake_count · 珊瑚光晕 = 有逾期复习 · 点虚线 = AI
+          提议（点击接受 / 忽略）· 点节点聚焦 · 拖拽 / 滚轮缩放
         </span>
       </div>
     </section>
