@@ -312,6 +312,89 @@ describe('persistNoteRefineApply → block-ref sync in the same tx', () => {
   });
 });
 
+describe('undoNoteRefineApplyEvent → block-ref resync in the same tx', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('removes the cross_link row that the applied patch added, when undo restores the pre-link doc', async () => {
+    const db = testDb();
+    // Start with a doc that has NO crossLinkBlock.
+    await seedArtifact('from1', {
+      body_blocks: docWith(semanticBlock('s1', 'original body')) as never,
+    });
+    await seedArtifact('to1');
+
+    // Apply a patch that appends a crossLinkBlock → apply-path resync writes the ref.
+    const apply = await persistNoteRefineApply({
+      db,
+      artifactId: 'from1',
+      patch: {
+        ops: [
+          {
+            kind: 'append_block',
+            block: crossLinkBlock({ id: 'cl_new', artifact_id: 'to1', block_id: 'tb1' }) as never,
+          },
+        ],
+      },
+    });
+    expect(apply.status).toBe('applied');
+    if (!apply.event_id) throw new Error('apply event id missing');
+    expect(await selectRefs('from1')).toHaveLength(1);
+
+    // Undo restores previous_body_blocks (no crossLinkBlock) → resync must drop the ref.
+    const undo = await undoNoteRefineApplyEvent(db, { applyEventId: apply.event_id });
+    expect(undo.status).toBe('undone');
+    expect(await selectRefs('from1')).toHaveLength(0);
+  });
+
+  it('re-adds the cross_link row that the applied patch removed, when undo restores the linked doc', async () => {
+    const db = testDb();
+    // Start with a doc that HAS a crossLinkBlock; seed its ref so the index
+    // matches the seeded body before any apply runs.
+    await seedArtifact('from1', {
+      body_blocks: docWith(
+        crossLinkBlock({ id: 'cl_existing', artifact_id: 'to1', block_id: 'tb1' }),
+        semanticBlock('s1', 'original body'),
+      ) as never,
+    });
+    await seedArtifact('to1');
+    await db.transaction(async (tx) => {
+      await syncBlockRefsForArtifact(
+        tx,
+        'from1',
+        docWith(
+          crossLinkBlock({ id: 'cl_existing', artifact_id: 'to1', block_id: 'tb1' }),
+          semanticBlock('s1', 'original body'),
+        ),
+      );
+    });
+    expect(await selectRefs('from1')).toHaveLength(1);
+
+    // Apply a patch that removes the crossLinkBlock → apply-path resync drops the ref.
+    const apply = await persistNoteRefineApply({
+      db,
+      artifactId: 'from1',
+      patch: { ops: [{ kind: 'delete_block', target_block_id: 'cl_existing' }] },
+    });
+    expect(apply.status).toBe('applied');
+    if (!apply.event_id) throw new Error('apply event id missing');
+    expect(await selectRefs('from1')).toHaveLength(0);
+
+    // Undo restores previous_body_blocks (with the crossLinkBlock) → resync re-adds the ref.
+    const undo = await undoNoteRefineApplyEvent(db, { applyEventId: apply.event_id });
+    expect(undo.status).toBe('undone');
+    const rows = await selectRefs('from1');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      from_block_id: 'cl_existing',
+      to_artifact_id: 'to1',
+      to_block_id: 'tb1',
+      ref_kind: 'cross_link',
+    });
+  });
+});
+
 describe('undoNoteRefineApplyEvent — optimistic lock on restore', () => {
   beforeEach(async () => {
     await resetDb();
