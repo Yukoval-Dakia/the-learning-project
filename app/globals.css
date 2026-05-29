@@ -4105,6 +4105,115 @@ ol {
   margin-left: auto;
 }
 
+/* Slice 1b — diagnostic legend: mastery-band dot swatches + section labels. */
+.kg-legend .swatch.dot {
+  width: 10px;
+  height: 10px;
+  border: 0;
+  border-radius: 50%;
+}
+
+.kg-legend-section {
+  font-weight: 600;
+  color: var(--ink-3);
+  letter-spacing: var(--ls-wide);
+}
+
+/* Slice 1b — filter controls (chips) over the canvas. Visual language matches
+   .kg-toggle (paper-sunk track, paper-raised active) + design-token chips. */
+.kg-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px 10px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.kg-control-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  /* reset <fieldset> UA defaults */
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: auto;
+}
+
+.kg-control-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: var(--ls-wide);
+  color: var(--ink-4);
+  margin-right: 2px;
+}
+
+.kg-chip {
+  padding: 4px 10px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--ink-3);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  transition: background var(--dur-fast), color var(--dur-fast), border-color var(--dur-fast);
+}
+
+.kg-chip:hover {
+  color: var(--ink);
+  background: var(--paper-tint);
+}
+
+.kg-chip.is-on {
+  color: var(--ink);
+  background: var(--paper-raised);
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-1);
+}
+
+/* Mastery-band chips carry a leading band dot via the band token. */
+.kg-chip-weak.is-on {
+  border-color: var(--hard-line);
+}
+
+.kg-chip-learning.is-on {
+  border-color: var(--info);
+}
+
+.kg-chip-mastered.is-on {
+  border-color: var(--good-line);
+}
+
+/* "看我哪里弱" diagnostic action — coral accent, reads as the primary verb. */
+.kg-chip-diagnose {
+  margin-left: auto;
+  color: var(--coral-ink);
+  background: var(--coral-soft);
+  border-color: var(--coral-line);
+}
+
+.kg-chip-diagnose:hover {
+  color: #fff;
+  background: var(--coral);
+  border-color: var(--coral);
+}
+
+.kg-focus-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.kg-focus-crumb {
+  color: var(--ink-2);
+  font-weight: 500;
+}
+
 .detail-drawer {
   position: fixed;
   top: 0;
