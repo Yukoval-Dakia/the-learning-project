@@ -19,11 +19,11 @@
 // XC-3: cross_link refs live in artifact_block_ref (L2) + block.attrs (L3, flat).
 // NEVER store note refs in knowledge_edge (that's concept relations only).
 
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 
 import { ArtifactBodyBlocks } from '@/core/schema/business';
 import type { Db, Tx } from '@/db/client';
-import { artifact, artifact_block_ref } from '@/db/schema';
+import { artifact, artifact_block_ref, learning_item } from '@/db/schema';
 
 const CROSS_LINK_BLOCK_TYPE = 'crossLinkBlock';
 const CROSS_LINK_REF_KIND = 'cross_link';
@@ -185,4 +185,38 @@ export async function listBacklinks(
     to_block_id: row.to_block_id,
     ref_kind: row.ref_kind,
   }));
+}
+
+/**
+ * Resolve owning `learning_item.id` for a set of source artifact ids via the 1:1
+ * `learning_item.primary_artifact_id` link, returning `artifact_id → learning_item.id`.
+ *
+ * Both backlink panels (the Lane-B artifact panel route + the P6 node page)
+ * render a source artifact's row as a link to `/learning-items/<learning_item_id>`
+ * — that route queries by `learning_item.id`, NOT `artifact.id`, so linking by the
+ * raw `from_artifact_id` 404s (Codex #193 / YUK-160). Callers map each
+ * `from_artifact_id` through this resolver; a source with no entry renders as a
+ * non-link. Archived learning_items are excluded so retired items don't surface
+ * as live links; both panels share this single resolver to stay behaviourally
+ * identical.
+ */
+export async function resolveOwningLearningItemIds(
+  db: DbLike,
+  artifactIds: string[],
+): Promise<Map<string, string>> {
+  if (artifactIds.length === 0) return new Map();
+  const rows = await db
+    .select({ id: learning_item.id, primary_artifact_id: learning_item.primary_artifact_id })
+    .from(learning_item)
+    .where(
+      and(
+        inArray(learning_item.primary_artifact_id, artifactIds),
+        isNull(learning_item.archived_at),
+      ),
+    );
+  const map = new Map<string, string>();
+  for (const row of rows) {
+    if (row.primary_artifact_id) map.set(row.primary_artifact_id, row.id);
+  }
+  return map;
 }
