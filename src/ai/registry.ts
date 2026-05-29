@@ -473,6 +473,24 @@ export const tasks = {
     systemPrompt:
       '你是学习目标规划助手。用户给一个模糊的学习目标标题，你看知识网格快照（节点 + 掌握度 + mesh 边），推断这个目标覆盖哪些知识节点 + 一个粗略的学习顺序，输出严格 JSON。不要发明网格里没有的节点 id。',
   },
+  TaggingTask: {
+    kind: 'TaggingTask',
+    description:
+      'T-OC slice 3 (YUK-145, OC-4) — 给一道抽取出的题（题面文字 + 可选 knowledge_hint）+ 一份知识网格快照（节点 + mesh 边），建议它覆盖哪些 knowledge_id（每条带 confidence + reasoning）+ 一个 overall_confidence。单次结构化输出，非多模态（题面已是文字）。下游 WorkflowJudge 用它的 confidence 做高置信自动入库 / 低置信 review 裁决。',
+    defaultProvider: 'xiaomi',
+    // 纯文本推理（题面 + 网格 → knowledge_id 建议），无 vision 需求 →
+    // mimo-v2.5（multimodal-capable model 但这里只喂文字）。与 SemanticJudge /
+    // GoalScope 等单次结构化 task 同档。
+    defaultModel: 'mimo-v2.5',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5-pro' }],
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
+    needsToolCall: false,
+    isMultimodal: false,
+    allowedTools: [],
+    // invocation 省略（默认 'auto'）：TaggingTask 在 auto-enroll server path 内被
+    // runTaggingTask 调用，不是用户手动触发。
+    systemPrompt: '(see getTaskSystemPrompt(task, profile) - fallback not for runtime)',
+  },
   // 其余 Task（VariantGen / Judge* / Dreaming / Maintenance 等）见
   // docs/architecture.md § 五，按需补全。
 } satisfies Record<string, TaskDef>;
