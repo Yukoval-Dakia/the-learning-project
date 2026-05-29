@@ -1,4 +1,5 @@
 import type { Db } from '@/db/client';
+import * as schema from '@/db/schema';
 import type { R2Client } from '@/server/r2';
 /**
  * buildBackupArchive — extract all table rows from Postgres + optional R2 assets,
@@ -8,11 +9,56 @@ import type { R2Client } from '@/server/r2';
  * then re-insert all rows + re-PUT R2 assets.
  */
 import { downloadZip } from 'client-zip';
-import { sql } from 'drizzle-orm';
+import { getTableColumns, getTableName, isTable, sql } from 'drizzle-orm';
 import { unzipSync } from 'fflate';
 import { FK_ORDER, MAX_INLINE_ASSETS, SCHEMA_VERSION, type TableName } from './constants';
 import { buildMistakesCsv, buildReviewEventsCsv } from './csv';
 import { type Manifest, buildReadme } from './readme';
+
+// ─── Restore column allowlist (single source of truth: Drizzle schema) ───────
+//
+// Security (YUK-136): restoreFromArchive builds its INSERT column list from
+// Object.keys(rows[0]) — the column names come from the attacker-controlled
+// data.json inside the uploaded ZIP — and interpolates them via raw SQL. Without
+// validation that is a raw-SQL injection surface through column names. Table
+// names are already safe (only FK_ORDER). We derive the allowed column names per
+// table from getTableColumns() so the allowlist can never drift from the schema.
+//
+// Keyed by SQL table name (getTableName), not the JS export identifier, so the
+// map is correct even if a future pgTable export is renamed without changing its
+// SQL name. Every FK_ORDER table is asserted present at module load.
+const COLUMN_ALLOWLIST: Record<TableName, ReadonlySet<string>> = buildColumnAllowlist();
+
+function buildColumnAllowlist(): Record<TableName, ReadonlySet<string>> {
+  const fkOrderNames = new Set<string>(FK_ORDER);
+  const bySqlName = new Map<string, ReadonlySet<string>>();
+  for (const value of Object.values(schema)) {
+    if (!isTable(value)) continue;
+    const sqlName = getTableName(value);
+    if (!fkOrderNames.has(sqlName)) continue;
+    const cols = Object.values(getTableColumns(value)).map((c) => c.name);
+    bySqlName.set(sqlName, new Set(cols));
+  }
+
+  const allowlist = {} as Record<TableName, ReadonlySet<string>>;
+  const missing: string[] = [];
+  for (const t of FK_ORDER) {
+    const cols = bySqlName.get(t);
+    if (!cols) {
+      missing.push(t);
+      continue;
+    }
+    allowlist[t] = cols;
+  }
+  if (missing.length > 0) {
+    // Lockstep guardrail: FK_ORDER and the Drizzle schema must agree. A missing
+    // entry means the constant references a table that has no pgTable export.
+    throw new Error(
+      `restore column allowlist: no pgTable export found for FK_ORDER table(s): ${missing.join(', ')}`,
+    );
+  }
+  return allowlist;
+}
 
 // ─── Export ────────────────────────────────────────────────────────────────
 
@@ -148,6 +194,9 @@ export type RestoreResult =
       got?: string;
       issues?: string[];
       partial_stats?: unknown;
+      // Set by the YUK-136 pre-flight allowlist rejections (before any wipe).
+      table?: string;
+      column?: string;
     };
 
 export interface RestoreFromArchiveOpts {
@@ -249,6 +298,49 @@ export async function restoreFromArchive({
   for (const row of data.event ?? []) {
     if (Object.prototype.hasOwnProperty.call(row, 'ingest_at')) {
       row.ingest_at = null;
+    }
+  }
+
+  // Pre-flight (security, YUK-136): reject unknown top-level keys BEFORE we wipe
+  // the DB. Previously any key in data.json that was not in FK_ORDER was silently
+  // ignored; that masks a malformed/hostile archive. Anything outside FK_ORDER is
+  // a hard 400 (FK_ORDER is the complete set of restorable tables).
+  const allowedTables = new Set<string>(FK_ORDER);
+  for (const key of Object.keys(data)) {
+    if (!allowedTables.has(key)) {
+      return {
+        status: 400,
+        body: {
+          error: 'invalid_table',
+          message: `Unknown table "${key}" in data.json; DB was NOT wiped.`,
+          table: key,
+        },
+      };
+    }
+  }
+
+  // Pre-flight (security, YUK-136): validate EVERY column name (for every row of
+  // every table present in data.json) against the schema-derived allowlist BEFORE
+  // we wipe the DB. The restore INSERT interpolates column names via raw SQL, so an
+  // unknown column name is a raw-SQL injection surface — reject it as a hard 400.
+  for (const t of FK_ORDER) {
+    const rows = data[t];
+    if (!Array.isArray(rows)) continue;
+    const allowed = COLUMN_ALLOWLIST[t];
+    for (const row of rows) {
+      for (const col of Object.keys(row)) {
+        if (!allowed.has(col)) {
+          return {
+            status: 400,
+            body: {
+              error: 'invalid_column',
+              message: `Unknown column "${col}" for table "${t}"; DB was NOT wiped.`,
+              table: t,
+              column: col,
+            },
+          };
+        }
+      }
     }
   }
 
