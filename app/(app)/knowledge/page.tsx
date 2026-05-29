@@ -217,8 +217,22 @@ export default function KnowledgePage() {
   const nodes = knowledgeQ.data?.rows ?? [];
   const edges = edgesQ.data?.rows ?? [];
   const nodeProposals = proposalsQ.data?.rows ?? [];
-  const pendingEdgeProposals = (edgeProposalsQ.data?.rows ?? []).filter(
-    (p) => edgeProposalStatus[edgeProposalKey(p)] === undefined,
+  // Stable identity for the pending (not-yet-decided) edge proposal set.
+  // Computing `.filter(...)` inline produced a fresh array every KnowledgePage
+  // render, which cascaded into graphProposals / edgeProposalsByNode /
+  // handleGraphProposalDecision (all keyed on this) changing identity every
+  // render — re-running KnowledgeGraph's build effect (which lists
+  // visibleProposals + proposalMetaById in its deps), re-initializing cytoscape
+  // with the randomized fcose layout and re-scattering the graph + discarding
+  // manual drag positions on every selection click. Memoizing on the real
+  // inputs (the fetched rows + the optimistic decision map) keeps it steady
+  // across selection re-renders — same discipline as activeEdges below.
+  const pendingEdgeProposals = useMemo(
+    () =>
+      (edgeProposalsQ.data?.rows ?? []).filter(
+        (p) => edgeProposalStatus[edgeProposalKey(p)] === undefined,
+      ),
+    [edgeProposalsQ.data, edgeProposalStatus],
   );
   const mistakes = mistakesQ.data?.rows ?? [];
 
