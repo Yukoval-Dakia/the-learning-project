@@ -36,19 +36,64 @@ interface SearchResponse {
   rows: ArtifactSearchResult[];
 }
 
+const SEARCH_DEBOUNCE_MS = 180;
+
 async function fetchPickerItems(
   query: string,
   excludeArtifactId: string,
+  signal: AbortSignal,
 ): Promise<CrossLinkPickerItem[]> {
   const trimmed = query.trim();
   if (trimmed.length === 0) return [];
   const params = new URLSearchParams({ q: trimmed, exclude: excludeArtifactId });
   try {
-    const res = await apiJson<SearchResponse>(`/api/artifacts/search?${params.toString()}`);
+    const res = await apiJson<SearchResponse>(`/api/artifacts/search?${params.toString()}`, {
+      signal,
+    });
     return mapSearchResultsToPickerItems(res.rows ?? []);
   } catch {
     return [];
   }
+}
+
+/**
+ * Per-Suggestion-session debounced + abortable search. Each keystroke routes
+ * through here: the previous pending debounce timer is cleared and the previous
+ * in-flight fetch is aborted, so only the latest query reaches the network (no
+ * request storm) and a slow earlier response can't resolve after a newer one to
+ * flicker stale results. An aborted fetch rejects → `fetchPickerItems` swallows
+ * it and resolves `[]`, but because that older promise is no longer the one the
+ * Suggestion plugin awaits (it tracks the latest `items()` call), the empty
+ * result is discarded. `cancel()` is called on Suggestion exit to drop a trailing
+ * timer/fetch when the popup closes mid-typing.
+ */
+function createDebouncedPickerSearch(excludeArtifactId: string) {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let controller: AbortController | null = null;
+
+  const cancel = () => {
+    if (timer !== null) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    controller?.abort();
+    controller = null;
+  };
+
+  const search = (query: string): Promise<CrossLinkPickerItem[]> => {
+    cancel();
+    if (query.trim().length === 0) return Promise.resolve([]);
+    const ac = new AbortController();
+    controller = ac;
+    return new Promise<CrossLinkPickerItem[]>((resolve) => {
+      timer = setTimeout(() => {
+        timer = null;
+        resolve(fetchPickerItems(query, excludeArtifactId, ac.signal));
+      }, SEARCH_DEBOUNCE_MS);
+    });
+  };
+
+  return { search, cancel };
 }
 
 // ── React popup list ──────────────────────────────────────────────────────
@@ -182,6 +227,9 @@ class PickerPopup {
 export function buildCrossLinkSuggestion(
   context: CrossLinkSuggestionContext,
 ): Omit<SuggestionOptions<CrossLinkPickerItem>, 'editor'> {
+  // One debounce/abort session shared by `items` and the render lifecycle so the
+  // trailing timer/fetch can be cancelled when the popup closes (Escape/onExit).
+  const picker = createDebouncedPickerSearch(context.artifactId);
   return {
     char: '@',
     // crossLinkBlock is an atom block, so replace the trigger range with a fresh
@@ -190,7 +238,7 @@ export function buildCrossLinkSuggestion(
       const node = buildCrossLinkInsertContent(props);
       editor.chain().focus().deleteRange(range).insertContent(node).run();
     },
-    items: ({ query }) => fetchPickerItems(query, context.artifactId),
+    items: ({ query }) => picker.search(query),
     render: () => {
       let popup: PickerPopup | null = null;
       return {
@@ -204,6 +252,7 @@ export function buildCrossLinkSuggestion(
         },
         onKeyDown: ({ event }) => {
           if (event.key === 'Escape') {
+            picker.cancel();
             popup?.destroy();
             popup = null;
             return true;
@@ -211,6 +260,7 @@ export function buildCrossLinkSuggestion(
           return popup?.onKeyDown(event) ?? false;
         },
         onExit: () => {
+          picker.cancel();
           popup?.destroy();
           popup = null;
         },

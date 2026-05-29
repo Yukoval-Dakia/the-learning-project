@@ -270,6 +270,22 @@ export default function KnowledgePage() {
   // KnowledgeGraph.)
   const activeEdges = useMemo(() => edges.filter((edge) => edge.archived_at === null), [edges]);
 
+  // Tree-row edge count, precomputed once per edges change. The tree render
+  // previously did `edges.filter(...)` inside each node row (O(nodes × edges) per
+  // render — ~6e4 ops for 200 nodes × 300 edges); build a per-node count Map in a
+  // single pass so the row lookup is O(1). An undirected edge touching the same
+  // node on both endpoints (self-loop) is counted once, matching the old
+  // `||`-filter (the filter kept the edge once regardless of which endpoint hit).
+  const edgeCountByNode = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const edge of activeEdges) {
+      const { from_knowledge_id: from, to_knowledge_id: to } = edge;
+      counts.set(from, (counts.get(from) ?? 0) + 1);
+      if (to !== from) counts.set(to, (counts.get(to) ?? 0) + 1);
+    }
+    return counts;
+  }, [activeEdges]);
+
   // Slice 3 ("AI 画布") — normalize pending edge proposals into the KnowledgeGraph
   // proposed-edge shape. Same stable-ref discipline as activeEdges: KnowledgeGraph
   // includes `proposals` in its rebuild-effect deps, so an inline array literal
@@ -485,11 +501,7 @@ export default function KnowledgePage() {
               nodeMistakes +
               (proposalsByParent.get(node.id)?.length ?? 0) +
               (edgeProposalsByNode.get(node.id)?.length ?? 0) +
-              edges.filter(
-                (edge) =>
-                  edge.archived_at === null &&
-                  (edge.from_knowledge_id === node.id || edge.to_knowledge_id === node.id),
-              ).length;
+              (edgeCountByNode.get(node.id) ?? 0);
             const hasProposal =
               (proposalsByParent.get(node.id)?.length ?? 0) > 0 ||
               (edgeProposalsByNode.get(node.id)?.length ?? 0) > 0;
