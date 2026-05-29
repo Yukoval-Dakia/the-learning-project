@@ -53,6 +53,11 @@ interface AiChangeRow {
 // non-ready / retracted-block per XC-5).
 interface BacklinkRow {
   from_artifact_id: string;
+  // owning learning_item.id for the source artifact; null when unresolved (no
+  // non-archived owning learning_item). The row links to /learning-items/<id> by
+  // this learning_item.id — NOT from_artifact_id, which 404s (YUK-160). Null →
+  // non-link row.
+  from_learning_item_id: string | null;
   from_title: string;
   from_type: string;
   from_block_id: string;
@@ -515,23 +520,24 @@ export function ArtifactBlockTree({
               {backlinksLoading ? (
                 <p className="backlink-empty">加载中...</p>
               ) : backlinks && backlinks.length > 0 ? (
-                backlinks.map((row) => (
-                  <Link
-                    key={`${row.from_artifact_id}:${row.from_block_id}`}
-                    href={`/learning-items/${row.from_artifact_id}`}
-                    className="backlink-row"
-                  >
-                    <span className="backlink-row-head">
-                      <Badge tone={backlinkTypeTone(row.from_type)}>
-                        {backlinkTypeLabel(row.from_type)}
-                      </Badge>
-                      <strong>{row.from_title}</strong>
-                    </span>
-                    {row.snippet ? (
-                      <span className="backlink-row-snippet">{row.snippet}</span>
-                    ) : null}
-                  </Link>
-                ))
+                backlinks.map((row) => {
+                  const key = `${row.from_artifact_id}:${row.from_block_id}`;
+                  // Link by owning learning_item.id; when unresolved render a
+                  // non-link row to avoid a /learning-items/<artifact-id> 404 (YUK-160).
+                  return row.from_learning_item_id ? (
+                    <Link
+                      key={key}
+                      href={`/learning-items/${row.from_learning_item_id}`}
+                      className="backlink-row"
+                    >
+                      <BacklinkRowInner row={row} />
+                    </Link>
+                  ) : (
+                    <div key={key} className="backlink-row">
+                      <BacklinkRowInner row={row} />
+                    </div>
+                  );
+                })
               ) : (
                 <p className="backlink-empty">还没有其它笔记链接到这里。</p>
               )}
@@ -541,6 +547,21 @@ export function ArtifactBlockTree({
       ) : null}
       {saveError ? <p className="artifact-section-error">保存失败：{saveError}</p> : null}
     </div>
+  );
+}
+
+// Shared row content for both the linked + non-linked backlink rows. Extracted
+// as a component (mirrors the node page's BacklinkRowInner) so the iterable's
+// keys live on the <Link>/<div> wrappers, not on bare JSX. (YUK-160)
+function BacklinkRowInner({ row }: { row: BacklinkRow }) {
+  return (
+    <>
+      <span className="backlink-row-head">
+        <Badge tone={backlinkTypeTone(row.from_type)}>{backlinkTypeLabel(row.from_type)}</Badge>
+        <strong>{row.from_title}</strong>
+      </span>
+      {row.snippet ? <span className="backlink-row-snippet">{row.snippet}</span> : null}
+    </>
   );
 }
 

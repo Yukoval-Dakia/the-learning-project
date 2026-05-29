@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { newId } from '@/core/ids';
-import { artifact, artifact_block_ref } from '@/db/schema';
+import { artifact, artifact_block_ref, learning_item } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { GET } from './route';
@@ -69,6 +69,26 @@ async function seedArtifact(opts: {
     });
 }
 
+// Seed a learning_item owning `primary_artifact_id`, so the backlink resolver can
+// map from_artifact_id → owning learning_item.id (the link target). (YUK-160)
+async function seedLearningItem(opts: {
+  id: string;
+  primaryArtifactId: string;
+  archived_at?: Date | null;
+}): Promise<void> {
+  await testDb()
+    .insert(learning_item)
+    .values({
+      id: opts.id,
+      source: 'manual',
+      title: `LI ${opts.id}`,
+      primary_artifact_id: opts.primaryArtifactId,
+      archived_at: opts.archived_at ?? null,
+      created_at: NOW,
+      updated_at: NOW,
+    });
+}
+
 async function seedRef(opts: {
   from: string;
   fromBlock: string;
@@ -112,6 +132,7 @@ function backlinksReq(toId: string): Request {
 
 interface PanelRow {
   from_artifact_id: string;
+  from_learning_item_id: string | null;
   from_title: string;
   from_type: string;
   from_block_id: string;
@@ -238,6 +259,60 @@ describe('GET /api/artifacts/[id]/backlinks', () => {
       await GET(backlinksReq('target'), { params: Promise.resolve({ id: 'target' }) }),
     );
     expect(rows).toEqual([]);
+  });
+
+  it('resolves from_learning_item_id from the source artifact owning learning_item (YUK-160)', async () => {
+    await seedArtifact({ id: 'target', title: '目标笔记' });
+    await seedArtifact({
+      id: 'src',
+      title: '来源笔记',
+      body_blocks: sourceDoc('cl1', 'target', 'x'),
+    });
+    await seedRef({ from: 'src', fromBlock: 'cl1', to: 'target' });
+    // Owning learning_item whose primary_artifact_id is the SOURCE artifact id.
+    await seedLearningItem({ id: 'li_src', primaryArtifactId: 'src' });
+
+    const rows = await readRows(
+      await GET(backlinksReq('target'), { params: Promise.resolve({ id: 'target' }) }),
+    );
+    expect(rows).toHaveLength(1);
+    // The link target must be the learning_item id, NOT the artifact id (which 404s).
+    expect(rows[0].from_learning_item_id).toBe('li_src');
+    expect(rows[0].from_artifact_id).toBe('src');
+  });
+
+  it('returns null from_learning_item_id when the source has no owning learning_item', async () => {
+    await seedArtifact({ id: 'target', title: '目标笔记' });
+    await seedArtifact({
+      id: 'src',
+      title: '来源笔记',
+      body_blocks: sourceDoc('cl1', 'target', 'x'),
+    });
+    await seedRef({ from: 'src', fromBlock: 'cl1', to: 'target' });
+    // No learning_item points at `src`.
+
+    const rows = await readRows(
+      await GET(backlinksReq('target'), { params: Promise.resolve({ id: 'target' }) }),
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].from_learning_item_id).toBeNull();
+  });
+
+  it('returns null from_learning_item_id when the owning learning_item is archived', async () => {
+    await seedArtifact({ id: 'target', title: '目标笔记' });
+    await seedArtifact({
+      id: 'src',
+      title: '来源笔记',
+      body_blocks: sourceDoc('cl1', 'target', 'x'),
+    });
+    await seedRef({ from: 'src', fromBlock: 'cl1', to: 'target' });
+    await seedLearningItem({ id: 'li_src', primaryArtifactId: 'src', archived_at: NOW });
+
+    const rows = await readRows(
+      await GET(backlinksReq('target'), { params: Promise.resolve({ id: 'target' }) }),
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].from_learning_item_id).toBeNull();
   });
 
   it('returns 404 when the target artifact does not exist (mirrors the correct route)', async () => {

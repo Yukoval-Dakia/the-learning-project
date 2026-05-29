@@ -28,7 +28,7 @@ import { z } from 'zod';
 
 import { db } from '@/db/client';
 import { artifact } from '@/db/schema';
-import { listBacklinks } from '@/server/artifacts/block-refs';
+import { listBacklinks, resolveOwningLearningItemIds } from '@/server/artifacts/block-refs';
 import { extractCrossLinkSnippet } from '@/server/artifacts/body-blocks';
 import { getArtifactCorrectionStates } from '@/server/events/artifact-corrections';
 import { ApiError, errorResponse } from '@/server/http/errors';
@@ -46,6 +46,11 @@ interface RouteParams {
 
 export interface BacklinkPanelRow {
   from_artifact_id: string;
+  // owning learning_item.id for the source artifact (primary_artifact_id == from_artifact_id),
+  // null when the source has no non-archived owning learning_item. The panel links to
+  // /learning-items/<from_learning_item_id> (that route queries learning_item.id, NOT
+  // artifact.id); when null the source renders as a non-link to avoid a 404. (YUK-160)
+  from_learning_item_id: string | null;
   from_title: string;
   from_type: string;
   from_block_id: string;
@@ -97,6 +102,12 @@ export async function GET(_req: Request, { params }: RouteParams): Promise<Respo
     // whose source block (or whole source artifact) is retracted/superseded.
     const correctionStates = await getArtifactCorrectionStates(db, sourceIds);
 
+    // Resolve each source artifact to its owning learning_item so the panel links
+    // to /learning-items/<learning_item_id> rather than the artifact id (those are
+    // distinct; linking by artifact id 404s — YUK-160). Shared with the P6 node
+    // page so both panels resolve identically.
+    const owningLearningItemByArtifactId = await resolveOwningLearningItemIds(db, sourceIds);
+
     const rows: BacklinkPanelRow[] = [];
     for (const ref of inbound) {
       const source = sourceById.get(ref.from_artifact_id);
@@ -118,6 +129,7 @@ export async function GET(_req: Request, { params }: RouteParams): Promise<Respo
 
       rows.push({
         from_artifact_id: ref.from_artifact_id,
+        from_learning_item_id: owningLearningItemByArtifactId.get(ref.from_artifact_id) ?? null,
         from_title: ref.from_artifact_title,
         from_type: ref.from_artifact_type,
         from_block_id: ref.from_block_id,

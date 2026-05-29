@@ -19,15 +19,8 @@ import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
-import {
-  artifact,
-  event,
-  knowledge,
-  knowledge_mastery,
-  learning_item,
-  question,
-} from '@/db/schema';
-import { listBacklinks } from '@/server/artifacts/block-refs';
+import { artifact, event, knowledge, knowledge_mastery, question } from '@/db/schema';
+import { listBacklinks, resolveOwningLearningItemIds } from '@/server/artifacts/block-refs';
 import { bodyBlocksToNoteSections } from '@/server/artifacts/body-blocks';
 import { getArtifactCorrectionStates } from '@/server/events/artifact-corrections';
 import { listKnowledgeEdges } from '@/server/knowledge/edges';
@@ -273,7 +266,7 @@ export async function loadKnowledgeNodePage(
       // link is learning_item.primary_artifact_id == source.artifact_id, 1:1 per
       // docs/modules/learning-items.md. Drop archived learning_items → unresolved
       // sources render as non-links downstream.
-      const owningLearningItemByArtifactId = await loadOwningLearningItemIds(db, sourceIds);
+      const owningLearningItemByArtifactId = await resolveOwningLearningItemIds(db, sourceIds);
       for (const ref of inbound) {
         const source = sourceById.get(ref.from_artifact_id);
         if (!source) continue;
@@ -359,30 +352,6 @@ async function loadNames(db: Db, ids: string[]): Promise<Map<string, string>> {
     .from(knowledge)
     .where(and(inArray(knowledge.id, ids), isNull(knowledge.archived_at)));
   return new Map(rows.map((r) => [r.id, r.name]));
-}
-
-// Resolve owning learning_item.id for a set of source artifact ids via the 1:1
-// learning_item.primary_artifact_id link. Archived learning_items are excluded so
-// the backlink panel renders unresolved sources as non-links. (Codex #193)
-async function loadOwningLearningItemIds(
-  db: Db,
-  artifactIds: string[],
-): Promise<Map<string, string>> {
-  if (artifactIds.length === 0) return new Map();
-  const rows = await db
-    .select({ id: learning_item.id, primary_artifact_id: learning_item.primary_artifact_id })
-    .from(learning_item)
-    .where(
-      and(
-        inArray(learning_item.primary_artifact_id, artifactIds),
-        isNull(learning_item.archived_at),
-      ),
-    );
-  const map = new Map<string, string>();
-  for (const row of rows) {
-    if (row.primary_artifact_id) map.set(row.primary_artifact_id, row.id);
-  }
-  return map;
 }
 
 // Walk up the parent chain until a node carries an explicit domain. Mirrors
