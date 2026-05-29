@@ -21,6 +21,7 @@ import { type NotePatchT, countNewBlocks, summarizeNotePatch } from '@/core/sche
 import type { Db, Tx } from '@/db/client';
 import { artifact, event } from '@/db/schema';
 import { type TaskTextResult, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
+import { syncBlockRefsForArtifact } from '@/server/artifacts/block-refs';
 import { writeEvent } from '@/server/events/queries';
 
 type DbLike = Db | Tx;
@@ -145,6 +146,10 @@ export async function persistNoteRefineApply(
         artifact_id: artifactId,
       };
     }
+
+    // YUK-95 P5: keep the L2 cross_link backlink index in sync within the same
+    // tx — an AI patch may add/remove crossLinkBlock nodes.
+    await syncBlockRefsForArtifact(tx, artifactId, newBodyBlocks);
 
     const summary = summarizeNotePatch(patch);
 

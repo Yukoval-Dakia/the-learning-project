@@ -103,6 +103,20 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
     expect(names.has('child_artifact_ids')).toBe(false);
     expect(names.has('knowledge_id')).toBe(false);
 
+    // YUK-95 P5 (0020) — ref_kind discriminator on artifact_block_ref.
+    const blockRefColumns = await db.execute<{
+      column_name: string;
+      column_default: string | null;
+    }>(
+      sql`
+        SELECT column_name, column_default FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'artifact_block_ref'
+      `,
+    );
+    const refKindCol = blockRefColumns.find((r) => r.column_name === 'ref_kind');
+    expect(refKindCol).toBeDefined();
+    expect(refKindCol?.column_default).toMatch(/cross_link/);
+
     const indexes = await db.execute<{ indexname: string; indexdef: string }>(sql`
       SELECT indexname, indexdef FROM pg_indexes
       WHERE schemaname = 'public'

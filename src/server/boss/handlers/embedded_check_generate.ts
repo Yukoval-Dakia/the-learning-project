@@ -307,6 +307,9 @@ export async function runEmbeddedCheckGenerate(
         from_block_id: checkSection.id,
         to_artifact_id: toolQuizArtifactId,
         to_block_id: null,
+        // YUK-95 P5 (Wave 7 D4): tag the quiz ref so the generic cross_link
+        // write-through (`syncBlockRefsForArtifact`) never recomputes it away.
+        ref_kind: 'embedded_check',
       });
 
       const finalUpdate = await tx

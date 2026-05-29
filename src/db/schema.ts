@@ -324,6 +324,11 @@ export const artifact_block_ref = pgTable(
       .notNull()
       .references(() => artifact.id),
     to_block_id: text('to_block_id'),
+    // YUK-95 P5 (Wave 7 D4): discriminator so the generic cross_link
+    // write-through (`syncBlockRefsForArtifact`) never clobbers the
+    // embedded_check quiz rows that `embedded_check_generate` owns. New rows
+    // default to 'cross_link'; the embedded_check writer sets 'embedded_check'.
+    ref_kind: text('ref_kind').notNull().default('cross_link'),
   },
   (t) => [
     uniqueIndex('artifact_block_ref_unique').on(

@@ -5,6 +5,7 @@ import { ArtifactBodyBlocks } from '@/core/schema/business';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact } from '@/db/schema';
+import { syncBlockRefsForArtifact } from '@/server/artifacts/block-refs';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError } from '@/server/http/errors';
 
@@ -84,6 +85,9 @@ export async function editArtifactBodyBlocks(
     if (updated.length === 0) {
       throw new ApiError('conflict', `artifact ${params.artifactId} concurrently modified`, 409);
     }
+
+    // YUK-95 P5: keep the L2 cross_link backlink index in sync within the same tx.
+    await syncBlockRefsForArtifact(tx, params.artifactId, bodyBlocks);
 
     await writeEvent(tx, {
       id: eventId,
