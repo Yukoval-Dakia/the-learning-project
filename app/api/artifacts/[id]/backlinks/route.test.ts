@@ -239,4 +239,13 @@ describe('GET /api/artifacts/[id]/backlinks', () => {
     );
     expect(rows).toEqual([]);
   });
+
+  it('returns 404 when the target artifact does not exist (mirrors the correct route)', async () => {
+    const res = await GET(backlinksReq('does_not_exist'), {
+      params: Promise.resolve({ id: 'does_not_exist' }),
+    });
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error?: string };
+    expect(body.error).toBe('not_found');
+  });
 });

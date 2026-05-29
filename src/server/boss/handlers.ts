@@ -60,6 +60,12 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   // hub's AutoLinksContainer auto-zone. Cross-process: relies on
   // persistNoteRefineApply's optimistic version lock, NOT the in-memory editing
   // heartbeat (Wave 7 D5).
+  //
+  // Concurrency: like every nightly here, this queue runs with pg-boss defaults
+  // (localConcurrency 1, batchSize 1) and no `singleton` — a single worker
+  // serializes runs within the process, so a scheduled fire won't overlap itself.
+  // The version lock above is the cross-process safety net. Deliberately NOT
+  // singling out this queue with a singleton the other nightlies don't use.
   await boss.createQueue('hub_auto_sync_nightly');
   await boss.work(
     'hub_auto_sync_nightly',

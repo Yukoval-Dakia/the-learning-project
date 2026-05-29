@@ -4,14 +4,14 @@
 // reader), and the regression that embedded_check rows survive a cross_link sync.
 
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { NotePatchT } from '@/core/schema/note-patch';
-import { artifact, artifact_block_ref } from '@/db/schema';
+import { artifact, artifact_block_ref, event } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { listBacklinks, syncBlockRefsForArtifact } from './block-refs';
-import { persistNoteRefineApply } from './note-refine-apply';
+import { persistNoteRefineApply, undoNoteRefineApplyEvent } from './note-refine-apply';
 
 function emptyDoc(): ArtifactBodyBlocksT {
   return { type: 'doc', content: [] };
@@ -309,6 +309,146 @@ describe('persistNoteRefineApply → block-ref sync in the same tx', () => {
       to_block_id: 'tb1',
       ref_kind: 'cross_link',
     });
+  });
+});
+
+describe('undoNoteRefineApplyEvent — optimistic lock on restore', () => {
+  beforeEach(async () => {
+    await resetDb();
+    vi.restoreAllMocks();
+  });
+
+  // Helper: apply a patch (→ writes the apply event we later undo) and return
+  // both its event id and the post-apply body so we can assert non-mutation.
+  async function seedApplied() {
+    const db = testDb();
+    await seedArtifact('note1', {
+      body_blocks: docWith(semanticBlock('s1', 'original body')) as never,
+    });
+    const apply = await persistNoteRefineApply({
+      db,
+      artifactId: 'note1',
+      patch: {
+        ops: [{ kind: 'append_block', block: semanticBlock('s2', 'ai-added body') as never }],
+      },
+    });
+    expect(apply.status).toBe('applied');
+    expect(apply.artifact_version).toBe(1);
+    if (!apply.event_id) throw new Error('apply event id missing');
+    return { db, applyEventId: apply.event_id };
+  }
+
+  it('undoes cleanly when no concurrent writer touched the artifact', async () => {
+    const { db, applyEventId } = await seedApplied();
+
+    const result = await undoNoteRefineApplyEvent(db, { applyEventId });
+    expect(result.status).toBe('undone');
+
+    // Body restored to the pre-apply doc; version bumped to 2 (1 apply + 1 undo).
+    const [row] = await db
+      .select({ version: artifact.version, body_blocks: artifact.body_blocks })
+      .from(artifact)
+      .where(eq(artifact.id, 'note1'));
+    expect(row?.version).toBe(2);
+    expect(row?.body_blocks).toEqual(docWith(semanticBlock('s1', 'original body')));
+  });
+
+  it('returns version_conflict (NOT undone) when the artifact is bumped between undo load and restore — note unmutated, undo event NOT written, retry still possible', async () => {
+    const { db, applyEventId } = await seedApplied();
+
+    // Reproduce the race deterministically. The production undo loads the
+    // artifact's current version inside its tx (call it V), then runs the restore
+    // UPDATE guarded by `WHERE version = V`. In the real race a concurrent writer
+    // (e.g. hub_auto_sync) bumps the version after undo's load but before its
+    // UPDATE, so `WHERE version = V` matches 0 rows.
+    //
+    // To stage that without fighting drizzle's lazy query builder, we (a) bump
+    // the LIVE row to version 2 up-front, then (b) make undo's in-tx artifact
+    // load return the STALE snapshot (version 1) by stubbing `tx.select` to yield
+    // it for the load query. Undo then locks its restore on V=1 while the live
+    // row is at V=2 → the optimistic-lock UPDATE matches 0 rows, identical to the
+    // production race outcome.
+    const concurrentBody = docWith(semanticBlock('s3', 'concurrent edit')) as never;
+    await db
+      .update(artifact)
+      .set({ version: 2, body_blocks: concurrentBody })
+      .where(eq(artifact.id, 'note1'));
+
+    const staleRow = { id: 'note1', version: 1, archived_at: null };
+    const realTransaction = db.transaction.bind(db);
+    const txSpy = vi
+      .spyOn(db, 'transaction')
+      .mockImplementation((cb: Parameters<typeof db.transaction>[0]) =>
+        realTransaction((tx) => {
+          const realSelect = tx.select.bind(tx);
+          let served = false;
+          // @ts-expect-error — shim over drizzle's overloaded select
+          tx.select = (...args: unknown[]) => {
+            if (!served) {
+              served = true;
+              // Undo's first SELECT is the artifact version load. Return the
+              // stale snapshot via a thenable chain shaped like the real builder.
+              const thenable = {
+                from: () => thenable,
+                where: () => thenable,
+                limit: () => Promise.resolve([staleRow]),
+              };
+              return thenable as never;
+            }
+            // @ts-expect-error — pass through drizzle's overload args
+            return realSelect(...args);
+          };
+          return cb(tx);
+        }),
+      );
+
+    const result = await undoNoteRefineApplyEvent(db, { applyEventId });
+    txSpy.mockRestore();
+
+    // 1. Undo reports the conflict, NOT a false success.
+    expect(result.status).toBe('skipped:version_conflict');
+    expect(result.event_id).toBeUndefined();
+
+    // 2. The note was NOT mutated by undo: it still holds the concurrent writer's
+    //    body at the concurrent version (undo's restore matched 0 rows).
+    const [row] = await db
+      .select({ version: artifact.version, body_blocks: artifact.body_blocks })
+      .from(artifact)
+      .where(eq(artifact.id, 'note1'));
+    expect(row?.version).toBe(2);
+    expect(row?.body_blocks).toEqual(docWith(semanticBlock('s3', 'concurrent edit')));
+
+    // 3. No undo event was written → the already_undone guard does NOT block a
+    //    retry. Re-running undo (now against the settled live version) succeeds.
+    const retry = await undoNoteRefineApplyEvent(db, { applyEventId });
+    expect(retry.status).toBe('undone');
+    const [restored] = await db
+      .select({ body_blocks: artifact.body_blocks })
+      .from(artifact)
+      .where(eq(artifact.id, 'note1'));
+    expect(restored?.body_blocks).toEqual(docWith(semanticBlock('s1', 'original body')));
+  });
+
+  it('scopes the already-undone check to this apply event (unrelated undo events do not block)', async () => {
+    const { db, applyEventId } = await seedApplied();
+
+    // An unrelated undo event for a DIFFERENT apply event must not trip the
+    // already-undone guard for THIS apply event.
+    await db.insert(event).values({
+      id: 'unrelated_undo',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:note_refine_undo',
+      subject_kind: 'artifact',
+      subject_id: 'some_other_artifact',
+      outcome: 'success',
+      payload: { undone_event_id: 'some_other_apply_event' },
+      caused_by_event_id: 'some_other_apply_event',
+      created_at: new Date(),
+    });
+
+    const result = await undoNoteRefineApplyEvent(db, { applyEventId });
+    expect(result.status).toBe('undone');
   });
 });
 

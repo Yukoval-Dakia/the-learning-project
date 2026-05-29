@@ -23,7 +23,7 @@
 // the enclosing block's text, falling back to the cross-link's title attr
 // (`extractCrossLinkSnippet`), so the panel can show where the link lives.
 
-import { inArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { db } from '@/db/client';
@@ -59,6 +59,17 @@ export async function GET(_req: Request, { params }: RouteParams): Promise<Respo
       throw new ApiError('validation_error', 'artifact id is required', 400);
     }
     const toArtifactId = parsedParams.data.id;
+
+    // Mirror the sibling `correct` route: a backlinks GET for an artifact id that
+    // doesn't exist is a 404, not a 200 with an empty list. (Without this the
+    // index read silently returns [] for a typo'd / deleted id, masking the error.)
+    const [target] = await db
+      .select({ id: artifact.id })
+      .from(artifact)
+      .where(eq(artifact.id, toArtifactId));
+    if (!target) {
+      throw new ApiError('not_found', `artifact ${toArtifactId} not found`, 404);
+    }
 
     // Single-owner read of the L2 index; cross_link refs only.
     const inbound = (await listBacklinks(db, { toArtifactId })).filter(

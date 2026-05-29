@@ -255,7 +255,7 @@ export async function undoNoteRefineApplyEvent(
   db: Db,
   params: { applyEventId: string; actorRef?: string; now?: Date },
 ): Promise<{
-  status: 'undone' | 'skipped:already_undone';
+  status: 'undone' | 'skipped:already_undone' | 'skipped:version_conflict';
   artifact_id: string;
   event_id?: string;
   artifact_version?: number;
@@ -266,10 +266,20 @@ export async function undoNoteRefineApplyEvent(
     throw new Error(`note refine apply event ${params.applyEventId} not found`);
   }
 
+  // Scope the already-undone check to undo events CAUSED BY this apply event
+  // (caused_by_event_id chain) instead of full-scanning every
+  // `experimental:note_refine_undo` row. The undo event we write below sets
+  // caused_by_event_id = applyEventId, so this is the precise inverse lookup and
+  // does not degrade as the global event log grows.
   const undoRows = await db
     .select()
     .from(event)
-    .where(and(eq(event.action, 'experimental:note_refine_undo')));
+    .where(
+      and(
+        eq(event.action, 'experimental:note_refine_undo'),
+        eq(event.caused_by_event_id, params.applyEventId),
+      ),
+    );
   const alreadyUndone = undoRows.some(
     (row) => (row.payload as { undone_event_id?: unknown }).undone_event_id === params.applyEventId,
   );
@@ -299,14 +309,27 @@ export async function undoNoteRefineApplyEvent(
     if (!target) throw new Error(`artifact ${artifactId} not found`);
     if (target.archived_at) throw new Error(`artifact ${artifactId} archived`);
     const nextVersion = target.version + 1;
-    await tx
+    // Optimistic lock: restore only if the artifact is still at the version we
+    // loaded. Mirror persistNoteRefineApply's apply-path pattern — check the
+    // returned row count and, on a concurrent version bump (0 rows updated),
+    // signal version_conflict WITHOUT writing the undo event. Reporting 'undone'
+    // here would be a false success (note not restored) AND would let the
+    // already_undone guard permanently block a real retry.
+    const restored = await tx
       .update(artifact)
       .set({
         body_blocks: payload.previous_body_blocks as never,
         version: nextVersion,
         updated_at: now,
       })
-      .where(and(eq(artifact.id, artifactId), eq(artifact.version, target.version)));
+      .where(and(eq(artifact.id, artifactId), eq(artifact.version, target.version)))
+      .returning({ version: artifact.version });
+    if (restored.length === 0) {
+      return {
+        status: 'skipped:version_conflict' as const,
+        artifact_id: artifactId,
+      };
+    }
     await writeEvent(tx, {
       id: undoEventId,
       actor_kind: 'user',
