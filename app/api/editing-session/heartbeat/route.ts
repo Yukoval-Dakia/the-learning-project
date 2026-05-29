@@ -24,7 +24,7 @@ export async function POST(req: Request): Promise<Response> {
       );
     }
     const body = parsed.data;
-    recordEditingHeartbeat({ artifactId: body.artifact_id, status: body.status });
+    await recordEditingHeartbeat({ artifactId: body.artifact_id, status: body.status });
     if (body.status === 'editing') {
       await enqueueDwellNoteRefine({ db, artifactId: body.artifact_id });
     }

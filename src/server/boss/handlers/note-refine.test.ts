@@ -126,7 +126,7 @@ describe('parseNoteRefineOutput', () => {
 describe('runNoteRefine', () => {
   beforeEach(async () => {
     await resetDb();
-    resetEditingSessionStateForTests();
+    await resetEditingSessionStateForTests();
   });
 
   it('returns skipped:not_found when artifact missing', async () => {
@@ -337,7 +337,7 @@ describe('runNoteRefine', () => {
   it('mutator path defers while the artifact is actively edited and flushes on idle', async () => {
     await seedArtifact({ artifactId: 'a1', knowledgeId: 'k1' });
     const now = new Date('2026-05-28T12:00:00Z');
-    recordEditingHeartbeat({ artifactId: 'a1', status: 'editing', now });
+    await recordEditingHeartbeat({ artifactId: 'a1', status: 'editing', now });
     const runTaskFn = vi.fn(async () => ({
       text: refinePayload([{ kind: 'append_block', block: paragraphBlock('b_deferred', 'x') }]),
     }));

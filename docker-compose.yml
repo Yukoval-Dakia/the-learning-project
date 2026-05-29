@@ -25,8 +25,15 @@ services:
     image: the-learning-project-app
     env_file:
       - .env
+    # YUK-148: cross-process editing presence. app (heartbeats) + worker
+    # (note-refine idle checks) share this Redis so the worker doesn't apply an
+    # AI patch mid-edit. Overrides any REDIS_URL in .env so both services agree.
+    environment:
+      REDIS_URL: redis://redis:6379
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
@@ -51,13 +58,34 @@ services:
     command: ["node", "worker.cjs"]
     env_file:
       - .env
+    # YUK-148: same Redis as `app` so editing presence is shared across the two
+    # processes (see app service note).
+    environment:
+      REDIS_URL: redis://redis:6379
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
     networks:
       - internal
+    restart: unless-stopped
+
+  redis:
+    # YUK-148: shared editing-presence store for app + worker. Presence is
+    # ephemeral best-effort state — lost presence on restart safely reads as
+    # idle — so no persistence (AOF/RDB) and no volume are configured. Keys
+    # self-expire via a TTL aligned to the heartbeat timeout (see ADR-0023).
+    image: redis:7-alpine
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     restart: unless-stopped
 
   postgres:
