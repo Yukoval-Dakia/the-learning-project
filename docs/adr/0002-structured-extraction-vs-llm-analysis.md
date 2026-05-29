@@ -45,3 +45,23 @@
 **Agent 修改约束沿用**：修改 `question.structured` 必须走领域工具集，version 递增 + provenance 留痕，不开放裸 jsonb 编辑。
 
 **See also**：`docs/superpowers/specs/2026-05-21-math-mvp-vision-design.md` §4 + `docs/superpowers/plans/2026-05-21-math-mvp-m-1-m0.md` Task 1-4。
+
+---
+
+**修订（2026-05-30）— 设定方向：VLM 全权拥有结构，腾讯降为纯文字 OCR hint（T-OC / YUK-145，OC-1/OC-2）**
+
+**Trigger**：T-OC OCR/录入 pipeline 重建 design（`docs/superpowers/specs/2026-05-29-t-oc-ocr-rebuild-design.md`，design-approved 2026-05-29）。feature 探查暴露原"抽取层 = 确定性 OCR"在两类硬伤上扛不住：**跨页大题**腾讯结构提取搞不定（YUK-144），**题图匹配**靠易错的 bbox 启发式（`assignFigures`）。
+
+**Direction（未来，slice 2 落地，本次 slice 1 不实现）**：
+- **腾讯 OCR 退为纯文字底层**：保留腾讯的**字符级文字提取**（它准），但其**结构输出降为 hint**，不再是结构 source of truth。
+- **StructureTask（VLM mimo-v2.5 多模态）全权拥有结构**：输入 图(N页) + 腾讯文字 hint → 规范结构树；**可完全覆盖腾讯结构**；负责跨页大题组装 + 题图匹配（VLM 看图判图属哪题，替代 `assignFigures` 启发式）+ 布局规范。
+- 这是对本 ADR 原则"结构抽取是 deterministic problem，交给专用 OCR"的**演进**而非否定：结构/语义层在带手写、跨页、复杂版式的真实录入场景里**不是** deterministic problem，需要 reasoning。字符 OCR 仍是确定性的，仍归腾讯。
+
+**Status of this revision**：方向已锁（OC-1/OC-2），但**实现分 slice**。
+- **Slice 1（本次，YUK-145，已实现）**：只做 OC-3 泛化捕获 model fix（见 ADR-0024），**不**碰 VLM 结构层。腾讯降级 + StructureTask 是 future。
+- **Slice 2（future）**：StructureTask VLM 实装 + 腾讯结构降为 hint。届时本 ADR 此节从"direction"转"accepted 实装"。
+- `assignFigures` 启发式在 slice 2 落地前保持现状；slice 1 的 import path 仍消费现有 `question_block.figures`。
+
+**Agent 修改约束沿用**：VLM 写 `structured` 仍须走领域工具集（Zod 校验 + version + provenance）；裸 jsonb 不开放。
+
+**See also**：`docs/superpowers/specs/2026-05-29-t-oc-ocr-rebuild-design.md` §2（OC-1/OC-2）+ `docs/superpowers/plans/2026-05-30-yuk145-toc-slice1-lane.md`（slice 边界）+ ADR-0024（slice 1 的 OC-3 model）。
