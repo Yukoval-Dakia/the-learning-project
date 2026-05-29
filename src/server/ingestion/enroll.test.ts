@@ -206,4 +206,68 @@ describe('enrollCapturedBlock', () => {
     expect(record[0].question_id).toBe(questionId);
     expect(record[0].origin_event_id).toBe(captureEvents[0].id);
   });
+
+  // T-OC slice 3 (YUK-145, OC-5): the auto-enroll path passes
+  // generatedBy='workflow_judge' so its events are distinguishable from
+  // user-reviewed ('ingestion_capture') captures. See ADR-0026.
+  it("generatedBy='workflow_judge' lands in the attempt event payload (slice 3)", async () => {
+    const db = testDb();
+    const questionId = await seedQuestion(db, 'k1');
+
+    const result = await db.transaction((tx) =>
+      enrollCapturedBlock(tx, {
+        ...baseInput(questionId, 'success'),
+        generatedBy: 'workflow_judge',
+      }),
+    );
+
+    const attempt = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'attempt'), eq(event.subject_id, questionId)));
+    expect(attempt).toHaveLength(1);
+    expect((attempt[0].payload as Record<string, unknown>).generated_by).toBe('workflow_judge');
+
+    const record = await db
+      .select()
+      .from(learning_record)
+      .where(eq(learning_record.id, result.recordId));
+    expect((record[0].payload as Record<string, unknown>).generated_by).toBe('workflow_judge');
+  });
+
+  it("generatedBy='workflow_judge' marks the unanswered capture provenance event (slice 3)", async () => {
+    const db = testDb();
+    const questionId = await seedQuestion(db, 'k1');
+
+    await db.transaction((tx) =>
+      enrollCapturedBlock(tx, {
+        ...baseInput(questionId, 'unanswered'),
+        generatedBy: 'workflow_judge',
+      }),
+    );
+
+    const captureEvents = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:record_capture'));
+    expect(captureEvents).toHaveLength(1);
+    expect((captureEvents[0].payload as Record<string, unknown>).generated_by).toBe(
+      'workflow_judge',
+    );
+  });
+
+  it("default provenance stays 'ingestion_capture' when generatedBy is omitted", async () => {
+    const db = testDb();
+    const questionId = await seedQuestion(db, 'k1');
+
+    const result = await db.transaction((tx) =>
+      enrollCapturedBlock(tx, baseInput(questionId, 'success')),
+    );
+
+    const attempt = await db
+      .select()
+      .from(event)
+      .where(eq(event.id, result.attemptEventId as string));
+    expect((attempt[0].payload as Record<string, unknown>).generated_by).toBe('ingestion_capture');
+  });
 });

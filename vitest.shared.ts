@@ -54,6 +54,11 @@ export const fastTestInclude = [
   // runTaskFn, no live DB / AI / R2. (sibling tencent_ocr_extract handler test
   // hits Postgres → db partition.)
   'src/server/ingestion/structure.test.ts',
+  // T-OC slice 3 (YUK-145): the deterministic WorkflowJudge aggregator + the
+  // auto-enroll flag config readers are pure (no DB / no LLM). The sibling
+  // tagging.test.ts + auto-enroll.test.ts hit live Postgres → db partition.
+  'src/server/ingestion/workflow-judge.test.ts',
+  'src/server/ingestion/workflow-judge-config.test.ts',
   'src/server/ingestion/tencent_mark.test.ts',
   'src/server/ingestion/tencent_mark_parser.test.ts',
   'src/server/ingestion/vision.test.ts',
