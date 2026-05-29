@@ -9,6 +9,7 @@ import {
   subjectContentProps,
 } from '@/ui/lib/subject';
 import { Badge } from '@/ui/primitives/Badge';
+import { AUTO_LINK_SYSTEM_LABEL, autoLinkChip } from './auto-link-chip';
 import {
   ARTIFACT_REF_BLOCK_NODE,
   AUTO_LINKS_CONTAINER_NODE,
@@ -29,6 +30,14 @@ type CorrectionStatus =
   | { state: 'marked_wrong'; correction_event_id: string; replacement_artifact_id: null }
   | { state: 'superseded'; correction_event_id: string; replacement_artifact_id: string };
 
+// YUK-95 P5 Lane-D — one system-maintained auto-link, as surfaced to the
+// dismiss-button renderer (hub auto-zone only). `relation` is the chip's
+// HubMeshRelation provenance; the dismiss POST sends both up.
+export interface AutoLinkDismissTarget {
+  artifact_id: string;
+  relation: string | null;
+}
+
 interface BlockTreeRendererProps {
   bodyBlocks: BlockTreeDoc;
   subjectProfile: SlimSubjectProfile;
@@ -36,6 +45,19 @@ interface BlockTreeRendererProps {
   embeddedCheckStatus?: 'not_required' | 'pending' | 'ready' | 'failed';
   correctionBlocks?: Record<string, CorrectionStatus>;
   renderBlockActions?: (block: { id: string; status: CorrectionStatus }) => ReactNode;
+  // YUK-95 P5 Lane-D — when provided, each system-maintained (`auto:true`)
+  // crossLinkBlock in an AutoLinksContainer renders the returned node (the
+  // hover dismiss × button). Omitted on read-only / non-hub surfaces.
+  renderAutoLinkDismiss?: (target: AutoLinkDismissTarget) => ReactNode;
+  // Client-side optimistic-hide set (artifact_ids the user just dismissed):
+  // auto-links whose artifact_id is in this set are skipped before the next
+  // server round-trip removes them.
+  hiddenAutoLinkArtifactIds?: ReadonlySet<string>;
+}
+
+interface RenderCtx {
+  renderAutoLinkDismiss?: (target: AutoLinkDismissTarget) => ReactNode;
+  hiddenAutoLinkArtifactIds?: ReadonlySet<string>;
 }
 
 const ACTIVE_STATUS: CorrectionStatus = {
@@ -71,37 +93,73 @@ function applyMarks(node: ReactNode, marks: BlockTreeMark[] | undefined): ReactN
   }, node);
 }
 
-function renderInline(node: BlockTreeNode, key: string): ReactNode {
+function renderInline(node: BlockTreeNode, key: string, ctx: RenderCtx): ReactNode {
   if (node.type === 'text') {
     return <span key={key}>{applyMarks(node.text ?? '', node.marks)}</span>;
   }
-  return renderNode(node, key);
+  return renderNode(node, key, ctx);
 }
 
-function renderChildren(node: BlockTreeNode): ReactNode[] {
-  return (node.content ?? []).map((child, idx) => renderInline(child, `${node.type}-${idx}`));
+function renderChildren(node: BlockTreeNode, ctx: RenderCtx): ReactNode[] {
+  return (node.content ?? []).map((child, idx) => renderInline(child, `${node.type}-${idx}`, ctx));
 }
 
-function renderNode(node: BlockTreeNode, key: string): ReactNode {
+// YUK-95 P5 Lane-D — render one crossLinkBlock. `inAutoZone` is true when this
+// link is a direct child of an AutoLinksContainer; only there do we surface the
+// system marker + relation chip + dismiss button (manual cross_links elsewhere
+// keep the plain card).
+function renderCrossLink(
+  node: BlockTreeNode,
+  key: string,
+  ctx: RenderCtx,
+  inAutoZone: boolean,
+): ReactNode {
   const attrs = asRecord(node.attrs);
-  if (node.type === 'paragraph') return <p key={key}>{renderChildren(node)}</p>;
+  const chip = inAutoZone
+    ? autoLinkChip(attrs)
+    : { isAuto: false, relationLabel: null, relationToneClass: null };
+  const artifactId = typeof attrs.artifact_id === 'string' ? attrs.artifact_id : null;
+  const relation = typeof attrs.relation === 'string' ? attrs.relation : null;
+  return (
+    <div
+      key={key}
+      className={`block-tree-link-card${chip.isAuto ? ' block-tree-link-card--auto' : ''}`}
+    >
+      <div className="block-tree-link-card-head">
+        <span>cross_link</span>
+        {chip.isAuto ? (
+          <span className="auto-link-system-tag">{AUTO_LINK_SYSTEM_LABEL}</span>
+        ) : null}
+        {chip.relationLabel ? (
+          <span className={`auto-link-chip ${chip.relationToneClass ?? ''}`}>
+            {chip.relationLabel}
+          </span>
+        ) : null}
+        {chip.isAuto && artifactId && ctx.renderAutoLinkDismiss
+          ? ctx.renderAutoLinkDismiss({ artifact_id: artifactId, relation })
+          : null}
+      </div>
+      <strong>{String(attrs.title ?? attrs.artifact_id ?? 'Artifact')}</strong>
+      {attrs.block_id ? <small>#{String(attrs.block_id)}</small> : null}
+    </div>
+  );
+}
+
+function renderNode(node: BlockTreeNode, key: string, ctx: RenderCtx): ReactNode {
+  const attrs = asRecord(node.attrs);
+  if (node.type === 'paragraph') return <p key={key}>{renderChildren(node, ctx)}</p>;
   if (node.type === 'heading') {
     const level = attrs.level === 2 || attrs.level === 3 || attrs.level === 4 ? attrs.level : 3;
     const HeadingTag = `h${level}` as 'h2' | 'h3' | 'h4';
-    return <HeadingTag key={key}>{renderChildren(node)}</HeadingTag>;
+    return <HeadingTag key={key}>{renderChildren(node, ctx)}</HeadingTag>;
   }
-  if (node.type === 'bulletList') return <ul key={key}>{renderChildren(node)}</ul>;
-  if (node.type === 'orderedList') return <ol key={key}>{renderChildren(node)}</ol>;
-  if (node.type === 'listItem') return <li key={key}>{renderChildren(node)}</li>;
+  if (node.type === 'bulletList') return <ul key={key}>{renderChildren(node, ctx)}</ul>;
+  if (node.type === 'orderedList') return <ol key={key}>{renderChildren(node, ctx)}</ol>;
+  if (node.type === 'listItem') return <li key={key}>{renderChildren(node, ctx)}</li>;
   if (node.type === 'hardBreak') return <br key={key} />;
   if (node.type === CROSS_LINK_BLOCK_NODE) {
-    return (
-      <div key={key} className="block-tree-link-card">
-        <span>cross_link</span>
-        <strong>{String(attrs.title ?? attrs.artifact_id ?? 'Artifact')}</strong>
-        {attrs.block_id ? <small>#{String(attrs.block_id)}</small> : null}
-      </div>
-    );
+    // A bare crossLinkBlock (not inside an AutoLinksContainer): manual link card.
+    return renderCrossLink(node, key, ctx, false);
   }
   if (node.type === ARTIFACT_REF_BLOCK_NODE) {
     return (
@@ -115,21 +173,33 @@ function renderNode(node: BlockTreeNode, key: string): ReactNode {
     return (
       <aside key={key} className="block-tree-callout">
         {attrs.title ? <strong>{String(attrs.title)}</strong> : null}
-        {renderChildren(node)}
+        {renderChildren(node, ctx)}
       </aside>
     );
   }
   if (node.type === AUTO_LINKS_CONTAINER_NODE) {
+    // Auto-zone: each crossLinkBlock child renders with the system marker +
+    // relation chip + dismiss button. Optimistically-hidden links are skipped.
+    const children = (node.content ?? []).filter((child) => {
+      if (child.type !== CROSS_LINK_BLOCK_NODE) return true;
+      const childAttrs = asRecord(child.attrs);
+      const id = typeof childAttrs.artifact_id === 'string' ? childAttrs.artifact_id : null;
+      return !(id && ctx.hiddenAutoLinkArtifactIds?.has(id));
+    });
     return (
       <aside key={key} className="block-tree-auto-links">
         <strong>{String(attrs.title ?? 'Related')}</strong>
-        {renderChildren(node)}
+        {children.map((child, idx) =>
+          child.type === CROSS_LINK_BLOCK_NODE
+            ? renderCrossLink(child, `auto-${idx}`, ctx, true)
+            : renderInline(child, `auto-${idx}`, ctx),
+        )}
       </aside>
     );
   }
   return (
     <div key={key} className="block-tree-unknown">
-      {renderChildren(node)}
+      {renderChildren(node, ctx)}
     </div>
   );
 }
@@ -141,6 +211,8 @@ export function BlockTreeRenderer({
   embeddedCheckStatus = 'not_required',
   correctionBlocks = {},
   renderBlockActions,
+  renderAutoLinkDismiss,
+  hiddenAutoLinkArtifactIds,
 }: BlockTreeRendererProps) {
   const subjectModel = resolveSubjectRenderModel(subjectProfile);
   const bodyProps = subjectContentProps(subjectModel, { className: 'artifact-section-body' });
@@ -150,12 +222,13 @@ export function BlockTreeRenderer({
     | 'plaintext'
     | 'code'
     | undefined;
+  const ctx: RenderCtx = { renderAutoLinkDismiss, hiddenAutoLinkArtifactIds };
 
   return (
     <div className="artifact-sections block-tree-renderer">
       {(bodyBlocks.content as BlockTreeNode[] | undefined)?.map((node, index) => {
         if (node.type !== SEMANTIC_BLOCK_NODE) {
-          return renderNode(node, `node-${index}`);
+          return renderNode(node, `node-${index}`, ctx);
         }
         const rawAttrs = asRecord(node.attrs);
         const attrs = rawAttrs as unknown as SemanticBlockAttrs;
@@ -199,7 +272,7 @@ export function BlockTreeRenderer({
               </MathMarkdown>
             ) : (
               <div {...bodyProps}>
-                {(node.content ?? []).map((child, idx) => renderNode(child, `${id}-${idx}`))}
+                {(node.content ?? []).map((child, idx) => renderNode(child, `${id}-${idx}`, ctx))}
               </div>
             )}
             {kind === 'check' ? (

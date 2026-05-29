@@ -2,6 +2,9 @@
 
 import { Node, mergeAttributes } from '@tiptap/core';
 import Link from '@tiptap/extension-link';
+import type { Node as PmNode } from '@tiptap/pm/model';
+import { Plugin, PluginKey } from '@tiptap/pm/state';
+import type { EditorState, Transaction } from '@tiptap/pm/state';
 import { NodeViewContent, NodeViewWrapper, ReactNodeViewRenderer } from '@tiptap/react';
 import type { NodeViewProps } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
@@ -9,6 +12,7 @@ import {
   type CrossLinkSuggestionContext,
   createCrossLinkSuggestionExtension,
 } from './CrossLinkSuggestion';
+import { AUTO_LINK_SYSTEM_LABEL, autoLinkChip } from './auto-link-chip';
 import {
   ARTIFACT_REF_BLOCK_NODE,
   AUTO_LINKS_CONTAINER_NODE,
@@ -37,17 +41,34 @@ function BlockNodeView({ node }: NodeViewProps) {
 // `.block-tree-link-card` the read renderer uses (BlockTreeRenderer.tsx) so the
 // inserted node looks identical in edit + read. `contentEditable=false` keeps
 // the cursor out of the card.
+//
+// YUK-95 P5 Lane-D — system-maintained auto-links (`attrs.auto === true`, written
+// by the nightly hub_auto_sync worker) get the "系统维护" marker + relation chip
+// here too, so the edit view matches the read view. Dismiss (×) is a read-view
+// affordance (it POSTs to /api/hubs/[id]/dismiss-link, which mutates body_blocks
+// out-of-band), so it is NOT surfaced inside the editor NodeView.
 function CrossLinkNodeView({ node }: NodeViewProps) {
   const title = String(node.attrs.title ?? node.attrs.artifact_id ?? 'Artifact');
   const blockId = node.attrs.block_id ? String(node.attrs.block_id) : null;
+  const chip = autoLinkChip(node.attrs as Record<string, unknown>);
   return (
     <NodeViewWrapper
-      className="block-tree-node-view-crosslink"
+      className={`block-tree-node-view-crosslink${chip.isAuto ? ' block-tree-node-view-crosslink--auto' : ''}`}
       data-block-id={String(node.attrs.id ?? '')}
       contentEditable={false}
     >
-      <div className="block-tree-link-card">
-        <span>cross_link</span>
+      <div className={`block-tree-link-card${chip.isAuto ? ' block-tree-link-card--auto' : ''}`}>
+        <div className="block-tree-link-card-head">
+          <span>cross_link</span>
+          {chip.isAuto ? (
+            <span className="auto-link-system-tag">{AUTO_LINK_SYSTEM_LABEL}</span>
+          ) : null}
+          {chip.relationLabel ? (
+            <span className={`auto-link-chip ${chip.relationToneClass ?? ''}`}>
+              {chip.relationLabel}
+            </span>
+          ) : null}
+        </div>
         <strong>{title}</strong>
         {blockId ? <small>#{blockId}</small> : null}
       </div>
@@ -174,6 +195,65 @@ export const CalloutBlock = Node.create({
   },
 });
 
+// YUK-95 P5 Lane-D — reorder-only enforcement (ADR-0020 §9: "用户可重排顺序，但
+// 不可增删 children"). We collect the MULTISET of auto-zone child anchors (each
+// child's `attrs.id`, falling back to artifact_id) across every
+// AutoLinksContainer in a doc, plus the number of containers. Reorder keeps the
+// multiset identical; a hand add or delete changes it. The dismiss flow
+// (× button → suppress event → out-of-band body_blocks mutation) is the ONLY
+// sanctioned removal path.
+export function autoZoneChildKeys(doc: PmNode): { containers: number; keys: string[] } {
+  const keys: string[] = [];
+  let containers = 0;
+  doc.descendants((node: PmNode) => {
+    if (node.type.name !== AUTO_LINKS_CONTAINER_NODE) return true;
+    containers += 1;
+    // `node.forEach` here is the ProseMirror Node child-iteration API (not
+    // Array.prototype.forEach) — the only way to walk a PM node's children.
+    // biome-ignore lint/complexity/noForEach: ProseMirror Node API, not an array.
+    node.forEach((child: PmNode) => {
+      const id = child.attrs?.id ?? child.attrs?.artifact_id;
+      keys.push(typeof id === 'string' && id.length > 0 ? id : `${child.type.name}:unknown`);
+    });
+    // Don't descend further into the container (children are atoms anyway).
+    return false;
+  });
+  return { containers, keys };
+}
+
+function sameMultiset(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const counts = new Map<string, number>();
+  for (const k of a) counts.set(k, (counts.get(k) ?? 0) + 1);
+  for (const k of b) {
+    const n = counts.get(k);
+    if (!n) return false;
+    counts.set(k, n - 1);
+  }
+  return [...counts.values()].every((n) => n === 0);
+}
+
+/**
+ * True when `next` is an allowed evolution of `prev` for the auto-zone. We only
+ * BLOCK in-place hand add/delete of individual children — i.e. the number of
+ * AutoLinksContainers is unchanged but the combined child multiset differs
+ * (reorder keeps it equal). Wholesale container add/remove (the count changed,
+ * e.g. setContent on initial load, or the server-side dismiss replace_block
+ * rebuilding the container) is allowed.
+ *
+ * Pure + exported for unit testing.
+ */
+export function isAllowedAutoZoneChange(prev: PmNode, next: PmNode): boolean {
+  const before = autoZoneChildKeys(prev);
+  const after = autoZoneChildKeys(next);
+  // Container set changed wholesale → not a piecemeal child edit; allow.
+  if (before.containers !== after.containers) return true;
+  // Same containers: reorder keeps the multiset; add/delete changes it.
+  return sameMultiset(before.keys, after.keys);
+}
+
+const autoZoneReorderOnlyKey = new PluginKey('autoZoneReorderOnly');
+
 export const AutoLinksContainer = Node.create({
   name: AUTO_LINKS_CONTAINER_NODE,
   group: 'block',
@@ -184,6 +264,8 @@ export const AutoLinksContainer = Node.create({
     return {
       id: { default: null },
       title: { default: 'Related' },
+      auto: { default: null },
+      relation: { default: null },
     };
   },
 
@@ -196,6 +278,23 @@ export const AutoLinksContainer = Node.create({
       'aside',
       mergeAttributes(HTMLAttributes, { 'data-node-type': AUTO_LINKS_CONTAINER_NODE }),
       0,
+    ];
+  },
+
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: autoZoneReorderOnlyKey,
+        // Reject any transaction that adds/deletes a child inside an
+        // AutoLinksContainer by hand. Programmatic full-container replacement
+        // (setContent / the dismiss replace_block) keeps the multiset equal or
+        // swaps the whole container, so it passes; only piecemeal user edits
+        // that change the child multiset are blocked.
+        filterTransaction(tr: Transaction, state: EditorState) {
+          if (!tr.docChanged) return true;
+          return isAllowedAutoZoneChange(state.doc, tr.doc);
+        },
+      }),
     ];
   },
 
