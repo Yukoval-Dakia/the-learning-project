@@ -543,7 +543,7 @@ describe('GET /api/learning-items/[id]', () => {
         summary_md: '例子部分需要人工复核。',
         issues: [
           {
-            section_id: null,
+            block_id: null,
             severity: 'warn',
             category: 'factuality',
             message: '缺少文本证据。',

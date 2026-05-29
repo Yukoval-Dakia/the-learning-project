@@ -30,7 +30,7 @@ describe('VerificationBadge', () => {
         summary="AI verification failed before producing a full report."
         issues={[
           {
-            section_id: 's1',
+            block_id: 'b1',
             severity: 'error',
             category: 'factuality',
             message: '公式引用不成立',
