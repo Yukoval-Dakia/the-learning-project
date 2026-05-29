@@ -23,9 +23,11 @@
  * OC-5 evidence-first: every enrolled item's event payload carries a
  * `generated_by` provenance marker so the action is traceable + reversible.
  * Slice 1 captures are user-reviewed → `generated_by='ingestion_capture'`.
- * Slice 3's WorkflowJudge will set `generated_by='workflow_judge'` for
- * auto-enrolled high-confidence items and drive the "AI auto-enrolled N items"
- * review surface (DEFERRED — see lane plan §"DEFERRED").
+ * Slice 3's WorkflowJudge auto-enroll path passes `generatedBy='workflow_judge'`
+ * (the `generatedBy` input below is now WIRED — see
+ * `src/server/ingestion/auto-enroll.ts`). The DEFERRED "AI auto-enrolled N items"
+ * review surface (slice 3b) reads this marker to show what the judge auto-enrolled
+ * — see `docs/superpowers/plans/2026-05-30-yuk145-toc-slice3-lane.md` §DEFERRED.
  */
 import { createId } from '@paralleldrive/cuid2';
 
@@ -35,6 +37,14 @@ import { createLearningRecord } from '@/server/records/queries';
 
 /** The capture outcome signal. `unanswered` = item/material (no attempt). */
 export type EnrollOutcome = 'failure' | 'success' | 'partial' | 'unanswered';
+
+/**
+ * Provenance marker (OC-5). `ingestion_capture` = user-reviewed capture (slice 1,
+ * the default). `workflow_judge` = WorkflowJudge auto-enrolled this block without
+ * human review (slice 3, `src/server/ingestion/auto-enroll.ts`). The marker lands
+ * in the event payload so the action is traceable + reversible.
+ */
+export type EnrollProvenance = 'ingestion_capture' | 'workflow_judge';
 
 export interface EnrollCapturedBlockInput {
   /** The question row this capture enrolls against. */
@@ -55,6 +65,13 @@ export interface EnrollCapturedBlockInput {
   sourceDocumentId: string;
   /** Wall-clock timestamp shared with the route's batch. */
   now: Date;
+  /**
+   * OC-5 provenance marker written into the event payload. Defaults to
+   * `'ingestion_capture'` (user-reviewed capture) so existing callers (the human
+   * import route) are byte-for-byte unchanged. The slice-3 auto-enroll path
+   * passes `'workflow_judge'`. See `EnrollProvenance` + ADR-0026.
+   */
+  generatedBy?: EnrollProvenance;
 }
 
 export interface EnrollCapturedBlockResult {
@@ -93,9 +110,11 @@ export async function enrollCapturedBlock(
   input: EnrollCapturedBlockInput,
 ): Promise<EnrollCapturedBlockResult> {
   const recordKind = RECORD_KIND_BY_OUTCOME[input.outcome];
-  // Slice-1 provenance seam (OC-5). Slice 3 WorkflowJudge flips `generated_by`
-  // to 'workflow_judge' for auto-enrolled items — see lane plan §DEFERRED.
-  const generatedBy = 'ingestion_capture' as const;
+  // OC-5 provenance (WIRED in slice 3). Default 'ingestion_capture' = the
+  // human import route (user-reviewed). The auto-enroll path
+  // (src/server/ingestion/auto-enroll.ts) passes 'workflow_judge' so its
+  // events are distinguishable + reversible. See ADR-0026 + lane plan §6.
+  const generatedBy: EnrollProvenance = input.generatedBy ?? 'ingestion_capture';
 
   // ---- unanswered: question/material, no attempt event ----
   if (input.outcome === 'unanswered') {
