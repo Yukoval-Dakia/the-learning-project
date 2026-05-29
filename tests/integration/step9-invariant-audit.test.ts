@@ -188,6 +188,11 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
     //     single owner-service for AI-side Living Note block-level patch
     //     application — applies a NotePatch to body_blocks + bumps version +
     //     writes `experimental:note_refine_apply` in one transaction.
+    //   - YUK-95 (P5 Lane-D) `src/server/artifacts/hub-dismiss.ts`: the single
+    //     owner-service for dismissing a hub auto-link — appends
+    //     `attrs.suppressed_block_refs` (no version bump) alongside the paired
+    //     suppress event + the immediate-removal `note_refine_apply`, all atomic
+    //     in one transaction. The route only validates input + opens the tx.
     // Anything else writing `artifact` should still be reviewed.
     const hits = await findWriteHits('artifact', { roots: SCAN_RUNTIME_ROOTS });
     const ALLOWED = [
@@ -199,6 +204,7 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
       'src/server/artifacts/sections.ts',
       'src/server/artifacts/body-blocks-edit.ts',
       'src/server/artifacts/note-refine-apply.ts',
+      'src/server/artifacts/hub-dismiss.ts',
     ];
     const unexpected = hits.filter((h) => !ALLOWED.includes(h.split(path.sep).join('/')));
     expect(

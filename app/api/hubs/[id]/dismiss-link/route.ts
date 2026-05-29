@@ -19,23 +19,13 @@
 // (append-only history) but the immediate-removal patch is a no-op (the child is
 // already gone) so no second body_blocks mutation happens.
 
-import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 
-import { newId } from '@/core/ids';
-import { SuppressArtifactLink } from '@/core/schema/event';
 import { db } from '@/db/client';
-import type { Tx } from '@/db/client';
-import { artifact } from '@/db/schema';
-import { appendSuppressedRef, buildRemoveAutoLinkPatch } from '@/server/artifacts/hub-dismiss';
-import { persistNoteRefineApply } from '@/server/artifacts/note-refine-apply';
-import { writeEvent } from '@/server/events/queries';
+import { persistHubLinkDismiss } from '@/server/artifacts/hub-dismiss';
 import { ApiError, errorResponse } from '@/server/http/errors';
 
 export const runtime = 'nodejs';
-
-const HUB_TYPE = 'note_hub';
-const SUPPRESS_ACTOR_REF = 'hub_dismiss_link';
 
 const ParamsSchema = z.object({ id: z.string().trim().min(1) });
 
@@ -73,85 +63,16 @@ export async function POST(req: Request, { params }: RouteParams): Promise<Respo
       throw new ApiError('validation_error', 'a hub cannot suppress a link to itself', 400);
     }
 
-    // Validate the suppress event shape against the canonical KnownEvent schema
-    // up front (same pattern as the correct route) so the wire contract is the
-    // single source of truth.
-    const parsedEvent = SuppressArtifactLink.safeParse({
-      actor_kind: 'user',
-      actor_ref: 'self',
-      action: 'suppress',
-      subject_kind: 'artifact',
-      subject_id: hubId,
-      outcome: 'success',
-      payload: { suppressed_artifact_id, ...(relation ? { relation } : {}) },
-    });
-    if (!parsedEvent.success) {
-      throw new ApiError('validation_error', 'invalid suppress payload', 400);
-    }
-
-    const result = await db.transaction(async (tx: Tx) => {
-      const [hub] = await tx
-        .select({
-          id: artifact.id,
-          type: artifact.type,
-          attrs: artifact.attrs,
-          body_blocks: artifact.body_blocks,
-        })
-        .from(artifact)
-        .where(eq(artifact.id, hubId));
-      if (!hub) {
-        throw new ApiError('not_found', `hub ${hubId} not found`, 404);
-      }
-      if (hub.type !== HUB_TYPE) {
-        throw new ApiError('validation_error', `artifact ${hubId} is not a hub`, 400);
-      }
-
-      const { attrs: nextAttrs } = appendSuppressedRef(
-        hub.attrs as Record<string, unknown> | null,
-        suppressed_artifact_id,
-      );
-
-      // 1. Persist the dedup'd suppressed_block_refs on attrs. Note: we do NOT
-      //    bump version here — the immediate-removal apply below owns the
-      //    version bump (and its optimistic guard) so both writes stay
-      //    consistent within this tx.
-      await tx
-        .update(artifact)
-        .set({ attrs: nextAttrs as never, updated_at: new Date() })
-        .where(eq(artifact.id, hubId));
-
-      // 2. Append-only suppress event (XC-5 traceable).
-      const suppressEventId = newId();
-      await writeEvent(tx, {
-        id: suppressEventId,
-        actor_kind: 'user',
-        actor_ref: 'self',
-        action: 'suppress',
-        subject_kind: 'artifact',
-        subject_id: hubId,
-        outcome: 'success',
-        payload: parsedEvent.data.payload,
-        created_at: new Date(),
-      });
-
-      // 3. Immediately remove the dismissed auto crossLinkBlock from the
-      //    container (undoable note_refine_apply). No-op when the child is
-      //    already gone (idempotent dismiss).
-      const patch = buildRemoveAutoLinkPatch(hub.body_blocks, suppressed_artifact_id);
-      let removed = false;
-      if (patch) {
-        const applied = await persistNoteRefineApply({
-          db: tx,
-          artifactId: hubId,
-          patch,
-          actorRef: SUPPRESS_ACTOR_REF,
-          triggerEventId: suppressEventId,
-        });
-        removed = applied.status === 'applied';
-      }
-
-      return { suppress_event_id: suppressEventId, removed };
-    });
+    // All artifact/event writes are owned by the hub-dismiss service so the attrs
+    // suppressed_block_refs update, the suppress event, and the immediate-removal
+    // patch stay atomic in one transaction (ADR-0020 §9 single-owner write path).
+    const result = await db.transaction((tx) =>
+      persistHubLinkDismiss(tx, {
+        hubId,
+        suppressedArtifactId: suppressed_artifact_id,
+        relation,
+      }),
+    );
 
     return Response.json({
       hub_id: hubId,
