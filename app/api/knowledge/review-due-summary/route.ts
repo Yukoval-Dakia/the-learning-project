@@ -10,15 +10,20 @@
 // material_fsrs_state → question, unnest knowledge_ids, and aggregate the count
 // of due questions per knowledge_id in a single GROUP BY (no N+1):
 //
-//   - overdue   : due_at < now
-//   - due_soon  : now <= due_at < now + DUE_SOON_WINDOW_HOURS
+//   - overdue   : due_at <= now
+//   - due_soon  : now < due_at < now + DUE_SOON_WINDOW_HOURS
 //
-// The join/predicate shape mirrors `executeGetReviewDue`
-// (src/server/ai/tools/context-readers.ts): same material_fsrs_state ⨝ question
-// on subject_id, same subject_kind = 'question' gate, same per-question
-// knowledge_ids fan-out — but aggregated for the graph indicator instead of
-// returning per-question rows. The `material_fsrs_due_idx` (on due_at) backs the
-// due_at range scan.
+// The overdue boundary is INCLUSIVE of `now` to match the canonical review
+// queue `executeGetReviewDue` (src/server/ai/tools/context-readers.ts), which
+// gates overdue with `lte(material_fsrs_state.due_at, now)` — a card due exactly
+// at `now` is overdue, not due_soon. due_soon therefore starts strictly after
+// now (> now), keeping the two bands a clean partition with no gap/overlap.
+//
+// The join/predicate shape also mirrors `executeGetReviewDue`: same
+// material_fsrs_state ⨝ question on subject_id, same subject_kind = 'question'
+// gate, same per-question knowledge_ids fan-out — but aggregated for the graph
+// indicator instead of returning per-question rows. The `material_fsrs_due_idx`
+// (on due_at) backs the due_at range scan.
 //
 // `never_reviewed` (questions with failure attempts but no FSRS row) is
 // deliberately OMITTED: deriving it needs the event-log failure scan +
@@ -78,8 +83,8 @@ export async function GET(): Promise<Response> {
     }>`
       SELECT
         link.knowledge_id AS knowledge_id,
-        count(*) FILTER (WHERE link.due_at < ${nowIso}::timestamptz)::int AS overdue,
-        count(*) FILTER (WHERE link.due_at >= ${nowIso}::timestamptz AND link.due_at < ${soonCutoffIso}::timestamptz)::int AS due_soon
+        count(*) FILTER (WHERE link.due_at <= ${nowIso}::timestamptz)::int AS overdue,
+        count(*) FILTER (WHERE link.due_at > ${nowIso}::timestamptz AND link.due_at < ${soonCutoffIso}::timestamptz)::int AS due_soon
       FROM (
         SELECT
           jsonb_array_elements_text(${question.knowledge_ids}) AS knowledge_id,

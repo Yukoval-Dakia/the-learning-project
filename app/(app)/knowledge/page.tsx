@@ -244,6 +244,18 @@ export default function KnowledgePage() {
     return counts;
   }, [reviewDueQ.data]);
 
+  // Stable identity for the active (non-archived) edge set fed to KnowledgeGraph.
+  // Computing `edges.filter(...)` inline in JSX produced a fresh array every
+  // KnowledgePage render, and KnowledgeGraph's build effect deps include the
+  // edges prop — so a selection click (onNodeClick → setSelectedId → re-render)
+  // would re-init cytoscape and re-run the randomized fcose layout, re-scattering
+  // the graph and discarding manual node-drag positions. Memoizing here keeps the
+  // prop reference steady across selection re-renders so only the dedicated
+  // [selectedId] effect reacts to selection. (`nodes`/`mistakeCounts` are already
+  // memoized above; `dueCounts` has its own stable empty-Map fallback inside
+  // KnowledgeGraph.)
+  const activeEdges = useMemo(() => edges.filter((edge) => edge.archived_at === null), [edges]);
+
   const proposalsByParent = useMemo(() => {
     const grouped = new Map<string | null, KnowledgeProposal[]>();
     for (const p of nodeProposals) {
@@ -457,7 +469,7 @@ export default function KnowledgePage() {
       {knowledgeQ.isSuccess && roots.length > 0 && view === 'graph' && (
         <KnowledgeGraph
           nodes={flattened}
-          edges={edges.filter((edge) => edge.archived_at === null)}
+          edges={activeEdges}
           selectedId={selectedId}
           onNodeClick={setSelectedId}
           mistakeCounts={mistakeCounts}

@@ -23,7 +23,7 @@ function ensureFcose() {
 // not var()). `arrow` toggles a target-arrow; `dashed` toggles line-style.
 type RelationVisual = { token: string; arrow: boolean; dashed: boolean };
 
-const RELATION_VISUAL: Record<string, RelationVisual> = {
+export const RELATION_VISUAL: Record<string, RelationVisual> = {
   prerequisite: { token: '--coral', arrow: true, dashed: false },
   applied_in: { token: '--info', arrow: true, dashed: false },
   derived_from: { token: '--ink-5', arrow: true, dashed: false },
@@ -32,23 +32,44 @@ const RELATION_VISUAL: Record<string, RelationVisual> = {
 };
 
 // ── Mastery bands (Slice 1b 诊断 overlay) ────────────────────────────────────
-// Thresholds mirror src/ui/primitives/MasteryBadge.tsx exactly: >=0.7 good,
-// >=0.4 mid (learning), <0.4 weak. NULL mastery = never practiced (the
-// knowledge_mastery PG view emits NULL when there is zero evidence; ADR-0012).
+// Bands mirror src/ui/primitives/MasteryBadge.tsx EXACTLY, evidence_count first:
+//   • evidence_count === 0       → 'untrained'   (MasteryBadge "未练习")
+//   • evidence_count < 3         → 'insufficient' (MasteryBadge "证据不足 · n<3")
+//   • then by mastery: >=0.7 'mastered', >=0.4 'learning', <0.4 'weak'.
+// The knowledge_mastery PG view emits mastery = 0.5 as a SENTINEL for the
+// low-evidence (1-2 pieces) case, so band logic that ignored evidence_count
+// painted those nodes as confident "学习中" — Fix B (YUK-142 review) threads
+// evidence_count in so the graph fill matches the badge. NULL mastery is the
+// never-practiced / zero-evidence case (ADR-0012) and collapses to 'untrained'.
+//
 // Each band reuses an EXISTING semantic token (no new color tokens) — see
 // app/globals.css :root. We deliberately reserve --again (deep alarm red) for
 // the prerequisite-weakness ring so it does not collide with the weak-band fill
-// (--hard amber).
-export type MasteryBand = 'weak' | 'learning' | 'mastered' | 'untrained';
+// (--hard amber). 'insufficient' shares the faint --ink-5 neutral with
+// 'untrained' (both are "unproven", visually receded) but is a distinct band so
+// it can carry its own label + filter behavior.
+export type MasteryBand = 'weak' | 'learning' | 'mastered' | 'untrained' | 'insufficient';
 
 const MASTERY_BAND_TOKEN: Record<MasteryBand, string> = {
   weak: '--hard', // amber — derivable shaky area
   learning: '--info', // steel blue — neutral mid
   mastered: '--good', // green — solid
-  untrained: '--ink-5', // faint neutral — never practiced (mastery == null)
+  untrained: '--ink-5', // faint neutral — never practiced (evidence_count == 0)
+  insufficient: '--ink-5', // faint neutral — unproven (1-2 evidence pieces)
 };
 
-export function masteryBand(mastery: number | null | undefined): MasteryBand {
+// Band from the full mastery record (mirrors MasteryBadge). evidence_count is
+// the gate: 0 → untrained, <3 → insufficient (regardless of the 0.5 sentinel),
+// then the mastery thresholds. evidence_count defaults to a large number when
+// undefined so callers that only know `mastery` keep the legacy threshold-only
+// behavior.
+export function masteryBand(
+  mastery: number | null | undefined,
+  evidenceCount?: number | null,
+): MasteryBand {
+  const evidence = evidenceCount ?? Number.POSITIVE_INFINITY;
+  if (evidence === 0) return 'untrained';
+  if (evidence < 3) return 'insufficient';
   if (mastery == null) return 'untrained';
   if (mastery < 0.4) return 'weak';
   if (mastery < 0.7) return 'learning';
@@ -60,18 +81,23 @@ export const MASTERY_BAND_LABEL: Record<MasteryBand, string> = {
   learning: '学习中',
   mastered: '已掌握',
   untrained: '未练习',
+  insufficient: '证据不足',
 };
 
-// "薄弱" filter target — weak OR never-practiced collapses to the diagnostic
-// "看我哪里弱" set (the principle: NULL never-practiced is also unproven).
-export function isWeakish(mastery: number | null | undefined): boolean {
-  const band = masteryBand(mastery);
-  return band === 'weak' || band === 'untrained';
+// "薄弱" filter target — weak, never-practiced, OR low-evidence collapses to the
+// diagnostic "看我哪里弱" set (the principle: anything unproven is also a gap to
+// surface). insufficient/untrained are both "not yet confident".
+export function isWeakish(
+  mastery: number | null | undefined,
+  evidenceCount?: number | null,
+): boolean {
+  const band = masteryBand(mastery, evidenceCount);
+  return band === 'weak' || band === 'untrained' || band === 'insufficient';
 }
 
 // Tokens the cytoscape stylesheet needs as concrete values. Read once per
 // (re)mount + on theme change, so dark mode resolves correctly.
-const TOKEN_NAMES = [
+export const TOKEN_NAMES = [
   '--coral',
   '--coral-soft',
   '--info',
@@ -105,7 +131,7 @@ const TOKEN_NAMES = [
 // is distinguishable from the alarm-red `--again` prereq ring by layer (halo vs
 // border), style (soft glow vs hard double stroke), and saturation.
 
-type TokenMap = Record<(typeof TOKEN_NAMES)[number], string>;
+export type TokenMap = Record<(typeof TOKEN_NAMES)[number], string>;
 
 function readTokens(): TokenMap {
   const cs = getComputedStyle(document.documentElement);
@@ -117,7 +143,7 @@ function readTokens(): TokenMap {
 }
 
 // PRESERVE the prior node radius rule: 12 + min(20, mistakeCount*4).
-function nodeRadius(mistakeCount: number): number {
+export function nodeRadius(mistakeCount: number): number {
   return 12 + Math.min(20, mistakeCount * 4);
 }
 
@@ -125,10 +151,14 @@ export interface KnowledgeGraphNode {
   id: string;
   name: string;
   parent_id: string | null;
-  // Slice 1b — diagnostic overlay + domain filter. Both already loaded by
+  // Slice 1b — diagnostic overlay + domain filter. All loaded by
   // app/(app)/knowledge/page.tsx from GET /api/knowledge (knowledge_mastery
   // view + effective_domain). NULL mastery = never practiced.
   mastery?: number | null;
+  // Fix B (YUK-142): evidence_count gates the band so the graph fill mirrors
+  // MasteryBadge — 0 → untrained, 1-2 → insufficient (the mastery=0.5 sentinel
+  // case), else by mastery threshold. Optional so non-page callers can omit it.
+  evidence_count?: number | null;
   domain?: string | null;
   effective_domain?: string | null;
 }
@@ -174,7 +204,7 @@ const FCOSE_LAYOUT: FcoseLayoutOptions = {
   nodeSeparation: 80,
 };
 
-function buildElements(
+export function buildElements(
   nodes: KnowledgeGraphNode[],
   edges: KnowledgeGraphEdge[],
   mistakeCounts: Map<string, number>,
@@ -185,7 +215,7 @@ function buildElements(
 
   for (const node of nodes) {
     const r = nodeRadius(mistakeCounts.get(node.id) ?? 0);
-    const band = masteryBand(node.mastery);
+    const band = masteryBand(node.mastery, node.evidence_count);
     const due = dueCounts.get(node.id);
     const overdue = due?.overdue ?? 0;
     elements.push({
@@ -247,7 +277,7 @@ function buildElements(
   return elements;
 }
 
-function buildStylesheet(t: TokenMap): StylesheetJson {
+export function buildStylesheet(t: TokenMap): StylesheetJson {
   const sheet: StylesheetJson = [
     {
       // Base node — fill now comes from the mastery band (see band selectors
@@ -285,6 +315,15 @@ function buildStylesheet(t: TokenMap): StylesheetJson {
     {
       selector: 'node[band = "untrained"]',
       style: { 'background-color': t['--ink-5'] },
+    },
+    {
+      // Low-evidence (1-2 pieces): faint --ink-5 like untrained, but at reduced
+      // background-opacity so it reads as "unproven, some evidence" — distinct
+      // from the solid untrained fill AND from every confident band. Mirrors
+      // MasteryBadge's separate "证据不足" state instead of painting these as a
+      // confident "学习中".
+      selector: 'node[band = "insufficient"]',
+      style: { 'background-color': t['--ink-5'], 'background-opacity': 0.4 },
     },
     {
       selector: 'node:selected',
@@ -392,9 +431,9 @@ function buildStylesheet(t: TokenMap): StylesheetJson {
 }
 
 // ── Filter model (client-only; derived from already-loaded node data) ────────
-type MasteryFilter = 'all' | 'weak' | 'learning' | 'mastered';
+export type MasteryFilter = 'all' | 'weak' | 'learning' | 'mastered';
 
-interface FilterState {
+export interface FilterState {
   // null domain = "全部" (all domains); otherwise an effective_domain value.
   domain: string | null;
   mastery: MasteryFilter;
@@ -403,7 +442,7 @@ interface FilterState {
   dueOnly: boolean;
 }
 
-function distinctDomains(nodes: KnowledgeGraphNode[]): string[] {
+export function distinctDomains(nodes: KnowledgeGraphNode[]): string[] {
   const seen = new Set<string>();
   for (const n of nodes) {
     const d = n.effective_domain ?? n.domain;
@@ -412,7 +451,7 @@ function distinctDomains(nodes: KnowledgeGraphNode[]): string[] {
   return [...seen].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
 }
 
-function passesFilter(
+export function passesFilter(
   node: KnowledgeGraphNode,
   filter: FilterState,
   dueCounts: Map<string, NodeDueSummary>,
@@ -423,8 +462,10 @@ function passesFilter(
   }
   if (filter.dueOnly && (dueCounts.get(node.id)?.overdue ?? 0) === 0) return false;
   if (filter.mastery === 'all') return true;
-  const band = masteryBand(node.mastery);
-  if (filter.mastery === 'weak') return band === 'weak' || band === 'untrained';
+  const band = masteryBand(node.mastery, node.evidence_count);
+  // "薄弱" target = anything unproven: weak band + never-practiced + low-evidence.
+  if (filter.mastery === 'weak')
+    return band === 'weak' || band === 'untrained' || band === 'insufficient';
   if (filter.mastery === 'learning') return band === 'learning';
   return band === 'mastered'; // 'mastered'
 }
@@ -511,16 +552,21 @@ export function KnowledgeGraph({
     [edges, visibleNodeIds],
   );
 
-  // mastery lookup for prerequisite-weakness derivation.
-  const masteryById = useMemo(() => {
-    const m = new Map<string, number | null | undefined>();
-    for (const n of nodes) m.set(n.id, n.mastery);
+  // mastery + evidence lookup for prerequisite-weakness derivation. evidence is
+  // carried so isWeakish() can treat a low-evidence prerequisite as shaky too
+  // (Fix B), matching the band logic used for fills.
+  const bandInputById = useMemo(() => {
+    const m = new Map<
+      string,
+      { mastery: number | null | undefined; evidence: number | null | undefined }
+    >();
+    for (const n of nodes) m.set(n.id, { mastery: n.mastery, evidence: n.evidence_count });
     return m;
   }, [nodes]);
 
   const counts = useMemo(() => {
-    const acc = { weak: 0, learning: 0, mastered: 0, untrained: 0 };
-    for (const n of visibleNodes) acc[masteryBand(n.mastery)]++;
+    const acc = { weak: 0, learning: 0, mastered: 0, untrained: 0, insufficient: 0 };
+    for (const n of visibleNodes) acc[masteryBand(n.mastery, n.evidence_count)]++;
     return acc;
   }, [visibleNodes]);
 
@@ -530,7 +576,7 @@ export function KnowledgeGraph({
   // All derived from the cytoscape graph + the node mastery map — zero new
   // backend. Shared so it can be (re)applied both on focus change AND right
   // after a graph rebuild (a rebuild drops the focus classes). `id` is passed
-  // explicitly so the latest masteryById is closed over without staleness.
+  // explicitly so the latest bandInputById is closed over without staleness.
   const applyFocus = useCallback(
     (id: string | null) => {
       const cy = cyRef.current;
@@ -546,12 +592,14 @@ export function KnowledgeGraph({
         root.addClass('kg-focus-root');
 
         // Shaky prerequisites: prerequisite mesh edges pointing INTO the focused
-        // node (to == focus); their SOURCE is the prerequisite. Flag those whose
-        // mastery is null or < 0.4. cytoscape edge direction = source→target, and
-        // we built prerequisite edges as from→to, so incomers carries them.
+        // node (to == focus); their SOURCE is the prerequisite. Flag those that
+        // are weakish (weak / never-practiced / low-evidence). cytoscape edge
+        // direction = source→target, and we built prerequisite edges as from→to,
+        // so incomers carries them.
         const prereqEdges = root.incomers('edge[kind = "mesh"][relation = "prerequisite"]');
         for (const src of prereqEdges.sources().toArray()) {
-          if (isWeakish(masteryById.get(src.id()))) src.addClass('kg-shaky-prereq');
+          const input = bandInputById.get(src.id());
+          if (isWeakish(input?.mastery, input?.evidence)) src.addClass('kg-shaky-prereq');
         }
       });
       if (id) {
@@ -561,7 +609,7 @@ export function KnowledgeGraph({
         }
       }
     },
-    [masteryById],
+    [bandInputById],
   );
 
   // Init / rebuild cytoscape when the *visible* graph data changes. Tokens are
@@ -733,21 +781,19 @@ export function KnowledgeGraph({
 
       <div className="kg-legend">
         <span className="kg-legend-section">掌握度</span>
-        {(['weak', 'learning', 'mastered', 'untrained'] as const).map((band) => (
+        {(['weak', 'learning', 'mastered', 'insufficient', 'untrained'] as const).map((band) => (
           <span className="item" key={band}>
             <span
               className="swatch dot"
-              style={{ background: `var(${MASTERY_BAND_TOKEN[band]})` }}
+              // insufficient shares --ink-5 with untrained but at reduced opacity
+              // (matches its node fill), so the legend reads them as distinct.
+              style={{
+                background: `var(${MASTERY_BAND_TOKEN[band]})`,
+                ...(band === 'insufficient' ? { opacity: 0.4 } : {}),
+              }}
             />
             <span>
-              {MASTERY_BAND_LABEL[band]}
-              {band === 'weak'
-                ? ` ${counts.weak}`
-                : band === 'learning'
-                  ? ` ${counts.learning}`
-                  : band === 'mastered'
-                    ? ` ${counts.mastered}`
-                    : ` ${counts.untrained}`}
+              {MASTERY_BAND_LABEL[band]} {counts[band]}
             </span>
           </span>
         ))}
