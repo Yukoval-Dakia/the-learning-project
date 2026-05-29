@@ -1,7 +1,9 @@
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { db } from '@/db/client';
 import { artifact, event, knowledge } from '@/db/schema';
+import { persistHubLinkDismiss } from '@/server/artifacts/hub-dismiss';
 import { runHubAutoSyncNightly } from '@/server/boss/handlers/hub_auto_sync_nightly';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { POST } from './route';
@@ -36,6 +38,31 @@ function hubDoc(atomicId: string) {
             },
           },
         ],
+      },
+    ],
+  };
+}
+
+// Hub auto-zone doc holding two system auto-links, for the concurrent /
+// sequential multi-target dismiss tests.
+function hubDocWithLinks(...atomicIds: string[]) {
+  return {
+    type: 'doc',
+    content: [
+      {
+        type: 'autoLinksContainer',
+        attrs: { id: 'hub1__auto_links', title: 'Related' },
+        content: atomicIds.map((atomicId) => ({
+          type: 'crossLinkBlock',
+          attrs: {
+            id: `hub1__auto_links__${atomicId}`,
+            artifact_id: atomicId,
+            block_id: null,
+            title: atomicId,
+            auto: true,
+            relation: 'subtopic',
+          },
+        })),
       },
     ],
   };
@@ -231,5 +258,80 @@ describe('POST /api/hubs/[id]/dismiss-link', () => {
       params: Promise.resolve({ id: 'hub1' }),
     });
     expect(res.status).toBe(400);
+  });
+
+  // YUK-155 review-2: FOR UPDATE row lock on the hub select serializes concurrent
+  // dismisses of DIFFERENT auto-links on the SAME hub. Without the lock the two
+  // transactions read the same attrs snapshot, each JS-appends one ref, and the
+  // later commit overwrites the earlier → one suppressed entry is lost. We run two
+  // dismiss transactions concurrently (each on its own pooled connection) and
+  // assert BOTH suppressed entries survive. The lock makes the second tx block
+  // until the first commits, so it reads the already-updated attrs before append.
+  it('concurrent dismiss of two targets keeps BOTH suppressed_block_refs (no lost update)', async () => {
+    await seedArtifact({ id: 'atomic1', title: '原子一', knowledge_ids: ['k1'] });
+    await seedArtifact({ id: 'atomic2', title: '原子二', knowledge_ids: ['k2'] });
+    await seedArtifact({
+      id: 'hub1',
+      title: 'Hub',
+      type: 'note_hub',
+      knowledge_ids: ['k_hub'],
+      body_blocks: hubDocWithLinks('atomic1', 'atomic2'),
+    });
+
+    // Two independent transactions, kicked off together. The pool (max:10) gives
+    // each its own connection so they genuinely contend for the hub row lock.
+    await Promise.all([
+      db.transaction((tx) =>
+        persistHubLinkDismiss(tx, { hubId: 'hub1', suppressedArtifactId: 'atomic1' }),
+      ),
+      db.transaction((tx) =>
+        persistHubLinkDismiss(tx, { hubId: 'hub1', suppressedArtifactId: 'atomic2' }),
+      ),
+    ]);
+
+    const hub = await loadHub('hub1');
+    const suppressed = ((hub.attrs as Record<string, unknown>).suppressed_block_refs ??
+      []) as Array<{ artifact_id: string }>;
+    const ids = suppressed.map((s) => s.artifact_id).sort();
+    expect(ids).toEqual(['atomic1', 'atomic2']);
+    // Both auto-links removed from the container too (each tx removed its own).
+    expect(autoLinkArtifactIds(hub.body_blocks)).toEqual([]);
+
+    // Two distinct suppress events recorded (append-only history, one per dismiss).
+    const suppressRows = await testDb()
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'suppress'), eq(event.subject_id, 'hub1')));
+    expect(suppressRows).toHaveLength(2);
+  });
+
+  it('sequential dismiss of two targets accumulates both suppressed entries', async () => {
+    await seedArtifact({ id: 'atomic1', title: '原子一', knowledge_ids: ['k1'] });
+    await seedArtifact({ id: 'atomic2', title: '原子二', knowledge_ids: ['k2'] });
+    await seedArtifact({
+      id: 'hub1',
+      title: 'Hub',
+      type: 'note_hub',
+      knowledge_ids: ['k_hub'],
+      body_blocks: hubDocWithLinks('atomic1', 'atomic2'),
+    });
+
+    await POST(dismissReq('hub1', { suppressed_artifact_id: 'atomic1' }), {
+      params: Promise.resolve({ id: 'hub1' }),
+    });
+    await POST(dismissReq('hub1', { suppressed_artifact_id: 'atomic2' }), {
+      params: Promise.resolve({ id: 'hub1' }),
+    });
+
+    const hub = await loadHub('hub1');
+    const ids = (
+      ((hub.attrs as Record<string, unknown>).suppressed_block_refs ?? []) as Array<{
+        artifact_id: string;
+      }>
+    )
+      .map((s) => s.artifact_id)
+      .sort();
+    expect(ids).toEqual(['atomic1', 'atomic2']);
+    expect(autoLinkArtifactIds(hub.body_blocks)).toEqual([]);
   });
 });
