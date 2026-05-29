@@ -4,9 +4,9 @@
 > 这里记的是 **项目走到了哪、下一站去哪、为什么这么走**，不是 commit log。
 > 维护规则：每完成一个 Phase 就 update 一次；不维护周度进度。
 
-**最后更新**：2026-05-29（**Wave 6 ✅ shipped** —— closeout `a419b2e6` 已合并 main：T-D7 / YUK-126 (PR #183) + T-PD8 / YUK-132 (PR #184) + T-88 P4-A / YUK-127 (PR #185) + P4-B/C/D/E (YUK-128/129/130/131) closeout commit。**完整 wave gate 实测全绿** @ `a419b2e6`：typecheck / lint / audit:schema (227 字段) / audit:partition / audit:profile (3 profiles) / build / `pnpm test` (138 files, 1091 tests + 1 todo) / migration-smoke (11)。Living Note v0 全 ship + `tool_use` KnownEvent promote + modules doc sweep 兑现。）
-**当前 Phase**：**Wave 7**（master roadmap §5.1）—— 启动中。出口目标：T-88 P5（反链 + cross_link UI + nightly hub auto-sync worker）+ T-KG（知识图谱 force-directed 视图，v2.1 brief §2.3.b contract）+ T-PD gap-filler。详见 [`plans/2026-05-29-wave7-ready-to-launch.md`](plans/2026-05-29-wave7-ready-to-launch.md)（规划中）。Wave 6 closeout baseline：[`plans/2026-05-29-wave6-ready-to-launch.md`](plans/2026-05-29-wave6-ready-to-launch.md)。
-**主分支**：`main` 已推 `origin`
+**最后更新**：2026-05-29（**Wave 7 ✅ shipped（本地 main，未 push）** —— T-88 P5 反链 + cross_link @-mention picker + nightly hub auto-sync worker (YUK-95) + T-KG 知识图谱 cytoscape 引擎 + 诊断/局部聚焦/AI 画布视图 (YUK-142) + 逐-commit review fix-pass（undo 版本冲突 / 裸 NUL / backlinks 404 / hub overlap）+ closeout single-owner 修复，全合并本地 main `17280d51`。**完整 wave gate 实测全绿**：typecheck / lint / audit:schema·partition·profile / `pnpm test` (144 files, 1137 tests + 1 todo) / migration-smoke (11) / build (55/55 static pages)。上一波 **Wave 6 ✅** `a419b2e6`（Living Note v0 + `tool_use` KnownEvent promote + modules doc sweep）仍是当前 origin/main HEAD。）
+**当前 Phase**：**Wave 8**（master roadmap §5.1，scenario A v1 closeout 末波）—— 出口目标：T-88 P6 read-view + 节点页 (YUK-96) + P7 tests sweep (YUK-97) + P2-polish (slash / drag-drop) + T-PD 收尾 + **v1 closeout**。详见 [`plans/2026-05-29-wave8-ready-to-launch.md`](plans/2026-05-29-wave8-ready-to-launch.md)。Wave 7 计划：[`plans/2026-05-29-wave7-ready-to-launch.md`](plans/2026-05-29-wave7-ready-to-launch.md)。
+**主分支**：`main` 本地领先 `origin` **19 commit**（完整 Wave 7 + closeout + north-star/T-OC spec + wave plans）；**未 push origin**（push 前停，待用户确认）。`origin/main` HEAD = `a419b2e6`（Wave 6）。
 **路线图源**：[`docs/planning/v0.3-generalized-ai-learning-framework.md`](../planning/v0.3-generalized-ai-learning-framework.md) §1.5 是当前执行清单；root `PLANNING.md` v0.12 Phase 1-4 已标 historical
 
 ---
@@ -148,6 +148,40 @@ Merge anchor：origin/main `d99c3bb1` ("feat(ai): launch Wave 4 AI lanes (YUK-93
 
 Validation anchor：post-merge full gate ✅. Drift audit [`docs/audit/2026-05-28-wave4-closeout-drift.md`](../audit/2026-05-28-wave4-closeout-drift.md) — 0 contradicted, 2 undocumented (`NoteVerificationIssue.section_id` half-migration; legacy correction payload read shim), 2 phase-deferred (hub auto-sync nightly → Wave 7, P2-polish slash/drag/mention → Wave 6+). Wave driver：[`plans/2026-05-28-wave4-ready-to-launch.md`](plans/2026-05-28-wave4-ready-to-launch.md)。
 
+### Wave 5 — Copilot Drawer /today MVP // Global Coach（shipped 2026-05-28）
+
+```text
+✅  T-D6 Phase 3 Global Coach Orchestrator    CoachTask + TodayPlan schema + coach_daily/coach_weekly pg-boss handlers (YUK-118/119/120)
+✅  T-D3 Copilot Drawer MVP on /today          <CopilotDrawer> + <ToolUseCard> 三段式 + 30s dwell + copilot-summary + CopilotTask chat route (YUK-122/123/124)
+```
+
+Layer 8 vision 兑现起点：`/today` 有真 Drawer + Coach 每日/每周 cron 出 plan proposal。详见 master-roadmap §5.1 Wave 5。
+
+### Wave 6 — Living Note v0 + experimental promote（shipped 2026-05-28..29，origin/main `a419b2e6`）
+
+```text
+✅  T-88 P4 Living Note v0                     NoteRefineTask + block-level patch ops (replace/insert/remove) + editing heartbeat/idle flush + undo surfaces + 5 Living Note triggers (YUK-127/128/129/130/131)
+✅  T-D7 experimental:tool_use → KnownEvent    PR #183 (YUK-126)
+✅  T-PD8 modules doc sweep                     PR #184 (YUK-132)
+```
+
+单 owner：`src/server/artifacts/note-refine-apply.ts`（AI-side block-patch apply）。注：editing 心跳为 in-memory，**跨进程 guard 缺口**（worker 看不到 web 心跳）见 §7 / YUK-148。
+
+### Wave 7 — 反链 + cross_link + hub auto-sync + Knowledge graph（shipped 2026-05-29，本地 main `17280d51`，**未 push**）
+
+```text
+✅  T-88 P5 cross_link L2/L3 write-through      block-refs.ts 单 owner syncBlockRefsForArtifact + listBacklinks；artifact_block_ref.ref_kind 分 cross_link/embedded_check (YUK-95 Lane-0)
+✅  T-88 P5 cross_link @-mention picker         CrossLinkSuggestion + @tiptap/suggestion (YUK-95 Lane-A)
+✅  T-88 P5 backlink panel + read API           /api/artifacts/[id]/backlinks（不存在 artifact → 404）(YUK-95 Lane-B)
+✅  T-88 P5 nightly hub auto-sync worker         hub_auto_sync_nightly @ BJT 02:45，iii-curated mesh + 乐观版本锁 + per-hub try/catch (YUK-95 Lane-C)
+✅  T-88 P5 AutoLinks relation chips + dismiss   auto-link-chip + hub-dismiss 单 owner service + suppress event (YUK-95 Lane-D)
+✅  T-KG 知识图谱 cytoscape 重建                 cytoscape + fcose 换掉手写 SVG verlet；mastery 配色 + 诊断(孤点/弱掌握/逾期) + 局部聚焦 + AI 提议边内联 accept/dismiss 画布 (YUK-142)
+✅  commit-review fix-pass + closeout 修复       undo 版本冲突假成功 / 裸 NUL 源码 / backlinks 404 / hub-dismiss 单 owner 抽取（step9 invariant）
+```
+
+实现锚点：`src/server/artifacts/{block-refs,hub-dismiss,note-refine-apply}.ts`、`src/ui/KnowledgeGraph.tsx`(cytoscape)、`src/ui/block-tree/{CrossLinkSuggestion,auto-link-chip,tiptap-extensions}`、`src/server/knowledge/hub-mesh.ts`、`src/server/boss/handlers/hub_auto_sync_nightly.ts`、`app/api/artifacts/[id]/backlinks` + `app/api/hubs/[id]/dismiss-link` + `app/api/knowledge/review-due-summary`。
+Validation：本地全 wave-gate ✅（144 test files / 1137 tests + 1 todo / migration 11 / build 55 pages）。Wave 计划：[`plans/2026-05-29-wave7-ready-to-launch.md`](plans/2026-05-29-wave7-ready-to-launch.md)。逐-commit 审查报告：[`docs/audit/2026-05-29-commit-review.md`](../audit/2026-05-29-commit-review.md)。
+
 ### Foundation C — Judge Result Contract + Correction Event（ADR-0014 §4/§6）
 
 ```
@@ -265,7 +299,7 @@ ADR-0014 配套：[7 轮讨论 + 10 决议 summary](../discussion/summary.md)、
 | `/learning-items` | 6 状态机 + 我想学 X 入口 | hub+atomic 树 + intent proposal |
 | `/learning-items/[id]` | 详情 + artifact view + 父子链接 | atomic note sections 渲染 + 对话教学入口 |
 | `/learn/[id]/chat` | **Phase 2C 对话教学** | TeachingTurnTask 循环 |
-| `/knowledge` | Loom 树 + mesh + 手动建边 | 边提议 accept/reverse/change_type/dismiss |
+| `/knowledge` | 知识图谱（cytoscape + fcose）+ mesh + 手动建边 | 诊断(孤点/弱掌握/逾期)/局部聚焦视图 + 边提议 accept/reverse/change_type/dismiss + AI 提议边内联 accept/dismiss |
 | `/knowledge/[id]` | 知识点详情 | edge proposals + 相邻边 |
 | `/records` | 学习记录列表 / timeline | 替代旧 `/study-log`，实现待迁移 |
 | `/events/[id]` | 事件链浏览器 | caused_by 上游 + 下游展开 + correction status/actions |
@@ -281,6 +315,7 @@ ADR-0014 配套：[7 轮讨论 + 10 决议 summary](../discussion/summary.md)、
 |---|---|---|
 | `knowledge_propose_nightly` | cron @ BJT 02:00 | 节点提议 |
 | `knowledge_edge_propose_nightly` | cron @ BJT 02:30 | 边提议 |
+| `hub_auto_sync_nightly` | cron @ BJT 02:45 | hub auto-link mesh 同步（iii-curated cross_link → AutoLinksContainer）+ 乐观版本锁 + per-hub try/catch（YUK-95 P5-C）|
 | `knowledge_maintenance_nightly` | cron @ BJT 03:00 | KnowledgeReviewTask → tree / mesh maintenance proposals |
 | `dreaming_nightly` | cron @ BJT 03:15 | DreamingTask + DomainTools → proposal inbox |
 | `prune_job_events` | cron @ BJT 04:00 | 旧 job_events 清理 |
@@ -301,6 +336,7 @@ ADR-0014 配套：[7 轮讨论 + 10 决议 summary](../discussion/summary.md)、
 | 项 | 描述 | 严重度 |
 |---|---|---|
 | Phase 2C UI 未真机验证 | 本地 ship 完没 E2E 跑过浏览器；NAS 容器还是旧 build | **高** |
+| 跨进程 editing-guard 失效 | `editing-session.ts` 模块级内存 Map：web 进程 API route 写心跳，`isArtifactIdle` 在 pg-boss **worker 进程**读不到 → 永远 idle → Living Note refine 不被「用户正在编辑」挡住、直接落盘。需 editing-presence 落 DB/共享态（YUK-148，逐-commit 审查发现）| **高** |
 | user_cause 与 agent judge 合并策略 | YUK-51 锁定 shared projection：active user_cause 优先，否则 latest active agent judge；dreaming/maintenance 只能提议不能静默覆盖 | 中 |
 | Full judge capability expansion | `semantic` 已通过 async service 可用；`rubric` / `steps` / `multimodal_direct` / `ai_flexible` 仍需独立 capability runner 和 score policy | 中 |
 | Dependabot moderate 警告 | GitHub 报 5 条；未处理 | 中 |

@@ -32,9 +32,10 @@
 | Doc / Infra 债 | P4.1-4.13 sweep；status.md / ADR / modules 一致 |
 | Audit | `/audit-drift` 全绿 |
 
-### 0.3 当前快照（2026-05-28 post-Wave 4 implementation / final gate pending）
+### 0.3 当前快照（2026-05-29 post-Wave 7 ship，本地 main `17280d51` 未 push；Wave 8 = scenario A v1 closeout 末波）
 
-**Shipped (从 status.md §1 + 2026-05-{20..27} commit log)**：
+**Shipped (从 status.md §1 + 2026-05-{20..29} commit log)**：
+- **Wave 5/6/7 ✅ ship**（详见 §5.1 + status.md §1）：W5 Copilot Drawer /today + Global Coach（YUK-118..124）；W6 Living Note v0 + `tool_use` promote + modules sweep（YUK-126/127/128..132，**origin/main `a419b2e6`**）；W7 反链 + cross_link + hub auto-sync + cytoscape graph（YUK-95 + YUK-142，**本地 main `17280d51`，未 push**）
 - Foundation A/B/C 全完，含 math + physics acid test ✓ framework diff = 0
 - **Foundation D M1 ship**（2026-05-26）：DomainTool registry + 3 read tools + bridge + `experimental:tool_use` mirror
 - Product Track 1 wave 1-4 ship + W5 closeout audit
@@ -55,11 +56,9 @@
 - **YUK-101 outbox follow-up ✅**：transactional outbox landed through PR #168 / commit `72d77555`; no longer blocks Wave 3 prep
 
 **In-flight / open**：
-- **Wave 3 shipped**：T-D4 propose/write tools full through PR #170 (YUK-107 parent + YUK-108..112 lanes)；8 个 DomainTool proposal/action surface + allowlist policy + proposal schema/UI coverage landed
-- **Wave 4 implementation complete（branch）**：
-  - YUK-93 / T-88 P3 AI pipeline rewrite — `body_blocks` canonical note output, NoteGenerate type switch, NoteVerify structural verifier, LearningIntent 0-M long artifacts, embedded `tool_quiz` refs
-  - YUK-114 / T-DR Dreaming lane — `DreamingTask`, `dreaming_nightly` pg-boss producer, DomainTool MCP bridge, dreaming allowlist, proposal inbox delta evidence
-  - Final full gate / PR / Linear closeout still pending
+- **Wave 3/4 ✅ shipped**（T-D4 propose tools PR #170；T-88 P3 AI pipeline + T-DR Dreaming `d99c3bb1`），Wave 5/6/7 ✅（见上）。
+- **当前在 Wave 8（scenario A v1 closeout 末波）**：T-88 P6 read-view + 节点页（YUK-96）/ P7 tests sweep（YUK-97）/ P2-polish slash·drag-drop / T-PD 收尾 / v1 closeout audit。先决：YUK-115 section_id→block_id 先落，P7 拿 clean schema。详见 [`plans/2026-05-29-wave8-ready-to-launch.md`](2026-05-29-wave8-ready-to-launch.md)。
+- **本 session 新增 spec/issue（post-v1 / scenario B 种子）**：North-Star 学习意图设计（YUK-143，spec ✅）+ T-OC OCR/ingestion 重建设计（YUK-145，spec ✅）+ 多页 OCR bug（YUK-144）+ 跨进程 editing-guard（YUK-148，**High**，需设计）+ derived_from 注释（YUK-146）+ undo UX（YUK-147）+ Wave6 mediums（YUK-149）。
 
 **Audit baseline ack（per `docs/audit/2026-05-27-pre-yuk88-baseline-drift.md`, 2026-05-27）**：
 - **F-01** notes.md 整篇 ADR-0020 冲突 → YUK-88 P3 implementation branch 已改 AI pipeline；module doc rewrite remains final audit item before closeout if still stale
@@ -503,15 +502,27 @@ T-FF fixtures ────→ blocks Eval / acceptance test 自动化
 
 **实现快照（2026-05-28）**：Wave 6 scope upgraded to 21 pts after T-PD8 selection. T-D7 + T-PD8 + P4-A are already on `origin/main`; closeout branch finishes P4-B/C/D/E: mutator/propose gate, editing heartbeat + idle/blur flush, undo surfaces, and all 5 Living Note triggers.
 
-#### Wave 7 (~5 周) — 反链 / hub auto-sync + Knowledge graph
+#### Wave 7 ✅ ship 2026-05-29（本地 main `17280d51`，未 push）— 反链 / hub auto-sync + Knowledge graph
 
-| Track | pts | worktree |
-|---|---|---|
-| T-88 P5 反链 + cross_link UI + hub auto-sync | 8 | A |
-| T-KG Knowledge graph force-directed view | 13 | B |
-| T-PD doc sweep gap-filler | ~4 | (任 worktree gap) |
+| Track | pts | worktree | status |
+|---|---|---|---|
+| T-88 P5 反链 + cross_link UI + hub auto-sync | 8 | A | ✅ YUK-95（Lane-0/A/B/C/D + review fixes）|
+| T-KG Knowledge graph view（cytoscape，非手写 SVG）| 13 | B | ✅ YUK-142（cytoscape + 诊断/聚焦/AI 画布）|
+| T-PD doc sweep gap-filler | ~4 | (任 worktree gap) | ⏳ 顺延 Wave 8（T-PD 收尾）|
 
 **预期**：~25 pts，~4-5 周。出口：cross_link + 反链 + auto-sync nightly worker ship；v2.1 brief §2.3.b graph view contract 兑现。
+
+**实现快照（2026-05-29，本地 main，未 push）**：
+- P5 Lane-0（YUK-95）：`block-refs.ts` 单 owner cross_link L2 write-through（`artifact_block_ref.ref_kind` 分 cross_link/embedded_check）+ `listBacklinks`
+- P5-A：`CrossLinkSuggestion` @-mention picker（@tiptap/suggestion）
+- P5-B：backlink panel + `/api/artifacts/[id]/backlinks`（不存在 artifact → 404）
+- P5-C：`hub_auto_sync_nightly` @ BJT 02:45，iii-curated mesh + 乐观版本锁 + per-hub try/catch
+- P5-D：AutoLinks relation chips + `hub-dismiss` 单 owner service（`persistHubLinkDismiss`）+ suppress event
+- T-KG（YUK-142）：cytoscape + fcose 换掉手写 SVG verlet；mastery 配色 + 诊断（孤点/弱掌握/逾期）+ 局部聚焦 + AI 提议边内联 accept/dismiss 画布；新增 `/api/knowledge/review-due-summary`
+- **Decision 调整（实测推翻 D1）**：T-KG 改用 **cytoscape**（非手写 SVG verlet）—— 用户实证「200 节点很容易达到」，手写力导布局不可维护
+- closeout：逐-commit review fix-pass（undo 版本冲突假成功 / 裸 NUL 源码 / backlinks 404 / hub overlap verify=非问题）+ `hub-dismiss` single-owner 抽取（修 step9 invariant）+ `--contrasts` token 收尾
+- Validation：本地全 wave-gate ✅（144 test files / 1137 tests + 1 todo / migration-smoke 11 / build 55 static pages）。**未 push origin**（push 前停，待用户确认）
+- 计划 + 审查：[`2026-05-29-wave7-ready-to-launch.md`](2026-05-29-wave7-ready-to-launch.md) + [`../../audit/2026-05-29-commit-review.md`](../../audit/2026-05-29-commit-review.md)
 
 #### Wave 8 (~4 周) — Read view + tests sweep + Editor polish + closeout
 
@@ -535,7 +546,7 @@ T-FF fixtures ────→ blocks Eval / acceptance test 自动化
 | 4 | ✅ implementation branch 2026-05-28 | T-DR // T-88 P3 双线 | 34 |
 | 5 | ~6 周 | Drawer /today MVP // Coach（Layer 8 vision 兑现） | 32 |
 | 6 | ~3 周 | Living Note + promote | 18 |
-| 7 | ~5 周 | 反链 + hub auto-sync + graph view | 25 |
+| 7 | ✅ ship 2026-05-29（本地 main，未 push）| 反链 + cross_link + hub auto-sync + cytoscape graph | 25 |
 | 8 | ~4 周 | read view + tests + polish + closeout | 19 |
 | **Total** | **~43 周 ≈ 10 月** | scenario A v1 closeout | **218 主线 + 30 buffer + 31 PD = ~279pt** |
 
