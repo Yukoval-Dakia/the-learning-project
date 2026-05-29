@@ -8,8 +8,11 @@ import { GET } from './route';
 
 const NOW = new Date('2026-05-29T00:00:00.000Z');
 
-// One crossLinkBlock (id=`blockId`) pointing at `toArtifactId`, wrapped in a
-// semanticBlock so the snippet walker has nested text to extract.
+// One crossLinkBlock (id=`blockId`) pointing at `toArtifactId`. The crossLinkBlock
+// is the REAL atom shape the writer emits (cross-link-picker.ts /
+// hub_auto_sync_nightly) — `{ type, attrs }`, NO `content`. It sits beside a
+// paragraph inside an enclosing semanticBlock; the backlink snippet
+// (extractCrossLinkSnippet) sources from that enclosing block's text (FIX 2).
 function sourceDoc(blockId: string, toArtifactId: string, text: string) {
   return {
     type: 'doc',
@@ -18,10 +21,10 @@ function sourceDoc(blockId: string, toArtifactId: string, text: string) {
         type: 'semanticBlock',
         attrs: { id: `${blockId}_sec`, semantic_kind: 'definition' },
         content: [
+          { type: 'paragraph', content: [{ type: 'text', text }] },
           {
             type: 'crossLinkBlock',
             attrs: { id: blockId, artifact_id: toArtifactId, title: '目标' },
-            content: [{ type: 'text', text }],
           },
         ],
       },

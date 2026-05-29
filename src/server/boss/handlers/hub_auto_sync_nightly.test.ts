@@ -230,6 +230,40 @@ describe('runHubAutoSyncNightly', () => {
     expect(ids).toEqual(['atom_in']);
   });
 
+  it('one bad hub is tallied (hubs_failed) and does not abort the batch (FIX 4)', async () => {
+    await seedKnowledge('k_hub');
+    // Bad hub: its existing autoLinksContainer has a NULL id at doc root, so
+    // buildAutoZonePatch derives a fallback container id (`bad_hub__auto_links`)
+    // that matches no doc-root block → applyNotePatch throws target_not_found.
+    await seedArtifact({
+      id: 'bad_hub',
+      type: 'note_hub',
+      knowledgeIds: ['k_hub'],
+      bodyBlocks: {
+        type: 'doc',
+        content: [{ type: 'autoLinksContainer', attrs: { id: null }, content: [] }],
+      },
+    });
+    // Healthy hub: clean empty doc, gets its auto-zone appended normally.
+    await seedArtifact({ id: 'good_hub', type: 'note_hub', knowledgeIds: ['k_hub'] });
+    await seedArtifact({ id: 'atom1', type: 'note_atomic', knowledgeIds: ['k_hub'], title: 'A' });
+
+    const result = await runHubAutoSyncNightly(testDb(), { now: NOW });
+
+    // Batch survived the bad hub.
+    expect(result.hubs_considered).toBe(2);
+    expect(result.hubs_failed).toBe(1);
+    expect(result.hubs_updated).toBe(1);
+
+    // The healthy hub still got its auto-zone.
+    const [good] = await testDb().select().from(artifact).where(eq(artifact.id, 'good_hub'));
+    expect(autoZoneChildren(good.body_blocks)).toHaveLength(1);
+
+    // The bad hub was left untouched (version unchanged, no partial write).
+    const [bad] = await testDb().select().from(artifact).where(eq(artifact.id, 'bad_hub'));
+    expect(bad.version).toBe(0);
+  });
+
   it('idempotent: a second run with no mesh change writes no new event', async () => {
     await seedKnowledge('k_hub');
     await seedArtifact({ id: 'hub1', type: 'note_hub', knowledgeIds: ['k_hub'] });

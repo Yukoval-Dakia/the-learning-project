@@ -119,12 +119,23 @@ export const CrossLinkBlock = Node.create({
   group: 'block',
   atom: true,
 
+  // FIX 1 (YUK-95 P5 review) — `auto` + `relation` are flat provenance attrs the
+  // nightly hub_auto_sync worker (Lane-C) writes on system-maintained auto-links.
+  // They MUST be declared here so they survive the editor's JSON round-trip
+  // (setContent → getJSON): an undeclared attr is silently stripped by TipTap,
+  // which (a) hides the relation chip in the edit view and (b) lets a user
+  // edit-save strip provenance from body_blocks (read chip vanishes + the
+  // worker's child-signature diff breaks). The `default: null` is the piece that
+  // fixes the JSON path; parseHTML/renderHTML below carry them through the HTML
+  // clipboard path too for completeness.
   addAttributes() {
     return {
       id: { default: null },
       artifact_id: { default: null },
       block_id: { default: null },
       title: { default: null },
+      auto: { default: null },
+      relation: { default: null },
     };
   },
 
@@ -260,12 +271,15 @@ export const AutoLinksContainer = Node.create({
   content: '(crossLinkBlock | artifactRefBlock)*',
   defining: true,
 
+  // FIX 1 (YUK-95 P5 review) — `auto` / `relation` provenance live on the child
+  // crossLinkBlock (declared on CrossLinkBlock above), NOT on the container: the
+  // read renderer + edit NodeView both read the chip off each child's attrs via
+  // `autoLinkChip(child.attrs)`, and the worker writes them per-child. They were
+  // misplaced here and never read at container level, so they are removed.
   addAttributes() {
     return {
       id: { default: null },
       title: { default: 'Related' },
-      auto: { default: null },
-      relation: { default: null },
     };
   },
 

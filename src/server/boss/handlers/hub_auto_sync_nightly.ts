@@ -73,6 +73,10 @@ export interface HubAutoSyncResult {
   hubs_considered: number;
   hubs_updated: number;
   hubs_skipped_version_conflict: number;
+  // FIX 4 (YUK-95 P5 review): hubs whose per-hub work threw (e.g. a
+  // target_not_found from applyNotePatch). Tallied + logged, not propagated, so
+  // one bad hub can't abort the whole nightly batch.
+  hubs_failed: number;
   cross_links_total: number;
 }
 
@@ -254,9 +258,13 @@ async function defaultLoadEdges(db: Db): Promise<HubMeshEdge[]> {
  * Scan every hub, recompute its curated auto-zone, and apply a single
  * replace_block / append_block patch when (and only when) it changed.
  *
- * 0 hubs → no-op. Per-hub failures inside `persistNoteRefineApply` surface as
- * statuses (version_conflict / not_found / archived) rather than throwing, so one
- * bad hub doesn't abort the batch.
+ * 0 hubs → no-op. Most per-hub failures inside `persistNoteRefineApply` surface
+ * as statuses (version_conflict / not_found / archived) rather than throwing. The
+ * one path that DOES throw is `applyNotePatch` raising NoteRefineApplyError (e.g.
+ * a target_not_found from a null-id container — not currently reachable but
+ * defensive). FIX 4 (P5 review): wrap each hub in try/catch so a single thrown
+ * hub is logged + tallied (`hubs_failed`) and the loop continues, instead of
+ * aborting the whole nightly batch.
  */
 export async function runHubAutoSyncNightly(
   db: Db,
@@ -267,6 +275,7 @@ export async function runHubAutoSyncNightly(
     hubs_considered: hubs.length,
     hubs_updated: 0,
     hubs_skipped_version_conflict: 0,
+    hubs_failed: 0,
     cross_links_total: 0,
   };
   if (hubs.length === 0) return result;
@@ -282,30 +291,36 @@ export async function runHubAutoSyncNightly(
   }));
 
   for (const hub of hubs) {
-    const suppressed = suppressedArtifactIds(hub.attrs);
-    const curated = resolveHubMeshAtomics(
-      nodes,
-      edges,
-      { hub_artifact_id: hub.id, knowledge_ids: hub.knowledge_ids },
-      atomicInputs,
-    ).filter((c) => !suppressed.has(c.artifact_id));
+    try {
+      const suppressed = suppressedArtifactIds(hub.attrs);
+      const curated = resolveHubMeshAtomics(
+        nodes,
+        edges,
+        { hub_artifact_id: hub.id, knowledge_ids: hub.knowledge_ids },
+        atomicInputs,
+      ).filter((c) => !suppressed.has(c.artifact_id));
 
-    result.cross_links_total += curated.length;
+      result.cross_links_total += curated.length;
 
-    const patch = buildAutoZonePatch(hub.body_blocks, hub.id, curated);
-    if (!patch) continue;
+      const patch = buildAutoZonePatch(hub.body_blocks, hub.id, curated);
+      if (!patch) continue;
 
-    const applied = await persistNoteRefineApply({
-      db,
-      artifactId: hub.id,
-      patch,
-      actorRef: ACTOR_REF,
-      now: deps.now,
-    });
+      const applied = await persistNoteRefineApply({
+        db,
+        artifactId: hub.id,
+        patch,
+        actorRef: ACTOR_REF,
+        now: deps.now,
+      });
 
-    if (applied.status === 'applied') result.hubs_updated += 1;
-    else if (applied.status === 'skipped:version_conflict') {
-      result.hubs_skipped_version_conflict += 1;
+      if (applied.status === 'applied') result.hubs_updated += 1;
+      else if (applied.status === 'skipped:version_conflict') {
+        result.hubs_skipped_version_conflict += 1;
+      }
+    } catch (err) {
+      // One bad hub must not kill the batch: log, tally, continue.
+      result.hubs_failed += 1;
+      console.error('[hub_auto_sync_nightly] hub failed', { hub_id: hub.id, error: err });
     }
   }
 

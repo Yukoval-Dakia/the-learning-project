@@ -1,10 +1,13 @@
 // YUK-95 P5 Lane-A — title search backing the in-editor cross_link picker.
 // Returns artifacts whose title matches the `q` query (case-insensitive
 // substring), optionally excluding one artifact id (the one being edited, to
-// avoid self-links). Small + read-only; the L2 `artifact_block_ref` index is
-// written elsewhere (Lane-0 write-through on save), never here.
+// avoid self-links). Only LIVE, READY notes are eligible targets: archived
+// (`archived_at != null`) or non-ready (`generation_status != 'ready'`) artifacts
+// are filtered out so the picker never offers a dead/pending link target (FIX 3,
+// P5 review). Small + read-only; the L2 `artifact_block_ref` index is written
+// elsewhere (Lane-0 write-through on save), never here.
 
-import { and, desc, ilike, ne } from 'drizzle-orm';
+import { and, desc, eq, ilike, isNull, ne } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { db } from '@/db/client';
@@ -41,7 +44,13 @@ export async function GET(req: Request): Promise<Response> {
     }
 
     const { q, exclude, limit } = parsed.data;
-    const conditions = [ilike(artifact.title, `%${escapeLike(q)}%`)];
+    // FIX 3 (YUK-95 P5 review): the picker must never offer archived or
+    // pending/failed artifacts as cross-link targets — only live, ready notes.
+    const conditions = [
+      ilike(artifact.title, `%${escapeLike(q)}%`),
+      isNull(artifact.archived_at),
+      eq(artifact.generation_status, 'ready'),
+    ];
     if (exclude) conditions.push(ne(artifact.id, exclude));
 
     const rows = await db

@@ -18,8 +18,10 @@
 //      read time (whole-artifact retract/supersede drops every backlink from
 //      that source too).
 //
-// Each surviving row carries a ~120-char context snippet extracted from the
-// source block so the panel can show where the link lives.
+// Each surviving row carries a ~120-char context snippet. Because the source
+// block IS a crossLinkBlock atom (no inline content), the snippet is derived from
+// the enclosing block's text, falling back to the cross-link's title attr
+// (`extractCrossLinkSnippet`), so the panel can show where the link lives.
 
 import { inArray } from 'drizzle-orm';
 import { z } from 'zod';
@@ -27,7 +29,7 @@ import { z } from 'zod';
 import { db } from '@/db/client';
 import { artifact } from '@/db/schema';
 import { listBacklinks } from '@/server/artifacts/block-refs';
-import { extractBlockSnippet } from '@/server/artifacts/body-blocks';
+import { extractCrossLinkSnippet } from '@/server/artifacts/body-blocks';
 import { getArtifactCorrectionStates } from '@/server/events/artifact-corrections';
 import { ApiError, errorResponse } from '@/server/http/errors';
 
@@ -108,7 +110,10 @@ export async function GET(_req: Request, { params }: RouteParams): Promise<Respo
         from_title: ref.from_artifact_title,
         from_type: ref.from_artifact_type,
         from_block_id: ref.from_block_id,
-        snippet: extractBlockSnippet(source.body_blocks, ref.from_block_id, SNIPPET_MAX_LENGTH),
+        // FIX 2 (YUK-95 P5 review): the source block is the crossLinkBlock itself
+        // (an atom with no content), so derive the snippet from the enclosing
+        // block's text / the cross-link title rather than the empty atom.
+        snippet: extractCrossLinkSnippet(source.body_blocks, ref.from_block_id, SNIPPET_MAX_LENGTH),
       });
     }
 
