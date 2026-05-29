@@ -2331,6 +2331,15 @@ ol {
   color: var(--ink-5);
 }
 
+/* W8-1 / read-view DEFECT 5+6 (削减型) — block-tree read view 节奏间距：
+   §7 line 133 of docs/design/2026-05-26-atomic-note-read-view.md → section 间距
+   var(--s-5)（比旧的 .artifact-sections var(--s-4) 大，给阅读节奏）。Scoped to
+   .block-tree-renderer so the legacy .artifact-sections (ArtifactSections.tsx)
+   keeps var(--s-4). DEFERRED to redraw (W8-1): per-semantic_kind idiom chrome. */
+.block-tree-renderer {
+  gap: var(--s-5);
+}
+
 .block-tree-renderer .artifact-section-body p {
   margin: 0 0 var(--s-2);
 }
