@@ -62,7 +62,9 @@ describe('BlockTreeRenderer', () => {
     );
 
     expect(html).toContain('定义');
-    expect(html).toContain('教材');
+    // W8-1 / read-view DEFECT 3 — source_tier chip ("教材"/"AI 单 pass") removed
+    // from the read view (docs/design/2026-05-26-atomic-note-read-view.md §5).
+    expect(html).not.toContain('教材');
     expect(html).toContain('<strong>概念</strong>');
     expect(html).toContain('已标错');
     expect(html).toContain('为什么？');
