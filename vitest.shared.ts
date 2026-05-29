@@ -28,12 +28,23 @@ export const fastTestInclude = [
   'src/server/ai/tools/allowlists.test.ts',
   'src/server/ai/tools/mcp-bridge.test.ts',
   'src/server/artifacts/body-blocks-snippet.test.ts',
+  // In-memory editing-session state machine (heartbeat / idle timeout /
+  // force-apply / defer-and-flush). persistNoteRefineApply is vi.mock'd, so
+  // no live DB is touched — fast unit. (YUK-97 P7)
+  'src/server/artifacts/editing-session.test.ts',
   // Pure (no-DB) coverage for the hub-dismiss helpers (appendSuppressedRef /
   // buildRemoveAutoLinkPatch). The sibling DB tests (boss/handlers/
   // hub_auto_sync_nightly, app/api/hubs/[id]/dismiss-link/route) stay in the db
   // partition because they hit live Postgres.
   'src/server/artifacts/hub-dismiss.test.ts',
   'src/server/artifacts/note-refine-triggers.test.ts',
+  // Pure dependency-injection unit: runCopilotChat takes runAgentTaskFn /
+  // buildMcpServerFn / writeEventFn as injected vi.fn() deps, so no live DB /
+  // AI is touched. The transitive `@/db/client` import (via events/queries +
+  // effective-truth) is type-only; only `@/db/schema` (pure table objects) +
+  // drizzle-orm (query builder) load at runtime — same safe surface the
+  // sibling mcp-bridge / allowlists unit tests already exercise. (YUK-97 P7)
+  'src/server/copilot/chat.test.ts',
   'src/server/events/cause-policy.test.ts',
   'src/server/export/**/*.test.ts',
   'src/server/http/**/*.test.ts',
