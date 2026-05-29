@@ -6,6 +6,10 @@ import { NodeViewContent, NodeViewWrapper, ReactNodeViewRenderer } from '@tiptap
 import type { NodeViewProps } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import {
+  type CrossLinkSuggestionContext,
+  createCrossLinkSuggestionExtension,
+} from './CrossLinkSuggestion';
+import {
   ARTIFACT_REF_BLOCK_NODE,
   AUTO_LINKS_CONTAINER_NODE,
   CALLOUT_BLOCK_NODE,
@@ -25,6 +29,28 @@ function BlockNodeView({ node }: NodeViewProps) {
           : node.type.name}
       </div>
       <NodeViewContent className="block-tree-node-view-content" />
+    </NodeViewWrapper>
+  );
+}
+
+// crossLinkBlock is an atom — no editable content. Render it as the same
+// `.block-tree-link-card` the read renderer uses (BlockTreeRenderer.tsx) so the
+// inserted node looks identical in edit + read. `contentEditable=false` keeps
+// the cursor out of the card.
+function CrossLinkNodeView({ node }: NodeViewProps) {
+  const title = String(node.attrs.title ?? node.attrs.artifact_id ?? 'Artifact');
+  const blockId = node.attrs.block_id ? String(node.attrs.block_id) : null;
+  return (
+    <NodeViewWrapper
+      className="block-tree-node-view-crosslink"
+      data-block-id={String(node.attrs.id ?? '')}
+      contentEditable={false}
+    >
+      <div className="block-tree-link-card">
+        <span>cross_link</span>
+        <strong>{title}</strong>
+        {blockId ? <small>#{blockId}</small> : null}
+      </div>
     </NodeViewWrapper>
   );
 }
@@ -90,7 +116,7 @@ export const CrossLinkBlock = Node.create({
   },
 
   addNodeView() {
-    return ReactNodeViewRenderer(BlockNodeView);
+    return ReactNodeViewRenderer(CrossLinkNodeView);
   },
 });
 
@@ -178,7 +204,7 @@ export const AutoLinksContainer = Node.create({
   },
 });
 
-export function blockTreeEditorExtensions() {
+export function blockTreeEditorExtensions(crossLink?: CrossLinkSuggestionContext) {
   return [
     StarterKit.configure({
       heading: { levels: [2, 3, 4] },
@@ -194,5 +220,8 @@ export function blockTreeEditorExtensions() {
     ArtifactRefBlock,
     CalloutBlock,
     AutoLinksContainer,
+    // `@`-triggered cross_link picker (Wave 7 P5 Lane-A). Only wired when an
+    // artifactId is provided so self-links can be excluded from search.
+    ...(crossLink ? [createCrossLinkSuggestionExtension(crossLink)] : []),
   ];
 }
