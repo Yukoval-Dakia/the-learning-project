@@ -330,6 +330,10 @@ export async function undoNoteRefineApplyEvent(
         artifact_id: artifactId,
       };
     }
+    // review 2026-05-29: undo restores previous_body_blocks, which may add/remove
+    // crossLinkBlock nodes vs the applied state — resync the L2 backlink index in the
+    // same tx (mirror the apply-path resync), else the index lags the restored doc.
+    await syncBlockRefsForArtifact(tx, artifactId, payload.previous_body_blocks);
     await writeEvent(tx, {
       id: undoEventId,
       actor_kind: 'user',

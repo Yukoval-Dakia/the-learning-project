@@ -116,7 +116,7 @@ describe('runHubAutoSyncNightly', () => {
 
     const result = await runHubAutoSyncNightly(testDb(), { now: NOW });
     expect(result.hubs_updated).toBe(1);
-    expect(result.cross_links_total).toBe(1);
+    expect(result.cross_links_desired_total).toBe(1);
 
     const [hub] = await testDb().select().from(artifact).where(eq(artifact.id, 'hub1'));
     expect(hub.version).toBe(1);

@@ -206,7 +206,7 @@ describe('POST /api/hubs/[id]/dismiss-link', () => {
 
     // Run the nightly sync — it must NOT re-add the suppressed atomic.
     const result = await runHubAutoSyncNightly(testDb(), { now: NOW });
-    expect(result.cross_links_total).toBe(0);
+    expect(result.cross_links_desired_total).toBe(0);
     expect(autoLinkArtifactIds((await loadHub('hub1')).body_blocks)).toEqual([]);
   });
 

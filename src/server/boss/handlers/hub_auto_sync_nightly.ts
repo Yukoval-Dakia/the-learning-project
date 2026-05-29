@@ -77,7 +77,11 @@ export interface HubAutoSyncResult {
   // target_not_found from applyNotePatch). Tallied + logged, not propagated, so
   // one bad hub can't abort the whole nightly batch.
   hubs_failed: number;
-  cross_links_total: number;
+  // review 2026-05-29: counts the DESIRED curated cross-links per hub, summed
+  // across every hub considered — including hubs whose patch was a no-op or hit a
+  // version_conflict and never wrote. This is the intended-link tally, NOT the
+  // count of links actually persisted this run.
+  cross_links_desired_total: number;
 }
 
 export interface HubAutoSyncDeps {
@@ -276,7 +280,7 @@ export async function runHubAutoSyncNightly(
     hubs_updated: 0,
     hubs_skipped_version_conflict: 0,
     hubs_failed: 0,
-    cross_links_total: 0,
+    cross_links_desired_total: 0,
   };
   if (hubs.length === 0) return result;
 
@@ -300,7 +304,7 @@ export async function runHubAutoSyncNightly(
         atomicInputs,
       ).filter((c) => !suppressed.has(c.artifact_id));
 
-      result.cross_links_total += curated.length;
+      result.cross_links_desired_total += curated.length;
 
       const patch = buildAutoZonePatch(hub.body_blocks, hub.id, curated);
       if (!patch) continue;
