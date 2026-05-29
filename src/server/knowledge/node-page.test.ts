@@ -4,8 +4,9 @@
 // single-node metadata, mastery join, mesh neighbors, primary atomic,
 // backlinks read-time filter (XC-5), timeline, and not-found path.
 
-import { artifact, artifact_block_ref, event, knowledge } from '@/db/schema';
+import { artifact, artifact_block_ref, event, knowledge, learning_item } from '@/db/schema';
 import { createKnowledgeEdge } from '@/server/knowledge/edges';
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { loadKnowledgeNodePage } from './node-page';
@@ -77,6 +78,80 @@ async function seedEdge(
     to_knowledge_id: to,
     relation_type: relationType,
     created_by: 'user',
+  });
+}
+
+async function seedArchivedKnowledge(
+  id: string,
+  opts: { name?: string; parent_id?: string | null } = {},
+) {
+  const db = testDb();
+  const now = new Date();
+  await db.insert(knowledge).values({
+    id,
+    name: opts.name ?? id,
+    parent_id: opts.parent_id ?? null,
+    archived_at: now,
+    created_at: now,
+    updated_at: now,
+    ...K_BASE,
+  });
+}
+
+async function archiveKnowledge(id: string) {
+  const db = testDb();
+  await db
+    .update(knowledge)
+    .set({ archived_at: new Date(), updated_at: new Date() })
+    .where(eq(knowledge.id, id));
+}
+
+async function seedLearningItem(
+  id: string,
+  primaryArtifactId: string,
+  opts: { archived?: boolean } = {},
+) {
+  const db = testDb();
+  const now = new Date();
+  await db.insert(learning_item).values({
+    id,
+    source: 'learning_intent',
+    title: `li-${id}`,
+    content: '',
+    knowledge_ids: [],
+    primary_artifact_id: primaryArtifactId,
+    status: 'pending',
+    archived_at: opts.archived ? now : null,
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  });
+}
+
+async function seedSourceArtifact(id: string, knowledgeId: string, type = 'note_hub') {
+  const db = testDb();
+  const now = new Date();
+  await db.insert(artifact).values({
+    id,
+    type,
+    title: `source-${id}`,
+    knowledge_ids: [knowledgeId],
+    generation_status: 'ready',
+    archived_at: null,
+    created_at: now,
+    updated_at: now,
+    ...A_BASE,
+  });
+}
+
+async function seedBacklinkRef(fromArtifactId: string, toArtifactId: string, blockId: string) {
+  const db = testDb();
+  await db.insert(artifact_block_ref).values({
+    from_artifact_id: fromArtifactId,
+    from_block_id: blockId,
+    to_artifact_id: toArtifactId,
+    to_block_id: null,
+    ref_kind: 'cross_link',
   });
 }
 
@@ -255,5 +330,91 @@ describe('loadKnowledgeNodePage', () => {
     expect(page?.backlinks).toHaveLength(1);
     expect(page?.backlinks[0].from_artifact_id).toBe('a-source');
     expect(page?.backlinks[0].from_block_id).toBe('blk1');
+  });
+
+  // Bug 2 (Codex #193): archived parent must not surface a dead-link parent_name.
+  it('returns null parent_name when the parent is archived', async () => {
+    const db = testDb();
+    await seedArchivedKnowledge('kp', { name: '文言文' });
+    await seedKnowledge('kc', { name: '虚词', parent_id: 'kp' });
+    const page = await loadKnowledgeNodePage(db, 'kc');
+    expect(page?.parent_id).toBe('kp');
+    expect(page?.parent_name).toBeNull();
+  });
+
+  // Bug 3 (Codex #193): archived mesh neighbors must be dropped (no id-fallback
+  // chip), for both out and in directions.
+  it('drops archived mesh neighbors in both directions', async () => {
+    const db = testDb();
+    await seedKnowledge('k1', { name: '虚词' });
+    await seedKnowledge('k-live-out', { name: '之' });
+    await seedKnowledge('k-arch-out', { name: '其' });
+    await seedKnowledge('k-live-in', { name: '也' });
+    await seedKnowledge('k-arch-in', { name: '乎' });
+    // Seed edges while all neighbors are live (createKnowledgeEdge rejects archived
+    // endpoints), then archive two of them — modelling a node archived AFTER the
+    // edge was created, which is exactly the dead-link scenario (Codex #193).
+    // out edges: k1 → live, k1 → archived (archived must be dropped)
+    await seedEdge('k1', 'k-live-out', 'prerequisite');
+    await seedEdge('k1', 'k-arch-out', 'related_to');
+    // in edges: live → k1, archived → k1 (archived must be dropped)
+    await seedEdge('k-live-in', 'k1', 'related_to');
+    await seedEdge('k-arch-in', 'k1', 'contrasts_with');
+    await archiveKnowledge('k-arch-out');
+    await archiveKnowledge('k-arch-in');
+
+    const page = await loadKnowledgeNodePage(db, 'k1');
+    const neighborIds = (page?.mesh_neighbors ?? []).map((n) => n.knowledge_id).sort();
+    expect(neighborIds).toEqual(['k-live-in', 'k-live-out']);
+    // no chip should fall back to rendering an archived neighbor's id as its name
+    expect(page?.mesh_neighbors.some((n) => n.knowledge_id === 'k-arch-out')).toBe(false);
+    expect(page?.mesh_neighbors.some((n) => n.knowledge_id === 'k-arch-in')).toBe(false);
+  });
+
+  // Bug 1 (Codex #193): backlink source artifact resolves to its owning
+  // learning_item.id (NOT the artifact id) so the panel links to a route that
+  // queries by learning_item.id.
+  it('resolves backlink source to its owning learning_item id', async () => {
+    const db = testDb();
+    await seedKnowledge('k1', { name: '虚词' });
+    await seedAtomicArtifact('a-target', 'k1');
+    await seedSourceArtifact('a-source', 'k1');
+    // owning learning_item whose primary_artifact_id points at the source artifact
+    await seedLearningItem('li-source', 'a-source');
+    await seedBacklinkRef('a-source', 'a-target', 'blk1');
+
+    const page = await loadKnowledgeNodePage(db, 'k1');
+    expect(page?.backlinks).toHaveLength(1);
+    expect(page?.backlinks[0].from_artifact_id).toBe('a-source');
+    expect(page?.backlinks[0].from_learning_item_id).toBe('li-source');
+  });
+
+  // Bug 1 edge (Codex #193): when the source artifact has no non-archived owning
+  // learning_item, from_learning_item_id is null so the panel renders a non-link.
+  it('returns null from_learning_item_id when no owning learning_item exists', async () => {
+    const db = testDb();
+    await seedKnowledge('k1', { name: '虚词' });
+    await seedAtomicArtifact('a-target', 'k1');
+    await seedSourceArtifact('a-orphan', 'k1');
+    await seedBacklinkRef('a-orphan', 'a-target', 'blk1');
+
+    const page = await loadKnowledgeNodePage(db, 'k1');
+    expect(page?.backlinks).toHaveLength(1);
+    expect(page?.backlinks[0].from_artifact_id).toBe('a-orphan');
+    expect(page?.backlinks[0].from_learning_item_id).toBeNull();
+  });
+
+  it('returns null from_learning_item_id when the owning learning_item is archived', async () => {
+    const db = testDb();
+    await seedKnowledge('k1', { name: '虚词' });
+    await seedAtomicArtifact('a-target', 'k1');
+    await seedSourceArtifact('a-source', 'k1');
+    await seedLearningItem('li-archived', 'a-source', { archived: true });
+    await seedBacklinkRef('a-source', 'a-target', 'blk1');
+
+    const page = await loadKnowledgeNodePage(db, 'k1');
+    expect(page?.backlinks).toHaveLength(1);
+    expect(page?.backlinks[0].from_artifact_id).toBe('a-source');
+    expect(page?.backlinks[0].from_learning_item_id).toBeNull();
   });
 });

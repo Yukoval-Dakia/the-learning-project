@@ -19,7 +19,14 @@ import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
-import { artifact, event, knowledge, knowledge_mastery, question } from '@/db/schema';
+import {
+  artifact,
+  event,
+  knowledge,
+  knowledge_mastery,
+  learning_item,
+  question,
+} from '@/db/schema';
 import { listBacklinks } from '@/server/artifacts/block-refs';
 import { bodyBlocksToNoteSections } from '@/server/artifacts/body-blocks';
 import { getArtifactCorrectionStates } from '@/server/events/artifact-corrections';
@@ -61,6 +68,11 @@ export interface NodePageMeshNeighbor {
 
 export interface NodePageBacklink {
   from_artifact_id: string;
+  // owning learning_item.id for the source artifact (primary_artifact_id == from_artifact_id),
+  // null when the source artifact has no non-archived owning learning_item. The node page links
+  // to /learning-items/<from_learning_item_id> (that route queries by learning_item.id, NOT
+  // artifact.id); when null the source renders as a non-link to avoid a 404. (Codex #193)
+  from_learning_item_id: string | null;
   from_title: string;
   from_type: string;
   from_block_id: string;
@@ -125,10 +137,13 @@ export async function loadKnowledgeNodePage(
   let parentName: string | null = null;
   let effectiveDomain = node.domain;
   if (node.parent_id) {
+    // Skip archived parents: the /knowledge/[id] endpoint 404s on archived nodes
+    // (it filters isNull(archived_at) above), so surfacing an archived parent name
+    // would render a dead link. archived parent → parentName=null → non-link. (Codex #193)
     const parentRows = await db
       .select({ name: knowledge.name, domain: knowledge.domain, parent_id: knowledge.parent_id })
       .from(knowledge)
-      .where(eq(knowledge.id, node.parent_id))
+      .where(and(eq(knowledge.id, node.parent_id), isNull(knowledge.archived_at)))
       .limit(1);
     parentName = parentRows[0]?.name ?? null;
   }
@@ -148,23 +163,30 @@ export async function loadKnowledgeNodePage(
     ]),
   );
   const neighborNames = await loadNames(db, neighborIds);
+  // Drop edges whose neighbor isn't in the (non-archived) name map: an archived
+  // neighbor would render a chip linking to a node the endpoint 404s on. No
+  // id-fallback name — skip the chip entirely instead. (Codex #193)
   const meshNeighbors: NodePageMeshNeighbor[] = [
-    ...outEdges.map((e) => ({
-      edge_id: e.id,
-      knowledge_id: e.to_knowledge_id,
-      name: neighborNames.get(e.to_knowledge_id) ?? e.to_knowledge_id,
-      relation_type: e.relation_type,
-      direction: 'out' as const,
-      weight: e.weight,
-    })),
-    ...inEdges.map((e) => ({
-      edge_id: e.id,
-      knowledge_id: e.from_knowledge_id,
-      name: neighborNames.get(e.from_knowledge_id) ?? e.from_knowledge_id,
-      relation_type: e.relation_type,
-      direction: 'in' as const,
-      weight: e.weight,
-    })),
+    ...outEdges
+      .filter((e) => neighborNames.has(e.to_knowledge_id))
+      .map((e) => ({
+        edge_id: e.id,
+        knowledge_id: e.to_knowledge_id,
+        name: neighborNames.get(e.to_knowledge_id) as string,
+        relation_type: e.relation_type,
+        direction: 'out' as const,
+        weight: e.weight,
+      })),
+    ...inEdges
+      .filter((e) => neighborNames.has(e.from_knowledge_id))
+      .map((e) => ({
+        edge_id: e.id,
+        knowledge_id: e.from_knowledge_id,
+        name: neighborNames.get(e.from_knowledge_id) as string,
+        relation_type: e.relation_type,
+        direction: 'in' as const,
+        weight: e.weight,
+      })),
   ];
 
   // 3. primary atomic — the newest non-archived note_atomic whose knowledge_ids
@@ -245,6 +267,13 @@ export async function loadKnowledgeNodePage(
         .where(inArray(artifact.id, sourceIds));
       const sourceById = new Map(sourceRows.map((row) => [row.id, row]));
       const correctionStates = await getArtifactCorrectionStates(db, sourceIds);
+      // Resolve each source artifact to its owning learning_item so the panel can
+      // link to /learning-items/<learning_item_id> instead of the artifact id
+      // (those are distinct ids; linking by artifact id 404s — Codex #193). The
+      // link is learning_item.primary_artifact_id == source.artifact_id, 1:1 per
+      // docs/modules/learning-items.md. Drop archived learning_items → unresolved
+      // sources render as non-links downstream.
+      const owningLearningItemByArtifactId = await loadOwningLearningItemIds(db, sourceIds);
       for (const ref of inbound) {
         const source = sourceById.get(ref.from_artifact_id);
         if (!source) continue;
@@ -265,6 +294,7 @@ export async function loadKnowledgeNodePage(
         }
         backlinks.push({
           from_artifact_id: ref.from_artifact_id,
+          from_learning_item_id: owningLearningItemByArtifactId.get(ref.from_artifact_id) ?? null,
           from_title: ref.from_artifact_title,
           from_type: ref.from_artifact_type,
           from_block_id: ref.from_block_id,
@@ -319,13 +349,40 @@ export async function loadKnowledgeNodePage(
   };
 }
 
+// Resolve non-archived knowledge names. Archived neighbors are intentionally
+// omitted from the map so mesh-chip construction can drop them (linking to an
+// archived node 404s — the /knowledge/[id] endpoint filters archived). (Codex #193)
 async function loadNames(db: Db, ids: string[]): Promise<Map<string, string>> {
   if (ids.length === 0) return new Map();
   const rows = await db
     .select({ id: knowledge.id, name: knowledge.name })
     .from(knowledge)
-    .where(inArray(knowledge.id, ids));
+    .where(and(inArray(knowledge.id, ids), isNull(knowledge.archived_at)));
   return new Map(rows.map((r) => [r.id, r.name]));
+}
+
+// Resolve owning learning_item.id for a set of source artifact ids via the 1:1
+// learning_item.primary_artifact_id link. Archived learning_items are excluded so
+// the backlink panel renders unresolved sources as non-links. (Codex #193)
+async function loadOwningLearningItemIds(
+  db: Db,
+  artifactIds: string[],
+): Promise<Map<string, string>> {
+  if (artifactIds.length === 0) return new Map();
+  const rows = await db
+    .select({ id: learning_item.id, primary_artifact_id: learning_item.primary_artifact_id })
+    .from(learning_item)
+    .where(
+      and(
+        inArray(learning_item.primary_artifact_id, artifactIds),
+        isNull(learning_item.archived_at),
+      ),
+    );
+  const map = new Map<string, string>();
+  for (const row of rows) {
+    if (row.primary_artifact_id) map.set(row.primary_artifact_id, row.id);
+  }
+  return map;
 }
 
 // Walk up the parent chain until a node carries an explicit domain. Mirrors

@@ -39,6 +39,7 @@ interface PrimaryAtomic {
 
 interface Backlink {
   from_artifact_id: string;
+  from_learning_item_id: string | null;
   from_title: string;
   from_type: string;
   from_block_id: string;
@@ -169,9 +170,17 @@ export default function KnowledgeDetailPage({
                 label="parent"
                 value={
                   node.parent_id ? (
-                    <Link href={`/knowledge/${node.parent_id}`} style={{ color: 'var(--coral)' }}>
-                      {node.parent_name ?? node.parent_id}
-                    </Link>
+                    // parent_name is null when the parent is archived (or otherwise
+                    // unresolvable): the /knowledge/[id] endpoint 404s on archived
+                    // nodes, so render a non-link placeholder instead of a dead
+                    // link. (Codex #193)
+                    node.parent_name ? (
+                      <Link href={`/knowledge/${node.parent_id}`} style={{ color: 'var(--coral)' }}>
+                        {node.parent_name}
+                      </Link>
+                    ) : (
+                      <span style={{ color: 'var(--ink-3)' }}>（父节点不可用）</span>
+                    )
                   ) : (
                     '(根节点)'
                   )
@@ -219,18 +228,26 @@ export default function KnowledgeDetailPage({
               <p style={{ ...mutedStyle, margin: 0 }}>还没有其它笔记链接到这个节点的简介。</p>
             ) : (
               <div style={backlinkListStyle}>
-                {node.backlinks.map((b) => (
-                  <Link
-                    key={`${b.from_artifact_id}:${b.from_block_id}`}
-                    href={`/learning-items/${b.from_artifact_id}`}
-                    style={backlinkRowStyle}
-                  >
-                    <Badge tone={b.from_type === 'note_hub' ? 'good' : 'info'}>
-                      {BACKLINK_TYPE_LABEL[b.from_type] ?? b.from_type}
-                    </Badge>
-                    <span style={{ color: 'var(--ink)' }}>{b.from_title}</span>
-                  </Link>
-                ))}
+                {node.backlinks.map((b) => {
+                  const key = `${b.from_artifact_id}:${b.from_block_id}`;
+                  // Link to the owning learning_item (its detail route queries by
+                  // learning_item.id, not artifact.id). When unresolved (no
+                  // non-archived owning learning_item) render a non-link so we
+                  // never emit a 404 href. (Codex #193)
+                  return b.from_learning_item_id ? (
+                    <Link
+                      key={key}
+                      href={`/learning-items/${b.from_learning_item_id}`}
+                      style={backlinkRowStyle}
+                    >
+                      <BacklinkRowInner backlink={b} />
+                    </Link>
+                  ) : (
+                    <div key={key} style={backlinkRowStyle}>
+                      <BacklinkRowInner backlink={b} />
+                    </div>
+                  );
+                })}
               </div>
             )}
           </Card>
@@ -318,6 +335,17 @@ function PrimaryAtomicPlaceholder() {
         去生成节点笔记
       </Link>
     </div>
+  );
+}
+
+function BacklinkRowInner({ backlink }: { backlink: Backlink }) {
+  return (
+    <>
+      <Badge tone={backlink.from_type === 'note_hub' ? 'good' : 'info'}>
+        {BACKLINK_TYPE_LABEL[backlink.from_type] ?? backlink.from_type}
+      </Badge>
+      <span style={{ color: 'var(--ink)' }}>{backlink.from_title}</span>
+    </>
   );
 }
 
