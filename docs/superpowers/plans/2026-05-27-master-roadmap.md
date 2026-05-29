@@ -32,10 +32,10 @@
 | Doc / Infra 债 | P4.1-4.13 sweep；status.md / ADR / modules 一致 |
 | Audit | `/audit-drift` 全绿 |
 
-### 0.3 当前快照（2026-05-29 post-Wave 7 ship，本地 main `17280d51` 未 push；Wave 8 = scenario A v1 closeout 末波）
+### 0.3 当前快照（2026-05-29 — **scenario A v1 closeout 达成**；Wave 7 ✅ origin `28dd48d6`，Wave 8 ✅ `wave8` 分支 `6c308bcd` PR 待 merge）
 
 **Shipped (从 status.md §1 + 2026-05-{20..29} commit log)**：
-- **Wave 5/6/7 ✅ ship**（详见 §5.1 + status.md §1）：W5 Copilot Drawer /today + Global Coach（YUK-118..124）；W6 Living Note v0 + `tool_use` promote + modules sweep（YUK-126/127/128..132，**origin/main `a419b2e6`**）；W7 反链 + cross_link + hub auto-sync + cytoscape graph（YUK-95 + YUK-142，**本地 main `17280d51`，未 push**）
+- **Wave 5/6/7/8 ✅**（详见 §5.1 + status.md §1 + [v1-closeout audit](../audits/2026-05-29-v1-closeout.md)）：W5 Copilot Drawer + Global Coach（YUK-118..124）；W6 Living Note v0 + `tool_use` promote + modules sweep（YUK-126/127/128..132）；W7 反链/cross_link/hub auto-sync + cytoscape graph（YUK-95 + YUK-142）—— 以上 **origin/main `28dd48d6`**；W8 P6 read-view+节点页 + P7 tests + P2-polish + 两轮 review-fix + T-PD（YUK-96/97/150/115/146/154/155/156）—— **`wave8` 分支 `6c308bcd`，PR 待 merge**。YUK-88 block-tree note P0-P7 全栈闭环。
 - Foundation A/B/C 全完，含 math + physics acid test ✓ framework diff = 0
 - **Foundation D M1 ship**（2026-05-26）：DomainTool registry + 3 read tools + bridge + `experimental:tool_use` mirror
 - Product Track 1 wave 1-4 ship + W5 closeout audit
@@ -57,7 +57,7 @@
 
 **In-flight / open**：
 - **Wave 3/4 ✅ shipped**（T-D4 propose tools PR #170；T-88 P3 AI pipeline + T-DR Dreaming `d99c3bb1`），Wave 5/6/7 ✅（见上）。
-- **当前在 Wave 8（scenario A v1 closeout 末波）**：T-88 P6 read-view + 节点页（YUK-96）/ P7 tests sweep（YUK-97）/ P2-polish slash·drag-drop / T-PD 收尾 / v1 closeout audit。先决：YUK-115 section_id→block_id 先落，P7 拿 clean schema。详见 [`plans/2026-05-29-wave8-ready-to-launch.md`](2026-05-29-wave8-ready-to-launch.md)。
+- **scenario A v1 达成 → scenario B**：8 波全 ship（YUK-88 P0-P7 全栈 + Layer 8 critical path + Living Note + cross_link/hub/cytoscape graph）。下一步 **continue-to-scenario-B**（**north-star YUK-143 + T-OC YUK-145** 为 top track，按 feature 价值重切，待 grill 拍板）。去向见 [`v0.5-maintenance-roadmap.md`](../../planning/v0.5-maintenance-roadmap.md)。
 - **本 session 新增 spec/issue（post-v1 / scenario B 种子）**：North-Star 学习意图设计（YUK-143，spec ✅）+ T-OC OCR/ingestion 重建设计（YUK-145，spec ✅）+ 多页 OCR bug（YUK-144）+ 跨进程 editing-guard（YUK-148，**High**，需设计）+ derived_from 注释（YUK-146）+ undo UX（YUK-147）+ Wave6 mediums（YUK-149）。
 
 **Audit baseline ack（per `docs/audit/2026-05-27-pre-yuk88-baseline-drift.md`, 2026-05-27）**：
@@ -543,7 +543,9 @@ T-FF fixtures ────→ blocks Eval / acceptance test 自动化
 - Validation：本地全 wave-gate ✅（144 test files / 1137 tests + 1 todo / migration-smoke 11 / build 55 static pages）。**未 push origin**（push 前停，待用户确认）
 - 计划 + 审查：[`2026-05-29-wave7-ready-to-launch.md`](2026-05-29-wave7-ready-to-launch.md) + [`../../audit/2026-05-29-commit-review.md`](../../audit/2026-05-29-commit-review.md)
 
-#### Wave 8 (~4 周) — Read view + tests sweep + Editor polish + closeout
+#### Wave 8 ✅ ship 2026-05-29（`wave8` 分支 `6c308bcd`，PR 待 merge）— Read view + tests + polish + v1 closeout
+
+> 实现快照见 [v1-closeout audit](../audits/2026-05-29-v1-closeout.md) §2：YUK-115 前置 + P6(YUK-96) + P7(YUK-97) + P2-polish(YUK-150) + 两轮用户 review-fix（YUK-146/154/155/156）+ T-PD 收尾，全 7 lane 各独立 reviewer + wave-gate 绿（145 test files / 1153 tests / build 55 pages）。
 
 | Track | pts | worktree |
 |---|---|---|
@@ -566,7 +568,7 @@ T-FF fixtures ────→ blocks Eval / acceptance test 自动化
 | 5 | ~6 周 | Drawer /today MVP // Coach（Layer 8 vision 兑现） | 32 |
 | 6 | ~3 周 | Living Note + promote | 18 |
 | 7 | ✅ ship 2026-05-29（本地 main，未 push）| 反链 + cross_link + hub auto-sync + cytoscape graph | 25 |
-| 8 | ~4 周 | read view + tests + polish + closeout | 19 |
+| 8 | ✅ ship 2026-05-29（`wave8` 分支，PR 待 merge）| read view + tests + polish + **v1 closeout** | 19 |
 | **Total** | **~43 周 ≈ 10 月** | scenario A v1 closeout | **218 主线 + 30 buffer + 31 PD = ~279pt** |
 
 注：~43 周是 5-7 pt/wk sustainable 估；如 5pt/wk → ~56 周（13 月）；如 8pt/wk → ~35 周（8 月）。
