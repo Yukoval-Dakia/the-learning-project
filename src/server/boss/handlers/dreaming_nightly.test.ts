@@ -8,8 +8,10 @@ import {
 import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
 import {
   DREAMING_MAX_PROPOSALS,
+  DREAMING_OBJECTIVE,
   runDreamingNightly,
 } from '@/server/boss/handlers/dreaming_nightly';
+import type { ActiveGoal } from '@/server/goals/queries';
 
 describe('runDreamingNightly', () => {
   it('runs DreamingTask with the generic MCP bridge and dreaming allowlist', async () => {
@@ -37,6 +39,9 @@ describe('runDreamingNightly', () => {
       buildMcpServerFn,
       runAgentTaskFn,
       writeEventFn,
+      // YUK-143 — North-Star: stub the active-goals reader so these no-DB unit
+      // tests don't hit the real listActiveGoals query (db is a {} stub).
+      listActiveGoalsFn: async () => [],
       now: () => new Date('2026-05-28T03:00:00.000Z'),
     });
 
@@ -112,6 +117,8 @@ describe('runDreamingNightly', () => {
           throw new Error('model down');
         }),
         writeEventFn,
+        // YUK-143 — stub the active-goals reader (db is a {} stub here).
+        listActiveGoalsFn: async () => [],
         now: () => new Date('2026-05-28T03:00:00.000Z'),
       }),
     ).rejects.toThrow('model down');
@@ -124,5 +131,109 @@ describe('runDreamingNightly', () => {
         payload: expect.objectContaining({ error: 'model down' }),
       }),
     );
+  });
+
+  // YUK-143 / ADR-0025 — North-Star: when active goals exist, the DreamingTask
+  // input carries them as `active_goals` (with scope_knowledge_ids) and the
+  // objective includes the goal-bias guidance. Purely additive (ND-5).
+  it('threads active goals into the DreamingTask input with goal-bias objective', async () => {
+    const db = {} as never;
+    const mcpServer = { name: 'fake-loom' } as never;
+    const goals: ActiveGoal[] = [
+      {
+        id: 'goal_1',
+        title: '攻克虚词「之」',
+        subject_id: 'wenyan',
+        scope_knowledge_ids: ['k_zhi_1', 'k_zhi_2'],
+        sequence_hint: 0,
+      },
+      {
+        id: 'goal_2',
+        title: '熟练判断句',
+        subject_id: 'wenyan',
+        scope_knowledge_ids: ['k_judge_1'],
+        sequence_hint: 1,
+      },
+    ];
+    const listProposalInboxRowsFn = vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_dreaming_goals',
+      text: 'done',
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    const writeEventFn = vi.fn(async (_db, input) => input.id);
+
+    await runDreamingNightly(db, {
+      listProposalInboxRowsFn,
+      buildMcpServerFn,
+      runAgentTaskFn,
+      writeEventFn,
+      listActiveGoalsFn: async () => goals,
+      now: () => new Date('2026-05-28T03:00:00.000Z'),
+    });
+
+    expect(runAgentTaskFn).toHaveBeenCalledWith(
+      'DreamingTask',
+      expect.objectContaining({
+        run_kind: 'nightly',
+        active_goals: [
+          {
+            id: 'goal_1',
+            title: '攻克虚词「之」',
+            subject_id: 'wenyan',
+            scope_knowledge_ids: ['k_zhi_1', 'k_zhi_2'],
+            sequence_hint: 0,
+          },
+          {
+            id: 'goal_2',
+            title: '熟练判断句',
+            subject_id: 'wenyan',
+            scope_knowledge_ids: ['k_judge_1'],
+            sequence_hint: 1,
+          },
+        ],
+        objective: DREAMING_OBJECTIVE,
+      }),
+      expect.anything(),
+    );
+    const firstCallArgs = runAgentTaskFn.mock.calls[0] as unknown as unknown[];
+    const taskInput = firstCallArgs[1] as { objective: string };
+    expect(taskInput.objective).toContain('scope_knowledge_ids');
+    expect(taskInput.objective).toContain('ND-5');
+  });
+
+  // YUK-143 / ADR-0025 — back-compat: empty active goals → empty active_goals
+  // array, behaves exactly as before (additive-only guarantee, ND-5).
+  it('emits empty active_goals when no goals are active (back-compat)', async () => {
+    const db = {} as never;
+    const mcpServer = { name: 'fake-loom' } as never;
+    const listProposalInboxRowsFn = vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_dreaming_no_goals',
+      text: 'done',
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    const writeEventFn = vi.fn(async (_db, input) => input.id);
+
+    await runDreamingNightly(db, {
+      listProposalInboxRowsFn,
+      buildMcpServerFn,
+      runAgentTaskFn,
+      writeEventFn,
+      listActiveGoalsFn: async () => [],
+      now: () => new Date('2026-05-28T03:00:00.000Z'),
+    });
+
+    const firstCallArgs = runAgentTaskFn.mock.calls[0] as unknown as unknown[];
+    const taskInput = firstCallArgs[1] as {
+      active_goals: unknown[];
+      run_kind: string;
+    };
+    expect(taskInput.active_goals).toEqual([]);
+    expect(taskInput.run_kind).toBe('nightly');
   });
 });

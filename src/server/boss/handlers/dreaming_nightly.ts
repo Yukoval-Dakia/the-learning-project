@@ -11,6 +11,11 @@ import {
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
 import { enqueueDreamingNoteRefine } from '@/server/artifacts/note-refine-triggers';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
+// YUK-143 / ADR-0025 — North-Star: feed active goals into the Dreaming input so
+// it can BIAS proposals toward weak/under-covered knowledge in their scope.
+// Purely ADDITIVE (ND-5): Dreaming still only PROPOSES via the inbox and never
+// reads the FSRS-due queue or mutates review state; goals only add direction.
+import { type ActiveGoal, listActiveGoals } from '@/server/goals/queries';
 import { type ProposalInboxRow, listProposalInboxRows } from '@/server/proposals/inbox';
 
 export const DREAMING_MAX_PROPOSALS = 5;
@@ -37,22 +42,49 @@ type RunAgentTaskFn = (
 type ListProposalInboxRowsFn = (db: Db) => Promise<ProposalSnapshotRow[]>;
 type BuildMcpServerFn = typeof buildMcpServerFromRegistry;
 type WriteEventFn = (db: Db, input: WriteEventInput) => Promise<string>;
+// YUK-143 / ADR-0025 — swappable active-goals reader (DB tests inject fixtures).
+type ListActiveGoalsFn = (db: Db) => Promise<ActiveGoal[]>;
 
 interface DepsOverride {
   runAgentTaskFn?: RunAgentTaskFn;
   listProposalInboxRowsFn?: ListProposalInboxRowsFn;
   buildMcpServerFn?: BuildMcpServerFn;
   writeEventFn?: WriteEventFn;
+  // YUK-143 / ADR-0025 — defaults to listActiveGoals; goals bias proposals
+  // toward weak scope only and never touch the review backbone (ND-5).
+  listActiveGoalsFn?: ListActiveGoalsFn;
   now?: () => Date;
 }
 
-function buildDreamingInput(now: Date, beforeRows: ProposalSnapshotRow[]) {
+// YUK-143 / ADR-0025 — North-Star goal-bias guidance appended to the Dreaming
+// objective. ND-5 is stated explicitly: the goal bias is ADDITIVE only — it must
+// NOT suppress or replace the existing signal-driven proposals, and Dreaming
+// still never reads the FSRS-due queue or mutates review state. When
+// active_goals is empty the objective is effectively unchanged (back-compat).
+const DREAMING_GOAL_BIAS_GUIDANCE =
+  ' When active_goals are present, BIAS proposals toward filling weak/under-covered knowledge in their scope_knowledge_ids — additive only; never suppress or replace the existing signal-driven proposals (ND-5). When active_goals is empty, behave exactly as before.';
+export const DREAMING_OBJECTIVE = `Review recent learning signals with the provided DomainTools and create only actionable inbox proposals. Do not mutate user data directly.${DREAMING_GOAL_BIAS_GUIDANCE}`;
+
+function buildDreamingInput(
+  now: Date,
+  beforeRows: ProposalSnapshotRow[],
+  activeGoals: ActiveGoal[],
+) {
   return {
     run_kind: 'nightly',
     now: now.toISOString(),
     pending_proposals_before: beforeRows.filter((row) => row.status === 'pending').length,
-    objective:
-      'Review recent learning signals with the provided DomainTools and create only actionable inbox proposals. Do not mutate user data directly.',
+    objective: DREAMING_OBJECTIVE,
+    // YUK-143 / ADR-0025 — active goals for the additive goal bias (ND-5).
+    // Ordered by sequence_hint then created_at (listActiveGoals). Empty array
+    // when no goals exist → model behaves as before, proposals unchanged.
+    active_goals: activeGoals.map((g) => ({
+      id: g.id,
+      title: g.title,
+      subject_id: g.subject_id,
+      scope_knowledge_ids: g.scope_knowledge_ids,
+      sequence_hint: g.sequence_hint,
+    })),
     budget: {
       max_tool_calls: 8,
       max_proposals: DREAMING_MAX_PROPOSALS,
@@ -75,9 +107,14 @@ export async function runDreamingNightly(
   const run = deps.runAgentTaskFn ?? runAgentTask;
   const buildMcpServer = deps.buildMcpServerFn ?? buildMcpServerFromRegistry;
   const write = deps.writeEventFn ?? writeEvent;
+  const listGoals = deps.listActiveGoalsFn ?? listActiveGoals;
 
   const beforeRows = await listRows(db);
   const beforeIds = new Set(beforeRows.map((row) => row.id));
+  // YUK-143 / ADR-0025 — read active goals for the additive goal bias. This is a
+  // read-only ADD to the Dreaming signal set; it does not read the FSRS-due
+  // queue or mutate any review state (ND-5).
+  const activeGoals = await listGoals(db);
   const triggerEventId = `dreaming_trigger_${createId()}`;
   const toolContextTaskRunId = `dreaming_tool_${createId()}`;
 
@@ -119,7 +156,7 @@ export async function runDreamingNightly(
       },
     });
 
-    const taskResult = await run('DreamingTask', buildDreamingInput(now, beforeRows), {
+    const taskResult = await run('DreamingTask', buildDreamingInput(now, beforeRows, activeGoals), {
       db,
       mcpServers: { [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer },
       allowedTools: [...resolveMcpAllowedTools('dreaming')],
