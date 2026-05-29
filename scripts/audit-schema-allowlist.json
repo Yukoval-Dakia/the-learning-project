@@ -336,38 +336,6 @@
       "expected_by": "2026-07-31"
     }
   },
-  "artifact_block_ref.from_artifact_id": {
-    "reason": "ADR-0020 backlink index table lands in P1; write-through body_blocks cross-link scanner is P2/P3 work.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-88 P2/P3 cross-link write-through indexer lands",
-      "expected_by": "2026-08-31"
-    }
-  },
-  "artifact_block_ref.from_block_id": {
-    "reason": "Same as artifact_block_ref.from_artifact_id",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-88 P2/P3 cross-link write-through indexer lands",
-      "expected_by": "2026-08-31"
-    }
-  },
-  "artifact_block_ref.to_artifact_id": {
-    "reason": "Same as artifact_block_ref.from_artifact_id",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-88 P2/P3 cross-link write-through indexer lands",
-      "expected_by": "2026-08-31"
-    }
-  },
-  "artifact_block_ref.to_block_id": {
-    "reason": "Same as artifact_block_ref.from_artifact_id",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-88 P2/P3 cross-link write-through indexer lands",
-      "expected_by": "2026-08-31"
-    }
-  },
   "echo_jobs.error_md": {
     "reason": "Sub 0c golden E2E hard-fail path not implemented; echo handler only writes success path. error_md reserved for explicit failure scenarios test",
     "resolves_when": {

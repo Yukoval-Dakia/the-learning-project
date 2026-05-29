@@ -17,6 +17,7 @@ import { ArtifactBodyBlocks, NoteSection } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
 import { type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
+import { syncBlockRefsForArtifact } from '@/server/artifacts/block-refs';
 import { bodyBlocksToNoteSections, noteSectionsToBodyBlocks } from '@/server/artifacts/body-blocks';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
@@ -194,19 +195,29 @@ export async function runNoteGenerate(
     });
     const parsed = parseNoteGenerateOutput(result.text);
 
-    const updated = await db
-      .update(artifact)
-      .set({
-        body_blocks: parsed.body_blocks as never,
-        generation_status: 'ready',
-        verification_status: 'queued',
-        generated_by: {
-          ...aiAgentRef('NoteGenerateTask', result),
-        } as never,
-        updated_at: new Date(),
-      })
-      .where(and(eq(artifact.id, artifactId), eq(artifact.generation_status, 'pending')))
-      .returning({ id: artifact.id });
+    // Wrap the body_blocks UPDATE + cross_link index sync in one tx so the L2
+    // backlink index never lags the AI-authored note (YUK-95 P5). An
+    // AI-generated note may emit crossLinkBlock nodes.
+    const updated = await db.transaction(async (tx) => {
+      const rows = await tx
+        .update(artifact)
+        .set({
+          body_blocks: parsed.body_blocks as never,
+          generation_status: 'ready',
+          verification_status: 'queued',
+          generated_by: {
+            ...aiAgentRef('NoteGenerateTask', result),
+          } as never,
+          updated_at: new Date(),
+        })
+        .where(and(eq(artifact.id, artifactId), eq(artifact.generation_status, 'pending')))
+        .returning({ id: artifact.id });
+
+      if (rows.length > 0) {
+        await syncBlockRefsForArtifact(tx, artifactId, parsed.body_blocks);
+      }
+      return rows;
+    });
 
     if (updated.length === 0) {
       return { status: 'skipped:not_pending' };
