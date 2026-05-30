@@ -27,6 +27,9 @@ export const fastTestInclude = [
   'src/server/ai/tools/registry.test.ts',
   'src/server/ai/tools/allowlists.test.ts',
   'src/server/ai/tools/mcp-bridge.test.ts',
+  // P5.1 / YUK-143 — pure (no-DB) budget constants + per-message context throttle.
+  'src/server/ai/tools/budgets.test.ts',
+  'src/server/ai/tools/context-throttle.test.ts',
   'src/server/artifacts/body-blocks-snippet.test.ts',
   // In-memory editing-session state machine (heartbeat / idle timeout /
   // force-apply / defer-and-flush). persistNoteRefineApply is vi.mock'd, so

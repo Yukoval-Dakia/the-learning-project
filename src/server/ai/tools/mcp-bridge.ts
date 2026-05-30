@@ -77,6 +77,24 @@ export interface ToolExecutionGateInput {
   effect: ToolEffect;
 }
 
+/**
+ * Result of the optional per-call input interceptor (P5.1 / YUK-143). Lets the
+ * Copilot context-budget tracker cap a read tool's requested `limit` down to
+ * the remaining per-message budget BEFORE execute and surface a truncation
+ * note to the agent. `args` is what the tool actually runs with;
+ * `truncationNote`, when present, is merged into the tool's JSON output under
+ * `context_budget` so the agent can self-correct (spec §3.2 / §5 Q2).
+ */
+export interface ToolInputInterceptResult {
+  args: unknown;
+  /**
+   * Structured truncation note (any object). Merged verbatim into the tool
+   * output as `context_budget`. Kept as `object` (not a named shape) so the
+   * bridge stays decoupled from the throttle's `ContextBudgetTruncation` type.
+   */
+  truncationNote?: object | null;
+}
+
 export interface BuildMcpServerOptions {
   ctx: ToolContext;
   /** Logical name for the SDK MCP server; tools surface as `mcp__<name>__<tool>`. */
@@ -87,6 +105,14 @@ export interface BuildMcpServerOptions {
   taskKind?: string;
   /** Optional per-call runtime gate. Return a reason string to block execution. */
   beforeExecute?: (tool: ToolExecutionGateInput) => string | undefined;
+  /**
+   * Optional per-call input interceptor (P5.1 / YUK-143). Runs AFTER
+   * `beforeExecute` clears and BEFORE execute, only on the happy path. Receives
+   * the zod-parsed args and returns the (possibly limit-capped) args plus an
+   * optional truncation note. Used by the Copilot per-message context-budget
+   * throttle; Dreaming/Coach do not pass it, so their behavior is unchanged.
+   */
+  interceptInput?: (tool: ToolExecutionGateInput, args: unknown) => ToolInputInterceptResult;
 }
 
 /**
@@ -121,9 +147,16 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
       let errorReason: string | undefined;
       let summary = '';
       let parsedInput: unknown = rawArgs;
+      // P5.1 / YUK-143 — input the tool actually executes with (possibly
+      // limit-capped by the context-budget interceptor) + the truncation note
+      // to merge into the output. parsedInput stays the agent-visible request
+      // for logging / mirror payloads; execInput is what runs.
+      let execInput: unknown = rawArgs;
+      let truncationNote: object | null = null;
 
       try {
         parsedInput = dt.inputSchema.parse(rawArgs);
+        execInput = parsedInput;
       } catch (err) {
         errorReason = err instanceof Error ? err.message : String(err);
       }
@@ -139,11 +172,33 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
         }
       }
 
-      if (errorReason === undefined) {
+      if (errorReason === undefined && opts.interceptInput) {
         try {
-          output = await dt.execute(ctx, parsedInput as never);
+          const intercepted = opts.interceptInput({ name: dt.name, effect: dt.effect }, execInput);
+          execInput = intercepted.args;
+          truncationNote = intercepted.truncationNote ?? null;
         } catch (err) {
           errorReason = err instanceof Error ? err.message : String(err);
+        }
+      }
+
+      if (errorReason === undefined) {
+        try {
+          output = await dt.execute(ctx, execInput as never);
+        } catch (err) {
+          errorReason = err instanceof Error ? err.message : String(err);
+        }
+      }
+
+      // P5.1 / YUK-143 — surface the truncation note inside the tool output so
+      // the agent sees it was capped and can re-strategise (spec §3.2 / §5 Q2).
+      // Object outputs gain a `context_budget` field; non-object outputs are
+      // wrapped. Only attaches on the happy path (no error).
+      if (errorReason === undefined && truncationNote) {
+        if (output !== null && typeof output === 'object' && !Array.isArray(output)) {
+          output = { ...(output as Record<string, unknown>), context_budget: truncationNote };
+        } else {
+          output = { value: output, context_budget: truncationNote };
         }
       }
 
