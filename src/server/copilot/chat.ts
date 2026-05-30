@@ -172,8 +172,11 @@ export async function runCopilotChat(
     // remaining nodes+edges / event-rows budget before execute, surface what
     // was capped to the agent. Graceful degradation, never a hard reject.
     interceptInput: (tool, args) => {
-      const { args: capped, truncation } = budgetTracker.capInput(tool.name, args);
-      return { args: capped, truncationNote: truncation };
+      const { args: capped, truncation, softStop } = budgetTracker.capInput(tool.name, args);
+      // FIX 1 (YUK-143): when the dimension is exhausted, propagate the
+      // soft-stop string so the bridge skips execute (graceful stop, never a
+      // limit:0 → Zod throw). Otherwise pass the (possibly capped) args + note.
+      return { args: capped, truncationNote: truncation, softStop };
     },
   });
 

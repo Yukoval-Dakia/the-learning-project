@@ -44,6 +44,14 @@ interface LimitedToolSpec {
   dimension: BudgetDimension;
 }
 
+// Every budgeted read tool's limit param has a Zod minimum of 1 (verified in
+// knowledge-readers.ts / query-mistakes.ts / query-events.ts /
+// get-attempt-context.ts / context-readers.ts). So an effective limit < 1 can
+// never be a valid execute arg — sending `limit:0` would make the tool's own
+// Zod re-parse THROW. We never do that: when the budget can't fund even one
+// row, capInput short-circuits to a graceful soft-stop instead (FIX 1).
+const MIN_TOOL_ROWS = 1;
+
 const LIMITED_TOOLS: Record<string, LimitedToolSpec> = {
   query_knowledge: {
     limitPath: ['limit'],
@@ -68,6 +76,33 @@ const LIMITED_TOOLS: Record<string, LimitedToolSpec> = {
   get_attempt_context: {
     limitPath: ['timelineLimit'],
     courtesyDefault: TOOL_COURTESY_DEFAULTS.get_attempt_context,
+    dimension: 'eventRows',
+  },
+  // FIX 2 (YUK-143) — the other bounded-row readers on the Copilot allowlist
+  // (COPILOT_TOOLS in allowlists.ts) so maxEventRows is enforced across ALL
+  // Copilot row tools, not just the original 5 (spec §7). Defaults are the
+  // tools' CURRENT defaults (no behavior change), verified in context-readers.ts:
+  //   - query_records.limit            default 20, rows ≤ 50   (~L155 / L226)
+  //   - get_review_due.limit           default 20, queue ≤ 50  (~L684 / L728)
+  //   - get_question_context.attemptLimit default 10, attempts+reviews timeline
+  //     (~L484 / L582). This tool also takes a reviewLimit (default 10) on the
+  //     same dimension; we budget the attempts timeline (the dominant row
+  //     source) as the v1 proxy — the reviewLimit rows are bounded ≤ 50 by the
+  //     tool's own Zod max and share this eventRows budget transitively. Both
+  //     paths still pass through the tool-call ceiling.
+  query_records: {
+    limitPath: ['limit'],
+    courtesyDefault: 20,
+    dimension: 'eventRows',
+  },
+  get_review_due: {
+    limitPath: ['limit'],
+    courtesyDefault: 20,
+    dimension: 'eventRows',
+  },
+  get_question_context: {
+    limitPath: ['attemptLimit'],
+    courtesyDefault: 10,
     dimension: 'eventRows',
   },
 };
@@ -116,6 +151,16 @@ export interface CapInputResult {
   args: unknown;
   /** Set when the requested limit was capped; null when nothing was throttled. */
   truncation: ContextBudgetTruncation | null;
+  /**
+   * Set ONLY when the dimension is exhausted (cannot fund even one row). The
+   * bridge treats this exactly like a `beforeExecute` gate reason: it does NOT
+   * execute the tool and surfaces the string as the tool result, so the agent
+   * stops calling read tools and answers with what it has. This is the same
+   * graceful soft-stop as the tool-call ceiling — NEVER a thrown error and
+   * NEVER a `limit:0` arg sent to a tool (FIX 1 / spec §6 non-goal). Null on
+   * the pass-through and partial-truncation paths.
+   */
+  softStop: string | null;
 }
 
 /**
@@ -156,11 +201,30 @@ export class ContextBudgetTracker {
    */
   capInput(toolName: string, args: unknown): CapInputResult {
     const spec = LIMITED_TOOLS[toolName];
-    if (!spec) return { args, truncation: null };
+    if (!spec) return { args, truncation: null, softStop: null };
 
     const requested = readLimit(args, spec.limitPath) ?? spec.courtesyDefault;
     const remaining = this.remainingFor(spec.dimension);
-    const applied = Math.max(0, Math.min(requested, remaining));
+
+    // EXHAUSTED: the dimension can't fund even one row (remaining < the tool's
+    // min of 1). Do NOT execute with limit:0 — that would make the tool's own
+    // Zod re-parse THROW, breaking the spec's central "never a hard reject"
+    // guarantee (§6). Short-circuit via the SAME soft-stop mechanism as the
+    // tool-call ceiling: return a string the bridge surfaces as the tool
+    // result, so the agent stops calling read tools and answers with what it
+    // has. No accounting (nothing ran), no truncation note (nothing returned).
+    if (remaining < MIN_TOOL_ROWS) {
+      return {
+        args,
+        truncation: null,
+        softStop: `context budget exhausted (${spec.dimension}); stop calling read tools and answer with what you have`,
+      };
+    }
+
+    // PARTIAL or FULL: clamp the requested limit down to what's left, but never
+    // below the tool's min of 1 — we return SOME rows, never 0. Since
+    // remaining >= 1 here, `min(requested, remaining)` is already >= 1.
+    const applied = Math.min(requested, remaining);
 
     // Account the (capped) amount up front. Row counting is request-side: we
     // charge what the tool is permitted to return, not the post-hoc result
@@ -172,11 +236,12 @@ export class ContextBudgetTracker {
     // omitted limit into the args, don't echo a truncation note). The tool
     // applies its own courtesy default exactly as before.
     if (applied === requested) {
-      return { args, truncation: null };
+      return { args, truncation: null, softStop: null };
     }
 
-    // Capped: rewrite the limit down to what fits + surface the truncation note
-    // so the agent can self-correct (graceful degradation, never a throw).
+    // Capped (but >= 1): rewrite the limit down to what fits + surface the
+    // truncation note so the agent can self-correct (graceful degradation,
+    // truncated-but-non-empty, never a throw).
     return {
       args: writeLimit(args, spec.limitPath, applied),
       truncation: {
@@ -186,6 +251,7 @@ export class ContextBudgetTracker {
         truncated: true,
         dimension: spec.dimension,
       },
+      softStop: null,
     };
   }
 

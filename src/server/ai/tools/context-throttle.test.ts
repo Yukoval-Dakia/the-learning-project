@@ -86,6 +86,7 @@ describe('ContextBudgetTracker — capInput limit capping (nodes+edges)', () => 
     // 2nd call: asks for 30 but only 10 remain → capped to 10 + truncation note.
     const second = tracker.capInput('query_knowledge', { subjectId: 'wenyan', limit: 30 });
     expect((second.args as { limit: number }).limit).toBe(10);
+    expect(second.softStop).toBeNull();
     expect(second.truncation).toMatchObject({
       applied_limit: 10,
       requested_limit: 30,
@@ -93,10 +94,16 @@ describe('ContextBudgetTracker — capInput limit capping (nodes+edges)', () => 
       dimension: 'nodesPlusEdges',
     });
 
-    // 3rd call: nothing left → capped to 0, still graceful (no throw).
+    // 3rd call: nothing left → EXHAUSTED. FIX 1: graceful soft-stop, NOT a
+    // limit:0 rewrite (which would trip the tool's Zod min and throw). No
+    // truncation note, no further accounting, args untouched.
     const third = tracker.capInput('query_knowledge', { subjectId: 'wenyan', limit: 5 });
-    expect((third.args as { limit: number }).limit).toBe(0);
-    expect(third.truncation?.truncated).toBe(true);
+    expect(typeof third.softStop).toBe('string');
+    expect(third.softStop).toMatch(/context budget exhausted \(nodesPlusEdges\)/);
+    expect(third.truncation).toBeNull();
+    // args are passed through unchanged — no limit:0 ever materialized.
+    expect((third.args as { limit: number }).limit).toBe(5);
+    // Budget stays at the cap (the exhausted call didn't account anything).
     expect(tracker.snapshot().nodesPlusEdgesUsed).toBe(50);
   });
 });
@@ -143,5 +150,96 @@ describe('ContextBudgetTracker — unbounded tools pass through', () => {
     expect(truncation).toBeNull();
     // No accounting against either dimension.
     expect(tracker.snapshot()).toMatchObject({ nodesPlusEdgesUsed: 0, eventRowsUsed: 0 });
+  });
+});
+
+// FIX 1 (YUK-143) — the spec's central invariant: budget EXHAUSTION degrades
+// to a graceful soft-stop, never a limit:0 arg (which would trip the tool's
+// own Zod min and throw). This is the load-bearing regression guard.
+describe('ContextBudgetTracker — exhaustion soft-stops (never limit:0)', () => {
+  it('returns a soft-stop string (no limit:0 rewrite, no truncation note) when the dimension is exhausted', () => {
+    // Budget large enough for one call, then exhausted.
+    const budget: ContextBudget = { ...COPILOT_CONTEXT_BUDGET, maxEventRows: 20 };
+    const tracker = new ContextBudgetTracker(budget);
+
+    // 1st call consumes all 20 event rows.
+    const first = tracker.capInput('query_mistakes', { filter: { limit: 20 } });
+    expect(first.softStop).toBeNull();
+    expect(first.truncation).toBeNull();
+    expect(tracker.snapshot().eventRowsUsed).toBe(20);
+
+    // 2nd call: 0 remaining → soft-stop, NOT a limit:0 arg.
+    const second = tracker.capInput('query_events', { filter: { limit: 20 } });
+    expect(typeof second.softStop).toBe('string');
+    expect(second.softStop).toMatch(/context budget exhausted \(eventRows\)/);
+    expect(second.softStop).toMatch(/stop calling read tools/);
+    expect(second.truncation).toBeNull();
+    // The original args are passed through verbatim — limit:0 is NEVER produced.
+    expect((second.args as { filter: { limit: number } }).filter.limit).toBe(20);
+    // No further accounting — the exhausted call ran nothing.
+    expect(tracker.snapshot().eventRowsUsed).toBe(20);
+  });
+
+  it('partial budget caps to remaining (>= 1) and emits a truncation note — never 0', () => {
+    // Leave exactly 1 row of headroom so the clamp must floor at 1, not 0.
+    const budget: ContextBudget = { ...COPILOT_CONTEXT_BUDGET, maxEventRows: 21 };
+    const tracker = new ContextBudgetTracker(budget);
+
+    // Consume 20 of 21.
+    tracker.capInput('query_mistakes', { filter: { limit: 20 } });
+    expect(tracker.snapshot().eventRowsUsed).toBe(20);
+
+    // Ask for 20 but only 1 remains → capped to 1 (>= 1), with a truncation note.
+    const partial = tracker.capInput('query_events', { filter: { limit: 20 } });
+    expect((partial.args as { filter: { limit: number } }).filter.limit).toBe(1);
+    expect(partial.softStop).toBeNull();
+    expect(partial.truncation).toMatchObject({
+      applied_limit: 1,
+      requested_limit: 20,
+      truncated: true,
+      dimension: 'eventRows',
+    });
+    expect(tracker.snapshot().eventRowsUsed).toBe(21);
+  });
+});
+
+// FIX 2 (YUK-143) — the other bounded-row Copilot readers must draw down the
+// SAME eventRows budget, so COPILOT_CONTEXT_BUDGET.maxEventRows is enforced
+// across ALL Copilot row tools (spec §7), not just the original 5.
+describe('ContextBudgetTracker — newly-budgeted Copilot readers count against eventRows', () => {
+  it('charges query_records / get_review_due / get_question_context to the event-row budget', () => {
+    const tracker = new ContextBudgetTracker(COPILOT_CONTEXT_BUDGET);
+
+    // query_records — top-level limit, courtesy default 20.
+    const records = tracker.capInput('query_records', { kind: ['note'] });
+    expect(records.softStop).toBeNull();
+    expect(records.truncation).toBeNull();
+    expect(tracker.snapshot().eventRowsUsed).toBe(20);
+
+    // get_review_due — top-level limit, courtesy default 20.
+    const due = tracker.capInput('get_review_due', {});
+    expect(due.softStop).toBeNull();
+    expect(tracker.snapshot().eventRowsUsed).toBe(40);
+
+    // get_question_context — attemptLimit path, courtesy default 10.
+    const q = tracker.capInput('get_question_context', { questionId: 'q_1' });
+    expect(q.softStop).toBeNull();
+    expect(tracker.snapshot().eventRowsUsed).toBe(50);
+
+    // None of these touched the nodes+edges dimension.
+    expect(tracker.snapshot().nodesPlusEdgesUsed).toBe(0);
+  });
+
+  it('caps an explicit over-remaining query_records request and flags truncation', () => {
+    const budget: ContextBudget = { ...COPILOT_CONTEXT_BUDGET, maxEventRows: 15 };
+    const tracker = new ContextBudgetTracker(budget);
+    const r = tracker.capInput('query_records', { limit: 50 });
+    expect((r.args as { limit: number }).limit).toBe(15);
+    expect(r.truncation).toMatchObject({
+      applied_limit: 15,
+      requested_limit: 50,
+      truncated: true,
+      dimension: 'eventRows',
+    });
   });
 });
