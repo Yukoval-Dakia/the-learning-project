@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "learning_item_primary_artifact_active_unique" ON "learning_item" USING btree ("primary_artifact_id") WHERE archived_at IS NULL AND primary_artifact_id IS NOT NULL;

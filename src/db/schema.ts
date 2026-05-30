@@ -229,6 +229,15 @@ export const learning_item = pgTable(
   (t) => [
     // ai_score is nullable; CHECK accepts NULL by default.
     check('learning_item_ai_score_range', sql`${t.ai_score} BETWEEN 0 AND 1`),
+    // YUK-171 — enforce the 1:1 `primary_artifact_id` invariant at the DB layer.
+    // The creation path (`acceptLearningIntent`) sets primary_artifact_id once per
+    // learning_item at INSERT and no update/revive path re-points it, so at most one
+    // NON-archived owner per artifact can exist. Archived rows are excluded so an
+    // artifact can be re-owned only after the prior owner is archived (one-way).
+    // Backstops `resolveOwningLearningItemIds`' deterministic-pick + warn read path.
+    uniqueIndex('learning_item_primary_artifact_active_unique')
+      .on(t.primary_artifact_id)
+      .where(sql`archived_at IS NULL AND primary_artifact_id IS NOT NULL`),
   ],
 );
 

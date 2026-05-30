@@ -8,9 +8,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { NotePatchT } from '@/core/schema/note-patch';
-import { artifact, artifact_block_ref, event } from '@/db/schema';
+import { artifact, artifact_block_ref, event, learning_item } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import { listBacklinks, syncBlockRefsForArtifact } from './block-refs';
+import {
+  listBacklinks,
+  resolveOwningLearningItemIds,
+  syncBlockRefsForArtifact,
+} from './block-refs';
 import { persistNoteRefineApply, undoNoteRefineApplyEvent } from './note-refine-apply';
 
 function emptyDoc(): ArtifactBodyBlocksT {
@@ -532,6 +536,115 @@ describe('undoNoteRefineApplyEvent — optimistic lock on restore', () => {
 
     const result = await undoNoteRefineApplyEvent(db, { applyEventId });
     expect(result.status).toBe('undone');
+  });
+});
+
+describe('resolveOwningLearningItemIds', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  async function seedLearningItem(
+    id: string,
+    primaryArtifactId: string | null,
+    opts: { archived?: boolean; createdAt?: Date } = {},
+  ): Promise<void> {
+    const db = testDb();
+    const now = opts.createdAt ?? new Date('2026-05-29T00:00:00.000Z');
+    await db.insert(learning_item).values({
+      id,
+      source: 'learning_intent',
+      title: `li-${id}`,
+      content: '',
+      knowledge_ids: [],
+      primary_artifact_id: primaryArtifactId,
+      status: 'pending',
+      archived_at: opts.archived ? now : null,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+  }
+
+  it('resolves the 1:1 artifact → learning_item id', async () => {
+    const db = testDb();
+    await seedArtifact('art1');
+    await seedLearningItem('li1', 'art1');
+
+    const map = await resolveOwningLearningItemIds(db, ['art1']);
+    expect(map.get('art1')).toBe('li1');
+    expect(map.size).toBe(1);
+  });
+
+  it('returns no entry for an artifact with no owning learning_item', async () => {
+    const db = testDb();
+    await seedArtifact('art1');
+    // No learning_item references art1.
+    const map = await resolveOwningLearningItemIds(db, ['art1']);
+    expect(map.has('art1')).toBe(false);
+    expect(map.size).toBe(0);
+  });
+
+  it('excludes an archived owning learning_item', async () => {
+    const db = testDb();
+    await seedArtifact('art1');
+    await seedLearningItem('li1', 'art1', { archived: true });
+
+    const map = await resolveOwningLearningItemIds(db, ['art1']);
+    expect(map.has('art1')).toBe(false);
+  });
+
+  it('an archived owner does not block a live owner for the same artifact', async () => {
+    // The partial unique index excludes archived rows, so an artifact can be
+    // re-owned after its prior owner is archived — the live owner must win.
+    const db = testDb();
+    await seedArtifact('art1');
+    await seedLearningItem('liOld', 'art1', {
+      archived: true,
+      createdAt: new Date('2026-05-01T00:00:00.000Z'),
+    });
+    await seedLearningItem('liNew', 'art1', { createdAt: new Date('2026-05-20T00:00:00.000Z') });
+
+    const map = await resolveOwningLearningItemIds(db, ['art1']);
+    expect(map.get('art1')).toBe('liNew');
+  });
+
+  it('on a DUPLICATE non-archived owner: picks the earliest-created and warns once (defensive — the unique index normally prevents this)', async () => {
+    // The DB partial unique index forbids two non-archived rows sharing the same
+    // primary_artifact_id, so this anomaly cannot occur via the real schema.
+    // To exercise the defensive deterministic-pick + warn path, stub the db query
+    // builder to yield two rows (already ordered earliest-first, as the production
+    // `.orderBy(created_at, id)` would), mirroring the txSpy shim used above.
+    const db = testDb();
+    const orderedRows = [
+      { id: 'liEarly', primary_artifact_id: 'art1' },
+      { id: 'liLate', primary_artifact_id: 'art1' },
+    ];
+    const thenable = {
+      from: () => thenable,
+      where: () => thenable,
+      orderBy: () => Promise.resolve(orderedRows),
+    };
+    const selectSpy = vi.spyOn(db, 'select').mockReturnValue(thenable as never);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const map = await resolveOwningLearningItemIds(db, ['art1']);
+
+    selectSpy.mockRestore();
+    // Earliest-created row deterministically wins.
+    expect(map.get('art1')).toBe('liEarly');
+    // Warned exactly once, naming both ids + the resolved (earliest) winner.
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const warnArg = warnSpy.mock.calls[0]?.[0] as string;
+    expect(warnArg).toContain('art1');
+    expect(warnArg).toContain('liEarly');
+    expect(warnArg).toContain('liLate');
+    warnSpy.mockRestore();
+  });
+
+  it('returns an empty map for an empty artifact id list (no query)', async () => {
+    const db = testDb();
+    expect((await resolveOwningLearningItemIds(db, [])).size).toBe(0);
   });
 });
 

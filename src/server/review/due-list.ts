@@ -135,7 +135,20 @@ async function batchResolveSubjectIds(
   const uniqueFirstIds = [...pendingFirstIds];
   if (uniqueFirstIds.length > 0) {
     const domains = await Promise.all(
-      uniqueFirstIds.map((kid) => getEffectiveDomain(db, kid).catch(() => null)),
+      uniqueFirstIds.map((kid) =>
+        // YUK-171 (#207) — log before defaulting so a transient / structural
+        // failure in the domain-resolution chain is observable instead of
+        // silently swallowed. Behaviour unchanged: a null domain still falls
+        // back to the default subject profile via resolveSubjectProfile.
+        getEffectiveDomain(db, kid).catch((error) => {
+          console.warn(
+            `[batchResolveSubjectIds] getEffectiveDomain failed for knowledge_id=${kid}; defaulting to null domain: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+          return null;
+        }),
+      ),
     );
     uniqueFirstIds.forEach((kid, idx) => {
       // resolveSubjectProfile maps domain → profile via the alias table and
