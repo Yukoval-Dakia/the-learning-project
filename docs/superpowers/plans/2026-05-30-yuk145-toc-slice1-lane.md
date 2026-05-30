@@ -90,7 +90,7 @@ Rationale (conservative, lower-risk, documented in the ADR note):
      token (now nullable-backed for unanswered → falls back to record id).
 4. **MODIFY** `app/api/ingestion/[id]/import/route.test.ts`: add generalized-outcome
    routing cases; keep ALL existing regression cases green (default outcome=failure).
-5. **MODIFY** `docs/adr/0002-...md` + **CREATE** `docs/adr/ADR-0024-...md` (see §7).
+5. **MODIFY** `docs/adr/0002-...md` + **CREATE** `docs/adr/0024-...md` (see §7).
 
 ## 6. Evidence-first provenance (OC-5)
 

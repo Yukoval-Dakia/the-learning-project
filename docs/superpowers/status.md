@@ -6,9 +6,23 @@
 
 **🎉 v1 closeout — scenario A 达成（2026-05-29）**：YUK-88 block-tree note 全栈 **P0-P7** + Layer 8 critical path（Drawer/Coach/tool_use promote）+ Living Note v0 + cross_link/反链/hub auto-sync + cytoscape 诊断图谱 全 ship。8 波 + Foundation A/B/C/D + Product Track 1/2 闭环。详见 [`audits/2026-05-29-v1-closeout.md`](audits/2026-05-29-v1-closeout.md)；v1 之后去向 [`../planning/v0.5-maintenance-roadmap.md`](../planning/v0.5-maintenance-roadmap.md)。
 
-**最后更新**：2026-05-29（**Wave 7 ✅ → origin `28dd48d6`**（P5 反链/cross_link/hub auto-sync YUK-95 + T-KG cytoscape 诊断图谱 YUK-142 + fix-pass + closeout）；**Wave 8 ✅ 实现完成**（末波 = P6 read-view+节点页 YUK-96 + P7 tests YUK-97 + P2-polish slash/drag-drop YUK-150 + 两轮用户 review-fix + T-PD 收尾 + v1 closeout，全 7 lane 各独立 opus reviewer + 完整 wave-gate 绿：145 test files / 1153 tests + 1 todo / migration 11 / build 55 pages），在 `wave8` 集成分支 `6c308bcd`，**PR `wave8 → main` 待 review/merge**。上一波 Wave 6 `a419b2e6`。）
-**当前 Phase**：**v1 closeout → scenario B**。scenario A v1 已达成；下一步 continue-to-scenario-B（**north-star YUK-143 + T-OC YUK-145** 为 top track，按 feature 价值重切，待 grill 拍板）。
-**主分支**：`origin/main` = `28dd48d6`（Wave 7）；`wave8` 集成分支 = `6c308bcd`（Wave 8 全 7 lane，gate 绿）—— **PR 待 merge**（走 PR 不直推，2026-05-29 用户定）。
+**最后更新**：2026-05-30（**Wave 7 ✅ → origin `28dd48d6`**（P5 反链/cross_link/hub auto-sync YUK-95 + T-KG cytoscape 诊断图谱 YUK-142 + fix-pass + closeout）；**Wave 8 ✅ 实现完成**（末波 = P6 read-view+节点页 YUK-96 + P7 tests YUK-97 + P2-polish slash/drag-drop YUK-150 + 两轮用户 review-fix + T-PD 收尾 + v1 closeout，全 7 lane 各独立 opus reviewer + 完整 wave-gate 绿：145 test files / 1153 tests + 1 todo / migration 11 / build 55 pages），**Wave 8 已 merge 到 main**（2026-05-29，PR #193 rebase-merge，保留 per-commit Closes），其上叠了 scenario B 第一批。上一波 Wave 6 `a419b2e6`。）
+**当前 Phase**：**scenario B 第一批 ✅ shipped（2026-05-30）**。scenario A v1 已达成；scenario B top track（north-star YUK-143 + T-OC YUK-145）+ scheduler/intelligence 链路第一批已落地到 main（baseline `81856564` → `b143ecd9`）。详见本节下方「scenario B 第一批」。
+
+**scenario B 第一批 ✅ shipped（2026-05-30，main `81856564` → `b143ecd9`）**：
+- v1 scenario A 收尾（PR #193）：YUK-96 P6 node page / YUK-97 P7 / YUK-150 P2-polish / YUK-160 artifact-panel dead-link / YUK-151 closeout。
+- **YUK-148** Redis cross-process editing presence（PR #195，**ADR-0023**）—— 解 §7「跨进程 editing-guard 失效」高危债。
+- **YUK-161** node-page primary-atomic dead-link + archived-domain（PR #196）。
+- **T-OC / YUK-145**：slice1 generalized capture（PR #197，**ADR-0024**）/ slice2 VLM StructureTask + multi-page YUK-144 rootfix（PR #199）/ slice3 TaggingTask+WorkflowJudge+flag-gated-OFF auto-enroll（PR #202，**ADR-0026**）。DEFERRED：slice-2b figure-matching YUK-163；slice-3b auto-enroll wiring + OC-5 review UI YUK-164。
+- **North-Star / YUK-143**：W9 core goal+GoalScopeTask+Coach goal_strand+ND-5（PR #198，**ADR-0025**）+ Dreaming goal-aware（PR #201）+ review soft-bias（PR #206，YUK-167）。DEFERRED：W10 UI（goal cards/views/KG lens）blocked on design pre-flight。
+- **T-QP / YUK-165** `question_part` ActivityKind（PR #203）—— ADR-0014 §1/§5 stub 实装 + scheduler-capability 半边。DEFERRED：parent-level 聚合 / part review UI / 自动拆分。
+- **T-CS / YUK-168** cross-subject scheduling v1 round-robin（PR #207）。
+- **T-AR / YUK-170** acceptance-rate signal + additive Dreaming feed（PR #209）。DEFERRED：T-MR deep maintenance-ranking（data-gated on ≥100 proposals）；dismiss-reason UI。
+- infra/follow-up：.env REDIS_URL fix（PR #200）；UI redraw brief（PR #208，WR umbrella YUK-169）；review-findings fix YUK-171（PR #210，learning_item 1:1 invariant + Redis fail-safe）。
+- **新 ADR**：0023 / 0024 / 0025 / 0026（文件名已统一 bare `NNNN-`，W15 doc sweep）。**新 Linear**：YUK-160..171。
+- **scheduler / intelligence track 已 coherent**：goal core → Dreaming/Coach goal-aware → review soft-bias → question_part → cross-subject → acceptance signal 链路打通。
+- 下一步 continue-to-scenario-B 余下（按 feature 价值重切，待 grill 拍板）。
+**主分支**：`origin/main` = `b143ecd9`（Wave 8 已 merge + scenario B 第一批已落地，2026-05-30）。走 PR 不直推（2026-05-29 用户定）。
 **路线图源**：[`docs/planning/v0.3-generalized-ai-learning-framework.md`](../planning/v0.3-generalized-ai-learning-framework.md) §1.5 是当前执行清单；root `PLANNING.md` v0.12 Phase 1-4 已标 historical
 
 ---
@@ -214,9 +228,9 @@ Validation：本地全 wave-gate ✅（144 test files / 1137 tests + 1 todo / mi
 
 ```
 ✅  统一 AiProposalPayload          YUK-42 — `src/core/schema/proposal.ts` discriminated union (kind / target / reason_md / evidence_refs / rollback_plan / cooldown_key) + writer / inbox / producers / signals
-🟡  Maintenance agent               YUK-48 cron ✅ (`knowledge_maintenance_nightly` BJT 03:00); accept UI uses unified proposal lifecycle, richer ranking remains later
-✅  Dreaming lane                   YUK-114 `dreaming_nightly` BJT 03:15；DomainTool MCP bridge + unified proposal inbox
-⬜  Acceptance-rate / dismiss-reason 信号 → 未来 ranking
+🟡  Maintenance agent               YUK-48 cron ✅ (`knowledge_maintenance_nightly` BJT 03:00); accept UI uses unified proposal lifecycle；deep maintenance ranking (T-MR) data-gated on ≥100 proposals
+✅  Dreaming lane                   YUK-114 `dreaming_nightly` BJT 03:15；DomainTool MCP bridge + unified proposal inbox；goal-aware bias (YUK-143/ADR-0025, PR #201) + acceptance-rate additive bias (T-AR/YUK-170, PR #209)
+✅  Acceptance-rate / dismiss-reason 信号 → ranking   T-AR / YUK-170 (PR #209) — signal foundation + additive Dreaming feed；DEFERRED: dismiss-reason UI + T-MR deep ranking (data-gated)
 ⬜  Bad accepted proposal 显式 retraction / rollback 流程
 ```
 
@@ -245,9 +259,13 @@ Validation：本地全 wave-gate ✅（144 test files / 1137 tests + 1 todo / mi
 | 0011 v2 | tool_use + suggestion + edge events | agent 的所有写入都过 event |
 | 0012 | mastery view | DROP 双层 mastery；改用 derived view |
 | 0013 | /review session lifecycle | eager 开 session + sendBeacon close + 6h orphan cron 兜底 |
-| 0014 | Generalized Activity + Capability Registry | `ActivityRef` 取代 question_id；judge/renderer/scheduler 注册制；SubjectProfile 纯数据 + 完全 profile-driven 归因；JudgeResult v2 连续分数；correction event 一等公民；FSRS 是 scheduling policy 之一 |
+| 0014 | Generalized Activity + Capability Registry | `ActivityRef` 取代 question_id；judge/renderer/scheduler 注册制；SubjectProfile 纯数据 + 完全 profile-driven 归因；JudgeResult v2 连续分数；correction event 一等公民；FSRS 是 scheduling policy 之一（2026-05-29 header proposed→accepted，T-PD11；2026-05-30 §1 question_part 实装 T-QP） |
+| 0023 | 跨进程 editing presence via Redis | Living Note 编辑心跳落 Redis 共享态，web/worker 进程共读；解 §7 跨进程 editing-guard 失效（YUK-148） |
+| 0024 | 泛化捕获 — 录入的 outcome 是 signal | T-OC slice 1：录入 outcome 不写死 mistake；`enrollCapturedBlock` 单一入库 owner（YUK-145） |
+| 0025 | North-Star `goal` 实体 + Coach 共存契约 | YUK-143：goal 实体 + GoalScopeTask + Coach goal_strand；ND-5 不变式（Dreaming/Coach 只 additive bias，never suppress signal-driven proposals） |
+| 0026 | WorkflowJudge 置信闸门 + flag-gated 保守自动入库 | T-OC slice 3：TaggingTask + WorkflowJudge confidence-gate；auto-enroll flag 默认 OFF（OC-4 / OC-5，YUK-145） |
 
-新 ADR 模板见 `docs/adr/`。改弦更张前先翻当时的 ADR 别重新论证。
+新 ADR 模板见 `docs/adr/`（文件名统一 bare `NNNN-kebab-title.md`）。改弦更张前先翻当时的 ADR 别重新论证。
 
 ADR-0014 配套：[7 轮讨论 + 10 决议 summary](../discussion/summary.md)、[N+1 实施计划（2125 行）](plans/2026-05-18-capability-registry-foundation.md)。
 
@@ -338,7 +356,7 @@ ADR-0014 配套：[7 轮讨论 + 10 决议 summary](../discussion/summary.md)、
 | 项 | 描述 | 严重度 |
 |---|---|---|
 | Phase 2C UI 未真机验证 | 本地 ship 完没 E2E 跑过浏览器；NAS 容器还是旧 build | **高** |
-| 跨进程 editing-guard 失效 | `editing-session.ts` 模块级内存 Map：web 进程 API route 写心跳，`isArtifactIdle` 在 pg-boss **worker 进程**读不到 → 永远 idle → Living Note refine 不被「用户正在编辑」挡住、直接落盘。需 editing-presence 落 DB/共享态（YUK-148，逐-commit 审查发现）| **高** |
+| ~~跨进程 editing-guard 失效~~ ✅ resolved | ~~`editing-session.ts` 模块级内存 Map：web 进程 API route 写心跳，`isArtifactIdle` 在 pg-boss **worker 进程**读不到 → 永远 idle~~ —— **已解**：editing presence 落 Redis 共享态，web/worker 共读（YUK-148，PR #195，ADR-0023；YUK-171 PR #210 加 Redis fail-safe）| ~~高~~ → resolved |
 | user_cause 与 agent judge 合并策略 | YUK-51 锁定 shared projection：active user_cause 优先，否则 latest active agent judge；dreaming/maintenance 只能提议不能静默覆盖 | 中 |
 | Full judge capability expansion | `semantic` 已通过 async service 可用；`rubric` / `steps` / `multimodal_direct` / `ai_flexible` 仍需独立 capability runner 和 score policy | 中 |
 | Dependabot moderate 警告 | GitHub 报 5 条；未处理 | 中 |
