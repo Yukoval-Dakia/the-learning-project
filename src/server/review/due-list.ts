@@ -26,7 +26,15 @@ import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries
 // only — never touches the FSRS due path, the returned set, counts, or due_at.
 import { type ActiveGoal, listActiveGoals } from '@/server/goals/queries';
 import { errorResponse } from '@/server/http/errors';
+// T-CS / YUK-168 — cross-subject scheduling v1 (ADR-0014 §5, line 242). The due
+// pool is round-robin balanced across the learning-subjects that have due items
+// so one busy subject can't dominate the page. resolveSubjectProfileForKnowledgeIds
+// walks knowledge_ids → parent chain → domain → SubjectProfile (default fallback
+// for orphan ids, YUK-56). getEffectiveDomain is the per-node read it builds on;
+// we memoise it across the pool to avoid an N+1 on the parent-chain walk.
+import { getEffectiveDomain } from '@/server/knowledge/domain';
 import type { EffectiveTruth } from '@/server/review/effective-truth';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import { and, eq, inArray, lte, sql } from 'drizzle-orm';
 
 // YUK-167 / ADR-0025 — swappable active-goals reader so DB tests inject goal
@@ -105,6 +113,98 @@ async function getFailureAttemptsPerQuestion(
   return await getFailureAttempts(db, { questionIds, perQuestionLimit });
 }
 
+// T-CS / YUK-168 — batch-resolve each candidate's learning-subject id from its
+// first knowledge id, deduplicating the parent-chain walk. A naive per-question
+// resolveSubjectProfileForKnowledgeIds would re-walk the knowledge tree once per
+// question (N+1); here we resolve each UNIQUE first-knowledge-id once and reuse.
+//
+// Orphan / missing knowledge ids (no row, or a question with no knowledge_ids)
+// fall back to the default profile id (YUK-56), so any pool whose knowledge ids
+// don't resolve to distinct domains is single-subject — which is exactly what
+// makes the round-robin degenerate to today's order (see roundRobinBySubject).
+async function batchResolveSubjectIds(
+  rows: Array<{ id: string; knowledge_ids: string[] }>,
+): Promise<Map<string, string>> {
+  const defaultSubjectId = resolveSubjectProfile(null).id;
+  const firstIdToSubjectId = new Map<string, string>();
+  const pendingFirstIds = new Set<string>();
+  for (const row of rows) {
+    const firstId = row.knowledge_ids[0];
+    if (firstId && !firstIdToSubjectId.has(firstId)) pendingFirstIds.add(firstId);
+  }
+  const uniqueFirstIds = [...pendingFirstIds];
+  if (uniqueFirstIds.length > 0) {
+    const domains = await Promise.all(
+      uniqueFirstIds.map((kid) => getEffectiveDomain(db, kid).catch(() => null)),
+    );
+    uniqueFirstIds.forEach((kid, idx) => {
+      // resolveSubjectProfile maps domain → profile via the alias table and
+      // falls back to default for unknown/null domains, mirroring
+      // resolveSubjectProfileForKnowledgeIds without re-walking the tree.
+      firstIdToSubjectId.set(kid, resolveSubjectProfile(domains[idx]).id);
+    });
+  }
+  const out = new Map<string, string>();
+  for (const row of rows) {
+    const firstId = row.knowledge_ids[0];
+    out.set(row.id, (firstId && firstIdToSubjectId.get(firstId)) || defaultSubjectId);
+  }
+  return out;
+}
+
+// T-CS / YUK-168 — deterministic round-robin SELECTION across subjects.
+//
+// `rows` is already ordered most-due-first (due_at asc for the overdue segment,
+// or attempt order for the never-reviewed segment). We partition it by subject
+// id (preserving that within-subject order — STABLE), then cycle through the
+// subjects in a deterministic, stable order — the order in which each subject is
+// FIRST encountered in `rows` — taking the next most-due item from each in turn
+// until `limit` items are chosen or the pool is exhausted.
+//
+// SET PRESERVATION + DEGENERATION: with a SINGLE subject there is exactly one
+// bucket, so the round-robin emits that bucket in its original order — byte-
+// identical to `rows.slice(0, limit)`. This is the safety property that keeps
+// the current single-subject-heavy usage unchanged (and keeps the
+// never-reviewed-first contract intact when applied per-segment).
+function roundRobinBySubject<T extends { id: string }>(
+  rows: T[],
+  subjectIdByRow: Map<string, string>,
+  limit: number,
+): T[] {
+  if (rows.length <= 1 || limit <= 0) return rows.slice(0, Math.max(limit, 0));
+  // Stable bucketing: subject order = first-seen order in `rows`; within-subject
+  // order = `rows` order (most-due first). Single subject → one bucket → no-op.
+  const buckets: T[][] = [];
+  const bucketIndexBySubject = new Map<string, number>();
+  for (const row of rows) {
+    const subjectId = subjectIdByRow.get(row.id) ?? '';
+    let idx = bucketIndexBySubject.get(subjectId);
+    if (idx === undefined) {
+      idx = buckets.length;
+      bucketIndexBySubject.set(subjectId, idx);
+      buckets.push([]);
+    }
+    buckets[idx].push(row);
+  }
+  if (buckets.length === 1) return rows.slice(0, limit);
+  const cursors = new Array<number>(buckets.length).fill(0);
+  const out: T[] = [];
+  const cap = Math.min(limit, rows.length);
+  while (out.length < cap) {
+    let advanced = false;
+    for (let b = 0; b < buckets.length && out.length < cap; b += 1) {
+      const cursor = cursors[b];
+      if (cursor < buckets[b].length) {
+        out.push(buckets[b][cursor]);
+        cursors[b] = cursor + 1;
+        advanced = true;
+      }
+    }
+    if (!advanced) break; // all buckets exhausted (defensive; cap bounds the loop)
+  }
+  return out;
+}
+
 export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): Promise<Response> {
   try {
     const listGoals = deps.listActiveGoalsFn ?? listActiveGoals;
@@ -122,6 +222,18 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
     //
     // We keep them ordered: null-state cards first (legacy contract), then
     // due-earliest first.
+    //
+    // T-CS / YUK-168: fetch a WIDER overdue candidate window than `limit` (same
+    // bounded window the never-reviewed slice uses) so the round-robin selection
+    // below can balance across subjects. With a plain `.limit(limit)` the SQL
+    // would pre-pick the `limit` most-due rows GLOBALLY — which can all be one
+    // subject — leaving round-robin nothing to balance. Every fetched row is
+    // still `due_at <= now`, so this widens the CANDIDATE window only, never the
+    // due-pool definition; the returned set is still capped at `limit`
+    // (round-robin selects exactly min(limit, pool) of these due rows). For a
+    // single subject this is a no-op: round-robin returns the `limit` most-due,
+    // identical to the old `.limit(limit)` slice.
+    const candidateWindow = Math.min(Math.max(limit * 4, 100), 400);
     const dueRows = await db
       .select({
         question_id: material_fsrs_state.subject_id,
@@ -138,15 +250,15 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
         and(eq(material_fsrs_state.subject_kind, 'question'), lte(material_fsrs_state.due_at, now)),
       )
       .orderBy(material_fsrs_state.due_at, question.created_at)
-      .limit(limit);
+      .limit(candidateWindow);
 
     // Build the "never reviewed" slice by finding failure attempts whose
     // question has no FSRS state row yet. Use the existing event-stream read
     // path (getFailureAttempts) and filter out already-projected ids.
     const projectedQids = new Set(dueRows.map((r) => r.question_id));
-    const candidateQuestionIds = (
-      await loadLatestFailureQuestionIds(Math.min(Math.max(limit * 4, 100), 400))
-    ).filter((questionId) => !projectedQids.has(questionId));
+    const candidateQuestionIds = (await loadLatestFailureQuestionIds(candidateWindow)).filter(
+      (questionId) => !projectedQids.has(questionId),
+    );
     const newAttempts = await getFailureAttemptsPerQuestion(candidateQuestionIds, 4);
     const newQuestionIds: string[] = [];
     for (const a of newAttempts) {
@@ -256,13 +368,42 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
       }),
     ];
 
-    // ND-5 命门: choose the returned page FIRST via the FSRS due-ordering +
-    // limit. The soft goal re-rank below runs on this ALREADY-SELECTED, sliced
-    // list — never on the pre-limit pool — so it can only reorder items, never
-    // change which ids (or how many, or their due_at / fsrs_state) are
-    // returned. Re-ranking before the slice would let goal-relevant items push
-    // other overdue items off the page → the SET would change → ND-5 violated.
-    const page = combined.slice(0, limit);
+    // T-CS / YUK-168 — cross-subject scheduling v1 (ADR-0014 §5).
+    //
+    // Choose the returned page FIRST, before any goal soft-bias. Instead of a
+    // plain global-due `combined.slice(0, limit)` (which lets one busy subject
+    // dominate the page), we ROUND-ROBIN the selection across the learning-
+    // subjects that have due items: cycle the subjects taking the next most-due
+    // item from each in turn until `limit` is reached or the pool is exhausted.
+    //
+    // We round-robin WITHIN each segment and keep the never-reviewed segment
+    // ahead of the overdue segment, preserving the legacy null-state-first
+    // contract that rerankOverdueByGoals relies on (overdue items remain a
+    // contiguous tail). The never-reviewed block still wins the budget first,
+    // exactly as `combined.slice` did today.
+    //
+    // ND-5 命门: round-robin only changes the ORDER + which subjects share the
+    // budget — every returned row is still a member of the same due pool, never
+    // a non-due item, and the soft goal re-rank below runs on this ALREADY-
+    // SELECTED page (never the pre-limit pool) so it can only reorder, never
+    // expand or shrink the set.
+    //
+    // SINGLE-SUBJECT DEGENERATION: when only one subject has due items, each
+    // segment has a single round-robin bucket → emitted in its original order →
+    // byte-identical to the old `combined.slice(0, limit)`. This keeps the
+    // current single-subject-heavy usage (and every single-subject test) green.
+    const subjectIdByRow = await batchResolveSubjectIds(
+      combined.map((r) => ({ id: r.id, knowledge_ids: r.knowledge_ids })),
+    );
+    const newSegment = combined.slice(0, newRows.length);
+    const overdueSegment = combined.slice(newRows.length);
+    const selectedNew = roundRobinBySubject(newSegment, subjectIdByRow, limit);
+    const selectedOverdue = roundRobinBySubject(
+      overdueSegment,
+      subjectIdByRow,
+      limit - selectedNew.length,
+    );
+    const page = [...selectedNew, ...selectedOverdue];
 
     // SOFT, goal-relevant re-rank of the OVERDUE segment of the returned page.
     // Overdue items are exactly those carrying a non-null fsrs_state (the

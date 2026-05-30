@@ -239,7 +239,7 @@ Dashboard 按 axis 聚合，不要求 profile 共享 runtime taxonomy。
 ### Phase N+3: Scaling
 
 - `steps` judge
-- Cross-subject scheduling v1
+- Cross-subject scheduling v1 — **实现（T-CS / YUK-168，2026-05-30）**：`/api/review/due` 的页面选取由全局 due_at slice 改为按学习科目（knowledge_ids → domain → SubjectProfile）的确定性 round-robin，与 YUK-167 soft-bias 组合（round-robin 选集合，soft-bias 在集合内排序）。单科目退化为原全局 due 行为（字节级一致），故默认开启。见 `docs/superpowers/plans/2026-05-30-yuk168-cross-subject-scheduling-lane.md`。
 - `symbolic` judge（如需要，Python sidecar）
 
 ---
