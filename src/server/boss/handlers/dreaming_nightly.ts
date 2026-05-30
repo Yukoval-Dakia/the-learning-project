@@ -17,8 +17,22 @@ import { type WriteEventInput, writeEvent } from '@/server/events/queries';
 // reads the FSRS-due queue or mutates review state; goals only add direction.
 import { type ActiveGoal, listActiveGoals } from '@/server/goals/queries';
 import { type ProposalInboxRow, listProposalInboxRows } from '@/server/proposals/inbox';
+// T-AR (YUK-TAR) — feed the acceptance-rate SIGNAL into the Dreaming input so it
+// can BIAS toward proposal kinds the user historically accepts (and away from
+// ones routinely dismissed). Purely ADDITIVE (ND-5), mirrors the YUK-143 goal
+// feed: read-only, never reads the FSRS-due queue or mutates review state, and
+// degrades to a no-op on cold start (empty signal → unchanged behavior).
+import {
+  type ProposalKindAcceptanceRate,
+  getProposalAcceptanceRates,
+} from '@/server/proposals/signals';
 
 export const DREAMING_MAX_PROPOSALS = 5;
+
+// T-AR (YUK-TAR) — cap how many proposal kinds we surface to the model so the
+// input stays bounded. There are 14 proposal kinds total (see proposal.ts); 8
+// "top by acceptance" comfortably covers the proven set without flooding.
+export const DREAMING_ACCEPTANCE_RATE_TOP_N = 8;
 
 export interface DreamingNightlyResult {
   processed: number;
@@ -44,6 +58,9 @@ type BuildMcpServerFn = typeof buildMcpServerFromRegistry;
 type WriteEventFn = (db: Db, input: WriteEventInput) => Promise<string>;
 // YUK-143 / ADR-0025 — swappable active-goals reader (DB tests inject fixtures).
 type ListActiveGoalsFn = (db: Db) => Promise<ActiveGoal[]>;
+// T-AR (YUK-TAR) — swappable acceptance-rate reader (DB tests inject fixtures),
+// mirrors ListActiveGoalsFn.
+type LoadProposalAcceptanceRatesFn = (db: Db) => Promise<ProposalKindAcceptanceRate[]>;
 
 interface DepsOverride {
   runAgentTaskFn?: RunAgentTaskFn;
@@ -53,6 +70,10 @@ interface DepsOverride {
   // YUK-143 / ADR-0025 — defaults to listActiveGoals; goals bias proposals
   // toward weak scope only and never touch the review backbone (ND-5).
   listActiveGoalsFn?: ListActiveGoalsFn;
+  // T-AR (YUK-TAR) — defaults to getProposalAcceptanceRates; biases toward
+  // historically-accepted proposal kinds only, never touches the review
+  // backbone, and is a no-op on cold start (ND-5 additive).
+  loadProposalAcceptanceRatesFn?: LoadProposalAcceptanceRatesFn;
   now?: () => Date;
 }
 
@@ -63,12 +84,20 @@ interface DepsOverride {
 // active_goals is empty the objective is effectively unchanged (back-compat).
 const DREAMING_GOAL_BIAS_GUIDANCE =
   ' When active_goals are present, BIAS proposals toward filling weak/under-covered knowledge in their scope_knowledge_ids — additive only; never suppress or replace the existing signal-driven proposals (ND-5). When active_goals is empty, behave exactly as before.';
-export const DREAMING_OBJECTIVE = `Review recent learning signals with the provided DomainTools and create only actionable inbox proposals. Do not mutate user data directly.${DREAMING_GOAL_BIAS_GUIDANCE}`;
+// T-AR (YUK-TAR) — acceptance-rate bias hint, parallel to the goal-bias string.
+// ND-5 additive only: prefer kinds with higher historical acceptance, avoid ones
+// routinely dismissed — but never suppress the existing signal-driven proposals.
+// When proposal_acceptance_rates is empty (cold start) there is nothing to bias
+// on, so the model behaves exactly as before (no-op degrade).
+const DREAMING_ACCEPTANCE_RATE_BIAS_GUIDANCE =
+  ' When proposal_acceptance_rates are present, prefer proposal kinds with higher historical acceptance and avoid kinds the user routinely dismisses — additive only; never suppress or replace the existing signal-driven proposals (ND-5). When proposal_acceptance_rates is empty, behave exactly as before.';
+export const DREAMING_OBJECTIVE = `Review recent learning signals with the provided DomainTools and create only actionable inbox proposals. Do not mutate user data directly.${DREAMING_GOAL_BIAS_GUIDANCE}${DREAMING_ACCEPTANCE_RATE_BIAS_GUIDANCE}`;
 
 function buildDreamingInput(
   now: Date,
   beforeRows: ProposalSnapshotRow[],
   activeGoals: ActiveGoal[],
+  acceptanceRates: ProposalKindAcceptanceRate[],
 ) {
   return {
     run_kind: 'nightly',
@@ -85,6 +114,18 @@ function buildDreamingInput(
       scope_knowledge_ids: g.scope_knowledge_ids,
       sequence_hint: g.sequence_hint,
     })),
+    // T-AR (YUK-TAR) — per-kind acceptance-rate signal for the additive bias
+    // (ND-5). Already sorted by acceptance_rate DESC, total DESC; capped to the
+    // top N proven kinds. Empty array on cold start → no-op (model has nothing
+    // to bias on, behaves exactly as before).
+    proposal_acceptance_rates: acceptanceRates
+      .slice(0, DREAMING_ACCEPTANCE_RATE_TOP_N)
+      .map((r) => ({
+        kind: r.kind,
+        acceptance_rate: r.acceptance_rate,
+        accept_count: r.accept_count,
+        dismiss_count: r.dismiss_count,
+      })),
     budget: {
       max_tool_calls: 8,
       max_proposals: DREAMING_MAX_PROPOSALS,
@@ -108,6 +149,7 @@ export async function runDreamingNightly(
   const buildMcpServer = deps.buildMcpServerFn ?? buildMcpServerFromRegistry;
   const write = deps.writeEventFn ?? writeEvent;
   const listGoals = deps.listActiveGoalsFn ?? listActiveGoals;
+  const loadAcceptanceRates = deps.loadProposalAcceptanceRatesFn ?? getProposalAcceptanceRates;
 
   const beforeRows = await listRows(db);
   const beforeIds = new Set(beforeRows.map((row) => row.id));
@@ -115,6 +157,10 @@ export async function runDreamingNightly(
   // read-only ADD to the Dreaming signal set; it does not read the FSRS-due
   // queue or mutate any review state (ND-5).
   const activeGoals = await listGoals(db);
+  // T-AR (YUK-TAR) — read the acceptance-rate signal for the additive bias.
+  // Read-only ADD; no FSRS-due read, no review-state mutation (ND-5). Empty on
+  // cold start → the input feed degrades to a no-op.
+  const acceptanceRates = await loadAcceptanceRates(db);
   const triggerEventId = `dreaming_trigger_${createId()}`;
   const toolContextTaskRunId = `dreaming_tool_${createId()}`;
 
@@ -156,11 +202,15 @@ export async function runDreamingNightly(
       },
     });
 
-    const taskResult = await run('DreamingTask', buildDreamingInput(now, beforeRows, activeGoals), {
-      db,
-      mcpServers: { [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer },
-      allowedTools: [...resolveMcpAllowedTools('dreaming')],
-    });
+    const taskResult = await run(
+      'DreamingTask',
+      buildDreamingInput(now, beforeRows, activeGoals, acceptanceRates),
+      {
+        db,
+        mcpServers: { [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer },
+        allowedTools: [...resolveMcpAllowedTools('dreaming')],
+      },
+    );
 
     const afterRows = await listRows(db);
     const pendingAfter = afterRows.filter((row) => row.status === 'pending').length;

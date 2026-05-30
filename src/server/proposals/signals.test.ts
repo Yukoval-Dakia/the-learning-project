@@ -6,6 +6,7 @@ import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
   PROPOSAL_DISMISS_COOLDOWN_DAYS,
   ensureProposalDecisionSignal,
+  getProposalAcceptanceRates,
   loadProposalSignalsForRows,
   recordProposalDecisionSignal,
 } from './signals';
@@ -524,5 +525,132 @@ describe('proposal signals', () => {
       acceptance_rate: 0.5,
       dismiss_reason: 'skip',
     });
+  });
+});
+
+// T-AR (YUK-TAR) — acceptance-rate SIGNAL roll-up. Rolls the per-(kind,
+// cooldown_key) proposal_signals rows up to the per-kind dimension Dreaming /
+// Coach reason about. Read-only; derived from the existing aggregate (no new
+// column / table / view).
+describe('getProposalAcceptanceRates', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('returns an empty array on cold start (no proposal_signals rows)', async () => {
+    const rates = await getProposalAcceptanceRates(testDb());
+    expect(rates).toEqual([]);
+  });
+
+  it('rolls multiple cooldown_keys of the same kind into one per-kind row', async () => {
+    const db = testDb();
+    // Two distinct cooldown_keys, same kind 'completion':
+    //   key A → 3 accept / 1 dismiss
+    //   key B → 1 accept / 1 dismiss
+    // Rolled up: 4 accept / 2 dismiss → 6 total → 4/6 acceptance.
+    await recordProposalDecisionSignal(
+      db,
+      { id: 'p_a', kind: 'completion', payload: { cooldown_key: 'completion:A' } },
+      'accept',
+    );
+    await recordProposalDecisionSignal(
+      db,
+      { id: 'p_a', kind: 'completion', payload: { cooldown_key: 'completion:A' } },
+      'accept',
+    );
+    await recordProposalDecisionSignal(
+      db,
+      { id: 'p_a', kind: 'completion', payload: { cooldown_key: 'completion:A' } },
+      'accept',
+    );
+    await recordProposalDecisionSignal(
+      db,
+      { id: 'p_a', kind: 'completion', payload: { cooldown_key: 'completion:A' } },
+      'dismiss',
+      'A dismiss',
+    );
+    await recordProposalDecisionSignal(
+      db,
+      { id: 'p_b', kind: 'completion', payload: { cooldown_key: 'completion:B' } },
+      'accept',
+    );
+    await recordProposalDecisionSignal(
+      db,
+      { id: 'p_b', kind: 'completion', payload: { cooldown_key: 'completion:B' } },
+      'dismiss',
+      'B dismiss',
+    );
+
+    const rates = await getProposalAcceptanceRates(db);
+    expect(rates).toHaveLength(1);
+    expect(rates[0]).toEqual({
+      kind: 'completion',
+      accept_count: 4,
+      dismiss_count: 2,
+      total: 6,
+      acceptance_rate: 4 / 6,
+    });
+  });
+
+  it('groups distinct kinds and sorts by acceptance_rate DESC then total DESC', async () => {
+    const db = testDb();
+    // archive: 1 accept / 0 dismiss → rate 1, total 1
+    // completion: 3 accept / 1 dismiss → rate 0.75, total 4
+    // knowledge_node: 1 accept / 1 dismiss → rate 0.5, total 2
+    await recordProposalDecisionSignal(
+      db,
+      { id: 'p_arch', kind: 'archive', payload: { cooldown_key: 'archive:1' } },
+      'accept',
+    );
+    for (let i = 0; i < 3; i++) {
+      await recordProposalDecisionSignal(
+        db,
+        { id: 'p_comp', kind: 'completion', payload: { cooldown_key: 'completion:1' } },
+        'accept',
+      );
+    }
+    await recordProposalDecisionSignal(
+      db,
+      { id: 'p_comp', kind: 'completion', payload: { cooldown_key: 'completion:1' } },
+      'dismiss',
+      'late',
+    );
+    await recordProposalDecisionSignal(
+      db,
+      { id: 'p_kn', kind: 'knowledge_node', payload: { cooldown_key: 'knowledge_node:1' } },
+      'accept',
+    );
+    await recordProposalDecisionSignal(
+      db,
+      { id: 'p_kn', kind: 'knowledge_node', payload: { cooldown_key: 'knowledge_node:1' } },
+      'dismiss',
+      'noise',
+    );
+
+    const rates = await getProposalAcceptanceRates(db);
+    expect(rates.map((r) => r.kind)).toEqual(['archive', 'completion', 'knowledge_node']);
+    expect(rates.map((r) => r.acceptance_rate)).toEqual([1, 0.75, 0.5]);
+  });
+
+  it('prefers higher total as the tiebreak when acceptance_rate is equal', async () => {
+    const db = testDb();
+    // Both kinds at acceptance_rate 1, but 'completion' has more decisions.
+    await recordProposalDecisionSignal(
+      db,
+      { id: 'p_low', kind: 'archive', payload: { cooldown_key: 'archive:1' } },
+      'accept',
+    );
+    for (let i = 0; i < 3; i++) {
+      await recordProposalDecisionSignal(
+        db,
+        { id: 'p_high', kind: 'completion', payload: { cooldown_key: 'completion:1' } },
+        'accept',
+      );
+    }
+
+    const rates = await getProposalAcceptanceRates(db);
+    expect(rates.map((r) => r.kind)).toEqual(['completion', 'archive']);
+    expect(rates[0].total).toBe(3);
+    expect(rates[1].total).toBe(1);
   });
 });

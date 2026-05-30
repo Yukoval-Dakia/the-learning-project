@@ -7,6 +7,7 @@ import {
 } from '@/server/ai/tools/allowlists';
 import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
 import {
+  DREAMING_ACCEPTANCE_RATE_TOP_N,
   DREAMING_MAX_PROPOSALS,
   DREAMING_OBJECTIVE,
   runDreamingNightly,
@@ -42,6 +43,9 @@ describe('runDreamingNightly', () => {
       // YUK-143 — North-Star: stub the active-goals reader so these no-DB unit
       // tests don't hit the real listActiveGoals query (db is a {} stub).
       listActiveGoalsFn: async () => [],
+      // T-AR (YUK-TAR) — stub the acceptance-rate reader so this no-DB unit test
+      // doesn't hit the real getProposalAcceptanceRates query (db is a {} stub).
+      loadProposalAcceptanceRatesFn: async () => [],
       now: () => new Date('2026-05-28T03:00:00.000Z'),
     });
 
@@ -119,6 +123,8 @@ describe('runDreamingNightly', () => {
         writeEventFn,
         // YUK-143 — stub the active-goals reader (db is a {} stub here).
         listActiveGoalsFn: async () => [],
+        // T-AR (YUK-TAR) — stub the acceptance-rate reader (db is a {} stub here).
+        loadProposalAcceptanceRatesFn: async () => [],
         now: () => new Date('2026-05-28T03:00:00.000Z'),
       }),
     ).rejects.toThrow('model down');
@@ -171,6 +177,7 @@ describe('runDreamingNightly', () => {
       runAgentTaskFn,
       writeEventFn,
       listActiveGoalsFn: async () => goals,
+      loadProposalAcceptanceRatesFn: async () => [],
       now: () => new Date('2026-05-28T03:00:00.000Z'),
     });
 
@@ -225,6 +232,7 @@ describe('runDreamingNightly', () => {
       runAgentTaskFn,
       writeEventFn,
       listActiveGoalsFn: async () => [],
+      loadProposalAcceptanceRatesFn: async () => [],
       now: () => new Date('2026-05-28T03:00:00.000Z'),
     });
 
@@ -235,5 +243,128 @@ describe('runDreamingNightly', () => {
     };
     expect(taskInput.active_goals).toEqual([]);
     expect(taskInput.run_kind).toBe('nightly');
+  });
+
+  // T-AR (YUK-TAR) — acceptance-rate SIGNAL: when proposal_acceptance_rates are
+  // present, the DreamingTask input carries them (capped + already sorted) and
+  // the objective includes the acceptance-rate bias hint. Purely additive (ND-5).
+  it('threads the acceptance-rate signal into the DreamingTask input with bias objective', async () => {
+    const db = {} as never;
+    const mcpServer = { name: 'fake-loom' } as never;
+    const acceptanceRates = [
+      { kind: 'completion', acceptance_rate: 0.9, accept_count: 9, dismiss_count: 1, total: 10 },
+      { kind: 'knowledge_node', acceptance_rate: 0.5, accept_count: 2, dismiss_count: 2, total: 4 },
+      { kind: 'archive', acceptance_rate: 0.1, accept_count: 1, dismiss_count: 9, total: 10 },
+    ];
+    const listProposalInboxRowsFn = vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_dreaming_rates',
+      text: 'done',
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    const writeEventFn = vi.fn(async (_db, input) => input.id);
+
+    await runDreamingNightly(db, {
+      listProposalInboxRowsFn,
+      buildMcpServerFn,
+      runAgentTaskFn,
+      writeEventFn,
+      listActiveGoalsFn: async () => [],
+      loadProposalAcceptanceRatesFn: async () => acceptanceRates,
+      now: () => new Date('2026-05-28T03:00:00.000Z'),
+    });
+
+    expect(runAgentTaskFn).toHaveBeenCalledWith(
+      'DreamingTask',
+      expect.objectContaining({
+        run_kind: 'nightly',
+        proposal_acceptance_rates: [
+          { kind: 'completion', acceptance_rate: 0.9, accept_count: 9, dismiss_count: 1 },
+          { kind: 'knowledge_node', acceptance_rate: 0.5, accept_count: 2, dismiss_count: 2 },
+          { kind: 'archive', acceptance_rate: 0.1, accept_count: 1, dismiss_count: 9 },
+        ],
+        objective: DREAMING_OBJECTIVE,
+      }),
+      expect.anything(),
+    );
+    const firstCallArgs = runAgentTaskFn.mock.calls[0] as unknown as unknown[];
+    const taskInput = firstCallArgs[1] as { objective: string };
+    expect(taskInput.objective).toContain('proposal_acceptance_rates');
+    expect(taskInput.objective).toContain('historical acceptance');
+    expect(taskInput.objective).toContain('ND-5');
+  });
+
+  // T-AR (YUK-TAR) — caps the surfaced kinds to the top N so the input stays
+  // bounded, preserving the already-sorted order from getProposalAcceptanceRates.
+  it('caps proposal_acceptance_rates to the top N kinds', async () => {
+    const db = {} as never;
+    const mcpServer = { name: 'fake-loom' } as never;
+    const manyRates = Array.from({ length: 14 }, (_, i) => ({
+      kind: `kind_${i}`,
+      acceptance_rate: (14 - i) / 14,
+      accept_count: 14 - i,
+      dismiss_count: i,
+      total: 14,
+    }));
+    const listProposalInboxRowsFn = vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_dreaming_cap',
+      text: 'done',
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    const writeEventFn = vi.fn(async (_db, input) => input.id);
+
+    await runDreamingNightly(db, {
+      listProposalInboxRowsFn,
+      buildMcpServerFn,
+      runAgentTaskFn,
+      writeEventFn,
+      listActiveGoalsFn: async () => [],
+      loadProposalAcceptanceRatesFn: async () => manyRates,
+      now: () => new Date('2026-05-28T03:00:00.000Z'),
+    });
+
+    const firstCallArgs = runAgentTaskFn.mock.calls[0] as unknown as unknown[];
+    const taskInput = firstCallArgs[1] as {
+      proposal_acceptance_rates: { kind: string }[];
+    };
+    expect(taskInput.proposal_acceptance_rates).toHaveLength(DREAMING_ACCEPTANCE_RATE_TOP_N);
+    // Top N preserved in order from the (already-sorted) reader output.
+    expect(taskInput.proposal_acceptance_rates[0].kind).toBe('kind_0');
+  });
+
+  // T-AR (YUK-TAR) — cold-start back-compat: empty acceptance-rate signal →
+  // empty proposal_acceptance_rates array, model has nothing to bias on and
+  // behaves exactly as before (additive-only / no-op guarantee, ND-5).
+  it('emits empty proposal_acceptance_rates on cold start (no-op back-compat)', async () => {
+    const db = {} as never;
+    const mcpServer = { name: 'fake-loom' } as never;
+    const listProposalInboxRowsFn = vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_dreaming_cold',
+      text: 'done',
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    const writeEventFn = vi.fn(async (_db, input) => input.id);
+
+    await runDreamingNightly(db, {
+      listProposalInboxRowsFn,
+      buildMcpServerFn,
+      runAgentTaskFn,
+      writeEventFn,
+      listActiveGoalsFn: async () => [],
+      loadProposalAcceptanceRatesFn: async () => [],
+      now: () => new Date('2026-05-28T03:00:00.000Z'),
+    });
+
+    const firstCallArgs = runAgentTaskFn.mock.calls[0] as unknown as unknown[];
+    const taskInput = firstCallArgs[1] as { proposal_acceptance_rates: unknown[] };
+    expect(taskInput.proposal_acceptance_rates).toEqual([]);
   });
 });
