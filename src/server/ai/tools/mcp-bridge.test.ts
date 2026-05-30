@@ -221,6 +221,51 @@ describe('buildMcpServerFromRegistry', () => {
     expect((log.input_json as { limit: number }).limit).toBe(10);
   });
 
+  // P5.1 / YUK-143 FIX 1 — budget-exhaustion soft-stop. When interceptInput
+  // returns a `softStop` reason (instead of capped args), the bridge must NOT
+  // execute the tool and must surface the string as the tool result — exactly
+  // like a beforeExecute gate. This guards the spec's central "never a hard
+  // reject/throw" invariant: the tool is never run with a limit:0 that would
+  // trip its own Zod min.
+  it('interceptInput softStop short-circuits execute and surfaces the reason as the tool result', async () => {
+    const runFn = vi.fn((_i: { limit: number }) => ({ rows: 0 }));
+    registerTool(
+      makeReadTool<{ limit: number }, { rows: number }>(
+        'demo_exhausted',
+        // min(1) mirrors the real budgeted readers: a limit:0 here would throw.
+        { limit: z.number().int().min(1) },
+        runFn,
+        (_i, o) => `demo_exhausted · ${o.rows}`,
+      ),
+    );
+
+    buildMcpServerFromRegistry({
+      ctx,
+      serverName: 'loom_v2',
+      toolNames: ['demo_exhausted'],
+      interceptInput: (_tool, _args) => ({
+        args: _args,
+        softStop:
+          'context budget exhausted (eventRows); stop calling read tools and answer with what you have',
+      }),
+    });
+
+    // No throw — handler resolves with a normal MCP content shape.
+    const result = (await mockAgentSdk.toolDefs[0].handler({ limit: 20 })) as {
+      content: Array<{ type: string; text: string }>;
+    };
+
+    // The tool was NOT executed (no limit:0 reached it → no Zod throw).
+    expect(runFn).not.toHaveBeenCalled();
+    // The soft-stop reason is surfaced as the tool result error, just like a
+    // beforeExecute gate reason.
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.error).toMatch(/context budget exhausted \(eventRows\)/);
+    expect(parsed.output).toBeUndefined();
+    const log = captured.toolCallLogs[0] as Record<string, unknown>;
+    expect(log.error_reason).toMatch(/context budget exhausted/);
+  });
+
   it('interceptInput does not run when beforeExecute blocks the call', async () => {
     const runFn = vi.fn(() => ({ ok: true }));
     const interceptInput = vi.fn((_tool: unknown, args: unknown) => ({ args }));
