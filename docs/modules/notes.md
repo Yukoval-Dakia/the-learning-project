@@ -99,7 +99,7 @@ note_hub: 氧化还原反应
 
 闭环：
 - 做对：算 LearningItem done 信号之一（见 [`learning-items.md`](learning-items.md)），喂 base mastery（见 [`progress.md`](progress.md)）
-- 做错：入错题本（见 [`mistakes.md`](mistakes.md)，`from_judgment_id` 关联），可申诉重判
+- 做错：入错题本（见 [`mistakes.md`](mistakes.md)，经 `caused_by_event_id` 关联到致因 attempt/judge event），可申诉重判
 - 错误率持续 >50%：触发 § 5 的 note 重写 propose
 
 读 note 与做题不再分离。
