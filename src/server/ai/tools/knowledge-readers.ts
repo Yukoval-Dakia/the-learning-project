@@ -8,9 +8,14 @@ import type { Db } from '@/db/client';
 import { event, knowledge, knowledge_edge, knowledge_mastery } from '@/db/schema';
 import { and, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
+// P5.1 / YUK-143 — excerpt cap + courtesy defaults sourced from the single
+// budgets.ts source of truth. KNOWLEDGE_EXCERPT_MAX is 180 (byte-unchanged from
+// the prior file-local TEXT_SNIPPET_MAX); the courtesy defaults below are the
+// tools' CURRENT defaults, just named centrally.
+import { KNOWLEDGE_EXCERPT_MAX, TOOL_COURTESY_DEFAULTS } from './budgets';
 import type { DomainTool, ToolContext } from './types';
 
-const TEXT_SNIPPET_MAX = 180;
+const TEXT_SNIPPET_MAX = KNOWLEDGE_EXCERPT_MAX;
 const MAX_NODES = 60;
 const RECENT_FAILURE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -394,7 +399,9 @@ async function executeQueryKnowledge(
   raw: QueryKnowledgeInput,
 ): Promise<QueryKnowledgeOutput> {
   const input = QueryKnowledgeInputSchema.parse(raw);
-  const limit = input.limit ?? 10;
+  // P5.1 / YUK-143 — courtesy default (10) centralized in budgets.ts;
+  // byte-unchanged from the prior inline literal.
+  const limit = input.limit ?? TOOL_COURTESY_DEFAULTS.query_knowledge;
   const rows = await loadKnowledgeRows(ctx.db, input.subjectId);
   const byId = nodeMap(rows);
   const allEdges = await loadEdges(
@@ -541,7 +548,9 @@ type ExpandOutput = z.infer<typeof ExpandOutputSchema>;
 
 async function executeExpand(ctx: ToolContext, raw: ExpandInput): Promise<ExpandOutput> {
   const input = ExpandInputSchema.parse(raw);
-  const maxNodes = input.maxNodes ?? 30;
+  // P5.1 / YUK-143 — courtesy default (30) centralized in budgets.ts;
+  // byte-unchanged from the prior inline literal.
+  const maxNodes = input.maxNodes ?? TOOL_COURTESY_DEFAULTS.expand_knowledge_subgraph;
   const allRows = await loadKnowledgeRows(ctx.db);
   const byId = nodeMap(allRows);
   const center = byId.get(input.centerNodeId);

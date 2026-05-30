@@ -10,6 +10,9 @@
 import { event } from '@/db/schema';
 import { and, desc, eq, gte } from 'drizzle-orm';
 import { z } from 'zod';
+// P5.1 / YUK-143 — courtesy default (20) centralized in budgets.ts;
+// byte-unchanged from the prior inline literal.
+import { TOOL_COURTESY_DEFAULTS } from './budgets';
 import type { DomainTool, ToolContext } from './types';
 
 const InputSchema = z.object({
@@ -70,7 +73,7 @@ const DESCRIPTION = [
 async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
   const input = InputSchema.parse(raw);
   const filter = input.filter ?? {};
-  const limit = filter.limit ?? 20;
+  const limit = filter.limit ?? TOOL_COURTESY_DEFAULTS.query_events;
   const since = filter.sinceDays ? new Date(Date.now() - filter.sinceDays * 86_400_000) : undefined;
 
   const conditions = [];

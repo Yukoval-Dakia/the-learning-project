@@ -8,6 +8,11 @@ import {
   resolveDomainToolNames,
   resolveMcpAllowedTools,
 } from '@/server/ai/tools/allowlists';
+// P5.1 / YUK-143 — single tunable source for the Dreaming run caps. The values
+// below are byte-identical to the numbers previously hardcoded here
+// (max_proposals 5 / max_tool_calls 8); this is a pure constant relocation, so
+// Dreaming behavior is unchanged (spec §3.3).
+import { DREAMING_CONTEXT_BUDGET } from '@/server/ai/tools/budgets';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
 import { enqueueDreamingNoteRefine } from '@/server/artifacts/note-refine-triggers';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
@@ -27,7 +32,10 @@ import {
   getProposalAcceptanceRates,
 } from '@/server/proposals/signals';
 
-export const DREAMING_MAX_PROPOSALS = 5;
+// P5.1 / YUK-143 — re-exported alias kept so existing imports / tests don't
+// break (spec §4.2). Sourced from DREAMING_CONTEXT_BUDGET.maxProposals (= 5),
+// byte-unchanged.
+export const DREAMING_MAX_PROPOSALS = DREAMING_CONTEXT_BUDGET.maxProposals as number;
 
 // T-AR (YUK-TAR) — cap how many proposal kinds we surface to the model so the
 // input stays bounded. There are 14 proposal kinds total (see proposal.ts); 8
@@ -127,7 +135,9 @@ function buildDreamingInput(
         dismiss_count: r.dismiss_count,
       })),
     budget: {
-      max_tool_calls: 8,
+      // P5.1 / YUK-143 — sourced from DREAMING_CONTEXT_BUDGET (8 / 5),
+      // byte-identical to the prior hardcoded literals.
+      max_tool_calls: DREAMING_CONTEXT_BUDGET.maxToolCalls,
       max_proposals: DREAMING_MAX_PROPOSALS,
       stop_when_no_actionable_proposal: true,
     },
