@@ -60,6 +60,21 @@
 - **scenario A v1 达成 → scenario B**：8 波全 ship（YUK-88 P0-P7 全栈 + Layer 8 critical path + Living Note + cross_link/hub/cytoscape graph）。下一步 **continue-to-scenario-B**（**north-star YUK-143 + T-OC YUK-145** 为 top track，按 feature 价值重切，待 grill 拍板）。去向见 [`v0.5-maintenance-roadmap.md`](../../planning/v0.5-maintenance-roadmap.md)。
 - **本 session 新增 spec/issue（post-v1 / scenario B 种子）**：North-Star 学习意图设计（YUK-143，spec ✅）+ T-OC OCR/ingestion 重建设计（YUK-145，spec ✅）+ 多页 OCR bug（YUK-144）+ 跨进程 editing-guard（YUK-148，**High**，需设计）+ derived_from 注释（YUK-146）+ undo UX（YUK-147）+ Wave6 mediums（YUK-149）。
 
+- **scenario B 第一批 ✅ shipped（2026-05-30，main baseline `81856564` → `b143ecd9`）**：上面这批 scenario-B 种子的多数已落地。
+  - **v1 scenario A 收尾**（PR #193，含 codex-fix dead-links）：YUK-96 P6 node page / YUK-97 P7 / YUK-150 P2-polish / YUK-160 artifact-panel dead-link / YUK-151 closeout。
+  - **YUK-148** Redis cross-process editing presence（PR #195，**ADR-0023**）—— 解 §7 高危技术债。
+  - **YUK-161** node-page primary-atomic dead-link + archived-domain（PR #196）。
+  - **T-OC / YUK-145**：slice1 generalized capture（PR #197，**ADR-0024**）/ slice2 VLM StructureTask + multi-page YUK-144 rootfix（PR #199）/ slice3 TaggingTask+WorkflowJudge+flag-gated-OFF auto-enroll（PR #202，**ADR-0026**）。DEFERRED：slice-2b figure-matching = YUK-163；slice-3b auto-enroll wiring + OC-5 review UI = YUK-164。
+  - **North-Star / YUK-143**：W9 core goal+GoalScopeTask+Coach goal_strand+ND-5（PR #198，**ADR-0025**）+ Dreaming goal-aware（PR #201）+ review soft-bias（PR #206，YUK-167）。DEFERRED：W10 UI（goal cards / views / KG lens）blocked on design pre-flight。
+  - **T-QP / YUK-165** `question_part` ActivityKind（PR #203）—— ADR-0014 §1/§5 stub 实装 + scheduler-capability 半边。DEFERRED：parent-level 聚合 / part review UI / 自动拆分。
+  - **T-CS / YUK-168** cross-subject scheduling v1 round-robin（PR #207）。
+  - **T-AR / YUK-170** acceptance-rate signal + additive Dreaming feed（PR #209）。DEFERRED：T-MR deep maintenance-ranking（data-gated on ≥100 proposals）；dismiss-reason UI。
+  - infra/follow-up：.env REDIS_URL fix（PR #200）；UI redraw brief（PR #208，WR umbrella YUK-169）；review-findings fix YUK-171（PR #210，learning_item 1:1 invariant + Redis fail-safe）。
+  - **新 ADR**：0023（Redis presence）/ 0024（generalized capture outcome-is-signal）/ 0025（North-Star goal + Coach coexistence）/ 0026（WorkflowJudge confidence-gate + flag-gated auto-enroll）—— 文件名已统一为 bare `NNNN-` 约定（W15 doc sweep）。
+  - **新 Linear**：YUK-160..171。
+  - **scheduler / intelligence track 已 coherent**：goal core → Dreaming/Coach goal-aware → review soft-bias → question_part → cross-subject → acceptance signal 链路打通。
+  - DEFERRED 留 ⬜：T-MR（data-gated）/ YUK-163 slice-2b / YUK-164 slice-3b / W10 North-Star UI + WR pre-flight-gated / Subject #4 先不定。
+
 **Audit baseline ack（per `docs/audit/2026-05-27-pre-yuk88-baseline-drift.md`, 2026-05-27）**：
 - **F-01** notes.md 整篇 ADR-0020 冲突 → YUK-88 P3 implementation branch 已改 AI pipeline；module doc rewrite remains final audit item before closeout if still stale
 - **F-02 / F-03** artifact 表 / `CorrectArtifactEvent.payload.section_id` pre-ADR-0020 形态 → resolved by Wave 2 YUK-91/YUK-92 body-block migration
@@ -83,7 +98,7 @@
 | 1 | `omc ultragoal status`（每条 track 一个 ledger 或 共用 master，见 §6.3） | Roadmap state |
 | 2 | `docs/planning/v0.4-complete-form-roadmap.md` | 完全体合成 SoT（§3 八层 + §6 P0-P5 priority + §10 漂移清单 + §11 风险） |
 | 3 | `docs/superpowers/status.md` | Shipped baseline + 当前 phase（事实）|
-| 4 | `docs/adr/0001..0022`（含 ADR-0021 outbox + ADR-0022 PM schema） | 决议层 |
+| 4 | `docs/adr/0001..0026`（含 ADR-0021 outbox + ADR-0022 PM schema + ADR-0023 Redis presence + ADR-0024 generalized capture + ADR-0025 North-Star goal + ADR-0026 WorkflowJudge gate） | 决议层 |
 | 5 | `CONTEXT.md` | 跨 agent 术语表（含 ADR-0020 新术语：block_id / body_blocks / knowledge_ids label） |
 | 6 | `docs/planning/2026-05-26-note-rich-doc.md` §0 | YUK-88 post-grill 决策矩阵 |
 | 7 | `docs/superpowers/plans/2026-05-26-yuk88-*.md` (3 份) | YUK-88 track 完整 plan + driver |
@@ -170,7 +185,7 @@ ls -lt docs/audit/*drift* 2>/dev/null | head -3
 | **T-J7** diagram_handwriting judge | ⬜ | ~8 | 几何 / 科学图表 | (none) | ⬜ |
 | **T-J8** human_review judge | ⬜ | ~5 | safety-critical / 高 uncertainty | (none) | ⬜ |
 | **T-J9** symbolic judge（可选 Python sidecar SymPy） | ⏳ | ~13 | math symbolic 等价 | ADR-0001 revise（引入 sidecar）| ⬜ |
-| **T-QP** `question_part` ActivityKind | ⬜ | ~8 | 英语阅读 / 物理多步独立调度 + cross-subject scheduling | (none) | ⬜ |
+| **T-QP** `question_part` ActivityKind | ✅ shipped (slice 1) | ~8 | 英语阅读 / 物理多步独立调度 + cross-subject scheduling | (none) | [YUK-165](https://linear.app/yukoval-studios/issue/YUK-165) PR #203 (ADR-0014 §1/§5 stub 实装 + scheduler-capability 半边) — **DEFERRED**: parent-level 聚合 / part review UI / 自动拆分 |
 | **T-S4** Subject #4 acid test | ⬜ | ~8 | 第 4 学科 onboard 流程定型 | (none) | ⬜ |
 | **T-LI** 3a/3b LearningIntent proposal flow | ⬜ | ~13 | "我想学 X" 路径完全体（主题不存在 / 不完整） | (none) | ⬜ |
 | **T-RA** Partial credit P3 RatingAdvisor | ✅ ship 2026-05-27 | (done) | review feedback advisory shipped | — | [YUK-98](https://linear.app/yukoval-studios/issue/YUK-98) |
@@ -183,12 +198,12 @@ ls -lt docs/audit/*drift* 2>/dev/null | head -3
 
 | Track | Status | pts | forward-locks | blocked-by | Linear |
 |---|---|---|---|---|---|
-| **T-AR** Acceptance-rate / dismiss-reason 信号 | ⬜ | ~5 | Maintenance ranking + Dreaming priorityization | (none) | ⬜ |
+| **T-AR** Acceptance-rate / dismiss-reason 信号 | ✅ shipped (signal foundation + additive Dreaming feed) | ~5 | Maintenance ranking + Dreaming priorityization | (none) | [YUK-170](https://linear.app/yukoval-studios/issue/YUK-170) PR #209 — **DEFERRED**: dismiss-reason UI |
 | **T-RT** Bad accepted proposal PR-level revert event | ⬜ | ~8 | proposal full lifecycle | (none) | ⬜ |
 | **T-LN** Living Note 5 触发器 + NoteRefineTask | 🔄 | (T-88 P4) | — | T-88 P4 | (T-88 sub) |
 | **T-MW** Note appeal / mark-wrong UX | ✅ | (done) | — | — | YUK-85 PR #151/#153/#154 |
-| **T-CS** Cross-subject scheduling v1 (deterministic quotas) | ⬜ | ~13 | 多学科混排; P1.1 / P1.2 done 才有意义 | T-QP + ≥ 5 judges | ⬜ |
-| **T-MR** Maintenance ranking 深化 | ⬜ | ~5 | T-AR signal | T-AR | ⬜ |
+| **T-CS** Cross-subject scheduling v1 (deterministic quotas) | ✅ shipped (round-robin due selection) | ~13 | 多学科混排; P1.1 / P1.2 done 才有意义 | T-QP + ≥ 5 judges | [YUK-168](https://linear.app/yukoval-studios/issue/YUK-168) PR #207 |
+| **T-MR** Maintenance ranking 深化 | ⬜（data-gated：需 ≥100 proposals 才有信号深化）| ~5 | T-AR signal | T-AR ✅ | ⬜ |
 | **T-TE** TipTap 编辑器 + 自定义 block (Layer 5 P2.7) | 🔄 | (T-88 P2) | — | T-88 P2 | (T-88 sub) |
 | **T-TQ** standalone `tool_quiz` artifact + UI | ⬜ | ~8 | quiz 独立路径（模拟卷 / 每日 quiz / final quiz） | T-88 P3 ✅（EmbeddedCheck 已拆成 `tool_quiz` ref；UI 仍待） | ⬜ |
 | **T-KG** Knowledge graph force-directed view | ⬜ | ~13 | v2.1 brief §2.3.b "必须" | (none，D3/cytoscape 待选) | ⬜ |
@@ -206,7 +221,7 @@ ls -lt docs/audit/*drift* 2>/dev/null | head -3
 | **T-BA** BlockAssemblyTask AI auto-merge | ⬜ | ~5 | 相邻 block AI merge proposal | T-88 P3 ✅（artifact schema 改）| ⬜ |
 | **T-SG** Source grounding + textbook RAG | ⬜ | ~13 | source_tier write path + user_verified flip；与 ADR-0020 解耦 | (none) | ⬜ |
 | **T-MM** Multimodal first-class (audio / handwriting / 图表 / 表格) | ⬜ | ~20 | first-class material | T-J2 + T-J7（vision/diagram judge）| ⬜ |
-| **T-OC** OCR capture pipeline rebuild (Sub 0c handoffs §3) | ⬜ | ~15 | StructureTask / TaggingTask / WorkflowJudge / MistakeEnrollTask / 6 个 agent tools | T-D4 (propose tools) | ⬜ |
+| **T-OC** OCR capture pipeline rebuild (Sub 0c handoffs §3) | ✅ shipped (slice 1-3；superseded by YUK-145 spec) | ~15 | StructureTask / TaggingTask / WorkflowJudge / MistakeEnrollTask / 6 个 agent tools | T-D4 (propose tools) | [YUK-145](https://linear.app/yukoval-studios/issue/YUK-145) slice1 PR #197 (ADR-0024) / slice2 VLM StructureTask + multi-page PR #199 (YUK-144 rootfix) / slice3 TaggingTask+WorkflowJudge+flag-gated-OFF auto-enroll PR #202 (ADR-0026) — **DEFERRED**: slice-2b figure-matching [YUK-163](https://linear.app/yukoval-studios/issue/YUK-163) / slice-3b auto-enroll wiring + OC-5 review UI [YUK-164](https://linear.app/yukoval-studios/issue/YUK-164) |
 
 **P3 小计**：~82 pts，~20-26 周
 
@@ -253,10 +268,10 @@ ls -lt docs/audit/*drift* 2>/dev/null | head -3
 
 | Track / Issue | pts | status | scenario-B 归属 | 一句话 | 来源 |
 |---|---|---|---|---|---|
-| **YUK-143** North-Star 学习意图 | TBD | spec ✅ | **scenario B top track** | "我想学 X" 的 north-star 学习意图建模 + orchestration | `specs/2026-05-29-north-star-learning-intent-design.md` |
-| **YUK-145** T-OC OCR/ingestion 重建 | ~15 | spec ✅ | **scenario B top track** | OCR capture pipeline 重建（StructureTask/TaggingTask/WorkflowJudge/MistakeEnrollTask + 6 agent tools），替换 §2.6 T-OC 旧描述 | `specs/2026-05-29-t-oc-ocr-rebuild-design.md` |
-| **YUK-144** 多页 OCR bug | TBD | bug | scenario B（随 T-OC 重建解）| 多页文档 OCR 当前出错 | session 实测 |
-| **YUK-148** 跨进程 editing-guard | TBD | **High，需设计** | scenario B（Living Note 健壮性）| 跨进程（app + worker）编辑保护，防 Living Note mutator 与用户并发改冲突 | session grill |
+| **YUK-143** North-Star 学习意图 | ✅ shipped (W9 core) | spec ✅ | **scenario B top track** | "我想学 X" 的 north-star 学习意图建模 + orchestration。W9 core goal+GoalScopeTask+Coach goal_strand+ND-5 PR #198 (ADR-0025) + Dreaming goal-aware PR #201 + review soft-bias PR #206 ([YUK-167](https://linear.app/yukoval-studios/issue/YUK-167))。**DEFERRED**: W10 UI（goal cards / views / KG lens）blocked on design pre-flight | `specs/2026-05-29-north-star-learning-intent-design.md` |
+| **YUK-145** T-OC OCR/ingestion 重建 | ~15 | ✅ shipped (slice 1-3) | **scenario B top track** | OCR capture pipeline 重建（StructureTask/TaggingTask/WorkflowJudge/MistakeEnrollTask + 6 agent tools），替换 §2.6 T-OC 旧描述。slice1 PR #197 (ADR-0024) / slice2 PR #199 / slice3 PR #202 (ADR-0026)。**DEFERRED**: slice-2b YUK-163 / slice-3b YUK-164 | `specs/2026-05-29-t-oc-ocr-rebuild-design.md` |
+| **YUK-144** 多页 OCR bug | TBD | ✅ fixed (rootfix in slice 2) | scenario B（随 T-OC 重建解）| 多页文档 OCR 当前出错 —— 随 slice 2 multi-page StructureTask rootfix 解 (PR #199) | session 实测 |
+| **YUK-148** 跨进程 editing-guard | TBD | ✅ shipped | scenario B（Living Note 健壮性）| 跨进程（app + worker）编辑保护，防 Living Note mutator 与用户并发改冲突 —— Redis cross-process editing presence PR #195 (ADR-0023) | session grill |
 | **YUK-146** derived_from 注释 | 1 | follow-up | post-v1 doc 债 | `derived_from_block_id` 语义补注释 | session review |
 | **YUK-147** undo UX | TBD | follow-up | scenario B（Editor polish）| Living Note undo 的 UX 完善 | session review |
 | **YUK-149** Wave6 mediums | TBD | follow-up | post-v1 | Wave 6 closeout 遗留的 medium-priority 项 | Wave 6 closeout |

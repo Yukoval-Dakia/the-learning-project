@@ -333,7 +333,7 @@ Mistake
 **3) 变式 Mistake 不再生变式：链终止**
 
 ```
-if mistake.from_judgment_id and 
+if mistake.caused_by_event_id and 
    question.source == 'mistake_variant':
   do NOT trigger VariantGenTask
 ```

@@ -60,7 +60,7 @@ CREATE:
 - `src/server/goals/scope.test.ts` (DB test — real testDb, DI runTaskFn; covers parser + proposal write + accept/dismiss/retract round-trip. NOT in fastTestInclude → runs in db config.)
 - `src/server/goals/accept.ts` (acceptGoalScopeProposal materializer)
 - `src/server/boss/handlers/coach_daily.northstar.test.ts` (ND-5 conservation — DB)
-- `docs/adr/ADR-0025-north-star-goal-entity-and-coach-coexistence.md`
+- `docs/adr/0025-north-star-goal-entity-and-coach-coexistence.md`
 
 MODIFY:
 - `src/db/schema.ts` (append `goal` pgTable)

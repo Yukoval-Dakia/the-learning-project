@@ -71,7 +71,7 @@ to ripple there.
 - `src/server/artifacts/presence/redis.ts` — ioredis + Lua impl.
 - `src/server/artifacts/presence/redis.integration.test.ts` — cross-instance regression
   (db partition; self-contained Redis testcontainer).
-- `docs/adr/ADR-0023-cross-process-editing-presence-via-redis.md`
+- `docs/adr/0023-cross-process-editing-presence-via-redis.md`
 
 ### Modify
 - `src/server/artifacts/editing-session.ts` — becomes a thin façade: factory selection +

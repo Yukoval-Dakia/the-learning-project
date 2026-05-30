@@ -151,7 +151,7 @@ human review path is the ONLY path that enrolls. Production = today, byte-for-by
      `'ingestion_capture'` defaults green.
 10. **MODIFY** `.env.example` — document both flags (default OFF / 0.85) with a
     loud "auto-enroll is OFF by default" comment.
-11. **CREATE** `docs/adr/ADR-0026-...md` — the Tagging/Judge confidence-gate +
+11. **CREATE** `docs/adr/0026-...md` — the Tagging/Judge confidence-gate +
     flag-gated-conservative-rollout decision (OC-4 / OC-5).
 
 ## 6. Evidence-first provenance (OC-5)
