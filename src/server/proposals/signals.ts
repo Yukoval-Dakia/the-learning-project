@@ -110,6 +110,62 @@ export async function loadProposalSignalsForRows(
   return out;
 }
 
+// T-AR (YUK-TAR) — acceptance-rate SIGNAL roll-up (read-only).
+//
+// The per-(kind, cooldown_key) `proposal_signals` aggregate already carries
+// accept/dismiss counts (maintained by recordProposalDecisionSignal / rebuilt
+// by ensureProposalDecisionSignal). This rolls those rows UP to the per-`kind`
+// dimension that Dreaming / Coach actually reason about, so we never re-scan the
+// unbounded event log (mastery-view precedent: derive from the existing aggregate,
+// no new column / table / view). Used by the additive Dreaming feed; generic so
+// Coach can reuse it later (see lane plan §DEFERRED).
+export interface ProposalKindAcceptanceRate {
+  kind: string;
+  accept_count: number;
+  dismiss_count: number;
+  total: number;
+  acceptance_rate: number;
+}
+
+/**
+ * Aggregate proposal decision signals by proposal KIND.
+ *
+ * Cold start (no `proposal_signals` rows, or only zero-count rows) → `[]`. We do
+ * NOT inject a uniform 0.5 sentinel: an empty list is the honest cold-start
+ * signal and keeps the additive Dreaming feed a true no-op. Kinds whose summed
+ * total is 0 are filtered out (also the div-by-zero guard). Sorted by
+ * acceptance_rate DESC, total DESC so callers can take "top N proven kinds".
+ */
+export async function getProposalAcceptanceRates(
+  db: DbLike,
+): Promise<ProposalKindAcceptanceRate[]> {
+  const rows = await db
+    .select({
+      kind: proposal_signals.kind,
+      accept_count: sql<number>`SUM(${proposal_signals.accept_count})::int`,
+      dismiss_count: sql<number>`SUM(${proposal_signals.dismiss_count})::int`,
+    })
+    .from(proposal_signals)
+    .groupBy(proposal_signals.kind);
+
+  return rows
+    .map((row) => {
+      const acceptCount = Number(row.accept_count ?? 0);
+      const dismissCount = Number(row.dismiss_count ?? 0);
+      const total = acceptCount + dismissCount;
+      return {
+        kind: row.kind,
+        accept_count: acceptCount,
+        dismiss_count: dismissCount,
+        total,
+        // total === 0 is filtered below, so this division never hits 0/0.
+        acceptance_rate: total === 0 ? 0 : acceptCount / total,
+      };
+    })
+    .filter((row) => row.total > 0)
+    .sort((a, b) => b.acceptance_rate - a.acceptance_rate || b.total - a.total);
+}
+
 export async function recordProposalDecisionSignal(
   db: DbLike,
   proposal: ProposalSignalSource,
