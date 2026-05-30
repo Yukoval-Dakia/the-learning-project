@@ -93,6 +93,16 @@ export interface ToolInputInterceptResult {
    * bridge stays decoupled from the throttle's `ContextBudgetTruncation` type.
    */
   truncationNote?: object | null;
+  /**
+   * Graceful soft-stop signal (P5.1 / YUK-143 FIX 1). When the budget dimension
+   * is exhausted the interceptor returns a reason string here INSTEAD of capped
+   * args. The bridge treats it exactly like a `beforeExecute` reason: it does
+   * NOT execute the tool and surfaces the string as the tool result, so the
+   * agent stops and answers with what it has. This keeps the spec's central
+   * "never a hard reject/throw" guarantee — the tool never runs with a `limit:0`
+   * that would trip its own Zod min and throw.
+   */
+  softStop?: string | null;
 }
 
 export interface BuildMcpServerOptions {
@@ -175,8 +185,17 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
       if (errorReason === undefined && opts.interceptInput) {
         try {
           const intercepted = opts.interceptInput({ name: dt.name, effect: dt.effect }, execInput);
-          execInput = intercepted.args;
-          truncationNote = intercepted.truncationNote ?? null;
+          // P5.1 / YUK-143 FIX 1 — budget-exhaustion soft-stop. When the
+          // interceptor signals exhaustion it returns a `softStop` reason
+          // instead of capped args; treat it exactly like a beforeExecute gate
+          // reason so the tool does NOT run (no limit:0 → no Zod throw) and the
+          // agent reads the string as the tool result. Graceful, never a throw.
+          if (typeof intercepted.softStop === 'string' && intercepted.softStop.length > 0) {
+            errorReason = intercepted.softStop;
+          } else {
+            execInput = intercepted.args;
+            truncationNote = intercepted.truncationNote ?? null;
+          }
         } catch (err) {
           errorReason = err instanceof Error ? err.message : String(err);
         }
