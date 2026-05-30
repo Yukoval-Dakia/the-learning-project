@@ -80,6 +80,25 @@ AOF / RDB / volume。每个 artifact 的 key 带 **TTL = heartbeat timeout**，s
 自动过期（缺失 / 过期的 key 读成 idle——安全默认）；deferred 队列在每次 SET 时刷新
 TTL，不会编辑中途静默过期。
 
+「lost presence safely reads as idle」**同样适用于 Redis 连接失败**（连不上 / 超时 /
+命令报错），不只是 key 缺失 / 过期（YUK-171）。`RedisPresenceStore` 的每个方法把 ioredis
+调用包在 try-catch 里，失败时 `console.warn` 一次并返回 ADR-0023 fail-safe，绝不让错误冒泡
+到 heartbeat / blur route（→ 500）或 worker（→ throw）。per-method 降级：
+
+- `isArtifactIdle` → 返回 `true`（idle），用户编辑永不被 Redis 故障阻塞。
+- `recordEditingHeartbeat` → no-op（resolve）；丢的 heartbeat 等价于缺失 key，session 自然 age-out。
+- `getEditingSessionSnapshot` → 返回 `null`（诊断读，不破坏调用方）。
+- `enqueueOrApplyNoteRefinePatch` → DECIDE 失败时降级到 **APPLY** 并照常执行
+  `persistNoteRefineApply`——DB 写必然发生，AI patch 绝不静默丢失（最坏结果 = 在活跃编辑期
+  提前 apply，跟 timeout-idle + force-apply ceiling 等价）。
+- `markArtifactIdleAndFlush` → drain 失败时 warn 并返回 `{ flushed: 0, results: [] }`；
+  没有 Lua 给的权威 drained 列表就不臆测要 apply 哪些 item，pending 留在 Redis（或随 TTL 过期），
+  下次 trigger 重新 apply。
+
+降级只发生在 `presence/redis.ts` 层；consumer（heartbeat / blur route、note-refine handler）
+无需 redundant try-catch——façade 已返回 fail-safe 值，不会 throw。in-memory impl 无需改
+（进程内 Map 不会连接失败）。
+
 ### Atomicity
 
 web heartbeat、worker idle-check（**超时会写**）、flush 会跨进程交错，必须避免
