@@ -59,6 +59,16 @@ describe('normalizeReviewSubmitActivityRef', () => {
     ).toThrow(ApiError);
   });
 
+  it('rejects question_part (a valid ActivityKind not yet supported by review submit)', () => {
+    // question_part is a real ActivityKind (ADR-0014 §1 / T-QP) but review submit
+    // currently supports `question` only; it must reject, not silently coerce.
+    expect(() =>
+      normalizeReviewSubmitActivityRef({
+        activity_ref: { kind: 'question_part', id: 'qp1' },
+      }),
+    ).toThrow(ApiError);
+  });
+
   it('requires one identity field', () => {
     expect(() => normalizeReviewSubmitActivityRef({})).toThrow(ApiError);
   });

@@ -19,7 +19,7 @@
 // XC-3: cross_link refs live in artifact_block_ref (L2) + block.attrs (L3, flat).
 // NEVER store note refs in knowledge_edge (that's concept relations only).
 
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
 
 import { ArtifactBodyBlocks } from '@/core/schema/business';
 import type { Db, Tx } from '@/db/client';
@@ -199,6 +199,16 @@ export async function listBacklinks(
  * non-link. Archived learning_items are excluded so retired items don't surface
  * as live links; both panels share this single resolver to stay behaviourally
  * identical.
+ *
+ * 1:1 invariant (YUK-171): the creation path (`acceptLearningIntent`) sets
+ * `primary_artifact_id` ONCE per learning_item at INSERT and no update/revive path
+ * ever re-points it, so at most one non-archived owner per artifact exists — now
+ * also enforced at the DB layer by the `learning_item_primary_artifact_active_unique`
+ * partial unique index. This read path nonetheless picks DEFENSIVELY: it orders by
+ * `created_at, id` so the EARLIEST owner deterministically wins (never an arbitrary
+ * DB-order row) and `console.warn`s once per conflicting artifact if a duplicate
+ * non-archived owner is somehow observed. It must NOT throw — it serves the backlink
+ * panel + node page and must never 500 over a data anomaly.
  */
 export async function resolveOwningLearningItemIds(
   db: DbLike,
@@ -213,10 +223,32 @@ export async function resolveOwningLearningItemIds(
         inArray(learning_item.primary_artifact_id, artifactIds),
         isNull(learning_item.archived_at),
       ),
-    );
+    )
+    // Deterministic ordering: earliest-created (tie-broken by id) wins, so a
+    // duplicate non-archived owner resolves stably instead of by arbitrary DB
+    // row order.
+    .orderBy(asc(learning_item.created_at), asc(learning_item.id));
   const map = new Map<string, string>();
+  const conflicts = new Map<string, string[]>();
   for (const row of rows) {
-    if (row.primary_artifact_id) map.set(row.primary_artifact_id, row.id);
+    const artifactId = row.primary_artifact_id;
+    if (!artifactId) continue;
+    if (map.has(artifactId)) {
+      // A second non-archived owner for the same artifact — keep the first
+      // (earliest) and record the conflict for a single warn below. Never throw.
+      const seen = conflicts.get(artifactId) ?? [map.get(artifactId) as string];
+      seen.push(row.id);
+      conflicts.set(artifactId, seen);
+      continue;
+    }
+    map.set(artifactId, row.id);
+  }
+  for (const [artifactId, learningItemIds] of conflicts) {
+    console.warn(
+      `[resolveOwningLearningItemIds] multiple non-archived learning_items share primary_artifact_id=${artifactId}: ${learningItemIds.join(
+        ', ',
+      )}. Resolving to the earliest-created (${learningItemIds[0]}). This violates the 1:1 invariant (YUK-171); investigate the data.`,
+    );
   }
   return map;
 }

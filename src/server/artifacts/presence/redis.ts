@@ -198,25 +198,53 @@ export class RedisPresenceStore implements PresenceStore {
     return `${KEY_PREFIX}${artifactId}`;
   }
 
-  async recordEditingHeartbeat(input: RecordHeartbeatInput): Promise<void> {
-    const now = (input.now ?? new Date()).getTime();
-    // ARGV order must match HEARTBEAT_LUA: now, status, ttl.
-    await this.redis.presenceHeartbeat(
-      this.key(input.artifactId),
-      String(now),
-      input.status,
-      String(this.ttlMs),
+  // YUK-171 — fail-safe degradation on a Redis CONNECTION failure. ADR-0023
+  // already covers missing/expired keys (TTL) reading as idle; this extends the
+  // same "lost presence safely reads as idle" guarantee to ioredis errors
+  // (connection refused / timeout / command error) so a Redis outage degrades
+  // gracefully instead of 500ing the heartbeat/blur routes or throwing in the
+  // worker. Each method logs once and returns its safe default. The DB write
+  // (persistNoteRefineApply) for enqueue/flush still happens — only the
+  // presence DECISION degrades.
+  private warnDegraded(method: string, error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `[RedisPresenceStore.${method}] Redis unavailable (${message}); degrading to ADR-0023 fail-safe (presence reads as idle).`,
     );
   }
 
+  async recordEditingHeartbeat(input: RecordHeartbeatInput): Promise<void> {
+    const now = (input.now ?? new Date()).getTime();
+    try {
+      // ARGV order must match HEARTBEAT_LUA: now, status, ttl.
+      await this.redis.presenceHeartbeat(
+        this.key(input.artifactId),
+        String(now),
+        input.status,
+        String(this.ttlMs),
+      );
+    } catch (error) {
+      // A dropped heartbeat is equivalent to a missing/expired key: the session
+      // simply ages out to idle. No-op (resolve) rather than throw.
+      this.warnDegraded('recordEditingHeartbeat', error);
+    }
+  }
+
   async isArtifactIdle(artifactId: string, now = new Date()): Promise<boolean> {
-    const res = await this.redis.presenceIdleCheck(
-      this.key(artifactId),
-      String(now.getTime()),
-      String(EDITING_HEARTBEAT_TIMEOUT_MS),
-      String(this.ttlMs),
-    );
-    return res === '1';
+    try {
+      const res = await this.redis.presenceIdleCheck(
+        this.key(artifactId),
+        String(now.getTime()),
+        String(EDITING_HEARTBEAT_TIMEOUT_MS),
+        String(this.ttlMs),
+      );
+      return res === '1';
+    } catch (error) {
+      // "lost presence safely reads as idle" — assume idle on a Redis failure so
+      // user editing is never blocked by a Redis outage.
+      this.warnDegraded('isArtifactIdle', error);
+      return true;
+    }
   }
 
   async enqueueOrApplyNoteRefinePatch(input: EnqueueOrApplyInput): Promise<EnqueueOrApplyResult> {
@@ -227,14 +255,24 @@ export class RedisPresenceStore implements PresenceStore {
       triggerEventId: input.triggerEventId ?? null,
       queuedAtMs: now.getTime(),
     };
-    const decision = await this.redis.presenceDecide(
-      this.key(input.artifactId),
-      String(now.getTime()),
-      String(EDITING_HEARTBEAT_TIMEOUT_MS),
-      String(EDITING_FORCE_APPLY_TIMEOUT_MS),
-      String(this.ttlMs),
-      JSON.stringify(item),
-    );
+    let decision: string;
+    try {
+      decision = await this.redis.presenceDecide(
+        this.key(input.artifactId),
+        String(now.getTime()),
+        String(EDITING_HEARTBEAT_TIMEOUT_MS),
+        String(EDITING_FORCE_APPLY_TIMEOUT_MS),
+        String(this.ttlMs),
+        JSON.stringify(item),
+      );
+    } catch (error) {
+      // The defer-vs-apply DECISION lives in Lua; the DB write does not. On a
+      // Redis failure we cannot enqueue, so degrade to APPLY (the safe default —
+      // equivalent to a timeout-idle + force-apply ceiling) and fall through to
+      // the DB write below. The patch is NEVER silently dropped.
+      this.warnDegraded('enqueueOrApplyNoteRefinePatch', error);
+      decision = 'apply';
+    }
     if (decision === 'deferred') {
       return { status: 'deferred', artifact_id: input.artifactId };
     }
@@ -251,11 +289,21 @@ export class RedisPresenceStore implements PresenceStore {
 
   async markArtifactIdleAndFlush(input: MarkIdleAndFlushInput): Promise<MarkIdleAndFlushResult> {
     const now = input.now ?? new Date();
-    const drainedJson = await this.redis.presenceFlush(
-      this.key(input.artifactId),
-      String(now.getTime()),
-      String(this.ttlMs),
-    );
+    let drainedJson: string | null;
+    try {
+      drainedJson = await this.redis.presenceFlush(
+        this.key(input.artifactId),
+        String(now.getTime()),
+        String(this.ttlMs),
+      );
+    } catch (error) {
+      // Without the authoritative drained list from Lua we must not guess which
+      // items to apply. Return an empty flush; any queued patches stay in Redis
+      // (or auto-expire via TTL) and re-apply on the next trigger. Acceptable
+      // per ADR-0023's ephemeral-state contract.
+      this.warnDegraded('markArtifactIdleAndFlush', error);
+      return { artifact_id: input.artifactId, flushed: 0, results: [] };
+    }
     const drained: SerializedQueuedPatch[] = drainedJson ? JSON.parse(drainedJson) : [];
     const results: PersistNoteRefineApplyResult[] = [];
     for (const item of drained) {
@@ -273,7 +321,15 @@ export class RedisPresenceStore implements PresenceStore {
   }
 
   async getEditingSessionSnapshot(artifactId: string): Promise<EditingSessionSnapshot | null> {
-    const raw = await this.redis.presenceSnapshot(this.key(artifactId));
+    let raw: string | null;
+    try {
+      raw = await this.redis.presenceSnapshot(this.key(artifactId));
+    } catch (error) {
+      // Diagnostic read — a Redis failure should not break the caller. Treat as
+      // "no snapshot available".
+      this.warnDegraded('getEditingSessionSnapshot', error);
+      return null;
+    }
     if (!raw) return null;
     const s: SerializedState = JSON.parse(raw);
     return {

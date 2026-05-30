@@ -38,6 +38,11 @@ export const fastTestInclude = [
   // partition because they hit live Postgres.
   'src/server/artifacts/hub-dismiss.test.ts',
   'src/server/artifacts/note-refine-triggers.test.ts',
+  // YUK-171 fail-safe degradation unit: a MOCKED ioredis client (no container) +
+  // vi.mock'd persistNoteRefineApply, so no live Redis / Postgres is touched —
+  // fast no-DB unit. The sibling redis.integration.test.ts (real testcontainer)
+  // stays in the db partition.
+  'src/server/artifacts/presence/redis.test.ts',
   // Pure dependency-injection unit: runCopilotChat takes runAgentTaskFn /
   // buildMcpServerFn / writeEventFn as injected vi.fn() deps, so no live DB /
   // AI is touched. The transitive `@/db/client` import (via events/queries +

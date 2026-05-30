@@ -162,6 +162,13 @@
       "when": 1780100978499,
       "tag": "0022_question_part",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1780154023767,
+      "tag": "0023_lovely_thing",
+      "breakpoints": true
     }
   ]
 }
