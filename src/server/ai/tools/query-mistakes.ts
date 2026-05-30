@@ -12,9 +12,12 @@ import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 import { getFailureAttempts } from '@/server/events/queries';
 import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
+// P5.1 / YUK-143 — snippet cap + courtesy default sourced from budgets.ts.
+// Both are byte-unchanged from the prior file-local literals (160 / 20).
+import { MISTAKE_PROMPT_SNIPPET_MAX, TOOL_COURTESY_DEFAULTS } from './budgets';
 import type { DomainTool, ToolContext } from './types';
 
-const PROMPT_SNIPPET_MAX = 160;
+const PROMPT_SNIPPET_MAX = MISTAKE_PROMPT_SNIPPET_MAX;
 
 const InputSchema = z.object({
   filter: z
@@ -141,7 +144,9 @@ async function loadVariants(
 async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
   const input = InputSchema.parse(raw);
   const filter = input.filter ?? {};
-  const limit = filter.limit ?? 20;
+  // P5.1 / YUK-143 — courtesy default (20) centralized in budgets.ts;
+  // byte-unchanged from the prior inline literal.
+  const limit = filter.limit ?? TOOL_COURTESY_DEFAULTS.query_mistakes;
   const since = filter.sinceDays ? new Date(Date.now() - filter.sinceDays * 86_400_000) : undefined;
 
   const hasPostFilter =

@@ -67,6 +67,72 @@ describe('runCopilotChat (two-surface routing)', () => {
     );
   });
 
+  // P5.1 / YUK-143 — Copilot wires the per-message context-budget throttle into
+  // the MCP bridge: a beforeExecute tool-call ceiling + an interceptInput limit
+  // cap. We assert the wiring end-to-end through the budget tracker by driving
+  // the captured hooks: 10 tool calls allowed then a soft-stop, and an
+  // over-budget node request capped down with a truncation note (graceful, not
+  // a throw).
+  it('wires the per-message context budget (tool-call ceiling + limit cap) into the bridge', async () => {
+    const db = {} as never;
+    const mcpServer = { name: 'fake-loom' } as never;
+    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_copilot_budget',
+      text: 'OK',
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    const writeEventFn = vi.fn(async (_db, input) => input.id);
+
+    await runCopilotChat(
+      db,
+      { user_message: '看看知识图谱', triggered_by: 'chat' },
+      {
+        buildMcpServerFn,
+        runAgentTaskFn,
+        writeEventFn,
+        now: () => new Date('2026-05-31T00:00:00.000Z'),
+      },
+    );
+
+    const opts = buildMcpServerFn.mock.calls[0]?.[0];
+    if (!opts?.beforeExecute || !opts?.interceptInput) {
+      throw new Error('expected beforeExecute + interceptInput throttle wiring');
+    }
+
+    // Tool-call ceiling: COPILOT_CONTEXT_BUDGET.maxToolCalls = 10 allowed, then
+    // a soft-stop string (not a throw).
+    for (let i = 0; i < 10; i += 1) {
+      expect(opts.beforeExecute({ name: 'query_knowledge', effect: 'read' })).toBeUndefined();
+    }
+    expect(opts.beforeExecute({ name: 'query_knowledge', effect: 'read' })).toMatch(
+      /context budget reached/,
+    );
+
+    // Limit cap: an over-budget maxNodes request is capped to remaining
+    // nodes+edges budget (≤250) with a truncation note. Run a fresh turn so the
+    // accumulator is clean (per-message tracker, spec §3.4).
+    await runCopilotChat(
+      db,
+      { user_message: '展开子图', triggered_by: 'chat' },
+      {
+        buildMcpServerFn,
+        runAgentTaskFn,
+        writeEventFn,
+        now: () => new Date('2026-05-31T00:00:00.000Z'),
+      },
+    );
+    const opts2 = buildMcpServerFn.mock.calls[1]?.[0];
+    if (!opts2?.interceptInput) throw new Error('expected interceptInput on second turn');
+    const capped = opts2.interceptInput(
+      { name: 'expand_knowledge_subgraph', effect: 'read' },
+      { centerNodeId: 'k_1', maxNodes: 9999 },
+    );
+    expect((capped.args as { maxNodes: number }).maxNodes).toBe(250);
+    expect(capped.truncationNote).toMatchObject({ truncated: true, applied_limit: 250 });
+  });
+
   it('chip path uses copilot_user_suggested_mistake_action allowlist and does NOT write user_ask', async () => {
     const db = {} as never;
     const mcpServer = { name: 'fake-loom' } as never;

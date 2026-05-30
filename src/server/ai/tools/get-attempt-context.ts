@@ -14,6 +14,9 @@ import { getFailureAttemptById, getQuestionTimeline } from '@/server/events/quer
 import { listLearningRecords } from '@/server/records/queries';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
+// P5.1 / YUK-143 — courtesy default (10) centralized in budgets.ts;
+// byte-unchanged from the prior inline literal.
+import { TOOL_COURTESY_DEFAULTS } from './budgets';
 import type { DomainTool, ToolContext } from './types';
 
 const InputSchema = z.object({
@@ -139,7 +142,7 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
   const timeline = await getQuestionTimeline(
     ctx.db,
     failure.question_id,
-    input.timelineLimit ?? 10,
+    input.timelineLimit ?? TOOL_COURTESY_DEFAULTS.get_attempt_context,
   );
 
   const records = await listLearningRecords(ctx.db, {

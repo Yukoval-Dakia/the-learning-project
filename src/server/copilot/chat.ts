@@ -26,6 +26,8 @@ import {
   resolveDomainToolNames,
   resolveMcpAllowedTools,
 } from '@/server/ai/tools/allowlists';
+import { resolveContextBudget } from '@/server/ai/tools/budgets';
+import { ContextBudgetTracker } from '@/server/ai/tools/context-throttle';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
 
@@ -145,6 +147,14 @@ export async function runCopilotChat(
     causedByEventId = chipEventId;
   }
 
+  // P5.1 / YUK-143 — per-message context-budget throttle. One tracker lives for
+  // the duration of THIS user message's agent turn (created here, discarded
+  // when runCopilotChat returns), so the bound sums across all the message's
+  // tool calls (spec §3.4 "tracked"). It mirrors the per-run proposalWrites
+  // accumulator Dreaming/Coach hold. Both chat + chip surfaces run the same
+  // user-facing CopilotTask, so both get the Copilot budget.
+  const budgetTracker = new ContextBudgetTracker(resolveContextBudget(surface));
+
   const mcpServer = buildMcpServer({
     ctx: {
       db,
@@ -155,6 +165,16 @@ export async function runCopilotChat(
     serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
     toolNames: resolveDomainToolNames(surface),
     taskKind: 'CopilotTask',
+    // Tool-call ceiling: soft-stop once maxToolCalls is reached (same mechanism
+    // as Dreaming/Coach's proposal cap; the model reads the string + stops).
+    beforeExecute: (tool) => budgetTracker.beforeExecute(tool),
+    // Limit cap + accounting + truncation note: cap the requested limit down to
+    // remaining nodes+edges / event-rows budget before execute, surface what
+    // was capped to the agent. Graceful degradation, never a hard reject.
+    interceptInput: (tool, args) => {
+      const { args: capped, truncation } = budgetTracker.capInput(tool.name, args);
+      return { args: capped, truncationNote: truncation };
+    },
   });
 
   const result = await run(

@@ -15,6 +15,11 @@ import {
   resolveDomainToolNames,
   resolveMcpAllowedTools,
 } from '@/server/ai/tools/allowlists';
+// P5.1 / YUK-143 — single tunable source for the Coach run caps. The values
+// below are byte-identical to the numbers previously hardcoded here
+// (max_proposals 5 / max_tool_calls 12); pure constant relocation, so Coach
+// behavior is unchanged (spec §3.3).
+import { COACH_CONTEXT_BUDGET } from '@/server/ai/tools/budgets';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
 // YUK-143 / ADR-0025 — North-Star: feed active goals into the Coach input so it
@@ -23,7 +28,10 @@ import { type WriteEventInput, writeEvent } from '@/server/events/queries';
 import { type ActiveGoal, listActiveGoals } from '@/server/goals/queries';
 import { type ProposalInboxRow, listProposalInboxRows } from '@/server/proposals/inbox';
 
-export const COACH_MAX_PROPOSALS = 5;
+// P5.1 / YUK-143 — re-exported alias kept so existing imports / tests don't
+// break (spec §4.2). Sourced from COACH_CONTEXT_BUDGET.maxProposals (= 5),
+// byte-unchanged.
+export const COACH_MAX_PROPOSALS = COACH_CONTEXT_BUDGET.maxProposals as number;
 // YUK-143 / ADR-0025 — North-Star goal strand guidance appended to the Coach
 // objective. ND-5 is stated explicitly: the goal strand is ADDITIVE only — it
 // must NOT suppress FSRS-due reviews, hide other capture tasks, preempt the
@@ -96,7 +104,9 @@ function buildCoachInput(
       sequence_hint: g.sequence_hint,
     })),
     budget: {
-      max_tool_calls: 12,
+      // P5.1 / YUK-143 — sourced from COACH_CONTEXT_BUDGET (12 / 5),
+      // byte-identical to the prior hardcoded literals.
+      max_tool_calls: COACH_CONTEXT_BUDGET.maxToolCalls,
       max_proposals: COACH_MAX_PROPOSALS,
       stop_when_no_actionable_proposal: true,
     },

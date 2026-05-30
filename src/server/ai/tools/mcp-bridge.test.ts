@@ -181,6 +181,71 @@ describe('buildMcpServerFromRegistry', () => {
     expect(log.output_json).toEqual({ error: 'quota exceeded' });
   });
 
+  // P5.1 / YUK-143 — interceptInput caps the executed args and merges a
+  // truncation note into the output the agent reads.
+  it('interceptInput rewrites the executed args and merges context_budget into output', async () => {
+    const runFn = vi.fn((i: { limit: number }) => ({ rows: i.limit }));
+    registerTool(
+      makeReadTool<{ limit: number }, { rows: number }>(
+        'demo_capped',
+        { limit: z.number() },
+        runFn,
+        (_i, o) => `demo_capped · ${o.rows}`,
+      ),
+    );
+
+    buildMcpServerFromRegistry({
+      ctx,
+      serverName: 'loom_v2',
+      toolNames: ['demo_capped'],
+      interceptInput: (_tool, args) => ({
+        args: { ...(args as object), limit: 3 },
+        truncationNote: { applied_limit: 3, requested_limit: 10, truncated: true },
+      }),
+    });
+    const result = (await mockAgentSdk.toolDefs[0].handler({ limit: 10 })) as {
+      content: Array<{ type: string; text: string }>;
+    };
+
+    // execute saw the capped limit (3), not the requested 10.
+    expect(runFn).toHaveBeenCalledWith({ limit: 3 });
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.output.rows).toBe(3);
+    expect(parsed.output.context_budget).toEqual({
+      applied_limit: 3,
+      requested_limit: 10,
+      truncated: true,
+    });
+    // The agent-visible mirror/log args record the ORIGINAL request (10).
+    const log = captured.toolCallLogs[0] as Record<string, unknown>;
+    expect((log.input_json as { limit: number }).limit).toBe(10);
+  });
+
+  it('interceptInput does not run when beforeExecute blocks the call', async () => {
+    const runFn = vi.fn(() => ({ ok: true }));
+    const interceptInput = vi.fn((_tool: unknown, args: unknown) => ({ args }));
+    registerTool(
+      makeReadTool<{ q: string }, { ok: boolean }>(
+        'demo_blocked_then_intercept',
+        { q: z.string() },
+        runFn,
+        () => 'blocked',
+      ),
+    );
+
+    buildMcpServerFromRegistry({
+      ctx,
+      serverName: 'loom_v2',
+      toolNames: ['demo_blocked_then_intercept'],
+      beforeExecute: () => 'budget reached',
+      interceptInput,
+    });
+    await mockAgentSdk.toolDefs[0].handler({ q: 'x' });
+
+    expect(interceptInput).not.toHaveBeenCalled();
+    expect(runFn).not.toHaveBeenCalled();
+  });
+
   it('records beforeExecute failures instead of escaping the handler', async () => {
     const runFn = vi.fn((i: { q: string }) => ({ len: i.q.length }));
     const beforeExecute = vi.fn(() => {
