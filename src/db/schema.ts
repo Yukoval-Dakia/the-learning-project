@@ -162,6 +162,18 @@ export const question = pgTable(
     variant_depth: integer('variant_depth').notNull().default(0),
     root_question_id: text('root_question_id'),
     parent_variant_id: text('parent_variant_id'),
+    // T-QP (YUK-165, ADR-0014 §1) — `question_part` composition axis. A part is a
+    // `question` row tagged `kind='question_part'` and linked to its parent here
+    // (mirrors the variant parent-ref precedent above; new axis = composition, not
+    // variant lineage). Nullable: NULL on a plain/root question, set only on parts.
+    // `part_index` orders parts within a parent. Written by the part-creation owner
+    // `src/server/questions/parts.ts` (createQuestionPart). Because a part IS a
+    // question, it gets FSRS state + flows through the existing fsrs_question
+    // due/review path unchanged — independent scheduling falls out of independent
+    // question rows. Parent-level aggregation scheduling is DEFERRED (ADR-0014 line
+    // 250). See docs/superpowers/plans/2026-05-30-yuk165-question-part-lane.md.
+    parent_question_id: text('parent_question_id'),
+    part_index: integer('part_index'),
     created_by: jsonb('created_by').$type<AgentRefT>(),
     metadata: jsonb('metadata').$type<JsonObject>(),
     // M-1 (2026-05-21): first-class multimodal carriers.

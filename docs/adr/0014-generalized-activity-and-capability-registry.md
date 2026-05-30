@@ -7,6 +7,8 @@
 
 > **2026-05-29 status update (T-PD11)**：本 ADR 的核心决策已全部实现 —— `ActivityRef`/`ActivityKind`（`src/core/schema/activity.ts`）、Capability Registry（`src/core/capability/registry.ts` + `judges/index.ts` + `validate-profile.ts`，`pnpm audit:profile` 启动期强制校验）、SubjectProfile 纯数据（§3）、JudgeResult v2（§4）、correction event 一等公民（§6，`src/server/events/corrections.ts`）。status.md Foundation A/B/C 标 ✅。`§C 选项`早已自标 (**accepted**)，header 同步为 accepted（解除 §12 R-2 风险）。
 
+> **2026-05-30 status update (T-QP / YUK-165)**：§1 `question_part` 从 type-only stub → **实现（slice 1）**。模型决策：part 即一行 `question`（`kind='question_part'`），经新增 `question.parent_question_id` + `question.part_index` 链到父题，owner 为 `src/server/questions/parts.ts`。因 part 本身是 question，它走**现有** `fsrs_question` 调度/复习/due 路径不变（`subject_kind='question'`、part 自己的 question id），独立调度由"part 是独立 question 行"自然得出——未新建调度算法。§5 scheduler 半边落地：`SchedulerCapabilityRunner`（`src/core/capability/schedulers/`）+ registry `registerScheduler/resolveScheduler/...` + `fsrs` scheduler capability（声明 `supports_activity_kinds: ['question','question_part']`）+ `validateProfile` 校验 `schedulingHints.default_policy` 解析到已注册 scheduler。**DEFERRED**：parent-level 聚合调度（line 250，仅当观察到碎片化）、part 在 review UI 的呈现（需 design pre-flight）、多 part 源自动拆分（随 T-OC）。详见 `docs/superpowers/plans/2026-05-30-yuk165-question-part-lane.md`。
+
 ---
 
 ## 决策

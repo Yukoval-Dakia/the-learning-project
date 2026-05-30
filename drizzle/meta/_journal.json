@@ -155,6 +155,13 @@
       "when": 1780075058509,
       "tag": "0021_yuk143_goal",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1780100978499,
+      "tag": "0022_question_part",
+      "breakpoints": true
     }
   ]
 }
