@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ActivityKind } from './activity';
 
 export const CapabilityKind = z.enum(['judge', 'renderer', 'scheduler']);
 export type CapabilityKindT = z.infer<typeof CapabilityKind>;
@@ -22,6 +23,12 @@ export const CapabilityManifest = z.object({
   latency_class: LatencyClass,
   stability: Stability,
   replaced_by: z.string().optional(),
+  // T-QP (YUK-165, ADR-0014 §5) — which ActivityKinds a scheduler capability
+  // serves. Optional + omitted for judge/renderer capabilities (they dispatch
+  // per question, not per activity-kind). The `fsrs` scheduler declares
+  // ['question', 'question_part']; validateProfile checks default_policy resolves
+  // to a scheduler that supports 'question'.
+  supports_activity_kinds: z.array(ActivityKind).optional(),
 });
 export type CapabilityManifestT = z.infer<typeof CapabilityManifest>;
 

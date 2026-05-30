@@ -1,4 +1,5 @@
 import { CapabilityRegistry } from '@/core/capability/registry';
+import { fsrsSchedulerCapability } from '@/core/capability/schedulers/fsrs';
 import type { JudgeCapabilityRunner } from '@/core/capability/types';
 import { type ProfileValidationResult, validateProfile } from '@/core/capability/validate-profile';
 import type { CapabilityManifestT } from '@/core/schema/capability';
@@ -33,6 +34,9 @@ function makeStubJudge(id: string): JudgeCapabilityRunner {
 function makeRegistry(...ids: string[]): CapabilityRegistry {
   const registry = new CapabilityRegistry();
   for (const id of ids) registry.registerJudge(makeStubJudge(id));
+  // T-QP (YUK-165): the baseline profile declares schedulingHints.default_policy
+  // = 'fsrs', which validateProfile now resolves against the scheduler registry.
+  registry.registerScheduler(fsrsSchedulerCapability);
   return registry;
 }
 
@@ -177,6 +181,8 @@ describe('validateProfile', () => {
 
   it('warns (but does not fail) for deprecated capability', () => {
     const registry = new CapabilityRegistry();
+    // T-QP (YUK-165): baseline profile's default_policy must resolve.
+    registry.registerScheduler(fsrsSchedulerCapability);
     const deprecated: CapabilityManifestT = {
       id: 'old_judge',
       kind: 'judge',

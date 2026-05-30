@@ -93,6 +93,46 @@ function validateJudgeCapabilities(
   }
 }
 
+// T-QP (YUK-165, ADR-0014 §5) — validate that the profile's scheduling policy is
+// a registered scheduler capability that serves the `question` activity kind.
+// `question` is the floor every subject schedules today; `question_part` is
+// served by the same `fsrs` scheduler (it declares both) so parts are scheduled
+// without any per-profile opt-in. A scheduler that omits `supports_activity_kinds`
+// is treated as serving everything (back-compat for non-fsrs policies that may not
+// declare the field), so this only hard-fails an explicit declaration that EXCLUDES
+// 'question'.
+function validateSchedulingPolicy(
+  profile: SubjectProfile,
+  registry: CapabilityRegistry,
+  errors: string[],
+  warnings: string[],
+): void {
+  const policyId = profile.schedulingHints.default_policy;
+  if (typeof policyId !== 'string' || policyId.trim().length === 0) {
+    // Shape error already surfaced by SchedulingHints.safeParse below; skip here.
+    return;
+  }
+  const scheduler = registry.resolveScheduler(policyId);
+  if (!scheduler) {
+    errors.push(
+      `[${profile.id}] schedulingHints.default_policy '${policyId}' not found in scheduler registry`,
+    );
+    return;
+  }
+  const supported = scheduler.manifest.supports_activity_kinds;
+  if (Array.isArray(supported) && !supported.includes('question')) {
+    errors.push(
+      `[${profile.id}] scheduler '${policyId}' does not support 'question' activity kind (supports: ${supported.join(', ')})`,
+    );
+  }
+  if (scheduler.manifest.stability === 'deprecated') {
+    const replacement = scheduler.manifest.replaced_by
+      ? ` (replaced by '${scheduler.manifest.replaced_by}')`
+      : '';
+    warnings.push(`[${profile.id}] scheduling policy '${policyId}' is deprecated${replacement}`);
+  }
+}
+
 export function validateProfile(
   profile: SubjectProfile,
   registry: CapabilityRegistry,
@@ -126,6 +166,8 @@ export function validateProfile(
     errors.push(
       `[${validProfile.id}] schedulingHints is invalid: ${firstIssueMessage(schedulingHints)}`,
     );
+  } else {
+    validateSchedulingPolicy(validProfile, registry, errors, warnings);
   }
 
   return {
