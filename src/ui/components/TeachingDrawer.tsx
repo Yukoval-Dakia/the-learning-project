@@ -112,7 +112,7 @@ const STATIC_SUGGESTIONS: Array<{
   {
     label: '再讲一遍',
     text: '上一段没完全跟上，能不能换一种说法再讲一遍？',
-    suggestion_kind: 'corrective',
+    suggestion_kind: 'proactive',
   },
   { label: '我懂了', text: '我懂了，继续下一个要点吧。', suggestion_kind: 'proactive' },
 ];
@@ -229,6 +229,15 @@ export function TeachingDrawer({
       );
     },
   });
+
+  // A corrective chip-accept is a pure KPI signal (no chat turn, §5.2), so the
+  // click would otherwise be silent. Surface a transient inline ack and clear it
+  // after a few seconds so it doesn't linger.
+  useEffect(() => {
+    if (!acceptChipM.isSuccess) return;
+    const t = window.setTimeout(() => acceptChipM.reset(), 4000);
+    return () => window.clearTimeout(t);
+  }, [acceptChipM.isSuccess, acceptChipM.reset]);
 
   // YUK-14 — Poll session GET every 30s for server-side status flips
   // (idle promote, abandoned cron). Stop polling once the session is in a
@@ -505,6 +514,10 @@ export function TeachingDrawer({
             </span>
             {turnM.isError ? (
               <span className="error">发送失败：{(turnM.error as Error)?.message}</span>
+            ) : acceptChipM.isError ? (
+              <span className="error">记录失败：{(acceptChipM.error as Error)?.message}</span>
+            ) : acceptChipM.isSuccess ? (
+              <span className="hint">已记录重做信号 ✓（计入复习信号，不打扰当前对话）</span>
             ) : null}
           </div>
         </div>

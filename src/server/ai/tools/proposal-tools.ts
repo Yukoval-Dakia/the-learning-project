@@ -519,6 +519,7 @@ const KnowledgeMutationParsedSchema = z.discriminatedUnion('mutation', [
     payload: z.object({ name: z.string().min(1).max(120), parent_id: z.string().min(1) }),
     reasoning: z.string().min(1).max(2000),
     evidence_event_ids: z.array(z.string().min(1)).default([]),
+    suggestion_kind: SuggestionKind.optional(),
   }),
   z.object({
     mutation: z.literal('reparent'),
@@ -529,6 +530,7 @@ const KnowledgeMutationParsedSchema = z.discriminatedUnion('mutation', [
     }),
     reasoning: z.string().min(1).max(2000),
     evidence_event_ids: z.array(z.string().min(1)).default([]),
+    suggestion_kind: SuggestionKind.optional(),
   }),
   z.object({
     mutation: z.literal('merge'),
@@ -539,6 +541,7 @@ const KnowledgeMutationParsedSchema = z.discriminatedUnion('mutation', [
     }),
     reasoning: z.string().min(1).max(2000),
     evidence_event_ids: z.array(z.string().min(1)).default([]),
+    suggestion_kind: SuggestionKind.optional(),
   }),
   z.object({
     mutation: z.literal('split'),
@@ -551,6 +554,7 @@ const KnowledgeMutationParsedSchema = z.discriminatedUnion('mutation', [
     }),
     reasoning: z.string().min(1).max(2000),
     evidence_event_ids: z.array(z.string().min(1)).default([]),
+    suggestion_kind: SuggestionKind.optional(),
   }),
   z.object({
     mutation: z.literal('archive'),
@@ -560,6 +564,7 @@ const KnowledgeMutationParsedSchema = z.discriminatedUnion('mutation', [
     }),
     reasoning: z.string().min(1).max(2000),
     evidence_event_ids: z.array(z.string().min(1)).default([]),
+    suggestion_kind: SuggestionKind.optional(),
   }),
 ]);
 
@@ -673,9 +678,10 @@ async function proposeKnowledgeMutationExecute(
     caused_by_event_id: ctx.causedByEventId ?? null,
     task_run_id: ctx.taskRunId,
     // P5.6 / YUK-178 — model-labeled discriminator threaded into the proposal
-    // payload writeKnowledgeProposeEvent builds; default proactive. Read off the
-    // outer (input-schema) parse — parseKnowledgeMutationInput strips it.
-    suggestion_kind: outer.suggestion_kind ?? 'proactive',
+    // payload writeKnowledgeProposeEvent builds; default proactive. Declared on
+    // every parsed-schema branch, so it flows through `input` (single source of
+    // truth — no reliance on the outer parse retaining a field the union strips).
+    suggestion_kind: input.suggestion_kind ?? 'proactive',
   });
 
   return { status: 'proposed', proposal_id: proposalId };

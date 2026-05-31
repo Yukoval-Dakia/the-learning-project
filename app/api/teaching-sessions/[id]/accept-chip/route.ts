@@ -51,6 +51,12 @@ const Body = z.object({
   proposal_id: z.string().optional(),
 });
 
+// ADR-0011 §2.1 — a chip's source_event_id may only anchor to an agent
+// teach_message in the same session (explain / tool_use shape). Both the
+// resolver and the explicit-id validator enforce this structural constraint so a
+// counted accept_suggestion can never anchor to an unrelated agent event.
+const TEACH_MESSAGE_ACTION = 'experimental:teach_message';
+
 /**
  * Resolve `source_event_id` per ADR-0011 §2.1 when the caller did not supply it:
  *  - proactive chip → the agent `explain` event (turn_kind === 'explain'),
@@ -66,7 +72,13 @@ async function resolveSourceEventId(
   const rows = await db
     .select({ id: event.id, payload: event.payload })
     .from(event)
-    .where(and(eq(event.session_id, sessionId), eq(event.actor_kind, 'agent')))
+    .where(
+      and(
+        eq(event.session_id, sessionId),
+        eq(event.actor_kind, 'agent'),
+        eq(event.action, TEACH_MESSAGE_ACTION),
+      ),
+    )
     .orderBy(desc(event.created_at), desc(event.id))
     .limit(50);
 
@@ -79,6 +91,27 @@ async function resolveSourceEventId(
     if (p.turn_kind === preferredTurnKind) return row.id;
   }
   return fallback;
+}
+
+/**
+ * Validate a client-supplied `source_event_id`: it must reference an agent
+ * teach_message in THIS session. Without this a stale or malformed client could
+ * write a counted accept_suggestion anchored to an unrelated/nonexistent event.
+ */
+async function isValidAnchorEvent(sessionId: string, eventId: string): Promise<boolean> {
+  const rows = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(
+      and(
+        eq(event.id, eventId),
+        eq(event.session_id, sessionId),
+        eq(event.actor_kind, 'agent'),
+        eq(event.action, TEACH_MESSAGE_ACTION),
+      ),
+    )
+    .limit(1);
+  return rows.length > 0;
 }
 
 export async function POST(
@@ -101,9 +134,19 @@ export async function POST(
     // assertAcceptingTurns (which auto-resumes idle + writes conversation.resumed).
     await Conversation.assertActive(db, sessionId);
 
-    const sourceEventId =
-      parsed.data.source_event_id ??
-      (await resolveSourceEventId(sessionId, parsed.data.suggestion_kind));
+    let sourceEventId: string | null;
+    if (parsed.data.source_event_id) {
+      if (!(await isValidAnchorEvent(sessionId, parsed.data.source_event_id))) {
+        throw new ApiError(
+          'validation_error',
+          'source_event_id must reference an agent teach_message in this session',
+          400,
+        );
+      }
+      sourceEventId = parsed.data.source_event_id;
+    } else {
+      sourceEventId = await resolveSourceEventId(sessionId, parsed.data.suggestion_kind);
+    }
     if (!sourceEventId) {
       throw new ApiError(
         'invalid_state',
@@ -127,6 +170,16 @@ export async function POST(
     if (parsed.data.target_tool) payload.target_tool = parsed.data.target_tool;
     if (parsed.data.target_args) payload.target_args = parsed.data.target_args;
 
+    // Order matters: run the proposal accept BEFORE persisting the chip event.
+    // writeEvent-first + a failing accept would leave a counted accept_suggestion
+    // behind, and the retry would write a second — double-counting §5.1's KPI for
+    // an action that never completed (P5.6 review finding). acceptAiProposal is
+    // idempotent on an already-accepted proposal, so write-failure retries stay
+    // safe. Gates compose: a corrective signal is excluded on either path (ND-SK-4).
+    if (parsed.data.proposal_id) {
+      await acceptAiProposal(db, parsed.data.proposal_id);
+    }
+
     await writeEvent(db, {
       id: chipEventId,
       session_id: sessionId,
@@ -138,13 +191,6 @@ export async function POST(
       outcome: 'success',
       payload,
     });
-
-    // If the chip materializes a proposal accept, run it through the proposal
-    // accept path so §5.1's KPI gate applies (Lane 1). The gates compose: a
-    // corrective signal is excluded at whichever path it takes (ND-SK-4).
-    if (parsed.data.proposal_id) {
-      await acceptAiProposal(db, parsed.data.proposal_id);
-    }
 
     return Response.json({ ok: true, event_id: chipEventId });
   } catch (err) {

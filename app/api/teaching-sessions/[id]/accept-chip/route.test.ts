@@ -130,22 +130,105 @@ describe('POST /api/teaching-sessions/[id]/accept-chip (AC-5, §5.2)', () => {
     expect(kpi.proactive_accept_count).toBe(2);
   });
 
-  it('honors an explicit source_event_id when supplied', async () => {
+  it('folds a missing suggestion_kind into the single proactive by_kind bucket (P5.6 regression)', async () => {
+    // A legacy / raw-inserted accept_suggestion row may lack suggestion_kind. It
+    // must collapse into the SAME proactive bucket as explicit-proactive rows —
+    // before the COALESCE-in-GROUP-BY fix, by_kind surfaced two distinct
+    // 'proactive' entries (the NULL group + the 'proactive' group).
+    const db = testDb();
+    const baseRow = (payload: Record<string, unknown>) => ({
+      id: createId(),
+      actor_kind: 'user' as const,
+      actor_ref: 'self',
+      action: 'accept_suggestion',
+      subject_kind: 'chip',
+      subject_id: createId(),
+      outcome: 'success',
+      payload,
+    });
+    await db
+      .insert(event)
+      .values(
+        baseRow({ suggestion_kind: 'proactive', chip_label: 'explicit', source_event_id: 'e1' }),
+      );
+    await db.insert(event).values(baseRow({ chip_label: 'legacy', source_event_id: 'e2' }));
+
+    const kpi = await getChipAcceptKpi(db);
+    const proactiveEntries = kpi.by_kind.filter((k) => k.suggestion_kind === 'proactive');
+    expect(proactiveEntries).toHaveLength(1);
+    expect(proactiveEntries[0].count).toBe(2);
+    expect(kpi.proactive_accept_count).toBe(2);
+  });
+
+  it('honors an explicit source_event_id when it is a valid agent teach_message in the session', async () => {
     const db = testDb();
     const { sessionId } = await Conversation.startConversation(db, { learningItemId: 'li_chip_d' });
+    const explicitId = await seedAgentMessage(sessionId, 'explain');
+
+    const res = await POST(
+      chipReq(sessionId, {
+        suggestion_kind: 'proactive',
+        chip_label: '我懂了',
+        source_event_id: explicitId,
+      }),
+      { params: paramsFor(sessionId) },
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { event_id: string };
+    const rows = await db.select().from(event).where(eq(event.id, json.event_id));
+    expect(rows[0].payload).toMatchObject({ source_event_id: explicitId });
+  });
+
+  it('rejects an explicit source_event_id from a different session (P5.6 regression)', async () => {
+    // foreignId is a valid agent teach_message, but in ANOTHER session — a stale
+    // client must not be able to anchor a counted accept_suggestion to it.
+    const db = testDb();
+    const { sessionId: otherSession } = await Conversation.startConversation(db, {
+      learningItemId: 'li_chip_foreign',
+    });
+    const foreignId = await seedAgentMessage(otherSession, 'explain');
+    const { sessionId } = await Conversation.startConversation(db, {
+      learningItemId: 'li_chip_d2',
+    });
     await seedAgentMessage(sessionId, 'explain');
 
     const res = await POST(
       chipReq(sessionId, {
         suggestion_kind: 'proactive',
         chip_label: '我懂了',
-        source_event_id: 'evt_explicit',
+        source_event_id: foreignId,
       }),
       { params: paramsFor(sessionId) },
     );
-    const json = (await res.json()) as { event_id: string };
-    const rows = await db.select().from(event).where(eq(event.id, json.event_id));
-    expect(rows[0].payload).toMatchObject({ source_event_id: 'evt_explicit' });
+    expect(res.status).toBe(400);
+
+    const rows = await db.select().from(event).where(eq(event.session_id, sessionId));
+    expect(rows.filter((r) => r.action === 'accept_suggestion')).toHaveLength(0);
+  });
+
+  it('does not write the chip event when the materialized proposal accept fails (P5.6 regression)', async () => {
+    // proposal_id points at a nonexistent proposal → acceptAiProposal throws.
+    // The chip event must NOT be persisted (and so must not reach getChipAcceptKpi),
+    // otherwise a failing accept + client retry double-counts the §5.1 KPI.
+    const db = testDb();
+    const { sessionId } = await Conversation.startConversation(db, {
+      learningItemId: 'li_chip_atomic',
+    });
+
+    const res = await POST(
+      chipReq(sessionId, {
+        suggestion_kind: 'proactive',
+        chip_label: '出题考我',
+        source_event_id: 'evt_explicit',
+        proposal_id: 'prop_does_not_exist',
+      }),
+      { params: paramsFor(sessionId) },
+    );
+    expect(res.status).not.toBe(200);
+
+    const rows = await db.select().from(event).where(eq(event.session_id, sessionId));
+    const chipEvents = rows.filter((r) => r.action === 'accept_suggestion');
+    expect(chipEvents).toHaveLength(0);
   });
 
   it('returns 409 when the session has ended (assertActive, no resume side-effect — PIN 9)', async () => {
