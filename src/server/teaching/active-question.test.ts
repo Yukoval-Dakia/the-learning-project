@@ -68,6 +68,18 @@ describe('countAttemptOutcomes (PIN 7 — plain helper, no ToolContext)', () => 
     const counts = await countAttemptOutcomes(testDb(), qid);
     expect(counts).toEqual({ success: 0, partial: 0, failure: 0 });
   });
+
+  it('counts the cumulative failure total past the old timeline window (P5.6 regression)', async () => {
+    // 12 failures > the windowed reader's default cap of 10: the windowed
+    // implementation reported 10 here, letting the failure total drop below the
+    // N=3 trigger once a question accumulated history. The cumulative reader
+    // must return all 12.
+    const qid = await seedTeachingQuestion('sess_window', new Date());
+    for (let i = 0; i < 12; i += 1) await seedAttempt(qid, 'failure');
+
+    const counts = await countAttemptOutcomes(testDb(), qid);
+    expect(counts.failure).toBe(12);
+  });
 });
 
 describe('getActiveQuestionState (call-site 11, §4.3)', () => {

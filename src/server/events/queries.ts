@@ -685,6 +685,45 @@ export async function getQuestionTimeline(
 }
 
 // ============================================================================
+// getQuestionAttemptOutcomeCounts — P5.6 / YUK-178 (§4.3): CUMULATIVE per-outcome
+// attempt totals over a question's WHOLE lifetime (the corrective-chip trigger).
+//
+// NOT `getQuestionTimeline`: that reader is windowed (≤50), so once a question
+// has >limit attempts the earliest failures drop out and the failure total can
+// DECREASE — flapping the corrective chip back to proactive. This scans every
+// `attempt` event and drops retracted/superseded rows via `filterActiveRows`,
+// mirroring the `unbounded` branch of getFailureAttempts.
+// ============================================================================
+
+export async function getQuestionAttemptOutcomeCounts(
+  db: DbLike,
+  questionId: string,
+): Promise<{ success: number; partial: number; failure: number }> {
+  const counts = { success: 0, partial: 0, failure: 0 };
+  const attemptRows = await db
+    .select()
+    .from(event)
+    .where(
+      and(
+        eq(event.subject_kind, 'question'),
+        eq(event.subject_id, questionId),
+        eq(event.action, 'attempt'),
+      ),
+    )
+    .orderBy(desc(event.created_at), desc(event.id));
+
+  if (attemptRows.length === 0) return counts;
+
+  const activeRows = await filterActiveRows(db, attemptRows);
+  for (const row of activeRows) {
+    if (row.outcome === 'success') counts.success += 1;
+    else if (row.outcome === 'partial') counts.partial += 1;
+    else counts.failure += 1;
+  }
+  return counts;
+}
+
+// ============================================================================
 // getEventById — single event lookup (caused_by chain navigation).
 // ============================================================================
 

@@ -37,17 +37,22 @@ export interface ChipAcceptKpi {
  * count is filtered, so a corrective chip-accept is auditable but uncounted.
  */
 export async function getChipAcceptKpi(db: DbLike): Promise<ChipAcceptKpi> {
+  // COALESCE the default into the GROUP BY itself so a missing suggestion_kind
+  // (legacy / externally-inserted rows) collapses into the same 'proactive'
+  // bucket as explicit-proactive rows — otherwise by_kind would surface two
+  // distinct 'proactive' entries (NULL group + 'proactive' group).
+  const kindExpr = sql<string>`COALESCE(${event.payload}->>'suggestion_kind', 'proactive')`;
   const rows = await db
     .select({
-      suggestion_kind: sql<string>`${event.payload}->>'suggestion_kind'`,
+      suggestion_kind: kindExpr,
       count: sql<number>`COUNT(*)::int`,
     })
     .from(event)
     .where(eq(event.action, 'accept_suggestion'))
-    .groupBy(sql`${event.payload}->>'suggestion_kind'`);
+    .groupBy(kindExpr);
 
   const byKind: ChipAcceptCount[] = rows.map((row) => ({
-    suggestion_kind: row.suggestion_kind ?? 'proactive',
+    suggestion_kind: row.suggestion_kind,
     count: Number(row.count ?? 0),
   }));
 
