@@ -336,6 +336,9 @@ describe('schema generated from drizzle', () => {
       recent_week_evidence_ids: ['event1', 'lr1'],
       recent_months_evidence_ids: ['event2'],
       long_term_evidence_ids: ['lr3'],
+      // P5.3 (YUK-183): nullable real column; select schema requires it present
+      // (a selected row always carries the column, here null = not-yet-scored).
+      long_term_freshness_score: null,
       source_event_id: 'event_refresh',
       latest_evidence_at: now,
       evidence_count: 3,

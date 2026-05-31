@@ -198,6 +198,17 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
     expect(rows[0]?.indexdef).toMatch(/affected_scopes/i);
   });
 
+  it('adds P5.3 long_term_freshness_score real column on memory_brief_note (YUK-183)', async () => {
+    const rows = await db.execute<{ column_name: string; data_type: string }>(sql`
+      SELECT column_name, data_type FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'memory_brief_note'
+        AND column_name = 'long_term_freshness_score'
+    `);
+    expect(rows.length).toBe(1);
+    expect(rows[0]?.data_type).toBe('real');
+  });
+
   it('knowledge_edge has FK to knowledge on both from and to', async () => {
     const rows = await db.execute<{ column_name: string; foreign_table_name: string }>(sql`
       SELECT

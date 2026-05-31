@@ -204,3 +204,25 @@ export const PROPOSAL_GATE_BIAS_CONFIG: GateBiasConfig = {
   acceptanceThreshold: 0.3, // §5 Q1 suggested default
   minSamples: 5, // §5 Q1 suggested cold-start guard
 };
+
+// ── P5.3 long-term brief freshness/decay budget ─────────────────────────────
+// Single tunable source for the long_term_md evidence-decay freshness score
+// (docs/superpowers/specs/2026-05-31-p5.3-long-term-brief-stale-design.md §4).
+// Pure arithmetic over SoT event.created_at — no LLM/embedding call.
+export interface LongTermFreshnessBudget {
+  /** Exponential decay half-life in days. freshness contribution of one
+   *  evidence row = exp(-ln(2) * ageDays / halfLifeDays). 60d = balanced
+   *  (readiness brief default): a 60d-old event contributes 0.5, 120d → 0.25. */
+  halfLifeDays: number;
+  /** ADVISORY render-annotation boundary: a stored score below this is the
+   *  signal a render-time consumer uses to surface the paragraph as
+   *  "may be dated". 0.3 = balanced default. NOT a mutation gate — nothing in
+   *  the regen path acts on it; it only informs §7 surfacing. With halfLife 60d
+   *  a single-event paragraph crosses 0.3 at ≈104d old. */
+  freshnessThreshold: number;
+}
+
+export const LONG_TERM_FRESHNESS_BUDGET: LongTermFreshnessBudget = {
+  halfLifeDays: 60,
+  freshnessThreshold: 0.3,
+};

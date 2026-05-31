@@ -169,6 +169,13 @@
       "when": 1780154023767,
       "tag": "0023_lovely_thing",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1780242112363,
+      "tag": "0024_dapper_barracuda",
+      "breakpoints": true
     }
   ]
 }

@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { FK_ORDER, MAX_INLINE_ASSETS, SCHEMA_VERSION } from './constants';
 
 describe('export constants', () => {
-  it('SCHEMA_VERSION is "4.0" (learning_record loop — study_log DROPped, learning_record + memory_brief_note added)', () => {
-    expect(SCHEMA_VERSION).toBe('4.0');
+  it('SCHEMA_VERSION is "4.1" (P5.3: additive nullable memory_brief_note.long_term_freshness_score column)', () => {
+    expect(SCHEMA_VERSION).toBe('4.1');
   });
 
   it('MAX_INLINE_ASSETS is 45 (legacy CF Worker 50 sub-request guardrail)', () => {
