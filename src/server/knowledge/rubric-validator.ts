@@ -164,13 +164,48 @@ async function resolveEvidence(
 
 type EvidenceLevel = 'strong' | 'medium' | 'weak';
 
+// §4.2 "strong = 2+ recent failure events show SAME PATTERN" (spec §3.2, line
+// 150). Raw count is not enough: two UNRELATED judge-backed failures must not
+// upgrade to strong (a low-quality edge would otherwise pass the relation gate).
+// Two events are "same pattern" when they are consistent on EITHER axis:
+//   - cause: they share the effective failure cause `primary_category`, OR
+//   - referenced knowledge: they overlap on at least one referenced node id.
+// We require a pair (i,j) within the usable set that is consistent on at least
+// one axis. With ≥2 usable events this is the predicate that distinguishes
+// "2 failures about the same thing" (strong) from "2 incidental failures"
+// (at most medium → rejected for agents, RB-4).
+function hasSamePatternPair(usable: ResolvedEvidence[]): boolean {
+  for (let i = 0; i < usable.length; i++) {
+    for (let j = i + 1; j < usable.length; j++) {
+      const a = usable[i];
+      const b = usable[j];
+      const sameCause =
+        a.cause !== null &&
+        b.cause !== null &&
+        a.cause.primary_category === b.cause.primary_category;
+      if (sameCause) return true;
+      const aRefs = new Set(a.attempt.referenced_knowledge_ids);
+      const sharesKnowledge = b.attempt.referenced_knowledge_ids.some((kid) => aRefs.has(kid));
+      if (sharesKnowledge) return true;
+    }
+  }
+  return false;
+}
+
 // §4.2 level computation from the in-window, judge-backed evidence set.
-//   strong: 2+ in-window judge-backed failures (or 1 + explicit user note)
-//   medium: exactly 1 in-window judge-backed failure
+//   strong: 2+ in-window judge-backed failures that show the SAME PATTERN
+//           (shared cause category OR overlapping referenced knowledge), OR
+//           1 failure + explicit user note
+//   medium: exactly 1 in-window judge-backed failure, OR 2+ that are unrelated
+//           (no same-pattern pair) — agents are rejected at medium (RB-4)
 //   weak:   0 usable failures
 function computeEvidenceLevel(usable: ResolvedEvidence[]): EvidenceLevel {
   const count = usable.length;
-  if (count >= 2) return 'strong';
+  if (count >= 2) {
+    // Raw count alone is NOT strong — the ≥2 events must be same-pattern (§4.2).
+    // Two unrelated judge-backed failures yield at most medium.
+    return hasSamePatternPair(usable) ? 'strong' : 'medium';
+  }
   if (count === 1) {
     // §4.2 "1 failure plus explicit user note" → strong.
     const onlyOne = usable[0];

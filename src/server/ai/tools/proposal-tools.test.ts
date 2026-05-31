@@ -17,6 +17,7 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { __resetBootstrapForTests, registerCoreTools } from './bootstrap';
+import { buildMcpServerFromRegistry } from './mcp-bridge';
 import {
   attributeMistakeTool,
   proposeKnowledgeEdgeTool,
@@ -36,6 +37,22 @@ const mockRunner = vi.hoisted(() => ({
 
 vi.mock('@/server/ai/runner', () => ({
   runTask: mockRunner.runTask,
+}));
+
+// PR #219 review fix — exercise the rubric-reject logging via the REAL bridge.
+// Mock the Agent SDK so `tool()` captures the handler instead of spawning Claude
+// (same pattern as mcp-bridge.integration.test.ts).
+const mockSdk = vi.hoisted(() => ({
+  toolDefs: [] as Array<{ name: string; handler: (args: unknown) => Promise<unknown> }>,
+}));
+
+vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+  createSdkMcpServer: vi.fn((opts: unknown) => ({ type: 'sdk', instance: opts })),
+  tool: vi.fn((name: string, _desc: string, _schema: unknown, handler: unknown) => {
+    const def = { name, handler } as (typeof mockSdk.toolDefs)[number];
+    mockSdk.toolDefs.push(def);
+    return def;
+  }),
 }));
 
 const BASE = new Date('2026-05-28T00:00:00.000Z');
@@ -283,8 +300,11 @@ describe('Wave 3 proposal/action DomainTools', () => {
     // judge-backed confusion evidence for a contrasts_with edge. Seed two recent
     // judge-backed failures that reference BOTH endpoints so the first proposal
     // passes the §4.2 strong floor + the §4.3 confusion predicate.
-    await seedConfusionEvidence('conf_1', new Date(BASE.getTime() + 1_000));
-    await seedConfusionEvidence('conf_2', new Date(BASE.getTime() + 2_000));
+    // PR #219 review fix — recency is measured against Date.now() + the 30d
+    // window, so these MUST be Date.now()-relative (not fixed BASE, which would
+    // expire past the window and turn CI red after ~30 days). 1–2 days inside.
+    await seedConfusionEvidence('conf_1', new Date(Date.now() - 1 * 86_400_000));
+    await seedConfusionEvidence('conf_2', new Date(Date.now() - 2 * 86_400_000));
 
     const proposed = await proposeKnowledgeEdgeTool.execute(ctx(), {
       from_knowledge_id: 'k_zhi',
@@ -699,9 +719,10 @@ describe('P5.4 rubric enforcement — propose_knowledge_edge', () => {
     __resetRegistryForTests();
     __resetBootstrapForTests();
     mockRunner.runTask.mockReset();
+    mockSdk.toolDefs = [];
   });
 
-  it('rejects an evidence-free agent edge, folds it, and logs a tool_call_log row (RB-6)', async () => {
+  it('rejects an evidence-free agent edge and folds it as a rubric_rejected propose event (RB-6)', async () => {
     const db = testDb();
     await seedKnowledgeGraph();
 
@@ -729,14 +750,16 @@ describe('P5.4 rubric enforcement — propose_knowledge_edge', () => {
       (row.payload as { rubric_verdict?: { ok?: boolean; gate?: string } }).rubric_verdict,
     ).toMatchObject({ ok: false, gate: 'evidence_missing' });
 
-    // RB-6 — logged for traceability (evidence-first).
+    // PR #219 review fix — tool_call_log is the mcp-bridge wrapper's concern, NOT
+    // execute()'s. Calling execute() directly (here) writes NO tool_call_log row;
+    // the bridge-driven path is asserted separately below ("logs exactly ONE
+    // tool_call_log row …"). This avoids the pre-fix double-count where execute()
+    // wrote an explicit log AND the bridge logged the same call.
     const logs = await db
       .select()
       .from(tool_call_log)
       .where(eq(tool_call_log.tool_name, 'propose_knowledge_edge'));
-    expect(logs).toHaveLength(1);
-    expect(logs[0].effect).toBe('propose');
-    expect(logs[0].mirrored_event_id).toBe(rejected.proposal_id);
+    expect(logs).toHaveLength(0);
 
     // RB-7 — the folded proposal derives a terminal 'rubric_rejected' status,
     // NOT 'pending'.
@@ -744,6 +767,49 @@ describe('P5.4 rubric enforcement — propose_knowledge_edge', () => {
     expect(inboxRow?.status).toBe('rubric_rejected');
     const pending = await listProposalInboxRows(db, { status: 'pending' });
     expect(pending).toHaveLength(0);
+  });
+
+  it('via mcp-bridge: a rubric-rejected propose call logs exactly ONE tool_call_log row with the verdict in output_json (not error_reason)', async () => {
+    const db = testDb();
+    await seedKnowledgeGraph();
+
+    // Drive the tool through the REAL bridge so we exercise the same logging
+    // path Copilot/Dreaming/Coach use. The Agent SDK is mocked (see top of file)
+    // so `tool()` captures the handler; we invoke it directly.
+    buildMcpServerFromRegistry({
+      ctx: ctx(),
+      serverName: 'loom_v2',
+      toolNames: ['propose_knowledge_edge'],
+    });
+    const def = mockSdk.toolDefs.find((d) => d.name === 'propose_knowledge_edge');
+    if (!def) throw new Error('propose_knowledge_edge not wired into the mocked SDK');
+
+    const result = (await def.handler({
+      from_knowledge_id: 'k_zhi',
+      to_knowledge_id: 'k_er',
+      relation_type: 'related_to',
+      weight: 1,
+      reasoning: 'attempt e_x 显示用户在 k_zhi 上失败。',
+    })) as { content: Array<{ type: 'text'; text: string }> };
+    const parsed = JSON.parse(result.content[0].text) as {
+      output?: { status?: string; gate?: string };
+    };
+    expect(parsed.output?.status).toBe('skipped:rubric_rejected');
+
+    // Exactly ONE tool_call_log row for this DomainTool call (no double-count).
+    const logs = await db
+      .select()
+      .from(tool_call_log)
+      .where(eq(tool_call_log.tool_name, 'propose_knowledge_edge'));
+    expect(logs).toHaveLength(1);
+    expect(logs[0].effect).toBe('propose');
+    // A soft rubric reject is NOT a hard failure: error_reason stays null and the
+    // verdict is preserved in output_json (traceability without mis-flagging).
+    expect(logs[0].error_reason).toBeNull();
+    expect(logs[0].output_json).toMatchObject({
+      status: 'skipped:rubric_rejected',
+      gate: 'evidence_missing',
+    });
   });
 
   it('RB-7 (load-bearing): a rubric-rejected proposal on K does NOT block a later valid proposal on K', async () => {
@@ -767,8 +833,9 @@ describe('P5.4 rubric enforcement — propose_knowledge_edge', () => {
 
     // 2) A valid (strong, judge-backed, endpoint-referencing) proposal on the
     //    SAME key K must be accepted as 'proposed', not skipped:duplicate_pending.
-    await seedConfusionEvidence('rb7_1', new Date(BASE.getTime() + 1_000));
-    await seedConfusionEvidence('rb7_2', new Date(BASE.getTime() + 2_000));
+    // PR #219 review fix — Date.now()-relative within the 30d window (see above).
+    await seedConfusionEvidence('rb7_1', new Date(Date.now() - 1 * 86_400_000));
+    await seedConfusionEvidence('rb7_2', new Date(Date.now() - 2 * 86_400_000));
     const valid = await proposeKnowledgeEdgeTool.execute(ctx(), {
       from_knowledge_id: 'k_zhi',
       to_knowledge_id: 'k_er',
