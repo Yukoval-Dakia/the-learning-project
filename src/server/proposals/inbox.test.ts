@@ -650,4 +650,70 @@ describe('proposal inbox reader', () => {
     const folded = await listProposalInboxRows(db, { status: 'rubric_rejected' });
     expect(folded.map((r) => r.id)).toContain('edge_folded');
   });
+
+  // P5.4 / YUK-143 (codex r4 P2 #2) — correction status takes PRIORITY over the
+  // rubric_rejected marker. A folded edge that is later retracted/corrected must
+  // clear the folded bucket and derive 'stale', otherwise it stays pinned as
+  // rubric_rejected forever and can never be cleared from ?status=rubric_rejected.
+  it('clears a folded (rubric_rejected) proposal to stale once it is corrected/retracted', async () => {
+    const db = testDb();
+    await writeAiProposal(db, {
+      id: 'edge_folded_corrected',
+      payload: {
+        kind: 'knowledge_edge',
+        target: { subject_kind: 'knowledge_edge', subject_id: null },
+        reason_md: 'evidence-free agent edge → rubric rejected',
+        evidence_refs: [],
+        proposed_change: {
+          from_knowledge_id: 'k1',
+          to_knowledge_id: 'k2',
+          relation_type: 'related_to',
+          weight: 1,
+        },
+      },
+      event_override: {
+        action: 'propose',
+        subject_kind: 'knowledge_edge',
+        payload: {
+          from_knowledge_id: 'k1',
+          to_knowledge_id: 'k2',
+          relation_type: 'related_to',
+          weight: 1,
+          reasoning: 'evidence-free agent edge → rubric rejected',
+          rubric_verdict: { ok: false, gate: 'evidence_missing', reason: 'no evidence' },
+        },
+      },
+    });
+    await writeEvent(db, {
+      id: 'correct_edge_folded',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: 'edge_folded_corrected',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'retract',
+        reason_md: 'retract folded edge',
+        affected_refs: [{ kind: 'open_inquiry', id: 'edge_folded_corrected' }],
+      },
+      caused_by_event_id: 'edge_folded_corrected',
+      created_at: new Date('2026-05-23T05:00:00.000Z'),
+    });
+
+    // Single-row projection now derives stale (correction wins over the marker).
+    const row = await getProposalInboxRow(db, 'edge_folded_corrected');
+    expect(row?.status).toBe('stale');
+
+    // It has dropped out of the folded rubric_rejected bucket…
+    const folded = await listProposalInboxRows(db, { status: 'rubric_rejected' });
+    expect(folded.find((r) => r.id === 'edge_folded_corrected')).toBeUndefined();
+    // …and now surfaces in the stale bucket instead.
+    const stale = await listProposalInboxRows(db, { status: 'stale' });
+    expect(stale.map((r) => r.id)).toContain('edge_folded_corrected');
+    // …and is still excluded from the live-pending bucket (RB-7 intact: stale is
+    // non-pending just like rubric_rejected was).
+    const pending = await listProposalInboxRows(db, { status: 'pending' });
+    expect(pending.find((r) => r.id === 'edge_folded_corrected')).toBeUndefined();
+  });
 });

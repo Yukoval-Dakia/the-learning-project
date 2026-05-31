@@ -247,6 +247,71 @@ async function seedPlainJudgeFailure(
   });
 }
 
+// A recent judge-backed failure where the ATTEMPT's referenced_knowledge_ids and
+// the JUDGE's referenced_knowledge_ids DIVERGE — the attempt's own refs are
+// `attemptKnowledgeIds` (e.g. empty / stale user selection) while the judge
+// references `judgeKnowledgeIds` at grading time. Used to prove the codex r4 P2
+// #3 fix: the endpoint / confusion / same-pattern checks read the UNION
+// (attempt ∪ judge), so a judge-referenced endpoint counts as evidence even when
+// the attempt's refs miss it. Non-empty `analysis_md` → judge-backed + explicit.
+async function seedDivergentRefsFailure(
+  attemptId: string,
+  attemptKnowledgeIds: string[],
+  judgeKnowledgeIds: string[],
+  ageDays: number,
+  causeCategory = 'concept',
+): Promise<void> {
+  const db = testDb();
+  const questionId = `q_${attemptId}`;
+  const createdAt = new Date(Date.now() - ageDays * DAY_MS);
+  await db.insert(question).values({
+    id: questionId,
+    kind: 'short_answer',
+    prompt_md: 'p',
+    reference_md: 'r',
+    knowledge_ids: attemptKnowledgeIds,
+    source: 'manual',
+    difficulty: 3,
+    created_at: createdAt,
+    updated_at: createdAt,
+  });
+  await writeEvent(db, {
+    id: attemptId,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'attempt',
+    subject_kind: 'question',
+    subject_id: questionId,
+    outcome: 'failure',
+    payload: {
+      answer_md: 'wrong',
+      answer_image_refs: [],
+      referenced_knowledge_ids: attemptKnowledgeIds,
+    },
+    created_at: createdAt,
+  });
+  await writeEvent(db, {
+    id: `judge_${attemptId}`,
+    actor_kind: 'agent',
+    actor_ref: 'attribution',
+    action: 'judge',
+    subject_kind: 'event',
+    subject_id: attemptId,
+    outcome: 'success',
+    payload: {
+      cause: {
+        primary_category: causeCategory,
+        secondary_categories: [],
+        analysis_md: '判官在评分时指向了端点节点。',
+        confidence: 0.9,
+      },
+      referenced_knowledge_ids: judgeKnowledgeIds,
+    },
+    caused_by_event_id: attemptId,
+    created_at: new Date(createdAt.getTime() + 500),
+  });
+}
+
 const AGENT = { isAgent: true, actorRef: 'agent:maintenance' };
 
 describe('validateProposalQuality — structural class (G1–G6)', () => {
@@ -871,6 +936,91 @@ describe('validateProposalQuality — agent vs user (RB-3)', () => {
 
     const asAgent = await validateProposalQuality(payload, testDb(), AGENT);
     expect(asAgent.ok).toBe(false);
+  });
+});
+
+// Codex re-review round 4 (P2 #3, rubric-validator.ts:~238-282) — the endpoint /
+// confusion / same-pattern checks read ONLY attempt.referenced_knowledge_ids.
+// But the judge exposes its own referenced_knowledge_ids (what it pointed at when
+// grading). A prerequisite / contrasts_with / applied_in / derived_from proposal
+// whose JUDGE references an endpoint (while the attempt's own refs are empty /
+// stale) was wrongly folded as no-endpoint / no-confusion evidence. The fix
+// merges attempt ∪ judge refs everywhere those refs are read for evidence
+// touching/overlap. Strictly ADDITIVE — the endpoint requirement must still be
+// MET, just now also satisfiable via judge refs; leveling / relation-scoping
+// unchanged.
+describe('validateProposalQuality — judge-referenced endpoints count as evidence (codex r4 P2 #3)', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await seedGraph();
+  });
+
+  it('(a) prerequisite whose attempt refs are EMPTY but whose JUDGE references an endpoint now PASSES', async () => {
+    // Single in-window judge-backed failure with explicit judge analysis_md →
+    // medium + explicit basis → the prerequisite rescue fires. The attempt's own
+    // refs are EMPTY, but the judge references endpoint k_zhi. Pre-fix the
+    // order-evidence predicate read only the (empty) attempt refs → folded as
+    // prerequisite_no_order_evidence; now the effective union counts the judge ref.
+    await seedDivergentRefsFailure('e_pre_judge', [], ['k_zhi'], 1);
+    const v = await validateProposalQuality(
+      edgePayload('k_zhi', 'k_er', 'prerequisite', {
+        reasoning:
+          'attempt e_pre_judge 的 judge 在评分时指向 k_zhi，说明 k_zhi 是 k_er 的学习前置。',
+        evidenceEventIds: ['e_pre_judge'],
+      }),
+      testDb(),
+      AGENT,
+    );
+    expect(v).toEqual({ ok: true });
+  });
+
+  it('(b) contrasts_with confusion satisfiable via JUDGE refs touching BOTH endpoints PASSES', async () => {
+    // Single failure, judge analysis present (rescue fires for contrasts_with).
+    // Attempt refs touch only k_zhi; the JUDGE references BOTH k_zhi and k_er →
+    // effective union references both endpoints → confusion predicate satisfied.
+    // Pre-fix referencingBoth read only attempt refs (k_zhi only) → folded as
+    // contrasts_with_no_confusion.
+    await seedDivergentRefsFailure('e_cw_judge', ['k_zhi'], ['k_zhi', 'k_er'], 1);
+    const v = await validateProposalQuality(
+      edgePayload('k_zhi', 'k_er', 'contrasts_with', {
+        reasoning: 'attempt e_cw_judge 的 judge 在评分时同时指向 k_zhi 与 k_er，说明二者被混淆。',
+        evidenceEventIds: ['e_cw_judge'],
+      }),
+      testDb(),
+      AGENT,
+    );
+    expect(v).toEqual({ ok: true });
+  });
+
+  it('(c) proposal where NEITHER attempt NOR judge refs touch an endpoint is STILL rejected (no loosening)', async () => {
+    // Anti-regression: two same-pattern (shared cause) failures whose attempt AND
+    // judge refs both reference an unrelated node only (k_other) → strong floor
+    // passes, but neither axis touches an endpoint → derived_from default gate
+    // still rejects. Proves the union is additive, not a blanket pass.
+    await testDb()
+      .insert(knowledge)
+      .values([
+        {
+          id: 'k_other',
+          name: '其它',
+          domain: null,
+          parent_id: 'k_wenyan',
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
+      ]);
+    await seedDivergentRefsFailure('e_none_1', ['k_other'], ['k_other'], 1, 'concept');
+    await seedDivergentRefsFailure('e_none_2', ['k_other'], ['k_other'], 2, 'concept');
+    const v = await validateProposalQuality(
+      edgePayload('k_zhi', 'k_er', 'derived_from', {
+        reasoning: 'attempt e_none judge cause concept，但 attempt 与 judge 都只指向 k_other。',
+        evidenceEventIds: ['e_none_1', 'e_none_2'],
+      }),
+      testDb(),
+      AGENT,
+    );
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.gate).toBe('derived_from_no_endpoint_evidence');
   });
 });
 

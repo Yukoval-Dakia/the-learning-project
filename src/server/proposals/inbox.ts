@@ -92,16 +92,26 @@ function isRubricRejected(row: EventRow): boolean {
   );
 }
 
-// Resolve the terminal status for a propose event: rubric_rejected wins, then a
-// non-active correction (stale), then the rate-derived status. Shared by the
-// list + single-row projections so the live-pending exclusion is uniform.
+// Resolve the terminal status for a propose event. A non-active correction
+// (stale) takes PRIORITY over the rubric_rejected marker: a folded edge that is
+// later retracted/corrected (a `correct` event chained off it via
+// retractAiProposal) must clear the folded `?status=rubric_rejected` bucket and
+// derive 'stale' — otherwise it would stay pinned as rubric_rejected forever and
+// could never be cleared (codex r4 P2 #2). The rubric_rejected marker only wins
+// when there is no correction. `stale` is ALSO non-pending, so the live-pending
+// dedup / cooldown queries (RB-7, in propose_edge.ts + review.ts) still exclude
+// a stale-from-correction proposal — those queries key on the correction state +
+// the `rubric_verdict` marker directly, not on this derived enum. The pure
+// (uncorrected) folded proposal still derives 'rubric_rejected'. Shared by the
+// list + single-row projections so the bucketing is uniform.
 function deriveProposalStatus(
   row: EventRow,
   correction: ProposalCorrectionDecision | undefined,
   rate: EventRow | undefined,
 ): ProposalStatus {
+  if (correction) return correction.status;
   if (isRubricRejected(row)) return 'rubric_rejected';
-  return correction?.status ?? rateStatus(rate);
+  return rateStatus(rate);
 }
 
 interface ProposalCorrectionDecision {

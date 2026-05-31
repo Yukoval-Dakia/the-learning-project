@@ -167,6 +167,24 @@ async function resolveEvidence(
   return out;
 }
 
+// Effective referenced-knowledge set for an evidence event = the ids the
+// ATTEMPT referenced UNION the ids the JUDGE referenced at grading time
+// (codex r4 P2 #3). `attempt.referenced_knowledge_ids` is the (possibly stale or
+// empty) user selection on the attempt; `attempt.judge.referenced_knowledge_ids`
+// is what the judge actually pointed at. A prerequisite / contrasts_with /
+// applied_in / derived_from proposal whose JUDGE references an endpoint (but the
+// attempt's own refs are empty) was wrongly folded as no-endpoint / no-confusion
+// evidence. Merging is strictly ADDITIVE — it only makes MORE refs count, never
+// loosens the leveling or the relation-scoping (the endpoint requirement must
+// still be MET; it is just now also satisfiable via judge refs). Used by the
+// same-pattern overlap (hasSamePatternPair) and the endpoint / confusion checks.
+function effectiveReferencedKnowledgeIds(ev: ResolvedEvidence): string[] {
+  const attemptRefs = ev.attempt.referenced_knowledge_ids;
+  const judgeRefs = ev.attempt.judge?.referenced_knowledge_ids ?? [];
+  if (judgeRefs.length === 0) return attemptRefs;
+  return [...new Set([...attemptRefs, ...judgeRefs])];
+}
+
 type EvidenceLevel = 'strong' | 'medium' | 'weak';
 
 // §4.2 "strong = 2+ recent failure events show SAME PATTERN" (spec §3.2, line
@@ -189,8 +207,11 @@ function hasSamePatternPair(usable: ResolvedEvidence[]): boolean {
         b.cause !== null &&
         a.cause.primary_category === b.cause.primary_category;
       if (sameCause) return true;
-      const aRefs = new Set(a.attempt.referenced_knowledge_ids);
-      const sharesKnowledge = b.attempt.referenced_knowledge_ids.some((kid) => aRefs.has(kid));
+      // Overlap uses the effective refs (attempt ∪ judge) so a shared
+      // judge-referenced node counts as same-pattern even when the attempt's
+      // own refs are empty/stale (codex r4 P2 #3).
+      const aRefs = new Set(effectiveReferencedKnowledgeIds(a));
+      const sharesKnowledge = effectiveReferencedKnowledgeIds(b).some((kid) => aRefs.has(kid));
       if (sharesKnowledge) return true;
     }
   }
@@ -252,15 +273,17 @@ function relationGate(
   const endpoints = new Set([change.from_knowledge_id, change.to_knowledge_id]);
 
   // How many in-window judge-backed failures actually reference an endpoint of
-  // this edge (the "evidence touches both nodes" / order-evidence signal).
+  // this edge (the "evidence touches both nodes" / order-evidence signal). The
+  // effective refs (attempt ∪ judge) count, so a judge-referenced endpoint
+  // satisfies the requirement even when the attempt's own refs are empty/stale
+  // (codex r4 P2 #3) — strictly additive, the endpoint must still be MET.
   const referencingEndpoint = usable.filter((ev) =>
-    ev.attempt.referenced_knowledge_ids.some((kid) => endpoints.has(kid)),
+    effectiveReferencedKnowledgeIds(ev).some((kid) => endpoints.has(kid)),
   );
-  const referencingBoth = usable.filter(
-    (ev) =>
-      ev.attempt.referenced_knowledge_ids.includes(change.from_knowledge_id) &&
-      ev.attempt.referenced_knowledge_ids.includes(change.to_knowledge_id),
-  );
+  const referencingBoth = usable.filter((ev) => {
+    const refs = new Set(effectiveReferencedKnowledgeIds(ev));
+    return refs.has(change.from_knowledge_id) && refs.has(change.to_knowledge_id);
+  });
 
   switch (relation) {
     case 'prerequisite': {
