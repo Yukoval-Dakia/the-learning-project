@@ -25,6 +25,13 @@ export function scoreLongTermFreshness(
   now: Date,
   budget: LongTermFreshnessBudget,
 ): { score: number | null; knownCount: number; unknownCount: number } {
+  // PR #229 review: fast-fail on a non-positive (or NaN) half-life. halfLifeDays
+  // is a compile-time const today (60), but as an exported pure util a bad config
+  // would otherwise yield NaN/Infinity/>1 scores that get written to the DB. The
+  // `!(x > 0)` form also rejects NaN.
+  if (!(budget.halfLifeDays > 0)) {
+    throw new Error(`scoreLongTermFreshness: halfLifeDays must be > 0, got ${budget.halfLifeDays}`);
+  }
   const nowMs = now.getTime();
   let sum = 0;
   let knownCount = 0;

@@ -266,11 +266,11 @@ export async function regenerateMemoryBrief(params: {
   // loaded events + at most one batched timestamp lookup (§4.3). draft's
   // long_term_md + long_term_evidence_ids pass through verbatim below — there is
   // NO demotion and NO override of the LLM's long-term fields. Spec §4.1.
-  const evidenceTimestamps = await resolveEvidenceTimestamps(
-    draft.long_term_evidence_ids,
-    events,
-    params,
-  );
+  // PR #229 review (medium): de-dup the SCORING input only — a duplicate evidence
+  // id would otherwise be counted twice in the mean and over-weight that one
+  // event (and double-query it). draft.long_term_evidence_ids is stored as-is.
+  const scoringEvidenceIds = [...new Set(draft.long_term_evidence_ids)];
+  const evidenceTimestamps = await resolveEvidenceTimestamps(scoringEvidenceIds, events, params);
   const { score: longTermFreshnessScore } = scoreLongTermFreshness(
     evidenceTimestamps,
     now,
