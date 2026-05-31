@@ -300,6 +300,56 @@ describe('buildMemoryBriefRegenHandler — BR-10 subject branch', () => {
     expect(briefRow[0].evidence_count).toBe(1);
   });
 
+  // Regression for the detection↔regen lookback-window divergence (adversarial
+  // verify finding): a BUILT subject whose qualifying event is NEWER than its
+  // refreshed_at but OLDER than a fixed now-30d floor. Detection flags it active
+  // (40d > 60d refreshed_at). Before the fix, loadSubjectBriefEvents used a flat
+  // now-30d floor → excluded the 40d event → events=[] →
+  // subjectScopeHasNewEvidence([]) false → SKIP forever (silently starved +
+  // re-enqueued every night). After the fix both floor at refreshed_at, so the
+  // 40d event loads and the brief refreshes.
+  it('refreshes a built subject whose only new event is newer than refreshed_at but older than the 30d window', async () => {
+    await seedKnowledge('k-wenyan', 'wenyan');
+    // Built 60d ago, last evidence 60d ago.
+    await seedBriefRow({
+      subjectId: 'wenyan',
+      refreshedAt: daysAgo(60),
+      latestEvidenceAt: daysAgo(60),
+    });
+    // One qualifying event at 40d: newer than refreshed_at (60d), older than the
+    // 30d lookback window.
+    await insertAttempt({
+      knowledgeIds: ['k-wenyan'],
+      createdAt: daysAgo(40),
+      affectedScopes: ['global', 'topic:k-wenyan'],
+    });
+
+    // (i) Detection flags it ACTIVE.
+    const active = await listActiveSubjectsSinceRefresh(testDb(), { now: NOW });
+    expect(active.map((a) => a.subjectId)).toContain('wenyan');
+
+    // (ii) The regen handler DOES refresh it.
+    const generate = fakeGenerate();
+    const handler = buildMemoryBriefRegenHandler(testDb(), {
+      memoryClient: noFactsClient,
+      generateBrief: generate,
+    });
+    await handler(regenJob('subject:wenyan'));
+
+    expect(generate).toHaveBeenCalledTimes(1);
+    const briefRow = await testDb()
+      .select()
+      .from(memory_brief_note)
+      .where(eq(memory_brief_note.scope_key, 'subject:wenyan'));
+    expect(briefRow).toHaveLength(1);
+    // refreshed_at bumped to ~now (was 60d ago).
+    expect(briefRow[0].refreshed_at?.getTime() ?? 0).toBeGreaterThan(daysAgo(1).getTime());
+    // latest_evidence_at = the 40d event's created_at.
+    expect(briefRow[0].latest_evidence_at?.getTime()).toBe(daysAgo(40).getTime());
+    expect(briefRow[0].evidence_count).toBeGreaterThanOrEqual(1);
+    expect(briefRow[0].recent_week_md.length).toBeGreaterThan(0);
+  });
+
   it('a never-built active subject does NOT loop into regenerating an empty brief', async () => {
     await seedKnowledge('k-math', 'math');
     await insertAttempt({
@@ -313,15 +363,30 @@ describe('buildMemoryBriefRegenHandler — BR-10 subject branch', () => {
       memoryClient: noFactsClient,
       generateBrief: generate,
     });
-    await handler(regenJob('subject:math'));
 
-    const briefRow = await testDb()
+    // First invocation: builds a non-empty brief (generate called once).
+    await handler(regenJob('subject:math'));
+    expect(generate).toHaveBeenCalledTimes(1);
+    const afterBuild = await testDb()
       .select()
       .from(memory_brief_note)
       .where(eq(memory_brief_note.scope_key, 'subject:math'));
-    expect(briefRow).toHaveLength(1);
-    expect(briefRow[0].latest_evidence_at).not.toBeNull();
-    expect(briefRow[0].evidence_count).toBeGreaterThan(0);
+    expect(afterBuild).toHaveLength(1);
+    expect(afterBuild[0].latest_evidence_at).not.toBeNull();
+    expect(afterBuild[0].evidence_count).toBeGreaterThan(0);
+    const firstRefreshedAt = afterBuild[0].refreshed_at?.getTime() ?? 0;
+
+    // Second invocation with NO new events: must NOT call generate again and must
+    // NOT bump refreshed_at (the brief now floors at its own refreshed_at, so the
+    // already-summarized event is excluded → empty window → skip). This is what
+    // the test name claims: no loop into regenerating an empty brief every night.
+    await handler(regenJob('subject:math'));
+    expect(generate).toHaveBeenCalledTimes(1);
+    const afterSecond = await testDb()
+      .select()
+      .from(memory_brief_note)
+      .where(eq(memory_brief_note.scope_key, 'subject:math'));
+    expect(afterSecond[0].refreshed_at?.getTime() ?? 0).toBe(firstRefreshedAt);
   });
 
   it('dormant subject enqueued via the global stale-sweep is skipped (BR-2: no LLM call, no refreshed_at bump)', async () => {

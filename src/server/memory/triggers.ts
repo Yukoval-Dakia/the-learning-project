@@ -164,6 +164,11 @@ export function buildMemoryBriefRegenHandler(
       // no refreshed_at bump for a dormant subject).
       if (scopeKey.startsWith(SUBJECT_SCOPE_PREFIX)) {
         const subjectId = scopeKey.slice(SUBJECT_SCOPE_PREFIX.length);
+        // loadSubjectBriefEvents floors at THIS subject's own brief refreshed_at
+        // (lookbackDays only as the never-built fallback), the SAME
+        // subjectEventFloor predicate the detection sweep uses — so any subject
+        // the sweep flagged active reloads ≥1 event here and is never silently
+        // starved by a flat now-30d floor.
         const events = await loadSubjectBriefEvents(db, subjectId, {
           lookbackDays: BRIEF_REFRESH_LOOKBACK_DAYS,
         });
