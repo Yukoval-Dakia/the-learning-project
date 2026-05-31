@@ -76,9 +76,11 @@ export const fastTestInclude = [
   // db partition because it hits live Postgres.
   'src/server/knowledge/hub-mesh.test.ts',
   // Memory tests are mostly unit-mocked. The outbox real-path integration
-  // test (triggers.outbox.test.ts, YUK-101 / ADR-0021) hits live Postgres
-  // and runs in the DB partition — enumerate the unit tests here instead
-  // of globbing so the outbox test falls through.
+  // test (triggers.outbox.test.ts, YUK-101 / ADR-0021) and the P5.2
+  // activity-gated brief test (active-subjects.db.test.ts, YUK-143) hit live
+  // Postgres and run in the DB partition — enumerate the unit tests here
+  // instead of globbing so those .db.test.ts files fall through.
+  'src/server/memory/active-subjects.test.ts',
   'src/server/memory/brief.test.ts',
   'src/server/memory/client.test.ts',
   'src/server/memory/scope_tagger.test.ts',

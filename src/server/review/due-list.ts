@@ -28,13 +28,13 @@ import { type ActiveGoal, listActiveGoals } from '@/server/goals/queries';
 import { errorResponse } from '@/server/http/errors';
 // T-CS / YUK-168 — cross-subject scheduling v1 (ADR-0014 §5, line 242). The due
 // pool is round-robin balanced across the learning-subjects that have due items
-// so one busy subject can't dominate the page. resolveSubjectProfileForKnowledgeIds
-// walks knowledge_ids → parent chain → domain → SubjectProfile (default fallback
-// for orphan ids, YUK-56). getEffectiveDomain is the per-node read it builds on;
-// we memoise it across the pool to avoid an N+1 on the parent-chain walk.
-import { getEffectiveDomain } from '@/server/knowledge/domain';
+// so one busy subject can't dominate the page. batchResolveSubjectIds walks
+// knowledge_ids → parent chain → domain → SubjectProfile (default fallback for
+// orphan ids, YUK-56), memoised across the pool to avoid an N+1 on the
+// parent-chain walk. Extracted to `@/server/knowledge/subject-resolution` (P5.2)
+// so the brief-refresh layer shares the SAME canonical bridge.
+import { batchResolveSubjectIds } from '@/server/knowledge/subject-resolution';
 import type { EffectiveTruth } from '@/server/review/effective-truth';
-import { resolveSubjectProfile } from '@/subjects/profile';
 import { and, eq, inArray, lte, sql } from 'drizzle-orm';
 
 // YUK-167 / ADR-0025 — swappable active-goals reader so DB tests inject goal
@@ -111,58 +111,6 @@ async function getFailureAttemptsPerQuestion(
   // hot question saturate the window, dropping quiet questions from the
   // never-reviewed slice entirely.
   return await getFailureAttempts(db, { questionIds, perQuestionLimit });
-}
-
-// T-CS / YUK-168 — batch-resolve each candidate's learning-subject id from its
-// first knowledge id, deduplicating the parent-chain walk. A naive per-question
-// resolveSubjectProfileForKnowledgeIds would re-walk the knowledge tree once per
-// question (N+1); here we resolve each UNIQUE first-knowledge-id once and reuse.
-//
-// Orphan / missing knowledge ids (no row, or a question with no knowledge_ids)
-// fall back to the default profile id (YUK-56), so any pool whose knowledge ids
-// don't resolve to distinct domains is single-subject — which is exactly what
-// makes the round-robin degenerate to today's order (see roundRobinBySubject).
-async function batchResolveSubjectIds(
-  rows: Array<{ id: string; knowledge_ids: string[] }>,
-): Promise<Map<string, string>> {
-  const defaultSubjectId = resolveSubjectProfile(null).id;
-  const firstIdToSubjectId = new Map<string, string>();
-  const pendingFirstIds = new Set<string>();
-  for (const row of rows) {
-    const firstId = row.knowledge_ids[0];
-    if (firstId && !firstIdToSubjectId.has(firstId)) pendingFirstIds.add(firstId);
-  }
-  const uniqueFirstIds = [...pendingFirstIds];
-  if (uniqueFirstIds.length > 0) {
-    const domains = await Promise.all(
-      uniqueFirstIds.map((kid) =>
-        // YUK-171 (#207) — log before defaulting so a transient / structural
-        // failure in the domain-resolution chain is observable instead of
-        // silently swallowed. Behaviour unchanged: a null domain still falls
-        // back to the default subject profile via resolveSubjectProfile.
-        getEffectiveDomain(db, kid).catch((error) => {
-          console.warn(
-            `[batchResolveSubjectIds] getEffectiveDomain failed for knowledge_id=${kid}; defaulting to null domain: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
-          return null;
-        }),
-      ),
-    );
-    uniqueFirstIds.forEach((kid, idx) => {
-      // resolveSubjectProfile maps domain → profile via the alias table and
-      // falls back to default for unknown/null domains, mirroring
-      // resolveSubjectProfileForKnowledgeIds without re-walking the tree.
-      firstIdToSubjectId.set(kid, resolveSubjectProfile(domains[idx]).id);
-    });
-  }
-  const out = new Map<string, string>();
-  for (const row of rows) {
-    const firstId = row.knowledge_ids[0];
-    out.set(row.id, (firstId && firstIdToSubjectId.get(firstId)) || defaultSubjectId);
-  }
-  return out;
 }
 
 // T-CS / YUK-168 — deterministic round-robin SELECTION across subjects.
@@ -406,6 +354,7 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
     // byte-identical to the old `combined.slice(0, limit)`. This keeps the
     // current single-subject-heavy usage (and every single-subject test) green.
     const subjectIdByRow = await batchResolveSubjectIds(
+      db,
       combined.map((r) => ({ id: r.id, knowledge_ids: r.knowledge_ids })),
     );
     const newSegment = combined.slice(0, newRows.length);

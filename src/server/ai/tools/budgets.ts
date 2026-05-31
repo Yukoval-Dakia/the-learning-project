@@ -124,3 +124,27 @@ export type CourtesyDefaultToolName = keyof typeof TOOL_COURTESY_DEFAULTS;
 //     a tool-local courtesy value that sits below the 180 budget ceiling.
 export const KNOWLEDGE_EXCERPT_MAX = 180;
 export const MISTAKE_PROMPT_SNIPPET_MAX = 160;
+
+// ── P5.2 brief-refresh budget (BR-9) ────────────────────────────────────────
+//
+// Single tunable source for the activity-gated per-subject brief refresh
+// (`docs/superpowers/specs/2026-05-31-p5.2-brief-refresh-design.md` §3.6).
+// Same const/interface pattern as the ContextBudget surfaces above: a typed
+// interface + one named const, no class/factory. These are the ONLY place the
+// per-run and per-brief limits are defined — no per-file fallbacks (BR-9,
+// acceptance §7 "single-source budgets").
+export interface BriefRefreshBudget {
+  /** Max subjects whose briefs refresh in a single nightly sweep run. When
+   *  exceeded, prioritize by activity recency; defer remainder to the next
+   *  night (no starvation). */
+  maxSubjectsPerRun: number;
+  /** Max recent activity events fed into a single subject brief's
+   *  summarization. Formalizes the prior hardcoded `.limit(50)` in
+   *  brief.ts loadEventsFromDb. */
+  maxEventsPerBrief: number;
+}
+
+export const BRIEF_REFRESH_BUDGET: BriefRefreshBudget = {
+  maxSubjectsPerRun: 12, // Never bites at today's 3–5 active subjects; forward-looking guard
+  maxEventsPerBrief: 50, // Existing hardcoded limit in brief.ts loadEventsFromDb; proven bound
+};

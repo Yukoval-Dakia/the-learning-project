@@ -1,7 +1,8 @@
-import { and, desc, eq, gt, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, isNull, lt, or, sql } from 'drizzle-orm';
 
 import type { Db } from '@/db/client';
 import { event, memory_brief_note } from '@/db/schema';
+import { BRIEF_REFRESH_BUDGET } from '@/server/ai/tools/budgets';
 
 export const BRIEF_TEMPLATES = {
   global:
@@ -83,7 +84,9 @@ async function loadEventsFromDb(db: Db, scopeKey: string): Promise<BriefEvent[]>
     .from(event)
     .where(sql`${event.affected_scopes} @> ARRAY[${scopeKey}]::text[]`)
     .orderBy(desc(event.created_at))
-    .limit(50);
+    // P5.2 (BR-9) — single-source per-brief read cap. Byte-identical to the
+    // prior hardcoded 50; budgets.ts is now the only place this number lives.
+    .limit(BRIEF_REFRESH_BUDGET.maxEventsPerBrief);
   return rows.map((row) => ({
     id: row.id,
     action: row.action,
@@ -118,14 +121,27 @@ async function upsertBriefInDb(db: Db, row: BriefRow): Promise<void> {
     });
 }
 
+// P5.2 (BR-10) — test-only export of the affected_scopes loader. The
+// acceptance test must prove that for a subject made active purely by
+// attempt/review events (referenced_knowledge_ids only), this affected_scopes
+// path returns 0 rows while the knowledge-resolved loader returns the events.
+// Not part of the production API; named with the `ForTest` suffix so it is
+// obviously a test seam, not a caller-facing helper.
+export const loadEventsFromDbForTest = loadEventsFromDb;
+
 export async function listStaleBriefScopes(db: Db, now = new Date()): Promise<string[]> {
   const cutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   const rows = await db
     .select({ scope_key: memory_brief_note.scope_key })
     .from(memory_brief_note)
-    .where(
-      sql`${memory_brief_note.refreshed_at} IS NULL OR ${memory_brief_note.refreshed_at} < ${cutoff}`,
-    );
+    // P5.2 — semantically identical to the prior raw
+    // `refreshed_at IS NULL OR refreshed_at < cutoff` fragment, but expressed
+    // via drizzle's typed operators so the `cutoff` Date binds against the
+    // timestamptz column type. The raw `sql\`... < ${cutoff}\`` form did NOT
+    // carry the column type, so postgres-js's prepared-statement bind crashed
+    // on a JS Date param (latent — the global sweep had no DB-level test until
+    // P5.2 exercised it). Same query, same 24h gate, no behavior change.
+    .where(or(isNull(memory_brief_note.refreshed_at), lt(memory_brief_note.refreshed_at, cutoff)));
   return rows.map((row) => row.scope_key);
 }
 
