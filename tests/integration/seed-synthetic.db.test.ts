@@ -229,6 +229,8 @@ async function synthCounts(db: ReturnType<typeof testDb>): Promise<{
   question: number;
   event: number;
   fsrs: number;
+  signalAccepts: number;
+  signalDismisses: number;
 }> {
   const k = (await db.execute(
     sql`SELECT count(*)::int AS n FROM "knowledge" WHERE id LIKE 'synthetic:%'`,
@@ -242,10 +244,21 @@ async function synthCounts(db: ReturnType<typeof testDb>): Promise<{
   const f = (await db.execute(
     sql`SELECT count(*)::int AS n FROM "material_fsrs_state" WHERE subject_id LIKE 'synthetic:q:%'`,
   )) as unknown as Array<{ n: number }>;
+  // FIX J: proposal_signals counts are upserted additively, so row-count alone
+  // would not catch a non-idempotent re-run that doubles accept/dismiss counts
+  // (FIX B's regression). Compare the summed accept/dismiss aggregates too.
+  const s = (await db.execute(
+    sql`SELECT coalesce(sum(accept_count),0)::int AS accepts,
+               coalesce(sum(dismiss_count),0)::int AS dismisses
+        FROM "proposal_signals"
+        WHERE cooldown_key LIKE 'knowledge_edge:synthetic:%'`,
+  )) as unknown as Array<{ accepts: number; dismisses: number }>;
   return {
     knowledge: k[0]?.n ?? 0,
     question: q[0]?.n ?? 0,
     event: e[0]?.n ?? 0,
     fsrs: f[0]?.n ?? 0,
+    signalAccepts: s[0]?.accepts ?? 0,
+    signalDismisses: s[0]?.dismisses ?? 0,
   };
 }
