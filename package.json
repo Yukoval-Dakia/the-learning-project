@@ -28,6 +28,7 @@
     "db:migrate": "drizzle-kit migrate",
     "db:migrate:local": "tsx scripts/migrate-local-db.ts",
     "worker:dev": "tsx scripts/worker.ts",
+    "seed:synthetic": "tsx scripts/seed-synthetic.ts",
     "audit:schema": "tsx scripts/audit-schema-writes.ts",
     "audit:partition": "tsx scripts/audit-test-partition.ts",
     "audit:profile": "tsx scripts/audit-profile.ts",
