@@ -30,6 +30,10 @@ import {
   writeKnowledgeProposeEvent,
 } from '@/server/knowledge/proposals';
 import { type RubricVerdict, validateProposalQuality } from '@/server/knowledge/rubric-validator';
+// P5.4-L2 / YUK-174 (Facet B) — resolve the per-(kind, relation) gate-bump for
+// this edge and pass it as the OPTIONAL adaptive input to the L1 validator. The
+// digest read is bounded; cold-start / below-threshold returns a no-op bump.
+import { resolveEdgeGateBump } from '@/server/proposals/adaptive-bias';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import {
   writeArchiveProposal,
@@ -41,6 +45,7 @@ import { writeAiProposal } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
+import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from './budgets';
 import type { DomainTool, ToolContext } from './types';
 
 const TEXT_EXCERPT_MAX = 180;
@@ -331,12 +336,31 @@ async function proposeKnowledgeEdgeExecute(
     cooldown_key: cooldownKey,
   };
 
+  // P5.4-L2 / YUK-174 (Facet B) — resolve the adaptive gate-bump for this edge's
+  // `(knowledge_edge, relation_type)` cell. Only meaningful for agents (the L1
+  // evidence floor + rescue is agent-only); for the user path the bump is inert
+  // because the rescue branch never runs. Cold-start / below-threshold → no-op.
+  const adaptive =
+    ctx.callerActor.kind === 'agent'
+      ? await resolveEdgeGateBump(
+          ctx.db,
+          input.relation_type,
+          PROPOSAL_FEEDBACK_BUDGET,
+          PROPOSAL_GATE_BIAS_CONFIG,
+        )
+      : undefined;
+
   // P5.4 / YUK-143 (RB-1) — shared rubric floor before the write. Agents are
   // strict; user-edited proposals (kind !== 'agent') run structural-only.
-  const verdict = await validateProposalQuality(parseAiProposalPayload(proposalPayload), ctx.db, {
-    isAgent: ctx.callerActor.kind === 'agent',
-    actorRef: ctx.callerActor.ref,
-  });
+  const verdict = await validateProposalQuality(
+    parseAiProposalPayload(proposalPayload),
+    ctx.db,
+    {
+      isAgent: ctx.callerActor.kind === 'agent',
+      actorRef: ctx.callerActor.ref,
+    },
+    adaptive,
+  );
   if (!verdict.ok) {
     return await foldRubricRejectedEdge(ctx, proposalPayload, cooldownKey, verdict, input);
   }

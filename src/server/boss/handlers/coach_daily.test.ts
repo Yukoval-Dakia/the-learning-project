@@ -7,10 +7,12 @@ import {
 } from '@/server/ai/tools/allowlists';
 import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
 import {
+  COACH_DAILY_OBJECTIVE,
   COACH_MAX_PROPOSALS,
   parseCoachOutputSafely,
   runCoach,
 } from '@/server/boss/handlers/coach_daily';
+import type { ProposalFeedbackCell } from '@/server/proposals/adaptive-bias';
 
 const VALID_TODAY_PLAN = {
   daily_focus: '今天先把上周的「之、其、于」复盘做完',
@@ -48,6 +50,9 @@ describe('runCoach', () => {
       // YUK-143 — North-Star: stub the active-goals reader so these no-DB unit
       // tests don't hit the real listActiveGoals query (db is a {} stub).
       listActiveGoalsFn: async () => [],
+      // P5.4-L2 / YUK-174 — stub the feedback reader (db is a {} stub) so the
+      // cold-start no-op path runs without querying.
+      loadProposalFeedbackFn: async () => [],
       now: () => new Date('2026-05-28T20:00:00.000Z'),
     });
 
@@ -152,6 +157,9 @@ describe('runCoach', () => {
       // YUK-143 — North-Star: stub the active-goals reader so these no-DB unit
       // tests don't hit the real listActiveGoals query (db is a {} stub).
       listActiveGoalsFn: async () => [],
+      // P5.4-L2 / YUK-174 — stub the feedback reader (db is a {} stub) so the
+      // cold-start no-op path runs without querying.
+      loadProposalFeedbackFn: async () => [],
       now: () => new Date('2026-05-31T20:00:00.000Z'),
     });
 
@@ -168,6 +176,110 @@ describe('runCoach', () => {
         actor_ref: 'weekly_coach',
       }),
     );
+  });
+
+  // P5.4-L2 / YUK-174 (Facet A + C, §3.3) — the per-(kind, relation) reason
+  // digest reaches the CoachTask input scoped to Coach's actable kinds (now
+  // INCLUDING knowledge_edge, AB-4) and the objective carries the ND-5 clause.
+  it('threads a proposal_feedback digest into the CoachTask input scoped to actable kinds', async () => {
+    const db = {} as never;
+    const mcpServer = { name: 'fake-loom' } as never;
+    const listProposalInboxRowsFn = vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_coach_feedback',
+      text: JSON.stringify(VALID_TODAY_PLAN),
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    const writeEventFn = vi.fn(async (_db, input) => input.id);
+    const digest: ProposalFeedbackCell[] = [
+      {
+        kind: 'knowledge_edge',
+        relation: 'prerequisite',
+        accept_count: 1,
+        dismiss_count: 9,
+        total: 10,
+        acceptance_rate: 0.1,
+        top_dismiss_reasons: ['no order evidence'],
+        top_rubric_gates: ['prerequisite_no_order_evidence'],
+      },
+      {
+        kind: 'completion',
+        relation: null,
+        accept_count: 0,
+        dismiss_count: 3,
+        total: 3,
+        acceptance_rate: 0,
+        top_dismiss_reasons: ['too early'],
+        top_rubric_gates: [],
+      },
+      // record_links is NOT a Coach-actable kind → must be filtered out.
+      {
+        kind: 'record_links',
+        relation: null,
+        accept_count: 0,
+        dismiss_count: 2,
+        total: 2,
+        acceptance_rate: 0,
+        top_dismiss_reasons: ['irrelevant link'],
+        top_rubric_gates: [],
+      },
+    ];
+
+    await runCoach(db, 'daily', {
+      listProposalInboxRowsFn,
+      buildMcpServerFn,
+      runAgentTaskFn,
+      writeEventFn,
+      listActiveGoalsFn: async () => [],
+      loadProposalFeedbackFn: async () => digest,
+      now: () => new Date('2026-05-28T20:00:00.000Z'),
+    });
+
+    const taskInput = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[1] as {
+      objective: string;
+      proposal_feedback: Array<{ kind: string; relation: string | null }>;
+    };
+    const kinds = taskInput.proposal_feedback.map((c) => c.kind);
+    // Coach CAN act on knowledge_edge (AB-4) + completion; record_links is out.
+    expect(kinds).toContain('knowledge_edge');
+    expect(kinds).toContain('completion');
+    expect(kinds).not.toContain('record_links');
+    // Objective carries the ND-5 reason-feedback + when-to-propose-an-edge clause.
+    expect(taskInput.objective).toBe(COACH_DAILY_OBJECTIVE);
+    expect(taskInput.objective).toContain('proposal_feedback');
+    expect(taskInput.objective).toContain('ND-5');
+    expect(taskInput.objective).toContain('knowledge_edge');
+  });
+
+  it('emits an empty proposal_feedback on cold start (no-op back-compat)', async () => {
+    const db = {} as never;
+    const mcpServer = { name: 'fake-loom' } as never;
+    const listProposalInboxRowsFn = vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_coach_cold',
+      text: JSON.stringify(VALID_TODAY_PLAN),
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    const writeEventFn = vi.fn(async (_db, input) => input.id);
+
+    await runCoach(db, 'daily', {
+      listProposalInboxRowsFn,
+      buildMcpServerFn,
+      runAgentTaskFn,
+      writeEventFn,
+      listActiveGoalsFn: async () => [],
+      loadProposalFeedbackFn: async () => [],
+      now: () => new Date('2026-05-28T20:00:00.000Z'),
+    });
+
+    const taskInput = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[1] as {
+      proposal_feedback: unknown[];
+    };
+    expect(taskInput.proposal_feedback).toEqual([]);
   });
 
   it('writes failure event and rethrows on CoachTask error', async () => {
@@ -188,6 +300,8 @@ describe('runCoach', () => {
         writeEventFn,
         // YUK-143 — stub the active-goals reader (db is a {} stub here).
         listActiveGoalsFn: async () => [],
+        // P5.4-L2 / YUK-174 — stub the feedback reader (db is a {} stub here).
+        loadProposalFeedbackFn: async () => [],
         now: () => new Date('2026-05-28T20:00:00.000Z'),
       }),
     ).rejects.toThrow('boom');
@@ -223,6 +337,9 @@ describe('runCoach', () => {
       // YUK-143 — North-Star: stub the active-goals reader so these no-DB unit
       // tests don't hit the real listActiveGoals query (db is a {} stub).
       listActiveGoalsFn: async () => [],
+      // P5.4-L2 / YUK-174 — stub the feedback reader (db is a {} stub) so the
+      // cold-start no-op path runs without querying.
+      loadProposalFeedbackFn: async () => [],
       now: () => new Date('2026-05-28T20:00:00.000Z'),
     });
 

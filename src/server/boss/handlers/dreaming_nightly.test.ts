@@ -251,10 +251,52 @@ describe('runDreamingNightly', () => {
   it('threads the acceptance-rate signal into the DreamingTask input with bias objective', async () => {
     const db = {} as never;
     const mcpServer = { name: 'fake-loom' } as never;
+    // P5.4-L2 / YUK-174 — the reader now returns the per-(kind, relation) digest;
+    // the all-kind RATE the existing feed surfaces is rolled up from it (strict
+    // subset). DREAMING_TOOLS spreads KNOWLEDGE_REVIEW_TOOLS, so knowledge_edge /
+    // knowledge_node ARE Dreaming-actable — their reason fields DO appear in
+    // proposal_feedback (the edge cell carries its relation), as asserted below.
     const acceptanceRates = [
-      { kind: 'completion', acceptance_rate: 0.9, accept_count: 9, dismiss_count: 1, total: 10 },
-      { kind: 'knowledge_node', acceptance_rate: 0.5, accept_count: 2, dismiss_count: 2, total: 4 },
-      { kind: 'archive', acceptance_rate: 0.1, accept_count: 1, dismiss_count: 9, total: 10 },
+      {
+        kind: 'completion',
+        relation: null,
+        acceptance_rate: 0.9,
+        accept_count: 9,
+        dismiss_count: 1,
+        total: 10,
+        top_dismiss_reasons: [],
+        top_rubric_gates: [],
+      },
+      {
+        kind: 'knowledge_node',
+        relation: null,
+        acceptance_rate: 0.5,
+        accept_count: 2,
+        dismiss_count: 2,
+        total: 4,
+        top_dismiss_reasons: [],
+        top_rubric_gates: [],
+      },
+      {
+        kind: 'archive',
+        relation: null,
+        acceptance_rate: 0.1,
+        accept_count: 1,
+        dismiss_count: 9,
+        total: 10,
+        top_dismiss_reasons: ['archived too aggressively'],
+        top_rubric_gates: [],
+      },
+      {
+        kind: 'knowledge_edge',
+        relation: 'related_to',
+        acceptance_rate: 0.05,
+        accept_count: 1,
+        dismiss_count: 19,
+        total: 20,
+        top_dismiss_reasons: ['dumping ground'],
+        top_rubric_gates: ['related_to_dumping_ground'],
+      },
     ];
     const listProposalInboxRowsFn = vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]);
     const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
@@ -280,20 +322,40 @@ describe('runDreamingNightly', () => {
       'DreamingTask',
       expect.objectContaining({
         run_kind: 'nightly',
+        // Rolled up per-kind, sorted by acceptance_rate DESC. The knowledge_edge
+        // cell adds a 4th kind to the RATE feed (background bias for every kind).
         proposal_acceptance_rates: [
           { kind: 'completion', acceptance_rate: 0.9, accept_count: 9, dismiss_count: 1 },
           { kind: 'knowledge_node', acceptance_rate: 0.5, accept_count: 2, dismiss_count: 2 },
           { kind: 'archive', acceptance_rate: 0.1, accept_count: 1, dismiss_count: 9 },
+          { kind: 'knowledge_edge', acceptance_rate: 0.05, accept_count: 1, dismiss_count: 19 },
         ],
         objective: DREAMING_OBJECTIVE,
       }),
       expect.anything(),
     );
     const firstCallArgs = runAgentTaskFn.mock.calls[0] as unknown as unknown[];
-    const taskInput = firstCallArgs[1] as { objective: string };
+    const taskInput = firstCallArgs[1] as {
+      objective: string;
+      proposal_feedback: Array<{ kind: string; relation: string | null }>;
+    };
     expect(taskInput.objective).toContain('proposal_acceptance_rates');
     expect(taskInput.objective).toContain('historical acceptance');
     expect(taskInput.objective).toContain('ND-5');
+    // The objective also describes the new reason-feedback fields.
+    expect(taskInput.objective).toContain('proposal_feedback');
+
+    // P5.4-L2 / YUK-174 (Facet A, §3.2) — REASON fields are scoped to Dreaming's
+    // ACTUAL actable kinds (DREAMING_TOOLS grants knowledge_edge +
+    // knowledge_mutation via KNOWLEDGE_REVIEW_TOOLS, plus learning-item / record).
+    // completion / knowledge_node / archive / knowledge_edge all reach
+    // proposal_feedback; the edge cell additionally carries its relation.
+    const feedbackKinds = taskInput.proposal_feedback.map((c) => c.kind);
+    expect(feedbackKinds).toContain('completion');
+    expect(feedbackKinds).toContain('archive');
+    expect(feedbackKinds).toContain('knowledge_node');
+    const edgeCell = taskInput.proposal_feedback.find((c) => c.kind === 'knowledge_edge');
+    expect(edgeCell?.relation).toBe('related_to');
   });
 
   // T-AR (YUK-TAR) — caps the surfaced kinds to the top N so the input stays
@@ -303,10 +365,13 @@ describe('runDreamingNightly', () => {
     const mcpServer = { name: 'fake-loom' } as never;
     const manyRates = Array.from({ length: 14 }, (_, i) => ({
       kind: `kind_${i}`,
+      relation: null,
       acceptance_rate: (14 - i) / 14,
       accept_count: 14 - i,
       dismiss_count: i,
       total: 14,
+      top_dismiss_reasons: [],
+      top_rubric_gates: [],
     }));
     const listProposalInboxRowsFn = vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]);
     const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);

@@ -29,6 +29,12 @@ import {
 import { type FailureAttempt, getFailureAttemptById } from '@/server/events/queries';
 import { getEffectiveDomain } from '@/server/knowledge/domain';
 import { assertKnowledgeIdsExist } from '@/server/knowledge/validate';
+// P5.4-L2 / YUK-174 — OPTIONAL adaptive gate input (Facet B). Type-only import:
+// the validator stays PURE (it does NOT run adaptive-bias.ts at runtime — the
+// import erases). The gate-bump decision + its audit metadata are COMPUTED by
+// adaptive-bias.ts at the call site and carried IN, so the folded reject reason
+// can cite the rate/threshold/sample without re-reading the signal (§3.4).
+import type { AdaptiveGateInput } from '@/server/proposals/adaptive-bias';
 import { eq } from 'drizzle-orm';
 
 // RB-5 — single-source evidence window. Consumed by the recency check (RB-4)
@@ -112,6 +118,13 @@ function reasoningIsGeneric(reason: string): boolean {
   if (hitsDenylist) return true;
   // No concrete signal and short → filler ("二者相关").
   return trimmed.length < 12;
+}
+
+// P5.4-L2 — format a carried acceptance_rate / threshold for the adaptive reject
+// reason (codex#2). Pure string formatting from the carried AdaptiveGateInput
+// fields; the validator does not re-read the signal.
+function formatRate(value: number | undefined): string {
+  return typeof value === 'number' ? value.toFixed(2) : 'n/a';
 }
 
 type EdgePayload = Extract<AiProposalPayloadT, { kind: 'knowledge_edge' }>;
@@ -405,6 +418,12 @@ export async function validateProposalQuality(
   payload: AiProposalPayloadT,
   db: DbLike,
   ctx: RubricValidatorCtx,
+  // P5.4-L2 / YUK-174 (Facet B / AB-3) — OPTIONAL adaptive gate input. Omitted →
+  // byte-identical to pure L1 (the regression invariant, §8). When present with
+  // `tightenMediumToStrong: true` it ONLY suppresses the §4.2 explicit-single-
+  // event rescue (raise medium/rescue → strong); it NEVER loosens an L1 reject,
+  // NEVER blocks `strong` evidence, and adds NO new RubricGate string.
+  adaptive?: AdaptiveGateInput,
 ): Promise<RubricVerdict> {
   if (!isEdgePayload(payload)) {
     return { ok: true };
@@ -520,13 +539,36 @@ export async function validateProposalQuality(
   // computeEvidenceLevel's leveling: the event stays `medium` (so OTHER relations
   // with 1 judge event still reject at the floor — no loosening). Endpoint-
   // touching is still required and is enforced by the §4.3 relationGate below.
-  const explicitSingleEventRescue =
+  const explicitSingleEventRescueBasis =
     requiresTwoEvents && level === 'medium' && hasExplicitSingleEventBasis(usable);
 
+  // P5.4-L2 / YUK-174 (Facet B / B1, tighten-only) — when the adaptive input
+  // says to raise the bar for this `(kind, relation)` (low acceptance_rate with
+  // enough samples, computeGateBump), SUPPRESS the explicit-single-event rescue
+  // so the borderline case requires a genuine `strong` instead. This is the ONLY
+  // place L2 touches L1: it can only turn a would-PASS (the rescue path) into a
+  // reject. `strong` evidence never reaches this rescue branch, so the bump can
+  // never block strong (never locks); cold-start / below-minSamples / above-
+  // threshold leaves `adaptive.tightenMediumToStrong === false` → rescue intact
+  // (pure L1).
+  const adaptiveTighten = adaptive?.tightenMediumToStrong === true;
+  const explicitSingleEventRescue = explicitSingleEventRescueBasis && !adaptiveTighten;
+
   // RB-4 — agents are rejected at medium/weak; only strong writes (plus the
-  // §4.3 explicit-single-event rescue above for prerequisite / contrasts_with).
-  // Downweighting medium is Layer 2 / YUK-174.
+  // §4.3 explicit-single-event rescue above for prerequisite / contrasts_with,
+  // unless L2's adaptive bump suppressed it).
   if (level !== 'strong' && !explicitSingleEventRescue) {
+    // L2-annotate the reason ONLY when the bump is what removed an otherwise-
+    // available rescue (traceability §8). The validator formats this from the
+    // CARRIED fields — it never imports adaptive-bias.ts. Gate stays
+    // 'evidence_level' (no new RubricGate, RB-9).
+    if (adaptiveTighten && explicitSingleEventRescueBasis) {
+      return {
+        ok: false,
+        gate: 'evidence_level',
+        reason: `evidence level '${level}': adaptive bias raised the bar for this relation (acceptance_rate ${formatRate(adaptive?.acceptanceRate)} over ${adaptive?.sampleCount ?? 0} decisions, below threshold ${formatRate(adaptive?.threshold)}) — the borderline single-event rescue is suppressed; strong evidence (≥2 in-window judge-backed failures) required`,
+      };
+    }
     return {
       ok: false,
       gate: 'evidence_level',

@@ -80,6 +80,10 @@ export const fastTestInclude = [
   // gate-behavior + RB-7 regression tests (rubric-validator.test.ts) hit live
   // Postgres → db partition.
   'src/server/knowledge/rubric-validator.unit.test.ts',
+  // P5.4-L2 / YUK-174 — pure (no-DB) adaptive-bias decision helpers
+  // (computeGateBump / relation parse / findFeedbackCell). The DB-touching
+  // getProposalFeedbackDigest is covered by adaptive-bias.test.ts (DB partition).
+  'src/server/proposals/adaptive-bias.unit.test.ts',
   // Memory tests are mostly unit-mocked. The outbox real-path integration
   // test (triggers.outbox.test.ts, YUK-101 / ADR-0021) and the P5.2
   // activity-gated brief test (active-subjects.db.test.ts, YUK-143) hit live

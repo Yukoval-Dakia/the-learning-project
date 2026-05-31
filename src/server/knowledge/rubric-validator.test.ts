@@ -1024,6 +1024,136 @@ describe('validateProposalQuality — judge-referenced endpoints count as eviden
   });
 });
 
+// P5.4-L2 / YUK-174 (Facet B / B1) — the OPTIONAL adaptive gate input. The bump
+// is tighten-only / never-lock / cold-start no-op (§3.4). It applies ONLY by
+// suppressing the §4.2 explicit-single-event rescue for prerequisite /
+// contrasts_with when `tightenMediumToStrong === true`.
+describe('validateProposalQuality — adaptive gate bump (Facet B / B1)', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await seedGraph();
+  });
+
+  const TIGHTEN = {
+    tightenMediumToStrong: true as const,
+    acceptanceRate: 0.1,
+    sampleCount: 12,
+    threshold: 0.3,
+  };
+  const NO_TIGHTEN = { tightenMediumToStrong: false as const };
+
+  it('B1 tighten: a single-judge-analysis prerequisite that PASSES pure L1 now rejects (evidence_level)', async () => {
+    // Same fixture as the "single judge-analysis event rescue (a)" pass case:
+    // 1 in-window judge-analysis failure referencing endpoint k_zhi → medium +
+    // rescue → pure L1 PASSES. With the adaptive bump the rescue is suppressed.
+    await seedEvidence('e_b1_pre', ['k_zhi'], 1);
+    const payload = edgePayload('k_zhi', 'k_er', 'prerequisite', {
+      reasoning: 'attempt e_b1_pre 的 judge cause concept 分析 k_zhi 是 k_er 的学习前置。',
+      evidenceEventIds: ['e_b1_pre'],
+    });
+
+    // Pure L1 (no adaptive) → passes.
+    expect(await validateProposalQuality(payload, testDb(), AGENT)).toEqual({ ok: true });
+
+    // Adaptive tighten → rejects at the evidence floor, gate unchanged.
+    const tightened = await validateProposalQuality(payload, testDb(), AGENT, TIGHTEN);
+    expect(tightened.ok).toBe(false);
+    if (!tightened.ok) {
+      expect(tightened.gate).toBe('evidence_level');
+      // Traceability (§8 / codex#2): reason cites the carried rate / threshold /
+      // sample without re-reading the signal.
+      expect(tightened.reason).toContain('adaptive');
+      expect(tightened.reason).toContain('0.10');
+      expect(tightened.reason).toContain('0.30');
+      expect(tightened.reason).toContain('12');
+    }
+  });
+
+  it('cold-start / no-tighten input behaves exactly like pure L1 (rescue intact)', async () => {
+    await seedEvidence('e_nt_pre', ['k_zhi'], 1);
+    const payload = edgePayload('k_zhi', 'k_er', 'prerequisite', {
+      reasoning: 'attempt e_nt_pre 的 judge cause concept 分析 k_zhi 是 k_er 的学习前置。',
+      evidenceEventIds: ['e_nt_pre'],
+    });
+    // tightenMediumToStrong: false → identical to omitting the arg.
+    expect(await validateProposalQuality(payload, testDb(), AGENT, NO_TIGHTEN)).toEqual({
+      ok: true,
+    });
+    expect(await validateProposalQuality(payload, testDb(), AGENT)).toEqual({ ok: true });
+  });
+
+  it('never locks: strong evidence still PASSES under tighten (bump cannot block strong)', async () => {
+    // Two same-pattern in-window judge-backed failures referencing endpoint
+    // k_zhi → strong floor + order evidence → passes. The bump only touches the
+    // medium/rescue branch, so strong is unaffected.
+    await seedEvidence('e_strong_1', ['k_zhi'], 1, 'concept');
+    await seedEvidence('e_strong_2', ['k_zhi'], 2, 'concept');
+    const payload = edgePayload('k_zhi', 'k_er', 'prerequisite', {
+      reasoning: 'attempt e_strong_1/e_strong_2 judge cause concept，集中在 k_zhi。',
+      evidenceEventIds: ['e_strong_1', 'e_strong_2'],
+    });
+    expect(await validateProposalQuality(payload, testDb(), AGENT, TIGHTEN)).toEqual({ ok: true });
+  });
+
+  it('additive invariant: any adaptive input on an L1-reject still rejects the SAME hard gate', async () => {
+    // G1 self_edge — a structural reject that the bump never touches.
+    const selfEdge = edgePayload('k_zhi', 'k_zhi', 'related_to');
+    for (const adaptive of [undefined, NO_TIGHTEN, TIGHTEN]) {
+      const v = await validateProposalQuality(selfEdge, testDb(), AGENT, adaptive);
+      expect(v).toEqual({ ok: false, gate: 'self_edge', reason: expect.any(String) });
+    }
+
+    // evidence_level — a single medium related_to event rejects regardless of the
+    // bump (the bump only suppresses the prerequisite/contrasts_with rescue, and
+    // related_to has no rescue, so the gate is identical with or without it).
+    await seedEvidence('e_inv_solo', ['k_zhi', 'k_er'], 1);
+    const mediumRelated = edgePayload('k_zhi', 'k_er', 'related_to', {
+      reasoning: 'attempt e_inv_solo judge cause concept on k_zhi/k_er。',
+      evidenceEventIds: ['e_inv_solo'],
+    });
+    for (const adaptive of [undefined, NO_TIGHTEN, TIGHTEN]) {
+      const v = await validateProposalQuality(mediumRelated, testDb(), AGENT, adaptive);
+      expect(v.ok).toBe(false);
+      if (!v.ok) expect(v.gate).toBe('evidence_level');
+    }
+
+    // contrasts_with_no_confusion — a RELATION gate reached only on strong evidence
+    // (so the medium/rescue bump never enters its path). Two strong events both
+    // referencing only k_zhi pass the floor but fail the confusion predicate; the
+    // gate must be identical with or without any adaptive input (widens the invariant
+    // beyond structural + floor rejects).
+    await seedEvidence('e_inv_conf_1', ['k_zhi'], 1);
+    await seedEvidence('e_inv_conf_2', ['k_zhi'], 2);
+    const contrastsNoConfusion = edgePayload('k_zhi', 'k_er', 'contrasts_with', {
+      reasoning: 'attempt e_inv_conf judge cause concept on k_zhi。',
+      evidenceEventIds: ['e_inv_conf_1', 'e_inv_conf_2'],
+    });
+    for (const adaptive of [undefined, NO_TIGHTEN, TIGHTEN]) {
+      const v = await validateProposalQuality(contrastsNoConfusion, testDb(), AGENT, adaptive);
+      expect(v.ok).toBe(false);
+      if (!v.ok) expect(v.gate).toBe('contrasts_with_no_confusion');
+    }
+  });
+
+  it('tighten does not fire on relations without the single-event rescue (related_to stays rejected via floor, no adaptive reason)', async () => {
+    // related_to with one medium event was ALREADY rejected by pure L1 (no
+    // rescue). The bump must not turn this into an adaptive-annotated reject — it
+    // only suppresses the prerequisite/contrasts_with rescue. Gate stays
+    // evidence_level; the reason is the plain (non-adaptive) floor message.
+    await seedEvidence('e_rel_floor', ['k_zhi', 'k_er'], 1);
+    const payload = edgePayload('k_zhi', 'k_er', 'related_to', {
+      reasoning: 'attempt e_rel_floor judge cause concept on k_zhi/k_er。',
+      evidenceEventIds: ['e_rel_floor'],
+    });
+    const v = await validateProposalQuality(payload, testDb(), AGENT, TIGHTEN);
+    expect(v.ok).toBe(false);
+    if (!v.ok) {
+      expect(v.gate).toBe('evidence_level');
+      expect(v.reason).not.toContain('adaptive');
+    }
+  });
+});
+
 describe('RubricGate type is referenced', () => {
   it('compiles a gate assignment', () => {
     const g: RubricGate = 'evidence_level';

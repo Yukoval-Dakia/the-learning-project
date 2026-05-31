@@ -24,6 +24,9 @@ describe('runCopilotChat (two-surface routing)', () => {
         buildMcpServerFn,
         runAgentTaskFn,
         writeEventFn,
+        // P5.4-L2 / YUK-174 — stub the feedback reader so the {}-stub db is never
+        // queried (cold-start no-op), mirroring the Dreaming/Coach DI stubs.
+        loadProposalFeedbackFn: async () => [],
         now: () => new Date('2026-05-28T20:00:00.000Z'),
       },
     );
@@ -92,6 +95,7 @@ describe('runCopilotChat (two-surface routing)', () => {
         buildMcpServerFn,
         runAgentTaskFn,
         writeEventFn,
+        loadProposalFeedbackFn: async () => [],
         now: () => new Date('2026-05-31T00:00:00.000Z'),
       },
     );
@@ -120,6 +124,7 @@ describe('runCopilotChat (two-surface routing)', () => {
         buildMcpServerFn,
         runAgentTaskFn,
         writeEventFn,
+        loadProposalFeedbackFn: async () => [],
         now: () => new Date('2026-05-31T00:00:00.000Z'),
       },
     );
@@ -152,6 +157,7 @@ describe('runCopilotChat (two-surface routing)', () => {
         buildMcpServerFn,
         runAgentTaskFn,
         writeEventFn,
+        loadProposalFeedbackFn: async () => [],
         now: () => new Date('2026-05-28T20:00:00.000Z'),
       },
     );
@@ -190,5 +196,177 @@ describe('runCopilotChat (two-surface routing)', () => {
         allowedTools: [...resolveMcpAllowedTools('copilot_user_suggested_mistake_action')],
       }),
     );
+  });
+
+  // P5.4-L2 / YUK-174 (Facet A, §3.3) — the edge-scoped reason digest reaches the
+  // CopilotTask run input as `proposal_feedback`. Copilot proposes ONLY
+  // knowledge_edge, so non-edge cells are filtered out; the field is char-bounded
+  // at read time.
+  it('threads an edge-scoped proposal_feedback digest into the CopilotTask input', async () => {
+    const db = {} as never;
+    const mcpServer = { name: 'fake-loom' } as never;
+    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_copilot_feedback',
+      text: 'OK',
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    const writeEventFn = vi.fn(async (_db, input) => input.id);
+
+    await runCopilotChat(
+      db,
+      { user_message: '能不能连一条边', triggered_by: 'chat' },
+      {
+        buildMcpServerFn,
+        runAgentTaskFn,
+        writeEventFn,
+        loadProposalFeedbackFn: async () => [
+          {
+            kind: 'knowledge_edge',
+            relation: 'related_to',
+            accept_count: 1,
+            dismiss_count: 9,
+            total: 10,
+            acceptance_rate: 0.1,
+            top_dismiss_reasons: ['dumping ground'],
+            top_rubric_gates: ['related_to_dumping_ground'],
+          },
+          // Non-edge cell — must NOT reach Copilot (it cannot act on it).
+          {
+            kind: 'completion',
+            relation: null,
+            accept_count: 0,
+            dismiss_count: 3,
+            total: 3,
+            acceptance_rate: 0,
+            top_dismiss_reasons: ['too early'],
+            top_rubric_gates: [],
+          },
+        ],
+        now: () => new Date('2026-05-31T00:00:00.000Z'),
+      },
+    );
+
+    const taskInput = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[1] as {
+      proposal_feedback: Array<{ kind: string; relation: string | null }>;
+    };
+    expect(taskInput.proposal_feedback).toEqual([
+      {
+        kind: 'knowledge_edge',
+        relation: 'related_to',
+        acceptance_rate: 0.1,
+        top_dismiss_reasons: ['dumping ground'],
+        top_rubric_gates: ['related_to_dumping_ground'],
+      },
+    ]);
+    // Char-bound: the serialized field never exceeds the whole-digest cap.
+    expect(JSON.stringify(taskInput.proposal_feedback).length).toBeLessThanOrEqual(1200);
+  });
+
+  // P5.4-L2 / YUK-174 (P1 fix) — a realistic multi-cell digest must NOT collapse to
+  // [] (the per-string maxChars=180 is NOT the whole-digest cap), and reason-bearing
+  // (actionable, low-acceptance) cells must be kept ahead of reason-less ones.
+  it('keeps reason-bearing edge cells under realistic data (no collapse) and orders them first', async () => {
+    const db = {} as never;
+    const mcpServer = { name: 'fake-loom' } as never;
+    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_copilot_feedback_multi',
+      text: 'OK',
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    const writeEventFn = vi.fn(async (_db, input) => input.id);
+    const mkCell = (relation: string, rate: number, reasons: string[], gates: string[]) => ({
+      kind: 'knowledge_edge' as const,
+      relation,
+      accept_count: Math.round(rate * 10),
+      dismiss_count: 10 - Math.round(rate * 10),
+      total: 10,
+      acceptance_rate: rate,
+      top_dismiss_reasons: reasons,
+      top_rubric_gates: gates,
+    });
+
+    await runCopilotChat(
+      db,
+      { user_message: '连边建议', triggered_by: 'chat' },
+      {
+        buildMcpServerFn,
+        runAgentTaskFn,
+        writeEventFn,
+        // Sorted acceptance DESC (as the digest emits): high-acceptance reason-less
+        // cells first, then low-acceptance reason-bearing ones.
+        loadProposalFeedbackFn: async () => [
+          mkCell('derived_from', 0.9, [], []),
+          mkCell('prerequisite', 0.8, [], []),
+          mkCell(
+            'related_to',
+            0.1,
+            ['dumping ground; too vague to be useful'],
+            ['related_to_dumping_ground'],
+          ),
+          mkCell(
+            'applied_in',
+            0.2,
+            ['not actually applied here'],
+            ['applied_in_no_application_evidence'],
+          ),
+        ],
+        now: () => new Date('2026-05-31T00:00:00.000Z'),
+      },
+    );
+
+    const taskInput = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[1] as {
+      proposal_feedback: Array<{ relation: string; top_dismiss_reasons: string[] }>;
+    };
+    // Did NOT collapse to [] (the P1 bug).
+    expect(taskInput.proposal_feedback.length).toBeGreaterThan(0);
+    const relations = taskInput.proposal_feedback.map((c) => c.relation);
+    // Reason-bearing cells survive truncation.
+    expect(relations).toContain('related_to');
+    expect(relations).toContain('applied_in');
+    // ...and are ordered ahead of any reason-less cell that survived.
+    const lastActionable = Math.max(
+      relations.indexOf('related_to'),
+      relations.indexOf('applied_in'),
+    );
+    const firstReasonless = relations.findIndex(
+      (r) => r === 'derived_from' || r === 'prerequisite',
+    );
+    if (firstReasonless !== -1) expect(lastActionable).toBeLessThan(firstReasonless);
+    // Still whole-digest bounded.
+    expect(JSON.stringify(taskInput.proposal_feedback).length).toBeLessThanOrEqual(1200);
+  });
+
+  it('emits an empty proposal_feedback on cold start (no-op back-compat)', async () => {
+    const db = {} as never;
+    const mcpServer = { name: 'fake-loom' } as never;
+    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_copilot_cold',
+      text: 'OK',
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    const writeEventFn = vi.fn(async (_db, input) => input.id);
+
+    await runCopilotChat(
+      db,
+      { user_message: '随便聊聊', triggered_by: 'chat' },
+      {
+        buildMcpServerFn,
+        runAgentTaskFn,
+        writeEventFn,
+        loadProposalFeedbackFn: async () => [],
+        now: () => new Date('2026-05-31T00:00:00.000Z'),
+      },
+    );
+
+    const taskInput = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[1] as {
+      proposal_feedback: unknown[];
+    };
+    expect(taskInput.proposal_feedback).toEqual([]);
   });
 });
