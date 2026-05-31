@@ -37,7 +37,14 @@ describe('rubric-validator — stable contract (pure)', () => {
   it('locks the gate string set for Layer-2 stability (RB-9)', () => {
     // A change to this set is a breaking change for YUK-174 and must be
     // intentional. The list mirrors spec §3.4 exactly.
-    const gates: RubricGate[] = [
+    //
+    // PR #219 review fix — `as const satisfies readonly RubricGate[]` makes the
+    // array members type-checked against RubricGate, and the two Exclude
+    // assertions below turn ANY divergence (a gate added to / removed from the
+    // union without updating this array) into a COMPILE error, not just a runtime
+    // snapshot mismatch. AssertNever<T> resolves to `never` only when T is
+    // `never`, so a non-empty Exclude is a type error at the call site.
+    const gates = [
       'self_edge',
       'unknown_node',
       'cross_subject',
@@ -51,7 +58,17 @@ describe('rubric-validator — stable contract (pure)', () => {
       'contrasts_with_no_confusion',
       'applied_in_role_mismatch',
       'related_to_dumping_ground',
-    ];
+    ] as const satisfies readonly RubricGate[];
+
+    // Compile-time completeness: every RubricGate is listed (no member missing)
+    // AND no listed member is outside RubricGate (no stale member). Both Excludes
+    // must be `never` or this stops compiling.
+    type Missing = Exclude<RubricGate, (typeof gates)[number]>;
+    type Extra = Exclude<(typeof gates)[number], RubricGate>;
+    type AssertNever<T extends never> = T;
+    type _MissingIsNever = AssertNever<Missing>;
+    type _ExtraIsNever = AssertNever<Extra>;
+
     expect(gates).toMatchInlineSnapshot(`
       [
         "self_edge",

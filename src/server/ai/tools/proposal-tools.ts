@@ -20,7 +20,6 @@ import {
   learning_record,
   question,
 } from '@/db/schema';
-import { writeToolCallLog } from '@/server/ai/log';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { runVariantGen } from '@/server/boss/handlers/variant_gen';
 import { getFailureAttemptById, getJudgeForAttempt } from '@/server/events/queries';
@@ -358,7 +357,16 @@ async function proposeKnowledgeEdgeExecute(
 // sibling of ai_proposal in the event payload). Folded, not dropped: the row is
 // an audit trail + a Layer-2 (YUK-174) signal, and is excluded from live-pending
 // dedup/cooldown (RB-7) because the inbox derive maps the marker to a terminal
-// 'rubric_rejected' status. Logs the verdict via writeToolCallLog (evidence-first).
+// 'rubric_rejected' status.
+//
+// NOTE (PR #219 review fix): we do NOT write a tool_call_log row here. The
+// mcp-bridge DomainTool wrapper (mcp-bridge.ts) already logs exactly ONE
+// tool_call_log per DomainTool call from this function's RETURN value, capturing
+// the verdict in `output_json` ({status:'skipped:rubric_rejected', gate, reason}).
+// An explicit log here double-counted the call (distorting call-volume/
+// failure-rate) and mis-flagged a SOFT reject as a hard failure by writing the
+// verdict into `error_reason`. Traceability is preserved via (1) the bridge's
+// output_json log and (2) the folded `rubric_rejected` propose event above.
 async function foldRubricRejectedEdge(
   ctx: ToolContext,
   proposalPayload: AiProposalPayloadInputT,
@@ -384,20 +392,6 @@ async function foldRubricRejectedEdge(
     },
     task_run_id: ctx.taskRunId,
     caused_by_event_id: ctx.causedByEventId ?? null,
-  });
-
-  await writeToolCallLog(ctx.db, {
-    task_run_id: ctx.taskRunId,
-    task_kind: 'DomainTool',
-    tool_name: 'propose_knowledge_edge',
-    effect: 'propose',
-    input_json: input,
-    output_json: { status: 'skipped:rubric_rejected', gate: verdict.gate, reason: verdict.reason },
-    error_reason: `rubric:${verdict.gate}`,
-    iteration: 0,
-    latency_ms: 0,
-    cost: 0,
-    mirrored_event_id: proposalId,
   });
 
   return {

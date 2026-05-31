@@ -64,11 +64,14 @@ async function seedGraph(): Promise<void> {
     ]);
 }
 
-// A recent judge-backed failure referencing the given knowledge ids.
+// A recent judge-backed failure referencing the given knowledge ids. The judge
+// cause `primary_category` defaults to 'concept' but can be overridden so tests
+// can construct "same pattern" vs "unrelated" evidence pairs (§4.2 strong).
 async function seedEvidence(
   attemptId: string,
   knowledgeIds: string[],
   ageDays: number,
+  causeCategory = 'concept',
 ): Promise<void> {
   const db = testDb();
   const questionId = `q_${attemptId}`;
@@ -109,7 +112,7 @@ async function seedEvidence(
     outcome: 'success',
     payload: {
       cause: {
-        primary_category: 'concept',
+        primary_category: causeCategory,
         secondary_categories: [],
         analysis_md: '用户混淆两个用法。',
         confidence: 0.9,
@@ -319,6 +322,61 @@ describe('validateProposalQuality — reasoning + evidence floor (G7, §4.2)', (
       AGENT,
     );
     expect(passes).toEqual({ ok: true });
+  });
+
+  // PR #219 review fix (FIX B / §4.2 "strong = 2+ recent failures show SAME
+  // pattern"). Pre-fix, `strong` was raw count ≥2, so two UNRELATED judge-backed
+  // failures upgraded to strong and passed the relation gate → a low-quality
+  // edge. Now the ≥2 events must overlap on cause OR referenced knowledge.
+  it('§4.2 strong requires same pattern — 2 SAME-pattern events → strong → passes', async () => {
+    // Both reference an endpoint (k_zhi) AND share the 'concept' cause → same
+    // pattern on both axes. (Endpoint-referencing keeps the related_to predicate
+    // happy; the point here is the strong upgrade itself.)
+    await seedEvidence('e_same_1', ['k_zhi'], 1, 'concept');
+    await seedEvidence('e_same_2', ['k_zhi'], 2, 'concept');
+    const v = await validateProposalQuality(
+      edgePayload('k_zhi', 'k_er', 'related_to', {
+        reasoning: 'attempt e_same_1/e_same_2 的 judge cause 均为 concept，集中在 k_zhi。',
+        evidenceEventIds: ['e_same_1', 'e_same_2'],
+      }),
+      testDb(),
+      AGENT,
+    );
+    expect(v).toEqual({ ok: true });
+  });
+
+  it('§4.2 strong requires same pattern — 1 endpoint failure + 1 UNRELATED failure → medium → rejected (evidence_level)', async () => {
+    await testDb()
+      .insert(knowledge)
+      .values([
+        {
+          id: 'k_unrelated',
+          name: '无关',
+          domain: null,
+          parent_id: 'k_wenyan',
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
+      ]);
+    // Event A: references the edge endpoint k_zhi, cause 'concept'.
+    await seedEvidence('e_mix_endpoint', ['k_zhi'], 1, 'concept');
+    // Event B: a different recent judge-backed failure with NEITHER shared cause
+    // NOR shared knowledge (k_unrelated, cause 'careless'). Pre-fix this raw
+    // count of 2 upgraded to strong and the proposal passed; now it is medium.
+    await seedEvidence('e_mix_unrelated', ['k_unrelated'], 2, 'careless');
+    const v = await validateProposalQuality(
+      edgePayload('k_zhi', 'k_er', 'related_to', {
+        reasoning:
+          'attempt e_mix_endpoint judge cause concept on k_zhi; e_mix_unrelated 是另一个无关错题。',
+        evidenceEventIds: ['e_mix_endpoint', 'e_mix_unrelated'],
+      }),
+      testDb(),
+      AGENT,
+    );
+    expect(v.ok).toBe(false);
+    // Two unrelated judge-backed failures yield at most medium → agent rejected
+    // at the evidence floor (RB-4), NOT at a relation predicate.
+    if (!v.ok) expect(v.gate).toBe('evidence_level');
   });
 });
 

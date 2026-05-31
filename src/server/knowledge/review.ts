@@ -379,9 +379,10 @@ async function writeProposalAfterGate(
       { isAgent: true, actorRef: 'dreaming' },
     );
     if (!verdict.ok) {
-      // RB-6 step 7 (evidence-first logging): the DomainTool fold path logs the
-      // reject via writeToolCallLog, but this legacy MCP path intentionally does
-      // NOT. tool_call_log.task_run_id is NOT NULL (schema.ts:424) and
+      // RB-6 step 7 (evidence-first logging): the DomainTool path's reject is
+      // logged once by the mcp-bridge wrapper (per tool call, from the return
+      // value), but this legacy MCP path has no such wrapper and intentionally
+      // does NOT log here. tool_call_log.task_run_id is NOT NULL (schema.ts:424) and
       // WriteProposalArgs carries no task_run_id — the value lives only in the
       // SDK runner above this in-process MCP tool, not in this pure dispatcher.
       // Threading a real task_run_id down through the MCP boundary is out of
