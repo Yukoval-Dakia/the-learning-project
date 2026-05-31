@@ -187,6 +187,7 @@ describe('runWriteProposal — pure dispatch', () => {
       reasoning: 'attempt_event_e1 显示用户混淆此用法',
     });
     expect(result.kind).toBe('tree_mutation');
+    if (result.kind !== 'tree_mutation') throw new Error(`unexpected kind ${result.kind}`);
     expect(result.proposal_id).toBeTruthy();
 
     const proposals = await db
@@ -221,7 +222,11 @@ describe('runWriteProposal — pure dispatch', () => {
     expect(payload.ai_proposal?.kind).toBe('archive');
   });
 
-  it('payload-embedded propose_knowledge_edge writes ProposeKnowledgeEdge event', async () => {
+  // P5.4 / YUK-143 — the legacy MCP edge path attaches no evidence_event_ids,
+  // so the rubric (isAgent: true) rejects it on the RB-4 evidence floor. The
+  // event is STILL written, folded with a rubric_verdict marker (RB-6); the
+  // ProposeKnowledgeEdge event shape + parseEvent roundtrip are unchanged.
+  it('payload-embedded propose_knowledge_edge folds a rubric-rejected ProposeKnowledgeEdge event', async () => {
     const db = testDb();
     await seedKnowledgeNode('k_from');
     const now = new Date();
@@ -247,11 +252,13 @@ describe('runWriteProposal — pure dispatch', () => {
       },
       reasoning: 'attempt_event_e1 显示用户错答指向 k_from 是 k_to 的先决',
     });
-    expect(result.kind).toBe('knowledge_edge_propose');
-    if (result.kind !== 'knowledge_edge_propose') {
-      throw new Error(`expected knowledge_edge_propose, got ${result.kind}`);
+    expect(result.kind).toBe('rubric_rejected');
+    if (result.kind !== 'rubric_rejected') {
+      throw new Error(`expected rubric_rejected, got ${result.kind}`);
     }
     expect(result.event_id).toBeTruthy();
+    // Evidence-free agent edge → RB-4 evidence floor.
+    expect(result.gate).toBe('evidence_missing');
 
     const edgeEvents = await db
       .select()
@@ -268,12 +275,16 @@ describe('runWriteProposal — pure dispatch', () => {
       relation_type: string;
       reasoning: string;
       ai_proposal?: { kind?: string };
+      rubric_verdict?: { ok?: boolean; gate?: string };
     };
     expect(payload.from_knowledge_id).toBe('k_from');
     expect(payload.to_knowledge_id).toBe('k_to');
     expect(payload.relation_type).toBe('prerequisite');
     expect(payload.reasoning).toContain('先决');
     expect(payload.ai_proposal?.kind).toBe('knowledge_edge');
+    // RB-6 — the fold marker rides on the event payload.
+    expect(payload.rubric_verdict?.ok).toBe(false);
+    expect(payload.rubric_verdict?.gate).toBe('evidence_missing');
 
     // Roundtrip through Lane B parseEvent — guards schema compatibility.
     const parsed = parseEvent({
@@ -290,7 +301,7 @@ describe('runWriteProposal — pure dispatch', () => {
     expect(parsed.subject_kind).toBe('knowledge_edge');
   });
 
-  it('top-level mutation=propose_knowledge_edge with payload=edge fields routes to ProposeKnowledgeEdge', async () => {
+  it('top-level mutation=propose_knowledge_edge with payload=edge fields routes to ProposeKnowledgeEdge (folded rubric-rejected)', async () => {
     const db = testDb();
     await seedKnowledgeNode('k_from');
     const now = new Date();
@@ -316,7 +327,8 @@ describe('runWriteProposal — pure dispatch', () => {
       },
       reasoning: 'top-level shape',
     });
-    expect(result.kind).toBe('knowledge_edge_propose');
+    // Evidence-free agent edge via the legacy MCP path → rubric-rejected fold.
+    expect(result.kind).toBe('rubric_rejected');
 
     const edgeEvents = await db
       .select()

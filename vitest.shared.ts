@@ -75,6 +75,11 @@ export const fastTestInclude = [
   // sibling DB handler test (boss/handlers/hub_auto_sync_nightly) stays in the
   // db partition because it hits live Postgres.
   'src/server/knowledge/hub-mesh.test.ts',
+  // P5.4 / YUK-143 — pure (no-DB) stable-contract unit for the proposal rubric
+  // validator (evidence-window const + RubricVerdict / gate set). The
+  // gate-behavior + RB-7 regression tests (rubric-validator.test.ts) hit live
+  // Postgres → db partition.
+  'src/server/knowledge/rubric-validator.unit.test.ts',
   // Memory tests are mostly unit-mocked. The outbox real-path integration
   // test (triggers.outbox.test.ts, YUK-101 / ADR-0021) and the P5.2
   // activity-gated brief test (active-subjects.db.test.ts, YUK-143) hit live

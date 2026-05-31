@@ -274,6 +274,21 @@ Must explain paths directly. Do not make the model infer multi-hop relation sema
 
 This rubric applies to agent-generated graph proposals. Manual user-created edges can be looser, but should still pass structural guards.
 
+> **Enforcement status (Layer 1, P5.4 / YUK-143 — shipped 2026-05-31).** §4.1 / §4.2 / §4.3
+> are now enforced deterministically by a single shared validator,
+> `src/server/knowledge/rubric-validator.ts` (`validateProposalQuality`), called by **both**
+> agent edge-proposal write paths before the propose-event write: the DomainTool
+> `proposeKnowledgeEdgeExecute` and the legacy MCP `writeProposalAfterGate`. Agents are strict
+> (structural + reasoning-depth + evidence floor + relation predicates); user-edited proposals run
+> structural-only (§4.1 G1–G6). A rejected agent proposal is **folded, not dropped**: the propose
+> event is still written carrying a `rubric_verdict: { ok:false, gate, reason }` marker, derives a
+> terminal `rubric_rejected` inbox status, and is excluded from live-pending dedup/cooldown so a
+> later valid proposal for the same edge is not blocked. Layer 1 is deterministic (no LLM call) and
+> rejects medium/weak evidence for agents. The adaptive **Layer 2** — accept-learned threshold bias
+> + medium-evidence downweighting — is deferred to
+> [YUK-174](https://linear.app/yukoval-studios/issue/YUK-174) and consumes the stable verdict shape.
+> Spec: `docs/superpowers/specs/2026-05-31-p5.4-rubric-enforcement-design.md`.
+
 ### 4.1 Universal gates
 
 Reject before writing `event(action='propose')` when:
