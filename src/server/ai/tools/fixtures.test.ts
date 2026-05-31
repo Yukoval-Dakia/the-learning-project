@@ -1,4 +1,4 @@
-// P5.5 Phase 1 — Tool-eval fixtures (4 core wenyan scenarios).
+// P5.5 Phase 1 — Tool-eval fixtures (wenyan).
 // Spec: docs/superpowers/specs/2026-05-31-p5.5-tool-eval-fixtures-design.md
 //
 // A Layer-8 fixture-gating DB test layer: it proves the DomainTool suite's
@@ -8,6 +8,18 @@
 // routes every output through the reusable `assertAgentReadable` contract (§3),
 // plus scenario-specific assertions.
 //
+// This file gates ALL FOUR knowledge.md §5 fixtures at the §5-named tool surface:
+//   (v)  query_knowledge zhi-confusion           -> §5 `wenyan-zhi-confusion`
+//   (ii) knowledge-filtered zero-result          -> §5 `wenyan-zero-result`
+//   (iii) propose_knowledge_edge ×2 (duplicate)  -> §5 `edge-duplicate`
+//   (vi) expand_knowledge_subgraph prereq paths  -> §5 `wenyan-translation-prereq`
+// PLUS two ADDITIONAL multi-tool Layer-8 chains beyond the four §5 rows:
+//   (i)  query_mistakes -> get_attempt_context -> attribute_mistake -> propose_variant
+//        (the diagnostic chain that ALSO answers the zhi-confusion user question)
+//   (iv) get_learning_item_context -> propose_learning_item_completion
+//        (the brief's 4th core scenario — learning-item lifecycle readability)
+// So the test gates a SUPERSET of §5: the four §5 fixtures + two extra chains.
+//
 // NO production code is touched. Every tool is already registered
 // (bootstrap.ts) and every seed helper / table already exists.
 //
@@ -16,7 +28,14 @@
 // (F-7 / AC-7). The pure-logic helper checks are FOLDED in here (M7), so there
 // is NO separate fixtures-assert.test.ts and NO vitest.shared.ts edit.
 
-import { completion_evidence, event, knowledge, learning_item, question } from '@/db/schema';
+import {
+  completion_evidence,
+  event,
+  knowledge,
+  knowledge_edge,
+  learning_item,
+  question,
+} from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -25,6 +44,7 @@ import { seedAttempt, seedUserCause } from '../../../../tests/helpers/event-seed
 import { getLearningItemContextTool } from './context-readers';
 import { assertAgentReadable, assertCostLabel, resolvePath } from './fixtures-assert';
 import { getAttemptContextTool } from './get-attempt-context';
+import { expandKnowledgeSubgraphTool, queryKnowledgeTool } from './knowledge-readers';
 import {
   attributeMistakeTool,
   proposeKnowledgeEdgeTool,
@@ -337,26 +357,71 @@ describe('P5.5 Phase 1 tool-eval fixtures', () => {
   // Scenario (ii) — zero-result-corrective (ISOLATED, KNOWN ERROR) — §4.2
   // Answers §5 `wenyan-zero-result`.
   // -------------------------------------------------------------------------
-  it('scenario (ii): empty query_mistakes is a legitimate success, not a corrective trigger (AC-3)', async () => {
+  it('scenario (ii): a knowledge-filtered query for 焉 returns 0 results as a legitimate success, not a corrective trigger (AC-3)', async () => {
     const db = testDb();
-    // Single knowledge node, NO failure attempts, NO questions — the read must
-    // legitimately return empty.
+    // The §5 question is "最近有没有『焉』的错题？". To actually EXERCISE the
+    // filter (not just an empty DB), seed a REAL mistake on a DIFFERENT
+    // knowledge point (k_zhi) plus a k_yan ('焉') node that has NO mistakes, then
+    // query WITH filter.knowledgeId:'k_yan'. If the filter were broken / ignored
+    // the k_zhi mistake would leak through and `total` would be 1 — so this gate
+    // covers "0 results for THIS knowledge point", not "empty DB".
     await seedZhiNode();
+    await db.insert(knowledge).values({
+      id: 'k_yan',
+      name: '焉的用法',
+      domain: null,
+      parent_id: 'k_root',
+      created_at: BASE,
+      updated_at: BASE,
+    });
+    await db.insert(question).values({
+      id: 'q_zhi_other',
+      kind: 'short_answer',
+      prompt_md: '解释「之」在句中的作用',
+      reference_md: '结构助词。',
+      knowledge_ids: ['k_zhi'],
+      source: 'manual',
+      difficulty: 3,
+      created_at: BASE,
+      updated_at: BASE,
+    });
+    // A real failure attempt on k_zhi (NOT k_yan) — the row the filter must
+    // exclude.
+    await seedAttempt({
+      id: 'att_zhi_other',
+      question_id: 'q_zhi_other',
+      outcome: 'failure',
+      answer_md: '代词',
+      knowledge_ids: ['k_zhi'],
+      created_at: new Date(BASE.getTime() + 1_000),
+    });
 
-    // Soft-fail contract (types.ts:60): empty read returns a valid Output, does
-    // NOT throw.
-    const empty = await queryMistakesTool.execute(ctx(), {});
+    // Sanity: an UNFILTERED read DOES see the seeded k_zhi mistake, so the empty
+    // result below is the FILTER's doing, not an empty DB.
+    const unfiltered = await queryMistakesTool.execute(ctx(), {});
+    expect(unfiltered.total).toBe(1);
 
-    // The valid empty shape: present non-null array, total 0, filter_applied set.
+    // Soft-fail contract (types.ts:60): a filtered read with no matching data
+    // returns a valid Output, does NOT throw.
+    const empty = await queryMistakesTool.execute(ctx(), { filter: { knowledgeId: 'k_yan' } });
+
+    // The valid empty shape: present non-null array, total 0, and filter_applied
+    // REFLECTS the filter (so the gate covers the filter, not an unfiltered scan).
     expect(empty.mistakes).toEqual([]);
     expect(empty.total).toBe(0);
-    expect(empty.filter_applied).toBeTruthy();
+    expect(empty.filter_applied.knowledge).toBe('k_yan');
 
-    await assertAgentReadable(db, queryMistakesTool as DomainTool, {}, empty, {
-      keyInsightFields: ['mistakes', 'filter_applied'],
-      idRefs: [],
-      allowEmptyContainers: true,
-    });
+    await assertAgentReadable(
+      db,
+      queryMistakesTool as DomainTool,
+      { filter: { knowledgeId: 'k_yan' } },
+      empty,
+      {
+        keyInsightFields: ['mistakes', 'filter_applied', 'filter_applied.knowledge'],
+        idRefs: [],
+        allowEmptyContainers: true,
+      },
+    );
 
     // P5.6 tie (the semantic assertion): this is a *success* shape (would map to
     // outcome:'success' via mcp-bridge.ts:287 because there is no errorReason),
@@ -427,9 +492,9 @@ describe('P5.5 Phase 1 tool-eval fixtures', () => {
   it('scenario (iv): learning-item context chains into a completion proposal (AC-5)', async () => {
     const db = testDb();
     await seedZhiNode();
-    // One in_progress learning_item + one completion_evidence row + a ready
-    // primary artifact (the read-tools-m2.test.ts seedLearningObjects shape,
-    // trimmed to this scenario's needs).
+    // One in_progress learning_item + one completion_evidence row (the
+    // read-tools-m2.test.ts seedLearningObjects shape, trimmed to this
+    // scenario's needs).
     await db.insert(learning_item).values({
       id: 'li_zhi',
       source: 'manual',
@@ -447,6 +512,31 @@ describe('P5.5 Phase 1 tool-eval fixtures', () => {
       evidence_json: { summary: 'note ready' },
       user_overrode_low_evidence: false,
       decided_at: new Date(BASE.getTime() + 2_000),
+    });
+    // F3 — propose_learning_item_completion writes its `evidence_event_ids` as
+    // {kind:'event', id} refs via evidenceRefsFromEventIds (proposal-tools.ts:963).
+    // So the ids it is handed MUST be REAL `event` ids, NOT completion_evidence
+    // ids — passing `evidence[].id` (a completion_evidence.id like 'ev_complete')
+    // would write a DANGLING ref to a nonexistent event. Seed a real failure
+    // attempt event on this item's knowledge point and thread ITS event id below.
+    await db.insert(question).values({
+      id: 'q_li_zhi',
+      kind: 'short_answer',
+      prompt_md: '解释「之」在句中的作用',
+      reference_md: '结构助词。',
+      knowledge_ids: ['k_zhi'],
+      source: 'manual',
+      difficulty: 3,
+      created_at: BASE,
+      updated_at: BASE,
+    });
+    await seedAttempt({
+      id: 'att_li_zhi',
+      question_id: 'q_li_zhi',
+      outcome: 'failure',
+      answer_md: '代词',
+      knowledge_ids: ['k_zhi'],
+      created_at: new Date(BASE.getTime() + 1_000),
     });
 
     // --- Stage 1: get_learning_item_context ---
@@ -482,26 +572,280 @@ describe('P5.5 Phase 1 tool-eval fixtures', () => {
     expect(itemId).toBeTruthy();
 
     // --- Stage 2: propose_learning_item_completion (no LLM, not rubric-gated) ---
-    const evidenceIds = (itemCtx.evidence ?? []).map((e) => e.id);
+    // F3 — pass a REAL `event` id (the seeded failure attempt), NOT the
+    // completion_evidence id from itemCtx.evidence[].id. The tool writes these as
+    // {kind:'event', id} refs, so a completion_evidence id would dangle.
+    const evidenceEventIds = ['att_li_zhi'];
     const completion = await proposeLearningItemCompletionTool.execute(ctx(), {
       learning_item_id: itemId as string,
       triggering_signals: ['check_all_passed'],
-      evidence_event_ids: evidenceIds.length > 0 ? evidenceIds : undefined,
+      evidence_event_ids: evidenceEventIds,
       reasoning: 'primary artifact is ready and completion evidence is recorded.',
     });
     expect(completion.status).toBe('proposed');
     expect(completion.proposal_id).toBeTruthy();
     expect(completion.learning_item_id).toBe(itemId);
+    // The proposal event persists `evidence_event_ids` as event evidence refs;
+    // assert those refs resolve to the real seeded attempt event (ties to F2 —
+    // a dangling event ref would now FAIL limb (b), not silently pass).
+    const proposalEventRows = await db
+      .select({ payload: event.payload })
+      .from(event)
+      .where(eq(event.id, completion.proposal_id as string));
+    const persistedEvidenceIds = (
+      proposalEventRows[0]?.payload as { ai_proposal?: { evidence_refs?: Array<{ id: string }> } }
+    )?.ai_proposal?.evidence_refs?.map((r) => r.id);
+    expect(persistedEvidenceIds).toEqual(evidenceEventIds);
+    const evidenceEventLookup = await db
+      .select({ id: event.id })
+      .from(event)
+      .where(eq(event.id, evidenceEventIds[0]));
+    expect(evidenceEventLookup).toHaveLength(1);
     await assertAgentReadable(
       db,
       proposeLearningItemCompletionTool as DomainTool,
-      { learning_item_id: itemId },
+      { learning_item_id: itemId, evidence_event_ids: evidenceEventIds },
       completion,
       {
         keyInsightFields: ['status', 'proposal_id', 'learning_item_id'],
         idRefs: [
           { path: 'proposal_id', table: 'event' },
           { path: 'learning_item_id', table: 'learning_item' },
+        ],
+      },
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // Scenario (v) — query_knowledge zhi-confusion (ISOLATED, §5 graph row) — F1
+  // Answers §5 `wenyan-zhi-confusion` ("我为什么老错『之』？") at the EXACT tool §5
+  // names — query_knowledge returns 之 children + recent failures + contrasts_with
+  // candidates. (Scenario (i) answers the SAME user question via the diagnostic
+  // mistake chain; this scenario gates the §5-named query_knowledge surface so
+  // knowledge.md §5's "gated as code in fixtures.test.ts" note is literally true.)
+  // -------------------------------------------------------------------------
+  it('scenario (v): query_knowledge surfaces 之 children + recent failures + contrasts_with candidates (F1 / §5 wenyan-zhi-confusion)', async () => {
+    const db = testDb();
+    // k_root → k_zhi (with a child) and k_zhi —contrasts_with→ k_er (the §5.2
+    // seedGraph shape + a child so "之 children" can surface).
+    await seedZhiErNodes();
+    await db.insert(knowledge).values({
+      id: 'k_zhi_pron',
+      name: '之作代词',
+      domain: null,
+      parent_id: 'k_zhi',
+      created_at: BASE,
+      updated_at: BASE,
+    });
+    await db.insert(knowledge_edge).values({
+      id: 'edge_zhi_er',
+      from_knowledge_id: 'k_zhi',
+      to_knowledge_id: 'k_er',
+      relation_type: 'contrasts_with',
+      weight: 0.8,
+      created_by: 'user' as never,
+      reasoning: '二者常在断句和翻译里混淆',
+      created_at: BASE,
+    });
+    // A recent judge-backed failure on 之 (so recent_failures is non-empty).
+    await db.insert(question).values({
+      id: 'q_zhi_kq',
+      kind: 'short_answer',
+      prompt_md: '解释「之」在句中的作用',
+      reference_md: '结构助词。',
+      knowledge_ids: ['k_zhi'],
+      source: 'manual',
+      difficulty: 3,
+      created_at: BASE,
+      updated_at: BASE,
+    });
+    await writeEvent(db, {
+      id: 'att_zhi_kq',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: 'q_zhi_kq',
+      outcome: 'failure',
+      payload: { answer_md: '代词', answer_image_refs: [], referenced_knowledge_ids: ['k_zhi'] },
+      created_at: new Date(Date.now() - 86_400_000),
+    });
+    await writeEvent(db, {
+      id: 'judge_zhi_kq',
+      actor_kind: 'agent',
+      actor_ref: 'attribution',
+      action: 'judge',
+      subject_kind: 'event',
+      subject_id: 'att_zhi_kq',
+      outcome: 'success',
+      payload: {
+        cause: {
+          primary_category: 'concept',
+          secondary_categories: [],
+          analysis_md: '把结构助词「之」误判成代词。',
+          confidence: 0.9,
+        },
+        referenced_knowledge_ids: ['k_zhi'],
+      },
+      caused_by_event_id: 'att_zhi_kq',
+      created_at: new Date(Date.now() - 86_400_000 + 500),
+    });
+
+    const k = await queryKnowledgeTool.execute(ctx(), {
+      subjectId: 'wenyan',
+      query: '之',
+      include: ['children', 'neighbors', 'recent_failures'],
+    });
+    // 之 node present, its child surfaces, the contrasts_with candidate (k_er)
+    // surfaces as an edge, and recent failures are non-empty.
+    const nodeIds = k.nodes.map((n) => n.id);
+    expect(nodeIds).toContain('k_zhi');
+    expect(nodeIds).toContain('k_zhi_pron'); // a 之 child
+    expect(k.edges.some((e) => e.relation_type === 'contrasts_with' && e.to_knowledge_id === 'k_er')).toBe(true);
+    expect(k.recent_failures?.length ?? 0).toBeGreaterThan(0);
+    expect(k.recent_failures?.[0].event_id).toBe('att_zhi_kq');
+
+    await assertAgentReadable(
+      db,
+      queryKnowledgeTool as DomainTool,
+      { subjectId: 'wenyan', query: '之', include: ['children', 'neighbors', 'recent_failures'] },
+      k,
+      {
+        keyInsightFields: [
+          'nodes[].id',
+          'nodes[].path',
+          'edges[].relation_type',
+          'recent_failures[].event_id',
+          'recent_failures[].created_at',
+        ],
+        idRefs: [
+          { path: 'nodes[].id', table: 'knowledge' },
+          { path: 'edges[].from_knowledge_id', table: 'knowledge' },
+          { path: 'edges[].to_knowledge_id', table: 'knowledge' },
+          { path: 'recent_failures[].event_id', table: 'event' },
+          { path: 'recent_failures[].question_id', table: 'question' },
+        ],
+      },
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // Scenario (vi) — expand_knowledge_subgraph translation-prereq (ISOLATED,
+  // §5 graph row) — F1. Answers §5 `wenyan-translation-prereq` ("翻译总错，是不
+  // 是实词问题？") — expand_knowledge_subgraph shows 实词/句式/虚词 → 翻译 candidate
+  // prerequisite paths. Phase-1 implements it with a minimal wenyan prerequisite
+  // seed (LD-2 wenyan-only); richer subject-graph seeding is Phase 2 (P5.8).
+  // -------------------------------------------------------------------------
+  it('scenario (vi): expand_knowledge_subgraph surfaces 实词/句式/虚词 → 翻译 prerequisite paths (F1 / §5 wenyan-translation-prereq)', async () => {
+    const db = testDb();
+    // 翻译 (center) with three prerequisite endpoints under a wenyan root.
+    await db.insert(knowledge).values([
+      { id: 'k_root', name: '文言文', domain: 'wenyan', created_at: BASE, updated_at: BASE },
+      {
+        id: 'k_translate',
+        name: '翻译',
+        domain: null,
+        parent_id: 'k_root',
+        created_at: BASE,
+        updated_at: BASE,
+      },
+      {
+        id: 'k_shici',
+        name: '实词',
+        domain: null,
+        parent_id: 'k_root',
+        created_at: BASE,
+        updated_at: BASE,
+      },
+      {
+        id: 'k_jushi',
+        name: '句式',
+        domain: null,
+        parent_id: 'k_root',
+        created_at: BASE,
+        updated_at: BASE,
+      },
+      {
+        id: 'k_xuci',
+        name: '虚词',
+        domain: null,
+        parent_id: 'k_root',
+        created_at: BASE,
+        updated_at: BASE,
+      },
+    ]);
+    // prerequisite edges: 实词/句式/虚词 → 翻译 (from is useful before learning to).
+    await db.insert(knowledge_edge).values([
+      {
+        id: 'edge_shici_translate',
+        from_knowledge_id: 'k_shici',
+        to_knowledge_id: 'k_translate',
+        relation_type: 'prerequisite',
+        weight: 0.9,
+        created_by: 'user' as never,
+        reasoning: '实词词义是翻译的基础',
+        created_at: BASE,
+      },
+      {
+        id: 'edge_jushi_translate',
+        from_knowledge_id: 'k_jushi',
+        to_knowledge_id: 'k_translate',
+        relation_type: 'prerequisite',
+        weight: 0.8,
+        created_by: 'user' as never,
+        reasoning: '句式决定语序与结构',
+        created_at: BASE,
+      },
+      {
+        id: 'edge_xuci_translate',
+        from_knowledge_id: 'k_xuci',
+        to_knowledge_id: 'k_translate',
+        relation_type: 'prerequisite',
+        weight: 0.7,
+        created_by: 'user' as never,
+        reasoning: '虚词影响语气与连接',
+        created_at: BASE,
+      },
+    ]);
+
+    const sub = await expandKnowledgeSubgraphTool.execute(ctx(), {
+      centerNodeId: 'k_translate',
+      include: ['neighbors'],
+      relationTypes: ['prerequisite'],
+    });
+    expect(sub.center?.id).toBe('k_translate');
+    // The three prerequisite endpoints surface as neighbors...
+    const subNodeIds = sub.nodes.map((n) => n.id).sort();
+    expect(subNodeIds).toEqual(['k_jushi', 'k_shici', 'k_translate', 'k_xuci']);
+    // ...and the candidate prerequisite paths INTO 翻译 are surfaced.
+    const prereqPathSources = sub.paths
+      .filter((p) => p.relation_type === 'prerequisite' && p.to === 'k_translate')
+      .map((p) => p.from)
+      .sort();
+    expect(prereqPathSources).toEqual(['k_jushi', 'k_shici', 'k_xuci']);
+
+    await assertAgentReadable(
+      db,
+      expandKnowledgeSubgraphTool as DomainTool,
+      { centerNodeId: 'k_translate', include: ['neighbors'], relationTypes: ['prerequisite'] },
+      sub,
+      {
+        keyInsightFields: [
+          'center.id',
+          'center.path',
+          'nodes[].id',
+          'nodes[].role',
+          'paths[].from',
+          'paths[].to',
+          'paths[].relation_type',
+        ],
+        idRefs: [
+          { path: 'center.id', table: 'knowledge' },
+          { path: 'nodes[].id', table: 'knowledge' },
+          { path: 'edges[].from', table: 'knowledge' },
+          { path: 'edges[].to', table: 'knowledge' },
+          { path: 'paths[].from', table: 'knowledge' },
+          { path: 'paths[].to', table: 'knowledge' },
         ],
       },
     );
@@ -544,12 +888,26 @@ describe('P5.5 fixtures-assert helper (pure-logic, folded — M7)', () => {
     ]);
   });
 
-  it('resolvePath flags a non-array where a [] segment expects one', () => {
+  it('resolvePath flags a non-array where a [] segment expects one (unresolved, F2)', () => {
     const root = { mistakes: { not: 'an array' } };
     const resolved = resolvePath(root, 'mistakes[].event_id');
     expect(resolved).toHaveLength(1);
     expect(resolved[0].path).toContain('not-an-array');
     expect(resolved[0].value).toBeUndefined();
+    // F2 — the entry is flagged `unresolved`, distinct from a real empty array.
+    expect(resolved[0].unresolved).toBe(true);
+  });
+
+  it('resolvePath returns ZERO entries for a real empty array (vacuous, not unresolved — F2)', () => {
+    const root = { mistakes: [] as unknown[] };
+    const resolved = resolvePath(root, 'mistakes[].event_id');
+    expect(resolved).toHaveLength(0);
+  });
+
+  it('resolvePath flags a missing/undefined [] container as unresolved (F2)', () => {
+    const resolved = resolvePath({}, 'timeline[].event_id');
+    expect(resolved).toHaveLength(1);
+    expect(resolved[0].unresolved).toBe(true);
   });
 
   const goodTool = {
@@ -599,5 +957,45 @@ describe('P5.5 fixtures-assert helper (pure-logic, folded — M7)', () => {
         idRefs: [{ path: 'knowledge_id', table: 'knowledge' }],
       }),
     ).rejects.toThrow();
+  });
+
+  it('assertAgentReadable FAILS when an idRef path does not resolve to an array (F2 — limb b)', async () => {
+    const db = testDb();
+    // The declared idRef path expects `timeline[]` to be an array; here it is
+    // missing entirely. Pre-F2 this filtered to empty and SILENTLY PASSED; F2
+    // makes it a hard failure (the regression limb (b) must catch).
+    const output = { attempt: { event_id: 'e1' } }; // no `timeline` array at all
+    await expect(
+      assertAgentReadable(db, goodTool, {}, output, {
+        keyInsightFields: [],
+        idRefs: [{ path: 'timeline[].event_id', table: 'event' }],
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('assertAgentReadable FAILS when a resolved id element is nullish/non-string (F2 — limb b)', async () => {
+    const db = testDb();
+    // The array resolves, but an element id is null — a broken citation an agent
+    // would follow into nothing. F2 fails it instead of silently filtering it.
+    const output = { proposal_ids: [null] as unknown[] };
+    await expect(
+      assertAgentReadable(db, goodTool, {}, output, {
+        keyInsightFields: [],
+        idRefs: [{ path: 'proposal_ids[]', table: 'event' }],
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('assertAgentReadable PASSES a genuinely empty id container vacuously (F2 / F-3 — limb b)', async () => {
+    const db = testDb();
+    // A REAL empty array (e.g. query_knowledge.edges[].evidence_event_ids:[]) is
+    // vacuously fine — no ids to resolve, and it is NOT an unresolved path.
+    const output = { evidence_event_ids: [] as unknown[] };
+    await expect(
+      assertAgentReadable(db, goodTool, {}, output, {
+        keyInsightFields: [],
+        idRefs: [{ path: 'evidence_event_ids[]', table: 'event' }],
+      }),
+    ).resolves.toBeUndefined();
   });
 });
