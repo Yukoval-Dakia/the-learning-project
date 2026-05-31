@@ -1,4 +1,5 @@
 import { newId } from '@/core/ids';
+import type { SuggestionKindT } from '@/core/schema/event/known';
 import type { Db, Tx } from '@/db/client';
 import { event, proposal_signals } from '@/db/schema';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
@@ -58,6 +59,12 @@ export interface ProposalSignalSource {
   kind: string;
   payload: {
     cooldown_key?: string;
+    // P5.6 / YUK-178 (call-site 5) — carry the corrective discriminator off the
+    // proposal payload so the KPI gate can read it. The narrowed pick used to be
+    // just { cooldown_key? } and would drop this field; absence === 'proactive'
+    // (ND-SK-1). Corrective decisions are excluded from accept_count/dismiss_count
+    // (SK-2 / §5.1).
+    suggestion_kind?: SuggestionKindT;
   };
 }
 
@@ -175,11 +182,35 @@ export async function recordProposalDecisionSignal(
   const cooldownKey = proposal.payload.cooldown_key;
   if (!cooldownKey) return;
 
+  // P5.6 / YUK-178 (SK-2 / LD-1 — full exclusion, incremental gate). A corrective
+  // decision is recorded as an event upstream (actions.ts writes the `rate`
+  // event), but it must NOT feed the P5.4-L2 accept-learned signal on EITHER side
+  // (ND-SK-4): an accept-family decision skips `accept_count`, a dismiss skips
+  // `dismiss_count`. Excluding only accepts would let a dismissed corrective
+  // depress the cell rate denominator and tighten the L1 gate — re-introducing the
+  // pollution LD-1 removes (§12 PIN 6 / re-critique issue 4). The gate skips the
+  // KPI *count accounting*, NOT the cooldown write: a corrective dismiss still
+  // persists its `cooldown_until` so the proposal is not re-surfaced.
+  const isCorrective = proposal.payload.suggestion_kind === 'corrective';
+  if (isCorrective && decision === 'accept') {
+    // Accept-family: nothing to write — no row, no count, no cooldown clear.
+    return;
+  }
+
   // YUK-76 codex P1 — serialize with `ensureProposalDecisionSignal` rebuilds
   // on the same `(kind, cooldown_key)` so rebuild snapshots can't clobber a
   // freshly-recorded increment.
   await withProposalSignalLock(db, proposal.kind, cooldownKey, async (tx) => {
-    await recordProposalDecisionSignalLocked(tx, proposal, cooldownKey, decision, dismissReason);
+    await recordProposalDecisionSignalLocked(
+      tx,
+      proposal,
+      cooldownKey,
+      decision,
+      dismissReason,
+      // P5.6 — a corrective dismiss writes its cooldown but contributes 0 to
+      // `dismiss_count` (count-suppressing flag, §12 PIN 6).
+      !isCorrective,
+    );
   });
 }
 
@@ -189,11 +220,21 @@ async function recordProposalDecisionSignalLocked(
   cooldownKey: string,
   decision: 'accept' | 'dismiss',
   dismissReason?: string,
+  // P5.6 / YUK-178 — when false (corrective decision), zero the count delta so the
+  // UPSERT bumps neither accept_count nor dismiss_count; the cooldown_until write
+  // (dismiss path) still happens (ND-SK-4 / §12 PIN 6).
+  countsTowardKpi = true,
 ): Promise<void> {
   const now = new Date();
-  const acceptDelta = decision === 'accept' ? 1 : 0;
-  const dismissDelta = decision === 'dismiss' ? 1 : 0;
-  const initialAcceptanceRate = acceptDelta / (acceptDelta + dismissDelta);
+  const acceptDelta = countsTowardKpi && decision === 'accept' ? 1 : 0;
+  const dismissDelta = countsTowardKpi && decision === 'dismiss' ? 1 : 0;
+  // P5.6 / YUK-178 — when this is a corrective dismiss creating a fresh row, both
+  // deltas are 0 (the count is suppressed) so guard the initial rate against 0/0:
+  // an all-zero-count row is rate 0 (matches getProposalAcceptanceRates' total===0
+  // filter). The pre-P5.6 paths always had exactly one delta = 1, so this only
+  // changes the corrective-dismiss-cold-start case.
+  const totalDelta = acceptDelta + dismissDelta;
+  const initialAcceptanceRate = totalDelta === 0 ? 0 : acceptDelta / totalDelta;
   const nowIso = now.toISOString();
 
   if (decision === 'accept') {
@@ -268,12 +309,18 @@ async function recordProposalDecisionSignalLocked(
     ON CONFLICT (kind, cooldown_key) DO UPDATE SET
       accept_count = proposal_signals.accept_count + ${acceptDelta},
       dismiss_count = proposal_signals.dismiss_count + ${dismissDelta},
-      acceptance_rate =
+      -- P5.6 / YUK-178 — COALESCE guards the 0/0 recompute. A corrective dismiss
+      -- bumps neither count (countsTowardKpi=false), so an existing all-zero-count
+      -- row (e.g. a prior corrective dismiss) would otherwise divide by NULLIF(0,0)
+      -- = NULL and violate the NOT NULL acceptance_rate column. Treat 0/0 as rate 0.
+      acceptance_rate = COALESCE(
         (proposal_signals.accept_count + ${acceptDelta})::real
         / NULLIF(
           proposal_signals.accept_count + proposal_signals.dismiss_count + ${acceptDelta} + ${dismissDelta},
           0
         ),
+        0
+      ),
       dismiss_reason = ${nextDismissReason},
       cooldown_until = ${nextCooldownUntilIso}::timestamptz,
       updated_at = ${nowIso}::timestamptz
@@ -304,8 +351,18 @@ async function rebuildProposalDecisionSignal(
 ): Promise<void> {
   const cooldownKey = proposal.payload.cooldown_key;
   if (!cooldownKey) return;
+  // P5.6 / YUK-178 (call-site 7) — also pull each sibling proposal's
+  // `suggestion_kind` off its `ai_proposal` payload so the rebuild can reproduce
+  // the same full KPI exclusion the incremental gate applies (SK-2 / §5.1 / AC-3b).
+  // One `(kind, cooldown_key)` can aggregate MULTIPLE sibling proposals; the
+  // corrective marker lives on the proposal payload, not the rate event, so we
+  // build a Set of corrective proposal ids and skip BOTH accept and dismiss
+  // counting for any rate row whose caused_by_event_id is in it.
   const proposalRows = await db
-    .select({ id: event.id })
+    .select({
+      id: event.id,
+      suggestion_kind: sql<string | null>`${event.payload}->'ai_proposal'->>'suggestion_kind'`,
+    })
     .from(event)
     .where(
       and(
@@ -314,6 +371,14 @@ async function rebuildProposalDecisionSignal(
       ),
     );
   const proposalIds = [...new Set([...proposalRows.map((row) => row.id), proposal.id])];
+  const correctiveProposalIds = new Set<string>(
+    proposalRows.filter((row) => row.suggestion_kind === 'corrective').map((row) => row.id),
+  );
+  // The triggering proposal may not be in the `event.payload` scan above (e.g. a
+  // tx not yet visible to this read) — fold its own marker in from the source.
+  if (proposal.payload.suggestion_kind === 'corrective') {
+    correctiveProposalIds.add(proposal.id);
+  }
   const rateRows =
     proposalIds.length === 0
       ? []
@@ -346,16 +411,37 @@ async function rebuildProposalDecisionSignal(
   let keyLatestRate: EventRow | null = null;
   for (const row of latestRateByProposal.values()) {
     const decision = decisionFromRate(row);
-    if (decision === 'accept') {
-      acceptCount += 1;
-    } else if (decision === 'dismiss') {
-      dismissCount += 1;
-    } else {
-      continue;
+    if (decision === null) continue;
+    // P5.6 / YUK-178 (full exclusion on replay, mirrors the incremental gate).
+    // A corrective proposal's decision contributes to NEITHER acceptCount nor
+    // dismissCount (ND-SK-4) — so a reconcile reproduces the gated counts (AC-3b).
+    const isCorrective =
+      row.caused_by_event_id !== null && correctiveProposalIds.has(row.caused_by_event_id);
+    if (!isCorrective) {
+      if (decision === 'accept') {
+        acceptCount += 1;
+      } else {
+        dismissCount += 1;
+      }
     }
+    // Cooldown parity with the incremental path: a corrective DISMISS still
+    // persists `cooldown_until` (the gate skips counting, not the cooldown), so it
+    // still participates in the key-wide latest-decision scan. A corrective ACCEPT
+    // does NOT clear an existing dismiss cooldown (the incremental accept gate
+    // early-returns without touching the row), so it is excluded from keyLatestRate.
+    if (isCorrective && decision === 'accept') continue;
     keyLatestRate = newerRate(keyLatestRate, row);
   }
   const total = acceptCount + dismissCount;
+  // P5.6 parity boundary: a key whose ONLY decisions are corrective (both counts
+  // gated to 0) early-returns here WITHOUT writing cooldown_until. This is safe
+  // because the incremental path always runs first in production and OWNS the
+  // cooldown for a corrective dismiss (it persists cooldown_until on the dismiss
+  // INSERT); the only rebuild caller (ensureProposalDecisionSignal / reconcile)
+  // runs over that already-written row, which this return leaves untouched. A
+  // from-scratch event-log replay onto an empty table is not a production flow
+  // for a corrective-dismiss-only key; full replay-parity is tracked as a
+  // follow-up (no live-bug). See spec §5.1 / §12 PIN 6.
   if (total === 0) return;
 
   const acceptanceRate = acceptCount / total;

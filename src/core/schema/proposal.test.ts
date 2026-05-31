@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { aiProposalKinds, parseAiProposalPayload } from './proposal';
+import { aiProposalKinds, parseAiProposalPayload, resolveSuggestionKind } from './proposal';
 
 const base = {
   target: { subject_kind: 'event', subject_id: 'target_1' },
@@ -166,5 +166,173 @@ describe('AiProposalPayload', () => {
         },
       }),
     ).toThrow();
+  });
+});
+
+// P5.6 / YUK-178 — suggestion_kind discriminator (AC-2 schema scope, ND-SK-1).
+describe('suggestion_kind (P5.6 / YUK-178)', () => {
+  it('is optional on every proposal kind — a payload without it parses and reads proactive', () => {
+    const sampleByKind: Record<string, Record<string, unknown>> = {
+      knowledge_node: {
+        kind: 'knowledge_node',
+        target: { subject_kind: 'knowledge', subject_id: null },
+        proposed_change: { mutation: 'propose_new', name: 'n', parent_id: 'p' },
+      },
+      knowledge_edge: {
+        kind: 'knowledge_edge',
+        target: { subject_kind: 'knowledge_edge', subject_id: null },
+        proposed_change: {
+          from_knowledge_id: 'k1',
+          to_knowledge_id: 'k2',
+          relation_type: 'prerequisite',
+          weight: 1,
+        },
+      },
+      knowledge_mutation: {
+        kind: 'knowledge_mutation',
+        target: { subject_kind: 'knowledge', subject_id: 'k2' },
+        proposed_change: {
+          mutation: 'merge',
+          from_ids: ['k1'],
+          into_id: 'k2',
+          expected_versions: { k1: 0 },
+        },
+      },
+      learning_item: {
+        kind: 'learning_item',
+        target: { subject_kind: 'learning_item', subject_id: null },
+        proposed_change: { topic: 't' },
+      },
+      note_update: {
+        kind: 'note_update',
+        target: { subject_kind: 'artifact', subject_id: 'a1' },
+        proposed_change: { artifact_id: 'a1' },
+      },
+      variant_question: {
+        kind: 'variant_question',
+        target: { subject_kind: 'question', subject_id: 'q1' },
+        proposed_change: { source_question_id: 'q1' },
+      },
+      completion: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'i1' },
+        proposed_change: { learning_item_id: 'i1' },
+      },
+      relearn: {
+        kind: 'relearn',
+        target: { subject_kind: 'knowledge', subject_id: 'k1' },
+        proposed_change: { knowledge_id: 'k1' },
+      },
+      defer: {
+        kind: 'defer',
+        target: { subject_kind: 'learning_item', subject_id: 'i2' },
+        proposed_change: { learning_item_id: 'i2' },
+      },
+      record_links: {
+        kind: 'record_links',
+        target: { subject_kind: 'record', subject_id: 'r1' },
+        proposed_change: { record_id: 'r1' },
+      },
+      record_promotion: {
+        kind: 'record_promotion',
+        target: { subject_kind: 'record', subject_id: 'r1' },
+        proposed_change: { record_id: 'r1', target: 'learning_item' },
+      },
+      archive: {
+        kind: 'archive',
+        target: { subject_kind: 'knowledge', subject_id: 'k1' },
+        proposed_change: { subject_kind: 'knowledge', subject_id: 'k1' },
+      },
+      judge_retraction: {
+        kind: 'judge_retraction',
+        target: { subject_kind: 'event', subject_id: 'j1' },
+        proposed_change: { judge_event_id: 'j1' },
+      },
+      goal_scope: {
+        kind: 'goal_scope',
+        target: { subject_kind: 'goal', subject_id: 'g1' },
+        proposed_change: {
+          title: 't',
+          scope_knowledge_ids: [],
+          sequence_hint: 0,
+          reasoning: 'r',
+        },
+      },
+    };
+    // Audit-coverage guard (AC-2): the sample map covers every AiProposalKind, so
+    // a future kind addition that forgets the optional-field check is caught.
+    expect(Object.keys(sampleByKind).sort()).toEqual([...aiProposalKinds].sort());
+
+    for (const sample of Object.values(sampleByKind)) {
+      const parsed = parseAiProposalPayload({ ...base, ...sample });
+      // Field-absent → undefined on the payload, proactive via the reader.
+      expect(parsed.suggestion_kind).toBeUndefined();
+      expect(resolveSuggestionKind(parsed)).toBe('proactive');
+    }
+  });
+
+  it("round-trips an explicit suggestion_kind:'corrective' on a knowledge_edge", () => {
+    const parsed = parseAiProposalPayload({
+      ...base,
+      kind: 'knowledge_edge',
+      target: { subject_kind: 'knowledge_edge', subject_id: null },
+      proposed_change: {
+        from_knowledge_id: 'k1',
+        to_knowledge_id: 'k2',
+        relation_type: 'prerequisite',
+        weight: 1,
+      },
+      suggestion_kind: 'corrective',
+    });
+    expect(parsed.suggestion_kind).toBe('corrective');
+    expect(resolveSuggestionKind(parsed)).toBe('corrective');
+  });
+
+  it('rejects an out-of-enum suggestion_kind', () => {
+    expect(() =>
+      parseAiProposalPayload({
+        ...base,
+        kind: 'variant_question',
+        target: { subject_kind: 'question', subject_id: 'q1' },
+        proposed_change: { source_question_id: 'q1' },
+        suggestion_kind: 'maintenance',
+      }),
+    ).toThrow();
+  });
+
+  it('resolveSuggestionKind defaults absence to proactive', () => {
+    expect(resolveSuggestionKind({})).toBe('proactive');
+    expect(resolveSuggestionKind({ suggestion_kind: undefined })).toBe('proactive');
+    expect(resolveSuggestionKind({ suggestion_kind: 'corrective' })).toBe('corrective');
+    expect(resolveSuggestionKind({ suggestion_kind: 'proactive' })).toBe('proactive');
+  });
+
+  // §3.1 per-kind audit classification table (AC-2). Pins which kinds are
+  // structurally corrective-CAPABLE so a future producer change that flips a kind
+  // is caught. Only variant_question is always-corrective; every other proposal
+  // kind is audited always-proactive.
+  it('pins the §3.1 corrective-possible classification per kind', () => {
+    const correctivePossibleByKind: Record<(typeof aiProposalKinds)[number], boolean> = {
+      knowledge_node: false,
+      knowledge_edge: false,
+      knowledge_mutation: false,
+      learning_item: false,
+      note_update: false,
+      variant_question: true,
+      completion: false,
+      relearn: false,
+      defer: false,
+      record_links: false,
+      record_promotion: false,
+      archive: false,
+      judge_retraction: false,
+      goal_scope: false,
+    };
+    // Every kind classified; exactly one structurally-corrective kind.
+    expect(Object.keys(correctivePossibleByKind).sort()).toEqual([...aiProposalKinds].sort());
+    const correctiveKinds = Object.entries(correctivePossibleByKind)
+      .filter(([, v]) => v)
+      .map(([k]) => k);
+    expect(correctiveKinds).toEqual(['variant_question']);
   });
 });

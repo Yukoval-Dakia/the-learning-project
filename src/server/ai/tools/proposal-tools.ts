@@ -6,6 +6,9 @@
 // delegates to the AttributionTask writer that appends a judge event.
 
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
+// P5.6 / YUK-178 — the proactive/corrective discriminator the model can label
+// explicitly via the propose-tool input arg (§4.1/§4.2).
+import { SuggestionKind } from '@/core/schema/event/known';
 import {
   type AiProposalPayloadInputT,
   type ProposalEvidenceRefT,
@@ -218,6 +221,11 @@ const ProposeKnowledgeEdgeInputSchema = z.object({
   weight: z.number().min(0).max(1).optional(),
   reasoning: z.string().min(1).max(2000),
   evidence_event_ids: z.array(z.string().min(1)).optional(),
+  // P5.6 / YUK-178 (§4.1/§4.2, SK-5) — OPTIONAL model-labeled discriminator. Set
+  // 'corrective' ONLY when this edge repairs a failure the model itself observed;
+  // omit (→ 'proactive') for a next-step suggestion. There is NO deterministic
+  // coercion — absence defaults to proactive in execute().
+  suggestion_kind: SuggestionKind.optional(),
 });
 
 const ProposeKnowledgeEdgeOutputSchema = z.object({
@@ -335,6 +343,11 @@ async function proposeKnowledgeEdgeExecute(
       weight: input.weight ?? 1,
     },
     cooldown_key: cooldownKey,
+    // P5.6 / YUK-178 — explicit model label, default proactive. This payload flows
+    // through parseAiProposalPayload → validateProposalQuality (the rubric) BELOW
+    // before writeAiProposal, so the marker must survive that round-trip (§12 PIN
+    // 10); it does because suggestion_kind is on BaseProposal.
+    suggestion_kind: input.suggestion_kind ?? 'proactive',
   };
 
   // P5.4-L2 / YUK-174 (Facet B) — resolve the adaptive gate-bump for this edge's
@@ -495,6 +508,9 @@ const KnowledgeMutationInputSchema = z.object({
   payload: z.record(z.string(), z.unknown()),
   reasoning: z.string().min(1).max(2000),
   evidence_event_ids: z.array(z.string().min(1)).optional(),
+  // P5.6 / YUK-178 (§4.1/§4.2, SK-5) — OPTIONAL model-labeled discriminator;
+  // omit (→ 'proactive') unless this mutation repairs a model-observed failure.
+  suggestion_kind: SuggestionKind.optional(),
 });
 
 const KnowledgeMutationParsedSchema = z.discriminatedUnion('mutation', [
@@ -603,7 +619,8 @@ async function proposeKnowledgeMutationExecute(
   ctx: ToolContext,
   raw: KnowledgeMutationInput,
 ): Promise<KnowledgeMutationOutput> {
-  const input = parseKnowledgeMutationInput(KnowledgeMutationInputSchema.parse(raw));
+  const outer = KnowledgeMutationInputSchema.parse(raw);
+  const input = parseKnowledgeMutationInput(outer);
   if (input.mutation === 'merge' && input.payload.from_ids.includes(input.payload.into_id)) {
     return { status: 'skipped:invalid_payload', reason: 'merge into_id cannot appear in from_ids' };
   }
@@ -655,6 +672,10 @@ async function proposeKnowledgeMutationExecute(
     actor_ref: ctx.callerActor.ref,
     caused_by_event_id: ctx.causedByEventId ?? null,
     task_run_id: ctx.taskRunId,
+    // P5.6 / YUK-178 — model-labeled discriminator threaded into the proposal
+    // payload writeKnowledgeProposeEvent builds; default proactive. Read off the
+    // outer (input-schema) parse — parseKnowledgeMutationInput strips it.
+    suggestion_kind: outer.suggestion_kind ?? 'proactive',
   });
 
   return { status: 'proposed', proposal_id: proposalId };
@@ -1075,6 +1096,9 @@ const ProposeRecordLinksInputSchema = z.object({
     .min(1)
     .max(12),
   evidence_event_ids: z.array(z.string().min(1)).optional(),
+  // P5.6 / YUK-178 (§4.2, SK-5) — OPTIONAL model-labeled discriminator; omit
+  // (→ proactive) unless this repairs a model-observed failure.
+  suggestion_kind: SuggestionKind.optional(),
 });
 
 const RecordProposalOutputSchema = z.object({
@@ -1136,6 +1160,8 @@ async function proposeRecordLinksExecute(
       },
       rollback_plan: { action: 'dismiss proposal; record links stay unchanged' },
       cooldown_key: cooldownKey,
+      // P5.6 / YUK-178 — explicit model label, default proactive.
+      suggestion_kind: input.suggestion_kind ?? 'proactive',
     },
     task_run_id: ctx.taskRunId,
     caused_by_event_id: ctx.causedByEventId ?? null,
@@ -1164,6 +1190,9 @@ const ProposeRecordPromotionInputSchema = z.object({
   target: z.enum(['question', 'learning_item', 'artifact']),
   reasoning: z.string().min(1).max(2000),
   draft: z.unknown().optional(),
+  // P5.6 / YUK-178 (§4.2, SK-5) — OPTIONAL model-labeled discriminator; omit
+  // (→ proactive) unless this repairs a model-observed failure.
+  suggestion_kind: SuggestionKind.optional(),
 });
 
 type ProposeRecordPromotionInput = z.infer<typeof ProposeRecordPromotionInputSchema>;
@@ -1196,6 +1225,8 @@ async function proposeRecordPromotionExecute(
       },
       rollback_plan: { action: 'dismiss proposal; no stronger learning object is created' },
       cooldown_key: cooldownKey,
+      // P5.6 / YUK-178 — explicit model label, default proactive.
+      suggestion_kind: input.suggestion_kind ?? 'proactive',
     },
     task_run_id: ctx.taskRunId,
     caused_by_event_id: ctx.causedByEventId ?? null,

@@ -307,6 +307,26 @@ This rubric applies to agent-generated graph proposals. Manual user-created edge
 > to [YUK-175](https://linear.app/yukoval-studios/issue/YUK-175); the reason digest still reaches it.
 > No schema change. Spec:
 > `docs/superpowers/specs/2026-05-31-p5.4-l2-adaptive-bias-design.md`.
+>
+> **Suggestion-kind semantics + KPI exclusion (P5.6 / YUK-178 — 2026-05-31).** Proposals (and chips)
+> carry an OPTIONAL `suggestion_kind: 'proactive' | 'corrective'` discriminator (ADR-0011 §2.1 / §11
+> erratum). It is on `BaseProposal` (`src/core/schema/proposal.ts`, absence === `proactive` via
+> `resolveSuggestionKind`); set deterministically by the `variant_question` producer (the only
+> structurally-corrective kind — it fires only after a failed attempt) and by **explicit model
+> labeling** through an optional input arg on the 4 agent-callable propose tools
+> (`propose_knowledge_edge` / `propose_knowledge_mutation` / `propose_record_links` /
+> `propose_record_promotion`). **KPI-exclusion rule (the single logical rule):** `suggestion_kind ===
+> 'corrective'` ⇒ no accept-learned KPI credit on EITHER side — a corrective accept does not bump
+> `proposal_signals.accept_count`, a corrective dismiss does not bump `dismiss_count` (the denominator
+> is not distorted), enforced at BOTH `accept_count`/`dismiss_count` writers
+> (`recordProposalDecisionSignal` incremental + `rebuildProposalDecisionSignal` replay/reconcile, both
+> in `src/server/proposals/signals.ts`). A corrective dismiss **still persists `cooldown_until`** (the
+> gate skips KPI counting, not the cooldown). The `rate` event is still written, so the corrective
+> decision is excluded from the *KPI aggregate*, never from the *event log*. This keeps the P5.4-L2
+> accept-learned bias (above) measuring only proactive proposal quality — a retry-on-failure
+> acknowledgment never inflates it. There is NO soft-fail / `result_count` coercion (that mechanism was
+> dropped). No DB migration, no new event action, no new table. Spec:
+> `docs/superpowers/specs/2026-05-31-p5.6-copilot-suggestion-semantics-design.md`.
 
 ### 4.1 Universal gates
 

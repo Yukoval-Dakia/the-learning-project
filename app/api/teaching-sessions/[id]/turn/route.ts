@@ -13,6 +13,7 @@ import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { TeachingError, planTeachingTurn } from '@/server/orchestrator/teaching';
 import { Conversation } from '@/server/session';
+import { getActiveQuestionState } from '@/server/teaching/active-question';
 
 export const runtime = 'nodejs';
 
@@ -162,6 +163,14 @@ export async function POST(
           caused_by_event_id: userMsgId,
         });
       });
+      // P5.6 / YUK-178 (call-site 11, §4.3) — surface the active question id +
+      // its cumulative attempt_counts so the drawer can store them for the
+      // corrective-chip trigger. Note (PIN 8): on the turn that CREATES an
+      // ask_check question that question has 0 attempts, so the failure total
+      // here is 0 — the trigger is driven by the GET poll / the turn AFTER an
+      // attempt lands. This turn value is a convenience, not the trigger source.
+      const { active_question_id, attempt_counts } = await getActiveQuestionState(db, sessionId);
+
       return Response.json({
         user_message: { id: userMsgId, role: 'user', text_md: parsed.data.text_md },
         agent_message: {
@@ -173,6 +182,8 @@ export async function POST(
         },
         suggested_next: turn.suggested_next,
         was_idle: wasIdle,
+        active_question_id,
+        attempt_counts,
       });
     } catch (err) {
       if (err instanceof TeachingError) {

@@ -1,3 +1,4 @@
+import type { SuggestionKindT } from '@/core/schema/event/known';
 import type { ProposalEvidenceRefT } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
@@ -57,6 +58,12 @@ export async function writeVariantQuestionProposal(
       },
       rollback_plan: { action: 'dismiss proposal; no question row has been materialized yet' },
       cooldown_key: `variant_question:${input.source_question_id}:${input.source_attempt_event_id}`,
+      // P5.6 / YUK-178 (SK-3, the deterministic structural floor) — variant_question
+      // is the ONLY always-corrective proposal kind: this producer fires ONLY after
+      // a failed attempt (it requires source_attempt_event_id + source_question_id),
+      // so its proposals are by construction failure-retries. Hard-set corrective so
+      // accepts here never inflate the P5.4-L2 accept-learned KPI (§5.1 gate).
+      suggestion_kind: 'corrective',
     },
     task_run_id: input.task_run_id ?? null,
     cost_usd: input.cost_usd,
@@ -264,6 +271,11 @@ export interface WriteArchiveProposalInput extends CommonProducerInput {
   target_subject_kind: string;
   target_subject_id: string;
   proposed_change: Record<string, unknown>;
+  // P5.6 / YUK-178 — OPTIONAL proactive/corrective discriminator. archive is
+  // audited always-proactive (§3.1); this exists only so the
+  // propose_knowledge_mutation tool's model-labeled arg can flow through the
+  // archive branch of writeKnowledgeProposeEvent. Absent → proactive (ND-SK-1).
+  suggestion_kind?: SuggestionKindT;
   legacy_event_override?: {
     action: string;
     subject_kind: string;
@@ -291,6 +303,9 @@ export async function writeArchiveProposal(
       },
       rollback_plan: { action: 'restore archived entity through correction/revive flow' },
       cooldown_key: `archive:${input.target_subject_kind}:${input.target_subject_id}`,
+      // P5.6 / YUK-178 — pass through the model-labeled discriminator; absent →
+      // proactive (so non-tool archive callers keep absence === proactive).
+      ...(input.suggestion_kind ? { suggestion_kind: input.suggestion_kind } : {}),
     },
     event_override: input.legacy_event_override,
     task_run_id: input.task_run_id ?? null,
