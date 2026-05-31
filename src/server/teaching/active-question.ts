@@ -12,13 +12,14 @@
 //
 // PIN 7: `getQuestionContext`'s attempt aggregate lives inside a DomainTool
 // (executeGetQuestionContext needs a ToolContext) and is not callable as a
-// drop-in route reader. We extract a plain `countAttemptOutcomes(db, questionId)`
-// here that reuses `getQuestionTimeline` (a free db-taking query) and filters —
-// mirroring context-readers.ts ~:599-:604.
+// drop-in route reader. We expose a plain `countAttemptOutcomes(db, questionId)`
+// here that delegates to the CUMULATIVE (unbounded) `getQuestionAttemptOutcomeCounts`
+// reader — NOT the windowed `getQuestionTimeline`, whose ≤50 cap would let the
+// failure total decrease and flap the corrective chip (P5.6 review finding).
 
 import type { Db, Tx } from '@/db/client';
 import { question } from '@/db/schema';
-import { getQuestionTimeline } from '@/server/events/queries';
+import { getQuestionAttemptOutcomeCounts } from '@/server/events/queries';
 import { and, desc, eq, sql } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
@@ -37,27 +38,17 @@ export interface ActiveQuestionState {
 }
 
 /**
- * Per-outcome attempt totals for one question, derived from the attempt
- * timeline (mirrors context-readers.ts ~:599-:604, same windowed query). Plain
- * db-taking helper — no ToolContext (PIN 7). NOTE: `getQuestionTimeline` is
- * windowed to its default (most-recent ≤10 attempt+review entries), so these are
- * totals over that recent window, not the question's lifetime — faithful to the
- * mirrored reference and ample for the N=3 (=`TEACHING_CORRECTIVE_FAILURE_N`)
- * corrective trigger. `failure` here is a total, not a consecutive streak.
+ * Cumulative per-outcome attempt totals for one question, over its whole
+ * lifetime (no window). Plain db-taking helper — no ToolContext (PIN 7).
+ * `failure` is a cumulative total feeding the N=3 (`TEACHING_CORRECTIVE_FAILURE_N`)
+ * corrective trigger, so it must be monotonic — hence the unbounded reader, not
+ * the windowed `getQuestionTimeline`.
  */
 export async function countAttemptOutcomes(
   db: DbLike,
   questionId: string,
 ): Promise<AttemptOutcomeCounts> {
-  const timeline = await getQuestionTimeline(db, questionId);
-  const counts: AttemptOutcomeCounts = { success: 0, partial: 0, failure: 0 };
-  for (const entry of timeline) {
-    if (entry.kind !== 'attempt') continue;
-    if (entry.outcome === 'success') counts.success += 1;
-    else if (entry.outcome === 'partial') counts.partial += 1;
-    else counts.failure += 1;
-  }
-  return counts;
+  return getQuestionAttemptOutcomeCounts(db, questionId);
 }
 
 /**
