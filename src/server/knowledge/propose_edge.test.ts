@@ -391,6 +391,80 @@ describe('runEdgeProposeAndWrite', () => {
     expect(stats.proposed).toBe(0);
   });
 
+  // P5.4 / YUK-143 (RB-7) — a rubric-rejected (folded) propose event must NOT
+  // poison the nightly batch dedup set. Before the fix, loadPendingEdgeProposalKeys
+  // added the folded edge's key (no chained rate) → the next batch hit
+  // skipped_duplicate_pending and permanently locked out the edge. This is the
+  // 4th "pending propose with no rate" query RB-7 requires the marker filtered
+  // from. Mirrors the DomainTool / legacy-MCP RB-7 regression tests.
+  it('RB-7: a rubric-rejected fold on K does NOT block a later batch re-propose of K', async () => {
+    const db = testDb();
+    await insertKnowledge('k1');
+    await insertKnowledge('k2');
+
+    // Fold a rubric-rejected edge proposal on K = (k1 -> k2, related_to):
+    // the propose event is written (folded) carrying a rubric_verdict marker
+    // (sibling of ai_proposal), with NO chained rate — exactly the shape the
+    // DomainTool/legacy fold via writeAiProposal(event_override) produces.
+    await db.insert(event).values({
+      id: 'e_folded',
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'dreaming',
+      action: 'propose',
+      subject_kind: 'knowledge_edge',
+      subject_id: 'syn_folded',
+      outcome: 'success',
+      payload: {
+        from_knowledge_id: 'k1',
+        to_knowledge_id: 'k2',
+        relation_type: 'related_to',
+        weight: 0.5,
+        reasoning: 'evidence-free agent edge → rubric rejected',
+        rubric_verdict: { ok: false, gate: 'evidence_missing', reason: 'no evidence' },
+        ai_proposal: {
+          kind: 'knowledge_edge',
+          target: { subject_kind: 'knowledge_edge', subject_id: null },
+          reason_md: 'evidence-free agent edge → rubric rejected',
+          evidence_refs: [],
+          proposed_change: {
+            from_knowledge_id: 'k1',
+            to_knowledge_id: 'k2',
+            relation_type: 'related_to',
+            weight: 0.5,
+          },
+        },
+      },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: new Date(),
+    });
+
+    // A subsequent batch re-proposing the SAME edge must NOT be deduped against
+    // the folded event — it can propose again.
+    const fakeRunTask = async () => ({
+      text: JSON.stringify({
+        proposals: [
+          {
+            from_knowledge_id: 'k1',
+            to_knowledge_id: 'k2',
+            relation_type: 'related_to',
+            weight: 0.6,
+            reasoning: 'fresh attempt with real evidence',
+          },
+        ],
+      }),
+    });
+    const stats = await runEdgeProposeAndWrite({
+      db,
+      recentFailures: emptyAttempts(),
+      runTaskFn: fakeRunTask,
+    });
+    expect(stats.skipped_duplicate_pending).toBe(0);
+    expect(stats.proposed).toBe(1);
+  });
+
   it('dedupes within a single batch (LLM emits the same edge twice)', async () => {
     const db = testDb();
     await insertKnowledge('k1');

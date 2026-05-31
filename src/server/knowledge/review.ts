@@ -379,6 +379,15 @@ async function writeProposalAfterGate(
       { isAgent: true, actorRef: 'dreaming' },
     );
     if (!verdict.ok) {
+      // RB-6 step 7 (evidence-first logging): the DomainTool fold path logs the
+      // reject via writeToolCallLog, but this legacy MCP path intentionally does
+      // NOT. tool_call_log.task_run_id is NOT NULL (schema.ts:424) and
+      // WriteProposalArgs carries no task_run_id — the value lives only in the
+      // SDK runner above this in-process MCP tool, not in this pure dispatcher.
+      // Threading a real task_run_id down through the MCP boundary is out of
+      // scope for P5.4 (§5 Q2); the fold itself (the rubric_verdict marker on
+      // the event below) is the durable, queryable audit trail. If a nullable
+      // task_run_id or a threaded value lands later, add the reject log here.
       const eventId = await writeAiProposal(db, {
         actor_ref: 'dreaming',
         outcome: 'success',

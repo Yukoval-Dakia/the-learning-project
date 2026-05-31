@@ -143,6 +143,15 @@ async function resolveEvidence(
     // authoritative over agent judge (cause-policy); either an active judge
     // (source 'agent') or an active user_cause (source 'user') counts as the
     // §4.2 "clear judge analysis" backing for the failure.
+    //
+    // NOTE (§5 Q4, deliberate): `effectiveCauseForFailureAttempt` returns
+    // non-null even for a user_cause-only attempt that carries NO analysis text
+    // (the user tagged a category without writing notes). That is an intentional
+    // §5 Q4 reuse of the existing cause resolver, NOT an oversight: a user
+    // categorising a failure IS authoritative backing under cause-policy, and
+    // the stricter "has prose" check is surfaced separately as
+    // `hasExplicitJudgeAnalysis` (used by the prerequisite/contrasts_with
+    // 2-event relaxation), not folded into the judge-backed floor.
     const judgeBacked = cause !== null;
     const hasExplicitJudgeAnalysis =
       attempt.judge !== undefined &&
@@ -346,8 +355,21 @@ export async function validateProposalQuality(
     };
   }
 
-  // G6 — proposal merely restates existing tree ancestry (covers derived_from).
-  if (await restatesTreeAncestry(db, fromId, toId)) {
+  // G6 — proposal merely restates existing tree ancestry. SCOPED to relations
+  // whose semantics ARE merely hierarchy: `related_to` (the pre-P5.4 inline
+  // gate was correctly related_to-only) and `derived_from` (§3.1 / §4.3
+  // "reject if already tree ancestor/descendant WITH NO NEW SEMANTICS").
+  //
+  // It MUST NOT fire for `prerequisite` / `applied_in` / `contrasts_with`:
+  // §3.3 explicitly endorses hierarchy-aligned prerequisite (parent concept →
+  // child task) and applied_in (concept/method → application) edges, which are
+  // valid precisely BECAUSE one endpoint is the other's ancestor. Their own
+  // §4.3 relation gates (below) carry the semantic check; gating them here on
+  // tree-adjacency would be a false positive. G6 stays structural (runs for
+  // agents AND users) for the two hierarchy-only relations.
+  const g6Applies =
+    change.relation_type === 'related_to' || change.relation_type === 'derived_from';
+  if (g6Applies && (await restatesTreeAncestry(db, fromId, toId))) {
     return {
       ok: false,
       gate: 'parent_semantic_duplicate',
