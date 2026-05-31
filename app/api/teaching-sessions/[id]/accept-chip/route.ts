@@ -173,9 +173,15 @@ export async function POST(
     // Order matters: run the proposal accept BEFORE persisting the chip event.
     // writeEvent-first + a failing accept would leave a counted accept_suggestion
     // behind, and the retry would write a second — double-counting §5.1's KPI for
-    // an action that never completed (P5.6 review finding). acceptAiProposal is
-    // idempotent on an already-accepted proposal, so write-failure retries stay
-    // safe. Gates compose: a corrective signal is excluded on either path (ND-SK-4).
+    // an action that never completed (P5.6 review finding). The accept-first order
+    // trades that silent double-count for an under-count on the (rare) accept-OK /
+    // write-fails window: acceptAiProposal is idempotent only for the kinds whose
+    // dispatchAccept honors `result.idempotent` (learning_item / variant_question /
+    // completion / goal_scope); for the others a re-accept throws, so a retry
+    // surfaces an error rather than double-counting. Under-count + recoverable is
+    // the lesser evil. NOTE: this branch is latent today — the only caller
+    // (TeachingDrawer) sends no proposal_id. Gates compose: a corrective signal is
+    // excluded on either path (ND-SK-4).
     if (parsed.data.proposal_id) {
       await acceptAiProposal(db, parsed.data.proposal_id);
     }
