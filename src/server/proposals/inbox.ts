@@ -12,7 +12,13 @@ import { and, desc, eq, inArray, isNotNull, like, or, sql } from 'drizzle-orm';
 type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;
 
-export type ProposalStatus = 'pending' | 'accepted' | 'dismissed' | 'stale';
+// P5.4 / YUK-143 (RB-7 / RB-8) — 'rubric_rejected' is a TERMINAL derived status
+// for propose events the Layer-1 rubric folded (carrying a `rubric_verdict`
+// marker on the event payload). It is NOT 'pending', so live-pending dedup /
+// cooldown queries that key on status:'pending' exclude it (the rejected edge
+// can be re-proposed later by a better attempt). It is the folded / low-
+// visibility bucket the inbox exposes (RB-8); no UI in P5.4.
+export type ProposalStatus = 'pending' | 'accepted' | 'dismissed' | 'stale' | 'rubric_rejected';
 
 export interface ProposalInboxRow {
   id: string;
@@ -67,6 +73,35 @@ function rateStatus(rate: EventRow | undefined): ProposalStatus {
     default:
       return 'pending';
   }
+}
+
+// P5.4 / YUK-143 (RB-6 / RB-7) — a propose event the Layer-1 rubric folded
+// carries a `rubric_verdict` marker (sibling of ai_proposal in the event
+// payload). Read it from the propose event row so the derived status becomes
+// terminal 'rubric_rejected' BEFORE the rate-based derivation runs. A
+// rubric-rejected event has no chained rate, so without this it would derive
+// 'pending' and re-occupy the (kind, cooldown_key) for live-pending dedup —
+// the exact lockout RB-7 forbids.
+function isRubricRejected(row: EventRow): boolean {
+  const payload = toRecord(row.payload);
+  const verdict = payload.rubric_verdict;
+  return (
+    verdict !== null &&
+    typeof verdict === 'object' &&
+    (verdict as Record<string, unknown>).ok === false
+  );
+}
+
+// Resolve the terminal status for a propose event: rubric_rejected wins, then a
+// non-active correction (stale), then the rate-derived status. Shared by the
+// list + single-row projections so the live-pending exclusion is uniform.
+function deriveProposalStatus(
+  row: EventRow,
+  correction: ProposalCorrectionDecision | undefined,
+  rate: EventRow | undefined,
+): ProposalStatus {
+  if (isRubricRejected(row)) return 'rubric_rejected';
+  return correction?.status ?? rateStatus(rate);
 }
 
 interface ProposalCorrectionDecision {
@@ -424,7 +459,7 @@ async function projectLoadedProposalRows(
   for (const row of proposalRows) {
     const rate = latestRateByProposal.get(row.id);
     const correction = correctionDecisionByProposal.get(row.id);
-    const rowStatus = correction?.status ?? rateStatus(rate);
+    const rowStatus = deriveProposalStatus(row, correction, rate);
     if (status && rowStatus !== status) continue;
     const payload = safeDeriveLegacyAiProposal(row);
     if (!payload) continue;
@@ -517,7 +552,7 @@ export async function getProposalInboxRow(
     kind: payload.kind,
     target: payload.target,
     payload,
-    status: correction?.status ?? rateStatus(rate),
+    status: deriveProposalStatus(proposalRow, correction, rate),
     proposed_at: proposalRow.created_at,
     decided_at: correction?.decided_at ?? rate?.created_at ?? null,
     actor_ref: proposalRow.actor_ref,
@@ -591,7 +626,7 @@ export async function listLegacyKnowledgeProposals(
   for (const row of proposalRows) {
     const rate = latestRateByProposal.get(row.id);
     const correction = correctionDecisionByProposal.get(row.id);
-    const status = correction?.status ?? rateStatus(rate);
+    const status = deriveProposalStatus(row, correction, rate);
     if (opts.status && status !== opts.status) continue;
     const projected = legacyPayloadFor(row);
     out.push({
