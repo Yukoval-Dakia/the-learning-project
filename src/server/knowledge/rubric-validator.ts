@@ -53,7 +53,12 @@ export type RubricGate =
   | 'prerequisite_no_order_evidence'
   | 'contrasts_with_no_confusion'
   | 'applied_in_role_mismatch'
-  | 'related_to_dumping_ground';
+  | 'related_to_dumping_ground'
+  // derived_from (and the experimental default) must still have ≥1 in-window
+  // judge-backed failure referencing an endpoint — mirrors the endpoint-touching
+  // requirement of the other §4.3 relations so a derived_from edge cannot pass
+  // on 2 unrelated same-cause failures that touch neither node.
+  | 'derived_from_no_endpoint_evidence';
 
 export type RubricVerdict = { ok: true } | { ok: false; gate: RubricGate; reason: string };
 
@@ -299,8 +304,21 @@ function relationGate(
       return null;
     }
     default:
-      // derived_from is handled by the structural G6 generalization; any other
-      // relation has no extra §4.3 predicate at Layer 1.
+      // derived_from (and any experimental:* relation that falls here) keeps its
+      // structural G6 tree-ancestry check, but must ALSO show usable evidence
+      // that touches the edge: require ≥1 in-window judge-backed failure
+      // referencing an endpoint. Without this the default branch verified no
+      // endpoint-touching evidence at all, so a derived_from edge could pass on
+      // 2 unrelated same-cause failures referencing neither node (the strong-
+      // via-shared-cause path) — the bypass codex flagged. Mirrors the
+      // endpoint-touching requirement the other relations enforce.
+      if (referencingEndpoint.length === 0) {
+        return {
+          gate: 'derived_from_no_endpoint_evidence',
+          reason:
+            'derived_from requires evidence touching the edge: no in-window judge-backed failure references either endpoint node (shared-cause failures that touch neither node are not enough)',
+        };
+      }
       return null;
   }
 }
@@ -459,10 +477,19 @@ export async function validateProposalQuality(
   }
 
   // §4.2 + §4.3 — prerequisite / contrasts_with require 2 events UNLESS one has
-  // explicit judge analysis. `strong` already means ≥2 usable (or 1 + user
-  // note); enforce the relation-specific minimum explicitly for clarity.
+  // explicit analysis. `strong` already means ≥2 usable (or 1 + user note);
+  // enforce the relation-specific minimum explicitly for clarity. The single-
+  // event relaxation honors EITHER axis of explicit analysis (§4.2 "1 failure +
+  // explicit user note" is just as strong as "1 + explicit judge analysis"):
+  // agent judge analysis (hasExplicitJudgeAnalysis) OR a non-empty
+  // user_cause.user_notes. Checking only the judge axis made §4.2's single-
+  // event-strong path unreachable for these two relations (a user-note-backed
+  // strong proposal was wrongly rejected for <2 events).
   if (relationRequiresTwoEvents(change.relation_type)) {
-    const hasExplicit = usable.some((ev) => ev.hasExplicitJudgeAnalysis);
+    const hasExplicit = usable.some(
+      (ev) =>
+        ev.hasExplicitJudgeAnalysis || (ev.attempt.user_cause?.user_notes ?? '').trim().length > 0,
+    );
     if (usable.length < 2 && !hasExplicit) {
       return {
         ok: false,
