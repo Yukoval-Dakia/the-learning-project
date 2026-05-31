@@ -6,8 +6,17 @@
 
 **🎉 v1 closeout — scenario A 达成（2026-05-29）**：YUK-88 block-tree note 全栈 **P0-P7** + Layer 8 critical path（Drawer/Coach/tool_use promote）+ Living Note v0 + cross_link/反链/hub auto-sync + cytoscape 诊断图谱 全 ship。8 波 + Foundation A/B/C/D + Product Track 1/2 闭环。详见 [`audits/2026-05-29-v1-closeout.md`](audits/2026-05-29-v1-closeout.md)；v1 之后去向 [`../planning/v0.5-maintenance-roadmap.md`](../planning/v0.5-maintenance-roadmap.md)。
 
-**最后更新**：2026-05-30（**Wave 7 ✅ → origin `28dd48d6`**（P5 反链/cross_link/hub auto-sync YUK-95 + T-KG cytoscape 诊断图谱 YUK-142 + fix-pass + closeout）；**Wave 8 ✅ 实现完成**（末波 = P6 read-view+节点页 YUK-96 + P7 tests YUK-97 + P2-polish slash/drag-drop YUK-150 + 两轮用户 review-fix + T-PD 收尾 + v1 closeout，全 7 lane 各独立 opus reviewer + 完整 wave-gate 绿：145 test files / 1153 tests + 1 todo / migration 11 / build 55 pages），**Wave 8 已 merge 到 main**（2026-05-29，PR #193 rebase-merge，保留 per-commit Closes），其上叠了 scenario B 第一批。上一波 Wave 6 `a419b2e6`。）
-**当前 Phase**：**scenario B 第一批 ✅ shipped（2026-05-30）**。scenario A v1 已达成；scenario B top track（north-star YUK-143 + T-OC YUK-145）+ scheduler/intelligence 链路第一批已落地到 main（baseline `81856564` → `b143ecd9`）。详见本节下方「scenario B 第一批」。
+**最后更新**：2026-05-31（**P5 open-questions chain ✅ 全 7 阶段 merge → origin `82ba1df1`**；详见上方「P5 chain ✅」+ closeout。以下为历史 baseline。）；2026-05-30（**Wave 7 ✅ → origin `28dd48d6`**（P5 反链/cross_link/hub auto-sync YUK-95 + T-KG cytoscape 诊断图谱 YUK-142 + fix-pass + closeout）；**Wave 8 ✅ 实现完成**（末波 = P6 read-view+节点页 YUK-96 + P7 tests YUK-97 + P2-polish slash/drag-drop YUK-150 + 两轮用户 review-fix + T-PD 收尾 + v1 closeout，全 7 lane 各独立 opus reviewer + 完整 wave-gate 绿：145 test files / 1153 tests + 1 todo / migration 11 / build 55 pages），**Wave 8 已 merge 到 main**（2026-05-29，PR #193 rebase-merge，保留 per-commit Closes），其上叠了 scenario B 第一批。上一波 Wave 6 `a419b2e6`。）
+**当前 Phase**：**P5 open-questions chain ✅ shipped 全 7 阶段（2026-05-31）**。scenario B intelligence track 的 Layer-8 readiness 缺口（readiness brief 2026-05-30）已全部 ship。**下一站 = 数据激活**（见下方「P5 chain ✅」+ closeout §4）：采集层早已全接线，真正卡点是两个 wiring-gated linchpin（A3 brief generate-writer / D1 goal trigger）+ 冷启动数据荒漠；推荐先造合成数据 seed → 接 A3/D1 → P5.x 在活的 flywheel 上验证。3 个产品 fork 待用户拍板（synthetic-vs-real / daily-use-now / A3·D1 trigger shape）。
+
+**P5 chain ✅ shipped（2026-05-31，main `b143ecd9` → `82ba1df1`）**：7 阶段全 rebase-merge 到 main，详见 [`audits/2026-05-31-p5-chain-closeout.md`](audits/2026-05-31-p5-chain-closeout.md)。
+- **P5.1** Context Budget（`budgets.ts` 单源 + Copilot throttle + soft-stop，YUK-143）· **P5.2** activity-gated brief refresh（PR #218，YUK-143）。
+- **P5.4** proposal-quality rubric：L1 enforce（#219）+ L2 adaptive accept-learned bias（#220 spec / #221 impl，YUK-174）。
+- **P5.6** suggestion semantics（#225，YUK-178）· **P5.5** tool-eval fixtures Phase 1（#227，YUK-180）· **P5.8** wenyan eval fixture / semantic judge route（#228，YUK-182）· **P5.3** long-term brief freshness score（#229，YUK-183）。
+- **关键决策/发现**：P5.3 archive→render-annotation 重构（generate 每次重写段落，归档不自洽）；**brief LLM generate writer 生产未接线**（`handlers.ts:50` 不传 → `defaultGenerateBrief` throw）—— P5.1/5.2/5.3 是先建层后接线，是数据激活的最高杠杆缺口；bounded-impl 纪律（禁 loop-until-green）；本 drive 特批 self-merge loop。
+- **deferred**：YUK-181（P5.5 Phase 2，已被 P5.8 解锁）/ YUK-179 / YUK-175/176 / P5.3 Phase-C / reading-note 产品澄清 / T-37 generate-writer 接线。
+
+> 历史「scenario B 第一批」记录见本行下方（2026-05-30 baseline）。
 
 **scenario B 第一批 ✅ shipped（2026-05-30，main `81856564` → `b143ecd9`）**：
 - v1 scenario A 收尾（PR #193）：YUK-96 P6 node page / YUK-97 P7 / YUK-150 P2-polish / YUK-160 artifact-panel dead-link / YUK-151 closeout。
@@ -22,7 +31,7 @@
 - **新 ADR**：0023 / 0024 / 0025 / 0026（文件名已统一 bare `NNNN-`，W15 doc sweep）。**新 Linear**：YUK-160..171。
 - **scheduler / intelligence track 已 coherent**：goal core → Dreaming/Coach goal-aware → review soft-bias → question_part → cross-subject → acceptance signal 链路打通。
 - 下一步 continue-to-scenario-B 余下（按 feature 价值重切，待 grill 拍板）。
-**主分支**：`origin/main` = `b143ecd9`（Wave 8 已 merge + scenario B 第一批已落地，2026-05-30）。走 PR 不直推（2026-05-29 用户定）。
+**主分支**：`origin/main` = `82ba1df1`（**P5 chain 全 7 阶段已 merge**，2026-05-31；其下 `b143ecd9` = scenario B 第一批 baseline）。走 PR 不直推（2026-05-29 用户定）。
 **路线图源**：[`docs/planning/v0.3-generalized-ai-learning-framework.md`](../planning/v0.3-generalized-ai-learning-framework.md) §1.5 是当前执行清单；root `PLANNING.md` v0.12 Phase 1-4 已标 historical
 
 ---
