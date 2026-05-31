@@ -1,4 +1,5 @@
 import type { Db } from '@/db/client';
+import { buildBriefGenerator } from '@/server/memory/brief-writer';
 import { registerMemoryHandlers } from '@/server/memory/triggers';
 import { getR2 } from '@/server/r2';
 import type { PgBoss } from 'pg-boss';
@@ -46,8 +47,12 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   await boss.schedule('knowledge_propose_nightly', '0 2 * * *', {}, { tz: 'Asia/Shanghai' });
   await boss.schedule('prune_job_events', '0 4 * * *', {}, { tz: 'Asia/Shanghai' });
 
-  // T-37 / YUK-37: Mem0 fact ingest + per-scope brief regen queues.
-  await registerMemoryHandlers(boss, db);
+  // T-37 / YUK-185: Mem0 fact ingest + per-scope brief regen queues. Station 2A
+  // injects the real brief writer (buildBriefGenerator) so the regen pipeline
+  // produces memory_brief_note rows instead of falling back to the throwing
+  // defaultGenerateBrief (triggers.ts). I-1: was a stale `YUK-37` comment — this
+  // wiring is YUK-185 / T-37.
+  await registerMemoryHandlers(boss, db, { generateBrief: buildBriefGenerator({ db }) });
 
   // Phase 2 Dreaming: knowledge_edge mesh propose (BJT 02:30, after node propose)
   await boss.createQueue('knowledge_edge_propose_nightly');

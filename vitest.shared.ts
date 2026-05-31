@@ -91,6 +91,11 @@ export const fastTestInclude = [
   // instead of globbing so those .db.test.ts files fall through.
   'src/server/memory/active-subjects.test.ts',
   'src/server/memory/brief.test.ts',
+  // Station 2A / YUK-185 — pure (no-DB) brief-writer unit (stubbed runTaskFn,
+  // brace-slice parse, D3 id-subset filter, 4A cold-scope, 3A now/projection).
+  // The end-to-end DB driver (brief-writer.db.test.ts) hits live Postgres and
+  // falls through to the DB partition.
+  'src/server/memory/brief-writer.test.ts',
   'src/server/memory/client.test.ts',
   'src/server/memory/scope_tagger.test.ts',
   'src/server/memory/triggers.test.ts',

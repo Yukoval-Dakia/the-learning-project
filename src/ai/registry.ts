@@ -483,6 +483,27 @@ export const tasks = {
     systemPrompt:
       '你是学习目标规划助手。用户给一个模糊的学习目标标题，你看知识网格快照（节点 + 掌握度 + mesh 边），推断这个目标覆盖哪些知识节点 + 一个粗略的学习顺序，输出严格 JSON。不要发明网格里没有的节点 id。',
   },
+  MemoryBriefTask: {
+    kind: 'MemoryBriefTask',
+    description:
+      'Station 2A (YUK-185, T-37) — per-scope memory brief writer. Input = scopeKey + template + now (ISO age anchor) + capped events[] (newest-first, ≤50, each with a compact { outcome?, excerpt? } payload projection) + facts[]. Output = strict JSON BriefDraft: 3 time-window markdown summaries (recent_week / recent_months / long_term) + 3 paired evidence_id arrays (subset of input event ids). Single structured-output call (no tool loop), mimo-v2.5-pro text. Drives memory_brief_note rows.',
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
+    needsToolCall: false,
+    isMultimodal: false,
+    allowedTools: [],
+    // CUT: this string IS the runtime prompt. MemoryBriefTask is subject-NEUTRAL
+    // (the per-scope `template` carries the angle and is passed in the INPUT, not
+    // baked here), so it joins the subject-neutral pass-through `case` group in
+    // getTaskSystemPrompt (task-prompts.ts) — there is NO per-profile
+    // buildMemoryBriefPrompt builder. This is the SoT prompt, NOT a deprecated
+    // fallback. Promote OUT of the pass-through into a profile builder only when a
+    // subject demands a coaching voice (OF-2, the same path CoachTask would take).
+    systemPrompt:
+      'You write a durable memory brief for one learning scope, as strict JSON only.\n\nINPUT: you are given `scope_key`, an `now` (ISO timestamp = the current moment, your age anchor), a `template` (the angle to summarize — follow its framing), a newest-first list of up to 50 `events` (each with `id`, `action`, `subject_kind`, `subject_id`, `created_at` ISO, and a COMPACT `payload` projection of `{ outcome?, excerpt? }` — never a raw blob), and `facts` (durable `memory` strings). Follow the `template`.\n\nTHREE TIME WINDOWS: anchor ALL ages on the input `now`, NOT on the newest event. Compute each event\'s age = `now - created_at`. Partition events into three windows by that age and write one markdown summary per window:\n- `recent_week_md` — events within ~7 days: what the learner is doing right now.\n- `recent_months_md` — events ~7 days to ~3 months old: the current arc / direction.\n- `long_term_md` — events older than ~3 months OR stable / durable signals & facts: enduring strengths, preferences, recurring weak spots.\nIf a window has no events, write a short "no recent signal" line; do not fabricate.\n\nEVIDENCE IDS: for each window, emit the matching `*_evidence_ids` array containing ONLY the `id`s of input events you placed in that window. Do not invent ids. Do not cite facts as evidence ids. Every id MUST be a subset of the given event `id`s.\n\nLENGTH: keep each window to a few tight sentences or bullets; this is a glanceable brief, not a transcript.\n\nOUTPUT: strict JSON only, exactly these 6 keys, nothing else: `recent_week_md`, `recent_months_md`, `long_term_md`, `recent_week_evidence_ids`, `recent_months_evidence_ids`, `long_term_evidence_ids`.',
+  },
   TaggingTask: {
     kind: 'TaggingTask',
     description:

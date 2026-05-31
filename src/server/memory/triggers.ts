@@ -156,66 +156,80 @@ export function buildMemoryBriefRegenHandler(
     const client = memoryClient;
     for (const job of jobs) {
       const scopeKey = job.data.scope_key;
-      const searchFacts = async () => {
-        const result = await client.search(`memory brief ${scopeKey}`, {
-          topK: 10,
-          filters: { scope_key: scopeKey },
-        });
-        return (result?.results ?? []).map((item) => ({ id: item.id, memory: item.memory }));
-      };
+      // F-1 (YUK-185, D8): one scope's LLM/provider throw (e.g. resolveTaskProvider
+      // throwing on a missing XIAOMI_API_KEY, providers.ts:88, or any runTask failure
+      // inside the injected generateBrief) must NOT reject the pg-boss job and trigger
+      // a nightly retry storm. The writer/generator stays LOUD (re-throws, never
+      // persists a blank row); the graceful "log + leave old brief intact" posture
+      // lives HERE. Catch per scope, log, continue — the prior brief row is never
+      // overwritten because the upsert in regenerateMemoryBrief is only reached on
+      // success. Mirrors knowledge_propose_nightly.ts:96-99 (per-job try/catch).
+      try {
+        const searchFacts = async () => {
+          const result = await client.search(`memory brief ${scopeKey}`, {
+            topK: 10,
+            filters: { scope_key: scopeKey },
+          });
+          return (result?.results ?? []).map((item) => ({ id: item.id, memory: item.memory }));
+        };
 
-      // BR-10 (load-bearing) — branch by scope prefix. attempt/review events
-      // never tag `subject:` in affected_scopes (§1.2), so the global path's
-      // affected_scopes-based guard + loader return false / ~0 rows for an
-      // active subject. The subject path instead reads a knowledge-resolved
-      // event window (the SAME resolution as the activity-detection sweep) and
-      // gates on a KNOWLEDGE-resolved freshness check — never the affected_scopes
-      // one. The active-subject sweep already filtered to fresh subjects, and
-      // (since PR #218 FIX 1) listStaleBriefScopes excludes `subject:*`, so the
-      // stale loop no longer enqueues dormant subjects. The guard is retained as
-      // defense-in-depth: a pg-boss singleton re-fire within the dedup window, or
-      // a refreshed_at-vs-latest_evidence_at skew, could still hand this branch a
-      // subject with no genuinely new evidence; the guard makes that a clean skip
-      // (BR-2: no LLM call, no refreshed_at bump for a dormant subject).
-      if (scopeKey.startsWith(SUBJECT_SCOPE_PREFIX)) {
-        const subjectId = scopeKey.slice(SUBJECT_SCOPE_PREFIX.length);
-        // P5.2 (PR #218 fix) — reuse the SWEEP's `now` (threaded via the job
-        // payload) rather than re-reading the clock here. For a never-built
-        // subject the floor is `now - lookbackDays`; if regen recomputed it with a
-        // fresh clock at job-run time (T+δ), an event the sweep detected near the
-        // 30d edge could age out → empty window → silent miss. Sharing the sweep's
-        // `now` keeps detection and reload on the SAME floor. Falls back to a fresh
-        // clock only if the job carries no `now` (e.g., a job from before this fix).
-        const now = job.data.now ? new Date(job.data.now) : new Date();
-        // loadSubjectBriefEvents floors at THIS subject's own brief refreshed_at
-        // (lookbackDays only as the never-built fallback), the SAME
-        // subjectEventFloor predicate the detection sweep uses — so any subject
-        // the sweep flagged active reloads ≥1 event here and is never silently
-        // starved by a flat now-30d floor.
-        const events = await loadSubjectBriefEvents(db, subjectId, {
-          lookbackDays: BRIEF_REFRESH_LOOKBACK_DAYS,
-          now,
-        });
-        if (!(await subjectScopeHasNewEvidence(db, scopeKey, events))) continue;
+        // BR-10 (load-bearing) — branch by scope prefix. attempt/review events
+        // never tag `subject:` in affected_scopes (§1.2), so the global path's
+        // affected_scopes-based guard + loader return false / ~0 rows for an
+        // active subject. The subject path instead reads a knowledge-resolved
+        // event window (the SAME resolution as the activity-detection sweep) and
+        // gates on a KNOWLEDGE-resolved freshness check — never the affected_scopes
+        // one. The active-subject sweep already filtered to fresh subjects, and
+        // (since PR #218 FIX 1) listStaleBriefScopes excludes `subject:*`, so the
+        // stale loop no longer enqueues dormant subjects. The guard is retained as
+        // defense-in-depth: a pg-boss singleton re-fire within the dedup window, or
+        // a refreshed_at-vs-latest_evidence_at skew, could still hand this branch a
+        // subject with no genuinely new evidence; the guard makes that a clean skip
+        // (BR-2: no LLM call, no refreshed_at bump for a dormant subject).
+        if (scopeKey.startsWith(SUBJECT_SCOPE_PREFIX)) {
+          const subjectId = scopeKey.slice(SUBJECT_SCOPE_PREFIX.length);
+          // P5.2 (PR #218 fix) — reuse the SWEEP's `now` (threaded via the job
+          // payload) rather than re-reading the clock here. For a never-built
+          // subject the floor is `now - lookbackDays`; if regen recomputed it with a
+          // fresh clock at job-run time (T+δ), an event the sweep detected near the
+          // 30d edge could age out → empty window → silent miss. Sharing the sweep's
+          // `now` keeps detection and reload on the SAME floor. Falls back to a fresh
+          // clock only if the job carries no `now` (e.g., a job from before this fix).
+          const now = job.data.now ? new Date(job.data.now) : new Date();
+          // loadSubjectBriefEvents floors at THIS subject's own brief refreshed_at
+          // (lookbackDays only as the never-built fallback), the SAME
+          // subjectEventFloor predicate the detection sweep uses — so any subject
+          // the sweep flagged active reloads ≥1 event here and is never silently
+          // starved by a flat now-30d floor.
+          const events = await loadSubjectBriefEvents(db, subjectId, {
+            lookbackDays: BRIEF_REFRESH_LOOKBACK_DAYS,
+            now,
+          });
+          if (!(await subjectScopeHasNewEvidence(db, scopeKey, events))) continue;
+          await regenerateMemoryBrief({
+            db,
+            scopeKey,
+            loadEvents: async () => events,
+            searchFacts,
+            generate: deps.generateBrief,
+          });
+          continue;
+        }
+
+        // BR-6 — global (and any legacy affected_scopes-tagged scope): unchanged.
+        // Still gated by scopeHasNewEvidence + loaded via loadEventsFromDb.
+        if (!(await scopeHasNewEvidence(db, scopeKey))) continue;
         await regenerateMemoryBrief({
           db,
           scopeKey,
-          loadEvents: async () => events,
           searchFacts,
           generate: deps.generateBrief,
         });
-        continue;
+      } catch (err) {
+        // Leave the prior brief row intact (the upsert is only reached on success)
+        // and move to the next scope — no rethrow, no pg-boss reject/retry storm.
+        console.error(`[memory_brief_regen] scope ${scopeKey} failed; leaving prior brief`, err);
       }
-
-      // BR-6 — global (and any legacy affected_scopes-tagged scope): unchanged.
-      // Still gated by scopeHasNewEvidence + loaded via loadEventsFromDb.
-      if (!(await scopeHasNewEvidence(db, scopeKey))) continue;
-      await regenerateMemoryBrief({
-        db,
-        scopeKey,
-        searchFacts,
-        generate: deps.generateBrief,
-      });
     }
   };
 }
@@ -339,6 +353,19 @@ export async function registerMemoryHandlers(
   } = {},
 ): Promise<void> {
   const generateBrief = deps.generateBrief ?? defaultGenerateBrief;
+
+  // F-2 (YUK-185): the brief regen handler calls the LLM via runTask, which needs
+  // XIAOMI_API_KEY (resolveTaskProvider throws otherwise, providers.ts:88). Surface
+  // a missing key at BOOT, not per-scope at 3 AM. One-shot WARN; not fatal (other
+  // memory handlers — ingest/outbox — still run; the brief regen degrades to a
+  // logged-skip per scope, F-1/D8). Placed here rather than scripts/worker.ts so the
+  // warn travels with the handler that needs the key and stays out of the Next app
+  // boot path (this register runs only in the pg-boss worker, scripts/worker.ts:21).
+  if (!process.env.XIAOMI_API_KEY) {
+    console.warn(
+      '[memory] XIAOMI_API_KEY unset — memory brief regen will fail (logged-skip per scope, F-1/D8)',
+    );
+  }
 
   await boss.createQueue?.(MEMORY_EVENT_INGEST_QUEUE);
   await boss.work(
