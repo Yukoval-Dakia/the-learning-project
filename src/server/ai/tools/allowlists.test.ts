@@ -36,6 +36,9 @@ describe('DomainTool allowlist policy', () => {
     expect(DOMAIN_TOOL_ALLOWLISTS.coach).toContain('propose_knowledge_mutation');
     expect(DOMAIN_TOOL_ALLOWLISTS.coach).toContain('propose_learning_item_relearn');
     expect(DOMAIN_TOOL_ALLOWLISTS.coach).toContain('propose_learning_item_completion');
+    // P5.4-L2 / YUK-174 (AB-4) — Coach now proposes knowledge_edge so the L2
+    // edge reason-feedback is actionable, not a dead grant.
+    expect(DOMAIN_TOOL_ALLOWLISTS.coach).toContain('propose_knowledge_edge');
     // Coach must not reach attribute_mistake / propose_variant — those stay
     // behind the chip-triggered copilot surface.
     expect(DOMAIN_TOOL_ALLOWLISTS.coach).not.toContain('attribute_mistake');

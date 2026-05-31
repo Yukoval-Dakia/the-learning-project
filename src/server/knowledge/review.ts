@@ -26,8 +26,13 @@ import { parseAiProposalPayload } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, proposal_signals } from '@/db/schema';
 import { streamTask } from '@/server/ai/runner';
+import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/server/ai/tools/budgets';
 import { getCorrectionStatuses } from '@/server/events/corrections';
 import { validateProposalQuality } from '@/server/knowledge/rubric-validator';
+// P5.4-L2 / YUK-174 (Facet B) — resolve the per-(kind, relation) gate-bump for
+// the legacy MCP edge path (always actor 'dreaming' → isAgent: true). Bounded
+// digest read; cold-start / below-threshold → no-op bump.
+import { resolveEdgeGateBump } from '@/server/proposals/adaptive-bias';
 import type { ProposalInboxRow } from '@/server/proposals/inbox';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -369,6 +374,16 @@ async function writeProposalAfterGate(
       cooldown_key: cooldownKey,
     };
 
+    // P5.4-L2 / YUK-174 (Facet B) — resolve the adaptive gate-bump for this
+    // edge's relation before the floor. Bounded digest read on the same tx
+    // handle; cold-start / below-threshold → no-op.
+    const adaptive = await resolveEdgeGateBump(
+      db,
+      edgePayload.relation_type,
+      PROPOSAL_FEEDBACK_BUDGET,
+      PROPOSAL_GATE_BIAS_CONFIG,
+    );
+
     // P5.4 / YUK-143 (RB-1) — shared rubric floor. Legacy MCP path always runs
     // as actor_ref 'dreaming' → isAgent: true (§3.5). On reject the event is
     // still written, marked rubric-rejected (RB-6), and excluded from
@@ -377,6 +392,7 @@ async function writeProposalAfterGate(
       parseAiProposalPayload(edgeProposalPayload),
       db as Db,
       { isAgent: true, actorRef: 'dreaming' },
+      adaptive,
     );
     if (!verdict.ok) {
       // RB-6 step 7 (evidence-first logging): the DomainTool path's reject is
