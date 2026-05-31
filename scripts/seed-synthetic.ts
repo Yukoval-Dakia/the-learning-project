@@ -28,18 +28,27 @@
 // only fire when this module is executed as the CLI entry point, so importing it
 // (in tests) is side-effect-free.
 
-import { config } from 'dotenv';
-
 // D3 / Step 0 — load `.env` BEFORE importing `@/db/client` (the client throws on
-// a missing DATABASE_URL at construction). Mirrors dev-local.ts:5 /
-// migrate-local-db.ts:5. Scripts load `.env`, NOT `.env.local`.
-config({ path: '.env', override: false });
+// a missing DATABASE_URL at construction). This MUST be the first import: ESM
+// evaluates an imported module's side effects before the importing module's
+// later imports, so a side-effect import lexically before `@/db/client`
+// guarantees config() runs first. (dev-local.ts / migrate-local-db.ts are NOT
+// precedents — they spawn a child process and never import @/db/client.)
+// Scripts load `.env`, NOT `.env.local`.
+import './load-env';
 
 import { CauseSchema } from '@/core/schema/cause';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import type { AiProposalPayloadInputT } from '@/core/schema/proposal';
 import { type Db, type Tx, db } from '@/db/client';
-import { knowledge, knowledge_edge, material_fsrs_state, question } from '@/db/schema';
+import {
+  event,
+  knowledge,
+  knowledge_edge,
+  material_fsrs_state,
+  proposal_signals,
+  question,
+} from '@/db/schema';
 import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/server/ai/tools/budgets';
 import { runKnowledgeEdgeProposeNightly } from '@/server/boss/handlers/knowledge_edge_propose_nightly';
 import { writeEvent } from '@/server/events/queries';
@@ -62,8 +71,10 @@ type DbLike = Db | Tx;
 // (1) explicit opt-in env, (2) loopback DATABASE_URL. Belt-and-suspenders: the
 // codebase has NO NODE_ENV fence and the destructive /api/_/* routes are
 // token-gated but not env-gated, so for a pre-product synthetic seed the cost of
-// a misfire against a real DB is total. We inline the same loopback regex
-// `@/db/client` uses (the `isLocalConnection` const is not exported there).
+// a misfire against a real DB is total. This is a STRICTER check than
+// `@/db/client`'s `/localhost|127\.0\.0\.1/` substring regex: we parse the URL
+// and exact-match the hostname, so `postgres://u:p@localhost.evil.com/db` (or
+// `localhost` smuggled into credentials/query) is correctly refused.
 export function assertProdFence(env: NodeJS.ProcessEnv = process.env): void {
   if (env.SEED_SYNTHETIC_OK !== '1') {
     throw new Error(
@@ -72,8 +83,15 @@ export function assertProdFence(env: NodeJS.ProcessEnv = process.env): void {
     );
   }
   const url = env.DATABASE_URL ?? '';
-  // Inline the same loopback check as src/db/client.ts:22 (not exported there).
-  const isLoopback = /localhost|127\.0\.0\.1/.test(url);
+  // Parse the hostname and EXACT-match loopback (stricter than a substring regex).
+  let host = '';
+  try {
+    host = new URL(env.DATABASE_URL ?? '').hostname;
+  } catch {
+    host = '';
+  }
+  // new URL lowercases host; IPv6 loopback arrives bracket-stripped as '::1'.
+  const isLoopback = host === 'localhost' || host === '127.0.0.1' || host === '::1';
   if (!isLoopback) {
     throw new Error(
       `seed-synthetic refused: DATABASE_URL host must be loopback (localhost / 127.0.0.1). Got: ${url || '<unset>'}. Dev/local only by construction.`,
@@ -307,12 +325,12 @@ function buildCause(primaryCategory: string, analysis: string): FsrsCauseShape {
     confidence: 0.8,
   });
 }
-type FsrsCauseShape = {
+interface FsrsCauseShape {
   primary_category: string;
   secondary_categories: string[];
   analysis_md: string;
   confidence: number;
-};
+}
 
 interface ClusterRefs {
   attemptIds: string[];
@@ -377,6 +395,18 @@ async function seedAttemptsAndReviews(
   const toNode = PASS_TO;
   const clusterQuestions = questions.filter((q) => q.node === fromNode || q.node === toNode);
   const clusterTargets = (clusterQuestions.length >= 2 ? clusterQuestions : questions).slice(0, 3);
+
+  // FIX F (reseed freshness): the recent-cluster events use deterministic ids and
+  // writeEvent is conflict-do-nothing, so a re-run would NOT refresh their
+  // created_at — and the cluster must stay inside the nightly's 24h scan window.
+  // Delete ONLY the recent-cluster deterministic ids (attempt + chained judge)
+  // before re-writing them, so each seed run re-anchors them to `now - hoursAgo`.
+  // Scoped to these ids only — the 28d history (4a/4b) is fine to keep stable.
+  const recentClusterIds: string[] = [];
+  for (let c = 0; c < SEED_PROFILE.recentClusterHoursAgo.length; c++) {
+    recentClusterIds.push(eId(`cluster_att_${c}`), eId(`cluster_judge_${c}`));
+  }
+  await dbh.delete(event).where(inArray(event.id, recentClusterIds));
 
   const attemptIds: string[] = [];
   for (let c = 0; c < clusterTargets.length && c < SEED_PROFILE.recentClusterHoursAgo.length; c++) {
@@ -560,6 +590,20 @@ async function seedRubricRejectedProposes(dbh: DbLike, now: Date): Promise<void>
   }
 }
 
+// ── Proposal-signal idempotency guard ───────────────────────────────────────
+// `recordProposalDecisionSignal` INCREMENTS accept_count/dismiss_count by a delta
+// on every call (additive upsert), so a naive re-run would double the per-cell
+// counts → acceptance_rate + the L2 gate-bump baseline drift. Skip the signal
+// write when a row already exists for that cooldown_key (idempotent by cell).
+async function signalExists(dbh: DbLike, cooldownKey: string): Promise<boolean> {
+  const rows = await dbh
+    .select({ id: proposal_signals.id })
+    .from(proposal_signals)
+    .where(eq(proposal_signals.cooldown_key, cooldownKey))
+    .limit(1);
+  return rows.length > 0;
+}
+
 // ── Step 5c — L2 dismiss cluster (sizes resolveEdgeGateBump → tighten) ──────
 // 6 PASS-style propose+rate chains on a SINGLE relation_type across distinct
 // from|to pairs, mostly dismiss, so the relation-summed total >= minSamples(5)
@@ -641,16 +685,20 @@ async function seedL2DismissCluster(dbh: DbLike, now: Date): Promise<void> {
 
     // proposal_signals via the production signal writer (D1). GAP5: cooldown_key
     // set + suggestion_kind proactive (corrective+accept early-returns).
-    await recordProposalDecisionSignal(
-      dbh,
-      {
-        id: proposeId,
-        kind: 'knowledge_edge',
-        payload: { cooldown_key: cooldownKey, suggestion_kind: 'proactive' },
-      },
-      decision,
-      decision === 'dismiss' ? '合成：与既有树结构重复，无导航价值' : undefined,
-    );
+    // Idempotency (FIX B): the writer increments counts by a delta on every
+    // call, so guard per-cell — skip when this cooldown_key already has a row.
+    if (!(await signalExists(dbh, cooldownKey))) {
+      await recordProposalDecisionSignal(
+        dbh,
+        {
+          id: proposeId,
+          kind: 'knowledge_edge',
+          payload: { cooldown_key: cooldownKey, suggestion_kind: 'proactive' },
+        },
+        decision,
+        decision === 'dismiss' ? '合成：与既有树结构重复，无导航价值' : undefined,
+      );
+    }
   }
 }
 
@@ -661,6 +709,9 @@ async function seedL2DismissCluster(dbh: DbLike, now: Date): Promise<void> {
 // from the deterministic cooldown_key.
 async function seedPassRelationSignal(dbh: DbLike, cluster: ClusterRefs): Promise<void> {
   const cooldownKey = passCooldownKey(cluster.fromNode, cluster.toNode);
+  // Idempotency (FIX B): skip when this cooldown_key already has a signal row —
+  // the writer is additive, so a naive re-run would double accept_count.
+  if (await signalExists(dbh, cooldownKey)) return;
   await recordProposalDecisionSignal(
     dbh,
     {
@@ -705,6 +756,16 @@ export interface ResetCounts {
 }
 
 export async function runReset(dbh: DbLike): Promise<ResetCounts> {
+  // FIX C (atomicity): wrap the whole delete sequence in a transaction so a
+  // mid-failure never leaves a half-cleaned DB. A `Db` exposes `.transaction`;
+  // a `Tx` does not (and nesting would be wrong), so guard on its presence.
+  if ('transaction' in dbh) {
+    return (dbh as Db).transaction((tx) => runResetTx(tx));
+  }
+  return runResetTx(dbh);
+}
+
+async function runResetTx(dbh: DbLike): Promise<ResetCounts> {
   // postgres-js `db.execute(sql\`… RETURNING …\`)` returns the rows array, so
   // `.length` is the deleted-row count.
   // Most synthetic events carry payload.__synthetic. EXCEPTION: the stubbed
@@ -713,11 +774,22 @@ export async function runReset(dbh: DbLike): Promise<ResetCounts> {
   // carry __synthetic (EdgeProposalSchema forbids extra keys). So also delete
   // any knowledge_edge propose event whose endpoints are synthetic — that
   // catches the un-markered nightly PASS propose (PR review, major).
+  //
+  // FIX D(2): broaden the second arm to also catch `generate` events on
+  // synthetic edges. A dev who accepts a seeded proposal via the real UI writes
+  // a `generate` event WITHOUT __synthetic, and GenerateKnowledgeEdge's payload
+  // carries from/to_knowledge_id (known.ts:392-393), so the synthetic-endpoint
+  // predicate matches it. NOTE: `rate` is deliberately NOT included here —
+  // RateKnowledgeEdge's payload is `{ rating, ... }` with NO from/to_knowledge_id
+  // (known.ts:472-477); it keys the edge via `subject_id` (the propose event id)
+  // + `caused_by_event_id`, NOT by endpoint, so a payload-endpoint predicate
+  // cannot match it. A real un-markered `rate` on a seeded edge is therefore not
+  // purged by --reset; correctness over coverage (PR review).
   const ev = await dbh.execute(
     sql`DELETE FROM "event"
         WHERE (payload->>'__synthetic') = 'true'
            OR (
-             action = 'propose' AND subject_kind = 'knowledge_edge'
+             action IN ('propose', 'generate') AND subject_kind = 'knowledge_edge'
              AND (
                (payload->>'from_knowledge_id') LIKE ${'synthetic:%'}
                OR (payload->>'to_knowledge_id') LIKE ${'synthetic:%'}
@@ -731,8 +803,11 @@ export async function runReset(dbh: DbLike): Promise<ResetCounts> {
   const fs = await dbh.execute(
     sql`DELETE FROM "material_fsrs_state" WHERE subject_id LIKE ${'synthetic:q:%'} RETURNING id`,
   );
+  // FIX D(1): delete any edge with EITHER endpoint synthetic (OR, not AND). An
+  // edge with ONE synthetic endpoint would otherwise FK-block the knowledge
+  // delete below.
   const ke = await dbh.execute(
-    sql`DELETE FROM "knowledge_edge" WHERE from_knowledge_id LIKE ${'synthetic:%'} AND to_knowledge_id LIKE ${'synthetic:%'} RETURNING id`,
+    sql`DELETE FROM "knowledge_edge" WHERE from_knowledge_id LIKE ${'synthetic:%'} OR to_knowledge_id LIKE ${'synthetic:%'} RETURNING id`,
   );
   const q = await dbh.execute(
     sql`DELETE FROM "question" WHERE (metadata->>'synthetic') = 'true' RETURNING id`,
