@@ -1,6 +1,8 @@
 // Phase 1c.1 Step 9.J: legacy tables (mistake / review_event / dreaming_proposal /
 // ingestion_session) DROPped — major bump.
-export const SCHEMA_VERSION = '4.0';
+// P5.3 (YUK-183): additive nullable `memory_brief_note.long_term_freshness_score`
+// column — minor bump. Column rides the whole-row dump/restore automatically.
+export const SCHEMA_VERSION = '4.1';
 
 // CF Worker free plan caps at 50 subrequests per request. We use 18 D1 SELECTs
 // + a few R2 reads for assets + future-proof headroom. Cap inline assets at 45;

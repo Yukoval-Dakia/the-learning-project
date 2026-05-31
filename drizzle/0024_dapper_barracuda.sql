@@ -1,0 +1,1 @@
+ALTER TABLE "memory_brief_note" ADD COLUMN "long_term_freshness_score" real;

@@ -1,8 +1,9 @@
-import { and, desc, eq, gt, isNull, like, lt, not, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNull, like, lt, not, or, sql } from 'drizzle-orm';
 
 import type { Db } from '@/db/client';
 import { event, memory_brief_note } from '@/db/schema';
-import { BRIEF_REFRESH_BUDGET } from '@/server/ai/tools/budgets';
+import { BRIEF_REFRESH_BUDGET, LONG_TERM_FRESHNESS_BUDGET } from '@/server/ai/tools/budgets';
+import { scoreLongTermFreshness } from './brief-freshness';
 
 export const BRIEF_TEMPLATES = {
   global:
@@ -53,6 +54,9 @@ export type BriefRow = BriefDraft & {
   id: string;
   scope_key: string;
   subject_id: string | null;
+  // P5.3 (YUK-183) — computed in regenerateMemoryBrief, NOT part of BriefDraft
+  // (it is not the `generate` LLM's output). null = unjudgeable (§4.2).
+  long_term_freshness_score: number | null;
   source_event_id: string | null;
   latest_evidence_at: Date | null;
   evidence_count: number;
@@ -111,6 +115,9 @@ async function upsertBriefInDb(db: Db, row: BriefRow): Promise<void> {
         recent_week_evidence_ids: row.recent_week_evidence_ids,
         recent_months_evidence_ids: row.recent_months_evidence_ids,
         long_term_evidence_ids: row.long_term_evidence_ids,
+        // P5.3 (YUK-183) — also write on UPDATE so audit:schema sees a `.set(`
+        // write path (the INSERT path rides in via `.values(row)`). Spec §5.
+        long_term_freshness_score: row.long_term_freshness_score,
         source_event_id: row.source_event_id,
         latest_evidence_at: row.latest_evidence_at,
         evidence_count: row.evidence_count,
@@ -179,6 +186,57 @@ export async function scopeHasNewEvidence(db: Db, scopeKey: string): Promise<boo
   return newer.length > 0;
 }
 
+/**
+ * P5.3 (YUK-183) — resolve `created_at` for the long-term evidence ids backing
+ * the freshness score (spec §4.3). The in-memory `events` array is the cheap
+ * first pass; any id NOT present there (the test seams break the subset
+ * guarantee, and the DB window is biased toward newest-50) is resolved LAZILY
+ * and only if there is actually something to resolve AND a way to resolve it.
+ *
+ * CRASH-FIX (§4.3): we never construct a DB loader when `params.db` is
+ * undefined. Resolution is gated on `missing.length > 0 && (loadEventTimestamps
+ * || db)`. The injected-`loadEvents` unit path (no db, no loader) leaves the
+ * missing ids unresolved → created_at: null → excluded from the score.
+ *
+ * Exported so the unit test can drive it directly with an injected
+ * `loadEventTimestamps` fake without touching Postgres.
+ */
+export async function resolveEvidenceTimestamps(
+  ids: string[],
+  events: BriefEvent[],
+  params: {
+    db?: Db;
+    loadEventTimestamps?: (ids: string[]) => Promise<{ id: string; created_at: Date }[]>;
+  },
+): Promise<{ id: string; created_at: Date | null }[]> {
+  // 1. In-memory map of already-loaded events (zero query).
+  const known = new Map<string, Date>();
+  for (const ev of events) known.set(ev.id, ev.created_at);
+
+  // 2. Partition into present (resolved from the map) vs missing.
+  const missing: string[] = [];
+  for (const id of ids) {
+    if (!known.has(id)) missing.push(id);
+  }
+
+  // 3. Lazily resolve the missing set — and only then.
+  if (missing.length > 0 && (params.loadEventTimestamps || params.db)) {
+    const rows = params.loadEventTimestamps
+      ? await params.loadEventTimestamps(missing)
+      : // One batched query — no N+1. `params.db` is guaranteed defined here by
+        // the guard above, so we never dereference an undefined db.
+        await (params.db as Db)
+          .select({ id: event.id, created_at: event.created_at })
+          .from(event)
+          .where(inArray(event.id, missing));
+    for (const r of rows) known.set(r.id, r.created_at);
+  }
+
+  // 4. Any id still unresolved (invented by `generate`, or a learning_record id
+  //    — §4.3 note) → created_at: null → excluded from the score per §4.2.
+  return ids.map((id) => ({ id, created_at: known.get(id) ?? null }));
+}
+
 export async function regenerateMemoryBrief(params: {
   db?: Db;
   scopeKey: string;
@@ -186,6 +244,9 @@ export async function regenerateMemoryBrief(params: {
   searchFacts?: (scopeKey: string) => Promise<BriefFact[]>;
   generate: GenerateBrief;
   upsertBrief?: (row: BriefRow) => Promise<void>;
+  // P5.3 (YUK-183) — injectable timestamp seam (§4.3) so the unit test drives
+  // the decay path with in-memory timestamps and never touches Postgres.
+  loadEventTimestamps?: (ids: string[]) => Promise<{ id: string; created_at: Date }[]>;
   now?: () => Date;
 }): Promise<{ wrote: boolean; row: BriefRow }> {
   const now = params.now?.() ?? new Date();
@@ -200,11 +261,28 @@ export async function regenerateMemoryBrief(params: {
       ? null
       : new Date(Math.max(...events.map((row) => row.created_at.getTime())));
 
+  // ── P5.3 long-term freshness score (no LLM/embedding call; no row mutation) ──
+  // Computed over draft.long_term_evidence_ids (SoT ids) reusing the already-
+  // loaded events + at most one batched timestamp lookup (§4.3). draft's
+  // long_term_md + long_term_evidence_ids pass through verbatim below — there is
+  // NO demotion and NO override of the LLM's long-term fields. Spec §4.1.
+  const evidenceTimestamps = await resolveEvidenceTimestamps(
+    draft.long_term_evidence_ids,
+    events,
+    params,
+  );
+  const { score: longTermFreshnessScore } = scoreLongTermFreshness(
+    evidenceTimestamps,
+    now,
+    LONG_TERM_FRESHNESS_BUDGET,
+  );
+
   const row: BriefRow = {
     id: idForScope(params.scopeKey),
     scope_key: params.scopeKey,
     subject_id: subjectForScope(params.scopeKey),
-    ...draft,
+    ...draft, // long_term_md + long_term_evidence_ids UNTOUCHED
+    long_term_freshness_score: longTermFreshnessScore, // P5.3 (§5); number | null
     source_event_id: events[0]?.id ?? null,
     latest_evidence_at: latestEvidenceAt,
     evidence_count: events.length,
