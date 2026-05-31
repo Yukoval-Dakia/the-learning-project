@@ -58,6 +58,7 @@ describe('rubric-validator — stable contract (pure)', () => {
       'contrasts_with_no_confusion',
       'applied_in_role_mismatch',
       'related_to_dumping_ground',
+      'derived_from_no_endpoint_evidence',
     ] as const satisfies readonly RubricGate[];
 
     // Compile-time completeness: every RubricGate is listed (no member missing)
@@ -84,6 +85,7 @@ describe('rubric-validator — stable contract (pure)', () => {
         "contrasts_with_no_confusion",
         "applied_in_role_mismatch",
         "related_to_dumping_ground",
+        "derived_from_no_endpoint_evidence",
       ]
     `);
   });
