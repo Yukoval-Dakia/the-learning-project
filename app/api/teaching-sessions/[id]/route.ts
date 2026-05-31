@@ -9,6 +9,7 @@ import { asc, eq } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { event, learning_session } from '@/db/schema';
 import { ApiError, errorResponse } from '@/server/http/errors';
+import { getActiveQuestionState } from '@/server/teaching/active-question';
 
 export const runtime = 'nodejs';
 
@@ -53,6 +54,13 @@ export async function GET(
       })
       .filter((m): m is NonNullable<typeof m> => m !== null);
 
+    // P5.6 / YUK-178 (call-site 11, §4.3, PIN 8) — surface the active question id
+    // + its cumulative attempt_counts so the drawer can drive the corrective
+    // redo chip without a DB column. The GET poll is the PRIMARY source: the
+    // failure total is non-zero only after an attempt lands, which the periodic
+    // poll observes (the turn-response value is a convenience, not the trigger).
+    const { active_question_id, attempt_counts } = await getActiveQuestionState(db, sessionId);
+
     return Response.json({
       session: {
         id: session.id,
@@ -63,6 +71,8 @@ export async function GET(
         ended_at: session.ended_at,
       },
       messages,
+      active_question_id,
+      attempt_counts,
     });
   } catch (err) {
     return errorResponse(err);

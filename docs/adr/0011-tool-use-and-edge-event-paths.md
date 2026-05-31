@@ -3,6 +3,7 @@
 > 起源：v2.1 design brief (2026-05-15) 引入 AI tool-use 三段式 UI 与 chip 直触发 tool 流；ADR-0010 (2026-05-15) 引入 knowledge_edge × 3 路径。这些路径已被 design / ADR 引用，但未在 ADR-0006 v2 的 `KnownEvent` discriminated union 里有 schema 定义。本 ADR 追认 5 处新 event 路径，**让 design 与 ADR 不再漂移**。
 >
 > **Revisions**
+> - **erratum (2026-05-31, P5.6 / YUK-178)**：§2.1 的 `suggestion_kind` discriminator 与 "corrective 不计入接受率" KPI 后果在 v2 里只有 *意图*，没有 handler / write path / KPI choke point，且 `AcceptSuggestionChip` 从未被任何代码写过。P5.6 是 operationalizing erratum——见文末 §11。
 > - **v2 (2026-05-16)**：§2 AcceptSuggestionChip.payload 加 `suggestion_kind: 'proactive' | 'corrective'` discriminator。处理 v2.1 design bundle README hot-spot #5（soft-fail corrective chip 语义混淆）。详见 §2.1。
 > - v1 (2026-05-15)：5 路径首次追认。
 
@@ -287,3 +288,16 @@ export const Event = z.union([KnownEvent, ExperimentalEvent]);
 - `experimental:tool_use` 落地 2 周后稳定，则按本 ADR §1 stabilization criteria promote
 - 若 v2.1 design 第二轮 designer 引入新 event 路径（如 dwell-with-no-progress signal、新 chip 形态），开 ADR-0011 修订段或 ADR-0012 追加
 - mesh edge invariant（"不存 tree 已有边"）若在 Zod 之外用代码 guard 后仍有 leak，考虑 PG check constraint 或 schema 层加运行时 verify
+
+---
+
+## §11 Erratum — P5.6 operationalizes the `suggestion_kind` discriminator (2026-05-31, YUK-178)
+
+§2.1（`:113`–`:121`）signed off 了 `suggestion_kind` discriminator + KPI 后果（"`corrective` 不计入接受率"），但 **没写 handler spec / write path / KPI choke point**，而它定义的 `AcceptSuggestionChip` event **从未被任何代码写过**（dead letterbox）。P5.6（设计 spec `docs/superpowers/specs/2026-05-31-p5.6-copilot-suggestion-semantics-design.md`）是这条的 operationalizing erratum：
+
+1. **`suggestion_kind` 落成 `BaseProposal` 上的 OPTIONAL 字段**（`src/core/schema/proposal.ts`）+ 4 个 agent-callable propose 工具（`propose_knowledge_edge` / `propose_knowledge_mutation` / `propose_record_links` / `propose_record_promotion`）的 OPTIONAL 输入 arg，不再只挂在 `AcceptSuggestionChip` 上。discriminator 现在随 proposal payload（真正的 Coach/Copilot 输出）走。这是 Option B（显式可选字段），不是新 `accept_correction` action——§2.1 的单一 `accept_suggestion` action 决定保留。absence === `proactive`（reader `resolveSuggestionKind`）。
+2. **KPI 排除有了具体 choke point**：proposal-signal 的 `accept_count`/`dismiss_count` 在它**两个**写入点都被 gate——`recordProposalDecisionSignal`（incremental，`signals.ts`）与 `rebuildProposalDecisionSignal`（replay/reconcile）；corrective 在 accept 端不计 `accept_count`、dismiss 端不计 `dismiss_count`（全排除，分子分母都不污染），但 corrective dismiss **仍写 `cooldown_until`**（gate 跳过的是计数，不是 cooldown）。§2.1 的 "不计入接受率" 现在是 incremental + reconcile 端到端机制化，不再是 aspirational。
+3. **唯一确定性 corrective = `variant_question` 结构地板**：它的 producer 只在失败 attempt 后触发，hard-set `suggestion_kind:'corrective'`。其余 corrective 走 4 个 propose 工具的**显式模型标注**（model 自己判断这条 proposal 修复了它观察到的失败）。**没有** soft-fail / `result_count===0` 确定性兜底（first-draft 的那个 trigger 被 drop 了——bridge 从不 populate `result_count`，soft-fail 读取是 `outcome:'success'`，且 SDK loop per-turn stateless 无法把 turn outcome 线进 tool）。
+4. **`AcceptSuggestionChip` 的 writer 由 P5.6 新增**（一个新的 `POST …/accept-chip` endpoint，见 P5.6 spec §6 / call-site 12，Lane 2）——schema 在 P5.6 前一直是 dead letterbox。§2.1 的 `source_event_id` 约定（proactive 用 `explain`、corrective 用 `tool_use`）在写入时 honored。
+
+§2.1 的 *语义表*（proactive/corrective 定义 + source-event 形态）**不变**——P5.6 verbatim 实现它。本 erratum 纯粹是补 §2.1 缺失的 handler/write/KPI 层。**No DB migration, no new event action, no new schema table**（`suggestion_kind` 是既有 `experimental:proposal` event 上的 payload 字段 + 可选 tool input；chip-accept KPI 是 event-table reader）。

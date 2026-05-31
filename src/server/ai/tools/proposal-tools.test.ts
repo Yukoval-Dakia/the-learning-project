@@ -889,3 +889,135 @@ describe('P5.4 rubric enforcement — propose_knowledge_edge', () => {
     expect(proposed.status).toBe('proposed');
   });
 });
+
+// P5.6 / YUK-178 — explicit model labeling via the optional suggestion_kind arg
+// (AC-3, SK-5) + the rubric round-trip (AC-10, §12 PIN 10). There is NO
+// soft-fail/result_count coercion (that mechanism is dropped, §2) — the only way
+// a propose-tool proposal becomes corrective is the model setting the arg.
+describe('P5.6 suggestion_kind on propose tools (YUK-178)', () => {
+  beforeEach(async () => {
+    await resetDb();
+    __resetRegistryForTests();
+    __resetBootstrapForTests();
+    mockRunner.runTask.mockReset();
+    mockSdk.toolDefs = [];
+  });
+
+  function aiProposalKind(payload: unknown): string | undefined {
+    return (payload as { ai_proposal?: { suggestion_kind?: string } }).ai_proposal?.suggestion_kind;
+  }
+
+  it("propose_knowledge_edge with suggestion_kind:'corrective' writes a corrective payload AND survives the rubric round-trip (AC-3 / AC-10)", async () => {
+    const db = testDb();
+    await seedKnowledgeGraph();
+    // A strong, judge-backed confusion edge so the rubric PASSES; the marker must
+    // survive parseAiProposalPayload → validateProposalQuality (§12 PIN 10).
+    await seedConfusionEvidence('sk_1', new Date(Date.now() - 1 * 86_400_000));
+    await seedConfusionEvidence('sk_2', new Date(Date.now() - 2 * 86_400_000));
+
+    const corrective = await proposeKnowledgeEdgeTool.execute(ctx(), {
+      from_knowledge_id: 'k_zhi',
+      to_knowledge_id: 'k_er',
+      relation_type: 'contrasts_with',
+      weight: 0.7,
+      reasoning: 'attempt sk_1 与 sk_2 的 judge cause 均指向用户把「之」「而」用法混淆。',
+      evidence_event_ids: ['sk_1', 'sk_2'],
+      suggestion_kind: 'corrective',
+    });
+    // The proposal is written (the rubric did NOT strip the marker), and it is
+    // corrective on the persisted ai_proposal payload.
+    expect(corrective.status).toBe('proposed');
+    const row = (
+      await db
+        .select()
+        .from(event)
+        .where(eq(event.id, corrective.proposal_id as string))
+    )[0];
+    expect(aiProposalKind(row.payload)).toBe('corrective');
+  });
+
+  it('propose_knowledge_edge WITHOUT the arg defaults to proactive (AC-3)', async () => {
+    const db = testDb();
+    await seedKnowledgeGraph();
+    await seedConfusionEvidence('sk_3', new Date(Date.now() - 1 * 86_400_000));
+    await seedConfusionEvidence('sk_4', new Date(Date.now() - 2 * 86_400_000));
+
+    const proactive = await proposeKnowledgeEdgeTool.execute(ctx(), {
+      from_knowledge_id: 'k_zhi',
+      to_knowledge_id: 'k_er',
+      relation_type: 'contrasts_with',
+      weight: 0.7,
+      reasoning: 'attempt sk_3 与 sk_4 的 judge cause 指向用户混淆「之」「而」。',
+      evidence_event_ids: ['sk_3', 'sk_4'],
+      // suggestion_kind omitted → execute() threads `?? 'proactive'`.
+    });
+    expect(proactive.status).toBe('proposed');
+    const row = (
+      await db
+        .select()
+        .from(event)
+        .where(eq(event.id, proactive.proposal_id as string))
+    )[0];
+    expect(aiProposalKind(row.payload)).toBe('proactive');
+  });
+
+  it('propose_knowledge_mutation threads the model-labeled suggestion_kind (AC-3)', async () => {
+    const db = testDb();
+    await seedKnowledgeGraph();
+
+    const corrective = await proposeKnowledgeMutationTool.execute(ctx(), {
+      mutation: 'propose_new',
+      payload: { name: '判断句', parent_id: 'k_wenyan' },
+      reasoning: '错题显示需要补一个判断句节点。',
+      evidence_event_ids: ['att_failure'],
+      suggestion_kind: 'corrective',
+    });
+    expect(corrective.status).toBe('proposed');
+    const correctiveRow = await getProposalInboxRow(db, corrective.proposal_id as string);
+    expect(correctiveRow?.payload.suggestion_kind).toBe('corrective');
+
+    const proactive = await proposeKnowledgeMutationTool.execute(ctx(), {
+      mutation: 'propose_new',
+      payload: { name: '被动句', parent_id: 'k_wenyan' },
+      reasoning: '另补一个被动句节点。',
+      evidence_event_ids: ['att_failure'],
+      // omitted → proactive
+    });
+    expect(proactive.status).toBe('proposed');
+    const proactiveRow = await getProposalInboxRow(db, proactive.proposal_id as string);
+    expect(proactiveRow?.payload.suggestion_kind).toBe('proactive');
+  });
+
+  it('propose_record_links / propose_record_promotion thread the model-labeled suggestion_kind (AC-3)', async () => {
+    const db = testDb();
+    await seedKnowledgeGraph();
+    await seedRecordTargets();
+
+    const links = await proposeRecordLinksTool.execute(ctx(), {
+      record_id: 'rec_open',
+      proposed_links: [
+        {
+          target_kind: 'knowledge',
+          target_id: 'k_zhi',
+          relation: 'about',
+          confidence: 0.8,
+          reasoning: '这条记录在讨论「之」的用法。',
+        },
+      ],
+      suggestion_kind: 'corrective',
+    });
+    expect(links.status).toBe('proposed');
+    const linksRow = await getProposalInboxRow(db, links.proposal_id as string);
+    expect(linksRow?.payload.suggestion_kind).toBe('corrective');
+
+    const promotion = await proposeRecordPromotionTool.execute(ctx(), {
+      record_id: 'rec_open',
+      target: 'learning_item',
+      reasoning: '把这条开放问题升级成一个学习项。',
+      // omitted → proactive
+    });
+    expect(promotion.status).toBe('proposed');
+    const promotionRow = await getProposalInboxRow(db, promotion.proposal_id as string);
+    expect(promotionRow?.payload.suggestion_kind).toBe('proactive');
+  });
+});

@@ -14,6 +14,7 @@
 // write to keep accept atomic.
 
 import { newId } from '@/core/ids';
+import type { SuggestionKindT } from '@/core/schema/event/known';
 import type { ProposalEvidenceRefT } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge } from '@/db/schema';
@@ -92,6 +93,11 @@ export interface WriteProposalEntry {
   caused_by_event_id?: string | null;
   task_run_id?: string;
   cost_usd?: number;
+  // P5.6 / YUK-178 — OPTIONAL proactive/corrective discriminator threaded onto the
+  // ai_proposal payload this writer builds (knowledge_node / knowledge_mutation /
+  // archive). Absence === proactive (ND-SK-1). Set explicitly by the
+  // propose_knowledge_mutation tool from the model-labeled arg (§4.1/§4.2).
+  suggestion_kind?: SuggestionKindT;
 }
 
 // =============================================================================
@@ -133,6 +139,10 @@ export async function writeKnowledgeProposeEvent(
           parent_id: entry.payload.parent_id,
         },
         cooldown_key: `knowledge_node:${entry.payload.parent_id}:${entry.payload.name}`,
+        // P5.6 / YUK-178 — model-labeled discriminator (default proactive at the
+        // tool call site); only set when present so the field stays absent for
+        // non-tool callers (KnowledgeReviewTask etc.), keeping absence === proactive.
+        ...(entry.suggestion_kind ? { suggestion_kind: entry.suggestion_kind } : {}),
       },
       task_run_id: entry.task_run_id ?? null,
       caused_by_event_id: causedByEventId,
@@ -156,6 +166,8 @@ export async function writeKnowledgeProposeEvent(
       },
       reason_md: reasoning,
       evidence_refs: entry.evidence_refs,
+      // P5.6 / YUK-178 — pass through the model-labeled discriminator.
+      suggestion_kind: entry.suggestion_kind,
       legacy_event_override: {
         action: 'experimental:knowledge_archive',
         subject_kind: 'knowledge',
@@ -191,6 +203,8 @@ export async function writeKnowledgeProposeEvent(
       evidence_refs: entry.evidence_refs ?? [],
       proposed_change: entry.payload,
       cooldown_key: `knowledge_mutation:${entry.payload.mutation}:${subjectId}`,
+      // P5.6 / YUK-178 — model-labeled discriminator; absent → proactive.
+      ...(entry.suggestion_kind ? { suggestion_kind: entry.suggestion_kind } : {}),
     },
     event_override: {
       action,

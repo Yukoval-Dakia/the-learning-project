@@ -1,3 +1,4 @@
+import { resolveSuggestionKind } from '@/core/schema/proposal';
 import { event } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -149,5 +150,42 @@ describe('proposal producer helpers', () => {
     expect((row.payload as { ai_proposal?: { kind?: string } }).ai_proposal?.kind).toBe(
       'learning_item',
     );
+  });
+
+  // P5.6 / YUK-178 (AC-2, SK-3) — the variant_question producer is the only
+  // structurally-corrective proposal kind: it fires ONLY after a failed attempt,
+  // so it hard-sets suggestion_kind:'corrective'. Other producers leave it absent
+  // (→ proactive), proving the default-to-proactive contract (ND-SK-1).
+  it('variant_question producer hard-sets suggestion_kind:corrective; siblings stay proactive', async () => {
+    const db = testDb();
+    await writeVariantQuestionProposal(db, {
+      source_question_id: 'q1',
+      source_attempt_event_id: 'attempt_1',
+      prompt_md: 'variant prompt',
+      reference_md: 'variant reference',
+      difficulty: 3,
+      knowledge_ids: ['k1'],
+      parent_variant_id: 'q1',
+      root_question_id: 'q1',
+      variant_depth: 1,
+      reason_md: 'targets the same cause',
+    });
+    await writeCompletionProposal(db, {
+      learning_item_id: 'li_done',
+      triggering_signals: ['check_all_passed'],
+      reason_md: 'all checks passed',
+    });
+
+    const rows = await listProposalInboxRows(db, { status: 'pending' });
+    const variant = rows.find((row) => row.kind === 'variant_question');
+    const completion = rows.find((row) => row.kind === 'completion');
+    if (!variant || !completion) throw new Error('expected variant + completion proposals');
+
+    expect(variant.payload.suggestion_kind).toBe('corrective');
+    expect(resolveSuggestionKind(variant.payload)).toBe('corrective');
+
+    // Audited always-proactive maintenance kind — field absent, reader proactive.
+    expect(completion.payload.suggestion_kind).toBeUndefined();
+    expect(resolveSuggestionKind(completion.payload)).toBe('proactive');
   });
 });
