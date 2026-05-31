@@ -1057,6 +1057,10 @@ const MemoryBriefOutputSchema = z.object({
       recent_week_md: z.string(),
       recent_months_md: z.string(),
       long_term_md: z.string(),
+      // P5.3 (YUK-183) — additive-optional evidence-decay freshness score for
+      // long_term_md. null = unjudgeable. Advisory render-annotation signal only;
+      // not evidence-gated (a scalar score is not provenance). Spec §7.2.
+      long_term_freshness_score: z.number().nullable().optional(),
       refreshed_at: z.string().nullable(),
       source_event_id: z.string().nullable(),
       version: z.number().int(),
@@ -1097,6 +1101,7 @@ export async function executeMemoryBrief(
       recent_week_md: note.recent_week_md,
       recent_months_md: note.recent_months_md,
       long_term_md: note.long_term_md,
+      long_term_freshness_score: note.long_term_freshness_score ?? null, // P5.3 (§7.2)
       refreshed_at: iso(note.refreshed_at),
       source_event_id: note.source_event_id ?? null,
       version: note.version,

@@ -293,6 +293,13 @@ export const memory_brief_note = pgTable(
       .notNull()
       .default([]),
     long_term_evidence_ids: jsonb('long_term_evidence_ids').$type<string[]>().notNull().default([]),
+    // P5.3 (YUK-183) — evidence-decay freshness score over long_term_evidence_ids
+    // (SoT event.created_at). nullable; null = unjudgeable (no known backing
+    // timestamps, knownCount === 0), distinct from a scored 0. `real` (not
+    // doublePrecision): matches the project float type + is the only float the
+    // audit:schema parser recognizes. Render-annotation signal only — no row
+    // mutation. Spec §5.
+    long_term_freshness_score: real('long_term_freshness_score'),
     source_event_id: text('source_event_id'),
     latest_evidence_at: timestamp('latest_evidence_at', { withTimezone: true }),
     evidence_count: integer('evidence_count').notNull().default(0),
