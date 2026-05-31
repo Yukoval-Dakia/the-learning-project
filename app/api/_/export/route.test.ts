@@ -90,7 +90,7 @@ describe('GET /api/_/export — refs only', () => {
     const ab = await res.arrayBuffer();
     const entries = unzipSync(new Uint8Array(ab));
     const manifest = JSON.parse(new TextDecoder().decode(entries['manifest.json']));
-    expect(manifest.schema_version).toBe('4.0');
+    expect(manifest.schema_version).toBe('4.1');
     expect(manifest.include_assets).toBe(false);
     expect(manifest.row_counts.knowledge).toBe(2);
     expect(manifest.row_counts.event).toBe(1);
