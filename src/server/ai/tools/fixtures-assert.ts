@@ -75,17 +75,38 @@ export interface AgentReadableSpec {
 }
 
 /**
+ * One resolution of a dotted path. `unresolved:true` flags a path that FAILED
+ * to resolve — a `[]` segment hit a non-array (`undefined` / nullish / wrong
+ * shape) — as opposed to a legitimately-empty container (a real array with no
+ * elements, which yields ZERO entries, not an `unresolved` entry). Limb (b)
+ * (F2) relies on this distinction so a renamed / removed / non-array id path is
+ * caught instead of silently filtered to empty.
+ */
+export interface ResolvedPath {
+  value: unknown;
+  path: string;
+  /** True only when a `[]` segment expected an array and found a non-array. */
+  unresolved?: boolean;
+}
+
+/**
  * Resolve a dotted path against `root`, expanding a `[]` segment into the array
  * of remaining-path resolutions for every element. Returns a flat list of
  * `{ value, path }` so callers can assert / look up elementwise.
+ *
+ * A `[]` segment over a REAL empty array yields ZERO entries (vacuously fine).
+ * A `[]` segment over a NON-array (undefined / nullish / wrong shape) yields a
+ * single `{ unresolved:true }` entry so callers can tell "container failed to
+ * resolve" apart from "container is empty" (F2).
  *
  * Examples:
  *   resolvePath(out, 'total')              -> [{ value: out.total }]
  *   resolvePath(out, 'mistakes.0.cause')   -> [{ value: out.mistakes[0].cause }]
  *   resolvePath(out, 'mistakes[].cause')   -> one entry per mistakes[i].cause
  *   resolvePath(out, 'evidence[].id')      -> one entry per evidence[i].id
+ *   resolvePath(out, 'missing[].id')       -> [{ unresolved:true }] (no array)
  */
-export function resolvePath(root: unknown, path: string): Array<{ value: unknown; path: string }> {
+export function resolvePath(root: unknown, path: string): ResolvedPath[] {
   const segments = splitPath(path);
   return walk(root, segments, 0, '');
 }
@@ -105,7 +126,7 @@ function walk(
   segments: Array<{ key: string; isArray: boolean }>,
   index: number,
   trail: string,
-): Array<{ value: unknown; path: string }> {
+): ResolvedPath[] {
   if (index >= segments.length) {
     return [{ value: current, path: trail || '<root>' }];
   }
@@ -118,8 +139,10 @@ function walk(
 
   if (seg.isArray) {
     if (!Array.isArray(child)) {
-      // Surface as a single unresolved entry so callers get a precise failure.
-      return [{ value: undefined, path: `${nextTrail}[] (not-an-array)` }];
+      // Surface as a single UNRESOLVED entry (F2) — a `[]` segment expected an
+      // array and found undefined / nullish / a non-array. Distinct from a real
+      // empty array (which yields zero entries, vacuously fine).
+      return [{ value: undefined, path: `${nextTrail}[] (not-an-array)`, unresolved: true }];
     }
     return child.flatMap((el, i) => walk(el, segments, index + 1, `${nextTrail}.${i}`));
   }
@@ -184,12 +207,38 @@ export async function assertAgentReadable(
   for (const ref of spec.idRefs) {
     const idColumn = SEEDED_TABLE_ID_COLUMN[ref.table];
     const resolved = resolvePath(output, ref.path);
+
+    // F2 — distinguish a PATH THAT FAILED TO RESOLVE from a LEGITIMATE empty
+    // container. A `[]` segment over a non-array yields an `unresolved` entry;
+    // that is a hard failure (the cited path was renamed / removed / became a
+    // non-array — exactly the regression this limb must catch, e.g.
+    // `timeline[].event_id` or `proposal_ids[]` breaking). A real empty array
+    // yields ZERO entries and is vacuously fine (F-3: `evidence_event_ids:[]`).
+    const unresolved = resolved.filter((r) => r.unresolved);
+    expect(
+      unresolved.length,
+      `[${tool.name}] id-ref path "${ref.path}" did not resolve to an array ` +
+        `(${unresolved.map((u) => u.path).join(', ')}) — a renamed/removed/non-array ` +
+        'id path must FAIL, not silently pass as empty',
+    ).toBe(0);
+
+    // F2 — when the path resolves to elements, every present element MUST be a
+    // non-nullish string id. A nullish / non-string element (e.g.
+    // `timeline[].event_id === null`) is a broken citation, not a skip. (A real
+    // empty array produced ZERO `resolved` entries above, so this loop is a
+    // no-op for the vacuous-empty case — F-3 still holds.)
+    for (const r of resolved) {
+      expect(
+        typeof r.value === 'string' && (r.value as string).length > 0,
+        `[${tool.name}] id-ref element "${r.path}" (path "${ref.path}") is not a ` +
+          `non-empty string id (got ${JSON.stringify(r.value)}) — a cited id the ` +
+          'agent would follow must be a real id',
+      ).toBe(true);
+    }
+
     const ids = resolved
       .map((r) => r.value)
       .filter((v): v is string => typeof v === 'string' && v.length > 0);
-    // Empty is vacuously fine (F-3: e.g. evidence_event_ids:[] resolves no rows
-    // and the contract does not require non-empty). But any present id MUST
-    // resolve to a seeded row.
     if (ids.length === 0) continue;
     const rows = await db
       .select({ id: idColumn })
