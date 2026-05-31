@@ -4,7 +4,17 @@ import { type ProposalStatus, listProposalInboxPage } from '@/server/proposals/i
 
 export const runtime = 'nodejs';
 
-const proposalStatuses = new Set<ProposalStatus>(['pending', 'accepted', 'dismissed', 'stale']);
+// P5.4 / YUK-143 (RB-8) — 'rubric_rejected' is queryable so the folded /
+// low-visibility bucket of rubric-rejected proposals is exposed to clients via
+// `?status=rubric_rejected`. Backend substrate only; the folded inbox rendering
+// is deferred to the claude-design redraw.
+const proposalStatuses = new Set<ProposalStatus>([
+  'pending',
+  'accepted',
+  'dismissed',
+  'stale',
+  'rubric_rejected',
+]);
 
 function parseStatus(value: string | null): ProposalStatus | undefined {
   if (value === null) return undefined;

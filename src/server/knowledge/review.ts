@@ -21,10 +21,13 @@
 // catalog before the model sees it.
 
 import { newId } from '@/core/ids';
+import type { KnowledgeEdgeProposalChangeT } from '@/core/schema/proposal';
+import { parseAiProposalPayload } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, proposal_signals } from '@/db/schema';
 import { streamTask } from '@/server/ai/runner';
 import { getCorrectionStatuses } from '@/server/events/corrections';
+import { validateProposalQuality } from '@/server/knowledge/rubric-validator';
 import type { ProposalInboxRow } from '@/server/proposals/inbox';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -117,6 +120,15 @@ export type WriteProposalResult =
       kind: 'skipped_cooldown';
       cooldown_key: string;
       cooldown_until: string;
+    }
+  // P5.4 / YUK-143 (RB-6) — rubric-rejected agent edge. The propose event is
+  // still written (folded, marked rubric-rejected); the verdict is surfaced to
+  // the agent so it gets structured feedback instead of a silent drop.
+  | {
+      event_id: string;
+      kind: 'rubric_rejected';
+      gate: string;
+      reason: string;
     };
 
 interface ProposalGateCandidate {
@@ -295,6 +307,12 @@ async function findProposalRowsForGate(
       and(
         sql`${event.payload}->'ai_proposal'->>'kind' = ${candidate.kind}`,
         sql`${event.payload}->'ai_proposal'->>'cooldown_key' = ${candidate.cooldown_key}`,
+        // P5.4 / YUK-143 (RB-7) — exclude rubric-rejected (folded) propose
+        // events. They are terminal, NOT live-pending; counting them would lock
+        // out the very edge the rubric rejected and block a later valid
+        // proposal on the same (kind, cooldown_key). The marker is a
+        // `rubric_verdict: { ok:false }` sibling of ai_proposal on the payload.
+        sql`(${event.payload}->'rubric_verdict'->>'ok') IS DISTINCT FROM 'false'`,
       ),
     )
     .orderBy(desc(event.created_at), desc(event.id))
@@ -334,22 +352,62 @@ async function writeProposalAfterGate(
       });
       return { proposal_id: id, kind: 'tree_mutation' };
     }
+    const cooldownKey = `knowledge_edge:${edgePayload.from_knowledge_id}|${edgePayload.to_knowledge_id}|${edgePayload.relation_type}`;
+    const edgeProposalPayload = {
+      kind: 'knowledge_edge' as const,
+      target: { subject_kind: 'knowledge_edge' as const, subject_id: null },
+      reason_md: reasoning,
+      // Legacy MCP path attaches no evidence_event_ids today — the RB-4 floor
+      // will reject evidence-free agent edges and fold them (RB-6).
+      evidence_refs: [],
+      proposed_change: {
+        from_knowledge_id: edgePayload.from_knowledge_id,
+        to_knowledge_id: edgePayload.to_knowledge_id,
+        relation_type: edgePayload.relation_type as KnowledgeEdgeProposalChangeT['relation_type'],
+        weight: 1,
+      },
+      cooldown_key: cooldownKey,
+    };
+
+    // P5.4 / YUK-143 (RB-1) — shared rubric floor. Legacy MCP path always runs
+    // as actor_ref 'dreaming' → isAgent: true (§3.5). On reject the event is
+    // still written, marked rubric-rejected (RB-6), and excluded from
+    // live-pending dedup (RB-7).
+    const verdict = await validateProposalQuality(
+      parseAiProposalPayload(edgeProposalPayload),
+      db as Db,
+      { isAgent: true, actorRef: 'dreaming' },
+    );
+    if (!verdict.ok) {
+      const eventId = await writeAiProposal(db, {
+        actor_ref: 'dreaming',
+        outcome: 'success',
+        payload: edgeProposalPayload,
+        event_override: {
+          action: 'propose',
+          subject_kind: 'knowledge_edge',
+          payload: {
+            from_knowledge_id: edgePayload.from_knowledge_id,
+            to_knowledge_id: edgePayload.to_knowledge_id,
+            relation_type: edgePayload.relation_type,
+            weight: 1,
+            reasoning,
+            rubric_verdict: { ok: false, gate: verdict.gate, reason: verdict.reason },
+          },
+        },
+      });
+      return {
+        event_id: eventId,
+        kind: 'rubric_rejected',
+        gate: verdict.gate,
+        reason: verdict.reason,
+      };
+    }
+
     const eventId = await writeAiProposal(db, {
       actor_ref: 'dreaming',
       outcome: 'success',
-      payload: {
-        kind: 'knowledge_edge',
-        target: { subject_kind: 'knowledge_edge', subject_id: null },
-        reason_md: reasoning,
-        evidence_refs: [],
-        proposed_change: {
-          from_knowledge_id: edgePayload.from_knowledge_id,
-          to_knowledge_id: edgePayload.to_knowledge_id,
-          relation_type: edgePayload.relation_type,
-          weight: 1,
-        },
-        cooldown_key: `knowledge_edge:${edgePayload.from_knowledge_id}|${edgePayload.to_knowledge_id}|${edgePayload.relation_type}`,
-      },
+      payload: edgeProposalPayload,
     });
     return { event_id: eventId, kind: 'knowledge_edge_propose' };
   }

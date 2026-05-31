@@ -184,6 +184,7 @@ describe('knowledge_maintenance_nightly handler', () => {
       reasoning: 'first pending proposal',
     });
     expect(first.kind).toBe('tree_mutation');
+    if (first.kind !== 'tree_mutation') throw new Error(`unexpected kind ${first.kind}`);
 
     let second: WriteProposalResult | null = null;
     const result = await runKnowledgeMaintenanceNightly(db, {

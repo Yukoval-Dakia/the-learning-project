@@ -6,7 +6,11 @@
 // delegates to the AttributionTask writer that appends a judge event.
 
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
-import type { ProposalEvidenceRefT } from '@/core/schema/proposal';
+import {
+  type AiProposalPayloadInputT,
+  type ProposalEvidenceRefT,
+  parseAiProposalPayload,
+} from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
 import {
   artifact,
@@ -16,6 +20,7 @@ import {
   learning_record,
   question,
 } from '@/db/schema';
+import { writeToolCallLog } from '@/server/ai/log';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { runVariantGen } from '@/server/boss/handlers/variant_gen';
 import { getFailureAttemptById, getJudgeForAttempt } from '@/server/events/queries';
@@ -25,6 +30,7 @@ import {
   type KnowledgeMutationPayload,
   writeKnowledgeProposeEvent,
 } from '@/server/knowledge/proposals';
+import { type RubricVerdict, validateProposalQuality } from '@/server/knowledge/rubric-validator';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import {
   writeArchiveProposal,
@@ -218,10 +224,16 @@ const ProposeKnowledgeEdgeOutputSchema = z.object({
     'skipped:duplicate_live_edge',
     'skipped:duplicate_pending',
     'skipped:parent_semantic_duplicate',
+    // P5.4 / YUK-143 (RB-6) — rubric-rejected agent edge. The propose event is
+    // still written, MARKED rubric-rejected (folded, not dropped); the verdict
+    // is returned to the agent as primitive feedback.
+    'skipped:rubric_rejected',
   ]),
   proposal_id: z.string().optional(),
   cooldown_key: z.string().optional(),
   reason: z.string().optional(),
+  // P5.4 — stable gate string from the rubric verdict (YUK-174 Layer-2 signal).
+  gate: z.string().optional(),
 });
 
 type ProposeKnowledgeEdgeInput = z.infer<typeof ProposeKnowledgeEdgeInputSchema>;
@@ -306,27 +318,95 @@ async function proposeKnowledgeEdgeExecute(
     return { status: 'skipped:duplicate_pending', cooldown_key: cooldownKey };
   }
 
+  const proposalPayload = {
+    kind: 'knowledge_edge' as const,
+    target: { subject_kind: 'knowledge_edge' as const, subject_id: null },
+    reason_md: input.reasoning,
+    evidence_refs: evidenceRefsFromEventIds(input.evidence_event_ids ?? []),
+    proposed_change: {
+      from_knowledge_id: input.from_knowledge_id,
+      to_knowledge_id: input.to_knowledge_id,
+      relation_type: input.relation_type,
+      weight: input.weight ?? 1,
+    },
+    cooldown_key: cooldownKey,
+  };
+
+  // P5.4 / YUK-143 (RB-1) — shared rubric floor before the write. Agents are
+  // strict; user-edited proposals (kind !== 'agent') run structural-only.
+  const verdict = await validateProposalQuality(parseAiProposalPayload(proposalPayload), ctx.db, {
+    isAgent: ctx.callerActor.kind === 'agent',
+    actorRef: ctx.callerActor.ref,
+  });
+  if (!verdict.ok) {
+    return await foldRubricRejectedEdge(ctx, proposalPayload, cooldownKey, verdict, input);
+  }
+
   const proposalId = await writeAiProposal(ctx.db, {
     actor_ref: ctx.callerActor.ref,
     outcome: 'success',
-    payload: {
-      kind: 'knowledge_edge',
-      target: { subject_kind: 'knowledge_edge', subject_id: null },
-      reason_md: input.reasoning,
-      evidence_refs: evidenceRefsFromEventIds(input.evidence_event_ids ?? []),
-      proposed_change: {
-        from_knowledge_id: input.from_knowledge_id,
-        to_knowledge_id: input.to_knowledge_id,
-        relation_type: input.relation_type,
-        weight: input.weight ?? 1,
-      },
-      cooldown_key: cooldownKey,
-    },
+    payload: proposalPayload,
     task_run_id: ctx.taskRunId,
     caused_by_event_id: ctx.causedByEventId ?? null,
   });
 
   return { status: 'proposed', proposal_id: proposalId, cooldown_key: cooldownKey };
+}
+
+// P5.4 / YUK-143 (RB-6 / §3.4) — on an agent rubric rejection, write the
+// propose event ANYWAY, MARKED rubric-rejected (carrying { rubric_verdict } as a
+// sibling of ai_proposal in the event payload). Folded, not dropped: the row is
+// an audit trail + a Layer-2 (YUK-174) signal, and is excluded from live-pending
+// dedup/cooldown (RB-7) because the inbox derive maps the marker to a terminal
+// 'rubric_rejected' status. Logs the verdict via writeToolCallLog (evidence-first).
+async function foldRubricRejectedEdge(
+  ctx: ToolContext,
+  proposalPayload: AiProposalPayloadInputT,
+  cooldownKey: string,
+  verdict: Extract<RubricVerdict, { ok: false }>,
+  input: ProposeKnowledgeEdgeInput,
+): Promise<ProposeKnowledgeEdgeOutput> {
+  const proposalId = await writeAiProposal(ctx.db, {
+    actor_ref: ctx.callerActor.ref,
+    outcome: 'success',
+    payload: proposalPayload,
+    event_override: {
+      action: 'propose',
+      subject_kind: 'knowledge_edge',
+      payload: {
+        from_knowledge_id: input.from_knowledge_id,
+        to_knowledge_id: input.to_knowledge_id,
+        relation_type: input.relation_type,
+        weight: input.weight ?? 1,
+        reasoning: input.reasoning,
+        rubric_verdict: { ok: false, gate: verdict.gate, reason: verdict.reason },
+      },
+    },
+    task_run_id: ctx.taskRunId,
+    caused_by_event_id: ctx.causedByEventId ?? null,
+  });
+
+  await writeToolCallLog(ctx.db, {
+    task_run_id: ctx.taskRunId,
+    task_kind: 'DomainTool',
+    tool_name: 'propose_knowledge_edge',
+    effect: 'propose',
+    input_json: input,
+    output_json: { status: 'skipped:rubric_rejected', gate: verdict.gate, reason: verdict.reason },
+    error_reason: `rubric:${verdict.gate}`,
+    iteration: 0,
+    latency_ms: 0,
+    cost: 0,
+    mirrored_event_id: proposalId,
+  });
+
+  return {
+    status: 'skipped:rubric_rejected',
+    proposal_id: proposalId,
+    cooldown_key: cooldownKey,
+    gate: verdict.gate,
+    reason: verdict.reason,
+  };
 }
 
 function proposeKnowledgeEdgeSummary(

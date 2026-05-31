@@ -7,10 +7,12 @@ import {
   learning_record,
   mistake_variant,
   question,
+  tool_call_log,
 } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import * as attributeModule from '@/server/knowledge/attribute';
-import { listProposalInboxRows } from '@/server/proposals/inbox';
+import { runWriteProposal } from '@/server/knowledge/review';
+import { getProposalInboxRow, listProposalInboxRows } from '@/server/proposals/inbox';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -134,6 +136,61 @@ async function seedQuestionAndFailure(opts: { withJudge?: boolean } = {}): Promi
   }
 }
 
+// P5.4 / YUK-143 — a recent, judge-backed failure attempt that references BOTH
+// k_zhi and k_er, i.e. the "same answer confuses two usages" §4.3 confusion
+// evidence the contrasts_with predicate requires. createdAt must be within the
+// 30-day rubric window of the current clock.
+async function seedConfusionEvidence(attemptId: string, createdAt: Date): Promise<void> {
+  const db = testDb();
+  const questionId = `q_${attemptId}`;
+  await db.insert(question).values({
+    id: questionId,
+    kind: 'short_answer',
+    prompt_md: '辨析「之」与「而」在句中的用法',
+    reference_md: '「之」结构助词；「而」连词。',
+    knowledge_ids: ['k_zhi', 'k_er'],
+    source: 'manual',
+    difficulty: 3,
+    created_at: BASE,
+    updated_at: BASE,
+  });
+  await writeEvent(db, {
+    id: attemptId,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'attempt',
+    subject_kind: 'question',
+    subject_id: questionId,
+    outcome: 'failure',
+    payload: {
+      answer_md: '都当代词用',
+      answer_image_refs: [],
+      referenced_knowledge_ids: ['k_zhi', 'k_er'],
+    },
+    created_at: createdAt,
+  });
+  await writeEvent(db, {
+    id: `judge_${attemptId}`,
+    actor_kind: 'agent',
+    actor_ref: 'attribution',
+    action: 'judge',
+    subject_kind: 'event',
+    subject_id: attemptId,
+    outcome: 'success',
+    payload: {
+      cause: {
+        primary_category: 'concept',
+        secondary_categories: [],
+        analysis_md: '用户把「之」「而」两个虚词的用法相互混淆。',
+        confidence: 0.9,
+      },
+      referenced_knowledge_ids: ['k_zhi', 'k_er'],
+    },
+    caused_by_event_id: attemptId,
+    created_at: new Date(createdAt.getTime() + 500),
+  });
+}
+
 async function seedLearningItem(id: string, status: string, completedAt: Date | null = null) {
   await testDb()
     .insert(learning_item)
@@ -222,14 +279,20 @@ describe('Wave 3 proposal/action DomainTools', () => {
   it('propose_knowledge_edge validates graph guardrails and writes an edge proposal', async () => {
     const db = testDb();
     await seedKnowledgeGraph();
+    // P5.4 / YUK-143 — the rubric (isAgent: true) now requires strong,
+    // judge-backed confusion evidence for a contrasts_with edge. Seed two recent
+    // judge-backed failures that reference BOTH endpoints so the first proposal
+    // passes the §4.2 strong floor + the §4.3 confusion predicate.
+    await seedConfusionEvidence('conf_1', new Date(BASE.getTime() + 1_000));
+    await seedConfusionEvidence('conf_2', new Date(BASE.getTime() + 2_000));
 
     const proposed = await proposeKnowledgeEdgeTool.execute(ctx(), {
       from_knowledge_id: 'k_zhi',
       to_knowledge_id: 'k_er',
       relation_type: 'contrasts_with',
       weight: 0.7,
-      reasoning: '同一类虚词经常混淆。',
-      evidence_event_ids: ['att_failure'],
+      reasoning: 'attempt conf_1 与 conf_2 的 judge cause 均指向用户把「之」「而」用法混淆。',
+      evidence_event_ids: ['conf_1', 'conf_2'],
     });
     expect(proposed.status).toBe('proposed');
 
@@ -626,5 +689,136 @@ describe('Wave 3 proposal/action DomainTools', () => {
       ],
     });
     expect(badTarget.status).toBe('skipped:unknown_target');
+  });
+});
+
+// P5.4 / YUK-143 — proposal quality rubric enforcement (Layer 1).
+describe('P5.4 rubric enforcement — propose_knowledge_edge', () => {
+  beforeEach(async () => {
+    await resetDb();
+    __resetRegistryForTests();
+    __resetBootstrapForTests();
+    mockRunner.runTask.mockReset();
+  });
+
+  it('rejects an evidence-free agent edge, folds it, and logs a tool_call_log row (RB-6)', async () => {
+    const db = testDb();
+    await seedKnowledgeGraph();
+
+    const rejected = await proposeKnowledgeEdgeTool.execute(ctx(), {
+      from_knowledge_id: 'k_zhi',
+      to_knowledge_id: 'k_er',
+      relation_type: 'related_to',
+      weight: 1,
+      reasoning: 'attempt e_x 显示用户在 k_zhi 上失败。',
+    });
+    expect(rejected.status).toBe('skipped:rubric_rejected');
+    expect(rejected.gate).toBe('evidence_missing');
+    expect(rejected.proposal_id).toBeTruthy();
+
+    // RB-6 — the propose event is folded (still written) with the marker.
+    const row = (
+      await db
+        .select()
+        .from(event)
+        .where(eq(event.id, rejected.proposal_id as string))
+    )[0];
+    expect(row.action).toBe('propose');
+    expect(row.subject_kind).toBe('knowledge_edge');
+    expect(
+      (row.payload as { rubric_verdict?: { ok?: boolean; gate?: string } }).rubric_verdict,
+    ).toMatchObject({ ok: false, gate: 'evidence_missing' });
+
+    // RB-6 — logged for traceability (evidence-first).
+    const logs = await db
+      .select()
+      .from(tool_call_log)
+      .where(eq(tool_call_log.tool_name, 'propose_knowledge_edge'));
+    expect(logs).toHaveLength(1);
+    expect(logs[0].effect).toBe('propose');
+    expect(logs[0].mirrored_event_id).toBe(rejected.proposal_id);
+
+    // RB-7 — the folded proposal derives a terminal 'rubric_rejected' status,
+    // NOT 'pending'.
+    const inboxRow = await getProposalInboxRow(db, rejected.proposal_id as string);
+    expect(inboxRow?.status).toBe('rubric_rejected');
+    const pending = await listProposalInboxRows(db, { status: 'pending' });
+    expect(pending).toHaveLength(0);
+  });
+
+  it('RB-7 (load-bearing): a rubric-rejected proposal on K does NOT block a later valid proposal on K', async () => {
+    const db = testDb();
+    await seedKnowledgeGraph();
+
+    // 1) Rubric-rejected (evidence-free) edge on key K = (k_zhi -> k_er, related_to).
+    const rejected = await proposeKnowledgeEdgeTool.execute(ctx(), {
+      from_knowledge_id: 'k_zhi',
+      to_knowledge_id: 'k_er',
+      relation_type: 'related_to',
+      weight: 1,
+      reasoning: 'attempt e_x 显示用户在 k_zhi 上失败。',
+    });
+    expect(rejected.status).toBe('skipped:rubric_rejected');
+
+    // The folded proposal must NOT count as live-pending for the same key.
+    expect(
+      await getProposalInboxRow(db, rejected.proposal_id as string).then((r) => r?.status),
+    ).toBe('rubric_rejected');
+
+    // 2) A valid (strong, judge-backed, endpoint-referencing) proposal on the
+    //    SAME key K must be accepted as 'proposed', not skipped:duplicate_pending.
+    await seedConfusionEvidence('rb7_1', new Date(BASE.getTime() + 1_000));
+    await seedConfusionEvidence('rb7_2', new Date(BASE.getTime() + 2_000));
+    const valid = await proposeKnowledgeEdgeTool.execute(ctx(), {
+      from_knowledge_id: 'k_zhi',
+      to_knowledge_id: 'k_er',
+      relation_type: 'related_to',
+      weight: 1,
+      reasoning: 'attempt rb7_1 与 rb7_2 的 judge cause 指向用户在 k_zhi/k_er 反复失败。',
+      evidence_event_ids: ['rb7_1', 'rb7_2'],
+    });
+    expect(valid.status).toBe('proposed');
+    expect(valid.status).not.toBe('skipped:duplicate_pending');
+  });
+
+  it('both write paths call the validator: legacy MCP runWriteProposal also rejects an evidence-free agent edge', async () => {
+    const db = testDb();
+    await seedKnowledgeGraph();
+
+    const result = await runWriteProposal(db, {
+      payload: {
+        mutation: 'propose_knowledge_edge',
+        from_knowledge_id: 'k_zhi',
+        to_knowledge_id: 'k_er',
+        relation_type: 'related_to',
+      },
+      reasoning: 'attempt e_x 显示用户在 k_zhi 上失败。',
+    });
+    expect(result.kind).toBe('rubric_rejected');
+    if (result.kind !== 'rubric_rejected') throw new Error(`unexpected kind ${result.kind}`);
+    expect(result.gate).toBe('evidence_missing');
+
+    // Folded, not live-pending.
+    const inboxRow = await getProposalInboxRow(db, result.event_id);
+    expect(inboxRow?.status).toBe('rubric_rejected');
+  });
+
+  it('user-edited proposal (isAgent:false) is structural-only — same evidence-free edge passes', async () => {
+    const db = testDb();
+    await seedKnowledgeGraph();
+
+    const userCtx: ToolContext = {
+      db,
+      taskRunId: 'tr_user',
+      callerActor: { kind: 'user', ref: 'user:self' },
+    };
+    const proposed = await proposeKnowledgeEdgeTool.execute(userCtx, {
+      from_knowledge_id: 'k_zhi',
+      to_knowledge_id: 'k_er',
+      relation_type: 'related_to',
+      weight: 1,
+      reasoning: '二者相关', // generic — but user path skips reasoning + evidence gates
+    });
+    expect(proposed.status).toBe('proposed');
   });
 });
