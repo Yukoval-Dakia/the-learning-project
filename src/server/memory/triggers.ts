@@ -3,6 +3,13 @@ import { type DrizzleTransactionLike, type Job, fromDrizzle } from 'pg-boss';
 
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
+import { BRIEF_REFRESH_BUDGET } from '@/server/ai/tools/budgets';
+import {
+  listActiveSubjectsSinceRefresh,
+  loadSubjectBriefEvents,
+  selectSubjectsForRun,
+  subjectScopeHasNewEvidence,
+} from './active-subjects';
 import {
   type GenerateBrief,
   listStaleBriefScopes,
@@ -10,6 +17,11 @@ import {
   scopeHasNewEvidence,
 } from './brief';
 import { type MemoryClient, type MemoryEventInput, createMemoryClient } from './client';
+
+// P5.2 (YUK-143) — per-subject brief refresh lookback for the nightly sweep +
+// regen handler. Bounded initial-build window for never-built subjects (BR-5).
+const BRIEF_REFRESH_LOOKBACK_DAYS = 30;
+const SUBJECT_SCOPE_PREFIX = 'subject:';
 
 export const MEMORY_EVENT_INGEST_QUEUE = 'memory_event_ingest';
 export const MEMORY_BRIEF_REGEN_QUEUE = 'memory_brief_regen';
@@ -132,17 +144,47 @@ export function buildMemoryBriefRegenHandler(
     const client = memoryClient;
     for (const job of jobs) {
       const scopeKey = job.data.scope_key;
+      const searchFacts = async () => {
+        const result = await client.search(`memory brief ${scopeKey}`, {
+          topK: 10,
+          filters: { scope_key: scopeKey },
+        });
+        return (result?.results ?? []).map((item) => ({ id: item.id, memory: item.memory }));
+      };
+
+      // BR-10 (load-bearing) — branch by scope prefix. attempt/review events
+      // never tag `subject:` in affected_scopes (§1.2), so the global path's
+      // affected_scopes-based guard + loader return false / ~0 rows for an
+      // active subject. The subject path instead reads a knowledge-resolved
+      // event window (the SAME resolution as the activity-detection sweep) and
+      // gates on a KNOWLEDGE-resolved freshness check — never the affected_scopes
+      // one. The active-subject sweep already filtered to fresh subjects, but
+      // the global stale-sweep (listStaleBriefScopes) also enqueues dormant
+      // subject rows older than 24h; the guard skips those (BR-2: no LLM call,
+      // no refreshed_at bump for a dormant subject).
+      if (scopeKey.startsWith(SUBJECT_SCOPE_PREFIX)) {
+        const subjectId = scopeKey.slice(SUBJECT_SCOPE_PREFIX.length);
+        const events = await loadSubjectBriefEvents(db, subjectId, {
+          lookbackDays: BRIEF_REFRESH_LOOKBACK_DAYS,
+        });
+        if (!(await subjectScopeHasNewEvidence(db, scopeKey, events))) continue;
+        await regenerateMemoryBrief({
+          db,
+          scopeKey,
+          loadEvents: async () => events,
+          searchFacts,
+          generate: deps.generateBrief,
+        });
+        continue;
+      }
+
+      // BR-6 — global (and any legacy affected_scopes-tagged scope): unchanged.
+      // Still gated by scopeHasNewEvidence + loaded via loadEventsFromDb.
       if (!(await scopeHasNewEvidence(db, scopeKey))) continue;
       await regenerateMemoryBrief({
         db,
         scopeKey,
-        searchFacts: async () => {
-          const result = await client.search(`memory brief ${scopeKey}`, {
-            topK: 10,
-            filters: { scope_key: scopeKey },
-          });
-          return (result?.results ?? []).map((item) => ({ id: item.id, memory: item.memory }));
-        },
+        searchFacts,
         generate: deps.generateBrief,
       });
     }
@@ -154,8 +196,28 @@ export function buildMemoryBriefSweepHandler(
   boss: Pick<BossLike, 'send'>,
 ): (jobs: Job<object>[]) => Promise<void> {
   return async () => {
+    // BR-6 — global + any existing stale brief rows: unchanged 24h-stale gate.
+    // The global brief is always enqueued via this loop and is NOT subject to
+    // maxSubjectsPerRun.
     for (const scopeKey of await listStaleBriefScopes(db)) {
       await enqueueBriefRegen(boss, scopeKey);
+    }
+
+    // P5.2 (YUK-143) — additive activity-gated per-subject layer (§3.3). Find
+    // subjects whose knowledge-resolved activity is newer than their brief's
+    // refreshed_at (or never-built within the lookback window), sort by activity
+    // recency DESC, and enqueue only the top maxSubjectsPerRun (BR-9). Deferred
+    // subjects remain active and are eligible again next run (no starvation).
+    // enqueueBriefRegen dedups per scope_key on a 6-min singleton window, so a
+    // subject also caught by listStaleBriefScopes is enqueued at most once.
+    const activeSubjects = await listActiveSubjectsSinceRefresh(db, {
+      lookbackDays: BRIEF_REFRESH_LOOKBACK_DAYS,
+    });
+    for (const subject of selectSubjectsForRun(
+      activeSubjects,
+      BRIEF_REFRESH_BUDGET.maxSubjectsPerRun,
+    )) {
+      await enqueueBriefRegen(boss, subject.scopeKey);
     }
   };
 }
