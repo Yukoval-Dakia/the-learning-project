@@ -165,6 +165,17 @@ describe('scoreLongTermFreshness', () => {
     );
     expect(r.score).toBeCloseTo(1, 5);
   });
+
+  it('throws on a non-positive or NaN halfLifeDays (PR #229 guard)', () => {
+    for (const bad of [0, -1, Number.NaN]) {
+      expect(() =>
+        scoreLongTermFreshness([{ id: 'a', created_at: NOW }], NOW, {
+          halfLifeDays: bad,
+          freshnessThreshold: 0.3,
+        }),
+      ).toThrow(/halfLifeDays must be > 0/);
+    }
+  });
 });
 
 describe('resolveEvidenceTimestamps', () => {
@@ -296,5 +307,36 @@ describe('regenerateMemoryBrief — P5.3 score persistence (no mutation)', () =>
     const row = upsertBrief.mock.calls[0][0];
     expect(row.long_term_freshness_score).not.toBeNull();
     expect(row.long_term_md).toBe(draft.long_term_md);
+  });
+
+  it('de-dups the scoring evidence ids before resolving/scoring (PR #229)', async () => {
+    const draft = {
+      recent_week_md: '',
+      recent_months_md: '',
+      long_term_md: '## Long term',
+      recent_week_evidence_ids: [],
+      recent_months_evidence_ids: [],
+      long_term_evidence_ids: ['evt_dup', 'evt_dup', 'evt_other'], // duplicate id
+    };
+    const upsertBrief = vi.fn<(row: BriefRow) => Promise<void>>(async () => undefined);
+    const loadEventTimestamps = vi.fn(async (ids: string[]) =>
+      ids.map((id) => ({ id, created_at: daysAgo(10) })),
+    );
+    await regenerateMemoryBrief({
+      scopeKey: 'subject:wenyan',
+      loadEvents: async () => [], // empty window ⇒ all ids "missing" ⇒ routed to the loader
+      searchFacts: async () => [],
+      generate: vi.fn(async () => draft),
+      upsertBrief,
+      loadEventTimestamps,
+      now: () => NOW,
+    });
+    // The loader (and the score numerator) sees the DEDUPED set, not the raw 3.
+    expect(loadEventTimestamps).toHaveBeenCalledTimes(1);
+    expect(loadEventTimestamps).toHaveBeenCalledWith(['evt_dup', 'evt_other']);
+    // Stored evidence ids are still the verbatim draft (dedup is scoring-only).
+    expect(upsertBrief.mock.calls[0][0].long_term_evidence_ids).toEqual(
+      draft.long_term_evidence_ids,
+    );
   });
 });
