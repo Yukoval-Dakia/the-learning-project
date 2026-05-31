@@ -183,6 +183,70 @@ async function seedUserCauseFailure(
   });
 }
 
+// A recent judge-backed failure whose judge cause carries an EMPTY analysis_md
+// and NO user_cause — i.e. the category is tagged but there is no explicit
+// analysis prose. `effectiveCauseForFailureAttempt` still returns non-null (the
+// failure is judge-backed → counts toward the §4.2 level), but
+// `hasExplicitJudgeAnalysis` is false. This is the §4.3 "PLAIN single failure"
+// case: a single such event is medium and must STILL be rejected for
+// prerequisite / contrasts_with (no explicit-analysis rescue).
+async function seedPlainJudgeFailure(
+  attemptId: string,
+  knowledgeIds: string[],
+  ageDays: number,
+  causeCategory = 'concept',
+): Promise<void> {
+  const db = testDb();
+  const questionId = `q_${attemptId}`;
+  const createdAt = new Date(Date.now() - ageDays * DAY_MS);
+  await db.insert(question).values({
+    id: questionId,
+    kind: 'short_answer',
+    prompt_md: 'p',
+    reference_md: 'r',
+    knowledge_ids: knowledgeIds,
+    source: 'manual',
+    difficulty: 3,
+    created_at: createdAt,
+    updated_at: createdAt,
+  });
+  await writeEvent(db, {
+    id: attemptId,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'attempt',
+    subject_kind: 'question',
+    subject_id: questionId,
+    outcome: 'failure',
+    payload: {
+      answer_md: 'wrong',
+      answer_image_refs: [],
+      referenced_knowledge_ids: knowledgeIds,
+    },
+    created_at: createdAt,
+  });
+  await writeEvent(db, {
+    id: `judge_${attemptId}`,
+    actor_kind: 'agent',
+    actor_ref: 'attribution',
+    action: 'judge',
+    subject_kind: 'event',
+    subject_id: attemptId,
+    outcome: 'success',
+    payload: {
+      cause: {
+        primary_category: causeCategory,
+        secondary_categories: [],
+        analysis_md: '', // empty → judge-backed but NOT explicit analysis
+        confidence: 0.9,
+      },
+      referenced_knowledge_ids: knowledgeIds,
+    },
+    caused_by_event_id: attemptId,
+    created_at: new Date(createdAt.getTime() + 500),
+  });
+}
+
 const AGENT = { isAgent: true, actorRef: 'agent:maintenance' };
 
 describe('validateProposalQuality — structural class (G1–G6)', () => {
@@ -654,6 +718,134 @@ describe('validateProposalQuality — user-note strong for two-event relations (
     );
     expect(v.ok).toBe(false);
     if (!v.ok) expect(v.gate).toBe('evidence_level');
+  });
+});
+
+// Codex re-review round 3 (P2, rubric-validator.ts:220) — the §4.3 single-event
+// relaxation ("prerequisite / contrasts_with need 2 events UNLESS one has
+// explicit judge analysis") was DEAD for a single judge-backed event. A single
+// in-window judge-backed failure with non-empty judge analysis_md is `medium`
+// per §4.2, so the RB-4 evidence floor rejected it at `evidence_level` BEFORE
+// the relaxation could run → every single-judge-event prerequisite /
+// contrasts_with proposal was wrongly folded. The fix rescues `medium` → pass
+// for these two relations ONLY when an explicit-analysis single event (judge
+// analysis_md OR user_cause.user_notes) references an endpoint. It does NOT
+// change computeEvidenceLevel's leveling (the event stays medium) and does NOT
+// loosen other relations.
+describe('validateProposalQuality — single judge-analysis event rescue (codex P2 r3)', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await seedGraph();
+  });
+
+  it('(a) prerequisite with 1 judge-analysis (analysis_md) failure referencing an endpoint PASSES', async () => {
+    // Single in-window judge-backed failure with explicit judge analysis_md
+    // (seedEvidence writes a non-empty analysis_md) referencing endpoint k_zhi.
+    // Pre-fix this was medium → rejected at the floor before the relaxation; now
+    // the relation-scoped, explicit-analysis-gated rescue lets it through, and
+    // the prerequisite order-evidence predicate (references an endpoint) passes.
+    await seedEvidence('e_pre_solo', ['k_zhi'], 1);
+    const v = await validateProposalQuality(
+      edgePayload('k_zhi', 'k_er', 'prerequisite', {
+        reasoning: 'attempt e_pre_solo 的 judge cause concept 分析 k_zhi 是 k_er 的学习前置。',
+        evidenceEventIds: ['e_pre_solo'],
+      }),
+      testDb(),
+      AGENT,
+    );
+    expect(v).toEqual({ ok: true });
+  });
+
+  it('(b) contrasts_with with 1 user-note failure referencing both endpoints PASSES', async () => {
+    // 1 failure + explicit user note is §4.2-strong, AND references BOTH
+    // endpoints → confusion predicate satisfied. Keeps FIX 4 intact across the
+    // floor reorder.
+    await seedUserCauseFailure(
+      'e_cw_un',
+      ['k_zhi', 'k_er'],
+      1,
+      '我把 k_zhi 和 k_er 的用法搞混，反复在同一题上错。',
+    );
+    const v = await validateProposalQuality(
+      edgePayload('k_zhi', 'k_er', 'contrasts_with', {
+        reasoning: 'attempt e_cw_un 的 user_cause 说明用户混淆 k_zhi 与 k_er。',
+        evidenceEventIds: ['e_cw_un'],
+      }),
+      testDb(),
+      AGENT,
+    );
+    expect(v).toEqual({ ok: true });
+  });
+
+  it('(c) prerequisite with 1 PLAIN failure (no judge analysis, no user note) is STILL rejected', async () => {
+    // Single judge-backed failure whose judge cause has an EMPTY analysis_md and
+    // no user_cause → medium, no explicit-analysis basis → the rescue does NOT
+    // fire → rejected at the evidence floor. Endpoint is referenced, proving the
+    // rejection is the floor (not the relation gate).
+    await seedPlainJudgeFailure('e_pre_plain', ['k_zhi'], 1);
+    const v = await validateProposalQuality(
+      edgePayload('k_zhi', 'k_er', 'prerequisite', {
+        reasoning: 'attempt e_pre_plain judge cause concept，但无分析正文。',
+        evidenceEventIds: ['e_pre_plain'],
+      }),
+      testDb(),
+      AGENT,
+    );
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.gate).toBe('evidence_level');
+  });
+
+  it('(d) related_to with 1 judge-analysis event is STILL rejected (rescue is relation-scoped, no loosening)', async () => {
+    // KEY anti-regression test. The SAME single judge-analysis event that
+    // rescues prerequisite in (a) must NOT rescue related_to: the relaxation is
+    // relation-scoped to prerequisite / contrasts_with. related_to with one judge
+    // event stays medium and is rejected at the evidence floor. This proves
+    // computeEvidenceLevel was NOT mis-leveled to strong (codex option A) — if it
+    // had been, this related_to would wrongly pass.
+    await seedEvidence('e_rt_solo', ['k_zhi', 'k_er'], 1);
+    const v = await validateProposalQuality(
+      edgePayload('k_zhi', 'k_er', 'related_to', {
+        reasoning: 'attempt e_rt_solo judge cause concept on k_zhi/k_er。',
+        evidenceEventIds: ['e_rt_solo'],
+      }),
+      testDb(),
+      AGENT,
+    );
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.gate).toBe('evidence_level');
+  });
+
+  it('(d-applied_in) applied_in with 1 judge-analysis event is STILL rejected', async () => {
+    // Second relation-scope guard: applied_in also keeps rejecting a single
+    // judge-analysis event at the floor.
+    await seedEvidence('e_ai_solo', ['k_zhi', 'k_er'], 1);
+    const v = await validateProposalQuality(
+      edgePayload('k_zhi', 'k_er', 'applied_in', {
+        reasoning: 'attempt e_ai_solo judge cause method on k_zhi/k_er。',
+        evidenceEventIds: ['e_ai_solo'],
+      }),
+      testDb(),
+      AGENT,
+    );
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.gate).toBe('evidence_level');
+  });
+
+  it('(e) 2-same-pattern strong path still passes for related_to (unchanged)', async () => {
+    // The strong path is untouched by the floor reorder: two same-pattern
+    // (shared cause + shared endpoint) failures → strong → passes for a relation
+    // that is NOT prerequisite/contrasts_with.
+    await seedEvidence('e_e_1', ['k_zhi'], 1, 'concept');
+    await seedEvidence('e_e_2', ['k_zhi'], 2, 'concept');
+    const v = await validateProposalQuality(
+      edgePayload('k_zhi', 'k_er', 'related_to', {
+        reasoning: 'attempt e_e_1/e_e_2 judge cause 均为 concept，集中在 k_zhi。',
+        evidenceEventIds: ['e_e_1', 'e_e_2'],
+      }),
+      testDb(),
+      AGENT,
+    );
+    expect(v).toEqual({ ok: true });
   });
 });
 
