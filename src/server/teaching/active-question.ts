@@ -37,13 +37,12 @@ export interface ActiveQuestionState {
 }
 
 /**
- * Per-outcome attempt totals for one question, derived from the attempt
- * timeline (mirrors context-readers.ts ~:599-:604, same windowed query). Plain
- * db-taking helper — no ToolContext (PIN 7). NOTE: `getQuestionTimeline` is
- * windowed to its default (most-recent ≤10 attempt+review entries), so these are
- * totals over that recent window, not the question's lifetime — faithful to the
- * mirrored reference and ample for the N=3 (=`TEACHING_CORRECTIVE_FAILURE_N`)
- * corrective trigger. `failure` here is a total, not a consecutive streak.
+ * Computes per-outcome attempt totals for a question from its recent attempt timeline.
+ *
+ * Counts are computed over the timeline window returned by `getQuestionTimeline` (the most-recent ≤10 attempt+review entries), not the question's lifetime.
+ *
+ * @param questionId - ID of the question whose recent attempt outcomes to tally
+ * @returns The totals as an object with `success`, `partial`, and `failure` counts; `failure` is the total failures in the window (not a consecutive streak)
  */
 export async function countAttemptOutcomes(
   db: DbLike,
@@ -61,10 +60,15 @@ export async function countAttemptOutcomes(
 }
 
 /**
- * Resolve the active question id for a teaching session + its cumulative attempt
- * counts. The active question is the most recently created `teaching_check`
- * question whose metadata links it to this session. Returns a null id (and null
- * counts) when the session has no teaching_check question yet.
+ * Determine the active teaching-check question for a session and its cumulative attempt totals.
+ *
+ * The active question is the most recently created question whose `source` is `'teaching_check'`
+ * and whose `metadata.session_id` matches the provided sessionId. If no such question exists,
+ * both `active_question_id` and `attempt_counts` will be `null`.
+ *
+ * @returns An object where `active_question_id` is the ID of the found question (or `null` if none),
+ * and `attempt_counts` contains per-outcome totals (`success`, `partial`, `failure`) for that question
+ * (or `null` when `active_question_id` is `null`).
  */
 export async function getActiveQuestionState(
   db: DbLike,

@@ -30,6 +30,13 @@ export interface WriteVariantQuestionProposalInput extends CommonProducerInput {
   variant_depth: number;
 }
 
+/**
+ * Creates a 'variant_question' AI proposal for a question variant generated from a failed attempt.
+ *
+ * @param db - Database connection or transaction used to persist the proposal
+ * @param input - Fields identifying the source question and attempt plus proposal content (prompt, reference, difficulty, knowledge ids, etc.)
+ * @returns The id of the created proposal
+ */
 export async function writeVariantQuestionProposal(
   db: DbLike,
   input: WriteVariantQuestionProposalInput,
@@ -284,6 +291,20 @@ export interface WriteArchiveProposalInput extends CommonProducerInput {
   };
 }
 
+/**
+ * Create an 'archive' AI proposal targeting a specified subject.
+ *
+ * The proposal's payload includes the target subject, reason, evidence, a composed
+ * `proposed_change` (merging the subject identifiers with `input.proposed_change`),
+ * a rollback plan to restore the archived entity, and a cooldown key derived from
+ * the target. If `input.suggestion_kind` is provided it is forwarded into the payload;
+ * `input.legacy_event_override` is applied as an optional event override.
+ *
+ * @param input - Proposal input containing target subject identifiers, reason, optional evidence,
+ *   optional `proposed_change` fields to merge, optional `suggestion_kind` to forward, and other
+ *   common producer fields (e.g., `id`, `task_run_id`, `caused_by_event_id`, `cost_usd`, `created_at`).
+ * @returns The id of the created proposal.
+ */
 export async function writeArchiveProposal(
   db: DbLike,
   input: WriteArchiveProposalInput,

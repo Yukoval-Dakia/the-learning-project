@@ -38,6 +38,22 @@ async function defaultRunTaskFn(
   return { text: result.text };
 }
 
+/**
+ * Handle an active teaching turn for a teaching session: validate the request, record the user's message, plan and persist the agent's reply (including creating an inline question when present), and return the new messages and relevant session question state.
+ *
+ * The request body must include `text_md`. On validation failure an `ApiError` is raised and handled by the outer error handler. If planning or persistence fails with a `TeachingError`, the handler returns a JSON error object with status `404` for `learning_item_not_found` or `502` for other teaching errors.
+ *
+ * @param req - HTTP request whose JSON body contains `{ text_md: string }`
+ * @param ctx - Route context with `params` resolving to an object `{ id: string }` (the teaching session id)
+ * @returns An HTTP Response whose JSON body contains:
+ * - `user_message`: `{ id, role: 'user', text_md }`
+ * - `agent_message`: `{ id, role: 'agent', text_md, turn_kind, question? }` (question present when an inline question was created)
+ * - `suggested_next`: suggested next action from the planner
+ * - `was_idle`: whether the session was resumed from idle
+ * - `active_question_id`: current active question id for the session (or `null`)
+ * - `attempt_counts`: cumulative attempt counts for active questions
+ * In the `TeachingError` case the body is `{ error: <code>, message: <text> }` with status `404` or `502`.
+ */
 export async function POST(
   req: Request,
   ctx: { params: Promise<{ id: string }> },

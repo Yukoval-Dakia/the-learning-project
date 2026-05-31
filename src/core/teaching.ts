@@ -19,9 +19,10 @@
 export const TEACHING_CORRECTIVE_FAILURE_N = 3;
 
 /**
- * Pure trigger for AC-4: does the cumulative failure total warrant a corrective
- * redo chip? `>= N` (total, not consecutive — §4.3). Absence of a count (the
- * question-creation turn, no attempts yet) is `false` (proactive).
+ * Determines whether the cumulative failure count warrants showing a corrective redo chip.
+ *
+ * @param failureCount - Cumulative number of failures for the active question; `null` or `undefined` is treated as `0`.
+ * @returns `true` if the (treated) failure count is greater than or equal to the corrective threshold, `false` otherwise.
  */
 export function isCorrectiveRedo(failureCount: number | null | undefined): boolean {
   return (failureCount ?? 0) >= TEACHING_CORRECTIVE_FAILURE_N;

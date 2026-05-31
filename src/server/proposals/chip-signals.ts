@@ -30,11 +30,11 @@ export interface ChipAcceptKpi {
 }
 
 /**
- * Aggregate `accept_suggestion` (AcceptSuggestionChip) events by
- * `suggestion_kind`. `proactive_accept_count` is the acceptance metric and
- * EXCLUDES `corrective` (WHERE payload->>'suggestion_kind' <> 'corrective',
- * §5.2 / SK-7). `by_kind` keeps every kind for observability — only the headline
- * count is filtered, so a corrective chip-accept is auditable but uncounted.
+ * Aggregate accept_suggestion events by payload->>'suggestion_kind' and produce the KPI that excludes corrective accepts.
+ *
+ * Includes all observed suggestion kinds in `by_kind` for observability; `proactive_accept_count` is the sum of counts for kinds not equal to 'corrective'.
+ *
+ * @returns An object with `by_kind` — an array of per-kind counts — and `proactive_accept_count` — the sum of counts where `suggestion_kind !== 'corrective'`.
  */
 export async function getChipAcceptKpi(db: DbLike): Promise<ChipAcceptKpi> {
   const rows = await db

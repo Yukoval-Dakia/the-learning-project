@@ -52,12 +52,13 @@ const Body = z.object({
 });
 
 /**
- * Resolve `source_event_id` per ADR-0011 §2.1 when the caller did not supply it:
- *  - proactive chip → the agent `explain` event (turn_kind === 'explain'),
- *  - corrective chip → the agent `tool_use` event, modeled here as the latest
- *    agent `ask_check` teach_message (the failure-retry context).
- * Falls back to the latest agent teach_message of any turn_kind so the REQUIRED
- * `source_event_id` is always populated.
+ * Determine an agent event id to use as the `source_event_id` when the caller omits it.
+ *
+ * Chooses a preferred agent teach_message event based on `kind` — for `corrective` prefer a turn with `turn_kind === 'ask_check'`, otherwise prefer `turn_kind === 'explain'` — and falls back to the latest agent event if no preferred match exists.
+ *
+ * @param sessionId - The teaching session id to search events within
+ * @param kind - The suggestion kind which selects the preferred turn kind (`'corrective'` → prefer `'ask_check'`, otherwise prefer `'explain'`)
+ * @returns The resolved event id to use as the source anchor, or `null` if no suitable agent event is found
  */
 async function resolveSourceEventId(
   sessionId: string,
@@ -81,6 +82,16 @@ async function resolveSourceEventId(
   return fallback;
 }
 
+/**
+ * Handle POST /api/teaching-sessions/[id]/accept-chip: validate the request, ensure the session is active,
+ * resolve or verify the source event anchor, record an `accept_suggestion` chip event, and optionally accept a proposal.
+ *
+ * Validates the request body against the expected schema, uses the provided or derived `source_event_id`
+ * (returns 409 if it cannot be resolved), writes an event with `action: 'accept_suggestion'` and `subject_kind: 'chip'`,
+ * and, if `proposal_id` is present, invokes the proposal acceptance path.
+ *
+ * @returns An HTTP Response whose JSON body is `{ ok: true, event_id: string }` on success, or an error response on failure.
+ */
 export async function POST(
   req: Request,
   ctx: { params: Promise<{ id: string }> },

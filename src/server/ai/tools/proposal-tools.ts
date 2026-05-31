@@ -252,6 +252,13 @@ const ProposeKnowledgeEdgeOutputSchema = z.object({
 type ProposeKnowledgeEdgeInput = z.infer<typeof ProposeKnowledgeEdgeInputSchema>;
 type ProposeKnowledgeEdgeOutput = z.infer<typeof ProposeKnowledgeEdgeOutputSchema>;
 
+/**
+ * Proposes a knowledge-edge between two knowledge nodes, performing validation and cooldown/duplication checks before writing a proposal event.
+ *
+ * Performs input validation, existence and domain checks, tree-parent deduplication, live-edge duplication checks (direction-aware for symmetric relations), pending-proposal cooldown checks, optional agent-specific adaptive gate resolution, rubric quality validation, and finally writes an AI proposal when allowed.
+ *
+ * @returns A ProposeKnowledgeEdgeOutput describing either a skip status with a concrete reason (possible skips include `self_edge`, `unknown_node`, `cross_subject`, `parent_semantic_duplicate`, `duplicate_live_edge`, `duplicate_pending`, `rubric_rejected`) or `proposed` with the created `proposal_id` and the `cooldown_key`.
+ */
 async function proposeKnowledgeEdgeExecute(
   ctx: ToolContext,
   raw: ProposeKnowledgeEdgeInput,
@@ -615,6 +622,15 @@ function mutationPayload(input: KnowledgeMutationParsedInput): KnowledgeMutation
   } as KnowledgeMutationPayload;
 }
 
+/**
+ * Processes a knowledge mutation proposal by validating inputs, checking domain consistency,
+ * deduplicating pending proposals, and writing a new proposal event.
+ *
+ * @param ctx - The tool execution context containing database and caller information.
+ * @param raw - The raw input for the knowledge mutation proposal, including mutation type,
+ * reasoning, and optional evidence and suggestion kind.
+ * @returns An object indicating whether the proposal was created or skipped with a reason.
+ */
 async function proposeKnowledgeMutationExecute(
   ctx: ToolContext,
   raw: KnowledgeMutationInput,
@@ -1116,6 +1132,11 @@ const RecordProposalOutputSchema = z.object({
 type ProposeRecordLinksInput = z.infer<typeof ProposeRecordLinksInputSchema>;
 type RecordProposalOutput = z.infer<typeof RecordProposalOutputSchema>;
 
+/**
+ * Proposes new links for a learning record, ensuring all targets exist and avoiding duplicates.
+ *
+ * @returns The proposal ID and record ID if the proposal was created; otherwise, a skip status indicating why the proposal was not made.
+ */
 async function proposeRecordLinksExecute(
   ctx: ToolContext,
   raw: ProposeRecordLinksInput,
@@ -1197,6 +1218,11 @@ const ProposeRecordPromotionInputSchema = z.object({
 
 type ProposeRecordPromotionInput = z.infer<typeof ProposeRecordPromotionInputSchema>;
 
+/**
+ * Proposes a promotion for a learning record.
+ *
+ * @returns A record proposal result with `proposed`, `skipped:not_found`, or `skipped:duplicate_pending` status.
+ */
 async function proposeRecordPromotionExecute(
   ctx: ToolContext,
   raw: ProposeRecordPromotionInput,

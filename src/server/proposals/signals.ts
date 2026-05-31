@@ -173,6 +173,16 @@ export async function getProposalAcceptanceRates(
     .sort((a, b) => b.acceptance_rate - a.acceptance_rate || b.total - a.total);
 }
 
+/**
+ * Record an accept or dismiss decision for a proposal that has a cooldown key.
+ *
+ * If the proposal has no `payload.cooldown_key` the function is a no-op.
+ * Corrective proposals (where `proposal.payload.suggestion_kind === 'corrective'`) are gated so that an accept is ignored entirely, while a dismiss still updates the stored cooldown but does not contribute to KPI counts. The write is performed under an advisory transaction lock for the (kind, cooldown_key) key to serialize concurrent updates and to coordinate with snapshot rebuilds.
+ *
+ * @param proposal - The proposal source containing `kind` and `payload`, where `payload.cooldown_key` selects the signal row and `payload.suggestion_kind` may be `"corrective"`.
+ * @param decision - Either `'accept'` or `'dismiss'`.
+ * @param dismissReason - Optional user-facing reason to persist when recording a dismiss decision.
+ */
 export async function recordProposalDecisionSignal(
   db: DbLike,
   proposal: ProposalSignalSource,
@@ -214,6 +224,18 @@ export async function recordProposalDecisionSignal(
   });
 }
 
+/**
+ * Persist an accept or dismiss decision for a proposal's (kind, cooldown_key) row, updating counts, rate, and cooldown state.
+ *
+ * This inserts or upserts a row in `proposal_signals` for the given `proposal.kind` and `cooldownKey`. For an accept decision the function clears any existing cooldown; for a dismiss decision it sets `cooldown_until` and `dismiss_reason`. `accept_count` and `dismiss_count` are incremented according to the `decision` unless `countsTowardKpi` is `false`, in which case the count deltas are zeroed but the dismiss-path still writes cooldown and reason. The function computes an initial acceptance rate when creating a new row and treats a zero-total delta case as rate 0 to avoid 0/0.
+ *
+ * @param db - Database or transaction handle used for the write
+ * @param proposal - Proposal source providing `kind` (and optionally `suggestion_kind` in the payload)
+ * @param cooldownKey - The proposal's `cooldown_key` used to scope the signal row
+ * @param decision - Either `'accept'` or `'dismiss'` indicating the action to record
+ * @param dismissReason - Optional user-provided note to persist with a dismiss decision
+ * @param countsTowardKpi - When `false`, suppress incrementing `accept_count`/`dismiss_count` while still performing dismiss cooldown writes
+ */
 async function recordProposalDecisionSignalLocked(
   db: DbLike,
   proposal: ProposalSignalSource,
@@ -344,6 +366,15 @@ function newerRate(a: EventRow | null, b: EventRow): EventRow {
     : a;
 }
 
+/**
+ * Recomputes and writes the aggregated proposal_signals row for a proposal's (kind, cooldown_key) using historical events.
+ *
+ * Rebuilds accept/dismiss counts and acceptance_rate for the given proposal.kind and payload.cooldown_key, determines the key-wide latest decision to set `cooldown_until` and `dismiss_reason`, and inserts or updates the corresponding row in `proposal_signals`. The rebuild mirrors incremental gating: proposals marked `suggestion_kind === 'corrective'` do not contribute to accept or dismiss counts; corrective dismisses still participate in the key-wide latest-decision calculation (so they can set or extend cooldown), while corrective accepts do not clear an existing cooldown. If `proposal.payload.cooldown_key` is absent the function returns immediately. If the reconstructed total of counted decisions is zero (e.g., the key's decisions are only corrective and therefore gated out) the function returns without writing to the table.
+ *
+ * @param db - Database or transaction handle used to read events and write the aggregated row.
+ * @param proposal - The source proposal event info; its `payload.cooldown_key` identifies the aggregation key and its optional `payload.suggestion_kind` (`'corrective'`) is used to gate counting.
+ * @param dismissReason - Optional fallback dismiss reason to attach when the latest rate belongs to the triggering proposal and carries no user note.
+ */
 async function rebuildProposalDecisionSignal(
   db: DbLike,
   proposal: ProposalSignalSource,

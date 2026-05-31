@@ -124,6 +124,21 @@ export interface TeachingDrawerProps {
   onClose: () => void;
 }
 
+/**
+ * Right-side chat drawer that manages an interactive teaching conversation for a given learning item.
+ *
+ * Starts a teaching session on mount, renders the message feed and composer, polls session state every 30s,
+ * sends turns and end/accept-chip requests, and attempts a best-effort beacon or POST on unmount/pagehide
+ * to mark the session as ended or abandoned. Also exposes static suggestion chips and a dynamic redo chip
+ * whose behavior and label switch to a corrective accept-chip once cumulative failure counts reach the
+ * corrective threshold.
+ *
+ * @param learningItemId - Identifier of the learning item to drive the teaching session; required to start a session
+ * @param learningItemTitle - Human-readable title shown in the drawer header
+ * @param subjectProfile - Subject rendering profile used for message notation and display name
+ * @param onClose - Callback invoked when the drawer close button is pressed
+ * @returns The TeachingDrawer React element
+ */
 export function TeachingDrawer({
   learningItemId,
   learningItemTitle,

@@ -13,6 +13,16 @@ import { getActiveQuestionState } from '@/server/teaching/active-question';
 
 export const runtime = 'nodejs';
 
+/**
+ * Handle GET /api/teaching-sessions/[id]: fetch a conversation learning session, its ordered message events, and the current active question state.
+ *
+ * @param ctx - An object whose `params` promise resolves to `{ id: string }`, where `id` is the session id to fetch.
+ * @returns A JSON Response whose body contains:
+ *  - `session`: an object with `id`, `type`, `status`, `learning_item_id`, `started_at`, and `ended_at`.
+ *  - `messages`: an array of message objects ordered by creation time; each message has `id`, `role`, `text_md`, `turn_kind` (or `null`), and `created_at`.
+ *  - `active_question_id`: the id of the currently active question, or `null` if none.
+ *  - `attempt_counts`: a mapping from question id to cumulative attempt count (e.g., `Record<string, number>`).
+ */
 export async function GET(
   _req: Request,
   ctx: { params: Promise<{ id: string }> },

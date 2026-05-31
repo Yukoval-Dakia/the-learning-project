@@ -104,7 +104,19 @@ export interface WriteProposalEntry {
 // writeKnowledgeProposeEvent — single-point propose-event writer (replaces the
 // legacy writeDreamingProposal). Returns the new event id (which doubles as
 // the proposal id post-Step-9).
-// =============================================================================
+/**
+ * Creates and writes a knowledge proposal event (AI proposal or legacy experimental event) and returns the new event id.
+ *
+ * Depending on entry.payload.mutation the function:
+ * - stores a `knowledge_node` AI proposal for `propose_new` (requires `parent_id`),
+ * - stores an archive proposal for `archive` (using a legacy event override),
+ * - or stores a `knowledge_mutation` AI proposal and emits an `experimental:knowledge_<mutation>` override for other mutations (`reparent`, `merge`, `split`, etc.).
+ *
+ * @param db - Database client used to persist the event (passed-through to helper writers).
+ * @param entry - WriteProposalEntry describing the mutation payload, reasoning, optional evidence, actor, causal event, task run, cost, and optional `suggestion_kind` which, when present, is included in AI proposal payloads.
+ * @returns The newly created proposal/event id.
+ * @throws Error if `entry.payload.mutation === 'propose_new'` and `entry.payload.parent_id === null` (unsupported in this phase).
+ */
 
 export async function writeKnowledgeProposeEvent(
   db: DbLike,

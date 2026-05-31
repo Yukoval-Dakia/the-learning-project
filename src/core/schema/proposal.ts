@@ -186,6 +186,13 @@ export const AiProposalPayload = z.discriminatedUnion('kind', [
 export type AiProposalPayloadT = z.infer<typeof AiProposalPayload>;
 export type AiProposalPayloadInputT = z.input<typeof AiProposalPayload>;
 
+/**
+ * Validate and parse an untrusted value into an AI proposal payload.
+ *
+ * @param input - The unvalidated value to validate as an AI proposal payload
+ * @returns The validated AI proposal payload (`AiProposalPayloadT`)
+ * @throws {ZodError} If the input does not conform to the `AiProposalPayload` schema
+ */
 export function parseAiProposalPayload(input: unknown): AiProposalPayloadT {
   return AiProposalPayload.parse(input);
 }
@@ -194,7 +201,12 @@ export function parseAiProposalPayload(input: unknown): AiProposalPayloadT {
 // so the default-to-proactive rule lives in one place; the KPI gate
 // (signals.ts) and any future reader resolve the kind through this. A corrective
 // proposal must have explicitly set the field at emit (producer hard-set for
-// variant_question, or model-labeled via the propose-tool arg).
+/**
+ * Resolve the suggestion kind for a proposal payload, defaulting to 'proactive' when unspecified.
+ *
+ * @param payload - Object that may include an optional `suggestion_kind` field.
+ * @returns `payload.suggestion_kind` if present, otherwise `'proactive'`.
+ */
 export function resolveSuggestionKind(payload: {
   suggestion_kind?: SuggestionKindT;
 }): SuggestionKindT {
