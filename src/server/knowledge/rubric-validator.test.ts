@@ -124,6 +124,65 @@ async function seedEvidence(
   });
 }
 
+// A recent failure attempt whose cause comes from a user_cause event (NOT an
+// agent judge). The user_cause carries a non-empty `user_notes` so it counts as
+// the §4.2 "1 failure + explicit user note" strong path. No judge event is
+// written, so `hasExplicitJudgeAnalysis` is false — this isolates the user-note
+// axis of the two-event relaxation.
+async function seedUserCauseFailure(
+  attemptId: string,
+  knowledgeIds: string[],
+  ageDays: number,
+  userNotes: string,
+  causeCategory = 'concept',
+): Promise<void> {
+  const db = testDb();
+  const questionId = `q_${attemptId}`;
+  const createdAt = new Date(Date.now() - ageDays * DAY_MS);
+  await db.insert(question).values({
+    id: questionId,
+    kind: 'short_answer',
+    prompt_md: 'p',
+    reference_md: 'r',
+    knowledge_ids: knowledgeIds,
+    source: 'manual',
+    difficulty: 3,
+    created_at: createdAt,
+    updated_at: createdAt,
+  });
+  await writeEvent(db, {
+    id: attemptId,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'attempt',
+    subject_kind: 'question',
+    subject_id: questionId,
+    outcome: 'failure',
+    payload: {
+      answer_md: 'wrong',
+      answer_image_refs: [],
+      referenced_knowledge_ids: knowledgeIds,
+    },
+    created_at: createdAt,
+  });
+  await writeEvent(db, {
+    id: `uc_${attemptId}`,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'experimental:user_cause',
+    subject_kind: 'event',
+    subject_id: attemptId,
+    outcome: 'success',
+    payload: {
+      primary_category: causeCategory,
+      secondary_categories: [],
+      user_notes: userNotes,
+    },
+    caused_by_event_id: attemptId,
+    created_at: new Date(createdAt.getTime() + 500),
+  });
+}
+
 const AGENT = { isAgent: true, actorRef: 'agent:maintenance' };
 
 describe('validateProposalQuality — structural class (G1–G6)', () => {
@@ -466,6 +525,59 @@ describe('validateProposalQuality — relation predicates (§4.3)', () => {
     if (!v.ok) expect(v.gate).toBe('related_to_dumping_ground');
   });
 
+  // Codex re-review FIX 1 (§4.3 default branch) — derived_from fell to the
+  // default relation gate, which verified NO endpoint-touching evidence. Combined
+  // with the strong-via-shared-cause path, 2 unrelated same-cause failures (neither
+  // referencing from/to) passed. Now the default branch requires ≥1 in-window
+  // judge-backed failure referencing an endpoint, mirroring the other relations.
+  it('derived_from_no_endpoint_evidence — 2 same-cause failures reference neither endpoint', async () => {
+    // k_zhi and k_er are siblings (both children of k_wenyan) → NOT tree
+    // ancestor/descendant, so G6 does not fire. Both failures reference an
+    // unrelated node (k_df_other) with the SAME 'concept' cause → same-pattern →
+    // strong floor passes, but neither touches an endpoint → default gate rejects.
+    await testDb()
+      .insert(knowledge)
+      .values([
+        {
+          id: 'k_df_other',
+          name: '无关',
+          domain: null,
+          parent_id: 'k_wenyan',
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
+      ]);
+    await seedEvidence('e_df_unrel_1', ['k_df_other'], 1, 'concept');
+    await seedEvidence('e_df_unrel_2', ['k_df_other'], 2, 'concept');
+    const v = await validateProposalQuality(
+      edgePayload('k_zhi', 'k_er', 'derived_from', {
+        reasoning: 'attempt e_df_unrel judge cause concept，但都在 k_df_other 上。',
+        evidenceEventIds: ['e_df_unrel_1', 'e_df_unrel_2'],
+      }),
+      testDb(),
+      AGENT,
+    );
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.gate).toBe('derived_from_no_endpoint_evidence');
+  });
+
+  it('derived_from with ≥1 endpoint-referencing in-window judge-backed event passes (G6 ok)', async () => {
+    // Same sibling endpoints (no tree ancestry → G6 ok). Two same-pattern
+    // failures, at least one referencing an endpoint (k_zhi) → strong floor +
+    // endpoint-touching evidence → passes.
+    await seedEvidence('e_df_ok_1', ['k_zhi'], 1, 'concept');
+    await seedEvidence('e_df_ok_2', ['k_zhi'], 2, 'concept');
+    const v = await validateProposalQuality(
+      edgePayload('k_zhi', 'k_er', 'derived_from', {
+        reasoning: 'attempt e_df_ok judge cause concept，集中在 k_zhi，k_er 由其派生。',
+        evidenceEventIds: ['e_df_ok_1', 'e_df_ok_2'],
+      }),
+      testDb(),
+      AGENT,
+    );
+    expect(v).toEqual({ ok: true });
+  });
+
   it('prerequisite_no_order_evidence — no in-window judge-backed failure references an endpoint', async () => {
     // Strong evidence that references unrelated nodes only → no order evidence.
     await testDb()
@@ -494,6 +606,54 @@ describe('validateProposalQuality — relation predicates (§4.3)', () => {
     // 2 in-window judge-backed events exist (floor ok), but none reference an
     // endpoint → order-evidence predicate fails.
     if (!v.ok) expect(v.gate).toBe('prerequisite_no_order_evidence');
+  });
+});
+
+// Codex re-review FIX 4 (§4.2 single-event-strong path for the two-event
+// relations) — the prerequisite/contrasts_with 2-event relaxation only checked
+// AGENT judge analysis, not explicit user_cause.user_notes. computeEvidenceLevel
+// already treats "1 failure + explicit user note" as strong, so a user-note-
+// backed strong proposal was wrongly rejected by the 2-event gate. The
+// relaxation now honors explicit user_notes as an OR with judge analysis.
+describe('validateProposalQuality — user-note strong for two-event relations (FIX 4)', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await seedGraph();
+  });
+
+  it('prerequisite with 1 failure + explicit user note passes (NOT rejected for <2 events)', async () => {
+    // Single in-window failure, no agent judge — its cause is a user_cause with a
+    // non-empty user note (§4.2 "1 failure + explicit user note" → strong). The
+    // failure references an endpoint (k_zhi) so the order-evidence predicate is
+    // satisfied; the two-event relaxation must honor the user note.
+    await seedUserCauseFailure('e_un_pre', ['k_zhi'], 1, '我把 k_zhi 当成 k_er 的前置，反复搞混。');
+    const v = await validateProposalQuality(
+      edgePayload('k_zhi', 'k_er', 'prerequisite', {
+        reasoning: 'attempt e_un_pre 的 user_cause 说明 k_zhi 是 k_er 的学习前置。',
+        evidenceEventIds: ['e_un_pre'],
+      }),
+      testDb(),
+      AGENT,
+    );
+    expect(v).toEqual({ ok: true });
+  });
+
+  it('prerequisite with 1 failure + neither judge analysis nor user note is still rejected', async () => {
+    // Single failure whose user_cause carries an EMPTY user_notes and no agent
+    // judge analysis → computeEvidenceLevel yields medium (not strong) → rejected
+    // at the evidence floor before the relaxation even matters. Confirms the OR
+    // does not weaken the floor.
+    await seedUserCauseFailure('e_un_empty', ['k_zhi'], 1, '   ');
+    const v = await validateProposalQuality(
+      edgePayload('k_zhi', 'k_er', 'prerequisite', {
+        reasoning: 'attempt e_un_empty user_cause 无备注，judge 也没有分析。',
+        evidenceEventIds: ['e_un_empty'],
+      }),
+      testDb(),
+      AGENT,
+    );
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.gate).toBe('evidence_level');
   });
 });
 

@@ -302,6 +302,102 @@ describe('proposal lifecycle owner service', () => {
     expect(rateRows).toHaveLength(1);
   });
 
+  // P5.4 / YUK-143 (RB-8) — codex re-review FIX 3 (bypass). A folded
+  // `rubric_rejected` edge proposal (carrying `rubric_verdict: { ok:false }` and
+  // no chained rate) was decidable by id via decideKnowledgeEdgeProposal: the
+  // code slipped past the existing-rate idempotency guard and wrote the rate +
+  // knowledge_edge anyway, bypassing the rubric. The folded bucket must be
+  // truly non-executable.
+  it('decideKnowledgeEdgeProposal rejects a rubric_rejected proposal by id and inserts NOTHING', async () => {
+    const db = testDb();
+    await seedKnowledge(['k1', 'k2']);
+    // Write the propose event the way the Layer-1 fold does: a normal
+    // knowledge_edge propose event with a `rubric_verdict: { ok:false }` marker
+    // alongside `ai_proposal`, and NO chained rate.
+    await writeAiProposal(db, {
+      id: 'edge_rejected',
+      payload: {
+        kind: 'knowledge_edge',
+        target: { subject_kind: 'knowledge_edge', subject_id: null },
+        reason_md: '二者相关', // generic — the kind of reason the rubric folds
+        evidence_refs: [],
+        proposed_change: {
+          from_knowledge_id: 'k1',
+          to_knowledge_id: 'k2',
+          relation_type: 'related_to',
+          weight: 1,
+        },
+      },
+      event_override: {
+        action: 'propose',
+        subject_kind: 'knowledge_edge',
+        payload: {
+          from_knowledge_id: 'k1',
+          to_knowledge_id: 'k2',
+          relation_type: 'related_to',
+          weight: 1,
+          reasoning: '二者相关',
+          rubric_verdict: { ok: false, gate: 'reasoning_generic', reason: 'generic reasoning' },
+        },
+      },
+    });
+
+    await expect(
+      decideKnowledgeEdgeProposal(db, 'edge_rejected', { decision: 'accept' }),
+    ).rejects.toMatchObject({ code: 'not_pending', status: 409 });
+
+    // The bypass is closed: NO knowledge_edge row, NO rate event written.
+    const edges = await db
+      .select()
+      .from(knowledge_edge)
+      .where(eq(knowledge_edge.from_knowledge_id, 'k1'));
+    expect(edges).toHaveLength(0);
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'edge_rejected')));
+    expect(rateRows).toHaveLength(0);
+
+    // reverse / change_type are blocked the same way (no executable decision).
+    await expect(
+      decideKnowledgeEdgeProposal(db, 'edge_rejected', { decision: 'reverse' }),
+    ).rejects.toMatchObject({ code: 'not_pending', status: 409 });
+  });
+
+  it('decideKnowledgeEdgeProposal still accepts a genuinely pending edge proposal', async () => {
+    const db = testDb();
+    await seedKnowledge(['k1', 'k2']);
+    await writeAiProposal(db, {
+      id: 'edge_pending',
+      payload: {
+        kind: 'knowledge_edge',
+        target: { subject_kind: 'knowledge_edge', subject_id: null },
+        reason_md: 'k1 unlocks k2',
+        evidence_refs: [],
+        proposed_change: {
+          from_knowledge_id: 'k1',
+          to_knowledge_id: 'k2',
+          relation_type: 'prerequisite',
+          weight: 1,
+        },
+      },
+    });
+
+    const result = await decideKnowledgeEdgeProposal(db, 'edge_pending', { decision: 'accept' });
+    expect(result.edge_id).toBeTruthy();
+    if (!result.edge_id) throw new Error('missing edge_id');
+    const edges = await db
+      .select()
+      .from(knowledge_edge)
+      .where(eq(knowledge_edge.id, result.edge_id));
+    expect(edges).toHaveLength(1);
+    expect(edges[0]).toMatchObject({
+      from_knowledge_id: 'k1',
+      to_knowledge_id: 'k2',
+      relation_type: 'prerequisite',
+    });
+  });
+
   it('dismissAiProposal records a generic RateEvent for future proposal kinds', async () => {
     const db = testDb();
     await writeAiProposal(db, {

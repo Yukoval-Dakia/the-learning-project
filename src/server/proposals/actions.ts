@@ -323,6 +323,24 @@ export async function decideKnowledgeEdgeProposal(
     };
   }
 
+  // P5.4 / YUK-143 (RB-8) — the folded `rubric_rejected` bucket must be truly
+  // NON-EXECUTABLE. A rubric-rejected propose event carries no chained rate, so
+  // it slips past the `existingRate` idempotency guard above; without this check
+  // any caller with the propose event id could accept / reverse / change_type it
+  // and write the knowledge_edge anyway, bypassing the Layer-1 rubric. Reject any
+  // decision whose derived status is not `pending` (rubric_rejected, or any other
+  // terminal status: accepted/dismissed/stale that reached here without a matching
+  // rate row) BEFORE writing any rate or edge. A genuinely accepted/dismissed
+  // proposal re-decided with the SAME decision is handled idempotently above; a
+  // genuinely pending proposal is unaffected.
+  if (proposal && proposal.status !== 'pending') {
+    throw new ApiError(
+      'not_pending',
+      `proposal ${proposeEventId} is not pending (status=${proposal.status}); rubric-folded and terminal proposals are not executable`,
+      409,
+    );
+  }
+
   const now = new Date();
   const rateEventId = createId();
 
