@@ -429,14 +429,24 @@ Before implementing graph reader tools, create fixed fixtures that force useful 
 
 These fixtures test whether the agent can understand context, not just whether SQL returns rows.
 
-> **Executable form (P5.5 Phase 1 / YUK-180).** These four fixtures are gated as
-> code in `src/server/ai/tools/fixtures.test.ts` via the reusable
-> `assertAgentReadable` contract (`src/server/ai/tools/fixtures-assert.ts`). The
-> table above is the spec; the test is the gate. When a tool's `Output` shape,
-> status enum, key-insight fields, or `costClass` changes, update the matching
-> scenario in `fixtures.test.ts` in the same change (LD-7 — process expectation,
-> not new automation). The remaining six brief-named scenarios + multi-subject
-> corpus are Phase 2, deferred and blocked on subject-graph seeding (P5.8).
+> **Executable form (P5.5 Phase 1 / YUK-180).** All four fixtures above are gated
+> as code in `src/server/ai/tools/fixtures.test.ts` via the reusable
+> `assertAgentReadable` contract (`src/server/ai/tools/fixtures-assert.ts`), each
+> at its §5-named tool surface: `wenyan-zhi-confusion` → `query_knowledge`
+> (scenario v), `wenyan-translation-prereq` → `expand_knowledge_subgraph`
+> (scenario vi), `wenyan-zero-result` → a knowledge-filtered `query_mistakes`
+> (scenario ii), `edge-duplicate` → `propose_knowledge_edge` ×2 (scenario iii).
+> The same test file ALSO gates two ADDITIONAL multi-tool Layer-8 chains beyond
+> these four rows — the `query_mistakes → get_attempt_context → attribute_mistake
+> → propose_variant` diagnostic chain (scenario i, which also answers the
+> zhi-confusion user question) and the `get_learning_item_context →
+> propose_learning_item_completion` lifecycle chain (scenario iv) — so the test
+> gates a SUPERSET of these four §5 fixtures, not exactly four. The table above is
+> the spec; the test is the gate. When a tool's `Output` shape, status enum,
+> key-insight fields, or `costClass` changes, update the matching scenario in
+> `fixtures.test.ts` in the same change (LD-7 — process expectation, not new
+> automation). The remaining brief-named scenarios + multi-subject corpus are
+> Phase 2, deferred and blocked on subject-graph seeding (P5.8).
 
 ---
 
