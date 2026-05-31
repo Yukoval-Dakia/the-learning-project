@@ -8,7 +8,7 @@
 // (CLAUDE.md partition rules: DB-touching → db partition).
 
 import { newId } from '@/core/ids';
-import { event, knowledge, memory_brief_note } from '@/db/schema';
+import { event, knowledge, learning_record, memory_brief_note } from '@/db/schema';
 import { BRIEF_REFRESH_BUDGET } from '@/server/ai/tools/budgets';
 import { batchResolveSubjectIds } from '@/server/knowledge/subject-resolution';
 import { eq } from 'drizzle-orm';
@@ -74,6 +74,59 @@ async function insertAttempt(opts: {
   return id;
 }
 
+// Insert an `experimental:record_capture` event + its linked learning_record.
+// The capture event's payload carries NO referenced_knowledge_ids (§5-Q2) — the
+// subject is resolved by JOINing the record (event.subject_id === record.id) and
+// reading the record's knowledge_ids (or its explicit subject_id column).
+async function insertCapture(opts: {
+  id?: string;
+  recordId?: string;
+  recordKnowledgeIds?: string[];
+  recordSubjectId?: string | null;
+  createdAt: Date;
+}): Promise<{ eventId: string; recordId: string }> {
+  const eventId = opts.id ?? newId();
+  const recordId = opts.recordId ?? newId();
+  await testDb()
+    .insert(learning_record)
+    .values({
+      id: recordId,
+      kind: 'note',
+      content_md: 'captured note',
+      source: 'user',
+      capture_mode: 'manual',
+      activity_kind: 'note',
+      processing_status: 'raw',
+      origin_event_id: eventId,
+      subject_id: opts.recordSubjectId ?? null,
+      knowledge_ids: opts.recordKnowledgeIds ?? [],
+      created_at: opts.createdAt,
+      updated_at: opts.createdAt,
+    });
+  await testDb()
+    .insert(event)
+    .values({
+      id: eventId,
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:record_capture',
+      subject_kind: 'record',
+      subject_id: recordId,
+      outcome: 'success',
+      // Capture payload has NO referenced_knowledge_ids by contract.
+      payload: {
+        record_kind: 'note',
+        activity_kind: 'note',
+        capture_mode: 'manual',
+        summary_md: 'captured note',
+      },
+      affected_scopes: ['global'],
+      created_at: opts.createdAt,
+    });
+  return { eventId, recordId };
+}
+
 async function seedBriefRow(opts: {
   subjectId: string;
   refreshedAt: Date | null;
@@ -97,9 +150,9 @@ async function seedBriefRow(opts: {
 // (an untyped vi.fn() infers an empty-arg signature → mock.calls is [][]).
 function bossSendMock() {
   return {
-    send: vi.fn<(name: string, data: { scope_key: string }, options?: object) => Promise<string>>(
-      async () => 'job-1',
-    ),
+    send: vi.fn<
+      (name: string, data: { scope_key: string; now?: string }, options?: object) => Promise<string>
+    >(async () => 'job-1'),
   };
 }
 
@@ -180,6 +233,29 @@ describe('listActiveSubjectsSinceRefresh', () => {
     expect(active.map((a) => a.subjectId).sort()).toEqual(['math', 'wenyan']);
   });
 
+  // FIX 2 (PR #218) — a record_capture carries NO referenced_knowledge_ids in its
+  // payload; the subject must be resolved by JOINing the linked learning_record
+  // (event.subject_id === record.id) and reading the record's knowledge_ids.
+  // Before the fix it resolved to the DEFAULT subject (wenyan) — a math capture
+  // wrongly refreshed subject:wenyan. After: it resolves to subject:math.
+  it('record_capture resolves its subject from the linked record (math), not the default subject', async () => {
+    await seedKnowledge('k-math', 'math');
+    await insertCapture({ recordKnowledgeIds: ['k-math'], createdAt: daysAgo(2) });
+
+    const active = await listActiveSubjectsSinceRefresh(testDb(), { now: NOW });
+    expect(active.map((a) => a.subjectId).sort()).toEqual(['math']);
+  });
+
+  // FIX 2 (PR #218) — a record with no knowledge_ids but an explicit subject_id
+  // column resolves to that subject_id directly.
+  it('record_capture honours the record explicit subject_id when it has no knowledge_ids', async () => {
+    await seedKnowledge('k-math', 'math');
+    await insertCapture({ recordSubjectId: 'math', recordKnowledgeIds: [], createdAt: daysAgo(2) });
+
+    const active = await listActiveSubjectsSinceRefresh(testDb(), { now: NOW });
+    expect(active.map((a) => a.subjectId).sort()).toEqual(['math']);
+  });
+
   it('caps each subject event window at maxEventsPerBrief, most recent first', async () => {
     await seedKnowledge('k-wenyan', 'wenyan');
     const cap = BRIEF_REFRESH_BUDGET.maxEventsPerBrief;
@@ -205,18 +281,52 @@ describe('buildMemoryBriefSweepHandler — per-subject layer', () => {
     await resetDb();
   });
 
-  it('enqueues regen for an active subject after the global stale loop (BR-6 untouched)', async () => {
+  it('enqueues regen for an active subject via the capped per-subject path', async () => {
     await seedKnowledge('k-wenyan', 'wenyan');
     await seedBriefRow({ subjectId: 'wenyan', refreshedAt: daysAgo(5) });
     await insertAttempt({ knowledgeIds: ['k-wenyan'], createdAt: daysAgo(1) });
     const boss = bossSendMock();
 
-    await buildMemoryBriefSweepHandler(testDb(), boss)([]);
+    await buildMemoryBriefSweepHandler(testDb(), boss, { now: NOW })([]);
 
-    // The stale subject:wenyan brief row (>24h) is also caught by
-    // listStaleBriefScopes, but enqueueBriefRegen dedups per scope_key — assert
-    // the scope was enqueued at least once.
+    // The stale subject:wenyan brief row (>24h) is NO LONGER caught by
+    // listStaleBriefScopes (FIX 1 excludes subject:* from the stale loop), so the
+    // ONLY way it is enqueued is the capped per-subject path — and it is active
+    // (attempt at 1d > refreshed_at at 5d).
     expect(enqueuedScopeKeys(boss)).toContain('subject:wenyan');
+  });
+
+  // FIX 1 (PR #218) — the stale loop must NOT enqueue subject:* scopes. A stale
+  // global row stays on the stale path (BR-6); a stale subject row is enqueued
+  // ONLY if active, via the capped per-subject path. Here the subject is DORMANT
+  // (no activity since its refresh) so it must not be enqueued at all, while the
+  // stale global row IS enqueued via the stale loop.
+  it('stale loop enqueues global but NOT a dormant stale subject row (maxSubjectsPerRun not bypassed)', async () => {
+    await seedKnowledge('k-wenyan', 'wenyan');
+    // Stale global brief row (>24h) → stale path.
+    await testDb()
+      .insert(memory_brief_note)
+      .values({
+        id: 'memory_brief:global',
+        scope_key: 'global',
+        subject_id: null,
+        refreshed_at: daysAgo(3),
+        latest_evidence_at: daysAgo(3),
+        created_at: daysAgo(5),
+        updated_at: daysAgo(3),
+      });
+    // Stale subject:wenyan brief row (>24h) but DORMANT (last activity 5d ago,
+    // older than its 2d refresh) → must NOT be enqueued by the stale loop, and not
+    // active so the per-subject path skips it too.
+    await seedBriefRow({ subjectId: 'wenyan', refreshedAt: daysAgo(2) });
+    await insertAttempt({ knowledgeIds: ['k-wenyan'], createdAt: daysAgo(5) });
+
+    const boss = bossSendMock();
+    await buildMemoryBriefSweepHandler(testDb(), boss, { now: NOW })([]);
+
+    const enqueued = enqueuedScopeKeys(boss);
+    expect(enqueued).toContain('global');
+    expect(enqueued).not.toContain('subject:wenyan');
   });
 
   // NOTE: the >maxSubjectsPerRun top-N + defer behavior is unit-tested against
@@ -233,7 +343,7 @@ describe('buildMemoryBriefSweepHandler — per-subject layer', () => {
     await insertAttempt({ knowledgeIds: ['k-phys'], createdAt: daysAgo(3) });
 
     const boss = bossSendMock();
-    await buildMemoryBriefSweepHandler(testDb(), boss)([]);
+    await buildMemoryBriefSweepHandler(testDb(), boss, { now: NOW })([]);
     const subjectEnqueued = enqueuedScopeKeys(boss)
       .filter((s) => s.startsWith('subject:'))
       .sort();
@@ -252,6 +362,59 @@ describe('buildMemoryBriefSweepHandler — per-subject layer', () => {
     const sorted = [...active].sort((a, b) => b.maxCreatedAt.getTime() - a.maxCreatedAt.getTime());
     expect(sorted.map((a) => a.subjectId)).toEqual(['wenyan', 'math', 'physics']);
   });
+
+  // FIX 3+4 (PR #218) — a never-built subject whose ONLY qualifying event sits
+  // near the 30d lookback edge. The sweep detects it active at NOW and threads
+  // NOW into the regen job. If regen re-read the clock at job-run time (T+δ, after
+  // the event has crossed the 30d floor), it would load an empty window and skip
+  // → permanently missed. Sharing the sweep's NOW keeps detection and reload on
+  // the SAME floor, so the brief refreshes. This test pins the contract: the sweep
+  // stamps NOW onto the job payload, and the regen handler consuming that
+  // job-carried NOW loads the near-edge event and builds the brief (the happy-path
+  // contract — the production guarantee is that regen prefers job.data.now over a
+  // fresh clock; a drifted-clock counterfactual would need system-clock mocking).
+  it('never-built subject with an event near the 30d edge still refreshes when sweep+regen share now', async () => {
+    await seedKnowledge('k-math', 'math');
+    // Event just INSIDE the 30d window at NOW (29.9d ago).
+    const nearEdge = new Date(NOW.getTime() - (30 * 24 * 60 * 60 * 1000 - 60 * 60 * 1000));
+    await insertAttempt({
+      knowledgeIds: ['k-math'],
+      createdAt: nearEdge,
+      affectedScopes: ['global', 'topic:k-math'],
+    });
+
+    // Sweep at NOW → enqueues subject:math carrying now=NOW.
+    const boss = bossSendMock();
+    await buildMemoryBriefSweepHandler(testDb(), boss, { now: NOW })([]);
+    const mathCall = boss.send.mock.calls.find((c) => c[1].scope_key === 'subject:math');
+    expect(mathCall).toBeDefined();
+    // The enqueued job carries the sweep's NOW (the fix's payload contract).
+    expect(mathCall?.[1].now).toBe(NOW.toISOString());
+
+    // Run the regen handler with the job payload's NOW (= the sweep's NOW). The
+    // event (29.9d at NOW) is loaded and the never-built brief is built.
+    const generate = fakeGenerate();
+    const handler = buildMemoryBriefRegenHandler(testDb(), {
+      memoryClient: noFactsClient,
+      generateBrief: generate,
+    });
+    const mathJob = [
+      { data: { scope_key: 'subject:math', now: mathCall?.[1].now } } as Job<{
+        scope_key: string;
+        now?: string;
+      }>,
+    ];
+    await handler(mathJob);
+
+    expect(generate).toHaveBeenCalledTimes(1);
+    const briefRow = await testDb()
+      .select()
+      .from(memory_brief_note)
+      .where(eq(memory_brief_note.scope_key, 'subject:math'));
+    expect(briefRow).toHaveLength(1);
+    expect(briefRow[0].latest_evidence_at?.getTime()).toBe(nearEdge.getTime());
+    expect(briefRow[0].evidence_count).toBe(1);
+  });
 });
 
 describe('buildMemoryBriefRegenHandler — BR-10 subject branch', () => {
@@ -259,8 +422,15 @@ describe('buildMemoryBriefRegenHandler — BR-10 subject branch', () => {
     await resetDb();
   });
 
-  function regenJob(scopeKey: string): Job<{ scope_key: string }>[] {
-    return [{ data: { scope_key: scopeKey } } as Job<{ scope_key: string }>];
+  // Drive the regen handler with the fixed NOW (ISO) so all time-based floors are
+  // deterministic regardless of wall-clock drift past the lookback window.
+  function regenJob(scopeKey: string): Job<{ scope_key: string; now?: string }>[] {
+    return [
+      { data: { scope_key: scopeKey, now: NOW.toISOString() } } as Job<{
+        scope_key: string;
+        now?: string;
+      }>,
+    ];
   }
 
   it('subject brief is NON-EMPTY from referenced_knowledge_ids while affected_scopes loader returns 0 rows', async () => {
@@ -512,8 +682,14 @@ describe('buildMemoryBriefRegenHandler — BR-10 subject branch', () => {
     });
     // Same batch, two jobs (mirrors batchSize>1 drain; correct at batchSize:1 too).
     await handler([
-      { data: { scope_key: 'subject:wenyan' } } as Job<{ scope_key: string }>,
-      { data: { scope_key: 'subject:math' } } as Job<{ scope_key: string }>,
+      { data: { scope_key: 'subject:wenyan', now: NOW.toISOString() } } as Job<{
+        scope_key: string;
+        now?: string;
+      }>,
+      { data: { scope_key: 'subject:math', now: NOW.toISOString() } } as Job<{
+        scope_key: string;
+        now?: string;
+      }>,
     ]);
 
     const rows = await testDb().select().from(memory_brief_note);

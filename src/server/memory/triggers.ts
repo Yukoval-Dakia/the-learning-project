@@ -95,11 +95,23 @@ export async function enqueueEventMemoryIngest(
   await boss.send(MEMORY_EVENT_INGEST_QUEUE, { event_id: eventId }, options);
 }
 
-export async function enqueueBriefRegen(boss: Pick<BossLike, 'send'>, scopeKey: string) {
+export async function enqueueBriefRegen(
+  boss: Pick<BossLike, 'send'>,
+  scopeKey: string,
+  // P5.2 (PR #218 fix) — optional stable sweep timestamp (ISO). The subject
+  // regen path floors its event reload at `now - lookbackDays` for a never-built
+  // subject; threading the SWEEP's `now` (rather than letting regen re-read the
+  // clock at job-run time) closes the race where an event near the 30d lookback
+  // edge is detected at sweep time T but ages out by regen time T+δ. Global jobs
+  // pass no `now` (global path is clock-independent / unchanged).
+  now?: Date,
+) {
   await boss.send(
     MEMORY_BRIEF_REGEN_QUEUE,
-    { scope_key: scopeKey },
+    now ? { scope_key: scopeKey, now: now.toISOString() } : { scope_key: scopeKey },
     {
+      // singletonKey unchanged — per-scope dedup must still collapse the stale
+      // loop's enqueue (if any) and the per-subject enqueue into one job.
       singletonKey: `memory.regen.${scopeKey}`,
       singletonSeconds: REGEN_SINGLETON_SECONDS,
       singletonNextSlot: true,
@@ -137,7 +149,7 @@ export function buildMemoryBriefRegenHandler(
     memoryClient?: Pick<MemoryClient, 'search'>;
     generateBrief: GenerateBrief;
   },
-): (jobs: Job<{ scope_key: string }>[]) => Promise<void> {
+): (jobs: Job<{ scope_key: string; now?: string }>[]) => Promise<void> {
   let memoryClient = deps.memoryClient;
   return async (jobs) => {
     memoryClient ??= createMemoryClient();
@@ -158,12 +170,23 @@ export function buildMemoryBriefRegenHandler(
       // active subject. The subject path instead reads a knowledge-resolved
       // event window (the SAME resolution as the activity-detection sweep) and
       // gates on a KNOWLEDGE-resolved freshness check — never the affected_scopes
-      // one. The active-subject sweep already filtered to fresh subjects, but
-      // the global stale-sweep (listStaleBriefScopes) also enqueues dormant
-      // subject rows older than 24h; the guard skips those (BR-2: no LLM call,
-      // no refreshed_at bump for a dormant subject).
+      // one. The active-subject sweep already filtered to fresh subjects, and
+      // (since PR #218 FIX 1) listStaleBriefScopes excludes `subject:*`, so the
+      // stale loop no longer enqueues dormant subjects. The guard is retained as
+      // defense-in-depth: a pg-boss singleton re-fire within the dedup window, or
+      // a refreshed_at-vs-latest_evidence_at skew, could still hand this branch a
+      // subject with no genuinely new evidence; the guard makes that a clean skip
+      // (BR-2: no LLM call, no refreshed_at bump for a dormant subject).
       if (scopeKey.startsWith(SUBJECT_SCOPE_PREFIX)) {
         const subjectId = scopeKey.slice(SUBJECT_SCOPE_PREFIX.length);
+        // P5.2 (PR #218 fix) — reuse the SWEEP's `now` (threaded via the job
+        // payload) rather than re-reading the clock here. For a never-built
+        // subject the floor is `now - lookbackDays`; if regen recomputed it with a
+        // fresh clock at job-run time (T+δ), an event the sweep detected near the
+        // 30d edge could age out → empty window → silent miss. Sharing the sweep's
+        // `now` keeps detection and reload on the SAME floor. Falls back to a fresh
+        // clock only if the job carries no `now` (e.g., a job from before this fix).
+        const now = job.data.now ? new Date(job.data.now) : new Date();
         // loadSubjectBriefEvents floors at THIS subject's own brief refreshed_at
         // (lookbackDays only as the never-built fallback), the SAME
         // subjectEventFloor predicate the detection sweep uses — so any subject
@@ -171,6 +194,7 @@ export function buildMemoryBriefRegenHandler(
         // starved by a flat now-30d floor.
         const events = await loadSubjectBriefEvents(db, subjectId, {
           lookbackDays: BRIEF_REFRESH_LOOKBACK_DAYS,
+          now,
         });
         if (!(await subjectScopeHasNewEvidence(db, scopeKey, events))) continue;
         await regenerateMemoryBrief({
@@ -199,12 +223,22 @@ export function buildMemoryBriefRegenHandler(
 export function buildMemoryBriefSweepHandler(
   db: Db,
   boss: Pick<BossLike, 'send'>,
+  // P5.2 (PR #218 fix) — optional injected `now`. Computed ONCE per sweep and
+  // shared across detection + the per-subject regen jobs it enqueues, so a
+  // never-built subject's 30d lookback floor is identical at detection time and
+  // reload time (closes the 30d-edge race; also makes fixed-NOW tests
+  // deterministic regardless of wall-clock drift). Defaults to a fresh clock.
+  opts?: { now?: Date },
 ): (jobs: Job<object>[]) => Promise<void> {
   return async () => {
-    // BR-6 — global + any existing stale brief rows: unchanged 24h-stale gate.
-    // The global brief is always enqueued via this loop and is NOT subject to
-    // maxSubjectsPerRun.
-    for (const scopeKey of await listStaleBriefScopes(db)) {
+    const now = opts?.now ?? new Date();
+
+    // BR-6 — global + any existing stale (non-subject) brief rows: unchanged
+    // 24h-stale gate. `listStaleBriefScopes` now EXCLUDES `subject:*` rows
+    // (brief.ts), so subject refresh is owned entirely by the capped per-subject
+    // path below and is never enqueued uncapped via this loop. The global brief
+    // is always enqueued here and is NOT subject to maxSubjectsPerRun.
+    for (const scopeKey of await listStaleBriefScopes(db, now)) {
       await enqueueBriefRegen(boss, scopeKey);
     }
 
@@ -213,16 +247,17 @@ export function buildMemoryBriefSweepHandler(
     // refreshed_at (or never-built within the lookback window), sort by activity
     // recency DESC, and enqueue only the top maxSubjectsPerRun (BR-9). Deferred
     // subjects remain active and are eligible again next run (no starvation).
-    // enqueueBriefRegen dedups per scope_key on a 6-min singleton window, so a
-    // subject also caught by listStaleBriefScopes is enqueued at most once.
+    // enqueueBriefRegen dedups per scope_key on a 6-min singleton window.
     const activeSubjects = await listActiveSubjectsSinceRefresh(db, {
       lookbackDays: BRIEF_REFRESH_LOOKBACK_DAYS,
+      now,
     });
     for (const subject of selectSubjectsForRun(
       activeSubjects,
       BRIEF_REFRESH_BUDGET.maxSubjectsPerRun,
     )) {
-      await enqueueBriefRegen(boss, subject.scopeKey);
+      // Thread the sweep's `now` so the regen job reloads on the SAME 30d floor.
+      await enqueueBriefRegen(boss, subject.scopeKey, now);
     }
   };
 }
