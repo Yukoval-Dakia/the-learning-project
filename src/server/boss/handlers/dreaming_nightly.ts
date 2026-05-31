@@ -138,7 +138,9 @@ const DREAMING_ACTABLE_KINDS = new Set([
 // UP to the per-kind acceptance RATE the existing feed surfaces (edge cells now
 // split by relation, so they must be re-summed). This keeps the all-kind rate a
 // strict SUPERSET-compatible subset of the old behavior. Sorted by rate DESC,
-// total DESC, matching getProposalAcceptanceRates.
+// then total (accept+dismiss) DESC — matching getProposalAcceptanceRates — then
+// kind ASC as a final deterministic tiebreak so rate-ties don't keep
+// small-sample kinds nondeterministically (CodeRabbit C3).
 function rollUpToPerKindRate(
   digest: ProposalFeedbackCell[],
 ): Array<{ kind: string; acceptance_rate: number; accept_count: number; dismiss_count: number }> {
@@ -159,7 +161,12 @@ function rollUpToPerKindRate(
         acceptance_rate: total === 0 ? 0 : agg.accept_count / total,
       };
     })
-    .sort((a, b) => b.acceptance_rate - a.acceptance_rate);
+    .sort(
+      (a, b) =>
+        b.acceptance_rate - a.acceptance_rate ||
+        b.accept_count + b.dismiss_count - (a.accept_count + a.dismiss_count) ||
+        a.kind.localeCompare(b.kind),
+    ); // rate DESC, then total (accept+dismiss) DESC, then kind ASC for determinism
 }
 
 function buildDreamingInput(
@@ -196,9 +203,13 @@ function buildDreamingInput(
     // scoped to the kinds Dreaming can ACT on (DREAMING_ACTABLE_KINDS). The
     // all-kind RATE above stays the background bias for every kind; the REASON
     // fields (top_dismiss_reasons / top_rubric_gates) are only fed for actable
-    // kinds — edge cells (knowledge_edge) are excluded because Dreaming cannot
-    // propose edges. Bounded by PROPOSAL_FEEDBACK_BUDGET.maxKindRelations (the
-    // digest is already sorted + capped). Empty on cold start → no-op.
+    // kinds. knowledge_edge IS actable here — DREAMING_TOOLS spreads
+    // KNOWLEDGE_REVIEW_TOOLS (allowlists.ts), which grants propose_knowledge_edge,
+    // so the edge cell (relation + top_rubric_gates) reaches Dreaming; only kinds
+    // outside DREAMING_ACTABLE_KINDS are dropped so no prompt budget is spent on a
+    // kind Dreaming cannot propose (spec §3.2). Bounded by
+    // PROPOSAL_FEEDBACK_BUDGET.maxKindRelations (the digest is already sorted +
+    // capped). Empty on cold start → no-op.
     proposal_feedback: feedbackDigest
       .filter((cell) => DREAMING_ACTABLE_KINDS.has(cell.kind))
       .map((cell) => ({

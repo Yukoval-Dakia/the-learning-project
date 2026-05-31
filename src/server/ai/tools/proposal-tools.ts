@@ -20,6 +20,7 @@ import {
   learning_record,
   question,
 } from '@/db/schema';
+import { writeToolCallLog } from '@/server/ai/log';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { runVariantGen } from '@/server/boss/handlers/variant_gen';
 import { getFailureAttemptById, getJudgeForAttempt } from '@/server/events/queries';
@@ -340,15 +341,50 @@ async function proposeKnowledgeEdgeExecute(
   // `(knowledge_edge, relation_type)` cell. Only meaningful for agents (the L1
   // evidence floor + rescue is agent-only); for the user path the bump is inert
   // because the rescue branch never runs. Cold-start / below-threshold → no-op.
-  const adaptive =
-    ctx.callerActor.kind === 'agent'
-      ? await resolveEdgeGateBump(
-          ctx.db,
-          input.relation_type,
-          PROPOSAL_FEEDBACK_BUDGET,
-          PROPOSAL_GATE_BIAS_CONFIG,
-        )
-      : undefined;
+  //
+  // ND-5 (additive-only): the L2 bump is an OPTIONAL soft layer. A digest/query
+  // error here MUST NOT become a hard failure that blocks the pure-L1
+  // validateProposalQuality below — that would suppress L1's signal-driven
+  // proposals. Guard the call so any error downgrades `adaptive` to undefined
+  // (no-op, identical to cold start) and the L1 floor + downstream still run.
+  let adaptive: Awaited<ReturnType<typeof resolveEdgeGateBump>> | undefined;
+  if (ctx.callerActor.kind === 'agent') {
+    try {
+      adaptive = await resolveEdgeGateBump(
+        ctx.db,
+        input.relation_type,
+        PROPOSAL_FEEDBACK_BUDGET,
+        PROPOSAL_GATE_BIAS_CONFIG,
+      );
+    } catch (bumpErr) {
+      adaptive = undefined;
+      // Evidence-first (CLAUDE.md): the soft-layer downgrade is traceable. Log
+      // via the AI action logger; the log write itself must never break the
+      // tool path, so swallow log errors with a console fallback (mirrors the
+      // mcp-bridge writeToolCallLog guard).
+      const errorReason = bumpErr instanceof Error ? bumpErr.message : String(bumpErr);
+      try {
+        await writeToolCallLog(ctx.db, {
+          task_run_id: ctx.taskRunId,
+          task_kind: ctx.callerActor.ref,
+          tool_name: 'propose_knowledge_edge:resolveEdgeGateBump',
+          effect: 'read',
+          input_json: { relation_type: input.relation_type },
+          output_json: { adaptive_downgraded: true },
+          error_reason: errorReason,
+          iteration: 0,
+          latency_ms: 0,
+          cost: 0,
+        });
+      } catch (logErr) {
+        console.error('[propose_knowledge_edge] adaptive-bump downgrade log failed', {
+          task_run_id: ctx.taskRunId,
+          bump_error: errorReason,
+          err: logErr,
+        });
+      }
+    }
+  }
 
   // P5.4 / YUK-143 (RB-1) — shared rubric floor before the write. Agents are
   // strict; user-edited proposals (kind !== 'agent') run structural-only.
