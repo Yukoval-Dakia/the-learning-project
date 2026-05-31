@@ -26,10 +26,19 @@ import {
   resolveDomainToolNames,
   resolveMcpAllowedTools,
 } from '@/server/ai/tools/allowlists';
-import { resolveContextBudget } from '@/server/ai/tools/budgets';
+import { PROPOSAL_FEEDBACK_BUDGET, resolveContextBudget } from '@/server/ai/tools/budgets';
 import { ContextBudgetTracker } from '@/server/ai/tools/context-throttle';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
+// P5.4-L2 / YUK-174 (Facet A, §3.3) — feed the per-(kind, relation) accept-
+// learned reason digest into the Copilot run input, EDGE-scoped (Copilot
+// proposes knowledge_edge, COPILOT_TOOLS). Explicitly truncated to
+// PROPOSAL_FEEDBACK_BUDGET.maxSerializedChars at READ TIME — the ContextBudgetTracker
+// gates the tool-call loop, NOT initial-input chars (codex#3). Cold-start inert.
+import {
+  type ProposalFeedbackCell,
+  getProposalFeedbackDigest,
+} from '@/server/proposals/adaptive-bias';
 
 export const COPILOT_CHAT_TRIGGER_KINDS = ['chat', 'chip'] as const;
 export type CopilotChatTriggerKind = (typeof COPILOT_CHAT_TRIGGER_KINDS)[number];
@@ -69,12 +78,67 @@ type RunAgentTaskFn = (
 ) => Promise<RunTaskResult>;
 type BuildMcpServerFn = typeof buildMcpServerFromRegistry;
 type WriteEventFn = (db: Db, input: WriteEventInput) => Promise<string>;
+// P5.4-L2 / YUK-174 (Facet A) — swappable feedback-digest reader (unit tests
+// inject a fixture / [] since db is a stub). Defaults to getProposalFeedbackDigest.
+type LoadProposalFeedbackFn = (db: Db) => Promise<ProposalFeedbackCell[]>;
 
 export interface CopilotChatDeps {
   runAgentTaskFn?: RunAgentTaskFn;
   buildMcpServerFn?: BuildMcpServerFn;
   writeEventFn?: WriteEventFn;
+  // P5.4-L2 / YUK-174 — defaults to getProposalFeedbackDigest. The unit test
+  // injects [] so the {}-stub db is never queried (cold-start no-op).
+  loadProposalFeedbackFn?: LoadProposalFeedbackFn;
   now?: () => Date;
+}
+
+// P5.4-L2 / YUK-174 (Facet A, §3.3) — Copilot proposes ONLY knowledge_edge
+// (COPILOT_TOOLS), so its digest scope is edge cells. Build the edge-scoped cell
+// list, order reason-bearing cells FIRST, then truncate the SERIALIZED field to
+// PROPOSAL_FEEDBACK_BUDGET.maxSerializedChars at read time (the ContextBudgetTracker
+// does NOT account initial-input chars — codex#3): drop whole cells from the
+// least-actionable tail until the serialized JSON fits, so the field stays
+// structured and bounded regardless of the tracker. Cold start (no edge cells) → [].
+function scopeCopilotProposalFeedback(
+  digest: ProposalFeedbackCell[],
+): Array<
+  Pick<
+    ProposalFeedbackCell,
+    'kind' | 'relation' | 'acceptance_rate' | 'top_dismiss_reasons' | 'top_rubric_gates'
+  >
+> {
+  const edgeCells = digest
+    .filter((cell) => cell.kind === 'knowledge_edge')
+    .map((cell) => ({
+      kind: cell.kind,
+      relation: cell.relation,
+      acceptance_rate: cell.acceptance_rate,
+      top_dismiss_reasons: cell.top_dismiss_reasons,
+      top_rubric_gates: cell.top_rubric_gates,
+    }));
+  // Copilot learns most from cells that carry an actual failure mode (net-negative
+  // cells with dismiss reasons / rubric gates). The digest is sorted acceptance_rate
+  // DESC, so a naive tail-drop would discard exactly those low-acceptance cells —
+  // order reason-bearing cells FIRST so whole-digest truncation keeps them; reason-less
+  // (typically high-acceptance) cells are dropped first. Stable within each group.
+  const hasReasonContent = (c: (typeof edgeCells)[number]) =>
+    c.top_dismiss_reasons.length > 0 || c.top_rubric_gates.length > 0;
+  const ordered = [
+    ...edgeCells.filter(hasReasonContent),
+    ...edgeCells.filter((c) => !hasReasonContent(c)),
+  ];
+  // Truncate the SERIALIZED field to the whole-digest cap `maxSerializedChars` (NOT
+  // `maxChars`, which is the per-string reason cap; a single populated cell exceeds
+  // maxChars, so reusing it would collapse the feed to []). Drop the least-actionable
+  // tail until it fits.
+  const scoped = [...ordered];
+  while (
+    scoped.length > 0 &&
+    JSON.stringify(scoped).length > PROPOSAL_FEEDBACK_BUDGET.maxSerializedChars
+  ) {
+    scoped.pop();
+  }
+  return scoped;
 }
 
 function selectSurface(triggeredBy: CopilotChatTriggerKind): DomainToolSurface {
@@ -94,6 +158,9 @@ export async function runCopilotChat(
   const run = deps.runAgentTaskFn ?? runAgentTask;
   const buildMcpServer = deps.buildMcpServerFn ?? buildMcpServerFromRegistry;
   const write = deps.writeEventFn ?? writeEvent;
+  const loadFeedback =
+    deps.loadProposalFeedbackFn ??
+    ((db: Db) => getProposalFeedbackDigest(db, PROPOSAL_FEEDBACK_BUDGET));
 
   const surface = selectSurface(req.triggered_by);
   const actorRef = selectActorRef(req.triggered_by);
@@ -180,6 +247,14 @@ export async function runCopilotChat(
     },
   });
 
+  // P5.4-L2 / YUK-174 (Facet A, §3.3) — read the feedback digest ONCE for this
+  // message and edge-scope + char-bound it before building the run input. A
+  // single bounded read (not per-tool-call), pre-truncated to maxChars so the
+  // per-message prompt cannot bloat regardless of the ContextBudgetTracker (which
+  // gates only the tool-call loop, codex#3). Cold start → [].
+  const feedbackDigest = await loadFeedback(db);
+  const proposalFeedback = scopeCopilotProposalFeedback(feedbackDigest);
+
   const result = await run(
     'CopilotTask',
     {
@@ -187,6 +262,9 @@ export async function runCopilotChat(
       triggered_by: req.triggered_by,
       user_message: req.user_message,
       ...(req.chip_kind ? { chip_kind: req.chip_kind } : {}),
+      // Edge-scoped, char-bounded reason digest. Serialized verbatim into the
+      // prompt by promptFromInput (runner.ts JSON.stringify) — no new plumbing.
+      proposal_feedback: proposalFeedback,
     },
     {
       db,

@@ -19,13 +19,21 @@ import {
 // below are byte-identical to the numbers previously hardcoded here
 // (max_proposals 5 / max_tool_calls 12); pure constant relocation, so Coach
 // behavior is unchanged (spec §3.3).
-import { COACH_CONTEXT_BUDGET } from '@/server/ai/tools/budgets';
+import { COACH_CONTEXT_BUDGET, PROPOSAL_FEEDBACK_BUDGET } from '@/server/ai/tools/budgets';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
 // YUK-143 / ADR-0025 — North-Star: feed active goals into the Coach input so it
 // can add a goal-oriented strand. Purely ADDITIVE (ND-5): the FSRS-due / review
 // backbone and other capture tasks are untouched; goals only add direction.
 import { type ActiveGoal, listActiveGoals } from '@/server/goals/queries';
+// P5.4-L2 / YUK-174 (Facet A + C, §3.3) — feed the per-(kind, relation) accept-
+// learned reason digest into the Coach input. Scoped to the kinds Coach can act
+// on; Coach now proposes knowledge_edge (AB-4), so its scope INCLUDES edge cells
+// (relation + top_rubric_gates). Purely additive / cold-start inert (ND-5).
+import {
+  type ProposalFeedbackCell,
+  getProposalFeedbackDigest,
+} from '@/server/proposals/adaptive-bias';
 import { type ProposalInboxRow, listProposalInboxRows } from '@/server/proposals/inbox';
 
 // P5.1 / YUK-143 — re-exported alias kept so existing imports / tests don't
@@ -41,8 +49,28 @@ export const COACH_MAX_PROPOSALS = COACH_CONTEXT_BUDGET.maxProposals as number;
 // (round-robin + weakest-scope first). When empty, omit the strand.
 const COACH_GOAL_STRAND_GUIDANCE =
   ' If active_goals are provided, additionally add a goal-oriented strand: set TodayPlan.goal_ids to the goals you address and add goal_strand items (each tagged serves_goal_id + knowledge_ids). Distribute attention across active goals (round-robin + weakest-scope first). CRITICAL: the goal strand is purely additive direction — it must NOT suppress or replace the FSRS-due review backbone, hide other capture tasks, preempt the daily review quota, or change any due times. If there are no active goals, omit the goal strand.';
-export const COACH_DAILY_OBJECTIVE = `Produce a TodayPlan for the user via the provided DomainTools. Only write proposals (defer / split / relearn / archive / completion / maintenance); never mutate user data directly. Prefer doing nothing if the day has no actionable adjustments.${COACH_GOAL_STRAND_GUIDANCE}`;
-export const COACH_WEEKLY_OBJECTIVE = `Produce a weekly TodayPlan with a \`weekly_reflection\` summary plus any plan adjustments / maintenance proposals via propose_* tools. Only write proposals; never mutate user data directly.${COACH_GOAL_STRAND_GUIDANCE}`;
+// P5.4-L2 / YUK-174 (Facet A + C, §3.3) — ND-5 reason-feedback clause PLUS brief
+// when-to-propose-an-edge guidance (Coach now holds propose_knowledge_edge, so
+// the edge feedback is actionable, not a dead grant). Empty proposal_feedback
+// (cold start) makes this clause inert.
+const COACH_PROPOSAL_FEEDBACK_GUIDANCE =
+  ' When proposal_feedback is present, each entry is a (kind, relation) cell carrying top_dismiss_reasons (why the user dismissed) and, for knowledge_edge cells, top_rubric_gates (why the rubric rejected) — read them as the specific failure mode and avoid repeating it; additive only, never suppress or replace the review backbone or signal-driven proposals (ND-5). Only propose a knowledge_edge when a concrete mistake pattern shows two knowledge points are confused / ordered / applied together AND that relation has not been routinely dismissed; otherwise skip the edge. When proposal_feedback is empty, behave exactly as before.';
+export const COACH_DAILY_OBJECTIVE = `Produce a TodayPlan for the user via the provided DomainTools. Only write proposals (defer / split / relearn / archive / completion / maintenance / knowledge_edge); never mutate user data directly. Prefer doing nothing if the day has no actionable adjustments.${COACH_GOAL_STRAND_GUIDANCE}${COACH_PROPOSAL_FEEDBACK_GUIDANCE}`;
+export const COACH_WEEKLY_OBJECTIVE = `Produce a weekly TodayPlan with a \`weekly_reflection\` summary plus any plan adjustments / maintenance proposals via propose_* tools. Only write proposals; never mutate user data directly.${COACH_GOAL_STRAND_GUIDANCE}${COACH_PROPOSAL_FEEDBACK_GUIDANCE}`;
+
+// P5.4-L2 / YUK-174 (Facet A, §3.3) — the proposal kinds Coach can ACT on
+// (COACH_TOOLS). Coach proposes learning-item lifecycle (completion / relearn /
+// defer / archive), knowledge mutations (knowledge_node / archive), and — after
+// AB-4 — knowledge_edge. The digest is scoped to these so prompt budget is not
+// spent on a kind Coach cannot act on. (record_* / variant / mistake stay out.)
+const COACH_ACTABLE_KINDS = new Set([
+  'completion',
+  'relearn',
+  'defer',
+  'archive',
+  'knowledge_node',
+  'knowledge_edge',
+]);
 
 export interface CoachRunResult {
   processed: number;
@@ -67,6 +95,9 @@ type BuildMcpServerFn = typeof buildMcpServerFromRegistry;
 type WriteEventFn = (db: Db, input: WriteEventInput) => Promise<string>;
 // YUK-143 / ADR-0025 — swappable active-goals reader (DB tests inject fixtures).
 type ListActiveGoalsFn = (db: Db) => Promise<ActiveGoal[]>;
+// P5.4-L2 / YUK-174 (Facet A) — swappable feedback-digest reader (DB tests inject
+// fixtures), mirrors ListActiveGoalsFn. No-op on cold start (empty digest).
+type LoadProposalFeedbackFn = (db: Db) => Promise<ProposalFeedbackCell[]>;
 
 export type CoachRunKind = 'daily' | 'weekly';
 
@@ -78,6 +109,9 @@ export interface CoachRunDeps {
   // YUK-143 / ADR-0025 — defaults to listActiveGoals; goals feed the additive
   // goal strand only and never touch the review backbone (ND-5).
   listActiveGoalsFn?: ListActiveGoalsFn;
+  // P5.4-L2 / YUK-174 — defaults to getProposalFeedbackDigest; feeds the additive
+  // reason digest, scoped to Coach's actable kinds. Cold-start inert (ND-5).
+  loadProposalFeedbackFn?: LoadProposalFeedbackFn;
   now?: () => Date;
 }
 
@@ -87,6 +121,7 @@ function buildCoachInput(
   beforeRows: ProposalSnapshotRow[],
   objective: string,
   activeGoals: ActiveGoal[],
+  feedbackDigest: ProposalFeedbackCell[],
 ) {
   return {
     run_kind: runKind,
@@ -103,6 +138,22 @@ function buildCoachInput(
       scope_knowledge_ids: g.scope_knowledge_ids,
       sequence_hint: g.sequence_hint,
     })),
+    // P5.4-L2 / YUK-174 (Facet A + C, §3.3) — per-(kind, relation) reason
+    // feedback, scoped to the kinds Coach can act on (COACH_ACTABLE_KINDS,
+    // including knowledge_edge after AB-4). Bounded by the digest's own cap.
+    // Empty on cold start → the COACH_PROPOSAL_FEEDBACK_GUIDANCE clause is inert,
+    // plan unchanged.
+    proposal_feedback: feedbackDigest
+      .filter((cell) => COACH_ACTABLE_KINDS.has(cell.kind))
+      .map((cell) => ({
+        kind: cell.kind,
+        relation: cell.relation,
+        acceptance_rate: cell.acceptance_rate,
+        accept_count: cell.accept_count,
+        dismiss_count: cell.dismiss_count,
+        top_dismiss_reasons: cell.top_dismiss_reasons,
+        top_rubric_gates: cell.top_rubric_gates,
+      })),
     budget: {
       // P5.1 / YUK-143 — sourced from COACH_CONTEXT_BUDGET (12 / 5),
       // byte-identical to the prior hardcoded literals.
@@ -133,6 +184,9 @@ export async function runCoach(
   const buildMcpServer = deps.buildMcpServerFn ?? buildMcpServerFromRegistry;
   const write = deps.writeEventFn ?? writeEvent;
   const listGoals = deps.listActiveGoalsFn ?? listActiveGoals;
+  const loadFeedback =
+    deps.loadProposalFeedbackFn ??
+    ((db: Db) => getProposalFeedbackDigest(db, PROPOSAL_FEEDBACK_BUDGET));
   const triggerActorRef = runKind === 'daily' ? 'nightly_coach' : 'weekly_coach';
   const objective = runKind === 'daily' ? COACH_DAILY_OBJECTIVE : COACH_WEEKLY_OBJECTIVE;
 
@@ -142,6 +196,10 @@ export async function runCoach(
   // a read-only ADD to the Coach signal set; it does not read the FSRS-due queue
   // or mutate any review state (ND-5).
   const activeGoals = await listGoals(db);
+  // P5.4-L2 / YUK-174 (Facet A) — read the feedback digest for the additive
+  // reason bias. Read-only ADD; never touches the FSRS-due / review backbone.
+  // Empty on cold start → the feed degrades to a no-op.
+  const feedbackDigest = await loadFeedback(db);
   const triggerEventId = `coach_trigger_${createId()}`;
   const toolContextTaskRunId = `coach_tool_${createId()}`;
 
@@ -186,7 +244,7 @@ export async function runCoach(
 
     const taskResult = await run(
       'CoachTask',
-      buildCoachInput(runKind, now, beforeRows, objective, activeGoals),
+      buildCoachInput(runKind, now, beforeRows, objective, activeGoals, feedbackDigest),
       {
         db,
         mcpServers: { [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer },

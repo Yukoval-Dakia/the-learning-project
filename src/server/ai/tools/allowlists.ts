@@ -92,6 +92,12 @@ const DREAMING_TOOLS = [
 // relearn / archive). `propose_knowledge_mutation` covers `split`;
 // `propose_learning_item_defer` and `propose_learning_item_archive` were
 // added by this lane.
+//
+// P5.4-L2 / YUK-174 (AB-4) — added `propose_knowledge_edge` so Coach can ACT on
+// the edge reason-feedback the L2 digest now feeds it (the user accepted
+// widening Coach's surface with edge, 2026-05-31). Without the tool the edge
+// feedback would be a dead/informational feed; the COACH objective gains brief
+// when-to-propose-an-edge guidance so it is exercised.
 const COACH_TOOLS = [
   'query_memory_brief',
   'query_mistakes',
@@ -104,6 +110,7 @@ const COACH_TOOLS = [
   'propose_learning_item_defer',
   'propose_learning_item_archive',
   'propose_knowledge_mutation',
+  'propose_knowledge_edge',
 ] as const satisfies readonly DomainToolName[];
 
 const MAINTENANCE_TOOLS = [

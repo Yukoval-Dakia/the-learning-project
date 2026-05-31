@@ -284,10 +284,29 @@ This rubric applies to agent-generated graph proposals. Manual user-created edge
 > event is still written carrying a `rubric_verdict: { ok:false, gate, reason }` marker, derives a
 > terminal `rubric_rejected` inbox status, and is excluded from live-pending dedup/cooldown so a
 > later valid proposal for the same edge is not blocked. Layer 1 is deterministic (no LLM call) and
-> rejects medium/weak evidence for agents. The adaptive **Layer 2** — accept-learned threshold bias
-> + medium-evidence downweighting — is deferred to
-> [YUK-174](https://linear.app/yukoval-studios/issue/YUK-174) and consumes the stable verdict shape.
+> rejects medium/weak evidence for agents.
 > Spec: `docs/superpowers/specs/2026-05-31-p5.4-rubric-enforcement-design.md`.
+>
+> **Enforcement status (Layer 2, P5.4-L2 / YUK-174 — shipped 2026-05-31).** The adaptive
+> accept-learned bias is now live as an ADDITIVE soft layer on top of Layer 1, owned by
+> `src/server/proposals/adaptive-bias.ts` (read-only). It reads `proposal_signals` (rate + recent
+> dismiss reasons) and the `rubric_rejected` propose-event bucket and produces (1) a per-`(kind,
+> relation)` **feedback digest** (`getProposalFeedbackDigest`) injected into the Dreaming / Coach /
+> Copilot proposal prompts — each scoped to the kinds that surface can act on, so the agent learns
+> the specific failure mode (the user's own dismiss reasons + the machine rubric gates) and
+> self-corrects; and (2) a per-`(kind, relation)` **gate-bump** (`computeGateBump`) passed as an
+> OPTIONAL 4th argument to `validateProposalQuality`. The bump is **tighten-only / never-lock**: when
+> a relation's acceptance_rate is below threshold with enough samples it raises the borderline bar
+> one notch (suppresses the §4.2 explicit-single-event rescue → requires genuine `strong`), but it
+> NEVER loosens an L1 reject, NEVER blocks `strong` evidence, and is a no-op on cold start /
+> below-`minSamples`. The validator with the 4th arg omitted is byte-identical to Layer 1, and the
+> verdict shape (RB-9) is unchanged — the adaptive reject keeps `gate:'evidence_level'` and annotates
+> its `reason` with the carried rate/threshold/sample for traceability. Coach also gains
+> `propose_knowledge_edge` so the edge feedback is actionable. The batch
+> `knowledge_edge_propose_nightly` path does not yet run Layer 1, so the gate-bump is deferred there
+> to [YUK-175](https://linear.app/yukoval-studios/issue/YUK-175); the reason digest still reaches it.
+> No schema change. Spec:
+> `docs/superpowers/specs/2026-05-31-p5.4-l2-adaptive-bias-design.md`.
 
 ### 4.1 Universal gates
 

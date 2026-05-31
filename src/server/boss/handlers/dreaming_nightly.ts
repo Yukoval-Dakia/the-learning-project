@@ -12,7 +12,9 @@ import {
 // below are byte-identical to the numbers previously hardcoded here
 // (max_proposals 5 / max_tool_calls 8); this is a pure constant relocation, so
 // Dreaming behavior is unchanged (spec §3.3).
-import { DREAMING_CONTEXT_BUDGET } from '@/server/ai/tools/budgets';
+// P5.4-L2 / YUK-174 (Facet A, §3.2) — PROPOSAL_FEEDBACK_BUDGET bounds the new
+// per-(kind, relation) digest (see the getProposalFeedbackDigest import below).
+import { DREAMING_CONTEXT_BUDGET, PROPOSAL_FEEDBACK_BUDGET } from '@/server/ai/tools/budgets';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
 import { enqueueDreamingNoteRefine } from '@/server/artifacts/note-refine-triggers';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
@@ -21,16 +23,11 @@ import { type WriteEventInput, writeEvent } from '@/server/events/queries';
 // Purely ADDITIVE (ND-5): Dreaming still only PROPOSES via the inbox and never
 // reads the FSRS-due queue or mutates review state; goals only add direction.
 import { type ActiveGoal, listActiveGoals } from '@/server/goals/queries';
-import { type ProposalInboxRow, listProposalInboxRows } from '@/server/proposals/inbox';
-// T-AR (YUK-TAR) — feed the acceptance-rate SIGNAL into the Dreaming input so it
-// can BIAS toward proposal kinds the user historically accepts (and away from
-// ones routinely dismissed). Purely ADDITIVE (ND-5), mirrors the YUK-143 goal
-// feed: read-only, never reads the FSRS-due queue or mutates review state, and
-// degrades to a no-op on cold start (empty signal → unchanged behavior).
 import {
-  type ProposalKindAcceptanceRate,
-  getProposalAcceptanceRates,
-} from '@/server/proposals/signals';
+  type ProposalFeedbackCell,
+  getProposalFeedbackDigest,
+} from '@/server/proposals/adaptive-bias';
+import { type ProposalInboxRow, listProposalInboxRows } from '@/server/proposals/inbox';
 
 // P5.1 / YUK-143 — re-exported alias kept so existing imports / tests don't
 // break (spec §4.2). Sourced from DREAMING_CONTEXT_BUDGET.maxProposals (= 5),
@@ -67,8 +64,10 @@ type WriteEventFn = (db: Db, input: WriteEventInput) => Promise<string>;
 // YUK-143 / ADR-0025 — swappable active-goals reader (DB tests inject fixtures).
 type ListActiveGoalsFn = (db: Db) => Promise<ActiveGoal[]>;
 // T-AR (YUK-TAR) — swappable acceptance-rate reader (DB tests inject fixtures),
-// mirrors ListActiveGoalsFn.
-type LoadProposalAcceptanceRatesFn = (db: Db) => Promise<ProposalKindAcceptanceRate[]>;
+// mirrors ListActiveGoalsFn. P5.4-L2 / YUK-174 (Facet A) — now returns the
+// per-(kind, relation) feedback digest (a strict superset of the prior per-kind
+// rate). The seam NAME is unchanged so existing injection sites keep working.
+type LoadProposalAcceptanceRatesFn = (db: Db) => Promise<ProposalFeedbackCell[]>;
 
 interface DepsOverride {
   runAgentTaskFn?: RunAgentTaskFn;
@@ -99,13 +98,75 @@ const DREAMING_GOAL_BIAS_GUIDANCE =
 // on, so the model behaves exactly as before (no-op degrade).
 const DREAMING_ACCEPTANCE_RATE_BIAS_GUIDANCE =
   ' When proposal_acceptance_rates are present, prefer proposal kinds with higher historical acceptance and avoid kinds the user routinely dismisses — additive only; never suppress or replace the existing signal-driven proposals (ND-5). When proposal_acceptance_rates is empty, behave exactly as before.';
-export const DREAMING_OBJECTIVE = `Review recent learning signals with the provided DomainTools and create only actionable inbox proposals. Do not mutate user data directly.${DREAMING_GOAL_BIAS_GUIDANCE}${DREAMING_ACCEPTANCE_RATE_BIAS_GUIDANCE}`;
+// P5.4-L2 / YUK-174 (Facet A, §3.2) — reason-feedback hint for the per-(kind,
+// relation) digest. For each cell, top_dismiss_reasons (the user's own words for
+// why they dismissed) and top_rubric_gates (the machine reason the rubric
+// rejected) tell you the SPECIFIC failure mode — avoid repeating it. Scoped to
+// the kinds Dreaming can act on; additive only, never suppress signal-driven
+// proposals (ND-5); empty proposal_feedback (cold start) = behave exactly as
+// before.
+const DREAMING_PROPOSAL_FEEDBACK_GUIDANCE =
+  ' When proposal_feedback is present, each entry is a (kind, relation) cell with top_dismiss_reasons (why the user dismissed) and top_rubric_gates (why the rubric rejected) — read them as the specific failure mode for that cell and avoid repeating it; additive only, never suppress or replace the existing signal-driven proposals (ND-5). When proposal_feedback is empty, behave exactly as before.';
+export const DREAMING_OBJECTIVE = `Review recent learning signals with the provided DomainTools and create only actionable inbox proposals. Do not mutate user data directly.${DREAMING_GOAL_BIAS_GUIDANCE}${DREAMING_ACCEPTANCE_RATE_BIAS_GUIDANCE}${DREAMING_PROPOSAL_FEEDBACK_GUIDANCE}`;
+
+// P5.4-L2 / YUK-174 (Facet A, §3.2) — the proposal kinds Dreaming can ACT on,
+// scoped to its ACTUAL tool surface (DREAMING_TOOLS, allowlists.ts). The all-kind
+// RATE is still surfaced for every kind (background bias); only the new REASON
+// fields are scoped here so prompt budget is not spent on a kind Dreaming cannot
+// act on.
+//
+// SPEC NOTE (resolved contradiction): the L2 spec §1.2/§3.2 asserts "Dreaming
+// does NOT propose knowledge_edge (DREAMING_TOOLS)". The MERGED code disagrees —
+// DREAMING_TOOLS spreads KNOWLEDGE_REVIEW_TOOLS, which DOES grant
+// propose_knowledge_edge + propose_knowledge_mutation. Code is authoritative
+// (project rule), and the spec's PRINCIPLE is "feed each surface the kinds it can
+// act on". So Dreaming's actable set includes knowledge_edge (relation +
+// top_rubric_gates) and knowledge_node / archive (the knowledge-mutation kinds),
+// alongside its learning-item / record kinds — matching the real surface, not the
+// spec's stale claim. (record_links / record_promotion are the record-tool kinds.)
+const DREAMING_ACTABLE_KINDS = new Set([
+  'completion',
+  'relearn',
+  'record_links',
+  'record_promotion',
+  'knowledge_edge',
+  'knowledge_node',
+  'archive',
+]);
+
+// P5.4-L2 / YUK-174 (Facet A, §3.2) — roll the per-(kind, relation) digest back
+// UP to the per-kind acceptance RATE the existing feed surfaces (edge cells now
+// split by relation, so they must be re-summed). This keeps the all-kind rate a
+// strict SUPERSET-compatible subset of the old behavior. Sorted by rate DESC,
+// total DESC, matching getProposalAcceptanceRates.
+function rollUpToPerKindRate(
+  digest: ProposalFeedbackCell[],
+): Array<{ kind: string; acceptance_rate: number; accept_count: number; dismiss_count: number }> {
+  const byKind = new Map<string, { accept_count: number; dismiss_count: number }>();
+  for (const cell of digest) {
+    const agg = byKind.get(cell.kind) ?? { accept_count: 0, dismiss_count: 0 };
+    agg.accept_count += cell.accept_count;
+    agg.dismiss_count += cell.dismiss_count;
+    byKind.set(cell.kind, agg);
+  }
+  return [...byKind.entries()]
+    .map(([kind, agg]) => {
+      const total = agg.accept_count + agg.dismiss_count;
+      return {
+        kind,
+        accept_count: agg.accept_count,
+        dismiss_count: agg.dismiss_count,
+        acceptance_rate: total === 0 ? 0 : agg.accept_count / total,
+      };
+    })
+    .sort((a, b) => b.acceptance_rate - a.acceptance_rate);
+}
 
 function buildDreamingInput(
   now: Date,
   beforeRows: ProposalSnapshotRow[],
   activeGoals: ActiveGoal[],
-  acceptanceRates: ProposalKindAcceptanceRate[],
+  feedbackDigest: ProposalFeedbackCell[],
 ) {
   return {
     run_kind: 'nightly',
@@ -123,16 +184,31 @@ function buildDreamingInput(
       sequence_hint: g.sequence_hint,
     })),
     // T-AR (YUK-TAR) — per-kind acceptance-rate signal for the additive bias
-    // (ND-5). Already sorted by acceptance_rate DESC, total DESC; capped to the
-    // top N proven kinds. Empty array on cold start → no-op (model has nothing
-    // to bias on, behaves exactly as before).
-    proposal_acceptance_rates: acceptanceRates
-      .slice(0, DREAMING_ACCEPTANCE_RATE_TOP_N)
-      .map((r) => ({
-        kind: r.kind,
-        acceptance_rate: r.acceptance_rate,
-        accept_count: r.accept_count,
-        dismiss_count: r.dismiss_count,
+    // (ND-5). Rolled up from the per-(kind, relation) digest (strict subset of
+    // the prior behavior); sorted by acceptance_rate DESC; capped to the top N
+    // proven kinds. Empty array on cold start → no-op (model has nothing to bias
+    // on, behaves exactly as before).
+    proposal_acceptance_rates: rollUpToPerKindRate(feedbackDigest).slice(
+      0,
+      DREAMING_ACCEPTANCE_RATE_TOP_N,
+    ),
+    // P5.4-L2 / YUK-174 (Facet A, §3.2) — per-(kind, relation) reason feedback,
+    // scoped to the kinds Dreaming can ACT on (DREAMING_ACTABLE_KINDS). The
+    // all-kind RATE above stays the background bias for every kind; the REASON
+    // fields (top_dismiss_reasons / top_rubric_gates) are only fed for actable
+    // kinds — edge cells (knowledge_edge) are excluded because Dreaming cannot
+    // propose edges. Bounded by PROPOSAL_FEEDBACK_BUDGET.maxKindRelations (the
+    // digest is already sorted + capped). Empty on cold start → no-op.
+    proposal_feedback: feedbackDigest
+      .filter((cell) => DREAMING_ACTABLE_KINDS.has(cell.kind))
+      .map((cell) => ({
+        kind: cell.kind,
+        relation: cell.relation,
+        acceptance_rate: cell.acceptance_rate,
+        accept_count: cell.accept_count,
+        dismiss_count: cell.dismiss_count,
+        top_dismiss_reasons: cell.top_dismiss_reasons,
+        top_rubric_gates: cell.top_rubric_gates,
       })),
     budget: {
       // P5.1 / YUK-143 — sourced from DREAMING_CONTEXT_BUDGET (8 / 5),
@@ -159,7 +235,9 @@ export async function runDreamingNightly(
   const buildMcpServer = deps.buildMcpServerFn ?? buildMcpServerFromRegistry;
   const write = deps.writeEventFn ?? writeEvent;
   const listGoals = deps.listActiveGoalsFn ?? listActiveGoals;
-  const loadAcceptanceRates = deps.loadProposalAcceptanceRatesFn ?? getProposalAcceptanceRates;
+  const loadAcceptanceRates =
+    deps.loadProposalAcceptanceRatesFn ??
+    ((db: Db) => getProposalFeedbackDigest(db, PROPOSAL_FEEDBACK_BUDGET));
 
   const beforeRows = await listRows(db);
   const beforeIds = new Set(beforeRows.map((row) => row.id));
@@ -170,7 +248,7 @@ export async function runDreamingNightly(
   // T-AR (YUK-TAR) — read the acceptance-rate signal for the additive bias.
   // Read-only ADD; no FSRS-due read, no review-state mutation (ND-5). Empty on
   // cold start → the input feed degrades to a no-op.
-  const acceptanceRates = await loadAcceptanceRates(db);
+  const feedbackDigest = await loadAcceptanceRates(db);
   const triggerEventId = `dreaming_trigger_${createId()}`;
   const toolContextTaskRunId = `dreaming_tool_${createId()}`;
 
@@ -214,7 +292,7 @@ export async function runDreamingNightly(
 
     const taskResult = await run(
       'DreamingTask',
-      buildDreamingInput(now, beforeRows, activeGoals, acceptanceRates),
+      buildDreamingInput(now, beforeRows, activeGoals, feedbackDigest),
       {
         db,
         mcpServers: { [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer },

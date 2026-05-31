@@ -6,6 +6,8 @@ import {
   DREAMING_CONTEXT_BUDGET,
   KNOWLEDGE_EXCERPT_MAX,
   MISTAKE_PROMPT_SNIPPET_MAX,
+  PROPOSAL_FEEDBACK_BUDGET,
+  PROPOSAL_GATE_BIAS_CONFIG,
   TOOL_COURTESY_DEFAULTS,
   resolveContextBudget,
 } from './budgets';
@@ -50,6 +52,26 @@ describe('context budgets — locked constants', () => {
   it('excerpt caps equal the prior file-local constants (180 / 160)', () => {
     expect(KNOWLEDGE_EXCERPT_MAX).toBe(180);
     expect(MISTAKE_PROMPT_SNIPPET_MAX).toBe(160);
+  });
+
+  // P5.4-L2 / YUK-174 — single-source budget snapshot (acceptance §8). Locks the
+  // digest caps + the gate-bias config so any tuning is a deliberate, reviewed
+  // change (mirrors the P5.1 budget snapshot tests).
+  it('PROPOSAL_FEEDBACK_BUDGET matches the L2 spec numbers', () => {
+    expect(PROPOSAL_FEEDBACK_BUDGET).toEqual({
+      maxKindRelations: 12,
+      maxDismissReasonsPerCell: 3,
+      maxRubricGatesPerCell: 3,
+      maxChars: 180,
+      maxSerializedChars: 1200,
+    });
+  });
+
+  it('PROPOSAL_GATE_BIAS_CONFIG matches the L2 spec §5 Q1 defaults', () => {
+    expect(PROPOSAL_GATE_BIAS_CONFIG).toEqual({
+      acceptanceThreshold: 0.3,
+      minSamples: 5,
+    });
   });
 
   it('resolveContextBudget routes each surface to its budget', () => {

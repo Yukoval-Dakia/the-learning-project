@@ -13,6 +13,7 @@
 // user-configurable budgets (CB-5) and no hard-reject circuit-breaker (§6):
 // over-budget degrades gracefully via the tracker below.
 
+import type { GateBiasConfig } from '@/server/proposals/adaptive-bias';
 import type { DomainToolSurface } from './allowlists';
 
 export interface ContextBudget {
@@ -147,4 +148,59 @@ export interface BriefRefreshBudget {
 export const BRIEF_REFRESH_BUDGET: BriefRefreshBudget = {
   maxSubjectsPerRun: 12, // Never bites at today's 3–5 active subjects; forward-looking guard
   maxEventsPerBrief: 50, // Existing hardcoded limit in brief.ts loadEventsFromDb; proven bound
+};
+
+// ── P5.4-L2 proposal-feedback budget (AB-5) ─────────────────────────────────
+//
+// Single tunable source for the per-`(kind, relation)` accept-learned feedback
+// digest injected into the Dreaming / Coach / Copilot prompts (adaptive-bias.ts
+// `getProposalFeedbackDigest`). Same const+interface pattern as the
+// ContextBudget surfaces and BriefRefreshBudget above: one typed interface + one
+// named const, no class/factory. These are the ONLY place the digest caps are
+// defined — no per-file fallbacks (acceptance §8 "single-source budget").
+// Spec: docs/superpowers/specs/2026-05-31-p5.4-l2-adaptive-bias-design.md §3.1.
+export interface ProposalFeedbackBudget {
+  /** Max `(kind, relation)` cells surfaced to a prompt. Subsumes the prior
+   *  Dreaming-local `DREAMING_ACCEPTANCE_RATE_TOP_N` (8) slice — the relation
+   *  split means a single kind can fan out, so 12 keeps the proven kinds plus
+   *  their relation breakdown without flooding. */
+  maxKindRelations: number;
+  /** Max recent `dismiss_reason` strings emitted per cell (only for net-negative
+   *  cells, §3.1). */
+  maxDismissReasonsPerCell: number;
+  /** Max recent L1 `rubric_verdict.gate` strings emitted per edge cell (§3.1). */
+  maxRubricGatesPerCell: number;
+  /** PER-STRING truncation cap for a single dismiss-reason / gate string. 180
+   *  aligns to the existing KNOWLEDGE_EXCERPT_MAX per-excerpt ceiling. NOTE: this
+   *  is per-string ONLY — the whole-digest Copilot cap is `maxSerializedChars`. */
+  maxChars: number;
+  /** WHOLE-DIGEST serialized-JSON cap for the per-message Copilot read (AB-5 /
+   *  codex#3): the ContextBudgetTracker gates only the tool-call loop, NOT
+   *  initial-input chars, so Copilot truncates the serialized `proposal_feedback`
+   *  to this at read time. Must hold several fully-populated edge cells — one cell
+   *  serializes to ~240 chars, so reusing the 180 per-string `maxChars` here would
+   *  collapse the feed to `[]` (P1 fix). */
+  maxSerializedChars: number;
+}
+
+export const PROPOSAL_FEEDBACK_BUDGET: ProposalFeedbackBudget = {
+  maxKindRelations: 12, // Subsumes the prior DREAMING_ACCEPTANCE_RATE_TOP_N (8) + relation fan-out
+  maxDismissReasonsPerCell: 3, // A few representative recent reasons; not a full log
+  maxRubricGatesPerCell: 3, // Recent machine gate failure modes per edge cell
+  maxChars: 180, // per-string reason/gate cap (== KNOWLEDGE_EXCERPT_MAX)
+  maxSerializedChars: 1200, // Copilot whole-digest read cap (~5 fully-populated edge cells); P1 fix
+};
+
+// ── P5.4-L2 gate-bias config (AB-3, §5 Q1) ──────────────────────────────────
+//
+// Single-source threshold + cold-start guard for `computeGateBump`. The
+// `GateBiasConfig` TYPE is owned by adaptive-bias.ts (the L2 module, §3.4); this
+// is the single-source CONST, kept here alongside PROPOSAL_FEEDBACK_BUDGET so
+// all L2 tunables live in budgets.ts. Single-user scale: most `(kind, relation)`
+// cells carry 0–5 samples, so `minSamples` keeps the bump inert until enough
+// signal accrues (§6). Tune against real proposal_signals after a few weeks (the
+// P5.1 "revisit after ~2 weeks of logs" stance).
+export const PROPOSAL_GATE_BIAS_CONFIG: GateBiasConfig = {
+  acceptanceThreshold: 0.3, // §5 Q1 suggested default
+  minSamples: 5, // §5 Q1 suggested cold-start guard
 };
