@@ -23,3 +23,69 @@ Do not use for: refactoring, writing scripts from scratch, debugging business lo
 3. `query-docs` with the selected library ID and the user's full question (not single words)
 4. Answer using the fetched docs
 <!-- context7 -->
+
+<!-- init-deep:START (generated 2026-05-31, 44eeca1a@main) -->
+## CODEBASE MAP
+
+> 导航索引。深层细节看子目录 `AGENTS.md` + 各 `README.md`。架构权威 = [docs/architecture.md](./docs/architecture.md)、决策 = [docs/adr/](./docs/adr/)、领域术语 = [CONTEXT.md](./CONTEXT.md)、命令/约定 = [CLAUDE.md](./CLAUDE.md)。
+
+### OVERVIEW
+`loom` —— self-hosted 单用户 AI 学习系统。Next.js 15 App Router + Postgres/Drizzle + pg-boss worker。**事件驱动核**（ADR-0006 v2）：`material × learning_session × event` 三表，AI 是与用户对等的 event actor。
+
+### STRUCTURE
+```
+app/             # App Router: (app)/(admin) 页面 + api/ 后端（唯一后端面）
+src/
+  core/          # 跨学科：Zod schema、capability registry、id helpers（无 IO）
+  db/            # Drizzle schema.ts + Postgres client（单 schema 文件）
+  ai/            # 浏览器侧 task registry + prompt builder（不持 key、无通用 runTask）
+  server/        # server-only：ai runner/tools, ingestion, knowledge, review, artifacts...（22 子模块）
+  subjects/      # 单学科 bundle：wenyan / math / physics
+  ui/            # 共享 React 设计系统
+scripts/         # worker 入口 + 迁移 + audit + local dev（一等公民）
+drizzle/         # 迁移 SQL + meta 快照（DB 演化历史）
+docs/            # architecture / adr / modules / design / agents
+```
+`core/` 跨学科、`subjects/<name>/` 单学科特化——别把学科逻辑漏进 `core/` 或 `server/`。**不是 monorepo**（单 package.json）。
+
+### WHERE TO LOOK
+| 任务 | 位置 |
+|------|------|
+| 后端逻辑 / API | `app/api/**`（见 [app/api/AGENTS.md](./app/api/AGENTS.md)）|
+| AI task 调用 / tool / runner | `src/server/ai/`（见 [AGENTS.md](./src/server/ai/AGENTS.md)）；注册表 `src/ai/registry.ts` |
+| 后台 job / cron | `src/server/boss/handlers/`（见 [AGENTS.md](./src/server/boss/handlers/AGENTS.md)）|
+| OCR / 试题抽取 / rescue | `src/server/ingestion/`（见 [AGENTS.md](./src/server/ingestion/AGENTS.md)）|
+| 知识树 / mesh / 复习 | `src/server/knowledge/`（见 [AGENTS.md](./src/server/knowledge/AGENTS.md)）|
+| DB schema / 迁移 | `src/db/schema.ts` + `drizzle/`（见 [src/db/README.md](./src/db/README.md)）|
+| Zod 业务 schema / event union | `src/core/schema/`（见 [AGENTS.md](./src/core/schema/AGENTS.md)）|
+| UI 组件 / 设计系统 | `src/ui/`（见 [AGENTS.md](./src/ui/AGENTS.md)）|
+| server 模块总览 | [src/server/AGENTS.md](./src/server/AGENTS.md) |
+| 运维 / 迁移 / audit 脚本 | `scripts/*.ts` |
+
+### COMMANDS（详见 CLAUDE.md）
+```bash
+pnpm dev:local        # 推荐本地入口（compose Postgres :5433 为真相源）
+pnpm typecheck        # tsc --noEmit
+pnpm lint             # biome check .
+pnpm test             # 全量门禁：audit:profile + unit + db + migration
+pnpm test:unit:watch  # 快速无-DB watch（UI/core/schema/parser）
+pnpm test:db:watch    # DB/API watch（需 Docker/OrbStack）
+pnpm build            # next build —— 抓 tsc/biome/vitest 都漏的 route export 校验
+```
+PR 前还需：`pnpm audit:schema` / `audit:partition` / `audit:profile`。
+
+### CONVENTIONS（仅本项目偏离项）
+- 工具链：**仅 Biome**（无 ESLint/Prettier）——2 空格 / 100 列 / 单引号 / 自动整理 imports；`noExplicitAny` + `useImportType` 为 warning。TS strict + ESM + `@/*`→`src/*`。
+- Next：`output:'standalone'`，外置 `pg`/`pg-boss`；**无 Vercel**——别带 `.vercel/` / `vercel env pull` 假设。
+- 测试分区严格：依赖 DB/drizzle/postgres/PgBoss 的测试**禁止**放进 unit config；命名 `*.unit.test.ts` / `*.integration.test.ts` / `*.test.ts`。DB 测试用 `tests/global-setup.ts` 起 testcontainers（`pool:forks` + `singleFork`，共享容器）。
+- 无 coverage gate；但有 schema/partition/profile audit lint。
+- 文件 mode 别硬编码（`0o644`）——尊重 umask（`0o666 & ~umask`）。
+
+### ANTI-PATTERNS (THIS PROJECT)
+- **破坏性 AI 动作没有直接 write tool**：删错题 / 合并节点 / reparent / archive 只能 `propose`，用户 accept route 才执行真实 mutation。
+- 别经 generic `/api/ai/[task]` 暴露 profile-driven / manual-rescue / tool task——走领域 route 或 worker（仅 `ReviewIntentTask` 走 generic 入口）。
+- 浏览器代码**不持** provider key——所有 AI 调用走 route handler 或 worker。
+- 别把派生 lifecycle 字段回写源表——建 reader / projection。
+- 别引入第二个具体实例之前的抽象（YAGNI）；bug fix 不顺手 refactor。
+- 加新表/字段必须有 write path，否则进 `scripts/audit-schema-allowlist.json` 标注可检查解除条件。
+<!-- init-deep:END -->
