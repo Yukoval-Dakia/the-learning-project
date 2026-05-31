@@ -226,6 +226,20 @@ function relationRequiresTwoEvents(relationType: string): boolean {
   return relationType === 'prerequisite' || relationType === 'contrasts_with';
 }
 
+// §4.2 + §4.3 "2 events for prerequisite / contrasts_with UNLESS judge analysis
+// is explicit". The relaxing basis: ≥1 usable (in-window, judge-backed) failure
+// that carries EXPLICIT analysis on EITHER axis — agent judge `analysis_md`
+// (hasExplicitJudgeAnalysis) OR a non-empty user_cause.user_notes (§4.2's
+// "1 failure + explicit user note" is just as strong as "1 + explicit judge
+// analysis"). A single PLAIN failure (cause category tagged but no prose, no
+// note) does NOT qualify — it stays the §4.2 medium that needs a second event.
+function hasExplicitSingleEventBasis(usable: ResolvedEvidence[]): boolean {
+  return usable.some(
+    (ev) =>
+      ev.hasExplicitJudgeAnalysis || (ev.attempt.user_cause?.user_notes ?? '').trim().length > 0,
+  );
+}
+
 // §4.3 relation-specific predicates (agents only). Each returns a rejection
 // reason string, or null if the relation predicate passes. Layer 1 keeps these
 // strict-but-cheap (§5 Q1) — no LLM call.
@@ -465,10 +479,31 @@ export async function validateProposalQuality(
   const resolved = await resolveEvidence(db, eventIds, now);
   const usable = resolved.filter((ev) => ev.inWindow && ev.judgeBacked);
   const level = computeEvidenceLevel(usable);
+  const requiresTwoEvents = relationRequiresTwoEvents(change.relation_type);
 
-  // RB-4 — agents are rejected at medium/weak; only strong writes. Downweighting
-  // medium is Layer 2 / YUK-174.
-  if (level !== 'strong') {
+  // §4.3 single-event relaxation for prerequisite / contrasts_with. knowledge.md
+  // §4.2 leaves a SINGLE in-window judge-backed failure at `medium` (1 failure
+  // with clear judge analysis, NOT a user note → not the strong path) — but
+  // §4.2 + §4.3 also say "2 events for prerequisite / contrasts_with UNLESS judge
+  // analysis is explicit". For those two relations a single failure WITH explicit
+  // analysis (judge analysis_md OR user_cause.user_notes) is exactly the
+  // documented exception. We compute the rescue HERE so it is visible to the
+  // evidence floor below: without it the floor (RB-4 rejects medium) fired first
+  // and the §4.3 relaxation was dead — every single-judge-event prerequisite /
+  // contrasts_with proposal was wrongly folded (codex P2, round 3).
+  //
+  // The rescue is RELATION-SCOPED (only these two relations) and EXPLICIT-ANALYSIS
+  // GATED (a single PLAIN failure is NOT rescued). It does NOT touch
+  // computeEvidenceLevel's leveling: the event stays `medium` (so OTHER relations
+  // with 1 judge event still reject at the floor — no loosening). Endpoint-
+  // touching is still required and is enforced by the §4.3 relationGate below.
+  const explicitSingleEventRescue =
+    requiresTwoEvents && level === 'medium' && hasExplicitSingleEventBasis(usable);
+
+  // RB-4 — agents are rejected at medium/weak; only strong writes (plus the
+  // §4.3 explicit-single-event rescue above for prerequisite / contrasts_with).
+  // Downweighting medium is Layer 2 / YUK-174.
+  if (level !== 'strong' && !explicitSingleEventRescue) {
     return {
       ok: false,
       gate: 'evidence_level',
@@ -477,26 +512,18 @@ export async function validateProposalQuality(
   }
 
   // §4.2 + §4.3 — prerequisite / contrasts_with require 2 events UNLESS one has
-  // explicit analysis. `strong` already means ≥2 usable (or 1 + user note);
-  // enforce the relation-specific minimum explicitly for clarity. The single-
-  // event relaxation honors EITHER axis of explicit analysis (§4.2 "1 failure +
-  // explicit user note" is just as strong as "1 + explicit judge analysis"):
-  // agent judge analysis (hasExplicitJudgeAnalysis) OR a non-empty
-  // user_cause.user_notes. Checking only the judge axis made §4.2's single-
-  // event-strong path unreachable for these two relations (a user-note-backed
-  // strong proposal was wrongly rejected for <2 events).
-  if (relationRequiresTwoEvents(change.relation_type)) {
-    const hasExplicit = usable.some(
-      (ev) =>
-        ev.hasExplicitJudgeAnalysis || (ev.attempt.user_cause?.user_notes ?? '').trim().length > 0,
-    );
-    if (usable.length < 2 && !hasExplicit) {
-      return {
-        ok: false,
-        gate: 'evidence_level',
-        reason: `${change.relation_type} requires 2 in-window judge-backed failures unless one has explicit judge analysis`,
-      };
-    }
+  // explicit analysis. A `strong` level already means ≥2 usable (or 1 + user
+  // note, which is itself explicit); when level is `medium` we only reached here
+  // via the explicitSingleEventRescue above, so the explicit-analysis basis is
+  // already established. The remaining guard: a `strong` level reached WITHOUT
+  // the relaxation must still satisfy the ≥2-or-explicit minimum (e.g. a future
+  // single-event strong path that is NOT user-note-backed would be caught here).
+  if (requiresTwoEvents && usable.length < 2 && !hasExplicitSingleEventBasis(usable)) {
+    return {
+      ok: false,
+      gate: 'evidence_level',
+      reason: `${change.relation_type} requires 2 in-window judge-backed failures unless one has explicit judge analysis`,
+    };
   }
 
   // ---- §4.3 relation-specific predicates (agents) ----
