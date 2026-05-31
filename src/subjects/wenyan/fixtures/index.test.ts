@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import fixtureData from './data.json' with { type: 'json' };
-import { WenyanFixtureFileSchema, loadWenyanFixtures } from './index';
+import { WenyanFixtureFileSchema, WenyanFixtureItemSchema, loadWenyanFixtures } from './index';
 
 /**
  * P5.8 (YUK-182) — wenyan fixture structure validation (unit partition).
@@ -95,5 +95,48 @@ describe('wenyan fixtures', () => {
     const items = loadWenyanFixtures();
     const refs = items.map((i) => i.ref);
     expect(new Set(refs).size).toBe(refs.length);
+  });
+
+  // PR #228 review (CodeRabbit, Major): the kind→field invariants now live in the
+  // schema (superRefine), so prove the guard actually rejects malformed items —
+  // not just that the shipped data.json happens to satisfy them.
+  describe('schema superRefine rejects kind/field mismatches', () => {
+    it('single_choice without choices_md fails', () => {
+      const r = WenyanFixtureItemSchema.safeParse({
+        ref: 'x',
+        kind: 'single_choice',
+        prompt_md: 'p',
+        reference_md: 'a',
+        difficulty: 1,
+        knowledge_hint: '实词',
+      });
+      expect(r.success).toBe(false);
+    });
+
+    it('translation without rubric_json.required_points fails', () => {
+      const r = WenyanFixtureItemSchema.safeParse({
+        ref: 'x',
+        kind: 'translation',
+        prompt_md: 'p',
+        reference_md: 'a',
+        rubric_json: { criteria: [] },
+        difficulty: 1,
+        knowledge_hint: '翻译',
+      });
+      expect(r.success).toBe(false);
+    });
+
+    it('fill_blank without rubric_json.keywords fails', () => {
+      const r = WenyanFixtureItemSchema.safeParse({
+        ref: 'x',
+        kind: 'fill_blank',
+        prompt_md: 'p',
+        reference_md: 'a',
+        rubric_json: { criteria: [] },
+        difficulty: 1,
+        knowledge_hint: '虚词',
+      });
+      expect(r.success).toBe(false);
+    });
   });
 });
