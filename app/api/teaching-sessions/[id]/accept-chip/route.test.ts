@@ -207,19 +207,24 @@ describe('POST /api/teaching-sessions/[id]/accept-chip (AC-5, §5.2)', () => {
   });
 
   it('does not write the chip event when the materialized proposal accept fails (P5.6 regression)', async () => {
-    // proposal_id points at a nonexistent proposal → acceptAiProposal throws.
-    // The chip event must NOT be persisted (and so must not reach getChipAcceptKpi),
+    // Seed a VALID anchor so isValidAnchorEvent passes and execution actually
+    // reaches the accept→write ordering (a bogus source_event_id would 400 first
+    // and never exercise the reorder). proposal_id points at a nonexistent
+    // proposal → acceptAiProposal throws BEFORE writeEvent (P0-B order). The chip
+    // event must NOT be persisted (and so must not reach getChipAcceptKpi),
     // otherwise a failing accept + client retry double-counts the §5.1 KPI.
+    // Reverting the reorder to writeEvent-first makes this test fail.
     const db = testDb();
     const { sessionId } = await Conversation.startConversation(db, {
       learningItemId: 'li_chip_atomic',
     });
+    const explainId = await seedAgentMessage(sessionId, 'explain');
 
     const res = await POST(
       chipReq(sessionId, {
         suggestion_kind: 'proactive',
         chip_label: '出题考我',
-        source_event_id: 'evt_explicit',
+        source_event_id: explainId,
         proposal_id: 'prop_does_not_exist',
       }),
       { params: paramsFor(sessionId) },
