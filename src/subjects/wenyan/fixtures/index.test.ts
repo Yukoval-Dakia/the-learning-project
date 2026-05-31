@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import curriculum from '../curriculum.json' with { type: 'json' };
 import fixtureData from './data.json' with { type: 'json' };
 import { WenyanFixtureFileSchema, WenyanFixtureItemSchema, loadWenyanFixtures } from './index';
 
@@ -85,7 +86,10 @@ describe('wenyan fixtures', () => {
 
   it('knowledge_hint is a curriculum.json seed name', () => {
     const items = loadWenyanFixtures();
-    const seedNames = new Set(['实词', '虚词', '句式', '断句', '翻译', '文学常识', '论述题']);
+    // PR #228 review (CodeRabbit nitpick): derive the allowed names from
+    // curriculum.json (single source of truth) rather than hardcoding them, so
+    // the test self-updates if the curriculum seeds change.
+    const seedNames = new Set(curriculum.knowledge_seeds.map((s) => s.name));
     for (const it of items) {
       expect(seedNames).toContain(it.knowledge_hint);
     }
