@@ -1152,6 +1152,40 @@ describe('validateProposalQuality — adaptive gate bump (Facet B / B1)', () => 
       expect(v.reason).not.toContain('adaptive');
     }
   });
+
+  it.each(['prerequisite', 'contrasts_with'] as const)(
+    'C5: TWO UNRELATED medium events (one with explicit analysis) do NOT take the single-event rescue (%s rejects at floor)',
+    async (relation) => {
+      // computeEvidenceLevel returns `medium` for 2+ UNRELATED judge-backed
+      // failures (no same-pattern pair). These two diverge on BOTH axes — distinct
+      // cause categories (concept vs memory) AND non-overlapping referenced
+      // knowledge (k_zhi vs k_er) — so they are medium, not strong. Both carry
+      // explicit judge analysis (seedEvidence's non-empty analysis_md), so
+      // hasExplicitSingleEventBasis is true. The §4.3 relaxation is a SINGLE-event
+      // exception (usable.length === 1); these TWO events must NOT be rescued and
+      // must reject at the evidence floor regardless of the adaptive input.
+      await seedEvidence('e_c5_a', ['k_zhi'], 1, 'concept');
+      await seedEvidence('e_c5_b', ['k_er'], 2, 'memory');
+      const payload = edgePayload('k_zhi', 'k_er', relation, {
+        reasoning:
+          'attempt e_c5_a judge cause concept 指向 k_zhi，attempt e_c5_b judge cause memory 指向 k_er，两者分析都明确但模式不同。',
+        evidenceEventIds: ['e_c5_a', 'e_c5_b'],
+      });
+
+      // Both pure L1 (no adaptive) and adaptive TIGHTEN must reject at the floor:
+      // the rescue never applies (length 2), so the bump has nothing to suppress.
+      for (const adaptive of [undefined, TIGHTEN]) {
+        const v = await validateProposalQuality(payload, testDb(), AGENT, adaptive);
+        expect(v.ok).toBe(false);
+        if (!v.ok) {
+          expect(v.gate).toBe('evidence_level');
+          // Reached the plain floor message — NO adaptive annotation, because the
+          // rescue basis was false (length 2), so the bump never removed a rescue.
+          expect(v.reason).not.toContain('adaptive');
+        }
+      }
+    },
+  );
 });
 
 describe('RubricGate type is referenced', () => {

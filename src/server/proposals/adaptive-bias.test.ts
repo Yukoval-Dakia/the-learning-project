@@ -6,12 +6,12 @@
 // by adaptive-bias.unit.test.ts).
 
 import type { AiProposalPayloadInputT } from '@/core/schema/proposal';
-import { PROPOSAL_FEEDBACK_BUDGET } from '@/server/ai/tools/budgets';
+import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/server/ai/tools/budgets';
 import { recordProposalDecisionSignal } from '@/server/proposals/signals';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import { getProposalFeedbackDigest } from './adaptive-bias';
+import { getProposalFeedbackDigest, resolveEdgeGateBump } from './adaptive-bias';
 
 const BUDGET = PROPOSAL_FEEDBACK_BUDGET;
 
@@ -282,5 +282,198 @@ describe('getProposalFeedbackDigest', () => {
     const digest = await getProposalFeedbackDigest(db, BUDGET);
     const cell = digest.find((c) => c.kind === 'completion');
     expect(cell?.top_rubric_gates).toEqual([]);
+  });
+
+  it('surfaces a rubric-only edge cell for a relation with NO proposal_signals row (codex#1)', async () => {
+    const db = testDb();
+    // A relation whose proposals were ALL rubric-rejected before reaching the
+    // decidable inbox: there is NO proposal_signals row for it (it was never
+    // accepted/dismissed). Its top_rubric_gates must still surface so the agents
+    // can self-correct, even though total === 0.
+    await writeAiProposal(db, {
+      id: 'rr-only',
+      actor_ref: 'dreaming',
+      outcome: 'success',
+      payload: edgeProposal('m', 'n', 'prerequisite', 'knowledge_edge:m|n|prerequisite'),
+      event_override: {
+        action: 'propose',
+        subject_kind: 'knowledge_edge',
+        payload: {
+          from_knowledge_id: 'm',
+          to_knowledge_id: 'n',
+          relation_type: 'prerequisite',
+          weight: 1,
+          reasoning: 'r',
+          rubric_verdict: { ok: false, gate: 'prerequisite_no_order_evidence', reason: 'r' },
+        },
+      },
+      created_at: new Date('2026-05-20T00:00:00.000Z'),
+    });
+
+    const digest = await getProposalFeedbackDigest(db, BUDGET);
+    const cell = digest.find((c) => c.kind === 'knowledge_edge' && c.relation === 'prerequisite');
+    expect(cell).toBeDefined();
+    expect(cell?.total).toBe(0);
+    expect(cell?.acceptance_rate).toBe(0);
+    expect(cell?.top_rubric_gates).toContain('prerequisite_no_order_evidence');
+  });
+
+  it('matches the rejected bucket by relation EQUALITY, not LIKE (codex#4: `_` is not a wildcard)', async () => {
+    const db = testDb();
+    // The target relation `experimental:foo_bar` contains `_` (a LIKE single-char
+    // wildcard). The OLD `cooldown_key LIKE '%|' || relation` predicate would also
+    // match `experimental:fooXbar` (the `_` matches the `X`), so a reject on that
+    // distinct relation would bleed into the target's gates. Equality on the
+    // derived `|`-segment must keep them separate. Both relations are schema-valid
+    // via the `experimental:*` escape hatch (RelationTypeSchema), so writeAiProposal
+    // parses them. (Core enum relations like `related_to` have no valid same-shape
+    // near-match to demonstrate the wildcard with, hence the experimental pair.)
+    await recordProposalDecisionSignal(
+      db,
+      {
+        id: 'rl1',
+        kind: 'knowledge_edge',
+        payload: { cooldown_key: 'knowledge_edge:a|b|experimental:foo_bar' },
+      },
+      'dismiss',
+      'dumping ground',
+    );
+    // Reject event on experimental:foo_bar → should surface.
+    await writeAiProposal(db, {
+      id: 'rr-rel',
+      actor_ref: 'dreaming',
+      outcome: 'success',
+      payload: edgeProposal(
+        'a',
+        'b',
+        'experimental:foo_bar',
+        'knowledge_edge:a|b|experimental:foo_bar',
+      ),
+      event_override: {
+        action: 'propose',
+        subject_kind: 'knowledge_edge',
+        payload: {
+          from_knowledge_id: 'a',
+          to_knowledge_id: 'b',
+          relation_type: 'experimental:foo_bar',
+          weight: 1,
+          reasoning: 'r',
+          rubric_verdict: { ok: false, gate: 'edge_endpoint_untouched', reason: 'r' },
+        },
+      },
+      created_at: new Date('2026-05-20T00:00:00.000Z'),
+    });
+    // Reject event on experimental:fooXbar (a `_`-wildcard near-match under the OLD
+    // LIKE predicate) → must NOT bleed into experimental:foo_bar's gates.
+    await writeAiProposal(db, {
+      id: 'rr-xo',
+      actor_ref: 'dreaming',
+      outcome: 'success',
+      payload: edgeProposal(
+        'c',
+        'd',
+        'experimental:fooXbar',
+        'knowledge_edge:c|d|experimental:fooXbar',
+      ),
+      event_override: {
+        action: 'propose',
+        subject_kind: 'knowledge_edge',
+        payload: {
+          from_knowledge_id: 'c',
+          to_knowledge_id: 'd',
+          relation_type: 'experimental:fooXbar',
+          weight: 1,
+          reasoning: 'r',
+          rubric_verdict: { ok: false, gate: 'wrong_relation_gate', reason: 'r' },
+        },
+      },
+      created_at: new Date('2026-05-21T00:00:00.000Z'),
+    });
+
+    const digest = await getProposalFeedbackDigest(db, BUDGET);
+    const target = digest.find(
+      (c) => c.kind === 'knowledge_edge' && c.relation === 'experimental:foo_bar',
+    );
+    expect(target?.top_rubric_gates).toContain('edge_endpoint_untouched');
+    expect(target?.top_rubric_gates).not.toContain('wrong_relation_gate');
+  });
+
+  it('suppresses a stale dismiss_reason after a later accept on the same cooldown_key (codex#5)', async () => {
+    const db = testDb();
+    // dismiss-then-accept on ONE cooldown_key: accept nulls cooldown_until but
+    // retains the prior dismiss_reason and bumps updated_at (sorts first). The
+    // stale reason must NOT surface. Use a net-negative count so the net-negative
+    // gate alone would NOT suppress it — only the cooldown_until guard does.
+    const key = { id: 'sd', kind: 'completion', payload: { cooldown_key: 'completion:flip' } };
+    await recordProposalDecisionSignal(db, key, 'dismiss', 'rejected then reconsidered');
+    await recordProposalDecisionSignal(db, key, 'dismiss', 'rejected then reconsidered');
+    await recordProposalDecisionSignal(db, key, 'accept');
+
+    const digest = await getProposalFeedbackDigest(db, BUDGET);
+    const cell = digest.find((c) => c.kind === 'completion');
+    // 0 accept? No — 1 accept / 2 dismiss → net-negative, so the reason WOULD
+    // surface if the cooldown_until guard were absent. It must be empty because
+    // the latest decision is an accept (cooldown_until nulled).
+    expect(cell?.dismiss_count).toBe(2);
+    expect(cell?.accept_count).toBe(1);
+    expect(cell?.top_dismiss_reasons).toEqual([]);
+  });
+
+  it('resolveEdgeGateBump uses a relation-scoped read unaffected by the digest display cap (codex#2/#3)', async () => {
+    const db = testDb();
+    // Seed MANY high-acceptance edge relations so a digest-then-slice path would
+    // sort the one low-acceptance relation we care about off the maxKindRelations
+    // tail. The relation-scoped read must still compute its (low) bump.
+    for (let r = 0; r < BUDGET.maxKindRelations + 3; r++) {
+      const rel = `experimental:hi${r}`;
+      for (let i = 0; i < 6; i++) {
+        await recordProposalDecisionSignal(
+          db,
+          {
+            id: `hi${r}_${i}`,
+            kind: 'knowledge_edge',
+            payload: { cooldown_key: `knowledge_edge:a${r}|b${r}|${rel}` },
+          },
+          'accept',
+        );
+      }
+    }
+    // The target low-acceptance relation: 1 accept / 9 dismiss → rate 0.1, 10
+    // samples (>= minSamples 5). It sorts LAST by acceptance_rate, so a sliced
+    // digest of the top maxKindRelations cells would drop it.
+    await recordProposalDecisionSignal(
+      db,
+      {
+        id: 'lo_a',
+        kind: 'knowledge_edge',
+        payload: { cooldown_key: 'knowledge_edge:lo|lo|contrasts_with' },
+      },
+      'accept',
+    );
+    for (let i = 0; i < 9; i++) {
+      await recordProposalDecisionSignal(
+        db,
+        {
+          id: `lo_d${i}`,
+          kind: 'knowledge_edge',
+          payload: { cooldown_key: 'knowledge_edge:lo|lo|contrasts_with' },
+        },
+        'dismiss',
+        'confusion not shown',
+      );
+    }
+
+    // Confirm the digest (sorted + sliced) would have dropped the low cell.
+    const digest = await getProposalFeedbackDigest(db, BUDGET);
+    expect(digest.find((c) => c.relation === 'contrasts_with')).toBeUndefined();
+
+    // The relation-scoped resolver still tightens it.
+    const bump = await resolveEdgeGateBump(db, 'contrasts_with', BUDGET, PROPOSAL_GATE_BIAS_CONFIG);
+    expect(bump).toMatchObject({
+      tightenMediumToStrong: true,
+      acceptanceRate: 0.1,
+      sampleCount: 10,
+      threshold: PROPOSAL_GATE_BIAS_CONFIG.acceptanceThreshold,
+    });
   });
 });

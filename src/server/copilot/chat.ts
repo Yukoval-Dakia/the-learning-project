@@ -252,8 +252,21 @@ export async function runCopilotChat(
   // single bounded read (not per-tool-call), pre-truncated to maxChars so the
   // per-message prompt cannot bloat regardless of the ContextBudgetTracker (which
   // gates only the tool-call loop, codex#3). Cold start → [].
-  const feedbackDigest = await loadFeedback(db);
-  const proposalFeedback = scopeCopilotProposalFeedback(feedbackDigest);
+  //
+  // The digest is an ADDITIVE input (ND-5): a read failure must NOT crash the
+  // chat. Degrade to [] (same as cold start) and continue; log so the silent
+  // empty is traceable (codex C4).
+  let proposalFeedback: ReturnType<typeof scopeCopilotProposalFeedback> = [];
+  try {
+    proposalFeedback = scopeCopilotProposalFeedback(await loadFeedback(db));
+  } catch (err) {
+    proposalFeedback = [];
+    console.error('[runCopilotChat] loadProposalFeedback failed; degrading to []', {
+      task_run_id: taskRunId,
+      surface,
+      err,
+    });
+  }
 
   const result = await run(
     'CopilotTask',

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { resolveDomainToolNames, resolveMcpAllowedTools } from '@/server/ai/tools/allowlists';
+import { PROPOSAL_FEEDBACK_BUDGET } from '@/server/ai/tools/budgets';
 import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
 import { runCopilotChat } from './chat';
 
@@ -261,7 +262,9 @@ describe('runCopilotChat (two-surface routing)', () => {
       },
     ]);
     // Char-bound: the serialized field never exceeds the whole-digest cap.
-    expect(JSON.stringify(taskInput.proposal_feedback).length).toBeLessThanOrEqual(1200);
+    expect(JSON.stringify(taskInput.proposal_feedback).length).toBeLessThanOrEqual(
+      PROPOSAL_FEEDBACK_BUDGET.maxSerializedChars,
+    );
   });
 
   // P5.4-L2 / YUK-174 (P1 fix) — a realistic multi-cell digest must NOT collapse to
@@ -337,7 +340,9 @@ describe('runCopilotChat (two-surface routing)', () => {
     );
     if (firstReasonless !== -1) expect(lastActionable).toBeLessThan(firstReasonless);
     // Still whole-digest bounded.
-    expect(JSON.stringify(taskInput.proposal_feedback).length).toBeLessThanOrEqual(1200);
+    expect(JSON.stringify(taskInput.proposal_feedback).length).toBeLessThanOrEqual(
+      PROPOSAL_FEEDBACK_BUDGET.maxSerializedChars,
+    );
   });
 
   it('emits an empty proposal_feedback on cold start (no-op back-compat)', async () => {
