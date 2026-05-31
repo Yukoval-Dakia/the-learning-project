@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, isNull, like, lt, not, or, sql } from 'drizzle-orm';
 
 import type { Db } from '@/db/client';
 import { event, memory_brief_note } from '@/db/schema';
@@ -134,14 +134,27 @@ export async function listStaleBriefScopes(db: Db, now = new Date()): Promise<st
   const rows = await db
     .select({ scope_key: memory_brief_note.scope_key })
     .from(memory_brief_note)
-    // P5.2 — semantically identical to the prior raw
-    // `refreshed_at IS NULL OR refreshed_at < cutoff` fragment, but expressed
-    // via drizzle's typed operators so the `cutoff` Date binds against the
-    // timestamptz column type. The raw `sql\`... < ${cutoff}\`` form did NOT
-    // carry the column type, so postgres-js's prepared-statement bind crashed
-    // on a JS Date param (latent — the global sweep had no DB-level test until
-    // P5.2 exercised it). Same query, same 24h gate, no behavior change.
-    .where(or(isNull(memory_brief_note.refreshed_at), lt(memory_brief_note.refreshed_at, cutoff)));
+    .where(
+      and(
+        // P5.2 (BR-9) — EXCLUDE `subject:*` scopes from the 24h-stale loop.
+        // Subject refresh is owned ENTIRELY by the capped per-subject path
+        // (listActiveSubjectsSinceRefresh → selectSubjectsForRun, gated by
+        // BRIEF_REFRESH_BUDGET.maxSubjectsPerRun). If the stale loop also
+        // enqueued every >24h subject row, an already-built subject would be
+        // refreshed UNCAPPED via this path, bypassing maxSubjectsPerRun. `global`
+        // (and any legacy non-subject scope) stays on this stale path (BR-6
+        // unchanged).
+        not(like(memory_brief_note.scope_key, 'subject:%')),
+        // P5.2 — semantically identical to the prior raw
+        // `refreshed_at IS NULL OR refreshed_at < cutoff` fragment, but expressed
+        // via drizzle's typed operators so the `cutoff` Date binds against the
+        // timestamptz column type. The raw `sql\`... < ${cutoff}\`` form did NOT
+        // carry the column type, so postgres-js's prepared-statement bind crashed
+        // on a JS Date param (latent — the global sweep had no DB-level test until
+        // P5.2 exercised it). Same 24h gate, no behavior change for non-subject scopes.
+        or(isNull(memory_brief_note.refreshed_at), lt(memory_brief_note.refreshed_at, cutoff)),
+      ),
+    );
   return rows.map((row) => row.scope_key);
 }
 

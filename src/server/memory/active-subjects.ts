@@ -17,7 +17,7 @@
 // `@/server/knowledge/subject-resolution`).
 
 import type { Db } from '@/db/client';
-import { event, memory_brief_note } from '@/db/schema';
+import { event, learning_record, memory_brief_note } from '@/db/schema';
 import { BRIEF_REFRESH_BUDGET } from '@/server/ai/tools/budgets';
 import { batchResolveSubjectIds } from '@/server/knowledge/subject-resolution';
 import { and, eq, gt, inArray, like, sql } from 'drizzle-orm';
@@ -26,12 +26,19 @@ import type { BriefEvent } from './brief';
 // Actions that count as "the user did learning work on this subject" (BR-3).
 // `judge` / `propose` / `generate` / `rate` are agent-side or meta and are
 // intentionally excluded. `experimental:record_capture` is included for the
-// direct /record + ingestion-enroll (unanswered) path, but its payload carries
-// NO referenced_knowledge_ids (§5-Q2) — such events resolve to the DEFAULT
-// subject via the orphan fallback (YUK-56), same as any unresolvable id, rather
-// than being dropped. The enroll answered path writes `action='attempt'`, which
-// is already covered and DOES carry referenced_knowledge_ids.
+// direct /record + ingestion-enroll (unanswered) path. Its PAYLOAD carries NO
+// referenced_knowledge_ids (§5-Q2) — instead the knowledge/subject lives on the
+// linked `learning_record` row (the capture event's `subject_id` IS the
+// learning_record id, `records/queries.ts`). We JOIN that record to resolve the
+// correct subject (BR-4, via the record's `knowledge_ids` → batchResolveSubjectIds,
+// falling back to the record's explicit `subject_id`), so a math/physics capture
+// refreshes its real subject — NOT the default subject. A capture whose record is
+// missing / has neither knowledge_ids nor subject_id still falls back to the
+// DEFAULT subject via the orphan fallback (YUK-56), rather than being dropped. The
+// enroll answered path writes `action='attempt'`, already covered, which DOES carry
+// referenced_knowledge_ids.
 const QUALIFYING_ACTIONS = ['attempt', 'review', 'experimental:record_capture'] as const;
+const RECORD_CAPTURE_ACTION = 'experimental:record_capture';
 
 const DEFAULT_LOOKBACK_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -45,8 +52,12 @@ export interface ActiveSubject {
   /** Newest qualifying event's created_at — drives the BR-9 recency sort. */
   maxCreatedAt: Date;
   /** The knowledge-resolved qualifying event window for THIS subject, most
-   *  recent first, capped at BRIEF_REFRESH_BUDGET.maxEventsPerBrief. This is
-   *  what the regen step (BR-10) summarizes from, so it never re-queries. */
+   *  recent first, capped at BRIEF_REFRESH_BUDGET.maxEventsPerBrief. Used ONLY
+   *  for activity DETECTION + recency ordering (it may include pre-refresh rows,
+   *  since the global scan floor is shared across subjects). The regen step does
+   *  NOT consume this window — after the de0a94e3 floor reconciliation it reloads
+   *  its own per-subject knowledge-resolved window via `loadSubjectBriefEvents`
+   *  (floored at the subject's own refreshed_at), so the two never diverge. */
   events: BriefEvent[];
 }
 
@@ -67,13 +78,81 @@ type QualifyingEventRow = {
 };
 
 function extractKnowledgeIds(payload: unknown): string[] {
-  // attempt / review carry payload.referenced_knowledge_ids; capture has none
-  // (resolves to default subject via the orphan fallback in batchResolveSubjectIds).
+  // attempt / review carry payload.referenced_knowledge_ids; capture has none in
+  // its payload (resolved from the linked learning_record instead, see
+  // resolveQualifyingEventSubjects).
   if (payload && typeof payload === 'object' && 'referenced_knowledge_ids' in payload) {
     const ids = (payload as { referenced_knowledge_ids?: unknown }).referenced_knowledge_ids;
     if (Array.isArray(ids)) return ids.filter((id): id is string => typeof id === 'string');
   }
   return [];
+}
+
+/**
+ * Resolve each qualifying event → subject id via the canonical BR-4 bridge,
+ * handling the `experimental:record_capture` join (§5-Q2 / PR #218 fix).
+ *
+ * attempt / review carry `payload.referenced_knowledge_ids`, so they resolve
+ * directly. `experimental:record_capture` events carry NO knowledge ids in their
+ * payload — the knowledge/subject lives on the linked `learning_record` row,
+ * which the capture event references by `event.subject_id === learning_record.id`
+ * (`records/queries.ts`). We batch-fetch those records and use the record's
+ * `knowledge_ids` (→ batchResolveSubjectIds, same BR-4 bridge as attempt/review)
+ * so a capture resolves to its REAL subject instead of misattributing to the
+ * default subject. If a record has no knowledge_ids but a non-null `subject_id`,
+ * we honour that explicit column directly. A capture whose record is missing /
+ * carries neither still falls back to the default subject via the orphan
+ * fallback (YUK-56), rather than being dropped.
+ */
+async function resolveQualifyingEventSubjects(
+  db: Db,
+  rows: QualifyingEventRow[],
+): Promise<Map<string, string>> {
+  // 1. Capture events reference their record by subject_id. Batch-fetch the
+  //    linked records once so the join is a single bounded query (not N+1).
+  const captureRecordIds = rows
+    .filter((row) => row.action === RECORD_CAPTURE_ACTION)
+    .map((row) => row.subject_id);
+  const recordById = new Map<string, { knowledge_ids: string[]; subject_id: string | null }>();
+  if (captureRecordIds.length > 0) {
+    const recordRows = await db
+      .select({
+        id: learning_record.id,
+        knowledge_ids: learning_record.knowledge_ids,
+        subject_id: learning_record.subject_id,
+      })
+      .from(learning_record)
+      .where(inArray(learning_record.id, [...new Set(captureRecordIds)]));
+    for (const rec of recordRows) {
+      recordById.set(rec.id, { knowledge_ids: rec.knowledge_ids, subject_id: rec.subject_id });
+    }
+  }
+
+  // 2. Build the knowledge-id list per event for the canonical bridge. Capture
+  //    events borrow their linked record's knowledge_ids; attempt/review use
+  //    their own payload. Records that have a subject_id but no knowledge_ids are
+  //    resolved by the explicit column in step 3 (their knowledge list is empty
+  //    here, so batchResolveSubjectIds would otherwise default them).
+  const explicitSubjectByEvent = new Map<string, string>();
+  const resolveInput = rows.map((row) => {
+    if (row.action === RECORD_CAPTURE_ACTION) {
+      const rec = recordById.get(row.subject_id);
+      if (rec) {
+        if (rec.knowledge_ids.length > 0) return { id: row.id, knowledge_ids: rec.knowledge_ids };
+        if (rec.subject_id) explicitSubjectByEvent.set(row.id, rec.subject_id);
+      }
+      return { id: row.id, knowledge_ids: [] as string[] };
+    }
+    return { id: row.id, knowledge_ids: extractKnowledgeIds(row.payload) };
+  });
+
+  // 3. Canonical BR-4 resolution; then override with any record's explicit
+  //    subject_id column (knowledge_ids-less capture → record.subject_id).
+  const resolved = await batchResolveSubjectIds(db, resolveInput);
+  for (const [eventId, subjectId] of explicitSubjectByEvent) {
+    resolved.set(eventId, subjectId);
+  }
+  return resolved;
 }
 
 /**
@@ -165,12 +244,10 @@ export async function listActiveSubjectsSinceRefresh(
 
   if (rows.length === 0) return [];
 
-  // 3. Resolve each event → subject via the canonical bridge (BR-4). Memoised
-  //    by first knowledge id; orphan / capture (no knowledge ids) → default.
-  const subjectByEventId = await batchResolveSubjectIds(
-    db,
-    rows.map((row) => ({ id: row.id, knowledge_ids: extractKnowledgeIds(row.payload) })),
-  );
+  // 3. Resolve each event → subject via the canonical bridge (BR-4). attempt /
+  //    review resolve from payload knowledge ids; capture resolves from its
+  //    linked learning_record (§5-Q2). Orphan / unresolvable → default.
+  const subjectByEventId = await resolveQualifyingEventSubjects(db, rows);
 
   // 4. Group by subject, keep max created_at + the resolved event window.
   //    `rows` is already newest-first, so per-subject pushes preserve that order
@@ -292,10 +369,7 @@ export async function loadSubjectBriefEvents(
 
   if (rows.length === 0) return [];
 
-  const subjectByEventId = await batchResolveSubjectIds(
-    db,
-    rows.map((row) => ({ id: row.id, knowledge_ids: extractKnowledgeIds(row.payload) })),
-  );
+  const subjectByEventId = await resolveQualifyingEventSubjects(db, rows);
 
   const out: BriefEvent[] = [];
   for (const row of rows) {
