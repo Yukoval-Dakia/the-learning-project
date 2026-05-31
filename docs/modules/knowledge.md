@@ -424,10 +424,19 @@ Before implementing graph reader tools, create fixed fixtures that force useful 
 |---|---|---|
 | `wenyan-zhi-confusion` | 我为什么老错“之”？ | `query_knowledge` returns `之` children, recent failures, and `contrasts_with` candidates |
 | `wenyan-translation-prereq` | 翻译总错，是不是实词问题？ | `expand_knowledge_subgraph` shows `实词/句式/虚词 → 翻译` candidate paths |
-| `wenyan-zero-result` | 最近有没有“焉”的错题？ | read tool returns 0 result with corrective query suggestions |
+| `wenyan-zero-result` | 最近有没有“焉”的错题？ | read tool returns 0 result as a legitimate empty success (P5.6 semantics; no corrective suggestions field) |
 | `edge-duplicate` | propose existing edge | proposal writer rejects duplicate live/pending edge |
 
 These fixtures test whether the agent can understand context, not just whether SQL returns rows.
+
+> **Executable form (P5.5 Phase 1 / YUK-180).** These four fixtures are gated as
+> code in `src/server/ai/tools/fixtures.test.ts` via the reusable
+> `assertAgentReadable` contract (`src/server/ai/tools/fixtures-assert.ts`). The
+> table above is the spec; the test is the gate. When a tool's `Output` shape,
+> status enum, key-insight fields, or `costClass` changes, update the matching
+> scenario in `fixtures.test.ts` in the same change (LD-7 — process expectation,
+> not new automation). The remaining six brief-named scenarios + multi-subject
+> corpus are Phase 2, deferred and blocked on subject-graph seeding (P5.8).
 
 ---
 
