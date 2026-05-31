@@ -1196,6 +1196,40 @@ describe('variant_question proposal lifecycle', () => {
     expect(enqueue).toHaveBeenCalledWith(mistakeVariantId);
   });
 
+  // P5.6 / YUK-178 (AC-1 + AC-6) — variant_question is hard-corrective. Accepting
+  // it still writes the rate event AND materializes the variant question identically
+  // (side-effects unchanged, ND-SK-2), but the accept is EXCLUDED from the KPI:
+  // proposal_signals.accept_count is NOT bumped (no row for the key).
+  it('accept of a (corrective) variant_question writes the rate event + materializes, but does NOT bump accept_count', async () => {
+    await seedParentQuestion('q_parent');
+    const { proposalId } = await seedVariantQuestionProposal();
+    const enqueue = vi.fn(async () => {});
+
+    const result = await acceptAiProposal(testDb(), proposalId, { enqueueVariantVerify: enqueue });
+    expect(result.kind).toBe('variant_question');
+    if (result.kind !== 'variant_question') throw new Error('unexpected result kind');
+
+    // Side-effect: the variant question IS materialized (identical to any accept).
+    const newQs = await testDb().select().from(question).where(eq(question.id, result.question_id));
+    expect(newQs).toHaveLength(1);
+
+    // The rate event IS written (ND-SK-3 — corrective is still a full event).
+    const rateRows = await testDb()
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId)));
+    expect(rateRows).toHaveLength(1);
+    expect(rateRows[0].payload).toMatchObject({ rating: 'accept' });
+
+    // But the KPI signal is gated: no accept_count bump (the accept-family corrective
+    // gate early-returns before any proposal_signals write, §5.1).
+    const signals = await testDb()
+      .select()
+      .from(proposal_signals)
+      .where(eq(proposal_signals.kind, 'variant_question'));
+    expect(signals).toHaveLength(0);
+  });
+
   it('dismiss flips mistake_variant row to dismissed and writes rate event', async () => {
     await seedParentQuestion('q_parent');
     const { proposalId, mistakeVariantId } = await seedVariantQuestionProposal();
@@ -1216,12 +1250,18 @@ describe('variant_question proposal lifecycle', () => {
     expect(rateRows).toHaveLength(1);
     expect(rateRows[0].payload).toMatchObject({ rating: 'dismiss', user_note: 'not useful' });
 
+    // P5.6 / YUK-178 (AC-1b) — variant_question is hard-corrective, so a dismiss is
+    // EXCLUDED from the KPI: dismiss_count stays 0 (the denominator is not
+    // distorted). But the row IS written and the cooldown IS persisted (re-surfacing
+    // suppression is independent of KPI counting). The `rate` event above still
+    // records the dismiss (ND-SK-3).
     const signals = await testDb()
       .select()
       .from(proposal_signals)
       .where(eq(proposal_signals.kind, 'variant_question'));
     expect(signals).toHaveLength(1);
-    expect(signals[0]).toMatchObject({ dismiss_count: 1, accept_count: 0 });
+    expect(signals[0]).toMatchObject({ dismiss_count: 0, accept_count: 0 });
+    expect(signals[0].cooldown_until).toBeInstanceOf(Date);
   });
 
   it('retract after accept flips mistake_variant row from active to dismissed', async () => {

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { RelationTypeSchema } from './event/blocks';
+import { SuggestionKind, type SuggestionKindT } from './event/known';
 
 export const aiProposalKinds = [
   'knowledge_node',
@@ -50,6 +51,16 @@ const BaseProposal = z.object({
   evidence_refs: z.array(ProposalEvidenceRef).default([]),
   rollback_plan: z.unknown().optional(),
   cooldown_key: z.string().min(1).max(300).optional(),
+  // P5.6 / YUK-178 (ADR-0011 v2 §2.1) — proactive (default, absence) vs corrective
+  // discriminator. OPTIONAL on every kind via the union; absence === 'proactive'
+  // (ND-SK-1, see resolveSuggestionKind). Set deterministically only by the
+  // variant_question producer (the one structurally-corrective kind, SK-3) and by
+  // explicit model labeling via the 4 propose tools' optional input arg (§4.1/§4.2).
+  // It changes ONLY KPI attribution (corrective is excluded from the
+  // accept-learned signal, §5.1), never proposal accept/reject side-effects
+  // (ND-SK-2). No migration — payload field on the existing experimental:proposal
+  // event.
+  suggestion_kind: SuggestionKind.optional(),
 });
 
 export const KnowledgeNodeProposalChange = z.object({
@@ -177,4 +188,15 @@ export type AiProposalPayloadInputT = z.input<typeof AiProposalPayload>;
 
 export function parseAiProposalPayload(input: unknown): AiProposalPayloadT {
   return AiProposalPayload.parse(input);
+}
+
+// P5.6 / YUK-178 (ND-SK-1) — absence === 'proactive'. The single reader helper
+// so the default-to-proactive rule lives in one place; the KPI gate
+// (signals.ts) and any future reader resolve the kind through this. A corrective
+// proposal must have explicitly set the field at emit (producer hard-set for
+// variant_question, or model-labeled via the propose-tool arg).
+export function resolveSuggestionKind(payload: {
+  suggestion_kind?: SuggestionKindT;
+}): SuggestionKindT {
+  return payload.suggestion_kind ?? 'proactive';
 }

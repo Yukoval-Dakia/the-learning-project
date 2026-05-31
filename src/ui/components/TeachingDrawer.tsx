@@ -9,6 +9,7 @@
 // Narrow screen：fixed overlay full-height 100vw 占满。
 // 同一 LearningItem 一次会话；mounted=open，unmounted=close。父组件控制开关。
 
+import { TEACHING_CORRECTIVE_FAILURE_N, isCorrectiveRedo } from '@/core/teaching';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import {
@@ -38,11 +39,23 @@ interface StartResponse {
   suggested_next: 'continue' | 'end';
 }
 
+// P5.6 / YUK-178 (§4.3) — cumulative attempt totals for the active question.
+// `failure` is a total over the question's whole timeline (NOT a streak); it
+// drives the corrective redo chip once it reaches TEACHING_CORRECTIVE_FAILURE_N.
+interface AttemptCounts {
+  success: number;
+  partial: number;
+  failure: number;
+}
+
 interface TurnResponse {
   user_message: ChatMessage;
   agent_message: ChatMessage;
   suggested_next: 'continue' | 'end';
   was_idle?: boolean;
+  // P5.6 — lean fix (no DB column): active question + counts ride the response.
+  active_question_id?: string | null;
+  attempt_counts?: AttemptCounts | null;
 }
 
 // YUK-14 — conversation lifecycle status mirrors the server enum
@@ -58,6 +71,11 @@ interface SessionPoll {
     started_at: string;
     ended_at: string | null;
   };
+  // P5.6 / YUK-178 (§4.3, PIN 8) — the GET poll is the PRIMARY source of the
+  // failure total that drives the corrective chip (it observes counts after an
+  // attempt lands; the question-creation turn has 0).
+  active_question_id?: string | null;
+  attempt_counts?: AttemptCounts | null;
 }
 
 // design doc Open Q #3 default — UI polls every 30s for status changes
@@ -70,13 +88,32 @@ const TURN_KIND_LABEL: Record<TurnKind, string> = {
   end: '收尾',
 };
 
-const SUGGESTIONS: Array<{ label: string; text: string; suggestion_kind: SuggestionKind }> = [
+// P5.6 / YUK-178 (§4.3, LD-3) — drawer chips.
+//
+// The "redo / revisit" chip is the dynamic corrective producer: its kind flips
+// proactive → corrective once the active question's CUMULATIVE attempt failure
+// total reaches TEACHING_CORRECTIVE_FAILURE_N (=3, total not consecutive). Below
+// the threshold it stays a proactive "出题考我" next-step. When corrective, its
+// onClick writes an AcceptSuggestionChip via the accept-chip endpoint (NOT the
+// chat-turn send) so it flows through the chip-accept KPI exclusion (§5.2).
+//
+// The remaining chips are static proactive next-steps (a proactive chip-accept
+// DOES count toward the KPI). They keep sending a chat turn — they are
+// conversational prompts, not structured chip-accepts.
+const REDO_CHIP_LABEL_PROACTIVE = '出题考我';
+const REDO_CHIP_LABEL_CORRECTIVE = '重做 / 回看前置';
+const REDO_CHIP_TEXT = '出一道相关的题考我一下。';
+
+const STATIC_SUGGESTIONS: Array<{
+  label: string;
+  text: string;
+  suggestion_kind: SuggestionKind;
+}> = [
   {
     label: '再讲一遍',
     text: '上一段没完全跟上，能不能换一种说法再讲一遍？',
     suggestion_kind: 'corrective',
   },
-  { label: '出题考我', text: '出一道相关的题考我一下。', suggestion_kind: 'proactive' },
   { label: '我懂了', text: '我懂了，继续下一个要点吧。', suggestion_kind: 'proactive' },
 ];
 
@@ -99,6 +136,10 @@ export function TeachingDrawer({
   const [draft, setDraft] = useState('');
   const [status, setStatus] = useState<SessionStatus>('active');
   const [bootError, setBootError] = useState<string | null>(null);
+  // P5.6 / YUK-178 (§4.3) — active question + cumulative attempt counts, fed by
+  // the turn response and (primarily, PIN 8) the GET poll.
+  const [activeQuestionId, setActiveQuestionId] = useState<string | null>(null);
+  const [attemptCounts, setAttemptCounts] = useState<AttemptCounts | null>(null);
   const startCalledRef = useRef(false);
   const streamRef = useRef<HTMLDivElement | null>(null);
   // YUK-14 — design §"Pagehide / sendBeacon" E5: pagehide decision needs the
@@ -153,6 +194,11 @@ export function TeachingDrawer({
     onSuccess: (data) => {
       setMessages((prev) => [...prev, data.user_message, data.agent_message]);
       setSuggestedNext(data.suggested_next);
+      // P5.6 — track the active question + counts off the turn response. On the
+      // turn that CREATES an ask_check question this failure total is 0 (no
+      // attempts yet, PIN 8); the GET poll is the primary trigger source.
+      if (data.active_question_id !== undefined) setActiveQuestionId(data.active_question_id);
+      if (data.attempt_counts !== undefined) setAttemptCounts(data.attempt_counts);
       // was_idle: server confirmation that idle→active happened (we already
       // flipped optimistically; this is the receipt). turn_kind='end' is just
       // a coach hint, not a state transition.
@@ -171,6 +217,19 @@ export function TeachingDrawer({
     onSuccess: () => setStatus('ended'),
   });
 
+  // P5.6 / YUK-178 (§4.3 / §5.2) — accept-chip writer. A corrective redo chip
+  // click writes an AcceptSuggestionChip via the new endpoint (NOT a chat turn),
+  // so it routes through the chip-accept KPI exclusion.
+  const acceptChipM = useMutation({
+    mutationFn: async (input: { suggestion_kind: SuggestionKind; chip_label: string }) => {
+      if (!sessionId) throw new Error('session not ready');
+      return apiJson<{ ok: boolean; event_id: string }>(
+        `/api/teaching-sessions/${sessionId}/accept-chip`,
+        { method: 'POST', body: JSON.stringify(input) },
+      );
+    },
+  });
+
   // YUK-14 — Poll session GET every 30s for server-side status flips
   // (idle promote, abandoned cron). Stop polling once the session is in a
   // terminal state.
@@ -184,6 +243,11 @@ export function TeachingDrawer({
         });
         const next = res.session.status;
         if (next !== statusRef.current) setStatus(next);
+        // P5.6 (PIN 8) — the GET poll is the primary source of the failure total
+        // that flips the redo chip corrective (it observes counts after attempts
+        // land). undefined = field not present (older payload) → leave as-is.
+        if (res.active_question_id !== undefined) setActiveQuestionId(res.active_question_id);
+        if (res.attempt_counts !== undefined) setAttemptCounts(res.attempt_counts);
       } catch {
         // Network blip — keep last known status, will retry next interval.
       }
@@ -243,6 +307,23 @@ export function TeachingDrawer({
   const send = (text: string) => {
     if (!text.trim() || turnM.isPending || ended) return;
     turnM.mutate(text.trim());
+  };
+
+  // P5.6 / YUK-178 (§4.3) — the redo chip is corrective once the active
+  // question's CUMULATIVE failure total reaches TEACHING_CORRECTIVE_FAILURE_N
+  // (total, not consecutive). Single-source helper from @/core/teaching.
+  const redoIsCorrective = isCorrectiveRedo(attemptCounts?.failure);
+  const redoChipLabel = redoIsCorrective ? REDO_CHIP_LABEL_CORRECTIVE : REDO_CHIP_LABEL_PROACTIVE;
+
+  // A corrective redo chip writes an AcceptSuggestionChip (chip-accept KPI path);
+  // a proactive redo chip sends a normal chat turn (§4.3).
+  const onRedoChipClick = () => {
+    if (turnM.isPending || acceptChipM.isPending || ended) return;
+    if (redoIsCorrective) {
+      acceptChipM.mutate({ suggestion_kind: 'corrective', chip_label: redoChipLabel });
+    } else {
+      send(REDO_CHIP_TEXT);
+    }
   };
 
   const subjectModel = resolveSubjectRenderModel(subjectProfile);
@@ -366,7 +447,7 @@ export function TeachingDrawer({
       {sessionId && !ended && (
         <div className="drawer-foot">
           <div className="suggestions">
-            {SUGGESTIONS.map((s) => (
+            {STATIC_SUGGESTIONS.map((s) => (
               <button
                 key={s.label}
                 type="button"
@@ -378,6 +459,23 @@ export function TeachingDrawer({
                 <SuggestionKindTag kind={s.suggestion_kind} />
               </button>
             ))}
+            {/* P5.6 / YUK-178 (§4.3, LD-3) — dynamic redo chip: corrective once
+                cumulative failure >= TEACHING_CORRECTIVE_FAILURE_N (=3, total). */}
+            <button
+              type="button"
+              className={`suggest-chip ${redoIsCorrective ? 'is-corrective' : ''}`}
+              onClick={onRedoChipClick}
+              disabled={turnM.isPending || acceptChipM.isPending}
+              data-corrective={redoIsCorrective}
+              title={
+                redoIsCorrective
+                  ? `已累计 ${attemptCounts?.failure ?? 0} 次失败（>= ${TEACHING_CORRECTIVE_FAILURE_N}）— 建议重做 / 回看前置`
+                  : undefined
+              }
+            >
+              {redoChipLabel}
+              <SuggestionKindTag kind={redoIsCorrective ? 'corrective' : 'proactive'} />
+            </button>
           </div>
           <div className="composer">
             <textarea

@@ -528,6 +528,212 @@ describe('proposal signals', () => {
   });
 });
 
+// P5.6 / YUK-178 — corrective proposals are excluded from the accept-learned KPI
+// FULLY (both accept_count and dismiss_count), at BOTH writers (incremental +
+// rebuild). A corrective dismiss still persists its cooldown_until (the gate
+// skips counting, not the cooldown). ND-SK-4 / LD-1 / §5.1.
+describe('proposal signals — corrective KPI exclusion (P5.6)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  const correctiveSource = {
+    id: 'proposal_corr',
+    kind: 'variant_question',
+    payload: { cooldown_key: 'variant_question:q1:a1', suggestion_kind: 'corrective' as const },
+  };
+  const proactiveSource = {
+    id: 'proposal_proa',
+    kind: 'completion',
+    payload: { cooldown_key: 'completion:proa' },
+  };
+
+  it('AC-1: a corrective ACCEPT does not bump accept_count (no row written)', async () => {
+    const db = testDb();
+    await recordProposalDecisionSignal(db, correctiveSource, 'accept');
+
+    const rows = await db
+      .select()
+      .from(proposal_signals)
+      .where(eq(proposal_signals.cooldown_key, 'variant_question:q1:a1'));
+    // The accept-family corrective decision early-returns: no row, no count.
+    expect(rows).toHaveLength(0);
+
+    // The acceptance-rate roll-up therefore never sees it.
+    const rates = await getProposalAcceptanceRates(db);
+    expect(rates.find((r) => r.kind === 'variant_question')).toBeUndefined();
+  });
+
+  it('AC-1: a proactive (field-absent) accept DOES bump accept_count', async () => {
+    const db = testDb();
+    await recordProposalDecisionSignal(db, proactiveSource, 'accept');
+
+    const rows = await db
+      .select()
+      .from(proposal_signals)
+      .where(eq(proposal_signals.cooldown_key, 'completion:proa'));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ accept_count: 1, dismiss_count: 0, acceptance_rate: 1 });
+  });
+
+  it('AC-1b: a corrective DISMISS skips dismiss_count BUT still writes cooldown_until', async () => {
+    const db = testDb();
+    const beforeDismiss = Date.now();
+    await recordProposalDecisionSignal(db, correctiveSource, 'dismiss', 'redo not needed');
+
+    const rows = await db
+      .select()
+      .from(proposal_signals)
+      .where(eq(proposal_signals.cooldown_key, 'variant_question:q1:a1'));
+    expect(rows).toHaveLength(1);
+    // Count suppressed on BOTH sides — the denominator is not distorted.
+    expect(rows[0]).toMatchObject({
+      accept_count: 0,
+      dismiss_count: 0,
+      acceptance_rate: 0,
+    });
+    // But the cooldown IS persisted (re-surfacing is suppressed, independent of KPI).
+    expect(rows[0].cooldown_until).toBeInstanceOf(Date);
+    const minCooldown = beforeDismiss + PROPOSAL_DISMISS_COOLDOWN_DAYS * 24 * 60 * 60 * 1000 - 1000;
+    expect(rows[0].cooldown_until?.getTime()).toBeGreaterThanOrEqual(minCooldown);
+
+    // total === 0 → filtered out of the roll-up (no denominator pollution).
+    const rates = await getProposalAcceptanceRates(db);
+    expect(rates.find((r) => r.kind === 'variant_question')).toBeUndefined();
+  });
+
+  it('AC-3b: rebuild/reconcile keeps accept_count gated for corrective; sibling proactive still counts', async () => {
+    const db = testDb();
+    const cooldownKey = 'knowledge_edge:k1:k2:related_to';
+
+    // A corrective proposal + its accept rate on the shared key.
+    await writeAiProposal(db, {
+      id: 'p_corrective',
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'li_corr' },
+        reason_md: 'corrective sibling',
+        evidence_refs: [],
+        proposed_change: { learning_item_id: 'li_corr' },
+        cooldown_key: cooldownKey,
+        suggestion_kind: 'corrective',
+      },
+    });
+    // A PROACTIVE sibling proposal (field absent) + its accept rate on the same key.
+    await writeAiProposal(db, {
+      id: 'p_proactive',
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'li_proa' },
+        reason_md: 'proactive sibling',
+        evidence_refs: [],
+        proposed_change: { learning_item_id: 'li_proa' },
+        cooldown_key: cooldownKey,
+      },
+    });
+    await db.insert(event).values([
+      {
+        id: 'rate_corr',
+        session_id: null,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'rate',
+        subject_kind: 'event',
+        subject_id: 'p_corrective',
+        outcome: 'success',
+        payload: { rating: 'accept' },
+        caused_by_event_id: 'p_corrective',
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: new Date('2026-05-23T00:00:00.000Z'),
+      },
+      {
+        id: 'rate_proa',
+        session_id: null,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'rate',
+        subject_kind: 'event',
+        subject_id: 'p_proactive',
+        outcome: 'success',
+        payload: { rating: 'accept' },
+        caused_by_event_id: 'p_proactive',
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: new Date('2026-05-24T00:00:00.000Z'),
+      },
+    ]);
+
+    await ensureProposalDecisionSignal(
+      db,
+      { id: 'p_proactive', kind: 'completion', payload: { cooldown_key: cooldownKey } },
+      'accept',
+    );
+
+    const rows = await db
+      .select()
+      .from(proposal_signals)
+      .where(eq(proposal_signals.cooldown_key, cooldownKey));
+    expect(rows).toHaveLength(1);
+    // The reconcile reproduces the gated count: only the proactive sibling counts;
+    // the corrective accept is skipped (the corrective-proposal Set skip, §5.1).
+    expect(rows[0]).toMatchObject({
+      accept_count: 1,
+      dismiss_count: 0,
+      acceptance_rate: 1,
+    });
+  });
+
+  it('AC-3b: a key whose only decided proposal is corrective stays uncounted on rebuild', async () => {
+    const db = testDb();
+    const cooldownKey = 'variant_question:only:corrective';
+    await writeAiProposal(db, {
+      id: 'p_only_corr',
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'li_only' },
+        reason_md: 'sole corrective',
+        evidence_refs: [],
+        proposed_change: { learning_item_id: 'li_only' },
+        cooldown_key: cooldownKey,
+        suggestion_kind: 'corrective',
+      },
+    });
+    await db.insert(event).values({
+      id: 'rate_only_corr',
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'event',
+      subject_id: 'p_only_corr',
+      outcome: 'success',
+      payload: { rating: 'accept' },
+      caused_by_event_id: 'p_only_corr',
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: new Date('2026-05-23T00:00:00.000Z'),
+    });
+
+    await ensureProposalDecisionSignal(
+      db,
+      {
+        id: 'p_only_corr',
+        kind: 'completion',
+        payload: { cooldown_key: cooldownKey, suggestion_kind: 'corrective' },
+      },
+      'accept',
+    );
+
+    // total === 0 → the rebuild early-returns and never writes a row.
+    const rows = await db
+      .select()
+      .from(proposal_signals)
+      .where(eq(proposal_signals.cooldown_key, cooldownKey));
+    expect(rows).toHaveLength(0);
+  });
+});
+
 // T-AR (YUK-TAR) — acceptance-rate SIGNAL roll-up. Rolls the per-(kind,
 // cooldown_key) proposal_signals rows up to the per-kind dimension Dreaming /
 // Coach reason about. Read-only; derived from the existing aggregate (no new
