@@ -15,7 +15,7 @@ import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 import type { FailureAttempt } from '@/server/events/queries';
 import { writeAiProposal } from '@/server/proposals/writer';
 import type { SubjectProfile } from '@/subjects/profile';
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { writeRetryableAiFailureLedger } from './ai_failure_log';
 import { loadTreeSnapshot } from './tree';
@@ -200,7 +200,21 @@ async function loadPendingEdgeProposalKeys(db: Db): Promise<Set<string>> {
   const proposeRows = await db
     .select({ id: event.id, payload: event.payload })
     .from(event)
-    .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge_edge')))
+    .where(
+      and(
+        eq(event.action, 'propose'),
+        eq(event.subject_kind, 'knowledge_edge'),
+        // P5.4 / YUK-143 (RB-7) — exclude rubric-rejected (folded) propose
+        // events. They are TERMINAL, not live-pending; counting one in the
+        // dedup set would make the next nightly batch hit
+        // `skipped_duplicate_pending` and permanently refuse to re-propose the
+        // very edge the rubric rejected. This is the 4th "pending propose with
+        // no chained rate" query and must filter the marker like
+        // findProposalRowsForGate (review.ts) does. The marker is a
+        // `rubric_verdict: { ok:false }` sibling of ai_proposal on the payload.
+        sql`(${event.payload}->'rubric_verdict'->>'ok') IS DISTINCT FROM 'false'`,
+      ),
+    )
     .orderBy(desc(event.created_at));
 
   if (proposeRows.length === 0) return new Set();

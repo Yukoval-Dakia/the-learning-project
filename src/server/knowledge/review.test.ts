@@ -340,6 +340,58 @@ describe('runWriteProposal — pure dispatch', () => {
     );
   });
 
+  // P5.4 / YUK-143 (RB-7) — legacy-MCP path regression. A folded
+  // rubric-rejected proposal on key K must NOT occupy the (kind, cooldown_key)
+  // slot for dup-pending dedup: a later runWriteProposal on K must NOT come back
+  // skipped_duplicate. (The legacy path hardcodes evidence_refs: [], so every
+  // agent edge re-folds as rubric_rejected rather than ever becoming a clean
+  // 'proposed' — the load-bearing assertion is simply "not skipped_duplicate".)
+  // Mirrors the DomainTool RB-7 test for the legacy path.
+  it('RB-7 (legacy path): a folded proposal on K does NOT block a later runWriteProposal on K', async () => {
+    const db = testDb();
+    await seedKnowledgeNode('k_from');
+    const now = new Date();
+    await testDb().insert(knowledge).values({
+      id: 'k_to',
+      name: '虚词-之',
+      domain: 'wenyan',
+      parent_id: null,
+      merged_from: [],
+      proposed_by_ai: false,
+      approval_status: 'approved',
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+
+    const edgeArgs = {
+      payload: {
+        mutation: 'propose_knowledge_edge' as const,
+        from_knowledge_id: 'k_from',
+        to_knowledge_id: 'k_to',
+        relation_type: 'related_to',
+      },
+      reasoning: 'attempt_event_e1 显示 k_from 与 k_to 相关',
+    };
+
+    const first = await runWriteProposal(db, edgeArgs);
+    expect(first.kind).toBe('rubric_rejected');
+
+    // Second call on the SAME key K: the prior fold is terminal, NOT
+    // live-pending, so checkProposalGate must NOT short-circuit with
+    // skipped_duplicate. It re-folds (legacy path is always evidence-free).
+    const second = await runWriteProposal(db, edgeArgs);
+    expect(second.kind).not.toBe('skipped_duplicate');
+    expect(second.kind).toBe('rubric_rejected');
+
+    // Both folded events exist; neither blocked the other.
+    const edgeEvents = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge_edge')));
+    expect(edgeEvents).toHaveLength(2);
+  });
+
   it('payload without recognised edge fields falls through to tree path', async () => {
     const db = testDb();
     await seedKnowledgeNode('k_parent');

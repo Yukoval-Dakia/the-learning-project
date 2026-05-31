@@ -172,6 +172,80 @@ describe('validateProposalQuality — structural class (G1–G6)', () => {
   });
 });
 
+// FIX 2 / §3.1 + §3.3 — the G6 tree-ancestry rejection is SCOPED to relations
+// whose semantics are merely hierarchy (related_to + derived_from). It must NOT
+// reject valid hierarchy-aligned prerequisite / applied_in edges (their §4.3
+// gates handle them); and it must STILL reject derived_from + related_to that
+// only restate tree parentage.
+describe('validateProposalQuality — G6 scope (FIX 2)', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await seedGraph();
+  });
+
+  it('prerequisite parent→child with strong order evidence is NOT G6-rejected → {ok:true}', async () => {
+    // k_wenyan is the direct parent of k_zhi. A prerequisite parent→child edge
+    // is exactly the §3.3-endorsed "prerequisite concept → narrower task" shape.
+    // Two in-window judge-backed failures reference an endpoint (k_zhi) → strong
+    // floor + order evidence → must PASS, NOT trip parent_semantic_duplicate.
+    await seedEvidence('e_pre_1', ['k_zhi'], 1);
+    await seedEvidence('e_pre_2', ['k_zhi'], 2);
+    const v = await validateProposalQuality(
+      edgePayload('k_wenyan', 'k_zhi', 'prerequisite', {
+        reasoning: 'attempt e_pre judge cause concept：先掌握 k_wenyan 才能学 k_zhi。',
+        evidenceEventIds: ['e_pre_1', 'e_pre_2'],
+      }),
+      testDb(),
+      AGENT,
+    );
+    expect(v).toEqual({ ok: true });
+  });
+
+  it('applied_in between tree-adjacent nodes with role evidence is NOT G6-rejected → {ok:true}', async () => {
+    // applied_in from parent concept k_wenyan to child application k_zhi: a
+    // valid role direction. Endpoint-referencing strong evidence → passes; the
+    // G6 ancestry check must not fire for applied_in.
+    await seedEvidence('e_app_1', ['k_zhi'], 1);
+    await seedEvidence('e_app_2', ['k_zhi'], 2);
+    const v = await validateProposalQuality(
+      edgePayload('k_wenyan', 'k_zhi', 'applied_in', {
+        reasoning: 'attempt e_app judge cause method：k_wenyan 的方法应用在 k_zhi 上。',
+        evidenceEventIds: ['e_app_1', 'e_app_2'],
+      }),
+      testDb(),
+      AGENT,
+    );
+    expect(v).toEqual({ ok: true });
+  });
+
+  it('derived_from between tree ancestor/descendant IS still G6-rejected', async () => {
+    // derived_from overlaps tree parentage (§3.1) → G6 still applies.
+    const v = await validateProposalQuality(
+      edgePayload('k_zhi', 'k_wenyan', 'derived_from', {
+        reasoning: 'attempt e_df 显示派生关系',
+        evidenceEventIds: ['e_df'],
+      }),
+      testDb(),
+      AGENT,
+    );
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.gate).toBe('parent_semantic_duplicate');
+  });
+
+  it('related_to parent→child restatement IS still G6-rejected (confirm)', async () => {
+    // The pre-P5.4 related_to-only behavior is preserved.
+    const v = await validateProposalQuality(
+      edgePayload('k_zhi', 'k_wenyan', 'related_to', {
+        evidenceEventIds: ['e_rt_dup'],
+      }),
+      testDb(),
+      AGENT,
+    );
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.gate).toBe('parent_semantic_duplicate');
+  });
+});
+
 describe('validateProposalQuality — reasoning + evidence floor (G7, §4.2)', () => {
   beforeEach(async () => {
     await resetDb();
@@ -271,6 +345,67 @@ describe('validateProposalQuality — relation predicates (§4.3)', () => {
     // prerequisite/contrasts_with require 2 events; both reference an endpoint,
     // so the floor passes, and the confusion predicate (references BOTH) fails.
     if (!v.ok) expect(v.gate).toBe('contrasts_with_no_confusion');
+  });
+
+  // FIX 3 (acceptance §7) — applied_in_role_mismatch direct rejecting test.
+  it('applied_in_role_mismatch — strong evidence but none references an endpoint', async () => {
+    // Two strong in-window judge-backed failures, but they reference an
+    // unrelated node only → no application-direction / role evidence touching
+    // either endpoint → applied_in role predicate fails (floor passes).
+    await testDb()
+      .insert(knowledge)
+      .values([
+        {
+          id: 'k_apply_other',
+          name: '其它',
+          domain: null,
+          parent_id: 'k_wenyan',
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
+      ]);
+    await seedEvidence('e_apply_1', ['k_apply_other'], 1);
+    await seedEvidence('e_apply_2', ['k_apply_other'], 2);
+    const v = await validateProposalQuality(
+      edgePayload('k_zhi', 'k_er', 'applied_in', {
+        reasoning: 'attempt e_apply judge cause concept。',
+        evidenceEventIds: ['e_apply_1', 'e_apply_2'],
+      }),
+      testDb(),
+      AGENT,
+    );
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.gate).toBe('applied_in_role_mismatch');
+  });
+
+  // FIX 3 (acceptance §7) — related_to_dumping_ground direct rejecting test.
+  it('related_to_dumping_ground — strong evidence but none references an endpoint (no grouping value)', async () => {
+    // Strong evidence referencing unrelated nodes → the related_to edge adds no
+    // navigation/grouping value beyond co-occurrence → dumping-ground reject.
+    await testDb()
+      .insert(knowledge)
+      .values([
+        {
+          id: 'k_rel_other',
+          name: '无关',
+          domain: null,
+          parent_id: 'k_wenyan',
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
+      ]);
+    await seedEvidence('e_rel_1', ['k_rel_other'], 1);
+    await seedEvidence('e_rel_2', ['k_rel_other'], 2);
+    const v = await validateProposalQuality(
+      edgePayload('k_zhi', 'k_er', 'related_to', {
+        reasoning: 'attempt e_rel judge cause concept。',
+        evidenceEventIds: ['e_rel_1', 'e_rel_2'],
+      }),
+      testDb(),
+      AGENT,
+    );
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.gate).toBe('related_to_dumping_ground');
   });
 
   it('prerequisite_no_order_evidence — no in-window judge-backed failure references an endpoint', async () => {

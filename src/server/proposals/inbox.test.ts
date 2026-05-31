@@ -601,4 +601,53 @@ describe('proposal inbox reader', () => {
       source_action: 'experimental:propose_learning_intent',
     });
   });
+
+  // P5.4 / YUK-143 (RB-7 leg (a)) — a propose event carrying a `rubric_verdict`
+  // marker (ok:false) must derive the TERMINAL 'rubric_rejected' status via
+  // deriveProposalStatus/isRubricRejected, NOT 'pending'. This pins the inbox
+  // derive directly (the dup-pending callers in proposal-tools / review key on
+  // status:'pending', so a wrong derivation here would silently re-introduce
+  // the lockout). A folded event has NO chained rate → would otherwise be
+  // 'pending' under the event-derived model.
+  it('derives terminal rubric_rejected status for a folded (rubric_verdict) propose event', async () => {
+    const db = testDb();
+    await writeAiProposal(db, {
+      id: 'edge_folded',
+      payload: {
+        kind: 'knowledge_edge',
+        target: { subject_kind: 'knowledge_edge', subject_id: null },
+        reason_md: 'evidence-free agent edge → rubric rejected',
+        evidence_refs: [],
+        proposed_change: {
+          from_knowledge_id: 'k1',
+          to_knowledge_id: 'k2',
+          relation_type: 'related_to',
+          weight: 1,
+        },
+      },
+      event_override: {
+        action: 'propose',
+        subject_kind: 'knowledge_edge',
+        payload: {
+          from_knowledge_id: 'k1',
+          to_knowledge_id: 'k2',
+          relation_type: 'related_to',
+          weight: 1,
+          reasoning: 'evidence-free agent edge → rubric rejected',
+          rubric_verdict: { ok: false, gate: 'evidence_missing', reason: 'no evidence' },
+        },
+      },
+    });
+
+    // Single-row projection → terminal rubric_rejected, not pending.
+    const row = await getProposalInboxRow(db, 'edge_folded');
+    expect(row?.status).toBe('rubric_rejected');
+
+    // The folded row is excluded from the pending bucket (RB-7) and surfaces in
+    // the rubric_rejected bucket (RB-8) instead.
+    const pending = await listProposalInboxRows(db, { status: 'pending' });
+    expect(pending.find((r) => r.id === 'edge_folded')).toBeUndefined();
+    const folded = await listProposalInboxRows(db, { status: 'rubric_rejected' });
+    expect(folded.map((r) => r.id)).toContain('edge_folded');
+  });
 });
