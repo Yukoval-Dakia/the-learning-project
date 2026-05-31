@@ -77,6 +77,25 @@ function extractKnowledgeIds(payload: unknown): string[] {
 }
 
 /**
+ * The single floor predicate shared by detection (the per-subject "is this event
+ * newer than this subject's watermark" test) and regen (`loadSubjectBriefEvents`).
+ *
+ * For an already-built subject the floor is its OWN `refreshed_at`: only evidence
+ * STRICTLY AFTER the brief's last refresh counts (BR-1 — "≥1 qualifying activity
+ * event with created_at strictly after that brief's last refresh"). A never-built
+ * subject (no brief row / null refreshed_at) falls back to the bounded lookback
+ * window (BR-5).
+ *
+ * Both detection and regen MUST derive their per-subject floor from this helper so
+ * they can never diverge: previously detection flagged a subject active on an event
+ * newer than its refreshed_at but OLDER than a fixed `now - lookbackDays`, while
+ * regen used the fixed floor and dropped that event → empty window → silent starve.
+ */
+export function subjectEventFloor(refreshedAt: Date | null, now: Date, lookbackDays: number): Date {
+  return refreshedAt ?? new Date(now.getTime() - lookbackDays * DAY_MS);
+}
+
+/**
  * §3.2 — the set of subjects active since their brief's last refresh.
  *
  * 1. Load per-subject brief watermarks (`scope_key LIKE 'subject:%'` → refreshed_at).
@@ -102,14 +121,18 @@ export async function listActiveSubjectsSinceRefresh(
   // 1. Per-subject brief watermarks.
   const briefRows = await db
     .select({
-      subject_id: memory_brief_note.subject_id,
+      scope_key: memory_brief_note.scope_key,
       refreshed_at: memory_brief_note.refreshed_at,
     })
     .from(memory_brief_note)
     .where(like(memory_brief_note.scope_key, `${SUBJECT_SCOPE_PREFIX}%`));
   const refreshedAtBySubject = new Map<string, Date | null>();
   for (const row of briefRows) {
-    if (row.subject_id) refreshedAtBySubject.set(row.subject_id, row.refreshed_at);
+    // Derive subjectId from scope_key (matching the regen handler,
+    // triggers.ts), not the subject_id column — robust against a legacy row
+    // with a null subject_id but a well-formed `subject:<id>` scope_key.
+    const subjectId = row.scope_key.slice(SUBJECT_SCOPE_PREFIX.length);
+    if (subjectId) refreshedAtBySubject.set(subjectId, row.refreshed_at);
   }
 
   // 2. Global scan floor: the earliest point any subject could need new
@@ -177,13 +200,16 @@ export async function listActiveSubjectsSinceRefresh(
   const active: ActiveSubject[] = [];
   for (const [subjectId, bucket] of bySubject) {
     const refreshedAt = refreshedAtBySubject.get(subjectId) ?? null;
-    // ACTIVE iff: existing brief AND newest qualifying event strictly after its
-    // refreshed_at; OR no brief row (never built, or row with null refreshed_at)
-    // AND activity within the lookback window (which `scanFloor`/`gt` already
-    // enforces, so any qualifying event here is in-window). A null refreshed_at
-    // is treated like never-built — any activity in the window triggers the
-    // first real refresh.
-    const isActive = refreshedAt ? bucket.maxCreatedAt > refreshedAt : true;
+    // ACTIVE iff the subject's newest qualifying event is STRICTLY AFTER its
+    // per-subject floor. The floor is shared with the regen reload
+    // (`subjectEventFloor` / `loadSubjectBriefEvents`) so detection and regen can
+    // never diverge: a built subject floors at its own `refreshed_at` (BR-1), a
+    // never-built / null-refreshed_at subject floors at the lookback window (BR-5,
+    // which `scanFloor`/`gt` already enforces, so any qualifying event is in
+    // window). This is the same predicate the regen reload applies, guaranteeing a
+    // detected-active subject reloads ≥1 event.
+    const floor = subjectEventFloor(refreshedAt, now, lookbackDays);
+    const isActive = bucket.maxCreatedAt > floor;
     if (!isActive) continue;
     active.push({
       scopeKey: `${SUBJECT_SCOPE_PREFIX}${subjectId}`,
@@ -234,7 +260,22 @@ export async function loadSubjectBriefEvents(
 ): Promise<BriefEvent[]> {
   const now = opts.now ?? new Date();
   const lookbackDays = opts.lookbackDays ?? DEFAULT_LOOKBACK_DAYS;
-  const lookbackFloor = new Date(now.getTime() - lookbackDays * DAY_MS);
+
+  // Floor at the subject's OWN brief refreshed_at (load events STRICTLY AFTER
+  // the last refresh, BR-1), falling back to `now - lookbackDays` only for a
+  // never-built subject (no brief row / null refreshed_at, BR-5). This is the
+  // SAME `subjectEventFloor` predicate the activity-detection scan applies, so a
+  // subject the sweep flagged active (newest event strictly after refreshed_at)
+  // always reloads ≥1 event here. A flat `now - lookbackDays` floor for an
+  // already-built subject silently starved any subject whose qualifying event
+  // was newer than refreshed_at but older than the lookback window.
+  const briefRows = await db
+    .select({ refreshed_at: memory_brief_note.refreshed_at })
+    .from(memory_brief_note)
+    .where(eq(memory_brief_note.scope_key, `${SUBJECT_SCOPE_PREFIX}${subjectId}`))
+    .limit(1);
+  const refreshedAt = briefRows[0]?.refreshed_at ?? null;
+  const floor = subjectEventFloor(refreshedAt, now, lookbackDays);
 
   const rows = (await db
     .select({
@@ -246,7 +287,7 @@ export async function loadSubjectBriefEvents(
       created_at: event.created_at,
     })
     .from(event)
-    .where(and(inArray(event.action, [...QUALIFYING_ACTIONS]), gt(event.created_at, lookbackFloor)))
+    .where(and(inArray(event.action, [...QUALIFYING_ACTIONS]), gt(event.created_at, floor)))
     .orderBy(sql`${event.created_at} DESC`)) as QualifyingEventRow[];
 
   if (rows.length === 0) return [];
