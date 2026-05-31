@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-01
 **Issue:** YUK-184 (post-P5 data-activation drive, Station 1 of N)
-**Status:** Design — not yet implemented
+**Status:** Implemented (PR #231, YUK-184). Brief layer stays dark until Station 2 (A3 generate-writer).
 **Scope posture:** Pre-product. Synthetic data first. This is a **focused dev script**, NOT a framework. Anti-over-engineering and scope discipline (CLAUDE.md) are load-bearing constraints, not aspirations.
 
 ---
@@ -38,7 +38,7 @@ It does **not** try to light up the brief surface end-to-end — that needs A3 w
 2. **`proposal_signals` rows → `recordProposalDecisionSignal(db, source, decision)`** (`signals.ts:176`). A thin, pure-DB signal writer with no LLM and no HTTP coupling — faithful and stable. See GAP5 (§D-GAP5) for the exact `ProposalSignalSource` shape it requires.
 3. **Everything else → markered direct-insert**: `knowledge` nodes, `knowledge_edge`, `question`, `material_fsrs_state` (via `upsertFsrsState`). These have no parse chokepoint worth replicating and no producer that accepts a bare `db` without LLM/HTTP.
 
-**The ONE exception** (GAP1): rubric-rejected propose events must replicate `foldRubricRejectedEdge`'s `event_override` payload shape directly via `writeEvent` (or `writeAiProposal` with `event_override`) — see §D-GAP1. The plain-PASS propose events come for free from the stubbed-runTaskFn nightly (below); the rubric-rejected ones must be hand-written because the nightly never produces them.
+**The exceptions** (GAP1): rubric-rejected propose events must replicate `foldRubricRejectedEdge`'s `event_override` payload shape directly via `writeEvent` (or `writeAiProposal` with `event_override`) — see §D-GAP1. The plain-PASS propose events come for free from the stubbed-runTaskFn nightly (below); the rubric-rejected ones must be hand-written because the nightly never produces them. The L2 dismiss cluster (§5c) ALSO uses `writeAiProposal` with `event_override` for its propose events — so the seed calls `writeAiProposal` for both hand-written propose families, not just one.
 
 **Why NOT the real producers:** `decideKnowledgeEdgeProposal` / `writeAiProposal` are over-faithful for a dev seed — they couple the seed to signatures that evolve per-phase and carry side effects (record-link flips, tool-call logs, gate-bump reads) we don't want to drag in. The seed wants the linkage, not the producers' full apparatus. The stubbed-runTaskFn nightly (below) already exercises the REAL linkage logic (dedup, self-loop, duplicate-edge, scope tagging) without the producer coupling.
 
@@ -125,7 +125,7 @@ A documented subcommand the user runs **after** seeding to *see* Layer-8 working
    - active subjects detected via `listActiveSubjectsSinceRefresh` / `loadSubjectBriefEvents` (`active-subjects.ts`) — proves detection sees the seeded activity (resolved via `referenced_knowledge_ids` knowledge-id resolution, NOT scope tagging — see §D-detection).
    - `knowledge_mastery` view rows with non-null `mastery` and `evidence_count >= 3` — proves the mastery projection escaped the `0.5` shortcut.
 
-`--observe` is read-mostly except for the stubbed-nightly propose writes it triggers; those writes are `payload.__synthetic`-markered (the stub's canned output flows through `writeEvent`, and the seed sets the marker on the propose payload) so `--reset` cleans them too.
+`--observe` is read-mostly except for the stubbed-nightly propose writes it triggers. **Documented EXCEPTION:** the nightly PASS propose is built by the real `writeAiProposal` path from the canned `EdgeProposeOutput`, whose `EdgeProposalSchema` forbids extra keys — so this propose event CANNOT carry `payload.__synthetic`. `--reset` purges it instead by its synthetic edge endpoints (the second arm of the event-delete predicate matches any `knowledge_edge` propose/generate event with a `synthetic:`-prefixed endpoint). Every OTHER synthetic event the seed writes does carry `payload.__synthetic`.
 
 ### D-GAP1 — the nightly does NOT emit rubric-rejected events; the seed writes them directly
 
@@ -188,7 +188,7 @@ Dependency order (the map's prerequisite chain). Each step uses the exact verifi
 **5a — the PASS edge (driven by the stubbed nightly, not hand-written):**
 1. **`recentClusterAttempts`** (Step 4) → ids `A1, A2, ...`: ≥2 failure attempts, same registry-valid `primary_category`, `created_at` inside the last 24h (D2 invariant), each referencing the edge endpoint(s) per GAP4.
 2. **Judge** per attempt via `writeEvent` (GAP3 §D-GAP3): chains `caused_by_event_id=Ai`, `subject_id=Ai`, carries the endpoint `referenced_knowledge_ids` and a registry-valid `primary_category`.
-3. **`--observe` runs the stubbed nightly** → it discovers `A1,A2` (24h scan), and `runEdgeProposeAndWrite` → `writeAiProposal` writes the PASS propose event `P` with the real `cooldown_key` (`knowledge_edge:<from>|<to>|<rel>`) and `evidence_refs` pointing at the cluster attempts. The seed's stub supplies a `reasoning` that **names a concrete signal** (id token / 「」-quoted node name / `judge`/`cause`/`失败`/`错题`) so it clears G7a if the rubric were ever run (`rubric-validator.ts:97-121`); the stub sets `suggestion_kind='proactive'` (NOT `'corrective'` — corrective zeroes the KPI count). Mark the canned output / propose payload `__synthetic:true`.
+3. **`--observe` runs the stubbed nightly** → it discovers `A1,A2` (24h scan), and `runEdgeProposeAndWrite` → `writeAiProposal` writes the PASS propose event `P` with the real `cooldown_key` (`knowledge_edge:<from>|<to>|<rel>`) and `evidence_refs` pointing at the cluster attempts. The seed's stub supplies a `reasoning` that **names a concrete signal** (id token / 「」-quoted node name / `judge`/`cause`/`失败`/`错题`) so it clears G7a if the rubric were ever run (`rubric-validator.ts:97-121`); the stub sets `suggestion_kind='proactive'` (NOT `'corrective'` — corrective zeroes the KPI count). The PASS propose event CANNOT carry `__synthetic` (the canned `EdgeProposeOutput` flows through `EdgeProposalSchema`, which forbids extra keys) — it is the documented `--reset` EXCEPTION, purged by synthetic endpoint instead (see §D5).
 4. **Rate** via `writeEvent`: `action='rate'`, **`actor_kind='user'` AND `actor_ref='self'`** (`RateKnowledgeEdge` pins `actor_ref: z.literal('self')`, `known.ts:467` — the prior spec omitted `actor_ref`), `subject_kind='knowledge_edge'`, `outcome='success'`, `caused_by_event_id=P`, `payload = { rating: 'accept'|'dismiss', user_note?, __synthetic:true }`. The rating enum is `accept|dismiss|reverse|change_type|rollback` (`known.ts:473`); use `accept`/`dismiss`. (For an `accept`, optionally also direct-insert the `knowledge_edge` row to mirror promotion — NOT required for the proposal-stack wins; skip unless a downstream slice needs the materialized edge.)
 5. **proposal_signals** via **`recordProposalDecisionSignal(db, source, 'accept'|'dismiss')`** (GAP5 §D-GAP5) — the single signal write lane (D1). It maintains `accept_count`/`dismiss_count`/`acceptance_rate`, sets `cooldown_until=now+7d` on dismiss, unique on `(kind, cooldown_key)`.
 
@@ -278,7 +278,7 @@ The **memory-brief surface** (`query_memory_brief`, the mem0 vector store, the r
 - **No production seeding.** Dev/local only, by construction.
 - **No `--llm` / `--no-llm` fork.** Single `--observe` mode driving the real nightly via a stubbed `runTaskFn` (zero token). The spend-posture product fork is CUT — nothing blocks autonomous execution.
 - **No node-propose pass.** `runKnowledgeProposeNightly` is not a named win for this station. Struck.
-- **No coupling to the real producers as a routing layer.** `decideKnowledgeEdgeProposal` / `writeAiProposal` are not used as the seed's write path (except the single `writeAiProposal` + `event_override` call that emits the rubric-rejected shape). The real LINKAGE logic is exercised by the stubbed-runTaskFn nightly instead.
+- **No coupling to the real producers as a routing layer.** `decideKnowledgeEdgeProposal` / `writeAiProposal` are not used as the seed's write path (except the `writeAiProposal` + `event_override` calls that emit the rubric-rejected shape AND the L2 dismiss-cluster proposes — §5b/§5c). The real LINKAGE logic is exercised by the stubbed-runTaskFn nightly instead.
 - **No three-marker scheme.** ONE conceptual marker: `payload.__synthetic = true` on events; native id/metadata/cooldown_key markers on the FK-less / non-event tables. No `actor_ref='synthetic'` marker (it collides with producer actor literals).
 
 _No remaining product forks._ Write strategy, distribution shape, idempotency/safety, question-seed, observability, and the spend posture are all resolved above as autonomous technical calls.
