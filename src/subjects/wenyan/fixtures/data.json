@@ -1,0 +1,128 @@
+{
+  "version": "2026-05-31",
+  "subject_id": "wenyan",
+  "items": [
+    {
+      "ref": "wenyan-choice-001",
+      "kind": "single_choice",
+      "prompt_md": "《论语·学而》「学而时习之，不亦说乎」中「说」字的正确解释是？",
+      "choices_md": ["说话", "通「悦」，高兴", "解释", "学说"],
+      "reference_md": "通「悦」，高兴",
+      "difficulty": 2,
+      "knowledge_hint": "实词"
+    },
+    {
+      "ref": "wenyan-choice-002",
+      "kind": "single_choice",
+      "prompt_md": "《爱莲说》「水陆草木之花，可爱者甚蕃」一句中「之」字的用法是？",
+      "choices_md": [
+        "结构助词，相当于「的」",
+        "代词，代指花",
+        "动词，相当于「往、到」",
+        "助词，用于主谓之间取消句子独立性"
+      ],
+      "reference_md": "结构助词，相当于「的」",
+      "difficulty": 2,
+      "knowledge_hint": "虚词"
+    },
+    {
+      "ref": "wenyan-choice-003",
+      "kind": "single_choice",
+      "prompt_md": "下列句子中属于宾语前置句式的是？",
+      "choices_md": ["甚矣，汝之不惠", "何陋之有", "青，取之于蓝", "马之千里者"],
+      "reference_md": "何陋之有",
+      "difficulty": 3,
+      "knowledge_hint": "句式"
+    },
+    {
+      "ref": "wenyan-choice-004",
+      "kind": "single_choice",
+      "prompt_md": "《六国论》的作者是谁？",
+      "choices_md": ["苏轼", "苏洵", "苏辙", "欧阳修"],
+      "reference_md": "苏洵",
+      "difficulty": 1,
+      "knowledge_hint": "文学常识"
+    },
+    {
+      "ref": "wenyan-choice-005",
+      "kind": "single_choice",
+      "prompt_md": "《出师表》「先帝不以臣卑鄙」中「卑鄙」一词的古义是？",
+      "choices_md": ["品德恶劣", "地位低微、见识浅陋", "言行下流", "卑躬屈膝"],
+      "reference_md": "地位低微、见识浅陋",
+      "difficulty": 2,
+      "knowledge_hint": "实词"
+    },
+    {
+      "ref": "wenyan-trans-001",
+      "kind": "translation",
+      "prompt_md": "翻译《论语》句子：「温故而知新，可以为师矣。」",
+      "reference_md": "温习旧的知识，从而能领悟到新的理解，（这样的人）就可以做老师了。",
+      "rubric_json": {
+        "criteria": [],
+        "required_points": ["温习旧知识", "领悟新理解", "可以做老师"]
+      },
+      "difficulty": 2,
+      "knowledge_hint": "翻译"
+    },
+    {
+      "ref": "wenyan-trans-002",
+      "kind": "translation",
+      "prompt_md": "翻译《孟子·告子上》句子：「鱼，我所欲也；熊掌，亦我所欲也。二者不可得兼，舍鱼而取熊掌者也。」",
+      "reference_md": "鱼是我想要的，熊掌也是我想要的；如果两样不能同时得到，（那就）舍弃鱼而选取熊掌。",
+      "rubric_json": {
+        "criteria": [],
+        "required_points": ["鱼和熊掌都是想要的", "二者不能同时得到", "舍鱼取熊掌"]
+      },
+      "difficulty": 3,
+      "knowledge_hint": "翻译"
+    },
+    {
+      "ref": "wenyan-trans-003",
+      "kind": "translation",
+      "prompt_md": "翻译《岳阳楼记》句子：「不以物喜，不以己悲。」",
+      "reference_md": "不因外物（环境的好坏）而欣喜，也不因自己（处境的得失）而悲伤。",
+      "rubric_json": {
+        "criteria": [],
+        "required_points": ["不因外物而喜", "不因自身而悲", "互文见义不可拆解"]
+      },
+      "difficulty": 3,
+      "knowledge_hint": "翻译"
+    },
+    {
+      "ref": "wenyan-read-001",
+      "kind": "reading_comprehension",
+      "prompt_md": "《爱莲说》中作者说「予独爱莲之出淤泥而不染」，请分析作者借莲花寄托了怎样的志趣。",
+      "reference_md": "作者以莲喻人，借「出淤泥而不染」赞美君子身处污浊环境却不同流合污、洁身自好的品格，表达了自己追求高洁、不慕名利的志趣。",
+      "rubric_json": {
+        "criteria": [],
+        "required_points": ["以莲喻君子", "不与世俗同流合污", "洁身自好/追求高洁"]
+      },
+      "difficulty": 4,
+      "knowledge_hint": "论述题"
+    },
+    {
+      "ref": "wenyan-read-002",
+      "kind": "reading_comprehension",
+      "prompt_md": "《六国论》开篇提出「六国破灭，非兵不利，战不善，弊在赂秦」，请说明这句话在全文中的作用。",
+      "reference_md": "这句话开门见山地提出全文的中心论点，指出六国灭亡的根本原因在于「赂秦」而非军事失利，统领下文的分层论证，起到提纲挈领的作用。",
+      "rubric_json": {
+        "criteria": [],
+        "required_points": ["开篇提出中心论点", "弊在赂秦而非兵战", "统领下文论证"]
+      },
+      "difficulty": 4,
+      "knowledge_hint": "论述题"
+    },
+    {
+      "ref": "wenyan-short-001",
+      "kind": "fill_blank",
+      "prompt_md": "请填出文言虚词「之」在「臣之壮也，犹不如人」一句中的语法功能名称。____",
+      "reference_md": "用于主谓之间，取消句子独立性",
+      "rubric_json": {
+        "criteria": [],
+        "keywords": ["主谓之间", "取消句子独立性"]
+      },
+      "difficulty": 3,
+      "knowledge_hint": "虚词"
+    }
+  ]
+}
