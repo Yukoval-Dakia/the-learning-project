@@ -32,6 +32,7 @@ import { validateProposalQuality } from '@/server/knowledge/rubric-validator';
 // P5.4-L2 / YUK-174 (Facet B) — resolve the per-(kind, relation) gate-bump for
 // the legacy MCP edge path (always actor 'dreaming' → isAgent: true). Bounded
 // digest read; cold-start / below-threshold → no-op bump.
+import type { AdaptiveGateInput } from '@/server/proposals/adaptive-bias';
 import { resolveEdgeGateBump } from '@/server/proposals/adaptive-bias';
 import type { ProposalInboxRow } from '@/server/proposals/inbox';
 import { writeAiProposal } from '@/server/proposals/writer';
@@ -377,12 +378,29 @@ async function writeProposalAfterGate(
     // P5.4-L2 / YUK-174 (Facet B) — resolve the adaptive gate-bump for this
     // edge's relation before the floor. Bounded digest read on the same tx
     // handle; cold-start / below-threshold → no-op.
-    const adaptive = await resolveEdgeGateBump(
-      db,
-      edgePayload.relation_type,
-      PROPOSAL_FEEDBACK_BUDGET,
-      PROPOSAL_GATE_BIAS_CONFIG,
-    );
+    //
+    // ND-5 (additive only): the L2 read must NEVER block L1. A throw from the
+    // digest read degrades to `adaptive = undefined` so `validateProposalQuality`
+    // runs the pure-L1 floor unchanged (the optional `adaptive` param omitted →
+    // pure L1, rubric-validator.ts:426). No task_run_id exists on this legacy
+    // dispatcher path (see the RB-6 note below, :401–:407), so the downgrade is
+    // surfaced via console.error like the sibling L2 feedback-read degradation
+    // (copilot/chat.ts:264), not the task-run-scoped log.ts helpers.
+    let adaptive: AdaptiveGateInput | undefined;
+    try {
+      adaptive = await resolveEdgeGateBump(
+        db,
+        edgePayload.relation_type,
+        PROPOSAL_FEEDBACK_BUDGET,
+        PROPOSAL_GATE_BIAS_CONFIG,
+      );
+    } catch (err) {
+      adaptive = undefined;
+      console.error('[writeProposalAfterGate] resolveEdgeGateBump failed; degrading to pure-L1', {
+        relation_type: edgePayload.relation_type,
+        err,
+      });
+    }
 
     // P5.4 / YUK-143 (RB-1) — shared rubric floor. Legacy MCP path always runs
     // as actor_ref 'dreaming' → isAgent: true (§3.5). On reject the event is

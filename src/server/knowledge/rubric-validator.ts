@@ -539,8 +539,16 @@ export async function validateProposalQuality(
   // computeEvidenceLevel's leveling: the event stays `medium` (so OTHER relations
   // with 1 judge event still reject at the floor — no loosening). Endpoint-
   // touching is still required and is enforced by the §4.3 relationGate below.
+  // The `usable.length === 1` bound is load-bearing: computeEvidenceLevel also
+  // returns `medium` for 2+ UNRELATED judge-backed failures (no same-pattern
+  // pair). Without the bound, TWO unrelated events where ONE carries explicit
+  // analysis would wrongly take the SINGLE-event rescue and skip the floor
+  // (CodeRabbit C5). The §4.3 relaxation is a SINGLE-event exception only.
   const explicitSingleEventRescueBasis =
-    requiresTwoEvents && level === 'medium' && hasExplicitSingleEventBasis(usable);
+    requiresTwoEvents &&
+    usable.length === 1 &&
+    level === 'medium' &&
+    hasExplicitSingleEventBasis(usable);
 
   // P5.4-L2 / YUK-174 (Facet B / B1, tighten-only) — when the adaptive input
   // says to raise the bar for this `(kind, relation)` (low acceptance_rate with

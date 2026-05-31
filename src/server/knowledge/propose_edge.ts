@@ -136,12 +136,18 @@ export async function runEdgeProposeAndWrite(
       }
       // Write ProposeKnowledgeEdge event (Lane B).
       //
-      // P5.4-L2 / YUK-174 (Facet B) NOTE: this batch path does NOT run
-      // `validateProposalQuality` (the L1 rubric floor) — its rubric gating is
-      // deferred to YUK-175 (batch enforce). So there is NO validator call here
-      // to thread the adaptive gate-bump into. Facet A's reason digest still
-      // reaches the batch agent's prompt (it is an edge-proposer); only Facet B's
-      // gate-bump waits on YUK-175. Wire the bump here once YUK-175 lands.
+      // P5.4-L2 / YUK-174 NOTE: this batch path is NOT wired into either L2 facet
+      // yet — both are deferred follow-ups:
+      //   - Facet A (reason digest): the `KnowledgeEdgeProposeTask` input built
+      //     above carries only { tree_snapshot, existing_edges, recent_failures },
+      //     NOT a `proposal_feedback` digest. Unlike the Dreaming / Coach / Copilot
+      //     surfaces, this batch edge-proposer never sees the per-(kind, relation)
+      //     digest, so threading it here needs the registry input schema + prompt
+      //     extended first (out of scope for this PR).
+      //   - Facet B (gate-bump): this path does NOT run `validateProposalQuality`
+      //     (the L1 rubric floor); its rubric gating is deferred to YUK-175 (batch
+      //     enforce), so there is NO validator call here to thread the bump into.
+      // Wire both once the schema/prompt threading and YUK-175 land.
       await writeAiProposal(params.db, {
         actor_ref: 'dreaming',
         outcome: 'success',
