@@ -90,6 +90,14 @@ export type StructuredQuestionT = {
   answers?: string[];
   analysis?: string;
   bbox?: BBoxT;
+  /**
+   * 0-based source page this question was extracted from. Set on the Tencent
+   * multi-page fallback path (parser stamps it per page); ABSENT on the VLM
+   * structure tree and single-page legacy trees. Used by `assignFigures` to gate
+   * figure↔question attachment to the same page so a page-1 figure can't match a
+   * page-0 question on normalized (0–1) bbox overlap (YUK-163).
+   */
+  page_index?: number;
   sub_questions?: StructuredQuestionT[];
   extraction_evidence?: z.infer<typeof ExtractionEvidence>;
   source?: 'tencent_ocr' | 'vision_rescue' | 'vlm_structure' | 'manual' | 'agent_edit';
@@ -107,6 +115,7 @@ export const StructuredQuestion: z.ZodType<StructuredQuestionT> = z.lazy(() =>
       answers: z.array(z.string()).optional(),
       analysis: z.string().optional(),
       bbox: BBox.optional(),
+      page_index: z.number().int().min(0).optional(),
       sub_questions: z.array(StructuredQuestion).optional(),
       extraction_evidence: ExtractionEvidence.optional(),
       source: StructuredQuestionSource.optional(),

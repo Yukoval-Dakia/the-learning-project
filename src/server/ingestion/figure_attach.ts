@@ -22,7 +22,18 @@ export function assignFigures(
   }
 
   return figures.map((fig) => {
-    const containing = allQs.filter((q) => q.bbox && bboxContains(q.bbox, fig.source_bbox));
+    // Page-gate (YUK-163): restrict candidates to questions on the figure's source
+    // page. The Tencent multi-page path stamps page_index on every question (parser),
+    // so a page-1 figure only competes for page-1 questions and can't win a page-0
+    // question on normalized (0–1) bbox overlap. VLM / single-page trees carry no
+    // page_index → samePageQs is empty → we use the full set, i.e. exactly the prior
+    // behavior (no regression on the VLM happy path, where questions have no bbox and
+    // every figure lands on root anyway).
+    const samePageQs = allQs.filter((q) => q.page_index === fig.source_page_index);
+    const scope = samePageQs.length > 0 ? samePageQs : allQs;
+    const scopeRoot = samePageQs[0] ?? root;
+
+    const containing = scope.filter((q) => q.bbox && bboxContains(q.bbox, fig.source_bbox));
 
     if (containing.length > 0) {
       const smallest = containing.reduce((min, q) =>
@@ -36,12 +47,12 @@ export function assignFigures(
       };
     }
 
-    // 找最近邻；若没有任何带 bbox 的题，归 root
-    const candidatesWithBbox = allQs.filter((q) => q.bbox);
+    // 找最近邻；若（同页/全局）没有任何带 bbox 的题，归 scope root
+    const candidatesWithBbox = scope.filter((q) => q.bbox);
     if (candidatesWithBbox.length === 0) {
       return {
         ...fig,
-        attached_to_index: root.id,
+        attached_to_index: scopeRoot.id,
         attach_confidence: 'low' as const,
       };
     }
