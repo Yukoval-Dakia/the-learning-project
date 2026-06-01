@@ -178,6 +178,17 @@ export async function POST(
           400,
         );
       }
+      // B1b (YUK-164 §2): a merge/split source must still be 'draft' — an
+      // already-auto_enrolled (or imported/ignored) source can't be consumed into
+      // a virtual card (would orphan its auto-enroll question/attempt without a
+      // retract). Revert it via OC-5 first. Mirrors the direct-import guard below.
+      if (row.status !== 'draft') {
+        throw new ApiError(
+          'conflict',
+          `source_block_id ${sid} is '${row.status}'; only 'draft' blocks can be imported`,
+          409,
+        );
+      }
       sourceBlockRows.set(sid, row);
     }
 
