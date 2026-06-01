@@ -19,6 +19,11 @@ vi.mock('@/server/boss/client', () => ({
   createBoss: () => ({
     send: vi.fn(async () => 'mock-job-id'),
   }),
+  // The extract route enqueues via getStartedBoss() (YUK-192: createBoss returns
+  // an unstarted instance → "Database not opened" on send in a cold process).
+  getStartedBoss: vi.fn(async () => ({
+    send: vi.fn(async () => 'mock-job-id'),
+  })),
 }));
 
 async function seedSession(opts: {

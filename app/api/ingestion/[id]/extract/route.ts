@@ -1,5 +1,5 @@
 import { db } from '@/db/client';
-import { createBoss } from '@/server/boss/client';
+import { getStartedBoss } from '@/server/boss/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { Ingestion } from '@/server/session';
 
@@ -23,10 +23,11 @@ export async function POST(
     if (!sessionId) {
       throw new ApiError('validation_error', 'session id is required', 400);
     }
-    const boss = createBoss();
-    // boss singleton 可能未 start —— 调用时 pg-boss send 会 lazy start
-    // 但 web process 不应该负责 start；测试 worker / scripts/worker.ts 才 start。
-    // boss.send 不依赖 worker，只写 pgboss.* 表，所以 web 可直接 send。
+    // pg-boss v12 requires start() before send() (it throws "Database not
+    // opened" otherwise). App processes enqueue via the started singleton
+    // (getStartedBoss); the worker owns boss.work(). Using the unstarted
+    // createBoss() here 500'd on the first enqueue in a cold app process (YUK-192).
+    const boss = await getStartedBoss();
     const { jobId } = await Ingestion.enqueueExtraction({ db, boss, sessionId });
     return Response.json({ businessId: sessionId, jobId });
   } catch (err) {

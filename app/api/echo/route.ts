@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { db } from '@/db/client';
 import { echo_jobs } from '@/db/schema';
-import { createBoss } from '@/server/boss/client';
+import { getStartedBoss } from '@/server/boss/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 
 export const runtime = 'nodejs';
@@ -46,7 +46,8 @@ export async function POST(req: Request): Promise<Response> {
       updated_at: now,
     });
 
-    const boss = createBoss();
+    // getStartedBoss: pg-boss v12 requires start() before send() (YUK-192).
+    const boss = await getStartedBoss();
     const jobId = await boss.send('echo', { businessId, input });
 
     return Response.json({ businessId, jobId });
