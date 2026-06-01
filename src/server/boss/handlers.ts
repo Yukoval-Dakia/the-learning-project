@@ -4,6 +4,7 @@ import { registerMemoryHandlers } from '@/server/memory/triggers';
 import { getR2 } from '@/server/r2';
 import type { PgBoss } from 'pg-boss';
 import { buildAttributionFollowupHandler } from './handlers/attribution_followup';
+import { buildAutoEnrollHandler } from './handlers/auto_enroll';
 import { buildCoachDailyHandler } from './handlers/coach_daily';
 import { buildCoachWeeklyHandler } from './handlers/coach_weekly';
 import { buildDreamingNightlyHandler } from './handlers/dreaming_nightly';
@@ -275,5 +276,21 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
         return getR2();
       },
     } as Parameters<typeof buildTencentOcrHandler>[0]),
+  );
+
+  // Strategy D Slice B (YUK-190): observe-only auto-enroll. Enqueued inline by
+  // tencent_ocr_extract after a successful extraction. With the enroll flag OFF
+  // + observe ON (the default), it runs TaggingTask + WorkflowJudge per draft
+  // block and writes a durable `experimental:auto_enroll_observed` audit event
+  // per block (zero domain rows, blocks stay 'draft'). A cheap tagging job that
+  // retries on its OWN queue — failure-isolated from the expensive OCR job.
+  // batchSize=1 keeps mimo rate-limit friendly. The LLM call needs
+  // XIAOMI_API_KEY in the worker env; a missing key routes each block to review
+  // (no throw, no retry storm — handled per-block in the runner).
+  await boss.createQueue('auto_enroll');
+  await boss.work(
+    'auto_enroll',
+    { pollingIntervalSeconds: 2, batchSize: 1 },
+    buildAutoEnrollHandler(db),
   );
 }

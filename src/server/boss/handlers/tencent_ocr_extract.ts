@@ -254,6 +254,22 @@ async function processOneOcrJob(
       outcome: 'success',
       pgboss_job_id: bossJobId,
     });
+
+    // Strategy D Slice B (YUK-190): fan out to the observe-only auto-enroll job.
+    // Inline getStartedBoss() producer (worker process already has boss started
+    // → same instance), mirroring attribution_followup → variant_gen. Swallow +
+    // log: a failed enqueue must NOT fail an extraction that already succeeded.
+    // Failure isolation lives on the dedicated `auto_enroll` queue — an
+    // auto-enroll throw never flips this session to 'failed' or re-runs OCR. The
+    // applyExtractionResult assertFromState(['extracting']) guard means a
+    // succeeded OCR job can never re-reach this line, so the hook fires once.
+    try {
+      const { getStartedBoss } = await import('@/server/boss/client');
+      const boss = await getStartedBoss();
+      await boss.send('auto_enroll', { sessionId });
+    } catch (err) {
+      console.error('[tencent_ocr_extract] failed to enqueue auto_enroll', err);
+    }
   } catch (err) {
     await markFailedAndLogCost(deps, sessionId, bossJobId, err);
     throw err; // rethrow so pg-boss retries (Retryable) or archives (Permanent)

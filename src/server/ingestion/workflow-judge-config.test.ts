@@ -10,8 +10,10 @@ import {
   AUTO_ENROLL_FLAG,
   AUTO_ENROLL_THRESHOLD_FLAG,
   DEFAULT_AUTO_ENROLL_THRESHOLD,
+  OBSERVE_FLAG,
   autoEnrollEnabled,
   autoEnrollThreshold,
+  observeEnabled,
 } from './workflow-judge-config';
 
 describe('autoEnrollEnabled', () => {
@@ -49,5 +51,24 @@ describe('autoEnrollThreshold', () => {
     expect(autoEnrollThreshold({ [AUTO_ENROLL_THRESHOLD_FLAG]: '0.7' })).toBeCloseTo(0.7);
     expect(autoEnrollThreshold({ [AUTO_ENROLL_THRESHOLD_FLAG]: '-1' })).toBe(0);
     expect(autoEnrollThreshold({ [AUTO_ENROLL_THRESHOLD_FLAG]: '2' })).toBe(1);
+  });
+});
+
+describe('observeEnabled', () => {
+  it('is ON when the env var is undefined (the OFF-flag default: observe-only)', () => {
+    expect(observeEnabled({})).toBe(true);
+  });
+
+  it('is ON for any value except explicit false (opt-OUT polarity)', () => {
+    expect(observeEnabled({ [OBSERVE_FLAG]: 'true' })).toBe(true);
+    expect(observeEnabled({ [OBSERVE_FLAG]: '' })).toBe(true);
+    expect(observeEnabled({ [OBSERVE_FLAG]: '1' })).toBe(true);
+    expect(observeEnabled({ [OBSERVE_FLAG]: 'yes' })).toBe(true);
+  });
+
+  it("is OFF only when explicitly 'false' (case-insensitive) → restores hard no-op", () => {
+    expect(observeEnabled({ [OBSERVE_FLAG]: 'false' })).toBe(false);
+    expect(observeEnabled({ [OBSERVE_FLAG]: 'FALSE' })).toBe(false);
+    expect(observeEnabled({ [OBSERVE_FLAG]: 'False' })).toBe(false);
   });
 });
