@@ -47,12 +47,19 @@ export type ReviewStatusT = z.infer<typeof ReviewStatus>;
 export const ConversationStatus = z.enum(['active', 'idle', 'ended', 'abandoned']);
 export type ConversationStatusT = z.infer<typeof ConversationStatus>;
 
-// tutor / explore / create —— 占位 enum，状态待定。**绝不**用 z.string() 兜底，
-// 也不留空 enum。Phase 1d/2 第一次实装时再展开。先用 'placeholder' 单值标记，避免
-// 误把任意字符串吞进生产数据。
-export const TutorStatus = z.enum(['placeholder']);
+// tutor 状态机 (YUK-193 解题陪练 / docs/superpowers/specs/2026-06-01-solve-tutor-design.md §3.1)：
+//   active → submitted → judged → ended  (+ abandoned terminal)
+// active   : 会话已开，可请求 hint / 提交作答
+// submitted: 已收到一次作答提交，判分进行中（瞬态，submit 路由内同事务推进到 judged）
+// judged   : 已判分 + 已揭示参考解
+// ended    : 终态 —— 正常收尾
+// abandoned: 终态 —— 放弃 / orphan
+export const TutorStatus = z.enum(['active', 'submitted', 'judged', 'ended', 'abandoned']);
 export type TutorStatusT = z.infer<typeof TutorStatus>;
 
+// explore / create —— 占位 enum，状态待定。**绝不**用 z.string() 兜底，
+// 也不留空 enum。Phase 1d/2 第一次实装时再展开。先用 'placeholder' 单值标记，避免
+// 误把任意字符串吞进生产数据。
 export const ExploreStatus = z.enum(['placeholder']);
 export type ExploreStatusT = z.infer<typeof ExploreStatus>;
 
