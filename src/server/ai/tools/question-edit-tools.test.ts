@@ -8,8 +8,13 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import type { StructuredQuestionT } from '@/core/schema/structured_question';
+import {
+  StructuredQuestion,
+  type StructuredQuestionT,
+  structuredToPromptMarkdown,
+} from '@/core/schema/structured_question';
 import { job_events, question_block } from '@/db/schema';
+import { idHasMatch } from '@/server/ingestion/block-structured-edit';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { __resetBootstrapForTests, registerCoreTools } from './bootstrap';
 import {
@@ -306,6 +311,57 @@ describe('split_stem', () => {
     const out = await splitStemTool.execute(ctx(), { block_id: blockId, node_id: 'ghost' });
     expect(out.status).toBe('skipped:node_not_found');
   });
+
+  it('reattaches a nested-stem figure to the first promoted child (no dangling)', async () => {
+    // Root stem holds a nested stem `inner` (with subs); a figure is attached to
+    // `inner`. Splitting `inner` removes its id, so the figure must be
+    // re-pointed onto the first promoted child rather than dangling.
+    const { blockId } = await seedBlock({
+      structured: {
+        id: 'root',
+        role: 'stem',
+        prompt_text: 'root passage',
+        sub_questions: [
+          {
+            id: 'inner',
+            role: 'stem',
+            prompt_text: 'inner passage',
+            sub_questions: [
+              { id: 'inner-a', role: 'sub', prompt_text: 'a' },
+              { id: 'inner-b', role: 'sub', prompt_text: 'b' },
+            ],
+          },
+        ],
+      },
+      figures: [
+        {
+          asset_id: 'fig-inner',
+          role: 'diagram',
+          source_page_index: 0,
+          source_bbox: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
+          attached_to_index: 'inner',
+          attach_confidence: 'high',
+        },
+      ],
+    });
+
+    const out = await splitStemTool.execute(ctx(), { block_id: blockId, node_id: 'inner' });
+    expect(out.status).toBe('written');
+
+    const block = await readBlock(blockId);
+    const tree = block.structured as StructuredQuestionT;
+    // `inner` is gone; its children are promoted as standalone siblings.
+    expect(idHasMatch(tree, 'inner')).toBe(false);
+    expect(idHasMatch(tree, 'inner-a')).toBe(true);
+
+    const fig = block.figures.find((f: { asset_id: string }) => f.asset_id === 'fig-inner') as
+      | { attached_to_index: string }
+      | undefined;
+    expect(fig).toBeDefined();
+    // Re-pointed to the first promoted child, and it resolves in the tree.
+    expect(fig?.attached_to_index).toBe('inner-a');
+    expect(idHasMatch(tree, (fig as { attached_to_index: string }).attached_to_index)).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -344,6 +400,46 @@ describe('merge_questions', () => {
 
     expect((await readBlock(m1)).status).toBe('ignored');
     expect((await readBlock(m2)).status).toBe('ignored');
+  });
+
+  it("preserves a stem primary's existing sub_questions when absorbing more", async () => {
+    const sessionId = createId();
+    const { blockId: primary } = await seedBlock({
+      sessionId,
+      structured: {
+        id: 'p',
+        role: 'stem',
+        prompt_text: 'passage',
+        sub_questions: [
+          { id: 'p-a', role: 'sub', prompt_text: 'pa', source: 'tencent_ocr' },
+          { id: 'p-b', role: 'sub', prompt_text: 'pb', source: 'tencent_ocr' },
+        ],
+      },
+    });
+    const { blockId: m1 } = await seedBlock({
+      sessionId,
+      structured: { id: 'm1', role: 'standalone', prompt_text: 'merge1' },
+    });
+
+    const out = await mergeQuestionsTool.execute(ctx(), {
+      primary_block_id: primary,
+      merge_block_ids: [m1],
+    });
+    expect(out.status).toBe('written');
+
+    const primaryBlock = await readBlock(primary);
+    expect(primaryBlock.structured?.role).toBe('stem');
+    // The stem primary's own passage is kept (not blanked) and its existing
+    // sub_questions stay ahead of the absorbed node, in order.
+    expect(primaryBlock.structured?.prompt_text).toBe('passage');
+    const subIds = primaryBlock.structured?.sub_questions?.map((s) => s.id) ?? [];
+    expect(subIds).toEqual(['p-a', 'p-b', 'm1']);
+    // existingSubs branch: the primary's own subs are passed through untouched
+    // (only the absorbed top node is stamped agent_edit).
+    const existing = primaryBlock.structured?.sub_questions?.filter((s) => s.id !== 'm1') ?? [];
+    expect(existing.map((s) => s.source)).toEqual(['tencent_ocr', 'tencent_ocr']);
+    const absorbed = primaryBlock.structured?.sub_questions?.find((s) => s.id === 'm1');
+    expect(absorbed?.source).toBe('agent_edit');
   });
 
   it('absorbs in caller-supplied order, not unordered SELECT order', async () => {
@@ -439,6 +535,127 @@ describe('merge_questions', () => {
       merge_block_ids: [createId()],
     });
     expect(out.status).toBe('skipped:block_not_found');
+  });
+
+  it('preserves a merged block whose root is a stem (role + sub_questions intact)', async () => {
+    const sessionId = createId();
+    const { blockId: primary } = await seedBlock({
+      sessionId,
+      structured: { id: 'p', role: 'standalone', prompt_text: 'primary' },
+    });
+    const { blockId: m1 } = await seedBlock({
+      sessionId,
+      structured: {
+        id: 'stem-m1',
+        role: 'stem',
+        prompt_text: 'passage',
+        sub_questions: [
+          { id: 'm1-a', role: 'sub', prompt_text: 'alpha' },
+          { id: 'm1-b', role: 'sub', prompt_text: 'beta' },
+        ],
+      },
+    });
+
+    const out = await mergeQuestionsTool.execute(ctx(), {
+      primary_block_id: primary,
+      merge_block_ids: [m1],
+    });
+    expect(out.status).toBe('written');
+
+    const primaryBlock = await readBlock(primary);
+    const tree = primaryBlock.structured as StructuredQuestionT;
+    // The absorbed stem stays a nested stem (NOT flattened to a leaf 'sub').
+    const absorbedStem = tree.sub_questions?.find((s) => s.id === 'stem-m1');
+    expect(absorbedStem).toBeDefined();
+    expect(absorbedStem?.role).toBe('stem');
+    expect(absorbedStem?.sub_questions?.map((s) => s.id)).toEqual(['m1-a', 'm1-b']);
+    // Provenance stamped on the absorbed top node only.
+    expect(absorbedStem?.last_modified_by).toBe('agent:ingestion_block_edit');
+
+    // Merged tree is schema-legal (refine does not reject the nested stem).
+    expect(() => StructuredQuestion.parse(tree)).not.toThrow();
+    // Derived markdown recurses into the nested stem's subs (not silently lost).
+    const md = structuredToPromptMarkdown(tree);
+    expect(md).toContain('alpha');
+    expect(md).toContain('beta');
+  });
+
+  it('carries the merged blocks figures onto the primary (union, ids resolve)', async () => {
+    const sessionId = createId();
+    const { blockId: primary } = await seedBlock({
+      sessionId,
+      structured: { id: 'p', role: 'standalone', prompt_text: 'primary' },
+    });
+    const mergeFigure = {
+      asset_id: 'fig-m1',
+      role: 'diagram',
+      source_page_index: 0,
+      source_bbox: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
+      attached_to_index: 'm1',
+      attach_confidence: 'high',
+    };
+    const { blockId: m1 } = await seedBlock({
+      sessionId,
+      structured: { id: 'm1', role: 'standalone', prompt_text: 'merge1' },
+      figures: [mergeFigure],
+    });
+
+    const out = await mergeQuestionsTool.execute(ctx(), {
+      primary_block_id: primary,
+      merge_block_ids: [m1],
+    });
+    expect(out.status).toBe('written');
+
+    const primaryBlock = await readBlock(primary);
+    // The merge block's figure is now on the primary.
+    const carried = primaryBlock.figures.find((f: { asset_id: string }) => f.asset_id === 'fig-m1');
+    expect(carried).toBeDefined();
+    // Its attached_to_index still resolves inside the merged tree.
+    const tree = primaryBlock.structured as StructuredQuestionT;
+    expect(idHasMatch(tree, (carried as { attached_to_index: string }).attached_to_index)).toBe(
+      true,
+    );
+  });
+
+  it('skips null_structured when a merge block has null structured (no mutation)', async () => {
+    const sessionId = createId();
+    const { blockId: primary } = await seedBlock({
+      sessionId,
+      structured: { id: 'p', role: 'standalone', prompt_text: 'primary' },
+    });
+    const { blockId: m1 } = await seedBlock({ sessionId, structured: null });
+
+    const out = await mergeQuestionsTool.execute(ctx(), {
+      primary_block_id: primary,
+      merge_block_ids: [m1],
+    });
+    expect(out.status).toBe('skipped:null_structured');
+
+    // No mutation: primary unchanged (still its own standalone), merge still draft.
+    const primaryBlock = await readBlock(primary);
+    expect(primaryBlock.structured?.id).toBe('p');
+    expect(primaryBlock.structured?.role).toBe('standalone');
+    expect(primaryBlock.merged_from_block_ids).toEqual([]);
+    expect(primaryBlock.version).toBe(0);
+    expect((await readBlock(m1)).status).toBe('draft');
+  });
+
+  it('skips null_structured when the primary has null structured (no mutation)', async () => {
+    const sessionId = createId();
+    const { blockId: primary } = await seedBlock({ sessionId, structured: null });
+    const { blockId: m1 } = await seedBlock({
+      sessionId,
+      structured: { id: 'm1', role: 'standalone', prompt_text: 'merge1' },
+    });
+
+    const out = await mergeQuestionsTool.execute(ctx(), {
+      primary_block_id: primary,
+      merge_block_ids: [m1],
+    });
+    expect(out.status).toBe('skipped:null_structured');
+
+    expect((await readBlock(primary)).structured).toBeNull();
+    expect((await readBlock(m1)).status).toBe('draft');
   });
 });
 
