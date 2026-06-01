@@ -198,7 +198,8 @@ export interface NodeDueSummary {
 // visibleNodes): when dueOnly is off, `due` does not affect which nodes are
 // visible, so feeding this constant keeps visibleNodes referentially stable
 // across background due refetches and avoids a needless cytoscape rebuild.
-const EMPTY_DUE_MAP: Map<string, NodeDueSummary> = new Map();
+// Typed ReadonlyMap so a stray write can't mutate the shared singleton.
+const EMPTY_DUE_MAP: ReadonlyMap<string, NodeDueSummary> = new Map();
 
 /**
  * A pending AI edge proposal, normalized for the graph (Slice 3 — "AI 画布").
@@ -598,7 +599,7 @@ export function distinctDomains(nodes: KnowledgeGraphNode[]): string[] {
 export function passesFilter(
   node: KnowledgeGraphNode,
   filter: FilterState,
-  dueCounts: Map<string, NodeDueSummary>,
+  dueCounts: ReadonlyMap<string, NodeDueSummary>,
 ): boolean {
   if (filter.domain !== null) {
     const d = node.effective_domain ?? node.domain ?? null;
