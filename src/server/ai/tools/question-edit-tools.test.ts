@@ -337,13 +337,64 @@ describe('merge_questions', () => {
     const primaryBlock = await readBlock(primary);
     expect(primaryBlock.structured?.role).toBe('stem');
     const subIds = primaryBlock.structured?.sub_questions?.map((s) => s.id) ?? [];
-    expect(subIds).toContain('m1');
-    expect(subIds).toContain('m2');
+    // primary's own node first, then absorbed nodes in caller-supplied order.
+    expect(subIds).toEqual(['p', 'm1', 'm2']);
     expect(primaryBlock.merged_from_block_ids).toEqual([m1, m2]);
     expect(primaryBlock.version).toBe(1);
 
     expect((await readBlock(m1)).status).toBe('ignored');
     expect((await readBlock(m2)).status).toBe('ignored');
+  });
+
+  it('absorbs in caller-supplied order, not unordered SELECT order', async () => {
+    const sessionId = createId();
+    const { blockId: primary } = await seedBlock({
+      sessionId,
+      structured: { id: 'p', role: 'standalone', prompt_text: 'primary' },
+    });
+    const { blockId: m1 } = await seedBlock({
+      sessionId,
+      structured: { id: 'm1', role: 'standalone', prompt_text: 'merge1' },
+    });
+    const { blockId: m2 } = await seedBlock({
+      sessionId,
+      structured: { id: 'm2', role: 'standalone', prompt_text: 'merge2' },
+    });
+    // m1 seeded before m2, but request order is [m2, m1] → absorbed must follow
+    // the request, not DB row order (the inArray SELECT is unordered).
+    const out = await mergeQuestionsTool.execute(ctx(), {
+      primary_block_id: primary,
+      merge_block_ids: [m2, m1],
+    });
+    expect(out.status).toBe('written');
+    const primaryBlock = await readBlock(primary);
+    const subIds = primaryBlock.structured?.sub_questions?.map((s) => s.id) ?? [];
+    expect(subIds).toEqual(['p', 'm2', 'm1']);
+    expect(primaryBlock.merged_from_block_ids).toEqual([m2, m1]);
+  });
+
+  it('dedupes merge_block_ids and drops the primary id', async () => {
+    const sessionId = createId();
+    const { blockId: primary } = await seedBlock({
+      sessionId,
+      structured: { id: 'p', role: 'standalone', prompt_text: 'primary' },
+    });
+    const { blockId: m1 } = await seedBlock({
+      sessionId,
+      structured: { id: 'm1', role: 'standalone', prompt_text: 'merge1' },
+    });
+    // Duplicate m1 + the primary id itself must collapse to a single m1 merge —
+    // not trip the length check and not write duplicate merged_from_block_ids.
+    const out = await mergeQuestionsTool.execute(ctx(), {
+      primary_block_id: primary,
+      merge_block_ids: [m1, m1, primary],
+    });
+    expect(out.status).toBe('written');
+    const primaryBlock = await readBlock(primary);
+    expect(primaryBlock.merged_from_block_ids).toEqual([m1]);
+    const subIds = primaryBlock.structured?.sub_questions?.map((s) => s.id) ?? [];
+    expect(subIds).toEqual(['p', 'm1']);
+    expect((await readBlock(m1)).status).toBe('ignored');
   });
 
   it('skips cross_session when a merge block belongs to another session', async () => {

@@ -375,7 +375,11 @@ export async function mergeQuestions(db: Db, params: MergeQuestionsParams): Prom
     if (!primary) return { status: 'skipped:block_not_found' };
     if (primary.status !== 'draft') return { status: 'skipped:not_draft' };
 
-    const mergeIds = params.mergeBlockIds.filter((id) => id !== params.primaryBlockId);
+    // Dedupe + drop the primary itself: a caller passing [m1, m1] or the primary
+    // id must not inflate merged_from_block_ids or trip the length check below.
+    const mergeIds = [...new Set(params.mergeBlockIds)].filter(
+      (id) => id !== params.primaryBlockId,
+    );
     if (mergeIds.length === 0) return { status: 'skipped:block_not_found' };
 
     const mergeBlocks = await tx
@@ -396,8 +400,14 @@ export async function mergeQuestions(db: Db, params: MergeQuestionsParams): Prom
     // appended sub_questions. The primary becomes a stem container holding all
     // nodes (its own + absorbed), preserving order. Provenance on the primary.
     const primaryNodes = topLevelNodes(primary.structured);
+    // Iterate in caller-supplied `mergeIds` order (not the unordered `inArray`
+    // SELECT result) so absorbed sub-question order is deterministic — §4.5
+    // "appended ... preserving order".
+    const blocksById = new Map(mergeBlocks.map((b) => [b.id, b]));
     const absorbed: StructuredQuestionT[] = [];
-    for (const mb of mergeBlocks) {
+    for (const id of mergeIds) {
+      const mb = blocksById.get(id);
+      if (!mb) continue; // unreachable: length check above guarantees presence
       for (const node of topLevelNodes(mb.structured)) {
         const clone: StructuredQuestionT = { ...node, role: 'sub' };
         stampProvenance(clone, params.actorRef);
