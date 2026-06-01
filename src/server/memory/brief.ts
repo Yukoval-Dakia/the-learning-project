@@ -25,6 +25,11 @@ export type BriefEvent = {
   action: string;
   subject_kind: string;
   subject_id: string;
+  // P5.4-L2 (PR #232 review) — `outcome` is a top-level event COLUMN (writeEvent
+  // sets `outcome: input.outcome`, schema.ts:555), NOT inside `payload`. Thread
+  // it end-to-end so the brief writer sees success/failure/partial and can write
+  // real weakness/progress summaries. null when the action carries no outcome.
+  outcome: string | null;
   payload: unknown;
   created_at: Date;
 };
@@ -96,6 +101,7 @@ async function loadEventsFromDb(db: Db, scopeKey: string): Promise<BriefEvent[]>
     action: row.action,
     subject_kind: row.subject_kind,
     subject_id: row.subject_id,
+    outcome: row.outcome,
     payload: row.payload,
     created_at: row.created_at,
   }));

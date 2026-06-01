@@ -16,6 +16,19 @@ import { registerHandlers } from '@/server/boss/handlers';
 import { installShutdownHandler } from '@/server/boss/shutdown';
 
 async function main() {
+  // F-2 (YUK-185) / PR #232 review (FIX #6) — the brief regen handler calls the
+  // LLM via runTask, which needs XIAOMI_API_KEY (resolveTaskProvider throws
+  // otherwise, providers.ts:88). Surface a missing key at BOOT here — the prod
+  // worker entry point that actually runs the cron — not per-scope at 3 AM and
+  // not inside registerMemoryHandlers (which tests also call). One-shot WARN;
+  // not fatal: ingest/outbox handlers still run and brief regen degrades to a
+  // logged-skip per scope (F-1/D8).
+  if (!process.env.XIAOMI_API_KEY) {
+    console.warn(
+      '[worker] XIAOMI_API_KEY unset — memory brief regen will fail (logged-skip per scope, F-1/D8)',
+    );
+  }
+
   const boss = createBoss();
   await boss.start();
   await registerHandlers(boss, db);
