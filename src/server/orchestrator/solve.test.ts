@@ -3,8 +3,9 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { learning_session, question } from '@/db/schema';
+import { Tutor } from '@/server/session';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import { startSolveSession } from './solve';
+import { planSolveHint, startSolveSession } from './solve';
 
 const db = testDb();
 
@@ -98,5 +99,53 @@ describe('startSolveSession', () => {
     await expect(startSolveSession({ db, questionId: 'nope', runTaskFn })).rejects.toMatchObject({
       code: 'question_not_found',
     });
+  });
+});
+
+describe('planSolveHint', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('returns a non-revealing hint via TeachingTurnTask', async () => {
+    const id = await seedQuestion({
+      rubric_json: {
+        criteria: [],
+        reference_solution: {
+          expected_signals: ['s'],
+          final_answer: 'a + b',
+          answer_equivalents: [],
+        },
+      },
+    });
+    await db
+      .update(question)
+      .set({ reference_md: '完整解：先因式分解，再约分得 a+b。' })
+      .where(eq(question.id, id));
+    const { sessionId } = await Tutor.startTutorSession(db, { questionId: id });
+
+    const turnText = JSON.stringify({
+      kind: 'explain',
+      text_md: '想想分子能不能因式分解？',
+      suggested_next: 'continue',
+    });
+    const runTaskFn = vi.fn(async () => ({ text: turnText }));
+
+    const hint = await planSolveHint({ db, sessionId, hintIndex: 0, runTaskFn });
+
+    expect(hint.text_md).toContain('因式分解');
+    expect(hint.text_md).not.toContain('a+b'); // does not reveal the final answer
+    expect(runTaskFn).toHaveBeenCalledWith(
+      'TeachingTurnTask',
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it('throws for an unknown session', async () => {
+    const runTaskFn = vi.fn();
+    await expect(
+      planSolveHint({ db, sessionId: 'nope', hintIndex: 0, runTaskFn }),
+    ).rejects.toThrow();
   });
 });
