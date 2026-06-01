@@ -490,7 +490,12 @@ export const tasks = {
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
     fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
-    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
+    // YUK-189: 120s (was 60s). The real-LLM demo (scripts/demo-flywheel.ts) hit
+    // the 60s budget on the `global` scope (full event set on the slow mimo
+    // endpoint: subject:wenyan finished 59s, global aborted at 60s). The nightly
+    // brief sweep can afford the longer budget; the per-message Copilot path does
+    // not call this task. maxIterations stays 1 (single structured-output call).
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 120_000 },
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
