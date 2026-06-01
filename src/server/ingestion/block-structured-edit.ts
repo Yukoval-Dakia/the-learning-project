@@ -91,7 +91,8 @@ export type EditStatus =
   | 'skipped:not_splittable'
   | 'skipped:cross_session'
   | 'skipped:block_not_found'
-  | 'skipped:figure_not_found';
+  | 'skipped:figure_not_found'
+  | 'skipped:null_structured';
 
 export interface EditResult {
   status: EditStatus;
@@ -125,11 +126,15 @@ async function persistStructured(
   structured: StructuredQuestionT,
   eventType: 'block.structured_edited',
   payload: Record<string, unknown>,
+  // Optional figures update — persisted in the SAME tx as `structured` when a
+  // mutation also re-points figures (e.g. splitStem nested-stem reattachment).
+  figures?: FigureRefT[],
 ): Promise<number> {
   const updated = await tx
     .update(question_block)
     .set({
       structured,
+      ...(figures !== undefined ? { figures } : {}),
       updated_at: new Date(),
       version: sql`${question_block.version} + 1`,
     })
@@ -279,14 +284,24 @@ function isSplittableStem(node: StructuredQuestionT): boolean {
  *     `sub_questions` and insert its promoted standalone children in its place,
  *     preserving order.
  *
- * Returns `{ tree, outcome }` where outcome is `split | not_found |
- * not_splittable`.
+ * Returns `{ tree, outcome, reattachFrom?, reattachTo? }` where outcome is
+ * `split | not_found | not_splittable`. On the NESTED-stem split branch the
+ * stem node is spliced out and its id disappears, so any figure that was
+ * `attached_to_index === <stem id>` would dangle. We surface `reattachFrom`
+ * (the vanished stem id) + `reattachTo` (the first promoted child id) so the
+ * caller can re-point those figures (root-stem split keeps the id via the shell,
+ * so it returns no reattach).
  */
 function splitStemInTree(
   node: StructuredQuestionT,
   target: string,
   actorRef: string,
-): { tree: StructuredQuestionT; outcome: 'split' | 'not_found' | 'not_splittable' } {
+): {
+  tree: StructuredQuestionT;
+  outcome: 'split' | 'not_found' | 'not_splittable';
+  reattachFrom?: string;
+  reattachTo?: string;
+} {
   if (node.id === target) {
     if (!isSplittableStem(node)) return { tree: node, outcome: 'not_splittable' };
     const shell: StructuredQuestionT = {
@@ -297,10 +312,13 @@ function splitStemInTree(
       last_modified_by: actorRef,
       sub_questions: promoteSubsToStandalone(node, actorRef),
     };
+    // Root-stem keeps its id via the shell — no figure reattachment needed.
     return { tree: shell, outcome: 'split' };
   }
 
   let outcome: 'split' | 'not_found' | 'not_splittable' = 'not_found';
+  let reattachFrom: string | undefined;
+  let reattachTo: string | undefined;
   const nextSubs: StructuredQuestionT[] = [];
   for (const sub of node.sub_questions ?? []) {
     if (sub.id === target) {
@@ -308,8 +326,13 @@ function splitStemInTree(
         nextSubs.push(sub);
         outcome = 'not_splittable';
       } else {
-        nextSubs.push(...promoteSubsToStandalone(sub, actorRef));
+        const promoted = promoteSubsToStandalone(sub, actorRef);
+        nextSubs.push(...promoted);
         outcome = 'split';
+        // Nested stem id vanishes on splice; re-point its figures to the first
+        // promoted child so they don't dangle.
+        reattachFrom = sub.id;
+        reattachTo = promoted[0]?.id;
       }
       continue;
     }
@@ -319,12 +342,16 @@ function splitStemInTree(
     else if (res.outcome === 'not_splittable' && outcome === 'not_found') {
       outcome = 'not_splittable';
     }
+    if (res.reattachFrom) {
+      reattachFrom = res.reattachFrom;
+      reattachTo = res.reattachTo;
+    }
   }
   const clone: StructuredQuestionT = {
     ...node,
     sub_questions: node.sub_questions ? nextSubs : undefined,
   };
-  return { tree: clone, outcome };
+  return { tree: clone, outcome, reattachFrom, reattachTo };
 }
 
 export async function splitStem(db: Db, params: SplitStemParams): Promise<EditResult> {
@@ -341,12 +368,25 @@ export async function splitStem(db: Db, params: SplitStemParams): Promise<EditRe
     if (result.outcome === 'not_found') return { status: 'skipped:node_not_found' };
     if (result.outcome === 'not_splittable') return { status: 'skipped:not_splittable' };
 
+    // Nested-stem split removes the stem id from the tree; re-point any figure
+    // that was attached to it onto the first promoted child so it doesn't
+    // dangle. Root-stem split keeps the id (shell), so reattachFrom is unset.
+    let nextFigures: FigureRefT[] | undefined;
+    if (result.reattachFrom && result.reattachTo) {
+      const from = result.reattachFrom;
+      const to = result.reattachTo;
+      nextFigures = (block.figures ?? []).map((f) =>
+        f.attached_to_index === from ? { ...f, attached_to_index: to } : f,
+      );
+    }
+
     const version = await persistStructured(
       tx,
       params.blockId,
       result.tree,
       'block.structured_edited',
       { op: 'split_stem', node_id: params.nodeId },
+      nextFigures,
     );
     return { status: 'written', version };
   });
@@ -395,6 +435,13 @@ export async function mergeQuestions(db: Db, params: MergeQuestionsParams): Prom
     if (mergeBlocks.some((b) => b.ingestion_session_id !== primary.ingestion_session_id)) {
       return { status: 'skipped:cross_session' };
     }
+    // A null-structured block carries only legacy extracted_prompt_md, which has
+    // no top-level node to absorb. Merging it would silently drop that content
+    // while still marking the block ignored — refuse instead of losing it.
+    if (!primary.structured) return { status: 'skipped:null_structured' };
+    if (mergeBlocks.some((b) => b.structured === null)) {
+      return { status: 'skipped:null_structured' };
+    }
 
     // Absorb each merge block's top-level structured nodes into the primary as
     // appended sub_questions. The primary becomes a stem container holding all
@@ -409,7 +456,17 @@ export async function mergeQuestions(db: Db, params: MergeQuestionsParams): Prom
       const mb = blocksById.get(id);
       if (!mb) continue; // unreachable: length check above guarantees presence
       for (const node of topLevelNodes(mb.structured)) {
-        const clone: StructuredQuestionT = { ...node, role: 'sub' };
+        // A merged block whose root is a stem (with sub_questions) must stay a
+        // nested stem: forcing role='sub' onto a node that still carries
+        // sub_questions produces an ILLEGAL StructuredQuestion (the refine bars
+        // non-stems from holding subs) and structuredToPromptMarkdown would
+        // render it as a leaf, silently dropping the sub-questions. Nested stems
+        // are schema-legal; keep the whole subtree intact via structuredClone.
+        const isStem = node.role === 'stem' && (node.sub_questions?.length ?? 0) > 0;
+        const clone: StructuredQuestionT = isStem
+          ? structuredClone(node)
+          : { ...node, role: 'sub', sub_questions: undefined };
+        // Stamp provenance only on the absorbed top node (subs keep their own).
         stampProvenance(clone, params.actorRef);
         absorbed.push(clone);
       }
@@ -427,10 +484,24 @@ export async function mergeQuestions(db: Db, params: MergeQuestionsParams): Prom
       sub_questions: [...existingSubs, ...absorbed],
     };
 
+    // Carry the merged blocks' figures onto the primary (union, in mergeIds
+    // order). Absorbed subtrees keep every node id, so each figure's
+    // attached_to_index still resolves inside the merged tree. Dedup by
+    // asset_id (keep first): the same cropped asset could be attached to both
+    // the primary and a merge block; reassignFigure / the PATCH route resolve a
+    // figure by first asset_id match, so a duplicate would shadow later updates
+    // and double-render in the review UI.
+    const seenAssetIds = new Set<string>();
+    const mergedFigures: FigureRefT[] = [
+      ...(primary.figures ?? []),
+      ...mergeIds.flatMap((id) => blocksById.get(id)?.figures ?? []),
+    ].filter((f) => !seenAssetIds.has(f.asset_id) && seenAssetIds.add(f.asset_id));
+
     await tx
       .update(question_block)
       .set({
         structured: mergedTree,
+        figures: mergedFigures,
         merged_from_block_ids: [...(primary.merged_from_block_ids ?? []), ...mergeIds],
         updated_at: new Date(),
         version: sql`${question_block.version} + 1`,

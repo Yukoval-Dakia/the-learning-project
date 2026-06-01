@@ -226,6 +226,7 @@ const MergeQuestionsOutputSchema = z.object({
     'skipped:not_draft',
     'skipped:cross_session',
     'skipped:block_not_found',
+    'skipped:null_structured',
   ]),
   primary_block_id: z.string(),
   merge_block_ids: z.array(z.string()),
@@ -251,7 +252,8 @@ export const mergeQuestionsTool: DomainTool<MergeQuestionsInput, MergeQuestionsO
     if (
       res.status === 'written' ||
       res.status === 'skipped:not_draft' ||
-      res.status === 'skipped:cross_session'
+      res.status === 'skipped:cross_session' ||
+      res.status === 'skipped:null_structured'
     ) {
       status = res.status;
     } else {

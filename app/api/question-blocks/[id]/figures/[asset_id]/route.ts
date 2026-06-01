@@ -55,6 +55,16 @@ export async function PATCH(
         throw new ApiError('conflict', `question_block ${blockId} is not draft`, 409);
       case 'written':
         return Response.json({ figures: result.figures });
+      default: {
+        // Exhaustiveness guard over ReassignFigureStatus: a new status added to
+        // the service without a case here is a compile-time error.
+        const _exhaustive: never = result.status;
+        throw new ApiError(
+          'internal_error',
+          `unexpected reassignFigure status ${_exhaustive}`,
+          500,
+        );
+      }
     }
   } catch (err) {
     return errorResponse(err);
