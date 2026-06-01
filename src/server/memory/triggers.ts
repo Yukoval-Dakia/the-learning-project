@@ -132,13 +132,17 @@ export function buildMemoryEventIngestHandler(
   return async (jobs) => {
     memoryClient ??= createMemoryClient();
     const client = memoryClient;
-    for (const job of jobs) {
-      const row = await loadEvent(db, job.data.event_id);
+    // Read every job's event in parallel (was one awaited SELECT per job).
+    // The Mem0 writes below stay sequential + in order (external call), but the
+    // DB reads no longer serialize.
+    const rows = await Promise.all(jobs.map((job) => loadEvent(db, job.data.event_id)));
+    for (const row of rows) {
       if (!row) continue;
       await client.addEventMemory(row);
-      for (const scopeKey of row.affected_scopes) {
-        await enqueueBriefRegen(boss, scopeKey);
-      }
+      // De-dupe this event's scopes and fan the regen enqueues out concurrently
+      // (each send is per-scope singleton-deduped server-side anyway).
+      const scopeKeys = [...new Set(row.affected_scopes)];
+      await Promise.all(scopeKeys.map((scopeKey) => enqueueBriefRegen(boss, scopeKey)));
     }
   };
 }

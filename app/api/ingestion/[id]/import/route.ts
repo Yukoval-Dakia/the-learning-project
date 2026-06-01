@@ -16,7 +16,7 @@
  * 或派生 `structuredToPromptMarkdown(structured)` 作为统一展示源。
  */
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { PageSpan } from '@/core/schema';
@@ -165,20 +165,30 @@ export async function POST(
       }
     }
 
-    for (const sid of allSourceIds) {
-      const rows = await db.select().from(question_block).where(eq(question_block.id, sid));
-      const row = rows[0] ?? null;
-      if (!row) {
-        throw new ApiError('validation_error', `unknown source_block_id: ${sid}`, 400);
+    // Batch-fetch every referenced source block in one query (was a per-id
+    // SELECT in a loop — N round-trips). Existence + session-ownership checks
+    // run in memory, preserving the original per-id error precedence (iterate
+    // allSourceIds in insertion order; unknown before session-mismatch).
+    if (allSourceIds.size > 0) {
+      const fetchedSourceBlocks = await db
+        .select()
+        .from(question_block)
+        .where(inArray(question_block.id, [...allSourceIds]));
+      const fetchedSourceById = new Map(fetchedSourceBlocks.map((row) => [row.id, row]));
+      for (const sid of allSourceIds) {
+        const row = fetchedSourceById.get(sid) ?? null;
+        if (!row) {
+          throw new ApiError('validation_error', `unknown source_block_id: ${sid}`, 400);
+        }
+        if (row.ingestion_session_id !== sessionId) {
+          throw new ApiError(
+            'validation_error',
+            `source_block_id ${sid} does not belong to session ${sessionId}`,
+            400,
+          );
+        }
+        sourceBlockRows.set(sid, row);
       }
-      if (row.ingestion_session_id !== sessionId) {
-        throw new ApiError(
-          'validation_error',
-          `source_block_id ${sid} does not belong to session ${sessionId}`,
-          400,
-        );
-      }
-      sourceBlockRows.set(sid, row);
     }
 
     // 3. Validate image_refs belong to session.source_asset_ids
@@ -207,15 +217,21 @@ export async function POST(
       }
     }
 
-    // 4. Validate knowledge_ids
-    for (const block of body.blocks) {
-      for (const kid of block.knowledge_ids) {
-        const rows = await db
-          .select({ id: knowledge.id })
-          .from(knowledge)
-          .where(and(eq(knowledge.id, kid), isNull(knowledge.archived_at)));
-        if (rows.length === 0) {
-          throw new ApiError('validation_error', `unknown or archived knowledge_id: ${kid}`, 400);
+    // 4. Validate knowledge_ids — batch every referenced id into one query
+    // (was a per-id SELECT in a nested loop). The in-memory membership check
+    // keeps the original per-(block,kid) error order + message.
+    const allKnowledgeIds = [...new Set(body.blocks.flatMap((block) => block.knowledge_ids))];
+    if (allKnowledgeIds.length > 0) {
+      const liveKnowledgeRows = await db
+        .select({ id: knowledge.id })
+        .from(knowledge)
+        .where(and(inArray(knowledge.id, allKnowledgeIds), isNull(knowledge.archived_at)));
+      const liveKnowledgeIds = new Set(liveKnowledgeRows.map((row) => row.id));
+      for (const block of body.blocks) {
+        for (const kid of block.knowledge_ids) {
+          if (!liveKnowledgeIds.has(kid)) {
+            throw new ApiError('validation_error', `unknown or archived knowledge_id: ${kid}`, 400);
+          }
         }
       }
     }
@@ -457,8 +473,10 @@ export async function POST(
         }
       }
 
-      // UPDATE source blocks → status='ignored'
-      for (const sid of toIgnore) {
+      // UPDATE source blocks → status='ignored' (one batched UPDATE over all
+      // ignored ids; was a per-id UPDATE in a loop). `version + 1` still
+      // increments each row's own version.
+      if (toIgnore.size > 0) {
         await tx
           .update(question_block)
           .set({
@@ -466,7 +484,7 @@ export async function POST(
             updated_at: now,
             version: sql`${question_block.version} + 1`,
           })
-          .where(eq(question_block.id, sid));
+          .where(inArray(question_block.id, [...toIgnore]));
       }
 
       // Terminal transition extracted | reviewed → imported. Re-asserts state
