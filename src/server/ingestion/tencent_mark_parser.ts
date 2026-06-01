@@ -227,6 +227,7 @@ function nodeToStem(
     id: createId(),
     role: 'stem',
     prompt_text,
+    page_index: pageIndex,
     sub_questions: subs,
     source: 'tencent_ocr',
   };
@@ -285,6 +286,7 @@ function nodeToLeaf(
     answers,
     analysis,
     bbox,
+    page_index: pageIndex,
     extraction_evidence: evidence.handwriting || evidence.tencent_grading ? evidence : undefined,
     source: 'tencent_ocr',
   };
