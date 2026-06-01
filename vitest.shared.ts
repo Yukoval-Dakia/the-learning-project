@@ -121,6 +121,10 @@ export const fastTestInclude = [
   // live-Postgres dependency and belongs in the no-Docker unit partition (YUK-134).
   'app/api/health/route.test.ts',
   'app/api/study-log/route.test.ts',
+  // Revert route mocks @/db/client + the revert primitive before importing the
+  // route, so it has no file-level DB import → unit partition (B1b, YUK-164).
+  // `*` matches the literal `[id]` dynamic segment (mirrors app/api/ai/*/...).
+  'app/api/ingestion/*/revert/route.test.ts',
   'tests/core/**/*.test.ts',
   'tests/schema/**/*.test.ts',
   'tests/subjects/**/*.test.ts',
