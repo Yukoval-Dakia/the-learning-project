@@ -8,7 +8,7 @@ import { PageHeader } from '@/ui/primitives/PageHeader';
 import { TodayCopilotDrawer } from '@/ui/today/TodayCopilotDrawer';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
-import { useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 
 interface DueRow {
   question_id: string;
@@ -117,13 +117,24 @@ export default function TodayPage() {
 
   const dueCount = dueQ.data?.rows.length ?? 0;
   const mistakeRows = mistakesQ.data?.rows ?? [];
-  const pendingAttrCount = mistakeRows.filter((m) => m.cause === null).length;
-  const activeItemsCount = itemsQ.data?.rows.filter((i) => i.status !== 'done').length ?? 0;
+  const pendingAttrCount = useMemo(
+    () => mistakeRows.reduce((count, m) => count + (m.cause === null ? 1 : 0), 0),
+    [mistakeRows],
+  );
+  const activeItemsCount = useMemo(
+    () =>
+      (itemsQ.data?.rows ?? []).reduce(
+        (count, item) => count + (item.status !== 'done' ? 1 : 0),
+        0,
+      ),
+    [itemsQ.data],
+  );
   const knowledgeCount = knowledgeQ.data?.rows.length ?? 0;
   const proposalKpi = proposalKpiQ.data ?? null;
-  const proposalGroups = proposalKpi
-    ? proposalGroupCounts(proposalKpi.by_kind)
-    : emptyProposalGroups;
+  const proposalGroups = useMemo(
+    () => (proposalKpi ? proposalGroupCounts(proposalKpi.by_kind) : emptyProposalGroups),
+    [proposalKpi],
+  );
   const pendingAiCount = proposalKpi?.total ?? 0;
   const pendingAiValue = proposalKpi?.has_more ? `${proposalKpi.limit}+` : pendingAiCount;
   const pendingAiLoading = proposalKpiQ.isLoading;
@@ -141,16 +152,18 @@ export default function TodayPage() {
     }
   }
 
-  const causeCounts = new Map<string, number>();
-  for (const m of mistakeRows) {
-    if (m.cause) {
-      causeCounts.set(
-        m.cause.primary_category,
-        (causeCounts.get(m.cause.primary_category) ?? 0) + 1,
-      );
+  const topCauses = useMemo(() => {
+    const causeCounts = new Map<string, number>();
+    for (const m of mistakeRows) {
+      if (m.cause) {
+        causeCounts.set(
+          m.cause.primary_category,
+          (causeCounts.get(m.cause.primary_category) ?? 0) + 1,
+        );
+      }
     }
-  }
-  const topCauses = [...causeCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
+    return [...causeCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
+  }, [mistakeRows]);
 
   return (
     <main className="page wide today-page">
@@ -403,7 +416,7 @@ function SessionStrip({
   );
 }
 
-function AiChangeActivityStrip({
+const AiChangeActivityStrip = memo(function AiChangeActivityStrip({
   rows,
   loading,
   undoingIds,
@@ -414,8 +427,8 @@ function AiChangeActivityStrip({
   undoingIds: string[];
   onUndo: (eventIds: string[]) => Promise<void>;
 }) {
-  const activeRows = rows.filter((row) => !row.undone);
-  const undoingSet = new Set(undoingIds);
+  const activeRows = useMemo(() => rows.filter((row) => !row.undone), [rows]);
+  const undoingSet = useMemo(() => new Set(undoingIds), [undoingIds]);
   if (!loading && rows.length === 0) return null;
 
   return (
@@ -456,7 +469,7 @@ function AiChangeActivityStrip({
       ))}
     </div>
   );
-}
+});
 
 function formatDuration(ms: number | null): string {
   if (!ms || ms < 0) return '0 分钟';

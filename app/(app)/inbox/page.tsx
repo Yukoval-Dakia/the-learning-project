@@ -11,6 +11,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import type { ReactNode } from 'react';
+import { useMemo } from 'react';
 
 interface KnowledgeNode {
   id: string;
@@ -198,20 +199,30 @@ export default function InboxPage() {
     onSuccess: refreshInbox,
   });
 
-  const nodesById = new Map((knowledgeQ.data?.rows ?? []).map((node) => [node.id, node]));
+  const knowledgeRows = knowledgeQ.data?.rows ?? [];
+  const nodesById = useMemo(
+    () => new Map(knowledgeRows.map((node) => [node.id, node])),
+    [knowledgeRows],
+  );
   const allProposals = proposalsQ.data?.rows ?? [];
   // YUK-15 — client-side filter when `?evidence_record=<id>` is present.
-  const proposals = evidenceRecordFilter
-    ? allProposals.filter((row) =>
-        row.payload.evidence_refs.some(
-          (ref) => ref.kind === 'record' && ref.id === evidenceRecordFilter,
-        ),
-      )
-    : allProposals;
-  const proposalGroups = groupByKind(proposals);
+  const proposals = useMemo(
+    () =>
+      evidenceRecordFilter
+        ? allProposals.filter((row) =>
+            row.payload.evidence_refs.some(
+              (ref) => ref.kind === 'record' && ref.id === evidenceRecordFilter,
+            ),
+          )
+        : allProposals,
+    [allProposals, evidenceRecordFilter],
+  );
+  const proposalGroups = useMemo(() => groupByKind(proposals), [proposals]);
   const pendingTotal = proposals.length;
-  const totalCostUsd =
-    proposals.reduce((sum, row) => sum + (row.cost_micro_usd ?? 0), 0) / 1_000_000;
+  const totalCostUsd = useMemo(
+    () => proposals.reduce((sum, row) => sum + (row.cost_micro_usd ?? 0), 0) / 1_000_000,
+    [proposals],
+  );
   const mutating =
     acceptMutation.isPending || dismissMutation.isPending || retractMutation.isPending;
 
