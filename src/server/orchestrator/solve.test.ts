@@ -149,6 +149,30 @@ describe('planSolveHint', () => {
       planSolveHint({ db, sessionId: 'nope', hintIndex: 0, runTaskFn }),
     ).rejects.toThrow();
   });
+
+  it('rejects a hint when expectedQuestionId does not match the session', async () => {
+    const id = await seedQuestion(seededRubricQuestion());
+    const { sessionId } = await Tutor.startTutorSession(db, { questionId: id });
+    const runTaskFn = vi.fn();
+
+    await expect(
+      planSolveHint({ db, sessionId, hintIndex: 0, expectedQuestionId: 'other_q', runTaskFn }),
+    ).rejects.toMatchObject({ code: 'session_not_found' });
+    expect(runTaskFn).not.toHaveBeenCalled();
+  });
+
+  it('rejects a hint once the session is no longer active', async () => {
+    const id = await seedQuestion(seededRubricQuestion());
+    const { sessionId } = await Tutor.startTutorSession(db, { questionId: id });
+    await Tutor.markSubmitted(db, sessionId);
+    await Tutor.markJudged(db, sessionId);
+    const runTaskFn = vi.fn();
+
+    await expect(
+      planSolveHint({ db, sessionId, hintIndex: 0, runTaskFn }),
+    ).rejects.toMatchObject({ code: 'session_not_active' });
+    expect(runTaskFn).not.toHaveBeenCalled();
+  });
 });
 
 function seededRubricQuestion() {
@@ -262,6 +286,85 @@ describe('submitSolveAttempt', () => {
       .where(eq(learning_record.question_id, id));
     expect(records).toHaveLength(1);
     expect(records[0].kind).toBe('mistake');
+  });
+
+  it('enrolls a mistake for a partial attempt scoring below mastery threshold', async () => {
+    const id = await seedQuestion(seededRubricQuestion());
+    const { sessionId } = await Tutor.startTutorSession(db, { questionId: id });
+    const judgeFn = judgeStub('partial', 0.4); // < 0.7 mastery threshold
+
+    const res = await submitSolveAttempt({
+      db,
+      sessionId,
+      submission: { student_final_answer_text: 'a+b' },
+      judgeFn,
+    });
+
+    expect(res.mistake_id).toBeDefined();
+    const records = await db
+      .select()
+      .from(learning_record)
+      .where(eq(learning_record.question_id, id));
+    expect(records).toHaveLength(1);
+  });
+
+  it('does not enroll a mistake for a partial attempt at or above mastery threshold', async () => {
+    const id = await seedQuestion(seededRubricQuestion());
+    const { sessionId } = await Tutor.startTutorSession(db, { questionId: id });
+    const judgeFn = judgeStub('partial', 0.8); // ≥ 0.7 mastery threshold
+
+    const res = await submitSolveAttempt({
+      db,
+      sessionId,
+      submission: { student_final_answer_text: 'a+b' },
+      judgeFn,
+    });
+
+    expect(res.mistake_id).toBeUndefined();
+    const records = await db
+      .select()
+      .from(learning_record)
+      .where(eq(learning_record.question_id, id));
+    expect(records).toHaveLength(0);
+  });
+
+  it('rejects a submit when expectedQuestionId does not match the session', async () => {
+    const id = await seedQuestion(seededRubricQuestion());
+    const { sessionId } = await Tutor.startTutorSession(db, { questionId: id });
+    const judgeFn = judgeStub('correct', 1);
+
+    await expect(
+      submitSolveAttempt({
+        db,
+        sessionId,
+        submission: { student_final_answer_text: 'a+b' },
+        expectedQuestionId: 'other_q',
+        judgeFn,
+      }),
+    ).rejects.toMatchObject({ code: 'session_not_found' });
+    expect(judgeFn).not.toHaveBeenCalled();
+  });
+
+  it('rejects a second submit on an already-judged session', async () => {
+    const id = await seedQuestion(seededRubricQuestion());
+    const { sessionId } = await Tutor.startTutorSession(db, { questionId: id });
+    const judgeFn = judgeStub('correct', 0.95);
+
+    await submitSolveAttempt({
+      db,
+      sessionId,
+      submission: { student_final_answer_text: 'a+b' },
+      judgeFn,
+    });
+
+    await expect(
+      submitSolveAttempt({
+        db,
+        sessionId,
+        submission: { student_final_answer_text: 'a+b' },
+        judgeFn,
+      }),
+    ).rejects.toMatchObject({ code: 'session_not_active' });
   });
 
   it('rejects an all-empty submission', async () => {
