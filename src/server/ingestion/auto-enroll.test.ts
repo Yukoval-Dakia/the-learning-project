@@ -239,12 +239,12 @@ describe('runAutoEnrollForSession', () => {
     expect(result.enrolled).toBe(2);
     expect(result.routed_to_review).toBe(0);
 
-    // Both blocks flipped to 'imported' + linked to a question.
+    // Both blocks flipped to 'auto_enrolled' (NOT human 'imported') + linked to a question.
     const blocks = await db
       .select()
       .from(question_block)
       .where(eq(question_block.ingestion_session_id, sessionId));
-    expect(blocks.every((b) => b.status === 'imported')).toBe(true);
+    expect(blocks.every((b) => b.status === 'auto_enrolled')).toBe(true);
     expect(blocks.every((b) => b.imported_question_id !== null)).toBe(true);
 
     // Questions created with the prefilled knowledge ids.
@@ -689,7 +689,7 @@ describe('runAutoEnrollForSession', () => {
       .select()
       .from(question_block)
       .where(eq(question_block.ingestion_session_id, enrollSeed.sessionId));
-    expect(enrollBlocks.every((b) => b.status === 'imported')).toBe(true);
+    expect(enrollBlocks.every((b) => b.status === 'auto_enrolled')).toBe(true);
   });
 
   // (g) Regression: enroll mode rejects a 'partial' session (§8 guard) so a
@@ -967,5 +967,114 @@ describe('runAutoEnrollForSession — MistakeEnroll draft (A1)', () => {
         runMistakeEnrollFn,
       }),
     ).rejects.toThrow('db connection lost');
+  });
+});
+
+// ===========================================================================
+// T-OC slice A2 (YUK-164): ENROLL mode (flag ON) enrolls the REAL outcome from
+// the MistakeEnrollTask draft for an ANSWERED block, sets status 'auto_enrolled'
+// (NOT human 'imported'), and writes the drafted cause as a chained judge event.
+// ===========================================================================
+describe('runAutoEnrollForSession — A2 answered enroll (flag ON)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('enrolls a failure attempt + mistake + drafted-cause judge event; block auto_enrolled', async () => {
+    const db = testDb();
+    const { sessionId, blockIds } = await seedAnswered(db);
+    const runMistakeEnrollFn = vi.fn(async () => DRAFT); // wrong_answer:'failure' + cause
+
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      subjectId: 'wenyan',
+      env: { [FLAG]: 'true' },
+      runTaggingFn: highConfidenceTagging,
+      runMistakeEnrollFn,
+    });
+
+    expect(result.status).toBe('completed');
+    expect(result.enrolled).toBe(1);
+
+    // Real failure attempt on the question (NOT unanswered/open_question).
+    const attempts = await db.select().from(event).where(eq(event.action, 'attempt'));
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]?.outcome).toBe('failure');
+    expect((attempts[0]?.payload as Record<string, unknown>).answer_md).toBe('学生错答');
+
+    // Mistake record (failure → 'mistake', not 'open_question').
+    const records = await db.select().from(learning_record);
+    expect(records).toHaveLength(1);
+    expect(records[0]?.kind).toBe('mistake');
+
+    // Drafted cause written as a chained judge event on the attempt.
+    const judges = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'judge'), eq(event.subject_kind, 'event')));
+    expect(judges).toHaveLength(1);
+    expect(judges[0]?.caused_by_event_id).toBe(attempts[0]?.id);
+    const cause = (judges[0]?.payload as { cause?: { primary_category?: string } }).cause;
+    expect(cause?.primary_category).toBe('other');
+
+    // Block is auto_enrolled (revertible), NOT human imported.
+    const blocks = await db.select().from(question_block).where(eq(question_block.id, blockIds[0]));
+    expect(blocks[0]?.status).toBe('auto_enrolled');
+    expect(blocks[0]?.imported_question_id).not.toBeNull();
+  });
+
+  it('a success draft enrolls a worked_example with NO cause judge event', async () => {
+    const db = testDb();
+    const { sessionId } = await seedAnswered(db);
+    const runMistakeEnrollFn = vi.fn(async () => ({
+      ...DRAFT,
+      wrong_answer: 'success' as const,
+      cause: null,
+    }));
+
+    await runAutoEnrollForSession({
+      db,
+      sessionId,
+      subjectId: 'wenyan',
+      env: { [FLAG]: 'true' },
+      runTaggingFn: highConfidenceTagging,
+      runMistakeEnrollFn,
+    });
+
+    const attempts = await db.select().from(event).where(eq(event.action, 'attempt'));
+    expect(attempts[0]?.outcome).toBe('success');
+    const records = await db.select().from(learning_record);
+    expect(records[0]?.kind).toBe('worked_example');
+    expect(await db.select().from(event).where(eq(event.action, 'judge'))).toHaveLength(0);
+  });
+
+  it('a draft outage falls back to unanswered (open_question); block still auto_enrolled, no throw', async () => {
+    const db = testDb();
+    const { sessionId } = await seedAnswered(db);
+    const runMistakeEnrollFn = vi.fn(async () => {
+      throw new MistakeEnrollTaskError('draft down');
+    });
+
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      subjectId: 'wenyan',
+      env: { [FLAG]: 'true' },
+      runTaggingFn: highConfidenceTagging,
+      runMistakeEnrollFn,
+    });
+
+    expect(result.status).toBe('completed');
+    expect(result.enrolled).toBe(1);
+    // No attempt event (unanswered fallback); open_question record.
+    expect(await db.select().from(event).where(eq(event.action, 'attempt'))).toHaveLength(0);
+    const records = await db.select().from(learning_record);
+    expect(records[0]?.kind).toBe('open_question');
+    const blocks = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.ingestion_session_id, sessionId));
+    expect(blocks.every((b) => b.status === 'auto_enrolled')).toBe(true);
   });
 });
