@@ -11,7 +11,7 @@
 // not "wording was tweaked".
 
 import { describe, expect, it } from 'vitest';
-import { tasks } from './registry';
+import { type TaskDef, tasks } from './registry';
 
 describe('AttributionTask.systemPrompt', () => {
   it('emits Lane B field name analysis_md (not legacy ai_analysis_md)', () => {
@@ -104,5 +104,20 @@ describe('UnitDimensionFallback registry entry', () => {
     expect(tasks.UnitDimensionFallback.isMultimodal).toBe(false);
     expect(tasks.UnitDimensionFallback.allowedTools).toEqual([]);
     expect(tasks.UnitDimensionFallback.systemPrompt).toContain('量纲');
+  });
+});
+
+describe('SolutionGenerateTask registry entry', () => {
+  it('is registered as a single-shot text task usable by runTask', () => {
+    expect(tasks.SolutionGenerateTask.kind).toBe('SolutionGenerateTask');
+    expect(tasks.SolutionGenerateTask.needsToolCall).toBe(false);
+    expect(tasks.SolutionGenerateTask.isMultimodal).toBe(false);
+    expect(tasks.SolutionGenerateTask.allowedTools).toEqual([]);
+    expect(tasks.SolutionGenerateTask.budget.maxIterations).toBe(1);
+    // invocation defaults to 'auto' (called from the solve orchestrator, not a
+    // manual rescue). The entry omits the optional `invocation` field, so the
+    // satisfies-inferred literal type for this key drops the property; read it
+    // through the TaskDef view to assert the runtime value is undefined.
+    expect((tasks.SolutionGenerateTask as TaskDef).invocation).toBeUndefined();
   });
 });
