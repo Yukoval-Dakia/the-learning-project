@@ -84,6 +84,10 @@ export const BUDGETS_BY_SURFACE: Record<DomainToolSurface, ContextBudget> = {
   coach: COACH_CONTEXT_BUDGET,
   knowledge_review: GENERIC_CONTEXT_BUDGET,
   maintenance: GENERIC_CONTEXT_BUDGET,
+  // YUK-195 — question structure-correction surface falls back to the generic
+  // budget until it needs an explicit one (no read-heavy fan-out; the 6 write
+  // tools are local DB mutations).
+  ingestion_block_edit: GENERIC_CONTEXT_BUDGET,
 };
 
 export function resolveContextBudget(surface: DomainToolSurface): ContextBudget {
