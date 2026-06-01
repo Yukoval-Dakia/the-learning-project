@@ -11,6 +11,7 @@
 // tests/integration/session-single-owner.test.ts assert this structurally.
 
 export * as Conversation from './conversation';
+export * as Tutor from './tutor';
 export * as Ingestion from './ingestion';
 export * as Review from './review';
 export type { LearningSessionTypeT } from '@/core/schema/learning_session';
