@@ -73,6 +73,10 @@ type QualifyingEventRow = {
   action: string;
   subject_kind: string;
   subject_id: string;
+  // P5.4-L2 (PR #232 review) — `outcome` is a top-level event column threaded
+  // into BriefEvent so the brief writer sees success/failure/partial (mirrors
+  // brief.ts loadEventsFromDb). null when the action carries no outcome.
+  outcome: string | null;
   payload: unknown;
   created_at: Date;
 };
@@ -235,6 +239,7 @@ export async function listActiveSubjectsSinceRefresh(
       action: event.action,
       subject_kind: event.subject_kind,
       subject_id: event.subject_id,
+      outcome: event.outcome,
       payload: event.payload,
       created_at: event.created_at,
     })
@@ -268,6 +273,7 @@ export async function listActiveSubjectsSinceRefresh(
         action: row.action,
         subject_kind: row.subject_kind,
         subject_id: row.subject_id,
+        outcome: row.outcome,
         payload: row.payload,
         created_at: row.created_at,
       });
@@ -360,6 +366,7 @@ export async function loadSubjectBriefEvents(
       action: event.action,
       subject_kind: event.subject_kind,
       subject_id: event.subject_id,
+      outcome: event.outcome,
       payload: event.payload,
       created_at: event.created_at,
     })
@@ -379,6 +386,7 @@ export async function loadSubjectBriefEvents(
       action: row.action,
       subject_kind: row.subject_kind,
       subject_id: row.subject_id,
+      outcome: row.outcome,
       payload: row.payload,
       created_at: row.created_at,
     });

@@ -25,19 +25,27 @@ import type { BriefDraft, BriefEvent, BriefFact, GenerateBrief } from './brief';
 // 1B/I-4: named `BriefDraftOutputSchema` (NOT `MemoryBriefOutputSchema`) — the
 // latter is ALREADY taken by the read-side {note, evidence} schema in
 // context-readers.ts:1051. Two same-named, structurally-different symbols would
-// be a footgun; this writer-side shape is the 6-field BriefDraft. All fields are
-// defaulted so a partial model response parses rather than throws (the host
-// tolerates empty windows).
+// be a footgun; this writer-side shape is the 6-field BriefDraft.
+//
+// PR #232 review (FIX #3) — all 6 keys are REQUIRED (no `.default(...)`). A
+// transient structured-output degradation that DROPS a section must FAIL parse
+// (throw in parseBriefDraftOutput → propagate → caught by the F-1 per-scope
+// try/catch in triggers.ts → prior brief left intact) rather than silently parse
+// into an all-empty draft and let regenerateMemoryBrief upsert ''/[] over a good
+// prior brief. The 3 md fields stay `z.string()` so an EMPTY-STRING VALUE is
+// still allowed (a present-but-empty window is legitimate); only a MISSING KEY
+// throws. The cold-scope early-return builds its empty draft directly and never
+// goes through this parser, so it is unaffected.
 export const BriefDraftOutputSchema = z.object({
-  recent_week_md: z.string().default(''),
-  recent_months_md: z.string().default(''),
-  long_term_md: z.string().default(''),
+  recent_week_md: z.string(),
+  recent_months_md: z.string(),
+  long_term_md: z.string(),
   // 1A/2A: `.min(1)` on each id element is intentional tightening — it rejects
   // empty-string ids at parse time. The D3 subset filter would drop them anyway
   // (an empty id is never in the input-id Set), so this is belt-and-suspenders.
-  recent_week_evidence_ids: z.array(z.string().min(1)).default([]),
-  recent_months_evidence_ids: z.array(z.string().min(1)).default([]),
-  long_term_evidence_ids: z.array(z.string().min(1)).default([]),
+  recent_week_evidence_ids: z.array(z.string().min(1)),
+  recent_months_evidence_ids: z.array(z.string().min(1)),
+  long_term_evidence_ids: z.array(z.string().min(1)),
 });
 export type BriefDraftOutput = z.infer<typeof BriefDraftOutputSchema>;
 
@@ -60,14 +68,21 @@ export function parseBriefDraftOutput(text: string): BriefDraftOutput {
   return BriefDraftOutputSchema.parse(json);
 }
 
-const EMPTY_DRAFT: BriefDraft = {
-  recent_week_md: '',
-  recent_months_md: '',
-  long_term_md: '',
-  recent_week_evidence_ids: [],
-  recent_months_evidence_ids: [],
-  long_term_evidence_ids: [],
-};
+// PR #232 review (FIX #5) — a FRESH empty draft per call. A shared module-level
+// singleton would hand every cold-scope caller the SAME `[]` array instances;
+// any downstream in-place mutation of an evidence array would then pollute every
+// other brief. This factory guarantees each cold-scope return owns its own
+// arrays. (Cheap — cold scopes do not pay an LLM round-trip anyway.)
+function makeEmptyDraft(): BriefDraft {
+  return {
+    recent_week_md: '',
+    recent_months_md: '',
+    long_term_md: '',
+    recent_week_evidence_ids: [],
+    recent_months_evidence_ids: [],
+    long_term_evidence_ids: [],
+  };
+}
 
 // I-3: project each event's unbounded jsonb `payload` down to the handful of
 // fields a glanceable brief needs, truncating any free text to the existing
@@ -75,16 +90,27 @@ const EMPTY_DRAFT: BriefDraft = {
 // (full prompt/answer/judge-reasoning blobs) would blow the input token count +
 // the 60s timeout for zero brief benefit. Keep ONLY outcome + one short text
 // excerpt; never serialize the raw blob.
-function projectEventPayload(payload: unknown): { outcome?: string; excerpt?: string } {
+function projectEventPayload(payload: unknown): { excerpt?: string } {
   if (typeof payload !== 'object' || payload === null) return {};
   const p = payload as Record<string, unknown>;
-  const out: { outcome?: string; excerpt?: string } = {};
-  if (typeof p.outcome === 'string') out.outcome = p.outcome;
-  // Pick the most brief-useful text field present, truncate hard.
+  const out: { excerpt?: string } = {};
+  // PR #232 review (FIX #1) — `outcome` is NO LONGER read from the payload: it is
+  // a top-level event column threaded through BriefEvent and projected directly
+  // by runBriefWriter. This projector only extracts the one short text excerpt.
+  //
+  // PR #232 review (FIX #2) — `review` events hold their text in
+  // `payload.user_response_md` and `experimental:record_capture` in
+  // `payload.summary_md` (notes use `content_md`). Without these in the
+  // priority list, review replies + record captures were projected as EMPTY
+  // payloads and the writer never saw their content. Pick the most brief-useful
+  // text field present, truncate hard.
   const text =
     (typeof p.summary === 'string' && p.summary) ||
+    (typeof p.summary_md === 'string' && p.summary_md) ||
     (typeof p.text_md === 'string' && p.text_md) ||
     (typeof p.answer_md === 'string' && p.answer_md) ||
+    (typeof p.user_response_md === 'string' && p.user_response_md) ||
+    (typeof p.content_md === 'string' && p.content_md) ||
     (typeof p.prompt_md === 'string' && p.prompt_md) ||
     '';
   if (text) out.excerpt = text.slice(0, KNOWLEDGE_EXCERPT_MAX);
@@ -111,7 +137,7 @@ export async function runBriefWriter(params: {
   // WITHOUT paying for an LLM round-trip. regenerateMemoryBrief still writes the
   // row deterministically (empty windows, null freshness score). Saves the
   // wasted paid call on every cold scope.
-  if (events.length === 0) return { ...EMPTY_DRAFT };
+  if (events.length === 0) return makeEmptyDraft();
 
   // Project the input down to what the writer needs:
   //  - 3A: `now` (real-clock ISO) so the model anchors the age windows on the
@@ -131,7 +157,11 @@ export async function runBriefWriter(params: {
       subject_kind: e.subject_kind,
       subject_id: e.subject_id,
       created_at: e.created_at.toISOString(),
-      payload: projectEventPayload(e.payload), // I-3 — capped projection, not raw blob
+      // PR #232 review (FIX #1) — `outcome` comes from the event COLUMN (threaded
+      // through BriefEvent), NOT the payload. This is what gives the writer the
+      // success/failure/partial signal for weakness/progress summaries.
+      outcome: e.outcome ?? undefined,
+      payload: projectEventPayload(e.payload), // I-3 — capped excerpt projection, not raw blob
     })),
     facts: facts.map((f) => ({ id: f.id, memory: f.memory })),
   };

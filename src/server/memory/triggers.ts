@@ -150,10 +150,16 @@ export function buildMemoryBriefRegenHandler(
     generateBrief: GenerateBrief;
   },
 ): (jobs: Job<{ scope_key: string; now?: string }>[]) => Promise<void> {
+  // F-4 (PR #232 review) — keep the injected test client here, but DO NOT init
+  // the real Mem0 client at the top of the batch. `createMemoryClient()` throws
+  // when its env (OPENAI_API_KEY / XIAOMI_API_KEY / DATABASE_URL for Mem0) is
+  // missing; doing it before the per-scope try would reject the WHOLE pg-boss
+  // job → nightly retry storm → the F-1 per-scope catch is defeated. Mem0
+  // fact-search is SUPPLEMENTARY — brief regen must still run from events when
+  // Mem0 is unavailable. The lazy `??= createMemoryClient()` now lives inside
+  // searchFacts' own try (below) so a missing-Mem0-key degrades to facts=[].
   let memoryClient = deps.memoryClient;
   return async (jobs) => {
-    memoryClient ??= createMemoryClient();
-    const client = memoryClient;
     for (const job of jobs) {
       const scopeKey = job.data.scope_key;
       // F-1 (YUK-185, D8): one scope's LLM/provider throw (e.g. resolveTaskProvider
@@ -166,11 +172,25 @@ export function buildMemoryBriefRegenHandler(
       // success. Mirrors knowledge_propose_nightly.ts:96-99 (per-job try/catch).
       try {
         const searchFacts = async () => {
-          const result = await client.search(`memory brief ${scopeKey}`, {
-            topK: 10,
-            filters: { scope_key: scopeKey },
-          });
-          return (result?.results ?? []).map((item) => ({ id: item.id, memory: item.memory }));
+          // F-4 (PR #232 review) — self-degrading. Lazily init the Mem0 client
+          // HERE so a missing-key throw stays contained: missing Mem0 env →
+          // facts=[] (brief still generates from events). A missing LLM key
+          // instead throws later inside generateBrief, caught by the F-1
+          // per-scope catch → logged skip. Neither path storms the job.
+          try {
+            memoryClient ??= createMemoryClient();
+            const result = await memoryClient.search(`memory brief ${scopeKey}`, {
+              topK: 10,
+              filters: { scope_key: scopeKey },
+            });
+            return (result?.results ?? []).map((item) => ({ id: item.id, memory: item.memory }));
+          } catch (err) {
+            console.warn(
+              `[memory_brief_regen] Mem0 fact search unavailable for ${scopeKey}; proceeding without facts`,
+              err,
+            );
+            return [];
+          }
         };
 
         // BR-10 (load-bearing) — branch by scope prefix. attempt/review events
@@ -354,18 +374,12 @@ export async function registerMemoryHandlers(
 ): Promise<void> {
   const generateBrief = deps.generateBrief ?? defaultGenerateBrief;
 
-  // F-2 (YUK-185): the brief regen handler calls the LLM via runTask, which needs
-  // XIAOMI_API_KEY (resolveTaskProvider throws otherwise, providers.ts:88). Surface
-  // a missing key at BOOT, not per-scope at 3 AM. One-shot WARN; not fatal (other
-  // memory handlers — ingest/outbox — still run; the brief regen degrades to a
-  // logged-skip per scope, F-1/D8). Placed here rather than scripts/worker.ts so the
-  // warn travels with the handler that needs the key and stays out of the Next app
-  // boot path (this register runs only in the pg-boss worker, scripts/worker.ts:21).
-  if (!process.env.XIAOMI_API_KEY) {
-    console.warn(
-      '[memory] XIAOMI_API_KEY unset — memory brief regen will fail (logged-skip per scope, F-1/D8)',
-    );
-  }
+  // F-2 (YUK-185) — the XIAOMI_API_KEY boot WARN used to live HERE, but tests
+  // also call registerMemoryHandlers (with a stubbed generateBrief), so it
+  // emitted a false "brief regen will fail" line in every such test. PR #232
+  // review (FIX #6) moved the one-time WARN to the prod entry point
+  // (scripts/worker.ts) — the only boot path that actually runs the cron — so
+  // the operator still gets the signal and tests stay quiet.
 
   await boss.createQueue?.(MEMORY_EVENT_INGEST_QUEUE);
   await boss.work(
