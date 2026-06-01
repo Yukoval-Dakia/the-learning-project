@@ -207,41 +207,40 @@ export async function runAutoEnrollForSession(
       threshold,
     });
 
+    // A1/A2 (YUK-145/164): for an ANSWERED block routed 'auto', draft the mistake
+    // metadata (outcome / cause) the human fills by hand. Computed ONCE here and
+    // shared: observe attaches it to the audit event (A1); enroll enrolls the real
+    // outcome from it (A2). Best-effort — a MistakeEnrollTaskError leaves it
+    // undefined (observe writes a draft-less event; enroll falls back to
+    // 'unanswered'); a non-MistakeEnrollTaskError re-raises (infra fault → retry).
+    let mistakeDraft: MistakeEnrollOutputT | undefined;
+    const studentAnswer = block.wrong_answer_md?.trim() ?? '';
+    if (verdict.route === 'auto' && studentAnswer.length > 0) {
+      const profile = await resolveSubjectProfileForKnowledgeIds(
+        params.db,
+        verdict.prefilled.knowledge_ids,
+      );
+      try {
+        mistakeDraft = await runMistakeEnrollFn({
+          questionMd,
+          referenceMd: block.reference_md ?? null,
+          studentAnswerMd: block.wrong_answer_md ?? null,
+          knowledgeIds: verdict.prefilled.knowledge_ids,
+          profile,
+          ctx: { db: params.db, subjectProfile: profile },
+        });
+      } catch (err) {
+        if (!(err instanceof MistakeEnrollTaskError)) throw err;
+        console.error(`[auto_enroll] mistake_enroll draft failed for block ${block.id}`, err);
+      }
+    }
+
     // ---- Phase B — OBSERVE (flag OFF, observe ON): write a standalone audit ----
     // event per block (BOTH 'auto' and 'review' routes — we want the full quality
     // distribution) and continue. Zero domain rows, no block UPDATE, no
     // enrollCapturedBlock, no commitImport. Best-effort: a single failed audit
     // write logs + continues so one bad write never aborts the batch (§5.4).
     if (mode === 'observe') {
-      // A1 (YUK-145): for an ANSWERED block routed 'auto', draft the mistake
-      // metadata (outcome / kind / difficulty / cause) the human fills by hand
-      // and attach it to the audit event. Observe-only — no domain row, no enroll.
-      // Best-effort: a MistakeEnrollTaskError leaves the event draft-less; a
-      // non-MistakeEnrollTaskError re-raises (infra fault → handler retries).
-      let mistakeDraft: MistakeEnrollOutputT | undefined;
-      const studentAnswer = block.wrong_answer_md?.trim() ?? '';
-      if (verdict.route === 'auto' && studentAnswer.length > 0) {
-        const profile = await resolveSubjectProfileForKnowledgeIds(
-          params.db,
-          verdict.prefilled.knowledge_ids,
-        );
-        try {
-          mistakeDraft = await runMistakeEnrollFn({
-            questionMd,
-            referenceMd: block.reference_md ?? null,
-            studentAnswerMd: block.wrong_answer_md ?? null,
-            knowledgeIds: verdict.prefilled.knowledge_ids,
-            profile,
-            ctx: { db: params.db, subjectProfile: profile },
-          });
-        } catch (err) {
-          if (!(err instanceof MistakeEnrollTaskError)) throw err;
-          console.error(
-            `[auto_enroll:observe] mistake_enroll draft failed for block ${block.id}`,
-            err,
-          );
-        }
-      }
       try {
         await writeEventFn(params.db, {
           id: observeEventId(params.sessionId, block.id),
@@ -289,6 +288,11 @@ export async function runAutoEnrollForSession(
     }
 
     // ---- Auto-enroll this block (one tx, mirrors the human import route). ----
+    // A2 (YUK-164): an ANSWERED block enrolls its REAL outcome from the draft
+    // (failure/partial/success); an unanswered block (or a draft outage) stays
+    // 'unanswered' (item-bank, no attempt) — the safest fallback (slice-3 behavior).
+    const outcome = mistakeDraft?.wrong_answer ?? 'unanswered';
+    const answerMd = outcome === 'unanswered' ? '' : (block.wrong_answer_md ?? '');
     const result = await params.db.transaction(async (tx) => {
       const questionId = createId();
       await tx.insert(question).values({
@@ -322,11 +326,12 @@ export async function runAutoEnrollForSession(
         version: 0,
       });
 
-      // SAME enrollment owner as the human path — only generatedBy differs.
+      // SAME enrollment owner as the human path — only generatedBy + the (drafted)
+      // outcome/answer differ. enrollCapturedBlock routes all 4 outcomes.
       const enroll = await enrollCapturedBlock(tx, {
         questionId,
-        outcome: verdict.prefilled.outcome,
-        answerMd: '',
+        outcome,
+        answerMd,
         answerImageRefs: [],
         knowledgeIds: verdict.prefilled.knowledge_ids,
         imageRefs: block.image_refs,
@@ -336,12 +341,44 @@ export async function runAutoEnrollForSession(
         generatedBy: 'workflow_judge',
       });
 
+      // A2: write the drafted cause directly as a chained judge event (mirrors
+      // attribute.ts) — only for a failure that produced both an attempt event and
+      // a cause. The draft already paid the LLM cost (no AttributionTask re-run);
+      // writeEvent stays the single owner (ADR-0005). OC-5 lets the user correct it.
+      if (outcome === 'failure' && enroll.attemptEventId && mistakeDraft?.cause) {
+        await writeEvent(tx, {
+          id: createId(),
+          session_id: null,
+          actor_kind: 'agent',
+          actor_ref: 'workflow_judge',
+          action: 'judge',
+          subject_kind: 'event',
+          subject_id: enroll.attemptEventId,
+          outcome: 'success',
+          payload: {
+            cause: {
+              primary_category: mistakeDraft.cause.primary_category,
+              secondary_categories: mistakeDraft.cause.secondary_categories,
+              analysis_md: mistakeDraft.cause.analysis_md,
+              confidence: mistakeDraft.cause.confidence,
+            },
+            referenced_knowledge_ids: verdict.prefilled.knowledge_ids,
+            generated_by: 'workflow_judge',
+          },
+          caused_by_event_id: enroll.attemptEventId,
+          task_run_id: null,
+          cost_micro_usd: null,
+          created_at: now,
+        });
+      }
+
       await tx
         .update(question_block)
         .set({
           imported_question_id: questionId,
           imported_attempt_event_id: enroll.attemptEventId,
-          status: 'imported',
+          // A2 (D1=C): a distinct terminal-but-revertible state, NOT human 'imported'.
+          status: 'auto_enrolled',
           updated_at: now,
           version: sql`${question_block.version} + 1`,
         })
