@@ -217,9 +217,7 @@ export async function assertAgentReadable(
     const unresolved = resolved.filter((r) => r.unresolved);
     expect(
       unresolved.length,
-      `[${tool.name}] id-ref path "${ref.path}" did not resolve to an array ` +
-        `(${unresolved.map((u) => u.path).join(', ')}) — a renamed/removed/non-array ` +
-        'id path must FAIL, not silently pass as empty',
+      `[${tool.name}] id-ref path "${ref.path}" did not resolve to an array (${unresolved.map((u) => u.path).join(', ')}) — a renamed/removed/non-array id path must FAIL, not silently pass as empty`,
     ).toBe(0);
 
     // F2 — when the path resolves to elements, every present element MUST be a
@@ -230,9 +228,7 @@ export async function assertAgentReadable(
     for (const r of resolved) {
       expect(
         typeof r.value === 'string' && (r.value as string).length > 0,
-        `[${tool.name}] id-ref element "${r.path}" (path "${ref.path}") is not a ` +
-          `non-empty string id (got ${JSON.stringify(r.value)}) — a cited id the ` +
-          'agent would follow must be a real id',
+        `[${tool.name}] id-ref element "${r.path}" (path "${ref.path}") is not a non-empty string id (got ${JSON.stringify(r.value)}) — a cited id the agent would follow must be a real id`,
       ).toBe(true);
     }
 

@@ -46,3 +46,8 @@ docs/preflight/*-vision-rejudge.json
 
 # pnpm package store cache (machine-local, ~866 MB; never commit)
 .pnpm-store/
+
+# Local agent/tool state dirs (opencode, omo, ocx) — machine-local, never commit
+.ocx/
+.omo/
+.opencode/
