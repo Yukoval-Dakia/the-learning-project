@@ -1,5 +1,5 @@
 import { createId } from '@paralleldrive/cuid2';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
 import { learning_session } from '@/db/schema';
@@ -76,6 +76,39 @@ export async function startTutorSession(
   });
 }
 
+// Core transition body — runs inside a caller-supplied tx so the status change
+// can be made atomic with sibling writes (e.g. the attempt event + mistake in
+// submitSolveAttempt). FOR UPDATE serialises concurrent transitions. This keeps
+// the single-owner invariant: only this module mutates learning_session(tutor).
+async function applyTransition(
+  tx: Tx,
+  sessionId: string,
+  from: readonly string[],
+  to: 'submitted' | 'judged' | 'ended' | 'abandoned',
+  eventType: string,
+  setEndedAt: boolean,
+): Promise<void> {
+  const current = await loadTutorSessionForUpdate(tx, sessionId);
+  if (!current) throw notFound(sessionId);
+  assertFromState(current.status, from, sessionId, `Tutor.${to}`);
+  const now = new Date();
+  await tx
+    .update(learning_session)
+    .set({
+      status: to,
+      ...(setEndedAt ? { ended_at: now } : {}),
+      updated_at: now,
+      version: sql`${learning_session.version} + 1`,
+    })
+    .where(eq(learning_session.id, sessionId));
+  await writeJobEvent(tx, {
+    business_table: SESSION_TABLE,
+    business_id: sessionId,
+    event_type: eventType,
+    payload: { from_status: current.status },
+  });
+}
+
 async function transition(
   db: Db,
   sessionId: string,
@@ -85,25 +118,7 @@ async function transition(
   setEndedAt: boolean,
 ): Promise<void> {
   await db.transaction(async (tx) => {
-    const current = await loadTutorSessionForUpdate(tx, sessionId);
-    if (!current) throw notFound(sessionId);
-    assertFromState(current.status, from, sessionId, `Tutor.${to}`);
-    const now = new Date();
-    await tx
-      .update(learning_session)
-      .set({
-        status: to,
-        ...(setEndedAt ? { ended_at: now } : {}),
-        updated_at: now,
-        version: sql`${learning_session.version} + 1`,
-      })
-      .where(eq(learning_session.id, sessionId));
-    await writeJobEvent(tx, {
-      business_table: SESSION_TABLE,
-      business_id: sessionId,
-      event_type: eventType,
-      payload: { from_status: current.status },
-    });
+    await applyTransition(tx, sessionId, from, to, eventType, setEndedAt);
   });
 }
 
@@ -113,6 +128,16 @@ export async function markSubmitted(db: Db, sessionId: string): Promise<void> {
 
 export async function markJudged(db: Db, sessionId: string): Promise<void> {
   await transition(db, sessionId, ['submitted'] as const, 'judged', 'tutor.judged', false);
+}
+
+/** active → submitted inside a caller's tx (atomic with the attempt write). */
+export async function markSubmittedTx(tx: Tx, sessionId: string): Promise<void> {
+  await applyTransition(tx, sessionId, ['active'] as const, 'submitted', 'tutor.submitted', false);
+}
+
+/** submitted → judged inside a caller's tx (atomic with the attempt write). */
+export async function markJudgedTx(tx: Tx, sessionId: string): Promise<void> {
+  await applyTransition(tx, sessionId, ['submitted'] as const, 'judged', 'tutor.judged', false);
 }
 
 export async function endTutor(db: Db, sessionId: string): Promise<void> {
@@ -138,7 +163,7 @@ export async function getTutorQuestionId(
   const rows = await db
     .select({ status: learning_session.status, goal_id: learning_session.goal_id })
     .from(learning_session)
-    .where(eq(learning_session.id, sessionId))
+    .where(and(eq(learning_session.id, sessionId), eq(learning_session.type, 'tutor')))
     .limit(1);
   const row = rows[0];
   if (!row) throw notFound(sessionId);

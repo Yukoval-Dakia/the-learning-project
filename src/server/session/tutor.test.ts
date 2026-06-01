@@ -61,4 +61,25 @@ describe('Tutor session module', () => {
   it('throws 404 for an unknown session id', async () => {
     await expect(Tutor.markSubmitted(db, 'nope')).rejects.toThrow();
   });
+
+  it('getTutorQuestionId ignores non-tutor sessions (type filter)', async () => {
+    const now = new Date();
+    await db.insert(learning_session).values({
+      id: 'not_a_tutor',
+      type: 'explore',
+      status: 'placeholder',
+      source_document_id: null,
+      source_asset_ids: [],
+      entrypoint: null,
+      warnings: [],
+      error_message: null,
+      summary_md: null,
+      goal_id: 'q9',
+      started_at: now,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    await expect(Tutor.getTutorQuestionId(db, 'not_a_tutor')).rejects.toThrow();
+  });
 });
