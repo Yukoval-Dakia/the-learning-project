@@ -23,7 +23,7 @@ export async function POST(
   ctx: { params: Promise<{ id: string }> },
 ): Promise<Response> {
   try {
-    await ctx.params; // session id in the path; the revert target is block_id.
+    const { id: sessionId } = await ctx.params;
     const raw = await req.json().catch(() => null);
     const parsed = Body.safeParse(raw);
     if (!parsed.success) {
@@ -35,6 +35,7 @@ export async function POST(
     }
     const result = await revertAutoEnrolledBlock(db, {
       blockId: parsed.data.block_id,
+      sessionId,
       reasonMd: parsed.data.reason_md,
     });
     return Response.json(result);

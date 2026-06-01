@@ -38,6 +38,7 @@ describe('POST /api/ingestion/[id]/revert', () => {
     expect(await res.json()).toMatchObject({ questionId: 'q1', retractEventId: 'e_retract' });
     expect(revertAutoEnrolledBlock).toHaveBeenCalledWith(expect.anything(), {
       blockId: 'b1',
+      sessionId: 'sess_1',
       reasonMd: 'wrong tag',
     });
   });
