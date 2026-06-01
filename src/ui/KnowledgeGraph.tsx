@@ -194,6 +194,12 @@ export interface NodeDueSummary {
   due_soon: number;
 }
 
+// Stable empty due-summary map used to gate the dueOnly filter dependency (see
+// visibleNodes): when dueOnly is off, `due` does not affect which nodes are
+// visible, so feeding this constant keeps visibleNodes referentially stable
+// across background due refetches and avoids a needless cytoscape rebuild.
+const EMPTY_DUE_MAP: Map<string, NodeDueSummary> = new Map();
+
 /**
  * A pending AI edge proposal, normalized for the graph (Slice 3 — "AI 画布").
  * page.tsx loads these from GET /api/events?action=propose&subject_kind=
@@ -649,6 +655,15 @@ export function KnowledgeGraph({
   // (proposals endpoint unavailable / no pending), keep a steady [] reference so
   // the build effect's deps don't churn.
   const allProposals = useMemo(() => proposals ?? ([] as KnowledgeEdgeProposal[]), [proposals]);
+  // Latest overlay maps (mistake-driven node size + due halo) kept in refs so
+  // they are NOT build-effect triggers: the topology build effect reads these
+  // for the initial element data, while the restyle effect below applies later
+  // changes in place via cy.batch (no rebuild, no relayout — preserves pan/zoom
+  // + manual drags). See applyOverlay.
+  const mistakeCountsRef = useRef(mistakeCounts);
+  mistakeCountsRef.current = mistakeCounts;
+  const dueRef = useRef(due);
+  dueRef.current = due;
   const totalOverdueNodes = useMemo(() => {
     let n = 0;
     for (const v of due.values()) if (v.overdue > 0) n += 1;
@@ -699,9 +714,15 @@ export function KnowledgeGraph({
   const focusIdRef = useRef(focusId);
   focusIdRef.current = focusId;
 
+  // `due` only changes which nodes are *visible* when the dueOnly filter is on;
+  // otherwise feed a stable empty map so a background due refetch (identical
+  // topology) doesn't churn visibleNodes and trigger a needless cytoscape
+  // rebuild + fcose relayout. The due *visual* overlay (coral halo) is applied
+  // separately via cy.batch in the restyle effect.
+  const dueForFilter = filter.dueOnly ? due : EMPTY_DUE_MAP;
   const visibleNodes = useMemo(
-    () => nodes.filter((n) => passesFilter(n, filter, due)),
-    [nodes, filter, due],
+    () => nodes.filter((n) => passesFilter(n, filter, dueForFilter)),
+    [nodes, filter, dueForFilter],
   );
   const visibleNodeIds = useMemo(() => new Set(visibleNodes.map((n) => n.id)), [visibleNodes]);
   const visibleEdges = useMemo(
@@ -803,8 +824,39 @@ export function KnowledgeGraph({
     [bandInputById],
   );
 
-  // Init / rebuild cytoscape when the *visible* graph data changes. Tokens are
-  // read here (client-only) and fed as concrete colors.
+  // Apply the data-overlay — mistake-driven node size (`diameter`/`mistakes`)
+  // and the overdue coral halo (`overdue`/`due_soon` + `.kg-due`) — onto the
+  // live graph WITHOUT a rebuild. Mirrors the node `data` block in
+  // buildElements; keep the two in sync. Runs inside cy.batch so a background
+  // refetch of mistakeCounts/dueCounts restyles in place instead of destroying
+  // the cy instance (which would re-run the randomized fcose layout and discard
+  // pan/zoom + manual node drags).
+  const applyOverlay = useCallback(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    cy.batch(() => {
+      for (const node of cy.nodes().toArray()) {
+        const id = node.id();
+        const mistakes = mistakeCounts.get(id) ?? 0;
+        node.data('diameter', nodeRadius(mistakes) * 2);
+        node.data('mistakes', mistakes);
+        const summary = due.get(id);
+        const overdue = summary?.overdue ?? 0;
+        node.data('overdue', overdue);
+        node.data('due_soon', summary?.due_soon ?? 0);
+        if (overdue > 0) node.addClass('kg-due');
+        else node.removeClass('kg-due');
+      }
+    });
+  }, [mistakeCounts, due]);
+
+  // Init / rebuild cytoscape when the *topology* of the visible graph changes
+  // (nodes / edges / proposals / filter). Overlay data (mistake size, due halo)
+  // is deliberately NOT a dep here — it's applied in place by the restyle effect
+  // below — so a background refetch doesn't re-run the randomized fcose layout
+  // and lose pan/zoom + manual drags. Tokens are read here (client-only) and fed
+  // as concrete colors; the initial overlay is seeded from the latest-ref maps
+  // so the first paint already has correct node sizes + halos.
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -814,7 +866,7 @@ export function KnowledgeGraph({
     const cy = cytoscape({
       container,
       elements: [
-        ...buildElements(visibleNodes, visibleEdges, mistakeCounts, due),
+        ...buildElements(visibleNodes, visibleEdges, mistakeCountsRef.current, dueRef.current),
         // Slice 3: proposed edges layered onto the same scene. They reference the
         // node ids built above; buildProposedEdgeElements already guards on the
         // visible set so every endpoint exists as a node element.
@@ -903,12 +955,18 @@ export function KnowledgeGraph({
     visibleEdges,
     visibleProposals,
     visibleNodeIds,
-    mistakeCounts,
-    due,
     applyFocus,
     proposalMetaById,
     nameById,
   ]);
+
+  // Restyle-only pass: when the mistake/due overlay data changes but the
+  // topology does not, update node size + due halo in place (see applyOverlay)
+  // instead of rebuilding. Companion to the topology build effect above, which
+  // no longer lists mistakeCounts/due as deps.
+  useEffect(() => {
+    applyOverlay();
+  }, [applyOverlay]);
 
   // Reflect selection without rebuilding the graph.
   useEffect(() => {
