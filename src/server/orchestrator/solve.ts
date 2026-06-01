@@ -4,17 +4,22 @@
 // (TeachingTurn-seeded escalating hint), submitSolveAttempt (judge → attempt
 // event → reveal → mistake-on-low-score). All AI calls go through injectable
 // fns so tests stub the LLM/judge seam (no live calls).
+import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
+import type { JudgeAnswerParams } from '@/server/ai/judges/question-contract';
 import {
   type GenerateReferenceSolutionResult,
   type SolutionGenerateRunTaskFn,
   generateReferenceSolution,
 } from '@/server/ai/solution-generate';
+import { writeEvent } from '@/server/events/queries';
+import { type JudgeInvokerOutput, createDefaultJudgeInvoker } from '@/server/judge/invoker';
 import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject-profile';
+import { createLearningRecord } from '@/server/records/queries';
 import { Tutor } from '@/server/session';
 
 export type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
@@ -182,4 +187,175 @@ export async function planSolveHint(params: PlanSolveHintParams): Promise<PlanSo
 
   const { text } = await runTaskFn('TeachingTurnTask', input, { db, subjectProfile });
   return parseHintTurn(text);
+}
+
+export interface SolveSubmission {
+  student_text_steps?: string[];
+  student_final_answer_text?: string;
+  student_image_refs?: string[];
+}
+
+export type JudgeFn = (input: JudgeAnswerParams) => Promise<JudgeInvokerOutput>;
+
+export interface SubmitSolveAttemptParams {
+  db: Db;
+  sessionId: string;
+  submission: SolveSubmission;
+  /** Injected in tests; defaults to the production JudgeInvoker. */
+  judgeFn?: JudgeFn;
+  runTaskFn?: RunTaskFn;
+}
+
+export interface SubmitSolveAttemptResult {
+  attempt_event_id: string;
+  judge: {
+    route: string;
+    score: number | null;
+    coarse_outcome: string;
+    confidence: number;
+    reason_md: string;
+    evidence_json: unknown;
+  };
+  /** The worked solution revealed after judging (null if generation failed). */
+  revealed_solution_md: string | null;
+  /** Set when a mistake was enrolled (low score). */
+  mistake_id?: string;
+}
+
+function hasNonEmptyCarrier(s: SolveSubmission): boolean {
+  const steps = (s.student_text_steps ?? []).filter((x) => x.trim().length > 0);
+  const finalText = (s.student_final_answer_text ?? '').trim();
+  const images = (s.student_image_refs ?? []).filter((x) => x.trim().length > 0);
+  return steps.length > 0 || finalText.length > 0 || images.length > 0;
+}
+
+function eventOutcomeForJudge(
+  coarseOutcome: 'correct' | 'partial' | 'incorrect' | 'unsupported',
+): 'success' | 'partial' | 'failure' {
+  if (coarseOutcome === 'correct') return 'success';
+  if (coarseOutcome === 'incorrect') return 'failure';
+  return 'partial';
+}
+
+export async function submitSolveAttempt(
+  params: SubmitSolveAttemptParams,
+): Promise<SubmitSolveAttemptResult> {
+  const { db, sessionId, submission } = params;
+
+  if (!hasNonEmptyCarrier(submission)) {
+    throw new SolveError(
+      'empty_submission',
+      'at least one of student_text_steps / student_final_answer_text / student_image_refs must be non-empty',
+    );
+  }
+
+  const { questionId, status } = await Tutor.getTutorQuestionId(db, sessionId);
+  if (!questionId) {
+    throw new SolveError('session_not_found', `tutor session ${sessionId} missing question link`);
+  }
+  if (status !== 'active') {
+    throw new SolveError('session_not_active', `tutor session ${sessionId} status=${status}`);
+  }
+
+  const [q] = await db.select().from(question).where(eq(question.id, questionId)).limit(1);
+  if (!q) throw new SolveError('question_not_found', `question ${questionId} not found`);
+
+  const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids);
+
+  const answerParts = [
+    ...(submission.student_text_steps ?? []),
+    submission.student_final_answer_text,
+  ].filter((x): x is string => typeof x === 'string' && x.trim().length > 0);
+  const answerMd = answerParts.join('\n');
+
+  const judgeFn = params.judgeFn ?? ((input) => createDefaultJudgeInvoker().invoke(input));
+  const judged = await judgeFn({
+    db,
+    question: q,
+    answer_md: answerMd,
+    student_image_refs: submission.student_image_refs ?? [],
+    subjectProfile,
+    runTaskFn: params.runTaskFn,
+  });
+
+  const judgeResult = judged.result;
+  const outcome = eventOutcomeForJudge(judgeResult.coarse_outcome);
+  const responseJudge = {
+    route: judged.route,
+    score: judgeResult.score,
+    coarse_outcome: judgeResult.coarse_outcome,
+    confidence: judgeResult.confidence,
+    reason_md: judgeResult.feedback_md,
+    evidence_json: judgeResult.evidence_json,
+  };
+
+  // session: active → submitted (then → judged after the write commits)
+  await Tutor.markSubmitted(db, sessionId);
+
+  const now = new Date();
+  const attemptEventId = createId();
+  let mistakeId: string | undefined;
+
+  await db.transaction(async (tx) => {
+    await writeEvent(tx, {
+      id: attemptEventId,
+      session_id: sessionId,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: q.id,
+      outcome,
+      payload: {
+        answer_md: answerMd.length > 0 ? answerMd : null,
+        answer_image_refs: submission.student_image_refs ?? [],
+        referenced_knowledge_ids: q.knowledge_ids,
+        // provenance (stored in jsonb; stripped by the Zod contract on parse)
+        source: 'solve_tutor',
+        judge_route: judged.route,
+        judge_score: judgeResult.score,
+        judge: responseJudge,
+      },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: now,
+    });
+
+    if (outcome === 'failure') {
+      mistakeId = createId();
+      await createLearningRecord(tx, {
+        id: mistakeId,
+        kind: 'mistake',
+        title: null,
+        content_md: answerMd.length > 0 ? answerMd : '(handwritten submission)',
+        source: 'manual',
+        capture_mode: (submission.student_image_refs ?? []).length > 0 ? 'image' : 'text',
+        activity_kind: 'attempt',
+        processing_status: 'raw',
+        origin_event_id: attemptEventId,
+        knowledge_ids: q.knowledge_ids,
+        question_id: q.id,
+        attempt_event_id: attemptEventId,
+        asset_refs: submission.student_image_refs ?? [],
+        payload: {
+          from: 'solve_tutor',
+          wrong_answer_md: answerMd,
+          judge_route: judged.route,
+          judge_score: judgeResult.score,
+          judge: responseJudge,
+        },
+      });
+    }
+  });
+
+  // session: submitted → judged (reveal happens after this commits)
+  await Tutor.markJudged(db, sessionId);
+
+  return {
+    attempt_event_id: attemptEventId,
+    judge: responseJudge,
+    revealed_solution_md: q.reference_md ?? null,
+    ...(mistakeId !== undefined ? { mistake_id: mistakeId } : {}),
+  };
 }
