@@ -35,6 +35,14 @@ import {
 } from './proposal-tools';
 import { queryEventsTool } from './query-events';
 import { queryMistakesTool } from './query-mistakes';
+import {
+  addOptionTool,
+  mergeQuestionsTool,
+  reassignFigureTool,
+  setQuestionTypeTool,
+  splitStemTool,
+  updatePromptTool,
+} from './question-edit-tools';
 import { getTool, registerTool } from './registry';
 import type { DomainTool } from './types';
 
@@ -62,6 +70,13 @@ const CORE_TOOLS: ReadonlyArray<DomainTool<unknown, unknown>> = [
   proposeLearningItemArchiveTool as DomainTool<unknown, unknown>,
   proposeRecordLinksTool as DomainTool<unknown, unknown>,
   proposeRecordPromotionTool as DomainTool<unknown, unknown>,
+  // YUK-195 — agent-callable question structure-edit write tools (draft layer).
+  updatePromptTool as DomainTool<unknown, unknown>,
+  addOptionTool as DomainTool<unknown, unknown>,
+  setQuestionTypeTool as DomainTool<unknown, unknown>,
+  splitStemTool as DomainTool<unknown, unknown>,
+  mergeQuestionsTool as DomainTool<unknown, unknown>,
+  reassignFigureTool as DomainTool<unknown, unknown>,
 ];
 
 let bootstrapped = false;

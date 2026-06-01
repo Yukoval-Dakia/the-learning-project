@@ -27,7 +27,37 @@ describe('DomainTool allowlist policy', () => {
       'propose_learning_item_archive',
       'propose_record_links',
       'propose_record_promotion',
+      // YUK-195 — question structure-edit write tools (draft layer).
+      'update_prompt',
+      'add_option',
+      'set_question_type',
+      'split_stem',
+      'merge_questions',
+      'reassign_figure',
     ]);
+  });
+
+  it('grants the 6 question structure-edit tools ONLY on ingestion_block_edit', () => {
+    const editTools = [
+      'update_prompt',
+      'add_option',
+      'set_question_type',
+      'split_stem',
+      'merge_questions',
+      'reassign_figure',
+    ] as const;
+    expect(DOMAIN_TOOL_ALLOWLISTS.ingestion_block_edit).toEqual([
+      'get_question_context',
+      'query_events',
+      ...editTools,
+    ]);
+    // No other surface may grant any of the question-mutation write tools.
+    for (const [surface, names] of Object.entries(DOMAIN_TOOL_ALLOWLISTS)) {
+      if (surface === 'ingestion_block_edit') continue;
+      for (const tool of editTools) {
+        expect(names).not.toContain(tool);
+      }
+    }
   });
 
   it('expands Coach surface for plan_adjustments (defer / split / relearn / archive)', () => {

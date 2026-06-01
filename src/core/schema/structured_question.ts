@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { QuestionKind } from './business';
 
 // ---------- BBox：0-1 归一化的轴对齐 bounding box ----------
 
@@ -102,6 +103,16 @@ export type StructuredQuestionT = {
   extraction_evidence?: z.infer<typeof ExtractionEvidence>;
   source?: 'tencent_ocr' | 'vision_rescue' | 'vlm_structure' | 'manual' | 'agent_edit';
   last_modified_by?: string;
+  /**
+   * Advisory question-type hint (YUK-195, design note §4.3). Written by the
+   * `set_question_type` agent-edit DomainTool onto a draft-block structured
+   * node. This is a jsonb-internal field — NOT a DDL column, NOT an
+   * `audit:schema` business field. Import behavior is UNCHANGED by this hint:
+   * `question.kind` is still supplied per-block by the import request. The
+   * hint's only consumer is the future OC-5 review UI (YUK-169 redraw), which
+   * will pre-fill the import kind selector from it.
+   */
+  kind?: z.infer<typeof QuestionKind>;
 };
 
 export const StructuredQuestion: z.ZodType<StructuredQuestionT> = z.lazy(() =>
@@ -120,6 +131,8 @@ export const StructuredQuestion: z.ZodType<StructuredQuestionT> = z.lazy(() =>
       extraction_evidence: ExtractionEvidence.optional(),
       source: StructuredQuestionSource.optional(),
       last_modified_by: z.string().optional(),
+      // YUK-195 §4.3 — advisory question-type hint (jsonb-internal, no DDL).
+      kind: QuestionKind.optional(),
     })
     .refine(
       (q) => {
