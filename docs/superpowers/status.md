@@ -6,8 +6,14 @@
 
 **🎉 v1 closeout — scenario A 达成（2026-05-29）**：YUK-88 block-tree note 全栈 **P0-P7** + Layer 8 critical path（Drawer/Coach/tool_use promote）+ Living Note v0 + cross_link/反链/hub auto-sync + cytoscape 诊断图谱 全 ship。8 波 + Foundation A/B/C/D + Product Track 1/2 闭环。详见 [`audits/2026-05-29-v1-closeout.md`](audits/2026-05-29-v1-closeout.md)；v1 之后去向 [`../planning/v0.5-maintenance-roadmap.md`](../planning/v0.5-maintenance-roadmap.md)。
 
-**最后更新**：2026-05-31（**P5 open-questions chain ✅ 全 7 阶段 merge → origin `82ba1df1`**；详见上方「P5 chain ✅」+ closeout。以下为历史 baseline。）；2026-05-30（**Wave 7 ✅ → origin `28dd48d6`**（P5 反链/cross_link/hub auto-sync YUK-95 + T-KG cytoscape 诊断图谱 YUK-142 + fix-pass + closeout）；**Wave 8 ✅ 实现完成**（末波 = P6 read-view+节点页 YUK-96 + P7 tests YUK-97 + P2-polish slash/drag-drop YUK-150 + 两轮用户 review-fix + T-PD 收尾 + v1 closeout，全 7 lane 各独立 opus reviewer + 完整 wave-gate 绿：145 test files / 1153 tests + 1 todo / migration 11 / build 55 pages），**Wave 8 已 merge 到 main**（2026-05-29，PR #193 rebase-merge，保留 per-commit Closes），其上叠了 scenario B 第一批。上一波 Wave 6 `a419b2e6`。）
-**当前 Phase**：**P5 open-questions chain ✅ shipped 全 7 阶段（2026-05-31）**。scenario B intelligence track 的 Layer-8 readiness 缺口（readiness brief 2026-05-30）已全部 ship。**下一站 = 数据激活**（见下方「P5 chain ✅」+ closeout §4）：采集层早已全接线，真正卡点是两个 wiring-gated linchpin（A3 brief generate-writer / D1 goal trigger）+ 冷启动数据荒漠；推荐先造合成数据 seed → 接 A3/D1 → P5.x 在活的 flywheel 上验证。3 个产品 fork 待用户拍板（synthetic-vs-real / daily-use-now / A3·D1 trigger shape）。
+**最后更新**：2026-06-01（**数据激活 drive ✅ DONE**：Station 1 合成数据 + 2A brief writer + 2B goal cron + 3 端到端验证（8 slice 全绿，零集成 bug）→ Layer-8 端到端可观测；详见上方「数据激活 drive ✅」+ closeout。下一站 Strategy D 真实 ingestion，开工前 surface 用户。）；2026-05-31（**P5 open-questions chain ✅ 全 7 阶段 merge → origin `82ba1df1`**；详见「P5 chain ✅」+ closeout。）；2026-05-30（**Wave 7 ✅ → origin `28dd48d6`**（P5 反链/cross_link/hub auto-sync YUK-95 + T-KG cytoscape 诊断图谱 YUK-142 + fix-pass + closeout）；**Wave 8 ✅ 实现完成**（末波 = P6 read-view+节点页 YUK-96 + P7 tests YUK-97 + P2-polish slash/drag-drop YUK-150 + 两轮用户 review-fix + T-PD 收尾 + v1 closeout，全 7 lane 各独立 opus reviewer + 完整 wave-gate 绿：145 test files / 1153 tests + 1 todo / migration 11 / build 55 pages），**Wave 8 已 merge 到 main**（2026-05-29，PR #193 rebase-merge，保留 per-commit Closes），其上叠了 scenario B 第一批。上一波 Wave 6 `a419b2e6`。）
+**当前 Phase**：**数据激活 drive ✅ DONE（2026-06-01）** —— Layer-8 推理栈从"全黑"变"端到端可观测 + 回归守护"。P5 链建好了智能层，这条 drive 让它**真的跑起来**。**下一站 = Strategy D（真实 ingestion + capture UX）**——真正的长期数据飞轮，pre-product 验证已被信任后的下一章；属大产品 fork，开工前 surface 用户。
+
+**数据激活 drive ✅ shipped（2026-06-01，main `8ed672fa` → Station 3）**：详见 [`audits/2026-06-01-data-activation-closeout.md`](audits/2026-06-01-data-activation-closeout.md)。背景=P5 closeout §4 勘察（采集层早已全接线；卡点=冷启动数据荒漠 + 两 wiring-gated linchpin）。用户拍板:合成数据先行 + pre-product + goal cron-trigger。
+- **Station 1** 合成数据 generator（`scripts/seed-synthetic.ts`，走生产 writeEvent 路径，#231，YUK-184）· **Station 2A** brief generate-writer（T-37，注入 generateBrief 替 throwing default，#232，YUK-185）· **Station 2B** goal-scope propose cron（D1，复用 runGoalScopeAndWrite，#233，YUK-186）· **Station 3** Layer-8 端到端验证（`layer8_e2e.db.test.ts`，8 slice 全绿，**零真集成 bug**——各层组合干净，YUK-188）。
+- **现可观测**：seed → brief regen / goal cron→accept→Coach goal_strand + Dreaming goal-aware + review goal-bias / proposal_signals digest + L2 tighten / FSRS due / active-subject 检测——整个 flywheel 端到端转起来，e2e 测试守护回归。
+- **deferred backlog**：YUK-187（goal dismiss-churn，P-low）· Strategy D 真实 ingestion（下一章）· goal chip/UI（随 UI redraw）· Mem0 OPENAI_API_KEY + worker XIAOMI_API_KEY（部署 config）。
+- **流程教训**：CI 只跑 CodeQL/Analyze 不跑 pnpm test → SCHEMA_VERSION/schema 改动必须本地手动全量 `pnpm test`；bot review 屡抓 gate 兜不住的真 bug（P1 dotenv-ESM / HIGH prod-fence / brief outcome 列 / Mem0 storm / goal watermark）。
 
 **P5 chain ✅ shipped（2026-05-31，main `b143ecd9` → `82ba1df1`）**：7 阶段全 rebase-merge 到 main，详见 [`audits/2026-05-31-p5-chain-closeout.md`](audits/2026-05-31-p5-chain-closeout.md)。
 - **P5.1** Context Budget（`budgets.ts` 单源 + Copilot throttle + soft-stop，YUK-143）· **P5.2** activity-gated brief refresh（PR #218，YUK-143）。
@@ -31,7 +37,7 @@
 - **新 ADR**：0023 / 0024 / 0025 / 0026（文件名已统一 bare `NNNN-`，W15 doc sweep）。**新 Linear**：YUK-160..171。
 - **scheduler / intelligence track 已 coherent**：goal core → Dreaming/Coach goal-aware → review soft-bias → question_part → cross-subject → acceptance signal 链路打通。
 - 下一步 continue-to-scenario-B 余下（按 feature 价值重切，待 grill 拍板）。
-**主分支**：`origin/main` = `82ba1df1`（**P5 chain 全 7 阶段已 merge**，2026-05-31；其下 `b143ecd9` = scenario B 第一批 baseline）。走 PR 不直推（2026-05-29 用户定）。
+**主分支**：`origin/main` = **数据激活 drive（Station 1/2A/2B/3）已 merge**，2026-06-01（Station 2B baseline `8ed672fa`；P5 chain baseline `82ba1df1`）。走 PR 不直推（2026-05-29 用户定）。
 **路线图源**：[`docs/planning/v0.3-generalized-ai-learning-framework.md`](../planning/v0.3-generalized-ai-learning-framework.md) §1.5 是当前执行清单；root `PLANNING.md` v0.12 Phase 1-4 已标 historical
 
 ---
