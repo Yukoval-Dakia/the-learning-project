@@ -6,6 +6,11 @@
 
 import type { Db } from '@/db/client';
 import { event, knowledge, knowledge_edge, knowledge_mastery } from '@/db/schema';
+// P5.4 §5-Q5 / YUK-175 — single source of truth for the recent-failure /
+// evidence window. Reusing the rubric validator's constant keeps the readers'
+// "recent failure" window aligned with the rubric's §4.2 evidence window (no
+// import cycle: rubric-validator does not import this module).
+import { RUBRIC_EVIDENCE_WINDOW_DAYS } from '@/server/knowledge/rubric-validator';
 import { and, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 // P5.1 / YUK-143 — excerpt cap + courtesy defaults sourced from the single
@@ -17,7 +22,9 @@ import type { DomainTool, ToolContext } from './types';
 
 const TEXT_SNIPPET_MAX = KNOWLEDGE_EXCERPT_MAX;
 const MAX_NODES = 60;
-const RECENT_FAILURE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+// Exported so tests can assert the window is sourced from the single rubric
+// constant (no hardcoded 30) — see propose_edge.test.ts window-merge case.
+export const RECENT_FAILURE_WINDOW_MS = RUBRIC_EVIDENCE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
 
 type KnowledgeRow = {
   id: string;
