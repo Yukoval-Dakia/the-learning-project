@@ -1,5 +1,6 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
+import * as Session from '.';
 import { Ingestion, Review } from '.';
 import type { LearningSessionTypeT } from '.';
 
@@ -25,5 +26,14 @@ describe('src/server/session index', () => {
     expectTypeOf<LearningSessionTypeT>().toEqualTypeOf<
       'ingestion' | 'review' | 'tutor' | 'explore' | 'create' | 'conversation'
     >();
+  });
+});
+
+describe('session barrel — Tutor (YUK-193)', () => {
+  it('re-exports the Tutor namespace with the transition functions', () => {
+    expect(typeof Session.Tutor.startTutorSession).toBe('function');
+    expect(typeof Session.Tutor.markSubmitted).toBe('function');
+    expect(typeof Session.Tutor.markJudged).toBe('function');
+    expect(typeof Session.Tutor.endTutor).toBe('function');
   });
 });
