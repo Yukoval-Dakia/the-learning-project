@@ -108,4 +108,24 @@ describe('getLatestCoachPlan', () => {
     expect(view.daily_ran_at).toBe(new Date('2026-06-01T03:00:00Z').toISOString()); // ran, but plan unparseable
     expect(view.weekly_reflection).toBe('复盘');
   });
+
+  it('weekly reflection is null (parse error) but weekly_ran_at still resolves', async () => {
+    await writeCoachScan({
+      id: 'w_bad',
+      runKind: 'weekly',
+      todayPlan: null, // plan_parse_error on the weekly run
+      at: new Date('2026-06-01T02:00:00Z'),
+    });
+    await writeCoachScan({
+      id: 'd_ok',
+      runKind: 'daily',
+      todayPlan: plan('今日'),
+      at: new Date('2026-06-01T03:00:00Z'),
+    });
+
+    const view = await getLatestCoachPlan(db);
+    expect(view.weekly_reflection).toBeNull();
+    expect(view.weekly_ran_at).toBe(new Date('2026-06-01T02:00:00Z').toISOString()); // ran, plan unparseable
+    expect(view.daily_plan?.daily_focus).toBe('今日');
+  });
 });
