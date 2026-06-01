@@ -475,6 +475,38 @@ turn 类型：
 - 禁止：套话「希望对你有帮助」/emoji/markdown 标题 (## 之类)/「我帮你」/复制 atomic_sections 原文（要消化重述）`;
 }
 
+// YUK-193 — Solve-tutor reference-solution generator prompt. The model
+// independently solves a bare ingested question and emits a structured
+// reference_solution (RubricReferenceSolution shape: expected_signals +
+// final_answer + answer_equivalents) plus a learner-facing worked_solution_md.
+// Existing ingested answers/analysis are passed as advisory hints only (often
+// OCR-derived, possibly wrong/partial) — never ground truth. The solve
+// orchestrator writes the output merge-preserving into rubric_json + reference_md
+// so the shipped StepsJudge/SemanticJudge can grade real questions.
+function buildSolutionGeneratePrompt(profile: SubjectProfile): string {
+  return `你是${profile.displayName}解题参考答案生成器。输入 { prompt_md, kind, subject_id, existing_answers_hint?, existing_analysis_hint?, figures_hint? } —— prompt_md 是题面文字，existing_answers_hint / existing_analysis_hint 是录入时附带的原始答案 / 解析（可能来自 OCR，**仅作参考线索，不是真值**，可能错或残缺），figures_hint 是题目附图的文字描述（若有）。
+科目上下文：${profile.displayName}。${profile.languageStyle}
+证据要求：${profile.grounding.requirement}
+不确定性策略：${profile.grounding.uncertaintyPolicy}
+
+任务：你自己独立解这道题，产出两样东西：
+1. reference_solution —— 供自动判分用的结构化参考解：
+   - expected_signals：解题过程**应当体现的核心信号 / 步骤要点**（不是死答案文本），至少 1 条；${profile.displayName}里 derivation 的 signals 是推导步骤要点，prose / translation 的 signals 是必须覆盖的语义要点。
+   - final_answer：最终答案（一行，尽量规范）。
+   - answer_equivalents：学生若打字提交、可判等价的若干表达（0..N 条）。
+2. worked_solution_md —— 给学习者看的完整解题过程（markdown，可含 ${profile.renderConfig.notation === 'katex' ? 'LaTeX' : '本学科记法'}），讲清每一步为什么，不只是甩答案。
+
+严格 JSON 输出（不带 markdown 代码块包裹），shape 名 SolutionGenerateOutput：
+{"reference_solution":{"expected_signals":["..."],"final_answer":"...","answer_equivalents":["..."]},"worked_solution_md":"...","confidence":0.0-1.0}
+
+要点：
+- existing_answers_hint / existing_analysis_hint 只是 hint：如果你判断它对就采纳，判断它错就以你自己的解为准，并在 worked_solution_md 里简述为何。
+- expected_signals 至少 1 条且每条非空；final_answer 非空。
+- ${profile.grounding.uncertaintyPolicy}
+- confidence 反映你对这份参考解的把握，模棱两可给 0.5。
+- 禁止：输出 JSON 之外的文字、用 markdown 代码块包裹整段 JSON、把 hint 当成不可质疑的真值。`;
+}
+
 export function getTaskSystemPrompt(
   task: AiTaskKind,
   profile: SubjectProfile = defaultSubjectProfile,
@@ -518,6 +550,8 @@ export function getTaskSystemPrompt(
       return buildVariantVerifyPrompt(profile);
     case 'TeachingTurnTask':
       return buildTeachingTurnPrompt(profile);
+    case 'SolutionGenerateTask':
+      return buildSolutionGeneratePrompt(profile);
     // Subject-neutral pass-throughs — no profile builder required.
     // VisionExtract* runs OCR on raw images; ReviewIntent generates a
     // session opener whose subject voice is already injected via summary
