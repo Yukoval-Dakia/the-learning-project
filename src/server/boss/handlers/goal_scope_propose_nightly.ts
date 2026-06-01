@@ -7,16 +7,29 @@
 // structured-output GoalScopeTask call + parse + id-subset filter +
 // writeAiProposal + failure-swallowing.
 //
-// Per run: most-active subject (selectSubjectsForRun(active, 1)) → skip the
-// BR-4 default/orphan bucket → resolve profile → 3 dedup gates (live goal,
-// pending proposal, has-weak-node) → at most ONE goal_scope proposal. Anti-storm
-// (D3) is gates 2+3 keyed on subject_id, all BEFORE the LLM call.
+// Per run: pick the KNOWN domain with the MOST weak nodes (watermark-independent,
+// over the same tree snapshot the producer reads) → resolve profile → 2 dedup
+// gates (live goal, pending proposal) → at most ONE goal_scope proposal. The
+// weak-node gate is folded into selection: skipped_no_weak fires when no known
+// domain has any weak node. Anti-storm (D3) is gates 2+3 keyed on subject_id,
+// all BEFORE the LLM call.
+//
+// FIX (Codex P1): the prior candidate selector gated on the active-subjects
+// brief `refreshed_at` watermark (listActiveSubjectsSinceRefresh +
+// selectSubjectsForRun). The memory_brief_sweep cron (03:00) advances that
+// watermark for every active subject BEFORE this cron (03:50), so by 03:50 the
+// active set was usually empty → the cron almost never proposed. We now select
+// from accumulated MASTERY in the tree snapshot (watermark-independent), which
+// matches the spec's "propose a goal from accumulated mastery" intent. Selecting
+// only over KNOWN_SUBJECT_IDS also subsumes the prior BR-4 orphan-bucket guard:
+// candidates are real knowledge-tree domains restricted to known profile ids.
 //
 // F-1 failure asymmetry (D7): the LLM/producer half is swallow-safe (its
 // internal try/catch → EMPTY_RESULT → proposed:0, logged ledger). The pre-LLM
 // DB reads run OUTSIDE that swallow — a throw there is a legit retryable DB
 // fault that propagates to the builder's rethrow so pg-boss retries. Do NOT
 // wrap the pre-LLM reads in a catch-all (would mask DB faults behind proposed:0).
+// The pre-LLM reads are now loadTreeSnapshot + listActiveGoals + the pending scan.
 
 import type { Job } from 'pg-boss';
 
@@ -25,11 +38,7 @@ import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { listActiveGoals } from '@/server/goals/queries';
 import { runGoalScopeAndWrite } from '@/server/goals/scope';
 import { loadTreeSnapshot } from '@/server/knowledge/tree';
-import {
-  listActiveSubjectsSinceRefresh,
-  selectSubjectsForRun,
-} from '@/server/memory/active-subjects';
-import { KNOWN_SUBJECT_IDS, type KnownSubjectId, resolveSubjectProfile } from '@/subjects/profile';
+import { KNOWN_SUBJECT_IDS, resolveSubjectProfile } from '@/subjects/profile';
 import { loadPendingGoalScopeSubjects } from './goal_scope_dedup';
 
 type DepsOverride = {
@@ -37,12 +46,13 @@ type DepsOverride = {
 };
 
 export interface GoalScopeNightlyResult {
-  /** active subjects examined (0 or 1) */
+  /** 1 if a candidate domain (a known domain with ≥1 weak node) was picked, else 0 */
   considered: number;
   /** 0 or 1 */
   proposed: number;
   skipped_existing_goal: number;
   skipped_pending: number;
+  /** set when NO known domain has any weak node (no candidate to propose) */
   skipped_no_weak: number;
   proposal_id: string | null;
 }
@@ -59,10 +69,21 @@ export function hasWeakNodeInDomain(
   return tree.some((n) => n.effective_domain === domain && (n.mastery ?? 0.5) < 0.55);
 }
 
+/** Count of weak nodes in a domain (same 0.55 convention as hasWeakNodeInDomain).
+ *  Drives the mastery-based candidate selection: the KNOWN domain with the most
+ *  weak nodes wins (deterministic KNOWN_SUBJECT_IDS-order tie-break in the loop). */
+export function countWeakNodesInDomain(
+  tree: Array<{ effective_domain: string | null; mastery: number | null }>,
+  domain: string,
+): number {
+  return tree.filter((n) => n.effective_domain === domain && (n.mastery ?? 0.5) < 0.55).length;
+}
+
 /**
- * Pick the single most-active subject and, if it has ≥1 weak node and is not
+ * Pick the KNOWN domain with the most accumulated weak nodes and, if it is not
  * already covered by a live goal / pending proposal, emit ONE goal_scope
- * proposal. Cap = 1 proposal/run. Empty active set → no-op early return.
+ * proposal. Cap = 1 proposal/run. No known domain has any weak node → no-op
+ * (skipped_no_weak).
  */
 export async function runGoalScopeProposeNightly(
   db: Db,
@@ -77,25 +98,32 @@ export async function runGoalScopeProposeNightly(
     proposal_id: null,
   };
 
-  // PRE-LLM reads run OUTSIDE runGoalScopeAndWrite's swallow (D7 / FIX-5): a
-  // throw here is a legit retryable DB error (the builder rethrows → pg-boss
-  // retries), NOT a logged skip. Do NOT wrap these in a catch-all.
-  const active = await listActiveSubjectsSinceRefresh(db, {});
-  const top = selectSubjectsForRun(active, 1);
-  if (top.length === 0) return empty;
-  const subjectId = top[0].subjectId; // a subject PROFILE-id (BR-4 bridge), not a domain
+  // PRE-LLM reads run OUTSIDE runGoalScopeAndWrite's swallow (D7 / F-1): a throw
+  // here is a legit retryable DB error (the builder rethrows → pg-boss retries),
+  // NOT a logged skip. Do NOT wrap these in a catch-all.
+  const tree = await loadTreeSnapshot(db);
 
-  // FIX-4: candidate quality — the BR-4 bridge resolves orphan events to a
-  // synthetic default bucket. Don't propose a goal scoped to a non-profile id.
-  if (!KNOWN_SUBJECT_IDS.includes(subjectId as KnownSubjectId)) {
-    return { ...empty, considered: 1 }; // skip default/orphan bucket
+  // Mastery-based candidate selection (watermark-independent). Pick the KNOWN
+  // domain with the most weak nodes; KNOWN_SUBJECT_IDS declaration order is the
+  // deterministic tie-break (first-wins, strict `>` keeps earlier ids on ties).
+  let domain: string | null = null;
+  let bestWeak = 0;
+  for (const candidate of KNOWN_SUBJECT_IDS) {
+    const weak = countWeakNodesInDomain(tree, candidate);
+    if (weak > bestWeak) {
+      bestWeak = weak;
+      domain = candidate;
+    }
   }
+  // No known domain has any weak node → nothing to propose. The weak-node gate
+  // is folded into selection here (subsumes the old standalone has-weak gate).
+  if (domain === null) return { ...empty, skipped_no_weak: 1 };
 
-  // FIX-3: profile-id → domain. resolveSubjectProfile takes a domain/alias; for
-  // wenyan profile-id == domain, but the general path is a registry lookup —
-  // don't assume id == domain for code that could see another subject.
-  const profile = resolveSubjectProfile(subjectId);
-  const domain = profile.id;
+  // The picked domain IS a known profile id; subjectId for the goal == domain
+  // (consistent with how the goal row's subject_id is stored + how Dreaming /
+  // Coach read it). resolveSubjectProfile yields the title.
+  const subjectId = domain;
+  const profile = resolveSubjectProfile(domain);
 
   // Gate 2: skip subject with a live goal (same additive read Dreaming uses).
   const activeGoals = await listActiveGoals(db);
@@ -104,25 +132,16 @@ export async function runGoalScopeProposeNightly(
   }
 
   // Gate 3: skip subject with a pending goal_scope proposal. The pending scan's
-  // rate query keys ONLY on caused_by_event_id (NO subject_kind filter) — the
-  // goal accept/dismiss rate event is subject_kind:'event', so a goal filter
-  // would match zero rows and permanently lock out re-propose (FIX-1).
+  // rate/correct query keys ONLY on caused_by_event_id (NO subject_kind filter)
+  // — the goal accept/dismiss rate event and the retract `correct` event are
+  // both subject_kind:'event', so a goal filter would match zero rows and
+  // permanently lock out re-propose (FIX-1 / FIX-3).
   const pendingSubjects = await loadPendingGoalScopeSubjects(db);
   if (pendingSubjects.has(subjectId)) {
     return { ...empty, considered: 1, skipped_pending: 1 };
   }
 
-  // FIX-2: candidate-has-weak-node check via the already-exported loadTreeSnapshot
-  // (NOT loadMasteryMap — private — and NOT loadSubjectKnowledgeIds — nonexistent).
-  // Filter by effective_domain (a DOMAIN), not the profile-id. The producer loads
-  // the same tree once more inside runGoalScopeAndWrite; for a 1/night cron that
-  // double-read is fine — do NOT add a shared-snapshot abstraction.
-  const tree = await loadTreeSnapshot(db);
-  if (!hasWeakNodeInDomain(tree, domain)) {
-    return { ...empty, considered: 1, skipped_no_weak: 1 };
-  }
-
-  // From here the LLM half is swallow-safe (D7 / FIX-5): runGoalScopeAndWrite's
+  // From here the LLM half is swallow-safe (D7 / F-1): runGoalScopeAndWrite's
   // internal try/catch absorbs LLM/key/runner throws → EMPTY_RESULT, proposed:0.
   const runTaskFn = deps.runTaskFn ?? defaultRunTaskFn;
   const result = await runGoalScopeAndWrite({

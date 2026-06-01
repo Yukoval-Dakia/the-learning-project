@@ -9,15 +9,23 @@
 //     from_knowledge_id). The candidate subject lives at
 //     payload.ai_proposal.proposed_change.subject_id.
 //
-// The load-bearing divergence (FIX-1, BLOCKING): the chained-rate query keys
-// ONLY on (action='rate', caused_by_event_id IN proposeIds) — NO subject_kind
-// filter. The goal accept path writes its rate event as subject_kind:'event'
-// (accept.ts:121), and dismiss/generic rate is ALSO subject_kind:'event'
-// (writeGenericRateEvent, actions.ts). A subject_kind='goal' filter would match
-// ZERO rows → an already-accepted-or-dismissed goal_scope propose mis-reads as
-// still-pending → that subject is permanently locked out of re-propose.
-// caused_by_event_id uniquely links the rate back to its propose (accept.ts:129),
-// so it alone is the correct, sufficient join key.
+// The load-bearing divergence (FIX-1, BLOCKING): the chained-decision query keys
+// ONLY on (action IN ('rate','correct'), caused_by_event_id IN proposeIds) — NO
+// subject_kind filter. The goal accept path writes its rate event as
+// subject_kind:'event' (accept.ts:121), dismiss/generic rate is ALSO
+// subject_kind:'event' (writeGenericRateEvent, actions.ts), and the retract path
+// writes a `correct` event with subject_kind:'event' (retractAiProposal,
+// actions.ts:1782-1784). A subject_kind='goal' filter would match ZERO rows → an
+// already-decided goal_scope propose mis-reads as still-pending → that subject is
+// permanently locked out of re-propose. caused_by_event_id uniquely links the
+// decision back to its propose (accept.ts:129), so it alone is the correct,
+// sufficient join key.
+//
+// FIX-3: a retract writes a `correct` event (inbox status → stale) and NO `rate`
+// (retractAiProposal, actions.ts:1778-1793). So a propose is "still pending" only
+// if it has NEITHER a chained `rate` NOR a chained `correct`. Without the
+// `correct` arm, a retracted/stale goal_scope keeps its subject pending forever →
+// the cron permanently skipped_pending for that subject.
 
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 
@@ -50,19 +58,28 @@ export async function loadPendingGoalScopeSubjects(db: Db): Promise<Set<string>>
   if (proposeRows.length === 0) return new Set();
 
   const proposeIds = proposeRows.map((r) => r.id);
-  // FIX-1 (BLOCKING): key the rate query ONLY on caused_by_event_id — NO
-  // subject_kind filter. The goal accept/dismiss rate is subject_kind:'event'.
-  const rateRows = await db
+  // FIX-1 / FIX-3 (BLOCKING): key the decision query ONLY on caused_by_event_id —
+  // NO subject_kind filter. The goal accept/dismiss rate is subject_kind:'event',
+  // and the retract `correct` event is ALSO subject_kind:'event'. Both a chained
+  // `rate` (accept/dismiss) and a chained `correct` (retract) mean DECIDED, not
+  // pending — so a retracted/stale propose drops out of the pending set instead of
+  // locking the subject out of re-propose forever.
+  const decisionRows = await db
     .select({ caused_by_event_id: event.caused_by_event_id })
     .from(event)
-    .where(and(eq(event.action, 'rate'), inArray(event.caused_by_event_id, proposeIds)));
-  const ratedProposeIds = new Set(
-    rateRows.map((r) => r.caused_by_event_id).filter((id): id is string => id !== null),
+    .where(
+      and(
+        inArray(event.action, ['rate', 'correct']),
+        inArray(event.caused_by_event_id, proposeIds),
+      ),
+    );
+  const decidedProposeIds = new Set(
+    decisionRows.map((r) => r.caused_by_event_id).filter((id): id is string => id !== null),
   );
 
   const out = new Set<string>();
   for (const row of proposeRows) {
-    if (ratedProposeIds.has(row.id)) continue; // any chained rate → decided, not pending
+    if (decidedProposeIds.has(row.id)) continue; // any chained rate/correct → decided, not pending
     const payload = row.payload as {
       ai_proposal?: { proposed_change?: { subject_id?: unknown } };
     };
