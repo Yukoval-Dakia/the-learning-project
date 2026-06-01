@@ -8,10 +8,11 @@
  */
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { TaggingOutputT } from '@/core/schema/tagging';
+import type { Db } from '@/db/client';
 import {
   event,
   knowledge,
@@ -20,10 +21,14 @@ import {
   question,
   question_block,
 } from '@/db/schema';
+import type { WriteEventInput } from '@/server/events/queries';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import { runAutoEnrollForSession } from './auto-enroll';
+import { observeEventId, runAutoEnrollForSession } from './auto-enroll';
+import { TaggingTaskError } from './tagging';
 
 const FLAG = 'WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED';
+const OBSERVE_FLAG = 'WORKFLOW_JUDGE_OBSERVE_ENABLED';
+const OBSERVE_ACTION = 'experimental:auto_enroll_observed';
 
 function structured(prompt: string): StructuredQuestionT {
   return { id: createId(), role: 'standalone', prompt_text: prompt, source: 'vlm_structure' };
@@ -82,6 +87,66 @@ async function seed(
   return { sessionId, blockIds };
 }
 
+/**
+ * Seed an ingestion session in a chosen status (default 'extracted') + N draft
+ * blocks. Each block embeds its own id in the prompt so a runTaggingFn can branch
+ * per-block on `questionMd` (used by the per-block isolation cases).
+ */
+async function seedWithStatus(
+  db: ReturnType<typeof testDb>,
+  status: 'extracted' | 'partial',
+  blockCount = 2,
+): Promise<{ sessionId: string; blockIds: string[] }> {
+  const now = new Date();
+  await db.insert(knowledge).values({
+    id: 'k1',
+    name: '虚词',
+    domain: 'wenyan',
+    parent_id: null,
+    archived_at: null,
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  });
+  const sessionId = createId();
+  await db.insert(learning_session).values({
+    id: sessionId,
+    type: 'ingestion',
+    status,
+    source_document_id: createId(),
+    source_asset_ids: ['asset_1'],
+    entrypoint: 'vision_paper',
+    warnings: [],
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  });
+  const blockIds = Array.from({ length: blockCount }, () => createId());
+  await db.insert(question_block).values(
+    blockIds.map((id) => ({
+      id,
+      ingestion_session_id: sessionId,
+      source_document_id: null,
+      source_asset_ids: ['asset_1'],
+      page_spans: [],
+      structured: structured(`下列句中「之」的用法 ${id}`),
+      figures: [],
+      layout_quality: 'structured' as const,
+      image_refs: ['asset_1'],
+      crop_refs: [],
+      visual_complexity: 'low' as const,
+      extraction_confidence: 1,
+      status: 'draft' as const,
+      knowledge_hint: '之',
+      merged_from_block_ids: [],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    })),
+  );
+  return { sessionId, blockIds };
+}
+
 const highConfidenceTagging = async (): Promise<TaggingOutputT> => ({
   suggestions: [{ knowledge_id: 'k1', confidence: 0.95, reasoning: 'ok' }],
   overall_confidence: 0.95,
@@ -100,9 +165,12 @@ describe('runAutoEnrollForSession', () => {
   });
 
   // ===========================================================================
-  // CRITICAL SAFETY: flag OFF (default) → no-op. This is the production default.
+  // CRITICAL SAFETY: enroll OFF + observe OFF → hard no-op. Slice B (YUK-190)
+  // INVERTED the default OFF behavior to observe-only (see the observe cases
+  // below); the legacy hard no-op now requires WORKFLOW_JUDGE_OBSERVE_ENABLED
+  // explicitly 'false'. The flag-ON enroll path below is unchanged.
   // ===========================================================================
-  it('flag OFF (default): no-op, nothing enrolled, all blocks stay draft', async () => {
+  it('enroll OFF + observe OFF: hard no-op, nothing enrolled, all blocks stay draft', async () => {
     const db = testDb();
     const { sessionId, blockIds } = await seed(db);
 
@@ -110,7 +178,7 @@ describe('runAutoEnrollForSession', () => {
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      env: {}, // flag undefined → OFF
+      env: { [OBSERVE_FLAG]: 'false' }, // enroll undefined → OFF; observe explicitly OFF
       runTaggingFn: async () => {
         taggingCalled = true;
         return highConfidenceTagging();
@@ -119,7 +187,7 @@ describe('runAutoEnrollForSession', () => {
 
     expect(result.status).toBe('skipped:flag_off');
     expect(result.enrolled).toBe(0);
-    // The judge / tagging never even runs when the flag is off.
+    // The judge / tagging never even runs when both flags are off.
     expect(taggingCalled).toBe(false);
 
     // Every block is untouched: still 'draft', no question, no event.
@@ -137,13 +205,13 @@ describe('runAutoEnrollForSession', () => {
     expect(blockIds).toHaveLength(2);
   });
 
-  it("flag explicitly 'false' → still OFF (no-op)", async () => {
+  it("enroll explicitly 'false' + observe OFF → still hard no-op", async () => {
     const db = testDb();
     const { sessionId } = await seed(db);
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      env: { [FLAG]: 'false' },
+      env: { [FLAG]: 'false', [OBSERVE_FLAG]: 'false' },
       runTaggingFn: highConfidenceTagging,
     });
     expect(result.status).toBe('skipped:flag_off');
@@ -235,7 +303,6 @@ describe('runAutoEnrollForSession', () => {
     const db = testDb();
     const { sessionId } = await seed(db);
 
-    const { TaggingTaskError } = await import('./tagging');
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
@@ -283,5 +350,389 @@ describe('runAutoEnrollForSession', () => {
       runTaggingFn: highConfidenceTagging,
     });
     expect(result.status).toBe('skipped:session_not_found');
+  });
+
+  // ===========================================================================
+  // Strategy D Slice B (YUK-190): OBSERVE-ONLY semantics.
+  // ===========================================================================
+
+  // (a) Headline: flag OFF + observe ON (default) ⇒ observe-only. Uses
+  // highConfidenceTagging so the ONLY thing preventing enrollment is the mode
+  // branch — proves observe writes the audit trail but changes zero domain state.
+  it('(a) flag OFF + observe ON: observe-only, zero domain rows, blocks stay draft', async () => {
+    const db = testDb();
+    const { sessionId, blockIds } = await seed(db);
+
+    let taggingCalled = 0;
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      env: {}, // enroll undefined → OFF; observe undefined → ON
+      runTaggingFn: async () => {
+        taggingCalled += 1;
+        return highConfidenceTagging();
+      },
+    });
+
+    // Observe runs tagging+judge but enrolls nothing.
+    expect(result.status).toBe('completed');
+    expect(result.enrolled).toBe(0);
+    expect(result.routed_to_review).toBe(0);
+    expect(taggingCalled).toBe(2);
+
+    // N observe events, each fully shaped.
+    const observed = await db.select().from(event).where(eq(event.action, OBSERVE_ACTION));
+    expect(observed).toHaveLength(2);
+    for (const e of observed) {
+      const p = e.payload as Record<string, unknown>;
+      expect(p.mode).toBe('observe');
+      expect(p.generated_by).toBe('workflow_judge');
+      expect(p.route).toBe('auto');
+      expect(typeof p.confidence).toBe('number');
+      expect(Array.isArray(p.suggested_knowledge_ids)).toBe(true);
+      expect((p.suggested_knowledge_ids as string[]).includes('k1')).toBe(true);
+      expect(e.outcome).toBe('success');
+      expect(e.subject_kind).toBe('question_block');
+      // ★ Memory-outbox opt-out (§3.5): every observe event is ingest-stamped.
+      expect(e.ingest_at).not.toBeNull();
+    }
+    // Deterministic ids tie each event to its block.
+    const observedIds = new Set(observed.map((e) => e.id));
+    for (const blockId of blockIds) {
+      expect(observedIds.has(observeEventId(sessionId, blockId))).toBe(true);
+    }
+
+    // No record_capture events (distinct count — not just events.length).
+    const captures = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:record_capture'));
+    expect(captures).toHaveLength(0);
+
+    // Zero domain rows.
+    expect(await db.select().from(learning_record)).toHaveLength(0);
+    expect(await db.select().from(question)).toHaveLength(0);
+
+    // Every block untouched: draft + both imported_* columns null.
+    const blocks = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.ingestion_session_id, sessionId));
+    expect(blocks.every((b) => b.status === 'draft')).toBe(true);
+    expect(blocks.every((b) => b.imported_question_id === null)).toBe(true);
+    expect(blocks.every((b) => b.imported_attempt_event_id === null)).toBe(true);
+
+    // Session unchanged (no commitImport).
+    const sessionRows = await db
+      .select()
+      .from(learning_session)
+      .where(eq(learning_session.id, sessionId));
+    expect(sessionRows[0]?.status).toBe('extracted');
+    expect(sessionRows[0]?.ended_at).toBeNull();
+  });
+
+  // (a) contrast: low confidence ⇒ route 'review', still an observe event with
+  // outcome 'skipped', still draft, still ingest-stamped.
+  it('(a) observe low-confidence: route review, outcome skipped, still draft + stamped', async () => {
+    const db = testDb();
+    const { sessionId } = await seed(db);
+
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      env: {},
+      runTaggingFn: lowConfidenceTagging,
+    });
+
+    expect(result.status).toBe('completed');
+    expect(result.enrolled).toBe(0);
+    const observed = await db.select().from(event).where(eq(event.action, OBSERVE_ACTION));
+    expect(observed).toHaveLength(2);
+    for (const e of observed) {
+      expect((e.payload as Record<string, unknown>).route).toBe('review');
+      expect(e.outcome).toBe('skipped');
+      expect(e.ingest_at).not.toBeNull();
+    }
+    const blocks = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.ingestion_session_id, sessionId));
+    expect(blocks.every((b) => b.status === 'draft')).toBe(true);
+  });
+
+  // (a-partial) observe on a 'partial' session: status gate accepts partial;
+  // session stays partial, blocks stay draft, zero domain rows.
+  it('(a-partial) observe on a partial session: stays partial, blocks draft, observes', async () => {
+    const db = testDb();
+    const { sessionId } = await seedWithStatus(db, 'partial');
+
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      env: {},
+      runTaggingFn: highConfidenceTagging,
+    });
+
+    expect(result.status).toBe('completed');
+    const observed = await db.select().from(event).where(eq(event.action, OBSERVE_ACTION));
+    expect(observed).toHaveLength(2);
+    expect(await db.select().from(question)).toHaveLength(0);
+    expect(await db.select().from(learning_record)).toHaveLength(0);
+    const sessionRows = await db
+      .select()
+      .from(learning_session)
+      .where(eq(learning_session.id, sessionId));
+    expect(sessionRows[0]?.status).toBe('partial');
+    const blocks = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.ingestion_session_id, sessionId));
+    expect(blocks.every((b) => b.status === 'draft')).toBe(true);
+  });
+
+  // (b) Missing-key shape (TaggingTaskError) ⇒ route-to-review, NO throw, 0
+  // observe events (no block was judged), all draft, session unchanged.
+  it('(b) observe + tagging error (missing-key shape): route to review, no observe event', async () => {
+    const db = testDb();
+    const { sessionId } = await seed(db);
+
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      env: {},
+      runTaggingFn: async () => {
+        throw new TaggingTaskError('TaggingTask LLM call failed');
+      },
+    });
+
+    expect(result.status).toBe('completed');
+    expect(result.enrolled).toBe(0);
+    expect(result.routed_to_review).toBe(2);
+    expect(await db.select().from(event).where(eq(event.action, OBSERVE_ACTION))).toHaveLength(0);
+    const blocks = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.ingestion_session_id, sessionId));
+    expect(blocks.every((b) => b.status === 'draft')).toBe(true);
+    const sessionRows = await db
+      .select()
+      .from(learning_session)
+      .where(eq(learning_session.id, sessionId));
+    expect(sessionRows[0]?.status).toBe('extracted');
+  });
+
+  // (b2) A plain Error (the only thing the runner re-throws) escapes the runner;
+  // buildAutoEnrollHandler re-throws it (infra classification → pg-boss retry).
+  it('(b2) observe + plain Error escapes runner; handler re-throws (no swallow)', async () => {
+    const db = testDb();
+    const { sessionId } = await seed(db);
+
+    // Runner surfaces the plain Error (the only thing the per-block catch
+    // re-raises — a non-TaggingTaskError).
+    await expect(
+      runAutoEnrollForSession({
+        db,
+        sessionId,
+        env: {},
+        runTaggingFn: async () => {
+          throw new Error('db connection lost');
+        },
+      }),
+    ).rejects.toThrow('db connection lost');
+
+    // buildAutoEnrollHandler re-throws an escaping fault so pg-boss retries on the
+    // auto_enroll queue alone (mirrors attribution_followup). Spy the runner the
+    // handler imports so the escaping infra fault is deterministic.
+    const autoEnrollModule = await import('./auto-enroll');
+    const spy = vi
+      .spyOn(autoEnrollModule, 'runAutoEnrollForSession')
+      .mockRejectedValueOnce(new Error('db connection lost'));
+    const { buildAutoEnrollHandler } = await import('../boss/handlers/auto_enroll');
+    const handler = buildAutoEnrollHandler(db);
+    await expect(handler([{ id: 'job-1', data: { sessionId } } as never])).rejects.toThrow(
+      'db connection lost',
+    );
+    spy.mockRestore();
+  });
+
+  // (c) Idempotent on re-run: deterministic id + onConflictDoNothing ⇒ exactly N
+  // observe events after two runs; tagging IS re-called (2N) — idempotency is NOT
+  // achieved by short-circuiting tagging.
+  it('(c) observe idempotent on re-run: N events, draft, 2N tagging calls', async () => {
+    const db = testDb();
+    const { sessionId } = await seed(db);
+
+    let taggingCalled = 0;
+    const fn = async () => {
+      taggingCalled += 1;
+      return highConfidenceTagging();
+    };
+    await runAutoEnrollForSession({ db, sessionId, env: {}, runTaggingFn: fn });
+    await runAutoEnrollForSession({ db, sessionId, env: {}, runTaggingFn: fn });
+
+    expect(await db.select().from(event).where(eq(event.action, OBSERVE_ACTION))).toHaveLength(2);
+    expect(taggingCalled).toBe(4);
+    const blocks = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.ingestion_session_id, sessionId));
+    expect(blocks.every((b) => b.status === 'draft')).toBe(true);
+  });
+
+  // (d) Per-block isolation: tagging throws for block 1 (branch on the id baked
+  // into questionMd) and succeeds for block 2. Block 1 → no event, draft; block 2
+  // → observe event, draft; no throw.
+  it('(d) observe per-block isolation: one tagging failure does not abort the batch', async () => {
+    const db = testDb();
+    const { sessionId, blockIds } = await seed(db);
+    const [block1, block2] = blockIds;
+
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      env: {},
+      runTaggingFn: async ({ questionMd }) => {
+        if (questionMd.includes(block1)) throw new TaggingTaskError('block 1 down');
+        return highConfidenceTagging();
+      },
+    });
+
+    expect(result.status).toBe('completed');
+    const observed = await db.select().from(event).where(eq(event.action, OBSERVE_ACTION));
+    expect(observed).toHaveLength(1);
+    expect(observed[0]?.subject_id).toBe(block2);
+    expect(observed[0]?.id).toBe(observeEventId(sessionId, block2));
+    const blocks = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.ingestion_session_id, sessionId));
+    expect(blocks.every((b) => b.status === 'draft')).toBe(true);
+  });
+
+  // (e) Observe-write failure isolation (§5.4): writeEventFn throws for block 1
+  // only. Block 2 still gets its observe event; the job does not throw.
+  it('(e) observe-write failure isolation: a failed audit write does not abort', async () => {
+    const db = testDb();
+    const { sessionId, blockIds } = await seed(db);
+    const [block1, block2] = blockIds;
+
+    let realWritten = 0;
+    const writeEventFn = async (innerDb: Db, input: WriteEventInput): Promise<string> => {
+      if (input.subject_id === block1) throw new Error('audit write failed');
+      const { writeEvent } = await import('../events/queries');
+      realWritten += 1;
+      return writeEvent(innerDb, input);
+    };
+
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      env: {},
+      runTaggingFn: highConfidenceTagging,
+      writeEventFn,
+    });
+
+    expect(result.status).toBe('completed');
+    expect(realWritten).toBe(1);
+    const observed = await db.select().from(event).where(eq(event.action, OBSERVE_ACTION));
+    expect(observed).toHaveLength(1);
+    expect(observed[0]?.subject_id).toBe(block2);
+  });
+
+  // (f) Paired flag-is-sole-switch: same seed + same highConfidenceTagging differ
+  // ONLY in Phase B. observe → 0 questions / 0 records / N observe events / draft;
+  // enroll → N questions / N records / N record_capture / imported.
+  it('(f) flag is the sole differentiator between observe and enroll', async () => {
+    // observe run
+    const dbObserve = testDb();
+    const observeSeed = await seed(dbObserve);
+    await runAutoEnrollForSession({
+      db: dbObserve,
+      sessionId: observeSeed.sessionId,
+      subjectId: 'wenyan',
+      env: {},
+      runTaggingFn: highConfidenceTagging,
+    });
+    expect(await dbObserve.select().from(question)).toHaveLength(0);
+    expect(await dbObserve.select().from(learning_record)).toHaveLength(0);
+    expect(
+      await dbObserve.select().from(event).where(eq(event.action, OBSERVE_ACTION)),
+    ).toHaveLength(2);
+    const observeBlocks = await dbObserve
+      .select()
+      .from(question_block)
+      .where(eq(question_block.ingestion_session_id, observeSeed.sessionId));
+    expect(observeBlocks.every((b) => b.status === 'draft')).toBe(true);
+
+    // enroll run (fresh DB)
+    await resetDb();
+    const dbEnroll = testDb();
+    const enrollSeed = await seed(dbEnroll);
+    await runAutoEnrollForSession({
+      db: dbEnroll,
+      sessionId: enrollSeed.sessionId,
+      subjectId: 'wenyan',
+      env: { [FLAG]: 'true' },
+      runTaggingFn: highConfidenceTagging,
+    });
+    expect(await dbEnroll.select().from(question)).toHaveLength(2);
+    expect(await dbEnroll.select().from(learning_record)).toHaveLength(2);
+    expect(
+      await dbEnroll.select().from(event).where(eq(event.action, 'experimental:record_capture')),
+    ).toHaveLength(2);
+    expect(
+      await dbEnroll.select().from(event).where(eq(event.action, OBSERVE_ACTION)),
+    ).toHaveLength(0);
+    const enrollBlocks = await dbEnroll
+      .select()
+      .from(question_block)
+      .where(eq(question_block.ingestion_session_id, enrollSeed.sessionId));
+    expect(enrollBlocks.every((b) => b.status === 'imported')).toBe(true);
+  });
+
+  // (g) Regression: enroll mode rejects a 'partial' session (§8 guard) so a
+  // careless flag flip can never enroll on a session the manual guard rejects.
+  it('(g) enroll mode rejects a partial session (observe accepts it)', async () => {
+    const db = testDb();
+    const { sessionId } = await seedWithStatus(db, 'partial');
+
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      subjectId: 'wenyan',
+      env: { [FLAG]: 'true' },
+      runTaggingFn: highConfidenceTagging,
+    });
+
+    expect(result.status).toBe('skipped:wrong_status');
+    expect(result.enrolled).toBe(0);
+    expect(await db.select().from(question)).toHaveLength(0);
+    const blocks = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.ingestion_session_id, sessionId));
+    expect(blocks.every((b) => b.status === 'draft')).toBe(true);
+  });
+
+  // (h) Off knob: observe explicitly disabled (and enroll OFF) ⇒ hard no-op
+  // (pre-Slice-B behavior): no observe events, no tagging calls.
+  it('(h) observe OFF knob: true no-op, no observe events, no tagging', async () => {
+    const db = testDb();
+    const { sessionId } = await seed(db);
+
+    let taggingCalled = false;
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      env: { [OBSERVE_FLAG]: 'false' },
+      runTaggingFn: async () => {
+        taggingCalled = true;
+        return highConfidenceTagging();
+      },
+    });
+
+    expect(result.status).toBe('skipped:flag_off');
+    expect(taggingCalled).toBe(false);
+    expect(await db.select().from(event).where(eq(event.action, OBSERVE_ACTION))).toHaveLength(0);
   });
 });
