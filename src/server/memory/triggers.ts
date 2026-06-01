@@ -132,17 +132,18 @@ export function buildMemoryEventIngestHandler(
   return async (jobs) => {
     memoryClient ??= createMemoryClient();
     const client = memoryClient;
-    // Read every job's event in parallel (was one awaited SELECT per job).
-    // The Mem0 writes below stay sequential + in order (external call), but the
-    // DB reads no longer serialize.
-    const rows = await Promise.all(jobs.map((job) => loadEvent(db, job.data.event_id)));
-    for (const row of rows) {
+    for (const job of jobs) {
+      const row = await loadEvent(db, job.data.event_id);
       if (!row) continue;
       await client.addEventMemory(row);
-      // De-dupe this event's scopes and fan the regen enqueues out concurrently
-      // (each send is per-scope singleton-deduped server-side anyway).
-      const scopeKeys = [...new Set(row.affected_scopes)];
-      await Promise.all(scopeKeys.map((scopeKey) => enqueueBriefRegen(boss, scopeKey)));
+      // De-dupe this event's scopes so a scope listed twice doesn't enqueue a
+      // redundant regen (pg-boss singletonKey would collapse it anyway). Kept
+      // sequential on purpose: this queue is registered at batchSize 1, so there
+      // is no batch-level fan-out to parallelize, and serial sends avoid an
+      // unbounded Promise.all if affected_scopes ever grows.
+      for (const scopeKey of new Set(row.affected_scopes)) {
+        await enqueueBriefRegen(boss, scopeKey);
+      }
     }
   };
 }
