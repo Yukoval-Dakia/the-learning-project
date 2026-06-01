@@ -115,14 +115,14 @@ describe('revertAutoEnrolledBlock', () => {
 
   it('retracts a failure auto-enrollment: retract event + archived record + reset block + question kept', async () => {
     const db = testDb();
-    const { blockId } = await seedAndAutoEnroll(db, FAILURE_DRAFT);
+    const { sessionId, blockId } = await seedAndAutoEnroll(db, FAILURE_DRAFT);
 
     // Precondition: block is auto_enrolled, an attempt + mistake record exist.
     const [before] = await db.select().from(question_block).where(eq(question_block.id, blockId));
     expect(before.status).toBe('auto_enrolled');
     const attempt = (await db.select().from(event).where(eq(event.action, 'attempt')))[0];
 
-    const res = await revertAutoEnrolledBlock(db, { blockId });
+    const res = await revertAutoEnrolledBlock(db, { blockId, sessionId });
 
     // A CorrectEvent(retract) targets the attempt event.
     expect(res.retractedEventId).toBe(attempt.id);
@@ -152,13 +152,13 @@ describe('revertAutoEnrolledBlock', () => {
 
   it('retracts an unanswered auto-enrollment against its capture event', async () => {
     const db = testDb();
-    const { blockId } = await seedAndAutoEnroll(db, 'unanswered');
+    const { sessionId, blockId } = await seedAndAutoEnroll(db, 'unanswered');
 
     const capture = (
       await db.select().from(event).where(eq(event.action, 'experimental:record_capture'))
     )[0];
 
-    const res = await revertAutoEnrolledBlock(db, { blockId });
+    const res = await revertAutoEnrolledBlock(db, { blockId, sessionId });
 
     expect(res.retractedEventId).toBe(capture.id);
     const [after] = await db.select().from(question_block).where(eq(question_block.id, blockId));
@@ -211,13 +211,27 @@ describe('revertAutoEnrolledBlock', () => {
       version: 0,
     });
 
-    await expect(revertAutoEnrolledBlock(db, { blockId })).rejects.toMatchObject({ status: 409 });
+    await expect(revertAutoEnrolledBlock(db, { blockId, sessionId })).rejects.toMatchObject({
+      status: 409,
+    });
   });
 
   it('rejects reverting a missing block (404)', async () => {
     const db = testDb();
-    await expect(revertAutoEnrolledBlock(db, { blockId: 'nope' })).rejects.toMatchObject({
-      status: 404,
-    });
+    await expect(
+      revertAutoEnrolledBlock(db, { blockId: 'nope', sessionId: 'sess_x' }),
+    ).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('rejects reverting a block that belongs to a different session (404, cross-session)', async () => {
+    const db = testDb();
+    const { blockId } = await seedAndAutoEnroll(db, FAILURE_DRAFT);
+    // Revert via a foreign session id → 404 (block not found in that session),
+    // and the block stays auto_enrolled (no cross-session mutation).
+    await expect(
+      revertAutoEnrolledBlock(db, { blockId, sessionId: 'someone_elses_session' }),
+    ).rejects.toMatchObject({ status: 404 });
+    const [blk] = await db.select().from(question_block).where(eq(question_block.id, blockId));
+    expect(blk.status).toBe('auto_enrolled');
   });
 });
