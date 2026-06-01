@@ -125,6 +125,9 @@ export const fastTestInclude = [
   // route, so it has no file-level DB import → unit partition (B1b, YUK-164).
   // `*` matches the literal `[id]` dynamic segment (mirrors app/api/ai/*/...).
   'app/api/ingestion/*/revert/route.test.ts',
+  // Coach TodayPlan read route mocks @/db/client + the reader before import →
+  // no live DB → unit partition (YUK-143, P0.4).
+  'app/api/coach/today-plan/route.test.ts',
   'tests/core/**/*.test.ts',
   'tests/schema/**/*.test.ts',
   'tests/subjects/**/*.test.ts',
