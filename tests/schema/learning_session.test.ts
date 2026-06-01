@@ -91,10 +91,7 @@ describe('LearningSessionStatusByType (discriminated union)', () => {
     ).toBe(false);
   });
 
-  it('accepts placeholder for tutor/explore/create', () => {
-    expect(
-      LearningSessionStatusByType.safeParse({ type: 'tutor', status: 'placeholder' }).success,
-    ).toBe(true);
+  it('accepts placeholder for explore/create (tutor now has a real machine)', () => {
     expect(
       LearningSessionStatusByType.safeParse({ type: 'explore', status: 'placeholder' }).success,
     ).toBe(true);
@@ -103,9 +100,17 @@ describe('LearningSessionStatusByType (discriminated union)', () => {
     ).toBe(true);
   });
 
-  it('rejects non-placeholder status for tutor (until real state machine defined)', () => {
-    expect(LearningSessionStatusByType.safeParse({ type: 'tutor', status: 'active' }).success).toBe(
-      false,
-    );
+  it('accepts the real tutor states (YUK-193 solve-tutor state machine)', () => {
+    for (const s of ['active', 'submitted', 'judged', 'ended', 'abandoned']) {
+      expect(LearningSessionStatusByType.safeParse({ type: 'tutor', status: s }).success).toBe(
+        true,
+      );
+    }
+  });
+
+  it('rejects placeholder status for tutor (real state machine now defined, YUK-193)', () => {
+    expect(
+      LearningSessionStatusByType.safeParse({ type: 'tutor', status: 'placeholder' }).success,
+    ).toBe(false);
   });
 });
