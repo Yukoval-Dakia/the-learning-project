@@ -15,7 +15,7 @@
 //     image_refs: string[],
 //     layout_quality: 'structured' | 'partial' | 'text_only',
 //     extraction_confidence: number,
-//     status: 'draft' | 'imported' | 'ignored',
+//     status: 'draft' | 'imported' | 'ignored' | 'auto_enrolled',
 //     knowledge_hint: string | null,
 //     created_at: number, // unix sec
 //   }

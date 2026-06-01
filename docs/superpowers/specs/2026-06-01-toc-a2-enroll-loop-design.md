@@ -21,7 +21,7 @@ auto_enrolled ──(OC-5 revert)───→ draft      (back to human review)
 
 Session machine unchanged (`uploaded→queued→extracting→extracted|partial|failed`; `extracted/partial→reviewed→imported`). Auto-enroll stays **`extracted`-only** for enroll mode (already guarded, `auto-enroll.ts:156`) and does NOT change session status (keeps its "doesn't close the session" contract). Coherence rules:
 
-- **Manual import skips non-`draft` blocks.** The import route imports only `status='draft'` blocks; `auto_enrolled`/`imported`/`ignored` are skipped (idempotent — a flag-ON `extracted` session is still human-importable for its remaining `draft` blocks).
+- **Manual import skips non-`draft` blocks.** The import route imports only `status='draft'` blocks; `auto_enrolled`/`imported`/`ignored` are skipped (idempotent — a flag-ON `extracted` session is still human-importable for its remaining `draft` blocks). **Lands in B1b** (see §5) — it is only reachable once the flag is ON, so it MUST ship before any `WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED` flip; B1a never produces an `auto_enrolled` block in production (flag OFF).
 - **`commitImport` stays the terminal owner** (allowed from `extracted`/`reviewed`, unchanged). A mixed session (some `auto_enrolled`, some `draft`) reaches `imported` when the human commits — even with zero remaining `draft` blocks (import nothing, flip terminal).
 
 ## 3. A2 — answered-mistake enrollment
@@ -46,8 +46,8 @@ The draft is computed **once** per answered-auto block and shared: observe mode 
 
 ## 5. Slices
 
-- **B1a** (this PR): enum `auto_enrolled`; enroll-branch draft→outcome+answer+cause + `auto_enrolled` status; manual-import skip non-`draft`. Backend, behind the OFF flag, unit+DB tested.
-- **B1b**: `revertAutoEnrolledBlock` + route. Backend.
+- **B1a** (this PR): enum `auto_enrolled`; enroll-branch draft→outcome+answer+cause + `auto_enrolled` status. Backend, behind the OFF flag, unit+DB tested.
+- **B1b**: `revertAutoEnrolledBlock` + route; **manual-import skip of non-`draft` blocks** (§2). Backend. Both gate the flag flip — B1b MUST land before any `WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED` ON.
 - **B2** (pre-flight-gated): OC-5 `/record` tab — list `action='experimental:auto_enroll_observed'` + enroll markers, revert.
 - **B3** (pre-flight-gated): review-UI prefill display (event-marker-only per D5).
 - **B4**: flag opt-in doc/guard + TaggingTask server-path-only doc-note.
