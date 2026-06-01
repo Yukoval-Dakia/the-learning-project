@@ -4,8 +4,10 @@
 //   §Test plan + §Validation-on-synthetic.
 //
 // All stubbed runTaskFn → zero token, deterministic. Drives the producer trigger
-// against the Station-1 synthetic seed (active wenyan subject + weak nodes), then
-// the dedup gates / cap / failure-swallow against hand-built substrate.
+// against the Station-1 synthetic seed (wenyan knowledge nodes whose mastery view
+// reads weak: evidence_count<3 → 0.5 < 0.55), so the mastery-based selector picks
+// 'wenyan' as the candidate domain. Then exercises the dedup gates / cap /
+// failure-swallow against hand-built substrate.
 //
 // `*.db.test.ts` under tests/** lands in the db partition (allTestInclude minus
 // fastTestInclude); it imports the testDb helper, so it must NOT be a unit test.
@@ -18,7 +20,7 @@ import {
 } from '@/server/boss/handlers/goal_scope_propose_nightly';
 import { listActiveGoals } from '@/server/goals/queries';
 import { runGoalScopeAndWrite } from '@/server/goals/scope';
-import { acceptAiProposal } from '@/server/proposals/actions';
+import { acceptAiProposal, retractAiProposal } from '@/server/proposals/actions';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -161,12 +163,13 @@ describe('runGoalScopeProposeNightly (DB integration)', () => {
     expect(goalRows).toHaveLength(1);
   });
 
-  it('dedup gate-3: an ACCEPTED proposal does NOT block re-propose (caused_by_event_id-only rate query, FIX-1)', async () => {
+  it('accept→dormant→re-propose: an ACCEPTED proposal does NOT block re-propose (caused_by_event_id-only rate query, FIX-1)', async () => {
     const db = testDb();
     await runSeed(db);
 
-    // Land a proposal, accept it, then RETRACT the goal so gate-2 (live goal)
-    // no longer covers wenyan — isolating the gate-3 caused_by_event_id behavior.
+    // Land a proposal, accept it, then tombstone the materialized goal to
+    // 'dormant' (the accept→dormant path) so gate-2 (live goal) no longer covers
+    // wenyan — isolating the gate-3 caused_by_event_id behavior.
     const first = await runGoalScopeProposeNightly(db, { runTaskFn: stubGoalScopeRunTask() });
     if (!first.proposal_id) throw new Error('expected first proposal id');
     await acceptAiProposal(db, first.proposal_id);
@@ -185,10 +188,10 @@ describe('runGoalScopeProposeNightly (DB integration)', () => {
     expect(rate).toBeTruthy();
     expect(rate.subject_kind).toBe('event');
 
-    // Tombstone the goal to dormant so gate-2 (live goal) no longer covers
-    // wenyan — isolating the gate-3 caused_by_event_id behavior. (The goal id is
-    // the reserved target.subject_id, not the proposal event id, so key on
-    // subject_id.)
+    // Tombstone the goal to dormant directly (the accept→dormant path) so gate-2
+    // (live goal) no longer covers wenyan — isolating the gate-3
+    // caused_by_event_id behavior. (The goal id is the reserved target.subject_id,
+    // not the proposal event id, so key on subject_id.)
     await db.update(goal).set({ status: 'dormant' }).where(eq(goal.subject_id, 'wenyan'));
     expect((await listActiveGoals(db)).some((g) => g.subject_id === 'wenyan')).toBe(false);
 
@@ -201,13 +204,53 @@ describe('runGoalScopeProposeNightly (DB integration)', () => {
     expect(stub).toHaveBeenCalledTimes(1);
   });
 
-  it('no-op: no active subjects → considered 0, proposed 0, stub not called', async () => {
+  it('retract→re-propose: a RETRACTED pending proposal does NOT block re-propose (chained `correct` clears pending, FIX-3)', async () => {
     const db = testDb();
-    // empty DB — no seed, no activity.
+    await runSeed(db);
+
+    // Land a PENDING proposal (never accepted), then retract it. retractAiProposal
+    // writes a `correct` event (subject_kind:'event', caused_by_event_id=propose)
+    // and NO `rate`. Without FIX-3 (chained-`correct` arm) the retracted propose
+    // would mis-read as still-pending and lock wenyan out of re-propose forever.
+    const first = await runGoalScopeProposeNightly(db, { runTaskFn: stubGoalScopeRunTask() });
+    if (!first.proposal_id) throw new Error('expected first proposal id');
+
+    await retractAiProposal(db, first.proposal_id, { reason_md: 'noise' });
+
+    // Confirm the retract wrote a `correct` event chained to the propose and that
+    // it is subject_kind:'event' (the load-bearing divergence FIX-3 relies on).
+    const correction = (
+      await db
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'correct'), eq(event.caused_by_event_id, first.proposal_id)))
+        .limit(1)
+    )[0];
+    expect(correction).toBeTruthy();
+    expect(correction.subject_kind).toBe('event');
+
+    // No live goal exists (the proposal was never accepted), so gate-2 is clear.
+    expect((await listActiveGoals(db)).some((g) => g.subject_id === 'wenyan')).toBe(false);
+
+    // Re-propose must NOT be blocked: the retracted propose has a chained `correct`
+    // so it is decided (not pending) and drops out of loadPendingGoalScopeSubjects.
+    const stub = stubGoalScopeRunTask();
+    const second = await runGoalScopeProposeNightly(db, { runTaskFn: stub });
+    expect(second.skipped_pending).toBe(0);
+    expect(second.proposed).toBe(1);
+    expect(stub).toHaveBeenCalledTimes(1);
+  });
+
+  it('no-op: no weak nodes in any known domain → skipped_no_weak, proposed 0, stub not called', async () => {
+    const db = testDb();
+    // Empty DB — no seed, no knowledge nodes. The mastery-based selector finds no
+    // weak node in any KNOWN domain (FIX #1: selection folds in the weak-node
+    // gate), so it short-circuits before resolving any candidate.
     const stub = stubGoalScopeRunTask();
     const result = await runGoalScopeProposeNightly(db, { runTaskFn: stub });
 
     expect(result.considered).toBe(0);
+    expect(result.skipped_no_weak).toBe(1);
     expect(result.proposed).toBe(0);
     expect(stub).not.toHaveBeenCalled();
   });
@@ -234,8 +277,9 @@ describe('runGoalScopeProposeNightly (DB integration)', () => {
   it('builder rethrows on a pre-LLM DB fault (retryable) — does not swallow', async () => {
     // A handler built against a broken Db whose first read throws should rethrow
     // (pg-boss retries). We simulate by passing a Db proxy whose select throws on
-    // the listActiveSubjectsSinceRefresh path. Simplest: a non-DB object that
-    // throws when used — the builder's try/catch must rethrow, not swallow.
+    // the loadTreeSnapshot path (the first pre-LLM read after FIX #1). Simplest: a
+    // non-DB object that throws when used — the builder's try/catch must rethrow,
+    // not swallow.
     const brokenDb = {
       select() {
         throw new Error('simulated DB fault');

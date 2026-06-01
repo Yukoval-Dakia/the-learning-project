@@ -11,6 +11,7 @@
 | `knowledge_maintenance_nightly` | `0 3` | KnowledgeReviewTask 维护流 |
 | `dreaming_nightly` | `15 3` | Dreaming producer（DomainTool MCP bridge）|
 | `coach_daily` | `45 3` | 读 Dreaming 同夜 proposal |
+| `goal_scope_propose_nightly` | `50 3` | 从累积 mastery 提议 goal_scope（在 coach_daily `45 3` 后、`0 4` prune 前；每夜 1 次，cap=1）|
 | `prune_job_events` | `0 4` | bulk DELETE（其它 prune 错开避锁）|
 | `prune_orphan_review_sessions` | `15 4` | 弃置 >6h stuck review session |
 | `prune_orphan_conversation_sessions` | `25 4` | 弃置 stuck conversation |
