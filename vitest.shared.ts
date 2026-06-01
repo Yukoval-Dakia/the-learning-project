@@ -62,6 +62,10 @@ export const fastTestInclude = [
   // runTaskFn, no live DB / AI / R2. (sibling tencent_ocr_extract handler test
   // hits Postgres → db partition.)
   'src/server/ingestion/structure.test.ts',
+  // T-OC slice A1 (YUK-145): the MistakeEnrollTask invoker is a pure DI unit —
+  // injected runTaskFn, no live DB / AI. (sibling auto-enroll.test.ts hits
+  // Postgres → db partition.)
+  'src/server/ingestion/mistake_enroll.test.ts',
   // T-OC slice 3 (YUK-145): the deterministic WorkflowJudge aggregator + the
   // auto-enroll flag config readers are pure (no DB / no LLM). The sibling
   // tagging.test.ts + auto-enroll.test.ts hit live Postgres → db partition.
