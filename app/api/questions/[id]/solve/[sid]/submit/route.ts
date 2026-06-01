@@ -26,7 +26,7 @@ export async function POST(
   ctx: { params: Promise<{ id: string; sid: string }> },
 ): Promise<Response> {
   try {
-    const { sid } = await ctx.params;
+    const { id, sid } = await ctx.params;
     const raw = await req.json().catch(() => null);
     const parsed = Body.safeParse(raw);
     if (!parsed.success) {
@@ -37,7 +37,12 @@ export async function POST(
       );
     }
 
-    const result = await submitSolveAttempt({ db, sessionId: sid, submission: parsed.data });
+    const result = await submitSolveAttempt({
+      db,
+      sessionId: sid,
+      submission: parsed.data,
+      expectedQuestionId: id,
+    });
 
     // Enqueue attribution after the response path commits (failure only).
     // VITEST guard mirrors /api/mistakes + /api/embedded-check/attempt. Uses

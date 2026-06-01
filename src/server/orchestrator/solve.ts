@@ -24,6 +24,12 @@ import { Tutor } from '@/server/session';
 
 export type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
 
+// Default mastery threshold for solve-tutor: a judged attempt scoring below this
+// is enrolled as a mistake (spec §3.2 "score < subject's mastery threshold").
+// Subject profiles do not yet carry a per-subject threshold; this constant is the
+// single default until they do (revisit when SubjectProfile gains the field).
+const SOLVE_MASTERY_THRESHOLD = 0.7;
+
 export class SolveError extends Error {
   constructor(
     public code:
@@ -102,6 +108,8 @@ export interface PlanSolveHintParams {
   sessionId: string;
   /** 0-based hint count so far in this session — escalates the ask. */
   hintIndex: number;
+  /** When set, the session's linked question must equal this (route-level guard). */
+  expectedQuestionId?: string;
   runTaskFn?: RunTaskFn;
 }
 
@@ -145,9 +153,21 @@ export async function planSolveHint(params: PlanSolveHintParams): Promise<PlanSo
   const { db, sessionId, hintIndex } = params;
   const runTaskFn = params.runTaskFn ?? defaultRunTaskFn;
 
-  const { questionId } = await Tutor.getTutorQuestionId(db, sessionId);
+  const { questionId, status } = await Tutor.getTutorQuestionId(db, sessionId);
   if (!questionId) {
     throw new SolveError('session_not_found', `tutor session ${sessionId} missing question link`);
+  }
+  if (params.expectedQuestionId !== undefined && questionId !== params.expectedQuestionId) {
+    throw new SolveError(
+      'session_not_found',
+      `tutor session ${sessionId} is not bound to question ${params.expectedQuestionId}`,
+    );
+  }
+  // Hints are only meaningful while the student is still solving; once the
+  // session is submitted/judged/ended the worked solution is (or will be)
+  // revealed, so refuse to spend more LLM budget on hints.
+  if (status !== 'active') {
+    throw new SolveError('session_not_active', `tutor session ${sessionId} status=${status}`);
   }
   const [q] = await db
     .select({
@@ -201,6 +221,8 @@ export interface SubmitSolveAttemptParams {
   db: Db;
   sessionId: string;
   submission: SolveSubmission;
+  /** When set, the session's linked question must equal this (route-level guard). */
+  expectedQuestionId?: string;
   /** Injected in tests; defaults to the production JudgeInvoker. */
   judgeFn?: JudgeFn;
   runTaskFn?: RunTaskFn;
@@ -253,6 +275,12 @@ export async function submitSolveAttempt(
   if (!questionId) {
     throw new SolveError('session_not_found', `tutor session ${sessionId} missing question link`);
   }
+  if (params.expectedQuestionId !== undefined && questionId !== params.expectedQuestionId) {
+    throw new SolveError(
+      'session_not_found',
+      `tutor session ${sessionId} is not bound to question ${params.expectedQuestionId}`,
+    );
+  }
   if (status !== 'active') {
     throw new SolveError('session_not_active', `tutor session ${sessionId} status=${status}`);
   }
@@ -289,14 +317,25 @@ export async function submitSolveAttempt(
     evidence_json: judgeResult.evidence_json,
   };
 
-  // session: active → submitted (then → judged after the write commits)
-  await Tutor.markSubmitted(db, sessionId);
+  // Enroll a mistake when the attempt scores below mastery. Prefer the numeric
+  // score (spec: "score < mastery threshold"); fall back to the coarse outcome
+  // only when the judge could not produce a score (e.g. unsupported).
+  const belowMastery =
+    judgeResult.score !== null
+      ? judgeResult.score < SOLVE_MASTERY_THRESHOLD
+      : outcome === 'failure';
 
   const now = new Date();
   const attemptEventId = createId();
   let mistakeId: string | undefined;
 
+  // One transaction for the whole judged-attempt write: status active → submitted
+  // → judged is committed atomically with the attempt event + mistake. If any
+  // write fails the transition rolls back too, so the session never strands in
+  // `submitted`. FOR UPDATE inside the transitions serialises concurrent submits
+  // (the loser hits assertFromState and its txn aborts — no duplicate attempt).
   await db.transaction(async (tx) => {
+    await Tutor.markSubmittedTx(tx, sessionId);
     await writeEvent(tx, {
       id: attemptEventId,
       session_id: sessionId,
@@ -322,7 +361,7 @@ export async function submitSolveAttempt(
       created_at: now,
     });
 
-    if (outcome === 'failure') {
+    if (belowMastery) {
       mistakeId = createId();
       await createLearningRecord(tx, {
         id: mistakeId,
@@ -347,10 +386,10 @@ export async function submitSolveAttempt(
         },
       });
     }
-  });
 
-  // session: submitted → judged (reveal happens after this commits)
-  await Tutor.markJudged(db, sessionId);
+    // submitted → judged, atomic with the writes above (reveal is in the response).
+    await Tutor.markJudgedTx(tx, sessionId);
+  });
 
   return {
     attempt_event_id: attemptEventId,
