@@ -701,7 +701,9 @@ describe('P5.5 Phase 1 tool-eval fixtures', () => {
     const nodeIds = k.nodes.map((n) => n.id);
     expect(nodeIds).toContain('k_zhi');
     expect(nodeIds).toContain('k_zhi_pron'); // a 之 child
-    expect(k.edges.some((e) => e.relation_type === 'contrasts_with' && e.to_knowledge_id === 'k_er')).toBe(true);
+    expect(
+      k.edges.some((e) => e.relation_type === 'contrasts_with' && e.to_knowledge_id === 'k_er'),
+    ).toBe(true);
     expect(k.recent_failures?.length ?? 0).toBeGreaterThan(0);
     expect(k.recent_failures?.[0].event_id).toBe('att_zhi_kq');
 
