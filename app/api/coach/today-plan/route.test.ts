@@ -26,6 +26,9 @@ describe('GET /api/coach/today-plan', () => {
     const res = await GET();
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(view);
+    // The route's only wiring contract: it passes the db client to the reader.
+    expect(getLatestCoachPlan).toHaveBeenCalledTimes(1);
+    expect(getLatestCoachPlan).toHaveBeenCalledWith({}); // the mocked @/db/client
   });
 
   it('maps a thrown error through errorResponse', async () => {
