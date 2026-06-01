@@ -121,6 +121,9 @@ export const fastTestInclude = [
   // live-Postgres dependency and belongs in the no-Docker unit partition (YUK-134).
   'app/api/health/route.test.ts',
   'app/api/study-log/route.test.ts',
+  // Coach TodayPlan read route mocks @/db/client + the reader before import →
+  // no live DB → unit partition (YUK-143, P0.4).
+  'app/api/coach/today-plan/route.test.ts',
   'tests/core/**/*.test.ts',
   'tests/schema/**/*.test.ts',
   'tests/subjects/**/*.test.ts',
