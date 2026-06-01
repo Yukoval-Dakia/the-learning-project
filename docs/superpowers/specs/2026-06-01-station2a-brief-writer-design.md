@@ -3,7 +3,7 @@
 - **Linear:** YUK-185
 - **Date:** 2026-06-01
 - **Author:** architect
-- **Status:** draft (not committed)
+- **Status:** Implemented (PR #232, YUK-185) — committed.
 - **Depends on:** P5.2 brief regen pipeline (already merged), P5.3 freshness scorer (`brief-freshness.ts`)
 
 ---

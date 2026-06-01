@@ -69,6 +69,7 @@ describe('regenerateMemoryBrief — P5.3 score persistence (DB)', () => {
           action: 'attempt',
           subject_kind: 'question',
           subject_id: 'q1',
+          outcome: 'success',
           payload: {},
           created_at: daysAgo(0),
         },

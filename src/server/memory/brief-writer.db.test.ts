@@ -128,6 +128,7 @@ describe('brief-writer end-to-end through regenerateMemoryBrief (DB, stubbed LLM
           action: 'attempt',
           subject_kind: 'question',
           subject_id: 'q1',
+          outcome: 'failure',
           payload: {},
           created_at: daysAgo(2),
         },

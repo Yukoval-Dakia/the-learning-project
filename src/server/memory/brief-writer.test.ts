@@ -15,12 +15,18 @@ import { BriefDraftOutputSchema, parseBriefDraftOutput, runBriefWriter } from '.
 const NOW = new Date('2026-06-01T00:00:00Z');
 const daysAgo = (n: number) => new Date(NOW.getTime() - n * 86_400_000);
 
-function evt(id: string, createdAt: Date, payload: unknown = {}): BriefEvent {
+function evt(
+  id: string,
+  createdAt: Date,
+  payload: unknown = {},
+  outcome: string | null = null,
+): BriefEvent {
   return {
     id,
     action: 'attempt',
     subject_kind: 'question',
     subject_id: `q-${id}`,
+    outcome,
     payload,
     created_at: createdAt,
   };
@@ -56,10 +62,28 @@ describe('parseBriefDraftOutput', () => {
     expect(() => parseBriefDraftOutput('no braces here')).toThrow(/no JSON object/);
   });
 
-  it('defaults all 6 fields so a partial response parses', () => {
-    const parsed = BriefDraftOutputSchema.parse({ recent_week_md: 'x' });
-    expect(parsed.recent_months_md).toBe('');
-    expect(parsed.long_term_evidence_ids).toEqual([]);
+  // PR #232 review (FIX #3) — all 6 keys are now REQUIRED. A response that DROPS
+  // a section must FAIL parse (so the F-1 per-scope catch in triggers.ts leaves
+  // the prior brief intact) rather than silently parse into an all-empty draft
+  // and let regenerateMemoryBrief upsert ''/[] over a good prior brief.
+  it('throws when the response is missing a key (no silent default-to-empty)', () => {
+    expect(() => BriefDraftOutputSchema.parse({ recent_week_md: 'x' })).toThrow();
+    // A complete-but-empty response is still legitimate (empty windows allowed).
+    const full = BriefDraftOutputSchema.parse(JSON.parse(draftBlob()));
+    expect(full.recent_months_md).toBe('## months');
+    expect(full.long_term_evidence_ids).toEqual([]);
+  });
+
+  it('allows empty-string md VALUES but not a missing md KEY', () => {
+    const emptyMd = BriefDraftOutputSchema.parse(
+      JSON.parse(draftBlob({ recent_week_md: '', recent_months_md: '', long_term_md: '' })),
+    );
+    expect(emptyMd.recent_week_md).toBe('');
+    // Drop a single key (long_term_evidence_ids) → throws.
+    const partial = JSON.parse(draftBlob());
+    // biome-ignore lint/performance/noDelete: test fixture — assert a dropped key fails parse.
+    delete partial.long_term_evidence_ids;
+    expect(() => BriefDraftOutputSchema.parse(partial)).toThrow();
   });
 });
 
@@ -104,7 +128,16 @@ describe('runBriefWriter', () => {
       runTaskFn: stub,
       scopeKey: 'subject:s1',
       template: 'summarize subject',
-      events: [evt('e1', daysAgo(2), { outcome: 'failure', answer_md: longText, junk: 'drop me' })],
+      // FIX #1 — `outcome` is the 4th arg (the event COLUMN), no longer read from
+      // the payload. `payload.outcome` here is junk and must NOT be projected.
+      events: [
+        evt(
+          'e1',
+          daysAgo(2),
+          { outcome: 'ignored-in-payload', answer_md: longText, junk: 'drop me' },
+          'failure',
+        ),
+      ],
       facts,
       now: NOW.toISOString(),
     });
@@ -113,17 +146,51 @@ describe('runBriefWriter', () => {
     const input = captured.input as {
       now: string;
       scope_key: string;
-      events: { id: string; payload: { outcome?: string; excerpt?: string } }[];
+      events: { id: string; outcome?: string; payload: { excerpt?: string } }[];
       facts: { id: string; memory: string }[];
     };
     expect(input.now).toBe(NOW.toISOString()); // 3A — real-clock anchor threaded
     expect(input.scope_key).toBe('subject:s1');
-    // I-3 — payload projected to { outcome?, excerpt? }, excerpt hard-truncated to 180.
-    expect(input.events[0].payload.outcome).toBe('failure');
+    // FIX #1 — `outcome` comes from the top-level event field, NOT the payload.
+    expect(input.events[0].outcome).toBe('failure');
+    // I-3 — payload projected to { excerpt? }, excerpt hard-truncated to 180; the
+    // payload no longer carries `outcome`.
+    expect((input.events[0].payload as Record<string, unknown>).outcome).toBeUndefined();
     expect(input.events[0].payload.excerpt).toHaveLength(180);
     expect((input.events[0].payload as Record<string, unknown>).junk).toBeUndefined();
     // facts are passed but as { id, memory } — not as evidence.
     expect(input.facts[0]).toEqual({ id: 'fact-1', memory: 'prefers contrastive examples' });
+  });
+
+  it('projects review / record / note text fields into the excerpt (FIX #2)', async () => {
+    const captured: { input?: unknown } = {};
+    const stub: TaskTextRunFn = vi.fn(async (_kind, input) => {
+      captured.input = input;
+      return { text: draftBlob() };
+    });
+
+    await runBriefWriter({
+      runTaskFn: stub,
+      scopeKey: 'global',
+      template: 'summarize globally',
+      events: [
+        // review reply text lives in payload.user_response_md
+        evt('rev', daysAgo(1), { user_response_md: 'my review answer' }),
+        // record capture text lives in payload.summary_md
+        evt('rec', daysAgo(2), { summary_md: 'captured summary' }),
+        // note text lives in payload.content_md
+        evt('note', daysAgo(3), { content_md: 'note body' }),
+      ],
+      facts,
+      now: NOW.toISOString(),
+    });
+
+    const input = captured.input as {
+      events: { id: string; payload: { excerpt?: string } }[];
+    };
+    expect(input.events.find((e) => e.id === 'rev')?.payload.excerpt).toBe('my review answer');
+    expect(input.events.find((e) => e.id === 'rec')?.payload.excerpt).toBe('captured summary');
+    expect(input.events.find((e) => e.id === 'note')?.payload.excerpt).toBe('note body');
   });
 
   it('cold-scope (events: []) returns an all-empty draft WITHOUT calling the stub (4A)', async () => {
