@@ -27,13 +27,16 @@
  * The DEFERRED "AI auto-enrolled N items" review surface (slice 3b) reads the
  * `generated_by='workflow_judge'` event marker to let the user inspect + revert.
  */
+import { createHash } from 'node:crypto';
+
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, sql } from 'drizzle-orm';
 
 import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
 import type { TaggingOutputT } from '@/core/schema/tagging';
-import type { Db, Tx } from '@/db/client';
+import type { Db } from '@/db/client';
 import { learning_session, question, question_block } from '@/db/schema';
+import { type WriteEventInput, writeEvent } from '@/server/events/queries';
 import { enrollCapturedBlock } from '@/server/ingestion/enroll';
 import {
   type RunTaggingTaskParams,
@@ -45,6 +48,7 @@ import {
   type FlagEnv,
   autoEnrollEnabled,
   autoEnrollThreshold,
+  observeEnabled,
 } from '@/server/ingestion/workflow-judge-config';
 
 export type AutoEnrollSkipReason = 'flag_off' | 'session_not_found' | 'wrong_status';
@@ -76,6 +80,12 @@ export interface RunAutoEnrollParams {
   subjectId?: string;
   /** Inject in tests; defaults to the production TaggingTask invoker. */
   runTaggingFn?: (params: RunTaggingTaskParams) => Promise<TaggingOutputT>;
+  /**
+   * Inject in tests; defaults to the real `writeEvent`. Used by observe mode to
+   * write the per-block audit event. Mirrors `runTaggingFn?` — tests inject a fn
+   * that throws for a chosen block to prove per-block observe-write isolation.
+   */
+  writeEventFn?: (db: Db, input: WriteEventInput) => Promise<string>;
   /** Override env for the flag / threshold reads (tests). */
   env?: FlagEnv;
   /** Shared wall-clock for the batch. */
@@ -93,14 +103,23 @@ export async function runAutoEnrollForSession(
 ): Promise<RunAutoEnrollResult> {
   const env = params.env ?? process.env;
 
-  // ---- CRITICAL SAFETY GATE: OFF by default → no-op before any work. ----
-  if (!autoEnrollEnabled(env)) {
+  // ---- Mode resolution (Strategy D Slice B, YUK-190). ----
+  // enroll flag ON  → 'enroll' (the original auto-import path, UNCHANGED).
+  // enroll OFF + observe ON (the default) → 'observe' (tag+judge, audit-only).
+  // enroll OFF + observe OFF → 'off' (the pre-Slice-B hard no-op).
+  const mode: 'enroll' | 'observe' | 'off' = autoEnrollEnabled(env)
+    ? 'enroll'
+    : observeEnabled(env)
+      ? 'observe'
+      : 'off';
+  if (mode === 'off') {
     return { status: 'skipped:flag_off', enrolled: 0, routed_to_review: 0, blocks: [] };
   }
 
   const threshold = autoEnrollThreshold(env);
   const now = params.now ?? new Date();
   const runTaggingFn = params.runTaggingFn ?? runTaggingTask;
+  const writeEventFn = params.writeEventFn ?? writeEvent;
 
   // Load the session (must be an ingestion session in an extractable state).
   const sessionRows = await params.db
@@ -111,8 +130,17 @@ export async function runAutoEnrollForSession(
   if (!session) {
     return { status: 'skipped:session_not_found', enrolled: 0, routed_to_review: 0, blocks: [] };
   }
-  // Auto-enroll runs after extraction, before human review.
+  // Auto-enroll runs after extraction, before human review. Both modes share the
+  // {extracted, partial} entry gate, BUT enroll mode narrows to 'extracted' only
+  // (§8 guard): enroll flips blocks to 'imported', and the manual import guard
+  // rejects 'partial' (assertSessionAvailableForImport(['extracted','reviewed'])),
+  // so letting enroll act on a 'partial' session would create the YUK-164 #1
+  // 409-mismatch the day someone flips the flag. observe acts on both — observing
+  // a degraded-layout session is harmless and we want its quality distribution.
   if (session.status !== 'extracted' && session.status !== 'partial') {
+    return { status: 'skipped:wrong_status', enrolled: 0, routed_to_review: 0, blocks: [] };
+  }
+  if (mode === 'enroll' && session.status !== 'extracted') {
     return { status: 'skipped:wrong_status', enrolled: 0, routed_to_review: 0, blocks: [] };
   }
   const sourceDocumentId = session.source_document_id ?? '';
@@ -165,6 +193,52 @@ export async function runAutoEnrollForSession(
       tagging,
       threshold,
     });
+
+    // ---- Phase B — OBSERVE (flag OFF, observe ON): write a standalone audit ----
+    // event per block (BOTH 'auto' and 'review' routes — we want the full quality
+    // distribution) and continue. Zero domain rows, no block UPDATE, no
+    // enrollCapturedBlock, no commitImport. Best-effort: a single failed audit
+    // write logs + continues so one bad write never aborts the batch (§5.4).
+    if (mode === 'observe') {
+      try {
+        await writeEventFn(params.db, {
+          id: observeEventId(params.sessionId, block.id),
+          session_id: null,
+          actor_kind: 'agent',
+          actor_ref: 'workflow_judge',
+          action: 'experimental:auto_enroll_observed',
+          subject_kind: 'question_block',
+          subject_id: block.id,
+          outcome: verdict.route === 'auto' ? 'success' : 'skipped',
+          payload: {
+            generated_by: 'workflow_judge',
+            mode: 'observe',
+            route: verdict.route,
+            confidence: verdict.confidence,
+            threshold,
+            reasoning: verdict.reasoning,
+            extraction_confidence: block.extraction_confidence,
+            tagging_overall_confidence: tagging.overall_confidence,
+            suggested_knowledge_ids: verdict.prefilled.knowledge_ids,
+            ingestion_session_id: params.sessionId,
+          },
+          caused_by_event_id: null,
+          task_run_id: null,
+          cost_micro_usd: null,
+          // ★ Memory-outbox OPT-OUT (§3.5): stamping ingest_at non-NULL makes the
+          // outbox poller (triggers.ts: WHERE ingest_at IS NULL) skip this row, so
+          // no Mem0 `add` / brief-regen fan-out fires for a judge-verdict on the
+          // inert OFF path. This is an opt-out of memory ingestion, NOT a claim
+          // that ingestion already ran; a future slice that wants verdicts in
+          // memory removes this stamp.
+          ingest_at: now,
+          created_at: now,
+        });
+      } catch (err) {
+        console.error(`[auto_enroll:observe] writeEvent failed for block ${block.id}`, err);
+      }
+      continue;
+    }
 
     if (verdict.route !== 'auto') {
       routedToReview += 1;
@@ -249,4 +323,15 @@ export async function runAutoEnrollForSession(
     routed_to_review: routedToReview,
     blocks: enrolled,
   };
+}
+
+/**
+ * Deterministic event id for an observe-only audit event (Slice B, YUK-190).
+ * A stable sha256 of `auto_enroll_observed:${sessionId}:${blockId}` so a pg-boss
+ * redelivery / re-run of the `auto_enroll` job writes NO duplicate event
+ * (writeEvent's onConflictDoNothing makes the second write a no-op, preserving
+ * the already-stamped `ingest_at`). A random cuid would break this idempotency.
+ */
+export function observeEventId(sessionId: string, blockId: string): string {
+  return createHash('sha256').update(`auto_enroll_observed:${sessionId}:${blockId}`).digest('hex');
 }

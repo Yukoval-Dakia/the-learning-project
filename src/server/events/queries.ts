@@ -995,6 +995,15 @@ export interface WriteEventInput {
   task_run_id?: string | null;
   cost_micro_usd?: number | null;
   created_at?: Date;
+  /**
+   * ADR-0021 opt-out: when set non-NULL at INSERT, the memory-ingestion outbox
+   * poller (`src/server/memory/triggers.ts` — `WHERE ingest_at IS NULL`) skips
+   * this event, so it never spawns a Mem0 `add` or brief-regen. Default NULL
+   * preserves the pending-ingest semantics for every existing caller. Stamping
+   * `ingest_at = now` is an *opt-out of memory ingestion*, NOT a claim that
+   * ingestion already ran. Used by the observe-only auto-enroll trail (YUK-190).
+   */
+  ingest_at?: Date | null;
 }
 
 /**
@@ -1044,6 +1053,9 @@ export async function writeEvent(db: DbLike, input: WriteEventInput): Promise<st
       affected_scopes: affectedScopes,
       task_run_id: input.task_run_id ?? null,
       cost_micro_usd: input.cost_micro_usd ?? null,
+      // NULL default = pending ingest (ADR-0021). A non-NULL stamp opts the row
+      // out of the memory outbox poller (see WriteEventInput.ingest_at).
+      ingest_at: input.ingest_at ?? null,
       created_at: input.created_at ?? new Date(),
     })
     .onConflictDoNothing({ target: event.id });

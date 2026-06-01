@@ -25,6 +25,13 @@
 export const AUTO_ENROLL_FLAG = 'WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED';
 /** Env var for the combined-confidence threshold. Default 0.85 (conservative). */
 export const AUTO_ENROLL_THRESHOLD_FLAG = 'WORKFLOW_JUDGE_AUTO_ENROLL_THRESHOLD';
+/**
+ * Env var that gates the OBSERVE-only path (Strategy D Slice B, YUK-190).
+ * Default ON: when the enroll flag above is OFF (its default), observe runs
+ * tagging + judge and writes a durable per-block audit event (zero domain rows,
+ * blocks stay 'draft'). Set to 'false' to make OFF a true no-op again.
+ */
+export const OBSERVE_FLAG = 'WORKFLOW_JUDGE_OBSERVE_ENABLED';
 
 /** Conservative default threshold: high bar → most blocks go to human review. */
 export const DEFAULT_AUTO_ENROLL_THRESHOLD = 0.85;
@@ -55,4 +62,17 @@ export function autoEnrollThreshold(env: FlagEnv = process.env): number {
   const parsed = Number(raw);
   if (!Number.isFinite(parsed)) return DEFAULT_AUTO_ENROLL_THRESHOLD;
   return Math.min(1, Math.max(0, parsed));
+}
+
+/**
+ * True UNLESS `WORKFLOW_JUDGE_OBSERVE_ENABLED` is explicitly 'false'
+ * (case-insensitive). Default ON — observe is the desired OFF-flag behavior
+ * (run tagging + judge, write the audit trail, change no domain state). Note
+ * the polarity differs from `autoEnrollEnabled` (opt-IN): observe is opt-OUT so
+ * the absence of the var preserves the "OFF means observe" goal (Slice B,
+ * YUK-190). Setting it to 'false' restores the pre-Slice-B hard no-op.
+ */
+export function observeEnabled(env: FlagEnv = process.env): boolean {
+  const value = env[OBSERVE_FLAG];
+  return !(typeof value === 'string' && value.toLowerCase() === 'false');
 }
