@@ -874,6 +874,84 @@ describe('runEdgeProposeAndWrite — L1 rubric floor (YUK-175)', () => {
     expect(liveEvents).toHaveLength(0);
   });
 
+  // codex r? P2 (propose_edge.ts:163) — per-edge evidence scoping. Before the
+  // fix, runEdgeProposeAndWrite attached EVERY recentFailure to EVERY edge's
+  // evidence_refs, so edge B (only 1 endpoint-touching failure) could BORROW
+  // edge A's 2 same-pattern failures from the SAME batch and clear the strong
+  // floor → wrongly written live. After the fix, each edge's evidence_refs is
+  // scoped to recentFailures whose effective referenced ids (attempt ∪ judge,
+  // matching rubric-validator's effectiveReferencedKnowledgeIds) touch THAT
+  // edge's own endpoints. So edge B is scoped to its single failure → medium →
+  // folded; edge A keeps its 2 → strong → live.
+  it('per-edge evidence scope: edge B cannot borrow edge A batch evidence to clear the strong floor', async () => {
+    const db = testDb();
+    await insertKnowledge('kA1');
+    await insertKnowledge('kA2');
+    await insertKnowledge('kB1');
+    await insertKnowledge('kB2');
+
+    // Edge A endpoints: kA1/kA2 — TWO same-cause in-window judge-backed failures
+    // touch kA1 (strong, endpoint-touching).
+    await seedJudgeFailure('att_A1', ['kA1'], 1, 'concept');
+    await seedJudgeFailure('att_A2', ['kA1'], 2, 'concept');
+    // Edge B endpoints: kB1/kB2 — ONLY ONE in-window judge-backed failure touches
+    // kB1 (at most medium on its own).
+    await seedJudgeFailure('att_B1', ['kB1'], 1, 'concept');
+
+    const recentFailures = await getFailureAttempts(db, {
+      since: new Date(Date.now() - 5 * DAY_MS),
+    });
+    expect(recentFailures.length).toBe(3);
+
+    const fakeRunTask = async () => ({
+      text: JSON.stringify({
+        proposals: [
+          {
+            from_knowledge_id: 'kA1',
+            to_knowledge_id: 'kA2',
+            relation_type: 'related_to',
+            weight: 0.6,
+            reasoning: reasoningFor('att_A1'),
+          },
+          {
+            from_knowledge_id: 'kB1',
+            to_knowledge_id: 'kB2',
+            relation_type: 'related_to',
+            weight: 0.6,
+            reasoning: reasoningFor('att_B1'),
+          },
+        ],
+      }),
+    });
+
+    const stats = await runEdgeProposeAndWrite({ db, recentFailures, runTaskFn: fakeRunTask });
+    // Edge A: 2 endpoint-touching same-pattern failures → live.
+    // Edge B: only 1 endpoint-touching failure (cannot borrow A's) → folded.
+    expect(stats.proposed).toBe(1);
+    expect(stats.folded_rubric_rejected).toBe(1);
+
+    const proposeEvents = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge_edge')));
+    expect(proposeEvents).toHaveLength(2);
+
+    const edgeA = proposeEvents.find((row) => {
+      const p = row.payload as { from_knowledge_id?: string };
+      return p.from_knowledge_id === 'kA1';
+    });
+    const edgeB = proposeEvents.find((row) => {
+      const p = row.payload as { from_knowledge_id?: string };
+      return p.from_knowledge_id === 'kB1';
+    });
+    // Edge A written LIVE (no rubric_verdict marker).
+    const edgeAPayload = edgeA?.payload as { rubric_verdict?: unknown };
+    expect(edgeAPayload.rubric_verdict).toBeUndefined();
+    // Edge B written FOLDED (rubric_verdict.ok === false), NOT live pending.
+    const edgeBPayload = edgeB?.payload as { rubric_verdict?: { ok?: boolean } };
+    expect(edgeBPayload.rubric_verdict?.ok).toBe(false);
+  });
+
   it('window-merge: knowledge-readers recent-failure window is sourced from RUBRIC_EVIDENCE_WINDOW_DAYS (no hardcoded 30)', () => {
     expect(RECENT_FAILURE_WINDOW_MS).toBe(RUBRIC_EVIDENCE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
   });
