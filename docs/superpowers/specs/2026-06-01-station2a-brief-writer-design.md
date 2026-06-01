@@ -55,7 +55,7 @@ MemoryBriefTask: {
   defaultProvider: 'xiaomi',
   defaultModel: 'mimo-v2.5-pro',
   fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
-  budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
+  budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 120_000 }, // YUK-189: was 60_000 — the mimo brief over the full `global` event set hit the 60s budget
   needsToolCall: false,
   isMultimodal: false,
   allowedTools: [],
