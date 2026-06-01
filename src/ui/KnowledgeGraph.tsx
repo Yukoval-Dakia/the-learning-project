@@ -164,6 +164,24 @@ export function nodeRadius(mistakeCount: number): number {
   return 12 + Math.min(20, mistakeCount * 4);
 }
 
+// Single source of truth for a node's mistake/due overlay data (size +
+// overdue/due_soon counts). Both the initial buildElements paint and the
+// in-place applyOverlay restyle derive from this so they can't drift.
+export function nodeOverlayData(
+  id: string,
+  mistakeCounts: ReadonlyMap<string, number>,
+  dueCounts: ReadonlyMap<string, NodeDueSummary>,
+): { diameter: number; mistakes: number; overdue: number; due_soon: number } {
+  const mistakes = mistakeCounts.get(id) ?? 0;
+  const summary = dueCounts.get(id);
+  return {
+    diameter: nodeRadius(mistakes) * 2,
+    mistakes,
+    overdue: summary?.overdue ?? 0,
+    due_soon: summary?.due_soon ?? 0,
+  };
+}
+
 export interface KnowledgeGraphNode {
   id: string;
   name: string;
@@ -271,10 +289,8 @@ export function buildElements(
   const elements: ElementDefinition[] = [];
 
   for (const node of nodes) {
-    const r = nodeRadius(mistakeCounts.get(node.id) ?? 0);
     const band = masteryBand(node.mastery, node.evidence_count);
-    const due = dueCounts.get(node.id);
-    const overdue = due?.overdue ?? 0;
+    const overlay = nodeOverlayData(node.id, mistakeCounts, dueCounts);
     elements.push({
       group: 'nodes',
       // `band` drives the diagnostic fill via a stylesheet data-selector.
@@ -285,13 +301,10 @@ export function buildElements(
       data: {
         id: node.id,
         label: node.name,
-        diameter: r * 2,
         band,
-        mistakes: mistakeCounts.get(node.id) ?? 0,
-        overdue,
-        due_soon: due?.due_soon ?? 0,
+        ...overlay,
       },
-      ...(overdue > 0 ? { classes: 'kg-due' } : {}),
+      ...(overlay.overdue > 0 ? { classes: 'kg-due' } : {}),
     });
   }
 
@@ -827,25 +840,22 @@ export function KnowledgeGraph({
 
   // Apply the data-overlay — mistake-driven node size (`diameter`/`mistakes`)
   // and the overdue coral halo (`overdue`/`due_soon` + `.kg-due`) — onto the
-  // live graph WITHOUT a rebuild. Mirrors the node `data` block in
-  // buildElements; keep the two in sync. Runs inside cy.batch so a background
-  // refetch of mistakeCounts/dueCounts restyles in place instead of destroying
-  // the cy instance (which would re-run the randomized fcose layout and discard
+  // live graph WITHOUT a rebuild. Reuses nodeOverlayData (same source as the
+  // initial buildElements paint). Runs inside cy.batch so a background refetch
+  // of mistakeCounts/dueCounts restyles in place instead of destroying the cy
+  // instance (which would re-run the randomized fcose layout and discard
   // pan/zoom + manual node drags).
   const applyOverlay = useCallback(() => {
     const cy = cyRef.current;
     if (!cy) return;
     cy.batch(() => {
       for (const node of cy.nodes().toArray()) {
-        const id = node.id();
-        const mistakes = mistakeCounts.get(id) ?? 0;
-        node.data('diameter', nodeRadius(mistakes) * 2);
-        node.data('mistakes', mistakes);
-        const summary = due.get(id);
-        const overdue = summary?.overdue ?? 0;
-        node.data('overdue', overdue);
-        node.data('due_soon', summary?.due_soon ?? 0);
-        if (overdue > 0) node.addClass('kg-due');
+        const overlay = nodeOverlayData(node.id(), mistakeCounts, due);
+        node.data('diameter', overlay.diameter);
+        node.data('mistakes', overlay.mistakes);
+        node.data('overdue', overlay.overdue);
+        node.data('due_soon', overlay.due_soon);
+        if (overlay.overdue > 0) node.addClass('kg-due');
         else node.removeClass('kg-due');
       }
     });
