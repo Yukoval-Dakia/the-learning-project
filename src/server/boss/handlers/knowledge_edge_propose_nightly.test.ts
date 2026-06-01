@@ -43,36 +43,66 @@ describe('knowledge_edge_propose_nightly handler', () => {
       },
     ]);
 
-    const qId = createId();
-    await db.insert(question).values({
-      id: qId,
-      kind: 'short_answer',
-      prompt_md: 'p',
-      reference_md: null,
-      source: 'manual',
-      created_at: now,
-      updated_at: now,
-    });
-    const attemptId = createId();
-    await db.insert(event).values({
-      id: attemptId,
-      session_id: null,
-      actor_kind: 'user',
-      actor_ref: 'self',
-      action: 'attempt',
-      subject_kind: 'question',
-      subject_id: qId,
-      outcome: 'failure',
-      payload: {
-        answer_md: 'w',
-        answer_image_refs: [],
-        referenced_knowledge_ids: [k1, k2],
-      },
-      caused_by_event_id: null,
-      task_run_id: null,
-      cost_micro_usd: null,
-      created_at: now,
-    });
+    // P5.4 §5-Q5 / YUK-175 — the batch path now runs the L1 rubric floor before
+    // a live write. A `related_to` edge needs STRONG (≥2 same-pattern in-window
+    // judge-backed failures) endpoint-touching evidence, so seed two judge-backed
+    // failures referencing k1/k2 with the same cause category.
+    const qIds = [createId(), createId()];
+    const attemptIds = [createId(), createId()];
+    for (let i = 0; i < 2; i++) {
+      await db.insert(question).values({
+        id: qIds[i],
+        kind: 'short_answer',
+        prompt_md: 'p',
+        reference_md: null,
+        knowledge_ids: [k1, k2],
+        source: 'manual',
+        created_at: now,
+        updated_at: now,
+      });
+      await db.insert(event).values({
+        id: attemptIds[i],
+        session_id: null,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'attempt',
+        subject_kind: 'question',
+        subject_id: qIds[i],
+        outcome: 'failure',
+        payload: {
+          answer_md: 'w',
+          answer_image_refs: [],
+          referenced_knowledge_ids: [k1, k2],
+        },
+        caused_by_event_id: null,
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: now,
+      });
+      await db.insert(event).values({
+        id: `judge_${attemptIds[i]}`,
+        session_id: null,
+        actor_kind: 'agent',
+        actor_ref: 'attribution',
+        action: 'judge',
+        subject_kind: 'event',
+        subject_id: attemptIds[i],
+        outcome: 'success',
+        payload: {
+          cause: {
+            primary_category: 'concept',
+            secondary_categories: [],
+            analysis_md: '反复混淆 K1 与 K2。',
+            confidence: 0.9,
+          },
+          referenced_knowledge_ids: [k1, k2],
+        },
+        caused_by_event_id: attemptIds[i],
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: new Date(now.getTime() + 500),
+      });
+    }
 
     const runTaskFn = vi.fn(async (_kind: string, _input: unknown, _ctx: unknown) => ({
       text: JSON.stringify({
@@ -82,15 +112,16 @@ describe('knowledge_edge_propose_nightly handler', () => {
             to_knowledge_id: k2,
             relation_type: 'related_to',
             weight: 0.6,
-            reasoning: 'observed co-occurrence',
+            reasoning: `attempt ${attemptIds[0]} judge cause concept：K1/K2 反复失败。`,
           },
         ],
       }),
     }));
 
     const result = await runKnowledgeEdgeProposeNightly(db, { runTaskFn });
-    expect(result.attempts_considered).toBe(1);
+    expect(result.attempts_considered).toBe(2);
     expect(result.proposed).toBe(1);
+    expect(result.folded_rubric_rejected).toBe(0);
     expect(runTaskFn).toHaveBeenCalledTimes(1);
     expect(runTaskFn.mock.calls[0]?.[2]).toMatchObject({
       subjectProfile: { id: 'math' },
@@ -112,8 +143,11 @@ describe('knowledge_edge_propose_nightly handler', () => {
     if (ours?.id) {
       await db.delete(event).where(eq(event.id, ours.id));
     }
-    await db.delete(event).where(eq(event.id, attemptId));
-    await db.delete(question).where(eq(question.id, qId));
+    for (let i = 0; i < 2; i++) {
+      await db.delete(event).where(eq(event.id, `judge_${attemptIds[i]}`));
+      await db.delete(event).where(eq(event.id, attemptIds[i]));
+      await db.delete(question).where(eq(question.id, qIds[i]));
+    }
     await db.delete(knowledge).where(eq(knowledge.id, k1));
     await db.delete(knowledge).where(eq(knowledge.id, k2));
   });
