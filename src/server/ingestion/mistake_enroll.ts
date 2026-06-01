@@ -76,6 +76,12 @@ function extractJsonObject(text: string): unknown {
   }
 }
 
+function hasDb(ctx: unknown): boolean {
+  return (
+    typeof ctx === 'object' && ctx !== null && 'db' in ctx && (ctx as { db?: unknown }).db != null
+  );
+}
+
 async function defaultRunTaskFn(
   kind: string,
   input: MistakeEnrollInputT,
@@ -115,6 +121,16 @@ export async function runMistakeEnrollTask(
     throw new MistakeEnrollTaskError('MistakeEnrollTask input was invalid', { cause: err });
   }
 
+  // The default (production) runner needs ctx.db (ai_task_run logging) +
+  // ctx.subjectProfile (prompt). Fail LOUD here if a caller forgets it, rather
+  // than letting it surface as an opaque 'LLM call failed' that upstream treats
+  // as a provider outage. Tests inject runTaskFn and don't need a real ctx.
+  if (params.runTaskFn === undefined && !hasDb(params.ctx)) {
+    throw new MistakeEnrollTaskError(
+      'runMistakeEnrollTask requires ctx with { db } when using the default runner (inject runTaskFn in tests)',
+    );
+  }
+
   const runTaskFn = params.runTaskFn ?? defaultRunTaskFn;
   let llmText: string;
   try {
@@ -147,5 +163,8 @@ export async function runMistakeEnrollTask(
   if (parsed.cause) {
     return { ...parsed, cause: validateCauseAgainstProfile(parsed.cause, params.profile) };
   }
+  // Failure WITHOUT a cause is a valid drafted state (the model may lack
+  // confidence to attribute one) — A2 consumers must handle cause === null on a
+  // 'failure' draft. We pass it through rather than inventing a cause.
   return parsed;
 }

@@ -127,4 +127,11 @@ describe('runMistakeEnrollTask', () => {
       runMistakeEnrollTask({ questionMd: 'q', studentAnswerMd: 'a', profile, runTaskFn }),
     ).rejects.toBeInstanceOf(MistakeEnrollTaskError);
   });
+
+  it('fails loud when the default runner is used without ctx.db (no opaque LLM error)', async () => {
+    // No runTaskFn injected → default runner path → ctx.db is required.
+    await expect(
+      runMistakeEnrollTask({ questionMd: 'q', studentAnswerMd: 'a', profile }),
+    ).rejects.toThrow(/ctx with \{ db \}/);
+  });
 });
