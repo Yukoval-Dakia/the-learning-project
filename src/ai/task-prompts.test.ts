@@ -155,6 +155,24 @@ describe('getTaskSystemPrompt', () => {
       expect(prompt).not.toMatch(/\bproof\b/);
     }
   });
+
+  it('builds a math SolutionGenerateTask prompt grounded in reference_solution shape', () => {
+    const prompt = getTaskSystemPrompt('SolutionGenerateTask', resolveSubjectProfile('math'));
+    expect(prompt).toContain('expected_signals');
+    expect(prompt).toContain('final_answer');
+    expect(prompt).toContain('answer_equivalents');
+    expect(prompt).toContain('worked_solution_md');
+    expect(prompt).toContain('数学');
+    // existing answers/analysis are advisory hints, never ground truth
+    expect(prompt).toContain('hint');
+    expect(prompt).toContain('不带 markdown 代码块包裹');
+  });
+
+  it('builds a wenyan SolutionGenerateTask prompt with prose-appropriate signals', () => {
+    const prompt = getTaskSystemPrompt('SolutionGenerateTask');
+    expect(prompt).toContain('expected_signals');
+    expect(prompt).toContain('worked_solution_md');
+  });
 });
 
 describe('getTaskSystemPrompt exhaustiveness (M1)', () => {
