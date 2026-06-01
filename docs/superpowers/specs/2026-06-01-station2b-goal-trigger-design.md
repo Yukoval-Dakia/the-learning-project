@@ -2,7 +2,7 @@
 
 - **Issue**: YUK-186 (Station 2B)
 - **Date**: 2026-06-01
-- **Status**: design (do not commit / do not implement yet)
+- **Status**: Implemented (PR #233, YUK-186) — committed.
 - **ADR context**: ADR-0025 (North-Star goal layer), YUK-143
 - **Decision (user)**: a **nightly pg-boss cron** that proposes a goal-scope from accumulated mastery. **NOT** a Copilot chip / UI trigger. Reuse-first, anti-over-engineering.
 
