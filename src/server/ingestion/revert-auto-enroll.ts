@@ -26,6 +26,8 @@ import { archiveLearningRecord } from '@/server/records/queries';
 
 export interface RevertAutoEnrolledBlockParams {
   blockId: string;
+  /** The block MUST belong to this ingestion session (the OC-5 surface is per-session). */
+  sessionId: string;
   /** Stored on the retract event (CorrectEvent.reason_md, required, 1-2000 chars). */
   reasonMd?: string;
 }
@@ -45,13 +47,26 @@ export async function revertAutoEnrolledBlock(
   return db.transaction(async (tx) => {
     const now = new Date();
 
+    // FOR UPDATE serialises concurrent reverts of the same block: the second to
+    // acquire the lock re-reads `status='draft'` and cleanly 409s (rather than
+    // both passing the guard and writing two retract events).
     const [block] = await tx
       .select()
       .from(question_block)
       .where(eq(question_block.id, params.blockId))
+      .for('update')
       .limit(1);
     if (!block) {
       throw new ApiError('not_found', `question_block ${params.blockId} not found`, 404);
+    }
+    // The OC-5 revert is per-session: the block must belong to the path session,
+    // mirroring the import route's source-block ownership check.
+    if (block.ingestion_session_id !== params.sessionId) {
+      throw new ApiError(
+        'not_found',
+        `question_block ${params.blockId} not found in session ${params.sessionId}`,
+        404,
+      );
     }
     if (block.status !== 'auto_enrolled') {
       throw new ApiError(
