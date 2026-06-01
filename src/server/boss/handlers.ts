@@ -9,6 +9,7 @@ import { buildCoachWeeklyHandler } from './handlers/coach_weekly';
 import { buildDreamingNightlyHandler } from './handlers/dreaming_nightly';
 import { buildEchoHandler } from './handlers/echo';
 import { buildEmbeddedCheckGenerateHandler } from './handlers/embedded_check_generate';
+import { buildGoalScopeProposeNightlyHandler } from './handlers/goal_scope_propose_nightly';
 import { buildHubAutoSyncNightlyHandler } from './handlers/hub_auto_sync_nightly';
 import { buildKnowledgeEdgeProposeNightlyHandler } from './handlers/knowledge_edge_propose_nightly';
 import { buildKnowledgeMaintenanceNightlyHandler } from './handlers/knowledge_maintenance_nightly';
@@ -120,6 +121,23 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     buildCoachWeeklyHandler(db),
   );
   await boss.schedule('coach_weekly', '30 4 * * 0', {}, { tz: 'Asia/Shanghai' });
+
+  // Station 2B / YUK-186: nightly goal-scope propose. Runs BJT 03:50 — AFTER
+  // coach_daily (`45 3`) so it reads same-night materialized goals + active
+  // subjects (steady by 03:50), and BEFORE prune_job_events (`0 4`) to avoid IO
+  // contention with the bulk DELETE pass. Picks the single most-active subject
+  // with ≥1 weak node and (cap=1) proposes at most one goal_scope into the
+  // inbox; idempotent via gates on a live goal / pending proposal (subject_id).
+  // Like every nightly here: defaults (localConcurrency 1, batchSize 1), no
+  // singleton — a single worker serializes runs so a scheduled fire won't
+  // overlap itself. The LLM call needs XIAOMI_API_KEY in the worker env (F-2).
+  await boss.createQueue('goal_scope_propose_nightly');
+  await boss.work(
+    'goal_scope_propose_nightly',
+    { pollingIntervalSeconds: 2, batchSize: 1 },
+    buildGoalScopeProposeNightlyHandler(db),
+  );
+  await boss.schedule('goal_scope_propose_nightly', '50 3 * * *', {}, { tz: 'Asia/Shanghai' });
 
   // ADR-0013: abandon review sessions stuck in 'started' >6h (sendBeacon
   // fallback when normal close didn't fire). BJT 04:15 after prune_job_events.
