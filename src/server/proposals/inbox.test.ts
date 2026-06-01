@@ -454,6 +454,21 @@ describe('proposal inbox reader', () => {
         },
       },
     });
+    await db.insert(event).values({
+      id: 'bad_p1',
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'bad_writer',
+      action: 'experimental:proposal',
+      subject_kind: 'learning_item',
+      subject_id: 'li_bad',
+      outcome: 'partial',
+      payload: { ai_proposal: { kind: 'completion' } },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: new Date('2026-05-23T03:00:00.000Z'),
+    });
 
     await expect(countPendingProposalInboxRows(db)).resolves.toBe(1);
   });

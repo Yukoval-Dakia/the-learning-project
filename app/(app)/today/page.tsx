@@ -8,7 +8,7 @@ import { PageHeader } from '@/ui/primitives/PageHeader';
 import { TodayCopilotDrawer } from '@/ui/today/TodayCopilotDrawer';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
-import { memo, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 
 interface DueRow {
   question_id: string;
@@ -416,7 +416,7 @@ function SessionStrip({
   );
 }
 
-const AiChangeActivityStrip = memo(function AiChangeActivityStrip({
+function AiChangeActivityStrip({
   rows,
   loading,
   undoingIds,
@@ -469,7 +469,7 @@ const AiChangeActivityStrip = memo(function AiChangeActivityStrip({
       ))}
     </div>
   );
-});
+}
 
 function formatDuration(ms: number | null): string {
   if (!ms || ms < 0) return '0 分钟';

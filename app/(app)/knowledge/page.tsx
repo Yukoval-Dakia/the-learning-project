@@ -357,7 +357,7 @@ export default function KnowledgePage() {
           grouped.set(from, [p]);
         }
       }
-      if (to) {
+      if (to && to !== from) {
         const toGroup = grouped.get(to);
         if (toGroup) {
           toGroup.push(p);

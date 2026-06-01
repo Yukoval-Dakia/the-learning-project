@@ -222,6 +222,66 @@ function proposalAcceptanceRateExpr() {
 function proposalPendingWhere() {
   return sql`
     (${event.payload}->'rubric_verdict'->>'ok') IS DISTINCT FROM 'false'
+    AND (
+      CASE
+        WHEN ${event.payload}->'ai_proposal' IS NOT NULL
+          OR ${event.action} = 'experimental:proposal'
+        THEN (
+          COALESCE(${event.payload}->'ai_proposal'->>'kind', ${event.payload}->>'kind') IN (
+            'knowledge_node',
+            'knowledge_edge',
+            'knowledge_mutation',
+            'learning_item',
+            'note_update',
+            'variant_question',
+            'completion',
+            'relearn',
+            'defer',
+            'record_links',
+            'record_promotion',
+            'archive',
+            'judge_retraction',
+            'goal_scope'
+          )
+          AND COALESCE(
+            ${event.payload}->'ai_proposal'->'target'->>'subject_kind',
+            ${event.payload}->'target'->>'subject_kind'
+          ) IS NOT NULL
+          AND COALESCE(
+            ${event.payload}->'ai_proposal'->>'reason_md',
+            ${event.payload}->>'reason_md'
+          ) <> ''
+          AND COALESCE(
+            ${event.payload}->'ai_proposal'->'proposed_change',
+            ${event.payload}->'proposed_change'
+          ) IS NOT NULL
+        )
+        WHEN ${event.action} LIKE 'experimental:knowledge_%'
+          AND ${event.subject_kind} = 'knowledge'
+        THEN ${event.subject_id} IS NOT NULL
+        WHEN ${event.action} = 'propose'
+          AND ${event.subject_kind} = 'knowledge'
+        THEN ${event.subject_id} IS NOT NULL
+          AND COALESCE(${event.payload}->>'name', '') <> ''
+          AND COALESCE(${event.payload}->>'parent_id', '') <> ''
+        WHEN ${event.action} = 'propose'
+          AND ${event.subject_kind} = 'knowledge_edge'
+        THEN ${event.subject_id} IS NOT NULL
+          AND COALESCE(${event.payload}->>'from_knowledge_id', '') <> ''
+          AND COALESCE(${event.payload}->>'to_knowledge_id', '') <> ''
+          AND (
+            (${event.payload}->>'relation_type') IN (
+              'prerequisite',
+              'related_to',
+              'contrasts_with',
+              'applied_in',
+              'derived_from'
+            )
+            OR (${event.payload}->>'relation_type') LIKE 'experimental:%'
+          )
+        ELSE false
+      END
+    )
     AND COALESCE(
       (
         SELECT rate_event.payload->>'rating'
