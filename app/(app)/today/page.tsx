@@ -8,7 +8,7 @@ import { PageHeader } from '@/ui/primitives/PageHeader';
 import { TodayCopilotDrawer } from '@/ui/today/TodayCopilotDrawer';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 
 interface DueRow {
   question_id: string;
@@ -72,6 +72,8 @@ interface TodayProposalKpi {
   limit: number;
   status: 'pending';
 }
+
+const AiChangeActivityStrip = memo(AiChangeActivityStripImpl);
 
 export default function TodayPage() {
   const queryClient = useQueryClient();
@@ -416,7 +418,7 @@ function SessionStrip({
   );
 }
 
-function AiChangeActivityStrip({
+function AiChangeActivityStripImpl({
   rows,
   loading,
   undoingIds,
