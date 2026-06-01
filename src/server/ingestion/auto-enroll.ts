@@ -32,12 +32,18 @@ import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, sql } from 'drizzle-orm';
 
+import type { MistakeEnrollOutputT } from '@/core/schema/mistake_enroll';
 import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
 import type { TaggingOutputT } from '@/core/schema/tagging';
 import type { Db } from '@/db/client';
 import { learning_session, question, question_block } from '@/db/schema';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
 import { enrollCapturedBlock } from '@/server/ingestion/enroll';
+import {
+  MistakeEnrollTaskError,
+  type RunMistakeEnrollTaskParams,
+  runMistakeEnrollTask,
+} from '@/server/ingestion/mistake_enroll';
 import {
   type RunTaggingTaskParams,
   TaggingTaskError,
@@ -50,6 +56,7 @@ import {
   autoEnrollThreshold,
   observeEnabled,
 } from '@/server/ingestion/workflow-judge-config';
+import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject-profile';
 
 export type AutoEnrollSkipReason = 'flag_off' | 'session_not_found' | 'wrong_status';
 
@@ -86,6 +93,11 @@ export interface RunAutoEnrollParams {
    * that throws for a chosen block to prove per-block observe-write isolation.
    */
   writeEventFn?: (db: Db, input: WriteEventInput) => Promise<string>;
+  /**
+   * Inject in tests; defaults to the production MistakeEnrollTask invoker. Used
+   * in observe mode to draft mistake metadata for ANSWERED blocks (A1, YUK-145).
+   */
+  runMistakeEnrollFn?: (params: RunMistakeEnrollTaskParams) => Promise<MistakeEnrollOutputT>;
   /** Override env for the flag / threshold reads (tests). */
   env?: FlagEnv;
   /** Shared wall-clock for the batch. */
@@ -120,6 +132,7 @@ export async function runAutoEnrollForSession(
   const now = params.now ?? new Date();
   const runTaggingFn = params.runTaggingFn ?? runTaggingTask;
   const writeEventFn = params.writeEventFn ?? writeEvent;
+  const runMistakeEnrollFn = params.runMistakeEnrollFn ?? runMistakeEnrollTask;
 
   // Load the session (must be an ingestion session in an extractable state).
   const sessionRows = await params.db
@@ -200,6 +213,35 @@ export async function runAutoEnrollForSession(
     // enrollCapturedBlock, no commitImport. Best-effort: a single failed audit
     // write logs + continues so one bad write never aborts the batch (§5.4).
     if (mode === 'observe') {
+      // A1 (YUK-145): for an ANSWERED block routed 'auto', draft the mistake
+      // metadata (outcome / kind / difficulty / cause) the human fills by hand
+      // and attach it to the audit event. Observe-only — no domain row, no enroll.
+      // Best-effort: a MistakeEnrollTaskError leaves the event draft-less; a
+      // non-MistakeEnrollTaskError re-raises (infra fault → handler retries).
+      let mistakeDraft: MistakeEnrollOutputT | undefined;
+      const studentAnswer = block.wrong_answer_md?.trim() ?? '';
+      if (verdict.route === 'auto' && studentAnswer.length > 0) {
+        const profile = await resolveSubjectProfileForKnowledgeIds(
+          params.db,
+          verdict.prefilled.knowledge_ids,
+        );
+        try {
+          mistakeDraft = await runMistakeEnrollFn({
+            questionMd,
+            referenceMd: block.reference_md ?? null,
+            studentAnswerMd: block.wrong_answer_md ?? null,
+            knowledgeIds: verdict.prefilled.knowledge_ids,
+            profile,
+            ctx: { db: params.db, subjectProfile: profile },
+          });
+        } catch (err) {
+          if (!(err instanceof MistakeEnrollTaskError)) throw err;
+          console.error(
+            `[auto_enroll:observe] mistake_enroll draft failed for block ${block.id}`,
+            err,
+          );
+        }
+      }
       try {
         await writeEventFn(params.db, {
           id: observeEventId(params.sessionId, block.id),
@@ -221,6 +263,7 @@ export async function runAutoEnrollForSession(
             tagging_overall_confidence: tagging.overall_confidence,
             suggested_knowledge_ids: verdict.prefilled.knowledge_ids,
             ingestion_session_id: params.sessionId,
+            ...(mistakeDraft ? { mistake_draft: mistakeDraft } : {}),
           },
           caused_by_event_id: null,
           task_run_id: null,

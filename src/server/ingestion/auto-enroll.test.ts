@@ -10,6 +10,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { MistakeEnrollOutputT } from '@/core/schema/mistake_enroll';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { TaggingOutputT } from '@/core/schema/tagging';
 import type { Db } from '@/db/client';
@@ -24,6 +25,7 @@ import {
 import type { WriteEventInput } from '@/server/events/queries';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { observeEventId, runAutoEnrollForSession } from './auto-enroll';
+import { MistakeEnrollTaskError, type RunMistakeEnrollTaskParams } from './mistake_enroll';
 import { TaggingTaskError } from './tagging';
 
 const FLAG = 'WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED';
@@ -734,5 +736,236 @@ describe('runAutoEnrollForSession', () => {
     expect(result.status).toBe('skipped:flag_off');
     expect(taggingCalled).toBe(false);
     expect(await db.select().from(event).where(eq(event.action, OBSERVE_ACTION))).toHaveLength(0);
+  });
+});
+
+// ===========================================================================
+// T-OC slice A1 (YUK-145): MistakeEnrollTask observe-only draft. For an
+// ANSWERED block (wrong_answer_md non-empty) routed 'auto', the observe branch
+// drafts mistake metadata and attaches it to the audit event under
+// payload.mistake_draft. Still zero domain rows; enroll path untouched.
+// ===========================================================================
+
+const DRAFT: MistakeEnrollOutputT = {
+  wrong_answer: 'failure',
+  question_type: 'computation',
+  difficulty: 3,
+  cause: {
+    primary_category: 'other',
+    secondary_categories: [],
+    analysis_md: 'drafted',
+    confidence: 0.7,
+  },
+  overall_confidence: 0.66,
+  reasoning: 'drafted by stub',
+};
+
+/** Seed like `seed()` but with a captured student answer on each block. */
+async function seedAnswered(
+  db: ReturnType<typeof testDb>,
+  blockCount = 1,
+): Promise<{ sessionId: string; blockIds: string[] }> {
+  const now = new Date();
+  await db.insert(knowledge).values({
+    id: 'k1',
+    name: '虚词',
+    domain: 'wenyan',
+    parent_id: null,
+    archived_at: null,
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  });
+  const sessionId = createId();
+  await db.insert(learning_session).values({
+    id: sessionId,
+    type: 'ingestion',
+    status: 'extracted',
+    source_document_id: createId(),
+    source_asset_ids: ['asset_1'],
+    entrypoint: 'vision_paper',
+    warnings: [],
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  });
+  const blockIds = Array.from({ length: blockCount }, () => createId());
+  await db.insert(question_block).values(
+    blockIds.map((id) => ({
+      id,
+      ingestion_session_id: sessionId,
+      source_document_id: null,
+      source_asset_ids: ['asset_1'],
+      page_spans: [],
+      structured: structured(`下列句中「之」的用法 ${id}`),
+      reference_md: '参考答案',
+      wrong_answer_md: '学生错答',
+      figures: [],
+      layout_quality: 'structured' as const,
+      image_refs: ['asset_1'],
+      crop_refs: [],
+      visual_complexity: 'low' as const,
+      extraction_confidence: 1,
+      status: 'draft' as const,
+      knowledge_hint: '之',
+      merged_from_block_ids: [],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    })),
+  );
+  return { sessionId, blockIds };
+}
+
+describe('runAutoEnrollForSession — MistakeEnroll draft (A1)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  // HEADLINE SAFETY: flag off → the draft producer is never invoked, no events.
+  it('mode off: never invokes the draft producer, writes nothing', async () => {
+    const db = testDb();
+    const { sessionId } = await seedAnswered(db);
+    const runMistakeEnrollFn = vi.fn(async () => DRAFT);
+
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      env: { [OBSERVE_FLAG]: 'false' },
+      runTaggingFn: highConfidenceTagging,
+      runMistakeEnrollFn,
+    });
+
+    expect(result.status).toBe('skipped:flag_off');
+    expect(runMistakeEnrollFn).not.toHaveBeenCalled();
+    expect(await db.select().from(event)).toHaveLength(0);
+  });
+
+  // observe + answered + auto → exactly one observe event carrying mistake_draft;
+  // zero domain rows; block stays draft.
+  it('observe + answered + auto: attaches mistake_draft to the audit event', async () => {
+    const db = testDb();
+    const { sessionId, blockIds } = await seedAnswered(db);
+    const runMistakeEnrollFn = vi.fn(async (_p: RunMistakeEnrollTaskParams) => DRAFT);
+
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      subjectId: 'wenyan',
+      env: {},
+      runTaggingFn: highConfidenceTagging,
+      runMistakeEnrollFn,
+    });
+
+    expect(result.status).toBe('completed');
+    expect(runMistakeEnrollFn).toHaveBeenCalledTimes(1);
+    // The producer saw the captured answer.
+    expect(runMistakeEnrollFn.mock.calls[0][0]).toMatchObject({ studentAnswerMd: '学生错答' });
+
+    const observed = await db.select().from(event).where(eq(event.action, OBSERVE_ACTION));
+    expect(observed).toHaveLength(1);
+    expect(observed[0]?.id).toBe(observeEventId(sessionId, blockIds[0]));
+    const p = observed[0]?.payload as Record<string, unknown>;
+    expect(p.mistake_draft).toMatchObject({
+      wrong_answer: 'failure',
+      question_type: 'computation',
+    });
+
+    // Still zero domain rows; block untouched.
+    expect(await db.select().from(question)).toHaveLength(0);
+    expect(await db.select().from(learning_record)).toHaveLength(0);
+    const blocks = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.ingestion_session_id, sessionId));
+    expect(blocks.every((b) => b.status === 'draft')).toBe(true);
+  });
+
+  // observe + answered + review route → producer NOT invoked; event has no draft.
+  it('observe + answered but routed review: no draft, observe event still written', async () => {
+    const db = testDb();
+    const { sessionId } = await seedAnswered(db);
+    const runMistakeEnrollFn = vi.fn(async () => DRAFT);
+
+    await runAutoEnrollForSession({
+      db,
+      sessionId,
+      env: {},
+      runTaggingFn: lowConfidenceTagging, // → route 'review'
+      runMistakeEnrollFn,
+    });
+
+    expect(runMistakeEnrollFn).not.toHaveBeenCalled();
+    const observed = await db.select().from(event).where(eq(event.action, OBSERVE_ACTION));
+    expect(observed).toHaveLength(1);
+    expect((observed[0]?.payload as Record<string, unknown>).mistake_draft).toBeUndefined();
+  });
+
+  // observe + UNANSWERED (no wrong_answer_md) → producer NOT invoked (regression
+  // guard for the existing unanswered observe path).
+  it('observe + unanswered: producer not invoked, no mistake_draft key', async () => {
+    const db = testDb();
+    const { sessionId } = await seed(db); // seed() has no wrong_answer_md
+    const runMistakeEnrollFn = vi.fn(async () => DRAFT);
+
+    await runAutoEnrollForSession({
+      db,
+      sessionId,
+      env: {},
+      runTaggingFn: highConfidenceTagging,
+      runMistakeEnrollFn,
+    });
+
+    expect(runMistakeEnrollFn).not.toHaveBeenCalled();
+    const observed = await db.select().from(event).where(eq(event.action, OBSERVE_ACTION));
+    expect(observed).toHaveLength(2);
+    expect(
+      observed.every((e) => (e.payload as Record<string, unknown>).mistake_draft === undefined),
+    ).toBe(true);
+  });
+
+  // Draft outage isolation: the producer throws → observe event still written
+  // WITHOUT mistake_draft; batch continues; no throw.
+  it('draft outage: a MistakeEnrollTaskError leaves the event draft-less, no throw', async () => {
+    const db = testDb();
+    const { sessionId } = await seedAnswered(db);
+    const runMistakeEnrollFn = vi.fn(async () => {
+      throw new MistakeEnrollTaskError('draft provider down');
+    });
+
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      env: {},
+      runTaggingFn: highConfidenceTagging,
+      runMistakeEnrollFn,
+    });
+
+    expect(result.status).toBe('completed');
+    const observed = await db.select().from(event).where(eq(event.action, OBSERVE_ACTION));
+    expect(observed).toHaveLength(1);
+    expect((observed[0]?.payload as Record<string, unknown>).mistake_draft).toBeUndefined();
+  });
+
+  // Infra-fault isolation: a NON-MistakeEnrollTaskError (e.g. DB connection lost)
+  // is NOT swallowed — it escapes so buildAutoEnrollHandler re-throws → pg-boss
+  // retries (mirrors the TaggingTask (b2) contract). Guards the silent-failure
+  // regression where the catch is widened to swallow everything.
+  it('draft infra fault (plain Error) escapes the runner; not swallowed', async () => {
+    const db = testDb();
+    const { sessionId } = await seedAnswered(db);
+    const runMistakeEnrollFn = vi.fn(async () => {
+      throw new Error('db connection lost');
+    });
+
+    await expect(
+      runAutoEnrollForSession({
+        db,
+        sessionId,
+        env: {},
+        runTaggingFn: highConfidenceTagging,
+        runMistakeEnrollFn,
+      }),
+    ).rejects.toThrow('db connection lost');
   });
 });
