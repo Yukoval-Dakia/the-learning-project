@@ -153,11 +153,29 @@ export async function runEdgeProposeAndWrite(
       // input schema + prompt extended first (out of scope here). Facet B (the
       // adaptive gate-bump 4th arg) is INTENTIONALLY NOT passed: L2/Facet A is
       // out-of-scope for this slice (§5-Q5), so the validator runs as pure L1.
+      // codex r? P2 (propose_edge.ts:163) — per-edge evidence scoping. Attaching
+      // EVERY batch recentFailure to EVERY edge's evidence_refs let edge B borrow
+      // edge A's same-pattern failures and clear the strong floor (live instead of
+      // fold). Scope each edge's evidence to the failures whose EFFECTIVE
+      // referenced ids touch THIS edge's own endpoints, where "effective" is the
+      // attempt ∪ judge union — identical to rubric-validator.ts
+      // `effectiveReferencedKnowledgeIds` (attempt.referenced_knowledge_ids ∪
+      // attempt.judge?.referenced_knowledge_ids). A failure references an endpoint
+      // when its effective id set contains p.from_knowledge_id or p.to_knowledge_id.
+      // When the scoped set is empty the validator takes the evidence_missing path
+      // → fold (correct, matches the existing no-endpoint-evidence behaviour).
+      const endpointTouchingFailures = params.recentFailures.filter((failure) => {
+        const effectiveRefs = new Set([
+          ...failure.referenced_knowledge_ids,
+          ...(failure.judge?.referenced_knowledge_ids ?? []),
+        ]);
+        return effectiveRefs.has(p.from_knowledge_id) || effectiveRefs.has(p.to_knowledge_id);
+      });
       const proposalPayload = {
         kind: 'knowledge_edge' as const,
         target: { subject_kind: 'knowledge_edge' as const, subject_id: null },
         reason_md: p.reasoning,
-        evidence_refs: params.recentFailures.map((failure) => ({
+        evidence_refs: endpointTouchingFailures.map((failure) => ({
           kind: 'event' as const,
           id: failure.attempt_event_id,
         })),
