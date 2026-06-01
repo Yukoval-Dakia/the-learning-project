@@ -120,6 +120,22 @@ export const tasks = {
     // 才是 manual_rescue_only）。
     systemPrompt: '(see getTaskSystemPrompt(task, profile) - fallback not for runtime)',
   },
+  MistakeEnrollTask: {
+    kind: 'MistakeEnrollTask',
+    description:
+      'T-OC slice A1 (YUK-145, OC-5) — 给一道已作答的录入题草拟错题元数据：判定 outcome（failure/partial/success/unanswered）+ 题型 + 难度 + （错答时）错因。单次结构化输出，非 multimodal。observe-only：草稿挂到 auto_enroll_observed 审计事件，不写 domain 行（enroll flag OFF）。',
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
+    // Single-shot structured output (mirrors AttributionTask / TaggingTask).
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
+    needsToolCall: false,
+    isMultimodal: false,
+    allowedTools: [],
+    // Runtime renders via getTaskSystemPrompt(task, profile); this string is the
+    // type-required fallback only (new tasks add a builder in task-prompts.ts).
+    systemPrompt: '(see getTaskSystemPrompt(task, profile) - fallback not for runtime)',
+  },
   KnowledgeProposeTask: {
     kind: 'KnowledgeProposeTask',
     description: '看新录入的 mistake 提议 0-3 个 propose_new 知识点（挂在合适 parent 下）',

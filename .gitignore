@@ -38,6 +38,9 @@ tsconfig.tsbuildinfo
 .claude/worktrees/
 .playwright-mcp/
 
+# Scheduled-tasks runtime lock (ScheduleWakeup / loop artifact)
+.claude/scheduled_tasks.lock
+
 # remember skill hook logs
 .remember/
 
