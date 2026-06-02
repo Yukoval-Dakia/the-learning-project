@@ -168,9 +168,9 @@ describe('planSolveHint', () => {
     await Tutor.markJudged(db, sessionId);
     const runTaskFn = vi.fn();
 
-    await expect(
-      planSolveHint({ db, sessionId, hintIndex: 0, runTaskFn }),
-    ).rejects.toMatchObject({ code: 'session_not_active' });
+    await expect(planSolveHint({ db, sessionId, hintIndex: 0, runTaskFn })).rejects.toMatchObject({
+      code: 'session_not_active',
+    });
     expect(runTaskFn).not.toHaveBeenCalled();
   });
 });
