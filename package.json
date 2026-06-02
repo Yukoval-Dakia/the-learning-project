@@ -64,7 +64,7 @@
     "fflate": "^0.8.2",
     "ioredis": "^5.11.0",
     "katex": "^0.16",
-    "lucide-react": "^0.468.0",
+    "lucide-react": "^1.17.0",
     "mathjs": "^15.2.0",
     "mem0ai": "3.0.4",
     "next": "^15.0.0",
