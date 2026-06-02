@@ -54,6 +54,11 @@ export const knowledge = pgTable('knowledge', {
   merged_from: jsonb('merged_from').$type<string[]>().notNull().default([]),
   archived_at: timestamp('archived_at', { withTimezone: true }),
   proposed_by_ai: boolean('proposed_by_ai').notNull().default(false),
+  // Phase-deferred (placeholder values). Only 'approved' has a write path today
+  // (seed.ts, knowledge/proposals.ts, orchestrator/learning_intent.ts — all set
+  // 'approved'); 'pending' / 'rejected' have NO code that sets them and exist as
+  // a reserved enum for a future AI-review flow. Default stays 'approved' (see
+  // src/core/schema/index.ts KnowledgeInsert). Revisit when that review flow lands.
   approval_status: text('approval_status', {
     enum: ['pending', 'approved', 'rejected'],
   })
@@ -428,6 +433,9 @@ export const ai_task_runs = pgTable(
 
 export const tool_call_log = pgTable('tool_call_log', {
   id: text('id').primaryKey(),
+  // Intentional loose coupling — NO hard FK to ai_task_runs.id. task_run_id is
+  // written during the run (frequently before the ai_task_runs row is committed),
+  // so a real FK would break INSERTs. Treated as a free-form text correlation id.
   task_run_id: text('task_run_id').notNull(),
   task_kind: text('task_kind').notNull(),
   tool_name: text('tool_name').notNull(),
@@ -453,6 +461,9 @@ export const cost_ledger = pgTable(
   'cost_ledger',
   {
     id: text('id').primaryKey(),
+    // Intentional loose coupling — NO hard FK to ai_task_runs.id. task_run_id is
+    // nullable and is often written before the ai_task_runs row exists, so a real
+    // FK would break INSERTs. Treated as a free-form text correlation id.
     task_run_id: text('task_run_id'),
     task_kind: text('task_kind').notNull(),
     provider: text('provider').notNull(),
@@ -559,7 +570,10 @@ export const event = pgTable(
     caused_by_event_id: text('caused_by_event_id'),
     // ADR-0017 brief writer scope tags; fixed prefixes, dynamic suffixes.
     affected_scopes: text('affected_scopes').array().notNull().default(sql`ARRAY[]::text[]`),
-    // AI task run association
+    // AI task run association. Intentional loose coupling — NO hard FK to
+    // ai_task_runs.id: task_run_id is nullable and is often written before the
+    // ai_task_runs row exists (or for events with no run at all), so a real FK
+    // would break INSERTs. Treated as a free-form text correlation id.
     task_run_id: text('task_run_id'),
     cost_micro_usd: integer('cost_micro_usd'),
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

@@ -370,7 +370,7 @@ ADR-0014 配套：[7 轮讨论 + 10 决议 summary](../discussion/summary.md)、
 
 | 项 | 描述 | 严重度 |
 |---|---|---|
-| Phase 2C UI 未真机验证 | 本地 ship 完没 E2E 跑过浏览器；NAS 容器还是旧 build | **高** |
+| ~~Phase 2C UI 未真机验证~~ ✅ resolved | ~~本地 ship 完没 E2E 跑过浏览器；NAS 容器还是旧 build~~ —— **已解**：见上方 ✅「Phase 2C chat deploy + E2E」行——NAS rebuild + 3 轮 browser chat E2E 已 closeout（DB-level admin obs retest 由 YUK-65 单独跟踪，不阻塞本项） | ~~高~~ → resolved |
 | ~~跨进程 editing-guard 失效~~ ✅ resolved | ~~`editing-session.ts` 模块级内存 Map：web 进程 API route 写心跳，`isArtifactIdle` 在 pg-boss **worker 进程**读不到 → 永远 idle~~ —— **已解**：editing presence 落 Redis 共享态，web/worker 共读（YUK-148，PR #195，ADR-0023；YUK-171 PR #210 加 Redis fail-safe）| ~~高~~ → resolved |
 | user_cause 与 agent judge 合并策略 | YUK-51 锁定 shared projection：active user_cause 优先，否则 latest active agent judge；dreaming/maintenance 只能提议不能静默覆盖 | 中 |
 | Full judge capability expansion | `semantic` 已通过 async service 可用；`rubric` / `steps` / `multimodal_direct` / `ai_flexible` 仍需独立 capability runner 和 score policy | 中 |
