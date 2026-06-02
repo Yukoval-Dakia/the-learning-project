@@ -1555,6 +1555,41 @@ describe('block_merge proposal lifecycle', () => {
     });
   });
 
+  it('reports the EFFECTIVE merged set when the payload has duplicate or primary ids', async () => {
+    // A hallucinating producer can emit merge_block_ids with a duplicate or the
+    // primary id (the schema does not refine for uniqueness/exclude-primary).
+    // mergeQuestions dedups + strips the primary before merging; merged_count and
+    // the rate event's merged_block_ids must match what was ACTUALLY merged
+    // (= the block's merged_from_block_ids), not the raw payload.
+    const db = testDb();
+    const sessionId = createId();
+    const primary = await seedDraftBlock({ sessionId, nodeId: 'p', promptText: 'primary' });
+    const m1 = await seedDraftBlock({ sessionId, nodeId: 'm1', promptText: 'merge1' });
+    await seedBlockMergeProposal({
+      proposalId: 'block_merge_dup',
+      sessionId,
+      primaryBlockId: primary,
+      mergeBlockIds: [m1, m1, primary], // duplicate + the primary itself
+    });
+
+    const result = await acceptAiProposal(db, 'block_merge_dup');
+    if (result.kind !== 'block_merge') throw new Error('expected block_merge result');
+    // effective set = [m1]; NOT 3.
+    expect(result.merged_count).toBe(1);
+    expect(result.stale).toBeUndefined();
+
+    const primaryBlock = await readBlock(primary);
+    expect(primaryBlock.merged_from_block_ids).toEqual([m1]);
+    expect((await readBlock(m1)).status).toBe('ignored');
+
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'block_merge_dup')));
+    expect(rateRows).toHaveLength(1);
+    expect(rateRows[0].payload).toMatchObject({ merged_block_ids: [m1] });
+  });
+
   it('a second accept is idempotent: no double-merge, no second rate event', async () => {
     const db = testDb();
     const sessionId = createId();
