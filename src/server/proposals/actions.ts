@@ -1507,6 +1507,14 @@ async function acceptBlockMergeProposal(
   const change = proposal.payload.proposed_change;
   const primaryBlockId = change.primary_block_id;
   const mergeBlockIds = change.merge_block_ids;
+  // Report what mergeQuestions ACTUALLY merges, not the raw payload. The
+  // block_merge schema does not refine merge_block_ids for uniqueness / exclude
+  // the primary, and proposals are not validated, so a hallucinating producer
+  // can emit duplicates or the primary id. mergeQuestions dedups + strips the
+  // primary before merging (block-structured-edit.ts:420-422 — source of truth);
+  // mirror that here so merged_count + the rate event's merged_block_ids match
+  // the block's merged_from_block_ids (consumed by the inbox UI + accept KPI).
+  const effectiveMergeIds = [...new Set(mergeBlockIds)].filter((id) => id !== primaryBlockId);
 
   // Idempotency (§4): an existing accept rate means we already ran the merge;
   // do NOT merge again. existingAcceptRate throws 409 if a non-accept decision
@@ -1518,7 +1526,7 @@ async function acceptBlockMergeProposal(
       kind: 'block_merge',
       rate_event_id: existingRate.id,
       primary_block_id: primaryBlockId,
-      merged_count: mergeBlockIds.length,
+      merged_count: effectiveMergeIds.length,
       idempotent: true,
     };
   }
@@ -1556,7 +1564,7 @@ async function acceptBlockMergeProposal(
     payload: {
       rating: 'accept',
       primary_block_id: primaryBlockId,
-      merged_block_ids: mergeBlockIds,
+      merged_block_ids: effectiveMergeIds,
       ...(opts.user_note ? { user_note: opts.user_note } : {}),
     },
     caused_by_event_id: proposalId,
@@ -1567,7 +1575,7 @@ async function acceptBlockMergeProposal(
     kind: 'block_merge',
     rate_event_id: rateEventId,
     primary_block_id: primaryBlockId,
-    merged_count: mergeBlockIds.length,
+    merged_count: effectiveMergeIds.length,
   };
 }
 
