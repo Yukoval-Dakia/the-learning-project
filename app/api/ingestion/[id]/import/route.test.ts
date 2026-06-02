@@ -714,7 +714,12 @@ describe('POST /api/ingestion/[id]/import', () => {
     // The block was already auto-enrolled by the WorkflowJudge; the manual import
     // must not re-import it (would duplicate the question/attempt). Revert it
     // (→ 'draft') first via OC-5.
-    await insertBlock(db, { id: 'block_a', sessionId, docId: sourceDocId, status: 'auto_enrolled' });
+    await insertBlock(db, {
+      id: 'block_a',
+      sessionId,
+      docId: sourceDocId,
+      status: 'auto_enrolled',
+    });
     await insertKnowledge(db, 'k1');
 
     const res = await post(sessionId, makeImportBody());
