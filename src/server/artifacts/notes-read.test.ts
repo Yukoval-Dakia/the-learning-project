@@ -145,6 +145,18 @@ describe('notesForItem', () => {
     ).toEqual([]);
   });
 
+  it('returns label-only material (no primary) ordered atomic → hub → long', async () => {
+    await seedNote('hub', 'note_hub', ['k1']);
+    await seedNote('atom', 'note_atomic', ['k1']);
+    await seedNote('long', 'note_long', ['k1']);
+    const notes = await notesForItem(testDb(), {
+      primary_artifact_id: null,
+      knowledge_ids: ['k1'],
+    });
+    expect(notes.map((n) => n.id)).toEqual(['atom', 'hub', 'long']);
+    expect(notes.every((n) => n.relation === 'label')).toBe(true);
+  });
+
   it('returns [] for an item with no primary and no labels', async () => {
     expect(await notesForItem(testDb(), { primary_artifact_id: null, knowledge_ids: [] })).toEqual(
       [],
