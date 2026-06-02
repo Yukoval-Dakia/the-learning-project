@@ -38,6 +38,10 @@ import type { TaggingOutputT } from '@/core/schema/tagging';
 import type { Db } from '@/db/client';
 import { learning_session, question, question_block } from '@/db/schema';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
+import {
+  type BlockAssemblyRunTaskFn,
+  runBlockAssemblyForSession,
+} from '@/server/ingestion/block-assembly';
 import { enrollCapturedBlock } from '@/server/ingestion/enroll';
 import {
   MistakeEnrollTaskError,
@@ -98,6 +102,12 @@ export interface RunAutoEnrollParams {
    * in observe mode to draft mistake metadata for ANSWERED blocks (A1, YUK-145).
    */
   runMistakeEnrollFn?: (params: RunMistakeEnrollTaskParams) => Promise<MistakeEnrollOutputT>;
+  /**
+   * Inject in tests; defaults to the production BlockAssemblyTask invoker
+   * (YUK-202, design 2026-06-02 §3). Drives the per-session block-merge proposal
+   * pass below — tests pass a fake returning candidates / throwing.
+   */
+  runBlockAssemblyFn?: BlockAssemblyRunTaskFn;
   /** Override env for the flag / threshold reads (tests). */
   env?: FlagEnv;
   /** Shared wall-clock for the batch. */
@@ -169,6 +179,30 @@ export async function runAutoEnrollForSession(
         eq(question_block.status, 'draft'),
       ),
     );
+
+  // ---- YUK-202 — BlockAssembly path-B per-session merge-proposal pass. ----
+  // Runs in BOTH modes ('enroll' + 'observe', i.e. mode !== 'off' which already
+  // short-circuited above), AFTER the draft blocks are loaded and BEFORE any
+  // enroll import (so blocks are still 'draft' — mergeQuestions on user accept
+  // needs draft) (design 2026-06-02 §3). AI ONLY proposes; mergeQuestions runs
+  // only on user accept (§5 hard boundary). The AI failure is SWALLOWED + logged
+  // — merge proposals are nice-to-have, not the critical path; an outage must
+  // NOT flip session state or abort enrollment (mirrors the per-block
+  // observe-write fault swallow). observe mode still proposes (zero mutation).
+  try {
+    await runBlockAssemblyForSession(params.db, {
+      sessionId: params.sessionId,
+      blocks: blocks.map((b) => ({
+        id: b.id,
+        structured: b.structured,
+        layout_quality: b.layout_quality,
+      })),
+      runTaskFn: params.runBlockAssemblyFn,
+      ctx: params.ctx ?? { db: params.db },
+    });
+  } catch (err) {
+    console.error(`[auto_enroll:block_assembly] pass failed for session ${params.sessionId}`, err);
+  }
 
   const enrolled: AutoEnrolledBlock[] = [];
   let routedToReview = 0;

@@ -618,6 +618,25 @@ export const tasks = {
     // type-required fallback only (new tasks add a builder in task-prompts.ts).
     systemPrompt: '(see getTaskSystemPrompt(task, profile) - fallback not for runtime)',
   },
+  BlockAssemblyTask: {
+    kind: 'BlockAssemblyTask',
+    description:
+      'YUK-202 / BlockAssembly path-B (design 2026-06-02 §2) — 给一个 ingestion session 的全部 draft blocks（按数组顺序 = 相邻关系）的紧凑文字投影（question_no / prompt 头 / role / 子问数 / layout_quality），找出哪些相邻 block 其实是被切开的同一道逻辑题（编号连续 / 子问承接 / 题干答案分离 / "承接前题、根据上文" 提示），输出 BlockAssemblyOutput 候选。单次结构化输出，输入是结构化文字（非页面图片）→ NON-vision，走 TaggingTask 同档轻量模型。SEMANTIC-ONLY：spatial/bbox page-edge 信号 DEFERRED 到 slice 2b（§0）。AI 只 propose 不 auto-merge（§5 硬边界）；候选经 writeBlockMergeProposal 落 inbox，用户接受才跑 mergeQuestions。',
+    defaultProvider: 'xiaomi',
+    // 纯文本推理（结构化文字投影 → 合并候选），无 vision 需求 → mimo-v2.5（与
+    // TaggingTask 同档：multimodal-capable model 但这里只喂文字）。
+    defaultModel: 'mimo-v2.5',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5-pro' }],
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
+    needsToolCall: false,
+    isMultimodal: false,
+    allowedTools: [],
+    // invocation 省略（默认 'auto'）：BlockAssemblyTask 在 auto_enroll server pass
+    // 内被 runBlockAssemblyForSession 调用，不是用户手动触发的 rescue。Runtime 经
+    // getTaskSystemPrompt(task, profile) 渲染 prompt；此字符串只是 type-required
+    // fallback（新 task 在 task-prompts.ts 加 builder，mirror TaggingTask/StructureTask）。
+    systemPrompt: '(see getTaskSystemPrompt(task, profile) - fallback not for runtime)',
+  },
   // 其余 Task（VariantGen / Judge* / Dreaming / Maintenance 等）见
   // docs/architecture.md § 五，按需补全。
 } satisfies Record<string, TaskDef>;
