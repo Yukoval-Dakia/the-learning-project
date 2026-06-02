@@ -10,10 +10,23 @@ import { ocr } from 'tencentcloud-sdk-nodejs-ocr';
 const OcrClient: any = ocr.v20181119.Client;
 
 function createOcrClient(): InstanceType<typeof OcrClient> {
+  // YUK-139 [M2]: fail fast on missing Tencent OCR creds. Previously these were
+  // passed straight into the SDK as possibly-undefined, which surfaces as an
+  // opaque signature/auth error deep inside the SDK at request time. Validate
+  // up front so a misconfigured deploy fails with a clear, actionable message.
+  const secretId = process.env.TENCENT_SECRET_ID?.trim();
+  const secretKey = process.env.TENCENT_SECRET_KEY?.trim();
+  const missing = [!secretId && 'TENCENT_SECRET_ID', !secretKey && 'TENCENT_SECRET_KEY'].filter(
+    Boolean,
+  );
+  if (missing.length > 0) {
+    throw new Error(`Tencent OCR client requires ${missing.join(' and ')}`);
+  }
+
   return new OcrClient({
     credential: {
-      secretId: process.env.TENCENT_SECRET_ID,
-      secretKey: process.env.TENCENT_SECRET_KEY,
+      secretId,
+      secretKey,
     },
     region: process.env.TENCENT_OCR_REGION ?? 'ap-shanghai',
     profile: { httpProfile: { endpoint: 'ocr.tencentcloudapi.com' } },

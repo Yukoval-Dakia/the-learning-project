@@ -1,3 +1,9 @@
+# YUK-137 [M2]: node:24-bookworm-slim keeps a floating *patch* tag on purpose.
+# The major (24) is pinned and matches the project runtime; pinning a full
+# patch tag here is brittle (slim patch tags are GC'd / can vanish, breaking the
+# build) for only a Low-severity benefit. The audit's High-severity unpinned
+# items were the docker-compose images (pgvector, cloudflared) — those are now
+# pinned. Revisit if we move to digest-pinned base images across the board.
 # Stage 1: Install dependencies
 FROM node:24-bookworm-slim AS deps
 WORKDIR /app
