@@ -27,6 +27,9 @@ export const fastTestInclude = [
   'src/server/ai/tools/registry.test.ts',
   'src/server/ai/tools/allowlists.test.ts',
   'src/server/ai/tools/mcp-bridge.test.ts',
+  // YUK-198 — pure (no-DB) Tavily remote MCP builder: reads TAVILY_API_KEY via
+  // vi.stubEnv, returns a static McpHttpServerConfig. No live DB / AI / network.
+  'src/server/ai/mcp/tavily.test.ts',
   // P5.1 / YUK-143 — pure (no-DB) budget constants + per-message context throttle.
   'src/server/ai/tools/budgets.test.ts',
   'src/server/ai/tools/context-throttle.test.ts',
