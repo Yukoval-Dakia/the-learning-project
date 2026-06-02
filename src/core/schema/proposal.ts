@@ -138,6 +138,11 @@ export const BlockMergeProposalChange = z.object({
   continuity_signal: z
     .enum(['page_edge', 'numbering', 'stem_answer_split', 'carryover'])
     .optional(),
+  // YUK-202 fork 4a — the AI's 0..1 confidence in this merge candidate, persisted
+  // at propose time so the inbox can sort/colour by it (consumed by the redraw UI
+  // slice, YUK-169). The model's confidence is not recoverable after the run, so
+  // it must be stored now even though the v1 inbox does not yet display it.
+  confidence: z.number().min(0).max(1).optional(),
 });
 export type BlockMergeProposalChangeT = z.infer<typeof BlockMergeProposalChange>;
 
