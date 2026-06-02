@@ -34,17 +34,46 @@ export async function loadTreeSnapshot(db: Db): Promise<KnowledgeNode[]> {
     .from(knowledge)
     .leftJoin(knowledge_mastery, eq(knowledge_mastery.knowledge_id, knowledge.id))
     .where(isNull(knowledge.archived_at));
-  const byId = new Map<string, KnowledgeRow>();
-  for (const r of rows) byId.set(r.id, r);
-  return rows.map((r) => {
-    let cur: KnowledgeRow | undefined = r;
-    let depth = 0;
-    while (depth < 32 && cur && cur.domain === null && cur.parent_id !== null) {
-      const next = byId.get(cur.parent_id);
-      if (next === undefined) break;
-      cur = next;
-      depth++;
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const effectiveDomainById = new Map<string, string | null>();
+  const sourceDepthById = new Map<string, number>();
+
+  function cachePath(path: KnowledgeRow[], domain: string | null, terminalDepth: number) {
+    for (const [index, pathRow] of path.entries()) {
+      effectiveDomainById.set(pathRow.id, domain);
+      sourceDepthById.set(pathRow.id, path.length - index + terminalDepth);
     }
-    return { ...r, effective_domain: cur?.domain ?? null };
-  });
+  }
+
+  function effectiveDomainFor(row: KnowledgeRow): string | null {
+    const path: KnowledgeRow[] = [];
+    const seen = new Set<string>();
+    let cur: KnowledgeRow | undefined = row;
+
+    while (path.length < 33 && cur) {
+      const cachedDepth = sourceDepthById.get(cur.id);
+      if (
+        effectiveDomainById.has(cur.id) &&
+        cachedDepth !== undefined &&
+        path.length + cachedDepth < 32
+      ) {
+        const domain = effectiveDomainById.get(cur.id) ?? null;
+        cachePath(path, domain, cachedDepth);
+        return domain;
+      }
+
+      path.push(cur);
+      if (cur.domain !== null || cur.parent_id === null || seen.has(cur.id)) {
+        cachePath(path, cur.domain, -1);
+        return cur.domain;
+      }
+      seen.add(cur.id);
+      cur = byId.get(cur.parent_id);
+    }
+
+    cachePath(path, null, 0);
+    return null;
+  }
+
+  return rows.map((r) => ({ ...r, effective_domain: effectiveDomainFor(r) }));
 }

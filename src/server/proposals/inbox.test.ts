@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
+  countPendingProposalInboxRows,
   getProposalInboxRow,
   listLegacyKnowledgeProposals,
   listProposalInboxPage,
@@ -358,6 +359,118 @@ describe('proposal inbox reader', () => {
       status: 'stale',
     });
     expect(stale[0].decided_at?.toISOString()).toBe('2026-05-23T02:00:00.000Z');
+  });
+
+  it('counts only live pending proposals without projecting the full inbox', async () => {
+    const db = testDb();
+    await writeAiProposal(db, {
+      id: 'pending_p1',
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'li_pending' },
+        reason_md: 'Pending row',
+        evidence_refs: [],
+        proposed_change: { learning_item_id: 'li_pending' },
+        cooldown_key: 'completion:pending',
+      },
+    });
+    await writeAiProposal(db, {
+      id: 'accepted_p1',
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'li_accepted' },
+        reason_md: 'Accepted row',
+        evidence_refs: [],
+        proposed_change: { learning_item_id: 'li_accepted' },
+        cooldown_key: 'completion:accepted',
+      },
+    });
+    await db.insert(event).values({
+      id: 'rate_accepted_p1',
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'event',
+      subject_id: 'accepted_p1',
+      outcome: 'success',
+      payload: { rating: 'accept' },
+      caused_by_event_id: 'accepted_p1',
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: new Date('2026-05-23T01:00:00.000Z'),
+    });
+    await writeAiProposal(db, {
+      id: 'stale_p1',
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'li_stale' },
+        reason_md: 'Stale row',
+        evidence_refs: [],
+        proposed_change: { learning_item_id: 'li_stale' },
+        cooldown_key: 'completion:stale',
+      },
+    });
+    await writeEvent(db, {
+      id: 'correct_stale_p1',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: 'stale_p1',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'retract',
+        reason_md: 'bad proposal',
+        affected_refs: [{ kind: 'open_inquiry', id: 'stale_p1' }],
+      },
+      caused_by_event_id: 'stale_p1',
+      created_at: new Date('2026-05-23T02:00:00.000Z'),
+    });
+    await writeAiProposal(db, {
+      id: 'edge_folded',
+      payload: {
+        kind: 'knowledge_edge',
+        target: { subject_kind: 'knowledge_edge', subject_id: null },
+        reason_md: 'folded',
+        evidence_refs: [],
+        proposed_change: {
+          from_knowledge_id: 'k1',
+          to_knowledge_id: 'k2',
+          relation_type: 'related_to',
+          weight: 1,
+        },
+      },
+      event_override: {
+        action: 'propose',
+        subject_kind: 'knowledge_edge',
+        payload: {
+          from_knowledge_id: 'k1',
+          to_knowledge_id: 'k2',
+          relation_type: 'related_to',
+          weight: 1,
+          reasoning: 'folded',
+          rubric_verdict: { ok: false, gate: 'evidence_missing', reason: 'no evidence' },
+        },
+      },
+    });
+    await db.insert(event).values({
+      id: 'bad_p1',
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'bad_writer',
+      action: 'experimental:proposal',
+      subject_kind: 'learning_item',
+      subject_id: 'li_bad',
+      outcome: 'partial',
+      payload: { ai_proposal: { kind: 'completion' } },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: new Date('2026-05-23T03:00:00.000Z'),
+    });
+
+    await expect(countPendingProposalInboxRows(db)).resolves.toBe(1);
   });
 
   it('ranks active high-acceptance proposals before default rows and cooled rows', async () => {

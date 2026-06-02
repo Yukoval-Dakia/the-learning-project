@@ -14,7 +14,7 @@ import { TabBar } from '@/ui/primitives/TabBar';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 function matchesKnowledgeFilter(
   node: { name: string; effective_domain: string | null },
@@ -129,7 +129,15 @@ export default function LearningItemsPage() {
     queryKey: ['knowledge'],
     queryFn: () => apiJson<{ rows: KnowledgeNode[] }>('/api/knowledge'),
   });
-  const knowledgeById = new Map(knowledgeQ.data?.rows.map((n) => [n.id, n]) ?? []);
+  const knowledgeRows = knowledgeQ.data?.rows ?? [];
+  const knowledgeById = useMemo(
+    () => new Map(knowledgeRows.map((n) => [n.id, n])),
+    [knowledgeRows],
+  );
+  const filteredKnowledge = useMemo(
+    () => knowledgeRows.filter((n) => matchesKnowledgeFilter(n, knowledgeFilter)).slice(0, 30),
+    [knowledgeRows, knowledgeFilter],
+  );
 
   const createM = useMutation({
     mutationFn: (payload: { title: string; knowledge_ids: string[] }) =>
@@ -286,27 +294,24 @@ export default function LearningItemsPage() {
             style={{ ...inputStyle, marginTop: 4 }}
           />
           <div style={chipRowStyle}>
-            {(knowledgeQ.data?.rows ?? [])
-              .filter((n) => matchesKnowledgeFilter(n, knowledgeFilter))
-              .slice(0, 30)
-              .map((n) => {
-                const selected = newKnowledgeIds.includes(n.id);
-                return (
-                  <button
-                    type="button"
-                    key={n.id}
-                    onClick={() =>
-                      setNewKnowledgeIds((cur) =>
-                        cur.includes(n.id) ? cur.filter((x) => x !== n.id) : [...cur, n.id],
-                      )
-                    }
-                    style={chipStyle(selected)}
-                    title={n.effective_domain ?? ''}
-                  >
-                    {n.name}
-                  </button>
-                );
-              })}
+            {filteredKnowledge.map((n) => {
+              const selected = newKnowledgeIds.includes(n.id);
+              return (
+                <button
+                  type="button"
+                  key={n.id}
+                  onClick={() =>
+                    setNewKnowledgeIds((cur) =>
+                      cur.includes(n.id) ? cur.filter((x) => x !== n.id) : [...cur, n.id],
+                    )
+                  }
+                  style={chipStyle(selected)}
+                  title={n.effective_domain ?? ''}
+                >
+                  {n.name}
+                </button>
+              );
+            })}
           </div>
 
           <div
@@ -399,26 +404,23 @@ export default function LearningItemsPage() {
                   style={{ ...inputStyle, marginTop: 4 }}
                 />
                 <div style={chipRowStyle}>
-                  {(knowledgeQ.data?.rows ?? [])
-                    .filter((n) => matchesKnowledgeFilter(n, knowledgeFilter))
-                    .slice(0, 30)
-                    .map((n) => {
-                      const selected = draftKnowledgeIds.includes(n.id);
-                      return (
-                        <button
-                          type="button"
-                          key={n.id}
-                          onClick={() =>
-                            setDraftKnowledgeIds((cur) =>
-                              cur.includes(n.id) ? cur.filter((x) => x !== n.id) : [...cur, n.id],
-                            )
-                          }
-                          style={chipStyle(selected)}
-                        >
-                          {n.name}
-                        </button>
-                      );
-                    })}
+                  {filteredKnowledge.map((n) => {
+                    const selected = draftKnowledgeIds.includes(n.id);
+                    return (
+                      <button
+                        type="button"
+                        key={n.id}
+                        onClick={() =>
+                          setDraftKnowledgeIds((cur) =>
+                            cur.includes(n.id) ? cur.filter((x) => x !== n.id) : [...cur, n.id],
+                          )
+                        }
+                        style={chipStyle(selected)}
+                      >
+                        {n.name}
+                      </button>
+                    );
+                  })}
                 </div>
                 <div
                   style={{

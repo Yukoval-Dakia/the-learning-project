@@ -207,36 +207,45 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
     const notDraftQuiz = or(isNull(question.draft_status), ne(question.draft_status, 'draft'));
 
     const candidateWindow = Math.min(Math.max(limit * 4, 100), 400);
-    const dueRows = await db
-      .select({
-        question_id: material_fsrs_state.subject_id,
-        state: material_fsrs_state.state,
-        due_at: material_fsrs_state.due_at,
-        prompt_md: question.prompt_md,
-        reference_md: question.reference_md,
-        knowledge_ids: question.knowledge_ids,
-        created_at: question.created_at,
-      })
-      .from(material_fsrs_state)
-      .innerJoin(question, eq(question.id, material_fsrs_state.subject_id))
-      .where(
-        and(
-          eq(material_fsrs_state.subject_kind, 'question'),
-          lte(material_fsrs_state.due_at, now),
-          notDraftQuiz,
-        ),
-      )
-      .orderBy(material_fsrs_state.due_at, question.created_at)
-      .limit(candidateWindow);
+    const [dueRows, latestFailureQuestionIds] = await Promise.all([
+      db
+        .select({
+          question_id: material_fsrs_state.subject_id,
+          state: material_fsrs_state.state,
+          due_at: material_fsrs_state.due_at,
+          prompt_md: question.prompt_md,
+          reference_md: question.reference_md,
+          knowledge_ids: question.knowledge_ids,
+          created_at: question.created_at,
+        })
+        .from(material_fsrs_state)
+        .innerJoin(question, eq(question.id, material_fsrs_state.subject_id))
+        .where(
+          and(
+            eq(material_fsrs_state.subject_kind, 'question'),
+            lte(material_fsrs_state.due_at, now),
+            notDraftQuiz,
+          ),
+        )
+        .orderBy(material_fsrs_state.due_at, question.created_at)
+        .limit(candidateWindow),
+      loadLatestFailureQuestionIds(candidateWindow),
+    ]);
 
     // Build the "never reviewed" slice by finding failure attempts whose
     // question has no FSRS state row yet. Use the existing event-stream read
     // path (getFailureAttempts) and filter out already-projected ids.
     const projectedQids = new Set(dueRows.map((r) => r.question_id));
-    const candidateQuestionIds = (await loadLatestFailureQuestionIds(candidateWindow)).filter(
+    const candidateQuestionIds = latestFailureQuestionIds.filter(
       (questionId) => !projectedQids.has(questionId),
     );
-    const newAttempts = await getFailureAttemptsPerQuestion(candidateQuestionIds, 4);
+    const [newAttempts, dueAttempts] = await Promise.all([
+      getFailureAttemptsPerQuestion(candidateQuestionIds, 4),
+      getFailureAttemptsPerQuestion(
+        dueRows.map((row) => row.question_id),
+        4,
+      ),
+    ]);
     const newQuestionIds: string[] = [];
     for (const a of newAttempts) {
       if (!projectedQids.has(a.question_id) && !newQuestionIds.includes(a.question_id)) {
@@ -292,8 +301,6 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
         }
       }
     }
-    const dueQuestionIds = dueRows.map((row) => row.question_id);
-    const dueAttempts = await getFailureAttemptsPerQuestion(dueQuestionIds, 4);
     const latestFailureByQid = pickLatestFailureByQuestion([...newAttempts, ...dueAttempts]);
 
     type OutRow = {

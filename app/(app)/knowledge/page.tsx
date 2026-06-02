@@ -349,30 +349,50 @@ export default function KnowledgePage() {
     for (const p of pendingEdgeProposals) {
       const from = edgeProposalFrom(p);
       const to = edgeProposalTo(p);
-      if (from) grouped.set(from, [...(grouped.get(from) ?? []), p]);
-      if (to) grouped.set(to, [...(grouped.get(to) ?? []), p]);
+      if (from) {
+        const fromGroup = grouped.get(from);
+        if (fromGroup) {
+          fromGroup.push(p);
+        } else {
+          grouped.set(from, [p]);
+        }
+      }
+      if (to && to !== from) {
+        const toGroup = grouped.get(to);
+        if (toGroup) {
+          toGroup.push(p);
+        } else {
+          grouped.set(to, [p]);
+        }
+      }
     }
     return grouped;
   }, [pendingEdgeProposals]);
 
-  const selectedEdges = selectedId
-    ? edges.filter(
-        (edge) =>
-          edge.archived_at === null &&
-          (edge.from_knowledge_id === selectedId || edge.to_knowledge_id === selectedId),
-      )
-    : [];
+  const selectedEdges = useMemo(
+    () =>
+      selectedId
+        ? activeEdges.filter(
+            (edge) => edge.from_knowledge_id === selectedId || edge.to_knowledge_id === selectedId,
+          )
+        : [],
+    [activeEdges, selectedId],
+  );
   const selectedPendingEdges = selectedId ? (edgeProposalsByNode.get(selectedId) ?? []) : [];
   const selectedNodeProposals = selectedId ? (proposalsByParent.get(selectedId) ?? []) : [];
-  const selectedActivity = selectedId
-    ? buildNodeActivity({
-        nodeId: selectedId,
-        mistakes,
-        nodeProposals: selectedNodeProposals,
-        edgeProposals: selectedPendingEdges,
-        edges: selectedEdges,
-      })
-    : [];
+  const selectedActivity = useMemo(
+    () =>
+      selectedId
+        ? buildNodeActivity({
+            nodeId: selectedId,
+            mistakes,
+            nodeProposals: selectedNodeProposals,
+            edgeProposals: selectedPendingEdges,
+            edges: selectedEdges,
+          })
+        : [],
+    [selectedId, mistakes, selectedNodeProposals, selectedPendingEdges, selectedEdges],
+  );
 
   const optionalDataError =
     edgesQ.error ?? proposalsQ.error ?? edgeProposalsQ.error ?? mistakesQ.error ?? reviewDueQ.error;

@@ -219,6 +219,96 @@ function proposalAcceptanceRateExpr() {
   return sql<number>`COALESCE(${proposal_signals.acceptance_rate}, 0.5)`;
 }
 
+function proposalPendingWhere() {
+  return sql`
+    (${event.payload}->'rubric_verdict'->>'ok') IS DISTINCT FROM 'false'
+    AND (
+      CASE
+        WHEN ${event.payload}->'ai_proposal' IS NOT NULL
+          OR ${event.action} = 'experimental:proposal'
+        THEN (
+          COALESCE(${event.payload}->'ai_proposal'->>'kind', ${event.payload}->>'kind') IN (
+            'knowledge_node',
+            'knowledge_edge',
+            'knowledge_mutation',
+            'learning_item',
+            'note_update',
+            'variant_question',
+            'completion',
+            'relearn',
+            'defer',
+            'record_links',
+            'record_promotion',
+            'archive',
+            'judge_retraction',
+            'goal_scope'
+          )
+          AND COALESCE(
+            ${event.payload}->'ai_proposal'->'target'->>'subject_kind',
+            ${event.payload}->'target'->>'subject_kind'
+          ) IS NOT NULL
+          AND COALESCE(
+            ${event.payload}->'ai_proposal'->>'reason_md',
+            ${event.payload}->>'reason_md'
+          ) <> ''
+          AND COALESCE(
+            ${event.payload}->'ai_proposal'->'proposed_change',
+            ${event.payload}->'proposed_change'
+          ) IS NOT NULL
+        )
+        WHEN ${event.action} LIKE 'experimental:knowledge_%'
+          AND ${event.subject_kind} = 'knowledge'
+        THEN ${event.subject_id} IS NOT NULL
+        WHEN ${event.action} = 'propose'
+          AND ${event.subject_kind} = 'knowledge'
+        THEN ${event.subject_id} IS NOT NULL
+          AND COALESCE(${event.payload}->>'name', '') <> ''
+          AND COALESCE(${event.payload}->>'parent_id', '') <> ''
+        WHEN ${event.action} = 'propose'
+          AND ${event.subject_kind} = 'knowledge_edge'
+        THEN ${event.subject_id} IS NOT NULL
+          AND COALESCE(${event.payload}->>'from_knowledge_id', '') <> ''
+          AND COALESCE(${event.payload}->>'to_knowledge_id', '') <> ''
+          AND (
+            (${event.payload}->>'relation_type') IN (
+              'prerequisite',
+              'related_to',
+              'contrasts_with',
+              'applied_in',
+              'derived_from'
+            )
+            OR (${event.payload}->>'relation_type') LIKE 'experimental:%'
+          )
+        ELSE false
+      END
+    )
+    AND COALESCE(
+      (
+        SELECT rate_event.payload->>'rating'
+        FROM "event" AS rate_event
+        WHERE rate_event.action = 'rate'
+          AND rate_event.caused_by_event_id = ${event.id}
+          AND rate_event.caused_by_event_id IS NOT NULL
+        ORDER BY rate_event.created_at DESC, rate_event.id DESC
+        LIMIT 1
+      ),
+      ''
+    ) NOT IN ('accept', 'reverse', 'change_type', 'dismiss', 'rollback')
+    AND COALESCE(
+      (
+        SELECT correction_event.payload->>'correction_kind'
+        FROM "event" AS correction_event
+        WHERE correction_event.action = 'correct'
+          AND correction_event.subject_kind = 'event'
+          AND correction_event.subject_id = ${event.id}
+        ORDER BY correction_event.created_at DESC, correction_event.id DESC
+        LIMIT 1
+      ),
+      'restore'
+    ) = 'restore'
+  `;
+}
+
 function proposalCursorWhere(cursor: ProposalCursor, nowIso: string) {
   const cooldownActive = proposalCooldownActiveExpr(nowIso);
   const acceptanceRate = proposalAcceptanceRateExpr();
@@ -450,20 +540,25 @@ export async function listProposalInboxRows(
   return (await listProposalInboxPage(db, opts)).rows;
 }
 
+export async function countPendingProposalInboxRows(db: DbLike): Promise<number> {
+  const rows = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(event)
+    .where(and(proposalWhere(), proposalPendingWhere()));
+  return rows[0]?.count ?? 0;
+}
+
 async function projectLoadedProposalRows(
   db: DbLike,
   loadedProposalRows: LoadedProposalEvent[],
   status?: ProposalStatus,
 ): Promise<ProposalInboxRow[]> {
   const proposalRows = loadedProposalRows.map((loaded) => loaded.row);
-  const latestRateByProposal = await loadLatestRateByProposal(
-    db,
-    proposalRows.map((row) => row.id),
-  );
-  const correctionDecisionByProposal = await loadCorrectionDecisionByProposal(
-    db,
-    proposalRows.map((row) => row.id),
-  );
+  const proposalIds = proposalRows.map((row) => row.id);
+  const [latestRateByProposal, correctionDecisionByProposal] = await Promise.all([
+    loadLatestRateByProposal(db, proposalIds),
+    loadCorrectionDecisionByProposal(db, proposalIds),
+  ]);
 
   const out: ProposalInboxRow[] = [];
   for (const row of proposalRows) {
@@ -490,6 +585,7 @@ async function projectLoadedProposalRows(
     });
   }
 
+  if (out.length === 0) return out;
   const signalsByProposalId = await loadProposalSignalsForRows(db, out);
   for (const row of out) {
     row.signals = signalsByProposalId.get(row.id) ?? null;
@@ -551,8 +647,10 @@ export async function getProposalInboxRow(
 ): Promise<ProposalInboxRow | null> {
   const proposalRow = await loadProposalEventById(db, proposalId);
   if (!proposalRow) return null;
-  const latestRateByProposal = await loadLatestRateByProposal(db, [proposalId]);
-  const correctionDecisionByProposal = await loadCorrectionDecisionByProposal(db, [proposalId]);
+  const [latestRateByProposal, correctionDecisionByProposal] = await Promise.all([
+    loadLatestRateByProposal(db, [proposalId]),
+    loadCorrectionDecisionByProposal(db, [proposalId]),
+  ]);
   const rate = latestRateByProposal.get(proposalId);
   const correction = correctionDecisionByProposal.get(proposalId);
   const payload = safeDeriveLegacyAiProposal(proposalRow);
