@@ -275,9 +275,10 @@ export async function loadKnowledgeNodePage(
       // Resolve each source artifact to its owning learning_item so the panel can
       // link to /learning-items/<learning_item_id> instead of the artifact id
       // (those are distinct ids; linking by artifact id 404s — Codex #193). The
-      // link is learning_item.primary_artifact_id == source.artifact_id, 1:1 per
-      // docs/modules/learning-items.md. Drop archived learning_items → unresolved
-      // sources render as non-links downstream.
+      // link is learning_item.primary_artifact_id == source.artifact_id. Per ADR-0027
+      // an artifact may be referenced by >1 item; resolveOwning returns the earliest as
+      // a representative. Drop archived learning_items → unresolved sources render as
+      // non-links downstream.
       const owningLearningItemByArtifactId = await resolveOwningLearningItemIds(db, sourceIds);
       for (const ref of inbound) {
         const source = sourceById.get(ref.from_artifact_id);

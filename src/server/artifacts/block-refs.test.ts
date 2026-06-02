@@ -566,7 +566,7 @@ describe('resolveOwningLearningItemIds', () => {
     });
   }
 
-  it('resolves the 1:1 artifact → learning_item id', async () => {
+  it('resolves an artifact → its owning learning_item id', async () => {
     const db = testDb();
     await seedArtifact('art1');
     await seedLearningItem('li1', 'art1');
@@ -595,8 +595,8 @@ describe('resolveOwningLearningItemIds', () => {
   });
 
   it('an archived owner does not block a live owner for the same artifact', async () => {
-    // The partial unique index excludes archived rows, so an artifact can be
-    // re-owned after its prior owner is archived — the live owner must win.
+    // Archived rows are excluded from the resolve query, so a live owner wins even
+    // when an older archived owner exists for the same artifact.
     const db = testDb();
     await seedArtifact('art1');
     await seedLearningItem('liOld', 'art1', {
@@ -609,36 +609,28 @@ describe('resolveOwningLearningItemIds', () => {
     expect(map.get('art1')).toBe('liNew');
   });
 
-  it('on a DUPLICATE non-archived owner: picks the earliest-created and warns once (defensive — the unique index normally prevents this)', async () => {
-    // The DB partial unique index forbids two non-archived rows sharing the same
-    // primary_artifact_id, so this anomaly cannot occur via the real schema.
-    // To exercise the defensive deterministic-pick + warn path, stub the db query
-    // builder to yield two rows (already ordered earliest-first, as the production
-    // `.orderBy(created_at, id)` would), mirroring the txSpy shim used above.
+  it('on MULTIPLE non-archived owners (now VALID per ADR-0027): picks the earliest as representative and does NOT warn', async () => {
+    // The YUK-171 1:1 unique index was dropped (ADR-0027): two non-archived
+    // learning_items MAY now reference the same primary_artifact_id. The resolver
+    // links to a single representative (earliest-created) and must not treat this
+    // as an anomaly — no console.warn. Seeded against the real schema.
     const db = testDb();
-    const orderedRows = [
-      { id: 'liEarly', primary_artifact_id: 'art1' },
-      { id: 'liLate', primary_artifact_id: 'art1' },
-    ];
-    const thenable = {
-      from: () => thenable,
-      where: () => thenable,
-      orderBy: () => Promise.resolve(orderedRows),
-    };
-    const selectSpy = vi.spyOn(db, 'select').mockReturnValue(thenable as never);
+    await seedArtifact('art1');
+    await seedLearningItem('liEarly', 'art1', {
+      createdAt: new Date('2026-05-10T00:00:00.000Z'),
+    });
+    await seedLearningItem('liLate', 'art1', {
+      createdAt: new Date('2026-05-20T00:00:00.000Z'),
+    });
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const map = await resolveOwningLearningItemIds(db, ['art1']);
 
-    selectSpy.mockRestore();
-    // Earliest-created row deterministically wins.
+    // Earliest-created row deterministically wins as the representative.
     expect(map.get('art1')).toBe('liEarly');
-    // Warned exactly once, naming both ids + the resolved (earliest) winner.
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    const warnArg = warnSpy.mock.calls[0]?.[0] as string;
-    expect(warnArg).toContain('art1');
-    expect(warnArg).toContain('liEarly');
-    expect(warnArg).toContain('liLate');
+    expect(map.size).toBe(1);
+    // Multiplicity is valid now — no warn.
+    expect(warnSpy).not.toHaveBeenCalled();
     warnSpy.mockRestore();
   });
 

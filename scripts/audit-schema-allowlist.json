@@ -57,10 +57,10 @@
     }
   },
   "learning_item.primary_artifact_id": {
-    "reason": "ADR-0004 Phase 2 — learning_item ↔ artifact 双向关联",
+    "reason": "ADR-0027 (YUK-203 P1) — primary_artifact_id 现为 learning_item→note 的可空 representative 引用指针（INSERT via acceptLearningIntent；无 UPDATE re-point path）。ADR-0004 的双向 ownership 已被 supersede。",
     "resolves_when": {
       "kind": "manual",
-      "ref": "Sub 0d Phase 2 (artifact generation lane) implemented",
+      "ref": "ADR-0027 reference-model: 当 learning_item→note 读全量切到 label 交集 (notesForItem, P1-PR2/P4) 后评估 drop 此列",
       "expected_by": "2026-07-31"
     }
   },
