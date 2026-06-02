@@ -315,6 +315,75 @@ export async function writeArchiveProposal(
   });
 }
 
+// YUK-202 / BlockAssembly path-B (design 2026-06-02 §1.C + §5) — AI proposes
+// cross-page/adjacent block merges; the user accepts in the inbox (S2's
+// acceptBlockMergeProposal reuses the YUK-195 `mergeQuestions` primitive). This
+// producer ONLY writes the proposal event — no auto-merge (hard safety boundary,
+// §5). `continuity_signal` is the semantic-only cue (§0: spatial/bbox page-edge
+// detection is DEFERRED to slice 2b — block_assembly gains a spatial input later
+// with no rework here), optional so low-signal candidates can still propose.
+export interface WriteBlockMergeProposalInput extends CommonProducerInput {
+  ingestion_session_id: string;
+  primary_block_id: string;
+  merge_block_ids: string[];
+  // §1.C — the BlockAssembly candidate's 0..1 confidence (S4 passes it through).
+  // DEFERRED persistence: the locked S1 `BlockMergeProposalChange` schema
+  // (src/core/schema/proposal.ts) has no confidence field, so this is not stored
+  // on the proposed_change today — Zod strips unknown keys on parse. It stays on
+  // the producer's input contract for the S4 call site; inbox sort-by-confidence
+  // is fork 4a (design §4), wired with the redraw UI slice, not in v1.
+  confidence: number;
+  continuity_signal: 'page_edge' | 'numbering' | 'stem_answer_split' | 'carryover';
+}
+
+export async function writeBlockMergeProposal(
+  db: DbLike,
+  input: WriteBlockMergeProposalInput,
+): Promise<string> {
+  return writeAiProposal(db, {
+    id: input.id,
+    actor_ref: 'block_assembly',
+    payload: {
+      kind: 'block_merge',
+      target: { subject_kind: 'question_block', subject_id: input.primary_block_id },
+      reason_md: input.reason_md,
+      // §1.C — each block (primary + merge candidates) is an evidence ref so the
+      // inbox preview can resolve every block; match the sibling EvidenceRef shape.
+      evidence_refs: input.evidence_refs ?? [
+        { kind: 'question', id: input.primary_block_id },
+        ...input.merge_block_ids.map((id) => ({ kind: 'question' as const, id })),
+      ],
+      proposed_change: {
+        primary_block_id: input.primary_block_id,
+        merge_block_ids: input.merge_block_ids,
+        ingestion_session_id: input.ingestion_session_id,
+        continuity_signal: input.continuity_signal,
+      },
+      rollback_plan: {
+        action:
+          'dismiss proposal; no blocks merged yet (accept reuses mergeQuestions, which is lossy — no real unmerge, §7)',
+      },
+      // §5 dedup (1) — sort the merge ids so the same block set produces a stable
+      // cooldown_key regardless of candidate ordering. This is a stable dedup KEY
+      // for downstream inbox cooldown-signal folding, NOT a pre-write suppressor:
+      // writeAiProposal does not hard-suppress a second write, so a re-run of the
+      // auto_enroll pass on the same session can write a duplicate proposal. That is
+      // acceptable — accept-side existingAcceptRate idempotency + mergeQuestions
+      // draft-only soft-reject prevent any double-merge (§5 dedup (2)).
+      cooldown_key: `block_merge:${input.ingestion_session_id}:${input.primary_block_id}:${[...input.merge_block_ids].sort().join(',')}`,
+      // suggestion_kind intentionally OMITTED → resolveSuggestionKind defaults to
+      // 'proactive'. block_merge is a proactive structural suggestion over draft
+      // blocks, NOT a failure-retry: variant_question is the ONLY corrective kind
+      // (SK-3). Tagging it 'corrective' would make signals.ts early-return on accept
+      // and silently drop the proposal_signals row / accept_count / cooldown clear.
+    },
+    caused_by_event_id: input.caused_by_event_id ?? null,
+    task_run_id: input.task_run_id ?? null,
+    cost_usd: input.cost_usd,
+    created_at: input.created_at,
+  });
+}
+
 export interface WriteJudgeRetractionProposalInput extends CommonProducerInput {
   judge_event_id: string;
   appeal_event_id?: string;
