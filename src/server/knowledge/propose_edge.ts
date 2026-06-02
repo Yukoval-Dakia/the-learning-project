@@ -8,11 +8,13 @@
 // 交互式 12 iter 设计，nightly cron 用单次结构化输出更便宜可控。
 
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
+import { parseAiProposalPayload } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
 import { event, knowledge_edge } from '@/db/schema';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 import type { FailureAttempt } from '@/server/events/queries';
+import { validateProposalQuality } from '@/server/knowledge/rubric-validator';
 import { writeAiProposal } from '@/server/proposals/writer';
 import type { SubjectProfile } from '@/subjects/profile';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
@@ -50,6 +52,10 @@ export interface RunEdgeProposeAndWriteResult {
   skipped_unknown_node: number;
   skipped_duplicate_edge: number;
   skipped_duplicate_pending: number;
+  // P5.4 §5-Q5 / YUK-175 — batch edge proposals that FAILED the L1 rubric floor
+  // (validateProposalQuality) and were FOLDED (a rubric-rejected propose event is
+  // still written, marked, but no live pending proposal is created).
+  folded_rubric_rejected: number;
 }
 
 const EMPTY_RESULT: RunEdgeProposeAndWriteResult = {
@@ -58,6 +64,7 @@ const EMPTY_RESULT: RunEdgeProposeAndWriteResult = {
   skipped_unknown_node: 0,
   skipped_duplicate_edge: 0,
   skipped_duplicate_pending: 0,
+  folded_rubric_rejected: 0,
 };
 
 /**
@@ -134,39 +141,98 @@ export async function runEdgeProposeAndWrite(
         stats.skipped_duplicate_pending += 1;
         continue;
       }
+
       // Write ProposeKnowledgeEdge event (Lane B).
       //
-      // P5.4-L2 / YUK-174 NOTE: this batch path is NOT wired into either L2 facet
-      // yet — both are deferred follow-ups:
-      //   - Facet A (reason digest): the `KnowledgeEdgeProposeTask` input built
-      //     above carries only { tree_snapshot, existing_edges, recent_failures },
-      //     NOT a `proposal_feedback` digest. Unlike the Dreaming / Coach / Copilot
-      //     surfaces, this batch edge-proposer never sees the per-(kind, relation)
-      //     digest, so threading it here needs the registry input schema + prompt
-      //     extended first (out of scope for this PR).
-      //   - Facet B (gate-bump): this path does NOT run `validateProposalQuality`
-      //     (the L1 rubric floor); its rubric gating is deferred to YUK-175 (batch
-      //     enforce), so there is NO validator call here to thread the bump into.
-      // Wire both once the schema/prompt threading and YUK-175 land.
+      // P5.4-L2 / YUK-174 NOTE: this batch path's L1 rubric floor is now wired in
+      // (YUK-175): every proposal runs `validateProposalQuality` BELOW before the
+      // live write, mirroring the DomainTool / legacy-MCP call sites. Facet A
+      // (reason-digest) is still deferred — the `KnowledgeEdgeProposeTask` input
+      // built above carries only { tree_snapshot, existing_edges, recent_failures },
+      // NOT a `proposal_feedback` digest; threading it here needs the registry
+      // input schema + prompt extended first (out of scope here). Facet B (the
+      // adaptive gate-bump 4th arg) is INTENTIONALLY NOT passed: L2/Facet A is
+      // out-of-scope for this slice (§5-Q5), so the validator runs as pure L1.
+      // codex r? P2 (propose_edge.ts:163) — per-edge evidence scoping. Attaching
+      // EVERY batch recentFailure to EVERY edge's evidence_refs let edge B borrow
+      // edge A's same-pattern failures and clear the strong floor (live instead of
+      // fold). Scope each edge's evidence to the failures whose EFFECTIVE
+      // referenced ids touch THIS edge's own endpoints, where "effective" is the
+      // attempt ∪ judge union — identical to rubric-validator.ts
+      // `effectiveReferencedKnowledgeIds` (attempt.referenced_knowledge_ids ∪
+      // attempt.judge?.referenced_knowledge_ids). A failure references an endpoint
+      // when its effective id set contains p.from_knowledge_id or p.to_knowledge_id.
+      // When the scoped set is empty the validator takes the evidence_missing path
+      // → fold (correct, matches the existing no-endpoint-evidence behaviour).
+      const endpointTouchingFailures = params.recentFailures.filter((failure) => {
+        const effectiveRefs = new Set([
+          ...failure.referenced_knowledge_ids,
+          ...(failure.judge?.referenced_knowledge_ids ?? []),
+        ]);
+        return effectiveRefs.has(p.from_knowledge_id) || effectiveRefs.has(p.to_knowledge_id);
+      });
+      const proposalPayload = {
+        kind: 'knowledge_edge' as const,
+        target: { subject_kind: 'knowledge_edge' as const, subject_id: null },
+        reason_md: p.reasoning,
+        evidence_refs: endpointTouchingFailures.map((failure) => ({
+          kind: 'event' as const,
+          id: failure.attempt_event_id,
+        })),
+        proposed_change: {
+          from_knowledge_id: p.from_knowledge_id,
+          to_knowledge_id: p.to_knowledge_id,
+          relation_type: p.relation_type,
+          weight: p.weight,
+        },
+        cooldown_key: `knowledge_edge:${key}`,
+      };
+
+      const verdict = await validateProposalQuality(
+        parseAiProposalPayload(proposalPayload),
+        params.db,
+        { isAgent: true, actorRef: 'dreaming' },
+      );
+
+      if (!verdict.ok) {
+        // RB-6 / §3.4 — write the propose event ANYWAY, MARKED rubric-rejected
+        // (carrying { rubric_verdict } as a sibling of ai_proposal in the event
+        // payload). Folded, not dropped: an audit trail + a Layer-2 signal, and
+        // excluded from live-pending dedup (RB-7) so a later batch can re-propose
+        // and re-fold rather than permanently lock the edge out. Mirrors
+        // foldRubricRejectedEdge in proposal-tools.ts.
+        await writeAiProposal(params.db, {
+          actor_ref: 'dreaming',
+          outcome: 'success',
+          payload: proposalPayload,
+          event_override: {
+            action: 'propose',
+            subject_kind: 'knowledge_edge',
+            payload: {
+              from_knowledge_id: p.from_knowledge_id,
+              to_knowledge_id: p.to_knowledge_id,
+              relation_type: p.relation_type,
+              weight: p.weight,
+              reasoning: p.reasoning,
+              rubric_verdict: { ok: false, gate: verdict.gate, reason: verdict.reason },
+            },
+          },
+          task_run_id: result.task_run_id ?? null,
+          cost_usd: result.cost_usd,
+          created_at: new Date(),
+        });
+        // Mark this key so the SAME batch does not re-emit it (the folded row is
+        // excluded from the CROSS-batch pending set in loadPendingEdgeProposalKeys,
+        // but within one batch we still suppress an immediate duplicate).
+        pendingEdgeKey.add(key);
+        stats.folded_rubric_rejected += 1;
+        continue;
+      }
+
       await writeAiProposal(params.db, {
         actor_ref: 'dreaming',
         outcome: 'success',
-        payload: {
-          kind: 'knowledge_edge',
-          target: { subject_kind: 'knowledge_edge', subject_id: null },
-          reason_md: p.reasoning,
-          evidence_refs: params.recentFailures.map((failure) => ({
-            kind: 'event' as const,
-            id: failure.attempt_event_id,
-          })),
-          proposed_change: {
-            from_knowledge_id: p.from_knowledge_id,
-            to_knowledge_id: p.to_knowledge_id,
-            relation_type: p.relation_type,
-            weight: p.weight,
-          },
-          cooldown_key: `knowledge_edge:${key}`,
-        },
+        payload: proposalPayload,
         task_run_id: result.task_run_id ?? null,
         cost_usd: result.cost_usd,
         created_at: new Date(),

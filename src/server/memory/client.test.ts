@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createMem0Config, createMemoryClient } from './client';
 
 const env = {
@@ -89,5 +89,73 @@ describe('createMemoryClient', () => {
       topK: 3,
       filters: { affected_scopes: { contains: 'topic:k1' }, user_id: 'self' },
     });
+  });
+
+  it('passes the xiaomi key to the LLM via config, not via process.env', () => {
+    let seenConfig: ReturnType<typeof createMem0Config> | undefined;
+    createMemoryClient({
+      env,
+      memoryFactory: (config) => {
+        seenConfig = config;
+        return { add: vi.fn(), search: vi.fn() };
+      },
+    });
+    expect(seenConfig?.llm.config.apiKey).toBe('xiaomi-key');
+  });
+});
+
+describe('createMemoryClient process.env hygiene (YUK-140)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('never assigns process.env.ANTHROPIC_API_KEY', () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', undefined);
+    createMemoryClient({
+      env,
+      memoryFactory: () => ({ add: vi.fn(), search: vi.fn() }),
+    });
+    // The xiaomi key must NOT have leaked into the global process env.
+    expect(process.env.ANTHROPIC_API_KEY).toBeUndefined();
+  });
+
+  it('sets ANTHROPIC_BASE_URL only during construction and restores it after', () => {
+    vi.stubEnv('ANTHROPIC_BASE_URL', undefined);
+    let baseUrlDuringConstruction: string | undefined;
+    createMemoryClient({
+      env,
+      // The factory runs inside the scoped env window (same window that wraps
+      // the real `new Memory`), so it observes the Xiaomi base URL...
+      memoryFactory: () => {
+        baseUrlDuringConstruction = process.env.ANTHROPIC_BASE_URL;
+        return { add: vi.fn(), search: vi.fn() };
+      },
+    });
+    expect(baseUrlDuringConstruction).toBe('https://api.xiaomimimo.com/anthropic');
+    // ...but it must NOT persist afterward (restored to the pre-call undefined).
+    expect(process.env.ANTHROPIC_BASE_URL).toBeUndefined();
+  });
+
+  it('restores a pre-existing ANTHROPIC_BASE_URL value after construction', () => {
+    vi.stubEnv('ANTHROPIC_BASE_URL', 'https://preexisting.example/anthropic');
+    createMemoryClient({
+      env,
+      memoryFactory: () => ({ add: vi.fn(), search: vi.fn() }),
+    });
+    expect(process.env.ANTHROPIC_BASE_URL).toBe('https://preexisting.example/anthropic');
+  });
+
+  it('prefers MEM0_ANTHROPIC_BASE_URL over ANTHROPIC_BASE_URL for the scoped value', () => {
+    vi.stubEnv('ANTHROPIC_BASE_URL', undefined);
+    let seen: string | undefined;
+    createMemoryClient({
+      env: { ...env, MEM0_ANTHROPIC_BASE_URL: 'https://mem0-specific.example/anthropic' },
+      memoryFactory: () => {
+        seen = process.env.ANTHROPIC_BASE_URL;
+        return { add: vi.fn(), search: vi.fn() };
+      },
+    });
+    expect(seen).toBe('https://mem0-specific.example/anthropic');
+    expect(process.env.ANTHROPIC_BASE_URL).toBeUndefined();
   });
 });

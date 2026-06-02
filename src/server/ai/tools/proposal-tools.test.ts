@@ -290,7 +290,20 @@ describe('Wave 3 proposal/action DomainTools', () => {
       'propose_record_promotion',
       'propose_variant',
     ]);
-    expect(listTools({ effect: 'write' }).map((tool) => tool.name)).toEqual(['attribute_mistake']);
+    expect(
+      listTools({ effect: 'write' })
+        .map((tool) => tool.name)
+        .sort(),
+    ).toEqual([
+      'add_option',
+      'attribute_mistake',
+      // YUK-195 — question structure-edit write tools (draft layer).
+      'merge_questions',
+      'reassign_figure',
+      'set_question_type',
+      'split_stem',
+      'update_prompt',
+    ]);
   });
 
   it('propose_knowledge_edge validates graph guardrails and writes an edge proposal', async () => {

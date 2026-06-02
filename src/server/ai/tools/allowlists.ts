@@ -35,6 +35,15 @@ export const PROPOSE_WRITE_TOOLS = [
   'propose_learning_item_archive',
   'propose_record_links',
   'propose_record_promotion',
+  // YUK-195 — agent-callable question structure-edit write tools. Operate on the
+  // pre-import draft layer (question_block.structured + figures); only the
+  // `ingestion_block_edit` surface below grants them.
+  'update_prompt',
+  'add_option',
+  'set_question_type',
+  'split_stem',
+  'merge_questions',
+  'reassign_figure',
 ] as const;
 
 export type ReadDomainToolName = (typeof READ_TOOLS)[number];
@@ -47,7 +56,11 @@ export type DomainToolSurface =
   | 'copilot_user_suggested_mistake_action'
   | 'dreaming'
   | 'coach'
-  | 'maintenance';
+  | 'maintenance'
+  // YUK-195 — question structure-correction surface (agent/user-triggered). Kept
+  // separate so copilot / dreaming / coach do NOT get question-mutation tools by
+  // default; this is the only surface granting the 6 draft-edit write tools.
+  | 'ingestion_block_edit';
 
 const KNOWLEDGE_REVIEW_TOOLS = [
   'get_subject_graph_overview',
@@ -125,6 +138,20 @@ const MAINTENANCE_TOOLS = [
   'propose_record_promotion',
 ] as const satisfies readonly DomainToolName[];
 
+// YUK-195 — the question structure-correction surface. Reads enough block /
+// question context to decide an edit, then the 6 draft-layer write tools. These
+// write tools live ONLY here; the broader surfaces above do not grant them.
+const INGESTION_BLOCK_EDIT_TOOLS = [
+  'get_question_context',
+  'query_events',
+  'update_prompt',
+  'add_option',
+  'set_question_type',
+  'split_stem',
+  'merge_questions',
+  'reassign_figure',
+] as const satisfies readonly DomainToolName[];
+
 export const DOMAIN_TOOL_ALLOWLISTS = {
   knowledge_review: KNOWLEDGE_REVIEW_TOOLS,
   copilot: COPILOT_TOOLS,
@@ -132,6 +159,7 @@ export const DOMAIN_TOOL_ALLOWLISTS = {
   dreaming: DREAMING_TOOLS,
   coach: COACH_TOOLS,
   maintenance: MAINTENANCE_TOOLS,
+  ingestion_block_edit: INGESTION_BLOCK_EDIT_TOOLS,
 } as const satisfies Record<DomainToolSurface, readonly DomainToolName[]>;
 
 export function resolveDomainToolNames(surface: DomainToolSurface): readonly DomainToolName[] {

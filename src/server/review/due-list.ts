@@ -35,7 +35,7 @@ import { errorResponse } from '@/server/http/errors';
 // so the brief-refresh layer shares the SAME canonical bridge.
 import { batchResolveSubjectIds } from '@/server/knowledge/subject-resolution';
 import type { EffectiveTruth } from '@/server/review/effective-truth';
-import { and, eq, inArray, lte, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, lte, ne, or, sql } from 'drizzle-orm';
 
 // YUK-167 / ADR-0025 — swappable active-goals reader so DB tests inject goal
 // fixtures (mirrors coach_daily.ts / dreaming_nightly.ts CoachRunDeps pattern).
@@ -194,6 +194,18 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
     // (round-robin selects exactly min(limit, pool) of these due rows). For a
     // single subject this is a no-op: round-robin returns the `limit` most-due,
     // identical to the old `.limit(limit)` slice.
+    // Gate-B defensive invariant (QuizGen Option B): an UNVERIFIED quiz draft
+    // (`draft_status='draft'`) must NEVER enter the review pool. quiz_verify only
+    // promotes draft→active + builds material_fsrs_state on pass, so a draft has
+    // neither an fsrs_state row nor an attempt — both slices already miss it
+    // implicitly. This predicate makes that an EXPLICIT, query-level invariant so
+    // a stray draft (e.g. a future write path that mis-attaches an attempt event)
+    // can still never surface. Only 'draft' is excluded: NULL (embedded /
+    // auto-enroll / legacy) and 'active' (variant / dreaming / promoted quiz) both
+    // stay in the pool. NULL handling is explicit (`draft_status != 'draft'` alone
+    // would drop NULL rows under SQL three-valued logic).
+    const notDraftQuiz = or(isNull(question.draft_status), ne(question.draft_status, 'draft'));
+
     const candidateWindow = Math.min(Math.max(limit * 4, 100), 400);
     const [dueRows, latestFailureQuestionIds] = await Promise.all([
       db
@@ -212,6 +224,7 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
           and(
             eq(material_fsrs_state.subject_kind, 'question'),
             lte(material_fsrs_state.due_at, now),
+            notDraftQuiz,
           ),
         )
         .orderBy(material_fsrs_state.due_at, question.created_at)
@@ -269,7 +282,9 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
             created_at: question.created_at,
           })
           .from(question)
-          .where(inArray(question.id, trulyNew));
+          // Gate-B invariant: never surface an unverified quiz draft, even if it
+          // somehow carries a failure attempt (see `notDraftQuiz` above).
+          .where(and(inArray(question.id, trulyNew), notDraftQuiz));
         const qById = new Map(qRows.map((q) => [q.id, q]));
         // Preserve attempt order (newest-first from getFailureAttempts).
         for (const qid of trulyNew) {

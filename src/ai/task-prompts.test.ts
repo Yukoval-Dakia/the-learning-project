@@ -173,6 +173,67 @@ describe('getTaskSystemPrompt', () => {
     expect(prompt).toContain('expected_signals');
     expect(prompt).toContain('worked_solution_md');
   });
+
+  it('builds a QuizGenTask prompt that enforces the §0 self-declared-sources contract', () => {
+    const wenyan = getTaskSystemPrompt('QuizGenTask');
+    const math = getTaskSystemPrompt('QuizGenTask', resolveSubjectProfile('math'));
+
+    // Subject voice flows in via displayName.
+    expect(wenyan).toContain('文言文');
+    expect(math).toContain('数学');
+
+    for (const prompt of [wenyan, math]) {
+      // §1 — search for SOURCE MATERIAL, not questions.
+      expect(prompt).toContain('素材');
+      expect(prompt).toContain('原创');
+      // §0 — every used URL must be self-declared into source_refs.
+      expect(prompt).toContain('source_refs');
+      expect(prompt).toContain('used_for');
+      expect(prompt).toContain('无法');
+      // §2 — output shape + self copy_safety.
+      expect(prompt).toContain('QuizGenOutput');
+      expect(prompt).toContain('source_pack');
+      expect(prompt).toContain('self_copy_safety');
+      expect(prompt).toContain('agent_self');
+      expect(prompt).toContain('generation_method');
+      // Tools referenced by capability (handler resolves names at run time).
+      expect(prompt).toContain('tavily_search');
+      expect(prompt).toContain('tavily_extract');
+      // canonical kinds, no subject-only leakage.
+      expect(prompt).toMatch(/\bchoice\b/);
+      expect(prompt).not.toMatch(/\bsingle_choice\b/);
+      expect(prompt).not.toMatch(/\bword_problem\b/);
+    }
+  });
+
+  it('builds a QuizVerifyTask prompt with the three §5 checks + two-axis output', () => {
+    const wenyan = getTaskSystemPrompt('QuizVerifyTask');
+    const math = getTaskSystemPrompt('QuizVerifyTask', resolveSubjectProfile('math'));
+
+    // Subject voice flows in via displayName.
+    expect(wenyan).toContain('文言文');
+    expect(math).toContain('数学');
+
+    for (const prompt of [wenyan, math]) {
+      // §5 — three checks: fact/grounding vs source_refs, plagiarism/copy_safety,
+      // knowledge-hit.
+      expect(prompt).toContain('source_refs');
+      expect(prompt).toContain('grounding');
+      expect(prompt).toContain('copy_safety');
+      expect(prompt).toContain('knowledge_hit');
+      // §0 — verifier trusts the agent's self-reported source_refs (closed-book).
+      expect(prompt).toContain('closed-book');
+      // two-axis output shape name.
+      expect(prompt).toContain('QuizVerificationResult');
+      // per-check verdict + overall verdict.
+      expect(prompt).toContain('overall');
+      // copy_safety verdict vocabulary.
+      expect(prompt).toContain('too_close');
+      expect(prompt).toContain('max_overlap');
+      // strict JSON, no leakage.
+      expect(prompt).not.toMatch(/\bsingle_choice\b/);
+    }
+  });
 });
 
 describe('getTaskSystemPrompt exhaustiveness (M1)', () => {

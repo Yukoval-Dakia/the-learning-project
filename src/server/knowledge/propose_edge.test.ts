@@ -1,8 +1,10 @@
 // Phase 2 Dreaming — knowledge_edge nightly propose tests.
 
 import { tasks } from '@/ai/registry';
-import { cost_ledger, event, knowledge, knowledge_edge } from '@/db/schema';
-import type { FailureAttempt } from '@/server/events/queries';
+import { cost_ledger, event, knowledge, knowledge_edge, question } from '@/db/schema';
+import { RECENT_FAILURE_WINDOW_MS } from '@/server/ai/tools/knowledge-readers';
+import { type FailureAttempt, getFailureAttempts, writeEvent } from '@/server/events/queries';
+import { RUBRIC_EVIDENCE_WINDOW_DAYS } from '@/server/knowledge/rubric-validator';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -94,11 +96,88 @@ describe('runEdgeProposeAndWrite', () => {
     return [];
   }
 
+  // P5.4 §5-Q5 / YUK-175 — the batch path now runs the L1 rubric floor, so a
+  // proposal needs strong, endpoint-touching, in-window judge-backed evidence to
+  // be written LIVE (otherwise it folds). These helpers seed exactly that so the
+  // dedup-mechanics tests below still exercise the pending/duplicate logic on a
+  // proposal that PASSES the floor. Mirrors rubric-validator.test.ts seedEvidence.
+  async function seedJudgeFailureFor(
+    attemptId: string,
+    knowledgeIds: string[],
+    ageDays: number,
+    causeCategory = 'concept',
+  ): Promise<void> {
+    const db = testDb();
+    const questionId = `q_${attemptId}`;
+    const createdAt = new Date(Date.now() - ageDays * 24 * 60 * 60 * 1000);
+    await db.insert(question).values({
+      id: questionId,
+      kind: 'short_answer',
+      prompt_md: 'p',
+      reference_md: 'r',
+      knowledge_ids: knowledgeIds,
+      source: 'manual',
+      difficulty: 3,
+      created_at: createdAt,
+      updated_at: createdAt,
+    });
+    await writeEvent(db, {
+      id: attemptId,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: questionId,
+      outcome: 'failure',
+      payload: {
+        answer_md: 'wrong',
+        answer_image_refs: [],
+        referenced_knowledge_ids: knowledgeIds,
+      },
+      created_at: createdAt,
+    });
+    await writeEvent(db, {
+      id: `judge_${attemptId}`,
+      actor_kind: 'agent',
+      actor_ref: 'attribution',
+      action: 'judge',
+      subject_kind: 'event',
+      subject_id: attemptId,
+      outcome: 'success',
+      payload: {
+        cause: {
+          primary_category: causeCategory,
+          secondary_categories: [],
+          analysis_md: '用户混淆两个用法。',
+          confidence: 0.9,
+        },
+        referenced_knowledge_ids: knowledgeIds,
+      },
+      caused_by_event_id: attemptId,
+      created_at: new Date(createdAt.getTime() + 500),
+    });
+  }
+
+  // Strong evidence for an edge touching `endpointIds`: 2 same-cause in-window
+  // judge-backed failures referencing an endpoint. `concreteReasoning` builds a
+  // reason_md that names a concrete signal (passes the G7a reasoning-depth gate).
+  function concreteReasoning(attemptId: string): string {
+    return `attempt ${attemptId} 显示用户反复失败，judge cause 为 concept。`;
+  }
+
   it('writes ProposeKnowledgeEdge events for each valid proposal', async () => {
     const db = testDb();
     await insertKnowledge('k1');
     await insertKnowledge('k2');
     await insertKnowledge('k3');
+    // Strong, endpoint-touching evidence so both edges pass the L1 floor: two
+    // same-cause in-window judge-backed failures referencing k1+k2 (edge1) and
+    // k2+k3 (edge2). Same overlap on k2 → strong; touches every endpoint.
+    await seedJudgeFailureFor('att_w1', ['k1', 'k2', 'k3'], 1, 'concept');
+    await seedJudgeFailureFor('att_w2', ['k1', 'k2', 'k3'], 2, 'concept');
+    const recentFailures = await getFailureAttempts(db, {
+      since: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000),
+    });
 
     const fakeRunTask = async () => ({
       text: JSON.stringify({
@@ -108,14 +187,14 @@ describe('runEdgeProposeAndWrite', () => {
             to_knowledge_id: 'k2',
             relation_type: 'prerequisite',
             weight: 0.7,
-            reasoning: 'k1 must precede k2',
+            reasoning: concreteReasoning('att_w1'),
           },
           {
             from_knowledge_id: 'k2',
             to_knowledge_id: 'k3',
             relation_type: 'related_to',
             weight: 0.4,
-            reasoning: 'mild link',
+            reasoning: concreteReasoning('att_w2'),
           },
         ],
       }),
@@ -123,7 +202,7 @@ describe('runEdgeProposeAndWrite', () => {
 
     const stats = await runEdgeProposeAndWrite({
       db,
-      recentFailures: emptyAttempts(),
+      recentFailures,
       runTaskFn: fakeRunTask,
     });
     expect(stats.proposed).toBe(2);
@@ -277,6 +356,10 @@ describe('runEdgeProposeAndWrite', () => {
     const db = testDb();
     await insertKnowledge('k1');
     await insertKnowledge('k2');
+    // Strong endpoint-touching evidence so the re-proposed prerequisite passes
+    // the L1 floor (otherwise it would fold, not write live).
+    await seedJudgeFailureFor('att_d1', ['k1', 'k2'], 1, 'concept');
+    await seedJudgeFailureFor('att_d2', ['k1', 'k2'], 2, 'concept');
 
     // Prior dismissed proposal: propose event + chained rate=dismiss event
     await db.insert(event).values({
@@ -316,6 +399,9 @@ describe('runEdgeProposeAndWrite', () => {
       created_at: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000 + 60_000),
     });
 
+    const recentFailures = await getFailureAttempts(db, {
+      since: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000),
+    });
     const fakeRunTask = async () => ({
       text: JSON.stringify({
         proposals: [
@@ -324,14 +410,14 @@ describe('runEdgeProposeAndWrite', () => {
             to_knowledge_id: 'k2',
             relation_type: 'prerequisite',
             weight: 0.8,
-            reasoning: 'new evidence',
+            reasoning: concreteReasoning('att_d1'),
           },
         ],
       }),
     });
     const stats = await runEdgeProposeAndWrite({
       db,
-      recentFailures: emptyAttempts(),
+      recentFailures,
       runTaskFn: fakeRunTask,
     });
     expect(stats.proposed).toBe(1);
@@ -401,6 +487,11 @@ describe('runEdgeProposeAndWrite', () => {
     const db = testDb();
     await insertKnowledge('k1');
     await insertKnowledge('k2');
+    // Strong endpoint-touching evidence so the re-propose passes the L1 floor and
+    // is written LIVE — this test proves the folded event does not POISON the
+    // dedup set (RB-7); the floor-still-folds case is covered by no-recreate-fold.
+    await seedJudgeFailureFor('att_rb7_1', ['k1', 'k2'], 1, 'concept');
+    await seedJudgeFailureFor('att_rb7_2', ['k1', 'k2'], 2, 'concept');
 
     // Fold a rubric-rejected edge proposal on K = (k1 -> k2, related_to):
     // the propose event is written (folded) carrying a rubric_verdict marker
@@ -443,6 +534,9 @@ describe('runEdgeProposeAndWrite', () => {
 
     // A subsequent batch re-proposing the SAME edge must NOT be deduped against
     // the folded event — it can propose again.
+    const recentFailures = await getFailureAttempts(db, {
+      since: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000),
+    });
     const fakeRunTask = async () => ({
       text: JSON.stringify({
         proposals: [
@@ -451,14 +545,14 @@ describe('runEdgeProposeAndWrite', () => {
             to_knowledge_id: 'k2',
             relation_type: 'related_to',
             weight: 0.6,
-            reasoning: 'fresh attempt with real evidence',
+            reasoning: concreteReasoning('att_rb7_1'),
           },
         ],
       }),
     });
     const stats = await runEdgeProposeAndWrite({
       db,
-      recentFailures: emptyAttempts(),
+      recentFailures,
       runTaskFn: fakeRunTask,
     });
     expect(stats.skipped_duplicate_pending).toBe(0);
@@ -469,6 +563,13 @@ describe('runEdgeProposeAndWrite', () => {
     const db = testDb();
     await insertKnowledge('k1');
     await insertKnowledge('k2');
+    // Strong endpoint-touching evidence so the FIRST emission passes the L1 floor
+    // and is written live; the second emission of the same edge dedups.
+    await seedJudgeFailureFor('att_dup_1', ['k1', 'k2'], 1, 'concept');
+    await seedJudgeFailureFor('att_dup_2', ['k1', 'k2'], 2, 'concept');
+    const recentFailures = await getFailureAttempts(db, {
+      since: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000),
+    });
     const fakeRunTask = async () => ({
       text: JSON.stringify({
         proposals: [
@@ -477,24 +578,381 @@ describe('runEdgeProposeAndWrite', () => {
             to_knowledge_id: 'k2',
             relation_type: 'related_to',
             weight: 0.5,
-            reasoning: 'r1',
+            reasoning: concreteReasoning('att_dup_1'),
           },
           {
             from_knowledge_id: 'k1',
             to_knowledge_id: 'k2',
             relation_type: 'related_to',
             weight: 0.6,
-            reasoning: 'r2',
+            reasoning: concreteReasoning('att_dup_2'),
           },
         ],
       }),
     });
     const stats = await runEdgeProposeAndWrite({
       db,
-      recentFailures: emptyAttempts(),
+      recentFailures,
       runTaskFn: fakeRunTask,
     });
     expect(stats.proposed).toBe(1);
     expect(stats.skipped_duplicate_pending).toBe(1);
+  });
+});
+
+// P5.4 §5-Q5 / YUK-175 — the nightly batch edge-proposer now runs the L1 rubric
+// floor (validateProposalQuality) before each live write. A proposal that fails
+// the floor is FOLDED (a rubric-rejected propose event written, no live pending
+// proposal), exactly like the DomainTool / legacy-MCP agent paths.
+describe('runEdgeProposeAndWrite — L1 rubric floor (YUK-175)', () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  async function insertKnowledge(
+    id: string,
+    domain: string | null = 'wenyan',
+    parentId: string | null = null,
+  ) {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(knowledge).values({
+      id,
+      name: id,
+      domain,
+      parent_id: parentId,
+      merged_from: [],
+      proposed_by_ai: false,
+      approval_status: 'approved',
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+  }
+
+  // Seed a recent in-window judge-backed failure referencing `knowledgeIds`,
+  // mirroring rubric-validator.test.ts seedEvidence. Returns the attempt id.
+  async function seedJudgeFailure(
+    attemptId: string,
+    knowledgeIds: string[],
+    ageDays = 1,
+    causeCategory = 'concept',
+  ): Promise<string> {
+    const db = testDb();
+    const questionId = `q_${attemptId}`;
+    const createdAt = new Date(Date.now() - ageDays * DAY_MS);
+    await db.insert(question).values({
+      id: questionId,
+      kind: 'short_answer',
+      prompt_md: 'p',
+      reference_md: 'r',
+      knowledge_ids: knowledgeIds,
+      source: 'manual',
+      difficulty: 3,
+      created_at: createdAt,
+      updated_at: createdAt,
+    });
+    await writeEvent(db, {
+      id: attemptId,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: questionId,
+      outcome: 'failure',
+      payload: {
+        answer_md: 'wrong',
+        answer_image_refs: [],
+        referenced_knowledge_ids: knowledgeIds,
+      },
+      created_at: createdAt,
+    });
+    await writeEvent(db, {
+      id: `judge_${attemptId}`,
+      actor_kind: 'agent',
+      actor_ref: 'attribution',
+      action: 'judge',
+      subject_kind: 'event',
+      subject_id: attemptId,
+      outcome: 'success',
+      payload: {
+        cause: {
+          primary_category: causeCategory,
+          secondary_categories: [],
+          analysis_md: '用户混淆两个用法。',
+          confidence: 0.9,
+        },
+        referenced_knowledge_ids: knowledgeIds,
+      },
+      caused_by_event_id: attemptId,
+      created_at: new Date(createdAt.getTime() + 500),
+    });
+    return attemptId;
+  }
+
+  function reasoningFor(attemptId: string): string {
+    return `attempt ${attemptId} 显示用户反复失败，judge cause 为 concept。`;
+  }
+
+  it('fold: an edge whose endpoints no recent failure references is folded (rubric reject), no live pending', async () => {
+    const db = testDb();
+    // Edge endpoints k1/k2. Recent failure references an UNRELATED node k_other,
+    // so no in-window judge-backed failure touches an endpoint → §4.3 floor reject.
+    await insertKnowledge('k1');
+    await insertKnowledge('k2');
+    await insertKnowledge('k_other');
+    await seedJudgeFailure('att_unrelated', ['k_other'], 1);
+
+    const recentFailures = await getFailureAttempts(db, {
+      since: new Date(Date.now() - 5 * DAY_MS),
+    });
+    expect(recentFailures.length).toBe(1);
+
+    const fakeRunTask = async () => ({
+      text: JSON.stringify({
+        proposals: [
+          {
+            from_knowledge_id: 'k1',
+            to_knowledge_id: 'k2',
+            relation_type: 'related_to',
+            weight: 0.5,
+            reasoning: reasoningFor('att_unrelated'),
+          },
+        ],
+      }),
+    });
+
+    const stats = await runEdgeProposeAndWrite({ db, recentFailures, runTaskFn: fakeRunTask });
+    expect(stats.folded_rubric_rejected).toBe(1);
+    expect(stats.proposed).toBe(0);
+
+    // One propose event written, MARKED rubric-rejected (rubric_verdict.ok=false).
+    const proposeEvents = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge_edge')));
+    expect(proposeEvents).toHaveLength(1);
+    const payload = proposeEvents[0].payload as {
+      rubric_verdict?: { ok?: boolean };
+      ai_proposal?: unknown;
+    };
+    expect(payload.rubric_verdict?.ok).toBe(false);
+    // The folded event still carries the ai_proposal sibling for audit.
+    expect(payload.ai_proposal).toBeTruthy();
+  });
+
+  it('pass: an edge with ≥2 same-pattern in-window judge-backed failures touching an endpoint writes a live proposal', async () => {
+    const db = testDb();
+    await insertKnowledge('k1');
+    await insertKnowledge('k2');
+    // Two same-cause (concept) in-window judge-backed failures both referencing
+    // endpoint k1 → strong evidence + endpoint-touching → related_to floor passes.
+    await seedJudgeFailure('att_pass_1', ['k1'], 1, 'concept');
+    await seedJudgeFailure('att_pass_2', ['k1'], 2, 'concept');
+
+    const recentFailures = await getFailureAttempts(db, {
+      since: new Date(Date.now() - 5 * DAY_MS),
+    });
+    expect(recentFailures.length).toBe(2);
+
+    const fakeRunTask = async () => ({
+      text: JSON.stringify({
+        proposals: [
+          {
+            from_knowledge_id: 'k1',
+            to_knowledge_id: 'k2',
+            relation_type: 'related_to',
+            weight: 0.6,
+            reasoning: reasoningFor('att_pass_1'),
+          },
+        ],
+      }),
+    });
+
+    const stats = await runEdgeProposeAndWrite({ db, recentFailures, runTaskFn: fakeRunTask });
+    expect(stats.proposed).toBe(1);
+    expect(stats.folded_rubric_rejected).toBe(0);
+
+    // The live propose event is NOT rubric-rejected.
+    const proposeEvents = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge_edge')));
+    expect(proposeEvents).toHaveLength(1);
+    const payload = proposeEvents[0].payload as { rubric_verdict?: unknown };
+    expect(payload.rubric_verdict).toBeUndefined();
+  });
+
+  // RB-7 止血证明 (core): a previously-folded edge K must NOT block a later batch
+  // from re-proposing K. The folded event is excluded from the live-pending dedup
+  // set, AND when the evidence still fails the floor, the batch RE-FOLDS K rather
+  // than writing a live pending proposal (validator stops the rebuild).
+  it('no-recreate-fold: a prior folded edge K is re-folded (not deduped, not made live) when evidence still fails', async () => {
+    const db = testDb();
+    await insertKnowledge('k1');
+    await insertKnowledge('k2');
+    await insertKnowledge('k_other');
+    // Recent failure touches only k_other — endpoints of K = (k1,k2) untouched.
+    await seedJudgeFailure('att_still_unrelated', ['k_other'], 1);
+
+    // Pre-existing folded event for K (rubric_verdict.ok=false, NO chained rate).
+    await db.insert(event).values({
+      id: 'e_folded_prior',
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'dreaming',
+      action: 'propose',
+      subject_kind: 'knowledge_edge',
+      subject_id: 'syn_prior_fold',
+      outcome: 'success',
+      payload: {
+        from_knowledge_id: 'k1',
+        to_knowledge_id: 'k2',
+        relation_type: 'related_to',
+        weight: 0.5,
+        reasoning: 'prior evidence-free agent edge → rubric rejected',
+        rubric_verdict: {
+          ok: false,
+          gate: 'related_to_dumping_ground',
+          reason: 'no endpoint evidence',
+        },
+        ai_proposal: {
+          kind: 'knowledge_edge',
+          target: { subject_kind: 'knowledge_edge', subject_id: null },
+          reason_md: 'prior evidence-free agent edge → rubric rejected',
+          evidence_refs: [],
+          proposed_change: {
+            from_knowledge_id: 'k1',
+            to_knowledge_id: 'k2',
+            relation_type: 'related_to',
+            weight: 0.5,
+          },
+        },
+      },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: new Date(Date.now() - DAY_MS),
+    });
+
+    const recentFailures = await getFailureAttempts(db, {
+      since: new Date(Date.now() - 5 * DAY_MS),
+    });
+
+    const fakeRunTask = async () => ({
+      text: JSON.stringify({
+        proposals: [
+          {
+            from_knowledge_id: 'k1',
+            to_knowledge_id: 'k2',
+            relation_type: 'related_to',
+            weight: 0.6,
+            reasoning: reasoningFor('att_still_unrelated'),
+          },
+        ],
+      }),
+    });
+
+    const stats = await runEdgeProposeAndWrite({ db, recentFailures, runTaskFn: fakeRunTask });
+    // Not deduped against the prior fold (RB-7) AND not made live (validator).
+    expect(stats.skipped_duplicate_pending).toBe(0);
+    expect(stats.proposed).toBe(0);
+    expect(stats.folded_rubric_rejected).toBe(1);
+
+    // Now TWO folded propose events for K; ZERO live (non-rubric-rejected) ones.
+    const proposeEvents = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge_edge')));
+    expect(proposeEvents).toHaveLength(2);
+    const liveEvents = proposeEvents.filter((row) => {
+      const p = row.payload as { rubric_verdict?: { ok?: boolean } };
+      return p.rubric_verdict?.ok !== false;
+    });
+    expect(liveEvents).toHaveLength(0);
+  });
+
+  // codex r? P2 (propose_edge.ts:163) — per-edge evidence scoping. Before the
+  // fix, runEdgeProposeAndWrite attached EVERY recentFailure to EVERY edge's
+  // evidence_refs, so edge B (only 1 endpoint-touching failure) could BORROW
+  // edge A's 2 same-pattern failures from the SAME batch and clear the strong
+  // floor → wrongly written live. After the fix, each edge's evidence_refs is
+  // scoped to recentFailures whose effective referenced ids (attempt ∪ judge,
+  // matching rubric-validator's effectiveReferencedKnowledgeIds) touch THAT
+  // edge's own endpoints. So edge B is scoped to its single failure → medium →
+  // folded; edge A keeps its 2 → strong → live.
+  it('per-edge evidence scope: edge B cannot borrow edge A batch evidence to clear the strong floor', async () => {
+    const db = testDb();
+    await insertKnowledge('kA1');
+    await insertKnowledge('kA2');
+    await insertKnowledge('kB1');
+    await insertKnowledge('kB2');
+
+    // Edge A endpoints: kA1/kA2 — TWO same-cause in-window judge-backed failures
+    // touch kA1 (strong, endpoint-touching).
+    await seedJudgeFailure('att_A1', ['kA1'], 1, 'concept');
+    await seedJudgeFailure('att_A2', ['kA1'], 2, 'concept');
+    // Edge B endpoints: kB1/kB2 — ONLY ONE in-window judge-backed failure touches
+    // kB1 (at most medium on its own).
+    await seedJudgeFailure('att_B1', ['kB1'], 1, 'concept');
+
+    const recentFailures = await getFailureAttempts(db, {
+      since: new Date(Date.now() - 5 * DAY_MS),
+    });
+    expect(recentFailures.length).toBe(3);
+
+    const fakeRunTask = async () => ({
+      text: JSON.stringify({
+        proposals: [
+          {
+            from_knowledge_id: 'kA1',
+            to_knowledge_id: 'kA2',
+            relation_type: 'related_to',
+            weight: 0.6,
+            reasoning: reasoningFor('att_A1'),
+          },
+          {
+            from_knowledge_id: 'kB1',
+            to_knowledge_id: 'kB2',
+            relation_type: 'related_to',
+            weight: 0.6,
+            reasoning: reasoningFor('att_B1'),
+          },
+        ],
+      }),
+    });
+
+    const stats = await runEdgeProposeAndWrite({ db, recentFailures, runTaskFn: fakeRunTask });
+    // Edge A: 2 endpoint-touching same-pattern failures → live.
+    // Edge B: only 1 endpoint-touching failure (cannot borrow A's) → folded.
+    expect(stats.proposed).toBe(1);
+    expect(stats.folded_rubric_rejected).toBe(1);
+
+    const proposeEvents = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge_edge')));
+    expect(proposeEvents).toHaveLength(2);
+
+    const edgeA = proposeEvents.find((row) => {
+      const p = row.payload as { from_knowledge_id?: string };
+      return p.from_knowledge_id === 'kA1';
+    });
+    const edgeB = proposeEvents.find((row) => {
+      const p = row.payload as { from_knowledge_id?: string };
+      return p.from_knowledge_id === 'kB1';
+    });
+    // Edge A written LIVE (no rubric_verdict marker).
+    const edgeAPayload = edgeA?.payload as { rubric_verdict?: unknown };
+    expect(edgeAPayload.rubric_verdict).toBeUndefined();
+    // Edge B written FOLDED (rubric_verdict.ok === false), NOT live pending.
+    const edgeBPayload = edgeB?.payload as { rubric_verdict?: { ok?: boolean } };
+    expect(edgeBPayload.rubric_verdict?.ok).toBe(false);
+  });
+
+  it('window-merge: knowledge-readers recent-failure window is sourced from RUBRIC_EVIDENCE_WINDOW_DAYS (no hardcoded 30)', () => {
+    expect(RECENT_FAILURE_WINDOW_MS).toBe(RUBRIC_EVIDENCE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
   });
 });

@@ -708,6 +708,25 @@ describe('POST /api/ingestion/[id]/import', () => {
     expect(questions).toHaveLength(0);
   });
 
+  it('rejects importing a non-draft (auto_enrolled) block → 409, NO inserts (B1b §2)', async () => {
+    const db = testDb();
+    const { sessionId, sourceDocId } = await setupSession(db, { status: 'extracted' });
+    // The block was already auto-enrolled by the WorkflowJudge; the manual import
+    // must not re-import it (would duplicate the question/attempt). Revert it
+    // (→ 'draft') first via OC-5.
+    await insertBlock(db, { id: 'block_a', sessionId, docId: sourceDocId, status: 'auto_enrolled' });
+    await insertKnowledge(db, 'k1');
+
+    const res = await post(sessionId, makeImportBody());
+
+    expect(res.status).toBe(409);
+    const questions = await db.select().from(question);
+    expect(questions).toHaveLength(0);
+    // The block is untouched (still auto_enrolled).
+    const [blk] = await db.select().from(question_block).where(eq(question_block.id, 'block_a'));
+    expect(blk.status).toBe('auto_enrolled');
+  });
+
   it('preserves high visual_complexity when merging from any high source block', async () => {
     const db = testDb();
     const { sessionId, sourceDocId } = await setupSession(db, { assetIds: ['asset_1', 'asset_2'] });

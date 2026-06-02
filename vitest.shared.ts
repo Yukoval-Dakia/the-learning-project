@@ -27,6 +27,9 @@ export const fastTestInclude = [
   'src/server/ai/tools/registry.test.ts',
   'src/server/ai/tools/allowlists.test.ts',
   'src/server/ai/tools/mcp-bridge.test.ts',
+  // YUK-198 — pure (no-DB) Tavily remote MCP builder: reads TAVILY_API_KEY via
+  // vi.stubEnv, returns a static McpHttpServerConfig. No live DB / AI / network.
+  'src/server/ai/mcp/tavily.test.ts',
   // P5.1 / YUK-143 — pure (no-DB) budget constants + per-message context throttle.
   'src/server/ai/tools/budgets.test.ts',
   'src/server/ai/tools/context-throttle.test.ts',
@@ -121,6 +124,17 @@ export const fastTestInclude = [
   // live-Postgres dependency and belongs in the no-Docker unit partition (YUK-134).
   'app/api/health/route.test.ts',
   'app/api/study-log/route.test.ts',
+  // Revert route mocks @/db/client + the revert primitive before importing the
+  // route, so it has no file-level DB import → unit partition (B1b, YUK-164).
+  // `*` matches the literal `[id]` dynamic segment (mirrors app/api/ai/*/...).
+  'app/api/ingestion/*/revert/route.test.ts',
+  // Coach TodayPlan read route mocks @/db/client + the reader before import →
+  // no live DB → unit partition (YUK-143, P0.4).
+  'app/api/coach/today-plan/route.test.ts',
+  // T-SQ Q4 — QuizGen trigger route mocks @/server/boss/client before importing
+  // the route; it only validates + enqueues (no @/db/client import), so it has
+  // no live-Postgres dependency → unit partition (search-grounded QuizGen wave).
+  'app/api/questions/quiz-gen/route.test.ts',
   'tests/core/**/*.test.ts',
   'tests/schema/**/*.test.ts',
   'tests/subjects/**/*.test.ts',

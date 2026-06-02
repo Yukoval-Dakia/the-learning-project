@@ -559,6 +559,42 @@ export const tasks = {
     // via getTaskSystemPrompt(task, profile); this string is the type-required fallback.
     systemPrompt: '(see getTaskSystemPrompt(task, profile) - fallback not for runtime)',
   },
+  QuizGenTask: {
+    kind: 'QuizGenTask',
+    description:
+      'Search-grounded QuizGen (T-SQ, docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §1). Tool-calling agent: plans (knowledge/difficulty/types), searches Tavily for SOURCE MATERIAL (not questions), writes ORIGINAL questions grounded in sources, and self-declares every used URL into source_refs (§0: provenance is not recoverable from runner logs, so the agent MUST self-report). The Q3 handler injects the Tavily remote MCP + the in-process domain-tool MCP (read user mistakes + knowledge graph) — allowedTools stays [] here so non-handler callers / tests get no tools.',
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
+    // Tool-calling loop: plan → search/extract (Tavily) → read domain signals →
+    // generate. maxIterations 8 + 120s mirrors the Dreaming / Coach agentic budget.
+    budget: { ...DEFAULT_BUDGET, maxIterations: 8, timeout: 120_000 },
+    needsToolCall: true,
+    isMultimodal: false,
+    // The quiz_gen handler (Q3) supplies the Tavily remote MCP + domain-tool MCP
+    // allowlist at run time (copy chat.ts mount pattern); this registry default
+    // stays empty so tests and non-handler callers register no tools.
+    allowedTools: [],
+    // Runtime renders via getTaskSystemPrompt(task, profile); this string is the
+    // type-required fallback only (new tasks add a builder in task-prompts.ts).
+    systemPrompt: '(see getTaskSystemPrompt(task, profile) - fallback not for runtime)',
+  },
+  QuizVerifyTask: {
+    kind: 'QuizVerifyTask',
+    description:
+      "Search-grounded QuizGen (T-SQ, docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §1 / §5 Q5). Single-shot, CLOSED-BOOK verifier built on the VariantVerify skeleton: trusts the QuizGen agent's self-reported source_refs (no own Tavily loop this wave) and runs three checks — fact/grounding vs source_refs, plagiarism/copy_safety, knowledge-hit — rolling them into a two-axis QuizVerificationResult. The quiz_verify handler (Q5) gates Option B on the output: overall='pass' (and copy_safety != 'too_close') promotes draft→active + FSRS-enrolls; otherwise the draft stays out of the pool (needs_review / fail).",
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
+    // Single structured-output call (mirrors VariantVerifyTask).
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
+    needsToolCall: false,
+    isMultimodal: false,
+    allowedTools: [],
+    // Runtime renders via getTaskSystemPrompt(task, profile); this string is the
+    // type-required fallback only (new tasks add a builder in task-prompts.ts).
+    systemPrompt: '(see getTaskSystemPrompt(task, profile) - fallback not for runtime)',
+  },
   // 其余 Task（VariantGen / Judge* / Dreaming / Maintenance 等）见
   // docs/architecture.md § 五，按需补全。
 } satisfies Record<string, TaskDef>;

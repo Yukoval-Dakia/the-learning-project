@@ -22,6 +22,8 @@ import { buildPromoteConversationIdleHandler } from './handlers/promote_conversa
 import { buildPruneJobEventsHandler } from './handlers/prune_job_events';
 import { buildPruneOrphanConversationSessionsHandler } from './handlers/prune_orphan_conversation_sessions';
 import { buildPruneOrphanReviewSessionsHandler } from './handlers/prune_orphan_review_sessions';
+import { buildQuizGenHandler } from './handlers/quiz_gen';
+import { buildQuizVerifyHandler } from './handlers/quiz_verify';
 import { buildSessionSummaryHandler } from './handlers/session_summary';
 import { buildTencentOcrHandler } from './handlers/tencent_ocr_extract';
 import { buildVariantGenHandler } from './handlers/variant_gen';
@@ -185,6 +187,33 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     'embedded_check_generate',
     { pollingIntervalSeconds: 2, batchSize: 1 },
     buildEmbeddedCheckGenerateHandler(db),
+  );
+
+  // Search-grounded QuizGen (T-SQ, docs/superpowers/specs/2026-06-02-quizgen-
+  // search-grounded-design.md §3 / §4). Manual-first: enqueued by
+  // POST /api/questions/quiz-gen (Q4). The tool-calling QuizGenTask agent mounts
+  // the Tavily remote MCP (env-gated) + the in-process domain-tool MCP, writes
+  // draft questions (Option B: draft_status='draft', NOT in the pool), then
+  // chains a quiz_verify job { question_ids }. batchSize=1 keeps mimo
+  // rate-limit friendly.
+  //
+  await boss.createQueue('quiz_gen');
+  await boss.work('quiz_gen', { pollingIntervalSeconds: 2, batchSize: 1 }, buildQuizGenHandler(db));
+
+  // Q5 + Q6 (same wave §3 / §5): QuizVerifyTask — chained behind quiz_gen, which
+  // sends `quiz_verify` { question_ids } after writing draft questions. The
+  // single-shot CLOSED-BOOK verifier runs the 3 checks (grounding / copy_safety /
+  // knowledge-hit) + a deterministic n-gram overlap, then gates Option B: on pass
+  // it promotes draft_status 'draft'→'active' AND FSRS-enrolls the question
+  // (initial material_fsrs_state via the single-owner enroll path) so it enters
+  // the review pool; on needs_review / fail / too_close the draft stays out of the
+  // pool. Idempotent per question via the chained verify event guard.
+  // batchSize=1 keeps mimo rate-limit friendly.
+  await boss.createQueue('quiz_verify');
+  await boss.work(
+    'quiz_verify',
+    { pollingIntervalSeconds: 2, batchSize: 1 },
+    buildQuizVerifyHandler(db),
   );
 
   // Product Track 1: NoteVerifyTask — enqueued after note_generate marks a

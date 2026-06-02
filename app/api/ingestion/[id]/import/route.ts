@@ -16,7 +16,7 @@
  * 或派生 `structuredToPromptMarkdown(structured)` 作为统一展示源。
  */
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { PageSpan } from '@/core/schema';
@@ -178,6 +178,17 @@ export async function POST(
           400,
         );
       }
+      // B1b (YUK-164 §2): a merge/split source must still be 'draft' — an
+      // already-auto_enrolled (or imported/ignored) source can't be consumed into
+      // a virtual card (would orphan its auto-enroll question/attempt without a
+      // retract). Revert it via OC-5 first. Mirrors the direct-import guard below.
+      if (row.status !== 'draft') {
+        throw new ApiError(
+          'conflict',
+          `source_block_id ${sid} is '${row.status}'; only 'draft' blocks can be imported`,
+          409,
+        );
+      }
       sourceBlockRows.set(sid, row);
     }
 
@@ -262,6 +273,30 @@ export async function POST(
       // Concurrent callers serialise here; the second to acquire the lock sees
       // status='imported' and throws 409 before any writes happen.
       await Ingestion.assertSessionAvailableForImport(tx, sessionId);
+
+      // B1b (YUK-164 §2): only 'draft' blocks are importable. A block already
+      // 'auto_enrolled' (WorkflowJudge) / 'imported' / 'ignored' must NOT be
+      // re-imported — that would duplicate the question + attempt. Reject loudly
+      // (no silent skip): the OC-5 surface reverts an auto_enrolled block back to
+      // 'draft' before it can be human-imported. Unreachable until the enroll flag
+      // is ON (no auto_enrolled blocks exist in prod today), but this guard MUST
+      // precede that flip — see the design note §2.
+      if (directlyImportedIds.size > 0) {
+        const existingBlocks = await tx
+          .select({ id: question_block.id, status: question_block.status })
+          .from(question_block)
+          .where(inArray(question_block.id, [...directlyImportedIds]));
+        const nonDraft = existingBlocks.filter((b) => b.status !== 'draft');
+        if (nonDraft.length > 0) {
+          throw new ApiError(
+            'conflict',
+            `cannot import blocks that are not 'draft': ${nonDraft
+              .map((b) => `${b.id} (${b.status})`)
+              .join(', ')}`,
+            409,
+          );
+        }
+      }
 
       const toIgnore = new Set<string>();
 

@@ -45,6 +45,8 @@ export interface NightlyResult {
   skipped_unknown_node: number;
   skipped_duplicate_edge: number;
   skipped_duplicate_pending: number;
+  // P5.4 §5-Q5 / YUK-175 — batch edge proposals folded by the L1 rubric floor.
+  folded_rubric_rejected: number;
 }
 
 /**
@@ -65,6 +67,7 @@ export async function runKnowledgeEdgeProposeNightly(
       skipped_unknown_node: 0,
       skipped_duplicate_edge: 0,
       skipped_duplicate_pending: 0,
+      folded_rubric_rejected: 0,
     };
   }
 

@@ -151,11 +151,16 @@ export async function callCodex(input: CodexAdapterInput): Promise<{ text: strin
 spike U1 (配额)
 ├── PASS → 继续 U2
 │   ├── PASS → ADR 状态 → accepted；启动 ADR-0003 revision 流程
-│   │            后续 ADR-0017 设计正式 protocol adapter 层
+│   │            后续开新 ADR 设计正式 protocol adapter 层 [*]
 │   └── FAIL → ADR 状态 → rejected；归档 spike report
 └── FAIL → ADR 状态 → rejected
               （升 Pro $200/month 决策属于另一个 ADR；本 ADR 不预设）
 ```
+
+> **[*] 修正（YUK-197 doc sweep）**：本节早先写"后续 ADR-0017 设计正式 protocol adapter 层"，
+> 是过时的前向引用——ADR-0017 编号已被 `0017-memory-mem0-plus-brief-layer.md`（memory dual-layer）占用。
+> 若 Codex spike 通过且确需 protocol adapter 层，应开新 ADR（取当前下一个空号，本 sweep 时为 ADR-0027），不要复用 ADR-0017。
+> 本 ADR 的决策本身（spike-first、不立即落地）不变。
 
 ---
 

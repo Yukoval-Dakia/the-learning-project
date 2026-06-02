@@ -59,7 +59,7 @@ const taskDef = tasks[kind]; // registry.ts declares defaultProvider/defaultMode
 | 审计 | `ai_task_runs` + `ai_tool_calls` + `ai_cost_ledger` |
 | 输出 | 结构化对象，写 DB（Proposal / Suggestion / enriched rows） |
 
-**Task 现状（2026-05-17，参考 `src/ai/registry.ts`）：**
+**Task 现状（2026-05-24 补录，参考 `src/ai/registry.ts`）：**
 
 | Task | 模型 | 状态 | 触发 | 输出 |
 |---|---|---|---|---|
@@ -70,6 +70,7 @@ const taskDef = tasks[kind]; // registry.ts declares defaultProvider/defaultMode
 | `LearningIntentOutlineTask` | mimo-v2.5-pro | ✅ 已实装 | `/api/learning-intents` | 1 hub + N atomic outline |
 | `NoteGenerateTask` | mimo-v2.5-pro | ✅ 已实装 | pg-boss `note_generate` | atomic artifact sections |
 | `VariantGenTask` | mimo-v2.5-pro | ✅ 已注册 | pg-boss `variant_gen` | draft `question(source='mistake_variant')` |
+| `VariantVerifyTask` | mimo-v2.5-pro | ✅ 已实装 | pg-boss `variant_verify` queue | second-pass alignment check；verdict='fail' → `mistake_variant.status='broken'`（ADR-0018，2026-05-24 引入） |
 | `TeachingTurnTask` | mimo-v2.5-pro | ✅ 已实装 | `/api/teaching-sessions/*` | Active Teaching turn |
 | `ReviewIntentTask` | mimo-v2.5-pro | ✅ 已实装 | Review Orchestrator | 一句话 session intent |
 | `KnowledgeReviewTask` | mimo-v2.5-pro | ✅ 已注册，tool-call | maintenance | tree / mesh mutation proposal |

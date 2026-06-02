@@ -38,6 +38,9 @@ export const QuestionSource = z.enum([
   'reverse_mark',
   'mistake_variant',
   'teaching_check',
+  // Search-grounded QuizGen wave (docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md
+  // §2). Zod-enum addition only — no DDL ALTER (the question.source column is text).
+  'quiz_gen',
 ]);
 
 export const MistakeSource = z.enum([
@@ -129,7 +132,11 @@ export const IngestionSessionStatus = z.enum([
 
 export const IngestionEntrypoint = z.enum(['vision_single', 'vision_paper']);
 
-export const QuestionBlockStatus = z.enum(['draft', 'imported', 'ignored']);
+// T-OC A2 (YUK-164, D1=C): `auto_enrolled` is a terminal-but-revertible state
+// distinct from human `imported` — set by the WorkflowJudge enroll path
+// (generated_by='workflow_judge'), revertible back to `draft` via OC-5.
+// draft → imported (human) | ignored (dismiss) | auto_enrolled (AI); auto_enrolled → draft (revert).
+export const QuestionBlockStatus = z.enum(['draft', 'imported', 'ignored', 'auto_enrolled']);
 
 export const QuestionBlockRole = z.enum(['prompt', 'answer_area', 'continuation']);
 
