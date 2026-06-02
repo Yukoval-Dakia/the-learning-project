@@ -326,12 +326,9 @@ export interface WriteBlockMergeProposalInput extends CommonProducerInput {
   ingestion_session_id: string;
   primary_block_id: string;
   merge_block_ids: string[];
-  // §1.C — the BlockAssembly candidate's 0..1 confidence (S4 passes it through).
-  // DEFERRED persistence: the locked S1 `BlockMergeProposalChange` schema
-  // (src/core/schema/proposal.ts) has no confidence field, so this is not stored
-  // on the proposed_change today — Zod strips unknown keys on parse. It stays on
-  // the producer's input contract for the S4 call site; inbox sort-by-confidence
-  // is fork 4a (design §4), wired with the redraw UI slice, not in v1.
+  // §1.C / fork 4a — the BlockAssembly candidate's 0..1 confidence (S4 passes it
+  // through). Persisted on proposed_change.confidence so the redraw inbox (YUK-169)
+  // can sort/colour by it; the model's confidence is not recoverable after the run.
   confidence: number;
   continuity_signal: 'page_edge' | 'numbering' | 'stem_answer_split' | 'carryover';
 }
@@ -358,6 +355,9 @@ export async function writeBlockMergeProposal(
         merge_block_ids: input.merge_block_ids,
         ingestion_session_id: input.ingestion_session_id,
         continuity_signal: input.continuity_signal,
+        // YUK-202 fork 4a — persist the AI's confidence so the redraw inbox can
+        // sort/colour by it; not recoverable after the run.
+        confidence: input.confidence,
       },
       rollback_plan: {
         action:

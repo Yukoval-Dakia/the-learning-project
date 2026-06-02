@@ -146,10 +146,57 @@ describe('runBlockAssemblyForSession', () => {
       merge_block_ids: [b],
       ingestion_session_id: sessionId,
       continuity_signal: 'numbering',
+      // YUK-202 fork 4a — confidence IS persisted on proposed_change so the redraw
+      // inbox can sort/colour by it (the model's confidence is not recoverable later).
+      confidence: 0.88,
     });
-    // confidence is NOT persisted on proposed_change (S1 schema has no field; Zod
-    // strips it on parse) — it stays on the producer input contract only (§4 fork 4a).
-    expect(first.payload.proposed_change).not.toHaveProperty('confidence');
+  });
+
+  it('drops candidates referencing block ids outside the session (hallucinated)', async () => {
+    const db = testDb();
+    const { sessionId, blockIds } = await seed(db, 2);
+    const [a, b] = blockIds;
+
+    // The model returns one valid candidate (a←b) and one that references a block
+    // id not in this session — the latter must be dropped before it reaches the inbox.
+    const runTaskFn: BlockAssemblyRunTaskFn = async () => ({
+      text: JSON.stringify({
+        candidates: [
+          {
+            primary_block_id: a,
+            merge_block_ids: [b],
+            confidence: 0.9,
+            signal: 'numbering',
+            reason_md: '有效候选',
+          },
+          {
+            primary_block_id: a,
+            merge_block_ids: ['ghost_block_not_in_session'],
+            confidence: 0.7,
+            signal: 'carryover',
+            reason_md: '幻觉出的不存在块',
+          },
+        ],
+      }),
+    });
+
+    const result = await runBlockAssemblyForSession(db, {
+      sessionId,
+      blocks: [
+        { id: a, structured: structured('a', '1'), layout_quality: 'structured' },
+        { id: b, structured: structured('b', '2'), layout_quality: 'structured' },
+      ],
+      runTaskFn,
+    });
+
+    // Only the valid candidate is proposed; the hallucinated one is filtered out.
+    expect(result.proposed).toBe(1);
+    const merges = (await listProposalInboxRows(db, { status: 'pending' })).filter(
+      (r) => r.kind === 'block_merge',
+    );
+    expect(merges).toHaveLength(1);
+    if (merges[0].payload.kind !== 'block_merge') throw new Error('expected block_merge');
+    expect(merges[0].payload.proposed_change.merge_block_ids).toEqual([b]);
   });
 
   it('proposes nothing when the session has fewer than two blocks (no merge possible)', async () => {

@@ -177,7 +177,10 @@ export interface RunBlockAssemblyForSessionResult {
   proposal_ids: string[];
 }
 
-/** Max chars of prompt text projected per block — enough to judge continuity. */
+// Max chars of prompt text projected per block — enough to judge continuity for
+// v1's semantic-only signals. A fixed head can miss late "承接前题" cues in very
+// long stems; slice 2b (when spatial signals land) may make this layout_quality-
+// aware (longer head for long-form / cross-page blocks). Tune here, not inline.
 const PROMPT_HEAD_CHARS = 400;
 
 /**
@@ -229,8 +232,25 @@ export async function runBlockAssemblyForSession(
     ctx: params.ctx,
   });
 
+  // Drop candidates referencing block ids outside this session's draft set: a
+  // hallucinating model can emit a primary/merge id that does not exist (or
+  // belongs to another session). acceptBlockMergeProposal would later soft-reject
+  // these as stale via mergeQuestions' guards, but filtering them here keeps
+  // hallucinated proposals out of the inbox (and the accept-side stale path).
+  const validBlockIds = new Set(params.blocks.map((b) => b.id));
+
   const proposalIds: string[] = [];
   for (const candidate of output.candidates) {
+    const refsInSession =
+      validBlockIds.has(candidate.primary_block_id) &&
+      candidate.merge_block_ids.every((id) => validBlockIds.has(id));
+    if (!refsInSession) {
+      console.warn(
+        `[block_assembly] dropping candidate with block ids outside session ${params.sessionId}`,
+        { primary: candidate.primary_block_id, merge: candidate.merge_block_ids },
+      );
+      continue;
+    }
     const id = await writeBlockMergeProposal(db, {
       ingestion_session_id: params.sessionId,
       primary_block_id: candidate.primary_block_id,
