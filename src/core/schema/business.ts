@@ -318,6 +318,7 @@ export const ArtifactHistoryEntry = z
     summary_md: z.string().optional(),
   })
   .catchall(z.unknown());
+export type ArtifactHistoryEntryT = z.infer<typeof ArtifactHistoryEntry>;
 
 // Provenance: lineage of an asset / document — minimal pinned fields, rest
 // open. Source-specific fields (ocr_engine, http_status, etc.) live in the
