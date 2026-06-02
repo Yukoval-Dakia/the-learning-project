@@ -342,6 +342,61 @@ describe('runQuizGen', () => {
     expect(rows.every((r) => r.source_ref === 'li1')).toBe(true);
   });
 
+  it('falls back to the trigger knowledge_ids when the agent hallucinates an unknown id', async () => {
+    await seedKnowledge({ id: 'k1' });
+    // Agent self-reports a knowledge_id that does not exist in the graph.
+    const hallucinatedOutput = JSON.stringify({
+      questions: [
+        {
+          kind: 'short_answer',
+          prompt_md: '解释「之」作主谓间助词的作用。',
+          reference_md: '「之」用在主谓之间，取消句子独立性。',
+          choices_md: null,
+          judge_kind_override: 'semantic',
+          rubric_json: {
+            criteria: [{ name: 'correctness', weight: 1, descriptor: '说明取消独立性' }],
+            required_points: ['用在主谓之间', '取消句子独立性'],
+          },
+          difficulty: 3,
+          knowledge_ids: ['ghost_knowledge_id'],
+          source_refs: [
+            {
+              url: 'https://example.edu/wenyan/zhi',
+              title: '文言虚词「之」',
+              used_for: 'fact',
+              extracted: true,
+            },
+          ],
+        },
+      ],
+      source_pack: {
+        query_plan: ['文言 之 主谓间 用法'],
+        searched_at: '2026-06-02T10:00:00.000Z',
+        tool: 'tavily',
+      },
+      generation_method: 'search_grounded',
+      self_copy_safety: { verdict: 'original', max_overlap: 0.1, checked_by: 'agent_self' },
+    });
+    const runAgentTaskFn = agentMock(hallucinatedOutput, 'tr_ghost');
+
+    const result = await runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      count: 1,
+      runAgentTaskFn,
+      enqueueQuizVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: vi.fn(() => null),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+    });
+
+    expect(result.status).toBe('ready');
+    const rows = await testDb().select().from(question).where(eq(question.source, 'quiz_gen'));
+    expect(rows).toHaveLength(1);
+    // Hallucinated id dropped; attribution falls back to the trigger's real node.
+    expect(rows[0].knowledge_ids).toEqual(['k1']);
+  });
+
   it('skips (no insert, no enqueue) when the knowledge trigger ref does not exist', async () => {
     const runAgentTaskFn = agentMock(VALID_OUTPUT);
     const enqueueQuizVerify = vi.fn(async () => {});

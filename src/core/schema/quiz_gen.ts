@@ -87,10 +87,14 @@ export const QuizGenQuestion = z.object({
   prompt_md: z.string().min(1),
   reference_md: z.string().min(1),
   choices_md: z.array(z.string().min(1)).max(6).nullable().optional(),
-  judge_kind_override: z
-    .enum(['exact', 'keyword', 'semantic', 'rubric', 'steps', 'unit_dimension'])
-    .nullable()
-    .optional(),
+  // Only judge routes a GENERATED question can actually be graded by. The judge
+  // layer's RUNNABLE_ROUTES is { exact, keyword, semantic, steps, unit_dimension },
+  // but 'steps' / 'unit_dimension' are first-class / profile-preferred routes
+  // (math derivation, physics units), never generator overrides, and 'rubric' has
+  // no runner at all. Allowing those here would let a verified question enter the
+  // review pool yet return `unsupported` the moment the learner submits an answer.
+  // The QuizGen handler routes derivation/prose to semantic, choice to exact, etc.
+  judge_kind_override: z.enum(['exact', 'keyword', 'semantic']).nullable().optional(),
   rubric_json: Rubric.nullable().optional(),
   difficulty: z.number().int().min(1).max(5),
   knowledge_ids: z.array(z.string().min(1)),
@@ -100,14 +104,34 @@ export const QuizGenQuestion = z.object({
 });
 export type QuizGenQuestionT = z.infer<typeof QuizGenQuestion>;
 
-export const QuizGenOutput = z.object({
-  questions: z.array(QuizGenQuestion).min(1).max(10),
-  source_pack: QuizGenSourcePack,
-  generation_method: QuizGenGenerationMethod,
-  // Agent's own copy-safety self-assessment (§0 / §1). QuizVerify (Q5) may later
-  // overwrite metadata.copy_safety with checked_by='quiz_verify'.
-  self_copy_safety: QuizGenCopySafety,
-});
+export const QuizGenOutput = z
+  .object({
+    questions: z.array(QuizGenQuestion).min(1).max(10),
+    source_pack: QuizGenSourcePack,
+    generation_method: QuizGenGenerationMethod,
+    // Agent's own copy-safety self-assessment (§0 / §1). QuizVerify (Q5) may later
+    // overwrite metadata.copy_safety with checked_by='quiz_verify'.
+    self_copy_safety: QuizGenCopySafety,
+  })
+  .superRefine((out, ctx) => {
+    // §0 — a `search_grounded` question MUST carry at least one source_ref. Search
+    // provenance is NOT recoverable from runner logs, so an empty source_refs on a
+    // search-grounded question would persist a draft with zero URL provenance that
+    // QuizVerify (closed-book) can only trust blindly (deterministic overlap is 0
+    // with no snippet). `closed_book` legitimately allows empty refs.
+    if (out.generation_method === 'search_grounded') {
+      out.questions.forEach((q, i) => {
+        if (q.source_refs.length === 0) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message:
+              'search_grounded question must declare at least one source_ref (§0 self-reported provenance)',
+            path: ['questions', i, 'source_refs'],
+          });
+        }
+      });
+    }
+  });
 export type QuizGenOutputT = z.infer<typeof QuizGenOutput>;
 
 // ---------- §5 Q5 QuizVerifyTask LLM output ----------

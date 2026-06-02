@@ -576,7 +576,7 @@ function buildQuizGenPrompt(profile: SubjectProfile): string {
   "prompt_md": "原创题面 markdown，可含 LaTeX",
   "reference_md": "参考答案 + 简短解析",
   "choices_md": ["选项 A", "选项 B", ...] | null,
-  "judge_kind_override": "exact"|"keyword"|"semantic"|"rubric" | null,
+  "judge_kind_override": "exact"|"keyword"|"semantic" | null,
   "rubric_json": { "criteria": [{"name":"correctness","weight":1,"descriptor":"..."}], "keywords": [...], "required_points": [...] } | null,
   "difficulty": 1-5 的整数,
   "knowledge_ids": ["这道题考查的知识点 id"],
@@ -597,7 +597,7 @@ function buildQuizGenPrompt(profile: SubjectProfile): string {
 - 真没搜到可用素材时，可走 generation_method="closed_book"（凭已有知识出题），但 source_refs 仍如实填（可为空），并把 self_copy_safety.verdict 设 'unknown' 或 'original'。
 约束（强约束）：
 - 题干必须原创，**禁止**照抄任何检索到的题目 / 原文句子。
-- 每个真正用到的 URL 都要进 source_refs（§0 强制自报）。
+- 每个真正用到的 URL 都要进 source_refs（§0 强制自报）。generation_method="search_grounded" 时**每道题** source_refs 至少 1 条，否则该题会被拒收；只有 closed_book 才允许空 source_refs。
 - 禁止：emoji、营销话、套话、JSON 之外的文字、用 markdown 代码块包裹整段 JSON。`;
 }
 

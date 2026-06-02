@@ -270,6 +270,49 @@ describe('runQuizVerify', () => {
     expect(await fsrsRowCount('q5')).toBe(1);
   });
 
+  it('idempotency: a first transient failure does NOT short-circuit the retry', async () => {
+    await seedKnowledge('k1');
+    await seedDraftQuestion({ id: 'q5b', knowledgeId: 'k1' });
+    // First invocation throws (transient LLM/parse/DB error → catch-bottom writes a
+    // failure event with outcome='error'); second invocation succeeds. The second
+    // run MUST re-invoke the task and verify, NOT skip as already_verified.
+    const runTaskFn = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('transient boom'))
+      .mockResolvedValueOnce({ text: verifyOutput({ overall: 'pass' }), task_run_id: 'tr_retry' });
+
+    await expect(runQuizVerify({ db: testDb(), questionId: 'q5b', runTaskFn })).rejects.toThrow(
+      /transient boom/,
+    );
+
+    const second = await runQuizVerify({ db: testDb(), questionId: 'q5b', runTaskFn });
+    expect(second.status).toBe('verified');
+    expect(runTaskFn).toHaveBeenCalledTimes(2);
+
+    const rows = await testDb().select().from(question).where(eq(question.id, 'q5b'));
+    expect(rows[0].draft_status).toBe('active');
+    // two verify events (one transient-error, one terminal success) + one fsrs row.
+    expect(await countVerifyEvents('q5b')).toBe(2);
+    expect(await fsrsRowCount('q5b')).toBe(1);
+  });
+
+  it('does NOT promote when overall=pass but a structured check verdict is fail', async () => {
+    await seedKnowledge('k1');
+    await seedDraftQuestion({ id: 'q7', knowledgeId: 'k1' });
+    // Inconsistent output: roll-up says pass but grounding failed — must stay draft.
+    const runTaskFn = runTaskMock(
+      verifyOutput({ overall: 'pass', groundingVerdict: 'fail' }),
+      'tr_inconsistent',
+    );
+
+    const result = await runQuizVerify({ db: testDb(), questionId: 'q7', runTaskFn });
+
+    expect(result.status).toBe('needs_review');
+    const rows = await testDb().select().from(question).where(eq(question.id, 'q7'));
+    expect(rows[0].draft_status).toBe('draft');
+    expect(await fsrsRowCount('q7')).toBe(0);
+  });
+
   it('skips a non-quiz_gen question', async () => {
     await seedKnowledge('k1');
     await seedDraftQuestion({ id: 'q6', knowledgeId: 'k1', source: 'embedded' });
