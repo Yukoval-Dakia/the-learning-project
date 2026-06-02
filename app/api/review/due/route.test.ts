@@ -276,6 +276,24 @@ describe('GET /api/review/due', () => {
     expect(body.rows.map((r) => r.id)).not.toContain('q_alone');
   });
 
+  it('excludes an unverified quiz draft (draft_status=draft) even when it has a failure attempt', async () => {
+    // Gate-B invariant (QuizGen Option B): an unverified draft must never enter
+    // the review pool. Seed a draft WITH a failure attempt — the implicit
+    // "drafts have no attempt" assumption is bypassed, so only the explicit
+    // draft_status filter keeps it out. An active sibling with an attempt is the
+    // positive control: 'active' must still surface.
+    await seedQuestion('q_draft', { draft_status: 'draft' });
+    await seedFailureAttempt('q_draft');
+    await seedQuestion('q_active', { draft_status: 'active' });
+    await seedFailureAttempt('q_active');
+
+    const res = await getReview();
+    const body = (await res.json()) as { rows: Array<{ id: string }> };
+    const ids = body.rows.map((r) => r.id);
+    expect(ids).not.toContain('q_draft');
+    expect(ids).toContain('q_active');
+  });
+
   it('respects limit=2 param across both slices', async () => {
     const now = new Date();
     const pastIso = new Date(now.getTime() - 86400 * 1000).toISOString();

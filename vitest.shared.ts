@@ -131,6 +131,10 @@ export const fastTestInclude = [
   // Coach TodayPlan read route mocks @/db/client + the reader before import →
   // no live DB → unit partition (YUK-143, P0.4).
   'app/api/coach/today-plan/route.test.ts',
+  // T-SQ Q4 — QuizGen trigger route mocks @/server/boss/client before importing
+  // the route; it only validates + enqueues (no @/db/client import), so it has
+  // no live-Postgres dependency → unit partition (search-grounded QuizGen wave).
+  'app/api/questions/quiz-gen/route.test.ts',
   'tests/core/**/*.test.ts',
   'tests/schema/**/*.test.ts',
   'tests/subjects/**/*.test.ts',
