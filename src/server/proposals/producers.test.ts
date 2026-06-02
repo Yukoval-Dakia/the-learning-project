@@ -6,6 +6,7 @@ import { resetDb, testDb } from '../../../tests/helpers/db';
 import { listProposalInboxRows } from './inbox';
 import {
   writeArchiveProposal,
+  writeBlockMergeProposal,
   writeCompletionProposal,
   writeJudgeRetractionProposal,
   writeLearningItemProposal,
@@ -150,6 +151,93 @@ describe('proposal producer helpers', () => {
     expect((row.payload as { ai_proposal?: { kind?: string } }).ai_proposal?.kind).toBe(
       'learning_item',
     );
+  });
+
+  // YUK-202 / BlockAssembly path-B (design 2026-06-02 §1.C + §5) — the
+  // writeBlockMergeProposal producer writes a `block_merge` proposal event that
+  // flows through the default writer branch (action='experimental:proposal',
+  // subject_kind='question_block') and is therefore selectable by proposalWhere()
+  // — i.e. it lands in the shared inbox reader. AI never auto-merges; this
+  // producer only proposes (S2's acceptBlockMergeProposal runs mergeQuestions on
+  // user accept).
+  it('writeBlockMergeProposal lands a block_merge proposal in the inbox with the typed change read back', async () => {
+    const db = testDb();
+    const id = await writeBlockMergeProposal(db, {
+      ingestion_session_id: 'sess_1',
+      primary_block_id: 'block_a',
+      merge_block_ids: ['block_b', 'block_c'],
+      confidence: 0.82,
+      continuity_signal: 'numbering',
+      reason_md: 'question_no continuity: block_b/block_c continue block_a numbering',
+    });
+
+    const rows = await listProposalInboxRows(db, { status: 'pending' });
+    const row = rows.find((r) => r.id === id);
+    if (!row) throw new Error('expected the block_merge proposal in the inbox');
+
+    expect(row.kind).toBe('block_merge');
+    // Default writer branch (no event_override) → experimental:proposal / question_block.
+    expect(row.source_action).toBe('experimental:proposal');
+    expect(row.target.subject_kind).toBe('question_block');
+    expect(row.target.subject_id).toBe('block_a');
+    expect(row.actor_ref).toBe('block_assembly');
+
+    if (row.payload.kind !== 'block_merge') throw new Error('expected block_merge payload');
+    expect(row.payload.proposed_change).toEqual({
+      primary_block_id: 'block_a',
+      merge_block_ids: ['block_b', 'block_c'],
+      ingestion_session_id: 'sess_1',
+      continuity_signal: 'numbering',
+    });
+    // §1.C — primary + each merge candidate is an evidence ref for the inbox preview.
+    expect(row.payload.evidence_refs).toEqual([
+      { kind: 'question', id: 'block_a' },
+      { kind: 'question', id: 'block_b' },
+      { kind: 'question', id: 'block_c' },
+    ]);
+    expect(row.payload.cooldown_key).toBe('block_merge:sess_1:block_a:block_b,block_c');
+    // YUK-202 — block_merge is a PROACTIVE structural suggestion, NOT a failure-retry
+    // (variant_question is the only corrective kind, SK-3). It must NOT carry
+    // suggestion_kind:'corrective', else signals.ts early-returns on accept and drops
+    // the proposal_signals row / accept_count / cooldown clear for a real production
+    // proposal. Guard the resolved kind, not just the absent field.
+    expect(row.payload.suggestion_kind).toBeUndefined();
+    expect(resolveSuggestionKind(row.payload)).toBe('proactive');
+  });
+
+  // §5 dedup (1) — the cooldown_key is derived from the SORTED merge ids, so a
+  // duplicate candidate for the same block set (regardless of merge-id ordering)
+  // produces the SAME (kind, cooldown_key). writeAiProposal does not hard-suppress
+  // a second write (the proposal_signals aggregate keys on (kind, cooldown_key) and
+  // intentionally aggregates sibling proposals — signals.ts), so both events land;
+  // the shared cooldown_key is what folds them in the inbox cooldown signal.
+  it('writeBlockMergeProposal derives a stable cooldown_key from sorted merge ids (dedup key)', async () => {
+    const db = testDb();
+    const first = await writeBlockMergeProposal(db, {
+      ingestion_session_id: 'sess_1',
+      primary_block_id: 'block_a',
+      merge_block_ids: ['block_b', 'block_c'],
+      confidence: 0.7,
+      continuity_signal: 'carryover',
+      reason_md: 'carryover cue from block_a',
+    });
+    // Same block set, merge ids in a different order → must collapse to one key.
+    const second = await writeBlockMergeProposal(db, {
+      ingestion_session_id: 'sess_1',
+      primary_block_id: 'block_a',
+      merge_block_ids: ['block_c', 'block_b'],
+      confidence: 0.7,
+      continuity_signal: 'carryover',
+      reason_md: 'carryover cue from block_a (re-proposed)',
+    });
+
+    const rows = await listProposalInboxRows(db, { status: 'pending' });
+    const firstRow = rows.find((r) => r.id === first);
+    const secondRow = rows.find((r) => r.id === second);
+    if (!firstRow || !secondRow) throw new Error('expected both block_merge proposals');
+
+    expect(firstRow.payload.cooldown_key).toBe('block_merge:sess_1:block_a:block_b,block_c');
+    expect(secondRow.payload.cooldown_key).toBe(firstRow.payload.cooldown_key);
   });
 
   // P5.6 / YUK-178 (AC-2, SK-3) — the variant_question producer is the only
