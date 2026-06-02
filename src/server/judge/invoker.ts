@@ -136,6 +136,17 @@ export class JudgeInvoker {
         runTaskFn,
       });
     }
+    if (route === 'multimodal_direct') {
+      const { runMultimodalDirectJudge } = await import('../ai/judges/multimodal-direct-judge');
+      return await runMultimodalDirectJudge({
+        db: input.db,
+        question: input.question,
+        answer_md: input.answer_md,
+        student_image_refs: input.student_image_refs,
+        subjectProfile: input.subjectProfile,
+        runTaskFn,
+      });
+    }
     if (route === 'unit_dimension') {
       const { runUnitDimensionJudge } = await import('@/core/capability/judges/unit_dimension');
       return await runUnitDimensionJudge(
