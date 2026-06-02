@@ -22,6 +22,7 @@ import type { Db } from '@/db/client';
 import { artifact, event, knowledge, knowledge_mastery, question } from '@/db/schema';
 import { listBacklinks, resolveOwningLearningItemIds } from '@/server/artifacts/block-refs';
 import { bodyBlocksToNoteSections } from '@/server/artifacts/body-blocks';
+import { type NoteSummary, notesForKnowledge } from '@/server/artifacts/notes-read';
 import { getArtifactCorrectionStates } from '@/server/events/artifact-corrections';
 import { listKnowledgeEdges } from '@/server/knowledge/edges';
 import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject-profile';
@@ -99,6 +100,10 @@ export interface KnowledgeNodePage {
   subject_profile: SlimSubjectProfile;
   mesh_neighbors: NodePageMeshNeighbor[];
   primary_atomic: NodePagePrimaryAtomic | null;
+  // ADR-0027: all notes labeled with this node (atomic/hub/long), atomic-first.
+  // `primary_atomic` stays as the inline-rendered 节点简介 (newest atomic); `notes`
+  // is the full labeled set for the "带当前 knowledge_id 标签的笔记列表" (0/1/many).
+  notes: NoteSummary[];
   backlinks: NodePageBacklink[];
   timeline: NodePageTimelineEntry[];
 }
@@ -335,6 +340,10 @@ export async function loadKnowledgeNodePage(
     created_at: r.created_at.toISOString(),
   }));
 
+  // 3b. all notes labeled with this node (ADR-0027) — atomic/hub/long, atomic-first.
+  // Superset of `primary_atomic`; powers the multi-note list on /knowledge/[id].
+  const notes = await notesForKnowledge(db, knowledgeId);
+
   const profile = await resolveSubjectProfileForKnowledgeIds(db, [knowledgeId]);
 
   return {
@@ -350,6 +359,7 @@ export async function loadKnowledgeNodePage(
     subject_profile: toSlimSubjectProfile(profile),
     mesh_neighbors: meshNeighbors,
     primary_atomic: primaryAtomic,
+    notes,
     backlinks,
     timeline,
   };
