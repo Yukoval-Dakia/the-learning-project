@@ -53,7 +53,7 @@ describe('defaultJudgeKindForQuestion', () => {
     }
   });
 
-  it('routes any other kind to exact', () => {
+  it('routes prose-listed essay to semantic (not exact)', () => {
     // essay is in PROSE_KINDS → semantic; anything not prose/derivation/etc → exact.
     expect(defaultJudgeKindForQuestion({ kind: 'essay' })).toBe('semantic');
   });
