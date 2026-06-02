@@ -137,6 +137,36 @@ function buildTaggingPrompt(profile: SubjectProfile): string {
 - 禁止套话、禁止输出 JSON 之外的文字。`;
 }
 
+// YUK-202 / BlockAssembly path-B (design 2026-06-02 §2) — BlockAssemblyTask
+// prompt. Single-shot structured output, NOT multimodal: input is a compact
+// TEXT projection of one ingestion session's draft blocks (in array order =
+// adjacency), output is `block_merge` candidates. SEMANTIC-ONLY (§0): the model
+// judges merges from numbering continuity / sub-question carry-over /
+// stem-answer split / "承接前题/根据上文" cues — NOT from bbox/page-edge spatial
+// signals (page_index is placeholder=0 today; spatial detection is DEFERRED to
+// slice 2b, where the task gains a spatial input with no prompt rework). AI ONLY
+// proposes; the user accepts in the inbox and acceptance reuses the YUK-195
+// mergeQuestions primitive — there is no auto-merge (hard safety boundary §5).
+function buildBlockAssemblyPrompt(profile: SubjectProfile): string {
+  return `你是${profile.displayName}试卷录入的「题块装配」助手。输入 { ingestion_session_id, blocks: [{ block_id, question_no, prompt_head, role, sub_question_count, layout_quality }] } —— blocks 是同一次录入抽取出的全部草稿题块，**按数组顺序排列（数组相邻 = 题块相邻）**。每块给的是结构化文字投影：question_no（题号，可能为 null）、prompt_head（题面开头文字）、role（stem/sub/standalone）、sub_question_count（子问数）、layout_quality。
+科目上下文：${profile.displayName}。${profile.languageStyle}
+任务：找出哪些**相邻**题块其实是**同一道逻辑题被切开**了，应该合并。只看语义线索，判据：
+- **编号连续**：question_no 连续（如 5 接 6 的子问，或同一大题被拆成两块）。
+- **子问承接**：前一块是大题/题干，后一块只有 (1)(2)(3) 这样的子问延续。
+- **题干答案分离**：一块是题干，紧邻的下一块只有答案/解析，没有独立题面。
+- **上下文承接提示**：后一块出现「承接前题」「根据上文」「续上」等线索词。
+重要约束（§0）：这是**纯语义**判断。**不要**依赖页码 / bbox / 页边等空间信号（当前输入里没有，也不可靠；空间信号已 DEFERRED 到后续切片）。只用上面的文字线索。
+严格 JSON 输出（不带 markdown 代码块包裹），shape 名 BlockAssemblyOutput：
+{"candidates":[{"primary_block_id":"<保留结构树的主块 id>","merge_block_ids":["<折叠进主块的相邻块 id>", "..."],"confidence":0.0-1.0,"signal":"page_edge"|"numbering"|"stem_answer_split"|"carryover","reason_md":"<具体说明哪条连续线索 + 引用 question_no / 题面证据>"}]}
+要点：
+- primary_block_id 与 merge_block_ids 都必须是输入 blocks 里真实存在的 block_id；merge_block_ids 至少 1 个，且不含 primary 自己。
+- 同一个 block 不要出现在多个候选里（一个块只属于一次合并）。
+- signal 选最贴切的那条语义线索；纯语义路径几乎不会是 page_edge（它是空间信号，DEFERRED），除非文字本身明示跨页承接。
+- confidence 反映你对「这几块确实是一道题」的把握；吃不准就给低分（下游只是 propose，用户会复核，但别凑数）。
+- reason_md 必须具体：引用 question_no 或题面文字，说清为什么该合并。
+- **宁缺毋滥**：没有明确该合并的相邻块时，输出空 candidates。禁止套话、禁止 JSON 之外的文字。`;
+}
+
 // T-OC slice 2 (YUK-145, OC-1/OC-2) — VLM StructureTask prompt. The VLM owns
 // the normalized structure tree: it sees all N page images (attached to the
 // user message in page order) + a Tencent text-OCR hint (demoted from
@@ -690,6 +720,8 @@ export function getTaskSystemPrompt(
       return buildGoalScopePrompt(profile);
     case 'TaggingTask':
       return buildTaggingPrompt(profile);
+    case 'BlockAssemblyTask':
+      return buildBlockAssemblyPrompt(profile);
     case 'MistakeEnrollTask':
       return buildMistakeEnrollPrompt(profile);
     case 'StructureTask':
