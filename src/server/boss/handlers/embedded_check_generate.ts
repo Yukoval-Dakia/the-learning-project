@@ -13,6 +13,11 @@ import type { Job } from 'pg-boss';
 import { z } from 'zod';
 
 import { JudgeKind, QuestionKind, Rubric } from '@/core/schema/business';
+import {
+  PROSE_KINDS,
+  defaultJudgeKindForQuestion,
+  nonEmptyStrings,
+} from '@/core/schema/judge-routing';
 import type { Db } from '@/db/client';
 import { artifact, artifact_block_ref, knowledge, question } from '@/db/schema';
 import {
@@ -52,42 +57,21 @@ const EmbeddedCheckOutputSchema = z.object({
 
 type EmbeddedCheckOutput = z.infer<typeof EmbeddedCheckOutputSchema>;
 
-const PROSE_KINDS = new Set(['short_answer', 'reading', 'translation', 'essay']);
 const PENDING_STALE_MS = 30 * 60 * 1000;
 
-function nonEmpty(values: string[] | undefined): string[] {
-  return (values ?? []).map((v) => v.trim()).filter((v) => v.length > 0);
-}
-
-function defaultJudgeKindForQuestion(q: z.infer<typeof EmbeddedCheckQuestionSchema>) {
-  if (q.judge_kind_override) return q.judge_kind_override;
-  if (q.kind === 'choice' || q.kind === 'true_false') return 'exact';
-  if (q.kind === 'fill_blank') {
-    return nonEmpty(q.rubric_json?.keywords).length > 0 ? 'keyword' : 'exact';
-  }
-  if (q.kind === 'computation') {
-    return nonEmpty(q.rubric_json?.keywords).length > 0 ? 'keyword' : 'semantic';
-  }
-  // M2.1 (2026-05-22): derivation must NEVER fall through to exact — step-by-step
-  // answers cannot be graded by string equality. Embedded-check derivation runs
-  // through semantic (required_points-driven); 'steps' route is reserved for
-  // first-class math questions with reference_solution shape (see
-  // src/core/capability/judges/steps.ts), not embedded checks. The
-  // EmbeddedCheckGenerate prompt does not advertise 'derivation' as an option
-  // (see canonicalKinds in src/ai/task-prompts.ts), but defense-in-depth covers
-  // LLM hallucination + future prompt changes.
-  if (q.kind === 'derivation') return 'semantic';
-  return PROSE_KINDS.has(q.kind) ? 'semantic' : 'exact';
-}
+// defaultJudgeKindForQuestion / nonEmptyStrings / PROSE_KINDS now live in the
+// shared @/core/schema/judge-routing util (Q1 of the search-grounded QuizGen
+// wave) so QuizGen and EmbeddedCheckGenerate share one routing rule. The
+// EmbeddedCheckQuestionSchema is structurally compatible with JudgeRoutableQuestion.
 
 function assertGeneratedQuestionHasJudgeContract(
   q: z.infer<typeof EmbeddedCheckQuestionSchema>,
 ): void {
   const route = defaultJudgeKindForQuestion(q);
-  if (route === 'keyword' && nonEmpty(q.rubric_json?.keywords).length === 0) {
+  if (route === 'keyword' && nonEmptyStrings(q.rubric_json?.keywords).length === 0) {
     throw new Error(`embedded question '${q.prompt_md}' uses keyword judge without keywords`);
   }
-  if (route === 'semantic' && nonEmpty(q.rubric_json?.required_points).length === 0) {
+  if (route === 'semantic' && nonEmptyStrings(q.rubric_json?.required_points).length === 0) {
     throw new Error(
       `embedded question '${q.prompt_md}' uses semantic judge without required_points`,
     );
