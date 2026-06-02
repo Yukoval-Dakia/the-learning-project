@@ -234,15 +234,13 @@ export const learning_item = pgTable(
   (t) => [
     // ai_score is nullable; CHECK accepts NULL by default.
     check('learning_item_ai_score_range', sql`${t.ai_score} BETWEEN 0 AND 1`),
-    // YUK-171 — enforce the 1:1 `primary_artifact_id` invariant at the DB layer.
-    // The creation path (`acceptLearningIntent`) sets primary_artifact_id once per
-    // learning_item at INSERT and no update/revive path re-points it, so at most one
-    // NON-archived owner per artifact can exist. Archived rows are excluded so an
-    // artifact can be re-owned only after the prior owner is archived (one-way).
-    // Backstops `resolveOwningLearningItemIds`' deterministic-pick + warn read path.
-    uniqueIndex('learning_item_primary_artifact_active_unique')
-      .on(t.primary_artifact_id)
-      .where(sql`archived_at IS NULL AND primary_artifact_id IS NOT NULL`),
+    // ADR-0027 (YUK-203 P1) — the YUK-171 1:1 uniqueIndex on primary_artifact_id was
+    // dropped: a note(artifact) is now a first-class knowledge-labeled entity and a
+    // learning_item only *references* it. primary_artifact_id stays as a nullable
+    // "primary/representative" pointer (no longer DB-unique; one artifact may be the
+    // primary of more than one item). A plain index is kept for owner-lookup reads.
+    // See docs/adr/0027-note-artifact-decouple-from-learning-item-ownership.md.
+    index('learning_item_primary_artifact_idx').on(t.primary_artifact_id),
   ],
 );
 

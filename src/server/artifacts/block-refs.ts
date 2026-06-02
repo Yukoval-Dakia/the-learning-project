@@ -200,15 +200,14 @@ export async function listBacklinks(
  * as live links; both panels share this single resolver to stay behaviourally
  * identical.
  *
- * 1:1 invariant (YUK-171): the creation path (`acceptLearningIntent`) sets
- * `primary_artifact_id` ONCE per learning_item at INSERT and no update/revive path
- * ever re-points it, so at most one non-archived owner per artifact exists — now
- * also enforced at the DB layer by the `learning_item_primary_artifact_active_unique`
- * partial unique index. This read path nonetheless picks DEFENSIVELY: it orders by
- * `created_at, id` so the EARLIEST owner deterministically wins (never an arbitrary
- * DB-order row) and `console.warn`s once per conflicting artifact if a duplicate
- * non-archived owner is somehow observed. It must NOT throw — it serves the backlink
- * panel + node page and must never 500 over a data anomaly.
+ * Representative-owner resolver (ADR-0027 / YUK-203 P1): a learning_item now only
+ * *references* an artifact via `primary_artifact_id`, and MORE THAN ONE non-archived
+ * item may reference the same artifact (the YUK-171 1:1 unique index was dropped).
+ * For the backlink panel + node page we link a source artifact to a single
+ * representative owner: rows are ordered by `created_at, id` so the EARLIEST
+ * referencing item deterministically wins. Multiplicity is now VALID and NOT warned.
+ * Rendering all referencing items is a follow-up (see notesForItem, P1-PR2). It must
+ * NOT throw — it serves read panels and must never 500.
  */
 export async function resolveOwningLearningItemIds(
   db: DbLike,
@@ -229,26 +228,11 @@ export async function resolveOwningLearningItemIds(
     // row order.
     .orderBy(asc(learning_item.created_at), asc(learning_item.id));
   const map = new Map<string, string>();
-  const conflicts = new Map<string, string[]>();
   for (const row of rows) {
     const artifactId = row.primary_artifact_id;
-    if (!artifactId) continue;
-    if (map.has(artifactId)) {
-      // A second non-archived owner for the same artifact — keep the first
-      // (earliest) and record the conflict for a single warn below. Never throw.
-      const seen = conflicts.get(artifactId) ?? [map.get(artifactId) as string];
-      seen.push(row.id);
-      conflicts.set(artifactId, seen);
-      continue;
-    }
+    if (!artifactId || map.has(artifactId)) continue;
+    // Earliest-created referencing item wins (deterministic representative).
     map.set(artifactId, row.id);
-  }
-  for (const [artifactId, learningItemIds] of conflicts) {
-    console.warn(
-      `[resolveOwningLearningItemIds] multiple non-archived learning_items share primary_artifact_id=${artifactId}: ${learningItemIds.join(
-        ', ',
-      )}. Resolving to the earliest-created (${learningItemIds[0]}). This violates the 1:1 invariant (YUK-171); investigate the data.`,
-    );
   }
   return map;
 }
