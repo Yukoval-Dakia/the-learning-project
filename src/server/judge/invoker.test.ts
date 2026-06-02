@@ -199,4 +199,54 @@ describe('JudgeInvoker', () => {
       expect.objectContaining({ db: mockDb, subjectProfile: physicsProfile }),
     );
   });
+
+  it('dispatches multimodal_direct route through the server runner', async () => {
+    const runTaskFn = vi.fn().mockResolvedValue({
+      text: JSON.stringify({
+        coarse_outcome: 'correct',
+        score: 0.9,
+        feedback_md: '看图作答正确。',
+        evidence: {
+          observed_md: '图中受力分析完整。',
+          matched_points: ['受力图', '合力方向'],
+          missing_points: [],
+        },
+        confidence: 0.86,
+      }),
+    });
+
+    // judge_kind_override forces the multimodal_direct route (mirrors the
+    // semantic/steps override pattern). No image_refs ⇒ the runner never calls
+    // defaultImageFetch (R2/DB); a non-empty answer_md keeps it past the
+    // no-input guard so the route truly dispatches into runMultimodalDirectJudge.
+    const result = await new JudgeInvoker({ runTaskFn }).invoke({
+      db: mockDb,
+      question: {
+        ...baseQuestion,
+        id: 'q-mm-direct',
+        kind: 'short_answer',
+        prompt_md: '看图描述受力',
+        reference_md: null,
+        judge_kind_override: 'multimodal_direct',
+      },
+      answer_md: '受力如图所示，合力向右。',
+      subjectProfile: physicsProfile,
+    });
+
+    expect(result.route).toBe('multimodal_direct');
+    // Proves the dispatch reached runMultimodalDirectJudge (NOT the
+    // RUNNABLE_ROUTES/registry unsupported fallback): a real verdict, not unsupported.
+    expect(result.result.coarse_outcome).toBe('correct');
+    expect(result.telemetry).toMatchObject({
+      route: 'multimodal_direct',
+      capability_ref: { id: 'multimodal_direct', version: '1.0.0' },
+      coarse_outcome: 'correct',
+      confidence: 0.86,
+    });
+    expect(runTaskFn).toHaveBeenCalledWith(
+      'MultimodalDirectJudgeTask',
+      expect.objectContaining({ images: [] }),
+      expect.objectContaining({ db: mockDb, subjectProfile: physicsProfile }),
+    );
+  });
 });

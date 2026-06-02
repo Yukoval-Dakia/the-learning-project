@@ -17,11 +17,17 @@ export const physicsProfile: SubjectProfile = {
   languageStyle: '中文讲解，强调物理量定义、单位与量纲、推导链路。',
   questionKinds: ['single_choice', 'multiple_choice', 'short_answer', 'calculation'],
   judgePolicy: {
-    preferredRoutes: ['exact', 'semantic', 'unit_dimension'],
+    // YUK-201: multimodal_direct added AFTER unit_dimension so calc questions keep
+    // unit_dimension precedence (the router checks the physics unit_dimension
+    // branch BEFORE the gated multimodal_direct auto-route; see
+    // question-contract.ts §2). multimodal_direct is the real consumer here:
+    // physics calc WITH a diagram and NO step-rubric reference_solution.
+    preferredRoutes: ['exact', 'semantic', 'unit_dimension', 'multimodal_direct'],
     notes: [
       '数值题优先 unit_dimension（P1+ capability 落地后）。',
       '推导题复用 steps@1（与 math 共享 capability，不重写）。',
       '公式选择题走 exact / semantic。',
+      '带图、无步骤评分表的计算/简答题走 multimodal_direct（整体视觉判分）。',
     ],
   },
   exampleSources: ['题面条件', '物理定律', '推导公式', '学生计算步骤'],
@@ -99,5 +105,8 @@ export const physicsProfile: SubjectProfile = {
   schedulingHints: {
     default_policy: 'fsrs',
   },
-  judgeCapabilities: ['exact', 'semantic', 'unit_dimension'],
+  // YUK-201: + 'multimodal_direct'. validateProfile requires every registry-backed
+  // preferredRoute to also appear in judgeCapabilities (and be registered) — both
+  // satisfied (registered in createDefaultRegistry).
+  judgeCapabilities: ['exact', 'semantic', 'unit_dimension', 'multimodal_direct'],
 };

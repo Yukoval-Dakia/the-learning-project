@@ -2,6 +2,7 @@ import { CapabilityRegistry } from '../registry';
 import { fsrsSchedulerCapability } from '../schedulers/fsrs';
 import { exactJudgeCapability } from './exact';
 import { keywordJudgeCapability } from './keyword';
+import { multimodalDirectV1Capability } from './multimodal_direct';
 import { semanticJudgeCapability } from './semantic';
 import { stepsV1Capability } from './steps';
 import { unitDimensionV1Capability } from './unit_dimension';
@@ -16,6 +17,11 @@ export function createDefaultRegistry(): CapabilityRegistry {
   // runStepsJudge instead of calling the core registry runner directly.
   registry.registerJudge(stepsV1Capability);
   registry.registerJudge(unitDimensionV1Capability);
+  // multimodal_direct (YUK-201) — like steps@1, registered for profile validation
+  // + route resolution. Server execution goes through JudgeInvoker, which supplies
+  // DB/runtime context to runMultimodalDirectJudge (DB + R2 image fetch) instead of
+  // calling the core registry runner directly.
+  registry.registerJudge(multimodalDirectV1Capability);
   // T-QP (YUK-165, ADR-0014 §5) — register the `fsrs` scheduling policy. Like
   // steps@1, this is for profile validation + route resolution: the live
   // review/due path schedules questions (and parts, which ARE questions) via
@@ -38,6 +44,7 @@ export function getDefaultRegistry(): CapabilityRegistry {
 export { fsrsSchedulerCapability } from '../schedulers/fsrs';
 export { exactJudgeCapability } from './exact';
 export { keywordJudgeCapability } from './keyword';
+export { multimodalDirectV1Capability } from './multimodal_direct';
 export { semanticJudgeCapability } from './semantic';
 export { stepsV1Capability } from './steps';
 export { unitDimensionV1Capability } from './unit_dimension';

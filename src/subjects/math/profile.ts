@@ -107,5 +107,8 @@ export const mathProfile: SubjectProfile = {
   },
   // M2.1 (2026-05-22): + 'steps' for derivation question kind.
   // steps@1 capability is registered in default registry; run() body lands in M2.2.
-  judgeCapabilities: ['exact', 'keyword', 'semantic', 'steps'],
+  // YUK-201: + 'multimodal_direct' so it is available as a judge_kind_override on
+  // math questions (override path). NOT added to preferredRoutes — steps@1 owns
+  // math derivations; math does not auto-route to multimodal_direct.
+  judgeCapabilities: ['exact', 'keyword', 'semantic', 'steps', 'multimodal_direct'],
 };

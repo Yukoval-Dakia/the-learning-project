@@ -304,17 +304,25 @@ describe('P0: physics SubjectProfile', () => {
     expect(causeIds).toContain('dimension');
   });
 
-  it('judgeCapabilities at P1: exact + semantic + unit_dimension', async () => {
+  // YUK-201: + 'multimodal_direct' (holistic vision judging for physics calc with
+  // a diagram + no step-rubric). unit_dimension stays ahead of it in the router.
+  it('judgeCapabilities: exact + semantic + unit_dimension + multimodal_direct', async () => {
     const { physicsProfile } = await import('@/subjects/physics/profile');
-    expect(physicsProfile.judgeCapabilities).toEqual(['exact', 'semantic', 'unit_dimension']);
+    expect(physicsProfile.judgeCapabilities).toEqual([
+      'exact',
+      'semantic',
+      'unit_dimension',
+      'multimodal_direct',
+    ]);
   });
 
-  it('prefers unit_dimension for P1 physics numeric answers', async () => {
+  it('prefers unit_dimension for physics numeric answers; multimodal_direct after it', async () => {
     const { physicsProfile } = await import('@/subjects/physics/profile');
     expect(physicsProfile.judgePolicy.preferredRoutes).toEqual([
       'exact',
       'semantic',
       'unit_dimension',
+      'multimodal_direct',
     ]);
   });
 

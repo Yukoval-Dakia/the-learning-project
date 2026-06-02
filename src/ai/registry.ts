@@ -337,6 +337,29 @@ export const tasks = {
     systemPrompt:
       '你是数学题视觉判分器（vision LLM）。输入：题面 + reference_solution (expected_signals + final_answer) + 学生图/文本步骤/文本 final_answer。严格 JSON 输出 StepsLlmOutput。',
   },
+  MultimodalDirectJudgeTask: {
+    kind: 'MultimodalDirectJudgeTask',
+    description:
+      'YUK-201 — Holistic vision-aware answer judging (no step-rubric). Single vision LLM call with structured output (MultimodalDirectLlmOutput) for image-bearing prompts/answers that lack a reference_solution (physics calc with a diagram; short-answer with a figure). steps@1 owns step/rubric-weighted derivation judging; this owns the holistic, no-step path.',
+    defaultProvider: 'xiaomi',
+    // multimodal: mimo-v2.5 reads prompt figures + student answer photos, outputs
+    // a holistic JudgeResultV2 fragment. Mirrors StepsJudgeTask (same vision model).
+    defaultModel: 'mimo-v2.5',
+    // MVP: no fallback. Transient mimo-v2.5 outage → runMultimodalDirectJudge
+    // returns 'unsupported' (see multimodal-direct-judge.ts catch path).
+    fallbackChain: [],
+    // vision call latency: mirror StepsJudgeTask budget (single call, 90s ceiling).
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 90_000 },
+    needsToolCall: false,
+    isMultimodal: true,
+    // invocation omitted (defaults to 'auto'): called from question-contract.ts
+    // resolveQuestionJudgeRoute → invoker on the multimodal_direct route, as part
+    // of the grading flow (not a user-initiated rescue).
+    allowedTools: [],
+    // Runtime renders via getTaskSystemPrompt(task, profile); this string is the
+    // type-required fallback only (new tasks add a builder in task-prompts.ts).
+    systemPrompt: '(see getTaskSystemPrompt(task, profile) - fallback not for runtime)',
+  },
   VariantVerifyTask: {
     kind: 'VariantVerifyTask',
     description:
