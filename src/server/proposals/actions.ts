@@ -24,6 +24,9 @@ import { writeEvent } from '@/server/events/queries';
 // YUK-143 / ADR-0024 — North-Star goal_scope accept materializer.
 import { type GoalScopeAcceptResult, acceptGoalScopeProposal } from '@/server/goals/accept';
 import { ApiError } from '@/server/http/errors';
+// YUK-202 / BlockAssembly path-B (design 2026-06-02 §4) — accept reuses the
+// verified YUK-195 `mergeQuestions` primitive; no auto-merge path is added.
+import { mergeQuestions } from '@/server/ingestion/block-structured-edit';
 import { acceptProposal, dismissProposal } from '@/server/knowledge/proposals';
 import {
   type LearningIntentMaterializeResult,
@@ -82,7 +85,8 @@ export type AcceptAiProposalResult =
   | NoteUpdateAcceptResult
   | RecordLinksAcceptResult
   | RecordPromotionAcceptResult
-  | GoalScopeAcceptResult;
+  | GoalScopeAcceptResult
+  | BlockMergeAcceptResult;
 
 export interface VariantQuestionAcceptResult {
   kind: 'variant_question';
@@ -149,6 +153,22 @@ export interface RecordPromotionAcceptResult {
   materialized_kind: 'question' | 'learning_item' | 'artifact';
   materialized_id: string;
   idempotent?: boolean;
+}
+
+// YUK-202 / BlockAssembly path-B (design 2026-06-02 §4) — accept reuses the
+// YUK-195 `mergeQuestions` primitive (no auto-merge — hard safety boundary, §5).
+// `rate_event_id` / `merged_count` are set only on a successful `'written'`
+// merge; `idempotent` on a second accept (already rated); `stale` + `skip_reason`
+// when `mergeQuestions` soft-rejects (a block left draft before accept), so the
+// UI can show a "proposal is stale" notice instead of throwing.
+export interface BlockMergeAcceptResult {
+  kind: 'block_merge';
+  rate_event_id?: string;
+  primary_block_id: string;
+  merged_count?: number;
+  idempotent?: boolean;
+  stale?: boolean;
+  skip_reason?: string;
 }
 
 export type DismissAiProposalResult =
@@ -586,6 +606,8 @@ async function dispatchAccept(
       }
       return result;
     }
+    case 'block_merge':
+      return await acceptBlockMergeProposal(db, proposalId, proposal, opts);
     default:
       throw new ApiError(
         'unsupported_proposal_kind',
@@ -1444,6 +1466,108 @@ async function acceptRecordPromotionProposal(
     record_id: recordId,
     materialized_kind: target,
     materialized_id: materializedId,
+  };
+}
+
+/**
+ * YUK-202 / BlockAssembly path-B (design 2026-06-02 §4) — accept a block_merge
+ * proposal by reusing the verified YUK-195 `mergeQuestions` primitive. AI only
+ * proposes; the merge runs ONLY here, on explicit user accept (§5 hard boundary
+ * — no auto-merge path exists).
+ *
+ * Atomicity (§4, locked): `mergeQuestions` opens its OWN `db.transaction`, so we
+ * use the TWO-STEP shape — run the merge (self-tx) first, THEN write the rate
+ * event — rather than nesting or adding a tx-override to the verified primitive.
+ * The crash window between the two is tiny, and `existingAcceptRate` makes a
+ * retry idempotent (a re-accept after a crash finds the merged blocks no longer
+ * draft → `mergeQuestions` soft-rejects → stale, no double-merge).
+ *
+ * Stale handling (§4): `mergeQuestions` returns a discriminated status. Any
+ * `skipped:*` (a block already manually merged / imported → no longer draft, or
+ * a same-session/structured precondition no longer holds) means we do NOT write
+ * the accept rate; we return `{ stale: true, skip_reason }` so the inbox shows a
+ * stale notice instead of throwing. This also covers dedup / accept races.
+ */
+async function acceptBlockMergeProposal(
+  db: Db,
+  proposalId: string,
+  proposal: ProposalInboxRow,
+  opts: AcceptAiProposalOpts,
+): Promise<BlockMergeAcceptResult> {
+  ensureAcceptOnly('block_merge', opts);
+  // The inbox row's payload is the typed AiProposalPayloadT; narrow on the
+  // discriminant to read the block_merge proposed_change with full types.
+  if (proposal.payload.kind !== 'block_merge') {
+    throw new ApiError(
+      'validation_error',
+      `proposal ${proposalId} is not a block_merge proposal (kind=${proposal.payload.kind})`,
+      400,
+    );
+  }
+  const change = proposal.payload.proposed_change;
+  const primaryBlockId = change.primary_block_id;
+  const mergeBlockIds = change.merge_block_ids;
+
+  // Idempotency (§4): an existing accept rate means we already ran the merge;
+  // do NOT merge again. existingAcceptRate throws 409 if a non-accept decision
+  // already exists.
+  const existingRate = await existingAcceptRate(db, proposalId);
+  if (existingRate) {
+    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+    return {
+      kind: 'block_merge',
+      rate_event_id: existingRate.id,
+      primary_block_id: primaryBlockId,
+      merged_count: mergeBlockIds.length,
+      idempotent: true,
+    };
+  }
+
+  // Step 1 — run the merge in its own self-tx (cannot nest in the rate-event tx).
+  const merge = await mergeQuestions(db, {
+    actorRef: 'proposal:accept',
+    primaryBlockId,
+    mergeBlockIds,
+  });
+
+  // A soft-reject (block no longer draft / cross-session / null structured /
+  // not found) means the proposal is stale: no rate event, no decision signal.
+  if (merge.status !== 'written') {
+    return {
+      kind: 'block_merge',
+      primary_block_id: primaryBlockId,
+      stale: true,
+      skip_reason: merge.status,
+    };
+  }
+
+  // Step 2 — the merge committed; write the accept rate event chained to the
+  // proposal (mirrors the other accept fns) + decision signal.
+  const now = new Date();
+  const rateEventId = newId();
+  await writeEvent(db, {
+    id: rateEventId,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'rate',
+    subject_kind: 'event',
+    subject_id: proposalId,
+    outcome: 'success',
+    payload: {
+      rating: 'accept',
+      primary_block_id: primaryBlockId,
+      merged_block_ids: mergeBlockIds,
+      ...(opts.user_note ? { user_note: opts.user_note } : {}),
+    },
+    caused_by_event_id: proposalId,
+    created_at: now,
+  });
+  await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+  return {
+    kind: 'block_merge',
+    rate_event_id: rateEventId,
+    primary_block_id: primaryBlockId,
+    merged_count: mergeBlockIds.length,
   };
 }
 

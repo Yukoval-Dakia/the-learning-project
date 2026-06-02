@@ -9,6 +9,7 @@ import {
   mistake_variant,
   proposal_signals,
   question,
+  question_block,
 } from '@/db/schema';
 import { writeKnowledgeProposeEvent } from '@/server/knowledge/proposals';
 import { planLearningIntent } from '@/server/orchestrator/learning_intent';
@@ -1426,5 +1427,222 @@ describe('YUK-15 record evidence flip on accept / retract', () => {
     await acceptAiProposal(db, 'node_p2');
     // Unrelated record stays raw.
     expect(await getRecordStatus('rec_unrelated')).toBe('raw');
+  });
+});
+
+// YUK-202 / BlockAssembly path-B (design 2026-06-02 §4) — accept a block_merge
+// proposal end-to-end: it reuses the YUK-195 `mergeQuestions` primitive (the
+// merge runs ONLY here, on user accept — §5 no auto-merge), writes the accept
+// rate event, is idempotent on a second accept, and goes stale (no rate event)
+// when a block left draft before accept.
+describe('block_merge proposal lifecycle', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  // Mirror the YUK-195 fixture: a draft question_block with a structured tree in
+  // a given ingestion session (mergeQuestions requires draft + same-session +
+  // structured).
+  async function seedDraftBlock(opts: {
+    sessionId: string;
+    nodeId: string;
+    promptText: string;
+    status?: string;
+  }): Promise<string> {
+    const db = testDb();
+    const blockId = createId();
+    const now = new Date();
+    await db.insert(question_block).values({
+      id: blockId,
+      ingestion_session_id: opts.sessionId,
+      source_document_id: null,
+      source_asset_ids: [],
+      page_spans: [],
+      structured: { id: opts.nodeId, role: 'standalone', prompt_text: opts.promptText },
+      figures: [],
+      layout_quality: 'structured',
+      image_refs: [],
+      crop_refs: [],
+      visual_complexity: 'low',
+      extraction_confidence: 1,
+      status: opts.status ?? 'draft',
+      knowledge_hint: null,
+      merged_from_block_ids: [],
+      imported_question_id: null,
+      imported_attempt_event_id: null,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    return blockId;
+  }
+
+  async function readBlock(blockId: string) {
+    return (
+      await testDb().select().from(question_block).where(eq(question_block.id, blockId)).limit(1)
+    )[0];
+  }
+
+  async function seedBlockMergeProposal(opts: {
+    proposalId: string;
+    sessionId: string;
+    primaryBlockId: string;
+    mergeBlockIds: string[];
+  }): Promise<void> {
+    await writeAiProposal(testDb(), {
+      id: opts.proposalId,
+      payload: {
+        kind: 'block_merge',
+        target: { subject_kind: 'question_block', subject_id: opts.primaryBlockId },
+        reason_md: '连续编号，承接前题',
+        evidence_refs: [],
+        proposed_change: {
+          primary_block_id: opts.primaryBlockId,
+          merge_block_ids: opts.mergeBlockIds,
+          ingestion_session_id: opts.sessionId,
+          continuity_signal: 'numbering',
+        },
+        cooldown_key: `block_merge:${opts.sessionId}:${opts.primaryBlockId}:${opts.mergeBlockIds.join(',')}`,
+      },
+    });
+  }
+
+  it('accept runs mergeQuestions, absorbs merge blocks, and writes an accept rate event', async () => {
+    const db = testDb();
+    const sessionId = createId();
+    const primary = await seedDraftBlock({ sessionId, nodeId: 'p', promptText: 'primary' });
+    const m1 = await seedDraftBlock({ sessionId, nodeId: 'm1', promptText: 'merge1' });
+    const m2 = await seedDraftBlock({ sessionId, nodeId: 'm2', promptText: 'merge2' });
+    await seedBlockMergeProposal({
+      proposalId: 'block_merge_p1',
+      sessionId,
+      primaryBlockId: primary,
+      mergeBlockIds: [m1, m2],
+    });
+
+    const result = await acceptAiProposal(db, 'block_merge_p1');
+
+    expect(result.kind).toBe('block_merge');
+    if (result.kind !== 'block_merge') throw new Error('expected block_merge result');
+    expect(result).toMatchObject({
+      kind: 'block_merge',
+      primary_block_id: primary,
+      merged_count: 2,
+    });
+    expect(result.rate_event_id).toBeTruthy();
+    expect(result.stale).toBeUndefined();
+
+    // (a) mergeQuestions ran: primary absorbed the merge blocks (stem + grown
+    // sub_questions, in caller order) and the merge blocks flipped to 'ignored'.
+    const primaryBlock = await readBlock(primary);
+    expect(primaryBlock.structured?.role).toBe('stem');
+    expect(primaryBlock.structured?.sub_questions?.map((s) => s.id)).toEqual(['p', 'm1', 'm2']);
+    expect(primaryBlock.merged_from_block_ids).toEqual([m1, m2]);
+    expect((await readBlock(m1)).status).toBe('ignored');
+    expect((await readBlock(m2)).status).toBe('ignored');
+
+    // (b) exactly one accept rate event chained to the proposal.
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'block_merge_p1')));
+    expect(rateRows).toHaveLength(1);
+    expect(rateRows[0].id).toBe(result.rate_event_id);
+    expect(rateRows[0].payload).toMatchObject({
+      rating: 'accept',
+      primary_block_id: primary,
+      merged_block_ids: [m1, m2],
+    });
+  });
+
+  it('a second accept is idempotent: no double-merge, no second rate event', async () => {
+    const db = testDb();
+    const sessionId = createId();
+    const primary = await seedDraftBlock({ sessionId, nodeId: 'p', promptText: 'primary' });
+    const m1 = await seedDraftBlock({ sessionId, nodeId: 'm1', promptText: 'merge1' });
+    await seedBlockMergeProposal({
+      proposalId: 'block_merge_idem',
+      sessionId,
+      primaryBlockId: primary,
+      mergeBlockIds: [m1],
+    });
+
+    const first = await acceptAiProposal(db, 'block_merge_idem');
+    expect(first.kind).toBe('block_merge');
+    if (first.kind !== 'block_merge') throw new Error('expected block_merge result');
+    expect(first.merged_count).toBe(1);
+
+    const second = await acceptAiProposal(db, 'block_merge_idem');
+    expect(second).toMatchObject({
+      kind: 'block_merge',
+      idempotent: true,
+      primary_block_id: primary,
+      rate_event_id: first.rate_event_id,
+    });
+
+    // No double-merge: merged_from_block_ids stays single, version is the single
+    // merge's bump (not two), and only one rate event exists.
+    const primaryBlock = await readBlock(primary);
+    expect(primaryBlock.merged_from_block_ids).toEqual([m1]);
+    expect(primaryBlock.version).toBe(1);
+
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'block_merge_idem')));
+    expect(rateRows).toHaveLength(1);
+
+    // Acceptance signal stays consistent across the idempotent re-accept.
+    const signals = await db
+      .select()
+      .from(proposal_signals)
+      .where(eq(proposal_signals.kind, 'block_merge'));
+    expect(signals).toHaveLength(1);
+    expect(signals[0]).toMatchObject({ accept_count: 1, dismiss_count: 0 });
+  });
+
+  it('returns stale with no rate event when a merge block is no longer draft', async () => {
+    const db = testDb();
+    const sessionId = createId();
+    const primary = await seedDraftBlock({ sessionId, nodeId: 'p', promptText: 'primary' });
+    // Pre-merge the merge block out of draft (e.g. already imported) so
+    // mergeQuestions soft-rejects with skipped:not_draft.
+    const m1 = await seedDraftBlock({
+      sessionId,
+      nodeId: 'm1',
+      promptText: 'merge1',
+      status: 'imported',
+    });
+    await seedBlockMergeProposal({
+      proposalId: 'block_merge_stale',
+      sessionId,
+      primaryBlockId: primary,
+      mergeBlockIds: [m1],
+    });
+
+    const result = await acceptAiProposal(db, 'block_merge_stale');
+
+    expect(result).toMatchObject({
+      kind: 'block_merge',
+      primary_block_id: primary,
+      stale: true,
+      skip_reason: 'skipped:not_draft',
+    });
+    if (result.kind !== 'block_merge') throw new Error('expected block_merge result');
+    expect(result.rate_event_id).toBeUndefined();
+
+    // No mutation: primary stays its own standalone, merge block untouched.
+    const primaryBlock = await readBlock(primary);
+    expect(primaryBlock.structured?.role).toBe('standalone');
+    expect(primaryBlock.merged_from_block_ids).toEqual([]);
+    expect(primaryBlock.version).toBe(0);
+    expect((await readBlock(m1)).status).toBe('imported');
+
+    // No rate event written for a stale proposal.
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'block_merge_stale')));
+    expect(rateRows).toHaveLength(0);
   });
 });
