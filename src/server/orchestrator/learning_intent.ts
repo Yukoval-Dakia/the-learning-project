@@ -547,11 +547,13 @@ export async function acceptLearningIntent(
       }
       const fallbackDomain =
         proposedKnowledge?.root?.domain ?? proposal.payload.knowledge_node?.domain ?? null;
-      for (const child of children) {
+      // Batch the starter-children inserts into one multi-row INSERT (was a
+      // per-child round-trip inside the accept transaction).
+      const childRows = children.map((child): typeof knowledge.$inferInsert => {
         const childId = newId();
         tempIdToRealId.set(child.temp_id, childId);
         createdKnowledgeIds.push(childId);
-        await tx.insert(knowledge).values({
+        return {
           id: childId,
           name: child.name,
           domain: child.domain ?? fallbackDomain,
@@ -562,7 +564,10 @@ export async function acceptLearningIntent(
           created_at: now,
           updated_at: now,
           version: 0,
-        });
+        };
+      });
+      if (childRows.length > 0) {
+        await tx.insert(knowledge).values(childRows);
       }
     }
 
@@ -620,13 +625,12 @@ export async function acceptLearningIntent(
     // Atomic LearningItems
     const atomicLiIds: string[] = [];
     const atomicArtifactIds: string[] = [];
-    for (const atomic of resolvedAtomics) {
+    const atomicLiRows = resolvedAtomics.map((atomic): typeof learning_item.$inferInsert => {
       const atomicLiId = newId();
       const atomicArtifactId = newId();
       atomicLiIds.push(atomicLiId);
       atomicArtifactIds.push(atomicArtifactId);
-
-      await tx.insert(learning_item).values({
+      return {
         id: atomicLiId,
         source: 'learning_intent',
         source_ref: proposalId,
@@ -640,19 +644,21 @@ export async function acceptLearningIntent(
         created_at: now,
         updated_at: now,
         version: 0,
-      });
+      };
+    });
+    if (atomicLiRows.length > 0) {
+      await tx.insert(learning_item).values(atomicLiRows);
     }
 
     // Long LearningItems
     const longLiIds: string[] = [];
     const longArtifactIds: string[] = [];
-    for (const long of resolvedLongs) {
+    const longLiRows = resolvedLongs.map((long): typeof learning_item.$inferInsert => {
       const longLiId = newId();
       const longArtifactId = newId();
       longLiIds.push(longLiId);
       longArtifactIds.push(longArtifactId);
-
-      await tx.insert(learning_item).values({
+      return {
         id: longLiId,
         source: 'learning_intent',
         source_ref: proposalId,
@@ -666,7 +672,10 @@ export async function acceptLearningIntent(
         created_at: now,
         updated_at: now,
         version: 0,
-      });
+      };
+    });
+    if (longLiRows.length > 0) {
+      await tx.insert(learning_item).values(longLiRows);
     }
 
     // Hub artifact (synchronous summary; no async generation needed)
@@ -703,9 +712,8 @@ export async function acceptLearningIntent(
     });
 
     // Atomic artifact stubs (pending; worker fills sections)
-    for (let i = 0; i < resolvedAtomics.length; i++) {
-      const atomicNode = resolvedAtomics[i];
-      await tx.insert(artifact).values({
+    const atomicArtifactRows = resolvedAtomics.map(
+      (atomicNode, i): typeof artifact.$inferInsert => ({
         id: atomicArtifactIds[i],
         type: 'note_atomic',
         title: atomicNode.title,
@@ -724,32 +732,35 @@ export async function acceptLearningIntent(
         created_at: now,
         updated_at: now,
         version: 0,
-      });
+      }),
+    );
+    if (atomicArtifactRows.length > 0) {
+      await tx.insert(artifact).values(atomicArtifactRows);
     }
 
     // Long artifact stubs (pending; worker fills body_blocks with free-form rich notes)
-    for (let i = 0; i < resolvedLongs.length; i++) {
-      const longNode = resolvedLongs[i];
-      await tx.insert(artifact).values({
-        id: longArtifactIds[i],
-        type: 'note_long',
-        title: longNode.title,
-        parent_artifact_id: hubArtifactId,
-        knowledge_ids: longNode.knowledge_ids,
-        intent_source: 'learning_intent',
-        source: 'ai_generated',
-        source_ref: proposalId,
-        body_blocks: null,
-        attrs: { one_line_intent: longNode.one_line_intent } as never,
-        tool_kind: null,
-        tool_state: null,
-        generation_status: 'pending',
-        generated_by: null,
-        history: [],
-        created_at: now,
-        updated_at: now,
-        version: 0,
-      });
+    const longArtifactRows = resolvedLongs.map((longNode, i): typeof artifact.$inferInsert => ({
+      id: longArtifactIds[i],
+      type: 'note_long',
+      title: longNode.title,
+      parent_artifact_id: hubArtifactId,
+      knowledge_ids: longNode.knowledge_ids,
+      intent_source: 'learning_intent',
+      source: 'ai_generated',
+      source_ref: proposalId,
+      body_blocks: null,
+      attrs: { one_line_intent: longNode.one_line_intent } as never,
+      tool_kind: null,
+      tool_state: null,
+      generation_status: 'pending',
+      generated_by: null,
+      history: [],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    }));
+    if (longArtifactRows.length > 0) {
+      await tx.insert(artifact).values(longArtifactRows);
     }
 
     // Rate event: marks proposal accepted, chains via caused_by_event_id

@@ -136,7 +136,12 @@ export function buildMemoryEventIngestHandler(
       const row = await loadEvent(db, job.data.event_id);
       if (!row) continue;
       await client.addEventMemory(row);
-      for (const scopeKey of row.affected_scopes) {
+      // De-dupe this event's scopes so a scope listed twice doesn't enqueue a
+      // redundant regen (pg-boss singletonKey would collapse it anyway). Kept
+      // sequential on purpose: this queue is registered at batchSize 1, so there
+      // is no batch-level fan-out to parallelize, and serial sends avoid an
+      // unbounded Promise.all if affected_scopes ever grows.
+      for (const scopeKey of new Set(row.affected_scopes)) {
         await enqueueBriefRegen(boss, scopeKey);
       }
     }
