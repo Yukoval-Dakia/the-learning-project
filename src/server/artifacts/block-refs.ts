@@ -188,8 +188,10 @@ export async function listBacklinks(
 }
 
 /**
- * Resolve owning `learning_item.id` for a set of source artifact ids via the 1:1
- * `learning_item.primary_artifact_id` link, returning `artifact_id → learning_item.id`.
+ * Resolve a representative owning `learning_item.id` for a set of source artifact
+ * ids via the `learning_item.primary_artifact_id` reference, returning
+ * `artifact_id → learning_item.id` (see the ADR-0027 note below — this is now a
+ * representative, not a 1:1 owner).
  *
  * Both backlink panels (the Lane-B artifact panel route + the P6 node page)
  * render a source artifact's row as a link to `/learning-items/<learning_item_id>`
