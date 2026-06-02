@@ -11,7 +11,7 @@
 // the node id — NOT learning_item ownership. tool_quiz is excluded (it is a quiz
 // artifact, not a note).
 
-import { and, desc, inArray, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
 import { artifact } from '@/db/schema';
@@ -87,4 +87,70 @@ export async function notesForKnowledge(db: DbLike, knowledgeId: string): Promis
     )
     .orderBy(NOTE_TYPE_ORDER, desc(artifact.created_at));
   return rows.map(toNoteSummary);
+}
+
+export interface ItemNote extends NoteSummary {
+  // 'primary' = the item's primary_artifact_id points here; 'label' = shares ≥1
+  // knowledge label with the item (study material). primary wins on dedupe.
+  relation: 'primary' | 'label';
+}
+
+// The learning_item fields notesForItem reads — pass the row (or a projection).
+export interface LearningItemNoteRefs {
+  primary_artifact_id: string | null;
+  knowledge_ids: string[];
+}
+
+/**
+ * Notes a learning_item *references* (ADR-0027 — it no longer owns them): its
+ * `primary_artifact_id` note (when that resolves to a non-archived note) plus
+ * notes sharing ≥1 of the item's knowledge labels (study material). Deduped with
+ * primary winning; primary first, then atomic→hub→long newest-within-type.
+ * Powers the /learning-items/[id] "关联笔记" surface (wired in P5).
+ */
+export async function notesForItem(db: DbLike, item: LearningItemNoteRefs): Promise<ItemNote[]> {
+  const out: ItemNote[] = [];
+  const seen = new Set<string>();
+
+  // primary: the item's primary_artifact_id, if it resolves to a non-archived note.
+  if (item.primary_artifact_id) {
+    const primaryRows = await db
+      .select(NOTE_SUMMARY_COLUMNS)
+      .from(artifact)
+      .where(
+        and(
+          eq(artifact.id, item.primary_artifact_id),
+          inArray(artifact.type, [...NOTE_TYPES]),
+          isNull(artifact.archived_at),
+        ),
+      )
+      .limit(1);
+    const primary = primaryRows[0];
+    if (primary) {
+      seen.add(primary.id);
+      out.push({ ...toNoteSummary(primary), relation: 'primary' });
+    }
+  }
+
+  // label: notes sharing ≥1 of the item's knowledge labels. OR of `@>` per label
+  // reuses the established containment pattern (no `?|` operator).
+  const labels = item.knowledge_ids ?? [];
+  if (labels.length > 0) {
+    const overlap = labels.map(
+      (kid) => sql`${artifact.knowledge_ids} @> ${JSON.stringify([kid])}::jsonb`,
+    );
+    const labelRows = await db
+      .select(NOTE_SUMMARY_COLUMNS)
+      .from(artifact)
+      .where(
+        and(inArray(artifact.type, [...NOTE_TYPES]), isNull(artifact.archived_at), or(...overlap)),
+      )
+      .orderBy(NOTE_TYPE_ORDER, desc(artifact.created_at));
+    for (const row of labelRows) {
+      if (seen.has(row.id)) continue;
+      seen.add(row.id);
+      out.push({ ...toNoteSummary(row), relation: 'label' });
+    }
+  }
+  return out;
 }
