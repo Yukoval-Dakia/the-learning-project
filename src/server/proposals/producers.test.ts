@@ -188,6 +188,8 @@ describe('proposal producer helpers', () => {
       merge_block_ids: ['block_b', 'block_c'],
       ingestion_session_id: 'sess_1',
       continuity_signal: 'numbering',
+      // YUK-202 fork 4a — confidence is persisted for the redraw inbox to sort by.
+      confidence: 0.82,
     });
     // §1.C — primary + each merge candidate is an evidence ref for the inbox preview.
     expect(row.payload.evidence_refs).toEqual([
