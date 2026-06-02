@@ -211,9 +211,22 @@ describe('loadKnowledgeNodePage', () => {
     expect(page?.evidence_count).toBe(0);
     expect(page?.mastery).toBeNull();
     expect(page?.primary_atomic).toBeNull();
+    expect(page?.notes).toHaveLength(0);
     expect(page?.mesh_neighbors).toHaveLength(0);
     expect(page?.backlinks).toHaveLength(0);
     expect(page?.timeline).toHaveLength(0);
+  });
+
+  it('lists all labeled notes (atomic/hub/long) in `notes`, atomic-first', async () => {
+    const db = testDb();
+    await seedKnowledge('k1', { name: '虚词' });
+    await seedAtomicArtifact('a1', 'k1');
+    await seedSourceArtifact('h1', 'k1', 'note_hub');
+    const page = await loadKnowledgeNodePage(db, 'k1');
+    expect(page?.notes.map((n) => n.id)).toEqual(['a1', 'h1']);
+    expect(page?.notes.map((n) => n.type)).toEqual(['note_atomic', 'note_hub']);
+    // primary_atomic still surfaces the inline 节点简介 (the atomic).
+    expect(page?.primary_atomic?.id).toBe('a1');
   });
 
   it('resolves parent name', async () => {
