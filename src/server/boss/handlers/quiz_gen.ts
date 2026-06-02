@@ -18,7 +18,7 @@
 // quiz_verify job (Q5) promotes draft→active + FSRS-enrolls on pass.
 
 import { createId } from '@paralleldrive/cuid2';
-import { eq } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
 import {
@@ -34,6 +34,7 @@ import {
 } from '@/core/schema/quiz_gen';
 import type { Db } from '@/db/client';
 import { knowledge, learning_item, question } from '@/db/schema';
+import { RUNNABLE_ROUTES } from '@/server/ai/judges/question-contract';
 import {
   TAVILY_MCP_ALLOWED_TOOLS,
   TAVILY_MCP_SERVER_NAME,
@@ -133,6 +134,15 @@ function assertGeneratedQuestionHasJudgeContract(q: QuizGenQuestionT): void {
   }
   if ((PROSE_KINDS.has(q.kind) || q.kind === 'derivation') && route === 'exact') {
     throw new Error(`quiz_gen ${q.kind} question '${q.prompt_md}' cannot use exact judge`);
+  }
+  // Defense-in-depth: a generated question must route to a judge the invoker can
+  // actually run. The output schema already restricts judge_kind_override to
+  // exact|keyword|semantic and defaultJudgeKindForQuestion never derives a
+  // non-runnable route, so this only fires on an upstream contract change — but it
+  // guarantees we never persist a draft that would return `unsupported` at answer
+  // time.
+  if (!(RUNNABLE_ROUTES as ReadonlySet<string>).has(route)) {
+    throw new Error(`quiz_gen question '${q.prompt_md}' routes to non-runnable judge '${route}'`);
   }
 }
 
@@ -304,12 +314,37 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     taskResult = result;
     const parsed = parseOutput(result.text);
 
+    // Constrain self-reported knowledge_ids to REAL knowledge nodes. The agent may
+    // hallucinate ids; an unattributable draft would pass verify yet never resolve
+    // to a real node (knowledge page / subject resolution / aggregation can't place
+    // it). Mirror the ingestion-import guard (reject unknown/archived), but salvage
+    // partial hallucination: intersect each question's ids with existing nodes,
+    // fall back to the trigger's resolved knowledge_ids when the agent's set is
+    // fully bogus, and throw only when neither yields an attribution.
+    const referencedKnowledgeIds = [...new Set(parsed.questions.flatMap((q) => q.knowledge_ids))];
+    const existingKnowledgeRows = referencedKnowledgeIds.length
+      ? await db
+          .select({ id: knowledge.id })
+          .from(knowledge)
+          .where(and(inArray(knowledge.id, referencedKnowledgeIds), isNull(knowledge.archived_at)))
+      : [];
+    const existingKnowledgeIds = new Set(existingKnowledgeRows.map((r) => r.id));
+    const resolveQuestionKnowledgeIds = (q: QuizGenQuestionT): string[] => {
+      const valid = q.knowledge_ids.filter((kid) => existingKnowledgeIds.has(kid));
+      if (valid.length > 0) return valid;
+      if (resolved.knowledgeIds.length > 0) return resolved.knowledgeIds;
+      throw new Error(
+        `quiz_gen question '${q.prompt_md}' references no known knowledge_id (got [${q.knowledge_ids.join(', ')}]) and the trigger resolved none`,
+      );
+    };
+
     const questionIds: string[] = [];
     const now = new Date();
     await db.transaction(async (tx) => {
       for (const q of parsed.questions) {
         const id = createId();
         const judgeKind = defaultJudgeKindForQuestion(q);
+        const questionKnowledgeIds = resolveQuestionKnowledgeIds(q);
         // §2 — metadata.quiz_gen: the agent self-reports source_pack + per-run
         // copy_safety; we fold the per-question source_refs into the row's
         // metadata so each draft carries its own provenance.
@@ -340,7 +375,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           rubric_json: q.rubric_json ?? null,
           choices_md: q.choices_md ?? null,
           judge_kind_override: judgeKind,
-          knowledge_ids: q.knowledge_ids,
+          knowledge_ids: questionKnowledgeIds,
           difficulty: q.difficulty,
           // §2 — trigger pointer (knowledge_id / learning_item_id), NOT a web URL.
           source_ref: resolved.refId,
@@ -379,8 +414,22 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
       created_at: new Date(),
     });
 
-    // Chain the verification job (Q5) — like ingestion → attribution_followup.
-    await enqueueQuizVerify(questionIds);
+    // Chain the verification job (Q5). Best-effort, mirroring the ingestion route's
+    // attribution_followup enqueue: the draft questions are already committed, so a
+    // transient enqueue failure must NOT re-throw. Re-throwing would let pg-boss
+    // redeliver the quiz_gen job, re-run the expensive QuizGenTask, and INSERT a
+    // DUPLICATE batch of drafts (the handler has no per-trigger idempotency key).
+    // On failure we log the orphaned ids — recoverable by re-enqueueing quiz_verify,
+    // which is itself idempotent per question.
+    try {
+      await enqueueQuizVerify(questionIds);
+    } catch (enqueueErr) {
+      console.error(
+        '[quiz_gen] quiz_verify enqueue failed; drafts persisted but unverified:',
+        questionIds,
+        enqueueErr,
+      );
+    }
 
     return { status: 'ready', question_ids: questionIds };
   } catch (err) {

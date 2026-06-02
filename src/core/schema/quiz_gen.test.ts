@@ -174,4 +174,36 @@ describe('QuizGenOutput', () => {
       }),
     ).toThrow();
   });
+
+  it('rejects a search_grounded question with empty source_refs (§0 provenance)', () => {
+    expect(() =>
+      QuizGenOutput.parse({
+        questions: [{ ...validQuestion, source_refs: [] }],
+        source_pack: validSourcePack,
+        generation_method: 'search_grounded',
+        self_copy_safety: validCopySafety,
+      }),
+    ).toThrow(/source_ref/);
+  });
+
+  it('allows a closed_book question with empty source_refs', () => {
+    const parsed = QuizGenOutput.parse({
+      questions: [{ ...validQuestion, source_refs: [] }],
+      source_pack: validSourcePack,
+      generation_method: 'closed_book',
+      self_copy_safety: { verdict: 'unknown' as const, checked_by: 'agent_self' as const },
+    });
+    expect(parsed.questions[0].source_refs).toEqual([]);
+  });
+
+  it('rejects a non-runnable judge_kind_override (rubric has no runner)', () => {
+    expect(() =>
+      QuizGenOutput.parse({
+        questions: [{ ...validQuestion, judge_kind_override: 'rubric' }],
+        source_pack: validSourcePack,
+        generation_method: 'search_grounded',
+        self_copy_safety: validCopySafety,
+      }),
+    ).toThrow();
+  });
 });

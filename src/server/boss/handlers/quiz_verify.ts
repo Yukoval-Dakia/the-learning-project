@@ -31,7 +31,7 @@
 // single-txn persist → writeEvent → catch).
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, ne } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
 import {
@@ -180,7 +180,13 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
   if (!row) return { status: 'skipped:not_found' };
   if (row.source !== 'quiz_gen') return { status: 'skipped:not_quiz_gen' };
 
-  // Idempotency: a prior verify event already chains off this question.
+  // Idempotency: only a TERMINAL verify event short-circuits a re-run — i.e. the
+  // QuizVerifyTask actually ran and produced a verdict (outcome success | partial |
+  // failure). The catch-bottom writes a TRANSIENT-error event with outcome='error'
+  // (LLM/parse/DB blew up before a verdict); that must NOT block pg-boss
+  // redelivery, or a one-off error would strand the draft forever (the retry would
+  // skip as `already_verified` and the draft stays failed/draft, contradicting the
+  // "re-throw so pg-boss retries" design).
   const existingVerify = await db
     .select({ id: event.id })
     .from(event)
@@ -189,6 +195,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
         eq(event.action, 'experimental:quiz_verify'),
         eq(event.subject_kind, 'question'),
         eq(event.subject_id, questionId),
+        ne(event.outcome, 'error'),
       ),
     )
     .limit(1);
@@ -264,9 +271,16 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
         ? 'too_close'
         : parsed.copy_safety.verdict;
 
-    // Option B gate: pass requires LLM overall='pass' AND copy_safety != 'too_close'.
+    // Option B gate: promote ONLY when EVERY structured axis agrees the draft is
+    // good. overall='pass' is necessary but NOT sufficient — an inconsistent LLM
+    // output (overall='pass' while grounding/knowledge_hit verdict is 'fail' or
+    // 'unclear') must not enter the review pool with an unsupported fact or an
+    // off-topic question. Such inconsistency stays draft (needs_review). copy_safety
+    // 'too_close' (LLM verdict OR deterministic overlap) also blocks promotion.
     const isTooClose = copySafetyVerdict === 'too_close';
-    const promote = parsed.overall === 'pass' && !isTooClose;
+    const checksPass =
+      parsed.grounding.verdict === 'pass' && parsed.knowledge_hit.verdict === 'pass';
+    const promote = parsed.overall === 'pass' && checksPass && !isTooClose;
     const verificationStatus: QuizGenVerificationT['status'] = promote
       ? 'verified'
       : parsed.overall === 'fail'
@@ -394,7 +408,12 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
         action: 'experimental:quiz_verify',
         subject_kind: 'question',
         subject_id: questionId,
-        outcome: 'failure',
+        // 'error' (NOT 'failure') marks a TRANSIENT, non-terminal failure: the task
+        // threw before producing a verdict. The idempotency guard treats this as
+        // retriable (outcome != 'error'), so pg-boss redelivery re-runs the verify
+        // instead of skipping it as already_verified. A terminal LLM verdict of
+        // overall='fail' uses outcome='failure' on the success path above.
+        outcome: 'error',
         payload: {
           question_id: questionId,
           error: String((err as Error).message ?? err),
