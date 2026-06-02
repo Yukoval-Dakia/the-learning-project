@@ -2,6 +2,7 @@ import { tasks } from '@/ai/registry';
 import { db } from '@/db/client';
 import { runTask } from '@/server/ai/runner';
 import { errorResponse } from '@/server/http/errors';
+import { checkRateLimit } from '@/server/http/rate-limit';
 import { getR2 } from '@/server/r2';
 
 export const runtime = 'nodejs';
@@ -16,6 +17,11 @@ export async function POST(
   { params }: { params: Promise<{ task: string }> },
 ): Promise<Response> {
   try {
+    // YUK-138 [M2]: cap the AI funnel before doing any work so a runaway client
+    // can't burn the metered model budget. Throws ApiError(429) when over the
+    // global sliding-window limit; errorResponse maps it to a 429 response.
+    checkRateLimit();
+
     const { task } = await params;
     const def = (tasks as Record<string, GenericRouteTaskDef>)[task];
     if (!def) return Response.json({ error: 'unknown_task', task }, { status: 404 });

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import { mapTencentError } from './tencent_mark_errors';
@@ -23,7 +23,21 @@ vi.mock('tencentcloud-sdk-nodejs-ocr', () => ({
 // Import AFTER mock is set up
 const { submitOcrJob, pollUntilDone } = await import('./tencent_mark');
 
+// YUK-139 [M2]: createOcrClient now fails fast when the Tencent creds are
+// missing. The happy-path tests below need valid creds in env; vi.stubEnv +
+// vi.unstubAllEnvs handles save/restore (and true removal of unset vars) so
+// nothing leaks across files.
+function restoreTencentEnv() {
+  vi.unstubAllEnvs();
+}
+
 describe('submitOcrJob', () => {
+  beforeEach(() => {
+    vi.stubEnv('TENCENT_SECRET_ID', 'test-secret-id');
+    vi.stubEnv('TENCENT_SECRET_KEY', 'test-secret-key');
+  });
+  afterEach(restoreTencentEnv);
+
   it('forwards params to SDK and returns JobId', async () => {
     submitMock.mockResolvedValueOnce({ JobId: 'job-abc-123' });
     const jobId = await submitOcrJob({ ImageBase64: 'aGVsbG8=' });
@@ -32,7 +46,55 @@ describe('submitOcrJob', () => {
   });
 });
 
+describe('createOcrClient credential validation (YUK-139)', () => {
+  afterEach(restoreTencentEnv);
+
+  it('throws a clear error when TENCENT_SECRET_ID is missing', async () => {
+    vi.stubEnv('TENCENT_SECRET_ID', undefined);
+    vi.stubEnv('TENCENT_SECRET_KEY', 'test-secret-key');
+    await expect(submitOcrJob({ ImageBase64: 'aGVsbG8=' })).rejects.toThrow(/TENCENT_SECRET_ID/);
+  });
+
+  it('throws a clear error when TENCENT_SECRET_KEY is missing', async () => {
+    vi.stubEnv('TENCENT_SECRET_ID', 'test-secret-id');
+    vi.stubEnv('TENCENT_SECRET_KEY', undefined);
+    await expect(submitOcrJob({ ImageBase64: 'aGVsbG8=' })).rejects.toThrow(/TENCENT_SECRET_KEY/);
+  });
+
+  it('throws naming both when neither is set, before touching the SDK', async () => {
+    vi.stubEnv('TENCENT_SECRET_ID', undefined);
+    vi.stubEnv('TENCENT_SECRET_KEY', undefined);
+    submitMock.mockClear();
+    await expect(submitOcrJob({ ImageBase64: 'aGVsbG8=' })).rejects.toThrow(
+      /TENCENT_SECRET_ID and TENCENT_SECRET_KEY/,
+    );
+    // fail-fast: the SDK call must never be reached
+    expect(submitMock).not.toHaveBeenCalled();
+  });
+
+  it('treats blank / whitespace-only creds as missing', async () => {
+    vi.stubEnv('TENCENT_SECRET_ID', '   ');
+    vi.stubEnv('TENCENT_SECRET_KEY', '');
+    await expect(submitOcrJob({ ImageBase64: 'aGVsbG8=' })).rejects.toThrow(
+      /TENCENT_SECRET_ID and TENCENT_SECRET_KEY/,
+    );
+  });
+
+  it('does not throw when both creds are present', async () => {
+    vi.stubEnv('TENCENT_SECRET_ID', 'test-secret-id');
+    vi.stubEnv('TENCENT_SECRET_KEY', 'test-secret-key');
+    submitMock.mockResolvedValueOnce({ JobId: 'job-ok' });
+    await expect(submitOcrJob({ ImageBase64: 'aGVsbG8=' })).resolves.toBe('job-ok');
+  });
+});
+
 describe('pollUntilDone', () => {
+  beforeEach(() => {
+    vi.stubEnv('TENCENT_SECRET_ID', 'test-secret-id');
+    vi.stubEnv('TENCENT_SECRET_KEY', 'test-secret-key');
+  });
+  afterEach(restoreTencentEnv);
+
   it('polls until DONE and returns the response', async () => {
     describeMock.mockReset();
     describeMock
