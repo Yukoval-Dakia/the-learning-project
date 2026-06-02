@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { TAVILY_MCP_ALLOWED_TOOLS, buildTavilyMcpServer } from '@/server/ai/mcp/tavily';
 import { resolveDomainToolNames, resolveMcpAllowedTools } from '@/server/ai/tools/allowlists';
 import { PROPOSAL_FEEDBACK_BUDGET } from '@/server/ai/tools/budgets';
 import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
@@ -373,5 +374,149 @@ describe('runCopilotChat (two-surface routing)', () => {
       proposal_feedback: unknown[];
     };
     expect(taskInput.proposal_feedback).toEqual([]);
+  });
+
+  // YUK-198 — Tavily remote MCP wiring. Copilot folds in the hosted Tavily MCP
+  // server (web grounding) ONLY when TAVILY_API_KEY is configured. When the key
+  // is absent the run is byte-for-byte the pre-YUK-198 behaviour: no tavily
+  // server in mcpServers, no tavily tools in allowedTools.
+  describe('Tavily MCP wiring (YUK-198)', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    const baseDeps = () => {
+      const runAgentTaskFn = vi.fn(async () => ({
+        task_run_id: 'task_copilot_tavily',
+        text: 'OK',
+        finishReason: 'stop',
+        usage: { inputTokens: 1, outputTokens: 2 },
+      }));
+      const buildMcpServerFn = vi.fn(
+        (_opts: BuildMcpServerOptions) => ({ name: 'fake-loom' }) as never,
+      );
+      const writeEventFn = vi.fn(async (_db, input) => input.id);
+      return { runAgentTaskFn, buildMcpServerFn, writeEventFn };
+    };
+
+    it('registers the tavily http server + tools when buildTavilyMcpServerFn returns a config', async () => {
+      const { runAgentTaskFn, buildMcpServerFn, writeEventFn } = baseDeps();
+
+      await runCopilotChat(
+        {} as never,
+        { user_message: '查一下最新的资料', triggered_by: 'chat' },
+        {
+          buildMcpServerFn,
+          runAgentTaskFn,
+          writeEventFn,
+          loadProposalFeedbackFn: async () => [],
+          buildTavilyMcpServerFn: () => ({
+            type: 'http',
+            url: 'https://mcp.tavily.com/mcp/?tavilyApiKey=tvly-test',
+          }),
+          now: () => new Date('2026-06-01T00:00:00.000Z'),
+        },
+      );
+
+      const ctx = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[2] as {
+        mcpServers: Record<string, unknown>;
+        allowedTools: string[];
+      };
+      // loom (domain tools) is still present; tavily is added alongside it.
+      expect(Object.keys(ctx.mcpServers)).toEqual(expect.arrayContaining(['loom', 'tavily']));
+      expect(ctx.mcpServers.tavily).toMatchObject({
+        type: 'http',
+        url: 'https://mcp.tavily.com/mcp/?tavilyApiKey=tvly-test',
+      });
+      // Tavily search + extract namespaced tool names are appended after the
+      // domain allowlist.
+      for (const tool of TAVILY_MCP_ALLOWED_TOOLS) {
+        expect(ctx.allowedTools).toContain(tool);
+      }
+      // Existing domain tools are untouched.
+      for (const tool of resolveMcpAllowedTools('copilot')) {
+        expect(ctx.allowedTools).toContain(tool);
+      }
+    });
+
+    it('does NOT register tavily when buildTavilyMcpServerFn returns null (env-absent no-op)', async () => {
+      const { runAgentTaskFn, buildMcpServerFn, writeEventFn } = baseDeps();
+
+      await runCopilotChat(
+        {} as never,
+        { user_message: '随便聊聊', triggered_by: 'chat' },
+        {
+          buildMcpServerFn,
+          runAgentTaskFn,
+          writeEventFn,
+          loadProposalFeedbackFn: async () => [],
+          buildTavilyMcpServerFn: () => null,
+          now: () => new Date('2026-06-01T00:00:00.000Z'),
+        },
+      );
+
+      const ctx = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[2] as {
+        mcpServers: Record<string, unknown>;
+        allowedTools: string[];
+      };
+      expect(Object.keys(ctx.mcpServers)).toEqual(['loom']);
+      expect(ctx.mcpServers.tavily).toBeUndefined();
+      for (const tool of TAVILY_MCP_ALLOWED_TOOLS) {
+        expect(ctx.allowedTools).not.toContain(tool);
+      }
+      // Domain allowlist is exactly the copilot surface set — nothing extra.
+      expect(ctx.allowedTools).toEqual([...resolveMcpAllowedTools('copilot')]);
+    });
+
+    it('defaults to the env-gated builder: TAVILY_API_KEY present → tavily wired', async () => {
+      const { runAgentTaskFn, buildMcpServerFn, writeEventFn } = baseDeps();
+      vi.stubEnv('TAVILY_API_KEY', 'tvly-from-env');
+
+      await runCopilotChat(
+        {} as never,
+        { user_message: '上网查查', triggered_by: 'chat' },
+        {
+          buildMcpServerFn,
+          runAgentTaskFn,
+          writeEventFn,
+          loadProposalFeedbackFn: async () => [],
+          // No buildTavilyMcpServerFn → uses the real env-reading default.
+          now: () => new Date('2026-06-01T00:00:00.000Z'),
+        },
+      );
+
+      const ctx = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[2] as {
+        mcpServers: Record<string, { type?: string; url?: string }>;
+        allowedTools: string[];
+      };
+      expect(ctx.mcpServers.tavily?.type).toBe('http');
+      expect(ctx.mcpServers.tavily?.url).toContain('tavilyApiKey=tvly-from-env');
+      // Sanity: the default builder agrees with the wiring under this env.
+      expect(buildTavilyMcpServer()).not.toBeNull();
+    });
+
+    it('defaults to the env-gated builder: TAVILY_API_KEY absent → no tavily', async () => {
+      const { runAgentTaskFn, buildMcpServerFn, writeEventFn } = baseDeps();
+      vi.stubEnv('TAVILY_API_KEY', '');
+
+      await runCopilotChat(
+        {} as never,
+        { user_message: '不联网', triggered_by: 'chat' },
+        {
+          buildMcpServerFn,
+          runAgentTaskFn,
+          writeEventFn,
+          loadProposalFeedbackFn: async () => [],
+          now: () => new Date('2026-06-01T00:00:00.000Z'),
+        },
+      );
+
+      const ctx = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[2] as {
+        mcpServers: Record<string, unknown>;
+        allowedTools: string[];
+      };
+      expect(ctx.mcpServers.tavily).toBeUndefined();
+      expect(buildTavilyMcpServer()).toBeNull();
+    });
   });
 });

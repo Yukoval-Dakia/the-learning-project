@@ -19,6 +19,14 @@ import { createId } from '@paralleldrive/cuid2';
 import { z } from 'zod';
 
 import type { Db } from '@/db/client';
+// YUK-198 — Tavily remote MCP (web grounding) for the Copilot surface only.
+// Gated on TAVILY_API_KEY: when absent, buildTavilyMcpServer() returns null and
+// the Copilot run is byte-for-byte unchanged (no tavily server, no extra tools).
+import {
+  TAVILY_MCP_ALLOWED_TOOLS,
+  TAVILY_MCP_SERVER_NAME,
+  buildTavilyMcpServer,
+} from '@/server/ai/mcp/tavily';
 import { type RunTaskResult, runAgentTask } from '@/server/ai/runner';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
@@ -39,6 +47,7 @@ import {
   type ProposalFeedbackCell,
   getProposalFeedbackDigest,
 } from '@/server/proposals/adaptive-bias';
+import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 
 export const COPILOT_CHAT_TRIGGER_KINDS = ['chat', 'chip'] as const;
 export type CopilotChatTriggerKind = (typeof COPILOT_CHAT_TRIGGER_KINDS)[number];
@@ -72,11 +81,18 @@ type RunAgentTaskFn = (
   input: unknown,
   ctx: {
     db: Db;
-    mcpServers?: Record<string, SdkMcpServer>;
+    // YUK-198 — widened to allow remote McpHttpServerConfig (Tavily) alongside
+    // the in-process SdkMcpServer (loom). Mirrors runner ctx.mcpServers, which
+    // is the SDK's Options['mcpServers'].
+    mcpServers?: Record<string, SdkMcpServer | McpHttpServerConfig>;
     allowedTools?: string[];
   },
 ) => Promise<RunTaskResult>;
 type BuildMcpServerFn = typeof buildMcpServerFromRegistry;
+// YUK-198 — swappable Tavily MCP builder. Defaults to the env-gated
+// buildTavilyMcpServer; unit tests inject a fixture (or null) instead of
+// touching process.env.
+type BuildTavilyMcpServerFn = () => McpHttpServerConfig | null;
 type WriteEventFn = (db: Db, input: WriteEventInput) => Promise<string>;
 // P5.4-L2 / YUK-174 (Facet A) — swappable feedback-digest reader (unit tests
 // inject a fixture / [] since db is a stub). Defaults to getProposalFeedbackDigest.
@@ -85,6 +101,10 @@ type LoadProposalFeedbackFn = (db: Db) => Promise<ProposalFeedbackCell[]>;
 export interface CopilotChatDeps {
   runAgentTaskFn?: RunAgentTaskFn;
   buildMcpServerFn?: BuildMcpServerFn;
+  // YUK-198 — defaults to buildTavilyMcpServer (reads TAVILY_API_KEY). Returns
+  // null when unconfigured → Tavily is not registered and no extra allowedTools
+  // are added (back-compat no-op).
+  buildTavilyMcpServerFn?: BuildTavilyMcpServerFn;
   writeEventFn?: WriteEventFn;
   // P5.4-L2 / YUK-174 — defaults to getProposalFeedbackDigest. The unit test
   // injects [] so the {}-stub db is never queried (cold-start no-op).
@@ -157,6 +177,7 @@ export async function runCopilotChat(
   const now = deps.now?.() ?? new Date();
   const run = deps.runAgentTaskFn ?? runAgentTask;
   const buildMcpServer = deps.buildMcpServerFn ?? buildMcpServerFromRegistry;
+  const buildTavily = deps.buildTavilyMcpServerFn ?? buildTavilyMcpServer;
   const write = deps.writeEventFn ?? writeEvent;
   const loadFeedback =
     deps.loadProposalFeedbackFn ??
@@ -268,6 +289,22 @@ export async function runCopilotChat(
     });
   }
 
+  // YUK-198 — optionally fold in the remote Tavily MCP (web grounding) for the
+  // Copilot surface. Env-gated: when TAVILY_API_KEY is unset, buildTavily()
+  // returns null and both the mcpServers map and allowedTools are identical to
+  // the pre-YUK-198 behaviour (no tavily server, no tavily tools). Only Copilot
+  // gets this — Dreaming / Coach / other cron handlers are untouched (they must
+  // not reach the network).
+  const tavilyCfg = buildTavily();
+  const mcpServers: Record<string, SdkMcpServer | McpHttpServerConfig> = {
+    [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer,
+    ...(tavilyCfg ? { [TAVILY_MCP_SERVER_NAME]: tavilyCfg } : {}),
+  };
+  const allowedTools = [
+    ...resolveMcpAllowedTools(surface),
+    ...(tavilyCfg ? TAVILY_MCP_ALLOWED_TOOLS : []),
+  ];
+
   const result = await run(
     'CopilotTask',
     {
@@ -281,8 +318,8 @@ export async function runCopilotChat(
     },
     {
       db,
-      mcpServers: { [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer },
-      allowedTools: [...resolveMcpAllowedTools(surface)],
+      mcpServers,
+      allowedTools,
     },
   );
 
