@@ -1,0 +1,53 @@
+# YUK-141 [M3]: dependency automation. Dependabot opens grouped weekly PRs so
+# patch/minor drift (the bulk of the audit's "outdated deps" findings) stays
+# small and reviewable instead of accumulating. The npm ecosystem reads the
+# pnpm-lock.yaml at the repo root. Owner action: this is an ongoing ops policy
+# (a steady trickle of dependency PRs to triage/merge) — see the security audit
+# 2026-05-28 recommendation #13.
+version: 2
+updates:
+  # Application + tooling dependencies (package.json / pnpm-lock.yaml).
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    # Group low-risk updates so we get a handful of batched PRs rather than one
+    # PR per package. Split prod vs dev so a noisy dev-tool bump never blocks a
+    # runtime-dependency review (and vice versa). Majors are deliberately left
+    # ungrouped so each breaking bump gets its own reviewable PR.
+    groups:
+      prod-minor-patch:
+        dependency-type: "production"
+        update-types:
+          - "minor"
+          - "patch"
+      dev-minor-patch:
+        dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "deps"
+      prefix-development: "deps-dev"
+
+  # GitHub Actions used by .github/workflows/*.yml. Low volume, weekly.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      actions-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "ci"

@@ -27,11 +27,15 @@ vi.mock('@/ai/registry', () => ({
   },
 }));
 
+import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { POST } from './route';
 
 describe('POST /api/ai/[task]', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Make the "these tests never trip the AI rate limiter" guarantee explicit
+    // (rather than relying on per-file module isolation + <max requests). (YUK-138)
+    __resetRateLimitForTests();
   });
 
   it('allows ReviewIntentTask on the generic route', async () => {

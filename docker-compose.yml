@@ -40,6 +40,27 @@ services:
     networks:
       - internal
     restart: unless-stopped
+    # YUK-137 [M2]: pure LIVENESS probe against the unauthenticated /api/health
+    # route (see middleware.ts — /api/health is exempt from the internal-token
+    # gate). The runner image is node:24-bookworm-slim with no curl/wget
+    # guaranteed, so probe with node's built-in fetch. start_period covers
+    # Next.js cold start. NOTE: success = ANY HTTP response (the Next server is
+    # up), NOT r.ok — /api/health intentionally returns 503 when Postgres is
+    # unreachable, but DB readiness is the postgres container's own healthcheck;
+    # coupling the app's liveness to DB would mark a perfectly-alive app
+    # unhealthy whenever the DB blips.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/health').then(()=>process.exit(0)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   worker:
     # Same image as `app` — esbuild bundles scripts/worker.ts to worker.cjs
@@ -72,6 +93,23 @@ services:
     networks:
       - internal
     restart: unless-stopped
+    # YUK-137 [M2]: the worker has no HTTP surface, so probe process liveness —
+    # confirm PID 1 is still the worker.cjs node process (Docker restarts the
+    # container if the entrypoint dies, but a wedged/zombie node would otherwise
+    # look "up"). Reads /proc/1/cmdline via node so we need no extra tooling in
+    # the slim image.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "const c=require('node:fs').readFileSync('/proc/1/cmdline','utf8');process.exit(c.includes('worker.cjs')?0:1)",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   redis:
     # YUK-148: shared editing-presence store for app + worker. Presence is
@@ -89,7 +127,10 @@ services:
     restart: unless-stopped
 
   postgres:
-    image: pgvector/pgvector:pg16
+    # YUK-137 [M2]: pin the floating `pg16` tag to an immutable digest-stable
+    # tag so a surprise pg17 bump can't break the on-disk pgdata format on a
+    # pull. Bump deliberately + test migrations before changing.
+    image: pgvector/pgvector:0.8.2-pg16-bookworm
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-loom}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-loom}
@@ -106,7 +147,10 @@ services:
     restart: unless-stopped
 
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    # YUK-137 [M2]: pin the mutable `latest` tag to a known-good release so an
+    # ingress restart can't silently pull a regressed tunnel build. Bump
+    # deliberately.
+    image: cloudflare/cloudflared:2026.5.2
     command: tunnel --no-autoupdate run
     environment:
       TUNNEL_TOKEN: ${TUNNEL_TOKEN}

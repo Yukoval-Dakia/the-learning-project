@@ -107,6 +107,39 @@ function eventToText(input: MemoryEventInput): string {
   });
 }
 
+// YUK-140 [M2]: avoid leaking Xiaomi creds into the global process.env.
+//
+// The xiaomi API key reaches mem0ai's Anthropic LLM cleanly via
+// config.llm.config.apiKey (createMem0Config). The base URL is the one value we
+// can't pass through config: the installed mem0ai AnthropicLLM constructs
+// `new Anthropic({ apiKey })` WITHOUT forwarding config.baseURL, and the
+// @anthropic-ai/sdk only adopts a custom base URL from the ANTHROPIC_BASE_URL
+// env var when none is passed explicitly. mem0ai's `new Memory(config)` builds
+// the LLM (and thus the Anthropic client) synchronously in its constructor, so
+// we set ANTHROPIC_BASE_URL ONLY for the duration of that synchronous call and
+// restore the prior value in finally — no persistent global mutation, and
+// ANTHROPIC_API_KEY is never touched.
+//
+// Revisit if mem0ai gains baseURL forwarding for the Anthropic provider (it
+// already does for openai/ollama/lmstudio/deepseek); then this can pass
+// llm.config.baseURL directly and drop the env dance entirely.
+function withXiaomiBaseUrl<T>(env: Env, construct: () => T): T {
+  const baseUrl =
+    env.MEM0_ANTHROPIC_BASE_URL ?? env.ANTHROPIC_BASE_URL ?? DEFAULT_ANTHROPIC_BASE_URL;
+  const had = Object.hasOwn(process.env, 'ANTHROPIC_BASE_URL');
+  const prev = process.env.ANTHROPIC_BASE_URL;
+  process.env.ANTHROPIC_BASE_URL = baseUrl;
+  try {
+    return construct();
+  } finally {
+    // Restore exactly. If the var didn't exist before, remove it (not set to
+    // the string "undefined"). Reflect.deleteProperty instead of `delete` to
+    // satisfy Biome's noDelete lint while still truly clearing the key.
+    if (had) process.env.ANTHROPIC_BASE_URL = prev;
+    else Reflect.deleteProperty(process.env, 'ANTHROPIC_BASE_URL');
+  }
+}
+
 export function createMemoryClient(
   opts: {
     env?: Env;
@@ -114,13 +147,18 @@ export function createMemoryClient(
   } = {},
 ): MemoryClient {
   const env = opts.env ?? process.env;
-  const xiaomiApiKey = requireEnv(env, 'XIAOMI_API_KEY');
-  process.env.ANTHROPIC_BASE_URL =
-    env.MEM0_ANTHROPIC_BASE_URL ?? env.ANTHROPIC_BASE_URL ?? DEFAULT_ANTHROPIC_BASE_URL;
-  process.env.ANTHROPIC_API_KEY = xiaomiApiKey;
+  // Validate the xiaomi key up front (also surfaces the failure with a clear
+  // message). The key itself is threaded to mem0ai's Anthropic LLM via
+  // config.llm.config.apiKey (createMem0Config) — NOT via env mutation.
+  requireEnv(env, 'XIAOMI_API_KEY');
 
   const config = createMem0Config(env);
-  const memory = opts.memoryFactory ? opts.memoryFactory(config) : new Memory(config);
+  // Scope ANTHROPIC_BASE_URL to ONLY the synchronous construction of the Memory
+  // / LLM (mem0ai builds the Anthropic client in its constructor). The injected
+  // test factory stands in for `new Memory` and runs inside the same scope, so
+  // the restore-on-finally behaviour is exercised by tests too.
+  const factory = opts.memoryFactory ?? ((c: MemoryConfig) => new Memory(c));
+  const memory = withXiaomiBaseUrl(env, () => factory(config));
 
   return {
     async addEventMemory(input) {
