@@ -22,6 +22,12 @@ export const aiProposalKinds = [
   // the `goal` row). Surfaces through the existing `experimental:proposal`
   // event path (writeAiProposal default) + inbox derive — no inbox.ts change.
   'goal_scope',
+  // YUK-202 / BlockAssembly path-B (design 2026-06-02 §1) — AI proposes
+  // cross-page/adjacent block merges; the user accepts in the inbox, which
+  // reuses the YUK-195 `mergeQuestions` primitive (no auto-merge — hard safety
+  // boundary). Flows through the existing experimental:proposal event/inbox
+  // path (writeAiProposal default + proposalWhere); no writer/inbox change.
+  'block_merge',
 ] as const;
 
 export const AiProposalKind = z.enum(aiProposalKinds);
@@ -118,6 +124,23 @@ export const GoalScopeProposalChange = z.object({
 });
 export type GoalScopeProposalChangeT = z.infer<typeof GoalScopeProposalChange>;
 
+// YUK-202 / BlockAssembly path-B (design 2026-06-02 §1) — block_merge
+// proposed_change. `primary_block_id` keeps its structured tree; `merge_block_ids`
+// fold into it (min 1). `ingestion_session_id` scopes the merge (mergeQuestions is
+// same-session only). `continuity_signal` is the AI's semantic-only cue (§0:
+// spatial/bbox page-edge detection is DEFERRED to slice 2b — the task gains a
+// spatial input later with no rework); optional because low-signal candidates can
+// still propose. Acceptance reuses the YUK-195 `mergeQuestions` primitive.
+export const BlockMergeProposalChange = z.object({
+  primary_block_id: z.string().min(1),
+  merge_block_ids: z.array(z.string().min(1)).min(1),
+  ingestion_session_id: z.string().min(1),
+  continuity_signal: z
+    .enum(['page_edge', 'numbering', 'stem_answer_split', 'carryover'])
+    .optional(),
+});
+export type BlockMergeProposalChangeT = z.infer<typeof BlockMergeProposalChange>;
+
 export const AiProposalPayload = z.discriminatedUnion('kind', [
   BaseProposal.extend({
     kind: z.literal('knowledge_node'),
@@ -181,6 +204,12 @@ export const AiProposalPayload = z.discriminatedUnion('kind', [
     kind: z.literal('goal_scope'),
     target: ProposalTarget.extend({ subject_kind: z.literal('goal') }),
     proposed_change: GoalScopeProposalChange,
+  }),
+  // YUK-202 / BlockAssembly path-B (design 2026-06-02 §1).
+  BaseProposal.extend({
+    kind: z.literal('block_merge'),
+    target: ProposalTarget.extend({ subject_kind: z.literal('question_block') }),
+    proposed_change: BlockMergeProposalChange,
   }),
 ]);
 export type AiProposalPayloadT = z.infer<typeof AiProposalPayload>;
