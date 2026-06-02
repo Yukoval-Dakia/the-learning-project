@@ -2,8 +2,9 @@
 
 > **怎么读**：贴进**同一个 claude design 会话**继续。round-2a 已验收通过（今日/复习/录入/收件箱/错题全部达标）；这一轮做**剩下的全部 surface**。
 > **性质**：2b 大多是**净新建/替换占位**（不像 2a 是改既有屏）。但纪律不变——**视觉语言完全不动**，复用你已建的 tokens / primitives / `Stateful`(loading-empty-error) / `Card·Btn·Badge·Ring·EmptyState·Icon` / `CopilotDrawer` 模式 / mesh 样式 / `KIND_META`·`REL_LABEL`。
-> **范围（本轮全做）**：D 知识(图升级 + `/knowledge/[id]`) · F 学习项(意图拆解 + 状态 + `/learning-items/[id]`) · G block-tree 笔记编辑器 · I `/coach` · J `/learning-sessions` + `/[id]` · E `/events/[id]` · 教学抽屉 TeachingDrawer · K `/admin/*`。
+> **范围（本轮全做）**：D 知识(图升级 + `/knowledge/[id]`) · F 学习项(意图拆解 + 状态 + `/learning-items/[id]`) · G block-tree 笔记编辑器 + Notion-like `/notes/[id]` 阅读页 · I `/coach` · J `/learning-sessions` + `/[id]` · E `/events/[id]` · 教学抽屉 TeachingDrawer · K `/admin/*`。
 > **现状已核对** round-2a 交付的 jsx（不是猜）。契约源头：同目录 `2026-06-02-claude-design-handoff-full-redraw.md` §3 D/F/G/I/J/K + §3E 详情页。日期 2026-06-02 · YUK-169。
+> **Round-2b 运行时核验补丁（2026-06-02）**：当前 2b prototype 曾把 knowledge 主笔记与 learning_item artifact 直接复用同一个 JS 对象（`=== true`），且交叉链只会跳 knowledge。此轮必须把 `note/artifact` 模型解耦：note 是独立实体，`knowledge_id` 是 note 上的标签（many-to-many），learning_item 通过标签/显式 note ref 关联 artifact；knowledge 不 own note，也不 implied 1:1 主笔记。cross-link 不能写死 knowledge。
 
 ---
 
@@ -17,8 +18,8 @@
 
 ## 1. 全局（2b 相关）
 
-1. **新增路由**（替换 2a 的 stub / 新建）：`/knowledge/[id]` · `/learning-items/[id]` · `/learning-sessions` · `/learning-sessions/[id]` · `/events/[id]`（2a 是 `ScreenStub`，替成真页）· `/coach`（同，替真页）· `(admin) /admin/runs /admin/cost /admin/failures`。
-2. **入口**：`/coach` 已由今日 C-lane 链入；`/events/[id]` 错题卡的 `→ events:id` **链接是活的**，只是目标页 2a 还是 stub；`/knowledge/[id]` 从知识树/图节点进；`/learning-items/[id]` 从学习项卡进；**`/learning-sessions` 列表**目前无入口——在今日「可恢复会话条」加一个「查看历史 →」或复习完成卡加入口。admin 是**独立 shell**（不同 chrome，nav = Runs / Cost / Failures），从主 app 不必显眼链接。
+1. **新增路由**（替换 2a 的 stub / 新建）：`/knowledge/[id]` · `/learning-items/[id]` · `/notes/[id]` · `/learning-sessions` · `/learning-sessions/[id]` · `/events/[id]`（2a 是 `ScreenStub`，替成真页）· `/coach`（同，替真页）· `(admin) /admin/runs /admin/cost /admin/failures`。
+2. **入口**：`/coach` 已由今日 C-lane 链入；`/events/[id]` 错题卡的 `→ events:id` **链接是活的**，只是目标页 2a 还是 stub；`/knowledge/[id]` 从知识树/图节点进；`/notes/[id]` 从 knowledge note card / learning-item artifact / cross-link card 进入；`/learning-items/[id]` 从学习项卡进；**`/learning-sessions` 列表**目前无入口——在今日「可恢复会话条」加一个「查看历史 →」或复习完成卡加入口。admin 是**独立 shell**（不同 chrome，nav = Runs / Cost / Failures），从主 app 不必显眼链接。
 3. **5 类 typed 关系**（知识边）必须**视觉可区分且非颜色单独承载**：`prerequisite 前置 · related_to 相关 · contrasts_with 对比 · applied_in 应用 · derived_from 派生`（沿用 2a `REL_LABEL`）。每类要有形状/图标/标签线索。
 4. **状态 enum（全 11 值，全部要非颜色线索）**：`pending / in_progress / done / resting / dismissed / archived / extracted / partial / failed / queued / extracting`。前 6 个是学习项状态（**F 的过滤 tabs 只用这 6 个**）；后 5 个（extracted / partial / failed / queued / extracting）是**会话 / ingestion 生命周期**状态，出现在 **J 学习会话**与录入/事件流——设计这些 surface 时别漏它们的非颜色态。
 5. 抽屉/弹层 focus 管理（TeachingDrawer 同 CopilotDrawer）。每个数据块三态。中文文案。
@@ -37,7 +38,8 @@
 - **mesh 升级为可交互**：可平移 / 缩放的 node-link 图（viz 库你定，但必须真交互）。边按 **5 类 typed 关系**视觉区分（非颜色单独承载）。**点节点 → 右侧节点详情抽屉**。
 - **掌握度在节点级就要可见**（不止抽屉里）：每个树/图节点带 mastery %（环）+ evidence 数 + decay 衰减——这是 handoff §3D 要求的"per-node"指标。
 - **节点详情抽屉**：**层级（parent/child）与关系（typed edges）两块视觉分开**。边提议就地决策：`接受 / 反向 / 改类型 / 忽略`（复用 2a inbox 的 edge action 视觉）。一个**建边表单**：选关系类型 + 目标节点 + **方向（source→target；prerequisite/derived_from/applied_in 等有向关系必须能指定方向，与"反向"控件一致）**。
-- **`/knowledge/[id]` 深度页**：节点 metadata + 掌握度；**邻居按关系类型分组**列出；节点**主笔记内联**（只读渲染，用 G 的渲染能力）；**backlinks 按类型**（atomic / hub / long / quiz）；活动时间线。
+- **`/knowledge/[id]` 深度页**：节点 metadata + 掌握度；**邻居按关系类型分组**列出；**带当前 knowledge_id 标签的笔记列表**（0/1/many，只读渲染，用 G 的渲染能力，每张 note card 显示全部标签并高亮当前标签）；**backlinks 按类型**（atomic / hub / long / quiz）；活动时间线。
+- **硬约束 · knowledge 只作为 note 标签**：prototype 数据里不要把同一个 note/doc 对象同时赋给 `knowledge.note` 与 `learning_item.artifact`，也不要在 knowledge 节点上放 `note` / `primary_note_id` 来暗示 1:1 主笔记。知识页按 `note.labels.includes(knowledge.id)` 查询并展示；空节点显示 empty state。
 - 样例：`之 · 用法 (k_xuci_zhi)` · 掌握度 62% · 9 evidence · 衰减中；前置=`文言虚词 (k_xuci)`；派生=`之attr (k_xuci_zhi_attr)`；对比=`主谓取独 (k_zhi_subj)`、相关=`其 · 用法 (k_xuci_qi)`（后两个节点 2a 图里还没有，重建 `DATA.knowledge` 时一并补，别凭空画无 id 的节点）。
 
 ### F · 学习项 `/learning-items`（升级）+ `/learning-items/[id]`（新）
@@ -49,6 +51,7 @@
 - **状态过滤 tabs**：`全部 / pending / in_progress / done / resting / dismissed / archived`。
 - **学习项卡**：带**状态流转**动作（如 开始/搁置/完成/归档）；内联知识点编辑。保留你已有的 Ring + stats 视觉。
 - **`/learning-items/[id]` 全编辑器**：标题/内容内联编辑；状态流转；知识点 chips；**origin proposal 块**（含**撤回 retract + 原因**）；**可搜索的父节点选择器**；**artifact 视图**（block-tree 笔记 + 生成/校验 badge——见 G）；**children 列表**；右侧**教学抽屉**入口（见 TeachingDrawer）。
+- **硬约束 · learning_item 显示关联笔记 artifact**：artifact 区渲染独立 note/artifact 实体（例如 `artifact_note_id` / `artifact_id`），并清楚说明它通过 `knowledge_id` 标签与本学习项关联；同一条 note 可被多个 learning_item / knowledge 节点引用，但必须是显式同一 note id，不允许隐式对象共用。
 
 ### G · block-tree 笔记编辑器（在 `/learning-items/[id]` 内）
 
@@ -57,11 +60,23 @@
 **本轮做什么**（这是全 app 最重的交互件，慢慢做）：一个 block 化笔记编辑器（参照 TipTap/ProseMirror 心智模型），必须有：
 - **slash 命令插入块**（`/` 唤出块类型菜单）——**修复点：slash 插入的块不能非法嵌套**（如不能把块插进不该嵌的容器）。
 - **拖拽手柄重排块**——**修复点：拖拽手柄只在真正可拖的块上出现**。
-- **交叉链选择器**（链到知识节点 / 其它笔记）。
+- **交叉链选择器**（链到知识节点 / 其它笔记 / 学习项 / 事件）。
 - **内嵌测验块**（"embedded check" 互动小测）。
 - **校验 badge**（生成/已校验）。
 - **渲染**：LaTeX / 文言文 / 纯文本 / 代码 四种都要渲染正确。
 - **只读 + 可编辑**两种呈现都要（`/knowledge/[id]` 和 artifact 只读处复用只读渲染）。
+- **硬约束 · link router 泛化**：block link 形状用 `{ kind: 'knowledge'|'note'|'learning_item'|'event', ref }`（或等价 typed target），`onLink` 按 kind 路由；禁止 `go('knowledge/' + tag)` 这种写死 knowledge 的 handler。prototype 里至少要有一条 link-to-note 或 link-to-learning-item 样例证明这条路可走。
+
+### G2 · Notion-like `/notes/[id]` 笔记阅读页（新）
+
+**当前缺口**：knowledge 和 learning item 已能展示 note card / artifact preview，但仍没有一个能像 Notion 文档那样长时间阅读、浏览、进入上下文的完整 note viewer。卡片展开不是阅读页。
+
+**本轮做什么**：
+- **一等公民 NoteReader route**：新增 `/notes/[id]` 或等价深度页。`/knowledge/[id]` 的 labeled note card、`/learning-items/[id]` 的 artifact 区、block cross-link card 都必须有明显「打开笔记」入口，进入同一个 note id。
+- **桌面布局**：左侧窄 outline / block tree；中央是文档正文（title 在页面内，不在卡片内；labels、校验 badge、正文 block、callout、quote、embedded check、cross-link cards）；右侧 context rail（属性、全部 knowledge labels、backlinks、相关 learning items、活动/版本）。
+- **移动布局**：单栏正文优先，outline/context 作为抽屉或底部 sheet，不挤正文。
+- **Notion-like 交互**：block hover actions、可折叠 section、inline tag chips、block link card、embedded quiz block；默认 read mode，edit mode 是次级 toggle，不要默认像表单或后台管理页。
+- **语义证明**：样例 `note_zhi` 标题「『之』的四类核心用法」，labels = `k_xuci_zhi` + `k_zhi_subj`。从 `/knowledge/k_xuci_zhi`、`/knowledge/k_zhi_subj`、`/learning-items/li_xuci` 三个入口进入时，页面都显示同一个 `/notes/note_zhi`，并让「同一篇 note，多处入口」在 UI 上清楚可见。
 
 ### I · `/coach` 分析（替换 2a stub）
 
@@ -120,6 +135,9 @@
 7. **节点活动时间线**：`/knowledge/[id]` 需要 per-node 事件/活动流（样例：14 天前 attempt:failure·之 → 昨日 judge:概念混淆 → 今日 correction）。
 8. **coach 聚合**：per-day 复习/评分桶 + top-N 失败知识点 + cause 分布——核后端是否已暴露，否则标为客户端 rollup。
 9. **重建 `DATA.knowledge` / `DATA.items`**：2a 的 data.jsx 重写丢了这两个顶层数组，2b 重建知识/学习项屏时要补回（knowledge 节点带 mastery/evidence/decay/typed 边；items 带 hub/atomic/status/children）。
+10. **note/artifact 独立身份 + knowledge label many-to-many**：新增/保留 `DATA.notes` 或等价实体表，note 至少有 `{ id, labels: knowledge_id[], title/body/blocks, updated_at, created_by }`；knowledge 节点不持 `note` / `primary_note_id`。learning item 可有 `artifact_note_id` / `artifact_id` 指向独立 note/artifact。验收时必须能证明：一个 note 可带多个 knowledge labels（如 `k_xuci_zhi` + `k_zhi_subj`），一个 knowledge 可列出多条 labeled notes，且没有 `knowledge.note === learning_item.artifact` 这种隐式对象共用。
+11. **typed cross-link target**：block link 不再只有 `{ kind:'knowledge', tag }`；至少支持 knowledge / note / learning_item / event 四类目标，并在 item detail 与 knowledge detail 两条 render path 共用同一个 typed router。
+12. **NoteReader data**：`/notes/[id]` 需要 note body blocks、outline/block tree、labels、verification、backlinks、related learning_items、activity/version log。若后端暂未一次性提供，prototype 要显式标为组合读取，而不是把这些字段塞回 knowledge 节点。
 
 若布局需要改数据/路由，**标出来**。
 
