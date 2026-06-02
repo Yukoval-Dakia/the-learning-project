@@ -129,6 +129,18 @@ describe('AiProposalPayload', () => {
           reasoning: 'k1 是 k2 的 prerequisite，两者共同构成该目标的覆盖范围。',
         },
       },
+      // YUK-202 / BlockAssembly path-B (design 2026-06-02 §1) — block_merge.
+      block_merge: {
+        ...base,
+        kind: 'block_merge',
+        target: { subject_kind: 'question_block', subject_id: 'block_1' },
+        proposed_change: {
+          primary_block_id: 'block_1',
+          merge_block_ids: ['block_2'],
+          ingestion_session_id: 'session_1',
+          continuity_signal: 'numbering',
+        },
+      },
     } as const;
 
     expect(Object.keys(samples).sort()).toEqual([...aiProposalKinds].sort());
@@ -163,6 +175,59 @@ describe('AiProposalPayload', () => {
           to_knowledge_id: 'k2',
           relation_type: 'made_up',
           weight: 0.7,
+        },
+      }),
+    ).toThrow();
+  });
+
+  // YUK-202 / BlockAssembly path-B (design 2026-06-02 §1).
+  it('accepts a valid block_merge proposal', () => {
+    const parsed = parseAiProposalPayload({
+      ...base,
+      kind: 'block_merge',
+      target: { subject_kind: 'question_block', subject_id: 'block_1' },
+      proposed_change: {
+        primary_block_id: 'block_1',
+        merge_block_ids: ['block_2', 'block_3'],
+        ingestion_session_id: 'session_1',
+        continuity_signal: 'stem_answer_split',
+      },
+    });
+    expect(parsed.kind).toBe('block_merge');
+    expect(parsed.target.subject_kind).toBe('question_block');
+    if (parsed.kind === 'block_merge') {
+      expect(parsed.proposed_change.primary_block_id).toBe('block_1');
+      expect(parsed.proposed_change.merge_block_ids).toEqual(['block_2', 'block_3']);
+      expect(parsed.proposed_change.ingestion_session_id).toBe('session_1');
+      expect(parsed.proposed_change.continuity_signal).toBe('stem_answer_split');
+    }
+  });
+
+  it('rejects a block_merge proposal with empty merge_block_ids', () => {
+    expect(() =>
+      parseAiProposalPayload({
+        ...base,
+        kind: 'block_merge',
+        target: { subject_kind: 'question_block', subject_id: 'block_1' },
+        proposed_change: {
+          primary_block_id: 'block_1',
+          merge_block_ids: [],
+          ingestion_session_id: 'session_1',
+        },
+      }),
+    ).toThrow();
+  });
+
+  it('rejects a block_merge proposal with the wrong target.subject_kind', () => {
+    expect(() =>
+      parseAiProposalPayload({
+        ...base,
+        kind: 'block_merge',
+        target: { subject_kind: 'question', subject_id: 'block_1' },
+        proposed_change: {
+          primary_block_id: 'block_1',
+          merge_block_ids: ['block_2'],
+          ingestion_session_id: 'session_1',
         },
       }),
     ).toThrow();
@@ -258,6 +323,15 @@ describe('suggestion_kind (P5.6 / YUK-178)', () => {
           reasoning: 'r',
         },
       },
+      block_merge: {
+        kind: 'block_merge',
+        target: { subject_kind: 'question_block', subject_id: 'b1' },
+        proposed_change: {
+          primary_block_id: 'b1',
+          merge_block_ids: ['b2'],
+          ingestion_session_id: 's1',
+        },
+      },
     };
     // Audit-coverage guard (AC-2): the sample map covers every AiProposalKind, so
     // a future kind addition that forgets the optional-field check is caught.
@@ -327,6 +401,7 @@ describe('suggestion_kind (P5.6 / YUK-178)', () => {
       archive: false,
       judge_retraction: false,
       goal_scope: false,
+      block_merge: false,
     };
     // Every kind classified; exactly one structurally-corrective kind.
     expect(Object.keys(correctivePossibleByKind).sort()).toEqual([...aiProposalKinds].sort());

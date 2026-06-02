@@ -525,6 +525,12 @@ const KIND_TO_GROUP: Record<AiProposalKindT, keyof ProposalGroups> = {
   // goal-lens UI is Wave-10; this entry only keeps the exhaustive Record in
   // sync with the server-side aiProposalKinds enum (no behavior change).
   goal_scope: 'learning',
+  // YUK-202 / BlockAssembly path-B (design 2026-06-02 §1) — block_merge
+  // proposals are inbox review items; bucket under 'review' for the breakdown
+  // count. The dedicated inbox row (primary + merge-block preview, confidence,
+  // continuity_signal badge) is the deferred UI redraw slice (design §6 UI);
+  // this entry only keeps the exhaustive Record in sync with aiProposalKinds.
+  block_merge: 'review',
 };
 
 function proposalGroupCounts(counts: ProposalKindCounts): ProposalGroups {
