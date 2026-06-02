@@ -1,0 +1,439 @@
+// Search-grounded QuizGen — Q3 handler.
+//
+// docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §3 / §4.
+//
+// Tool-calling agent (QuizGenTask): plans, searches Tavily for SOURCE MATERIAL
+// (not questions), writes ORIGINAL questions grounded in those sources, and
+// self-declares every used URL into source_refs (§0 — provenance is NOT
+// recoverable from runner logs, so the agent MUST self-report).
+//
+// Skeleton copied from embedded_check_generate.ts (parse → INSERT → writeEvent →
+// catch). MCP mount copies the verbatim chat.ts:298-306 pattern (Tavily remote
+// MCP via buildTavilyMcpServer() — env-gated graceful degradation — + the
+// in-process domain-tool MCP that reads the user's mistakes + knowledge graph).
+// The chained quiz_verify enqueue mirrors attribution_followup → variant_gen.
+//
+// Gate = Option B (owner-confirmed §3): each generated question is INSERTed with
+// draft_status='draft' (NOT in the review pool, no FSRS yet). The chained
+// quiz_verify job (Q5) promotes draft→active + FSRS-enrolls on pass.
+
+import { createId } from '@paralleldrive/cuid2';
+import { eq } from 'drizzle-orm';
+import type { Job } from 'pg-boss';
+
+import {
+  PROSE_KINDS,
+  defaultJudgeKindForQuestion,
+  nonEmptyStrings,
+} from '@/core/schema/judge-routing';
+import {
+  type QuizGenMetadataT,
+  QuizGenOutput,
+  type QuizGenOutputT,
+  type QuizGenQuestionT,
+} from '@/core/schema/quiz_gen';
+import type { Db } from '@/db/client';
+import { knowledge, learning_item, question } from '@/db/schema';
+import {
+  TAVILY_MCP_ALLOWED_TOOLS,
+  TAVILY_MCP_SERVER_NAME,
+  buildTavilyMcpServer,
+} from '@/server/ai/mcp/tavily';
+import { type TaskTextResult, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
+import { runAgentTask } from '@/server/ai/runner';
+import {
+  DOMAIN_TOOL_MCP_SERVER_NAME,
+  type DomainToolName,
+  toMcpAllowedToolName,
+} from '@/server/ai/tools/allowlists';
+import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
+import { writeEvent } from '@/server/events/queries';
+import { resolveSubjectProfile } from '@/subjects/profile';
+import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+
+// §3 / §4 — the trigger surface. 'manual' carries a free-form ref_id (we still
+// try to resolve it as a knowledge node for the subject profile, but never skip
+// the run on a manual trigger). 'knowledge' / 'learning_item' resolve a real row.
+export const QUIZ_GEN_TRIGGERS = ['knowledge', 'learning_item', 'manual'] as const;
+export type QuizGenTrigger = (typeof QUIZ_GEN_TRIGGERS)[number];
+
+export interface QuizGenJobData {
+  trigger: QuizGenTrigger;
+  ref_id: string;
+  count?: number;
+}
+
+// §4 — default question count when the trigger doesn't specify one.
+export const QUIZ_GEN_DEFAULT_COUNT = 3;
+
+// The read-only domain-tool surface QuizGen mounts: enough to read the user's
+// mistakes + knowledge graph so the agent can pick difficulty / types / coverage
+// (§1 / §3). Deliberately READ-only — QuizGen never proposes/writes via DomainTools
+// (its only write is the draft question INSERT below). Reuses the same domain MCP
+// builder Copilot / Dreaming use; we keep the list local rather than adding a new
+// `DomainToolSurface` enum (that would widen the shared allowlist matrix).
+export const QUIZ_GEN_READ_TOOLS = [
+  'query_mistakes',
+  'get_attempt_context',
+  'query_knowledge',
+  'get_subject_graph_overview',
+  'expand_knowledge_subgraph',
+  'find_knowledge_paths',
+  'get_question_context',
+] as const satisfies readonly DomainToolName[];
+
+// The handler only consumes { text, task_run_id?, cost_usd? } from the run
+// result (parse + provenance + cost), so the seam returns the loose
+// TaskTextResult shape — structurally satisfied by runAgentTask's RunTaskResult,
+// and easy to fixture in DB tests (mirrors embedded_check_generate's RunTaskFn).
+type RunAgentTaskFn = (
+  kind: string,
+  input: unknown,
+  ctx: {
+    db: Db;
+    mcpServers?: Record<string, SdkMcpServer | McpHttpServerConfig>;
+    allowedTools?: string[];
+  },
+) => Promise<TaskTextResult>;
+
+type BuildMcpServerFn = typeof buildMcpServerFromRegistry;
+type BuildTavilyMcpServerFn = () => McpHttpServerConfig | null;
+// Chained quiz_verify enqueue (Q5 owns the queue + handler). Mirrors
+// attribution_followup's EnqueueVariantGenFn seam so DB tests inject a vi.fn().
+export type EnqueueQuizVerifyFn = (questionIds: string[]) => Promise<void>;
+
+interface DepsOverride {
+  runAgentTaskFn?: RunAgentTaskFn;
+  buildMcpServerFn?: BuildMcpServerFn;
+  buildTavilyMcpServerFn?: BuildTavilyMcpServerFn;
+  enqueueQuizVerify?: EnqueueQuizVerifyFn;
+}
+
+async function defaultEnqueueQuizVerify(questionIds: string[]): Promise<void> {
+  // Worker process already has boss started; getStartedBoss() returns the same
+  // instance (mirrors attribution_followup). Q5 creates + works the queue.
+  const { getStartedBoss } = await import('@/server/boss/client');
+  const boss = await getStartedBoss();
+  await boss.send('quiz_verify', { question_ids: questionIds });
+}
+
+// §2 / §5 — output JSON parse + judge-contract assertion (shared with
+// EmbeddedCheckGenerate via judge-routing). A generated prose / derivation
+// question that cannot be graded by its declared route is rejected so downstream
+// judges never see an ungradeable question.
+function assertGeneratedQuestionHasJudgeContract(q: QuizGenQuestionT): void {
+  const route = defaultJudgeKindForQuestion(q);
+  if (route === 'keyword' && nonEmptyStrings(q.rubric_json?.keywords).length === 0) {
+    throw new Error(`quiz_gen question '${q.prompt_md}' uses keyword judge without keywords`);
+  }
+  if (route === 'semantic' && nonEmptyStrings(q.rubric_json?.required_points).length === 0) {
+    throw new Error(
+      `quiz_gen question '${q.prompt_md}' uses semantic judge without required_points`,
+    );
+  }
+  if ((PROSE_KINDS.has(q.kind) || q.kind === 'derivation') && route === 'exact') {
+    throw new Error(`quiz_gen ${q.kind} question '${q.prompt_md}' cannot use exact judge`);
+  }
+}
+
+function parseOutput(text: string): QuizGenOutputT {
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start === -1 || end === -1 || end < start) {
+    throw new Error('parseOutput: no JSON object found in text');
+  }
+  let json: unknown;
+  try {
+    json = JSON.parse(text.slice(start, end + 1));
+  } catch (e) {
+    throw new Error(`parseOutput: JSON.parse failed: ${(e as Error).message}`);
+  }
+  const parsed = QuizGenOutput.safeParse(json);
+  if (!parsed.success) {
+    throw new Error(
+      `parseOutput: schema invalid: ${parsed.error.issues.map((i) => i.message).join('; ')}`,
+    );
+  }
+  for (const q of parsed.data.questions) {
+    assertGeneratedQuestionHasJudgeContract(q);
+  }
+  return parsed.data;
+}
+
+export interface RunQuizGenParams {
+  db: Db;
+  trigger: QuizGenTrigger;
+  refId: string;
+  count?: number;
+  runAgentTaskFn?: RunAgentTaskFn;
+  buildMcpServerFn?: BuildMcpServerFn;
+  buildTavilyMcpServerFn?: BuildTavilyMcpServerFn;
+  enqueueQuizVerify?: EnqueueQuizVerifyFn;
+}
+
+export type RunQuizGenStatus = 'ready' | 'skipped:ref_not_found';
+
+export interface RunQuizGenResult {
+  status: RunQuizGenStatus;
+  question_ids?: string[];
+}
+
+interface ResolvedTrigger {
+  refId: string;
+  knowledgeNode: { id: string; name: string; domain: string | null } | null;
+  knowledgeIds: string[];
+  title: string | null;
+}
+
+async function resolveTrigger(
+  db: Db,
+  trigger: QuizGenTrigger,
+  refId: string,
+): Promise<ResolvedTrigger | null> {
+  if (trigger === 'knowledge') {
+    const rows = await db
+      .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
+      .from(knowledge)
+      .where(eq(knowledge.id, refId))
+      .limit(1);
+    const k = rows[0];
+    if (!k) return null;
+    return { refId, knowledgeNode: k, knowledgeIds: [k.id], title: k.name };
+  }
+  if (trigger === 'learning_item') {
+    const rows = await db
+      .select({
+        id: learning_item.id,
+        title: learning_item.title,
+        knowledge_ids: learning_item.knowledge_ids,
+      })
+      .from(learning_item)
+      .where(eq(learning_item.id, refId))
+      .limit(1);
+    const li = rows[0];
+    if (!li) return null;
+    let knowledgeNode: ResolvedTrigger['knowledgeNode'] = null;
+    const primaryKnowledgeId = li.knowledge_ids[0] ?? null;
+    if (primaryKnowledgeId) {
+      const kRows = await db
+        .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
+        .from(knowledge)
+        .where(eq(knowledge.id, primaryKnowledgeId))
+        .limit(1);
+      knowledgeNode = kRows[0] ?? null;
+    }
+    return { refId, knowledgeNode, knowledgeIds: li.knowledge_ids, title: li.title };
+  }
+  // 'manual' — never skips. Best-effort resolve the ref as a knowledge node for
+  // the subject profile; the run proceeds either way (§4 manual-first).
+  const rows = await db
+    .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
+    .from(knowledge)
+    .where(eq(knowledge.id, refId))
+    .limit(1);
+  const k = rows[0] ?? null;
+  return {
+    refId,
+    knowledgeNode: k,
+    knowledgeIds: k ? [k.id] : [],
+    title: k?.name ?? null,
+  };
+}
+
+export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenResult> {
+  const { db, trigger, refId } = params;
+  const count = params.count ?? QUIZ_GEN_DEFAULT_COUNT;
+  const run = params.runAgentTaskFn ?? runAgentTask;
+  const buildMcpServer = params.buildMcpServerFn ?? buildMcpServerFromRegistry;
+  const buildTavily = params.buildTavilyMcpServerFn ?? buildTavilyMcpServer;
+  const enqueueQuizVerify = params.enqueueQuizVerify ?? defaultEnqueueQuizVerify;
+
+  const resolved = await resolveTrigger(db, trigger, refId);
+  // knowledge / learning_item triggers must resolve a real row; manual always
+  // resolves (best-effort) so it never skips.
+  if (!resolved) return { status: 'skipped:ref_not_found' };
+
+  const subjectProfile = resolveSubjectProfile(resolved.knowledgeNode?.domain ?? null);
+  const triggerEventId = `quiz_gen_trigger_${createId()}`;
+  const toolContextTaskRunId = `quiz_gen_tool_${createId()}`;
+
+  // ── MCP mount: copy chat.ts:298-306 verbatim pattern ──────────────────────
+  // In-process domain-tool MCP (read user mistakes + knowledge graph) + the
+  // env-gated Tavily remote MCP. When TAVILY_API_KEY is unset, buildTavily()
+  // returns null → no tavily server, no tavily tools (graceful degradation).
+  const domainMcpServer = buildMcpServer({
+    ctx: {
+      db,
+      taskRunId: toolContextTaskRunId,
+      callerActor: { kind: 'agent', ref: 'quiz_gen' },
+      causedByEventId: triggerEventId,
+    },
+    serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
+    toolNames: QUIZ_GEN_READ_TOOLS,
+    taskKind: 'QuizGenTask',
+  });
+
+  const tavilyCfg = buildTavily();
+  const mcpServers: Record<string, SdkMcpServer | McpHttpServerConfig> = {
+    [DOMAIN_TOOL_MCP_SERVER_NAME]: domainMcpServer,
+    ...(tavilyCfg ? { [TAVILY_MCP_SERVER_NAME]: tavilyCfg } : {}),
+  };
+  const allowedTools = [
+    ...QUIZ_GEN_READ_TOOLS.map((name) => toMcpAllowedToolName(name)),
+    ...(tavilyCfg ? TAVILY_MCP_ALLOWED_TOOLS : []),
+  ];
+
+  const input = {
+    trigger,
+    ref: {
+      id: resolved.refId,
+      name: resolved.title,
+      knowledge_node: resolved.knowledgeNode,
+    },
+    knowledge_context: resolved.knowledgeNode ? [resolved.knowledgeNode] : [],
+    count,
+  };
+
+  let taskResult: TaskTextResult | null = null;
+  try {
+    const result = await run('QuizGenTask', input, {
+      db,
+      mcpServers,
+      allowedTools,
+    });
+    taskResult = result;
+    const parsed = parseOutput(result.text);
+
+    const questionIds: string[] = [];
+    const now = new Date();
+    await db.transaction(async (tx) => {
+      for (const q of parsed.questions) {
+        const id = createId();
+        const judgeKind = defaultJudgeKindForQuestion(q);
+        // §2 — metadata.quiz_gen: the agent self-reports source_pack + per-run
+        // copy_safety; we fold the per-question source_refs into the row's
+        // metadata so each draft carries its own provenance.
+        const metaQuizGen: QuizGenMetadataT = {
+          source_pack: parsed.source_pack,
+          source_refs: q.source_refs,
+          generation_method: parsed.generation_method,
+          // V1 LOW — the agent self-reports verdict + max_overlap, but the gen
+          // stage MUST stamp checked_by='agent_self' itself; an agent claiming
+          // checked_by='quiz_verify' here would forge a verification it never ran.
+          // QuizVerify (Q5) overwrites this whole block with checked_by='quiz_verify'
+          // once it actually runs.
+          copy_safety: {
+            verdict: parsed.self_copy_safety.verdict,
+            ...(parsed.self_copy_safety.max_overlap !== undefined
+              ? { max_overlap: parsed.self_copy_safety.max_overlap }
+              : {}),
+            checked_by: 'agent_self',
+          },
+          generation_status: 'ready',
+        };
+        await tx.insert(question).values({
+          id,
+          kind: q.kind,
+          source: 'quiz_gen',
+          prompt_md: q.prompt_md,
+          reference_md: q.reference_md,
+          rubric_json: q.rubric_json ?? null,
+          choices_md: q.choices_md ?? null,
+          judge_kind_override: judgeKind,
+          knowledge_ids: q.knowledge_ids,
+          difficulty: q.difficulty,
+          // §2 — trigger pointer (knowledge_id / learning_item_id), NOT a web URL.
+          source_ref: resolved.refId,
+          // Option B (§3) — generated drafts do NOT enter the pool / FSRS until
+          // quiz_verify passes (Q5 promotes draft→active + enrolls).
+          draft_status: 'draft',
+          created_by: aiAgentRef('QuizGenTask', result),
+          metadata: { quiz_gen: metaQuizGen },
+          created_at: now,
+          updated_at: now,
+        });
+        questionIds.push(id);
+      }
+    });
+
+    await writeEvent(db, {
+      id: createId(),
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'quiz_gen',
+      action: 'experimental:quiz_gen',
+      subject_kind: 'query',
+      subject_id: triggerEventId,
+      outcome: 'success',
+      payload: {
+        trigger,
+        ref_id: resolved.refId,
+        question_ids: questionIds,
+        count: questionIds.length,
+        generation_method: parsed.generation_method,
+        tool_context_task_run_id: toolContextTaskRunId,
+      },
+      caused_by_event_id: null,
+      task_run_id: result.task_run_id ?? null,
+      cost_micro_usd: costUsdToMicroUsd(result.cost_usd),
+      created_at: new Date(),
+    });
+
+    // Chain the verification job (Q5) — like ingestion → attribution_followup.
+    await enqueueQuizVerify(questionIds);
+
+    return { status: 'ready', question_ids: questionIds };
+  } catch (err) {
+    try {
+      await writeEvent(db, {
+        id: createId(),
+        session_id: null,
+        actor_kind: 'agent',
+        actor_ref: 'quiz_gen',
+        action: 'experimental:quiz_gen',
+        subject_kind: 'query',
+        subject_id: triggerEventId,
+        outcome: 'failure',
+        payload: {
+          trigger,
+          ref_id: resolved.refId,
+          error: String((err as Error).message ?? err),
+          tool_context_task_run_id: toolContextTaskRunId,
+        },
+        caused_by_event_id: null,
+        task_run_id: taskResult?.task_run_id ?? null,
+        cost_micro_usd: costUsdToMicroUsd(taskResult?.cost_usd),
+        created_at: new Date(),
+      });
+    } catch (cleanupErr) {
+      console.error('[quiz_gen] catch-block cleanup failed for', refId, cleanupErr);
+    }
+    throw err;
+  }
+}
+
+export function buildQuizGenHandler(
+  db: Db,
+  deps: DepsOverride = {},
+): (jobs: Job<QuizGenJobData>[]) => Promise<void> {
+  return async (jobs) => {
+    for (const job of jobs) {
+      const data = job.data;
+      if (!data?.trigger || !data?.ref_id) {
+        console.warn('[quiz_gen] job missing trigger/ref_id', job.id);
+        continue;
+      }
+      const result = await runQuizGen({
+        db,
+        trigger: data.trigger,
+        refId: data.ref_id,
+        count: data.count,
+        runAgentTaskFn: deps.runAgentTaskFn,
+        buildMcpServerFn: deps.buildMcpServerFn,
+        buildTavilyMcpServerFn: deps.buildTavilyMcpServerFn,
+        enqueueQuizVerify: deps.enqueueQuizVerify,
+      });
+      console.log(`[quiz_gen] ${data.trigger}:${data.ref_id} -> ${result.status}`);
+    }
+  };
+}

@@ -38,6 +38,9 @@ export const QuestionSource = z.enum([
   'reverse_mark',
   'mistake_variant',
   'teaching_check',
+  // Search-grounded QuizGen wave (docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md
+  // §2). Zod-enum addition only — no DDL ALTER (the question.source column is text).
+  'quiz_gen',
 ]);
 
 export const MistakeSource = z.enum([

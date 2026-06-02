@@ -1,0 +1,156 @@
+// Search-grounded QuizGen (T-SQ) — Zod types.
+//
+// docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md
+//   §0  Decisive constraint: search-call provenance cannot be recovered from
+//       logs, so the QuizGen agent MUST self-declare its sources. These types
+//       are built around that self-declaration.
+//   §2  Data model — `question.metadata.quiz_gen` (jsonb, zero migration).
+//   §5  Q2 — the QuizGenTask LLM structured output schema.
+//
+// Two layers live here:
+//   1. Persisted shape  — `QuizGenMetadata` (what lands in question.metadata.quiz_gen).
+//   2. LLM output shape  — `QuizGenOutput` (what the QuizGenTask agent emits;
+//      the Q3 handler maps it into questions + metadata).
+import { z } from 'zod';
+import { AgentRef, QuestionKind, Rubric } from './business';
+
+// ---------- §2 persisted metadata.quiz_gen ----------
+
+// Where a source URL was used in generation. 'fact' = grounded a factual claim
+// in the question; 'inspiration' = informed the topic/framing only. Drives the
+// QuizVerify grounding + copy_safety checks (Q5).
+export const QuizGenUsedFor = z.enum(['fact', 'inspiration']);
+export type QuizGenUsedForT = z.infer<typeof QuizGenUsedFor>;
+
+// §0: every URL the agent actually used must appear here (agent self-reported —
+// it cannot be recovered from runner logs).
+export const QuizGenSourceRef = z.object({
+  url: z.string().url(),
+  title: z.string().min(1),
+  snippet: z.string().optional(),
+  used_for: QuizGenUsedFor,
+  // true when the agent pulled full content via tavily_extract (not just search snippet).
+  extracted: z.boolean(),
+});
+export type QuizGenSourceRefT = z.infer<typeof QuizGenSourceRef>;
+
+export const QuizGenSourcePack = z.object({
+  query_plan: z.array(z.string().min(1)),
+  searched_at: z.string().min(1),
+  tool: z.literal('tavily'),
+});
+export type QuizGenSourcePackT = z.infer<typeof QuizGenSourcePack>;
+
+export const QuizGenGenerationMethod = z.enum(['search_grounded', 'closed_book']);
+export type QuizGenGenerationMethodT = z.infer<typeof QuizGenGenerationMethod>;
+
+export const QuizGenCopySafetyVerdict = z.enum(['original', 'too_close', 'unknown']);
+export type QuizGenCopySafetyVerdictT = z.infer<typeof QuizGenCopySafetyVerdict>;
+
+export const QuizGenCopySafety = z.object({
+  verdict: QuizGenCopySafetyVerdict,
+  // normalized n-gram overlap (0-1) when computed; absent on a pure agent self-assessment.
+  max_overlap: z.number().min(0).max(1).optional(),
+  checked_by: z.enum(['agent_self', 'quiz_verify']),
+});
+export type QuizGenCopySafetyT = z.infer<typeof QuizGenCopySafety>;
+
+// Two-axis verification result written by QuizVerifyTask (Q5). Absent until the
+// chained quiz_verify job runs.
+export const QuizGenVerification = z.object({
+  status: z.enum(['verified', 'needs_review', 'failed']),
+  summary: z.string(),
+  verified_by: AgentRef,
+});
+export type QuizGenVerificationT = z.infer<typeof QuizGenVerification>;
+
+export const QuizGenMetadata = z.object({
+  source_pack: QuizGenSourcePack,
+  source_refs: z.array(QuizGenSourceRef),
+  generation_method: QuizGenGenerationMethod,
+  copy_safety: QuizGenCopySafety,
+  // Set by QuizGenTask handler on successful parse (Q3). 'ready' = generated,
+  // pending verification.
+  generation_status: z.literal('ready'),
+  verification: QuizGenVerification.optional(),
+});
+export type QuizGenMetadataT = z.infer<typeof QuizGenMetadata>;
+
+// ---------- §5 Q2 QuizGenTask LLM output ----------
+
+// Per-question shape. Mirrors the EmbeddedCheck question contract (kind +
+// prompt_md + reference_md + optional choices/judge/rubric) plus QuizGen-only
+// fields: difficulty, knowledge_ids the question targets, and the per-question
+// source_refs the agent self-declares (§0).
+export const QuizGenQuestion = z.object({
+  kind: QuestionKind,
+  prompt_md: z.string().min(1),
+  reference_md: z.string().min(1),
+  choices_md: z.array(z.string().min(1)).max(6).nullable().optional(),
+  judge_kind_override: z
+    .enum(['exact', 'keyword', 'semantic', 'rubric', 'steps', 'unit_dimension'])
+    .nullable()
+    .optional(),
+  rubric_json: Rubric.nullable().optional(),
+  difficulty: z.number().int().min(1).max(5),
+  knowledge_ids: z.array(z.string().min(1)),
+  // §0 self-declared: the URLs (subset of the run's source_pack) that grounded
+  // or inspired THIS question.
+  source_refs: z.array(QuizGenSourceRef),
+});
+export type QuizGenQuestionT = z.infer<typeof QuizGenQuestion>;
+
+export const QuizGenOutput = z.object({
+  questions: z.array(QuizGenQuestion).min(1).max(10),
+  source_pack: QuizGenSourcePack,
+  generation_method: QuizGenGenerationMethod,
+  // Agent's own copy-safety self-assessment (§0 / §1). QuizVerify (Q5) may later
+  // overwrite metadata.copy_safety with checked_by='quiz_verify'.
+  self_copy_safety: QuizGenCopySafety,
+});
+export type QuizGenOutputT = z.infer<typeof QuizGenOutput>;
+
+// ---------- §5 Q5 QuizVerifyTask LLM output ----------
+//
+// Two-axis verification (mirrors VariantVerificationResult but adds the
+// copy_safety axis). QuizVerify is CLOSED-BOOK (§1 default): it trusts the
+// agent's self-reported source_refs and does NOT run its own Tavily loop. It
+// answers three §5 checks, each carrying its own verdict + note, then rolls them
+// up into an `overall` verdict that the Q5 handler maps to the Option-B gate:
+//   pass      → promote draft→active + FSRS enroll
+//   needs_review / fail → stay draft (never reaches the pool)
+//
+// The copy_safety axis is separate from `overall` because the handler also folds
+// a DETERMINISTIC normalized n-gram overlap into the persisted copy_safety
+// verdict; the LLM's copy_safety verdict here is the model's independent read,
+// and `'too_close'` blocks promotion even when the other two checks pass.
+
+export const QuizVerifyCheckVerdict = z.enum(['pass', 'fail', 'unclear']);
+export type QuizVerifyCheckVerdictT = z.infer<typeof QuizVerifyCheckVerdict>;
+
+export const QuizVerifyCheck = z.object({
+  verdict: QuizVerifyCheckVerdict,
+  note: z.string().max(500).optional(),
+});
+export type QuizVerifyCheckT = z.infer<typeof QuizVerifyCheck>;
+
+// copy_safety axis the LLM reports. Reuses the persisted-metadata verdict enum
+// (original|too_close|unknown); max_overlap is the model's rough estimate (the
+// handler may override it with its deterministic n-gram computation).
+export const QuizVerifyCopySafety = z.object({
+  verdict: QuizGenCopySafetyVerdict,
+  max_overlap: z.number().min(0).max(1).optional(),
+});
+export type QuizVerifyCopySafetyT = z.infer<typeof QuizVerifyCopySafety>;
+
+export const QuizVerificationResult = z.object({
+  // §5 three checks.
+  grounding: QuizVerifyCheck, // fact / grounding vs the self-reported source_refs
+  copy_safety: QuizVerifyCopySafety, // plagiarism / originality vs source snippets
+  knowledge_hit: QuizVerifyCheck, // does the question actually test its knowledge_ids
+  // Roll-up verdict driving the Option-B gate.
+  overall: z.enum(['pass', 'needs_review', 'fail']),
+  summary_md: z.string().min(1).max(1000),
+  confidence: z.number().min(0).max(1),
+});
+export type QuizVerificationResultT = z.infer<typeof QuizVerificationResult>;

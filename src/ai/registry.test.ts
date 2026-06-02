@@ -121,3 +121,47 @@ describe('SolutionGenerateTask registry entry', () => {
     expect((tasks.SolutionGenerateTask as TaskDef).invocation).toBeUndefined();
   });
 });
+
+describe('QuizGenTask registry entry', () => {
+  // Search-grounded QuizGen wave (T-SQ) §1 — agentic tool-calling task. Budget
+  // and tool-call flags are part of the slice contract: maxIterations 8,
+  // timeout 120s, needsToolCall true, allowedTools [] (the handler injects the
+  // Tavily + domain MCP allowlist at run time).
+  it('is registered as a tool-calling agent task', () => {
+    expect(tasks.QuizGenTask.kind).toBe('QuizGenTask');
+    expect(tasks.QuizGenTask.needsToolCall).toBe(true);
+    expect(tasks.QuizGenTask.isMultimodal).toBe(false);
+    expect(tasks.QuizGenTask.allowedTools).toEqual([]);
+    expect(tasks.QuizGenTask.budget.maxIterations).toBe(8);
+    expect(tasks.QuizGenTask.budget.timeout).toBe(120_000);
+  });
+
+  it('uses the mimo-v2.5-pro default with mimo-v2.5 fallback', () => {
+    expect(tasks.QuizGenTask.defaultProvider).toBe('xiaomi');
+    expect(tasks.QuizGenTask.defaultModel).toBe('mimo-v2.5-pro');
+    expect(tasks.QuizGenTask.fallbackChain).toEqual([{ provider: 'xiaomi', model: 'mimo-v2.5' }]);
+  });
+});
+
+describe('QuizVerifyTask registry entry', () => {
+  // Search-grounded QuizGen wave (T-SQ) §1 / §5 Q5 — single-shot, closed-book
+  // verifier built on the VariantVerify skeleton: needsToolCall false,
+  // maxIterations 1, timeout 60s, allowedTools [] (it trusts the agent's
+  // self-reported source_refs; no own Tavily loop this wave).
+  it('is registered as a single-shot closed-book verifier', () => {
+    expect(tasks.QuizVerifyTask.kind).toBe('QuizVerifyTask');
+    expect(tasks.QuizVerifyTask.needsToolCall).toBe(false);
+    expect(tasks.QuizVerifyTask.isMultimodal).toBe(false);
+    expect(tasks.QuizVerifyTask.allowedTools).toEqual([]);
+    expect(tasks.QuizVerifyTask.budget.maxIterations).toBe(1);
+    expect(tasks.QuizVerifyTask.budget.timeout).toBe(60_000);
+  });
+
+  it('uses the mimo-v2.5-pro default with mimo-v2.5 fallback', () => {
+    expect(tasks.QuizVerifyTask.defaultProvider).toBe('xiaomi');
+    expect(tasks.QuizVerifyTask.defaultModel).toBe('mimo-v2.5-pro');
+    expect(tasks.QuizVerifyTask.fallbackChain).toEqual([
+      { provider: 'xiaomi', model: 'mimo-v2.5' },
+    ]);
+  });
+});

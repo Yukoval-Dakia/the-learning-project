@@ -45,6 +45,28 @@ export function scheduleReview(
   };
 }
 
+// Search-grounded QuizGen (T-SQ) §3 / Q6 — enroll-on-active. When a quiz_gen
+// draft is promoted to active, it has NO failure attempts and NO prior reviews,
+// so it lands in NEITHER review-pool slice (overdue material_fsrs_state, nor the
+// never-reviewed-failure-attempt stream). To put it in the pool we materialize a
+// fresh FSRS "new" card via ts-fsrs `createEmptyCard` (the SAME primitive
+// scheduleReview uses for a first review — we do NOT hand-roll FSRS) and persist
+// it via the single-owner upsertFsrsState. due_at = the empty card's due (== now
+// for a New card), so the promoted question is immediately due for its first
+// pass. The next /api/review/submit then drives normal scheduling from this row.
+export interface InitialFsrsState {
+  state: FsrsStateData;
+  dueAt: Date;
+}
+
+export function initialFsrsState(now: Date): InitialFsrsState {
+  const card = createEmptyCard(now);
+  return {
+    state: stateFromCard(card),
+    dueAt: card.due,
+  };
+}
+
 function cardFromState(s: FsrsStateData): Card {
   return {
     due: s.due,
