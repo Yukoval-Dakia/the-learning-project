@@ -13,11 +13,12 @@ export const RUNNABLE_ROUTES = new Set<JudgeKind>([
   'semantic',
   'steps',
   'unit_dimension',
+  // YUK-201 — holistic vision-aware judging (runMultimodalDirectJudge via invoker).
+  'multimodal_direct',
 ]);
 
 export const FUTURE_JUDGE_ROUTES = {
   rubric: 'future: rubric judge needs weighted criteria runner and score semantics',
-  multimodal_direct: 'future: multimodal answer judging needs image/audio inputs',
   ai_flexible: 'future: fallback LLM judge needs stronger audit and cost policy',
 } as const satisfies Record<string, string>;
 
@@ -151,6 +152,26 @@ export function resolveQuestionJudgeRoute(
   if (kind === 'derivation') {
     if (isPreferred(subjectProfile, 'steps')) return 'steps';
     return isPreferred(subjectProfile, 'semantic') ? 'semantic' : 'keyword';
+  }
+  // YUK-201 — gated auto-route to multimodal_direct (holistic vision judging).
+  // Placed AFTER the physics unit_dimension branch (above) and AFTER the
+  // derivation→steps branch (above) so steps@1 keeps math derivations and physics
+  // calc keeps unit_dimension. Additive — fires only when ALL hold:
+  //   - kind is non-choice (choices short-circuit to 'exact' earlier) and
+  //     non-derivation (handled above);
+  //   - the question carries prompt figures (q.image_refs?.length > 0);
+  //   - the profile declares multimodal_direct as a preferred route (wenyan/math
+  //     do NOT → unaffected; only physics opts in);
+  //   - there is NO step-rubric reference_solution (a rubric reference_solution
+  //     belongs to steps@1, never multimodal_direct).
+  // No profile opts in for a question without these conditions, so existing items
+  // (no figures, or no multimodal_direct preference) route exactly as before.
+  if (
+    (q.image_refs?.length ?? 0) > 0 &&
+    isPreferred(subjectProfile, 'multimodal_direct') &&
+    rubric?.reference_solution == null
+  ) {
+    return 'multimodal_direct';
   }
   if (kind === 'short_answer' || kind === 'reading' || kind === 'translation' || kind === 'essay') {
     return isPreferred(subjectProfile, 'semantic') ? 'semantic' : 'keyword';
