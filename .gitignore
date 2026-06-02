@@ -54,3 +54,6 @@ docs/preflight/*-vision-rejudge.json
 .ocx/
 .omo/
 .opencode/
+
+# External sample/tutorial clones dropped into the repo root — not project source
+getting-started-with-browserbase/
