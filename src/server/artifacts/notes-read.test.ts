@@ -1,14 +1,15 @@
-// YUK-203 P1 (ADR-0027) — notesForKnowledge label-read DB test.
+// YUK-203 P1 (ADR-0027) — notesForKnowledge + notesForItem label-read DB tests.
 //
-// Verifies the multi-note read by knowledge label: ordering (atomic → hub → long,
-// newest within type), exclusion of tool_quiz / archived / non-labeled notes, that
-// all labels surface, and the empty case.
+// notesForKnowledge: multi-note read by knowledge label — ordering (atomic → hub →
+// long, newest within type), exclusion of tool_quiz / archived / non-labeled notes,
+// all labels surface, empty case. notesForItem: a learning_item's referenced notes
+// (primary + label material), deduped (primary wins), with archived/non-note guards.
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { artifact, knowledge } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import { notesForKnowledge } from './notes-read';
+import { notesForItem, notesForKnowledge } from './notes-read';
 
 const A_BASE = {
   intent_source: 'test',
@@ -100,5 +101,53 @@ describe('notesForKnowledge', () => {
   it('returns [] for a node with no labeled notes', async () => {
     await seedKnowledge('k1');
     expect(await notesForKnowledge(testDb(), 'k1')).toEqual([]);
+  });
+});
+
+describe('notesForItem', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('returns the primary note (relation=primary) + label-matched material', async () => {
+    await seedNote('p1', 'note_hub', ['k1']);
+    await seedNote('mat', 'note_atomic', ['k1']);
+    await seedNote('other', 'note_atomic', ['k2']);
+
+    const notes = await notesForItem(testDb(), {
+      primary_artifact_id: 'p1',
+      knowledge_ids: ['k1'],
+    });
+    // primary first, then label material (atomic-first); 'other' (k2) excluded.
+    expect(notes.map((n) => n.id)).toEqual(['p1', 'mat']);
+    expect(notes.find((n) => n.id === 'p1')?.relation).toBe('primary');
+    expect(notes.find((n) => n.id === 'mat')?.relation).toBe('label');
+  });
+
+  it('dedupes a primary that is also a label match (primary wins)', async () => {
+    await seedNote('p1', 'note_atomic', ['k1']);
+    const notes = await notesForItem(testDb(), {
+      primary_artifact_id: 'p1',
+      knowledge_ids: ['k1'],
+    });
+    expect(notes.map((n) => n.id)).toEqual(['p1']);
+    expect(notes[0]?.relation).toBe('primary');
+  });
+
+  it('ignores a primary_artifact_id that is a non-note or archived', async () => {
+    await seedNote('quiz', 'tool_quiz', ['k1']);
+    await seedNote('arch', 'note_atomic', ['k2'], { archived: true });
+    expect(
+      await notesForItem(testDb(), { primary_artifact_id: 'quiz', knowledge_ids: [] }),
+    ).toEqual([]);
+    expect(
+      await notesForItem(testDb(), { primary_artifact_id: 'arch', knowledge_ids: [] }),
+    ).toEqual([]);
+  });
+
+  it('returns [] for an item with no primary and no labels', async () => {
+    expect(await notesForItem(testDb(), { primary_artifact_id: null, knowledge_ids: [] })).toEqual(
+      [],
+    );
   });
 });
