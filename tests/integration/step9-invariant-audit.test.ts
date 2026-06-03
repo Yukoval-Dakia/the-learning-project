@@ -174,6 +174,9 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
     //   - `embedded_check_generate`: writes `embedded_check_status` and
     //     mirrors the generated question ids back onto the `check` section
     //     after Judge v2 light's question contract is satisfied.
+    //   - YUK-203 P2 `src/server/boss/handlers/quiz_gen.ts`: writes the
+    //     standalone `tool_quiz` artifact that groups QuizGenTask draft
+    //     questions through `tool_state.question_ids[]`.
     //   - YUK-19 `src/server/proposals/actions.ts`: retracting a learning_intent
     //     proposal tombstones the paired artifact stubs alongside the materialized
     //     hub + atomic learning_items (archived_at + version+1 only — no semantic
@@ -200,6 +203,7 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
       'src/server/boss/handlers/note_generate.ts',
       'src/server/boss/handlers/note_verify.ts',
       'src/server/boss/handlers/embedded_check_generate.ts',
+      'src/server/boss/handlers/quiz_gen.ts',
       'src/server/proposals/actions.ts',
       'src/server/artifacts/sections.ts',
       'src/server/artifacts/body-blocks-edit.ts',

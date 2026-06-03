@@ -14,7 +14,7 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { knowledge, learning_item, question } from '@/db/schema';
+import { artifact, event, knowledge, learning_item, question } from '@/db/schema';
 import { TAVILY_MCP_ALLOWED_TOOLS, TAVILY_MCP_SERVER_NAME } from '@/server/ai/mcp/tavily';
 import { DOMAIN_TOOL_MCP_SERVER_NAME, toMcpAllowedToolName } from '@/server/ai/tools/allowlists';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -197,6 +197,7 @@ describe('runQuizGen', () => {
 
     expect(result.status).toBe('ready');
     expect(result.question_ids).toHaveLength(2);
+    expect(result.tool_quiz_artifact_id).toEqual(expect.any(String));
 
     const rows = await testDb().select().from(question).where(eq(question.source, 'quiz_gen'));
     expect(rows).toHaveLength(2);
@@ -232,6 +233,50 @@ describe('runQuizGen', () => {
     expect(meta?.source_pack).toMatchObject({ tool: 'tavily' });
     expect(Array.isArray(meta?.source_refs)).toBe(true);
     expect((meta?.source_refs as unknown[]).length).toBe(1);
+
+    // YUK-203 P2 — generated quizzes become a first-class question-set artifact.
+    const quizArtifacts = await testDb()
+      .select()
+      .from(artifact)
+      .where(eq(artifact.id, result.tool_quiz_artifact_id ?? ''));
+    expect(quizArtifacts).toHaveLength(1);
+    const quizArtifact = quizArtifacts[0];
+    expect(quizArtifact.type).toBe('tool_quiz');
+    expect(quizArtifact.title).toBe('之 组卷');
+    expect(quizArtifact.knowledge_ids).toEqual(['k1']);
+    expect(quizArtifact.intent_source).toBe('quiz_gen');
+    expect(quizArtifact.source).toBe('ai_generated');
+    expect(quizArtifact.source_ref).toBe('k1');
+    expect(quizArtifact.tool_kind).toBe('quiz_gen');
+    expect(quizArtifact.generation_status).toBe('ready');
+    expect(quizArtifact.verification_status).toBe('not_required');
+    expect(quizArtifact.generated_by).toMatchObject({
+      by: 'ai',
+      task_kind: 'QuizGenTask',
+      task_run_id: 'tr_1',
+    });
+    expect(quizArtifact.attrs).toMatchObject({
+      trigger: 'knowledge',
+      generation_method: 'search_grounded',
+    });
+    expect(quizArtifact.tool_state).toMatchObject({
+      question_ids: result.question_ids,
+      session_meta: {
+        trigger: 'knowledge',
+        ref_id: 'k1',
+        generation_method: 'search_grounded',
+      },
+    });
+
+    const quizEvents = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:quiz_gen'));
+    expect(quizEvents).toHaveLength(1);
+    expect(quizEvents[0].payload).toMatchObject({
+      question_ids: result.question_ids,
+      tool_quiz_artifact_id: result.tool_quiz_artifact_id,
+    });
 
     // quiz_verify enqueued with the new question ids.
     expect(enqueueQuizVerify).toHaveBeenCalledTimes(1);

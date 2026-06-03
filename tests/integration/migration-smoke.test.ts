@@ -120,14 +120,17 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
     const indexes = await db.execute<{ indexname: string; indexdef: string }>(sql`
       SELECT indexname, indexdef FROM pg_indexes
       WHERE schemaname = 'public'
-        AND tablename IN ('artifact_block_ref', 'event')
+        AND tablename IN ('artifact', 'artifact_block_ref', 'event')
         AND indexname IN (
+          'artifact_knowledge_ids_gin_idx',
           'artifact_block_ref_to_idx',
           'artifact_block_ref_unique',
           'event_referenced_knowledge_gin'
         )
     `);
     const byName = new Map(indexes.map((r) => [r.indexname, r.indexdef]));
+    expect(byName.get('artifact_knowledge_ids_gin_idx')).toMatch(/USING gin/i);
+    expect(byName.get('artifact_knowledge_ids_gin_idx')).toMatch(/jsonb_path_ops/i);
     expect(byName.get('artifact_block_ref_to_idx')).toMatch(/to_artifact_id/i);
     expect(byName.get('artifact_block_ref_unique')).toMatch(/COALESCE/i);
     expect(byName.get('event_referenced_knowledge_gin')).toMatch(/USING gin/i);
