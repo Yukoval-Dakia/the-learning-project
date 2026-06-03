@@ -412,34 +412,6 @@ export default function KnowledgePage() {
   const optionalDataError =
     edgesQ.error ?? proposalsQ.error ?? edgeProposalsQ.error ?? mistakesQ.error ?? reviewDueQ.error;
 
-  // Increments on each successful edge create; combined with selected.id it keys
-  // the per-node EdgeCreateForm so the form remounts (fresh rel/target/dir) on
-  // node switch (C1: stale state could otherwise submit a self-loop) and after a
-  // successful create (W1: reset + implicit success feedback).
-  const [edgeCreatedAt, setEdgeCreatedAt] = useState(0);
-  const createEdgeM = useMutation({
-    mutationFn: (vars: {
-      from_knowledge_id: string;
-      to_knowledge_id: string;
-      relation_type: RelationType;
-      reasoning?: string;
-    }) =>
-      apiJson('/api/knowledge/edges', {
-        method: 'POST',
-        body: JSON.stringify({
-          ...vars,
-          // created_by accepts the literal 'user' (per AgentRefLike on the
-          // server) or any non-empty agent ref string — not an object.
-          created_by: 'user',
-          reasoning: vars.reasoning ?? null,
-        }),
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['knowledge-edges'] });
-      setEdgeCreatedAt((n) => n + 1);
-    },
-  });
-
   return (
     <main className="knowledge-page knowledge-loom">
       {/* loom chrome — eyebrow / serif title / tree·graph seg / CTA / lead.
@@ -871,16 +843,14 @@ export default function KnowledgePage() {
               </div>
 
               {/* per-node edge-create form (slice-3c, OPTION B) — from = this node,
-                  relation chip-set + target select + directional dir-row. Submits
-                  through createEdgeM (no reasoning). */}
+                  relation chip-set + target select + directional dir-row. Owns its
+                  own createEdgeM mutation; keyed by node id so each node gets a
+                  fresh, isolated form (no cross-node request-state bleed). */}
               <div className="drawer-sec">
                 <EdgeCreateForm
-                  key={`${selected.id}:${edgeCreatedAt}`}
+                  key={selected.id}
                   node={selected}
                   others={nodes.filter((n) => n.id !== selected.id)}
-                  onSubmit={(vars) => createEdgeM.mutate(vars)}
-                  pending={createEdgeM.isPending}
-                  error={createEdgeM.error as Error | null}
                 />
               </div>
             </div>
@@ -1154,25 +1124,39 @@ function KnowledgeRelation({
 function EdgeCreateForm({
   node,
   others,
-  onSubmit,
-  pending,
-  error,
 }: {
   node: TreeNode;
   others: KnowledgeNode[];
-  onSubmit: (vars: {
-    from_knowledge_id: string;
-    to_knowledge_id: string;
-    relation_type: RelationType;
-  }) => void;
-  pending: boolean;
-  error: Error | null;
 }) {
+  // Mutation lives in the form (not the page) so request state — pending / error /
+  // post-success reset — is scoped to THIS per-node form instance and never bleeds
+  // into another node's drawer. The form is keyed by node id, so switching nodes
+  // mounts a fresh instance. Resolves the cross-node state-pollution review note.
+  const queryClient = useQueryClient();
   const [rel, setRel] = useState<RelationType>('related_to');
   const [target, setTarget] = useState<string>('');
   // dir true → from = node, to = target; dir false → swapped. Only meaningful
   // for directed relations (the .dir-row is gated on RELATION_TYPES[rel].directed).
   const [dir, setDir] = useState(true);
+  const createEdgeM = useMutation({
+    mutationFn: (vars: {
+      from_knowledge_id: string;
+      to_knowledge_id: string;
+      relation_type: RelationType;
+    }) =>
+      apiJson('/api/knowledge/edges', {
+        method: 'POST',
+        // created_by accepts the literal 'user' (AgentRefLike on the server).
+        body: JSON.stringify({ ...vars, created_by: 'user', reasoning: null }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['knowledge-edges'] });
+      // local reset doubles as success feedback, scoped to this node's form.
+      setTarget('');
+      setRel('related_to');
+      setDir(true);
+    },
+  });
   const sortedOthers = useMemo(
     () => [...others].sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN')),
     [others],
@@ -1219,9 +1203,9 @@ function EdgeCreateForm({
           <IconBtn icon="reverse" size={13} title="反向" onClick={() => setDir((d) => !d)} />
         </div>
       )}
-      {error && (
+      {createEdgeM.error && (
         <span className="meta" style={{ color: 'var(--coral)', marginTop: 'var(--s-2)' }}>
-          创建失败：{error.message}
+          创建失败：{(createEdgeM.error as Error).message}
         </span>
       )}
       <Btn
@@ -1229,10 +1213,10 @@ function EdgeCreateForm({
         size="sm"
         icon="plus"
         block
-        disabled={!target || pending}
+        disabled={!target || createEdgeM.isPending}
         style={{ marginTop: 'var(--s-3)' }}
         onClick={() =>
-          onSubmit({
+          createEdgeM.mutate({
             from_knowledge_id: dir ? node.id : target,
             to_knowledge_id: dir ? target : node.id,
             relation_type: rel,
