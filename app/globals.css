@@ -6668,6 +6668,12 @@ button.seg-sm {
   display: none;
 }
 @media (max-width: 720px) {
+  /* The mobile tab bar is fixed to the viewport bottom; reserve room so the last
+     screen of content (long lists, forms, footer CTAs) isn't hidden behind it. */
+  .main {
+    padding-bottom: calc(60px + env(safe-area-inset-bottom));
+    scroll-padding-bottom: calc(60px + env(safe-area-inset-bottom));
+  }
   .mobile-tabbar {
     display: grid;
     grid-auto-flow: column;
