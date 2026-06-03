@@ -48,6 +48,21 @@ export interface BacklinkRow {
   ref_kind: string;
 }
 
+export interface BacklinksByArtifactType<T extends { from_type: string }> {
+  [from_type: string]: T[];
+}
+
+export function groupBacklinksByArtifactType<T extends { from_type: string }>(
+  rows: T[],
+): BacklinksByArtifactType<T> {
+  const grouped: BacklinksByArtifactType<T> = {};
+  for (const row of rows) {
+    grouped[row.from_type] = grouped[row.from_type] ?? [];
+    grouped[row.from_type].push(row);
+  }
+  return grouped;
+}
+
 function recordOrEmpty(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
