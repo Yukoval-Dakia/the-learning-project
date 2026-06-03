@@ -1,14 +1,27 @@
 'use client';
 
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
+// Loom primitives — chrome / banner / states / tree row (redraw slice 3, YUK-169).
+import { Badge } from '@/ui/primitives/Badge';
+import { Btn } from '@/ui/primitives/Btn';
+// Legacy primitives — still consumed by the slice-3b territory (NodeDrawer /
+// graph / edge-create / edge-proposal cards). Removed from the rewritten
+// chrome/banner/tree blocks only; slice-3b migrates the rest.
 import { Button } from '@/ui/primitives/Button';
 import { Card } from '@/ui/primitives/Card';
+import { EmptyState } from '@/ui/primitives/EmptyState';
+import { ErrorState } from '@/ui/primitives/ErrorState';
 import { Icon } from '@/ui/primitives/Icon';
+import { LoomCard } from '@/ui/primitives/LoomCard';
+import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { MasteryBadge, type MasteryData } from '@/ui/primitives/MasteryBadge';
-import { PageHeader } from '@/ui/primitives/PageHeader';
+import { Ring } from '@/ui/primitives/Ring';
+import { SkLines } from '@/ui/primitives/SkLines';
+import { Stateful } from '@/ui/primitives/Stateful';
 import { type SuggestionKind, SuggestionKindTag } from '@/ui/primitives/SuggestionKindTag';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import dynamic from 'next/dynamic';
+import { useRouter } from 'next/navigation';
 import { useCallback, useMemo, useState } from 'react';
 
 // cytoscape touches window/document, so the graph primitive must never run
@@ -136,6 +149,7 @@ const RELATION_ORDER = Object.keys(RELATION_TYPES);
 
 export default function KnowledgePage() {
   const queryClient = useQueryClient();
+  const router = useRouter();
   const [view, setView] = useState<'tree' | 'graph'>('tree');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [edgeProposalStatus, setEdgeProposalStatus] = useState<Record<string, ProposalDecision>>(
@@ -402,37 +416,49 @@ export default function KnowledgePage() {
   const [showEdgeCreate, setShowEdgeCreate] = useState(false);
 
   return (
-    <main className="knowledge-page">
-      <PageHeader
-        eyebrow={`KNOWLEDGE · ${nodes.length} nodes · ${edges.length} edges (mesh)`}
-        title="知识"
-        sub="树是骨架，mesh 是肌肉。点节点 → 右侧抽屉看关系 + 活动 + AI 提议。"
-      >
-        <div className="kg-toggle" aria-label="知识视图切换">
-          <button
-            type="button"
-            className={view === 'tree' ? 'is-on' : ''}
-            onClick={() => setView('tree')}
-          >
-            树
-          </button>
-          <button
-            type="button"
-            className={view === 'graph' ? 'is-on' : ''}
-            onClick={() => setView('graph')}
-          >
-            Graph
-          </button>
+    <main className="knowledge-page knowledge-loom">
+      {/* loom chrome — eyebrow / serif title / tree·graph seg / CTA / lead.
+          Scoped under .knowledge-loom so the loom .page-head / .eyebrow /
+          .page-title / .seg rules apply without touching the legacy globals
+          (pre-flight §5). */}
+      <div className="page-head">
+        <div className="eyebrow">
+          KNOWLEDGE · {nodes.length} nodes · {edges.length} edges (mesh)
         </div>
-        <Button
-          variant="primary"
-          icon="plus"
-          onClick={() => setShowEdgeCreate((v) => !v)}
-          className="knowledge-btn-primary"
-        >
-          {showEdgeCreate ? '取消' : '新建关系'}
-        </Button>
-      </PageHeader>
+        <div className="page-head-row">
+          <h1 className="page-title serif">知识</h1>
+          <div className="hero-cta">
+            <div className="seg" aria-label="知识视图切换">
+              <button
+                type="button"
+                aria-pressed={view === 'tree'}
+                className={view === 'tree' ? 'on' : ''}
+                onClick={() => setView('tree')}
+              >
+                <LoomIcon name="tree" size={15} />树
+              </button>
+              <button
+                type="button"
+                aria-pressed={view === 'graph'}
+                className={view === 'graph' ? 'on' : ''}
+                onClick={() => setView('graph')}
+              >
+                <LoomIcon name="graph" size={15} />
+                Graph
+              </button>
+            </div>
+            {/* CTA keeps its real behaviour (toggle edge-create form, slice-3b
+                territory) — loom-ified to Btn, real label, no fake「新建节点」
+                wiring (pre-flight §4). */}
+            <Btn variant="primary" icon="plus" onClick={() => setShowEdgeCreate((v) => !v)}>
+              {showEdgeCreate ? '取消' : '新建关系'}
+            </Btn>
+          </div>
+        </div>
+        <p className="page-lead">
+          树是骨架（parent/child），mesh 是 5 类 typed 关系。点节点看详情抽屉；图可平移缩放。
+        </p>
+      </div>
 
       {showEdgeCreate && (
         <Card pad="lg" style={{ marginBottom: 'var(--s-4)' }}>
@@ -445,100 +471,166 @@ export default function KnowledgePage() {
         </Card>
       )}
 
-      {knowledgeQ.error && <LoadError error={knowledgeQ.error} />}
+      {/* hard error — knowledge list itself failed (ApiAuthError-aware). The
+          loom ErrorState replaces the legacy LoadError Card. */}
+      {knowledgeQ.error && (
+        <ErrorState
+          text={
+            knowledgeQ.error instanceof ApiAuthError
+              ? `${knowledgeQ.error.message} — 请重新进入页面输入 token`
+              : `知识图加载失败：${(knowledgeQ.error as Error).message}`
+          }
+          onRetry={() => knowledgeQ.refetch()}
+        />
+      )}
 
+      {/* optional-data degradation — tree loaded but mesh / proposals / activity
+          are unavailable. Compact loom ErrorState, ApiAuthError-aware. */}
       {knowledgeQ.isSuccess && optionalDataError && (
-        <Card pad="lg" style={{ marginBottom: 'var(--s-4)' }}>
-          <p className="knowledge-empty-text">
-            tree 已加载；mesh / AI 提议 / 活动数据暂时不可用：{(optionalDataError as Error).message}
-          </p>
-        </Card>
+        <ErrorState
+          compact
+          text={
+            optionalDataError instanceof ApiAuthError
+              ? `tree 已加载；mesh / AI 提议 / 活动数据需要重新输入 token：${optionalDataError.message}`
+              : `tree 已加载；mesh / AI 提议 / 活动数据暂时不可用：${(optionalDataError as Error).message}`
+          }
+        />
       )}
 
+      {/* AI relation-proposals banner — loom sunk LoomCard, routes to /inbox for
+          central review (pre-flight: legacy opened a drawer, loom → /inbox). */}
       {pendingEdgeProposals.length > 0 && (
-        <div className="quality-strip knowledge-proposal-strip">
-          <Icon name="link" size={20} />
-          <div className="qtxt">
-            <h5>AI 提议了 {pendingEdgeProposals.length} 条新关系</h5>
-            <p>来自 Dreaming / Maintenance。节点选中后可在右侧抽屉里接受、改方向、改关系或忽略。</p>
+        <LoomCard
+          pad
+          sunk
+          style={{
+            marginBottom: 'var(--s-5)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 'var(--s-4)',
+            flexWrap: 'wrap',
+            borderColor: 'var(--coral-line)',
+          }}
+        >
+          <span className="card-icon accent">
+            <LoomIcon name="link" size={18} />
+          </span>
+          <div style={{ flex: 1, minWidth: 180 }}>
+            <div style={{ fontWeight: 500 }}>AI 提议了 {pendingEdgeProposals.length} 条新关系</div>
+            <div className="meta">
+              来自 Dreaming / Maintenance · 在收件箱集中接受 / 改方向 / 改关系 / 忽略
+            </div>
           </div>
-          <div className="rescue">
-            <Button
-              variant="primary"
-              size="sm"
-              iconRight="arrowR"
-              className="knowledge-btn-primary"
-              onClick={() => {
-                // Jump to the first node with pending edge proposals and open
-                // its drawer; user can step through subsequent nodes manually.
-                const firstId = edgeProposalsByNode.keys().next().value ?? null;
-                if (firstId) setSelectedId(firstId);
-              }}
-            >
-              集中审批
-            </Button>
-          </div>
-        </div>
+          <Btn variant="secondary" size="sm" iconEnd="arrow" onClick={() => router.push('/inbox')}>
+            集中审批
+          </Btn>
+        </LoomCard>
       )}
 
-      {knowledgeQ.isLoading && (
-        <Card pad="lg">
-          <p className="knowledge-empty-text">正在加载知识网...</p>
-        </Card>
-      )}
-
-      {knowledgeQ.isSuccess && roots.length === 0 && (
-        <Card pad="lg">
-          <p className="knowledge-empty-text">还没有知识节点。AI 会在归因 / 提议时自动生成。</p>
-        </Card>
-      )}
-
-      {knowledgeQ.isSuccess && roots.length > 0 && view === 'tree' && (
-        <section className="knowledge-tree" aria-label="知识树">
-          {flattened.map((node) => {
-            const nodeMistakes = mistakeCounts.get(node.id) ?? 0;
-            const activityCount =
-              nodeMistakes +
-              (proposalsByParent.get(node.id)?.length ?? 0) +
-              (edgeProposalsByNode.get(node.id)?.length ?? 0) +
-              (edgeCountByNode.get(node.id) ?? 0);
-            const hasProposal =
-              (proposalsByParent.get(node.id)?.length ?? 0) > 0 ||
-              (edgeProposalsByNode.get(node.id)?.length ?? 0) > 0;
-
-            return (
-              <button
-                key={node.id}
-                type="button"
-                className={[
-                  'tree-node',
-                  hasProposal ? 'has-proposal' : '',
-                  node.id === selectedId ? 'is-selected' : '',
-                ]
-                  .join(' ')
-                  .trim()}
-                data-depth={Math.min(node.depth, 4)}
-                onClick={() => setSelectedId(node.id)}
-              >
-                <div className="name">
-                  <span className="indent" />
-                  {node.depth > 0 && <span className="tree-hook">↳</span>}
-                  <span className="tree-title">{node.name}</span>
-                  <code>{node.id}</code>
-                </div>
-                <div className="activity">
-                  {node.effective_domain && <span>{node.effective_domain}</span>}
-                  {nodeMistakes > 0 && <span>{nodeMistakes} 错</span>}
-                  {activityCount > 0 && <span>{activityCount} 事件</span>}
-                  {(edgeProposalsByNode.get(node.id)?.length ?? 0) > 0 && (
-                    <span className="mini-badge">新关系</span>
+      {/* tree view — loom .know-node rows inside Stateful (loading / empty /
+          error / ok). The graph branch is rendered as a sibling below and keeps
+          cytoscape untouched (slice-3b). */}
+      {/* Hard error is owned by the top-level ErrorState above; gate the tree
+          Stateful out of the error case so it doesn't stack a second error. */}
+      {view === 'tree' && !knowledgeQ.error && (
+        <Stateful
+          status={
+            knowledgeQ.isLoading
+              ? 'loading'
+              : knowledgeQ.isSuccess && roots.length === 0
+                ? 'empty'
+                : 'ok'
+          }
+          skeleton={
+            <LoomCard pad>
+              <SkLines rows={5} />
+            </LoomCard>
+          }
+          empty={
+            <EmptyState
+              icon="knowledge"
+              title="知识网为空"
+              text="录入材料后，AI 会从中抽取节点并提议关系。"
+            />
+          }
+        >
+          <LoomCard>
+            {flattened.map((node) => {
+              const nodeMistakes = mistakeCounts.get(node.id) ?? 0;
+              const meshCount = edgeCountByNode.get(node.id) ?? 0;
+              // Mastery evidence-guard (pre-flight §4 / mirrors MasteryBadge):
+              // a ring % is misleading below 3 evidence, so render a muted
+              // neutral indicator instead of a colored ring; 0 evidence is the
+              // untrained state. Only ≥3 evidence shows the real Ring.
+              const masteryPct = Math.round((node.mastery ?? 0) * 100);
+              const lowEvidence = node.evidence_count < 3;
+              return (
+                <button
+                  key={node.id}
+                  type="button"
+                  className="know-node"
+                  style={{
+                    paddingLeft: `calc(var(--s-5) + ${node.depth * 22}px)`,
+                    width: '100%',
+                    textAlign: 'left',
+                    border: 0,
+                    background: 'transparent',
+                  }}
+                  onClick={() => setSelectedId(node.id)}
+                >
+                  {node.depth > 0 && <span className="know-twig">└</span>}
+                  {lowEvidence ? (
+                    <span
+                      className="mastery mastery-low-evidence"
+                      title={
+                        node.evidence_count === 0
+                          ? 'evidence_count=0 · 尚无 attempt / review event'
+                          : `evidence_count<3 · 暂不展示稳定掌握度 · n=${node.evidence_count}`
+                      }
+                      style={{ flex: 'none' }}
+                    >
+                      <LoomIcon name="target" size={12} />
+                      {node.evidence_count === 0 ? '未练习' : `n=${node.evidence_count}`}
+                    </span>
+                  ) : (
+                    // Ring primitive is fixed 84px; scale the wrapper to ~30px
+                    // to fit the compact tree row (loom MasteryRing size=30).
+                    <span
+                      style={{
+                        flex: 'none',
+                        width: 30,
+                        height: 30,
+                        display: 'inline-flex',
+                      }}
+                    >
+                      <span
+                        style={{
+                          transform: 'scale(0.357)',
+                          transformOrigin: 'top left',
+                        }}
+                      >
+                        <Ring percent={masteryPct} />
+                      </span>
+                    </span>
                   )}
-                </div>
-                <div className="actions">→</div>
-              </button>
-            );
-          })}
-        </section>
+                  <span className="know-title wenyan">{node.name}</span>
+                  <span className="chip chip-k mono">{node.id.slice(0, 8)}</span>
+                  <div className="know-end">
+                    <span className="meta mono">{node.evidence_count} ev</span>
+                    {nodeMistakes > 0 && <Badge tone="again">{nodeMistakes} 错</Badge>}
+                    {meshCount > 0 && (
+                      <Badge tone="info">
+                        <LoomIcon name="link" size={11} />
+                        {meshCount}
+                      </Badge>
+                    )}
+                    <LoomIcon name="arrow" size={15} className="thread-arrow" />
+                  </div>
+                </button>
+              );
+            })}
+          </LoomCard>
+        </Stateful>
       )}
 
       {knowledgeQ.isSuccess && roots.length > 0 && view === 'graph' && (
@@ -716,18 +808,6 @@ export default function KnowledgePage() {
         </aside>
       )}
     </main>
-  );
-}
-
-function LoadError({ error }: { error: unknown }) {
-  return (
-    <Card pad="lg" style={{ marginBottom: 'var(--s-4)' }}>
-      <p className="knowledge-error-text">
-        {error instanceof ApiAuthError
-          ? `${error.message} — 请重新进入页面输入 token`
-          : `加载失败：${(error as Error).message}`}
-      </p>
-    </Card>
   );
 }
 
