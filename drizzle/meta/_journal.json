@@ -183,6 +183,13 @@
       "when": 1780419877893,
       "tag": "0025_easy_masked_marvel",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1780502400000,
+      "tag": "0026_artifact_knowledge_ids_gin",
+      "breakpoints": true
     }
   ]
 }

@@ -33,7 +33,7 @@ import {
   type QuizGenQuestionT,
 } from '@/core/schema/quiz_gen';
 import type { Db } from '@/db/client';
-import { knowledge, learning_item, question } from '@/db/schema';
+import { artifact, knowledge, learning_item, question } from '@/db/schema';
 import { RUNNABLE_ROUTES } from '@/server/ai/judges/question-contract';
 import {
   TAVILY_MCP_ALLOWED_TOOLS,
@@ -186,6 +186,7 @@ export type RunQuizGenStatus = 'ready' | 'skipped:ref_not_found';
 export interface RunQuizGenResult {
   status: RunQuizGenStatus;
   question_ids?: string[];
+  tool_quiz_artifact_id?: string;
 }
 
 interface ResolvedTrigger {
@@ -339,12 +340,17 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     };
 
     const questionIds: string[] = [];
+    const quizKnowledgeIds = new Set<string>();
+    const toolQuizArtifactId = createId();
     const now = new Date();
     await db.transaction(async (tx) => {
       for (const q of parsed.questions) {
         const id = createId();
         const judgeKind = defaultJudgeKindForQuestion(q);
         const questionKnowledgeIds = resolveQuestionKnowledgeIds(q);
+        for (const kid of questionKnowledgeIds) {
+          quizKnowledgeIds.add(kid);
+        }
         // §2 — metadata.quiz_gen: the agent self-reports source_pack + per-run
         // copy_safety; we fold the per-question source_refs into the row's
         // metadata so each draft carries its own provenance.
@@ -389,6 +395,40 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
         });
         questionIds.push(id);
       }
+
+      await tx.insert(artifact).values({
+        id: toolQuizArtifactId,
+        type: 'tool_quiz',
+        title: resolved.title ? `${resolved.title} 组卷` : '自定义组卷',
+        parent_artifact_id: null,
+        knowledge_ids: [...quizKnowledgeIds],
+        intent_source: 'quiz_gen',
+        source: 'ai_generated',
+        source_ref: resolved.refId,
+        body_blocks: null,
+        attrs: {
+          trigger,
+          generation_method: parsed.generation_method,
+          source_pack: parsed.source_pack,
+        } as never,
+        tool_kind: 'quiz_gen',
+        tool_state: {
+          question_ids: questionIds,
+          session_meta: {
+            trigger,
+            ref_id: resolved.refId,
+            generation_method: parsed.generation_method,
+            tool_context_task_run_id: toolContextTaskRunId,
+          },
+        } as never,
+        generation_status: 'ready',
+        verification_status: 'not_required',
+        generated_by: aiAgentRef('QuizGenTask', result) as never,
+        history: [],
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      });
     });
 
     await writeEvent(db, {
@@ -404,6 +444,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
         trigger,
         ref_id: resolved.refId,
         question_ids: questionIds,
+        tool_quiz_artifact_id: toolQuizArtifactId,
         count: questionIds.length,
         generation_method: parsed.generation_method,
         tool_context_task_run_id: toolContextTaskRunId,
@@ -431,7 +472,11 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
       );
     }
 
-    return { status: 'ready', question_ids: questionIds };
+    return {
+      status: 'ready',
+      question_ids: questionIds,
+      tool_quiz_artifact_id: toolQuizArtifactId,
+    };
   } catch (err) {
     try {
       await writeEvent(db, {
