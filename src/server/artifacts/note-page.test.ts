@@ -49,6 +49,7 @@ async function seedNote(
     verificationStatus?: string;
     verificationSummary?: unknown;
     genStatus?: string;
+    bodyBlocks?: unknown;
   } = {},
 ): Promise<void> {
   const now = new Date();
@@ -59,6 +60,7 @@ async function seedNote(
       type,
       title: `${type}-${id}`,
       knowledge_ids: knowledgeIds,
+      body_blocks: opts.bodyBlocks as never,
       generation_status: opts.genStatus ?? 'ready',
       verification_status: opts.verificationStatus ?? 'not_required',
       verification_summary: (opts.verificationSummary ?? null) as never,
@@ -124,12 +126,29 @@ describe('loadNotePage', () => {
     expect(await loadNotePage(db, 'quiz')).toBeNull();
   });
 
-  it('aggregates labels (resolved names), version, and history', async () => {
+  it('aggregates labels, sections, subject profile, version, and history', async () => {
     const db = testDb();
     await seedKnowledge('k1', '之');
     await seedKnowledge('k2', '其');
     await seedKnowledge('kArch', 'archived-node', { archived: true });
     await seedNote('n1', 'note_long', ['k1', 'k2', 'kArch'], {
+      bodyBlocks: {
+        type: 'doc',
+        content: [
+          {
+            type: 'semanticBlock',
+            attrs: {
+              id: 's1',
+              semantic_kind: 'definition',
+              source_tier: 'user_verified',
+              user_verified: true,
+              version: 0,
+              source_markdown: '「之」常见作结构助词。',
+            },
+            content: [],
+          },
+        ],
+      },
       version: 2,
       history: [
         { version: 1, at: new Date('2026-05-01T00:00:00.000Z') },
@@ -146,6 +165,10 @@ describe('loadNotePage', () => {
     // archived knowledge label dropped from the resolved names.
     expect(page?.labels.map((l) => l.id).sort()).toEqual(['k1', 'k2']);
     expect(page?.labels.find((l) => l.id === 'k1')?.name).toBe('之');
+    expect(page?.sections.map((s) => [s.id, s.kind, s.body_md])).toEqual([
+      ['s1', 'definition', '「之」常见作结构助词。'],
+    ]);
+    expect(page?.subject_profile.id).toBe('wenyan');
     expect(page?.version).toBe(2);
     expect(page?.history.map((h) => h.version)).toEqual([1, 2]);
     expect(page?.verification_status).toBe('pass');
@@ -163,6 +186,30 @@ describe('loadNotePage', () => {
 
     const page = await loadNotePage(db, 'n1');
     expect(page?.backlinks.map((b) => b.from_artifact_id)).toEqual(['src']);
+    expect(page?.backlinks_by_type.note_hub.map((b) => b.from_artifact_id)).toEqual(['src']);
+  });
+
+  it('groups inbound backlinks by source artifact type', async () => {
+    const db = testDb();
+    await seedNote('n1', 'note_atomic', ['k1']);
+    await seedNote('srcAtomic', 'note_atomic', ['k2']);
+    await seedNote('srcLong', 'note_long', ['k3']);
+    await seedNote('srcQuiz', 'tool_quiz', []);
+    await seedCrossLink('srcAtomic', 'n1', 'b1');
+    await seedCrossLink('srcLong', 'n1', 'b2');
+    await seedCrossLink('srcQuiz', 'n1', 'b3');
+
+    const page = await loadNotePage(db, 'n1');
+    expect(Object.keys(page?.backlinks_by_type ?? {}).sort()).toEqual([
+      'note_atomic',
+      'note_long',
+      'tool_quiz',
+    ]);
+    expect(page?.backlinks_by_type.note_atomic.map((b) => b.from_artifact_id)).toEqual([
+      'srcAtomic',
+    ]);
+    expect(page?.backlinks_by_type.note_long.map((b) => b.from_artifact_id)).toEqual(['srcLong']);
+    expect(page?.backlinks_by_type.tool_quiz.map((b) => b.from_artifact_id)).toEqual(['srcQuiz']);
   });
 
   it('relates learning_items by primary + label, deduped (primary wins)', async () => {

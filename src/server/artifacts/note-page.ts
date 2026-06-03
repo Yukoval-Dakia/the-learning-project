@@ -18,13 +18,22 @@ import type {
 } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, knowledge, learning_item, question } from '@/db/schema';
-import { listBacklinks, resolveOwningLearningItemIds } from '@/server/artifacts/block-refs';
+import {
+  type BacklinksByArtifactType,
+  groupBacklinksByArtifactType,
+  listBacklinks,
+  resolveOwningLearningItemIds,
+} from '@/server/artifacts/block-refs';
 import { bodyBlocksToNoteSections } from '@/server/artifacts/body-blocks';
 import { getArtifactCorrectionStates } from '@/server/events/artifact-corrections';
+import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject-profile';
+import { type SlimSubjectProfile, toSlimSubjectProfile } from '@/subjects/profile';
 
 const CROSS_LINK_REF_KIND = 'cross_link';
 const NOTE_TYPES = ['note_atomic', 'note_hub', 'note_long'] as const;
 const RELATED_ITEMS_LIMIT = 30;
+
+export type NotePageSection = ReturnType<typeof bodyBlocksToNoteSections>[number];
 
 export interface NotePageLabel {
   id: string;
@@ -64,14 +73,17 @@ export interface NotePage {
   // resolved non-archived label names (archived/missing knowledge dropped).
   labels: NotePageLabel[];
   body_blocks: ArtifactBodyBlocksT | null;
+  sections: NotePageSection[];
   generation_status: string;
   verification_status: string;
   verification_summary: NoteVerificationResultT | null;
   embedded_check_status: string;
   embedded_questions: NotePageEmbeddedQuestion[];
+  subject_profile: SlimSubjectProfile;
   version: number;
   history: ArtifactHistoryEntryT[];
   backlinks: NotePageBacklink[];
+  backlinks_by_type: BacklinksByArtifactType<NotePageBacklink>;
   related_learning_items: NotePageRelatedItem[];
   created_at: string;
   updated_at: string;
@@ -153,6 +165,7 @@ export async function loadNotePage(db: Db, noteId: string): Promise<NotePage | n
   // 5. related learning_items — items referencing this note as primary + items
   // sharing ≥1 knowledge label (study material). Deduped, primary wins.
   const related = await loadRelatedLearningItems(db, noteId, knowledgeIds);
+  const profile = await resolveSubjectProfileForKnowledgeIds(db, knowledgeIds);
 
   return {
     id: note.id,
@@ -161,14 +174,17 @@ export async function loadNotePage(db: Db, noteId: string): Promise<NotePage | n
     knowledge_ids: knowledgeIds,
     labels,
     body_blocks: note.body_blocks,
+    sections,
     generation_status: note.generation_status,
     verification_status: note.verification_status,
     verification_summary: note.verification_summary,
     embedded_check_status: note.embedded_check_status,
     embedded_questions: embeddedQuestions,
+    subject_profile: toSlimSubjectProfile(profile),
     version: note.version,
     history: note.history ?? [],
     backlinks,
+    backlinks_by_type: groupBacklinksByArtifactType(backlinks),
     related_learning_items: related,
     created_at: note.created_at.toISOString(),
     updated_at: note.updated_at.toISOString(),

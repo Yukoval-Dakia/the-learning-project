@@ -239,6 +239,19 @@
   --cap-app: 960px;
   --cap-wide: 1200px;
 
+  /* ── Loom app-shell layout vars (ported from loom-prototype/loom.css
+     §App shell) — not part of the @theme token layer because they are
+     pure layout geometry, not design tokens consumed via Tailwind. ──── */
+  --rail-w: 240px;
+  --rail-w-collapsed: 76px;
+  --scrim: rgba(40, 33, 22, 0.34);
+  /* app-shell prefers a slightly wider working canvas than --cap-wide */
+  --cap-shell: 1240px;
+  /* informational hairline — not in the canonical token layer; the
+     existing .note-entry-banner already references var(--info-line, …)
+     with a fallback, this promotes it to a real token. */
+  --info-line: #bacbdc;
+
   /* Tell the UA which color schemes are supported so native UI (scrollbars,
      form controls) follows the active theme rather than fighting it. */
   color-scheme: light dark;
@@ -319,6 +332,10 @@
     --shadow-3: 0 2px 0 rgba(0, 0, 0, 0.4), 0 12px 32px -8px rgba(0, 0, 0, 0.7);
     --shadow-focus: 0 0 0 3px rgba(232, 149, 114, 0.32);
     --shadow-inset: inset 0 1px 0 rgba(255, 245, 225, 0.04);
+
+    /* Loom shell scrim + info-line, dark mirror (see :root light defaults). */
+    --scrim: rgba(0, 0, 0, 0.55);
+    --info-line: #324252;
   }
 }
 
@@ -374,6 +391,10 @@
   --shadow-3: 0 2px 0 rgba(0, 0, 0, 0.4), 0 12px 32px -8px rgba(0, 0, 0, 0.7);
   --shadow-focus: 0 0 0 3px rgba(232, 149, 114, 0.32);
   --shadow-inset: inset 0 1px 0 rgba(255, 245, 225, 0.04);
+
+  /* Loom shell scrim + info-line, dark mirror (see :root light defaults). */
+  --scrim: rgba(0, 0, 0, 0.55);
+  --info-line: #324252;
 }
 
 /* Smooth swap when the user clicks the toggle. ~200ms keeps it gentle
@@ -5804,5 +5825,1498 @@ progress {
       );
     opacity: 0.48;
     mix-blend-mode: screen;
+  }
+}
+/* ============================================================
+   LOOM CLASS LAYER — Redraw Slice 1 (YUK-169 / YUK-203 P5)
+   Ported verbatim from docs/design/loom-prototype/loom.css
+   + note-reader.css. Raw CSS, OUTSIDE the @theme block.
+
+   Reconciliation notes (this file is an existing 6600-line port
+   of a DIFFERENT design version, loom-design-v2.1, that already
+   ships many same-named classes used by ~40 legacy surfaces):
+     - dark mode reuses the existing :root[data-theme="dark"]
+       + @media(prefers-color-scheme) mechanism; NO competing
+       [data-theme="dark"] mirror is introduced here.
+     - bare .page / .seg / .kpi / .section-label / .page-head-row
+       already exist with the project's tuned values and are
+       consumed by legacy surfaces, so they are NOT redefined here
+       (would cascade-override and break unredrawn surfaces).
+     - .mono / .meta / .wenyan utilities already exist → skipped.
+     - note-reader .note-entry-banner / .note-doc-meta collide with
+       the legacy note page's classes → scoped under .note-reader-page
+       so only the new loom NoteReader picks up the coral treatment;
+       legacy .note-reader-real page keeps its existing styling.
+   ============================================================ */
+
+/* ── Typeface utilities (loom.css L81-85; .mono/.meta/.wenyan
+   already defined above → only .serif/.tnum added) ────────────── */
+.serif {
+  font-family: var(--font-serif);
+  font-weight: 500;
+  letter-spacing: var(--ls-tight);
+}
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============================================================
+   App shell (loom.css L87-172)
+   ============================================================ */
+.app {
+  display: grid;
+  grid-template-columns: var(--rail-w) 1fr;
+  min-height: 100%;
+}
+.app.rail-collapsed {
+  grid-template-columns: var(--rail-w-collapsed) 1fr;
+}
+
+.sidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper-sunk);
+  border-right: 1px solid var(--line);
+  padding: var(--s-5) var(--s-4);
+  z-index: 30;
+  transition: background var(--dur-slow) var(--ease-soft);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  border: 0;
+  background: transparent;
+  padding: var(--s-2);
+  color: var(--ink);
+  border-radius: var(--r-2);
+  width: 100%;
+  text-align: left;
+}
+.brand-mark {
+  color: var(--coral);
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+.brand-name {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h3);
+  font-weight: 500;
+  letter-spacing: var(--ls-tight);
+}
+.brand-sub {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+}
+.rail-collapsed .brand-name,
+.rail-collapsed .brand-sub,
+.rail-collapsed .nav-label,
+.rail-collapsed .nav-section-label,
+.rail-collapsed .sidebar-foot-full {
+  display: none;
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: var(--s-6);
+  overflow-y: auto;
+}
+.nav-section-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: var(--ls-wide);
+  color: var(--ink-4);
+  padding: var(--s-4) var(--s-3) var(--s-2);
+}
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  border-radius: var(--r-2);
+  width: 100%;
+  text-align: left;
+  font-size: var(--fs-body);
+  position: relative;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.rail-collapsed .nav-item {
+  justify-content: center;
+  padding: var(--s-3);
+}
+.nav-item .ico {
+  color: var(--ink-4);
+  flex: none;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.nav-item .nav-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nav-item:hover {
+  background: var(--paper-tint);
+  color: var(--ink);
+}
+.nav-item:hover .ico {
+  color: var(--ink-2);
+}
+.nav-item.is-active {
+  background: var(--coral-soft);
+  color: var(--coral-ink);
+  font-weight: 500;
+}
+.nav-item.is-active .ico {
+  color: var(--coral);
+}
+.nav-item .nav-count {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-4);
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.nav-item.is-active .nav-count {
+  color: var(--coral-ink);
+  border-color: var(--coral-line);
+}
+.rail-collapsed .nav-item .nav-count {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  min-width: 16px;
+  height: 16px;
+  font-size: 10px;
+  padding: 0 3px;
+  margin: 0;
+}
+
+.sidebar-foot {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding-top: var(--s-4);
+}
+.sidebar-foot-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.rail-collapsed .sidebar-foot-row {
+  flex-direction: column;
+}
+.profile-mini {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-2);
+  border-radius: var(--r-2);
+  min-width: 0;
+  flex: 1;
+}
+.profile-mini:hover {
+  background: var(--paper-tint);
+}
+.avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--r-pill);
+  background: linear-gradient(140deg, var(--coral), var(--coral-press));
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-serif);
+  font-size: 14px;
+  flex: none;
+}
+.profile-mini .pm-name {
+  font-size: var(--fs-caption);
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.profile-mini .pm-sub {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-4);
+}
+
+.icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  color: var(--ink-3);
+  border-radius: var(--r-2);
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.icon-btn:hover {
+  color: var(--ink);
+  border-color: var(--line-strong);
+  background: var(--paper-tint);
+}
+.icon-btn:active {
+  transform: scale(0.94);
+}
+
+.main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  padding: var(--s-3) var(--s-6);
+  background: color-mix(in srgb, var(--paper) 84%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--line);
+}
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+  min-width: 0;
+}
+.crumbs b {
+  color: var(--ink-2);
+  font-weight: 500;
+}
+.crumbs .sep {
+  color: var(--ink-5);
+}
+.topbar-spacer {
+  flex: 1;
+}
+.menu-btn {
+  display: none;
+}
+/* rail-collapse toggle — desktop only; the mobile sidebar uses .menu-btn
+   instead (loom app.jsx hid this inline below 720px). */
+.rail-toggle {
+  display: inline-grid;
+}
+/* The shell drives Copilot via TodayCopilotDrawer's hidden trigger button;
+   only the in-flow trigger is hidden — the drawer renders fixed at root. */
+.shell-copilot-mount > [data-testid="copilot-drawer-trigger"] {
+  display: none;
+}
+.searchbox {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  height: 34px;
+  padding: 0 var(--s-3);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  color: var(--ink-4);
+  font-size: var(--fs-caption);
+  width: 240px;
+  flex: none;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.searchbox > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.searchbox kbd {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-4);
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  padding: 1px 5px;
+}
+
+/* loom .page / .page-head / .eyebrow / .page-title collide with the
+   existing legacy port; only the loom-specific extras not already
+   present are added here. (.page-narrow, .page-lead, .page-head-row,
+   .eyebrow, .page-title, .section-label already exist OR are owned by
+   legacy → see reconciliation header.) */
+.page-narrow {
+  max-width: var(--cap-app);
+}
+
+/* ============================================================
+   Buttons (loom.css L174-203)
+   ============================================================ */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  font-size: var(--fs-body);
+  font-weight: 500;
+  line-height: 1;
+  padding: 0 var(--s-4);
+  height: 38px;
+  border-radius: var(--r-2);
+  border: 1px solid transparent;
+  white-space: nowrap;
+  transition:
+    background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), border-color var(
+      --dur-fast
+    ) var(--ease-out), transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(
+      --ease-out
+    );
+}
+.btn:active {
+  transform: scale(0.98);
+}
+.btn-sm {
+  height: 32px;
+  padding: 0 var(--s-3);
+  font-size: var(--fs-caption);
+}
+.btn-lg {
+  height: 44px;
+  padding: 0 var(--s-5);
+  font-size: var(--fs-body-lg);
+}
+.btn-primary {
+  background: var(--coral);
+  color: #fff;
+  box-shadow: var(--shadow-1);
+}
+.btn-primary:hover {
+  background: var(--coral-hover);
+}
+.btn-primary:active {
+  background: var(--coral-press);
+}
+.btn-secondary {
+  background: var(--paper-raised);
+  color: var(--ink);
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-1);
+}
+.btn-secondary:hover {
+  background: var(--paper-tint);
+  border-color: var(--ink-5);
+}
+.btn-ghost {
+  background: transparent;
+  color: var(--ink-2);
+}
+.btn-ghost:hover {
+  background: var(--paper-tint);
+}
+.btn-quiet {
+  background: transparent;
+  color: var(--ink-3);
+  padding: 0 var(--s-2);
+  height: 32px;
+}
+.btn-quiet:hover {
+  color: var(--ink);
+  background: var(--paper-tint);
+}
+.btn-good {
+  background: var(--good-soft);
+  color: var(--good-ink);
+  border-color: var(--good-line);
+}
+.btn-good:hover {
+  background: color-mix(in srgb, var(--good-soft) 78%, var(--good));
+}
+.btn-hard {
+  background: var(--hard-soft);
+  color: var(--hard-ink);
+  border-color: var(--hard-line);
+}
+.btn-hard:hover {
+  background: color-mix(in srgb, var(--hard-soft) 78%, var(--hard));
+}
+.btn-again {
+  background: var(--again-soft);
+  color: var(--again-ink);
+  border-color: var(--again-line);
+}
+.btn-again:hover {
+  background: color-mix(in srgb, var(--again-soft) 78%, var(--again));
+}
+.btn[disabled] {
+  opacity: 0.5;
+  pointer-events: none;
+}
+.btn-block {
+  width: 100%;
+}
+
+/* ============================================================
+   Badges & chips (loom.css L205-224)
+   ============================================================ */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  line-height: 1;
+  padding: 4px var(--s-2);
+  border-radius: var(--r-pill);
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.badge.tone-neutral {
+  background: var(--paper-sunk);
+  color: var(--ink-3);
+  border-color: var(--line);
+}
+.badge.tone-coral {
+  background: var(--coral-soft);
+  color: var(--coral-ink);
+  border-color: var(--coral-line);
+}
+.badge.tone-info {
+  background: var(--info-soft);
+  color: var(--info-ink);
+  border-color: var(--info-line);
+}
+.badge.tone-good {
+  background: var(--good-soft);
+  color: var(--good-ink);
+  border-color: var(--good-line);
+}
+.badge.tone-hard {
+  background: var(--hard-soft);
+  color: var(--hard-ink);
+  border-color: var(--hard-line);
+}
+.badge.tone-again {
+  background: var(--again-soft);
+  color: var(--again-ink);
+  border-color: var(--again-line);
+}
+.badge .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentcolor;
+}
+.badge .dot.pulse {
+  animation: loom-pulse-dot 1.4s var(--ease-soft) infinite;
+}
+@keyframes loom-pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  padding: 4px var(--s-2);
+  border-radius: var(--r-1);
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.chip-k {
+  color: var(--coral-ink);
+  background: var(--coral-soft);
+  border-color: var(--coral-line);
+}
+button.chip {
+  cursor: pointer;
+}
+button.chip:hover {
+  border-color: var(--ink-5);
+  color: var(--ink);
+}
+button.chip.is-on {
+  background: var(--coral-soft);
+  color: var(--coral-ink);
+  border-color: var(--coral-line);
+}
+button.chip.is-on:hover {
+  border-color: var(--coral);
+  color: var(--coral-ink);
+}
+
+/* segmented control — loom .seg collides with the legacy .seg; only
+   the loom .seg-sm size modifier (referenced by note-reader
+   .note-mode.seg-sm) is added, scoped so it does not touch legacy. */
+.seg-sm button,
+button.seg-sm {
+  padding: 5px 10px;
+  font-size: var(--fs-caption);
+}
+
+/* ============================================================
+   Cards (loom.css L226-238)
+   ============================================================ */
+.card {
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  box-shadow: var(--shadow-1);
+  transition: box-shadow var(--dur-base) var(--ease-out), border-color var(--dur-base)
+    var(--ease-out), transform var(--dur-base) var(--ease-out);
+}
+.card-pad {
+  padding: var(--s-5);
+}
+.card-pad-lg {
+  padding: var(--s-6);
+}
+.card-hover {
+  cursor: pointer;
+}
+.card-hover:hover {
+  box-shadow: var(--shadow-2);
+  border-color: var(--line-strong);
+  transform: translateY(-2px);
+}
+.card-sunk {
+  background: var(--paper-sunk);
+  box-shadow: none;
+}
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-bottom: var(--s-4);
+}
+.card-title {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h4);
+  font-weight: 500;
+  letter-spacing: var(--ls-tight);
+}
+.card-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--r-2);
+  display: grid;
+  place-items: center;
+  background: var(--paper-sunk);
+  color: var(--ink-3);
+  border: 1px solid var(--line);
+  flex: none;
+}
+.card-icon.accent {
+  background: var(--coral-soft);
+  color: var(--coral);
+  border-color: var(--coral-line);
+}
+
+/* ============================================================
+   KPI / progress (loom.css L250-266)
+   loom bare .kpi collides with the legacy .kpi → not redefined.
+   .bar (loom L261) only existed scoped as .cost-ribbon .bar, so the
+   bare .bar / .ring / kpi sub-elements are safe to add.
+   ============================================================ */
+.bar {
+  height: 8px;
+  border-radius: var(--r-pill);
+  background: var(--paper-sunk);
+  overflow: hidden;
+}
+.bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--coral);
+  transition: width var(--dur-slow) var(--ease-out);
+}
+.bar.thin {
+  height: 5px;
+}
+.ring {
+  --p: 0;
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: conic-gradient(var(--coral) calc(var(--p) * 1%), var(--paper-sunk) 0);
+  position: relative;
+}
+.ring::before {
+  content: "";
+  position: absolute;
+  inset: 9px;
+  border-radius: 50%;
+  background: var(--paper-raised);
+}
+.ring .ring-val {
+  position: relative;
+  font-family: var(--font-serif);
+  font-size: var(--fs-h4);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============================================================
+   Drawer (loom.css L278-288) — scrim + generic drawer shell.
+   The existing .teach-drawer / Copilot drawer rules are scoped
+   descendants and are not affected by these bare classes.
+   ============================================================ */
+.scrim {
+  position: fixed;
+  inset: 0;
+  background: var(--scrim);
+  z-index: 80;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-base) var(--ease-soft);
+  backdrop-filter: blur(1px);
+}
+.scrim.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+.drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100vh;
+  width: min(460px, 92vw);
+  background: var(--paper-raised);
+  border-left: 1px solid var(--line);
+  box-shadow: var(--shadow-3);
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform var(--dur-slow) var(--ease-out);
+}
+.drawer.open {
+  transform: translateX(0);
+}
+.drawer-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-4) var(--s-5);
+  border-bottom: 1px solid var(--line);
+}
+.drawer-title {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h4);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--s-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+.drawer-foot {
+  border-top: 1px solid var(--line);
+  padding: var(--s-4);
+}
+
+/* ============================================================
+   Empty / placeholder (loom.css L334-345)
+   loom bare .empty does not exist (legacy only scopes it); safe to add.
+   ============================================================ */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: var(--s-3);
+  padding: var(--s-12) var(--s-6);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-4);
+  background: linear-gradient(var(--paper-sunk), var(--paper-raised));
+}
+.empty .empty-ico {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--r-3);
+  display: grid;
+  place-items: center;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  color: var(--ink-4);
+}
+.empty .empty-title {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h4);
+  font-weight: 500;
+}
+.empty .empty-text {
+  color: var(--ink-4);
+  max-width: 42ch;
+  font-size: var(--fs-caption);
+}
+.future-tag {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: var(--ls-wide);
+  color: var(--info-ink);
+  background: var(--info-soft);
+  border: 1px solid var(--info-line);
+  border-radius: var(--r-pill);
+  padding: 3px 9px;
+}
+
+/* skeleton (loom.css L343-345) + sk-stack/sk-line (screens.css L207-208) */
+.sk {
+  background: linear-gradient(
+    90deg,
+    var(--paper-sunk) 25%,
+    var(--paper-tint) 50%,
+    var(--paper-sunk) 75%
+  );
+  background-size: 200% 100%;
+  animation: loom-sk 1.4s var(--ease-soft) infinite;
+  border-radius: var(--r-1);
+}
+@keyframes loom-sk {
+  to {
+    background-position: -200% 0;
+  }
+}
+.sk-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.sk-line {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+/* error block (screens.css L211-214) — referenced by the loom
+   ErrorState primitive; absent from globals → added. */
+.errorstate {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  border: 1px dashed var(--again-line);
+  border-radius: var(--r-3);
+  background: var(--again-soft);
+}
+.errorstate-ic {
+  color: var(--again);
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+.errorstate-text {
+  color: var(--again-ink);
+  font-size: var(--fs-caption);
+  flex: 1;
+  min-width: 0;
+}
+.errorstate.compact {
+  padding: var(--s-3);
+}
+
+/* ============================================================
+   Mobile bottom tab bar (p5.css L111-125) — distinct from the
+   legacy .app-shell-bottom-tabs; loom shell uses .mobile-tabbar.
+   ============================================================ */
+.mobile-tabbar {
+  display: none;
+}
+@media (max-width: 720px) {
+  .mobile-tabbar {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 40;
+    background: color-mix(in srgb, var(--paper-raised) 94%, transparent);
+    backdrop-filter: blur(12px);
+    border-top: 1px solid var(--line);
+    padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
+  }
+  .mtab {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    border: 0;
+    background: transparent;
+    color: var(--ink-4);
+    padding: 6px 0;
+    border-radius: var(--r-2);
+    cursor: pointer;
+    min-height: 48px;
+    transition: color var(--dur-fast) var(--ease-out);
+  }
+  .mtab .mtab-l {
+    font-size: 11px;
+  }
+  .mtab:active {
+    background: var(--paper-sunk);
+  }
+  .mtab.is-active {
+    color: var(--coral);
+  }
+}
+
+/* ============================================================
+   App-shell responsive (loom.css L375-417) — rail collapse / phone
+   sidebar drawer + menu button reveal. Scoped to loom .app shell.
+   ============================================================ */
+@media (max-width: 980px) {
+  .app {
+    grid-template-columns: var(--rail-w-collapsed) 1fr;
+  }
+  .app .sidebar {
+    padding: var(--s-5) var(--s-2);
+  }
+  .app .brand-name,
+  .app .brand-sub,
+  .app .nav-label,
+  .app .nav-section-label,
+  .app .sidebar-foot-full {
+    display: none;
+  }
+  .app .nav-item {
+    justify-content: center;
+    padding: var(--s-3);
+  }
+  .app .nav-item .nav-count {
+    position: absolute;
+    top: 4px;
+    right: 6px;
+    min-width: 16px;
+    height: 16px;
+    font-size: 10px;
+    padding: 0 3px;
+    margin: 0;
+  }
+  .app .sidebar-foot-row {
+    flex-direction: column;
+  }
+  .searchbox {
+    min-width: 150px;
+  }
+}
+@media (max-width: 720px) {
+  .app,
+  .app.rail-collapsed {
+    grid-template-columns: 1fr;
+  }
+  .app .sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    height: 100vh;
+    width: 264px;
+    padding: var(--s-5) var(--s-4);
+    transform: translateX(-100%);
+    transition: transform var(--dur-slow) var(--ease-out);
+    box-shadow: var(--shadow-3);
+  }
+  .app .sidebar.open {
+    transform: translateX(0);
+  }
+  .app .brand-name,
+  .app .brand-sub,
+  .app .nav-label,
+  .app .nav-section-label,
+  .app .sidebar-foot-full {
+    display: revert;
+  }
+  .app .nav-item {
+    justify-content: flex-start;
+    padding: var(--s-2) var(--s-3);
+  }
+  .app .nav-item .nav-count {
+    position: static;
+    margin-left: auto;
+    min-width: 22px;
+    height: 20px;
+    font-size: 12px;
+    padding: 0 6px;
+  }
+  .app .sidebar-foot-row {
+    flex-direction: row;
+  }
+  .menu-btn {
+    display: inline-grid;
+  }
+  .rail-toggle {
+    display: none;
+  }
+  .topbar {
+    padding: var(--s-3) var(--s-4);
+  }
+  .searchbox {
+    display: none;
+  }
+  .drawer {
+    width: 100vw;
+  }
+}
+
+/* ============================================================
+   LOOM NOTEREADER (/notes/[id]) — note-reader.css verbatim.
+   .note-entry-banner / .note-doc-meta are scoped under
+   .note-reader-page to avoid overriding the legacy note page.
+   ============================================================ */
+.note-reader-page {
+  width: 100%;
+  max-width: var(--cap-wide);
+  margin: 0 auto;
+}
+
+/* top sub-bar */
+.note-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 18;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-6);
+  background: color-mix(in srgb, var(--paper) 88%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+}
+.note-id-pill {
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  padding: 3px 10px;
+  color: var(--ink-3);
+}
+.note-mode.seg-sm button {
+  padding: 5px 10px;
+}
+.note-rail-toggle {
+  display: none;
+}
+
+/* 3-column grid */
+.note-reader-grid {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr) 300px;
+  gap: var(--s-6);
+  padding: var(--s-6) var(--s-6) var(--s-16);
+  align-items: start;
+}
+.note-rail-left,
+.note-rail-right {
+  position: sticky;
+  top: 76px;
+}
+
+/* ── outline / block tree ─────────────────────────────────── */
+.note-outline {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.note-rail-h {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  letter-spacing: var(--ls-wide);
+  color: var(--ink-4);
+  padding: 0 var(--s-2) var(--s-2);
+}
+.nol-item {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  border-radius: var(--r-2);
+  padding: 6px var(--s-2);
+  font-size: var(--fs-caption);
+  cursor: pointer;
+  line-height: 1.4;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.nol-item:hover {
+  background: var(--paper-sunk);
+  color: var(--ink);
+}
+.nol-glyph {
+  width: 18px;
+  flex: none;
+  text-align: center;
+  font-size: 11px;
+  color: var(--ink-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  line-height: 16px;
+  height: 18px;
+}
+.nol-h .nol-glyph {
+  background: var(--coral-soft);
+  color: var(--coral-ink);
+  border-color: var(--coral-line);
+}
+.nol-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nol-h .nol-label {
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.nol-top {
+  color: var(--ink-4);
+}
+
+/* ── document column ──────────────────────────────────────── */
+.note-doc-col {
+  min-width: 0;
+  max-width: var(--cap-prose);
+  margin: 0 auto;
+  width: 100%;
+}
+
+.note-reader-page .note-entry-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+  background: var(--coral-soft);
+  border: 1px solid var(--coral-line);
+  color: var(--coral-ink);
+  border-radius: var(--r-3);
+  font-size: var(--fs-caption);
+  margin-bottom: var(--s-5);
+  line-height: var(--lh-snug);
+}
+.note-reader-page .note-entry-banner > svg {
+  flex: none;
+}
+.note-reader-page .note-entry-banner b {
+  font-weight: 600;
+}
+
+.note-doc-head {
+  margin-bottom: var(--s-4);
+}
+.note-doc-title {
+  font-size: var(--fs-display);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--ls-tight);
+  margin: var(--s-2) 0 var(--s-4);
+}
+.note-reader-page .note-doc-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+.note-entries-strip {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  padding: var(--s-3) var(--s-4);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  margin-bottom: var(--s-8);
+}
+.entry-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  color: var(--ink-2);
+  border-radius: var(--r-pill);
+  padding: 5px 12px;
+  font-size: var(--fs-caption);
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.entry-pill:hover {
+  border-color: var(--coral-line);
+  color: var(--coral-ink);
+  background: var(--coral-soft);
+}
+.entry-pill.is-here {
+  background: var(--coral);
+  border-color: var(--coral);
+  color: #fff;
+}
+.entry-pill.is-here:hover {
+  background: var(--coral-hover);
+}
+
+/* ── read-mode body ───────────────────────────────────────── */
+.note-reader-body {
+  font-size: var(--fs-body-lg);
+}
+.nrb-block {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: var(--s-2);
+  align-items: start;
+  scroll-margin-top: 84px;
+  padding: 2px 0;
+  border-radius: var(--r-2);
+}
+.nrb-block + .nrb-block {
+  margin-top: var(--s-4);
+}
+.nrb-h {
+  margin-top: var(--s-6);
+}
+.nrb-gutter {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out);
+  padding-top: 4px;
+}
+.nrb-block:hover .nrb-gutter {
+  opacity: 1;
+}
+.nrb-anchor-btn,
+.nrb-collapse {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--ink-4);
+  border-radius: var(--r-1);
+  cursor: pointer;
+}
+.nrb-anchor-btn:hover,
+.nrb-collapse:hover {
+  background: var(--paper-sunk);
+  color: var(--ink-2);
+}
+.nrb-h-block .nrb-gutter {
+  opacity: 1;
+}
+.nrb-content {
+  min-width: 0;
+}
+.nrb-h {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h3);
+  font-weight: 500;
+  color: var(--ink);
+  letter-spacing: var(--ls-tight);
+}
+.note-reader-body .nb-p {
+  font-size: var(--fs-body-lg);
+  line-height: var(--lh-prose);
+}
+.note-reader-body .nb-wenyan {
+  font-size: var(--fs-h5);
+}
+.nrb-linkrow {
+  margin-top: var(--s-3);
+}
+
+/* block link card */
+.nb-linkcard {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  border-radius: var(--r-3);
+  padding: var(--s-3) var(--s-4);
+  cursor: pointer;
+  box-shadow: var(--shadow-1);
+  transition: box-shadow var(--dur-base) var(--ease-out), border-color var(--dur-base)
+    var(--ease-out);
+}
+.nb-linkcard:hover {
+  box-shadow: var(--shadow-2);
+  border-color: var(--coral-line);
+}
+.nb-linkcard-ic {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-2);
+  background: var(--coral-soft);
+  color: var(--coral);
+  border: 1px solid var(--coral-line);
+}
+.nb-linkcard-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+.nb-linkcard-t {
+  font-family: var(--font-wenyan);
+  font-weight: 500;
+  color: var(--ink);
+}
+.nb-linkcard-s {
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
+.nb-linkcard-pct {
+  font-size: var(--fs-caption);
+  color: var(--coral-ink);
+  font-weight: 600;
+  flex: none;
+}
+
+.note-edit-shell {
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-3);
+  padding: var(--s-5);
+  background: var(--paper-sunk);
+}
+
+/* ── context rail ─────────────────────────────────────────── */
+.note-context {
+  display: flex;
+  flex-direction: column;
+}
+.note-prop-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+  padding: 5px 0;
+  font-size: var(--fs-caption);
+}
+.note-label-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.note-label-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  border-radius: var(--r-2);
+  padding: var(--s-2);
+  cursor: pointer;
+  color: var(--ink-2);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.note-label-row:hover {
+  background: var(--paper-sunk);
+}
+.note-label-row .wenyan {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-caption);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.note-label-row.is-entry {
+  background: var(--coral-soft);
+}
+.entry-tag {
+  font-size: 10px;
+  color: #fff;
+  background: var(--coral);
+  border-radius: var(--r-1);
+  padding: 1px 6px;
+  flex: none;
+}
+
+.note-versions {
+  display: flex;
+  flex-direction: column;
+}
+.note-ver {
+  display: flex;
+  gap: var(--s-2);
+  padding-bottom: var(--s-3);
+  position: relative;
+}
+.note-ver:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 14px;
+  bottom: 0;
+  width: 1px;
+  background: var(--line);
+}
+.note-ver-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--line-strong);
+  border: 2px solid var(--paper-raised);
+  flex: none;
+  margin-top: 4px;
+  z-index: 1;
+}
+.note-ver.is-current .note-ver-dot {
+  background: var(--coral);
+}
+.note-ver-body {
+  min-width: 0;
+  flex: 1;
+}
+.note-ver-top {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.note-ver-v {
+  color: var(--ink-2);
+  font-weight: 600;
+  font-size: 12px;
+}
+.note-ver-note {
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  line-height: var(--lh-snug);
+  margin-top: 1px;
+}
+
+/* drawer section header (note-reader Context rail sections + mobile
+   drawers) — referenced by the NoteReader page; named .drawer-sec to
+   match the spec class list. */
+.drawer-sec {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.drawer-sec + .drawer-sec {
+  margin-top: var(--s-6);
+}
+.drawer-sec > h4 {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  letter-spacing: var(--ls-wide);
+  color: var(--ink-4);
+}
+
+/* mobile drawers (hidden on desktop) */
+.note-mobile-drawer {
+  display: none;
+}
+
+/* ── responsive ───────────────────────────────────────────── */
+@media (max-width: 1180px) {
+  .note-reader-grid {
+    grid-template-columns: 200px minmax(0, 1fr);
+  }
+  .note-rail-right {
+    display: none;
+  }
+  .note-topbar .note-rail-toggle:last-child {
+    display: grid;
+  }
+}
+@media (max-width: 880px) {
+  .note-reader-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+  .note-rail-left {
+    display: none;
+  }
+  .note-rail-toggle {
+    display: grid !important;
+  }
+  .note-doc-title {
+    font-size: var(--fs-h1);
+  }
+  .note-mobile-drawer {
+    display: block;
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    width: min(86vw, 320px);
+    background: var(--paper-raised);
+    z-index: 60;
+    padding: var(--s-6) var(--s-5);
+    overflow-y: auto;
+    box-shadow: var(--shadow-3);
+    transition: transform var(--dur-slow) var(--ease-out);
+  }
+  .note-mobile-drawer.left {
+    left: 0;
+    transform: translateX(-102%);
+    border-right: 1px solid var(--line);
+  }
+  .note-mobile-drawer.right {
+    right: 0;
+    transform: translateX(102%);
+    border-left: 1px solid var(--line);
+  }
+  .note-mobile-drawer.open {
+    transform: translateX(0);
   }
 }
