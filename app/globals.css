@@ -7326,3 +7326,454 @@ button.seg-sm {
     transform: translateX(0);
   }
 }
+
+/* ============================================================
+   LOOM KD-DETAIL LAYER — Redraw Slice 2 (YUK-169)
+   Knowledge-detail (/knowledge/[id]) screen classes ported
+   additively from loom-prototype @ f85aca6d
+   (screens.css / screens-2b.css / p5.css / loom.css).
+   Tokens-only; no new hues. Does NOT redefine slice-1 classes.
+   Skipped (already present in globals): .chip / .chip-k.
+   Skipped per task: annotations (.anno-*) and .note-ref*.
+   ============================================================ */
+
+/* ---- hero / page-head meta (screens.css L34, round-2a) ---- */
+.hero-cta {
+  display: flex;
+  gap: var(--s-3);
+  margin-top: var(--s-6);
+  flex-wrap: wrap;
+}
+.nowrap-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.dot-sep {
+  color: var(--ink-5);
+  margin-right: var(--s-2);
+}
+.quiet-empty {
+  color: var(--ink-4);
+  font-size: var(--fs-caption);
+  padding: var(--s-3) 0;
+}
+
+/* ---- back link (screens-2b.css L8-9) ---- */
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: var(--fs-caption);
+  padding: 4px 6px 4px 2px;
+  border-radius: var(--r-1);
+  margin-bottom: var(--s-3);
+  cursor: pointer;
+}
+.back-link:hover {
+  color: var(--coral-ink);
+  background: var(--coral-soft);
+}
+
+/* ---- thread arrow (screens.css L21-22) ---- */
+.thread-arrow {
+  margin-left: auto;
+  color: var(--ink-5);
+  transition: transform var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out);
+}
+
+/* ---- KD layout (screens-2b.css L89-100) ---- */
+.kd-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  flex-wrap: wrap;
+}
+.kd-metrics {
+  margin-top: var(--s-2);
+}
+.kd-grid {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: var(--s-5);
+  align-items: start;
+}
+.kd-side {
+  position: sticky;
+  top: 84px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* ---- neighbors-by-relation (screens-2b.css L74-100) ---- */
+.kd-rel-block {
+  padding: var(--s-3) 0;
+  border-top: 1px dashed var(--line);
+}
+.kd-rel-block:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.kd-rel-h {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  margin-bottom: var(--s-2);
+  font-family: var(--font-mono);
+}
+.rel-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-2);
+  cursor: pointer;
+  color: var(--ink);
+}
+.rel-row:hover {
+  background: var(--paper-sunk);
+}
+.rel-row.indent {
+  padding-left: var(--s-6);
+}
+.rel-row .wenyan {
+  flex: 1;
+  min-width: 0;
+}
+.rel-kind {
+  font-size: 11px;
+  color: var(--ink-4);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  padding: 1px 6px;
+  flex: none;
+}
+
+/* ---- relation tag (screens-2b.css L27-33) ---- */
+.rel-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-meta);
+  padding: 2px 8px;
+  border-radius: var(--r-1);
+  border: 1px solid var(--line);
+  background: var(--paper-sunk);
+  color: var(--ink-2);
+  flex: none;
+}
+.rel-tag .mono {
+  font-size: 13px;
+}
+.rel-tag-prerequisite {
+  border-color: var(--coral-line);
+  background: var(--coral-soft);
+  color: var(--coral-ink);
+}
+.rel-tag-related_to {
+  border-color: var(--line-strong);
+}
+.rel-tag-contrasts_with {
+  border-color: var(--info-line);
+  background: var(--info-soft);
+  color: var(--info-ink);
+}
+.rel-tag-applied_in {
+  border-color: var(--good-line);
+  background: var(--good-soft);
+  color: var(--good-ink);
+}
+.rel-tag-derived_from {
+  border-color: var(--hard-line);
+  background: var(--hard-soft);
+  color: var(--hard-ink);
+}
+
+/* ---- artifact-typed backlinks (screens-2b.css L96-100 + p5.css) ---- */
+.bl-group {
+  margin-bottom: var(--s-3);
+}
+.bl-kind {
+  font-size: 11px;
+  color: var(--ink-4);
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.bl-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 6px var(--s-2);
+  border-radius: var(--r-1);
+  cursor: pointer;
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+}
+.bl-row:hover {
+  background: var(--paper-sunk);
+  color: var(--ink);
+}
+.bl-row span {
+  flex: 1;
+  min-width: 0;
+}
+.bl-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+.bl-row-t {
+  font-size: var(--fs-caption);
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bl-row-m {
+  font-size: 11px;
+}
+
+/* ---- verify badge (screens-2b.css L122-124) ---- */
+.verify-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  padding: 2px 7px;
+  border-radius: var(--r-pill);
+  border: 1px solid;
+}
+.verify-badge.verified {
+  background: var(--good-soft);
+  border-color: var(--good-line);
+  color: var(--good-ink);
+}
+.verify-badge.draft {
+  background: var(--hard-soft);
+  border-color: var(--hard-line);
+  color: var(--hard-ink);
+}
+
+/* ---- KD note-hint (screens-2b.css L295-296) ---- */
+.kd-note-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--ink-4);
+  margin: -4px 0 var(--s-3);
+  line-height: var(--lh-snug);
+}
+.kd-note-hint > svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+/* ---- note kinds (p5.css L65-69) ---- */
+.note-kind-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: var(--ls-wide);
+  padding: 2px 8px;
+  border-radius: var(--r-1);
+  border: 1px solid;
+  flex: none;
+}
+.note-kind-atomic {
+  background: var(--coral-soft);
+  color: var(--coral-ink);
+  border-color: var(--coral-line);
+}
+.note-kind-hub {
+  background: var(--info-soft);
+  color: var(--info-ink);
+  border-color: var(--info-line);
+}
+.note-kind-long {
+  background: var(--paper-sunk);
+  color: var(--ink-3);
+  border-color: var(--line-strong);
+}
+
+/* ---- primary note (p5.css L71-76) ---- */
+.kd-primary-note {
+  margin-bottom: var(--s-4);
+}
+.kd-primary-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  margin-bottom: var(--s-4);
+  padding-bottom: var(--s-3);
+  border-bottom: 1px solid var(--line);
+}
+.kd-primary-title {
+  font-size: var(--fs-h4);
+  font-weight: 500;
+  flex: 1;
+  min-width: 0;
+}
+.kd-primary-body {
+  font-size: var(--fs-body-lg);
+}
+.kd-primary-body .note-doc > * + * {
+  margin-top: var(--s-3);
+}
+
+/* ---- note groups + link rows (p5.css L78-85) ---- */
+.kd-note-group {
+  margin-top: var(--s-3);
+}
+.kd-note-group-h {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  margin-bottom: 6px;
+}
+.note-link-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  border-radius: var(--r-2);
+  padding: var(--s-2) var(--s-3);
+  cursor: pointer;
+  color: var(--ink-2);
+  margin-bottom: 6px;
+  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast)
+    var(--ease-out);
+}
+.note-link-row:hover {
+  border-color: var(--line-strong);
+  background: var(--paper-sunk);
+}
+.note-link-title {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-wenyan);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- decay bucket pill (p5.css L99-103) ---- */
+.decay-bucket {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-meta);
+  padding: 3px 8px;
+  border-radius: var(--r-pill);
+  border: 1px solid;
+}
+.decay-bucket.tone-good {
+  background: var(--good-soft);
+  color: var(--good-ink);
+  border-color: var(--good-line);
+}
+.decay-bucket.tone-hard {
+  background: var(--hard-soft);
+  color: var(--hard-ink);
+  border-color: var(--hard-line);
+}
+.decay-bucket.tone-again {
+  background: var(--again-soft);
+  color: var(--again-ink);
+  border-color: var(--again-line);
+}
+.decay-retr {
+  font-weight: 600;
+  padding-left: 5px;
+  border-left: 1px solid currentColor;
+  opacity: 0.9;
+}
+
+/* ---- activity event chain (screens.css L325-332) ---- */
+.event-chain {
+  padding: var(--s-2) 0 0;
+}
+.event-row {
+  display: flex;
+  gap: var(--s-3);
+}
+.event-rail {
+  position: relative;
+  width: 12px;
+  flex: none;
+  display: flex;
+  justify-content: center;
+  padding-top: 5px;
+}
+.event-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--coral);
+  border: 2px solid var(--paper-raised);
+  z-index: 1;
+}
+.event-line {
+  position: absolute;
+  top: 12px;
+  bottom: -8px;
+  width: 2px;
+  background: var(--line);
+}
+.event-body {
+  padding-bottom: var(--s-4);
+  min-width: 0;
+  flex: 1;
+}
+.event-head {
+  gap: var(--s-2);
+}
+.event-label {
+  color: var(--ink-2);
+  font-size: var(--fs-meta);
+}
+.event-note {
+  font-size: var(--fs-caption);
+  color: var(--ink-3);
+  margin-top: 2px;
+}
+
+/* ---- KD responsive (screens-2b.css L308-310) ---- */
+@media (max-width: 1100px) {
+  .kd-grid {
+    grid-template-columns: 1fr;
+  }
+  .kd-side {
+    position: static;
+  }
+}
