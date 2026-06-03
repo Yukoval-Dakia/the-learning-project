@@ -4,11 +4,6 @@ import { ApiAuthError, apiJson } from '@/ui/lib/api';
 // Loom primitives — chrome / banner / states / tree row (redraw slice 3, YUK-169).
 import { Badge } from '@/ui/primitives/Badge';
 import { Btn } from '@/ui/primitives/Btn';
-// Legacy primitives — still consumed by the EdgeCreateForm + cytoscape graph
-// territory (slice-3c). The NodeDrawer / edge-proposal cards were migrated to
-// loom primitives (Btn / IconBtn / LoomIcon / Badge / Ring) in slice-3b.
-import { Button } from '@/ui/primitives/Button';
-import { Card } from '@/ui/primitives/Card';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { ErrorState } from '@/ui/primitives/ErrorState';
 import { IconBtn } from '@/ui/primitives/IconBtn';
@@ -417,6 +412,11 @@ export default function KnowledgePage() {
   const optionalDataError =
     edgesQ.error ?? proposalsQ.error ?? edgeProposalsQ.error ?? mistakesQ.error ?? reviewDueQ.error;
 
+  // Increments on each successful edge create; combined with selected.id it keys
+  // the per-node EdgeCreateForm so the form remounts (fresh rel/target/dir) on
+  // node switch (C1: stale state could otherwise submit a self-loop) and after a
+  // successful create (W1: reset + implicit success feedback).
+  const [edgeCreatedAt, setEdgeCreatedAt] = useState(0);
   const createEdgeM = useMutation({
     mutationFn: (vars: {
       from_knowledge_id: string;
@@ -435,11 +435,10 @@ export default function KnowledgePage() {
         }),
       }),
     onSuccess: () => {
-      setShowEdgeCreate(false);
       queryClient.invalidateQueries({ queryKey: ['knowledge-edges'] });
+      setEdgeCreatedAt((n) => n + 1);
     },
   });
-  const [showEdgeCreate, setShowEdgeCreate] = useState(false);
 
   return (
     <main className="knowledge-page knowledge-loom">
@@ -473,29 +472,15 @@ export default function KnowledgePage() {
                 Graph
               </button>
             </div>
-            {/* CTA keeps its real behaviour (toggle edge-create form, slice-3b
-                territory) — loom-ified to Btn, real label, no fake「新建节点」
-                wiring (pre-flight §4). */}
-            <Btn variant="primary" icon="plus" onClick={() => setShowEdgeCreate((v) => !v)}>
-              {showEdgeCreate ? '取消' : '新建关系'}
-            </Btn>
+            {/* edge-create moved into the per-node NodeDrawer form (slice-3c,
+                OPTION B); the page-level「新建关系」CTA was removed. No「新建节点」
+                CTA — node-create is unwired. */}
           </div>
         </div>
         <p className="page-lead">
           树是骨架（parent/child），mesh 是 5 类 typed 关系。点节点看详情抽屉；图可平移缩放。
         </p>
       </div>
-
-      {showEdgeCreate && (
-        <Card pad="lg" style={{ marginBottom: 'var(--s-4)' }}>
-          <EdgeCreateForm
-            nodes={nodes}
-            onSubmit={(vars) => createEdgeM.mutate(vars)}
-            pending={createEdgeM.isPending}
-            error={createEdgeM.error as Error | null}
-          />
-        </Card>
-      )}
 
       {/* hard error — knowledge list itself failed (ApiAuthError-aware). The
           loom ErrorState replaces the legacy LoadError Card. */}
@@ -884,6 +869,20 @@ export default function KnowledgePage() {
                   </div>
                 ))}
               </div>
+
+              {/* per-node edge-create form (slice-3c, OPTION B) — from = this node,
+                  relation chip-set + target select + directional dir-row. Submits
+                  through createEdgeM (no reasoning). */}
+              <div className="drawer-sec">
+                <EdgeCreateForm
+                  key={`${selected.id}:${edgeCreatedAt}`}
+                  node={selected}
+                  others={nodes.filter((n) => n.id !== selected.id)}
+                  onSubmit={(vars) => createEdgeM.mutate(vars)}
+                  pending={createEdgeM.isPending}
+                  error={createEdgeM.error as Error | null}
+                />
+              </div>
             </div>
 
             <div className="drawer-foot">
@@ -1145,100 +1144,103 @@ function KnowledgeRelation({
   );
 }
 
+// EdgeCreateForm — loom per-node edge-create form (slice-3c, OPTION B). Lives
+// inside the NodeDrawer; `node` is the FROM (the selected drawer node) and
+// `others` are the candidate targets (all nodes except `node`). Relation is a
+// .chip-set; target is a .field-input select; directional relations show a
+// .dir-row with a from→to chip + reverse toggle. Reasoning was dropped per the
+// approved pre-flight (the page-level free-form from/to + reasoning form is
+// gone). The submit maps `dir` to from/to so reversing swaps the endpoints.
 function EdgeCreateForm({
-  nodes,
+  node,
+  others,
   onSubmit,
   pending,
   error,
 }: {
-  nodes: KnowledgeNode[];
+  node: TreeNode;
+  others: KnowledgeNode[];
   onSubmit: (vars: {
     from_knowledge_id: string;
     to_knowledge_id: string;
     relation_type: RelationType;
-    reasoning?: string;
   }) => void;
   pending: boolean;
   error: Error | null;
 }) {
-  const [fromId, setFromId] = useState<string>('');
-  const [toId, setToId] = useState<string>('');
-  const [relation, setRelation] = useState<RelationType>('related_to');
-  const [reasoning, setReasoning] = useState('');
-  const sortedNodes = useMemo(
-    () => [...nodes].sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN')),
-    [nodes],
+  const [rel, setRel] = useState<RelationType>('related_to');
+  const [target, setTarget] = useState<string>('');
+  // dir true → from = node, to = target; dir false → swapped. Only meaningful
+  // for directed relations (the .dir-row is gated on RELATION_TYPES[rel].directed).
+  const [dir, setDir] = useState(true);
+  const sortedOthers = useMemo(
+    () => [...others].sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN')),
+    [others],
   );
-  const canSubmit = fromId && toId && fromId !== toId && !pending;
+  const targetNode = others.find((n) => n.id === target) ?? null;
+  const directional = RELATION_TYPES[rel]?.directed ?? false;
   return (
-    <div>
-      <h4 className="kf-title">新建知识关系</h4>
-      <div className="kf-row">
-        <label className="kf-label">
-          From
-          <select value={fromId} onChange={(e) => setFromId(e.target.value)} className="kf-select">
-            <option value="">—</option>
-            {sortedNodes.map((n) => (
-              <option key={n.id} value={n.id}>
-                {n.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="kf-label">
-          关系
-          <select
-            value={relation}
-            onChange={(e) => setRelation(e.target.value as RelationType)}
-            className="kf-select"
+    <div className="edge-form">
+      <div className="field-label">新建关系边</div>
+      <div className="chip-set" style={{ marginBottom: 'var(--s-3)' }}>
+        {Object.keys(RELATION_TYPES).map((r) => (
+          <button
+            type="button"
+            key={r}
+            aria-pressed={rel === r}
+            className={`chip${rel === r ? ' is-on' : ''}`}
+            onClick={() => setRel(r as RelationType)}
           >
-            {Object.entries(RELATION_TYPES).map(([k, v]) => (
-              <option key={k} value={k}>
-                {v.label} ({k})
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="kf-label">
-          To
-          <select value={toId} onChange={(e) => setToId(e.target.value)} className="kf-select">
-            <option value="">—</option>
-            {sortedNodes.map((n) => (
-              <option key={n.id} value={n.id}>
-                {n.name}
-              </option>
-            ))}
-          </select>
-        </label>
+            <span className="mono">{RELATION_TYPES[r].arrow}</span> {RELATION_TYPES[r].label}
+          </button>
+        ))}
       </div>
-      <label className="kf-label" style={{ marginTop: 'var(--s-3)' }}>
-        Reasoning（可选）
-        <textarea
-          value={reasoning}
-          onChange={(e) => setReasoning(e.target.value)}
-          rows={2}
-          className="kf-textarea"
-          placeholder="为什么这两个节点是这种关系"
-        />
-      </label>
-      {fromId && toId && fromId === toId && <p className="kf-error">From 和 To 不能是同一节点</p>}
-      {error && <p className="kf-error">创建失败：{error.message}</p>}
-      <div className="kf-actions">
-        <Button
-          variant="primary"
-          disabled={!canSubmit}
-          onClick={() =>
-            onSubmit({
-              from_knowledge_id: fromId,
-              to_knowledge_id: toId,
-              relation_type: relation,
-              reasoning: reasoning.trim() ? reasoning.trim() : undefined,
-            })
-          }
-        >
-          {pending ? '创建中…' : '创建关系'}
-        </Button>
-      </div>
+      <select
+        className="field-input"
+        value={target}
+        onChange={(e) => setTarget(e.target.value)}
+        aria-label="目标节点"
+      >
+        <option value="">选择目标节点…</option>
+        {sortedOthers.map((n) => (
+          <option key={n.id} value={n.id}>
+            {n.name} ({n.id.slice(0, 8)})
+          </option>
+        ))}
+      </select>
+      {directional && (
+        <div className="dir-row">
+          <span className="meta">方向</span>
+          <button type="button" className="chip is-on" onClick={() => setDir((d) => !d)}>
+            <span className="wenyan">{dir ? node.name : (targetNode?.name ?? '目标')}</span>
+            <LoomIcon name="arrow" size={12} />
+            <span className="wenyan">{dir ? (targetNode?.name ?? '目标') : node.name}</span>
+          </button>
+          <IconBtn icon="reverse" size={13} title="反向" onClick={() => setDir((d) => !d)} />
+        </div>
+      )}
+      {error && (
+        <span className="meta" style={{ color: 'var(--coral)', marginTop: 'var(--s-2)' }}>
+          创建失败：{error.message}
+        </span>
+      )}
+      <Btn
+        variant="primary"
+        size="sm"
+        icon="plus"
+        block
+        disabled={!target || pending}
+        style={{ marginTop: 'var(--s-3)' }}
+        onClick={() =>
+          onSubmit({
+            from_knowledge_id: dir ? node.id : target,
+            to_knowledge_id: dir ? target : node.id,
+            relation_type: rel,
+          })
+        }
+      >
+        建立 {RELATION_TYPES[rel].label} 边
+      </Btn>
     </div>
   );
 }

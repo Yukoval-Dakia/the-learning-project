@@ -7990,3 +7990,78 @@ button.seg-sm {
     gap: var(--s-2);
   }
 }
+
+/* ============================================================
+   LOOM KD-EDGEFORM LAYER — Redraw Slice 3c (YUK-169)
+   NodeDrawer per-node edge-create form (relation chip-set + target
+   select + directional dir-row) ported additively from loom-prototype
+   @ f85aca6d. Tokens-only; no new hues. User chose option B (loom
+   per-node form moved into the slice-3b NodeDrawer).
+
+   Reuses (NOT re-ported here — present from slice-1 shell / slice-2/3b):
+   .chip / .chip.is-on / .drawer-sec / .drawer-sec-h / .badge / .btn.
+
+   Sources: screens.css L237 (.field-label), L271-273 (.chip-set /
+   .field-input / .field-input:focus); screens-2b.css L84-86
+   (.edge-form .field-input / .dir-row / .dir-row .chip). The loom has
+   no standalone ".edge-form" rule — it is a vertical form container
+   inside a .drawer-sec; defined minimally here.
+   ============================================================ */
+
+/* per-node edge-create form container (lives inside a .drawer-sec) */
+.edge-form {
+  display: flex;
+  flex-direction: column;
+}
+
+/* mono field label (port: screens.css L237) */
+.field-label {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+  letter-spacing: var(--ls-wide);
+  margin-bottom: var(--s-2);
+}
+
+/* relation chip row (port: screens.css L271) */
+.chip-set {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
+/* form input / select (port: screens.css L272) */
+.field-input {
+  width: 100%;
+  height: 38px;
+  padding: 0 var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+}
+.field-input:focus {
+  outline: none;
+  border-color: var(--coral);
+  box-shadow: var(--shadow-focus);
+}
+
+/* target select spacing within the edge form (port: screens-2b.css L84) */
+.edge-form .field-input {
+  margin-bottom: var(--s-2);
+}
+
+/* directional from→to toggle row (port: screens-2b.css L85-86) */
+.dir-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
+  flex-wrap: wrap;
+}
+.dir-row .chip {
+  gap: 6px;
+}
