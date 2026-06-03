@@ -7777,3 +7777,131 @@ button.seg-sm {
     position: static;
   }
 }
+
+/* ============================================================
+   LOOM KD-LIST LAYER — Redraw Slice 3 (YUK-169)
+   Knowledge-list (/knowledge) chrome + tree classes ported
+   additively from loom-prototype @ f85aca6d
+   (screens.css / screens-2b.css / loom.css).
+   Tokens-only; no new hues.
+
+   COLLISION SCOPING (the whole point of this layer):
+   .seg / .page-head / .page-head-row / .eyebrow / .page-title /
+   .page-lead all ALREADY EXIST as legacy globals consumed by ~40
+   surfaces. The loom values are therefore ported SCOPED under the
+   .knowledge-loom page wrapper so they never touch the legacy
+   globals. The NEW tree classes (.know-node / .know-twig /
+   .know-title / .know-end) are grep-confirmed absent globally, but
+   are still scoped under .knowledge-loom for safety.
+
+   REUSED from slice-1/2 (NOT re-ported here — relied upon):
+   .hero-cta, .card-icon(.accent), .chip / .chip-k, .thread-arrow,
+   .badge(+tones), .quiet-empty, and the Stateful / EmptyState /
+   SkLines layers (.empty* / .sk*).
+
+   SKIPPED: .mastery-ring / .mastery-ring-t (loom prototype's SVG
+   ring). The page uses the slice-1/2 Ring primitive for mastery, so
+   no second ring style is introduced; .know-node's own gap handles
+   the spacing the screens-2b.css L65-66 .know-node .mastery-ring
+   tweak would have provided.
+   ============================================================ */
+
+/* ---- page-head chrome (loom.css §App shell L167-172) ----
+   Scoped under .knowledge-loom to avoid colliding with the legacy
+   .page-head / .eyebrow / .page-title / .page-head-row / .page-lead
+   globals. */
+.knowledge-loom .page-head {
+  margin-bottom: var(--s-6);
+}
+.knowledge-loom .eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+  margin-bottom: var(--s-2);
+  display: block;
+}
+.knowledge-loom .page-title {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h1);
+  font-weight: 500;
+  letter-spacing: var(--ls-tight);
+  line-height: var(--lh-tight);
+}
+.knowledge-loom .page-head-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s-4);
+  flex-wrap: wrap;
+}
+.knowledge-loom .page-lead {
+  color: var(--ink-3);
+  font-size: var(--fs-body-lg);
+  max-width: 58ch;
+  margin-top: var(--s-3);
+  line-height: var(--lh-prose);
+}
+
+/* ---- segmented control (screens.css L144-146) ----
+   Scoped under .knowledge-loom; the legacy .seg is a different model
+   (loop is a button group with .is-on), so do NOT touch it. */
+.knowledge-loom .seg {
+  display: inline-flex;
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  padding: 2px;
+}
+.knowledge-loom .seg button {
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: var(--fs-caption);
+  padding: 6px 14px;
+  border-radius: var(--r-1);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.knowledge-loom .seg button.on {
+  background: var(--paper-raised);
+  color: var(--ink);
+  box-shadow: var(--shadow-1);
+}
+
+/* ---- tree rows (screens.css L147-153; .hot drop per pre-flight §4) ----
+   New classes, grep-confirmed absent globally; scoped for safety. */
+.knowledge-loom .know-node {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-4) var(--s-5);
+  border-bottom: 1px solid var(--line-soft);
+  transition: background var(--dur-fast) var(--ease-out);
+  cursor: pointer;
+}
+.knowledge-loom .know-node:hover {
+  background: var(--paper-sunk);
+}
+.knowledge-loom .know-node:last-child {
+  border-bottom: 0;
+}
+.knowledge-loom .know-node.hot {
+  background: color-mix(in srgb, var(--coral-soft) 50%, var(--paper-raised));
+}
+.knowledge-loom .know-twig {
+  color: var(--ink-5);
+  font-family: var(--font-mono);
+}
+.knowledge-loom .know-title {
+  font-family: var(--font-wenyan);
+  font-weight: 500;
+}
+.knowledge-loom .know-end {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
