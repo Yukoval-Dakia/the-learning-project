@@ -346,7 +346,7 @@ Question
 
 `Artifact` 表中 `type=tool_quiz` 的实例。Standalone 和 embedded check 都会独立成行；embedded check 额外在 note block 里保留 `embedded_check.question_ids[]` / `artifact_ref` 方便渲染：
 
-```
+```text
 Artifact
   id, type=tool_quiz
   title
