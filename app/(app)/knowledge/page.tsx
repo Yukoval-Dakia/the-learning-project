@@ -4,25 +4,27 @@ import { ApiAuthError, apiJson } from '@/ui/lib/api';
 // Loom primitives — chrome / banner / states / tree row (redraw slice 3, YUK-169).
 import { Badge } from '@/ui/primitives/Badge';
 import { Btn } from '@/ui/primitives/Btn';
-// Legacy primitives — still consumed by the slice-3b territory (NodeDrawer /
-// graph / edge-create / edge-proposal cards). Removed from the rewritten
-// chrome/banner/tree blocks only; slice-3b migrates the rest.
+// Legacy primitives — still consumed by the EdgeCreateForm + cytoscape graph
+// territory (slice-3c). The NodeDrawer / edge-proposal cards were migrated to
+// loom primitives (Btn / IconBtn / LoomIcon / Badge / Ring) in slice-3b.
 import { Button } from '@/ui/primitives/Button';
 import { Card } from '@/ui/primitives/Card';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { ErrorState } from '@/ui/primitives/ErrorState';
-import { Icon } from '@/ui/primitives/Icon';
+import { IconBtn } from '@/ui/primitives/IconBtn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { MasteryBadge, type MasteryData } from '@/ui/primitives/MasteryBadge';
+import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { Ring } from '@/ui/primitives/Ring';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful } from '@/ui/primitives/Stateful';
-import { type SuggestionKind, SuggestionKindTag } from '@/ui/primitives/SuggestionKindTag';
+// SuggestionKind type only — used by the EdgeProposalEvent payload shape;
+// the SuggestionKindTag component was dropped in the slice-3b card rewrite.
+import type { SuggestionKind } from '@/ui/primitives/SuggestionKindTag';
+import { useFocusTrap } from '@/ui/primitives/useFocusTrap';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 // cytoscape touches window/document, so the graph primitive must never run
 // during SSR/prerender. It already guards itself (cytoscape init lives inside
@@ -155,6 +157,10 @@ export default function KnowledgePage() {
   const [edgeProposalStatus, setEdgeProposalStatus] = useState<Record<string, ProposalDecision>>(
     {},
   );
+  // NodeDrawer focus trap (slice-3b) — Tab containment + Esc-to-close + focus
+  // restore for the CSS-class `.drawer`. Declared at the top level so the hook
+  // runs unconditionally; gated on `!!selectedId` (open) below.
+  const drawerRef = useRef<HTMLElement | null>(null);
 
   const knowledgeQ = useQuery({
     queryKey: ['knowledge'],
@@ -252,6 +258,26 @@ export default function KnowledgePage() {
 
   const { roots, flattened, byId, childrenByParent } = useMemo(() => buildTree(nodes), [nodes]);
   const selected = selectedId ? (byId.get(selectedId) ?? null) : null;
+  // Stable onClose so useFocusTrap's effect deps don't churn on every render
+  // (an inline arrow is a fresh ref each render → background refetch / mutation /
+  // state update would tear down + rebuild the trap, kicking focus back to the
+  // trigger). Reused for the scrim onClick + close IconBtn for consistency.
+  const closeDrawer = useCallback(() => setSelectedId(null), []);
+  useFocusTrap(!!selected, closeDrawer, drawerRef);
+  // Switching nodes inside the open drawer (parent/child/typed-relation row)
+  // changes selectedId but keeps the drawer mounted; the previously-focused
+  // button unmounts and focus falls outside the dialog. Re-focus the first
+  // tabbable element inside the drawer whenever the selected node changes.
+  // selected?.id is the trigger — re-focus only on node switch, not on every
+  // `selected` object identity change (which would refire on unrelated re-renders).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: selected?.id is the node-switch trigger
+  useEffect(() => {
+    if (!selected || !drawerRef.current) return;
+    const first = drawerRef.current.querySelector<HTMLElement>(
+      'button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])',
+    );
+    first?.focus();
+  }, [selected?.id]);
 
   const mistakeCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -646,32 +672,128 @@ export default function KnowledgePage() {
         />
       )}
 
+      {/* NodeDrawer — loom .drawer/.scrim pattern (slice-3b). scrim + focus trap
+          (declared above) replace the legacy .detail-drawer. All selection data
+          (selectedEdges / selectedPendingEdges / selectedNodeProposals /
+          selectedActivity) and the edge/node proposal mutations are unchanged. */}
       {selected && (
-        <aside className="detail-drawer" aria-label={`${selected.name} 详情`}>
-          <header className="dd-head">
-            <div>
-              <h3>{selected.name}</h3>
-              <div className="meta">
-                <code>{selected.id}</code> · depth {selected.depth}
-                {selected.parent_id ? ` · parent ${selected.parent_id}` : ' · root'}
+        <button type="button" className="scrim open" onClick={closeDrawer} aria-label="关闭" />
+      )}
+      <aside
+        ref={drawerRef}
+        // biome-ignore lint/a11y/useSemanticElements: CSS-class-driven drawer (.open
+        // toggle + custom useFocusTrap), not a native <dialog>; role="dialog" +
+        // aria-modal is the correct ARIA for this modal pattern (same as slice-1/2).
+        role="dialog"
+        aria-modal
+        aria-label={selected?.name}
+        aria-hidden={!selected}
+        className={`drawer${selected ? ' open' : ''}`}
+      >
+        {selected && (
+          <>
+            <div className="drawer-head">
+              <NodeRing node={selected} size={40} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="drawer-title serif">{selected.name}</div>
+                <div className="meta mono">{selected.id.slice(0, 8)}</div>
               </div>
-              <div className="dd-mastery">
-                <MasteryBadge data={masteryData(selected)} />
-              </div>
+              <IconBtn icon="close" size={16} onClick={closeDrawer} aria-label="关闭" />
             </div>
-            <Button
-              variant="ghost"
-              icon="x"
-              onClick={() => setSelectedId(null)}
-              aria-label="关闭"
-              className="knowledge-btn-ghost"
-            />
-          </header>
-          <div className="dd-body">
-            {selectedPendingEdges.length > 0 && (
-              <section className="dd-section">
-                <h4>AI 建议关系 · {selectedPendingEdges.length} 待审</h4>
-                <div className="dd-stack">
+
+            <div className="drawer-body">
+              {/* node metrics — 3-up: 掌握度 / evidence / 关系 (mesh count).
+                  The loom decay cell has no FSRS backing here → replaced with the
+                  real mesh edge count (pre-flight §4). */}
+              <div className="node-metrics">
+                <div className="nm">
+                  {/* Mirror NodeRing's evidence guard (pre-flight §4): a mastery %
+                      is misleading below 3 evidence, so show the untrained /
+                      low-evidence state instead of a misleading "0%". */}
+                  <div className="nm-n serif">
+                    {selected.evidence_count === 0
+                      ? '未练习'
+                      : selected.evidence_count < 3
+                        ? '证据不足'
+                        : `${Math.round((selected.mastery ?? 0) * 100)}%`}
+                  </div>
+                  <div className="nm-l meta">掌握度</div>
+                </div>
+                <div className="nm">
+                  <div className="nm-n serif">{selected.evidence_count}</div>
+                  <div className="nm-l meta">evidence</div>
+                </div>
+                <div className="nm">
+                  <div className="nm-n serif">{edgeCountByNode.get(selected.id) ?? 0}</div>
+                  <div className="nm-l meta">关系</div>
+                </div>
+              </div>
+
+              {/* hierarchy block — parent / children (parent_id + childrenByParent) */}
+              <div className="drawer-sec">
+                <div className="drawer-sec-h">
+                  <LoomIcon name="tree" size={14} />
+                  层级 hierarchy
+                </div>
+                {selected.parent_id && byId.get(selected.parent_id) ? (
+                  <button
+                    type="button"
+                    className="rel-row"
+                    onClick={() => {
+                      const parent = byId.get(selected.parent_id ?? '');
+                      if (parent) setSelectedId(parent.id);
+                    }}
+                  >
+                    <span className="rel-kind mono">parent</span>
+                    <span className="wenyan">{byId.get(selected.parent_id)?.name}</span>
+                    <LoomIcon name="arrow" size={13} className="thread-arrow" />
+                  </button>
+                ) : (
+                  <div className="quiet-empty">根节点（无父）</div>
+                )}
+                {(childrenByParent.get(selected.id) ?? []).map((child) => (
+                  <button
+                    type="button"
+                    key={child.id}
+                    className="rel-row indent"
+                    onClick={() => setSelectedId(child.id)}
+                  >
+                    <span className="rel-kind mono">child</span>
+                    <span className="wenyan">{child.name}</span>
+                    <NodeRing node={child} size={24} />
+                  </button>
+                ))}
+              </div>
+
+              {/* typed relations block — mesh edges grouped by RELATION_ORDER */}
+              <div className="drawer-sec">
+                <div className="drawer-sec-h">
+                  <LoomIcon name="link" size={14} />
+                  关系 typed edges
+                </div>
+                {selectedEdges.length === 0 && <div className="quiet-empty">暂无 typed 关系。</div>}
+                {RELATION_ORDER.flatMap((relationType) =>
+                  selectedEdges
+                    .filter((edge) => edge.relation_type === relationType)
+                    .map((edge) => (
+                      <KnowledgeRelation
+                        key={edge.id}
+                        edge={edge}
+                        currentNodeId={selected.id}
+                        nodesById={byId}
+                        onNavigate={setSelectedId}
+                      />
+                    )),
+                )}
+              </div>
+
+              {/* AI edge proposals — accept / reverse / change-type / dismiss */}
+              {selectedPendingEdges.length > 0 && (
+                <div className="drawer-sec">
+                  <div className="drawer-sec-h">
+                    <LoomIcon name="sparkle" size={14} />
+                    AI 提议的边 · {selectedPendingEdges.length}
+                  </div>
                   {selectedPendingEdges.map((event) => (
                     <EdgeProposalCard
                       key={edgeProposalKey(event)}
@@ -693,120 +815,90 @@ export default function KnowledgePage() {
                     />
                   ))}
                 </div>
-              </section>
-            )}
-
-            <section className="dd-section">
-              <h4>层级 · tree</h4>
-              <div className="relations-list">
-                {selected.parent_id ? (
-                  <div className="relation tone-neutral">
-                    <span className="rel-arrow">↑</span>
-                    <span className="rel-type">父</span>
-                    <span className="rel-target">
-                      {byId.get(selected.parent_id)?.name ?? selected.parent_id}
-                    </span>
-                  </div>
-                ) : (
-                  <div className="empty-tiny">根节点</div>
-                )}
-                {(childrenByParent.get(selected.id) ?? []).map((child) => (
-                  <div className="relation tone-neutral" key={child.id}>
-                    <span className="rel-arrow">↓</span>
-                    <span className="rel-type">子</span>
-                    <span className="rel-target">{child.name}</span>
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            <section className="dd-section">
-              <h4>关系 · mesh · {selectedEdges.length}</h4>
-              {selectedEdges.length === 0 && (
-                <div className="empty-tiny">尚无 mesh 边。tree backbone 之外没有横向链接。</div>
               )}
-              <div className="relations-list">
-                {RELATION_ORDER.map((relationType) => {
-                  const group = selectedEdges.filter((edge) => edge.relation_type === relationType);
-                  if (group.length === 0) return null;
-                  return (
-                    <div className="relations-group" key={relationType}>
-                      {group.map((edge) => (
-                        <KnowledgeRelation
-                          key={edge.id}
-                          edge={edge}
-                          currentNodeId={selected.id}
-                          nodesById={byId}
-                        />
-                      ))}
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
 
-            {selectedNodeProposals.length > 0 && (
-              <section className="dd-section">
-                <h4>AI 建议子节点 · {selectedNodeProposals.length}</h4>
-                <div className="dd-stack">
+              {/* AI child-node proposals — loom omits this, but it is fully wired
+                  (proposalDecision) and useful, so kept as an extra section. */}
+              {selectedNodeProposals.length > 0 && (
+                <div className="drawer-sec">
+                  <div className="drawer-sec-h">
+                    <LoomIcon name="sparkle" size={14} />
+                    AI 建议子节点 · {selectedNodeProposals.length}
+                  </div>
                   {selectedNodeProposals.map((proposal) => (
-                    <div className="proposal" key={proposal.id}>
-                      <div className="proposal-head">
-                        <span className="mini-badge info">AI · 新节点</span>
-                        <span className="title">{proposal.payload.name ?? '未命名节点'}</span>
+                    <div className="edge-prop" key={proposal.id}>
+                      <div className="edge-prop-head">
+                        <Badge tone="info">
+                          <LoomIcon name="sparkle" size={11} />
+                          AI · 新节点
+                        </Badge>
+                        <span className="wenyan">{proposal.payload.name ?? '未命名节点'}</span>
                       </div>
-                      <div className="body">{proposal.reasoning}</div>
-                      <div className="proposal-actions">
-                        <Button
+                      <div className="meta" style={{ marginBottom: 'var(--s-2)' }}>
+                        {proposal.reasoning}
+                      </div>
+                      <div className="edge-prop-acts">
+                        <Btn
                           variant="good"
                           size="sm"
                           icon="check"
                           disabled={proposalDecision.isPending}
-                          className="knowledge-btn-good"
                           onClick={() =>
                             proposalDecision.mutate({ id: proposal.id, decision: 'accept' })
                           }
                         >
                           接受
-                        </Button>
-                        <Button
+                        </Btn>
+                        <Btn
                           variant="ghost"
                           size="sm"
-                          icon="x"
+                          icon="close"
                           disabled={proposalDecision.isPending}
-                          className="knowledge-btn-ghost"
                           onClick={() =>
                             proposalDecision.mutate({ id: proposal.id, decision: 'reject' })
                           }
                         >
                           忽略
-                        </Button>
+                        </Btn>
                       </div>
                     </div>
                   ))}
                 </div>
-              </section>
-            )}
+              )}
 
-            <section className="dd-section">
-              <h4>近活动 · {selectedActivity.length}</h4>
-              {selectedActivity.length === 0 && <div className="empty-tiny">无近期事件</div>}
-              <div className="dd-activity">
+              {/* recent activity — loom keeps this on the detail page; kept here as
+                  an extra section (buildNodeActivity / selectedActivity unchanged). */}
+              <div className="drawer-sec">
+                <div className="drawer-sec-h">
+                  <LoomIcon name="history" size={14} />
+                  近活动 · {selectedActivity.length}
+                </div>
+                {selectedActivity.length === 0 && <div className="quiet-empty">无近期事件</div>}
                 {selectedActivity.map((row) => (
-                  <div className="dd-activity-row" key={row.id}>
-                    <div className="top">
-                      <ActorPill actor={row.actor} />
-                      <span>{row.label}</span>
-                      <span style={{ marginLeft: 'auto' }}>{row.meta}</span>
-                    </div>
-                    <div className="body">{row.detail}</div>
+                  <div className="rel-row" key={row.id} style={{ cursor: 'default' }}>
+                    <ActorPill actor={row.actor} />
+                    <span className="wenyan">{row.label}</span>
+                    <span className="meta mono" style={{ marginLeft: 'auto', flex: 'none' }}>
+                      {row.meta}
+                    </span>
                   </div>
                 ))}
               </div>
-            </section>
-          </div>
-        </aside>
-      )}
+            </div>
+
+            <div className="drawer-foot">
+              <Btn
+                variant="primary"
+                block
+                iconEnd="arrow"
+                onClick={() => router.push(`/knowledge/${selected.id}`)}
+              >
+                打开节点详情页
+              </Btn>
+            </div>
+          </>
+        )}
+      </aside>
     </main>
   );
 }
@@ -852,14 +944,6 @@ function edgeProposalFrom(event: EdgeProposalEvent): string | undefined {
 
 function edgeProposalTo(event: EdgeProposalEvent): string | undefined {
   return event.payload.to_knowledge_id ?? event.payload.to_id;
-}
-
-function masteryData(node: KnowledgeNode): MasteryData {
-  return {
-    mastery: node.mastery,
-    evidence_count: node.evidence_count,
-    last_evidence_at: node.last_evidence_at,
-  };
 }
 
 function edgeProposalKey(event: EdgeProposalEvent): string {
@@ -973,15 +1057,63 @@ function createdByActor(value: unknown): 'user' | 'agent' | 'system' {
   return 'system';
 }
 
+// NodeRing — loom MasteryRing for the drawer, sharing the tree's evidence-guard
+// (pre-flight §4): a ring % is misleading below 3 evidence, so render a muted
+// neutral chip instead of a colored ring; 0 evidence is the untrained state.
+// The Ring primitive is fixed 84px, so scale the wrapper to the requested size.
+function NodeRing({
+  node,
+  size,
+}: {
+  node: Pick<KnowledgeNode, 'mastery' | 'evidence_count'>;
+  size: number;
+}) {
+  if (node.evidence_count < 3) {
+    return (
+      <span
+        className="mastery mastery-low-evidence"
+        title={
+          node.evidence_count === 0
+            ? 'evidence_count=0 · 尚无 attempt / review event'
+            : `evidence_count<3 · 暂不展示稳定掌握度 · n=${node.evidence_count}`
+        }
+        style={{ flex: 'none' }}
+      >
+        <LoomIcon name="target" size={12} />
+        {node.evidence_count === 0 ? '未练习' : `n=${node.evidence_count}`}
+      </span>
+    );
+  }
+  const masteryPct = Math.round((node.mastery ?? 0) * 100);
+  return (
+    <span
+      style={{
+        flex: 'none',
+        width: size,
+        height: size,
+        display: 'inline-flex',
+      }}
+    >
+      <span style={{ transform: `scale(${size / 84})`, transformOrigin: 'top left' }}>
+        <Ring percent={masteryPct} />
+      </span>
+    </span>
+  );
+}
+
+// ActorPill — loom mono actor chip (replaces the legacy .actor-pill). LoomIcon by
+// actor: agent→sparkle, user→record (the loom icon set has no person glyph;
+// `record` is its user-input/capture mark — the closest human-action cue), else→moon.
 function ActorPill({ actor }: { actor: 'user' | 'agent' | 'system' | string }) {
-  const icon = actor === 'agent' ? 'bot' : actor === 'user' ? 'user' : 'cog';
+  const icon: LoomIconName = actor === 'agent' ? 'sparkle' : actor === 'user' ? 'record' : 'moon';
   const label = actor === 'agent' ? 'AI' : actor === 'user' ? '用户' : 'system';
   return (
     <span
-      className={`actor-pill ${actor === 'agent' ? 'agent' : actor === 'user' ? 'user' : 'system'}`}
+      className="rel-kind mono"
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
     >
-      <Icon name={icon} size={11} />
-      <span>{label}</span>
+      <LoomIcon name={icon} size={11} />
+      {label}
     </span>
   );
 }
@@ -990,28 +1122,26 @@ function KnowledgeRelation({
   edge,
   currentNodeId,
   nodesById,
+  onNavigate,
 }: {
   edge: KnowledgeEdgeRow;
   currentNodeId: string;
   nodesById: Map<string, TreeNode>;
+  onNavigate: (id: string) => void;
 }) {
   const meta = relationMeta(edge.relation_type);
   const isFromHere = edge.from_knowledge_id === currentNodeId;
   const otherId = isFromHere ? edge.to_knowledge_id : edge.from_knowledge_id;
   const arrow = meta.directed ? (isFromHere ? '→' : '←') : meta.arrow;
   return (
-    <div className={`relation tone-${meta.tone}`}>
-      <span className="rel-arrow">{arrow}</span>
-      <span className="rel-type">{meta.label}</span>
-      <span className="rel-target">{nodeName(nodesById, otherId)}</span>
-      <span className="rel-weight">{edge.weight.toFixed(1)}</span>
-      {createdByActor(edge.created_by) === 'agent' && <ActorPill actor="agent" />}
-      {edge.reasoning && (
-        <span className="rel-info" title={edge.reasoning}>
-          <Icon name="info" size={12} />
-        </span>
-      )}
-    </div>
+    <button type="button" className="rel-row" onClick={() => onNavigate(otherId)}>
+      <span className={`rel-tag rel-tag-${edge.relation_type}`}>
+        <span className="mono">{arrow}</span>
+        {meta.label}
+      </span>
+      <span className="wenyan">{nodeName(nodesById, otherId)}</span>
+      <LoomIcon name="arrow" size={13} className="thread-arrow" />
+    </button>
   );
 }
 
@@ -1113,6 +1243,13 @@ function EdgeCreateForm({
   );
 }
 
+const EDGE_DECISION_LABEL: Record<ProposalDecision, string> = {
+  accept: '已接受',
+  reverse: '已反向',
+  change_type: '已改类型',
+  dismiss: '已忽略',
+};
+
 function EdgeProposalCard({
   event,
   nodesById,
@@ -1128,81 +1265,98 @@ function EdgeProposalCard({
 }) {
   const fromId = edgeProposalFrom(event);
   const toId = edgeProposalTo(event);
-  const meta = relationMeta(event.payload.relation_type);
-  const suggestionKind = event.payload.suggestion_kind ?? 'proactive';
+  const relType = event.payload.relation_type;
+  const meta = relationMeta(relType);
   const disabled = status !== undefined || pending;
+
+  // Resolved (decided) — optimistic terminal state; show the decision badge.
+  if (status) {
+    return (
+      <div className="edge-prop resolved">
+        <Badge tone="good">
+          <LoomIcon name="check" size={12} />
+          {EDGE_DECISION_LABEL[status]}
+        </Badge>
+        <span className="wenyan">
+          {nodeName(nodesById, fromId)} {meta.arrow} {nodeName(nodesById, toId)}
+        </span>
+      </div>
+    );
+  }
+
   return (
-    <div
-      className={`edge-proposal tone-${meta.tone} ${status ? `is-${status}` : ''} ${
-        suggestionKind === 'corrective' ? 'is-corrective' : ''
-      }`}
-    >
-      <div className="edge-proposal-head">
-        <span className="mini-badge info">
-          <Icon name="link" size={11} /> AI · 关系
-          <SuggestionKindTag kind={suggestionKind} />
+    <div className="edge-prop">
+      <div className="edge-prop-head">
+        <span className={`rel-tag rel-tag-${relType ?? ''}`}>
+          <span className="mono">{meta.arrow}</span>
+          {meta.label}
         </span>
-        <span className="ep-graph">
-          <code>{nodeName(nodesById, fromId)}</code>
-          <span className={`ep-arrow tone-${meta.tone}`}>
-            <span className="ep-arrow-glyph">{meta.arrow}</span>
-            <sub className="ep-arrow-lbl">{meta.label}</sub>
-          </span>
-          <code>{nodeName(nodesById, toId)}</code>
+        {/* Corrective proposals don't count toward acceptance rate — mark them
+            distinctly so review context survives the loom rewrite. Proactive
+            proposals show nothing extra. */}
+        {event.payload.suggestion_kind === 'corrective' && <Badge tone="info">修正</Badge>}
+        <span className="wenyan">
+          {nodeName(nodesById, fromId)} {meta.arrow} {nodeName(nodesById, toId)}
         </span>
-        <span className="meta-row">
+        <span className="meta mono" style={{ marginLeft: 'auto' }}>
           {event.actor_ref}
-          {event.task_run_id ? ` · ${event.task_run_id}` : ''}
+          {typeof event.payload.weight === 'number' ? ` · w${event.payload.weight.toFixed(1)}` : ''}
           {event.cost_micro_usd ? ` · $${(event.cost_micro_usd / 1_000_000).toFixed(4)}` : ''}
         </span>
       </div>
-      {event.payload.reasoning && <div className="ep-reason">推理 — {event.payload.reasoning}</div>}
-      <div className="ep-actions">
-        <Button
+      {event.payload.reasoning && (
+        <div className="meta" style={{ marginBottom: 'var(--s-2)' }}>
+          推理 — {event.payload.reasoning}
+        </div>
+      )}
+      <div className="edge-prop-acts">
+        <Btn
           variant="good"
           size="sm"
           icon="check"
           disabled={disabled}
-          className="knowledge-btn-good"
           onClick={() => onDecision('accept')}
         >
-          {status === 'accept' ? '已接受' : '接受'}
-        </Button>
-        <Button
-          variant="secondary"
+          接受
+        </Btn>
+        <Btn
+          variant="ghost"
           size="sm"
+          icon="reverse"
           disabled={disabled}
-          className="knowledge-btn-secondary"
           onClick={() => onDecision('reverse')}
         >
           改方向
-        </Button>
-        <Button
-          variant="secondary"
-          size="sm"
-          disabled={disabled}
-          className="knowledge-btn-secondary"
-          onClick={() => {
-            // Pick the next relation type from the core enum, skipping the
-            // current one. The full picker is a later UX polish; cycling lets
-            // users at least round-trip the decision through the server.
-            const cur = event.payload.relation_type;
-            const next = (Object.keys(RELATION_TYPES) as RelationType[]).find((r) => r !== cur);
-            if (next) onDecision('change_type', next);
-          }}
-        >
-          改关系
-        </Button>
-        <Button
+        </Btn>
+        <Btn
           variant="ghost"
           size="sm"
-          icon="x"
+          icon="refresh"
           disabled={disabled}
-          className="knowledge-btn-ghost"
+          onClick={() => {
+            // Rotate to the NEXT core relation type in RELATION_ORDER (wrapping
+            // around), not the first different one. Keeps the server `change_type`
+            // round-trip; the full picker is later UX polish.
+            const currentIndex = RELATION_ORDER.indexOf(relType ?? 'related_to');
+            const next = (
+              currentIndex === -1
+                ? RELATION_ORDER[0]
+                : RELATION_ORDER[(currentIndex + 1) % RELATION_ORDER.length]
+            ) as RelationType;
+            onDecision('change_type', next);
+          }}
+        >
+          改类型
+        </Btn>
+        <Btn
+          variant="ghost"
+          size="sm"
+          icon="close"
+          disabled={disabled}
           onClick={() => onDecision('dismiss')}
         >
-          {status === 'dismiss' ? '已忽略' : '忽略'}
-        </Button>
+          忽略
+        </Btn>
       </div>
     </div>
   );
