@@ -7905,3 +7905,88 @@ button.seg-sm {
   align-items: center;
   gap: var(--s-2);
 }
+
+/* ============================================================
+   LOOM KD-DRAWER LAYER — Redraw Slice 3b (YUK-169)
+   NodeDrawer (node detail drawer) + AI edge-proposal card classes
+   ported additively from loom-prototype @ f85aca6d
+   (screens-2b.css L71-83 + responsive L325). Tokens-only; no new hues.
+
+   Reuses (NOT re-ported here — present from slice-1 shell / slice-2):
+   .drawer / .scrim / .drawer-head / .drawer-body / .drawer-foot /
+   .drawer-sec / .rel-row / .rel-tag(+5 variants) / .quiet-empty /
+   .badge(+tones) / .chip.
+
+   NOTE: slice-2 styles ".drawer-sec > h4"; this slice ADDS a sibling
+   ".drawer-sec-h" (a div mono header row) — the h4 rule is untouched.
+   The legacy ".edge-proposal" / ".ep-*" classes (different names) are
+   left in place for a later cleanup pass; this is the loom ".edge-prop".
+   ============================================================ */
+
+/* loom mono section header row (div header, alongside slice-2 h4) */
+.drawer-sec-h {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  letter-spacing: var(--ls-wide);
+  color: var(--ink-4);
+  margin-bottom: var(--s-3);
+}
+
+/* node metrics — 3-up grid of stat cells */
+.node-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--s-2);
+  padding-bottom: var(--s-4);
+  border-bottom: 1px solid var(--line);
+}
+.nm {
+  text-align: center;
+}
+.nm-n {
+  font-size: var(--fs-h4);
+}
+.nm-l {
+  display: block;
+  margin-top: 2px;
+}
+
+/* AI edge-proposal card (accept / reverse / change-type / dismiss) */
+.edge-prop {
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  padding: var(--s-3);
+  margin-bottom: var(--s-2);
+  background: var(--paper-sunk);
+}
+.edge-prop.resolved {
+  opacity: 0.6;
+  display: flex;
+  gap: var(--s-2);
+  align-items: center;
+}
+.edge-prop-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: var(--s-2);
+  flex-wrap: wrap;
+}
+.edge-prop-head .wenyan {
+  font-size: var(--fs-caption);
+}
+.edge-prop-acts {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 640px) {
+  .node-metrics {
+    grid-template-columns: 1fr;
+    gap: var(--s-2);
+  }
+}
