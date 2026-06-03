@@ -99,7 +99,10 @@ interface NotePageData {
   updated_at: string;
 }
 
-type EntryContext = { kind: 'knowledge' | 'item'; id: string } | null;
+interface EntryContext {
+  kind: 'knowledge' | 'item';
+  id: string;
+}
 type ViewMode = 'read' | 'edit';
 
 const NOTE_TYPE_LABEL: Record<string, string> = {
@@ -141,7 +144,7 @@ function outlineGlyph(node: BlockTreeNode): string {
   return (kind ? OUTLINE_GLYPH[kind] : undefined) ?? '·';
 }
 
-function parseEntryContext(raw: string | null): EntryContext {
+function parseEntryContext(raw: string | null): EntryContext | null {
   if (!raw) return null;
   const [kind, ...rest] = raw.split(':');
   const id = rest.join(':').trim();
@@ -204,13 +207,13 @@ function scrollToBlock(id: string) {
   target?.scrollIntoView({ block: 'start', behavior: 'smooth' });
 }
 
-function entryHref(entry: EntryContext): string {
+function entryHref(entry: EntryContext | null): string {
   if (entry?.kind === 'knowledge') return `/knowledge/${entry.id}`;
   if (entry?.kind === 'item') return `/learning-items/${entry.id}`;
   return '/knowledge';
 }
 
-function entryText(entry: EntryContext, note: NotePageData): string | null {
+function entryText(entry: EntryContext | null, note: NotePageData): string | null {
   if (entry?.kind === 'knowledge') {
     return note.labels.find((label) => label.id === entry.id)?.name ?? entry.id;
   }
@@ -290,7 +293,10 @@ export default function NoteReaderPage() {
 
   const entryLabel = entryText(entry, note);
   const entryCount = note.labels.length + note.related_learning_items.length;
-  const canEdit = note.body_blocks !== null && note.generation_status === 'ready';
+  // A ready note is editable even with an empty body — ArtifactBlockTree accepts
+  // a null bodyBlocks (it coerces to an empty doc) so the user can author the
+  // first block instead of being stuck on a read-only "暂无正文" dead end.
+  const canEdit = note.generation_status === 'ready';
   // note.history arrives JSON-serialized (at: ISO string); deriveNoteActorView
   // is runtime-safe for both Date and string `at` and casts the loose wire shape
   // to the schema type at the boundary.
@@ -538,6 +544,8 @@ export default function NoteReaderPage() {
           className="note-rail-toggle"
           title="大纲"
           aria-label="切换大纲"
+          aria-expanded={outlineOpen}
+          aria-controls="note-outline-drawer"
           onClick={() => setOutlineOpen((o) => !o)}
         />
         <div
@@ -572,6 +580,8 @@ export default function NoteReaderPage() {
           className="note-rail-toggle"
           title="上下文"
           aria-label="切换上下文"
+          aria-expanded={ctxOpen}
+          aria-controls="note-context-drawer"
           onClick={() => setCtxOpen((o) => !o)}
         />
       </div>
@@ -713,6 +723,13 @@ export default function NoteReaderPage() {
       )}
       <div
         ref={outlineDrawerRef}
+        id="note-outline-drawer"
+        // biome-ignore lint/a11y/useSemanticElements: CSS-class-driven drawer (.open
+        // toggle + custom useFocusTrap), not a native <dialog>; role="dialog" +
+        // aria-modal is the correct ARIA for this modal pattern.
+        role="dialog"
+        aria-modal="true"
+        aria-label="笔记大纲"
         className={`note-mobile-drawer left${outlineOpen ? ' open' : ''}`}
       >
         {Outline}
@@ -725,7 +742,17 @@ export default function NoteReaderPage() {
           onClick={() => setCtxOpen(false)}
         />
       )}
-      <div ref={ctxDrawerRef} className={`note-mobile-drawer right${ctxOpen ? ' open' : ''}`}>
+      <div
+        ref={ctxDrawerRef}
+        id="note-context-drawer"
+        // biome-ignore lint/a11y/useSemanticElements: CSS-class-driven drawer (.open
+        // toggle + custom useFocusTrap), not a native <dialog>; role="dialog" +
+        // aria-modal is the correct ARIA for this modal pattern.
+        role="dialog"
+        aria-modal="true"
+        aria-label="笔记上下文"
+        className={`note-mobile-drawer right${ctxOpen ? ' open' : ''}`}
+      >
         {Context}
       </div>
     </div>
