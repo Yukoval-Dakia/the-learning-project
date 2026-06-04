@@ -126,6 +126,12 @@ export async function findOrCreateCopilotConversation(
       .where(
         and(
           eq(learning_session.type, 'conversation'),
+          // Scope reuse to Copilot's own envelopes. teaching's startConversation
+          // inserts type='conversation' with entrypoint=null + goal_id set, so
+          // without this filter a live teaching session could be the most-recent
+          // live row and get cross-surface reused — polluting teaching's event
+          // stream and violating this fn's goal_id=null invariant.
+          eq(learning_session.entrypoint, 'copilot'),
           inArray(learning_session.status, ['active', 'idle']),
           gte(learning_session.updated_at, cutoff),
         ),
