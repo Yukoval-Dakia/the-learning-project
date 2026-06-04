@@ -258,6 +258,22 @@ Validation：本地全 wave-gate ✅（144 test files / 1137 tests + 1 todo / mi
 ⬜  Bad accepted proposal 显式 retraction / rollback 流程
 ```
 
+### U 序列 — 三设计统一落地（YUK-203，2026-06-04 起）
+
+> 机器可读 shipped 注册表：`pnpm audit:schema` 的 `resolves_when.kind='phase'` 按本 block 的 ✅ 行判定 phase 是否 shipped（脚本只解析 `## 1. Phase 路线图` 下 fenced block）。叙述性细节见顶部「U 序列 drive」。
+
+```
+✅  U0    审计 + 裁决              29-agent 可行性审计 → D1-D11 + ADR-0029/0028（PR #292/#293）
+✅  U1    重绘 wave-2              composer + mistakes/sessions/coach/items loom 化（PR #294/#296，YUK-169）
+✅  U2    知识级 FSRS              ADR-0028 调度单元 = 知识点（PR #295）
+✅  U3    Copilot 持久化           会话 envelope + 去 Today 化 + agent objective docs（PR #297）
+✅  U4    ReviewPlanTask 流水线    Coach brief → review_plan 窄面 + D6 judge 版本钉（PR #298/#299）
+⬜  U5    paper 模型 + 试卷 UI     ToolStateT v2 sections + artifact_id + answer 草稿层 + 练习一级页面
+⬜  U6    三 chat 合并             teaching/solve → Copilot（AF S4）
+⬜  U7    Studio MVP               profile 编译 CLI + ProfileCriticTask + read-only /admin/subjects
+✅  U8    leave_agent_note         随 U3 提前落地（ExperimentalEvent 带外 hint 通道）
+```
+
 ### Later — Standalone MCP / Plugin / Multi-Subject 扩展
 
 ```
