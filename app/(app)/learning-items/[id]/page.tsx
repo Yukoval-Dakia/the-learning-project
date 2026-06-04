@@ -19,10 +19,12 @@ import {
   resolveSubjectRenderModel,
   subjectContentProps,
 } from '@/ui/lib/subject';
-import { Badge } from '@/ui/primitives/Badge';
-import { Button } from '@/ui/primitives/Button';
-import { Card } from '@/ui/primitives/Card';
-import { PageHeader } from '@/ui/primitives/PageHeader';
+import { Btn } from '@/ui/primitives/Btn';
+import { LoomBadge } from '@/ui/primitives/LoomBadge';
+import { LoomCard } from '@/ui/primitives/LoomCard';
+import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { Ring } from '@/ui/primitives/Ring';
+import { SectionLabel } from '@/ui/primitives/SectionLabel';
 import { StatusBadge } from '@/ui/primitives/StatusBadge';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
@@ -110,6 +112,19 @@ interface CandidateRow {
   status: ItemStatus;
 }
 
+interface KnowledgeNode {
+  id: string;
+  name: string;
+  effective_domain: string | null;
+  mastery: number | null;
+  evidence_count: number;
+}
+
+// /api/knowledge/review-due-summary — existing GET endpoint, minimal inline shape.
+interface ReviewDueSummary {
+  summary: Record<string, { overdue: number; due_soon: number }>;
+}
+
 const STATUS_TRANSITIONS: Record<ItemStatus, ItemStatus[]> = {
   pending: ['in_progress', 'done', 'archived', 'dismissed'],
   in_progress: ['done', 'pending', 'archived'],
@@ -128,6 +143,68 @@ const STATUS_LABEL: Record<ItemStatus, string> = {
   archived: '归档',
 };
 
+const STATUS_FLOW: ItemStatus[] = [
+  'pending',
+  'in_progress',
+  'done',
+  'resting',
+  'dismissed',
+  'archived',
+];
+
+// D11 health bar — read-time aggregation of knowledge_mastery + due (zero owned
+// state; docs/design/2026-06-04-u0-decisions.md D11③).
+function aggregateHealth(
+  knowledgeIds: string[],
+  knowledgeById: Map<string, KnowledgeNode>,
+  dueSummary: Record<string, { overdue: number; due_soon: number }> | undefined,
+): { nodeCount: number; dueCount: number; avgMastery: number | null; lowEvidence: boolean } {
+  const nodeCount = knowledgeIds.length;
+  let dueCount = 0;
+  let masterySum = 0;
+  let masteryNodes = 0;
+  let anyEvidence = false;
+  for (const kid of knowledgeIds) {
+    dueCount += dueSummary?.[kid]?.overdue ?? 0;
+    const node = knowledgeById.get(kid);
+    if (node) {
+      if (node.evidence_count >= 3) anyEvidence = true;
+      if (node.evidence_count > 0 && node.mastery !== null) {
+        masterySum += node.mastery;
+        masteryNodes += 1;
+      }
+    }
+  }
+  const avgMastery = masteryNodes > 0 ? Math.round((masterySum / masteryNodes) * 100) : null;
+  return { nodeCount, dueCount, avgMastery, lowEvidence: !anyEvidence };
+}
+
+function ItemHealthBar({
+  health,
+}: {
+  health: { nodeCount: number; dueCount: number; avgMastery: number | null; lowEvidence: boolean };
+}) {
+  if (health.nodeCount === 0) return null;
+  return (
+    <div className={`item-health${health.lowEvidence ? ' muted' : ''}`}>
+      <span className="health-seg">
+        <span className="health-n tnum">{health.nodeCount}</span>
+        <span className="health-l">知识点</span>
+      </span>
+      <span className="health-seg due">
+        <span className="health-n tnum">{health.dueCount}</span>
+        <span className="health-l">到期</span>
+      </span>
+      <span className="health-seg">
+        <span className="health-n tnum">
+          {health.avgMastery === null ? '—' : `${health.avgMastery}%`}
+        </span>
+        <span className="health-l">平均掌握</span>
+      </span>
+    </div>
+  );
+}
+
 export default function LearningItemDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
@@ -142,6 +219,17 @@ export default function LearningItemDetailPage() {
   const candidatesQ = useQuery({
     queryKey: ['learning-items', 'candidates'],
     queryFn: () => apiJson<{ rows: CandidateRow[] }>('/api/learning-items?limit=200'),
+  });
+
+  // D11 health bar inputs — both already-existing GET endpoints (zero new table
+  // / write path; audit:schema unaffected).
+  const knowledgeQ = useQuery({
+    queryKey: ['knowledge'],
+    queryFn: () => apiJson<{ rows: KnowledgeNode[] }>('/api/knowledge'),
+  });
+  const dueSummaryQ = useQuery({
+    queryKey: ['review-due-summary'],
+    queryFn: () => apiJson<ReviewDueSummary>('/api/knowledge/review-due-summary'),
   });
 
   const [titleDraft, setTitleDraft] = useState<string | null>(null);
@@ -211,9 +299,9 @@ export default function LearningItemDetailPage() {
   if (detailQ.isLoading) {
     return (
       <Shell>
-        <Card>
-          <p style={mutedStyle}>加载中…</p>
-        </Card>
+        <LoomCard pad>
+          <p className="item-sub">加载中…</p>
+        </LoomCard>
       </Shell>
     );
   }
@@ -221,22 +309,22 @@ export default function LearningItemDetailPage() {
     const err = detailQ.error;
     return (
       <Shell>
-        <Card>
-          <p style={errorStyle}>
+        <LoomCard pad>
+          <p className="meta" style={{ color: 'var(--again-ink)' }}>
             {err instanceof ApiAuthError
               ? `${err.message} — 请重新进入页面输入 token`
               : `加载失败：${(err as Error).message}`}
           </p>
-        </Card>
+        </LoomCard>
       </Shell>
     );
   }
   if (!data) {
     return (
       <Shell>
-        <Card>
-          <p style={mutedStyle}>未找到。</p>
-        </Card>
+        <LoomCard pad>
+          <p className="item-sub">未找到。</p>
+        </LoomCard>
       </Shell>
     );
   }
@@ -250,45 +338,59 @@ export default function LearningItemDetailPage() {
   );
   const allowedStatusTargets = STATUS_TRANSITIONS[data.status] ?? [];
   const subjectModel = resolveSubjectRenderModel(data.subject_profile);
-  const titleInputProps = subjectContentProps(subjectModel, { style: inputStyle });
-  const contentTextareaProps = subjectContentProps(subjectModel, { style: textareaStyle });
+  const titleInputProps = subjectContentProps(subjectModel, { className: 'title-input serif' });
+  const contentTextareaProps = subjectContentProps(subjectModel, {
+    className: 'field-input',
+    style: contentStyle,
+  });
+  const knowledgeById = new Map(knowledgeQ.data?.rows.map((n) => [n.id, n]) ?? []);
+  const health = aggregateHealth(data.knowledge_ids, knowledgeById, dueSummaryQ.data?.summary);
 
   return (
     <Shell>
-      <PageHeader title="学习项详情" eyebrow={`/learning-items/${data.id}`} />
-      <div style={{ marginTop: 'var(--s-2)' }}>
-        <Link href="/learning-items" style={linkStyle}>
-          ← 返回列表
-        </Link>
-        {currentParent && (
-          <>
-            <span style={{ margin: '0 var(--s-2)', color: 'var(--ink-4)' }}>·</span>
-            <Link href={`/learning-items/${currentParent.id}`} style={linkStyle}>
-              ↑ 父项：{currentParent.title}
-            </Link>
-          </>
-        )}
-        <span style={{ margin: '0 var(--s-2)', color: 'var(--ink-4)' }}>·</span>
-        <button
-          type="button"
-          onClick={() => setTeachOpen(true)}
-          style={{
-            ...linkStyle,
-            background: 'none',
-            border: 'none',
-            padding: 0,
-            cursor: 'pointer',
-            font: 'inherit',
-          }}
-        >
-          → 对话教学
-        </button>
+      <Link href="/learning-items" className="back-link">
+        <LoomIcon name="arrowL" size={14} />
+        学习项
+      </Link>
+
+      <div className="page-head">
+        <div className="eyebrow">
+          LEARNING_ITEM · {data.id} · {currentParent ? 'atomic' : 'hub'}
+        </div>
+        <div className="page-head-row">
+          <input
+            {...titleInputProps}
+            type="text"
+            aria-label="标题"
+            value={titleDraft ?? data.title}
+            maxLength={200}
+            onChange={(e) => setTitleDraft(e.target.value)}
+            onBlur={() => {
+              if (titleDraft?.trim() && titleDraft !== data.title) {
+                updateM.mutate({ version: data.version, title: titleDraft.trim() });
+              } else {
+                setTitleDraft(null);
+              }
+            }}
+          />
+          <div className="hero-cta">
+            {/* RED-LINE: teaching wiring preserved verbatim — AF S4 absorbs it. */}
+            <Btn variant="secondary" icon="teach" onClick={() => setTeachOpen(true)}>
+              对话教学
+            </Btn>
+            <Btn
+              variant="primary"
+              icon="review"
+              onClick={() => updateM.mutate({ version: data.version, status: 'in_progress' })}
+              disabled={updateM.isPending || data.status === 'in_progress'}
+            >
+              {data.status === 'in_progress' ? '进行中' : '开始学'}
+            </Btn>
+          </div>
+        </div>
       </div>
 
-      {/* YUK-19 — source event block. Surface origin proposal + correction state
-          + retract CTA when the item came from a still-active learning_intent
-          proposal. Reuses CorrectionStateRenderer (CC-2) + the existing retract
-          route (CC-4). */}
+      {/* YUK-19 — source event block + retract CTA (wiring unchanged). */}
       {data.source_event && (
         <SourceEventBlock
           source={data.source}
@@ -304,158 +406,189 @@ export default function LearningItemDetailPage() {
         />
       )}
 
-      <Card pad="lg" style={{ marginTop: 'var(--s-4)' }}>
-        <Label>标题</Label>
-        <input
-          {...titleInputProps}
-          type="text"
-          value={titleDraft ?? data.title}
-          maxLength={200}
-          onChange={(e) => setTitleDraft(e.target.value)}
-          onBlur={() => {
-            if (titleDraft?.trim() && titleDraft !== data.title) {
-              updateM.mutate({ version: data.version, title: titleDraft.trim() });
-            } else {
-              setTitleDraft(null);
-            }
-          }}
-        />
+      <div className="kd-grid" style={{ marginTop: 'var(--s-5)' }}>
+        <div className="kd-main">
+          {/* D11 health bar */}
+          <ItemHealthBar health={health} />
 
-        <div
-          style={{
-            marginTop: 'var(--s-3)',
-            display: 'flex',
-            gap: 'var(--s-3)',
-            alignItems: 'center',
-            flexWrap: 'wrap',
-          }}
-        >
-          <Label inline>状态</Label>
-          <StatusBadge status={data.status as never} />
-          <Badge tone="info">{subjectModel.displayName}</Badge>
-          {allowedStatusTargets.map((t) => (
-            <Button
-              key={t}
-              variant={t === 'archived' || t === 'dismissed' ? 'ghost' : 'primary'}
-              onClick={() => updateM.mutate({ version: data.version, status: t })}
-              disabled={updateM.isPending}
-            >
-              → {STATUS_LABEL[t]}
-            </Button>
-          ))}
+          {/* content editor */}
+          <LoomCard pad style={{ marginTop: 'var(--s-4)' }}>
+            <div className="field-label">内容</div>
+            <textarea
+              {...contentTextareaProps}
+              value={contentDraft ?? data.content}
+              rows={8}
+              maxLength={10_000}
+              onChange={(e) => setContentDraft(e.target.value)}
+              onBlur={() => {
+                if (contentDraft !== null && contentDraft !== data.content) {
+                  updateM.mutate({ version: data.version, content: contentDraft });
+                } else {
+                  setContentDraft(null);
+                }
+              }}
+            />
+            {updateM.isError && (
+              <p className="meta" style={{ color: 'var(--again-ink)', marginTop: 'var(--s-2)' }}>
+                更新失败：{(updateM.error as Error).message}
+              </p>
+            )}
+          </LoomCard>
+
+          {/* YUK-92 P2-basic — primary artifact block-tree note when present */}
+          {data.primary_artifact && (
+            <ArtifactView
+              artifact={data.primary_artifact}
+              subjectProfile={data.subject_profile}
+              onSectionSaved={() => {
+                qc.invalidateQueries({ queryKey: ['learning-item', id] });
+                qc.invalidateQueries({ queryKey: ['learning-items'] });
+              }}
+            />
+          )}
+
+          {/* children */}
+          {data.children.length > 0 && (
+            <>
+              <SectionLabel count={data.children.length}>子项</SectionLabel>
+              <div className="grid" style={{ display: 'grid', gap: 'var(--s-2)' }}>
+                {data.children.map((c) => {
+                  const childHealth = aggregateHealth(
+                    c.knowledge_ids,
+                    knowledgeById,
+                    dueSummaryQ.data?.summary,
+                  );
+                  return (
+                    <div key={c.id} className="child-row">
+                      <span className="item-ic info" style={{ width: 32, height: 32 }}>
+                        <LoomIcon name="review" size={16} />
+                      </span>
+                      <Link
+                        href={`/learning-items/${c.id}`}
+                        className="child-title wenyan"
+                        style={{ color: 'inherit', textDecoration: 'none' }}
+                      >
+                        {c.title}
+                      </Link>
+                      <StatusBadge status={c.status} />
+                      {childHealth.avgMastery !== null && !childHealth.lowEvidence && (
+                        <Ring percent={childHealth.avgMastery} />
+                      )}
+                      <Btn
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          // child version unknown here; round-trip patch fetches it.
+                          apiJson<{ version: number }>(`/api/learning-items/${c.id}`)
+                            .then((row) =>
+                              detachChildM.mutate({ childId: c.id, version: row.version }),
+                            )
+                            .catch(() => {});
+                        }}
+                        disabled={detachChildM.isPending}
+                      >
+                        解除
+                      </Btn>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
         </div>
 
-        <div style={{ marginTop: 'var(--s-3)' }}>
-          <Label>内容</Label>
-          <textarea
-            {...contentTextareaProps}
-            value={contentDraft ?? data.content}
-            rows={8}
-            maxLength={10_000}
-            onChange={(e) => setContentDraft(e.target.value)}
-            onBlur={() => {
-              if (contentDraft !== null && contentDraft !== data.content) {
-                updateM.mutate({ version: data.version, content: contentDraft });
-              } else {
-                setContentDraft(null);
-              }
-            }}
-          />
-        </div>
-
-        {data.knowledge_ids.length > 0 && (
-          <div style={{ marginTop: 'var(--s-3)' }}>
-            <Label>知识点</Label>
-            <div style={chipRowStyle}>
-              {data.knowledge_ids.map((kid) => (
-                <Badge key={kid} tone="neutral">
-                  {kid}
-                </Badge>
-              ))}
+        <div className="kd-side">
+          <SectionLabel>属性</SectionLabel>
+          <LoomCard pad>
+            <div className="prop-field">
+              <div className="field-label">状态</div>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 'var(--s-2)',
+                  flexWrap: 'wrap',
+                }}
+              >
+                <StatusBadge status={data.status} />
+                <LoomBadge tone="info">{subjectModel.displayName}</LoomBadge>
+              </div>
+              <div className="status-flow" style={{ marginTop: 'var(--s-2)' }}>
+                {STATUS_FLOW.map((s) => {
+                  const reachable = data.status === s || allowedStatusTargets.includes(s);
+                  return (
+                    <button
+                      type="button"
+                      key={s}
+                      className={`status-step${data.status === s ? ' on' : ''}`}
+                      disabled={!reachable || updateM.isPending}
+                      onClick={() =>
+                        data.status !== s && updateM.mutate({ version: data.version, status: s })
+                      }
+                    >
+                      {STATUS_LABEL[s]}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        )}
 
-        {updateM.isError && <p style={errorStyle}>更新失败：{(updateM.error as Error).message}</p>}
-      </Card>
+            {data.knowledge_ids.length > 0 && (
+              <div className="prop-field">
+                <div className="field-label">知识点</div>
+                <div className="chip-set">
+                  {data.knowledge_ids.map((kid) => {
+                    const node = knowledgeById.get(kid);
+                    return (
+                      <Link key={kid} href={`/knowledge/${kid}`} className="chip chip-k mono">
+                        #{node?.name ?? kid}
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
-      {/* Parent linkage */}
-      <Card pad="lg" style={{ marginTop: 'var(--s-4)' }}>
-        <Label>父项（hub）</Label>
-        {currentParent ? (
-          <div
-            style={{ display: 'flex', alignItems: 'center', gap: 'var(--s-3)', flexWrap: 'wrap' }}
-          >
-            <Link href={`/learning-items/${currentParent.id}`} style={linkStyle}>
-              {currentParent.title}
-            </Link>
-            <StatusBadge status={currentParent.status as never} />
-            <Button
-              variant="ghost"
-              onClick={() =>
-                updateM.mutate({ version: data.version, parent_learning_item_id: null })
-              }
-              disabled={updateM.isPending}
-            >
-              脱离父项
-            </Button>
-          </div>
-        ) : (
-          <ParentPicker
-            candidates={candidates}
-            onAttach={(parentId) =>
-              updateM.mutate({
-                version: data.version,
-                parent_learning_item_id: parentId,
-              })
-            }
-            disabled={updateM.isPending}
-          />
-        )}
-      </Card>
-
-      {/* YUK-92 P2-basic — primary artifact block-tree note when present */}
-      {data.primary_artifact && (
-        <ArtifactView
-          artifact={data.primary_artifact}
-          subjectProfile={data.subject_profile}
-          onSectionSaved={() => {
-            qc.invalidateQueries({ queryKey: ['learning-item', id] });
-            qc.invalidateQueries({ queryKey: ['learning-items'] });
-          }}
-        />
-      )}
-
-      {/* Children */}
-      <Card pad="lg" style={{ marginTop: 'var(--s-4)' }}>
-        <Label>子项（atomic）</Label>
-        {data.children.length === 0 ? (
-          <p style={mutedStyle}>暂无子项。</p>
-        ) : (
-          <ul style={childListStyle}>
-            {data.children.map((c) => (
-              <li key={c.id} style={childRowStyle}>
-                <Link href={`/learning-items/${c.id}`} style={linkStyle}>
-                  {c.title}
-                </Link>
-                <StatusBadge status={c.status as never} />
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    // child version unknown here; round-trip patch fetches it.
-                    apiJson<{ version: number }>(`/api/learning-items/${c.id}`)
-                      .then((row) => detachChildM.mutate({ childId: c.id, version: row.version }))
-                      .catch(() => {});
+            <div className="prop-field">
+              <div className="field-label">父节点（hub）</div>
+              {currentParent ? (
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 'var(--s-2)',
+                    flexWrap: 'wrap',
                   }}
-                  disabled={detachChildM.isPending}
                 >
-                  解除
-                </Button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
+                  <Link href={`/learning-items/${currentParent.id}`} className="chip chip-k mono">
+                    {currentParent.title}
+                  </Link>
+                  <StatusBadge status={currentParent.status} />
+                  <Btn
+                    size="sm"
+                    variant="ghost"
+                    onClick={() =>
+                      updateM.mutate({ version: data.version, parent_learning_item_id: null })
+                    }
+                    disabled={updateM.isPending}
+                  >
+                    脱离
+                  </Btn>
+                </div>
+              ) : (
+                <ParentPicker
+                  candidates={candidates}
+                  onAttach={(parentId) =>
+                    updateM.mutate({ version: data.version, parent_learning_item_id: parentId })
+                  }
+                  disabled={updateM.isPending}
+                />
+              )}
+            </div>
+          </LoomCard>
+        </div>
+      </div>
+
       {teachOpen && (
         <TeachingDrawer
           learningItemId={data.id}
@@ -601,27 +734,27 @@ function ParentPicker({
     .filter((c) => c.title.toLowerCase().includes(filter.toLowerCase()))
     .slice(0, 20);
   return (
-    <div>
+    <div className="parent-picker">
       <input
         type="text"
         value={filter}
         onChange={(e) => setFilter(e.target.value)}
         placeholder="搜索一个学习项作为父项 hub"
-        style={inputStyle}
+        className="field-input"
       />
-      <div style={chipRowStyle}>
+      <div className="chip-set" style={{ marginTop: 'var(--s-2)' }}>
         {filtered.map((c) => (
           <button
             type="button"
             key={c.id}
             onClick={() => onAttach(c.id)}
             disabled={disabled}
-            style={attachChipStyle}
+            className="chip"
           >
             {c.title}
           </button>
         ))}
-        {filter && filtered.length === 0 && <span style={mutedStyle}>无匹配</span>}
+        {filter && filtered.length === 0 && <span className="item-sub">无匹配</span>}
       </div>
     </div>
   );
@@ -655,64 +788,45 @@ function SourceEventBlock({
   const canRetract = source === 'learning_intent' && state === 'active';
 
   return (
-    <Card pad="lg" style={{ marginTop: 'var(--s-4)' }}>
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 'var(--s-3)',
-          flexWrap: 'wrap',
-        }}
-      >
-        <Label inline>source event</Label>
-        <Link href={`/events/${sourceEvent.id}`} style={linkStyle}>
+    <LoomCard pad className="origin-card" style={{ marginTop: 'var(--s-4)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s-2)', flexWrap: 'wrap' }}>
+        <span className="ai-tag">
+          <LoomIcon name="sparkle" size={12} />
+          AI · {source}
+        </span>
+        <Link href={`/events/${sourceEvent.id}`} className="chip chip-k mono">
           {sourceEvent.id.slice(0, 8)}…
         </Link>
         <CorrectionStateRenderer state={sourceEvent.correction_state} showActive />
         {archivedReason === 'proposal_retracted' && (
-          <Badge tone="again">archive 因 proposal 撤回</Badge>
+          <LoomBadge tone="again">archive 因 proposal 撤回</LoomBadge>
         )}
       </div>
 
       {canRetract && retractDraftReason === null && (
         <div style={{ marginTop: 'var(--s-3)' }}>
-          <Button variant="ghost" onClick={() => setRetractDraftReason('')}>
+          <Btn variant="ghost" icon="undo" onClick={() => setRetractDraftReason('')}>
             撤回此 proposal（连带归档已生成的 hub + atomic）
-          </Button>
+          </Btn>
         </div>
       )}
       {canRetract && retractDraftReason !== null && (
         <div style={{ marginTop: 'var(--s-3)' }}>
-          <Label>撤回原因</Label>
+          <div className="field-label">撤回原因</div>
           <textarea
             value={retractDraftReason}
             onChange={(e) => setRetractDraftReason(e.target.value)}
             placeholder="例：方向走错了 / 拆分粒度不对 / 重做一遍"
             rows={3}
             maxLength={2000}
-            style={{
-              ...inputStyle,
-              minHeight: 80,
-              lineHeight: 'var(--lh-prose)',
-              resize: 'vertical',
-            }}
+            className="field-input"
+            style={{ minHeight: 80, lineHeight: 'var(--lh-prose)', resize: 'vertical' }}
           />
-          <div
-            style={{
-              marginTop: 'var(--s-2)',
-              display: 'flex',
-              gap: 'var(--s-2)',
-              justifyContent: 'flex-end',
-            }}
-          >
-            <Button
-              variant="ghost"
-              onClick={() => setRetractDraftReason(null)}
-              disabled={isPending}
-            >
+          <div className="hero-cta" style={{ justifyContent: 'flex-end', marginTop: 'var(--s-2)' }}>
+            <Btn variant="ghost" onClick={() => setRetractDraftReason(null)} disabled={isPending}>
               取消
-            </Button>
-            <Button
+            </Btn>
+            <Btn
               variant="primary"
               onClick={() =>
                 onRetract(retractDraftReason.trim() || '撤回 learning_intent proposal')
@@ -720,23 +834,28 @@ function SourceEventBlock({
               disabled={isPending}
             >
               {isPending ? '撤回中…' : '确认撤回'}
-            </Button>
+            </Btn>
           </div>
-          {error && <p style={errorStyle}>撤回失败：{error}</p>}
+          {error && (
+            <p className="meta" style={{ color: 'var(--again-ink)', marginTop: 'var(--s-2)' }}>
+              撤回失败：{error}
+            </p>
+          )}
         </div>
       )}
-    </Card>
+    </LoomCard>
   );
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
     <main
+      className="page prose items-loom"
       style={{
         minHeight: '100vh',
         background: 'var(--paper)',
         padding: '36px 28px',
-        maxWidth: 'var(--cap-prose, 780px)',
+        maxWidth: 'var(--cap-wide, 1080px)',
         margin: '0 auto',
         width: '100%',
         boxSizing: 'border-box',
@@ -747,100 +866,9 @@ function Shell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Label({
-  children,
-  inline,
-}: {
-  children: React.ReactNode;
-  inline?: boolean;
-}) {
-  return (
-    <span
-      style={{
-        fontFamily: 'var(--font-mono)',
-        fontSize: 'var(--fs-meta)',
-        color: 'var(--ink-4)',
-        letterSpacing: 'var(--ls-wide)',
-        display: inline ? 'inline-block' : 'block',
-        marginBottom: inline ? 0 : 'var(--s-2)',
-        marginRight: inline ? 'var(--s-2)' : 0,
-      }}
-    >
-      {children}
-    </span>
-  );
-}
-
-const linkStyle: React.CSSProperties = {
-  color: 'var(--coral)',
-  textDecoration: 'none',
-};
-
-const mutedStyle: React.CSSProperties = {
-  margin: 0,
-  fontSize: 'var(--fs-body)',
-  color: 'var(--ink-3)',
-};
-
-const errorStyle: React.CSSProperties = {
-  margin: 'var(--s-2) 0 0 0',
-  fontSize: 'var(--fs-body)',
-  color: 'var(--again-ink)',
-};
-
-const inputStyle: React.CSSProperties = {
-  width: '100%',
-  padding: '8px 12px',
-  fontSize: 'var(--fs-body)',
-  background: 'var(--paper-sunk)',
-  color: 'var(--ink)',
-  border: '1px solid var(--line)',
-  borderRadius: 'var(--r-2)',
-  outline: 'none',
-  boxSizing: 'border-box',
-};
-
-const textareaStyle: React.CSSProperties = {
-  ...inputStyle,
+const contentStyle: React.CSSProperties = {
   minHeight: 140,
   lineHeight: 'var(--lh-prose)',
   resize: 'vertical',
-};
-
-const chipRowStyle: React.CSSProperties = {
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: 4,
-  marginTop: 'var(--s-2)',
-};
-
-const attachChipStyle: React.CSSProperties = {
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-meta)',
-  padding: '4px 10px',
-  borderRadius: 'var(--r-pill)',
-  border: '1px solid var(--line)',
-  background: 'var(--paper-sunk)',
-  color: 'var(--ink-2)',
-  cursor: 'pointer',
-  whiteSpace: 'nowrap',
-  letterSpacing: 'var(--ls-wide)',
-};
-
-const childListStyle: React.CSSProperties = {
-  listStyle: 'none',
-  padding: 0,
-  margin: 0,
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 'var(--s-2)',
-};
-
-const childRowStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 'var(--s-3)',
-  padding: '8px 0',
-  borderBottom: '1px solid var(--line-soft)',
-  flexWrap: 'wrap',
+  width: '100%',
 };

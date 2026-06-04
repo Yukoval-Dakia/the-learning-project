@@ -9626,3 +9626,521 @@ button.seg-sm {
   gap: var(--s-2);
   flex-wrap: wrap;
 }
+
+/* ============================================================
+   LOOM ITEMS LAYER — Wave 2 (YUK-169 / YUK-203 P5)
+   /learning-items list + /learning-items/[id] detail.
+   Ported additively from loom-prototype @ f85aca6d
+   (screens.css / screens-2b.css). Cross-ref: screen-items.jsx
+   + screen-item-detail.jsx.
+
+   SCOPE: every selector lives under .items-loom (page root carries
+   class "page prose items-loom"). Required because loom names
+   .page-head / .eyebrow / .page-title / .page-lead / .section-label
+   / .kd-grid / .kd-side / .field-label / .chip-set / .back-link /
+   .note-ref / .stagger collide with legacy globals + the
+   knowledge-loom / today-loom scoped layers consumed elsewhere.
+   Scoping keeps the loom values off those surfaces (same strategy
+   as the .knowledge-loom + .today-loom slices).
+
+   D11 health bar (.item-health) is a NEW class set — read-time
+   aggregation of knowledge_mastery + review-due-summary (zero owned
+   state); see docs/design/2026-06-04-u0-decisions.md D11③.
+
+   Reused (grep-confirmed already present → NOT re-ported):
+     .card / .card-pad* / .card-hover / .card-sunk · .btn* ·
+     .badge(+tones) · .chip / .chip-k · .card-head / .card-title /
+     .card-icon(.accent) · .bar · .hero-cta · .ring / .ring-val ·
+     .serif / .mono / .tnum / .meta / .wenyan · .thread-arrow ·
+     .empty* / .sk* · .nowrap-meta · loom-rise keyframe (today-loom).
+   ============================================================ */
+
+/* ---- chrome typography (loom values, scoped) ---- */
+.items-loom .eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+  margin-bottom: var(--s-2);
+  display: block;
+}
+.items-loom .page-head {
+  margin-bottom: var(--s-6);
+}
+.items-loom .page-head-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+}
+.items-loom .page-title {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h1);
+  font-weight: 500;
+  letter-spacing: var(--ls-tight);
+  line-height: var(--lh-tight);
+  flex: 1;
+  min-width: 0;
+}
+.items-loom .page-lead {
+  color: var(--ink-3);
+  font-size: var(--fs-body-lg);
+  max-width: 58ch;
+  margin-top: var(--s-3);
+  line-height: var(--lh-prose);
+}
+
+/* ---- SectionLabel (loom flex shape; legacy bare untouched) ---- */
+.items-loom .section-label {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin: var(--s-8) 0 var(--s-4);
+}
+.items-loom .section-label h2 {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h3);
+  font-weight: 500;
+  letter-spacing: var(--ls-tight);
+}
+.items-loom .section-label .rule {
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+.items-loom .section-label .count {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
+
+/* ---- status tabs (screens-2b.css L160-166) ---- */
+.items-loom .status-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: var(--s-4);
+}
+.items-loom .status-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  color: var(--ink-3);
+  border-radius: var(--r-pill);
+  padding: 5px 12px;
+  font-size: var(--fs-caption);
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.items-loom .status-tab:hover {
+  border-color: var(--ink-5);
+  color: var(--ink);
+}
+.items-loom .status-tab.on {
+  background: var(--coral-soft);
+  border-color: var(--coral-line);
+  color: var(--coral-ink);
+  font-weight: 500;
+}
+.items-loom .status-tab-n {
+  font-size: 11px;
+  opacity: 0.7;
+}
+.items-loom .status-glyph {
+  display: inline-flex;
+  align-items: center;
+}
+.items-loom .status-badge {
+  gap: 5px;
+}
+
+/* ---- item card grid (screens.css L128-140) ---- */
+.items-loom .items-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--s-4);
+}
+.items-loom .item-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+.items-loom .item-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+.items-loom .item-ic {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--r-3);
+  display: grid;
+  place-items: center;
+  flex: none;
+  border: 1px solid var(--line);
+  background: var(--paper-sunk);
+  color: var(--ink-3);
+}
+.items-loom .item-ic.coral {
+  background: var(--coral-soft);
+  color: var(--coral);
+  border-color: var(--coral-line);
+}
+.items-loom .item-ic.info {
+  background: var(--info-soft);
+  color: var(--info);
+  border-color: var(--info-line);
+}
+.items-loom .item-ic.good {
+  background: var(--good-soft);
+  color: var(--good);
+  border-color: var(--good-line);
+}
+.items-loom .item-ic.hard {
+  background: var(--hard-soft);
+  color: var(--hard);
+  border-color: var(--hard-line);
+}
+.items-loom .item-title {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h4);
+  font-weight: 500;
+}
+.items-loom .item-title a {
+  color: inherit;
+  text-decoration: none;
+}
+.items-loom .item-title a:hover {
+  color: var(--coral-hover);
+}
+.items-loom .item-sub {
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
+.items-loom .item-tags {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: var(--s-1) 0;
+}
+.items-loom .item-foot-acts {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* ---- D11 health bar (NEW; read-time mastery + due aggregation) ----
+   "N 个知识点 · M 个到期 · 平均掌握 X%" derived row. evidence-guard:
+   .muted when every node's evidence_count < 3 (no misleading mastery%). */
+.items-loom .item-health {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--paper-sunk);
+}
+.items-loom .item-health.muted {
+  opacity: 0.62;
+}
+.items-loom .health-seg {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+.items-loom .health-seg + .health-seg {
+  padding-left: var(--s-3);
+  border-left: 1px solid var(--line);
+}
+.items-loom .health-n {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h4);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+.items-loom .health-seg.due .health-n {
+  color: var(--coral);
+}
+.items-loom .health-l {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+}
+
+/* ---- intent decompose card (screens-2b.css L152-159) ---- */
+.items-loom .intent-card {
+  margin-bottom: var(--s-6);
+}
+.items-loom .decomp-hub {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3);
+  border: 1px solid var(--coral-line);
+  background: var(--coral-soft);
+  border-radius: var(--r-2);
+  margin-bottom: var(--s-3);
+}
+.items-loom .decomp-atomics {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin-bottom: var(--s-4);
+}
+.items-loom .decomp-atomic {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+}
+
+/* ---- archived collapse zone (screen-items.jsx L141-166) ---- */
+.items-loom .archive-zone {
+  margin-top: var(--s-6);
+}
+.items-loom .archive-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  color: var(--ink-3);
+  border-radius: var(--r-2);
+  padding: var(--s-3);
+  cursor: pointer;
+  font-size: var(--fs-caption);
+}
+.items-loom .archive-toggle:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+.items-loom .archive-n {
+  font-size: 11px;
+  opacity: 0.7;
+}
+.items-loom .archive-caret {
+  margin-left: auto;
+  transition: transform var(--dur-base) var(--ease-out);
+}
+.items-loom .archive-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
+}
+.items-loom .archive-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  border-radius: var(--r-2);
+  padding: var(--s-2) var(--s-3);
+}
+.items-loom .archive-main {
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+.items-loom .archive-title {
+  font-family: var(--font-serif);
+  font-size: var(--fs-body);
+  font-weight: 500;
+}
+
+/* ---- detail: back-link + title-input (screens-2b.css L8-13) ---- */
+.items-loom .back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: var(--fs-caption);
+  padding: 4px 6px 4px 2px;
+  border-radius: var(--r-1);
+  margin-bottom: var(--s-3);
+  cursor: pointer;
+  text-decoration: none;
+}
+.items-loom .back-link:hover {
+  color: var(--coral-ink);
+  background: var(--coral-soft);
+}
+.items-loom .title-input {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h1);
+  font-weight: 500;
+  letter-spacing: var(--ls-tight);
+  color: var(--ink);
+  border: 0;
+  background: transparent;
+  border-bottom: 1px dashed transparent;
+  padding: 2px 0;
+  min-width: 0;
+  flex: 1;
+}
+.items-loom .title-input:hover {
+  border-bottom-color: var(--line-strong);
+}
+.items-loom .title-input:focus {
+  outline: none;
+  border-bottom-color: var(--coral);
+}
+
+/* ---- detail: kd-grid + side props (screens-2b.css L91-92, L173-183) ---- */
+.items-loom .kd-grid {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: var(--s-5);
+  align-items: start;
+}
+.items-loom .kd-side {
+  position: sticky;
+  top: 84px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.items-loom .field-label {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+  letter-spacing: var(--ls-wide);
+  margin-bottom: var(--s-2);
+}
+.items-loom .chip-set {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+.items-loom .prop-field {
+  padding: var(--s-3) 0;
+  border-top: 1px solid var(--line);
+}
+.items-loom .prop-field:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.items-loom .status-flow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.items-loom .status-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  color: var(--ink-4);
+  border-radius: var(--r-1);
+  padding: 4px 8px;
+  font-size: var(--fs-meta);
+  cursor: pointer;
+}
+.items-loom .status-step:hover {
+  border-color: var(--ink-5);
+  color: var(--ink-2);
+}
+.items-loom .status-step.on {
+  background: var(--coral);
+  border-color: var(--coral);
+  color: #fff;
+}
+.items-loom .child-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  border-radius: var(--r-2);
+  padding: var(--s-2) var(--s-3);
+  cursor: pointer;
+  text-decoration: none;
+  color: inherit;
+}
+.items-loom .child-row:hover {
+  border-color: var(--line-strong);
+  background: var(--paper-sunk);
+}
+.items-loom .child-row .wenyan,
+.items-loom .child-row .child-title {
+  flex: 1;
+  min-width: 0;
+}
+.items-loom .origin-card {
+  border-color: var(--coral-line);
+}
+.items-loom .ai-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--coral-ink);
+  background: var(--coral-soft);
+  border: 1px solid var(--coral-line);
+  border-radius: var(--r-pill);
+  padding: 3px 9px;
+}
+
+/* ---- stagger entrance (transform-only; reuses loom-rise keyframe) ---- */
+.items-loom .stagger > * {
+  opacity: 1;
+}
+@media screen and (prefers-reduced-motion: no-preference) {
+  .items-loom .stagger > * {
+    animation: loom-rise var(--dur-slow) var(--ease-out) both;
+  }
+  .items-loom .stagger > *:nth-child(1) {
+    animation-delay: 0.02s;
+  }
+  .items-loom .stagger > *:nth-child(2) {
+    animation-delay: 0.07s;
+  }
+  .items-loom .stagger > *:nth-child(3) {
+    animation-delay: 0.12s;
+  }
+  .items-loom .stagger > *:nth-child(4) {
+    animation-delay: 0.17s;
+  }
+}
+
+/* ---- fade-key (decomp/archive reveal) ---- */
+.items-loom .fade-key {
+  animation: items-fade var(--dur-base) var(--ease-out) both;
+}
+@keyframes items-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ---- responsive (screens.css L333-336, screens-2b.css L308-310) ---- */
+@media (max-width: 1180px) {
+  .items-loom .kd-grid {
+    grid-template-columns: 1fr;
+  }
+  .items-loom .kd-side {
+    position: static;
+  }
+}
+@media (max-width: 900px) {
+  .items-loom .items-grid {
+    grid-template-columns: 1fr;
+  }
+}
