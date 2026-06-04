@@ -754,7 +754,9 @@ function proposalKpiSub(groups: ProposalGroups, hasMore: boolean): string {
 const PROPOSAL_GROUP_META: Array<{
   key: keyof ProposalGroups;
   label: string;
-  tone: string;
+  // Union of the .tone-chip-* classes the 7B CSS layer defines — a typo here
+  // would silently produce a nonexistent class, so let TS catch it.
+  tone: 'info' | 'neutral' | 'coral' | 'good' | 'hard';
 }> = [
   { key: 'content', label: '内容生成', tone: 'info' },
   { key: 'learning', label: '学习项', tone: 'neutral' },
