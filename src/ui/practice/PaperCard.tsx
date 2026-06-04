@@ -12,7 +12,7 @@ import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import type { LoomIconName } from '@/ui/primitives/LoomIcon';
-import { PaperStatusPill } from './PaperStatusPill';
+// PaperStatusPill intentionally NOT mounted here — see comment at card end.
 
 interface SrcMeta {
   label: string;
@@ -204,10 +204,10 @@ export function PaperCard({ paper, onAction, past }: PaperCardProps) {
         )}
       </div>
 
-      {/* status pill — rendered last for absolute/overlay positioning */}
-      <div style={{ position: 'absolute', top: 'var(--s-3)', right: 'var(--s-3)' }}>
-        <PaperStatusPill generationStatus={paper.generation_status} sessionStatus={sessionStatus} />
-      </div>
+      {/* NO corner status pill: the design source defines PaperStatusPill but
+          never mounts it (screen-practice.jsx:5, dead code) — state is conveyed
+          via the foot line + action button. The earlier absolute overlay also
+          collided with .paper-count (visual loop finding). */}
     </LoomCard>
   );
 }
