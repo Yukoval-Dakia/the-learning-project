@@ -4,6 +4,7 @@ import {
   CorrectionStateRenderer,
   type CorrectionStateSnapshot,
 } from '@/ui/correction/CorrectionStateRenderer';
+import { ItemHealthBar, aggregateHealth } from '@/ui/learning-items/health';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
@@ -88,62 +89,6 @@ interface IntentProposal {
   atomics: Array<{ knowledge_id: string; title: string; one_line_intent: string }>;
 }
 
-// D11 health-bar aggregation (read-time only, zero owned state — see
-// docs/design/2026-06-04-u0-decisions.md D11③). For a learning item's
-// knowledge_ids: count nodes, sum overdue due-cards, average mastery over
-// nodes WITH evidence. evidence-guard: if every node has evidence_count < 3
-// the bar renders muted (no misleading mastery%).
-function aggregateHealth(
-  knowledgeIds: string[],
-  knowledgeById: Map<string, KnowledgeNode>,
-  dueSummary: Record<string, { overdue: number; due_soon: number }> | undefined,
-): { nodeCount: number; dueCount: number; avgMastery: number | null; lowEvidence: boolean } {
-  const nodeCount = knowledgeIds.length;
-  let dueCount = 0;
-  let masterySum = 0;
-  let masteryNodes = 0;
-  let anyEvidence = false;
-  for (const kid of knowledgeIds) {
-    dueCount += dueSummary?.[kid]?.overdue ?? 0;
-    const node = knowledgeById.get(kid);
-    if (node) {
-      if (node.evidence_count >= 3) anyEvidence = true;
-      if (node.evidence_count > 0 && node.mastery !== null) {
-        masterySum += node.mastery;
-        masteryNodes += 1;
-      }
-    }
-  }
-  const avgMastery = masteryNodes > 0 ? Math.round((masterySum / masteryNodes) * 100) : null;
-  return { nodeCount, dueCount, avgMastery, lowEvidence: !anyEvidence };
-}
-
-function ItemHealthBar({
-  health,
-}: {
-  health: { nodeCount: number; dueCount: number; avgMastery: number | null; lowEvidence: boolean };
-}) {
-  if (health.nodeCount === 0) return null;
-  return (
-    <div className={`item-health${health.lowEvidence ? ' muted' : ''}`}>
-      <span className="health-seg">
-        <span className="health-n tnum">{health.nodeCount}</span>
-        <span className="health-l">知识点</span>
-      </span>
-      <span className="health-seg due">
-        <span className="health-n tnum">{health.dueCount}</span>
-        <span className="health-l">到期</span>
-      </span>
-      <span className="health-seg">
-        <span className="health-n tnum">
-          {health.avgMastery === null ? '—' : `${health.avgMastery}%`}
-        </span>
-        <span className="health-l">平均掌握</span>
-      </span>
-    </div>
-  );
-}
-
 export default function LearningItemsPage() {
   const qc = useQueryClient();
   const router = useRouter();
@@ -191,18 +136,31 @@ export default function LearningItemsPage() {
     },
   });
 
-  // Fetch ALL items (no status filter) so the live grid + archived collapse
-  // zone derive from one query (TDM 决策3 — archived is always available to
-  // toggle, not gated behind a tab refetch). Client-side filter by tab below.
+  // Fetch ALL items so the live grid + archived collapse zone + every status
+  // tab derive from one dataset (TDM 决策3 — archived is always available to
+  // toggle, not gated behind a tab refetch). Per-status parallel fetches
+  // (Codex review, PR #294): the default list query excludes dismissed
+  // entirely, and a single merged limit=200 fetch could truncate tail
+  // statuses — per-status requests restore the old per-tab 200 cap for every
+  // status, dismissed included. Client-side filter by tab below.
   const itemsQ = useQuery({
-    queryKey: ['learning-items', 'all-with-archived'],
-    queryFn: () =>
-      apiJson<{ rows: LearningItem[] }>('/api/learning-items?limit=200&status=archived').then(
-        async (archivedRes) => {
-          const liveRes = await apiJson<{ rows: LearningItem[] }>('/api/learning-items?limit=200');
-          return { rows: [...liveRes.rows, ...archivedRes.rows] };
-        },
-      ),
+    queryKey: ['learning-items', 'all-statuses'],
+    queryFn: async () => {
+      const statuses: ItemStatus[] = [
+        'pending',
+        'in_progress',
+        'done',
+        'resting',
+        'dismissed',
+        'archived',
+      ];
+      const results = await Promise.all(
+        statuses.map((s) =>
+          apiJson<{ rows: LearningItem[] }>(`/api/learning-items?limit=200&status=${s}`),
+        ),
+      );
+      return { rows: results.flatMap((r) => r.rows) };
+    },
   });
 
   const knowledgeQ = useQuery({

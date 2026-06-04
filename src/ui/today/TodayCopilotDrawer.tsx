@@ -87,6 +87,9 @@ export function TodayCopilotDrawer() {
   const [input, setInput] = useState('');
   // Holds the last user_message so the error-state "重试" button can resend it.
   const lastUserMessageRef = useRef<string | null>(null);
+  // Synchronous single-flight guard: `sending` state lags a re-render behind,
+  // so rapid double-Enter could fire duplicate POSTs from the stale closure.
+  const sendingRef = useRef(false);
   const streamRef = useRef<HTMLDivElement | null>(null);
 
   // Auto-scroll the message stream to the bottom on new messages / loading.
@@ -99,35 +102,34 @@ export function TodayCopilotDrawer() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, sending]);
 
-  const send = useCallback(
-    async (raw: string) => {
-      const text = raw.trim();
-      if (!text || sending) return;
-      lastUserMessageRef.current = text;
-      setError(null);
-      setInput('');
-      setMessages((prev) => [...prev, { id: nextId(), role: 'user', text }]);
-      setSending(true);
-      try {
-        const res = await apiJson<CopilotChatResponse>('/api/copilot/chat', {
-          method: 'POST',
-          body: JSON.stringify({ user_message: text, triggered_by: 'chat' }),
-        });
-        setMessages((prev) => [...prev, { id: nextId(), role: 'ai', text: res.reply }]);
-      } catch (err) {
-        const message =
-          err instanceof ApiError
-            ? `请求失败（${err.status}）`
-            : err instanceof Error
-              ? err.message
-              : '请求失败';
-        setError(message);
-      } finally {
-        setSending(false);
-      }
-    },
-    [sending],
-  );
+  const send = useCallback(async (raw: string) => {
+    const text = raw.trim();
+    if (!text || sendingRef.current) return;
+    sendingRef.current = true;
+    lastUserMessageRef.current = text;
+    setError(null);
+    setInput('');
+    setMessages((prev) => [...prev, { id: nextId(), role: 'user', text }]);
+    setSending(true);
+    try {
+      const res = await apiJson<CopilotChatResponse>('/api/copilot/chat', {
+        method: 'POST',
+        body: JSON.stringify({ user_message: text, triggered_by: 'chat' }),
+      });
+      setMessages((prev) => [...prev, { id: nextId(), role: 'ai', text: res.reply }]);
+    } catch (err) {
+      const message =
+        err instanceof ApiError
+          ? `请求失败（${err.status}）`
+          : err instanceof Error
+            ? err.message
+            : '请求失败';
+      setError(message);
+    } finally {
+      sendingRef.current = false;
+      setSending(false);
+    }
+  }, []);
 
   const retry = useCallback(() => {
     const last = lastUserMessageRef.current;
@@ -202,7 +204,9 @@ export function TodayCopilotDrawer() {
           data-testid="copilot-composer-input"
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
+            // isComposing guard: Enter during IME composition (中文选词确认)
+            // must not submit.
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
               void send(input);
             }

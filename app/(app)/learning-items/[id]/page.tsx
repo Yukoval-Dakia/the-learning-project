@@ -13,6 +13,7 @@ import {
   CorrectionStateRenderer,
   type CorrectionStateSnapshot,
 } from '@/ui/correction/CorrectionStateRenderer';
+import { ItemHealthBar, aggregateHealth } from '@/ui/learning-items/health';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
 import {
   type SlimSubjectProfile,
@@ -152,59 +153,6 @@ const STATUS_FLOW: ItemStatus[] = [
   'archived',
 ];
 
-// D11 health bar — read-time aggregation of knowledge_mastery + due (zero owned
-// state; docs/design/2026-06-04-u0-decisions.md D11③).
-function aggregateHealth(
-  knowledgeIds: string[],
-  knowledgeById: Map<string, KnowledgeNode>,
-  dueSummary: Record<string, { overdue: number; due_soon: number }> | undefined,
-): { nodeCount: number; dueCount: number; avgMastery: number | null; lowEvidence: boolean } {
-  const nodeCount = knowledgeIds.length;
-  let dueCount = 0;
-  let masterySum = 0;
-  let masteryNodes = 0;
-  let anyEvidence = false;
-  for (const kid of knowledgeIds) {
-    dueCount += dueSummary?.[kid]?.overdue ?? 0;
-    const node = knowledgeById.get(kid);
-    if (node) {
-      if (node.evidence_count >= 3) anyEvidence = true;
-      if (node.evidence_count > 0 && node.mastery !== null) {
-        masterySum += node.mastery;
-        masteryNodes += 1;
-      }
-    }
-  }
-  const avgMastery = masteryNodes > 0 ? Math.round((masterySum / masteryNodes) * 100) : null;
-  return { nodeCount, dueCount, avgMastery, lowEvidence: !anyEvidence };
-}
-
-function ItemHealthBar({
-  health,
-}: {
-  health: { nodeCount: number; dueCount: number; avgMastery: number | null; lowEvidence: boolean };
-}) {
-  if (health.nodeCount === 0) return null;
-  return (
-    <div className={`item-health${health.lowEvidence ? ' muted' : ''}`}>
-      <span className="health-seg">
-        <span className="health-n tnum">{health.nodeCount}</span>
-        <span className="health-l">知识点</span>
-      </span>
-      <span className="health-seg due">
-        <span className="health-n tnum">{health.dueCount}</span>
-        <span className="health-l">到期</span>
-      </span>
-      <span className="health-seg">
-        <span className="health-n tnum">
-          {health.avgMastery === null ? '—' : `${health.avgMastery}%`}
-        </span>
-        <span className="health-l">平均掌握</span>
-      </span>
-    </div>
-  );
-}
-
 export default function LearningItemDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
@@ -295,6 +243,10 @@ export default function LearningItemDetailPage() {
       qc.invalidateQueries({ queryKey: ['learning-item', id] });
     },
   });
+  // Surfaces failures from the detach two-step (version round-trip GET +
+  // PATCH) — silently swallowing them left the user with no feedback
+  // (CodeRabbit, PR #294).
+  const [detachError, setDetachError] = useState<string | null>(null);
 
   if (detailQ.isLoading) {
     return (
@@ -378,14 +330,29 @@ export default function LearningItemDetailPage() {
             <Btn variant="secondary" icon="teach" onClick={() => setTeachOpen(true)}>
               对话教学
             </Btn>
-            <Btn
-              variant="primary"
-              icon="review"
-              onClick={() => updateM.mutate({ version: data.version, status: 'in_progress' })}
-              disabled={updateM.isPending || data.status === 'in_progress'}
-            >
-              {data.status === 'in_progress' ? '进行中' : '开始学'}
-            </Btn>
+            {data.status === 'archived' ? (
+              // Archived items must leave via the unarchive path (archived →
+              // pending), mirroring the list page's 归档区; a direct jump to
+              // in_progress would bypass the status flow and clear
+              // archived_at (Codex review, PR #294).
+              <Btn
+                variant="secondary"
+                icon="undo"
+                onClick={() => updateM.mutate({ version: data.version, status: 'pending' })}
+                disabled={updateM.isPending}
+              >
+                取出归档
+              </Btn>
+            ) : (
+              <Btn
+                variant="primary"
+                icon="review"
+                onClick={() => updateM.mutate({ version: data.version, status: 'in_progress' })}
+                disabled={updateM.isPending || data.status === 'in_progress'}
+              >
+                {data.status === 'in_progress' ? '进行中' : '开始学'}
+              </Btn>
+            )}
           </div>
         </div>
       </div>
@@ -478,12 +445,21 @@ export default function LearningItemDetailPage() {
                         size="sm"
                         variant="ghost"
                         onClick={() => {
+                          setDetachError(null);
                           // child version unknown here; round-trip patch fetches it.
                           apiJson<{ version: number }>(`/api/learning-items/${c.id}`)
                             .then((row) =>
-                              detachChildM.mutate({ childId: c.id, version: row.version }),
+                              detachChildM.mutate(
+                                { childId: c.id, version: row.version },
+                                {
+                                  onError: (err) =>
+                                    setDetachError(err instanceof Error ? err.message : '解除失败'),
+                                },
+                              ),
                             )
-                            .catch(() => {});
+                            .catch((err) =>
+                              setDetachError(err instanceof Error ? err.message : '解除失败'),
+                            );
                         }}
                         disabled={detachChildM.isPending}
                       >
@@ -493,6 +469,11 @@ export default function LearningItemDetailPage() {
                   );
                 })}
               </div>
+              {detachError && (
+                <p className="meta" style={{ color: 'var(--again)' }}>
+                  解除失败：{detachError}
+                </p>
+              )}
             </>
           )}
         </div>
