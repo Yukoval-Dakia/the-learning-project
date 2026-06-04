@@ -322,17 +322,32 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
           })
           .where(eq(question.id, questionId));
 
-        // Q6 — FSRS enroll: materialize an initial "new" card so the promoted
-        // question enters the review pool. Reuses the single-owner enroll path
-        // (upsertFsrsState) + ts-fsrs createEmptyCard (no hand-rolled FSRS).
+        // YUK-203 P3 — FSRS enroll is per knowledge point: materialize an
+        // initial "new" card for each knowledge id this verified question
+        // probes. The question itself remains the concrete item selected when
+        // that knowledge becomes due. Unlabeled legacy questions fall back to
+        // question-level FSRS so they are not silently dropped.
         const initial = initialFsrsState(now);
-        await upsertFsrsState(tx, {
-          subject_kind: 'question',
-          subject_id: questionId,
-          state: initial.state,
-          due_at: initial.dueAt,
-          last_review_event_id: verifyEventId,
-        });
+        const fsrsSubjectIds = Array.from(new Set(row.knowledge_ids ?? []));
+        if (fsrsSubjectIds.length > 0) {
+          for (const knowledgeId of fsrsSubjectIds) {
+            await upsertFsrsState(tx, {
+              subject_kind: 'knowledge',
+              subject_id: knowledgeId,
+              state: initial.state,
+              due_at: initial.dueAt,
+              last_review_event_id: verifyEventId,
+            });
+          }
+        } else {
+          await upsertFsrsState(tx, {
+            subject_kind: 'question',
+            subject_id: questionId,
+            state: initial.state,
+            due_at: initial.dueAt,
+            last_review_event_id: verifyEventId,
+          });
+        }
       } else {
         // needs_review / fail / too_close — stay draft, never reaches the pool.
         await tx

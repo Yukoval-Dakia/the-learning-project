@@ -177,8 +177,8 @@ async function seedQuestionsAndEvents() {
   });
   await db.insert(material_fsrs_state).values({
     id: 'fsrs_due',
-    subject_kind: 'question',
-    subject_id: 'q_due',
+    subject_kind: 'knowledge',
+    subject_id: 'k_er',
     state: fsrsState(new Date(BASE.getTime() - 86_400_000)) as never,
     due_at: new Date(BASE.getTime() - 86_400_000),
     last_review_event_id: 'review_due',
@@ -458,8 +458,8 @@ describe('Foundation D M2 read tools', () => {
       .insert(material_fsrs_state)
       .values({
         id: 'fsrs_due_zhi_only',
-        subject_kind: 'question',
-        subject_id: 'q_due_zhi_only',
+        subject_kind: 'knowledge',
+        subject_id: 'k_zhi',
         state: fsrsState(new Date(BASE.getTime() - 172_800_000)) as never,
         due_at: new Date(BASE.getTime() - 172_800_000),
         updated_at: BASE,

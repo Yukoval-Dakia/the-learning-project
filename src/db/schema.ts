@@ -622,13 +622,15 @@ export const proposal_signals = pgTable(
   ],
 );
 
-// FSRS state projection per material (currently only 'question').
-// Latest FSRS card state derived from `event(action='review', subject_kind='question')`.
+// FSRS state projection per review subject. YUK-203 P3 schedules knowledge-
+// labeled questions by `subject_kind='knowledge'`; unlabeled legacy questions
+// may still use `subject_kind='question'`.
+// Latest state is derived from `event(action='review', subject_kind='question')`.
 export const material_fsrs_state = pgTable(
   'material_fsrs_state',
   {
     id: text('id').primaryKey(),
-    // 'question' for Phase 1c.1; other material kinds in later phases
+    // 'knowledge' for labeled questions; 'question' remains a legacy fallback.
     subject_kind: text('subject_kind').notNull(),
     subject_id: text('subject_id').notNull(),
     // FsrsState (ts-fsrs Card-aligned) — typed via Lane B parse barrier

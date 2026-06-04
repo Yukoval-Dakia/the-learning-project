@@ -89,12 +89,12 @@ async function seedJudge(attemptId: string, primary: string, knowledgeIds: strin
   });
 }
 
-async function seedFsrsState(questionId: string, dueAt: Date) {
+async function seedFsrsState(knowledgeId: string, dueAt: Date) {
   const db = testDb();
   await db.insert(material_fsrs_state).values({
     id: createId(),
-    subject_kind: 'question',
-    subject_id: questionId,
+    subject_kind: 'knowledge',
+    subject_id: knowledgeId,
     state: { stability: 0, difficulty: 0, due: dueAt.toISOString(), reps: 0, lapses: 0 } as never,
     due_at: dueAt,
     last_review_event_id: null,
@@ -158,12 +158,12 @@ describe('queryMistakesTool', () => {
 
   it('filters by dueWithinDays using material_fsrs_state', async () => {
     await seedQuestion('q1', ['k_xuci']);
-    await seedQuestion('q2', ['k_xuci']);
+    await seedQuestion('q2', ['k_shici']);
     await seedFailureAttempt('att_1', 'q1', ['k_xuci']);
-    await seedFailureAttempt('att_2', 'q2', ['k_xuci']);
-    // q1 due in 1 day, q2 due in 30 days
-    await seedFsrsState('q1', new Date(Date.now() + 86_400_000));
-    await seedFsrsState('q2', new Date(Date.now() + 30 * 86_400_000));
+    await seedFailureAttempt('att_2', 'q2', ['k_shici']);
+    // k_xuci due in 1 day, k_shici due in 30 days.
+    await seedFsrsState('k_xuci', new Date(Date.now() + 86_400_000));
+    await seedFsrsState('k_shici', new Date(Date.now() + 30 * 86_400_000));
 
     const output = await queryMistakesTool.execute(ctx(), {
       filter: { dueWithinDays: 7 },
@@ -177,11 +177,11 @@ describe('queryMistakesTool', () => {
 
   it('applies dueWithinDays when the value is zero', async () => {
     await seedQuestion('q1', ['k_xuci']);
-    await seedQuestion('q2', ['k_xuci']);
+    await seedQuestion('q2', ['k_shici']);
     await seedFailureAttempt('att_1', 'q1', ['k_xuci']);
-    await seedFailureAttempt('att_2', 'q2', ['k_xuci']);
-    await seedFsrsState('q1', new Date(Date.now() - 1_000));
-    await seedFsrsState('q2', new Date(Date.now() + 86_400_000));
+    await seedFailureAttempt('att_2', 'q2', ['k_shici']);
+    await seedFsrsState('k_xuci', new Date(Date.now() - 1_000));
+    await seedFsrsState('k_shici', new Date(Date.now() + 86_400_000));
 
     const output = await queryMistakesTool.execute(ctx(), {
       filter: { dueWithinDays: 0 },

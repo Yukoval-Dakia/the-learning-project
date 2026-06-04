@@ -20,7 +20,12 @@ import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, event, knowledge, knowledge_mastery, question } from '@/db/schema';
-import { listBacklinks, resolveOwningLearningItemIds } from '@/server/artifacts/block-refs';
+import {
+  type BacklinksByArtifactType,
+  groupBacklinksByArtifactType,
+  listBacklinks,
+  resolveOwningLearningItemIds,
+} from '@/server/artifacts/block-refs';
 import { bodyBlocksToNoteSections } from '@/server/artifacts/body-blocks';
 import { type NoteSummary, notesForKnowledge } from '@/server/artifacts/notes-read';
 import { getArtifactCorrectionStates } from '@/server/events/artifact-corrections';
@@ -31,6 +36,7 @@ import { type SlimSubjectProfile, toSlimSubjectProfile } from '@/subjects/profil
 const CROSS_LINK_REF_KIND = 'cross_link';
 const NOTE_ATOMIC_TYPE = 'note_atomic';
 const TIMELINE_LIMIT = 30;
+export type MasteryDecayBucket = 'untrained' | 'fresh' | 'mild' | 'stale' | 'unknown';
 
 export interface NodePageEmbeddedQuestion {
   id: string;
@@ -97,6 +103,7 @@ export interface KnowledgeNodePage {
   mastery: number | null;
   evidence_count: number;
   last_evidence_at: string | null;
+  mastery_decay_bucket: MasteryDecayBucket;
   subject_profile: SlimSubjectProfile;
   mesh_neighbors: NodePageMeshNeighbor[];
   primary_atomic: NodePagePrimaryAtomic | null;
@@ -105,6 +112,7 @@ export interface KnowledgeNodePage {
   // is the full labeled set for the "带当前 knowledge_id 标签的笔记列表" (0/1/many).
   notes: NoteSummary[];
   backlinks: NodePageBacklink[];
+  backlinks_by_type: BacklinksByArtifactType<NodePageBacklink>;
   timeline: NodePageTimelineEntry[];
 }
 
@@ -356,13 +364,28 @@ export async function loadKnowledgeNodePage(
     mastery: node.mastery,
     evidence_count: node.evidence_count,
     last_evidence_at: node.last_evidence_at ? node.last_evidence_at.toISOString() : null,
+    mastery_decay_bucket: masteryDecayBucket(node.evidence_count, node.last_evidence_at),
     subject_profile: toSlimSubjectProfile(profile),
     mesh_neighbors: meshNeighbors,
     primary_atomic: primaryAtomic,
     notes,
     backlinks,
+    backlinks_by_type: groupBacklinksByArtifactType(backlinks),
     timeline,
   };
+}
+
+export function masteryDecayBucket(
+  evidenceCount: number,
+  lastEvidenceAt: Date | null,
+  now = new Date(),
+): MasteryDecayBucket {
+  if (evidenceCount <= 0) return 'untrained';
+  if (!lastEvidenceAt) return 'unknown';
+  const ageDays = Math.max(0, Math.floor((now.getTime() - lastEvidenceAt.getTime()) / 86_400_000));
+  if (ageDays >= 30) return 'stale';
+  if (ageDays >= 7) return 'mild';
+  return 'fresh';
 }
 
 // Resolve non-archived knowledge names. Archived neighbors are intentionally

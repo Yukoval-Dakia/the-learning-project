@@ -18,7 +18,7 @@
 import { type ActivityRefT, questionRef } from '@/core/schema/activity';
 import type { CauseCategoryT } from '@/core/schema/event/blocks';
 import { type Db, db } from '@/db/client';
-import { material_fsrs_state, question } from '@/db/schema';
+import { event, material_fsrs_state, question } from '@/db/schema';
 import { effectiveCauseCategoryForFailureAttempt } from '@/server/events/cause-policy';
 import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
 // YUK-167 / ADR-0025 — North-Star W10 review soft-bias. Active goals supply a
@@ -166,6 +166,79 @@ function roundRobinBySubject<T extends { id: string }>(
   return out;
 }
 
+type ScheduledDueRow = {
+  question_id: string;
+  prompt_md: string;
+  reference_md: string | null;
+  knowledge_ids: string[];
+  created_at: Date;
+  state: unknown;
+  due_at: Date;
+  fsrs_subject_kind: 'question' | 'knowledge';
+  fsrs_subject_id: string;
+};
+
+async function lastReviewedQuestionIdForEvent(
+  dbHandle: Db,
+  lastReviewEventId: string | null,
+): Promise<string | null> {
+  if (!lastReviewEventId) return null;
+  const rows = await dbHandle
+    .select({ subject_id: event.subject_id })
+    .from(event)
+    .where(eq(event.id, lastReviewEventId))
+    .limit(1);
+  return rows[0]?.subject_id ?? null;
+}
+
+async function pickQuestionForKnowledge(
+  dbHandle: Db,
+  input: {
+    knowledgeId: string;
+    lastReviewEventId: string | null;
+    usedQuestionIds: Set<string>;
+  },
+): Promise<Omit<
+  ScheduledDueRow,
+  'state' | 'due_at' | 'fsrs_subject_kind' | 'fsrs_subject_id'
+> | null> {
+  const lastQuestionId = await lastReviewedQuestionIdForEvent(dbHandle, input.lastReviewEventId);
+  const rows = (await dbHandle.execute(sql<{
+    id: string;
+    prompt_md: string;
+    reference_md: string | null;
+    knowledge_ids: string[];
+    created_at: Date;
+  }>`
+    SELECT id, prompt_md, reference_md, knowledge_ids, created_at
+    FROM question
+    WHERE knowledge_ids @> ${JSON.stringify([input.knowledgeId])}::jsonb
+      AND (draft_status IS NULL OR draft_status <> 'draft')
+    ORDER BY
+      CASE WHEN ${lastQuestionId}::text IS NOT NULL AND id = ${lastQuestionId} THEN 1 ELSE 0 END,
+      created_at ASC,
+      id ASC
+    LIMIT 20
+  `)) as unknown as Array<{
+    id: string;
+    prompt_md: string;
+    reference_md: string | null;
+    knowledge_ids: string[];
+    created_at: Date;
+  }>;
+
+  const chosen = rows.find((row) => !input.usedQuestionIds.has(row.id));
+  if (!chosen) return null;
+  input.usedQuestionIds.add(chosen.id);
+  return {
+    question_id: chosen.id,
+    prompt_md: chosen.prompt_md,
+    reference_md: chosen.reference_md,
+    knowledge_ids: chosen.knowledge_ids ?? [],
+    created_at: chosen.created_at,
+  };
+}
+
 export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): Promise<Response> {
   try {
     const listGoals = deps.listActiveGoalsFn ?? listActiveGoals;
@@ -207,7 +280,42 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
     const notDraftQuiz = or(isNull(question.draft_status), ne(question.draft_status, 'draft'));
 
     const candidateWindow = Math.min(Math.max(limit * 4, 100), 400);
-    const dueRows = await db
+    const usedDueQuestionIds = new Set<string>();
+    const knowledgeStateRows = await db
+      .select({
+        knowledge_id: material_fsrs_state.subject_id,
+        state: material_fsrs_state.state,
+        due_at: material_fsrs_state.due_at,
+        last_review_event_id: material_fsrs_state.last_review_event_id,
+      })
+      .from(material_fsrs_state)
+      .where(
+        and(
+          eq(material_fsrs_state.subject_kind, 'knowledge'),
+          lte(material_fsrs_state.due_at, now),
+        ),
+      )
+      .orderBy(material_fsrs_state.due_at, material_fsrs_state.subject_id)
+      .limit(candidateWindow);
+
+    const dueRows: ScheduledDueRow[] = [];
+    for (const stateRow of knowledgeStateRows) {
+      const selected = await pickQuestionForKnowledge(db, {
+        knowledgeId: stateRow.knowledge_id,
+        lastReviewEventId: stateRow.last_review_event_id ?? null,
+        usedQuestionIds: usedDueQuestionIds,
+      });
+      if (!selected) continue;
+      dueRows.push({
+        ...selected,
+        state: stateRow.state,
+        due_at: stateRow.due_at,
+        fsrs_subject_kind: 'knowledge',
+        fsrs_subject_id: stateRow.knowledge_id,
+      });
+    }
+
+    const legacyQuestionStateRows = await db
       .select({
         question_id: material_fsrs_state.subject_id,
         state: material_fsrs_state.state,
@@ -228,6 +336,29 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
       )
       .orderBy(material_fsrs_state.due_at, question.created_at)
       .limit(candidateWindow);
+
+    for (const row of legacyQuestionStateRows) {
+      if (usedDueQuestionIds.has(row.question_id)) continue;
+      usedDueQuestionIds.add(row.question_id);
+      dueRows.push({
+        question_id: row.question_id,
+        prompt_md: row.prompt_md,
+        reference_md: row.reference_md,
+        knowledge_ids: row.knowledge_ids,
+        created_at: row.created_at,
+        state: row.state,
+        due_at: row.due_at,
+        fsrs_subject_kind: 'question',
+        fsrs_subject_id: row.question_id,
+      });
+    }
+    dueRows.sort((a, b) => {
+      const dueDelta = a.due_at.getTime() - b.due_at.getTime();
+      if (dueDelta !== 0) return dueDelta;
+      const createdDelta = a.created_at.getTime() - b.created_at.getTime();
+      if (createdDelta !== 0) return createdDelta;
+      return a.question_id.localeCompare(b.question_id);
+    });
 
     // Build the "never reviewed" slice by finding failure attempts whose
     // question has no FSRS state row yet. Use the existing event-stream read
@@ -300,6 +431,8 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
       id: string;
       activity_ref: ActivityRefT;
       question_id: string;
+      fsrs_subject_kind: 'question' | 'knowledge';
+      fsrs_subject_id: string;
       prompt_md: string;
       reference_md: string | null;
       knowledge_ids: string[];
@@ -317,6 +450,9 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
           id: n.question_id,
           activity_ref: questionRef(n.question_id),
           question_id: n.question_id,
+          fsrs_subject_kind:
+            n.knowledge_ids.length > 0 ? ('knowledge' as const) : ('question' as const),
+          fsrs_subject_id: n.knowledge_ids[0] ?? n.question_id,
           prompt_md: n.prompt_md.slice(0, 1000),
           reference_md: n.reference_md ? n.reference_md.slice(0, 1000) : null,
           knowledge_ids: n.knowledge_ids,
@@ -334,6 +470,8 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
           id: r.question_id,
           activity_ref: questionRef(r.question_id),
           question_id: r.question_id,
+          fsrs_subject_kind: r.fsrs_subject_kind,
+          fsrs_subject_id: r.fsrs_subject_id,
           prompt_md: r.prompt_md.slice(0, 1000),
           reference_md: r.reference_md ? r.reference_md.slice(0, 1000) : null,
           knowledge_ids: (r.knowledge_ids as string[]) ?? [],
