@@ -6,10 +6,13 @@ import {
 } from '@/ui/correction/CorrectionStateRenderer';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
 import { formatRelTime } from '@/ui/lib/utils';
-import { Badge } from '@/ui/primitives/Badge';
-import { Card } from '@/ui/primitives/Card';
+import { Btn } from '@/ui/primitives/Btn';
 import { CauseBadge } from '@/ui/primitives/CauseBadge';
-import { PageHeader } from '@/ui/primitives/PageHeader';
+import { EmptyState } from '@/ui/primitives/EmptyState';
+import { LoomCard } from '@/ui/primitives/LoomCard';
+import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { SkLines } from '@/ui/primitives/SkLines';
+import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 
@@ -41,54 +44,89 @@ export default function MistakesPage() {
   const rows = q.data?.rows ?? [];
   const total = rows.length;
   const pending = rows.filter((r) => r.cause === null).length;
-  const attributed = total - pending;
+
+  // Map the single query's status onto the Stateful status vocabulary. Error
+  // copy still distinguishes the auth case (token re-entry) from generic load
+  // failure, mirroring the legacy page's two-branch error message.
+  const status: StatefulStatus = q.isLoading
+    ? 'loading'
+    : q.isError
+      ? 'error'
+      : total === 0
+        ? 'empty'
+        : 'ok';
+  const errorText =
+    q.error instanceof ApiAuthError
+      ? `${q.error.message} — 请重新进入页面输入 token`
+      : q.error
+        ? `加载失败：${(q.error as Error).message}`
+        : '错题加载失败。';
 
   return (
-    <main className="page prose">
-      <PageHeader
-        title="错题"
-        eyebrow="MISTAKES · cause + event chain"
-        sub={
-          total === 0 ? undefined : `最近 ${total} 条 · 归因中 ${pending} / 已归因 ${attributed}`
+    // Scoped under .mistakes-loom so the loom chrome / card classes do not
+    // collide with legacy globals of the same name (sibling of .today-loom /
+    // .knowledge-loom).
+    <main className="page mistakes-page mistakes-loom">
+      <div className="page-head">
+        <div className="eyebrow">
+          MISTAKES · 错题归因{total > 0 ? ` · 最近 ${total} 条 · 归因中 ${pending}` : ''}
+        </div>
+        <div className="page-head-row">
+          <h1 className="page-title serif">错题本</h1>
+          <div className="hero-cta">
+            {/* Pure navigation chrome (no new data wiring): record + review. */}
+            <Link href="/record">
+              <Btn variant="ghost" size="sm" icon="record">
+                录新错题
+              </Btn>
+            </Link>
+            <Link href="/review">
+              <Btn variant="primary" size="sm" icon="review">
+                重练薄弱点
+              </Btn>
+            </Link>
+          </div>
+        </div>
+        <p className="page-lead">
+          每条错题是一条 event-sourced 记录：题面 / 错答 / 知识点 / 归因（AI vs 人）/
+          纠错状态。点「→ 事件链」看完整 caused_by 链。
+        </p>
+      </div>
+
+      <Stateful
+        status={status}
+        onRetry={() => q.refetch()}
+        errorText={errorText}
+        skeleton={
+          <div className="grid" style={{ gap: 'var(--s-3)' }}>
+            {[1, 2, 3].map((i) => (
+              <LoomCard key={i} pad>
+                <SkLines rows={1} />
+              </LoomCard>
+            ))}
+          </div>
         }
-      />
-
-      {q.isLoading && (
-        <Card>
-          <p style={loadingStyle}>正在加载…</p>
-        </Card>
-      )}
-
-      {q.isError && (
-        <Card>
-          <p style={errorStyle}>
-            {q.error instanceof ApiAuthError
-              ? `${q.error.message} — 请重新进入页面输入 token`
-              : `加载失败：${(q.error as Error).message}`}
-          </p>
-        </Card>
-      )}
-
-      {q.isSuccess && total === 0 && (
-        <Card pad="lg">
-          <p style={{ ...emptyStyle, margin: 0 }}>暂时没有错题记录。</p>
-          <p style={{ ...subEmptyStyle, marginTop: 'var(--s-2)' }}>
-            去{' '}
-            <a href="/record" style={linkStyle}>
-              /record
-            </a>{' '}
-            录入第一道。
-          </p>
-        </Card>
-      )}
-
-      {q.isSuccess && total > 0 && (
-        <div style={listStyle}>
+        empty={
+          <EmptyState
+            icon="mistakes"
+            title="还没有错题"
+            text="复习答错或手动录入后，错题会聚到这里并自动归因。"
+            action={
+              <Link href="/record">
+                <Btn variant="primary" size="sm" icon="record">
+                  录新错题
+                </Btn>
+              </Link>
+            }
+          />
+        }
+      >
+        <div className="grid stagger" style={{ gap: 'var(--s-3)' }}>
           {rows.map((row) => (
             <MistakeCard key={row.id} row={row} />
           ))}
         </div>
-      )}
+      </Stateful>
     </main>
   );
 }
@@ -105,124 +143,51 @@ function MistakeCard({ row }: { row: MistakeRow }) {
       }
     : null;
   return (
-    <Card pad="lg" style={{ marginBottom: 'var(--s-3)' }}>
-      <div style={cardHeadStyle}>
-        <span style={metaStyle}>{formatRelTime(createdAt)}</span>
-        <span style={stateClusterStyle}>
-          <CorrectionStateRenderer state={row.correction_state} compact />
-          <CauseBadge cause={cause} pendingSinceSec={pendingSince} />
-        </span>
+    <LoomCard pad className="mistake-card">
+      <div className="mistake-top">
+        <div className="mistake-q wenyan">{row.prompt_md}</div>
+        <span className="mistake-time mono">{formatRelTime(createdAt)}</span>
       </div>
-      <p style={promptStyle}>{row.prompt_md}</p>
+
+      {/* phase-deferred: the 正解 (reference_md) is NOT carried in the
+          /api/mistakes projection (listMistakeProjectionRows returns only
+          prompt_md + wrong_answer_md — see src/server/records/mistakes.ts L61).
+          The prototype's 误/正 two-row compare degrades to a single 误 row
+          until the projection is extended to return reference_md. */}
       {row.wrong_answer_md && (
-        <p style={wrongAnswerStyle}>
-          <span style={inlineLabelStyle}>错答 · </span>
-          {row.wrong_answer_md}
-        </p>
-      )}
-      {row.knowledge_ids.length > 0 && (
-        <div style={knowledgeRowStyle}>
-          {row.knowledge_ids.map((id) => (
-            <Badge key={id} tone="neutral">
-              {id}
-            </Badge>
-          ))}
+        <div className="mistake-cmp">
+          <span className="mistake-cmp-line">
+            <span className="cmp-label">误</span>
+            <span className="cmp-wrong">{row.wrong_answer_md}</span>
+          </span>
         </div>
       )}
-      <p style={{ ...metaStyle, marginTop: 'var(--s-2)' }}>
-        <Link href={`/events/${row.id}`} style={{ color: 'var(--coral)' }}>
-          → 事件链
+
+      <div className="mistake-meta-row">
+        <div className="kp-badges">
+          {/* No knowledge-name query on this page (projection returns only
+              knowledge_ids); chips show the id text and link to /knowledge,
+              matching the legacy page's behaviour. */}
+          {row.knowledge_ids.map((id) => (
+            <Link key={id} href="/knowledge" className="chip chip-k mono kp-chip">
+              {id}
+            </Link>
+          ))}
+        </div>
+        <div className="mistake-state-cluster">
+          <CorrectionStateRenderer state={row.correction_state} compact />
+          <CauseBadge cause={cause} pendingSinceSec={pendingSince} />
+        </div>
+      </div>
+
+      <div className="mistake-foot">
+        {/* Inline event-chain expansion (prototype m.events[]) is dropped: this
+            page has no event-list query — the full caused_by chain lives on the
+            /events/[id] detail route. Keep the link. */}
+        <Link href={`/events/${row.id}`} className="mistake-evlink mono">
+          <LoomIcon name="link" size={12} />→ 事件链 · events:{row.id.slice(0, 8)}
         </Link>
-      </p>
-    </Card>
+      </div>
+    </LoomCard>
   );
 }
-
-const loadingStyle: React.CSSProperties = {
-  margin: 0,
-  fontSize: 'var(--fs-body)',
-  color: 'var(--ink-3)',
-};
-
-const errorStyle: React.CSSProperties = {
-  margin: 0,
-  fontSize: 'var(--fs-body)',
-  color: 'var(--again-ink)',
-};
-
-const emptyStyle: React.CSSProperties = {
-  fontSize: 'var(--fs-h4)',
-  color: 'var(--ink-2)',
-  fontFamily: 'var(--font-serif)',
-};
-
-const subEmptyStyle: React.CSSProperties = {
-  fontSize: 'var(--fs-caption)',
-  color: 'var(--ink-3)',
-  margin: 0,
-  lineHeight: 'var(--lh-prose)',
-};
-
-const linkStyle: React.CSSProperties = {
-  color: 'var(--coral)',
-};
-
-const listStyle: React.CSSProperties = {
-  marginTop: 'var(--s-4)',
-};
-
-const cardHeadStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  gap: 'var(--s-2)',
-};
-
-const stateClusterStyle: React.CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  flexWrap: 'wrap',
-  justifyContent: 'flex-end',
-  gap: 6,
-  minWidth: 0,
-};
-
-const metaStyle: React.CSSProperties = {
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-meta)',
-  color: 'var(--ink-4)',
-  letterSpacing: 'var(--ls-wide)',
-};
-
-const promptStyle: React.CSSProperties = {
-  margin: 'var(--s-2) 0 0',
-  fontFamily: 'var(--font-serif)',
-  fontSize: 'var(--fs-body)',
-  lineHeight: 'var(--lh-prose)',
-  color: 'var(--ink)',
-  whiteSpace: 'pre-wrap',
-  wordBreak: 'break-word',
-};
-
-const wrongAnswerStyle: React.CSSProperties = {
-  margin: 'var(--s-2) 0 0',
-  fontSize: 'var(--fs-caption)',
-  lineHeight: 'var(--lh-prose)',
-  color: 'var(--ink-2)',
-  whiteSpace: 'pre-wrap',
-  wordBreak: 'break-word',
-};
-
-const inlineLabelStyle: React.CSSProperties = {
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-meta)',
-  color: 'var(--ink-4)',
-  letterSpacing: 'var(--ls-wide)',
-};
-
-const knowledgeRowStyle: React.CSSProperties = {
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: 4,
-  marginTop: 'var(--s-2)',
-};
