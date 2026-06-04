@@ -2,6 +2,7 @@ import { createId } from '@paralleldrive/cuid2';
 import type { Job } from 'pg-boss';
 
 import type { Db } from '@/db/client';
+import { type AgentNote, readAgentNotes } from '@/server/agents/notes';
 import { type RunTaskResult, runAgentTask } from '@/server/ai/runner';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
@@ -68,6 +69,10 @@ type ListActiveGoalsFn = (db: Db) => Promise<ActiveGoal[]>;
 // per-(kind, relation) feedback digest (a strict superset of the prior per-kind
 // rate). The seam NAME is unchanged so existing injection sites keep working.
 type LoadProposalAcceptanceRatesFn = (db: Db) => Promise<ProposalFeedbackCell[]>;
+// U8 / AF §4 — swappable un-expired agent-note reader (DB tests inject
+// fixtures). Notes are HINTS, not facts — additive context only; an empty list
+// (the common case) leaves the Dreaming input unchanged.
+type ReadAgentNotesFn = (db: Db, now: Date) => Promise<AgentNote[]>;
 
 interface DepsOverride {
   runAgentTaskFn?: RunAgentTaskFn;
@@ -81,6 +86,10 @@ interface DepsOverride {
   // historically-accepted proposal kinds only, never touches the review
   // backbone, and is a no-op on cold start (ND-5 additive).
   loadProposalAcceptanceRatesFn?: LoadProposalAcceptanceRatesFn;
+  // U8 / AF §4 — defaults to readAgentNotes(for_agent='dreaming'); reads the
+  // out-of-band hint channel. Additive only: hints bias attention, never the
+  // FSRS-due queue or review state (ND-5).
+  readAgentNotesFn?: ReadAgentNotesFn;
   now?: () => Date;
 }
 
@@ -107,7 +116,13 @@ const DREAMING_ACCEPTANCE_RATE_BIAS_GUIDANCE =
 // before.
 const DREAMING_PROPOSAL_FEEDBACK_GUIDANCE =
   ' When proposal_feedback is present, each entry is a (kind, relation) cell with top_dismiss_reasons (why the user dismissed) and top_rubric_gates (why the rubric rejected) — read them as the specific failure mode for that cell and avoid repeating it; additive only, never suppress or replace the existing signal-driven proposals (ND-5). When proposal_feedback is empty, behave exactly as before.';
-export const DREAMING_OBJECTIVE = `Review recent learning signals with the provided DomainTools and create only actionable inbox proposals. Do not mutate user data directly.${DREAMING_GOAL_BIAS_GUIDANCE}${DREAMING_ACCEPTANCE_RATE_BIAS_GUIDANCE}${DREAMING_PROPOSAL_FEEDBACK_GUIDANCE}`;
+// U8 / AF §4 — agent_notes are out-of-band HINTS left by narrow tasks (provenance
+// + expiry), NOT facts. Weigh them as soft attention priors; never treat a note
+// as ground truth and never let it suppress the signal-driven proposals (ND-5).
+// Empty agent_notes (the common case) = behave exactly as before.
+const DREAMING_AGENT_NOTES_GUIDANCE =
+  ' When agent_notes are present, treat each as a soft HINT (not a fact) left by a narrow task — it has a signal_kind, refs, and confidence; use it to direct attention, never as ground truth, and never let it suppress or replace the signal-driven proposals (ND-5). When agent_notes is empty, behave exactly as before.';
+export const DREAMING_OBJECTIVE = `Review recent learning signals with the provided DomainTools and create only actionable inbox proposals. Do not mutate user data directly.${DREAMING_GOAL_BIAS_GUIDANCE}${DREAMING_ACCEPTANCE_RATE_BIAS_GUIDANCE}${DREAMING_PROPOSAL_FEEDBACK_GUIDANCE}${DREAMING_AGENT_NOTES_GUIDANCE}`;
 
 // P5.4-L2 / YUK-174 (Facet A, §3.2) — the proposal kinds Dreaming can ACT on,
 // scoped to its ACTUAL tool surface (DREAMING_TOOLS, allowlists.ts). The all-kind
@@ -174,6 +189,7 @@ function buildDreamingInput(
   beforeRows: ProposalSnapshotRow[],
   activeGoals: ActiveGoal[],
   feedbackDigest: ProposalFeedbackCell[],
+  agentNotes: AgentNote[],
 ) {
   return {
     run_kind: 'nightly',
@@ -221,6 +237,17 @@ function buildDreamingInput(
         top_dismiss_reasons: cell.top_dismiss_reasons,
         top_rubric_gates: cell.top_rubric_gates,
       })),
+    // U8 / AF §4 — un-expired out-of-band hints addressed to 'dreaming'. HINTS,
+    // not facts (the objective guidance above says so explicitly). Empty array
+    // when no fresh notes exist → model behaves exactly as before.
+    agent_notes: agentNotes.map((n) => ({
+      id: n.id,
+      signal_kind: n.signal_kind,
+      summary_md: n.summary_md,
+      refs: n.refs,
+      source_task_kind: n.source_task_kind,
+      ...(n.confidence !== undefined ? { confidence: n.confidence } : {}),
+    })),
     budget: {
       // P5.1 / YUK-143 — sourced from DREAMING_CONTEXT_BUDGET (8 / 5),
       // byte-identical to the prior hardcoded literals.
@@ -249,6 +276,12 @@ export async function runDreamingNightly(
   const loadAcceptanceRates =
     deps.loadProposalAcceptanceRatesFn ??
     ((db: Db) => getProposalFeedbackDigest(db, PROPOSAL_FEEDBACK_BUDGET));
+  // U8 / AF §4 — default to the un-expired note reader for 'dreaming'. Read-only
+  // ADD to the Dreaming signal set; never reads the FSRS-due queue or mutates
+  // review state (ND-5).
+  const readNotes =
+    deps.readAgentNotesFn ??
+    ((db: Db, now: Date) => readAgentNotes(db, { for_agent: 'dreaming', now }));
 
   const beforeRows = await listRows(db);
   const beforeIds = new Set(beforeRows.map((row) => row.id));
@@ -260,6 +293,9 @@ export async function runDreamingNightly(
   // Read-only ADD; no FSRS-due read, no review-state mutation (ND-5). Empty on
   // cold start → the input feed degrades to a no-op.
   const feedbackDigest = await loadAcceptanceRates(db);
+  // U8 / AF §4 — read un-expired hints addressed to Dreaming. Empty on the
+  // common cold path → input feed degrades to a no-op.
+  const agentNotes = await readNotes(db, now);
   const triggerEventId = `dreaming_trigger_${createId()}`;
   const toolContextTaskRunId = `dreaming_tool_${createId()}`;
 
@@ -303,7 +339,7 @@ export async function runDreamingNightly(
 
     const taskResult = await run(
       'DreamingTask',
-      buildDreamingInput(now, beforeRows, activeGoals, feedbackDigest),
+      buildDreamingInput(now, beforeRows, activeGoals, feedbackDigest, agentNotes),
       {
         db,
         mcpServers: { [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer },

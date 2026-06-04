@@ -15,6 +15,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { QuizGenMetadataT } from '@/core/schema/quiz_gen';
 import { event, knowledge, material_fsrs_state, question } from '@/db/schema';
+import { readAgentNotes } from '@/server/agents/notes';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   COPY_SAFETY_TOO_CLOSE_THRESHOLD,
@@ -132,6 +133,17 @@ async function countVerifyEvents(questionId: string): Promise<number> {
   return rows.length;
 }
 
+// U8 / AF §4 — coach-addressed question_pool_gap notes referencing a knowledge id.
+async function poolGapNotesForKnowledge(knowledgeId: string): Promise<number> {
+  const notes = await readAgentNotes(testDb(), { for_agent: 'coach', now: new Date() });
+  return notes.filter(
+    (n) =>
+      n.signal_kind === 'question_pool_gap' &&
+      n.source_task_kind === 'quiz_verify' &&
+      n.refs.some((r) => r.id === knowledgeId),
+  ).length;
+}
+
 async function fsrsRowCount(subjectKind: string, subjectId: string): Promise<number> {
   const rows = await testDb()
     .select({ id: material_fsrs_state.id })
@@ -194,6 +206,9 @@ describe('runQuizVerify', () => {
 
     // one verify event, outcome success.
     expect(await countVerifyEvents('q1')).toBe(1);
+    // U8 / AF §4 (U3 L-note) — a promoted draft DID enter the pool, so no
+    // question_pool_gap hint is left.
+    expect(await poolGapNotesForKnowledge('k1')).toBe(0);
   });
 
   // Codex (PR #295) — enroll-if-absent. Verifying a NEW question that binds to a
@@ -292,6 +307,9 @@ describe('runQuizVerify', () => {
     expect(await fsrsRowCount('question', 'q3')).toBe(0);
     const meta = await readMeta('q3');
     expect((meta?.verification as Record<string, unknown>)?.status).toBe('needs_review');
+    // U8 / AF §4 (U3 L-note) — a draft that did NOT enter the pool leaves a
+    // coach-addressed question_pool_gap hint referencing its knowledge point(s).
+    expect(await poolGapNotesForKnowledge('k1')).toBe(1);
   });
 
   it('too_close (deterministic overlap): blocks promotion even when the LLM says original', async () => {
