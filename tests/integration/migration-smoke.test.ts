@@ -212,6 +212,65 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
     expect(rows[0]?.data_type).toBe('real');
   });
 
+  it('U5 (0028) — answer revived with paper link columns + submitted_at nullable', async () => {
+    const cols = await db.execute<{ column_name: string; is_nullable: string }>(sql`
+      SELECT column_name, is_nullable FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'answer'
+    `);
+    const byName = new Map(cols.map((c) => [c.column_name, c.is_nullable]));
+    for (const c of ['session_id', 'paper_artifact_id', 'part_ref', 'event_id', 'autosaved_at']) {
+      expect(byName.has(c)).toBe(true);
+    }
+    // submitted_at flipped from NOT NULL → nullable (null = live draft).
+    expect(byName.get('submitted_at')).toBe('YES');
+  });
+
+  it('U5 (0028) — learning_session.artifact_id column added', async () => {
+    const rows = await db.execute<{ column_name: string }>(sql`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'learning_session' AND column_name = 'artifact_id'
+    `);
+    expect(rows.length).toBe(1);
+  });
+
+  it('U5 (0028) — answer_draft_slot_uk is a partial unique index with COALESCE expression', async () => {
+    const rows = await db.execute<{ indexdef: string }>(sql`
+      SELECT indexdef FROM pg_indexes
+      WHERE schemaname = 'public' AND tablename = 'answer'
+        AND indexname = 'answer_draft_slot_uk'
+    `);
+    expect(rows.length).toBe(1);
+    expect(rows[0]?.indexdef).toMatch(/UNIQUE/i);
+    expect(rows[0]?.indexdef).toMatch(/COALESCE/i);
+    expect(rows[0]?.indexdef).toMatch(/submitted_at IS NULL/i);
+  });
+
+  it('U5 (0028) — partial index constrains only live drafts; frozen rows are append-only', async () => {
+    // One slot (sess1, q1, atomic part_ref=NULL). Two FROZEN rows coexist
+    // (append-only history after abandon→reopen→re-submit), then ONE live draft
+    // is allowed, but a SECOND live draft on the same slot is rejected.
+    const ins = (
+      id: string,
+      submitted: string | null,
+    ) => db.execute(sql`
+      INSERT INTO answer (id, question_id, input_kind, content_md, image_refs, tags,
+        submitted_at, session_id, part_ref, autosaved_at)
+      VALUES (${id}, 'q1', 'text', '', '[]'::jsonb, '[]'::jsonb,
+        ${submitted ? sql`${submitted}::timestamptz` : sql`NULL`}, 'sess1', NULL, now())
+    `);
+
+    await ins('a_frozen_1', '2026-06-05T00:00:00Z');
+    await ins('a_frozen_2', '2026-06-05T01:00:00Z');
+    // Two frozen rows for the same slot coexist (partial index excludes them).
+    await ins('a_live_1', null);
+    // A second live draft on the same slot must collide on answer_draft_slot_uk.
+    await expect(ins('a_live_2', null)).rejects.toThrow();
+
+    // Cleanup so the assertion doesn't leak into other smoke assertions.
+    await db.execute(sql`DELETE FROM answer WHERE session_id = 'sess1'`);
+  });
+
   it('knowledge_edge has FK to knowledge on both from and to', async () => {
     const rows = await db.execute<{ column_name: string; foreign_table_name: string }>(sql`
       SELECT
