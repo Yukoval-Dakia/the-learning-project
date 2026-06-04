@@ -10,16 +10,16 @@
 // existing `data-theme` attribute + localStorage 'loom-theme' key (no second
 // key) that app/layout.tsx's THEME_BOOT and ThemeToggle already manage.
 //
-// Copilot: reuses the existing self-contained TodayCopilotDrawer (it owns its
-// own dwell-driven open state + hidden trigger). The shell's Copilot buttons
-// open it by clicking that trigger — no fork of the drawer logic. Admin is its
-// own (admin) route group, so the sidebar only links to /admin/runs.
+// Copilot: reuses the existing self-contained CopilotDock (it owns its own
+// dwell-driven open state + hidden trigger). The shell's Copilot buttons open
+// it by clicking that trigger — no fork of the drawer logic. Admin is its own
+// (admin) route group, so the sidebar only links to /admin/runs.
 
 import { TokenGate } from '@/ui/components/TokenGate';
+import { CopilotDock } from '@/ui/copilot/CopilotDock';
 import { AppSidebar } from '@/ui/shell/AppSidebar';
 import { AppTopbar } from '@/ui/shell/AppTopbar';
 import { MobileTabBar } from '@/ui/shell/MobileTabBar';
-import { TodayCopilotDrawer } from '@/ui/today/TodayCopilotDrawer';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 const RAIL_KEY = 'loom-rail';
@@ -97,7 +97,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   const closeMobileNav = useCallback(() => setMobileNav(false), []);
   const openMobileNav = useCallback(() => setMobileNav(true), []);
 
-  // Reuse TodayCopilotDrawer's own open path by clicking its hidden trigger.
+  // Reuse CopilotDock's own open path by clicking its hidden trigger.
   const openCopilot = useCallback(() => {
     const trigger = copilotTriggerRef.current?.querySelector<HTMLButtonElement>(
       '[data-testid="copilot-drawer-trigger"]',
@@ -141,7 +141,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
         {/* Self-contained Copilot drawer. Its visible trigger is hidden — the
             shell's sidebar/topbar Copilot buttons drive it via openCopilot. */}
         <div ref={copilotTriggerRef} className="shell-copilot-mount">
-          <TodayCopilotDrawer />
+          <CopilotDock />
         </div>
       </div>
     </TokenGate>

@@ -1,5 +1,5 @@
 import { createId } from '@paralleldrive/cuid2';
-import { eq, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
 import { learning_session } from '@/db/schema';
@@ -88,6 +88,103 @@ export async function startConversation(
     });
 
     return { sessionId };
+  });
+}
+
+// ---------- findOrCreateCopilotConversation (AF S3a / YUK-203 U3) ----------
+
+/**
+ * Copilot session envelope (AF spec §1.5 + §7 S3a). Returns the durable
+ * `learning_session(type='conversation')` that THIS Copilot turn belongs to,
+ * creating one only when there is no live session to continue.
+ *
+ * Reuse predicate (no new columns — see L-copilot pre-flight缺口表): the most
+ * recent conversation session that is still live (`status IN ('active','idle')`,
+ * i.e. not ended/abandoned) AND was active within the last 24h
+ * (`updated_at >= now - 24h`). Otherwise a fresh `status='active'` row is
+ * inserted. Copilot conversations carry `goal_id = null` — there is no learning
+ * item, which is what distinguishes them from teaching's `startConversation`.
+ *
+ * Single-owner invariant (ADR-0005, this module owns all conversation
+ * transitions): both the candidate select and the insert run in ONE
+ * transaction, and an `idle` reuse is inline-resumed to `active` here rather
+ * than leaving the row stale. Single-user tool → no `FOR UPDATE` fan-out needed.
+ */
+const COPILOT_REUSE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+export async function findOrCreateCopilotConversation(
+  db: Db,
+  opts: { now?: Date } = {},
+): Promise<{ sessionId: string; created: boolean }> {
+  const now = opts.now ?? new Date();
+  const cutoff = new Date(now.getTime() - COPILOT_REUSE_WINDOW_MS);
+
+  return db.transaction(async (tx) => {
+    const candidates = await tx
+      .select({ id: learning_session.id, status: learning_session.status })
+      .from(learning_session)
+      .where(
+        and(
+          eq(learning_session.type, 'conversation'),
+          inArray(learning_session.status, ['active', 'idle']),
+          gte(learning_session.updated_at, cutoff),
+        ),
+      )
+      .orderBy(desc(learning_session.updated_at))
+      .limit(1);
+
+    const existing = candidates[0];
+    if (existing) {
+      // Inline-resume an idle session so the row reflects the live turn (mirrors
+      // assertAcceptingTurns' idle → active transition).
+      if (existing.status === 'idle') {
+        await tx
+          .update(learning_session)
+          .set({
+            status: 'active',
+            updated_at: now,
+            version: sql`${learning_session.version} + 1`,
+          })
+          .where(eq(learning_session.id, existing.id));
+
+        await writeJobEvent(tx, {
+          business_table: SESSION_TABLE,
+          business_id: existing.id,
+          event_type: 'conversation.resumed',
+          payload: { resumed_at: now.toISOString(), surface: 'copilot' },
+        });
+      }
+      return { sessionId: existing.id, created: false };
+    }
+
+    const sessionId = createId();
+    await tx.insert(learning_session).values({
+      id: sessionId,
+      type: 'conversation',
+      status: 'active',
+      source_document_id: null,
+      source_asset_ids: [],
+      entrypoint: 'copilot',
+      warnings: [],
+      error_message: null,
+      summary_md: null,
+      // Copilot has no learning item — goal_id stays null (vs teaching's
+      // startConversation which parks the learning item id here).
+      goal_id: null,
+      started_at: now,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+
+    await writeJobEvent(tx, {
+      business_table: SESSION_TABLE,
+      business_id: sessionId,
+      event_type: 'conversation.started',
+      payload: { surface: 'copilot' },
+    });
+
+    return { sessionId, created: true };
   });
 }
 
