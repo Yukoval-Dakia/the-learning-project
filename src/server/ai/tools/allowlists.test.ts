@@ -92,7 +92,9 @@ describe('DomainTool allowlist policy', () => {
   it('keeps Maintenance broad but excludes user-suggested mistake actions', () => {
     registerCoreTools();
     expect(DOMAIN_TOOL_ALLOWLISTS.maintenance).toEqual([
-      ...READ_TOOLS,
+      // YUK-203 U4 / D7③ — Maintenance is an operator surface and must NOT read
+      // memory facts, so its read base is READ_TOOLS minus `search_memory_facts`.
+      ...READ_TOOLS.filter((name) => name !== 'search_memory_facts'),
       'propose_knowledge_edge',
       'propose_knowledge_mutation',
       'propose_learning_item_completion',
@@ -105,6 +107,21 @@ describe('DomainTool allowlist policy', () => {
     expect(DOMAIN_TOOL_ALLOWLISTS.maintenance).not.toContain('attribute_mistake');
     expect(DOMAIN_TOOL_ALLOWLISTS.maintenance).not.toContain('propose_variant');
     expect(listTools().map((tool) => tool.name)).toEqual([...READ_TOOLS, ...PROPOSE_WRITE_TOOLS]);
+  });
+
+  it('grants search_memory_facts to coach / dreaming / copilot only (D7②/③)', () => {
+    // YUK-203 U4 / L-memtool — additive grant to the three soft-judgment surfaces.
+    expect(READ_TOOLS).toContain('search_memory_facts');
+    expect(DOMAIN_TOOL_ALLOWLISTS.coach).toContain('search_memory_facts');
+    expect(DOMAIN_TOOL_ALLOWLISTS.dreaming).toContain('search_memory_facts');
+    expect(DOMAIN_TOOL_ALLOWLISTS.copilot).toContain('search_memory_facts');
+    expect(DOMAIN_TOOL_ALLOWLISTS.copilot_user_suggested_mistake_action).toContain(
+      'search_memory_facts',
+    );
+    // D7③ deny-from-wide — evaluator / operator surfaces must stay memory-free.
+    expect(DOMAIN_TOOL_ALLOWLISTS.knowledge_review).not.toContain('search_memory_facts');
+    expect(DOMAIN_TOOL_ALLOWLISTS.maintenance).not.toContain('search_memory_facts');
+    expect(DOMAIN_TOOL_ALLOWLISTS.ingestion_block_edit).not.toContain('search_memory_facts');
   });
 
   it('renders MCP allowedTools names for the selected server', () => {

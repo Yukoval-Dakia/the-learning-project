@@ -27,6 +27,10 @@ export const fastTestInclude = [
   'src/server/ai/tools/registry.test.ts',
   'src/server/ai/tools/allowlists.test.ts',
   'src/server/ai/tools/mcp-bridge.test.ts',
+  // YUK-203 U4 / L-memtool — search_memory_facts DomainTool. Pure DI unit: the
+  // MemoryClient factory is stubbed, so no live Mem0 / pgvector / OpenAI env is
+  // touched (the real createMemoryClient is never constructed in tests).
+  'src/server/ai/tools/search-memory-facts.test.ts',
   // YUK-198 — pure (no-DB) Tavily remote MCP builder: reads TAVILY_API_KEY via
   // vi.stubEnv, returns a static McpHttpServerConfig. No live DB / AI / network.
   'src/server/ai/mcp/tavily.test.ts',
