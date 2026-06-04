@@ -1,0 +1,382 @@
+// U5 (YUK-203, §4.10 Q8-addendum) — GET /api/practice/[id] route DB tests.
+//
+// Covers:
+//   1. Full render payload: paper meta + sections + question faces + null slot state
+//      when no session started yet.
+//   2. Draft restoration: a live autosaved draft appears in slot_state.draft.
+//   3. Visible submission: correct answer → slot_state.submission with outcome.
+//   4. Hidden feedback: judge_now_show_later + in-progress session → feedback_buffered,
+//      score/outcome NOT in response (server visibility gate §4.9).
+//   5. Revealed on complete: same slot after session.status='completed' → full
+//      outcome visible.
+//   6. Flat fallback: a quiz with no sections degrades to single synthetic section.
+//   7. 404 for unknown artifact id.
+
+import { artifact, event, learning_session, question } from '@/db/schema';
+import { autosaveAnswerDraft } from '@/server/review/answer-draft';
+import { submitPaperSlot } from '@/server/review/paper-submit';
+import { Review } from '@/server/session';
+import { sql } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { GET } from './route';
+
+async function seedQuestion(id: string, reference: string, kind = 'true_false') {
+  const db = testDb();
+  const now = new Date();
+  await db.insert(question).values({
+    id,
+    kind,
+    prompt_md: `Prompt for ${id}`,
+    reference_md: reference,
+    knowledge_ids: ['k1'],
+    difficulty: 3,
+    source: 'manual',
+    variant_depth: 0,
+    version: 0,
+    created_at: now,
+    updated_at: now,
+  });
+}
+
+async function seedPaper(
+  id: string,
+  opts: {
+    intentSource?: string;
+    questionIds: string[];
+    feedbackPolicy?: string;
+    sectioned?: boolean;
+  },
+) {
+  const db = testDb();
+  const now = new Date();
+  const {
+    intentSource = 'review_plan',
+    questionIds,
+    feedbackPolicy = 'immediate',
+    sectioned = true,
+  } = opts;
+
+  const toolState = sectioned
+    ? {
+        question_ids: questionIds,
+        sections: [
+          {
+            knowledge_focus: ['k1'],
+            feedback_policy: feedbackPolicy,
+            adaptation_policy: 'none',
+            assignments: questionIds.map((qid) => ({
+              question_id: qid,
+              primary_knowledge_id: 'k1',
+              secondary_knowledge_ids: [],
+              selection_reason: 'test',
+              review_profile_snapshot: {},
+            })),
+          },
+        ],
+      }
+    : {
+        // Flat quiz — no sections (U4 / quiz_gen fallback)
+        question_ids: questionIds,
+      };
+
+  await db.insert(artifact).values({
+    id,
+    type: 'tool_quiz',
+    title: `卷 ${id}`,
+    knowledge_ids: ['k1'],
+    intent_source: intentSource,
+    source: 'ai_generated',
+    tool_kind: intentSource,
+    tool_state: toolState as never,
+    generation_status: 'ready',
+    verification_status: 'not_required',
+    history: [],
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  });
+}
+
+function makeRequest(artifactId: string): [Request, { params: Promise<{ id: string }> }] {
+  return [
+    new Request(`http://localhost/api/practice/${artifactId}`),
+    { params: Promise.resolve({ id: artifactId }) },
+  ];
+}
+
+describe('GET /api/practice/[id]', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('returns full render payload with question faces and null session when no session started', async () => {
+    await seedQuestion('q1', 'true');
+    await seedQuestion('q2', 'false');
+    await seedPaper('p1', { questionIds: ['q1', 'q2'] });
+
+    const [req, ctx] = makeRequest('p1');
+    const res = await GET(req, ctx);
+    expect(res.status).toBe(200);
+
+    const body = (await res.json()) as {
+      artifact_id: string;
+      title: string;
+      generation_status: string;
+      intent_source: string;
+      session: null;
+      sections: Array<{
+        section_index: number;
+        knowledge_focus: string[];
+        feedback_policy: string;
+        slots: Array<{
+          question_id: string;
+          part_ref: null;
+          section_index: number;
+          question: { id: string; kind: string; prompt_md: string };
+          slot_state: { draft: null; submission: null };
+        }>;
+      }>;
+      is_flat_fallback: boolean;
+    };
+
+    expect(body.artifact_id).toBe('p1');
+    expect(body.generation_status).toBe('ready');
+    expect(body.intent_source).toBe('review_plan');
+    expect(body.session).toBeNull();
+    expect(body.is_flat_fallback).toBe(false);
+    expect(body.sections).toHaveLength(1);
+
+    const section = body.sections[0];
+    expect(section.section_index).toBe(0);
+    expect(section.knowledge_focus).toEqual(['k1']);
+    expect(section.feedback_policy).toBe('immediate');
+    expect(section.slots).toHaveLength(2);
+
+    const slot1 = section.slots.find((s) => s.question_id === 'q1');
+    expect(slot1).toBeDefined();
+    expect(slot1?.question.kind).toBe('true_false');
+    expect(slot1?.question.prompt_md).toBe('Prompt for q1');
+    expect(slot1?.slot_state.draft).toBeNull();
+    expect(slot1?.slot_state.submission).toBeNull();
+  });
+
+  it('restores live draft in slot_state.draft', async () => {
+    await seedQuestion('q1', 'true');
+    await seedPaper('p1', { questionIds: ['q1'] });
+    const db = testDb();
+    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'p1' });
+
+    await autosaveAnswerDraft(db, {
+      sessionId,
+      questionId: 'q1',
+      inputKind: 'text',
+      contentMd: 'my draft answer',
+      paperArtifactId: 'p1',
+    });
+
+    const [req, ctx] = makeRequest('p1');
+    const res = await GET(req, ctx);
+    const body = (await res.json()) as {
+      sections: Array<{
+        slots: Array<{
+          question_id: string;
+          slot_state: {
+            draft: { content_md: string; input_kind: string } | null;
+            submission: null;
+          };
+        }>;
+      }>;
+    };
+
+    const slot = body.sections[0]?.slots.find((s) => s.question_id === 'q1');
+    expect(slot?.slot_state.draft?.content_md).toBe('my draft answer');
+    expect(slot?.slot_state.draft?.input_kind).toBe('text');
+    expect(slot?.slot_state.submission).toBeNull();
+  });
+
+  it('returns visible outcome after correct submission (feedback_policy=immediate)', async () => {
+    await seedQuestion('q1', 'true');
+    await seedPaper('p1', { questionIds: ['q1'], feedbackPolicy: 'immediate' });
+    const db = testDb();
+    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'p1' });
+
+    await submitPaperSlot(
+      {
+        sessionId,
+        paperArtifactId: 'p1',
+        questionId: 'q1',
+        answerMd: 'true',
+        primaryKnowledgeId: 'k1',
+        feedbackPolicy: 'immediate',
+      },
+      db,
+    );
+
+    const [req, ctx] = makeRequest('p1');
+    const res = await GET(req, ctx);
+    const body = (await res.json()) as {
+      session: { id: string; status: string; pos: number; right: number; wrong: number } | null;
+      sections: Array<{
+        slots: Array<{
+          question_id: string;
+          slot_state: {
+            draft: null;
+            submission:
+              | null
+              | { submitted: true; visible_to_user: true; outcome: string; score: number | null }
+              | { submitted: true; visible_to_user: false; feedback_buffered: true };
+          };
+        }>;
+      }>;
+    };
+
+    expect(body.session?.pos).toBe(1);
+    expect(body.session?.right).toBe(1);
+    expect(body.session?.wrong).toBe(0);
+
+    const slot = body.sections[0]?.slots.find((s) => s.question_id === 'q1');
+    expect(slot?.slot_state.draft).toBeNull(); // draft cleared after freeze
+    const sub = slot?.slot_state.submission as {
+      submitted: true;
+      visible_to_user: true;
+      outcome: string;
+    } | null;
+    expect(sub?.submitted).toBe(true);
+    expect(sub?.visible_to_user).toBe(true);
+    expect(sub?.outcome).toBe('success'); // correct → success
+  });
+
+  it('hides feedback (feedback_buffered:true) for judge_now_show_later in-progress session — score/outcome not in response', async () => {
+    await seedQuestion('q1', 'true');
+    await seedPaper('p1', { questionIds: ['q1'], feedbackPolicy: 'judge_now_show_later' });
+    const db = testDb();
+    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'p1' });
+
+    await submitPaperSlot(
+      {
+        sessionId,
+        paperArtifactId: 'p1',
+        questionId: 'q1',
+        answerMd: 'true',
+        primaryKnowledgeId: 'k1',
+        feedbackPolicy: 'judge_now_show_later',
+      },
+      db,
+    );
+
+    const [req, ctx] = makeRequest('p1');
+    const res = await GET(req, ctx);
+    const body = (await res.json()) as {
+      sections: Array<{
+        slots: Array<{
+          question_id: string;
+          slot_state: {
+            submission: {
+              submitted?: boolean;
+              visible_to_user?: boolean;
+              feedback_buffered?: boolean;
+              outcome?: string;
+              score?: number | null;
+            } | null;
+          };
+        }>;
+      }>;
+    };
+
+    const slot = body.sections[0]?.slots.find((s) => s.question_id === 'q1');
+    const sub = slot?.slot_state.submission;
+    expect(sub?.submitted).toBe(true);
+    expect(sub?.visible_to_user).toBe(false);
+    expect(sub?.feedback_buffered).toBe(true);
+    // Server visibility gate: outcome and score must NOT be present when buffered.
+    expect('outcome' in (sub ?? {})).toBe(false);
+    expect('score' in (sub ?? {})).toBe(false);
+  });
+
+  it('reveals full feedback after session completed (judge_now_show_later → completed reveals)', async () => {
+    await seedQuestion('q1', 'true');
+    await seedPaper('p1', { questionIds: ['q1'], feedbackPolicy: 'judge_now_show_later' });
+    const db = testDb();
+    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'p1' });
+
+    await submitPaperSlot(
+      {
+        sessionId,
+        paperArtifactId: 'p1',
+        questionId: 'q1',
+        answerMd: 'true',
+        primaryKnowledgeId: 'k1',
+        feedbackPolicy: 'judge_now_show_later',
+      },
+      db,
+    );
+
+    // Force session to 'completed' (directly, no helper needed — the visibility
+    // gate only reads session.status, not how it got there).
+    await db
+      .update(learning_session)
+      .set({ status: 'completed' })
+      // biome-ignore lint/suspicious/noExplicitAny: dynamic import for test helper
+      .where((sql as any)`id = ${sessionId}`);
+
+    // Workaround: use raw SQL to update session status.
+    await db.execute(sql`UPDATE learning_session SET status = 'completed' WHERE id = ${sessionId}`);
+
+    const [req, ctx] = makeRequest('p1');
+    const res = await GET(req, ctx);
+    const body = (await res.json()) as {
+      sections: Array<{
+        slots: Array<{
+          question_id: string;
+          slot_state: {
+            submission: {
+              submitted?: boolean;
+              visible_to_user?: boolean;
+              outcome?: string;
+              feedback_buffered?: boolean;
+            } | null;
+          };
+        }>;
+      }>;
+    };
+
+    const slot = body.sections[0]?.slots.find((s) => s.question_id === 'q1');
+    const sub = slot?.slot_state.submission;
+    // Completed session reveals buffered feedback.
+    expect(sub?.submitted).toBe(true);
+    expect(sub?.visible_to_user).toBe(true);
+    expect(sub?.outcome).toBe('success');
+    expect('feedback_buffered' in (sub ?? {})).toBe(false);
+  });
+
+  it('flat fallback: quiz with no sections degrades to single synthetic section', async () => {
+    await seedQuestion('q1', 'true');
+    await seedQuestion('q2', 'false');
+    await seedPaper('p_flat', { questionIds: ['q1', 'q2'], sectioned: false });
+
+    const [req, ctx] = makeRequest('p_flat');
+    const res = await GET(req, ctx);
+    const body = (await res.json()) as {
+      is_flat_fallback: boolean;
+      sections: Array<{
+        section_index: number;
+        slots: Array<{ question_id: string }>;
+      }>;
+    };
+
+    expect(body.is_flat_fallback).toBe(true);
+    expect(body.sections).toHaveLength(1);
+    expect(body.sections[0].section_index).toBe(0);
+    expect(body.sections[0].slots).toHaveLength(2);
+    const qIds = body.sections[0].slots.map((s) => s.question_id);
+    expect(qIds).toContain('q1');
+    expect(qIds).toContain('q2');
+  });
+
+  it('returns 404 for unknown artifact id', async () => {
+    const [req, ctx] = makeRequest('does_not_exist');
+    const res = await GET(req, ctx);
+    expect(res.status).toBe(404);
+  });
+});

@@ -185,6 +185,65 @@ Two lanes, chain-merged into `yuk-203-u5` (single PR — U-sequence convention).
 - **Q13 ruling — no new judge capability**: U5 reuses the six registered judge runners (exact/keyword/semantic/steps/unit_dimension/multimodal_direct — `judges/index.ts:10-33`). Paper submit routes through the existing `createDefaultJudgeInvoker()` path (`submit/route.ts:125`); no new `judgeCapability` registration, no `validateProfile`/`audit:profile` change. Delayed-batch judging (a hypothetical new route) is DEFER (Q2 killed delayed-reveal). **`audit:profile` stays zero-delta.**
 - **Acceptance**: `GET /api/practice` returns today/past papers with derived pos/score/gen; a paper with a U4 `session_meta`-only plan and one with a U5 top-level plan both appear; the Coach read variant sees hidden judgements.
 
+### 4.10 Q8-addendum: `GET /api/practice/[id]` (UI lane integration gap, orchestrator ruling A)
+
+**Context**: UI lane integration revealed that none of the four practice endpoints returned question-face content (prompt_md / choices_md / difficulty / image_refs), making the answering page impossible to render. Orchestrator ruling: L-paper-core addendum — additive only, zero contract change to the four existing endpoints.
+
+**Endpoint**: `GET /api/practice/[id]` (id = paper artifact id)
+
+**Single aggregation — no N+1 (Q8 principle)**:
+1. Paper artifact (Artifact.safeParse for tool_state shape)
+2. Linked review session (newest per paper, via artifact_id)
+3. Question faces — one `IN` query for all distinct slot question_ids
+4. Live draft rows (submitted_at IS NULL) per slot for draft restoration
+5. Newest frozen row per slot (MAX(submitted_at) subquery) + judge outcomes via answer.event_id JOIN
+
+**Response shape** (TypeScript contract for L-practice-ui):
+
+```typescript
+interface PaperQuestionFace {
+  id: string; kind: string; prompt_md: string;
+  choices_md: string[] | null;  // null for open-ended
+  difficulty: number;           // 1-5
+  parent_question_id: string | null;  // composite part linkage
+  part_index: number | null;
+  image_refs: string[];
+}
+
+interface PaperSlotState {
+  draft: { content_md: string; input_kind: string; image_refs: string[] } | null;
+  // null = not submitted; two submission variants:
+  submission:
+    | null
+    | { submitted: true; visible_to_user: true; outcome: string; score: number | null }
+    | { submitted: true; visible_to_user: false; feedback_buffered: true };
+}
+
+interface PaperDetailSlot {
+  question_id: string; part_ref: string | null;
+  section_index: number; knowledge_focus: string[];
+  question: PaperQuestionFace;
+  slot_state: PaperSlotState;
+}
+
+interface PaperDetailResult {
+  artifact_id: string; title: string;
+  generation_status: string; intent_source: string;
+  session: { id: string; status: string; pos: number; right: number; wrong: number } | null;
+  sections: Array<{ section_index: number; knowledge_focus: string[]; feedback_policy: string; slots: PaperDetailSlot[] }>;
+  is_flat_fallback: boolean;  // true for U4/quiz_gen flat quizzes with no sections
+}
+```
+
+**Visibility gate (§4.9 server-side)**: when judge event `visible_to_user:false` AND session not yet `completed`, `slot_state.submission` is `{ submitted:true, visible_to_user:false, feedback_buffered:true }` — `outcome` and `score` are NOT sent to the client. Completed session reveals all buffered slots.
+
+**Flat fallback**: quizzes with no `sections` (U4 session_meta-only or bare quiz_gen) degrade to a single synthetic section with `feedback_policy:'immediate'` — `is_flat_fallback:true` signals the UI to render flat.
+
+**Implementation files**:
+- `src/server/review/paper-detail.ts` — aggregation logic + exported TypeScript types
+- `app/api/practice/[id]/route.ts` — GET handler (runtime=nodejs)
+- `app/api/practice/[id]/route.test.ts` — 7 DB tests (full payload, draft restore, visible/buffered submission, completion reveal, flat fallback, 404)
+
 ---
 
 ## 5. L-practice-ui — design-doc pre-flight + file manifest + acceptance
@@ -323,6 +382,7 @@ This PR has DDL → migration smoke required; it builds a UI page → visual rin
 | 4 | 往日 source-filter tabs 的 provenance 映射未定 | **补裁定**。抽查 `review-plan-tools.ts:730-731` `intent_source='review_plan'`+`source='ai_generated'`。 | §4.10 Q9 后补：`review_plan→Coach 排期 / quiz_gen→用户自建 / embedded_check→笔记小测`，纯客户端 filter |
 | 5 | feedback_policy → visible_to_user 映射未定（§4.3 自由 string，§4.6 无从判断） | **补裁定**。 | §4.6 补：submit handler 把 `'judge_now_show_later'`→`visible_to_user:false`，其余→可见/缺省；§4.3 feedback_policy 注释交叉引用。U4 现不写此值，全部默认可见，back-compat 安全 |
 | 6 | §4.5/§3 暗示 db:generate 即可，但 partial-index + COALESCE 须手写 SQL | **确认 critic 正确**。抽查 `schema.ts:594-597` 注记 + `drizzle/0017`/`0005`/`0018:64` 手写先例。 | §4.5 DDL 补：generate 后手编 migration 追加 `CREATE UNIQUE INDEX ... WHERE submitted_at IS NULL` 带 COALESCE；`pnpm test:migration` 必须覆盖；migration 编号 = `0028_*`（实证 latest=0027） |
+| A | UI lane integration gap: 四个 practice 端点均无题面内容，答题页无法渲染 | **Orchestrator 裁定方案 A**：L-paper-core 补一个最小 addendum（additive only，零既有契约变更）。 | §4.10 新增 Q8-addendum：`GET /api/practice/[id]`，返回题面（question_id/prompt_md/choices_md/difficulty/image_refs）+ live 草稿（供刷新续答）+ server-gated 提交状态（§4.9 可见性边界在 server 端持有）。实现文件：`src/server/review/paper-detail.ts` + `app/api/practice/[id]/route.ts` + 7 条 DB 测试。 |
 
 ### 全局一致性检查（本 agent 独有职责，Planner/Critic 均未做）
 
