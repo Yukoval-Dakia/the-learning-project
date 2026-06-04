@@ -114,6 +114,10 @@ export const fastTestInclude = [
   'src/server/review/activity-ref.test.ts',
   'src/server/review/fsrs.test.ts',
   'src/server/review/rating-advisor.test.ts',
+  // U5 (YUK-203) — pure (no-DB) shim: readPaperSections + resolveSlotAssignment
+  // import only @/core/schema/business (Zod). The end-to-end DB driver
+  // (paper-cycle.test.ts) hits live Postgres → falls through to the DB partition.
+  'src/server/review/paper-sections.test.ts',
   'src/server/session/guards.test.ts',
   'src/server/session/index.test.ts',
   'src/subjects/math/fixtures/index.test.ts',
