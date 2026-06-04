@@ -12,6 +12,8 @@
 
 import { event, material_fsrs_state, question } from '@/db/schema';
 import { runTask } from '@/server/ai/runner';
+import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject-profile';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -22,6 +24,18 @@ import { POST } from './route';
 vi.mock('@/server/ai/runner', () => ({
   runTask: vi.fn(),
 }));
+
+// D6 (U4 L-stamp): mock the profile resolver so a single test can inject a
+// '2.0.0' profile. importOriginal keeps the default behaviour (real registry
+// profiles) for every other test in this file; only the D6 e2e test overrides
+// the return with mockResolvedValueOnce.
+vi.mock('@/server/knowledge/subject-profile', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/server/knowledge/subject-profile')>();
+  return {
+    ...actual,
+    resolveSubjectProfileForKnowledgeIds: vi.fn(actual.resolveSubjectProfileForKnowledgeIds),
+  };
+});
 
 const QUESTION_BASE = {
   kind: 'short_answer' as const,
@@ -489,6 +503,53 @@ describe('POST /api/review/submit', () => {
         suggested_rating: 'good',
         auto_rated: true,
       });
+    });
+
+    // D6 (U4 L-stamp, critic-R2 HIGH) — end-to-end proof that the result-side
+    // version override reaches the persisted review event. The judge result is
+    // embedded at submit/route.ts:306 as `judgeResult.capability_ref`; a
+    // telemetry-only override would leave `payload.judge.capability_ref.version`
+    // at the runner's '1.0.0'. Inject a '2.0.0' profile and assert the event
+    // stream carries it on BOTH the embedded judge block and the telemetry.
+    it('D6: review event payload.judge.capability_ref.version == SubjectProfile.version (2.0.0)', async () => {
+      vi.mocked(resolveSubjectProfileForKnowledgeIds).mockResolvedValueOnce({
+        ...resolveSubjectProfile('wenyan'),
+        version: '2.0.0',
+      });
+      await seedQuestion('q_d6_version', {
+        kind: 'fill_blank',
+        reference_md: '答案',
+        knowledge_ids: [],
+      });
+
+      const res = await POST(
+        submitReq({
+          activity_ref: { kind: 'question', id: 'q_d6_version' },
+          rating: 'again',
+          response_md: '答案',
+          auto_rate: true,
+        }),
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        judge: { capability_ref: { id: string; version: string } };
+      };
+      // Response side (mirrors the embedded event payload).
+      expect(body.judge.capability_ref.version).toBe('2.0.0');
+
+      const events = await testDb()
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_d6_version')));
+      expect(events).toHaveLength(1);
+      const payloadJudge = (events[0].payload as Record<string, unknown>).judge as {
+        capability_ref: { version: string };
+        telemetry: { capability_ref: { version: string }; profile_version: string };
+      };
+      // Event-stream side — the persisted, traceable record.
+      expect(payloadJudge.capability_ref.version).toBe('2.0.0');
+      expect(payloadJudge.telemetry.capability_ref.version).toBe('2.0.0');
+      expect(payloadJudge.telemetry.profile_version).toBe('2.0.0');
     });
 
     it('exact judge auto-rate wrong → final rating="again" + outcome=failure', async () => {

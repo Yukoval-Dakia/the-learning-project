@@ -54,6 +54,41 @@ describe('JudgeInvoker', () => {
     expect(JudgeInvokerOutputSchema.safeParse(result).success).toBe(true);
   });
 
+  // D6 (U4 L-stamp, critic-R2 HIGH) — capability_ref.version must be pinned from
+  // SubjectProfile.version, NOT the judge runner's module-level '1.0.0' constant.
+  // The real wenyan/math/physics profiles are all on '1.0.0', so a same-value
+  // assertion would pass silently even on the OLD path. Force a '2.0.0' profile
+  // to prove the read path actually switched — and assert BOTH sides: the
+  // result.capability_ref (embedded into the review event payload at
+  // submit/route.ts:306) AND the telemetry (attribution / analytics path).
+  it('pins capability_ref.version + telemetry.profile_version from SubjectProfile.version (both sides)', async () => {
+    const v2Profile = { ...wenyanProfile, version: '2.0.0' };
+    const telemetry: JudgeInvocationTelemetry[] = [];
+    const invoker = new JudgeInvoker({
+      onTelemetry: (event) => {
+        telemetry.push(event);
+      },
+    });
+
+    const result = await invoker.invoke({
+      db: mockDb,
+      question: {
+        ...baseQuestion,
+        id: 'q-exact-v2',
+        kind: 'choice',
+        choices_md: ['答案', '错'],
+      },
+      answer_md: '答案',
+      subjectProfile: v2Profile,
+    });
+
+    // capability id still comes from the runner (exact), version re-sourced.
+    expect(result.result.capability_ref).toEqual({ id: 'exact', version: '2.0.0' });
+    expect(result.telemetry.capability_ref).toEqual({ id: 'exact', version: '2.0.0' });
+    expect(result.telemetry.profile_version).toBe('2.0.0');
+    expect(telemetry[0]?.profile_version).toBe('2.0.0');
+  });
+
   it('dispatches semantic route with the injected task runner', async () => {
     const runTaskFn = vi.fn().mockResolvedValue({
       text: JSON.stringify({

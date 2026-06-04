@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { ActivityRef } from '../activity';
+import { JudgeKind } from '../business';
+import { CapabilityRef } from '../capability';
 import { CauseSchema, FsrsStateSchema, RelationTypeSchema } from './blocks';
 
 // ---------- 通用 envelope 字段 ----------
@@ -56,6 +58,19 @@ export const JudgeOnEvent = z.object({
   payload: z.object({
     cause: CauseSchema,
     referenced_knowledge_ids: z.array(z.string()),
+    // D6 (U4 L-stamp, 2026-06-04): judge-event version pinning. All three are
+    // optional so the union still parses every historical judge event in the
+    // 25-event scan window (no backfill, no rewrite of old results — rejudge =
+    // new event per D6). Sourced from SubjectProfile.version at the invoker /
+    // attribution layer, NOT from the 8 module-level '1.0.0' capability-id
+    // constants. See docs/design/2026-06-04-u0-decisions.md D6.
+    //   - profile_version: the SubjectProfile.version active when judged
+    //   - capability_ref:  the routed judge capability (id + resolved version);
+    //                      undefined for the pure-attribution path (not routed)
+    //   - judge_route:     which JudgeKind ran; undefined for attribution
+    profile_version: z.string().optional(),
+    capability_ref: CapabilityRef.optional(),
+    judge_route: JudgeKind.optional(),
   }),
   ...baseOptionalFields,
 });
