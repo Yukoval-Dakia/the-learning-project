@@ -44,6 +44,13 @@ import {
   updatePromptTool,
 } from './question-edit-tools';
 import { getTool, registerTool } from './registry';
+// YUK-203 U4 — the 4 ReviewPlanTask DomainTools (narrow planner surface).
+import {
+  getReviewKnowledgeSnapshotTool,
+  readCoachBriefTool,
+  selectReviewQuestionCandidatesTool,
+  writeReviewPlanTool,
+} from './review-plan-tools';
 import { searchMemoryFactsTool } from './search-memory-facts';
 import type { DomainTool } from './types';
 
@@ -81,6 +88,11 @@ const CORE_TOOLS: ReadonlyArray<DomainTool<unknown, unknown>> = [
   splitStemTool as DomainTool<unknown, unknown>,
   mergeQuestionsTool as DomainTool<unknown, unknown>,
   reassignFigureTool as DomainTool<unknown, unknown>,
+  // YUK-203 U4 — ReviewPlanTask planner surface (4 tools, no memory).
+  readCoachBriefTool as DomainTool<unknown, unknown>,
+  getReviewKnowledgeSnapshotTool as DomainTool<unknown, unknown>,
+  selectReviewQuestionCandidatesTool as DomainTool<unknown, unknown>,
+  writeReviewPlanTool as DomainTool<unknown, unknown>,
 ];
 
 let bootstrapped = false;

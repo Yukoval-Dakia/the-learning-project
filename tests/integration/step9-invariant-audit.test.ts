@@ -191,6 +191,9 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
     //     single owner-service for AI-side Living Note block-level patch
     //     application — applies a NotePatch to body_blocks + bumps version +
     //     writes `experimental:note_refine_apply` in one transaction.
+    //   - YUK-203 U4 (D5 / CO §7.1) `src/server/ai/tools/review-plan-tools.ts`:
+    //     write_review_plan emits the review-plan `tool_quiz` artifact (the
+    //     paper) — the ReviewPlanTask planner's only write.
     //   - YUK-95 (P5 Lane-D) `src/server/artifacts/hub-dismiss.ts`: the single
     //     owner-service for dismissing a hub auto-link — appends
     //     `attrs.suppressed_block_refs` (no version bump) alongside the paired
@@ -209,6 +212,9 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
       'src/server/artifacts/body-blocks-edit.ts',
       'src/server/artifacts/note-refine-apply.ts',
       'src/server/artifacts/hub-dismiss.ts',
+      // YUK-203 U4 (D5 / CO §7.1) — write_review_plan emits the review-plan
+      // tool_quiz artifact (the paper). The ReviewPlanTask planner's ONLY write.
+      'src/server/ai/tools/review-plan-tools.ts',
     ];
     const unexpected = hits.filter((h) => !ALLOWED.includes(h.split(path.sep).join('/')));
     expect(

@@ -765,6 +765,10 @@ export function getTaskSystemPrompt(
     case 'DreamingTask':
     case 'CoachTask':
     case 'CopilotTask':
+    // YUK-203 U4 — ReviewPlanTask is subject-neutral (the strategic brief carries
+    // all subject angle via read_coach_brief); its registry-inline systemPrompt IS
+    // the runtime prompt. Joins the pass-through group, same as Coach / Dreaming.
+    case 'ReviewPlanTask':
     // Station 2A (YUK-185) — MemoryBriefTask is subject-NEUTRAL: the per-scope
     // `template` carries the angle and is passed in the input, not baked into a
     // profile builder. Joins this pass-through group (registry systemPrompt is the
