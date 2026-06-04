@@ -184,6 +184,69 @@ describe('buildMistakesCsv', () => {
     expect(cols[cols.length - 1]).toBe('1');
   });
 
+  // Codex (PR #295) — ADR-0028 deletes the question-level FSRS row for labeled
+  // questions and keeps the projection on the knowledge node. Export must fall
+  // back to the knowledge row so fsrs_state_* is not lost, marking the source.
+  it('falls back to the knowledge-level FSRS row for labeled questions (source kind=knowledge)', () => {
+    const tables = fixture();
+    // Drop the question-level row; add a knowledge-level row for k1.
+    tables.material_fsrs_state = [
+      {
+        subject_kind: 'knowledge',
+        subject_id: 'k1',
+        state:
+          '{"due":1700500000,"stability":3,"difficulty":4,"reps":7,"lapses":2,"state":"review"}',
+      },
+    ] as Row[];
+
+    const csv = buildMistakesCsv(tables);
+    const header = csv.split('\n')[0].split(',');
+    const cols = csv.split('\n')[1].split(',');
+    const dueIdx = header.indexOf('fsrs_state_due');
+    const repsIdx = header.indexOf('fsrs_state_reps');
+    const lapsesIdx = header.indexOf('fsrs_state_lapses');
+    const sourceIdx = header.indexOf('fsrs_state_source_kind');
+    expect(cols[dueIdx]).toBe('1700500000');
+    expect(cols[repsIdx]).toBe('7');
+    expect(cols[lapsesIdx]).toBe('2');
+    expect(cols[sourceIdx]).toBe('knowledge');
+  });
+
+  it('picks the most-overdue knowledge row when a question probes several knowledge points', () => {
+    const tables = fixture();
+    // q1 is labeled with k1 + k2 (override the fixture question labels).
+    (tables.question[0] as { knowledge_ids: string }).knowledge_ids = '["k1","k2"]';
+    tables.material_fsrs_state = [
+      {
+        subject_kind: 'knowledge',
+        subject_id: 'k1',
+        state:
+          '{"due":1700900000,"stability":3,"difficulty":4,"reps":1,"lapses":0,"state":"review"}',
+      },
+      {
+        // k2 is more overdue (smaller due) → its state must win.
+        subject_kind: 'knowledge',
+        subject_id: 'k2',
+        state:
+          '{"due":1700100000,"stability":3,"difficulty":4,"reps":9,"lapses":3,"state":"review"}',
+      },
+    ] as Row[];
+
+    const csv = buildMistakesCsv(tables);
+    const header = csv.split('\n')[0].split(',');
+    const cols = csv.split('\n')[1].split(',');
+    expect(cols[header.indexOf('fsrs_state_due')]).toBe('1700100000');
+    expect(cols[header.indexOf('fsrs_state_reps')]).toBe('9');
+    expect(cols[header.indexOf('fsrs_state_source_kind')]).toBe('knowledge');
+  });
+
+  it('marks fsrs_state_source_kind=question when the question-level row exists', () => {
+    const csv = buildMistakesCsv(fixture());
+    const header = csv.split('\n')[0].split(',');
+    const cols = csv.split('\n')[1].split(',');
+    expect(cols[header.indexOf('fsrs_state_source_kind')]).toBe('question');
+  });
+
   it('handles missing judge gracefully (cause blank)', () => {
     const tables = fixture();
     tables.event = tables.event.filter((e) => e.action !== 'judge');

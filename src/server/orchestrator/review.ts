@@ -258,14 +258,16 @@ export async function planReviewSession(params: PlanReviewSessionParams): Promis
   const limit = clamp(params.limit ?? 20, 1, 200);
   const now = new Date();
 
-  type DueRow = {
+  // CodeRabbit (PR #295) — object-shape declaration uses `interface` per repo
+  // TS convention; same fields, no semantic change.
+  interface DueRow {
     question_id: string;
     state: unknown;
     due_at: Date;
     prompt_md: string;
     reference_md: string | null;
     knowledge_ids: string[];
-  };
+  }
 
   // Slice 1: knowledge FSRS states where due_at <= now (overdue or due now
   // from prior reviews). The scheduler chooses one concrete question probe per
@@ -273,47 +275,66 @@ export async function planReviewSession(params: PlanReviewSessionParams): Promis
   // unlabeled questions.
   const dueRows: DueRow[] = [];
   const usedDueQuestionIds = new Set<string>();
-  const dueKnowledgeStates = await params.db
-    .select({
-      knowledge_id: material_fsrs_state.subject_id,
-      state: material_fsrs_state.state,
-      due_at: material_fsrs_state.due_at,
-    })
-    .from(material_fsrs_state)
-    .where(
-      and(eq(material_fsrs_state.subject_kind, 'knowledge'), lte(material_fsrs_state.due_at, now)),
-    )
-    .orderBy(material_fsrs_state.due_at, material_fsrs_state.subject_id)
-    .limit(limit);
-
-  for (const due of dueKnowledgeStates) {
-    const qRows = await params.db
+  // CodeRabbit (PR #295) — bounded pagination instead of a pre-dedup
+  // `.limit(limit)`. When several due knowledge points map to the same small
+  // set of questions, a single page truncated at `limit` would scan only the
+  // first N knowledge points and silently drop later due ones whose questions
+  // were already consumed. We page through due knowledge states (ordered most-
+  // due first) and pick one unused question probe each, stopping once we have
+  // `limit` unique dueRows or a page comes back empty. A MAX_PAGES guard caps
+  // the loop so a pathological dataset can never run away.
+  const pageSize = Math.max(limit * 3, 50);
+  const MAX_KNOWLEDGE_PAGES = 10;
+  for (let page = 0; page < MAX_KNOWLEDGE_PAGES && dueRows.length < limit; page += 1) {
+    const dueKnowledgeStates = await params.db
       .select({
-        id: question.id,
-        prompt_md: question.prompt_md,
-        reference_md: question.reference_md,
-        knowledge_ids: question.knowledge_ids,
+        knowledge_id: material_fsrs_state.subject_id,
+        state: material_fsrs_state.state,
+        due_at: material_fsrs_state.due_at,
       })
-      .from(question)
+      .from(material_fsrs_state)
       .where(
         and(
-          sql`${question.knowledge_ids} @> ${JSON.stringify([due.knowledge_id])}::jsonb`,
-          sql`(${question.draft_status} IS NULL OR ${question.draft_status} <> 'draft')`,
+          eq(material_fsrs_state.subject_kind, 'knowledge'),
+          lte(material_fsrs_state.due_at, now),
         ),
       )
-      .orderBy(question.created_at, question.id)
-      .limit(10);
-    const selected = qRows.find((row) => !usedDueQuestionIds.has(row.id));
-    if (!selected) continue;
-    usedDueQuestionIds.add(selected.id);
-    dueRows.push({
-      question_id: selected.id,
-      state: due.state,
-      due_at: due.due_at,
-      prompt_md: selected.prompt_md,
-      reference_md: selected.reference_md,
-      knowledge_ids: selected.knowledge_ids ?? [],
-    });
+      .orderBy(material_fsrs_state.due_at, material_fsrs_state.subject_id)
+      .limit(pageSize)
+      .offset(page * pageSize);
+    if (dueKnowledgeStates.length === 0) break;
+
+    for (const due of dueKnowledgeStates) {
+      if (dueRows.length >= limit) break;
+      const qRows = await params.db
+        .select({
+          id: question.id,
+          prompt_md: question.prompt_md,
+          reference_md: question.reference_md,
+          knowledge_ids: question.knowledge_ids,
+        })
+        .from(question)
+        .where(
+          and(
+            sql`${question.knowledge_ids} @> ${JSON.stringify([due.knowledge_id])}::jsonb`,
+            sql`(${question.draft_status} IS NULL OR ${question.draft_status} <> 'draft')`,
+          ),
+        )
+        .orderBy(question.created_at, question.id)
+        .limit(10);
+      const selected = qRows.find((row) => !usedDueQuestionIds.has(row.id));
+      if (!selected) continue;
+      usedDueQuestionIds.add(selected.id);
+      dueRows.push({
+        question_id: selected.id,
+        state: due.state,
+        due_at: due.due_at,
+        prompt_md: selected.prompt_md,
+        reference_md: selected.reference_md,
+        knowledge_ids: selected.knowledge_ids ?? [],
+      });
+    }
+    if (dueKnowledgeStates.length < pageSize) break;
   }
 
   const legacyQuestionRows = await params.db
@@ -346,11 +367,23 @@ export async function planReviewSession(params: PlanReviewSessionParams): Promis
   // Slice 2: failure attempts whose question has no fsrs_state row yet
   // (never reviewed, first-pass owed).
   const recentFailures = await getFailureAttempts(params.db, { limit: limit * 2 });
+  // CodeRabbit (PR #295) — scope the question-level FSRS lookup to the
+  // recentFailures' question_id set instead of `eq(subject_kind,'question')`
+  // alone, which read every question-level row in the table. We only need to
+  // know whether THESE candidate questions are already projected, so an
+  // inArray over the failure question ids keeps the read bounded as the table
+  // grows.
+  const failureQuestionIds = Array.from(new Set(recentFailures.map((f) => f.question_id)));
   const failureKnowledgeIds = Array.from(
     new Set(recentFailures.flatMap((failure) => failure.referenced_knowledge_ids)),
   );
   const fsrsConditions = [
-    eq(material_fsrs_state.subject_kind, 'question'),
+    failureQuestionIds.length > 0
+      ? and(
+          eq(material_fsrs_state.subject_kind, 'question'),
+          inArray(material_fsrs_state.subject_id, failureQuestionIds),
+        )
+      : undefined,
     failureKnowledgeIds.length > 0
       ? and(
           eq(material_fsrs_state.subject_kind, 'knowledge'),
@@ -358,13 +391,16 @@ export async function planReviewSession(params: PlanReviewSessionParams): Promis
         )
       : undefined,
   ];
-  const fsrsRows = await params.db
-    .select({
-      subject_kind: material_fsrs_state.subject_kind,
-      subject_id: material_fsrs_state.subject_id,
-    })
-    .from(material_fsrs_state)
-    .where(or(...fsrsConditions));
+  const fsrsRows =
+    failureQuestionIds.length > 0 || failureKnowledgeIds.length > 0
+      ? await params.db
+          .select({
+            subject_kind: material_fsrs_state.subject_kind,
+            subject_id: material_fsrs_state.subject_id,
+          })
+          .from(material_fsrs_state)
+          .where(or(...fsrsConditions))
+      : [];
   const projectedKnowledgeIds = new Set(
     fsrsRows.filter((row) => row.subject_kind === 'knowledge').map((row) => row.subject_id),
   );

@@ -113,7 +113,14 @@ describe('POST /api/review/submit', () => {
     const fsrs = await db
       .select()
       .from(material_fsrs_state)
-      .where(eq(material_fsrs_state.subject_id, 'k1'));
+      // CodeRabbit (PR #295) — pin subject_kind so a future same-id question/
+      // legacy row can't falsely satisfy the assertion.
+      .where(
+        and(
+          eq(material_fsrs_state.subject_id, 'k1'),
+          eq(material_fsrs_state.subject_kind, 'knowledge'),
+        ),
+      );
     expect(fsrs).toHaveLength(1);
     expect(fsrs[0].subject_kind).toBe('knowledge');
     expect(fsrs[0].last_review_event_id).toBe(events[0].id);
@@ -147,6 +154,70 @@ describe('POST /api/review/submit', () => {
       subject_kind: 'knowledge',
       subject_id: 'k_fsrs',
     });
+  });
+
+  // Codex / CodeRabbit (PR #295) — referenced_knowledge_ids that exceed the
+  // question's own labels must NOT steer FSRS scheduling onto unrelated
+  // knowledge points. The FSRS projection is keyed only by requested ∩
+  // q.knowledge_ids; the event payload still records the original requested
+  // ids (judge evidence may legitimately cite knowledge beyond the tags).
+  it('superset referenced_knowledge_ids only schedules the question tags (intersection)', async () => {
+    await seedQuestion('q_superset', { knowledge_ids: ['k_tagged'] });
+
+    const res = await POST(
+      submitReq({
+        activity_ref: { kind: 'question', id: 'q_superset' },
+        rating: 'good',
+        // 'k_orphan' is NOT a label of q_superset — must not get a projection.
+        referenced_knowledge_ids: ['k_tagged', 'k_orphan'],
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      review_event: { fsrs_subject_kind?: string; fsrs_subject_ids?: string[] };
+    };
+    // Scheduling scoped to the intersection only.
+    expect(body.review_event.fsrs_subject_kind).toBe('knowledge');
+    expect(body.review_event.fsrs_subject_ids).toEqual(['k_tagged']);
+
+    const db = testDb();
+    const rows = await db.select().from(material_fsrs_state);
+    // Exactly one projection row, for the tagged knowledge — no orphan row.
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ subject_kind: 'knowledge', subject_id: 'k_tagged' });
+
+    // Event payload preserves the original requested ids (audit trail).
+    const events = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_superset')));
+    expect((events[0].payload as Record<string, unknown>).referenced_knowledge_ids).toEqual([
+      'k_tagged',
+      'k_orphan',
+    ]);
+  });
+
+  it('empty intersection with a labeled question falls back to the question tags', async () => {
+    await seedQuestion('q_disjoint', { knowledge_ids: ['k_real'] });
+
+    const res = await POST(
+      submitReq({
+        activity_ref: { kind: 'question', id: 'q_disjoint' },
+        rating: 'good',
+        // None of the requested ids tag the question → fall back to q tags.
+        referenced_knowledge_ids: ['k_bogus'],
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      review_event: { fsrs_subject_kind?: string; fsrs_subject_ids?: string[] };
+    };
+    expect(body.review_event.fsrs_subject_kind).toBe('knowledge');
+    expect(body.review_event.fsrs_subject_ids).toEqual(['k_real']);
+
+    const rows = await testDb().select().from(material_fsrs_state);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ subject_kind: 'knowledge', subject_id: 'k_real' });
   });
 
   it('second review (existing fsrs_state with ISO string dates) → Plan F1 coercion works', async () => {
@@ -344,7 +415,13 @@ describe('POST /api/review/submit', () => {
     const rows = await db
       .select()
       .from(material_fsrs_state)
-      .where(eq(material_fsrs_state.subject_id, 'k1'));
+      // CodeRabbit (PR #295) — pin subject_kind on the assertion query.
+      .where(
+        and(
+          eq(material_fsrs_state.subject_id, 'k1'),
+          eq(material_fsrs_state.subject_kind, 'knowledge'),
+        ),
+      );
     expect(rows).toHaveLength(1);
     expect(rows[0].subject_kind).toBe('knowledge');
     const events = await db
@@ -683,7 +760,13 @@ describe('POST /api/review/submit', () => {
     const stateRows = await db
       .select()
       .from(material_fsrs_state)
-      .where(eq(material_fsrs_state.subject_id, 'k1'));
+      // CodeRabbit (PR #295) — pin subject_kind on the assertion query.
+      .where(
+        and(
+          eq(material_fsrs_state.subject_id, 'k1'),
+          eq(material_fsrs_state.subject_kind, 'knowledge'),
+        ),
+      );
     expect(stateRows).toHaveLength(1);
     expect(stateRows[0].subject_kind).toBe('knowledge');
     const finalState = stateRows[0].state as { reps: number };
