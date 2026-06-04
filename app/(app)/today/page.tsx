@@ -2,13 +2,15 @@
 
 import type { AiProposalKindT } from '@/core/schema/proposal';
 import { apiJson } from '@/ui/lib/api';
-import { Badge } from '@/ui/primitives/Badge';
 import { Btn } from '@/ui/primitives/Btn';
-import { Button } from '@/ui/primitives/Button';
 import { LoomBadge } from '@/ui/primitives/LoomBadge';
+import type { LoomBadgeProps } from '@/ui/primitives/LoomBadge';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SectionLabel } from '@/ui/primitives/SectionLabel';
+import { SkLines } from '@/ui/primitives/SkLines';
+import { Stateful } from '@/ui/primitives/Stateful';
+import type { StatefulStatus } from '@/ui/primitives/Stateful';
 import { useCountUp } from '@/ui/primitives/useCountUp';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
@@ -295,28 +297,79 @@ export default function TodayPage() {
         />
       </div>
 
-      <SessionStrip sessions={sessionsQ.data?.rows ?? []} loading={sessionsQ.isLoading} />
+      <SectionLabel>进行中 · 待裁决</SectionLabel>
+      <div className="dash-grid">
+        <div className="dash-col">
+          <SessionStrip
+            sessions={sessionsQ.data?.rows ?? []}
+            status={listStatus(
+              sessionsQ.isLoading,
+              sessionsQ.error,
+              (sessionsQ.data?.rows ?? []).filter(
+                (s) => s.status === 'started' || s.status === 'paused' || s.status === 'completed',
+              ).length === 0,
+            )}
+            onRetry={() => sessionsQ.refetch()}
+            onNavigate={(route) => router.push(route)}
+          />
+          <AiChangeActivityStrip
+            rows={aiChangesQ.data?.rows ?? []}
+            status={listStatus(
+              aiChangesQ.isLoading,
+              aiChangesQ.error,
+              (aiChangesQ.data?.rows ?? []).length === 0,
+            )}
+            undoingIds={undoingAiChangeIds}
+            onUndo={undoAiChanges}
+            onRetry={() => aiChangesQ.refetch()}
+          />
+        </div>
+        <div className="dash-col">
+          <ProposalStrip
+            total={pendingAiCount}
+            groups={proposalGroups}
+            hasMore={proposalKpi?.has_more ?? false}
+            status={listStatus(proposalKpiQ.isLoading, proposalKpiQ.error, pendingAiCount === 0)}
+            onRetry={() => proposalKpiQ.refetch()}
+            onNavigate={(route) => router.push(route)}
+          />
+          <CostRibbon
+            cost={costQ.data ?? null}
+            status={costStatus(costQ.isLoading, costQ.error, costQ.data ?? null)}
+            onRetry={() => costQ.refetch()}
+          />
+        </div>
+      </div>
 
-      <AiChangeActivityStrip
-        rows={aiChangesQ.data?.rows ?? []}
-        loading={aiChangesQ.isLoading}
-        undoingIds={undoingAiChangeIds}
-        onUndo={undoAiChanges}
-      />
-
-      <InboxStrip
-        total={pendingAiCount}
-        groups={proposalGroups}
-        hasMore={proposalKpi?.has_more ?? false}
-      />
-
-      <CostRibbon
-        cost={costQ.data ?? null}
-        loading={costQ.isLoading}
-        error={costQ.error as Error | null}
-      />
+      {/*
+        WeekHeat「本周编织」section OMITTED — pre-flight
+        docs/design/2026-06-04-redraw-today-7b-preflight.md §4: no 7-day
+        activity-aggregation endpoint exists yet, and the prototype's heat grid
+        is hardcoded seed data. Per the no-mock policy this whole SectionLabel +
+        Card + WeekHeat block is left out (not mocked). Restore once an activity
+        aggregation endpoint lands.
+      */}
     </main>
   );
+}
+
+// Derive a Stateful status for a list-backed card: loading wins, then error
+// (never swallowed as empty), then empty when there are no rows, else ok.
+function listStatus(isLoading: boolean, error: unknown, isEmpty: boolean): StatefulStatus {
+  if (isLoading) return 'loading';
+  if (error) return 'error';
+  if (isEmpty) return 'empty';
+  return 'ok';
+}
+
+// Cost card status: loading → error → empty (zero spend and no by_task rows) → ok.
+function costStatus(isLoading: boolean, error: unknown, cost: CostSummary | null): StatefulStatus {
+  if (isLoading) return 'loading';
+  if (error) return 'error';
+  if (!cost || (cost.today.spend === 0 && cost.today.by_task.length === 0)) {
+    return 'empty';
+  }
+  return 'ok';
 }
 
 interface KpiCardData {
@@ -376,162 +429,224 @@ function ThreadCard({ tone, icon, label, title, cta, route, badge }: ThreadCardP
   );
 }
 
+// One session row in the loom strip. `tone` drives the strip-lead colour
+// (good = active/completed, hard = paused). Buttons are Btn (never wrapped in a
+// Link — button-in-anchor is invalid HTML); navigation goes through onNavigate
+// (router.push). Labels + routes are kept EXACTLY as the legacy strip.
+function SessionRow({
+  row,
+  tone,
+  statusLabel,
+  statusTone,
+  buttonLabel,
+  route,
+  summary,
+  onNavigate,
+}: {
+  row: LearningSessionRow;
+  tone: 'good' | 'hard';
+  statusLabel: string;
+  statusTone: LoomBadgeProps['tone'];
+  buttonLabel: string;
+  route: string;
+  summary?: string;
+  onNavigate: (route: string) => void;
+}) {
+  const dist = `不会 ${row.rating_counts.again} · 模糊 ${row.rating_counts.hard} · 会了 ${row.rating_counts.good}`;
+  const when =
+    row.status === 'completed'
+      ? formatDay(row.ended_at ?? row.started_at)
+      : formatDuration(row.duration_ms);
+  return (
+    <div className="strip">
+      <span className={`strip-lead tone-${tone}`}>
+        <LoomIcon name={tone === 'good' ? 'review' : 'undo'} size={16} />
+      </span>
+      <div className="strip-body">
+        <div className="strip-title">
+          {row.type} · 已复习 {row.reviewed_count}
+        </div>
+        <div className="strip-sub nowrap-meta">
+          <LoomBadge tone={statusTone}>{statusLabel}</LoomBadge>
+          {dist} · {when}
+        </div>
+        {summary && <div className="strip-sub">{summary}</div>}
+      </div>
+      <div className="strip-end">
+        <Btn size="sm" variant="ghost" iconEnd="arrow" onClick={() => onNavigate(route)}>
+          {buttonLabel}
+        </Btn>
+      </div>
+    </div>
+  );
+}
+
 function SessionStrip({
   sessions,
-  loading,
+  status,
+  onRetry,
+  onNavigate,
 }: {
   sessions: LearningSessionRow[];
-  loading: boolean;
+  status: StatefulStatus;
+  onRetry: () => void;
+  onNavigate: (route: string) => void;
 }) {
   const active = sessions.find((s) => s.status === 'started');
   // YUK-57 — paused session row. Picked separately from started so the user
   // can resume an explicit pause from /today.
   const paused = sessions.find((s) => s.status === 'paused');
   const completed = sessions.find((s) => s.status === 'completed');
-  if (!active && !paused && !completed) {
-    if (!loading) return null;
-    return (
-      <div className="session-strip">
-        <div className="ss-row">
-          <div className="ss-line">
-            <Badge tone="neutral">sessions</Badge>
-            <span className="ss-stat">正在加载 review session…</span>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
-    <div className="session-strip">
-      {completed && (
-        <div className="ss-row ss-completed">
-          <div className="ss-line">
-            <Badge tone="good" dot dotStatic>
-              completed
-            </Badge>
-            <span className="ss-id">
-              <code>{completed.id.slice(0, 12)}</code>
-            </span>
-            <span className="ss-stat">
-              {completed.reviewed_count} 卡 · {formatDuration(completed.duration_ms)} ·{' '}
-              {formatDay(completed.ended_at ?? completed.started_at)}
-            </span>
-            <span style={{ flex: 1 }} />
-            <Link href="/review" style={{ textDecoration: 'none' }}>
-              <Button variant="quiet" size="sm" iconRight="arrowR">
-                开新 session
-              </Button>
-            </Link>
-          </div>
-          <p className="ss-summary">
-            {completed.summary_md ??
-              `不会 ${completed.rating_counts.again} · 模糊 ${completed.rating_counts.hard} · 会了 ${completed.rating_counts.good}`}
-          </p>
+    <LoomCard pad>
+      <div className="card-head">
+        <span className="card-icon">
+          <LoomIcon name="clock" size={18} />
+        </span>
+        <div className="card-title">进行中的会话</div>
+        <span className="meta" style={{ marginLeft: 'auto' }}>
+          review_session
+        </span>
+      </div>
+      <Stateful
+        status={status}
+        onRetry={onRetry}
+        errorText="无法读取会话状态。"
+        skeleton={<SkLines rows={2} />}
+        empty={<div className="quiet-empty">没有进行中的复习会话。</div>}
+      >
+        <div className="strip-list">
+          {completed && (
+            <SessionRow
+              row={completed}
+              tone="good"
+              statusLabel="completed"
+              statusTone="good"
+              buttonLabel="开新 session"
+              route="/review"
+              summary={completed.summary_md ?? undefined}
+              onNavigate={onNavigate}
+            />
+          )}
+          {active && (
+            <SessionRow
+              row={active}
+              tone="good"
+              statusLabel="started"
+              statusTone="info"
+              buttonLabel="回到当前 session"
+              route="/review"
+              onNavigate={onNavigate}
+            />
+          )}
+          {/* YUK-57 — paused session entry. Resume via ?session=<id> on /review. */}
+          {paused && (
+            <SessionRow
+              row={paused}
+              tone="hard"
+              statusLabel="paused"
+              statusTone="hard"
+              buttonLabel="恢复 session"
+              route={`/review?session=${paused.id}`}
+              onNavigate={onNavigate}
+            />
+          )}
         </div>
-      )}
-
-      {active && (
-        <div className="ss-row ss-active">
-          <div className="ss-line">
-            <Badge tone="info" dot>
-              started
-            </Badge>
-            <span className="ss-id">
-              <code>{active.id.slice(0, 12)}</code>
-            </span>
-            <span className="ss-stat">
-              eager 创建 · 已复习 {active.reviewed_count} · 退出 sendBeacon → completed · cron 6h
-              兜底 abandoned
-            </span>
-            <span style={{ flex: 1 }} />
-            <Link href="/review" style={{ textDecoration: 'none' }}>
-              <Button variant="quiet" size="sm" iconRight="arrowR">
-                回到当前 session
-              </Button>
-            </Link>
-          </div>
-        </div>
-      )}
-
-      {/* YUK-57 — paused session entry. Resume via ?session=<id> on /review. */}
-      {paused && (
-        <div className="ss-row ss-active">
-          <div className="ss-line">
-            <Badge tone="info" dot dotStatic>
-              paused
-            </Badge>
-            <span className="ss-id">
-              <code>{paused.id.slice(0, 12)}</code>
-            </span>
-            <span className="ss-stat">
-              已暂停 · 已复习 {paused.reviewed_count} · 6h 不恢复则 cron 兜底 abandoned
-            </span>
-            <span style={{ flex: 1 }} />
-            <Link href={`/review?session=${paused.id}`} style={{ textDecoration: 'none' }}>
-              <Button variant="quiet" size="sm" iconRight="arrowR">
-                恢复 session
-              </Button>
-            </Link>
-          </div>
-        </div>
-      )}
-    </div>
+      </Stateful>
+    </LoomCard>
   );
 }
 
 function AiChangeActivityStrip({
   rows,
-  loading,
+  status,
   undoingIds,
   onUndo,
+  onRetry,
 }: {
   rows: AiChangeRow[];
-  loading: boolean;
+  status: StatefulStatus;
   undoingIds: string[];
   onUndo: (eventIds: string[]) => Promise<void>;
+  onRetry: () => void;
 }) {
   const activeRows = rows.filter((row) => !row.undone);
   const undoingSet = new Set(undoingIds);
-  if (!loading && rows.length === 0) return null;
 
   return (
-    <div className="ai-change-strip">
-      <div className="ai-change-strip-head">
-        <div>
-          <Badge tone="info">Living Note</Badge>
-          <h3>过去 24 小时 AI 改过 {loading ? '...' : rows.length} 处笔记</h3>
-        </div>
-        <Button
-          variant="danger"
-          size="sm"
-          icon="refresh"
-          disabled={activeRows.length === 0 || undoingIds.length > 0}
-          onClick={() => onUndo(activeRows.map((row) => row.event_id))}
-        >
-          全部撤销
-        </Button>
-      </div>
-      {rows.slice(0, 6).map((row) => (
-        <div key={row.event_id} className="ai-change-strip-row">
-          <Link href={`/events/${row.event_id}`}>
-            <code>{row.artifact_id.slice(0, 12)}</code>
-          </Link>
-          <span>
-            {row.ops_count} ops · 新增 {row.new_blocks} block · {formatDateTime(row.created_at)}
-          </span>
-          <Button
-            variant={row.undone ? 'quiet' : 'danger'}
+    <LoomCard pad>
+      <div className="card-head">
+        <span className="card-icon accent">
+          <LoomIcon name="undo" size={18} />
+        </span>
+        <div className="card-title">AI 改动 · 近 24h</div>
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 'var(--s-2)' }}>
+          <LoomBadge tone="neutral">可回滚</LoomBadge>
+          {/* KEEP — existing bulk "全部撤销" action (prototype has no bulk button;
+              this is a real existing feature). undoAiChanges mutation unchanged. */}
+          <Btn
             size="sm"
-            icon={row.undone ? 'check' : 'refresh'}
-            disabled={row.undone || undoingSet.has(row.event_id)}
-            onClick={() => onUndo([row.event_id])}
+            variant="hard"
+            icon="refresh"
+            disabled={activeRows.length === 0 || undoingIds.length > 0}
+            onClick={() => onUndo(activeRows.map((row) => row.event_id))}
           >
-            {row.undone ? '已撤销' : undoingSet.has(row.event_id) ? '撤销中...' : '撤销'}
-          </Button>
+            全部撤销
+          </Btn>
+        </span>
+      </div>
+      <Stateful
+        status={status}
+        onRetry={onRetry}
+        errorText="无法读取改动记录。"
+        skeleton={<SkLines rows={2} />}
+        empty={<div className="quiet-empty">过去 24 小时没有 AI 改动。</div>}
+      >
+        <div className="strip-list">
+          {rows.slice(0, 6).map((row) => (
+            <div key={row.event_id} className={`strip${row.undone ? ' is-undone' : ''}`}>
+              <span className="strip-lead tone-coral">
+                <LoomIcon name="sparkle" size={15} />
+              </span>
+              <div className="strip-body">
+                <div className="strip-title">
+                  <b className="mono">{row.actor_ref}</b> 改了{' '}
+                  {/* plain text link (not a button) — keeps the existing
+                      /events/{event_id} deep link on the artifact id */}
+                  <Link href={`/events/${row.event_id}`}>
+                    <code>{row.artifact_id.slice(0, 12)}</code>
+                  </Link>
+                </div>
+                <div className="strip-sub nowrap-meta mono">
+                  {row.ops_count} ops · 新增 {row.new_blocks} block · v
+                  {row.previous_artifact_version}→v{row.next_artifact_version} ·{' '}
+                  {formatDateTime(row.created_at)}
+                </div>
+              </div>
+              <div className="strip-end">
+                {row.undone ? (
+                  <LoomBadge tone="good" dot>
+                    <LoomIcon name="check" size={12} />
+                    已撤销
+                  </LoomBadge>
+                ) : (
+                  <Btn
+                    size="sm"
+                    variant="ghost"
+                    icon="undo"
+                    disabled={undoingSet.has(row.event_id)}
+                    onClick={() => onUndo([row.event_id])}
+                  >
+                    {undoingSet.has(row.event_id) ? '撤销中...' : '撤销'}
+                  </Btn>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
-      ))}
-    </div>
+      </Stateful>
+    </LoomCard>
   );
 }
 
@@ -632,116 +747,148 @@ function proposalKpiSub(groups: ProposalGroups, hasMore: boolean): string {
   return `${parts.join(' · ')}${hasMore ? ' · 还有更多' : ''}`;
 }
 
-function InboxStrip({
+// Proposal-group chip metadata: label + .tone-chip-<tone> class. Tones chosen
+// to match the loom chip vocabulary (.tone-chip-info/coral/good/hard/neutral):
+// content=info, learning=neutral, knowledge nodes/edges=coral (both touch the
+// graph), review=hard. Order = the legacy InboxStrip breakdown order.
+const PROPOSAL_GROUP_META: Array<{
+  key: keyof ProposalGroups;
+  label: string;
+  tone: string;
+}> = [
+  { key: 'content', label: '内容生成', tone: 'info' },
+  { key: 'learning', label: '学习项', tone: 'neutral' },
+  { key: 'nodes', label: '新知识点', tone: 'coral' },
+  { key: 'edges', label: '关系建议', tone: 'coral' },
+  { key: 'review', label: '复核', tone: 'hard' },
+];
+
+function ProposalStrip({
   total,
   groups,
   hasMore,
+  status,
+  onRetry,
+  onNavigate,
 }: {
   total: number;
   groups: ProposalGroups;
   hasMore: boolean;
+  status: StatefulStatus;
+  onRetry: () => void;
+  onNavigate: (route: string) => void;
 }) {
-  if (total === 0) return null;
   const totalLabel = hasMore ? `${total}+` : String(total);
 
   return (
-    <div className="inbox-strip">
-      <div className="inbox-text">
-        <div className="src">
-          <Badge tone="coral">agent</Badge> · pending only · unified inbox
-        </div>
-        <h3>昨晚 AI 提议了 {totalLabel} 条，要看吗？</h3>
-        <div className="breakdown">
-          {groups.content > 0 && (
-            <div>
-              <b>{groups.content}</b>
-              <span>内容生成</span>
-            </div>
+    <LoomCard pad>
+      <div className="card-head">
+        <span className="card-icon">
+          <LoomIcon name="inbox" size={18} />
+        </span>
+        <div className="card-title">提议收件箱</div>
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 'var(--s-2)' }}>
+          {/* KEEP — existing "知识图谱" shortcut (prototype has no such button);
+              shown only when there are graph-touching proposals. */}
+          {groups.nodes + groups.edges > 0 && (
+            <Btn size="sm" variant="ghost" onClick={() => onNavigate('/knowledge')}>
+              知识图谱
+            </Btn>
           )}
-          {groups.learning > 0 && (
-            <div>
-              <b>{groups.learning}</b>
-              <span>学习项</span>
-            </div>
-          )}
-          {groups.nodes > 0 && (
-            <div>
-              <b>{groups.nodes}</b>
-              <span>新知识点</span>
-            </div>
-          )}
-          {groups.edges > 0 && (
-            <div>
-              <b>{groups.edges}</b>
-              <span>关系建议</span>
-            </div>
-          )}
-          {groups.review > 0 && (
-            <div>
-              <b>{groups.review}</b>
-              <span>复核</span>
-            </div>
-          )}
-        </div>
+          <Btn size="sm" variant="ghost" iconEnd="arrow" onClick={() => onNavigate('/inbox')}>
+            去裁决
+          </Btn>
+        </span>
       </div>
-      <div className="inbox-strip-actions">
-        {groups.nodes + groups.edges > 0 && (
-          <Link href="/knowledge" style={{ textDecoration: 'none' }}>
-            <Button variant="secondary">知识图谱</Button>
-          </Link>
-        )}
-        <Link href="/inbox" style={{ textDecoration: 'none' }}>
-          <Button variant="primary" iconRight="arrowR">
-            集中审批 (全部 {totalLabel})
-          </Button>
-        </Link>
-      </div>
-    </div>
+      <Stateful
+        status={status}
+        onRetry={onRetry}
+        errorText="无法读取提议。"
+        skeleton={<SkLines rows={1} />}
+        empty={<div className="quiet-empty">没有待审提议。</div>}
+      >
+        <div className="prop-summary">
+          <div className="prop-summary-n serif tnum">{totalLabel}</div>
+          <div className="prop-summary-kinds">
+            {PROPOSAL_GROUP_META.filter((m) => groups[m.key] > 0).map((m) => (
+              <span key={m.key} className={`chip tone-chip-${m.tone}`}>
+                {m.label} <b className="mono">{groups[m.key]}</b>
+              </span>
+            ))}
+          </div>
+        </div>
+      </Stateful>
+    </LoomCard>
   );
 }
 
 function CostRibbon({
   cost,
-  loading,
-  error,
+  status,
+  onRetry,
 }: {
   cost: CostSummary | null;
-  loading: boolean;
-  error: Error | null;
+  status: StatefulStatus;
+  onRetry: () => void;
 }) {
-  if (loading) {
-    return <div className="cost-ribbon">Cost guard · 加载中…</div>;
-  }
-  if (error) {
-    return <div className="cost-ribbon">Cost guard · 暂时不可用 ({error.message})</div>;
-  }
-  if (!cost) return null;
-
+  // Budget stays hardcoded at 5 (existing behaviour, pre-flight §4 — no budget
+  // config exists; this is not a new mock).
+  const budget = 5;
   const fmtUsd = (n: number) => `$${n.toFixed(n < 0.01 ? 5 : 3)}`;
-  const top = cost.today.by_task
+  const spend = cost?.today.spend ?? 0;
+  const pct = Math.min(100, Math.round((spend / budget) * 100));
+  const top = (cost?.today.by_task ?? [])
     .slice()
     .sort((a, b) => b.spend - a.spend)
     .slice(0, 3);
-  const budget = 5;
-  const pct = Math.min(100, Math.round((cost.today.spend / budget) * 100));
 
   return (
-    <div className="cost-ribbon">
-      <span>
-        <b>${cost.today.spend.toFixed(3)}</b> / ${budget.toFixed(2)} 今日
-      </span>
-      <span className="bar" aria-label={`成本 ${pct}%`}>
-        <span style={{ width: `${pct}%` }} />
-      </span>
-      <span>
-        {cost.today.ledger_rows} ledger · {cost.today.tool_calls} tool calls · tokens{' '}
-        {cost.today.tokens_in}/{cost.today.tokens_out}
-      </span>
-      {top.length > 0 && (
-        <span>
-          top: {top.map((t) => `${t.task_kind} ${fmtUsd(t.spend)} (${t.calls})`).join(' · ')}
+    <LoomCard pad>
+      <div className="card-head">
+        <span className="card-icon">
+          <LoomIcon name="bolt" size={18} />
         </span>
-      )}
-    </div>
+        <div className="card-title">今日 AI 成本</div>
+        <span className="meta" style={{ marginLeft: 'auto' }}>
+          预算 ${budget.toFixed(2)}
+        </span>
+      </div>
+      <Stateful
+        status={status}
+        onRetry={onRetry}
+        errorText="成本服务暂不可用。"
+        skeleton={<SkLines rows={1} />}
+        empty={<div className="quiet-empty">今日尚无 AI 花费。</div>}
+      >
+        {cost && (
+          <>
+            <div className="cost-top">
+              <div className="cost-amt serif tnum">
+                ${spend.toFixed(3)}
+                <span className="cost-budget"> / ${budget.toFixed(2)}</span>
+              </div>
+            </div>
+            <div className="bar" aria-label={`成本 ${pct}%`} style={{ marginBottom: 'var(--s-3)' }}>
+              <span style={{ width: `${pct}%` }} />
+            </div>
+            {top.length > 0 && (
+              <div className="cost-tasks">
+                {top.map((t) => (
+                  <span key={t.task_kind} className="chip">
+                    <span className="mono">{t.task_kind}</span>{' '}
+                    <b className="mono">{fmtUsd(t.spend)}</b>
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="cost-foot nowrap-meta mono">
+              tokens {(cost.today.tokens_in / 1000).toFixed(1)}k in ·{' '}
+              {(cost.today.tokens_out / 1000).toFixed(1)}k out · {cost.today.tool_calls} tool calls
+              · {cost.today.ledger_rows} ledger
+            </div>
+          </>
+        )}
+      </Stateful>
+    </LoomCard>
   );
 }

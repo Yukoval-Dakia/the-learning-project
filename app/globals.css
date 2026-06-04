@@ -8394,3 +8394,206 @@ button.seg-sm {
     grid-template-columns: 1fr;
   }
 }
+
+/* ============================================================
+   LOOM TODAY-7B LAYER — Redraw Today 7B (YUK-169 / YUK-203 P5)
+   /today lower half (SectionLabel「进行中 · 待裁决」 + dash-grid:
+   SessionsStrip + AiChangesStrip | ProposalStrip + CostRibbon)
+   ported additively from loom-prototype @ f85aca6d
+   (loom.css L248-276/379 + screens.css L189-233/337-349).
+   Cross-ref: screen-today.jsx (SessionsStrip / AiChangesStrip /
+   ProposalStrip / CostRibbon).
+
+   SCOPE: every selector in this layer lives under .today-loom,
+   matching the TODAY-7A layer. Collision-checked before append:
+   none of .dash-grid / .dash-col / .strip* / .is-undone /
+   .prop-summary* / .tone-chip-* / .cost-* has a bare (unscoped)
+   definition in this file. Legacy .session-strip / .ss-* /
+   .ai-change-strip* / .inbox-strip / .cost-ribbon are DIFFERENT
+   class names (left untouched; retire in cleanup pass).
+
+   OMITTED per 7B pre-flight §4: WeekHeat 整段 — .week-heat /
+   .heat-row / .heat-cell / .heat-axis / .heat-pop keyframe are
+   NOT ported (no 7-day activity aggregation endpoint; prototype
+   data was hardcoded seed). Re-add when the endpoint lands.
+   Ref: docs/design/2026-06-04-redraw-today-7b-preflight.md §4.
+
+   Reused (grep-confirmed already present → NOT re-ported here):
+     .card-head / .card-title / .card-icon(.accent) · .chip ·
+     .bar · .quiet-empty · .nowrap-meta · .serif / .tnum / .mono
+     + Stateful / SkLines primitives (slice-1).
+   ============================================================ */
+
+/* ---- dash-grid two-column layout (loom.css L251) ---- */
+.today-loom .dash-grid {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr;
+  gap: var(--s-5);
+  align-items: start;
+}
+.today-loom .dash-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  min-width: 0;
+}
+
+/* ---- list strips (loom.css L268-273 + screens.css L194-200) ---- */
+.today-loom .strip {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  padding: var(--s-4) var(--s-5);
+  border-bottom: 1px solid var(--line);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.today-loom .strip:last-child {
+  border-bottom: 0;
+}
+.today-loom .strip:hover {
+  background: var(--paper-sunk);
+}
+.today-loom .strip .strip-lead {
+  width: 38px;
+  height: 38px;
+  border-radius: var(--r-2);
+  display: grid;
+  place-items: center;
+  flex: none;
+  background: var(--paper-sunk);
+  color: var(--ink-3);
+  border: 1px solid var(--line);
+}
+.today-loom .strip .strip-body {
+  min-width: 0;
+  flex: 1;
+}
+.today-loom .strip .strip-title {
+  font-size: var(--fs-body);
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.today-loom .strip .strip-sub {
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-top: 2px;
+}
+.today-loom .strip .strip-end {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex: none;
+}
+.today-loom .strip-list {
+  display: flex;
+  flex-direction: column;
+}
+.today-loom .strip-list .strip {
+  padding: var(--s-3) 0;
+}
+.today-loom .strip-lead.tone-good {
+  background: var(--good-soft);
+  color: var(--good);
+  border-color: var(--good-line);
+}
+.today-loom .strip-lead.tone-hard {
+  background: var(--hard-soft);
+  color: var(--hard);
+  border-color: var(--hard-line);
+}
+.today-loom .strip-lead.tone-coral {
+  background: var(--coral-soft);
+  color: var(--coral);
+  border-color: var(--coral-line);
+}
+.today-loom .is-undone {
+  opacity: 0.5;
+}
+
+/* ---- tone chips — proposal kinds / summary (screens.css L221-225) ---- */
+.today-loom .tone-chip-info {
+  color: var(--info-ink);
+  background: var(--info-soft);
+  border-color: var(--info-line);
+}
+.today-loom .tone-chip-coral {
+  color: var(--coral-ink);
+  background: var(--coral-soft);
+  border-color: var(--coral-line);
+}
+.today-loom .tone-chip-good {
+  color: var(--good-ink);
+  background: var(--good-soft);
+  border-color: var(--good-line);
+}
+.today-loom .tone-chip-hard {
+  color: var(--hard-ink);
+  background: var(--hard-soft);
+  border-color: var(--hard-line);
+}
+.today-loom .tone-chip-neutral {
+  color: var(--ink-3);
+  background: var(--paper-sunk);
+  border-color: var(--line);
+}
+
+/* ---- proposal summary strip (screens.css L228-230) ---- */
+.today-loom .prop-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+}
+.today-loom .prop-summary-n {
+  font-size: var(--fs-display);
+  line-height: 1;
+  color: var(--coral);
+  flex: none;
+}
+.today-loom .prop-summary-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
+/* ---- cost ribbon (screens.css L233-237) ---- */
+.today-loom .cost-top {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  margin-bottom: var(--s-3);
+}
+.today-loom .cost-amt {
+  font-size: var(--fs-h2);
+  line-height: 1;
+}
+.today-loom .cost-budget {
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  color: var(--ink-4);
+}
+.today-loom .cost-tasks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  margin-bottom: var(--s-3);
+}
+.today-loom .cost-foot {
+  color: var(--ink-4);
+}
+
+/* ---- responsive (loom.css L379 + screens.css L337/349) ---- */
+@media (max-width: 1180px) {
+  .today-loom .dash-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 720px) {
+  .today-loom .prop-summary-n {
+    font-size: var(--fs-h1);
+  }
+}
