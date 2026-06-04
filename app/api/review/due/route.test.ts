@@ -326,6 +326,46 @@ describe('GET /api/review/due', () => {
     expect(body.rows.map((row) => row.question_id)).toEqual(['q_next_variant']);
   });
 
+  // Codex (PR #295) — never-reviewed slice must honor knowledge-level
+  // projections. Under ADR-0028 a labeled question's FSRS lives on its
+  // knowledge node and the question-level row is deleted. A just-reviewed
+  // knowledge point (future due) whose source question still has a failure
+  // attempt must NOT reappear as a fresh `fsrs_state: null` never-reviewed card.
+  it('excludes a never-reviewed candidate whose knowledge point already has a (future) projection', async () => {
+    const now = new Date();
+    const futureIso = new Date(now.getTime() + 7 * 86400 * 1000).toISOString();
+
+    // q_reviewed_k is labeled with k_reviewed; it has a failure attempt but the
+    // knowledge node was already reviewed and is due in the future.
+    await seedQuestion('q_reviewed_k', { knowledge_ids: ['k_reviewed'] });
+    await seedFailureAttempt('q_reviewed_k', { id: 'evt_attempt_q_reviewed_k' });
+    await seedFsrsState({
+      question_id: 'k_reviewed',
+      due_at: new Date(futureIso),
+      state: makeFsrsState({ due: futureIso }),
+      subject_kind: 'knowledge',
+    });
+
+    const res = await getReview();
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { rows: Array<{ id: string; fsrs_state: unknown }> };
+    const ids = body.rows.map((r) => r.id);
+    expect(ids).not.toContain('q_reviewed_k');
+  });
+
+  // Positive control: a labeled never-reviewed question whose knowledge point
+  // has NO projection still surfaces in the never-reviewed slice.
+  it('still surfaces a labeled never-reviewed question when its knowledge point has no projection', async () => {
+    await seedQuestion('q_fresh_k', { knowledge_ids: ['k_fresh'] });
+    await seedFailureAttempt('q_fresh_k', { id: 'evt_attempt_q_fresh_k' });
+
+    const res = await getReview();
+    const body = (await res.json()) as { rows: Array<{ id: string; fsrs_state: unknown }> };
+    const fresh = body.rows.find((r) => r.id === 'q_fresh_k');
+    expect(fresh).toBeDefined();
+    expect(fresh?.fsrs_state).toBeNull();
+  });
+
   it('returns empty rows when no cards are due', async () => {
     const res = await getReview();
     expect(res.status).toBe(200);

@@ -382,7 +382,27 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
       created_at: Date;
     }> = [];
     if (newQuestionIds.length > 0) {
-      // Check NO material_fsrs_state row exists for these question ids
+      // Codex (PR #295) — knowledge-level "already reviewed" exclusion.
+      //
+      // ADR-0028 keys FSRS by knowledge point for labeled questions and DELETES
+      // the question-level row. So a knowledge point that was just reviewed (its
+      // knowledge-level projection has due_at in the future) but whose source
+      // question still carries a failure attempt would otherwise reappear here
+      // as a fresh `fsrs_state: null` never-reviewed card — re-queuing a card
+      // the user just finished. Mirror the orchestrator/review.ts read path: a
+      // candidate is "reviewed" if EITHER its own question-level projection
+      // exists OR any knowledge id it references (failure-attempt
+      // referenced_knowledge_ids ∪ the question's own knowledge_ids) already has
+      // a knowledge-level projection.
+      const failureKnowledgeIdsByQid = new Map<string, Set<string>>();
+      for (const a of newAttempts) {
+        if (!newQuestionIds.includes(a.question_id)) continue;
+        const set = failureKnowledgeIdsByQid.get(a.question_id) ?? new Set<string>();
+        for (const kid of a.referenced_knowledge_ids ?? []) set.add(kid);
+        failureKnowledgeIdsByQid.set(a.question_id, set);
+      }
+
+      // Question-level projection check (legacy unlabeled questions).
       const existing = await db
         .select({ subject_id: material_fsrs_state.subject_id })
         .from(material_fsrs_state)
@@ -393,7 +413,51 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
           ),
         );
       const reviewed = new Set(existing.map((r) => r.subject_id));
-      const trulyNew = newQuestionIds.filter((id) => !reviewed.has(id));
+
+      // Knowledge-level projection check. Fold in each candidate question's own
+      // knowledge_ids (a labeled question's review schedules its knowledge node)
+      // plus the failure-attempt referenced ids.
+      const candidateQuestionRows = await db
+        .select({ id: question.id, knowledge_ids: question.knowledge_ids })
+        .from(question)
+        .where(inArray(question.id, newQuestionIds));
+      const knowledgeIdsByQid = new Map<string, Set<string>>();
+      for (const qid of newQuestionIds) {
+        const set = new Set<string>(failureKnowledgeIdsByQid.get(qid) ?? []);
+        knowledgeIdsByQid.set(qid, set);
+      }
+      for (const qRow of candidateQuestionRows) {
+        const set = knowledgeIdsByQid.get(qRow.id) ?? new Set<string>();
+        for (const kid of qRow.knowledge_ids ?? []) set.add(kid);
+        knowledgeIdsByQid.set(qRow.id, set);
+      }
+      const allCandidateKnowledgeIds = Array.from(
+        new Set([...knowledgeIdsByQid.values()].flatMap((set) => [...set])),
+      );
+      const projectedKnowledgeIds = new Set<string>();
+      if (allCandidateKnowledgeIds.length > 0) {
+        const knowledgeProjections = await db
+          .select({ subject_id: material_fsrs_state.subject_id })
+          .from(material_fsrs_state)
+          .where(
+            and(
+              eq(material_fsrs_state.subject_kind, 'knowledge'),
+              inArray(material_fsrs_state.subject_id, allCandidateKnowledgeIds),
+            ),
+          );
+        for (const r of knowledgeProjections) projectedKnowledgeIds.add(r.subject_id);
+      }
+
+      const trulyNew = newQuestionIds.filter((id) => {
+        if (reviewed.has(id)) return false;
+        const knowledgeIds = knowledgeIdsByQid.get(id);
+        if (knowledgeIds) {
+          for (const kid of knowledgeIds) {
+            if (projectedKnowledgeIds.has(kid)) return false;
+          }
+        }
+        return true;
+      });
       if (trulyNew.length > 0) {
         const qRows = await db
           .select({
