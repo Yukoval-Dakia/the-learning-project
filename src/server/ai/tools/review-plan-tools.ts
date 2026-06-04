@@ -607,6 +607,25 @@ async function executeWriteReviewPlan(
     );
   }
 
+  // codex PR #298 #3357961871 — reject duplicate question_ids across
+  // assignments. Two assignments pointing at the same question would persist a
+  // paper whose tool_state.question_ids carries the same id twice (a duplicate
+  // item in one review session). We REJECT (list the duplicated ids) rather
+  // than silently de-dup: a duplicate is a planner mistake worth surfacing for
+  // audit, and silent de-dup would hide it (consistent with this PR's
+  // reject-over-silently-narrow philosophy — see assertAssignment* below).
+  const seenQuestionIds = new Set<string>();
+  const duplicateQuestionIds = new Set<string>();
+  for (const id of questionIds) {
+    if (seenQuestionIds.has(id)) duplicateQuestionIds.add(id);
+    else seenQuestionIds.add(id);
+  }
+  if (duplicateQuestionIds.size > 0) {
+    throw new Error(
+      `write_review_plan: duplicate assignment question_id(s) across sections: [${[...duplicateQuestionIds].join(',')}]`,
+    );
+  }
+
   // Validate the planned question IDs against `question` BEFORE persisting
   // (codex-review #3357652733). The planner is an LLM; a hallucinated id or a
   // draft question would otherwise produce a `ready` review paper that the
@@ -624,20 +643,35 @@ async function executeWriteReviewPlan(
   const knowledgeIdsByQuestion = await assertQuestionsExistAndRunnable(ctx, questionIds);
   assertAssignmentKnowledgeWithinCoverage(plan, knowledgeIdsByQuestion);
 
-  // Derive artifact knowledge_ids from the FULL union of section-level
-  // knowledge_ids ∪ every assignment's primary + secondary knowledge ids
-  // (codex-review #3357652748). section.knowledge_ids defaults to [] and the
-  // validator only requires per-assignment primary_knowledge_id, so a plan that
-  // omits section-level ids would otherwise write `knowledge_ids: []` — leaving
-  // the paper invisible to knowledge-node backlinks / by-knowledge entry points.
-  const knowledgeIds = [
-    ...new Set([
-      ...plan.sections.flatMap((s) => s.knowledge_ids),
-      ...plan.sections.flatMap((s) =>
-        s.assignments.flatMap((a) => [a.primary_knowledge_id, ...a.secondary_knowledge_ids]),
-      ),
-    ]),
-  ];
+  // Derive artifact knowledge_ids ONLY from the VALIDATED assignment primary +
+  // secondary knowledge ids (codex-review #3357652748 + #3357932409). These are
+  // the only ids assertAssignmentKnowledgeWithinCoverage proved are real
+  // question coverage; section.knowledge_ids is NOT validated against the DB, so
+  // folding it into the artifact's knowledge_ids could mount the paper onto a
+  // hallucinated / mistyped node (breaking by-knowledge entry + backlinks). We
+  // also REQUIRE section.knowledge_ids ⊆ this derived set and REJECT any
+  // section-level id outside it (list the violating ids) — reject over silently
+  // dropping, consistent with assertAssignmentKnowledgeWithinCoverage / the dup
+  // check above: a stray section id is a planner mistake worth surfacing.
+  const assignmentKnowledgeIds = new Set<string>(
+    plan.sections.flatMap((s) =>
+      s.assignments.flatMap((a) => [a.primary_knowledge_id, ...a.secondary_knowledge_ids]),
+    ),
+  );
+  const sectionKnowledgeViolations: string[] = [];
+  for (const section of plan.sections) {
+    for (const kid of section.knowledge_ids) {
+      if (!assignmentKnowledgeIds.has(kid)) {
+        sectionKnowledgeViolations.push(`${section.subject_id}→${kid}`);
+      }
+    }
+  }
+  if (sectionKnowledgeViolations.length > 0) {
+    throw new Error(
+      `write_review_plan: section knowledge_id(s) not covered by any assignment's primary/secondary knowledge: [${sectionKnowledgeViolations.join(',')}]`,
+    );
+  }
+  const knowledgeIds = [...assignmentKnowledgeIds];
   const now = new Date();
   const artifactId = `review_plan_${createId()}`;
 

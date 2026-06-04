@@ -865,7 +865,21 @@ export async function executeGetReviewDue(
   const newQuestionIds = [...latestNeverReviewed.keys()].slice(0, limit);
   const newQuestions =
     newQuestionIds.length > 0
-      ? await ctx.db.select().from(question).where(inArray(question.id, newQuestionIds))
+      ? await ctx.db
+          .select()
+          .from(question)
+          .where(
+            and(
+              inArray(question.id, newQuestionIds),
+              // Guard-B (codex PR #298 #3357932403): a draft question with a
+              // failure attempt has NO material_fsrs_state row, so the FSRS-keyed
+              // branches' draft filter above never sees it — it would otherwise
+              // surface here as a never-reviewed-failure candidate. Apply the same
+              // exclusion the due-list.ts public path applies to its never-
+              // reviewed slice. NULL handling explicit: only 'draft' excluded.
+              sql`(${question.draft_status} IS NULL OR ${question.draft_status} <> 'draft')`,
+            ),
+          )
       : [];
   const qById = new Map(newQuestions.map((row) => [row.id, row]));
 
