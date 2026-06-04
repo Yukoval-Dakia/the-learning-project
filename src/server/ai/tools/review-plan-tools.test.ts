@@ -43,7 +43,14 @@ async function seedKnowledge(id: string) {
   });
 }
 
-async function seedQuestion(opts: { id: string; knowledgeId: string; draft: boolean }) {
+async function seedQuestion(opts: {
+  id: string;
+  knowledgeId: string;
+  draft: boolean;
+  // Extra knowledge ids the question also covers (so an assignment may legally
+  // reference them). Defaults to [].
+  extraKnowledgeIds?: string[];
+}) {
   const now = new Date();
   await db.insert(question).values({
     id: opts.id,
@@ -53,7 +60,7 @@ async function seedQuestion(opts: { id: string; knowledgeId: string; draft: bool
     rubric_json: { required_points: ['p'] } as never,
     choices_md: null,
     judge_kind_override: 'semantic',
-    knowledge_ids: [opts.knowledgeId],
+    knowledge_ids: [opts.knowledgeId, ...(opts.extraKnowledgeIds ?? [])],
     difficulty: 3,
     source: 'test',
     source_ref: opts.knowledgeId,
@@ -61,6 +68,30 @@ async function seedQuestion(opts: { id: string; knowledgeId: string; draft: bool
     created_by: { by: 'ai', task_kind: 'QuizGenTask', task_run_id: 'tr' } as never,
     metadata: {} as never,
     created_at: now,
+    updated_at: now,
+  });
+}
+
+async function seedDueQuestionFsrs(questionId: string) {
+  const now = new Date();
+  await db.insert(material_fsrs_state).values({
+    id: `fsrs_q_${questionId}`,
+    // Legacy question-keyed FSRS row (subject_kind='question') — the branch
+    // codex #3357817910 flagged for the missing draft filter.
+    subject_kind: 'question',
+    subject_id: questionId,
+    state: {
+      due: new Date(now.getTime() - 1000).toISOString(),
+      stability: 1,
+      difficulty: 5,
+      elapsed_days: 1,
+      scheduled_days: 1,
+      reps: 1,
+      lapses: 0,
+      state: 2,
+      last_review: new Date(now.getTime() - 86_400_000).toISOString(),
+    } as never,
+    due_at: new Date(now.getTime() - 1000),
     updated_at: now,
   });
 }
@@ -125,6 +156,19 @@ describe('write_review_plan', () => {
     await seedKnowledge('k_zhi');
     await seedQuestion({ id: 'q_active', knowledgeId: 'k_zhi', draft: false });
   });
+
+  // Shared helper: re-seed q_active so it also covers k_secondary, and add a
+  // q_secondary that covers k_qi — so coverage-valid plans in the union test
+  // (and below) pass the #3357817923 coverage gate.
+  async function reseedWithCoverage() {
+    await seedQuestion({
+      id: 'q_active_cov',
+      knowledgeId: 'k_zhi',
+      draft: false,
+      extraKnowledgeIds: ['k_secondary'],
+    });
+    await seedQuestion({ id: 'q_secondary', knowledgeId: 'k_qi', draft: false });
+  }
 
   it('writes a tool_quiz artifact with the flat ToolState transition encoding', async () => {
     const out = await writeReviewPlanTool.execute(ctx(), {
@@ -245,7 +289,7 @@ describe('write_review_plan', () => {
   // #3357652748 — knowledge_ids derived from the full union even when
   // section-level knowledge_ids is omitted.
   it('derives artifact knowledge_ids from the assignment union when section knowledge_ids omitted', async () => {
-    await seedQuestion({ id: 'q_secondary', knowledgeId: 'k_zhi', draft: false });
+    await reseedWithCoverage();
     const out = await writeReviewPlanTool.execute(ctx(), {
       plan: validPlan({
         sections: [
@@ -257,7 +301,7 @@ describe('write_review_plan', () => {
             knowledge_ids: [],
             assignments: [
               {
-                question_id: 'q_active',
+                question_id: 'q_active_cov',
                 primary_knowledge_id: 'k_zhi',
                 secondary_knowledge_ids: ['k_secondary'],
               },
@@ -278,6 +322,127 @@ describe('write_review_plan', () => {
     // Union of every assignment's primary + secondary knowledge ids.
     expect([...rows[0].knowledge_ids].sort()).toEqual(['k_qi', 'k_secondary', 'k_zhi']);
   });
+
+  // #3357817927 — refuse an empty paper (no assignments → questionIds empty).
+  it('rejects an empty review paper (no assignments)', async () => {
+    await expect(
+      writeReviewPlanTool.execute(ctx(), {
+        plan: validPlan({ subject_ids: [], sections: [] }),
+        mode: 'initial_plan',
+      }),
+    ).rejects.toThrow(/refusing to write an empty review paper/);
+    expect(await db.select().from(artifact)).toHaveLength(0);
+  });
+
+  it('rejects when every section has empty assignments', async () => {
+    await expect(
+      writeReviewPlanTool.execute(ctx(), {
+        plan: validPlan({
+          sections: [{ subject_id: 'wenyan', knowledge_ids: ['k_zhi'], assignments: [] }],
+        }),
+        mode: 'initial_plan',
+      }),
+    ).rejects.toThrow(/refusing to write an empty review paper/);
+    expect(await db.select().from(artifact)).toHaveLength(0);
+  });
+
+  // #3357817923 — assignment knowledge id not in the question's coverage.
+  it('rejects an assignment knowledge_id outside the question coverage (reject, not intersect)', async () => {
+    await expect(
+      writeReviewPlanTool.execute(ctx(), {
+        plan: validPlan({
+          sections: [
+            {
+              subject_id: 'wenyan',
+              knowledge_ids: ['k_zhi'],
+              assignments: [
+                {
+                  // q_active only covers k_zhi; k_ghost is a hallucinated id.
+                  question_id: 'q_active',
+                  primary_knowledge_id: 'k_zhi',
+                  secondary_knowledge_ids: ['k_ghost'],
+                },
+              ],
+            },
+          ],
+        }),
+        mode: 'initial_plan',
+      }),
+    ).rejects.toThrow(/not in the question's knowledge_ids coverage.*q_active→k_ghost/);
+    expect(await db.select().from(artifact)).toHaveLength(0);
+  });
+
+  it('rejects a primary_knowledge_id outside the question coverage', async () => {
+    await expect(
+      writeReviewPlanTool.execute(ctx(), {
+        plan: validPlan({
+          sections: [
+            {
+              subject_id: 'wenyan',
+              knowledge_ids: ['k_zhi'],
+              assignments: [
+                {
+                  question_id: 'q_active',
+                  primary_knowledge_id: 'k_other', // q_active does not cover k_other
+                  secondary_knowledge_ids: [],
+                },
+              ],
+            },
+          ],
+        }),
+        mode: 'initial_plan',
+      }),
+    ).rejects.toThrow(/not in the question's knowledge_ids coverage.*q_active→k_other/);
+  });
+
+  // #3357817933 — any FALSE guardrail rejects the plan.
+  it('rejects when guardrail candidate_pool_only is false', async () => {
+    await expect(
+      writeReviewPlanTool.execute(ctx(), {
+        plan: validPlan({
+          guardrail_checks: {
+            within_time_budget: true,
+            candidate_pool_only: false,
+            every_assignment_has_primary_knowledge: true,
+            no_direct_scheduler_mutation: true,
+          },
+        }),
+        mode: 'initial_plan',
+      }),
+    ).rejects.toThrow(/guardrail_checks must all be true.*candidate_pool_only/);
+    expect(await db.select().from(artifact)).toHaveLength(0);
+  });
+
+  it('rejects when guardrail within_time_budget or no_direct_scheduler_mutation is false', async () => {
+    await expect(
+      writeReviewPlanTool.execute(ctx(), {
+        plan: validPlan({
+          guardrail_checks: {
+            within_time_budget: false,
+            candidate_pool_only: true,
+            every_assignment_has_primary_knowledge: true,
+            no_direct_scheduler_mutation: false,
+          },
+        }),
+        mode: 'initial_plan',
+      }),
+    ).rejects.toThrow(/guardrail_checks must all be true/);
+  });
+
+  // #3357817915 — only one plan may be written per run (ctx.taskRunId).
+  it('rejects a second write_review_plan within the same run (idempotency)', async () => {
+    const first = await writeReviewPlanTool.execute(ctx(), {
+      plan: validPlan(),
+      mode: 'initial_plan',
+    });
+    expect(first.question_count).toBe(1);
+    // Same ctx() ⇒ same taskRunId ⇒ second write rejected.
+    await expect(
+      writeReviewPlanTool.execute(ctx(), { plan: validPlan(), mode: 'initial_plan' }),
+    ).rejects.toThrow(/already exists for this run/);
+    // Exactly one artifact persisted.
+    expect(await db.select().from(artifact)).toHaveLength(1);
+  });
 });
 
 describe('select_review_question_candidates', () => {
@@ -290,6 +455,27 @@ describe('select_review_question_candidates', () => {
     await seedQuestion({ id: 'q_active', knowledgeId: 'k_zhi', draft: false });
     await seedQuestion({ id: 'q_draft', knowledgeId: 'k_zhi', draft: true });
     await seedDueKnowledgeFsrs('k_zhi');
+
+    const out = await selectReviewQuestionCandidatesTool.execute(ctx(), {
+      knowledgeIds: ['k_zhi'],
+      constraints: { limit: 10 },
+    });
+    const ids = out.candidates.map((c) => c.question_id);
+    expect(ids).toContain('q_active');
+    expect(ids).not.toContain('q_draft');
+  });
+
+  // #3357817910 — the LEGACY question-keyed FSRS branch of executeGetReviewDue
+  // (subject_kind='question') also excludes draft questions. A draft question
+  // with a mis-written question-level FSRS row must NOT enter the candidate
+  // pool even though it has no knowledge-level projection.
+  it('excludes a draft question reached via the legacy question-keyed FSRS row', async () => {
+    await seedKnowledge('k_zhi');
+    await seedQuestion({ id: 'q_active', knowledgeId: 'k_zhi', draft: false });
+    await seedQuestion({ id: 'q_draft', knowledgeId: 'k_zhi', draft: true });
+    // Legacy question-keyed due rows (NOT a knowledge-level projection).
+    await seedDueQuestionFsrs('q_active');
+    await seedDueQuestionFsrs('q_draft');
 
     const out = await selectReviewQuestionCandidatesTool.execute(ctx(), {
       knowledgeIds: ['k_zhi'],

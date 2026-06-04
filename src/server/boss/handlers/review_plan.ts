@@ -136,15 +136,21 @@ export async function runReviewPlan(
       },
     );
 
-    // Verify the model actually persisted a review plan via write_review_plan.
-    // For tool-calling tasks the SDK can return finishReason:'stop' having only
-    // emitted text (exhausted turns / refused the tool) — without this check the
-    // queue records a success event and does NOT retry, leaving the day with no
-    // executable review paper. Throw (→ failure path → job retry) when none.
+    // Verify the model actually persisted EXACTLY ONE review plan via
+    // write_review_plan. For tool-calling tasks the SDK can return
+    // finishReason:'stop' having only emitted text (exhausted turns / refused
+    // the tool) — without this check the queue records a success event and does
+    // NOT retry, leaving the day with no executable review paper.
+    //   - count === 0 → task wrote no paper (refused / pool-empty needs-only).
+    //   - count  >  1 → duplicate papers from one run. The tool's own per-run
+    //     idempotency guard (write_review_plan, #3357817915) should make this
+    //     unreachable, but we fail loudly here as a second layer rather than
+    //     leave duplicate review papers for the day.
+    // Either way: throw → failure path → job retry.
     const planCount = await countArtifacts(db, toolContextTaskRunId);
-    if (planCount === 0) {
+    if (planCount !== 1) {
       throw new Error(
-        `review_plan: task returned (finishReason=${taskResult.finishReason}) but wrote no review-plan artifact (tool_context_task_run_id=${toolContextTaskRunId})`,
+        `review_plan: task returned (finishReason=${taskResult.finishReason}) but wrote ${planCount} review-plan artifacts (expected exactly 1, tool_context_task_run_id=${toolContextTaskRunId})`,
       );
     }
 

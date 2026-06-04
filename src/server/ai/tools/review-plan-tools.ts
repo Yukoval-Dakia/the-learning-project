@@ -12,7 +12,7 @@ import { ReviewSessionProposal } from '@/core/schema/coach';
 import { artifact, knowledge, knowledge_mastery, question } from '@/db/schema';
 import { getLatestCoachPlan } from '@/server/today/coach-plan';
 import { createId } from '@paralleldrive/cuid2';
-import { inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { executeGetReviewDue } from './context-readers';
 import type { DomainTool, ToolContext } from './types';
@@ -489,20 +489,41 @@ function validateReviewPlanContract(plan: ReviewPlanContractT): void {
       'write_review_plan: guardrail_checks.every_assignment_has_primary_knowledge must be true',
     );
   }
+  // codex PR #298 #3357817933 — reject any self-reported FALSE guardrail.
+  // The planner attests to four hard constraints; an honestly-flagged
+  // violation (e.g. candidate_pool_only=false, within_time_budget=false,
+  // no_direct_scheduler_mutation=false) must NOT persist a `ready` paper that
+  // the user would then execute. Same treatment as
+  // every_assignment_has_primary_knowledge above; list every failed check so
+  // the failure is auditable.
+  const failedGuardrails = Object.entries(plan.guardrail_checks)
+    .filter(([, value]) => value === false)
+    .map(([key]) => key);
+  if (failedGuardrails.length > 0) {
+    throw new Error(
+      `write_review_plan: guardrail_checks must all be true — failed: [${failedGuardrails.join(',')}]`,
+    );
+  }
 }
 
 // Existence + non-draft backstop for the planner-supplied question_ids
 // (codex-review #3357652733). Throws with a message listing the offending ids
 // so the failure is auditable (and, in the boss handler, fails the job so it
-// retries rather than persisting an unrunnable ready paper).
+// retries rather than persisting an unrunnable ready paper). Returns each
+// question's knowledge_ids so the caller can validate assignment knowledge-
+// point coverage (codex PR #298 #3357817923).
 async function assertQuestionsExistAndRunnable(
   ctx: ToolContext,
   questionIds: string[],
-): Promise<void> {
+): Promise<Map<string, string[]>> {
   const wanted = [...new Set(questionIds)];
-  if (wanted.length === 0) return;
+  if (wanted.length === 0) return new Map();
   const rows = await ctx.db
-    .select({ id: question.id, draft_status: question.draft_status })
+    .select({
+      id: question.id,
+      draft_status: question.draft_status,
+      knowledge_ids: question.knowledge_ids,
+    })
     .from(question)
     .where(inArray(question.id, wanted));
   const found = new Map(rows.map((r) => [r.id, r.draft_status]));
@@ -517,6 +538,40 @@ async function assertQuestionsExistAndRunnable(
   if (drafts.length > 0) {
     throw new Error(
       `write_review_plan: assignment question_id(s) are draft (unrunnable): [${drafts.join(',')}]`,
+    );
+  }
+  return new Map(rows.map((r) => [r.id, r.knowledge_ids ?? []]));
+}
+
+// codex PR #298 #3357817923 — reject assignment knowledge points that are NOT
+// in the assigned question's own knowledge_ids.
+//
+// CONTRAST with #295 submit-judge (which INTERSECTS rather than rejects): the
+// judge writes against *evidence* semantics, where an out-of-scope id is just
+// outside the proven coverage and is safely dropped to the intersection. The
+// planner here is asserting *coverage facts* used to mount the paper onto
+// knowledge nodes (by-knowledge entry + backlinks); an assignment knowledge id
+// that the question does not actually cover is a planner hallucination, not a
+// narrowing — silently intersecting would hide the bug AND could leave an
+// assignment with no primary knowledge. So we REJECT (list the violating
+// pairs) rather than intersect.
+function assertAssignmentKnowledgeWithinCoverage(
+  plan: ReviewPlanContractT,
+  knowledgeIdsByQuestion: Map<string, string[]>,
+): void {
+  const violations: string[] = [];
+  for (const section of plan.sections) {
+    for (const a of section.assignments) {
+      const coverage = new Set(knowledgeIdsByQuestion.get(a.question_id) ?? []);
+      const assigned = [a.primary_knowledge_id, ...a.secondary_knowledge_ids];
+      for (const kid of assigned) {
+        if (!coverage.has(kid)) violations.push(`${a.question_id}→${kid}`);
+      }
+    }
+  }
+  if (violations.length > 0) {
+    throw new Error(
+      `write_review_plan: assignment knowledge_id(s) not in the question's knowledge_ids coverage: [${violations.join(',')}]`,
     );
   }
 }
@@ -534,18 +589,40 @@ async function executeWriteReviewPlan(
   const questionIds = plan.sections.flatMap((s) => s.assignments.map((a) => a.question_id));
   const subjectIds = [...new Set(plan.subject_ids)];
 
+  // codex PR #298 #3357817927 — reject an empty paper. A plan with no
+  // assignments (sections:[] or every section's assignments:[]) yields
+  // questionIds.length===0 and would otherwise persist a `ready` tool_quiz
+  // with no tool_state.question_ids — an unexecutable empty paper. When the
+  // candidate pool is insufficient the planner must NOT write a paper; it
+  // should only declare needs[] (question_generation / question_profile_refresh)
+  // and let the run finish without an artifact.
+  // TRADEOFF (paired with the boss handler's 0-artifact failure path,
+  // review_plan.ts): on a pool-empty night this throw → the run writes 0
+  // artifacts → the handler fails the job (with finishReason/needs summary) →
+  // pg-boss bounded retry. "Every night yields a paper" is NOT an invariant;
+  // the pool-gap signal reaches the Coach via the U3 agent_note channel.
+  if (questionIds.length === 0) {
+    throw new Error(
+      'write_review_plan: refusing to write an empty review paper — no assignments. When the candidate pool is insufficient, declare needs[] (question_generation / question_profile_refresh) and do NOT write a plan.',
+    );
+  }
+
   // Validate the planned question IDs against `question` BEFORE persisting
   // (codex-review #3357652733). The planner is an LLM; a hallucinated id or a
   // draft question would otherwise produce a `ready` review paper that the
-  // session can't execute. Two invariants are HARD-enforced here:
+  // session can't execute. Three invariants are HARD-enforced here:
   //   - existence: every assignment question_id must resolve to a real row;
-  //   - non-draft: Guard-B (`draft_status='draft'` is unrunnable in review).
+  //   - non-draft: Guard-B (`draft_status='draft'` is unrunnable in review);
+  //   - knowledge coverage (#3357817923): every assignment knowledge id must be
+  //     in that question's own knowledge_ids (REJECT, not intersect — see
+  //     assertAssignmentKnowledgeWithinCoverage for the #295 contrast).
   // candidate-pool membership is NOT re-checkable here: the candidate pool
   // lives in `select_review_question_candidates`'s output, not in this tool's
   // input. So `guardrail_checks.candidate_pool_only` is the planner's own
   // self-attestation that it only assigned pool-sourced questions; existence +
-  // non-draft are the backstop this tool can prove against the DB.
-  await assertQuestionsExistAndRunnable(ctx, questionIds);
+  // non-draft + coverage are the backstop this tool can prove against the DB.
+  const knowledgeIdsByQuestion = await assertQuestionsExistAndRunnable(ctx, questionIds);
+  assertAssignmentKnowledgeWithinCoverage(plan, knowledgeIdsByQuestion);
 
   // Derive artifact knowledge_ids from the FULL union of section-level
   // knowledge_ids ∪ every assignment's primary + secondary knowledge ids
@@ -561,6 +638,32 @@ async function executeWriteReviewPlan(
       ),
     ]),
   ];
+  // codex PR #298 #3357817915 — idempotency guard against multiple papers per
+  // run. If the model calls write_review_plan twice within the SAME
+  // ReviewPlanTask run, the second call would persist a duplicate `ready`
+  // paper (the handler only saw planCount===0). There is no downstream
+  // de-dup/selection, so the user would get two review papers from one nightly
+  // run. We refuse the second write here, keyed on ctx.taskRunId (==
+  // tool_context_task_run_id stamped into session_meta below). The handler's
+  // post-run count check is also tightened to "exactly 1" as a second layer.
+  if (ctx.taskRunId) {
+    const [existing] = await ctx.db
+      .select({ id: artifact.id })
+      .from(artifact)
+      .where(
+        and(
+          eq(artifact.tool_kind, 'review_plan'),
+          sql`${artifact.tool_state}->'session_meta'->>'tool_context_task_run_id' = ${ctx.taskRunId}`,
+        ),
+      )
+      .limit(1);
+    if (existing) {
+      throw new Error(
+        `write_review_plan: a review plan already exists for this run (tool_context_task_run_id=${ctx.taskRunId}, artifact=${existing.id}) — only one plan may be written per run`,
+      );
+    }
+  }
+
   const now = new Date();
   const artifactId = `review_plan_${createId()}`;
 
