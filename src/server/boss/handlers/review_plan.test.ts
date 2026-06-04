@@ -203,4 +203,163 @@ describe('runReviewPlan', () => {
       }),
     );
   });
+
+  // #3358031881 — pg-boss retry idempotency: the per-run identity is keyed on
+  // the stable job.id, not a per-attempt random id.
+  it('derives a deterministic tool_context_task_run_id from jobId', async () => {
+    const db = {} as never;
+    const writeEventFn = vi.fn(async (_db, input) => input.id);
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_rp_job',
+      text: 'ok',
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    // No prior artifact (resume pre-check 0), one after the run (verification).
+    const countReviewPlanArtifactsFn = vi
+      .fn<(db: unknown, id: string) => Promise<number>>()
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(1);
+
+    const result = await runReviewPlan(
+      db,
+      { run_kind: 'daily', mode: 'initial_plan' },
+      {
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        runAgentTaskFn,
+        writeEventFn,
+        countReviewPlanArtifactsFn,
+        jobId: 'job_abc123',
+      },
+    );
+
+    expect(result.tool_context_task_run_id).toBe('review_plan_tool_job_abc123');
+    // The resume pre-check + the post-run verification both keyed on the
+    // job-derived id.
+    expect(countReviewPlanArtifactsFn).toHaveBeenCalledWith(db, 'review_plan_tool_job_abc123');
+  });
+
+  // #3358031881 — resume path: a prior attempt of this job already wrote the
+  // paper. This retry must NOT re-run the agent; it records a resumed success
+  // scan and returns.
+  it('short-circuits (resumes) without running the agent when the job already wrote a plan', async () => {
+    const db = {} as never;
+    const writeEventFn = vi.fn(async (_db, input) => input.id);
+    const runAgentTaskFn = vi.fn(async () => {
+      throw new Error('agent must not run on resume');
+    });
+    // Prior attempt's artifact already present (pre-check returns 1).
+    const countReviewPlanArtifactsFn = vi.fn(async () => 1);
+
+    const result = await runReviewPlan(
+      db,
+      { run_kind: 'daily', mode: 'initial_plan' },
+      {
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        runAgentTaskFn,
+        writeEventFn,
+        countReviewPlanArtifactsFn,
+        jobId: 'job_resume',
+      },
+    );
+
+    expect(result).toEqual({
+      processed: 1,
+      tool_context_task_run_id: 'review_plan_tool_job_resume',
+    });
+    // Agent never invoked.
+    expect(runAgentTaskFn).not.toHaveBeenCalled();
+    // The pre-check ran with the job-derived id.
+    expect(countReviewPlanArtifactsFn).toHaveBeenCalledWith(db, 'review_plan_tool_job_resume');
+    // A resumed success scan is recorded for audit.
+    expect(writeEventFn).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({
+        action: 'experimental:review_plan',
+        outcome: 'success',
+        payload: expect.objectContaining({ resumed: true }),
+      }),
+    );
+  });
+
+  // #3358031881 — regression: with jobId present but NO prior artifact, the
+  // normal path still runs (pre-check 0 → agent → post-run 1).
+  it('runs normally when jobId is present but no prior artifact exists', async () => {
+    const db = {} as never;
+    const writeEventFn = vi.fn(async (_db, input) => input.id);
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_rp_fresh',
+      text: 'ok',
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    // Pre-check 0 (no resume), post-run 1 (verification passes).
+    const countReviewPlanArtifactsFn = vi
+      .fn<(db: unknown, id: string) => Promise<number>>()
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(1);
+
+    const result = await runReviewPlan(
+      db,
+      { run_kind: 'daily', mode: 'initial_plan' },
+      {
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        runAgentTaskFn,
+        writeEventFn,
+        countReviewPlanArtifactsFn,
+        jobId: 'job_fresh',
+      },
+    );
+
+    expect(result).toMatchObject({ processed: 1, task_run_id: 'task_rp_fresh' });
+    expect(runAgentTaskFn).toHaveBeenCalledTimes(1);
+    // No resumed flag on the success scan for a normal run.
+    expect(writeEventFn).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({
+        action: 'experimental:review_plan',
+        outcome: 'success',
+        payload: expect.not.objectContaining({ resumed: true }),
+      }),
+    );
+  });
+
+  // #3358031881 — fallback: with no jobId, the id is random (two calls differ).
+  it('falls back to a random tool_context_task_run_id when no jobId is given', async () => {
+    const db = {} as never;
+    const writeEventFn = vi.fn(async (_db, input) => input.id);
+    const makeRun = () =>
+      vi.fn(async () => ({
+        task_run_id: 'task_rp_rand',
+        text: 'ok',
+        finishReason: 'stop',
+        usage: { inputTokens: 1, outputTokens: 2 },
+      }));
+    const countReviewPlanArtifactsFn = vi.fn(async () => 1);
+
+    const first = await runReviewPlan(
+      db,
+      { run_kind: 'daily', mode: 'initial_plan' },
+      {
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        runAgentTaskFn: makeRun(),
+        writeEventFn,
+        countReviewPlanArtifactsFn,
+      },
+    );
+    const second = await runReviewPlan(
+      db,
+      { run_kind: 'daily', mode: 'initial_plan' },
+      {
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        runAgentTaskFn: makeRun(),
+        writeEventFn,
+        countReviewPlanArtifactsFn,
+      },
+    );
+
+    expect(first.tool_context_task_run_id).toMatch(/^review_plan_tool_/);
+    expect(second.tool_context_task_run_id).toMatch(/^review_plan_tool_/);
+    expect(first.tool_context_task_run_id).not.toBe(second.tool_context_task_run_id);
+  });
 });
