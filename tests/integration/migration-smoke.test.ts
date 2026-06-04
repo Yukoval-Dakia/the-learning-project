@@ -250,10 +250,8 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
     // One slot (sess1, q1, atomic part_ref=NULL). Two FROZEN rows coexist
     // (append-only history after abandon→reopen→re-submit), then ONE live draft
     // is allowed, but a SECOND live draft on the same slot is rejected.
-    const ins = (
-      id: string,
-      submitted: string | null,
-    ) => db.execute(sql`
+    const ins = (id: string, submitted: string | null) =>
+      db.execute(sql`
       INSERT INTO answer (id, question_id, input_kind, content_md, image_refs, tags,
         submitted_at, session_id, part_ref, autosaved_at)
       VALUES (${id}, 'q1', 'text', '', '[]'::jsonb, '[]'::jsonb,
