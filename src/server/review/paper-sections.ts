@@ -101,8 +101,18 @@ export interface ResolvedSlotAssignment {
  * tool_state. Returns the resolved knowledge + the owning section's
  * feedback_policy so the paper submit handler can FSRS-key on the primary
  * knowledge and apply the visibility gate server-side (the client never supplies
- * these — they come from the auditable plan). Returns null when the slot is not
- * in the plan.
+ * these — they come from the auditable plan).
+ *
+ * Flat-quiz fallback: when the paper has no structured sections (legacy
+ * quiz_gen / embedded_check artifacts that only have `question_ids`), any
+ * question_id present in `tool_state.question_ids` is accepted. The assignment
+ * uses primaryKnowledgeId=null so submitPaperSlot falls through to the
+ * question-keyed FSRS path (same fallback as the single-question /review/submit
+ * flow). feedbackPolicy defaults to 'immediate'.
+ *
+ * Returns null only when the slot is not in the plan (neither sections nor the
+ * flat question_ids list), so a structurally invalid request still receives a
+ * 400 rather than silently skipping.
  */
 export function resolveSlotAssignment(
   toolState: ToolStateLike,
@@ -123,5 +133,19 @@ export function resolveSlotAssignment(
       }
     }
   }
+
+  // Flat-quiz fallback: no structured sections but the question is in the plan.
+  // Atomic only (partRef must be null) — flat quizzes have no composite parts.
+  const qids = Array.isArray(toolState?.question_ids) ? toolState.question_ids : [];
+  if (target === null && qids.includes(questionId)) {
+    return {
+      questionId,
+      partRef: null,
+      primaryKnowledgeId: null, // question-keyed FSRS fallback
+      secondaryKnowledgeIds: [],
+      feedbackPolicy: 'immediate',
+    };
+  }
+
   return null;
 }

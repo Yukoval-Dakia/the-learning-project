@@ -320,4 +320,46 @@ describe('GET /api/practice', () => {
     );
     expect(subRes.status).toBe(400);
   });
+
+  it('fix #2 (round-2): flat quiz (no sections) can be submitted via route', async () => {
+    await seedQuestion('q1', 'true');
+    const db = testDb();
+    const now = new Date();
+    // Flat paper: question_ids only, no sections array.
+    await db.insert(artifact).values({
+      id: 'p_flat',
+      type: 'tool_quiz',
+      title: 'flat quiz',
+      knowledge_ids: [],
+      intent_source: 'quiz_gen',
+      source: 'ai_generated',
+      tool_kind: 'quiz_gen',
+      tool_state: { question_ids: ['q1'] } as never,
+      generation_status: 'ready',
+      verification_status: 'not_required',
+      history: [],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+
+    const startRes = await POST(
+      jsonReq('http://localhost/api/practice', { artifact_id: 'p_flat' }),
+    );
+    expect(startRes.status).toBe(200);
+    const { session_id } = (await startRes.json()) as { session_id: string };
+
+    const subRes = await submitPost(
+      jsonReq('http://localhost/api/practice/p_flat/submit', {
+        session_id,
+        question_id: 'q1',
+        answer_md: 'true',
+      }),
+      { params: Promise.resolve({ id: 'p_flat' }) },
+    );
+    expect(subRes.status).toBe(200);
+    const body = (await subRes.json()) as { coarse_outcome: string; visible_to_user: boolean };
+    expect(body.coarse_outcome).toBe('correct');
+    expect(body.visible_to_user).toBe(true);
+  });
 });
