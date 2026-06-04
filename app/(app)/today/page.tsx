@@ -3,9 +3,13 @@
 import type { AiProposalKindT } from '@/core/schema/proposal';
 import { apiJson } from '@/ui/lib/api';
 import { Badge } from '@/ui/primitives/Badge';
+import { Btn } from '@/ui/primitives/Btn';
 import { Button } from '@/ui/primitives/Button';
-import { PageHeader } from '@/ui/primitives/PageHeader';
-import { TodayCopilotDrawer } from '@/ui/today/TodayCopilotDrawer';
+import { LoomBadge } from '@/ui/primitives/LoomBadge';
+import { LoomCard } from '@/ui/primitives/LoomCard';
+import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { SectionLabel } from '@/ui/primitives/SectionLabel';
+import { useCountUp } from '@/ui/primitives/useCountUp';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useState } from 'react';
@@ -125,8 +129,6 @@ export default function TodayPage() {
     ? proposalGroupCounts(proposalKpi.by_kind)
     : emptyProposalGroups;
   const pendingAiCount = proposalKpi?.total ?? 0;
-  const pendingAiValue = proposalKpi?.has_more ? `${proposalKpi.limit}+` : pendingAiCount;
-  const pendingAiLoading = proposalKpiQ.isLoading;
 
   async function undoAiChanges(eventIds: string[]) {
     setUndoingAiChangeIds(eventIds);
@@ -141,64 +143,141 @@ export default function TodayPage() {
     }
   }
 
-  const causeCounts = new Map<string, number>();
-  for (const m of mistakeRows) {
-    if (m.cause) {
-      causeCounts.set(
-        m.cause.primary_category,
-        (causeCounts.get(m.cause.primary_category) ?? 0) + 1,
-      );
-    }
-  }
-  const topCauses = [...causeCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
+  // hero Copilot button — mirror app/(app)/layout.tsx openCopilot: the shell
+  // mounts TodayCopilotDrawer globally with a hidden trigger; we drive it by
+  // clicking that trigger instead of mounting a second drawer here.
+  const openCopilot = () => {
+    const trigger = document.querySelector<HTMLButtonElement>(
+      '[data-testid="copilot-drawer-trigger"]',
+    );
+    trigger?.click();
+  };
+
+  // time-of-day greeting — loom screen-today.jsx LoomHero greet buckets
+  // verbatim (hour thresholds 5 / 11 / 14 / 18). No user name (single-user
+  // tool has no user model — gap §4); end with the 。full stop.
+  const hour = new Date().getHours();
+  const greet =
+    hour < 5
+      ? '夜深了'
+      : hour < 11
+        ? '早上好'
+        : hour < 14
+          ? '午安'
+          : hour < 18
+            ? '下午好'
+            : '晚上好';
+
+  const kpis = [
+    {
+      key: 'due',
+      icon: 'review' as const,
+      label: 'FSRS · 到期',
+      value: dueCount,
+      foot: '到期复习',
+      route: '/review',
+    },
+    {
+      key: 'mistakes',
+      icon: 'mistakes' as const,
+      label: '错题 · 待归因',
+      value: pendingAttrCount,
+      foot: pendingAttrCount > 0 ? 'attempt:failure 无 judge' : '全部已归因',
+      route: '/mistakes',
+    },
+    {
+      key: 'proposals',
+      icon: 'inbox' as const,
+      label: 'AI 提议 · 待审',
+      value: pendingAiCount,
+      foot: proposalKpiSub(proposalGroups, proposalKpi?.has_more ?? false),
+      route: '/inbox',
+    },
+    {
+      key: 'knowledge',
+      icon: 'knowledge' as const,
+      label: '知识点',
+      value: knowledgeCount,
+      foot: 'tree + mesh',
+      route: '/knowledge',
+    },
+  ];
 
   return (
-    <main className="page wide today-page">
-      <PageHeader
-        title="今日"
-        eyebrow={`TODAY · ${new Date().toISOString().slice(0, 10)} · phase 1c`}
-        sub="昨晚 Dreaming agent 跑过；下面是它想让你看的几件事，再加你自己排的复习队列。"
-      >
-        <TodayCopilotDrawer />
-        <Button variant="secondary" icon="refresh" onClick={() => queryClient.invalidateQueries()}>
-          刷新
-        </Button>
-        <Link href="/record" style={{ textDecoration: 'none' }}>
-          <Button variant="primary" icon="pen">
-            录入
-          </Button>
-        </Link>
-      </PageHeader>
+    <main className="page wide today-page today-loom">
+      <LoomCard padLg className="loom-hero">
+        <svg
+          className="hero-weave"
+          viewBox="0 0 600 180"
+          preserveAspectRatio="none"
+          aria-hidden="true"
+        >
+          <path className="wv wv1" d="M0 60 C 150 60, 150 100, 300 100 S 450 60, 600 60" />
+          <path className="wv wv2" d="M0 90 C 150 90, 150 130, 300 130 S 450 90, 600 90" />
+          <path className="wv wv3" d="M0 120 C 150 120, 150 160, 300 160 S 450 120, 600 120" />
+        </svg>
+        <div className="hero-inner">
+          <div className="eyebrow">
+            <span className="dot-sep">●</span>TODAY · {new Date().toISOString().slice(0, 10)} ·
+            phase 1c
+          </div>
+          <h1 className="page-title serif hero-title">{greet}。</h1>
+          <p className="page-lead">
+            昨晚 Dreaming agent 跑过；下面是它想让你看的几件事，再加你自己排的复习队列。
+          </p>
+          <div className="hero-cta">
+            <Link href="/review" style={{ textDecoration: 'none' }}>
+              <Btn variant="primary" icon="review">
+                开始今日复习
+              </Btn>
+            </Link>
+            <Link href="/record" style={{ textDecoration: 'none' }}>
+              <Btn variant="secondary" icon="record">
+                录入
+              </Btn>
+            </Link>
+            <Btn variant="ghost" icon="refresh" onClick={() => queryClient.invalidateQueries()}>
+              刷新
+            </Btn>
+            <Btn variant="ghost" icon="copilot" onClick={openCopilot}>
+              打开 Copilot
+            </Btn>
+          </div>
+        </div>
+      </LoomCard>
 
-      <div className="kpi-strip">
-        <Kpi
-          label="FSRS · 到期"
-          value={dueCount}
-          loading={dueQ.isLoading}
-          href="/review"
-          trendUp={dueCount > 0}
+      <div className="kpi-row stagger" style={{ marginTop: 'var(--s-5)' }}>
+        {kpis.map((kpi) => (
+          <KpiCard key={kpi.key} kpi={kpi} />
+        ))}
+      </div>
+
+      <SectionLabel count="3 缕">今日之线</SectionLabel>
+      <div className="threads-grid stagger">
+        <ThreadCard
+          tone="coral"
+          icon="review"
+          label="LANE A · 复习"
+          title={dueCount > 0 ? `${dueCount} 张卡片到期` : '队列已清空'}
+          cta="开始复习"
+          route="/review"
+          badge={dueCount > 0 ? dueCount : null}
         />
-        <Kpi
-          label="错题 · 待归因"
-          value={pendingAttrCount}
-          loading={mistakesQ.isLoading}
-          href="/mistakes"
-          trend={pendingAttrCount > 0 ? 'attempt:failure 无 judge' : '全部已归因'}
+        <ThreadCard
+          tone="info"
+          icon="items"
+          label="LANE B · 意图"
+          title={activeItemsCount > 0 ? `${activeItemsCount} 个意图在途` : '暂无在途意图'}
+          cta="查看学习项"
+          route="/learning-items"
         />
-        <Kpi
-          label="AI 提议 · 待审"
-          value={pendingAiValue}
-          loading={pendingAiLoading}
-          href="/inbox"
-          trend={proposalTrend(proposalKpi, proposalGroups)}
-          trendUp={pendingAiCount > 0}
-        />
-        <Kpi
-          label="知识点"
-          value={knowledgeCount}
-          loading={knowledgeQ.isLoading}
-          href="/knowledge"
-          trend="tree + mesh"
+        <ThreadCard
+          tone="good"
+          icon="graph"
+          label="LANE C · Coach"
+          title="本周报表"
+          cta="查看周报"
+          route="/coach"
         />
       </div>
 
@@ -217,85 +296,69 @@ export default function TodayPage() {
         hasMore={proposalKpi?.has_more ?? false}
       />
 
-      <div className="lanes">
-        <Lane
-          eyebrow="LANE A"
-          title="复习队列 · FSRS"
-          badge={<Badge tone="coral">{dueCount} 到期</Badge>}
-        >
-          <p className="lane-empty" hidden={dueCount > 0}>
-            没有到期的复习任务。
-          </p>
-          {dueCount > 0 && (
-            <div className="lane-body">
-              <div className="lane-item">
-                <div className="top">
-                  <span>共 {dueCount} 题待复习</span>
-                </div>
-                <div className="body">
-                  {topCauses.length === 0
-                    ? '尚无归因数据 — 先去 /mistakes 归因，FSRS 复习权重会更准。'
-                    : `按 cause 分布：${topCauses.map(([k, v]) => `${k} ${v}`).join(' · ')}`}
-                </div>
-              </div>
-            </div>
-          )}
-          <div className="lane-cta">
-            <Link href="/review" style={{ textDecoration: 'none' }}>
-              <Button variant="coral" disabled={dueCount === 0}>
-                开始 review_session →
-              </Button>
-            </Link>
-          </div>
-        </Lane>
-
-        <Lane
-          eyebrow="LANE B"
-          title="学习意图"
-          badge={<Badge tone="neutral">{activeItemsCount} 在途</Badge>}
-        >
-          {activeItemsCount === 0 ? (
-            <p className="lane-empty">没有在途学习项 — 去 /learning-items 加。</p>
-          ) : (
-            <div className="lane-body">
-              <div className="lane-item">
-                <div className="top">
-                  <span>{activeItemsCount} 个 pending + in_progress</span>
-                </div>
-                <div className="body muted">挂在 /learning-items；hub 与子项已通。</div>
-              </div>
-            </div>
-          )}
-          <div className="lane-cta">
-            <Link href="/learning-items" style={{ textDecoration: 'none' }}>
-              <Button variant="secondary">打开 →</Button>
-            </Link>
-          </div>
-        </Lane>
-
-        <Lane eyebrow="LANE C" title="Coach · 周度报表" badge={<Badge tone="info">7d</Badge>}>
-          <div className="lane-body">
-            <div className="lane-item">
-              <div className="top">
-                <span>过去 7 天的 FSRS / 错题 / 归因 / 成本</span>
-              </div>
-              <div className="body muted">正确率趋势、易错知识点、cause 分布。</div>
-            </div>
-          </div>
-          <div className="lane-cta">
-            <Link href="/coach" style={{ textDecoration: 'none' }}>
-              <Button variant="secondary">查看 →</Button>
-            </Link>
-          </div>
-        </Lane>
-      </div>
-
       <CostRibbon
         cost={costQ.data ?? null}
         loading={costQ.isLoading}
         error={costQ.error as Error | null}
       />
     </main>
+  );
+}
+
+interface KpiCardData {
+  key: string;
+  icon: Parameters<typeof LoomIcon>[0]['name'];
+  label: string;
+  value: number;
+  foot: string;
+  route: string;
+}
+
+function KpiCard({ kpi }: { kpi: KpiCardData }) {
+  const v = useCountUp(kpi.value, { dur: 1000 });
+  return (
+    <Link href={kpi.route} className="kpi-link" style={{ textDecoration: 'none' }}>
+      <LoomCard pad hover className="kpi">
+        <div className="kpi-label">
+          <LoomIcon name={kpi.icon} size={14} />
+          {kpi.label}
+        </div>
+        <div className="kpi-val tnum">{Math.round(v)}</div>
+        <div className="kpi-foot kpi-sub">{kpi.foot}</div>
+        <LoomIcon name="arrow" size={15} className="kpi-go" />
+      </LoomCard>
+    </Link>
+  );
+}
+
+interface ThreadCardProps {
+  tone: 'coral' | 'info' | 'good';
+  icon: Parameters<typeof LoomIcon>[0]['name'];
+  label: string;
+  title: string;
+  cta: string;
+  route: string;
+  badge?: number | null;
+}
+
+function ThreadCard({ tone, icon, label, title, cta, route, badge }: ThreadCardProps) {
+  return (
+    <Link href={route} className="thread-link" style={{ textDecoration: 'none' }}>
+      <LoomCard hover pad className="thread-card">
+        <div className="thread-top">
+          <span className={`card-icon accent thread-ic tone-${tone}`}>
+            <LoomIcon name={icon} size={18} />
+          </span>
+          {badge != null && badge > 0 && <LoomBadge tone={tone}>{badge}</LoomBadge>}
+          <LoomIcon name="arrow" size={16} className="thread-arrow" />
+        </div>
+        <div className="thread-label meta">{label}</div>
+        <div className="thread-title serif">{title}</div>
+        <div className="thread-cta">
+          {cta} <LoomIcon name="arrow" size={14} />
+        </div>
+      </LoomCard>
+    </Link>
   );
 }
 
@@ -541,8 +604,9 @@ function proposalGroupCounts(counts: ProposalKindCounts): ProposalGroups {
   return groups;
 }
 
-function proposalTrend(kpi: TodayProposalKpi | null, groups: ProposalGroups): string {
-  if (!kpi || kpi.total === 0) return '全部清空';
+// KPI foot sub for the AI-proposal card — derived from the existing 5-group
+// breakdown (not raw kinds, per pre-flight §4 gap). Empty when nothing pending.
+function proposalKpiSub(groups: ProposalGroups, hasMore: boolean): string {
   const parts = [
     groups.edges > 0 ? `关系 ${groups.edges}` : null,
     groups.nodes > 0 ? `新节点 ${groups.nodes}` : null,
@@ -550,8 +614,8 @@ function proposalTrend(kpi: TodayProposalKpi | null, groups: ProposalGroups): st
     groups.content > 0 ? `内容 ${groups.content}` : null,
     groups.review > 0 ? `复核 ${groups.review}` : null,
   ].filter((part): part is string => Boolean(part));
-  const suffix = kpi.has_more ? ' · 还有更多' : '';
-  return `${parts.length > 0 ? parts.join(' · ') : `待审 ${kpi.total}`}${suffix}`;
+  if (parts.length === 0) return '全部清空';
+  return `${parts.join(' · ')}${hasMore ? ' · 还有更多' : ''}`;
 }
 
 function InboxStrip({
@@ -619,51 +683,6 @@ function InboxStrip({
         </Link>
       </div>
     </div>
-  );
-}
-
-interface KpiProps {
-  label: string;
-  value: number | string;
-  loading: boolean;
-  href: string;
-  trend?: string;
-  trendUp?: boolean;
-}
-
-function Kpi({ label, value, loading, href, trend, trendUp }: KpiProps) {
-  return (
-    <Link href={href} className="kpi kpi-clickable">
-      <div className="kpi-label">{label}</div>
-      <div className="kpi-num">
-        {loading ? '—' : value}
-        <small> 条</small>
-      </div>
-      {trend && <div className={`kpi-trend${trendUp ? ' up' : ''}`}>{trend}</div>}
-    </Link>
-  );
-}
-
-interface LaneProps {
-  eyebrow: string;
-  title: string;
-  badge?: React.ReactNode;
-  stub?: boolean;
-  children?: React.ReactNode;
-}
-
-function Lane({ eyebrow, title, badge, stub, children }: LaneProps) {
-  return (
-    <section className={`lane${stub ? ' is-stub' : ''}`}>
-      <div className="lane-head">
-        <div>
-          <div className="lane-eyebrow">{eyebrow}</div>
-          <h3>{title}</h3>
-        </div>
-        {badge}
-      </div>
-      {children}
-    </section>
   );
 }
 
