@@ -41,10 +41,22 @@ const FILTERS: Array<{ id: FilterId; label: string; icon?: 'target' | 'pencil' |
 /** Is this paper in "today" bucket: generating (not failed), not started, or in-progress. */
 function isToday(p: PracticePaperItem): boolean {
   if (p.generation_status === 'failed') return false; // failed → show in past/error bucket
-  if (p.generation_status !== 'ready') return true; // pending/generating
+  if (p.generation_status !== 'ready') return true; // pending/generating (not failed)
   const st = p.session?.status ?? null;
-  if (st === null || st === 'abandoned') return false;
-  return st !== 'completed';
+  // CR Round-2 #3359486401: a ready paper with no session is "today" if it was
+  // created today (same calendar date). Papers created on previous days with no
+  // session have been sitting untouched and belong in 往日.
+  if (st === null) {
+    const today = new Date();
+    const c = p.created_at;
+    return (
+      c.getFullYear() === today.getFullYear() &&
+      c.getMonth() === today.getMonth() &&
+      c.getDate() === today.getDate()
+    );
+  }
+  if (st === 'abandoned') return false; // abandoned → 往日
+  return st !== 'completed'; // started/paused → today
 }
 
 /** Is this paper in "往日" bucket: a completed (or abandoned+ready) past paper. */

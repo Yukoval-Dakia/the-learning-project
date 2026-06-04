@@ -25,7 +25,7 @@
 //   - pause/resume via /api/review/sessions/[id]/{pause,resume}
 
 import type { PaperDetailResult, PaperDetailSlot } from '@/server/review/paper-detail';
-import { apiJson } from '@/ui/lib/api';
+import { apiJson, getInternalToken } from '@/ui/lib/api';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
@@ -33,6 +33,23 @@ import { SkLines } from '@/ui/primitives/SkLines';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
+
+// ── keepalive fetch helper ────────────────────────────────────────────────────
+// sendBeacon cannot carry custom headers (→ 401). Use fetch with keepalive:true
+// instead so the request survives navigation / unload while still passing the
+// x-internal-token header required by middleware.ts.
+function keepaliveFetch(url: string, body?: string): void {
+  const token = getInternalToken();
+  if (!token) return;
+  const headers: HeadersInit = { 'x-internal-token': token };
+  if (body !== undefined) headers['content-type'] = 'application/json';
+  void fetch(url, {
+    method: 'POST',
+    keepalive: true,
+    headers,
+    ...(body !== undefined ? { body } : {}),
+  });
+}
 
 // ── slot display state ────────────────────────────────────────────────────────
 
@@ -109,9 +126,9 @@ export default function PracticeAnswerPage() {
     if (paper.session) {
       const st = paper.session.status;
       if (st === 'abandoned') {
-        // Fix 2: abandoned session must be reopened first (only /reopen can revive it;
-        // other endpoints 409 against abandoned). No silent fallback — error surfaces
-        // to the user so the session state stays coherent and draft answers are preserved.
+        // Fix 1 (CR Round-2 #3359476199): reopen abandoned session; if reopen
+        // fails, fall back to creating a brand-new session. If both fail, reset
+        // startedRef so the user can retry rather than being stuck with no session.
         const abandonedSessionId = paper.session.id; // capture before async
         startedRef.current = true;
         setStartingSession(true);
@@ -123,7 +140,22 @@ export default function PracticeAnswerPage() {
             void qc.invalidateQueries({ queryKey: ['practice-detail', artifactId] });
           })
           .catch(() => {
-            setStartingSession(false);
+            // reopen failed — fall back to a new session for this paper
+            apiJson<{ session_id: string }>('/api/practice', {
+              method: 'POST',
+              body: JSON.stringify({ artifact_id: artifactId }),
+            })
+              .then((data) => {
+                setSessionId(data.session_id);
+                updateStatus('started');
+                setStartingSession(false);
+                void qc.invalidateQueries({ queryKey: ['practice-detail', artifactId] });
+              })
+              .catch(() => {
+                // both paths failed: reset guard so user can retry
+                startedRef.current = false;
+                setStartingSession(false);
+              });
           });
         return;
       }
@@ -155,16 +187,19 @@ export default function PracticeAnswerPage() {
   }, [paper, artifactId, updateStatus, qc]);
 
   // ── pagehide beacon ────────────────────────────────────────────────────────
-  // Fix 1: pagehide only pauses — never completes — to prevent premature
-  // feedback reveal on a partially-answered paper. Complete fires exclusively
-  // from the allDone effect when the user has submitted all slots.
+  // pagehide only pauses — never completes — to prevent premature feedback
+  // reveal on a partially-answered paper. Complete fires exclusively from the
+  // allDone effect when the user has submitted all slots.
+  //
+  // CR Round-2 #3359486404: navigator.sendBeacon cannot carry custom headers
+  // so it gets a 401 from middleware. Use keepalive fetch instead.
   useEffect(() => {
     const sid = sessionId;
     if (!sid) return;
     const onPageHide = () => {
       if (sessionClosedRef.current) return;
       if (sessionStatusRef.current === 'paused' || sessionStatusRef.current === 'completed') return;
-      navigator.sendBeacon(`/api/review/sessions/${sid}/pause`);
+      keepaliveFetch(`/api/review/sessions/${sid}/pause`);
     };
     window.addEventListener('pagehide', onPageHide);
     return () => window.removeEventListener('pagehide', onPageHide);
@@ -261,17 +296,57 @@ export default function PracticeAnswerPage() {
   // ── autosave debounce ──────────────────────────────────────────────────────
   const autosaveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
-  // SHOULD-FIX #3: cleanup all pending autosave timers on unmount
-  useEffect(() => {
+  // Tracks the pending draft payload for each slot key so the unmount cleanup
+  // can flush unsaved answers without needing access to React state.
+  // CR Round-2 #3359486408: unmount must flush rather than silently drop drafts.
+  const pendingDrafts = useRef<
+    Record<string, { question_id: string; part_ref: string | null; content_md: string }>
+  >({});
+
+  // Flush all pending draft autosaves using keepalive fetch (survives unload).
+  // Called from both the unmount cleanup and the pagehide handler.
+  const flushPendingDrafts = useRef(() => {
+    const sid = sessionIdRef.current;
+    if (!sid) return;
     const timers = autosaveTimers.current;
+    const drafts = pendingDrafts.current;
+    for (const key of Object.keys(timers)) {
+      clearTimeout(timers[key]);
+      delete timers[key];
+      const d = drafts[key];
+      if (d) {
+        keepaliveFetch(
+          `/api/practice/${artifactIdRef.current}/answer`,
+          JSON.stringify({ session_id: sid, ...d }),
+        );
+        delete drafts[key];
+      }
+    }
+  });
+
+  // Stable refs for artifactId and sessionId so the flush closure above can
+  // read the latest values without being re-created on every render.
+  const artifactIdRef = useRef(artifactId);
+  artifactIdRef.current = artifactId;
+  const sessionIdRef = useRef(sessionId);
+  sessionIdRef.current = sessionId;
+
+  // CR Round-2 #3359486408: on unmount flush pending drafts before clearing timers.
+  useEffect(() => {
     return () => {
-      for (const id of Object.values(timers)) clearTimeout(id);
+      flushPendingDrafts.current();
     };
   }, []);
 
   function scheduleAutosave(slot: PaperDetailSlot, answer: string) {
     const key = slotKey(slot);
     clearTimeout(autosaveTimers.current[key]);
+    // Track the latest draft payload so flushPendingDrafts can send it on unmount.
+    pendingDrafts.current[key] = {
+      question_id: slot.question_id,
+      part_ref: slot.part_ref ?? null,
+      content_md: answer,
+    };
     autosaveTimers.current[key] = setTimeout(() => {
       if (!sessionId) return;
       void apiJson(`/api/practice/${artifactId}/answer`, {
@@ -287,6 +362,8 @@ export default function PracticeAnswerPage() {
         ...prev,
         [key]: { ...prev[key], autosavePending: false },
       }));
+      delete autosaveTimers.current[key];
+      delete pendingDrafts.current[key];
     }, 500);
   }
 
@@ -350,10 +427,15 @@ export default function PracticeAnswerPage() {
   function handleSubmit(slot: PaperDetailSlot) {
     const key = slotKey(slot);
     if (submitM.isPending || slotStates[key]?.submitResult) return;
-    // Fix 5: cancel any pending autosave for this slot before submitting to
-    // prevent a stale /answer call from rebuilding a live draft after submit.
+    // Cancel pending autosave timer and synchronously clear the pending flag
+    // (CR Round-2 #3359476204: without this, "草稿保存中…" sticks after submit failure).
     clearTimeout(autosaveTimers.current[key]);
     delete autosaveTimers.current[key];
+    delete pendingDrafts.current[key];
+    setSlotStates((prev) => ({
+      ...prev,
+      [key]: { ...prev[key], autosavePending: false },
+    }));
     const answer = slotStates[key]?.answer ?? '';
     submitM.mutate({ slot, answerMd: answer });
   }
