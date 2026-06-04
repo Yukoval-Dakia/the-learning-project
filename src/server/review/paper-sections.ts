@@ -20,14 +20,59 @@ type ToolStateLike =
   | null
   | undefined;
 
+// U4 ReviewPlanSection shape as written by write_review_plan (review-plan-tools.ts).
+// knowledge_ids (not knowledge_focus), feedback_policy/adaptation_policy are
+// unknown/optional. Must be normalized before returning as ToolStateSectionT.
+type U4Section = {
+  knowledge_ids?: string[];
+  feedback_policy?: unknown;
+  adaptation_policy?: unknown;
+  assignments?: Array<{
+    question_id?: string;
+    part_ref?: string;
+    primary_knowledge_id?: string;
+    secondary_knowledge_ids?: string[];
+    selection_reason?: string;
+    review_profile_snapshot?: unknown;
+  }>;
+};
+
+/**
+ * Normalize a U4 session_meta section (ReviewPlanSection shape) into the
+ * promoted U5 ToolStateSectionT shape. Field mapping mirrors toToolStateSections
+ * in review-plan-tools.ts: knowledge_ids → knowledge_focus, with safe defaults.
+ */
+function normalizeU4Section(raw: U4Section): ToolStateSectionT {
+  return {
+    knowledge_focus: Array.isArray(raw.knowledge_ids) ? raw.knowledge_ids : [],
+    feedback_policy: typeof raw.feedback_policy === 'string' ? raw.feedback_policy : 'immediate',
+    adaptation_policy: typeof raw.adaptation_policy === 'string' ? raw.adaptation_policy : 'none',
+    assignments: Array.isArray(raw.assignments)
+      ? raw.assignments.map((a) => ({
+          question_id: a.question_id ?? '',
+          ...(a.part_ref !== undefined ? { part_ref: a.part_ref } : {}),
+          primary_knowledge_id: a.primary_knowledge_id ?? '',
+          secondary_knowledge_ids: Array.isArray(a.secondary_knowledge_ids)
+            ? a.secondary_knowledge_ids
+            : [],
+          selection_reason: a.selection_reason ?? '',
+          review_profile_snapshot:
+            a.review_profile_snapshot && typeof a.review_profile_snapshot === 'object'
+              ? (a.review_profile_snapshot as Record<string, unknown>)
+              : {},
+        }))
+      : [],
+  };
+}
+
 /**
  * Resolve the section list for a paper, preferring the U5 top-level `sections`
  * and falling back to the U4 `session_meta.sections`. Returns [] when neither
  * is present (a flat quiz with no structured plan).
  *
- * Note: this returns the raw stored shape (already Zod-parsed when read via
- * Artifact.parse(); the session_meta fallback is a loose record). Callers that
- * need the validated ToolStateSection shape should parse the result.
+ * The session_meta legacy path NORMALIZES the U4 ReviewPlanSection shape
+ * (knowledge_ids → knowledge_focus, etc.) before returning. Top-level sections
+ * are already in the promoted U5 shape and returned as-is.
  */
 export function readPaperSections(toolState: ToolStateLike): ToolStateSectionT[] {
   if (!toolState) return [];
@@ -37,7 +82,7 @@ export function readPaperSections(toolState: ToolStateLike): ToolStateSectionT[]
   const meta = toolState.session_meta as { sections?: unknown } | null | undefined;
   const metaSections = meta?.sections;
   if (Array.isArray(metaSections)) {
-    return metaSections as ToolStateSectionT[];
+    return (metaSections as U4Section[]).map(normalizeU4Section);
   }
   return [];
 }

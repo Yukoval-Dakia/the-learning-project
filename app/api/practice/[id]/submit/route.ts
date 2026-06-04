@@ -74,18 +74,31 @@ export async function POST(
       db,
     );
 
-    return Response.json({
-      attempt_event_id: result.attemptEventId,
-      judge_event_id: result.judgeEventId,
-      answer_id: result.answerId,
-      // Derived visibility (§4.9). The independent judge event carries the gate;
-      // the read layer derives 可见. The submit response echoes whether THIS slot's
-      // feedback is immediately visible so the answering page can show the judge
-      // panel or a "feedback buffered" placeholder.
-      visible_to_user: result.visibleToUser,
-      coarse_outcome: result.coarseOutcome,
-      score: result.score,
-    });
+    // Derived visibility (§4.9). The independent judge event carries the gate;
+    // the read layer derives 可见. The submit response echoes whether THIS slot's
+    // feedback is immediately visible so the answering page can show the judge
+    // panel or a "feedback buffered" placeholder.
+    //
+    // When visible_to_user:false, coarse_outcome and score are structurally
+    // ABSENT — same discipline as the GET buffered variant (§4.9 server boundary).
+    return Response.json(
+      result.visibleToUser
+        ? {
+            attempt_event_id: result.attemptEventId,
+            judge_event_id: result.judgeEventId,
+            answer_id: result.answerId,
+            visible_to_user: true,
+            coarse_outcome: result.coarseOutcome,
+            score: result.score,
+          }
+        : {
+            attempt_event_id: result.attemptEventId,
+            judge_event_id: result.judgeEventId,
+            answer_id: result.answerId,
+            visible_to_user: false,
+            feedback_buffered: true,
+          },
+    );
   } catch (err) {
     return errorResponse(err);
   }

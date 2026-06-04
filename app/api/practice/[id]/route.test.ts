@@ -269,7 +269,9 @@ describe('GET /api/practice/[id]', () => {
     } | null;
     expect(sub?.submitted).toBe(true);
     expect(sub?.visible_to_user).toBe(true);
-    expect(sub?.outcome).toBe('success'); // correct → success
+    // fix #2: outcome is coarse_outcome from judge payload ('correct'), not
+    // the judge event's own outcome field ('success').
+    expect(sub?.outcome).toBe('correct');
     expect(sub?.answer_md).toBe('true'); // user's own answer echoed back
     expect(sub?.reference_md).toBe('true'); // from question.reference_md
   });
@@ -334,12 +336,13 @@ describe('GET /api/practice/[id]', () => {
     const db = testDb();
     const { sessionId } = await Review.startReviewSession(db, { artifactId: 'p1' });
 
+    // Submit the correct answer so coarse_outcome='correct' after reveal.
     await submitPaperSlot(
       {
         sessionId,
         paperArtifactId: 'p1',
         questionId: 'q1',
-        answerMd: 'my revealed answer',
+        answerMd: 'true', // matches reference_md='true' → correct
         primaryKnowledgeId: 'k1',
         feedbackPolicy: 'judge_now_show_later',
       },
@@ -380,10 +383,11 @@ describe('GET /api/practice/[id]', () => {
     // Completed session reveals buffered feedback.
     expect(sub?.submitted).toBe(true);
     expect(sub?.visible_to_user).toBe(true);
-    expect(sub?.outcome).toBe('success');
+    // fix #2: coarse_outcome from judge payload ('correct') not event.outcome ('success').
+    expect(sub?.outcome).toBe('correct');
     expect('feedback_buffered' in (sub ?? {})).toBe(false);
     // answer_md + reference_md now visible.
-    expect(sub?.answer_md).toBe('my revealed answer');
+    expect(sub?.answer_md).toBe('true'); // user's own answer echoed back
     expect(sub?.reference_md).toBe('true'); // from question.reference_md
   });
 

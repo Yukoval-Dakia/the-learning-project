@@ -57,6 +57,74 @@ describe('readPaperSections (U4→U5 forward-compat shim)', () => {
   });
 });
 
+describe('readPaperSections — U4 session_meta normalization', () => {
+  // U4 write_review_plan stores ReviewPlanSection shape inside session_meta.sections.
+  // ReviewPlanSection has knowledge_ids (not knowledge_focus), feedback_policy/
+  // adaptation_policy as unknown. readPaperSections must normalize before returning
+  // so callers always receive ToolStateSectionT (knowledge_focus, string policies).
+  const u4Section = {
+    subject_id: 'wenyan',
+    knowledge_ids: ['k_wenyan', 'k_poetry'],
+    feedback_policy: 'immediate',
+    adaptation_policy: 'none',
+    assignments: [
+      {
+        question_id: 'q1',
+        primary_knowledge_id: 'k_wenyan',
+        secondary_knowledge_ids: ['k_poetry'],
+        selection_reason: 'high-due',
+        review_profile_snapshot: { fsrs_stability: 1.5 },
+      },
+    ],
+  };
+
+  it('normalizes U4 session_meta section: knowledge_ids → knowledge_focus', () => {
+    const out = readPaperSections({
+      question_ids: [],
+      session_meta: { sections: [u4Section] },
+    } as never);
+    expect(out).toHaveLength(1);
+    // Core normalization: knowledge_ids must appear as knowledge_focus.
+    expect(out[0].knowledge_focus).toEqual(['k_wenyan', 'k_poetry']);
+    // Policies must be strings (not undefined).
+    expect(out[0].feedback_policy).toBe('immediate');
+    expect(out[0].adaptation_policy).toBe('none');
+  });
+
+  it('normalizes U4 assignment fields: primary_knowledge_id + secondary_knowledge_ids', () => {
+    const out = readPaperSections({
+      question_ids: [],
+      session_meta: { sections: [u4Section] },
+    } as never);
+    const a = out[0].assignments[0];
+    expect(a.question_id).toBe('q1');
+    expect(a.primary_knowledge_id).toBe('k_wenyan');
+    expect(a.secondary_knowledge_ids).toEqual(['k_poetry']);
+    expect(a.selection_reason).toBe('high-due');
+    expect((a.review_profile_snapshot as Record<string, unknown>).fsrs_stability).toBe(1.5);
+  });
+
+  it('defaults missing feedback_policy + adaptation_policy to safe values', () => {
+    const minimal = {
+      knowledge_ids: ['k1'],
+      assignments: [
+        {
+          question_id: 'q1',
+          primary_knowledge_id: 'k1',
+          secondary_knowledge_ids: [],
+        },
+      ],
+    };
+    const out = readPaperSections({
+      question_ids: [],
+      session_meta: { sections: [minimal] },
+    } as never);
+    expect(out[0].feedback_policy).toBe('immediate');
+    expect(out[0].adaptation_policy).toBe('none');
+    expect(out[0].knowledge_focus).toEqual(['k1']);
+  });
+});
+
 describe('resolveSlotAssignment', () => {
   const toolState = { question_ids: ['q1', 'q2'], sections: [section] as never };
 
