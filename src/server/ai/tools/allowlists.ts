@@ -21,6 +21,9 @@ export const READ_TOOLS = [
   'get_review_due',
   'get_learning_item_context',
   'query_memory_brief',
+  // YUK-203 U4 / L-memtool — Mem0 fact-layer retrieval (D7②). Granted only to
+  // coach / dreaming / copilot below; NOT to review_plan / evaluator surfaces.
+  'search_memory_facts',
 ] as const;
 
 export const PROPOSE_WRITE_TOOLS = [
@@ -84,6 +87,8 @@ const COPILOT_TOOLS = [
   'get_attempt_context',
   'get_review_due',
   'propose_knowledge_edge',
+  // YUK-203 U4 / L-memtool (D7②) — Mem0 fact retrieval.
+  'search_memory_facts',
 ] as const satisfies readonly DomainToolName[];
 
 const DREAMING_TOOLS = [
@@ -97,6 +102,8 @@ const DREAMING_TOOLS = [
   'propose_learning_item_relearn',
   'propose_record_links',
   'propose_record_promotion',
+  // YUK-203 U4 / L-memtool (D7②) — Mem0 fact retrieval.
+  'search_memory_facts',
 ] as const satisfies readonly DomainToolName[];
 
 // T-D6/C (YUK-120) — Coach surface allowlist.
@@ -124,10 +131,22 @@ const COACH_TOOLS = [
   'propose_learning_item_archive',
   'propose_knowledge_mutation',
   'propose_knowledge_edge',
+  // YUK-203 U4 / L-memtool (D7②) — Mem0 fact retrieval.
+  'search_memory_facts',
 ] as const satisfies readonly DomainToolName[];
 
+// D7③ (docs/design/2026-06-04-u0-decisions.md) — deny-from-wide: the
+// evaluator/operator surfaces must NOT read memory facts. `search_memory_facts`
+// now lives in READ_TOOLS (granted to coach/dreaming/copilot), so the wide
+// Maintenance read base must filter it back out rather than spreading READ_TOOLS
+// wholesale. This is the single chokepoint keeping Maintenance memory-free.
+const MAINTENANCE_READ_TOOLS = READ_TOOLS.filter(
+  (name): name is Exclude<ReadDomainToolName, 'search_memory_facts'> =>
+    name !== 'search_memory_facts',
+);
+
 const MAINTENANCE_TOOLS = [
-  ...READ_TOOLS,
+  ...MAINTENANCE_READ_TOOLS,
   'propose_knowledge_edge',
   'propose_knowledge_mutation',
   'propose_learning_item_completion',

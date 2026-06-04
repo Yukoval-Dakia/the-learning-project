@@ -44,6 +44,7 @@ import {
   updatePromptTool,
 } from './question-edit-tools';
 import { getTool, registerTool } from './registry';
+import { searchMemoryFactsTool } from './search-memory-facts';
 import type { DomainTool } from './types';
 
 const CORE_TOOLS: ReadonlyArray<DomainTool<unknown, unknown>> = [
@@ -60,6 +61,9 @@ const CORE_TOOLS: ReadonlyArray<DomainTool<unknown, unknown>> = [
   getReviewDueTool as DomainTool<unknown, unknown>,
   getLearningItemContextTool as DomainTool<unknown, unknown>,
   queryMemoryBriefTool as DomainTool<unknown, unknown>,
+  // YUK-203 U4 / L-memtool — Mem0 fact-layer retrieval (granted to
+  // coach/dreaming/copilot only via allowlists; D7②).
+  searchMemoryFactsTool as DomainTool<unknown, unknown>,
   proposeKnowledgeEdgeTool as DomainTool<unknown, unknown>,
   proposeKnowledgeMutationTool as DomainTool<unknown, unknown>,
   attributeMistakeTool as DomainTool<unknown, unknown>,
