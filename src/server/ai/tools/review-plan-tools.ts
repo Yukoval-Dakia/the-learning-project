@@ -9,7 +9,7 @@
 // the EXISTING flat ToolState shape (ToolStateT v2 is U5 scope — D3 §4-①).
 
 import { ReviewSessionProposal } from '@/core/schema/coach';
-import { artifact, knowledge, knowledge_mastery } from '@/db/schema';
+import { artifact, knowledge, knowledge_mastery, question } from '@/db/schema';
 import { getLatestCoachPlan } from '@/server/today/coach-plan';
 import { createId } from '@paralleldrive/cuid2';
 import { inArray } from 'drizzle-orm';
@@ -491,6 +491,36 @@ function validateReviewPlanContract(plan: ReviewPlanContractT): void {
   }
 }
 
+// Existence + non-draft backstop for the planner-supplied question_ids
+// (codex-review #3357652733). Throws with a message listing the offending ids
+// so the failure is auditable (and, in the boss handler, fails the job so it
+// retries rather than persisting an unrunnable ready paper).
+async function assertQuestionsExistAndRunnable(
+  ctx: ToolContext,
+  questionIds: string[],
+): Promise<void> {
+  const wanted = [...new Set(questionIds)];
+  if (wanted.length === 0) return;
+  const rows = await ctx.db
+    .select({ id: question.id, draft_status: question.draft_status })
+    .from(question)
+    .where(inArray(question.id, wanted));
+  const found = new Map(rows.map((r) => [r.id, r.draft_status]));
+
+  const missing = wanted.filter((id) => !found.has(id));
+  if (missing.length > 0) {
+    throw new Error(
+      `write_review_plan: assignment question_id(s) do not exist: [${missing.join(',')}]`,
+    );
+  }
+  const drafts = wanted.filter((id) => found.get(id) === 'draft');
+  if (drafts.length > 0) {
+    throw new Error(
+      `write_review_plan: assignment question_id(s) are draft (unrunnable): [${drafts.join(',')}]`,
+    );
+  }
+}
+
 async function executeWriteReviewPlan(
   ctx: ToolContext,
   rawInput: WriteReviewPlanInput,
@@ -503,7 +533,34 @@ async function executeWriteReviewPlan(
 
   const questionIds = plan.sections.flatMap((s) => s.assignments.map((a) => a.question_id));
   const subjectIds = [...new Set(plan.subject_ids)];
-  const knowledgeIds = [...new Set(plan.sections.flatMap((s) => s.knowledge_ids))];
+
+  // Validate the planned question IDs against `question` BEFORE persisting
+  // (codex-review #3357652733). The planner is an LLM; a hallucinated id or a
+  // draft question would otherwise produce a `ready` review paper that the
+  // session can't execute. Two invariants are HARD-enforced here:
+  //   - existence: every assignment question_id must resolve to a real row;
+  //   - non-draft: Guard-B (`draft_status='draft'` is unrunnable in review).
+  // candidate-pool membership is NOT re-checkable here: the candidate pool
+  // lives in `select_review_question_candidates`'s output, not in this tool's
+  // input. So `guardrail_checks.candidate_pool_only` is the planner's own
+  // self-attestation that it only assigned pool-sourced questions; existence +
+  // non-draft are the backstop this tool can prove against the DB.
+  await assertQuestionsExistAndRunnable(ctx, questionIds);
+
+  // Derive artifact knowledge_ids from the FULL union of section-level
+  // knowledge_ids ∪ every assignment's primary + secondary knowledge ids
+  // (codex-review #3357652748). section.knowledge_ids defaults to [] and the
+  // validator only requires per-assignment primary_knowledge_id, so a plan that
+  // omits section-level ids would otherwise write `knowledge_ids: []` — leaving
+  // the paper invisible to knowledge-node backlinks / by-knowledge entry points.
+  const knowledgeIds = [
+    ...new Set([
+      ...plan.sections.flatMap((s) => s.knowledge_ids),
+      ...plan.sections.flatMap((s) =>
+        s.assignments.flatMap((a) => [a.primary_knowledge_id, ...a.secondary_knowledge_ids]),
+      ),
+    ]),
+  ];
   const now = new Date();
   const artifactId = `review_plan_${createId()}`;
 
