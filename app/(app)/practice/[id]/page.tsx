@@ -107,9 +107,28 @@ export default function PracticeAnswerPage() {
   useEffect(() => {
     if (!paper || startedRef.current) return;
     if (paper.session) {
-      // adopt the existing session
-      setSessionId(paper.session.id);
       const st = paper.session.status;
+      if (st === 'abandoned') {
+        // Fix 2: abandoned session must be reopened first (only /reopen can revive it;
+        // other endpoints 409 against abandoned). No silent fallback — error surfaces
+        // to the user so the session state stays coherent and draft answers are preserved.
+        const abandonedSessionId = paper.session.id; // capture before async
+        startedRef.current = true;
+        setStartingSession(true);
+        apiJson(`/api/review/sessions/${abandonedSessionId}/reopen`, { method: 'POST' })
+          .then(() => {
+            setSessionId(abandonedSessionId);
+            updateStatus('started');
+            setStartingSession(false);
+            void qc.invalidateQueries({ queryKey: ['practice-detail', artifactId] });
+          })
+          .catch(() => {
+            setStartingSession(false);
+          });
+        return;
+      }
+      // adopt existing started / paused / completed session
+      setSessionId(paper.session.id);
       const mapped: 'started' | 'paused' | 'completed' =
         st === 'completed' ? 'completed' : st === 'paused' ? 'paused' : 'started';
       updateStatus(mapped);
@@ -135,30 +154,20 @@ export default function PracticeAnswerPage() {
       });
   }, [paper, artifactId, updateStatus, qc]);
 
-  // ── pagehide beacon (same as review/page.tsx) ──────────────────────────────
+  // ── pagehide beacon ────────────────────────────────────────────────────────
+  // Fix 1: pagehide only pauses — never completes — to prevent premature
+  // feedback reveal on a partially-answered paper. Complete fires exclusively
+  // from the allDone effect when the user has submitted all slots.
   useEffect(() => {
     const sid = sessionId;
     if (!sid) return;
     const onPageHide = () => {
       if (sessionClosedRef.current) return;
-      if (sessionStatusRef.current === 'paused') return;
-      sessionClosedRef.current = true;
-      const body = new Blob([JSON.stringify({ status: 'completed' })], {
-        type: 'application/json',
-      });
-      navigator.sendBeacon(`/api/review/sessions/${sid}/end`, body);
+      if (sessionStatusRef.current === 'paused' || sessionStatusRef.current === 'completed') return;
+      navigator.sendBeacon(`/api/review/sessions/${sid}/pause`);
     };
     window.addEventListener('pagehide', onPageHide);
-    return () => {
-      window.removeEventListener('pagehide', onPageHide);
-      if (sid && !sessionClosedRef.current && sessionStatusRef.current !== 'paused') {
-        sessionClosedRef.current = true;
-        void apiJson(`/api/review/sessions/${sid}/end`, {
-          method: 'POST',
-          body: JSON.stringify({ status: 'completed' }),
-        }).catch(() => {});
-      }
-    };
+    return () => window.removeEventListener('pagehide', onPageHide);
   }, [sessionId]);
 
   // ── pause / resume mutations ───────────────────────────────────────────────
@@ -216,15 +225,17 @@ export default function PracticeAnswerPage() {
   // current active slot = first unsubmitted
   const [activeSlotIdx, setActiveSlotIdx] = useState(0);
 
-  // Reset activeSlotIdx when paper loads. Derive from server slot_state.submission
-  // (not local slotStates) — local state may not be initialized yet when this runs
-  // (both useEffects share the same dependency; React doesn't guarantee state
-  // updates from one are visible in another within the same flush).
+  // Fix 3: init activeSlotIdx only once per paper (artifact_id), not on every
+  // refetch. Using artifactId as dependency (stable) + ref guard prevents the
+  // post-submit invalidate from resetting activeSlotIdx back to slot 0.
+  // Advancement after each submit is handled explicitly in submitM.onSuccess.
+  const activeSlotInitRef = useRef<string | null>(null);
   useEffect(() => {
-    if (allSlots.length === 0) return;
+    if (allSlots.length === 0 || activeSlotInitRef.current === artifactId) return;
+    activeSlotInitRef.current = artifactId;
     const firstUnsubmitted = allSlots.findIndex((s) => !s.slot_state.submission);
     setActiveSlotIdx(firstUnsubmitted >= 0 ? firstUnsubmitted : allSlots.length - 1);
-  }, [allSlots]);
+  }, [allSlots, artifactId]);
 
   // count submitted slots
   const submittedCount = allSlots.filter((s) => !!slotStates[slotKey(s)]?.submitResult).length;
@@ -321,13 +332,28 @@ export default function PracticeAnswerPage() {
         ...prev,
         [key]: { ...prev[key], phase: 'feedback', submitResult: result },
       }));
+      // Fix 3: explicitly advance to the next unsubmitted slot after submit.
+      // This must happen after setSlotStates so the newly submitted slot is
+      // excluded; using functional update pattern to read current allSlots.
+      setActiveSlotIdx((currentIdx) => {
+        const submittedSlotIdx = allSlots.indexOf(vars.slot);
+        // Find next unsubmitted slot after the just-submitted one
+        for (let i = submittedSlotIdx + 1; i < allSlots.length; i++) {
+          if (!allSlots[i].slot_state.submission) return i;
+        }
+        // No next slot: stay on the submitted slot to show its feedback
+        return currentIdx;
+      });
     },
   });
 
   function handleSubmit(slot: PaperDetailSlot) {
     const key = slotKey(slot);
-    // SHOULD-FIX #4: guard against double-submit from Cmd+Enter race
     if (submitM.isPending || slotStates[key]?.submitResult) return;
+    // Fix 5: cancel any pending autosave for this slot before submitting to
+    // prevent a stale /answer call from rebuilding a live draft after submit.
+    clearTimeout(autosaveTimers.current[key]);
+    delete autosaveTimers.current[key];
     const answer = slotStates[key]?.answer ?? '';
     submitM.mutate({ slot, answerMd: answer });
   }
@@ -562,6 +588,30 @@ export default function PracticeAnswerPage() {
                       {slot.question.prompt_md || '（题面加载中）'}
                     </div>
 
+                    {/* choice options — rendered for both active and read-only views */}
+                    {slot.question.choices_md && slot.question.choices_md.length > 0 && (
+                      <ol className="practice-choices">
+                        {slot.question.choices_md.map((choice, ci) => {
+                          const label = String.fromCharCode(65 + ci); // A, B, C, D…
+                          return (
+                            <li key={label} className="practice-choice-item">
+                              <button
+                                type="button"
+                                className="practice-choice-btn"
+                                disabled={isReadOnly || isSubmitted}
+                                onClick={() =>
+                                  !isReadOnly && !isSubmitted && handleAnswerChange(slot, label)
+                                }
+                              >
+                                <span className="practice-choice-label">{label}</span>
+                                <span className="wenyan">{choice}</span>
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ol>
+                    )}
+
                     {/* answering phase — active, not yet submitted, session not completed */}
                     {!isReadOnly && isActive && phase === 'answering' && !isSubmitted && (
                       <>
@@ -573,7 +623,11 @@ export default function PracticeAnswerPage() {
                               ref={taRef}
                               rows={3}
                               value={localState.answer}
-                              placeholder="先用你自己的话作答，再提交……"
+                              placeholder={
+                                slot.question.choices_md?.length
+                                  ? '点击选项填入，或直接输入…'
+                                  : '先用你自己的话作答，再提交……'
+                              }
                               onChange={(e) => handleAnswerChange(slot, e.target.value)}
                               aria-label="作答"
                             />
