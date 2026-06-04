@@ -1,0 +1,75 @@
+/* Loom · Practice (练习) — 成卷练习 screen styling.
+   Reuses card / badge / chip / bar vocab; adds paper-card + dist-bar. */
+
+.practice-aux { display: flex; align-items: center; gap: var(--s-2); }
+
+/* region grids — today prominent, past denser */
+.paper-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--s-4); }
+
+/* ---------- paper card ---------- */
+.paper-card { display: flex; flex-direction: column; gap: var(--s-3); position: relative; }
+.paper-top { display: flex; align-items: flex-start; gap: var(--s-3); }
+.paper-src { width: 38px; height: 38px; }
+.paper-src.tone-coral { background: var(--coral-soft); color: var(--coral); border-color: var(--coral-line); }
+.paper-src.tone-info  { background: var(--info-soft);  color: var(--info);  border-color: var(--info-line); }
+.paper-src.tone-good  { background: var(--good-soft);  color: var(--good);  border-color: var(--good-line); }
+
+.paper-head-main { flex: 1; min-width: 0; }
+.paper-title { font-family: var(--font-serif); font-size: var(--fs-h4); font-weight: 500; letter-spacing: var(--ls-tight); line-height: var(--lh-snug); }
+.paper-meta { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-2); margin-top: 4px; font-family: var(--font-mono); font-size: var(--fs-meta); color: var(--ink-4); }
+.paper-meta .dot-sep { color: var(--ink-5); }
+.paper-meta span { white-space: nowrap; }
+
+.paper-count { text-align: right; flex: none; line-height: 1; }
+.paper-count b { display: block; font-family: var(--font-serif); font-size: var(--fs-h3); color: var(--ink); }
+.paper-count span { font-family: var(--font-mono); font-size: 11px; color: var(--ink-4); }
+
+/* knowledge chips */
+.paper-know { display: flex; flex-wrap: wrap; gap: 6px; }
+.paper-know .chip { font-size: 11px; padding: 3px 8px; }
+
+/* coach reason note */
+.paper-reason { display: flex; align-items: flex-start; gap: 6px; font-size: var(--fs-caption); color: var(--coral-ink); background: var(--coral-soft); border: 1px solid var(--coral-line); border-radius: var(--r-2); padding: var(--s-2) var(--s-3); }
+.paper-reason .ico { flex: none; margin-top: 1px; }
+
+/* in-progress position */
+.paper-prog { display: flex; align-items: center; gap: var(--s-3); }
+.paper-prog .bar { flex: 1; }
+.paper-prog .bar > span { background: var(--coral); }
+.paper-prog-label { font-family: var(--font-mono); font-size: var(--fs-meta); color: var(--ink-3); white-space: nowrap; }
+
+/* generating shimmer bar */
+.paper-genbar { display: flex; align-items: center; gap: var(--s-3); }
+.paper-genbar .bar { flex: 1; }
+.paper-genbar .bar > span { background: linear-gradient(90deg, var(--info), var(--coral)); background-size: 200% 100%; }
+[data-anim="on"] .paper-genbar .bar > span { animation: paper-gen 1.4s linear infinite; }
+@keyframes paper-gen { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.paper-gen-label { font-family: var(--font-mono); font-size: var(--fs-meta); color: var(--info-ink); white-space: nowrap; display: inline-flex; align-items: center; gap: 5px; }
+.paper-card.is-gen .paper-title { color: var(--ink-3); }
+
+/* ---------- done summary: dist + foot ---------- */
+.dist-row { display: flex; align-items: center; gap: var(--s-4); }
+.dist-block { flex: 1; min-width: 0; }
+.dist-bar { display: flex; height: 8px; border-radius: var(--r-pill); overflow: hidden; background: var(--paper-sunk); }
+.dist-seg { display: block; height: 100%; }
+.dist-seg.good  { background: var(--good); }
+.dist-seg.again { background: var(--again); }
+.dist-legend { margin-top: 6px; display: flex; align-items: center; gap: var(--s-2); font-family: var(--font-mono); font-size: var(--fs-meta); color: var(--ink-4); }
+.dist-legend .g-right { color: var(--good-ink); }
+.dist-legend .g-wrong { color: var(--again-ink); }
+.dist-score { text-align: right; flex: none; }
+.dist-score b { font-family: var(--font-serif); font-size: var(--fs-h4); color: var(--ink); white-space: nowrap; }
+.dist-score span { display: block; font-family: var(--font-mono); font-size: 10px; color: var(--ink-4); white-space: nowrap; }
+
+/* footer action row */
+.paper-foot { display: flex; align-items: center; gap: var(--s-2); margin-top: auto; padding-top: var(--s-1); }
+.paper-foot .paper-when { font-family: var(--font-mono); font-size: var(--fs-meta); color: var(--ink-4); margin-right: auto; white-space: nowrap; }
+
+/* past cards: a touch quieter than today */
+.paper-card.is-past { background: var(--paper-raised); }
+
+/* divider rule between regions handled by SectionLabel */
+
+@media (max-width: 920px) {
+  .paper-grid { grid-template-columns: 1fr; }
+}
