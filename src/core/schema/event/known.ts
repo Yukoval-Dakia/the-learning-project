@@ -71,6 +71,13 @@ export const JudgeOnEvent = z.object({
     profile_version: z.string().optional(),
     capability_ref: CapabilityRef.optional(),
     judge_route: JudgeKind.optional(),
+    // U5 (YUK-203, F1/Q1) — paper-path visibility gate. The independent paper
+    // judge event sets `false` for judge-now/show-later slots (feedback buffered
+    // until the paper completes); omitted/true → immediately visible. Optional so
+    // every historical judge event still parses (no backfill). Visibility is
+    // DERIVED at read time: 可见 = visible_to_user !== false || session completed.
+    // The single-question /api/review/submit embed path never sets this.
+    visible_to_user: z.boolean().optional(),
   }),
   ...baseOptionalFields,
 });

@@ -33,8 +33,14 @@ export const IngestionStatus = z.enum([
 ]);
 export type IngestionStatusT = z.infer<typeof IngestionStatus>;
 
-// review 状态机：started → completed | abandoned
-export const ReviewStatus = z.enum(['started', 'completed', 'abandoned']);
+// review 状态机：started ⇄ paused → completed | abandoned (↳ reopened → started)
+//
+// 'paused' 自 YUK-57 起就由 src/server/session/review.ts 写入/读出（pauseReview-
+// Session / resumeReviewSession），但本 Zod enum 一直漏了它，导致
+// LearningSessionStatusByType.parse({type:'review',status:'paused'}) 抛错。
+// U5 (YUK-203) 补齐——paper attempt session 走 review 状态机，practice 列表读时
+// 过 Zod 校验，paused 卷会爆。这同时修了既有 YUK-57 drift，非仅 paper 需要。
+export const ReviewStatus = z.enum(['started', 'paused', 'completed', 'abandoned']);
 export type ReviewStatusT = z.infer<typeof ReviewStatus>;
 
 // conversation 状态机 (ADR-0008 + YUK-14 / docs/design/2026-05-24-teaching-idle-state-machine.md)：
