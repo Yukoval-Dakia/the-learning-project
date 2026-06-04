@@ -88,6 +88,10 @@ export const BUDGETS_BY_SURFACE: Record<DomainToolSurface, ContextBudget> = {
   // budget until it needs an explicit one (no read-heavy fan-out; the 6 write
   // tools are local DB mutations).
   ingestion_block_edit: GENERIC_CONTEXT_BUDGET,
+  // YUK-203 U4 — the ReviewPlanTask surface uses the generic budget; its 4-tool
+  // loop is bounded by the task's own maxIterations (8) in the registry, and
+  // the per-message context throttle is not mounted on this nightly path.
+  review_plan: GENERIC_CONTEXT_BUDGET,
 };
 
 export function resolveContextBudget(surface: DomainToolSurface): ContextBudget {

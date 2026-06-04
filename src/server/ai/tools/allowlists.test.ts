@@ -3,6 +3,7 @@ import {
   DOMAIN_TOOL_ALLOWLISTS,
   PROPOSE_WRITE_TOOLS,
   READ_TOOLS,
+  REVIEW_PLAN_ONLY_TOOLS,
   resolveMcpAllowedTools,
 } from './allowlists';
 import { __resetBootstrapForTests, registerCoreTools } from './bootstrap';
@@ -106,7 +107,32 @@ describe('DomainTool allowlist policy', () => {
     ]);
     expect(DOMAIN_TOOL_ALLOWLISTS.maintenance).not.toContain('attribute_mistake');
     expect(DOMAIN_TOOL_ALLOWLISTS.maintenance).not.toContain('propose_variant');
-    expect(listTools().map((tool) => tool.name)).toEqual([...READ_TOOLS, ...PROPOSE_WRITE_TOOLS]);
+    // YUK-203 U4 — the 4 ReviewPlanTask tools are also bootstrapped into the
+    // registry (separate planner surface), so the full inventory now includes
+    // them after READ + PROPOSE_WRITE.
+    expect(listTools().map((tool) => tool.name)).toEqual([
+      ...READ_TOOLS,
+      ...PROPOSE_WRITE_TOOLS,
+      ...REVIEW_PLAN_ONLY_TOOLS,
+    ]);
+  });
+
+  // YUK-203 U4 / D5 / D7 — the ReviewPlanTask surface is exactly the 4 planner
+  // tools and reads NO memory (CO §6.1:664-666). This is a hard red line.
+  it('grants ReviewPlanTask exactly the 4 planner tools and NO memory tool', () => {
+    expect(DOMAIN_TOOL_ALLOWLISTS.review_plan).toEqual([
+      'read_coach_brief',
+      'get_review_knowledge_snapshot',
+      'select_review_question_candidates',
+      'write_review_plan',
+    ]);
+    // RED LINE (D7): no memory tool on the planner surface.
+    expect(DOMAIN_TOOL_ALLOWLISTS.review_plan).not.toContain('query_memory_brief');
+    expect(DOMAIN_TOOL_ALLOWLISTS.review_plan).not.toContain('search_memory_facts');
+    // And it never reaches into any propose/write tool from the shared surfaces.
+    for (const tool of PROPOSE_WRITE_TOOLS) {
+      expect(DOMAIN_TOOL_ALLOWLISTS.review_plan).not.toContain(tool);
+    }
   });
 
   it('grants search_memory_facts to coach / dreaming / copilot only (D7②/③)', () => {

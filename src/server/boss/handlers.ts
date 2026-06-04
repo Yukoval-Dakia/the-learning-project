@@ -24,6 +24,7 @@ import { buildPruneOrphanConversationSessionsHandler } from './handlers/prune_or
 import { buildPruneOrphanReviewSessionsHandler } from './handlers/prune_orphan_review_sessions';
 import { buildQuizGenHandler } from './handlers/quiz_gen';
 import { buildQuizVerifyHandler } from './handlers/quiz_verify';
+import { buildReviewPlanHandler } from './handlers/review_plan';
 import { buildSessionSummaryHandler } from './handlers/session_summary';
 import { buildTencentOcrHandler } from './handlers/tencent_ocr_extract';
 import { buildVariantGenHandler } from './handlers/variant_gen';
@@ -102,6 +103,18 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     buildDreamingNightlyHandler(db),
   );
   await boss.schedule('dreaming_nightly', '15 3 * * *', {}, { tz: 'Asia/Shanghai' });
+
+  // YUK-203 U4 / D5: review_plan — the tactical ReviewPlanTask queue. Registered
+  // BEFORE coach_daily so the worker is ready to accept the chained
+  // coach_daily → review_plan send (buildCoachDailyHandler enqueues it after a
+  // successful coach run; runtime map bullet 4). NO `schedule` — it is
+  // chain-triggered (and on-demand re-run), NOT a cron (D5:29 "不要另开独立 cron").
+  await boss.createQueue('review_plan');
+  await boss.work(
+    'review_plan',
+    { pollingIntervalSeconds: 2, batchSize: 1 },
+    buildReviewPlanHandler(db),
+  );
 
   // Wave 5 / T-D6/B (YUK-119): coach_daily + coach_weekly.
   // coach_daily runs nightly at BJT 03:45 — 30 min after dreaming_nightly

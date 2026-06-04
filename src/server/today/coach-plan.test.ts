@@ -10,7 +10,14 @@ const db = testDb();
 function plan(focus: string, extra: Partial<TodayPlanT> = {}): TodayPlanT {
   return {
     daily_focus: focus,
-    review_session_proposal: { count: 5, estimated_minutes: 20 },
+    // YUK-203 U4 — review_session_proposal grew brief fields (all defaulted).
+    review_session_proposal: {
+      count: 5,
+      estimated_minutes: 20,
+      knowledge_focus: [],
+      subject_mix: [],
+      intent_tags: [],
+    },
     plan_adjustments: [],
     maintenance_proposals: [],
     goal_ids: [],
