@@ -149,7 +149,7 @@ describe('runReviewPlan', () => {
           countReviewPlanArtifactsFn,
         },
       ),
-    ).rejects.toThrow(/wrote no review-plan artifact/);
+    ).rejects.toThrow(/wrote 0 review-plan artifacts \(expected exactly 1/);
 
     // The verification ran with the run's tool_context_task_run_id.
     expect(countReviewPlanArtifactsFn).toHaveBeenCalledWith(
@@ -165,6 +165,41 @@ describe('runReviewPlan', () => {
         payload: expect.objectContaining({
           error: expect.stringContaining('finishReason=stop'),
         }),
+      }),
+    );
+  });
+
+  // #3357817915 (handler second layer) — duplicate papers from one run fail the
+  // job rather than leaving the user with multiple review papers.
+  it('fails the job when the task wrote more than one review-plan artifact', async () => {
+    const db = {} as never;
+    const writeEventFn = vi.fn(async (_db, input) => input.id);
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_rp_dup',
+      text: 'wrote two plans',
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    const countReviewPlanArtifactsFn = vi.fn(async () => 2);
+
+    await expect(
+      runReviewPlan(
+        db,
+        { run_kind: 'daily', mode: 'initial_plan' },
+        {
+          buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+          runAgentTaskFn,
+          writeEventFn,
+          countReviewPlanArtifactsFn,
+        },
+      ),
+    ).rejects.toThrow(/wrote 2 review-plan artifacts \(expected exactly 1/);
+
+    expect(writeEventFn).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({
+        action: 'experimental:review_plan',
+        outcome: 'failure',
       }),
     );
   });
