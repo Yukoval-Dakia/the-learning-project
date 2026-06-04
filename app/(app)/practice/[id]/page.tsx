@@ -499,192 +499,212 @@ export default function PracticeAnswerPage() {
               </div>
             )}
 
-            {section.slots.map((slot) => {
-              const globalIdx = allSlots.indexOf(slot);
-              const key = slotKey(slot);
-              const localState = slotStates[key] ?? {
-                answer: slot.slot_state.draft?.content_md ?? '',
-                phase: slot.slot_state.submission ? 'feedback' : 'answering',
-                submitResult: serverSubToResult(slot.slot_state.submission),
-                autosavePending: false,
-              };
-              const isActive = globalIdx === activeSlotIdx;
-              const isSubmitted = !!localState.submitResult;
-              const phase = localState.phase;
+            {/* Build id→name map from section's parallel arrays for slot-level chips. */}
+            {(() => {
+              const sectionNameMap = new Map<string, string>(
+                section.knowledge_focus.map((id, i) => [
+                  id,
+                  section.knowledge_focus_names[i] ?? id,
+                ]),
+              );
+              return section.slots.map((slot) => {
+                const globalIdx = allSlots.indexOf(slot);
+                const key = slotKey(slot);
+                const localState = slotStates[key] ?? {
+                  answer: slot.slot_state.draft?.content_md ?? '',
+                  phase: slot.slot_state.submission ? 'feedback' : 'answering',
+                  submitResult: serverSubToResult(slot.slot_state.submission),
+                  autosavePending: false,
+                };
+                const isActive = globalIdx === activeSlotIdx;
+                const isSubmitted = !!localState.submitResult;
+                const phase = localState.phase;
 
-              return (
-                <section
-                  key={key}
-                  className="review-stage"
-                  style={isActive ? undefined : { opacity: 0.65 }}
-                  aria-current={isActive ? 'true' : undefined}
-                >
-                  {/* slot meta */}
-                  <div className="progress">
-                    <span>
-                      {globalIdx + 1} / {totalSlots}
-                      {slot.knowledge_focus.map((k) => (
-                        <span
-                          key={k}
-                          className="chip chip-k mono"
-                          style={{ marginLeft: 'var(--s-2)' }}
-                        >
-                          {k}
-                        </span>
-                      ))}
-                      {slot.part_ref && (
-                        <span className="badge tone-neutral" style={{ marginLeft: 'var(--s-2)' }}>
-                          {slot.part_ref}
-                        </span>
-                      )}
-                    </span>
-                    {!isActive && !isSubmitted && (
-                      <button
-                        type="button"
-                        className="btn-sm"
-                        onClick={() => setActiveSlotIdx(globalIdx)}
-                      >
-                        跳到此题
-                      </button>
-                    )}
-                  </div>
-
-                  {/* question body */}
-                  <div className="qbody wenyan">{slot.question.prompt_md || '（题面加载中）'}</div>
-
-                  {/* answering phase — active, not yet submitted, session not completed */}
-                  {!isReadOnly && isActive && phase === 'answering' && !isSubmitted && (
-                    <>
-                      <div className="label-mono">你的作答</div>
-                      <div className="answer-compose">
-                        <div className="answer-compose__editor">
-                          <textarea
-                            id={`answer-input-${key}`}
-                            ref={taRef}
-                            rows={3}
-                            value={localState.answer}
-                            placeholder="先用你自己的话作答，再提交……"
-                            onChange={(e) => handleAnswerChange(slot, e.target.value)}
-                            aria-label="作答"
-                          />
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s-3)' }}>
-                        <Btn
-                          variant="primary"
-                          icon="check"
-                          onClick={() => handleSubmit(slot)}
-                          disabled={submitM.isPending}
-                        >
-                          提交
-                        </Btn>
-                        <span className="label-mono" style={{ color: 'var(--ink-5)' }}>
-                          ⌘/Ctrl+Enter 提交
-                        </span>
-                        {localState.autosavePending && (
-                          <span className="label-mono" style={{ color: 'var(--ink-5)' }}>
-                            草稿保存中…
+                return (
+                  <section
+                    key={key}
+                    className="review-stage"
+                    style={isActive ? undefined : { opacity: 0.65 }}
+                    aria-current={isActive ? 'true' : undefined}
+                  >
+                    {/* slot meta */}
+                    <div className="progress">
+                      <span>
+                        {globalIdx + 1} / {totalSlots}
+                        {slot.knowledge_focus.map((id) => (
+                          <span
+                            key={id}
+                            className="chip chip-k mono"
+                            style={{ marginLeft: 'var(--s-2)' }}
+                          >
+                            {sectionNameMap.get(id) ?? id}
+                          </span>
+                        ))}
+                        {slot.part_ref && (
+                          <span className="badge tone-neutral" style={{ marginLeft: 'var(--s-2)' }}>
+                            {slot.part_ref}
                           </span>
                         )}
-                      </div>
-                      {submitM.isError && (
-                        <p
-                          className="empty"
-                          style={{ color: 'var(--again-ink)', marginTop: 'var(--s-2)' }}
+                      </span>
+                      {!isActive && !isSubmitted && (
+                        <button
+                          type="button"
+                          className="btn-sm"
+                          onClick={() => setActiveSlotIdx(globalIdx)}
                         >
-                          提交失败：{(submitM.error as Error).message}
-                        </p>
+                          跳到此题
+                        </button>
                       )}
-                    </>
-                  )}
+                    </div>
 
-                  {/* feedback phase — submitted, or read-only review of completed paper */}
-                  {(phase === 'feedback' && isSubmitted) ||
-                  (isReadOnly && !!slot.slot_state.submission) ? (
-                    <>
-                      {/* answer vs reference — feedback-split is a production class */}
-                      <div className="feedback-split">
-                        <div>
-                          <div className="label-mono">
-                            <LoomIcon name="pencil" size={13} /> 你的作答
-                          </div>
-                          <div className="wenyan" style={{ marginTop: 'var(--s-2)' }}>
-                            {/* In read-only mode, answer comes from server draft (frozen answer). */}
-                            {(isReadOnly
-                              ? slot.slot_state.draft?.content_md
-                              : localState.answer) || (
-                              <span className="quiet-empty">（未作答）</span>
-                            )}
+                    {/* question body */}
+                    <div className="qbody wenyan">
+                      {slot.question.prompt_md || '（题面加载中）'}
+                    </div>
+
+                    {/* answering phase — active, not yet submitted, session not completed */}
+                    {!isReadOnly && isActive && phase === 'answering' && !isSubmitted && (
+                      <>
+                        <div className="label-mono">你的作答</div>
+                        <div className="answer-compose">
+                          <div className="answer-compose__editor">
+                            <textarea
+                              id={`answer-input-${key}`}
+                              ref={taRef}
+                              rows={3}
+                              value={localState.answer}
+                              placeholder="先用你自己的话作答，再提交……"
+                              onChange={(e) => handleAnswerChange(slot, e.target.value)}
+                              aria-label="作答"
+                            />
                           </div>
                         </div>
-                        <div>
-                          <div className="label-mono">
-                            <LoomIcon name="check" size={13} /> 参考答案
-                          </div>
-                          <div
-                            className="wenyan feedback-prose muted"
-                            style={{ marginTop: 'var(--s-2)' }}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s-3)' }}>
+                          <Btn
+                            variant="primary"
+                            icon="check"
+                            onClick={() => handleSubmit(slot)}
+                            disabled={submitM.isPending}
                           >
-                            {/* reference_md not in server response (anti-cheat);
-                                revealed in learning-session view after completion. */}
-                            提交后可在学习会话中查看
-                          </div>
+                            提交
+                          </Btn>
+                          <span className="label-mono" style={{ color: 'var(--ink-5)' }}>
+                            ⌘/Ctrl+Enter 提交
+                          </span>
+                          {localState.autosavePending && (
+                            <span className="label-mono" style={{ color: 'var(--ink-5)' }}>
+                              草稿保存中…
+                            </span>
+                          )}
                         </div>
-                      </div>
+                        {submitM.isError && (
+                          <p
+                            className="empty"
+                            style={{ color: 'var(--again-ink)', marginTop: 'var(--s-2)' }}
+                          >
+                            提交失败：{(submitM.error as Error).message}
+                          </p>
+                        )}
+                      </>
+                    )}
 
-                      {/* judge outcome — in read-only mode use server slot_state directly */}
-                      {(() => {
-                        const result = isReadOnly
-                          ? serverSubToResult(slot.slot_state.submission)
-                          : localState.submitResult;
-                        if (result?.visible_to_user) {
+                    {/* feedback phase — submitted, or read-only review of completed paper */}
+                    {(phase === 'feedback' && isSubmitted) ||
+                    (isReadOnly && !!slot.slot_state.submission) ? (
+                      <>
+                        {/* answer vs reference — feedback-split is a production class */}
+                        {(() => {
+                          // Submission is guaranteed non-null when this block renders.
+                          const sub = slot.slot_state.submission;
+                          // "你的作答": always use submission.answer_md (frozen at submit time).
+                          const answerText = sub?.answer_md ?? localState.answer;
+                          // "参考答案": only present in the visible variant (§4.9).
+                          // answer_image_refs reserved: no image rendering pattern in codebase yet.
+                          const refMd = sub && 'reference_md' in sub ? sub.reference_md : undefined;
                           return (
-                            <div className="feedback-prose">
-                              <span
-                                className={`badge ${OUTCOME_TONE[result.coarse_outcome ?? 'unknown']}`}
-                              >
-                                {OUTCOME_LABEL[result.coarse_outcome ?? 'unknown']}
-                              </span>
-                              {result.score != null && (
-                                <span className="label-mono" style={{ marginLeft: 'var(--s-2)' }}>
-                                  {/* score is [0,1]; display as percentage */}
-                                  得分 {Math.round(result.score * 100)}%
-                                </span>
-                              )}
+                            <div className="feedback-split">
+                              <div>
+                                <div className="label-mono">
+                                  <LoomIcon name="pencil" size={13} /> 你的作答
+                                </div>
+                                <div className="wenyan" style={{ marginTop: 'var(--s-2)' }}>
+                                  {answerText || <span className="quiet-empty">（未作答）</span>}
+                                </div>
+                              </div>
+                              <div>
+                                <div className="label-mono">
+                                  <LoomIcon name="check" size={13} /> 参考答案
+                                </div>
+                                <div
+                                  className="wenyan feedback-prose muted"
+                                  style={{ marginTop: 'var(--s-2)' }}
+                                >
+                                  {refMd === undefined
+                                    ? // Buffered variant: reference_md structurally absent.
+                                      '提交后可在学习会话中查看'
+                                    : refMd === null
+                                      ? '本题无参考答案'
+                                      : refMd}
+                                </div>
+                              </div>
                             </div>
                           );
-                        }
-                        return (
-                          /* feedback_buffered placeholder (§4.9) */
-                          <div className="feedback-buffered">
-                            <LoomIcon name="clock" size={14} />
-                            <span>反馈已缓冲</span>
-                            <span className="label-mono" style={{ color: 'var(--ink-5)' }}>
-                              整卷完成后揭示
-                            </span>
-                          </div>
-                        );
-                      })()}
+                        })()}
 
-                      {/* next slot button — only in active answering mode, not read-only */}
-                      {!isReadOnly && isActive && globalIdx < totalSlots - 1 && (
-                        <div
-                          style={{
-                            display: 'flex',
-                            justifyContent: 'flex-end',
-                            marginTop: 'var(--s-1)',
-                          }}
-                        >
-                          <Btn variant="primary" iconEnd="arrow" onClick={handleNext}>
-                            下一题
-                          </Btn>
-                        </div>
-                      )}
-                    </>
-                  ) : null}
-                </section>
-              );
-            })}
+                        {/* judge outcome — in read-only mode use server slot_state directly */}
+                        {(() => {
+                          const result = isReadOnly
+                            ? serverSubToResult(slot.slot_state.submission)
+                            : localState.submitResult;
+                          if (result?.visible_to_user) {
+                            return (
+                              <div className="feedback-prose">
+                                <span
+                                  className={`badge ${OUTCOME_TONE[result.coarse_outcome ?? 'unknown']}`}
+                                >
+                                  {OUTCOME_LABEL[result.coarse_outcome ?? 'unknown']}
+                                </span>
+                                {result.score != null && (
+                                  <span className="label-mono" style={{ marginLeft: 'var(--s-2)' }}>
+                                    {/* score is [0,1]; display as percentage */}
+                                    得分 {Math.round(result.score * 100)}%
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          }
+                          return (
+                            /* feedback_buffered placeholder (§4.9) */
+                            <div className="feedback-buffered">
+                              <LoomIcon name="clock" size={14} />
+                              <span>反馈已缓冲</span>
+                              <span className="label-mono" style={{ color: 'var(--ink-5)' }}>
+                                整卷完成后揭示
+                              </span>
+                            </div>
+                          );
+                        })()}
+
+                        {/* next slot button — only in active answering mode, not read-only */}
+                        {!isReadOnly && isActive && globalIdx < totalSlots - 1 && (
+                          <div
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'flex-end',
+                              marginTop: 'var(--s-1)',
+                            }}
+                          >
+                            <Btn variant="primary" iconEnd="arrow" onClick={handleNext}>
+                              下一题
+                            </Btn>
+                          </div>
+                        )}
+                      </>
+                    ) : null}
+                  </section>
+                );
+              });
+            })()}
           </div>
         ))}
     </div>
