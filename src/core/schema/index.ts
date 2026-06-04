@@ -127,12 +127,23 @@ export type MemoryBriefNote = z.infer<typeof MemoryBriefNote>;
 // ---------- Artifact ----------
 export const Artifact = g.ArtifactSelectGenerated.extend({
   type: b.ArtifactType,
-  intent_source: z.enum(['learning_intent', 'declared', 'from_mistake', 'from_dream']),
+  // U5 (YUK-203) — widened so every paper row (Coach review_plan / quiz_gen /
+  // embedded_check) parses without throwing. The three new values are the live
+  // DB intent_source strings; `tool_kind` mirrors them. Pure additive enum.
+  intent_source: z.enum([
+    'learning_intent',
+    'declared',
+    'from_mistake',
+    'from_dream',
+    'review_plan',
+    'quiz_gen',
+    'embedded_check',
+  ]),
   body_blocks: b.ArtifactBodyBlocks.nullable(),
   knowledge_ids: z.array(z.string()),
   attrs: z.record(z.unknown()),
   tool_state: b.ToolState.nullable(),
-  tool_kind: z.enum(['quiz']).nullable(),
+  tool_kind: z.enum(['quiz', 'review_plan', 'quiz_gen', 'embedded_check']).nullable(),
   generation_status: b.ArtifactGenerationStatus,
   verification_status: b.ArtifactVerificationStatus,
   verification_summary: b.NoteVerificationResult.nullable(),
