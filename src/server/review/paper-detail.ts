@@ -21,7 +21,7 @@ import { Artifact } from '@/core/schema/index';
 import type { Db } from '@/db/client';
 import { answer, artifact, event, learning_session, question } from '@/db/schema';
 import { readPaperSections } from '@/server/review/paper-sections';
-import { isJudgementVisibleToUser } from '@/server/review/practice-read';
+import { isJudgementVisibleToUser, resolveKnowledgeNames } from '@/server/review/practice-read';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -82,6 +82,12 @@ export interface PaperDetailSlot {
 export interface PaperDetailSection {
   section_index: number;
   knowledge_focus: string[];
+  /**
+   * Human-readable names parallel to knowledge_focus[]. Index-aligned:
+   * knowledge_focus_names[i] is the name for knowledge_focus[i].
+   * Falls back to the id itself when the node is missing or archived.
+   */
+  knowledge_focus_names: string[];
   feedback_policy: string;
   slots: PaperDetailSlot[];
 }
@@ -227,7 +233,13 @@ export async function getPaperDetail(
     }
   }
 
-  // 5 & 6) Answer rows + judge outcomes — only meaningful if a session exists.
+  // 5) Knowledge name resolution for section headers — one IN query across all
+  //    knowledge_focus ids referenced by any section. archived_at not filtered
+  //    (historical papers must still display names). Falls back to id on miss.
+  const allFocusIds = [...new Set(rawSlots.flatMap((s) => s.knowledge_focus))];
+  const knowledgeNameMap = await resolveKnowledgeNames(db, allFocusIds);
+
+  // 6 & 7) Answer rows + judge outcomes — only meaningful if a session exists.
   //
   // Live draft: the single row WHERE submitted_at IS NULL for a slot.
   // Newest frozen: MAX(submitted_at) per slot — the submission to show feedback for.
@@ -466,9 +478,11 @@ export async function getPaperDetail(
       });
     }
 
+    const sectionFocus = firstSlot?.knowledge_focus ?? [];
     resultSections.push({
       section_index: si,
-      knowledge_focus: firstSlot?.knowledge_focus ?? [],
+      knowledge_focus: sectionFocus,
+      knowledge_focus_names: sectionFocus.map((id) => knowledgeNameMap.get(id) ?? id),
       feedback_policy: firstSlot?.feedback_policy ?? 'immediate',
       slots: detailSlots,
     });
