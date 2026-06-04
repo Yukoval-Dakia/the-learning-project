@@ -26,7 +26,7 @@ import { Stateful } from '@/ui/primitives/Stateful';
 import { useCountUp } from '@/ui/primitives/useCountUp';
 import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 interface WeeklyResponse {
   window: { days: number; from: number; to: number };
@@ -90,13 +90,11 @@ function CoachKpi({
 
 export default function CoachPage() {
   const [days, setDays] = useState<Window>(7);
-  // Re-arm count-up animations on window change (prototype L11-12 pattern).
-  const [active, setActive] = useState(false);
-  useEffect(() => {
-    setActive(false);
-    const id = requestAnimationFrame(() => setActive(true));
-    return () => cancelAnimationFrame(id);
-  }, []);
+  // Count-up animations: useCountUp(start: true) already animates 0→target on
+  // mount, and `key={days}` below remounts CoachReport on window change. The
+  // former rAF false→true toggle caused a one-frame final-value flash before
+  // replaying (CodeRabbit, PR #294).
+  const active = true;
 
   const q = useQuery({
     queryKey: ['weekly-review', days],

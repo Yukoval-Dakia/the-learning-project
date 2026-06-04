@@ -13,7 +13,7 @@
 |---|---|---|
 | **后端 chat 是非流式 JSON** | `POST /api/copilot/chat` → `Response.json(result)`，一次性返回最终 `reply`。**没有 SSE / token-by-token 流**。 | `app/api/copilot/chat/route.ts:13-22` |
 | 响应 shape | `{ task_run_id, reply, surface, triggered_by, user_ask_event_id? }`（`reply: string` 是完整文本） | `src/server/copilot/chat.ts:67-74, 326-332` |
-| 请求 shape | `{ user_message: string(1..4000), triggered_by: 'chat'|'chip', chip_kind?: string }` | `src/server/copilot/chat.ts:55-63` |
+| 请求 shape | `{ user_message: string(1..4000), triggered_by: 'chat' \| 'chip', chip_kind?: string }` | `src/server/copilot/chat.ts:55-63` |
 | **route 不向前端暴露 tool-call 明细** | `RunTaskResult` 只有 `{ task_run_id, text, finishReason, usage, cost_usd? }`。tool 调用日志写在 server 侧（`src/server/ai/log.ts` / events），**响应里没有 per-message tool-call 数组**。 | `src/server/ai/runner.ts:56-64` |
 | 事件留痕 | `runCopilotChat` 内部 `writeEvent(copilot_user_ask / copilot_chip_trigger)` + tool-use mirror events，**已在 server 侧完成**，前端不需要也不能碰。 | `chat.ts:201-236` |
 
