@@ -50,6 +50,7 @@
 ## 3. 数据映射
 
 ### 列表 / 详情接线（全复用，零改）
+
 | loom 字段 | 来源 |
 |---|---|
 | 列表 items | `itemsQ`（`/api/learning-items?limit=200[&status=]`），现有 |
@@ -60,6 +61,7 @@
 | Ring pct | **见缺口表**——列表 row 无 cards/mastered，drop Ring，改用健康条 |
 
 ### D11 健康条数据路径（**零新表 / 零写路径 / 零新 endpoint**）
+
 | 健康条字段 | 来源（全是已有 GET） |
 |---|---|
 | 「N 个知识点」 | `item.knowledge_ids.length`（已在两页 payload） |

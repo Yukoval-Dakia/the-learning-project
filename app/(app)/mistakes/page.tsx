@@ -6,7 +6,6 @@ import {
 } from '@/ui/correction/CorrectionStateRenderer';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
 import { formatRelTime } from '@/ui/lib/utils';
-import { Btn } from '@/ui/primitives/Btn';
 import { CauseBadge } from '@/ui/primitives/CauseBadge';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { LoomCard } from '@/ui/primitives/LoomCard';
@@ -74,16 +73,16 @@ export default function MistakesPage() {
         <div className="page-head-row">
           <h1 className="page-title serif">错题本</h1>
           <div className="hero-cta">
-            {/* Pure navigation chrome (no new data wiring): record + review. */}
-            <Link href="/record">
-              <Btn variant="ghost" size="sm" icon="record">
-                录新错题
-              </Btn>
+            {/* Pure navigation chrome (no new data wiring): record + review.
+                Link carries the .btn classes directly — nesting <Btn> (a real
+                <button>) inside <Link> renders invalid <a><button/></a>. */}
+            <Link href="/record" className="btn btn-ghost btn-sm">
+              <LoomIcon name="record" size={15} />
+              录新错题
             </Link>
-            <Link href="/review">
-              <Btn variant="primary" size="sm" icon="review">
-                重练薄弱点
-              </Btn>
+            <Link href="/review" className="btn btn-primary btn-sm">
+              <LoomIcon name="review" size={15} />
+              重练薄弱点
             </Link>
           </div>
         </div>
@@ -112,10 +111,9 @@ export default function MistakesPage() {
             title="还没有错题"
             text="复习答错或手动录入后，错题会聚到这里并自动归因。"
             action={
-              <Link href="/record">
-                <Btn variant="primary" size="sm" icon="record">
-                  录新错题
-                </Btn>
+              <Link href="/record" className="btn btn-primary btn-sm">
+                <LoomIcon name="record" size={15} />
+                录新错题
               </Link>
             }
           />
