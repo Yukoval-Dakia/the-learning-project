@@ -8756,6 +8756,10 @@ button.seg-sm {
 @keyframes loom-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+/* ============================================================
    LOOM MISTAKES LAYER — Wave 2 (YUK-169)
    /mistakes (错题本) card + chrome classes ported additively from
    loom-prototype @ f85aca6d (screen-mistakes.jsx MistakeCard).
@@ -8907,6 +8911,10 @@ button.seg-sm {
   .mistakes-loom .mistake-top {
     flex-direction: column;
     gap: var(--s-1);
+  }
+}
+
+/* ============================================================
    LOOM COACH LAYER — Wave 2 (YUK-169)
    /coach read-only weekly report. Ported additively from
    loom-prototype @ f85aca6d (screens-2b.css L186-218 + responsive
