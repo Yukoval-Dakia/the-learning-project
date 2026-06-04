@@ -92,10 +92,10 @@ export function PaperCard({ paper, onAction, past }: PaperCardProps) {
         </div>
       </div>
 
-      {/* ── knowledge chips ── */}
+      {/* ── knowledge chips — deduped by id ── */}
       {paper.knowledge.length > 0 && (
         <div className="paper-know">
-          {paper.knowledge.map((k) => (
+          {[...new Map(paper.knowledge.map((k) => [k.id, k])).values()].map((k) => (
             <span key={k.id} className="chip chip-k">
               {k.name}
             </span>
