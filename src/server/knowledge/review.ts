@@ -25,6 +25,7 @@ import type { KnowledgeEdgeProposalChangeT } from '@/core/schema/proposal';
 import { parseAiProposalPayload } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, proposal_signals } from '@/db/schema';
+import { readAgentNotes } from '@/server/agents/notes';
 import { streamTask } from '@/server/ai/runner';
 import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/server/ai/tools/budgets';
 import { getCorrectionStatuses } from '@/server/events/corrections';
@@ -61,6 +62,20 @@ async function buildReviewInput(db: Db) {
     .from(knowledge)
     .orderBy(knowledge.created_at);
 
+  // U8 / AF §4 — un-expired out-of-band hints addressed to 'maintenance'. HINTS,
+  // not facts (labelled as such in the input below); additive context only,
+  // never mutates durable learning facts (AF §2.4). Empty on the common path.
+  const agent_notes = (await readAgentNotes(db, { for_agent: 'maintenance', now: new Date() })).map(
+    (n) => ({
+      id: n.id,
+      signal_kind: n.signal_kind,
+      summary_md: n.summary_md,
+      refs: n.refs,
+      source_task_kind: n.source_task_kind,
+      ...(n.confidence !== undefined ? { confidence: n.confidence } : {}),
+    }),
+  );
+
   const attempts = await getFailureAttempts(db, { limit: RECENT_MISTAKES_LIMIT });
   const recent_mistakes = attempts.map((fa) => {
     const cause = effectiveCauseForFailureAttempt(fa);
@@ -87,6 +102,11 @@ async function buildReviewInput(db: Db) {
     input: {
       tree,
       recent_mistakes,
+      // U8 / AF §4 — these are HINTS left by narrow tasks, NOT facts: use them to
+      // direct maintenance attention (e.g. a flagged structural gap), never as
+      // ground truth, and keep proposing only (AF §2.4). Empty when no fresh
+      // notes exist → the task behaves exactly as before.
+      agent_notes,
     },
     subjectProfile: resolveSubjectProfile(resolveSingleTreeDomain(tree)),
   };
