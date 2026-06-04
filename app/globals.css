@@ -8907,5 +8907,303 @@ button.seg-sm {
   .mistakes-loom .mistake-top {
     flex-direction: column;
     gap: var(--s-1);
+   LOOM COACH LAYER — Wave 2 (YUK-169)
+   /coach read-only weekly report. Ported additively from
+   loom-prototype @ f85aca6d (screens-2b.css L186-218 + responsive
+   L311-322). Tokens-only; no new hues.
+
+   All rules scoped under .coach-loom:
+   - chrome classes (.page-head / .eyebrow / .page-title / .page-lead
+     / .seg) collide with ~40-surface legacy globals — scope per the
+     .knowledge-loom / .today-loom precedent.
+   - .coach-grid collides with the LEGACY /coach grid (globals L1608/
+     1673) that THIS redraw retires; legacy block left for the
+     L-cleanup wave-2 lane (grep=0 verified) — not removed here.
+   - new classes (.coach-kpi* / .dist-* / .cause-* / .stack-* /
+     .fail-*) are grep-confirmed absent globally; scoped for safety.
+   Reuses (NOT re-ported): .card(+pad) / .card-head / .card-icon
+   (+.accent) / .card-title / .serif / .tnum / .mono / .meta /
+   .wenyan / .thread-arrow / .tone-{again,hard,good} / .section-label
+   / Stateful (.empty* / .sk*).
+   ============================================================ */
+
+/* ---- page-head chrome (loom.css §App shell) ---- */
+.coach-loom .page-head {
+  margin-bottom: var(--s-6);
+}
+.coach-loom .eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+  margin-bottom: var(--s-2);
+  display: block;
+}
+.coach-loom .page-head-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s-4);
+  flex-wrap: wrap;
+}
+.coach-loom .page-title {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h1);
+  font-weight: 500;
+  letter-spacing: var(--ls-tight);
+  line-height: var(--lh-tight);
+}
+.coach-loom .page-lead {
+  color: var(--ink-3);
+  font-size: var(--fs-body-lg);
+  max-width: 58ch;
+  margin-top: var(--s-3);
+  line-height: var(--lh-prose);
+}
+
+/* ---- segmented window control (7/30/90), screens.css seg model ---- */
+.coach-loom .seg {
+  display: inline-flex;
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  padding: 2px;
+}
+.coach-loom .seg button {
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: var(--fs-caption);
+  padding: 6px 14px;
+  border-radius: var(--r-1);
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.coach-loom .seg button.on {
+  background: var(--paper-raised);
+  color: var(--ink);
+  box-shadow: var(--shadow-1);
+}
+
+/* ---- KPI cards (screens-2b.css L186-190) ---- */
+.coach-loom .coach-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--s-4);
+  margin-bottom: var(--s-6);
+}
+.coach-loom .coach-kpi {
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  padding: var(--s-4);
+  box-shadow: var(--shadow-1);
+}
+.coach-loom .coach-kpi-n {
+  font-size: var(--fs-h1);
+  line-height: 1;
+}
+.coach-loom .coach-kpi-u {
+  font-size: var(--fs-h5);
+  color: var(--ink-4);
+  margin-left: 2px;
+}
+.coach-loom .coach-kpi-l {
+  display: block;
+  margin-top: var(--s-2);
+}
+
+/* ---- 2-up grid: rating dist + cause dist (screens-2b.css L191) ---- */
+.coach-loom .coach-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-4);
+  margin-bottom: var(--s-2);
+}
+
+/* ---- rating distribution bar (screens-2b.css L192-198) ---- */
+.coach-loom .dist-bar {
+  display: flex;
+  height: 14px;
+  border-radius: var(--r-pill);
+  overflow: hidden;
+  background: var(--paper-sunk);
+  margin-bottom: var(--s-3);
+}
+.coach-loom .dist-seg {
+  display: block;
+  height: 100%;
+}
+.coach-loom .dist-seg.tone-again {
+  background: var(--again);
+}
+.coach-loom .dist-seg.tone-hard {
+  background: var(--hard);
+}
+.coach-loom .dist-seg.tone-good {
+  background: var(--good);
+}
+.coach-loom .dist-seg.tone-easy {
+  background: var(--info);
+}
+.coach-loom .dist-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-4);
+  font-size: var(--fs-caption);
+  color: var(--ink-3);
+}
+.coach-loom .dist-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.coach-loom .dist-key {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+.coach-loom .dist-key.tone-again {
+  background: var(--again);
+}
+.coach-loom .dist-key.tone-hard {
+  background: var(--hard);
+}
+.coach-loom .dist-key.tone-good {
+  background: var(--good);
+}
+.coach-loom .dist-key.tone-easy {
+  background: var(--info);
+}
+
+/* ---- cause distribution list (screens-2b.css L199-204) ---- */
+.coach-loom .cause-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.coach-loom .cause-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+.coach-loom .cause-name {
+  width: 92px;
+  flex: none;
+  font-size: var(--fs-caption);
+  color: var(--ink-2);
+}
+.coach-loom .cause-track {
+  flex: 1;
+  height: 8px;
+  border-radius: var(--r-pill);
+  background: var(--paper-sunk);
+  overflow: hidden;
+}
+.coach-loom .cause-track > span {
+  display: block;
+  height: 100%;
+  background: var(--info);
+  border-radius: var(--r-pill);
+}
+.coach-loom .cause-n {
+  font-size: 12px;
+  color: var(--ink-4);
+  width: 40px;
+  text-align: right;
+  flex: none;
+}
+
+/* ---- per-day stacked chart (screens-2b.css L205-211) ---- */
+.coach-loom .stack-chart {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-around;
+  gap: var(--s-2);
+  padding-top: var(--s-3);
+}
+.coach-loom .stack-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+.coach-loom .stack-bars {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  width: 60%;
+  max-width: 36px;
+}
+.coach-loom .stack-seg {
+  display: block;
+  width: 100%;
+}
+.coach-loom .stack-seg:first-child {
+  border-radius: var(--r-1) var(--r-1) 0 0;
+}
+.coach-loom .stack-seg.tone-good {
+  background: var(--good);
+}
+.coach-loom .stack-seg.tone-again {
+  background: var(--again);
+}
+.coach-loom .stack-total {
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+/* ---- failure ranking rows (screens-2b.css L212-218) ---- */
+.coach-loom .fail-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-2);
+  cursor: pointer;
+}
+.coach-loom .fail-row:hover {
+  background: var(--paper-sunk);
+}
+.coach-loom .fail-name {
+  width: 110px;
+  flex: none;
+}
+.coach-loom .fail-track {
+  flex: 1;
+  height: 10px;
+  border-radius: var(--r-pill);
+  background: var(--paper-sunk);
+  overflow: hidden;
+}
+.coach-loom .fail-track > span {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-pill);
+}
+.coach-loom .fail-track .tone-again {
+  background: var(--again);
+}
+.coach-loom .fail-n {
+  font-size: 12px;
+  color: var(--ink-3);
+  width: 46px;
+  text-align: right;
+  flex: none;
+}
+
+/* ---- responsive (screens-2b.css L311-322) ---- */
+@media (max-width: 900px) {
+  .coach-loom .coach-kpis {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .coach-loom .coach-grid {
+    grid-template-columns: 1fr;
   }
 }
