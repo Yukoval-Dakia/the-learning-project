@@ -11,12 +11,17 @@
 // many tool-loop seconds separated them.
 //
 // No new schema: all three actions live in the generic ExperimentalEvent escape
-// hatch and carry their text in payload. session_id is read from payload (the
-// events.session_id column is owned by the teaching state machine).
+// hatch and carry their text in payload. Replay is scoped to the CURRENT
+// reusable Copilot session (codex #3356884484): we resolve that session with the
+// same predicate find-or-create uses (Conversation.findReusableCopilotConversation),
+// then filter events by the events.session_id column — which every Copilot turn
+// event now writes (ask/chip + reply), the column being the event's conversation
+// session (teaching + copilot share it; payload.session_id is a portable copy).
 
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
-import { desc, eq, inArray, or } from 'drizzle-orm';
+import { findReusableCopilotConversation } from '@/server/session/conversation';
+import { and, desc, eq, inArray, or } from 'drizzle-orm';
 
 export type CopilotTurnRole = 'user' | 'ai';
 
@@ -64,12 +69,23 @@ function replyText(payload: Record<string, unknown>): string | null {
  */
 export async function getRecentCopilotTurns(
   dbArg: DbLike,
-  opts: { limit?: number } = {},
+  opts: { limit?: number; now?: Date } = {},
 ): Promise<CopilotTurn[]> {
   const limit = clampLimit(opts.limit);
 
-  // One query over all three actions, newest first, bounded by limit*2 (a turn
-  // pair is one user + one reply row, so ≤ limit*2 rows cover `limit` turns).
+  // codex #3356884484 — scope replay to the CURRENT reusable Copilot session.
+  // Resolve it with the SAME predicate find-or-create uses (shared helper) so a
+  // stale prior conversation (ended/abandoned, or last active >24h ago) is never
+  // replayed into what the server will treat as a fresh session. No reusable
+  // session → this is a brand-new conversation; return nothing to prefill.
+  const session = await findReusableCopilotConversation(dbArg as Db, { now: opts.now });
+  if (session === null) return [];
+
+  // One query over all three actions for THIS session, newest first, bounded by
+  // limit*2 (a turn pair is one user + one reply row, so ≤ limit*2 rows cover
+  // `limit` turns). Filter on the events.session_id column — every Copilot turn
+  // event (ask/chip + reply) now writes it (the column = the event's conversation
+  // session, shared by teaching + copilot; payload.session_id is the portable copy).
   const rows = await dbArg
     .select({
       id: event.id,
@@ -78,7 +94,12 @@ export async function getRecentCopilotTurns(
       created_at: event.created_at,
     })
     .from(event)
-    .where(or(inArray(event.action, [...USER_ACTIONS]), eq(event.action, REPLY_ACTION)))
+    .where(
+      and(
+        eq(event.session_id, session.id),
+        or(inArray(event.action, [...USER_ACTIONS]), eq(event.action, REPLY_ACTION)),
+      ),
+    )
     .orderBy(desc(event.created_at), desc(event.id))
     .limit(limit * 2);
 

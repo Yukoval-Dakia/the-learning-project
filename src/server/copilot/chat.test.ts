@@ -117,6 +117,10 @@ describe('runCopilotChat (two-surface routing)', () => {
     expect(writeEventFn).toHaveBeenCalledTimes(2);
     const askCall = writeEventFn.mock.calls[0]?.[1];
     expect(askCall?.action).toBe('experimental:copilot_user_ask');
+    // codex #3356884490 — the user ask carries the session_id on BOTH the events
+    // column (so promote_conversation_idle's event.session_id = ls.id join sees
+    // it as a user turn for this session) AND the payload (portable copy).
+    expect(askCall?.session_id).toBe('ls_envelope');
     expect((askCall?.payload as { session_id?: string }).session_id).toBe('ls_envelope');
 
     const replyCall = writeEventFn.mock.calls[1]?.[1];
@@ -248,6 +252,11 @@ describe('runCopilotChat (two-surface routing)', () => {
     expect(writeArg?.action).not.toBe('experimental:copilot_user_ask');
     expect(writeArg?.actor_kind).toBe('system');
     expect(writeArg?.actor_ref).toBe('ui:copilot_chip');
+    // codex #3356884490 — the chip trigger also carries the session_id column
+    // (not just payload) so chip-driven activity is attributed to this session
+    // for the idle clock + replay scoping, same as the ask path.
+    expect(writeArg?.session_id).toBe('ls_unit');
+    expect((writeArg?.payload as { session_id?: string }).session_id).toBe('ls_unit');
     // The second event is the reply turn (no user_ask anywhere on the chip path).
     const replyArg = writeEventFn.mock.calls[1]?.[1];
     expect(replyArg?.action).toBe('experimental:copilot_reply');

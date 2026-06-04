@@ -9,6 +9,11 @@ import type { Job } from 'pg-boss';
 
 import { type TodayPlanT, parseTodayPlan } from '@/core/schema/coach';
 import type { Db } from '@/db/client';
+// codex #3356884494 — Coach consumes the out-of-band agent-note HINT channel
+// (for_agent='coach'). quiz_verify leaves question_pool_gap notes targeting
+// 'coach', but nothing read them until now (the only live readers were Dreaming /
+// KnowledgeReview). Mirrors dreaming_nightly.ts: hints, not facts; additive only.
+import { type AgentNote, readAgentNotes } from '@/server/agents/notes';
 import { type RunTaskResult, runAgentTask } from '@/server/ai/runner';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
@@ -64,8 +69,16 @@ const COACH_PROPOSAL_FEEDBACK_GUIDANCE =
 // model's explicit, honest label.
 const COACH_SUGGESTION_KIND_GUIDANCE =
   " On each propose_* tool call set the optional suggestion_kind argument: use 'proactive' (the default — omit it) when you are proposing a next step off a successful read; use 'corrective' ONLY when the proposal repairs a specific failure you yourself just observed. A read that returns zero results is a legitimate success (you looked and found nothing), NOT a failure — do NOT label a proposal corrective merely because an upstream read came back empty. Only a genuine repair of an observed failure is corrective.";
-export const COACH_DAILY_OBJECTIVE = `Produce a TodayPlan for the user via the provided DomainTools. Only write proposals (defer / split / relearn / archive / completion / maintenance / knowledge_edge); never mutate user data directly. Prefer doing nothing if the day has no actionable adjustments.${COACH_GOAL_STRAND_GUIDANCE}${COACH_PROPOSAL_FEEDBACK_GUIDANCE}${COACH_SUGGESTION_KIND_GUIDANCE}`;
-export const COACH_WEEKLY_OBJECTIVE = `Produce a weekly TodayPlan with a \`weekly_reflection\` summary plus any plan adjustments / maintenance proposals via propose_* tools. Only write proposals; never mutate user data directly.${COACH_GOAL_STRAND_GUIDANCE}${COACH_PROPOSAL_FEEDBACK_GUIDANCE}${COACH_SUGGESTION_KIND_GUIDANCE}`;
+// codex #3356884494 / AF §4 — agent_notes are out-of-band HINTS left by narrow
+// tasks (provenance + expiry), NOT facts. Weigh them as soft attention priors
+// for the day's plan (e.g. a question_pool_gap hint = a knowledge point that may
+// still lack a usable question); never treat a note as ground truth and never
+// let it suppress the FSRS-due review backbone or signal-driven proposals (ND-5).
+// Empty agent_notes (the common case) = behave exactly as before.
+const COACH_AGENT_NOTES_GUIDANCE =
+  ' When agent_notes are present, treat each as a soft HINT (not a fact) left by a narrow task — it has a signal_kind, refs, and confidence; use it to direct attention when shaping the plan, never as ground truth, and never let it suppress or replace the FSRS-due review backbone or signal-driven proposals (ND-5). When agent_notes is empty, behave exactly as before.';
+export const COACH_DAILY_OBJECTIVE = `Produce a TodayPlan for the user via the provided DomainTools. Only write proposals (defer / split / relearn / archive / completion / maintenance / knowledge_edge); never mutate user data directly. Prefer doing nothing if the day has no actionable adjustments.${COACH_GOAL_STRAND_GUIDANCE}${COACH_PROPOSAL_FEEDBACK_GUIDANCE}${COACH_AGENT_NOTES_GUIDANCE}${COACH_SUGGESTION_KIND_GUIDANCE}`;
+export const COACH_WEEKLY_OBJECTIVE = `Produce a weekly TodayPlan with a \`weekly_reflection\` summary plus any plan adjustments / maintenance proposals via propose_* tools. Only write proposals; never mutate user data directly.${COACH_GOAL_STRAND_GUIDANCE}${COACH_PROPOSAL_FEEDBACK_GUIDANCE}${COACH_AGENT_NOTES_GUIDANCE}${COACH_SUGGESTION_KIND_GUIDANCE}`;
 
 // P5.4-L2 / YUK-174 (Facet A, §3.3) — the proposal kinds Coach can ACT on
 // (COACH_TOOLS). Coach proposes learning-item lifecycle (completion / relearn /
@@ -107,6 +120,10 @@ type ListActiveGoalsFn = (db: Db) => Promise<ActiveGoal[]>;
 // P5.4-L2 / YUK-174 (Facet A) — swappable feedback-digest reader (DB tests inject
 // fixtures), mirrors ListActiveGoalsFn. No-op on cold start (empty digest).
 type LoadProposalFeedbackFn = (db: Db) => Promise<ProposalFeedbackCell[]>;
+// codex #3356884494 / AF §4 — swappable agent-note reader (DB tests inject a
+// stub / [] so the {}-stub db is never touched). Defaults to
+// readAgentNotes(for_agent='coach'). Mirrors dreaming_nightly's ReadAgentNotesFn.
+type ReadAgentNotesFn = (db: Db, now: Date) => Promise<AgentNote[]>;
 
 export type CoachRunKind = 'daily' | 'weekly';
 
@@ -121,6 +138,10 @@ export interface CoachRunDeps {
   // P5.4-L2 / YUK-174 — defaults to getProposalFeedbackDigest; feeds the additive
   // reason digest, scoped to Coach's actable kinds. Cold-start inert (ND-5).
   loadProposalFeedbackFn?: LoadProposalFeedbackFn;
+  // codex #3356884494 / AF §4 — defaults to readAgentNotes(for_agent='coach').
+  // Reads the out-of-band hint channel. Additive only: hints bias attention,
+  // never the FSRS-due queue / review backbone (ND-5).
+  readAgentNotesFn?: ReadAgentNotesFn;
   now?: () => Date;
 }
 
@@ -131,6 +152,7 @@ function buildCoachInput(
   objective: string,
   activeGoals: ActiveGoal[],
   feedbackDigest: ProposalFeedbackCell[],
+  agentNotes: AgentNote[],
 ) {
   return {
     run_kind: runKind,
@@ -163,6 +185,18 @@ function buildCoachInput(
         top_dismiss_reasons: cell.top_dismiss_reasons,
         top_rubric_gates: cell.top_rubric_gates,
       })),
+    // codex #3356884494 / AF §4 — un-expired out-of-band hints addressed to
+    // 'coach'. HINTS, not facts (the COACH_AGENT_NOTES_GUIDANCE clause says so
+    // explicitly). Empty array when no fresh notes exist → model behaves exactly
+    // as before. Mirrors dreaming_nightly's agent_notes field shape.
+    agent_notes: agentNotes.map((n) => ({
+      id: n.id,
+      signal_kind: n.signal_kind,
+      summary_md: n.summary_md,
+      refs: n.refs,
+      source_task_kind: n.source_task_kind,
+      ...(n.confidence !== undefined ? { confidence: n.confidence } : {}),
+    })),
     budget: {
       // P5.1 / YUK-143 — sourced from COACH_CONTEXT_BUDGET (12 / 5),
       // byte-identical to the prior hardcoded literals.
@@ -196,6 +230,10 @@ export async function runCoach(
   const loadFeedback =
     deps.loadProposalFeedbackFn ??
     ((db: Db) => getProposalFeedbackDigest(db, PROPOSAL_FEEDBACK_BUDGET));
+  // codex #3356884494 / AF §4 — read un-expired hints addressed to Coach.
+  const readNotes =
+    deps.readAgentNotesFn ??
+    ((db: Db, now: Date) => readAgentNotes(db, { for_agent: 'coach', now }));
   const triggerActorRef = runKind === 'daily' ? 'nightly_coach' : 'weekly_coach';
   const objective = runKind === 'daily' ? COACH_DAILY_OBJECTIVE : COACH_WEEKLY_OBJECTIVE;
 
@@ -209,6 +247,11 @@ export async function runCoach(
   // reason bias. Read-only ADD; never touches the FSRS-due / review backbone.
   // Empty on cold start → the feed degrades to a no-op.
   const feedbackDigest = await loadFeedback(db);
+  // codex #3356884494 / AF §4 — read the un-expired out-of-band hints addressed
+  // to Coach (for_agent='coach'). Read-only ADD mirroring dreaming_nightly; hints
+  // bias attention only, never the FSRS-due queue / review backbone (ND-5). Empty
+  // in the common case → the COACH_AGENT_NOTES_GUIDANCE clause is inert.
+  const agentNotes = await readNotes(db, now);
   const triggerEventId = `coach_trigger_${createId()}`;
   const toolContextTaskRunId = `coach_tool_${createId()}`;
 
@@ -253,7 +296,7 @@ export async function runCoach(
 
     const taskResult = await run(
       'CoachTask',
-      buildCoachInput(runKind, now, beforeRows, objective, activeGoals, feedbackDigest),
+      buildCoachInput(runKind, now, beforeRows, objective, activeGoals, feedbackDigest, agentNotes),
       {
         db,
         mcpServers: { [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer },

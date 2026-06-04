@@ -26,4 +26,4 @@ The project also maintains:
 - `docs/design/` — 设计与决策草稿
 - `docs/planning/` — 版本规划（v0.X）
 - `docs/audit/` — 漂移审计输出（`/audit-drift` skill 写入）
-- `docs/agents/objectives.md` — Copilot / Coach / Dreaming / Maintenance 四个 agent 的运行期 objective 速查卡（形态设计记录在 `docs/superpowers/specs/2026-06-04-agent-framework-design.md`）
+- `docs/agents/objectives.md` — Copilot / Coach / Dreaming / Maintenance 四个 agent + 窄任务（共五节速查卡）的运行期 objective 速查卡（形态设计记录在 `docs/superpowers/specs/2026-06-04-agent-framework-design.md`）

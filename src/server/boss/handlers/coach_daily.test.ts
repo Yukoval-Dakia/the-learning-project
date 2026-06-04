@@ -53,6 +53,10 @@ describe('runCoach', () => {
       // P5.4-L2 / YUK-174 — stub the feedback reader (db is a {} stub) so the
       // cold-start no-op path runs without querying.
       loadProposalFeedbackFn: async () => [],
+      // codex #3356884494 — stub the agent-note reader so these no-DB unit tests
+      // don't hit the real readAgentNotes query (db is a {} stub). The dedicated
+      // "injects agent_notes" test below overrides this.
+      readAgentNotesFn: async () => [],
       now: () => new Date('2026-05-28T20:00:00.000Z'),
     });
 
@@ -160,6 +164,8 @@ describe('runCoach', () => {
       // P5.4-L2 / YUK-174 — stub the feedback reader (db is a {} stub) so the
       // cold-start no-op path runs without querying.
       loadProposalFeedbackFn: async () => [],
+      // codex #3356884494 — stub the agent-note reader (db is a {} stub here).
+      readAgentNotesFn: async () => [],
       now: () => new Date('2026-05-31T20:00:00.000Z'),
     });
 
@@ -234,6 +240,7 @@ describe('runCoach', () => {
       writeEventFn,
       listActiveGoalsFn: async () => [],
       loadProposalFeedbackFn: async () => digest,
+      readAgentNotesFn: async () => [],
       now: () => new Date('2026-05-28T20:00:00.000Z'),
     });
 
@@ -273,6 +280,7 @@ describe('runCoach', () => {
       writeEventFn,
       listActiveGoalsFn: async () => [],
       loadProposalFeedbackFn: async () => [],
+      readAgentNotesFn: async () => [],
       now: () => new Date('2026-05-28T20:00:00.000Z'),
     });
 
@@ -302,6 +310,8 @@ describe('runCoach', () => {
         listActiveGoalsFn: async () => [],
         // P5.4-L2 / YUK-174 — stub the feedback reader (db is a {} stub here).
         loadProposalFeedbackFn: async () => [],
+        // codex #3356884494 — stub the agent-note reader (db is a {} stub here).
+        readAgentNotesFn: async () => [],
         now: () => new Date('2026-05-28T20:00:00.000Z'),
       }),
     ).rejects.toThrow('boom');
@@ -340,6 +350,8 @@ describe('runCoach', () => {
       // P5.4-L2 / YUK-174 — stub the feedback reader (db is a {} stub) so the
       // cold-start no-op path runs without querying.
       loadProposalFeedbackFn: async () => [],
+      // codex #3356884494 — stub the agent-note reader (db is a {} stub here).
+      readAgentNotesFn: async () => [],
       now: () => new Date('2026-05-28T20:00:00.000Z'),
     });
 
@@ -364,6 +376,99 @@ describe('runCoach', () => {
     );
     const payload = (successCall?.[1] as { payload?: Record<string, unknown> })?.payload ?? {};
     expect(payload.daily_focus).toBeUndefined();
+  });
+
+  // codex #3356884494 / AF §4 — un-expired agent_notes (HINTS, not facts) reach
+  // the CoachTask input and the objective describes them as hints. The reader
+  // already filters expiry/target (notes.test.ts covers that); here we only
+  // assert the Coach wiring (mirrors dreaming_nightly's injection test). Before
+  // this fix quiz_verify's question_pool_gap hints (for_agent='coach') were
+  // durable but had no Coach consumer.
+  it('injects agent_notes into the CoachTask input and objective', async () => {
+    const db = {} as never;
+    const mcpServer = { name: 'fake-loom' } as never;
+    const listProposalInboxRowsFn = vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_coach_notes',
+      text: JSON.stringify(VALID_TODAY_PLAN),
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    const writeEventFn = vi.fn(async (_db, input) => input.id);
+
+    await runCoach(db, 'daily', {
+      listProposalInboxRowsFn,
+      buildMcpServerFn,
+      runAgentTaskFn,
+      writeEventFn,
+      listActiveGoalsFn: async () => [],
+      loadProposalFeedbackFn: async () => [],
+      readAgentNotesFn: async () => [
+        {
+          id: 'agent_note_coach_1',
+          created_at: new Date('2026-05-28T02:00:00.000Z'),
+          target_agents: ['coach'],
+          source_task_kind: 'quiz_verify',
+          refs: [{ kind: 'knowledge', id: 'k1' }],
+          summary_md: 'pool gap on k1',
+          signal_kind: 'question_pool_gap',
+          confidence: 0.6,
+        },
+      ],
+      now: () => new Date('2026-05-28T20:00:00.000Z'),
+    });
+
+    const taskInput = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[1] as {
+      objective: string;
+      agent_notes: Array<{ id: string; signal_kind: string; confidence?: number }>;
+    };
+    expect(taskInput.agent_notes).toEqual([
+      {
+        id: 'agent_note_coach_1',
+        signal_kind: 'question_pool_gap',
+        summary_md: 'pool gap on k1',
+        refs: [{ kind: 'knowledge', id: 'k1' }],
+        source_task_kind: 'quiz_verify',
+        confidence: 0.6,
+      },
+    ]);
+    // Objective labels notes as hints, not facts (ND-5 additive).
+    expect(taskInput.objective).toContain('agent_notes');
+    expect(taskInput.objective).toContain('HINT');
+    expect(taskInput.objective).toContain('ND-5');
+  });
+
+  // codex #3356884494 — cold start (no notes) is byte-compatible: the
+  // agent_notes field is empty and the run is unchanged.
+  it('emits an empty agent_notes on cold start (no-op back-compat)', async () => {
+    const db = {} as never;
+    const mcpServer = { name: 'fake-loom' } as never;
+    const listProposalInboxRowsFn = vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_coach_notes_cold',
+      text: JSON.stringify(VALID_TODAY_PLAN),
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    const writeEventFn = vi.fn(async (_db, input) => input.id);
+
+    await runCoach(db, 'daily', {
+      listProposalInboxRowsFn,
+      buildMcpServerFn,
+      runAgentTaskFn,
+      writeEventFn,
+      listActiveGoalsFn: async () => [],
+      loadProposalFeedbackFn: async () => [],
+      readAgentNotesFn: async () => [],
+      now: () => new Date('2026-05-28T20:00:00.000Z'),
+    });
+
+    const taskInput = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[1] as {
+      agent_notes: unknown[];
+    };
+    expect(taskInput.agent_notes).toEqual([]);
   });
 });
 

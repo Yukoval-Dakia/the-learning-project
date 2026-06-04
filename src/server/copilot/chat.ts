@@ -215,10 +215,14 @@ export async function runCopilotChat(
   let userAskEventId: string | undefined;
 
   // AF S3a / YUK-203 U3 — resolve the durable conversation envelope FIRST so the
-  // ask/chip + reply events all carry the same session_id (payload-only; the
-  // events table's session_id column is left for the teaching state machine to
-  // own per its single-owner module). Both chat + chip turns belong to the same
-  // Copilot conversation.
+  // ask/chip + reply events all carry the same session_id. The events table's
+  // session_id column = the event's conversation session and is shared by BOTH
+  // teaching and copilot (codex #3356884490/#3356974269 裁决): it is NOT teaching-
+  // exclusive. payload.session_id is kept as a redundant portable copy. Writing
+  // the column on the user/chip events (not just the reply) lets the idle clock
+  // (promote_conversation_idle, which joins event.session_id = ls.id AND
+  // actor_kind='user') see Copilot user activity instead of idling on started_at.
+  // Both chat + chip turns belong to the same Copilot conversation.
   const { sessionId } = await findOrCreateConversation(db, { now });
 
   // ──────────────────────────────────────────────────────────────────────
@@ -234,6 +238,9 @@ export async function runCopilotChat(
     userAskEventId = `copilot_user_ask_${createId()}`;
     await write(db, {
       id: userAskEventId,
+      // codex #3356884490 — write the session_id column on the user ask (not just
+      // payload) so the idle clock sees this as a user turn for THIS session.
+      session_id: sessionId,
       actor_kind: 'user',
       actor_ref: 'user:self',
       action: USER_ASK_EVENT_ACTION,
@@ -243,7 +250,7 @@ export async function runCopilotChat(
       payload: {
         surface: 'copilot',
         user_message: req.user_message,
-        // AF S3a — carry the conversation envelope id (payload-only, zero schema).
+        // AF S3a — redundant portable copy of the conversation envelope id.
         session_id: sessionId,
       },
       created_at: now,
@@ -253,6 +260,10 @@ export async function runCopilotChat(
     const chipEventId = `copilot_chip_${createId()}`;
     await write(db, {
       id: chipEventId,
+      // codex #3356884490 — write the session_id column on the chip trigger too,
+      // so chip-driven user activity is attributed to THIS conversation session
+      // (same idle-clock + replay reasons as the ask path above).
+      session_id: sessionId,
       actor_kind: 'system',
       actor_ref: 'ui:copilot_chip',
       action: CHIP_TRIGGER_EVENT_ACTION,
@@ -263,7 +274,7 @@ export async function runCopilotChat(
         surface: 'copilot',
         chip_kind: req.chip_kind ?? null,
         user_message: req.user_message,
-        // AF S3a — carry the conversation envelope id (payload-only, zero schema).
+        // AF S3a — redundant portable copy of the conversation envelope id.
         session_id: sessionId,
       },
       created_at: now,
@@ -373,6 +384,9 @@ export async function runCopilotChat(
   const replyEventId = `copilot_reply_${createId()}`;
   await write(db, {
     id: replyEventId,
+    // session_id column = this event's conversation session (shared by teaching +
+    // copilot; codex #3356974269 裁决 — keep the column write, it is not teaching-
+    // exclusive). payload.session_id below is the redundant portable copy.
     session_id: sessionId,
     actor_kind: 'agent',
     actor_ref: actorRef,

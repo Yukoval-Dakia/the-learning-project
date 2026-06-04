@@ -112,34 +112,60 @@ export async function startConversation(
  */
 const COPILOT_REUSE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * Resolve the single live Copilot conversation session that THIS surface would
+ * reuse right now (or `null` if none). This is the SHARED reuse predicate:
+ * `findOrCreateCopilotConversation` uses it to decide find-vs-create, and the
+ * turns reader (src/server/copilot/turns.ts) uses it to scope replay to the
+ * current session so a stale prior conversation's turns are never preloaded
+ * into what the server treats as a fresh session (codex #3356884484). Keeping
+ * one predicate prevents the two call sites from drifting.
+ *
+ * Predicate (no new columns): the most-recent conversation session that is
+ *   - entrypoint='copilot' (Copilot's own envelopes, not teaching's),
+ *   - status IN ('active','idle') (not ended/abandoned), AND
+ *   - updated_at >= now - 24h (still inside the reuse window).
+ * Read-only: callers wrap it in their own transaction when they need to mutate.
+ */
+export async function findReusableCopilotConversation(
+  db: Db | Tx,
+  opts: { now?: Date } = {},
+): Promise<{ id: string; status: string } | null> {
+  const now = opts.now ?? new Date();
+  const cutoff = new Date(now.getTime() - COPILOT_REUSE_WINDOW_MS);
+
+  const candidates = await db
+    .select({ id: learning_session.id, status: learning_session.status })
+    .from(learning_session)
+    .where(
+      and(
+        eq(learning_session.type, 'conversation'),
+        // Scope reuse to Copilot's own envelopes. teaching's startConversation
+        // inserts type='conversation' with entrypoint=null + goal_id set, so
+        // without this filter a live teaching session could be the most-recent
+        // live row and get cross-surface reused — polluting teaching's event
+        // stream and violating this fn's goal_id=null invariant.
+        eq(learning_session.entrypoint, 'copilot'),
+        inArray(learning_session.status, ['active', 'idle']),
+        gte(learning_session.updated_at, cutoff),
+      ),
+    )
+    .orderBy(desc(learning_session.updated_at))
+    .limit(1);
+
+  return candidates[0] ?? null;
+}
+
 export async function findOrCreateCopilotConversation(
   db: Db,
   opts: { now?: Date } = {},
 ): Promise<{ sessionId: string; created: boolean }> {
   const now = opts.now ?? new Date();
-  const cutoff = new Date(now.getTime() - COPILOT_REUSE_WINDOW_MS);
 
   return db.transaction(async (tx) => {
-    const candidates = await tx
-      .select({ id: learning_session.id, status: learning_session.status })
-      .from(learning_session)
-      .where(
-        and(
-          eq(learning_session.type, 'conversation'),
-          // Scope reuse to Copilot's own envelopes. teaching's startConversation
-          // inserts type='conversation' with entrypoint=null + goal_id set, so
-          // without this filter a live teaching session could be the most-recent
-          // live row and get cross-surface reused — polluting teaching's event
-          // stream and violating this fn's goal_id=null invariant.
-          eq(learning_session.entrypoint, 'copilot'),
-          inArray(learning_session.status, ['active', 'idle']),
-          gte(learning_session.updated_at, cutoff),
-        ),
-      )
-      .orderBy(desc(learning_session.updated_at))
-      .limit(1);
-
-    const existing = candidates[0];
+    // Shared reuse predicate (findReusableCopilotConversation) so this and the
+    // turns reader never drift on "which session is live".
+    const existing = await findReusableCopilotConversation(tx, { now });
     if (existing) {
       // Inline-resume an idle session so the row reflects the live turn (mirrors
       // assertAcceptingTurns' idle → active transition).
@@ -159,6 +185,20 @@ export async function findOrCreateCopilotConversation(
           event_type: 'conversation.resumed',
           payload: { resumed_at: now.toISOString(), surface: 'copilot' },
         });
+      } else {
+        // codex #3356884503 — an already-`active` session is being reused, so it
+        // is genuinely live RIGHT NOW. Touch updated_at (+ version bump, per this
+        // table's update convention) so the reuse window is measured from the
+        // last turn, not from creation/resume time. Without this, a long active
+        // conversation with regular turns would age past `now - 24h` and split
+        // into a new session even while in active use.
+        await tx
+          .update(learning_session)
+          .set({
+            updated_at: now,
+            version: sql`${learning_session.version} + 1`,
+          })
+          .where(eq(learning_session.id, existing.id));
       }
       return { sessionId: existing.id, created: false };
     }
