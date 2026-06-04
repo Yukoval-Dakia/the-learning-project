@@ -12,6 +12,7 @@ import { SectionLabel } from '@/ui/primitives/SectionLabel';
 import { useCountUp } from '@/ui/primitives/useCountUp';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
 interface DueRow {
@@ -79,6 +80,7 @@ interface TodayProposalKpi {
 
 export default function TodayPage() {
   const queryClient = useQueryClient();
+  const router = useRouter();
   const [undoingAiChangeIds, setUndoingAiChangeIds] = useState<string[]>([]);
 
   const dueQ = useQuery({
@@ -156,7 +158,10 @@ export default function TodayPage() {
   // time-of-day greeting — loom screen-today.jsx LoomHero greet buckets
   // verbatim (hour thresholds 5 / 11 / 14 / 18). No user name (single-user
   // tool has no user model — gap §4); end with the 。full stop.
-  const hour = new Date().getHours();
+  // Single LOCAL Date instance for both the greeting hour and the eyebrow date —
+  // toISOString() is UTC and would disagree with getHours() near local midnight.
+  const now = new Date();
+  const hour = now.getHours();
   const greet =
     hour < 5
       ? '夜深了'
@@ -167,6 +172,9 @@ export default function TodayPage() {
           : hour < 18
             ? '下午好'
             : '晚上好';
+  const localDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(
+    now.getDate(),
+  ).padStart(2, '0')}`;
 
   const kpis = [
     {
@@ -218,25 +226,31 @@ export default function TodayPage() {
         </svg>
         <div className="hero-inner">
           <div className="eyebrow">
-            <span className="dot-sep">●</span>TODAY · {new Date().toISOString().slice(0, 10)} ·
-            phase 1c
+            <span className="dot-sep">●</span>TODAY · {localDate} · phase 1c
           </div>
           <h1 className="page-title serif hero-title">{greet}。</h1>
           <p className="page-lead">
             昨晚 Dreaming agent 跑过；下面是它想让你看的几件事，再加你自己排的复习队列。
           </p>
           <div className="hero-cta">
-            <Link href="/review" style={{ textDecoration: 'none' }}>
-              <Btn variant="primary" icon="review">
-                开始今日复习
-              </Btn>
-            </Link>
-            <Link href="/record" style={{ textDecoration: 'none' }}>
-              <Btn variant="secondary" icon="record">
-                录入
-              </Btn>
-            </Link>
-            <Btn variant="ghost" icon="refresh" onClick={() => queryClient.invalidateQueries()}>
+            <Btn variant="primary" icon="review" onClick={() => router.push('/review')}>
+              开始今日复习
+            </Btn>
+            <Btn variant="secondary" icon="record" onClick={() => router.push('/record')}>
+              录入
+            </Btn>
+            <Btn
+              variant="ghost"
+              icon="refresh"
+              onClick={() =>
+                // Only this page's queries (all keyed 'today-*') — a bare
+                // invalidateQueries() would mark every query app-wide stale.
+                queryClient.invalidateQueries({
+                  predicate: (q) =>
+                    typeof q.queryKey[0] === 'string' && q.queryKey[0].startsWith('today-'),
+                })
+              }
+            >
               刷新
             </Btn>
             <Btn variant="ghost" icon="copilot" onClick={openCopilot}>
