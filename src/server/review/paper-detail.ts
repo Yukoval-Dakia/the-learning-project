@@ -54,14 +54,41 @@ export interface PaperSlotState {
   } | null;
   /**
    * null = not yet submitted. When submitted:
-   *   - visible feedback: { submitted, visible_to_user: true, outcome, score, feedback_md }
-   *   - buffered feedback: { submitted, visible_to_user: false, feedback_buffered: true }
-   *     (visible_to_user:false AND session not yet 'completed')
+   *   - visible feedback: { submitted, visible_to_user: true, outcome, score, answer_md,
+   *       answer_image_refs, reference_md } — outcome/score/reference_md all gated by
+   *       visibility (visible_to_user !== false || session completed).
+   *   - buffered feedback: { submitted, visible_to_user: false, feedback_buffered: true,
+   *       answer_md, answer_image_refs } — user's own answer is always safe to echo back;
+   *       reference_md/outcome/score are NOT included (server visibility gate §4.9).
    */
   submission:
     | null
-    | { submitted: true; visible_to_user: true; outcome: string; score: number | null }
-    | { submitted: true; visible_to_user: false; feedback_buffered: true };
+    | {
+        submitted: true;
+        visible_to_user: true;
+        outcome: string;
+        score: number | null;
+        /** The user's frozen answer text (echoed back unconditionally). */
+        answer_md: string;
+        /** Image refs attached to the frozen answer row. */
+        answer_image_refs: string[];
+        /**
+         * Reference answer from question.reference_md. Null when the question
+         * has no reference_md, or when the row is missing. Only present in the
+         * visible variant (same gate as outcome/score).
+         */
+        reference_md: string | null;
+      }
+    | {
+        submitted: true;
+        visible_to_user: false;
+        feedback_buffered: true;
+        /** The user's frozen answer text (always safe to echo back). */
+        answer_md: string;
+        /** Image refs attached to the frozen answer row. */
+        answer_image_refs: string[];
+        // reference_md / outcome / score are structurally absent (§4.9 discipline).
+      };
 }
 
 export interface PaperDetailSlot {
@@ -203,8 +230,12 @@ export async function getPaperDetail(
   }
 
   // 4) Question faces — one IN query for all distinct question_ids.
+  //    reference_md is fetched here but kept out of PaperQuestionFace (face is
+  //    pre-answer-visible; reference_md must only appear in the visible submission
+  //    variant). Stored in a parallel referenceMap for the assembly step.
   const questionIds = [...new Set(rawSlots.map((s) => s.question_id))];
   const questionMap = new Map<string, PaperQuestionFace>();
+  const referenceMap = new Map<string, string | null>(); // question_id → reference_md
   if (questionIds.length > 0) {
     const qRows = await db
       .select({
@@ -216,10 +247,12 @@ export async function getPaperDetail(
         parent_question_id: question.parent_question_id,
         part_index: question.part_index,
         image_refs: question.image_refs,
+        reference_md: question.reference_md,
       })
       .from(question)
       .where(inArray(question.id, questionIds));
     for (const q of qRows) {
+      referenceMap.set(q.id, q.reference_md ?? null);
       questionMap.set(q.id, {
         id: q.id,
         kind: q.kind,
@@ -259,6 +292,8 @@ export async function getPaperDetail(
     part_ref: string | null;
     event_id: string | null;
     submitted_at: Date;
+    content_md: string;
+    image_refs: string[];
   };
   type JudgeRow = {
     event_id: string;
@@ -296,13 +331,16 @@ export async function getPaperDetail(
     }
 
     // Newest frozen row per slot: subquery on MAX(submitted_at).
+    // content_md + image_refs: user's own answer, echoed back unconditionally.
     const frozenRows = await db.execute<{
       question_id: string;
       part_ref: string | null;
       event_id: string | null;
       submitted_at: Date;
+      content_md: string;
+      image_refs: string[];
     }>(sql`
-      SELECT question_id, part_ref, event_id, submitted_at
+      SELECT question_id, part_ref, event_id, submitted_at, content_md, image_refs
       FROM answer
       WHERE session_id = ${sid}
         AND submitted_at IS NOT NULL
@@ -452,18 +490,29 @@ export async function getPaperDetail(
           | undefined;
         const visibleToUser = judgePayload?.visible_to_user;
         const visible = isJudgementVisibleToUser({ visibleToUser, sessionStatus });
+        // User's own answer is always safe to echo back (both variants).
+        const answerMd = frozenRow.content_md;
+        const answerImageRefs = (frozenRow.image_refs as string[]) ?? [];
         if (visible) {
+          // reference_md lives on the question row — fetched in referenceMap (step 4).
+          // Null when question is missing/orphaned or has no reference answer.
+          const refMd = referenceMap.get(slot.question_id) ?? null;
           submission = {
             submitted: true,
             visible_to_user: true,
             outcome: judgeRow?.outcome ?? 'unknown',
             score: (judgePayload?.score as number | null | undefined) ?? null,
+            answer_md: answerMd,
+            answer_image_refs: answerImageRefs,
+            reference_md: refMd,
           };
         } else {
           submission = {
             submitted: true,
             visible_to_user: false,
             feedback_buffered: true,
+            answer_md: answerMd,
+            answer_image_refs: answerImageRefs,
           };
         }
       }

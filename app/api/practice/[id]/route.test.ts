@@ -4,13 +4,16 @@
 //   1. Full render payload: paper meta + sections + question faces + null slot state
 //      when no session started yet.
 //   2. Draft restoration: a live autosaved draft appears in slot_state.draft.
-//   3. Visible submission: correct answer → slot_state.submission with outcome.
+//   3. Visible submission: correct answer → slot_state.submission with outcome,
+//      answer_md (user's own answer echoed back), and reference_md.
 //   4. Hidden feedback: judge_now_show_later + in-progress session → feedback_buffered,
-//      score/outcome NOT in response (server visibility gate §4.9).
+//      answer_md present; score/outcome/reference_md NOT in response (§4.9 gate).
 //   5. Revealed on complete: same slot after session.status='completed' → full
-//      outcome visible.
+//      outcome + reference_md visible.
 //   6. Flat fallback: a quiz with no sections degrades to single synthetic section.
 //   7. 404 for unknown artifact id.
+//   8. section knowledge_focus_names resolved from DB; unknown id falls back to id.
+//   9. Face has no reference_md field (reference is gated, not pre-answer-visible).
 
 import { artifact, event, knowledge, learning_session, question } from '@/db/schema';
 import { autosaveAnswerDraft } from '@/server/review/answer-draft';
@@ -201,8 +204,8 @@ describe('GET /api/practice/[id]', () => {
     expect(slot?.slot_state.submission).toBeNull();
   });
 
-  it('returns visible outcome after correct submission (feedback_policy=immediate)', async () => {
-    await seedQuestion('q1', 'true');
+  it('returns visible outcome + answer_md + reference_md after correct submission (feedback_policy=immediate)', async () => {
+    await seedQuestion('q1', 'true'); // reference_md = 'true'
     await seedPaper('p1', { questionIds: ['q1'], feedbackPolicy: 'immediate' });
     const db = testDb();
     const { sessionId } = await Review.startReviewSession(db, { artifactId: 'p1' });
@@ -230,8 +233,22 @@ describe('GET /api/practice/[id]', () => {
             draft: null;
             submission:
               | null
-              | { submitted: true; visible_to_user: true; outcome: string; score: number | null }
-              | { submitted: true; visible_to_user: false; feedback_buffered: true };
+              | {
+                  submitted: true;
+                  visible_to_user: true;
+                  outcome: string;
+                  score: number | null;
+                  answer_md: string;
+                  answer_image_refs: string[];
+                  reference_md: string | null;
+                }
+              | {
+                  submitted: true;
+                  visible_to_user: false;
+                  feedback_buffered: true;
+                  answer_md: string;
+                  answer_image_refs: string[];
+                };
           };
         }>;
       }>;
@@ -247,13 +264,17 @@ describe('GET /api/practice/[id]', () => {
       submitted: true;
       visible_to_user: true;
       outcome: string;
+      answer_md: string;
+      reference_md: string | null;
     } | null;
     expect(sub?.submitted).toBe(true);
     expect(sub?.visible_to_user).toBe(true);
     expect(sub?.outcome).toBe('success'); // correct → success
+    expect(sub?.answer_md).toBe('true'); // user's own answer echoed back
+    expect(sub?.reference_md).toBe('true'); // from question.reference_md
   });
 
-  it('hides feedback (feedback_buffered:true) for judge_now_show_later in-progress session — score/outcome not in response', async () => {
+  it('hides feedback (feedback_buffered:true) for judge_now_show_later — answer_md present, score/outcome/reference_md absent', async () => {
     await seedQuestion('q1', 'true');
     await seedPaper('p1', { questionIds: ['q1'], feedbackPolicy: 'judge_now_show_later' });
     const db = testDb();
@@ -264,7 +285,7 @@ describe('GET /api/practice/[id]', () => {
         sessionId,
         paperArtifactId: 'p1',
         questionId: 'q1',
-        answerMd: 'true',
+        answerMd: 'my buffered answer',
         primaryKnowledgeId: 'k1',
         feedbackPolicy: 'judge_now_show_later',
       },
@@ -282,8 +303,11 @@ describe('GET /api/practice/[id]', () => {
               submitted?: boolean;
               visible_to_user?: boolean;
               feedback_buffered?: boolean;
+              answer_md?: string;
+              answer_image_refs?: string[];
               outcome?: string;
               score?: number | null;
+              reference_md?: string | null;
             } | null;
           };
         }>;
@@ -295,13 +319,17 @@ describe('GET /api/practice/[id]', () => {
     expect(sub?.submitted).toBe(true);
     expect(sub?.visible_to_user).toBe(false);
     expect(sub?.feedback_buffered).toBe(true);
-    // Server visibility gate: outcome and score must NOT be present when buffered.
+    // User's own answer is always echoed back (safe even in buffered variant).
+    expect(sub?.answer_md).toBe('my buffered answer');
+    expect(Array.isArray(sub?.answer_image_refs)).toBe(true);
+    // Server visibility gate: outcome, score, reference_md must NOT be present when buffered.
     expect('outcome' in (sub ?? {})).toBe(false);
     expect('score' in (sub ?? {})).toBe(false);
+    expect('reference_md' in (sub ?? {})).toBe(false);
   });
 
-  it('reveals full feedback after session completed (judge_now_show_later → completed reveals)', async () => {
-    await seedQuestion('q1', 'true');
+  it('reveals full feedback (+ answer_md + reference_md) after session completed (judge_now_show_later → completed reveals)', async () => {
+    await seedQuestion('q1', 'true'); // reference_md = 'true'
     await seedPaper('p1', { questionIds: ['q1'], feedbackPolicy: 'judge_now_show_later' });
     const db = testDb();
     const { sessionId } = await Review.startReviewSession(db, { artifactId: 'p1' });
@@ -311,7 +339,7 @@ describe('GET /api/practice/[id]', () => {
         sessionId,
         paperArtifactId: 'p1',
         questionId: 'q1',
-        answerMd: 'true',
+        answerMd: 'my revealed answer',
         primaryKnowledgeId: 'k1',
         feedbackPolicy: 'judge_now_show_later',
       },
@@ -337,6 +365,9 @@ describe('GET /api/practice/[id]', () => {
               submitted?: boolean;
               visible_to_user?: boolean;
               outcome?: string;
+              answer_md?: string;
+              answer_image_refs?: string[];
+              reference_md?: string | null;
               feedback_buffered?: boolean;
             } | null;
           };
@@ -351,6 +382,9 @@ describe('GET /api/practice/[id]', () => {
     expect(sub?.visible_to_user).toBe(true);
     expect(sub?.outcome).toBe('success');
     expect('feedback_buffered' in (sub ?? {})).toBe(false);
+    // answer_md + reference_md now visible.
+    expect(sub?.answer_md).toBe('my revealed answer');
+    expect(sub?.reference_md).toBe('true'); // from question.reference_md
   });
 
   it('flat fallback: quiz with no sections degrades to single synthetic section', async () => {
@@ -432,6 +466,33 @@ describe('GET /api/practice/[id]', () => {
     expect(sec.knowledge_focus).toEqual(['k_named', 'k_unknown']);
     // Resolved: k_named → '文言文基础', k_unknown → 'k_unknown' (fallback)
     expect(sec.knowledge_focus_names).toEqual(['文言文基础', 'k_unknown']);
+  });
+
+  it('question face has no reference_md field (reference is gated — not pre-answer-visible)', async () => {
+    // reference_md must NOT appear in the question face returned for an unsubmitted
+    // slot. The face is shown before the user answers, so leaking the reference
+    // answer would defeat the exercise.
+    await seedQuestion('q1', 'secret reference answer');
+    await seedPaper('p_face', { questionIds: ['q1'] });
+
+    const [req, ctx] = makeRequest('p_face');
+    const res = await GET(req, ctx);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      sections: Array<{
+        slots: Array<{
+          question: Record<string, unknown>;
+          slot_state: { submission: null };
+        }>;
+      }>;
+    };
+
+    const slot = body.sections[0]?.slots[0];
+    // Face must have prompt_md but must NOT expose reference_md.
+    expect(slot?.question.prompt_md).toBe('Prompt for q1');
+    expect('reference_md' in (slot?.question ?? {})).toBe(false);
+    // Unsubmitted slot: submission is null.
+    expect(slot?.slot_state.submission).toBeNull();
   });
 
   it('returns 404 for unknown artifact id', async () => {
