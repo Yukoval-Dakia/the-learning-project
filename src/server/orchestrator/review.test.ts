@@ -2,6 +2,7 @@
 
 import { event, knowledge, material_fsrs_state, question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { planReviewSession } from './review';
@@ -23,6 +24,12 @@ async function seedQuestion(id: string, prompt = `q ${id}`, knowledgeIds: string
 
 async function seedFsrsState(questionId: string, dueAt: Date, opts: { lapses?: number } = {}) {
   const db = testDb();
+  const rows = await db
+    .select({ knowledge_ids: question.knowledge_ids })
+    .from(question)
+    .where(eq(question.id, questionId))
+    .limit(1);
+  const knowledgeId = rows[0]?.knowledge_ids?.[0] ?? null;
   const state = {
     due: dueAt,
     stability: 1,
@@ -35,9 +42,9 @@ async function seedFsrsState(questionId: string, dueAt: Date, opts: { lapses?: n
     last_review: new Date(),
   };
   await db.insert(material_fsrs_state).values({
-    id: `f_${questionId}`,
-    subject_kind: 'question',
-    subject_id: questionId,
+    id: `f_${knowledgeId ?? questionId}`,
+    subject_kind: knowledgeId ? 'knowledge' : 'question',
+    subject_id: knowledgeId ?? questionId,
     state: state as never,
     due_at: dueAt,
     last_review_event_id: null,
@@ -272,6 +279,28 @@ describe('planReviewSession', () => {
 
     const plan = await planReviewSession({ db: testDb() });
     expect(plan.queue.map((q) => q.question_id)).toEqual(['q_new', 'q_overdue']);
+  });
+
+  it('surfaces due knowledge FSRS state by choosing a linked question', async () => {
+    await testDb().insert(knowledge).values({
+      id: 'k_xuci',
+      name: '虚词',
+      domain: 'wenyan',
+      parent_id: null,
+      merged_from: [],
+      proposed_by_ai: false,
+      approval_status: 'approved',
+      created_at: new Date(),
+      updated_at: new Date(),
+      version: 0,
+    });
+    await seedQuestion('q_knowledge_due', '虚词复习', ['k_xuci']);
+    await seedFsrsState('q_knowledge_due', new Date(Date.now() - 2 * 86_400_000));
+
+    const plan = await planReviewSession({ db: testDb() });
+    expect(plan.queue.map((q) => q.question_id)).toEqual(['q_knowledge_due']);
+    expect(plan.queue[0].fsrs_state).not.toBeNull();
+    expect(plan.queue[0].knowledge_ids).toEqual(['k_xuci']);
   });
 
   it('does not call runTaskFn when queue is empty', async () => {

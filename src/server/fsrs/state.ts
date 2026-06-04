@@ -16,9 +16,10 @@ import type { Db, Tx } from '@/db/client';
 import { material_fsrs_state } from '@/db/schema';
 
 type DbLike = Db | Tx;
+export type FsrsSubjectKind = 'question' | 'knowledge';
 
 export interface UpsertFsrsStateInput {
-  subject_kind: 'question';
+  subject_kind: FsrsSubjectKind;
   subject_id: string;
   state: FsrsStateSchemaT;
   due_at: Date;
@@ -70,7 +71,7 @@ export interface FsrsStateRow {
  */
 export async function getFsrsState(
   db: DbLike,
-  subject_kind: 'question',
+  subject_kind: FsrsSubjectKind,
   subject_id: string,
 ): Promise<FsrsStateRow | null> {
   const rows = await db

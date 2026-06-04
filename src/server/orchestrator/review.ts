@@ -25,7 +25,7 @@ import {
   resolveSubjectProfile,
   toSlimSubjectProfile,
 } from '@/subjects/profile';
-import { and, eq, inArray, lte } from 'drizzle-orm';
+import { and, eq, inArray, lte, or, sql } from 'drizzle-orm';
 
 import type { CauseCategoryT, FsrsStateSchemaT } from '@/core/schema/event/blocks';
 
@@ -258,9 +258,65 @@ export async function planReviewSession(params: PlanReviewSessionParams): Promis
   const limit = clamp(params.limit ?? 20, 1, 200);
   const now = new Date();
 
-  // Slice 1: questions with material_fsrs_state where due_at <= now (overdue
-  // or due now from prior reviews).
-  const dueRows = await params.db
+  type DueRow = {
+    question_id: string;
+    state: unknown;
+    due_at: Date;
+    prompt_md: string;
+    reference_md: string | null;
+    knowledge_ids: string[];
+  };
+
+  // Slice 1: knowledge FSRS states where due_at <= now (overdue or due now
+  // from prior reviews). The scheduler chooses one concrete question probe per
+  // due knowledge point. Question-level rows remain as legacy fallback for
+  // unlabeled questions.
+  const dueRows: DueRow[] = [];
+  const usedDueQuestionIds = new Set<string>();
+  const dueKnowledgeStates = await params.db
+    .select({
+      knowledge_id: material_fsrs_state.subject_id,
+      state: material_fsrs_state.state,
+      due_at: material_fsrs_state.due_at,
+    })
+    .from(material_fsrs_state)
+    .where(
+      and(eq(material_fsrs_state.subject_kind, 'knowledge'), lte(material_fsrs_state.due_at, now)),
+    )
+    .orderBy(material_fsrs_state.due_at, material_fsrs_state.subject_id)
+    .limit(limit);
+
+  for (const due of dueKnowledgeStates) {
+    const qRows = await params.db
+      .select({
+        id: question.id,
+        prompt_md: question.prompt_md,
+        reference_md: question.reference_md,
+        knowledge_ids: question.knowledge_ids,
+      })
+      .from(question)
+      .where(
+        and(
+          sql`${question.knowledge_ids} @> ${JSON.stringify([due.knowledge_id])}::jsonb`,
+          sql`(${question.draft_status} IS NULL OR ${question.draft_status} <> 'draft')`,
+        ),
+      )
+      .orderBy(question.created_at, question.id)
+      .limit(10);
+    const selected = qRows.find((row) => !usedDueQuestionIds.has(row.id));
+    if (!selected) continue;
+    usedDueQuestionIds.add(selected.id);
+    dueRows.push({
+      question_id: selected.id,
+      state: due.state,
+      due_at: due.due_at,
+      prompt_md: selected.prompt_md,
+      reference_md: selected.reference_md,
+      knowledge_ids: selected.knowledge_ids ?? [],
+    });
+  }
+
+  const legacyQuestionRows = await params.db
     .select({
       question_id: material_fsrs_state.subject_id,
       state: material_fsrs_state.state,
@@ -276,14 +332,57 @@ export async function planReviewSession(params: PlanReviewSessionParams): Promis
     )
     .orderBy(material_fsrs_state.due_at, question.created_at)
     .limit(limit);
+  for (const due of legacyQuestionRows) {
+    if (usedDueQuestionIds.has(due.question_id)) continue;
+    usedDueQuestionIds.add(due.question_id);
+    dueRows.push(due);
+  }
+  dueRows.sort((a, b) => {
+    const dueDelta = a.due_at.getTime() - b.due_at.getTime();
+    if (dueDelta !== 0) return dueDelta;
+    return a.question_id.localeCompare(b.question_id);
+  });
 
   // Slice 2: failure attempts whose question has no fsrs_state row yet
   // (never reviewed, first-pass owed).
   const recentFailures = await getFailureAttempts(params.db, { limit: limit * 2 });
+  const failureKnowledgeIds = Array.from(
+    new Set(recentFailures.flatMap((failure) => failure.referenced_knowledge_ids)),
+  );
+  const fsrsConditions = [
+    eq(material_fsrs_state.subject_kind, 'question'),
+    failureKnowledgeIds.length > 0
+      ? and(
+          eq(material_fsrs_state.subject_kind, 'knowledge'),
+          inArray(material_fsrs_state.subject_id, failureKnowledgeIds),
+        )
+      : undefined,
+  ];
+  const fsrsRows = await params.db
+    .select({
+      subject_kind: material_fsrs_state.subject_kind,
+      subject_id: material_fsrs_state.subject_id,
+    })
+    .from(material_fsrs_state)
+    .where(or(...fsrsConditions));
+  const projectedKnowledgeIds = new Set(
+    fsrsRows.filter((row) => row.subject_kind === 'knowledge').map((row) => row.subject_id),
+  );
+  const projectedQuestionIds = new Set(
+    fsrsRows.filter((row) => row.subject_kind === 'question').map((row) => row.subject_id),
+  );
   const projectedQids = new Set(dueRows.map((r) => r.question_id));
   const candidateNewQids: string[] = [];
   for (const f of recentFailures) {
-    if (!projectedQids.has(f.question_id) && !candidateNewQids.includes(f.question_id)) {
+    const knowledgeReviewed = f.referenced_knowledge_ids.some((id) =>
+      projectedKnowledgeIds.has(id),
+    );
+    if (
+      !knowledgeReviewed &&
+      !projectedQuestionIds.has(f.question_id) &&
+      !projectedQids.has(f.question_id) &&
+      !candidateNewQids.includes(f.question_id)
+    ) {
       candidateNewQids.push(f.question_id);
     }
   }
@@ -295,17 +394,7 @@ export async function planReviewSession(params: PlanReviewSessionParams): Promis
     knowledge_ids: string[];
   }> = [];
   if (candidateNewQids.length > 0) {
-    const existingFsrs = await params.db
-      .select({ subject_id: material_fsrs_state.subject_id })
-      .from(material_fsrs_state)
-      .where(
-        and(
-          eq(material_fsrs_state.subject_kind, 'question'),
-          inArray(material_fsrs_state.subject_id, candidateNewQids),
-        ),
-      );
-    const reviewedSet = new Set(existingFsrs.map((r) => r.subject_id));
-    const trulyNew = candidateNewQids.filter((id) => !reviewedSet.has(id));
+    const trulyNew = candidateNewQids;
     if (trulyNew.length > 0) {
       const qRows = await params.db
         .select({

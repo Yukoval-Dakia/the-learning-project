@@ -34,7 +34,7 @@ import { db } from '@/db/client';
 import { question } from '@/db/schema';
 import { enqueueMasteryNoteRefine } from '@/server/artifacts/note-refine-triggers';
 import { writeEvent } from '@/server/events/queries';
-import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
+import { type FsrsSubjectKind, getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
 import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject-profile';
@@ -168,56 +168,97 @@ export async function POST(req: Request): Promise<Response> {
       finalRating = suggestedRating;
     }
 
-    // Codex P1-G — FSRS read + compute + write must all share a transaction
-    // serialised by SELECT … FOR UPDATE on the question row. Pre-fix the read
-    // ran outside the txn so two concurrent submits saw the same prior state
-    // and the later upsert produced torn FSRS state (e.g., both saw reps=0
-    // and wrote reps=1; lost the second review's effect).
+    const referencedKnowledgeIds = Array.from(
+      new Set(
+        (body.referenced_knowledge_ids.length > 0 ? body.referenced_knowledge_ids : q.knowledge_ids)
+          .map((id) => id.trim())
+          .filter((id) => id.length > 0),
+      ),
+    );
+    const fsrsSubjectKind: FsrsSubjectKind =
+      referencedKnowledgeIds.length > 0 ? 'knowledge' : 'question';
+    const fsrsSubjectIds = fsrsSubjectKind === 'knowledge' ? referencedKnowledgeIds : [questionId];
+
+    // P3 / YUK-203 — FSRS is now scheduled per knowledge point when the reviewed
+    // question is knowledge-labeled. The review event remains question-scoped
+    // because the user answered a concrete question, but the projection row is
+    // keyed by `(subject_kind='knowledge', subject_id=<knowledge_id>)`.
     //
-    // We lock the question row (always exists since we just checked above)
-    // even when no material_fsrs_state row exists yet — first-review case
-    // would otherwise race on the unique constraint and only one write would
-    // survive, dropping the other's effect.
+    // Concurrency: locking only the question row is no longer sufficient because
+    // two different questions may update the same knowledge FSRS state. A
+    // transaction-scoped advisory lock per FSRS subject serializes read/compute/
+    // upsert even when the projection row does not exist yet.
     const outcome: 'success' | 'failure' = finalRating === 'again' ? 'failure' : 'success';
     const eventId = newId();
-    let result: ReturnType<typeof scheduleReview>;
-    let fsrsStateAfter: ReturnType<typeof scheduleReview>['nextState'] & {
+    let primaryResult: ReturnType<typeof scheduleReview>;
+    let primaryFsrsStateAfter: ReturnType<typeof scheduleReview>['nextState'] & {
       last_review: Date | null;
     };
 
     await db.transaction(async (tx) => {
-      // SELECT … FOR UPDATE on the question row — concurrent reviewers
-      // serialise on this lock, so the second read sees the first's
-      // committed FSRS projection.
       await tx.execute(sql`SELECT id FROM question WHERE id = ${questionId} FOR UPDATE`);
 
-      let prevStateRow: Awaited<ReturnType<typeof getFsrsState>> = null;
-      try {
-        prevStateRow = await getFsrsState(tx, 'question', questionId);
-        result = scheduleReview(
-          prevStateRow?.state
-            ? {
-                ...prevStateRow.state,
-                last_review: prevStateRow.state.last_review ?? null,
-              }
-            : null,
-          finalRating,
-          now,
-        );
-      } catch (err) {
-        console.error('review submit prep failed', { questionId, err });
-        throw new ApiError(
-          'corrupt_state',
-          `material_fsrs_state for question ${questionId} could not be parsed; please reset this card`,
-          422,
+      const fsrsUpdates: Array<{
+        subject_kind: FsrsSubjectKind;
+        subject_id: string;
+        result: ReturnType<typeof scheduleReview>;
+        stateAfter: ReturnType<typeof scheduleReview>['nextState'] & {
+          last_review: Date | null;
+        };
+      }> = [];
+
+      for (const subjectId of [...fsrsSubjectIds].sort()) {
+        await tx.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtext(${`fsrs:${fsrsSubjectKind}:${subjectId}`}))`,
         );
       }
 
-      fsrsStateAfter = {
-        ...result.nextState,
-        due: result.nextState.due,
-        last_review: result.nextState.last_review ?? null,
-      };
+      for (const subjectId of fsrsSubjectIds) {
+        let prevStateRow: Awaited<ReturnType<typeof getFsrsState>> = null;
+        let result: ReturnType<typeof scheduleReview>;
+        try {
+          prevStateRow = await getFsrsState(tx, fsrsSubjectKind, subjectId);
+          if (!prevStateRow && fsrsSubjectKind === 'knowledge') {
+            prevStateRow = await getFsrsState(tx, 'question', questionId);
+          }
+          result = scheduleReview(
+            prevStateRow?.state
+              ? {
+                  ...prevStateRow.state,
+                  last_review: prevStateRow.state.last_review ?? null,
+                }
+              : null,
+            finalRating,
+            now,
+          );
+        } catch (err) {
+          console.error('review submit prep failed', {
+            questionId,
+            fsrsSubjectKind,
+            fsrsSubjectId: subjectId,
+            err,
+          });
+          throw new ApiError(
+            'corrupt_state',
+            `material_fsrs_state for ${fsrsSubjectKind} ${subjectId} could not be parsed; please reset this card`,
+            422,
+          );
+        }
+
+        fsrsUpdates.push({
+          subject_kind: fsrsSubjectKind,
+          subject_id: subjectId,
+          result,
+          stateAfter: {
+            ...result.nextState,
+            due: result.nextState.due,
+            last_review: result.nextState.last_review ?? null,
+          },
+        });
+      }
+      const primaryUpdate = fsrsUpdates[0];
+      primaryResult = primaryUpdate.result;
+      primaryFsrsStateAfter = primaryUpdate.stateAfter;
 
       // YUK-56 — Embed judge result on the review event's payload (mirrors
       // embedded-check pattern at app/api/embedded-check/attempt/route.ts:122).
@@ -288,9 +329,17 @@ export async function POST(req: Request): Promise<Response> {
         outcome,
         payload: {
           fsrs_rating: finalRating,
-          fsrs_state_after: fsrsStateAfter,
+          fsrs_subject_kind: fsrsSubjectKind,
+          fsrs_subject_ids: fsrsSubjectIds,
+          fsrs_state_after: primaryFsrsStateAfter,
+          fsrs_state_after_by_subject: fsrsUpdates.map((update) => ({
+            subject_kind: update.subject_kind,
+            subject_id: update.subject_id,
+            state: update.stateAfter,
+            due_at: update.result.dueAt,
+          })),
           user_response_md: body.response_md ?? null,
-          referenced_knowledge_ids: body.referenced_knowledge_ids,
+          referenced_knowledge_ids: referencedKnowledgeIds,
           // Wire `latency_ms` from the UI lands here as `duration_ms` per the
           // ReviewOnQuestion Zod schema (2026-05-17). Optional — omitted for
           // legacy callers that never sent it.
@@ -303,20 +352,22 @@ export async function POST(req: Request): Promise<Response> {
         cost_micro_usd: null,
         created_at: now,
       });
-      await upsertFsrsState(tx, {
-        subject_kind: 'question',
-        subject_id: questionId,
-        state: fsrsStateAfter,
-        due_at: result.dueAt,
-        last_review_event_id: eventId,
-      });
+      for (const update of fsrsUpdates) {
+        await upsertFsrsState(tx, {
+          subject_kind: update.subject_kind,
+          subject_id: update.subject_id,
+          state: update.stateAfter,
+          due_at: update.result.dueAt,
+          last_review_event_id: eventId,
+        });
+      }
     });
-    // After the txn: result + fsrsStateAfter were assigned inside; assert
+    // After the txn: primaryResult + primaryFsrsStateAfter were assigned inside; assert
     // non-null for TS narrowing (txn either commits and assigns, or throws).
     // biome-ignore lint/style/noNonNullAssertion: assigned inside the txn
-    const finalResult = result!;
+    const finalResult = primaryResult!;
     // biome-ignore lint/style/noNonNullAssertion: assigned inside the txn
-    const finalFsrsStateAfter = fsrsStateAfter!;
+    const finalFsrsStateAfter = primaryFsrsStateAfter!;
 
     if (outcome === 'success' && q.source_ref) {
       await enqueueMasteryNoteRefine({
@@ -358,6 +409,8 @@ export async function POST(req: Request): Promise<Response> {
         activity_ref: identity.activity_ref,
         question_id: questionId,
         rating: finalRating,
+        fsrs_subject_kind: fsrsSubjectKind,
+        fsrs_subject_ids: fsrsSubjectIds,
         response_md: body.response_md ?? null,
         latency_ms: body.latency_ms ?? null,
         fsrs_state_after: finalFsrsStateAfter,
