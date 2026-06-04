@@ -11,7 +11,7 @@
 // proposal-tools.ts: `status !== 'pending' && status !== 'in_progress'`).
 // `user_pinned` is a boolean (default false, schema.ts:222).
 
-import { asc, eq, or } from 'drizzle-orm';
+import { and, asc, eq, isNull, or } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
 import { learning_item } from '@/db/schema';
@@ -26,9 +26,15 @@ export interface ActiveLearningItem {
 }
 
 /**
- * Active learning items = `status = 'in_progress'` OR `user_pinned = true`.
- * Ordered by created_at for a stable feed. Read-only; writes nothing (ND-5 /
- * D11: attention pressure, never bookkeeping).
+ * Active learning items = NOT archived AND (`status = 'in_progress'` OR
+ * `user_pinned = true`). Ordered by created_at for a stable feed. Read-only;
+ * writes nothing (ND-5 / D11: attention pressure, never bookkeeping).
+ *
+ * codex PR #298 #3357932406 — `archived_at IS NULL` guard. The learning-item
+ * DELETE route soft-deletes by setting `archived_at` only; it does NOT flip
+ * `status` (an in_progress item) or clear `user_pinned`. Without this guard a
+ * just-archived item still matched the status/pin filter and was fed into the
+ * Coach brief as attention pressure — surfacing a deleted item.
  */
 export async function listActiveLearningItems(db: DbLike): Promise<ActiveLearningItem[]> {
   const rows = await db
@@ -39,7 +45,12 @@ export async function listActiveLearningItems(db: DbLike): Promise<ActiveLearnin
       user_pinned: learning_item.user_pinned,
     })
     .from(learning_item)
-    .where(or(eq(learning_item.status, 'in_progress'), eq(learning_item.user_pinned, true)))
+    .where(
+      and(
+        isNull(learning_item.archived_at),
+        or(eq(learning_item.status, 'in_progress'), eq(learning_item.user_pinned, true)),
+      ),
+    )
     .orderBy(asc(learning_item.created_at), asc(learning_item.id));
   return rows.map((r) => ({
     id: r.id,

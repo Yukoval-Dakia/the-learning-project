@@ -504,4 +504,43 @@ describe('Foundation D M2 read tools', () => {
       .where(and(eq(event.action, 'attempt'), eq(event.id, 'att_new')));
     expect(rows).toHaveLength(1);
   });
+
+  // codex PR #298 #3357932403 — a DRAFT question with a failure attempt (and no
+  // FSRS row) must NOT enter the never-reviewed-failure slice. The FSRS-keyed
+  // branches' draft filter can't see it (no material_fsrs_state row), so the
+  // never-reviewed question SELECT must apply the draft exclusion itself.
+  it('excludes a draft question with a failure attempt from never-reviewed', async () => {
+    const db = testDb();
+    await db.insert(question).values({
+      id: 'q_draft_fail',
+      kind: 'short_answer',
+      prompt_md: '草稿题（未验证）',
+      reference_md: '参考',
+      source: 'manual',
+      knowledge_ids: ['k_zhi'],
+      draft_status: 'draft',
+      created_at: BASE,
+      updated_at: BASE,
+    });
+    await writeEvent(db, {
+      id: 'att_draft_fail',
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: 'q_draft_fail',
+      outcome: 'failure',
+      payload: {
+        answer_md: '错答',
+        answer_image_refs: [],
+        referenced_knowledge_ids: ['k_zhi'],
+      },
+      created_at: new Date(BASE.getTime() + 10_000),
+    });
+
+    const due = await getReviewDueTool.execute(ctx(), { limit: 20 });
+    const ids = due.rows.map((row) => row.question_id);
+    expect(ids).not.toContain('q_draft_fail');
+  });
 });

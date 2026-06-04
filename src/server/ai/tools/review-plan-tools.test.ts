@@ -429,6 +429,88 @@ describe('write_review_plan', () => {
     ).rejects.toThrow(/guardrail_checks must all be true/);
   });
 
+  // #3357932409 — section.knowledge_ids must be ⊆ the validated assignment
+  // primary/secondary set; a stray/mistyped section id is rejected.
+  it('rejects a section knowledge_id not covered by any assignment', async () => {
+    await expect(
+      writeReviewPlanTool.execute(ctx(), {
+        plan: validPlan({
+          sections: [
+            {
+              subject_id: 'wenyan',
+              // k_typo is not any assignment's primary/secondary knowledge.
+              knowledge_ids: ['k_zhi', 'k_typo'],
+              assignments: [
+                {
+                  question_id: 'q_active',
+                  primary_knowledge_id: 'k_zhi',
+                  secondary_knowledge_ids: [],
+                },
+              ],
+            },
+          ],
+        }),
+        mode: 'initial_plan',
+      }),
+    ).rejects.toThrow(/section knowledge_id.*not covered by any assignment.*wenyan→k_typo/);
+    expect(await db.select().from(artifact)).toHaveLength(0);
+  });
+
+  it('derives artifact knowledge_ids only from validated assignments (ignores section-only ids)', async () => {
+    // section.knowledge_ids ⊆ assignment set (k_zhi present) → passes; the
+    // derived artifact knowledge_ids are exactly the assignment primary/secondary.
+    const out = await writeReviewPlanTool.execute(ctx(), {
+      plan: validPlan({
+        sections: [
+          {
+            subject_id: 'wenyan',
+            knowledge_ids: ['k_zhi'],
+            assignments: [
+              {
+                question_id: 'q_active',
+                primary_knowledge_id: 'k_zhi',
+                secondary_knowledge_ids: [],
+              },
+            ],
+          },
+        ],
+      }),
+      mode: 'initial_plan',
+    });
+    const rows = await db.select().from(artifact).where(eq(artifact.id, out.artifact_id));
+    expect([...rows[0].knowledge_ids].sort()).toEqual(['k_zhi']);
+  });
+
+  // #3357961871 — duplicate question_ids across assignments are rejected.
+  it('rejects duplicate question_ids across assignments', async () => {
+    await expect(
+      writeReviewPlanTool.execute(ctx(), {
+        plan: validPlan({
+          sections: [
+            {
+              subject_id: 'wenyan',
+              knowledge_ids: ['k_zhi'],
+              assignments: [
+                {
+                  question_id: 'q_active',
+                  primary_knowledge_id: 'k_zhi',
+                  secondary_knowledge_ids: [],
+                },
+                {
+                  question_id: 'q_active',
+                  primary_knowledge_id: 'k_zhi',
+                  secondary_knowledge_ids: [],
+                },
+              ],
+            },
+          ],
+        }),
+        mode: 'initial_plan',
+      }),
+    ).rejects.toThrow(/duplicate assignment question_id.*q_active/);
+    expect(await db.select().from(artifact)).toHaveLength(0);
+  });
+
   // #3357817915 — only one plan may be written per run (ctx.taskRunId).
   it('rejects a second write_review_plan within the same run (idempotency)', async () => {
     const first = await writeReviewPlanTool.execute(ctx(), {
