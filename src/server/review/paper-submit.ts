@@ -146,6 +146,44 @@ export async function submitPaperSlot(
   );
 
   await db.transaction(async (tx) => {
+    // Session validation (FOR UPDATE): lock the session row to prevent a concurrent
+    // status transition (e.g. session completed between route and here). Validates
+    // type='review', artifact_id binding, and status ∈ started|paused.
+    const sessRows = await tx.execute<{
+      type: string;
+      status: string;
+      artifact_id: string | null;
+    }>(
+      sql`SELECT type, status, artifact_id FROM learning_session WHERE id = ${input.sessionId} FOR UPDATE`,
+    );
+    const sess = (
+      sessRows as unknown as Array<{ type: string; status: string; artifact_id: string | null }>
+    )[0];
+    if (!sess) {
+      throw new ApiError('validation_error', `session ${input.sessionId} not found`, 400);
+    }
+    if (sess.type !== 'review') {
+      throw new ApiError(
+        'validation_error',
+        `session ${input.sessionId} is not a review session`,
+        400,
+      );
+    }
+    if (sess.artifact_id !== input.paperArtifactId) {
+      throw new ApiError(
+        'validation_error',
+        `session ${input.sessionId} is not bound to paper ${input.paperArtifactId}`,
+        400,
+      );
+    }
+    if (sess.status !== 'started' && sess.status !== 'paused') {
+      throw new ApiError(
+        'validation_error',
+        `session ${input.sessionId} is in status '${sess.status}' and cannot accept submissions`,
+        400,
+      );
+    }
+
     // Per-knowledge FSRS advisory lock (ADR-0028) — serializes read/compute/
     // upsert even across different questions touching the same knowledge.
     await tx.execute(
