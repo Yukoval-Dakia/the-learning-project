@@ -5,6 +5,16 @@
 > audit. **Decision**: `SubjectProfile` evolves from a hand-written "hard
 > contract" into a versioned, editable runtime policy snapshot managed through a
 > visual studio and agent review loop.
+>
+> **U0 adjudication note (2026-06-04 / YUK-205 / ADR-0029)**: the U0 grill
+> session sliced this spec with **MVP knife + zero CUT, full DEFER** (reading A).
+> Nothing in the vision is removed — the §0 reframe is *not* reversed — but only
+> a small spine ships first; everything else is DEFERRED behind an explicit
+> trigger. See `docs/adr/0029-review-engine-lands-on-existing-primitives.md` for
+> the adjudication cluster and `docs/audit/2026-06-04-design-feasibility-audit.md`
+> for the feasibility audit (U0 gate + §5 七问) that drove it. Sections amended
+> below carry an inline `> **Amended 2026-06-04 (U0 / YUK-205 / ADR-0029)**`
+> marker at the point of change.
 
 ## 0. Reframe
 
@@ -21,6 +31,16 @@ explainability:
   under;
 - edits create drafts and eventually a new published snapshot;
 - high-impact edits require impact preview, fixture smoke, and explicit publish.
+
+> **Amended 2026-06-04 (U0 / YUK-205 / ADR-0029)**: the "historical events keep
+> their profile/capability version" invariant does **not** hold today —
+> `capability_ref.version` is hard-coded `'1.0.0'`
+> (question-contract.ts:92,239 / steps-judge.ts:10). The invariant is honored
+> by D6 judge-event version stamping (see §8 gates), which adds optional
+> `profile_version`/`capability_ref`/`judge_route` to the judge-event payload
+> and reads the real `SubjectProfile.version`. This stamping is the **first
+> slice** (§9) and ships before any Studio UI; until it lands, the invariant is
+> aspirational rather than enforced.
 
 Short version: **SubjectProfile is not a hard-coded contract; it is a versioned
 editable policy. The hard thing is the publish record and historical reference,
@@ -135,9 +155,17 @@ The default review scheduler, currently commonly `fsrs`. This is editable
 because some learning loops may be practice cadence, evidence-only, or project
 based.
 
-Preview must show due-queue impact: approximate added/removed due items, items
-whose next review moves substantially, and whether mixed-subject balancing is
-affected.
+> **Amended 2026-06-04 (U0 / YUK-205 / ADR-0029)**: scheduling lives on
+> `SubjectProfile.schedulingHints` (ADR-0014) — there is **no per-knowledge
+> scheduler-policy column**, and knowledge-level FSRS reuses
+> `material_fsrs_state(subject_kind='knowledge')` per D1/ADR-0028. The
+> **due-queue impact preview is DEFERRED** (trigger = a *second* scheduler
+> policy exists). Today the only policy is `fsrs`, so a policy delta is
+> structurally always empty (audit SR-8) and a due-queue preview has nothing to
+> show. The near-term, actually-useful impact preview is a **route-resolution
+> diff**: run `resolveQuestionJudgeRoute` as a pure function over old vs draft
+> profile and show which fixture/question families route differently. This is
+> "可先做不挡 MVP" — buildable now, but not on the MVP critical path.
 
 ### `cause category ids`
 
@@ -151,6 +179,15 @@ Cause ids are editable, but the edit must be classified:
 
 The Studio must never treat an id string edit as a harmless text edit. It must
 ask for the intended mapping and show analytics/variant-generation impact.
+
+> **Amended 2026-06-04 (U0 / YUK-205 / ADR-0029)**: the **cause-taxonomy board**
+> (§7) and the `subject_id` rename/alias/fork classifier (above) are both
+> **DEFERRED** (trigger = the first real rename/split need). This is **schedule,
+> not policy**: §0's "no field is locked" stance is unchanged. Until the gated
+> tooling exists, the Studio UI simply ships **no edit entry point** for these
+> two classes; the fallback is hand-editing `src/subjects/<id>/profile.ts`
+> guarded by a **cause-id lint** (`causeLean` hard-coding + `variant_gen`
+> targeted cross-check), tracked under YUK-172. See §8 gates.
 
 ## 4. Agent loop
 
@@ -168,9 +205,26 @@ Introduce an authoring loop that sits before the published snapshot:
 6. Publish compiles the draft into a `SubjectProfileSnapshot` after validation
    and smoke checks.
 
-Agent tasks propose. They do not silently publish. This follows the project's
-existing proposal-first safety pattern for destructive or semantically heavy AI
-actions.
+> **Amended 2026-06-04 (U0 / YUK-205 / ADR-0029)**: **ProfileCriticTask is the
+> only MVP agent** (it reviews human/agent drafts without owning generation, so
+> it gives value immediately). The other three are **DEFERRED** with explicit
+> triggers:
+> - **ProfileAuthorTask** — trigger = the Critic loop runs smoothly in practice;
+> - **FixtureGeneratorTask** — trigger = DB-backed fixture runs exist (tied to
+>   the §5 table DEFER);
+> - **ProfileImpactTask** — DEFERRED as a task; the near-term impact preview is
+>   the pure-function route-resolution diff described in §3, not a dedicated
+>   agent.
+
+Agent tasks propose. They do not silently publish.
+
+> **Amended 2026-06-04 (U0 / YUK-205 / ADR-0029)**: the proposal-only invariant
+> is owned by **ADR-0025 ND-5** (with ADR-0004). This spec restates it by
+> reference rather than re-deriving it; admission of agent-proposed profile
+> edits follows the **blast-radius admission rule in the Agent Framework spec
+> §3** (per D8): a *global policy* like a subject profile is **publish-gated**
+> (never auto-active), as opposed to per-item measurement metadata which is
+> auto-active with confidence + provenance.
 
 ## 5. Data model direction
 
@@ -192,6 +246,15 @@ Longer term, add database-backed authoring records:
   - `id`, `draft_id`, `snapshot_id`, `result_json`, `created_at`.
 
 Runtime should resolve only published snapshots. Drafts are authoring state.
+
+> **Amended 2026-06-04 (U0 / YUK-205 / ADR-0029)**: all four `subject_profile_*`
+> DB tables are **DEFERRED** (trigger = the git-backed flow proves insufficient).
+> `git` already supplies the four lifecycle states for free — commit = snapshot,
+> uncommitted working tree = draft, diff/PR = patch, history = audit trail — and
+> `profile.ts` has been verified to round-trip as pure data, so no DB row is
+> needed to author profiles today. **V1 stays file-backed.** Do not add these
+> tables until a concrete authoring need (concurrent drafts, agent-run fixture
+> persistence, cross-machine state) can't be served by git.
 
 ## 6. Runtime resolution
 
@@ -219,6 +282,14 @@ Important screens and controls:
 - Cause taxonomy board with explicit operations: rename, split, merge, replace.
 - Capability route matrix: rows = question/activity families; columns =
   capabilities; cells show enabled, preferred, fallback, or blocked.
+
+> **Amended 2026-06-04 (U0 / YUK-205 / ADR-0029)**: the **cause-taxonomy board**
+> and the side-by-side **due-queue preview** above are **DEFERRED** (board:
+> trigger = first real rename/split need; due-queue: trigger = a second
+> scheduler policy exists — see §3). These are schedule, not policy; §0 stays.
+> Until then, cause-id edits go through hand-edited `profile.ts` + cause-id lint
+> (YUK-172), and the near-term impact panel is the route-resolution diff (§3),
+> not a due-queue panel.
 - Fixture console: case list, expected route, actual route, score delta, output
   evidence.
 - Publish drawer: version bump, required gates, release notes, rollback pointer.
@@ -244,6 +315,23 @@ This extends current `pnpm audit:profile` rather than replacing it. The
 section references, fallback family, and pipeline schema compatibility; the
 Studio publish gate is a good home for those checks.
 
+> **Amended 2026-06-04 (U0 / YUK-205 / ADR-0029)**: three concrete foundation
+> gates land first, ahead of the long-term publish-gate vision:
+>
+> - **profile_version event stamping (D6)** — the first slice. Judge-event
+>   payload gains optional `profile_version`/`capability_ref`/`judge_route`, and
+>   the hard-coded `capability_ref.version` `'1.0.0'`
+>   (question-contract.ts:92,239 / steps-judge.ts:10) is replaced with the real
+>   `SubjectProfile.version`. This is a **shared CO/PS slice — built once, not
+>   twice**; it makes the §0 historical-explainability invariant actually true.
+> - **`audit:profile` registry-traversal fix (YUK-206)** — repair the registry
+>   walk so declared capabilities are genuinely validated against the capability
+>   registry, not silently skipped.
+> - **cause-id lint** — guard against `causeLean` hard-coding drift plus a
+>   `variant_gen` targeted cross-check, so hand-edited `profile.ts` cause-id
+>   changes (the file-backed fallback while the taxonomy board is DEFERRED) stay
+>   honest. Tracked under YUK-172.
+
 ## 9. First implementation slice
 
 Keep the first slice deliberately small:
@@ -260,6 +348,45 @@ Keep the first slice deliberately small:
 
 This validates the product loop without prematurely migrating runtime profile
 resolution out of TypeScript files.
+
+> **Amended 2026-06-04 (U0 / YUK-205 / ADR-0029)**: the MVP KEEP list (per D9)
+> is ordered as follows, and only these ship in the first pass:
+>
+> 1. **D6 judge-event version stamping** (the first knife; shared CO/PS slice,
+>    built once — see §8);
+> 2. **`audit:profile` registry-traversal fix (YUK-206)**;
+> 3. **`SubjectProfileDraft` + `ProfileImpactReport` Zod schemas** in core;
+> 4. **draft-JSON → `validateProfile` → diff CLI compile script**;
+> 5. **profile → TS-literal serializer** (round-trip back to `profile.ts`);
+> 6. **`ProfileCriticTask`** — the only MVP agent;
+> 7. **read-only `/admin/subjects` page** — reuses the existing `(admin)` layout
+>    + `TokenGate`. Any future write operation **must** go through `/api/admin/*`
+>    so it inherits the API token gate (see the Security note below); no page
+>    Server Action.
+>
+> Everything else in this spec is DEFERRED with the triggers recorded in the
+> amended sections above.
+
+## 9a. Security note — admin pages are not middleware-gated
+
+> **Added 2026-06-04 (U0 / YUK-205 / ADR-0029)**, per audit SR-4.
+
+The auth middleware **does not gate admin PAGE routes**: `middleware.ts`'s
+`matcher` only covers `/api/:path*`, and `TokenGate` is a client-side
+`localStorage` guard, not a server-side check. A page route under `/admin/*`
+therefore renders without any server-enforced token.
+
+The hard rule for this Studio: **every write operation must go through
+`/api/admin/*`**, so it inherits the middleware's `x-internal-token` gate. Do
+**not** put writes in page Server Actions — those bypass the API matcher and run
+unauthenticated. The read-only `/admin/subjects` page (§9) is fine because it
+only reads compiled profiles client-side; the moment a write is introduced it
+moves behind an `/api/admin/*` endpoint.
+
+The single-token model is sufficient for this single-user tool — there is no
+per-user auth, and the one shared `INTERNAL_TOKEN` is the entire trust boundary.
+Stating this explicitly so no future slice "improves" the page route into a
+Server Action that quietly drops the gate.
 
 ## 10. Open decisions
 
