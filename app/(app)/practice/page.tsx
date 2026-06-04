@@ -38,9 +38,10 @@ const FILTERS: Array<{ id: FilterId; label: string; icon?: 'target' | 'pencil' |
   { id: 'note', label: '笔记小测', icon: 'doc' },
 ];
 
-/** Is this paper in "today" bucket: generating, not started, or in-progress. */
+/** Is this paper in "today" bucket: generating (not failed), not started, or in-progress. */
 function isToday(p: PracticePaperItem): boolean {
-  if (p.generation_status !== 'ready') return true; // generating
+  if (p.generation_status === 'failed') return false; // failed → show in past/error bucket
+  if (p.generation_status !== 'ready') return true; // pending/generating
   const st = p.session?.status ?? null;
   if (st === null || st === 'abandoned') return false;
   return st !== 'completed';

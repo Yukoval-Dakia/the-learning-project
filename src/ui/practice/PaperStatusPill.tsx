@@ -17,6 +17,14 @@ export interface PaperStatusPillProps {
 }
 
 export function PaperStatusPill({ generationStatus, sessionStatus }: PaperStatusPillProps) {
+  if (generationStatus === 'failed') {
+    return (
+      <span className="badge tone-coral">
+        <LoomIcon name="alert" size={12} />
+        生成失败
+      </span>
+    );
+  }
   if (generationStatus !== 'ready') {
     return (
       <span className="badge tone-info">

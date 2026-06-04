@@ -1,9 +1,11 @@
 'use client';
 
 // /practice/[id] — 做卷答题页 (paper answering page).
-// Ported from docs/design/loom-prototype/screen-review.jsx (two-phase answering→
-// feedback flow, session banner, cmp-split, judge-panel, keyboard contract).
-// §5.1 design pre-flight: see plan §5 / screen-review.jsx.
+// Design authority: docs/superpowers/plans/2026-06-05-u5-paper-model.md §5.
+// Markup uses production CSS classes only (review-stage, answer-compose,
+// feedback-split, feedback-prose, label-mono, qbody, etc.) — no phantom
+// class names. Practice-specific chrome (session bar, paper progress bar)
+// uses .practice-loom scoped rules appended in globals.css.
 //
 // session.type is always 'review' (RL1). No `type='paper'` string ships here.
 //
@@ -47,6 +49,7 @@ interface SlotLocalState {
 interface SubmitResult {
   visible_to_user: boolean;
   coarse_outcome: string | null;
+  // score is [0,1]; multiply by 100 for display as percentage
   score: number | null;
   feedback_buffered?: boolean;
 }
@@ -99,7 +102,7 @@ export default function PracticeAnswerPage() {
 
   // ── start session if not already linked ────────────────────────────────────
   const [startingSession, setStartingSession] = useState(false);
-  const startedRef = useRef(false); // prevent double-start in StrictMode
+  const startedRef = useRef(false); // prevent double-start in React StrictMode
 
   useEffect(() => {
     if (!paper || startedRef.current) return;
@@ -192,10 +195,17 @@ export default function PracticeAnswerPage() {
         const existing = prev[key];
         const serverDraft = slot.slot_state.draft;
         const serverSub = slot.slot_state.submission;
+        // SHOULD-FIX #2: server visible_to_user:true (revealed after session end)
+        // must override stale local buffered result — always prefer server sub when visible.
+        const serverResult = serverSubToResult(serverSub);
+        const localResult = existing?.submitResult ?? null;
+        const mergedResult = serverResult?.visible_to_user
+          ? serverResult
+          : (localResult ?? serverResult);
         next[key] = {
           answer: existing?.answer ?? serverDraft?.content_md ?? '',
           phase: serverSub ? 'feedback' : (existing?.phase ?? 'answering'),
-          submitResult: existing?.submitResult ?? serverSubToResult(serverSub),
+          submitResult: mergedResult,
           autosavePending: false,
         };
       }
@@ -236,6 +246,14 @@ export default function PracticeAnswerPage() {
 
   // ── autosave debounce ──────────────────────────────────────────────────────
   const autosaveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  // SHOULD-FIX #3: cleanup all pending autosave timers on unmount
+  useEffect(() => {
+    const timers = autosaveTimers.current;
+    return () => {
+      for (const id of Object.values(timers)) clearTimeout(id);
+    };
+  }, []);
 
   function scheduleAutosave(slot: PaperDetailSlot, answer: string) {
     const key = slotKey(slot);
@@ -305,6 +323,8 @@ export default function PracticeAnswerPage() {
 
   function handleSubmit(slot: PaperDetailSlot) {
     const key = slotKey(slot);
+    // SHOULD-FIX #4: guard against double-submit from Cmd+Enter race
+    if (submitM.isPending || slotStates[key]?.submitResult) return;
     const answer = slotStates[key]?.answer ?? '';
     submitM.mutate({ slot, answerMd: answer });
   }
@@ -315,7 +335,7 @@ export default function PracticeAnswerPage() {
 
   // ── keyboard contract (screen-review.jsx:38-54) ───────────────────────────
   const taRef = useRef<HTMLTextAreaElement | null>(null);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: handleSubmit is stable (useCallback), intentionally omitted to avoid re-registering listeners
+  // biome-ignore lint/correctness/useExhaustiveDependencies: handleSubmit is stable via closure; intentionally omitted to avoid re-registering listeners on every state tick
   useEffect(() => {
     const activeSlot = allSlots[activeSlotIdx];
     if (!activeSlot) return;
@@ -332,7 +352,6 @@ export default function PracticeAnswerPage() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSlotIdx, slotStates, sessionStatus, allDone, allSlots]);
 
   // ── render ─────────────────────────────────────────────────────────────────
@@ -342,7 +361,14 @@ export default function PracticeAnswerPage() {
   if (detailQ.isLoading || startingSession) {
     return (
       <div className="page view practice-loom">
-        <div className="paper-grid" style={{ marginTop: 'var(--s-6)' }}>
+        <div
+          style={{
+            marginTop: 'var(--s-6)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 'var(--s-4)',
+          }}
+        >
           {[1, 2].map((i) => (
             <LoomCard key={i} pad>
               <SkLines rows={3} />
@@ -369,13 +395,13 @@ export default function PracticeAnswerPage() {
 
   return (
     <div className="page view practice-loom">
-      {/* ── session banner (screen-review.jsx:73-81) ─────────────────────── */}
-      <div className="review-session nowrap-meta">
+      {/* ── session status bar ─────────────────────────────────────────────── */}
+      <div className="paper-session-bar">
         <span className="badge tone-neutral">
           <span className={`dot${isPaused ? '' : ' pulse'}`} />
           {isPaused ? '已暂停' : sessionStatus === 'completed' ? '已完成' : '进行中'}
         </span>
-        {sessionId && <span className="mono">session {sessionId}</span>}
+        {sessionId && <span className="mono">{sessionId.slice(0, 8)}…</span>}
         <span className="dot-sep">·</span>
         <span>URL 可恢复</span>
         <span className="topbar-spacer" />
@@ -390,15 +416,15 @@ export default function PracticeAnswerPage() {
         ) : null}
       </div>
 
-      {/* ── progress bar ─────────────────────────────────────────────────── */}
-      <div className="review-prog">
-        <span className="meta tnum">
+      {/* ── paper-level progress bar ──────────────────────────────────────── */}
+      <div className="paper-answering-prog">
+        <span className="prog-label tnum">
           {submittedCount}/{totalSlots}
         </span>
         <div className="bar">
           <span style={{ width: `${progressPct}%` }} />
         </div>
-        <span className="meta">{paper.title}</span>
+        <span className="prog-label">{paper.title}</span>
       </div>
 
       {/* ── paused overlay ───────────────────────────────────────────────── */}
@@ -451,10 +477,10 @@ export default function PracticeAnswerPage() {
       {!isPaused &&
         !allDone &&
         paper.sections.map((section) => (
-          <div key={section.section_index} className="review-stage">
-            {/* section header */}
+          <div key={section.section_index}>
+            {/* section header — only shown when paper has multiple sections */}
             {paper.sections.length > 1 && (
-              <div className="review-meta nowrap-meta" style={{ marginBottom: 'var(--s-3)' }}>
+              <div className="section-divider">
                 <span className="badge tone-neutral">
                   <LoomIcon name="layers" size={12} />第 {section.section_index + 1} 节
                 </span>
@@ -466,7 +492,7 @@ export default function PracticeAnswerPage() {
               </div>
             )}
 
-            {section.slots.map((slot, slotIdxInSection) => {
+            {section.slots.map((slot) => {
               const globalIdx = allSlots.indexOf(slot);
               const key = slotKey(slot);
               const localState = slotStates[key] ?? {
@@ -480,54 +506,63 @@ export default function PracticeAnswerPage() {
               const phase = localState.phase;
 
               return (
-                <div
+                <section
                   key={key}
-                  className={`flash-card${isActive ? '' : ' is-past'}`}
-                  style={isActive ? undefined : { opacity: 0.6 }}
-                  onClick={() => !isSubmitted && setActiveSlotIdx(globalIdx)}
-                  onKeyDown={(e) => {
-                    if ((e.key === 'Enter' || e.key === ' ') && !isSubmitted)
-                      setActiveSlotIdx(globalIdx);
-                  }}
-                  tabIndex={isSubmitted || isActive ? -1 : 0}
+                  className="review-stage"
+                  style={isActive ? undefined : { opacity: 0.65 }}
                   aria-current={isActive ? 'true' : undefined}
                 >
                   {/* slot meta */}
-                  <div className="review-meta nowrap-meta">
-                    <span className="meta">
+                  <div className="progress">
+                    <span>
                       {globalIdx + 1} / {totalSlots}
+                      {slot.knowledge_focus.map((k) => (
+                        <span
+                          key={k}
+                          className="chip chip-k mono"
+                          style={{ marginLeft: 'var(--s-2)' }}
+                        >
+                          {k}
+                        </span>
+                      ))}
+                      {slot.part_ref && (
+                        <span className="badge tone-neutral" style={{ marginLeft: 'var(--s-2)' }}>
+                          {slot.part_ref}
+                        </span>
+                      )}
                     </span>
-                    {slot.knowledge_focus.map((k) => (
-                      <span key={k} className="chip chip-k mono">
-                        {k}
-                      </span>
-                    ))}
-                    {slot.part_ref && <span className="badge tone-neutral">{slot.part_ref}</span>}
+                    {!isActive && !isSubmitted && (
+                      <button
+                        type="button"
+                        className="btn-sm"
+                        onClick={() => setActiveSlotIdx(globalIdx)}
+                      >
+                        跳到此题
+                      </button>
+                    )}
                   </div>
 
                   {/* question body */}
-                  <div className="flash-q wenyan">
-                    {slot.question.prompt_md || '（题面加载中）'}
-                  </div>
+                  <div className="qbody wenyan">{slot.question.prompt_md || '（题面加载中）'}</div>
 
                   {/* answering phase */}
                   {isActive && phase === 'answering' && !isSubmitted && (
-                    <div className="answer-block">
-                      <label className="field-label" htmlFor={`answer-input-${key}`}>
-                        你的作答
-                      </label>
-                      <div className="composer answer-composer">
-                        <textarea
-                          id={`answer-input-${key}`}
-                          ref={globalIdx === activeSlotIdx ? taRef : undefined}
-                          rows={3}
-                          value={localState.answer}
-                          placeholder="先用你自己的话作答，再提交……"
-                          onChange={(e) => handleAnswerChange(slot, e.target.value)}
-                          aria-label="作答"
-                        />
+                    <>
+                      <div className="label-mono">你的作答</div>
+                      <div className="answer-compose">
+                        <div className="answer-compose__editor">
+                          <textarea
+                            id={`answer-input-${key}`}
+                            ref={taRef}
+                            rows={3}
+                            value={localState.answer}
+                            placeholder="先用你自己的话作答，再提交……"
+                            onChange={(e) => handleAnswerChange(slot, e.target.value)}
+                            aria-label="作答"
+                          />
+                        </div>
                       </div>
-                      <div className="answer-actions">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s-3)' }}>
                         <Btn
                           variant="primary"
                           icon="check"
@@ -536,9 +571,11 @@ export default function PracticeAnswerPage() {
                         >
                           提交
                         </Btn>
-                        <span className="key-hints nowrap-meta mono">⌘/Ctrl+Enter 提交</span>
+                        <span className="label-mono" style={{ color: 'var(--ink-5)' }}>
+                          ⌘/Ctrl+Enter 提交
+                        </span>
                         {localState.autosavePending && (
-                          <span className="meta" style={{ color: 'var(--ink-5)' }}>
+                          <span className="label-mono" style={{ color: 'var(--ink-5)' }}>
                             草稿保存中…
                           </span>
                         )}
@@ -551,79 +588,60 @@ export default function PracticeAnswerPage() {
                           提交失败：{(submitM.error as Error).message}
                         </p>
                       )}
-                    </div>
+                    </>
                   )}
 
                   {/* feedback phase */}
                   {phase === 'feedback' && isSubmitted && (
-                    <div className="flash-reveal">
-                      {/* answer vs reference (cmp-split, screen-review.jsx:115-124) */}
-                      <div className="cmp-split">
-                        <div className="cmp-pane cmp-you">
-                          <div className="cmp-head">
-                            <LoomIcon name="pencil" size={13} />
-                            你的作答
+                    <>
+                      {/* answer vs reference — feedback-split is a production class */}
+                      <div className="feedback-split">
+                        <div>
+                          <div className="label-mono">
+                            <LoomIcon name="pencil" size={13} /> 你的作答
                           </div>
-                          <div className="cmp-text wenyan">
-                            {localState.answer || (
-                              <span className="quiet-empty" style={{ padding: 0 }}>
-                                （未作答）
-                              </span>
-                            )}
+                          <div className="wenyan" style={{ marginTop: 'var(--s-2)' }}>
+                            {localState.answer || <span className="quiet-empty">（未作答）</span>}
                           </div>
                         </div>
-                        <div className="cmp-pane cmp-ref">
-                          <div className="cmp-head">
-                            <LoomIcon name="check" size={13} />
-                            参考答案
+                        <div>
+                          <div className="label-mono">
+                            <LoomIcon name="check" size={13} /> 参考答案
                           </div>
-                          <div className="cmp-text wenyan">
-                            {/* reference not included in the server response to
-                                avoid cheating; show after paper completion or
-                                when the section policy is immediate. Future:
-                                add reference_md to PaperDetailResult when
-                                visibility=immediate. */}
-                            （提交后可在学习会话中查看）
+                          <div
+                            className="wenyan feedback-prose muted"
+                            style={{ marginTop: 'var(--s-2)' }}
+                          >
+                            {/* reference_md not included in server response (anti-cheat);
+                                revealed in learning-session view after completion. */}
+                            提交后可在学习会话中查看
                           </div>
                         </div>
                       </div>
 
-                      {/* judge panel / buffered placeholder */}
+                      {/* judge outcome / buffered placeholder */}
                       {localState.submitResult?.visible_to_user ? (
-                        <div className="judge-panel">
-                          <div className="judge-head">
-                            <span className="ai-tag">
-                              <LoomIcon name="sparkle" size={12} />
-                              AI 判定
+                        <div className="feedback-prose">
+                          <span
+                            className={`badge ${OUTCOME_TONE[localState.submitResult.coarse_outcome ?? 'unknown']}`}
+                          >
+                            {OUTCOME_LABEL[localState.submitResult.coarse_outcome ?? 'unknown']}
+                          </span>
+                          {localState.submitResult.score != null && (
+                            <span className="label-mono" style={{ marginLeft: 'var(--s-2)' }}>
+                              {/* score is [0,1]; display as percentage */}
+                              得分 {Math.round(localState.submitResult.score * 100)}%
                             </span>
-                            <span
-                              className={`badge ${OUTCOME_TONE[localState.submitResult.coarse_outcome ?? 'unknown']}`}
-                            >
-                              {OUTCOME_LABEL[localState.submitResult.coarse_outcome ?? 'unknown']}
-                            </span>
-                            {localState.submitResult.score != null && (
-                              <span className="meta" style={{ marginLeft: 'auto' }}>
-                                {localState.submitResult.score >= 1
-                                  ? Math.round(localState.submitResult.score * 100)
-                                  : Math.round(localState.submitResult.score * 100)}
-                                分
-                              </span>
-                            )}
-                          </div>
+                          )}
                         </div>
                       ) : (
                         /* feedback_buffered placeholder (§4.9) */
-                        <div
-                          className="judge-panel"
-                          style={{ background: 'var(--paper-raised)', borderStyle: 'dashed' }}
-                        >
-                          <div className="judge-head">
-                            <span className="ai-tag" style={{ color: 'var(--ink-4)' }}>
-                              <LoomIcon name="clock" size={12} />
-                              反馈已缓冲
-                            </span>
-                            <span className="meta">整卷完成后揭示</span>
-                          </div>
+                        <div className="feedback-buffered">
+                          <LoomIcon name="clock" size={14} />
+                          <span>反馈已缓冲</span>
+                          <span className="label-mono" style={{ color: 'var(--ink-5)' }}>
+                            整卷完成后揭示
+                          </span>
                         </div>
                       )}
 
@@ -633,7 +651,7 @@ export default function PracticeAnswerPage() {
                           style={{
                             display: 'flex',
                             justifyContent: 'flex-end',
-                            marginTop: 'var(--s-3)',
+                            marginTop: 'var(--s-1)',
                           }}
                         >
                           <Btn variant="primary" iconEnd="arrow" onClick={handleNext}>
@@ -641,9 +659,9 @@ export default function PracticeAnswerPage() {
                           </Btn>
                         </div>
                       )}
-                    </div>
+                    </>
                   )}
-                </div>
+                </section>
               );
             })}
           </div>
