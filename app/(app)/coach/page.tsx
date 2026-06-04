@@ -1,15 +1,32 @@
 'use client';
 
-// Phase 1d — Coach 周度 review 报表
+// Phase 1d — Coach 周度 review 报表 (loom redraw, wave 2 / YUK-169)
 //
 // Aggregates FSRS review activity over a 7d / 30d / 90d window. Computed from
 // the event stream at request time (single-shot fetch per page load; client
-// re-fetches on window change).
+// re-fetches on window change). Read-only: this surface never mutates.
+//
+// Redraw note (see docs/design/2026-06-04-redraw-coach-preflight.md):
+//   - Visual layer ported from loom-prototype screen-coach.jsx; all wiring
+//     (query / days state / WINDOW_OPTIONS / CAUSE_LABELS / correctRate)
+//     preserved.
+//   - The prototype's TodayPlan / strand / goal-strand sections are DROPPED:
+//     the current /coach route has zero wiring for them. Those are future
+//     Coach-engine surfaces (Coach brief -> ReviewPlanTask two-stage
+//     pipeline + ADR-0025 goal strand) not yet exposed to this page. No mock.
+//     Phase-deferred context: docs/design/2026-06-04-u0-decisions.md D5.
 
-import { ApiAuthError, apiJson } from '@/ui/lib/api';
-import { PageHeader } from '@/ui/primitives/PageHeader';
+import { apiJson } from '@/ui/lib/api';
+import { EmptyState } from '@/ui/primitives/EmptyState';
+import { LoomCard } from '@/ui/primitives/LoomCard';
+import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { SectionLabel } from '@/ui/primitives/SectionLabel';
+import { SkLines } from '@/ui/primitives/SkLines';
+import { Stateful } from '@/ui/primitives/Stateful';
+import { useCountUp } from '@/ui/primitives/useCountUp';
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { useEffect, useState } from 'react';
 
 interface WeeklyResponse {
   window: { days: number; from: number; to: number };
@@ -41,236 +58,259 @@ const CAUSE_LABELS: Record<string, string> = {
   other: '其它',
 };
 
+// Loom CoachKpi — animated count-up KPI (screen-coach.jsx L2-6).
+function CoachKpi({
+  label,
+  value,
+  unit,
+  prefix,
+  active,
+  decimals = 0,
+}: {
+  label: string;
+  value: number;
+  unit?: string;
+  prefix?: string;
+  active: boolean;
+  decimals?: number;
+}) {
+  const v = useCountUp(value, { start: active, dur: 900, decimals });
+  const shown = decimals > 0 ? v.toFixed(decimals) : Math.round(v);
+  return (
+    <div className="coach-kpi">
+      <div className="coach-kpi-n serif tnum">
+        {prefix}
+        {shown}
+        {unit ? <span className="coach-kpi-u">{unit}</span> : null}
+      </div>
+      <div className="coach-kpi-l meta">{label}</div>
+    </div>
+  );
+}
+
 export default function CoachPage() {
   const [days, setDays] = useState<Window>(7);
+  // Re-arm count-up animations on window change (prototype L11-12 pattern).
+  const [active, setActive] = useState(false);
+  useEffect(() => {
+    setActive(false);
+    const id = requestAnimationFrame(() => setActive(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
 
   const q = useQuery({
     queryKey: ['weekly-review', days],
     queryFn: () => apiJson<WeeklyResponse>(`/api/review/weekly?days=${days}`),
   });
 
-  return (
-    <main className="page">
-      <PageHeader
-        title="周度报表"
-        eyebrow="/coach"
-        sub="过去 N 天的 FSRS 复习、错题归因与 AI 提议总览。"
-      />
+  const status = q.isLoading
+    ? 'loading'
+    : q.isError
+      ? 'error'
+      : q.data && q.data.totals.reviews === 0
+        ? 'empty'
+        : 'ok';
 
-      <div className="coach-window-tabs">
-        {WINDOW_OPTIONS.map((opt) => (
-          <button
-            key={opt.days}
-            type="button"
-            className={days === opt.days ? 'is-on' : ''}
-            onClick={() => setDays(opt.days)}
-          >
-            {opt.label}
-          </button>
-        ))}
+  return (
+    <main className="page view coach-loom">
+      <div className="page-head">
+        <div className="eyebrow">COACH · 只读分析 · 近 {days} 天</div>
+        <div className="page-head-row">
+          <h1 className="page-title serif">Coach 周报</h1>
+          <div className="seg">
+            {WINDOW_OPTIONS.map((opt) => (
+              <button
+                key={opt.days}
+                type="button"
+                className={days === opt.days ? 'on' : ''}
+                onClick={() => setDays(opt.days)}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <p className="page-lead">
+          复盘最近的复习与错题：评分构成、逐日节奏、薄弱知识点与归因分布。只读，不改数据。
+        </p>
       </div>
 
-      {q.isLoading && (
-        <div className="coach-panel">
-          <p className="empty">加载中…</p>
-        </div>
-      )}
-
-      {q.isError && (
-        <div className="coach-panel">
-          <p className="empty" style={{ color: 'var(--again-ink)' }}>
-            {q.error instanceof ApiAuthError
-              ? `${q.error.message} — 请重新进入页面输入 token`
-              : `加载失败：${(q.error as Error).message}`}
-          </p>
-        </div>
-      )}
-
-      {q.isSuccess && <CoachReport data={q.data} />}
+      <Stateful
+        status={status}
+        onRetry={() => q.refetch()}
+        errorText="分析数据加载失败。"
+        skeleton={
+          <LoomCard pad>
+            <SkLines rows={4} />
+          </LoomCard>
+        }
+        empty={<EmptyState icon="target" title="窗口内无数据" text="该时间窗内还没有复习记录。" />}
+      >
+        {q.data ? <CoachReport key={days} data={q.data} active={active} /> : null}
+      </Stateful>
     </main>
   );
 }
 
-function CoachReport({ data }: { data: WeeklyResponse }) {
+function CoachReport({ data, active }: { data: WeeklyResponse; active: boolean }) {
+  const router = useRouter();
   const { totals, ratings, daily, top_causes, top_knowledge } = data;
-  const total = ratings.again + ratings.hard + ratings.good + ratings.easy;
+  const distTotal = ratings.again + ratings.hard + ratings.good + ratings.easy;
   const correctRate =
     totals.reviews > 0 ? Math.round(((ratings.good + ratings.easy) / totals.reviews) * 100) : 0;
+  const causeTotal = top_causes.reduce((s, c) => s + c.count, 0);
+  const maxDay = Math.max(1, ...daily.map((d) => d.count));
+  const maxFail = Math.max(1, ...top_knowledge.map((k) => k.failure_count));
 
   return (
     <>
-      <div className="kpi-strip">
-        <div className="kpi">
-          <div className="kpi-label">复习总数</div>
-          <div className="kpi-num">
-            {totals.reviews}
-            <small> 题</small>
-          </div>
-          <div className="kpi-trend">action=review · {data.window.days}d</div>
-        </div>
-        <div className="kpi">
-          <div className="kpi-label">正确率</div>
-          <div className="kpi-num">
-            {correctRate}
-            <small> %</small>
-          </div>
-          <div
-            className={`kpi-trend${correctRate >= 70 ? ' up' : correctRate < 50 ? ' down' : ''}`}
-          >
-            good + easy / 总数
-          </div>
-        </div>
-        <div className="kpi">
-          <div className="kpi-label">新错题</div>
-          <div className="kpi-num">
-            {totals.failures}
-            <small> 条</small>
-          </div>
-          <div className="kpi-trend">attempt:failure · {data.window.days}d</div>
-        </div>
-        <div className="kpi">
-          <div className="kpi-label">AI 成本</div>
-          <div className="kpi-num">${totals.cost_usd.toFixed(3)}</div>
-          <div className="kpi-trend">cost_micro_usd · {data.window.days}d</div>
-        </div>
+      <div className="coach-kpis stagger">
+        <CoachKpi label="reviews" value={totals.reviews} active={active} />
+        <CoachKpi label="正确率" value={correctRate} unit="%" active={active} />
+        <CoachKpi label="新增错题" value={totals.failures} active={active} />
+        <CoachKpi label="AI 成本" value={totals.cost_usd} prefix="$" active={active} decimals={3} />
       </div>
 
-      {total > 0 && (
-        <div className="session-rating-bar">
-          {(['again', 'hard', 'good', 'easy'] as const).map((r) => {
-            const pct = (ratings[r] / total) * 100;
-            if (pct === 0) return null;
+      <div className="coach-grid">
+        <LoomCard pad>
+          <div className="card-head">
+            <span className="card-icon">
+              <LoomIcon name="review" size={18} />
+            </span>
+            <div className="card-title">评分分布</div>
+            <span className="meta" style={{ marginLeft: 'auto' }}>
+              {distTotal} 次
+            </span>
+          </div>
+          {distTotal > 0 && (
+            <div className="dist-bar">
+              <span
+                className="dist-seg tone-again"
+                style={{ width: `${(ratings.again / distTotal) * 100}%` }}
+              />
+              <span
+                className="dist-seg tone-hard"
+                style={{ width: `${(ratings.hard / distTotal) * 100}%` }}
+              />
+              <span
+                className="dist-seg tone-good"
+                style={{ width: `${(ratings.good / distTotal) * 100}%` }}
+              />
+              <span
+                className="dist-seg tone-easy"
+                style={{ width: `${(ratings.easy / distTotal) * 100}%` }}
+              />
+            </div>
+          )}
+          <div className="dist-legend">
+            <span>
+              <span className="dist-key tone-again" />
+              不会 <b className="mono">{ratings.again}</b>
+            </span>
+            <span>
+              <span className="dist-key tone-hard" />
+              勉强 <b className="mono">{ratings.hard}</b>
+            </span>
+            <span>
+              <span className="dist-key tone-good" />
+              会了 <b className="mono">{ratings.good}</b>
+            </span>
+            <span>
+              <span className="dist-key tone-easy" />
+              熟练 <b className="mono">{ratings.easy}</b>
+            </span>
+          </div>
+        </LoomCard>
+
+        <LoomCard pad>
+          <div className="card-head">
+            <span className="card-icon">
+              <LoomIcon name="bolt" size={18} />
+            </span>
+            <div className="card-title">归因分布</div>
+            <span className="meta" style={{ marginLeft: 'auto' }}>
+              只读
+            </span>
+          </div>
+          {top_causes.length === 0 ? (
+            <p className="meta">尚无归因数据。</p>
+          ) : (
+            <div className="cause-list">
+              {top_causes.map((c) => (
+                <div key={c.category} className="cause-row">
+                  <span className="cause-name">{CAUSE_LABELS[c.category] ?? c.category}</span>
+                  <div className="cause-track">
+                    <span
+                      style={{ width: `${causeTotal > 0 ? (c.count / causeTotal) * 100 : 0}%` }}
+                    />
+                  </div>
+                  <span className="mono cause-n">
+                    {causeTotal > 0 ? Math.round((c.count / causeTotal) * 100) : 0}%
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </LoomCard>
+      </div>
+
+      <SectionLabel>逐日复习量</SectionLabel>
+      <LoomCard pad>
+        {/* Per-day stack is 2-segment (correct=good / wrong=again): the
+            weekly endpoint exposes only daily {count, correct}, not an
+            again/hard/good per-day split. Three-tier per-day breakdown is
+            phase-deferred to FSRS event-stream group-by-rating (P3) — see
+            docs/design/2026-06-04-u0-decisions.md D1/D5. No mock. */}
+        <div className="stack-chart">
+          {daily.map((d) => {
+            const wrong = d.count - d.correct;
             return (
-              <div
-                key={r}
-                className={`seg ${r}`}
-                style={{ width: `${pct}%` }}
-                title={`${r} ${ratings[r]} / ${total}`}
-              >
-                {pct > 12 ? `${ratings[r]}` : ''}
+              <div key={d.date} className="stack-col">
+                <div className="stack-bars" style={{ height: 140 }}>
+                  <span
+                    className="stack-seg tone-good"
+                    style={{ height: `${(d.correct / maxDay) * 140}px` }}
+                    title={`对 ${d.correct}`}
+                  />
+                  <span
+                    className="stack-seg tone-again"
+                    style={{ height: `${(wrong / maxDay) * 140}px` }}
+                    title={`错 ${wrong}`}
+                  />
+                </div>
+                <span className="stack-x meta">{d.date.slice(5)}</span>
+                <span className="stack-total mono">{d.count}</span>
               </div>
             );
           })}
         </div>
-      )}
-      <div className="session-rating-legend">
-        <span className="item">
-          <span className="swatch again" /> 不会 {ratings.again}
-        </span>
-        <span className="item">
-          <span className="swatch hard" /> 勉强 {ratings.hard}
-        </span>
-        <span className="item">
-          <span className="swatch good" /> 会 {ratings.good}
-        </span>
-        <span className="item">
-          <span className="swatch easy" /> 熟练 {ratings.easy}
-        </span>
-      </div>
+      </LoomCard>
 
-      <div className="coach-daily">
-        <h4>每日 review 数（绿=对 / 红=错）</h4>
-        <DailyBars daily={daily} />
-        <div className="coach-daily-labels">
-          {daily.map((d) => (
-            <span key={d.date} className="lbl">
-              {d.date.slice(5)}
-            </span>
-          ))}
-        </div>
-      </div>
-
-      <div className="coach-grid">
-        <div className="coach-panel">
-          <h4>易错知识点</h4>
-          {top_knowledge.length === 0 ? (
-            <p className="empty">窗口内无失败 attempt。</p>
-          ) : (
-            <TopList
-              entries={top_knowledge.map((k) => ({
-                name: k.name,
-                count: k.failure_count,
-              }))}
-              suffix=" 次"
-            />
-          )}
-        </div>
-
-        <div className="coach-panel">
-          <h4>归因分布</h4>
-          {top_causes.length === 0 ? (
-            <p className="empty">尚无归因数据。</p>
-          ) : (
-            <TopList
-              entries={top_causes.map((c) => ({
-                name: CAUSE_LABELS[c.category] ?? c.category,
-                count: c.count,
-              }))}
-              suffix=" 次"
-            />
-          )}
-        </div>
-      </div>
-    </>
-  );
-}
-
-function DailyBars({
-  daily,
-}: {
-  daily: Array<{ date: string; count: number; correct: number }>;
-}) {
-  const max = Math.max(1, ...daily.map((d) => d.count));
-  return (
-    <div className="coach-daily-bars">
-      {daily.map((d) => {
-        const heightPct = (d.count / max) * 100;
-        const correctPct = d.count > 0 ? (d.correct / d.count) * 100 : 0;
-        return (
-          <div
-            key={d.date}
-            className={`coach-daily-bar${d.count === 0 ? ' empty' : ''}`}
-            title={`${d.date} · ${d.count} 题 · ${d.count > 0 ? Math.round(correctPct) : 0}% 对`}
-          >
-            <div className="stack" style={{ height: `${Math.max(heightPct, 2)}%` }}>
-              {d.count > 0 && (
-                <>
-                  <div className="correct" style={{ flex: correctPct }} />
-                  <div className="wrong" style={{ flex: 100 - correctPct }} />
-                </>
-              )}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function TopList({
-  entries,
-  suffix,
-}: {
-  entries: Array<{ name: string; count: number }>;
-  suffix?: string;
-}) {
-  const max = Math.max(1, ...entries.map((e) => e.count));
-  return (
-    <>
-      {entries.map((e) => (
-        <div className="row" key={e.name}>
-          <span className="name" title={e.name}>
-            {e.name}
-          </span>
-          <span className="count">
-            {e.count}
-            {suffix}
-          </span>
-          <span className="meter">
-            <span style={{ width: `${(e.count / max) * 100}%` }} />
-          </span>
-        </div>
-      ))}
+      <SectionLabel>失败排行 · 按知识点</SectionLabel>
+      <LoomCard pad>
+        {top_knowledge.length === 0 ? (
+          <p className="meta">窗口内无失败 attempt。</p>
+        ) : (
+          top_knowledge.map((k) => (
+            <button
+              key={k.id}
+              type="button"
+              className="fail-row"
+              onClick={() => router.push(`/knowledge/${k.id}`)}
+            >
+              <span className="wenyan fail-name">{k.name}</span>
+              <div className="fail-track">
+                <span
+                  className="tone-again"
+                  style={{ width: `${(k.failure_count / maxFail) * 100}%` }}
+                />
+              </div>
+              <span className="mono fail-n">{k.failure_count} 次</span>
+              <LoomIcon name="arrow" size={14} className="thread-arrow" />
+            </button>
+          ))
+        )}
+      </LoomCard>
     </>
   );
 }
