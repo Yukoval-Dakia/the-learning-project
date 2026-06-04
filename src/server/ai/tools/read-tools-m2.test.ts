@@ -315,12 +315,17 @@ describe('Foundation D M2 read tools', () => {
       'get_question_context',
       'get_record_context',
       'get_review_due',
+      // YUK-203 U4 — ReviewPlanTask read tools + Mem0 fact search.
+      'get_review_knowledge_snapshot',
       'get_subject_graph_overview',
       'query_events',
       'query_knowledge',
       'query_memory_brief',
       'query_mistakes',
       'query_records',
+      'read_coach_brief',
+      'search_memory_facts',
+      'select_review_question_candidates',
     ]);
   });
 
