@@ -9665,7 +9665,7 @@ button.seg-sm {
 .practice-loom .paper-know { display: flex; flex-wrap: wrap; gap: 6px; }
 .practice-loom .paper-know .chip { font-size: 11px; padding: 3px 8px; }
 
-/* coach reason note */
+/* coach reason note — reserved: activate when coach.reason field is surfaced in PracticePaperItem */
 .practice-loom .paper-reason { display: flex; align-items: flex-start; gap: 6px; font-size: var(--fs-caption); color: var(--coral-ink); background: var(--coral-soft); border: 1px solid var(--coral-line); border-radius: var(--r-2); padding: var(--s-2) var(--s-3); }
 .practice-loom .paper-reason .ico { flex: none; margin-top: 1px; }
 
@@ -9716,3 +9716,21 @@ button.seg-sm {
 @media (max-width: 920px) {
   .practice-loom .paper-grid { grid-template-columns: 1fr; }
 }
+
+/* ---------- answering page (practice/[id]) — scoped to .practice-loom ---------- */
+
+/* session status bar */
+.practice-loom .paper-session-bar { display: flex; align-items: center; gap: var(--s-3); flex-wrap: wrap; padding: 10px var(--s-4); background: var(--paper-raised); border: 1px solid var(--line); border-radius: var(--r-3); margin-bottom: var(--s-4); font-family: var(--font-mono); font-size: var(--fs-meta); color: var(--ink-3); }
+.practice-loom .paper-session-bar .topbar-spacer { flex: 1; }
+
+/* paper-level progress bar (题数 / 总题数 + bar) */
+.practice-loom .paper-answering-prog { display: flex; align-items: center; gap: var(--s-3); margin-bottom: var(--s-4); }
+.practice-loom .paper-answering-prog .bar { flex: 1; }
+.practice-loom .paper-answering-prog .bar > span { background: var(--coral); }
+.practice-loom .paper-answering-prog .prog-label { font-family: var(--font-mono); font-size: var(--fs-meta); color: var(--ink-4); white-space: nowrap; }
+
+/* section divider inside answering page */
+.practice-loom .section-divider { display: flex; align-items: center; gap: var(--s-2); margin: var(--s-3) 0; font-family: var(--font-mono); font-size: var(--fs-meta); color: var(--ink-4); }
+
+/* buffered feedback placeholder */
+.practice-loom .feedback-buffered { display: flex; align-items: center; gap: var(--s-2); padding: var(--s-3) var(--s-4); background: var(--paper-sunk); border: 1px dashed var(--line); border-radius: var(--r-2); font-family: var(--font-mono); font-size: var(--fs-meta); color: var(--ink-4); }
