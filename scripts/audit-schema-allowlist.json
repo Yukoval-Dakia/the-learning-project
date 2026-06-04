@@ -176,44 +176,12 @@
       "expected_by": "2026-07-31"
     }
   },
-  "answer.input_kind": {
-    "reason": "Answer table currently unused; Phase 1c.2 /review submit will write",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.2 review submit path implemented",
-      "expected_by": "2026-07-31"
-    }
-  },
-  "answer.content_md": {
-    "reason": "Same as answer.input_kind",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.2 review submit path implemented",
-      "expected_by": "2026-07-31"
-    }
-  },
   "answer.vision_extracted": {
-    "reason": "Same as answer.input_kind",
+    "reason": "U5 (YUK-203) revives `answer` as the paper draft layer with text+choice input; vision_extracted holds OCR text for the scratch-image answer path whose CAPTURE UI is explicitly DEFER in U5 (plan §1 non-goals — data model must not block image upload, but MVP ships text+choice only). Write path lands with the scratch-image answer-capture UI.",
     "resolves_when": {
       "kind": "manual",
-      "ref": "Phase 1c.2 review submit path implemented",
-      "expected_by": "2026-07-31"
-    }
-  },
-  "answer.tags": {
-    "reason": "Same as answer.input_kind",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.2 review submit path implemented",
-      "expected_by": "2026-07-31"
-    }
-  },
-  "answer.submitted_at": {
-    "reason": "Same as answer.input_kind",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.2 review submit path implemented",
-      "expected_by": "2026-07-31"
+      "ref": "scratch-image answer-capture UI implemented (CO §5.7 image input)",
+      "expected_by": "2026-09-30"
     }
   },
   "artifact.id": {
