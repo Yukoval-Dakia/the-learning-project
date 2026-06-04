@@ -49,6 +49,12 @@ async function loadReviewSessionForUpdate(
 export type StartReviewSessionParams = {
   /** Optional Phase 1d goal linkage. */
   goalId?: string | null;
+  /**
+   * U5 (YUK-203) — optional soft reference to the paper artifact this review
+   * session is taking (the answering page passes it on mount). Null for the
+   * FSRS-逐张 /review flow. No FK (Q4) — loose text ref.
+   */
+  artifactId?: string | null;
 };
 
 /**
@@ -75,6 +81,7 @@ export async function startReviewSession(
       error_message: null,
       summary_md: null,
       goal_id: params.goalId ?? null,
+      artifact_id: params.artifactId ?? null,
       started_at: now,
       created_at: now,
       updated_at: now,
