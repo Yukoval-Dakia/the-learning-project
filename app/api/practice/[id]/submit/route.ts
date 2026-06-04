@@ -1,0 +1,92 @@
+// U5 (YUK-203, §4.6) — POST /api/practice/[id]/submit: submit ONE paper slot.
+// `id` is the paper artifact id. Per-slot, UI-sequential (Q6). Resolves the
+// slot's assignment (primary knowledge + section feedback_policy) from the
+// auditable plan SERVER-side — the client never supplies knowledge ids or the
+// visibility policy. Writes attempt + independent judge events + FSRS upsert and
+// freezes the draft via submitPaperSlot.
+//
+// Distinct from /api/review/submit (single-question FSRS流, untouched).
+
+import { z } from 'zod';
+
+import { Artifact } from '@/core/schema/index';
+import { db } from '@/db/client';
+import { artifact } from '@/db/schema';
+import { ApiError, errorResponse } from '@/server/http/errors';
+import { resolveSlotAssignment } from '@/server/review/paper-sections';
+import { submitPaperSlot } from '@/server/review/paper-submit';
+import { eq } from 'drizzle-orm';
+
+export const runtime = 'nodejs';
+
+const SubmitBody = z.object({
+  session_id: z.string().min(1),
+  question_id: z.string().min(1),
+  part_ref: z.string().min(1).nullable().optional(),
+  answer_md: z.string(),
+  image_refs: z.array(z.string()).default([]),
+});
+
+export async function POST(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> },
+): Promise<Response> {
+  try {
+    const { id: paperArtifactId } = await params;
+    const raw = await req.json().catch(() => null);
+    const parsed = SubmitBody.safeParse(raw);
+    if (!parsed.success) {
+      const message = parsed.error.issues
+        .map((i) => `${i.path.join('.')}: ${i.message}`)
+        .join('; ');
+      throw new ApiError('validation_error', message, 400);
+    }
+    const body = parsed.data;
+
+    // Load the paper + resolve the slot assignment from the auditable plan.
+    const rows = await db.select().from(artifact).where(eq(artifact.id, paperArtifactId)).limit(1);
+    const row = rows[0];
+    if (!row) {
+      throw new ApiError('not_found', `paper artifact ${paperArtifactId} not found`, 404);
+    }
+    const paper = Artifact.parse(row);
+    const slot = resolveSlotAssignment(paper.tool_state, body.question_id, body.part_ref ?? null);
+    if (!slot) {
+      throw new ApiError(
+        'validation_error',
+        `slot (question ${body.question_id}, part ${body.part_ref ?? '-'}) is not in paper ${paperArtifactId}`,
+        400,
+      );
+    }
+
+    const result = await submitPaperSlot(
+      {
+        sessionId: body.session_id,
+        paperArtifactId,
+        questionId: body.question_id,
+        partRef: body.part_ref ?? null,
+        answerMd: body.answer_md,
+        answerImageRefs: body.image_refs,
+        primaryKnowledgeId: slot.primaryKnowledgeId,
+        secondaryKnowledgeIds: slot.secondaryKnowledgeIds,
+        feedbackPolicy: slot.feedbackPolicy,
+      },
+      db,
+    );
+
+    return Response.json({
+      attempt_event_id: result.attemptEventId,
+      judge_event_id: result.judgeEventId,
+      answer_id: result.answerId,
+      // Derived visibility (§4.9). The independent judge event carries the gate;
+      // the read layer derives 可见. The submit response echoes whether THIS slot's
+      // feedback is immediately visible so the answering page can show the judge
+      // panel or a "feedback buffered" placeholder.
+      visible_to_user: result.visibleToUser,
+      coarse_outcome: result.coarseOutcome,
+      score: result.score,
+    });
+  } catch (err) {
+    return errorResponse(err);
+  }
+}

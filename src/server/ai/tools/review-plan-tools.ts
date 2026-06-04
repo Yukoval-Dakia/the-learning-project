@@ -8,6 +8,7 @@
 // write is `write_review_plan`, which emits a `tool_quiz` paper artifact using
 // the EXISTING flat ToolState shape (ToolStateT v2 is U5 scope — D3 §4-①).
 
+import { ToolState, type ToolStateSectionT } from '@/core/schema/business';
 import { ReviewSessionProposal } from '@/core/schema/coach';
 import { artifact, knowledge, knowledge_mastery, question } from '@/db/schema';
 import { getLatestCoachPlan } from '@/server/today/coach-plan';
@@ -443,6 +444,34 @@ const ReviewPlanContractSchema = z.object({
 });
 export type ReviewPlanContractT = z.infer<typeof ReviewPlanContractSchema>;
 
+// U5 (YUK-203, §4.8) — map a U4 ReviewPlan section onto the promoted ToolStateT
+// v2 `ToolStateSection` shape so the artifact carries top-level `sections[]`
+// going forward (with the session_meta copy retained for the transition
+// window). feedback_policy / adaptation_policy are free strings at the v2 schema
+// layer: U4 currently emits no value, so the default 'immediate' keeps every
+// current paper immediately-visible (back-compat safe — only the sentinel
+// 'judge_now_show_later' hides feedback, mapped in the paper submit handler).
+function toToolStateSections(plan: ReviewPlanContractT): ToolStateSectionT[] {
+  return plan.sections.map((section) => ({
+    knowledge_focus: section.knowledge_ids,
+    feedback_policy:
+      typeof section.feedback_policy === 'string' ? section.feedback_policy : 'immediate',
+    adaptation_policy:
+      typeof section.adaptation_policy === 'string' ? section.adaptation_policy : 'none',
+    assignments: section.assignments.map((a) => ({
+      question_id: a.question_id,
+      ...(a.part_ref !== undefined ? { part_ref: a.part_ref } : {}),
+      primary_knowledge_id: a.primary_knowledge_id,
+      secondary_knowledge_ids: a.secondary_knowledge_ids,
+      selection_reason: a.selection_reason ?? '',
+      review_profile_snapshot:
+        a.review_profile_snapshot && typeof a.review_profile_snapshot === 'object'
+          ? (a.review_profile_snapshot as Record<string, unknown>)
+          : {},
+    })),
+  }));
+}
+
 const WriteReviewPlanInputSchema = z.object({
   plan: ReviewPlanContractSchema,
   // initial_plan (nightly/on-demand) vs checkpoint_adapt (in-session). Recorded
@@ -717,10 +746,25 @@ async function executeWriteReviewPlan(
       }
     }
 
-    // Flat tool_quiz artifact (D3 §4-① transition shape). The full structured
-    // plan (labels / rationale / sections / guardrail_checks / needs) is
-    // preserved in session_meta, promotable to ToolStateT v2 columns in U5 with
-    // no data loss.
+    // U5 (YUK-203, §4.3/§4.8) — ToolStateT v2: promote `sections[]` to the TOP
+    // level of tool_state (parsed through the ToolState Zod barrier — jsonb is
+    // opaque to audit:schema, so the barrier is the load-bearing guard, RL4),
+    // while RETAINING the session_meta copy for the U4-era read shim
+    // (readPaperSections). No data loss; the U4 guarantee held.
+    const toolState = ToolState.parse({
+      question_ids: questionIds,
+      sections: toToolStateSections(plan),
+      session_meta: {
+        mode,
+        subject_ids: subjectIds,
+        labels: plan.labels,
+        rationale: plan.rationale,
+        sections: plan.sections,
+        guardrail_checks: plan.guardrail_checks,
+        needs: plan.needs,
+        tool_context_task_run_id: ctx.taskRunId,
+      },
+    });
     await tx.insert(artifact).values({
       id: artifactId,
       type: 'tool_quiz',
@@ -737,19 +781,7 @@ async function executeWriteReviewPlan(
         intent_tags: plan.labels.intent_tags,
       } as never,
       tool_kind: 'review_plan',
-      tool_state: {
-        question_ids: questionIds,
-        session_meta: {
-          mode,
-          subject_ids: subjectIds,
-          labels: plan.labels,
-          rationale: plan.rationale,
-          sections: plan.sections,
-          guardrail_checks: plan.guardrail_checks,
-          needs: plan.needs,
-          tool_context_task_run_id: ctx.taskRunId,
-        },
-      } as never,
+      tool_state: toolState as never,
       generation_status: 'ready',
       verification_status: 'not_required',
       history: [],
