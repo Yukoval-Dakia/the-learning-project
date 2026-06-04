@@ -43,15 +43,11 @@ describe('ReviewStatus machine (U5 / YUK-203 — fixes YUK-57 paused drift)', ()
   it.each(['started', 'completed', 'abandoned'])(
     'still accepts the pre-existing (review, %s) cases',
     (status) => {
-      expect(() =>
-        LearningSessionStatusByType.parse({ type: 'review', status }),
-      ).not.toThrow();
+      expect(() => LearningSessionStatusByType.parse({ type: 'review', status })).not.toThrow();
     },
   );
 
   it('rejects an unknown review status', () => {
-    expect(() =>
-      LearningSessionStatusByType.parse({ type: 'review', status: 'frozen' }),
-    ).toThrow();
+    expect(() => LearningSessionStatusByType.parse({ type: 'review', status: 'frozen' })).toThrow();
   });
 });

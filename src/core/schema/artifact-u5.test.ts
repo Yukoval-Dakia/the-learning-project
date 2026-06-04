@@ -55,14 +55,45 @@ describe('Artifact enum widen (§4.1)', () => {
 
   it('still parses the pre-U5 intent_source values', () => {
     for (const value of ['learning_intent', 'declared', 'from_mistake', 'from_dream']) {
-      expect(Artifact.safeParse(artifactRow({ intent_source: value, tool_kind: 'quiz' })).success).toBe(
-        true,
-      );
+      expect(
+        Artifact.safeParse(artifactRow({ intent_source: value, tool_kind: 'quiz' })).success,
+      ).toBe(true);
     }
   });
 
   it('rejects an unknown intent_source', () => {
     expect(Artifact.safeParse(artifactRow({ intent_source: 'made_up' })).success).toBe(false);
+  });
+
+  it('parses a full U5 write_review_plan-shaped row (v2 sections + session_meta)', () => {
+    const r = Artifact.safeParse(
+      artifactRow({
+        intent_source: 'review_plan',
+        tool_kind: 'review_plan',
+        tool_state: {
+          question_ids: ['q1'],
+          sections: [
+            {
+              knowledge_focus: ['k1'],
+              feedback_policy: 'immediate',
+              adaptation_policy: 'none',
+              assignments: [
+                {
+                  question_id: 'q1',
+                  primary_knowledge_id: 'k1',
+                  secondary_knowledge_ids: [],
+                  selection_reason: 'targets k1',
+                  review_profile_snapshot: {},
+                },
+              ],
+            },
+          ],
+          session_meta: { mode: 'initial_plan', sections: [] },
+        },
+      }),
+    );
+    expect(r.success).toBe(true);
+    expect(r.success && r.data.tool_state?.sections?.[0].assignments[0].question_id).toBe('q1');
   });
 });
 
