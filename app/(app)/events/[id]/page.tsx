@@ -191,7 +191,23 @@ export default function EventDetailPage({
                 </SectionLabel>
                 <LoomCard pad>
                   {q.data.chain.corrections.map((e) => (
-                    <div key={e.id} className="corr-row">
+                    // Clickable like the downstream ev-node rows — the old
+                    // EventCard path linked corrections to their own event
+                    // page (Codex, PR #294 r2).
+                    <button
+                      type="button"
+                      key={e.id}
+                      className="corr-row"
+                      onClick={() => router.push(`/events/${e.id}`)}
+                      style={{
+                        background: 'none',
+                        border: 0,
+                        font: 'inherit',
+                        cursor: 'pointer',
+                        width: '100%',
+                        textAlign: 'left',
+                      }}
+                    >
                       <span className="ev-dot tone-good" style={{ background: 'var(--good)' }} />
                       <span>
                         {e.action}
@@ -200,7 +216,7 @@ export default function EventDetailPage({
                       <span className="meta" style={{ marginLeft: 'auto' }}>
                         {formatRelTime(new Date(e.created_at))} · {e.actor_kind}
                       </span>
-                    </div>
+                    </button>
                   ))}
                 </LoomCard>
               </>

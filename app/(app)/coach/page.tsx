@@ -101,13 +101,17 @@ export default function CoachPage() {
     queryFn: () => apiJson<WeeklyResponse>(`/api/review/weekly?days=${days}`),
   });
 
-  const status = q.isLoading
-    ? 'loading'
-    : q.isError
-      ? 'error'
-      : q.data && q.data.totals.reviews === 0
-        ? 'empty'
-        : 'ok';
+  // Empty only when the window has NO signal at all — a failure-only window
+  // (attempt:failure / cost / causes / top-knowledge, zero reviews) must still
+  // render the report (Codex, PR #294 r2).
+  const windowIsEmpty =
+    q.data !== undefined &&
+    q.data.totals.reviews === 0 &&
+    q.data.totals.failures === 0 &&
+    q.data.totals.cost_usd === 0 &&
+    q.data.top_causes.length === 0 &&
+    q.data.top_knowledge.length === 0;
+  const status = q.isLoading ? 'loading' : q.isError ? 'error' : windowIsEmpty ? 'empty' : 'ok';
 
   return (
     <main className="page view coach-loom">
