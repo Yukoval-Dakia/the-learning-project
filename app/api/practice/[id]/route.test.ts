@@ -12,7 +12,7 @@
 //   6. Flat fallback: a quiz with no sections degrades to single synthetic section.
 //   7. 404 for unknown artifact id.
 
-import { artifact, event, learning_session, question } from '@/db/schema';
+import { artifact, event, knowledge, learning_session, question } from '@/db/schema';
 import { autosaveAnswerDraft } from '@/server/review/answer-draft';
 import { submitPaperSlot } from '@/server/review/paper-submit';
 import { Review } from '@/server/session';
@@ -96,6 +96,12 @@ async function seedPaper(
     updated_at: now,
     version: 0,
   });
+}
+
+async function seedKnowledge(id: string, name: string) {
+  const db = testDb();
+  const now = new Date();
+  await db.insert(knowledge).values({ id, name, created_at: now, updated_at: now });
 }
 
 function makeRequest(artifactId: string): [Request, { params: Promise<{ id: string }> }] {
@@ -369,6 +375,63 @@ describe('GET /api/practice/[id]', () => {
     const qIds = body.sections[0].slots.map((s) => s.question_id);
     expect(qIds).toContain('q1');
     expect(qIds).toContain('q2');
+  });
+
+  it('section knowledge_focus_names resolved from DB; unknown id falls back to id', async () => {
+    await seedQuestion('q1', 'true');
+    // k_named: node exists. k_unknown: no row → name falls back to id.
+    await seedKnowledge('k_named', '文言文基础');
+    const db = testDb();
+    const now = new Date();
+    await db.insert(artifact).values({
+      id: 'p_named',
+      type: 'tool_quiz',
+      title: '知识名测试卷',
+      knowledge_ids: ['k_named'],
+      intent_source: 'review_plan',
+      source: 'ai_generated',
+      tool_kind: 'review_plan',
+      tool_state: {
+        question_ids: ['q1'],
+        sections: [
+          {
+            knowledge_focus: ['k_named', 'k_unknown'],
+            feedback_policy: 'immediate',
+            adaptation_policy: 'none',
+            assignments: [
+              {
+                question_id: 'q1',
+                primary_knowledge_id: 'k_named',
+                secondary_knowledge_ids: [],
+                selection_reason: 'test',
+                review_profile_snapshot: {},
+              },
+            ],
+          },
+        ],
+      } as never,
+      generation_status: 'ready',
+      verification_status: 'not_required',
+      history: [],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+
+    const [req, ctx] = makeRequest('p_named');
+    const res = await GET(req, ctx);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      sections: Array<{
+        knowledge_focus: string[];
+        knowledge_focus_names: string[];
+      }>;
+    };
+
+    const sec = body.sections[0];
+    expect(sec.knowledge_focus).toEqual(['k_named', 'k_unknown']);
+    // Resolved: k_named → '文言文基础', k_unknown → 'k_unknown' (fallback)
+    expect(sec.knowledge_focus_names).toEqual(['文言文基础', 'k_unknown']);
   });
 
   it('returns 404 for unknown artifact id', async () => {

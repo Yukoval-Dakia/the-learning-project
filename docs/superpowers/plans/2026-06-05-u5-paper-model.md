@@ -189,6 +189,10 @@ Two lanes, chain-merged into `yuk-203-u5` (single PR — U-sequence convention).
 
 **Context**: UI lane integration revealed that none of the four practice endpoints returned question-face content (prompt_md / choices_md / difficulty / image_refs), making the answering page impossible to render. Orchestrator ruling: L-paper-core addendum — additive only, zero contract change to the four existing endpoints.
 
+**Knowledge name resolution (visual-loop finding, addendum B)**: `GET /api/practice` list chips and `GET /api/practice/[id]` section headers were rendering raw knowledge ids (e.g. `synthetic:wenyan:shici`). Design spec (`screen-practice.jsx` paper-know chips) shows human-readable names. Fix: one extra `IN` query on the `knowledge` table per aggregation call; `archived_at` intentionally not filtered (historical papers must still show the name). Both responses carry new additive fields — existing `knowledge_ids` preserved for back-compat:
+- `GET /api/practice` → `PracticePaperItem.knowledge: Array<{id, name}>` (index-aligned with `knowledge_ids`; name falls back to id when node missing)
+- `GET /api/practice/[id]` → `PaperDetailSection.knowledge_focus_names: string[]` (index-aligned with `knowledge_focus`; same fallback rule)
+
 **Endpoint**: `GET /api/practice/[id]` (id = paper artifact id)
 
 **Single aggregation — no N+1 (Q8 principle)**:
@@ -230,7 +234,13 @@ interface PaperDetailResult {
   artifact_id: string; title: string;
   generation_status: string; intent_source: string;
   session: { id: string; status: string; pos: number; right: number; wrong: number } | null;
-  sections: Array<{ section_index: number; knowledge_focus: string[]; feedback_policy: string; slots: PaperDetailSlot[] }>;
+  sections: Array<{
+    section_index: number;
+    knowledge_focus: string[];
+    knowledge_focus_names: string[];  // human-readable, index-aligned with knowledge_focus; fallback=id
+    feedback_policy: string;
+    slots: PaperDetailSlot[];
+  }>;
   is_flat_fallback: boolean;  // true for U4/quiz_gen flat quizzes with no sections
 }
 ```
@@ -383,6 +393,7 @@ This PR has DDL → migration smoke required; it builds a UI page → visual rin
 | 5 | feedback_policy → visible_to_user 映射未定（§4.3 自由 string，§4.6 无从判断） | **补裁定**。 | §4.6 补：submit handler 把 `'judge_now_show_later'`→`visible_to_user:false`，其余→可见/缺省；§4.3 feedback_policy 注释交叉引用。U4 现不写此值，全部默认可见，back-compat 安全 |
 | 6 | §4.5/§3 暗示 db:generate 即可，但 partial-index + COALESCE 须手写 SQL | **确认 critic 正确**。抽查 `schema.ts:594-597` 注记 + `drizzle/0017`/`0005`/`0018:64` 手写先例。 | §4.5 DDL 补：generate 后手编 migration 追加 `CREATE UNIQUE INDEX ... WHERE submitted_at IS NULL` 带 COALESCE；`pnpm test:migration` 必须覆盖；migration 编号 = `0028_*`（实证 latest=0027） |
 | A | UI lane integration gap: 四个 practice 端点均无题面内容，答题页无法渲染 | **Orchestrator 裁定方案 A**：L-paper-core 补一个最小 addendum（additive only，零既有契约变更）。 | §4.10 新增 Q8-addendum：`GET /api/practice/[id]`，返回题面（question_id/prompt_md/choices_md/difficulty/image_refs）+ live 草稿（供刷新续答）+ server-gated 提交状态（§4.9 可见性边界在 server 端持有）。实现文件：`src/server/review/paper-detail.ts` + `app/api/practice/[id]/route.ts` + 7 条 DB 测试。 |
+| B | 视觉环 finding：practice list chips 与答题页 section 标签渲染 knowledge id 原始值而非人类可读名 | **L-paper-core addendum**：单次 IN 查询 `knowledge.name`，additive 字段，不破坏既有契约。 | `GET /api/practice` → `PracticePaperItem.knowledge: Array<{id,name}>`；`GET /api/practice/[id]` → `PaperDetailSection.knowledge_focus_names: string[]`（均 fallback to id when node missing）。`resolveKnowledgeNames()` 共享 helper 导出自 `practice-read.ts`。archived_at 不过滤（历史卷仍需显示名）。 |
 
 ### 全局一致性检查（本 agent 独有职责，Planner/Critic 均未做）
 

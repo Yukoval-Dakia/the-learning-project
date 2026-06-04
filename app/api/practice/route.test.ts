@@ -4,7 +4,7 @@
 // paper-session start, draft autosave, and per-slot submit (attempt + judge +
 // FSRS + freeze). Uses the deterministic exact judge (true_false vs reference).
 
-import { artifact, question } from '@/db/schema';
+import { artifact, knowledge, question } from '@/db/schema';
 import { sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -64,6 +64,17 @@ async function seedPaper(id: string, intentSource: string, questionIds: string[]
     created_at: now,
     updated_at: now,
     version: 0,
+  });
+}
+
+async function seedKnowledge(id: string, name: string) {
+  const db = testDb();
+  const now = new Date();
+  await db.insert(knowledge).values({
+    id,
+    name,
+    created_at: now,
+    updated_at: now,
   });
 }
 
@@ -169,6 +180,66 @@ describe('GET /api/practice', () => {
     expect(p1?.session?.pos).toBe(1);
     expect(p1?.session?.right).toBe(1);
     expect(p1?.session?.wrong).toBe(0);
+  });
+
+  it('knowledge[] carries human-readable names; unknown id falls back to id itself', async () => {
+    await seedQuestion('q1', 'true');
+    // k_named: node exists with a readable name.
+    // k_missing: no row in knowledge table → fallback to id.
+    await seedKnowledge('k_named', '诗词鉴赏');
+    const db = testDb();
+    await db.insert(artifact).values({
+      id: 'p_named',
+      type: 'tool_quiz',
+      title: '知识名测试',
+      knowledge_ids: ['k_named', 'k_missing'],
+      intent_source: 'review_plan',
+      source: 'ai_generated',
+      tool_kind: 'review_plan',
+      tool_state: {
+        question_ids: ['q1'],
+        sections: [
+          {
+            knowledge_focus: ['k_named'],
+            feedback_policy: 'immediate',
+            adaptation_policy: 'none',
+            assignments: [
+              {
+                question_id: 'q1',
+                primary_knowledge_id: 'k_named',
+                secondary_knowledge_ids: [],
+                selection_reason: 'test',
+                review_profile_snapshot: {},
+              },
+            ],
+          },
+        ],
+      } as never,
+      generation_status: 'ready',
+      verification_status: 'not_required',
+      history: [],
+      created_at: new Date(),
+      updated_at: new Date(),
+      version: 0,
+    });
+
+    const res = await GET();
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      papers: Array<{
+        artifact_id: string;
+        knowledge_ids: string[];
+        knowledge: Array<{ id: string; name: string }>;
+      }>;
+    };
+    const paper = body.papers.find((p) => p.artifact_id === 'p_named');
+    expect(paper).toBeDefined();
+    // knowledge_ids unchanged (backward compat)
+    expect(paper?.knowledge_ids).toEqual(['k_named', 'k_missing']);
+    // knowledge[] provides resolved names
+    const byId = new Map(paper?.knowledge?.map((k) => [k.id, k.name]));
+    expect(byId.get('k_named')).toBe('诗词鉴赏'); // resolved from DB
+    expect(byId.get('k_missing')).toBe('k_missing'); // fallback: id itself
   });
 
   it('submit rejects a slot not in the paper plan (400)', async () => {

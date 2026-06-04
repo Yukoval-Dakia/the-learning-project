@@ -9,9 +9,35 @@
 
 import { Artifact } from '@/core/schema/index';
 import type { Db } from '@/db/client';
-import { artifact, learning_session } from '@/db/schema';
+import { artifact, knowledge, learning_session } from '@/db/schema';
 import { readPaperSections } from '@/server/review/paper-sections';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+
+// ────────────────────────────────────────────────────────────────────────────
+// Shared knowledge name resolver (used by practice-read + paper-detail)
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Resolve human-readable names for a set of knowledge ids with one IN query.
+ * archived_at is intentionally NOT filtered — historical papers may reference
+ * archived nodes; the name should still display rather than falling back to id.
+ * Returns a Map<id, name>; ids not found in the table map to themselves (id as
+ * fallback) so callers never surface raw unknown ids to the UI.
+ */
+export async function resolveKnowledgeNames(db: Db, ids: string[]): Promise<Map<string, string>> {
+  const nameMap = new Map<string, string>();
+  if (ids.length === 0) return nameMap;
+  const rows = await db
+    .select({ id: knowledge.id, name: knowledge.name })
+    .from(knowledge)
+    .where(inArray(knowledge.id, ids));
+  for (const r of rows) nameMap.set(r.id, r.name);
+  // Fallback: ids missing from the table resolve to themselves.
+  for (const id of ids) {
+    if (!nameMap.has(id)) nameMap.set(id, id);
+  }
+  return nameMap;
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Derived visibility (§4.9)
@@ -72,6 +98,13 @@ export interface PracticePaperItem {
   /** artifact generation_status — drives the 生成中 pill (NOT a pg-boss poll) */
   generation_status: string;
   knowledge_ids: string[];
+  /**
+   * Human-readable knowledge node name pairs for the practice list chips.
+   * One entry per id in knowledge_ids; name falls back to id when the node
+   * is missing or archived (archived_at not filtered — historical papers
+   * should still display the name).
+   */
+  knowledge: Array<{ id: string; name: string }>;
   /** total answerable slots in the paper (DISTINCT assignment slots) */
   total_slots: number;
   /** the linked review session, if one has been started */
@@ -195,7 +228,12 @@ export async function getPracticeList(db: Db): Promise<PracticeListResult> {
     }
   }
 
-  // 5) Assemble. Total slots = the paper's distinct assignment slots (parsed via
+  // 5) Knowledge name resolution — one IN query across all paper knowledge_ids.
+  //    archived_at intentionally not filtered (historical papers still need names).
+  const allKnowledgeIds = [...new Set(paperRows.flatMap((r) => r.knowledge_ids ?? []))];
+  const knowledgeNameMap = await resolveKnowledgeNames(db, allKnowledgeIds);
+
+  // 6) Assemble. Total slots = the paper's distinct assignment slots (parsed via
   //    readPaperSections, covering both U4 session_meta + U5 top-level plans).
   const papers: PracticePaperItem[] = paperRows.map((row) => {
     const parsed = Artifact.safeParse(row);
@@ -211,13 +249,15 @@ export async function getPracticeList(db: Db): Promise<PracticeListResult> {
     const totalSlots = slotKeys.size > 0 ? slotKeys.size : (toolState?.question_ids?.length ?? 0);
 
     const session = sessionByPaper.get(row.id) ?? null;
+    const kIds = row.knowledge_ids ?? [];
     return {
       artifact_id: row.id,
       title: row.title,
       source: intentSourceToPracticeSource(row.intent_source),
       intent_source: row.intent_source,
       generation_status: row.generation_status,
-      knowledge_ids: row.knowledge_ids ?? [],
+      knowledge_ids: kIds,
+      knowledge: kIds.map((id) => ({ id, name: knowledgeNameMap.get(id) ?? id })),
       total_slots: totalSlots,
       session: session
         ? {
