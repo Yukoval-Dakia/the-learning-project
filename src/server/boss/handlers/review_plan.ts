@@ -59,6 +59,21 @@ export interface ReviewPlanRunDeps {
   writeEventFn?: WriteEventFn;
   countReviewPlanArtifactsFn?: CountReviewPlanArtifactsFn;
   now?: () => Date;
+  // codex PR #298 #3358031881 — the pg-boss job.id, threaded in by
+  // buildReviewPlanHandler. It keys the per-RUN idempotency identity
+  // (toolContextTaskRunId) so it stays STABLE across pg-boss retries of the
+  // SAME job. Without it each attempt minted a fresh createId(), so a job that
+  // failed AFTER write_review_plan committed (SDK timeout / network blip / any
+  // post-commit throw) would retry, see no prior artifact (the advisory-lock
+  // guard + exactly-one check both keyed on the per-attempt id), and write a
+  // SECOND ready paper — a duplicate review paper for the day. job.id is the
+  // correct dedup grain: pg-boss reuses the same job row across retries, so
+  // job.id is constant per logical run. We deliberately do NOT dedup on
+  // day/mode — an on_demand run legitimately happens multiple times a day, so a
+  // day/mode key would wrongly collapse distinct intentional runs into one.
+  // Optional: direct callers / tests that omit it fall back to a random id
+  // (preserving the previous behaviour for non-pg-boss entry points).
+  jobId?: string;
 }
 
 // Default verification query: write_review_plan stamps
@@ -93,7 +108,11 @@ export async function runReviewPlan(
   const runKind = data.run_kind ?? 'daily';
   const mode: ReviewPlanMode = data.mode ?? 'initial_plan';
   const triggerEventId = `review_plan_trigger_${createId()}`;
-  const toolContextTaskRunId = `review_plan_tool_${createId()}`;
+  // Stable across pg-boss retries when a job.id is threaded in (#3358031881);
+  // random fallback for direct callers / tests with no job context.
+  const toolContextTaskRunId = deps.jobId
+    ? `review_plan_tool_${deps.jobId}`
+    : `review_plan_tool_${createId()}`;
 
   await write(db, {
     id: triggerEventId,
@@ -106,6 +125,46 @@ export async function runReviewPlan(
     payload: { surface: 'review_plan', run_kind: runKind, mode },
     created_at: now,
   });
+
+  // Resume short-circuit (#3358031881): if a PRIOR attempt of this SAME job
+  // already committed exactly one review-plan artifact (keyed on the stable
+  // toolContextTaskRunId), this retry was triggered by a post-commit failure
+  // (e.g. the SDK call timed out after write_review_plan persisted, or a scan
+  // event write threw before the swallow guards landed). Re-running the agent
+  // would burn tokens AND risk a second paper, so we treat the existing
+  // artifact as the run's output: record a `resumed:true` success scan (for
+  // audit) and return without touching the agent. The advisory-lock guard in
+  // write_review_plan is now only a SECOND-layer defence (against the agent
+  // double-calling within a single attempt). Only short-circuit on exactly 1;
+  // a stale partial (count>1, which the exactly-one check below would reject)
+  // falls through so the normal verification can fail the job loudly.
+  if (deps.jobId) {
+    const priorCount = await countArtifacts(db, toolContextTaskRunId);
+    if (priorCount === 1) {
+      try {
+        await write(db, {
+          id: `review_plan_scan_${createId()}`,
+          actor_kind: 'agent',
+          actor_ref: 'review_plan',
+          action: 'experimental:review_plan',
+          subject_kind: 'query',
+          subject_id: triggerEventId,
+          outcome: 'success',
+          payload: {
+            run_kind: runKind,
+            mode,
+            tool_context_task_run_id: toolContextTaskRunId,
+            resumed: true,
+          },
+          caused_by_event_id: triggerEventId,
+          created_at: deps.now?.() ?? new Date(),
+        });
+      } catch (eventErr) {
+        console.error('[review_plan] resumed scan writeEvent failed (swallowed)', eventErr);
+      }
+      return { processed: 1, tool_context_task_run_id: toolContextTaskRunId };
+    }
+  }
 
   try {
     const toolNames = resolveDomainToolNames('review_plan');
@@ -221,7 +280,10 @@ export function buildReviewPlanHandler(
 ): (jobs: Job<ReviewPlanJobData>[]) => Promise<void> {
   return async (jobs) => {
     for (const job of jobs) {
-      const result = await runReviewPlan(db, job.data ?? {}, deps);
+      // Thread the pg-boss job.id so the per-run idempotency identity is stable
+      // across retries of this job (#3358031881). job.id is constant per
+      // logical run; pg-boss reuses the same job row when it retries.
+      const result = await runReviewPlan(db, job.data ?? {}, { ...deps, jobId: job.id });
       console.log('[review_plan] result', result);
     }
   };
