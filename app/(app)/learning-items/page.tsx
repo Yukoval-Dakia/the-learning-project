@@ -5,12 +5,15 @@ import {
   type CorrectionStateSnapshot,
 } from '@/ui/correction/CorrectionStateRenderer';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
-import { formatRelTime } from '@/ui/lib/utils';
-import { Button } from '@/ui/primitives/Button';
-import { Card } from '@/ui/primitives/Card';
-import { PageHeader } from '@/ui/primitives/PageHeader';
+import { Btn } from '@/ui/primitives/Btn';
+import { EmptyState } from '@/ui/primitives/EmptyState';
+import { LoomBadge } from '@/ui/primitives/LoomBadge';
+import { LoomCard } from '@/ui/primitives/LoomCard';
+import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { SectionLabel } from '@/ui/primitives/SectionLabel';
+import { SkLines } from '@/ui/primitives/SkLines';
+import { Stateful } from '@/ui/primitives/Stateful';
 import { StatusBadge } from '@/ui/primitives/StatusBadge';
-import { TabBar } from '@/ui/primitives/TabBar';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -45,20 +48,36 @@ interface LearningItem {
   version: number;
 }
 
-const FILTER_TABS: { id: StatusFilter; label: string }[] = [
-  { id: 'all', label: '全部' },
-  { id: 'pending', label: '待办' },
-  { id: 'in_progress', label: '进行中' },
-  { id: 'done', label: '已完成' },
-  { id: 'resting', label: '养护' },
-  { id: 'dismissed', label: '已拒' },
-  { id: 'archived', label: '归档' },
-];
+// status enum metadata — non-color cue (loom icon + zh label) per
+// loom-prototype STATUS_META (data.jsx L366). "全部" handled separately.
+const STATUS_META: Record<
+  ItemStatus,
+  { label: string; icon: 'clock' | 'review' | 'checkCircle' | 'moon' | 'close' | 'layers' }
+> = {
+  pending: { label: '待办', icon: 'clock' },
+  in_progress: { label: '进行中', icon: 'review' },
+  done: { label: '已完成', icon: 'checkCircle' },
+  resting: { label: '养护', icon: 'moon' },
+  dismissed: { label: '已拒', icon: 'close' },
+  archived: { label: '归档', icon: 'layers' },
+};
+
+// Tabs: 全部 + live statuses (archived is surfaced in the collapse zone, not a
+// tab) per screen-items.jsx L102.
+const TAB_STATUSES: ItemStatus[] = ['pending', 'in_progress', 'done', 'resting', 'dismissed'];
 
 interface KnowledgeNode {
   id: string;
   name: string;
   effective_domain: string | null;
+  mastery: number | null;
+  evidence_count: number;
+}
+
+// /api/knowledge/review-due-summary response (existing GET endpoint). Inlined
+// minimal shape so the client never imports the route module.
+interface ReviewDueSummary {
+  summary: Record<string, { overdue: number; due_soon: number }>;
 }
 
 interface IntentProposal {
@@ -67,6 +86,62 @@ interface IntentProposal {
   knowledge_node: { id: string; name: string; domain: string | null };
   hub: { title: string; summary_md: string };
   atomics: Array<{ knowledge_id: string; title: string; one_line_intent: string }>;
+}
+
+// D11 health-bar aggregation (read-time only, zero owned state — see
+// docs/design/2026-06-04-u0-decisions.md D11③). For a learning item's
+// knowledge_ids: count nodes, sum overdue due-cards, average mastery over
+// nodes WITH evidence. evidence-guard: if every node has evidence_count < 3
+// the bar renders muted (no misleading mastery%).
+function aggregateHealth(
+  knowledgeIds: string[],
+  knowledgeById: Map<string, KnowledgeNode>,
+  dueSummary: Record<string, { overdue: number; due_soon: number }> | undefined,
+): { nodeCount: number; dueCount: number; avgMastery: number | null; lowEvidence: boolean } {
+  const nodeCount = knowledgeIds.length;
+  let dueCount = 0;
+  let masterySum = 0;
+  let masteryNodes = 0;
+  let anyEvidence = false;
+  for (const kid of knowledgeIds) {
+    dueCount += dueSummary?.[kid]?.overdue ?? 0;
+    const node = knowledgeById.get(kid);
+    if (node) {
+      if (node.evidence_count >= 3) anyEvidence = true;
+      if (node.evidence_count > 0 && node.mastery !== null) {
+        masterySum += node.mastery;
+        masteryNodes += 1;
+      }
+    }
+  }
+  const avgMastery = masteryNodes > 0 ? Math.round((masterySum / masteryNodes) * 100) : null;
+  return { nodeCount, dueCount, avgMastery, lowEvidence: !anyEvidence };
+}
+
+function ItemHealthBar({
+  health,
+}: {
+  health: { nodeCount: number; dueCount: number; avgMastery: number | null; lowEvidence: boolean };
+}) {
+  if (health.nodeCount === 0) return null;
+  return (
+    <div className={`item-health${health.lowEvidence ? ' muted' : ''}`}>
+      <span className="health-seg">
+        <span className="health-n tnum">{health.nodeCount}</span>
+        <span className="health-l">知识点</span>
+      </span>
+      <span className="health-seg due">
+        <span className="health-n tnum">{health.dueCount}</span>
+        <span className="health-l">到期</span>
+      </span>
+      <span className="health-seg">
+        <span className="health-n tnum">
+          {health.avgMastery === null ? '—' : `${health.avgMastery}%`}
+        </span>
+        <span className="health-l">平均掌握</span>
+      </span>
+    </div>
+  );
 }
 
 export default function LearningItemsPage() {
@@ -79,6 +154,8 @@ export default function LearningItemsPage() {
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [editingKnowledgeId, setEditingKnowledgeId] = useState<string | null>(null);
   const [draftKnowledgeIds, setDraftKnowledgeIds] = useState<string[]>([]);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [archiveOpen, setArchiveOpen] = useState(false);
 
   // Phase 2B intent flow state
   const [intentTopic, setIntentTopic] = useState('');
@@ -114,15 +191,18 @@ export default function LearningItemsPage() {
     },
   });
 
+  // Fetch ALL items (no status filter) so the live grid + archived collapse
+  // zone derive from one query (TDM 决策3 — archived is always available to
+  // toggle, not gated behind a tab refetch). Client-side filter by tab below.
   const itemsQ = useQuery({
-    queryKey: ['learning-items', filter],
-    queryFn: () => {
-      const url =
-        filter === 'all'
-          ? '/api/learning-items?limit=200'
-          : `/api/learning-items?limit=200&status=${filter}`;
-      return apiJson<{ rows: LearningItem[] }>(url);
-    },
+    queryKey: ['learning-items', 'all-with-archived'],
+    queryFn: () =>
+      apiJson<{ rows: LearningItem[] }>('/api/learning-items?limit=200&status=archived').then(
+        async (archivedRes) => {
+          const liveRes = await apiJson<{ rows: LearningItem[] }>('/api/learning-items?limit=200');
+          return { rows: [...liveRes.rows, ...archivedRes.rows] };
+        },
+      ),
   });
 
   const knowledgeQ = useQuery({
@@ -130,6 +210,13 @@ export default function LearningItemsPage() {
     queryFn: () => apiJson<{ rows: KnowledgeNode[] }>('/api/knowledge'),
   });
   const knowledgeById = new Map(knowledgeQ.data?.rows.map((n) => [n.id, n]) ?? []);
+
+  // D11 health bar — per-knowledge-node overdue/due counts. Existing GET
+  // endpoint (zero new table / write path; audit:schema unaffected).
+  const dueSummaryQ = useQuery({
+    queryKey: ['review-due-summary'],
+    queryFn: () => apiJson<ReviewDueSummary>('/api/knowledge/review-due-summary'),
+  });
 
   const createM = useMutation({
     mutationFn: (payload: { title: string; knowledge_ids: string[] }) =>
@@ -165,6 +252,10 @@ export default function LearningItemsPage() {
     },
   });
 
+  // Preserved verbatim from the legacy page (signature + call unchanged per
+  // "接线不动"). NOTE: the DELETE route requires a `?version=` query param it is
+  // not sent here — this mismatch predates the redraw; not fixed in this UI-only
+  // slice (out of scope). Tracked as a follow-up gap, not a redraw regression.
   const deleteM = useMutation({
     mutationFn: (id: string) => apiJson(`/api/learning-items/${id}`, { method: 'DELETE' }),
     onSuccess: () => {
@@ -173,20 +264,54 @@ export default function LearningItemsPage() {
     },
   });
 
-  const rows = itemsQ.data?.rows ?? [];
+  const allRows = itemsQ.data?.rows ?? [];
+  const live = allRows.filter((i) => i.status !== 'archived');
+  const archived = allRows.filter((i) => i.status === 'archived');
+  const filtered = filter === 'all' ? live : live.filter((i) => i.status === filter);
+
+  const dataState: 'loading' | 'error' | 'empty' | 'ok' = itemsQ.isLoading
+    ? 'loading'
+    : itemsQ.isError
+      ? 'error'
+      : live.length === 0
+        ? 'empty'
+        : 'ok';
 
   return (
-    <main className="page prose">
-      <PageHeader
-        title="学习项"
-        eyebrow="ITEMS · free queue"
-        sub="自由 TODO，不进入 FSRS 排程。intent 可以拆成 hub + atomic learning items。"
-      />
+    <main className="page prose items-loom">
+      <div className="page-head">
+        <div className="eyebrow">
+          ITEMS · learning_item · {live.length} 活跃 · {archived.length} 归档
+        </div>
+        <div className="page-head-row">
+          <h1 className="page-title serif">学习项</h1>
+          <div className="hero-cta">
+            <Btn variant="ghost" icon="history" onClick={() => router.push('/learning-sessions')}>
+              会话历史
+            </Btn>
+            <Btn variant="secondary" icon="plus" onClick={() => setCreateOpen((o) => !o)}>
+              新增
+            </Btn>
+          </div>
+        </div>
+        <p className="page-lead">
+          自由 TODO，不进入 FSRS 排程。intent 可以拆成 hub + atomic learning
+          items。归档项不在主列表显示。
+        </p>
+      </div>
 
-      {/* Phase 2B — Learning Intent input */}
-      <section className="intent-input-section">
-        <h4 className="intent-section-label">我想学…</h4>
-        <div className="intent-input-row">
+      {/* Phase 2B — Learning Intent input (real wiring preserved; loom skin) */}
+      <LoomCard pad className="intent-card">
+        <div className="card-head">
+          <span className="card-icon accent">
+            <LoomIcon name="sparkle" size={18} />
+          </span>
+          <div className="card-title">我想学 → AI 拆解</div>
+          <span className="meta mono" style={{ marginLeft: 'auto' }}>
+            learning_item · propose
+          </span>
+        </div>
+        <div className="intent-input-row" style={{ display: 'flex', gap: 'var(--s-2)' }}>
           <input
             type="text"
             value={intentTopic}
@@ -199,68 +324,79 @@ export default function LearningItemsPage() {
                 intentPlanM.mutate(intentTopic.trim());
               }
             }}
-            className="intent-input"
+            className="field-input"
+            style={{ flex: 1 }}
           />
-          <Button
+          <Btn
+            variant="primary"
+            icon="sparkle"
             onClick={() => intentTopic.trim() && intentPlanM.mutate(intentTopic.trim())}
             disabled={!intentTopic.trim() || intentPlanM.isPending || intentAcceptM.isPending}
           >
-            {intentPlanM.isPending ? '生成提议中…' : '提议拆分'}
-          </Button>
+            {intentPlanM.isPending ? '生成中…' : '拆解'}
+          </Btn>
         </div>
-        {intentError && <p className="intent-error">{intentError}</p>}
+        {intentError && (
+          <p className="meta" style={{ color: 'var(--again-ink)', marginTop: 'var(--s-2)' }}>
+            {intentError}
+          </p>
+        )}
         {intentProposal && (
-          <div className="intent-proposal-panel">
-            <div className="intent-proposal-hub">
-              <span className="intent-proposal-tag">HUB</span>
-              <strong>{intentProposal.hub.title}</strong>
-              <span className="intent-proposal-knowledge">
-                #{intentProposal.knowledge_node.name}
-              </span>
+          <div className="decomp fade-key" style={{ marginTop: 'var(--s-3)' }}>
+            <div className="decomp-hub">
+              <LoomBadge tone="coral">
+                <LoomIcon name="items" size={12} />
+                hub
+              </LoomBadge>
+              <div>
+                <div className="item-title">{intentProposal.hub.title}</div>
+                <div className="item-sub">#{intentProposal.knowledge_node.name}</div>
+              </div>
             </div>
-            <p className="intent-proposal-summary">{intentProposal.hub.summary_md}</p>
-            <ul className="intent-proposal-atomics">
+            <div className="decomp-atomics">
               {intentProposal.atomics.map((a) => (
-                <li key={a.knowledge_id}>
-                  <span className="intent-proposal-tag-sm">ATOMIC</span>
-                  <strong>{a.title}</strong>
-                  <span className="intent-proposal-intent">{a.one_line_intent}</span>
-                </li>
+                <div key={a.knowledge_id} className="decomp-atomic">
+                  <LoomBadge tone="info">atomic</LoomBadge>
+                  <div>
+                    <div className="item-title">{a.title}</div>
+                    <div className="item-sub">{a.one_line_intent}</div>
+                  </div>
+                </div>
               ))}
-            </ul>
-            <div className="intent-proposal-actions">
-              <Button
-                variant="secondary"
-                onClick={() => setIntentProposal(null)}
-                disabled={intentAcceptM.isPending}
-              >
-                取消
-              </Button>
-              <Button
+            </div>
+            <div className="hero-cta">
+              <Btn
+                variant="primary"
+                icon="check"
                 onClick={() => intentAcceptM.mutate(intentProposal.proposal_id)}
                 disabled={intentAcceptM.isPending}
               >
                 {intentAcceptM.isPending
                   ? '正在创建 + 入队…'
-                  : `接受（1 hub + ${intentProposal.atomics.length} atomic）`}
-              </Button>
+                  : `接受拆解（hub + ${intentProposal.atomics.length} atomic）`}
+              </Btn>
+              <Btn
+                variant="ghost"
+                icon="close"
+                onClick={() => setIntentProposal(null)}
+                disabled={intentAcceptM.isPending}
+              >
+                忽略
+              </Btn>
             </div>
             {intentAcceptM.isError && (
-              <p className="intent-error">Accept 失败：{(intentAcceptM.error as Error).message}</p>
+              <p className="meta" style={{ color: 'var(--again-ink)', marginTop: 'var(--s-2)' }}>
+                Accept 失败：{(intentAcceptM.error as Error).message}
+              </p>
             )}
           </div>
         )}
-      </section>
+      </LoomCard>
 
-      <TabBar
-        items={FILTER_TABS.map((t) => ({ id: t.id, label: t.label }))}
-        active={filter}
-        onSelect={(id) => setFilter(id as StatusFilter)}
-      />
-
-      <details open style={{ marginTop: 'var(--s-4)' }}>
-        <summary style={summaryStyle}>新增学习项</summary>
-        <Card pad="lg" style={{ marginTop: 'var(--s-2)' }}>
+      {/* manual create form — collapsed by default, opened via 新增 CTA */}
+      {createOpen && (
+        <LoomCard pad className="fade-key" style={{ marginBottom: 'var(--s-5)' }}>
+          <div className="field-label">新增学习项</div>
           <input
             type="text"
             value={newTitle}
@@ -272,10 +408,9 @@ export default function LearningItemsPage() {
                 createM.mutate({ title: newTitle.trim(), knowledge_ids: newKnowledgeIds });
               }
             }}
-            style={inputStyle}
+            className="field-input"
           />
-
-          <p style={{ ...metaStyle, marginTop: 'var(--s-3)' }}>
+          <p className="field-label" style={{ marginTop: 'var(--s-3)' }}>
             知识点（可选，已选 {newKnowledgeIds.length}）
           </p>
           <input
@@ -283,9 +418,9 @@ export default function LearningItemsPage() {
             value={knowledgeFilter}
             onChange={(e) => setKnowledgeFilter(e.target.value)}
             placeholder="搜索知识点"
-            style={{ ...inputStyle, marginTop: 4 }}
+            className="field-input"
           />
-          <div style={chipRowStyle}>
+          <div className="chip-set" style={{ marginTop: 'var(--s-2)' }}>
             {(knowledgeQ.data?.rows ?? [])
               .filter((n) => matchesKnowledgeFilter(n, knowledgeFilter))
               .slice(0, 30)
@@ -300,7 +435,7 @@ export default function LearningItemsPage() {
                         cur.includes(n.id) ? cur.filter((x) => x !== n.id) : [...cur, n.id],
                       )
                     }
-                    style={chipStyle(selected)}
+                    className={`chip${selected ? ' is-on' : ''}`}
                     title={n.effective_domain ?? ''}
                   >
                     {n.name}
@@ -308,16 +443,9 @@ export default function LearningItemsPage() {
                 );
               })}
           </div>
-
-          <div
-            style={{
-              marginTop: 'var(--s-3)',
-              display: 'flex',
-              justifyContent: 'flex-end',
-              gap: 'var(--s-2)',
-            }}
-          >
-            <Button
+          <div className="hero-cta" style={{ justifyContent: 'flex-end', marginTop: 'var(--s-3)' }}>
+            <Btn
+              variant="primary"
               onClick={() =>
                 newTitle.trim() &&
                 createM.mutate({ title: newTitle.trim(), knowledge_ids: newKnowledgeIds })
@@ -325,453 +453,430 @@ export default function LearningItemsPage() {
               disabled={!newTitle.trim() || createM.isPending}
             >
               {createM.isPending ? '创建中…' : '创建'}
-            </Button>
+            </Btn>
           </div>
           {createM.isError && (
-            <p style={errorStyle}>创建失败：{(createM.error as Error).message}</p>
+            <p className="meta" style={{ color: 'var(--again-ink)', marginTop: 'var(--s-2)' }}>
+              创建失败：{(createM.error as Error).message}
+            </p>
           )}
-        </Card>
-      </details>
-
-      {itemsQ.isLoading && (
-        <Card style={{ marginTop: 'var(--s-4)' }}>
-          <p style={mutedStyle}>正在加载…</p>
-        </Card>
+        </LoomCard>
       )}
 
-      {itemsQ.isError && (
-        <Card style={{ marginTop: 'var(--s-4)' }}>
-          <p style={errorStyle}>
-            {itemsQ.error instanceof ApiAuthError
-              ? `${itemsQ.error.message} — 请重新进入页面输入 token`
-              : `加载失败：${(itemsQ.error as Error).message}`}
-          </p>
-        </Card>
-      )}
+      <SectionLabel>学习项</SectionLabel>
+      <div className="status-tabs" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={filter === 'all'}
+          className={`status-tab${filter === 'all' ? ' on' : ''}`}
+          onClick={() => setFilter('all')}
+        >
+          全部
+          <span className="mono status-tab-n">{live.length}</span>
+        </button>
+        {TAB_STATUSES.map((s) => {
+          const n = live.filter((i) => i.status === s).length;
+          const m = STATUS_META[s];
+          return (
+            <button
+              type="button"
+              key={s}
+              role="tab"
+              aria-selected={filter === s}
+              className={`status-tab${filter === s ? ' on' : ''}`}
+              onClick={() => setFilter(s)}
+            >
+              <span className="status-glyph" aria-hidden="true">
+                <LoomIcon name={m.icon} size={13} />
+              </span>
+              {m.label}
+              <span className="mono status-tab-n">{n}</span>
+            </button>
+          );
+        })}
+      </div>
 
-      {itemsQ.isSuccess && rows.length === 0 && (
-        <Card pad="lg" style={{ marginTop: 'var(--s-4)' }}>
-          <p style={{ margin: 0, fontSize: 'var(--fs-body)', color: 'var(--ink-3)' }}>
-            {filter === 'all' ? '还没有学习项。' : `没有 ${labelFor(filter)} 状态的学习项。`}
-          </p>
-        </Card>
-      )}
-
-      <div style={{ marginTop: 'var(--s-4)' }}>
-        {rows.map((item) => (
-          <Card key={item.id} pad="lg" style={{ marginBottom: 'var(--s-3)' }}>
-            <div style={itemHeadStyle}>
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <h3 style={titleStyle}>
-                  <Link
-                    href={`/learning-items/${item.id}`}
-                    style={{ color: 'inherit', textDecoration: 'none' }}
-                  >
-                    {item.title}
-                  </Link>
-                </h3>
-                <p style={metaStyle}>
-                  创建 {formatRelTime(item.created_at)} · v{item.version}
-                </p>
-                {item.source_event && (
-                  <p style={metaStyle}>
-                    source event{' '}
-                    <Link href={`/events/${item.source_event.id}`} style={metaLinkStyle}>
-                      {item.source_event.id.slice(0, 8)}…
-                    </Link>{' '}
-                    <CorrectionStateRenderer state={item.source_event.correction_state} compact />
-                  </p>
+      <Stateful
+        status={dataState}
+        onRetry={() => itemsQ.refetch()}
+        errorText={
+          itemsQ.error instanceof ApiAuthError
+            ? `${itemsQ.error.message} — 请重新进入页面输入 token`
+            : '学习项加载失败。'
+        }
+        skeleton={
+          <div className="items-grid">
+            {[1, 2].map((i) => (
+              <LoomCard key={i} pad>
+                <SkLines rows={2} />
+              </LoomCard>
+            ))}
+          </div>
+        }
+        empty={
+          <EmptyState
+            icon="items"
+            title="还没有学习项"
+            text="在上方输入一个学习意图，让 AI 拆解成可执行的子项。"
+          />
+        }
+      >
+        {filtered.length === 0 ? (
+          <EmptyState
+            icon="items"
+            title={`没有「${filter === 'all' ? '全部' : STATUS_META[filter as ItemStatus].label}」的学习项`}
+            text="切换其它状态，或新建一个学习意图。"
+          />
+        ) : (
+          <div className="items-grid stagger">
+            {filtered.map((item) => (
+              <ItemCard
+                key={item.id}
+                item={item}
+                health={aggregateHealth(
+                  item.knowledge_ids,
+                  knowledgeById,
+                  dueSummaryQ.data?.summary,
                 )}
-              </div>
-              <StatusBadge status={item.status} />
-            </div>
-            {item.content && <p style={contentStyle}>{item.content}</p>}
+                knowledgeById={knowledgeById}
+                editingKnowledgeId={editingKnowledgeId}
+                draftKnowledgeIds={draftKnowledgeIds}
+                knowledgeFilter={knowledgeFilter}
+                knowledgeRows={knowledgeQ.data?.rows ?? []}
+                pendingDeleteId={pendingDeleteId}
+                updatePending={updateM.isPending}
+                deletePending={deleteM.isPending}
+                onTransition={(status) =>
+                  updateM.mutate({ id: item.id, version: item.version, status })
+                }
+                onStartEditKnowledge={() => {
+                  setEditingKnowledgeId(item.id);
+                  setDraftKnowledgeIds(item.knowledge_ids);
+                  setKnowledgeFilter('');
+                }}
+                onToggleDraftKnowledge={(kid) =>
+                  setDraftKnowledgeIds((cur) =>
+                    cur.includes(kid) ? cur.filter((x) => x !== kid) : [...cur, kid],
+                  )
+                }
+                onSaveKnowledge={() =>
+                  updateM.mutate({
+                    id: item.id,
+                    version: item.version,
+                    knowledge_ids: draftKnowledgeIds,
+                  })
+                }
+                onCancelEditKnowledge={() => setEditingKnowledgeId(null)}
+                onKnowledgeFilterChange={setKnowledgeFilter}
+                onRequestDelete={() => setPendingDeleteId(item.id)}
+                onConfirmDelete={() => deleteM.mutate(item.id)}
+                onCancelDelete={() => setPendingDeleteId(null)}
+              />
+            ))}
+          </div>
+        )}
+      </Stateful>
 
-            {/* knowledge_ids display + inline editor */}
-            {editingKnowledgeId === item.id ? (
-              <div style={{ marginTop: 'var(--s-2)' }}>
-                <p style={metaStyle}>编辑知识点（已选 {draftKnowledgeIds.length}）</p>
-                <input
-                  type="text"
-                  value={knowledgeFilter}
-                  onChange={(e) => setKnowledgeFilter(e.target.value)}
-                  placeholder="搜索"
-                  style={{ ...inputStyle, marginTop: 4 }}
-                />
-                <div style={chipRowStyle}>
-                  {(knowledgeQ.data?.rows ?? [])
-                    .filter((n) => matchesKnowledgeFilter(n, knowledgeFilter))
-                    .slice(0, 30)
-                    .map((n) => {
-                      const selected = draftKnowledgeIds.includes(n.id);
-                      return (
-                        <button
-                          type="button"
-                          key={n.id}
-                          onClick={() =>
-                            setDraftKnowledgeIds((cur) =>
-                              cur.includes(n.id) ? cur.filter((x) => x !== n.id) : [...cur, n.id],
-                            )
-                          }
-                          style={chipStyle(selected)}
-                        >
-                          {n.name}
-                        </button>
-                      );
-                    })}
-                </div>
-                <div
-                  style={{
-                    marginTop: 'var(--s-2)',
-                    display: 'flex',
-                    justifyContent: 'flex-end',
-                    gap: 'var(--s-2)',
-                  }}
-                >
-                  <Button
+      {/* archived — collapsed by default, explicit open (TDM 决策3) */}
+      {archived.length > 0 && (
+        <div className="archive-zone">
+          <button
+            type="button"
+            className="archive-toggle"
+            aria-expanded={archiveOpen}
+            onClick={() => setArchiveOpen((o) => !o)}
+          >
+            <LoomIcon name="archive" size={15} />
+            <span>归档项</span>
+            <span className="mono archive-n">{archived.length}</span>
+            <LoomIcon
+              name="arrow"
+              size={14}
+              className="archive-caret"
+              style={{ transform: archiveOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}
+            />
+          </button>
+          {archiveOpen && (
+            <div className="archive-list fade-key">
+              {archived.map((item) => (
+                <div key={item.id} className="archive-row">
+                  <span className="item-ic info" style={{ width: 34, height: 34 }}>
+                    <LoomIcon name="items" size={16} />
+                  </span>
+                  <Link href={`/learning-items/${item.id}`} className="archive-main">
+                    <div className="archive-title">{item.title}</div>
+                    {item.knowledge_ids.length > 0 && (
+                      <div className="item-sub mono">{item.knowledge_ids.length} 知识点</div>
+                    )}
+                  </Link>
+                  <Btn
+                    size="sm"
                     variant="secondary"
-                    size="sm"
-                    onClick={() => setEditingKnowledgeId(null)}
-                    disabled={updateM.isPending}
-                  >
-                    取消
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={() =>
-                      updateM.mutate({
-                        id: item.id,
-                        version: item.version,
-                        knowledge_ids: draftKnowledgeIds,
-                      })
-                    }
-                    disabled={updateM.isPending}
-                  >
-                    {updateM.isPending ? '保存中…' : '保存'}
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              item.knowledge_ids.length > 0 && (
-                <div style={knowledgeChipsStyle}>
-                  {item.knowledge_ids.map((kid) => {
-                    const node = knowledgeById.get(kid);
-                    return (
-                      <Link
-                        key={kid}
-                        href={`/knowledge/${kid}`}
-                        style={knowledgeChipLinkStyle}
-                        title={node?.effective_domain ?? kid}
-                      >
-                        #{node?.name ?? kid}
-                      </Link>
-                    );
-                  })}
-                </div>
-              )
-            )}
-
-            <div style={actionsStyle}>
-              {item.status === 'pending' && (
-                <>
-                  <Button
-                    variant="hard"
-                    size="sm"
-                    onClick={() =>
-                      updateM.mutate({ id: item.id, version: item.version, status: 'in_progress' })
-                    }
-                    disabled={updateM.isPending}
-                  >
-                    开始学
-                  </Button>
-                  <Button
-                    variant="good"
-                    size="sm"
-                    onClick={() =>
-                      updateM.mutate({ id: item.id, version: item.version, status: 'done' })
-                    }
-                    disabled={updateM.isPending}
-                  >
-                    我学完了
-                  </Button>
-                </>
-              )}
-              {item.status === 'in_progress' && (
-                <>
-                  <Button
-                    variant="good"
-                    size="sm"
-                    onClick={() =>
-                      updateM.mutate({ id: item.id, version: item.version, status: 'done' })
-                    }
-                    disabled={updateM.isPending}
-                  >
-                    我学完了
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
+                    icon="undo"
                     onClick={() =>
                       updateM.mutate({ id: item.id, version: item.version, status: 'pending' })
                     }
                     disabled={updateM.isPending}
                   >
-                    改回待办
-                  </Button>
-                </>
-              )}
-              {item.status === 'done' && (
-                <>
-                  <Button
-                    variant="info"
-                    size="sm"
-                    onClick={() =>
-                      updateM.mutate({ id: item.id, version: item.version, status: 'in_progress' })
-                    }
-                    disabled={updateM.isPending}
-                  >
-                    重学
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() =>
-                      updateM.mutate({ id: item.id, version: item.version, status: 'resting' })
-                    }
-                    disabled={updateM.isPending}
-                    title="进入养护 — dreaming 会从这里挑复学"
-                  >
-                    去养护
-                  </Button>
-                </>
-              )}
-              {item.status === 'resting' && (
-                <Button
-                  variant="info"
-                  size="sm"
-                  onClick={() =>
-                    updateM.mutate({ id: item.id, version: item.version, status: 'in_progress' })
-                  }
-                  disabled={updateM.isPending}
-                >
-                  复学
-                </Button>
-              )}
-              {item.status === 'dismissed' && (
-                <Button
-                  variant="info"
-                  size="sm"
-                  onClick={() =>
-                    updateM.mutate({ id: item.id, version: item.version, status: 'pending' })
-                  }
-                  disabled={updateM.isPending}
-                >
-                  恢复
-                </Button>
-              )}
-              {item.status === 'archived' && (
-                <Button
-                  variant="info"
-                  size="sm"
-                  onClick={() =>
-                    updateM.mutate({ id: item.id, version: item.version, status: 'pending' })
-                  }
-                  disabled={updateM.isPending}
-                >
-                  取出归档
-                </Button>
-              )}
-              {item.status !== 'archived' && (
-                <Button
-                  variant="quiet"
-                  size="sm"
-                  onClick={() =>
-                    updateM.mutate({ id: item.id, version: item.version, status: 'archived' })
-                  }
-                  disabled={updateM.isPending}
-                  title="归档 — 不在主列表显示"
-                >
-                  归档
-                </Button>
-              )}
-              <span style={{ flex: 1 }} />
-              {editingKnowledgeId !== item.id && (
-                <Button
-                  variant="quiet"
-                  size="sm"
-                  onClick={() => {
-                    setEditingKnowledgeId(item.id);
-                    setDraftKnowledgeIds(item.knowledge_ids);
-                    setKnowledgeFilter('');
-                  }}
-                >
-                  改知识点
-                </Button>
-              )}
-              {pendingDeleteId === item.id ? (
-                <>
-                  <span style={confirmStyle}>确认删除？</span>
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    onClick={() => deleteM.mutate(item.id)}
-                    disabled={deleteM.isPending}
-                  >
-                    确认
-                  </Button>
-                  <Button
-                    variant="quiet"
-                    size="sm"
-                    onClick={() => setPendingDeleteId(null)}
-                    disabled={deleteM.isPending}
-                  >
-                    取消
-                  </Button>
-                </>
-              ) : (
-                <Button
-                  variant="quiet"
-                  size="sm"
-                  onClick={() => setPendingDeleteId(item.id)}
-                  aria-label="删除"
-                >
-                  ×
-                </Button>
-              )}
+                    取出归档
+                  </Btn>
+                </div>
+              ))}
             </div>
-          </Card>
-        ))}
-      </div>
+          )}
+        </div>
+      )}
     </main>
   );
 }
 
-function labelFor(s: StatusFilter): string {
-  const found = FILTER_TABS.find((t) => t.id === s);
-  return found?.label ?? s;
+function ItemCard({
+  item,
+  health,
+  knowledgeById,
+  editingKnowledgeId,
+  draftKnowledgeIds,
+  knowledgeFilter,
+  knowledgeRows,
+  pendingDeleteId,
+  updatePending,
+  deletePending,
+  onTransition,
+  onStartEditKnowledge,
+  onToggleDraftKnowledge,
+  onSaveKnowledge,
+  onCancelEditKnowledge,
+  onKnowledgeFilterChange,
+  onRequestDelete,
+  onConfirmDelete,
+  onCancelDelete,
+}: {
+  item: LearningItem;
+  health: { nodeCount: number; dueCount: number; avgMastery: number | null; lowEvidence: boolean };
+  knowledgeById: Map<string, KnowledgeNode>;
+  editingKnowledgeId: string | null;
+  draftKnowledgeIds: string[];
+  knowledgeFilter: string;
+  knowledgeRows: KnowledgeNode[];
+  pendingDeleteId: string | null;
+  updatePending: boolean;
+  deletePending: boolean;
+  onTransition: (status: ItemStatus) => void;
+  onStartEditKnowledge: () => void;
+  onToggleDraftKnowledge: (kid: string) => void;
+  onSaveKnowledge: () => void;
+  onCancelEditKnowledge: () => void;
+  onKnowledgeFilterChange: (v: string) => void;
+  onRequestDelete: () => void;
+  onConfirmDelete: () => void;
+  onCancelDelete: () => void;
+}) {
+  const isEditing = editingKnowledgeId === item.id;
+  return (
+    <LoomCard pad hover className="item-card">
+      <div className="item-head">
+        <span className="item-ic coral">
+          <LoomIcon name="items" size={22} />
+        </span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="item-title">
+            <Link href={`/learning-items/${item.id}`}>{item.title}</Link>
+          </div>
+          {item.source_event && (
+            <div className="item-sub mono">
+              source event{' '}
+              <Link href={`/events/${item.source_event.id}`} style={{ color: 'var(--coral)' }}>
+                {item.source_event.id.slice(0, 8)}…
+              </Link>{' '}
+              <CorrectionStateRenderer state={item.source_event.correction_state} compact />
+            </div>
+          )}
+        </div>
+        <StatusBadge status={item.status} />
+      </div>
+
+      {item.content && <p className="item-sub">{item.content}</p>}
+
+      <ItemHealthBar health={health} />
+
+      {/* knowledge_ids display + inline editor (wiring preserved) */}
+      {isEditing ? (
+        <div>
+          <div className="field-label">编辑知识点（已选 {draftKnowledgeIds.length}）</div>
+          <input
+            type="text"
+            value={knowledgeFilter}
+            onChange={(e) => onKnowledgeFilterChange(e.target.value)}
+            placeholder="搜索"
+            className="field-input"
+          />
+          <div className="chip-set" style={{ marginTop: 'var(--s-2)' }}>
+            {knowledgeRows
+              .filter((n) => matchesKnowledgeFilter(n, knowledgeFilter))
+              .slice(0, 30)
+              .map((n) => {
+                const selected = draftKnowledgeIds.includes(n.id);
+                return (
+                  <button
+                    type="button"
+                    key={n.id}
+                    onClick={() => onToggleDraftKnowledge(n.id)}
+                    className={`chip${selected ? ' is-on' : ''}`}
+                  >
+                    {n.name}
+                  </button>
+                );
+              })}
+          </div>
+          <div className="hero-cta" style={{ justifyContent: 'flex-end', marginTop: 'var(--s-2)' }}>
+            <Btn size="sm" variant="ghost" onClick={onCancelEditKnowledge} disabled={updatePending}>
+              取消
+            </Btn>
+            <Btn size="sm" variant="primary" onClick={onSaveKnowledge} disabled={updatePending}>
+              {updatePending ? '保存中…' : '保存'}
+            </Btn>
+          </div>
+        </div>
+      ) : (
+        item.knowledge_ids.length > 0 && (
+          <div className="chip-set">
+            {item.knowledge_ids.map((kid) => {
+              const node = knowledgeById.get(kid);
+              return (
+                <Link
+                  key={kid}
+                  href={`/knowledge/${kid}`}
+                  className="chip chip-k mono"
+                  title={node?.effective_domain ?? kid}
+                >
+                  #{node?.name ?? kid}
+                </Link>
+              );
+            })}
+          </div>
+        )
+      )}
+
+      <div className="item-tags item-foot-acts" style={{ marginLeft: 0 }}>
+        {item.status === 'pending' && (
+          <>
+            <Btn
+              size="sm"
+              variant="hard"
+              icon="review"
+              onClick={() => onTransition('in_progress')}
+              disabled={updatePending}
+            >
+              开始学
+            </Btn>
+            <Btn
+              size="sm"
+              variant="good"
+              icon="check"
+              onClick={() => onTransition('done')}
+              disabled={updatePending}
+            >
+              我学完了
+            </Btn>
+          </>
+        )}
+        {item.status === 'in_progress' && (
+          <>
+            <Btn
+              size="sm"
+              variant="good"
+              icon="check"
+              onClick={() => onTransition('done')}
+              disabled={updatePending}
+            >
+              我学完了
+            </Btn>
+            <Btn
+              size="sm"
+              variant="secondary"
+              onClick={() => onTransition('pending')}
+              disabled={updatePending}
+            >
+              改回待办
+            </Btn>
+          </>
+        )}
+        {item.status === 'done' && (
+          <>
+            <Btn
+              size="sm"
+              variant="secondary"
+              icon="review"
+              onClick={() => onTransition('in_progress')}
+              disabled={updatePending}
+            >
+              重学
+            </Btn>
+            <Btn
+              size="sm"
+              variant="ghost"
+              icon="moon"
+              onClick={() => onTransition('resting')}
+              disabled={updatePending}
+            >
+              去养护
+            </Btn>
+          </>
+        )}
+        {item.status === 'resting' && (
+          <Btn
+            size="sm"
+            variant="secondary"
+            icon="review"
+            onClick={() => onTransition('in_progress')}
+            disabled={updatePending}
+          >
+            复学
+          </Btn>
+        )}
+        {item.status === 'dismissed' && (
+          <Btn
+            size="sm"
+            variant="secondary"
+            icon="undo"
+            onClick={() => onTransition('pending')}
+            disabled={updatePending}
+          >
+            恢复
+          </Btn>
+        )}
+        <span style={{ flex: 1 }} />
+        {!isEditing && (
+          <Btn size="sm" variant="quiet" icon="tag" onClick={onStartEditKnowledge}>
+            改知识点
+          </Btn>
+        )}
+        <Btn
+          size="sm"
+          variant="ghost"
+          icon="archive"
+          onClick={() => onTransition('archived')}
+          disabled={updatePending}
+        >
+          归档
+        </Btn>
+        {pendingDeleteId === item.id ? (
+          <>
+            <span className="meta" style={{ color: 'var(--again-ink)' }}>
+              确认删除？
+            </span>
+            <Btn size="sm" variant="again" onClick={onConfirmDelete} disabled={deletePending}>
+              确认
+            </Btn>
+            <Btn size="sm" variant="quiet" onClick={onCancelDelete} disabled={deletePending}>
+              取消
+            </Btn>
+          </>
+        ) : (
+          <Btn size="sm" variant="quiet" icon="trash" onClick={onRequestDelete} aria-label="删除" />
+        )}
+      </div>
+    </LoomCard>
+  );
 }
-
-const summaryStyle: React.CSSProperties = {
-  cursor: 'pointer',
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-meta)',
-  color: 'var(--ink-3)',
-  letterSpacing: 'var(--ls-wide)',
-};
-
-const inputStyle: React.CSSProperties = {
-  width: '100%',
-  padding: '10px 12px',
-  fontSize: 'var(--fs-body)',
-  fontFamily: 'var(--font-serif)',
-  background: 'var(--paper-sunk)',
-  color: 'var(--ink)',
-  border: '1px solid var(--line)',
-  borderRadius: 'var(--r-2)',
-  outline: 'none',
-  boxSizing: 'border-box',
-};
-
-const itemHeadStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'flex-start',
-  justifyContent: 'space-between',
-  gap: 'var(--s-3)',
-};
-
-const titleStyle: React.CSSProperties = {
-  margin: 0,
-  fontFamily: 'var(--font-serif)',
-  fontSize: 'var(--fs-h4)',
-  fontWeight: 500,
-  color: 'var(--ink)',
-  wordBreak: 'break-word',
-};
-
-const metaStyle: React.CSSProperties = {
-  margin: '4px 0 0',
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-meta)',
-  color: 'var(--ink-4)',
-  letterSpacing: 'var(--ls-wide)',
-};
-
-const metaLinkStyle: React.CSSProperties = {
-  color: 'var(--coral)',
-  textDecoration: 'none',
-};
-
-const contentStyle: React.CSSProperties = {
-  margin: 'var(--s-2) 0 0',
-  fontSize: 'var(--fs-body)',
-  color: 'var(--ink-2)',
-  lineHeight: 'var(--lh-prose)',
-  whiteSpace: 'pre-wrap',
-  wordBreak: 'break-word',
-};
-
-const actionsStyle: React.CSSProperties = {
-  marginTop: 'var(--s-3)',
-  display: 'flex',
-  alignItems: 'center',
-  flexWrap: 'wrap',
-  gap: 'var(--s-2)',
-};
-
-const mutedStyle: React.CSSProperties = {
-  margin: 0,
-  fontSize: 'var(--fs-body)',
-  color: 'var(--ink-3)',
-};
-
-const errorStyle: React.CSSProperties = {
-  margin: 0,
-  fontSize: 'var(--fs-body)',
-  color: 'var(--again-ink)',
-};
-
-const confirmStyle: React.CSSProperties = {
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-meta)',
-  color: 'var(--again-ink)',
-  letterSpacing: 'var(--ls-wide)',
-};
-
-const chipRowStyle: React.CSSProperties = {
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: 4,
-  marginTop: 'var(--s-2)',
-};
-
-const chipStyle = (active: boolean): React.CSSProperties => ({
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-meta)',
-  padding: '4px 10px',
-  borderRadius: 'var(--r-pill)',
-  border: `1px solid ${active ? 'var(--coral)' : 'var(--line)'}`,
-  background: active ? 'var(--coral-soft)' : 'var(--paper-sunk)',
-  color: active ? 'var(--coral-ink)' : 'var(--ink-2)',
-  cursor: 'pointer',
-  whiteSpace: 'nowrap',
-  letterSpacing: 'var(--ls-wide)',
-});
-
-const knowledgeChipsStyle: React.CSSProperties = {
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: 4,
-  marginTop: 'var(--s-2)',
-};
-
-const knowledgeChipLinkStyle: React.CSSProperties = {
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-meta)',
-  padding: '2px 8px',
-  borderRadius: 'var(--r-pill)',
-  border: '1px solid var(--line)',
-  background: 'var(--paper-sunk)',
-  color: 'var(--coral)',
-  textDecoration: 'none',
-  letterSpacing: 'var(--ls-wide)',
-};
