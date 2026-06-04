@@ -168,16 +168,39 @@ export async function POST(req: Request): Promise<Response> {
       finalRating = suggestedRating;
     }
 
-    const referencedKnowledgeIds = Array.from(
-      new Set(
-        (body.referenced_knowledge_ids.length > 0 ? body.referenced_knowledge_ids : q.knowledge_ids)
-          .map((id) => id.trim())
-          .filter((id) => id.length > 0),
-      ),
+    // Codex / CodeRabbit (PR #295) — `referenced_knowledge_ids` used to drive
+    // FSRS scheduling verbatim from the request body, letting a stale/superset
+    // id steer scheduling onto knowledge points the reviewed question does not
+    // tag (orphan projection rows, due-summary pollution). Orchestrator ruling:
+    // do NOT 400 — instead schedule only on requested ∩ q.knowledge_ids; if that
+    // intersection is empty but the question IS labeled, fall back to the
+    // question's own labels. The event payload's `referenced_knowledge_ids`
+    // keeps the ORIGINAL requested value (judge evidence may legitimately cite
+    // knowledge beyond the question's tags; that trail must not be narrowed).
+    const questionKnowledgeIds = Array.from(
+      new Set(q.knowledge_ids.map((id) => id.trim()).filter((id) => id.length > 0)),
     );
-    const fsrsSubjectKind: FsrsSubjectKind =
-      referencedKnowledgeIds.length > 0 ? 'knowledge' : 'question';
-    const fsrsSubjectIds = fsrsSubjectKind === 'knowledge' ? referencedKnowledgeIds : [questionId];
+    const requestedKnowledgeIds = Array.from(
+      new Set(body.referenced_knowledge_ids.map((id) => id.trim()).filter((id) => id.length > 0)),
+    );
+    // Event-payload value: original requested ids when present, else the
+    // question's own labels (preserves the prior default for legacy callers).
+    const referencedKnowledgeIds =
+      requestedKnowledgeIds.length > 0 ? requestedKnowledgeIds : questionKnowledgeIds;
+    // FSRS-scheduling set: requested ∩ question labels. Empty intersection with a
+    // labeled question falls back to the question labels; no request at all also
+    // falls back to the question labels.
+    const requestedIntersection = requestedKnowledgeIds.filter((id) =>
+      questionKnowledgeIds.includes(id),
+    );
+    const fsrsKnowledgeIds =
+      requestedKnowledgeIds.length === 0
+        ? questionKnowledgeIds
+        : requestedIntersection.length > 0
+          ? requestedIntersection
+          : questionKnowledgeIds;
+    const fsrsSubjectKind: FsrsSubjectKind = fsrsKnowledgeIds.length > 0 ? 'knowledge' : 'question';
+    const fsrsSubjectIds = fsrsSubjectKind === 'knowledge' ? fsrsKnowledgeIds : [questionId];
 
     // P3 / YUK-203 — FSRS is now scheduled per knowledge point when the reviewed
     // question is knowledge-labeled. The review event remains question-scoped

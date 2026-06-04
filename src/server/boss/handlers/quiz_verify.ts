@@ -45,7 +45,7 @@ import type { Db } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
 import { type TaskTextResult, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { writeEvent } from '@/server/events/queries';
-import { upsertFsrsState } from '@/server/fsrs/state';
+import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { initialFsrsState } from '@/server/review/fsrs';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
@@ -331,6 +331,15 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
         const fsrsSubjectIds = Array.from(new Set(row.knowledge_ids ?? []));
         if (fsrsSubjectIds.length > 0) {
           for (const knowledgeId of fsrsSubjectIds) {
+            // Codex (PR #295) — enroll-if-absent. A verified quiz binding to a
+            // knowledge point that ALREADY has an FSRS projection (e.g. a
+            // supplementary question for an already-studied node) must NOT reset
+            // that node's state/due_at/last_review_event_id back to a fresh card —
+            // that would discard the user's review history and pull a not-yet-due
+            // card back into the pool. Only enroll knowledge points with no
+            // existing projection; leave existing schedules untouched.
+            const existing = await getFsrsState(tx, 'knowledge', knowledgeId);
+            if (existing) continue;
             await upsertFsrsState(tx, {
               subject_kind: 'knowledge',
               subject_id: knowledgeId,
@@ -340,13 +349,18 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
             });
           }
         } else {
-          await upsertFsrsState(tx, {
-            subject_kind: 'question',
-            subject_id: questionId,
-            state: initial.state,
-            due_at: initial.dueAt,
-            last_review_event_id: verifyEventId,
-          });
+          // Unlabeled legacy questions enroll at question level. Same
+          // enroll-if-absent guard so a re-verify can't reset an existing card.
+          const existing = await getFsrsState(tx, 'question', questionId);
+          if (!existing) {
+            await upsertFsrsState(tx, {
+              subject_kind: 'question',
+              subject_id: questionId,
+              state: initial.state,
+              due_at: initial.dueAt,
+              last_review_event_id: verifyEventId,
+            });
+          }
         }
       } else {
         // needs_review / fail / too_close — stay draft, never reaches the pool.

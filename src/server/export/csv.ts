@@ -30,6 +30,13 @@ const MISTAKES_HEADERS = [
   'fsrs_state_due',
   'fsrs_state_reps',
   'fsrs_state_lapses',
+  // Codex (PR #295) — ADR-0028 moves FSRS for labeled questions onto the
+  // knowledge node and deletes the question-level row. This column marks where
+  // the fsrs_state_* values came from ('question' = own question-level row,
+  // 'knowledge' = the most-overdue knowledge node this question probes, '' =
+  // no projection). It makes explicit that for labeled questions the FSRS
+  // numbers are the knowledge node's schedule, NOT a per-question card.
+  'fsrs_state_source_kind',
   'status',
   'last_reviewed_at',
   'review_count',
@@ -230,12 +237,60 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
       reviewsByQuestion.set(qid, list);
     }
   }
-  // Index FSRS state per (subject_kind, subject_id) — keyed by question_id here
+  // Index FSRS state per (subject_kind, subject_id). Post-ADR-0028 a labeled
+  // question's projection lives under subject_kind='knowledge' keyed by the
+  // knowledge id; the question-level row is deleted. We index BOTH so a labeled
+  // question can fall back to its knowledge node's schedule (Codex, PR #295).
   const fsrsByQuestion = new Map<string, Row>();
+  const fsrsByKnowledge = new Map<string, Row>();
   for (const r of (tables.material_fsrs_state ?? []) as Row[]) {
     if (r.subject_kind === 'question') {
       fsrsByQuestion.set(r.subject_id as string, r);
+    } else if (r.subject_kind === 'knowledge') {
+      fsrsByKnowledge.set(r.subject_id as string, r);
     }
+  }
+
+  // Codex (PR #295) — resolve the FSRS row to report for a question.
+  //   1. question-level row wins when present (legacy unlabeled questions);
+  //   2. otherwise, among the question's knowledge_ids, pick the MOST-OVERDUE
+  //      knowledge-level row (smallest due) — that is the soonest-acting
+  //      schedule the question participates in;
+  //   3. otherwise none.
+  // Returns the source kind so the row can label provenance without faking a
+  // per-question card.
+  function resolveFsrsForQuestion(
+    qid: string,
+    knowledgeIds: string[],
+  ): { row: Row; kind: 'question' | 'knowledge' } | null {
+    const own = fsrsByQuestion.get(qid);
+    if (own) return { row: own, kind: 'question' };
+    let best: Row | null = null;
+    let bestDue = Number.POSITIVE_INFINITY;
+    for (const kid of knowledgeIds) {
+      const krow = fsrsByKnowledge.get(kid);
+      if (!krow) continue;
+      const state = parseJsonCell<{ due?: number | string }>(krow.state);
+      const dueRaw = state?.due;
+      const due =
+        typeof dueRaw === 'number'
+          ? dueRaw
+          : typeof dueRaw === 'string'
+            ? Date.parse(dueRaw)
+            : Number.POSITIVE_INFINITY;
+      const dueValue = Number.isFinite(due) ? due : Number.POSITIVE_INFINITY;
+      if (best === null || dueValue < bestDue) {
+        best = krow;
+        bestDue = dueValue;
+      }
+    }
+    return best ? { row: best, kind: 'knowledge' } : null;
+  }
+
+  function questionKnowledgeIds(q: { knowledge_ids?: string | string[] } | undefined): string[] {
+    if (!q?.knowledge_ids) return [];
+    if (Array.isArray(q.knowledge_ids)) return q.knowledge_ids;
+    return parseJsonCell<string[]>(q.knowledge_ids) ?? [];
   }
 
   const lines: string[] = [MISTAKES_HEADERS.join(',')];
@@ -272,10 +327,16 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
     const lastReview =
       reviews.length > 0 ? Math.max(...reviews.map((r) => r.created_at as number)) : null;
 
-    const fsrsRow = fsrsByQuestion.get(qid);
-    const fsrsState = fsrsRow
-      ? parseJsonCell<{ due: number; reps: number; lapses: number }>(fsrsRow.state)
+    // Codex (PR #295) — index knowledge-level FSRS rows too. The attempt's own
+    // referenced_knowledge_ids drive the knowledge fallback; union with the
+    // question's stored knowledge_ids so a labeled question still resolves when
+    // the attempt payload carried no referenced ids.
+    const fsrsKnowledgeIds = Array.from(new Set([...knowledgeIds, ...questionKnowledgeIds(q)]));
+    const fsrsResolved = resolveFsrsForQuestion(qid, fsrsKnowledgeIds);
+    const fsrsState = fsrsResolved
+      ? parseJsonCell<{ due: number; reps: number; lapses: number }>(fsrsResolved.row.state)
       : null;
+    const fsrsSourceKind = fsrsResolved?.kind ?? '';
 
     lines.push(
       [
@@ -291,6 +352,7 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
         csvEscape(fsrsState?.due ?? ''),
         csvEscape(fsrsState?.reps ?? ''),
         csvEscape(fsrsState?.lapses ?? ''),
+        csvEscape(fsrsSourceKind),
         // No mistake.status equivalent in event stream — emit 'active' since
         // a failure attempt without an archive event is considered active.
         csvEscape('active'),

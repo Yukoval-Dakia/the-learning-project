@@ -196,6 +196,63 @@ describe('runQuizVerify', () => {
     expect(await countVerifyEvents('q1')).toBe(1);
   });
 
+  // Codex (PR #295) — enroll-if-absent. Verifying a NEW question that binds to a
+  // knowledge point which already has an FSRS projection (supplementary-question
+  // scenario) must NOT reset that node's state/due_at back to a fresh card.
+  it('pass: does NOT reset an existing knowledge FSRS schedule when binding a new question', async () => {
+    await seedKnowledge('k1');
+    await seedDraftQuestion({ id: 'q_existing_sched', knowledgeId: 'k1' });
+
+    // Pre-existing knowledge-level projection with a far-future due + prior reps.
+    const futureDue = new Date(Date.now() + 30 * 86400 * 1000);
+    const priorState = {
+      due: futureDue.toISOString(),
+      stability: 12,
+      difficulty: 5,
+      elapsed_days: 0,
+      scheduled_days: 30,
+      learning_steps: 0,
+      reps: 4,
+      lapses: 1,
+      state: 'review',
+      last_review: new Date(Date.now() - 86400 * 1000).toISOString(),
+    };
+    await testDb()
+      .insert(material_fsrs_state)
+      .values({
+        id: 'f_k1_existing',
+        subject_kind: 'knowledge',
+        subject_id: 'k1',
+        state: priorState as never,
+        due_at: futureDue,
+        last_review_event_id: 'evt_prior_review',
+        updated_at: new Date(),
+      });
+
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }), 'tr_keep');
+    const result = await runQuizVerify({ db: testDb(), questionId: 'q_existing_sched', runTaskFn });
+    expect(result.status).toBe('verified');
+
+    // Still exactly one knowledge row, with the ORIGINAL state/due preserved.
+    const rows = await testDb()
+      .select()
+      .from(material_fsrs_state)
+      .where(
+        and(
+          eq(material_fsrs_state.subject_kind, 'knowledge'),
+          eq(material_fsrs_state.subject_id, 'k1'),
+        ),
+      );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].due_at.getTime()).toBe(futureDue.getTime());
+    expect(rows[0].last_review_event_id).toBe('evt_prior_review');
+    expect((rows[0].state as { reps: number }).reps).toBe(4);
+
+    // The question is still promoted to active.
+    const qRows = await testDb().select().from(question).where(eq(question.id, 'q_existing_sched'));
+    expect(qRows[0].draft_status).toBe('active');
+  });
+
   it('fail: leaves draft + verification.status=failed + NO FSRS enroll', async () => {
     await seedKnowledge('k1');
     await seedDraftQuestion({ id: 'q2', knowledgeId: 'k1' });
