@@ -320,9 +320,6 @@ describe('GET /api/practice/[id]', () => {
       // biome-ignore lint/suspicious/noExplicitAny: dynamic import for test helper
       .where((sql as any)`id = ${sessionId}`);
 
-    // Workaround: use raw SQL to update session status.
-    await db.execute(sql`UPDATE learning_session SET status = 'completed' WHERE id = ${sessionId}`);
-
     const [req, ctx] = makeRequest('p1');
     const res = await GET(req, ctx);
     const body = (await res.json()) as {
