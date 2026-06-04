@@ -93,11 +93,11 @@ export function PaperCard({ paper, onAction, past }: PaperCardProps) {
       </div>
 
       {/* ── knowledge chips ── */}
-      {paper.knowledge_ids.length > 0 && (
+      {paper.knowledge.length > 0 && (
         <div className="paper-know">
-          {paper.knowledge_ids.map((k) => (
-            <span key={k} className="chip chip-k">
-              {k}
+          {paper.knowledge.map((k) => (
+            <span key={k.id} className="chip chip-k">
+              {k.name}
             </span>
           ))}
         </div>
