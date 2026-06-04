@@ -9,7 +9,7 @@
 
 import { Artifact } from '@/core/schema/index';
 import type { Db } from '@/db/client';
-import { artifact, event, learning_session } from '@/db/schema';
+import { artifact, learning_session } from '@/db/schema';
 import { readPaperSections } from '@/server/review/paper-sections';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 
@@ -155,43 +155,43 @@ export async function getPracticeList(db: Db): Promise<PracticeListResult> {
     }
   }
 
-  // 4) Right/wrong per session, distinct by slot. The paper submit handler sets
-  //    the attempt event outcome from the judge's coarse_outcome (correct →
-  //    success, partial → partial, incorrect → failure), so the attempt outcome
-  //    IS the right/wrong signal (§4.10 Q9 maps correct/partial → right,
-  //    incorrect → wrong; the loom dist-bar is a two-segment good/again split).
-  //    Take the NEWEST attempt per (session, slot) so a re-submit after
-  //    abandon→reopen counts once (newest-per-slot, §4.9).
+  // 4) Right/wrong per session, distinct by slot. We use the answer table as the
+  //    single truth source — same (session_id, question_id, COALESCE(part_ref,''))
+  //    slot key used by pos (step 3), so composite question parts are never
+  //    collapsed (Option B fix — the event.payload has no part_ref field; the
+  //    answer table's part_ref column is the canonical per-slot identifier).
+  //    Take the NEWEST frozen row per slot (MAX(submitted_at)), join to the
+  //    attempt event via answer.event_id, read the outcome from event.outcome.
+  //    §4.10 Q9: correct/partial → right, incorrect → wrong (the loom dist-bar
+  //    is a two-segment good/again split; partial counts as right deliberately —
+  //    a partial answer represents meaningful progress toward mastery).
   const rightWrongBySession = new Map<string, { right: number; wrong: number }>();
   if (sessionIds.length > 0) {
-    const attemptRows = await db
-      .select({
-        session_id: event.session_id,
-        subject_id: event.subject_id,
-        outcome: event.outcome,
-        payload: event.payload,
-      })
-      .from(event)
-      .where(
-        and(
-          eq(event.action, 'attempt'),
-          eq(event.subject_kind, 'question'),
-          inArray(event.session_id, sessionIds),
-        ),
-      )
-      .orderBy(desc(event.created_at), desc(event.id));
-
-    const seenSlot = new Set<string>();
-    for (const a of attemptRows) {
-      if (!a.session_id) continue;
-      const payload = a.payload as { part_ref?: string } | null;
-      const slotKey = `${a.session_id}::${a.subject_id}::${payload?.part_ref ?? ''}`;
-      if (seenSlot.has(slotKey)) continue; // newest already taken (desc order)
-      seenSlot.add(slotKey);
-      const bucket = rightWrongBySession.get(a.session_id) ?? { right: 0, wrong: 0 };
-      if (a.outcome === 'failure') bucket.wrong += 1;
+    const rwRows = await db.execute<{
+      session_id: string;
+      outcome: string;
+    }>(sql`
+      SELECT a.session_id, e.outcome
+      FROM answer a
+      JOIN event e ON e.id = a.event_id
+      WHERE a.session_id IN (${sql.join(sessionIds, sql`, `)})
+        AND a.submitted_at IS NOT NULL
+        AND a.submitted_at = (
+          SELECT MAX(a2.submitted_at)
+          FROM answer a2
+          WHERE a2.session_id = a.session_id
+            AND a2.question_id = a.question_id
+            AND COALESCE(a2.part_ref, '') = COALESCE(a.part_ref, '')
+            AND a2.submitted_at IS NOT NULL
+        )
+    `);
+    for (const r of rwRows as unknown as Array<{ session_id: string; outcome: string }>) {
+      if (!r.session_id) continue;
+      const bucket = rightWrongBySession.get(r.session_id) ?? { right: 0, wrong: 0 };
+      if (r.outcome === 'failure') bucket.wrong += 1;
+      // partial counts as right (§4.10 Q9 deliberate — see comment above)
       else bucket.right += 1;
-      rightWrongBySession.set(a.session_id, bucket);
+      rightWrongBySession.set(r.session_id, bucket);
     }
   }
 
