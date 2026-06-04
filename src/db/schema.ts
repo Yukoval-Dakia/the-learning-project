@@ -375,6 +375,20 @@ export const artifact_block_ref = pgTable(
   ],
 );
 
+// U5 (YUK-203) — `answer` revived as the paper answer-sheet draft layer
+// (ADR-0029 决定 #3: 既有原语复用, NOT a new table — RL2). Link columns are
+// loose-coupled plain text refs (no FK — matches event.task_run_id /
+// learning_record.artifact_id precedent, Q4 ruling): orphan-cleanup cron and
+// artifact soft-delete must not be blocked by an FK.
+//
+// Draft grain is PER-SLOT `(session_id, question_id, part_ref)` (Q5): a
+// composite question with parts gets one row per part; atomic questions have
+// part_ref=null. The autosave partial unique index (drizzle/0028, hand-written)
+// guarantees ONE live draft per slot. submitted_at is now nullable: null=live
+// draft, set=frozen. Frozen rows are append-only history — re-submission (after
+// abandon→reopen) writes a NEW row and never mutates a frozen one (§4.5).
+//
+// learning_item_id stays nullable/unused for paper answers (DEFER per Map §B3).
 export const answer = pgTable('answer', {
   id: text('id').primaryKey(),
   question_id: text('question_id').notNull(),
@@ -384,8 +398,24 @@ export const answer = pgTable('answer', {
   image_refs: jsonb('image_refs').$type<string[]>().notNull().default([]),
   vision_extracted: text('vision_extracted'),
   tags: jsonb('tags').$type<string[]>().notNull().default([]),
-  submitted_at: timestamp('submitted_at', { withTimezone: true }).notNull(),
+  // U5 — null = live draft, set = frozen at submit. DROP NOT NULL in 0028.
+  submitted_at: timestamp('submitted_at', { withTimezone: true }),
+  // U5 link columns (loose refs, no FK):
+  session_id: text('session_id'),
+  paper_artifact_id: text('paper_artifact_id'),
+  // StructuredQuestion.id of the part this answer targets; null for atomic Qs.
+  part_ref: text('part_ref'),
+  // back-ref to the attempt/review event written at freeze
+  event_id: text('event_id'),
+  // mutable working-state stamp on each autosave
+  autosaved_at: timestamp('autosaved_at', { withTimezone: true }),
 });
+// U5 — the autosave partial unique index `answer_draft_slot_uk`
+// (session_id, question_id, COALESCE(part_ref,'')) WHERE submitted_at IS NULL
+// is declared in the hand-written migration drizzle/0028_u5_paper_answer_links.sql
+// (drizzle-kit doesn't emit partial-index WHERE / COALESCE expression-indexes at
+// this version — same pattern as the event outbox index, see above). Not in the
+// table-def index array so db:generate doesn't try to re-emit it incompletely.
 
 // Phase 1c.1 Step 1.4 (Lane A): judgment + user_appeal tables DROPped per
 // data-assumptions §O2. judging is now an event (action='judge',
@@ -537,6 +567,13 @@ export const learning_session = pgTable('learning_session', {
   summary_md: text('summary_md'),
   // goal linkage — Phase 1d placeholder
   goal_id: text('goal_id'),
+  // U5 (YUK-203) — soft reference to the paper artifact a review-attempt session
+  // is taking (Q4: loose coupling, NO FK — matches event.task_run_id; a deleted
+  // paper artifact must not block session rows / the orphan-cleanup cron). Null
+  // for FSRS-逐张 review, conversation, and tutor sessions. Write path =
+  // startReviewSession({ artifactId }) binding (RL4: write path same PR → no
+  // allowlist entry).
+  artifact_id: text('artifact_id'),
   started_at: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
   ended_at: timestamp('ended_at', { withTimezone: true }),
   created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
