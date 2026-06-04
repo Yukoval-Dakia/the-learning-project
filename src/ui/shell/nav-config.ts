@@ -34,6 +34,7 @@ export const NAV: NavEntry[] = [
   { section: '织造' },
   { id: 'today', label: '今日', icon: 'today' },
   { id: 'review', label: '复习', icon: 'review' },
+  { id: 'practice', label: '练习', icon: 'layers' },
   { id: 'record', label: '录入', icon: 'record' },
   { section: '整理' },
   { id: 'inbox', label: '收件箱', icon: 'inbox' },
@@ -59,6 +60,7 @@ export const MOBILE_NAV: NavItem[] = [
 export const TITLES: Record<string, string> = {
   today: '今日',
   review: '复习',
+  practice: '练习',
   record: '录入',
   inbox: '收件箱',
   mistakes: '错题',
@@ -76,6 +78,7 @@ export const TITLES: Record<string, string> = {
 export const ROUTE_MAP: Record<string, string> = {
   today: '/today',
   review: '/review',
+  practice: '/practice',
   record: '/record',
   inbox: '/inbox',
   mistakes: '/mistakes',
@@ -92,6 +95,7 @@ const PATH_ACTIVE: Array<[string, string]> = [
   ['/learning-sessions', 'learning-sessions'],
   ['/today', 'today'],
   ['/review', 'review'],
+  ['/practice', 'practice'],
   ['/record', 'record'],
   ['/inbox', 'inbox'],
   ['/mistakes', 'mistakes'],
