@@ -263,7 +263,7 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
     // Two frozen rows for the same slot coexist (partial index excludes them).
     await ins('a_live_1', null);
     // A second live draft on the same slot must collide on answer_draft_slot_uk.
-    await expect(ins('a_live_2', null)).rejects.toThrow();
+    await expect(ins('a_live_2', null)).rejects.toMatchObject({ cause: { code: '23505' } });
 
     // Cleanup so the assertion doesn't leak into other smoke assertions.
     await db.execute(sql`DELETE FROM answer WHERE session_id = 'sess1'`);

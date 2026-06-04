@@ -90,7 +90,7 @@ Two lanes, chain-merged into `yuk-203-u5` (single PR — U-sequence convention).
 
 ### 4.3 ToolStateT v2 (RL4 barrier) — **Q3 ruling**
 - **MODIFY** `src/core/schema/business.ts:292` — extend `ToolState` to an **additive** shape. **Ruling: a single `ToolState` object with optional `sections?`**, NOT a `z.discriminatedUnion('version')`. Rationale: (a) the flat `question_ids[]` form must coexist on the *same* artifact for `embedded_check` + legacy quizzes (CO §5.1:522,525) — a discriminated union would force every existing flat quiz to declare a version discriminator it does not have, breaking back-compat over the artifact scan window; (b) `sections?` optional is purely additive and parses every existing row. Shape:
-  ```
+  ```ts
   ToolState = {
     question_ids: string[]                      // retained, flat form
     session_meta?: record<unknown> | null       // retained (U4 transition shape lives here)
@@ -370,7 +370,7 @@ This PR has DDL → migration smoke required; it builds a UI page → visual rin
 - **Q6** (multi-slot submit): per-slot submit, UI-sequential; no batch judge; sidesteps lock contention; batch-submit DEFER.
 - **Q7** (answering route): new `/practice/[id]` route (reuses review session-lifecycle helpers), NOT `/review?paper=`.
 - **Q8** (practice data API): dedicated `GET /api/practice` aggregation endpoint, NOT client-side artifacts+sessions assembly.
-- **Q9** (pos/gen sources): `pos` = COUNT submitted answer rows; `right/wrong` = latest judge `coarse_outcome` per slot; `gen` = artifact `generation_status` (not pg-boss poll).
+- **Q9** (pos/gen sources): `pos` = COUNT(DISTINCT slot) WHERE submitted_at IS NOT NULL; `right/wrong` = latest judge `coarse_outcome` per slot; `gen` = artifact `generation_status` (not pg-boss poll).
 - **Q10** (adaptation action): `experimental:adaptation` via the ExperimentalEvent escape hatch (no new KnownEvent schema/migration until shape stabilizes).
 - **Q11** (slicing): single PR, two chain-merged lanes (backend → UI); two-PR migration-isolation alternative evaluated and recommended-against (§6).
 - **Q12** (migration conflict): lane-start re-check of `main` `learning_session`/`answer` column set before generating the migration; renumber if conflict.
