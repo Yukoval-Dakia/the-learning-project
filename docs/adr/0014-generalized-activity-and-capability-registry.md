@@ -9,6 +9,8 @@
 
 > **2026-05-30 status update (T-QP / YUK-165)**：§1 `question_part` 从 type-only stub → **实现（slice 1）**。模型决策：part 即一行 `question`（`kind='question_part'`），经新增 `question.parent_question_id` + `question.part_index` 链到父题，owner 为 `src/server/questions/parts.ts`。因 part 本身是 question，它走**现有** `fsrs_question` 调度/复习/due 路径不变（`subject_kind='question'`、part 自己的 question id），独立调度由"part 是独立 question 行"自然得出——未新建调度算法。§5 scheduler 半边落地：`SchedulerCapabilityRunner`（`src/core/capability/schedulers/`）+ registry `registerScheduler/resolveScheduler/...` + `fsrs` scheduler capability（声明 `supports_activity_kinds: ['question','question_part']`）+ `validateProfile` 校验 `schedulingHints.default_policy` 解析到已注册 scheduler。**DEFERRED**：parent-level 聚合调度（line 250，仅当观察到碎片化）、part 在 review UI 的呈现（需 design pre-flight）、多 part 源自动拆分（随 T-OC）。详见 `docs/superpowers/plans/2026-05-30-yuk165-question-part-lane.md`。
 
+> **2026-06-04 update (U0 裁决 A2 / YUK-205)**：上一条的 **part 独立调度 facet 被 ADR-0028 supersede**——调度单元改为知识点（`material_fsrs_state(subject_kind='knowledge')`），有标签的 part 的 question 级 FSRS 行随 ADR-0028 决定 #5 forward-migrate 进知识点行；part 作为独立 question 行的**判分 / 血缘 / figures 归属**语义不变。配套规则：**未标注 knowledge 的 part 在 tagging/enroll 时默认继承写实 parent 的 `knowledge_ids`**（写实标签而非读时继承），question 级 fallback 只留给真正无主的 legacy。"parent-level 聚合调度" DEFERRED 项随之作废（聚合已由知识点调度天然承担）。审计来源：`docs/audit/2026-06-04-design-feasibility-audit.md` §2.1/§3 A2。
+
 ---
 
 ## 决策
