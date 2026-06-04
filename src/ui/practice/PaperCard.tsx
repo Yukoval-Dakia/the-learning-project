@@ -65,7 +65,7 @@ export function PaperCard({ paper, onAction, past }: PaperCardProps) {
       hover={
         displayState === 'not_started' || displayState === 'in_progress' || displayState === 'done'
       }
-      className={`paper-card${generating ? ' is-gen' : ''}${past ? ' is-past' : ''}`}
+      className={`paper-card${displayState === 'generating' ? ' is-gen' : ''}${past ? ' is-past' : ''}`}
     >
       {/* ── top row: icon / title / meta / count ── */}
       <div className="paper-top">
@@ -104,7 +104,10 @@ export function PaperCard({ paper, onAction, past }: PaperCardProps) {
       )}
 
       {/* ── generating shimmer bar ── */}
-      {generating && (
+      {/* gated on displayState (not the raw `generating` flag) so a `failed`
+          paper shows only the 生成失败 pill + disabled button — no contradictory
+          排卷中 shimmer / dimmed title (re-review LOW finding) */}
+      {displayState === 'generating' && (
         <div className="paper-genbar">
           <div className="bar">
             <span style={{ width: '40%' }} />
