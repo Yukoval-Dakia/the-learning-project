@@ -1,11 +1,13 @@
 'use client';
 
-// Phase 1d — single event detail + chain navigation.
+// Phase 1d — single event detail + chain navigation (loom redraw, wave 2 / YUK-169).
 //
 // "错题详情" used to mean opening the Mistake row. Post-event-stream the
 // concept maps to "open this attempt event with its caused_by_event_id chain
 // + payload pretty-printed". This page is the chain explorer; downstream
-// flows (rate, accept, etc.) keep their existing entry points.
+// flows (rate, accept, etc.) keep their existing entry points. The correction
+// write path (CorrectionControls) keeps its real wiring — only the visual
+// shell is loom-ified.
 
 import {
   CorrectionStateRenderer,
@@ -14,10 +16,15 @@ import {
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
 import { type ActivityRefInput, affectedRefsForCorrection } from '@/ui/lib/event-corrections';
 import { formatRelTime } from '@/ui/lib/utils';
-import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
-import { PageHeader } from '@/ui/primitives/PageHeader';
+import { Btn } from '@/ui/primitives/Btn';
+import { LoomCard } from '@/ui/primitives/LoomCard';
+import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import type { LoomIconName } from '@/ui/primitives/LoomIcon';
+import { SectionLabel } from '@/ui/primitives/SectionLabel';
+import { SkLines } from '@/ui/primitives/SkLines';
+import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { use, useState } from 'react';
 
 interface CorrectionStatus extends CorrectionStateSnapshot {
@@ -51,160 +58,207 @@ interface EventChainResponse {
   };
 }
 
+// actor_kind → loom icon (prototype ACTOR_ICON, screen-events.jsx L2).
+const ACTOR_ICON: Record<string, LoomIconName> = {
+  user: 'today',
+  agent: 'sparkle',
+  cron: 'moon',
+  system: 'bolt',
+};
+
+function actorIcon(kind: string): LoomIconName {
+  return ACTOR_ICON[kind] ?? 'bolt';
+}
+
+function eventTone(e: EventRow): string {
+  if (e.outcome === 'failure') return 'again';
+  if (e.outcome === 'success') return 'good';
+  if (e.outcome === 'partial') return 'hard';
+  if (e.action === 'propose' || e.action.startsWith('experimental:')) return 'coral';
+  return 'info';
+}
+
 export default function EventDetailPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
+  const router = useRouter();
   const qc = useQueryClient();
   const q = useQuery({
     queryKey: ['event', id],
     queryFn: () => apiJson<EventChainResponse>(`/api/events/${id}`),
   });
 
+  const state: StatefulStatus = q.isLoading ? 'loading' : q.isError ? 'error' : 'ok';
+  const errorText =
+    q.error instanceof ApiAuthError
+      ? `${q.error.message} — 请重新进入页面输入 token`
+      : q.error
+        ? `加载失败：${(q.error as Error).message}`
+        : '事件加载失败。';
+
   return (
-    <main className="page prose">
-      <p className="breadcrumb">
-        <Link href="/mistakes">← 错题</Link>
-      </p>
+    <main className="page page-narrow events-loom">
+      <button type="button" className="back-link" onClick={() => router.push('/mistakes')}>
+        <LoomIcon name="arrowL" size={14} />
+        错题
+      </button>
 
-      <PageHeader
-        title="事件链"
-        eyebrow={`/events/${id.slice(0, 8)}…`}
-        sub="event 的 caused_by 上下文：上游因 → 当前事件 → 下游派生。"
-      />
+      <div className="page-head">
+        <div className="eyebrow">EVENT · {id.slice(0, 8)}…</div>
+        <h1 className="page-title serif">事件链</h1>
+        <p className="page-lead">
+          每个事件是不可变记录，带 actor、caused_by 链与成本。下面是该焦点事件的来龙去脉。
+        </p>
+      </div>
 
-      {q.isLoading && (
-        <div className="event-card">
-          <p className="ec-row">加载中…</p>
-        </div>
-      )}
+      <Stateful
+        status={state}
+        onRetry={() => q.refetch()}
+        errorText={errorText}
+        skeleton={
+          <LoomCard pad>
+            <SkLines rows={3} />
+          </LoomCard>
+        }
+      >
+        {q.isSuccess && (
+          <>
+            {/* caused_by · 由什么导致 */}
+            {q.data.chain.caused_by && (
+              <div className="ev-lane">
+                <div className="ev-lane-label meta">caused_by · 由什么导致</div>
+                <button
+                  type="button"
+                  className="ev-node ev-cause"
+                  onClick={() => router.push(`/events/${q.data.chain.caused_by?.id}`)}
+                >
+                  <span className="ev-actor">
+                    <LoomIcon name={actorIcon(q.data.chain.caused_by.actor_kind)} size={14} />
+                  </span>
+                  <span>
+                    {q.data.chain.caused_by.action} · {q.data.chain.caused_by.subject_kind}
+                  </span>
+                  <LoomIcon name="arrow" size={13} className="thread-arrow" />
+                </button>
+                <div className="ev-connector" />
+              </div>
+            )}
 
-      {q.isError && (
-        <div className="event-card">
-          <p className="ec-row" style={{ color: 'var(--again-ink)' }}>
-            {q.error instanceof ApiAuthError
-              ? `${q.error.message} — 请重新进入页面输入 token`
-              : `加载失败：${(q.error as Error).message}`}
-          </p>
-        </div>
-      )}
+            {/* focal */}
+            <FocalEvent event={q.data.event} />
+            <CorrectionControls
+              event={q.data.event}
+              onChanged={() => qc.invalidateQueries({ queryKey: ['event', id] })}
+            />
 
-      {q.isSuccess && (
-        <>
-          {q.data.chain.caused_by && (
-            <>
-              <p className="event-rail-label">caused_by · 上游</p>
-              <EventCard event={q.data.chain.caused_by} kind="upstream" />
-            </>
-          )}
+            {/* downstream */}
+            {q.data.chain.caused_events.length > 0 && (
+              <div className="ev-lane">
+                <div className="ev-connector" />
+                <div className="ev-lane-label meta">
+                  导致了 · downstream · {q.data.chain.caused_events.length} 条
+                </div>
+                {q.data.chain.caused_events.map((e) => (
+                  <button
+                    type="button"
+                    key={e.id}
+                    className="ev-node"
+                    onClick={() => router.push(`/events/${e.id}`)}
+                    style={{ marginBottom: 'var(--s-2)' }}
+                  >
+                    <span
+                      className={`ev-dot tone-${eventTone(e)}`}
+                      style={{ background: `var(--${eventTone(e)})` }}
+                    />
+                    <span>
+                      {e.action}
+                      {e.outcome ? `:${e.outcome}` : ''} · {e.subject_kind}
+                    </span>
+                    <span className="ev-actor-mini mono">{e.actor_kind}</span>
+                  </button>
+                ))}
+              </div>
+            )}
 
-          <p className="event-rail-label">focal · 当前事件</p>
-          <EventCard event={q.data.event} kind="focal" />
-          <CorrectionControls
-            event={q.data.event}
-            onChanged={() => qc.invalidateQueries({ queryKey: ['event', id] })}
-          />
-
-          {q.data.chain.caused_events.length > 0 && (
-            <>
-              <p className="event-rail-label">下游 · {q.data.chain.caused_events.length} 条</p>
-              {q.data.chain.caused_events.map((e) => (
-                <EventCard key={e.id} event={e} kind="downstream" />
-              ))}
-            </>
-          )}
-
-          {q.data.chain.corrections.length > 0 && (
-            <>
-              <p className="event-rail-label">corrections · {q.data.chain.corrections.length} 条</p>
-              {q.data.chain.corrections.map((e) => (
-                <EventCard key={e.id} event={e} kind="correction" />
-              ))}
-            </>
-          )}
-        </>
-      )}
+            {/* corrections · 纠正 */}
+            {q.data.chain.corrections.length > 0 && (
+              <>
+                <SectionLabel count={q.data.chain.corrections.length}>
+                  corrections · 纠正
+                </SectionLabel>
+                <LoomCard pad>
+                  {q.data.chain.corrections.map((e) => (
+                    <div key={e.id} className="corr-row">
+                      <span className="ev-dot tone-good" style={{ background: 'var(--good)' }} />
+                      <span>
+                        {e.action}
+                        {e.outcome ? `:${e.outcome}` : ''}
+                      </span>
+                      <span className="meta" style={{ marginLeft: 'auto' }}>
+                        {formatRelTime(new Date(e.created_at))} · {e.actor_kind}
+                      </span>
+                    </div>
+                  ))}
+                </LoomCard>
+              </>
+            )}
+          </>
+        )}
+      </Stateful>
     </main>
   );
 }
 
-type EventKind = 'focal' | 'upstream' | 'downstream' | 'correction';
-
-function actionTone(action: string): BadgeTone {
-  if (action === 'attempt') return 'again';
-  if (action === 'review') return 'good';
-  if (action === 'judge' || action === 'generate') return 'info';
-  if (action === 'propose' || action.startsWith('experimental:')) return 'coral';
-  if (action === 'rate') return 'neutral';
-  return 'neutral';
-}
-
-function outcomeTone(outcome: string): BadgeTone {
-  if (outcome === 'failure') return 'again';
-  if (outcome === 'success') return 'good';
-  if (outcome === 'partial') return 'hard';
-  return 'neutral';
-}
-
-function EventCard({ event, kind }: { event: EventRow; kind: EventKind }) {
+function FocalEvent({ event }: { event: EventRow }) {
+  const [rawOpen, setRawOpen] = useState(false);
   return (
-    <article className={`event-card is-${kind}`}>
-      <div className="ec-head">
-        <Badge tone={actionTone(event.action)}>{event.action}</Badge>
-        <Badge tone="neutral">{event.subject_kind}</Badge>
-        {event.outcome && <Badge tone={outcomeTone(event.outcome)}>{event.outcome}</Badge>}
-        <CorrectionStateRenderer state={event.correction_status} showActive compact />
-        <span className="when">{formatRelTime(new Date(event.created_at))}</span>
-      </div>
-
-      <p className="ec-row">
-        <span className="lbl">actor</span>
-        <span>
-          {event.actor_kind} · {event.actor_ref}
+    <div className="ev-focal">
+      <div className="ev-focal-head">
+        <span className="badge tone-again">
+          <span className="dot" />
+          focal
         </span>
-      </p>
-
-      <p className="ec-row">
-        <span className="lbl">subject_id</span>
-        <code>{event.subject_id}</code>
-      </p>
-
+        <span className="ev-actor">
+          <LoomIcon name={actorIcon(event.actor_kind)} size={14} />
+          {event.actor_kind}
+        </span>
+        <CorrectionStateRenderer state={event.correction_status} showActive compact />
+        <span className="meta mono" style={{ marginLeft: 'auto' }}>
+          {formatRelTime(new Date(event.created_at))}
+        </span>
+      </div>
+      {/* gap G6: no human-readable subject name server-side — use real ids */}
+      <div className="ev-focal-title serif">
+        {event.action}
+        {event.outcome ? `:${event.outcome}` : ''} ·{' '}
+        <span className="mono">
+          {event.subject_kind}:{event.subject_id}
+        </span>
+      </div>
       {event.caused_by_event_id && (
-        <p className="ec-row">
-          <span className="lbl">caused_by</span>
-          <Link href={`/events/${event.caused_by_event_id}`}>
-            {event.caused_by_event_id.slice(0, 8)}…
-          </Link>
-        </p>
+        <div className="meta mono" style={{ marginTop: 'var(--s-2)' }}>
+          caused_by · {event.caused_by_event_id.slice(0, 8)}…
+        </div>
       )}
-
       {event.task_run_id && (
-        <p className="ec-row">
-          <span className="lbl">task_run</span>
-          <code>{event.task_run_id.slice(0, 12)}…</code>
-        </p>
+        <div className="meta mono">task_run · {event.task_run_id.slice(0, 12)}…</div>
       )}
-
       {typeof event.cost_micro_usd === 'number' && event.cost_micro_usd > 0 && (
-        <p className="ec-row">
-          <span className="lbl">cost</span>
-          <span>${(event.cost_micro_usd / 1e6).toFixed(5)}</span>
-        </p>
+        <div className="meta mono">cost · ${(event.cost_micro_usd / 1e6).toFixed(5)}</div>
       )}
-
-      <details className="ec-payload">
-        <summary>payload ▾</summary>
-        <pre>{JSON.stringify(event.payload, null, 2)}</pre>
-      </details>
-
-      {kind !== 'focal' && (
-        <p className="ec-jump">
-          <Link href={`/events/${event.id}`}>→ 看这条事件</Link>
-        </p>
-      )}
-    </article>
+      <button
+        type="button"
+        className={`raw-toggle${rawOpen ? ' open' : ''}`}
+        onClick={() => setRawOpen((o) => !o)}
+      >
+        <LoomIcon name="slash" size={13} />
+        {rawOpen ? '收起' : '展开'} raw payload
+      </button>
+      {rawOpen && <pre className="raw-payload">{JSON.stringify(event.payload, null, 2)}</pre>}
+    </div>
   );
 }
 
@@ -248,28 +302,37 @@ function CorrectionControls({
       />
 
       <div className="ec-correction-actions">
-        <button type="button" disabled={!canSubmit} onClick={() => correctionM.mutate('retract')}>
+        <Btn
+          size="sm"
+          variant="secondary"
+          disabled={!canSubmit}
+          onClick={() => correctionM.mutate('retract')}
+        >
           撤回
-        </button>
-        <button
-          type="button"
+        </Btn>
+        <Btn
+          size="sm"
+          variant="secondary"
           disabled={!canSubmit}
           onClick={() => correctionM.mutate('mark_wrong')}
         >
           标错
-        </button>
-        <button
-          type="button"
+        </Btn>
+        <Btn
+          size="sm"
+          variant="ghost"
           disabled={!canSubmit || event.correction_status.state === 'active'}
           onClick={() => correctionM.mutate('restore')}
         >
           恢复
-        </button>
+        </Btn>
       </div>
 
-      {affectedRefs.length === 0 && <p className="ec-muted">无法推断 affected_ref</p>}
+      {affectedRefs.length === 0 && <p className="meta">无法推断 affected_ref</p>}
       {correctionM.isError && (
-        <p className="ec-error">写入失败：{(correctionM.error as Error).message}</p>
+        <p className="meta" style={{ color: 'var(--again-ink)' }}>
+          写入失败：{(correctionM.error as Error).message}
+        </p>
       )}
     </section>
   );

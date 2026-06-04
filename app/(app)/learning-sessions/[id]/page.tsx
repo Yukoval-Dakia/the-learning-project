@@ -1,6 +1,6 @@
 'use client';
 
-// Phase 1d — learning_session detail page.
+// Phase 1d — learning_session detail page (loom redraw, wave 2 / YUK-169).
 //
 // Surfaces a single session row + every event chained via session_id, with
 // per-rating stats computed client-side. Stub area reserves space for
@@ -8,8 +8,13 @@
 
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
 import { formatRelTime } from '@/ui/lib/utils';
-import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
-import { PageHeader } from '@/ui/primitives/PageHeader';
+import { Btn } from '@/ui/primitives/Btn';
+import { LoomCard } from '@/ui/primitives/LoomCard';
+import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { SectionLabel } from '@/ui/primitives/SectionLabel';
+import { SkLines } from '@/ui/primitives/SkLines';
+import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
+import { StatusBadge } from '@/ui/primitives/StatusBadge';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { use } from 'react';
@@ -42,13 +47,6 @@ interface SessionDetail {
   events: SessionEvent[];
 }
 
-const STATUS_TONE: Record<string, BadgeTone> = {
-  started: 'info',
-  completed: 'good',
-  abandoned: 'neutral',
-  failed: 'again',
-};
-
 const TYPE_LABEL: Record<string, string> = {
   review: '复习',
   ingestion: '录入',
@@ -61,10 +59,20 @@ const TYPE_LABEL: Record<string, string> = {
 type Rating = 'again' | 'hard' | 'good' | 'easy';
 const RATING_LABELS: Record<Rating, string> = {
   again: '不会',
-  hard: '勉强',
-  good: '会',
+  hard: '模糊',
+  good: '会了',
   easy: '熟练',
 };
+
+// event-chain dot tone by outcome / rating (non-color cue carried by label).
+function eventTone(e: SessionEvent): string {
+  const rating = (e.payload as { fsrs_rating?: string }).fsrs_rating;
+  if (rating && rating in RATING_LABELS) return rating === 'easy' ? 'good' : rating;
+  if (e.outcome === 'failure') return 'again';
+  if (e.outcome === 'success') return 'good';
+  if (e.outcome === 'partial') return 'hard';
+  return 'info';
+}
 
 export default function SessionDetailPage({
   params,
@@ -77,35 +85,41 @@ export default function SessionDetailPage({
     queryFn: () => apiJson<SessionDetail>(`/api/learning-sessions/${id}`),
   });
 
+  const state: StatefulStatus = q.isLoading ? 'loading' : q.isError ? 'error' : 'ok';
+  const errorText =
+    q.error instanceof ApiAuthError
+      ? `${q.error.message} — 请重新进入页面输入 token`
+      : q.error
+        ? `加载失败：${(q.error as Error).message}`
+        : '会话加载失败。';
+
   return (
-    <main className="page">
-      <p className="breadcrumb">
-        <Link href="/today">← 今日</Link>
-      </p>
+    <main className="page page-narrow sessions-loom">
+      <Link href="/learning-sessions" className="back-link" style={{ textDecoration: 'none' }}>
+        <LoomIcon name="arrowL" size={14} />
+        学习会话
+      </Link>
 
-      <PageHeader
-        title="学习会话"
-        eyebrow={`/learning-sessions/${id.slice(0, 8)}…`}
-        sub="learning_session 行 + session_id 串联的事件流。"
-      />
-
-      {q.isLoading && (
-        <div className="event-card">
-          <p className="ec-row">加载中…</p>
+      <div className="page-head">
+        <div className="eyebrow">SESSION · {id.slice(0, 8)}…</div>
+        <div className="page-head-row">
+          <h1 className="page-title serif">会话详情</h1>
+          {q.isSuccess && <StatusBadge status={q.data.status} />}
         </div>
-      )}
+      </div>
 
-      {q.isError && (
-        <div className="event-card">
-          <p className="ec-row" style={{ color: 'var(--again-ink)' }}>
-            {q.error instanceof ApiAuthError
-              ? `${q.error.message} — 请重新进入页面输入 token`
-              : `加载失败：${(q.error as Error).message}`}
-          </p>
-        </div>
-      )}
-
-      {q.isSuccess && <SessionView session={q.data} />}
+      <Stateful
+        status={state}
+        onRetry={() => q.refetch()}
+        errorText={errorText}
+        skeleton={
+          <LoomCard pad>
+            <SkLines rows={3} />
+          </LoomCard>
+        }
+      >
+        {q.isSuccess && <SessionView session={q.data} />}
+      </Stateful>
     </main>
   );
 }
@@ -123,144 +137,126 @@ function SessionView({ session }: { session: SessionDetail }) {
 
   const totalCostUsd = session.events.reduce((s, e) => s + (e.cost_micro_usd ?? 0), 0) / 1e6;
 
+  // gap G3: no model dimension is aggregated server-side — sess-summary keeps
+  // 4 real cells (type / duration / count / cost), prototype's 5th "模型" cell
+  // is dropped rather than mocked. Model needs a task_run join (deferred).
   return (
     <>
-      <div className="session-meta">
-        <MetaCell label="类型">{TYPE_LABEL[session.type] ?? session.type}</MetaCell>
-        <MetaCell label="状态">
-          <Badge tone={STATUS_TONE[session.status] ?? 'neutral'}>{session.status}</Badge>
-        </MetaCell>
-        <MetaCell label="时长">
+      <div className="sess-summary">
+        <SumCell label="类型">{TYPE_LABEL[session.type] ?? session.type}</SumCell>
+        <SumCell label="时长">
           {session.duration_ms !== null ? formatDuration(session.duration_ms) : '—'}
-        </MetaCell>
-        <MetaCell label="复习题数">
-          {totalRated}
-          <small>题</small>
-        </MetaCell>
-        <MetaCell label="AI 成本">
-          {totalCostUsd > 0 ? `$${totalCostUsd.toFixed(5)}` : '$0'}
-        </MetaCell>
-        <MetaCell label="开始">{formatRelTime(new Date(session.started_at * 1000))}</MetaCell>
+        </SumCell>
+        <SumCell label="复习数">{totalRated}</SumCell>
+        <SumCell label="成本">{totalCostUsd > 0 ? `$${totalCostUsd.toFixed(5)}` : '$0'}</SumCell>
       </div>
 
       {totalRated > 0 && (
-        <>
-          <div className="session-rating-bar">
+        <LoomCard pad style={{ marginTop: 'var(--s-5)' }}>
+          <div className="card-head">
+            <span className="card-icon">
+              <LoomIcon name="review" size={18} />
+            </span>
+            <div className="card-title">评分分布</div>
+            <span className="meta" style={{ marginLeft: 'auto' }}>
+              {totalRated} 次
+            </span>
+          </div>
+          {/* gap G4: real data has 4 tiers (incl. easy) vs prototype's 3 — keep all 4 */}
+          <div className="dist-bar">
             {(['again', 'hard', 'good', 'easy'] as Rating[]).map((r) => {
               const pct = (ratingCounts[r] / totalRated) * 100;
               if (pct === 0) return null;
               return (
-                <div
+                <span
                   key={r}
-                  className={`seg ${r}`}
+                  className={`dist-seg tone-${r}`}
                   style={{ width: `${pct}%` }}
                   title={`${RATING_LABELS[r]} ${ratingCounts[r]} / ${totalRated}`}
-                >
-                  {pct > 15 ? `${RATING_LABELS[r]} ${ratingCounts[r]}` : ratingCounts[r]}
-                </div>
+                />
               );
             })}
           </div>
-          <div className="session-rating-legend">
+          <div className="dist-legend">
             {(['again', 'hard', 'good', 'easy'] as Rating[]).map((r) => (
-              <span key={r} className="item">
-                <span className={`swatch ${r}`} /> {RATING_LABELS[r]} {ratingCounts[r]}
+              <span key={r}>
+                <span className={`dist-key tone-${r}`} />
+                {RATING_LABELS[r]} <b className="mono">{ratingCounts[r]}</b>
               </span>
             ))}
           </div>
-        </>
+        </LoomCard>
       )}
 
-      <section
-        className={`session-summary${session.summary_md ? '' : ' is-stub'}`}
+      <LoomCard
+        pad
+        sunk
+        style={{ marginTop: 'var(--s-4)', borderColor: 'var(--coral-line)' }}
         aria-label="session summary"
       >
-        <h4>AI 总结</h4>
+        <div className="card-head">
+          <span className="card-icon accent">
+            <LoomIcon name="sparkle" size={18} />
+          </span>
+          <div className="card-title">AI 会话总结</div>
+        </div>
         {session.summary_md ? (
-          <p>{session.summary_md}</p>
+          <p className="prose-cn" style={{ marginTop: 'var(--s-2)' }}>
+            {session.summary_md}
+          </p>
         ) : (
-          <p>
+          <p className="prose-cn" style={{ marginTop: 'var(--s-2)' }}>
             尚未生成 — SessionSummaryTask 计划在 session close 事件后自动跑（Phase 1d 后续；当前
             stub）。
           </p>
         )}
-      </section>
+      </LoomCard>
 
-      <p className="event-rail-label">事件流 · {session.events.length} 条</p>
+      <SectionLabel count={session.events.length}>逐事件流</SectionLabel>
       {session.events.length === 0 ? (
-        <div className="event-card">
-          <p className="ec-row">这个 session 还没有事件挂上来。</p>
-        </div>
+        <LoomCard pad>
+          <p className="meta">这个 session 还没有事件挂上来。</p>
+        </LoomCard>
       ) : (
-        session.events.map((e) => <SessionEventCard key={e.id} event={e} />)
+        <LoomCard pad>
+          <div className="event-chain">
+            {session.events.map((e, i) => (
+              <Link
+                key={e.id}
+                href={`/events/${e.id}`}
+                className="event-row event-link"
+                style={{ textDecoration: 'none' }}
+              >
+                <span className="event-rail">
+                  <span className="event-dot" style={{ background: `var(--${eventTone(e)})` }} />
+                  {i < session.events.length - 1 && <span className="event-line" />}
+                </span>
+                <div className="event-body">
+                  <div className="event-head nowrap-meta">
+                    <span className="mono event-label">
+                      {e.action}
+                      {e.outcome ? `:${e.outcome}` : ''}
+                    </span>
+                    <span className="meta">{formatRelTime(new Date(e.created_at * 1000))}</span>
+                  </div>
+                  <div className="meta mono">→ events:{e.id.slice(0, 8)}…</div>
+                </div>
+                <LoomIcon name="arrow" size={14} className="thread-arrow" />
+              </Link>
+            ))}
+          </div>
+        </LoomCard>
       )}
     </>
   );
 }
 
-function MetaCell({ label, children }: { label: string; children: React.ReactNode }) {
+function SumCell({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="meta-cell">
-      <span className="lbl">{label}</span>
-      <span className="val">{children}</span>
+    <div className="sess-sum-cell">
+      <div className="sess-sum-n serif">{children}</div>
+      <div className="meta">{label}</div>
     </div>
-  );
-}
-
-function actionTone(action: string): BadgeTone {
-  if (action === 'attempt') return 'again';
-  if (action === 'review') return 'good';
-  if (action === 'judge' || action === 'generate') return 'info';
-  if (action === 'propose' || action.startsWith('experimental:')) return 'coral';
-  return 'neutral';
-}
-
-function outcomeTone(outcome: string): BadgeTone {
-  if (outcome === 'failure') return 'again';
-  if (outcome === 'success') return 'good';
-  if (outcome === 'partial') return 'hard';
-  return 'neutral';
-}
-
-function SessionEventCard({ event }: { event: SessionEvent }) {
-  const ratingFromPayload = (event.payload as { fsrs_rating?: string }).fsrs_rating;
-  const responseMd = (event.payload as { user_response_md?: string | null }).user_response_md;
-  const durationMs = (event.payload as { duration_ms?: number }).duration_ms;
-  return (
-    <article className="event-card">
-      <div className="ec-head">
-        <Badge tone={actionTone(event.action)}>{event.action}</Badge>
-        <Badge tone="neutral">{event.subject_kind}</Badge>
-        {event.outcome && <Badge tone={outcomeTone(event.outcome)}>{event.outcome}</Badge>}
-        {ratingFromPayload && (
-          <Badge tone={outcomeTone(event.outcome ?? '')}>{ratingFromPayload}</Badge>
-        )}
-        {typeof durationMs === 'number' && (
-          <Badge tone="neutral">⏱ {formatDuration(durationMs)}</Badge>
-        )}
-        <span className="when">{formatRelTime(new Date(event.created_at * 1000))}</span>
-      </div>
-
-      {event.question && (
-        <p className="ec-row" style={{ alignItems: 'flex-start' }}>
-          <span className="lbl">题面</span>
-          <span style={{ fontFamily: 'var(--font-wenyan)', fontSize: '14.5px' }}>
-            {event.question.prompt_md}
-          </span>
-        </p>
-      )}
-
-      {responseMd && (
-        <p className="ec-row" style={{ alignItems: 'flex-start' }}>
-          <span className="lbl">回答</span>
-          <span style={{ fontFamily: 'var(--font-wenyan)', fontSize: '14px' }}>{responseMd}</span>
-        </p>
-      )}
-
-      <p className="ec-jump">
-        <Link href={`/events/${event.id}`}>→ 事件详情</Link>
-      </p>
-    </article>
   );
 }
 
