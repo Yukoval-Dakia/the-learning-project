@@ -216,12 +216,15 @@ export default function PracticeAnswerPage() {
   // current active slot = first unsubmitted
   const [activeSlotIdx, setActiveSlotIdx] = useState(0);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — reset to first unsubmitted only on paper load
+  // Reset activeSlotIdx when paper loads. Derive from server slot_state.submission
+  // (not local slotStates) — local state may not be initialized yet when this runs
+  // (both useEffects share the same dependency; React doesn't guarantee state
+  // updates from one are visible in another within the same flush).
   useEffect(() => {
     if (allSlots.length === 0) return;
-    const firstUnsubmitted = allSlots.findIndex((s) => !slotStates[slotKey(s)]?.submitResult);
+    const firstUnsubmitted = allSlots.findIndex((s) => !s.slot_state.submission);
     setActiveSlotIdx(firstUnsubmitted >= 0 ? firstUnsubmitted : allSlots.length - 1);
-  }, [paper]);
+  }, [allSlots]);
 
   // count submitted slots
   const submittedCount = allSlots.filter((s) => !!slotStates[slotKey(s)]?.submitResult).length;
@@ -357,6 +360,9 @@ export default function PracticeAnswerPage() {
   // ── render ─────────────────────────────────────────────────────────────────
 
   const isPaused = sessionStatus === 'paused';
+  // Read-only mode: session is completed (either adopted from server or just ended here).
+  // In read-only mode the slot list renders without composer/autosave — purely for review.
+  const isReadOnly = sessionStatus === 'completed';
 
   if (detailQ.isLoading || startingSession) {
     return (
@@ -474,8 +480,9 @@ export default function PracticeAnswerPage() {
       )}
 
       {/* ── slot list ─────────────────────────────────────────────────────── */}
+      {/* Rendered in both active and completed (read-only review) modes.      */}
+      {/* In read-only mode: no composer, no autosave — purely for review.     */}
       {!isPaused &&
-        !allDone &&
         paper.sections.map((section) => (
           <div key={section.section_index}>
             {/* section header — only shown when paper has multiple sections */}
@@ -545,8 +552,8 @@ export default function PracticeAnswerPage() {
                   {/* question body */}
                   <div className="qbody wenyan">{slot.question.prompt_md || '（题面加载中）'}</div>
 
-                  {/* answering phase */}
-                  {isActive && phase === 'answering' && !isSubmitted && (
+                  {/* answering phase — active, not yet submitted, session not completed */}
+                  {!isReadOnly && isActive && phase === 'answering' && !isSubmitted && (
                     <>
                       <div className="label-mono">你的作答</div>
                       <div className="answer-compose">
@@ -591,8 +598,9 @@ export default function PracticeAnswerPage() {
                     </>
                   )}
 
-                  {/* feedback phase */}
-                  {phase === 'feedback' && isSubmitted && (
+                  {/* feedback phase — submitted, or read-only review of completed paper */}
+                  {(phase === 'feedback' && isSubmitted) ||
+                  (isReadOnly && !!slot.slot_state.submission) ? (
                     <>
                       {/* answer vs reference — feedback-split is a production class */}
                       <div className="feedback-split">
@@ -601,7 +609,12 @@ export default function PracticeAnswerPage() {
                             <LoomIcon name="pencil" size={13} /> 你的作答
                           </div>
                           <div className="wenyan" style={{ marginTop: 'var(--s-2)' }}>
-                            {localState.answer || <span className="quiet-empty">（未作答）</span>}
+                            {/* In read-only mode, answer comes from server draft (frozen answer). */}
+                            {(isReadOnly
+                              ? slot.slot_state.draft?.content_md
+                              : localState.answer) || (
+                              <span className="quiet-empty">（未作答）</span>
+                            )}
                           </div>
                         </div>
                         <div>
@@ -612,41 +625,49 @@ export default function PracticeAnswerPage() {
                             className="wenyan feedback-prose muted"
                             style={{ marginTop: 'var(--s-2)' }}
                           >
-                            {/* reference_md not included in server response (anti-cheat);
+                            {/* reference_md not in server response (anti-cheat);
                                 revealed in learning-session view after completion. */}
                             提交后可在学习会话中查看
                           </div>
                         </div>
                       </div>
 
-                      {/* judge outcome / buffered placeholder */}
-                      {localState.submitResult?.visible_to_user ? (
-                        <div className="feedback-prose">
-                          <span
-                            className={`badge ${OUTCOME_TONE[localState.submitResult.coarse_outcome ?? 'unknown']}`}
-                          >
-                            {OUTCOME_LABEL[localState.submitResult.coarse_outcome ?? 'unknown']}
-                          </span>
-                          {localState.submitResult.score != null && (
-                            <span className="label-mono" style={{ marginLeft: 'var(--s-2)' }}>
-                              {/* score is [0,1]; display as percentage */}
-                              得分 {Math.round(localState.submitResult.score * 100)}%
+                      {/* judge outcome — in read-only mode use server slot_state directly */}
+                      {(() => {
+                        const result = isReadOnly
+                          ? serverSubToResult(slot.slot_state.submission)
+                          : localState.submitResult;
+                        if (result?.visible_to_user) {
+                          return (
+                            <div className="feedback-prose">
+                              <span
+                                className={`badge ${OUTCOME_TONE[result.coarse_outcome ?? 'unknown']}`}
+                              >
+                                {OUTCOME_LABEL[result.coarse_outcome ?? 'unknown']}
+                              </span>
+                              {result.score != null && (
+                                <span className="label-mono" style={{ marginLeft: 'var(--s-2)' }}>
+                                  {/* score is [0,1]; display as percentage */}
+                                  得分 {Math.round(result.score * 100)}%
+                                </span>
+                              )}
+                            </div>
+                          );
+                        }
+                        return (
+                          /* feedback_buffered placeholder (§4.9) */
+                          <div className="feedback-buffered">
+                            <LoomIcon name="clock" size={14} />
+                            <span>反馈已缓冲</span>
+                            <span className="label-mono" style={{ color: 'var(--ink-5)' }}>
+                              整卷完成后揭示
                             </span>
-                          )}
-                        </div>
-                      ) : (
-                        /* feedback_buffered placeholder (§4.9) */
-                        <div className="feedback-buffered">
-                          <LoomIcon name="clock" size={14} />
-                          <span>反馈已缓冲</span>
-                          <span className="label-mono" style={{ color: 'var(--ink-5)' }}>
-                            整卷完成后揭示
-                          </span>
-                        </div>
-                      )}
+                          </div>
+                        );
+                      })()}
 
-                      {/* next slot button */}
-                      {isActive && globalIdx < totalSlots - 1 && (
+                      {/* next slot button — only in active answering mode, not read-only */}
+                      {!isReadOnly && isActive && globalIdx < totalSlots - 1 && (
                         <div
                           style={{
                             display: 'flex',
@@ -660,7 +681,7 @@ export default function PracticeAnswerPage() {
                         </div>
                       )}
                     </>
-                  )}
+                  ) : null}
                 </section>
               );
             })}
