@@ -163,17 +163,16 @@ function SessionRow({
       </div>
       <div className="mono">{formatDuration(session.duration_ms)}</div>
       <div className="sess-acts">
-        <Link href={`/learning-sessions/${session.id}`} style={{ textDecoration: 'none' }}>
-          <Btn size="sm" variant="secondary">
-            详情
-          </Btn>
+        {/* Link carries .btn classes directly — nesting <Btn> (a real <button>)
+            inside <Link> renders invalid <a><button/></a> (Codex, PR #294 r2). */}
+        <Link href={`/learning-sessions/${session.id}`} className="btn btn-secondary btn-sm">
+          详情
         </Link>
         {/* YUK-57/63 pause/resume wiring — preserved verbatim */}
         {session.status === 'paused' && (
-          <Link href={`/review?session=${session.id}`} style={{ textDecoration: 'none' }}>
-            <Btn size="sm" variant="ghost" icon="undo">
-              恢复
-            </Btn>
+          <Link href={`/review?session=${session.id}`} className="btn btn-ghost btn-sm">
+            <LoomIcon name="undo" size={15} />
+            恢复
           </Link>
         )}
         {session.status === 'abandoned' && (

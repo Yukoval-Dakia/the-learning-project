@@ -330,18 +330,18 @@ export default function LearningItemDetailPage() {
             <Btn variant="secondary" icon="teach" onClick={() => setTeachOpen(true)}>
               对话教学
             </Btn>
-            {data.status === 'archived' ? (
-              // Archived items must leave via the unarchive path (archived →
-              // pending), mirroring the list page's 归档区; a direct jump to
-              // in_progress would bypass the status flow and clear
-              // archived_at (Codex review, PR #294).
+            {data.status === 'archived' || data.status === 'dismissed' ? (
+              // Archived/dismissed items must leave via restore-to-pending —
+              // STATUS_TRANSITIONS allows archived→pending and
+              // dismissed→pending|archived only; a direct jump to in_progress
+              // hits the API's invalid_transition (Codex review, PR #294 + r2).
               <Btn
                 variant="secondary"
                 icon="undo"
                 onClick={() => updateM.mutate({ version: data.version, status: 'pending' })}
                 disabled={updateM.isPending}
               >
-                取出归档
+                {data.status === 'archived' ? '取出归档' : '恢复待办'}
               </Btn>
             ) : (
               <Btn
