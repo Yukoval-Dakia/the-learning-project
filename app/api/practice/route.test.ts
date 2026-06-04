@@ -242,6 +242,68 @@ describe('GET /api/practice', () => {
     expect(byId.get('k_missing')).toBe('k_missing'); // fallback: id itself
   });
 
+  it('fix #1: buffered submit response structurally omits coarse_outcome/score (§4.9)', async () => {
+    await seedQuestion('q1', 'true');
+    // Seed a paper with judge_now_show_later policy so feedback is buffered.
+    const db = testDb();
+    const now = new Date();
+    await db.insert(artifact).values({
+      id: 'p_buffered',
+      type: 'tool_quiz',
+      title: '缓冲卷',
+      knowledge_ids: ['k1'],
+      intent_source: 'review_plan',
+      source: 'ai_generated',
+      tool_kind: 'review_plan',
+      tool_state: {
+        question_ids: ['q1'],
+        sections: [
+          {
+            knowledge_focus: ['k1'],
+            feedback_policy: 'judge_now_show_later',
+            adaptation_policy: 'none',
+            assignments: [
+              {
+                question_id: 'q1',
+                primary_knowledge_id: 'k1',
+                secondary_knowledge_ids: [],
+                selection_reason: 'test',
+                review_profile_snapshot: {},
+              },
+            ],
+          },
+        ],
+      } as never,
+      generation_status: 'ready',
+      verification_status: 'not_required',
+      history: [],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+
+    const startRes = await POST(
+      jsonReq('http://localhost/api/practice', { artifact_id: 'p_buffered' }),
+    );
+    const { session_id } = (await startRes.json()) as { session_id: string };
+
+    const subRes = await submitPost(
+      jsonReq('http://localhost/api/practice/p_buffered/submit', {
+        session_id,
+        question_id: 'q1',
+        answer_md: 'true',
+      }),
+      { params: Promise.resolve({ id: 'p_buffered' }) },
+    );
+    expect(subRes.status).toBe(200);
+    const body = (await subRes.json()) as Record<string, unknown>;
+    expect(body.visible_to_user).toBe(false);
+    expect(body.feedback_buffered).toBe(true);
+    // Server gate: coarse_outcome and score must be structurally absent.
+    expect('coarse_outcome' in body).toBe(false);
+    expect('score' in body).toBe(false);
+  });
+
   it('submit rejects a slot not in the paper plan (400)', async () => {
     await seedQuestion('q1', 'true');
     await seedPaper('p1', 'review_plan', ['q1']);
