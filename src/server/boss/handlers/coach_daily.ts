@@ -31,6 +31,11 @@ import { type WriteEventInput, writeEvent } from '@/server/events/queries';
 // can add a goal-oriented strand. Purely ADDITIVE (ND-5): the FSRS-due / review
 // backbone and other capture tasks are untouched; goals only add direction.
 import { type ActiveGoal, listActiveGoals } from '@/server/goals/queries';
+// YUK-203 U4 / D11① — feed active/pinned learning items' knowledge_ids into the
+// Coach input as ATTENTION PRESSURE only (CO §7.1:723-726). Purely additive
+// (ND-5): never carries scheduling/bookkeeping, never touches the FSRS-due
+// review backbone. Coach folds it into the brief's knowledge_focus.
+import { type ActiveLearningItem, listActiveLearningItems } from '@/server/learning-items/queries';
 // P5.4-L2 / YUK-174 (Facet A + C, §3.3) — feed the per-(kind, relation) accept-
 // learned reason digest into the Coach input. Scoped to the kinds Coach can act
 // on; Coach now proposes knowledge_edge (AB-4), so its scope INCLUDES edge cells
@@ -77,8 +82,19 @@ const COACH_SUGGESTION_KIND_GUIDANCE =
 // Empty agent_notes (the common case) = behave exactly as before.
 const COACH_AGENT_NOTES_GUIDANCE =
   ' When agent_notes are present, treat each as a soft HINT (not a fact) left by a narrow task — it has a signal_kind, refs, and confidence; use it to direct attention when shaping the plan, never as ground truth, and never let it suppress or replace the FSRS-due review backbone or signal-driven proposals (ND-5). When agent_notes is empty, behave exactly as before.';
-export const COACH_DAILY_OBJECTIVE = `Produce a TodayPlan for the user via the provided DomainTools. Only write proposals (defer / split / relearn / archive / completion / maintenance / knowledge_edge); never mutate user data directly. Prefer doing nothing if the day has no actionable adjustments.${COACH_GOAL_STRAND_GUIDANCE}${COACH_PROPOSAL_FEEDBACK_GUIDANCE}${COACH_AGENT_NOTES_GUIDANCE}${COACH_SUGGESTION_KIND_GUIDANCE}`;
-export const COACH_WEEKLY_OBJECTIVE = `Produce a weekly TodayPlan with a \`weekly_reflection\` summary plus any plan adjustments / maintenance proposals via propose_* tools. Only write proposals; never mutate user data directly.${COACH_GOAL_STRAND_GUIDANCE}${COACH_PROPOSAL_FEEDBACK_GUIDANCE}${COACH_AGENT_NOTES_GUIDANCE}${COACH_SUGGESTION_KIND_GUIDANCE}`;
+// YUK-203 U4 / D5 + CO §6.1:679-681 — the review_session_proposal is a strategic
+// BRIEF, and it is the ONLY attention prior handed down to ReviewPlanTask (the
+// tactical planner reads it via read_coach_brief and reads NO memory). Coach
+// must populate the brief fields: knowledge_focus (ranked from due/weak signals
+// PLUS the active_items attention pressure), subject_mix, time_box_minutes,
+// intent_tags. CRITICAL (D11): active_items are attention pressure ONLY — they
+// influence what the brief prioritises, never bookkeeping / scheduling state,
+// and the brief never suppresses the FSRS-due review backbone (ND-5). When
+// active_items is empty, derive the brief from due/weak signals alone.
+const COACH_BRIEF_GUIDANCE =
+  " The review_session_proposal is a strategic BRIEF and the ONLY attention prior handed down to the tactical review planner (which reads no memory). Beyond count + estimated_minutes, set: knowledge_focus (ranked knowledge_ids to prioritise, drawn from due/weak signals AND the active_items attention pressure), subject_mix (relative weight per subject), time_box_minutes, and intent_tags. active_items carry the knowledge_ids of the user's in-progress / pinned learning items: treat them as attention pressure that biases knowledge_focus, NEVER as bookkeeping or scheduling state, and never let them suppress the FSRS-due review backbone (ND-5 / D11). When active_items is empty, derive the brief from due/weak signals alone.";
+export const COACH_DAILY_OBJECTIVE = `Produce a TodayPlan for the user via the provided DomainTools. Only write proposals (defer / split / relearn / archive / completion / maintenance / knowledge_edge); never mutate user data directly. Prefer doing nothing if the day has no actionable adjustments.${COACH_GOAL_STRAND_GUIDANCE}${COACH_PROPOSAL_FEEDBACK_GUIDANCE}${COACH_AGENT_NOTES_GUIDANCE}${COACH_BRIEF_GUIDANCE}${COACH_SUGGESTION_KIND_GUIDANCE}`;
+export const COACH_WEEKLY_OBJECTIVE = `Produce a weekly TodayPlan with a \`weekly_reflection\` summary plus any plan adjustments / maintenance proposals via propose_* tools. Only write proposals; never mutate user data directly.${COACH_GOAL_STRAND_GUIDANCE}${COACH_PROPOSAL_FEEDBACK_GUIDANCE}${COACH_AGENT_NOTES_GUIDANCE}${COACH_BRIEF_GUIDANCE}${COACH_SUGGESTION_KIND_GUIDANCE}`;
 
 // P5.4-L2 / YUK-174 (Facet A, §3.3) — the proposal kinds Coach can ACT on
 // (COACH_TOOLS). Coach proposes learning-item lifecycle (completion / relearn /
@@ -117,6 +133,10 @@ type BuildMcpServerFn = typeof buildMcpServerFromRegistry;
 type WriteEventFn = (db: Db, input: WriteEventInput) => Promise<string>;
 // YUK-143 / ADR-0025 — swappable active-goals reader (DB tests inject fixtures).
 type ListActiveGoalsFn = (db: Db) => Promise<ActiveGoal[]>;
+// YUK-203 U4 / D11① — swappable active learning-item reader (DB tests inject
+// fixtures / []). Defaults to listActiveLearningItems. Read-only ADD; the
+// items' knowledge_ids are attention pressure only, never the review backbone.
+type ListActiveItemsFn = (db: Db) => Promise<ActiveLearningItem[]>;
 // P5.4-L2 / YUK-174 (Facet A) — swappable feedback-digest reader (DB tests inject
 // fixtures), mirrors ListActiveGoalsFn. No-op on cold start (empty digest).
 type LoadProposalFeedbackFn = (db: Db) => Promise<ProposalFeedbackCell[]>;
@@ -135,6 +155,10 @@ export interface CoachRunDeps {
   // YUK-143 / ADR-0025 — defaults to listActiveGoals; goals feed the additive
   // goal strand only and never touch the review backbone (ND-5).
   listActiveGoalsFn?: ListActiveGoalsFn;
+  // YUK-203 U4 / D11① — defaults to listActiveLearningItems; feeds active/pinned
+  // items' knowledge_ids as the brief's attention pressure. Read-only ADD;
+  // never touches the FSRS-due / review backbone (ND-5).
+  listActiveItemsFn?: ListActiveItemsFn;
   // P5.4-L2 / YUK-174 — defaults to getProposalFeedbackDigest; feeds the additive
   // reason digest, scoped to Coach's actable kinds. Cold-start inert (ND-5).
   loadProposalFeedbackFn?: LoadProposalFeedbackFn;
@@ -153,6 +177,7 @@ function buildCoachInput(
   activeGoals: ActiveGoal[],
   feedbackDigest: ProposalFeedbackCell[],
   agentNotes: AgentNote[],
+  activeItems: ActiveLearningItem[],
 ) {
   return {
     run_kind: runKind,
@@ -168,6 +193,16 @@ function buildCoachInput(
       subject_id: g.subject_id,
       scope_knowledge_ids: g.scope_knowledge_ids,
       sequence_hint: g.sequence_hint,
+    })),
+    // YUK-203 U4 / D11① — active/pinned learning items' knowledge_ids as the
+    // brief's attention pressure (CO §7.1:723-726). Empty array when no active
+    // items → the COACH_BRIEF_GUIDANCE clause derives the brief from due/weak
+    // signals alone. Attention pressure ONLY: never bookkeeping (ND-5 / D11).
+    active_items: activeItems.map((it) => ({
+      id: it.id,
+      knowledge_ids: it.knowledge_ids,
+      status: it.status,
+      user_pinned: it.user_pinned,
     })),
     // P5.4-L2 / YUK-174 (Facet A + C, §3.3) — per-(kind, relation) reason
     // feedback, scoped to the kinds Coach can act on (COACH_ACTABLE_KINDS,
@@ -211,7 +246,7 @@ function buildCoachInput(
     },
     output_schema: {
       kind: 'TodayPlan',
-      hint: 'Return a JSON object with daily_focus, review_session_proposal, plan_adjustments[], maintenance_proposals[]. Weekly runs additionally set weekly_reflection. When active_goals are present, also set goal_ids[] and goal_strand[] (each item: serves_goal_id, knowledge_ids[], focus) — additive only, never replacing review_session_proposal (ND-5).',
+      hint: 'Return a JSON object with daily_focus, review_session_proposal, plan_adjustments[], maintenance_proposals[]. review_session_proposal is the strategic BRIEF: set count + estimated_minutes AND the brief fields knowledge_focus[] (ranked knowledge_ids from due/weak + active_items pressure), subject_mix[] ({subject_id, weight}), time_box_minutes, intent_tags[]. Weekly runs additionally set weekly_reflection. When active_goals are present, also set goal_ids[] and goal_strand[] (each item: serves_goal_id, knowledge_ids[], focus) — additive only, never replacing the review backbone (ND-5).',
     },
   };
 }
@@ -227,6 +262,9 @@ export async function runCoach(
   const buildMcpServer = deps.buildMcpServerFn ?? buildMcpServerFromRegistry;
   const write = deps.writeEventFn ?? writeEvent;
   const listGoals = deps.listActiveGoalsFn ?? listActiveGoals;
+  // YUK-203 U4 / D11① — default to listActiveLearningItems; DB tests inject a
+  // stub / [] so the {}-stub db is never touched (mirrors listGoals default).
+  const listItems = deps.listActiveItemsFn ?? listActiveLearningItems;
   const loadFeedback =
     deps.loadProposalFeedbackFn ??
     ((db: Db) => getProposalFeedbackDigest(db, PROPOSAL_FEEDBACK_BUDGET));
@@ -252,6 +290,10 @@ export async function runCoach(
   // bias attention only, never the FSRS-due queue / review backbone (ND-5). Empty
   // in the common case → the COACH_AGENT_NOTES_GUIDANCE clause is inert.
   const agentNotes = await readNotes(db, now);
+  // YUK-203 U4 / D11① — read active/pinned learning items for the brief's
+  // attention pressure. Read-only ADD; never touches the FSRS-due / review
+  // backbone (ND-5). Empty in the cold-start case → brief derives from due/weak.
+  const activeItems = await listItems(db);
   const triggerEventId = `coach_trigger_${createId()}`;
   const toolContextTaskRunId = `coach_tool_${createId()}`;
 
@@ -296,7 +338,16 @@ export async function runCoach(
 
     const taskResult = await run(
       'CoachTask',
-      buildCoachInput(runKind, now, beforeRows, objective, activeGoals, feedbackDigest, agentNotes),
+      buildCoachInput(
+        runKind,
+        now,
+        beforeRows,
+        objective,
+        activeGoals,
+        feedbackDigest,
+        agentNotes,
+        activeItems,
+      ),
       {
         db,
         mcpServers: { [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer },
@@ -395,12 +446,47 @@ export function parseCoachOutputSafely(rawText: string): TodayPlanT | null {
   return null;
 }
 
+// YUK-203 U4 / D5 — swappable chain-enqueue seam. Defaults to a dynamic
+// getStartedBoss().send('review_plan', ...); factory-level tests inject a stub
+// to assert the chain WITHOUT a live boss. Kept OUT of runCoach (Cross-统合
+// 裁定 #2): runCoach is the DI-pure unit-test target (coach_daily.test.ts runs
+// it with db={}; coach_daily.northstar.test.ts runs a real DB but stubs no
+// boss seam) — injecting boss.send there would break the R9 injection-surface
+// convergence goal. The chain lives here, after runCoach resolves.
+export type EnqueueReviewPlanFn = (payload: {
+  run_kind: CoachRunKind;
+  mode: 'initial_plan';
+}) => Promise<void>;
+
+export interface CoachDailyHandlerDeps extends CoachRunDeps {
+  enqueueReviewPlanFn?: EnqueueReviewPlanFn;
+}
+
 export function buildCoachDailyHandler(
   db: Db,
-  deps: CoachRunDeps = {},
+  deps: CoachDailyHandlerDeps = {},
 ): (jobs: Job<Record<string, never>>[]) => Promise<void> {
+  const { enqueueReviewPlanFn, ...runDeps } = deps;
   return async () => {
-    const result = await runCoach(db, 'daily', deps);
+    const result = await runCoach(db, 'daily', runDeps);
     console.log('[coach_daily] result', result);
+    // YUK-203 U4 / D5 — chain coach_daily → review_plan (nightly review-plan
+    // generation off the fresh brief). FIRE-AND-FORGET, best-effort: wrapped in
+    // try/catch + log-and-swallow, NEVER rethrow. A failed enqueue must not undo
+    // the succeeded coach run nor trigger pg-boss redelivery + a duplicate LLM
+    // run (precedent: attribution_followup.ts:156-162; risk table R5). The send
+    // does not extend coach_daily's own job (coach_daily 03:45 / prune 04:00).
+    try {
+      const enqueue =
+        enqueueReviewPlanFn ??
+        (async (payload) => {
+          const { getStartedBoss } = await import('../client');
+          const boss = await getStartedBoss();
+          await boss.send('review_plan', payload);
+        });
+      await enqueue({ run_kind: 'daily', mode: 'initial_plan' });
+    } catch (err) {
+      console.error('[coach_daily] enqueue review_plan failed', err);
+    }
   };
 }

@@ -637,6 +637,33 @@ export const tasks = {
     // fallback（新 task 在 task-prompts.ts 加 builder，mirror TaggingTask/StructureTask）。
     systemPrompt: '(see getTaskSystemPrompt(task, profile) - fallback not for runtime)',
   },
+  ReviewPlanTask: {
+    kind: 'ReviewPlanTask',
+    description:
+      'YUK-203 U4 / D5 — tactical review planner (CO §6.1). Independently registered, narrow 4-tool surface (read_coach_brief / get_review_knowledge_snapshot / select_review_question_candidates / write_review_plan). Two modes (initial_plan / checkpoint_adapt). Consumes the Coach brief as its ONLY attention prior and reads NO memory (D7). Emits a review_plan with the subject_ids invariant + guardrail_checks + needs[]; write_review_plan produces a tool_quiz artifact. Chain-triggered by coach_daily (no cron).',
+    defaultProvider: 'xiaomi',
+    // Text-only tactical planning (reads brief / knowledge snapshot / candidate
+    // pool, writes a plan). No vision → mimo-v2.5-pro default, mimo-v2.5 fallback.
+    defaultModel: 'mimo-v2.5-pro',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
+    // Tool-calling loop over a narrow 4-tool surface; 8 iterations is enough to
+    // read the brief + snapshot + candidates and write the plan (runtime map
+    // bullet 1: 6-8). 120s mirrors Coach / Dreaming / QuizGen agentic budget.
+    budget: { ...DEFAULT_BUDGET, maxIterations: 8, timeout: 120_000 },
+    needsToolCall: true,
+    isMultimodal: false,
+    // The review_plan handler supplies the surface-specific DomainTool allowlist
+    // (resolveMcpAllowedTools('review_plan')) at run time, so this registry
+    // default stays empty for tests and non-handler callers (mirrors Coach /
+    // Dreaming / QuizGen).
+    allowedTools: [],
+    // Registry-inline systemPrompt (pass-through `case` group in
+    // task-prompts.ts, same as Coach / Dreaming): this string IS the runtime
+    // prompt. ReviewPlanTask is subject-neutral; promote to a profile builder
+    // only when a subject demands a planner voice.
+    systemPrompt:
+      "你是复习规划器（ReviewPlanTask），一个战术出卷器。两种模式：initial_plan（夜间从战略 brief 出整卷）与 checkpoint_adapt（session 中途按判分结果微调）。\n你只读 4 个工具：read_coach_brief（拿 Coach 战略 brief —— 这是你唯一的注意力先验，你不读任何记忆/Mem0）、get_review_knowledge_snapshot（看 due/weak/uncertain/最近失败/目标相关的知识状态）、select_review_question_candidates（从 due 队列拿候选题池）、write_review_plan（产出 review_plan）。\n降级语义：read_coach_brief 返回 reason:'no_plan'（25 事件窗口内无 coach run）或 reason:'empty_brief'（brief 存在但 knowledge_focus 与 subject_mix 全空）时，没有注意力先验，退化为纯 due-pressure —— 直接基于 due 队列出卷。\n硬约束：subject_ids 必须等于 sections[].subject_id 去重集合；每个 assignment 必须有 primary_knowledge_id；产出 guardrail_checks；把发现的缺口（如缺题、需刷新题面）写进 needs[]（question_profile_refresh / question_generation）。\n禁止：不改 FSRS/due_at、不改 question.metadata、不做任何 question CRUD、不写判分事件。你唯一的写是 write_review_plan。",
+  },
   // 其余 Task（VariantGen / Judge* / Dreaming / Maintenance 等）见
   // docs/architecture.md § 五，按需补全。
 } satisfies Record<string, TaskDef>;

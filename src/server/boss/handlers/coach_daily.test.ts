@@ -9,6 +9,7 @@ import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
 import {
   COACH_DAILY_OBJECTIVE,
   COACH_MAX_PROPOSALS,
+  buildCoachDailyHandler,
   parseCoachOutputSafely,
   runCoach,
 } from '@/server/boss/handlers/coach_daily';
@@ -16,7 +17,15 @@ import type { ProposalFeedbackCell } from '@/server/proposals/adaptive-bias';
 
 const VALID_TODAY_PLAN = {
   daily_focus: '今天先把上周的「之、其、于」复盘做完',
-  review_session_proposal: { count: 12, estimated_minutes: 20 },
+  // YUK-203 U4 — brief fields included so the parsed (default-filled) plan
+  // round-trips against this literal in the today_plan assertion below.
+  review_session_proposal: {
+    count: 12,
+    estimated_minutes: 20,
+    knowledge_focus: [],
+    subject_mix: [],
+    intent_tags: [],
+  },
   plan_adjustments: [{ kind: 'defer', learning_item_id: 'li_old' }],
   maintenance_proposals: [],
 };
@@ -50,6 +59,8 @@ describe('runCoach', () => {
       // YUK-143 — North-Star: stub the active-goals reader so these no-DB unit
       // tests don't hit the real listActiveGoals query (db is a {} stub).
       listActiveGoalsFn: async () => [],
+      // YUK-203 U4 — stub the active learning-items reader (db is a {} stub).
+      listActiveItemsFn: async () => [],
       // P5.4-L2 / YUK-174 — stub the feedback reader (db is a {} stub) so the
       // cold-start no-op path runs without querying.
       loadProposalFeedbackFn: async () => [],
@@ -161,6 +172,8 @@ describe('runCoach', () => {
       // YUK-143 — North-Star: stub the active-goals reader so these no-DB unit
       // tests don't hit the real listActiveGoals query (db is a {} stub).
       listActiveGoalsFn: async () => [],
+      // YUK-203 U4 — stub the active learning-items reader (db is a {} stub).
+      listActiveItemsFn: async () => [],
       // P5.4-L2 / YUK-174 — stub the feedback reader (db is a {} stub) so the
       // cold-start no-op path runs without querying.
       loadProposalFeedbackFn: async () => [],
@@ -239,6 +252,8 @@ describe('runCoach', () => {
       runAgentTaskFn,
       writeEventFn,
       listActiveGoalsFn: async () => [],
+      // YUK-203 U4 — stub the active learning-items reader (db is a {} stub).
+      listActiveItemsFn: async () => [],
       loadProposalFeedbackFn: async () => digest,
       readAgentNotesFn: async () => [],
       now: () => new Date('2026-05-28T20:00:00.000Z'),
@@ -279,6 +294,8 @@ describe('runCoach', () => {
       runAgentTaskFn,
       writeEventFn,
       listActiveGoalsFn: async () => [],
+      // YUK-203 U4 — stub the active learning-items reader (db is a {} stub).
+      listActiveItemsFn: async () => [],
       loadProposalFeedbackFn: async () => [],
       readAgentNotesFn: async () => [],
       now: () => new Date('2026-05-28T20:00:00.000Z'),
@@ -308,6 +325,8 @@ describe('runCoach', () => {
         writeEventFn,
         // YUK-143 — stub the active-goals reader (db is a {} stub here).
         listActiveGoalsFn: async () => [],
+        // YUK-203 U4 — stub the active learning-items reader (db is a {} stub).
+        listActiveItemsFn: async () => [],
         // P5.4-L2 / YUK-174 — stub the feedback reader (db is a {} stub here).
         loadProposalFeedbackFn: async () => [],
         // codex #3356884494 — stub the agent-note reader (db is a {} stub here).
@@ -347,6 +366,8 @@ describe('runCoach', () => {
       // YUK-143 — North-Star: stub the active-goals reader so these no-DB unit
       // tests don't hit the real listActiveGoals query (db is a {} stub).
       listActiveGoalsFn: async () => [],
+      // YUK-203 U4 — stub the active learning-items reader (db is a {} stub).
+      listActiveItemsFn: async () => [],
       // P5.4-L2 / YUK-174 — stub the feedback reader (db is a {} stub) so the
       // cold-start no-op path runs without querying.
       loadProposalFeedbackFn: async () => [],
@@ -403,6 +424,8 @@ describe('runCoach', () => {
       runAgentTaskFn,
       writeEventFn,
       listActiveGoalsFn: async () => [],
+      // YUK-203 U4 — stub the active learning-items reader (db is a {} stub).
+      listActiveItemsFn: async () => [],
       loadProposalFeedbackFn: async () => [],
       readAgentNotesFn: async () => [
         {
@@ -460,6 +483,8 @@ describe('runCoach', () => {
       runAgentTaskFn,
       writeEventFn,
       listActiveGoalsFn: async () => [],
+      // YUK-203 U4 — stub the active learning-items reader (db is a {} stub).
+      listActiveItemsFn: async () => [],
       loadProposalFeedbackFn: async () => [],
       readAgentNotesFn: async () => [],
       now: () => new Date('2026-05-28T20:00:00.000Z'),
@@ -494,5 +519,101 @@ describe('parseCoachOutputSafely', () => {
 
   it('returns null on empty input', () => {
     expect(parseCoachOutputSafely('')).toBeNull();
+  });
+});
+
+// YUK-203 U4 / D11① — active_items attention pressure feed.
+describe('runCoach active_items feed', () => {
+  it('passes injected active learning items into the CoachTask input', async () => {
+    const db = {} as never;
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_coach_items',
+      text: JSON.stringify(VALID_TODAY_PLAN),
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 2 },
+      cost_usd: 0.001,
+    }));
+
+    await runCoach(db, 'daily', {
+      listProposalInboxRowsFn: vi.fn(async () => []),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      runAgentTaskFn,
+      writeEventFn: vi.fn(async (_db, input) => input.id),
+      listActiveGoalsFn: async () => [],
+      listActiveItemsFn: async () => [
+        { id: 'li_1', knowledge_ids: ['k_zhi', 'k_qi'], status: 'in_progress', user_pinned: false },
+        { id: 'li_2', knowledge_ids: ['k_yu'], status: 'pending', user_pinned: true },
+      ],
+      loadProposalFeedbackFn: async () => [],
+      readAgentNotesFn: async () => [],
+      now: () => new Date('2026-06-04T20:00:00.000Z'),
+    });
+
+    const taskInput = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[1] as {
+      active_items: Array<{ id: string; knowledge_ids: string[] }>;
+    };
+    expect(taskInput.active_items).toEqual([
+      { id: 'li_1', knowledge_ids: ['k_zhi', 'k_qi'], status: 'in_progress', user_pinned: false },
+      { id: 'li_2', knowledge_ids: ['k_yu'], status: 'pending', user_pinned: true },
+    ]);
+  });
+});
+
+// YUK-203 U4 / D5 + Cross-统合 裁定 #2 — the chain send lives in the FACTORY,
+// not in runCoach (so the DI-pure runCoach unit/northstar tests need no boss
+// stub). It is best-effort: a failed enqueue must NOT throw out of the handler.
+describe('buildCoachDailyHandler review_plan chain', () => {
+  it('enqueues review_plan after a successful coach run', async () => {
+    const db = {} as never;
+    const enqueueReviewPlanFn = vi.fn(async () => undefined);
+    const handler = buildCoachDailyHandler(db, {
+      listProposalInboxRowsFn: vi.fn(async () => []),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      runAgentTaskFn: vi.fn(async () => ({
+        task_run_id: 'task_coach_chain',
+        text: JSON.stringify(VALID_TODAY_PLAN),
+        finishReason: 'stop',
+        usage: { inputTokens: 1, outputTokens: 2 },
+        cost_usd: 0.001,
+      })),
+      writeEventFn: vi.fn(async (_db, input) => input.id),
+      listActiveGoalsFn: async () => [],
+      listActiveItemsFn: async () => [],
+      loadProposalFeedbackFn: async () => [],
+      readAgentNotesFn: async () => [],
+      enqueueReviewPlanFn,
+    });
+
+    await handler([]);
+
+    expect(enqueueReviewPlanFn).toHaveBeenCalledWith({ run_kind: 'daily', mode: 'initial_plan' });
+  });
+
+  it('swallows a failed review_plan enqueue (no rethrow)', async () => {
+    const db = {} as never;
+    const enqueueReviewPlanFn = vi.fn(async () => {
+      throw new Error('boss down');
+    });
+    const handler = buildCoachDailyHandler(db, {
+      listProposalInboxRowsFn: vi.fn(async () => []),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      runAgentTaskFn: vi.fn(async () => ({
+        task_run_id: 'task_coach_chain_fail',
+        text: JSON.stringify(VALID_TODAY_PLAN),
+        finishReason: 'stop',
+        usage: { inputTokens: 1, outputTokens: 2 },
+        cost_usd: 0.001,
+      })),
+      writeEventFn: vi.fn(async (_db, input) => input.id),
+      listActiveGoalsFn: async () => [],
+      listActiveItemsFn: async () => [],
+      loadProposalFeedbackFn: async () => [],
+      readAgentNotesFn: async () => [],
+      enqueueReviewPlanFn,
+    });
+
+    // Must resolve (best-effort): a failed enqueue does not undo the coach run.
+    await expect(handler([])).resolves.toBeUndefined();
+    expect(enqueueReviewPlanFn).toHaveBeenCalled();
   });
 });
