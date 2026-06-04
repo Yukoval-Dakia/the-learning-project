@@ -202,6 +202,63 @@ describe('runAttributionAndWriteJudgeEvent', () => {
     expect(payload.cause.primary_category).toBe('unit_error');
   });
 
+  // D6 (U4 L-stamp) — attribution is a non-routed judge: it stamps the resolved
+  // SubjectProfile.version onto payload.profile_version, but leaves capability_ref
+  // / judge_route undefined (no routed judge capability). Use a '2.0.0' profile so
+  // the assertion proves the version is actually sourced from the profile (the real
+  // profiles are all on '1.0.0' — a same-value check would pass on any path).
+  it('stamps profile_version from the resolved profile; capability_ref/judge_route stay absent', async () => {
+    const db = testDb();
+    const attemptId = 'attempt_e_pv';
+    await insertAttemptEvent({ attemptId, questionId: 'q_pv' });
+    const fakeRunTask = async () => ({
+      text: '{"primary_category":"concept","secondary_categories":[],"analysis_md":"why","confidence":0.8}',
+    });
+    await runAttributionAndWriteJudgeEvent({
+      db,
+      attemptEventId: attemptId,
+      input: validInput,
+      runTaskFn: fakeRunTask,
+      subjectProfile: { ...resolveSubjectProfile('wenyan'), version: '2.0.0' },
+    });
+    const judgeRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'judge'), eq(event.caused_by_event_id, attemptId)));
+    expect(judgeRows).toHaveLength(1);
+    const payload = judgeRows[0].payload as {
+      profile_version?: string;
+      capability_ref?: unknown;
+      judge_route?: unknown;
+    };
+    expect(payload.profile_version).toBe('2.0.0');
+    expect(payload.capability_ref).toBeUndefined();
+    expect(payload.judge_route).toBeUndefined();
+  });
+
+  it('defaults profile_version to the default profile when no subjectProfile passed', async () => {
+    const db = testDb();
+    const attemptId = 'attempt_e_pv_default';
+    await insertAttemptEvent({ attemptId, questionId: 'q_pv_default' });
+    const fakeRunTask = async () => ({
+      text: '{"primary_category":"concept","secondary_categories":[],"analysis_md":"why","confidence":0.8}',
+    });
+    await runAttributionAndWriteJudgeEvent({
+      db,
+      attemptEventId: attemptId,
+      input: validInput,
+      runTaskFn: fakeRunTask,
+    });
+    const judgeRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'judge'), eq(event.caused_by_event_id, attemptId)));
+    expect(judgeRows).toHaveLength(1);
+    const payload = judgeRows[0].payload as { profile_version?: string };
+    // default profile (wenyan) version — present (not undefined) on the event.
+    expect(payload.profile_version).toBe(resolveSubjectProfile(null).version);
+  });
+
   it('does NOT bridge legacy ai_analysis_md — surfaces as parse error (no judge written)', async () => {
     const db = testDb();
     const attemptId = 'attempt_e_legacy';

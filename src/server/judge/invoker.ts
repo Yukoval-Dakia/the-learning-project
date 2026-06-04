@@ -58,6 +58,10 @@ export const JudgeInvocationTelemetrySchema = z.object({
   elapsed_ms: z.number().min(0),
   question_id: z.string().min(1),
   subject_id: z.string().min(1),
+  // D6 (U4 L-stamp): the SubjectProfile.version active for this invocation.
+  // Threaded into JudgeOnEvent.payload.profile_version downstream so judge
+  // events carry the profile generation that produced them.
+  profile_version: z.string().min(1),
 });
 
 export const JudgeInvokerOutputSchema = z.object({
@@ -90,15 +94,31 @@ export class JudgeInvoker {
   async invoke(input: JudgeAnswerParams): Promise<JudgeInvokerOutput> {
     const route = resolveQuestionJudgeRoute(input.question, input.subjectProfile);
     const startedAt = nowMs();
-    const result = await this.dispatch(route, input);
+    const dispatched = await this.dispatch(route, input);
+
+    // D6 (U4 L-stamp, critic-R2 HIGH): pin capability_ref.version from the
+    // active SubjectProfile.version, NOT the judge runners' module-level
+    // '1.0.0' constants. Override on the RESULT object **before** the output
+    // parse — /api/review/submit embeds `invoked.result.capability_ref` into the
+    // review event payload (submit/route.ts:306), so a telemetry-only override
+    // would still ship '1.0.0' into the event stream. The capability id stays
+    // as the runner reported it; only the version is re-sourced.
+    const pinnedCapabilityRef = {
+      ...dispatched.capability_ref,
+      version: input.subjectProfile.version,
+    };
+    const result = { ...dispatched, capability_ref: pinnedCapabilityRef };
+
     const telemetry = JudgeInvocationTelemetrySchema.parse({
       route,
-      capability_ref: result.capability_ref,
+      // Same pinned ref on the telemetry side (attribution / analytics path).
+      capability_ref: pinnedCapabilityRef,
       coarse_outcome: result.coarse_outcome,
       confidence: result.confidence,
       elapsed_ms: Math.max(0, nowMs() - startedAt),
       question_id: input.question.id,
       subject_id: input.subjectProfile.id,
+      profile_version: input.subjectProfile.version,
     });
 
     await this.emitTelemetry(telemetry);

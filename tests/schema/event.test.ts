@@ -191,6 +191,77 @@ describe('JudgeOnEvent', () => {
     });
     expect(result.success).toBe(false);
   });
+
+  // D6 (U4 L-stamp) — judge-event version pinning. The 3 new payload fields
+  // are optional → routed judges stamp all three; attribution stamps only
+  // profile_version; historical events carry none. All must parse.
+  it('accepts the D6 version-pin fields (profile_version / capability_ref / judge_route)', () => {
+    const result = JudgeOnEvent.safeParse({
+      actor_kind: 'agent',
+      actor_ref: 'judge',
+      action: 'judge',
+      subject_kind: 'event',
+      subject_id: 'e_1',
+      outcome: 'success',
+      payload: {
+        cause: {
+          primary_category: 'concept',
+          secondary_categories: [],
+          analysis_md: '理解偏差',
+          confidence: 0.9,
+        },
+        referenced_knowledge_ids: ['k1'],
+        profile_version: '2.0.0',
+        capability_ref: { id: 'semantic', version: '2.0.0' },
+        judge_route: 'semantic',
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('back-compat: historical judge event WITHOUT the D6 fields still parses', () => {
+    const result = JudgeOnEvent.safeParse({
+      actor_kind: 'agent',
+      actor_ref: 'attribution',
+      action: 'judge',
+      subject_kind: 'event',
+      subject_id: 'e_1',
+      outcome: 'success',
+      payload: {
+        cause: {
+          primary_category: 'concept',
+          secondary_categories: [],
+          analysis_md: 'x',
+          confidence: 0.5,
+        },
+        referenced_knowledge_ids: [],
+        // no profile_version / capability_ref / judge_route — pre-D6 shape
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects an invalid judge_route enum value', () => {
+    const result = JudgeOnEvent.safeParse({
+      actor_kind: 'agent',
+      actor_ref: 'judge',
+      action: 'judge',
+      subject_kind: 'event',
+      subject_id: 'e_1',
+      outcome: 'success',
+      payload: {
+        cause: {
+          primary_category: 'concept',
+          secondary_categories: [],
+          analysis_md: 'x',
+          confidence: 0.5,
+        },
+        referenced_knowledge_ids: [],
+        judge_route: 'not_a_real_route',
+      },
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 // ====================================================================
