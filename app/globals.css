@@ -5606,7 +5606,7 @@ progress {
 .rail-toggle {
   display: inline-grid;
 }
-/* The shell drives Copilot via TodayCopilotDrawer's hidden trigger button;
+/* The shell drives Copilot via CopilotDock's hidden trigger button;
    only the in-flow trigger is hidden — the drawer renders fixed at root. */
 .shell-copilot-mount > [data-testid="copilot-drawer-trigger"] {
   display: none;

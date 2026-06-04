@@ -148,8 +148,8 @@ export default function TodayPage() {
   }
 
   // hero Copilot button — mirror app/(app)/layout.tsx openCopilot: the shell
-  // mounts TodayCopilotDrawer globally with a hidden trigger; we drive it by
-  // clicking that trigger instead of mounting a second drawer here.
+  // mounts CopilotDock globally with a hidden trigger; we drive it by clicking
+  // that trigger instead of mounting a second drawer here.
   const openCopilot = () => {
     const trigger = document.querySelector<HTMLButtonElement>(
       '[data-testid="copilot-drawer-trigger"]',
