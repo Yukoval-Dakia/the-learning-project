@@ -3,7 +3,7 @@
 > Authority chain: `docs/design/2026-06-04-u0-decisions.md` D5/D6/D7/D11 + `docs/adr/0029-review-engine-lands-on-existing-primitives.md` + CO spec §6/§6.1/§7.1/§10 (`docs/superpowers/specs/2026-06-03-coach-led-review-engine-design.md`).
 > Snapshot: `/tmp/u4` = main@6ef92efe (deps installed). All assertions carry file:line into the snapshot.
 > Scope guard: **zero new tables, zero new columns**, `pnpm audit:schema` stays zero-delta, **ReviewPlanTask reads no memory** (Mem0 or brief).
-
+>
 > **Cross-统合 修订记录（2026-06-04）** — 全局视角统合 + 否决权 pass。Critic 意见**未送达**（编排模板变量未注入，/tmp 无 critic 产物）——故本 pass 未裁决具体 critic NEEDS_CHANGES 项，仅做跨 lane / 锁决一致性 + Map completeness 复核。三处就地修订：
 > 1. **L-pipeline §④ `read_coach_brief`** —— 原文写 `getLatestCoachPlan` "returns parsed `TodayPlanT`" 不准确：该函数返回 `CoachPlanView`（`coach-plan.ts:20-29,54`，字段 `daily_plan`/`weekly_reflection`），`review_session_proposal` 住在 `view.daily_plan.review_session_proposal`，不是顶层。已改 §④ 该 bullet。
 > 2. **L-pipeline 链触发位置歧义裁定** —— 原文给了 `runCoach` 内部 (~342) 与 factory `buildCoachDailyHandler` (402) 两个候选。**裁定：必须在 factory，禁止在 `runCoach` 内部**。`runCoach` 是 DI-pure 单测载体（`coach_daily.test.ts` 用 `db={}`、`coach_daily.northstar.test.ts` 真 DB 但不 stub boss）；把 `boss.send` 塞进 `runCoach` 会逼这两个测试新增 boss seam 或触真 boss，破坏 R9 已识别的注入面收敛目标。链送留在 factory 包裹层（`runCoach` 返回成功后），`runCoach` 保持 boss-free。已改 §④ 链触发 bullet + 风险表 R5。

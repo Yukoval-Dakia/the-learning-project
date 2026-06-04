@@ -5,6 +5,7 @@
 // select_review_question_candidates routing through the due path with the
 // Guard-B draft exclusion (draft_status='draft' questions never enter the pool).
 
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { artifact, knowledge, material_fsrs_state, question } from '@/db/schema';
@@ -119,6 +120,10 @@ function validPlan(overrides: Partial<ReviewPlanContractT> = {}): ReviewPlanCont
 describe('write_review_plan', () => {
   beforeEach(async () => {
     await resetDb();
+    // Existence backstop (#3357652733): q_active must resolve to a real,
+    // non-draft question for the happy-path contract tests to persist.
+    await seedKnowledge('k_zhi');
+    await seedQuestion({ id: 'q_active', knowledgeId: 'k_zhi', draft: false });
   });
 
   it('writes a tool_quiz artifact with the flat ToolState transition encoding', async () => {
@@ -176,6 +181,102 @@ describe('write_review_plan', () => {
         mode: 'initial_plan',
       }),
     ).rejects.toThrow(/every_assignment_has_primary_knowledge/);
+  });
+
+  // #3357652733 — existence + non-draft backstop against planner hallucination.
+  it('rejects a hallucinated (non-existent) assignment question_id', async () => {
+    await expect(
+      writeReviewPlanTool.execute(ctx(), {
+        plan: validPlan({
+          sections: [
+            {
+              subject_id: 'wenyan',
+              knowledge_ids: ['k_zhi'],
+              assignments: [
+                {
+                  question_id: 'q_ghost',
+                  primary_knowledge_id: 'k_zhi',
+                  secondary_knowledge_ids: [],
+                },
+              ],
+            },
+          ],
+        }),
+        mode: 'initial_plan',
+      }),
+    ).rejects.toThrow(/do not exist.*q_ghost/);
+    // Nothing persisted on rejection.
+    expect(await db.select().from(artifact)).toHaveLength(0);
+  });
+
+  it('rejects a draft assignment question_id (Guard-B, unrunnable)', async () => {
+    await seedQuestion({ id: 'q_draft', knowledgeId: 'k_zhi', draft: true });
+    await expect(
+      writeReviewPlanTool.execute(ctx(), {
+        plan: validPlan({
+          sections: [
+            {
+              subject_id: 'wenyan',
+              knowledge_ids: ['k_zhi'],
+              assignments: [
+                {
+                  question_id: 'q_draft',
+                  primary_knowledge_id: 'k_zhi',
+                  secondary_knowledge_ids: [],
+                },
+              ],
+            },
+          ],
+        }),
+        mode: 'initial_plan',
+      }),
+    ).rejects.toThrow(/draft.*q_draft/);
+  });
+
+  it('passes when all assignment question_ids exist and are non-draft', async () => {
+    const out = await writeReviewPlanTool.execute(ctx(), {
+      plan: validPlan(),
+      mode: 'initial_plan',
+    });
+    expect(out.question_count).toBe(1);
+    expect(await db.select().from(artifact)).toHaveLength(1);
+  });
+
+  // #3357652748 — knowledge_ids derived from the full union even when
+  // section-level knowledge_ids is omitted.
+  it('derives artifact knowledge_ids from the assignment union when section knowledge_ids omitted', async () => {
+    await seedQuestion({ id: 'q_secondary', knowledgeId: 'k_zhi', draft: false });
+    const out = await writeReviewPlanTool.execute(ctx(), {
+      plan: validPlan({
+        sections: [
+          {
+            subject_id: 'wenyan',
+            // section-level knowledge_ids EMPTY (the .default([]) runtime state
+            // when the planner omits them) — the artifact must still carry the
+            // full union derived from the assignments.
+            knowledge_ids: [],
+            assignments: [
+              {
+                question_id: 'q_active',
+                primary_knowledge_id: 'k_zhi',
+                secondary_knowledge_ids: ['k_secondary'],
+              },
+              {
+                question_id: 'q_secondary',
+                primary_knowledge_id: 'k_qi',
+                secondary_knowledge_ids: [],
+              },
+            ],
+          },
+        ],
+      }),
+      mode: 'initial_plan',
+    });
+
+    const rows = await db.select().from(artifact).where(eq(artifact.id, out.artifact_id));
+    expect(rows).toHaveLength(1);
+    // Union of every assignment's primary + secondary knowledge ids.
+    expect([...rows[0].knowledge_ids].sort()).toEqual(['k_qi', 'k_secondary', 'k_zhi']);
   });
 });
 

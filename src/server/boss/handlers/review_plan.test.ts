@@ -28,6 +28,8 @@ describe('runReviewPlan', () => {
       cost_usd: 0.002,
     }));
     const writeEventFn = vi.fn(async (_db, input) => input.id);
+    // The model persisted a plan this run → verification passes.
+    const countReviewPlanArtifactsFn = vi.fn(async () => 1);
 
     const result = await runReviewPlan(
       db,
@@ -36,6 +38,7 @@ describe('runReviewPlan', () => {
         buildMcpServerFn,
         runAgentTaskFn,
         writeEventFn,
+        countReviewPlanArtifactsFn,
         now: () => new Date('2026-06-04T19:45:00.000Z'),
       },
     );
@@ -119,6 +122,49 @@ describe('runReviewPlan', () => {
         action: 'experimental:review_plan',
         outcome: 'failure',
         payload: expect.objectContaining({ error: expect.stringContaining('llm down') }),
+      }),
+    );
+  });
+
+  it('fails the job (failure scan + rethrow) when the task wrote no review-plan artifact', async () => {
+    const db = {} as never;
+    const writeEventFn = vi.fn(async (_db, input) => input.id);
+    // Task returns finishReason:'stop' but never called write_review_plan.
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_rp_noplan',
+      text: 'I will not call the tool.',
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    const countReviewPlanArtifactsFn = vi.fn(async () => 0);
+
+    await expect(
+      runReviewPlan(
+        db,
+        { run_kind: 'daily', mode: 'initial_plan' },
+        {
+          buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+          runAgentTaskFn,
+          writeEventFn,
+          countReviewPlanArtifactsFn,
+        },
+      ),
+    ).rejects.toThrow(/wrote no review-plan artifact/);
+
+    // The verification ran with the run's tool_context_task_run_id.
+    expect(countReviewPlanArtifactsFn).toHaveBeenCalledWith(
+      db,
+      expect.stringMatching(/^review_plan_tool_/),
+    );
+    // A failure scan event is recorded; the error carries the finishReason.
+    expect(writeEventFn).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({
+        action: 'experimental:review_plan',
+        outcome: 'failure',
+        payload: expect.objectContaining({
+          error: expect.stringContaining('finishReason=stop'),
+        }),
       }),
     );
   });
