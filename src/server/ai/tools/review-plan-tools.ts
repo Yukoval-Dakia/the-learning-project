@@ -638,73 +638,91 @@ async function executeWriteReviewPlan(
       ),
     ]),
   ];
-  // codex PR #298 #3357817915 — idempotency guard against multiple papers per
-  // run. If the model calls write_review_plan twice within the SAME
-  // ReviewPlanTask run, the second call would persist a duplicate `ready`
-  // paper (the handler only saw planCount===0). There is no downstream
-  // de-dup/selection, so the user would get two review papers from one nightly
-  // run. We refuse the second write here, keyed on ctx.taskRunId (==
-  // tool_context_task_run_id stamped into session_meta below). The handler's
-  // post-run count check is also tightened to "exactly 1" as a second layer.
-  if (ctx.taskRunId) {
-    const [existing] = await ctx.db
-      .select({ id: artifact.id })
-      .from(artifact)
-      .where(
-        and(
-          eq(artifact.tool_kind, 'review_plan'),
-          sql`${artifact.tool_state}->'session_meta'->>'tool_context_task_run_id' = ${ctx.taskRunId}`,
-        ),
-      )
-      .limit(1);
-    if (existing) {
-      throw new Error(
-        `write_review_plan: a review plan already exists for this run (tool_context_task_run_id=${ctx.taskRunId}, artifact=${existing.id}) — only one plan may be written per run`,
-      );
-    }
-  }
-
   const now = new Date();
   const artifactId = `review_plan_${createId()}`;
 
-  // Flat tool_quiz artifact (D3 §4-① transition shape). The full structured plan
-  // (labels / rationale / sections / guardrail_checks / needs) is preserved in
-  // session_meta, promotable to ToolStateT v2 columns in U5 with no data loss.
-  await ctx.db.insert(artifact).values({
-    id: artifactId,
-    type: 'tool_quiz',
-    title: plan.labels.paper_kind ? `复习卷 · ${plan.labels.paper_kind}` : '复习卷',
-    parent_artifact_id: null,
-    knowledge_ids: knowledgeIds,
-    intent_source: 'review_plan',
-    source: 'ai_generated',
-    source_ref: null,
-    body_blocks: null,
-    attrs: {
-      mode,
-      subject_ids: subjectIds,
-      intent_tags: plan.labels.intent_tags,
-    } as never,
-    tool_kind: 'review_plan',
-    tool_state: {
-      question_ids: questionIds,
-      session_meta: {
+  // codex PR #298 #3357817915 + #3357918622 — idempotency guard against
+  // multiple papers per run. If the model calls write_review_plan twice within
+  // the SAME ReviewPlanTask run, the second call would persist a duplicate
+  // `ready` paper; there is no downstream de-dup/selection, so the user would
+  // get two review papers from one nightly run. We refuse the second write
+  // here, keyed on ctx.taskRunId (== tool_context_task_run_id stamped into
+  // session_meta). The handler's post-run count check is tightened to
+  // "exactly 1" as a second layer.
+  //
+  // TOCTOU (#3357918622): a bare select-then-insert lets two concurrent calls
+  // with the same taskRunId both pass the existence check and both insert. We
+  // close the race the SAME way as the proposal-signal writers (ADR-0028
+  // submit route precedent — withProposalSignalLock in
+  // src/server/proposals/signals.ts:25): wrap check + insert in ONE
+  // transaction and take a `pg_advisory_xact_lock` keyed on the run, so a
+  // concurrent caller blocks until we commit and then sees the existing row.
+  // The lock auto-releases at txn boundary. We deliberately do NOT add a UNIQUE
+  // index — that needs a migration, and U4 is a zero-schema-change phase
+  // (D3 §4-① RED LINE: no DDL); the advisory lock gives the same mutual
+  // exclusion without touching the schema.
+  await ctx.db.transaction(async (tx) => {
+    if (ctx.taskRunId) {
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`review_plan:${ctx.taskRunId}`}, 0))`,
+      );
+      const [existing] = await tx
+        .select({ id: artifact.id })
+        .from(artifact)
+        .where(
+          and(
+            eq(artifact.tool_kind, 'review_plan'),
+            sql`${artifact.tool_state}->'session_meta'->>'tool_context_task_run_id' = ${ctx.taskRunId}`,
+          ),
+        )
+        .limit(1);
+      if (existing) {
+        throw new Error(
+          `write_review_plan: a review plan already exists for this run (tool_context_task_run_id=${ctx.taskRunId}, artifact=${existing.id}) — only one plan may be written per run`,
+        );
+      }
+    }
+
+    // Flat tool_quiz artifact (D3 §4-① transition shape). The full structured
+    // plan (labels / rationale / sections / guardrail_checks / needs) is
+    // preserved in session_meta, promotable to ToolStateT v2 columns in U5 with
+    // no data loss.
+    await tx.insert(artifact).values({
+      id: artifactId,
+      type: 'tool_quiz',
+      title: plan.labels.paper_kind ? `复习卷 · ${plan.labels.paper_kind}` : '复习卷',
+      parent_artifact_id: null,
+      knowledge_ids: knowledgeIds,
+      intent_source: 'review_plan',
+      source: 'ai_generated',
+      source_ref: null,
+      body_blocks: null,
+      attrs: {
         mode,
         subject_ids: subjectIds,
-        labels: plan.labels,
-        rationale: plan.rationale,
-        sections: plan.sections,
-        guardrail_checks: plan.guardrail_checks,
-        needs: plan.needs,
-        tool_context_task_run_id: ctx.taskRunId,
-      },
-    } as never,
-    generation_status: 'ready',
-    verification_status: 'not_required',
-    history: [],
-    created_at: now,
-    updated_at: now,
-    version: 0,
+        intent_tags: plan.labels.intent_tags,
+      } as never,
+      tool_kind: 'review_plan',
+      tool_state: {
+        question_ids: questionIds,
+        session_meta: {
+          mode,
+          subject_ids: subjectIds,
+          labels: plan.labels,
+          rationale: plan.rationale,
+          sections: plan.sections,
+          guardrail_checks: plan.guardrail_checks,
+          needs: plan.needs,
+          tool_context_task_run_id: ctx.taskRunId,
+        },
+      } as never,
+      generation_status: 'ready',
+      verification_status: 'not_required',
+      history: [],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
   });
 
   return {
