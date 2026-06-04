@@ -1,11 +1,12 @@
-# Coach-led Review Engine — dynamic paper, normalized probes, knowledge scheduling
+# Coach-led Review Engine — dynamic paper, question profiles, knowledge scheduling
 
 > **Status**: design record, 2026-06-03.
 > **Context**: product/architecture discussion about replacing the current
 > per-question FSRS review flow with a Coach-led, subject-aware adaptive review
 > engine.
 > **Decision**: 复习不再把题目当单词卡排期。Coach 负责复习编排；系统提供
-> knowledge/probe/paper 数据层、即时隐藏判分、可追溯 evidence 和安全约束。
+> question review profile / knowledge coverage / paper 数据层、即时隐藏判分、
+> 可追溯 evidence 和安全约束。
 
 ## 0. Why This Exists
 
@@ -25,7 +26,7 @@ measurement instrument, not the learning object itself.
 
 New framing:
 
-**question is content, probe is measurement purpose, knowledge is the scheduling
+**question is content plus measurement profile, knowledge is the scheduling
 object, paper is the user experience.**
 
 ## 1. Locked Product Decisions
@@ -36,7 +37,7 @@ Chosen direction: **D — knowledge-node scheduling with mixed ranking signals**
 
 - Knowledge node is the only schedulable review object.
 - Ability, failure mode, goal, due pressure, and subject strategy affect ranking
-  and probe selection; they do not create separate target identities.
+  and question selection; they do not create separate target identities.
 - FSRS becomes one pressure signal, not the owner of the user-facing queue.
 
 ### 1.2 Coach Freedom
@@ -52,13 +53,13 @@ Global Coach responsibilities:
 
 - allocate today's subject/time balance;
 - decide which knowledge nodes deserve attention;
-- pick or request probes;
+- pick questions or request profile refresh/generation;
 - decide when to stop, continue, switch knowledge focus, or insert variants;
 - explain the plan and feedback in user-facing language.
 
 Subject skill responsibilities:
 
-- provide subject-specific knowledge/probe policy;
+- provide subject-specific knowledge/question-selection policy;
 - interpret answer shapes and scoring signals;
 - define what counts as diagnostic, transfer, remedial, or mastery evidence.
 
@@ -107,11 +108,12 @@ Short rule:
 
 **Paper UI is buffered; Coach loop is real-time.**
 
-### 1.6 Probe Admission
+### 1.6 Review Profile Admission
 
 Chosen direction: **automatic active admission**.
 
-At ingestion, AI-generated probe metadata enters the Coach candidate pool by
+At ingestion, AI-generated review metadata is written under
+`question.metadata.review_profile` and enters the Coach candidate pool by
 default. Low-confidence metadata is not blocked, but every generated claim must
 carry:
 
@@ -136,14 +138,27 @@ It stores:
 - options;
 - figures/images;
 - structured shape;
+- review profile metadata;
 - source and lineage;
 - compatibility `knowledge_ids`.
 
 It should not own the scheduling state.
 
-### 2.2 Probe
+### 2.2 Question Review Profile
 
-Probe is the measurement profile of a question or part of a question.
+The review profile is the measurement profile of a question or part of a
+question. It lives under `question.metadata`; it is not a separate durable table
+in the first build.
+
+For materialized parts, the profile lives on the child `question` row
+(`kind='question_part'`). For structured-only parts, paper assignment and
+coverage records use `part_ref` to point at the relevant structured node.
+
+`part_ref` is always a `StructuredQuestion.id`. Do not use array index, ordinal
+path, rendered label, or child order as `part_ref`; structure edits and reorders
+must not move historical evidence to a different child. This matches the figure
+attachment convention, where figure ownership also points at a
+`StructuredQuestion.id`.
 
 It answers:
 
@@ -155,7 +170,38 @@ It answers:
 - how likely is answer memorization?
 - what answer shape should the paper render?
 
-Probe is a child of question, but it is not the same thing as question.
+`review_probe` may remain a runtime/DTO word for "candidate measurement item",
+but it is not a durable table in the first build. Its identity is computed from:
+
+```text
+question_id
++ optional part_ref
++ resolved review profile
++ coverage rows
+```
+
+The durable owner of item-level measurement information is the question row.
+
+### 2.2.1 Probe Identity and Paper Assignment
+
+Do not create one durable probe per covered knowledge node. A question or part
+can cover multiple knowledge nodes through `question_knowledge_coverage`, but a
+specific paper occurrence must declare why this question is being used now.
+
+Rules:
+
+- Static coverage: one question/part may have multiple coverage rows.
+- Runtime intent: each `paper_question_assignment` has exactly one
+  `primary_knowledge_id`.
+- Secondary signals: the assignment may include `secondary_knowledge_ids`, but
+  they do not become independent scheduling objects.
+- Evidence writing: one answer/judgement may create multiple
+  `paper_evidence_result` rows only when the judgement contains enough evidence
+  to support them. One row should be primary; secondary or blocking rows should
+  be lower-confidence and explicitly marked.
+- Retargeting: if Coach wants to use the same question/part primarily for a
+  different knowledge node, it creates a separate paper assignment. It should not
+  split the same static question profile into multiple durable probes.
 
 ### 2.3 Knowledge Review Target
 
@@ -170,8 +216,9 @@ target = active knowledge node
 ```
 
 Ability, failure mode, question type, difficulty, and original mistake pattern
-remain probe/result facets. Coach can focus on them by selecting appropriate
-probes for a knowledge node, but they should not become separate target rows.
+remain review-profile/result facets. Coach can focus on them by selecting
+appropriate questions for a knowledge node, but they should not become separate
+target rows.
 
 ### 2.4 Knowledge Review State
 
@@ -200,7 +247,7 @@ It stores:
 
 - review plan;
 - sections;
-- selected probes;
+- selected questions/profile snapshots;
 - answer slots;
 - hidden judgements;
 - Coach observations;
@@ -208,44 +255,85 @@ It stores:
 
 Paper is not just a UI layout. It is the runtime container for adaptive review.
 
-## 3. Normalized Probe Layer
+## 3. Question Review Profile and Coverage Layer
 
-The normalized probe layer is the structured bridge between question content
-and Coach review decisions.
+The review profile and coverage layer is the structured bridge between question
+content and Coach review decisions.
 
-Do not put all probe metadata into a large `question.metadata` blob. Use
-first-class records so Coach tools, analytics, and future maintenance jobs can
-query and repair them.
+Most new item-level information should live under `question.metadata`, because
+it describes the question as a measurement instrument. The first-class table is
+only for the queryable many-to-many relationship between questions and knowledge
+nodes.
 
 Conceptual schema:
 
+```ts
+type ReviewProfile = {
+  profile_kind:
+    | 'diagnostic'
+    | 'remedial'
+    | 'transfer'
+    | 'challenge'
+    | 'original_mistake',
+  answer_shape:
+    | 'choice'
+    | 'multi_choice'
+    | 'inline_blank'
+    | 'short_answer'
+    | 'long_work'
+    | 'scratch_image',
+  difficulty?: number,
+  estimated_minutes?: number,
+  cognitive_load?: number,
+  repeatability?: 'low' | 'medium' | 'high',
+  memorization_risk?: number,
+  ability_tags?: string[],
+  failure_mode_tags?: string[],
+  work_style?: string[],
+  confidence: number,
+  provenance: Record<string, unknown>
+}
+
+question.metadata.review_profile?: ReviewProfile
+
+question.metadata.review_profiles_by_part_ref?: Record<
+  StructuredQuestion['id'],
+  ReviewProfile
+>
+```
+
+Resolution rule:
+
+```text
+materialized question_part:
+  use child_question.metadata.review_profile
+
+structured-only part:
+  use parent_question.metadata.review_profiles_by_part_ref[part_ref]
+  fallback to parent_question.metadata.review_profile only for whole-question
+  assignments
+```
+
+A parent question may have a whole-question profile and multiple part profiles.
+They are not interchangeable: child parts commonly differ in answer shape,
+difficulty, profile kind, and failure-mode tags.
+
 ```sql
-review_probe (
+question_knowledge_coverage (
   id text primary key,
   question_id text not null references question(id),
-  subject_id text not null,
-  probe_kind text not null,
-  difficulty int,
-  estimated_minutes int,
-  cognitive_load int,
-  repeatability text,
-  memorization_risk real,
+  part_ref text,
+  knowledge_id text not null references knowledge(id),
+  role text not null check (
+    role in ('primary', 'secondary', 'prerequisite', 'context')
+  ),
+  coverage_strength real not null,
   confidence real not null,
+  rationale text,
   provenance jsonb not null,
   status text not null default 'active',
   created_at timestamptz not null,
   updated_at timestamptz not null
-)
-
-review_probe_knowledge (
-  id text primary key,
-  probe_id text not null references review_probe(id),
-  knowledge_id text not null references knowledge(id),
-  role text not null,
-  coverage_strength real not null,
-  confidence real not null,
-  rationale text,
-  provenance jsonb not null
 )
 
 knowledge_review_state (
@@ -260,12 +348,16 @@ knowledge_review_state (
   model_version text not null,
   updated_at timestamptz not null
 )
+
+-- Active-row uniqueness:
+--   unique active (question_id, coalesce(part_ref, ''), knowledge_id, role)
+--   where status = 'active'
 ```
 
 Core rule:
 
-**Question is content. Probe is measurement purpose. Knowledge is scheduling.
-Review state only hangs from knowledge.**
+**Question owns item-level measurement metadata. Coverage links question/part to
+knowledge. Knowledge is scheduling. Review state only hangs from knowledge.**
 
 ## 4. Question Shape Taxonomy
 
@@ -315,7 +407,8 @@ Math problem
 Principle:
 
 **Composite question is the context boundary. Child question is the
-answer/judge boundary. Knowledge/probe is the scheduling boundary.**
+answer/judge boundary. Knowledge/question-selection is the scheduling
+boundary.**
 
 Coach may choose:
 
@@ -335,7 +428,7 @@ Current code already has related primitives:
 
 The old idea that a part naturally becomes an independently scheduled question
 should be retired for this engine. Parts may be answer/judge units, but the
-scheduling unit should remain knowledge/probe.
+scheduling unit should remain knowledge plus question/profile selection.
 
 ## 5. Paper, Answer, and Hidden Judgement Model
 
@@ -369,11 +462,23 @@ review_paper_attempt (
   updated_at timestamptz not null
 )
 
+paper_question_assignment (
+  id text primary key,
+  paper_attempt_id text not null references review_paper_attempt(id),
+  question_id text not null references question(id),
+  part_ref text,
+  primary_knowledge_id text not null references knowledge(id),
+  secondary_knowledge_ids jsonb not null default '[]'::jsonb,
+  review_profile_snapshot jsonb not null,
+  coverage_snapshot jsonb not null,
+  selection_reason text,
+  created_at timestamptz not null
+)
+
 paper_answer (
   id text primary key,
   paper_attempt_id text not null references review_paper_attempt(id),
-  probe_id text not null references review_probe(id),
-  question_id text not null references question(id),
+  assignment_id text not null references paper_question_assignment(id),
   slot_id text not null,
   answer_kind text not null,
   answer_payload jsonb not null,
@@ -397,12 +502,13 @@ paper_judgement (
   created_at timestamptz not null
 )
 
-probe_result (
+paper_evidence_result (
   id text primary key,
-  probe_id text not null references review_probe(id),
   knowledge_id text references knowledge(id),
+  assignment_id text not null references paper_question_assignment(id),
   paper_answer_id text not null references paper_answer(id),
   judgement_id text references paper_judgement(id),
+  evidence_role text not null,
   result_kind text not null,
   confidence real not null,
   signals_json jsonb not null,
@@ -421,9 +527,16 @@ Answer kinds:
 - future `oral`;
 - future `self_check`.
 
-`paper_judgement` is the hidden/visible grading record. `probe_result` is the
-normalized evidence that Coach and the knowledge scheduler consume. A judgement
-may be hidden from the user but still create a probe result for Coach.
+`paper_question_assignment` records why this question/part was placed in this
+paper and which knowledge node it primarily serves. `paper_judgement` is the
+hidden/visible grading record. `paper_evidence_result` is the normalized
+evidence that Coach and the knowledge scheduler consume. A judgement may be
+hidden from the user but still create evidence for Coach.
+
+`evidence_role` distinguishes `primary`, `secondary`, `blocking_prerequisite`,
+and `context_only` evidence. The scheduler should treat primary evidence as the
+default update path for `knowledge_review_state`; secondary evidence needs
+confidence/rule checks before it affects scheduling.
 
 For math/physics, final answer alone is insufficient. The answer model must
 support reasoning/work signals, units, formulas, intermediate steps, and image
@@ -444,22 +557,22 @@ It needs structured tools rather than raw access to all questions:
 
 ```text
 get_review_knowledge_snapshot(subject_id?)
-select_review_probes(knowledge_ids, constraints)
+select_review_question_candidates(knowledge_ids, constraints)
 write_review_plan(plan)
 observe_paper_attempt(attempt_id)
-record_probe_result(...)
-request_probe_generation(...)
+record_paper_evidence_result(...)
+request_question_profile_refresh(...)
 ```
 
-`select_review_probes` should return a ranked candidate pool:
+`select_review_question_candidates` should return a ranked candidate pool:
 
 ```text
 [
   {
-    probe_id,
     question_id,
+    part_ref,
+    review_profile,
     knowledge_coverage,
-    probe_kind,
     estimated_minutes,
     memorization_risk,
     confidence,
@@ -471,7 +584,50 @@ request_probe_generation(...)
 ```
 
 Coach does not need to scan the entire raw question table. It chooses from
-explainable candidates and can request new probes when the pool is inadequate.
+explainable candidates and can request profile refresh or new generated
+questions when the pool is inadequate.
+
+### 6.1 ReviewPlanTask Tool Boundary
+
+`ReviewPlanTask` is a planner, not a general executor.
+
+Allowed tools:
+
+```text
+query_memory_brief(scope_key)
+search_memory_facts(query, scope_key?, top_k?)
+get_review_knowledge_snapshot(subject_id?)
+select_review_question_candidates(knowledge_ids, constraints)
+write_review_plan(plan)
+```
+
+Tool roles:
+
+- `query_memory_brief` and `search_memory_facts` provide attention prior;
+- `get_review_knowledge_snapshot` provides due, weak, uncertain, recent-failure,
+  and goal-relevant knowledge state;
+- `select_review_question_candidates` provides an explainable candidate pool;
+- `write_review_plan` persists the auditable plan artifact.
+
+Forbidden direct writes:
+
+- `knowledge_review_state`, FSRS state, or `due_at`;
+- `question.metadata.review_profile` or `question_knowledge_coverage`;
+- question creation, deletion, or mutation;
+- `paper_judgement` or `paper_evidence_result`.
+
+If the candidate pool is inadequate, `ReviewPlanTask` should declare needs
+rather than performing the work itself:
+
+```ts
+needs: Array<
+  | { kind: 'question_profile_refresh'; question_id: string; reason: string }
+  | { kind: 'question_generation'; knowledge_id: string; reason: string }
+>
+```
+
+The practical rule: Coach plans the review. Other tasks profile, generate,
+judge, extract evidence, and schedule.
 
 ## 7. Dynamic Paper Flow
 
@@ -486,20 +642,60 @@ Inputs:
 - due pressure;
 - mastery/uncertainty;
 - recent failures;
-- available probes;
+- available question candidates;
 - proposal feedback / user preferences.
 
 Output:
 
 ```text
 review_plan
+  subject_ids[]
+  labels
+    paper_kind
+    time_box
+    intent_tags[]
+    subject_mix
+    adaptation_level
+    difficulty_shape
+    source
+  rationale
+  memory_context_used[]
   sections[]
     subject_id
     knowledge_ids[]
-    probe_ids[]
+    assignments[]
+      question_id
+      part_ref?
+      primary_knowledge_id
+      secondary_knowledge_ids[]
+      review_profile_snapshot
+      coverage_snapshot
+      selection_reason
     feedback_policy
     adaptation_policy
+  guardrail_checks
+    within_time_budget
+    candidate_pool_only
+    every_assignment_has_primary_knowledge
+    no_direct_scheduler_mutation
 ```
+
+`review_plan.subject_ids` is the plan-level subject summary. Each section also
+has a `subject_id`, which drives rendering, subject profile selection, memory
+scope, and judgement policy. Invariant:
+
+```text
+review_plan.subject_ids = unique(review_plan.sections[].subject_id)
+```
+
+The first product may generate single-subject papers, but the plan contract
+should support multi-subject daily papers from the start.
+
+`ReviewPlanTask` should plan heuristically, not by applying a fixed paper mix.
+The hard requirements are its output contract, candidate-pool guardrails,
+structured labels, and rationale. Labels make daily auto-generated papers
+explainable, debuggable, reviewable in history, and available to future memory
+briefs.
 
 ### 7.2 Execution
 
@@ -516,7 +712,7 @@ Internally:
 
 - each answer slot autosaves;
 - each submitted slot can trigger hidden judgement;
-- hidden judgement writes probe evidence;
+- hidden judgement writes paper evidence;
 - Coach observes the result before deciding later sections.
 
 ### 7.3 Feedback
@@ -536,7 +732,8 @@ Allowed interruption:
 
 ## 8. Knowledge Review State Update
 
-Probe results should update `knowledge_review_state`, not question state.
+Paper evidence results should update `knowledge_review_state`, not question
+state.
 
 Evidence dimensions:
 
@@ -561,9 +758,14 @@ Current engine should remain as compatibility while the new engine lands.
 
 Compatibility facts:
 
-- existing `question.knowledge_ids` can seed first probe-knowledge links;
+- existing `question.knowledge_ids` can seed first question-knowledge coverage
+  links;
 - existing `material_fsrs_state(subject_kind='question')` can remain as legacy
   queue pressure;
+- existing `question_part` rows and their question-level FSRS projections can
+  remain for compatibility, but they are legacy pressure/evidence only. They are
+  not the new review truth and must not compete with `knowledge_review_state` as
+  a second scheduler owner;
 - existing `/api/review/submit` can inspire judge/write behavior but should not
   stay the central paper answer model;
 - existing `ReviewIntentTask` can be replaced or subsumed by Coach plan text;
@@ -572,10 +774,76 @@ Compatibility facts:
 
 Migration principle:
 
-**Do not delete the old queue first. Introduce knowledge/probe/paper alongside it,
-then move `/review` to consume Coach plans once the new path has enough data.**
+**Do not delete the old queue first. Introduce question review profiles,
+question-knowledge coverage, knowledge review state, and paper attempts
+alongside it; then move `/review` to consume Coach plans once the new path has
+enough data.**
 
-## 10. Safety and Governance
+## 10. Memory Governance
+
+Memory is available to review planning as an attention prior, not as review
+truth.
+
+Daily Coach planning should read memory in two layers:
+
+- `memory_brief_note` for broad orientation;
+- Mem0 fact search for scoped detail when the agent has a specific reason to
+  look up prior preferences, habits, or recurring patterns.
+
+Active subjects are not durable state. They are a reader-computed scope list
+used to decide which subject briefs are relevant for a planning turn.
+
+Inputs that may make a subject active:
+
+- recent learning, attempt, review, or capture events for that subject;
+- due pressure or weak knowledge in that subject;
+- active goals that mention the subject;
+- recent Coach or Dreaming attention to that subject.
+
+Default daily review memory scopes:
+
+```text
+global
+subject:<active_subject_id>[]
+meta:orchestrator_self, when the agent is reasoning about user preferences or
+conversation style
+```
+
+Mem0 should be broadly available to product agents, including `CoachTask`,
+`ReviewPlanTask`, `DreamingTask`, `CopilotTask`, `KnowledgeReviewTask`, and
+`QuizGenTask`.
+
+Evaluator/operator tasks should not read Mem0 by default:
+
+- `TaggingTask`;
+- judge tasks;
+- structure tasks;
+- attribution tasks;
+- verification tasks.
+
+Those tasks should rely on question content, answers, knowledge, rubrics, and
+explicit task inputs. User memory should not leak into judgement or extraction.
+
+Allowed memory effects:
+
+- choose what context the Coach inspects next;
+- adjust paper labels, time box, and explanation style;
+- suggest which subject or knowledge state should be checked in SoT;
+- personalize Coach language and pacing.
+
+Forbidden memory effects:
+
+- directly update `due_at`, mastery, FSRS state, or `knowledge_review_state`;
+- replace `paper_evidence_result`;
+- replace SQL reads from event, knowledge, question, or scheduler state;
+- bias judge scoring because memory says the user is weak or strong.
+
+Core rule:
+
+**Memory can change attention and explanation. Evidence and scheduler state
+change review truth.**
+
+## 11. Safety and Governance
 
 Coach can arrange review freely inside safe boundaries.
 
@@ -583,10 +851,10 @@ Coach may:
 
 - choose subject allocation;
 - choose knowledge order;
-- choose probes;
+- choose questions/profile candidates;
 - append variants;
 - stop or continue a knowledge focus;
-- request new probes;
+- request question profile refresh or generated variants;
 - hide or reveal feedback according to policy.
 
 Coach may not silently:
@@ -601,19 +869,21 @@ Coach may not silently:
 Every Coach decision should be traceable to:
 
 - knowledge snapshot;
-- probe candidate list;
+- question candidate list;
 - hidden judgement;
 - paper attempt;
 - user context;
 - goal/subject policy.
 
-## 11. Suggested Implementation Slices
+## 12. Suggested Implementation Slices
 
 ### Slice 1 — Schema and read model
 
-- Add `review_probe`, `review_probe_knowledge`, and `knowledge_review_state`.
-- Seed from existing `question.knowledge_ids`.
-- Auto-activate AI-generated probe metadata with confidence/provenance.
+- Add `question_knowledge_coverage` and `knowledge_review_state`.
+- Extend `question.metadata` with whole-question `review_profile` and
+  per-structured-part `review_profiles_by_part_ref`.
+- Seed coverage from existing `question.knowledge_ids`.
+- Auto-activate AI-generated review profile metadata with confidence/provenance.
 
 ### Slice 2 — Question shape and answer slots
 
@@ -623,8 +893,19 @@ Every Coach decision should be traceable to:
 
 ### Slice 3 — Coach planning tools
 
-- Add read tools for knowledge snapshots and probe candidates.
+- Add read tools for knowledge snapshots and question candidates.
 - Add a plan artifact/write path.
+- Give `ReviewPlanTask` only memory read, knowledge snapshot, candidate
+  selection, and plan-write tools.
+- Make pool gaps explicit via `needs[]` instead of letting the planner profile,
+  generate, judge, or schedule directly.
+- Add `ReviewPlanTask` with `initial_plan` and `checkpoint_adapt` modes.
+- Require `ReviewPlanTask` output to include plan-level `subject_ids`, paper
+  labels, rationale, optional memory-use summary, section-level `subject_id`,
+  assignment-level selection reasons, and guardrail checks.
+- Do not hard-code a fixed paper mix; Coach should plan heuristically from
+  active goals, memory attention, due pressure, knowledge state, subject
+  context, and candidate questions.
 - Keep plan writes auditable and replayable.
 
 ### Slice 4 — Dynamic paper UI
@@ -639,7 +920,7 @@ Every Coach decision should be traceable to:
 - Use existing question FSRS as compatibility/evidence.
 - Stop treating question as the primary due object.
 
-## 12. Non-goals for the First Build
+## 13. Non-goals for the First Build
 
 - Fully autonomous knowledge restructuring.
 - Perfect scheduler theory.
@@ -648,21 +929,23 @@ Every Coach decision should be traceable to:
 - Forcing every question into a polished structured shape before compatibility
   fallback exists.
 
-## 13. Design Summary
+## 14. Design Summary
 
 The new review engine should be Coach-led, subject-aware, and paper-shaped.
 
 The durable model is:
 
 ```text
-question -> review_probe -> review_probe_knowledge -> knowledge_review_state
-                         \
-                          -> review_plan -> paper_attempt -> paper_answer
+question.metadata.review_profile
+question -> question_knowledge_coverage -> knowledge_review_state
+         \
+          -> review_plan -> paper_attempt -> paper_question_assignment -> paper_answer
 ```
 
 The user experience is a dynamic paper. The internal engine is real-time
 judgement plus Coach observation. The scheduling object is knowledge. The
-question is only content and probe material.
+question owns its measurement profile and remains the content/measurement
+material.
 
 This is the decisive break from "questions are like words, so use FSRS on
 questions."
