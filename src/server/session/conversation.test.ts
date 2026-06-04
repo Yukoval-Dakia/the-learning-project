@@ -336,4 +336,40 @@ describe('Conversation.findOrCreateCopilotConversation', () => {
     await cleanup(first.sessionId);
     await cleanup(next.sessionId);
   });
+
+  it('does NOT reuse a live teaching conversation (goal_id set / entrypoint=null) — creates its own', async () => {
+    await clearLiveConversations();
+    // A teaching session is type='conversation', status='active', entrypoint=null,
+    // goal_id=<learning item>, and is the most-recent live row. Without an
+    // entrypoint='copilot' filter the reuse predicate would pick it up and the
+    // Copilot turn would bind to teaching's session_id — cross-surface bleed.
+    const teaching = await startConversation(db, { learningItemId: 'li_teaching_bleed' });
+    const teachingRows = await db
+      .select()
+      .from(learning_session)
+      .where(eq(learning_session.id, teaching.sessionId));
+    expect(teachingRows[0].entrypoint).toBeNull();
+    expect(teachingRows[0].goal_id).toBe('li_teaching_bleed');
+
+    const copilot = await findOrCreateCopilotConversation(db);
+    expect(copilot.created).toBe(true);
+    expect(copilot.sessionId).not.toBe(teaching.sessionId);
+    const copilotRows = await db
+      .select()
+      .from(learning_session)
+      .where(eq(learning_session.id, copilot.sessionId));
+    expect(copilotRows[0].entrypoint).toBe('copilot');
+    expect(copilotRows[0].goal_id).toBeNull();
+
+    // The teaching session must be untouched (still active, no version bump).
+    const teachingAfter = await db
+      .select()
+      .from(learning_session)
+      .where(eq(learning_session.id, teaching.sessionId));
+    expect(teachingAfter[0].status).toBe('active');
+    expect(teachingAfter[0].version).toBe(0);
+
+    await cleanup(teaching.sessionId);
+    await cleanup(copilot.sessionId);
+  });
 });
