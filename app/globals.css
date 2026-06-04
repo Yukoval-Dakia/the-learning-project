@@ -8597,3 +8597,164 @@ button.seg-sm {
     font-size: var(--fs-h1);
   }
 }
+
+/* ============================================================
+   LOOM COPILOT LAYER — Wave 2 (YUK-169 / AF Slice 0)
+   Copilot drawer chat surface. Ported from docs/design/loom-prototype/
+   copilot.jsx (Message / ToolCard / composer / quick-chips).
+
+   SCOPE: all chat classes are scoped under `.copilot-loom` (mirrors the
+   `.knowledge-loom` / `.today-loom` precedent). `.msg` / `.composer` /
+   `.suggest-chip` already exist scoped under :is(.teach-chat-page,
+   .teach-drawer) for the Phase 2C teaching drawer (globals L4933-5074) —
+   scoping ours under `.copilot-loom` keeps the two surfaces isolated.
+   `.chip` / `.chip-k` (L6350) are the shared global loom chip and are
+   REUSED for quick-chips, not redefined here. `.spin` keyframe is global
+   (keyframes can't be scoped) but only the thinking icon uses it.
+   ============================================================ */
+.copilot-loom {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-height: 0;
+}
+
+/* message stream */
+.copilot-loom .chat-stream {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+.copilot-loom .msg {
+  display: flex;
+  gap: var(--s-3);
+  max-width: 100%;
+}
+.copilot-loom .msg-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-2);
+  display: grid;
+  place-items: center;
+  flex: none;
+  font-size: 13px;
+  background: var(--paper-sunk);
+  color: var(--ink-3);
+  border: 1px solid var(--line);
+}
+.copilot-loom .msg-ai .msg-avatar {
+  background: var(--coral-soft);
+  color: var(--coral);
+  border-color: var(--coral-line);
+}
+.copilot-loom .msg-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.copilot-loom .msg-name {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: var(--ls-wide);
+  color: var(--ink-4);
+}
+.copilot-loom .msg-text {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.copilot-loom .msg-ai .msg-text {
+  background: var(--paper);
+  border: 1px solid var(--line-soft);
+  padding: 10px 14px;
+  border-radius: var(--r-3);
+}
+.copilot-loom .msg-user {
+  flex-direction: row-reverse;
+}
+.copilot-loom .msg-user .msg-body {
+  align-items: flex-end;
+}
+.copilot-loom .msg-user .msg-text {
+  background: var(--coral-soft);
+  border: 1px solid var(--coral-line);
+  color: var(--coral-ink);
+  padding: 10px 14px;
+  border-radius: var(--r-3);
+}
+
+/* thinking / loading bubble (real in-flight, not a fake typewriter) */
+.copilot-loom .chat-thinking {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-4);
+}
+
+/* empty + error states */
+.copilot-loom .chat-empty {
+  font-size: 12.5px;
+  color: var(--ink-3);
+  line-height: 1.55;
+  padding: var(--s-3) 0;
+}
+.copilot-loom .chat-error {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  color: var(--again-ink);
+  background: var(--again-soft, var(--paper-sunk));
+  border: 1px solid var(--again-line, var(--line));
+  border-radius: var(--r-2);
+  padding: 8px 12px;
+}
+
+/* footer: quick-chips + composer */
+.copilot-loom .chat-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  margin-bottom: var(--s-3);
+}
+.copilot-loom .composer {
+  display: flex;
+  gap: var(--s-2);
+  align-items: flex-end;
+}
+.copilot-loom .composer textarea {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  padding: 10px 12px;
+  font-size: 14px;
+  line-height: 1.5;
+  resize: none;
+  min-height: 40px;
+  max-height: 160px;
+  background: var(--paper);
+  font-family: var(--font-sans);
+  color: var(--ink);
+}
+.copilot-loom .composer textarea:focus-visible {
+  outline: none;
+  border-color: var(--coral);
+  box-shadow: var(--shadow-focus);
+}
+
+/* thinking icon spin (global keyframe; only the .spin icon uses it) */
+.spin {
+  animation: loom-spin 0.9s linear infinite;
+}
+@keyframes loom-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
