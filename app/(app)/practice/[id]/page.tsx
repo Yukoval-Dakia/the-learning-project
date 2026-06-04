@@ -491,9 +491,9 @@ export default function PracticeAnswerPage() {
                 <span className="badge tone-neutral">
                   <LoomIcon name="layers" size={12} />第 {section.section_index + 1} 节
                 </span>
-                {section.knowledge_focus.map((k) => (
-                  <span key={k} className="chip chip-k mono">
-                    {k}
+                {section.knowledge_focus.map((id, i) => (
+                  <span key={id} className="chip chip-k mono">
+                    {section.knowledge_focus_names[i] ?? id}
                   </span>
                 ))}
               </div>
