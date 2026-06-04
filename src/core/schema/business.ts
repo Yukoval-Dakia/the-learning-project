@@ -289,10 +289,56 @@ export const VariantVerificationResult = z.object({
 });
 export type VariantVerificationResultT = z.infer<typeof VariantVerificationResult>;
 
+// ---------- ToolState (tool_quiz artifact.tool_state) ----------
+//
+// U5 (YUK-203) ToolStateT v2 — additive `sections?` variant promoted to a
+// first-class shape (CO §5.1). NOT a discriminatedUnion('version'): the flat
+// `question_ids[]` form must coexist on the SAME artifact for embedded_check +
+// legacy quizzes, so a discriminator would break back-compat over the artifact
+// scan window. `sections?` optional is purely additive — every existing flat
+// quiz row (and every U4 row whose plan lives in `session_meta`) still parses
+// with `sections === undefined`.
+//
+// RL4: tool_state is jsonb, opaque to `pnpm audit:schema`. The load-bearing
+// guard is the Zod parse barrier exercised at every write point (write_review_
+// plan + the U5 paper submit/adaptation paths); Artifact.parse() referencing
+// this schema is defense-in-depth on read.
+
+export const ToolStateAssignment = z.object({
+  question_id: z.string(),
+  // StructuredQuestion.id of the part this assignment targets (CO §2.2);
+  // null/undefined for atomic questions (the whole question is one slot).
+  part_ref: z.string().optional(),
+  primary_knowledge_id: z.string(),
+  secondary_knowledge_ids: z.array(z.string()).default([]),
+  selection_reason: z.string(),
+  // Snapshot blob of the review profile state at selection time. Narrow later
+  // once the shape stabilizes (CO §5.1); kept open so producers don't fork the
+  // schema per snapshot key.
+  review_profile_snapshot: z.record(z.unknown()),
+});
+export type ToolStateAssignmentT = z.infer<typeof ToolStateAssignment>;
+
+export const ToolStateSection = z.object({
+  knowledge_focus: z.array(z.string()),
+  // Free string at the schema layer (may carry other section-policy hints).
+  // The U5 paper submit handler treats EXACTLY 'judge_now_show_later' as the
+  // visible_to_user:false trigger (judge runs now, feedback buffered until the
+  // paper completes); every other value (incl. the default 'immediate' / unset)
+  // → immediate-visible. See app/api/practice/.../submit handler (§4.6 critic #5).
+  feedback_policy: z.string(),
+  adaptation_policy: z.string(),
+  assignments: z.array(ToolStateAssignment),
+});
+export type ToolStateSectionT = z.infer<typeof ToolStateSection>;
+
 export const ToolState = z.object({
   question_ids: z.array(z.string()),
   session_meta: z.record(z.unknown()).nullish(),
+  // U5 v2 — promoted first-class structured plan. Optional → back-compat.
+  sections: z.array(ToolStateSection).optional(),
 });
+export type ToolStateT = z.infer<typeof ToolState>;
 
 // AgentRef: a uniform "who did this" stamp on question.created_by /
 // judgment.judged_by / artifact.generated_by. Catchall allows callers to add
