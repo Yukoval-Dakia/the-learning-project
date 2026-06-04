@@ -103,6 +103,13 @@ export async function runAttributionAndWriteJudgeEvent(
     );
 
     const judgeId = newId();
+    // D6 (U4 L-stamp): attribution is a non-routed judge — it runs AttributionTask
+    // directly (above), never through JudgeInvoker. So the version source here is
+    // the resolved SubjectProfile already in scope, not the invoker telemetry.
+    // Stamp `profile_version` only; `capability_ref` / `judge_route` stay
+    // undefined (attribution has no routed judge capability) — both remain
+    // optional on JudgeOnEvent.payload. See docs/design/2026-06-04-u0-decisions.md D6.
+    const profileVersion = (params.subjectProfile ?? defaultSubjectProfile).version;
     await writeEvent(params.db, {
       id: judgeId,
       session_id: null,
@@ -120,6 +127,7 @@ export async function runAttributionAndWriteJudgeEvent(
           confidence: parsed.confidence,
         },
         referenced_knowledge_ids: params.referencedKnowledgeIds ?? [],
+        profile_version: profileVersion,
       },
       caused_by_event_id: params.attemptEventId,
       task_run_id: result.task_run_id ?? null,
