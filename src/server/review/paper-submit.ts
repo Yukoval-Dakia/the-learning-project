@@ -209,6 +209,11 @@ export async function submitPaperSlot(
         // visibility gate (F1/Q1). Omit when visible (default) to keep the
         // payload minimal + back-compat; set false to buffer feedback.
         ...(visibleToUser ? {} : { visible_to_user: false }),
+        // U5 (YUK-203): store judge verdict in payload so page-reload / reveal
+        // can reconstruct outcome+score without re-running the judge. D6 not
+        // broken — three stamps above are unchanged; these are new fields.
+        coarse_outcome: coarseOutcome,
+        ...(judgeResult.score != null ? { score: judgeResult.score } : {}),
       },
       caused_by_event_id: attemptEventId,
       created_at: now,

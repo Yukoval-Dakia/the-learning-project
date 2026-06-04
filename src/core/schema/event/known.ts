@@ -78,6 +78,14 @@ export const JudgeOnEvent = z.object({
     // DERIVED at read time: 可见 = visible_to_user !== false || session completed.
     // The single-question /api/review/submit embed path never sets this.
     visible_to_user: z.boolean().optional(),
+    // U5 (YUK-203) — paper judge result stored in payload so the read layer
+    // (paper-detail.ts) can reconstruct the coarse_outcome / score on page reload
+    // without re-running the judge. Optional so every historical judge event
+    // (pre-U5 + the single-question /api/review/submit embed path) still parses.
+    // coarse_outcome is the judge's verdict ('correct'/'partial'/'incorrect'/
+    // 'unsupported'); score is [0,1] or null.
+    coarse_outcome: z.string().optional(),
+    score: z.number().optional(),
   }),
   ...baseOptionalFields,
 });

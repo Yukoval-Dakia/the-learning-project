@@ -485,7 +485,7 @@ export async function getPaperDetail(
       if (frozenRow) {
         const judgeRow = frozenRow.event_id ? judgeMap.get(frozenRow.event_id) : null;
         const judgePayload = judgeRow?.payload as
-          | { visible_to_user?: boolean; score?: number }
+          | { visible_to_user?: boolean; coarse_outcome?: string; score?: number }
           | null
           | undefined;
         const visibleToUser = judgePayload?.visible_to_user;
@@ -497,10 +497,12 @@ export async function getPaperDetail(
           // reference_md lives on the question row — fetched in referenceMap (step 4).
           // Null when question is missing/orphaned or has no reference answer.
           const refMd = referenceMap.get(slot.question_id) ?? null;
+          // coarse_outcome is written into the judge payload by paper-submit (fix #2).
+          // Fall back to 'unknown' for pre-fix judge events that lack it.
           submission = {
             submitted: true,
             visible_to_user: true,
-            outcome: judgeRow?.outcome ?? 'unknown',
+            outcome: judgePayload?.coarse_outcome ?? 'unknown',
             score: (judgePayload?.score as number | null | undefined) ?? null,
             answer_md: answerMd,
             answer_image_refs: answerImageRefs,
