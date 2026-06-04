@@ -8756,5 +8756,156 @@ button.seg-sm {
 @keyframes loom-spin {
   to {
     transform: rotate(360deg);
+   LOOM MISTAKES LAYER — Wave 2 (YUK-169)
+   /mistakes (错题本) card + chrome classes ported additively from
+   loom-prototype @ f85aca6d (screen-mistakes.jsx MistakeCard).
+   Tokens-only; no new hues.
+
+   SCOPING: every rule is prefixed with .mistakes-loom (page root
+   wrapper) — siblings .today-loom / .knowledge-loom set the precedent.
+   Shared classes already in globals are reused, NOT redefined here:
+     .page-head / .eyebrow / .page-head-row / .page-title / .page-lead
+     · .hero-cta · .chip / .chip-k · .badge · .card* · .grid
+     · .serif / .mono / .wenyan · Stateful / EmptyState / SkLines.
+   New, grep=0 classes (mistake-*, cmp-*, kp-chip, attr/state clusters)
+   are also scoped under .mistakes-loom for safety.
+   ============================================================ */
+
+/* list stagger — reuses the global @keyframes loom-rise (defined in the
+   today-loom layer); only the .stagger selectors are re-declared here so
+   the /mistakes list animates without touching the today-loom block. */
+.mistakes-loom .stagger > * {
+  opacity: 1;
+}
+@media screen and (prefers-reduced-motion: no-preference) {
+  .mistakes-loom .stagger > * {
+    animation: loom-rise var(--dur-slow) var(--ease-out) both;
+  }
+}
+.mistakes-loom .stagger > *:nth-child(1) {
+  animation-delay: 0.02s;
+}
+.mistakes-loom .stagger > *:nth-child(2) {
+  animation-delay: 0.06s;
+}
+.mistakes-loom .stagger > *:nth-child(3) {
+  animation-delay: 0.1s;
+}
+.mistakes-loom .stagger > *:nth-child(4) {
+  animation-delay: 0.14s;
+}
+.mistakes-loom .stagger > *:nth-child(5) {
+  animation-delay: 0.18s;
+}
+.mistakes-loom .stagger > *:nth-child(n + 6) {
+  animation-delay: 0.22s;
+}
+
+/* mistake card */
+.mistakes-loom .mistake-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.mistakes-loom .mistake-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+.mistakes-loom .mistake-q {
+  font-size: var(--fs-body);
+  line-height: var(--lh-prose);
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-width: 0;
+}
+.mistakes-loom .mistake-time {
+  flex: none;
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+  padding-top: 2px;
+}
+
+/* 误 / (正 dropped — see preflight §4) comparison */
+.mistakes-loom .mistake-cmp {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.mistakes-loom .mistake-cmp-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  min-width: 0;
+}
+.mistakes-loom .cmp-label {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  letter-spacing: var(--ls-wide);
+  color: var(--again-ink);
+}
+.mistakes-loom .cmp-wrong {
+  font-size: var(--fs-caption);
+  line-height: var(--lh-prose);
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-width: 0;
+}
+
+/* meta row — knowledge chips + state/cause cluster */
+.mistakes-loom .mistake-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+.mistakes-loom .kp-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+  min-width: 0;
+}
+.mistakes-loom .kp-chip {
+  text-decoration: none;
+  cursor: pointer;
+}
+.mistakes-loom .mistake-state-cluster {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+/* footer — event-chain link (inline expansion dropped, see preflight §4) */
+.mistakes-loom .mistake-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+.mistakes-loom .mistake-evlink {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  font-size: var(--fs-meta);
+  letter-spacing: var(--ls-wide);
+  color: var(--coral);
+  text-decoration: none;
+}
+.mistakes-loom .mistake-evlink:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 640px) {
+  .mistakes-loom .mistake-top {
+    flex-direction: column;
+    gap: var(--s-1);
   }
 }
