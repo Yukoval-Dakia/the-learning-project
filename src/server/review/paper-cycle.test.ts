@@ -16,9 +16,10 @@
 // reference_md) — no LLM / runTask mock needed.
 
 import { answer, artifact, event, learning_session, question } from '@/db/schema';
+import * as invokerModule from '@/server/judge/invoker';
 import { Review } from '@/server/session';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { autosaveAnswerDraft, countAnsweredSlots, freezeAnswerDraft } from './answer-draft';
 import { submitPaperSlot } from './paper-submit';
@@ -604,6 +605,209 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
         db,
       ),
     ).rejects.toThrow(/status.*completed|cannot accept submissions/i);
+  });
+
+  // ── fix #5 (round-2 P1): duplicate submit is idempotent ─────────────────────
+  it('fix #5: duplicate submit (same content) returns existing ids, no new rows/events', async () => {
+    const db = testDb();
+    await seedQuestion('q1', 'true');
+    await seedPaper('paper1', ['q1']);
+    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
+
+    // First submit.
+    const first = await submitPaperSlot(
+      {
+        sessionId,
+        paperArtifactId: 'paper1',
+        questionId: 'q1',
+        answerMd: 'true',
+        primaryKnowledgeId: 'k1',
+        feedbackPolicy: 'immediate',
+      },
+      db,
+    );
+
+    // Second submit with identical content — must be idempotent.
+    const second = await submitPaperSlot(
+      {
+        sessionId,
+        paperArtifactId: 'paper1',
+        questionId: 'q1',
+        answerMd: 'true',
+        primaryKnowledgeId: 'k1',
+        feedbackPolicy: 'immediate',
+      },
+      db,
+    );
+
+    // Same ids returned.
+    expect(second.attemptEventId).toBe(first.attemptEventId);
+    expect(second.judgeEventId).toBe(first.judgeEventId);
+    expect(second.answerId).toBe(first.answerId);
+
+    // No duplicate frozen rows — exactly one frozen row for the slot.
+    const frozenRows = await db
+      .select()
+      .from(answer)
+      .where(
+        and(
+          eq(answer.session_id, sessionId),
+          eq(answer.question_id, 'q1'),
+          isNull(answer.submitted_at),
+        ),
+      );
+    expect(frozenRows).toHaveLength(0); // live draft was consumed by freeze
+
+    const allRows = await db
+      .select()
+      .from(answer)
+      .where(and(eq(answer.session_id, sessionId), eq(answer.question_id, 'q1')));
+    expect(allRows).toHaveLength(1); // exactly one frozen row, not two
+
+    // No duplicate events.
+    const judgeEvents = await db
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'judge'),
+          eq(event.subject_kind, 'event'),
+          eq(event.subject_id, first.attemptEventId),
+        ),
+      );
+    expect(judgeEvents).toHaveLength(1);
+  });
+
+  // ── fix #5 (round-2 P1): different content after reopen = new append ─────────
+  it('fix #5: different content after reopen-resubmit is NOT idempotent (appends)', async () => {
+    const db = testDb();
+    await seedQuestion('q1', 'true');
+    await seedPaper('paper1', ['q1']);
+    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
+
+    await submitPaperSlot(
+      {
+        sessionId,
+        paperArtifactId: 'paper1',
+        questionId: 'q1',
+        answerMd: 'true',
+        primaryKnowledgeId: 'k1',
+      },
+      db,
+    );
+
+    // Reopen, then resubmit with different content.
+    await Review.abandonReviewSession(db, sessionId);
+    await Review.reopenAbandonedReviewSession(db, sessionId);
+    const second = await submitPaperSlot(
+      {
+        sessionId,
+        paperArtifactId: 'paper1',
+        questionId: 'q1',
+        answerMd: 'false',
+        primaryKnowledgeId: 'k1',
+      },
+      db,
+    );
+
+    // Different answer_id — new append row.
+    const allRows = await db
+      .select()
+      .from(answer)
+      .where(and(eq(answer.session_id, sessionId), eq(answer.question_id, 'q1')));
+    expect(allRows).toHaveLength(2); // append-only: both frozen rows kept
+    expect(second.answerId).not.toBe(
+      allRows[0].id === second.answerId ? allRows[1].id : allRows[0].id,
+    );
+  });
+
+  // ── fix #6 (round-2 P2): flat quiz submit is allowed ─────────────────────────
+  it('fix #6: submitPaperSlot accepts a flat quiz slot (no structured sections)', async () => {
+    const db = testDb();
+    await seedQuestion('q1', 'true');
+    // Flat paper: question_ids only, no sections.
+    const now = new Date();
+    await db.insert(artifact).values({
+      id: 'flat_paper',
+      type: 'tool_quiz',
+      title: 'flat quiz',
+      knowledge_ids: [],
+      intent_source: 'quiz_gen',
+      source: 'ai_generated',
+      tool_kind: 'quiz_gen',
+      tool_state: { question_ids: ['q1'] } as never,
+      generation_status: 'ready',
+      verification_status: 'not_required',
+      history: [],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'flat_paper' });
+
+    // submitPaperSlot with primaryKnowledgeId=null (flat path — question-keyed FSRS).
+    const result = await submitPaperSlot(
+      {
+        sessionId,
+        paperArtifactId: 'flat_paper',
+        questionId: 'q1',
+        answerMd: 'true',
+        primaryKnowledgeId: null, // question-keyed FSRS fallback
+        feedbackPolicy: 'immediate',
+      },
+      db,
+    );
+
+    expect(result.coarseOutcome).toBe('correct');
+    expect(result.answerId).toBeTruthy();
+    expect(result.attemptEventId).toBeTruthy();
+
+    // Exactly one frozen row written.
+    const rows = await db
+      .select()
+      .from(answer)
+      .where(and(eq(answer.session_id, sessionId), eq(answer.question_id, 'q1')));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].submitted_at).not.toBeNull();
+  });
+
+  // ── fix #7 (round-2 P2): judge is skipped for invalid sessions ───────────────
+  it('fix #7: completed session is rejected BEFORE the judge is invoked', async () => {
+    const db = testDb();
+    await seedQuestion('q1', 'true');
+    await seedPaper('paper1', ['q1']);
+    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
+
+    await db
+      .update(learning_session)
+      .set({ status: 'completed' })
+      .where(eq(learning_session.id, sessionId));
+
+    // Spy on the invoker factory — if judge runs, invokeSpy will be called.
+    const invokeSpy = vi.fn();
+    vi.spyOn(invokerModule, 'createDefaultJudgeInvoker').mockReturnValue({
+      invoke: invokeSpy,
+    } as never);
+
+    try {
+      await expect(
+        submitPaperSlot(
+          {
+            sessionId,
+            paperArtifactId: 'paper1',
+            questionId: 'q1',
+            answerMd: 'true',
+            primaryKnowledgeId: 'k1',
+          },
+          db,
+        ),
+      ).rejects.toThrow(/status.*completed|cannot accept/i);
+
+      // Judge must not have been called.
+      expect(invokeSpy).not.toHaveBeenCalled();
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   // ── issue #4: autosave rejects misbound / wrong-state sessions ────────────────

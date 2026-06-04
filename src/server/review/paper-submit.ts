@@ -23,7 +23,7 @@ import { newId } from '@/core/ids';
 import { validateCauseAgainstProfile } from '@/core/schema/cause';
 import { db as defaultDb } from '@/db/client';
 import type { Db } from '@/db/client';
-import { question } from '@/db/schema';
+import { answer, event, question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { type FsrsSubjectKind, getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { ApiError } from '@/server/http/errors';
@@ -31,8 +31,8 @@ import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
 import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject-profile';
 import { scheduleReview } from '@/server/review/fsrs';
 import { ratingFromCoarseOutcome } from '@/server/review/judge-rating';
-import { eq, sql } from 'drizzle-orm';
-import { freezeAnswerDraft } from './answer-draft';
+import { and, desc, eq, isNull, not, sql } from 'drizzle-orm';
+import { assertSessionMutable, freezeAnswerDraft } from './answer-draft';
 
 // The feedback_policy sentinel that buffers feedback until paper completion
 // (critic #5). Any other value (incl. the default 'immediate' / unset) → the
@@ -82,6 +82,12 @@ export async function submitPaperSlot(
 ): Promise<PaperSubmitSlotResult> {
   const now = new Date();
 
+  // Fix #3: cheap non-locking pre-flight before the expensive judge call.
+  // Rejects stale/invalid sessions fast (completed, abandoned, misbound paper)
+  // without burning judge capacity. The FOR UPDATE inside the transaction below
+  // remains the authoritative TOCTOU guard.
+  await assertSessionMutable(db, input.sessionId, input.paperArtifactId);
+
   // Load the question for the judge invoker (same fields /review/submit reads).
   const qRows = await db.select().from(question).where(eq(question.id, input.questionId)).limit(1);
   const q = qRows[0];
@@ -123,8 +129,8 @@ export async function submitPaperSlot(
   // paper completes; everything else is immediately visible.
   const visibleToUser = input.feedbackPolicy !== HIDE_FEEDBACK_POLICY;
 
-  const attemptEventId = newId();
-  const judgeEventId = newId();
+  let attemptEventId = newId();
+  let judgeEventId = newId();
   let frozenAnswerId = '';
 
   const referencedKnowledgeIds = input.primaryKnowledgeId
@@ -182,6 +188,54 @@ export async function submitPaperSlot(
         `session ${input.sessionId} is in status '${sess.status}' and cannot accept submissions`,
         400,
       );
+    }
+
+    // Fix #1: idempotent resubmit guard — if the slot already has a frozen row
+    // with the same content_md, return the existing attempt/judge event ids
+    // without writing any new rows. This makes API-level retries and double-sends
+    // safe: the second request returns the same ids as the first and records no
+    // additional FSRS review, no duplicate events, no extra frozen rows.
+    //
+    // Content differs → legitimate reopen-resubmit (new content after
+    // abandon→reopen): fall through to the normal append path below.
+    const partRef = input.partRef ?? null;
+    const existingFrozen = await tx
+      .select({
+        id: answer.id,
+        event_id: answer.event_id,
+        content_md: answer.content_md,
+      })
+      .from(answer)
+      .where(
+        and(
+          eq(answer.session_id, input.sessionId),
+          eq(answer.question_id, input.questionId),
+          sql`COALESCE(${answer.part_ref}, '') = COALESCE(${partRef}, '')`,
+          not(isNull(answer.submitted_at)),
+        ),
+      )
+      .orderBy(desc(answer.submitted_at))
+      .limit(1);
+
+    const latestFrozen = existingFrozen[0];
+    if (latestFrozen?.event_id && latestFrozen.content_md === input.answerMd) {
+      // Same content already frozen — find the judge event for this attempt.
+      const judgeRows = await tx
+        .select({ id: event.id })
+        .from(event)
+        .where(
+          and(
+            eq(event.action, 'judge'),
+            eq(event.subject_kind, 'event'),
+            eq(event.subject_id, latestFrozen.event_id),
+          ),
+        )
+        .limit(1);
+      // Return existing ids — no new rows written.
+      attemptEventId = latestFrozen.event_id;
+      judgeEventId = judgeRows[0]?.id ?? judgeEventId; // fallback keeps the pre-generated id
+      frozenAnswerId = latestFrozen.id;
+      return; // exit the transaction callback
     }
 
     // Per-knowledge FSRS advisory lock (ADR-0028) — serializes read/compute/
