@@ -170,16 +170,18 @@ async function seedFsrsState(opts: {
   // jsonb column; tests build the FSRS state inline via mkFsrsState. unknown
   // keeps the helper agnostic without dragging the full FsrsStateSchemaT here.
   state: unknown;
+  subject_kind?: string;
+  last_review_event_id?: string | null;
 }) {
   const db = testDb();
   const now = new Date();
   await db.insert(material_fsrs_state).values({
     id: `f_${opts.question_id}`,
-    subject_kind: 'question',
+    subject_kind: opts.subject_kind ?? 'question',
     subject_id: opts.question_id,
     state: opts.state as never,
     due_at: opts.due_at,
-    last_review_event_id: null,
+    last_review_event_id: opts.last_review_event_id ?? null,
     updated_at: now,
   });
 }
@@ -246,6 +248,82 @@ describe('GET /api/review/due', () => {
       id: 'evt_attempt_q_due',
       correction_state: expect.objectContaining({ state: 'active' }),
     });
+  });
+
+  it('surfaces a due knowledge FSRS state by choosing a linked question', async () => {
+    const now = new Date();
+    const pastIso = new Date(now.getTime() - 2 * 86400 * 1000).toISOString();
+
+    await seedQuestion('q_for_k_due', { knowledge_ids: ['k_due'] });
+    await seedFsrsState({
+      question_id: 'k_due',
+      due_at: new Date(pastIso),
+      state: makeFsrsState({ due: pastIso }),
+      subject_kind: 'knowledge',
+    });
+
+    const res = await getReview();
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      rows: Array<{
+        id: string;
+        question_id: string;
+        fsrs_subject_kind?: string;
+        fsrs_subject_id?: string;
+        fsrs_state: unknown;
+      }>;
+    };
+
+    expect(body.rows).toHaveLength(1);
+    expect(body.rows[0]).toMatchObject({
+      id: 'q_for_k_due',
+      question_id: 'q_for_k_due',
+      fsrs_subject_kind: 'knowledge',
+      fsrs_subject_id: 'k_due',
+    });
+    expect(body.rows[0].fsrs_state).not.toBeNull();
+  });
+
+  it('rotates away from the last reviewed question for a due knowledge state when another variant exists', async () => {
+    const now = new Date();
+    const pastIso = new Date(now.getTime() - 2 * 86400 * 1000).toISOString();
+
+    await seedQuestion('q_last_variant', { knowledge_ids: ['k_rotate'] });
+    await seedQuestion('q_next_variant', { knowledge_ids: ['k_rotate'] });
+    await testDb()
+      .insert(event)
+      .values({
+        id: 'evt_review_k_rotate',
+        session_id: null,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'review',
+        subject_kind: 'question',
+        subject_id: 'q_last_variant',
+        outcome: 'success',
+        payload: {
+          fsrs_rating: 'good',
+          fsrs_state_after: makeFsrsState({ due: pastIso }),
+          referenced_knowledge_ids: ['k_rotate'],
+        },
+        caused_by_event_id: null,
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: new Date(now.getTime() - 86400 * 1000),
+      });
+    await seedFsrsState({
+      question_id: 'k_rotate',
+      due_at: new Date(pastIso),
+      state: makeFsrsState({ due: pastIso }),
+      subject_kind: 'knowledge',
+      last_review_event_id: 'evt_review_k_rotate',
+    });
+
+    const res = await getReview();
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { rows: Array<{ question_id: string }> };
+
+    expect(body.rows.map((row) => row.question_id)).toEqual(['q_next_variant']);
   });
 
   it('returns empty rows when no cards are due', async () => {

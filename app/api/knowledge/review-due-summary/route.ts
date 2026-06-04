@@ -4,11 +4,9 @@
 //   → { now: ISO, due_soon_window_hours: 24,
 //       summary: { [knowledge_id]: { overdue, due_soon } } }
 //
-// FSRS due is tracked per QUESTION (`material_fsrs_state`, subject_kind =
-// 'question', subject_id = question.id). `question.knowledge_ids` (jsonb
-// string[]) links a question to one or more knowledge nodes. We join
-// material_fsrs_state → question, unnest knowledge_ids, and aggregate the count
-// of due questions per knowledge_id in a single GROUP BY (no N+1):
+// YUK-203 P3: FSRS due is tracked per KNOWLEDGE point
+// (`material_fsrs_state`, subject_kind='knowledge', subject_id=knowledge.id).
+// Aggregate due knowledge cards directly in a single GROUP BY (no N+1):
 //
 //   - overdue   : due_at <= now
 //   - due_soon  : now < due_at < now + DUE_SOON_WINDOW_HOURS
@@ -19,11 +17,7 @@
 // at `now` is overdue, not due_soon. due_soon therefore starts strictly after
 // now (> now), keeping the two bands a clean partition with no gap/overlap.
 //
-// The join/predicate shape also mirrors `executeGetReviewDue`: same
-// material_fsrs_state ⨝ question on subject_id, same subject_kind = 'question'
-// gate, same per-question knowledge_ids fan-out — but aggregated for the graph
-// indicator instead of returning per-question rows. The `material_fsrs_due_idx`
-// (on due_at) backs the due_at range scan.
+// The `material_fsrs_due_idx` (on due_at) backs the due_at range scan.
 //
 // `never_reviewed` (questions with failure attempts but no FSRS row) is
 // deliberately OMITTED: deriving it needs the event-log failure scan +
@@ -36,7 +30,7 @@
 // auth-agnostic like its neighbours (route.ts / edges/route.ts).
 
 import { db } from '@/db/client';
-import { material_fsrs_state, question } from '@/db/schema';
+import { material_fsrs_state } from '@/db/schema';
 import { errorResponse } from '@/server/http/errors';
 import { sql } from 'drizzle-orm';
 
@@ -67,34 +61,22 @@ export async function GET(): Promise<Response> {
     const nowIso = now.toISOString();
     const soonCutoffIso = soonCutoff.toISOString();
 
-    // Single aggregate query. Postgres forbids a set-returning function
-    // (jsonb_array_elements_text) directly in GROUP BY, so the unnest happens in
-    // an inner subquery (one (knowledge_id, due_at) row per question→node link;
-    // XC-4: knowledge_ids is jsonb, NOT pg text[], hence jsonb_array_elements_text
-    // not a pg array op), and the outer query groups by knowledge_id with FILTER
-    // aggregates for the two bands. Upper bound `due_at < soonCutoff` is applied
-    // in the subquery so the material_fsrs_due_idx (on due_at) backs the range
-    // scan and far-future cards are dropped before the group-by; there is no
-    // lower bound because overdue cards may be arbitrarily far in the past.
+    // Single aggregate query. Upper bound `due_at < soonCutoff` keeps far-future
+    // cards out before the group-by; there is no lower bound because overdue
+    // knowledge cards may be arbitrarily far in the past.
     const rows = (await db.execute(sql<{
       knowledge_id: string;
       overdue: number;
       due_soon: number;
     }>`
       SELECT
-        link.knowledge_id AS knowledge_id,
-        count(*) FILTER (WHERE link.due_at <= ${nowIso}::timestamptz)::int AS overdue,
-        count(*) FILTER (WHERE link.due_at > ${nowIso}::timestamptz AND link.due_at < ${soonCutoffIso}::timestamptz)::int AS due_soon
-      FROM (
-        SELECT
-          jsonb_array_elements_text(${question.knowledge_ids}) AS knowledge_id,
-          ${material_fsrs_state.due_at} AS due_at
-        FROM ${material_fsrs_state}
-        INNER JOIN ${question} ON ${question.id} = ${material_fsrs_state.subject_id}
-        WHERE ${material_fsrs_state.subject_kind} = 'question'
-          AND ${material_fsrs_state.due_at} < ${soonCutoffIso}::timestamptz
-      ) AS link
-      GROUP BY link.knowledge_id
+        ${material_fsrs_state.subject_id} AS knowledge_id,
+        count(*) FILTER (WHERE ${material_fsrs_state.due_at} <= ${nowIso}::timestamptz)::int AS overdue,
+        count(*) FILTER (WHERE ${material_fsrs_state.due_at} > ${nowIso}::timestamptz AND ${material_fsrs_state.due_at} < ${soonCutoffIso}::timestamptz)::int AS due_soon
+      FROM ${material_fsrs_state}
+      WHERE ${material_fsrs_state.subject_kind} = 'knowledge'
+        AND ${material_fsrs_state.due_at} < ${soonCutoffIso}::timestamptz
+      GROUP BY ${material_fsrs_state.subject_id}
     `)) as unknown as Array<{ knowledge_id: string; overdue: number; due_soon: number }>;
 
     const summary: Record<string, ReviewDueNodeSummary> = {};

@@ -155,7 +155,7 @@ async function seedBacklinkRef(fromArtifactId: string, toArtifactId: string, blo
   });
 }
 
-async function seedEvent(id: string, knowledgeId: string) {
+async function seedEvent(id: string, knowledgeId: string, createdAt = new Date()) {
   const db = testDb();
   await db.insert(event).values({
     id,
@@ -170,7 +170,7 @@ async function seedEvent(id: string, knowledgeId: string) {
     caused_by_event_id: null,
     task_run_id: null,
     cost_micro_usd: null,
-    created_at: new Date(),
+    created_at: createdAt,
   });
 }
 
@@ -343,6 +343,43 @@ describe('loadKnowledgeNodePage', () => {
     expect(page?.backlinks).toHaveLength(1);
     expect(page?.backlinks[0].from_artifact_id).toBe('a-source');
     expect(page?.backlinks[0].from_block_id).toBe('blk1');
+    expect(page?.backlinks_by_type.note_hub).toHaveLength(1);
+    expect(page?.backlinks_by_type.note_hub[0].from_artifact_id).toBe('a-source');
+  });
+
+  it('groups backlinks by source artifact type for typed panels', async () => {
+    const db = testDb();
+    await seedKnowledge('k1', { name: '虚词' });
+    await seedAtomicArtifact('a-target', 'k1');
+    await seedSourceArtifact('src-hub', 'k1', 'note_hub');
+    await seedSourceArtifact('src-long', 'k1', 'note_long');
+    await seedSourceArtifact('src-quiz', 'k1', 'tool_quiz');
+    await seedBacklinkRef('src-hub', 'a-target', 'hub-block');
+    await seedBacklinkRef('src-long', 'a-target', 'long-block');
+    await seedBacklinkRef('src-quiz', 'a-target', 'quiz-block');
+
+    const page = await loadKnowledgeNodePage(db, 'k1');
+    expect(Object.keys(page?.backlinks_by_type ?? {}).sort()).toEqual([
+      'note_hub',
+      'note_long',
+      'tool_quiz',
+    ]);
+    expect(page?.backlinks_by_type.note_hub.map((b) => b.from_artifact_id)).toEqual(['src-hub']);
+    expect(page?.backlinks_by_type.note_long.map((b) => b.from_artifact_id)).toEqual(['src-long']);
+    expect(page?.backlinks_by_type.tool_quiz.map((b) => b.from_artifact_id)).toEqual(['src-quiz']);
+  });
+
+  it('derives a mastery_decay_bucket from last evidence recency', async () => {
+    const db = testDb();
+    await seedKnowledge('k1', { name: '虚词' });
+    const old = new Date(Date.now() - 35 * 86_400_000);
+    await seedEvent('ev-old-1', 'k1', old);
+    await seedEvent('ev-old-2', 'k1', old);
+    await seedEvent('ev-old-3', 'k1', old);
+
+    const page = await loadKnowledgeNodePage(db, 'k1');
+    expect(page?.evidence_count).toBe(3);
+    expect(page?.mastery_decay_bucket).toBe('stale');
   });
 
   // Bug 2 (Codex #193): archived parent must not surface a dead-link parent_name.

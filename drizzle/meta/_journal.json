@@ -190,6 +190,13 @@
       "when": 1780502400000,
       "tag": "0026_artifact_knowledge_ids_gin",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1780447934000,
+      "tag": "0027_knowledge_fsrs_state",
+      "breakpoints": true
     }
   ]
 }

@@ -727,14 +727,70 @@ export async function executeGetReviewDue(
   const input = GetReviewDueInputSchema.parse(raw);
   const limit = input.limit ?? 20;
   const now = new Date();
-  const dueConditions = [
+  type DueRow = {
+    question_id: string;
+    state: unknown;
+    due_at: Date;
+    prompt_md: string;
+    knowledge_ids: string[];
+  };
+  const dueRows: DueRow[] = [];
+  const usedDueQuestionIds = new Set<string>();
+  const knowledgeStateConditions = [
+    eq(material_fsrs_state.subject_kind, 'knowledge'),
+    lte(material_fsrs_state.due_at, now),
+  ];
+  if (input.knowledgeIds?.length) {
+    knowledgeStateConditions.push(inArray(material_fsrs_state.subject_id, input.knowledgeIds));
+  }
+  const dueKnowledgeStates = await ctx.db
+    .select({
+      knowledge_id: material_fsrs_state.subject_id,
+      state: material_fsrs_state.state,
+      due_at: material_fsrs_state.due_at,
+    })
+    .from(material_fsrs_state)
+    .where(and(...knowledgeStateConditions))
+    .orderBy(asc(material_fsrs_state.due_at), asc(material_fsrs_state.subject_id))
+    .limit(limit);
+
+  for (const due of dueKnowledgeStates) {
+    const qRows = await ctx.db
+      .select({
+        id: question.id,
+        prompt_md: question.prompt_md,
+        knowledge_ids: question.knowledge_ids,
+        created_at: question.created_at,
+      })
+      .from(question)
+      .where(
+        and(
+          sql`${question.knowledge_ids} @> ${JSON.stringify([due.knowledge_id])}::jsonb`,
+          sql`(${question.draft_status} IS NULL OR ${question.draft_status} <> 'draft')`,
+        ),
+      )
+      .orderBy(asc(question.created_at), asc(question.id))
+      .limit(10);
+    const selected = qRows.find((row) => !usedDueQuestionIds.has(row.id));
+    if (!selected) continue;
+    usedDueQuestionIds.add(selected.id);
+    dueRows.push({
+      question_id: selected.id,
+      state: due.state,
+      due_at: due.due_at,
+      prompt_md: selected.prompt_md,
+      knowledge_ids: selected.knowledge_ids ?? [],
+    });
+  }
+
+  const legacyQuestionConditions = [
     eq(material_fsrs_state.subject_kind, 'question'),
     lte(material_fsrs_state.due_at, now),
   ];
   if (input.knowledgeIds?.length) {
-    dueConditions.push(questionKnowledgeContainsAny(input.knowledgeIds));
+    legacyQuestionConditions.push(questionKnowledgeContainsAny(input.knowledgeIds));
   }
-  const dueRows = await ctx.db
+  const legacyDueRows = await ctx.db
     .select({
       question_id: material_fsrs_state.subject_id,
       state: material_fsrs_state.state,
@@ -744,22 +800,45 @@ export async function executeGetReviewDue(
     })
     .from(material_fsrs_state)
     .innerJoin(question, eq(question.id, material_fsrs_state.subject_id))
-    .where(and(...dueConditions))
+    .where(and(...legacyQuestionConditions))
     .orderBy(asc(material_fsrs_state.due_at), asc(question.created_at))
     .limit(limit);
+  for (const due of legacyDueRows) {
+    if (usedDueQuestionIds.has(due.question_id)) continue;
+    usedDueQuestionIds.add(due.question_id);
+    dueRows.push(due);
+  }
+  dueRows.sort((a, b) => {
+    const dueDelta = a.due_at.getTime() - b.due_at.getTime();
+    if (dueDelta !== 0) return dueDelta;
+    return a.question_id.localeCompare(b.question_id);
+  });
 
-  const existingFsrsIds = new Set(
-    (
-      await ctx.db
-        .select({ subject_id: material_fsrs_state.subject_id })
-        .from(material_fsrs_state)
-        .where(eq(material_fsrs_state.subject_kind, 'question'))
-    ).map((row) => row.subject_id),
+  const fsrsSubjectRows = await ctx.db
+    .select({
+      subject_kind: material_fsrs_state.subject_kind,
+      subject_id: material_fsrs_state.subject_id,
+    })
+    .from(material_fsrs_state)
+    .where(
+      or(
+        eq(material_fsrs_state.subject_kind, 'knowledge'),
+        eq(material_fsrs_state.subject_kind, 'question'),
+      ),
+    );
+  const existingKnowledgeFsrsIds = new Set(
+    fsrsSubjectRows.filter((row) => row.subject_kind === 'knowledge').map((row) => row.subject_id),
+  );
+  const existingQuestionFsrsIds = new Set(
+    fsrsSubjectRows.filter((row) => row.subject_kind === 'question').map((row) => row.subject_id),
   );
   const failures = await getFailureAttempts(ctx.db, { limit: 200 });
   const latestNeverReviewed = new Map<string, (typeof failures)[number]>();
   for (const failure of failures) {
-    if (existingFsrsIds.has(failure.question_id)) continue;
+    const knowledgeReviewed = failure.referenced_knowledge_ids.some((id) =>
+      existingKnowledgeFsrsIds.has(id),
+    );
+    if (knowledgeReviewed || existingQuestionFsrsIds.has(failure.question_id)) continue;
     if (
       input.knowledgeIds?.length &&
       !input.knowledgeIds.some((id) => failure.referenced_knowledge_ids.includes(id))

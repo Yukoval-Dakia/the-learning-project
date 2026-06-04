@@ -113,9 +113,40 @@ describe('POST /api/review/submit', () => {
     const fsrs = await db
       .select()
       .from(material_fsrs_state)
-      .where(eq(material_fsrs_state.subject_id, 'q1'));
+      .where(eq(material_fsrs_state.subject_id, 'k1'));
     expect(fsrs).toHaveLength(1);
+    expect(fsrs[0].subject_kind).toBe('knowledge');
     expect(fsrs[0].last_review_event_id).toBe(events[0].id);
+  });
+
+  it('writes FSRS projection per knowledge id, not per reviewed question', async () => {
+    await seedQuestion('q_knowledge_card', { knowledge_ids: ['k_fsrs'] });
+
+    const res = await POST(
+      submitReq({
+        activity_ref: { kind: 'question', id: 'q_knowledge_card' },
+        rating: 'good',
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      review_event: {
+        fsrs_subject_kind?: string;
+        fsrs_subject_ids?: string[];
+        question_id: string;
+      };
+    };
+
+    expect(body.review_event.question_id).toBe('q_knowledge_card');
+    expect(body.review_event.fsrs_subject_kind).toBe('knowledge');
+    expect(body.review_event.fsrs_subject_ids).toEqual(['k_fsrs']);
+
+    const rows = await testDb().select().from(material_fsrs_state);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      subject_kind: 'knowledge',
+      subject_id: 'k_fsrs',
+    });
   });
 
   it('second review (existing fsrs_state with ISO string dates) → Plan F1 coercion works', async () => {
@@ -313,8 +344,9 @@ describe('POST /api/review/submit', () => {
     const rows = await db
       .select()
       .from(material_fsrs_state)
-      .where(eq(material_fsrs_state.subject_id, 'q1'));
+      .where(eq(material_fsrs_state.subject_id, 'k1'));
     expect(rows).toHaveLength(1);
+    expect(rows[0].subject_kind).toBe('knowledge');
     const events = await db
       .select()
       .from(event)
@@ -651,8 +683,9 @@ describe('POST /api/review/submit', () => {
     const stateRows = await db
       .select()
       .from(material_fsrs_state)
-      .where(eq(material_fsrs_state.subject_id, 'q1'));
+      .where(eq(material_fsrs_state.subject_id, 'k1'));
     expect(stateRows).toHaveLength(1);
+    expect(stateRows[0].subject_kind).toBe('knowledge');
     const finalState = stateRows[0].state as { reps: number };
     // Without locking, both reads see reps=0 and both write reps=1 → finalState.reps=1 (torn).
     // With locking, second sees reps=1 and writes reps=2.

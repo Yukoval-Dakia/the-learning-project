@@ -9,7 +9,7 @@
 import type { Db } from '@/db/client';
 import { material_fsrs_state, mistake_variant, question } from '@/db/schema';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
-import { getFailureAttempts } from '@/server/events/queries';
+import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
 import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 // P5.1 / YUK-143 — snippet cap + courtesy default sourced from budgets.ts.
@@ -104,10 +104,31 @@ async function loadQuestionPrompts(db: Db, questionIds: string[]): Promise<Map<s
 
 async function loadFsrsStates(
   db: Db,
-  questionIds: string[],
+  failures: FailureAttempt[],
 ): Promise<Map<string, { due_at: Date }>> {
+  const questionIds = Array.from(new Set(failures.map((failure) => failure.question_id)));
   if (questionIds.length === 0) return new Map();
-  const rows = await db
+  const knowledgeIds = Array.from(
+    new Set(failures.flatMap((failure) => failure.referenced_knowledge_ids)),
+  );
+  const knowledgeRows =
+    knowledgeIds.length === 0
+      ? []
+      : await db
+          .select({
+            subject_id: material_fsrs_state.subject_id,
+            due_at: material_fsrs_state.due_at,
+          })
+          .from(material_fsrs_state)
+          .where(
+            and(
+              eq(material_fsrs_state.subject_kind, 'knowledge'),
+              inArray(material_fsrs_state.subject_id, knowledgeIds),
+            ),
+          );
+  const dueByKnowledgeId = new Map(knowledgeRows.map((r) => [r.subject_id, { due_at: r.due_at }]));
+
+  const legacyQuestionRows = await db
     .select({ subject_id: material_fsrs_state.subject_id, due_at: material_fsrs_state.due_at })
     .from(material_fsrs_state)
     .where(
@@ -116,7 +137,22 @@ async function loadFsrsStates(
         inArray(material_fsrs_state.subject_id, questionIds),
       ),
     );
-  return new Map(rows.map((r) => [r.subject_id, { due_at: r.due_at }]));
+  const legacyByQuestionId = new Map(
+    legacyQuestionRows.map((r) => [r.subject_id, { due_at: r.due_at }]),
+  );
+
+  const out = new Map<string, { due_at: Date }>();
+  for (const failure of failures) {
+    let selected: { due_at: Date } | null = null;
+    for (const knowledgeId of failure.referenced_knowledge_ids) {
+      const state = dueByKnowledgeId.get(knowledgeId);
+      if (!state) continue;
+      if (!selected || state.due_at < selected.due_at) selected = state;
+    }
+    selected = selected ?? legacyByQuestionId.get(failure.question_id) ?? null;
+    if (selected) out.set(failure.question_id, selected);
+  }
+  return out;
 }
 
 async function loadVariants(
@@ -176,8 +212,10 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
     : withCause;
 
   // FSRS state lookup + dueWithinDays filter.
-  const allQids = Array.from(new Set(byCause.map((x) => x.fa.question_id)));
-  const fsrsMap = await loadFsrsStates(ctx.db, allQids);
+  const fsrsMap = await loadFsrsStates(
+    ctx.db,
+    byCause.map((x) => x.fa),
+  );
   const dueCutoff =
     filter.dueWithinDays !== undefined
       ? new Date(Date.now() + filter.dueWithinDays * 86_400_000)

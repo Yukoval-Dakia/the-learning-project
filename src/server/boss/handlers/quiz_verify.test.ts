@@ -132,14 +132,14 @@ async function countVerifyEvents(questionId: string): Promise<number> {
   return rows.length;
 }
 
-async function fsrsRowCount(questionId: string): Promise<number> {
+async function fsrsRowCount(subjectKind: string, subjectId: string): Promise<number> {
   const rows = await testDb()
     .select({ id: material_fsrs_state.id })
     .from(material_fsrs_state)
     .where(
       and(
-        eq(material_fsrs_state.subject_kind, 'question'),
-        eq(material_fsrs_state.subject_id, questionId),
+        eq(material_fsrs_state.subject_kind, subjectKind),
+        eq(material_fsrs_state.subject_id, subjectId),
       ),
     );
   return rows.length;
@@ -178,8 +178,10 @@ describe('runQuizVerify', () => {
     const rows = await testDb().select().from(question).where(eq(question.id, 'q1'));
     expect(rows[0].draft_status).toBe('active');
 
-    // Q6 — FSRS enroll: a material_fsrs_state row now exists (question in pool).
-    expect(await fsrsRowCount('q1')).toBe(1);
+    // YUK-203 P3 — FSRS enroll is per knowledge point; the verified question is
+    // just the current probe chosen when that knowledge becomes due.
+    expect(await fsrsRowCount('knowledge', 'k1')).toBe(1);
+    expect(await fsrsRowCount('question', 'q1')).toBe(0);
 
     const meta = await readMeta('q1');
     expect((meta?.verification as Record<string, unknown>)?.status).toBe('verified');
@@ -207,7 +209,8 @@ describe('runQuizVerify', () => {
     expect(result.status).toBe('failed');
     const rows = await testDb().select().from(question).where(eq(question.id, 'q2'));
     expect(rows[0].draft_status).toBe('draft');
-    expect(await fsrsRowCount('q2')).toBe(0);
+    expect(await fsrsRowCount('knowledge', 'k1')).toBe(0);
+    expect(await fsrsRowCount('question', 'q2')).toBe(0);
     const meta = await readMeta('q2');
     expect((meta?.verification as Record<string, unknown>)?.status).toBe('failed');
     expect(await countVerifyEvents('q2')).toBe(1);
@@ -228,7 +231,8 @@ describe('runQuizVerify', () => {
     expect(result.copy_safety_verdict).toBe('too_close');
     const rows = await testDb().select().from(question).where(eq(question.id, 'q3'));
     expect(rows[0].draft_status).toBe('draft');
-    expect(await fsrsRowCount('q3')).toBe(0);
+    expect(await fsrsRowCount('knowledge', 'k1')).toBe(0);
+    expect(await fsrsRowCount('question', 'q3')).toBe(0);
     const meta = await readMeta('q3');
     expect((meta?.verification as Record<string, unknown>)?.status).toBe('needs_review');
   });
@@ -250,7 +254,8 @@ describe('runQuizVerify', () => {
     expect(result.status).toBe('needs_review');
     const rows = await testDb().select().from(question).where(eq(question.id, 'q4'));
     expect(rows[0].draft_status).toBe('draft');
-    expect(await fsrsRowCount('q4')).toBe(0);
+    expect(await fsrsRowCount('knowledge', 'k1')).toBe(0);
+    expect(await fsrsRowCount('question', 'q4')).toBe(0);
   });
 
   it('idempotency: a second run skips (no duplicate event, no re-run of the LLM)', async () => {
@@ -267,7 +272,8 @@ describe('runQuizVerify', () => {
     expect(runTaskFn).toHaveBeenCalledTimes(1);
     // exactly one verify event, one fsrs row.
     expect(await countVerifyEvents('q5')).toBe(1);
-    expect(await fsrsRowCount('q5')).toBe(1);
+    expect(await fsrsRowCount('knowledge', 'k1')).toBe(1);
+    expect(await fsrsRowCount('question', 'q5')).toBe(0);
   });
 
   it('idempotency: a first transient failure does NOT short-circuit the retry', async () => {
@@ -293,7 +299,8 @@ describe('runQuizVerify', () => {
     expect(rows[0].draft_status).toBe('active');
     // two verify events (one transient-error, one terminal success) + one fsrs row.
     expect(await countVerifyEvents('q5b')).toBe(2);
-    expect(await fsrsRowCount('q5b')).toBe(1);
+    expect(await fsrsRowCount('knowledge', 'k1')).toBe(1);
+    expect(await fsrsRowCount('question', 'q5b')).toBe(0);
   });
 
   it('does NOT promote when overall=pass but a structured check verdict is fail', async () => {
@@ -310,7 +317,8 @@ describe('runQuizVerify', () => {
     expect(result.status).toBe('needs_review');
     const rows = await testDb().select().from(question).where(eq(question.id, 'q7'));
     expect(rows[0].draft_status).toBe('draft');
-    expect(await fsrsRowCount('q7')).toBe(0);
+    expect(await fsrsRowCount('knowledge', 'k1')).toBe(0);
+    expect(await fsrsRowCount('question', 'q7')).toBe(0);
   });
 
   it('skips a non-quiz_gen question', async () => {
@@ -350,7 +358,8 @@ describe('buildQuizVerifyHandler', () => {
     const qb = await testDb().select().from(question).where(eq(question.id, 'qb'));
     expect(qa[0].draft_status).toBe('active');
     expect(qb[0].draft_status).toBe('active');
-    expect(await fsrsRowCount('qa')).toBe(1);
-    expect(await fsrsRowCount('qb')).toBe(1);
+    expect(await fsrsRowCount('knowledge', 'k1')).toBe(1);
+    expect(await fsrsRowCount('question', 'qa')).toBe(0);
+    expect(await fsrsRowCount('question', 'qb')).toBe(0);
   });
 });

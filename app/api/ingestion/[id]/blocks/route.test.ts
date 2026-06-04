@@ -3,7 +3,7 @@
 // Reads question_block rows for one session, returns them ordered by
 // created_at asc so the UI shows them in extraction order.
 
-import { learning_session, question_block } from '@/db/schema';
+import { event, learning_session, question_block } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { GET } from './route';
@@ -38,6 +38,8 @@ async function seedBlock(opts: {
   created_at?: Date;
   source_asset_ids?: string[];
   image_refs?: string[];
+  // biome-ignore lint/suspicious/noExplicitAny: tests pass arbitrary figure json through jsonb
+  figures?: any[];
 }): Promise<void> {
   const db = testDb();
   const now = opts.created_at ?? new Date();
@@ -49,7 +51,7 @@ async function seedBlock(opts: {
     page_spans: [],
     extracted_prompt_md: opts.prompt ?? null,
     structured: null,
-    figures: [],
+    figures: opts.figures ?? [],
     layout_quality: opts.layout ?? 'structured',
     reference_md: null,
     wrong_answer_md: null,
@@ -124,7 +126,7 @@ describe('GET /api/ingestion/[id]/blocks', () => {
     expect(body.rows.map((r) => r.id)).toEqual(['a']);
   });
 
-  it('surfaces layout_quality + image_refs + source_asset_ids on the wire', async () => {
+  it('surfaces layout_quality + image_refs + source_asset_ids + figures on the wire', async () => {
     await seedSession('sess1');
     await seedBlock({
       id: 'b1',
@@ -132,6 +134,16 @@ describe('GET /api/ingestion/[id]/blocks', () => {
       layout: 'partial',
       source_asset_ids: ['asset_a', 'asset_b'],
       image_refs: ['asset_a'],
+      figures: [
+        {
+          asset_id: 'fig_a',
+          role: 'diagram',
+          source_page_index: 0,
+          source_bbox: { x: 0, y: 0, width: 0.5, height: 0.5 },
+          attached_to_index: 'stem',
+          attach_confidence: 'low',
+        },
+      ],
     });
     const res = await getBlocks('sess1');
     const body = (await res.json()) as {
@@ -139,10 +151,68 @@ describe('GET /api/ingestion/[id]/blocks', () => {
         layout_quality: string;
         image_refs: string[];
         source_asset_ids: string[];
+        figures: Array<{ asset_id: string; attached_to_index: string }>;
       }>;
     };
     expect(body.rows[0].layout_quality).toBe('partial');
     expect(body.rows[0].image_refs).toEqual(['asset_a']);
     expect(body.rows[0].source_asset_ids).toEqual(['asset_a', 'asset_b']);
+    expect(body.rows[0].figures[0]).toMatchObject({
+      asset_id: 'fig_a',
+      attached_to_index: 'stem',
+    });
+  });
+
+  it('projects the latest auto-enroll observation for each block', async () => {
+    await seedSession('sess1');
+    await seedBlock({ id: 'b1', session_id: 'sess1' });
+    await testDb()
+      .insert(event)
+      .values({
+        id: 'evt_observe_b1',
+        session_id: null,
+        actor_kind: 'agent',
+        actor_ref: 'workflow_judge',
+        action: 'experimental:auto_enroll_observed',
+        subject_kind: 'question_block',
+        subject_id: 'b1',
+        outcome: 'success',
+        payload: {
+          mode: 'observe',
+          route: 'auto',
+          confidence: 0.91,
+          threshold: 0.85,
+          reasoning: 'high agreement',
+          suggested_knowledge_ids: ['k1', 'k2'],
+        },
+        caused_by_event_id: null,
+        affected_scopes: [],
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: new Date('2026-05-16T12:01:00Z'),
+        ingest_at: new Date('2026-05-16T12:01:00Z'),
+      });
+
+    const res = await getBlocks('sess1');
+    const body = (await res.json()) as {
+      rows: Array<{
+        auto_enroll_observation: {
+          event_id: string;
+          route: string;
+          confidence: number;
+          threshold: number;
+          reasoning: string;
+          suggested_knowledge_ids: string[];
+        } | null;
+      }>;
+    };
+    expect(body.rows[0].auto_enroll_observation).toMatchObject({
+      event_id: 'evt_observe_b1',
+      route: 'auto',
+      confidence: 0.91,
+      threshold: 0.85,
+      reasoning: 'high agreement',
+      suggested_knowledge_ids: ['k1', 'k2'],
+    });
   });
 });
