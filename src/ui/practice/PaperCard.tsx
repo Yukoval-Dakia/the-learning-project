@@ -39,15 +39,18 @@ export function PaperCard({ paper, onAction, past }: PaperCardProps) {
   const generating = paper.generation_status !== 'ready';
   const sessionStatus = s?.status ?? null;
 
+  const failed = paper.generation_status === 'failed';
   // Map real DB session statuses to display states.
   // 'started' | 'paused' → in_progress; 'completed' → done; null/abandoned → not_started
-  const displayState: 'generating' | 'in_progress' | 'done' | 'not_started' = generating
-    ? 'generating'
-    : sessionStatus === 'started' || sessionStatus === 'paused'
-      ? 'in_progress'
-      : sessionStatus === 'completed'
-        ? 'done'
-        : 'not_started';
+  const displayState: 'failed' | 'generating' | 'in_progress' | 'done' | 'not_started' = failed
+    ? 'failed'
+    : generating
+      ? 'generating'
+      : sessionStatus === 'started' || sessionStatus === 'paused'
+        ? 'in_progress'
+        : sessionStatus === 'completed'
+          ? 'done'
+          : 'not_started';
 
   const pct =
     displayState === 'done' && s && s.right + s.wrong > 0
@@ -59,7 +62,9 @@ export function PaperCard({ paper, onAction, past }: PaperCardProps) {
   return (
     <LoomCard
       pad
-      hover={!generating}
+      hover={
+        displayState === 'not_started' || displayState === 'in_progress' || displayState === 'done'
+      }
       className={`paper-card${generating ? ' is-gen' : ''}${past ? ' is-past' : ''}`}
     >
       {/* ── top row: icon / title / meta / count ── */}
@@ -128,7 +133,8 @@ export function PaperCard({ paper, onAction, past }: PaperCardProps) {
         <div className="dist-row">
           <div className="dist-block">
             <div className="dist-bar">
-              <span className="dist-seg good" style={{ flex: s.right || 1 }} />
+              {/* flex: s.right collapses the green segment when all wrong; that's correct */}
+              <span className="dist-seg good" style={{ flex: s.right }} />
               <span className="dist-seg again" style={{ flex: s.wrong }} />
             </div>
             <div className="dist-legend">
@@ -151,6 +157,10 @@ export function PaperCard({ paper, onAction, past }: PaperCardProps) {
           <span className="paper-when">{createdLabel} 完成</span>
         ) : displayState === 'in_progress' ? (
           <span className="paper-when mono">已答 {s?.pos ?? 0} 题 · 可恢复</span>
+        ) : displayState === 'failed' ? (
+          <span className="paper-when" style={{ color: 'var(--again-ink)' }}>
+            生成失败
+          </span>
         ) : generating ? (
           <span className="paper-when">Coach 排卷中…</span>
         ) : (
@@ -158,7 +168,11 @@ export function PaperCard({ paper, onAction, past }: PaperCardProps) {
         )}
 
         {/* right: action button */}
-        {generating ? (
+        {displayState === 'failed' ? (
+          <Btn size="sm" variant="ghost" icon="alert" disabled>
+            生成失败
+          </Btn>
+        ) : generating ? (
           <Btn size="sm" variant="ghost" icon="clock" disabled>
             等待生成
           </Btn>
