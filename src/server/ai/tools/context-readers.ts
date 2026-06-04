@@ -786,6 +786,17 @@ export async function executeGetReviewDue(
   const legacyQuestionConditions = [
     eq(material_fsrs_state.subject_kind, 'question'),
     lte(material_fsrs_state.due_at, now),
+    // Guard-B (codex PR #298 #3357817910): a legacy/mis-written
+    // material_fsrs_state row keyed on a question whose question is still
+    // draft_status='draft' must NEVER enter the candidate pool. The knowledge
+    // branch above already inlines this exclusion; the public due-list path
+    // (`notDraftQuiz` in src/server/review/due-list.ts) adds it on its own
+    // legacy-question join. This branch was the one place missing it, so every
+    // get_review_due consumer (snapshot / candidates / non-LLM read paths)
+    // could surface a draft question. NULL handling is explicit: only 'draft'
+    // is excluded (`draft_status <> 'draft'` alone would drop NULL rows under
+    // SQL three-valued logic).
+    sql`(${question.draft_status} IS NULL OR ${question.draft_status} <> 'draft')`,
   ];
   if (input.knowledgeIds?.length) {
     legacyQuestionConditions.push(questionKnowledgeContainsAny(input.knowledgeIds));
