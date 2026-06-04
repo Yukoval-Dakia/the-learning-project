@@ -2,9 +2,13 @@
 
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
 import { formatRelTime } from '@/ui/lib/utils';
-import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
-import { Button } from '@/ui/primitives/Button';
-import { PageHeader } from '@/ui/primitives/PageHeader';
+import { Btn } from '@/ui/primitives/Btn';
+import { EmptyState } from '@/ui/primitives/EmptyState';
+import { LoomCard } from '@/ui/primitives/LoomCard';
+import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { SkLines } from '@/ui/primitives/SkLines';
+import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
+import { StatusBadge } from '@/ui/primitives/StatusBadge';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -22,16 +26,14 @@ interface LearningSessionRow {
   knowledge_touched: string[];
 }
 
-const STATUS_TONE: Record<string, BadgeTone> = {
-  started: 'info',
-  paused: 'hard',
-  completed: 'good',
-  abandoned: 'again',
-};
-
 export default function LearningSessionsPage() {
   const router = useRouter();
   const qc = useQueryClient();
+  // NOTE: query is review-only by product decision (resume/reopen semantics).
+  // The prototype list also shows ingestion sessions; loosening the `type`
+  // filter is a separate ingestion-surface decision tracked outside this
+  // redraw lane (preflight gap G1). The type-icon mapping below is kept
+  // structural so an ingestion row renders correctly if/when the filter opens.
   const q = useQuery({
     queryKey: ['learning-sessions', 'review'],
     queryFn: () =>
@@ -50,52 +52,73 @@ export default function LearningSessionsPage() {
     },
   });
 
+  const state: StatefulStatus = q.isLoading
+    ? 'loading'
+    : q.isError
+      ? 'error'
+      : q.isSuccess && q.data.rows.length === 0
+        ? 'empty'
+        : 'ok';
+
+  const errorText =
+    q.error instanceof ApiAuthError
+      ? `${q.error.message} — 请重新进入页面输入 token`
+      : q.error
+        ? `加载失败：${(q.error as Error).message}`
+        : '会话历史加载失败。';
+
   return (
-    <main className="page">
-      <p className="breadcrumb">
-        <Link href="/today">← 今日</Link>
-      </p>
-      <PageHeader
-        title="Review sessions"
-        eyebrow="/learning-sessions"
-        sub="最近 review learning_session；abandoned 可重新打开继续。"
-      />
+    <main className="page sessions-loom">
+      <button type="button" className="back-link" onClick={() => router.push('/today')}>
+        <LoomIcon name="arrowL" size={14} />
+        今日
+      </button>
 
-      {q.isLoading && (
-        <div className="event-card">
-          <p className="ec-row">加载中…</p>
+      <div className="page-head">
+        <div className="eyebrow">
+          SESSIONS · LearningSession · {q.isSuccess ? q.data.rows.length : 0} 条
         </div>
-      )}
+        <h1 className="page-title serif">学习会话</h1>
+        <p className="page-lead">
+          过往复习与录入会话。复习会话可重开或恢复；录入会话带 ingestion 生命周期状态。
+        </p>
+      </div>
 
-      {q.isError && (
-        <div className="event-card">
-          <p className="ec-row" style={{ color: 'var(--again-ink)' }}>
-            {q.error instanceof ApiAuthError
-              ? `${q.error.message} — 请重新进入页面输入 token`
-              : `加载失败：${(q.error as Error).message}`}
-          </p>
-        </div>
-      )}
-
-      {q.isSuccess && q.data.rows.length === 0 && (
-        <div className="event-card">
-          <p className="ec-row">还没有 review session。</p>
-        </div>
-      )}
-
-      {q.isSuccess && (
-        <div className="learning-session-list">
-          {q.data.rows.map((session) => (
-            <SessionRow
-              key={session.id}
-              session={session}
-              reopening={reopenM.isPending}
-              reopenError={reopenM.isError ? (reopenM.error as Error).message : null}
-              onReopen={() => reopenM.mutate(session.id)}
-            />
-          ))}
-        </div>
-      )}
+      <Stateful
+        status={state}
+        onRetry={() => q.refetch()}
+        errorText={errorText}
+        skeleton={
+          <LoomCard pad>
+            <SkLines rows={4} />
+          </LoomCard>
+        }
+        empty={
+          <EmptyState icon="history" title="还没有会话" text="开始一次复习后，会话会记录在这里。" />
+        }
+      >
+        {q.isSuccess && (
+          <LoomCard>
+            <div className="sess-head-row meta">
+              <span>会话</span>
+              <span>状态</span>
+              <span>已复习</span>
+              <span>评分</span>
+              <span>时长</span>
+              <span />
+            </div>
+            {q.data.rows.map((session) => (
+              <SessionRow
+                key={session.id}
+                session={session}
+                reopening={reopenM.isPending}
+                reopenError={reopenM.isError ? (reopenM.error as Error).message : null}
+                onReopen={() => reopenM.mutate(session.id)}
+              />
+            ))}
+          </LoomCard>
+        )}
+      </Stateful>
     </main>
   );
 }
@@ -111,74 +134,77 @@ function SessionRow({
   reopenError: string | null;
   onReopen: () => void;
 }) {
-  const total =
-    session.rating_counts.again + session.rating_counts.hard + session.rating_counts.good;
+  const isReview = session.type === 'review';
   return (
-    <article className="event-card learning-session-row">
-      <div className="ec-head">
-        <Badge tone={STATUS_TONE[session.status] ?? 'neutral'} dot={session.status === 'started'}>
-          {session.status}
-        </Badge>
-        <code>{session.id.slice(0, 12)}</code>
-        <span className="when">{formatRelTime(new Date(session.started_at * 1000))}</span>
-      </div>
-      <p className="ec-row">
-        <span className="lbl">复习</span>
-        <span>
-          {session.reviewed_count} 题 · 不会 {session.rating_counts.again} · 模糊{' '}
-          {session.rating_counts.hard} · 会 {session.rating_counts.good}
+    <div className="sess-row">
+      <div className="sess-id">
+        <span className={`sess-type-ic tone-${isReview ? 'coral' : 'info'}`}>
+          <LoomIcon name={isReview ? 'review' : 'record'} size={15} />
         </span>
-      </p>
-      <p className="ec-row">
-        <span className="lbl">时长</span>
-        <span>
-          {formatDuration(session.duration_ms)}
-          {total > 0 && ` · ${Math.round((session.rating_counts.good / total) * 100)}% good`}
-        </span>
-      </p>
-      {session.summary_md && (
-        <p className="ec-row">
-          <span className="lbl">总结</span>
-          <span>{session.summary_md}</span>
-        </p>
-      )}
-      {session.knowledge_touched.length > 0 && (
-        <div className="learning-session-chips">
-          {session.knowledge_touched.slice(0, 8).map((kid) => (
-            <code key={kid}>{kid}</code>
-          ))}
+        <div style={{ minWidth: 0 }}>
+          <div className="mono sess-id-t">{session.id.slice(0, 12)}</div>
+          <div className="meta nowrap-meta">
+            {formatRelTime(new Date(session.started_at * 1000))}
+            {session.knowledge_touched.slice(0, 6).map((kid) => (
+              <span key={kid} className="chip chip-k mono" style={{ padding: '0 5px' }}>
+                {kid}
+              </span>
+            ))}
+          </div>
+          {session.summary_md && <div className="meta">{session.summary_md}</div>}
         </div>
-      )}
-      <div className="learning-session-actions">
+      </div>
+      <div>
+        <StatusBadge status={session.status} />
+      </div>
+      <div className="mono sess-reviewed">{session.reviewed_count || '—'}</div>
+      <div>
+        <MiniDist dist={session.rating_counts} />
+      </div>
+      <div className="mono">{formatDuration(session.duration_ms)}</div>
+      <div className="sess-acts">
         <Link href={`/learning-sessions/${session.id}`} style={{ textDecoration: 'none' }}>
-          <Button variant="quiet" size="sm" iconRight="arrowR">
+          <Btn size="sm" variant="secondary">
             详情
-          </Button>
+          </Btn>
         </Link>
+        {/* YUK-57/63 pause/resume wiring — preserved verbatim */}
         {session.status === 'paused' && (
           <Link href={`/review?session=${session.id}`} style={{ textDecoration: 'none' }}>
-            <Button variant="info" size="sm" iconRight="arrowR">
+            <Btn size="sm" variant="ghost" icon="undo">
               恢复
-            </Button>
+            </Btn>
           </Link>
         )}
         {session.status === 'abandoned' && (
-          <Button variant="primary" size="sm" onClick={onReopen} disabled={reopening}>
-            Resume
-          </Button>
+          <Btn size="sm" variant="ghost" icon="refresh" onClick={onReopen} disabled={reopening}>
+            重开
+          </Btn>
+        )}
+        {session.status === 'abandoned' && reopenError && (
+          <span className="meta" style={{ color: 'var(--again-ink)' }}>
+            重开失败：{reopenError}
+          </span>
         )}
       </div>
-      {session.status === 'abandoned' && reopenError && (
-        <p className="ec-row" style={{ color: 'var(--again-ink)' }}>
-          resume 失败：{reopenError}
-        </p>
-      )}
-    </article>
+    </div>
+  );
+}
+
+function MiniDist({ dist }: { dist: { again: number; hard: number; good: number } }) {
+  const total = dist.again + dist.hard + dist.good;
+  if (total === 0) return <span className="meta">—</span>;
+  return (
+    <div className="mini-dist" title={`不会 ${dist.again} · 模糊 ${dist.hard} · 会了 ${dist.good}`}>
+      <span className="tone-again" style={{ width: `${(dist.again / total) * 100}%` }} />
+      <span className="tone-hard" style={{ width: `${(dist.hard / total) * 100}%` }} />
+      <span className="tone-good" style={{ width: `${(dist.good / total) * 100}%` }} />
+    </div>
   );
 }
 
 function formatDuration(ms: number | null): string {
-  if (!ms || ms < 0) return '0 分钟';
+  if (!ms || ms < 0) return '—';
   const minutes = Math.max(1, Math.round(ms / 60_000));
-  return `${minutes} 分钟`;
+  return `${minutes}m`;
 }
