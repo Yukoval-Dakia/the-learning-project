@@ -301,6 +301,40 @@ describe('Conversation.findOrCreateCopilotConversation', () => {
     await cleanup(first.sessionId);
   });
 
+  // codex #3356884503 — reusing an already-`active` session must refresh
+  // updated_at (+ bump version) so the 24h reuse window is measured from the
+  // last turn, not from creation. Without this a long active conversation with
+  // regular turns would age past now-24h and unexpectedly split into a new
+  // session even while in active use.
+  it('refreshes updated_at + bumps version when reusing an active session', async () => {
+    await clearLiveConversations();
+    const t0 = new Date('2026-06-04T10:00:00.000Z');
+    const first = await findOrCreateCopilotConversation(db, { now: t0 });
+    const before = await db
+      .select()
+      .from(learning_session)
+      .where(eq(learning_session.id, first.sessionId));
+    expect(before[0].status).toBe('active');
+    expect(before[0].version).toBe(0);
+
+    // Reuse ~3h later (still inside the window) — active branch, no idle resume.
+    const t1 = new Date('2026-06-04T13:00:00.000Z');
+    const reused = await findOrCreateCopilotConversation(db, { now: t1 });
+    expect(reused.created).toBe(false);
+    expect(reused.sessionId).toBe(first.sessionId);
+
+    const after = await db
+      .select()
+      .from(learning_session)
+      .where(eq(learning_session.id, first.sessionId));
+    // Still active; updated_at moved forward to the reuse time; version bumped.
+    expect(after[0].status).toBe('active');
+    expect(after[0].updated_at.getTime()).toBe(t1.getTime());
+    expect(after[0].updated_at.getTime()).toBeGreaterThan(before[0].updated_at.getTime());
+    expect(after[0].version).toBe(1);
+    await cleanup(first.sessionId);
+  });
+
   it('does NOT reuse a session that last updated >24h ago — creates a new one', async () => {
     await clearLiveConversations();
     const stale = await findOrCreateCopilotConversation(db, {
