@@ -216,11 +216,21 @@ interface PaperQuestionFace {
 
 interface PaperSlotState {
   draft: { content_md: string; input_kind: string; image_refs: string[] } | null;
-  // null = not submitted; two submission variants:
+  // null = not submitted; two submission variants (addendum C: answer_md + reference_md):
   submission:
     | null
-    | { submitted: true; visible_to_user: true; outcome: string; score: number | null }
-    | { submitted: true; visible_to_user: false; feedback_buffered: true };
+    | {
+        submitted: true; visible_to_user: true;
+        outcome: string; score: number | null;
+        answer_md: string;           // user's own frozen answer (echoed back unconditionally)
+        answer_image_refs: string[]; // image refs on the frozen answer row
+        reference_md: string | null; // from question.reference_md; same visibility gate as outcome/score
+      }
+    | {
+        submitted: true; visible_to_user: false; feedback_buffered: true;
+        answer_md: string;           // user's own answer — always safe to echo back
+        answer_image_refs: string[]; // structurally absent: reference_md / outcome / score (§4.9)
+      };
 }
 
 interface PaperDetailSlot {
@@ -252,7 +262,7 @@ interface PaperDetailResult {
 **Implementation files**:
 - `src/server/review/paper-detail.ts` — aggregation logic + exported TypeScript types
 - `app/api/practice/[id]/route.ts` — GET handler (runtime=nodejs)
-- `app/api/practice/[id]/route.test.ts` — 7 DB tests (full payload, draft restore, visible/buffered submission, completion reveal, flat fallback, 404)
+- `app/api/practice/[id]/route.test.ts` — 10 DB tests (full payload, draft restore, visible/buffered submission, completion reveal, flat fallback, knowledge_focus_names resolution, face has no reference_md, 404)
 
 ---
 
@@ -394,6 +404,7 @@ This PR has DDL → migration smoke required; it builds a UI page → visual rin
 | 6 | §4.5/§3 暗示 db:generate 即可，但 partial-index + COALESCE 须手写 SQL | **确认 critic 正确**。抽查 `schema.ts:594-597` 注记 + `drizzle/0017`/`0005`/`0018:64` 手写先例。 | §4.5 DDL 补：generate 后手编 migration 追加 `CREATE UNIQUE INDEX ... WHERE submitted_at IS NULL` 带 COALESCE；`pnpm test:migration` 必须覆盖；migration 编号 = `0028_*`（实证 latest=0027） |
 | A | UI lane integration gap: 四个 practice 端点均无题面内容，答题页无法渲染 | **Orchestrator 裁定方案 A**：L-paper-core 补一个最小 addendum（additive only，零既有契约变更）。 | §4.10 新增 Q8-addendum：`GET /api/practice/[id]`，返回题面（question_id/prompt_md/choices_md/difficulty/image_refs）+ live 草稿（供刷新续答）+ server-gated 提交状态（§4.9 可见性边界在 server 端持有）。实现文件：`src/server/review/paper-detail.ts` + `app/api/practice/[id]/route.ts` + 7 条 DB 测试。 |
 | B | 视觉环 finding：practice list chips 与答题页 section 标签渲染 knowledge id 原始值而非人类可读名 | **L-paper-core addendum**：单次 IN 查询 `knowledge.name`，additive 字段，不破坏既有契约。 | `GET /api/practice` → `PracticePaperItem.knowledge: Array<{id,name}>`；`GET /api/practice/[id]` → `PaperDetailSection.knowledge_focus_names: string[]`（均 fallback to id when node missing）。`resolveKnowledgeNames()` 共享 helper 导出自 `practice-read.ts`。archived_at 不过滤（历史卷仍需显示名）。 |
+| C | 视觉环 finding：答题页"你的作答"恒显示（未作答）、"参考答案"恒蒙板 | **L-paper-core addendum**：additive 字段，不破坏既有契约；reference_md 不放进 face（防答前泄题）。 | `slot_state.submission` 两个变体均加 `answer_md: string` + `answer_image_refs: string[]`（取该 slot newest frozen answer 行）。visible 变体加 `reference_md: string \| null`（来自 `question.reference_md`，同 outcome/score 同一可见性 gate）；buffered 变体结构上不含（与 outcome 同纪律，§4.9）。`referenceMap` 与 `questionMap` 并列在 step 4（同一 SELECT），无额外查询。4 条 DB 测试更新（tests 3/4/5 + 新增 test 9 face 无 reference_md 断言）。 |
 
 ### 全局一致性检查（本 agent 独有职责，Planner/Critic 均未做）
 
