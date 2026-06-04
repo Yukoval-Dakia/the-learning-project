@@ -21,7 +21,7 @@ import { NAV, ROUTE_MAP, activeFromPath, isSection } from './nav-config';
 export interface AppSidebarProps {
   /** Whether the sidebar drawer is open on mobile (adds `.open`). */
   mobileOpen: boolean;
-  /** Open the Copilot drawer (wired by the layout to TodayCopilotDrawer). */
+  /** Open the Copilot drawer (wired by the layout to CopilotDock). */
   onOpenCopilot: () => void;
   /** Current theme pref ('light' | 'dark'); drives the sun/moon icon. */
   theme: 'light' | 'dark';

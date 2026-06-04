@@ -1,21 +1,29 @@
-// AF Slice 0 / YUK-169 — /today Copilot drawer with live chat.
+// AF Slice 0 / YUK-169 — global Copilot drawer with live chat.
+// AF S2a / S3a (YUK-203 U3) — moved out of today/ (CopilotDock, global not
+// Today-scoped) + session persistence with replay-last-N.
 //
 // Mounts <CopilotDrawer> with three regions:
 //   • summary  — /api/today/copilot-summary (Coach + Dreaming digest), preserved
-//                verbatim from the prior placeholder build.
-//   • chat     — in-memory message list + real request to the existing,
-//                NON-STREAMING POST /api/copilot/chat (returns one final reply).
+//                verbatim. The route stays Today-scoped (the data genuinely IS
+//                today's), so the "今日摘要"-style copy in this slot is correct.
+//   • chat     — message list + real request to the existing, NON-STREAMING POST
+//                /api/copilot/chat (returns one final reply). On open, the list
+//                is prefilled from GET /api/copilot/turns (replay-last-N) so the
+//                conversation is continuous across drawer reopens / reloads.
 //   • footer   — quick-chips + composer (Enter to send, Shift+Enter newline).
 //
-// Contract notes (see docs/design/2026-06-04-redraw-composer-preflight.md):
+// Contract notes (see docs/design/2026-06-04-redraw-composer-preflight.md +
+// docs/design/2026-06-04-l-copilot-preflight.md):
 //   • The endpoint is non-streaming (Response.json) — we render a real
 //     "thinking" in-flight bubble, then the final reply. No fake typewriter.
 //   • The route does NOT return tool-call details (RunTaskResult is text-only),
 //     so tool-use cards are phase-deferred (no mock fixtures in production).
-//   • No session persistence / rolling summary — that is AF Slice 3. Messages
-//     live in component memory for this session only.
+//   • Turn persistence + replay-last-N is AF Slice 3a. Rolling summary is S3b
+//     (YAGNI-gated, NOT built here).
 //   • Token never touches the client: requests go through apiJson, which adds
 //     the x-internal-token header; the Anthropic key stays server-side.
+//   • Replay is best-effort: a turns-fetch failure degrades to the prior
+//     in-memory-only behaviour (no error surfaced for the prefill path).
 
 'use client';
 
@@ -28,6 +36,7 @@ import { LoomBadge } from '@/ui/primitives/LoomBadge';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { type ReplayTurn, replayToMessages } from './replay';
 
 interface DreamingPreviewRow {
   proposal_id: string;
@@ -54,7 +63,14 @@ interface CopilotChatResponse {
   reply: string;
   surface: string;
   triggered_by: string;
+  session_id: string;
+  reply_event_id: string;
   user_ask_event_id?: string;
+}
+
+// GET /api/copilot/turns response shape — see src/server/copilot/turns.ts.
+interface CopilotTurnsResponse {
+  turns: ReplayTurn[];
 }
 
 interface ChatMessage {
@@ -68,11 +84,14 @@ interface ChatMessage {
 // COPILOT_CHAT_TRIGGER_KINDS — and is NOT what these prefilled prompts mean).
 const QUICK_CHIPS = ['今天该复习哪些？', '解释「之」的用法'] as const;
 
+// replay-last-N window (matches the turns route default).
+const REPLAY_LIMIT = 20;
+
 function nextId(): string {
   return `m_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export function TodayCopilotDrawer() {
+export function CopilotDock() {
   const { open, openDrawer, closeDrawer } = useCopilotDwell();
   const summaryQ = useQuery({
     queryKey: ['copilot-summary'],
@@ -91,6 +110,39 @@ export function TodayCopilotDrawer() {
   // so rapid double-Enter could fire duplicate POSTs from the stale closure.
   const sendingRef = useRef(false);
   const streamRef = useRef<HTMLDivElement | null>(null);
+  // AF S3a — replay runs once per open; guard so a refetch / re-render does not
+  // clobber the live in-memory list with a stale prefill.
+  const replayedRef = useRef(false);
+
+  // AF S3a — on open, prefill the message list from GET /api/copilot/turns
+  // (replay-last-N). Best-effort: on failure we keep the current in-memory list
+  // (graceful degradation to pre-S3a behaviour) and surface no error for the
+  // prefill path. Only replays into an empty list, and only once per open.
+  useEffect(() => {
+    if (!open) {
+      replayedRef.current = false;
+      return;
+    }
+    if (replayedRef.current) return;
+    replayedRef.current = true;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await apiJson<CopilotTurnsResponse>(`/api/copilot/turns?limit=${REPLAY_LIMIT}`);
+        if (cancelled) return;
+        const replayed = replayToMessages(res.turns ?? []);
+        if (replayed.length === 0) return;
+        // Only prefill if the user has not already started typing/sending in this
+        // open (don't stomp a live exchange that raced the fetch).
+        setMessages((prev) => (prev.length === 0 ? replayed : prev));
+      } catch {
+        // Replay is best-effort — stay on the in-memory list.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   // Auto-scroll the message stream to the bottom on new messages / loading.
   // `sending` is an intentional trigger dep: when it flips true the thinking
@@ -239,7 +291,7 @@ export function TodayCopilotDrawer() {
       <CopilotDrawer
         open={open}
         onClose={closeDrawer}
-        title="Copilot · 今日"
+        title="Copilot"
         summary={summary}
         footer={footer}
       >

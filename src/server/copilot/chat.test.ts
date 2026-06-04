@@ -29,6 +29,9 @@ describe('runCopilotChat (two-surface routing)', () => {
         // P5.4-L2 / YUK-174 — stub the feedback reader so the {}-stub db is never
         // queried (cold-start no-op), mirroring the Dreaming/Coach DI stubs.
         loadProposalFeedbackFn: async () => [],
+        // AF S3a / YUK-203 U3 — stub the conversation envelope so the {}-stub db
+        // is never touched (these are pure routing/wiring unit tests).
+        findOrCreateConversationFn: async () => ({ sessionId: 'ls_unit', created: true }),
         now: () => new Date('2026-05-28T20:00:00.000Z'),
       },
     );
@@ -38,8 +41,10 @@ describe('runCopilotChat (two-surface routing)', () => {
     expect(result.user_ask_event_id).toBeDefined();
     expect(result.reply).toBe('OK');
 
-    expect(writeEventFn).toHaveBeenCalledTimes(1);
-    expect(writeEventFn).toHaveBeenCalledWith(
+    // Two events: the user ask + the persisted reply (AF S3a). The ask is first.
+    expect(writeEventFn).toHaveBeenCalledTimes(2);
+    expect(writeEventFn).toHaveBeenNthCalledWith(
+      1,
       db,
       expect.objectContaining({
         action: 'experimental:copilot_user_ask',
@@ -72,6 +77,63 @@ describe('runCopilotChat (two-surface routing)', () => {
     );
   });
 
+  // AF S3a / YUK-203 U3 — the conversation envelope is resolved once per turn;
+  // its session_id is stamped on the ask payload and a reply event is persisted
+  // chained to the ask. Both surfaces (chat/chip) share the same envelope.
+  it('resolves a conversation session, stamps session_id on the ask, and persists a reply event', async () => {
+    const db = {} as never;
+    const buildMcpServerFn = vi.fn(() => ({ name: 'fake-loom' }) as never);
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_copilot_session',
+      text: 'REPLY',
+      finishReason: 'stop' as const,
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    const writeEventFn = vi.fn(async (_db, input) => input.id);
+    const findOrCreateConversationFn = vi.fn(async () => ({
+      sessionId: 'ls_envelope',
+      created: false,
+    }));
+
+    const result = await runCopilotChat(
+      db,
+      { user_message: '继续上次的话题', triggered_by: 'chat' },
+      {
+        buildMcpServerFn,
+        runAgentTaskFn,
+        writeEventFn,
+        findOrCreateConversationFn,
+        loadProposalFeedbackFn: async () => [],
+        now: () => new Date('2026-06-04T00:00:00.000Z'),
+      },
+    );
+
+    // Envelope resolved exactly once, result carries it + the reply event id.
+    expect(findOrCreateConversationFn).toHaveBeenCalledTimes(1);
+    expect(result.session_id).toBe('ls_envelope');
+    expect(result.reply_event_id).toMatch(/^copilot_reply_/);
+
+    // Two events: the user ask (session_id stamped) and the reply (chained to ask).
+    expect(writeEventFn).toHaveBeenCalledTimes(2);
+    const askCall = writeEventFn.mock.calls[0]?.[1];
+    expect(askCall?.action).toBe('experimental:copilot_user_ask');
+    expect((askCall?.payload as { session_id?: string }).session_id).toBe('ls_envelope');
+
+    const replyCall = writeEventFn.mock.calls[1]?.[1];
+    expect(replyCall?.action).toBe('experimental:copilot_reply');
+    expect(replyCall?.actor_kind).toBe('agent');
+    expect(replyCall?.session_id).toBe('ls_envelope');
+    expect(replyCall?.caused_by_event_id).toBe(askCall?.id);
+    const replyPayload = replyCall?.payload as {
+      session_id?: string;
+      reply_md?: string;
+      in_reply_to_event_id?: string;
+    };
+    expect(replyPayload.session_id).toBe('ls_envelope');
+    expect(replyPayload.reply_md).toBe('REPLY');
+    expect(replyPayload.in_reply_to_event_id).toBe(askCall?.id);
+  });
+
   // P5.1 / YUK-143 — Copilot wires the per-message context-budget throttle into
   // the MCP bridge: a beforeExecute tool-call ceiling + an interceptInput limit
   // cap. We assert the wiring end-to-end through the budget tracker by driving
@@ -98,6 +160,9 @@ describe('runCopilotChat (two-surface routing)', () => {
         runAgentTaskFn,
         writeEventFn,
         loadProposalFeedbackFn: async () => [],
+        // AF S3a / YUK-203 U3 — stub the conversation envelope so the {}-stub db
+        // is never touched (these are pure routing/wiring unit tests).
+        findOrCreateConversationFn: async () => ({ sessionId: 'ls_unit', created: true }),
         now: () => new Date('2026-05-31T00:00:00.000Z'),
       },
     );
@@ -127,6 +192,9 @@ describe('runCopilotChat (two-surface routing)', () => {
         runAgentTaskFn,
         writeEventFn,
         loadProposalFeedbackFn: async () => [],
+        // AF S3a / YUK-203 U3 — stub the conversation envelope so the {}-stub db
+        // is never touched (these are pure routing/wiring unit tests).
+        findOrCreateConversationFn: async () => ({ sessionId: 'ls_unit', created: true }),
         now: () => new Date('2026-05-31T00:00:00.000Z'),
       },
     );
@@ -160,6 +228,9 @@ describe('runCopilotChat (two-surface routing)', () => {
         runAgentTaskFn,
         writeEventFn,
         loadProposalFeedbackFn: async () => [],
+        // AF S3a / YUK-203 U3 — stub the conversation envelope so the {}-stub db
+        // is never touched (these are pure routing/wiring unit tests).
+        findOrCreateConversationFn: async () => ({ sessionId: 'ls_unit', created: true }),
         now: () => new Date('2026-05-28T20:00:00.000Z'),
       },
     );
@@ -168,13 +239,21 @@ describe('runCopilotChat (two-surface routing)', () => {
     expect(result.triggered_by).toBe('chip');
     expect(result.user_ask_event_id).toBeUndefined();
 
-    // Exactly one event written — chip_trigger, NOT user_ask.
-    expect(writeEventFn).toHaveBeenCalledTimes(1);
+    // Two events written — chip_trigger (NOT user_ask) + the persisted reply
+    // (AF S3a). The first is the chip trigger; the chip path never writes a
+    // user_ask event.
+    expect(writeEventFn).toHaveBeenCalledTimes(2);
     const writeArg = writeEventFn.mock.calls[0]?.[1];
     expect(writeArg?.action).toBe('experimental:copilot_chip_trigger');
     expect(writeArg?.action).not.toBe('experimental:copilot_user_ask');
     expect(writeArg?.actor_kind).toBe('system');
     expect(writeArg?.actor_ref).toBe('ui:copilot_chip');
+    // The second event is the reply turn (no user_ask anywhere on the chip path).
+    const replyArg = writeEventFn.mock.calls[1]?.[1];
+    expect(replyArg?.action).toBe('experimental:copilot_reply');
+    expect(
+      writeEventFn.mock.calls.some((c) => c[1]?.action === 'experimental:copilot_user_ask'),
+    ).toBe(false);
     const payload = writeArg?.payload as { chip_kind?: string } | undefined;
     expect(payload?.chip_kind).toBe('out_3_variants');
 
@@ -246,6 +325,7 @@ describe('runCopilotChat (two-surface routing)', () => {
             top_rubric_gates: [],
           },
         ],
+        findOrCreateConversationFn: async () => ({ sessionId: 'ls_unit', created: true }),
         now: () => new Date('2026-05-31T00:00:00.000Z'),
       },
     );
@@ -318,6 +398,7 @@ describe('runCopilotChat (two-surface routing)', () => {
             ['applied_in_no_application_evidence'],
           ),
         ],
+        findOrCreateConversationFn: async () => ({ sessionId: 'ls_unit', created: true }),
         now: () => new Date('2026-05-31T00:00:00.000Z'),
       },
     );
@@ -366,6 +447,9 @@ describe('runCopilotChat (two-surface routing)', () => {
         runAgentTaskFn,
         writeEventFn,
         loadProposalFeedbackFn: async () => [],
+        // AF S3a / YUK-203 U3 — stub the conversation envelope so the {}-stub db
+        // is never touched (these are pure routing/wiring unit tests).
+        findOrCreateConversationFn: async () => ({ sessionId: 'ls_unit', created: true }),
         now: () => new Date('2026-05-31T00:00:00.000Z'),
       },
     );
@@ -410,6 +494,9 @@ describe('runCopilotChat (two-surface routing)', () => {
           runAgentTaskFn,
           writeEventFn,
           loadProposalFeedbackFn: async () => [],
+          // AF S3a / YUK-203 U3 — stub the conversation envelope so the {}-stub db
+          // is never touched (these are pure routing/wiring unit tests).
+          findOrCreateConversationFn: async () => ({ sessionId: 'ls_unit', created: true }),
           buildTavilyMcpServerFn: () => ({
             type: 'http',
             url: 'https://mcp.tavily.com/mcp/?tavilyApiKey=tvly-test',
@@ -450,6 +537,9 @@ describe('runCopilotChat (two-surface routing)', () => {
           runAgentTaskFn,
           writeEventFn,
           loadProposalFeedbackFn: async () => [],
+          // AF S3a / YUK-203 U3 — stub the conversation envelope so the {}-stub db
+          // is never touched (these are pure routing/wiring unit tests).
+          findOrCreateConversationFn: async () => ({ sessionId: 'ls_unit', created: true }),
           buildTavilyMcpServerFn: () => null,
           now: () => new Date('2026-06-01T00:00:00.000Z'),
         },
@@ -480,6 +570,9 @@ describe('runCopilotChat (two-surface routing)', () => {
           runAgentTaskFn,
           writeEventFn,
           loadProposalFeedbackFn: async () => [],
+          // AF S3a / YUK-203 U3 — stub the conversation envelope so the {}-stub db
+          // is never touched (these are pure routing/wiring unit tests).
+          findOrCreateConversationFn: async () => ({ sessionId: 'ls_unit', created: true }),
           // No buildTavilyMcpServerFn → uses the real env-reading default.
           now: () => new Date('2026-06-01T00:00:00.000Z'),
         },
@@ -507,6 +600,9 @@ describe('runCopilotChat (two-surface routing)', () => {
           runAgentTaskFn,
           writeEventFn,
           loadProposalFeedbackFn: async () => [],
+          // AF S3a / YUK-203 U3 — stub the conversation envelope so the {}-stub db
+          // is never touched (these are pure routing/wiring unit tests).
+          findOrCreateConversationFn: async () => ({ sessionId: 'ls_unit', created: true }),
           now: () => new Date('2026-06-01T00:00:00.000Z'),
         },
       );

@@ -47,6 +47,11 @@ import {
   type ProposalFeedbackCell,
   getProposalFeedbackDigest,
 } from '@/server/proposals/adaptive-bias';
+// AF S3a / YUK-203 U3 — durable conversation envelope. runCopilotChat now
+// find-or-creates a learning_session(type='conversation') so turns persist and
+// the drawer can replay-last-N (AF spec §1.5 + §7 S3a). Session ownership stays
+// in src/server/session/conversation.ts (ADR-0005 single-owner).
+import { Conversation } from '@/server/session';
 import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 
 export const COPILOT_CHAT_TRIGGER_KINDS = ['chat', 'chip'] as const;
@@ -71,10 +76,19 @@ export interface CopilotChatResult {
   triggered_by: CopilotChatTriggerKind;
   /** When the chat path wrote a user_ask event, this carries the id. */
   user_ask_event_id?: string;
+  // AF S3a / YUK-203 U3 — durable conversation envelope this turn belongs to,
+  // and the persisted reply event id.
+  session_id: string;
+  reply_event_id: string;
 }
 
 const CHIP_TRIGGER_EVENT_ACTION = 'experimental:copilot_chip_trigger';
 const USER_ASK_EVENT_ACTION = 'experimental:copilot_user_ask';
+// AF S3a / YUK-203 U3 — Copilot reply留痕. New experimental action (NOT in
+// RESERVED_EXPERIMENTAL_ACTIONS), so it parses via the generic ExperimentalEvent
+// escape hatch — zero schema change. Payload is free-form per ExperimentalEvent
+// (z.record). See L-copilot pre-flight缺口表.
+const REPLY_EVENT_ACTION = 'experimental:copilot_reply';
 
 type RunAgentTaskFn = (
   kind: string,
@@ -94,6 +108,13 @@ type BuildMcpServerFn = typeof buildMcpServerFromRegistry;
 // touching process.env.
 type BuildTavilyMcpServerFn = () => McpHttpServerConfig | null;
 type WriteEventFn = (db: Db, input: WriteEventInput) => Promise<string>;
+// AF S3a / YUK-203 U3 — swappable conversation find-or-create (unit tests inject
+// a fixture so the {}-stub db is never touched). Defaults to
+// Conversation.findOrCreateCopilotConversation.
+type FindOrCreateConversationFn = (
+  db: Db,
+  opts: { now?: Date },
+) => Promise<{ sessionId: string; created: boolean }>;
 // P5.4-L2 / YUK-174 (Facet A) — swappable feedback-digest reader (unit tests
 // inject a fixture / [] since db is a stub). Defaults to getProposalFeedbackDigest.
 type LoadProposalFeedbackFn = (db: Db) => Promise<ProposalFeedbackCell[]>;
@@ -109,6 +130,8 @@ export interface CopilotChatDeps {
   // P5.4-L2 / YUK-174 — defaults to getProposalFeedbackDigest. The unit test
   // injects [] so the {}-stub db is never queried (cold-start no-op).
   loadProposalFeedbackFn?: LoadProposalFeedbackFn;
+  // AF S3a / YUK-203 U3 — defaults to Conversation.findOrCreateCopilotConversation.
+  findOrCreateConversationFn?: FindOrCreateConversationFn;
   now?: () => Date;
 }
 
@@ -182,12 +205,21 @@ export async function runCopilotChat(
   const loadFeedback =
     deps.loadProposalFeedbackFn ??
     ((db: Db) => getProposalFeedbackDigest(db, PROPOSAL_FEEDBACK_BUDGET));
+  const findOrCreateConversation =
+    deps.findOrCreateConversationFn ?? Conversation.findOrCreateCopilotConversation;
 
   const surface = selectSurface(req.triggered_by);
   const actorRef = selectActorRef(req.triggered_by);
   const taskRunId = `copilot_task_${createId()}`;
   let causedByEventId: string | undefined;
   let userAskEventId: string | undefined;
+
+  // AF S3a / YUK-203 U3 — resolve the durable conversation envelope FIRST so the
+  // ask/chip + reply events all carry the same session_id (payload-only; the
+  // events table's session_id column is left for the teaching state machine to
+  // own per its single-owner module). Both chat + chip turns belong to the same
+  // Copilot conversation.
+  const { sessionId } = await findOrCreateConversation(db, { now });
 
   // ──────────────────────────────────────────────────────────────────────
   // T-D3/C event-write contract.
@@ -211,6 +243,8 @@ export async function runCopilotChat(
       payload: {
         surface: 'copilot',
         user_message: req.user_message,
+        // AF S3a — carry the conversation envelope id (payload-only, zero schema).
+        session_id: sessionId,
       },
       created_at: now,
     });
@@ -229,6 +263,8 @@ export async function runCopilotChat(
         surface: 'copilot',
         chip_kind: req.chip_kind ?? null,
         user_message: req.user_message,
+        // AF S3a — carry the conversation envelope id (payload-only, zero schema).
+        session_id: sessionId,
       },
       created_at: now,
     });
@@ -323,11 +359,46 @@ export async function runCopilotChat(
     },
   );
 
+  // AF S3a / YUK-203 U3 — persist the reply turn so the drawer can replay-last-N.
+  // The reply chains to the user ask/chip event (causedByEventId) so the turn
+  // pair is reconstructable. actor = the running agent (matches the chat run's
+  // actorRef). Payload free-form per ExperimentalEvent (zero schema).
+  //
+  // created_at is stamped strictly AFTER the ask (now + 1ms): the whole turn
+  // shares the single captured `now`, so without the offset the ask and reply
+  // tie on created_at and the turns reader's (created_at, id) sort can place the
+  // reply before its own ask. The reply genuinely follows the ask in time, so a
+  // 1ms bump is faithful and keeps the pair ordered for replay.
+  const replyAt = new Date(now.getTime() + 1);
+  const replyEventId = `copilot_reply_${createId()}`;
+  await write(db, {
+    id: replyEventId,
+    session_id: sessionId,
+    actor_kind: 'agent',
+    actor_ref: actorRef,
+    action: REPLY_EVENT_ACTION,
+    subject_kind: 'query',
+    subject_id: replyEventId,
+    outcome: null,
+    payload: {
+      surface: 'copilot',
+      session_id: sessionId,
+      reply_md: result.text,
+      task_run_id: result.task_run_id,
+      in_reply_to_event_id: causedByEventId ?? null,
+    },
+    caused_by_event_id: causedByEventId ?? null,
+    task_run_id: result.task_run_id,
+    created_at: replyAt,
+  });
+
   return {
     task_run_id: result.task_run_id,
     reply: result.text,
     surface,
     triggered_by: req.triggered_by,
+    session_id: sessionId,
+    reply_event_id: replyEventId,
     ...(userAskEventId ? { user_ask_event_id: userAskEventId } : {}),
   };
 }

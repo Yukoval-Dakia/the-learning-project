@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 
 import { db } from '@/db/client';
@@ -9,6 +9,7 @@ import {
   assertAcceptingTurns,
   assertActive,
   endConversation,
+  findOrCreateCopilotConversation,
   idleConversation,
   startConversation,
 } from './conversation';
@@ -258,5 +259,81 @@ describe('Conversation.assertActive', () => {
       code: 'not_found',
       status: 404,
     });
+  });
+});
+
+// AF S3a / YUK-203 U3 — Copilot conversation envelope (no learning item).
+describe('Conversation.findOrCreateCopilotConversation', () => {
+  // Isolate from other tests' live conversation rows: the reuse predicate scans
+  // ALL live conversation sessions in the 24h window, so clear them first.
+  async function clearLiveConversations(): Promise<void> {
+    const rows = await db
+      .select({ id: learning_session.id })
+      .from(learning_session)
+      .where(
+        and(
+          eq(learning_session.type, 'conversation'),
+          inArray(learning_session.status, ['active', 'idle']),
+        ),
+      );
+    for (const r of rows) await cleanup(r.id);
+  }
+
+  it('creates a fresh active conversation with goal_id null (no learning item)', async () => {
+    await clearLiveConversations();
+    const { sessionId, created } = await findOrCreateCopilotConversation(db);
+    expect(created).toBe(true);
+    const rows = await db.select().from(learning_session).where(eq(learning_session.id, sessionId));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].type).toBe('conversation');
+    expect(rows[0].status).toBe('active');
+    expect(rows[0].goal_id).toBeNull();
+    expect(rows[0].entrypoint).toBe('copilot');
+    await cleanup(sessionId);
+  });
+
+  it('reuses the live session within the 24h window (created=false)', async () => {
+    await clearLiveConversations();
+    const first = await findOrCreateCopilotConversation(db);
+    const second = await findOrCreateCopilotConversation(db);
+    expect(second.created).toBe(false);
+    expect(second.sessionId).toBe(first.sessionId);
+    await cleanup(first.sessionId);
+  });
+
+  it('does NOT reuse a session that last updated >24h ago — creates a new one', async () => {
+    await clearLiveConversations();
+    const stale = await findOrCreateCopilotConversation(db, {
+      now: new Date(Date.now() - 48 * 60 * 60 * 1000),
+    });
+    // The stale row's updated_at is 48h old; a now-anchored call must not reuse it.
+    const fresh = await findOrCreateCopilotConversation(db);
+    expect(fresh.created).toBe(true);
+    expect(fresh.sessionId).not.toBe(stale.sessionId);
+    await cleanup(stale.sessionId);
+    await cleanup(fresh.sessionId);
+  });
+
+  it('inline-resumes an idle session (idle → active) on reuse', async () => {
+    await clearLiveConversations();
+    const { sessionId } = await findOrCreateCopilotConversation(db);
+    await idleConversation(db, sessionId);
+    const reused = await findOrCreateCopilotConversation(db);
+    expect(reused.sessionId).toBe(sessionId);
+    expect(reused.created).toBe(false);
+    const rows = await db.select().from(learning_session).where(eq(learning_session.id, sessionId));
+    expect(rows[0].status).toBe('active');
+    await cleanup(sessionId);
+  });
+
+  it('does NOT reuse an ended session — creates a new one', async () => {
+    await clearLiveConversations();
+    const first = await findOrCreateCopilotConversation(db);
+    await endConversation(db, first.sessionId);
+    const next = await findOrCreateCopilotConversation(db);
+    expect(next.created).toBe(true);
+    expect(next.sessionId).not.toBe(first.sessionId);
+    await cleanup(first.sessionId);
+    await cleanup(next.sessionId);
   });
 });
