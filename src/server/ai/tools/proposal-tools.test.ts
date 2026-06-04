@@ -303,6 +303,8 @@ describe('Wave 3 proposal/action DomainTools', () => {
       'set_question_type',
       'split_stem',
       'update_prompt',
+      // YUK-203 U4 — ReviewPlanTask's single mutation (paper tool_quiz artifact).
+      'write_review_plan',
     ]);
   });
 
