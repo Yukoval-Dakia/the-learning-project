@@ -123,13 +123,19 @@ export async function POST(req: Request): Promise<Response> {
     // CC-3 invariant: route through `createDefaultJudgeInvoker()`; never call
     // `judgeExact` / `judgeKeyword` / `judgeRouter` directly.
     const answerMd = body.response_md?.trim() ?? '';
-    const suppliedJudgeResult = answerMd.length > 0 ? (body.judge_result_v2 ?? null) : null;
+    // YUK-215 (PR #309 round-1, F1) — a photo-only answer (no typed text but
+    // handwriting-photo refs present) is a real, judgeable answer. The judge
+    // gate keys on "has any answer" = text OR image, not text alone; otherwise a
+    // photographed answer was frozen into the event yet never judged.
+    const hasImageAnswer = body.answer_image_refs.length > 0;
+    const hasAnswer = answerMd.length > 0 || hasImageAnswer;
+    const suppliedJudgeResult = hasAnswer ? (body.judge_result_v2 ?? null) : null;
     let judgeResult: JudgeResultV2T | null = suppliedJudgeResult;
     let judgeRoute: string | null = suppliedJudgeResult?.capability_ref.id ?? null;
     let judgeTelemetry:
       | Awaited<ReturnType<ReturnType<typeof createDefaultJudgeInvoker>['invoke']>>['telemetry']
       | null = null;
-    if (answerMd.length > 0 && judgeResult === null) {
+    if (hasAnswer && judgeResult === null) {
       const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids);
       const invoked = await createDefaultJudgeInvoker().invoke({
         db,
@@ -167,11 +173,14 @@ export async function POST(req: Request): Promise<Response> {
     let finalRating: Rating = body.rating;
     if (body.auto_rate) {
       if (suggestedRating === null) {
-        // Either no answer submitted, or judge returned 'unsupported'.
+        // Either no answer submitted (neither text NOR image), or the judge ran
+        // but returned 'unsupported'. F1: a photo-only answer DOES satisfy the
+        // "has answer" precondition (the judge runs on the image), so the
+        // "non-empty" message only fires when there is no answer at all.
         throw new ApiError(
           'unsupported_judge_route',
-          answerMd.length === 0
-            ? 'auto_rate requires response_md to be non-empty'
+          !hasAnswer
+            ? 'auto_rate requires an answer: response_md or answer_image_refs must be non-empty'
             : `judge route '${judgeRoute}' returned coarse_outcome='unsupported'; please rate manually`,
           422,
         );

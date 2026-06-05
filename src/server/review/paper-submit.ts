@@ -39,6 +39,19 @@ import { assertSessionMutable, freezeAnswerDraft } from './answer-draft';
 // judgement is immediately visible.
 export const HIDE_FEEDBACK_POLICY = 'judge_now_show_later' as const;
 
+// F3 (PR #309 round-1, YUK-215) — order-sensitive element-wise array equality.
+// Image refs now influence the judge verdict, so the same-content idempotency
+// guard must compare image_refs too: same text + different photo must NOT
+// short-circuit to the old attempt (it would return a stale judgement for an
+// answer the judge never actually saw).
+function sameImageRefs(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
 export interface PaperSubmitSlotInput {
   /** the review session running this paper (type='review', linked via artifact_id) */
   sessionId: string;
@@ -115,6 +128,7 @@ export async function submitPaperSlot(
       id: answer.id,
       event_id: answer.event_id,
       content_md: answer.content_md,
+      image_refs: answer.image_refs,
       submitted_at: answer.submitted_at,
     })
     .from(answer)
@@ -136,10 +150,13 @@ export async function submitPaperSlot(
   // user is re-submitting in a new attempt and a new attempt row must be written.
   const preCheckIsSameAttempt =
     preCheckLatest?.submitted_at != null && preCheckLatest.submitted_at >= preCheckStartedAt;
+  const inputImageRefs = input.answerImageRefs ?? [];
   if (
     preCheckIsSameAttempt &&
     preCheckLatest?.event_id &&
-    preCheckLatest.content_md === input.answerMd
+    preCheckLatest.content_md === input.answerMd &&
+    // F3: same text but different photo → not idempotent, re-judge.
+    sameImageRefs(preCheckLatest.image_refs, inputImageRefs)
   ) {
     // Same content frozen in the current attempt — look up the existing judge
     // event and return without invoking the judge or entering the write transaction.
@@ -315,6 +332,7 @@ export async function submitPaperSlot(
         id: answer.id,
         event_id: answer.event_id,
         content_md: answer.content_md,
+        image_refs: answer.image_refs,
         submitted_at: answer.submitted_at,
       })
       .from(answer)
@@ -341,7 +359,10 @@ export async function submitPaperSlot(
       if (
         frozenInCurrentAttempt &&
         latestFrozen.event_id &&
-        latestFrozen.content_md === input.answerMd
+        latestFrozen.content_md === input.answerMd &&
+        // F3: image refs are part of "same content" — same text + different photo
+        // is NOT idempotent (the judge verdict depends on the image).
+        sameImageRefs(latestFrozen.image_refs, inputImageRefs)
       ) {
         // Same content already frozen in this attempt (authoritative under lock).
         // Return existing ids — no new rows written (judge was also skipped by
