@@ -957,6 +957,76 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     expect(second.score).toBe(0); // from persisted payload
   });
 
+  // ── round-6 fix #4 (CR 3359820529): reopen + same-content resubmit is NOT idempotent ──
+  it('round-6 fix #4: reopen then same-content resubmit appends new attempt/judge rows', async () => {
+    // Before the fix: same-content idempotency checked only content_md, ignoring
+    // whether the frozen row was from before a reopen. After a reopen (started_at
+    // advances), submitting the same answer must produce a new attempt + judge,
+    // not short-circuit to the original ids.
+    const db = testDb();
+    await seedQuestion('q1', 'true');
+    await seedPaper('paper1', ['q1']);
+    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
+
+    // First submit: correct → frozen row + attempt + judge.
+    const first = await submitPaperSlot(
+      {
+        sessionId,
+        paperArtifactId: 'paper1',
+        questionId: 'q1',
+        answerMd: 'true',
+        primaryKnowledgeId: 'k1',
+        feedbackPolicy: 'immediate',
+      },
+      db,
+    );
+    expect(first.coarseOutcome).toBe('correct');
+
+    // Abandon then reopen (started_at advances past first frozen row's submitted_at).
+    await Review.abandonReviewSession(db, sessionId);
+    await Review.reopenAbandonedReviewSession(db, sessionId);
+
+    // Second submit with THE SAME content ('true') after reopen.
+    // The fix: submitted_at < started_at (frozen before reopen) → not same attempt
+    // → must NOT be treated as idempotent → new attempt/judge/FSRS rows written.
+    const second = await submitPaperSlot(
+      {
+        sessionId,
+        paperArtifactId: 'paper1',
+        questionId: 'q1',
+        answerMd: 'true', // identical content
+        primaryKnowledgeId: 'k1',
+        feedbackPolicy: 'immediate',
+      },
+      db,
+    );
+
+    // Must return DIFFERENT attempt/answer ids (new attempt written).
+    expect(second.attemptEventId).not.toBe(first.attemptEventId);
+    expect(second.answerId).not.toBe(first.answerId);
+
+    // Two frozen rows in answer table (append-only history).
+    const allRows = await db
+      .select()
+      .from(answer)
+      .where(and(eq(answer.session_id, sessionId), eq(answer.question_id, 'q1')));
+    const frozenRows = allRows.filter((r) => r.submitted_at !== null);
+    expect(frozenRows).toHaveLength(2);
+
+    // Two attempt events + two judge events (one per attempt).
+    const attempts = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'attempt'), eq(event.session_id, sessionId)));
+    expect(attempts).toHaveLength(2);
+
+    const judges = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'judge'), eq(event.subject_kind, 'event')));
+    expect(judges).toHaveLength(2);
+  });
+
   // ── issue #4: autosave rejects misbound / wrong-state sessions ────────────────
   it('fix #4: autosaveAnswerDraft rejects a session bound to a different paper (400)', async () => {
     const db = testDb();

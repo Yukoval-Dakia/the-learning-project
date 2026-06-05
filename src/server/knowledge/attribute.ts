@@ -95,6 +95,12 @@ export async function runAttributionAndWriteJudgeEvent(
     // the D4 mistake-flywheel stays silent. Skip only when a real attribution
     // judge (no attribution_pending flag, or explicitly false) is present.
     const existing = await getJudgeForAttempt(params.db, params.attemptEventId);
+    // Round-6 fix #1: track the placeholder's visibility/verdict fields to inherit.
+    let inheritedVisibility: {
+      visible_to_user?: boolean;
+      coarse_outcome?: string;
+      score?: number;
+    } | null = null;
     if (existing) {
       // Peek at the raw payload to check attribution_pending.
       // getJudgeForAttempt returns the processed shape; we need the raw flag.
@@ -104,7 +110,12 @@ export async function runAttributionAndWriteJudgeEvent(
         .from(eventTable)
         .where(and(eq(eventTable.id, existing.judge_event_id)))
         .limit(1);
-      const rawPayload = rawRows[0]?.payload as { attribution_pending?: boolean } | null;
+      const rawPayload = rawRows[0]?.payload as {
+        attribution_pending?: boolean;
+        visible_to_user?: boolean;
+        coarse_outcome?: string;
+        score?: number;
+      } | null;
       if (!rawPayload?.attribution_pending) {
         // Real attribution already present — skip to stay idempotent.
         console.warn(
@@ -112,8 +123,16 @@ export async function runAttributionAndWriteJudgeEvent(
         );
         return;
       }
-      // attribution_pending=true: this is a paper placeholder — fall through
-      // and run real attribution, whose result supersedes via newest-wins (D6).
+      // attribution_pending=true: paper placeholder — fall through and run real
+      // attribution. Capture the placeholder's visibility/verdict so the new judge
+      // inherits them: visible_to_user:false must persist on the attribution event
+      // or the newest-wins read layer will treat absent visible_to_user as visible
+      // and expose buffered feedback before session completes (CR 3359820520).
+      inheritedVisibility = {
+        visible_to_user: rawPayload.visible_to_user,
+        coarse_outcome: rawPayload.coarse_outcome,
+        score: rawPayload.score,
+      };
     }
 
     const result = await params.runTaskFn('AttributionTask', params.input, {
@@ -151,6 +170,19 @@ export async function runAttributionAndWriteJudgeEvent(
         },
         referenced_knowledge_ids: params.referencedKnowledgeIds ?? [],
         profile_version: profileVersion,
+        // Round-6 fix #1 (CR 3359820520): inherit paper placeholder's visibility
+        // gate and verdict fields so the newest-wins read layer does not treat the
+        // absence of visible_to_user as "visible" and prematurely expose buffered
+        // feedback. coarse_outcome/score are preserved so the paper-detail and
+        // practice-list summaries remain accurate after attribution runs.
+        // attribution_pending is intentionally NOT inherited (attribution is done).
+        ...(inheritedVisibility?.visible_to_user !== undefined
+          ? { visible_to_user: inheritedVisibility.visible_to_user }
+          : {}),
+        ...(inheritedVisibility?.coarse_outcome !== undefined
+          ? { coarse_outcome: inheritedVisibility.coarse_outcome }
+          : {}),
+        ...(inheritedVisibility?.score !== undefined ? { score: inheritedVisibility.score } : {}),
       },
       caused_by_event_id: params.attemptEventId,
       task_run_id: result.task_run_id ?? null,

@@ -7,14 +7,14 @@
 // getPracticeList) so the route module only exports recognized handlers
 // (next build / YUK-67).
 
+import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { db } from '@/db/client';
-import { artifact } from '@/db/schema';
+import { artifact, learning_session } from '@/db/schema';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { getPracticeList } from '@/server/review/practice-read';
 import { Review } from '@/server/session';
-import { and, eq, inArray } from 'drizzle-orm';
 
 export const runtime = 'nodejs';
 
@@ -80,6 +80,28 @@ export async function POST(req: Request): Promise<Response> {
         `artifact ${parsed.data.artifact_id} is not a practice paper (intent_source=${art.intent_source})`,
         400,
       );
+    }
+
+    // Round-6 fix #3 (CR 3359820518): reuse an existing started/paused session
+    // for this artifact instead of creating a new one on every POST. Without this
+    // guard, two concurrent tab opens would each create their own session; the
+    // read layer takes only the newest, so the older session's answers would be
+    // orphaned (FSRS already written, but invisible). Idempotent: return the
+    // existing session id when one is active.
+    const existingSessionRows = await db
+      .select({ id: learning_session.id })
+      .from(learning_session)
+      .where(
+        and(
+          eq(learning_session.type, 'review'),
+          eq(learning_session.artifact_id, parsed.data.artifact_id),
+          inArray(learning_session.status, ['started', 'paused']),
+        ),
+      )
+      .orderBy(learning_session.created_at)
+      .limit(1);
+    if (existingSessionRows[0]) {
+      return Response.json({ session_id: existingSessionRows[0].id });
     }
 
     const { sessionId } = await Review.startReviewSession(db, {
