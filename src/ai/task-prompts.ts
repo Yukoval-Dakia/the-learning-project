@@ -775,6 +775,11 @@ export function getTaskSystemPrompt(
     // SoT). Promote into a buildMemoryBriefPrompt(profile) only if a subject later
     // demands a coaching voice (OF-2).
     case 'MemoryBriefTask':
+    // U7 (YUK-203) — ProfileCriticTask is subject-NEUTRAL: it reviews a draft
+    // SubjectProfile whose subject angle lives in the input draft, not the prompt
+    // voice. Joins the pass-through group (registry-inline systemPrompt IS the
+    // runtime SoT, Q3) — no buildProfileCriticPrompt(profile) builder.
+    case 'ProfileCriticTask':
       return tasks[task].systemPrompt;
     default:
       return assertNever(task);
