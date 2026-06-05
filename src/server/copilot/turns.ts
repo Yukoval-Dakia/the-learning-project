@@ -25,11 +25,28 @@ import { and, desc, eq, inArray, or } from 'drizzle-orm';
 
 export type CopilotTurnRole = 'user' | 'ai';
 
+// AF S4 / YUK-203 U6 (PR #305 review comment #2) — skill_turn is persisted in
+// the copilot_reply event payload so replay can surface the structured question
+// card without re-running the LLM. Shape mirrors CopilotSkillTurn in chat.ts;
+// kept here as a plain interface to avoid circular imports.
+export interface CopilotTurnSkillTurn {
+  kind: 'explain' | 'ask_check' | 'end';
+  structured_question?: {
+    id: string;
+    kind: string;
+    prompt_md: string;
+    choices_md: string[] | null;
+  };
+  suggested_next?: 'continue' | 'end';
+}
+
 export interface CopilotTurn {
   role: CopilotTurnRole;
   text: string;
   at: string; // ISO timestamp
   event_id: string;
+  /** Present for AI turns that carried a skill turn (teaching ask_check / explain / end). */
+  skill_turn?: CopilotTurnSkillTurn;
 }
 
 const USER_ACTIONS = [
@@ -56,6 +73,35 @@ function userText(payload: Record<string, unknown>): string | null {
 function replyText(payload: Record<string, unknown>): string | null {
   const v = payload.reply_md;
   return typeof v === 'string' && v.length > 0 ? v : null;
+}
+
+function replySkillTurn(payload: Record<string, unknown>): CopilotTurnSkillTurn | undefined {
+  const st = payload.skill_turn;
+  if (!st || typeof st !== 'object') return undefined;
+  const s = st as Record<string, unknown>;
+  const kind = s.kind;
+  if (kind !== 'explain' && kind !== 'ask_check' && kind !== 'end') return undefined;
+  // Narrow the shape to what the UI needs; extra fields pass through.
+  const result: CopilotTurnSkillTurn = { kind };
+  if (s.suggested_next === 'continue' || s.suggested_next === 'end') {
+    result.suggested_next = s.suggested_next;
+  }
+  if (s.structured_question && typeof s.structured_question === 'object') {
+    const sq = s.structured_question as Record<string, unknown>;
+    if (
+      typeof sq.id === 'string' &&
+      typeof sq.kind === 'string' &&
+      typeof sq.prompt_md === 'string'
+    ) {
+      result.structured_question = {
+        id: sq.id,
+        kind: sq.kind,
+        prompt_md: sq.prompt_md,
+        choices_md: Array.isArray(sq.choices_md) ? (sq.choices_md as string[]) : null,
+      };
+    }
+  }
+  return result;
 }
 
 /**
@@ -109,7 +155,15 @@ export async function getRecentCopilotTurns(
     if (row.action === REPLY_ACTION) {
       const text = replyText(payload);
       if (text === null) continue;
-      turns.push({ role: 'ai', text, at: row.created_at.toISOString(), event_id: row.id });
+      const skillTurn = replySkillTurn(payload);
+      const turn: CopilotTurn = {
+        role: 'ai',
+        text,
+        at: row.created_at.toISOString(),
+        event_id: row.id,
+      };
+      if (skillTurn) turn.skill_turn = skillTurn;
+      turns.push(turn);
     } else {
       const text = userText(payload);
       if (text === null) continue;
