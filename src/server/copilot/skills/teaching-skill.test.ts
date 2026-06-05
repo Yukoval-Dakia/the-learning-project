@@ -1,9 +1,11 @@
 // AF S4 / YUK-203 U6 (OQ2/OQ7/OQ9, R2 — single-session) — teaching-skill DB tests.
 //
 // A teaching turn inside Copilot lives ENTIRELY on the Copilot session:
-//   - the ask_check question is materialized with metadata.session_id = the
-//     Copilot session id (NOT a second teaching session),
-//   - getActiveQuestionState resolves it against the Copilot session id,
+//   - ask_check turns return a pendingQuestion (NOT yet persisted — the caller,
+//     runCopilotChat, wraps the question INSERT + reply event in one transaction
+//     for atomicity; PR #305 review comment #1).
+//   - getActiveQuestionState resolves against the Copilot session id once the
+//     caller completes the materialization.
 //   - NO second learning_session row is created by the skill.
 
 import { createId } from '@paralleldrive/cuid2';
@@ -13,6 +15,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { learning_item, learning_session, question } from '@/db/schema';
 import { Conversation } from '@/server/session';
 import { getActiveQuestionState } from '@/server/teaching/active-question';
+import { materializeAskCheckQuestion } from '@/server/teaching/materialize-ask-check';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { runTeachingSkill } from './teaching-skill';
 
@@ -46,7 +49,7 @@ describe('runTeachingSkill (U6 teaching skill — single session)', () => {
     await resetDb();
   });
 
-  it('explain turn: returns text + kind, materializes no question', async () => {
+  it('explain turn: returns text + kind, returns no pendingQuestion', async () => {
     await seedLearningItem('li_skill_explain');
     const sessionId = await seedCopilotSession();
     const runAgentTaskFn = vi.fn(async () => ({
@@ -66,15 +69,16 @@ describe('runTeachingSkill (U6 teaching skill — single session)', () => {
         sessionId,
         learningItemId: 'li_skill_explain',
         userMessage: '帮我讲讲',
-        replyEventId: 'copilot_reply_x',
       },
       { runAgentTaskFn },
     );
 
     expect(result.kind).toBe('explain');
     expect(result.text_md).toBe('我们先看这段。');
-    expect(result.structured_question).toBeUndefined();
-    // No question materialized.
+    expect(result.pendingQuestion).toBeUndefined();
+    // PR #305 review comment #3: real task_run_id is returned.
+    expect(result.task_run_id).toBe('task_t1');
+    // No question persisted (caller owns the transaction).
     const qs = await db.select().from(question);
     expect(qs).toHaveLength(0);
     // TeachingTurnTask ran with allowedTools:[] (no memory, no tool budget — R6).
@@ -85,7 +89,7 @@ describe('runTeachingSkill (U6 teaching skill — single session)', () => {
     );
   });
 
-  it('ask_check turn: materializes a question stamped with the COPILOT session id', async () => {
+  it('ask_check turn: returns pendingQuestion (NOT persisted) with correct params', async () => {
     await seedLearningItem('li_skill_ask');
     const sessionId = await seedCopilotSession();
     const runAgentTaskFn = vi.fn(async () => ({
@@ -110,41 +114,95 @@ describe('runTeachingSkill (U6 teaching skill — single session)', () => {
         sessionId,
         learningItemId: 'li_skill_ask',
         userMessage: '考我一下',
-        replyEventId: 'copilot_reply_ask',
       },
       { runAgentTaskFn },
     );
 
     expect(result.kind).toBe('ask_check');
-    expect(result.structured_question).toMatchObject({
-      kind: 'short_answer',
-      prompt_md: '这里的「之」指代什么？',
-      choices_md: null,
+    expect(result.task_run_id).toBe('task_t2');
+
+    // pendingQuestion is populated — NOT yet persisted (PR #305 review #1 atomicity).
+    expect(result.pendingQuestion).toMatchObject({
+      structured_question: {
+        kind: 'short_answer',
+        prompt_md: '这里的「之」指代什么？',
+      },
+      learningItemId: 'li_skill_ask',
+      sessionId,
     });
 
-    // The question is stamped with the COPILOT session id (single-session, OQ7/OQ9).
-    const qRows = await db
-      .select()
-      .from(question)
-      .where(eq(question.id, result.structured_question?.id ?? 'missing'));
+    // The skill itself wrote NO question row — the caller is responsible.
+    const qsBefore = await db.select().from(question);
+    expect(qsBefore).toHaveLength(0);
+
+    // Single-session: NO second learning_session row was created by the skill.
+    const sessions = await db.select().from(learning_session);
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].id).toBe(sessionId);
+    expect(sessions[0].entrypoint).toBe('copilot');
+  });
+
+  it('ask_check turn: caller can materialize question + verify active-question state', async () => {
+    // This test simulates what runCopilotChat does: take the pendingQuestion and
+    // persist it via materializeAskCheckQuestion inside a transaction, then verify
+    // getActiveQuestionState resolves it against the Copilot session.
+    await seedLearningItem('li_skill_ask_mat');
+    const sessionId = await seedCopilotSession();
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_t3',
+      text: JSON.stringify({
+        kind: 'ask_check',
+        text_md: '试题来了。',
+        suggested_next: 'continue',
+        structured_question: {
+          kind: 'short_answer',
+          prompt_md: '解释「之」的用法。',
+          reference_md: '代词用法，指代前文。',
+        },
+      }),
+      finishReason: 'stop' as const,
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+
+    const result = await runTeachingSkill(
+      {
+        db,
+        sessionId,
+        learningItemId: 'li_skill_ask_mat',
+        userMessage: '考我',
+      },
+      { runAgentTaskFn },
+    );
+
+    expect(result.pendingQuestion).toBeDefined();
+
+    // Simulate the caller's transaction: materialize question + write reply event.
+    const fakeReplyEventId = `copilot_reply_${createId()}`;
+    const mat = await db.transaction((tx) =>
+      materializeAskCheckQuestion(tx, {
+        // biome-ignore lint/style/noNonNullAssertion: asserted above
+        ...result.pendingQuestion!,
+        sourceRef: fakeReplyEventId,
+      }),
+    );
+
+    expect(mat).toMatchObject({
+      kind: 'short_answer',
+      prompt_md: '解释「之」的用法。',
+    });
+
+    // Now the question row exists, stamped with the Copilot session id.
+    const qRows = await db.select().from(question).where(eq(question.id, mat.id));
     expect(qRows).toHaveLength(1);
-    expect(qRows[0].source).toBe('teaching_check');
-    expect(qRows[0].source_ref).toBe('copilot_reply_ask');
+    expect(qRows[0].source_ref).toBe(fakeReplyEventId);
     expect(qRows[0].metadata).toMatchObject({
-      learning_item_id: 'li_skill_ask',
+      learning_item_id: 'li_skill_ask_mat',
       session_id: sessionId,
     });
 
     // getActiveQuestionState resolves it against the COPILOT session id (the reader
     // keys purely on metadata.session_id — no learning_session.type filter).
     const active = await getActiveQuestionState(db, sessionId);
-    expect(active.active_question_id).toBe(result.structured_question?.id);
-
-    // Single-session: NO second learning_session row was created by the skill
-    // (only the one Copilot conversation session exists).
-    const sessions = await db.select().from(learning_session);
-    expect(sessions).toHaveLength(1);
-    expect(sessions[0].id).toBe(sessionId);
-    expect(sessions[0].entrypoint).toBe('copilot');
+    expect(active.active_question_id).toBe(mat.id);
   });
 });

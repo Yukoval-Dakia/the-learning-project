@@ -44,6 +44,12 @@ export interface RunSolveSkillParams {
 export interface SolveSkillResult {
   /** The non-revealing hint markdown to surface as the Copilot reply. */
   text_md: string;
+  /**
+   * The real task_run_id returned by the TeachingTurnTask runner. The caller
+   * writes this onto the reply event for cost-tracing + observability
+   * (PR #305 review comment #3).
+   */
+  task_run_id: string;
 }
 
 export interface RunSolveSkillDeps {
@@ -85,5 +91,5 @@ export async function runSolveSkill(
     allowedTools: [],
   });
 
-  return parseHintTurn(result.text);
+  return { ...parseHintTurn(result.text), task_run_id: result.task_run_id };
 }
