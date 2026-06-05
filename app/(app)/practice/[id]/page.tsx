@@ -61,6 +61,8 @@ interface SlotLocalState {
   // result echoed from the submit response (visible slots only)
   submitResult: SubmitResult | null;
   autosavePending: boolean;
+  // set when the last autosave POST failed; cleared on next successful save
+  autosaveFailed?: boolean;
 }
 
 interface SubmitResult {
@@ -355,6 +357,8 @@ export default function PracticeAnswerPage() {
     };
     autosaveTimers.current[key] = setTimeout(() => {
       if (!sessionId) return;
+      // CR Round-4 #3359642328: only clear pending state on success; preserve on
+      // failure so flushPendingDrafts can retry on unmount/pagehide.
       void apiJson(`/api/practice/${artifactId}/answer`, {
         method: 'POST',
         body: JSON.stringify({
@@ -363,13 +367,26 @@ export default function PracticeAnswerPage() {
           part_ref: slot.part_ref ?? null,
           content_md: answer,
         }),
-      }).catch(() => {});
-      setSlotStates((prev) => ({
-        ...prev,
-        [key]: { ...prev[key], autosavePending: false },
-      }));
-      delete autosaveTimers.current[key];
-      delete pendingDrafts.current[key];
+      })
+        .then(() => {
+          setSlotStates((prev) => ({
+            ...prev,
+            [key]: { ...prev[key], autosavePending: false, autosaveFailed: false },
+          }));
+          delete autosaveTimers.current[key];
+          delete pendingDrafts.current[key];
+        })
+        .catch(() => {
+          // Save failed — clear the timer entry (it already fired) but keep the
+          // draft in pendingDrafts so flush on unmount/pagehide can retry it.
+          // Signal failure in UI; autosavePending cleared so indicator doesn't
+          // stay "saving…" forever.
+          setSlotStates((prev) => ({
+            ...prev,
+            [key]: { ...prev[key], autosavePending: false, autosaveFailed: true },
+          }));
+          delete autosaveTimers.current[key];
+        });
     }, 500);
   }
 
@@ -377,7 +394,7 @@ export default function PracticeAnswerPage() {
     const key = slotKey(slot);
     setSlotStates((prev) => ({
       ...prev,
-      [key]: { ...prev[key], answer: value, autosavePending: true },
+      [key]: { ...prev[key], answer: value, autosavePending: true, autosaveFailed: false },
     }));
     scheduleAutosave(slot, value);
   }
@@ -415,6 +432,13 @@ export default function PracticeAnswerPage() {
         ...prev,
         [key]: { ...prev[key], phase: 'feedback', submitResult: result },
       }));
+      // CR Round-4 #3359642338: for visible submissions, immediately refetch so
+      // the reference_md (only in server slot_state) is available before the
+      // session completes. For buffered submissions the refetch at session-end
+      // (allDone effect) is sufficient.
+      if (data.visible_to_user) {
+        void qc.invalidateQueries({ queryKey: ['practice-detail', artifactId] });
+      }
       // Fix 3: explicitly advance to the next unsubmitted slot after submit.
       // This must happen after setSlotStates so the newly submitted slot is
       // excluded; using functional update pattern to read current allSlots.
@@ -738,6 +762,11 @@ export default function PracticeAnswerPage() {
                               草稿保存中…
                             </span>
                           )}
+                          {!localState.autosavePending && localState.autosaveFailed && (
+                            <span className="label-mono" style={{ color: 'var(--again-ink)' }}>
+                              保存失败，将重试
+                            </span>
+                          )}
                         </div>
                         {submitM.isError && (
                           <p
@@ -760,9 +789,29 @@ export default function PracticeAnswerPage() {
                           const sub = slot.slot_state.submission;
                           // "你的作答": always use submission.answer_md (frozen at submit time).
                           const answerText = sub?.answer_md ?? localState.answer;
-                          // "参考答案": only present in the visible variant (§4.9).
-                          // answer_image_refs reserved: no image rendering pattern in codebase yet.
-                          const refMd = sub && 'reference_md' in sub ? sub.reference_md : undefined;
+                          // "参考答案" resolution (§4.9 + CR Round-4 #3359642338):
+                          //   sub present + visible variant → sub.reference_md (may be null = no ref)
+                          //   sub present + buffered variant → structurally no reference_md field
+                          //   sub absent + local result visible (refetch gap) → show loading text
+                          //   sub absent + local result buffered / null → show buffered placeholder
+                          // Do NOT use 'reference_md' in sub to distinguish visible/buffered when
+                          // sub is absent — fall back to localState.submitResult.visible_to_user.
+                          let refMdNode: React.ReactNode;
+                          if (sub && 'reference_md' in sub) {
+                            // server data available: use it authoritatively
+                            refMdNode =
+                              sub.reference_md === null ? '本题无参考答案' : sub.reference_md;
+                          } else if (localState.submitResult?.visible_to_user) {
+                            // visible submit, server refetch pending (CR Round-4 #3359642338)
+                            refMdNode = (
+                              <span className="label-mono" style={{ color: 'var(--ink-5)' }}>
+                                参考答案加载中…
+                              </span>
+                            );
+                          } else {
+                            // buffered variant: reference_md structurally absent
+                            refMdNode = '提交后可在学习会话中查看';
+                          }
                           return (
                             <div className="feedback-split">
                               <div>
@@ -781,12 +830,7 @@ export default function PracticeAnswerPage() {
                                   className="wenyan feedback-prose muted"
                                   style={{ marginTop: 'var(--s-2)' }}
                                 >
-                                  {refMd === undefined
-                                    ? // Buffered variant: reference_md structurally absent.
-                                      '提交后可在学习会话中查看'
-                                    : refMd === null
-                                      ? '本题无参考答案'
-                                      : refMd}
+                                  {refMdNode}
                                 </div>
                               </div>
                             </div>
