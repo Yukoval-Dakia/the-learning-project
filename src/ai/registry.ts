@@ -465,7 +465,7 @@ export const tasks = {
   CopilotTask: {
     kind: 'CopilotTask',
     description:
-      'Wave 5 / T-D3 — Copilot Drawer on /today. Streams chat responses with tool-use 三段式 rendering. The chat endpoint resolves the per-request DomainTool allowlist surface (`copilot` for free-form chat, `copilot_user_suggested_mistake_action` for chip-direct-trigger).',
+      'AF S4 / YUK-203 — the single user-facing conversational agent (teach / solve / explain / critique / plan / inspect). The chat endpoint resolves the per-request DomainTool allowlist surface (`copilot` for free-form chat, `copilot_user_suggested_mistake_action` for chip-direct-trigger); teaching/solve skills compose TeachingTurnTask at the service layer, never adding tools to this surface.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
     fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
@@ -485,7 +485,7 @@ export const tasks = {
     // observed within the message. A zero-result read is a legitimate success, not
     // a corrective trigger. No deterministic fallback — pure model labeling.
     systemPrompt:
-      '你是 Copilot 助手，在 /today drawer 内辅助用户。读 DomainTools 拿当前学习信号，回答用户问题。自由对话的 copilot surface 已带 propose_knowledge_edge 写工具，你可以在对话中直接提议 knowledge_edge；用户主动点 chip 会切到更宽的写工具 surface（额外开放 attribute_mistake / propose_variant）去执行那次具体 mutation。所有 mutation 仅 propose 不直接写。当输入里有 proposal_feedback 时，每条是一个 (kind, relation) 单元，带 top_dismiss_reasons（用户为何 dismiss）和 top_rubric_gates（rubric 为何拒绝）——把它当作该 relation 的具体失败模式，提议 knowledge_edge 时避免重蹈；纯加性，绝不压制信号驱动的提议（ND-5）。proposal_feedback 为空时按原行为处理。每次调 propose_* 工具时设置可选的 suggestion_kind 参数：提议下一步动作（基于成功读取）用 proactive（默认值，可省略）；只有当这条提议是在修正你自己刚观察到的一次失败时才用 corrective。读取返回 0 条结果属于正常成功（你查了但没找到），不是失败，不要因为上游读取为空就把提议标成 corrective——只有真正修复观察到的失败才是 corrective。',
+      '你是 Copilot，本应用唯一面向用户的对话式学习助手，跨页面随处可用，覆盖讲解 / 解题陪练 / 答疑 / 评析 / 规划 / 查阅。读 DomainTools 拿当前学习信号，回答用户问题。自由对话的 copilot surface 已带 propose_knowledge_edge 写工具，你可以在对话中直接提议 knowledge_edge；用户主动点 chip 会切到更宽的写工具 surface（额外开放 attribute_mistake / propose_variant）去执行那次具体 mutation。所有 mutation 仅 propose 不直接写。当输入里有 proposal_feedback 时，每条是一个 (kind, relation) 单元，带 top_dismiss_reasons（用户为何 dismiss）和 top_rubric_gates（rubric 为何拒绝）——把它当作该 relation 的具体失败模式，提议 knowledge_edge 时避免重蹈；纯加性，绝不压制信号驱动的提议（ND-5）。proposal_feedback 为空时按原行为处理。每次调 propose_* 工具时设置可选的 suggestion_kind 参数：提议下一步动作（基于成功读取）用 proactive（默认值，可省略）；只有当这条提议是在修正你自己刚观察到的一次失败时才用 corrective。读取返回 0 条结果属于正常成功（你查了但没找到），不是失败，不要因为上游读取为空就把提议标成 corrective——只有真正修复观察到的失败才是 corrective。',
   },
   KnowledgeReviewTask: {
     kind: 'KnowledgeReviewTask',
