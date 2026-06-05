@@ -1,11 +1,18 @@
 import { z } from 'zod';
 
-import { JudgeKind as JudgeKindSchema, QuestionKind, Rubric } from '@/core/schema/business';
+import { Rubric } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
+// F0 (PR #309 round-3) — the route resolver now lives in the dependency-light
+// leaf `@/server/judge/route-resolve` (see that file's header for the build
+// regression it fixes). Re-exported below so this module's public surface is
+// unchanged; existing importers keep working.
+import { resolveQuestionJudgeRoute } from '@/server/judge/route-resolve';
 import type { SubjectProfile } from '@/subjects/profile';
 import type { JudgeKind } from '.';
+
+export { resolveQuestionJudgeRoute };
 
 export const RUNNABLE_ROUTES = new Set<JudgeKind>([
   'exact',
@@ -105,79 +112,9 @@ function nonEmpty(values: string[] | undefined): string[] {
   return (values ?? []).map((v) => v.trim()).filter((v) => v.length > 0);
 }
 
-function parseRoute(value: string | null | undefined): JudgeKind | null {
-  const parsed = JudgeKindSchema.safeParse(value);
-  return parsed.success ? parsed.data : null;
-}
-
-function isPreferred(profile: SubjectProfile, route: JudgeKind): boolean {
-  return profile.judgePolicy.preferredRoutes.includes(route);
-}
-
-export function resolveQuestionJudgeRoute(
-  q: JudgeQuestionRow,
-  subjectProfile: SubjectProfile,
-): JudgeKind {
-  const override = parseRoute(q.judge_kind_override);
-  if (override) return override;
-
-  // A question with persisted choices is structurally a multiple/single-choice
-  // item regardless of the kind string the subject profile uses
-  // (e.g. wenyan exposes 'single_choice' / 'multiple_choice' while the
-  // QuestionKind enum still calls the canonical kind 'choice'). The structure
-  // is the source of truth: if there are choices, the only safe default is
-  // exact match against reference_md — never spend LLM budget on a semantic
-  // judge for what is fundamentally a string compare.
-  const choices = q.choices_md ?? [];
-  if (choices.length > 0) return 'exact';
-
-  if (
-    subjectProfile.id === 'physics' &&
-    isPreferred(subjectProfile, 'unit_dimension') &&
-    (q.kind === 'calculation' || q.kind === 'computation')
-  ) {
-    return 'unit_dimension';
-  }
-
-  const kind = QuestionKind.safeParse(q.kind).success ? q.kind : 'short_answer';
-  const rubric = parseRubric(q.rubric_json);
-  const keywords = nonEmpty(rubric?.keywords);
-
-  if (kind === 'choice' || kind === 'true_false') return 'exact';
-  if (kind === 'fill_blank') return keywords.length > 0 ? 'keyword' : 'exact';
-  if (kind === 'computation') return keywords.length > 0 ? 'keyword' : 'semantic';
-  // M2.1 (2026-05-22): derivation always routes via steps@1 for profiles that
-  // declare it (math); other profiles fall back to semantic if preferred, else
-  // keyword. M2.2 made 'steps' runnable via runStepsJudge (vision LLM call).
-  if (kind === 'derivation') {
-    if (isPreferred(subjectProfile, 'steps')) return 'steps';
-    return isPreferred(subjectProfile, 'semantic') ? 'semantic' : 'keyword';
-  }
-  // YUK-201 — gated auto-route to multimodal_direct (holistic vision judging).
-  // Placed AFTER the physics unit_dimension branch (above) and AFTER the
-  // derivation→steps branch (above) so steps@1 keeps math derivations and physics
-  // calc keeps unit_dimension. Additive — fires only when ALL hold:
-  //   - kind is non-choice (choices short-circuit to 'exact' earlier) and
-  //     non-derivation (handled above);
-  //   - the question carries prompt figures (q.image_refs?.length > 0);
-  //   - the profile declares multimodal_direct as a preferred route (wenyan/math
-  //     do NOT → unaffected; only physics opts in);
-  //   - there is NO step-rubric reference_solution (a rubric reference_solution
-  //     belongs to steps@1, never multimodal_direct).
-  // No profile opts in for a question without these conditions, so existing items
-  // (no figures, or no multimodal_direct preference) route exactly as before.
-  if (
-    (q.image_refs?.length ?? 0) > 0 &&
-    isPreferred(subjectProfile, 'multimodal_direct') &&
-    rubric?.reference_solution == null
-  ) {
-    return 'multimodal_direct';
-  }
-  if (kind === 'short_answer' || kind === 'reading' || kind === 'translation' || kind === 'essay') {
-    return isPreferred(subjectProfile, 'semantic') ? 'semantic' : 'keyword';
-  }
-  return 'exact';
-}
+// `resolveQuestionJudgeRoute` moved to `@/server/judge/route-resolve` (F0,
+// PR #309 round-3) and is re-exported at the top of this file. The private
+// helpers it used (`parseRoute` / `isPreferred`) moved with it.
 
 export function buildLocalJudgeQuestion(
   q: JudgeQuestionRow,

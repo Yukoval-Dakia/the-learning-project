@@ -17,10 +17,11 @@ import {
   RUNNABLE_ROUTES,
   buildLocalJudgeQuestion,
   defaultRunTaskFn,
-  resolveQuestionJudgeRoute,
   runSemanticJudge,
   unsupportedResult,
 } from '../ai/judges/question-contract';
+// F0 (PR #309 round-3) — resolver now lives in the dependency-light leaf.
+import { resolveQuestionJudgeRoute } from './route-resolve';
 
 export const JudgeInvokerQuestionSchema = z
   .object({
