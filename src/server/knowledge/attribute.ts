@@ -12,8 +12,10 @@
 import { newId } from '@/core/ids';
 import { CauseSchema, validateCauseAgainstProfile } from '@/core/schema/business';
 import type { Db } from '@/db/client';
+import { event as eventTable } from '@/db/schema';
 import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { type SubjectProfile, defaultSubjectProfile } from '@/subjects/profile';
+import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { getJudgeForAttempt, writeEvent } from '../events/queries';
 import { writeRetryableAiFailureLedger } from './ai_failure_log';
@@ -85,12 +87,33 @@ export async function runAttributionAndWriteJudgeEvent(
     // Idempotency check — mirrors old "cause already set" behaviour. The DB-level
     // PK conflict in writeEvent gives us idempotency on event id, but here we
     // dedupe by attempt to avoid wastefully calling the LLM.
+    //
+    // Round-4 fix #4 (YUK-203): a paper placeholder judge sets
+    // `attribution_pending: true` in its payload to signal that real attribution
+    // has NOT happened yet. We must NOT skip when the only existing judge is a
+    // pending placeholder — otherwise paper mistakes never get a real cause and
+    // the D4 mistake-flywheel stays silent. Skip only when a real attribution
+    // judge (no attribution_pending flag, or explicitly false) is present.
     const existing = await getJudgeForAttempt(params.db, params.attemptEventId);
     if (existing) {
-      console.warn(
-        `runAttributionAndWriteJudgeEvent: skipped — judge already exists for attempt ${params.attemptEventId}`,
-      );
-      return;
+      // Peek at the raw payload to check attribution_pending.
+      // getJudgeForAttempt returns the processed shape; we need the raw flag.
+      // Re-query is acceptable here (non-hot path, attribution is async).
+      const rawRows = await params.db
+        .select({ payload: eventTable.payload })
+        .from(eventTable)
+        .where(and(eq(eventTable.id, existing.judge_event_id)))
+        .limit(1);
+      const rawPayload = rawRows[0]?.payload as { attribution_pending?: boolean } | null;
+      if (!rawPayload?.attribution_pending) {
+        // Real attribution already present — skip to stay idempotent.
+        console.warn(
+          `runAttributionAndWriteJudgeEvent: skipped — real judge already exists for attempt ${params.attemptEventId}`,
+        );
+        return;
+      }
+      // attribution_pending=true: this is a paper placeholder — fall through
+      // and run real attribution, whose result supersedes via newest-wins (D6).
     }
 
     const result = await params.runTaskFn('AttributionTask', params.input, {
