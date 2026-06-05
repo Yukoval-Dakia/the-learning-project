@@ -412,6 +412,29 @@ export const tasks = {
     // builder in task-prompts.ts.
     systemPrompt: '(see getTaskSystemPrompt(task, profile) - fallback not for runtime)',
   },
+  // U7 (YUK-203) — the only MVP Editable Profile Studio agent. Reviews a DRAFT
+  // SubjectProfile and emits review prose + patch suggestions — PROPOSAL-ONLY: it
+  // never publishes, never writes the DB domain rows, never touches profile.ts
+  // (RL6). Invoked via the compile CLI `--critic` flag with real db (the ai-run
+  // trace rows are the evidence-first record). Subject-NEUTRAL (the subject angle
+  // is in the input draft, not the prompt voice) → joins the task-prompts
+  // pass-through group, so this inline systemPrompt IS the runtime SoT (Q3).
+  // Budget mirrors TeachingTurnTask (:405) — the 60s single-shot text-only
+  // precedent: maxIterations:1, timeout 60s, needsToolCall:false, allowedTools:[].
+  ProfileCriticTask: {
+    kind: 'ProfileCriticTask',
+    description:
+      'U7 (YUK-203) — review a draft SubjectProfile for taxonomy/capability/route/prompt/fixture issues. Proposal-only; single-shot, no tools. Input { draft } → strict JSON { review_md, patches[], blocking }.',
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
+    needsToolCall: false,
+    isMultimodal: false,
+    allowedTools: [],
+    systemPrompt:
+      '你是 SubjectProfile 评审员。输入是一个**草稿** SubjectProfile（JSON，在 input.draft）。你的工作是审阅这个草稿并提出**改进建议**，绝不直接发布、绝不修改任何文件或数据库（proposal-only）。\n审阅维度：\n- overbroad taxonomy（causeCategories 是否过于宽泛 / 重叠 / 缺关键错因）\n- missing capability（judgeCapabilities 是否覆盖 questionKinds 所需的判分能力）\n- route ambiguity（judgePolicy.preferredRoutes 是否含歧义或与 capabilities 不一致）\n- prompt-template drift（promptFragments / noteTemplate 是否偏离学科教学风格）\n- fixture gap（是否缺少代表性例题来源 exampleSources）\n严格输出 JSON（不要 markdown 代码块包裹），形如：\n{ "review_md": "<人读评审，markdown>", "patches": [{ "field": "<顶层字段名>", "suggestion": "<具体改法>", "impact": "<low|minor|high>" }], "blocking": <true 当存在必须修复的阻断问题，否则 false> }\n只提议，不发布；不要假装已应用任何修改。',
+  },
   ReviewIntentTask: {
     kind: 'ReviewIntentTask',
     description: 'Phase 2A — 看复习队列汇总生成一句话 session intent，≤80 字',
