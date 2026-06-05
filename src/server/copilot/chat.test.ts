@@ -640,7 +640,9 @@ describe('runCopilotChat — skill routing (U6)', () => {
   it('teaching skill: runs on the Copilot session, writes turn_kind, returns skill_turn', async () => {
     const db = {} as never;
     const writeEventFn = vi.fn(async (_db, input) => input.id);
-    const runTeachingSkillFn = vi.fn(async () => ({
+    // 参数必须显式类型化：vi.fn(async () => …) 推导出空参数元组，
+    // 下方 mock.calls[0]?.[0] 会触发 TS2493/TS2532（review must-fix）。
+    const runTeachingSkillFn = vi.fn(async (_params: { replyEventId: string }) => ({
       text_md: '我们来看这段——你能说说为什么吗？',
       kind: 'ask_check' as const,
       suggested_next: 'continue' as const,
