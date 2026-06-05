@@ -29,6 +29,7 @@ import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { autosaveAnswerDraft, countAnsweredSlots, freezeAnswerDraft } from './answer-draft';
+import { getPaperDetail } from './paper-detail';
 import { submitPaperSlot } from './paper-submit';
 import { getPracticeList, isJudgementVisibleToUser } from './practice-read';
 
@@ -414,6 +415,80 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     // partial → right (deliberate §4.10 Q9)
     expect(paper?.session?.right).toBe(1);
     expect(paper?.session?.wrong).toBe(0);
+  });
+
+  // F1 (PR #309 round-4, YUK-215) — a photo-only answer on a text-only judge route
+  // (true_false → exact judge) is "未判分": captured but NOT graded. Round-3 stopped
+  // FSRS pollution but left the attempt as outcome='failure' with NO judge event,
+  // so both read-layer summaries counted it as WRONG. This pins the write-side fix:
+  //   - submit reports coarseOutcome='unsupported', visible, no judge event, no FSRS
+  //   - getPracticeList / getPaperDetail count it as NEITHER right nor wrong
+  //   - getPaperDetail surfaces outcome='unsupported' (visible) to the user
+  it('F1: photo-only on a text-only route is un-judged — not wrong, status visible', async () => {
+    const db = testDb();
+    await seedQuestion('q1', 'true');
+    await seedPaper('paper_f1', ['q1']);
+    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper_f1' });
+
+    const submit = await submitPaperSlot(
+      {
+        sessionId,
+        paperArtifactId: 'paper_f1',
+        questionId: 'q1',
+        answerMd: '', // photo-only: no typed text
+        answerImageRefs: ['photo_x'],
+        primaryKnowledgeId: 'k1',
+        feedbackPolicy: 'immediate',
+      },
+      db,
+    );
+    // Un-judged: surfaced as 'unsupported', always visible (actionable feedback).
+    expect(submit.coarseOutcome).toBe('unsupported');
+    expect(submit.visibleToUser).toBe(true);
+    expect(submit.score).toBeNull();
+
+    // NO judge event written (a text-only judge never saw the photo).
+    const judgeEvents = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'judge'), eq(event.subject_kind, 'event')));
+    expect(judgeEvents).toHaveLength(0);
+
+    // The attempt event carries the un-judged marker in its payload.
+    const attemptEvents = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'attempt'), eq(event.subject_id, 'q1')));
+    expect(attemptEvents).toHaveLength(1);
+    expect((attemptEvents[0].payload as { unsupported_judge?: boolean }).unsupported_judge).toBe(
+      true,
+    );
+
+    // NO FSRS state written for the un-judged slot.
+    const fsrsRows = await db
+      .select()
+      .from(material_fsrs_state)
+      .where(eq(material_fsrs_state.subject_id, 'k1'));
+    expect(fsrsRows).toHaveLength(0);
+
+    // getPracticeList: the slot is answered (pos=1) but counts as NEITHER right
+    // nor wrong — the un-judged attempt must not pollute the summary.
+    const practice = await getPracticeList(db);
+    const paper = practice.papers.find((p) => p.artifact_id === 'paper_f1');
+    expect(paper?.session?.pos).toBe(1);
+    expect(paper?.session?.right).toBe(0);
+    expect(paper?.session?.wrong).toBe(0);
+
+    // getPaperDetail: same right/wrong, and the slot surfaces outcome='unsupported'
+    // (visible) so the user sees WHY it is ungraded.
+    const detail = await getPaperDetail(db, 'paper_f1');
+    expect(detail?.session?.right).toBe(0);
+    expect(detail?.session?.wrong).toBe(0);
+    const slot = detail?.sections.flatMap((s) => s.slots).find((s) => s.question_id === 'q1');
+    const submission = slot?.slot_state.submission;
+    expect(submission?.submitted).toBe(true);
+    expect(submission?.visible_to_user).toBe(true);
+    expect(submission && 'outcome' in submission ? submission.outcome : null).toBe('unsupported');
   });
 
   it('hidden judgement (feedback_policy=judge_now_show_later) is buffered until completion', async () => {

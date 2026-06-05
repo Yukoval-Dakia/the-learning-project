@@ -143,40 +143,63 @@ export async function POST(req: Request): Promise<Response> {
     // `answerMd` would be scored as a wrong answer and pollute FSRS, so we route
     // such a submit to the no-judge path (recorded but not auto-rated).
     const photoOnly = answerMd.length === 0 && hasImageAnswer;
-    const suppliedJudgeResult = hasAnswer ? (body.judge_result_v2 ?? null) : null;
+
+    // F3 (PR #309 round-4, YUK-215) — resolve the route the invoker WOULD dispatch
+    // (same resolver, invoker.ts:95) BEFORE deciding whether to trust any judge
+    // result, so the photo-only gate covers BOTH paths uniformly. Pre-fix the gate
+    // only ran inside the server-invoke branch (judgeResult===null); a client that
+    // supplied `judge_result_v2` for a photo-only answer on a text-only route
+    // bypassed the gate entirely — its verdict was trusted and (with auto_rate)
+    // written to FSRS, exactly the text-only-route pollution F4 set out to stop.
+    // Resolving up front + ignoring the supplied result on the unsupported case
+    // makes the supplied and invoke paths share one gate (same semantics as the
+    // invoke path: auto_rate → 422, non-auto_rate → recorded unjudged).
+    let judgeRoute: string | null = null;
+    let photoOnlyUnsupported = false;
+    // Resolve the subject profile ONCE (when there is any answer) and reuse it for
+    // BOTH the route gate and the invoke below. Resolving it twice would consume a
+    // test's `mockResolvedValueOnce` on the first call (letting the invoke fall
+    // through to the real resolver) and is a needless second DB round-trip.
+    const subjectProfile = hasAnswer
+      ? await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids)
+      : null;
+    if (subjectProfile !== null) {
+      const resolvedRoute = resolveQuestionJudgeRoute(q, subjectProfile);
+      photoOnlyUnsupported = photoOnly && !IMAGE_CONSUMING_JUDGE_ROUTES.has(resolvedRoute);
+      if (photoOnlyUnsupported) {
+        // Surface the route for the 422 message; the supplied/invoke result is
+        // discarded below so no client verdict can reach FSRS for this case.
+        judgeRoute = resolvedRoute;
+      }
+    }
+
+    // F3 — only trust a supplied result when the route can actually consume the
+    // photo. A client-supplied verdict for a photo-only + text-only-route slot is
+    // ignored (treated as no judge), routing to the same no-judge path as the
+    // server-invoke branch instead of being trusted.
+    const suppliedJudgeResult =
+      hasAnswer && !photoOnlyUnsupported ? (body.judge_result_v2 ?? null) : null;
     let judgeResult: JudgeResultV2T | null = suppliedJudgeResult;
-    let judgeRoute: string | null = suppliedJudgeResult?.capability_ref.id ?? null;
+    if (suppliedJudgeResult !== null) {
+      judgeRoute = suppliedJudgeResult.capability_ref.id;
+    }
     let judgeTelemetry:
       | Awaited<ReturnType<ReturnType<typeof createDefaultJudgeInvoker>['invoke']>>['telemetry']
       | null = null;
-    if (hasAnswer && judgeResult === null) {
-      const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids);
-      // Resolve the route the invoker WOULD dispatch (same resolver, invoker.ts:95)
-      // so a photo-only answer headed for a text-only judge skips judging instead
-      // of being scored against an empty string (F4). Text answers and photo
-      // answers headed for steps/multimodal_direct are unaffected.
-      const resolvedRoute = resolveQuestionJudgeRoute(q, subjectProfile);
-      const routeConsumesImages = IMAGE_CONSUMING_JUDGE_ROUTES.has(resolvedRoute);
-      if (photoOnly && !routeConsumesImages) {
-        // Leave judgeResult null → the auto_rate gate below 422s with a message
-        // that names the unsupported route; non-auto_rate records the attempt
-        // unjudged (no FSRS pollution). Surface the route for that 422 message.
-        judgeRoute = resolvedRoute;
-      } else {
-        const invoked = await createDefaultJudgeInvoker().invoke({
-          db,
-          question: q,
-          answer_md: answerMd,
-          // YUK-215 — pass handwriting-photo refs to the judge (invoker accepts
-          // student_image_refs; invoker.ts:46). Optional → no-image submits and
-          // client-supplied-judge submits are byte-for-byte unchanged.
-          student_image_refs: body.answer_image_refs,
-          subjectProfile,
-        });
-        judgeResult = invoked.result;
-        judgeRoute = invoked.route;
-        judgeTelemetry = invoked.telemetry;
-      }
+    if (judgeResult === null && !photoOnlyUnsupported && subjectProfile !== null) {
+      const invoked = await createDefaultJudgeInvoker().invoke({
+        db,
+        question: q,
+        answer_md: answerMd,
+        // YUK-215 — pass handwriting-photo refs to the judge (invoker accepts
+        // student_image_refs; invoker.ts:46). Optional → no-image submits and
+        // client-supplied-judge submits are byte-for-byte unchanged.
+        student_image_refs: body.answer_image_refs,
+        subjectProfile,
+      });
+      judgeResult = invoked.result;
+      judgeRoute = invoked.route;
+      judgeTelemetry = invoked.telemetry;
     }
 
     // YUK-100 (W-05) + YUK-101 (iter2 F8 / F13) — Resolve effective cause via
@@ -202,12 +225,13 @@ export async function POST(req: Request): Promise<Response> {
       if (suggestedRating === null) {
         // No suggested rating in auto_rate mode has three causes:
         //   1. No answer at all (neither text NOR image) — name both inputs.
-        //   2. F4 (round-2): a photo-only answer routed to a text-only judge
-        //      (judgeResult left null deliberately, NOT 'unsupported') — this
-        //      question type cannot grade a pure-image answer, so ask for typed
-        //      text (or manual rating). We must NOT score the empty text wrong.
+        //   2. F4 (round-2) / F3 (round-4): a photo-only answer routed to a
+        //      text-only judge — this question type cannot grade a pure-image
+        //      answer, so ask for typed text (or manual rating). We must NOT score
+        //      the empty text wrong. `photoOnlyUnsupported` is resolved up front
+        //      (above) and now covers BOTH the server-invoke and client-supplied
+        //      result paths (F3) — a supplied verdict for this case was discarded.
         //   3. The judge ran but returned coarse_outcome='unsupported'.
-        const photoOnlyUnsupported = photoOnly && judgeResult === null;
         let message: string;
         if (!hasAnswer) {
           message =

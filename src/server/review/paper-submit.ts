@@ -483,6 +483,20 @@ export async function submitPaperSlot(
 
     // (a) attempt event — always written (the answer IS captured, even when the
     // photo-only route can't grade it).
+    //
+    // F1 (PR #309 round-4, YUK-215) — write-side representation of "未判分".
+    // On the photo-only unsupported path the attempt `outcome` is forced to a
+    // valid enum value ('failure', via attemptOutcome above) because the
+    // AttemptOnQuestion schema enum is [success|failure|partial] (widening it to
+    // 'unanswered' would ripple into the FSRS derivation + the knowledge_mastery
+    // view denominator). That enum value is NOT the semantic truth here — the user
+    // did not answer wrong, the route simply cannot grade a photo. The SEMANTIC
+    // truth is carried by the explicit `unsupported_judge: true` payload flag,
+    // which both read-layer right/wrong summaries (practice-read.ts /
+    // paper-detail.ts) key on to SKIP the slot (not right, not wrong) and which
+    // paper-detail uses to surface outcome='unsupported' to the user. Round-3's
+    // fix (no judge event, no FSRS) stopped FSRS pollution; this round stops the
+    // read-layer right/wrong pollution that the missing judge event left behind.
     await writeEvent(tx, {
       id: attemptEventId,
       session_id: input.sessionId,
@@ -496,6 +510,9 @@ export async function submitPaperSlot(
         answer_md: input.answerMd,
         answer_image_refs: input.answerImageRefs ?? [],
         referenced_knowledge_ids: referencedKnowledgeIds,
+        // Only stamped on the un-judged path; absent (→ undefined) for every
+        // normal graded attempt so the read shape is unchanged for them.
+        ...(photoOnlyUnsupported ? { unsupported_judge: true } : {}),
       },
       caused_by_event_id: null,
       created_at: now,

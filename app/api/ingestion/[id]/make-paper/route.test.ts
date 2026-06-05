@@ -204,6 +204,26 @@ describe('POST /api/ingestion/[id]/make-paper (YUK-214)', () => {
     expect(rows).toHaveLength(0);
   });
 
+  // F2 (PR #309 round-4, YUK-214) — duplicate question_ids collapse onto a single
+  // slot key (question_id::part_ref) and de-dupe total_slots, scrambling client
+  // state. Reject with 400 (same style as the explicit-empty-array guard), not
+  // silently de-dupe. No paper is built.
+  it('rejects duplicate question_ids (400) and creates no paper', async () => {
+    await seedImportedSession({
+      sessionId: 'sess_dup_q',
+      questions: [{ id: 'qd1', knowledge_ids: ['k1'] }],
+    });
+    const res = await post('sess_dup_q', { question_ids: ['qd1', 'qd1'] });
+    expect(res.status).toBe(400);
+
+    const db = testDb();
+    const rows = await db
+      .select({ id: artifact.id })
+      .from(artifact)
+      .where(eq(artifact.source_ref, 'sess_dup_q'));
+    expect(rows).toHaveLength(0);
+  });
+
   it('CLOSED LOOP: make-paper → /practice list → start session → submit slot', async () => {
     await seedImportedSession({
       sessionId: 'sess_loop',

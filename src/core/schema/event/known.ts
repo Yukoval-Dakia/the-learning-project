@@ -37,6 +37,17 @@ export const AttemptOnQuestion = z.object({
     duration_ms: z.number().int().optional(),
     // feeds knowledge_mastery view (ADR-0012): which knowledge nodes this attempt exercises
     referenced_knowledge_ids: z.array(z.string()).default([]),
+    // F1 (PR #309 round-4, YUK-215) — UN-JUDGED marker. A photo-only answer on a
+    // text-only judge route is captured (the answer IS frozen) but NOT judged: no
+    // judge event is written and FSRS is skipped (paper-submit.ts). Its attempt
+    // `outcome` is a structurally-required enum value but is SEMANTICALLY "未判分"
+    // (unsupported), NOT a wrong answer — so the read-layer right/wrong summaries
+    // MUST skip these slots (practice-read.ts / paper-detail.ts) and paper-detail
+    // surfaces outcome='unsupported' to the user. This explicit write-side flag is
+    // the source of truth for "un-judged" (chosen over `outcome='unanswered'`: the
+    // enum stays `[success|failure|partial]`, avoiding a schema/FSRS/mastery-view
+    // ripple). Optional + absent for every normal attempt → no read-shape change.
+    unsupported_judge: z.boolean().optional(),
   }),
   ...baseOptionalFields,
 });
