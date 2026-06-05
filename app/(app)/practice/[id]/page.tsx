@@ -193,12 +193,18 @@ export default function PracticeAnswerPage() {
   //
   // CR Round-2 #3359486404: navigator.sendBeacon cannot carry custom headers
   // so it gets a 401 from middleware. Use keepalive fetch instead.
+  //
+  // CR Round-3 #3359561300: flush pending draft autosaves before pausing so
+  // no in-flight answer is lost on navigation. flushPendingDrafts uses stable
+  // sessionIdRef/artifactIdRef refs so it is safe to call from this closure
+  // even though it is defined later in the component body.
   useEffect(() => {
     const sid = sessionId;
     if (!sid) return;
     const onPageHide = () => {
       if (sessionClosedRef.current) return;
       if (sessionStatusRef.current === 'paused' || sessionStatusRef.current === 'completed') return;
+      flushPendingDrafts.current();
       keepaliveFetch(`/api/review/sessions/${sid}/pause`);
     };
     window.addEventListener('pagehide', onPageHide);
@@ -787,10 +793,15 @@ export default function PracticeAnswerPage() {
                           );
                         })()}
 
-                        {/* judge outcome — in read-only mode use server slot_state directly */}
+                        {/* judge outcome — in read-only mode prefer server slot_state;
+                            fall back to localState.submitResult for the brief window
+                            between allDone→completed and the refetch arriving
+                            (CR Round-3 #3359561301). Server data overwrites local on
+                            the next render once invalidateQueries resolves. */}
                         {(() => {
                           const result = isReadOnly
-                            ? serverSubToResult(slot.slot_state.submission)
+                            ? (serverSubToResult(slot.slot_state.submission) ??
+                              localState.submitResult)
                             : localState.submitResult;
                           if (result?.visible_to_user) {
                             return (
