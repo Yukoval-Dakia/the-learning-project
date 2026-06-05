@@ -14,7 +14,14 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { event, knowledge, learning_session, question, source_document } from '@/db/schema';
+import {
+  artifact,
+  event,
+  knowledge,
+  learning_session,
+  question,
+  source_document,
+} from '@/db/schema';
 import { getFsrsState } from '@/server/fsrs/state';
 import { submitPaperSlot } from '@/server/review/paper-submit';
 import { getPracticeList } from '@/server/review/practice-read';
@@ -129,6 +136,51 @@ describe('POST /api/ingestion/[id]/make-paper (YUK-214)', () => {
   it('returns 404 when the session does not exist', async () => {
     const res = await post('sess_missing', {});
     expect(res.status).toBe(404);
+  });
+
+  // F2 (PR #309 round-2) — a malformed JSON body (the caller MEANT to send
+  // question_ids but the bytes are corrupt) must 400 invalid_json, NOT silently
+  // fall back to a default full-set paper. No artifact is created.
+  it('returns 400 invalid_json for a malformed body and creates no paper', async () => {
+    await seedImportedSession({
+      sessionId: 'sess_malformed',
+      questions: [{ id: 'qm1', knowledge_ids: ['k1'] }],
+    });
+    const req = new Request('http://localhost/api/ingestion/sess_malformed/make-paper', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{ "question_ids": ', // truncated → not valid JSON
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: 'sess_malformed' }) });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('invalid_json');
+
+    // No side effect: the malformed request must not have built a paper.
+    const db = testDb();
+    const rows = await db
+      .select({ id: artifact.id })
+      .from(artifact)
+      .where(eq(artifact.source_ref, 'sess_malformed'));
+    expect(rows).toHaveLength(0);
+  });
+
+  // F2 — a TRULY-EMPTY body (Content-Length 0 / no bytes) is the legitimate
+  // no-override case → 200 default full-set paper.
+  it('treats an empty body as the default full-set request (200)', async () => {
+    await seedImportedSession({
+      sessionId: 'sess_empty_body',
+      questions: [{ id: 'qe1', knowledge_ids: ['k1'] }],
+    });
+    const req = new Request('http://localhost/api/ingestion/sess_empty_body/make-paper', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      // no body at all
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: 'sess_empty_body' }) });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { artifact_id: string };
+    expect(body.artifact_id).toMatch(/^ingestion_paper_/);
   });
 
   it('CLOSED LOOP: make-paper → /practice list → start session → submit slot', async () => {

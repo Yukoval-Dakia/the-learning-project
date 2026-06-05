@@ -8,7 +8,14 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { Artifact } from '@/core/schema/index';
-import { artifact, knowledge, learning_session, question, source_document } from '@/db/schema';
+import {
+  artifact,
+  knowledge,
+  learning_session,
+  question,
+  question_block,
+  source_document,
+} from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { createIngestionPaper } from './make-paper';
 
@@ -31,10 +38,17 @@ async function seedKnowledge(id: string) {
 }
 
 /** Seed an ingestion session + source document + N imported questions whose
- *  metadata carries ingestion_session_id (mirrors import/route's write). */
+ *  metadata carries ingestion_session_id (mirrors import/route's write).
+ *
+ *  When a question carries `block_created_at`, a matching `question_block` row is
+ *  also seeded (with that created_at) and linked via
+ *  `metadata.question_block_id` — mirroring import/route's write so the F3
+ *  block-order reverse-query can be exercised. All imported questions share one
+ *  `now` (as the real import route does), so the block's created_at is the only
+ *  thing that can carry the original paper order. */
 async function seedImportedSession(opts: {
   sessionId: string;
-  questions: Array<{ id: string; knowledge_ids: string[] }>;
+  questions: Array<{ id: string; knowledge_ids: string[]; block_created_at?: Date }>;
   docTitle?: string | null;
 }) {
   const db = testDb();
@@ -66,6 +80,33 @@ async function seedImportedSession(opts: {
   });
   for (const q of opts.questions) {
     for (const k of q.knowledge_ids) await seedKnowledge(k);
+    let blockId: string | undefined;
+    if (q.block_created_at) {
+      blockId = createId();
+      await db.insert(question_block).values({
+        id: blockId,
+        ingestion_session_id: opts.sessionId,
+        source_document_id: docId,
+        source_asset_ids: [],
+        page_spans: [],
+        extracted_prompt_md: `Prompt ${q.id}`,
+        reference_md: null,
+        wrong_answer_md: null,
+        image_refs: [],
+        crop_refs: [],
+        visual_complexity: 'low',
+        extraction_confidence: 1,
+        status: 'imported',
+        knowledge_hint: null,
+        merged_from_block_ids: [],
+        imported_question_id: q.id,
+        imported_attempt_event_id: null,
+        // The block carries the original paper order via its extraction time.
+        created_at: q.block_created_at,
+        updated_at: q.block_created_at,
+        version: 0,
+      });
+    }
     await db.insert(question).values({
       id: q.id,
       kind: 'short_answer',
@@ -75,7 +116,13 @@ async function seedImportedSession(opts: {
       difficulty: 3,
       source: 'vision_single',
       variant_depth: 0,
-      metadata: { ingestion_session_id: opts.sessionId, source_document_id: docId },
+      metadata: {
+        ingestion_session_id: opts.sessionId,
+        source_document_id: docId,
+        // Link to the source block (import/route.ts:407) when one was seeded.
+        ...(blockId ? { question_block_id: blockId } : {}),
+      },
+      // All imported questions share one `now` (import/route.ts:250).
       created_at: now,
       updated_at: now,
       version: 0,
@@ -153,6 +200,81 @@ describe('createIngestionPaper (YUK-214)', () => {
     expect(rows).toHaveLength(1);
   });
 
+  // F1 (PR #309 round-2) — idempotency must account for the question set. A
+  // second call with a DIFFERENT explicit questionIds set conflicts with the
+  // existing one-session-one-paper artifact → 409 (no silent stale reuse).
+  it('409s when a second call passes a different explicit questionIds set', async () => {
+    const db = testDb();
+    await seedImportedSession({
+      sessionId: 'sess_f1_conflict',
+      questions: [
+        { id: 'qfc1', knowledge_ids: ['k1'] },
+        { id: 'qfc2', knowledge_ids: ['k2'] },
+      ],
+    });
+    const first = await createIngestionPaper(db, {
+      sessionId: 'sess_f1_conflict',
+      questionIds: ['qfc1'],
+    });
+    expect(first.reused).toBe(false);
+
+    // A different set on the same session must NOT silently return the qfc1 paper.
+    await expect(
+      createIngestionPaper(db, { sessionId: 'sess_f1_conflict', questionIds: ['qfc2'] }),
+    ).rejects.toMatchObject({ status: 409 });
+
+    // Still exactly one paper for the session (the conflict did not create one).
+    const rows = await db
+      .select({ id: artifact.id })
+      .from(artifact)
+      .where(eq(artifact.source_ref, 'sess_f1_conflict'));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe(first.artifactId);
+  });
+
+  // F1 — the SAME explicit set is still idempotent (returns the existing paper).
+  it('reuses the existing paper when the same explicit questionIds set is passed again', async () => {
+    const db = testDb();
+    await seedImportedSession({
+      sessionId: 'sess_f1_same',
+      questions: [
+        { id: 'qfs1', knowledge_ids: ['k1'] },
+        { id: 'qfs2', knowledge_ids: ['k2'] },
+      ],
+    });
+    const first = await createIngestionPaper(db, {
+      sessionId: 'sess_f1_same',
+      questionIds: ['qfs1', 'qfs2'],
+    });
+    const second = await createIngestionPaper(db, {
+      sessionId: 'sess_f1_same',
+      questionIds: ['qfs1', 'qfs2'],
+    });
+    expect(second.reused).toBe(true);
+    expect(second.artifactId).toBe(first.artifactId);
+  });
+
+  // F1 — the default (no questionIds) path stays purely idempotent even after a
+  // paper was first built from an explicit subset: a bare call carries no set to
+  // conflict with, so it reuses rather than 409s.
+  it('default (no questionIds) path reuses the existing paper without conflict', async () => {
+    const db = testDb();
+    await seedImportedSession({
+      sessionId: 'sess_f1_default',
+      questions: [
+        { id: 'qfd1', knowledge_ids: ['k1'] },
+        { id: 'qfd2', knowledge_ids: ['k2'] },
+      ],
+    });
+    const first = await createIngestionPaper(db, {
+      sessionId: 'sess_f1_default',
+      questionIds: ['qfd1'],
+    });
+    const second = await createIngestionPaper(db, { sessionId: 'sess_f1_default' });
+    expect(second.reused).toBe(true);
+    expect(second.artifactId).toBe(first.artifactId);
+  });
+
   it('honours an explicit questionIds override (intersected with the session)', async () => {
     const db = testDb();
     await seedImportedSession({
@@ -195,25 +317,34 @@ describe('createIngestionPaper (YUK-214)', () => {
     expect(paper.tool_state?.question_ids).toEqual(requested);
   });
 
-  // F2 — the reverse-query fall-through path orders by (created_at, id) so the
-  // paper slot sequence is stable/repeatable rather than DB-row-order-dependent.
-  it('orders fall-through reverse-queried questions deterministically by (created_at, id)', async () => {
+  // F3 (PR #309 round-2) — the reverse-query fall-through path orders by the
+  // SOURCE paper's block order (question_block.created_at), NOT by question.id.
+  // All imported questions share one question.created_at, so an id-only sort
+  // (round-1) produced a deterministic-but-arbitrary order. The block's
+  // extraction-time created_at carries the real paper sequence; the reverse
+  // query joins question→question_block and orders by it, so the paper's slot
+  // order equals the original on-screen block order.
+  it('orders fall-through reverse-queried questions by the source block order (created_at), not id', async () => {
     const db = testDb();
-    // Insert ids in an order that differs from their sorted (created_at, id)
-    // order. With a shared created_at, the tiebreaker is `id`, so the expected
-    // paper order is the ascending-id order regardless of insertion sequence.
+    // Block order (paper order): qg_3 (t0) → qg_1 (t1) → qg_2 (t2). The question
+    // ids are deliberately NOT in that order, so an id-sort would scramble the
+    // paper; a block-created_at sort reconstructs the true paper sequence.
+    const t0 = new Date('2026-06-01T00:00:00.000Z');
+    const t1 = new Date('2026-06-01T00:00:01.000Z');
+    const t2 = new Date('2026-06-01T00:00:02.000Z');
     await seedImportedSession({
       sessionId: 'sess_g',
       questions: [
-        { id: 'qg_3', knowledge_ids: ['k3'] },
-        { id: 'qg_1', knowledge_ids: ['k1'] },
-        { id: 'qg_2', knowledge_ids: ['k2'] },
+        { id: 'qg_1', knowledge_ids: ['k1'], block_created_at: t1 },
+        { id: 'qg_2', knowledge_ids: ['k2'], block_created_at: t2 },
+        { id: 'qg_3', knowledge_ids: ['k3'], block_created_at: t0 },
       ],
     });
     const { artifactId } = await createIngestionPaper(db, { sessionId: 'sess_g' });
     const [row] = await db.select().from(artifact).where(eq(artifact.id, artifactId)).limit(1);
     const paper = Artifact.parse(row);
-    expect(paper.tool_state?.question_ids).toEqual(['qg_1', 'qg_2', 'qg_3']);
+    // Block order, NOT id order (which would be qg_1, qg_2, qg_3).
+    expect(paper.tool_state?.question_ids).toEqual(['qg_3', 'qg_1', 'qg_2']);
   });
 
   it('throws when the session has no imported questions', async () => {
