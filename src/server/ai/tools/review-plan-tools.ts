@@ -392,6 +392,18 @@ export const selectReviewQuestionCandidatesTool: DomainTool<
 
 const ReviewPlanAssignmentSchema = z.object({
   question_id: z.string().min(1),
+  // Round-4 fix #1 REJECT — part_ref is ALWAYS a StructuredQuestion.id (an
+  // embedded JSON node id inside the parent question's sub_questions tree, per
+  // CO §2.2 and docs/superpowers/specs/2026-06-03-coach-led-review-engine-design.md
+  // line 167: "part_ref is always a StructuredQuestion.id. Do not use array
+  // index, ordinal path, rendered label, or child order as part_ref").
+  //
+  // It is NOT a kind='question_part' row id (that is the T-QP/YUK-165 axis, a
+  // separate feature using the parent_question_id FK). Because sub-questions are
+  // embedded inside the parent question's prompt_md / reference_md JSON, the
+  // judge MUST read the parent question row — using the parent question_id for
+  // judging is correct, not a bug. The CR finding (3359642325) was based on a
+  // misreading of the two axes.
   part_ref: z.string().optional(),
   primary_knowledge_id: z.string().min(1),
   secondary_knowledge_ids: z.array(z.string()).default([]),
