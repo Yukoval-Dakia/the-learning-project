@@ -199,6 +199,10 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
     //     `attrs.suppressed_block_refs` (no version bump) alongside the paired
     //     suppress event + the immediate-removal `note_refine_apply`, all atomic
     //     in one transaction. The route only validates input + opens the tx.
+    //   - YUK-214 (Strategy D S1) `src/server/ingestion/make-paper.ts`:
+    //     createIngestionPaper packs an imported ingestion session's questions
+    //     into an `ingestion_paper` tool_quiz artifact (ingest→practice
+    //     bridge). Single INSERT, idempotent by source_ref=sessionId.
     // Anything else writing `artifact` should still be reviewed.
     const hits = await findWriteHits('artifact', { roots: SCAN_RUNTIME_ROOTS });
     const ALLOWED = [
@@ -215,6 +219,11 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
       // YUK-203 U4 (D5 / CO §7.1) — write_review_plan emits the review-plan
       // tool_quiz artifact (the paper). The ReviewPlanTask planner's ONLY write.
       'src/server/ai/tools/review-plan-tools.ts',
+      // YUK-214 (Strategy D S1) — createIngestionPaper packs an imported
+      // ingestion session's questions into an `ingestion_paper` tool_quiz
+      // artifact (the ingest→practice bridge). Single INSERT, idempotent
+      // by source_ref=sessionId; the make-paper route's only write.
+      'src/server/ingestion/make-paper.ts',
     ];
     const unexpected = hits.filter((h) => !ALLOWED.includes(h.split(path.sep).join('/')));
     expect(
