@@ -456,4 +456,134 @@ describe('runAttributionAndWriteJudgeEvent', () => {
     expect(rows).toHaveLength(1);
     warnSpy.mockRestore();
   });
+
+  // ── round-6 fix #1 (CR 3359820520): attribution judge inherits visibility ──
+
+  it('round-6 fix #1: attribution judge inherits visible_to_user:false from paper placeholder', async () => {
+    // When the paper placeholder carries visible_to_user:false (feedback buffered
+    // until session completes), the attribution judge must inherit that flag so
+    // the newest-wins read layer does not treat absent visible_to_user as visible
+    // and prematurely expose buffered feedback.
+    const db = testDb();
+    const attemptId = 'attempt_e_r6_vis';
+    await insertAttemptEvent({ attemptId, questionId: 'q_r6_vis' });
+
+    const now = new Date();
+    await db.insert(event).values({
+      id: 'judge_placeholder_r6',
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'paper_judge',
+      action: 'judge',
+      subject_kind: 'event',
+      subject_id: attemptId,
+      outcome: 'success',
+      payload: {
+        cause: {
+          primary_category: 'other',
+          secondary_categories: [],
+          analysis_md: '<paper-submit, attribution deferred>',
+          confidence: 0,
+        },
+        referenced_knowledge_ids: [],
+        coarse_outcome: 'incorrect',
+        score: 0,
+        visible_to_user: false,
+        attribution_pending: true,
+      },
+      caused_by_event_id: attemptId,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: now,
+    });
+
+    const fakeRunTask = async () => ({
+      text: '{"primary_category":"concept","secondary_categories":[],"analysis_md":"real cause","confidence":0.9}',
+    });
+
+    await runAttributionAndWriteJudgeEvent({
+      db,
+      attemptEventId: attemptId,
+      input: validInput,
+      runTaskFn: fakeRunTask,
+    });
+
+    // Two judge events — the placeholder and the real attribution.
+    const rows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'judge'), eq(event.caused_by_event_id, attemptId)));
+    expect(rows).toHaveLength(2);
+
+    // The newest judge (the attribution) must inherit visible_to_user:false.
+    const newest = rows.sort((a, b) => b.created_at.getTime() - a.created_at.getTime())[0];
+    const payload = newest?.payload as {
+      visible_to_user?: boolean;
+      coarse_outcome?: string;
+      score?: number;
+      attribution_pending?: boolean;
+    };
+    expect(payload.visible_to_user).toBe(false); // inherited from placeholder
+    expect(payload.coarse_outcome).toBe('incorrect'); // inherited from placeholder
+    expect(payload.score).toBe(0); // inherited from placeholder
+    // attribution_pending must NOT be inherited (attribution is done).
+    expect(payload.attribution_pending).toBeUndefined();
+  });
+
+  it('round-6 fix #1: attribution judge without placeholder visibility has no visible_to_user override', async () => {
+    // When the placeholder does NOT set visible_to_user (immediate feedback policy),
+    // the attribution judge must not inject a false override — it should be absent
+    // so the read layer treats it as visible (default).
+    const db = testDb();
+    const attemptId = 'attempt_e_r6_vis_none';
+    await insertAttemptEvent({ attemptId, questionId: 'q_r6_vis_none' });
+
+    const now = new Date();
+    await db.insert(event).values({
+      id: 'judge_placeholder_r6_none',
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'paper_judge',
+      action: 'judge',
+      subject_kind: 'event',
+      subject_id: attemptId,
+      outcome: 'success',
+      payload: {
+        cause: {
+          primary_category: 'other',
+          secondary_categories: [],
+          analysis_md: '<paper-submit, attribution deferred>',
+          confidence: 0,
+        },
+        referenced_knowledge_ids: [],
+        coarse_outcome: 'correct',
+        // visible_to_user intentionally absent (immediate policy)
+        attribution_pending: true,
+      },
+      caused_by_event_id: attemptId,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: now,
+    });
+
+    const fakeRunTask = async () => ({
+      text: '{"primary_category":"memory","secondary_categories":[],"analysis_md":"reason","confidence":0.7}',
+    });
+
+    await runAttributionAndWriteJudgeEvent({
+      db,
+      attemptEventId: attemptId,
+      input: validInput,
+      runTaskFn: fakeRunTask,
+    });
+
+    const rows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'judge'), eq(event.caused_by_event_id, attemptId)));
+    const newest = rows.sort((a, b) => b.created_at.getTime() - a.created_at.getTime())[0];
+    const payload = newest?.payload as { visible_to_user?: boolean };
+    // visible_to_user must be absent (undefined) on the attribution judge — not false.
+    expect(payload.visible_to_user).toBeUndefined();
+  });
 });

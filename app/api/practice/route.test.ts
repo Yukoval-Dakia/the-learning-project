@@ -491,4 +491,119 @@ describe('GET /api/practice', () => {
     const res = await POST(jsonReq('http://localhost/api/practice', { artifact_id: 'import_art' }));
     expect(res.status).toBe(400);
   });
+
+  // ── round-6 fix #3 (CR 3359820518): concurrent POST reuses existing session ──
+
+  it('round-6 fix #3: second POST returns the same session_id (idempotent session start)', async () => {
+    // Two concurrent tab opens both POST with the same artifact_id. The second
+    // must return the id of the already-started session, not create a new one.
+    await seedQuestion('q1', 'true');
+    await seedPaper('p_idem', 'review_plan', ['q1']);
+
+    const first = await POST(jsonReq('http://localhost/api/practice', { artifact_id: 'p_idem' }));
+    expect(first.status).toBe(200);
+    const { session_id: sid1 } = (await first.json()) as { session_id: string };
+    expect(sid1).toBeTruthy();
+
+    // Second POST — must get same session_id.
+    const second = await POST(jsonReq('http://localhost/api/practice', { artifact_id: 'p_idem' }));
+    expect(second.status).toBe(200);
+    const { session_id: sid2 } = (await second.json()) as { session_id: string };
+    expect(sid2).toBe(sid1);
+
+    // Only one session row in the DB for this artifact.
+    const db = testDb();
+    const rows = await db.execute<{ id: string }>(
+      sql`SELECT id FROM learning_session WHERE artifact_id = 'p_idem' AND type = 'review'`,
+    );
+    expect(rows as unknown as Array<{ id: string }>).toHaveLength(1);
+  });
+
+  // ── round-6 fix #2 (CR 3359820526): buffered slots excluded from right/wrong ──
+
+  it('round-6 fix #2: right/wrong excludes buffered slots for in-progress session; includes after completed', async () => {
+    // A paper with judge_now_show_later feedback: submitted slots carry
+    // visible_to_user:false. The practice list must show right=0/wrong=0 while
+    // the session is in-progress; after completed it shows the real counts.
+    await seedQuestion('q1', 'true');
+    const db = testDb();
+    const now = new Date();
+    await db.insert(artifact).values({
+      id: 'p_buffered_r6',
+      type: 'tool_quiz',
+      title: '缓冲卷 r6',
+      knowledge_ids: ['k1'],
+      intent_source: 'review_plan',
+      source: 'ai_generated',
+      tool_kind: 'review_plan',
+      tool_state: {
+        question_ids: ['q1'],
+        sections: [
+          {
+            knowledge_focus: ['k1'],
+            feedback_policy: 'judge_now_show_later',
+            adaptation_policy: 'none',
+            assignments: [
+              {
+                question_id: 'q1',
+                primary_knowledge_id: 'k1',
+                secondary_knowledge_ids: [],
+                selection_reason: 'test',
+                review_profile_snapshot: {},
+              },
+            ],
+          },
+        ],
+      } as never,
+      generation_status: 'ready',
+      verification_status: 'not_required',
+      history: [],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+
+    const startRes = await POST(
+      jsonReq('http://localhost/api/practice', { artifact_id: 'p_buffered_r6' }),
+    );
+    const { session_id } = (await startRes.json()) as { session_id: string };
+
+    // Submit (judge_now_show_later → visible_to_user:false on the judge event).
+    const subRes = await submitPost(
+      jsonReq('http://localhost/api/practice/p_buffered_r6/submit', {
+        session_id,
+        question_id: 'q1',
+        answer_md: 'true',
+      }),
+      { params: Promise.resolve({ id: 'p_buffered_r6' }) },
+    );
+    expect(subRes.status).toBe(200);
+    const sub = (await subRes.json()) as { visible_to_user: boolean };
+    expect(sub.visible_to_user).toBe(false);
+
+    // Practice list while in-progress: right=0, wrong=0 (buffered slot excluded).
+    const listInProgress = (await (await GET()).json()) as {
+      papers: Array<{
+        artifact_id: string;
+        session: { right: number; wrong: number; pos: number } | null;
+      }>;
+    };
+    const pInProgress = listInProgress.papers.find((p) => p.artifact_id === 'p_buffered_r6');
+    expect(pInProgress?.session?.pos).toBe(1); // pos still counts answered slots
+    expect(pInProgress?.session?.right).toBe(0); // buffered — not shown
+    expect(pInProgress?.session?.wrong).toBe(0); // buffered — not shown
+
+    // Mark session completed (reveals buffered feedback).
+    await db.execute(
+      sql`UPDATE learning_session SET status = 'completed' WHERE id = ${session_id}`,
+    );
+
+    // Practice list after completed: right=1 (correct answer 'true' vs reference 'true').
+    const listCompleted = (await (await GET()).json()) as {
+      papers: Array<{ artifact_id: string; session: { right: number; wrong: number } | null }>;
+    };
+    const pCompleted = listCompleted.papers.find((p) => p.artifact_id === 'p_buffered_r6');
+    expect(pCompleted?.session?.right).toBe(1);
+    expect(pCompleted?.session?.wrong).toBe(0);
+  });
 });
