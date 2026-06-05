@@ -98,7 +98,7 @@ import 成功后，把本次 session 导入的 question 打包成一个 `tool_qu
 
 ### 3.1 桥接数据流
 
-```
+```text
 import route (现有) → 写 N×question + N×event + N×learning_record，返回 question_ids[]
         │
         ▼ (owner/UI/agent 显式触发，形态 b)
