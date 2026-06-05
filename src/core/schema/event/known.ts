@@ -115,6 +115,14 @@ export const ReviewOnQuestion = z
       fsrs_rating: z.enum(['again', 'hard', 'good']),
       fsrs_state_after: FsrsStateSchema,
       user_response_md: z.string().nullable(),
+      // YUK-215 (PR #309 round-1, F4) — handwriting-photo answer refs. The
+      // /api/review/submit write path freezes these onto the review event
+      // payload (submit/route.ts:380) as the judge's evidence trail, but without
+      // this field the discriminated-union parse stripped them on read so the
+      // refs vanished through the event API. Optional + array so every historical
+      // review event (pre-YUK-215, no image refs) still parses. Mirrors the
+      // attempt payload's `answer_image_refs` naming convention.
+      answer_image_refs: z.array(z.string()).optional(),
       // feeds knowledge_mastery view (ADR-0012)
       referenced_knowledge_ids: z.array(z.string()).default([]),
       // Wall-clock time from when the question was first shown to when the

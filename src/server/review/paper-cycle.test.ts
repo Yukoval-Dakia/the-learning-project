@@ -721,6 +721,96 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     );
   });
 
+  // ── F3 (PR #309 round-1): idempotency must compare image refs, not just text ──
+  it('F3: same text but a different photo is NOT idempotent (image refs in the guard)', async () => {
+    const db = testDb();
+    await seedQuestion('q1', 'true');
+    await seedPaper('paper1', ['q1']);
+    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
+
+    // First submit: text 'true' + photo A.
+    await submitPaperSlot(
+      {
+        sessionId,
+        paperArtifactId: 'paper1',
+        questionId: 'q1',
+        answerMd: 'true',
+        answerImageRefs: ['photo_a'],
+        primaryKnowledgeId: 'k1',
+        feedbackPolicy: 'immediate',
+      },
+      db,
+    );
+
+    // Second submit in the SAME attempt: identical text but a DIFFERENT photo.
+    // Pre-fix this short-circuited to the old attempt (image refs were ignored),
+    // returning a stale judgement for an answer the judge never saw. Now the
+    // guard sees changed content and rejects 409 (the user must reopen to change
+    // their answer) — the key assertion is that it is NOT silently idempotent.
+    await expect(
+      submitPaperSlot(
+        {
+          sessionId,
+          paperArtifactId: 'paper1',
+          questionId: 'q1',
+          answerMd: 'true',
+          answerImageRefs: ['photo_b'],
+          primaryKnowledgeId: 'k1',
+          feedbackPolicy: 'immediate',
+        },
+        db,
+      ),
+    ).rejects.toMatchObject({ status: 409 });
+  });
+
+  it('F3: same text + different photo after reopen appends a new attempt (re-judged)', async () => {
+    const db = testDb();
+    await seedQuestion('q1', 'true');
+    await seedPaper('paper1', ['q1']);
+    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
+
+    const first = await submitPaperSlot(
+      {
+        sessionId,
+        paperArtifactId: 'paper1',
+        questionId: 'q1',
+        answerMd: 'true',
+        answerImageRefs: ['photo_a'],
+        primaryKnowledgeId: 'k1',
+      },
+      db,
+    );
+
+    // Reopen, then resubmit the SAME text with a DIFFERENT photo. Because image
+    // refs are part of "content", this is not idempotent: a new attempt+judge
+    // row is appended and the answer is re-judged (new attempt id).
+    await Review.abandonReviewSession(db, sessionId);
+    await Review.reopenAbandonedReviewSession(db, sessionId);
+    const second = await submitPaperSlot(
+      {
+        sessionId,
+        paperArtifactId: 'paper1',
+        questionId: 'q1',
+        answerMd: 'true',
+        answerImageRefs: ['photo_b'],
+        primaryKnowledgeId: 'k1',
+      },
+      db,
+    );
+
+    expect(second.attemptEventId).not.toBe(first.attemptEventId);
+
+    // Two frozen rows (append-only), each carrying its own photo.
+    const allRows = await db
+      .select({ id: answer.id, image_refs: answer.image_refs })
+      .from(answer)
+      .where(and(eq(answer.session_id, sessionId), eq(answer.question_id, 'q1')))
+      .orderBy(answer.submitted_at);
+    expect(allRows).toHaveLength(2);
+    expect(allRows[0].image_refs).toEqual(['photo_a']);
+    expect(allRows[1].image_refs).toEqual(['photo_b']);
+  });
+
   // ── fix #6 (round-2 P2): flat quiz submit is allowed ─────────────────────────
   it('fix #6: submitPaperSlot accepts a flat quiz slot (no structured sections)', async () => {
     const db = testDb();
