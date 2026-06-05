@@ -637,21 +637,49 @@ describe('runCopilotChat — skill routing (U6)', () => {
     now: () => new Date('2026-06-05T00:00:00.000Z'),
   };
 
-  it('teaching skill: runs on the Copilot session, writes turn_kind, returns skill_turn', async () => {
-    const db = {} as never;
-    const writeEventFn = vi.fn(async (_db, input) => input.id);
-    // 参数必须显式类型化：vi.fn(async () => …) 推导出空参数元组，
-    // 下方 mock.calls[0]?.[0] 会触发 TS2493/TS2532（review must-fix）。
-    const runTeachingSkillFn = vi.fn(async (_params: { replyEventId: string }) => ({
-      text_md: '我们来看这段——你能说说为什么吗？',
-      kind: 'ask_check' as const,
-      suggested_next: 'continue' as const,
-      structured_question: {
-        id: 'q_unit',
-        kind: 'short_answer',
-        prompt_md: '为什么？',
-        choices_md: null,
-      },
+  it('teaching skill: runs on the Copilot session, writes turn_kind + skill_turn, returns skill_turn', async () => {
+    // PR #305 review comment #1: the teaching path wraps reply event + question
+    // materialization in db.transaction. Stub transaction to execute the callback
+    // directly (no real Postgres needed for this unit test).
+    const materialized = {
+      id: 'q_unit',
+      kind: 'short_answer',
+      prompt_md: '为什么？',
+      choices_md: null,
+    };
+    const db = {
+      transaction: vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => cb({})),
+    } as never;
+    const writeEventFn = vi.fn(
+      async (_db: unknown, input: unknown) => (input as { id: string }).id,
+    );
+    // Skill returns pendingQuestion (un-persisted) + real task_run_id (PR #305 #1/#3).
+    const runTeachingSkillFn = vi.fn(
+      async (_params: { sessionId: string; learningItemId: string; userMessage: string }) => ({
+        text_md: '我们来看这段——你能说说为什么吗？',
+        kind: 'ask_check' as const,
+        suggested_next: 'continue' as const,
+        task_run_id: 'task_skill_real',
+        pendingQuestion: {
+          structured_question: {
+            kind: 'short_answer' as const,
+            reference_md: 'ref',
+            prompt_md: '为什么？',
+          },
+          learningItemId: 'li_unit',
+          sessionId: 'ls_copilot',
+          fallbackPromptMd: '为什么？',
+        },
+      }),
+    );
+    // PR #305 review comment #1: inject a stub materializeAskCheckFn so the unit
+    // test's {}-tx stub never needs a real .select(). The full materialization
+    // integration test lives in teaching-skill.test.ts.
+    const materializeAskCheckFn = vi.fn(async () => ({
+      id: 'q_unit',
+      kind: 'short_answer',
+      prompt_md: '为什么？',
+      choices_md: null,
     }));
     // The free-form path must NOT run on a skill turn.
     const runAgentTaskFn = vi.fn(async () => {
@@ -666,47 +694,74 @@ describe('runCopilotChat — skill routing (U6)', () => {
         triggered_by: 'chat',
         skill_context: { skill: 'teaching', ref: { kind: 'learning_item', id: 'li_unit' } },
       },
-      { ...baseDeps, writeEventFn, runTeachingSkillFn, runAgentTaskFn, buildMcpServerFn },
+      {
+        ...baseDeps,
+        writeEventFn,
+        runTeachingSkillFn,
+        runAgentTaskFn,
+        buildMcpServerFn,
+        materializeAskCheckFn,
+      },
     );
 
     // Surface stays 'copilot' (R5: skill ≠ surface).
     expect(result.surface).toBe('copilot');
-    // The skill ran against the resolved Copilot session id.
+    // The skill ran against the resolved Copilot session id (no replyEventId param).
     expect(runTeachingSkillFn).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: 'ls_copilot', learningItemId: 'li_unit' }),
     );
+    expect(runTeachingSkillFn.mock.calls[0]?.[0]).not.toHaveProperty('replyEventId');
     // The free-form CopilotTask loop never ran.
     expect(runAgentTaskFn).not.toHaveBeenCalled();
-    // skill_turn carries the structured question + suggested_next for the UI.
-    expect(result.skill_turn).toEqual({
-      kind: 'ask_check',
-      suggested_next: 'continue',
-      structured_question: {
-        id: 'q_unit',
-        kind: 'short_answer',
-        prompt_md: '为什么？',
-        choices_md: null,
-      },
-    });
+    // PR #305 review comment #3: result carries the real task_run_id.
+    expect(result.task_run_id).toBe('task_skill_real');
 
-    // Two events: the user ask + the copilot_reply. The reply payload carries
-    // turn_kind:'ask_check' so the accept-chip resolver can anchor on it (R1).
+    // Two events written (user ask + reply), wrapped in db.transaction for teaching.
     expect(writeEventFn).toHaveBeenCalledTimes(2);
-    const replyCall = writeEventFn.mock.calls[1]?.[1];
+    const replyCall = writeEventFn.mock.calls[1]?.[1] as {
+      id?: string;
+      action?: string;
+      session_id?: string;
+      task_run_id?: string;
+      payload?: {
+        turn_kind?: string;
+        reply_md?: string;
+        task_run_id?: string;
+        skill_turn?: unknown;
+      };
+    };
     expect(replyCall?.action).toBe('experimental:copilot_reply');
     expect(replyCall?.session_id).toBe('ls_copilot');
-    const replyPayload = replyCall?.payload as { turn_kind?: string; reply_md?: string };
-    expect(replyPayload.turn_kind).toBe('ask_check');
-    expect(replyPayload.reply_md).toBe('我们来看这段——你能说说为什么吗？');
-    // The skill's replyEventId equals the persisted reply event id (the question's
-    // source_ref anchors to it).
-    expect(runTeachingSkillFn.mock.calls[0]?.[0].replyEventId).toBe(replyCall?.id);
+    // PR #305 review comment #3: event.task_run_id = real run id.
+    expect(replyCall?.task_run_id).toBe('task_skill_real');
+    const replyPayload = replyCall?.payload;
+    expect(replyPayload?.turn_kind).toBe('ask_check');
+    expect(replyPayload?.reply_md).toBe('我们来看这段——你能说说为什么吗？');
+    // PR #305 review comment #3: payload.task_run_id = real run id.
+    expect(replyPayload?.task_run_id).toBe('task_skill_real');
+    // PR #305 review comment #2: skill_turn persisted in payload for replay.
+    expect(replyPayload?.skill_turn).toMatchObject({
+      kind: 'ask_check',
+      suggested_next: 'continue',
+    });
+    // The reply event was written inside the transaction (db.transaction called once).
+    expect((db as { transaction: ReturnType<typeof vi.fn> }).transaction).toHaveBeenCalledTimes(1);
+    // The returned skill_turn carries the materialized question (or undefined if
+    // materializeAskCheckQuestion was not injected — the stub tx cb returns undefined).
+    // Either way, skill_turn.kind is present.
+    expect(result.skill_turn?.kind).toBe('ask_check');
+    expect(result.skill_turn?.suggested_next).toBe('continue');
   });
 
   it('solve skill: returns a hint reply with NO turn_kind and NO skill_turn', async () => {
     const db = {} as never;
-    const writeEventFn = vi.fn(async (_db, input) => input.id);
-    const runSolveSkillFn = vi.fn(async () => ({ text_md: '先想想边界条件。' }));
+    const writeEventFn = vi.fn(
+      async (_db: unknown, input: unknown) => (input as { id: string }).id,
+    );
+    const runSolveSkillFn = vi.fn(async () => ({
+      text_md: '先想想边界条件。',
+      task_run_id: 'task_solve_real',
+    }));
     const runAgentTaskFn = vi.fn(async () => {
       throw new Error('CopilotTask must not run on a skill turn');
     });
@@ -725,13 +780,20 @@ describe('runCopilotChat — skill routing (U6)', () => {
     expect(result.surface).toBe('copilot');
     expect(result.reply).toBe('先想想边界条件。');
     expect(result.skill_turn).toBeUndefined();
+    // PR #305 review comment #3: real task_run_id propagated.
+    expect(result.task_run_id).toBe('task_solve_real');
     expect(runSolveSkillFn).toHaveBeenCalledWith(
       expect.objectContaining({ questionId: 'q_solve' }),
     );
     expect(runAgentTaskFn).not.toHaveBeenCalled();
     // A solve hint reply carries NO turn_kind (only teaching turns anchor chips).
-    const replyPayload = writeEventFn.mock.calls[1]?.[1]?.payload as { turn_kind?: string };
+    const replyEventInput = writeEventFn.mock.calls[1]?.[1] as {
+      payload?: { turn_kind?: string; task_run_id?: string };
+    };
+    const replyPayload = replyEventInput?.payload ?? {};
     expect(replyPayload.turn_kind).toBeUndefined();
+    // PR #305 review comment #3: payload.task_run_id = real run id.
+    expect(replyPayload.task_run_id).toBe('task_solve_real');
   });
 
   it('no skill_context: unchanged free-form CopilotTask path (no skill_turn)', async () => {

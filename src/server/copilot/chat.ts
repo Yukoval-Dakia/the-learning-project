@@ -18,7 +18,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { z } from 'zod';
 
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 // YUK-198 — Tavily remote MCP (web grounding) for the Copilot surface only.
 // Gated on TAVILY_API_KEY: when absent, buildTavilyMcpServer() returns null and
 // the Copilot run is byte-for-byte unchanged (no tavily server, no extra tools).
@@ -56,6 +56,10 @@ import {
 // the drawer can replay-last-N (AF spec §1.5 + §7 S3a). Session ownership stays
 // in src/server/session/conversation.ts (ADR-0005 single-owner).
 import { Conversation } from '@/server/session';
+import {
+  type MaterializedAskCheckQuestion,
+  materializeAskCheckQuestion,
+} from '@/server/teaching/materialize-ask-check';
 import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 
 export const COPILOT_CHAT_TRIGGER_KINDS = ['chat', 'chip'] as const;
@@ -157,7 +161,8 @@ type BuildMcpServerFn = typeof buildMcpServerFromRegistry;
 // buildTavilyMcpServer; unit tests inject a fixture (or null) instead of
 // touching process.env.
 type BuildTavilyMcpServerFn = () => McpHttpServerConfig | null;
-type WriteEventFn = (db: Db, input: WriteEventInput) => Promise<string>;
+// Accepts both Db and Tx so the skill path can call write() inside a db.transaction.
+type WriteEventFn = (db: Db | Tx, input: WriteEventInput) => Promise<string>;
 // AF S3a / YUK-203 U3 — swappable conversation find-or-create (unit tests inject
 // a fixture so the {}-stub db is never touched). Defaults to
 // Conversation.findOrCreateCopilotConversation.
@@ -186,6 +191,8 @@ export interface CopilotChatDeps {
   // the {}-stub db is never touched). Default to the real skill modules.
   runTeachingSkillFn?: typeof runTeachingSkill;
   runSolveSkillFn?: typeof runSolveSkill;
+  // PR #305 review comment #1 — swappable for unit tests (stub tx has no .select).
+  materializeAskCheckFn?: typeof materializeAskCheckQuestion;
   now?: () => Date;
 }
 
@@ -263,6 +270,7 @@ export async function runCopilotChat(
     deps.findOrCreateConversationFn ?? Conversation.findOrCreateCopilotConversation;
   const runTeachingSkillFn = deps.runTeachingSkillFn ?? runTeachingSkill;
   const runSolveSkillFn = deps.runSolveSkillFn ?? runSolveSkill;
+  const materializeAskCheck = deps.materializeAskCheckFn ?? materializeAskCheckQuestion;
 
   const surface = selectSurface(req.triggered_by);
   const actorRef = selectActorRef(req.triggered_by);
@@ -346,13 +354,18 @@ export async function runCopilotChat(
   // down NO tool budget (OQ5). The skill turn lives entirely on this single
   // Copilot session (Cross-统合 single-session).
   if (req.skill_context) {
+    // Pre-generate the reply event id so ask_check materialization (which needs
+    // it as source_ref) and the reply event write can share the same tx (PR #305
+    // review comment #1: prevents dangling question row on reply-write failure).
     const replyEventId = `copilot_reply_${createId()}`;
     let replyMd: string;
+    let realTaskRunId: string;
     // Carry the teaching turn kind onto the copilot_reply payload so the
     // accept-chip resolver can anchor a corrective chip on THIS event (R1 pairing,
     // load-bearing — §4.2). Free-form replies and solve hints carry no turn_kind.
     let turnKind: 'explain' | 'ask_check' | 'end' | undefined;
     let skillTurn: CopilotSkillTurn | undefined;
+    let materializedQuestion: MaterializedAskCheckQuestion | undefined;
 
     if (req.skill_context.skill === 'teaching') {
       const skillResult: TeachingSkillResult = await runTeachingSkillFn({
@@ -360,16 +373,71 @@ export async function runCopilotChat(
         sessionId,
         learningItemId: req.skill_context.ref.id,
         userMessage: req.user_message,
-        replyEventId,
       });
       replyMd = skillResult.text_md;
+      // PR #305 review comment #3: use the real task_run_id from the skill runner.
+      realTaskRunId = skillResult.task_run_id;
       turnKind = skillResult.kind;
+
+      // PR #305 review comment #1 (atomicity): materialize the ask_check question
+      // INSIDE the reply-event write transaction — both or neither persist.
+      const replyAt = new Date(now.getTime() + 1);
+      materializedQuestion = await db.transaction(async (tx: Tx) => {
+        let mat: MaterializedAskCheckQuestion | undefined;
+        if (skillResult.pendingQuestion) {
+          mat = await materializeAskCheck(tx, {
+            ...skillResult.pendingQuestion,
+            sourceRef: replyEventId,
+          });
+        }
+        await write(tx, {
+          id: replyEventId,
+          session_id: sessionId,
+          actor_kind: 'agent',
+          actor_ref: actorRef,
+          action: REPLY_EVENT_ACTION,
+          subject_kind: 'query',
+          subject_id: replyEventId,
+          outcome: null,
+          payload: {
+            surface: 'copilot',
+            session_id: sessionId,
+            reply_md: replyMd,
+            // PR #305 review comment #3: real task_run_id from TeachingTurnTask.
+            task_run_id: realTaskRunId,
+            in_reply_to_event_id: causedByEventId ?? null,
+            // AF S4 — corrective-chip anchor key (only for teaching turns).
+            ...(turnKind ? { turn_kind: turnKind } : {}),
+            // PR #305 review comment #2: persist skill_turn so replay can surface
+            // it without re-running the LLM (ask_check carries structured_question).
+            ...(mat
+              ? {
+                  skill_turn: {
+                    kind: skillResult.kind,
+                    suggested_next: skillResult.suggested_next,
+                    structured_question: mat,
+                  },
+                }
+              : turnKind
+                ? {
+                    skill_turn: {
+                      kind: skillResult.kind,
+                      suggested_next: skillResult.suggested_next,
+                    },
+                  }
+                : {}),
+          },
+          caused_by_event_id: causedByEventId ?? null,
+          task_run_id: realTaskRunId,
+          created_at: replyAt,
+        });
+        return mat;
+      });
+
       skillTurn = {
         kind: skillResult.kind,
         suggested_next: skillResult.suggested_next,
-        ...(skillResult.structured_question
-          ? { structured_question: skillResult.structured_question }
-          : {}),
+        ...(materializedQuestion ? { structured_question: materializedQuestion } : {}),
       };
     } else {
       // hintIndex 故意不传（恒为首问 hint）：U6 MVP 只做 hint-only solve skill，
@@ -381,34 +449,37 @@ export async function runCopilotChat(
         questionId: req.skill_context.ref.id,
       });
       replyMd = skillResult.text_md;
+      // PR #305 review comment #3: use the real task_run_id from the skill runner.
+      realTaskRunId = skillResult.task_run_id;
+
+      const replyAt = new Date(now.getTime() + 1);
+      await write(db, {
+        id: replyEventId,
+        session_id: sessionId,
+        actor_kind: 'agent',
+        actor_ref: actorRef,
+        action: REPLY_EVENT_ACTION,
+        subject_kind: 'query',
+        subject_id: replyEventId,
+        outcome: null,
+        payload: {
+          surface: 'copilot',
+          session_id: sessionId,
+          reply_md: replyMd,
+          // PR #305 review comment #3: real task_run_id from TeachingTurnTask.
+          task_run_id: realTaskRunId,
+          in_reply_to_event_id: causedByEventId ?? null,
+        },
+        caused_by_event_id: causedByEventId ?? null,
+        task_run_id: realTaskRunId,
+        created_at: replyAt,
+      });
     }
 
-    const replyAt = new Date(now.getTime() + 1);
-    await write(db, {
-      id: replyEventId,
-      session_id: sessionId,
-      actor_kind: 'agent',
-      actor_ref: actorRef,
-      action: REPLY_EVENT_ACTION,
-      subject_kind: 'query',
-      subject_id: replyEventId,
-      outcome: null,
-      payload: {
-        surface: 'copilot',
-        session_id: sessionId,
-        reply_md: replyMd,
-        task_run_id: taskRunId,
-        in_reply_to_event_id: causedByEventId ?? null,
-        // AF S4 — corrective-chip anchor key (only for teaching turns).
-        ...(turnKind ? { turn_kind: turnKind } : {}),
-      },
-      caused_by_event_id: causedByEventId ?? null,
-      task_run_id: taskRunId,
-      created_at: replyAt,
-    });
-
     return {
-      task_run_id: taskRunId,
+      // PR #305 review comment #3: expose the real task_run_id (not the pre-generated
+      // placeholder) so cost-tracing links the API response to the actual LLM run.
+      task_run_id: realTaskRunId,
       reply: replyMd,
       surface,
       triggered_by: req.triggered_by,
