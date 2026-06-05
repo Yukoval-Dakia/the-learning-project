@@ -294,6 +294,11 @@ export async function getPaperDetail(
     submitted_at: Date;
     content_md: string;
     image_refs: string[];
+    // F1 (PR #309 round-4, YUK-215) — 'true' when the frozen attempt was the
+    // un-judged photo-only-on-text-route case (no judge event written). Drives the
+    // visible outcome='unsupported' surface in slot assembly. NULL for every normal
+    // graded attempt.
+    unsupported_judge: string | null;
   };
   type JudgeRow = {
     event_id: string;
@@ -339,12 +344,23 @@ export async function getPaperDetail(
       submitted_at: Date;
       content_md: string;
       image_refs: string[];
+      unsupported_judge: string | null;
     }>(sql`
-      SELECT question_id, part_ref, event_id, submitted_at, content_md, image_refs
+      SELECT
+        answer.question_id,
+        answer.part_ref,
+        answer.event_id,
+        answer.submitted_at,
+        answer.content_md,
+        answer.image_refs,
+        -- F1 (PR #309 round-4): the attempt event's un-judged marker, so slot
+        -- assembly can surface outcome='unsupported' without an extra round-trip.
+        att.payload->>'unsupported_judge' AS unsupported_judge
       FROM answer
-      WHERE session_id = ${sid}
-        AND submitted_at IS NOT NULL
-        AND submitted_at = (
+      LEFT JOIN event att ON att.id = answer.event_id
+      WHERE answer.session_id = ${sid}
+        AND answer.submitted_at IS NOT NULL
+        AND answer.submitted_at = (
           SELECT MAX(a2.submitted_at)
           FROM answer a2
           WHERE a2.session_id = ${sid}
@@ -411,6 +427,7 @@ export async function getPaperDetail(
       coarse_outcome: string | null;
       judge_visible_to_user: string | null;
       attempt_outcome: string | null;
+      unsupported_judge: string | null;
     }>(sql`
       SELECT
         (SELECT j.payload->>'coarse_outcome'
@@ -427,7 +444,8 @@ export async function getPaperDetail(
            AND j.subject_id = a.event_id
          ORDER BY j.created_at DESC
          LIMIT 1) AS judge_visible_to_user,
-        e.outcome AS attempt_outcome
+        e.outcome AS attempt_outcome,
+        e.payload->>'unsupported_judge' AS unsupported_judge
       FROM answer a
       JOIN event e ON e.id = a.event_id
       WHERE a.session_id = ${sid}
@@ -447,7 +465,12 @@ export async function getPaperDetail(
       coarse_outcome: string | null;
       judge_visible_to_user: string | null;
       attempt_outcome: string | null;
+      unsupported_judge: string | null;
     }>) {
+      // F1 (PR #309 round-4, YUK-215): un-judged attempts (photo-only on a
+      // text-only route) are "未判分" — neither right nor wrong. Skip so the
+      // summary here stays in lock-step with getPracticeList (practice-read.ts).
+      if (r.unsupported_judge === 'true') continue;
       // Visibility gate: skip buffered slots when session is not yet completed.
       if (r.judge_visible_to_user === 'false' && sessionStatus !== 'completed') continue;
       const verdict =
@@ -534,12 +557,20 @@ export async function getPaperDetail(
           // reference_md lives on the question row — fetched in referenceMap (step 4).
           // Null when question is missing/orphaned or has no reference answer.
           const refMd = referenceMap.get(slot.question_id) ?? null;
-          // coarse_outcome is written into the judge payload by paper-submit (fix #2).
-          // Fall back to 'unknown' for pre-fix judge events that lack it.
+          // F1 (PR #309 round-4, YUK-215): an un-judged attempt (photo-only on a
+          // text-only route) has NO judge event, so coarse_outcome is absent. It
+          // is "未判分" — surface outcome='unsupported' (always visible: this is
+          // actionable user feedback, "this question type can't grade a photo",
+          // matching paper-submit's visibleToUser=true for the case) rather than
+          // the generic 'unknown'. JudgeResultPanel renders 'unsupported' as
+          // "无法判分", so the user sees WHY the slot is ungraded.
+          // coarse_outcome is written into the judge payload by paper-submit when a
+          // judge DID run; fall back to 'unknown' only for pre-fix judge events.
+          const unjudged = frozenRow.unsupported_judge === 'true';
           submission = {
             submitted: true,
             visible_to_user: true,
-            outcome: judgePayload?.coarse_outcome ?? 'unknown',
+            outcome: unjudged ? 'unsupported' : (judgePayload?.coarse_outcome ?? 'unknown'),
             score: (judgePayload?.score as number | null | undefined) ?? null,
             answer_md: answerMd,
             answer_image_refs: answerImageRefs,

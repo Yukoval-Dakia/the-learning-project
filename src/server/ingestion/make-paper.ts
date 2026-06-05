@@ -147,6 +147,29 @@ export async function createIngestionPaper(
       400,
     );
   }
+  // F2 (PR #309 round-4, YUK-214) — reject duplicate question_ids. Two assignments
+  // sharing a question_id collapse onto the same slot key (question_id::part_ref),
+  // which scrambles client per-slot state AND makes total_slots de-dupe (so the
+  // counts disagree with the assignment list). We REJECT rather than silently
+  // de-dupe — same semantic style as the explicit-empty-array guard above (F3
+  // round-3): an explicitly-malformed selection is a client error, and the service
+  // is the authoritative boundary (the route schema mirrors this as defense in
+  // depth). A caller that wants the de-duped set should pass it explicitly.
+  if (params.questionIds !== undefined) {
+    const seen = new Set<string>();
+    const duplicates = new Set<string>();
+    for (const id of params.questionIds) {
+      if (seen.has(id)) duplicates.add(id);
+      seen.add(id);
+    }
+    if (duplicates.size > 0) {
+      throw new ApiError(
+        'validation_error',
+        `question_ids must not contain duplicates; repeated ids: ${JSON.stringify([...duplicates])}`,
+        400,
+      );
+    }
+  }
   return db.transaction(async (tx: Tx) => {
     // Serialise concurrent make-paper calls for the same session; auto-released
     // at txn boundary (no UNIQUE index → no migration, same as write_review_plan).

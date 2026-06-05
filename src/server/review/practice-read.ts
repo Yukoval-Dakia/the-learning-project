@@ -239,6 +239,7 @@ export async function getPracticeList(db: Db): Promise<PracticeListResult> {
       coarse_outcome: string | null;
       judge_visible_to_user: string | null;
       attempt_outcome: string | null;
+      unsupported_judge: string | null;
     }>(sql`
       SELECT
         a.session_id,
@@ -256,7 +257,8 @@ export async function getPracticeList(db: Db): Promise<PracticeListResult> {
            AND j.subject_id = a.event_id
          ORDER BY j.created_at DESC
          LIMIT 1) AS judge_visible_to_user,
-        e.outcome AS attempt_outcome
+        e.outcome AS attempt_outcome,
+        e.payload->>'unsupported_judge' AS unsupported_judge
       FROM answer a
       JOIN event e ON e.id = a.event_id
       WHERE a.session_id IN (${sql.join(sessionIds, sql`, `)})
@@ -275,8 +277,15 @@ export async function getPracticeList(db: Db): Promise<PracticeListResult> {
       coarse_outcome: string | null;
       judge_visible_to_user: string | null;
       attempt_outcome: string | null;
+      unsupported_judge: string | null;
     }>) {
       if (!r.session_id) continue;
+      // F1 (PR #309 round-4, YUK-215): an UN-JUDGED attempt (photo-only on a
+      // text-only route — `unsupported_judge='true'`, no judge event) is neither
+      // right nor wrong; it is "未判分". Skip it entirely so it never pollutes the
+      // right/wrong summary. Round-3 wrote this attempt with outcome='failure' and
+      // no judge event, so the coarse_outcome fallback below counted it as wrong.
+      if (r.unsupported_judge === 'true') continue;
       // Visibility gate: if the newest judge is buffered (visible_to_user='false')
       // and the session is not yet completed, skip this slot entirely — do not
       // count it as right or wrong. The summary must not leak the verdict.

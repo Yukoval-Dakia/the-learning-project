@@ -1368,6 +1368,73 @@ describe('POST /api/review/submit', () => {
       }
     });
 
+    // F3 (PR #309 round-4, YUK-215) — a client that SUPPLIES `judge_result_v2`
+    // for a photo-only + text-only-route answer must NOT bypass the photo-only
+    // gate. Pre-fix the gate only ran on the server-invoke branch (judgeResult
+    // === null); a supplied verdict was trusted and, with auto_rate, written to
+    // FSRS — exactly the text-only-route pollution F4 stops for the invoke path.
+    // The supplied result is now ignored for this case (same 422, no FSRS).
+    it('F3: photo-only + text-only route + SUPPLIED judge_result_v2 + auto_rate → 422, no FSRS', async () => {
+      await seedQuestion('q_215_photo_supplied', {
+        kind: 'fill_blank',
+        reference_md: '答案',
+        knowledge_ids: ['k_215_supplied'],
+      });
+
+      const realFactory = invokerModule.createDefaultJudgeInvoker;
+      const captured: unknown[] = [];
+      vi.spyOn(invokerModule, 'createDefaultJudgeInvoker').mockImplementation((deps) => {
+        const real = realFactory(deps);
+        return {
+          invoke: (input: Parameters<typeof real.invoke>[0]) => {
+            captured.push(input);
+            return real.invoke(input);
+          },
+        } as never;
+      });
+
+      try {
+        const res = await POST(
+          submitReq({
+            activity_ref: { kind: 'question', id: 'q_215_photo_supplied' },
+            rating: 'good',
+            auto_rate: true,
+            // photo is the only answer; exact judge would read empty text.
+            answer_image_refs: ['asset_photo_supplied_1'],
+            // The attack vector: a client-supplied 'correct' verdict that would,
+            // pre-fix, be trusted and written to FSRS despite the text-only route.
+            judge_result_v2: {
+              coarse_outcome: 'correct',
+              score: 0.95,
+              score_meaning: 'correctness',
+              confidence: 0.9,
+              feedback_md: 'looks right',
+              evidence_json: {},
+              capability_ref: { id: 'exact', version: '1' },
+            },
+          }),
+        );
+        expect(res.status).toBe(422);
+        const body = (await res.json()) as { error: string; message: string };
+        expect(body.error).toBe('unsupported_judge_route');
+        expect(body.message).toContain('photo-only');
+
+        // The supplied verdict was ignored — no review event, no FSRS pollution.
+        const events = await testDb()
+          .select()
+          .from(event)
+          .where(eq(event.subject_id, 'q_215_photo_supplied'));
+        expect(events).toHaveLength(0);
+        const fsrs = await testDb()
+          .select()
+          .from(material_fsrs_state)
+          .where(eq(material_fsrs_state.subject_id, 'k_215_supplied'));
+        expect(fsrs).toHaveLength(0);
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+
     // F4 — the same photo-only + text-only route WITHOUT auto_rate records the
     // attempt on the user's manual rating but DOES NOT run the judge (no judge
     // envelope on the payload, no wrong-text scoring).

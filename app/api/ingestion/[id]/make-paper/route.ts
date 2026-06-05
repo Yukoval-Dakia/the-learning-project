@@ -27,7 +27,18 @@ const MakePaperBody = z.object({
   // selection, NOT "select all", so it must 400 rather than silently fall
   // through to the full-set path. `.min(1)` enforces this at the schema layer;
   // `.optional()` keeps the omitted/undefined default-full-set path.
-  question_ids: z.array(z.string().min(1)).min(1).optional(),
+  question_ids: z
+    .array(z.string().min(1))
+    .min(1)
+    // F2 (PR #309 round-4, YUK-214) — reject duplicate ids at the schema layer
+    // too (defense in depth; the service is the authoritative boundary). Two
+    // assignments sharing a question_id collapse onto one slot key and de-dupe
+    // total_slots, scrambling client state. Same reject-not-silently-dedupe style
+    // as the explicit-empty-array guard (F3 round-3).
+    .refine((ids) => new Set(ids).size === ids.length, {
+      message: 'must not contain duplicate question_ids',
+    })
+    .optional(),
 });
 
 export async function POST(
