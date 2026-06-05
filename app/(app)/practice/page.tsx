@@ -46,9 +46,11 @@ function isToday(p: PracticePaperItem): boolean {
   // CR Round-2 #3359486401: a ready paper with no session is "today" if it was
   // created today (same calendar date). Papers created on previous days with no
   // session have been sitting untouched and belong in 往日.
+  // CR Round-3 #3359561294: p.created_at arrives as a JSON string over the wire;
+  // always coerce through new Date() before calling Date methods.
   if (st === null) {
     const today = new Date();
-    const c = p.created_at;
+    const c = new Date(p.created_at);
     return (
       c.getFullYear() === today.getFullYear() &&
       c.getMonth() === today.getMonth() &&
