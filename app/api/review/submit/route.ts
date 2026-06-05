@@ -63,6 +63,13 @@ const SubmitBody = z.object({
   session_id: z.string().min(1).nullable().optional(),
   // ADR-0012 — review events feed the derived knowledge_mastery view.
   referenced_knowledge_ids: z.array(z.string().min(1)).default([]),
+  // YUK-215 — handwriting-photo answer refs. Threaded into the judge invoker so
+  // a photographed answer is judged on what was written, and frozen into the
+  // review event payload (evidence trail). Named `answer_image_refs` to match
+  // the event-payload convention (paper attempt payload uses the same key);
+  // the paper submit route's body uses `image_refs` — distinct layers, not a
+  // conflict (Cross-统合 F-16). Default [] → old callers unchanged.
+  answer_image_refs: z.array(z.string()).default([]),
   // YUK-56 — when true, the judge runs and its suggested rating (mapped from
   // coarse_outcome) overrides `rating`. Requires `response_md` non-empty.
   // Rejects with 422 when the judge returns coarse_outcome='unsupported'.
@@ -128,6 +135,10 @@ export async function POST(req: Request): Promise<Response> {
         db,
         question: q,
         answer_md: answerMd,
+        // YUK-215 — pass handwriting-photo refs to the judge (invoker accepts
+        // student_image_refs; invoker.ts:46). Optional → no-image submits and
+        // client-supplied-judge submits are byte-for-byte unchanged.
+        student_image_refs: body.answer_image_refs,
         subjectProfile,
       });
       judgeResult = invoked.result;
@@ -362,6 +373,11 @@ export async function POST(req: Request): Promise<Response> {
             due_at: update.result.dueAt,
           })),
           user_response_md: body.response_md ?? null,
+          // YUK-215 — freeze the handwriting-photo refs into the review event so
+          // the judge's evidence is traceable (project evidence-trail discipline;
+          // mirrors the paper attempt payload's `answer_image_refs`, paper-submit
+          // :425). Always present (default []) for a uniform read shape.
+          answer_image_refs: body.answer_image_refs,
           referenced_knowledge_ids: referencedKnowledgeIds,
           // Wire `latency_ms` from the UI lands here as `duration_ms` per the
           // ReviewOnQuestion Zod schema (2026-05-17). Optional — omitted for
