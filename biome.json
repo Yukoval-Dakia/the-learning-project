@@ -19,6 +19,7 @@
       ".mcp.json",
       ".next",
       ".remember",
+      ".playwright-mcp",
       "next-env.d.ts"
     ]
   },
