@@ -13,7 +13,7 @@
 // commit, so the owner decides which imported papers become takeable.
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 
 import { ToolState, type ToolStateT } from '@/core/schema/business';
 import type { Db, Tx } from '@/db/client';
@@ -144,21 +144,44 @@ export async function createIngestionPaper(
     }
 
     // Resolve the questions: explicit override, else reverse-query metadata.
-    const questions =
-      params.questionIds && params.questionIds.length > 0
-        ? await tx
-            .select({ id: question.id, knowledge_ids: question.knowledge_ids })
-            .from(question)
-            .where(
-              and(
-                inArray(question.id, params.questionIds),
-                sql`${question.metadata}->>'ingestion_session_id' = ${params.sessionId}`,
-              ),
-            )
-        : await tx
-            .select({ id: question.id, knowledge_ids: question.knowledge_ids })
-            .from(question)
-            .where(sql`${question.metadata}->>'ingestion_session_id' = ${params.sessionId}`);
+    //
+    // F2 (PR #309 round-1, YUK-214) — paper question order must be deterministic.
+    // `inArray` / a bare WHERE returns rows in an UNSPECIFIED order (Postgres is
+    // free to return them in any sequence), which silently scrambled the paper's
+    // slot order vs the user's original paper.
+    //   - explicit override: re-sort the fetched rows into params.questionIds
+    //     order (the caller's requested sequence is the source of truth).
+    //   - fall-through reverse-query: ORDER BY created_at, id. Import writes the
+    //     whole batch with one shared `now` (route.ts:422), so created_at alone
+    //     is a constant within a session; `id` is the deterministic tiebreaker.
+    //     There is no persisted block-ordinal column on `question` (no
+    //     block_index / part_index for imported atoms), so (created_at, id) is
+    //     the strongest stable key available — it guarantees a REPEATABLE order
+    //     even though it cannot reconstruct the exact source block sequence.
+    let questions: Array<{ id: string; knowledge_ids: string[] }>;
+    if (params.questionIds && params.questionIds.length > 0) {
+      const rows = await tx
+        .select({ id: question.id, knowledge_ids: question.knowledge_ids })
+        .from(question)
+        .where(
+          and(
+            inArray(question.id, params.questionIds),
+            sql`${question.metadata}->>'ingestion_session_id' = ${params.sessionId}`,
+          ),
+        );
+      // Re-order into the caller's requested sequence; drop ids the WHERE filtered
+      // out (not in this session) by skipping unresolved entries.
+      const byId = new Map(rows.map((r) => [r.id, r]));
+      questions = params.questionIds
+        .map((id) => byId.get(id))
+        .filter((r): r is { id: string; knowledge_ids: string[] } => r !== undefined);
+    } else {
+      questions = await tx
+        .select({ id: question.id, knowledge_ids: question.knowledge_ids })
+        .from(question)
+        .where(sql`${question.metadata}->>'ingestion_session_id' = ${params.sessionId}`)
+        .orderBy(asc(question.created_at), asc(question.id));
+    }
 
     if (questions.length === 0) {
       throw new Error(
