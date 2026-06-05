@@ -41,7 +41,17 @@ export const QuizGenSourcePack = z.object({
 });
 export type QuizGenSourcePackT = z.infer<typeof QuizGenSourcePack>;
 
-export const QuizGenGenerationMethod = z.enum(['search_grounded', 'closed_book']);
+// YUK-216 S2 — 'material_grounded' (tier 3 "material"): QuizGen first fetches
+// REAL source material (e.g. a reading passage / authentic dataset), persists it
+// to source_document, then writes questions that probe that material. The grounded
+// material's id is carried in metadata.quiz_gen.material_source_document_id (see
+// QuizGenMetadata below). Code-contract addition only — no DDL.
+// docs/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §2.1 / §4.
+export const QuizGenGenerationMethod = z.enum([
+  'search_grounded',
+  'closed_book',
+  'material_grounded',
+]);
 export type QuizGenGenerationMethodT = z.infer<typeof QuizGenGenerationMethod>;
 
 export const QuizGenCopySafetyVerdict = z.enum(['original', 'too_close', 'unknown']);
@@ -73,6 +83,15 @@ export const QuizGenMetadata = z.object({
   // pending verification.
   generation_status: z.literal('ready'),
   verification: QuizGenVerification.optional(),
+  // YUK-216 S2 — tier 3 'material_grounded' only: the source_document row id the
+  // generated questions are grounded in. question has no source_document_id column
+  // (zero-DDL), so material provenance lives here in the quiz_gen metadata
+  // namespace. Absent for search_grounded / closed_book. deriveSourceTier() reads
+  // this (with generation_method='material_grounded') to land tier 3. The
+  // superRefine that REQUIRES it when generation_method='material_grounded' is
+  // added by slice 3 (this slice only declares the optional field).
+  // docs/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §2.1 / §2.3.
+  material_source_document_id: z.string().min(1).optional(),
 });
 export type QuizGenMetadataT = z.infer<typeof QuizGenMetadata>;
 
