@@ -141,3 +141,101 @@ describe('parseHintTurn — control-char resilience', () => {
     expect(() => parseHintTurn('just text')).toThrow(SolveError);
   });
 });
+
+// ---------------------------------------------------------------------------
+// choices_md coercion: TeachingStructuredQuestion inside parseTurnOutput
+// ---------------------------------------------------------------------------
+
+describe('parseTurnOutput — choices_md coercion', () => {
+  // Helper: build a minimal ask_check turn JSON with the given choices_md value
+  function askCheckJson(choices_md: unknown): string {
+    return JSON.stringify({
+      kind: 'ask_check',
+      text_md: '选出正确答案。',
+      suggested_next: 'continue',
+      structured_question: {
+        kind: 'choice',
+        reference_md: '答案是 B。',
+        choices_md,
+      },
+    });
+  }
+
+  it('accepts a valid string[] choices_md unchanged', () => {
+    const result = parseTurnOutput(askCheckJson(['A. 苹果', 'B. 香蕉']));
+    expect(result.kind).toBe('ask_check');
+    if (result.kind === 'ask_check') {
+      expect(result.structured_question.choices_md).toEqual(['A. 苹果', 'B. 香蕉']);
+      expect(result.structured_question.kind).toBe('choice');
+    }
+  });
+
+  it('coerces a JSON-stringified array to string[]', () => {
+    // Model sometimes outputs choices_md as a JSON string: '["A. foo","B. bar"]'
+    const result = parseTurnOutput(askCheckJson('["A. 苹果","B. 香蕉"]'));
+    expect(result.kind).toBe('ask_check');
+    if (result.kind === 'ask_check') {
+      expect(result.structured_question.choices_md).toEqual(['A. 苹果', 'B. 香蕉']);
+      expect(result.structured_question.kind).toBe('choice');
+    }
+  });
+
+  it('downgrades choice kind to short_answer when choices_md is an uncoercible string', () => {
+    // Model sends choices_md as a prose string with no array structure
+    const result = parseTurnOutput(askCheckJson('A苹果、B香蕉、C樱桃'));
+    expect(result.kind).toBe('ask_check');
+    if (result.kind === 'ask_check') {
+      expect(result.structured_question.choices_md == null).toBe(true);
+      expect(result.structured_question.kind).toBe('short_answer');
+    }
+  });
+
+  it('downgrades true_false kind to short_answer when choices_md is an uncoercible string', () => {
+    const raw = JSON.stringify({
+      kind: 'ask_check',
+      text_md: '判断正误。',
+      suggested_next: 'continue',
+      structured_question: {
+        kind: 'true_false',
+        reference_md: '正确',
+        choices_md: '正确/错误',
+      },
+    });
+    const result = parseTurnOutput(raw);
+    expect(result.kind).toBe('ask_check');
+    if (result.kind === 'ask_check') {
+      expect(result.structured_question.kind).toBe('short_answer');
+    }
+  });
+
+  it('does NOT downgrade short_answer kind when choices_md is absent (expected)', () => {
+    const raw = JSON.stringify({
+      kind: 'ask_check',
+      text_md: '请用自己的话解释。',
+      suggested_next: 'continue',
+      structured_question: {
+        kind: 'short_answer',
+        reference_md: '参考答案。',
+      },
+    });
+    const result = parseTurnOutput(raw);
+    expect(result.kind).toBe('ask_check');
+    if (result.kind === 'ask_check') {
+      expect(result.structured_question.kind).toBe('short_answer');
+    }
+  });
+
+  it('still throws TeachingError when reference_md is missing (structural error not rescued)', () => {
+    const raw = JSON.stringify({
+      kind: 'ask_check',
+      text_md: '选出答案。',
+      suggested_next: 'continue',
+      structured_question: {
+        kind: 'choice',
+        // reference_md intentionally omitted
+        choices_md: ['A', 'B'],
+      },
+    });
+    expect(() => parseTurnOutput(raw)).toThrow(TeachingError);
+  });
+});
