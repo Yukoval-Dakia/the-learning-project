@@ -102,9 +102,12 @@ interface ChatMessage {
   text: string;
   // AF S4 / YUK-203 U6 — set on an AI message produced by a teaching/solve
   // skill turn. `skill_turn` drives the structured-question card + chips;
-  // `session_id` is the Copilot session id the corrective accept-chip posts to.
+  // `session_id` is the Copilot session id the corrective accept-chip posts to;
+  // `reply_event_id` is the precise anchor for the corrective chip resolver
+  // (PR #305 — avoids wrong-anchor on multi-card sessions).
   skill_turn?: SkillTurn;
   session_id?: string;
+  reply_event_id?: string;
 }
 
 // Quick-chips are user-readable prompts; they send via triggered_by:'chat'
@@ -230,6 +233,7 @@ export function CopilotDock() {
           text: res.reply,
           skill_turn: res.skill_turn,
           session_id: res.session_id,
+          reply_event_id: res.reply_event_id,
         },
       ]);
     } catch (err) {
@@ -255,23 +259,42 @@ export function CopilotDock() {
   // on an ask_check turn posts an AcceptSuggestionChip to the accept-chip
   // endpoint with the COPILOT session id (single-session, §4.2) so it routes
   // through the chip-accept KPI exclusion (§5.2). It is NOT a chat turn.
+  //
+  // PR #305 fixes:
+  //   • chipPending — in-flight lock (set on click, cleared on settle) so
+  //     double-clicks within the network round-trip cannot write duplicate events.
+  //   • source_event_id — the reply_event_id from this specific AI message turn
+  //     is forwarded to the accept-chip POST body as an optional precise anchor
+  //     for the server resolver; if absent the resolver falls back to its
+  //     existing heuristic (backward-compatible).
   const [chipAcked, setChipAcked] = useState<string | null>(null);
-  const acceptCorrectiveChip = useCallback(async (sessionId: string, questionId: string) => {
-    try {
-      await apiJson<{ ok: boolean; event_id: string }>(
-        `/api/teaching-sessions/${sessionId}/accept-chip`,
-        {
-          method: 'POST',
-          body: JSON.stringify({ suggestion_kind: 'corrective', chip_label: '重做 / 回看前置' }),
-        },
-      );
-      setChipAcked(questionId);
-      window.setTimeout(() => setChipAcked((cur) => (cur === questionId ? null : cur)), 4000);
-    } catch {
-      // The chip-accept is a pure KPI signal — a transient failure is silent
-      // (no chat turn to retry); the user can click again.
-    }
-  }, []);
+  const [chipPending, setChipPending] = useState<string | null>(null);
+  const acceptCorrectiveChip = useCallback(
+    async (sessionId: string, questionId: string, replyEventId?: string) => {
+      setChipPending(questionId);
+      try {
+        await apiJson<{ ok: boolean; event_id: string }>(
+          `/api/teaching-sessions/${sessionId}/accept-chip`,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              suggestion_kind: 'corrective',
+              chip_label: '重做 / 回看前置',
+              ...(replyEventId ? { source_event_id: replyEventId } : {}),
+            }),
+          },
+        );
+        setChipAcked(questionId);
+        window.setTimeout(() => setChipAcked((cur) => (cur === questionId ? null : cur)), 4000);
+      } catch {
+        // The chip-accept is a pure KPI signal — a transient failure is silent
+        // (no chat turn to retry); clearing pending lets the user click again.
+      } finally {
+        setChipPending((cur) => (cur === questionId ? null : cur));
+      }
+    },
+    [],
+  );
 
   // AF S4 / YUK-203 U6 — subscribe to the cross-tree open-with-context signal.
   // A button in another subtree (learning-items 「对话教学」) publishes a
@@ -444,12 +467,16 @@ export function CopilotDock() {
                           type="button"
                           className="chip is-corrective"
                           data-testid="copilot-corrective-chip"
-                          // Disable after ack to prevent duplicate KPI events.
-                          disabled={chipAcked === m.skill_turn.structured_question.id}
+                          // Disabled while in-flight (pending) or already acked —
+                          // prevents duplicate AcceptSuggestionChip KPI events.
+                          disabled={
+                            chipPending === m.skill_turn.structured_question.id ||
+                            chipAcked === m.skill_turn.structured_question.id
+                          }
                           onClick={() => {
                             const sid = m.session_id;
                             const qid = m.skill_turn?.structured_question?.id;
-                            if (sid && qid) void acceptCorrectiveChip(sid, qid);
+                            if (sid && qid) void acceptCorrectiveChip(sid, qid, m.reply_event_id);
                           }}
                         >
                           重做 / 回看前置
