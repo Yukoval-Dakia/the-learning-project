@@ -57,6 +57,10 @@ describe('ProfileCriticTask prompt (subject-neutral pass-through, Q3)', () => {
 });
 
 describe('ProfileCriticTask via runner (RL6 proposal-only + trace-written)', () => {
+  // Issue 6 (CR 3361144262): save and restore XIAOMI_API_KEY so the test does
+  // not pollute the env when CI already has a real key set.
+  let savedXiaomiKey: string | undefined;
+
   beforeEach(() => {
     mockSdk.messages = [
       {
@@ -68,6 +72,7 @@ describe('ProfileCriticTask via runner (RL6 proposal-only + trace-written)', () 
         usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 0 },
       },
     ];
+    savedXiaomiKey = process.env.XIAOMI_API_KEY;
     process.env.XIAOMI_API_KEY = 'sk-test-key';
     trace.started.mockClear();
     trace.finished.mockClear();
@@ -75,6 +80,11 @@ describe('ProfileCriticTask via runner (RL6 proposal-only + trace-written)', () 
   });
 
   afterEach(() => {
+    // Restore original value (or delete if it wasn't set) to avoid env pollution.
+    // biome: noDelete — assign undefined to "unset" rather than delete.
+    // For process.env this is equivalent: env keys with value undefined are
+    // treated as absent by child processes and process.env lookups.
+    process.env.XIAOMI_API_KEY = savedXiaomiKey;
     vi.restoreAllMocks();
   });
 
