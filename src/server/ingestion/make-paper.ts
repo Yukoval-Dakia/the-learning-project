@@ -134,6 +134,19 @@ export async function createIngestionPaper(
   params: CreateIngestionPaperParams,
 ): Promise<CreateIngestionPaperResult> {
   const now = new Date();
+  // F3 (PR #309 round-3, YUK-214) — separate `undefined` from an explicit empty
+  // array. `undefined` (questionIds omitted) means "default full-set" → fall
+  // through to the reverse-query. An EXPLICIT empty array is an explicit empty
+  // selection (≠ select all) and must be rejected here, not silently treated as
+  // full-set. The route schema also rejects `[]` (defense in depth); this guard
+  // makes the service the authoritative boundary for any other caller.
+  if (params.questionIds !== undefined && params.questionIds.length === 0) {
+    throw new ApiError(
+      'validation_error',
+      'question_ids must be a non-empty array when provided; omit it to package the full imported set',
+      400,
+    );
+  }
   return db.transaction(async (tx: Tx) => {
     // Serialise concurrent make-paper calls for the same session; auto-released
     // at txn boundary (no UNIQUE index → no migration, same as write_review_plan).
@@ -141,44 +154,16 @@ export async function createIngestionPaper(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${`ingestion_paper:${params.sessionId}`}, 0))`,
     );
 
-    const [existing] = await tx
-      .select({ id: artifact.id, tool_state: artifact.tool_state })
-      .from(artifact)
-      .where(
-        and(
-          eq(artifact.intent_source, INGESTION_PAPER_INTENT_SOURCE),
-          eq(artifact.source_ref, params.sessionId),
-        ),
-      )
-      .limit(1);
-    if (existing) {
-      // F1 (PR #309 round-2) — an explicitly-passed questionIds set must match the
-      // existing paper's set; otherwise reuse would silently drop the caller's new
-      // subset. Compare as ORDERED sequences: the paper's slot order is meaningful
-      // (F2/F3), so a reorder of the same ids is still a different paper request.
-      // A bare idempotent call (no questionIds) carries no set to conflict with.
-      if (params.questionIds && params.questionIds.length > 0) {
-        const existingIds = (existing.tool_state as ToolStateT | null)?.question_ids ?? [];
-        const requested = params.questionIds;
-        const mismatch =
-          existingIds.length !== requested.length ||
-          existingIds.some((id, i) => id !== requested[i]);
-        if (mismatch) {
-          throw new ApiError(
-            'conflict',
-            `ingestion session ${params.sessionId} already has a paper (questions ${JSON.stringify(
-              existingIds,
-            )}); the requested question_ids ${JSON.stringify(
-              requested,
-            )} differ. One session maps to one paper — delete the existing paper to rebuild with a different set.`,
-            409,
-          );
-        }
-      }
-      return { artifactId: existing.id, reused: true };
-    }
-
-    // Resolve the questions: explicit override, else reverse-query metadata.
+    // F4 (PR #309 round-3, YUK-214 / CodeRabbit) — resolve the question list with
+    // the SAME normalization the create branch uses (session-filter + preserve
+    // the caller's requested order, dropping ids that are not in this session)
+    // BEFORE the existing-paper check. The reuse-branch idempotency comparison
+    // must compare the existing paper's stored set against this NORMALIZED list,
+    // not the raw `params.questionIds`. Pre-fix it compared against the raw ids:
+    // a replay of the exact same request that happened to include a session-EXTERNAL
+    // id (filtered out at store time) compared `[q1]` (stored) vs `[q1, qExternal]`
+    // (raw) → false mismatch → self-409. Normalizing both sides makes the same
+    // request idempotent.
     //
     // Paper question order must be deterministic AND reconstruct the user's
     // original paper sequence. `inArray` / a bare WHERE returns rows in an
@@ -194,18 +179,23 @@ export async function createIngestionPaper(
     // so question.created_at is constant within a session and `id` (cuid2) is
     // UNORDERED — the result was deterministic-but-arbitrary, not the paper order.
     //
-    // The stable original-paper order lives on `question_block`: every imported
-    // question persists `metadata.question_block_id` (import/route.ts:407,421),
-    // and the block list's canonical display order is
-    // `ORDER BY question_block.created_at` (the /blocks read path,
-    // app/api/ingestion/[id]/blocks/route.ts:65 — the single source of truth for
-    // "the user's paper order"). Unlike question rows, block `created_at` is set
-    // at EXTRACTION time (one block per extracted item, in reading order), so it
-    // is a genuine positional key. We join question → question_block on that id
-    // and order by (question_block.created_at, question_block.id) — the same key
-    // /blocks uses — so the paper's slot sequence equals the on-screen block
-    // order. The `id` tiebreaker covers virtual/merged cards minted at import
-    // time (which DO share `now`), keeping the order repeatable for those too.
+    // The order key lives on `question_block`: every imported question persists
+    // `metadata.question_block_id` (import/route.ts:407,421), and the block list's
+    // canonical display order is `ORDER BY question_block.created_at` (the /blocks
+    // read path, app/api/ingestion/[id]/blocks/route.ts:65 — the read the user's
+    // on-screen paper order comes from). We join question → question_block on that
+    // id and order by (question_block.created_at, question_block.id, question.id) —
+    // the same primary key /blocks uses — so the paper's slot sequence equals the
+    // on-screen block order.
+    //
+    // F2 SEMANTIC BOUNDARY (PR #309 round-3) — block `created_at` is NOT a true
+    // positional ordinal: applyExtractionResult (src/server/session/ingestion.ts)
+    // takes `now` ONCE before the insert loop, so every block in a batch shares the
+    // SAME created_at. ORDER BY created_at therefore degenerates to the id
+    // tiebreaker (cuid2, unordered) WITHIN a batch. This ordering's only defensible
+    // guarantee is "identical to what /blocks shows the user" (both use the same
+    // key) — NOT "the true reading order". Persisting a real block ordinal is the
+    // proper fix and is tracked as a follow-up in YUK-221.
     let questions: Array<{ id: string; knowledge_ids: string[] }>;
     if (params.questionIds && params.questionIds.length > 0) {
       const rows = await tx
@@ -236,6 +226,51 @@ export async function createIngestionPaper(
         )
         .where(sql`${question.metadata}->>'ingestion_session_id' = ${params.sessionId}`)
         .orderBy(asc(question_block.created_at), asc(question_block.id), asc(question.id));
+    }
+    // The normalized id sequence — session-filtered + order-preserved — used by
+    // BOTH the reuse-branch comparison (F4) and the create-branch build below.
+    const normalizedQuestionIds = questions.map((q) => q.id);
+
+    const [existing] = await tx
+      .select({ id: artifact.id, tool_state: artifact.tool_state })
+      .from(artifact)
+      .where(
+        and(
+          eq(artifact.intent_source, INGESTION_PAPER_INTENT_SOURCE),
+          eq(artifact.source_ref, params.sessionId),
+        ),
+      )
+      .limit(1);
+    if (existing) {
+      // F1 (PR #309 round-2) — an explicitly-passed questionIds set must match the
+      // existing paper's set; otherwise reuse would silently drop the caller's new
+      // subset. Compare as ORDERED sequences: the paper's slot order is meaningful
+      // (F2/F3), so a reorder of the same ids is still a different paper request.
+      // A bare idempotent call (no questionIds) carries no set to conflict with.
+      //
+      // F4 (PR #309 round-3) — compare the NORMALIZED requested ids (session-filtered,
+      // order-preserved — the exact sequence that WAS stored when the paper was
+      // built), not the raw `params.questionIds`, so a replay including a
+      // session-external id stays idempotent instead of self-409ing.
+      if (params.questionIds && params.questionIds.length > 0) {
+        const existingIds = (existing.tool_state as ToolStateT | null)?.question_ids ?? [];
+        const requested = normalizedQuestionIds;
+        const mismatch =
+          existingIds.length !== requested.length ||
+          existingIds.some((id, i) => id !== requested[i]);
+        if (mismatch) {
+          throw new ApiError(
+            'conflict',
+            `ingestion session ${params.sessionId} already has a paper (questions ${JSON.stringify(
+              existingIds,
+            )}); the requested question_ids ${JSON.stringify(
+              requested,
+            )} differ. One session maps to one paper — delete the existing paper to rebuild with a different set.`,
+            409,
+          );
+        }
+      }
+      return { artifactId: existing.id, reused: true };
     }
 
     if (questions.length === 0) {
