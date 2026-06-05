@@ -40,10 +40,18 @@ export async function POST(req: Request): Promise<Response> {
     }
     // Round-4 fix #3: validate artifact before starting a session.
     // Must exist, be a tool_quiz, have generation_status='ready', and use one
-    // of the three paper intent_sources used by the list query. Any other
+    // of the paper intent_sources used by the list query. Any other
     // artifact (failed generation, non-paper type) must not be able to start
     // a session — those sessions then pollute the paper linkage read paths.
-    const PAPER_INTENT_SOURCES = ['review_plan', 'quiz_gen', 'embedded_check'] as const;
+    // YUK-214 (Strategy D · S1) — `ingestion_paper` is the fourth paper source
+    // (ingest→practice bridge); must stay in lock-step with the list query
+    // whitelist at practice-read.ts (§Step 1).
+    const PAPER_INTENT_SOURCES = [
+      'review_plan',
+      'quiz_gen',
+      'embedded_check',
+      'ingestion_paper',
+    ] as const;
     const artifactRows = await db
       .select({
         id: artifact.id,

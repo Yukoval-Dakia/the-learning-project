@@ -130,6 +130,10 @@ export const Artifact = g.ArtifactSelectGenerated.extend({
   // U5 (YUK-203) — widened so every paper row (Coach review_plan / quiz_gen /
   // embedded_check) parses without throwing. The three new values are the live
   // DB intent_source strings; `tool_kind` mirrors them. Pure additive enum.
+  // YUK-214 (Strategy D · S1) — `ingestion_paper` is the fourth paper provenance:
+  // a tool_quiz built from a session's imported questions (ingest→practice
+  // bridge §2.3). Pure additive enum, no migration (intent_source/tool_kind are
+  // text columns).
   intent_source: z.enum([
     'learning_intent',
     'declared',
@@ -138,12 +142,15 @@ export const Artifact = g.ArtifactSelectGenerated.extend({
     'review_plan',
     'quiz_gen',
     'embedded_check',
+    'ingestion_paper',
   ]),
   body_blocks: b.ArtifactBodyBlocks.nullable(),
   knowledge_ids: z.array(z.string()),
   attrs: z.record(z.unknown()),
   tool_state: b.ToolState.nullable(),
-  tool_kind: z.enum(['quiz', 'review_plan', 'quiz_gen', 'embedded_check']).nullable(),
+  tool_kind: z
+    .enum(['quiz', 'review_plan', 'quiz_gen', 'embedded_check', 'ingestion_paper'])
+    .nullable(),
   generation_status: b.ArtifactGenerationStatus,
   verification_status: b.ArtifactVerificationStatus,
   verification_summary: b.NoteVerificationResult.nullable(),

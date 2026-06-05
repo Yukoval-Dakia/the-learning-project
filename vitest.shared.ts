@@ -118,6 +118,11 @@ export const fastTestInclude = [
   // import only @/core/schema/business (Zod). The end-to-end DB driver
   // (paper-cycle.test.ts) hits live Postgres → falls through to the DB partition.
   'src/server/review/paper-sections.test.ts',
+  // YUK-214 (Strategy D · S1) — pure (no-DB) source-mapping unit. Imports only
+  // @/server/review/practice-read; @/db/client is type-only and @/db/schema is
+  // pure table objects (no connection), same safe surface as paper-sections.
+  // The DB-touching getPracticeList is covered by the db-partition tests.
+  'src/server/review/practice-read.unit.test.ts',
   // YUK-203 U6 — pure (no-DB) state-machine JSON sanitizer + parseTurnOutput /
   // parseHintTurn control-char resilience tests. Imports only ./json-sanitize,
   // ./teaching, ./solve — no live DB / AI touches.
