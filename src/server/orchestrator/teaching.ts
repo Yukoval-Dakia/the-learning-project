@@ -79,7 +79,10 @@ export class TeachingError extends Error {
 
 // ---------- Helpers ----------
 
-function parseTurnOutput(text: string): TeachingTurnOutputT {
+// AF S4 / YUK-203 U6 — exported (was private) so the Copilot teaching-skill
+// parses the TeachingTurnTask structured JSON with the SAME defensive parser as
+// the legacy route (single contract for ask_check/explain/end + structured_question).
+export function parseTurnOutput(text: string): TeachingTurnOutputT {
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
   if (start === -1 || end === -1 || end < start) {
@@ -104,7 +107,11 @@ function parseTurnOutput(text: string): TeachingTurnOutputT {
   return parsed.data;
 }
 
-async function loadTeachingContext(db: Db, learningItemId: string) {
+// AF S4 / YUK-203 U6 — exported (was private) so the Copilot teaching-skill
+// (src/server/copilot/skills/teaching-skill.ts) reuses the SINGLE impl rather
+// than forking the context-load. Pure visibility change; still the only loader,
+// used by both planTeachingTurn (below) and the skill.
+export async function loadTeachingContext(db: Db, learningItemId: string) {
   const liRows = await db
     .select({
       id: learning_item.id,
