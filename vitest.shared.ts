@@ -118,6 +118,10 @@ export const fastTestInclude = [
   // import only @/core/schema/business (Zod). The end-to-end DB driver
   // (paper-cycle.test.ts) hits live Postgres → falls through to the DB partition.
   'src/server/review/paper-sections.test.ts',
+  // YUK-203 U6 — pure (no-DB) state-machine JSON sanitizer + parseTurnOutput /
+  // parseHintTurn control-char resilience tests. Imports only ./json-sanitize,
+  // ./teaching, ./solve — no live DB / AI touches.
+  'src/server/orchestrator/json-sanitize.test.ts',
   'src/server/session/guards.test.ts',
   'src/server/session/index.test.ts',
   'src/subjects/math/fixtures/index.test.ts',

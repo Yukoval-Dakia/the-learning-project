@@ -17,6 +17,7 @@ import { JudgeKind, QuestionKind, Rubric } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, event, knowledge, learning_item } from '@/db/schema';
 import { bodyBlocksToNoteSections } from '@/server/artifacts/body-blocks';
+import { sanitizeJsonStringLiterals } from '@/server/orchestrator/json-sanitize';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 // ---------- Schemas ----------
@@ -89,13 +90,24 @@ export function parseTurnOutput(text: string): TeachingTurnOutputT {
     throw new TeachingError('llm_parse_failed', 'TeachingTurnTask output had no JSON object');
   }
   let raw: unknown;
+  const slice = text.slice(start, end + 1);
   try {
-    raw = JSON.parse(text.slice(start, end + 1));
-  } catch (e) {
-    throw new TeachingError(
-      'llm_parse_failed',
-      `TeachingTurnTask output JSON.parse failed: ${(e as Error).message}`,
-    );
+    raw = JSON.parse(slice);
+  } catch (firstErr) {
+    // Fallback: LLM may embed bare control characters inside string literals.
+    // Sanitize and retry once before giving up.
+    try {
+      const sanitized = sanitizeJsonStringLiterals(slice);
+      console.warn(
+        `[TeachingTurnTask] JSON.parse failed (${(firstErr as Error).message}); retrying after control-char sanitization`,
+      );
+      raw = JSON.parse(sanitized);
+    } catch {
+      throw new TeachingError(
+        'llm_parse_failed',
+        `TeachingTurnTask output JSON.parse failed: ${(firstErr as Error).message}`,
+      );
+    }
   }
   const parsed = TeachingTurnOutput.safeParse(raw);
   if (!parsed.success) {
