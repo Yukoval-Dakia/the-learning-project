@@ -65,6 +65,12 @@ export const fastTestInclude = [
   'src/server/http/**/*.test.ts',
   'src/server/ingestion/crop.test.ts',
   'src/server/ingestion/figure_attach.test.ts',
+  // YUK-214 (Strategy D · S1) — pure (no-DB) ingest→practice paper builder.
+  // buildIngestionPaperToolState imports only @/core/schema/business (Zod);
+  // @/db/* is type-only / pure table objects at this surface. The DB writer
+  // (createIngestionPaper) + idempotency are covered by make-paper.db.test.ts
+  // (db partition).
+  'src/server/ingestion/make-paper.unit.test.ts',
   // T-OC slice 2 (YUK-145): VLM StructureTask runner. Pure DI unit — injected
   // runTaskFn, no live DB / AI / R2. (sibling tencent_ocr_extract handler test
   // hits Postgres → db partition.)
