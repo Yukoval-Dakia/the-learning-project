@@ -28,6 +28,10 @@ import { writeEvent } from '@/server/events/queries';
 import { type FsrsSubjectKind, getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { ApiError } from '@/server/http/errors';
 import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
+import {
+  IMAGE_CONSUMING_JUDGE_ROUTES,
+  resolveQuestionJudgeRoute,
+} from '@/server/judge/route-resolve';
 import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject-profile';
 import { scheduleReview } from '@/server/review/fsrs';
 import { ratingFromCoarseOutcome } from '@/server/review/judge-rating';
@@ -205,27 +209,47 @@ export async function submitPaperSlot(
     : q.knowledge_ids;
   const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, slotKnowledgeIds);
 
+  // F1 (PR #309 round-3, YUK-215) — photo-only gate, mirroring the single-question
+  // /api/review/submit F4 fix. A photo-only answer (empty text + image refs) is
+  // only judgeable by an image-consuming route (steps / multimodal_direct); any
+  // other route reads the text answer alone and would score the empty string as a
+  // wrong answer, polluting FSRS. Resolve the route the invoker WOULD dispatch
+  // (same resolver) BEFORE invoking; when photo-only AND the route is text-only,
+  // take the no-judge path: record the attempt (the answer IS captured), but do
+  // NOT invoke the judge, do NOT write a judge event, and do NOT write FSRS. The
+  // slot surfaces coarse_outcome='unsupported' (JudgeResultPanel renders this as
+  // "无法判分" / cannot judge), so the user sees that this question type does not
+  // support photo-only grading instead of a silent (false) wrong.
+  const photoOnly = input.answerMd.trim().length === 0 && (input.answerImageRefs?.length ?? 0) > 0;
+  const resolvedRoute = resolveQuestionJudgeRoute(q, subjectProfile);
+  const photoOnlyUnsupported = photoOnly && !IMAGE_CONSUMING_JUDGE_ROUTES.has(resolvedRoute);
+
   // Route through the existing judge invoker (Q13: no new capability). Paper
   // judging IS routed, so capability_ref / judge_route are populated (contrast
-  // attribution, which leaves them undefined).
-  const invoked = await createDefaultJudgeInvoker().invoke({
-    db,
-    question: q,
-    answer_md: input.answerMd,
-    // YUK-215 — pass the learner's handwriting-photo refs to the judge so a
-    // photographed answer is judged on what was actually written (not just the
-    // typed text). `input.answerImageRefs` is already frozen into the attempt
-    // event payload (:425) + supplied by the practice submit route; the invoker
-    // input schema already accepts `student_image_refs` (invoker.ts:46) — this
-    // was the one missing wire. Optional → no-image submits are unchanged.
-    student_image_refs: input.answerImageRefs,
-    subjectProfile,
-  });
-  const judgeResult = invoked.result;
-  const coarseOutcome = judgeResult.coarse_outcome;
+  // attribution, which leaves them undefined). Skipped entirely for the
+  // photo-only unsupported case above (no judge event is written for it).
+  const invoked = photoOnlyUnsupported
+    ? null
+    : await createDefaultJudgeInvoker().invoke({
+        db,
+        question: q,
+        answer_md: input.answerMd,
+        // YUK-215 — pass the learner's handwriting-photo refs to the judge so a
+        // photographed answer is judged on what was actually written (not just the
+        // typed text). `input.answerImageRefs` is already frozen into the attempt
+        // event payload (:425) + supplied by the practice submit route; the invoker
+        // input schema already accepts `student_image_refs` (invoker.ts:46) — this
+        // was the one missing wire. Optional → no-image submits are unchanged.
+        student_image_refs: input.answerImageRefs,
+        subjectProfile,
+      });
+  const judgeResult = invoked?.result ?? null;
+  // 'unsupported' for the photo-only no-judge path; otherwise the judge's verdict.
+  const coarseOutcome = judgeResult?.coarse_outcome ?? 'unsupported';
 
   // Map coarse outcome → FSRS rating; 'unsupported' → 'again' (failure) so an
   // un-auto-ratable answer still records a review (the user can re-rate later).
+  // Unused on the photoOnlyUnsupported path (FSRS is skipped there).
   const rating = ratingFromCoarseOutcome(coarseOutcome) ?? 'again';
   const attemptOutcome: 'success' | 'failure' | 'partial' =
     coarseOutcome === 'correct' ? 'success' : coarseOutcome === 'partial' ? 'partial' : 'failure';
@@ -236,16 +260,22 @@ export async function submitPaperSlot(
   const fsrsSubjectId = input.primaryKnowledgeId ?? input.questionId;
 
   // visible_to_user gate (critic #5): the sentinel hides feedback until the
-  // paper completes; everything else is immediately visible.
-  const visibleToUser = input.feedbackPolicy !== HIDE_FEEDBACK_POLICY;
+  // paper completes; everything else is immediately visible. The photo-only
+  // unsupported state is ALWAYS visible — it is actionable user feedback ("this
+  // question type can't grade a photo"), not a buffered judgement.
+  const visibleToUser = photoOnlyUnsupported || input.feedbackPolicy !== HIDE_FEEDBACK_POLICY;
 
   let attemptEventId = newId();
-  let judgeEventId = newId();
+  // F1 (PR #309 round-3) — on the photo-only unsupported path NO judge event is
+  // written, so there is no judge event id. Mirror the idempotent path's
+  // convention (judgeEventId falls back to the attempt event id) so the returned
+  // id always points at a real row instead of a dangling fresh id.
+  let judgeEventId = photoOnlyUnsupported ? attemptEventId : newId();
   let frozenAnswerId = '';
   // Round-4 fix #3: these shadow the loser's locally-computed values when the
   // locked duplicate path reloads the winner's persisted judge payload.
   let persistedCoarseOutcome: string = coarseOutcome;
-  let persistedScore: number | null | undefined = judgeResult.score;
+  let persistedScore: number | null | undefined = judgeResult?.score ?? null;
   let persistedVisibleToUser: boolean = visibleToUser;
 
   const referencedKnowledgeIds = input.primaryKnowledgeId
@@ -255,13 +285,14 @@ export async function submitPaperSlot(
   // cause: canonical 'other' fallback (critic #1 — no CauseSchema widening, no
   // embed). validateCauseAgainstProfile coerces primary to the profile's 'other'
   // when present. A later attribution agent writes a NEW judge event that
-  // supersedes this via newest-per-slot.
+  // supersedes this via newest-per-slot. Unused on the photoOnlyUnsupported path
+  // (no judge event is written there).
   const cause = validateCauseAgainstProfile(
     {
       primary_category: 'other',
       secondary_categories: [],
       analysis_md: '<paper-submit, attribution deferred>',
-      confidence: judgeResult.confidence ?? 0,
+      confidence: judgeResult?.confidence ?? 0,
     },
     subjectProfile,
   );
@@ -394,7 +425,7 @@ export async function submitPaperSlot(
             visible_to_user?: boolean;
           };
           persistedCoarseOutcome = p.coarse_outcome ?? coarseOutcome;
-          persistedScore = p.score !== undefined ? p.score : judgeResult.score;
+          persistedScore = p.score !== undefined ? p.score : (judgeResult?.score ?? null);
           persistedVisibleToUser = p.visible_to_user !== false;
         }
         return; // exit the transaction callback
@@ -415,30 +446,43 @@ export async function submitPaperSlot(
       // frozenAt < sessionStartedAt: frozen in a prior attempt → allow append.
     }
 
-    // Per-knowledge FSRS advisory lock (ADR-0028) — serializes read/compute/
-    // upsert even across different questions touching the same knowledge.
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtext(${`fsrs:${fsrsSubjectKind}:${fsrsSubjectId}`}))`,
-    );
+    // F1 (PR #309 round-3) — the photo-only unsupported path records ONLY the
+    // attempt (the answer is captured) and the answer freeze: no judge event, no
+    // FSRS lock/read/schedule/upsert. A text-only judge never saw the photo, so
+    // there is nothing to grade and nothing to schedule; the slot surfaces
+    // coarse_outcome='unsupported' as visible user feedback. The FSRS work below
+    // is gated behind `!photoOnlyUnsupported`.
+    let scheduled: ReturnType<typeof scheduleReview> | null = null;
+    let stateAfter:
+      | (ReturnType<typeof scheduleReview>['nextState'] & { last_review: Date | null })
+      | null = null;
+    if (!photoOnlyUnsupported) {
+      // Per-knowledge FSRS advisory lock (ADR-0028) — serializes read/compute/
+      // upsert even across different questions touching the same knowledge.
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtext(${`fsrs:${fsrsSubjectKind}:${fsrsSubjectId}`}))`,
+      );
 
-    let prevStateRow = await getFsrsState(tx, fsrsSubjectKind, fsrsSubjectId);
-    if (!prevStateRow && fsrsSubjectKind === 'knowledge') {
-      prevStateRow = await getFsrsState(tx, 'question', input.questionId);
+      let prevStateRow = await getFsrsState(tx, fsrsSubjectKind, fsrsSubjectId);
+      if (!prevStateRow && fsrsSubjectKind === 'knowledge') {
+        prevStateRow = await getFsrsState(tx, 'question', input.questionId);
+      }
+      scheduled = scheduleReview(
+        prevStateRow?.state
+          ? { ...prevStateRow.state, last_review: prevStateRow.state.last_review ?? null }
+          : null,
+        rating,
+        now,
+      );
+      stateAfter = {
+        ...scheduled.nextState,
+        due: scheduled.nextState.due,
+        last_review: scheduled.nextState.last_review ?? null,
+      };
     }
-    const scheduled = scheduleReview(
-      prevStateRow?.state
-        ? { ...prevStateRow.state, last_review: prevStateRow.state.last_review ?? null }
-        : null,
-      rating,
-      now,
-    );
-    const stateAfter = {
-      ...scheduled.nextState,
-      due: scheduled.nextState.due,
-      last_review: scheduled.nextState.last_review ?? null,
-    };
 
-    // (a) attempt event
+    // (a) attempt event — always written (the answer IS captured, even when the
+    // photo-only route can't grade it).
     await writeEvent(tx, {
       id: attemptEventId,
       session_id: input.sessionId,
@@ -459,50 +503,57 @@ export async function submitPaperSlot(
 
     // (b) independent judge event — subject_kind='event', subject_id = attempt
     // event id, caused_by → attempt (mirrors attribute.ts / auto-enroll.ts).
-    await writeEvent(tx, {
-      id: judgeEventId,
-      session_id: input.sessionId,
-      actor_kind: 'agent',
-      actor_ref: 'paper_judge',
-      action: 'judge',
-      subject_kind: 'event',
-      subject_id: attemptEventId,
-      outcome: 'success',
-      payload: {
-        cause,
-        referenced_knowledge_ids: referencedKnowledgeIds,
-        // D6 stamps — paper judging IS routed, so all three are populated.
-        profile_version: subjectProfile.version,
-        capability_ref: invoked.result.capability_ref,
-        judge_route: invoked.route,
-        // visibility gate (F1/Q1). Omit when visible (default) to keep the
-        // payload minimal + back-compat; set false to buffer feedback.
-        ...(visibleToUser ? {} : { visible_to_user: false }),
-        // U5 (YUK-203): store judge verdict in payload so page-reload / reveal
-        // can reconstruct outcome+score without re-running the judge. D6 not
-        // broken — three stamps above are unchanged; these are new fields.
-        coarse_outcome: coarseOutcome,
-        ...(judgeResult.score != null ? { score: judgeResult.score } : {}),
-        // Round-4 fix #4: signal to the attribution pipeline that this judge is
-        // a placeholder ('other' cause, attribution deferred). The skip guard in
-        // runAttributionAndWriteJudgeEvent checks !attribution_pending — it will
-        // NOT skip this event, allowing the attribution agent to write a real
-        // judge event (with a non-placeholder cause) that supersedes via
-        // newest-wins (D6).
-        attribution_pending: true,
-      },
-      caused_by_event_id: attemptEventId,
-      created_at: now,
-    });
+    // SKIPPED on the photo-only unsupported path: no judge ran, so writing a
+    // judge event would fabricate a verdict the system never produced.
+    if (!photoOnlyUnsupported && invoked !== null && judgeResult !== null) {
+      await writeEvent(tx, {
+        id: judgeEventId,
+        session_id: input.sessionId,
+        actor_kind: 'agent',
+        actor_ref: 'paper_judge',
+        action: 'judge',
+        subject_kind: 'event',
+        subject_id: attemptEventId,
+        outcome: 'success',
+        payload: {
+          cause,
+          referenced_knowledge_ids: referencedKnowledgeIds,
+          // D6 stamps — paper judging IS routed, so all three are populated.
+          profile_version: subjectProfile.version,
+          capability_ref: invoked.result.capability_ref,
+          judge_route: invoked.route,
+          // visibility gate (F1/Q1). Omit when visible (default) to keep the
+          // payload minimal + back-compat; set false to buffer feedback.
+          ...(visibleToUser ? {} : { visible_to_user: false }),
+          // U5 (YUK-203): store judge verdict in payload so page-reload / reveal
+          // can reconstruct outcome+score without re-running the judge. D6 not
+          // broken — three stamps above are unchanged; these are new fields.
+          coarse_outcome: coarseOutcome,
+          ...(judgeResult.score != null ? { score: judgeResult.score } : {}),
+          // Round-4 fix #4: signal to the attribution pipeline that this judge is
+          // a placeholder ('other' cause, attribution deferred). The skip guard in
+          // runAttributionAndWriteJudgeEvent checks !attribution_pending — it will
+          // NOT skip this event, allowing the attribution agent to write a real
+          // judge event (with a non-placeholder cause) that supersedes via
+          // newest-wins (D6).
+          attribution_pending: true,
+        },
+        caused_by_event_id: attemptEventId,
+        created_at: now,
+      });
+    }
 
-    // (c) FSRS upsert on the slot's knowledge (or question fallback).
-    await upsertFsrsState(tx, {
-      subject_kind: fsrsSubjectKind,
-      subject_id: fsrsSubjectId,
-      state: stateAfter,
-      due_at: scheduled.dueAt,
-      last_review_event_id: attemptEventId,
-    });
+    // (c) FSRS upsert on the slot's knowledge (or question fallback). SKIPPED on
+    // the photo-only unsupported path — an ungraded answer schedules nothing.
+    if (!photoOnlyUnsupported && scheduled !== null && stateAfter !== null) {
+      await upsertFsrsState(tx, {
+        subject_kind: fsrsSubjectKind,
+        subject_id: fsrsSubjectId,
+        state: stateAfter,
+        due_at: scheduled.dueAt,
+        last_review_event_id: attemptEventId,
+      });
+    }
 
     // Freeze the answer draft (set submitted_at + event_id). Re-submission after
     // abandon→reopen writes a NEW frozen row; this one stays immutable (§4.5).

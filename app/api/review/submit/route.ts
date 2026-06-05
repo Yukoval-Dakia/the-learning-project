@@ -32,12 +32,15 @@ import { FsrsRating } from '@/core/schema/business';
 import { JudgeResultV2, type JudgeResultV2T } from '@/core/schema/capability';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
-import { resolveQuestionJudgeRoute } from '@/server/ai/judges/question-contract';
 import { enqueueMasteryNoteRefine } from '@/server/artifacts/note-refine-triggers';
 import { writeEvent } from '@/server/events/queries';
 import { type FsrsSubjectKind, getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
+import {
+  IMAGE_CONSUMING_JUDGE_ROUTES,
+  resolveQuestionJudgeRoute,
+} from '@/server/judge/route-resolve';
 import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject-profile';
 import { normalizeReviewSubmitActivityRef } from '@/server/review/activity-ref';
 import { resolveAdviceCauseForQuestion } from '@/server/review/cause-context';
@@ -88,15 +91,10 @@ const SubmitBody = z.object({
 
 type Rating = z.infer<typeof FsrsRating>;
 
-// F4 (PR #309 round-2, YUK-215) — the ONLY judge routes that consume
-// `student_image_refs` (handwriting-photo answers). Verified against the invoker
-// dispatch (src/server/judge/invoker.ts:148-169): `steps` and `multimodal_direct`
-// thread `input.student_image_refs` into their runners; every other route
-// (`exact`/`keyword`/`semantic`/`unit_dimension`) reads ONLY `answer.content`
-// (text). So a photo-only answer (empty text + image refs) routed to a text-only
-// judge would be scored against the empty string — a false "wrong" that pollutes
-// FSRS. Keep this set in sync with the invoker if a new image-aware route lands.
-const IMAGE_CONSUMING_JUDGE_ROUTES = new Set(['steps', 'multimodal_direct']);
+// F4 (PR #309 round-2, YUK-215) — the image-consuming judge routes set is now
+// shared from `@/server/judge/route-resolve` (IMAGE_CONSUMING_JUDGE_ROUTES) so
+// the photo-only gate cannot drift between this single-question flow and the
+// paper-submit flow (F1).
 
 export async function POST(req: Request): Promise<Response> {
   try {

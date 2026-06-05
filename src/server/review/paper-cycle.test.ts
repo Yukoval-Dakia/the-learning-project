@@ -15,7 +15,14 @@
 // Uses the deterministic `exact` judge (true_false question matched against
 // reference_md) — no LLM / runTask mock needed.
 
-import { answer, artifact, event, learning_session, question } from '@/db/schema';
+import {
+  answer,
+  artifact,
+  event,
+  learning_session,
+  material_fsrs_state,
+  question,
+} from '@/db/schema';
 import * as invokerModule from '@/server/judge/invoker';
 import { Review } from '@/server/session';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
@@ -1183,6 +1190,181 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
         'asset_photo_1',
         'asset_photo_2',
       ]);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  // ── F1 (PR #309 round-3, YUK-215): photo-only on a text-only route is NOT judged ──
+  it('F1: photo-only answer on a text-only (exact) route records the attempt but does NOT judge or schedule FSRS', async () => {
+    const db = testDb();
+    // seedQuestion makes a true_false question → resolveQuestionJudgeRoute → 'exact'
+    // (text-only, NOT in IMAGE_CONSUMING_JUDGE_ROUTES).
+    await seedQuestion('q1', 'true');
+    await seedPaper('paper1', ['q1']);
+    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
+
+    // Spy on the invoker factory — the judge must NOT run for a photo-only answer
+    // headed to a text-only route (it would score the empty string as wrong).
+    const invokeSpy = vi.fn();
+    vi.spyOn(invokerModule, 'createDefaultJudgeInvoker').mockReturnValue({
+      invoke: invokeSpy,
+    } as never);
+
+    try {
+      const res = await submitPaperSlot(
+        {
+          sessionId,
+          paperArtifactId: 'paper1',
+          questionId: 'q1',
+          answerMd: '', // photo-only: no typed text
+          answerImageRefs: ['asset_photo_only'],
+          primaryKnowledgeId: 'k1',
+          feedbackPolicy: 'immediate',
+        },
+        db,
+      );
+
+      // Judge never invoked → no false-wrong scoring.
+      expect(invokeSpy).not.toHaveBeenCalled();
+      // Visible "unsupported" state (JudgeResultPanel renders this as 无法判分).
+      expect(res.coarseOutcome).toBe('unsupported');
+      expect(res.visibleToUser).toBe(true);
+      expect(res.score).toBeNull();
+
+      // The attempt IS recorded (the answer is captured) + the draft is frozen.
+      const attempts = await db
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'attempt'), eq(event.subject_id, 'q1')));
+      expect(attempts).toHaveLength(1);
+      expect((attempts[0].payload as { answer_image_refs?: string[] }).answer_image_refs).toEqual([
+        'asset_photo_only',
+      ]);
+      const frozen = await db
+        .select()
+        .from(answer)
+        .where(and(eq(answer.session_id, sessionId), eq(answer.question_id, 'q1')));
+      expect(frozen).toHaveLength(1);
+      expect(frozen[0].submitted_at).not.toBeNull();
+
+      // NO judge event was written.
+      const judgeEvents = await db
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'judge'), eq(event.subject_id, attempts[0].id)));
+      expect(judgeEvents).toHaveLength(0);
+
+      // NO FSRS row was written for the slot's knowledge (an ungraded answer
+      // schedules nothing).
+      const fsrsRows = await db
+        .select()
+        .from(material_fsrs_state)
+        .where(
+          and(
+            eq(material_fsrs_state.subject_kind, 'knowledge'),
+            eq(material_fsrs_state.subject_id, 'k1'),
+          ),
+        );
+      expect(fsrsRows).toHaveLength(0);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('F1: photo-only answer on an image-consuming route (multimodal_direct) IS judged', async () => {
+    const db = testDb();
+    const now = new Date();
+    // A question forced onto the image-consuming `multimodal_direct` route via
+    // judge_kind_override — a photo-only answer here IS judgeable.
+    await db.insert(question).values({
+      id: 'qmm',
+      kind: 'short_answer',
+      prompt_md: 'Prompt qmm',
+      reference_md: null,
+      judge_kind_override: 'multimodal_direct',
+      knowledge_ids: ['k1'],
+      difficulty: 3,
+      source: 'manual',
+      variant_depth: 0,
+      version: 0,
+      created_at: now,
+      updated_at: now,
+    });
+    await seedPaper('paper1', ['qmm']);
+    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
+
+    // Wrap the real invoker so we can confirm it WAS called for the image route,
+    // returning a stubbed verdict (the real multimodal judge needs R2 + an LLM).
+    const captured: Array<{ student_image_refs?: string[] }> = [];
+    vi.spyOn(invokerModule, 'createDefaultJudgeInvoker').mockReturnValue({
+      invoke: (input: { student_image_refs?: string[] }) => {
+        captured.push(input);
+        return Promise.resolve({
+          route: 'multimodal_direct',
+          result: {
+            score: 0.9,
+            score_meaning: 'correctness',
+            coarse_outcome: 'correct',
+            confidence: 0.9,
+            capability_ref: { id: 'multimodal_direct', version: '1.0.0' },
+            feedback_md: 'looks right',
+            evidence_json: {},
+          },
+          telemetry: {
+            route: 'multimodal_direct',
+            capability_ref: { id: 'multimodal_direct', version: '1.0.0' },
+            coarse_outcome: 'correct',
+            confidence: 0.9,
+            elapsed_ms: 1,
+            question_id: 'qmm',
+            subject_id: 'wenyan',
+            profile_version: '1.0.0',
+          },
+        });
+      },
+    } as never);
+
+    try {
+      const res = await submitPaperSlot(
+        {
+          sessionId,
+          paperArtifactId: 'paper1',
+          questionId: 'qmm',
+          answerMd: '', // photo-only
+          answerImageRefs: ['asset_photo_only'],
+          primaryKnowledgeId: 'k1',
+          feedbackPolicy: 'immediate',
+        },
+        db,
+      );
+
+      // The judge WAS invoked with the photo refs, and the verdict flows through.
+      expect(captured).toHaveLength(1);
+      expect(captured[0].student_image_refs).toEqual(['asset_photo_only']);
+      expect(res.coarseOutcome).toBe('correct');
+      expect(res.score).toBe(0.9);
+
+      // A judge event WAS written + FSRS WAS scheduled (normal judged path).
+      const attempts = await db
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'attempt'), eq(event.subject_id, 'qmm')));
+      const judgeEvents = await db
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'judge'), eq(event.subject_id, attempts[0].id)));
+      expect(judgeEvents).toHaveLength(1);
+      const fsrsRows = await db
+        .select()
+        .from(material_fsrs_state)
+        .where(
+          and(
+            eq(material_fsrs_state.subject_kind, 'knowledge'),
+            eq(material_fsrs_state.subject_id, 'k1'),
+          ),
+        );
+      expect(fsrsRows).toHaveLength(1);
     } finally {
       vi.restoreAllMocks();
     }
