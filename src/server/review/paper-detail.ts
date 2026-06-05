@@ -401,8 +401,22 @@ export async function getPaperDetail(
     `);
     const pos = (posRows as unknown as Array<{ pos: number }>)[0]?.pos ?? 0;
 
-    const rwRows = await db.execute<{ outcome: string }>(sql`
-      SELECT e.outcome
+    // Round-4 fix #2: use the newest JUDGE event's coarse_outcome instead of
+    // the attempt event's outcome, matching the practice-list fix (round-4).
+    // Falls back to attempt outcome when no judge event exists (historical rows).
+    const rwRows = await db.execute<{
+      coarse_outcome: string | null;
+      attempt_outcome: string | null;
+    }>(sql`
+      SELECT
+        (SELECT j.payload->>'coarse_outcome'
+         FROM event j
+         WHERE j.action = 'judge'
+           AND j.subject_kind = 'event'
+           AND j.subject_id = a.event_id
+         ORDER BY j.created_at DESC
+         LIMIT 1) AS coarse_outcome,
+        e.outcome AS attempt_outcome
       FROM answer a
       JOIN event e ON e.id = a.event_id
       WHERE a.session_id = ${sid}
@@ -418,9 +432,18 @@ export async function getPaperDetail(
     `);
     let right = 0;
     let wrong = 0;
-    for (const r of rwRows as unknown as Array<{ outcome: string }>) {
-      if (r.outcome === 'failure') wrong += 1;
-      else right += 1; // partial counts as right (§4.10 Q9 deliberate)
+    for (const r of rwRows as unknown as Array<{
+      coarse_outcome: string | null;
+      attempt_outcome: string | null;
+    }>) {
+      const verdict =
+        r.coarse_outcome ??
+        (r.attempt_outcome === 'success' ? 'correct' : (r.attempt_outcome ?? 'incorrect'));
+      if (verdict === 'correct' || verdict === 'partial') {
+        right += 1; // partial counts as right (§4.10 Q9 deliberate)
+      } else {
+        wrong += 1;
+      }
     }
 
     sessionInfo = { id: sessionInfo.id, status: sessionInfo.status };

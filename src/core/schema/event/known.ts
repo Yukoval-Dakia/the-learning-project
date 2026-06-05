@@ -86,6 +86,13 @@ export const JudgeOnEvent = z.object({
     // 'unsupported'); score is [0,1] or null.
     coarse_outcome: z.string().optional(),
     score: z.number().optional(),
+    // Round-4 fix #4 (YUK-203): paper placeholder judge sets this true so the
+    // attribution pipeline can distinguish "already attributed" from "pending
+    // real cause". The skip condition in attribute.ts / runAttributionAndWriteJudgeEvent
+    // checks `!attribution_pending` — only skips when a real attribution judge
+    // (written by the attribution agent) is found. Optional + defaults false so
+    // every historical judge event still parses with no backfill.
+    attribution_pending: z.boolean().optional(),
   }),
   ...baseOptionalFields,
 });

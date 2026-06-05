@@ -421,6 +421,13 @@ export async function submitPaperSlot(
         // broken — three stamps above are unchanged; these are new fields.
         coarse_outcome: coarseOutcome,
         ...(judgeResult.score != null ? { score: judgeResult.score } : {}),
+        // Round-4 fix #4: signal to the attribution pipeline that this judge is
+        // a placeholder ('other' cause, attribution deferred). The skip guard in
+        // runAttributionAndWriteJudgeEvent checks !attribution_pending — it will
+        // NOT skip this event, allowing the attribution agent to write a real
+        // judge event (with a non-placeholder cause) that supersedes via
+        // newest-wins (D6).
+        attribution_pending: true,
       },
       caused_by_event_id: attemptEventId,
       created_at: now,
