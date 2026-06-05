@@ -171,6 +171,51 @@ describe('createIngestionPaper (YUK-214)', () => {
     expect(paper.tool_state?.question_ids).toEqual(['qd1']);
   });
 
+  // F2 (PR #309 round-1) — paper slot order is deterministic, not whatever order
+  // the DB happens to return rows in.
+  it('preserves the requested questionIds order even when ids are passed out of order', async () => {
+    const db = testDb();
+    // Seed ids whose lexical/insertion order is NOT the requested order, so a
+    // bare inArray would scramble them.
+    await seedImportedSession({
+      sessionId: 'sess_f',
+      questions: [
+        { id: 'qf_a', knowledge_ids: ['k1'] },
+        { id: 'qf_b', knowledge_ids: ['k2'] },
+        { id: 'qf_c', knowledge_ids: ['k3'] },
+      ],
+    });
+    const requested = ['qf_c', 'qf_a', 'qf_b'];
+    const { artifactId } = await createIngestionPaper(db, {
+      sessionId: 'sess_f',
+      questionIds: requested,
+    });
+    const [row] = await db.select().from(artifact).where(eq(artifact.id, artifactId)).limit(1);
+    const paper = Artifact.parse(row);
+    expect(paper.tool_state?.question_ids).toEqual(requested);
+  });
+
+  // F2 — the reverse-query fall-through path orders by (created_at, id) so the
+  // paper slot sequence is stable/repeatable rather than DB-row-order-dependent.
+  it('orders fall-through reverse-queried questions deterministically by (created_at, id)', async () => {
+    const db = testDb();
+    // Insert ids in an order that differs from their sorted (created_at, id)
+    // order. With a shared created_at, the tiebreaker is `id`, so the expected
+    // paper order is the ascending-id order regardless of insertion sequence.
+    await seedImportedSession({
+      sessionId: 'sess_g',
+      questions: [
+        { id: 'qg_3', knowledge_ids: ['k3'] },
+        { id: 'qg_1', knowledge_ids: ['k1'] },
+        { id: 'qg_2', knowledge_ids: ['k2'] },
+      ],
+    });
+    const { artifactId } = await createIngestionPaper(db, { sessionId: 'sess_g' });
+    const [row] = await db.select().from(artifact).where(eq(artifact.id, artifactId)).limit(1);
+    const paper = Artifact.parse(row);
+    expect(paper.tool_state?.question_ids).toEqual(['qg_1', 'qg_2', 'qg_3']);
+  });
+
   it('throws when the session has no imported questions', async () => {
     const db = testDb();
     await seedImportedSession({ sessionId: 'sess_e', questions: [] });
