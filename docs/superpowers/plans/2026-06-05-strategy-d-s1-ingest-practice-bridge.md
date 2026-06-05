@@ -417,3 +417,8 @@ critic 11 条 NIT（F-1/3/4/5/6/8/10/12/13/14/15）均"已核验为真"，其中
 另两项 kickoff 轮拍板（doc riders 范围）：合成 seed 定位 = 仅测试 harness（分工写进文档）；TUNNEL_TOKEN 注入方式 = 写 NAS `.env`（runbook §3 + `.env.example` 同步补）。
 
 **实施自此开工。**
+
+> **§13 改判（2026-06-05 晚）**：Fork 4（TUNNEL_TOKEN 注入方式）整体撤销——owner 裁定外网访问
+> 不属项目考虑范围（「要外网访问我可以自己反代再用 tunnel」）。doc rider 中 runbook §3 的
+> TUNNEL_TOKEN 必配块与 `.env.example` 的 REQUIRED 注释已回退至 rider 前状态；ingestion
+> 数据链与入口方式无关。cloudflared 是否留在 compose 由 owner 另行决定。
