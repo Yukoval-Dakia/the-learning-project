@@ -75,18 +75,81 @@ export interface PaperSubmitSlotResult {
  * event with the visibility gate + D6 stamps + cause, (c) an FSRS upsert on the
  * slot's primary knowledge, and freezes the answer draft — all in one
  * transaction so the audit trail cannot drift from the FSRS projection.
+ *
+ * Idempotency: a retry/double-send with the same content returns the existing
+ * attempt/judge ids without re-invoking the judge or writing any new rows.
+ * Changed content while the session is still in its current attempt (i.e. the
+ * slot was frozen AFTER the session's started_at) is rejected with 409 — the
+ * caller must abandon→reopen before resubmitting different content.
  */
 export async function submitPaperSlot(
   input: PaperSubmitSlotInput,
   db: Db = defaultDb,
 ): Promise<PaperSubmitSlotResult> {
   const now = new Date();
+  const partRef = input.partRef ?? null;
 
-  // Fix #3: cheap non-locking pre-flight before the expensive judge call.
-  // Rejects stale/invalid sessions fast (completed, abandoned, misbound paper)
-  // without burning judge capacity. The FOR UPDATE inside the transaction below
-  // remains the authoritative TOCTOU guard.
+  // Round-3 fix #3 (P2): cheap non-locking pre-flight rejects stale/invalid
+  // sessions before any expensive work. The FOR UPDATE inside the transaction
+  // below is the authoritative TOCTOU guard.
   await assertSessionMutable(db, input.sessionId, input.paperArtifactId);
+
+  // Round-3 fix #1 (P2): check for an already-frozen row with the same content
+  // BEFORE invoking the judge, so a duplicate submit never burns LLM capacity.
+  // Non-locking read is sufficient here — the transaction below re-checks with
+  // FOR UPDATE and is the authoritative path.
+  const preCheckFrozen = await db
+    .select({
+      id: answer.id,
+      event_id: answer.event_id,
+      content_md: answer.content_md,
+    })
+    .from(answer)
+    .where(
+      and(
+        eq(answer.session_id, input.sessionId),
+        eq(answer.question_id, input.questionId),
+        sql`COALESCE(${answer.part_ref}, '') = COALESCE(${partRef}, '')`,
+        not(isNull(answer.submitted_at)),
+      ),
+    )
+    .orderBy(desc(answer.submitted_at))
+    .limit(1);
+
+  const preCheckLatest = preCheckFrozen[0];
+  if (preCheckLatest?.event_id && preCheckLatest.content_md === input.answerMd) {
+    // Same content already frozen — look up the existing judge event and return
+    // without invoking the judge or entering the write transaction.
+    const judgeRows = await db
+      .select({
+        id: event.id,
+        payload: event.payload,
+      })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'judge'),
+          eq(event.subject_kind, 'event'),
+          eq(event.subject_id, preCheckLatest.event_id),
+        ),
+      )
+      .limit(1);
+
+    const existingJudge = judgeRows[0];
+    const payload = existingJudge?.payload as {
+      coarse_outcome?: string;
+      score?: number;
+      visible_to_user?: boolean;
+    } | null;
+    return {
+      attemptEventId: preCheckLatest.event_id,
+      judgeEventId: existingJudge?.id ?? preCheckLatest.event_id,
+      answerId: preCheckLatest.id,
+      visibleToUser: payload?.visible_to_user !== false,
+      coarseOutcome: payload?.coarse_outcome ?? 'unsupported',
+      score: payload?.score ?? null,
+    };
+  }
 
   // Load the question for the judge invoker (same fields /review/submit reads).
   const qRows = await db.select().from(question).where(eq(question.id, input.questionId)).limit(1);
@@ -155,15 +218,22 @@ export async function submitPaperSlot(
     // Session validation (FOR UPDATE): lock the session row to prevent a concurrent
     // status transition (e.g. session completed between route and here). Validates
     // type='review', artifact_id binding, and status ∈ started|paused.
+    // Also reads started_at which serves as the reopen marker (see below).
     const sessRows = await tx.execute<{
       type: string;
       status: string;
       artifact_id: string | null;
+      started_at: string;
     }>(
-      sql`SELECT type, status, artifact_id FROM learning_session WHERE id = ${input.sessionId} FOR UPDATE`,
+      sql`SELECT type, status, artifact_id, started_at FROM learning_session WHERE id = ${input.sessionId} FOR UPDATE`,
     );
     const sess = (
-      sessRows as unknown as Array<{ type: string; status: string; artifact_id: string | null }>
+      sessRows as unknown as Array<{
+        type: string;
+        status: string;
+        artifact_id: string | null;
+        started_at: string;
+      }>
     )[0];
     if (!sess) {
       throw new ApiError('validation_error', `session ${input.sessionId} not found`, 400);
@@ -190,20 +260,27 @@ export async function submitPaperSlot(
       );
     }
 
-    // Fix #1: idempotent resubmit guard — if the slot already has a frozen row
-    // with the same content_md, return the existing attempt/judge event ids
-    // without writing any new rows. This makes API-level retries and double-sends
-    // safe: the second request returns the same ids as the first and records no
-    // additional FSRS review, no duplicate events, no extra frozen rows.
+    // Idempotent resubmit guard (authoritative — FOR UPDATE ensures no concurrent
+    // freeze wins between the pre-check above and this point).
+    // Same content → return existing ids without writing (pre-check usually catches
+    // this first, but the transaction re-confirms under lock).
     //
-    // Content differs → legitimate reopen-resubmit (new content after
-    // abandon→reopen): fall through to the normal append path below.
-    const partRef = input.partRef ?? null;
+    // Round-3 fix #2 (P2): changed-content guard (§4.9 plan).
+    // `started_at` is reset to now() on every reopenAbandonedReviewSession, so it
+    // serves as the reopen marker without any new column:
+    //   - frozen row submitted_at < started_at → slot was frozen in a previous
+    //     attempt (before the last reopen) → changed content is a legitimate
+    //     reopen-resubmit, allow append.
+    //   - frozen row submitted_at >= started_at → slot was frozen in THIS attempt
+    //     → changed content means the active slot is already answered. The user
+    //     must abandon→reopen before changing their answer. Reject 409.
+    const sessionStartedAt = new Date(sess.started_at);
     const existingFrozen = await tx
       .select({
         id: answer.id,
         event_id: answer.event_id,
         content_md: answer.content_md,
+        submitted_at: answer.submitted_at,
       })
       .from(answer)
       .where(
@@ -218,24 +295,40 @@ export async function submitPaperSlot(
       .limit(1);
 
     const latestFrozen = existingFrozen[0];
-    if (latestFrozen?.event_id && latestFrozen.content_md === input.answerMd) {
-      // Same content already frozen — find the judge event for this attempt.
-      const judgeRows = await tx
-        .select({ id: event.id })
-        .from(event)
-        .where(
-          and(
-            eq(event.action, 'judge'),
-            eq(event.subject_kind, 'event'),
-            eq(event.subject_id, latestFrozen.event_id),
-          ),
-        )
-        .limit(1);
-      // Return existing ids — no new rows written.
-      attemptEventId = latestFrozen.event_id;
-      judgeEventId = judgeRows[0]?.id ?? judgeEventId; // fallback keeps the pre-generated id
-      frozenAnswerId = latestFrozen.id;
-      return; // exit the transaction callback
+    if (latestFrozen) {
+      if (latestFrozen.event_id && latestFrozen.content_md === input.answerMd) {
+        // Same content already frozen (authoritative under lock). Return existing
+        // ids — no new rows written (judge was also skipped by the pre-check).
+        const judgeRows = await tx
+          .select({ id: event.id })
+          .from(event)
+          .where(
+            and(
+              eq(event.action, 'judge'),
+              eq(event.subject_kind, 'event'),
+              eq(event.subject_id, latestFrozen.event_id),
+            ),
+          )
+          .limit(1);
+        attemptEventId = latestFrozen.event_id;
+        judgeEventId = judgeRows[0]?.id ?? judgeEventId;
+        frozenAnswerId = latestFrozen.id;
+        return; // exit the transaction callback
+      }
+
+      // Different content — check the reopen marker.
+      const frozenAt = latestFrozen.submitted_at;
+      if (frozenAt && frozenAt >= sessionStartedAt) {
+        // Slot was frozen in this session attempt. Changed-content resubmit is
+        // only allowed after abandon→reopen (which advances started_at). Reject
+        // so the caller must reopen the session before changing their answer.
+        throw new ApiError(
+          'conflict',
+          `slot (question ${input.questionId}) was already submitted in this session attempt; abandon and reopen the session before changing your answer`,
+          409,
+        );
+      }
+      // frozenAt < sessionStartedAt: frozen in a prior attempt → allow append.
     }
 
     // Per-knowledge FSRS advisory lock (ADR-0028) — serializes read/compute/
