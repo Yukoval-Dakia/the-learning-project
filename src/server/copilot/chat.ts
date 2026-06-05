@@ -37,6 +37,10 @@ import {
 import { PROPOSAL_FEEDBACK_BUDGET, resolveContextBudget } from '@/server/ai/tools/budgets';
 import { ContextBudgetTracker } from '@/server/ai/tools/context-throttle';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
+// AF S4 / YUK-203 U6 — Copilot skills (behavior packs). A skill_context turn
+// routes to these at the service layer instead of the free-form CopilotTask loop.
+import { type SolveSkillResult, runSolveSkill } from '@/server/copilot/skills/solve-skill';
+import { type TeachingSkillResult, runTeachingSkill } from '@/server/copilot/skills/teaching-skill';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
 // P5.4-L2 / YUK-174 (Facet A, §3.3) — feed the per-(kind, relation) accept-
 // learned reason digest into the Copilot run input, EDGE-scoped (Copilot
@@ -57,6 +61,29 @@ import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 export const COPILOT_CHAT_TRIGGER_KINDS = ['chat', 'chip'] as const;
 export type CopilotChatTriggerKind = (typeof COPILOT_CHAT_TRIGGER_KINDS)[number];
 
+// AF S4 / YUK-203 U6 — the surface-merge skill selector. A `skill_context`
+// turn routes runCopilotChat to a teaching/solve behavior pack (a prompt/context
+// pack, NEVER a different tool surface — R5: skill ≠ surface). The skills compose
+// TeachingTurnTask at the SERVICE layer; they do not add tools to COPILOT_TOOLS.
+//
+// FORWARD-COMPAT NOTE: `skill_context` is the U6-temporary seed of AF S2b's
+// `CurrentUserContext.active_ref` (agent-framework-design §1.4). When S2b lands
+// the full `active_ref` envelope, this field is subsumed by it — both the `skill`
+// discriminator and the `ref` shape are deliberately minimal so the migration is
+// additive. The `ref` shape `{ kind, id }` mirrors `leave_agent_note`'s ref
+// vocabulary (AF §4 `refs: Array<{kind, id}>`) for consistency.
+export const COPILOT_SKILL_KINDS = ['teaching', 'solve'] as const;
+export type CopilotSkillKind = (typeof COPILOT_SKILL_KINDS)[number];
+
+export const CopilotSkillContext = z.object({
+  skill: z.enum(COPILOT_SKILL_KINDS),
+  ref: z.object({
+    kind: z.string().min(1).max(40),
+    id: z.string().min(1).max(120),
+  }),
+});
+export type CopilotSkillContextT = z.infer<typeof CopilotSkillContext>;
+
 export const CopilotChatRequest = z.object({
   user_message: z.string().min(1).max(4000),
   triggered_by: z.enum(COPILOT_CHAT_TRIGGER_KINDS),
@@ -65,9 +92,28 @@ export const CopilotChatRequest = z.object({
    * Stored on the chip-trigger event so downstream can analyse usage.
    */
   chip_kind: z.string().min(1).max(80).optional(),
+  // AF S4 / YUK-203 U6 — optional skill selector. Absent → unchanged free-form
+  // Copilot behavior. Present → routes to the teaching/solve skill (§4.4).
+  skill_context: CopilotSkillContext.optional(),
 });
 
 export type CopilotChatRequestT = z.infer<typeof CopilotChatRequest>;
+
+// AF S4 / YUK-203 U6 — structured carrier for a skill turn (teaching ask_check /
+// explain / end). Rides as an ADDITIVE optional field on CopilotChatResult so
+// the existing text-only consumers are byte-for-byte unaffected; the Dock reads
+// it only when present to render the inline question + suggested-next chips.
+export interface CopilotSkillTurn {
+  kind: 'explain' | 'ask_check' | 'end';
+  /** Present only for an ask_check turn that materialized a question. */
+  structured_question?: {
+    id: string;
+    kind: string;
+    prompt_md: string;
+    choices_md: string[] | null;
+  };
+  suggested_next?: 'continue' | 'end';
+}
 
 export interface CopilotChatResult {
   task_run_id: string;
@@ -80,6 +126,10 @@ export interface CopilotChatResult {
   // and the persisted reply event id.
   session_id: string;
   reply_event_id: string;
+  // AF S4 / YUK-203 U6 — additive optional structured-turn carrier (§4.1). Set
+  // only when a teaching skill ran an ask_check/explain/end turn; absent for
+  // free-form chat replies so existing consumers are unaffected.
+  skill_turn?: CopilotSkillTurn;
 }
 
 const CHIP_TRIGGER_EVENT_ACTION = 'experimental:copilot_chip_trigger';
@@ -132,6 +182,10 @@ export interface CopilotChatDeps {
   loadProposalFeedbackFn?: LoadProposalFeedbackFn;
   // AF S3a / YUK-203 U3 — defaults to Conversation.findOrCreateCopilotConversation.
   findOrCreateConversationFn?: FindOrCreateConversationFn;
+  // AF S4 / YUK-203 U6 — swappable skill runners (unit tests inject fixtures so
+  // the {}-stub db is never touched). Default to the real skill modules.
+  runTeachingSkillFn?: typeof runTeachingSkill;
+  runSolveSkillFn?: typeof runSolveSkill;
   now?: () => Date;
 }
 
@@ -207,6 +261,8 @@ export async function runCopilotChat(
     ((db: Db) => getProposalFeedbackDigest(db, PROPOSAL_FEEDBACK_BUDGET));
   const findOrCreateConversation =
     deps.findOrCreateConversationFn ?? Conversation.findOrCreateCopilotConversation;
+  const runTeachingSkillFn = deps.runTeachingSkillFn ?? runTeachingSkill;
+  const runSolveSkillFn = deps.runSolveSkillFn ?? runSolveSkill;
 
   const surface = selectSurface(req.triggered_by);
   const actorRef = selectActorRef(req.triggered_by);
@@ -280,6 +336,83 @@ export async function runCopilotChat(
       created_at: now,
     });
     causedByEventId = chipEventId;
+  }
+
+  // AF S4 / YUK-203 U6 (§4.4) — skill routing. A skill_context turn runs a
+  // teaching/solve behavior pack at the SERVICE layer instead of the free-form
+  // CopilotTask tool loop. The surface stays 'copilot' (R5: skill ≠ surface — the
+  // budget tracker / mcp / tool allowlist below are NOT constructed on this path),
+  // and the TeachingTurnTask call inside the skill is a service call, so it draws
+  // down NO tool budget (OQ5). The skill turn lives entirely on this single
+  // Copilot session (Cross-统合 single-session).
+  if (req.skill_context) {
+    const replyEventId = `copilot_reply_${createId()}`;
+    let replyMd: string;
+    // Carry the teaching turn kind onto the copilot_reply payload so the
+    // accept-chip resolver can anchor a corrective chip on THIS event (R1 pairing,
+    // load-bearing — §4.2). Free-form replies and solve hints carry no turn_kind.
+    let turnKind: 'explain' | 'ask_check' | 'end' | undefined;
+    let skillTurn: CopilotSkillTurn | undefined;
+
+    if (req.skill_context.skill === 'teaching') {
+      const skillResult: TeachingSkillResult = await runTeachingSkillFn({
+        db,
+        sessionId,
+        learningItemId: req.skill_context.ref.id,
+        userMessage: req.user_message,
+        replyEventId,
+      });
+      replyMd = skillResult.text_md;
+      turnKind = skillResult.kind;
+      skillTurn = {
+        kind: skillResult.kind,
+        suggested_next: skillResult.suggested_next,
+        ...(skillResult.structured_question
+          ? { structured_question: skillResult.structured_question }
+          : {}),
+      };
+    } else {
+      const skillResult: SolveSkillResult = await runSolveSkillFn({
+        db,
+        questionId: req.skill_context.ref.id,
+      });
+      replyMd = skillResult.text_md;
+    }
+
+    const replyAt = new Date(now.getTime() + 1);
+    await write(db, {
+      id: replyEventId,
+      session_id: sessionId,
+      actor_kind: 'agent',
+      actor_ref: actorRef,
+      action: REPLY_EVENT_ACTION,
+      subject_kind: 'query',
+      subject_id: replyEventId,
+      outcome: null,
+      payload: {
+        surface: 'copilot',
+        session_id: sessionId,
+        reply_md: replyMd,
+        task_run_id: taskRunId,
+        in_reply_to_event_id: causedByEventId ?? null,
+        // AF S4 — corrective-chip anchor key (only for teaching turns).
+        ...(turnKind ? { turn_kind: turnKind } : {}),
+      },
+      caused_by_event_id: causedByEventId ?? null,
+      task_run_id: taskRunId,
+      created_at: replyAt,
+    });
+
+    return {
+      task_run_id: taskRunId,
+      reply: replyMd,
+      surface,
+      triggered_by: req.triggered_by,
+      session_id: sessionId,
+      reply_event_id: replyEventId,
+      ...(userAskEventId ? { user_ask_event_id: userAskEventId } : {}),
+      ...(skillTurn ? { skill_turn: skillTurn } : {}),
+    };
   }
 
   // P5.1 / YUK-143 — per-message context-budget throttle. One tracker lives for

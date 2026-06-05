@@ -24,7 +24,7 @@
 //    path it takes; ND-SK-4).
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { SuggestionKind } from '@/core/schema/event/known';
@@ -56,13 +56,24 @@ const Body = z.object({
 // resolver and the explicit-id validator enforce this structural constraint so a
 // counted accept_suggestion can never anchor to an unrelated agent event.
 const TEACH_MESSAGE_ACTION = 'experimental:teach_message';
+// AF S4 / YUK-203 U6 (R1, Cross-统合 §4.2) — under the single-session merge a
+// teaching ask_check turn inside Copilot writes an `experimental:copilot_reply`
+// event (not a teach_message). The resolver/validator are ADDITIVELY widened to
+// also anchor on copilot_reply so an accept-chip click posted with the COPILOT
+// session id finds the right agent reply. The endpoint identity, the
+// `action='accept_suggestion'` write, and the §5.2 KPI-exclusion reader are
+// UNCHANGED — spec :527 freezes the endpoint + KPI separation, not the resolver
+// internals. R3: legacy `teach_message` anchoring MUST NOT regress.
+const COPILOT_REPLY_ACTION = 'experimental:copilot_reply';
+const ANCHOR_ACTIONS = [TEACH_MESSAGE_ACTION, COPILOT_REPLY_ACTION] as const;
 
 /**
  * Resolve `source_event_id` per ADR-0011 §2.1 when the caller did not supply it:
  *  - proactive chip → the agent `explain` event (turn_kind === 'explain'),
  *  - corrective chip → the agent `tool_use` event, modeled here as the latest
- *    agent `ask_check` teach_message (the failure-retry context).
- * Falls back to the latest agent teach_message of any turn_kind so the REQUIRED
+ *    agent `ask_check` event (the failure-retry context).
+ * Anchors on agent teach_message OR copilot_reply events (AF S4 single-session).
+ * Falls back to the latest agent anchor of any turn_kind so the REQUIRED
  * `source_event_id` is always populated.
  */
 async function resolveSourceEventId(
@@ -76,7 +87,7 @@ async function resolveSourceEventId(
       and(
         eq(event.session_id, sessionId),
         eq(event.actor_kind, 'agent'),
-        eq(event.action, TEACH_MESSAGE_ACTION),
+        inArray(event.action, [...ANCHOR_ACTIONS]),
       ),
     )
     .orderBy(desc(event.created_at), desc(event.id))
@@ -85,18 +96,21 @@ async function resolveSourceEventId(
   const preferredTurnKind = kind === 'corrective' ? 'ask_check' : 'explain';
   let fallback: string | null = null;
   for (const row of rows) {
-    const p = row.payload as { role?: string; turn_kind?: string } | null;
-    if (p?.role !== 'agent') continue;
+    // The event row is already actor_kind='agent' (filtered above). teach_message
+    // carries payload.role='agent'; copilot_reply has no role — match on the row's
+    // actor_kind instead, so both anchor shapes resolve.
+    const p = row.payload as { turn_kind?: string } | null;
     if (fallback === null) fallback = row.id;
-    if (p.turn_kind === preferredTurnKind) return row.id;
+    if (p?.turn_kind === preferredTurnKind) return row.id;
   }
   return fallback;
 }
 
 /**
  * Validate a client-supplied `source_event_id`: it must reference an agent
- * teach_message in THIS session. Without this a stale or malformed client could
- * write a counted accept_suggestion anchored to an unrelated/nonexistent event.
+ * teach_message OR copilot_reply in THIS session. Without this a stale or
+ * malformed client could write a counted accept_suggestion anchored to an
+ * unrelated/nonexistent event.
  */
 async function isValidAnchorEvent(sessionId: string, eventId: string): Promise<boolean> {
   const rows = await db
@@ -107,7 +121,7 @@ async function isValidAnchorEvent(sessionId: string, eventId: string): Promise<b
         eq(event.id, eventId),
         eq(event.session_id, sessionId),
         eq(event.actor_kind, 'agent'),
-        eq(event.action, TEACH_MESSAGE_ACTION),
+        inArray(event.action, [...ANCHOR_ACTIONS]),
       ),
     )
     .limit(1);
