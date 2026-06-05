@@ -321,6 +321,36 @@ describe('createIngestionPaper (YUK-214)', () => {
     expect(ok.reused).toBe(false);
   });
 
+  // F2 (PR #309 round-4, YUK-214) — the service layer is the authoritative
+  // boundary: duplicate question_ids 400 (same reject-not-dedupe style as F3's
+  // empty-array guard), so no two assignments share a slot key. A unique set with
+  // the same ids builds normally (control).
+  it('F2: duplicate questionIds are rejected (400); a unique set is not', async () => {
+    const db = testDb();
+    await seedImportedSession({
+      sessionId: 'sess_f2_dup',
+      questions: [
+        { id: 'qf2a', knowledge_ids: ['k1'] },
+        { id: 'qf2b', knowledge_ids: ['k2'] },
+      ],
+    });
+    await expect(
+      createIngestionPaper(db, { sessionId: 'sess_f2_dup', questionIds: ['qf2a', 'qf2a'] }),
+    ).rejects.toMatchObject({ status: 400 });
+    // No paper built by the rejected call.
+    const rows = await db
+      .select({ id: artifact.id })
+      .from(artifact)
+      .where(eq(artifact.source_ref, 'sess_f2_dup'));
+    expect(rows).toHaveLength(0);
+    // A unique set with the same ids builds normally (control).
+    const ok = await createIngestionPaper(db, {
+      sessionId: 'sess_f2_dup',
+      questionIds: ['qf2a', 'qf2b'],
+    });
+    expect(ok.reused).toBe(false);
+  });
+
   // F1 — the default (no questionIds) path stays purely idempotent even after a
   // paper was first built from an explicit subset: a bare call carries no set to
   // conflict with, so it reuses rather than 409s.
