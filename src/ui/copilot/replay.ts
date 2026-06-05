@@ -15,9 +15,11 @@
 
 export type ReplayTurnRole = 'user' | 'ai';
 
-// Minimal inline type for the replayed skill-turn carrier. Mirrors SkillTurn in
-// CopilotDock.tsx but is declared here so replay.ts stays self-contained and
-// unit-testable without importing the client component.
+// Minimal inline types for replayed skill carriers. Mirror their server-side
+// counterparts (CopilotSkillContextT, SkillTurn) but are declared here so
+// replay.ts stays self-contained and unit-testable without importing the client
+// component or the server module.
+
 export interface ReplaySkillTurn {
   kind: 'explain' | 'ask_check' | 'end';
   structured_question?: {
@@ -29,6 +31,15 @@ export interface ReplaySkillTurn {
   suggested_next?: 'continue' | 'end';
 }
 
+// AF S4 / YUK-203 U6 (round-2) — the originating skill selector that produced
+// this AI turn. Present on AI turns that carried a skill_context in the chat
+// request. CopilotDock restores activeSkillRef from this field on replay so
+// composer answers after a page refresh still route to the teaching/solve skill.
+export interface ReplaySkillContext {
+  skill: 'teaching' | 'solve';
+  ref: { kind: string; id: string };
+}
+
 export interface ReplayTurn {
   role: ReplayTurnRole;
   text: string;
@@ -38,6 +49,8 @@ export interface ReplayTurn {
   skill_turn?: ReplaySkillTurn;
   session_id?: string;
   reply_event_id?: string;
+  // AF S4 / YUK-203 U6 (round-2) — the skill_context that produced this turn.
+  skill_context?: ReplaySkillContext;
 }
 
 export interface ReplayChatMessage {
@@ -49,6 +62,9 @@ export interface ReplayChatMessage {
   skill_turn?: ReplaySkillTurn;
   session_id?: string;
   reply_event_id?: string;
+  // AF S4 / YUK-203 U6 (round-2) — forwarded so CopilotDock can restore
+  // activeSkillRef from the last non-end skill turn on replay.
+  skill_context?: ReplaySkillContext;
 }
 
 /**
@@ -70,6 +86,7 @@ export function replayToMessages(turns: ReplayTurn[]): ReplayChatMessage[] {
       skill_turn: t.skill_turn,
       session_id: t.session_id,
       reply_event_id: t.reply_event_id,
+      skill_context: t.skill_context,
     });
   }
   return out;
