@@ -70,7 +70,16 @@ describe('Judge v2 light gap-prevention audit', () => {
       // barrel 会毒化共享 chunk 致 prerender 崩溃）。question-contract 仍 re-export，
       // 路由选择的唯一语义入口不变——leaf 是它的物理宿主，同属 canonical。
       if (rel === 'src/server/judge/route-resolve.ts') continue;
-      const text = await fs.readFile(file, 'utf8');
+      // 并行测试竞态容忍（YUK-222 gate 实测）：serialize round-trip 等测试会在
+      // src/subjects/ 下创建临时 fixture 目录，walk 时存在、read 时已删 → ENOENT。
+      // 消失的文件不可能是 offender，跳过即可；其它错误照常抛。
+      let text: string;
+      try {
+        text = await fs.readFile(file, 'utf8');
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue;
+        throw err;
+      }
       if (/preferredRoutes\s*\.\s*(find|includes|filter)/.test(text)) {
         offenders.push(rel);
       }
