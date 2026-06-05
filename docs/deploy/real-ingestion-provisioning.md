@@ -64,6 +64,16 @@ jobs in `scripts/worker.ts`.
 > calls cost money and write to your real bucket. Provision them where you
 > actually intend to ingest.
 
+> **`TUNNEL_TOKEN` (Cloudflare Tunnel / Sub 0z):** before bringing up the compose
+> stack on NAS / prod, `TUNNEL_TOKEN` MUST be set in the same compose `.env` that
+> injects app + worker — the `cloudflared` ingress container depends on it and
+> won't start without it. The owner keeps it in the NAS `.env` alongside the
+> other credentials (`.env.example` carries it under the Cloudflare Tunnel block).
+> Generate it via Zero Trust dashboard → Networks → Tunnels → Create tunnel. This
+> is an external-ingress dependency, NOT part of the ingestion data chain, so it
+> is intentionally NOT added to `pnpm preflight:ingestion` (which gates only the
+> OCR / R2 / AI data path) — documented here only (YUK-214 §7 Step 8).
+
 ## 4. Verify before ingesting (the pre-flights)
 
 Run in order; each is fast and the first two are free:
