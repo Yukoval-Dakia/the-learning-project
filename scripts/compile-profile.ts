@@ -4,8 +4,8 @@
 // paths (it only populates process.env; it does NOT import the db client). Repo
 // convention: scripts load `.env`, NOT `.env.local` (see seed-synthetic.ts).
 import './load-env';
-import { readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getDefaultRegistry } from '@/core/capability/judges';
 import { validateProfile } from '@/core/capability/validate-profile';
@@ -181,19 +181,25 @@ function assertCriticEnv(env: NodeJS.ProcessEnv = process.env): void {
   }
   const isLoopback = host === 'localhost' || host === '127.0.0.1' || host === '::1';
   if (!isLoopback) {
+    // Issue 4: only emit the hostname, never the full connection string (which
+    // contains credentials). host was extracted via new URL() above.
     throw new Error(
-      `compile-profile --critic refused: DATABASE_URL host must be loopback (localhost / 127.0.0.1) unless PROFILE_CRITIC_OK=1. Got: ${url}.`,
+      `compile-profile --critic refused: DATABASE_URL host must be loopback (localhost / 127.0.0.1) unless PROFILE_CRITIC_OK=1. Got host: ${host || '<unparseable>'}.`,
     );
   }
 }
 
 // --critic invocation (RL6 proposal-only): runs ProfileCriticTask through the
-// runner with real db (preserves the ai-run trace — evidence-first) and emits the
-// review to stdout. ctx.subjectProfile = defaultSubjectProfile (provider/trace
-// context only; the draft under review travels in the input — Cross-统合 G3). The
-// runner write is dynamically imported so the bare/--json/--write paths never load
-// the db client.
-async function runCritic(draft: SubjectProfile, asJson: boolean): Promise<void> {
+// runner with real db (preserves the ai-run trace — evidence-first). The runner
+// is dynamically imported so bare/--json/--write paths never load the db client.
+// ctx.subjectProfile = defaultSubjectProfile (provider/trace context only; the
+// draft under review travels in the input — Cross-统合 G3).
+//
+// runCriticResult: returns the structured critic payload for --json merged output.
+// runCritic: human-readable stdout emitter for non-json mode.
+async function runCriticResult(
+  draft: SubjectProfile,
+): Promise<{ review: string; task_run_id: string }> {
   assertCriticEnv();
   const { runAgentTask } = await import('@/server/ai/runner');
   const { db } = await import('@/db/client');
@@ -202,15 +208,15 @@ async function runCritic(draft: SubjectProfile, asJson: boolean): Promise<void> 
     { draft },
     { db, allowedTools: [], subjectProfile: defaultSubjectProfile },
   );
-  // Proposal-only: the review text is written to stdout/JSON, never to the DB
-  // domain rows and never back to profile.ts (RL6). The only DB writes are the
-  // runner's own ai-run-log trace rows.
-  if (asJson) {
-    console.log(JSON.stringify({ review: result.text, task_run_id: result.task_run_id }, null, 2));
-  } else {
-    console.log('--- ProfileCriticTask review (proposal-only) ---');
-    console.log(result.text);
-  }
+  // Proposal-only: review text is returned for stdout/JSON, never written to domain
+  // rows or back to profile.ts (RL6). Only DB writes are the runner ai-run trace rows.
+  return { review: result.text, task_run_id: result.task_run_id };
+}
+
+async function runCritic(draft: SubjectProfile, _asJson: false): Promise<void> {
+  const result = await runCriticResult(draft);
+  console.log('--- ProfileCriticTask review (proposal-only) ---');
+  console.log(result.review);
 }
 
 function readDraftSource(pathArg: string | undefined): string {
@@ -218,6 +224,20 @@ function readDraftSource(pathArg: string | undefined): string {
     return readFileSync(resolve(pathArg), 'utf-8');
   }
   return readFileSync(0, 'utf-8'); // stdin
+}
+
+// Issue 1 (Codex 3361129316) — safe single-segment id guard.
+// Prevents path traversal when --write is used with a draft whose id contains
+// '/' or '..'. Regex matches TS export-identifier form (same style as cause-id
+// regex in profile-schema.ts). Called before any fs write.
+const SAFE_ID_RE = /^[a-z][a-z0-9_]*$/;
+
+function assertSafeId(id: string): void {
+  if (!SAFE_ID_RE.test(id)) {
+    throw new Error(
+      `compile-profile --write refused: subject id "${id}" is not a safe single-segment identifier. Id must match /^[a-z][a-z0-9_]*$/ (no slashes, dots, or uppercase).`,
+    );
+  }
 }
 
 function profilePathForId(id: string): string {
@@ -239,26 +259,69 @@ export async function runCli(args: string[] = process.argv.slice(2)): Promise<nu
   }
 
   const { report, profile } = compileProfile(raw);
-  console.log(asJson ? JSON.stringify(report, null, 2) : formatReport(report));
+
+  // Issue 2: in --json mode ALL status/log messages go to stderr so stdout
+  // remains a single parseable JSON document. Non-json mode is unchanged.
+  const log = asJson ? console.error.bind(console) : console.log.bind(console);
+
+  // Build the combined output object for --json mode; populate incrementally.
+  // For non-json mode emit the human report immediately (matches prior UX).
+  type JsonOut = {
+    report: typeof report;
+    write_result?: { wrote: string };
+    critic?: unknown;
+  };
+  const jsonOut: JsonOut = { report };
+  if (!asJson) {
+    console.log(formatReport(report));
+  }
 
   // RL7 — --write is gated on validateProfile passing. Refuse to write an invalid
   // (or unparseable-as-full) profile. The gate is not bypassable.
   if (doWrite) {
     if (!report.valid || !profile) {
-      console.error('compile-profile --write refused: profile failed validateProfile (RL7).');
+      log('compile-profile --write refused: profile failed validateProfile (RL7).');
+      if (asJson) console.log(JSON.stringify(jsonOut, null, 2));
+      return 1;
+    }
+    // Issue 1: guard against path-traversal via malformed id (e.g. "physics/../math").
+    try {
+      assertSafeId(profile.id);
+    } catch (err) {
+      log((err as Error).message);
+      if (asJson) console.log(JSON.stringify(jsonOut, null, 2));
       return 1;
     }
     const target = profilePathForId(profile.id);
+    // Issue 3: create subject directory if it doesn't exist yet (new subject).
+    // No explicit mode — mkdirSync respects the process umask (CLAUDE.md rule).
+    mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, serializeProfileToTs(profile));
-    console.log(`wrote ${target}`);
+    if (asJson) {
+      jsonOut.write_result = { wrote: target };
+    } else {
+      log(`wrote ${target}`);
+    }
   }
 
   if (doCritic) {
     if (!profile) {
-      console.error('compile-profile --critic refused: draft did not parse as a full profile.');
+      log('compile-profile --critic refused: draft did not parse as a full profile.');
+      if (asJson) console.log(JSON.stringify(jsonOut, null, 2));
       return 1;
     }
-    await runCritic(profile, asJson);
+    if (asJson) {
+      // Issue 2: critic result is merged into the single JSON object, not a 2nd JSON.
+      const criticResult = await runCriticResult(profile);
+      jsonOut.critic = criticResult;
+    } else {
+      await runCritic(profile, false);
+    }
+  }
+
+  // Emit single JSON object at end in --json mode.
+  if (asJson) {
+    console.log(JSON.stringify(jsonOut, null, 2));
   }
 
   return report.valid ? 0 : 1;
