@@ -104,10 +104,13 @@ interface ChatMessage {
   // skill turn. `skill_turn` drives the structured-question card + chips;
   // `session_id` is the Copilot session id the corrective accept-chip posts to;
   // `reply_event_id` is the precise anchor for the corrective chip resolver
-  // (PR #305 — avoids wrong-anchor on multi-card sessions).
+  // (PR #305 — avoids wrong-anchor on multi-card sessions);
+  // `skill_context` is the originating skill selector, forwarded from the turns
+  // API (round-2) so activeSkillRef can be restored on replay.
   skill_turn?: SkillTurn;
   session_id?: string;
   reply_event_id?: string;
+  skill_context?: CopilotSkillContextT;
 }
 
 // Quick-chips are user-readable prompts; they send via triggered_by:'chat'
@@ -138,9 +141,13 @@ export function CopilotDock() {
   // AF S4 / YUK-203 U6 — the active skill context (teaching/solve). When set, the
   // next turn(s) route to the skill (single-session model, §4.2). Held in a ref
   // so the composer's `send` reads the live value without re-creating `send`.
-  // Lifecycle: set when the open-with-context signal fires; cleared on closeDrawer
-  // or when the skill returns kind==='end', so free-form turns after a teaching
-  // session end are not silently re-routed to the stale skill.
+  // Lifecycle:
+  //   SET   — when the open-with-context signal fires (cross-tree button click)
+  //           OR when the replay effect finds the last non-end skill turn with a
+  //           skill_context (restores teaching continuity after page refresh).
+  //   CLEAR — on closeDrawer, or when the skill returns kind==='end', so
+  //           free-form turns after a session end are not re-routed to a stale
+  //           skill. A replayed end turn correctly leaves the ref null.
   const activeSkillRef = useRef<CopilotSkillContextT | null>(null);
   // AF S4 / YUK-203 U6 — wrap closeDrawer to also clear the active skill context
   // so that re-opening the Dock after closing does not resume a stale skill.
@@ -162,6 +169,12 @@ export function CopilotDock() {
   // (replay-last-N). Best-effort: on failure we keep the current in-memory list
   // (graceful degradation to pre-S3a behaviour) and surface no error for the
   // prefill path. Only replays into an empty list, and only once per open.
+  //
+  // AF S4 / YUK-203 U6 (round-2) — after prefilling, scan replayed messages for
+  // the latest AI turn whose skill_turn.kind !== 'end' and that carries a
+  // skill_context. If found, restore activeSkillRef so composer answers after a
+  // page refresh continue through the teaching/solve skill. If the last skill turn
+  // is 'end' (or there is none), the ref stays null → free-form.
   useEffect(() => {
     if (!open) {
       replayedRef.current = false;
@@ -179,6 +192,18 @@ export function CopilotDock() {
         // Only prefill if the user has not already started typing/sending in this
         // open (don't stomp a live exchange that raced the fetch).
         setMessages((prev) => (prev.length === 0 ? replayed : prev));
+        // Restore the active skill context from the last non-end skill turn so
+        // composer answers after a page refresh still route to the skill.
+        // Scan newest-first (replayed is oldest→newest, so reverse-iterate).
+        for (let i = replayed.length - 1; i >= 0; i--) {
+          const m = replayed[i];
+          if (m.role !== 'ai' || !m.skill_turn) continue;
+          if (m.skill_turn.kind === 'end') break; // ended session → stop, leave ref null
+          if (m.skill_context) {
+            activeSkillRef.current = m.skill_context;
+          }
+          break; // found the latest skill turn — done either way
+        }
       } catch {
         // Replay is best-effort — stay on the in-memory list.
       }
@@ -234,6 +259,10 @@ export function CopilotDock() {
           skill_turn: res.skill_turn,
           session_id: res.session_id,
           reply_event_id: res.reply_event_id,
+          // Store the originating skill_context on the message so the replay
+          // path can reconstruct activeSkillRef on next open without waiting
+          // for the turns API to echo it back.
+          skill_context: skillContext ?? undefined,
         },
       ]);
     } catch (err) {
