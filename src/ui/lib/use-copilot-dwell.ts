@@ -53,6 +53,14 @@ export interface CopilotOpenRequest {
 
 interface CopilotOpenSignalStore {
   request: CopilotOpenRequest | null;
+  // PR #305 fix — monotonically increasing counter that persists across
+  // clearRequest() so seq never resets to a value already seen by the Dock's
+  // lastHandledSeqRef. Bug: seq was derived from s.request?.seq which reset to
+  // null on clear → second openCopilotWith produced seq=1 again → Dock saw
+  // seq===lastHandledSeqRef.current (still 1) and silently swallowed the open.
+  // Scenario verified: open (seq→1, handled) → clear (request null) →
+  // open again (old: seq→1 again, SWALLOWED; new: seq→2, correctly handled).
+  nextSeq: number;
   /** Publish an open-with-context request (cross-tree). */
   openCopilotWith: (skillContext: CopilotSkillContextT, prefill?: string) => void;
   /** Consume the pending request (CopilotDock calls this after reading it). */
@@ -61,15 +69,18 @@ interface CopilotOpenSignalStore {
 
 export const useCopilotOpenSignal = create<CopilotOpenSignalStore>((set) => ({
   request: null,
+  nextSeq: 0,
   openCopilotWith: (skillContext, prefill) =>
-    set((s) => ({
-      request: {
-        seq: (s.request?.seq ?? 0) + 1,
-        skill_context: skillContext,
-        prefill,
-      },
-    })),
+    set((s) => {
+      const seq = s.nextSeq + 1;
+      return {
+        nextSeq: seq,
+        request: { seq, skill_context: skillContext, prefill },
+      };
+    }),
   clearRequest: () => set({ request: null }),
+  // nextSeq is intentionally NOT reset on clearRequest — it must monotonically
+  // increase so the Dock's lastHandledSeqRef never matches a future open.
 }));
 
 /**
