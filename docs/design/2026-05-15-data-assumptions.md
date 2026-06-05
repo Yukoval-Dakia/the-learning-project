@@ -340,3 +340,28 @@ audit 揭露的 stub 模式不止 mastery 一处——是**系统性**的："sch
 ---
 
 > Audit 完毕（2026-05-15）。本文档转 final。后续如有新 ADR / plan，建议在 PR 时附上数据假设更新。
+
+---
+
+## 附录 · 合成 seed 与真实 ingest 数据的分层定位（2026-06-05 · Strategy D · YUK-214）
+
+随真实 ingest 数据飞轮（ingest → 做题 → FSRS 信号 → Coach/brief 吃真实证据）打通，
+明确合成数据与真实数据的职责边界，避免误把合成 seed 当作可被真实数据"替代/退役"
+的运行时信号源：
+
+- **`scripts/seed-synthetic.ts` + `tests/**/layer8_e2e.db.test.ts` 的合成数据 = 仅作
+  测试 harness / 确定性 regression guard。** 它制造一段因果链完整、时间分布合理的事件
+  历史，让 FSRS / proposal / detection 切片在 **本地 dev DB** 或测试里可观测、可断言。
+  合成事件全部带 `payload.__synthetic = true`，合成知识节点用 `synthetic:` id 前缀，
+  按确定性 id 幂等。
+- **真实 ingest 数据替代的是「生产运行时信号源」**——FSRS / Dreaming / Coach brief
+  在 prod 实际消费的真实证据。这是与合成 seed **正交的另一层**，不是同一职责的两种
+  实现。
+- **二者不互相替代：**
+  - 合成 seed **不退役**。真实数据进来后，测试 / regression 仍用确定性合成数据——它更
+    稳，不随真实数据漂移；用真实 fixture 做 regression 会引入数据漂移与不可复现失败。
+  - 真实数据进来后**也不**把测试迁到真实 fixture。"真实数据驱动 prod 信号" 与 "合成数据
+    驱动测试断言" 是两条永久并存的轨道。
+
+> 落点依据：本文档已是项目数据假设的单一出处（§格式 / §目的），故合成-vs-真实 的分层
+> 定位写在此处而非散落 plan。详见 `docs/superpowers/plans/2026-06-05-strategy-d-s1-ingest-practice-bridge.md` §7 Step 7。
