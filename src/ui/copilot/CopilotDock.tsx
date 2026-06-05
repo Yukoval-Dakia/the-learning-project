@@ -29,6 +29,7 @@
 
 import type { CopilotSkillContextT } from '@/server/copilot/chat';
 import { ApiError, apiJson } from '@/ui/lib/api';
+import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { useCopilotDwell, useCopilotOpenSignal } from '@/ui/lib/use-copilot-dwell';
 import { Btn } from '@/ui/primitives/Btn';
 import { Button } from '@/ui/primitives/Button';
@@ -412,7 +413,12 @@ export function CopilotDock() {
                 </div>
                 <div className="msg-body">
                   <div className="msg-name">{m.role === 'ai' ? 'Loom Copilot' : '我'}</div>
-                  <div className="msg-text">{m.text}</div>
+                  {/* MathMarkdown inherits react-markdown's built-in XSS safety
+                      (no raw HTML by default). notation=undefined → no KaTeX;
+                      GFM bold/italic/code/lists render correctly. Copilot
+                      replies have no subject-profile context so latex gating
+                      is deliberately off (matches free-form path intention). */}
+                  <MathMarkdown className="msg-text">{m.text}</MathMarkdown>
                   {/* AF S4 / YUK-203 U6 — teaching skill turn carrier. explain is
                       already covered by msg-text above; ask_check renders the
                       materialized question + a corrective accept-chip; end shows a
@@ -420,16 +426,18 @@ export function CopilotDock() {
                       system (§5.1). */}
                   {m.skill_turn?.kind === 'ask_check' && m.skill_turn.structured_question ? (
                     <div className="skill-turn-check" data-testid="copilot-skill-ask-check">
-                      <div className="skill-turn-q-prompt">
+                      <MathMarkdown className="skill-turn-q-prompt">
                         {m.skill_turn.structured_question.prompt_md}
-                      </div>
+                      </MathMarkdown>
                       {m.skill_turn.structured_question.choices_md &&
                       m.skill_turn.structured_question.choices_md.length > 0 ? (
-                        <ul className="skill-turn-q-choices">
+                        <ol className="skill-turn-q-choices">
                           {m.skill_turn.structured_question.choices_md.map((choice, i) => (
-                            <li key={`${m.skill_turn?.structured_question?.id}-${i}`}>{choice}</li>
+                            <li key={`${m.skill_turn?.structured_question?.id}-${i}`}>
+                              <MathMarkdown>{choice}</MathMarkdown>
+                            </li>
                           ))}
-                        </ul>
+                        </ol>
                       ) : null}
                       {m.session_id ? (
                         <button
