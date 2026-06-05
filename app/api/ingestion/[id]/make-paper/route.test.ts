@@ -183,6 +183,27 @@ describe('POST /api/ingestion/[id]/make-paper (YUK-214)', () => {
     expect(body.artifact_id).toMatch(/^ingestion_paper_/);
   });
 
+  // F3 (PR #309 round-3, YUK-214) — an EXPLICIT empty `question_ids: []` is an
+  // explicit empty selection (≠ "select all") and must 400, NOT fall through to
+  // the default full-set path. Distinct from an OMITTED question_ids (the
+  // empty-body / `{}` cases above → 200 full-set).
+  it('rejects an explicit empty question_ids array (400) and creates no paper', async () => {
+    await seedImportedSession({
+      sessionId: 'sess_empty_arr',
+      questions: [{ id: 'qea1', knowledge_ids: ['k1'] }],
+    });
+    const res = await post('sess_empty_arr', { question_ids: [] });
+    expect(res.status).toBe(400);
+
+    // No side effect: the rejected request must not have built a paper.
+    const db = testDb();
+    const rows = await db
+      .select({ id: artifact.id })
+      .from(artifact)
+      .where(eq(artifact.source_ref, 'sess_empty_arr'));
+    expect(rows).toHaveLength(0);
+  });
+
   it('CLOSED LOOP: make-paper → /practice list → start session → submit slot', async () => {
     await seedImportedSession({
       sessionId: 'sess_loop',

@@ -21,8 +21,13 @@ export const runtime = 'nodejs';
 
 const MakePaperBody = z.object({
   // Optional explicit override of which imported questions to package. When
-  // absent, the module reverse-queries the session's imported questions.
-  question_ids: z.array(z.string().min(1)).optional(),
+  // ABSENT (undefined), the module reverse-queries the session's imported
+  // questions (default full-set). An EXPLICIT empty array is rejected: F3
+  // (PR #309 round-3, YUK-214) — `question_ids: []` is an explicit empty
+  // selection, NOT "select all", so it must 400 rather than silently fall
+  // through to the full-set path. `.min(1)` enforces this at the schema layer;
+  // `.optional()` keeps the omitted/undefined default-full-set path.
+  question_ids: z.array(z.string().min(1)).min(1).optional(),
 });
 
 export async function POST(
