@@ -413,4 +413,82 @@ describe('GET /api/practice', () => {
     expect(body.coarse_outcome).toBe('correct');
     expect(body.visible_to_user).toBe(true);
   });
+
+  // ── round-4 fix #3: POST /api/practice validates artifact before starting ──
+
+  it('round-4 fix #3: POST rejects non-existent artifact with 404', async () => {
+    const res = await POST(jsonReq('http://localhost/api/practice', { artifact_id: 'ghost' }));
+    expect(res.status).toBe(404);
+  });
+
+  it('round-4 fix #3: POST rejects artifact with wrong type (not tool_quiz) with 400', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(artifact).values({
+      id: 'note_art',
+      type: 'note',
+      title: 'a note',
+      knowledge_ids: [],
+      intent_source: 'manual',
+      source: 'manual',
+      tool_kind: null,
+      tool_state: {} as never,
+      generation_status: 'ready',
+      verification_status: 'not_required',
+      history: [],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    const res = await POST(jsonReq('http://localhost/api/practice', { artifact_id: 'note_art' }));
+    expect(res.status).toBe(400);
+  });
+
+  it('round-4 fix #3: POST rejects tool_quiz with generation_status=failed with 400', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(artifact).values({
+      id: 'failed_paper',
+      type: 'tool_quiz',
+      title: 'failed paper',
+      knowledge_ids: [],
+      intent_source: 'review_plan',
+      source: 'ai_generated',
+      tool_kind: 'review_plan',
+      tool_state: { question_ids: [] } as never,
+      generation_status: 'failed',
+      verification_status: 'not_required',
+      history: [],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    const res = await POST(
+      jsonReq('http://localhost/api/practice', { artifact_id: 'failed_paper' }),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('round-4 fix #3: POST rejects tool_quiz with non-paper intent_source with 400', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(artifact).values({
+      id: 'import_art',
+      type: 'tool_quiz',
+      title: 'import artifact',
+      knowledge_ids: [],
+      intent_source: 'import',
+      source: 'manual',
+      tool_kind: 'import',
+      tool_state: { question_ids: [] } as never,
+      generation_status: 'ready',
+      verification_status: 'not_required',
+      history: [],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    const res = await POST(jsonReq('http://localhost/api/practice', { artifact_id: 'import_art' }));
+    expect(res.status).toBe(400);
+  });
 });

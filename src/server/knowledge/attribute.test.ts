@@ -350,4 +350,110 @@ describe('runAttributionAndWriteJudgeEvent', () => {
     expect(payload.cause.analysis_md).toBe('first');
     warnSpy.mockRestore();
   });
+
+  // ── round-4 fix #4: attribution_pending gate ──────────────────────────────
+
+  it('round-4 fix #4: paper placeholder judge (attribution_pending=true) does NOT block attribution', async () => {
+    // Simulate: paper-submit wrote a judge event with attribution_pending=true.
+    // Attribution should proceed (LLM called) and write a real judge event.
+    const db = testDb();
+    const attemptId = 'attempt_e_pending';
+    await insertAttemptEvent({ attemptId, questionId: 'q_pending' });
+
+    // Insert a paper placeholder judge event with attribution_pending=true.
+    const now = new Date();
+    await db.insert(event).values({
+      id: 'judge_placeholder',
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'paper_judge',
+      action: 'judge',
+      subject_kind: 'event',
+      subject_id: attemptId,
+      outcome: 'success',
+      payload: {
+        cause: {
+          primary_category: 'other',
+          secondary_categories: [],
+          analysis_md: '<paper-submit, attribution deferred>',
+          confidence: 0,
+        },
+        referenced_knowledge_ids: [],
+        coarse_outcome: 'incorrect',
+        attribution_pending: true,
+      },
+      caused_by_event_id: attemptId,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: now,
+    });
+
+    const invokeSpy = vi.fn(async () => ({
+      text: '{"primary_category":"concept","secondary_categories":[],"analysis_md":"real cause","confidence":0.9}',
+    }));
+
+    await runAttributionAndWriteJudgeEvent({
+      db,
+      attemptEventId: attemptId,
+      input: validInput,
+      runTaskFn: invokeSpy,
+    });
+
+    // LLM must have been called (placeholder did not block).
+    expect(invokeSpy).toHaveBeenCalledOnce();
+
+    // A real attribution judge event was written (now 2 judge events chained).
+    const rows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'judge'), eq(event.caused_by_event_id, attemptId)));
+    expect(rows).toHaveLength(2);
+
+    // The newest judge (by created_at) carries the real cause.
+    const newest = rows.sort((a, b) => b.created_at.getTime() - a.created_at.getTime())[0];
+    const payload = newest?.payload as { cause: { primary_category: string; analysis_md: string } };
+    expect(payload.cause.primary_category).toBe('concept');
+    expect(payload.cause.analysis_md).toBe('real cause');
+  });
+
+  it('round-4 fix #4: real attribution judge (no attribution_pending) IS idempotent — blocks second run', async () => {
+    // Once a real attribution judge exists (attribution_pending absent/false),
+    // a second call must skip and not invoke the LLM again.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const db = testDb();
+    const attemptId = 'attempt_e_real';
+    await insertAttemptEvent({ attemptId, questionId: 'q_real' });
+
+    const fakeRunTask = async () => ({
+      text: '{"primary_category":"reading","secondary_categories":[],"analysis_md":"real","confidence":0.75}',
+    });
+    // First call — writes real judge (no attribution_pending).
+    await runAttributionAndWriteJudgeEvent({
+      db,
+      attemptEventId: attemptId,
+      input: validInput,
+      runTaskFn: fakeRunTask,
+    });
+
+    // Second call — real judge already exists, must skip.
+    const secondSpy = vi.fn(async () => ({
+      text: '{"primary_category":"memory","secondary_categories":[],"analysis_md":"should not write","confidence":0.5}',
+    }));
+    await runAttributionAndWriteJudgeEvent({
+      db,
+      attemptEventId: attemptId,
+      input: validInput,
+      runTaskFn: secondSpy,
+    });
+
+    expect(secondSpy).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalled();
+
+    const rows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'judge'), eq(event.caused_by_event_id, attemptId)));
+    expect(rows).toHaveLength(1);
+    warnSpy.mockRestore();
+  });
 });

@@ -15,6 +15,7 @@
 //   8. section knowledge_focus_names resolved from DB; unknown id falls back to id.
 //   9. Face has no reference_md field (reference is gated, not pre-answer-visible).
 
+import { newId } from '@/core/ids';
 import { artifact, event, knowledge, learning_session, question } from '@/db/schema';
 import { autosaveAnswerDraft } from '@/server/review/answer-draft';
 import { submitPaperSlot } from '@/server/review/paper-submit';
@@ -503,5 +504,58 @@ describe('GET /api/practice/[id]', () => {
     const [req, ctx] = makeRequest('does_not_exist');
     const res = await GET(req, ctx);
     expect(res.status).toBe(404);
+  });
+
+  it('round-4 fix #2: rejudge event supersedes original verdict in detail session summary', async () => {
+    // Submit correct (right=1), then insert a superseding judge event with
+    // coarse_outcome='incorrect'. Detail summary must flip to right=0 wrong=1.
+    await seedQuestion('q1', 'true');
+    await seedPaper('p_rj', { questionIds: ['q1'], feedbackPolicy: 'immediate' });
+    const db = testDb();
+    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'p_rj' });
+
+    const sub = await submitPaperSlot(
+      {
+        sessionId,
+        paperArtifactId: 'p_rj',
+        questionId: 'q1',
+        answerMd: 'true',
+        primaryKnowledgeId: 'k1',
+        feedbackPolicy: 'immediate',
+      },
+      db,
+    );
+    expect(sub.coarseOutcome).toBe('correct');
+
+    // Sanity: before rejudge, detail shows right=1.
+    const [req0, ctx0] = makeRequest('p_rj');
+    const before = (await (await GET(req0, ctx0)).json()) as {
+      session: { right: number; wrong: number } | null;
+    };
+    expect(before.session?.right).toBe(1);
+    expect(before.session?.wrong).toBe(0);
+
+    // Insert a superseding judge event: coarse_outcome='incorrect'.
+    await db.insert(event).values({
+      id: newId(),
+      session_id: sessionId,
+      actor_kind: 'agent',
+      actor_ref: 'rejudge',
+      action: 'judge',
+      subject_kind: 'event',
+      subject_id: sub.attemptEventId,
+      outcome: 'success',
+      payload: { coarse_outcome: 'incorrect', referenced_knowledge_ids: [] },
+      caused_by_event_id: sub.attemptEventId,
+      created_at: new Date(),
+    });
+
+    // After rejudge: detail summary must use newest judge event → wrong=1.
+    const [req1, ctx1] = makeRequest('p_rj');
+    const after = (await (await GET(req1, ctx1)).json()) as {
+      session: { right: number; wrong: number } | null;
+    };
+    expect(after.session?.right).toBe(0);
+    expect(after.session?.wrong).toBe(1);
   });
 });
