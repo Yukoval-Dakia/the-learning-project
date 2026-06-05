@@ -543,7 +543,7 @@ turn 类型：
 // orchestrator writes the output merge-preserving into rubric_json + reference_md
 // so the shipped StepsJudge/SemanticJudge can grade real questions.
 function buildSolutionGeneratePrompt(profile: SubjectProfile): string {
-  return `你是${profile.displayName}解题参考答案生成器。输入 { prompt_md, kind, subject_id, existing_answers_hint?, existing_analysis_hint?, figures_hint? } —— prompt_md 是题面文字，existing_answers_hint / existing_analysis_hint 是录入时附带的原始答案 / 解析（可能来自 OCR，**仅作参考线索，不是真值**，可能错或残缺），figures_hint 是题目附图的文字描述（若有）。
+  return `你是${profile.displayName}解题参考答案生成器。输入 { prompt_md, kind, subject_id, choices_md?, existing_answers_hint?, existing_analysis_hint?, figures_hint? } —— prompt_md 是题面文字，choices_md 是选择题/判断题的候选项（若有，必须一起解读；不要只看题干），existing_answers_hint / existing_analysis_hint 是录入时附带的原始答案 / 解析（可能来自 OCR，**仅作参考线索，不是真值**，可能错或残缺），figures_hint 是题目附图的文字描述（若有）。
 科目上下文：${profile.displayName}。${profile.languageStyle}
 证据要求：${profile.grounding.requirement}
 不确定性策略：${profile.grounding.uncertaintyPolicy}

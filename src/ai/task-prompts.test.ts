@@ -162,6 +162,7 @@ describe('getTaskSystemPrompt', () => {
     expect(prompt).toContain('final_answer');
     expect(prompt).toContain('answer_equivalents');
     expect(prompt).toContain('worked_solution_md');
+    expect(prompt).toContain('choices_md');
     expect(prompt).toContain('数学');
     // existing answers/analysis are advisory hints, never ground truth
     expect(prompt).toContain('hint');

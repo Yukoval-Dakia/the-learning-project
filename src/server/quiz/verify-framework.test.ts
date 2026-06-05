@@ -51,12 +51,18 @@ describe('CHECK_SETS_BY_TIER / checksForTier', () => {
 // ---------- normalizeAnswer ----------
 
 describe('normalizeAnswer', () => {
-  it('strips whitespace, punctuation and case', () => {
-    expect(normalizeAnswer('  A. 公元前 202 年! ')).toBe(normalizeAnswer('a公元前202年'));
+  it('strips whitespace and case while preserving meaningful punctuation/symbols', () => {
+    expect(normalizeAnswer('  A. 公元前 202 年! ')).toBe(normalizeAnswer('a.公元前202年!'));
   });
 
   it('treats full-width and ASCII whitespace alike', () => {
     expect(normalizeAnswer('公元前　202')).toBe(normalizeAnswer('公元前 202'));
+  });
+
+  it('preserves mathematical and symbolic answer content', () => {
+    expect(normalizeAnswer('1/2')).not.toBe(normalizeAnswer('12'));
+    expect(normalizeAnswer('√')).toBe('√');
+    expect(normalizeAnswer('x = -1')).toBe(normalizeAnswer('x=-1'));
   });
 });
 
@@ -135,6 +141,18 @@ describe('runSolveCheck — exact path (normalize compare)', () => {
     expect(result.verdict).toBe('pass');
   });
 
+  it('passes choice answers by matching option labels and option text', async () => {
+    const labelOnly = vi.fn(async () => ({ text: solverOutput('A') }));
+    await expect(
+      runSolveCheck(exactQuestion, { runTaskFn: labelOnly, profile: fakeProfile }),
+    ).resolves.toMatchObject({ verdict: 'pass' });
+
+    const labeledText = vi.fn(async () => ({ text: solverOutput('A. 公元前202年') }));
+    await expect(
+      runSolveCheck(exactQuestion, { runTaskFn: labeledText, profile: fakeProfile }),
+    ).resolves.toMatchObject({ verdict: 'pass' });
+  });
+
   it('fails when the solver answer disagrees with the reference', async () => {
     const runTaskFn = vi.fn(async () => ({ text: solverOutput('公元前 221 年') }));
     const result = await runSolveCheck(exactQuestion, { runTaskFn, profile: fakeProfile });
@@ -149,6 +167,7 @@ describe('runSolveCheck — exact path (normalize compare)', () => {
     await runSolveCheck(exactQuestion, { runTaskFn, profile: fakeProfile });
     const input = runTaskFn.mock.calls[0][1] as Record<string, unknown>;
     expect(input.existing_answers_hint).toBeNull();
+    expect(input.choices_md).toEqual(exactQuestion.choices_md);
     expect(input.prompt_md).toBe(exactQuestion.prompt_md);
   });
 

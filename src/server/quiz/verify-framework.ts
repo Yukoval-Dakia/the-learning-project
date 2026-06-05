@@ -162,10 +162,43 @@ function isExactQuestion(q: SolveCheckQuestion): boolean {
 
 export function normalizeAnswer(text: string): string {
   return text
+    .normalize('NFKC')
     .toLowerCase()
-    .replace(/[\s　]+/gu, '') // strip ASCII + full-width whitespace
-    .replace(/[\p{P}\p{S}]/gu, '') // strip punctuation / symbols
+    .replace(/[\s　]+/gu, '') // strip ASCII + full-width whitespace only
     .trim();
+}
+
+function choiceLabelIndex(value: string): number | null {
+  const label = value.normalize('NFKC').trim().toUpperCase();
+  if (!/^[A-F]$/u.test(label)) return null;
+  return label.charCodeAt(0) - 'A'.charCodeAt(0);
+}
+
+function stripLeadingChoiceLabel(value: string): string | null {
+  const normalized = value.normalize('NFKC').trim();
+  const match = /^([A-F])[\s.、:：)\]）-]+(.+)$/iu.exec(normalized);
+  const stripped = match?.[2]?.trim();
+  return stripped && stripped.length > 0 ? stripped : null;
+}
+
+function addChoiceExpansion(out: string[], choice: string | undefined): void {
+  if (!choice) return;
+  out.push(choice);
+  const stripped = stripLeadingChoiceLabel(choice);
+  if (stripped) out.push(stripped);
+}
+
+function answerCandidates(text: string, choices: readonly string[]): string[] {
+  const out = [text];
+  const stripped = stripLeadingChoiceLabel(text);
+  if (stripped) out.push(stripped);
+
+  const labelIndex = choiceLabelIndex(text);
+  if (labelIndex !== null) {
+    addChoiceExpansion(out, choices[labelIndex]);
+  }
+
+  return out;
 }
 
 function extractJsonObject(text: string): unknown {
@@ -205,6 +238,10 @@ export async function runSolveCheck(
       prompt_md: question.prompt_md,
       kind: question.kind,
       subject_id: opts.profile.id,
+      // Choice options are part of the question, but live in a separate column.
+      // Pass them explicitly so stems like "which statement is correct?" are
+      // solvable by SolutionGenerateTask.
+      choices_md: question.choices_md ?? [],
       // existing answer is only a HINT to the solver (it may copy a wrong answer);
       // for solve-check we WANT an independent solve, so we do NOT feed the
       // question's own reference_md as a hint — only OCR-side hints if any.
@@ -254,9 +291,15 @@ export async function runSolveCheck(
 
   // ----- exact path: normalize compare -----
   if (isExactQuestion(question)) {
-    const refNorm = normalizeAnswer(referenceAnswer);
-    const candidates = [solverFinalAnswer, ...solverEquivalents].map(normalizeAnswer);
-    const agree = candidates.some((c) => c.length > 0 && c === refNorm);
+    const choices = question.choices_md ?? [];
+    const refCandidates = answerCandidates(referenceAnswer, choices)
+      .map(normalizeAnswer)
+      .filter((c) => c.length > 0);
+    const solverCandidates = [solverFinalAnswer, ...solverEquivalents]
+      .flatMap((candidate) => answerCandidates(candidate, choices))
+      .map(normalizeAnswer)
+      .filter((c) => c.length > 0);
+    const agree = solverCandidates.some((candidate) => refCandidates.includes(candidate));
     return {
       verdict: agree ? 'pass' : 'fail',
       solver_final_answer: solverFinalAnswer,

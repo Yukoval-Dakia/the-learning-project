@@ -24,6 +24,7 @@ async function seedQuestion(opts: {
   rubric_json?: unknown;
   reference_md?: string | null;
   kind?: string;
+  choices_md?: string[] | null;
 }): Promise<string> {
   const id = createId();
   const now = new Date();
@@ -32,6 +33,7 @@ async function seedQuestion(opts: {
     kind: opts.kind ?? 'derivation',
     prompt_md: '化简 (a^2 - b^2)/(a - b)',
     reference_md: opts.reference_md ?? null,
+    choices_md: opts.choices_md ?? null,
     rubric_json: (opts.rubric_json ?? null) as never,
     knowledge_ids: [],
     difficulty: 3,
@@ -50,7 +52,9 @@ describe('generateReferenceSolution', () => {
 
   it('generates + writes reference_solution + reference_md + provenance on a bare question', async () => {
     const id = await seedQuestion({});
-    const runTaskFn = vi.fn(async () => ({ text: validLlmText() }));
+    const runTaskFn = vi.fn(async (_kind: string, _input: unknown, _ctx: unknown) => ({
+      text: validLlmText(),
+    }));
 
     const result = await generateReferenceSolution({ db, questionId: id, runTaskFn });
 
@@ -64,6 +68,22 @@ describe('generateReferenceSolution', () => {
     expect(rubric.reference_solution.final_answer).toBe('a + b');
     expect(rubric.reference_solution_source).toBe('ai_generated');
     expect(row.reference_md).toContain('因式分解');
+  });
+
+  it('passes choices_md to SolutionGenerateTask when the row is choice-style', async () => {
+    const id = await seedQuestion({
+      kind: 'choice',
+      choices_md: ['A. a + b', 'B. a - b'],
+    });
+    let capturedInput: unknown;
+    const runTaskFn = vi.fn(async (_kind: string, input: unknown, _ctx: unknown) => {
+      capturedInput = input;
+      return { text: validLlmText() };
+    });
+
+    await generateReferenceSolution({ db, questionId: id, runTaskFn });
+
+    expect(capturedInput).toMatchObject({ choices_md: ['A. a + b', 'B. a - b'] });
   });
 
   it('is idempotent — skips when reference_solution already present', async () => {
