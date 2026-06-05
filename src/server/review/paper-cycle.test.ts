@@ -810,6 +810,89 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     }
   });
 
+  // ── round-3 fix #1 (P2): pre-judge idempotent check skips the judge ──────────
+  it('round-3 fix #1: duplicate submit skips judge invocation (pre-judge idempotent check)', async () => {
+    const db = testDb();
+    await seedQuestion('q1', 'true');
+    await seedPaper('paper1', ['q1']);
+    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
+
+    // First submit (judge runs normally).
+    const first = await submitPaperSlot(
+      {
+        sessionId,
+        paperArtifactId: 'paper1',
+        questionId: 'q1',
+        answerMd: 'true',
+        primaryKnowledgeId: 'k1',
+      },
+      db,
+    );
+
+    // Now spy on the invoker AFTER the first submit so only the second is watched.
+    const invokeSpy = vi.fn();
+    vi.spyOn(invokerModule, 'createDefaultJudgeInvoker').mockReturnValue({
+      invoke: invokeSpy,
+    } as never);
+
+    try {
+      // Second submit with identical content — pre-check finds the frozen row,
+      // returns early, and must NOT invoke the judge.
+      const second = await submitPaperSlot(
+        {
+          sessionId,
+          paperArtifactId: 'paper1',
+          questionId: 'q1',
+          answerMd: 'true',
+          primaryKnowledgeId: 'k1',
+        },
+        db,
+      );
+
+      expect(invokeSpy).not.toHaveBeenCalled();
+      expect(second.attemptEventId).toBe(first.attemptEventId);
+      expect(second.judgeEventId).toBe(first.judgeEventId);
+      expect(second.answerId).toBe(first.answerId);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  // ── round-3 fix #2 (P2): changed-content resubmit in active session → 409 ───
+  it('round-3 fix #2: changed content while session is active is rejected with 409', async () => {
+    const db = testDb();
+    await seedQuestion('q1', 'true');
+    await seedPaper('paper1', ['q1']);
+    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
+
+    // First submit — freezes the slot in this session attempt.
+    await submitPaperSlot(
+      {
+        sessionId,
+        paperArtifactId: 'paper1',
+        questionId: 'q1',
+        answerMd: 'true',
+        primaryKnowledgeId: 'k1',
+      },
+      db,
+    );
+
+    // Second submit with different content — session is still started (no reopen).
+    // Must be rejected 409: the slot was already answered in this attempt.
+    await expect(
+      submitPaperSlot(
+        {
+          sessionId,
+          paperArtifactId: 'paper1',
+          questionId: 'q1',
+          answerMd: 'false',
+          primaryKnowledgeId: 'k1',
+        },
+        db,
+      ),
+    ).rejects.toThrow(/already submitted in this session attempt|abandon and reopen/i);
+  });
+
   // ── issue #4: autosave rejects misbound / wrong-state sessions ────────────────
   it('fix #4: autosaveAnswerDraft rejects a session bound to a different paper (400)', async () => {
     const db = testDb();
