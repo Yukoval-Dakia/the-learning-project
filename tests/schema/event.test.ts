@@ -411,6 +411,32 @@ describe('ReviewOnQuestion', () => {
     });
     expect(result.success).toBe(true);
   });
+
+  // F4 (PR #309 round-1, YUK-215) — the review write path freezes
+  // answer_image_refs onto the payload; the read path (parseEvent) must preserve
+  // them as the judge's evidence trail rather than strip them through the union.
+  it('preserves payload.answer_image_refs through parseEvent (evidence trail)', () => {
+    const parsed = parseEvent({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'review',
+      subject_kind: 'question',
+      subject_id: 'q_1',
+      outcome: 'success',
+      payload: {
+        fsrs_rating: 'good',
+        fsrs_state_after: baseFsrsState,
+        user_response_md: null,
+        answer_image_refs: ['asset_handwriting_1', 'asset_handwriting_2'],
+      },
+    });
+    expect(parsed.action).toBe('review');
+    // The union read path must NOT strip the refs.
+    expect((parsed.payload as { answer_image_refs?: string[] }).answer_image_refs).toEqual([
+      'asset_handwriting_1',
+      'asset_handwriting_2',
+    ]);
+  });
 });
 
 // ====================================================================

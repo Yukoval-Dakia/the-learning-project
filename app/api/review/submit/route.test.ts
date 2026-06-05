@@ -1246,5 +1246,118 @@ describe('POST /api/review/submit', () => {
         .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_215_default')));
       expect((events[0].payload as { answer_image_refs?: string[] }).answer_image_refs).toEqual([]);
     });
+
+    // F1 (PR #309 round-1) — a photo-only answer (no typed response_md, only
+    // answer_image_refs) is a real answer and MUST be judged. Pre-fix the judge
+    // gate keyed on `response_md` non-empty alone, so a photographed answer was
+    // frozen into the event yet never judged (and auto_rate 422'd asking for
+    // response_md).
+    it('photo-only answer (no response_md) still invokes the judge with the image refs', async () => {
+      await seedQuestion('q_215_photo_only', {
+        kind: 'fill_blank',
+        reference_md: '答案',
+        knowledge_ids: [],
+      });
+
+      const realFactory = invokerModule.createDefaultJudgeInvoker;
+      const captured: Array<{ answer_md?: string; student_image_refs?: string[] }> = [];
+      vi.spyOn(invokerModule, 'createDefaultJudgeInvoker').mockImplementation((deps) => {
+        const real = realFactory(deps);
+        return {
+          invoke: (input: Parameters<typeof real.invoke>[0]) => {
+            captured.push(input as { answer_md?: string; student_image_refs?: string[] });
+            return real.invoke(input);
+          },
+        } as never;
+      });
+
+      try {
+        const res = await POST(
+          submitReq({
+            activity_ref: { kind: 'question', id: 'q_215_photo_only' },
+            rating: 'good',
+            // response_md omitted → photo is the only answer.
+            answer_image_refs: ['asset_photo_only_1'],
+          }),
+        );
+        expect(res.status).toBe(200);
+
+        // The judge ran on the photo-only answer (empty text + image refs).
+        expect(captured).toHaveLength(1);
+        expect(captured[0].answer_md).toBe('');
+        expect(captured[0].student_image_refs).toEqual(['asset_photo_only_1']);
+
+        // A non-null judge result is returned to the client (judge actually ran).
+        const body = (await res.json()) as { judge: unknown };
+        expect(body.judge).not.toBeNull();
+
+        // The image refs are frozen on the review event as the evidence trail.
+        const events = await testDb()
+          .select()
+          .from(event)
+          .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_215_photo_only')));
+        expect(events).toHaveLength(1);
+        expect((events[0].payload as { answer_image_refs?: string[] }).answer_image_refs).toEqual([
+          'asset_photo_only_1',
+        ]);
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+
+    // F1 — auto_rate with a photo-only answer must NOT 422 with "requires
+    // response_md". The judge runs on the image; only a TRULY empty submit
+    // (no text AND no image) still 422s.
+    it('auto_rate with photo-only answer is judged (does not 422 for missing response_md)', async () => {
+      await seedQuestion('q_215_photo_autorate', {
+        kind: 'fill_blank',
+        reference_md: '答案',
+        knowledge_ids: [],
+      });
+
+      const res = await POST(
+        submitReq({
+          activity_ref: { kind: 'question', id: 'q_215_photo_autorate' },
+          rating: 'hard',
+          auto_rate: true,
+          // No response_md; photo is the only answer.
+          answer_image_refs: ['asset_photo_ar_1'],
+        }),
+      );
+      // The exact judge marks the (empty-text) answer incorrect → suggested
+      // rating 'again' (a valid auto-rate outcome, not 'unsupported'), so the
+      // request succeeds rather than 422'ing for a missing response_md.
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        review_event: { rating: string };
+        judge: { coarse_outcome: string } | null;
+      };
+      expect(body.judge).not.toBeNull();
+      expect(body.review_event.rating).toBe('again');
+    });
+
+    // F1 — a truly empty submit (neither text nor image) with auto_rate STILL
+    // 422s, now with a message naming both inputs.
+    it('auto_rate with no answer at all (no text, no image) → 422 naming both inputs', async () => {
+      await seedQuestion('q_215_empty_autorate', {
+        kind: 'fill_blank',
+        reference_md: '答案',
+        knowledge_ids: [],
+      });
+
+      const res = await POST(
+        submitReq({
+          activity_ref: { kind: 'question', id: 'q_215_empty_autorate' },
+          rating: 'good',
+          auto_rate: true,
+          // no response_md, no answer_image_refs
+        }),
+      );
+      expect(res.status).toBe(422);
+      const body = (await res.json()) as { error: string; message: string };
+      expect(body.error).toBe('unsupported_judge_route');
+      expect(body.message).toContain('response_md');
+      expect(body.message).toContain('answer_image_refs');
+    });
   });
 });
