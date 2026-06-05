@@ -20,6 +20,7 @@ import {
   resolveSubjectRenderModel,
   subjectContentProps,
 } from '@/ui/lib/subject';
+import { openCopilotWith } from '@/ui/lib/use-copilot-dwell';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomBadge } from '@/ui/primitives/LoomBadge';
 import { LoomCard } from '@/ui/primitives/LoomCard';
@@ -326,8 +327,21 @@ export default function LearningItemDetailPage() {
             }}
           />
           <div className="hero-cta">
-            {/* RED-LINE: teaching wiring preserved verbatim — AF S4 absorbs it. */}
-            <Btn variant="secondary" icon="teach" onClick={() => setTeachOpen(true)}>
+            {/* AF S4 / YUK-203 U6 — the 「对话教学」 entry is RE-POINTED to the
+                global Copilot Dock (the single user-facing conversational agent,
+                AF §1.1): clicking it opens the Dock pre-seeded with a teaching
+                skill_context instead of the per-page TeachingDrawer. The legacy
+                TeachingDrawer import + mount (below) STAY in parallel (R3 — the
+                legacy teaching route is not retired in U6; cut-over is a separate
+                closeout). The prior RED-LINE ("AF S4 absorbs it") is now executed
+                here. */}
+            <Btn
+              variant="secondary"
+              icon="teach"
+              onClick={() =>
+                openCopilotWith({ skill: 'teaching', ref: { kind: 'learning_item', id: data.id } })
+              }
+            >
               对话教学
             </Btn>
             {data.status === 'archived' || data.status === 'dismissed' ? (

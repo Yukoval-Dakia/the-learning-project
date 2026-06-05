@@ -1,7 +1,7 @@
 // Wave 5 / T-D3/A — generic Copilot Drawer primitive.
 //
-// Slot-based slide-out panel mounted on `/today` (and reused by future
-// pages in Wave 6). Two slots:
+// Slot-based slide-out panel for the global Copilot Dock (mounted app-wide in
+// (app)/layout.tsx — AF S2a; previously page-scoped, now global). Two slots:
 //   • summary  — Coach TodayPlan.daily_focus + review_due + dreaming preview
 //   • chat     — message list + tool-use cards + composer
 //
