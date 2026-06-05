@@ -21,9 +21,8 @@ describe('buildIngestionPaperToolState (YUK-214)', () => {
 
     expect(ts.question_ids).toEqual(['q1', 'q2']);
     expect(ts.sections).toHaveLength(1);
-    const section = ts.sections?.[0];
-    expect(section.assignments).toHaveLength(2);
-    expect(section.assignments.map((a) => a.question_id)).toEqual(['q1', 'q2']);
+    expect(ts.sections?.[0].assignments).toHaveLength(2);
+    expect(ts.sections?.[0].assignments.map((a) => a.question_id)).toEqual(['q1', 'q2']);
   });
 
   it('drives FSRS off knowledge_ids[0] (primary) with the rest as secondary', () => {
@@ -32,9 +31,9 @@ describe('buildIngestionPaperToolState (YUK-214)', () => {
       sourceDocumentId: 'doc_1',
     });
     const a = ts.sections?.[0].assignments[0];
-    expect(a.primary_knowledge_id).toBe('k1');
-    expect(a.secondary_knowledge_ids).toEqual(['k2', 'k3']);
-    expect(a.selection_reason).toBe('ingested_paper');
+    expect(a?.primary_knowledge_id).toBe('k1');
+    expect(a?.secondary_knowledge_ids).toEqual(['k2', 'k3']);
+    expect(a?.selection_reason).toBe('ingested_paper');
   });
 
   it("uses feedback_policy='immediate' (imported papers are immediately visible)", () => {
