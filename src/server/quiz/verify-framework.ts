@@ -61,8 +61,21 @@ export type VerifyCheck =
 export const CHECK_SETS_BY_TIER: Record<SourceTier, readonly VerifyCheck[]> = {
   1: ['structure_completeness', 'knowledge_hit'],
   2: ['structure_completeness', 'source_consistency', 'solve_check', 'dedup'],
-  3: ['structure_completeness', 'material_grounding', 'solve_check', 'knowledge_hit'],
-  4: ['structure_completeness', 'grounding', 'copy_safety', 'knowledge_hit'],
+  3: [
+    'structure_completeness',
+    'material_grounding',
+    'solve_check',
+    'kind_conformance',
+    'knowledge_hit',
+  ],
+  4: [
+    'structure_completeness',
+    'grounding',
+    'copy_safety',
+    'knowledge_hit',
+    'kind_conformance',
+    'solve_check',
+  ],
 };
 
 export function checksForTier(tier: SourceTier): readonly VerifyCheck[] {
@@ -142,7 +155,8 @@ export const SOLVE_CHECK_SEMANTIC_THRESHOLD = 0.8;
 const EXACT_KINDS = new Set(['choice', 'true_false', 'fill_blank']);
 
 function isExactQuestion(q: SolveCheckQuestion): boolean {
-  if (q.judge_kind_override === 'exact' || q.judge_kind_override === 'keyword') return true;
+  if (q.judge_kind_override === 'exact') return true;
+  if (q.judge_kind_override === 'keyword' || q.judge_kind_override === 'semantic') return false;
   return EXACT_KINDS.has(q.kind);
 }
 

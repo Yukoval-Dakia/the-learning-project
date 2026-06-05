@@ -23,13 +23,21 @@ describe('CHECK_SETS_BY_TIER / checksForTier', () => {
     );
   });
 
-  it('tier 3 material requires material_grounding + solve_check', () => {
-    expect(checksForTier(3)).toEqual(expect.arrayContaining(['material_grounding', 'solve_check']));
+  it('tier 3 material requires material_grounding + solve_check + kind_conformance', () => {
+    expect(checksForTier(3)).toEqual(
+      expect.arrayContaining(['material_grounding', 'solve_check', 'kind_conformance']),
+    );
   });
 
-  it('tier 4 generated keeps grounding + copy_safety + knowledge_hit (legacy quiz_verify §5)', () => {
+  it('tier 4 generated keeps legacy checks and adds kind_conformance + solve_check', () => {
     expect(checksForTier(4)).toEqual(
-      expect.arrayContaining(['grounding', 'copy_safety', 'knowledge_hit']),
+      expect.arrayContaining([
+        'grounding',
+        'copy_safety',
+        'knowledge_hit',
+        'kind_conformance',
+        'solve_check',
+      ]),
     );
   });
 
@@ -241,6 +249,21 @@ describe('runSolveCheck — open path (SemanticJudge, conservative)', () => {
       db: fakeDb,
     });
     expect(result.verdict).toBe('pass');
+  });
+
+  it('routes explicit keyword overrides through the conservative semantic path, not exact compare', async () => {
+    const runTaskFn = dispatch('包含关键词的较长答案', semanticOutput('correct', 0.9));
+    const result = await runSolveCheck(
+      { ...exactQuestion, judge_kind_override: 'keyword' },
+      { runTaskFn, profile: fakeProfile, db: fakeDb },
+    );
+    expect(result.verdict).toBe('pass');
+    expect(result.compared_by).toBe('semantic');
+    expect(runTaskFn).toHaveBeenCalledWith(
+      'SemanticJudgeTask',
+      expect.anything(),
+      expect.anything(),
+    );
   });
 
   it('is conservative (unsupported) for an open question when no db handle is passed', async () => {
