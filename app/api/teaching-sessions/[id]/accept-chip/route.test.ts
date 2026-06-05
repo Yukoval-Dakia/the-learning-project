@@ -49,6 +49,34 @@ async function seedAgentMessage(
   return id;
 }
 
+// AF S4 / YUK-203 U6 — seed an agent copilot_reply event (the single-session
+// teaching-skill turn shape). `turnKind` omitted models a free-form reply that
+// must NOT be mis-anchored as a preferred (explain/ask_check) kind.
+async function seedCopilotReply(
+  sessionId: string,
+  turnKind?: 'explain' | 'ask_check',
+): Promise<string> {
+  const db = testDb();
+  const id = createId();
+  await writeEvent(db, {
+    id,
+    session_id: sessionId,
+    actor_kind: 'agent',
+    actor_ref: 'agent:copilot',
+    action: 'experimental:copilot_reply',
+    subject_kind: 'query',
+    subject_id: id,
+    outcome: null,
+    payload: {
+      surface: 'copilot',
+      session_id: sessionId,
+      reply_md: 'hi',
+      ...(turnKind ? { turn_kind: turnKind } : {}),
+    },
+  });
+  return id;
+}
+
 describe('POST /api/teaching-sessions/[id]/accept-chip (AC-5, §5.2)', () => {
   beforeEach(async () => {
     await resetDb();
@@ -264,5 +292,58 @@ describe('POST /api/teaching-sessions/[id]/accept-chip (AC-5, §5.2)', () => {
       params: paramsFor(sessionId),
     });
     expect(res.status).toBe(400);
+  });
+
+  // AF S4 / YUK-203 U6 (R1, Cross-统合 §4.2) — under the single-session merge a
+  // teaching ask_check turn inside Copilot writes a copilot_reply event carrying
+  // turn_kind. The accept-chip click posts the COPILOT session id and the resolver
+  // must anchor the corrective chip on that copilot_reply (not a fallback).
+  it('corrective chip on a Copilot session anchors to the copilot_reply with turn_kind ask_check', async () => {
+    const db = testDb();
+    // A live Copilot session (entrypoint='copilot', active — kept fresh by the
+    // user's copilot_user_ask, so assertActive holds).
+    const { sessionId } = await Conversation.findOrCreateCopilotConversation(db);
+    // An explain reply then the ask_check reply: corrective must anchor to ask_check.
+    await seedCopilotReply(sessionId, 'explain');
+    const askId = await seedCopilotReply(sessionId, 'ask_check');
+
+    const res = await POST(
+      chipReq(sessionId, { suggestion_kind: 'corrective', chip_label: '重做' }),
+      { params: paramsFor(sessionId) },
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { event_id: string };
+    const rows = await db.select().from(event).where(eq(event.id, json.event_id));
+    expect(rows[0].payload).toMatchObject({
+      suggestion_kind: 'corrective',
+      source_event_id: askId, // anchored on the copilot_reply, not a fallback
+    });
+    // §5.2 KPI-exclusion semantics unchanged: corrective is excluded.
+    const kpi = await getChipAcceptKpi(db);
+    expect(kpi.proactive_accept_count).toBe(0);
+  });
+
+  // A copilot_reply WITHOUT turn_kind is a free-form reply — a corrective chip
+  // must not treat it as the preferred (ask_check) anchor. With only a turn_kind-
+  // less reply present, the resolver falls back to the latest agent anchor (the
+  // REQUIRED source_event_id is still populated), but it is NOT a preferred-kind match.
+  it('does not mis-anchor a corrective chip on a turn_kind-less copilot_reply as the preferred kind', async () => {
+    const db = testDb();
+    const { sessionId } = await Conversation.findOrCreateCopilotConversation(db);
+    const freeformId = await seedCopilotReply(sessionId); // no turn_kind
+    const askId = await seedCopilotReply(sessionId, 'ask_check');
+
+    // The ask_check reply IS present and newer → corrective anchors to it, NOT the
+    // turn_kind-less freeform reply.
+    const res = await POST(
+      chipReq(sessionId, { suggestion_kind: 'corrective', chip_label: '重做' }),
+      { params: paramsFor(sessionId) },
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { event_id: string };
+    const rows = await db.select().from(event).where(eq(event.id, json.event_id));
+    const anchored = (rows[0].payload as { source_event_id?: string }).source_event_id;
+    expect(anchored).toBe(askId);
+    expect(anchored).not.toBe(freeformId);
   });
 });
