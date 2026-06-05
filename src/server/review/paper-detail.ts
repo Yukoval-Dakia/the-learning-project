@@ -401,11 +401,15 @@ export async function getPaperDetail(
     `);
     const pos = (posRows as unknown as Array<{ pos: number }>)[0]?.pos ?? 0;
 
-    // Round-4 fix #2: use the newest JUDGE event's coarse_outcome instead of
-    // the attempt event's outcome, matching the practice-list fix (round-4).
-    // Falls back to attempt outcome when no judge event exists (historical rows).
+    // Round-4 fix #2 + Round-6 fix #2 (CR 3359820526): use the newest JUDGE
+    // event's coarse_outcome; also fetch visible_to_user so buffered slots are
+    // excluded from the summary when the session is not yet 'completed'.
+    // Slots with visible_to_user:false and session not completed are skipped —
+    // the summary must not let the caller infer the buffered verdict.
+    const sessionStatus = sessionInfo.status;
     const rwRows = await db.execute<{
       coarse_outcome: string | null;
+      judge_visible_to_user: string | null;
       attempt_outcome: string | null;
     }>(sql`
       SELECT
@@ -416,6 +420,13 @@ export async function getPaperDetail(
            AND j.subject_id = a.event_id
          ORDER BY j.created_at DESC
          LIMIT 1) AS coarse_outcome,
+        (SELECT j.payload->>'visible_to_user'
+         FROM event j
+         WHERE j.action = 'judge'
+           AND j.subject_kind = 'event'
+           AND j.subject_id = a.event_id
+         ORDER BY j.created_at DESC
+         LIMIT 1) AS judge_visible_to_user,
         e.outcome AS attempt_outcome
       FROM answer a
       JOIN event e ON e.id = a.event_id
@@ -434,8 +445,11 @@ export async function getPaperDetail(
     let wrong = 0;
     for (const r of rwRows as unknown as Array<{
       coarse_outcome: string | null;
+      judge_visible_to_user: string | null;
       attempt_outcome: string | null;
     }>) {
+      // Visibility gate: skip buffered slots when session is not yet completed.
+      if (r.judge_visible_to_user === 'false' && sessionStatus !== 'completed') continue;
       const verdict =
         r.coarse_outcome ??
         (r.attempt_outcome === 'success' ? 'correct' : (r.attempt_outcome ?? 'incorrect'));

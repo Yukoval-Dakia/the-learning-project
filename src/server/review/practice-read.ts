@@ -165,10 +165,14 @@ export async function getPracticeList(db: Db): Promise<PracticeListResult> {
     .orderBy(desc(learning_session.created_at));
 
   const sessionByPaper = new Map<string, { id: string; status: string }>();
+  // Keyed by session_id for the right/wrong visibility gate lookup (r.session_id
+  // from the rwRows query is a session id, not an artifact id).
+  const sessionStatusById = new Map<string, string>();
   for (const s of sessionRows) {
     if (!s.artifact_id) continue;
     if (!sessionByPaper.has(s.artifact_id)) {
       sessionByPaper.set(s.artifact_id, { id: s.id, status: s.status });
+      sessionStatusById.set(s.id, s.status);
     }
   }
   const sessionIds = [...sessionByPaper.values()].map((s) => s.id);
@@ -207,9 +211,15 @@ export async function getPracticeList(db: Db): Promise<PracticeListResult> {
   //    partial counts as right, see comment in previous rounds).
   const rightWrongBySession = new Map<string, { right: number; wrong: number }>();
   if (sessionIds.length > 0) {
+    // Round-6 fix #2 (CR 3359820526): also fetch visible_to_user from the newest
+    // judge event. For sessions not yet 'completed', slots with visible_to_user:false
+    // are excluded from the right/wrong count — the summary must not let the caller
+    // infer the buffered verdict. For completed sessions all slots are counted
+    // (the visibility gate opens on completion per §4.9).
     const rwRows = await db.execute<{
       session_id: string;
       coarse_outcome: string | null;
+      judge_visible_to_user: string | null;
       attempt_outcome: string | null;
     }>(sql`
       SELECT
@@ -221,6 +231,13 @@ export async function getPracticeList(db: Db): Promise<PracticeListResult> {
            AND j.subject_id = a.event_id
          ORDER BY j.created_at DESC
          LIMIT 1) AS coarse_outcome,
+        (SELECT j.payload->>'visible_to_user'
+         FROM event j
+         WHERE j.action = 'judge'
+           AND j.subject_kind = 'event'
+           AND j.subject_id = a.event_id
+         ORDER BY j.created_at DESC
+         LIMIT 1) AS judge_visible_to_user,
         e.outcome AS attempt_outcome
       FROM answer a
       JOIN event e ON e.id = a.event_id
@@ -238,9 +255,16 @@ export async function getPracticeList(db: Db): Promise<PracticeListResult> {
     for (const r of rwRows as unknown as Array<{
       session_id: string;
       coarse_outcome: string | null;
+      judge_visible_to_user: string | null;
       attempt_outcome: string | null;
     }>) {
       if (!r.session_id) continue;
+      // Visibility gate: if the newest judge is buffered (visible_to_user='false')
+      // and the session is not yet completed, skip this slot entirely — do not
+      // count it as right or wrong. The summary must not leak the verdict.
+      const sessionStatus = sessionStatusById.get(r.session_id);
+      const judgeBuffered = r.judge_visible_to_user === 'false';
+      if (judgeBuffered && sessionStatus !== 'completed') continue;
       const bucket = rightWrongBySession.get(r.session_id) ?? { right: 0, wrong: 0 };
       // Prefer judge coarse_outcome; fall back to attempt outcome mapping.
       // attempt 'success' → treated as 'correct'; 'partial' → right; else wrong.

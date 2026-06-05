@@ -23,7 +23,7 @@ import { newId } from '@/core/ids';
 import { validateCauseAgainstProfile } from '@/core/schema/cause';
 import { db as defaultDb } from '@/db/client';
 import type { Db } from '@/db/client';
-import { answer, event, question } from '@/db/schema';
+import { answer, event, learning_session, question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { type FsrsSubjectKind, getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { ApiError } from '@/server/http/errors';
@@ -94,6 +94,18 @@ export async function submitPaperSlot(
   // below is the authoritative TOCTOU guard.
   await assertSessionMutable(db, input.sessionId, input.paperArtifactId);
 
+  // Round-6 fix #4 (CR 3359820529): read started_at non-locking here so the
+  // pre-check can scope same-content idempotency to the current attempt only.
+  // After abandon→reopen, a slot with the same answer should append a new attempt
+  // (the user is re-submitting in a new attempt). The authoritative FOR UPDATE
+  // path inside the transaction below carries the same guard.
+  const preCheckSessionRows = await db
+    .select({ started_at: learning_session.started_at })
+    .from(learning_session)
+    .where(eq(learning_session.id, input.sessionId))
+    .limit(1);
+  const preCheckStartedAt = preCheckSessionRows[0]?.started_at ?? new Date(0);
+
   // Round-3 fix #1 (P2): check for an already-frozen row with the same content
   // BEFORE invoking the judge, so a duplicate submit never burns LLM capacity.
   // Non-locking read is sufficient here — the transaction below re-checks with
@@ -103,6 +115,7 @@ export async function submitPaperSlot(
       id: answer.id,
       event_id: answer.event_id,
       content_md: answer.content_md,
+      submitted_at: answer.submitted_at,
     })
     .from(answer)
     .where(
@@ -117,9 +130,19 @@ export async function submitPaperSlot(
     .limit(1);
 
   const preCheckLatest = preCheckFrozen[0];
-  if (preCheckLatest?.event_id && preCheckLatest.content_md === input.answerMd) {
-    // Same content already frozen — look up the existing judge event and return
-    // without invoking the judge or entering the write transaction.
+  // Round-6 fix #4: idempotency only applies when the frozen row belongs to the
+  // current attempt (submitted_at >= started_at). A frozen row from before a
+  // reopen (submitted_at < started_at) must NOT trigger the early exit — the
+  // user is re-submitting in a new attempt and a new attempt row must be written.
+  const preCheckIsSameAttempt =
+    preCheckLatest?.submitted_at != null && preCheckLatest.submitted_at >= preCheckStartedAt;
+  if (
+    preCheckIsSameAttempt &&
+    preCheckLatest?.event_id &&
+    preCheckLatest.content_md === input.answerMd
+  ) {
+    // Same content frozen in the current attempt — look up the existing judge
+    // event and return without invoking the judge or entering the write transaction.
     const judgeRows = await db
       .select({
         id: event.id,
@@ -301,12 +324,23 @@ export async function submitPaperSlot(
 
     const latestFrozen = existingFrozen[0];
     if (latestFrozen) {
-      if (latestFrozen.event_id && latestFrozen.content_md === input.answerMd) {
-        // Same content already frozen (authoritative under lock). Return existing
-        // ids — no new rows written (judge was also skipped by the pre-check).
-        // Round-4 fix #3: also reload the persisted judge payload so the return
-        // value reflects what's in the DB, not the loser's freshly-computed
-        // (non-persisted) coarseOutcome/score/visibleToUser.
+      // Round-6 fix #4 (CR 3359820529): same-content idempotency only applies when
+      // the frozen row belongs to the CURRENT attempt (submitted_at >= started_at).
+      // A frozen row from a prior attempt (submitted_at < started_at, i.e. before
+      // the last reopen) must NOT trigger the early exit — the user is re-submitting
+      // in a new attempt and a new attempt+judge+FSRS row must be written.
+      const frozenInCurrentAttempt =
+        latestFrozen.submitted_at != null && latestFrozen.submitted_at >= sessionStartedAt;
+      if (
+        frozenInCurrentAttempt &&
+        latestFrozen.event_id &&
+        latestFrozen.content_md === input.answerMd
+      ) {
+        // Same content already frozen in this attempt (authoritative under lock).
+        // Return existing ids — no new rows written (judge was also skipped by
+        // the pre-check). Round-4 fix #3: also reload the persisted judge payload
+        // so the return value reflects what's in the DB, not the loser's freshly-
+        // computed (non-persisted) coarseOutcome/score/visibleToUser.
         const judgeRows = await tx
           .select({ id: event.id, payload: event.payload })
           .from(event)
