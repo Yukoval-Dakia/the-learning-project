@@ -184,6 +184,9 @@ export default function PracticeAnswerPage() {
         void qc.invalidateQueries({ queryKey: ['practice-detail', artifactId] });
       })
       .catch(() => {
+        // CR Round-5 #3359720378: reset guard so user can retry (symmetric with
+        // the abandoned-fallback double-failure path above).
+        startedRef.current = false;
         setStartingSession(false);
       });
   }, [paper, artifactId, updateStatus, qc]);
@@ -313,22 +316,24 @@ export default function PracticeAnswerPage() {
 
   // Flush all pending draft autosaves using keepalive fetch (survives unload).
   // Called from both the unmount cleanup and the pagehide handler.
+  //
+  // CR Round-5 #3359720375: iterate pendingDrafts (not autosaveTimers) so that
+  // drafts whose timer already fired but whose POST failed (timer deleted, draft
+  // retained) are also retried. Outstanding timers are cancelled as a side-effect.
   const flushPendingDrafts = useRef(() => {
     const sid = sessionIdRef.current;
     if (!sid) return;
     const timers = autosaveTimers.current;
     const drafts = pendingDrafts.current;
-    for (const key of Object.keys(timers)) {
+    for (const key of Object.keys(drafts)) {
+      // Cancel any outstanding timer (no-op if already fired/deleted).
       clearTimeout(timers[key]);
       delete timers[key];
-      const d = drafts[key];
-      if (d) {
-        keepaliveFetch(
-          `/api/practice/${artifactIdRef.current}/answer`,
-          JSON.stringify({ session_id: sid, ...d }),
-        );
-        delete drafts[key];
-      }
+      keepaliveFetch(
+        `/api/practice/${artifactIdRef.current}/answer`,
+        JSON.stringify({ session_id: sid, ...drafts[key] }),
+      );
+      delete drafts[key];
     }
   });
 
