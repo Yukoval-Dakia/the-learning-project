@@ -40,13 +40,28 @@ export interface CopilotTurnSkillTurn {
   suggested_next?: 'continue' | 'end';
 }
 
+// PR round-2 — skill_context persisted in copilot_reply payload so replay can
+// restore the skill card even after page refresh (without re-running the LLM).
+export interface CopilotTurnSkillContext {
+  skill: string;
+  ref: { kind: string; id: string };
+}
+
 export interface CopilotTurn {
   role: CopilotTurnRole;
   text: string;
   at: string; // ISO timestamp
   event_id: string;
+  // PR round-2 (CR 3360614432): session_id + reply_event_id let the Dock
+  // chip-renderer anchor a corrective chip on the correct event/session after
+  // page refresh. session_id = the Copilot conversation envelope id; both are
+  // present only on AI turns (replay fills them from the event row).
+  session_id?: string;
+  reply_event_id?: string;
   /** Present for AI turns that carried a skill turn (teaching ask_check / explain / end). */
   skill_turn?: CopilotTurnSkillTurn;
+  /** Present for AI turns produced by a skill (teaching / solve) — lets replay restore the skill card. */
+  skill_context?: CopilotTurnSkillContext;
 }
 
 const USER_ACTIONS = [
@@ -93,15 +108,34 @@ function replySkillTurn(payload: Record<string, unknown>): CopilotTurnSkillTurn 
       typeof sq.kind === 'string' &&
       typeof sq.prompt_md === 'string'
     ) {
+      // PR round-2 (CR 3360606340): validate every element is a string before
+      // passing through; a corrupt array (e.g. [{text:'...'}]) becomes null.
+      const rawChoices = sq.choices_md;
+      const choices_md =
+        Array.isArray(rawChoices) && rawChoices.every((el) => typeof el === 'string')
+          ? (rawChoices as string[])
+          : null;
       result.structured_question = {
         id: sq.id,
         kind: sq.kind,
         prompt_md: sq.prompt_md,
-        choices_md: Array.isArray(sq.choices_md) ? (sq.choices_md as string[]) : null,
+        choices_md,
       };
     }
   }
   return result;
+}
+
+function replySkillContext(payload: Record<string, unknown>): CopilotTurnSkillContext | undefined {
+  const sc = payload.skill_context;
+  if (!sc || typeof sc !== 'object') return undefined;
+  const s = sc as Record<string, unknown>;
+  if (typeof s.skill !== 'string') return undefined;
+  const ref = s.ref;
+  if (!ref || typeof ref !== 'object') return undefined;
+  const r = ref as Record<string, unknown>;
+  if (typeof r.kind !== 'string' || typeof r.id !== 'string') return undefined;
+  return { skill: s.skill, ref: { kind: r.kind, id: r.id } };
 }
 
 /**
@@ -156,13 +190,19 @@ export async function getRecentCopilotTurns(
       const text = replyText(payload);
       if (text === null) continue;
       const skillTurn = replySkillTurn(payload);
+      const skillContext = replySkillContext(payload);
       const turn: CopilotTurn = {
         role: 'ai',
         text,
         at: row.created_at.toISOString(),
         event_id: row.id,
+        // PR round-2 (CR 3360614432): Dock chip renderer needs session_id to
+        // resolve the conversation and reply_event_id to anchor the chip.
+        session_id: session.id,
+        reply_event_id: row.id,
       };
       if (skillTurn) turn.skill_turn = skillTurn;
+      if (skillContext) turn.skill_context = skillContext;
       turns.push(turn);
     } else {
       const text = userText(payload);

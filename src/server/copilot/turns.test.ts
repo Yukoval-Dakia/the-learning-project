@@ -114,12 +114,14 @@ async function writeReply(
 
 // PR #305 review comment #2 — seed a copilot_reply that carries a skill_turn in
 // the payload (simulates what runCopilotChat writes for a teaching ask_check turn).
+// PR round-2 — optionally also carries skill_context.
 async function writeReplyWithSkillTurn(
   text: string,
   sessionId: string,
   inReplyTo: string,
   at: Date,
   skillTurn: object,
+  skillContext?: object,
 ): Promise<string> {
   const id = `copilot_reply_${createId()}`;
   writtenEventIds.push(id);
@@ -139,6 +141,7 @@ async function writeReplyWithSkillTurn(
       task_run_id: 'task_y',
       in_reply_to_event_id: inReplyTo,
       skill_turn: skillTurn,
+      ...(skillContext ? { skill_context: skillContext } : {}),
     },
     caused_by_event_id: inReplyTo,
     task_run_id: 'task_y',
@@ -166,15 +169,22 @@ describe('getRecentCopilotTurns', () => {
     // Only this session's two events exist among our written ids; assert they
     // are present, ordered, and shaped.
     const ours = turns.filter((t) => t.event_id === askId || t.event_id === replyId);
-    expect(ours).toEqual([
-      { role: 'user', text: '今天该复习哪些？', at: t0.toISOString(), event_id: askId },
-      {
-        role: 'ai',
-        text: '有 3 道题到期。',
-        at: new Date('2026-06-04T10:00:05.000Z').toISOString(),
-        event_id: replyId,
-      },
-    ]);
+    // User turns have no session_id/reply_event_id/skill_turn/skill_context.
+    expect(ours[0]).toEqual({
+      role: 'user',
+      text: '今天该复习哪些？',
+      at: t0.toISOString(),
+      event_id: askId,
+    });
+    // AI turns carry session_id + reply_event_id (PR round-2 CR 3360614432).
+    expect(ours[1]).toEqual({
+      role: 'ai',
+      text: '有 3 道题到期。',
+      at: new Date('2026-06-04T10:00:05.000Z').toISOString(),
+      event_id: replyId,
+      session_id: sessionId,
+      reply_event_id: replyId,
+    });
   });
 
   it('caps to limit turns (newest kept), returned chronologically', async () => {
@@ -277,9 +287,13 @@ describe('getRecentCopilotTurns', () => {
         choices_md: null,
       },
     });
-    // User turns never carry skill_turn.
+    // PR round-2 (CR 3360614432): AI turns carry session_id + reply_event_id.
+    expect(aiTurn?.session_id).toBe(sessionId);
+    expect(aiTurn?.reply_event_id).toBe(replyId);
+    // User turns never carry skill_turn / session_id / reply_event_id.
     const userTurn = ours.find((t) => t.role === 'user');
     expect(userTurn?.skill_turn).toBeUndefined();
+    expect(userTurn?.session_id).toBeUndefined();
   });
 
   // Replies without skill_turn in payload have undefined skill_turn in the turn.
@@ -298,6 +312,35 @@ describe('getRecentCopilotTurns', () => {
     const turns = await getRecentCopilotTurns(db, { now });
     const aiTurn = turns.find((t) => t.event_id === replyId);
     expect(aiTurn?.skill_turn).toBeUndefined();
+    // Plain AI replies still carry session_id + reply_event_id.
+    expect(aiTurn?.session_id).toBe(sessionId);
+    expect(aiTurn?.reply_event_id).toBe(replyId);
+  });
+
+  // PR round-2 (CR 3360614441): skill_context persisted in payload so replay can
+  // restore the skill card after page refresh.
+  it('replay surfaces skill_context on AI turns that carried a skill', async () => {
+    const now = new Date();
+    const sessionId = await createLiveCopilotSession(now);
+    const t0 = new Date('2026-06-05T12:00:00.000Z');
+    const t1 = new Date('2026-06-05T12:00:05.000Z');
+    const askId = await writeAsk('讲讲这道题', sessionId, t0);
+    const skillContext = { skill: 'teaching', ref: { kind: 'learning_item', id: 'li_ctx_test' } };
+    const replyId = await writeReplyWithSkillTurn(
+      '好，我们来分析。',
+      sessionId,
+      askId,
+      t1,
+      { kind: 'explain', suggested_next: 'continue' },
+      skillContext,
+    );
+
+    const turns = await getRecentCopilotTurns(db, { now });
+    const aiTurn = turns.find((t) => t.event_id === replyId);
+    expect(aiTurn?.skill_context).toEqual(skillContext);
+    // User turns never carry skill_context.
+    const userTurn = turns.find((t) => t.event_id === askId);
+    expect(userTurn?.skill_context).toBeUndefined();
   });
 });
 
