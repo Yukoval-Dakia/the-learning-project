@@ -41,6 +41,12 @@ export const QuestionSource = z.enum([
   // Search-grounded QuizGen wave (docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md
   // §2). Zod-enum addition only — no DDL ALTER (the question.source column is text).
   'quiz_gen',
+  // YUK-216 S2 (题源扩展 Strategy D) — tier 2 "sourced" questions fetched from
+  // the web by SourcingTask. Zero-DDL Zod-enum addition (same手法 as 'quiz_gen'
+  // above; question.source is a text column). provenance lives in
+  // metadata.web_sourced (see src/core/schema/provenance.ts WebSourcedProvenance).
+  // docs/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §2.1.
+  'web_sourced',
 ]);
 
 export const MistakeSource = z.enum([
