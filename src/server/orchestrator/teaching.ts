@@ -25,14 +25,52 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 const TurnKind = z.enum(['explain', 'ask_check', 'end']);
 export type TurnKindT = z.infer<typeof TurnKind>;
 
-const TeachingStructuredQuestion = z.object({
-  kind: QuestionKind,
-  prompt_md: z.string().min(1).max(4000).optional(),
-  reference_md: z.string().min(1).max(4000),
-  choices_md: z.array(z.string().min(1)).nullable().optional(),
-  judge_kind_override: JudgeKind.nullish(),
-  rubric_json: Rubric.nullish(),
-});
+// Question kinds that imply choices_md must be present.
+// When the LLM sends choices_md as a string (instead of array) and we cannot
+// coerce it, we downgrade these kinds to 'short_answer' to keep the object
+// semantically self-consistent (no choices → not a choice question).
+const CHOICE_BEARING_KINDS = new Set<string>(['choice', 'true_false']);
+
+// Coerce LLM-emitted choices_md from string → string[] when possible.
+// Returns the original value (array / null / undefined) when no coercion needed.
+// Returns null when the string cannot be parsed as a string array.
+function coerceChoicesMd(raw: unknown): string[] | null | undefined {
+  if (raw === null || raw === undefined || Array.isArray(raw))
+    return raw as string[] | null | undefined;
+  if (typeof raw !== 'string') return null; // unexpected type → null (graceful)
+  // Model sometimes stringifies the array: '["A. foo","B. bar"]'
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.every((x) => typeof x === 'string')) {
+      return parsed as string[];
+    }
+  } catch {
+    // fall through
+  }
+  // Cannot recover a string[]; caller will downgrade kind if needed.
+  return null;
+}
+
+const TeachingStructuredQuestion = z
+  .object({
+    kind: QuestionKind,
+    prompt_md: z.string().min(1).max(4000).optional(),
+    reference_md: z.string().min(1).max(4000),
+    choices_md: z.preprocess(coerceChoicesMd, z.array(z.string().min(1)).nullable().optional()),
+    judge_kind_override: JudgeKind.nullish(),
+    rubric_json: Rubric.nullish(),
+  })
+  .transform((q) => {
+    // If choices_md ended up null/undefined and the kind implies choices are
+    // required, downgrade to short_answer so downstream code stays consistent.
+    if ((q.choices_md === null || q.choices_md === undefined) && CHOICE_BEARING_KINDS.has(q.kind)) {
+      console.warn(
+        `[TeachingStructuredQuestion] choices_md missing/uncoercible for kind=${q.kind}; downgrading to short_answer`,
+      );
+      return { ...q, kind: 'short_answer' as const };
+    }
+    return q;
+  });
 export type TeachingStructuredQuestionT = z.infer<typeof TeachingStructuredQuestion>;
 
 const TeachingTurnBase = {
