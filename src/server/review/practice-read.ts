@@ -76,7 +76,10 @@ export function isJudgementVisibleToCoach(): boolean {
 // client-side predicate over `source` (review_plan → Coach 排期, etc.).
 export type PracticeSource = 'coach' | 'custom' | 'note' | 'other';
 
-function intentSourceToPracticeSource(intentSource: string): PracticeSource {
+// YUK-214 (Strategy D · S1): exported so the source-mapping is unit-testable
+// without a DB round-trip (Cross-统合 F-11). Internal callers (getPracticeList)
+// use it unchanged.
+export function intentSourceToPracticeSource(intentSource: string): PracticeSource {
   switch (intentSource) {
     case 'review_plan':
       return 'coach';
@@ -84,6 +87,13 @@ function intentSourceToPracticeSource(intentSource: string): PracticeSource {
       return 'custom';
     case 'embedded_check':
       return 'note';
+    // YUK-214: an imported paper (ingest→practice bridge) maps to the existing
+    // 'other' bucket — it still appears in the 今日/往日 main list (list inclusion
+    // is decided ONLY by the inArray whitelist below, not by this source value;
+    // Cross-统合 §C1). A dedicated 'ingested' PracticeSource + source tab is
+    // phase-deferred to the OC/UI wave (§Step 1; not built here — no tab UI yet).
+    case 'ingestion_paper':
+      return 'other';
     default:
       return 'other';
   }
@@ -134,14 +144,22 @@ export interface PracticeListResult {
  * the returned `source` field (Map §C2 / critic #4).
  */
 export async function getPracticeList(db: Db): Promise<PracticeListResult> {
-  // 1) Paper artifacts (the three widened intent_source provenances).
+  // 1) Paper artifacts (the widened intent_source provenances).
+  //    YUK-214 (Strategy D · S1) — `ingestion_paper` is the fourth source
+  //    (ingest→practice bridge); must stay in lock-step with the start-session
+  //    whitelist at app/api/practice/route.ts (§Step 1).
   const paperRows = await db
     .select()
     .from(artifact)
     .where(
       and(
         eq(artifact.type, 'tool_quiz'),
-        inArray(artifact.intent_source, ['review_plan', 'quiz_gen', 'embedded_check']),
+        inArray(artifact.intent_source, [
+          'review_plan',
+          'quiz_gen',
+          'embedded_check',
+          'ingestion_paper',
+        ]),
       ),
     )
     .orderBy(desc(artifact.created_at));

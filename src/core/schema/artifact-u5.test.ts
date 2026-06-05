@@ -48,6 +48,16 @@ describe('Artifact enum widen (§4.1)', () => {
     },
   );
 
+  // YUK-214 (Strategy D · S1) — ingest→practice bridge adds a fourth paper
+  // provenance so an imported paper (tool_quiz built from imported questions)
+  // parses + is recognised by /practice. Pure additive enum (§2.3).
+  it('parses a paper row with intent_source/tool_kind = ingestion_paper (YUK-214)', () => {
+    const r = Artifact.safeParse(
+      artifactRow({ intent_source: 'ingestion_paper', tool_kind: 'ingestion_paper' }),
+    );
+    expect(r.success).toBe(true);
+  });
+
   it('still parses a legacy tool_kind=quiz row (back-compat)', () => {
     const r = Artifact.safeParse(artifactRow({ intent_source: 'declared', tool_kind: 'quiz' }));
     expect(r.success).toBe(true);
