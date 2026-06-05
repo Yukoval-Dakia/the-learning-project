@@ -1,5 +1,10 @@
 import { getDefaultRegistry } from '@/core/capability/judges';
-import { type SubjectProfile, subjectProfiles } from '@/subjects/profile';
+import {
+  type SubjectProfile,
+  SubjectRegistry,
+  getDefaultSubjectRegistry,
+  subjectProfiles,
+} from '@/subjects/profile';
 import { describe, expect, it } from 'vitest';
 import { auditProfiles, formatProfileAuditReport } from './audit-profile';
 
@@ -29,11 +34,31 @@ function makeAuditProfile(overrides: Partial<SubjectProfile> = {}): SubjectProfi
 
 describe('auditProfiles', () => {
   it('passes for all built-in profiles', () => {
-    const result = auditProfiles();
+    // YUK-206 (RL2): exercise the registry-traversal path the `runCli` fix relies
+    // on (NOT the hardcoded `auditProfiles()` default) and assert dynamically
+    // against the registry's live ids, so no static 3-subject list remains.
+    const result = auditProfiles(getDefaultSubjectRegistry().listProfiles());
 
     expect(result.valid).toBe(true);
     expect(result.invalid).toBe(0);
-    expect(result.entries.map((entry) => entry.id).sort()).toEqual(['math', 'physics', 'wenyan']);
+    expect(result.entries.map((entry) => entry.id).sort()).toEqual(
+      getDefaultSubjectRegistry().listIds().sort(),
+    );
+  });
+
+  it('auto-enters a newly registered 4th subject into the audit (YUK-206 RL2)', () => {
+    // Positive RL2 proof: a fresh registry with a 4th synthetic subject must see
+    // that subject auto-appear in the audit entries and stay valid — the actual
+    // invariant ("4th subject auto-enters"), not just "no hardcoded 3 remain".
+    const registry = new SubjectRegistry();
+    const fourth = makeAuditProfile({ id: 'audit_synthetic_4th', displayName: 'Synthetic 4th' });
+    registry.register(fourth);
+
+    const result = auditProfiles(registry.listProfiles());
+
+    expect(result.valid).toBe(true);
+    expect(result.entries.map((entry) => entry.id)).toContain('audit_synthetic_4th');
+    expect(result.entries.map((entry) => entry.id).sort()).toEqual(registry.listIds().sort());
   });
 
   it('fails when a profile declares an unknown judge capability', () => {
