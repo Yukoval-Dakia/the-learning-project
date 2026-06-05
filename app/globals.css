@@ -8139,8 +8139,30 @@ button.seg-sm {
   font-size: 14px;
   line-height: 1.6;
   color: var(--ink);
-  white-space: pre-wrap;
   word-break: break-word;
+}
+/* react-markdown renders <p> children; collapse default margins so the
+   bubble padding alone controls spacing. */
+.copilot-loom .msg-text p,
+.copilot-loom .msg-text li,
+.copilot-loom .msg-text ul,
+.copilot-loom .msg-text ol {
+  margin: 0;
+  padding: 0;
+}
+.copilot-loom .msg-text ul,
+.copilot-loom .msg-text ol {
+  list-style-position: inside;
+}
+.copilot-loom .msg-text strong {
+  font-weight: 600;
+}
+.copilot-loom .msg-text code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--paper-sunk);
+  border-radius: var(--r-1);
+  padding: 1px 4px;
 }
 .copilot-loom .msg-ai .msg-text {
   background: var(--paper);
@@ -8210,8 +8232,12 @@ button.seg-sm {
   font-size: 14px;
   line-height: 1.6;
   color: var(--ink);
-  white-space: pre-wrap;
+  /* react-markdown renders <p> children; no pre-wrap needed here */
   word-break: break-word;
+}
+.copilot-loom .skill-turn-q-prompt p,
+.copilot-loom .skill-turn-q-prompt li {
+  margin: 0;
 }
 .copilot-loom .skill-turn-q-choices {
   list-style: decimal;
