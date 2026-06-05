@@ -372,6 +372,10 @@ export async function runCopilotChat(
           : {}),
       };
     } else {
+      // hintIndex 故意不传（恒为首问 hint）：U6 MVP 只做 hint-only solve skill，
+      // buildSolveHintInput 的递进分支（hintIndex>0 合成追问）经此入口是死代码。
+      // 接续上下文见 plan §11（cut-over 时机）：若要递进，需按 session 内既往
+      // solve turn 计数派生 hintIndex（review LOW note，intentional-by-record）。
       const skillResult: SolveSkillResult = await runSolveSkillFn({
         db,
         questionId: req.skill_context.ref.id,
