@@ -153,7 +153,7 @@ export async function POST(
       if (!(await isValidAnchorEvent(sessionId, parsed.data.source_event_id))) {
         throw new ApiError(
           'validation_error',
-          'source_event_id must reference an agent teach_message in this session',
+          'source_event_id must reference an agent teach_message or copilot_reply in this session',
           400,
         );
       }
