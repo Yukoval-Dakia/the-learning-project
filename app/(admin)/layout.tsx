@@ -9,6 +9,7 @@ const ADMIN_NAV: NavItem[] = [
   { id: 'runs', label: 'Runs' },
   { id: 'cost', label: 'Cost' },
   { id: 'failures', label: 'Failures' },
+  { id: 'subjects', label: 'Subjects' },
 ];
 
 const ROUTE_MAP: Record<string, string> = {
@@ -16,11 +17,13 @@ const ROUTE_MAP: Record<string, string> = {
   runs: '/admin/runs',
   cost: '/admin/cost',
   failures: '/admin/failures',
+  subjects: '/admin/subjects',
 };
 
 function activeFromPath(pathname: string): string {
   if (pathname.startsWith('/admin/cost')) return 'cost';
   if (pathname.startsWith('/admin/failures')) return 'failures';
+  if (pathname.startsWith('/admin/subjects')) return 'subjects';
   return 'runs';
 }
 
