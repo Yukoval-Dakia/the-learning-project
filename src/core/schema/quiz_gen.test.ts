@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { QuestionSource } from './business';
-import { QuizGenMetadata, QuizGenOutput, QuizGenSourceRef } from './quiz_gen';
+import {
+  QuizGenGenerationMethod,
+  QuizGenMetadata,
+  QuizGenOutput,
+  QuizGenSourceRef,
+} from './quiz_gen';
 
 describe('QuestionSource enum', () => {
   it("includes 'quiz_gen' (search-grounded QuizGen wave §2)", () => {
@@ -8,8 +13,26 @@ describe('QuestionSource enum', () => {
     expect(() => QuestionSource.parse('quiz_gen')).not.toThrow();
   });
 
+  it("includes 'web_sourced' (YUK-216 S2 tier 2)", () => {
+    expect(QuestionSource.options).toContain('web_sourced');
+    expect(() => QuestionSource.parse('web_sourced')).not.toThrow();
+  });
+
   it('rejects an unknown source', () => {
     expect(() => QuestionSource.parse('not_a_source')).toThrow();
+  });
+});
+
+describe('QuizGenGenerationMethod enum', () => {
+  it("includes 'material_grounded' (YUK-216 S2 tier 3)", () => {
+    expect(QuizGenGenerationMethod.options).toContain('material_grounded');
+    expect(() => QuizGenGenerationMethod.parse('material_grounded')).not.toThrow();
+  });
+
+  it("keeps the prior 'search_grounded' / 'closed_book' values", () => {
+    expect(QuizGenGenerationMethod.options).toEqual(
+      expect.arrayContaining(['search_grounded', 'closed_book', 'material_grounded']),
+    );
   });
 });
 
@@ -106,6 +129,29 @@ describe('QuizGenMetadata', () => {
         generation_status: 'pending',
       }),
     ).toThrow();
+  });
+
+  it('accepts an optional material_source_document_id (YUK-216 S2 tier 3)', () => {
+    const parsed = QuizGenMetadata.parse({
+      source_pack: validSourcePack,
+      source_refs: [validSourceRef],
+      generation_method: 'material_grounded',
+      copy_safety: validCopySafety,
+      generation_status: 'ready',
+      material_source_document_id: 'doc_passage_1',
+    });
+    expect(parsed.material_source_document_id).toBe('doc_passage_1');
+  });
+
+  it('leaves material_source_document_id undefined when omitted', () => {
+    const parsed = QuizGenMetadata.parse({
+      source_pack: validSourcePack,
+      source_refs: [validSourceRef],
+      generation_method: 'search_grounded',
+      copy_safety: validCopySafety,
+      generation_status: 'ready',
+    });
+    expect(parsed.material_source_document_id).toBeUndefined();
   });
 });
 
