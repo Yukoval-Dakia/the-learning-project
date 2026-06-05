@@ -70,6 +70,9 @@ interface SkillTurn {
     prompt_md: string;
     choices_md: string[] | null;
   };
+  // Contract mirror of the server CopilotSkillTurn.suggested_next field.
+  // Reserved for future chip-level UX (e.g. auto-suggest "继续" / "结束" chips).
+  // End-of-session rendering is driven by kind==='end', not this field.
   suggested_next?: 'continue' | 'end';
 }
 
@@ -116,7 +119,7 @@ function nextId(): string {
 }
 
 export function CopilotDock() {
-  const { open, openDrawer, closeDrawer } = useCopilotDwell();
+  const { open, openDrawer, closeDrawer: closeDrawerDwell } = useCopilotDwell();
   const summaryQ = useQuery({
     queryKey: ['copilot-summary'],
     queryFn: () => apiJson<CopilotSummary>('/api/today/copilot-summary'),
@@ -131,7 +134,16 @@ export function CopilotDock() {
   // AF S4 / YUK-203 U6 — the active skill context (teaching/solve). When set, the
   // next turn(s) route to the skill (single-session model, §4.2). Held in a ref
   // so the composer's `send` reads the live value without re-creating `send`.
+  // Lifecycle: set when the open-with-context signal fires; cleared on closeDrawer
+  // or when the skill returns kind==='end', so free-form turns after a teaching
+  // session end are not silently re-routed to the stale skill.
   const activeSkillRef = useRef<CopilotSkillContextT | null>(null);
+  // AF S4 / YUK-203 U6 — wrap closeDrawer to also clear the active skill context
+  // so that re-opening the Dock after closing does not resume a stale skill.
+  const closeDrawer = useCallback(() => {
+    activeSkillRef.current = null;
+    closeDrawerDwell();
+  }, [closeDrawerDwell]);
   // Holds the last user_message so the error-state "重试" button can resend it.
   const lastUserMessageRef = useRef<string | null>(null);
   // Synchronous single-flight guard: `sending` state lags a re-render behind,
@@ -204,6 +216,11 @@ export function CopilotDock() {
           ...(skillContext ? { skill_context: skillContext } : {}),
         }),
       });
+      // AF S4 / YUK-203 U6 — clear the active skill on end turn so subsequent
+      // free-form messages are not re-routed to the stale skill context.
+      if (res.skill_turn?.kind === 'end') {
+        activeSkillRef.current = null;
+      }
       setMessages((prev) => [
         ...prev,
         {
@@ -419,6 +436,8 @@ export function CopilotDock() {
                           type="button"
                           className="chip is-corrective"
                           data-testid="copilot-corrective-chip"
+                          // Disable after ack to prevent duplicate KPI events.
+                          disabled={chipAcked === m.skill_turn.structured_question.id}
                           onClick={() => {
                             const sid = m.session_id;
                             const qid = m.skill_turn?.structured_question?.id;
@@ -435,7 +454,7 @@ export function CopilotDock() {
                   ) : null}
                   {m.skill_turn?.kind === 'end' ? (
                     <div className="skill-turn-end" data-testid="copilot-skill-end">
-                      本轮教学已收尾。继续提问可开启下一轮。
+                      本轮教学已结束，继续提问将回到自由对话。
                     </div>
                   ) : null}
                 </div>
