@@ -195,6 +195,11 @@ export async function submitPaperSlot(
   let attemptEventId = newId();
   let judgeEventId = newId();
   let frozenAnswerId = '';
+  // Round-4 fix #3: these shadow the loser's locally-computed values when the
+  // locked duplicate path reloads the winner's persisted judge payload.
+  let persistedCoarseOutcome: string = coarseOutcome;
+  let persistedScore: number | null | undefined = judgeResult.score;
+  let persistedVisibleToUser: boolean = visibleToUser;
 
   const referencedKnowledgeIds = input.primaryKnowledgeId
     ? [input.primaryKnowledgeId, ...(input.secondaryKnowledgeIds ?? [])]
@@ -299,8 +304,11 @@ export async function submitPaperSlot(
       if (latestFrozen.event_id && latestFrozen.content_md === input.answerMd) {
         // Same content already frozen (authoritative under lock). Return existing
         // ids — no new rows written (judge was also skipped by the pre-check).
+        // Round-4 fix #3: also reload the persisted judge payload so the return
+        // value reflects what's in the DB, not the loser's freshly-computed
+        // (non-persisted) coarseOutcome/score/visibleToUser.
         const judgeRows = await tx
-          .select({ id: event.id })
+          .select({ id: event.id, payload: event.payload })
           .from(event)
           .where(
             and(
@@ -311,8 +319,22 @@ export async function submitPaperSlot(
           )
           .limit(1);
         attemptEventId = latestFrozen.event_id;
-        judgeEventId = judgeRows[0]?.id ?? judgeEventId;
+        const lockedJudge = judgeRows[0];
+        judgeEventId = lockedJudge?.id ?? judgeEventId;
         frozenAnswerId = latestFrozen.id;
+        if (lockedJudge?.payload) {
+          // Overwrite the loser's freshly-computed (non-persisted) values with
+          // the winner's persisted judge payload — visible_to_user / coarse_outcome
+          // / score may differ when the judge is nondeterministic.
+          const p = lockedJudge.payload as {
+            coarse_outcome?: string;
+            score?: number;
+            visible_to_user?: boolean;
+          };
+          persistedCoarseOutcome = p.coarse_outcome ?? coarseOutcome;
+          persistedScore = p.score !== undefined ? p.score : judgeResult.score;
+          persistedVisibleToUser = p.visible_to_user !== false;
+        }
         return; // exit the transaction callback
       }
 
@@ -432,8 +454,10 @@ export async function submitPaperSlot(
     attemptEventId,
     judgeEventId,
     answerId: frozenAnswerId,
-    visibleToUser,
-    coarseOutcome,
-    score: judgeResult.score ?? null,
+    // Round-4 fix #3: use persisted values (overwritten by locked duplicate path
+    // when the loser reached the transaction with a different judge result).
+    visibleToUser: persistedVisibleToUser,
+    coarseOutcome: persistedCoarseOutcome,
+    score: persistedScore ?? null,
   };
 }

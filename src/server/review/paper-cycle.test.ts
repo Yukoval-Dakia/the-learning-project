@@ -893,6 +893,70 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     ).rejects.toThrow(/already submitted in this session attempt|abandon and reopen/i);
   });
 
+  // ── round-4 fix #3 (P2): locked race loser returns persisted judge payload ─────
+  it('round-4 fix #3: locked duplicate path returns persisted judge payload (not loser computed)', async () => {
+    // Simulates the race scenario: a second submitPaperSlot call with identical
+    // content arrives after the first has already frozen the row and written the
+    // judge event. The transaction's FOR UPDATE locked path must reload the winner's
+    // judge event payload and return those values — not the loser's freshly-computed
+    // (non-persisted) coarseOutcome/score/visibleToUser.
+    //
+    // We set up the scenario by:
+    //   1. First submit (winner) — writes frozen row + judge event.
+    //   2. Overwrite the judge event payload with a known sentinel (coarse_outcome
+    //      changed to 'incorrect') via direct DB update — simulates a different
+    //      judge outcome that the loser would not have computed locally.
+    //   3. Second submit with identical content (loser path) — must return the
+    //      sentinel outcome from the DB, NOT the locally-computed 'correct'.
+    const db = testDb();
+    await seedQuestion('q1', 'true');
+    await seedPaper('paper1', ['q1']);
+    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
+
+    // First submit: correct answer → coarseOutcome='correct'.
+    const first = await submitPaperSlot(
+      {
+        sessionId,
+        paperArtifactId: 'paper1',
+        questionId: 'q1',
+        answerMd: 'true',
+        primaryKnowledgeId: 'k1',
+        feedbackPolicy: 'immediate',
+      },
+      db,
+    );
+    expect(first.coarseOutcome).toBe('correct');
+
+    // Directly overwrite the persisted judge event payload to simulate a different
+    // (non-deterministic) outcome from the winner's judge. The loser would have
+    // computed 'correct' locally (same question/answer), but the persisted payload
+    // now says 'incorrect'. The locked duplicate path must return 'incorrect'.
+    await db.execute(
+      sql`UPDATE event SET payload = payload || '{"coarse_outcome":"incorrect","score":0}'::jsonb WHERE id = ${first.judgeEventId}`,
+    );
+
+    // Second submit with identical content — hits the locked duplicate path.
+    const second = await submitPaperSlot(
+      {
+        sessionId,
+        paperArtifactId: 'paper1',
+        questionId: 'q1',
+        answerMd: 'true',
+        primaryKnowledgeId: 'k1',
+        feedbackPolicy: 'immediate',
+      },
+      db,
+    );
+
+    // Same ids (idempotent).
+    expect(second.attemptEventId).toBe(first.attemptEventId);
+    expect(second.judgeEventId).toBe(first.judgeEventId);
+    expect(second.answerId).toBe(first.answerId);
+    // Return value must come from the persisted payload, not loser's computed value.
+    expect(second.coarseOutcome).toBe('incorrect'); // from persisted payload
+    expect(second.score).toBe(0); // from persisted payload
+  });
+
   // ── issue #4: autosave rejects misbound / wrong-state sessions ────────────────
   it('fix #4: autosaveAnswerDraft rejects a session bound to a different paper (400)', async () => {
     const db = testDb();

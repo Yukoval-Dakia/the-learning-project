@@ -193,18 +193,35 @@ export async function getPracticeList(db: Db): Promise<PracticeListResult> {
   //    slot key used by pos (step 3), so composite question parts are never
   //    collapsed (Option B fix — the event.payload has no part_ref field; the
   //    answer table's part_ref column is the canonical per-slot identifier).
-  //    Take the NEWEST frozen row per slot (MAX(submitted_at)), join to the
-  //    attempt event via answer.event_id, read the outcome from event.outcome.
-  //    §4.10 Q9: correct/partial → right, incorrect → wrong (the loom dist-bar
-  //    is a two-segment good/again split; partial counts as right deliberately —
-  //    a partial answer represents meaningful progress toward mastery).
+  //    Take the NEWEST frozen row per slot (MAX(submitted_at)).
+  //
+  //    Round-4 fix #2: use the newest JUDGE event's coarse_outcome instead of
+  //    the attempt event's outcome. A later rejudge supersedes the original verdict
+  //    by writing a new judge event (action='judge', subject_kind='event',
+  //    subject_id=attempt_event_id) — the detail view already uses newest-per-slot,
+  //    this keeps the list summary in sync. The correlated subquery fetches the
+  //    latest judge payload for the attempt; falls back to e.outcome (which maps
+  //    'success'→correct-equivalent bucket) when no judge event exists (historical
+  //    rows written before the paper judge path).
+  //    §4.10 Q9: correct/partial → right, anything else → wrong (deliberate —
+  //    partial counts as right, see comment in previous rounds).
   const rightWrongBySession = new Map<string, { right: number; wrong: number }>();
   if (sessionIds.length > 0) {
     const rwRows = await db.execute<{
       session_id: string;
-      outcome: string;
+      coarse_outcome: string | null;
+      attempt_outcome: string | null;
     }>(sql`
-      SELECT a.session_id, e.outcome
+      SELECT
+        a.session_id,
+        (SELECT j.payload->>'coarse_outcome'
+         FROM event j
+         WHERE j.action = 'judge'
+           AND j.subject_kind = 'event'
+           AND j.subject_id = a.event_id
+         ORDER BY j.created_at DESC
+         LIMIT 1) AS coarse_outcome,
+        e.outcome AS attempt_outcome
       FROM answer a
       JOIN event e ON e.id = a.event_id
       WHERE a.session_id IN (${sql.join(sessionIds, sql`, `)})
@@ -218,12 +235,24 @@ export async function getPracticeList(db: Db): Promise<PracticeListResult> {
             AND a2.submitted_at IS NOT NULL
         )
     `);
-    for (const r of rwRows as unknown as Array<{ session_id: string; outcome: string }>) {
+    for (const r of rwRows as unknown as Array<{
+      session_id: string;
+      coarse_outcome: string | null;
+      attempt_outcome: string | null;
+    }>) {
       if (!r.session_id) continue;
       const bucket = rightWrongBySession.get(r.session_id) ?? { right: 0, wrong: 0 };
-      if (r.outcome === 'failure') bucket.wrong += 1;
-      // partial counts as right (§4.10 Q9 deliberate — see comment above)
-      else bucket.right += 1;
+      // Prefer judge coarse_outcome; fall back to attempt outcome mapping.
+      // attempt 'success' → treated as 'correct'; 'partial' → right; else wrong.
+      const verdict =
+        r.coarse_outcome ??
+        (r.attempt_outcome === 'success' ? 'correct' : (r.attempt_outcome ?? 'incorrect'));
+      if (verdict === 'correct' || verdict === 'partial') {
+        // partial counts as right (§4.10 Q9 deliberate — meaningful progress)
+        bucket.right += 1;
+      } else {
+        bucket.wrong += 1;
+      }
       rightWrongBySession.set(r.session_id, bucket);
     }
   }
