@@ -4,16 +4,18 @@
 // Writes user message event, plans + writes agent reply, returns the agent.
 
 import { createId } from '@paralleldrive/cuid2';
-import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { db } from '@/db/client';
-import { learning_item, question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { TeachingError, planTeachingTurn } from '@/server/orchestrator/teaching';
 import { Conversation } from '@/server/session';
 import { getActiveQuestionState } from '@/server/teaching/active-question';
+// AF S4 / YUK-203 U6 (OQ7) — the ask_check INSERT is extracted to a shared
+// service fn so the Copilot teaching-skill reuses the SAME impl (R2: off the
+// tool surface). The legacy route calls it in-place; behavior is unchanged.
+import { materializeAskCheckQuestion } from '@/server/teaching/materialize-ask-check';
 
 export const runtime = 'nodejs';
 
@@ -97,41 +99,13 @@ export async function POST(
 
       await db.transaction(async (tx) => {
         if (turn.kind === 'ask_check' && turn.structured_question) {
-          const structured = turn.structured_question;
-          const qId = createId();
-          const liRows = await tx
-            .select({ knowledge_ids: learning_item.knowledge_ids })
-            .from(learning_item)
-            .where(eq(learning_item.id, learningItemId))
-            .limit(1);
-          const knowledgeIds = liRows[0]?.knowledge_ids ?? [];
-          const promptMd = structured.prompt_md ?? turn.text_md;
-          const choicesMd = structured.choices_md ?? null;
-          await tx.insert(question).values({
-            id: qId,
-            kind: structured.kind,
-            prompt_md: promptMd,
-            reference_md: structured.reference_md,
-            rubric_json: structured.rubric_json ?? null,
-            choices_md: choicesMd,
-            judge_kind_override: structured.judge_kind_override ?? null,
-            knowledge_ids: knowledgeIds,
-            difficulty: 2,
-            source: 'teaching_check',
-            source_ref: agentMsgId,
-            metadata: {
-              learning_item_id: learningItemId,
-              session_id: sessionId,
-            },
-            created_at: new Date(),
-            updated_at: new Date(),
+          inlineQuestion = await materializeAskCheckQuestion(tx, {
+            structured_question: turn.structured_question,
+            learningItemId,
+            sessionId,
+            sourceRef: agentMsgId,
+            fallbackPromptMd: turn.text_md,
           });
-          inlineQuestion = {
-            id: qId,
-            kind: structured.kind,
-            prompt_md: promptMd,
-            choices_md: choicesMd,
-          };
         }
 
         const payload: {

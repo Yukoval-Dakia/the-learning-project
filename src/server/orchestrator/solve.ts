@@ -127,7 +127,43 @@ async function defaultRunTaskFn(
   return { text: result.text };
 }
 
-function parseHintTurn(text: string): PlanSolveHintResult {
+// AF S4 / YUK-203 U6 (OQ6, Cross-统合 §4.3) — the pure, session-FREE seed body
+// extracted from planSolveHint (was solve.ts:189-206) so the Copilot solve-skill
+// reuses the SAME TeachingTurnTask input rather than the tutor-session-bound
+// entry. It takes a question face + reference + hintIndex — NOT a sessionId.
+//
+// Seeds the worked solution as material + a synthetic message asking for ONLY the
+// next step (escalating with hintIndex). The TeachingTurnTask prompt forbids
+// dumping the full solution + caps ≤300 字/轮, so the returned text_md is a
+// minimal hint, not the answer. NO prior-attempt summary, NO memory content
+// (R4/R6: the hint turn is not memory-bearing).
+export function buildSolveHintInput(
+  q: { prompt_md: string; reference_md: string | null },
+  hintIndex: number,
+): unknown {
+  return {
+    learning_item: {
+      title: '解题陪练',
+      one_line_intent: q.prompt_md,
+      knowledge_node: null,
+    },
+    parent_hub_summary: null,
+    atomic_sections: q.reference_md ? { worked_solution: q.reference_md } : null,
+    messages: [
+      {
+        role: 'user' as const,
+        text_md:
+          hintIndex === 0
+            ? '我卡住了，给我一个不剧透答案的最小提示，只点一步方向。'
+            : `还是不会，给下一个更具体的提示（第 ${hintIndex + 1} 个），仍然不要直接说出最终答案。`,
+      },
+    ],
+  };
+}
+
+// AF S4 / YUK-203 U6 — exported (was private) so the Copilot solve-skill parses
+// the TeachingTurnTask hint output with the SAME defensive parser (single contract).
+export function parseHintTurn(text: string): PlanSolveHintResult {
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
   if (start === -1 || end === -1 || end < start) {
@@ -182,29 +218,7 @@ export async function planSolveHint(params: PlanSolveHintParams): Promise<PlanSo
 
   const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids);
 
-  // Seed TeachingTurnTask with the worked solution as material + a synthetic
-  // message asking for ONLY the next step (escalating with hintIndex). The
-  // TeachingTurnTask prompt forbids dumping the full solution + caps ≤300 字/轮,
-  // so the returned text_md is a minimal hint, not the answer.
-  const input = {
-    learning_item: {
-      title: '解题陪练',
-      one_line_intent: q.prompt_md,
-      knowledge_node: null,
-    },
-    parent_hub_summary: null,
-    atomic_sections: q.reference_md ? { worked_solution: q.reference_md } : null,
-    messages: [
-      {
-        role: 'user' as const,
-        text_md:
-          hintIndex === 0
-            ? '我卡住了，给我一个不剧透答案的最小提示，只点一步方向。'
-            : `还是不会，给下一个更具体的提示（第 ${hintIndex + 1} 个），仍然不要直接说出最终答案。`,
-      },
-    ],
-  };
-
+  const input = buildSolveHintInput(q, hintIndex);
   const { text } = await runTaskFn('TeachingTurnTask', input, { db, subjectProfile });
   return parseHintTurn(text);
 }
