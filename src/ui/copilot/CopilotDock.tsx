@@ -27,8 +27,9 @@
 
 'use client';
 
+import type { CopilotSkillContextT } from '@/server/copilot/chat';
 import { ApiError, apiJson } from '@/ui/lib/api';
-import { useCopilotDwell } from '@/ui/lib/use-copilot-dwell';
+import { useCopilotDwell, useCopilotOpenSignal } from '@/ui/lib/use-copilot-dwell';
 import { Btn } from '@/ui/primitives/Btn';
 import { Button } from '@/ui/primitives/Button';
 import { CopilotDrawer } from '@/ui/primitives/CopilotDrawer';
@@ -56,6 +57,22 @@ interface CopilotSummary {
   dreaming_last_run_at: string | null;
 }
 
+// AF S4 / YUK-203 U6 — UI-side mirror of the server CopilotSkillTurn carrier
+// (src/server/copilot/chat.ts). Set only when a teaching/solve skill ran a
+// structured turn; absent for free-form chat (so the existing text-only render
+// path is untouched). The Dock reads `structured_question` + `suggested_next`
+// to render the inline question card + corrective chip.
+interface SkillTurn {
+  kind: 'explain' | 'ask_check' | 'end';
+  structured_question?: {
+    id: string;
+    kind: string;
+    prompt_md: string;
+    choices_md: string[] | null;
+  };
+  suggested_next?: 'continue' | 'end';
+}
+
 // POST /api/copilot/chat response shape — see src/server/copilot/chat.ts
 // (CopilotChatResult). `reply` is the complete final text (non-streaming).
 interface CopilotChatResponse {
@@ -66,6 +83,8 @@ interface CopilotChatResponse {
   session_id: string;
   reply_event_id: string;
   user_ask_event_id?: string;
+  // AF S4 / YUK-203 U6 — additive optional structured-turn carrier.
+  skill_turn?: SkillTurn;
 }
 
 // GET /api/copilot/turns response shape — see src/server/copilot/turns.ts.
@@ -77,6 +96,11 @@ interface ChatMessage {
   id: string;
   role: 'user' | 'ai';
   text: string;
+  // AF S4 / YUK-203 U6 — set on an AI message produced by a teaching/solve
+  // skill turn. `skill_turn` drives the structured-question card + chips;
+  // `session_id` is the Copilot session id the corrective accept-chip posts to.
+  skill_turn?: SkillTurn;
+  session_id?: string;
 }
 
 // Quick-chips are user-readable prompts; they send via triggered_by:'chat'
@@ -104,6 +128,10 @@ export function CopilotDock() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [input, setInput] = useState('');
+  // AF S4 / YUK-203 U6 — the active skill context (teaching/solve). When set, the
+  // next turn(s) route to the skill (single-session model, §4.2). Held in a ref
+  // so the composer's `send` reads the live value without re-creating `send`.
+  const activeSkillRef = useRef<CopilotSkillContextT | null>(null);
   // Holds the last user_message so the error-state "重试" button can resend it.
   const lastUserMessageRef = useRef<string | null>(null);
   // Synchronous single-flight guard: `sending` state lags a re-render behind,
@@ -163,12 +191,29 @@ export function CopilotDock() {
     setInput('');
     setMessages((prev) => [...prev, { id: nextId(), role: 'user', text }]);
     setSending(true);
+    // AF S4 / YUK-203 U6 — when a skill context is active, route this turn to the
+    // teaching/solve skill (additive optional body field; absent → unchanged
+    // free-form chat). The Copilot session id is unchanged (single-session, §4.2).
+    const skillContext = activeSkillRef.current;
     try {
       const res = await apiJson<CopilotChatResponse>('/api/copilot/chat', {
         method: 'POST',
-        body: JSON.stringify({ user_message: text, triggered_by: 'chat' }),
+        body: JSON.stringify({
+          user_message: text,
+          triggered_by: 'chat',
+          ...(skillContext ? { skill_context: skillContext } : {}),
+        }),
       });
-      setMessages((prev) => [...prev, { id: nextId(), role: 'ai', text: res.reply }]);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: nextId(),
+          role: 'ai',
+          text: res.reply,
+          skill_turn: res.skill_turn,
+          session_id: res.session_id,
+        },
+      ]);
     } catch (err) {
       const message =
         err instanceof ApiError
@@ -187,6 +232,47 @@ export function CopilotDock() {
     const last = lastUserMessageRef.current;
     if (last) void send(last);
   }, [send]);
+
+  // AF S4 / YUK-203 U6 — corrective accept-chip writer. A corrective chip click
+  // on an ask_check turn posts an AcceptSuggestionChip to the accept-chip
+  // endpoint with the COPILOT session id (single-session, §4.2) so it routes
+  // through the chip-accept KPI exclusion (§5.2). It is NOT a chat turn.
+  const [chipAcked, setChipAcked] = useState<string | null>(null);
+  const acceptCorrectiveChip = useCallback(async (sessionId: string, questionId: string) => {
+    try {
+      await apiJson<{ ok: boolean; event_id: string }>(
+        `/api/teaching-sessions/${sessionId}/accept-chip`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ suggestion_kind: 'corrective', chip_label: '重做 / 回看前置' }),
+        },
+      );
+      setChipAcked(questionId);
+      window.setTimeout(() => setChipAcked((cur) => (cur === questionId ? null : cur)), 4000);
+    } catch {
+      // The chip-accept is a pure KPI signal — a transient failure is silent
+      // (no chat turn to retry); the user can click again.
+    }
+  }, []);
+
+  // AF S4 / YUK-203 U6 — subscribe to the cross-tree open-with-context signal.
+  // A button in another subtree (learning-items 「对话教学」) publishes a
+  // skill_context; here we adopt it as the active skill, open the Dock, and (if
+  // a prefill is given) send the first turn through the skill. `seq` guards
+  // against re-processing the same request on re-render.
+  const openRequest = useCopilotOpenSignal((s) => s.request);
+  const clearRequest = useCopilotOpenSignal((s) => s.clearRequest);
+  const lastHandledSeqRef = useRef(0);
+  useEffect(() => {
+    if (!openRequest) return;
+    if (openRequest.seq === lastHandledSeqRef.current) return;
+    lastHandledSeqRef.current = openRequest.seq;
+    activeSkillRef.current = openRequest.skill_context;
+    openDrawer();
+    const prefill = openRequest.prefill;
+    clearRequest();
+    if (prefill) void send(prefill);
+  }, [openRequest, openDrawer, clearRequest, send]);
 
   const summary = summaryQ.data ? (
     // 4-slot order per Wave 5 ready-to-launch lock §Human decision points:
@@ -310,6 +396,48 @@ export function CopilotDock() {
                 <div className="msg-body">
                   <div className="msg-name">{m.role === 'ai' ? 'Loom Copilot' : '我'}</div>
                   <div className="msg-text">{m.text}</div>
+                  {/* AF S4 / YUK-203 U6 — teaching skill turn carrier. explain is
+                      already covered by msg-text above; ask_check renders the
+                      materialized question + a corrective accept-chip; end shows a
+                      close-out notice. Reuses the Dock chat tokens — no new visual
+                      system (§5.1). */}
+                  {m.skill_turn?.kind === 'ask_check' && m.skill_turn.structured_question ? (
+                    <div className="skill-turn-check" data-testid="copilot-skill-ask-check">
+                      <div className="skill-turn-q-prompt">
+                        {m.skill_turn.structured_question.prompt_md}
+                      </div>
+                      {m.skill_turn.structured_question.choices_md &&
+                      m.skill_turn.structured_question.choices_md.length > 0 ? (
+                        <ul className="skill-turn-q-choices">
+                          {m.skill_turn.structured_question.choices_md.map((choice, i) => (
+                            <li key={`${m.skill_turn?.structured_question?.id}-${i}`}>{choice}</li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      {m.session_id ? (
+                        <button
+                          type="button"
+                          className="chip is-corrective"
+                          data-testid="copilot-corrective-chip"
+                          onClick={() => {
+                            const sid = m.session_id;
+                            const qid = m.skill_turn?.structured_question?.id;
+                            if (sid && qid) void acceptCorrectiveChip(sid, qid);
+                          }}
+                        >
+                          重做 / 回看前置
+                        </button>
+                      ) : null}
+                      {chipAcked === m.skill_turn.structured_question.id ? (
+                        <output className="skill-turn-ack">已记录（不计入接受率）</output>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {m.skill_turn?.kind === 'end' ? (
+                    <div className="skill-turn-end" data-testid="copilot-skill-end">
+                      本轮教学已收尾。继续提问可开启下一轮。
+                    </div>
+                  ) : null}
                 </div>
               </div>
             ))}
