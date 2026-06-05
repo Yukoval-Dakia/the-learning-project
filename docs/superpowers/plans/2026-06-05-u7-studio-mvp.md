@@ -126,7 +126,7 @@ The Critic reviews a *draft profile* (overbroad taxonomy / missing capability / 
 
 ### 3.6 Q7 — version bump = author-filled, CLI suggests only (orchestrator-fixed)
 
-The CLI does **not** auto-bump. The `ProfileImpactReport` includes a `suggested_bump` hint line (e.g. "high-impact change → suggest minor/major bump"); the author hand-edits the `version` string. Consistent with Q4/Q5 (serializer omits version).
+The CLI does **not** auto-bump. The `ProfileImpactReport` includes a `suggested_bump` hint line (e.g. "high-impact change → suggest minor/major bump"); the author hand-edits the `version` string. Consistent with Q4/Q5 (serializer passes version through verbatim; the CLI only suggests a bump, never mutates it).
 
 ### 3.7 Q9 — low-risk cleanup = optional, marked (planner-adjudicated)
 
