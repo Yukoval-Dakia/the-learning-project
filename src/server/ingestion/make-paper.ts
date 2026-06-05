@@ -17,7 +17,8 @@ import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 
 import { ToolState, type ToolStateT } from '@/core/schema/business';
 import type { Db, Tx } from '@/db/client';
-import { artifact, question, source_document } from '@/db/schema';
+import { artifact, question, question_block, source_document } from '@/db/schema';
+import { ApiError } from '@/server/http/errors';
 
 /** Minimal question shape the builder needs (subset of the question row). */
 export interface IngestionPaperQuestion {
@@ -110,12 +111,23 @@ export interface CreateIngestionPaperResult {
 /**
  * Create (or return the existing) imported-paper artifact for a session.
  *
- * Idempotent on sessionId alone: an advisory lock keyed on the session + a
- * lookup for an existing `intent_source='ingestion_paper' AND source_ref=session`
- * artifact means a double-click returns the same paper instead of duplicating it
- * (mirrors write_review_plan's per-run lock). The key is sessionId-only because
- * the package range is fixed ("all imported questions" — outcome_filter was cut,
- * Cross-统合 F-7/F-9), so there is no same-session multi-paper fork.
+ * Idempotent on sessionId: an advisory lock keyed on the session + a lookup for
+ * an existing `intent_source='ingestion_paper' AND source_ref=session` artifact
+ * means a double-click returns the same paper instead of duplicating it (mirrors
+ * write_review_plan's per-run lock). The key is sessionId-only because the plan
+ * keeps a fixed "one session, one paper" range (Cross-统合 F-7), so there is no
+ * same-session multi-paper fork.
+ *
+ * F1 (PR #309 round-2, YUK-214) — that fixed range is the reason an explicit
+ * `questionIds` subset must NOT silently reuse a paper built from a different
+ * set. Pre-fix, a first call with `['q1']` then a second call with `['q2']`
+ * returned the SAME (stale, q1-only) artifact, dropping the caller's new subset
+ * on the floor. The chosen reconciliation (Cross-统合 F-7: one session = one
+ * paper, do not re-package) is to reject with 409 when the existing paper's
+ * question set differs from an EXPLICITLY-passed `questionIds` — the owner must
+ * delete/rebuild rather than have one session silently fork into two ranges.
+ * The default full-set path (no `questionIds`) stays purely idempotent: it never
+ * specifies a set, so it can never conflict with the existing paper.
  */
 export async function createIngestionPaper(
   db: Db,
@@ -130,7 +142,7 @@ export async function createIngestionPaper(
     );
 
     const [existing] = await tx
-      .select({ id: artifact.id })
+      .select({ id: artifact.id, tool_state: artifact.tool_state })
       .from(artifact)
       .where(
         and(
@@ -140,24 +152,60 @@ export async function createIngestionPaper(
       )
       .limit(1);
     if (existing) {
+      // F1 (PR #309 round-2) — an explicitly-passed questionIds set must match the
+      // existing paper's set; otherwise reuse would silently drop the caller's new
+      // subset. Compare as ORDERED sequences: the paper's slot order is meaningful
+      // (F2/F3), so a reorder of the same ids is still a different paper request.
+      // A bare idempotent call (no questionIds) carries no set to conflict with.
+      if (params.questionIds && params.questionIds.length > 0) {
+        const existingIds = (existing.tool_state as ToolStateT | null)?.question_ids ?? [];
+        const requested = params.questionIds;
+        const mismatch =
+          existingIds.length !== requested.length ||
+          existingIds.some((id, i) => id !== requested[i]);
+        if (mismatch) {
+          throw new ApiError(
+            'conflict',
+            `ingestion session ${params.sessionId} already has a paper (questions ${JSON.stringify(
+              existingIds,
+            )}); the requested question_ids ${JSON.stringify(
+              requested,
+            )} differ. One session maps to one paper — delete the existing paper to rebuild with a different set.`,
+            409,
+          );
+        }
+      }
       return { artifactId: existing.id, reused: true };
     }
 
     // Resolve the questions: explicit override, else reverse-query metadata.
     //
-    // F2 (PR #309 round-1, YUK-214) — paper question order must be deterministic.
-    // `inArray` / a bare WHERE returns rows in an UNSPECIFIED order (Postgres is
-    // free to return them in any sequence), which silently scrambled the paper's
-    // slot order vs the user's original paper.
+    // Paper question order must be deterministic AND reconstruct the user's
+    // original paper sequence. `inArray` / a bare WHERE returns rows in an
+    // UNSPECIFIED order (Postgres is free to return them in any sequence), which
+    // silently scrambled the paper's slot order vs the user's original paper.
     //   - explicit override: re-sort the fetched rows into params.questionIds
     //     order (the caller's requested sequence is the source of truth).
-    //   - fall-through reverse-query: ORDER BY created_at, id. Import writes the
-    //     whole batch with one shared `now` (route.ts:422), so created_at alone
-    //     is a constant within a session; `id` is the deterministic tiebreaker.
-    //     There is no persisted block-ordinal column on `question` (no
-    //     block_index / part_index for imported atoms), so (created_at, id) is
-    //     the strongest stable key available — it guarantees a REPEATABLE order
-    //     even though it cannot reconstruct the exact source block sequence.
+    //   - fall-through reverse-query: ORDER BY the SOURCE paper's block order.
+    //
+    // F3 (PR #309 round-2, YUK-214) — original-paper order key. Round-1 ordered
+    // by (question.created_at, question.id), but import writes the whole question
+    // batch with one shared `now` (import/route.ts:250 `const now = new Date()`),
+    // so question.created_at is constant within a session and `id` (cuid2) is
+    // UNORDERED — the result was deterministic-but-arbitrary, not the paper order.
+    //
+    // The stable original-paper order lives on `question_block`: every imported
+    // question persists `metadata.question_block_id` (import/route.ts:407,421),
+    // and the block list's canonical display order is
+    // `ORDER BY question_block.created_at` (the /blocks read path,
+    // app/api/ingestion/[id]/blocks/route.ts:65 — the single source of truth for
+    // "the user's paper order"). Unlike question rows, block `created_at` is set
+    // at EXTRACTION time (one block per extracted item, in reading order), so it
+    // is a genuine positional key. We join question → question_block on that id
+    // and order by (question_block.created_at, question_block.id) — the same key
+    // /blocks uses — so the paper's slot sequence equals the on-screen block
+    // order. The `id` tiebreaker covers virtual/merged cards minted at import
+    // time (which DO share `now`), keeping the order repeatable for those too.
     let questions: Array<{ id: string; knowledge_ids: string[] }>;
     if (params.questionIds && params.questionIds.length > 0) {
       const rows = await tx
@@ -176,11 +224,18 @@ export async function createIngestionPaper(
         .map((id) => byId.get(id))
         .filter((r): r is { id: string; knowledge_ids: string[] } => r !== undefined);
     } else {
+      // LEFT JOIN so a question whose metadata.question_block_id has no matching
+      // block row (manual/legacy import path) still appears; such rows sort last
+      // (NULL block created_at) with question.id as the final stable tiebreaker.
       questions = await tx
         .select({ id: question.id, knowledge_ids: question.knowledge_ids })
         .from(question)
+        .leftJoin(
+          question_block,
+          sql`${question.metadata}->>'question_block_id' = ${question_block.id}`,
+        )
         .where(sql`${question.metadata}->>'ingestion_session_id' = ${params.sessionId}`)
-        .orderBy(asc(question.created_at), asc(question.id));
+        .orderBy(asc(question_block.created_at), asc(question_block.id), asc(question.id));
     }
 
     if (questions.length === 0) {

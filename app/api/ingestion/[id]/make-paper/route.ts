@@ -31,9 +31,25 @@ export async function POST(
 ): Promise<Response> {
   try {
     const { id: sessionId } = await params;
-    const raw = await req.json().catch(() => null);
-    // Empty/absent body is valid (no override) — default to {}.
-    const parsed = MakePaperBody.safeParse(raw ?? {});
+    // F2 (PR #309 round-2, YUK-214) — distinguish a TRULY-EMPTY body (no override
+    // intended → default {}) from MALFORMED JSON (the caller meant to send
+    // question_ids but the bytes are corrupt). Round-1 collapsed every parse
+    // failure to `{}`, so a broken body silently built a default full-set paper
+    // instead of surfacing the error. Read the raw text first: an empty/whitespace
+    // body is the legitimate no-override case; a non-empty body that fails to
+    // JSON.parse is a client error → 400 invalid_json (no paper built).
+    const rawText = await req.text();
+    let raw: unknown;
+    if (rawText.trim().length === 0) {
+      raw = {};
+    } else {
+      try {
+        raw = JSON.parse(rawText);
+      } catch {
+        throw new ApiError('invalid_json', 'request body is not valid JSON', 400);
+      }
+    }
+    const parsed = MakePaperBody.safeParse(raw);
     if (!parsed.success) {
       throw new ApiError(
         'validation_error',
