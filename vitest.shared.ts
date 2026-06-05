@@ -88,6 +88,13 @@ export const fastTestInclude = [
   'src/server/ingestion/tencent_mark_parser.test.ts',
   'src/server/ingestion/vision.test.ts',
   'src/server/judge/**/*.test.ts',
+  // YUK-216 S2 slice 1 — pure (no-DB) verify-gate framework + solve-check unit.
+  // runSolveCheck takes an injected runTaskFn (mocks BOTH the SolutionGenerate
+  // solver and the SemanticJudge open-question compare), and `db` is a `{}` stub
+  // that the conservative semantic path only forwards — no live Postgres / AI. The
+  // transitive @/db/client import (via question-contract → runSemanticJudge) is
+  // type-only; same safe surface as the judges unit tests above.
+  'src/server/quiz/verify-framework.test.ts',
   // Pure (no-DB) set-algebra unit for hub mesh curation (YUK-95 P5 Lane-C). The
   // sibling DB handler test (boss/handlers/hub_auto_sync_nightly) stays in the
   // db partition because it hits live Postgres.
