@@ -240,11 +240,27 @@ function assertSafeId(id: string): void {
   }
 }
 
-function profilePathForId(id: string): string {
-  return resolve(process.cwd(), 'src', 'subjects', id, 'profile.ts');
+// Issues 2+3 (Codex 3361262852, CR 3361255163): outputRoot allows tests to
+// redirect all --write output to a sandbox tmpdir so no test ever touches the
+// real src/subjects tree. Production callers pass no outputRoot (defaults to
+// process.cwd(), i.e. the repo root). The parameter is intentionally NOT part
+// of the CompileProfileResult / public schema — it is a CLI-level concern only.
+function profilePathForId(id: string, outputRoot: string = process.cwd()): string {
+  return resolve(outputRoot, 'src', 'subjects', id, 'profile.ts');
 }
 
-export async function runCli(args: string[] = process.argv.slice(2)): Promise<number> {
+export interface RunCliOptions {
+  /**
+   * Root directory for --write output. Defaults to process.cwd() (repo root).
+   * Tests pass a tmpdir sandbox so the real src/subjects tree is never touched.
+   */
+  outputRoot?: string;
+}
+
+export async function runCli(
+  args: string[] = process.argv.slice(2),
+  { outputRoot = process.cwd() }: RunCliOptions = {},
+): Promise<number> {
   const asJson = args.includes('--json');
   const doWrite = args.includes('--write');
   const doCritic = args.includes('--critic');
@@ -269,6 +285,8 @@ export async function runCli(args: string[] = process.argv.slice(2)): Promise<nu
   type JsonOut = {
     report: typeof report;
     write_result?: { wrote: string };
+    /** Issue 4: present+true when --write succeeds but id is not in the default registry. */
+    unregistered_subject?: true;
     critic?: unknown;
   };
   const jsonOut: JsonOut = { report };
@@ -292,7 +310,7 @@ export async function runCli(args: string[] = process.argv.slice(2)): Promise<nu
       if (asJson) console.log(JSON.stringify(jsonOut, null, 2));
       return 1;
     }
-    const target = profilePathForId(profile.id);
+    const target = profilePathForId(profile.id, outputRoot);
     // Issue 3: create subject directory if it doesn't exist yet (new subject).
     // No explicit mode — mkdirSync respects the process umask (CLAUDE.md rule).
     mkdirSync(dirname(target), { recursive: true });
@@ -301,6 +319,24 @@ export async function runCli(args: string[] = process.argv.slice(2)): Promise<nu
       jsonOut.write_result = { wrote: target };
     } else {
       log(`wrote ${target}`);
+    }
+
+    // Issue 4 (Codex 3361262860): if the written id is not in the default
+    // registry the profile.ts file exists on disk but no runtime code imports
+    // it. Emit an actionable warning so the author knows what to do next.
+    // Design note: onboarding a new subject still requires manual registration
+    // in src/subjects/profile.ts (SubjectRegistry constructor); the DB-backed
+    // auto-discovery is DEFERRED beyond U7 MVP scope.
+    const registry = getDefaultSubjectRegistry();
+    if (!registry.listIds().includes(profile.id)) {
+      const warningMsg = `compile-profile --write: profile.ts written for subject "${profile.id}" but it is NOT registered in the default SubjectRegistry. To make it visible to audit:profile, /admin/subjects, and runtime routing, register it in src/subjects/profile.ts (SubjectRegistry constructor). (DB-backed auto-discovery is DEFERRED beyond U7 MVP.)`;
+      // In --json mode the warning travels as a structured field so callers can
+      // programmatically detect and act on it without screen-scraping.
+      if (asJson) {
+        jsonOut.unregistered_subject = true;
+      } else {
+        console.error(`warn: ${warningMsg}`);
+      }
     }
   }
 
