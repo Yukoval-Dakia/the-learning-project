@@ -4,7 +4,8 @@
 // paper-session start, draft autosave, and per-slot submit (attempt + judge +
 // FSRS + freeze). Uses the deterministic exact judge (true_false vs reference).
 
-import { artifact, knowledge, question } from '@/db/schema';
+import { newId } from '@/core/ids';
+import { artifact, event, knowledge, question } from '@/db/schema';
 import { sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -319,6 +320,56 @@ describe('GET /api/practice', () => {
       { params: Promise.resolve({ id: 'p1' }) },
     );
     expect(subRes.status).toBe(400);
+  });
+
+  it('fix #2 (round-4): rejudge event supersedes original verdict in practice list right/wrong', async () => {
+    await seedQuestion('q1', 'true');
+    await seedPaper('p1', 'review_plan', ['q1']);
+
+    // Start session and submit (correct answer → right=1).
+    const startRes = await POST(jsonReq('http://localhost/api/practice', { artifact_id: 'p1' }));
+    const { session_id } = (await startRes.json()) as { session_id: string };
+
+    const subRes = await submitPost(
+      jsonReq('http://localhost/api/practice/p1/submit', {
+        session_id,
+        question_id: 'q1',
+        answer_md: 'true',
+      }),
+      { params: Promise.resolve({ id: 'p1' }) },
+    );
+    const sub = (await subRes.json()) as { attempt_event_id: string };
+
+    // Sanity: list shows right=1 before rejudge.
+    const beforeList = (await (await GET()).json()) as {
+      papers: Array<{ artifact_id: string; session: { right: number; wrong: number } | null }>;
+    };
+    expect(beforeList.papers.find((p) => p.artifact_id === 'p1')?.session?.right).toBe(1);
+
+    // Insert a superseding judge event with coarse_outcome='incorrect' to simulate
+    // the rejudge (D6: rejudge = new event, never rewrites old; read layer takes newest).
+    const db = testDb();
+    await db.insert(event).values({
+      id: newId(),
+      session_id,
+      actor_kind: 'agent',
+      actor_ref: 'rejudge',
+      action: 'judge',
+      subject_kind: 'event',
+      subject_id: sub.attempt_event_id,
+      outcome: 'success',
+      payload: { coarse_outcome: 'incorrect', referenced_knowledge_ids: [] },
+      caused_by_event_id: sub.attempt_event_id,
+      created_at: new Date(),
+    });
+
+    // After rejudge: list must reflect the newest judge event → wrong=1, right=0.
+    const afterList = (await (await GET()).json()) as {
+      papers: Array<{ artifact_id: string; session: { right: number; wrong: number } | null }>;
+    };
+    const p = afterList.papers.find((p) => p.artifact_id === 'p1');
+    expect(p?.session?.right).toBe(0);
+    expect(p?.session?.wrong).toBe(1);
   });
 
   it('fix #2 (round-2): flat quiz (no sections) can be submitted via route', async () => {
