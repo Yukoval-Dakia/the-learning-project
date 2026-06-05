@@ -1045,4 +1045,56 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
       }),
     ).rejects.toThrow(/not bound to paper/i);
   });
+
+  // ── YUK-215: handwriting-photo refs reach the judge ───────────────────────────
+  it('YUK-215: submitPaperSlot passes answerImageRefs to the judge as student_image_refs', async () => {
+    const db = testDb();
+    await seedQuestion('q1', 'true');
+    await seedPaper('paper1', ['q1']);
+    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
+
+    // Wrap the REAL invoker so submit still completes (FSRS / events write), but
+    // capture the input the judge received.
+    const realFactory = invokerModule.createDefaultJudgeInvoker;
+    const captured: Array<{ student_image_refs?: string[] }> = [];
+    vi.spyOn(invokerModule, 'createDefaultJudgeInvoker').mockImplementation((deps) => {
+      const real = realFactory(deps);
+      return {
+        invoke: (input: Parameters<typeof real.invoke>[0]) => {
+          captured.push(input as { student_image_refs?: string[] });
+          return real.invoke(input);
+        },
+      } as never;
+    });
+
+    try {
+      const res = await submitPaperSlot(
+        {
+          sessionId,
+          paperArtifactId: 'paper1',
+          questionId: 'q1',
+          answerMd: 'true',
+          answerImageRefs: ['asset_photo_1', 'asset_photo_2'],
+          primaryKnowledgeId: 'k1',
+          feedbackPolicy: 'immediate',
+        },
+        db,
+      );
+      expect(res.coarseOutcome).toBe('correct');
+      expect(captured).toHaveLength(1);
+      expect(captured[0].student_image_refs).toEqual(['asset_photo_1', 'asset_photo_2']);
+
+      // The refs are also frozen into the attempt event payload (evidence trail).
+      const attempt = await db
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'attempt'), eq(event.subject_id, 'q1')));
+      expect((attempt[0].payload as { answer_image_refs?: string[] }).answer_image_refs).toEqual([
+        'asset_photo_1',
+        'asset_photo_2',
+      ]);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
 });

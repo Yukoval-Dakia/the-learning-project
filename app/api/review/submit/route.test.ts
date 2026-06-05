@@ -12,6 +12,9 @@
 
 import { event, material_fsrs_state, question } from '@/db/schema';
 import { runTask } from '@/server/ai/runner';
+// YUK-215 — spy on the judge invoker to assert handwriting-photo refs are
+// threaded through (student_image_refs).
+import * as invokerModule from '@/server/judge/invoker';
 import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject-profile';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { and, eq } from 'drizzle-orm';
@@ -1173,6 +1176,75 @@ describe('POST /api/review/submit', () => {
       expect(payload.judge_advice?.reason).toMatch(/careless|carelessness/i);
       // CC-1 / advisor invariant: user's body.rating still wins.
       expect(payload.fsrs_rating).toBe('hard');
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // YUK-215 — handwriting-photo refs reach the judge + are frozen on the event
+  // ──────────────────────────────────────────────────────────────────────────
+  describe('YUK-215 handwriting-photo pass-through', () => {
+    it('passes answer_image_refs to the judge as student_image_refs + freezes them on the review event', async () => {
+      await seedQuestion('q_215', {
+        kind: 'fill_blank',
+        reference_md: '答案',
+        knowledge_ids: [],
+      });
+
+      // Wrap the real invoker so the judge still runs (real exact match) while we
+      // capture the input it received.
+      const realFactory = invokerModule.createDefaultJudgeInvoker;
+      const captured: Array<{ student_image_refs?: string[] }> = [];
+      vi.spyOn(invokerModule, 'createDefaultJudgeInvoker').mockImplementation((deps) => {
+        const real = realFactory(deps);
+        return {
+          invoke: (input: Parameters<typeof real.invoke>[0]) => {
+            captured.push(input as { student_image_refs?: string[] });
+            return real.invoke(input);
+          },
+        } as never;
+      });
+
+      try {
+        const res = await POST(
+          submitReq({
+            activity_ref: { kind: 'question', id: 'q_215' },
+            rating: 'good',
+            response_md: '答案',
+            answer_image_refs: ['asset_hw_1', 'asset_hw_2'],
+          }),
+        );
+        expect(res.status).toBe(200);
+
+        // (1) the judge received the photo refs
+        expect(captured).toHaveLength(1);
+        expect(captured[0].student_image_refs).toEqual(['asset_hw_1', 'asset_hw_2']);
+
+        // (2) the refs are frozen onto the review event payload (evidence trail)
+        const events = await testDb()
+          .select()
+          .from(event)
+          .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_215')));
+        expect(events).toHaveLength(1);
+        expect((events[0].payload as { answer_image_refs?: string[] }).answer_image_refs).toEqual([
+          'asset_hw_1',
+          'asset_hw_2',
+        ]);
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+
+    it('defaults answer_image_refs to [] for old callers (no regression)', async () => {
+      await seedQuestion('q_215_default');
+      const res = await POST(
+        submitReq({ activity_ref: { kind: 'question', id: 'q_215_default' }, rating: 'good' }),
+      );
+      expect(res.status).toBe(200);
+      const events = await testDb()
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_215_default')));
+      expect((events[0].payload as { answer_image_refs?: string[] }).answer_image_refs).toEqual([]);
     });
   });
 });

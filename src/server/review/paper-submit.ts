@@ -195,6 +195,13 @@ export async function submitPaperSlot(
     db,
     question: q,
     answer_md: input.answerMd,
+    // YUK-215 — pass the learner's handwriting-photo refs to the judge so a
+    // photographed answer is judged on what was actually written (not just the
+    // typed text). `input.answerImageRefs` is already frozen into the attempt
+    // event payload (:425) + supplied by the practice submit route; the invoker
+    // input schema already accepts `student_image_refs` (invoker.ts:46) — this
+    // was the one missing wire. Optional → no-image submits are unchanged.
+    student_image_refs: input.answerImageRefs,
     subjectProfile,
   });
   const judgeResult = invoked.result;
