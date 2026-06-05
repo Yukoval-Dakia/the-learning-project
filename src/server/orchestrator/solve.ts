@@ -19,6 +19,7 @@ import {
 import { writeEvent } from '@/server/events/queries';
 import { type JudgeInvokerOutput, createDefaultJudgeInvoker } from '@/server/judge/invoker';
 import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject-profile';
+import { sanitizeJsonStringLiterals } from '@/server/orchestrator/json-sanitize';
 import { createLearningRecord } from '@/server/records/queries';
 import { Tutor } from '@/server/session';
 
@@ -170,13 +171,24 @@ export function parseHintTurn(text: string): PlanSolveHintResult {
     throw new SolveError('llm_parse_failed', 'hint turn output had no JSON object');
   }
   let raw: unknown;
+  const slice = text.slice(start, end + 1);
   try {
-    raw = JSON.parse(text.slice(start, end + 1));
-  } catch (e) {
-    throw new SolveError(
-      'llm_parse_failed',
-      `hint turn JSON.parse failed: ${(e as Error).message}`,
-    );
+    raw = JSON.parse(slice);
+  } catch (firstErr) {
+    // Fallback: LLM may embed bare control characters inside string literals.
+    // Sanitize and retry once before giving up.
+    try {
+      const sanitized = sanitizeJsonStringLiterals(slice);
+      console.warn(
+        `[parseHintTurn] JSON.parse failed (${(firstErr as Error).message}); retrying after control-char sanitization`,
+      );
+      raw = JSON.parse(sanitized);
+    } catch {
+      throw new SolveError(
+        'llm_parse_failed',
+        `hint turn JSON.parse failed: ${(firstErr as Error).message}`,
+      );
+    }
   }
   const parsed = HintTurn.safeParse(raw);
   if (!parsed.success) {
