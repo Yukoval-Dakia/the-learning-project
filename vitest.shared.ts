@@ -129,6 +129,10 @@ export const fastTestInclude = [
   'src/subjects/math/fixtures/derivation-with-images.test.ts',
   'src/subjects/physics/fixtures/schema.test.ts',
   'src/subjects/wenyan/fixtures/index.test.ts',
+  // U7 (YUK-203) — pure (no-DB) profile→TS-literal serializer round-trip. Imports
+  // only the three profile.ts fixtures + ./serialize (no @/db / pg-boss / drizzle);
+  // writes/imports a temp .ts under src/subjects/ then rm's it. → unit partition.
+  'src/subjects/serialize.test.ts',
   'src/ui/**/*.test.ts',
   'src/ui/**/*.test.tsx',
   'app/api/ai/*/route.test.ts',
