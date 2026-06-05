@@ -426,6 +426,9 @@ export async function runCopilotChat(
                     },
                   }
                 : {}),
+            // PR round-2 (CR 3360614441): persist skill_context so replay can
+            // restore the skill card (Dock chip renderer + replayToMessages use it).
+            skill_context: req.skill_context,
           },
           caused_by_event_id: causedByEventId ?? null,
           task_run_id: realTaskRunId,
@@ -469,6 +472,9 @@ export async function runCopilotChat(
           // PR #305 review comment #3: real task_run_id from TeachingTurnTask.
           task_run_id: realTaskRunId,
           in_reply_to_event_id: causedByEventId ?? null,
+          // PR round-2 (CR 3360614441): persist skill_context so replay can
+          // restore the skill card (Dock chip renderer + replayToMessages use it).
+          skill_context: req.skill_context,
         },
         caused_by_event_id: causedByEventId ?? null,
         task_run_id: realTaskRunId,

@@ -728,6 +728,7 @@ describe('runCopilotChat — skill routing (U6)', () => {
         reply_md?: string;
         task_run_id?: string;
         skill_turn?: unknown;
+        skill_context?: unknown;
       };
     };
     expect(replyCall?.action).toBe('experimental:copilot_reply');
@@ -743,6 +744,11 @@ describe('runCopilotChat — skill routing (U6)', () => {
     expect(replyPayload?.skill_turn).toMatchObject({
       kind: 'ask_check',
       suggested_next: 'continue',
+    });
+    // PR round-2 (CR 3360614441): skill_context persisted in payload for replay.
+    expect(replyPayload?.skill_context).toMatchObject({
+      skill: 'teaching',
+      ref: { kind: 'learning_item', id: 'li_unit' },
     });
     // The reply event was written inside the transaction (db.transaction called once).
     expect((db as { transaction: ReturnType<typeof vi.fn> }).transaction).toHaveBeenCalledTimes(1);
