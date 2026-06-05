@@ -112,6 +112,41 @@ async function writeReply(
   return id;
 }
 
+// PR #305 review comment #2 — seed a copilot_reply that carries a skill_turn in
+// the payload (simulates what runCopilotChat writes for a teaching ask_check turn).
+async function writeReplyWithSkillTurn(
+  text: string,
+  sessionId: string,
+  inReplyTo: string,
+  at: Date,
+  skillTurn: object,
+): Promise<string> {
+  const id = `copilot_reply_${createId()}`;
+  writtenEventIds.push(id);
+  await writeEvent(db, {
+    id,
+    session_id: sessionId,
+    actor_kind: 'agent',
+    actor_ref: 'agent:copilot',
+    action: 'experimental:copilot_reply',
+    subject_kind: 'query',
+    subject_id: id,
+    outcome: null,
+    payload: {
+      surface: 'copilot',
+      session_id: sessionId,
+      reply_md: text,
+      task_run_id: 'task_y',
+      in_reply_to_event_id: inReplyTo,
+      skill_turn: skillTurn,
+    },
+    caused_by_event_id: inReplyTo,
+    task_run_id: 'task_y',
+    created_at: at,
+  });
+  return id;
+}
+
 describe('getRecentCopilotTurns', () => {
   it('returns ask+reply pairs oldest→newest with role/text/at/event_id', async () => {
     // Seed a real live Copilot session so the reader can resolve it; events are
@@ -200,6 +235,69 @@ describe('getRecentCopilotTurns', () => {
     expect(turns.some((t) => t.event_id === staleAsk)).toBe(false);
     expect(turns.some((t) => t.event_id === liveAsk)).toBe(true);
     expect(turns.some((t) => t.event_id === liveReply)).toBe(true);
+  });
+
+  // PR #305 review comment #2 — ask_check skill_turn is persisted in the reply
+  // payload so replay can surface the question card without re-running the LLM.
+  it('replay surfaces skill_turn on AI turns that carried a teaching ask_check', async () => {
+    const now = new Date();
+    const sessionId = await createLiveCopilotSession(now);
+    const t0 = new Date('2026-06-05T10:00:00.000Z');
+    const t1 = new Date('2026-06-05T10:00:05.000Z');
+    const askId = await writeAsk('帮我讲讲这个', sessionId, t0);
+    const skillTurnPayload = {
+      kind: 'ask_check',
+      suggested_next: 'continue',
+      structured_question: {
+        id: 'q_replay_test',
+        kind: 'short_answer',
+        prompt_md: '请解释「之」的用法。',
+        choices_md: null,
+      },
+    };
+    const replyId = await writeReplyWithSkillTurn(
+      '这里的「之」是代词。请作答。',
+      sessionId,
+      askId,
+      t1,
+      skillTurnPayload,
+    );
+
+    const turns = await getRecentCopilotTurns(db, { now });
+    const ours = turns.filter((t) => t.event_id === askId || t.event_id === replyId);
+    expect(ours).toHaveLength(2);
+    const aiTurn = ours.find((t) => t.role === 'ai');
+    expect(aiTurn?.skill_turn).toEqual({
+      kind: 'ask_check',
+      suggested_next: 'continue',
+      structured_question: {
+        id: 'q_replay_test',
+        kind: 'short_answer',
+        prompt_md: '请解释「之」的用法。',
+        choices_md: null,
+      },
+    });
+    // User turns never carry skill_turn.
+    const userTurn = ours.find((t) => t.role === 'user');
+    expect(userTurn?.skill_turn).toBeUndefined();
+  });
+
+  // Replies without skill_turn in payload have undefined skill_turn in the turn.
+  it('replay omits skill_turn for plain (non-skill) AI replies', async () => {
+    const now = new Date();
+    const sessionId = await createLiveCopilotSession(now);
+    const t0 = new Date('2026-06-05T11:00:00.000Z');
+    const askId = await writeAsk('随便问问', sessionId, t0);
+    const replyId = await writeReply(
+      '好的，随便聊。',
+      sessionId,
+      askId,
+      new Date(t0.getTime() + 1000),
+    );
+
+    const turns = await getRecentCopilotTurns(db, { now });
+    const aiTurn = turns.find((t) => t.event_id === replyId);
+    expect(aiTurn?.skill_turn).toBeUndefined();
   });
 });
 
