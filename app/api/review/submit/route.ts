@@ -32,6 +32,7 @@ import { FsrsRating } from '@/core/schema/business';
 import { JudgeResultV2, type JudgeResultV2T } from '@/core/schema/capability';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
+import { resolveQuestionJudgeRoute } from '@/server/ai/judges/question-contract';
 import { enqueueMasteryNoteRefine } from '@/server/artifacts/note-refine-triggers';
 import { writeEvent } from '@/server/events/queries';
 import { type FsrsSubjectKind, getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
@@ -87,6 +88,16 @@ const SubmitBody = z.object({
 
 type Rating = z.infer<typeof FsrsRating>;
 
+// F4 (PR #309 round-2, YUK-215) — the ONLY judge routes that consume
+// `student_image_refs` (handwriting-photo answers). Verified against the invoker
+// dispatch (src/server/judge/invoker.ts:148-169): `steps` and `multimodal_direct`
+// thread `input.student_image_refs` into their runners; every other route
+// (`exact`/`keyword`/`semantic`/`unit_dimension`) reads ONLY `answer.content`
+// (text). So a photo-only answer (empty text + image refs) routed to a text-only
+// judge would be scored against the empty string — a false "wrong" that pollutes
+// FSRS. Keep this set in sync with the invoker if a new image-aware route lands.
+const IMAGE_CONSUMING_JUDGE_ROUTES = new Set(['steps', 'multimodal_direct']);
+
 export async function POST(req: Request): Promise<Response> {
   try {
     const raw = await req.json().catch(() => null);
@@ -129,6 +140,11 @@ export async function POST(req: Request): Promise<Response> {
     // photographed answer was frozen into the event yet never judged.
     const hasImageAnswer = body.answer_image_refs.length > 0;
     const hasAnswer = answerMd.length > 0 || hasImageAnswer;
+    // F4 (PR #309 round-2) — a PHOTO-ONLY answer is judgeable ONLY by an
+    // image-consuming route. When the resolved route reads text alone, the empty
+    // `answerMd` would be scored as a wrong answer and pollute FSRS, so we route
+    // such a submit to the no-judge path (recorded but not auto-rated).
+    const photoOnly = answerMd.length === 0 && hasImageAnswer;
     const suppliedJudgeResult = hasAnswer ? (body.judge_result_v2 ?? null) : null;
     let judgeResult: JudgeResultV2T | null = suppliedJudgeResult;
     let judgeRoute: string | null = suppliedJudgeResult?.capability_ref.id ?? null;
@@ -137,19 +153,32 @@ export async function POST(req: Request): Promise<Response> {
       | null = null;
     if (hasAnswer && judgeResult === null) {
       const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids);
-      const invoked = await createDefaultJudgeInvoker().invoke({
-        db,
-        question: q,
-        answer_md: answerMd,
-        // YUK-215 — pass handwriting-photo refs to the judge (invoker accepts
-        // student_image_refs; invoker.ts:46). Optional → no-image submits and
-        // client-supplied-judge submits are byte-for-byte unchanged.
-        student_image_refs: body.answer_image_refs,
-        subjectProfile,
-      });
-      judgeResult = invoked.result;
-      judgeRoute = invoked.route;
-      judgeTelemetry = invoked.telemetry;
+      // Resolve the route the invoker WOULD dispatch (same resolver, invoker.ts:95)
+      // so a photo-only answer headed for a text-only judge skips judging instead
+      // of being scored against an empty string (F4). Text answers and photo
+      // answers headed for steps/multimodal_direct are unaffected.
+      const resolvedRoute = resolveQuestionJudgeRoute(q, subjectProfile);
+      const routeConsumesImages = IMAGE_CONSUMING_JUDGE_ROUTES.has(resolvedRoute);
+      if (photoOnly && !routeConsumesImages) {
+        // Leave judgeResult null → the auto_rate gate below 422s with a message
+        // that names the unsupported route; non-auto_rate records the attempt
+        // unjudged (no FSRS pollution). Surface the route for that 422 message.
+        judgeRoute = resolvedRoute;
+      } else {
+        const invoked = await createDefaultJudgeInvoker().invoke({
+          db,
+          question: q,
+          answer_md: answerMd,
+          // YUK-215 — pass handwriting-photo refs to the judge (invoker accepts
+          // student_image_refs; invoker.ts:46). Optional → no-image submits and
+          // client-supplied-judge submits are byte-for-byte unchanged.
+          student_image_refs: body.answer_image_refs,
+          subjectProfile,
+        });
+        judgeResult = invoked.result;
+        judgeRoute = invoked.route;
+        judgeTelemetry = invoked.telemetry;
+      }
     }
 
     // YUK-100 (W-05) + YUK-101 (iter2 F8 / F13) — Resolve effective cause via
@@ -173,17 +202,24 @@ export async function POST(req: Request): Promise<Response> {
     let finalRating: Rating = body.rating;
     if (body.auto_rate) {
       if (suggestedRating === null) {
-        // Either no answer submitted (neither text NOR image), or the judge ran
-        // but returned 'unsupported'. F1: a photo-only answer DOES satisfy the
-        // "has answer" precondition (the judge runs on the image), so the
-        // "non-empty" message only fires when there is no answer at all.
-        throw new ApiError(
-          'unsupported_judge_route',
-          !hasAnswer
-            ? 'auto_rate requires an answer: response_md or answer_image_refs must be non-empty'
-            : `judge route '${judgeRoute}' returned coarse_outcome='unsupported'; please rate manually`,
-          422,
-        );
+        // No suggested rating in auto_rate mode has three causes:
+        //   1. No answer at all (neither text NOR image) — name both inputs.
+        //   2. F4 (round-2): a photo-only answer routed to a text-only judge
+        //      (judgeResult left null deliberately, NOT 'unsupported') — this
+        //      question type cannot grade a pure-image answer, so ask for typed
+        //      text (or manual rating). We must NOT score the empty text wrong.
+        //   3. The judge ran but returned coarse_outcome='unsupported'.
+        const photoOnlyUnsupported = photoOnly && judgeResult === null;
+        let message: string;
+        if (!hasAnswer) {
+          message =
+            'auto_rate requires an answer: response_md or answer_image_refs must be non-empty';
+        } else if (photoOnlyUnsupported) {
+          message = `judge route '${judgeRoute}' does not support photo-only answers; type your answer or rate manually`;
+        } else {
+          message = `judge route '${judgeRoute}' returned coarse_outcome='unsupported'; please rate manually`;
+        }
+        throw new ApiError('unsupported_judge_route', message, 422);
       }
       finalRating = suggestedRating;
     }

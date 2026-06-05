@@ -1248,14 +1248,21 @@ describe('POST /api/review/submit', () => {
     });
 
     // F1 (PR #309 round-1) — a photo-only answer (no typed response_md, only
-    // answer_image_refs) is a real answer and MUST be judged. Pre-fix the judge
-    // gate keyed on `response_md` non-empty alone, so a photographed answer was
-    // frozen into the event yet never judged (and auto_rate 422'd asking for
-    // response_md).
-    it('photo-only answer (no response_md) still invokes the judge with the image refs', async () => {
+    // answer_image_refs) is a real answer and MUST be judged WHEN it is routed to
+    // a judge that actually consumes the image (steps / multimodal_direct).
+    //
+    // F4 (PR #309 round-2) narrows this: an image-only answer is only judgeable by
+    // an image-consuming route. Here we force `multimodal_direct` (an image route)
+    // via `judge_kind_override` so the invoker is still called on the photo-only
+    // answer. The runner's R2 image fetch fails in-test (no asset) → it returns a
+    // graceful `unsupported` result rather than throwing — but the point of THIS
+    // test is that F4 did NOT skip the judge: the invoker WAS invoked with the
+    // image refs. (The text-only-route skip is covered by the F4 tests below.)
+    it('photo-only answer routed to an image-consuming judge (multimodal_direct) still invokes the judge', async () => {
       await seedQuestion('q_215_photo_only', {
-        kind: 'fill_blank',
+        kind: 'short_answer',
         reference_md: '答案',
+        judge_kind_override: 'multimodal_direct',
         knowledge_ids: [],
       });
 
@@ -1282,14 +1289,11 @@ describe('POST /api/review/submit', () => {
         );
         expect(res.status).toBe(200);
 
-        // The judge ran on the photo-only answer (empty text + image refs).
+        // F4: the judge ran on the photo-only answer because the route consumes
+        // images (multimodal_direct) — it was NOT skipped.
         expect(captured).toHaveLength(1);
         expect(captured[0].answer_md).toBe('');
         expect(captured[0].student_image_refs).toEqual(['asset_photo_only_1']);
-
-        // A non-null judge result is returned to the client (judge actually ran).
-        const body = (await res.json()) as { judge: unknown };
-        expect(body.judge).not.toBeNull();
 
         // The image refs are frozen on the review event as the evidence trail.
         const events = await testDb()
@@ -1305,35 +1309,120 @@ describe('POST /api/review/submit', () => {
       }
     });
 
-    // F1 — auto_rate with a photo-only answer must NOT 422 with "requires
-    // response_md". The judge runs on the image; only a TRULY empty submit
-    // (no text AND no image) still 422s.
-    it('auto_rate with photo-only answer is judged (does not 422 for missing response_md)', async () => {
-      await seedQuestion('q_215_photo_autorate', {
+    // F4 (PR #309 round-2) — a photo-only answer routed to a TEXT-ONLY judge
+    // (exact for a fill_blank) must NOT be judged: the judge reads only the
+    // (empty) text and would score it wrong, polluting FSRS. In auto_rate mode
+    // this is a 422 (the question type can't grade a pure image), and NO review
+    // event / FSRS row is written.
+    it('photo-only + text-only route (exact) + auto_rate → 422, judge not invoked, no FSRS write', async () => {
+      await seedQuestion('q_215_photo_exact_auto', {
         kind: 'fill_blank',
         reference_md: '答案',
-        knowledge_ids: [],
+        knowledge_ids: ['k_215_photo'],
       });
 
-      const res = await POST(
-        submitReq({
-          activity_ref: { kind: 'question', id: 'q_215_photo_autorate' },
-          rating: 'hard',
-          auto_rate: true,
-          // No response_md; photo is the only answer.
-          answer_image_refs: ['asset_photo_ar_1'],
-        }),
-      );
-      // The exact judge marks the (empty-text) answer incorrect → suggested
-      // rating 'again' (a valid auto-rate outcome, not 'unsupported'), so the
-      // request succeeds rather than 422'ing for a missing response_md.
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as {
-        review_event: { rating: string };
-        judge: { coarse_outcome: string } | null;
-      };
-      expect(body.judge).not.toBeNull();
-      expect(body.review_event.rating).toBe('again');
+      const realFactory = invokerModule.createDefaultJudgeInvoker;
+      const captured: unknown[] = [];
+      vi.spyOn(invokerModule, 'createDefaultJudgeInvoker').mockImplementation((deps) => {
+        const real = realFactory(deps);
+        return {
+          invoke: (input: Parameters<typeof real.invoke>[0]) => {
+            captured.push(input);
+            return real.invoke(input);
+          },
+        } as never;
+      });
+
+      try {
+        const res = await POST(
+          submitReq({
+            activity_ref: { kind: 'question', id: 'q_215_photo_exact_auto' },
+            rating: 'good',
+            auto_rate: true,
+            // photo is the only answer; exact judge would read empty text.
+            answer_image_refs: ['asset_photo_exact_1'],
+          }),
+        );
+        expect(res.status).toBe(422);
+        const body = (await res.json()) as { error: string; message: string };
+        expect(body.error).toBe('unsupported_judge_route');
+        expect(body.message).toContain('photo-only');
+
+        // F4: the judge was NOT invoked (route is text-only) — so no wrong-text
+        // scoring happened.
+        expect(captured).toHaveLength(0);
+
+        // No review event written (txn never opened) and no FSRS pollution.
+        const events = await testDb()
+          .select()
+          .from(event)
+          .where(eq(event.subject_id, 'q_215_photo_exact_auto'));
+        expect(events).toHaveLength(0);
+        const fsrs = await testDb()
+          .select()
+          .from(material_fsrs_state)
+          .where(eq(material_fsrs_state.subject_id, 'k_215_photo'));
+        expect(fsrs).toHaveLength(0);
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+
+    // F4 — the same photo-only + text-only route WITHOUT auto_rate records the
+    // attempt on the user's manual rating but DOES NOT run the judge (no judge
+    // envelope on the payload, no wrong-text scoring).
+    it('photo-only + text-only route (exact), non-auto_rate → attempt recorded, judge not invoked', async () => {
+      await seedQuestion('q_215_photo_exact_manual', {
+        kind: 'fill_blank',
+        reference_md: '答案',
+        knowledge_ids: ['k_215_manual'],
+      });
+
+      const realFactory = invokerModule.createDefaultJudgeInvoker;
+      const captured: unknown[] = [];
+      vi.spyOn(invokerModule, 'createDefaultJudgeInvoker').mockImplementation((deps) => {
+        const real = realFactory(deps);
+        return {
+          invoke: (input: Parameters<typeof real.invoke>[0]) => {
+            captured.push(input);
+            return real.invoke(input);
+          },
+        } as never;
+      });
+
+      try {
+        const res = await POST(
+          submitReq({
+            activity_ref: { kind: 'question', id: 'q_215_photo_exact_manual' },
+            rating: 'good',
+            answer_image_refs: ['asset_photo_manual_1'],
+          }),
+        );
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as {
+          review_event: { rating: string };
+          judge: unknown;
+        };
+        // User's manual rating is committed; judge result is null (not run).
+        expect(body.review_event.rating).toBe('good');
+        expect(body.judge).toBeNull();
+        // F4: the judge was NOT invoked.
+        expect(captured).toHaveLength(0);
+
+        const events = await testDb()
+          .select()
+          .from(event)
+          .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_215_photo_exact_manual')));
+        expect(events).toHaveLength(1);
+        // No judge envelope on the payload (judge never ran), but the photo refs
+        // are still frozen as the evidence trail.
+        expect((events[0].payload as { judge?: unknown }).judge).toBeUndefined();
+        expect((events[0].payload as { answer_image_refs?: string[] }).answer_image_refs).toEqual([
+          'asset_photo_manual_1',
+        ]);
+      } finally {
+        vi.restoreAllMocks();
+      }
     });
 
     // F1 — a truly empty submit (neither text nor image) with auto_rate STILL
