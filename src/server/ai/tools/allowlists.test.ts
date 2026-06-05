@@ -90,6 +90,37 @@ describe('DomainTool allowlist policy', () => {
     );
   });
 
+  // AF S4 / YUK-203 U6 (R5/R6) — the teaching/solve skill merge is a behavior pack,
+  // NOT a tool switch. COPILOT_TOOLS must gain NO tool from U6: no raw ask_check
+  // INSERT tool, no teaching/solve-specific tool, no memory grant beyond the
+  // copilot surface's pre-existing search_memory_facts. Lock the exact set.
+  it('U6: the skill merge adds NO new tool to the Copilot surface (R5/R6)', () => {
+    expect(DOMAIN_TOOL_ALLOWLISTS.copilot).toEqual([
+      'query_memory_brief',
+      'get_subject_graph_overview',
+      'query_knowledge',
+      'query_events',
+      'query_records',
+      'get_record_context',
+      'get_question_context',
+      'query_mistakes',
+      'get_attempt_context',
+      'get_review_due',
+      'propose_knowledge_edge',
+      'search_memory_facts',
+    ]);
+    // The ask_check INSERT (materializeAskCheckQuestion) is a service path, never
+    // a DomainTool — it is not in COPILOT_TOOLS (R2).
+    expect(DOMAIN_TOOL_ALLOWLISTS.copilot).not.toContain('materialize_ask_check');
+    // No teaching/solve-specific tool name leaked onto either copilot surface.
+    expect(DOMAIN_TOOL_ALLOWLISTS.copilot).not.toContain('attribute_mistake');
+    expect(DOMAIN_TOOL_ALLOWLISTS.copilot_user_suggested_mistake_action).toEqual([
+      ...DOMAIN_TOOL_ALLOWLISTS.copilot,
+      'attribute_mistake',
+      'propose_variant',
+    ]);
+  });
+
   it('keeps Maintenance broad but excludes user-suggested mistake actions', () => {
     registerCoreTools();
     expect(DOMAIN_TOOL_ALLOWLISTS.maintenance).toEqual([
