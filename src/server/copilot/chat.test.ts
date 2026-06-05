@@ -625,3 +625,136 @@ describe('runCopilotChat (two-surface routing)', () => {
     });
   });
 });
+
+// AF S4 / YUK-203 U6 — skill routing. A skill_context turn runs a teaching/solve
+// behavior pack at the service layer instead of the free-form CopilotTask loop.
+// The surface stays 'copilot' (R5), the turn lives on the single Copilot session,
+// and a teaching ask_check reply carries turn_kind for the corrective-chip anchor.
+describe('runCopilotChat — skill routing (U6)', () => {
+  const baseDeps = {
+    findOrCreateConversationFn: async () => ({ sessionId: 'ls_copilot', created: false }),
+    loadProposalFeedbackFn: async () => [],
+    now: () => new Date('2026-06-05T00:00:00.000Z'),
+  };
+
+  it('teaching skill: runs on the Copilot session, writes turn_kind, returns skill_turn', async () => {
+    const db = {} as never;
+    const writeEventFn = vi.fn(async (_db, input) => input.id);
+    const runTeachingSkillFn = vi.fn(async () => ({
+      text_md: '我们来看这段——你能说说为什么吗？',
+      kind: 'ask_check' as const,
+      suggested_next: 'continue' as const,
+      structured_question: {
+        id: 'q_unit',
+        kind: 'short_answer',
+        prompt_md: '为什么？',
+        choices_md: null,
+      },
+    }));
+    // The free-form path must NOT run on a skill turn.
+    const runAgentTaskFn = vi.fn(async () => {
+      throw new Error('CopilotTask must not run on a skill turn');
+    });
+    const buildMcpServerFn = vi.fn(() => ({ name: 'fake-loom' }) as never);
+
+    const result = await runCopilotChat(
+      db,
+      {
+        user_message: '帮我讲讲这个',
+        triggered_by: 'chat',
+        skill_context: { skill: 'teaching', ref: { kind: 'learning_item', id: 'li_unit' } },
+      },
+      { ...baseDeps, writeEventFn, runTeachingSkillFn, runAgentTaskFn, buildMcpServerFn },
+    );
+
+    // Surface stays 'copilot' (R5: skill ≠ surface).
+    expect(result.surface).toBe('copilot');
+    // The skill ran against the resolved Copilot session id.
+    expect(runTeachingSkillFn).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'ls_copilot', learningItemId: 'li_unit' }),
+    );
+    // The free-form CopilotTask loop never ran.
+    expect(runAgentTaskFn).not.toHaveBeenCalled();
+    // skill_turn carries the structured question + suggested_next for the UI.
+    expect(result.skill_turn).toEqual({
+      kind: 'ask_check',
+      suggested_next: 'continue',
+      structured_question: {
+        id: 'q_unit',
+        kind: 'short_answer',
+        prompt_md: '为什么？',
+        choices_md: null,
+      },
+    });
+
+    // Two events: the user ask + the copilot_reply. The reply payload carries
+    // turn_kind:'ask_check' so the accept-chip resolver can anchor on it (R1).
+    expect(writeEventFn).toHaveBeenCalledTimes(2);
+    const replyCall = writeEventFn.mock.calls[1]?.[1];
+    expect(replyCall?.action).toBe('experimental:copilot_reply');
+    expect(replyCall?.session_id).toBe('ls_copilot');
+    const replyPayload = replyCall?.payload as { turn_kind?: string; reply_md?: string };
+    expect(replyPayload.turn_kind).toBe('ask_check');
+    expect(replyPayload.reply_md).toBe('我们来看这段——你能说说为什么吗？');
+    // The skill's replyEventId equals the persisted reply event id (the question's
+    // source_ref anchors to it).
+    expect(runTeachingSkillFn.mock.calls[0]?.[0].replyEventId).toBe(replyCall?.id);
+  });
+
+  it('solve skill: returns a hint reply with NO turn_kind and NO skill_turn', async () => {
+    const db = {} as never;
+    const writeEventFn = vi.fn(async (_db, input) => input.id);
+    const runSolveSkillFn = vi.fn(async () => ({ text_md: '先想想边界条件。' }));
+    const runAgentTaskFn = vi.fn(async () => {
+      throw new Error('CopilotTask must not run on a skill turn');
+    });
+    const buildMcpServerFn = vi.fn(() => ({ name: 'fake-loom' }) as never);
+
+    const result = await runCopilotChat(
+      db,
+      {
+        user_message: '这道题不会',
+        triggered_by: 'chat',
+        skill_context: { skill: 'solve', ref: { kind: 'question', id: 'q_solve' } },
+      },
+      { ...baseDeps, writeEventFn, runSolveSkillFn, runAgentTaskFn, buildMcpServerFn },
+    );
+
+    expect(result.surface).toBe('copilot');
+    expect(result.reply).toBe('先想想边界条件。');
+    expect(result.skill_turn).toBeUndefined();
+    expect(runSolveSkillFn).toHaveBeenCalledWith(
+      expect.objectContaining({ questionId: 'q_solve' }),
+    );
+    expect(runAgentTaskFn).not.toHaveBeenCalled();
+    // A solve hint reply carries NO turn_kind (only teaching turns anchor chips).
+    const replyPayload = writeEventFn.mock.calls[1]?.[1]?.payload as { turn_kind?: string };
+    expect(replyPayload.turn_kind).toBeUndefined();
+  });
+
+  it('no skill_context: unchanged free-form CopilotTask path (no skill_turn)', async () => {
+    const db = {} as never;
+    const writeEventFn = vi.fn(async (_db, input) => input.id);
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_freeform',
+      text: 'FREEFORM',
+      finishReason: 'stop' as const,
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    const runTeachingSkillFn = vi.fn(async () => {
+      throw new Error('teaching skill must not run without skill_context');
+    });
+    const buildMcpServerFn = vi.fn(() => ({ name: 'fake-loom' }) as never);
+
+    const result = await runCopilotChat(
+      db,
+      { user_message: '随便聊聊', triggered_by: 'chat' },
+      { ...baseDeps, writeEventFn, runAgentTaskFn, runTeachingSkillFn, buildMcpServerFn },
+    );
+
+    expect(result.reply).toBe('FREEFORM');
+    expect(result.skill_turn).toBeUndefined();
+    expect(runAgentTaskFn).toHaveBeenCalledTimes(1);
+    expect(runTeachingSkillFn).not.toHaveBeenCalled();
+  });
+});
