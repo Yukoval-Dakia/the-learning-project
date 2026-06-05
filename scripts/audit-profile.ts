@@ -5,6 +5,7 @@ import type { CapabilityRegistry } from '@/core/capability/registry';
 import { validateProfile } from '@/core/capability/validate-profile';
 import { mathProfile } from '@/subjects/math/profile';
 import { physicsProfile } from '@/subjects/physics/profile';
+import { getDefaultSubjectRegistry } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
 import { wenyanProfile } from '@/subjects/wenyan/profile';
 
@@ -25,6 +26,11 @@ export interface ProfileAuditResult {
 
 export type ProfileAuditInput = readonly SubjectProfile[] | Record<string, SubjectProfile>;
 
+// YUK-206: `auditProfiles()`'s default arg is this hardcoded 3-subject record,
+// retained only as backward-compat for the unit tests that exercise validation
+// failure modes with explicit `auditProfiles([profile], registry)` args. The CLI
+// (`runCli`) walks the live registry instead (see below) so a 4th subject
+// auto-enters the audit; this const is NO LONGER the `runCli` source of truth.
 export const auditSubjectProfiles: Record<string, SubjectProfile> = {
   wenyan: wenyanProfile,
   math: mathProfile,
@@ -100,7 +106,9 @@ export function formatProfileAuditReport(result: ProfileAuditResult): string {
 }
 
 export function runCli(args: string[] = process.argv.slice(2)): number {
-  const result = auditProfiles();
+  // YUK-206 (RL2): walk the live SubjectRegistry so any registered subject —
+  // including a future 4th — is audited, instead of the hardcoded 3-subject default.
+  const result = auditProfiles(getDefaultSubjectRegistry().listProfiles());
   if (args.includes('--json')) {
     console.log(JSON.stringify(result, null, 2));
   } else {
