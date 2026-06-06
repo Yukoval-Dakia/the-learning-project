@@ -109,6 +109,26 @@ Skills do not define the tool permission boundary for Copilot. Tool permissions
 are governed by the Copilot safety surface. Narrow backend tasks still keep
 narrow allowlists.
 
+> **Doc rider (YUK-225, S2 slice 4 — second consumer of the same SKILL.md
+> ecosystem).** The conversational Copilot is NOT the only consumer of SKILL.md
+> behavior packs. Backend生题/验题 tasks (QuizGenTask / QuizVerifyTask) load
+> per-题型出题规范 packs from `src/subjects/<id>/skills/quiz-gen-<kind>/` via the
+> SDK `Options.skills` whitelist (runner mirrors them into the isolated
+> CLAUDE_CONFIG_DIR/skills; see `src/server/ai/runner.ts`). 出题与验题 load the
+> SAME pack so the「题型是否像真题」standard is single-sourced (出题验题同源). The
+> same `references/rubric.md` is intended to also back future judge-judging细则
+> (spec §8 展望, one pack serving 出题 / solve-check / 判分).
+>
+> **Naming convention (N2) — two distinct `skills/` namespaces, do not conflate:**
+> - `src/subjects/<id>/skills/` — NEW, SDK SKILL.md directories (frontmatter
+>   `name` + `references/` + `assets/`), discovered on disk and loaded via
+>   `Options.skills`. This is the behavior-pack root this rider describes.
+> - `src/server/copilot/skills/` — OLD, plain TypeScript services
+>   (`solve-skill.ts`, `teaching-skill.ts`, …). These are NOT SDK SKILL.md packs
+>   despite the `skills/` directory name; they are in-process TS modules. A future
+>   agent touching either tree must keep this distinction (the latter may be
+>   README-annotated or renamed in a later wave to remove the same-name trap).
+
 ### 1.4 Current Context Is Automatic
 
 Copilot should automatically know what the user is doing now:

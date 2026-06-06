@@ -113,4 +113,21 @@ export const wenyanProfile: SubjectProfile = {
     default_policy: 'fsrs',
   },
   judgeCapabilities: ['exact', 'keyword', 'semantic'],
+  // YUK-225 (S2 slice 4) — OF-1 首批源白名单候选 (调研报告
+  // .omc/research/2026-06-05-source-whitelist-candidates.md, owner review pending).
+  // 各域名形态 / owner 待确认项:
+  //   gzywtk.com      — 一苇轩高中语文题库, 文言文专项, 无登录 / HTML 内联 / 单题+解析
+  //                     (形态: 题库站, 最适合检索); owner 待确认 UGC 版权边界。
+  //   gaokao.eol.cn   — 中国教育在线·掌上高考, 历年高考真题(含文言文), 官方媒体 / 无登录
+  //                     (形态: 真题多以图片嵌入, OCR 抽取有难度); owner 待确认转载授权。
+  //   gaokao.zxxk.com — 学科网高考专项子站 (形态: 登录边界待人工确认, 比主站墙低);
+  //                     条件推荐, owner 手动验证无墙范围后再倚重。
+  //   gaokao.neea.edu.cn — 教育部中国教育考试网, 权威性最高 (形态: 内容是试题评析文章
+  //                     非逐题题库, SSL 证书不稳); owner 待确认是否作低优先权威参考。
+  sourceWhitelist: ['gzywtk.com', 'gaokao.eol.cn', 'gaokao.zxxk.com', 'gaokao.neea.edu.cn'],
+  // 阅读题直奔素材线 (真原文锚); 翻译题优先找现成题源, 不足再据材生成。
+  sourcingRoutePreference: {
+    reading_comprehension: ['material', 'sourced', 'closed_book'],
+    translation: ['sourced', 'material', 'closed_book'],
+  },
 };
