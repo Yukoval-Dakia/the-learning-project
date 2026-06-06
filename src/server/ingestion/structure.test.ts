@@ -210,8 +210,8 @@ describe('runStructureTask — figureAssignments (YUK-227 S3 Slice A)', () => {
       tencentHintMd: '',
       pageCount: 2,
       preFigures: [
-        { index: 0, page_index: 0 },
-        { index: 1, page_index: 0 },
+        { index: 0, page_index: 0, position: 'mid-center' },
+        { index: 1, page_index: 0, position: 'bot-right' },
       ],
       runTaskFn,
     });
@@ -278,7 +278,7 @@ describe('runStructureTask — figureAssignments (YUK-227 S3 Slice A)', () => {
       pageImages: [IMG],
       tencentHintMd: '',
       pageCount: 1,
-      preFigures: [{ index: 0, page_index: 0 }],
+      preFigures: [{ index: 0, page_index: 0, position: 'mid-center' }],
       runTaskFn,
     });
 
@@ -289,7 +289,7 @@ describe('runStructureTask — figureAssignments (YUK-227 S3 Slice A)', () => {
   it('includes figures metadata in the text payload when preFigures provided', async () => {
     const runTaskFn = vi.fn(async (_kind: string, input: { text: string; images: unknown[] }) => {
       const payload = JSON.parse(input.text);
-      expect(payload.figures).toEqual([{ index: 0, page_index: 1 }]);
+      expect(payload.figures).toEqual([{ index: 0, page_index: 1, position: 'mid-center' }]);
       return {
         text: vlmJson({
           layout_quality: 'structured',
@@ -303,7 +303,7 @@ describe('runStructureTask — figureAssignments (YUK-227 S3 Slice A)', () => {
       pageImages: [IMG, IMG],
       tencentHintMd: '',
       pageCount: 2,
-      preFigures: [{ index: 0, page_index: 1 }],
+      preFigures: [{ index: 0, page_index: 1, position: 'mid-center' }],
       runTaskFn,
     });
 

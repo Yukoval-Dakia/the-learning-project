@@ -77,14 +77,23 @@ export function assignFigures(
 /**
  * Assign figures to questions using VLM-reported assignments as the primary
  * signal, falling back to the geometric `assignFigures` heuristic for any
- * figures the VLM did not cover.
+ * figures the VLM did not cover or reported with low confidence.
  *
  * Safety contract (regression invariant):
- *  - VLM covers a figure → use VLM assignment (confidence='high').
- *  - VLM did not cover a figure → geometric fallback (`assignFigures`),
- *    confidence='low'. No figure is ever dropped.
+ *  - VLM covers a figure with confidence='high' AND target id exists in the
+ *    question tree → use VLM assignment (attach_confidence='high').
+ *  - VLM reported confidence='low' → treat as "uncertain" and fall back to
+ *    geometric heuristic. The prompt (F1) instructs the VLM to only report
+ *    figure_ids when certain; low-confidence assignments are a signal that the
+ *    VLM guessed rather than determined. Geometric fallback is safer than
+ *    a low-confidence VLM guess that overrides it.
+ *  - VLM did not cover a figure → geometric fallback, no figure dropped.
  *  - VLM assignments is empty/undefined → identical to calling `assignFigures`
  *    directly (zero regression on the Tencent fallback path).
+ *
+ * F1 semantic decision: only high-confidence VLM assignments are consumed;
+ * low-confidence ones go to geometric fallback. This aligns with the prompt
+ * change that asks the VLM to only report figure_ids when certain.
  *
  * F3 note: if VLM figure attribution is found to pollute structure quality in
  * practice, this function remains safe — the VLM simply omits figure_ids and
@@ -102,12 +111,18 @@ export function assignFiguresFromVlm(
   const validQuestionIds = new Set(flattenQuestions(questions).map((q) => q.id));
 
   // Build a lookup: figure_index → assignment (first-win if duplicate indices).
-  // Only include assignments whose target question id is actually present in the
-  // tree — hallucinated ids fall back to the geometric heuristic instead of
-  // producing a dangling reference.
+  // Only include HIGH-confidence assignments whose target question id is present
+  // in the tree. Low-confidence assignments are treated as "uncertain VLM guess"
+  // and fall back to geometric — aligning with the F1 prompt change that asks
+  // the VLM to only report figure_ids when certain (F1 semantic decision).
+  // Hallucinated ids (P3) also fall to geometric regardless of confidence.
   const assignmentByIndex = new Map<number, FigureAssignment>();
   for (const a of figureAssignments ?? []) {
-    if (!assignmentByIndex.has(a.figure_index) && validQuestionIds.has(a.attached_to_question_id)) {
+    if (
+      !assignmentByIndex.has(a.figure_index) &&
+      a.confidence === 'high' &&
+      validQuestionIds.has(a.attached_to_question_id)
+    ) {
       assignmentByIndex.set(a.figure_index, a);
     }
   }
