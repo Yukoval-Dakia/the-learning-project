@@ -1,4 +1,4 @@
-name: OCR Codex PR Review
+name: OCR PR Review
 
 on:
   pull_request:
@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   review:
-    name: OCR Codex review
+    name: OCR review
     if: >
       github.event.pull_request.draft == false &&
       github.event.pull_request.head.repo.full_name == github.repository
@@ -23,8 +23,9 @@ jobs:
       issues: write
       pull-requests: write
     env:
-      OCR_LLM_PROTOCOL: codex
-      OCR_CODEX_RUNTIME: app_server
+      OCR_LLM_PROTOCOL: openai
+      OCR_LLM_URL: ${{ vars.OCR_LLM_URL }}
+      OCR_LLM_TOKEN: ${{ secrets.OCR_LLM_TOKEN }}
       OCR_BIN: ${{ vars.OCR_BIN }}
       OCR_LLM_MODEL: ${{ vars.OCR_LLM_MODEL }}
       OCR_CONCURRENCY: ${{ vars.OCR_CONCURRENCY }}
@@ -135,7 +136,7 @@ jobs:
 
             const lines = [
               marker,
-              '## OCR Codex review',
+              '## OCR review',
               '',
               `Status: \`${result.status || 'unknown'}\``,
               `Files reviewed: \`${summary.files_reviewed ?? 0}\``,
