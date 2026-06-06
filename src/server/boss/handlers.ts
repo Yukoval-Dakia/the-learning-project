@@ -26,6 +26,8 @@ import { buildQuizGenHandler } from './handlers/quiz_gen';
 import { buildQuizVerifyHandler } from './handlers/quiz_verify';
 import { buildReviewPlanHandler } from './handlers/review_plan';
 import { buildSessionSummaryHandler } from './handlers/session_summary';
+import { buildSourceVerifyHandler } from './handlers/source_verify';
+import { buildSourcingHandler } from './handlers/sourcing';
 import { buildTencentOcrHandler } from './handlers/tencent_ocr_extract';
 import { buildVariantGenHandler } from './handlers/variant_gen';
 import { buildVariantVerifyHandler } from './handlers/variant_verify';
@@ -227,6 +229,32 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     'quiz_verify',
     { pollingIntervalSeconds: 2, batchSize: 1 },
     buildQuizVerifyHandler(db),
+  );
+
+  // YUK-216 S2 slice 2 (题源扩展 Strategy D, docs/superpowers/plans/2026-06-05-
+  // yuk216-question-source-s2.md §3): the online sourcing line. SourcingTask
+  // searches the web for EXISTING practice questions, restructures each into a
+  // draft (source='web_sourced', tier 2, draft_status='draft' — NOT in the pool),
+  // then chains a source_verify job { question_ids }. Mirrors quiz_gen → quiz_verify.
+  // batchSize=1 keeps mimo rate-limit friendly.
+  await boss.createQueue('sourcing');
+  await boss.work(
+    'sourcing',
+    { pollingIntervalSeconds: 2, batchSize: 1 },
+    buildSourcingHandler(db),
+  );
+
+  // source_verify — chained behind sourcing. Runs the tier-2 check set
+  // (structure_completeness + source_consistency + solve_check + dedup, from
+  // verify-framework.ts) and gates Option B: pass → promote draft→active +
+  // FSRS-enroll (enters the review pool); fail → stays draft. Idempotent per
+  // question via the chained verify event guard. batchSize=1 keeps mimo
+  // rate-limit friendly.
+  await boss.createQueue('source_verify');
+  await boss.work(
+    'source_verify',
+    { pollingIntervalSeconds: 2, batchSize: 1 },
+    buildSourceVerifyHandler(db),
   );
 
   // Product Track 1: NoteVerifyTask — enqueued after note_generate marks a
