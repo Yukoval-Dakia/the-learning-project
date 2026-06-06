@@ -12,10 +12,15 @@ const { submitMock, describeMock } = vi.hoisted(() => ({
 vi.mock('tencentcloud-sdk-nodejs-ocr', () => ({
   ocr: {
     v20181119: {
-      Client: vi.fn().mockImplementation(() => ({
-        SubmitQuestionMarkAgentJob: submitMock,
-        DescribeQuestionMarkAgentJob: describeMock,
-      })),
+      // vitest 4: a `vi.fn()` used with `new` must use a `function`/`class`
+      // implementation — an arrow returning an object is no longer constructable
+      // ("not a constructor"). createOcrClient does `new OcrClient(...)`, so the
+      // mock constructor assigns the stubbed SDK methods onto `this`.
+      // See vitest 4 migration: spyOn/fn support constructors.
+      Client: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
+        this.SubmitQuestionMarkAgentJob = submitMock;
+        this.DescribeQuestionMarkAgentJob = describeMock;
+      }),
     },
   },
 }));

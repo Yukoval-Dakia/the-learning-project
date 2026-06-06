@@ -3,6 +3,7 @@
     "ignore": [
       "dist",
       "node_modules",
+      "coverage",
       "drizzle",
       "docs/design/loom-design",
       "docs/design/loom-design-v2",

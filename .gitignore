@@ -9,6 +9,9 @@ node_modules/
 dist/
 .cache/
 
+# Test coverage reports (@vitest/coverage-v8 output — generated, never committed)
+coverage/
+
 # Wrangler runtime artifacts (leftover from old workers/ setup)
 .wrangler/
 .wrangler-state/

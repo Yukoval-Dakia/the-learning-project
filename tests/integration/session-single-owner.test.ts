@@ -65,7 +65,17 @@ async function findLearningSessionWriteHits(): Promise<string[]> {
     const files = await walkFiles(path.join(REPO_ROOT, root));
     for (const file of files) {
       if (file.endsWith('.test.ts') || file.endsWith('.test.tsx')) continue;
-      const text = await fs.readFile(file, 'utf8');
+      // 并行测试竞态容忍（YUK-222 gate 实测；judge-gap-audit.test.ts 同款防护）：
+      // serialize round-trip 等单元测试会在 src/subjects/ 下创建临时 fixture 目录，
+      // walk 时 readdir 已枚举该文件、随后 read 时它的 afterAll 已 rm → ENOENT。
+      // 消失的临时文件不可能是 learning_session 写者，跳过即可；其它错误照常抛。
+      let text: string;
+      try {
+        text = await fs.readFile(file, 'utf8');
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue;
+        throw err;
+      }
       if (re.test(text)) {
         hits.push(path.relative(REPO_ROOT, file));
       }
