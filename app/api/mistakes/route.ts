@@ -16,6 +16,7 @@ import {
 } from '@/server/knowledge/subject-profile';
 import { listMistakeProjectionRows } from '@/server/records/mistakes';
 import { createLearningRecord } from '@/server/records/queries';
+import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { and, inArray, isNull } from 'drizzle-orm';
 
 export const runtime = 'nodejs';
@@ -204,10 +205,11 @@ export async function POST(req: Request): Promise<Response> {
 
     // Async attribution via pg-boss (Task #16): user-supplied cause skips this,
     // otherwise the worker picks up the job and calls AttributionTask. Durable
-    // + retryable + doesn't tie up the web container. VITEST-gated to keep test
-    // suite from accumulating boss state (same posture as session_summary +
-    // note_generate enqueue).
-    if (body.cause === null && !process.env.VITEST) {
+    // + retryable + doesn't tie up the web container. Gated by the shared
+    // shouldEnqueueBackgroundJobs() (YUK-239) so the test suite doesn't
+    // accumulate boss state (same posture as session_summary + note_generate
+    // enqueue).
+    if (body.cause === null && shouldEnqueueBackgroundJobs()) {
       try {
         const boss = await getStartedBoss();
         await boss.send('attribution_followup', { attempt_event_id: attemptEventId });

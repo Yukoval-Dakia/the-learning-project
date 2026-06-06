@@ -17,10 +17,7 @@
  */
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
-import { z } from 'zod';
 
-import { PageSpan } from '@/core/schema';
-import { CauseCategory, QuestionKind } from '@/core/schema/business';
 import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
 import { db } from '@/db/client';
 import { knowledge, learning_session, question, question_block } from '@/db/schema';
@@ -37,52 +34,15 @@ import {
   resolveSubjectProfileForKnowledgeIds,
 } from '@/server/knowledge/subject-profile';
 import { getR2 } from '@/server/r2';
+import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { Ingestion } from '@/server/session';
 import type { SubjectProfile } from '@/subjects/profile';
+// YUK-234 (SEC-4): request-body schema (incl. per-array .max() bounds) lives in
+// ./schema so the bounds are unit-testable without the route's DB/R2/AI import
+// graph. The capture-outcome / cause / kind semantics are unchanged.
+import { ImportBody } from './schema';
 
 export const runtime = 'nodejs';
-
-// T-OC slice 1 (YUK-145, OC-3): the capture outcome is a SIGNAL, not hardcoded.
-// See ADR-0024 + docs/superpowers/plans/2026-05-30-yuk145-toc-slice1-lane.md.
-// Default 'failure' keeps the current review UI (VisionTab) enrolling mistakes
-// byte-for-byte; new values come from the review UI / slice-3 WorkflowJudge.
-const EnrollOutcomeSchema = z.enum(['failure', 'success', 'partial', 'unanswered']);
-
-const ImportBlock = z
-  .object({
-    block_id: z.string().min(1).optional(),
-    source_block_ids: z.array(z.string().min(1)),
-    page_spans: z.array(PageSpan).min(1),
-    image_refs: z.array(z.string().min(1)),
-    final_prompt_md: z.string().min(1),
-    final_reference_md: z.string().nullable(),
-    // For an `unanswered` capture (item bank / to-practice) there is no answer,
-    // so empty is allowed; otherwise the answer markdown is required.
-    final_wrong_answer_md: z.string(),
-    outcome: EnrollOutcomeSchema.default('failure'),
-    knowledge_ids: z.array(z.string().min(1)).min(1),
-    cause: z
-      .object({
-        primary_category: CauseCategory,
-        user_notes: z.string().nullable(),
-      })
-      .nullable(),
-    difficulty: z.number().int().min(1).max(5).default(3),
-    question_kind: QuestionKind,
-  })
-  .superRefine((block, ctx) => {
-    if (block.outcome !== 'unanswered' && block.final_wrong_answer_md.length === 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "final_wrong_answer_md is required unless outcome='unanswered'",
-        path: ['final_wrong_answer_md'],
-      });
-    }
-  });
-
-const ImportBody = z.object({
-  blocks: z.array(ImportBlock).min(1),
-});
 
 export async function POST(
   req: Request,
@@ -540,7 +500,7 @@ export async function POST(
         // Task #16: attribution via pg-boss instead of inline. Worker process
         // owns the LLM call; ingestion route returns as soon as DB writes
         // commit.
-        if (q.cause === null && !process.env.VITEST) {
+        if (q.cause === null && shouldEnqueueBackgroundJobs()) {
           tasks.push(
             (async () => {
               try {
