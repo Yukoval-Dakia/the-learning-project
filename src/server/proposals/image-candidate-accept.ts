@@ -203,10 +203,15 @@ async function defaultRunTaskFn(
   kind: string,
   input: unknown,
   ctx: unknown,
-): Promise<{ text: string }> {
+): Promise<{ text: string; task_run_id?: string }> {
   const { runTask } = await import('@/server/ai/runner');
   const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
-  return { text: result.text };
+  // FIX-4 (verification round) — forward task_run_id so the accept path can correlate
+  // the sourcing_image_extract ledger row with the REAL VisionExtractTask run. Dropping
+  // it here left visionTaskRunId null in production, silently degrading the correlation
+  // row to registry-default zeros (test seams return only { text } and exercise the
+  // fallback branch on purpose).
+  return { text: result.text, task_run_id: result.task_run_id };
 }
 
 /**
