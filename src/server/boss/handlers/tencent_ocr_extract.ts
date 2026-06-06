@@ -28,6 +28,23 @@ import type { R2Client } from '@/server/r2';
 import { Ingestion } from '@/server/session';
 import { and, eq } from 'drizzle-orm';
 
+// ---------- helpers ----------
+
+/**
+ * YUK-227 S3 Slice A (F2): Map a normalised bbox centre (cx, cy ∈ [0,1]) to a
+ * 3×3 grid label so the VLM can disambiguate multiple figures on the same page.
+ * Labels: "top-left" | "top-center" | "top-right" | "mid-left" | "mid-center" |
+ * "mid-right" | "bot-left" | "bot-center" | "bot-right".
+ * No image bytes are included — this is a text-only spatial anchor.
+ */
+function bboxCenterPosition(bbox: { x: number; y: number; width: number; height: number }): string {
+  const cx = bbox.x + bbox.width / 2;
+  const cy = bbox.y + bbox.height / 2;
+  const col = cx < 1 / 3 ? 'left' : cx < 2 / 3 ? 'center' : 'right';
+  const row = cy < 1 / 3 ? 'top' : cy < 2 / 3 ? 'mid' : 'bot';
+  return `${row}-${col}`;
+}
+
 export type TencentOcrJobData = { sessionId: string };
 
 const TASK_KIND = 'tencent_ocr_extract';
@@ -193,9 +210,16 @@ async function processOneOcrJob(
     const tencentFallbackQuestions = tencentPages.flatMap((p) => p.questions);
 
     // Build the minimal preFigures descriptor for the VLM prompt.
+    //
+    // YUK-227 S3 Slice A (F2): include a 3×3 position label derived from the
+    // figure's normalised bbox centre so the VLM can distinguish multiple figures
+    // on the same page (e.g. "bot-left" vs "top-right"). No image bytes are sent —
+    // only the text anchor. The position label matches the figures[] description in
+    // the StructureTask system prompt.
     const preFiguresMeta = allPreFigures.map((f, i) => ({
       index: i,
       page_index: f.source_page_index,
+      position: bboxCenterPosition(f.source_bbox),
     }));
 
     let structure: StructureResult;
@@ -257,19 +281,35 @@ async function processOneOcrJob(
     //     returns true for these sessions, so block-assembly stays semantic-only
     //     (correct behaviour — Tencent structure is already per-page, no cross-page
     //     merge signal needed). If this is ever relaxed, revise §2 step 4 first.
-    const blocks = structure.questions.map((q) => ({
-      structured: q,
-      figures: figureRefs,
-      page_spans: [
-        {
-          page_index: usedVlmPath ? (q.page_index ?? 0) : 0,
-          bbox: { x: 0, y: 0, width: 1, height: 1 },
-          role: 'prompt',
-        },
-      ],
-      source_asset_ids: assetIds,
-      image_refs: assetIds,
-    }));
+    //
+    //     YUK-227 S3 Slice A (F3): clamp VLM page_index to [0, pageCount-1].
+    //     The VLM may hallucinate out-of-range page indices (e.g. page_index=3 on
+    //     a 2-page doc). An out-of-range index is treated as invalid: fall back to
+    //     placeholder 0 and log a warning so the anomaly is visible in server logs.
+    const pageCount = assetIds.length;
+    const blocks = structure.questions.map((q) => {
+      let rawPageIndex = usedVlmPath ? (q.page_index ?? 0) : 0;
+      if (usedVlmPath && rawPageIndex >= pageCount) {
+        console.warn(
+          `[tencent_ocr_extract] VLM returned out-of-range page_index=${rawPageIndex} ` +
+            `(pageCount=${pageCount}) for question id=${q.id ?? '?'}; clamping to 0`,
+        );
+        rawPageIndex = 0;
+      }
+      return {
+        structured: q,
+        figures: figureRefs,
+        page_spans: [
+          {
+            page_index: rawPageIndex,
+            bbox: { x: 0, y: 0, width: 1, height: 1 },
+            role: 'prompt',
+          },
+        ],
+        source_asset_ids: assetIds,
+        image_refs: assetIds,
+      };
+    });
 
     if (blocks.length === 0) {
       throw new PermanentError('structure produced 0 questions');

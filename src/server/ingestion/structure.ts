@@ -233,10 +233,12 @@ export type RunStructureTaskParams = {
   /**
    * YUK-227 S3 Slice A — minimal per-figure info fed to the VLM so it can
    * self-report figure↔question assignments via figure_ids on StructureNode.
-   * Only sequence index + page_index are passed (no bytes — the images are
-   * already present in the page images array). Absent = no figures to assign.
+   * index + page_index + position are passed (no bytes — the images are already
+   * present in the page images array). position is a 3×3 grid label derived from
+   * the figure's normalized bbox centre (F2: spatial anchor for same-page disambiguation).
+   * Absent = no figures to assign.
    */
-  preFigures?: Array<{ index: number; page_index: number }>;
+  preFigures?: Array<{ index: number; page_index: number; position: string }>;
   /** Inject in tests; defaults to the production runner. */
   runTaskFn?: StructureRunTaskFn;
   /** Forwarded to runTask ctx (db / subjectProfile / r2). */
