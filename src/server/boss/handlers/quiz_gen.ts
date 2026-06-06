@@ -51,8 +51,8 @@ import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools
 import { writeEvent } from '@/server/events/queries';
 import { type FewShotExample, renderFewShotBlock } from '@/server/quiz/fewshot-retrieve';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
+import { kindsMatch } from '@/subjects/question-kind';
 import {
-  questionKindToSkillKind,
   resolveQuizGenSkills,
   resolveQuizGenSkillsForSubject,
   skillKindToQuestionKind,
@@ -518,17 +518,18 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
       );
     }
 
-    // YUK-226 S2-5b F3 (PR #320 round-4) — same pre-persist assert for the 题型 pin. When
-    // the 找题次序 requested a specific kind (params.kind), every produced question MUST be
-    // that kind; the prompt only HINTS requested_kind, so a model that wrote a different
-    // kind would persist an off-target draft (a translation row where calculation was asked
-    // for). Normalize the persisted q.kind ('computation') to the skill/profile key
-    // ('calculation') before comparing — params.kind is the profile SubjectQuestionKind.
-    // On mismatch throw (the catch writes a failure event + re-throws → pg-boss retries)
-    // rather than silently persisting the wrong 题型. Unpinned runs keep the agent's choice.
+    // YUK-226 S2-5b F3 (PR #320 验证轮 A3) — pre-persist assert for the 题型 pin. When the
+    // 找题次序 requested a specific kind (params.kind), every produced question MUST be that
+    // kind; the prompt only HINTS requested_kind, so a model that wrote a different kind
+    // would persist an off-target draft. Compare via kindsMatch, which normalizes BOTH
+    // sides to canonical (持久 QuestionKind) — so a `reading_comprehension` request matches
+    // a `reading` output and `calculation` matches `computation`, regardless of which
+    // vocabulary params.kind arrived in. On mismatch throw (the catch writes a failure
+    // event + re-throws → pg-boss retries) rather than silently persisting the wrong 题型.
+    // Unpinned runs keep the agent's choice.
     if (params.kind) {
       for (const q of parsed.questions) {
-        if (questionKindToSkillKind(q.kind) !== params.kind) {
+        if (!kindsMatch(q.kind, params.kind)) {
           throw new Error(
             `quiz_gen pinned kind='${params.kind}' but agent produced question of kind '${q.kind}'`,
           );

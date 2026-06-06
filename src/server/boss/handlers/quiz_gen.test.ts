@@ -992,6 +992,35 @@ describe('runQuizGen', () => {
     expect(rows).toHaveLength(1);
   });
 
+  // YUK-226 S2-5b (PR #320 验证轮 A3) — cross-vocabulary pin: a profile-vocabulary pin
+  // ('reading_comprehension') MATCHES a canonical 'reading' output via kindsMatch. The old
+  // skill-space compare (questionKindToSkillKind(q.kind) !== params.kind) would have FAILED
+  // this (reading → reading_comprehension !== reading_comprehension? no — it compared
+  // 'reading' to 'reading_comprehension' and threw). This proves the canonical compare.
+  it('persists when a profile-vocabulary pin matches a canonical-vocabulary output (reading_comprehension ↔ reading)', async () => {
+    await seedKnowledge({ id: 'k1' });
+    // MATERIAL_OUTPUT's question is canonical kind 'reading'.
+    const runAgentTaskFn = agentMock(MATERIAL_OUTPUT, 'tr_kind_xvocab');
+
+    const result = await runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      count: 1,
+      // profile/skill vocabulary on the pin; the output is canonical 'reading'.
+      kind: 'reading_comprehension',
+      runAgentTaskFn,
+      enqueueQuizVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: vi.fn(() => FAKE_TAVILY_CONFIG),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+    });
+
+    expect(result.status).toBe('ready');
+    const rows = await testDb().select().from(question).where(eq(question.source, 'quiz_gen'));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].kind).toBe('reading');
+  });
+
   // YUK-226 S2-5b F4 (PR #318 round-4) — the 题型 hint the次序 selected this line for is
   // threaded into the agent input as requested_kind.
   it('threads kind into the agent input as requested_kind', async () => {

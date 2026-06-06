@@ -18,45 +18,16 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { SubjectQuestionKind } from './profile-schema';
 
-// YUK-225 (S2 slice 4, PR #319 F3) — persisted-kind ↔ skill/profile-kind 规范化.
+// YUK-226 S2-5b (PR #320 验证轮 A) — kind 词表规范化收编进单一权威模块.
 //
-// Two enums name the same conceptual kind differently:
-//   - persisted `question.kind` (core/schema/business.ts QuestionKind) uses
-//     'computation' (and is what generated math rows are stored under, since
-//     QuizGenOutput.kind validates against QuestionKind).
-//   - profile / skill-key `SubjectQuestionKind` (profile-schema) uses 'calculation'
-//     (math/physics profile.questionKinds, QUIZ_GEN_SKILL_KIND_KEYS, the
-//     quiz-gen-calculation skill dir + its few-shot.json).
-//
-// The only divergent pair is computation ↔ calculation (route-resolve.ts:131 already
-// treats them as one kind); every other kind matches by name. This single map is the
-// canonical translation point so skill resolution AND few-shot retrieval agree on the
-// key, instead of each side hand-rolling (and mismatching) the conversion.
-const PERSISTED_TO_SKILL_KIND: Record<string, SubjectQuestionKind> = {
-  computation: 'calculation',
-};
-const SKILL_TO_PERSISTED_KIND: Record<string, string> = {
-  calculation: 'computation',
-};
+// persisted `question.kind` (QuestionKind) ↔ profile/skill `SubjectQuestionKind` 的双向
+// 映射现在只有一份实现，住在 ./question-kind.ts（canonical = 持久 QuestionKind），全链
+// （route 校验 / sequence 池过滤 / pin 校验 / skill 解析）共用。这里 import + re-export 以
+// 保持既有 import 路径稳定（skillDirName 仍按名引用），不再在本文件第二份手搓
+// computation↔calculation 特例。
+import { questionKindToSkillKind, skillKindToQuestionKind } from './question-kind';
 
-/**
- * Normalize a persisted `question.kind` value (core QuestionKind, e.g. 'computation')
- * to the profile/skill `SubjectQuestionKind` key (e.g. 'calculation') used by
- * QUIZ_GEN_SKILL_KIND_KEYS and the skill directory layout. Kinds that already match
- * pass through unchanged.
- */
-export function questionKindToSkillKind(persistedKind: string): SubjectQuestionKind {
-  return PERSISTED_TO_SKILL_KIND[persistedKind] ?? (persistedKind as SubjectQuestionKind);
-}
-
-/**
- * Inverse of {@link questionKindToSkillKind}: map a profile/skill `SubjectQuestionKind`
- * (e.g. 'calculation') to the persisted `question.kind` value (e.g. 'computation')
- * that rows are stored under, so a `WHERE kind = …` few-shot filter matches real rows.
- */
-export function skillKindToQuestionKind(skillKind: SubjectQuestionKind): string {
-  return SKILL_TO_PERSISTED_KIND[skillKind] ?? skillKind;
-}
+export { questionKindToSkillKind, skillKindToQuestionKind };
 
 // 题型 key 表 (spec §5「题型 key 表」): the subset of SubjectQuestionKind that has a
 // dedicated quiz-gen skill naming convention. The skill DIRECTORY uses hyphens
