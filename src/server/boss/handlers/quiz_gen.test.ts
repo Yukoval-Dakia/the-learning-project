@@ -898,18 +898,114 @@ describe('runQuizGen', () => {
     expect(rows.every((r) => !r.knowledge_ids.includes('k_archived'))).toBe(true);
   });
 
+  // YUK-226 S2-5b F2 (PR #320 round-4) — the archived-anchor bypass form: when the
+  // explicit anchor is archived AND trigger==='knowledge' with refId === the SAME archived
+  // id, the knowledge-trigger fall-through used to re-resolve the dead node WITHOUT the
+  // archived guard, silently mounting drafts onto it. The guard now covers the knowledge
+  // branch too → the run skips (no node) rather than reviving the archived node.
+  it('skips a knowledge trigger whose refId is the same archived id as the anchor', async () => {
+    const now = new Date();
+    await testDb().insert(knowledge).values({
+      id: 'k_arch_same',
+      name: '废弃',
+      domain: 'wenyan',
+      parent_id: null,
+      merged_from: [],
+      proposed_by_ai: false,
+      approval_status: 'approved',
+      archived_at: now,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_arch_same');
+
+    const result = await runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k_arch_same',
+      knowledgeId: 'k_arch_same',
+      count: 1,
+      runAgentTaskFn,
+      enqueueQuizVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: vi.fn(() => null),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+    });
+
+    // The run is skipped (archived node resolves to nothing), never reaching the agent.
+    expect(result.status).toBe('skipped:ref_not_found');
+    expect(runAgentTaskFn).not.toHaveBeenCalled();
+    const rows = await testDb().select().from(question).where(eq(question.source, 'quiz_gen'));
+    expect(rows.every((r) => !r.knowledge_ids.includes('k_arch_same'))).toBe(true);
+  });
+
+  // YUK-226 S2-5b F3 (PR #320 round-4) — same pre-persist assert for the 题型 pin: an agent
+  // that produced a different kind than requested must FAIL the run (not persist an
+  // off-target draft). The catch writes a failure event + re-throws → pg-boss retries.
+  it('throws (no insert, no enqueue) when the agent produces the wrong requested kind', async () => {
+    await seedKnowledge({ id: 'k1' });
+    // VALID_OUTPUT's questions are short_answer + choice; we pin 'reading' → mismatch.
+    const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_kind_violation');
+    const enqueueQuizVerify = vi.fn(async () => {});
+
+    await expect(
+      runQuizGen({
+        db: testDb(),
+        trigger: 'knowledge',
+        refId: 'k1',
+        kind: 'reading',
+        runAgentTaskFn,
+        enqueueQuizVerify,
+        buildTavilyMcpServerFn: vi.fn(() => null),
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      }),
+    ).rejects.toThrow(/pinned kind='reading' but agent produced question of kind 'short_answer'/);
+
+    const rows = await testDb().select().from(question).where(eq(question.source, 'quiz_gen'));
+    expect(rows).toHaveLength(0);
+    expect(enqueueQuizVerify).not.toHaveBeenCalled();
+    const events = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:quiz_gen'));
+    expect(events.some((e) => e.outcome === 'failure')).toBe(true);
+  });
+
+  it('persists when the agent honours the pinned kind (computation↔calculation normalized)', async () => {
+    await seedKnowledge({ id: 'k1' });
+    // closed_book single short_answer question; pin matches the produced kind.
+    const runAgentTaskFn = agentMock(CLOSED_BOOK_OUTPUT, 'tr_kind_ok');
+
+    const result = await runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      kind: 'short_answer',
+      runAgentTaskFn,
+      enqueueQuizVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: vi.fn(() => null),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+    });
+
+    expect(result.status).toBe('ready');
+    const rows = await testDb().select().from(question).where(eq(question.source, 'quiz_gen'));
+    expect(rows).toHaveLength(1);
+  });
+
   // YUK-226 S2-5b F4 (PR #318 round-4) — the 题型 hint the次序 selected this line for is
   // threaded into the agent input as requested_kind.
   it('threads kind into the agent input as requested_kind', async () => {
     await seedKnowledge({ id: 'k1' });
-    const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_kind');
+    // CLOSED_BOOK_OUTPUT is a single short_answer question, so the pinned kind MATCHES the
+    // produced kind (F3 asserts the pin held — a mismatched fixture would now throw).
+    const runAgentTaskFn = agentMock(CLOSED_BOOK_OUTPUT, 'tr_kind');
 
     await runQuizGen({
       db: testDb(),
       trigger: 'knowledge',
       refId: 'k1',
       count: 1,
-      kind: 'reading',
+      kind: 'short_answer',
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
       buildTavilyMcpServerFn: vi.fn(() => null),
@@ -917,12 +1013,12 @@ describe('runQuizGen', () => {
     });
 
     const [, input] = runAgentTaskFn.mock.calls[0];
-    expect((input as { requested_kind?: string }).requested_kind).toBe('reading');
+    expect((input as { requested_kind?: string }).requested_kind).toBe('short_answer');
   });
 
   it('passes kind from job data through buildQuizGenHandler', async () => {
     await seedKnowledge({ id: 'k1' });
-    const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_kind_job');
+    const runAgentTaskFn = agentMock(CLOSED_BOOK_OUTPUT, 'tr_kind_job');
     const handler = buildQuizGenHandler(testDb(), {
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
@@ -931,12 +1027,12 @@ describe('runQuizGen', () => {
     });
 
     const jobs = [
-      { id: 'j1', data: { trigger: 'knowledge', ref_id: 'k1', count: 1, kind: 'reading' } },
+      { id: 'j1', data: { trigger: 'knowledge', ref_id: 'k1', count: 1, kind: 'short_answer' } },
     ] as never;
     await handler(jobs);
 
     const [, input] = runAgentTaskFn.mock.calls[0];
-    expect((input as { requested_kind?: string }).requested_kind).toBe('reading');
+    expect((input as { requested_kind?: string }).requested_kind).toBe('short_answer');
   });
 
   it('skips (no insert, no enqueue) when the knowledge trigger ref does not exist', async () => {

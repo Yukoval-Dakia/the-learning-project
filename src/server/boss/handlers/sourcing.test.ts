@@ -499,13 +499,15 @@ describe('runSourcing', () => {
   it('threads kind into the SourcingTask input as kinds', async () => {
     const db = testDb();
     await seedKnowledge({ id: 'k1' });
+    // VALID_OUTPUT's question is short_answer, so the pinned kind MATCHES the produced
+    // kind (F4 asserts the pin held — a mismatched fixture would now throw the whole job).
     const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_src_kind');
 
     await runSourcing({
       db,
       trigger: 'knowledge',
       refId: 'k1',
-      kind: 'reading',
+      kind: 'short_answer',
       runAgentTaskFn,
       enqueueSourceVerify: vi.fn(async () => {}),
       buildTavilyMcpServerFn: vi.fn(() => null),
@@ -513,7 +515,7 @@ describe('runSourcing', () => {
     });
 
     const input = runAgentTaskFn.mock.calls[0][1] as { kinds?: string[] };
-    expect(input.kinds).toEqual(['reading']);
+    expect(input.kinds).toEqual(['short_answer']);
   });
 
   it('omits kinds when no kind hint is passed', async () => {
@@ -535,6 +537,58 @@ describe('runSourcing', () => {
     expect(input).not.toHaveProperty('kinds');
   });
 
+  // YUK-226 S2-5b F4 (PR #320 round-4) — same loud-fail semantics as quiz_gen F3: when the
+  // 找题次序 pinned a kind and the agent returned a DIFFERENT kind, fail the whole job (no
+  // ingest) rather than accept an off-target sourced draft. The catch writes a failure
+  // event + re-throws → pg-boss retries.
+  it('throws (no insert) when the sourced question kind differs from the requested kind', async () => {
+    const db = testDb();
+    await seedKnowledge({ id: 'k1' });
+    // VALID_OUTPUT's question is short_answer; we pin 'reading' → mismatch.
+    const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_src_kind_violation');
+    const enqueueSourceVerify = vi.fn(async () => {});
+
+    await expect(
+      runSourcing({
+        db,
+        trigger: 'knowledge',
+        refId: 'k1',
+        kind: 'reading',
+        runAgentTaskFn,
+        enqueueSourceVerify,
+        buildTavilyMcpServerFn: vi.fn(() => null),
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      }),
+    ).rejects.toThrow(/pinned kind='reading' but agent produced question of kind 'short_answer'/);
+
+    const rows = await db.select().from(question).where(eq(question.source, 'web_sourced'));
+    expect(rows).toHaveLength(0);
+    expect(enqueueSourceVerify).not.toHaveBeenCalled();
+    const events = await db.select().from(event).where(eq(event.action, 'experimental:sourcing'));
+    expect(events.some((e) => e.outcome === 'failure')).toBe(true);
+  });
+
+  it('ingests when the sourced question kind matches the requested kind', async () => {
+    const db = testDb();
+    await seedKnowledge({ id: 'k1' });
+    const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_src_kind_ok');
+
+    const result = await runSourcing({
+      db,
+      trigger: 'knowledge',
+      refId: 'k1',
+      kind: 'short_answer',
+      runAgentTaskFn,
+      enqueueSourceVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: vi.fn(() => null),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+    });
+
+    expect(result.status).toBe('ready');
+    const rows = await db.select().from(question).where(eq(question.source, 'web_sourced'));
+    expect(rows).toHaveLength(1);
+  });
+
   it('passes knowledge_id + kind from job data through buildSourcingHandler', async () => {
     const db = testDb();
     await seedKnowledge({ id: 'k1' });
@@ -550,7 +604,7 @@ describe('runSourcing', () => {
       trigger: 'manual',
       ref_id: 'free form ref',
       knowledge_id: 'k1',
-      kind: 'reading',
+      kind: 'short_answer',
     };
     // biome-ignore lint/suspicious/noExplicitAny: minimal pg-boss Job shape for the handler test.
     await handler([{ id: 'j1', data: jobData } as any]);
@@ -559,7 +613,7 @@ describe('runSourcing', () => {
       kinds?: string[];
       knowledge_context?: Array<{ id: string }>;
     };
-    expect(input.kinds).toEqual(['reading']);
+    expect(input.kinds).toEqual(['short_answer']);
     const rows = await db.select().from(question).where(eq(question.source, 'web_sourced'));
     expect(rows.every((r) => r.knowledge_ids.includes('k1'))).toBe(true);
   });
