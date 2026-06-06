@@ -724,10 +724,15 @@ describe('runSourcing', () => {
     expect(proposalInput.payload.proposed_change.source_url).toBe(
       'https://example.edu/wenyan/scan.png',
     );
+    // FIX-3 — the run's resolved knowledge node is carried into the proposal so accept can
+    // attribute the materialized question.
+    expect(
+      (proposalInput.payload.proposed_change as { knowledge_ids?: string[] }).knowledge_ids,
+    ).toEqual(['k1']);
     expect(result.image_candidate_proposal_ids).toEqual(['proposal_evt_1']);
-    // No question → no source_verify (the gate is for text drafts; image accept enqueues
-    // its own verify later).
-    expect(enqueueSourceVerify).toHaveBeenCalledWith([]);
+    // FIX-8 — an image-only run has 0 text drafts, so source_verify is NOT enqueued at all
+    // (no empty source_verify([]) job). Image drafts get their own verify at accept time.
+    expect(enqueueSourceVerify).not.toHaveBeenCalled();
     // Success event records the proposal id for audit.
     const events = await db.select().from(event).where(eq(event.action, 'experimental:sourcing'));
     expect(events).toHaveLength(1);
@@ -792,6 +797,112 @@ describe('runSourcing', () => {
     expect(writeImageCandidateProposalFn).toHaveBeenCalledTimes(1);
     // The text draft still chains source_verify (only the text question id).
     expect(enqueueSourceVerify).toHaveBeenCalledWith(result.question_ids);
+  });
+
+  // YUK-227 S3 Slice C (FIX-6) — a re-run that re-reports the SAME image URL must not
+  // stack a second pending image_candidate proposal in the inbox. The first run (real
+  // writeAiProposal) lands a live pending proposal; the second run (same URL) skips it.
+  it('does not re-propose an image_candidate whose URL already has a live pending proposal', async () => {
+    const db = testDb();
+    await seedKnowledge({ id: 'k1' });
+
+    // Run 1 — real writer so a live pending image_candidate proposal exists.
+    const first = await runSourcing({
+      db,
+      trigger: 'knowledge',
+      refId: 'k1',
+      runAgentTaskFn: agentMock(IMAGE_ONLY_OUTPUT, 'tr_src_dedup_1'),
+      enqueueSourceVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: vi.fn(() => null),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+    });
+    expect(first.image_candidate_proposal_ids).toHaveLength(1);
+
+    // Run 2 — same image URL. The live-pending dedup skips the write (seam not called).
+    const writeImageCandidateProposalFn = vi.fn(
+      async (_db: unknown, _input: unknown) => 'should_not_be_written',
+    );
+    const second = await runSourcing({
+      db,
+      trigger: 'knowledge',
+      refId: 'k1',
+      runAgentTaskFn: agentMock(IMAGE_ONLY_OUTPUT, 'tr_src_dedup_2'),
+      enqueueSourceVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: vi.fn(() => null),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      writeImageCandidateProposalFn,
+    });
+
+    expect(writeImageCandidateProposalFn).not.toHaveBeenCalled();
+    expect(second.image_candidate_proposal_ids).toEqual([]);
+    // Still exactly ONE pending image_candidate proposal in the inbox (not two).
+    const proposalEvents = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:proposal'));
+    const imageProposals = proposalEvents.filter(
+      (e) =>
+        (e.payload as { ai_proposal?: { kind?: string } }).ai_proposal?.kind === 'image_candidate',
+    );
+    expect(imageProposals).toHaveLength(1);
+  });
+
+  // YUK-227 S3 Slice C (FIX-8) — an image-only run whose every proposal write FAILS must
+  // throw (failure event + re-throw), NOT swallow the errors and report伪 success.
+  it('throws on an image-only run when all image_candidate proposal writes fail', async () => {
+    const db = testDb();
+    await seedKnowledge({ id: 'k1' });
+    const writeImageCandidateProposalFn = vi.fn(async () => {
+      throw new Error('proposal writer boom');
+    });
+    const enqueueSourceVerify = vi.fn(async () => {});
+
+    await expect(
+      runSourcing({
+        db,
+        trigger: 'knowledge',
+        refId: 'k1',
+        runAgentTaskFn: agentMock(IMAGE_ONLY_OUTPUT, 'tr_src_allfail'),
+        enqueueSourceVerify,
+        buildTavilyMcpServerFn: vi.fn(() => null),
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        writeImageCandidateProposalFn,
+      }),
+    ).rejects.toThrow(/all 1 image_candidate proposal write\(s\) failed/);
+
+    // The catch wrote a failure event; no success event for this run.
+    const events = await db.select().from(event).where(eq(event.action, 'experimental:sourcing'));
+    expect(events.some((e) => e.outcome === 'failure')).toBe(true);
+    expect(events.some((e) => e.outcome === 'success')).toBe(false);
+    // No empty source_verify enqueued.
+    expect(enqueueSourceVerify).not.toHaveBeenCalled();
+  });
+
+  // A mixed run (≥1 text draft) where the image proposal write fails stays best-effort:
+  // the committed text drafts are useful output, so the run still succeeds.
+  it('does NOT throw on a mixed run when the image_candidate proposal write fails (text drafts committed)', async () => {
+    const db = testDb();
+    await seedKnowledge({ id: 'k1' });
+    const writeImageCandidateProposalFn = vi.fn(async () => {
+      throw new Error('proposal writer boom');
+    });
+
+    const result = await runSourcing({
+      db,
+      trigger: 'knowledge',
+      refId: 'k1',
+      runAgentTaskFn: agentMock(MIXED_OUTPUT, 'tr_src_mixed_fail'),
+      enqueueSourceVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: vi.fn(() => null),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      writeImageCandidateProposalFn,
+    });
+
+    expect(result.status).toBe('ready');
+    expect(result.question_ids).toHaveLength(1);
+    expect(result.image_candidate_proposal_ids).toEqual([]);
+    const events = await db.select().from(event).where(eq(event.action, 'experimental:sourcing'));
+    expect(events.some((e) => e.outcome === 'success')).toBe(true);
   });
 });
 

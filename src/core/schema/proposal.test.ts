@@ -141,7 +141,9 @@ describe('AiProposalPayload', () => {
           continuity_signal: 'numbering',
         },
       },
-      // YUK-227 S3 Slice C (ADR-0002) — image_candidate.
+      // YUK-227 S3 Slice C (ADR-0002 / FIX-3) — image_candidate carries the
+      // sourcing-resolved knowledge_ids so accept can attribute the materialized
+      // question (the text path stamps these too).
       image_candidate: {
         ...base,
         kind: 'image_candidate',
@@ -150,6 +152,7 @@ describe('AiProposalPayload', () => {
           source_url: 'https://example.edu/wenyan/scan.png',
           source_title: '论语·学而 扫描卷',
           summary_md: 'tavily_extract 返回空文本；搜索结果显示该页含题目图片。',
+          knowledge_ids: ['k1'],
         },
       },
     } as const;
@@ -162,6 +165,38 @@ describe('AiProposalPayload', () => {
       expect(parsed.reason_md).toBe(sample.reason_md);
       expect(parsed.evidence_refs[0]).toEqual({ kind: 'event', id: 'event_1' });
     }
+  });
+
+  // YUK-227 S3 Slice C (FIX-3) — image_candidate knowledge_ids attribution channel.
+  it('round-trips image_candidate.knowledge_ids and defaults a missing field to []', () => {
+    const withIds = parseAiProposalPayload({
+      ...base,
+      kind: 'image_candidate',
+      target: { subject_kind: 'source_asset', subject_id: null },
+      proposed_change: {
+        source_url: 'https://example.edu/wenyan/scan.png',
+        source_title: '扫描卷',
+        summary_md: '图片型源',
+        knowledge_ids: ['k1', 'k2'],
+      },
+    });
+    if (withIds.kind !== 'image_candidate') throw new Error('unreachable');
+    expect(withIds.proposed_change.knowledge_ids).toEqual(['k1', 'k2']);
+
+    // A legacy proposal written before FIX-3 (no knowledge_ids) still parses; the
+    // field defaults to [] so accept inserts an empty attribution exactly as before.
+    const legacy = parseAiProposalPayload({
+      ...base,
+      kind: 'image_candidate',
+      target: { subject_kind: 'source_asset', subject_id: null },
+      proposed_change: {
+        source_url: 'https://example.edu/wenyan/scan.png',
+        source_title: '扫描卷',
+        summary_md: '图片型源',
+      },
+    });
+    if (legacy.kind !== 'image_candidate') throw new Error('unreachable');
+    expect(legacy.proposed_change.knowledge_ids).toEqual([]);
   });
 
   it('rejects a knowledge_node proposal without current producer fields', () => {

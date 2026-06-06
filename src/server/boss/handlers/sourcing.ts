@@ -55,6 +55,10 @@ import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools
 import { writeEvent } from '@/server/events/queries';
 // YUK-227 S3 Slice C — image-type sources become proposals (NOT auto-extracted, 守
 // ADR-0002). writeAiProposal is the实证 writer (writeProposal does not exist).
+// listProposalInboxRows (FIX-6) gives the live-pending dedup the same way variant_gen
+// does (handlers/variant_gen.ts:190) — reuse the inbox projection's status derivation
+// rather than re-deriving "live" from raw rows.
+import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
@@ -486,8 +490,35 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
     // 抽图 path here). Best-effort, OUTSIDE the question tx (a proposal write failure
     // must not roll back the already-committed text drafts; the proposals are
     // re-derivable by re-running the cheap text-only path or re-sourcing).
+    const candidates = parsed.image_candidates ?? [];
     const imageCandidateProposalIds: string[] = [];
-    for (const candidate of parsed.image_candidates ?? []) {
+    // FIX-8 — track propose attempts vs failures so an image-only run whose every
+    // proposal write FAILED reports failure instead of伪 success (see below). A
+    // skipped (already-live) candidate is NOT a failure — it just isn't re-proposed.
+    let proposeAttempted = 0;
+    let proposeFailed = 0;
+    // FIX-6 — live-pending dedup. A sourcing job retried / re-run that re-reports the
+    // SAME image URL must not stack duplicate pending image_candidate proposals in the
+    // inbox. Reuse the inbox projection's status derivation (same as variant_gen.ts:190)
+    // so "live" means exactly what the inbox shows as pending. Snapshot ONCE before the
+    // loop: within a single run we also dedup against earlier candidates we just wrote.
+    const livePendingCooldownKeys =
+      candidates.length > 0
+        ? new Set(
+            (await listProposalInboxRows(db, { status: 'pending' }))
+              .filter((p) => p.kind === 'image_candidate')
+              .map((p) => p.payload.cooldown_key)
+              .filter((key): key is string => typeof key === 'string'),
+          )
+        : new Set<string>();
+    for (const candidate of candidates) {
+      const cooldownKey = `image_candidate:${candidate.source_url}`;
+      // Skip a URL that already has a live (pending) proposal — or that an earlier
+      // candidate in THIS run already proposed (a run can report the same URL twice).
+      if (livePendingCooldownKeys.has(cooldownKey)) {
+        continue;
+      }
+      proposeAttempted += 1;
       try {
         const proposalId = await writeImageCandidateProposal(db, {
           actor_ref: 'sourcing',
@@ -505,23 +536,49 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
               source_url: candidate.source_url,
               source_title: candidate.source_title,
               summary_md: candidate.summary_md,
+              // YUK-227 S3 Slice C (FIX-3) — carry the run's already-resolved live
+              // knowledge nodes so accept attributes the materialized question to
+              // the originating 知识点 (the text path stamps these same ids on
+              // question.knowledge_ids). fallbackKnowledgeIds is the archived-
+              // filtered set the text path uses; image candidates have no
+              // per-question knowledge hint (the stem is unread until accept's VLM),
+              // so the run-level resolved nodes are the correct attribution. Empty
+              // when the trigger resolved no live node (e.g. a manual free-form ref).
+              knowledge_ids: fallbackKnowledgeIds,
             },
             // Dedup key so re-sourcing the same image page does not stack duplicate
             // pending proposals (mirrors the cooldown_key precedent on other kinds).
-            cooldown_key: `image_candidate:${candidate.source_url}`,
+            cooldown_key: cooldownKey,
           },
           task_run_id: result.task_run_id ?? null,
           cost_usd: undefined,
           created_at: now,
         });
         imageCandidateProposalIds.push(proposalId);
+        // In-run dedup: a later candidate reporting the same URL is now "live".
+        livePendingCooldownKeys.add(cooldownKey);
       } catch (proposalErr) {
+        proposeFailed += 1;
         console.error(
           '[sourcing] image_candidate proposal write failed for',
           candidate.source_url,
           proposalErr,
         );
       }
+    }
+
+    // FIX-8 — an image-only run (0 text questions) whose every attempted proposal
+    // write FAILED is NOT a success: the old code swallowed each write error and
+    // still wrote a success event + returned 'ready', silently dropping the run's
+    // only output. Throw so the catch writes a failure event + re-throws → pg-boss
+    // retries. Guarded on attempted>0 (a run that found candidates but skipped them
+    // all as already-live is a legit no-op success, not a failure) and on
+    // questionIds.length===0 (a mixed run that ingested ≥1 text draft already
+    // produced useful output, so a proposal write failure stays best-effort).
+    if (questionIds.length === 0 && proposeAttempted > 0 && proposeFailed === proposeAttempted) {
+      throw new Error(
+        `sourcing image-only run: all ${proposeAttempted} image_candidate proposal write(s) failed`,
+      );
     }
 
     await writeEvent(db, {
@@ -555,14 +612,21 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
     // let pg-boss redeliver the sourcing job, re-run the expensive SourcingTask, and
     // INSERT a duplicate batch). On failure we log the orphaned ids — recoverable by
     // re-enqueueing source_verify, which is idempotent per question.
-    try {
-      await enqueueSourceVerify(questionIds);
-    } catch (enqueueErr) {
-      console.error(
-        '[sourcing] source_verify enqueue failed; drafts persisted but unverified:',
-        questionIds,
-        enqueueErr,
-      );
+    //
+    // FIX-8 — only enqueue when there are text drafts to verify. An image-only run
+    // produces 0 text questions; enqueueing source_verify([]) is a pointless empty
+    // job (source_verify's gate is for text drafts — image drafts get their own
+    // verify at accept time). Skip it.
+    if (questionIds.length > 0) {
+      try {
+        await enqueueSourceVerify(questionIds);
+      } catch (enqueueErr) {
+        console.error(
+          '[sourcing] source_verify enqueue failed; drafts persisted but unverified:',
+          questionIds,
+          enqueueErr,
+        );
+      }
     }
 
     return {
