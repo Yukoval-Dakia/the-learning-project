@@ -352,4 +352,46 @@ describe('getTaskSystemPrompt exhaustiveness (M1)', () => {
       expect(w).toBe(tasks[kind].systemPrompt);
     }
   });
+
+  // YUK-227 S3 Slice C (FIX-1) — the SourcingTask prompt MUST teach the agent the
+  // image_candidate contract, otherwise the new accept path is unreachable in
+  // production (the agent never emits image_candidates). These pins are the prompt
+  // half of the contract; sourcing.ts:490 consumes parsed.image_candidates.
+  describe('SourcingTask prompt — image_candidate contract (FIX-1)', () => {
+    it('documents the image_candidates output array + its three fields', () => {
+      const prompt = getTaskSystemPrompt('SourcingTask');
+      // The whole-run output contract lists image_candidates (so an agent that
+      // reads the contract knows the key exists).
+      expect(prompt).toContain('image_candidates');
+      expect(prompt).toContain('SourcingImageCandidate');
+      // The per-candidate shape names all three schema fields (sourcing.ts:79-88).
+      expect(prompt).toContain('source_url');
+      expect(prompt).toContain('source_title');
+      expect(prompt).toContain('summary_md');
+    });
+
+    it('teaches WHEN to report an image_candidate (tavily_extract empty + search says questions)', () => {
+      const prompt = getTaskSystemPrompt('SourcingTask');
+      expect(prompt).toContain('tavily_extract');
+      // The trigger condition: stem lives in an image / cannot lift as text.
+      expect(prompt).toMatch(/图片/);
+      // 守 ADR-0002: VLM 抽图是用户 accept 后的付费动作, NOT the agent's job.
+      expect(prompt).toContain('accept');
+    });
+
+    it('forbids double-reporting a source as both a question and a candidate', () => {
+      const prompt = getTaskSystemPrompt('SourcingTask');
+      expect(prompt).toContain('二选一');
+      // The stale "skip all image sources" instruction is gone (the agent must now
+      // surface them, not silently drop them).
+      expect(prompt).not.toContain('跳过纯图片型题源');
+      expect(prompt).not.toContain('跳过纯图片题源');
+    });
+
+    it('keeps the image_candidate contract for a non-default (math) subject', () => {
+      const prompt = getTaskSystemPrompt('SourcingTask', resolveSubjectProfile('math'));
+      expect(prompt).toContain('image_candidates');
+      expect(prompt).toContain('summary_md');
+    });
+  });
 });
