@@ -95,6 +95,11 @@ export const fastTestInclude = [
   // transitive @/db/client import (via question-contract → runSemanticJudge) is
   // type-only; same safe surface as the judges unit tests above.
   'src/server/quiz/verify-framework.test.ts',
+  // YUK-225 (S2 slice 4) — pure (no-DB) units: skill resolver (fs fixture root),
+  // few-shot block renderer (pure fn), profile thin-section schema parse.
+  'src/server/quiz/fewshot-retrieve.render.test.ts',
+  'src/subjects/quiz-gen-skills.test.ts',
+  'src/subjects/profile-schema.thin-section.test.ts',
   // Pure (no-DB) set-algebra unit for hub mesh curation (YUK-95 P5 Lane-C). The
   // sibling DB handler test (boss/handlers/hub_auto_sync_nightly) stays in the
   // db partition because it hits live Postgres.
