@@ -41,7 +41,8 @@ Historical docs and audits may still mention the old Vite/Workers/Hono/D1 stack.
 ## Commands
 
 ```bash
-pnpm dev              # Next dev server
+pnpm dev:local        # 推荐本地入口（compose Postgres :5433 为真相源；scripts/dev-local.ts 注入 DATABASE_URL + 端口）
+pnpm dev              # 备选：裸 next dev（需自带 DATABASE_URL / 端口）
 pnpm build            # next build
 pnpm typecheck        # tsc --noEmit
 pnpm lint             # biome check .
