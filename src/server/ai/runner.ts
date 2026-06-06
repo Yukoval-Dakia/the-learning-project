@@ -24,7 +24,7 @@
 //     output after.
 
 import { createHash } from 'node:crypto';
-import { mkdtempSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type TaskKind, tasks } from '@/ai/registry';
@@ -97,6 +97,20 @@ export interface RunTaskCtx {
   allowedTools?: string[];
   /** Subject context for prompts that are rendered from SubjectProfile. */
   subjectProfile?: SubjectProfile;
+  /**
+   * YUK-225 (S2 slice 4) — Agent Skill whitelist threaded to `Options.skills`.
+   * Names match a SKILL.md `name` / directory under src/subjects/<id>/skills/
+   * (e.g. ['quiz-gen-translation']). When set, ONLY these skills are loaded into
+   * the model's listing (SDK context filter); when omitted, no skills option is
+   * passed (current behaviour — the降级链 falls back to promptFragments).
+   *
+   * The SoT lives in src/subjects/<id>/skills/; the runner populates the isolated
+   * CLAUDE_CONFIG_DIR/skills once at process start (getIsolatedClaudeConfigDir),
+   * and this array keys WHICH of the populated skills the model actually sees. Per
+   * the YUK-217 spike, `settingSources` must stay OMITTED — passing `[]` disables
+   * the CONFIG_DIR/skills auto-load and the populated skills become invisible.
+   */
+  skills?: string[];
 }
 
 export type RunAgentTaskCtx = RunTaskCtx;
@@ -211,10 +225,67 @@ function inputHash(input: unknown): string {
 // Memoised isolated CLAUDE_CONFIG_DIR. The agent SDK reads `~/.claude/` by
 // default for hooks/MCP/skills; in a server we need a clean empty dir so
 // the subprocess can't pull in the developer's personal Claude config.
+//
+// YUK-225 (S2 slice 4) — Agent Skill 接线（YUK-217 spike「结论 B」修正形态）:
+// the SDK auto-loads skills from `$CLAUDE_CONFIG_DIR/skills/` (spike 实证：that IS
+// the discovery root, NOT additionalDirectories/settingSources). Since the config
+// dir is a PROCESS-LEVEL memoised singleton shared by every task, we populate it
+// ONCE with ALL subject skills, then let each task's `Options.skills` whitelist
+// pick which ones the model sees (context filter). SoT stays at
+// src/subjects/<id>/skills/; this just mirrors them into the isolated dir.
 let isolatedConfigDir: string | undefined;
+
+// Mirror every src/subjects/<id>/skills/<skill>/ into <isolatedDir>/skills/.
+// Best-effort + idempotent: a missing subjects tree (e.g. an unusual cwd) just
+// yields no skills, and the runner degrades to promptFragments — never throws.
+function populateIsolatedSkills(isolatedDir: string): void {
+  // cwd is the repo root for the server (buildQueryOptions sets cwd: process.cwd()).
+  const subjectsRoot = join(process.cwd(), 'src', 'subjects');
+  if (!existsSync(subjectsRoot)) return;
+  const skillsDest = join(isolatedDir, 'skills');
+  let subjectIds: string[];
+  try {
+    subjectIds = readdirSync(subjectsRoot, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
+  } catch {
+    return;
+  }
+  for (const subjectId of subjectIds) {
+    const subjectSkillsDir = join(subjectsRoot, subjectId, 'skills');
+    if (!existsSync(subjectSkillsDir)) continue;
+    let skillNames: string[];
+    try {
+      skillNames = readdirSync(subjectSkillsDir, { withFileTypes: true })
+        .filter((d) => d.isDirectory())
+        .map((d) => d.name);
+    } catch {
+      continue;
+    }
+    for (const skillName of skillNames) {
+      const src = join(subjectSkillsDir, skillName);
+      // Flatten into <isolatedDir>/skills/<skillName>/ — skill names are unique
+      // across subjects (quiz-gen-<kind> is subject-scoped by directory but the
+      // SKILL.md `name` is the global key, so collisions would be a config bug).
+      const dest = join(skillsDest, skillName);
+      try {
+        cpSync(src, dest, { recursive: true });
+      } catch (err) {
+        console.error('[runner] failed to populate skill into isolated config dir', {
+          skill: skillName,
+          subject: subjectId,
+          err,
+        });
+      }
+    }
+  }
+}
+
 function getIsolatedClaudeConfigDir(): string {
   if (!isolatedConfigDir) {
-    isolatedConfigDir = mkdtempSync(join(tmpdir(), 'loom-claude-'));
+    const dir = mkdtempSync(join(tmpdir(), 'loom-claude-'));
+    populateIsolatedSkills(dir);
+    isolatedConfigDir = dir;
   }
   return isolatedConfigDir;
 }
@@ -260,6 +331,12 @@ function buildQueryOptions(
     allowDangerouslySkipPermissions: true,
     persistSession: false,
     cwd: process.cwd(),
+    // YUK-225 (S2 slice 4) — Agent Skill whitelist. Only pass the option when a
+    // handler set ctx.skills (降级链：omitted → SDK loads nothing extra → current
+    // promptFragments behaviour). settingSources stays OMITTED on purpose — the
+    // YUK-217 spike proved `[]` disables CONFIG_DIR/skills auto-load (双 NO),
+    // so the populated skills only stay visible when settingSources is unset.
+    ...(ctx.skills && ctx.skills.length > 0 ? { skills: ctx.skills } : {}),
   };
 }
 
