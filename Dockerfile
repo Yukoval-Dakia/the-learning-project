@@ -89,6 +89,21 @@ RUN test -f ./migrate.cjs || (echo "migrate.cjs missing — check pnpm build:mig
 # migrator at runtime. Copying here keeps the runner image self-contained.
 COPY --from=builder --chown=nextjs:nodejs /app/drizzle ./drizzle
 
+# YUK-225 (S2 slice 4, PR #319 F2): quiz-gen Agent Skill assets. The runner
+# (src/server/ai/runner.ts populateIsolatedSkills) mirrors src/subjects/<id>/skills/
+# into the isolated CLAUDE_CONFIG_DIR/skills at process start so the SDK can load the
+# per-题型 SKILL.md规范包. The Next standalone tracer never sees these files (they are
+# read at runtime via readdirSync, not imported), and the worker.cjs bundle doesn't
+# carry them either — so without this COPY production skills degrade to empty and every
+# generated question silently falls back to promptFragments. The runner resolves the
+# tree relative to process.cwd() (= /app for `node server.js` / `node worker.cjs`) and
+# walks src/subjects/<id>/skills/, so we land the skills subtrees at that exact path.
+# Minimal copy: ONLY the skills/ subtrees (not profile.ts / fixtures / other source);
+# subjects without a skills/ dir (e.g. physics) are skipped by the runner's per-subject
+# existsSync guard, so they need not be present.
+COPY --from=builder --chown=nextjs:nodejs /app/src/subjects/math/skills ./src/subjects/math/skills
+COPY --from=builder --chown=nextjs:nodejs /app/src/subjects/wenyan/skills ./src/subjects/wenyan/skills
+
 # sharp is a native module used by the tencent_ocr_extract handler in the
 # worker process and by /api/assets/* in the app process. Next standalone
 # tracer only includes what route code imports — worker handlers aren't traced
