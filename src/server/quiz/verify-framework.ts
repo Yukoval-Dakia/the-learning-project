@@ -157,7 +157,43 @@ const EXACT_KINDS = new Set(['choice', 'true_false', 'fill_blank']);
 function isExactQuestion(q: SolveCheckQuestion): boolean {
   if (q.judge_kind_override === 'exact') return true;
   if (q.judge_kind_override === 'keyword' || q.judge_kind_override === 'semantic') return false;
+  // Structure is the source of truth for the exact/semantic split, mirroring the
+  // formal judge dispatch (route-resolve.ts: `choices.length > 0 → 'exact'`). A row
+  // with persisted choices is a single/multiple-choice item regardless of the kind
+  // string a subject profile uses (history/学科 题型 expose 'single_choice' etc.
+  // while the canonical QuestionKind enum only knows 'choice'). Without this, those
+  // rows fell through to the conservative semantic path and a wrong reference answer
+  // went undetected by solve-check.
+  if ((q.choices_md ?? []).length > 0) return true;
   return EXACT_KINDS.has(q.kind);
+}
+
+// F2: the question's declared answer for solve-check comparison. solution-generate.ts
+// writes the STRUCTURED final answer to rubric_json.reference_solution.final_answer
+// (+ answer_equivalents) while reference_md holds the full worked solution prose.
+// Comparing an exact solver answer against an entire worked solution would falsely
+// fail, so prefer the structured final answer and only fall back to reference_md when
+// no structured answer is present.
+function referenceAnswerCandidates(q: SolveCheckQuestion): string[] {
+  const rubric = q.rubric_json;
+  if (rubric !== null && typeof rubric === 'object' && !Array.isArray(rubric)) {
+    const refSolution = (rubric as Record<string, unknown>).reference_solution;
+    if (refSolution !== null && typeof refSolution === 'object' && !Array.isArray(refSolution)) {
+      const rs = refSolution as Record<string, unknown>;
+      const out: string[] = [];
+      if (typeof rs.final_answer === 'string' && rs.final_answer.trim().length > 0) {
+        out.push(rs.final_answer.trim());
+      }
+      if (Array.isArray(rs.answer_equivalents)) {
+        for (const eq of rs.answer_equivalents) {
+          if (typeof eq === 'string' && eq.trim().length > 0) out.push(eq.trim());
+        }
+      }
+      if (out.length > 0) return out;
+    }
+  }
+  const fallback = (q.reference_md ?? '').trim();
+  return fallback.length > 0 ? [fallback] : [];
 }
 
 export function normalizeAnswer(text: string): string {
@@ -227,7 +263,12 @@ export async function runSolveCheck(
   question: SolveCheckQuestion,
   opts: SolveCheckOptions,
 ): Promise<SolveCheckResult> {
-  const referenceAnswer = (question.reference_md ?? '').trim();
+  // F2: prefer the structured final answer (rubric_json.reference_solution) over the
+  // worked-solution prose in reference_md. referenceAnswer is the primary candidate
+  // used for human-readable reason strings + the semantic-path reference; the full
+  // list feeds the exact normalize-compare.
+  const referenceCandidates = referenceAnswerCandidates(question);
+  const referenceAnswer = referenceCandidates[0] ?? '';
 
   // Solve the question independently. Input shape mirrors solution-generate.ts:103.
   let solverFinalAnswer: string;
@@ -292,7 +333,8 @@ export async function runSolveCheck(
   // ----- exact path: normalize compare -----
   if (isExactQuestion(question)) {
     const choices = question.choices_md ?? [];
-    const refCandidates = answerCandidates(referenceAnswer, choices)
+    const refCandidates = referenceCandidates
+      .flatMap((candidate) => answerCandidates(candidate, choices))
       .map(normalizeAnswer)
       .filter((c) => c.length > 0);
     const solverCandidates = [solverFinalAnswer, ...solverEquivalents]
