@@ -16,6 +16,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { knowledge, question } from '@/db/schema';
+import * as profileModule from '@/subjects/profile';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
@@ -28,12 +29,12 @@ import {
 
 const db = testDb();
 
-async function seedKnowledge(id: string) {
+async function seedKnowledge(id: string, domain = 'wenyan') {
   const now = new Date();
   await db.insert(knowledge).values({
     id,
     name: '之',
-    domain: 'wenyan',
+    domain,
     parent_id: null,
     merged_from: [],
     proposed_by_ai: false,
@@ -76,18 +77,45 @@ async function seedQuestion(opts: {
 // high-tier-first ordering is observable.
 const TIER1_META = { ingestion_session_id: 'sess-1' };
 
+// A tier-2 web_sourced row. whitelist_match drives the OF-2 within-tier demotion.
+function tier2Meta(whitelistMatch: boolean): Record<string, unknown> {
+  return {
+    source_ref_kind: 'url',
+    web_sourced: {
+      url: 'https://example.com/q',
+      title: 't',
+      fetched_at: '2026-06-06T00:00:00Z',
+      whitelist_match: whitelistMatch,
+      // extract is REQUIRED by WebSourcedProvenance (provenance.ts:63) or the row
+      // falls through to tier 4 and the demotion ordering can't be observed.
+      extract: '示例题干抽取',
+    },
+  };
+}
+
+interface EnqueueCall {
+  step: SourcingSequenceStep;
+  ref_id: string;
+  count?: number;
+  trigger: string;
+  generation_method?: 'material_grounded' | 'closed_book';
+  knowledge_id?: string;
+}
+
 function collectingEnqueue(): {
   fn: EnqueueSequenceJobFn;
-  calls: Array<{ step: SourcingSequenceStep; ref_id: string; count?: number; trigger: string }>;
+  calls: EnqueueCall[];
 } {
-  const calls: Array<{
-    step: SourcingSequenceStep;
-    ref_id: string;
-    count?: number;
-    trigger: string;
-  }> = [];
+  const calls: EnqueueCall[] = [];
   const fn = vi.fn(async (step, data) => {
-    calls.push({ step, ref_id: data.ref_id, count: data.count, trigger: data.trigger });
+    calls.push({
+      step,
+      ref_id: data.ref_id,
+      count: data.count,
+      trigger: data.trigger,
+      generation_method: data.generation_method,
+      knowledge_id: data.knowledge_id,
+    });
   });
   return { fn, calls };
 }
@@ -243,6 +271,139 @@ describe('runSourcingSequence', () => {
     for (const c of calls) {
       expect(c.ref_id).toBe('li-99');
       expect(c.trigger).toBe('learning_item');
+    }
+  });
+
+  // F1 (PR #318 round-1) — the quiz_gen steps carry an EXPLICIT generation_method so
+  // the worker executes the tier the次序 asked for (step 3 material vs step 4 closed).
+  it('pins generation_method per quiz_gen step (material_grounded / closed_book)', async () => {
+    await resetDb();
+    await seedKnowledge('k1');
+
+    const { fn, calls } = collectingEnqueue();
+    await runSourcingSequence({ db, knowledgeId: 'k1', count: 3, enqueueSequenceJob: fn });
+
+    const byStep = new Map(calls.map((c) => [c.step, c]));
+    // external_sourcing rides the sourcing queue — NO method axis.
+    expect(byStep.get('external_sourcing')?.generation_method).toBeUndefined();
+    // step 3 → material_grounded (tier 3); step 4 → closed_book (tier 4).
+    expect(byStep.get('material_grounded')?.generation_method).toBe('material_grounded');
+    expect(byStep.get('closed_book')?.generation_method).toBe('closed_book');
+  });
+
+  // F3 (PR #318 round-1) — manual trigger with a free-form ref_id still keys produced
+  // questions to the knowledge node (knowledge_id forwarded on every enqueued job).
+  it('forwards knowledge_id for attribution under a manual free-form ref', async () => {
+    await resetDb();
+    await seedKnowledge('k1');
+
+    const { fn, calls } = collectingEnqueue();
+    await runSourcingSequence({
+      db,
+      knowledgeId: 'k1',
+      refId: 'free form manual ref',
+      trigger: 'manual',
+      count: 3,
+      enqueueSequenceJob: fn,
+    });
+
+    expect(calls.length).toBeGreaterThan(0);
+    for (const c of calls) {
+      // ref_id stays the free-form trigger pointer; knowledge_id is the attribution anchor.
+      expect(c.ref_id).toBe('free form manual ref');
+      expect(c.knowledge_id).toBe('k1');
+    }
+  });
+
+  // F2 (PR #318 round-1) — when many OLD low-tier rows exceed limit×4, a NEW high-tier
+  // row created LAST must still be selected. The previous SQL截断 (limit×4 by created_at)
+  // dropped it before the tier sort; fetching the full candidate set fixes it.
+  it('selects a new high-tier row even when old low-tier rows exceed limit×4', async () => {
+    await resetDb();
+    await seedKnowledge('k1');
+    const limit = 2;
+    // Seed limit×4 + a margin of OLD tier-4 generated rows FIRST (earliest created_at).
+    for (let i = 0; i < limit * 4 + 3; i++) {
+      await seedQuestion({ id: `gen-${i}`, knowledgeId: 'k1', source: 'quiz_gen' });
+    }
+    // Then a NEW tier-1 authentic row (latest created_at — last in the SQL截断 window).
+    await seedQuestion({
+      id: 'auth-new',
+      knowledgeId: 'k1',
+      source: 'wenyan',
+      metadata: TIER1_META,
+    });
+
+    const { fn } = collectingEnqueue();
+    const res = await runSourcingSequence({
+      db,
+      knowledgeId: 'k1',
+      count: limit,
+      enqueueSequenceJob: fn,
+    });
+
+    // The new high-tier authentic row must be the FIRST hit despite being created last.
+    expect(res.existing[0]).toMatchObject({ question_id: 'auth-new', tier: 1 });
+  });
+
+  // F4 (PR #318 round-1) — within the SAME tier, off-whitelist (whitelist_match=false)
+  // sorts BEHIND on-whitelist (reuses the slice 5a comparator — 合约五).
+  it('demotes off-whitelist tier-2 rows behind on-whitelist within the pool', async () => {
+    await resetDb();
+    await seedKnowledge('k1');
+    // insert off-whitelist FIRST (earlier created_at) so only the tier+demotion order,
+    // not insertion order, can put on-whitelist ahead.
+    await seedQuestion({
+      id: 'q_off',
+      knowledgeId: 'k1',
+      source: 'web_sourced',
+      metadata: tier2Meta(false),
+    });
+    await seedQuestion({
+      id: 'q_on',
+      knowledgeId: 'k1',
+      source: 'web_sourced',
+      metadata: tier2Meta(true),
+    });
+
+    const { fn } = collectingEnqueue();
+    const res = await runSourcingSequence({
+      db,
+      knowledgeId: 'k1',
+      count: 5, // force insufficient so both hits come back
+      enqueueSequenceJob: fn,
+    });
+
+    const ids = res.existing.map((h) => h.question_id);
+    expect(res.existing.every((h) => h.tier === 2)).toBe(true);
+    expect(ids.indexOf('q_on')).toBeLessThan(ids.indexOf('q_off'));
+  });
+
+  // F5 (PR #318 round-1) — when domain is omitted, the profile route is resolved from
+  // the KNOWLEDGE NODE's own domain, not the default subject. Proven by asserting the
+  // domain ACTUALLY passed to resolveSubjectProfile equals the node's domain (the route
+  // step list is identical across subjects until S2-4, so the observable proof is the
+  // resolution INPUT, not the output route).
+  it('resolves the subject profile from the knowledge node domain when domain omitted', async () => {
+    await resetDb();
+    await seedKnowledge('k_math', 'math');
+
+    const spy = vi.spyOn(profileModule, 'resolveSubjectProfile');
+    try {
+      const { fn } = collectingEnqueue();
+      await runSourcingSequence({
+        db,
+        knowledgeId: 'k_math',
+        count: 3, // force insufficient (empty pool) so the profile path runs
+        // NO domain passed → must derive from the node.
+        enqueueSequenceJob: fn,
+      });
+      // The orchestrator resolved the profile off the node's domain ('math'), NOT the
+      // default-subject fallback (null).
+      expect(spy).toHaveBeenCalledWith('math');
+      expect(spy).not.toHaveBeenCalledWith(null);
+    } finally {
+      spy.mockRestore();
     }
   });
 });
