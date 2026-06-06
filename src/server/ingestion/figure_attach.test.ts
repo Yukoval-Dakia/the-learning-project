@@ -321,4 +321,69 @@ describe('assignFiguresFromVlm', () => {
     // geometric fallback: figure bbox (0.2,0.2,0.1,0.1) is inside realQ's full-page bbox
     expect(result[0].attached_to_index).toBe('real-q');
   });
+
+  // R2-1: output order must match original preFigures order.
+
+  it('R2-1: output preserves original preFigures order even when index-1 is VLM and index-0 is geometric', () => {
+    // figure index 0 → NOT covered by VLM (goes geometric)
+    // figure index 1 → covered by VLM (goes to q2)
+    // Expected output: [result_for_fig0, result_for_fig1] — original order, NOT
+    // [vlmRef(fig1), geometricRef(fig0)] which the old [...vlmRefs, ...geometricRefs]
+    // would have produced.
+    const q1: StructuredQuestionT = {
+      id: 'q1',
+      role: 'standalone',
+      prompt_text: 'q1',
+      bbox: { x: 0, y: 0, width: 0.5, height: 0.5 },
+    };
+    const figures: PreAttachFigure[] = [
+      fig({ x: 0.1, y: 0.1, width: 0.05, height: 0.05 }, 0, 0), // index 0 — no VLM assignment
+      fig({ x: 0.6, y: 0.6, width: 0.05, height: 0.05 }, 1, 0), // index 1 — VLM → q2
+    ];
+    const assignments: FigureAssignment[] = [
+      { figure_index: 1, attached_to_question_id: 'q1', confidence: 'high' },
+    ];
+    const result = assignFiguresFromVlm(figures, assignments, [q1]);
+    expect(result).toHaveLength(2);
+    // result[0] must correspond to preFigures[0] (fig_0, no VLM coverage → geometric)
+    expect(result[0].asset_id).toBe('fig_0');
+    // result[1] must correspond to preFigures[1] (fig_1, VLM → q1)
+    expect(result[1].asset_id).toBe('fig_1');
+    expect(result[1].attached_to_index).toBe('q1');
+    expect(result[1].attach_confidence).toBe('high');
+  });
+
+  // R2-2: same figure_index claimed by multiple nodes → both discarded → geometric.
+
+  it('R2-2: duplicate figure_index in VLM assignments → conflict discarded → geometric fallback', () => {
+    // VLM assigns figure 0 to both q1 and q2 (e.g. same image claimed by stem and sub).
+    // The whole conflict group must be discarded; figure 0 falls to geometric heuristic.
+    const q1: StructuredQuestionT = {
+      id: 'q1',
+      role: 'standalone',
+      prompt_text: 'q1',
+      bbox: { x: 0, y: 0, width: 0.5, height: 0.5 },
+    };
+    const q2: StructuredQuestionT = {
+      id: 'q2',
+      role: 'standalone',
+      prompt_text: 'q2',
+      bbox: { x: 0.5, y: 0.5, width: 0.5, height: 0.5 },
+    };
+    const figures: PreAttachFigure[] = [
+      // figure 0 inside q1 bbox — geometric would attach it to q1
+      fig({ x: 0.1, y: 0.1, width: 0.05, height: 0.05 }, 0, 0),
+    ];
+    const assignments: FigureAssignment[] = [
+      { figure_index: 0, attached_to_question_id: 'q1', confidence: 'high' },
+      { figure_index: 0, attached_to_question_id: 'q2', confidence: 'high' }, // conflict
+    ];
+    const result = assignFiguresFromVlm(figures, assignments, [q1, q2]);
+    expect(result).toHaveLength(1);
+    // The VLM conflict is discarded; geometric resolves it: fig inside q1 bbox → q1.
+    // (Not q2, which would indicate the conflicting VLM assignment leaked through.)
+    expect(result[0].asset_id).toBe('fig_0');
+    expect(result[0].attached_to_index).toBe('q1'); // geometric: bbox containment
+    expect(result[0].attach_confidence).toBe('high'); // geometric containment = high
+  });
 });

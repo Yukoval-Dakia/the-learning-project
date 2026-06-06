@@ -81,15 +81,26 @@ export function assignFigures(
  *
  * Safety contract (regression invariant):
  *  - VLM covers a figure with confidence='high' AND target id exists in the
- *    question tree → use VLM assignment (attach_confidence='high').
+ *    question tree AND no other node claimed the same figure_index → use VLM
+ *    assignment (attach_confidence='high').
  *  - VLM reported confidence='low' → treat as "uncertain" and fall back to
  *    geometric heuristic. The prompt (F1) instructs the VLM to only report
  *    figure_ids when certain; low-confidence assignments are a signal that the
  *    VLM guessed rather than determined. Geometric fallback is safer than
  *    a low-confidence VLM guess that overrides it.
+ *  - VLM assigned the same figure_index to multiple nodes (conflict) → discard
+ *    the whole group and fall back to geometric (R2-2). Conflicting assignments
+ *    are ambiguous and overriding either choice would be wrong; geometric is
+ *    more conservative. console.warn logs the conflict for visibility.
  *  - VLM did not cover a figure → geometric fallback, no figure dropped.
  *  - VLM assignments is empty/undefined → identical to calling `assignFigures`
  *    directly (zero regression on the Tencent fallback path).
+ *
+ * Output order contract (R2-1): the returned array is in the SAME ORDER as the
+ * input `preFigures` array. Callers must not assume position === figure_index
+ * but any code relying on the original preFigures order (e.g. block.figures[i]
+ * corresponds to preFigures[i]) is protected. Throws if the internal
+ * reconstruction leaves a gap (programming error, never normal operation).
  *
  * F1 semantic decision: only high-confidence VLM assignments are consumed;
  * low-confidence ones go to geometric fallback. This aligns with the prompt
@@ -110,54 +121,87 @@ export function assignFiguresFromVlm(
   // Build a set of valid question ids (P3: validate assignment targets exist).
   const validQuestionIds = new Set(flattenQuestions(questions).map((q) => q.id));
 
-  // Build a lookup: figure_index → assignment (first-win if duplicate indices).
-  // Only include HIGH-confidence assignments whose target question id is present
-  // in the tree. Low-confidence assignments are treated as "uncertain VLM guess"
-  // and fall back to geometric — aligning with the F1 prompt change that asks
-  // the VLM to only report figure_ids when certain (F1 semantic decision).
-  // Hallucinated ids (P3) also fall to geometric regardless of confidence.
+  // Build a lookup: figure_index → assignment, applying three filters:
+  //  1. HIGH confidence only (F1): low-confidence → geometric fallback.
+  //  2. Valid target question id (P3): hallucinated id → geometric fallback.
+  //  3. No conflict (R2-2): if the same figure_index appears more than once
+  //     across any nodes, the whole group is discarded → geometric fallback.
+  //     Conflicts are logged via console.warn.
+  const seenIndices = new Set<number>();
+  const conflictIndices = new Set<number>();
   const assignmentByIndex = new Map<number, FigureAssignment>();
+
   for (const a of figureAssignments ?? []) {
-    if (
-      !assignmentByIndex.has(a.figure_index) &&
-      a.confidence === 'high' &&
-      validQuestionIds.has(a.attached_to_question_id)
-    ) {
+    if (a.confidence !== 'high' || !validQuestionIds.has(a.attached_to_question_id)) {
+      // Low confidence or invalid target — skip silently (will fall to geometric).
+      continue;
+    }
+    if (seenIndices.has(a.figure_index)) {
+      // Duplicate figure_index → conflict. Mark for discard and warn.
+      conflictIndices.add(a.figure_index);
+    } else {
+      seenIndices.add(a.figure_index);
       assignmentByIndex.set(a.figure_index, a);
     }
   }
 
-  // Separate covered (VLM, valid target) vs uncovered/invalid (geometric fallback).
-  const vlmCovered: PreAttachFigure[] = [];
-  const vlmCoveredIndices: number[] = [];
-  const geometric: PreAttachFigure[] = [];
+  // Remove conflicting indices from the lookup so they fall to geometric fallback.
+  for (const ci of conflictIndices) {
+    assignmentByIndex.delete(ci);
+    console.warn(
+      `[assignFiguresFromVlm] figure_index=${ci} was claimed by multiple VLM nodes; discarding all claims — falling back to geometric heuristic (R2-2)`,
+    );
+  }
 
-  preFigures.forEach((fig, i) => {
-    if (assignmentByIndex.has(i)) {
-      vlmCovered.push(fig);
-      vlmCoveredIndices.push(i);
-    } else {
-      geometric.push(fig);
+  // R2-1: reconstruct output in original preFigures order.
+  // Figures going to geometric fallback are collected, run through assignFigures,
+  // then re-inserted at their original positions so the output array is always
+  // index-stable with respect to the input preFigures array.
+  const geometricFigures: PreAttachFigure[] = [];
+  const geometricOriginalPositions: number[] = [];
+
+  for (let i = 0; i < preFigures.length; i++) {
+    if (!assignmentByIndex.has(i)) {
+      geometricFigures.push(preFigures[i]);
+      geometricOriginalPositions.push(i);
     }
-  });
+  }
 
-  // VLM-assigned figures → directly produce FigureRefT with high confidence.
-  const vlmRefs: FigureRefT[] = vlmCovered.map((fig, pos) => {
-    const idx = vlmCoveredIndices[pos];
-    // biome-ignore lint/style/noNonNullAssertion: idx guaranteed in map above
-    const assignment = assignmentByIndex.get(idx)!;
-    return {
-      ...fig,
-      attached_to_index: assignment.attached_to_question_id,
-      attach_confidence: assignment.confidence,
-    };
-  });
-
-  // Geometric fallback for uncovered or invalid-target figures.
   const geometricRefs: FigureRefT[] =
-    geometric.length > 0 ? assignFigures(geometric, questions) : [];
+    geometricFigures.length > 0 ? assignFigures(geometricFigures, questions) : [];
 
-  return [...vlmRefs, ...geometricRefs];
+  // Build the output array in original preFigures order.
+  const result: (FigureRefT | undefined)[] = new Array(preFigures.length);
+
+  // Place VLM-assigned figures at their original positions.
+  for (let i = 0; i < preFigures.length; i++) {
+    const assignment = assignmentByIndex.get(i);
+    if (assignment) {
+      result[i] = {
+        ...preFigures[i],
+        attached_to_index: assignment.attached_to_question_id,
+        attach_confidence: assignment.confidence,
+      };
+    }
+  }
+
+  // Place geometric-fallback figures at their original positions.
+  for (let g = 0; g < geometricOriginalPositions.length; g++) {
+    const pos = geometricOriginalPositions[g];
+    result[pos] = geometricRefs[g];
+  }
+
+  // Sanity check: no gaps (programming error if this fires).
+  for (let i = 0; i < result.length; i++) {
+    if (result[i] === undefined) {
+      throw new Error(
+        `assignFiguresFromVlm: internal error — result[${i}] is undefined (gap in reconstruction). ` +
+          `preFigures.length=${preFigures.length}`,
+      );
+    }
+  }
+
+  return result as FigureRefT[];
 }
 
 // ---------- 几何 helpers ----------
