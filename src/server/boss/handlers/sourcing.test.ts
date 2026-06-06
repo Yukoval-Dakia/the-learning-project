@@ -118,6 +118,37 @@ const MIXED_OUTPUT = JSON.stringify({
   tool: 'tavily',
 });
 
+// YUK-227 S3 Slice C (FIX-R2-9) — a run that VIOLATES the 二选一 prompt contract: the
+// SAME source_url is reported in BOTH a text question AND an image_candidate. The handler
+// must INSERT the text question and SKIP the duplicate image_candidate (text wins).
+const DUAL_REPORT_OUTPUT = JSON.stringify({
+  questions: [
+    {
+      kind: 'short_answer',
+      prompt_md: '请翻译「学而时习之」。',
+      reference_md: '学习并按时温习它。',
+      choices_md: null,
+      judge_kind_override: 'semantic',
+      rubric_json: null,
+      difficulty: 2,
+      knowledge_ids: ['k1'],
+      source_url: 'https://example.edu/wenyan/dual',
+      source_title: '论语·学而',
+      extract: '请翻译「学而时习之」。学习并按时温习它。',
+    },
+  ],
+  image_candidates: [
+    {
+      source_url: 'https://example.edu/wenyan/dual',
+      source_title: '论语·学而',
+      summary_md: '同一个源被错误地又报成了图片型源。',
+    },
+  ],
+  query_plan: ['论语 学而'],
+  fetched_at: '2026-06-06T00:00:00.000Z',
+  tool: 'tavily',
+});
+
 const HALLUCINATED_KNOWLEDGE_OUTPUT = JSON.stringify({
   questions: [
     {
@@ -903,6 +934,68 @@ describe('runSourcing', () => {
     expect(result.image_candidate_proposal_ids).toEqual([]);
     const events = await db.select().from(event).where(eq(event.action, 'experimental:sourcing'));
     expect(events.some((e) => e.outcome === 'success')).toBe(true);
+  });
+
+  // FIX-R2-9 — the agent violated the 二选一 contract and reported the SAME source_url in
+  // BOTH questions and image_candidates. The text question is INSERTed; the duplicate
+  // image_candidate is SKIPPED (text wins), so accept can't re-extract + duplicate it.
+  it('skips an image_candidate whose source_url was also reported as a text question (FIX-R2-9)', async () => {
+    const db = testDb();
+    await seedKnowledge({ id: 'k1' });
+    const writeImageCandidateProposalFn = vi.fn(
+      async (_db: unknown, _input: unknown) => 'should_not_be_written',
+    );
+
+    const result = await runSourcing({
+      db,
+      trigger: 'knowledge',
+      refId: 'k1',
+      runAgentTaskFn: agentMock(DUAL_REPORT_OUTPUT, 'tr_src_dual'),
+      enqueueSourceVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: vi.fn(() => null),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      writeImageCandidateProposalFn,
+    });
+
+    // 1 text question INSERTed, 0 image_candidate proposals (the dup was skipped).
+    expect(result.question_ids).toHaveLength(1);
+    expect(result.image_candidate_proposal_ids).toEqual([]);
+    expect(writeImageCandidateProposalFn).not.toHaveBeenCalled();
+    const rows = await db.select().from(question).where(eq(question.source, 'web_sourced'));
+    expect(rows).toHaveLength(1);
+  });
+
+  // FIX-R2-5 — a kind-constrained run stamps requested_kind on the image_candidate
+  // proposed_change so accept can materialize the question as that kind. (The text path
+  // already enforces kindsMatch per question; this carries the same constraint to the
+  // image path which has no per-question kind until accept's VLM.)
+  it('stamps requested_kind on the image_candidate proposal when the run is kind-pinned (FIX-R2-5)', async () => {
+    const db = testDb();
+    await seedKnowledge({ id: 'k1' });
+    const writeImageCandidateProposalFn = vi.fn(
+      async (_db: unknown, _input: unknown) => 'proposal_evt_kind',
+    );
+
+    await runSourcing({
+      db,
+      trigger: 'knowledge',
+      refId: 'k1',
+      // The pinned kind is short_answer, matching IMAGE_ONLY_OUTPUT's (0) questions — an
+      // image-only run has no text questions to kind-check, so the pin only flows to the
+      // proposal here.
+      kind: 'short_answer',
+      runAgentTaskFn: agentMock(IMAGE_ONLY_OUTPUT, 'tr_src_img_kind'),
+      enqueueSourceVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: vi.fn(() => null),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      writeImageCandidateProposalFn,
+    });
+
+    expect(writeImageCandidateProposalFn).toHaveBeenCalledTimes(1);
+    const proposalInput = writeImageCandidateProposalFn.mock.calls[0][1] as {
+      payload: { proposed_change: { requested_kind?: string } };
+    };
+    expect(proposalInput.payload.proposed_change.requested_kind).toBe('short_answer');
   });
 });
 

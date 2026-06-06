@@ -47,6 +47,7 @@ import { writeEvent } from '@/server/events/queries';
 import { ApiError } from '@/server/http/errors';
 import { runVisionExtract } from '@/server/ingestion/vision';
 import { type R2Client, getR2 } from '@/server/r2';
+import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 import type { ProposalInboxRow } from './inbox';
 import { ensureProposalDecisionSignal, recordProposalDecisionSignal } from './signals';
 
@@ -135,20 +136,28 @@ function assertPublicHttpUrl(url: string): void {
   const host = parsed.hostname.toLowerCase();
   // Strip IPv6 brackets if present (URL.hostname keeps them).
   const bareHost = host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
+  // FIX-R2-7 — the IPv6 unique-local / link-local prefixes (fc00::/7, fe80::/10) must
+  // ONLY be matched against a real IPv6 LITERAL (host contains ':'). The old
+  // bareHost.startsWith('fc'|'fd'|'fe80') matched normal DNS names like fcdn.example.com
+  // or fdic.gov (false-positive private-host rejection). A hostname can never be an IPv6
+  // literal without a ':', so gate the IPv6 checks on that and use precise prefix regexes.
+  const isIpv6Literal = bareHost.includes(':');
+  const isPrivateIpv6 =
+    isIpv6Literal &&
+    (bareHost === '::1' || // loopback
+      /^f[cd][0-9a-f]{2}:/i.test(bareHost) || // unique-local fc00::/7
+      /^fe80:/i.test(bareHost)); // link-local fe80::/10
   const isPrivate =
     bareHost === 'localhost' ||
     bareHost.endsWith('.localhost') ||
     bareHost.endsWith('.local') ||
-    bareHost === '::1' ||
     bareHost === '0.0.0.0' ||
     /^127\./.test(bareHost) ||
     /^10\./.test(bareHost) ||
     /^192\.168\./.test(bareHost) ||
     /^172\.(1[6-9]|2\d|3[01])\./.test(bareHost) ||
     /^169\.254\./.test(bareHost) || // link-local incl. cloud metadata 169.254.169.254
-    bareHost.startsWith('fc') || // IPv6 unique-local fc00::/7
-    bareHost.startsWith('fd') ||
-    bareHost.startsWith('fe80'); // IPv6 link-local
+    isPrivateIpv6;
   if (isPrivate) {
     throw new ApiError(
       'validation_error',
@@ -158,12 +167,56 @@ function assertPublicHttpUrl(url: string): void {
   }
 }
 
+// FIX-R2-1 — fetch follows 30x by default, which would let an AI-written URL that
+// PASSED assertPublicHttpUrl redirect to localhost / 169.254.169.254 / an internal host
+// and bypass the SSRF guard. Drive redirects manually (redirect:'manual') and re-run
+// assertPublicHttpUrl on each hop's Location before following it. Cap at MAX_REDIRECTS so
+// a redirect loop / chain can't spin.
+const MAX_REDIRECTS = 3;
+
 async function defaultFetchImageBytes(
   url: string,
 ): Promise<{ bytes: Uint8Array; mimeType: string }> {
   // FIX-7 — gate the AI-written URL before any network call.
   assertPublicHttpUrl(url);
-  const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+  let currentUrl = url;
+  let res: Response | null = null;
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    res = await fetch(currentUrl, {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    // A 30x with a Location is a redirect we must re-guard before following (the original
+    // URL passed the SSRF check, but the redirect target is just as AI-influenced).
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get('location');
+      if (!location) {
+        throw new ApiError(
+          'extraction_failed',
+          `image fetch got ${res.status} with no Location for ${currentUrl}`,
+          422,
+        );
+      }
+      if (hop === MAX_REDIRECTS) {
+        throw new ApiError(
+          'extraction_failed',
+          `image fetch exceeded ${MAX_REDIRECTS} redirects starting at ${url}`,
+          422,
+        );
+      }
+      // Resolve relative Location against the current URL, then re-run the FULL SSRF guard
+      // on the resolved target — a redirect to 169.254.169.254 / localhost is rejected here
+      // (before the next fetch), so the redirect can never reach a private host.
+      const nextUrl = new URL(location, currentUrl).toString();
+      assertPublicHttpUrl(nextUrl);
+      currentUrl = nextUrl;
+      continue;
+    }
+    break;
+  }
+  if (!res) {
+    throw new ApiError('extraction_failed', `image fetch produced no response for ${url}`, 422);
+  }
   if (!res.ok) {
     throw new ApiError('extraction_failed', `image fetch failed (${res.status}) for ${url}`, 422);
   }
@@ -175,6 +228,18 @@ async function defaultFetchImageBytes(
     throw new ApiError(
       'unsupported_media_type',
       `image_candidate source_url returned non-image Content-Type '${mimeType || '(none)'}' for ${url}`,
+      422,
+    );
+  }
+  // FIX-R2-4 — an image/* MIME outside the VLM pipeline's supported set (png/jpeg/webp)
+  // must be REJECTED, not silently re-tagged as image/png. The old code persisted gif /
+  // svg / bmp bytes under a falsified image/png mime_type, so R2 served a wrong
+  // Content-Type AND the bytes were decoded by the VLM as PNG (garbage). Reject loudly
+  // with the real MIME + the supported list so the failure is diagnosable.
+  if (!ALLOWED_IMAGE_MIME.has(mimeType)) {
+    throw new ApiError(
+      'unsupported_media_type',
+      `image_candidate source_url Content-Type '${mimeType}' is not a supported image type (supported: ${[...ALLOWED_IMAGE_MIME].join(', ')})`,
       422,
     );
   }
@@ -445,6 +510,16 @@ export async function acceptImageCandidateProposal(
     // gets a real ctx. We capture the returned VisionExtractTask task_run_id to correlate
     // the cost_ledger correlation row written in step 5.
     let visionTaskRunId: string | null = null;
+    // FIX-R2-6 — capture the VLM's RAW output text (the full block-serialized JSON from
+    // the same VLM call) so metadata.web_sourced.extract can store something WIDER than the
+    // final promptMd. The old code set extract = promptMd, which made source_verify's
+    // source_consistency n-gram overlap pass trivially (extract === prompt), grounding the
+    // question against itself. The raw VLM text still comes from the same single call (we do
+    // NOT spend a second VLM), but it carries the reference / wrong-answer / confidence
+    // context too, so the overlap is no longer an identity. (True independent grounding —
+    // re-verifying the prompt against the IMAGE — needs a multimodal verify pass; that is
+    // out of scope for this slice; see single_source_grounding marker below.)
+    let visionRawText = '';
     const vision = await runVisionExtract({
       assetId: sourceAssetId,
       mimeType: resolvedMime,
@@ -460,6 +535,8 @@ export async function acceptImageCandidateProposal(
         // { text }. Capture it when present so step 5's ledger row串联s the real run.
         const maybeRunId = (out as { task_run_id?: unknown }).task_run_id;
         if (typeof maybeRunId === 'string') visionTaskRunId = maybeRunId;
+        // FIX-R2-6 — keep the raw VLM output text for the extract field (see above).
+        if (typeof out.text === 'string') visionRawText = out.text;
         return out;
       },
     });
@@ -468,15 +545,18 @@ export async function acceptImageCandidateProposal(
       throw new ApiError('extraction_failed', 'VLM returned 0 blocks for image_candidate', 422);
     }
 
-    // FIX-4 — pull the REAL provider/model/usage from the VisionExtractTask's ai_task_runs
-    // row (written by the production runner) so the correlation ledger row carries real
-    // numbers, not hardcoded zeros. When the run id is unknown (test seam) the row falls
-    // back to the registry defaults — but the production path always has it.
-    let ledgerProvider = 'xiaomi';
-    let ledgerModel = 'mimo-v2.5';
-    let ledgerCost = 0;
-    let ledgerTokensIn = 0;
-    let ledgerTokensOut = 0;
+    // FIX-R2-2 — the correlation ledger row is ZERO-VALUED on cost/tokens by design.
+    // The production runTask already wrote a REAL cost_ledger row for the
+    // VisionExtractTask run (with the actual model spend). If THIS correlation row also
+    // carried that same cost/tokens, /api/cost/today + the admin SUM(cost_ledger.cost)
+    // aggregate would count the one VLM extraction TWICE (both rows share visionTaskRunId).
+    // So this row keeps cost=0 / tokens_in=0 / tokens_out=0 CONSTANT and串联s the real run
+    // via task_run_id=visionTaskRunId; the real numbers are recoverable by JOINing the
+    // VisionExtractTask row on the same task_run_id (OCR-O5 traceability). provider/model
+    // are still looked up from ai_task_runs so the correlation row is self-describing
+    // ('unknown' when the run row is absent — never a hardcoded xiaomi/mimo guess).
+    let ledgerProvider = 'unknown';
+    let ledgerModel = 'unknown';
     if (visionTaskRunId) {
       const runRows = await db
         .select()
@@ -487,10 +567,16 @@ export async function acceptImageCandidateProposal(
       if (runRow) {
         ledgerProvider = runRow.provider;
         ledgerModel = runRow.model;
-        ledgerCost = runRow.cost_usd ?? 0;
-        ledgerTokensIn = runRow.usage_json?.inputTokens ?? 0;
-        ledgerTokensOut = runRow.usage_json?.outputTokens ?? 0;
       }
+    } else {
+      // Production always has a real VisionExtractTask run id (defaultRunTaskFn forwards it).
+      // A null id here is an anomaly (the run completed without an id) — log it; the row
+      // still串联s nothing but its zeros keep it from corrupting the cost aggregate.
+      console.warn(
+        '[image_candidate_accept] no VisionExtractTask task_run_id for accept of',
+        proposalId,
+        '— correlation ledger row will not link a real run',
+      );
     }
 
     // ── 4. build a web_sourced draft question from the VLM block ─────────────────
@@ -508,6 +594,17 @@ export async function acceptImageCandidateProposal(
     // path's question.knowledge_ids. Empty when the run resolved no node (legacy proposal
     // or free-form manual ref) → empty attribution, same as before FIX-3.
     const knowledgeIds = change.knowledge_ids ?? [];
+    // FIX-R2-6 — the extract is the RAW VLM output (block-serialized text from the same
+    // call), NOT the final promptMd. Storing promptMd made source_verify's source
+    // consistency n-gram overlap an identity (extract === prompt → always passes), so the
+    // question was "grounded" against itself. The raw text is still single-source (it is
+    // the same VLM call's output, not an independent re-read of the image), but it carries
+    // the reference / confidence / wrong-answer context so the overlap is no longer an
+    // identity. We mark single_source_grounding: true so the limitation is explicit:
+    // true independent grounding (re-verifying the prompt against the IMAGE via a second
+    // multimodal pass) is deliberately NOT done here (avoiding over-engineering for a
+    // single-user tool — see plan §4); the standard source_verify gate still runs.
+    const extractRaw = visionRawText.trim().length > 0 ? visionRawText : promptMd;
     const webSourced: WebSourcedProvenanceT = {
       url: change.source_url,
       title: change.source_title,
@@ -515,13 +612,24 @@ export async function acceptImageCandidateProposal(
       // image_candidate sources have no profile whitelist context at accept time → demoted
       // like every cold-start sourced row (OF-2). The verify gate is NOT relaxed.
       whitelist_match: false,
-      extract: promptMd,
+      extract: extractRaw,
     };
-    // A VLM-extracted question is short_answer by default with a semantic judge (no
-    // structured choices recoverable from a single image block); defaultJudgeKindForQuestion
-    // keeps this aligned with the SourcingTask judge-route contract.
+    // FIX-R2-5 — honour a题型约束 carried on the proposal. When the sourcing job that
+    // produced this candidate was kind-constrained, requested_kind was stamped on the
+    // proposed_change (the text path enforces the same pin). Normalize it through the
+    // single-authority question-kind vocabulary (src/subjects/question-kind.ts) so a
+    // profile/skill key (single_choice / calculation ...) maps to its canonical persisted
+    // kind; fall back to short_answer when absent or unrecognised (legacy proposal or
+    // free-form run) — the prior unconditional behaviour.
+    const requestedKind = change.requested_kind
+      ? normalizeToCanonicalKind(change.requested_kind)
+      : null;
+    const resolvedKind = requestedKind ?? 'short_answer';
+    // A VLM-extracted question defaults to a semantic judge (no structured choices
+    // recoverable from a single image block); defaultJudgeKindForQuestion keeps this
+    // aligned with the SourcingTask judge-route contract.
     const draftQuestion = {
-      kind: 'short_answer' as const,
+      kind: resolvedKind,
       prompt_md: promptMd,
       reference_md: referenceMd || null,
       knowledge_ids: knowledgeIds,
@@ -536,6 +644,34 @@ export async function acceptImageCandidateProposal(
     const questionId = createId();
     const rateEventId = newId();
     await db.transaction(async (tx) => {
+      // FIX-R2-3 — the claim (accept_started) does NOT freeze the inbox: while the VLM ran
+      // (the long, racy window), the user could have dismissed / retracted this proposal,
+      // landing a non-accept terminal rate event. Without this re-check the terminal tx
+      // would blindly write the accept rate + question, OVERWRITING that veto. Re-acquire
+      // the advisory lock and re-read the rate event under it; if a non-accept terminal
+      // decision now exists, abort with 409 and write NOTHING (no question, no accept rate).
+      // The VLM spend is already irreversible, but it is audited by the VisionExtractTask's
+      // own ledger row (the accept_failed marker below is NOT written — this is a user
+      // decision, not a crash — so the proposal correctly stays in its dismissed/retracted
+      // terminal state).
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`image_candidate_accept:${proposalId}`}, 0))`,
+      );
+      const terminalRateRows = await tx
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId)))
+        .limit(1);
+      const terminalRate = terminalRateRows[0];
+      if (terminalRate) {
+        const terminalRating = (terminalRate.payload as { rating?: string }).rating;
+        throw new ApiError(
+          'conflict',
+          `image_candidate proposal ${proposalId} was ${terminalRating ?? 'decided'} (dismissed/retracted) during accept; the VLM extraction is discarded`,
+          409,
+        );
+      }
+
       await tx.insert(question).values({
         id: questionId,
         kind: draftQuestion.kind,
@@ -558,27 +694,37 @@ export async function acceptImageCandidateProposal(
           // Evidence trail: which asset + proposal this question came from.
           image_candidate_source_asset_id: sourceAssetId,
           image_candidate_proposal_id: proposalId,
+          // FIX-R2-6 — the prompt + the extract both originate from the SAME single VLM
+          // call (no independent re-read of the image), so source_verify's overlap is a
+          // weaker signal than for a web-text source (where extract is an independent page
+          // scrape). Marked explicitly; a future multimodal verify-against-image pass would
+          // clear this. Not done in this slice (see comment above).
+          single_source_grounding: true,
         },
         created_at: now,
         updated_at: now,
       });
 
       // ── 5. cost ledger — one CORRELATION row per accept. ───────────────────────
-      // FIX-4 — the underlying VisionExtractTask run already wrote its OWN cost_ledger row
-      // (with the model spend) via the production runner. THIS row is a distinct
-      // `sourcing_image_extract`-kinded correlation row so per-accept image spend is
-      // queryable in isolation (plan §4); it串联s the real run via task_run_id =
-      // visionTaskRunId and carries the SAME real provider/model/usage (no longer全零),
-      // so the two rows agree. When the run id is unknown (test seam) it falls back to the
-      // accept run id + registry defaults.
+      // FIX-R2-2 — this row's cost/tokens are intentionally ZERO. The underlying
+      // VisionExtractTask run ALREADY wrote its own cost_ledger row carrying the real
+      // model spend (via the production runner). This distinct `sourcing_image_extract`-
+      // kinded row exists only to make per-accept image extraction queryable in isolation
+      // (plan §4) and to串联 the real run via task_run_id=visionTaskRunId. If it ALSO
+      // carried the cost/tokens, every cost aggregate (SUM(cost_ledger.cost) in
+      // /api/cost/today + admin) would count the one extraction TWICE (both rows share
+      // visionTaskRunId). The REAL花费 is recoverable by JOINing the VisionExtractTask row
+      // on the same task_run_id — so zeros here lose no traceability (OCR-O5). provider/
+      // model are still the real run's (or 'unknown' when no run id) so the row is
+      // self-describing.
       await writeCostLedgerFn(tx, {
         task_run_id: visionTaskRunId ?? result.task_run_id,
         task_kind: COST_LEDGER_TASK_KIND,
         provider: ledgerProvider,
         model: ledgerModel,
-        cost: ledgerCost,
-        tokens_in: ledgerTokensIn,
-        tokens_out: ledgerTokensOut,
+        cost: 0,
+        tokens_in: 0,
+        tokens_out: 0,
       });
 
       // ── 7. accept rate event chained to the proposal. ──────────────────────────
@@ -621,6 +767,14 @@ export async function acceptImageCandidateProposal(
       question_id: questionId,
     };
   } catch (err) {
+    // FIX-R2-3 — a 409 conflict from the terminal-tx veto re-check is NOT a crash: the
+    // user dismissed/retracted the proposal during accept, so it already has a non-accept
+    // terminal rate. Do NOT write an `accept_failed` marker (that is the crash-recovery
+    // path that re-opens the claim for retry); the proposal must stay in its terminal
+    // dismissed/retracted state. Just re-throw.
+    if (err instanceof ApiError && err.status === 409) {
+      throw err;
+    }
     // FIX-5 — the accept failed (download/VLM/insert). Clear the `accept_started` claim so
     // the next attempt can reclaim immediately instead of waiting out the stale window.
     await markAcceptFailed(db, proposalId, err instanceof Error ? err.message : String(err));
