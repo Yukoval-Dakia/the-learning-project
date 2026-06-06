@@ -19,7 +19,13 @@ import { artifact, event, knowledge, learning_item, question, source_document } 
 import { TAVILY_MCP_ALLOWED_TOOLS, TAVILY_MCP_SERVER_NAME } from '@/server/ai/mcp/tavily';
 import { DOMAIN_TOOL_MCP_SERVER_NAME, toMcpAllowedToolName } from '@/server/ai/tools/allowlists';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { QUIZ_GEN_READ_TOOLS, buildQuizGenHandler, runQuizGen } from './quiz_gen';
+import {
+  QUIZ_GEN_READ_TOOLS,
+  buildQuizGenHandler,
+  embedMaterialInPrompt,
+  runQuizGen,
+  synthesizeMaterialSourceRefs,
+} from './quiz_gen';
 
 const FAKE_TAVILY_CONFIG = {
   type: 'http' as const,
@@ -460,6 +466,76 @@ describe('runQuizGen', () => {
     expect(docIds).toEqual(new Set([docs[0].id]));
   });
 
+  // YUK-224 F1 (PR #314 round-1) — the learner can only see the material if it is
+  // rendered with the prompt; review/practice render only reads prompt_md, so the
+  // handler embeds the passage into prompt_md at persist time.
+  it('material_grounded: embeds the passage into prompt_md so the learner can see the material', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const runAgentTaskFn = agentMock(MATERIAL_OUTPUT, 'tr_mat_embed');
+
+    await runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      count: 1,
+      runAgentTaskFn,
+      enqueueQuizVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: vi.fn(() => null),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+    });
+
+    const rows = await testDb().select().from(question).where(eq(question.source, 'quiz_gen'));
+    expect(rows).toHaveLength(1);
+    // The persisted prompt_md carries BOTH the original passage text and the
+    // original question stem, so a prompt-only renderer is self-contained.
+    expect(rows[0].prompt_md).toContain(MATERIAL_PASSAGE);
+    expect(rows[0].prompt_md).toContain('汉朝建立于哪一年');
+    expect(rows[0].prompt_md).toContain('阅读材料');
+  });
+
+  // YUK-224 F3 (PR #314 round-1) — synthesize a per-question source_ref (material
+  // URL + passage snippet) so quiz_verify's deterministic copy-safety overlap has
+  // the passage to compare against even when the agent left source_refs thin.
+  it('material_grounded: synthesizes a per-question source_ref with the passage snippet', async () => {
+    await seedKnowledge({ id: 'k1' });
+    // Strip the agent-declared snippet so only the synthesized ref carries one.
+    const noSnippet = JSON.parse(MATERIAL_OUTPUT) as {
+      questions: { source_refs: { url: string; snippet?: string }[] }[];
+      [k: string]: unknown;
+    };
+    noSnippet.questions[0].source_refs = [
+      {
+        url: 'https://other.example/unrelated',
+        title: 'x',
+        used_for: 'inspiration',
+        extracted: false,
+      } as never,
+    ];
+    const runAgentTaskFn = agentMock(JSON.stringify(noSnippet), 'tr_mat_refs');
+
+    await runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      count: 1,
+      runAgentTaskFn,
+      enqueueQuizVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: vi.fn(() => null),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+    });
+
+    const rows = await testDb().select().from(question).where(eq(question.source, 'quiz_gen'));
+    const meta = (rows[0].metadata as Record<string, unknown> | null)?.quiz_gen as
+      | { source_refs?: { url: string; snippet?: string }[] }
+      | undefined;
+    const materialRef = meta?.source_refs?.find(
+      (r) => r.url === 'https://example.edu/han/founding',
+    );
+    expect(materialRef).toBeDefined();
+    // The synthesized ref carries a snippet截段 of the real passage.
+    expect(materialRef?.snippet).toContain('公元前 202 年');
+  });
+
   it('mounts Tavily + domain MCP and folds Tavily tools into allowedTools when a config is present', async () => {
     await seedKnowledge({ id: 'k1' });
     const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_2');
@@ -665,5 +741,41 @@ describe('buildQuizGenHandler', () => {
     // 2 questions per job * 2 jobs.
     expect(rows).toHaveLength(4);
     expect(enqueueQuizVerify).toHaveBeenCalledTimes(2);
+  });
+});
+
+// YUK-224 F1 / F3 (PR #314 round-1) — pure helpers, no DB.
+describe('embedMaterialInPrompt (F1)', () => {
+  it('prepends the material as a 阅读材料 blockquote before the prompt', () => {
+    const out = embedMaterialInPrompt('题干？', '原文第一行\n原文第二行');
+    expect(out).toBe('> **阅读材料**\n> 原文第一行\n> 原文第二行\n\n题干？');
+  });
+  it('returns the prompt unchanged when the material is empty/whitespace', () => {
+    expect(embedMaterialInPrompt('题干？', '   ')).toBe('题干？');
+  });
+});
+
+describe('synthesizeMaterialSourceRefs (F3)', () => {
+  const material = { url: 'https://m.example/p', title: '原文', body_md: '甲乙丙'.repeat(300) };
+  it('prepends a material ref carrying a snippet截段 of the passage', () => {
+    const refs = synthesizeMaterialSourceRefs([], material);
+    expect(refs).toHaveLength(1);
+    expect(refs[0].url).toBe(material.url);
+    expect(refs[0].snippet).toBeDefined();
+    // Capped to MATERIAL_SNIPPET_MAX (500).
+    expect((refs[0].snippet ?? '').length).toBeLessThanOrEqual(500);
+    expect(refs[0].used_for).toBe('fact');
+  });
+  it('does not duplicate when the agent already declared the material URL with a snippet', () => {
+    const declared = [
+      {
+        url: material.url,
+        title: '原文',
+        snippet: '甲乙丙',
+        used_for: 'fact' as const,
+        extracted: true,
+      },
+    ];
+    expect(synthesizeMaterialSourceRefs(declared, material)).toBe(declared);
   });
 });

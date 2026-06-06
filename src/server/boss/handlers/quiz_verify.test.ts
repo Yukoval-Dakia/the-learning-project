@@ -29,11 +29,17 @@ function verifyOutput(opts: {
   copySafety?: 'original' | 'too_close' | 'unknown';
   groundingVerdict?: 'pass' | 'fail' | 'unclear';
   knowledgeHitVerdict?: 'pass' | 'fail' | 'unclear';
+  // YUK-224 F2 — tier-3 material relevance verdict. Omitted from the JSON when
+  // undefined (older / non-material verifier outputs don't emit it).
+  materialGroundingVerdict?: 'pass' | 'fail' | 'unclear';
 }): string {
   return JSON.stringify({
     grounding: { verdict: opts.groundingVerdict ?? 'pass', note: 'grounded in source' },
     copy_safety: { verdict: opts.copySafety ?? 'original', max_overlap: 0.1 },
     knowledge_hit: { verdict: opts.knowledgeHitVerdict ?? 'pass', note: 'tests k1' },
+    ...(opts.materialGroundingVerdict
+      ? { material_grounding: { verdict: opts.materialGroundingVerdict, note: 'probes material' } }
+      : {}),
     overall: opts.overall,
     summary_md: `复核结论：${opts.overall}`,
     confidence: 0.8,
@@ -493,6 +499,37 @@ describe('runQuizVerify', () => {
     expect(evRows[0].payload).toMatchObject({
       source_tier: 3,
       material_grounding: { material_present: false },
+      promoted: false,
+    });
+  });
+
+  // YUK-224 F2 (PR #314 round-1) — the material is present + non-empty, but the
+  // verifier judges the question does NOT actually probe it (irrelevant material).
+  // The relevance verdict must block promotion even though overall='pass' and the
+  // material row exists (the old gate only checked "row non-empty").
+  it('tier 3 material_grounded: irrelevant material (material_grounding=fail) blocks promotion', async () => {
+    await seedKnowledge('k1');
+    await seedMaterialDoc({ id: 'doc1' });
+    await seedDraftQuestion({ id: 'qm3', knowledgeId: 'k1', meta: materialMeta('doc1') });
+    const runTaskFn = runTaskMock(
+      verifyOutput({ overall: 'pass', materialGroundingVerdict: 'fail' }),
+      'tr_mat_irrelevant',
+    );
+
+    const result = await runQuizVerify({ db: testDb(), questionId: 'qm3', runTaskFn });
+    expect(result.status).toBe('needs_review');
+
+    const rows = await testDb().select().from(question).where(eq(question.id, 'qm3'));
+    expect(rows[0].draft_status).toBe('draft');
+    expect(await fsrsRowCount('knowledge', 'k1')).toBe(0);
+
+    const evRows = await testDb()
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'experimental:quiz_verify'), eq(event.subject_id, 'qm3')));
+    expect(evRows[0].payload).toMatchObject({
+      source_tier: 3,
+      material_grounding: { material_present: true, verdict: 'fail' },
       promoted: false,
     });
   });
