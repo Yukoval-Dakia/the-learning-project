@@ -10,14 +10,19 @@
  * `writeBlockMergeProposal`. NO auto-merge — that is the hard safety boundary
  * (§5); `mergeQuestions` runs only on user accept.
  *
- * DECISIVE CONSTRAINT — spatial signal is DEFERRED (§0). `question_block.page_spans`
- * is all placeholder today (page_index=0, full-page bbox; precise bbox = slice 2b,
- * DEFERRED). So path-B v1 is SEMANTIC-ONLY: the model judges merge candidates from
- * the projected `structured` tree (question_no continuity, sub-question carry-over,
- * stem/answer split, "承接前题/根据上文" cues), NOT from bbox/page-edge spatial
- * signals. Adjacency = the natural session block array order (INSERT order); there
- * is no ordering column. bbox-based page-edge detection layers in later when slice
- * 2b lands (the task just gains a spatial input — no rework here).
+ * YUK-227 S3 Slice A (F4 owner decision — "本章立即消费"):
+ * path-B is upgraded from SEMANTIC-ONLY to consume spatial signals when available.
+ * `projectBlock` now includes `page_index` from `page_spans[0]` so the model can
+ * use page continuity as a signal. Safe degradation rule: when ALL blocks in the
+ * session have placeholder page_index=0 (Tencent fallback path), `page_index` is
+ * omitted from the projected input — the model reverts to pure semantic reasoning,
+ * producing zero regression on that path. Only sessions where VLM-path page_spans
+ * carry real page_index values get the spatial upgrade.
+ *
+ * Adjacency = the natural session block array order (INSERT order); there is no
+ * ordering column. bbox pixel-level detection remains deferred (ADR-0002: VLM
+ * does not give pixel bbox). The task input gains a `page_index` field — no
+ * rework needed on the output schema or proposal writer side.
  *
  * Mirrors `runStructureTask` (src/server/ingestion/structure.ts): an in-module
  * output schema, an injectable `runTaskFn` for testability, an extractJsonObject
@@ -82,6 +87,13 @@ export interface BlockAssemblyInputBlock {
   role: StructuredQuestionT['role'] | null;
   sub_question_count: number;
   layout_quality: string | null;
+  /**
+   * YUK-227 S3 Slice A (F4): page_index from page_spans[0]. Present only when
+   * the session has at least one block with a real (non-placeholder) page_index
+   * (i.e. VLM-path sessions). Absent on all-placeholder sessions so the model
+   * falls back to pure semantic reasoning (zero regression — Tencent path).
+   */
+  page_index?: number;
 }
 
 export interface BlockAssemblyInput {
@@ -158,6 +170,18 @@ export interface BlockAssemblySourceBlock {
   id: string;
   structured: StructuredQuestionT | null;
   layout_quality: string | null;
+  /**
+   * YUK-227 S3 Slice A (F4): page_spans as stored by the extraction handler.
+   * The first span's page_index is used for spatial matching when real values
+   * are available (VLM path). Placeholder page_index=0 (Tencent fallback) is
+   * detected at the session level and causes spatial projection to be skipped
+   * — zero regression on the Tencent fallback path.
+   */
+  page_spans?: Array<{
+    page_index: number;
+    bbox: { x: number; y: number; width: number; height: number };
+    role?: string;
+  }>;
 }
 
 export interface RunBlockAssemblyForSessionParams {
@@ -179,21 +203,49 @@ export interface RunBlockAssemblyForSessionResult {
 
 // Max chars of prompt text projected per block — enough to judge continuity for
 // v1's semantic-only signals. A fixed head can miss late "承接前题" cues in very
-// long stems; slice 2b (when spatial signals land) may make this layout_quality-
-// aware (longer head for long-form / cross-page blocks). Tune here, not inline.
+// long stems; when spatial signals are available (VLM path), the model also gets
+// page_index which may resolve ambiguous cross-page splits more reliably. Tune
+// PROMPT_HEAD_CHARS here, not inline.
 const PROMPT_HEAD_CHARS = 400;
 
 /**
- * Project one draft block's structured tree to the compact text view the model
- * reasons over (§2 input projection). page_spans page_index is placeholder=0
- * (§0: SEMANTIC-ONLY — spatial input is DEFERRED to slice 2b), so it is NOT
- * projected here; the model judges merges from numbering / carry-over / stem-
- * answer-split cues, not from spatial signals.
+ * YUK-227 S3 Slice A (F4): returns true when ALL blocks in the session carry
+ * placeholder page_index=0 (i.e. the Tencent fallback path or sessions from
+ * before slice A). When true, page_index is omitted from the projected input
+ * so the model falls back to pure semantic reasoning — zero regression.
+ *
+ * A session is "all-placeholder" when every block's first page_span has
+ * page_index === 0 (or page_spans is absent/empty). A single block with a
+ * non-zero page_index is sufficient to enable spatial projection for the
+ * whole session (the VLM path assigns real page indices starting from 0, so
+ * page_index=0 is valid but ambiguous; we only skip when EVERY block is 0).
+ *
+ * Exported for unit testing; callers outside this module should not rely on it.
  */
-function projectBlock(block: BlockAssemblySourceBlock): BlockAssemblyInputBlock {
+export function isAllPlaceholderPageIndex(blocks: BlockAssemblySourceBlock[]): boolean {
+  return blocks.every((b) => {
+    const firstSpan = b.page_spans?.[0];
+    return !firstSpan || firstSpan.page_index === 0;
+  });
+}
+
+/**
+ * Project one draft block's structured tree to the compact text view the model
+ * reasons over (§2 input projection).
+ *
+ * YUK-227 S3 Slice A (F4): when `includeSpatial` is true (VLM path with real
+ * page_index values), page_index from the first page_span is included so the
+ * model can use page continuity as a signal. When false (Tencent fallback /
+ * all-placeholder), page_index is omitted → pure semantic reasoning (no change
+ * from before, zero regression).
+ */
+function projectBlock(
+  block: BlockAssemblySourceBlock,
+  includeSpatial: boolean,
+): BlockAssemblyInputBlock {
   const tree = block.structured;
   const promptText = tree?.prompt_text ?? '';
-  return {
+  const projected: BlockAssemblyInputBlock = {
     block_id: block.id,
     question_no: tree?.question_no ?? null,
     prompt_head: promptText.slice(0, PROMPT_HEAD_CHARS),
@@ -201,6 +253,13 @@ function projectBlock(block: BlockAssemblySourceBlock): BlockAssemblyInputBlock 
     sub_question_count: tree?.sub_questions?.length ?? 0,
     layout_quality: block.layout_quality,
   };
+  if (includeSpatial) {
+    const firstSpan = block.page_spans?.[0];
+    if (firstSpan !== undefined) {
+      projected.page_index = firstSpan.page_index;
+    }
+  }
+  return projected;
 }
 
 /**
@@ -221,9 +280,14 @@ export async function runBlockAssemblyForSession(
     return { proposed: 0, proposal_ids: [] };
   }
 
+  // YUK-227 S3 Slice A (F4): enable spatial projection only when the session
+  // has at least one block with a real (non-placeholder) page_index. All-zero
+  // sessions (Tencent fallback path) skip spatial projection → semantic-only.
+  const includeSpatial = !isAllPlaceholderPageIndex(params.blocks);
+
   const input: BlockAssemblyInput = {
     ingestion_session_id: params.sessionId,
-    blocks: params.blocks.map(projectBlock),
+    blocks: params.blocks.map((b) => projectBlock(b, includeSpatial)),
   };
 
   const output = await runBlockAssemblyTask({
