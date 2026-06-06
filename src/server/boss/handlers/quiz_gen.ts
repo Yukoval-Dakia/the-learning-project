@@ -49,7 +49,9 @@ import {
 } from '@/server/ai/tools/allowlists';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
 import { writeEvent } from '@/server/events/queries';
-import { resolveSubjectProfile } from '@/subjects/profile';
+import { type FewShotExample, renderFewShotBlock } from '@/server/quiz/fewshot-retrieve';
+import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
+import { resolveQuizGenSkills, resolveQuizGenSkillsForSubject } from '@/subjects/quiz-gen-skills';
 import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 
 // §3 / §4 — the trigger surface. 'manual' carries a free-form ref_id (we still
@@ -66,6 +68,10 @@ export interface QuizGenJobData {
 
 // §4 — default question count when the trigger doesn't specify one.
 export const QUIZ_GEN_DEFAULT_COUNT = 3;
+
+// YUK-225 (S2 slice 4) — cap on total few-shot exemplars folded into the prompt
+// across all skill-backed kinds (spec §5: 2-4 per kind; keep the merged block tight).
+const FEWSHOT_MAX_TOTAL = 4;
 
 // The read-only domain-tool surface QuizGen mounts: enough to read the user's
 // mistakes + knowledge graph so the agent can pick difficulty / types / coverage
@@ -94,11 +100,23 @@ type RunAgentTaskFn = (
     db: Db;
     mcpServers?: Record<string, SdkMcpServer | McpHttpServerConfig>;
     allowedTools?: string[];
+    // YUK-225 (S2 slice 4) — Agent Skill whitelist + subject context threaded to
+    // the runner so the (subject, kind) 规范包 is loaded into the model's listing.
+    skills?: string[];
+    subjectProfile?: SubjectProfile;
   },
 ) => Promise<TaskTextResult>;
 
 type BuildMcpServerFn = typeof buildMcpServerFromRegistry;
 type BuildTavilyMcpServerFn = () => McpHttpServerConfig | null;
+// YUK-225 (S2 slice 4) — 轨 2 few-shot retrieval seam. The handler injects a few
+// already-pooled同题型 examples into the prompt; DB tests inject a vi.fn(). Keyed by
+// the trigger's knowledge ids (the run's target topics).
+export type RetrieveFewShotFn = (params: {
+  db: Db;
+  kind: string;
+  knowledgeIds: string[];
+}) => Promise<FewShotExample[]>;
 // Chained quiz_verify enqueue (Q5 owns the queue + handler). Mirrors
 // attribution_followup's EnqueueVariantGenFn seam so DB tests inject a vi.fn().
 export type EnqueueQuizVerifyFn = (questionIds: string[]) => Promise<void>;
@@ -108,6 +126,16 @@ interface DepsOverride {
   buildMcpServerFn?: BuildMcpServerFn;
   buildTavilyMcpServerFn?: BuildTavilyMcpServerFn;
   enqueueQuizVerify?: EnqueueQuizVerifyFn;
+  retrieveFewShotFn?: RetrieveFewShotFn;
+}
+
+async function defaultRetrieveFewShot(params: {
+  db: Db;
+  kind: string;
+  knowledgeIds: string[];
+}): Promise<FewShotExample[]> {
+  const { retrieveFewShotExamples } = await import('@/server/quiz/fewshot-retrieve');
+  return retrieveFewShotExamples(params);
 }
 
 async function defaultEnqueueQuizVerify(questionIds: string[]): Promise<void> {
@@ -233,6 +261,7 @@ export interface RunQuizGenParams {
   buildMcpServerFn?: BuildMcpServerFn;
   buildTavilyMcpServerFn?: BuildTavilyMcpServerFn;
   enqueueQuizVerify?: EnqueueQuizVerifyFn;
+  retrieveFewShotFn?: RetrieveFewShotFn;
 }
 
 export type RunQuizGenStatus = 'ready' | 'skipped:ref_not_found';
@@ -312,6 +341,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
   const buildMcpServer = params.buildMcpServerFn ?? buildMcpServerFromRegistry;
   const buildTavily = params.buildTavilyMcpServerFn ?? buildTavilyMcpServer;
   const enqueueQuizVerify = params.enqueueQuizVerify ?? defaultEnqueueQuizVerify;
+  const retrieveFewShot = params.retrieveFewShotFn ?? defaultRetrieveFewShot;
 
   const resolved = await resolveTrigger(db, trigger, refId);
   // knowledge / learning_item triggers must resolve a real row; manual always
@@ -348,6 +378,41 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     ...(tavilyCfg ? TAVILY_MCP_ALLOWED_TOOLS : []),
   ];
 
+  // YUK-225 (S2 slice 4) — 规范双轨.
+  // 轨 1: whitelist the subject's quiz-gen SKILL.md规范包 so the model loads them
+  //       (the runner already mirrored every subject skill into the isolated
+  //       CLAUDE_CONFIG_DIR/skills; `skills` keys which ones are visible). 降级链:
+  //       resolveQuizGenSkillsForSubject returns undefined when the subject has no
+  //       pack → no skills option → promptFragments fallback.
+  // 轨 2: retrieve a few already-pooled同题型 examples (high-tier first) and fold a
+  //       few-shot block into the prompt. Best-effort: a retrieval failure must not
+  //       block generation, so we log + continue with no block (降级).
+  const subjectSkills = resolveQuizGenSkillsForSubject(subjectProfile.id);
+
+  let fewShotBlock = '';
+  if (resolved.knowledgeIds.length > 0) {
+    // QuizGen runs emit mixed kinds; retrieve few-shot across the subject's
+    // skill-backed kinds (translation / reading_comprehension / calculation …)
+    // and merge a small set so each kind the model writes has an exemplar.
+    const skillBackedKinds = (subjectProfile.questionKinds ?? []).filter(
+      (k) => resolveQuizGenSkills(subjectProfile.id, k) !== undefined,
+    );
+    const collected: FewShotExample[] = [];
+    for (const k of skillBackedKinds) {
+      try {
+        const examples = await retrieveFewShot({
+          db,
+          kind: k,
+          knowledgeIds: resolved.knowledgeIds,
+        });
+        collected.push(...examples);
+      } catch (fewShotErr) {
+        console.error('[quiz_gen] few-shot retrieval failed (non-fatal) for kind', k, fewShotErr);
+      }
+    }
+    fewShotBlock = renderFewShotBlock(collected.slice(0, FEWSHOT_MAX_TOTAL));
+  }
+
   const input = {
     trigger,
     ref: {
@@ -357,6 +422,8 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     },
     knowledge_context: resolved.knowledgeNode ? [resolved.knowledgeNode] : [],
     count,
+    // 轨 2 — injected exemplars (empty string when no hits / no skill-backed kinds).
+    ...(fewShotBlock ? { few_shot_examples_md: fewShotBlock } : {}),
   };
 
   let taskResult: TaskTextResult | null = null;
@@ -365,6 +432,8 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
       db,
       mcpServers,
       allowedTools,
+      subjectProfile,
+      ...(subjectSkills ? { skills: subjectSkills } : {}),
     });
     taskResult = result;
     const parsed = parseOutput(result.text);
@@ -634,6 +703,7 @@ export function buildQuizGenHandler(
         buildMcpServerFn: deps.buildMcpServerFn,
         buildTavilyMcpServerFn: deps.buildTavilyMcpServerFn,
         enqueueQuizVerify: deps.enqueueQuizVerify,
+        retrieveFewShotFn: deps.retrieveFewShotFn,
       });
       console.log(`[quiz_gen] ${data.trigger}:${data.ref_id} -> ${result.status}`);
     }
