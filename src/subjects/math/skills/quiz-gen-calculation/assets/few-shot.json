@@ -1,0 +1,32 @@
+{
+  "kind": "calculation",
+  "subject": "math",
+  "examples": [
+    {
+      "prompt_md": "已知一元二次方程 $x^2 - 5x + 6 = 0$，求它的两个实数根。",
+      "reference_md": "解：方程为 $x^2 - 5x + 6 = 0$。\n\n1. 因式分解：$x^2 - 5x + 6 = (x-2)(x-3) = 0$（依据：十字相乘，$-2 \\times -3 = 6$，$-2 + -3 = -5$）。\n2. 由 $(x-2)(x-3)=0$ 得 $x-2=0$ 或 $x-3=0$。\n3. 解得 $x_1 = 2$，$x_2 = 3$。\n\n检验：代入原方程，$2^2-5\\cdot2+6=0$，$3^2-5\\cdot3+6=0$，均成立。\n\n最终答案：$x_1=2,\\ x_2=3$。",
+      "judge_kind_override": "exact",
+      "rubric_json": {
+        "reference_solution": {
+          "final_answer": "x=2 或 x=3",
+          "answer_equivalents": ["{2, 3}", "x1=2, x2=3", "2,3"]
+        }
+      },
+      "difficulty": 2,
+      "why_good": "条件完备、唯一解；步骤含因式分解依据与验根；给出 final_answer 与等价形式让 normalize 比对命中无序写法。"
+    },
+    {
+      "prompt_md": "已知函数 $f(x) = \\dfrac{x+1}{x-2}$，求其定义域。",
+      "reference_md": "解：分式有意义要求分母不为零。\n\n1. 令分母 $x-2 \\neq 0$，得 $x \\neq 2$（依据：分式定义域要求分母非零）。\n2. 分子为多项式，无额外限制。\n\n最终答案：定义域为 $\\{x \\mid x \\neq 2\\}$，即 $(-\\infty, 2) \\cup (2, +\\infty)$。",
+      "judge_kind_override": "exact",
+      "rubric_json": {
+        "reference_solution": {
+          "final_answer": "{x | x ≠ 2}",
+          "answer_equivalents": ["(-∞,2)∪(2,+∞)", "x≠2", "x ∈ R, x≠2"]
+        }
+      },
+      "difficulty": 2,
+      "why_good": "考点是分式定义域这一常见易错点；步骤标明依据；等价形式覆盖集合记法与区间记法两种合法书写。"
+    }
+  ]
+}
