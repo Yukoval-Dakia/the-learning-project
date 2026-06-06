@@ -141,6 +141,17 @@ describe('AiProposalPayload', () => {
           continuity_signal: 'numbering',
         },
       },
+      // YUK-227 S3 Slice C (ADR-0002) — image_candidate.
+      image_candidate: {
+        ...base,
+        kind: 'image_candidate',
+        target: { subject_kind: 'source_asset', subject_id: null },
+        proposed_change: {
+          source_url: 'https://example.edu/wenyan/scan.png',
+          source_title: '论语·学而 扫描卷',
+          summary_md: 'tavily_extract 返回空文本；搜索结果显示该页含题目图片。',
+        },
+      },
     } as const;
 
     expect(Object.keys(samples).sort()).toEqual([...aiProposalKinds].sort());
@@ -332,6 +343,15 @@ describe('suggestion_kind (P5.6 / YUK-178)', () => {
           ingestion_session_id: 's1',
         },
       },
+      image_candidate: {
+        kind: 'image_candidate',
+        target: { subject_kind: 'source_asset', subject_id: null },
+        proposed_change: {
+          source_url: 'https://example.edu/scan.png',
+          source_title: '扫描卷',
+          summary_md: '图片型源',
+        },
+      },
     };
     // Audit-coverage guard (AC-2): the sample map covers every AiProposalKind, so
     // a future kind addition that forgets the optional-field check is caught.
@@ -402,6 +422,9 @@ describe('suggestion_kind (P5.6 / YUK-178)', () => {
       judge_retraction: false,
       goal_scope: false,
       block_merge: false,
+      // YUK-227 S3 Slice C — image_candidate is a proactive source-expansion proposal
+      // (the agent surfaces a reachable image-type source); it is not corrective.
+      image_candidate: false,
     };
     // Every kind classified; exactly one structurally-corrective kind.
     expect(Object.keys(correctivePossibleByKind).sort()).toEqual([...aiProposalKinds].sort());
