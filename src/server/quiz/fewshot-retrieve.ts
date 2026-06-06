@@ -10,7 +10,9 @@
 //
 // Implementation (实证3 裁决): SQL 直查既有 jsonb 包含原语，无新检索系统 / 无向量
 // 检索 / 无新索引 / 不动 schema. Mirrors due-list.ts:208-225's
-// `knowledge_ids @> jsonb` + `draft_status='active'` filter. tier 排序 cannot be
+// `knowledge_ids @> jsonb` + `(draft_status IS NULL OR <> 'draft')` pool filter
+// (legacy active rows carry NULL draft_status — a bare `= 'active'` would drop
+// them; PR #319 F4 aligns this with due-list / source_verify). tier 排序 cannot be
 // expressed in SQL (tier is the deriveSourceTier推导函数), so SQL pulls a wider
 // candidate set (LIMIT CANDIDATE_POOL) filtered by subject+kind+knowledge overlap
 // + active, then the TS layer sorts by (tier → knowledge overlap → recency) and
@@ -73,8 +75,10 @@ function overlapCount(a: string[], b: Set<string>): number {
  * high source tiers and knowledge-overlap with the target. Returns [] on 0 hits
  * (降级: caller injects no few-shot block).
  *
- * Filter: same kind + draft_status='active' (only pooled questions, never drafts —
- * mirrors due-list's `draft_status <> 'draft'` pool gate). When knowledgeIds is
+ * Filter: same kind + (draft_status IS NULL OR <> 'draft') — pooled questions only,
+ * never drafts, but INCLUDING legacy active rows that carry NULL draft_status
+ * (mirrors due-list / source_verify's pool gate; a bare `= 'active'` would drop them).
+ * When knowledgeIds is
  * non-empty we additionally require jsonb overlap so the SQL候选集 is already
  * topical; when empty we fall back to recent active questions of the kind.
  * Sort (TS layer): tier asc (1 best) → knowledge overlap desc → recency desc.
@@ -97,14 +101,35 @@ export async function retrieveFewShotExamples(
         )})`
       : sql``;
 
+  // PR #319 F5 — order the candidate pool by source tier BEFORE truncating to
+  // CANDIDATE_POOL, then recency within tier. A bare `ORDER BY created_at DESC LIMIT
+  // 20` truncated by pure recency: if 20+ low-tier rows are newer than a high-tier
+  // exemplar, that exemplar never enters the pool and the TS-layer tier sort can't
+  // surface it. `tier_rank` mirrors deriveSourceTier (provenance.ts) so the SQL pulls
+  // the best-tier candidates first; the TS layer still RE-DERIVES the authoritative
+  // tier value per row (deriveSourceTier stays the single source of truth), this
+  // CASE only governs WHICH rows survive truncation. The tier-2/3 SQL shapes use the
+  // cheap structural keys deriveSourceTier checks first (it additionally Zod-parses
+  // web_sourced; a row matching the SQL tier-2 shape but failing that parse is merely
+  // ranked optimistically into the pool, then placed correctly by the TS sort — never
+  // mis-surfaced).
+  const tierRank = sql`CASE
+        WHEN COALESCE(metadata->>'ingestion_session_id', '') <> '' THEN 1
+        WHEN source = 'web_sourced' AND metadata->>'source_ref_kind' = 'url' THEN 2
+        WHEN source = 'quiz_gen'
+          AND metadata->'quiz_gen'->>'generation_method' = 'material_grounded'
+          AND COALESCE(metadata->'quiz_gen'->>'material_source_document_id', '') <> '' THEN 3
+        ELSE 4
+      END`;
+
   const rows = (await db.execute(sql`
       SELECT id, kind, prompt_md, reference_md, choices_md, rubric_json, difficulty,
              knowledge_ids, source, metadata, created_at
       FROM question
       WHERE kind = ${kind}
-        AND draft_status = 'active'
+        AND (draft_status IS NULL OR draft_status <> 'draft')
         ${overlapPredicate}
-      ORDER BY created_at DESC
+      ORDER BY ${tierRank} ASC, created_at DESC
       LIMIT ${CANDIDATE_POOL}
     `)) as unknown as CandidateRow[];
 
