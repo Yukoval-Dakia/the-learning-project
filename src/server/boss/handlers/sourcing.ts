@@ -492,6 +492,14 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
     // re-derivable by re-running the cheap text-only path or re-sourcing).
     const candidates = parsed.image_candidates ?? [];
     const imageCandidateProposalIds: string[] = [];
+    // FIX-R2-9 — the prompt tells the agent to report a source as EITHER a question OR an
+    // image_candidate (二选一), but a misbehaving run can violate that and report the same
+    // source_url in BOTH lists. The text question is already INSERTed (higher priority — it
+    // is real, extracted text) and accepting the duplicate image_candidate would re-extract
+    // the same source via a paid VLM call and stack a duplicate question. So we filter
+    // (NOT schema-superRefine: an LLM contract violation must not fail the whole run) any
+    // candidate whose source_url already entered the questions path this run, and warn.
+    const questionSourceUrls = new Set(parsed.questions.map((q) => q.source_url));
     // FIX-8 — track propose attempts vs failures so an image-only run whose every
     // proposal write FAILED reports failure instead of伪 success (see below). A
     // skipped (already-live) candidate is NOT a failure — it just isn't re-proposed.
@@ -512,6 +520,17 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
           )
         : new Set<string>();
     for (const candidate of candidates) {
+      // FIX-R2-9 — the agent reported this URL in BOTH questions and image_candidates
+      // (violating the 二选一 prompt contract). The text question already INSERTed wins;
+      // skip the duplicate candidate so accept can't re-extract the same source via a paid
+      // VLM call and double the question. Warn so the contract violation is visible.
+      if (questionSourceUrls.has(candidate.source_url)) {
+        console.warn(
+          '[sourcing] image_candidate source_url also reported as a text question; skipping the candidate (text wins):',
+          candidate.source_url,
+        );
+        continue;
+      }
       const cooldownKey = `image_candidate:${candidate.source_url}`;
       // Skip a URL that already has a live (pending) proposal — or that an earlier
       // candidate in THIS run already proposed (a run can report the same URL twice).
@@ -545,6 +564,12 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
               // so the run-level resolved nodes are the correct attribution. Empty
               // when the trigger resolved no live node (e.g. a manual free-form ref).
               knowledge_ids: fallbackKnowledgeIds,
+              // YUK-227 S3 Slice C (FIX-R2-5) — carry the run's 题型约束 (if pinned) so
+              // accept materializes the question as that kind. The text path enforces
+              // kindsMatch per question (above); image candidates have no per-question
+              // kind until accept's VLM, so the run-level requested kind is the correct
+              // constraint. Absent on an unpinned run → accept falls back to short_answer.
+              ...(params.kind ? { requested_kind: params.kind } : {}),
             },
             // Dedup key so re-sourcing the same image page does not stack duplicate
             // pending proposals (mirrors the cooldown_key precedent on other kinds).

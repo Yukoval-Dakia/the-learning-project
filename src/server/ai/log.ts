@@ -4,9 +4,12 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 
 // cost_ledger / tool_call_log are loose-coupled correlation logs (no FK); a single
-// INSERT works against either a top-level Db or a Tx. Accepting DbLike lets callers
+// INSERT/UPDATE works against either a top-level Db or a Tx. Accepting DbLike lets callers
 // fold the write into a surrounding transaction (YUK-227 image_candidate accept folds
-// the per-accept cost row into the question-INSERT tx for atomicity).
+// the per-accept cost row into the question-INSERT tx for atomicity). FIX-R2-10 — all
+// THREE correlation-log writers (writeCostLedger, writeToolCallLog,
+// setToolCallLogMirroredEventId) accept DbLike for the same reason; only the ai_task_runs
+// lifecycle writers below stay Db (they are written by the runner outside any caller tx).
 type DbLike = Db | Tx;
 
 export interface ToolCallLogEntry {
@@ -26,7 +29,7 @@ export interface ToolCallLogEntry {
   mirrored_event_id?: string;
 }
 
-export async function writeToolCallLog(db: Db, entry: ToolCallLogEntry): Promise<string> {
+export async function writeToolCallLog(db: DbLike, entry: ToolCallLogEntry): Promise<string> {
   const id = createId();
   await db.insert(tool_call_log).values({
     id,
@@ -48,7 +51,7 @@ export async function writeToolCallLog(db: Db, entry: ToolCallLogEntry): Promise
 
 /** YUK-79: backfill `mirrored_event_id` after mirrorEvent policy fires. */
 export async function setToolCallLogMirroredEventId(
-  db: Db,
+  db: DbLike,
   toolCallLogId: string,
   eventId: string,
 ): Promise<void> {
