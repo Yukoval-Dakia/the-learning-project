@@ -86,6 +86,7 @@ const HALLUCINATED_KNOWLEDGE_OUTPUT = JSON.stringify({
       knowledge_ids: ['does_not_exist'],
       source_url: 'https://example.edu/wenyan/zhi',
       source_title: '之的用法',
+      extract: '「之」在「学而时习之」中作代词。',
     },
   ],
   query_plan: ['之 用法 选择题'],

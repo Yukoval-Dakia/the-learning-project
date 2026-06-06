@@ -29,7 +29,7 @@ function solverOutput(finalAnswer: string, equivalents: string[] = []): string {
   });
 }
 
-async function seedKnowledge(id: string, domain = 'wenyan') {
+async function seedKnowledge(id: string, domain = 'wenyan', opts: { archived?: boolean } = {}) {
   const db = testDb();
   const now = new Date();
   await db.insert(knowledge).values({
@@ -40,6 +40,7 @@ async function seedKnowledge(id: string, domain = 'wenyan') {
     merged_from: [],
     proposed_by_ai: false,
     approval_status: 'approved',
+    archived_at: opts.archived ? now : null,
     created_at: now,
     updated_at: now,
     version: 0,
@@ -60,6 +61,9 @@ interface SeedQuestionOpts {
   sourceRefKind?: string | null;
   sourceRef?: string | null;
   metadataOverride?: Record<string, unknown>;
+  // F2: drop the extract entirely from the seeded web_sourced block (the
+  // missing-extract → source_consistency fail path).
+  omitExtract?: boolean;
 }
 
 async function seedQuestion(opts: SeedQuestionOpts = {}): Promise<string> {
@@ -67,6 +71,12 @@ async function seedQuestion(opts: SeedQuestionOpts = {}): Promise<string> {
   const now = new Date();
   const id = opts.id ?? createId();
   const url = opts.web?.url ?? 'https://example.edu/wenyan/lunyu';
+  // F2: extract is REQUIRED on web_sourced provenance. Default to an extract that
+  // grounds the default prompt/reference so the baseline rows pass source_consistency;
+  // tests targeting the missing-extract path pass `web: { extract: undefined }` (and a
+  // matching omitExtract sentinel) explicitly.
+  const defaultExtract = '「之」在「学而时习之」中作代词，指代所学的内容。';
+  const includeExtract = !opts.omitExtract;
   const metadata =
     opts.metadataOverride ??
     ({
@@ -76,7 +86,7 @@ async function seedQuestion(opts: SeedQuestionOpts = {}): Promise<string> {
         fetched_at: opts.web?.fetched_at ?? '2026-06-06T00:00:00.000Z',
         whitelist_match: opts.web?.whitelist_match ?? false,
         ...(opts.web?.extraction_hash ? { extraction_hash: opts.web.extraction_hash } : {}),
-        ...(opts.web?.extract ? { extract: opts.web.extract } : {}),
+        ...(includeExtract ? { extract: opts.web?.extract ?? defaultExtract } : {}),
       },
       ...(opts.sourceRefKind === null ? {} : { source_ref_kind: opts.sourceRefKind ?? 'url' }),
     } as Record<string, unknown>);
@@ -255,6 +265,76 @@ describe('runSourceVerify', () => {
     const result = await runSourceVerify({ db, questionId: qid, runTaskFn });
     expect(result.checks?.some((c) => c.check === 'dedup' && c.verdict === 'fail')).toBe(true);
     expect(result.status).toBe('failed');
+  });
+
+  it('promotes an option-less true_false question (structure check exempts true_false) (F1)', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    // 判断题 form: kind='true_false' + reference_md carrying 真/假, NO choices_md.
+    const qid = await seedQuestion({
+      knowledgeIds: ['k1'],
+      kind: 'true_false',
+      choices: null,
+      prompt: '「学而时习之」中的「之」是代词。判断正误。',
+      reference: '真',
+      judge: 'exact',
+      web: { extract: '「学而时习之」中的「之」作代词，指代所学的内容，故此判断为真。' },
+    });
+    // exact-kind solver AGREES → solve_check pass; structure must NOT fail on choices.
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('真') }));
+
+    const result = await runSourceVerify({ db, questionId: qid, runTaskFn });
+    expect(
+      result.checks?.some((c) => c.check === 'structure_completeness' && c.verdict === 'pass'),
+    ).toBe(true);
+    expect(result.status).toBe('verified');
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    expect(rows[0].draft_status).toBe('active');
+  });
+
+  it('fails source_consistency when a web_sourced row has no extract (F2)', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    // sourced row with valid provenance but NO extract → cannot be deterministically
+    // grounded → fail (a fabricated/unanchored URL must not promote to tier 2).
+    const qid = await seedQuestion({ knowledgeIds: ['k1'], omitExtract: true });
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+
+    const result = await runSourceVerify({ db, questionId: qid, runTaskFn });
+    expect(result.status).toBe('failed');
+    expect(
+      result.checks?.some(
+        (c) =>
+          c.check === 'source_consistency' && c.verdict === 'fail' && /extract/i.test(c.reason),
+      ),
+    ).toBe(true);
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    expect(rows[0].draft_status).toBe('draft');
+  });
+
+  it('does not promote when the knowledge point was archived after sourcing (F3)', async () => {
+    const db = testDb();
+    // knowledge point archived between sourcing (draft) and verify (promote).
+    await seedKnowledge('k1', 'wenyan', { archived: true });
+    const qid = await seedQuestion({ knowledgeIds: ['k1'] });
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+
+    const result = await runSourceVerify({ db, questionId: qid, runTaskFn });
+    expect(result.status).toBe('failed');
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    expect(rows[0].draft_status).toBe('draft');
+    // not enrolled onto the dead node.
+    const fsrs = await getFsrsState(db, 'knowledge', 'k1');
+    expect(fsrs).toBeNull();
+    // the verify event records the archived-knowledge reason.
+    const events = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:source_verify'));
+    expect(events).toHaveLength(1);
+    expect(events[0].outcome).toBe('failure');
+    const payload = events[0].payload as Record<string, unknown>;
+    expect(payload.knowledge_archived).toMatchObject({ archived_knowledge_ids: ['k1'] });
   });
 
   it('is idempotent — a second run skips as already_verified', async () => {
