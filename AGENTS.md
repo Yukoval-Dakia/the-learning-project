@@ -39,7 +39,7 @@ src/
   core/          # 跨学科：Zod schema、capability registry、id helpers（无 IO）
   db/            # Drizzle schema.ts + Postgres client（单 schema 文件）
   ai/            # 浏览器侧 task registry + prompt builder（不持 key、无通用 runTask）
-  server/        # server-only：ai runner/tools, ingestion, knowledge, review, artifacts...（22 子模块）
+  server/        # server-only：ai runner/tools, ingestion, knowledge, review, artifacts...（20+ 子模块；精确数以 `ls src/server/*/` 为准）
   subjects/      # 单学科 bundle：wenyan / math / physics
   ui/            # 共享 React 设计系统
 scripts/         # worker 入口 + 迁移 + audit + local dev（一等公民）

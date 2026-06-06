@@ -208,6 +208,8 @@ export const fastTestInclude = [
   'tests/subjects/**/*.test.ts',
   'tests/integration/judge-gap-audit.test.ts',
   'tests/integration/session-single-owner.test.ts',
+  // Audit 2026-06-06 G8-docs — pure-fs doc invariants (YUK-242/243/244), no DB/AI.
+  'tests/integration/audit-docs-invariant.test.ts',
   'tests/integration/step12-docs-invariant.test.ts',
   'tests/integration/step9-invariant-audit.test.ts',
 ];
