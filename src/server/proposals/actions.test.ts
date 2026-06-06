@@ -1708,8 +1708,12 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
     ],
   });
 
-  async function seedImageCandidateProposal(id: string): Promise<void> {
+  async function seedImageCandidateProposal(
+    id: string,
+    overrides: { source_url?: string; knowledge_ids?: string[] } = {},
+  ): Promise<void> {
     const db = testDb();
+    const sourceUrl = overrides.source_url ?? 'https://example.edu/wenyan/scan.png';
     await writeAiProposal(db, {
       id,
       actor_ref: 'sourcing',
@@ -1720,11 +1724,13 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
         reason_md: '该页题干在图片里，tavily_extract 抽不出文本。',
         evidence_refs: [],
         proposed_change: {
-          source_url: 'https://example.edu/wenyan/scan.png',
+          source_url: sourceUrl,
           source_title: '论语·学而 扫描卷',
           summary_md: '图片型源：题干为扫描图片。',
+          // FIX-3 — the sourcing-resolved knowledge node carried for accept attribution.
+          ...(overrides.knowledge_ids ? { knowledge_ids: overrides.knowledge_ids } : {}),
         },
-        cooldown_key: 'image_candidate:https://example.edu/wenyan/scan.png',
+        cooldown_key: `image_candidate:${sourceUrl}`,
       },
     });
   }
@@ -1848,5 +1854,192 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
       .from(cost_ledger)
       .where(eq(cost_ledger.task_kind, 'sourcing_image_extract'));
     expect(ledger).toHaveLength(1);
+  });
+
+  // FIX-3 — the materialized question is attributed to the sourcing-resolved knowledge
+  // node carried on the proposal (text-path parity); an empty/absent set → empty attribution.
+  it('attributes the materialized question to the proposal knowledge_ids (FIX-3)', async () => {
+    const db = testDb();
+    await seedImageCandidateProposal('img_cand_kids', { knowledge_ids: ['k1', 'k2'] });
+    const { deps } = imageCandidateDeps();
+
+    const result = await acceptAiProposal(db, 'img_cand_kids', { imageCandidateDeps: deps });
+    if (result.kind !== 'image_candidate') throw new Error('unreachable');
+    const rows = await db.select().from(question).where(eq(question.id, result.question_id));
+    expect(rows[0].knowledge_ids).toEqual(['k1', 'k2']);
+  });
+
+  it('attributes empty knowledge_ids when the proposal carries none (FIX-3 default)', async () => {
+    const db = testDb();
+    await seedImageCandidateProposal('img_cand_nokids');
+    const { deps } = imageCandidateDeps();
+
+    const result = await acceptAiProposal(db, 'img_cand_nokids', { imageCandidateDeps: deps });
+    if (result.kind !== 'image_candidate') throw new Error('unreachable');
+    const rows = await db.select().from(question).where(eq(question.id, result.question_id));
+    expect(rows[0].knowledge_ids).toEqual([]);
+  });
+
+  // FIX-2 — a non-image Content-Type must be rejected BEFORE the paid VLM flow. We exercise
+  // the real defaultFetchImageBytes by stubbing global fetch to return an HTML page.
+  it('rejects a non-image Content-Type before spending the VLM (FIX-2)', async () => {
+    const db = testDb();
+    await seedImageCandidateProposal('img_cand_html');
+    // No fetchImageBytesFn override → the REAL defaultFetchImageBytes runs.
+    const runTaskFn = vi.fn(async () => ({ text: VLM_OUTPUT }));
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('<html>not an image</html>', {
+        status: 200,
+        headers: { 'content-type': 'text/html; charset=utf-8' },
+      }),
+    );
+    try {
+      await expect(
+        acceptAiProposal(db, 'img_cand_html', {
+          imageCandidateDeps: { runTaskFn, r2: { put: vi.fn(), get: vi.fn() } as never },
+        }),
+      ).rejects.toMatchObject({ code: 'unsupported_media_type' });
+      // The VLM was never called — no money burned on HTML bytes.
+      expect(runTaskFn).not.toHaveBeenCalled();
+      // No question / ledger / rate.
+      const questions = await db.select().from(question).where(eq(question.source, 'web_sourced'));
+      expect(questions).toHaveLength(0);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  // FIX-7 — a private/loopback host is rejected before any network call (the AI-written URL
+  // is untrusted). We assert via the real defaultFetchImageBytes path.
+  it('rejects a private/loopback source_url before fetching (FIX-7 SSRF guard)', async () => {
+    const db = testDb();
+    await seedImageCandidateProposal('img_cand_ssrf', {
+      source_url: 'http://169.254.169.254/latest/meta-data/',
+    });
+    const runTaskFn = vi.fn(async () => ({ text: VLM_OUTPUT }));
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    try {
+      await expect(
+        acceptAiProposal(db, 'img_cand_ssrf', {
+          imageCandidateDeps: { runTaskFn, r2: { put: vi.fn(), get: vi.fn() } as never },
+        }),
+      ).rejects.toMatchObject({ code: 'validation_error' });
+      // Never even reached fetch.
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(runTaskFn).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  // FIX-7 — an oversized body is rejected (Content-Length pre-check) before the paid flow.
+  it('rejects an oversized image via Content-Length before the VLM (FIX-7 size cap)', async () => {
+    const db = testDb();
+    await seedImageCandidateProposal('img_cand_big');
+    const runTaskFn = vi.fn(async () => ({ text: VLM_OUTPUT }));
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(new Uint8Array([1, 2, 3]), {
+        status: 200,
+        headers: {
+          'content-type': 'image/png',
+          'content-length': String(20 * 1024 * 1024), // 20 MB > 10 MB cap
+        },
+      }),
+    );
+    try {
+      await expect(
+        acceptAiProposal(db, 'img_cand_big', {
+          imageCandidateDeps: { runTaskFn, r2: { put: vi.fn(), get: vi.fn() } as never },
+        }),
+      ).rejects.toMatchObject({ code: 'payload_too_large' });
+      expect(runTaskFn).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  // FIX-5 — a concurrent second accept while the first is in flight is rejected with 409
+  // (accept in progress) and does NOT spend a second VLM call. We model concurrency by
+  // making the first accept's VLM hang until we have fired the second accept.
+  it('blocks a concurrent second accept (409 in progress), no double VLM spend (FIX-5)', async () => {
+    const db = testDb();
+    await seedImageCandidateProposal('img_cand_concurrent');
+
+    let releaseFirstVlm: () => void = () => {};
+    const firstVlmGate = new Promise<void>((resolve) => {
+      releaseFirstVlm = resolve;
+    });
+    let secondHasStarted: () => void = () => {};
+    const secondStartedGate = new Promise<void>((resolve) => {
+      secondHasStarted = resolve;
+    });
+
+    const firstRunTaskFn = vi.fn(async () => {
+      // Signal that the first accept is now mid-VLM, then wait for the test to let it finish.
+      secondHasStarted();
+      await firstVlmGate;
+      return { text: VLM_OUTPUT };
+    });
+    const secondRunTaskFn = vi.fn(async () => ({ text: VLM_OUTPUT }));
+
+    const { deps: firstDeps } = imageCandidateDeps({ runTaskFn: firstRunTaskFn });
+    const { deps: secondDeps } = imageCandidateDeps({ runTaskFn: secondRunTaskFn });
+
+    const firstPromise = acceptAiProposal(db, 'img_cand_concurrent', {
+      imageCandidateDeps: firstDeps,
+    });
+    // Wait until the first accept has claimed + entered the VLM, then fire the second.
+    await secondStartedGate;
+    const secondResult = await acceptAiProposal(db, 'img_cand_concurrent', {
+      imageCandidateDeps: secondDeps,
+    }).then(
+      (r) => ({ ok: true as const, r }),
+      (e) => ({ ok: false as const, e }),
+    );
+    releaseFirstVlm();
+    await firstPromise;
+
+    // The second accept saw the live claim and was rejected; it never spent a VLM call.
+    expect(secondResult.ok).toBe(false);
+    if (!secondResult.ok) {
+      expect((secondResult.e as { code?: string }).code).toBe('conflict');
+    }
+    expect(secondRunTaskFn).not.toHaveBeenCalled();
+    expect(firstRunTaskFn).toHaveBeenCalledTimes(1);
+    // Exactly one question + one ledger row.
+    const questions = await db.select().from(question).where(eq(question.source, 'web_sourced'));
+    expect(questions).toHaveLength(1);
+    const ledger = await db
+      .select()
+      .from(cost_ledger)
+      .where(eq(cost_ledger.task_kind, 'sourcing_image_extract'));
+    expect(ledger).toHaveLength(1);
+  });
+
+  // FIX-5 — after a failed accept (VLM throws), the claim is cleared so a retry can run
+  // (it is NOT permanently wedged "in progress").
+  it('allows a retry after a failed accept (claim cleared on failure) (FIX-5)', async () => {
+    const db = testDb();
+    await seedImageCandidateProposal('img_cand_retry');
+
+    const failingRunTaskFn = vi.fn(async () => {
+      throw new Error('VLM boom');
+    });
+    const { deps: failDeps } = imageCandidateDeps({ runTaskFn: failingRunTaskFn });
+    await expect(
+      acceptAiProposal(db, 'img_cand_retry', { imageCandidateDeps: failDeps }),
+    ).rejects.toThrow(/VLM boom/);
+
+    // No question was created by the failed attempt.
+    let questions = await db.select().from(question).where(eq(question.source, 'web_sourced'));
+    expect(questions).toHaveLength(0);
+
+    // Retry with a working VLM — the claim was cleared, so this is NOT a 409.
+    const { deps: okDeps, runTaskFn } = imageCandidateDeps();
+    const result = await acceptAiProposal(db, 'img_cand_retry', { imageCandidateDeps: okDeps });
+    expect(result.kind).toBe('image_candidate');
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+    questions = await db.select().from(question).where(eq(question.source, 'web_sourced'));
+    expect(questions).toHaveLength(1);
   });
 });
