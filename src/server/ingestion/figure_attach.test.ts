@@ -386,4 +386,35 @@ describe('assignFiguresFromVlm', () => {
     expect(result[0].attached_to_index).toBe('q1'); // geometric: bbox containment
     expect(result[0].attach_confidence).toBe('high'); // geometric containment = high
   });
+
+  // R2-2 refinement (bot round-3): a repeated figure_index pointing at the SAME
+  // question is a harmless duplicate, not a conflict — the assignment is kept.
+  it('R2-2 refinement: duplicate figure_index with same target → kept as VLM assignment', () => {
+    const q1: StructuredQuestionT = {
+      id: 'q1',
+      role: 'standalone',
+      prompt_text: 'q1',
+      bbox: { x: 0, y: 0, width: 0.5, height: 0.5 },
+    };
+    const q2: StructuredQuestionT = {
+      id: 'q2',
+      role: 'standalone',
+      prompt_text: 'q2',
+      bbox: { x: 0.5, y: 0.5, width: 0.5, height: 0.5 },
+    };
+    const figures: PreAttachFigure[] = [
+      // figure 0 geometrically inside q1 — but VLM (redundantly) assigns it to q2.
+      // If the duplicate were wrongly treated as a conflict, geometric fallback
+      // would attach it to q1; the VLM assignment surviving proves the refinement.
+      fig({ x: 0.1, y: 0.1, width: 0.05, height: 0.05 }, 0, 0),
+    ];
+    const assignments: FigureAssignment[] = [
+      { figure_index: 0, attached_to_question_id: 'q2', confidence: 'high' },
+      { figure_index: 0, attached_to_question_id: 'q2', confidence: 'high' }, // same target — harmless
+    ];
+    const result = assignFiguresFromVlm(figures, assignments, [q1, q2]);
+    expect(result).toHaveLength(1);
+    expect(result[0].attached_to_index).toBe('q2'); // VLM assignment kept, not geometric q1
+    expect(result[0].attach_confidence).toBe('high');
+  });
 });
