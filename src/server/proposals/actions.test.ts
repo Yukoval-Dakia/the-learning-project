@@ -1818,11 +1818,14 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
     expect((rateRows[0].payload as { rating?: string }).rating).toBe('accept');
   });
 
-  it('correlates the sourcing_image_extract row with the real VisionExtractTask run (production-shaped seam)', async () => {
-    // FIX-4 verification-round gap: the default runTaskFn used to drop task_run_id, so the
-    // correlation row carried registry-default zeros in production. This test uses a
-    // production-shaped seam (returns task_run_id like the real runTask) against a seeded
-    // ai_task_runs row and asserts the correlation row carries the REAL numbers.
+  it('correlates the sourcing_image_extract row with the real VisionExtractTask run (zero-valued, no double-count)', async () => {
+    // FIX-R2-2: the correlation row must串联 the REAL VisionExtractTask run via
+    // task_run_id AND carry the real provider/model, but its cost/tokens are ZERO by
+    // design — the VisionExtractTask run already wrote a real cost_ledger row, so a
+    // non-zero correlation row would double-count the one extraction in SUM(cost). This
+    // test uses a production-shaped seam (returns task_run_id like the real runTask)
+    // against a seeded ai_task_runs row and asserts: task_run_id串联 + real provider/model
+    // + zero cost/tokens.
     const db = testDb();
     await seedImageCandidateProposal('img_cand_runid');
     await db.insert(ai_task_runs).values({
@@ -1847,11 +1850,16 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
       .where(eq(cost_ledger.task_run_id, 'vlm_run_real_1'));
     const row = rows.find((r) => r.task_kind === 'sourcing_image_extract');
     expect(row).toBeDefined();
+    // task_run_id串联s the real VisionExtractTask run (recover real花费 via JOIN).
+    expect(row?.task_run_id).toBe('vlm_run_real_1');
+    // provider/model are the real run's (self-describing correlation row).
     expect(row?.provider).toBe('xiaomi');
     expect(row?.model).toBe('mimo-vl-prod');
-    expect(row?.cost).toBeCloseTo(0.0123);
-    expect(row?.tokens_in).toBe(1234);
-    expect(row?.tokens_out).toBe(567);
+    // FIX-R2-2 — cost/tokens are ZERO so the correlation row never double-counts the
+    // extraction the VisionExtractTask row already recorded.
+    expect(row?.cost).toBe(0);
+    expect(row?.tokens_in).toBe(0);
+    expect(row?.tokens_out).toBe(0);
   });
 
   it('writes exactly one sourcing_image_extract cost_ledger row per accept (cost 留痕)', async () => {
@@ -1938,9 +1946,21 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
       ).rejects.toMatchObject({ code: 'unsupported_media_type' });
       // The VLM was never called — no money burned on HTML bytes.
       expect(runTaskFn).not.toHaveBeenCalled();
-      // No question / ledger / rate.
+      // FIX-R2-8 — assert ALL of "No question / ledger / rate" the comment claims.
       const questions = await db.select().from(question).where(eq(question.source, 'web_sourced'));
       expect(questions).toHaveLength(0);
+      // No sourcing_image_extract cost_ledger row (the paid flow never started).
+      const ledger = await db
+        .select()
+        .from(cost_ledger)
+        .where(eq(cost_ledger.task_kind, 'sourcing_image_extract'));
+      expect(ledger).toHaveLength(0);
+      // No accept rate event chained to the proposal (the proposal stays pending).
+      const acceptRates = await db
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'img_cand_html')));
+      expect(acceptRates).toHaveLength(0);
     } finally {
       fetchSpy.mockRestore();
     }
@@ -2078,5 +2098,224 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
     expect(runTaskFn).toHaveBeenCalledTimes(1);
     questions = await db.select().from(question).where(eq(question.source, 'web_sourced'));
     expect(questions).toHaveLength(1);
+  });
+
+  // FIX-R2-1 — a redirect to a private host must be rejected by re-running the SSRF guard
+  // on the redirect target; the VLM is never reached. We exercise the real
+  // defaultFetchImageBytes with a manual-redirect fetch stub.
+  it('rejects a redirect to a private host before the VLM (FIX-R2-1 redirect SSRF)', async () => {
+    const db = testDb();
+    await seedImageCandidateProposal('img_cand_redirect', {
+      source_url: 'https://example.edu/wenyan/redirect.png',
+    });
+    const runTaskFn = vi.fn(async () => ({ text: VLM_OUTPUT }));
+    // First hop = a legal 302 → Location pointing at the cloud metadata endpoint.
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(null, {
+        status: 302,
+        headers: { location: 'http://169.254.169.254/latest/meta-data/' },
+      }),
+    );
+    try {
+      await expect(
+        acceptAiProposal(db, 'img_cand_redirect', {
+          imageCandidateDeps: { runTaskFn, r2: { put: vi.fn(), get: vi.fn() } as never },
+        }),
+      ).rejects.toMatchObject({ code: 'validation_error' });
+      // The first hop fetched, but the redirect target was rejected before a second fetch.
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      // The VLM never ran — no money burned via the redirect bypass.
+      expect(runTaskFn).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  // FIX-R2-7 — a normal domain that happens to start with fc/fd/fe (fdic.gov,
+  // fcdn.example.com) must NOT be mis-flagged as an IPv6 private host. fdic.gov passes the
+  // guard and reaches fetch; an actual IPv6 unique-local literal [fd00::1] is still
+  // rejected before any network call.
+  it('does not mis-reject fc/fd-prefixed domains; still rejects IPv6 literals (FIX-R2-7)', async () => {
+    const db = testDb();
+    await seedImageCandidateProposal('img_cand_fdic', {
+      source_url: 'https://fdic.gov/exam/q.png',
+    });
+    const runTaskFn = vi.fn(async () => ({ text: VLM_OUTPUT }));
+    // A tiny valid image response so the accept proceeds past fetch (we only need to prove
+    // the guard let fdic.gov through — fetch WAS called).
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(new Uint8Array([1, 2, 3, 4]), {
+        status: 200,
+        headers: { 'content-type': 'image/png' },
+      }),
+    );
+    try {
+      // Build deps WITHOUT fetchImageBytesFn so the REAL defaultFetchImageBytes (and its
+      // SSRF guard) runs against the fetch stub.
+      const result = await acceptAiProposal(db, 'img_cand_fdic', {
+        imageCandidateDeps: {
+          runTaskFn,
+          enqueueSourceVerify: vi.fn(async () => {}),
+          r2: { put: vi.fn(async () => {}), get: vi.fn(async () => null) } as never,
+        },
+      });
+      expect(result.kind).toBe('image_candidate');
+      // fdic.gov passed the SSRF guard → fetch was actually called.
+      expect(fetchSpy).toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+
+    // An IPv6 unique-local literal is still rejected before any network call.
+    await seedImageCandidateProposal('img_cand_ipv6', {
+      source_url: 'http://[fd00::1]/x.png',
+    });
+    const ipv6RunTaskFn = vi.fn(async () => ({ text: VLM_OUTPUT }));
+    const ipv6FetchSpy = vi.spyOn(globalThis, 'fetch');
+    try {
+      await expect(
+        acceptAiProposal(db, 'img_cand_ipv6', {
+          imageCandidateDeps: {
+            runTaskFn: ipv6RunTaskFn,
+            r2: { put: vi.fn(), get: vi.fn() } as never,
+          },
+        }),
+      ).rejects.toMatchObject({ code: 'validation_error' });
+      expect(ipv6FetchSpy).not.toHaveBeenCalled();
+      expect(ipv6RunTaskFn).not.toHaveBeenCalled();
+    } finally {
+      ipv6FetchSpy.mockRestore();
+    }
+  });
+
+  // FIX-R2-4 — an image/* MIME outside the supported set (svg/gif/bmp) is rejected with a
+  // 422, NOT silently re-tagged as image/png; the paid VLM flow never starts.
+  it('rejects an unsupported image MIME (svg) before the VLM (FIX-R2-4)', async () => {
+    const db = testDb();
+    await seedImageCandidateProposal('img_cand_svg');
+    const runTaskFn = vi.fn(async () => ({ text: VLM_OUTPUT }));
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('<svg></svg>', {
+        status: 200,
+        headers: { 'content-type': 'image/svg+xml' },
+      }),
+    );
+    try {
+      await expect(
+        acceptAiProposal(db, 'img_cand_svg', {
+          imageCandidateDeps: { runTaskFn, r2: { put: vi.fn(), get: vi.fn() } as never },
+        }),
+      ).rejects.toMatchObject({ code: 'unsupported_media_type' });
+      expect(runTaskFn).not.toHaveBeenCalled();
+      const questions = await db.select().from(question).where(eq(question.source, 'web_sourced'));
+      expect(questions).toHaveLength(0);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  // FIX-R2-3 — the user dismisses the proposal WHILE the accept's VLM is in flight. The
+  // terminal tx re-checks the rate event under the lock and aborts with 409, writing NO
+  // question and NO accept rate (the dismiss veto is preserved).
+  it('aborts (409) when the proposal is dismissed during accept; no question written (FIX-R2-3)', async () => {
+    const db = testDb();
+    await seedImageCandidateProposal('img_cand_veto');
+
+    let releaseVlm: () => void = () => {};
+    const vlmGate = new Promise<void>((resolve) => {
+      releaseVlm = resolve;
+    });
+    let vlmStarted: () => void = () => {};
+    const vlmStartedGate = new Promise<void>((resolve) => {
+      vlmStarted = resolve;
+    });
+    const runTaskFn = vi.fn(async () => {
+      vlmStarted();
+      await vlmGate;
+      return { text: VLM_OUTPUT };
+    });
+    const { deps } = imageCandidateDeps({ runTaskFn });
+
+    const acceptPromise = acceptAiProposal(db, 'img_cand_veto', { imageCandidateDeps: deps }).then(
+      (r) => ({ ok: true as const, r }),
+      (e) => ({ ok: false as const, e }),
+    );
+    // Wait until the accept is mid-VLM, then dismiss the proposal (the user's veto lands a
+    // non-accept terminal rate event).
+    await vlmStartedGate;
+    await dismissAiProposal(db, 'img_cand_veto');
+    releaseVlm();
+    const outcome = await acceptPromise;
+
+    // The accept aborted with 409 — the veto was NOT overwritten.
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect((outcome.e as { code?: string }).code).toBe('conflict');
+    }
+    // No web_sourced question was written.
+    const questions = await db.select().from(question).where(eq(question.source, 'web_sourced'));
+    expect(questions).toHaveLength(0);
+    // The only rate event chained to the proposal is the dismiss (no accept rate).
+    const rates = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'img_cand_veto')));
+    expect(rates).toHaveLength(1);
+    expect((rates[0].payload as { rating?: string }).rating).toBe('dismiss');
+  });
+
+  // FIX-R2-5 — a kind-constrained proposal (requested_kind on the proposed_change)
+  // materializes a question of that kind, normalized through the question-kind vocabulary.
+  it('materializes the requested_kind (choice) when the proposal carries one (FIX-R2-5)', async () => {
+    const db = testDb();
+    await writeAiProposal(db, {
+      id: 'img_cand_choice',
+      actor_ref: 'sourcing',
+      outcome: 'partial',
+      payload: {
+        kind: 'image_candidate',
+        target: { subject_kind: 'source_asset', subject_id: null },
+        reason_md: '图片型源',
+        evidence_refs: [],
+        proposed_change: {
+          source_url: 'https://example.edu/wenyan/choice.png',
+          source_title: '选择题扫描卷',
+          summary_md: '图片型选择题源。',
+          // single_choice is a profile/skill key → normalizes to canonical 'choice'.
+          requested_kind: 'single_choice',
+        },
+        cooldown_key: 'image_candidate:https://example.edu/wenyan/choice.png',
+      },
+    });
+    const { deps } = imageCandidateDeps();
+
+    const result = await acceptAiProposal(db, 'img_cand_choice', { imageCandidateDeps: deps });
+    if (result.kind !== 'image_candidate') throw new Error('unreachable');
+    const rows = await db.select().from(question).where(eq(question.id, result.question_id));
+    expect(rows[0].kind).toBe('choice');
+  });
+
+  // FIX-R2-6 — the stored extract is the RAW VLM output (the full block-serialized text),
+  // NOT the final promptMd, so source_verify's overlap is not an identity. The question
+  // metadata carries single_source_grounding=true to mark the limitation.
+  it('stores the raw VLM output as the extract (not promptMd) + marks single_source_grounding (FIX-R2-6)', async () => {
+    const db = testDb();
+    await seedImageCandidateProposal('img_cand_extract');
+    const { deps } = imageCandidateDeps();
+
+    const result = await acceptAiProposal(db, 'img_cand_extract', { imageCandidateDeps: deps });
+    if (result.kind !== 'image_candidate') throw new Error('unreachable');
+    const rows = await db.select().from(question).where(eq(question.id, result.question_id));
+    const meta = rows[0].metadata as {
+      web_sourced?: { extract?: string };
+      single_source_grounding?: boolean;
+    };
+    const extract = meta.web_sourced?.extract ?? '';
+    const promptMd = rows[0].prompt_md;
+    // The extract is the raw VLM JSON (contains the block structure), not just the prompt.
+    expect(extract).not.toBe(promptMd);
+    expect(extract).toBe(VLM_OUTPUT);
+    expect(extract).toContain('extracted_prompt_md');
+    expect(meta.single_source_grounding).toBe(true);
   });
 });

@@ -175,6 +175,16 @@ export const ImageCandidateProposalChange = z.object({
   // (or a run that resolved no node) parses to [] and the accept handler inserts
   // an empty attribution exactly as before — no behaviour regression.
   knowledge_ids: z.array(z.string().min(1)).default([]),
+  // YUK-227 S3 Slice C (FIX-R2-5) — the 题型约束 the sourcing run was pinned to (if
+  // any). The text path enforces kindsMatch per question; image candidates carry no
+  // per-question kind at propose time (the stem is unread until accept's VLM), so the
+  // run-level requested kind is stamped here and the accept handler normalizes it
+  // through the single-authority question-kind vocabulary (src/subjects/question-kind.ts)
+  // to set question.kind. Optional + free-string: a legacy proposal or an unpinned run
+  // omits it and accept falls back to short_answer (the prior unconditional behaviour);
+  // the value is validated/normalized at accept time (an unrecognised value also falls
+  // back), not here, so a relaxed string keeps the proposal write tolerant.
+  requested_kind: z.string().min(1).optional(),
 });
 export type ImageCandidateProposalChangeT = z.infer<typeof ImageCandidateProposalChange>;
 
