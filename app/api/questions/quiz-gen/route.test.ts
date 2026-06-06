@@ -122,6 +122,45 @@ describe('POST /api/questions/quiz-gen', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  // 验证轮 A1 — kind is validated at the route entry against BOTH vocabularies; a typo
+  // is a 400 (not a forwarded value that永败 the worker job).
+  it('returns 400 on an unknown kind', async () => {
+    const res = await POST(
+      postReq({ trigger: 'knowledge', ref_id: 'k1', sequence: true, kind: 'nonsense' }),
+    );
+    expect(res.status).toBe(400);
+    expect(runSourcingSequence).not.toHaveBeenCalled();
+  });
+
+  // 验证轮 A1 — a profile-vocabulary kind is accepted and normalized to canonical before
+  // it reaches the orchestrator (so the whole chain carries one vocabulary).
+  it('normalizes a profile-vocabulary kind to canonical for the orchestrator', async () => {
+    const res = await POST(
+      postReq({
+        trigger: 'knowledge',
+        ref_id: 'k1',
+        sequence: true,
+        kind: 'reading_comprehension',
+      }),
+    );
+    expect(res.status).toBe(202);
+    expect(runSourcingSequence).toHaveBeenCalledWith(expect.objectContaining({ kind: 'reading' }));
+  });
+
+  // 验证轮 B — orchestrator reports a missing/archived node → route 404s (not a misleading
+  // 202 enqueued:[]).
+  it('returns 404 when the orchestrator reports a missing knowledge node', async () => {
+    runSourcingSequence.mockResolvedValueOnce({
+      existing: [],
+      satisfiedFromPool: false,
+      enqueued: [],
+      needs: [],
+      knowledgeNodeMissing: true,
+    } as never);
+    const res = await POST(postReq({ trigger: 'knowledge', ref_id: 'ghost', sequence: true }));
+    expect(res.status).toBe(404);
+  });
+
   it('returns 400 on a non-JSON body', async () => {
     const res = await POST(
       new Request('http://localhost/api/questions/quiz-gen', {
