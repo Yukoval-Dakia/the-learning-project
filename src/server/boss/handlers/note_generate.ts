@@ -19,6 +19,7 @@ import { artifact, knowledge } from '@/db/schema';
 import { type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
 import { syncBlockRefsForArtifact } from '@/server/artifacts/block-refs';
 import { bodyBlocksToNoteSections, noteSectionsToBodyBlocks } from '@/server/artifacts/body-blocks';
+import { resolveNoteSkill } from '@/subjects/note-skills';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 export interface NoteGenerateJobData {
@@ -189,9 +190,11 @@ export async function runNoteGenerate(
   };
 
   try {
+    const subjectProfile = resolveSubjectProfile(kNode?.domain);
     const result = await runTaskFn('NoteGenerateTask', input, {
       db,
-      subjectProfile: resolveSubjectProfile(kNode?.domain),
+      subjectProfile,
+      skills: resolveNoteSkill(subjectProfile.id),
     });
     const parsed = parseNoteGenerateOutput(result.text);
 
