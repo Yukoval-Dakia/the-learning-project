@@ -95,12 +95,14 @@ export type SourcingImageCandidateT = z.infer<typeof SourcingImageCandidate>;
 // `question` row + metadata.web_sourced provenance and chains a tier-2 verify job.
 export const SourcingTaskOutput = z
   .object({
-    // YUK-227 S3 Slice C — relaxed from min(1) to min(0): a run may find ONLY
-    // image-type sources (0 text questions) and still be a valid, useful result
-    // (it yields image_candidate proposals). The superRefine below enforces that a
-    // run produces SOMETHING (≥1 question OR ≥1 image_candidate), so an empty run
-    // still fails loudly.
-    questions: z.array(SourcedQuestion).max(10),
+    // YUK-227 S3 Slice C (FIX-9b) — relaxed from min(1) to min(0): a run may find
+    // ONLY image-type sources (0 text questions) and still be a valid, useful result
+    // (it yields image_candidate proposals). The explicit .min(0) makes the relaxation
+    // match this comment (a bare z.array() already allows 0, but the explicit bound
+    // documents the deliberate relaxation at the call site). The superRefine below
+    // enforces that a run produces SOMETHING (≥1 question OR ≥1 image_candidate), so an
+    // empty run still fails loudly.
+    questions: z.array(SourcedQuestion).min(0).max(10),
     // Image-type sources the agent located but did NOT extract (守 ADR-0002). Each
     // becomes an `image_candidate` proposal; VLM extraction runs only on user accept.
     // Optional + capped — a text-only run omits it entirely.

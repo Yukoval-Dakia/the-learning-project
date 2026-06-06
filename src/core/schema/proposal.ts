@@ -165,6 +165,16 @@ export const ImageCandidateProposalChange = z.object({
   source_url: z.string().url(),
   source_title: z.string().min(1),
   summary_md: z.string().min(1).max(4000),
+  // YUK-227 S3 Slice C (FIX-3) — the knowledge_ids the sourcing job already
+  // resolved for this run (same archived-filtered live nodes the text path
+  // attributes its drafts to). Carried at propose time so the accept handler can
+  // attribute the materialized question WITHOUT re-resolving — the text path
+  // stamps these on the question.knowledge_ids column, so the image path must too
+  // or the materialized question is orphaned (unattributable to the originating
+  // 知识点). Optional + defaulted: a legacy proposal written before this field
+  // (or a run that resolved no node) parses to [] and the accept handler inserts
+  // an empty attribution exactly as before — no behaviour regression.
+  knowledge_ids: z.array(z.string().min(1)).default([]),
 });
 export type ImageCandidateProposalChangeT = z.infer<typeof ImageCandidateProposalChange>;
 
