@@ -1,0 +1,122 @@
+// YUK-225 (S2 slice 4) — few-shot retriever DB test.
+//
+// docs/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §5.3.
+//
+// Asserts the 轨 2 SQL retriever: same-kind + draft_status='active' filter,
+// knowledge-overlap candidate pull, TS-layer tier-priority sort, LIMIT, 0-hit 降级.
+
+import { createId } from '@paralleldrive/cuid2';
+import { beforeEach, describe, expect, it } from 'vitest';
+
+import { question } from '@/db/schema';
+import { resetDb, testDb } from '../../../tests/helpers/db';
+import { retrieveFewShotExamples } from './fewshot-retrieve';
+
+interface SeedOpts {
+  kind?: string;
+  knowledgeIds?: string[];
+  source?: string;
+  metadata?: Record<string, unknown> | null;
+  draftStatus?: string | null;
+  createdAt?: Date;
+}
+
+async function seed(opts: SeedOpts = {}): Promise<string> {
+  const db = testDb();
+  const id = createId();
+  const now = opts.createdAt ?? new Date();
+  await db.insert(question).values({
+    id,
+    kind: opts.kind ?? 'translation',
+    prompt_md: `题面 ${id}`,
+    reference_md: '参考答案',
+    rubric_json: null,
+    choices_md: null,
+    judge_kind_override: 'semantic',
+    knowledge_ids: opts.knowledgeIds ?? ['k1'],
+    difficulty: 3,
+    source: opts.source ?? 'quiz_gen',
+    source_ref: null,
+    draft_status: opts.draftStatus === undefined ? 'active' : opts.draftStatus,
+    created_by: { by: 'ai', task_kind: 'QuizGenTask' },
+    metadata: (opts.metadata ?? {}) as never,
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  });
+  return id;
+}
+
+const ingestionMeta = { ingestion_session_id: 'sess-1' }; // → tier 1
+const generatedMeta = {}; // quiz_gen, no provenance → tier 4
+
+describe('retrieveFewShotExamples', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('降级: 0 hits → empty array', async () => {
+    const db = testDb();
+    const out = await retrieveFewShotExamples({ db, kind: 'translation', knowledgeIds: ['k1'] });
+    expect(out).toEqual([]);
+  });
+
+  it('filters by kind and active status (drafts excluded)', async () => {
+    const db = testDb();
+    await seed({ kind: 'translation', knowledgeIds: ['k1'] });
+    await seed({ kind: 'calculation', knowledgeIds: ['k1'] }); // wrong kind
+    await seed({ kind: 'translation', knowledgeIds: ['k1'], draftStatus: 'draft' }); // draft
+
+    const out = await retrieveFewShotExamples({ db, kind: 'translation', knowledgeIds: ['k1'] });
+    expect(out).toHaveLength(1);
+    expect(out[0].kind).toBe('translation');
+  });
+
+  it('ranks higher tier first (tier 1 authentic before tier 4 generated)', async () => {
+    const db = testDb();
+    const generatedId = await seed({ knowledgeIds: ['k1'], metadata: generatedMeta });
+    const ingestedId = await seed({
+      knowledgeIds: ['k1'],
+      source: 'vision_paper',
+      metadata: ingestionMeta,
+    });
+
+    const out = await retrieveFewShotExamples({ db, kind: 'translation', knowledgeIds: ['k1'] });
+    expect(out.map((e) => e.id)).toEqual([ingestedId, generatedId]);
+    expect(out[0].tier).toBe(1);
+    expect(out[1].tier).toBe(4);
+  });
+
+  it('within a tier, ranks by knowledge overlap', async () => {
+    const db = testDb();
+    const lowOverlap = await seed({ knowledgeIds: ['k1'] });
+    const highOverlap = await seed({ knowledgeIds: ['k1', 'k2'] });
+
+    const out = await retrieveFewShotExamples({
+      db,
+      kind: 'translation',
+      knowledgeIds: ['k1', 'k2'],
+    });
+    expect(out[0].id).toBe(highOverlap);
+    expect(out[1].id).toBe(lowOverlap);
+  });
+
+  it('respects the limit', async () => {
+    const db = testDb();
+    for (let i = 0; i < 5; i++) await seed({ knowledgeIds: ['k1'] });
+    const out = await retrieveFewShotExamples({
+      db,
+      kind: 'translation',
+      knowledgeIds: ['k1'],
+      limit: 2,
+    });
+    expect(out).toHaveLength(2);
+  });
+
+  it('with empty knowledgeIds, falls back to recent active same-kind questions', async () => {
+    const db = testDb();
+    await seed({ knowledgeIds: ['kX'] });
+    const out = await retrieveFewShotExamples({ db, kind: 'translation', knowledgeIds: [] });
+    expect(out).toHaveLength(1);
+  });
+});
