@@ -613,7 +613,8 @@ ${causeTaxonomyList(profile)}
 function buildQuizGenPrompt(profile: SubjectProfile): string {
   const canonicalKinds =
     'choice | true_false | fill_blank | short_answer | essay | computation | reading | translation';
-  return `你是${profile.displayName}出题人，用联网检索来的**素材**写**原创**练习题。输入 { trigger: 'knowledge'|'learning_item'|'manual', ref: { id, name, ... }, knowledge_context, count } —— ref 是触发出题的知识点 / 学习项，count 是期望题数（默认 3）。
+  return `你是${profile.displayName}出题人，用联网检索来的**素材**写**原创**练习题。输入 { trigger: 'knowledge'|'learning_item'|'manual', ref: { id, name, ... }, knowledge_context, count, few_shot_examples_md? } —— ref 是触发出题的知识点 / 学习项，count 是期望题数（默认 3）。few_shot_examples_md（若有）是已入库的同题型优质范例，**仅供参考其结构与设问风格，禁止照抄题面**。
+若已加载本学科的出题规范 skill（quiz-gen-<题型>），请按其题型结构 / 采分点 / 答案格式规范出题。
 科目上下文：${profile.displayName}。${profile.languageStyle}
 证据要求：${profile.grounding.requirement}
 不确定性策略：${profile.grounding.uncertaintyPolicy}
@@ -692,15 +693,16 @@ function buildQuizVerifyPrompt(profile: SubjectProfile): string {
 2. copy_safety（原创/抄袭）：题干措辞是否与任一 source_ref 的 snippet 过于接近（逐句复制 / 仅做同义替换）？给 verdict：'original'（措辞充分原创）/ 'too_close'（与某来源太接近，应重写）/ 'unknown'（信息不足）；尽量给 max_overlap（0-1 粗略重合度）。'too_close' 会**阻止**这题进入复习池。
 3. knowledge_hit（知识命中）：这道题是否真的考查它声明的 knowledge_ids（对照 knowledge_context）？跑题 / 考了别的点 → 'fail'；沾边但弱 → 'unclear'。
 4. material_grounding（素材命中，**仅当输入带 material 时给出**）：题干 + reference_md 是否**真的考查这份 material 原文**？答案能否在 material 原文里找到依据？若题与这份素材无关（素材只是凑数地附上、题其实考别的）→ 'fail'；切题但弱关联 → 'unclear'；题确实据这份素材而出且答案有素材依据 → 'pass'。**输入没有 material 时，省略该字段（不要输出 material_grounding）。**
+5. kind_conformance（题型规范符合，**仅当已加载本题型的出题规范 skill（quiz-gen-<题型>）时给出**）：对照该 skill 规范包里的题型结构 / 采分点 / 答案格式 / 坏题反例，这道题**是否像该题型的真题**？结构缺失（如翻译题无采分点、阅读题无原文锚、计算题条件不全）或命中坏题反例 → 'fail'；基本符合但有瑕疵 → 'unclear'；结构与采分都规范 → 'pass'。**未加载对应 skill 时，省略该字段（不要输出 kind_conformance）。**
 
 综合裁决 overall（驱动 Option B gate）：
 - 'pass'：三项均无硬伤（grounding != 'fail' 且 knowledge_hit != 'fail' 且 copy_safety != 'too_close'）。
 - 'needs_review'：有可疑项但不致命（出现 'unclear'，或 copy_safety='unknown'），需人工复核。
-- 'fail'：任一硬伤（grounding='fail' 或 knowledge_hit='fail' 或 material_grounding='fail' 或题面自相矛盾/不可解）。
-注意：copy_safety='too_close' 即使其他两项 pass 也**不能**给 overall='pass'（至少 'needs_review'）。带 material 时若 material_grounding='fail'（题与素材无关），overall 不能 'pass'。
+- 'fail'：任一硬伤（grounding='fail' 或 knowledge_hit='fail' 或 material_grounding='fail' 或 kind_conformance='fail' 或题面自相矛盾/不可解）。
+注意：copy_safety='too_close' 即使其他两项 pass 也**不能**给 overall='pass'（至少 'needs_review'）。带 material 时若 material_grounding='fail'（题与素材无关），overall 不能 'pass'。加载了题型规范 skill 时若 kind_conformance='fail'（题型结构不规范 / 命中坏题反例），overall 不能 'pass'。
 
 严格 JSON 输出（不带 markdown 代码块包裹），shape 名 QuizVerificationResult：
-{"grounding":{"verdict":"pass"|"fail"|"unclear","note":"..."},"copy_safety":{"verdict":"original"|"too_close"|"unknown","max_overlap":0.0-1.0},"knowledge_hit":{"verdict":"pass"|"fail"|"unclear","note":"..."},"material_grounding":{"verdict":"pass"|"fail"|"unclear","note":"..."}（仅当输入带 material 时；否则省略此键）,"overall":"pass"|"needs_review"|"fail","summary_md":"<≤200 字结论 + 关键证据>","confidence":0.0-1.0}
+{"grounding":{"verdict":"pass"|"fail"|"unclear","note":"..."},"copy_safety":{"verdict":"original"|"too_close"|"unknown","max_overlap":0.0-1.0},"knowledge_hit":{"verdict":"pass"|"fail"|"unclear","note":"..."},"material_grounding":{"verdict":"pass"|"fail"|"unclear","note":"..."}（仅当输入带 material 时；否则省略此键）,"kind_conformance":{"verdict":"pass"|"fail"|"unclear","note":"..."}（仅当已加载本题型出题规范 skill 时；否则省略此键）,"overall":"pass"|"needs_review"|"fail","summary_md":"<≤200 字结论 + 关键证据>","confidence":0.0-1.0}
 要点：
 - summary_md 必须可执行：写"为什么 pass / needs_review / fail"和对应证据（指向具体 source_ref 或题面），不写套话。
 - ${profile.grounding.uncertaintyPolicy}
