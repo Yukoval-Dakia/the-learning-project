@@ -197,8 +197,14 @@ describe('runNoteGenerate', () => {
       runTaskFn,
     });
 
-    const ctx = runTaskFn.mock.calls[0]?.[2] as unknown as { subjectProfile?: { id: string } };
+    const ctx = runTaskFn.mock.calls[0]?.[2] as unknown as {
+      subjectProfile?: { id: string };
+      skills?: string[];
+    };
     expect(ctx.subjectProfile?.id).toBe('math');
+    // YUK-228 (S3 Slice B): handler must pass resolveNoteSkill(subject) as skills.
+    // math has a note skill → ['note']; wenyan also has one (default domain).
+    expect(ctx.skills).toEqual(['note']);
   });
 
   it('marks generation_status=failed when LLM throws (and rethrows)', async () => {
