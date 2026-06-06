@@ -40,6 +40,86 @@ describe('getTaskSystemPrompt', () => {
     expect(prompt).not.toContain('文言文经典原文');
   });
 
+  // YUK-228 (S3 Slice B) — plan test matrix row: 「prompt 删薄不破契约」.
+  // Verifies that after the Note skill migration slim-down, each buildNoteXxxPrompt
+  // still contains (a) I/O JSON shape, (b) noteTemplate injection (per-subject data),
+  // (c) fallback semantics sufficient for the degraded (no-skill) path.
+  it('NoteGenerateTask slim: I/O shape + noteTemplate + fallback semantics intact', () => {
+    const wenyan = getTaskSystemPrompt('NoteGenerateTask');
+    const math = getTaskSystemPrompt('NoteGenerateTask', resolveSubjectProfile('math'));
+
+    for (const prompt of [wenyan, math]) {
+      // I/O contract
+      expect(prompt).toContain('artifact_id');
+      expect(prompt).toContain('artifact_type');
+      expect(prompt).toContain('body_blocks');
+      expect(prompt).toContain('note_atomic');
+      expect(prompt).toContain('note_long');
+      expect(prompt).toContain('note_hub');
+      // attrs contract
+      expect(prompt).toContain('source_tier="llm_only"');
+      expect(prompt).toContain('user_verified=false');
+      expect(prompt).toContain('semantic_kind');
+      // fallback: all five semantic_kind names present
+      expect(prompt).toContain('definition');
+      expect(prompt).toContain('mechanism');
+      expect(prompt).toContain('example');
+      expect(prompt).toContain('pitfall');
+      expect(prompt).toContain('check');
+    }
+    // noteTemplate injection (per-subject data, not in SKILL.md)
+    expect(wenyan).toContain('引用短句并标明关键字词'); // wenyan example template
+    expect(math).toContain('带步骤的短例题'); // math example template
+  });
+
+  it('NoteVerifyTask slim: I/O shape + four-dim fallback + verdicts intact', () => {
+    const math = getTaskSystemPrompt('NoteVerifyTask', resolveSubjectProfile('math'));
+
+    // I/O contract
+    expect(math).toContain('NoteVerificationResult');
+    expect(math).toContain('artifact_id');
+    expect(math).toContain('body_blocks');
+    expect(math).toContain('block_summaries');
+    expect(math).toContain('"verdict":"pass"|"needs_review"');
+    expect(math).toContain('"severity":"info"|"warn"|"error"');
+    // format rule
+    expect(math).toContain('block_id');
+    expect(math).toContain('attrs.id');
+    // fallback four-dim (compressed but all four present)
+    expect(math).toContain('factuality');
+    expect(math).toContain('coverage');
+    expect(math).toContain('clarity');
+    expect(math).toContain('subject_fit');
+    // fallback coverage: five semantic_kinds listed
+    expect(math).toContain('definition/mechanism/example/pitfall/check');
+    // fallback verdict thresholds
+    expect(math).toContain('pass');
+    expect(math).toContain('needs_review');
+    expect(math).toContain('confidence<0.6');
+    // per-subject grounding injected
+    expect(math).toContain('条件不足时指出缺少的条件');
+  });
+
+  it('NoteRefineTask slim: NotePatchOp union + ADR-0020 constraint intact', () => {
+    const prompt = getTaskSystemPrompt('NoteRefineTask');
+
+    // I/O contract
+    expect(prompt).toContain('NotePatch');
+    expect(prompt).toContain('ops');
+    // four op kinds
+    expect(prompt).toContain('insert_after');
+    expect(prompt).toContain('replace_block');
+    expect(prompt).toContain('delete_block');
+    expect(prompt).toContain('append_block');
+    // ADR-0020 block_id stability constraint
+    expect(prompt).toContain('ADR-0020');
+    expect(prompt).toContain('target_block_id');
+    // mutator threshold hint
+    expect(prompt).toContain('≤ 3');
+    // semantic_kind boundary preserved
+    expect(prompt).toContain('definition / mechanism / example / pitfall / check');
+  });
+
   it('builds LearningIntentOutlineTask prompt with optional long notes', () => {
     const prompt = getTaskSystemPrompt('LearningIntentOutlineTask', resolveSubjectProfile('math'));
 
