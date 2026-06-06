@@ -407,46 +407,56 @@ describe('tencent_ocr_extract handler', () => {
   it('VLM figure routing: figureAssignments from VLM stub are applied to question_block.figures (P2-2)', async () => {
     const { sessionId, sourceDocId, assetId } = await seedSessionWithAsset();
 
-    // R2 must return image bytes for BOTH the source asset (→ page images for
-    // Tencent submit + VLM) AND for figure crops (cropAndUploadFigures reads
-    // figure bboxes from the Tencent response). makeR2WithImage always returns
-    // the same buffer for any key, which is sufficient.
+    // R2 must return image bytes for both the source asset (page images for
+    // Tencent submit + VLM) and for figure crops (cropAndUploadFigures reads
+    // figure bboxes from Tencent and crops them). makeR2WithImage returns the
+    // same buffer for every key — sufficient for the crop path.
     const r2 = makeR2WithImage(await makeTestImage());
 
     const submitFn = vi.fn(async () => 'tencent-job-fig-assign');
-    // clozeFixture has QuestionImagePositions in MarkInfos — those become preFigures.
-    const pollFn = vi.fn(async () => clozeFixture as never);
 
-    // VLM stub returns one question AND claims figure index 0 belongs to it.
-    // The handler will call assignFiguresFromVlm with these assignments and the
-    // preFigures derived from Tencent's QuestionImagePositions.
+    // Build a Tencent response with one QuestionImagePositions entry so that
+    // cropAndUploadFigures produces allPreFigures.length > 0 and the VLM path
+    // receives preFigures. The polygon uses pixel coords for a 500×700 image
+    // (TL→TR→BR→BL order, flat-8 format required by collectFigures).
+    // x: 50–200, y: 100–300 → normalized x:0.1, y:≈0.143, w:0.3, h:≈0.286.
+    const figurePolygon = [50, 100, 200, 100, 200, 300, 50, 300];
+    const tencentWithFigure = {
+      ...clozeFixture,
+      MarkInfos: [
+        {
+          ...clozeFixture.MarkInfos[0],
+          QuestionImagePositions: [figurePolygon],
+        },
+      ],
+    };
+    const pollFn = vi.fn(async () => tencentWithFigure as never);
+
+    // VLM stub claims figure index 0 belongs to vlmQuestionId.
+    // assignFiguresFromVlm will route it with high confidence to that question
+    // rather than falling back to the geometric heuristic.
     const vlmQuestionId = 'vlm-fig-q-1';
     const runStructureFn: typeof import('@/server/ingestion/structure').runStructureTask =
-      async (_params) => {
-        // Return figureAssignments claiming figure 0 belongs to vlmQuestionId.
-        // Only returned when preFigures are supplied (the handler supplies them
-        // when Tencent reported figure bboxes).
-        return {
-          questions: [
-            {
-              id: vlmQuestionId,
-              role: 'standalone' as const,
-              prompt_text: 'VLM question with figure',
-              source: 'vlm_structure' as const,
-              page_index: 0,
-            },
-          ],
-          layout_quality: 'structured' as const,
-          warnings: [],
-          figureAssignments: [
-            {
-              figure_index: 0,
-              attached_to_question_id: vlmQuestionId,
-              confidence: 'high' as const,
-            },
-          ],
-        };
-      };
+      async () => ({
+        questions: [
+          {
+            id: vlmQuestionId,
+            role: 'standalone' as const,
+            prompt_text: 'VLM question with figure',
+            source: 'vlm_structure' as const,
+            page_index: 0,
+          },
+        ],
+        layout_quality: 'structured' as const,
+        warnings: [],
+        figureAssignments: [
+          {
+            figure_index: 0,
+            attached_to_question_id: vlmQuestionId,
+            confidence: 'high' as const,
+          },
+        ],
+      });
 
     const handler = buildTencentOcrHandler({ db, r2, submitFn, pollFn, runStructureFn });
     await handler([{ id: 'boss-job-fig-assign', data: { sessionId } } as never]);
@@ -457,26 +467,19 @@ describe('tencent_ocr_extract handler', () => {
       .where(eq(question_block.ingestion_session_id, sessionId));
     expect(blocks.length).toBeGreaterThanOrEqual(1);
 
-    // P2-2: if clozeFixture has figure bboxes, figureAssignments routes figures
-    // to the VLM-assigned question (not all falling back to root / geometric).
-    // We verify the figures array is non-empty and the VLM assignment was honoured.
+    // P2-2 core assertion (no if-guard): the Tencent response above has exactly
+    // one QuestionImagePositions entry, so allPreFigures.length === 1 and
+    // assignFiguresFromVlm is called. The VLM assignment must route figure 0
+    // to vlmQuestionId with high confidence — not to some other question or root.
     const figures = blocks[0].figures as Array<{
       attached_to_index: string;
       attach_confidence: string;
     }>;
-
-    if (figures && figures.length > 0) {
-      // At least one figure must be attached to the VLM-assigned question id
-      // with high confidence (not all-root geometric fallback).
-      const vlmAssigned = figures.filter(
-        (f) => f.attached_to_index === vlmQuestionId && f.attach_confidence === 'high',
-      );
-      expect(vlmAssigned.length).toBeGreaterThan(0);
-    }
-    // If clozeFixture has no QuestionImagePositions the figures array is empty —
-    // that is still a valid (no-op) outcome; the test passes because the handler
-    // ran without error and produced a question_block.
-    expect(blocks[0].structured).toBeTruthy();
+    expect(figures.length).toBeGreaterThan(0);
+    const vlmAssigned = figures.filter(
+      (f) => f.attached_to_index === vlmQuestionId && f.attach_confidence === 'high',
+    );
+    expect(vlmAssigned.length).toBeGreaterThan(0);
 
     await cleanup(sessionId, sourceDocId, assetId);
     const cost = await db.select().from(cost_ledger);
