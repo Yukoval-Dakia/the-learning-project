@@ -629,6 +629,13 @@ describe('select_review_question_candidates', () => {
   // whitelist_match=false demotes BEHIND whitelist_match=true.
   it('demotes off-whitelist tier-2 questions behind on-whitelist (OF-2)', async () => {
     await seedKnowledge('k_zhi');
+    // Self-contained tier-2 fixture: the web_sourced block must satisfy the FULL
+    // WebSourcedProvenance contract so deriveSourceTier lands tier 2 — including the
+    // `extract` anchor made REQUIRED by YUK-223 (provenance.ts §合约一, F2/PR #313).
+    // This test pins its own tier-2 provenance shape; it does NOT depend on the
+    // subject profile's source whitelist — whitelist_match here is a literal seeded
+    // value, and the OF-2 demotion sort reads that persisted flag, never a live
+    // profile recompute.
     const webMeta = (whitelist: boolean) => ({
       source_ref_kind: 'url',
       web_sourced: {
@@ -636,6 +643,7 @@ describe('select_review_question_candidates', () => {
         title: 't',
         fetched_at: '2026-06-06T00:00:00Z',
         whitelist_match: whitelist,
+        extract: 'seeded extract anchor for the declared source page',
       },
     });
     await seedQuestion({
