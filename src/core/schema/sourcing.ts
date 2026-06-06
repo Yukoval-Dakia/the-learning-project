@@ -12,8 +12,14 @@
 // QuizGenQuestion is PROVENANCE: a sourced question carries its origin URL/title
 // (WebSourcedProvenance) instead of generator source_refs.
 //
-// OF-1 回填 (YUK-223 issue): the first cut extracts from HTML/TEXT sources only;
-// image-type sources are out of the first version.
+// OF-1 回填 (YUK-223 issue / YUK-227 S3 Slice C): HTML/TEXT sources are extracted
+// inline and INSERTed as drafts (the `questions` path below). Image-type sources —
+// pages whose question stem lives in an image that tavily_extract cannot lift as
+// plain text — are NOT auto-extracted (守 ADR-0002: VLM 抽图是用户授权的付费动作).
+// Instead the agent reports them as `image_candidates`; the handler turns each into
+// an `image_candidate` proposal (proposal inbox), and a VLM extraction runs ONLY on
+// explicit user accept. See docs/superpowers/plans/2026-06-06-yuk227-s3-image-
+// reachability.md §2 Slice C + §4 cost gate.
 import { z } from 'zod';
 import { QuestionKind, Rubric } from './business';
 
@@ -58,18 +64,62 @@ export const SourcedQuestion = z.object({
 });
 export type SourcedQuestionT = z.infer<typeof SourcedQuestion>;
 
+// ---------- image-type source candidate (YUK-227 S3 Slice C) ----------
+//
+// A real-question source the agent located but could NOT lift as plain text because
+// the question stem lives inside an image (e.g. a scanned 试卷 PNG, a 图表 题). The
+// agent reports it here INSTEAD of fabricating a text question. The handler writes one
+// `image_candidate` proposal per entry; the page's image is downloaded + VLM-extracted
+// ONLY on explicit user accept (守 ADR-0002 — no auto VLM 抽图 path). The agent
+// determines "image-type" by inference: tavily_extract returned empty/near-empty text
+// for a URL that the search result indicates carries questions (Tavily's hosted MCP
+// search response shape is not parsed in our code — buildTavilyMcpServer only mounts
+// the remote server — so the agent, not the handler, classifies the source; see plan
+// §6 F1(c) + §6.1).
+export const SourcingImageCandidate = z.object({
+  // The page URL whose question(s) are image-only. Required: without it there is no
+  // asset to download on accept (mirrors SourcedQuestion.source_url being required).
+  source_url: z.string().url(),
+  source_title: z.string().min(1),
+  // Why the agent judged this an image-type source + a human-readable summary of what
+  // the page appears to contain (shown in the proposal inbox so the user decides
+  // whether to spend a VLM extraction on accept).
+  summary_md: z.string().min(1).max(4000),
+});
+export type SourcingImageCandidateT = z.infer<typeof SourcingImageCandidate>;
+
 // ---------- whole-run LLM output shape ----------
 //
 // The SourcingTask agent emits a batch of sourced questions plus the run-level
 // search plan (audit / reproducibility). The handler maps each question into a
 // `question` row + metadata.web_sourced provenance and chains a tier-2 verify job.
-export const SourcingTaskOutput = z.object({
-  questions: z.array(SourcedQuestion).min(1).max(10),
-  // The queries the agent executed (audit trail; provenance is NOT recoverable from
-  // runner logs, so the agent self-reports — same §0 constraint as QuizGen).
-  query_plan: z.array(z.string().min(1)),
-  // ISO string (same shape as quiz_gen source_pack.searched_at — string, not Date).
-  fetched_at: z.string().min(1),
-  tool: z.literal('tavily'),
-});
+export const SourcingTaskOutput = z
+  .object({
+    // YUK-227 S3 Slice C — relaxed from min(1) to min(0): a run may find ONLY
+    // image-type sources (0 text questions) and still be a valid, useful result
+    // (it yields image_candidate proposals). The superRefine below enforces that a
+    // run produces SOMETHING (≥1 question OR ≥1 image_candidate), so an empty run
+    // still fails loudly.
+    questions: z.array(SourcedQuestion).max(10),
+    // Image-type sources the agent located but did NOT extract (守 ADR-0002). Each
+    // becomes an `image_candidate` proposal; VLM extraction runs only on user accept.
+    // Optional + capped — a text-only run omits it entirely.
+    image_candidates: z.array(SourcingImageCandidate).max(10).optional(),
+    // The queries the agent executed (audit trail; provenance is NOT recoverable from
+    // runner logs, so the agent self-reports — same §0 constraint as QuizGen).
+    query_plan: z.array(z.string().min(1)),
+    // ISO string (same shape as quiz_gen source_pack.searched_at — string, not Date).
+    fetched_at: z.string().min(1),
+    tool: z.literal('tavily'),
+  })
+  .superRefine((value, ctx) => {
+    const questionCount = value.questions.length;
+    const candidateCount = value.image_candidates?.length ?? 0;
+    if (questionCount === 0 && candidateCount === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'sourcing run produced neither questions nor image_candidates (empty result)',
+      });
+    }
+  });
 export type SourcingTaskOutputT = z.infer<typeof SourcingTaskOutput>;

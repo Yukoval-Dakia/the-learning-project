@@ -28,6 +28,16 @@ export const aiProposalKinds = [
   // boundary). Flows through the existing experimental:proposal event/inbox
   // path (writeAiProposal default + proposalWhere); no writer/inbox change.
   'block_merge',
+  // YUK-227 S3 Slice C (题源扩展 Strategy D / ADR-0002) — SourcingTask located a
+  // real-question source whose stem is image-only (tavily_extract could not lift it
+  // as text). The handler proposes it INSTEAD of auto-extracting; VLM 抽图 runs ONLY
+  // on explicit user accept (守 ADR-0002 — VLM 抽图是用户授权的付费动作). Accept
+  // downloads the image, runs VisionExtractTask (manual_rescue_only), and produces a
+  // tier-2 SourcedQuestion through the existing source_verify gate. Flows through the
+  // existing experimental:proposal event/inbox path (writeAiProposal default +
+  // proposalWhere); accept is dispatched in src/server/proposals/actions.ts. See
+  // docs/superpowers/plans/2026-06-06-yuk227-s3-image-reachability.md §2 Slice C + §4.
+  'image_candidate',
 ] as const;
 
 export const AiProposalKind = z.enum(aiProposalKinds);
@@ -146,6 +156,18 @@ export const BlockMergeProposalChange = z.object({
 });
 export type BlockMergeProposalChangeT = z.infer<typeof BlockMergeProposalChange>;
 
+// YUK-227 S3 Slice C (ADR-0002) — image_candidate proposed_change. The page URL +
+// title + the agent's summary of why it judged the source image-type. NO image bytes
+// here: the bytes are downloaded from `source_url` only on accept (the accept handler
+// in actions.ts is the single VLM 抽图 trigger — there is no auto path). Mirrors the
+// SourcingImageCandidate output shape (src/core/schema/sourcing.ts).
+export const ImageCandidateProposalChange = z.object({
+  source_url: z.string().url(),
+  source_title: z.string().min(1),
+  summary_md: z.string().min(1).max(4000),
+});
+export type ImageCandidateProposalChangeT = z.infer<typeof ImageCandidateProposalChange>;
+
 export const AiProposalPayload = z.discriminatedUnion('kind', [
   BaseProposal.extend({
     kind: z.literal('knowledge_node'),
@@ -215,6 +237,14 @@ export const AiProposalPayload = z.discriminatedUnion('kind', [
     kind: z.literal('block_merge'),
     target: ProposalTarget.extend({ subject_kind: z.literal('question_block') }),
     proposed_change: BlockMergeProposalChange,
+  }),
+  // YUK-227 S3 Slice C (ADR-0002) — image-type source candidate. target.subject_kind
+  // is 'source_asset' (the materialized asset the accept handler will create); the
+  // subject_id is null at propose time (the asset does not exist until accept).
+  BaseProposal.extend({
+    kind: z.literal('image_candidate'),
+    target: ProposalTarget.extend({ subject_kind: z.literal('source_asset') }),
+    proposed_change: ImageCandidateProposalChange,
   }),
 ]);
 export type AiProposalPayloadT = z.infer<typeof AiProposalPayload>;
