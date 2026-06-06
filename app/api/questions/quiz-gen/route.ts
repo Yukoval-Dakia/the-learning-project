@@ -24,6 +24,7 @@ import { z } from 'zod';
 import { getStartedBoss } from '@/server/boss/client';
 import { QUIZ_GEN_TRIGGERS } from '@/server/boss/handlers/quiz_gen';
 import { ApiError, errorResponse } from '@/server/http/errors';
+import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 
 export const runtime = 'nodejs';
 
@@ -38,7 +39,16 @@ const Body = z.object({
   // refines the profile route preference. Default false → original quiz_gen trigger.
   sequence: z.boolean().optional(),
   knowledge_id: z.string().min(1).optional(),
-  kind: z.string().min(1).optional(),
+  // YUK-226 S2-5b (验证轮 A1) — 接受**两套词表**的合法 kind（持久 QuestionKind 或
+  // profile/skill SubjectQuestionKind），规范化到 canonical 后下发。typo / 无效值 → 400
+  // 在入口拒掉（而非透传到 worker 永败 job）。
+  kind: z
+    .string()
+    .min(1)
+    .refine((v) => normalizeToCanonicalKind(v) !== null, {
+      message: 'kind must be a known question kind (QuestionKind or SubjectQuestionKind)',
+    })
+    .optional(),
   domain: z.string().min(1).optional(),
 });
 
@@ -77,9 +87,21 @@ export async function POST(req: Request): Promise<Response> {
         trigger,
         refId: ref_id,
         ...(count !== undefined ? { count } : {}),
-        kind: kind ?? null,
+        // Validated above; normalize to canonical so the sequence + pinned jobs all
+        // carry one vocabulary (the persisted QuestionKind).
+        kind: kind ? normalizeToCanonicalKind(kind) : null,
         domain: domain ?? null,
       });
+      // 验证轮 B — the orchestrator refused to enqueue because the knowledge node is
+      // missing/archived. Surface a 4xx instead of a misleading 202 enqueued:[] (the
+      // request named a node that can't anchor production).
+      if (result.knowledgeNodeMissing) {
+        throw new ApiError(
+          'validation_error',
+          `knowledge node '${knowledgeId}' does not exist or is archived`,
+          404,
+        );
+      }
       return Response.json(
         {
           mode: 'sequence',

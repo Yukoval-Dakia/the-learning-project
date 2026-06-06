@@ -1,0 +1,99 @@
+// YUK-226 S2-5b (验证轮 A) — 单一权威 kind 词表规范化层 unit test (no DB).
+//
+// 覆盖 normalizeToCanonicalKind / kindsMatch / questionKindToSkillKind /
+// skillKindToQuestionKind 的双向映射 + 校验 + cross-vocabulary 命中。
+
+import { describe, expect, it } from 'vitest';
+
+import {
+  kindsMatch,
+  normalizeToCanonicalKind,
+  questionKindToSkillKind,
+  skillKindToQuestionKind,
+} from './question-kind';
+
+describe('normalizeToCanonicalKind', () => {
+  it('passes a persisted QuestionKind through unchanged (canonical)', () => {
+    expect(normalizeToCanonicalKind('choice')).toBe('choice');
+    expect(normalizeToCanonicalKind('computation')).toBe('computation');
+    expect(normalizeToCanonicalKind('reading')).toBe('reading');
+    expect(normalizeToCanonicalKind('translation')).toBe('translation');
+    expect(normalizeToCanonicalKind('derivation')).toBe('derivation');
+  });
+
+  it('folds profile/skill SubjectQuestionKind to canonical', () => {
+    expect(normalizeToCanonicalKind('single_choice')).toBe('choice');
+    expect(normalizeToCanonicalKind('multiple_choice')).toBe('choice');
+    expect(normalizeToCanonicalKind('reading_comprehension')).toBe('reading');
+    expect(normalizeToCanonicalKind('calculation')).toBe('computation');
+    expect(normalizeToCanonicalKind('word_problem')).toBe('computation');
+    expect(normalizeToCanonicalKind('proof')).toBe('derivation');
+  });
+
+  it('returns null for an unknown value (drives the route 400)', () => {
+    expect(normalizeToCanonicalKind('nonsense')).toBeNull();
+    expect(normalizeToCanonicalKind('')).toBeNull();
+    expect(normalizeToCanonicalKind('calc')).toBeNull();
+  });
+});
+
+describe('kindsMatch (canonical-space compare)', () => {
+  it('matches the same canonical kind across vocabularies', () => {
+    // reading_comprehension request vs reading output.
+    expect(kindsMatch('reading', 'reading_comprehension')).toBe(true);
+    expect(kindsMatch('reading_comprehension', 'reading')).toBe(true);
+    // computation vs calculation.
+    expect(kindsMatch('computation', 'calculation')).toBe(true);
+    // single_choice / multiple_choice both fold to choice.
+    expect(kindsMatch('choice', 'single_choice')).toBe(true);
+    expect(kindsMatch('single_choice', 'multiple_choice')).toBe(true);
+    // proof vs derivation.
+    expect(kindsMatch('derivation', 'proof')).toBe(true);
+  });
+
+  it('rejects different kinds', () => {
+    expect(kindsMatch('reading', 'computation')).toBe(false);
+    expect(kindsMatch('translation', 'calculation')).toBe(false);
+  });
+
+  it('rejects when either side is unknown', () => {
+    expect(kindsMatch('reading', 'nonsense')).toBe(false);
+    expect(kindsMatch('nonsense', 'reading')).toBe(false);
+  });
+});
+
+describe('questionKindToSkillKind (canonical → representative skill key)', () => {
+  it('maps canonical kinds to their representative SubjectQuestionKind', () => {
+    expect(questionKindToSkillKind('computation')).toBe('calculation');
+    expect(questionKindToSkillKind('reading')).toBe('reading_comprehension');
+    expect(questionKindToSkillKind('choice')).toBe('single_choice');
+    expect(questionKindToSkillKind('derivation')).toBe('proof');
+  });
+
+  it('accepts a profile key too (normalizes first)', () => {
+    expect(questionKindToSkillKind('calculation')).toBe('calculation');
+    expect(questionKindToSkillKind('reading_comprehension')).toBe('reading_comprehension');
+  });
+
+  it('passes through kinds with no profile equivalent', () => {
+    expect(questionKindToSkillKind('true_false')).toBe('true_false');
+    expect(questionKindToSkillKind('fill_blank')).toBe('fill_blank');
+    expect(questionKindToSkillKind('essay')).toBe('essay');
+  });
+});
+
+describe('skillKindToQuestionKind (profile key → persisted canonical)', () => {
+  it('maps profile keys to the persisted kind rows are stored under', () => {
+    expect(skillKindToQuestionKind('calculation')).toBe('computation');
+    expect(skillKindToQuestionKind('reading_comprehension')).toBe('reading');
+    expect(skillKindToQuestionKind('single_choice')).toBe('choice');
+    expect(skillKindToQuestionKind('proof')).toBe('derivation');
+    expect(skillKindToQuestionKind('translation')).toBe('translation');
+  });
+
+  it('round-trips computation/calculation and reading/reading_comprehension', () => {
+    expect(skillKindToQuestionKind(questionKindToSkillKind('computation'))).toBe('computation');
+    expect(questionKindToSkillKind(skillKindToQuestionKind('calculation'))).toBe('calculation');
+    expect(skillKindToQuestionKind(questionKindToSkillKind('reading'))).toBe('reading');
+  });
+});

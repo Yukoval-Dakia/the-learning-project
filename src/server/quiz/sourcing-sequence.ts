@@ -27,13 +27,15 @@
 // "要新题/扩充练习" scenario and does NOT绕过错题本 (the orchestrator only READS the
 // active pool and ENQUEUES production — it never touches mistakes / review state).
 
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 
 import { compareBySourceTierThenWhitelist, deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
+import { buildTavilyMcpServer } from '@/server/ai/mcp/tavily';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import type { SubjectProfile } from '@/subjects/profile-schema';
+import type { SubjectProfile, SubjectQuestionKind } from '@/subjects/profile-schema';
+import { kindsMatch, questionKindToSkillKind } from '@/subjects/question-kind';
 
 // The downstream production steps, in default order. Step 1 (existing pool) is the
 // synchronous query below and is NOT part of this enum (it never enqueues).
@@ -82,6 +84,13 @@ async function queryExistingPool(
   db: Db,
   knowledgeId: string,
   limit: number,
+  // YUK-226 S2-5b (验证轮 A2) — when the sequence targets a specific 题型, the
+  // existing pool must be filtered by that kind so a node full of `reading`
+  // questions does NOT short-circuit a `computation` request. The compare runs in
+  // canonical space (kindsMatch), so a `reading_comprehension` request matches
+  // `reading` rows and `calculation` matches `computation` — no vocabulary
+  // mismatch silently dropping hits. null kind → no filter (whole active pool).
+  kind: string | null,
 ): Promise<ExistingPoolHit[]> {
   // F2 (PR #318 round-1): tier is a DERIVED (metadata-driven) value, not a column, so
   // it cannot be expressed in SQL ORDER BY. The previous code截断 to limit×4 in SQL
@@ -96,6 +105,7 @@ async function queryExistingPool(
     .select({
       id: question.id,
       source: question.source,
+      kind: question.kind,
       metadata: question.metadata,
     })
     .from(question)
@@ -108,12 +118,17 @@ async function queryExistingPool(
     )
     .orderBy(asc(question.created_at), asc(question.id));
 
-  const hits = rows.map((r) => ({
-    question_id: r.id,
-    source: r.source,
-    tier: deriveSourceTier({ source: r.source, metadata: r.metadata ?? null }).tier,
-    whitelistMatch: readWhitelistMatch((r.metadata ?? null) as Record<string, unknown> | null),
-  }));
+  const hits = rows
+    // A2 — kind filter in canonical space (no-op when kind is null). A row whose
+    // persisted kind doesn't normalize-match the requested kind is excluded so the
+    // pool count reflects only on-target questions.
+    .filter((r) => kind === null || kindsMatch(r.kind, kind))
+    .map((r) => ({
+      question_id: r.id,
+      source: r.source,
+      tier: deriveSourceTier({ source: r.source, metadata: r.metadata ?? null }).tier,
+      whitelistMatch: readWhitelistMatch((r.metadata ?? null) as Record<string, unknown> | null),
+    }));
   // 合约五 shared comparator: high tier first (1 authentic → 4 generated), then OF-2
   // within-tier demotion (off-whitelist behind on-whitelist). Same comparator slice 5a
   // uses — the created_at base order from SQL stays stable within equal keys.
@@ -123,17 +138,24 @@ async function queryExistingPool(
     .map(({ question_id, source, tier }) => ({ question_id, source, tier }));
 }
 
-// F5 — resolve the subject domain from the knowledge node itself (used when the caller
-// omits `domain`). Returns null when the node is absent / has no domain, so
-// resolveSubjectProfile falls back to the default subject — the same defensive default
-// as before, just keyed off the node when available.
-async function resolveKnowledgeDomain(db: Db, knowledgeId: string): Promise<string | null> {
+// YUK-226 S2-5b (验证轮 B) — resolve the knowledge node ONCE: whether it exists as a
+// LIVE (non-archived) node, plus its domain (F5: subject for the route preference when
+// the caller omits `domain`). The orchestrator must NOT enqueue background production
+// for a missing/archived node — that produces a need[] marker that can never resolve
+// (the worker-side anchor guard at quiz_gen.ts:326 / sourcing.ts rejects archived
+// anchors with isNull(archived_at), so the enqueued job would just fail). This single
+// pre-enqueue check aligns the API surface with that worker guard.
+async function resolveLiveKnowledgeNode(
+  db: Db,
+  knowledgeId: string,
+): Promise<{ exists: boolean; domain: string | null }> {
   const rows = await db
     .select({ domain: knowledge.domain })
     .from(knowledge)
-    .where(eq(knowledge.id, knowledgeId))
+    .where(and(eq(knowledge.id, knowledgeId), isNull(knowledge.archived_at)))
     .limit(1);
-  return rows[0]?.domain ?? null;
+  const row = rows[0];
+  return { exists: row !== undefined, domain: row?.domain ?? null };
 }
 
 // ── Profile route preference (S2-4 adds the field) ────────────────────────────
@@ -175,10 +197,15 @@ export function resolveRoutePreference(
 ): readonly SourcingSequenceStep[] {
   const raw = (profile as { sourcingRoutePreference?: unknown }).sourcingRoutePreference;
   if (!raw || typeof raw !== 'object') return DEFAULT_SOURCING_ROUTE;
-  // Shape: a map from 题型 key → ordered profile-token list. Fall back to a '*' default
-  // entry, then the hard-coded default.
+  // Shape: a map from 题型 key → ordered profile-token list. The map is keyed by the
+  // profile SubjectQuestionKind ('reading_comprehension' / 'calculation'), but `kind`
+  // arrives in canonical persisted form ('reading' / 'computation'). Translate to the
+  // profile key (验证轮 A4: same single mapping) before the lookup so a canonical kind
+  // resolves the profile's per-题型 route. Fall back to a '*' default entry, then the
+  // hard-coded default.
   const byKind = raw as Record<string, unknown>;
-  const candidate = (kind && byKind[kind]) || byKind['*'];
+  const profileKey: SubjectQuestionKind | null = kind ? questionKindToSkillKind(kind) : null;
+  const candidate = (profileKey && byKind[profileKey]) || byKind['*'];
   if (!Array.isArray(candidate)) return DEFAULT_SOURCING_ROUTE;
   const steps: SourcingSequenceStep[] = [];
   for (const token of candidate) {
@@ -277,6 +304,37 @@ async function defaultEnqueueSequenceJob(
   });
 }
 
+// ── 验证轮 C: Tavily availability + route degradation ─────────────────────────
+
+// The web-grounded steps: external_sourcing (tier 2, SourcingTask web search) and
+// material_grounded (tier 3, must拉真原文 via tavily_extract). Both no-op without Tavily.
+const TAVILY_DEPENDENT_STEPS: ReadonlySet<SourcingSequenceStep> = new Set([
+  'external_sourcing',
+  'material_grounded',
+]);
+
+// Reuse the worker's availability判定 verbatim: buildTavilyMcpServer() returns a config
+// iff TAVILY_API_KEY is set (graceful no-op otherwise). Same single source the quiz_gen /
+// sourcing handlers gate on — no second copy of the env logic here.
+function defaultTavilyAvailable(): boolean {
+  return buildTavilyMcpServer() !== null;
+}
+
+// Does the base route include any Tavily-dependent line? (drives the need[] annotation).
+function routeUsesTavily(route: readonly SourcingSequenceStep[]): boolean {
+  return route.some((step) => TAVILY_DEPENDENT_STEPS.has(step));
+}
+
+// Drop the Tavily-dependent steps; if that leaves the route empty (it wanted ONLY web
+// lines), degrade to the tier-4 closed_book fallback (which needs no web fetch). Preserves
+// any closed_book the base route already had, deduped.
+function degradeRouteWithoutTavily(
+  route: readonly SourcingSequenceStep[],
+): readonly SourcingSequenceStep[] {
+  const kept = route.filter((step) => !TAVILY_DEPENDENT_STEPS.has(step));
+  return kept.length > 0 ? kept : ['closed_book'];
+}
+
 // ── needs[] markers ───────────────────────────────────────────────────────────
 
 // Reuse the ReviewPlanNeedSchema `question_generation` 先例 shape (plan §6.1(b):
@@ -314,6 +372,9 @@ export interface SourcingSequenceParams {
   domain?: string | null;
   // DB-test seam.
   enqueueSequenceJob?: EnqueueSequenceJobFn;
+  // 验证轮 C — test seam for the Tavily availability判定. Defaults to the SAME
+  // buildTavilyMcpServer()-backed predicate the workers use (single judgment, no copy).
+  tavilyAvailable?: () => boolean;
 }
 
 export interface SourcingSequenceResult {
@@ -325,6 +386,11 @@ export interface SourcingSequenceResult {
   enqueued: SourcingSequenceStep[];
   // Consumer-side need markers for the in-flight background production.
   needs: SourcingNeed[];
+  // YUK-226 S2-5b (验证轮 B) — true when the knowledge node does not exist or is
+  // archived. The orchestrator enqueued NOTHING and returns empty existing/needs; the
+  // HTTP caller maps this to a 4xx (the route does), other consumers treat it as「no
+  // questions, nothing in flight」. Absent/false on the normal path.
+  knowledgeNodeMissing?: boolean;
 }
 
 /**
@@ -343,10 +409,28 @@ export async function runSourcingSequence(
   const count = params.count ?? SOURCING_DEFAULT_COUNT;
   const trigger = params.trigger ?? 'knowledge';
   const refId = params.refId ?? knowledgeId;
+  const kind = params.kind ?? null;
   const enqueue = params.enqueueSequenceJob ?? defaultEnqueueSequenceJob;
+  const isTavilyAvailable = params.tavilyAvailable ?? defaultTavilyAvailable;
 
-  // Step 1 — synchronous existing-pool query (high tier first).
-  const existing = await queryExistingPool(db, knowledgeId, count);
+  // 验证轮 B — pre-enqueue guard: resolve the node ONCE (existence + archive + domain).
+  // A missing/archived node must not enqueue (the produced need would never resolve —
+  // the worker-side anchor guard rejects archived anchors). Return empty + the
+  // discriminator so the HTTP caller can 4xx and other consumers see「nothing found,
+  // nothing in flight」.
+  const node = await resolveLiveKnowledgeNode(db, knowledgeId);
+  if (!node.exists) {
+    return {
+      existing: [],
+      satisfiedFromPool: false,
+      enqueued: [],
+      needs: [],
+      knowledgeNodeMissing: true,
+    };
+  }
+
+  // Step 1 — synchronous existing-pool query (high tier first), kind-filtered (A2).
+  const existing = await queryExistingPool(db, knowledgeId, count, kind);
   if (existing.length >= count) {
     return { existing, satisfiedFromPool: true, enqueued: [], needs: [] };
   }
@@ -357,9 +441,21 @@ export async function runSourcingSequence(
   // subject. A 'knowledge' trigger keys off a real node, so its domain is the
   // authoritative subject for the route preference (a math node must not route through
   // the wenyan default profile). domain wins when explicitly passed.
-  const resolvedDomain = params.domain ?? (await resolveKnowledgeDomain(db, knowledgeId));
+  const resolvedDomain = params.domain ?? node.domain;
   const profile = resolveSubjectProfile(resolvedDomain);
-  const route = resolveRoutePreference(profile, params.kind ?? null);
+  const baseRoute = resolveRoutePreference(profile, kind);
+
+  // 验证轮 C — Tavily awareness: external_sourcing (tier 2) AND material_grounded (tier 3)
+  // both lean on web fetch (SourcingTask searches the web; material_grounded must拉真原文).
+  // When Tavily is unconfigured the worker-side buildTavilyMcpServer() returns null and
+  // those steps degrade to closed_book ANYWAY — but enqueuing them first wastes a job and
+  // produces a misleading need[]. Reuse the SAME availability判定 the worker uses (no
+  // second copy) to skip them up front and degrade to a single closed_book line, recording
+  // the degradation reason in the need[] for evidence留痕.
+  const tavilyDown = !isTavilyAvailable();
+  const route: readonly SourcingSequenceStep[] = tavilyDown
+    ? degradeRouteWithoutTavily(baseRoute)
+    : baseRoute;
 
   const enqueued: SourcingSequenceStep[] = [];
   const needs: SourcingNeed[] = [];
@@ -377,14 +473,21 @@ export async function runSourcingSequence(
       // F4 — forward the 题型 hint that selected this route so the produced job can target
       // it. The route was chosen with this same kind; threading it through closes the gap
       // where kind drove选路 then vanished. Absent → no hint (agent free-targets).
-      ...(params.kind ? { kind: params.kind } : {}),
+      ...(kind ? { kind } : {}),
     });
     enqueued.push(step);
     needs.push({
       kind: 'question_generation',
       knowledge_id: knowledgeId,
       source: step,
-      reason: `existing pool had ${existing.length}/${count} active questions; enqueued ${step}`,
+      // 验证轮 C — the degradation suffix records WHY external/material lines were skipped
+      // (evidence留痕). Only present when the route was actually degraded (Tavily down AND
+      // the base route wanted a web line).
+      reason: `existing pool had ${existing.length}/${count} active questions; enqueued ${step}${
+        tavilyDown && routeUsesTavily(baseRoute)
+          ? ' (Tavily unavailable: external_sourcing/material_grounded degraded to closed_book)'
+          : ''
+      }`,
     });
   }
 
