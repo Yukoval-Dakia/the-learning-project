@@ -111,4 +111,15 @@ export const mathProfile: SubjectProfile = {
   // math questions (override path). NOT added to preferredRoutes — steps@1 owns
   // math derivations; math does not auto-route to multimodal_direct.
   judgeCapabilities: ['exact', 'keyword', 'semantic', 'steps', 'multimodal_direct'],
+  // YUK-225 (S2 slice 4) — OF-1 首批源白名单候选 (调研报告
+  // .omc/research/2026-06-05-source-whitelist-candidates.md, owner review pending).
+  //   gaokao.eol.cn      — 中国教育在线·掌上高考, 历年高考数学真题+解析, 官方媒体 / 无登录,
+  //                        覆盖 2010–2025 (形态: 真题多图片嵌入, OCR 抽取有难度)。
+  //   gaokao.zxxk.com    — 学科网高考专项子站 (形态: 登录边界待 owner 人工确认)。
+  //   gaokao.neea.edu.cn — 教育部中国教育考试网, 权威性最高 (形态: 试题评析文章非题库, SSL 不稳)。
+  sourceWhitelist: ['gaokao.eol.cn', 'gaokao.zxxk.com', 'gaokao.neea.edu.cn'],
+  // 计算题优先找现成真题, 不足凭知识闭卷出 / 变式扩展。
+  sourcingRoutePreference: {
+    calculation: ['sourced', 'closed_book', 'variant'],
+  },
 };

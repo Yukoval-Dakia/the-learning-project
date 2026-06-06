@@ -70,6 +70,25 @@ export const SubjectProfileSchema = z.object({
   renderConfig: RenderConfig,
   schedulingHints: SchedulingHints,
   judgeCapabilities: z.array(z.string().trim().min(1)),
+  // YUK-225 (S2 slice 4) — 规范双轨 thin profile section (no skill registry; the
+  // SKILL.md packs live in src/subjects/<id>/skills/ and are discovered on disk —
+  // spec §5 第五轮定稿「不建 skill 注册表」).
+  //
+  // sourceWhitelist: 可信题源域名列表，SourcingTask (slice 2) 用它判 whitelist_match。
+  // OWNER-FORK OF-1 拍板「委托 agent 调研提名」(plan §12)，首批候选见
+  // .omc/research/2026-06-05-source-whitelist-candidates.md。OF-2「入库但降权」: 白名单
+  // 外源仍入库 (whitelist_match=false)，只在选题排序后置，不降质量门。空数组 = 全部
+  // 来源 whitelist_match=false (cold-start 默认，owner 后补域名即生效)。
+  sourceWhitelist: z.array(z.string().trim().min(1)).default([]),
+  // sourcingRoutePreference: per-题型「缺题时找题次序」偏好 (§3.2)。key = SubjectQuestionKind,
+  // value = 该题型优先走的四线次序 (slice 5b 的 sourcing-sequence 消费)。如阅读题直奔
+  // material 线。未列题型走默认次序 (sourced → material → closed_book)。加性、可选。
+  sourcingRoutePreference: z
+    .record(
+      SubjectQuestionKindSchema,
+      z.array(z.enum(['sourced', 'material', 'closed_book', 'variant'])).min(1),
+    )
+    .optional(),
 });
 export type SubjectProfile = z.infer<typeof SubjectProfileSchema>;
 export type SlimSubjectProfile = Pick<SubjectProfile, 'id' | 'displayName' | 'renderConfig'>;

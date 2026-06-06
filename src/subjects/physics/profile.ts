@@ -109,4 +109,16 @@ export const physicsProfile: SubjectProfile = {
   // preferredRoute to also appear in judgeCapabilities (and be registered) — both
   // satisfied (registered in createDefaultRegistry).
   judgeCapabilities: ['exact', 'semantic', 'unit_dimension', 'multimodal_direct'],
+  // YUK-225 (S2 slice 4) — OF-1 首批源白名单候选 (调研报告
+  // .omc/research/2026-06-05-source-whitelist-candidates.md, owner review pending).
+  //   gaokao.eol.cn      — 中国教育在线·掌上高考, 历年高考物理真题+解析, 官方媒体 / 无登录
+  //                        (形态: 真题多图片嵌入, OCR 抽取有难度); 物理单科专项站多有
+  //                        付费墙(jyeoo 等), 首批不进。
+  //   gaokao.zxxk.com    — 学科网高考专项子站 (形态: 登录边界待 owner 人工确认)。
+  //   gaokao.neea.edu.cn — 教育部中国教育考试网, 权威性最高 (形态: 试题评析文章非题库, SSL 不稳)。
+  sourceWhitelist: ['gaokao.eol.cn', 'gaokao.zxxk.com', 'gaokao.neea.edu.cn'],
+  // physics 首批无专属 quiz-gen skill (OF-3 首批只覆盖 wenyan/math); 计算题走通用次序。
+  sourcingRoutePreference: {
+    calculation: ['sourced', 'closed_book', 'variant'],
+  },
 };
