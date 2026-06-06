@@ -727,8 +727,15 @@ function buildQuizVerifyPrompt(profile: SubjectProfile): string {
 //   - Unlike QuizGen (which searches for SOURCE MATERIAL and writes ORIGINAL
 //     questions), SourcingTask searches for REAL practice questions and lifts +
 //     restructures them, recording each origin URL into per-question provenance.
-//   - OF-1 回填 (YUK-223): first cut extracts from HTML/TEXT sources only; image
-//     sources are out of the first version.
+//   - OF-1 回填 (YUK-223 / YUK-227 S3 Slice C): HTML/TEXT sources are extracted
+//     inline as `questions`. Image-type sources — pages whose stem lives in an
+//     image that tavily_extract cannot lift as text — are reported as
+//     `image_candidates` (NOT auto-extracted: 守 ADR-0002, VLM 抽图是用户授权的
+//     付费动作). The handler turns each into an `image_candidate` proposal, and a
+//     VLM extraction runs ONLY on explicit user accept. The prompt MUST teach the
+//     agent (a) when to report an image_candidate, (b) the output contract for it,
+//     and (c) never to double-report a source as both a question and a candidate —
+//     生产 agent only emits image_candidates if the prompt asks for them.
 //   - This片 is the MINIMAL task-description skeleton (role / output contract /
 //     whitelist note). Domain content (题型规范 etc.) migrates to an Agent Skill
 //     in slice 4 — this builder stays thin per the owner's code-as-task-description
@@ -750,10 +757,11 @@ function buildSourcingPrompt(profile: SubjectProfile): string {
 - 领域读工具：可读用户的知识图谱，确认题目考查的 knowledge_ids 真实存在。
 
 工作流程：
-1. 检索：用 tavily_search 找与考点/题型相关的现成练习题页面（HTML 文本源）；只处理**文本型**网页，**跳过纯图片型题源**（首版不抽图片题）。
+1. 检索：用 tavily_search 找与考点/题型相关的现成练习题页面。
 2. 抽取：用 tavily_extract 拉网页正文，从中**逐题**抽出题面、参考答案、选项（若有）。忠实抽取，不要自己改写题意或编造答案。
 3. 结构化：把每道题映射成 SourcedQuestion，标注 kind / 难度 / 它考查的 knowledge_ids（用 knowledge_context 里真实存在的 id）。
 4. 记录来源（**强制**）：每道题写它来自的 source_url（具体网页 URL）+ source_title（页面标题）。运行时无法从日志恢复你访问了哪些页面——只有写进 source_url 的来源才被记录。漏报 = 该题不可追溯、会被拒收。
+5. 图片型题源（**不要自己抽图**）：当 tavily_extract **拿不到题干文本**（返回空/近空正文），但 tavily_search 的搜索结果表明该 URL 确实含真题（标题/摘要指向练习题/真题/试卷）——说明题干在**图片**里（扫描卷 PNG、图表题等）。这种源**不要**编造文本题、**不要**塞进 questions，改为报进 image_candidates。抽图是用户授权的付费动作，由用户在收件箱里 accept 后才发生，不是你的职责。
 
 每题输出形状（SourcedQuestion）：
 {
@@ -771,8 +779,15 @@ function buildSourcingPrompt(profile: SubjectProfile): string {
   "extraction_hash": "(可选) 抽取内容指纹"
 }
 
+图片型题源输出形状（SourcingImageCandidate，**可选数组**，没有就省略）：
+{
+  "source_url": "题干为图片的具体网页 URL（accept 时会从这里下载图片）",
+  "source_title": "该网页标题",
+  "summary_md": "为什么判定为图片型源（如 tavily_extract 返回空文本但搜索结果指向真题）+ 该页大致含什么内容（给用户在收件箱里决定要不要花一次抽图）"
+}
+
 整体严格 JSON 输出（不带 markdown 代码块包裹），shape 名 SourcingTaskOutput：
-{"questions":[SourcedQuestion, ...],"query_plan":["你执行的检索查询", ...],"fetched_at":"ISO8601 时间戳","tool":"tavily"}
+{"questions":[SourcedQuestion, ...],"image_candidates":[SourcingImageCandidate, ...](可省略),"query_plan":["你执行的检索查询", ...],"fetched_at":"ISO8601 时间戳","tool":"tavily"}
 
 题目要求：
 - kind 只能是 ${canonicalKinds} 之一；不要发明新值；客观题统一用 "choice"。
@@ -785,7 +800,9 @@ function buildSourcingPrompt(profile: SubjectProfile): string {
 约束（强约束）：
 - 每道题必须有有效的 source_url（具体网页 URL）+ source_title，否则会被拒收。
 - **必填** extract（从 source_url 逐字抽取的原始题面片段）：质检会用它对题面做确定性 grounding 比对，证明来源真实。缺 extract 或 extract 与题面毫无重叠 → 该题被判为来源不可锚定/伪造、拒收。
-- 只抽文本型网页；跳过纯图片题源（首版）。
+- 图片型题源报进 image_candidates，**不要**自己抽图、**不要**为图片源编造文本题。
+- **同一个源不要既报成 question 又报成 image_candidate**：能抽出文本就只放 questions；抽不出文本（图片型）就只放 image_candidates。二选一。
+- 一道题都没找到、且也没有图片型源时，宁可返回空 questions（运行会失败）也不要编题；但只要有图片型源，至少报进 image_candidates。
 - 禁止：emoji、营销话、套话、JSON 之外的文字、用 markdown 代码块包裹整段 JSON。`;
 }
 
