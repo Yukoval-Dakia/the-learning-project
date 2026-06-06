@@ -667,6 +667,109 @@ describe('runQuizGen', () => {
     expect(rows[0].knowledge_ids).toEqual(['k1']);
   });
 
+  // YUK-226 S2-5b F1 (PR #318 round-1) — the 找题次序 pins generation_method; the
+  // worker must forward it to the agent input as requested_generation_method so the
+  // requested tier (material vs closed) is actually executed, not free-chosen.
+  it('threads generationMethod into the agent input as requested_generation_method', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_method');
+
+    await runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      count: 1,
+      generationMethod: 'closed_book',
+      runAgentTaskFn,
+      enqueueQuizVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: vi.fn(() => null),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+    });
+
+    const [, input] = runAgentTaskFn.mock.calls[0];
+    expect((input as { requested_generation_method?: string }).requested_generation_method).toBe(
+      'closed_book',
+    );
+  });
+
+  it('omits requested_generation_method when no generationMethod is pinned (free-choice preserved)', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_nomethod');
+
+    await runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      count: 1,
+      runAgentTaskFn,
+      enqueueQuizVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: vi.fn(() => null),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+    });
+
+    const [, input] = runAgentTaskFn.mock.calls[0];
+    expect(input as Record<string, unknown>).not.toHaveProperty('requested_generation_method');
+  });
+
+  // YUK-226 S2-5b F3 (PR #318 round-1) — a manual trigger carries a free-form ref_id
+  // (the trigger pointer), but the explicit knowledgeId anchors attribution to the node.
+  it('attributes a manual free-form trigger to the explicit knowledgeId anchor', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_anchor');
+
+    const result = await runQuizGen({
+      db: testDb(),
+      trigger: 'manual',
+      refId: 'free form manual ref',
+      knowledgeId: 'k1',
+      count: 1,
+      runAgentTaskFn,
+      enqueueQuizVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: vi.fn(() => null),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+    });
+
+    expect(result.status).toBe('ready');
+    const rows = await testDb().select().from(question).where(eq(question.source, 'quiz_gen'));
+    expect(rows.length).toBeGreaterThan(0);
+    // Attribution keyed to the anchor node, NOT the free-form ref.
+    expect(rows.every((r) => r.knowledge_ids.includes('k1'))).toBe(true);
+    // The trigger pointer (source_ref) stays the original free-form ref.
+    expect(rows.every((r) => r.source_ref === 'free form manual ref')).toBe(true);
+  });
+
+  it('passes generation_method + knowledge_id from job data through buildQuizGenHandler', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_jobthread');
+    const handler = buildQuizGenHandler(testDb(), {
+      runAgentTaskFn,
+      enqueueQuizVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: () => null,
+      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+    });
+
+    const jobs = [
+      {
+        id: 'j1',
+        data: {
+          trigger: 'manual',
+          ref_id: 'free form ref',
+          count: 1,
+          generation_method: 'material_grounded',
+          knowledge_id: 'k1',
+        },
+      },
+    ] as never;
+    await handler(jobs);
+
+    const [, input] = runAgentTaskFn.mock.calls[0];
+    expect((input as { requested_generation_method?: string }).requested_generation_method).toBe(
+      'material_grounded',
+    );
+    const rows = await testDb().select().from(question).where(eq(question.source, 'quiz_gen'));
+    expect(rows.every((r) => r.knowledge_ids.includes('k1'))).toBe(true);
+  });
+
   it('skips (no insert, no enqueue) when the knowledge trigger ref does not exist', async () => {
     const runAgentTaskFn = agentMock(VALID_OUTPUT);
     const enqueueQuizVerify = vi.fn(async () => {});
