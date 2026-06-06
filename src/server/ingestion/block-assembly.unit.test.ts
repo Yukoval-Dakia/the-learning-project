@@ -6,6 +6,11 @@
  * When ALL blocks carry placeholder page_index=0 (Tencent fallback), the spatial
  * signal is omitted and the model falls back to pure semantic reasoning.
  *
+ * P2-1 fix: tests now call the EXPORTED production `projectBlock` directly
+ * instead of reimplementing the projection logic internally. This ensures that
+ * production bugs in projectBlock are caught by these tests (previously a
+ * tautological reimplementation let the P1 bug escape).
+ *
  * No DB — these tests only exercise pure functions and capture the LLM input via
  * an injected runTaskFn. No imports from tests/helpers/db / @/db/client / postgres
  * / drizzle / PgBoss (unit partition constraint).
@@ -17,6 +22,7 @@ import {
   type BlockAssemblyInputBlock,
   type BlockAssemblySourceBlock,
   isAllPlaceholderPageIndex,
+  projectBlock,
   runBlockAssemblyTask,
 } from './block-assembly';
 
@@ -77,47 +83,90 @@ describe('isAllPlaceholderPageIndex (YUK-227 S3 Slice A F4)', () => {
   });
 });
 
-// ---------- projectBlock: spatial inclusion via runBlockAssemblyTask ----------
+// ---------- projectBlock: direct production function tests (P2-1) ----------
+//
+// Tests call the EXPORTED `projectBlock` directly. This exercises the actual
+// production isAllPlaceholderPageIndex → projectBlock chain and catches bugs
+// that a tautological reimplementation would miss (see P2-1 fix note above).
+
+describe('projectBlock (YUK-227 S3 Slice A F4)', () => {
+  it('includes page_index when includeSpatial=true and block has page_spans', () => {
+    const block = makeBlock('a', 1, 'prompt a', '1');
+    const result = projectBlock(block, true);
+    expect(result.block_id).toBe('a');
+    expect(result.page_index).toBe(1);
+    expect(result.question_no).toBe('1');
+    expect(result.prompt_head).toBe('prompt a');
+    expect(result.role).toBe('standalone');
+    expect(result.layout_quality).toBe('structured');
+  });
+
+  it('includes page_index=0 when includeSpatial=true and block is on page 0', () => {
+    const block = makeBlock('a', 0, 'prompt a', '1');
+    const result = projectBlock(block, true);
+    expect(result.page_index).toBe(0);
+  });
+
+  it('omits page_index when includeSpatial=false (placeholder/semantic-only mode)', () => {
+    const block = makeBlock('a', 1, 'prompt a');
+    const result = projectBlock(block, false);
+    expect(result.page_index).toBeUndefined();
+  });
+
+  it('omits page_index when includeSpatial=true but block has no page_spans', () => {
+    const block = makeBlockNoSpans('x');
+    const result = projectBlock(block, true);
+    expect(result.page_index).toBeUndefined();
+  });
+
+  it('semantic fields are always present regardless of spatial mode', () => {
+    const block = makeBlock('q1', 2, '长题目文字', '5');
+    const spatial = projectBlock(block, true);
+    const semantic = projectBlock(block, false);
+
+    for (const result of [spatial, semantic]) {
+      expect(result.block_id).toBe('q1');
+      expect(result.question_no).toBe('5');
+      expect(result.prompt_head).toBe('长题目文字');
+      expect(result.role).toBe('standalone');
+      expect(result.layout_quality).toBe('structured');
+      expect(result.sub_question_count).toBe(0);
+    }
+    // Only spatial mode includes page_index
+    expect(spatial.page_index).toBe(2);
+    expect(semantic.page_index).toBeUndefined();
+  });
+
+  it('truncates prompt_head to 400 chars', () => {
+    const longPrompt = 'x'.repeat(500);
+    const block = makeBlock('a', 0, longPrompt);
+    const result = projectBlock(block, false);
+    expect(result.prompt_head).toHaveLength(400);
+  });
+});
+
+// ---------- projectBlock spatial signal via runBlockAssemblyTask ----------
+//
+// End-to-end verification: blocks with non-zero page_index → isAllPlaceholderPageIndex
+// returns false → runBlockAssemblyForSession would pass includeSpatial=true →
+// projectBlock emits page_index. We verify the full chain by building the
+// input the same way runBlockAssemblyForSession does and confirming the task receives
+// the right shape.
 
 describe('projectBlock spatial signal (YUK-227 S3 Slice A F4)', () => {
   /**
-   * Helper: call runBlockAssemblyTask with given source blocks and capture the
-   * projected BlockAssemblyInput passed to the injected runTaskFn.
+   * Build input blocks via projectBlock (real production function) and pass them to
+   * runBlockAssemblyTask, capturing what the model receives.
    */
   async function captureProjected(
     sourceBlocks: BlockAssemblySourceBlock[],
   ): Promise<BlockAssemblyInputBlock[]> {
     let captured: BlockAssemblyInputBlock[] = [];
-    // runBlockAssemblyTask takes a BlockAssemblyInput directly (not source blocks).
-    // The projection happens in runBlockAssemblyForSession. To test projectBlock
-    // in isolation we need to go through runBlockAssemblyForSession — but that
-    // requires DB for writeBlockMergeProposal.
-    //
-    // Instead, test the observable effect: the task prompt text payload contains
-    // page_index only when at least one block has a non-zero page_index.
-    // We simulate this by directly calling runBlockAssemblyTask with a hand-built
-    // input (same shape as projectBlock output) and verify the model receives it.
-    const allPlaceholder = sourceBlocks.every((b) => {
-      const firstSpan = b.page_spans?.[0];
-      return !firstSpan || firstSpan.page_index === 0;
-    });
 
-    const projectedBlocks: BlockAssemblyInputBlock[] = sourceBlocks.map((b) => {
-      const tree = b.structured;
-      const block: BlockAssemblyInputBlock = {
-        block_id: b.id,
-        question_no: tree?.question_no ?? null,
-        prompt_head: (tree?.prompt_text ?? '').slice(0, 400),
-        role: tree?.role ?? null,
-        sub_question_count: tree?.sub_questions?.length ?? 0,
-        layout_quality: b.layout_quality,
-      };
-      if (!allPlaceholder) {
-        const firstSpan = b.page_spans?.[0];
-        if (firstSpan !== undefined) block.page_index = firstSpan.page_index;
-      }
-      return block;
-    });
+    const includeSpatial = !isAllPlaceholderPageIndex(sourceBlocks);
+    const projectedBlocks: BlockAssemblyInputBlock[] = sourceBlocks.map((b) =>
+      projectBlock(b, includeSpatial),
+    );
 
     await runBlockAssemblyTask({
       input: {
@@ -125,7 +174,6 @@ describe('projectBlock spatial signal (YUK-227 S3 Slice A F4)', () => {
         blocks: projectedBlocks,
       },
       runTaskFn: async (_kind, input) => {
-        // Capture the blocks as passed to the model
         captured = (input as { blocks: BlockAssemblyInputBlock[] }).blocks;
         return { text: '{"candidates":[]}' };
       },
@@ -138,8 +186,7 @@ describe('projectBlock spatial signal (YUK-227 S3 Slice A F4)', () => {
     const sourceBlocks = [makeBlock('a', 0, 'prompt a', '1'), makeBlock('b', 1, 'prompt b', '2')];
     const projected = await captureProjected(sourceBlocks);
     expect(projected).toHaveLength(2);
-    // Block a is on page 0, block b is on page 1 — at least one non-zero, so
-    // both get page_index.
+    // At least one non-zero → both get page_index (includeSpatial=true)
     expect(projected[0].page_index).toBe(0);
     expect(projected[1].page_index).toBe(1);
   });

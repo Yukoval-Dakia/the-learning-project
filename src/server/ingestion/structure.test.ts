@@ -334,3 +334,73 @@ describe('runStructureTask — figureAssignments (YUK-227 S3 Slice A)', () => {
     expect(runTaskFn).toHaveBeenCalledOnce();
   });
 });
+
+// ---------- YUK-227 S3 Slice A (P1 fix) — page_index propagation ----------
+
+describe('runStructureTask — page_index propagation (YUK-227 S3 Slice A P1)', () => {
+  it('copies VLM node page_index to StructuredQuestionT (P1 fix)', async () => {
+    // VLM reports a multi-page stem: stem on page 0, second sub on page 1.
+    const runTaskFn = vi.fn(async () => ({
+      text: vlmJson({
+        layout_quality: 'structured',
+        warnings: [],
+        questions: [
+          {
+            role: 'stem',
+            prompt_text: 'Stem on page 0',
+            page_index: 0,
+            sub_questions: [
+              { role: 'sub', question_no: '1', prompt_text: 'Sub on page 0', page_index: 0 },
+              { role: 'sub', question_no: '2', prompt_text: 'Sub on page 1', page_index: 1 },
+            ],
+          },
+          {
+            role: 'standalone',
+            prompt_text: 'Standalone on page 1',
+            page_index: 1,
+          },
+        ],
+      }),
+    }));
+
+    const result = await runStructureTask({
+      pageImages: [IMG, IMG],
+      tencentHintMd: '',
+      pageCount: 2,
+      runTaskFn,
+    });
+
+    expect(result.questions).toHaveLength(2);
+
+    // P1 fix: stem page_index must be copied from the VLM node
+    expect(result.questions[0].page_index).toBe(0);
+
+    // Sub questions also carry page_index
+    const subs = result.questions[0].sub_questions ?? [];
+    expect(subs[0].page_index).toBe(0);
+    expect(subs[1].page_index).toBe(1);
+
+    // Standalone on page 1
+    expect(result.questions[1].page_index).toBe(1);
+  });
+
+  it('omits page_index when VLM node does not report it', async () => {
+    const runTaskFn = vi.fn(async () => ({
+      text: vlmJson({
+        layout_quality: 'structured',
+        warnings: [],
+        questions: [{ role: 'standalone', prompt_text: 'No page_index reported' }],
+      }),
+    }));
+
+    const result = await runStructureTask({
+      pageImages: [IMG],
+      tencentHintMd: '',
+      pageCount: 1,
+      runTaskFn,
+    });
+
+    // VLM omitted page_index → StructuredQuestionT should not carry it
+    expect(result.questions[0].page_index).toBeUndefined();
+  });
+});
