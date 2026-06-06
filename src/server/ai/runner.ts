@@ -124,6 +124,16 @@ export type RunAgentTaskCtx = RunTaskCtx;
 export type StreamTaskCtx = RunTaskCtx & {
   /** Reserved for back-compat with the old Vercel AI SDK shape; ignored. */
   tools?: Record<string, unknown>;
+  /**
+   * YUK-238 [STB-4]: the request's AbortSignal (`req.signal`). When the client
+   * disconnects mid-stream, wiring this into the SDK's abortController tears the
+   * in-flight agent run down instead of letting it burn the model budget to
+   * completion. Optional so non-HTTP callers (tests, background jobs) can omit
+   * it; the ReadableStream `cancel` callback is the second, transport-level
+   * trigger that also aborts. Threading a real signal from a route is the
+   * follow-up — see YUK-238 note where the route calls streamReviewTask.
+   */
+  signal?: AbortSignal;
 };
 
 export interface MultimodalTaskInput {
@@ -556,6 +566,18 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
   const abortController = new AbortController();
   const timer = setTimeout(() => abortController.abort(), def.budget.timeout);
 
+  // YUK-238 [STB-4]: connect the request signal so a client disconnect aborts
+  // the SDK run. If the caller threads `req.signal` (see StreamTaskCtx.signal),
+  // its abort (already-aborted or future) propagates to the shared
+  // abortController that buildQueryOptions hands to the SDK below.
+  if (ctx.signal) {
+    if (ctx.signal.aborted) {
+      abortController.abort();
+    } else {
+      ctx.signal.addEventListener('abort', () => abortController.abort(), { once: true });
+    }
+  }
+
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const encoder = new TextEncoder();
@@ -666,6 +688,20 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
                   kind,
                   err,
                 });
+                // YUK-240 [STB-6]: the finish-write failed, so this ai_task_runs
+                // row stays at status='running' forever (the run actually
+                // succeeded). Emit a scannable structured event so a future
+                // sweeper / dashboard can reconcile stuck rows. We deliberately
+                // do NOT retry the DB write here — when the DB is the thing
+                // failing, retrying the same write just compounds the outage.
+                // Observability-only fix; a real reconcile job is the follow-up.
+                console.warn('[streamTask] task_run_stuck_in_running', {
+                  event: 'task_run_stuck_in_running',
+                  task_run_id: taskRunId,
+                  kind,
+                  intended_status: 'success',
+                  err: err instanceof Error ? err.message : String(err),
+                });
               }
             }
             break;
@@ -711,12 +747,35 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
             kind,
             err: finishErr,
           });
+          // YUK-240 [STB-6]: the run already errored AND the failure-status
+          // finish-write itself failed, so this ai_task_runs row is now stuck at
+          // status='running' with no terminal record. Emit the same scannable
+          // structured event the success path uses so a reconcile sweeper can
+          // find it. No retry — see the success-path note: retrying a DB write
+          // during a DB outage just amplifies it. Observability-only.
+          console.warn('[streamTask] task_run_stuck_in_running', {
+            event: 'task_run_stuck_in_running',
+            task_run_id: taskRunId,
+            kind,
+            intended_status: 'failure',
+            err: finishErr instanceof Error ? finishErr.message : String(finishErr),
+          });
         }
         controller.enqueue(new TextEncoder().encode(`\n\n${message}\n`));
       } finally {
         clearTimeout(timer);
         controller.close();
       }
+    },
+    // YUK-238 [STB-4]: transport-level disconnect hook. When the consumer of the
+    // response body cancels the stream (client drops the connection / aborts the
+    // fetch), the runtime invokes cancel(); abort the SDK run and clear the
+    // budget timer so the agent loop stops instead of running to completion in
+    // the background. This is the belt to StreamTaskCtx.signal's suspenders —
+    // either trigger aborts the same shared abortController.
+    cancel() {
+      clearTimeout(timer);
+      abortController.abort();
     },
   });
 
