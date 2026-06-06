@@ -641,6 +641,26 @@ export const tasks = {
     // type-required fallback only (new tasks add a builder in task-prompts.ts).
     systemPrompt: '(see getTaskSystemPrompt(task, profile) - fallback not for runtime)',
   },
+  SourcingTask: {
+    kind: 'SourcingTask',
+    description:
+      "YUK-216 S2 slice 2 (题源扩展 Strategy D, docs/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §3). Tool-calling agent: given a subject + 考点/题型 + count, searches the web (Tavily) for EXISTING practice questions, restructures each into a SourcedQuestion (kind + prompt_md + reference_md + per-question source_url/title provenance), and emits a SourcingTaskOutput. First cut extracts from HTML/TEXT sources only (OF-1; no image sources). The sourcing handler injects the Tavily remote MCP + the in-process domain-tool MCP at run time (mirrors QuizGenTask's mount pattern) — allowedTools stays [] here so non-handler callers / tests register no tools. Output questions land as draft_status='draft' (source='web_sourced', tier 2) and chain a source_verify job.",
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
+    // Tool-calling loop: plan → search/extract (Tavily) → read domain signals →
+    // structure. Same agentic budget as QuizGenTask (maxIterations 8 + 120s).
+    budget: { ...DEFAULT_BUDGET, maxIterations: 8, timeout: 120_000 },
+    needsToolCall: true,
+    isMultimodal: false,
+    // The sourcing handler supplies the Tavily remote MCP + domain-tool MCP
+    // allowlist at run time; this registry default stays empty so tests and
+    // non-handler callers register no tools.
+    allowedTools: [],
+    // Runtime renders via getTaskSystemPrompt(task, profile); this string is the
+    // type-required fallback only (the builder lives in task-prompts.ts).
+    systemPrompt: '(see getTaskSystemPrompt(task, profile) - fallback not for runtime)',
+  },
   BlockAssemblyTask: {
     kind: 'BlockAssemblyTask',
     description:
