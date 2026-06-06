@@ -171,6 +171,64 @@ describe('runSolveCheck — exact path (normalize compare)', () => {
     expect(input.prompt_md).toBe(exactQuestion.prompt_md);
   });
 
+  it('routes a subject choice kind (single_choice) with choices_md through the exact path (F1 structural)', async () => {
+    // History/学科 题型 expose kinds like 'single_choice' that the canonical
+    // QuestionKind enum does not, but a persisted choices_md makes the item
+    // structurally exact (mirrors route-resolve.ts). No judge_kind_override here.
+    const singleChoice: SolveCheckQuestion = {
+      ...exactQuestion,
+      kind: 'single_choice',
+      judge_kind_override: null,
+    };
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('公元前 221 年') }));
+    const result = await runSolveCheck(singleChoice, { runTaskFn, profile: fakeProfile });
+    // A wrong reference answer is now CAUGHT (would have been a conservative semantic
+    // pass / skip before F1).
+    expect(result.verdict).toBe('fail');
+    expect(result.compared_by).toBe('normalize');
+  });
+
+  it('compares against the structured rubric final_answer, not the worked-solution prose (F2)', async () => {
+    // solution-generate writes the structured answer to rubric_json.reference_solution
+    // while reference_md holds the full worked solution. Exact compare must use the
+    // structured final answer, otherwise it compares against an entire paragraph and
+    // falsely fails.
+    const workedSolution: SolveCheckQuestion = {
+      ...exactQuestion,
+      reference_md: '我们先回顾汉朝的建立背景，刘邦在垓下之战后……因此最终答案是公元前 202 年。',
+      rubric_json: {
+        criteria: [],
+        reference_solution: {
+          expected_signals: ['汉朝建立年份'],
+          final_answer: '公元前 202 年',
+          answer_equivalents: [],
+        },
+      },
+    };
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('公元前202年') }));
+    const result = await runSolveCheck(workedSolution, { runTaskFn, profile: fakeProfile });
+    expect(result.verdict).toBe('pass');
+    expect(result.compared_by).toBe('normalize');
+  });
+
+  it('matches a rubric answer_equivalent in the exact path (F2)', async () => {
+    const withEquivalents: SolveCheckQuestion = {
+      ...exactQuestion,
+      reference_md: '冗长的解题过程……',
+      rubric_json: {
+        criteria: [],
+        reference_solution: {
+          expected_signals: ['s'],
+          final_answer: '公元前 202 年',
+          answer_equivalents: ['前 202 年'],
+        },
+      },
+    };
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('前202年') }));
+    const result = await runSolveCheck(withEquivalents, { runTaskFn, profile: fakeProfile });
+    expect(result.verdict).toBe('pass');
+  });
+
   it('threads a solverModelOverride into ctx (OF-4 model 异源 seam)', async () => {
     const runTaskFn = vi.fn(async (_kind: string, _input: unknown, _ctx: unknown) => ({
       text: solverOutput('公元前202年'),

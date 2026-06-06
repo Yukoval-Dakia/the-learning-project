@@ -88,10 +88,10 @@ describe('deriveSourceTier', () => {
     expect(result.tier).toBe(1);
   });
 
-  it('tier 2 sourced — web_sourced source + valid web_sourced provenance', () => {
+  it('tier 2 sourced — web_sourced source + valid web_sourced provenance + source_ref_kind=url', () => {
     const result = deriveSourceTier({
       source: 'web_sourced',
-      metadata: { web_sourced: validWebSourced },
+      metadata: { web_sourced: validWebSourced, source_ref_kind: 'url' },
     });
     expect(result).toEqual({ tier: 2, name: 'sourced' });
   });
@@ -99,7 +99,10 @@ describe('deriveSourceTier', () => {
   it('tier 2 — off-whitelist (whitelist_match=false) still tier 2 (demotion is a sort concern)', () => {
     const result = deriveSourceTier({
       source: 'web_sourced',
-      metadata: { web_sourced: { ...validWebSourced, whitelist_match: false } },
+      metadata: {
+        web_sourced: { ...validWebSourced, whitelist_match: false },
+        source_ref_kind: 'url',
+      },
     });
     expect(result.tier).toBe(2);
   });
@@ -108,7 +111,25 @@ describe('deriveSourceTier', () => {
     // source says web_sourced but the provenance block is not parseable → not tier 2.
     const result = deriveSourceTier({
       source: 'web_sourced',
-      metadata: { web_sourced: { url: 'not-a-url' } },
+      metadata: { web_sourced: { url: 'not-a-url' }, source_ref_kind: 'url' },
+    });
+    expect(result.tier).toBe(4);
+  });
+
+  it('web_sourced source WITHOUT top-level source_ref_kind is NOT tier 2 (合约三 discriminator required)', () => {
+    // valid web_sourced block but missing the disambiguation discriminator → must not
+    // bypass 合约三; falls through to tier 4.
+    const result = deriveSourceTier({
+      source: 'web_sourced',
+      metadata: { web_sourced: validWebSourced },
+    });
+    expect(result.tier).toBe(4);
+  });
+
+  it('web_sourced source with a NON-url source_ref_kind is NOT tier 2', () => {
+    const result = deriveSourceTier({
+      source: 'web_sourced',
+      metadata: { web_sourced: validWebSourced, source_ref_kind: 'trigger_ptr' },
     });
     expect(result.tier).toBe(4);
   });

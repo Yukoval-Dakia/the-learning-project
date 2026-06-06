@@ -143,7 +143,7 @@ describe('QuizGenMetadata', () => {
     expect(parsed.material_source_document_id).toBe('doc_passage_1');
   });
 
-  it('leaves material_source_document_id undefined when omitted', () => {
+  it('leaves material_source_document_id undefined when omitted (non-material method)', () => {
     const parsed = QuizGenMetadata.parse({
       source_pack: validSourcePack,
       source_refs: [validSourceRef],
@@ -152,6 +152,20 @@ describe('QuizGenMetadata', () => {
       generation_status: 'ready',
     });
     expect(parsed.material_source_document_id).toBeUndefined();
+  });
+
+  it('rejects material_grounded WITHOUT material_source_document_id (YUK-224 time-order guard)', () => {
+    const result = QuizGenMetadata.safeParse({
+      source_pack: validSourcePack,
+      source_refs: [validSourceRef],
+      generation_method: 'material_grounded',
+      copy_safety: validCopySafety,
+      generation_status: 'ready',
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0]?.path).toEqual(['material_source_document_id']);
+    }
   });
 });
 
