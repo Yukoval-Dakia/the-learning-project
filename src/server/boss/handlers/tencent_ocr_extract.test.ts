@@ -108,6 +108,71 @@ async function cleanup(sessionId: string, sourceDocId: string, assetId: string) 
   await db.delete(source_document).where(eq(source_document.id, sourceDocId));
 }
 
+/**
+ * Seed a 2-page session (two source_asset rows). Used by F4 test to create a
+ * session where the Tencent parser stamps real page_index=1 on the second page's
+ * questions — the placeholder invariant test must assert those still produce
+ * page_spans[0].page_index=0 (Tencent fallback path always forces 0).
+ */
+async function seedTwoPageSession(): Promise<{
+  sessionId: string;
+  sourceDocId: string;
+  assetId0: string;
+  assetId1: string;
+}> {
+  const sourceDocId = createId();
+  const sessionId = createId();
+  const assetId0 = createId();
+  const assetId1 = createId();
+  const now = new Date();
+
+  await db.insert(source_document).values({
+    id: sourceDocId,
+    title: null,
+    source_asset_ids: [assetId0, assetId1],
+    body_md: null,
+    provenance: {},
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  });
+
+  for (const [idx, assetId] of [
+    [0, assetId0],
+    [1, assetId1],
+  ] as const) {
+    await db.insert(source_asset).values({
+      id: assetId,
+      kind: 'image',
+      storage_key: `test-key-${assetId}`,
+      mime_type: 'image/png',
+      byte_size: 1000,
+      sha256: `fake-${idx}`,
+      width: 500,
+      height: 700,
+      provenance: {},
+      created_at: now,
+    });
+  }
+
+  await db.insert(learning_session).values({
+    id: sessionId,
+    type: 'ingestion',
+    source_document_id: sourceDocId,
+    source_asset_ids: [assetId0, assetId1],
+    status: 'queued',
+    entrypoint: 'vision_single',
+    error_message: null,
+    warnings: [],
+    started_at: now,
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  });
+
+  return { sessionId, sourceDocId, assetId0, assetId1 };
+}
+
 function makeR2WithImage(image: Buffer): R2Client & { puts: { key: string; body: Uint8Array }[] } {
   const puts: { key: string; body: Uint8Array }[] = [];
   return {
@@ -315,14 +380,25 @@ describe('tencent_ocr_extract handler', () => {
     if (ours) await db.delete(cost_ledger).where(eq(cost_ledger.id, ours.id));
   });
 
-  it('VLM fallback path: page_spans uses question page_index (0) as fallback, no regression', async () => {
-    const { sessionId, sourceDocId, assetId } = await seedSessionWithAsset();
+  // F4 fix: multi-page session so Tencent parser stamps real page_index=1 on the
+  // second page's questions. The single-page version could not distinguish
+  // "placeholder 0" from "real page 0" — both implementations pass. The two-page
+  // fixture makes the invariant meaningful: even though Tencent stamped page_index=1
+  // on second-page questions, the Tencent fallback path MUST force page_spans to 0
+  // (plan §2 step 4) so isAllPlaceholderPageIndex remains true for block-assembly.
+  it('Tencent fallback path: page_spans forced to placeholder 0 even when Tencent stamps real page_index=1 (F4 multi-page)', async () => {
+    const { sessionId, sourceDocId, assetId0, assetId1 } = await seedTwoPageSession();
     const r2 = makeR2WithImage(await makeTestImage());
 
-    const submitFn = vi.fn(async () => 'tencent-job-fb-pspan');
+    // Two Tencent OCR calls (one per page). clozeFixture is fine for both pages —
+    // the parser will stamp page_index=0 for the first call and page_index=1 for
+    // the second call (the handler passes pageIndex=1 for the second asset).
+    let callCount = 0;
+    const submitFn = vi.fn(async () => `tencent-job-fb-pspan-${++callCount}`);
     const pollFn = vi.fn(async () => clozeFixture as never);
-    // VLM down → Tencent structure used. Tencent questions carry page_index from
-    // the parser (page_index=0 for first page). page_spans should reflect that.
+
+    // VLM down → Tencent structure used (two pages → two sets of questions,
+    // second set will have page_index=1 from the parser).
     const runStructureFn = (async () => {
       throw new StructureTaskError('provider unavailable');
     }) as typeof import('@/server/ingestion/structure').runStructureTask;
@@ -335,12 +411,18 @@ describe('tencent_ocr_extract handler', () => {
       .from(question_block)
       .where(eq(question_block.ingestion_session_id, sessionId));
     expect(blocks.length).toBeGreaterThanOrEqual(1);
-    // Tencent fallback: page_spans[0].page_index comes from the Tencent-parsed
-    // question's page_index (0 for first page). The bbox is full-page (ADR-0002).
-    const span = blocks[0].page_spans[0];
-    expect(span).toBeDefined();
-    expect(span?.page_index).toBe(0); // Tencent parser stamps page 0 on first page
-    expect(span?.bbox).toEqual({ x: 0, y: 0, width: 1, height: 1 });
+
+    // F4 core assertion: ALL blocks on the Tencent fallback path must have
+    // page_spans[0].page_index===0 (placeholder), regardless of the real
+    // page_index the Tencent parser stamped. This locks the "腾讯回落路径保持
+    // placeholder" invariant against a multi-page doc where ambiguity exists.
+    for (const block of blocks) {
+      const span = block.page_spans[0];
+      expect(span).toBeDefined();
+      expect(span?.page_index).toBe(0); // forced placeholder — NOT the Tencent-stamped real value
+      expect(span?.bbox).toEqual({ x: 0, y: 0, width: 1, height: 1 }); // ADR-0002
+    }
+
     // Tencent fallback warning was surfaced.
     const session = await db
       .select()
@@ -348,22 +430,32 @@ describe('tencent_ocr_extract handler', () => {
       .where(eq(learning_session.id, sessionId));
     expect(session[0].warnings.some((w: string) => w.includes('fell back to Tencent'))).toBe(true);
 
-    await cleanup(sessionId, sourceDocId, assetId);
+    // Cleanup both assets.
+    await db.delete(event).where(eq(event.session_id, sessionId));
+    await db.delete(job_events).where(eq(job_events.business_id, sessionId));
+    await db.delete(question_block).where(eq(question_block.ingestion_session_id, sessionId));
+    await db.delete(learning_session).where(eq(learning_session.id, sessionId));
+    await db.delete(source_asset).where(eq(source_asset.id, assetId0));
+    await db.delete(source_asset).where(eq(source_asset.id, assetId1));
+    await db.delete(source_document).where(eq(source_document.id, sourceDocId));
     const cost = await db.select().from(cost_ledger);
-    const ours = cost.find((c) => c.pgboss_job_id === 'boss-job-fb-pspan');
-    if (ours) await db.delete(cost_ledger).where(eq(cost_ledger.id, ours.id));
+    const ours = cost.filter((c) => c.pgboss_job_id?.startsWith('boss-job-fb-pspan'));
+    for (const c of ours) await db.delete(cost_ledger).where(eq(cost_ledger.id, c.id));
   });
 
   // YUK-227 S3 Slice A (P1 fix) — VLM path page-1 question carries real page_index.
+  // Uses a 2-page session so page_index=1 is in-range (F3 clamp won't fire).
 
-  it('VLM path: page-1 question produces page_spans[0].page_index=1 (P1 fix)', async () => {
-    const { sessionId, sourceDocId, assetId } = await seedSessionWithAsset();
+  it('VLM path: page-1 question produces page_spans[0].page_index=1 (P1 fix, 2-page session)', async () => {
+    const { sessionId, sourceDocId, assetId0, assetId1 } = await seedTwoPageSession();
     const r2 = makeR2WithImage(await makeTestImage());
 
-    const submitFn = vi.fn(async () => 'tencent-job-p1-pspan');
+    let callCount = 0;
+    const submitFn = vi.fn(async () => `tencent-job-p1-pspan-${++callCount}`);
     const pollFn = vi.fn(async () => clozeFixture as never);
 
-    // VLM stub returns a question that explicitly lives on page 1.
+    // VLM stub returns a question that lives on page 1 (valid in a 2-page doc).
+    // pageCount=2, page_index=1 → in-range, F3 clamp does NOT fire.
     const runStructureFn: typeof import('@/server/ingestion/structure').runStructureTask =
       async () => ({
         questions: [
@@ -390,15 +482,73 @@ describe('tencent_ocr_extract handler', () => {
 
     // P1 fix: VLM question with page_index=1 must produce page_spans[0].page_index=1,
     // not 0. Before the P1 fix, nodeToStructured never copied page_index so ?? 0
-    // always produced 0 for VLM questions.
+    // always produced 0 for VLM questions. With F3 clamp in place, page_index=1 is
+    // accepted because pageCount=2 (1 < 2).
     const span = blocks[0].page_spans[0];
     expect(span).toBeDefined();
     expect(span?.page_index).toBe(1);
     expect(span?.bbox).toEqual({ x: 0, y: 0, width: 1, height: 1 }); // ADR-0002
 
+    // Cleanup both assets.
+    await db.delete(event).where(eq(event.session_id, sessionId));
+    await db.delete(job_events).where(eq(job_events.business_id, sessionId));
+    await db.delete(question_block).where(eq(question_block.ingestion_session_id, sessionId));
+    await db.delete(learning_session).where(eq(learning_session.id, sessionId));
+    await db.delete(source_asset).where(eq(source_asset.id, assetId0));
+    await db.delete(source_asset).where(eq(source_asset.id, assetId1));
+    await db.delete(source_document).where(eq(source_document.id, sourceDocId));
+    const cost = await db.select().from(cost_ledger);
+    const ours = cost.filter((c) => c.pgboss_job_id?.startsWith('boss-job-p1-pspan'));
+    for (const c of ours) await db.delete(cost_ledger).where(eq(cost_ledger.id, c.id));
+  });
+
+  // YUK-227 S3 Slice A (F3) — VLM out-of-range page_index clamped to placeholder 0.
+
+  it('F3: VLM page_index >= pageCount is clamped to 0 with a warning (single-page doc)', async () => {
+    const { sessionId, sourceDocId, assetId } = await seedSessionWithAsset();
+    const r2 = makeR2WithImage(await makeTestImage());
+
+    const submitFn = vi.fn(async () => 'tencent-job-f3-clamp');
+    const pollFn = vi.fn(async () => clozeFixture as never);
+
+    // VLM hallucinates page_index=5 on a single-page (pageCount=1) session.
+    // F3 clamp: 5 >= 1 → rawPageIndex forced to 0 + console.warn.
+    const runStructureFn: typeof import('@/server/ingestion/structure').runStructureTask =
+      async () => ({
+        questions: [
+          {
+            id: 'vlm-q-oob',
+            role: 'standalone' as const,
+            prompt_text: 'VLM question with out-of-range page_index',
+            source: 'vlm_structure' as const,
+            page_index: 5, // hallucinated — out of range for a 1-page doc
+          },
+        ],
+        layout_quality: 'structured' as const,
+        warnings: [],
+      });
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const handler = buildTencentOcrHandler({ db, r2, submitFn, pollFn, runStructureFn });
+    await handler([{ id: 'boss-job-f3-clamp', data: { sessionId } } as never]);
+
+    const blocks = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.ingestion_session_id, sessionId));
+    expect(blocks.length).toBeGreaterThanOrEqual(1);
+
+    // F3: out-of-range page_index must be clamped to 0 (placeholder).
+    const span = blocks[0].page_spans[0];
+    expect(span).toBeDefined();
+    expect(span?.page_index).toBe(0);
+    // The clamp must have fired a console.warn with the anomaly details.
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('out-of-range page_index=5'));
+
     await cleanup(sessionId, sourceDocId, assetId);
     const cost = await db.select().from(cost_ledger);
-    const ours = cost.find((c) => c.pgboss_job_id === 'boss-job-p1-pspan');
+    const ours = cost.find((c) => c.pgboss_job_id === 'boss-job-f3-clamp');
     if (ours) await db.delete(cost_ledger).where(eq(cost_ledger.id, ours.id));
   });
 

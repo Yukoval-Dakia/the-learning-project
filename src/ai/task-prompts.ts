@@ -183,7 +183,7 @@ function buildBlockAssemblyPrompt(profile: SubjectProfile): string {
 function buildStructurePrompt(profile: SubjectProfile): string {
   return `你是${profile.displayName}试卷结构化助手（多模态）。输入：
 - user message 里按页顺序附了 N 张试卷/作业页面图片（第 1 张 = page_index 0，依次类推）
-- 一段文字 { tencent_hint_md, page_count[, figures] } —— tencent_hint_md 是腾讯字符级 OCR 的**文字提示**（已按页用 "=== page K ===" 分隔），仅作参考，**不是**结构真相；figures（若存在）是裁剪图列表 [{index, page_index}, ...]，表示已从页面裁剪出的图片素材序号与所在页
+- 一段文字 { tencent_hint_md, page_count[, figures] } —— tencent_hint_md 是腾讯字符级 OCR 的**文字提示**（已按页用 "=== page K ===" 分隔），仅作参考，**不是**结构真相；figures（若存在）是裁剪图列表 [{index, page_index, position}]，表示已从页面裁剪出的图片素材：index 是序号，page_index 是所在页，position 是归一化位置摘要（"top-left" / "top-center" / "top-right" / "mid-left" / "mid-center" / "mid-right" / "bot-left" / "bot-center" / "bot-right"，按图片中心点在页面 3×3 区域落点）
 科目上下文：${profile.displayName}。${profile.languageStyle}
 
 任务：以**图片为准**、腾讯文字为辅，输出一棵**规范化的题目结构树**。你对结构有完全裁量权，可以覆盖腾讯文字 hint 暗示的任何切分。
@@ -191,7 +191,7 @@ function buildStructurePrompt(profile: SubjectProfile): string {
 1. **跨页大题组装**：一道大题（passage / 阅读理解 / 完形 / 大题带多个小问）如果横跨多页，必须组装成**一个** stem 节点，它的 sub_questions 收齐所有页的小问。不要因为换页就把同一大题拆成两个顶层节点。
 2. **布局规范**：把题面、选项、答案规整到结构字段里；passage 进 stem 的 prompt_text，小问进 sub。
 3. 不抽取手写涂改 / 批改痕迹作为结构（那是作答证据，下游处理）。
-4. **图片归属（仅当输入含 figures 字段时）**：根据页面图片判断每张裁剪图属于哪道题，在对应 StructureNode 上填写 figure_ids（裁剪图序号数组）。跨页大题的配图（包括图示、电路图、坐标图等）归到 stem 节点。同一页且视觉上明显属于某小问的图归到该 sub 节点。拿不准时归到最近的 stem 或 standalone，**不要漏报**（宁错归勿不归）。
+4. **图片归属（仅当输入含 figures 字段时）**：根据页面图片判断每张裁剪图属于哪道题，在对应 StructureNode 上填写 figure_ids（裁剪图序号数组）。跨页大题的配图（包括图示、电路图、坐标图等）归到 stem 节点。同一页且视觉上**明确**属于某小问的图归到该 sub 节点。**只在判断确定时填 figure_ids**——拿不准的图省略（不要猜，留给几何兜底）。漏报比错报代价小：几何兜底一定能处理漏报，但 VLM 错误归属会覆盖兜底，下游无法纠正。position 字段（图的位置摘要）可辅助判断同页归属关系，但仍以图片视觉为准。
 
 输出严格 JSON（不带 markdown 代码块包裹），shape 名 StructureOutput：
 {"layout_quality":"structured"|"partial"|"text_only","warnings":["..."],"questions":[StructureNode, ...]}
