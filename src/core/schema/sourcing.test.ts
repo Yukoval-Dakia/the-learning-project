@@ -41,13 +41,10 @@ describe('SourcedQuestion', () => {
     expect(parsed.success).toBe(false);
   });
 
-  it.each(['exact', 'keyword', 'semantic'])(
-    'accepts runnable judge_kind_override %s',
-    (judge) => {
-      const parsed = SourcedQuestion.safeParse({ ...validQuestion, judge_kind_override: judge });
-      expect(parsed.success).toBe(true);
-    },
-  );
+  it.each(['exact', 'keyword', 'semantic'])('accepts runnable judge_kind_override %s', (judge) => {
+    const parsed = SourcedQuestion.safeParse({ ...validQuestion, judge_kind_override: judge });
+    expect(parsed.success).toBe(true);
+  });
 
   it.each(['steps', 'unit_dimension', 'rubric', 'multimodal_direct'])(
     'rejects non-runnable judge_kind_override %s (same constraint as QuizGenQuestion)',
