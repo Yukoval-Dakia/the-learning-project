@@ -73,6 +73,51 @@ const VALID_OUTPUT = JSON.stringify({
   tool: 'tavily',
 });
 
+// YUK-227 S3 Slice C — a run that found ONLY an image-type source (0 text questions,
+// 1 image_candidate). The handler must propose it, NOT INSERT a question, NOT call VLM.
+const IMAGE_ONLY_OUTPUT = JSON.stringify({
+  questions: [],
+  image_candidates: [
+    {
+      source_url: 'https://example.edu/wenyan/scan.png',
+      source_title: '论语·学而 扫描卷',
+      summary_md: 'tavily_extract 返回空文本；搜索结果显示该页含题目图片，判定为图片型源。',
+    },
+  ],
+  query_plan: ['论语 学而 扫描卷'],
+  fetched_at: '2026-06-06T00:00:00.000Z',
+  tool: 'tavily',
+});
+
+// A mixed run: 1 text question (INSERTed) + 1 image_candidate (proposed).
+const MIXED_OUTPUT = JSON.stringify({
+  questions: [
+    {
+      kind: 'short_answer',
+      prompt_md: '请翻译「学而时习之，不亦说乎」。',
+      reference_md: '学习并按时温习它，不也很愉快吗？',
+      choices_md: null,
+      judge_kind_override: 'semantic',
+      rubric_json: null,
+      difficulty: 2,
+      knowledge_ids: ['k1'],
+      source_url: 'https://example.edu/wenyan/lunyu',
+      source_title: '论语·学而 注疏',
+      extract: '请翻译「学而时习之，不亦说乎」。',
+    },
+  ],
+  image_candidates: [
+    {
+      source_url: 'https://example.edu/wenyan/scan.png',
+      source_title: '论语·学而 扫描卷',
+      summary_md: '该页题干在图片里，tavily_extract 抽不出文本。',
+    },
+  ],
+  query_plan: ['论语 学而'],
+  fetched_at: '2026-06-06T00:00:00.000Z',
+  tool: 'tavily',
+});
+
 const HALLUCINATED_KNOWLEDGE_OUTPUT = JSON.stringify({
   questions: [
     {
@@ -636,6 +681,117 @@ describe('runSourcing', () => {
     const events = await db.select().from(event).where(eq(event.action, 'experimental:sourcing'));
     expect(events).toHaveLength(1);
     expect(events[0].outcome).toBe('failure');
+  });
+
+  // YUK-227 S3 Slice C — an image-only run writes an image_candidate PROPOSAL and does
+  // NOT INSERT any question. The handler never imports/loads VLM, so "no VLM call" is
+  // structural; here we assert the observable side effects: proposal written via the
+  // seam, ZERO question rows, NO source_verify enqueue, success event records the
+  // proposal id.
+  it('proposes image-type sources (writeAiProposal) WITHOUT inserting a question or VLM', async () => {
+    const db = testDb();
+    await seedKnowledge({ id: 'k1' });
+    const writeImageCandidateProposalFn = vi.fn(
+      async (_db: unknown, _input: unknown) => 'proposal_evt_1',
+    );
+    const enqueueSourceVerify = vi.fn(async () => {});
+
+    const result = await runSourcing({
+      db,
+      trigger: 'knowledge',
+      refId: 'k1',
+      runAgentTaskFn: agentMock(IMAGE_ONLY_OUTPUT, 'tr_src_img'),
+      enqueueSourceVerify,
+      buildTavilyMcpServerFn: vi.fn(() => null),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      writeImageCandidateProposalFn,
+    });
+
+    expect(result.status).toBe('ready');
+    // No text question INSERTed.
+    expect(result.question_ids).toEqual([]);
+    const rows = await db.select().from(question).where(eq(question.source, 'web_sourced'));
+    expect(rows).toHaveLength(0);
+    // The image candidate was proposed (NOT auto-extracted) via the proposal writer seam.
+    expect(writeImageCandidateProposalFn).toHaveBeenCalledTimes(1);
+    const proposalInput = writeImageCandidateProposalFn.mock.calls[0][1] as {
+      payload: {
+        kind: string;
+        proposed_change: { source_url: string; source_title: string; summary_md: string };
+      };
+    };
+    expect(proposalInput.payload.kind).toBe('image_candidate');
+    expect(proposalInput.payload.proposed_change.source_url).toBe(
+      'https://example.edu/wenyan/scan.png',
+    );
+    expect(result.image_candidate_proposal_ids).toEqual(['proposal_evt_1']);
+    // No question → no source_verify (the gate is for text drafts; image accept enqueues
+    // its own verify later).
+    expect(enqueueSourceVerify).toHaveBeenCalledWith([]);
+    // Success event records the proposal id for audit.
+    const events = await db.select().from(event).where(eq(event.action, 'experimental:sourcing'));
+    expect(events).toHaveLength(1);
+    expect(events[0].outcome).toBe('success');
+    const payload = events[0].payload as { image_candidate_proposal_ids?: string[] };
+    expect(payload.image_candidate_proposal_ids).toEqual(['proposal_evt_1']);
+  });
+
+  // The default writer (writeAiProposal) lands a real experimental:proposal event that
+  // the proposal inbox can derive — proving the propose path is wired end-to-end (no seam).
+  it('writes a real image_candidate proposal event via the default writeAiProposal path', async () => {
+    const db = testDb();
+    await seedKnowledge({ id: 'k1' });
+
+    const result = await runSourcing({
+      db,
+      trigger: 'knowledge',
+      refId: 'k1',
+      runAgentTaskFn: agentMock(IMAGE_ONLY_OUTPUT, 'tr_src_img_real'),
+      enqueueSourceVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: vi.fn(() => null),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      // no writeImageCandidateProposalFn override → default writeAiProposal
+    });
+
+    const proposalId = result.image_candidate_proposal_ids?.[0] as string;
+    expect(proposalId).toBeDefined();
+    const proposalEvents = await db.select().from(event).where(eq(event.id, proposalId));
+    expect(proposalEvents).toHaveLength(1);
+    expect(proposalEvents[0].action).toBe('experimental:proposal');
+    const aiProposal = (proposalEvents[0].payload as { ai_proposal?: { kind?: string } })
+      .ai_proposal;
+    expect(aiProposal?.kind).toBe('image_candidate');
+  });
+
+  // A mixed run: text question INSERTed AND image_candidate proposed — both paths
+  // co-exist, text path is unchanged.
+  it('handles a mixed run: text question INSERTed + image_candidate proposed', async () => {
+    const db = testDb();
+    await seedKnowledge({ id: 'k1' });
+    const writeImageCandidateProposalFn = vi.fn(
+      async (_db: unknown, _input: unknown) => 'proposal_evt_mixed',
+    );
+    const enqueueSourceVerify = vi.fn(async () => {});
+
+    const result = await runSourcing({
+      db,
+      trigger: 'knowledge',
+      refId: 'k1',
+      runAgentTaskFn: agentMock(MIXED_OUTPUT, 'tr_src_mixed'),
+      enqueueSourceVerify,
+      buildTavilyMcpServerFn: vi.fn(() => null),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      writeImageCandidateProposalFn,
+    });
+
+    expect(result.question_ids).toHaveLength(1);
+    expect(result.image_candidate_proposal_ids).toEqual(['proposal_evt_mixed']);
+    const rows = await db.select().from(question).where(eq(question.source, 'web_sourced'));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].source_ref).toBe('https://example.edu/wenyan/lunyu');
+    expect(writeImageCandidateProposalFn).toHaveBeenCalledTimes(1);
+    // The text draft still chains source_verify (only the text question id).
+    expect(enqueueSourceVerify).toHaveBeenCalledWith(result.question_ids);
   });
 });
 
