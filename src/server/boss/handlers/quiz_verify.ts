@@ -51,6 +51,8 @@ import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { checksForTier } from '@/server/quiz/verify-framework';
 import { initialFsrsState } from '@/server/review/fsrs';
 import { resolveSubjectProfile } from '@/subjects/profile';
+import type { SubjectQuestionKind } from '@/subjects/profile-schema';
+import { resolveQuizGenSkills } from '@/subjects/quiz-gen-skills';
 
 export interface QuizVerifyJobData {
   question_ids: string[];
@@ -280,9 +282,23 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
       : {}),
   };
 
+  // YUK-225 (S2 slice 4) — 验题出题同源: when the tier's check set includes
+  // kind_conformance (tier 3/4), load the SAME (subject, kind) quiz-gen规范包 the
+  // generator used so the verifier judges「题型是否像真题」against the same standard
+  // it was written to. 降级链: resolveQuizGenSkills returns undefined when no pack
+  // exists for (subject, kind) → no skills option → current behaviour.
+  const kindConformanceChecked = tierChecks.includes('kind_conformance');
+  const verifySkills = kindConformanceChecked
+    ? resolveQuizGenSkills(subjectProfile.id, row.kind as SubjectQuestionKind)
+    : undefined;
+
   let taskResult: TaskTextResult | null = null;
   try {
-    const result = await runTaskFn('QuizVerifyTask', input, { db, subjectProfile });
+    const result = await runTaskFn('QuizVerifyTask', input, {
+      db,
+      subjectProfile,
+      ...(verifySkills ? { skills: verifySkills } : {}),
+    });
     taskResult = result;
     const parsed = parseQuizVerifyOutput(result.text);
 
@@ -327,7 +343,20 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     const materialGroundingOk =
       !tierChecks.includes('material_grounding') ||
       (materialPresent && parsed.material_grounding?.verdict !== 'fail');
-    const promote = parsed.overall === 'pass' && checksPass && !isTooClose && materialGroundingOk;
+    // YUK-225 (S2 slice 4) — kind_conformance gate. Only blocks promotion on an
+    // explicit 'fail' from the verifier (题型规范不符 / 命中坏题反例). 'unclear' or an
+    // absent verdict (no skill loaded for this kind, or older output) falls through —
+    // don't harden a missing optional check into a hard fail (mirrors
+    // material_grounding's soft treatment). Vacuously true for tiers whose check set
+    // omits kind_conformance (tier 1/2).
+    const kindConformanceOk =
+      !tierChecks.includes('kind_conformance') || parsed.kind_conformance?.verdict !== 'fail';
+    const promote =
+      parsed.overall === 'pass' &&
+      checksPass &&
+      !isTooClose &&
+      materialGroundingOk &&
+      kindConformanceOk;
     const verificationStatus: QuizGenVerificationT['status'] = promote
       ? 'verified'
       : parsed.overall === 'fail'
@@ -450,6 +479,16 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
                   // F2 — the verifier's relevance verdict (题是否真考这份素材), null when
                   // the verifier did not emit it (no material fed / older output).
                   verdict: parsed.material_grounding?.verdict ?? null,
+                },
+              }
+            : {}),
+          // YUK-225 — kind_conformance outcome (audit trail). Records whether the
+          // (subject, kind) skill pack was loaded for the check and the verdict.
+          ...(tierChecks.includes('kind_conformance')
+            ? {
+                kind_conformance: {
+                  skill_loaded: verifySkills !== undefined,
+                  verdict: parsed.kind_conformance?.verdict ?? null,
                 },
               }
             : {}),

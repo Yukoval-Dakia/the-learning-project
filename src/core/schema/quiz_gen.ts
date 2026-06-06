@@ -260,6 +260,13 @@ export const QuizVerificationResult = z.object({
   // consumes THIS verdict instead of merely checking the material row is non-empty,
   // so an irrelevant-but-present material can no longer promote a question.
   material_grounding: QuizVerifyCheck.optional(),
+  // YUK-225 (S2 slice 4) — kind_conformance verdict axis (题型规范符合). OPTIONAL +
+  // additive: the verifier only emits it when the (subject, kind) quiz-gen规范包
+  // skill was loaded (tier 3/4 with an authored skill pack). Older outputs / runs
+  // without a matching skill omit it and still parse. The gate consumes a 'fail' as
+  // a promotion blocker (the question does not look like a real item of its kind);
+  // 'unclear' / absent falls through (don't harden a missing optional into a fail).
+  kind_conformance: QuizVerifyCheck.optional(),
   // Roll-up verdict driving the Option-B gate.
   overall: z.enum(['pass', 'needs_review', 'fail']),
   summary_md: z.string().min(1).max(1000),
