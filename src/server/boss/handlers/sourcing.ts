@@ -55,6 +55,7 @@ import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools
 import { writeEvent } from '@/server/events/queries';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
+import { questionKindToSkillKind } from '@/subjects/quiz-gen-skills';
 import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 
 // The trigger surface mirrors quiz_gen: 'knowledge' / 'learning_item' resolve a
@@ -350,6 +351,25 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
     });
     taskResult = result;
     const parsed = parseOutput(result.text);
+
+    // YUK-226 S2-5b F4 (PR #320 round-4) — same 题型 pin enforcement as quiz_gen F3, same
+    // semantics: when the 找题次序 requested a kind (params.kind, forwarded as the `kinds`
+    // input hint), every sourced question MUST be that kind. The prompt only HINTS `kinds`,
+    // so an agent that returned an off-target 题型 would ingest a wrong-kind draft. Normalize
+    // the persisted q.kind ('computation') to the skill/profile key ('calculation') before
+    // comparing — params.kind is the profile SubjectQuestionKind. On mismatch throw to fail
+    // the whole job (the catch writes a failure event + re-throws → pg-boss retries), the
+    // SAME loud-fail semantics F3 uses, rather than ingesting an off-target draft. Unpinned
+    // runs keep the agent's free targeting.
+    if (params.kind) {
+      for (const q of parsed.questions) {
+        if (questionKindToSkillKind(q.kind) !== params.kind) {
+          throw new Error(
+            `sourcing pinned kind='${params.kind}' but agent produced question of kind '${q.kind}'`,
+          );
+        }
+      }
+    }
 
     // Constrain self-reported knowledge_ids to REAL knowledge nodes (mirror quiz_gen):
     // the agent may hallucinate ids; intersect with existing nodes and fall back to

@@ -52,6 +52,7 @@ import { writeEvent } from '@/server/events/queries';
 import { type FewShotExample, renderFewShotBlock } from '@/server/quiz/fewshot-retrieve';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import {
+  questionKindToSkillKind,
   resolveQuizGenSkills,
   resolveQuizGenSkillsForSubject,
   skillKindToQuestionKind,
@@ -331,10 +332,15 @@ async function resolveTrigger(
     // Fall through to the per-trigger resolution when the anchor node is missing.
   }
   if (trigger === 'knowledge') {
+    // YUK-226 S2-5b F2 (PR #320 round-4) — guard archived here too. Without it, an
+    // archived explicit anchor that was rejected above (isNull(archived_at)) would fall
+    // through to THIS branch and, when refId === the same archived id, re-resolve the dead
+    // node WITHOUT the guard — silently mounting drafts onto an archived node (the exact
+    // bypass the anchor guard exists to prevent). The archived knowledge trigger now skips.
     const rows = await db
       .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
       .from(knowledge)
-      .where(eq(knowledge.id, refId))
+      .where(and(eq(knowledge.id, refId), isNull(knowledge.archived_at)))
       .limit(1);
     const k = rows[0];
     if (!k) return null;
@@ -355,21 +361,25 @@ async function resolveTrigger(
     let knowledgeNode: ResolvedTrigger['knowledgeNode'] = null;
     const primaryKnowledgeId = li.knowledge_ids[0] ?? null;
     if (primaryKnowledgeId) {
+      // F2 — same archived guard: a learning_item pointing at an archived primary node
+      // must not resolve that dead node as the attribution anchor.
       const kRows = await db
         .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
         .from(knowledge)
-        .where(eq(knowledge.id, primaryKnowledgeId))
+        .where(and(eq(knowledge.id, primaryKnowledgeId), isNull(knowledge.archived_at)))
         .limit(1);
       knowledgeNode = kRows[0] ?? null;
     }
     return { refId, knowledgeNode, knowledgeIds: li.knowledge_ids, title: li.title };
   }
   // 'manual' — never skips. Best-effort resolve the ref as a knowledge node for
-  // the subject profile; the run proceeds either way (§4 manual-first).
+  // the subject profile; the run proceeds either way (§4 manual-first). F2 — guard
+  // archived: a manual ref pointing at an archived node resolves to no node (run still
+  // proceeds, just without that dead node as the attribution anchor).
   const rows = await db
     .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
     .from(knowledge)
-    .where(eq(knowledge.id, refId))
+    .where(and(eq(knowledge.id, refId), isNull(knowledge.archived_at)))
     .limit(1);
   const k = rows[0] ?? null;
   return {
@@ -506,6 +516,24 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
       throw new Error(
         `quiz_gen pinned generation_method='${params.generationMethod}' but agent produced '${parsed.generation_method}'`,
       );
+    }
+
+    // YUK-226 S2-5b F3 (PR #320 round-4) — same pre-persist assert for the 题型 pin. When
+    // the 找题次序 requested a specific kind (params.kind), every produced question MUST be
+    // that kind; the prompt only HINTS requested_kind, so a model that wrote a different
+    // kind would persist an off-target draft (a translation row where calculation was asked
+    // for). Normalize the persisted q.kind ('computation') to the skill/profile key
+    // ('calculation') before comparing — params.kind is the profile SubjectQuestionKind.
+    // On mismatch throw (the catch writes a failure event + re-throws → pg-boss retries)
+    // rather than silently persisting the wrong 题型. Unpinned runs keep the agent's choice.
+    if (params.kind) {
+      for (const q of parsed.questions) {
+        if (questionKindToSkillKind(q.kind) !== params.kind) {
+          throw new Error(
+            `quiz_gen pinned kind='${params.kind}' but agent produced question of kind '${q.kind}'`,
+          );
+        }
+      }
     }
 
     // Constrain self-reported knowledge_ids to REAL knowledge nodes. The agent may

@@ -136,28 +136,67 @@ async function resolveKnowledgeDomain(db: Db, knowledgeId: string): Promise<stri
   return rows[0]?.domain ?? null;
 }
 
-// ── Profile route preference (defensive — S2-4 adds the field) ────────────────
+// ── Profile route preference (S2-4 adds the field) ────────────────────────────
+
+// F1 (PR #320 round-4): the profile's `sourcingRoutePreference` is keyed in PROFILE
+// tokens (SubjectProfileSchema:89 — `sourced | material | closed_book | variant`), but
+// the orchestrator drives SEQUENCE STEPS (`external_sourcing | material_grounded |
+// closed_book`). The old code filtered profile values against the sequence-step name
+// set, so every token that didn't happen to share a name with a step (`sourced`,
+// `material`, `variant`) was silently dropped — wenyan reading collapsed to just
+// `closed_book` and math/physics skipped external sourcing entirely. We translate via
+// a single explicit token→step map instead.
+//
+// Mapping derives directly from spec §3.2 (四线 ↔ 找题次序, design doc lines 60-76):
+//   `sourced`     → external_sourcing  (tier 2「在线检索线」/ SourcingTask)
+//   `material`    → material_grounded  (tier 3「素材生成线」)
+//   `closed_book` → closed_book        (tier 4「闭卷兜底」)
+//   `variant`     → closed_book        (tier 4: spec §3.2 lines 65/75 bind「闭卷/variant
+//                   线」into the SAME tier-4 fallback; the sequence enum has no separate
+//                   variant_gen step, so the profile's `variant` token routes through the
+//                   tier-4 closed_book line. Adjacent duplicates are deduped below so a
+//                   route like `['closed_book','variant']` enqueues closed_book once.)
+const PROFILE_TOKEN_TO_STEP: Record<string, SourcingSequenceStep> = {
+  sourced: 'external_sourcing',
+  material: 'material_grounded',
+  closed_book: 'closed_book',
+  variant: 'closed_book',
+};
 
 // Read the subject profile's per-题型 找题次序偏好 (§3.2 / plan row 4.x
-// `sourcingRoutePreference`). The field is added by S2-4 (profile-schema.ts);
-// until then it is absent on every profile, so this resolves to the default次序
-// — the容错 form the task spec calls for ("若 profile 有偏好则用、无则默认次序").
-// When S2-4 merges and populates the field, it takes effect with no change here.
+// `sourcingRoutePreference`). When the field is absent (or holds no usable preference for
+// this 题型) this resolves to the default次序 — the容错 form the task spec calls for
+// ("若 profile 有偏好则用、无则默认次序"). Profile tokens are translated to sequence steps
+// via PROFILE_TOKEN_TO_STEP; an unknown token is skipped with a (non-silent) warning so a
+// future profile typo surfaces instead of quietly shrinking the route.
 export function resolveRoutePreference(
   profile: SubjectProfile,
   kind: string | null,
 ): readonly SourcingSequenceStep[] {
   const raw = (profile as { sourcingRoutePreference?: unknown }).sourcingRoutePreference;
   if (!raw || typeof raw !== 'object') return DEFAULT_SOURCING_ROUTE;
-  // Shape (forward-compatible with S2-4): a map from 题型 key → ordered step list.
-  // Fall back to a '*' default entry, then the hard-coded default.
+  // Shape: a map from 题型 key → ordered profile-token list. Fall back to a '*' default
+  // entry, then the hard-coded default.
   const byKind = raw as Record<string, unknown>;
   const candidate = (kind && byKind[kind]) || byKind['*'];
   if (!Array.isArray(candidate)) return DEFAULT_SOURCING_ROUTE;
-  const steps = candidate.filter(
-    (s): s is SourcingSequenceStep =>
-      typeof s === 'string' && (SOURCING_SEQUENCE_STEPS as readonly string[]).includes(s),
-  );
+  const steps: SourcingSequenceStep[] = [];
+  for (const token of candidate) {
+    if (typeof token !== 'string') continue;
+    const step = PROFILE_TOKEN_TO_STEP[token];
+    if (step === undefined) {
+      console.warn(
+        '[sourcing-sequence] unknown sourcingRoutePreference token; skipping',
+        token,
+        'for kind',
+        kind ?? '(none)',
+      );
+      continue;
+    }
+    // Dedup adjacent duplicates (e.g. closed_book + variant both → closed_book) so the
+    // tier-4 fallback isn't enqueued twice for one route.
+    if (steps[steps.length - 1] !== step) steps.push(step);
+  }
   return steps.length > 0 ? steps : DEFAULT_SOURCING_ROUTE;
 }
 

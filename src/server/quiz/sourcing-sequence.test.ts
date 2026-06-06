@@ -130,15 +130,17 @@ describe('resolveRoutePreference (unit-shaped, no DB)', () => {
     expect(resolveRoutePreference(profile, null)).toEqual(DEFAULT_SOURCING_ROUTE);
   });
 
-  it('honours a per-题型 preference when present, falling back to * then default', () => {
+  it('translates per-题型 profile tokens to sequence steps, falling back to * then default', () => {
+    // profile values are PROFILE tokens (sourced/material/closed_book/variant), NOT
+    // sequence-step names — resolveRoutePreference must translate them (F1, PR #320).
     const withPref = {
       ...profile,
       sourcingRoutePreference: {
-        reading_comprehension: ['material_grounded', 'external_sourcing', 'closed_book'],
+        reading_comprehension: ['material', 'sourced', 'closed_book'],
         '*': ['closed_book'],
       },
     } as never;
-    // per-题型 match
+    // per-题型 match: material→material_grounded, sourced→external_sourcing.
     expect(resolveRoutePreference(withPref, 'reading_comprehension')).toEqual([
       'material_grounded',
       'external_sourcing',
@@ -148,9 +150,54 @@ describe('resolveRoutePreference (unit-shaped, no DB)', () => {
     expect(resolveRoutePreference(withPref, 'short_answer')).toEqual(['closed_book']);
   });
 
-  it('ignores a malformed preference and falls back to default', () => {
+  it('maps the variant token onto the tier-4 closed_book line and dedups it', () => {
+    // spec §3.2 (lines 65/75): 「闭卷/variant 线」share tier 4; the sequence enum has no
+    // separate variant step, so `variant` routes through closed_book. A route that lists
+    // both closed_book and variant must NOT enqueue closed_book twice.
+    const withVariant = {
+      ...profile,
+      sourcingRoutePreference: { calculation: ['sourced', 'closed_book', 'variant'] },
+    } as never;
+    expect(resolveRoutePreference(withVariant, 'calculation')).toEqual([
+      'external_sourcing',
+      'closed_book',
+    ]);
+  });
+
+  it('skips an unknown token (warns) and falls back to default when none remain', () => {
     const bad = { ...profile, sourcingRoutePreference: { short_answer: ['nonsense'] } } as never;
-    expect(resolveRoutePreference(bad, 'short_answer')).toEqual(DEFAULT_SOURCING_ROUTE);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      expect(resolveRoutePreference(bad, 'short_answer')).toEqual(DEFAULT_SOURCING_ROUTE);
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('translates the three subjects’ real profile route preferences', () => {
+    // The actual shipped profiles (slice 4) — proves no token is silently dropped.
+    const wenyan = resolveSubjectProfile('wenyan');
+    expect(resolveRoutePreference(wenyan, 'reading_comprehension')).toEqual([
+      'material_grounded',
+      'external_sourcing',
+      'closed_book',
+    ]);
+    expect(resolveRoutePreference(wenyan, 'translation')).toEqual([
+      'external_sourcing',
+      'material_grounded',
+      'closed_book',
+    ]);
+    const math = resolveSubjectProfile('math');
+    expect(resolveRoutePreference(math, 'calculation')).toEqual([
+      'external_sourcing',
+      'closed_book',
+    ]);
+    const physics = resolveSubjectProfile('physics');
+    expect(resolveRoutePreference(physics, 'calculation')).toEqual([
+      'external_sourcing',
+      'closed_book',
+    ]);
   });
 });
 
