@@ -24,6 +24,12 @@ export const fastTestInclude = [
   'src/ai/**/*.test.ts',
   'src/core/**/*.test.ts',
   'src/server/ai/judges/**/*.test.ts',
+  // YUK-238 / YUK-240 — streamTask client-disconnect abort + stuck-run warn.
+  // Pure no-DB unit: @anthropic-ai/claude-agent-sdk and @/server/ai/log are
+  // vi.mock'd and `db` is an untouched stub, so no live Postgres is needed.
+  // (The sibling runner.test.ts stays in the db partition because it drives the
+  // real ai/log writers against a container.)
+  'src/server/ai/stream-cancel.test.ts',
   'src/server/ai/tools/registry.test.ts',
   'src/server/ai/tools/allowlists.test.ts',
   'src/server/ai/tools/mcp-bridge.test.ts',
