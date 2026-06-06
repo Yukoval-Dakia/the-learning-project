@@ -99,6 +99,9 @@ export const fastTestInclude = [
   // few-shot block renderer (pure fn), profile thin-section schema parse.
   'src/server/quiz/fewshot-retrieve.render.test.ts',
   'src/subjects/quiz-gen-skills.test.ts',
+  // YUK-228 (S3 Slice B) — pure (no-DB) note skill resolver (fs fixture root),
+  // live SoT discovery, and double-sided cloze防御 (note vs quiz-gen-* prefix).
+  'src/subjects/note-skills.test.ts',
   'src/subjects/question-kind.test.ts',
   'src/subjects/profile-schema.thin-section.test.ts',
   // Pure (no-DB) set-algebra unit for hub mesh curation (YUK-95 P5 Lane-C). The
