@@ -251,6 +251,15 @@ export const QuizVerificationResult = z.object({
   grounding: QuizVerifyCheck, // fact / grounding vs the self-reported source_refs
   copy_safety: QuizVerifyCopySafety, // plagiarism / originality vs source snippets
   knowledge_hit: QuizVerifyCheck, // does the question actually test its knowledge_ids
+  // YUK-224 (slice 3, tier 3 'material_grounded') — material-grounding verdict axis.
+  // OPTIONAL + additive: the verifier only emits it when the input carries a
+  // `material` block (tier-3 questions). Older verifier outputs (no material) omit
+  // it and still parse. Distinct from `grounding`: `grounding` asks "is the question
+  // factually supported by source_refs"; this asks "does the question actually PROBE
+  // the persisted material passage" (spec §6.1 row 3 真原文判据). The tier-3 gate
+  // consumes THIS verdict instead of merely checking the material row is non-empty,
+  // so an irrelevant-but-present material can no longer promote a question.
+  material_grounding: QuizVerifyCheck.optional(),
   // Roll-up verdict driving the Option-B gate.
   overall: z.enum(['pass', 'needs_review', 'fail']),
   summary_md: z.string().min(1).max(1000),
