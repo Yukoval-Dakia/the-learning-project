@@ -41,6 +41,27 @@ export const QuizGenSourcePack = z.object({
 });
 export type QuizGenSourcePackT = z.infer<typeof QuizGenSourcePack>;
 
+// YUK-216 S2 / YUK-224 (slice 3, tier 3 'material_grounded') — the REAL source
+// material the agent fetched and grounds its questions in (e.g. a reading passage
+// / authentic dataset). The agent SELF-REPORTS this block (provenance is NOT
+// recoverable from runner logs, §0); the Q3 handler then persists `body_md` to a
+// `source_document` row (with `provenance` carrying the URL) and back-fills the
+// resulting row id into metadata.quiz_gen.material_source_document_id. The agent
+// cannot know that id (it is minted at persist time), so the OUTPUT carries the
+// material CONTENT + URL, not the doc id.
+export const QuizGenMaterial = z.object({
+  // the fetched material itself — the passage / dataset text the questions probe.
+  // This is what gets persisted to source_document.body_md and is the "真原文"
+  // a reading question is grounded in (spec §6.1 row 3: 原文持久化 + 题面强制引用).
+  body_md: z.string().min(1),
+  // where the material came from. Persisted into source_document.provenance.
+  url: z.string().url(),
+  title: z.string().min(1),
+  // ISO string (same shape as source_pack.searched_at).
+  fetched_at: z.string().min(1),
+});
+export type QuizGenMaterialT = z.infer<typeof QuizGenMaterial>;
+
 // YUK-216 S2 — 'material_grounded' (tier 3 "material"): QuizGen first fetches
 // REAL source material (e.g. a reading passage / authentic dataset), persists it
 // to source_document, then writes questions that probe that material. The grounded
@@ -147,6 +168,11 @@ export const QuizGenOutput = z
     // Agent's own copy-safety self-assessment (§0 / §1). QuizVerify (Q5) may later
     // overwrite metadata.copy_safety with checked_by='quiz_verify'.
     self_copy_safety: QuizGenCopySafety,
+    // YUK-224 (slice 3) — the fetched material a `material_grounded` run grounds its
+    // questions in. Absent for search_grounded / closed_book; REQUIRED (enforced
+    // below) for material_grounded so the Q3 handler can persist it to source_document
+    // and back-fill material_source_document_id.
+    material: QuizGenMaterial.nullable().optional(),
   })
   .superRefine((out, ctx) => {
     // §0 — a `search_grounded` question MUST carry at least one source_ref. Search
@@ -166,19 +192,22 @@ export const QuizGenOutput = z
         }
       });
     }
-    // YUK-216 S2 时序守卫（PR #312 验证轮 V1）：material_grounded 的 live writer
-    // （素材检索 + source_document 持久化 + material_source_document_id 回填）要到
-    // slice 3（YUK-224）才落地。在那之前 live QuizGenOutput 不接受该值——否则
-    // QuizGenTask 幻觉出 material_grounded 会被持久化为缺素材来源的 draft，
-    // deriveSourceTier 还会把它降到 tier 4 跳过 material_grounding 检查。
-    // slice 3 落地时移除本守卫并改为强制携带 material 来源（metadata 层的
-    // superRefine 已就位：material_source_document_id 必填）。
-    if (out.generation_method === 'material_grounded') {
+    // YUK-224 (slice 3) — material grounding 正向校验。PR #312 的 V1 时序守卫
+    // （拒收一切 material_grounded 输出，等 live writer 落地）已被本 slice 取代：
+    // 素材检索 + source_document 持久化 + material_source_document_id 回填的 live
+    // writer 现在就在 quiz_gen handler 里（runQuizGen material_grounded 分支）。
+    // 守卫从「拒收」翻转为「必须携带 material 来源」：material_grounded 时 output
+    // 必须自报 `material`（passage 原文 + URL），handler 才能据此持久化 source_document
+    // 并回填 doc id（metadata 层 superRefine 已就位：material_source_document_id 必填，
+    // 由 handler 回填后满足）。漏报 material → 无真原文可持久化，deriveSourceTier 会把
+    // 题降到 tier 4 跳过 material_grounding 检查 → 在 parse 期 fail-fast（spec §6.1
+    // row 3「阅读类题有真原文：原文持久化 + 题面强制引用」的入口约束）。
+    if (out.generation_method === 'material_grounded' && !out.material) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message:
-          "generation_method='material_grounded' is not accepted by the live QuizGen output until the material writer lands (YUK-224 slice 3)",
-        path: ['generation_method'],
+          "generation_method='material_grounded' requires a `material` block (real source passage + URL) so the handler can persist it to source_document (YUK-224)",
+        path: ['material'],
       });
     }
   });
