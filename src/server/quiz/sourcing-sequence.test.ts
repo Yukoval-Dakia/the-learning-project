@@ -100,6 +100,7 @@ interface EnqueueCall {
   trigger: string;
   generation_method?: 'material_grounded' | 'closed_book';
   knowledge_id?: string;
+  kind?: string;
 }
 
 function collectingEnqueue(): {
@@ -115,6 +116,7 @@ function collectingEnqueue(): {
       trigger: data.trigger,
       generation_method: data.generation_method,
       knowledge_id: data.knowledge_id,
+      kind: data.kind,
     });
   });
   return { fn, calls };
@@ -312,6 +314,40 @@ describe('runSourcingSequence', () => {
       // ref_id stays the free-form trigger pointer; knowledge_id is the attribution anchor.
       expect(c.ref_id).toBe('free form manual ref');
       expect(c.knowledge_id).toBe('k1');
+    }
+  });
+
+  // F4 (PR #318 round-4) — the 题型 hint that selected the route is forwarded on every
+  // enqueued job (sourcing→kinds, quiz_gen→kind) so the produced job can target the题型.
+  it('forwards the kind hint to every enqueued job when provided', async () => {
+    await resetDb();
+    await seedKnowledge('k1');
+
+    const { fn, calls } = collectingEnqueue();
+    await runSourcingSequence({
+      db,
+      knowledgeId: 'k1',
+      count: 3,
+      kind: 'reading',
+      enqueueSequenceJob: fn,
+    });
+
+    expect(calls.length).toBeGreaterThan(0);
+    for (const c of calls) {
+      expect(c.kind).toBe('reading');
+    }
+  });
+
+  it('omits the kind hint on enqueued jobs when none is passed', async () => {
+    await resetDb();
+    await seedKnowledge('k1');
+
+    const { fn, calls } = collectingEnqueue();
+    await runSourcingSequence({ db, knowledgeId: 'k1', count: 3, enqueueSequenceJob: fn });
+
+    expect(calls.length).toBeGreaterThan(0);
+    for (const c of calls) {
+      expect(c.kind).toBeUndefined();
     }
   });
 

@@ -185,6 +185,10 @@ export type EnqueueSequenceJobFn = (
     // F3 — the knowledge node this need keys to. Forwarded so a manual trigger with a
     // free-form ref_id still attributes produced questions to the right node.
     knowledge_id?: string;
+    // F4 (PR #318 round-4) — the 题型 hint this次序 selected. The route was chosen with
+    // `kind` (resolveRoutePreference) but `kind` was then dropped; forward it so each
+    // produced job (sourcing / quiz_gen) can target the题型. Additive — absent → no hint.
+    kind?: string;
   },
 ) => Promise<void>;
 
@@ -215,6 +219,7 @@ async function defaultEnqueueSequenceJob(
     count?: number;
     generation_method?: 'material_grounded' | 'closed_book';
     knowledge_id?: string;
+    kind?: string;
   },
 ): Promise<void> {
   const { getStartedBoss } = await import('@/server/boss/client');
@@ -227,6 +232,9 @@ async function defaultEnqueueSequenceJob(
     ...(data.generation_method !== undefined ? { generation_method: data.generation_method } : {}),
     // F3 — forward the knowledge node for attribution (quiz_gen reads it for manual triggers).
     ...(data.knowledge_id !== undefined ? { knowledge_id: data.knowledge_id } : {}),
+    // F4 — forward the 题型 hint so the produced job can target it (sourcing→kinds,
+    // quiz_gen→kind). Both queue handlers read it additively.
+    ...(data.kind !== undefined ? { kind: data.kind } : {}),
   });
 }
 
@@ -327,6 +335,10 @@ export async function runSourcingSequence(
       // F3 — forward the knowledge node so produced questions attribute to it even when
       // the trigger is manual with a free-form ref_id.
       knowledge_id: knowledgeId,
+      // F4 — forward the 题型 hint that selected this route so the produced job can target
+      // it. The route was chosen with this same kind; threading it through closes the gap
+      // where kind drove选路 then vanished. Absent → no hint (agent free-targets).
+      ...(params.kind ? { kind: params.kind } : {}),
     });
     enqueued.push(step);
     needs.push({
