@@ -98,19 +98,21 @@ export function assignFiguresFromVlm(
 ): FigureRefT[] {
   if (preFigures.length === 0) return [];
 
+  // Build a set of valid question ids (P3: validate assignment targets exist).
+  const validQuestionIds = new Set(flattenQuestions(questions).map((q) => q.id));
+
   // Build a lookup: figure_index → assignment (first-win if duplicate indices).
+  // Only include assignments whose target question id is actually present in the
+  // tree — hallucinated ids fall back to the geometric heuristic instead of
+  // producing a dangling reference.
   const assignmentByIndex = new Map<number, FigureAssignment>();
   for (const a of figureAssignments ?? []) {
-    if (!assignmentByIndex.has(a.figure_index)) {
+    if (!assignmentByIndex.has(a.figure_index) && validQuestionIds.has(a.attached_to_question_id)) {
       assignmentByIndex.set(a.figure_index, a);
     }
   }
 
-  // Build a lookup: question_id → StructuredQuestionT (needed for FigureRefT shape).
-  // assignFigures only needs `questions` array; FigureRefT doesn't embed the question
-  // object — we just need the id string from the assignment.
-
-  // Separate covered (VLM) vs uncovered (geometric fallback) figures.
+  // Separate covered (VLM, valid target) vs uncovered/invalid (geometric fallback).
   const vlmCovered: PreAttachFigure[] = [];
   const vlmCoveredIndices: number[] = [];
   const geometric: PreAttachFigure[] = [];
@@ -136,7 +138,7 @@ export function assignFiguresFromVlm(
     };
   });
 
-  // Geometric fallback for uncovered figures (preserves existing behaviour).
+  // Geometric fallback for uncovered or invalid-target figures.
   const geometricRefs: FigureRefT[] =
     geometric.length > 0 ? assignFigures(geometric, questions) : [];
 

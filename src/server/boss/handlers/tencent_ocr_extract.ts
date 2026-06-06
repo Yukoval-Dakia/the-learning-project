@@ -243,21 +243,26 @@ async function processOneOcrJob(
     // 12. applyExtractionResult —— one question_block per top-level structured
     //     question. A cross-page stem is ONE block spanning its pages.
     //
-    //     YUK-227 S3 Slice A: page_spans now carry a real page_index on the VLM
-    //     path (using the question's page_index from the VLM tree). bbox remains
-    //     full-page (ADR-0002: VLM does not give pixel bbox; crop still uses
-    //     Tencent bbox). When page_index is absent (null/undefined on the node),
-    //     we fall back to page 0 — consistent with the previous placeholder.
-    //     Tencent fallback questions may carry page_index from the parser; the
-    //     same logic applies safely.
+    //     YUK-227 S3 Slice A: page_spans carry a real page_index on the VLM path
+    //     only. bbox remains full-page (ADR-0002). Two paths:
+    //
+    //     VLM path (usedVlmPath=true): q.page_index is now non-null because
+    //     nodeToStructured copies node.page_index (P1 fix). Use q.page_index ?? 0
+    //     as fallback for any node the VLM omitted page_index on.
+    //
+    //     Tencent fallback path (usedVlmPath=false): tencent_mark_parser stamps
+    //     real page_index on parsed questions (parser.ts:230,289). We must NOT
+    //     use that value here — plan §2 step 4 says "腾讯回落路径保持 placeholder".
+    //     Keeping page_spans at page_index=0 ensures isAllPlaceholderPageIndex
+    //     returns true for these sessions, so block-assembly stays semantic-only
+    //     (correct behaviour — Tencent structure is already per-page, no cross-page
+    //     merge signal needed). If this is ever relaxed, revise §2 step 4 first.
     const blocks = structure.questions.map((q) => ({
       structured: q,
       figures: figureRefs,
       page_spans: [
         {
-          // Use the VLM-reported page_index when available; page 0 as fallback
-          // (matches previous placeholder behaviour — no regression on Tencent path).
-          page_index: q.page_index ?? 0,
+          page_index: usedVlmPath ? (q.page_index ?? 0) : 0,
           bbox: { x: 0, y: 0, width: 1, height: 1 },
           role: 'prompt',
         },
