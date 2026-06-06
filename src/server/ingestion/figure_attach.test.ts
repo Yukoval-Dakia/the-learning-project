@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { PreAttachFigure } from './crop';
-import { assignFigures } from './figure_attach';
+import { assignFigures, assignFiguresFromVlm } from './figure_attach';
+import type { FigureAssignment } from './structure';
 
 function makeStem(): StructuredQuestionT {
   return {
@@ -185,5 +186,106 @@ describe('assignFigures', () => {
     const result = assignFigures(figures, [makeStem()]);
     expect(result[0].attached_to_index).toBe('sub-b');
     expect(result[0].attach_confidence).toBe('high');
+  });
+});
+
+// ---------- YUK-227 S3 Slice A — assignFiguresFromVlm ----------
+
+describe('assignFiguresFromVlm', () => {
+  function q(id: string, page = 0): StructuredQuestionT {
+    return { id, role: 'standalone', prompt_text: id, page_index: page };
+  }
+
+  it('uses VLM assignment for covered figures (high confidence)', () => {
+    const figures: PreAttachFigure[] = [fig({ x: 0.1, y: 0.1, width: 0.1, height: 0.1 }, 0, 0)];
+    const assignments: FigureAssignment[] = [
+      { figure_index: 0, attached_to_question_id: 'q1', confidence: 'high' },
+    ];
+    const questions = [q('q1'), q('q2')];
+    const result = assignFiguresFromVlm(figures, assignments, questions);
+    expect(result).toHaveLength(1);
+    expect(result[0].attached_to_index).toBe('q1');
+    expect(result[0].attach_confidence).toBe('high');
+  });
+
+  it('VLM priority: 3 questions 3 figures — each figure goes to its assigned question (regression core)', () => {
+    // The old heuristic (no bbox on VLM questions) would attach ALL figures to root (q1).
+    // assignFiguresFromVlm must route each figure to its correct question.
+    const figures: PreAttachFigure[] = [
+      fig({ x: 0.1, y: 0.1, width: 0.1, height: 0.1 }, 0, 0),
+      fig({ x: 0.2, y: 0.2, width: 0.1, height: 0.1 }, 1, 0),
+      fig({ x: 0.3, y: 0.3, width: 0.1, height: 0.1 }, 2, 0),
+    ];
+    const assignments: FigureAssignment[] = [
+      { figure_index: 0, attached_to_question_id: 'q1', confidence: 'high' },
+      { figure_index: 1, attached_to_question_id: 'q2', confidence: 'high' },
+      { figure_index: 2, attached_to_question_id: 'q3', confidence: 'high' },
+    ];
+    const questions = [q('q1'), q('q2'), q('q3')];
+    const result = assignFiguresFromVlm(figures, assignments, questions);
+    expect(result).toHaveLength(3);
+    // Each figure goes to its assigned question, not all to root q1.
+    expect(result.find((r) => r.asset_id === 'fig_0')?.attached_to_index).toBe('q1');
+    expect(result.find((r) => r.asset_id === 'fig_1')?.attached_to_index).toBe('q2');
+    expect(result.find((r) => r.asset_id === 'fig_2')?.attached_to_index).toBe('q3');
+  });
+
+  it('VLM miss fallback: uncovered figures fall back to geometric heuristic (no figure dropped)', () => {
+    // VLM covers figure 0 and 1 but misses figure 2.
+    // Figure 2 must be picked up by geometric fallback — not dropped.
+    const q1: StructuredQuestionT = {
+      id: 'q1',
+      role: 'standalone',
+      prompt_text: 'q1',
+      page_index: 0,
+      bbox: { x: 0, y: 0, width: 0.5, height: 0.5 },
+    };
+    const q2: StructuredQuestionT = {
+      id: 'q2',
+      role: 'standalone',
+      prompt_text: 'q2',
+      page_index: 0,
+      bbox: { x: 0.5, y: 0.5, width: 0.5, height: 0.5 },
+    };
+    const figures: PreAttachFigure[] = [
+      fig({ x: 0.1, y: 0.1, width: 0.1, height: 0.1 }, 0, 0), // covered by VLM → q1
+      fig({ x: 0.6, y: 0.6, width: 0.1, height: 0.1 }, 1, 0), // covered by VLM → q2
+      fig({ x: 0.6, y: 0.6, width: 0.05, height: 0.05 }, 2, 0), // NOT covered by VLM → geometric
+    ];
+    const assignments: FigureAssignment[] = [
+      { figure_index: 0, attached_to_question_id: 'q1', confidence: 'high' },
+      { figure_index: 1, attached_to_question_id: 'q2', confidence: 'high' },
+      // figure 2 deliberately omitted from assignments
+    ];
+    const result = assignFiguresFromVlm(figures, assignments, [q1, q2]);
+    expect(result).toHaveLength(3); // all 3 figures present (none dropped)
+    expect(result.find((r) => r.asset_id === 'fig_0')?.attached_to_index).toBe('q1');
+    expect(result.find((r) => r.asset_id === 'fig_1')?.attached_to_index).toBe('q2');
+    // fig_2 falls back to geometric: bbox (0.6,0.6,0.05,0.05) inside q2's bbox
+    expect(result.find((r) => r.asset_id === 'fig_2')?.attached_to_index).toBe('q2');
+  });
+
+  it('returns [] for empty figures input', () => {
+    expect(assignFiguresFromVlm([], [], [q('q1')])).toEqual([]);
+  });
+
+  it('degrades to pure geometric when assignments is undefined', () => {
+    // When called from the Tencent fallback path, assignments is undefined →
+    // identical to calling assignFigures directly.
+    const stem = makeStem(); // has bbox on stem + sub-b
+    const figures = [fig({ x: 0.6, y: 0.6, width: 0.05, height: 0.05 })]; // inside sub-b
+    const result = assignFiguresFromVlm(figures, undefined, [stem]);
+    expect(result).toHaveLength(1);
+    // geometric: sub-b is smallest containing → high confidence
+    expect(result[0].attached_to_index).toBe('sub-b');
+    expect(result[0].attach_confidence).toBe('high');
+  });
+
+  it('degrades to pure geometric when assignments is empty array', () => {
+    const stem = makeStem();
+    const figures = [fig({ x: 0.6, y: 0.6, width: 0.05, height: 0.05 })];
+    const result = assignFiguresFromVlm(figures, [], [stem]);
+    expect(result).toHaveLength(1);
+    expect(result[0].attached_to_index).toBe('sub-b');
   });
 });

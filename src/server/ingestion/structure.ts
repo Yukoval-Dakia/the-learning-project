@@ -14,9 +14,12 @@
  * parses strict JSON via a Zod schema, and accepts an injectable `runTaskFn` for
  * testability.
  *
- * Figure↔question matching (replacing `assignFigures`) is DEFERRED to slice 2b
- * (see lane plan §DEFERRED) — this module does NOT attach figures; the handler
- * keeps the Tencent-bbox `assignFigures` heuristic for now.
+ * YUK-227 S3 Slice A: Figure↔question matching is now performed by the VLM via
+ * `figure_ids` on StructureNode. `preFigures` (sequence index + page_index) are
+ * fed into the prompt so the VLM can self-report which figures belong to which
+ * question. The result is surfaced as `figureAssignments` on StructureResult and
+ * consumed by `assignFiguresFromVlm` in figure_attach.ts. The old Tencent-bbox
+ * `assignFigures` heuristic is kept as a fallback (see figure_attach.ts).
  */
 import { createId } from '@paralleldrive/cuid2';
 import { z } from 'zod';
@@ -50,6 +53,13 @@ type StructureNodeT = {
   analysis?: string | null;
   page_index?: number | null;
   sub_questions?: StructureNodeT[] | null;
+  /**
+   * YUK-227 S3 Slice A — VLM self-reported figure indices for this node.
+   * Each entry is a 0-based index into the `preFigures` array passed to
+   * runStructureTask. The VLM fills this when prompted; absence (null/empty)
+   * means the VLM did not assign any figures to this node.
+   */
+  figure_ids?: number[] | null;
 };
 
 const StructureNode: z.ZodType<StructureNodeT> = z.lazy(() =>
@@ -62,6 +72,8 @@ const StructureNode: z.ZodType<StructureNodeT> = z.lazy(() =>
     analysis: z.string().nullable().optional(),
     page_index: z.number().int().min(0).nullable().optional(),
     sub_questions: z.array(StructureNode).nullable().optional(),
+    // YUK-227 S3 Slice A: figure indices reported by the VLM (see StructureNodeT).
+    figure_ids: z.array(z.number().int().min(0)).nullable().optional(),
   }),
 );
 
@@ -75,10 +87,29 @@ export type StructureOutputT = z.infer<typeof StructureOutput>;
 
 // ---------- Result shape (consumed by tencent_ocr_extract handler) ----------
 
+/**
+ * YUK-227 S3 Slice A — one VLM figure assignment: a pre-figure at `figure_index`
+ * belongs to the question with `attached_to_question_id`.
+ * `confidence` comes from the VLM's self-report context: 'high' when the VLM
+ * explicitly assigned this figure via figure_ids, 'low' as fallback sentinel
+ * (not currently emitted here — the VLM always emits 'high' when it assigns).
+ */
+export type FigureAssignment = {
+  figure_index: number;
+  attached_to_question_id: string;
+  confidence: 'high' | 'low';
+};
+
 export type StructureResult = {
   questions: StructuredQuestionT[];
   layout_quality: LayoutQuality;
   warnings: string[];
+  /**
+   * YUK-227 S3 Slice A — VLM figure assignments extracted from figure_ids on
+   * StructureNode. Absent (undefined) when no preFigures were supplied or the
+   * VLM did not assign any figures. Consumed by assignFiguresFromVlm().
+   */
+  figureAssignments?: FigureAssignment[];
 };
 
 /**
@@ -123,11 +154,24 @@ export function renderTencentHint(pages: TencentPageHint[]): string {
 
 // ---------- Mapping VLM nodes → StructuredQuestionT ----------
 
-function nodeToStructured(node: StructureNodeT): StructuredQuestionT {
+/**
+ * YUK-227 S3 Slice A — walk the VLM node tree, assign cuid ids, and collect
+ * figure_ids → question_id assignments into `assignmentsOut`. The collector is
+ * mutated in place so callers don't need to thread a return value through the
+ * recursive walk.
+ */
+function nodeToStructured(
+  node: StructureNodeT,
+  assignmentsOut?: FigureAssignment[],
+): StructuredQuestionT {
+  const id = createId();
   const isStem = node.role === 'stem';
-  const subs = isStem && node.sub_questions ? node.sub_questions.map(nodeToStructured) : undefined;
+  const subs =
+    isStem && node.sub_questions
+      ? node.sub_questions.map((s) => nodeToStructured(s, assignmentsOut))
+      : undefined;
   const out: StructuredQuestionT = {
-    id: createId(),
+    id,
     role: node.role,
     prompt_text: node.prompt_text,
     source: 'vlm_structure',
@@ -137,6 +181,19 @@ function nodeToStructured(node: StructureNodeT): StructuredQuestionT {
   if (node.answers && node.answers.length > 0) out.answers = node.answers;
   if (node.analysis) out.analysis = node.analysis;
   if (subs && subs.length > 0) out.sub_questions = subs;
+
+  // YUK-227 S3 Slice A: record figure_ids → question_id assignments while
+  // traversing the tree so the caller can build figureAssignments.
+  if (assignmentsOut && node.figure_ids && node.figure_ids.length > 0) {
+    for (const figIdx of node.figure_ids) {
+      assignmentsOut.push({
+        figure_index: figIdx,
+        attached_to_question_id: id,
+        confidence: 'high',
+      });
+    }
+  }
+
   return out;
 }
 
@@ -168,6 +225,13 @@ export type RunStructureTaskParams = {
   tencentHintMd: string;
   /** Number of pages (so the VLM knows the page count). */
   pageCount: number;
+  /**
+   * YUK-227 S3 Slice A — minimal per-figure info fed to the VLM so it can
+   * self-report figure↔question assignments via figure_ids on StructureNode.
+   * Only sequence index + page_index are passed (no bytes — the images are
+   * already present in the page images array). Absent = no figures to assign.
+   */
+  preFigures?: Array<{ index: number; page_index: number }>;
   /** Inject in tests; defaults to the production runner. */
   runTaskFn?: StructureRunTaskFn;
   /** Forwarded to runTask ctx (db / subjectProfile / r2). */
@@ -198,6 +262,10 @@ export async function runStructureTask(params: RunStructureTaskParams): Promise<
   const textPayload = JSON.stringify({
     tencent_hint_md: params.tencentHintMd,
     page_count: params.pageCount,
+    // YUK-227 S3 Slice A: pass minimal figure metadata so the VLM can self-report
+    // figure↔question assignments via figure_ids on StructureNode. Only index +
+    // page_index are passed; the actual image bytes are already in pageImages.
+    ...(params.preFigures && params.preFigures.length > 0 ? { figures: params.preFigures } : {}),
   });
 
   const runTaskFn = params.runTaskFn ?? defaultRunTaskFn;
@@ -227,10 +295,15 @@ export async function runStructureTask(params: RunStructureTaskParams): Promise<
     throw new StructureTaskError('StructureTask returned 0 questions');
   }
 
-  const questions = parsed.questions.map(nodeToStructured);
+  // YUK-227 S3 Slice A: collect figure assignments while mapping nodes.
+  // Only populate the collector when preFigures were supplied (no-op otherwise).
+  const assignmentsOut: FigureAssignment[] | undefined =
+    params.preFigures && params.preFigures.length > 0 ? [] : undefined;
+  const questions = parsed.questions.map((node) => nodeToStructured(node, assignmentsOut));
   return {
     questions,
     layout_quality: parsed.layout_quality,
     warnings: parsed.warnings,
+    ...(assignmentsOut && assignmentsOut.length > 0 ? { figureAssignments: assignmentsOut } : {}),
   };
 }

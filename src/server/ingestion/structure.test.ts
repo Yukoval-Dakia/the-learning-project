@@ -7,6 +7,9 @@ import {
   runStructureTask,
 } from './structure';
 
+// YUK-227 S3 Slice A test helpers
+import type { FigureAssignment } from './structure';
+
 const IMG = { data: 'AAAA', mediaType: 'image/png' } as const;
 
 function vlmJson(payload: unknown): string {
@@ -163,5 +166,171 @@ describe('runStructureTask', () => {
     await expect(
       runStructureTask({ pageImages: [], tencentHintMd: '', pageCount: 0 }),
     ).rejects.toBeInstanceOf(StructureTaskError);
+  });
+});
+
+// ---------- YUK-227 S3 Slice A — figureAssignments mapping ----------
+
+describe('runStructureTask — figureAssignments (YUK-227 S3 Slice A)', () => {
+  it('maps figure_ids on nodes to figureAssignments with question ids', async () => {
+    // VLM reports figure index 0 belongs to the stem, index 1 belongs to sub1.
+    const runTaskFn = vi.fn(async () => ({
+      text: vlmJson({
+        layout_quality: 'structured',
+        warnings: [],
+        questions: [
+          {
+            role: 'stem',
+            prompt_text: '阅读材料，完成下列题目',
+            page_index: 0,
+            figure_ids: [0], // stem claims figure 0
+            sub_questions: [
+              {
+                role: 'sub',
+                question_no: '1',
+                prompt_text: '分析电路图。',
+                page_index: 0,
+                figure_ids: [1], // sub claims figure 1
+              },
+              {
+                role: 'sub',
+                question_no: '2',
+                prompt_text: '根据上图回答。',
+                page_index: 1,
+                // no figure_ids on this sub
+              },
+            ],
+          },
+        ],
+      }),
+    }));
+
+    const result = await runStructureTask({
+      pageImages: [IMG, IMG],
+      tencentHintMd: '',
+      pageCount: 2,
+      preFigures: [
+        { index: 0, page_index: 0 },
+        { index: 1, page_index: 0 },
+      ],
+      runTaskFn,
+    });
+
+    // figureAssignments should be present
+    expect(result.figureAssignments).toBeDefined();
+    const assignments = result.figureAssignments as FigureAssignment[];
+    expect(assignments).toHaveLength(2);
+
+    // Verify figure 0 is attached to the stem (first top-level question)
+    const stemId = result.questions[0].id;
+    const a0 = assignments.find((a) => a.figure_index === 0);
+    expect(a0).toBeDefined();
+    expect(a0?.attached_to_question_id).toBe(stemId);
+    expect(a0?.confidence).toBe('high');
+
+    // Verify figure 1 is attached to sub1 (first sub_question)
+    const sub1Id = result.questions[0].sub_questions?.[0]?.id;
+    expect(sub1Id).toBeTruthy();
+    const a1 = assignments.find((a) => a.figure_index === 1);
+    expect(a1).toBeDefined();
+    expect(a1?.attached_to_question_id).toBe(sub1Id);
+    expect(a1?.confidence).toBe('high');
+  });
+
+  it('returns no figureAssignments when preFigures is absent', async () => {
+    const runTaskFn = vi.fn(async () => ({
+      text: vlmJson({
+        layout_quality: 'structured',
+        warnings: [],
+        questions: [
+          {
+            role: 'standalone',
+            prompt_text: '题目',
+            page_index: 0,
+            figure_ids: [0], // VLM reports this but we have no preFigures
+          },
+        ],
+      }),
+    }));
+
+    const result = await runStructureTask({
+      pageImages: [IMG],
+      tencentHintMd: '',
+      pageCount: 1,
+      // preFigures intentionally omitted
+      runTaskFn,
+    });
+
+    // Without preFigures, figureAssignments should not be populated
+    expect(result.figureAssignments).toBeUndefined();
+  });
+
+  it('returns undefined figureAssignments when VLM emits no figure_ids', async () => {
+    const runTaskFn = vi.fn(async () => ({
+      text: vlmJson({
+        layout_quality: 'structured',
+        warnings: [],
+        questions: [{ role: 'standalone', prompt_text: '题目', page_index: 0 }],
+      }),
+    }));
+
+    const result = await runStructureTask({
+      pageImages: [IMG],
+      tencentHintMd: '',
+      pageCount: 1,
+      preFigures: [{ index: 0, page_index: 0 }],
+      runTaskFn,
+    });
+
+    // preFigures supplied but VLM emitted no figure_ids → no assignments
+    expect(result.figureAssignments).toBeUndefined();
+  });
+
+  it('includes figures metadata in the text payload when preFigures provided', async () => {
+    const runTaskFn = vi.fn(async (_kind: string, input: { text: string; images: unknown[] }) => {
+      const payload = JSON.parse(input.text);
+      expect(payload.figures).toEqual([{ index: 0, page_index: 1 }]);
+      return {
+        text: vlmJson({
+          layout_quality: 'structured',
+          warnings: [],
+          questions: [{ role: 'standalone', prompt_text: 'q', figure_ids: [0] }],
+        }),
+      };
+    });
+
+    await runStructureTask({
+      pageImages: [IMG, IMG],
+      tencentHintMd: '',
+      pageCount: 2,
+      preFigures: [{ index: 0, page_index: 1 }],
+      runTaskFn,
+    });
+
+    expect(runTaskFn).toHaveBeenCalledOnce();
+  });
+
+  it('does NOT include figures key in payload when preFigures is empty', async () => {
+    const runTaskFn = vi.fn(async (_kind: string, input: { text: string; images: unknown[] }) => {
+      const payload = JSON.parse(input.text);
+      expect(payload.figures).toBeUndefined();
+      return {
+        text: vlmJson({
+          layout_quality: 'structured',
+          warnings: [],
+          questions: [{ role: 'standalone', prompt_text: 'q' }],
+        }),
+      };
+    });
+
+    await runStructureTask({
+      pageImages: [IMG],
+      tencentHintMd: '',
+      pageCount: 1,
+      preFigures: [],
+      runTaskFn,
+    });
+
+    expect(runTaskFn).toHaveBeenCalledOnce();
   });
 });

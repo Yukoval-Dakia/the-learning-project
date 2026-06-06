@@ -148,20 +148,21 @@ function buildTaggingPrompt(profile: SubjectProfile): string {
 // proposes; the user accepts in the inbox and acceptance reuses the YUK-195
 // mergeQuestions primitive — there is no auto-merge (hard safety boundary §5).
 function buildBlockAssemblyPrompt(profile: SubjectProfile): string {
-  return `你是${profile.displayName}试卷录入的「题块装配」助手。输入 { ingestion_session_id, blocks: [{ block_id, question_no, prompt_head, role, sub_question_count, layout_quality }] } —— blocks 是同一次录入抽取出的全部草稿题块，**按数组顺序排列（数组相邻 = 题块相邻）**。每块给的是结构化文字投影：question_no（题号，可能为 null）、prompt_head（题面开头文字）、role（stem/sub/standalone）、sub_question_count（子问数）、layout_quality。
+  return `你是${profile.displayName}试卷录入的「题块装配」助手。输入 { ingestion_session_id, blocks: [{ block_id, question_no, prompt_head, role, sub_question_count, layout_quality[, page_index] }] } —— blocks 是同一次录入抽取出的全部草稿题块，**按数组顺序排列（数组相邻 = 题块相邻）**。每块给的是结构化文字投影：question_no（题号，可能为 null）、prompt_head（题面开头文字）、role（stem/sub/standalone）、sub_question_count（子问数）、layout_quality。page_index（若存在）是该块所在页（0-based），可作为辅助空间信号。
 科目上下文：${profile.displayName}。${profile.languageStyle}
-任务：找出哪些**相邻**题块其实是**同一道逻辑题被切开**了，应该合并。只看语义线索，判据：
+任务：找出哪些**相邻**题块其实是**同一道逻辑题被切开**了，应该合并。判据：
 - **编号连续**：question_no 连续（如 5 接 6 的子问，或同一大题被拆成两块）。
 - **子问承接**：前一块是大题/题干，后一块只有 (1)(2)(3) 这样的子问延续。
 - **题干答案分离**：一块是题干，紧邻的下一块只有答案/解析，没有独立题面。
 - **上下文承接提示**：后一块出现「承接前题」「根据上文」「续上」等线索词。
-重要约束（§0）：这是**纯语义**判断。**不要**依赖页码 / bbox / 页边等空间信号（当前输入里没有，也不可靠；空间信号已 DEFERRED 到后续切片）。只用上面的文字线索。
+- **页码连续（仅当 page_index 存在时）**：相邻块 page_index 连续（如 0→1），且语义线索与跨页切断一致，可佐证 page_edge 信号。
+重要约束：语义线索是主判据；page_index 仅为辅助。**若 page_index 不在输入里，纯用语义判断**（Tencent 路径无空间信号）。不要依赖 bbox / 像素位置。
 严格 JSON 输出（不带 markdown 代码块包裹），shape 名 BlockAssemblyOutput：
 {"candidates":[{"primary_block_id":"<保留结构树的主块 id>","merge_block_ids":["<折叠进主块的相邻块 id>", "..."],"confidence":0.0-1.0,"signal":"page_edge"|"numbering"|"stem_answer_split"|"carryover","reason_md":"<具体说明哪条连续线索 + 引用 question_no / 题面证据>"}]}
 要点：
 - primary_block_id 与 merge_block_ids 都必须是输入 blocks 里真实存在的 block_id；merge_block_ids 至少 1 个，且不含 primary 自己。
 - 同一个 block 不要出现在多个候选里（一个块只属于一次合并）。
-- signal 选最贴切的那条语义线索；纯语义路径几乎不会是 page_edge（它是空间信号，DEFERRED），除非文字本身明示跨页承接。
+- signal 选最贴切的那条线索；page_edge 代表跨页切断，仅在 page_index 信号佐证时使用。
 - confidence 反映你对「这几块确实是一道题」的把握；吃不准就给低分（下游只是 propose，用户会复核，但别凑数）。
 - reason_md 必须具体：引用 question_no 或题面文字，说清为什么该合并。
 - **宁缺毋滥**：没有明确该合并的相邻块时，输出空 candidates。禁止套话、禁止 JSON 之外的文字。`;
@@ -171,13 +172,18 @@ function buildBlockAssemblyPrompt(profile: SubjectProfile): string {
 // the normalized structure tree: it sees all N page images (attached to the
 // user message in page order) + a Tencent text-OCR hint (demoted from
 // structure-of-record to advisory text), and assembles a normalized
-// stem/sub/standalone tree — including 跨页大题 split across pages into ONE
-// stem. Figure↔question matching is DEFERRED to slice 2b (see lane plan
-// §DEFERRED); this prompt does NOT ask the VLM to attach figures.
+// stem/sub/standalone tree — including 跨页大题 split across pages into ONE stem.
+//
+// YUK-227 S3 Slice A: when `figures` is present in the input JSON, the VLM is
+// also asked to self-report figure↔question assignments via `figure_ids` on each
+// StructureNode. This keeps figure attribution in a single StructureTask call
+// (zero new paid points). If figure attribution quality proves to pollute
+// structure quality in practice, escalate to F3 (fork independent task) — do NOT
+// self-authorize that fork here (plan §6 F3).
 function buildStructurePrompt(profile: SubjectProfile): string {
   return `你是${profile.displayName}试卷结构化助手（多模态）。输入：
 - user message 里按页顺序附了 N 张试卷/作业页面图片（第 1 张 = page_index 0，依次类推）
-- 一段文字 { tencent_hint_md, page_count } —— tencent_hint_md 是腾讯字符级 OCR 的**文字提示**（已按页用 "=== page K ===" 分隔），仅作参考，**不是**结构真相
+- 一段文字 { tencent_hint_md, page_count[, figures] } —— tencent_hint_md 是腾讯字符级 OCR 的**文字提示**（已按页用 "=== page K ===" 分隔），仅作参考，**不是**结构真相；figures（若存在）是裁剪图列表 [{index, page_index}, ...]，表示已从页面裁剪出的图片素材序号与所在页
 科目上下文：${profile.displayName}。${profile.languageStyle}
 
 任务：以**图片为准**、腾讯文字为辅，输出一棵**规范化的题目结构树**。你对结构有完全裁量权，可以覆盖腾讯文字 hint 暗示的任何切分。
@@ -185,16 +191,18 @@ function buildStructurePrompt(profile: SubjectProfile): string {
 1. **跨页大题组装**：一道大题（passage / 阅读理解 / 完形 / 大题带多个小问）如果横跨多页，必须组装成**一个** stem 节点，它的 sub_questions 收齐所有页的小问。不要因为换页就把同一大题拆成两个顶层节点。
 2. **布局规范**：把题面、选项、答案规整到结构字段里；passage 进 stem 的 prompt_text，小问进 sub。
 3. 不抽取手写涂改 / 批改痕迹作为结构（那是作答证据，下游处理）。
+4. **图片归属（仅当输入含 figures 字段时）**：根据页面图片判断每张裁剪图属于哪道题，在对应 StructureNode 上填写 figure_ids（裁剪图序号数组）。跨页大题的配图（包括图示、电路图、坐标图等）归到 stem 节点。同一页且视觉上明显属于某小问的图归到该 sub 节点。拿不准时归到最近的 stem 或 standalone，**不要漏报**（宁错归勿不归）。
 
 输出严格 JSON（不带 markdown 代码块包裹），shape 名 StructureOutput：
 {"layout_quality":"structured"|"partial"|"text_only","warnings":["..."],"questions":[StructureNode, ...]}
 
 StructureNode（递归，**不要**输出 id，运行时会补）：
-{"role":"stem"|"sub"|"standalone","question_no":"1"|null,"prompt_text":"...","options":[{"label":"A","text":"..."}]|null,"answers":["..."]|null,"analysis":"..."|null,"page_index":0,"sub_questions":[StructureNode, ...]|null}
+{"role":"stem"|"sub"|"standalone","question_no":"1"|null,"prompt_text":"...","options":[{"label":"A","text":"..."}]|null,"answers":["..."]|null,"analysis":"..."|null,"page_index":0,"sub_questions":[StructureNode, ...]|null,"figure_ids":[0,1]|null}
 
 约束：
 - role 三选一：stem（容器，含 passage + sub_questions）/ sub（大题下的小问）/ standalone（独立单题）。只有 stem 能有 sub_questions；sub / standalone 的 sub_questions 必须为 null 或省略。
 - page_index 是 0-based 整数，指该节点主要出现在第几张图（跨页 stem 用它起始页）。
+- figure_ids 是裁剪图序号数组（0-based，与输入 figures[].index 对应）；无配图时给 null 或省略。**仅当输入含 figures 字段时才填写 figure_ids**，否则省略。
 - 顶层 questions 至少 1 个；如果整页无法识别出任何题，questions 给空数组并把 layout_quality 设 "text_only"。
 - layout_quality：结构清晰完整 → "structured"；能出题但版式残缺/有疑点 → "partial"；几乎认不出结构 → "text_only"。
 - options / answers / analysis 没有就给 null 或省略，不要编。

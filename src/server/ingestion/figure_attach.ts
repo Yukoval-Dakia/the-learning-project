@@ -1,5 +1,6 @@
 import type { BBoxT, FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { PreAttachFigure } from './crop';
+import type { FigureAssignment } from './structure';
 
 /**
  * Figure 归属启发式（spec § 1.7.1 (a)）:
@@ -69,6 +70,77 @@ export function assignFigures(
       attach_confidence: 'low' as const,
     };
   });
+}
+
+// ---------- YUK-227 S3 Slice A — VLM-first figure assignment ----------
+
+/**
+ * Assign figures to questions using VLM-reported assignments as the primary
+ * signal, falling back to the geometric `assignFigures` heuristic for any
+ * figures the VLM did not cover.
+ *
+ * Safety contract (regression invariant):
+ *  - VLM covers a figure → use VLM assignment (confidence='high').
+ *  - VLM did not cover a figure → geometric fallback (`assignFigures`),
+ *    confidence='low'. No figure is ever dropped.
+ *  - VLM assignments is empty/undefined → identical to calling `assignFigures`
+ *    directly (zero regression on the Tencent fallback path).
+ *
+ * F3 note: if VLM figure attribution is found to pollute structure quality in
+ * practice, this function remains safe — the VLM simply omits figure_ids and
+ * everything falls back to the geometric heuristic. Escalate to plan §6 F3 if
+ * attribution needs to be a separate task.
+ */
+export function assignFiguresFromVlm(
+  preFigures: PreAttachFigure[],
+  figureAssignments: FigureAssignment[] | undefined,
+  questions: StructuredQuestionT[],
+): FigureRefT[] {
+  if (preFigures.length === 0) return [];
+
+  // Build a lookup: figure_index → assignment (first-win if duplicate indices).
+  const assignmentByIndex = new Map<number, FigureAssignment>();
+  for (const a of figureAssignments ?? []) {
+    if (!assignmentByIndex.has(a.figure_index)) {
+      assignmentByIndex.set(a.figure_index, a);
+    }
+  }
+
+  // Build a lookup: question_id → StructuredQuestionT (needed for FigureRefT shape).
+  // assignFigures only needs `questions` array; FigureRefT doesn't embed the question
+  // object — we just need the id string from the assignment.
+
+  // Separate covered (VLM) vs uncovered (geometric fallback) figures.
+  const vlmCovered: PreAttachFigure[] = [];
+  const vlmCoveredIndices: number[] = [];
+  const geometric: PreAttachFigure[] = [];
+
+  preFigures.forEach((fig, i) => {
+    if (assignmentByIndex.has(i)) {
+      vlmCovered.push(fig);
+      vlmCoveredIndices.push(i);
+    } else {
+      geometric.push(fig);
+    }
+  });
+
+  // VLM-assigned figures → directly produce FigureRefT with high confidence.
+  const vlmRefs: FigureRefT[] = vlmCovered.map((fig, pos) => {
+    const idx = vlmCoveredIndices[pos];
+    // biome-ignore lint/style/noNonNullAssertion: idx guaranteed in map above
+    const assignment = assignmentByIndex.get(idx)!;
+    return {
+      ...fig,
+      attached_to_index: assignment.attached_to_question_id,
+      attach_confidence: assignment.confidence,
+    };
+  });
+
+  // Geometric fallback for uncovered figures (preserves existing behaviour).
+  const geometricRefs: FigureRefT[] =
+    geometric.length > 0 ? assignFigures(geometric, questions) : [];
+
+  return [...vlmRefs, ...geometricRefs];
 }
 
 // ---------- 几何 helpers ----------
