@@ -257,12 +257,18 @@ async function processOneOcrJob(
     //       any figure the VLM did not cover falls back to the geometric heuristic
     //       (no figure is ever dropped — regression safety).
     //     - Tencent fallback path: assignFigures geometric heuristic (unchanged).
-    const figureRefs: FigureRefT[] =
-      allPreFigures.length > 0
-        ? usedVlmPath
-          ? assignFiguresFromVlm(allPreFigures, structure.figureAssignments, structure.questions)
-          : assignFigures(allPreFigures, structure.questions)
-        : [];
+    let figureRefs: FigureRefT[];
+    if (allPreFigures.length === 0) {
+      figureRefs = [];
+    } else if (usedVlmPath) {
+      figureRefs = assignFiguresFromVlm(
+        allPreFigures,
+        structure.figureAssignments,
+        structure.questions,
+      );
+    } else {
+      figureRefs = assignFigures(allPreFigures, structure.questions);
+    }
 
     // 12. applyExtractionResult —— one question_block per top-level structured
     //     question. A cross-page stem is ONE block spanning its pages.

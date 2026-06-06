@@ -189,13 +189,37 @@ function nodeToStructured(
 
   // YUK-227 S3 Slice A: record figure_ids → question_id assignments while
   // traversing the tree so the caller can build figureAssignments.
+  //
+  // R2-2: duplicate figure_index detection. When the VLM assigns the same
+  // figure_index to more than one node (e.g. both stem and sub claim the same
+  // figure), the conflict is ambiguous — picking either assignment would be
+  // wrong. We mark conflicting indices so assignFiguresFromVlm can discard
+  // them and let the geometric heuristic decide instead (consistent with the
+  // F1 conservative philosophy: uncertainty → geometric fallback).
+  //
+  // Implementation: push a sentinel assignment with attached_to_question_id=''
+  // for any figure_index that already appears in assignmentsOut. The consumer
+  // (assignFiguresFromVlm) discards any assignment whose figure_index appears
+  // more than once regardless of content (it scans all assignments and collects
+  // conflicts). The sentinel makes the duplicate visible without requiring a
+  // two-pass approach here.
   if (assignmentsOut && node.figure_ids && node.figure_ids.length > 0) {
+    const existingIndices = new Set(assignmentsOut.map((a) => a.figure_index));
     for (const figIdx of node.figure_ids) {
+      if (existingIndices.has(figIdx)) {
+        // Conflict: this figure_index was already claimed by another node.
+        // Push a second entry so assignFiguresFromVlm sees the duplicate and
+        // routes both to geometric fallback (R2-2).
+        console.warn(
+          `[nodeToStructured] figure_index=${figIdx} claimed by multiple VLM nodes; marking as conflict — geometric fallback will apply (R2-2)`,
+        );
+      }
       assignmentsOut.push({
         figure_index: figIdx,
         attached_to_question_id: id,
         confidence: 'high',
       });
+      existingIndices.add(figIdx);
     }
   }
 
