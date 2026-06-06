@@ -53,6 +53,9 @@ import {
 } from '@/server/ai/tools/allowlists';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
 import { writeEvent } from '@/server/events/queries';
+// YUK-227 S3 Slice C — image-type sources become proposals (NOT auto-extracted, 守
+// ADR-0002). writeAiProposal is the实证 writer (writeProposal does not exist).
+import { writeAiProposal } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
 import { kindsMatch } from '@/subjects/question-kind';
@@ -112,12 +115,21 @@ type BuildTavilyMcpServerFn = () => McpHttpServerConfig | null;
 // Chained source_verify enqueue. Mirrors quiz_gen's EnqueueQuizVerifyFn seam so DB
 // tests inject a vi.fn().
 export type EnqueueSourceVerifyFn = (questionIds: string[]) => Promise<void>;
+// YUK-227 S3 Slice C — image_candidate proposal writer seam. Defaults to
+// writeAiProposal; DB tests inject a vi.fn() to assert the propose path runs WITHOUT
+// any question INSERT / VLM call. Loose shape (Pick of writeAiProposal's inputs the
+// handler supplies) so the seam stays narrow.
+export type WriteImageCandidateProposalFn = (
+  db: Db,
+  input: Parameters<typeof writeAiProposal>[1],
+) => Promise<string>;
 
 interface DepsOverride {
   runAgentTaskFn?: RunAgentTaskFn;
   buildMcpServerFn?: BuildMcpServerFn;
   buildTavilyMcpServerFn?: BuildTavilyMcpServerFn;
   enqueueSourceVerify?: EnqueueSourceVerifyFn;
+  writeImageCandidateProposalFn?: WriteImageCandidateProposalFn;
 }
 
 async function defaultEnqueueSourceVerify(questionIds: string[]): Promise<void> {
@@ -190,6 +202,7 @@ export interface RunSourcingParams {
   buildMcpServerFn?: BuildMcpServerFn;
   buildTavilyMcpServerFn?: BuildTavilyMcpServerFn;
   enqueueSourceVerify?: EnqueueSourceVerifyFn;
+  writeImageCandidateProposalFn?: WriteImageCandidateProposalFn;
 }
 
 export type RunSourcingStatus = 'ready' | 'skipped:ref_not_found';
@@ -197,6 +210,9 @@ export type RunSourcingStatus = 'ready' | 'skipped:ref_not_found';
 export interface RunSourcingResult {
   status: RunSourcingStatus;
   question_ids?: string[];
+  // YUK-227 S3 Slice C — proposal event ids written for image-type sources (one per
+  // image_candidate the agent reported). Empty/absent when the run found none.
+  image_candidate_proposal_ids?: string[];
 }
 
 interface ResolvedTrigger {
@@ -292,6 +308,7 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
   const buildMcpServer = params.buildMcpServerFn ?? buildMcpServerFromRegistry;
   const buildTavily = params.buildTavilyMcpServerFn ?? buildTavilyMcpServer;
   const enqueueSourceVerify = params.enqueueSourceVerify ?? defaultEnqueueSourceVerify;
+  const writeImageCandidateProposal = params.writeImageCandidateProposalFn ?? writeAiProposal;
 
   const resolved = await resolveTrigger(db, trigger, refId, params.knowledgeId);
   if (!resolved) return { status: 'skipped:ref_not_found' };
@@ -463,6 +480,50 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
       }
     });
 
+    // YUK-227 S3 Slice C — image-type sources do NOT enter the question INSERT path.
+    // Each is written as an `image_candidate` proposal; the page's image is downloaded
+    // + VLM-extracted ONLY on explicit user accept (守 ADR-0002 — there is NO auto VLM
+    // 抽图 path here). Best-effort, OUTSIDE the question tx (a proposal write failure
+    // must not roll back the already-committed text drafts; the proposals are
+    // re-derivable by re-running the cheap text-only path or re-sourcing).
+    const imageCandidateProposalIds: string[] = [];
+    for (const candidate of parsed.image_candidates ?? []) {
+      try {
+        const proposalId = await writeImageCandidateProposal(db, {
+          actor_ref: 'sourcing',
+          // 'partial' = pending in the inbox (mirrors the other producers); accept
+          // flips it via the chained rate event.
+          outcome: 'partial',
+          payload: {
+            kind: 'image_candidate',
+            // subject_id is null at propose time — the source_asset does not exist
+            // until accept downloads + persists the image.
+            target: { subject_kind: 'source_asset', subject_id: null },
+            reason_md: candidate.summary_md,
+            evidence_refs: [],
+            proposed_change: {
+              source_url: candidate.source_url,
+              source_title: candidate.source_title,
+              summary_md: candidate.summary_md,
+            },
+            // Dedup key so re-sourcing the same image page does not stack duplicate
+            // pending proposals (mirrors the cooldown_key precedent on other kinds).
+            cooldown_key: `image_candidate:${candidate.source_url}`,
+          },
+          task_run_id: result.task_run_id ?? null,
+          cost_usd: undefined,
+          created_at: now,
+        });
+        imageCandidateProposalIds.push(proposalId);
+      } catch (proposalErr) {
+        console.error(
+          '[sourcing] image_candidate proposal write failed for',
+          candidate.source_url,
+          proposalErr,
+        );
+      }
+    }
+
     await writeEvent(db, {
       id: createId(),
       session_id: null,
@@ -477,6 +538,9 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
         ref_id: resolved.refId,
         question_ids: questionIds,
         count: questionIds.length,
+        // YUK-227 S3 Slice C — audit the image-type sources surfaced as proposals.
+        image_candidate_proposal_ids: imageCandidateProposalIds,
+        image_candidate_count: imageCandidateProposalIds.length,
         query_plan: parsed.query_plan,
         tool_context_task_run_id: toolContextTaskRunId,
       },
@@ -501,7 +565,11 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
       );
     }
 
-    return { status: 'ready', question_ids: questionIds };
+    return {
+      status: 'ready',
+      question_ids: questionIds,
+      image_candidate_proposal_ids: imageCandidateProposalIds,
+    };
   } catch (err) {
     try {
       await writeEvent(db, {
@@ -554,6 +622,7 @@ export function buildSourcingHandler(
         buildMcpServerFn: deps.buildMcpServerFn,
         buildTavilyMcpServerFn: deps.buildTavilyMcpServerFn,
         enqueueSourceVerify: deps.enqueueSourceVerify,
+        writeImageCandidateProposalFn: deps.writeImageCandidateProposalFn,
       });
       console.log(`[sourcing] ${data.trigger}:${data.ref_id} -> ${result.status}`);
     }
