@@ -219,36 +219,28 @@ artifact_type 只能是 note_atomic / note_long / note_hub；这是同一个 Not
 - note_long：自由 block tree，可用 heading / paragraph / bulletList / calloutBlock / crossLinkBlock，综合 knowledge_nodes，不强制 semantic_kind。
 - note_hub：短 outline + 主题路线，可加入 crossLinkBlock 串起 atomic / long；不要假装是单知识点 atomic。
 
-note_atomic semantic_kind 内容模板（per-subject）：
+per-subject semantic_kind 内容模板（definition/mechanism/example/pitfall/check 五维，领域规范见 note skill）：
 
 ${noteTemplateTable(profile)}
 
-要点：
 - block content 用 paragraph / list 等 PM JSON 节点，不嵌 HTML / 不带代码块包裹
 - ${profile.promptFragments.noteExamplePolicy}
 - ${profile.grounding.uncertaintyPolicy}
-- 禁止：套话「希望对你有帮助」、营销话语、emoji / 颜文字`;
+- 禁止：套话、营销话语、emoji / 颜文字`;
 }
 
-// YUK-228 (S3 Slice B) — 同 buildNoteGeneratePrompt 职责划分注记：SKILL.md 提供
-// 领域规范，本 prompt 只留 I/O 契约 + profile 注入 + 降级安全（无 skill 时仍可判）。
+// YUK-228 (S3 Slice B) — Note skill 职责划分：SKILL.md 承载质检领域规范；
+// 本 prompt 留 I/O 契约 + profile 注入。详细判据见加载的 note skill；
+// skill 未加载时按下方 fallback 四维标准独立判。
 function buildNoteVerifyPrompt(profile: SubjectProfile): string {
   return `你是${profile.displayName}学习笔记质检员。输入 { artifact_id, artifact_type, title, knowledge_node, body_blocks, block_summaries, sections }，其中 body_blocks 是 NoteGenerateTask 产出的 TipTap / ProseMirror JSON；sections 仅为旧兼容摘要。
 科目上下文：${profile.displayName}。${profile.languageStyle}
 证据要求：${profile.grounding.requirement}
 输出严格 JSON（不带 markdown 代码块包裹），shape 名称为 NoteVerificationResult：
 {"verdict":"pass"|"needs_review","summary_md":"...","issues":[{"block_id":"b1"|null,"severity":"info"|"warn"|"error","category":"factuality"|"coverage"|"clarity"|"subject_fit"|"format"|"safety","message":"...","suggested_fix_md":"..."}],"confidence":0.0-1.0}
-检查标准：
-- factuality：内容是否自洽，是否明显编造；${profile.grounding.uncertaintyPolicy}
-- coverage：note_atomic 必须覆盖 definition/mechanism/example/pitfall/check；note_hub 关注路线和 cross-link；note_long 关注综合范围是否完整
-- clarity：学习者是否能按 block_summaries 读懂，不要空泛套话
-- subject_fit：是否符合 ${profile.displayName} 的表达、例子和检查题风格
-- format：用 block_id 引用 body_blocks 内 attrs.id；找不到具体 block 时用 null
-判定：
-- 没有 error 且 warn 不超过 2 条：verdict="pass"
-- 任一 error，或 warn 超过 2 条，或 confidence < 0.6：verdict="needs_review"
-- issues 最多 10 条；message 必须可执行；suggested_fix_md 只在有明确改法时填写
-禁止：重写整篇 note、输出 markdown 代码块、输出 JSON 之外的文字。`;
+四维检查（fallback；详细规范见 note skill）：factuality（自洽不编造，${profile.grounding.uncertaintyPolicy}）/ coverage（atomic 须覆盖 definition/mechanism/example/pitfall/check 五种；long 综合完整；hub 路线+cross-link）/ clarity（按 block_summaries 可读，不空泛）/ subject_fit（符合 ${profile.displayName} 表达与例子风格）。format：block_id 引用 attrs.id；找不到用 null。
+判定（fallback）：无 error 且 warn≤2 → pass；任一 error 或 warn>2 或 confidence<0.6 → needs_review。issues≤10 条，message 可执行，suggested_fix_md 有明确改法时填。
+禁止：重写整篇 note、markdown 代码块、JSON 之外的文字。`;
 }
 
 // YUK-228 (S3 Slice B) — 同 buildNoteGeneratePrompt 职责划分注记：SKILL.md 提供
