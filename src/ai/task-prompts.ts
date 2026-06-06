@@ -201,6 +201,13 @@ StructureNode（递归，**不要**输出 id，运行时会补）：
 - 禁止：输出 JSON 之外的文字、把跨页同一大题拆成多个顶层节点、把腾讯文字 hint 当成不可改的结构。`;
 }
 
+// YUK-228 (S3 Slice B) — Note 族 skill 迁移后的 prompt 职责划分：
+// SKILL.md（src/subjects/<id>/skills/note/SKILL.md）承载「什么是合格 note」的领域知识
+// （semantic_kind 定义、质量规范、质检判据）。
+// 本 prompt 只保留：
+//   (a) task-specific I/O 契约（输入字段 / 输出 JSON shape / attrs 约束）
+//   (b) profile.noteTemplate 注入（per-subject 数据，不进 SKILL.md）
+//   (c) 降级安全：skill 未加载时 prompt 仍可独立产出合格 note。
 function buildNoteGeneratePrompt(profile: SubjectProfile): string {
   return `你是${noteWriterRole(profile)}。输入 { artifact_id, artifact_type, title, atomic_title, one_line_intent, knowledge_node: { id, name, domain }, knowledge_nodes: [...], parent_hub: { title, summary_md }, related_knowledge_ids: [...] }。
 artifact_type 只能是 note_atomic / note_long / note_hub；这是同一个 NoteGenerateTask 内的 type switch。
@@ -212,7 +219,7 @@ artifact_type 只能是 note_atomic / note_long / note_hub；这是同一个 Not
 - note_long：自由 block tree，可用 heading / paragraph / bulletList / calloutBlock / crossLinkBlock，综合 knowledge_nodes，不强制 semantic_kind。
 - note_hub：短 outline + 主题路线，可加入 crossLinkBlock 串起 atomic / long；不要假装是单知识点 atomic。
 
-note_atomic 的 semantic_kind 内容指南：
+note_atomic semantic_kind 内容模板（per-subject）：
 
 ${noteTemplateTable(profile)}
 
@@ -223,6 +230,8 @@ ${noteTemplateTable(profile)}
 - 禁止：套话「希望对你有帮助」、营销话语、emoji / 颜文字`;
 }
 
+// YUK-228 (S3 Slice B) — 同 buildNoteGeneratePrompt 职责划分注记：SKILL.md 提供
+// 领域规范，本 prompt 只留 I/O 契约 + profile 注入 + 降级安全（无 skill 时仍可判）。
 function buildNoteVerifyPrompt(profile: SubjectProfile): string {
   return `你是${profile.displayName}学习笔记质检员。输入 { artifact_id, artifact_type, title, knowledge_node, body_blocks, block_summaries, sections }，其中 body_blocks 是 NoteGenerateTask 产出的 TipTap / ProseMirror JSON；sections 仅为旧兼容摘要。
 科目上下文：${profile.displayName}。${profile.languageStyle}
@@ -242,6 +251,8 @@ function buildNoteVerifyPrompt(profile: SubjectProfile): string {
 禁止：重写整篇 note、输出 markdown 代码块、输出 JSON 之外的文字。`;
 }
 
+// YUK-228 (S3 Slice B) — 同 buildNoteGeneratePrompt 职责划分注记：SKILL.md 提供
+// 领域规范，本 prompt 只留 I/O 契约（NotePatchOp union）+ profile 注入 + 降级安全。
 function buildNoteRefinePrompt(profile: SubjectProfile): string {
   // YUK-127 / T-88 P4-A — Living Note refine prompt.
   //
