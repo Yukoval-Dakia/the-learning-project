@@ -49,10 +49,18 @@ export const WebSourcedProvenance = z.object({
   // the network — mirroring the quiz_gen source_pack precedent where the agent's
   // self-reported snippets feed a deterministic maxNgramOverlap inside quiz_verify
   // (quiz_verify.ts:265-268). A row that fabricated/misattributed its URL carries an
-  // extract that does NOT overlap the prompt, so the gate can reject it. Optional:
-  // absent → source_consistency keeps its prior structural-only behaviour (no signal,
-  // conservative). See docs/...question-source-expansion-design.md §2.1 / §4.
-  extract: z.string().optional(),
+  // extract that does NOT overlap the prompt, so the gate can reject it.
+  //
+  // REQUIRED (F2, PR #313): a sourced question whose declared URL cannot be anchored
+  // by ANY persisted extract can be promoted to tier 2 with ZERO deterministic
+  // grounding — that is precisely the fabricated-URL escape hatch. So the web_sourced
+  // contract now demands a non-empty extract; source_verify's source_consistency
+  // fails any web_sourced row missing it. NOTE: this REQUIRED bar applies to the
+  // web_sourced provenance block ONLY. There is no other producer/consumer of
+  // WebSourcedProvenance in the repo (sourcing.ts writes it, source_verify.ts +
+  // deriveSourceTier read it) — no legacy non-sourced path constructs this shape, so
+  // tightening it here has no cross-contract fallout.
+  extract: z.string().min(1),
 });
 export type WebSourcedProvenanceT = z.infer<typeof WebSourcedProvenance>;
 
