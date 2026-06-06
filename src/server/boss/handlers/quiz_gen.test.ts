@@ -14,7 +14,8 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { artifact, event, knowledge, learning_item, question } from '@/db/schema';
+import { deriveSourceTier } from '@/core/schema/provenance';
+import { artifact, event, knowledge, learning_item, question, source_document } from '@/db/schema';
 import { TAVILY_MCP_ALLOWED_TOOLS, TAVILY_MCP_SERVER_NAME } from '@/server/ai/mcp/tavily';
 import { DOMAIN_TOOL_MCP_SERVER_NAME, toMcpAllowedToolName } from '@/server/ai/tools/allowlists';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -136,6 +137,50 @@ const ZERO_QUESTIONS_OUTPUT = JSON.stringify({
   source_pack: { query_plan: [], searched_at: '2026-06-02T10:00:00.000Z', tool: 'tavily' },
   generation_method: 'closed_book',
   self_copy_safety: { verdict: 'unknown', checked_by: 'agent_self' },
+});
+
+// YUK-224 (slice 3, tier 3) — material_grounded run: the agent self-reports a REAL
+// fetched passage in `material`; the handler persists it to source_document and
+// back-fills material_source_document_id onto every question's metadata.quiz_gen.
+const MATERIAL_PASSAGE = '汉朝由刘邦建立于公元前 202 年，定都长安，国号「汉」。';
+const MATERIAL_OUTPUT = JSON.stringify({
+  questions: [
+    {
+      kind: 'reading',
+      prompt_md: '阅读下面短文，回答：汉朝建立于哪一年？',
+      reference_md: '公元前 202 年。',
+      choices_md: null,
+      judge_kind_override: 'semantic',
+      rubric_json: {
+        criteria: [{ name: 'correctness', weight: 1, descriptor: '答对建立年份' }],
+        required_points: ['公元前 202 年'],
+      },
+      difficulty: 2,
+      knowledge_ids: ['k1'],
+      source_refs: [
+        {
+          url: 'https://example.edu/han/founding',
+          title: '汉朝的建立',
+          snippet: '汉朝建立于公元前 202 年。',
+          used_for: 'fact',
+          extracted: true,
+        },
+      ],
+    },
+  ],
+  source_pack: {
+    query_plan: ['汉朝 建立 年份 原文'],
+    searched_at: '2026-06-06T10:00:00.000Z',
+    tool: 'tavily',
+  },
+  generation_method: 'material_grounded',
+  self_copy_safety: { verdict: 'original', max_overlap: 0.1, checked_by: 'agent_self' },
+  material: {
+    body_md: MATERIAL_PASSAGE,
+    url: 'https://example.edu/han/founding',
+    title: '汉朝的建立',
+    fetched_at: '2026-06-06T10:00:00.000Z',
+  },
 });
 
 async function seedKnowledge(opts: { id: string; domain?: string | null }) {
@@ -309,6 +354,110 @@ describe('runQuizGen', () => {
     // verdict + max_overlap are still the agent's self-assessment.
     expect(copySafety?.verdict).toBe('original');
     expect(copySafety?.max_overlap).toBe(0.05);
+  });
+
+  it('material_grounded: persists the passage to source_document + back-fills material_source_document_id (tier 3)', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const runAgentTaskFn = agentMock(MATERIAL_OUTPUT, 'tr_mat');
+    const enqueueQuizVerify = vi.fn(async () => {});
+
+    const result = await runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      count: 1,
+      runAgentTaskFn,
+      enqueueQuizVerify,
+      buildTavilyMcpServerFn: vi.fn(() => FAKE_TAVILY_CONFIG),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+    });
+
+    expect(result.status).toBe('ready');
+    expect(result.question_ids).toHaveLength(1);
+
+    // The real fetched passage is persisted as a source_document with URL provenance.
+    const docs = await testDb().select().from(source_document);
+    expect(docs).toHaveLength(1);
+    const doc = docs[0];
+    expect(doc.body_md).toBe(MATERIAL_PASSAGE);
+    expect(doc.title).toBe('汉朝的建立');
+    expect(doc.provenance).toMatchObject({
+      source_kind: 'quiz_gen_material',
+      url: 'https://example.edu/han/founding',
+      fetched_at: '2026-06-06T10:00:00.000Z',
+    });
+
+    const rows = await testDb().select().from(question).where(eq(question.source, 'quiz_gen'));
+    expect(rows).toHaveLength(1);
+    const q = rows[0];
+    const meta = (q.metadata as Record<string, unknown> | null)?.quiz_gen as
+      | Record<string, unknown>
+      | undefined;
+    expect(meta?.generation_method).toBe('material_grounded');
+    // The persisted doc id is back-filled so deriveSourceTier lands tier 3.
+    expect(meta?.material_source_document_id).toBe(doc.id);
+
+    // End-to-end shape: deriveSourceTier on the persisted row returns tier 3 (material).
+    const derived = deriveSourceTier({ source: q.source, metadata: q.metadata as never });
+    expect(derived).toEqual({ tier: 3, name: 'material' });
+
+    // The artifact records the material_grounded method too.
+    const quizArtifacts = await testDb()
+      .select()
+      .from(artifact)
+      .where(eq(artifact.id, result.tool_quiz_artifact_id ?? ''));
+    expect(quizArtifacts[0].attrs).toMatchObject({ generation_method: 'material_grounded' });
+
+    expect(enqueueQuizVerify).toHaveBeenCalledWith(result.question_ids);
+  });
+
+  it('material_grounded with multiple questions shares ONE source_document id', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const twoQuestionMaterial = JSON.parse(MATERIAL_OUTPUT) as {
+      questions: unknown[];
+      [k: string]: unknown;
+    };
+    twoQuestionMaterial.questions = [
+      twoQuestionMaterial.questions[0],
+      {
+        ...(twoQuestionMaterial.questions[0] as Record<string, unknown>),
+        prompt_md: '阅读下面短文，回答：汉朝定都何处？',
+        reference_md: '长安。',
+        rubric_json: {
+          criteria: [{ name: 'correctness', weight: 1, descriptor: '答对都城' }],
+          required_points: ['长安'],
+        },
+      },
+    ];
+    const runAgentTaskFn = agentMock(JSON.stringify(twoQuestionMaterial), 'tr_mat2');
+
+    const result = await runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      count: 2,
+      runAgentTaskFn,
+      enqueueQuizVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: vi.fn(() => null),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+    });
+
+    expect(result.question_ids).toHaveLength(2);
+    const docs = await testDb().select().from(source_document);
+    // ONE passage → ONE source_document, shared across both questions.
+    expect(docs).toHaveLength(1);
+    const rows = await testDb().select().from(question).where(eq(question.source, 'quiz_gen'));
+    const docIds = new Set(
+      rows.map(
+        (r) =>
+          (
+            (r.metadata as Record<string, unknown> | null)?.quiz_gen as
+              | Record<string, unknown>
+              | undefined
+          )?.material_source_document_id,
+      ),
+    );
+    expect(docIds).toEqual(new Set([docs[0].id]));
   });
 
   it('mounts Tavily + domain MCP and folds Tavily tools into allowedTools when a config is present', async () => {
