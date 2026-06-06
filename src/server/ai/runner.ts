@@ -101,14 +101,21 @@ export interface RunTaskCtx {
    * YUK-225 (S2 slice 4) — Agent Skill whitelist threaded to `Options.skills`.
    * Names match a SKILL.md `name` / directory under src/subjects/<id>/skills/
    * (e.g. ['quiz-gen-translation']). When set, ONLY these skills are loaded into
-   * the model's listing (SDK context filter); when omitted, no skills option is
-   * passed (current behaviour — the降级链 falls back to promptFragments).
+   * the model's listing (SDK context filter). When omitted/empty, the runner passes
+   * `skills: []` — an EXPLICIT disable — so no quiz-gen skill leaks into tasks that
+   * never opt in (降级链 falls back to promptFragments).
+   *
+   * Why explicit-disable rather than omit: per sdk.d.ts:1699-1721 / 2768-2771,
+   * OMITTING `Options.skills` makes the CLI load EVERY discovered skill. Because the
+   * runner pre-populates CONFIG_DIR/skills with all subject skills, omitting would
+   * expose every quiz-gen skill to Attribution / NoteGenerate / etc. — a zero-impact
+   * regression. `[]` keeps the default behaviour identical to pre-slice-4.
    *
    * The SoT lives in src/subjects/<id>/skills/; the runner populates the isolated
    * CLAUDE_CONFIG_DIR/skills once at process start (getIsolatedClaudeConfigDir),
    * and this array keys WHICH of the populated skills the model actually sees. Per
-   * the YUK-217 spike, `settingSources` must stay OMITTED — passing `[]` disables
-   * the CONFIG_DIR/skills auto-load and the populated skills become invisible.
+   * the YUK-217 spike, `settingSources` (a SEPARATE field) must stay OMITTED —
+   * passing settingSources:[] disables the CONFIG_DIR/skills auto-load.
    */
   skills?: string[];
 }
@@ -235,13 +242,31 @@ function inputHash(input: unknown): string {
 // src/subjects/<id>/skills/; this just mirrors them into the isolated dir.
 let isolatedConfigDir: string | undefined;
 
+// Resolve the on-disk src/subjects root across deploy layouts. In dev/test cwd is the
+// repo root, so <cwd>/src/subjects exists. In the Next standalone production image the
+// worker (`node worker.cjs`) / app (`node server.js`) run with cwd=/app, and the
+// Dockerfile copies the skills subtrees to /app/src/subjects (PR #319 F2) — which the
+// first candidate also covers. The extra candidate (__dirname-relative) is a belt-and-
+// braces fallback should the process be launched from a non-/app cwd. First existing
+// candidate wins; none existing → undefined → no skills (degrade to promptFragments).
+function resolveSubjectsRoot(): string | undefined {
+  const candidates = [
+    join(process.cwd(), 'src', 'subjects'),
+    // standalone server.js/worker.cjs live at /app; src/subjects is a sibling.
+    join('/app', 'src', 'subjects'),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return undefined;
+}
+
 // Mirror every src/subjects/<id>/skills/<skill>/ into <isolatedDir>/skills/.
 // Best-effort + idempotent: a missing subjects tree (e.g. an unusual cwd) just
 // yields no skills, and the runner degrades to promptFragments — never throws.
 function populateIsolatedSkills(isolatedDir: string): void {
-  // cwd is the repo root for the server (buildQueryOptions sets cwd: process.cwd()).
-  const subjectsRoot = join(process.cwd(), 'src', 'subjects');
-  if (!existsSync(subjectsRoot)) return;
+  const subjectsRoot = resolveSubjectsRoot();
+  if (!subjectsRoot) return;
   const skillsDest = join(isolatedDir, 'skills');
   let subjectIds: string[];
   try {
@@ -331,12 +356,28 @@ function buildQueryOptions(
     allowDangerouslySkipPermissions: true,
     persistSession: false,
     cwd: process.cwd(),
-    // YUK-225 (S2 slice 4) — Agent Skill whitelist. Only pass the option when a
-    // handler set ctx.skills (降级链：omitted → SDK loads nothing extra → current
-    // promptFragments behaviour). settingSources stays OMITTED on purpose — the
-    // YUK-217 spike proved `[]` disables CONFIG_DIR/skills auto-load (双 NO),
-    // so the populated skills only stay visible when settingSources is unset.
-    ...(ctx.skills && ctx.skills.length > 0 ? { skills: ctx.skills } : {}),
+    // YUK-225 (S2 slice 4) — Agent Skill whitelist.
+    //
+    // SDK 语义实证（node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts）:
+    //   - Options.skills:1699-1721 — "omitted (default): no SDK auto-configuration.
+    //     The CLI's own defaults still apply, so this is **not** skills off."
+    //   - Query-level skills:2768-2771 — "Omit to load every discovered skill."
+    //   - `string[]` — "enable only the listed skills … unlisted skills are hidden
+    //     from the model's listing and rejected by the Skill tool" (context filter).
+    // 即：OMITTED ⇒ CLI 默认加载「全部已发现 skills」；`[]` ⇒ 一个都不启用（显式禁用）。
+    //
+    // Since getIsolatedClaudeConfigDir() pre-populates the isolated CONFIG_DIR/skills
+    // with ALL subject quiz-gen skills, OMITTING the option would leak every quiz-gen
+    // skill into the listing of tasks that never set ctx.skills (Attribution /
+    // NoteGenerate / …) — a zero-behaviour-change red-line break. So the DEFAULT must
+    // be explicit-disable: pass `skills: ctx.skills ?? []`. Only a handler that
+    // explicitly whitelists (ctx.skills = ['quiz-gen-<kind>']) sees those skills.
+    //
+    // settingSources stays OMITTED on purpose — the YUK-217 spike proved
+    // settingSources:[] disables the CONFIG_DIR/skills auto-load (CLEAN-PRESEED 双 NO).
+    // That is a SEPARATE field from Options.skills; this change does not touch it (the
+    // spike's settingSources=OMITTED conclusion is unchanged).
+    skills: ctx.skills ?? [],
   };
 }
 
