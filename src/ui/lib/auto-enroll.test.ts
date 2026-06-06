@@ -142,3 +142,43 @@ describe('seedBlockForm', () => {
     expect(seed.cause_notes).toBe('x');
   });
 });
+
+// slice 3 — VisionTab prefill. The seed `useEffect` is a one-line `seedBlockForm`
+// call, so the prefill contract is verified here (the effect cannot tick under
+// renderToString). These pin the §4 field mapping that the VisionTab seed relies
+// on, most critically `cause_notes ← cause.analysis_md` (NOT a `user_notes` field,
+// which does not exist on CauseSchema and would not typecheck off the typed cause).
+describe('seedBlockForm — VisionTab prefill field mapping (slice 3)', () => {
+  it('maps cause_notes from cause.analysis_md (the judge cause text), not user_notes', () => {
+    const seed = seedBlockForm({
+      auto_enroll_observation: obs({
+        suggested_knowledge_ids: ['k1'],
+        mistake_draft: {
+          wrong_answer: 'failure',
+          difficulty: 4,
+          cause: { primary_category: 'concept', analysis_md: '把公式记反了' },
+        },
+      }),
+    });
+    // cause_notes is sourced from analysis_md verbatim.
+    expect(seed.cause_notes).toBe('把公式记反了');
+    // and the sibling fields are seeded together (knowledge_ids + cause_primary)
+    // so the VisionTab self-heal effect admits the seeded cause.
+    expect(seed.knowledge_ids).toEqual(['k1']);
+    expect(seed.cause_primary).toBe('concept');
+    expect(seed.difficulty).toBe(4);
+  });
+
+  it('leaves question_kind at the prefill default (not derived from the observation)', () => {
+    const seed = seedBlockForm({
+      auto_enroll_observation: obs({
+        mistake_draft: {
+          wrong_answer: 'partial',
+          difficulty: 2,
+          cause: { primary_category: 'careless', analysis_md: '审题' },
+        },
+      }),
+    });
+    expect(seed.question_kind).toBe('short_answer');
+  });
+});
