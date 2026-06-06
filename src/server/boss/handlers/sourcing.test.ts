@@ -426,6 +426,144 @@ describe('runSourcing', () => {
     ).rejects.toThrow();
   });
 
+  // YUK-226 S2-5b F2 (PR #318 round-4) — a manual trigger with a free-form ref_id still
+  // attributes produced questions to the explicit knowledge anchor forwarded by the
+  // 找题次序 (knowledge_id payload). resolveTrigger consumes it preferentially.
+  it('attributes a manual free-form trigger to the explicit knowledgeId anchor', async () => {
+    const db = testDb();
+    await seedKnowledge({ id: 'k1' });
+    const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_src_anchor');
+
+    const result = await runSourcing({
+      db,
+      trigger: 'manual',
+      refId: 'free form manual ref',
+      knowledgeId: 'k1',
+      runAgentTaskFn,
+      enqueueSourceVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: vi.fn(() => null),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+    });
+
+    expect(result.status).toBe('ready');
+    const qid = result.question_ids?.[0] as string;
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    // Attribution keyed to the anchor node, NOT the free-form ref.
+    expect(rows[0].knowledge_ids).toEqual(['k1']);
+    // The trigger pointer (source_ref) is the fetched URL; the anchor only drives
+    // knowledge attribution, and the knowledge_context the agent saw came from k1.
+    const ctx = runAgentTaskFn.mock.calls[0][1] as {
+      knowledge_context?: Array<{ id: string }>;
+    };
+    expect(ctx.knowledge_context?.[0]?.id).toBe('k1');
+  });
+
+  it('ignores an archived knowledgeId anchor and falls through to the trigger resolution', async () => {
+    const db = testDb();
+    await seedKnowledge({ id: 'k1' });
+    const now = new Date();
+    await db.insert(knowledge).values({
+      id: 'k_archived_anchor',
+      name: '废弃锚',
+      domain: 'wenyan',
+      parent_id: null,
+      merged_from: [],
+      proposed_by_ai: false,
+      approval_status: 'approved',
+      archived_at: now,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    // A knowledge trigger on a LIVE node (k1) with an ARCHIVED anchor → anchor ignored,
+    // per-trigger resolution (k1) wins, VALID_OUTPUT attributes to k1.
+    const result = await runSourcing({
+      db,
+      trigger: 'knowledge',
+      refId: 'k1',
+      knowledgeId: 'k_archived_anchor',
+      runAgentTaskFn: agentMock(VALID_OUTPUT, 'tr_src_arch_anchor'),
+      enqueueSourceVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: vi.fn(() => null),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+    });
+
+    expect(result.status).toBe('ready');
+    const qid = result.question_ids?.[0] as string;
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    expect(rows[0].knowledge_ids).toEqual(['k1']);
+  });
+
+  // YUK-226 S2-5b F4 (PR #318 round-4) — the 题型 hint the次序 selected this line for is
+  // forwarded into the SourcingTask input's existing `kinds?` field (as a one-element list).
+  it('threads kind into the SourcingTask input as kinds', async () => {
+    const db = testDb();
+    await seedKnowledge({ id: 'k1' });
+    const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_src_kind');
+
+    await runSourcing({
+      db,
+      trigger: 'knowledge',
+      refId: 'k1',
+      kind: 'reading',
+      runAgentTaskFn,
+      enqueueSourceVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: vi.fn(() => null),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+    });
+
+    const input = runAgentTaskFn.mock.calls[0][1] as { kinds?: string[] };
+    expect(input.kinds).toEqual(['reading']);
+  });
+
+  it('omits kinds when no kind hint is passed', async () => {
+    const db = testDb();
+    await seedKnowledge({ id: 'k1' });
+    const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_src_nokind');
+
+    await runSourcing({
+      db,
+      trigger: 'knowledge',
+      refId: 'k1',
+      runAgentTaskFn,
+      enqueueSourceVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: vi.fn(() => null),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+    });
+
+    const input = runAgentTaskFn.mock.calls[0][1] as Record<string, unknown>;
+    expect(input).not.toHaveProperty('kinds');
+  });
+
+  it('passes knowledge_id + kind from job data through buildSourcingHandler', async () => {
+    const db = testDb();
+    await seedKnowledge({ id: 'k1' });
+    const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_src_jobthread');
+    const handler = buildSourcingHandler(db, {
+      runAgentTaskFn,
+      enqueueSourceVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: () => null,
+      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+    });
+
+    const jobData = {
+      trigger: 'manual',
+      ref_id: 'free form ref',
+      knowledge_id: 'k1',
+      kind: 'reading',
+    };
+    // biome-ignore lint/suspicious/noExplicitAny: minimal pg-boss Job shape for the handler test.
+    await handler([{ id: 'j1', data: jobData } as any]);
+
+    const input = runAgentTaskFn.mock.calls[0][1] as {
+      kinds?: string[];
+      knowledge_context?: Array<{ id: string }>;
+    };
+    expect(input.kinds).toEqual(['reading']);
+    const rows = await db.select().from(question).where(eq(question.source, 'web_sourced'));
+    expect(rows.every((r) => r.knowledge_ids.includes('k1'))).toBe(true);
+  });
+
   it('writes a failure event and rethrows on unparseable agent output', async () => {
     const db = testDb();
     await seedKnowledge({ id: 'k1' });
