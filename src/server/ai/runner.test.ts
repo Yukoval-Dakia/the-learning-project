@@ -248,21 +248,25 @@ describe('runTask — YUK-217 spike invariants (slice 4 skills wiring)', () => {
     expect('settingSources' in opts).toBe(false);
   });
 
-  // (b) Zero-impact red line: a task with no ctx.skills must produce Options
-  // WITHOUT a `skills` key (current behaviour — 降级链 falls back to
-  // promptFragments). plan §5.2「SPIKE 修正注记」: only pass `skills` when
-  // ctx.skills is non-empty.
-  it('omits skills key when ctx has no skills (zero behaviour change)', async () => {
+  // (b) Zero-impact red line: a task with no ctx.skills must EXPLICITLY DISABLE
+  // skills via `skills: []`, NOT omit the key. Per sdk.d.ts:1699-1721 / 2768-2771,
+  // OMITTING Options.skills makes the CLI load EVERY discovered skill — and the
+  // runner has pre-populated CONFIG_DIR/skills with ALL quiz-gen skills, so omitting
+  // would leak them into Attribution / NoteGenerate (a behaviour change). `[]` is the
+  // SDK context filter's "enable zero skills", preserving pre-slice-4 behaviour.
+  it('passes skills:[] when ctx has no skills (explicit disable = zero behaviour change)', async () => {
     mockSdk.messages = [successResult('ok')];
 
     await runTask('AttributionTask', { test: 'payload' }, { db: testDb(), r2: memR2() });
 
-    const opts = mockSdk.capturedOptions as Record<string, unknown>;
-    expect('skills' in opts).toBe(false);
+    const opts = mockSdk.capturedOptions as { skills?: string[] };
+    expect('skills' in opts).toBe(true);
+    expect(opts.skills).toEqual([]);
   });
 
-  // Also guard the empty-array degrade path: ctx.skills=[] is still "no skills".
-  it('omits skills key when ctx.skills is an empty array', async () => {
+  // Also guard the empty-array degrade path: ctx.skills=[] is still "no skills"
+  // and lands as the same explicit `skills: []` disable.
+  it('passes skills:[] when ctx.skills is an empty array', async () => {
     mockSdk.messages = [successResult('ok')];
 
     await runTask(
@@ -271,8 +275,8 @@ describe('runTask — YUK-217 spike invariants (slice 4 skills wiring)', () => {
       { db: testDb(), r2: memR2(), skills: [] },
     );
 
-    const opts = mockSdk.capturedOptions as Record<string, unknown>;
-    expect('skills' in opts).toBe(false);
+    const opts = mockSdk.capturedOptions as { skills?: string[] };
+    expect(opts.skills).toEqual([]);
   });
 
   // (c) Whitelist passthrough: ctx.skills threads verbatim onto Options.skills.
