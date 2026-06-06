@@ -285,6 +285,12 @@ const ReviewCandidateSchema = z.object({
   provenance: z.string(),
   why_candidate: z.string(),
   alternatives: z.array(z.string()),
+  // YUK-226 S2-5a.1 — source/tier read model passthrough (derived in
+  // get_review_due via deriveSourceTier). Used by the tier-preference ordering
+  // below (authentic tier 1 preferred). Optional for back-compat with callers
+  // that don't yet consume them.
+  source: z.string().optional(),
+  source_tier: z.number().int().min(1).max(4).optional(),
 });
 
 const SelectReviewQuestionCandidatesOutputSchema = z.object({
@@ -315,10 +321,15 @@ async function executeSelectReviewQuestionCandidates(
 
   let neverFailure = 0;
   let overdue = 0;
+  // OF-2 (plan §12) — side table for the within-tier-2 demotion sort below, kept
+  // OUT of the ReviewCandidate output shape (whitelist_match is an internal sort
+  // signal, not part of the candidate contract).
+  const whitelistMatchByQid = new Map<string, boolean | null>();
   const candidates: SelectReviewQuestionCandidatesOutput['candidates'] = due.rows.map((row) => {
     const isFailure = row.reason === 'never_reviewed_failure';
     if (isFailure) neverFailure += 1;
     else overdue += 1;
+    whitelistMatchByQid.set(row.question_id, row.whitelist_match);
     const why = isFailure
       ? `never-reviewed failure${row.latest_mistake?.cause ? ` (cause: ${row.latest_mistake.cause})` : ''}`
       : `overdue review${row.due_at ? ` (due ${row.due_at})` : ''}`;
@@ -333,18 +344,34 @@ async function executeSelectReviewQuestionCandidates(
       provenance: `review_due:${row.reason}`,
       why_candidate: why,
       alternatives: [],
+      // YUK-226 S2-5a.1/5a.3 — source/tier passthrough for tier-preference order.
+      source: row.source,
+      source_tier: row.tier,
     };
   });
 
   // Shaping layer (R6): prioritise failures first when requested (default true).
+  // YUK-226 S2-5a.3 — tier-preference ordering. Within the failure-first grouping,
+  // prefer lower-numbered (higher) source tiers (1 authentic → 4 generated); and
+  // within the same tier demote off-whitelist questions (whitelist_match === false
+  // sorts behind true/null — OF-2, plan §12). Tier affects selection ORDER only,
+  // never WHICH items are due nor WHEN (spec §7-3 invariant).
   const prioritizeFailures = constraints.prioritizeFailures ?? true;
-  if (prioritizeFailures) {
-    candidates.sort((a, b) => {
+  candidates.sort((a, b) => {
+    if (prioritizeFailures) {
       const af = a.provenance.endsWith('never_reviewed_failure') ? 0 : 1;
       const bf = b.provenance.endsWith('never_reviewed_failure') ? 0 : 1;
-      return af - bf;
-    });
-  }
+      if (af !== bf) return af - bf;
+    }
+    const at = a.source_tier ?? 4;
+    const bt = b.source_tier ?? 4;
+    if (at !== bt) return at - bt;
+    // OF-2: within the same tier, off-whitelist (false) sorts after on-whitelist
+    // / unknown (true | null). Only false is demoted.
+    const ad = whitelistMatchByQid.get(a.question_id) === false ? 1 : 0;
+    const bd = whitelistMatchByQid.get(b.question_id) === false ? 1 : 0;
+    return ad - bd;
+  });
 
   return {
     candidates,
