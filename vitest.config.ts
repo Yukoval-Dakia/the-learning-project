@@ -17,7 +17,9 @@ export default defineConfig({
     testTimeout: 30_000,
     hookTimeout: 60_000, // container startup
     pool: 'forks',
-    poolOptions: { forks: { singleFork: true } }, // share container across files
+    // vitest 4: poolOptions.forks.singleFork → top-level maxWorkers. maxWorkers: 1
+    // shares the container across files (legacy single-config; pnpm test:legacy).
+    maxWorkers: 1,
   },
   resolve: {
     alias: { '@': path.resolve(__dirname, 'src') },

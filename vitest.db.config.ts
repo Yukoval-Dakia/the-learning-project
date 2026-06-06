@@ -24,7 +24,11 @@ export default defineConfig({
     testTimeout: 30_000,
     hookTimeout: 60_000,
     pool: 'forks',
-    poolOptions: { forks: { singleFork: true } },
+    // vitest 4 flattened poolOptions.forks.singleFork → top-level maxWorkers.
+    // maxWorkers: 1 keeps a single fork so the shared Postgres testcontainer
+    // (started once in tests/global-setup.ts) is reused across files instead of
+    // each file spinning its own DB. (vitest 4 migration: pool config.)
+    maxWorkers: 1,
   },
   resolve: resolveConfig,
 });
