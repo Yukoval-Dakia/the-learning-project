@@ -69,6 +69,9 @@ export interface QuizGenJobData {
   // YUK-226 S2-5b F3 — the knowledge node a manual/free-form trigger should attribute
   // produced questions to (the next 找题次序 round keys off this node's pool).
   knowledge_id?: string;
+  // YUK-226 S2-5b F4 — the 题型 hint the次序 selected this line for (additive). Threaded
+  // into the QuizGenTask input so the agent can target the题型.
+  kind?: string;
 }
 
 // §4 — default question count when the trigger doesn't specify one.
@@ -242,6 +245,8 @@ export interface RunQuizGenParams {
   // YUK-226 S2-5b F3 — attribution anchor for manual/free-form triggers: when present,
   // resolveTrigger keys the produced questions to this knowledge node.
   knowledgeId?: string;
+  // YUK-226 S2-5b F4 — 题型 hint forwarded into the QuizGenTask input.
+  kind?: string;
   runAgentTaskFn?: RunAgentTaskFn;
   buildMcpServerFn?: BuildMcpServerFn;
   buildTavilyMcpServerFn?: BuildTavilyMcpServerFn;
@@ -275,10 +280,16 @@ async function resolveTrigger(
   // attribution anchor so produced questions key to that node even when refId is a
   // free-form manual string. ref_id (the trigger pointer) is preserved verbatim.
   if (knowledgeId) {
+    // YUK-226 S2-5b F3 — the explicit anchor must clear the SAME archived guard as the
+    // other knowledge lookups (knowledge / learning_item primary node + the constrain
+    // step's existence check all filter archived_at). An archived anchor is treated as
+    // missing → fall through to per-trigger resolution (which, for a manual trigger, runs
+    // its own unarchived best-effort lookup), so a stale/archived 找题次序 anchor never
+    // mounts new drafts onto a dead node.
     const rows = await db
       .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
       .from(knowledge)
-      .where(eq(knowledge.id, knowledgeId))
+      .where(and(eq(knowledge.id, knowledgeId), isNull(knowledge.archived_at)))
       .limit(1);
     const k = rows[0];
     if (k) {
@@ -392,6 +403,9 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     // (buildQuizGenPrompt) instructs honouring requested_generation_method when present;
     // absent → the agent free-chooses (original behaviour).
     ...(params.generationMethod ? { requested_generation_method: params.generationMethod } : {}),
+    // YUK-226 S2-5b F4 — the 题型 hint the次序 selected this line for. Forwarded additively
+    // so the agent can target it; absent → the agent free-targets (original behaviour).
+    ...(params.kind ? { requested_kind: params.kind } : {}),
   };
 
   let taskResult: TaskTextResult | null = null;
@@ -403,6 +417,19 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     });
     taskResult = result;
     const parsed = parseOutput(result.text);
+
+    // YUK-226 S2-5b F1 — when the 找题次序 PINNED a generation_method (step 3
+    // material_grounded vs step 4 closed_book), the agent prompt instructs honouring it,
+    // but the prompt is only a hint — a model that ignores the pin would persist the WRONG
+    // tier (a closed_book draft where the次序 asked for material_grounded, or vice versa).
+    // Assert the pin held; on mismatch throw so the run fails loudly (the catch writes a
+    // failure event and re-throws → pg-boss retries) rather than silently mis-tiering the
+    // draft into the pool. Unpinned runs (bare manual quiz_gen) keep the agent's free choice.
+    if (params.generationMethod && parsed.generation_method !== params.generationMethod) {
+      throw new Error(
+        `quiz_gen pinned generation_method='${params.generationMethod}' but agent produced '${parsed.generation_method}'`,
+      );
+    }
 
     // Constrain self-reported knowledge_ids to REAL knowledge nodes. The agent may
     // hallucinate ids; an unattributable draft would pass verify yet never resolve
@@ -665,9 +692,10 @@ export function buildQuizGenHandler(
         trigger: data.trigger,
         refId: data.ref_id,
         count: data.count,
-        // YUK-226 S2-5b F1/F3 — honour the 找题次序's pinned method + attribution anchor.
+        // YUK-226 S2-5b F1/F3/F4 — honour the 找题次序's pinned method + attribution anchor + 题型 hint.
         ...(data.generation_method ? { generationMethod: data.generation_method } : {}),
         ...(data.knowledge_id ? { knowledgeId: data.knowledge_id } : {}),
+        ...(data.kind ? { kind: data.kind } : {}),
         runAgentTaskFn: deps.runAgentTaskFn,
         buildMcpServerFn: deps.buildMcpServerFn,
         buildTavilyMcpServerFn: deps.buildTavilyMcpServerFn,

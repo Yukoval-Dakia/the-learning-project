@@ -67,6 +67,14 @@ export interface SourcingJobData {
   trigger: SourcingTrigger;
   ref_id: string;
   count?: number;
+  // YUK-226 S2-5b F2 — attribution anchor from the 找题次序 (additive). When a manual
+  // trigger carries a free-form ref_id, the orchestrator forwards the real knowledge node
+  // here so produced questions attribute to it (mirrors quiz_gen's knowledge_id anchor —
+  // same anchor semantics). resolveTrigger consumes it preferentially.
+  knowledge_id?: string;
+  // YUK-226 S2-5b F4 — the 题型 hint the次序 selected this line for (additive). Forwarded
+  // into the SourcingTask input's existing `kinds?` field so the agent can target the题型.
+  kind?: string;
 }
 
 // Default question count when the trigger doesn't specify one.
@@ -172,6 +180,11 @@ export interface RunSourcingParams {
   trigger: SourcingTrigger;
   refId: string;
   count?: number;
+  // YUK-226 S2-5b F2 — attribution anchor for manual/free-form triggers: when present,
+  // resolveTrigger keys the produced questions to this knowledge node.
+  knowledgeId?: string;
+  // YUK-226 S2-5b F4 — 题型 hint forwarded into the SourcingTask input (existing `kinds?`).
+  kind?: string;
   runAgentTaskFn?: RunAgentTaskFn;
   buildMcpServerFn?: BuildMcpServerFn;
   buildTavilyMcpServerFn?: BuildTavilyMcpServerFn;
@@ -196,7 +209,27 @@ async function resolveTrigger(
   db: Db,
   trigger: SourcingTrigger,
   refId: string,
+  // YUK-226 S2-5b F2 — explicit knowledge anchor (from the 找题次序). When present it
+  // resolves the attribution node directly, regardless of the (free-form) refId. Mirrors
+  // quiz_gen's F3 anchor branch — same archived guard as the per-trigger lookups.
+  knowledgeId?: string,
 ): Promise<ResolvedTrigger | null> {
+  // F2 — a 找题次序-driven job carries the knowledge node explicitly. Resolve it as the
+  // attribution anchor so produced questions key to that node even when refId is a
+  // free-form manual string. An archived anchor is treated as missing (same guard as the
+  // other lookups) → fall through to the per-trigger resolution. ref_id is preserved.
+  if (knowledgeId) {
+    const rows = await db
+      .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
+      .from(knowledge)
+      .where(and(eq(knowledge.id, knowledgeId), isNull(knowledge.archived_at)))
+      .limit(1);
+    const k = rows[0];
+    if (k) {
+      return { refId, knowledgeNode: k, knowledgeIds: [k.id], title: k.name };
+    }
+    // Fall through to the per-trigger resolution when the anchor node is missing.
+  }
   if (trigger === 'knowledge') {
     // Archived knowledge nodes are treated as missing (other write paths do the
     // same): an archived node must not receive new sourced practice material or FSRS
@@ -259,7 +292,7 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
   const buildTavily = params.buildTavilyMcpServerFn ?? buildTavilyMcpServer;
   const enqueueSourceVerify = params.enqueueSourceVerify ?? defaultEnqueueSourceVerify;
 
-  const resolved = await resolveTrigger(db, trigger, refId);
+  const resolved = await resolveTrigger(db, trigger, refId, params.knowledgeId);
   if (!resolved) return { status: 'skipped:ref_not_found' };
 
   const subjectProfile = resolveSubjectProfile(resolved.knowledgeNode?.domain ?? null);
@@ -301,6 +334,10 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
     knowledge_context: resolved.knowledgeNode ? [resolved.knowledgeNode] : [],
     count,
     whitelist,
+    // YUK-226 S2-5b F4 — the 题型 the 找题次序 selected this line for. Folds into the
+    // SourcingTask prompt's existing `kinds?` input (plural — a single hint forwarded as a
+    // one-element list) so the agent can target the题型. Absent → the agent free-targets.
+    ...(params.kind ? { kinds: [params.kind] } : {}),
   };
 
   let taskResult: TaskTextResult | null = null;
@@ -489,6 +526,9 @@ export function buildSourcingHandler(
         trigger: data.trigger,
         refId: data.ref_id,
         count: data.count,
+        // YUK-226 S2-5b F2/F4 — honour the 找题次序's attribution anchor + 题型 hint.
+        ...(data.knowledge_id ? { knowledgeId: data.knowledge_id } : {}),
+        ...(data.kind ? { kind: data.kind } : {}),
         runAgentTaskFn: deps.runAgentTaskFn,
         buildMcpServerFn: deps.buildMcpServerFn,
         buildTavilyMcpServerFn: deps.buildTavilyMcpServerFn,
