@@ -112,22 +112,59 @@ function eventToText(input: MemoryEventInput): string {
 // The xiaomi API key reaches mem0ai's Anthropic LLM cleanly via
 // config.llm.config.apiKey (createMem0Config). The base URL is the one value we
 // can't pass through config: the installed mem0ai AnthropicLLM constructs
-// `new Anthropic({ apiKey })` WITHOUT forwarding config.baseURL, and the
-// @anthropic-ai/sdk only adopts a custom base URL from the ANTHROPIC_BASE_URL
-// env var when none is passed explicitly. mem0ai's `new Memory(config)` builds
-// the LLM (and thus the Anthropic client) synchronously in its constructor, so
-// we set ANTHROPIC_BASE_URL ONLY for the duration of that synchronous call and
-// restore the prior value in finally — no persistent global mutation, and
+// `new Anthropic({ apiKey })` WITHOUT forwarding config.baseURL
+// (node_modules/mem0ai/dist/oss/index.js — `new import_sdk.default({ apiKey })`,
+// config.baseURL dropped), and the @anthropic-ai/sdk only adopts a custom base
+// URL from the ANTHROPIC_BASE_URL env var when none is passed explicitly
+// (@anthropic-ai/sdk client ctor reads `readEnv('ANTHROPIC_BASE_URL')` as the
+// baseURL default). mem0ai's `new Memory(config)` builds the LLM (and thus the
+// Anthropic client) SYNCHRONOUSLY in its constructor (Memory ctor →
+// LLMFactory.create('anthropic') → new AnthropicLLM → new Anthropic), so we set
+// ANTHROPIC_BASE_URL ONLY for the duration of that synchronous call and restore
+// the prior value in finally — no persistent global mutation, and
 // ANTHROPIC_API_KEY is never touched.
 //
 // Revisit if mem0ai gains baseURL forwarding for the Anthropic provider (it
 // already does for openai/ollama/lmstudio/deepseek); then this can pass
-// llm.config.baseURL directly and drop the env dance entirely.
+// llm.config.baseURL directly and drop the env dance entirely. (Re-checked
+// 2026-06-06 against installed mem0ai: still NOT forwarded — env dance stays.)
+
+// YUK-232 [SEC-2]: mutex around the ANTHROPIC_BASE_URL mutation window.
+//
+// withXiaomiBaseUrl temporarily mutates a PROCESS-GLOBAL (process.env). The
+// mutation window is only safe while it is entered by exactly one caller at a
+// time. Because the wrapped `construct` is strictly synchronous (verified: the
+// whole Memory→AnthropicLLM→Anthropic ctor chain runs in one synchronous frame,
+// and @anthropic-ai/sdk reads ANTHROPIC_BASE_URL inside that frame), two calls
+// cannot interleave their windows within a single call stack on the
+// single-threaded event loop. The ONLY way the windows could overlap — and the
+// race the audit flags — is if a `construct` callback yields (awaits / re-enters
+// withXiaomiBaseUrl) while inside the window; then a second window could mutate
+// or restore the global out from under the first.
+//
+// A promise-chain mutex can't be used here without making createMemoryClient
+// async, which would break its synchronous `??= createMemoryClient()` callers
+// (triggers.ts, search-memory-facts.ts). For a synchronous critical section the
+// correct mutex is a re-entrancy lock: take the lock on entry, assert it is free
+// (throw loudly otherwise), release in finally. This makes the single-writer
+// invariant explicit and converts a silent global-env race into a deterministic,
+// testable error if construction ever becomes async/re-entrant.
+let baseUrlWindowLocked = false;
+
 function withXiaomiBaseUrl<T>(env: Env, construct: () => T): T {
+  if (baseUrlWindowLocked) {
+    // Reached only if a `construct` callback yielded/re-entered while the global
+    // ANTHROPIC_BASE_URL was already swapped. Surfaces the YUK-232 race as a hard
+    // failure instead of letting two windows fight over process.env.
+    throw new Error(
+      'withXiaomiBaseUrl: re-entrant ANTHROPIC_BASE_URL window detected (construct must stay synchronous)',
+    );
+  }
   const baseUrl =
     env.MEM0_ANTHROPIC_BASE_URL ?? env.ANTHROPIC_BASE_URL ?? DEFAULT_ANTHROPIC_BASE_URL;
   const had = Object.hasOwn(process.env, 'ANTHROPIC_BASE_URL');
   const prev = process.env.ANTHROPIC_BASE_URL;
+  baseUrlWindowLocked = true;
   process.env.ANTHROPIC_BASE_URL = baseUrl;
   try {
     return construct();
@@ -137,6 +174,7 @@ function withXiaomiBaseUrl<T>(env: Env, construct: () => T): T {
     // satisfy Biome's noDelete lint while still truly clearing the key.
     if (had) process.env.ANTHROPIC_BASE_URL = prev;
     else Reflect.deleteProperty(process.env, 'ANTHROPIC_BASE_URL');
+    baseUrlWindowLocked = false;
   }
 }
 
