@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { QuestionSource } from './business';
 import {
   QuizGenGenerationMethod,
+  QuizGenMaterial,
   QuizGenMetadata,
   QuizGenOutput,
   QuizGenSourceRef,
@@ -67,6 +68,29 @@ const validQuestion = {
   knowledge_ids: ['k_han'],
   source_refs: [validSourceRef],
 };
+
+describe('QuizGenMaterial (YUK-224 tier 3)', () => {
+  const validMaterial = {
+    body_md: '汉朝由刘邦建立于公元前 202 年。',
+    url: 'https://example.edu/han/founding',
+    title: '汉朝的建立',
+    fetched_at: '2026-06-06T10:00:00.000Z',
+  };
+
+  it('parses a valid material block', () => {
+    const parsed = QuizGenMaterial.parse(validMaterial);
+    expect(parsed.body_md).toContain('公元前 202 年');
+    expect(parsed.title).toBe('汉朝的建立');
+  });
+
+  it('rejects an empty body_md', () => {
+    expect(() => QuizGenMaterial.parse({ ...validMaterial, body_md: '' })).toThrow();
+  });
+
+  it('rejects a non-URL url', () => {
+    expect(() => QuizGenMaterial.parse({ ...validMaterial, url: 'not-a-url' })).toThrow();
+  });
+});
 
 describe('QuizGenSourceRef', () => {
   it('parses a valid source ref', () => {
@@ -213,7 +237,7 @@ describe('QuizGenOutput', () => {
     ).toThrow();
   });
 
-  it("rejects generation_method='material_grounded' at the live output boundary (YUK-224 时序守卫, PR #312 V1)", () => {
+  it('rejects material_grounded WITHOUT a material block (YUK-224 正向校验, replaces PR #312 V1 时序守卫)', () => {
     const result = QuizGenOutput.safeParse({
       questions: [validQuestion],
       source_pack: validSourcePack,
@@ -222,8 +246,64 @@ describe('QuizGenOutput', () => {
     });
     expect(result.success).toBe(false);
     if (!result.success) {
+      expect(result.error.issues.some((i) => i.path.includes('material'))).toBe(true);
       expect(result.error.issues.some((i) => i.message.includes('YUK-224'))).toBe(true);
     }
+  });
+
+  it('accepts material_grounded WITH a material block (real passage + URL)', () => {
+    const parsed = QuizGenOutput.parse({
+      questions: [
+        {
+          ...validQuestion,
+          kind: 'reading' as const,
+          prompt_md: '阅读下面短文，回答：汉朝建立于哪一年？',
+          judge_kind_override: 'semantic' as const,
+          rubric_json: {
+            criteria: [{ name: 'correctness', weight: 1, descriptor: '答对建立年份' }],
+            required_points: ['公元前 202 年'],
+          },
+        },
+      ],
+      source_pack: validSourcePack,
+      generation_method: 'material_grounded',
+      self_copy_safety: validCopySafety,
+      material: {
+        body_md: '汉朝由刘邦建立于公元前 202 年，定都长安……',
+        url: 'https://example.edu/han/founding',
+        title: '汉朝的建立',
+        fetched_at: '2026-06-06T10:00:00.000Z',
+      },
+    });
+    expect(parsed.generation_method).toBe('material_grounded');
+    expect(parsed.material?.body_md).toContain('公元前 202 年');
+    expect(parsed.material?.url).toContain('example.edu');
+  });
+
+  it('allows search_grounded to omit the material block', () => {
+    const parsed = QuizGenOutput.parse({
+      questions: [validQuestion],
+      source_pack: validSourcePack,
+      generation_method: 'search_grounded',
+      self_copy_safety: validCopySafety,
+    });
+    expect(parsed.material).toBeUndefined();
+  });
+
+  it('rejects a material block with a non-URL url', () => {
+    const result = QuizGenOutput.safeParse({
+      questions: [validQuestion],
+      source_pack: validSourcePack,
+      generation_method: 'material_grounded',
+      self_copy_safety: validCopySafety,
+      material: {
+        body_md: '一段真实素材原文。',
+        url: 'not-a-url',
+        title: '素材',
+        fetched_at: '2026-06-06T10:00:00.000Z',
+      },
+    });
+    expect(result.success).toBe(false);
   });
 
   it('rejects a difficulty out of 1-5', () => {

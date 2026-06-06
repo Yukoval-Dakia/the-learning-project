@@ -14,7 +14,7 @@ import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { QuizGenMetadataT } from '@/core/schema/quiz_gen';
-import { event, knowledge, material_fsrs_state, question } from '@/db/schema';
+import { event, knowledge, material_fsrs_state, question, source_document } from '@/db/schema';
 import { readAgentNotes } from '@/server/agents/notes';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
@@ -110,6 +110,34 @@ async function seedDraftQuestion(opts: {
     metadata: { quiz_gen: opts.meta ?? BASE_META } as never,
     created_at: now,
     updated_at: now,
+  });
+}
+
+// YUK-224 (slice 3, tier 3) — material_grounded meta carrying the grounded doc id.
+function materialMeta(materialDocId: string): QuizGenMetadataT {
+  return {
+    ...BASE_META,
+    generation_method: 'material_grounded',
+    material_source_document_id: materialDocId,
+  };
+}
+
+async function seedMaterialDoc(opts: { id: string; bodyMd?: string }) {
+  const db = testDb();
+  const now = new Date();
+  await db.insert(source_document).values({
+    id: opts.id,
+    title: '汉朝的建立',
+    source_asset_ids: [],
+    body_md: opts.bodyMd ?? '汉朝由刘邦建立于公元前 202 年，定都长安。',
+    provenance: {
+      source_kind: 'quiz_gen_material',
+      url: 'https://example.edu/han/founding',
+      fetched_at: '2026-06-06T10:00:00.000Z',
+    } as never,
+    created_at: now,
+    updated_at: now,
+    version: 0,
   });
 }
 
@@ -411,6 +439,62 @@ describe('runQuizVerify', () => {
     const result = await runQuizVerify({ db: testDb(), questionId: 'missing', runTaskFn });
     expect(result.status).toBe('skipped:not_found');
     expect(runTaskFn).not.toHaveBeenCalled();
+  });
+
+  // YUK-224 (slice 3, tier 3) — material_grounding check.
+  it('tier 3 material_grounded: feeds the grounded material to the verifier + records material_grounding, promotes on pass', async () => {
+    await seedKnowledge('k1');
+    await seedMaterialDoc({ id: 'doc1' });
+    await seedDraftQuestion({ id: 'qm1', knowledgeId: 'k1', meta: materialMeta('doc1') });
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }), 'tr_mat_v');
+
+    const result = await runQuizVerify({ db: testDb(), questionId: 'qm1', runTaskFn });
+    expect(result.status).toBe('verified');
+
+    // The verifier receives the persisted material body so the grounding check can
+    // confirm the question probes THAT material (spec §6.1 row 3 真原文判据).
+    const input = runTaskFn.mock.calls[0][1] as { material?: { body_md?: string } };
+    expect(input.material?.body_md).toContain('公元前 202 年');
+
+    // Promoted into the pool.
+    const rows = await testDb().select().from(question).where(eq(question.id, 'qm1'));
+    expect(rows[0].draft_status).toBe('active');
+
+    // The verify event records source_tier=3 + the material_grounding outcome.
+    const evRows = await testDb()
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'experimental:quiz_verify'), eq(event.subject_id, 'qm1')));
+    expect(evRows).toHaveLength(1);
+    expect(evRows[0].payload).toMatchObject({
+      source_tier: 3,
+      material_grounding: { material_source_document_id: 'doc1', material_present: true },
+    });
+  });
+
+  it('tier 3 material_grounded: does NOT promote when the grounded source_document is missing', async () => {
+    await seedKnowledge('k1');
+    // No seedMaterialDoc — the referenced doc never persisted / was deleted.
+    await seedDraftQuestion({ id: 'qm2', knowledgeId: 'k1', meta: materialMeta('doc_gone') });
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }), 'tr_mat_gone');
+
+    const result = await runQuizVerify({ db: testDb(), questionId: 'qm2', runTaskFn });
+    // LLM said pass, but the material_grounding structural guard blocks promotion.
+    expect(result.status).toBe('needs_review');
+
+    const rows = await testDb().select().from(question).where(eq(question.id, 'qm2'));
+    expect(rows[0].draft_status).toBe('draft');
+    expect(await fsrsRowCount('knowledge', 'k1')).toBe(0);
+
+    const evRows = await testDb()
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'experimental:quiz_verify'), eq(event.subject_id, 'qm2')));
+    expect(evRows[0].payload).toMatchObject({
+      source_tier: 3,
+      material_grounding: { material_present: false },
+      promoted: false,
+    });
   });
 });
 

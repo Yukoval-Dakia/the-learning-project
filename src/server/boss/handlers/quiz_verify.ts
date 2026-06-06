@@ -34,6 +34,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, ne } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
+import { deriveSourceTier } from '@/core/schema/provenance';
 import {
   QuizGenMetadata,
   type QuizGenMetadataT,
@@ -42,11 +43,12 @@ import {
   type QuizVerificationResultT,
 } from '@/core/schema/quiz_gen';
 import type { Db } from '@/db/client';
-import { event, knowledge, question } from '@/db/schema';
+import { event, knowledge, question, source_document } from '@/db/schema';
 import { writeAgentNote } from '@/server/agents/notes';
 import { type TaskTextResult, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { writeEvent } from '@/server/events/queries';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
+import { checksForTier } from '@/server/quiz/verify-framework';
 import { initialFsrsState } from '@/server/review/fsrs';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
@@ -234,6 +236,29 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
   const knowledgeNode = knowledgeRows[0] ?? null;
   const subjectProfile = resolveSubjectProfile(knowledgeNode?.domain ?? null);
 
+  // YUK-224 (slice 3, tier 3) — derive the source tier from provenance so the verify
+  // gate runs the tier-appropriate check set (verify-framework CHECK_SETS_BY_TIER).
+  // tier 3 (material_grounded) adds the `material_grounding` check: load the persisted
+  // source_document the questions are grounded in and feed its body to the verifier so
+  // the grounding check can confirm the question actually probes THAT material (spec
+  // §6.1 row 3「原文持久化 + 题面强制引用」), rather than trusting the agent's snippet
+  // alone. The already-green tier-4 flow is unchanged — material is simply absent there.
+  const tier = deriveSourceTier({ source: row.source, metadata: metadataRaw }).tier;
+  const tierChecks = checksForTier(tier);
+  let materialDoc: { id: string; title: string | null; body_md: string | null } | null = null;
+  if (tier === 3 && meta.material_source_document_id) {
+    const docRows = await db
+      .select({
+        id: source_document.id,
+        title: source_document.title,
+        body_md: source_document.body_md,
+      })
+      .from(source_document)
+      .where(eq(source_document.id, meta.material_source_document_id))
+      .limit(1);
+    materialDoc = docRows[0] ?? null;
+  }
+
   const input = {
     question: {
       id: row.id,
@@ -249,6 +274,10 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     source_refs: meta.source_refs,
     self_copy_safety: meta.copy_safety,
     generation_method: meta.generation_method,
+    // tier 3 only — the real grounded material for the `material_grounding` check.
+    ...(materialDoc
+      ? { material: { title: materialDoc.title, body_md: materialDoc.body_md } }
+      : {}),
   };
 
   let taskResult: TaskTextResult | null = null;
@@ -281,7 +310,16 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     const isTooClose = copySafetyVerdict === 'too_close';
     const checksPass =
       parsed.grounding.verdict === 'pass' && parsed.knowledge_hit.verdict === 'pass';
-    const promote = parsed.overall === 'pass' && checksPass && !isTooClose;
+    // YUK-224 tier 3 — material_grounding gate. A material_grounded question whose
+    // grounded source_document went missing (deleted / never persisted) cannot have its
+    // "题确实考这份素材" claim verified, so it must NOT be promoted into the pool even if
+    // the LLM checks pass. For tier 1/2/4 this is vacuously true (no material check in
+    // the tier's check set). The grounding verdict (LLM) is already folded into
+    // checksPass above; this adds the structural "material is actually present" guard.
+    const materialGroundingOk =
+      !tierChecks.includes('material_grounding') ||
+      (materialDoc !== null && (materialDoc.body_md ?? '').trim().length > 0);
+    const promote = parsed.overall === 'pass' && checksPass && !isTooClose && materialGroundingOk;
     const verificationStatus: QuizGenVerificationT['status'] = promote
       ? 'verified'
       : parsed.overall === 'fail'
@@ -394,6 +432,16 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
             max_overlap: maxOverlap,
             deterministic_too_close: deterministicTooClose,
           },
+          // YUK-224 — source tier + the tier-3 material_grounding outcome (audit trail).
+          source_tier: tier,
+          ...(tierChecks.includes('material_grounding')
+            ? {
+                material_grounding: {
+                  material_source_document_id: meta.material_source_document_id ?? null,
+                  material_present: materialGroundingOk,
+                },
+              }
+            : {}),
           promoted: promote,
           verification_status: verificationStatus,
           summary_md: parsed.summary_md,

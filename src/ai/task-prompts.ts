@@ -643,7 +643,14 @@ function buildQuizGenPrompt(profile: SubjectProfile): string {
 }
 
 整体严格 JSON 输出（不带 markdown 代码块包裹），shape 名 QuizGenOutput：
-{"questions":[QuizGenQuestion, ...],"source_pack":{"query_plan":["你执行的检索查询", ...],"searched_at":"ISO8601 时间戳","tool":"tavily"},"generation_method":"search_grounded"|"closed_book","self_copy_safety":{"verdict":"original"|"too_close"|"unknown","max_overlap":0.0-1.0,"checked_by":"agent_self"}}
+{"questions":[QuizGenQuestion, ...],"source_pack":{"query_plan":["你执行的检索查询", ...],"searched_at":"ISO8601 时间戳","tool":"tavily"},"generation_method":"search_grounded"|"closed_book"|"material_grounded","self_copy_safety":{"verdict":"original"|"too_close"|"unknown","max_overlap":0.0-1.0,"checked_by":"agent_self"},"material":{"body_md":"...","url":"...","title":"...","fetched_at":"ISO8601"}|null}
+
+素材生成模式（generation_method="material_grounded"，阅读理解 / 据材出题专用）：
+- 当题型需要一份**真实原文 / 真实数据**作锚（典型：阅读理解、文言翻译、据材料分析），用 tavily_extract 拉一份**真实素材原文**，全部题目都考查这份素材。
+- 此时**必须**在顶层 material 填这份素材：body_md=素材原文全文（会被持久化、题面据它出），url/title=素材出处，fetched_at=拉取时间。漏填 material 该输出会被拒收。
+- 题面要**明确指向**这份素材（如「阅读下面短文，回答问题」），reference_md 的答案要能在素材里找到依据。
+- material_grounded 时各题 source_refs 仍如实填素材 URL；material 是被持久化的「真原文」单一来源，source_refs 是每题的引用足迹。
+- 不需要真原文锚的常规题用 search_grounded（搜背景素材、自己出题），material 留空或省略。
 
 题目要求：
 - kind 只能是 ${canonicalKinds} 之一；不要发明新值；客观题统一用 "choice"。

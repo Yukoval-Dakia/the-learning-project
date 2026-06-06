@@ -33,7 +33,7 @@ import {
   type QuizGenQuestionT,
 } from '@/core/schema/quiz_gen';
 import type { Db } from '@/db/client';
-import { artifact, knowledge, learning_item, question } from '@/db/schema';
+import { artifact, knowledge, learning_item, question, source_document } from '@/db/schema';
 import { RUNNABLE_ROUTES } from '@/server/ai/judges/question-contract';
 import {
   TAVILY_MCP_ALLOWED_TOOLS,
@@ -343,7 +343,36 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     const quizKnowledgeIds = new Set<string>();
     const toolQuizArtifactId = createId();
     const now = new Date();
+    // YUK-224 (slice 3, tier 3) — material_grounded persists the fetched REAL source
+    // material to a source_document row FIRST (with the URL in provenance), then every
+    // generated question carries that row id in metadata.quiz_gen.material_source_document_id.
+    // The output schema guarantees `parsed.material` is present when the method is
+    // material_grounded (superRefine). source_document has no step9 invariant audit
+    // (only event / learning_session / material_fsrs_state / artifact are audited), so
+    // this new writer needs no allowlist registration. The id is shared across all
+    // questions in the run (one passage → many questions probing it).
+    let materialSourceDocumentId: string | null = null;
     await db.transaction(async (tx) => {
+      if (parsed.generation_method === 'material_grounded' && parsed.material) {
+        materialSourceDocumentId = createId();
+        await tx.insert(source_document).values({
+          id: materialSourceDocumentId,
+          title: parsed.material.title,
+          source_asset_ids: [],
+          body_md: parsed.material.body_md,
+          // URL provenance — the fetched material's origin. source_kind tags it as a
+          // quiz_gen-fetched material so audits can distinguish it from ingestion docs.
+          provenance: {
+            source_kind: 'quiz_gen_material',
+            url: parsed.material.url,
+            fetched_at: parsed.material.fetched_at,
+            captured_by: aiAgentRef('QuizGenTask', result),
+          } as never,
+          created_at: now,
+          updated_at: now,
+          version: 0,
+        });
+      }
       for (const q of parsed.questions) {
         const id = createId();
         const judgeKind = defaultJudgeKindForQuestion(q);
@@ -371,6 +400,14 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
             checked_by: 'agent_self',
           },
           generation_status: 'ready',
+          // YUK-224 tier 3 — back-fill the persisted material's source_document id so
+          // deriveSourceTier lands tier 3 (material_grounded + material_source_document_id).
+          // Only set for material_grounded; the QuizGenMetadata superRefine requires it
+          // when generation_method='material_grounded', so this is the live writer that
+          // naturally satisfies that contract.
+          ...(materialSourceDocumentId
+            ? { material_source_document_id: materialSourceDocumentId }
+            : {}),
         };
         await tx.insert(question).values({
           id,
