@@ -636,6 +636,11 @@ describe('select_review_question_candidates', () => {
         title: 't',
         fetched_at: '2026-06-06T00:00:00Z',
         whitelist_match: whitelist,
+        // extract is REQUIRED by WebSourcedProvenance since YUK-223 / PR #313
+        // (provenance.ts:63). Without it safeParse fails and deriveSourceTier
+        // falls through to tier 4, defeating the tier-2 demotion-ordering this
+        // test guards. Supply a non-empty extract so the row derives tier 2.
+        extract: '示例题干抽取',
       },
     });
     await seedQuestion({
