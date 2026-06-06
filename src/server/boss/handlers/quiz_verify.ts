@@ -310,15 +310,23 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     const isTooClose = copySafetyVerdict === 'too_close';
     const checksPass =
       parsed.grounding.verdict === 'pass' && parsed.knowledge_hit.verdict === 'pass';
-    // YUK-224 tier 3 — material_grounding gate. A material_grounded question whose
-    // grounded source_document went missing (deleted / never persisted) cannot have its
-    // "题确实考这份素材" claim verified, so it must NOT be promoted into the pool even if
-    // the LLM checks pass. For tier 1/2/4 this is vacuously true (no material check in
-    // the tier's check set). The grounding verdict (LLM) is already folded into
-    // checksPass above; this adds the structural "material is actually present" guard.
+    // YUK-224 tier 3 — material_grounding gate (two parts).
+    //   (a) STRUCTURAL: a material_grounded question whose grounded source_document
+    //       went missing (deleted / never persisted) cannot have its "题确实考这份素材"
+    //       claim verified, so it must NOT be promoted even if the LLM checks pass.
+    //   (b) F2 (PR #314 round-1) RELEVANCE: when the material IS present, the verifier
+    //       was fed the passage body and returns a `material_grounding` verdict — does
+    //       the question actually PROBE this material, not just "is a doc attached".
+    //       Without this, an irrelevant-but-present material could still promote (the
+    //       old check only asserted the row was non-empty). Consume the verdict: a
+    //       'fail' blocks promotion, 'unclear' / absent verdict falls through to the
+    //       structural check (don't harden a missing optional field into a hard fail
+    //       for older / non-emitting verifier outputs).
+    // For tier 1/2/4 this is vacuously true (no material check in the tier's set).
+    const materialPresent = materialDoc !== null && (materialDoc.body_md ?? '').trim().length > 0;
     const materialGroundingOk =
       !tierChecks.includes('material_grounding') ||
-      (materialDoc !== null && (materialDoc.body_md ?? '').trim().length > 0);
+      (materialPresent && parsed.material_grounding?.verdict !== 'fail');
     const promote = parsed.overall === 'pass' && checksPass && !isTooClose && materialGroundingOk;
     const verificationStatus: QuizGenVerificationT['status'] = promote
       ? 'verified'
@@ -438,7 +446,10 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
             ? {
                 material_grounding: {
                   material_source_document_id: meta.material_source_document_id ?? null,
-                  material_present: materialGroundingOk,
+                  material_present: materialPresent,
+                  // F2 — the verifier's relevance verdict (题是否真考这份素材), null when
+                  // the verifier did not emit it (no material fed / older output).
+                  verdict: parsed.material_grounding?.verdict ?? null,
                 },
               }
             : {}),
