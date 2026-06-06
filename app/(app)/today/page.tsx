@@ -723,6 +723,12 @@ const KIND_TO_GROUP: Record<AiProposalKindT, keyof ProposalGroups> = {
   // continuity_signal badge) is the deferred UI redraw slice (design §6 UI);
   // this entry only keeps the exhaustive Record in sync with aiProposalKinds.
   block_merge: 'review',
+  // YUK-227 S3 Slice C — image_candidate proposals (image-type real-question
+  // sources awaiting user accept → VLM 抽图) are inbox review items; bucket under
+  // 'review' for the breakdown count. The dedicated inbox row (source preview +
+  // accept-spends-VLM affordance) is a deferred UI slice; this entry only keeps the
+  // exhaustive Record in sync with aiProposalKinds.
+  image_candidate: 'review',
 };
 
 function proposalGroupCounts(counts: ProposalKindCounts): ProposalGroups {

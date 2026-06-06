@@ -1,7 +1,13 @@
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { ai_task_runs, cost_ledger, tool_call_log } from '@/db/schema';
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
+
+// cost_ledger / tool_call_log are loose-coupled correlation logs (no FK); a single
+// INSERT works against either a top-level Db or a Tx. Accepting DbLike lets callers
+// fold the write into a surrounding transaction (YUK-227 image_candidate accept folds
+// the per-accept cost row into the question-INSERT tx for atomicity).
+type DbLike = Db | Tx;
 
 export interface ToolCallLogEntry {
   task_run_id: string;
@@ -65,7 +71,7 @@ export interface CostLedgerEntry {
   pgboss_job_id?: string;
 }
 
-export async function writeCostLedger(db: Db, entry: CostLedgerEntry): Promise<void> {
+export async function writeCostLedger(db: DbLike, entry: CostLedgerEntry): Promise<void> {
   await db.insert(cost_ledger).values({
     id: createId(),
     task_run_id: entry.task_run_id ?? null,
