@@ -1,5 +1,6 @@
 import { deriveSourceTier } from '@/core/schema/provenance';
 import {
+  ai_task_runs,
   artifact,
   completion_evidence,
   cost_ledger,
@@ -1815,6 +1816,42 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
       .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'img_cand_1')));
     expect(rateRows).toHaveLength(1);
     expect((rateRows[0].payload as { rating?: string }).rating).toBe('accept');
+  });
+
+  it('correlates the sourcing_image_extract row with the real VisionExtractTask run (production-shaped seam)', async () => {
+    // FIX-4 verification-round gap: the default runTaskFn used to drop task_run_id, so the
+    // correlation row carried registry-default zeros in production. This test uses a
+    // production-shaped seam (returns task_run_id like the real runTask) against a seeded
+    // ai_task_runs row and asserts the correlation row carries the REAL numbers.
+    const db = testDb();
+    await seedImageCandidateProposal('img_cand_runid');
+    await db.insert(ai_task_runs).values({
+      id: 'vlm_run_real_1',
+      task_kind: 'VisionExtractTask',
+      provider: 'xiaomi',
+      model: 'mimo-vl-prod',
+      input_hash: 'hash_fix4',
+      status: 'succeeded',
+      started_at: new Date(),
+      usage_json: { inputTokens: 1234, outputTokens: 567 },
+      cost_usd: 0.0123,
+    });
+    const runTaskFn = vi.fn(async () => ({ text: VLM_OUTPUT, task_run_id: 'vlm_run_real_1' }));
+    const { deps } = imageCandidateDeps({ runTaskFn });
+
+    await acceptAiProposal(db, 'img_cand_runid', { imageCandidateDeps: deps });
+
+    const rows = await db
+      .select()
+      .from(cost_ledger)
+      .where(eq(cost_ledger.task_run_id, 'vlm_run_real_1'));
+    const row = rows.find((r) => r.task_kind === 'sourcing_image_extract');
+    expect(row).toBeDefined();
+    expect(row?.provider).toBe('xiaomi');
+    expect(row?.model).toBe('mimo-vl-prod');
+    expect(row?.cost).toBeCloseTo(0.0123);
+    expect(row?.tokens_in).toBe(1234);
+    expect(row?.tokens_out).toBe(567);
   });
 
   it('writes exactly one sourcing_image_extract cost_ledger row per accept (cost 留痕)', async () => {
