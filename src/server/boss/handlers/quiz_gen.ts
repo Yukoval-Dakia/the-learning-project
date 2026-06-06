@@ -51,7 +51,11 @@ import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools
 import { writeEvent } from '@/server/events/queries';
 import { type FewShotExample, renderFewShotBlock } from '@/server/quiz/fewshot-retrieve';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
-import { resolveQuizGenSkills, resolveQuizGenSkillsForSubject } from '@/subjects/quiz-gen-skills';
+import {
+  resolveQuizGenSkills,
+  resolveQuizGenSkillsForSubject,
+  skillKindToQuestionKind,
+} from '@/subjects/quiz-gen-skills';
 import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 
 // §3 / §4 — the trigger surface. 'manual' carries a free-form ref_id (we still
@@ -402,7 +406,11 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
       try {
         const examples = await retrieveFewShot({
           db,
-          kind: k,
+          // `k` is a profile SubjectQuestionKind ('calculation'); the few-shot SQL
+          // filters persisted `question.kind` which stores 'computation'. Normalize
+          // so the WHERE clause matches real rows (PR #319 F3 — same map as the skill
+          // resolver, so出题/验题/few-shot agree on the kind key).
+          kind: skillKindToQuestionKind(k),
           knowledgeIds: resolved.knowledgeIds,
         });
         collected.push(...examples);

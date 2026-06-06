@@ -4,8 +4,10 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   QUIZ_GEN_SKILL_KIND_KEYS,
+  questionKindToSkillKind,
   resolveQuizGenSkills,
   resolveQuizGenSkillsForSubject,
+  skillKindToQuestionKind,
 } from './quiz-gen-skills';
 
 // Build a fixture skills root: <root>/<subject>/skills/<dir>/SKILL.md
@@ -85,6 +87,35 @@ describe('the shipped first-batch skills resolve against the live SoT', () => {
       'quiz-gen-reading-comprehension',
     ]);
     expect(resolveQuizGenSkills('math', 'calculation')).toEqual(['quiz-gen-calculation']);
+  });
+
+  // PR #319 F3 — the persisted question.kind for math calculation questions is
+  // 'computation' (core QuestionKind), NOT 'calculation' (SubjectQuestionKind). When
+  // quiz_verify hands the PERSISTED kind to resolveQuizGenSkills, it must still resolve
+  // to quiz-gen-calculation via the normalization map; otherwise the verifier loads no
+  // math skill and kind_conformance silently degrades.
+  it('resolves the persisted kind (computation) to quiz-gen-calculation', () => {
+    // `as never` mirrors the quiz_verify call site casting a persisted QuestionKind
+    // string into the SubjectQuestionKind param; the normalizer accepts it.
+    expect(resolveQuizGenSkills('math', 'computation' as never)).toEqual(['quiz-gen-calculation']);
+  });
+});
+
+describe('kind normalization (persisted QuestionKind ↔ skill SubjectQuestionKind)', () => {
+  it('questionKindToSkillKind maps computation → calculation, passes others through', () => {
+    expect(questionKindToSkillKind('computation')).toBe('calculation');
+    expect(questionKindToSkillKind('translation')).toBe('translation');
+    expect(questionKindToSkillKind('reading_comprehension')).toBe('reading_comprehension');
+  });
+
+  it('skillKindToQuestionKind maps calculation → computation, passes others through', () => {
+    expect(skillKindToQuestionKind('calculation')).toBe('computation');
+    expect(skillKindToQuestionKind('translation')).toBe('translation');
+  });
+
+  it('round-trips computation/calculation', () => {
+    expect(skillKindToQuestionKind(questionKindToSkillKind('computation'))).toBe('computation');
+    expect(questionKindToSkillKind(skillKindToQuestionKind('calculation'))).toBe('calculation');
   });
 });
 

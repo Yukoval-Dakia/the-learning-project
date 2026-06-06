@@ -2,8 +2,9 @@
 //
 // docs/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §5.3.
 //
-// Asserts the 轨 2 SQL retriever: same-kind + draft_status='active' filter,
-// knowledge-overlap candidate pull, TS-layer tier-priority sort, LIMIT, 0-hit 降级.
+// Asserts the 轨 2 SQL retriever: same-kind + pool predicate
+// `(draft_status IS NULL OR <> 'draft')`, knowledge-overlap candidate pull, SQL-layer
+// tier-priority ordering before truncation + TS-layer tier sort, LIMIT, 0-hit 降级.
 
 import { createId } from '@paralleldrive/cuid2';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -118,5 +119,53 @@ describe('retrieveFewShotExamples', () => {
     await seed({ knowledgeIds: ['kX'] });
     const out = await retrieveFewShotExamples({ db, kind: 'translation', knowledgeIds: [] });
     expect(out).toHaveLength(1);
+  });
+
+  // PR #319 F4 — legacy active rows carry NULL draft_status; a bare `= 'active'`
+  // predicate dropped them. The pool predicate is now
+  // `(draft_status IS NULL OR <> 'draft')` (aligns with due-list / source_verify), so
+  // a NULL-draft_status row is eligible while a 'draft' row stays excluded.
+  it('includes legacy NULL draft_status rows (excludes drafts)', async () => {
+    const db = testDb();
+    const nullDraft = await seed({ knowledgeIds: ['k1'], draftStatus: null });
+    await seed({ knowledgeIds: ['k1'], draftStatus: 'draft' }); // still excluded
+    const out = await retrieveFewShotExamples({ db, kind: 'translation', knowledgeIds: ['k1'] });
+    expect(out.map((e) => e.id)).toEqual([nullDraft]);
+  });
+
+  // PR #319 F5 — tier ordering must happen in SQL BEFORE the CANDIDATE_POOL (20)
+  // truncation. A high-tier exemplar OLDER than a flood of recent low-tier rows must
+  // still be pulled into the pool (and then surfaced by the TS tier sort). With a pure
+  // `ORDER BY created_at DESC LIMIT 20`, the 25 newer tier-4 rows would evict the older
+  // tier-1 row from the pool entirely.
+  it('surfaces an older high-tier row past a recency flood of low-tier rows', async () => {
+    const db = testDb();
+    const base = Date.now();
+    // 25 recent tier-4 (generated) rows — newer than the tier-1 exemplar, and more
+    // numerous than CANDIDATE_POOL (20), so recency-only truncation would bury tier 1.
+    for (let i = 0; i < 25; i++) {
+      await seed({
+        knowledgeIds: ['k1'],
+        metadata: generatedMeta,
+        createdAt: new Date(base + 1000 + i),
+      });
+    }
+    // One OLDER tier-1 (ingested authentic) exemplar.
+    const ingestedId = await seed({
+      knowledgeIds: ['k1'],
+      source: 'vision_paper',
+      metadata: ingestionMeta,
+      createdAt: new Date(base),
+    });
+
+    const out = await retrieveFewShotExamples({
+      db,
+      kind: 'translation',
+      knowledgeIds: ['k1'],
+      limit: 1,
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0].id).toBe(ingestedId);
+    expect(out[0].tier).toBe(1);
   });
 });
