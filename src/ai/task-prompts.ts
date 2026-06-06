@@ -707,6 +707,73 @@ function buildQuizVerifyPrompt(profile: SubjectProfile): string {
 - 禁止：联网检索、改写题目、给学习者建议（这是质检 not 教学）、JSON 之外的文字、用 markdown 代码块包裹整段 JSON。`;
 }
 
+// YUK-216 S2 slice 2 — SourcingTask prompt. Tool-calling agent that finds
+// EXISTING practice questions on the web and restructures them.
+//
+// docs/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §3.
+//   - Unlike QuizGen (which searches for SOURCE MATERIAL and writes ORIGINAL
+//     questions), SourcingTask searches for REAL practice questions and lifts +
+//     restructures them, recording each origin URL into per-question provenance.
+//   - OF-1 回填 (YUK-223): first cut extracts from HTML/TEXT sources only; image
+//     sources are out of the first version.
+//   - This片 is the MINIMAL task-description skeleton (role / output contract /
+//     whitelist note). Domain content (题型规范 etc.) migrates to an Agent Skill
+//     in slice 4 — this builder stays thin per the owner's code-as-task-description
+//     philosophy.
+//
+// The handler mounts the Tavily remote MCP (tavily_search / tavily_extract) + an
+// in-process domain-tool MCP at run time, so this prompt refers to tools by
+// capability, not by exact mcp__* identifier.
+function buildSourcingPrompt(profile: SubjectProfile): string {
+  const canonicalKinds =
+    'choice | true_false | fill_blank | short_answer | essay | computation | reading | translation';
+  return `你是${profile.displayName}题源检索员。任务：根据输入的学科 + 考点/题型 + 数量，**联网检索现成的练习题**，把每道题抽取并结构化为 SourcedQuestion。输入 { subject, knowledge_context, kinds?, count, whitelist } —— count 是期望题数，whitelist 是可信题源域名列表（可能为空）。
+科目上下文：${profile.displayName}。${profile.languageStyle}
+证据要求：${profile.grounding.requirement}
+不确定性策略：${profile.grounding.uncertaintyPolicy}
+
+你有工具：
+- 联网检索（tavily_search / tavily_extract）：搜**现成的练习题 / 习题 / 真题**；需要题面与答案细节时用 tavily_extract 拉网页正文。
+- 领域读工具：可读用户的知识图谱，确认题目考查的 knowledge_ids 真实存在。
+
+工作流程：
+1. 检索：用 tavily_search 找与考点/题型相关的现成练习题页面（HTML 文本源）；只处理**文本型**网页，**跳过纯图片型题源**（首版不抽图片题）。
+2. 抽取：用 tavily_extract 拉网页正文，从中**逐题**抽出题面、参考答案、选项（若有）。忠实抽取，不要自己改写题意或编造答案。
+3. 结构化：把每道题映射成 SourcedQuestion，标注 kind / 难度 / 它考查的 knowledge_ids（用 knowledge_context 里真实存在的 id）。
+4. 记录来源（**强制**）：每道题写它来自的 source_url（具体网页 URL）+ source_title（页面标题）。运行时无法从日志恢复你访问了哪些页面——只有写进 source_url 的来源才被记录。漏报 = 该题不可追溯、会被拒收。
+
+每题输出形状（SourcedQuestion）：
+{
+  "kind": "${canonicalKinds}",
+  "prompt_md": "题面 markdown（忠实抽取，可含 LaTeX）",
+  "reference_md": "参考答案 + 简短解析",
+  "choices_md": ["选项 A", "选项 B", ...] | null,
+  "judge_kind_override": "exact"|"keyword"|"semantic" | null,
+  "rubric_json": { "criteria": [{"name":"correctness","weight":1,"descriptor":"..."}], "keywords": [...], "required_points": [...] } | null,
+  "difficulty": 1-5 的整数,
+  "knowledge_ids": ["这道题考查的知识点 id"],
+  "source_url": "题目来自的具体网页 URL",
+  "source_title": "该网页标题",
+  "extraction_hash": "(可选) 抽取内容指纹"
+}
+
+整体严格 JSON 输出（不带 markdown 代码块包裹），shape 名 SourcingTaskOutput：
+{"questions":[SourcedQuestion, ...],"query_plan":["你执行的检索查询", ...],"fetched_at":"ISO8601 时间戳","tool":"tavily"}
+
+题目要求：
+- kind 只能是 ${canonicalKinds} 之一；不要发明新值；客观题统一用 "choice"。
+- choice / true_false：judge_kind_override="exact"，给选项，reference_md 第一行是正确选项原文。
+- fill_blank：可 exact；多个合理表述时用 "keyword" 并在 rubric_json.keywords 写 1–5 个必中关键词。
+- short_answer / reading / translation / essay：judge_kind_override="semantic"，rubric_json.required_points 必填 1–5 个可核查要点。
+- computation：只验最终答案可 exact；验方法要点用 semantic + required_points。
+- knowledge_ids 用 knowledge_context 里真实存在的知识点 id，不要发明。
+- whitelist 非空时**优先**抽取命中白名单域名的来源；白名单外的来源仍可抽（会在入库时被降权标记，不影响质检），但不要为了凑数抽明显低质的来源。
+约束（强约束）：
+- 每道题必须有有效的 source_url（具体网页 URL）+ source_title，否则会被拒收。
+- 只抽文本型网页；跳过纯图片题源（首版）。
+- 禁止：emoji、营销话、套话、JSON 之外的文字、用 markdown 代码块包裹整段 JSON。`;
+}
+
 export function getTaskSystemPrompt(
   task: AiTaskKind,
   profile: SubjectProfile = defaultSubjectProfile,
@@ -762,6 +829,8 @@ export function getTaskSystemPrompt(
       return buildQuizGenPrompt(profile);
     case 'QuizVerifyTask':
       return buildQuizVerifyPrompt(profile);
+    case 'SourcingTask':
+      return buildSourcingPrompt(profile);
     // Subject-neutral pass-throughs — no profile builder required.
     // VisionExtract* runs OCR on raw images; ReviewIntent generates a
     // session opener whose subject voice is already injected via summary
