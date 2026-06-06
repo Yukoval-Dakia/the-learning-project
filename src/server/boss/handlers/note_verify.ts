@@ -20,6 +20,7 @@ import {
 } from '@/server/artifacts/body-blocks';
 import { writeEvent } from '@/server/events/queries';
 import { writeNoteUpdateProposal } from '@/server/proposals/producers';
+import { resolveNoteSkill } from '@/subjects/note-skills';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 const ATOMIC_REQUIRED_SEMANTIC_KINDS = [
@@ -233,9 +234,11 @@ export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNot
   };
 
   try {
+    const subjectProfile = resolveSubjectProfile(kNode?.domain);
     const result = await runTaskFn('NoteVerifyTask', input, {
       db,
-      subjectProfile: resolveSubjectProfile(kNode?.domain),
+      subjectProfile,
+      skills: resolveNoteSkill(subjectProfile.id),
     });
     const parsed = parseVerificationOutput(result.text);
     const status = await persistNoteVerificationResult({

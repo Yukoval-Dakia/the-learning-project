@@ -30,6 +30,7 @@ import { bodyBlocksToBlockSummaries } from '@/server/artifacts/body-blocks';
 import { enqueueOrApplyNoteRefinePatch } from '@/server/artifacts/editing-session';
 import { decideNoteRefineMode } from '@/server/artifacts/note-refine-policy';
 import { writeNoteRefineProposal } from '@/server/artifacts/note-refine-proposals';
+import { resolveNoteSkill } from '@/subjects/note-skills';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 export type NoteRefineTriggerKind =
@@ -191,9 +192,11 @@ export async function runNoteRefine(params: RunNoteRefineParams): Promise<RunNot
     },
   };
 
+  const subjectProfile = resolveSubjectProfile(kNode?.domain);
   const taskResult = await runTaskFn('NoteRefineTask', input, {
     db,
-    subjectProfile: resolveSubjectProfile(kNode?.domain),
+    subjectProfile,
+    skills: resolveNoteSkill(subjectProfile.id),
   });
   const { patch } = parseNoteRefineOutput(taskResult.text);
   const summary = summarizeNotePatch(patch);
