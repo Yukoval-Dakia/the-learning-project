@@ -45,6 +45,13 @@ export const SourcedQuestion = z.object({
   // Optional fingerprint of the extracted content (dedup / audit cross-evidence).
   // Folded into metadata.web_sourced.extraction_hash by the handler.
   extraction_hash: z.string().min(1).optional(),
+  // The text the agent actually lifted from source_url for THIS question (the page
+  // passage the prompt + reference were restructured from). Folded into
+  // metadata.web_sourced.extract so source_verify's source_consistency check can run a
+  // DETERMINISTIC prompt↔source overlap WITHOUT refetching the network (mirrors the
+  // quiz_gen source_pack snippet → quiz_verify maxNgramOverlap precedent). Optional:
+  // absent → the verify gate keeps structural-only consistency (no overlap signal).
+  extract: z.string().min(1).optional(),
 });
 export type SourcedQuestionT = z.infer<typeof SourcedQuestion>;
 

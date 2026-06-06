@@ -115,9 +115,25 @@ function checkStructureCompleteness(row: QuestionRow): CheckOutcome {
     : { check: 'structure_completeness', verdict: 'fail', reason: problems.join('; ') };
 }
 
+// Minimum deterministic overlap between a sourced question's prompt+reference and the
+// extract the agent reported lifting from the declared source page. BELOW this, the
+// stored content does not support the declared provenance (mis-extraction or a
+// fabricated/guessed URL) and source_consistency fails. This is the INVERSE direction
+// of quiz_verify's copy_safety (which fails on HIGH overlap to catch plagiarism):
+// here a sourced question SHOULD closely echo its real source. Reuses the same
+// deterministic word-shingle overlap (maxNgramOverlap, CJK-aware). CONSERVATIVE start
+// — the gate only fires when an extract is present AND clearly fails to ground the
+// question, so genuine restructuring (paraphrase) is not punished. Tunable.
+export const SOURCE_GROUNDING_MIN_OVERLAP = 0.15;
+
 // source_consistency — the row's declared source matches its persisted provenance:
-// deriveSourceTier lands tier 2, the web_sourced block parses, and source_ref equals
-// the provenance URL. A web_sourced row that does NOT derive tier 2 is mislabeled.
+// deriveSourceTier lands tier 2, the web_sourced block parses, source_ref is present
+// and equals the provenance URL, AND (when the agent persisted an extract) the
+// prompt+reference deterministically overlap that extract. A web_sourced row that
+// does NOT derive tier 2, omits source_ref, or whose stored content does not ground
+// the declared source page is rejected. The overlap is DETERMINISTIC over the
+// PERSISTED extract — verify never refetches the network (mirrors the quiz_gen
+// source_pack snippet → quiz_verify maxNgramOverlap precedent; spec §4).
 function checkSourceConsistency(row: QuestionRow): CheckOutcome {
   const metadata = (row.metadata ?? {}) as Record<string, unknown>;
   const { tier } = deriveSourceTier({ source: row.source, metadata });
@@ -136,17 +152,48 @@ function checkSourceConsistency(row: QuestionRow): CheckOutcome {
       reason: `metadata.web_sourced failed provenance parse: ${parsed.error.issues.map((i) => i.message).join('; ')}`,
     };
   }
-  if (row.source_ref && row.source_ref !== parsed.data.url) {
+  // A web_sourced question with no source_ref has incomplete provenance — the column
+  // is supposed to carry the fetched URL (合约三). Missing → fail (CR), not pass.
+  if (!row.source_ref) {
+    return {
+      check: 'source_consistency',
+      verdict: 'fail',
+      reason: 'source_ref is missing for web_sourced question',
+    };
+  }
+  if (row.source_ref !== parsed.data.url) {
     return {
       check: 'source_consistency',
       verdict: 'fail',
       reason: `source_ref (${row.source_ref}) disagrees with provenance url (${parsed.data.url})`,
     };
   }
+  // Deterministic content grounding: when the agent persisted the source extract,
+  // the question's prompt+reference must overlap it. A mis-extracted or fabricated
+  // source carries an extract that does not echo the question → fail. When no extract
+  // was persisted there is no deterministic signal (older drafts / agent omitted it),
+  // so this stays structural-only — conservative, never punishing a missing extract.
+  const extract = parsed.data.extract;
+  if (extract && extract.trim().length > 0) {
+    const questionText = `${row.prompt_md}\n${row.reference_md}`;
+    const overlap = maxNgramOverlap(questionText, [extract]);
+    if (overlap < SOURCE_GROUNDING_MIN_OVERLAP) {
+      return {
+        check: 'source_consistency',
+        verdict: 'fail',
+        reason: `question content does not ground its declared source (overlap ${overlap.toFixed(2)} < ${SOURCE_GROUNDING_MIN_OVERLAP}); extract may be mis-attributed or fabricated`,
+      };
+    }
+    return {
+      check: 'source_consistency',
+      verdict: 'pass',
+      reason: `tier 2 sourced provenance consistent + content grounded (url ${parsed.data.url}, overlap ${overlap.toFixed(2)})`,
+    };
+  }
   return {
     check: 'source_consistency',
     verdict: 'pass',
-    reason: `tier 2 sourced provenance consistent (url ${parsed.data.url})`,
+    reason: `tier 2 sourced provenance consistent (url ${parsed.data.url}; no extract to ground)`,
   };
 }
 

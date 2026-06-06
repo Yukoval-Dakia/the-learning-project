@@ -39,6 +39,7 @@ type AgentCtx = {
   db: unknown;
   mcpServers?: Record<string, unknown>;
   allowedTools?: string[];
+  subjectProfile?: { id: string };
 };
 
 function agentMock(output: string, taskRunId?: string) {
@@ -63,6 +64,7 @@ const VALID_OUTPUT = JSON.stringify({
       knowledge_ids: ['k1'],
       source_url: 'https://example.edu/wenyan/lunyu',
       source_title: '论语·学而 注疏',
+      extract: '请翻译「学而时习之，不亦说乎」。学习并按时温习它，不也很愉快吗？',
       extraction_hash: 'sha256:abc',
     },
   ],
@@ -187,6 +189,8 @@ describe('runSourcing', () => {
     expect(web.fetched_at).toBe('2026-06-06T00:00:00.000Z');
     expect(web.whitelist_match).toBe(false); // OF-2 — empty whitelist
     expect(web.extraction_hash).toBe('sha256:abc');
+    // F1: the agent's extract is persisted so source_verify can ground deterministically.
+    expect(web.extract).toBe('请翻译「学而时习之，不亦说乎」。学习并按时温习它，不也很愉快吗？');
 
     // deriveSourceTier lands tier 2 on the persisted row.
     const { tier, name } = deriveSourceTier({ source: row.source, metadata: meta });
@@ -297,6 +301,128 @@ describe('runSourcing', () => {
       buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
     });
     expect(result.status).toBe('ready');
+  });
+
+  it('passes the resolved subject profile into the SourcingTask ctx (non-default subject)', async () => {
+    const db = testDb();
+    // a math-domain knowledge node → math profile, NOT the default wenyan voice.
+    await seedKnowledge({ id: 'k1', domain: 'math' });
+    const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_src_profile');
+
+    await runSourcing({
+      db,
+      trigger: 'knowledge',
+      refId: 'k1',
+      runAgentTaskFn,
+      enqueueSourceVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: vi.fn(() => null),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+    });
+
+    const ctx = runAgentTaskFn.mock.calls[0][2];
+    expect(ctx.subjectProfile?.id).toBe('math');
+  });
+
+  it('preserves an explicit judge_kind_override instead of overwriting it with the default', async () => {
+    const db = testDb();
+    await seedKnowledge({ id: 'k1' });
+    // A fill_blank question with NO rubric keywords would default to 'exact', but the
+    // agent explicitly chose 'keyword' — that explicit route must survive.
+    const output = JSON.stringify({
+      questions: [
+        {
+          kind: 'fill_blank',
+          prompt_md: '「学而时习之，不亦____乎」',
+          reference_md: '说',
+          choices_md: null,
+          judge_kind_override: 'keyword',
+          rubric_json: {
+            criteria: [{ name: 'correctness', weight: 1, descriptor: '填对字' }],
+            keywords: ['说', '悦'],
+          },
+          difficulty: 2,
+          knowledge_ids: ['k1'],
+          source_url: 'https://example.edu/wenyan/lunyu',
+          source_title: '论语',
+          extract: '「学而时习之，不亦说乎」',
+        },
+      ],
+      query_plan: ['论语 填空'],
+      fetched_at: '2026-06-06T00:00:00.000Z',
+      tool: 'tavily',
+    });
+    const result = await runSourcing({
+      db,
+      trigger: 'knowledge',
+      refId: 'k1',
+      runAgentTaskFn: agentMock(output, 'tr_src_judge'),
+      enqueueSourceVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: vi.fn(() => null),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+    });
+    const qid = result.question_ids?.[0] as string;
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    expect(rows[0].judge_kind_override).toBe('keyword');
+  });
+
+  it('skips an archived knowledge trigger (archived nodes get no new material)', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(knowledge).values({
+      id: 'k_archived',
+      name: '归档点',
+      domain: 'wenyan',
+      parent_id: null,
+      merged_from: [],
+      proposed_by_ai: false,
+      approval_status: 'approved',
+      archived_at: now,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    const result = await runSourcing({
+      db,
+      trigger: 'knowledge',
+      refId: 'k_archived',
+      runAgentTaskFn: agentMock(VALID_OUTPUT),
+      enqueueSourceVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: vi.fn(() => null),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+    });
+    expect(result.status).toBe('skipped:ref_not_found');
+  });
+
+  it('does not fall back to an archived knowledge id when the agent hallucinates (manual trigger)', async () => {
+    const db = testDb();
+    const now = new Date();
+    // manual trigger resolves an archived node → resolved.knowledgeIds is []; the
+    // hallucinated id is unknown → no valid attribution → throws (never mounts to the
+    // archived node).
+    await db.insert(knowledge).values({
+      id: 'k_arch_manual',
+      name: '归档点',
+      domain: 'wenyan',
+      parent_id: null,
+      merged_from: [],
+      proposed_by_ai: false,
+      approval_status: 'approved',
+      archived_at: now,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    await expect(
+      runSourcing({
+        db,
+        trigger: 'manual',
+        refId: 'k_arch_manual',
+        runAgentTaskFn: agentMock(HALLUCINATED_KNOWLEDGE_OUTPUT, 'tr_src_arch'),
+        enqueueSourceVerify: vi.fn(async () => {}),
+        buildTavilyMcpServerFn: vi.fn(() => null),
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      }),
+    ).rejects.toThrow();
   });
 
   it('writes a failure event and rethrows on unparseable agent output', async () => {
