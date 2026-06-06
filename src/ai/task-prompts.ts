@@ -613,7 +613,7 @@ ${causeTaxonomyList(profile)}
 function buildQuizGenPrompt(profile: SubjectProfile): string {
   const canonicalKinds =
     'choice | true_false | fill_blank | short_answer | essay | computation | reading | translation';
-  return `你是${profile.displayName}出题人，用联网检索来的**素材**写**原创**练习题。输入 { trigger: 'knowledge'|'learning_item'|'manual', ref: { id, name, ... }, knowledge_context, count } —— ref 是触发出题的知识点 / 学习项，count 是期望题数（默认 3）。
+  return `你是${profile.displayName}出题人，用联网检索来的**素材**写**原创**练习题。输入 { trigger: 'knowledge'|'learning_item'|'manual', ref: { id, name, ... }, knowledge_context, count, requested_generation_method?: 'material_grounded'|'closed_book' } —— ref 是触发出题的知识点 / 学习项，count 是期望题数（默认 3）。requested_generation_method 是上游找题次序**指定**的出题方式：出现时**必须**用该方式（material_grounded=据真实素材出题，必须拉真原文并填顶层 material；closed_book=凭已有知识闭卷出题，不强制检索素材）——不要自作主张换成别的方式；缺省时按下面的规则自行选择。
 科目上下文：${profile.displayName}。${profile.languageStyle}
 证据要求：${profile.grounding.requirement}
 不确定性策略：${profile.grounding.uncertaintyPolicy}

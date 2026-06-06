@@ -27,11 +27,11 @@
 // "要新题/扩充练习" scenario and does NOT绕过错题本 (the orchestrator only READS the
 // active pool and ENQUEUES production — it never touches mistakes / review state).
 
-import { and, asc, sql } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 
-import { deriveSourceTier } from '@/core/schema/provenance';
+import { compareBySourceTierThenWhitelist, deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
-import { question } from '@/db/schema';
+import { knowledge, question } from '@/db/schema';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
 
@@ -60,16 +60,38 @@ export interface ExistingPoolHit {
   tier: number;
 }
 
+// OF-2 (plan §12) — read metadata.web_sourced.whitelist_match for the within-tier-2
+// demotion comparator. Returns null for non-web_sourced rows (no whitelist semantics).
+// Mirrors context-readers' readWhitelistMatch predicate verbatim; the ORDER logic
+// itself is the shared compareBySourceTierThenWhitelist comparator (合约五), so only
+// this tiny jsonb read is local — the sort semantics are not re-implemented.
+function readWhitelistMatch(metadata: Record<string, unknown> | null): boolean | null {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const webSourced = (metadata as Record<string, unknown>).web_sourced;
+  if (!webSourced || typeof webSourced !== 'object') return null;
+  const match = (webSourced as Record<string, unknown>).whitelist_match;
+  return typeof match === 'boolean' ? match : null;
+}
+
 // Pull the ACTIVE (non-draft) questions attached to a knowledge node, ordered by
-// source tier (high tier = low number first), then创建顺序. Mirrors the candidate
-// SELECT widening from slice 5a (projects source + metadata so deriveSourceTier can
-// run) and the non-draft filter used by context-readers / due-list (drafts never
-// enter the pool — Gate-B先例).
+// source tier (high tier = low number first), then OF-2 whitelist demotion, then创建
+// 顺序. Mirrors the candidate SELECT widening from slice 5a (projects source +
+// metadata so deriveSourceTier can run) and the non-draft filter used by
+// context-readers / due-list (drafts never enter the pool — Gate-B先例).
 async function queryExistingPool(
   db: Db,
   knowledgeId: string,
   limit: number,
 ): Promise<ExistingPoolHit[]> {
+  // F2 (PR #318 round-1): tier is a DERIVED (metadata-driven) value, not a column, so
+  // it cannot be expressed in SQL ORDER BY. The previous code截断 to limit×4 in SQL
+  // BEFORE the in-memory tier sort, which could drop a newer high-tier row in favour of
+  // older low-tier ones (the truncation키ed off created_at, not tier). We instead fetch
+  // the FULL candidate set for this one knowledge node and rank entirely in memory.
+  // 量级论证: candidates are scoped to a SINGLE knowledge node (knowledge_ids @> [id])
+  // and exclude drafts — a node's active question pool is bounded (tens, not millions);
+  // there is no unbounded-table scan here. created_at asc gives a stable base order so
+  // the comparator below is a stable secondary sort within equal (tier, demotion).
   const rows = await db
     .select({
       id: question.id,
@@ -84,21 +106,34 @@ async function queryExistingPool(
         sql`(${question.draft_status} IS NULL OR ${question.draft_status} <> 'draft')`,
       ),
     )
-    // Stable secondary order; the tier sort below is applied in-memory because tier is
-    // a derived (metadata-driven) value, not a column.
-    .orderBy(asc(question.created_at), asc(question.id))
-    // Over-fetch a little so the tier sort has room, then trim to `limit`.
-    .limit(Math.max(limit * 4, limit));
+    .orderBy(asc(question.created_at), asc(question.id));
 
   const hits = rows.map((r) => ({
     question_id: r.id,
     source: r.source,
     tier: deriveSourceTier({ source: r.source, metadata: r.metadata ?? null }).tier,
+    whitelistMatch: readWhitelistMatch((r.metadata ?? null) as Record<string, unknown> | null),
   }));
-  // High tier first (1 authentic → 4 generated); created_at order already stable from
-  // the SQL, so this is a stable secondary sort within the same tier.
-  hits.sort((a, b) => a.tier - b.tier);
-  return hits.slice(0, limit);
+  // 合约五 shared comparator: high tier first (1 authentic → 4 generated), then OF-2
+  // within-tier demotion (off-whitelist behind on-whitelist). Same comparator slice 5a
+  // uses — the created_at base order from SQL stays stable within equal keys.
+  hits.sort(compareBySourceTierThenWhitelist);
+  return hits
+    .slice(0, limit)
+    .map(({ question_id, source, tier }) => ({ question_id, source, tier }));
+}
+
+// F5 — resolve the subject domain from the knowledge node itself (used when the caller
+// omits `domain`). Returns null when the node is absent / has no domain, so
+// resolveSubjectProfile falls back to the default subject — the same defensive default
+// as before, just keyed off the node when available.
+async function resolveKnowledgeDomain(db: Db, knowledgeId: string): Promise<string | null> {
+  const rows = await db
+    .select({ domain: knowledge.domain })
+    .from(knowledge)
+    .where(eq(knowledge.id, knowledgeId))
+    .limit(1);
+  return rows[0]?.domain ?? null;
 }
 
 // ── Profile route preference (defensive — S2-4 adds the field) ────────────────
@@ -131,15 +166,37 @@ export function resolveRoutePreference(
 // The orchestrator enqueues background production jobs but never waits for them to
 // ingest (B2). The default impl sends to the existing pg-boss queues (slice 2/3):
 //   external_sourcing → 'sourcing'  (SourcingTask, tier 2)
-//   material_grounded → 'quiz_gen'  (QuizGenTask picks material_grounded, tier 3)
-//   closed_book       → 'quiz_gen'  (QuizGenTask falls back to closed_book, tier 4)
-// material_grounded vs closed_book both ride the quiz_gen queue — the QuizGenTask
-// agent picks the generation_method at run time (Tavily availability + prompt);
-// the orchestrator's job is only to drive the次序, not the method选择.
+//   material_grounded → 'quiz_gen'  (QuizGenTask PINNED to material_grounded, tier 3)
+//   closed_book       → 'quiz_gen'  (QuizGenTask PINNED to closed_book, tier 4)
+// F1 (PR #318 round-1): material_grounded vs closed_book both ride the quiz_gen queue,
+// but the quiz_gen payload now carries an EXPLICIT generation_method so the worker
+// knows WHICH of the two tiers the次序 asked for. Without it the agent free-chose the
+// method (Tavily availability + prompt) and the次序's step 3 vs step 4 distinction was
+// never actually executed. The orchestrator pins the method per step below.
 export type EnqueueSequenceJobFn = (
   step: SourcingSequenceStep,
-  data: { trigger: SourcingTrigger; ref_id: string; count?: number },
+  data: {
+    trigger: SourcingTrigger;
+    ref_id: string;
+    count?: number;
+    // F1 — pinned generation_method for quiz_gen steps (material_grounded /
+    // closed_book). Absent for external_sourcing (the sourcing queue has no method axis).
+    generation_method?: 'material_grounded' | 'closed_book';
+    // F3 — the knowledge node this need keys to. Forwarded so a manual trigger with a
+    // free-form ref_id still attributes produced questions to the right node.
+    knowledge_id?: string;
+  },
 ) => Promise<void>;
+
+// F1 — map a quiz_gen step to the generation_method it must pin. external_sourcing has
+// no method axis (it rides the sourcing queue), so it maps to undefined.
+function methodForStep(
+  step: SourcingSequenceStep,
+): 'material_grounded' | 'closed_book' | undefined {
+  if (step === 'material_grounded') return 'material_grounded';
+  if (step === 'closed_book') return 'closed_book';
+  return undefined;
+}
 
 // Mirror the quiz_gen / sourcing trigger surface (knowledge / learning_item /
 // manual). Kept local to avoid importing a handler module into core orchestration.
@@ -152,7 +209,13 @@ function queueForStep(step: SourcingSequenceStep): 'sourcing' | 'quiz_gen' {
 
 async function defaultEnqueueSequenceJob(
   step: SourcingSequenceStep,
-  data: { trigger: SourcingTrigger; ref_id: string; count?: number },
+  data: {
+    trigger: SourcingTrigger;
+    ref_id: string;
+    count?: number;
+    generation_method?: 'material_grounded' | 'closed_book';
+    knowledge_id?: string;
+  },
 ): Promise<void> {
   const { getStartedBoss } = await import('@/server/boss/client');
   const boss = await getStartedBoss();
@@ -160,6 +223,10 @@ async function defaultEnqueueSequenceJob(
     trigger: data.trigger,
     ref_id: data.ref_id,
     ...(data.count !== undefined ? { count: data.count } : {}),
+    // F1 — only quiz_gen steps carry a pinned method; the sourcing queue ignores it.
+    ...(data.generation_method !== undefined ? { generation_method: data.generation_method } : {}),
+    // F3 — forward the knowledge node for attribution (quiz_gen reads it for manual triggers).
+    ...(data.knowledge_id !== undefined ? { knowledge_id: data.knowledge_id } : {}),
   });
 }
 
@@ -238,13 +305,29 @@ export async function runSourcingSequence(
   }
 
   // Steps 2-4 — enqueue background production in the profile's preference order.
-  const profile = resolveSubjectProfile(params.domain ?? null);
+  // F5 (PR #318 round-1): when the caller omits `domain`, resolve the subject from the
+  // knowledge node's own domain instead of silently falling back to the default
+  // subject. A 'knowledge' trigger keys off a real node, so its domain is the
+  // authoritative subject for the route preference (a math node must not route through
+  // the wenyan default profile). domain wins when explicitly passed.
+  const resolvedDomain = params.domain ?? (await resolveKnowledgeDomain(db, knowledgeId));
+  const profile = resolveSubjectProfile(resolvedDomain);
   const route = resolveRoutePreference(profile, params.kind ?? null);
 
   const enqueued: SourcingSequenceStep[] = [];
   const needs: SourcingNeed[] = [];
   for (const step of route) {
-    await enqueue(step, { trigger, ref_id: refId, count });
+    await enqueue(step, {
+      trigger,
+      ref_id: refId,
+      count,
+      // F1 — pin the generation_method for quiz_gen steps so the worker executes the
+      // requested tier (material_grounded vs closed_book) rather than free-choosing.
+      ...(methodForStep(step) !== undefined ? { generation_method: methodForStep(step) } : {}),
+      // F3 — forward the knowledge node so produced questions attribute to it even when
+      // the trigger is manual with a free-form ref_id.
+      knowledge_id: knowledgeId,
+    });
     enqueued.push(step);
     needs.push({
       kind: 'question_generation',

@@ -62,6 +62,13 @@ export interface QuizGenJobData {
   trigger: QuizGenTrigger;
   ref_id: string;
   count?: number;
+  // YUK-226 S2-5b F1 — the §3.2 找题次序 pins which tier it asked for (step 3
+  // material_grounded vs step 4 closed_book). Absent on a bare manual quiz_gen
+  // trigger, in which case the agent free-chooses the method as before.
+  generation_method?: 'material_grounded' | 'closed_book';
+  // YUK-226 S2-5b F3 — the knowledge node a manual/free-form trigger should attribute
+  // produced questions to (the next 找题次序 round keys off this node's pool).
+  knowledge_id?: string;
 }
 
 // §4 — default question count when the trigger doesn't specify one.
@@ -229,6 +236,12 @@ export interface RunQuizGenParams {
   trigger: QuizGenTrigger;
   refId: string;
   count?: number;
+  // YUK-226 S2-5b F1 — when set, the 找题次序 pins the generation_method (the agent is
+  // instructed to honour it). Absent → original free-choice behaviour preserved.
+  generationMethod?: 'material_grounded' | 'closed_book';
+  // YUK-226 S2-5b F3 — attribution anchor for manual/free-form triggers: when present,
+  // resolveTrigger keys the produced questions to this knowledge node.
+  knowledgeId?: string;
   runAgentTaskFn?: RunAgentTaskFn;
   buildMcpServerFn?: BuildMcpServerFn;
   buildTavilyMcpServerFn?: BuildTavilyMcpServerFn;
@@ -254,7 +267,25 @@ async function resolveTrigger(
   db: Db,
   trigger: QuizGenTrigger,
   refId: string,
+  // YUK-226 S2-5b F3 — explicit knowledge anchor (from the 找题次序). When present it
+  // resolves the attribution node directly, regardless of the (free-form) refId.
+  knowledgeId?: string,
 ): Promise<ResolvedTrigger | null> {
+  // F3 — a 找题次序-driven job carries the knowledge node explicitly. Resolve it as the
+  // attribution anchor so produced questions key to that node even when refId is a
+  // free-form manual string. ref_id (the trigger pointer) is preserved verbatim.
+  if (knowledgeId) {
+    const rows = await db
+      .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
+      .from(knowledge)
+      .where(eq(knowledge.id, knowledgeId))
+      .limit(1);
+    const k = rows[0];
+    if (k) {
+      return { refId, knowledgeNode: k, knowledgeIds: [k.id], title: k.name };
+    }
+    // Fall through to the per-trigger resolution when the anchor node is missing.
+  }
   if (trigger === 'knowledge') {
     const rows = await db
       .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
@@ -313,7 +344,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
   const buildTavily = params.buildTavilyMcpServerFn ?? buildTavilyMcpServer;
   const enqueueQuizVerify = params.enqueueQuizVerify ?? defaultEnqueueQuizVerify;
 
-  const resolved = await resolveTrigger(db, trigger, refId);
+  const resolved = await resolveTrigger(db, trigger, refId, params.knowledgeId);
   // knowledge / learning_item triggers must resolve a real row; manual always
   // resolves (best-effort) so it never skips.
   if (!resolved) return { status: 'skipped:ref_not_found' };
@@ -357,6 +388,10 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     },
     knowledge_context: resolved.knowledgeNode ? [resolved.knowledgeNode] : [],
     count,
+    // YUK-226 S2-5b F1 — the 找题次序 pins which tier it asked for. The agent prompt
+    // (buildQuizGenPrompt) instructs honouring requested_generation_method when present;
+    // absent → the agent free-chooses (original behaviour).
+    ...(params.generationMethod ? { requested_generation_method: params.generationMethod } : {}),
   };
 
   let taskResult: TaskTextResult | null = null;
@@ -630,6 +665,9 @@ export function buildQuizGenHandler(
         trigger: data.trigger,
         refId: data.ref_id,
         count: data.count,
+        // YUK-226 S2-5b F1/F3 — honour the 找题次序's pinned method + attribution anchor.
+        ...(data.generation_method ? { generationMethod: data.generation_method } : {}),
+        ...(data.knowledge_id ? { knowledgeId: data.knowledge_id } : {}),
         runAgentTaskFn: deps.runAgentTaskFn,
         buildMcpServerFn: deps.buildMcpServerFn,
         buildTavilyMcpServerFn: deps.buildTavilyMcpServerFn,
