@@ -1,5 +1,6 @@
 'use client';
 
+import { AutoEnrolledPanel } from '@/ui/components/AutoEnrolledPanel';
 import { VisionTab } from '@/ui/components/VisionTab';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
 import { causeOptionsForSelectedKnowledge } from '@/ui/lib/cause-options';
@@ -13,7 +14,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 
-type ModeTab = 'context' | 'manual' | 'vision_single' | 'vision_paper';
+type ModeTab = 'context' | 'manual' | 'vision_single' | 'vision_paper' | 'auto_enrolled';
 
 interface KnowledgeNode {
   id: string;
@@ -94,6 +95,7 @@ const MODE_TABS = [
   { id: 'manual' as ModeTab, label: '错题' },
   { id: 'vision_single' as ModeTab, label: '拍单题' },
   { id: 'vision_paper' as ModeTab, label: '拍试卷' },
+  { id: 'auto_enrolled' as ModeTab, label: 'AI 录入' },
 ];
 
 export default function RecordPage() {
@@ -118,6 +120,7 @@ export default function RecordPage() {
         {mode === 'manual' && <ManualForm />}
         {mode === 'vision_single' && <VisionTab mode="vision_single" />}
         {mode === 'vision_paper' && <VisionTab mode="vision_paper" />}
+        {mode === 'auto_enrolled' && <AutoEnrolledPanel />}
       </div>
     </main>
   );
