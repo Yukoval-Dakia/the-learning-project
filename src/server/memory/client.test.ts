@@ -159,3 +159,70 @@ describe('createMemoryClient process.env hygiene (YUK-140)', () => {
     expect(process.env.ANTHROPIC_BASE_URL).toBeUndefined();
   });
 });
+
+describe('createMemoryClient base-URL window mutex (YUK-232)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('throws if the construction window is re-entered (race guard)', () => {
+    vi.stubEnv('ANTHROPIC_BASE_URL', undefined);
+    // Simulate a `construct` callback that re-enters the scoped window before the
+    // outer one has restored process.env — the exact overlap YUK-232 guards
+    // against. The inner createMemoryClient must throw rather than corrupt the
+    // shared process.env.ANTHROPIC_BASE_URL.
+    expect(() =>
+      createMemoryClient({
+        env,
+        memoryFactory: () => {
+          createMemoryClient({
+            env,
+            memoryFactory: () => ({ add: vi.fn(), search: vi.fn() }),
+          });
+          return { add: vi.fn(), search: vi.fn() };
+        },
+      }),
+    ).toThrow(/re-entrant ANTHROPIC_BASE_URL window/);
+    // The global must be cleanly restored even though the inner call threw and
+    // unwound through the outer finally.
+    expect(process.env.ANTHROPIC_BASE_URL).toBeUndefined();
+  });
+
+  it('releases the window lock after a normal construction so later calls succeed', () => {
+    vi.stubEnv('ANTHROPIC_BASE_URL', undefined);
+    // First construction takes and releases the lock.
+    createMemoryClient({ env, memoryFactory: () => ({ add: vi.fn(), search: vi.fn() }) });
+    // A second, sequential construction must not see a stuck lock.
+    let baseUrlDuringSecond: string | undefined;
+    expect(() =>
+      createMemoryClient({
+        env,
+        memoryFactory: () => {
+          baseUrlDuringSecond = process.env.ANTHROPIC_BASE_URL;
+          return { add: vi.fn(), search: vi.fn() };
+        },
+      }),
+    ).not.toThrow();
+    expect(baseUrlDuringSecond).toBe('https://api.xiaomimimo.com/anthropic');
+    expect(process.env.ANTHROPIC_BASE_URL).toBeUndefined();
+  });
+
+  it('releases the window lock even when construction throws', () => {
+    vi.stubEnv('ANTHROPIC_BASE_URL', undefined);
+    // A throwing factory must still unlock the window via the finally block,
+    // otherwise every subsequent createMemoryClient would falsely report a race.
+    expect(() =>
+      createMemoryClient({
+        env,
+        memoryFactory: () => {
+          throw new Error('boom');
+        },
+      }),
+    ).toThrow(/boom/);
+    expect(process.env.ANTHROPIC_BASE_URL).toBeUndefined();
+    // Lock is free again: a clean construction now succeeds.
+    expect(() =>
+      createMemoryClient({ env, memoryFactory: () => ({ add: vi.fn(), search: vi.fn() }) }),
+    ).not.toThrow();
+  });
+});
