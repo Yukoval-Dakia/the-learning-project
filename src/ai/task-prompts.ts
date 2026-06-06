@@ -746,6 +746,7 @@ function buildSourcingPrompt(profile: SubjectProfile): string {
   "knowledge_ids": ["这道题考查的知识点 id"],
   "source_url": "题目来自的具体网页 URL",
   "source_title": "该网页标题",
+  "extract": "你从该网页**逐字抽取**的原始题面片段（质检会用它与题面做确定性比对，证明 source_url 真实可追溯；忠实粘贴，勿改写）",
   "extraction_hash": "(可选) 抽取内容指纹"
 }
 
@@ -762,6 +763,7 @@ function buildSourcingPrompt(profile: SubjectProfile): string {
 - whitelist 非空时**优先**抽取命中白名单域名的来源；白名单外的来源仍可抽（会在入库时被降权标记，不影响质检），但不要为了凑数抽明显低质的来源。
 约束（强约束）：
 - 每道题必须有有效的 source_url（具体网页 URL）+ source_title，否则会被拒收。
+- **强烈建议**为每题填 extract（从 source_url 逐字抽取的原始题面片段）：质检会用它对题面做确定性 grounding 比对，证明来源真实。extract 与题面毫无重叠 → 该题被判为来源伪造、拒收。
 - 只抽文本型网页；跳过纯图片题源（首版）。
 - 禁止：emoji、营销话、套话、JSON 之外的文字、用 markdown 代码块包裹整段 JSON。`;
 }

@@ -76,6 +76,7 @@ async function seedQuestion(opts: SeedQuestionOpts = {}): Promise<string> {
         fetched_at: opts.web?.fetched_at ?? '2026-06-06T00:00:00.000Z',
         whitelist_match: opts.web?.whitelist_match ?? false,
         ...(opts.web?.extraction_hash ? { extraction_hash: opts.web.extraction_hash } : {}),
+        ...(opts.web?.extract ? { extract: opts.web.extract } : {}),
       },
       ...(opts.sourceRefKind === null ? {} : { source_ref_kind: opts.sourceRefKind ?? 'url' }),
     } as Record<string, unknown>);
@@ -169,6 +170,68 @@ describe('runSourceVerify', () => {
     ).toBe(true);
     const rows = await db.select().from(question).where(eq(question.id, qid));
     expect(rows[0].draft_status).toBe('draft');
+  });
+
+  it('fails source_consistency when source_ref is missing (incomplete provenance)', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    // valid web_sourced provenance block but NO source_ref column → incomplete (F4).
+    const qid = await seedQuestion({ knowledgeIds: ['k1'], sourceRef: null });
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+
+    const result = await runSourceVerify({ db, questionId: qid, runTaskFn });
+    expect(result.status).toBe('failed');
+    expect(
+      result.checks?.some(
+        (c) =>
+          c.check === 'source_consistency' && c.verdict === 'fail' && /missing/i.test(c.reason),
+      ),
+    ).toBe(true);
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    expect(rows[0].draft_status).toBe('draft');
+  });
+
+  it('fails source_consistency when a persisted extract does not ground the question (F1)', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    // The extract is about an UNRELATED topic — zero overlap with the prompt/reference,
+    // so the declared source cannot have produced this question (mis-attributed URL).
+    const qid = await seedQuestion({
+      knowledgeIds: ['k1'],
+      prompt: '「之」在「学而时习之」中作？',
+      reference: '代词',
+      web: { extract: '光合作用发生在叶绿体中，需要光照与二氧化碳。' },
+    });
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+
+    const result = await runSourceVerify({ db, questionId: qid, runTaskFn });
+    expect(result.status).toBe('failed');
+    expect(
+      result.checks?.some(
+        (c) => c.check === 'source_consistency' && c.verdict === 'fail' && /ground/i.test(c.reason),
+      ),
+    ).toBe(true);
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    expect(rows[0].draft_status).toBe('draft');
+  });
+
+  it('passes source_consistency when the persisted extract grounds the question (F1)', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    const qid = await seedQuestion({
+      knowledgeIds: ['k1'],
+      prompt: '「之」在「学而时习之」中作？',
+      reference: '代词',
+      // extract echoes the prompt → grounded → source_consistency passes.
+      web: { extract: '「之」在「学而时习之」中作代词，指代所学的内容。' },
+    });
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+
+    const result = await runSourceVerify({ db, questionId: qid, runTaskFn });
+    expect(result.status).toBe('verified');
+    expect(
+      result.checks?.some((c) => c.check === 'source_consistency' && c.verdict === 'pass'),
+    ).toBe(true);
   });
 
   it('fails dedup when an active pool question shares a knowledge point and is near-identical', async () => {
