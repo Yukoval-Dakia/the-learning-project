@@ -74,25 +74,41 @@ export const QuizGenVerification = z.object({
 });
 export type QuizGenVerificationT = z.infer<typeof QuizGenVerification>;
 
-export const QuizGenMetadata = z.object({
-  source_pack: QuizGenSourcePack,
-  source_refs: z.array(QuizGenSourceRef),
-  generation_method: QuizGenGenerationMethod,
-  copy_safety: QuizGenCopySafety,
-  // Set by QuizGenTask handler on successful parse (Q3). 'ready' = generated,
-  // pending verification.
-  generation_status: z.literal('ready'),
-  verification: QuizGenVerification.optional(),
-  // YUK-216 S2 — tier 3 'material_grounded' only: the source_document row id the
-  // generated questions are grounded in. question has no source_document_id column
-  // (zero-DDL), so material provenance lives here in the quiz_gen metadata
-  // namespace. Absent for search_grounded / closed_book. deriveSourceTier() reads
-  // this (with generation_method='material_grounded') to land tier 3. The
-  // superRefine that REQUIRES it when generation_method='material_grounded' is
-  // added by slice 3 (this slice only declares the optional field).
-  // docs/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §2.1 / §2.3.
-  material_source_document_id: z.string().min(1).optional(),
-});
+export const QuizGenMetadata = z
+  .object({
+    source_pack: QuizGenSourcePack,
+    source_refs: z.array(QuizGenSourceRef),
+    generation_method: QuizGenGenerationMethod,
+    copy_safety: QuizGenCopySafety,
+    // Set by QuizGenTask handler on successful parse (Q3). 'ready' = generated,
+    // pending verification.
+    generation_status: z.literal('ready'),
+    verification: QuizGenVerification.optional(),
+    // YUK-216 S2 — tier 3 'material_grounded' only: the source_document row id the
+    // generated questions are grounded in. question has no source_document_id column
+    // (zero-DDL), so material provenance lives here in the quiz_gen metadata
+    // namespace. Absent for search_grounded / closed_book. deriveSourceTier() reads
+    // this (with generation_method='material_grounded') to land tier 3.
+    // docs/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §2.1 / §2.3.
+    material_source_document_id: z.string().min(1).optional(),
+  })
+  .superRefine((meta, ctx) => {
+    // Time-ordering guard: a 'material_grounded' row MUST carry the grounding
+    // material id, otherwise it would land in the question table flagged as tier 3
+    // by deriveSourceTier yet be demoted to tier 4 (no material id → fails the tier-3
+    // branch). Make the contract reject the half-formed shape at parse time. The live
+    // material writer (slice 3 / YUK-224) persists the source_document first, so it
+    // naturally satisfies this; this guard fails fast if any earlier writer flips the
+    // method without wiring the id.
+    if (meta.generation_method === 'material_grounded' && !meta.material_source_document_id) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['material_source_document_id'],
+        message:
+          "generation_method='material_grounded' requires material_source_document_id (YUK-224)",
+      });
+    }
+  });
 export type QuizGenMetadataT = z.infer<typeof QuizGenMetadata>;
 
 // ---------- §5 Q2 QuizGenTask LLM output ----------

@@ -119,8 +119,13 @@ export function deriveSourceTier(q: SourceTierInput): {
     return { tier: 1, name: 'authentic' };
   }
 
-  // tier 2 sourced — web_sourced source + a parseable web_sourced provenance block.
-  if (q.source === 'web_sourced') {
+  // tier 2 sourced — web_sourced source + a parseable web_sourced provenance block
+  // AND the top-level source_ref_kind discriminator set to 'url'. 合约三 (§2.2) makes
+  // metadata.source_ref_kind the single source of truth that disambiguates the
+  // overloaded source_ref column; tier-2 derivation must honour that contract rather
+  // than inferring tier 2 from metadata.web_sourced alone, otherwise a row missing
+  // the discriminator would bypass the disambiguation contract this slice defines.
+  if (q.source === 'web_sourced' && metadata.source_ref_kind === 'url') {
     const parsed = WebSourcedProvenance.safeParse(metadata.web_sourced);
     if (parsed.success) {
       return { tier: 2, name: 'sourced' };
