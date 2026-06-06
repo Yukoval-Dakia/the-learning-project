@@ -3,6 +3,7 @@
 // Composite read tools for records, questions, due review cards, learning
 // items, and Dreaming-maintained memory briefs.
 
+import { deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
 import {
   artifact,
@@ -696,6 +697,16 @@ const GetReviewDueOutputSchema = z.object({
       fsrs_state: z.unknown().nullable(),
       due_at: z.string().nullable(),
       reason: z.enum(['never_reviewed_failure', 'overdue', 'filtered_match']),
+      // YUK-226 S2-5a.2 — source/tier read model. `source` is the question.source
+      // column; `tier` is derived via deriveSourceTier(source, metadata) (1 authentic
+      // → 4 generated). Consumers (组卷/召回) prefer lower-numbered (higher) tiers.
+      source: z.string(),
+      tier: z.number().int().min(1).max(4),
+      // OF-2 (plan §12) — within tier 2 (web_sourced), off-whitelist questions
+      // (whitelist_match=false) sort BEHIND whitelist_match=true at selection
+      // time. Present only for tier-2 rows (metadata.web_sourced.whitelist_match);
+      // null otherwise. Demotion affects selection priority only, never quality.
+      whitelist_match: z.boolean().nullable(),
       latest_mistake: z
         .object({
           attempt_event_id: z.string(),
@@ -716,6 +727,18 @@ const GetReviewDueOutputSchema = z.object({
 type GetReviewDueInput = z.infer<typeof GetReviewDueInputSchema>;
 type GetReviewDueOutput = z.infer<typeof GetReviewDueOutputSchema>;
 
+// OF-2 (plan §12) — read metadata.web_sourced.whitelist_match for tier-2 demotion.
+// Returns null for non-web_sourced rows (no whitelist semantics). Defensive about
+// the jsonb shape: a malformed/absent block yields null (treated as "unknown",
+// never demoted ahead of a real false).
+function readWhitelistMatch(metadata: Record<string, unknown> | null): boolean | null {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const webSourced = (metadata as Record<string, unknown>).web_sourced;
+  if (!webSourced || typeof webSourced !== 'object') return null;
+  const match = (webSourced as Record<string, unknown>).whitelist_match;
+  return typeof match === 'boolean' ? match : null;
+}
+
 // Exported so non-LLM read paths (e.g. /api/today/copilot-summary in Wave 5)
 // can reuse the exact predicate without duplicating SQL. Pass a minimal
 // ToolContext (`{ db, taskRunId: 'system', callerActor: ... }`) when calling
@@ -733,6 +756,9 @@ export async function executeGetReviewDue(
     due_at: Date;
     prompt_md: string;
     knowledge_ids: string[];
+    // YUK-226 S2-5a.2 — projected for tier derivation (deriveSourceTier needs both).
+    source: string;
+    metadata: Record<string, unknown> | null;
   };
   const dueRows: DueRow[] = [];
   const usedDueQuestionIds = new Set<string>();
@@ -761,6 +787,8 @@ export async function executeGetReviewDue(
         prompt_md: question.prompt_md,
         knowledge_ids: question.knowledge_ids,
         created_at: question.created_at,
+        source: question.source,
+        metadata: question.metadata,
       })
       .from(question)
       .where(
@@ -780,6 +808,8 @@ export async function executeGetReviewDue(
       due_at: due.due_at,
       prompt_md: selected.prompt_md,
       knowledge_ids: selected.knowledge_ids ?? [],
+      source: selected.source,
+      metadata: selected.metadata,
     });
   }
 
@@ -808,6 +838,8 @@ export async function executeGetReviewDue(
       due_at: material_fsrs_state.due_at,
       prompt_md: question.prompt_md,
       knowledge_ids: question.knowledge_ids,
+      source: question.source,
+      metadata: question.metadata,
     })
     .from(material_fsrs_state)
     .innerJoin(question, eq(question.id, material_fsrs_state.subject_id))
@@ -896,6 +928,9 @@ export async function executeGetReviewDue(
       fsrs_state: null,
       due_at: null,
       reason: 'never_reviewed_failure',
+      source: q.source,
+      tier: deriveSourceTier({ source: q.source, metadata: q.metadata }).tier,
+      whitelist_match: readWhitelistMatch(q.metadata),
       latest_mistake: {
         attempt_event_id: failure.attempt_event_id,
         cause: cause?.primary_category ?? null,
@@ -912,6 +947,9 @@ export async function executeGetReviewDue(
       fsrs_state: due.state,
       due_at: due.due_at.toISOString(),
       reason: 'overdue',
+      source: due.source,
+      tier: deriveSourceTier({ source: due.source, metadata: due.metadata }).tier,
+      whitelist_match: readWhitelistMatch(due.metadata),
     });
   }
   const counts = new Map<string, number>();
