@@ -288,4 +288,37 @@ describe('assignFiguresFromVlm', () => {
     expect(result).toHaveLength(1);
     expect(result[0].attached_to_index).toBe('sub-b');
   });
+
+  // YUK-227 S3 Slice A (P3 fix) — invalid attached_to_question_id falls to geometric.
+
+  it('P3: assignment pointing to non-existent question id falls back to geometric (no dangling ref)', () => {
+    // VLM hallucinates a question id that is not in the question tree.
+    // The P3 fix must discard that assignment and route the figure via the
+    // geometric heuristic instead — producing a valid (non-dangling) attached_to_index.
+    const realQ: StructuredQuestionT = {
+      id: 'real-q',
+      role: 'standalone',
+      prompt_text: 'real question',
+      page_index: 0,
+      bbox: { x: 0, y: 0, width: 1, height: 1 },
+    };
+    const figures: PreAttachFigure[] = [fig({ x: 0.2, y: 0.2, width: 0.1, height: 0.1 }, 0, 0)];
+    const assignments: FigureAssignment[] = [
+      {
+        figure_index: 0,
+        // This id does not exist in the question tree — VLM hallucination.
+        attached_to_question_id: 'ghost-question-id',
+        confidence: 'high',
+      },
+    ];
+
+    const result = assignFiguresFromVlm(figures, assignments, [realQ]);
+
+    // P3: the hallucinated assignment must be discarded; the figure must land
+    // on a real question via geometric fallback — not 'ghost-question-id'.
+    expect(result).toHaveLength(1);
+    expect(result[0].attached_to_index).not.toBe('ghost-question-id');
+    // geometric fallback: figure bbox (0.2,0.2,0.1,0.1) is inside realQ's full-page bbox
+    expect(result[0].attached_to_index).toBe('real-q');
+  });
 });
