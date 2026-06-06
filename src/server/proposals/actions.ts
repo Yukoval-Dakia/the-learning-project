@@ -39,6 +39,13 @@ import {
   markRecordsActioned,
   rollbackRecordsActioned,
 } from '@/server/records/record_processing';
+// YUK-227 S3 Slice C (ADR-0002) — image_candidate accept is the SINGLE VLM 抽图 trigger
+// (download → asset → VisionExtractTask → SourcedQuestion → source_verify). No auto path.
+import {
+  type ImageCandidateAcceptDeps,
+  type ImageCandidateAcceptResult,
+  acceptImageCandidateProposal,
+} from './image-candidate-accept';
 import { type ProposalInboxRow, getProposalInboxRow } from './inbox';
 import { ensureProposalDecisionSignal, recordProposalDecisionSignal } from './signals';
 
@@ -86,7 +93,8 @@ export type AcceptAiProposalResult =
   | RecordLinksAcceptResult
   | RecordPromotionAcceptResult
   | GoalScopeAcceptResult
-  | BlockMergeAcceptResult;
+  | BlockMergeAcceptResult
+  | ImageCandidateAcceptResult;
 
 export interface VariantQuestionAcceptResult {
   kind: 'variant_question';
@@ -190,6 +198,9 @@ export interface AcceptAiProposalOpts {
   user_note?: string;
   // YUK-17 — swappable enqueue (DB tests inject a no-op or vi.fn).
   enqueueVariantVerify?: EnqueueVariantVerifyFn;
+  // YUK-227 S3 Slice C — image_candidate accept seams (download/VLM/enqueue/ledger).
+  // DB tests inject stubs to drive the accept path without real R2 / model spend.
+  imageCandidateDeps?: ImageCandidateAcceptDeps;
 }
 
 export interface DismissAiProposalOpts {
@@ -608,6 +619,12 @@ async function dispatchAccept(
     }
     case 'block_merge':
       return await acceptBlockMergeProposal(db, proposalId, proposal, opts);
+    case 'image_candidate': {
+      // YUK-227 S3 Slice C (ADR-0002) — the user explicitly accepts an image-type
+      // source; this is the ONLY path that spends a VLM extraction on it.
+      ensureAcceptOnly('image_candidate', opts);
+      return await acceptImageCandidateProposal(db, proposalId, proposal, opts.imageCandidateDeps);
+    }
     default:
       throw new ApiError(
         'unsupported_proposal_kind',

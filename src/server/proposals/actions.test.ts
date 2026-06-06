@@ -1,6 +1,8 @@
+import { deriveSourceTier } from '@/core/schema/provenance';
 import {
   artifact,
   completion_evidence,
+  cost_ledger,
   event,
   knowledge,
   knowledge_edge,
@@ -10,6 +12,7 @@ import {
   proposal_signals,
   question,
   question_block,
+  source_asset,
 } from '@/db/schema';
 import { writeKnowledgeProposeEvent } from '@/server/knowledge/proposals';
 import { planLearningIntent } from '@/server/orchestrator/learning_intent';
@@ -1679,5 +1682,171 @@ describe('block_merge proposal lifecycle', () => {
       .from(event)
       .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'block_merge_stale')));
     expect(rateRows).toHaveLength(0);
+  });
+});
+
+// YUK-227 S3 Slice C (ADR-0002) — image_candidate accept = the SINGLE VLM 抽图 trigger.
+describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  // A VisionExtractTask output (parseVisionOutput shape) — one block.
+  const VLM_OUTPUT = JSON.stringify({
+    blocks: [
+      {
+        extracted_prompt_md: '请翻译「学而时习之，不亦说乎」。',
+        reference_md: '学习并按时温习它，不也很愉快吗？',
+        wrong_answer_md: null,
+        page_index: 0,
+        bbox: { x: 0.1, y: 0.1, width: 0.8, height: 0.4 },
+        role: 'prompt',
+        visual_complexity: 'low',
+        extraction_confidence: 0.9,
+        knowledge_hint: null,
+      },
+    ],
+  });
+
+  async function seedImageCandidateProposal(id: string): Promise<void> {
+    const db = testDb();
+    await writeAiProposal(db, {
+      id,
+      actor_ref: 'sourcing',
+      outcome: 'partial',
+      payload: {
+        kind: 'image_candidate',
+        target: { subject_kind: 'source_asset', subject_id: null },
+        reason_md: '该页题干在图片里，tavily_extract 抽不出文本。',
+        evidence_refs: [],
+        proposed_change: {
+          source_url: 'https://example.edu/wenyan/scan.png',
+          source_title: '论语·学而 扫描卷',
+          summary_md: '图片型源：题干为扫描图片。',
+        },
+        cooldown_key: 'image_candidate:https://example.edu/wenyan/scan.png',
+      },
+    });
+  }
+
+  function imageCandidateDeps(
+    overrides: {
+      runTaskFn?: ReturnType<typeof vi.fn>;
+      enqueueSourceVerify?: ReturnType<typeof vi.fn>;
+      writeCostLedgerFn?: ReturnType<typeof vi.fn>;
+      fetchImageBytesFn?: ReturnType<typeof vi.fn>;
+      r2?: { put: ReturnType<typeof vi.fn>; get: ReturnType<typeof vi.fn> };
+    } = {},
+  ) {
+    const runTaskFn =
+      overrides.runTaskFn ??
+      vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({ text: VLM_OUTPUT }));
+    const enqueueSourceVerify = overrides.enqueueSourceVerify ?? vi.fn(async () => {});
+    const r2 = overrides.r2 ?? { put: vi.fn(async () => {}), get: vi.fn(async () => null) };
+    const fetchImageBytesFn =
+      overrides.fetchImageBytesFn ??
+      vi.fn(async () => ({ bytes: new Uint8Array([1, 2, 3, 4]), mimeType: 'image/png' }));
+    return {
+      runTaskFn,
+      enqueueSourceVerify,
+      r2,
+      fetchImageBytesFn,
+      deps: {
+        runTaskFn,
+        enqueueSourceVerify,
+        r2: r2 as never,
+        fetchImageBytesFn,
+        ...(overrides.writeCostLedgerFn ? { writeCostLedgerFn: overrides.writeCostLedgerFn } : {}),
+      },
+    };
+  }
+
+  it('accept downloads the image, persists a source_asset, runs VLM, and materializes a tier-2 SourcedQuestion', async () => {
+    const db = testDb();
+    await seedImageCandidateProposal('img_cand_1');
+    const { deps, runTaskFn, enqueueSourceVerify, r2 } = imageCandidateDeps();
+
+    const result = await acceptAiProposal(db, 'img_cand_1', { imageCandidateDeps: deps });
+
+    expect(result.kind).toBe('image_candidate');
+    if (result.kind !== 'image_candidate') throw new Error('unreachable');
+
+    // source_asset persisted (the image was downloaded + put to R2).
+    expect(r2.put).toHaveBeenCalledTimes(1);
+    const assets = await db
+      .select()
+      .from(source_asset)
+      .where(eq(source_asset.id, result.source_asset_id));
+    expect(assets).toHaveLength(1);
+    expect(assets[0].kind).toBe('image');
+    expect(assets[0].mime_type).toBe('image/png');
+
+    // EXACTLY one VLM call (per-accept upper bound = 1 image).
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+    expect(runTaskFn.mock.calls[0][0]).toBe('VisionExtractTask');
+
+    // A tier-2 web_sourced draft question was created from the VLM block.
+    const questions = await db.select().from(question).where(eq(question.id, result.question_id));
+    expect(questions).toHaveLength(1);
+    const q = questions[0];
+    expect(q.source).toBe('web_sourced');
+    expect(q.draft_status).toBe('draft');
+    expect(q.prompt_md).toBe('请翻译「学而时习之，不亦说乎」。');
+    expect(q.source_ref).toBe('https://example.edu/wenyan/scan.png');
+    const meta = q.metadata as Record<string, unknown>;
+    expect(meta.source_ref_kind).toBe('url');
+    expect(meta.image_candidate_source_asset_id).toBe(result.source_asset_id);
+    const { tier } = deriveSourceTier({ source: q.source, metadata: meta });
+    expect(tier).toBe(2);
+
+    // source_verify enqueued for the new draft.
+    expect(enqueueSourceVerify).toHaveBeenCalledWith([result.question_id]);
+
+    // accept rate event chained to the proposal.
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'img_cand_1')));
+    expect(rateRows).toHaveLength(1);
+    expect((rateRows[0].payload as { rating?: string }).rating).toBe('accept');
+  });
+
+  it('writes exactly one sourcing_image_extract cost_ledger row per accept (cost 留痕)', async () => {
+    const db = testDb();
+    await seedImageCandidateProposal('img_cand_cost');
+    const { deps } = imageCandidateDeps();
+
+    await acceptAiProposal(db, 'img_cand_cost', { imageCandidateDeps: deps });
+
+    const ledger = await db
+      .select()
+      .from(cost_ledger)
+      .where(eq(cost_ledger.task_kind, 'sourcing_image_extract'));
+    expect(ledger).toHaveLength(1);
+  });
+
+  it('cost gate: per accept = exactly one VLM call, no batch/auto path (re-accept does NOT re-spend)', async () => {
+    const db = testDb();
+    await seedImageCandidateProposal('img_cand_idem');
+    const { deps, runTaskFn } = imageCandidateDeps();
+
+    const first = await acceptAiProposal(db, 'img_cand_idem', { imageCandidateDeps: deps });
+    // Second accept is idempotent: no second VLM call, no second question, no second ledger row.
+    const second = await acceptAiProposal(db, 'img_cand_idem', { imageCandidateDeps: deps });
+
+    expect(runTaskFn).toHaveBeenCalledTimes(1); // still ONE — re-accept did not re-spend.
+    if (second.kind !== 'image_candidate') throw new Error('unreachable');
+    expect(second.idempotent).toBe(true);
+    if (first.kind === 'image_candidate') {
+      expect(second.question_id).toBe(first.question_id);
+    }
+
+    const questions = await db.select().from(question).where(eq(question.source, 'web_sourced'));
+    expect(questions).toHaveLength(1);
+    const ledger = await db
+      .select()
+      .from(cost_ledger)
+      .where(eq(cost_ledger.task_kind, 'sourcing_image_extract'));
+    expect(ledger).toHaveLength(1);
   });
 });
