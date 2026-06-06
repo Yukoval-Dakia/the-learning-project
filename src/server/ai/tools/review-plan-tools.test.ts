@@ -50,6 +50,11 @@ async function seedQuestion(opts: {
   // Extra knowledge ids the question also covers (so an assignment may legally
   // reference them). Defaults to [].
   extraKnowledgeIds?: string[];
+  // YUK-226 S2-5a — override source/metadata so a seeded question derives a
+  // specific tier (deriveSourceTier reads both). Defaults: source='test',
+  // metadata={} → tier 4 generated.
+  source?: string;
+  metadata?: Record<string, unknown>;
 }) {
   const now = new Date();
   await db.insert(question).values({
@@ -62,11 +67,11 @@ async function seedQuestion(opts: {
     judge_kind_override: 'semantic',
     knowledge_ids: [opts.knowledgeId, ...(opts.extraKnowledgeIds ?? [])],
     difficulty: 3,
-    source: 'test',
+    source: opts.source ?? 'test',
     source_ref: opts.knowledgeId,
     draft_status: opts.draft ? 'draft' : null,
     created_by: { by: 'ai', task_kind: 'QuizGenTask', task_run_id: 'tr' } as never,
-    metadata: {} as never,
+    metadata: (opts.metadata ?? {}) as never,
     created_at: now,
     updated_at: now,
   });
@@ -566,5 +571,98 @@ describe('select_review_question_candidates', () => {
     const ids = out.candidates.map((c) => c.question_id);
     expect(ids).toContain('q_active');
     expect(ids).not.toContain('q_draft');
+  });
+
+  // YUK-226 S2-5a.1/5a.2 — read model carries source + derived tier.
+  it('carries source + derived tier on candidates (tier 1 authentic via ingestion provenance)', async () => {
+    await seedKnowledge('k_zhi');
+    await seedQuestion({
+      id: 'q_auth',
+      knowledgeId: 'k_zhi',
+      draft: false,
+      source: 'vision_paper',
+      metadata: { ingestion_session_id: 'sess_1' },
+    });
+    await seedDueQuestionFsrs('q_auth');
+
+    const out = await selectReviewQuestionCandidatesTool.execute(ctx(), {
+      knowledgeIds: ['k_zhi'],
+      constraints: { limit: 10 },
+    });
+    const cand = out.candidates.find((c) => c.question_id === 'q_auth');
+    expect(cand).toBeDefined();
+    expect(cand?.source).toBe('vision_paper');
+    expect(cand?.source_tier).toBe(1);
+  });
+
+  // YUK-226 S2-5a.3 — tier-preference ordering: authentic (tier 1) sorts ahead of
+  // generated (tier 4) within the same failure grouping.
+  it('orders higher tiers first (authentic before generated)', async () => {
+    await seedKnowledge('k_zhi');
+    // Both overdue via the legacy question-keyed FSRS branch; same reason group.
+    await seedQuestion({
+      id: 'q_gen',
+      knowledgeId: 'k_zhi',
+      draft: false,
+      source: 'quiz_gen',
+      metadata: {},
+    });
+    await seedQuestion({
+      id: 'q_auth',
+      knowledgeId: 'k_zhi',
+      draft: false,
+      source: 'vision_paper',
+      metadata: { ingestion_session_id: 'sess_1' },
+    });
+    await seedDueQuestionFsrs('q_gen');
+    await seedDueQuestionFsrs('q_auth');
+
+    const out = await selectReviewQuestionCandidatesTool.execute(ctx(), {
+      knowledgeIds: ['k_zhi'],
+      constraints: { limit: 10 },
+    });
+    const ids = out.candidates.map((c) => c.question_id);
+    expect(ids.indexOf('q_auth')).toBeLessThan(ids.indexOf('q_gen'));
+  });
+
+  // YUK-226 S2-5a.3 / OF-2 (plan §12) — within tier 2 (web_sourced),
+  // whitelist_match=false demotes BEHIND whitelist_match=true.
+  it('demotes off-whitelist tier-2 questions behind on-whitelist (OF-2)', async () => {
+    await seedKnowledge('k_zhi');
+    const webMeta = (whitelist: boolean) => ({
+      source_ref_kind: 'url',
+      web_sourced: {
+        url: 'https://example.com/q',
+        title: 't',
+        fetched_at: '2026-06-06T00:00:00Z',
+        whitelist_match: whitelist,
+      },
+    });
+    await seedQuestion({
+      id: 'q_off',
+      knowledgeId: 'k_zhi',
+      draft: false,
+      source: 'web_sourced',
+      metadata: webMeta(false),
+    });
+    await seedQuestion({
+      id: 'q_on',
+      knowledgeId: 'k_zhi',
+      draft: false,
+      source: 'web_sourced',
+      metadata: webMeta(true),
+    });
+    await seedDueQuestionFsrs('q_off');
+    await seedDueQuestionFsrs('q_on');
+
+    const out = await selectReviewQuestionCandidatesTool.execute(ctx(), {
+      knowledgeIds: ['k_zhi'],
+      constraints: { limit: 10 },
+    });
+    // Both derive tier 2 (web_sourced + source_ref_kind='url' + parseable block).
+    expect(out.candidates.find((c) => c.question_id === 'q_on')?.source_tier).toBe(2);
+    expect(out.candidates.find((c) => c.question_id === 'q_off')?.source_tier).toBe(2);
+    const ids = out.candidates.map((c) => c.question_id);
+    expect(ids.indexOf('q_on')).toBeLessThan(ids.indexOf('q_off'));
   });
 });

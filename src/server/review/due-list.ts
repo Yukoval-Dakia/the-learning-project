@@ -176,6 +176,13 @@ type ScheduledDueRow = {
   due_at: Date;
   fsrs_subject_kind: 'question' | 'knowledge';
   fsrs_subject_id: string;
+  // YUK-226 S2-5a.0 (B1) — source/metadata projected purely so downstream read
+  // models can derive a source tier (deriveSourceTier needs both). Optional: the
+  // never-reviewed slice / older call sites may not carry them. Projection ONLY —
+  // these columns never touch the WHERE / ORDER / Gate-B filter, so the scheduling
+  // hot path (FSRS due ordering, round-robin, draft exclusion) is unchanged.
+  source?: string;
+  metadata?: Record<string, unknown> | null;
 };
 
 async function lastReviewedQuestionIdForEvent(
@@ -209,8 +216,10 @@ async function pickQuestionForKnowledge(
     reference_md: string | null;
     knowledge_ids: string[];
     created_at: Date;
+    source: string;
+    metadata: Record<string, unknown> | null;
   }>`
-    SELECT id, prompt_md, reference_md, knowledge_ids, created_at
+    SELECT id, prompt_md, reference_md, knowledge_ids, created_at, source, metadata
     FROM question
     WHERE knowledge_ids @> ${JSON.stringify([input.knowledgeId])}::jsonb
       AND (draft_status IS NULL OR draft_status <> 'draft')
@@ -225,6 +234,8 @@ async function pickQuestionForKnowledge(
     reference_md: string | null;
     knowledge_ids: string[];
     created_at: Date;
+    source: string;
+    metadata: Record<string, unknown> | null;
   }>;
 
   const chosen = rows.find((row) => !input.usedQuestionIds.has(row.id));
@@ -236,6 +247,8 @@ async function pickQuestionForKnowledge(
     reference_md: chosen.reference_md,
     knowledge_ids: chosen.knowledge_ids ?? [],
     created_at: chosen.created_at,
+    source: chosen.source,
+    metadata: chosen.metadata,
   };
 }
 
@@ -324,6 +337,9 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
         reference_md: question.reference_md,
         knowledge_ids: question.knowledge_ids,
         created_at: question.created_at,
+        // YUK-226 S2-5a.0 (B1) — project source/metadata for tier derivation.
+        source: question.source,
+        metadata: question.metadata,
       })
       .from(material_fsrs_state)
       .innerJoin(question, eq(question.id, material_fsrs_state.subject_id))
@@ -350,6 +366,8 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
         due_at: row.due_at,
         fsrs_subject_kind: 'question',
         fsrs_subject_id: row.question_id,
+        source: row.source,
+        metadata: row.metadata,
       });
     }
     dueRows.sort((a, b) => {
