@@ -145,6 +145,31 @@ const ZERO_QUESTIONS_OUTPUT = JSON.stringify({
   self_copy_safety: { verdict: 'unknown', checked_by: 'agent_self' },
 });
 
+// A closed_book run with a real question (closed_book legitimately carries empty
+// source_refs). Used by the pinned-method tests so the agent's generation_method
+// MATCHES the pin (F1 asserts the pin held).
+const CLOSED_BOOK_OUTPUT = JSON.stringify({
+  questions: [
+    {
+      kind: 'short_answer',
+      prompt_md: '解释「之」作主谓间助词的作用。',
+      reference_md: '「之」用在主谓之间，取消句子独立性。',
+      choices_md: null,
+      judge_kind_override: 'semantic',
+      rubric_json: {
+        criteria: [{ name: 'correctness', weight: 1, descriptor: '说明取消独立性' }],
+        required_points: ['用在主谓之间', '取消句子独立性'],
+      },
+      difficulty: 3,
+      knowledge_ids: ['k1'],
+      source_refs: [],
+    },
+  ],
+  source_pack: { query_plan: [], searched_at: '2026-06-02T10:00:00.000Z', tool: 'tavily' },
+  generation_method: 'closed_book',
+  self_copy_safety: { verdict: 'unknown', checked_by: 'agent_self' },
+});
+
 // YUK-224 (slice 3, tier 3) — material_grounded run: the agent self-reports a REAL
 // fetched passage in `material`; the handler persists it to source_document and
 // back-fills material_source_document_id onto every question's metadata.quiz_gen.
@@ -672,7 +697,8 @@ describe('runQuizGen', () => {
   // requested tier (material vs closed) is actually executed, not free-chosen.
   it('threads generationMethod into the agent input as requested_generation_method', async () => {
     await seedKnowledge({ id: 'k1' });
-    const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_method');
+    // The fixture's generation_method MUST match the pin (F1 asserts the pin held).
+    const runAgentTaskFn = agentMock(CLOSED_BOOK_OUTPUT, 'tr_method');
 
     await runQuizGen({
       db: testDb(),
@@ -740,7 +766,8 @@ describe('runQuizGen', () => {
 
   it('passes generation_method + knowledge_id from job data through buildQuizGenHandler', async () => {
     await seedKnowledge({ id: 'k1' });
-    const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_jobthread');
+    // material_grounded fixture so the agent's method MATCHES the pinned method (F1).
+    const runAgentTaskFn = agentMock(MATERIAL_OUTPUT, 'tr_jobthread');
     const handler = buildQuizGenHandler(testDb(), {
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
@@ -768,6 +795,148 @@ describe('runQuizGen', () => {
     );
     const rows = await testDb().select().from(question).where(eq(question.source, 'quiz_gen'));
     expect(rows.every((r) => r.knowledge_ids.includes('k1'))).toBe(true);
+  });
+
+  // YUK-226 S2-5b F1 (PR #318 round-4) — the pin is only a prompt hint; if the agent
+  // ignores it and returns the WRONG generation_method, the run must FAIL (not silently
+  // persist a mis-tiered draft). The catch writes a failure event + re-throws → pg-boss
+  // retries.
+  it('throws (no insert, no enqueue) when the agent ignores the pinned generation_method', async () => {
+    await seedKnowledge({ id: 'k1' });
+    // VALID_OUTPUT declares generation_method='search_grounded'; we pin material_grounded.
+    const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_pin_violation');
+    const enqueueQuizVerify = vi.fn(async () => {});
+
+    await expect(
+      runQuizGen({
+        db: testDb(),
+        trigger: 'knowledge',
+        refId: 'k1',
+        generationMethod: 'material_grounded',
+        runAgentTaskFn,
+        enqueueQuizVerify,
+        buildTavilyMcpServerFn: vi.fn(() => null),
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      }),
+    ).rejects.toThrow(
+      /pinned generation_method='material_grounded' but agent produced 'search_grounded'/,
+    );
+
+    const rows = await testDb().select().from(question).where(eq(question.source, 'quiz_gen'));
+    expect(rows).toHaveLength(0);
+    expect(enqueueQuizVerify).not.toHaveBeenCalled();
+    // a failure event was written by the catch block.
+    const events = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:quiz_gen'));
+    expect(events.some((e) => e.outcome === 'failure')).toBe(true);
+  });
+
+  it('persists when the agent honours the pinned generation_method', async () => {
+    await seedKnowledge({ id: 'k1' });
+    // closed_book is one of the pinnable tiers; CLOSED_BOOK_OUTPUT matches the pin.
+    const runAgentTaskFn = agentMock(CLOSED_BOOK_OUTPUT, 'tr_pin_ok');
+
+    const result = await runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      generationMethod: 'closed_book',
+      runAgentTaskFn,
+      enqueueQuizVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: vi.fn(() => null),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+    });
+
+    expect(result.status).toBe('ready');
+    const rows = await testDb().select().from(question).where(eq(question.source, 'quiz_gen'));
+    expect(rows).toHaveLength(1);
+  });
+
+  // YUK-226 S2-5b F3 (PR #318 round-4) — an ARCHIVED explicit anchor must be treated as
+  // missing (same guard as the other lookups). The manual fall-through then runs its own
+  // unarchived best-effort lookup → attribution lands on the agent's real id, never the
+  // dead anchor node.
+  it('ignores an archived knowledgeId anchor and attributes to the real node instead', async () => {
+    await seedKnowledge({ id: 'k1' });
+    // Seed an archived anchor node.
+    const now = new Date();
+    await testDb().insert(knowledge).values({
+      id: 'k_archived',
+      name: '废弃',
+      domain: 'wenyan',
+      parent_id: null,
+      merged_from: [],
+      proposed_by_ai: false,
+      approval_status: 'approved',
+      archived_at: now,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    // VALID_OUTPUT attributes to 'k1' (a live node).
+    const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_archived_anchor');
+
+    const result = await runQuizGen({
+      db: testDb(),
+      trigger: 'manual',
+      refId: 'free form manual ref',
+      knowledgeId: 'k_archived',
+      count: 1,
+      runAgentTaskFn,
+      enqueueQuizVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: vi.fn(() => null),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+    });
+
+    expect(result.status).toBe('ready');
+    const rows = await testDb().select().from(question).where(eq(question.source, 'quiz_gen'));
+    expect(rows.length).toBeGreaterThan(0);
+    // Attribution lands on the live node, NOT the archived anchor.
+    expect(rows.every((r) => r.knowledge_ids.includes('k1'))).toBe(true);
+    expect(rows.every((r) => !r.knowledge_ids.includes('k_archived'))).toBe(true);
+  });
+
+  // YUK-226 S2-5b F4 (PR #318 round-4) — the 题型 hint the次序 selected this line for is
+  // threaded into the agent input as requested_kind.
+  it('threads kind into the agent input as requested_kind', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_kind');
+
+    await runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      count: 1,
+      kind: 'reading',
+      runAgentTaskFn,
+      enqueueQuizVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: vi.fn(() => null),
+      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+    });
+
+    const [, input] = runAgentTaskFn.mock.calls[0];
+    expect((input as { requested_kind?: string }).requested_kind).toBe('reading');
+  });
+
+  it('passes kind from job data through buildQuizGenHandler', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_kind_job');
+    const handler = buildQuizGenHandler(testDb(), {
+      runAgentTaskFn,
+      enqueueQuizVerify: vi.fn(async () => {}),
+      buildTavilyMcpServerFn: () => null,
+      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+    });
+
+    const jobs = [
+      { id: 'j1', data: { trigger: 'knowledge', ref_id: 'k1', count: 1, kind: 'reading' } },
+    ] as never;
+    await handler(jobs);
+
+    const [, input] = runAgentTaskFn.mock.calls[0];
+    expect((input as { requested_kind?: string }).requested_kind).toBe('reading');
   });
 
   it('skips (no insert, no enqueue) when the knowledge trigger ref does not exist', async () => {
