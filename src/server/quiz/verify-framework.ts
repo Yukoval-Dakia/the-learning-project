@@ -291,7 +291,10 @@ export async function runSolveCheck(
       figures_hint: null,
     };
     const ctx: Record<string, unknown> = { db: opts.db, subjectProfile: opts.profile.full };
-    if (opts.solverModelOverride) ctx.model = opts.solverModelOverride;
+    // OF-4(ii) 异源旋钮真接线（PR #312 验证轮 V4）：生产 runner 的模型覆盖读
+    // `ctx.override.model`（resolveTaskProvider(kind, ctx.override)），裸 `ctx.model`
+    // 不会被读取——那是个死旋钮。
+    if (opts.solverModelOverride) ctx.override = { model: opts.solverModelOverride };
     const { text } = await opts.runTaskFn('SolutionGenerateTask', input, ctx);
     // Parse the structured output; only final_answer + answer_equivalents matter here.
     const parsed = extractJsonObject(text) as {
