@@ -239,7 +239,10 @@ describe('runSolveCheck — exact path (normalize compare)', () => {
       solverModelOverride: 'mimo-v2.5',
     });
     const ctx = runTaskFn.mock.calls[0][2] as Record<string, unknown>;
-    expect(ctx.model).toBe('mimo-v2.5');
+    // PR #312 验证轮 V4：生产 runner 只读 ctx.override.model（resolveTaskProvider），
+    // 裸 ctx.model 是死旋钮——断言真接线形态。
+    expect((ctx.override as { model?: string }).model).toBe('mimo-v2.5');
+    expect(ctx.model).toBeUndefined();
   });
 });
 

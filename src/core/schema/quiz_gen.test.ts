@@ -213,6 +213,19 @@ describe('QuizGenOutput', () => {
     ).toThrow();
   });
 
+  it("rejects generation_method='material_grounded' at the live output boundary (YUK-224 时序守卫, PR #312 V1)", () => {
+    const result = QuizGenOutput.safeParse({
+      questions: [validQuestion],
+      source_pack: validSourcePack,
+      generation_method: 'material_grounded',
+      self_copy_safety: validCopySafety,
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((i) => i.message.includes('YUK-224'))).toBe(true);
+    }
+  });
+
   it('rejects a difficulty out of 1-5', () => {
     expect(() =>
       QuizGenOutput.parse({

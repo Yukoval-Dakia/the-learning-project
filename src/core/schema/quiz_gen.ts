@@ -166,6 +166,21 @@ export const QuizGenOutput = z
         }
       });
     }
+    // YUK-216 S2 时序守卫（PR #312 验证轮 V1）：material_grounded 的 live writer
+    // （素材检索 + source_document 持久化 + material_source_document_id 回填）要到
+    // slice 3（YUK-224）才落地。在那之前 live QuizGenOutput 不接受该值——否则
+    // QuizGenTask 幻觉出 material_grounded 会被持久化为缺素材来源的 draft，
+    // deriveSourceTier 还会把它降到 tier 4 跳过 material_grounding 检查。
+    // slice 3 落地时移除本守卫并改为强制携带 material 来源（metadata 层的
+    // superRefine 已就位：material_source_document_id 必填）。
+    if (out.generation_method === 'material_grounded') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "generation_method='material_grounded' is not accepted by the live QuizGen output until the material writer lands (YUK-224 slice 3)",
+        path: ['generation_method'],
+      });
+    }
   });
 export type QuizGenOutputT = z.infer<typeof QuizGenOutput>;
 
