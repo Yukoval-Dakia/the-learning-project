@@ -18,7 +18,11 @@
 // + active, then the TS layer sorts by (tier → knowledge overlap → recency) and
 // takes the top N (LIMIT 2-4). 0 命中降级: returns [].
 
-import { type SourceTier, deriveSourceTier } from '@/core/schema/provenance';
+import {
+  type SourceTier,
+  compareBySourceTierThenWhitelist,
+  deriveSourceTier,
+} from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
 import { sql } from 'drizzle-orm';
 
@@ -146,7 +150,16 @@ export async function retrieveFewShotExamples(
       };
     })
     .sort((a, b) => {
-      if (a.tier !== b.tier) return a.tier - b.tier; // tier 1 (authentic) first
+      // Tier key routes through the single 合约五 comparator (provenance.ts) so
+      // few-shot shares one tier-ordering authority instead of a hand-rolled copy.
+      // few-shot has no OF-2 whitelist intent (it biases by overlap/recency within
+      // a tier), so whitelistMatch is null — the comparator's OF-2 demotion is a
+      // no-op here and it falls through to the few-shot-specific keys below.
+      const tierCmp = compareBySourceTierThenWhitelist(
+        { tier: a.tier, whitelistMatch: null },
+        { tier: b.tier, whitelistMatch: null },
+      );
+      if (tierCmp !== 0) return tierCmp;
       if (a.overlap !== b.overlap) return b.overlap - a.overlap; // more overlap first
       return b.createdAt - a.createdAt; // most recent first
     })

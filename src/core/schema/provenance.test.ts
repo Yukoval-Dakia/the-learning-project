@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { SourceRefKind, WebSourcedProvenance, deriveSourceTier } from './provenance';
+import {
+  SourceRefKind,
+  WebSourcedProvenance,
+  compareBySourceTierThenWhitelist,
+  deriveSourceTier,
+} from './provenance';
 
 // ---------- 合约一：WebSourcedProvenance ----------
 
@@ -213,5 +218,61 @@ describe('deriveSourceTier', () => {
   it('null metadata never throws and lands tier 4', () => {
     expect(() => deriveSourceTier({ source: 'quiz_gen', metadata: null })).not.toThrow();
     expect(deriveSourceTier({ source: 'quiz_gen', metadata: null }).tier).toBe(4);
+  });
+});
+
+// ---------- 合约五：compareBySourceTierThenWhitelist (shared selection comparator) ----------
+describe('compareBySourceTierThenWhitelist', () => {
+  it('orders by tier ascending (high tier = low number first)', () => {
+    const items = [
+      { tier: 4, whitelistMatch: null },
+      { tier: 1, whitelistMatch: null },
+      { tier: 3, whitelistMatch: null },
+      { tier: 2, whitelistMatch: null },
+    ];
+    items.sort(compareBySourceTierThenWhitelist);
+    expect(items.map((i) => i.tier)).toEqual([1, 2, 3, 4]);
+  });
+
+  it('treats a null tier as the lowest (4)', () => {
+    const items = [
+      { tier: null, whitelistMatch: null },
+      { tier: 2, whitelistMatch: null },
+    ];
+    items.sort(compareBySourceTierThenWhitelist);
+    expect(items.map((i) => i.tier)).toEqual([2, null]);
+  });
+
+  it('OF-2 — within the same tier, only whitelist_match=false is demoted', () => {
+    expect(
+      compareBySourceTierThenWhitelist(
+        { tier: 2, whitelistMatch: true },
+        { tier: 2, whitelistMatch: false },
+      ),
+    ).toBeLessThan(0);
+    // true vs null: equal (neither demoted).
+    expect(
+      compareBySourceTierThenWhitelist(
+        { tier: 2, whitelistMatch: true },
+        { tier: 2, whitelistMatch: null },
+      ),
+    ).toBe(0);
+    // null is NOT demoted ahead of a real false.
+    expect(
+      compareBySourceTierThenWhitelist(
+        { tier: 2, whitelistMatch: null },
+        { tier: 2, whitelistMatch: false },
+      ),
+    ).toBeLessThan(0);
+  });
+
+  it('tier dominates whitelist (a higher tier off-whitelist still wins)', () => {
+    // tier 1 off-whitelist beats tier 2 on-whitelist — tier is the primary key.
+    expect(
+      compareBySourceTierThenWhitelist(
+        { tier: 1, whitelistMatch: false },
+        { tier: 2, whitelistMatch: true },
+      ),
+    ).toBeLessThan(0);
   });
 });
