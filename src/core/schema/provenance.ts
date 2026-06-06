@@ -43,6 +43,16 @@ export const WebSourcedProvenance = z.object({
   whitelist_match: z.boolean(),
   // Fingerprint of the extracted content (dedup / audit cross-evidence). Optional.
   extraction_hash: z.string().optional(),
+  // The text the SourcingTask agent actually extracted from the declared source
+  // page. Persisted at sourcing time so source_verify's source_consistency check can
+  // run a DETERMINISTIC overlap (prompt/reference vs this extract) WITHOUT refetching
+  // the network — mirroring the quiz_gen source_pack precedent where the agent's
+  // self-reported snippets feed a deterministic maxNgramOverlap inside quiz_verify
+  // (quiz_verify.ts:265-268). A row that fabricated/misattributed its URL carries an
+  // extract that does NOT overlap the prompt, so the gate can reject it. Optional:
+  // absent → source_consistency keeps its prior structural-only behaviour (no signal,
+  // conservative). See docs/...question-source-expansion-design.md §2.1 / §4.
+  extract: z.string().optional(),
 });
 export type WebSourcedProvenanceT = z.infer<typeof WebSourcedProvenance>;
 

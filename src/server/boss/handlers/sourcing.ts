@@ -91,6 +91,10 @@ type RunAgentTaskFn = (
     db: Db;
     mcpServers?: Record<string, SdkMcpServer | McpHttpServerConfig>;
     allowedTools?: string[];
+    // The resolved subject profile drives getTaskSystemPrompt's voice/rules. Omitting
+    // it makes the runner fall back to the default (wenyan) prompt even for math /
+    // physics triggers — pass it through like other subject-specific handlers.
+    subjectProfile?: SubjectProfile;
   },
 ) => Promise<TaskTextResult>;
 
@@ -194,10 +198,13 @@ async function resolveTrigger(
   refId: string,
 ): Promise<ResolvedTrigger | null> {
   if (trigger === 'knowledge') {
+    // Archived knowledge nodes are treated as missing (other write paths do the
+    // same): an archived node must not receive new sourced practice material or FSRS
+    // cards (CR — skip archived knowledge triggers).
     const rows = await db
       .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
       .from(knowledge)
-      .where(eq(knowledge.id, refId))
+      .where(and(eq(knowledge.id, refId), isNull(knowledge.archived_at)))
       .limit(1);
     const k = rows[0];
     if (!k) return null;
@@ -221,17 +228,19 @@ async function resolveTrigger(
       const kRows = await db
         .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
         .from(knowledge)
-        .where(eq(knowledge.id, primaryKnowledgeId))
+        .where(and(eq(knowledge.id, primaryKnowledgeId), isNull(knowledge.archived_at)))
         .limit(1);
       knowledgeNode = kRows[0] ?? null;
     }
     return { refId, knowledgeNode, knowledgeIds: li.knowledge_ids, title: li.title };
   }
-  // 'manual' — never skips. Best-effort resolve the ref as a knowledge node.
+  // 'manual' — never skips. Best-effort resolve the ref as a knowledge node, but an
+  // archived node is treated as unresolved (same as the knowledge trigger) so manual
+  // runs never attribute new material to archived knowledge (CR).
   const rows = await db
     .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
     .from(knowledge)
-    .where(eq(knowledge.id, refId))
+    .where(and(eq(knowledge.id, refId), isNull(knowledge.archived_at)))
     .limit(1);
   const k = rows[0] ?? null;
   return {
@@ -296,7 +305,12 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
 
   let taskResult: TaskTextResult | null = null;
   try {
-    const result = await run('SourcingTask', input, { db, mcpServers, allowedTools });
+    const result = await run('SourcingTask', input, {
+      db,
+      mcpServers,
+      allowedTools,
+      subjectProfile,
+    });
     taskResult = result;
     const parsed = parseOutput(result.text);
 
@@ -311,10 +325,25 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
           .where(and(inArray(knowledge.id, referencedKnowledgeIds), isNull(knowledge.archived_at)))
       : [];
     const existingKnowledgeIds = new Set(existingKnowledgeRows.map((r) => r.id));
+
+    // The trigger-resolved fallback ids must clear the SAME existence + archived
+    // filter as the agent-reported ids (CR — fallback must not bypass the live-node
+    // check). A trigger carrying a stale/archived id would otherwise mount new
+    // questions + FSRS cards onto a dead node. The fallback ids are NOT necessarily a
+    // subset of referencedKnowledgeIds (the agent may report none, or only ids the
+    // trigger never resolved), so re-query them through the same archived filter
+    // rather than reusing existingKnowledgeIds.
+    const resolvedKnowledgeRows = resolved.knowledgeIds.length
+      ? await db
+          .select({ id: knowledge.id })
+          .from(knowledge)
+          .where(and(inArray(knowledge.id, resolved.knowledgeIds), isNull(knowledge.archived_at)))
+      : [];
+    const fallbackKnowledgeIds = resolvedKnowledgeRows.map((r) => r.id);
     const resolveQuestionKnowledgeIds = (q: SourcedQuestionT): string[] => {
       const valid = q.knowledge_ids.filter((kid) => existingKnowledgeIds.has(kid));
       if (valid.length > 0) return valid;
-      if (resolved.knowledgeIds.length > 0) return resolved.knowledgeIds;
+      if (fallbackKnowledgeIds.length > 0) return fallbackKnowledgeIds;
       throw new Error(
         `sourcing question '${q.prompt_md}' references no known knowledge_id (got [${q.knowledge_ids.join(', ')}]) and the trigger resolved none`,
       );
@@ -325,7 +354,12 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
     await db.transaction(async (tx) => {
       for (const q of parsed.questions) {
         const id = createId();
-        const judgeKind = defaultJudgeKindForQuestion(q);
+        // Preserve the model's EXPLICIT judge_kind_override; only derive a default
+        // when the agent left it absent (CR — never clobber an explicit route like
+        // 'keyword' with the structural default). defaultJudgeKindForQuestion already
+        // returns q.judge_kind_override first, but pinning it here keeps the contract
+        // explicit and robust to future helper changes.
+        const judgeKind = q.judge_kind_override ?? defaultJudgeKindForQuestion(q);
         const questionKnowledgeIds = resolveQuestionKnowledgeIds(q);
 
         // §2.1 web_sourced provenance contract. OF-2: whitelist_match flags
@@ -337,6 +371,10 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
           fetched_at: parsed.fetched_at,
           whitelist_match: matchesWhitelist(q.source_url, whitelist),
           ...(q.extraction_hash ? { extraction_hash: q.extraction_hash } : {}),
+          // Persist the agent's extracted source passage so source_verify can run a
+          // DETERMINISTIC prompt↔source overlap without refetching the network (§2.1
+          // contract; mirrors quiz_gen source_pack snippet → quiz_verify overlap).
+          ...(q.extract ? { extract: q.extract } : {}),
         };
 
         await tx.insert(question).values({
