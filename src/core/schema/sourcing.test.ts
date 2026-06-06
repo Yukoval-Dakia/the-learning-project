@@ -18,6 +18,7 @@ const validQuestion = {
   knowledge_ids: ['k_lunyu_xueer'],
   source_url: 'https://example.edu/wenyan/lunyu',
   source_title: '论语·学而 注疏',
+  extract: '请翻译「学而时习之，不亦说乎」。学习并按时温习它，不也很愉快吗？',
 };
 
 describe('SourcedQuestion', () => {
@@ -39,6 +40,12 @@ describe('SourcedQuestion', () => {
   it('requires a non-empty source_title', () => {
     const parsed = SourcedQuestion.safeParse({ ...validQuestion, source_title: '' });
     expect(parsed.success).toBe(false);
+  });
+
+  it('requires a non-empty extract (F2 — deterministic grounding anchor)', () => {
+    const { extract: _drop, ...rest } = validQuestion;
+    expect(SourcedQuestion.safeParse(rest).success).toBe(false);
+    expect(SourcedQuestion.safeParse({ ...validQuestion, extract: '' }).success).toBe(false);
   });
 
   it.each(['exact', 'keyword', 'semantic'])('accepts runnable judge_kind_override %s', (judge) => {

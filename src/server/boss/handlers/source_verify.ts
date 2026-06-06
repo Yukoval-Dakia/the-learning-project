@@ -20,7 +20,7 @@
 // arrives in slice 4.
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, isNull, ne, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
 import { deriveSourceTier } from '@/core/schema/provenance';
@@ -99,16 +99,21 @@ export interface RunSourceVerifyResult {
 
 type QuestionRow = typeof question.$inferSelect;
 
-// structure_completeness — the row carries the fields its kind requires. Choice
-// kinds need ≥2 options; every kind needs a non-empty prompt + reference answer.
+// structure_completeness — the row carries the fields its kind requires. Only
+// `choice` requires ≥2 options; every kind needs a non-empty prompt + reference
+// answer. true_false is INTENTIONALLY exempt: the repo's existing 判断题 form is
+// kind='true_false' + reference_md carrying 真/假 with NO choices_md (practice/paper
+// fixtures share this shape, and judge routing dispatches true_false straight to
+// exact). Forcing ≥2 choices onto sourced true_false rows would strand every
+// option-less 判断题 in draft forever (F1).
 function checkStructureCompleteness(row: QuestionRow): CheckOutcome {
   const problems: string[] = [];
   if (!row.prompt_md || row.prompt_md.trim().length === 0) problems.push('empty prompt_md');
   if (!row.reference_md || row.reference_md.trim().length === 0) {
     problems.push('empty reference_md');
   }
-  if ((row.kind === 'choice' || row.kind === 'true_false') && (row.choices_md ?? []).length < 2) {
-    problems.push(`${row.kind} question has <2 choices`);
+  if (row.kind === 'choice' && (row.choices_md ?? []).length < 2) {
+    problems.push('choice question has <2 choices');
   }
   return problems.length === 0
     ? { check: 'structure_completeness', verdict: 'pass', reason: 'all required fields present' }
@@ -136,6 +141,20 @@ export const SOURCE_GROUNDING_MIN_OVERLAP = 0.15;
 // source_pack snippet → quiz_verify maxNgramOverlap precedent; spec §4).
 function checkSourceConsistency(row: QuestionRow): CheckOutcome {
   const metadata = (row.metadata ?? {}) as Record<string, unknown>;
+  // F2: extract is the deterministic grounding anchor. A web_sourced row without a
+  // non-empty extract cannot derive tier 2 (WebSourcedProvenance now requires it), so
+  // the generic tier check below already rejects it — but check it FIRST so the audit
+  // reason names extract precisely rather than the opaque "missing or malformed".
+  const rawWebSourced = (metadata.web_sourced ?? {}) as Record<string, unknown>;
+  const rawExtract = rawWebSourced.extract;
+  if (typeof rawExtract !== 'string' || rawExtract.trim().length === 0) {
+    return {
+      check: 'source_consistency',
+      verdict: 'fail',
+      reason:
+        'web_sourced row has no extract; the declared source cannot be deterministically grounded (fabricated/unanchored URL risk)',
+    };
+  }
   const { tier } = deriveSourceTier({ source: row.source, metadata });
   if (tier !== 2) {
     return {
@@ -168,32 +187,24 @@ function checkSourceConsistency(row: QuestionRow): CheckOutcome {
       reason: `source_ref (${row.source_ref}) disagrees with provenance url (${parsed.data.url})`,
     };
   }
-  // Deterministic content grounding: when the agent persisted the source extract,
-  // the question's prompt+reference must overlap it. A mis-extracted or fabricated
-  // source carries an extract that does not echo the question → fail. When no extract
-  // was persisted there is no deterministic signal (older drafts / agent omitted it),
-  // so this stays structural-only — conservative, never punishing a missing extract.
+  // Deterministic content grounding (F2). extract is guaranteed non-empty here (the
+  // top-of-function guard + the required WebSourcedProvenance.extract contract). The
+  // question's prompt+reference must overlap it — a mis-extracted or fabricated source
+  // carries an extract that does not echo the question → fail.
   const extract = parsed.data.extract;
-  if (extract && extract.trim().length > 0) {
-    const questionText = `${row.prompt_md}\n${row.reference_md}`;
-    const overlap = maxNgramOverlap(questionText, [extract]);
-    if (overlap < SOURCE_GROUNDING_MIN_OVERLAP) {
-      return {
-        check: 'source_consistency',
-        verdict: 'fail',
-        reason: `question content does not ground its declared source (overlap ${overlap.toFixed(2)} < ${SOURCE_GROUNDING_MIN_OVERLAP}); extract may be mis-attributed or fabricated`,
-      };
-    }
+  const questionText = `${row.prompt_md}\n${row.reference_md}`;
+  const overlap = maxNgramOverlap(questionText, [extract]);
+  if (overlap < SOURCE_GROUNDING_MIN_OVERLAP) {
     return {
       check: 'source_consistency',
-      verdict: 'pass',
-      reason: `tier 2 sourced provenance consistent + content grounded (url ${parsed.data.url}, overlap ${overlap.toFixed(2)})`,
+      verdict: 'fail',
+      reason: `question content does not ground its declared source (overlap ${overlap.toFixed(2)} < ${SOURCE_GROUNDING_MIN_OVERLAP}); extract may be mis-attributed or fabricated`,
     };
   }
   return {
     check: 'source_consistency',
     verdict: 'pass',
-    reason: `tier 2 sourced provenance consistent (url ${parsed.data.url}; no extract to ground)`,
+    reason: `tier 2 sourced provenance consistent + content grounded (url ${parsed.data.url}, overlap ${overlap.toFixed(2)})`,
   };
 }
 
@@ -307,6 +318,26 @@ export async function runSourceVerify(
   const knowledgeNode = knowledgeRows[0] ?? null;
   const subjectProfile = resolveSubjectProfile(knowledgeNode?.domain ?? null);
 
+  // F3 (PR #313) — knowledge survival re-check BEFORE promotion. A draft can sit
+  // between sourcing and verify long enough for its knowledge point to be archived;
+  // promoting it anyway enrolls FSRS cards onto a dead node (the same archived guard
+  // sourcing.ts:resolveTrigger applies at INGEST time must also gate at PROMOTE time).
+  // We re-query the row's knowledge_ids against live (archived_at IS NULL) nodes; if
+  // ANY referenced knowledge point is archived (or no longer exists), the draft does
+  // not promote and is not enrolled. The gate folds into the promote decision below
+  // and is recorded on the verify event (knowledge_archived reason) rather than the
+  // tier-2 checks[] array, which is typed to the formal VerifyCheck set.
+  const referencedKnowledgeIds = Array.from(new Set(row.knowledge_ids ?? []));
+  const liveKnowledgeRows = referencedKnowledgeIds.length
+    ? await db
+        .select({ id: knowledge.id })
+        .from(knowledge)
+        .where(and(inArray(knowledge.id, referencedKnowledgeIds), isNull(knowledge.archived_at)))
+    : [];
+  const liveKnowledgeIds = new Set(liveKnowledgeRows.map((r) => r.id));
+  const archivedKnowledgeIds = referencedKnowledgeIds.filter((id) => !liveKnowledgeIds.has(id));
+  const knowledgeAlive = archivedKnowledgeIds.length === 0;
+
   try {
     // Run the tier-2 check set (CHECK_SETS_BY_TIER[2]). structure_completeness +
     // source_consistency + dedup are deterministic; solve_check spends the LLM call.
@@ -342,11 +373,12 @@ export async function runSourceVerify(
       checks.push(solveCheckToOutcome(solveResult));
     }
 
-    // Option B gate: promote ONLY when no check is 'fail'. 'unsupported' (no signal)
-    // is non-blocking — conservative, so a question the solver couldn't independently
-    // solve is not killed (R2). A hard structural / consistency / dedup / solve fail
-    // keeps the draft out of the pool.
-    const promote = !checks.some((c) => c.verdict === 'fail');
+    // Option B gate: promote ONLY when no check is 'fail' AND every referenced
+    // knowledge point is still alive (F3). 'unsupported' (no signal) is non-blocking —
+    // conservative, so a question the solver couldn't independently solve is not killed
+    // (R2). A hard structural / consistency / dedup / solve fail — or an archived
+    // knowledge point — keeps the draft out of the pool.
+    const promote = knowledgeAlive && !checks.some((c) => c.verdict === 'fail');
 
     // solve_check owns its AI run inside runSolveCheck, so this handler holds no
     // single TaskTextResult; the verify event carries the per-check verdicts as its
@@ -407,6 +439,18 @@ export async function runSourceVerify(
           tier: 2,
           promoted: promote,
           checks: checks.map((c) => ({ check: c.check, verdict: c.verdict, reason: c.reason })),
+          // F3: record the knowledge-survival gate alongside the tier-2 checks. When a
+          // referenced knowledge point was archived after sourcing, the draft is not
+          // promoted/enrolled and this names the dead node(s) for the audit trail.
+          ...(knowledgeAlive
+            ? {}
+            : {
+                knowledge_archived: {
+                  reason:
+                    'referenced knowledge point archived after sourcing; not promoted/enrolled',
+                  archived_knowledge_ids: archivedKnowledgeIds,
+                },
+              }),
           verified_by: verifiedBy,
         },
         caused_by_event_id: null,

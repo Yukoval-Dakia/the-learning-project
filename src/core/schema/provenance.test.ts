@@ -9,6 +9,7 @@ const validWebSourced = {
   fetched_at: '2026-06-05T10:00:00Z',
   whitelist_match: true,
   extraction_hash: 'abc123',
+  extract: '阅读下面的文言文，完成各题。',
 };
 
 describe('WebSourcedProvenance', () => {
@@ -43,6 +44,12 @@ describe('WebSourcedProvenance', () => {
   it('accepts whitelist_match=false (off-whitelist, demoted not rejected)', () => {
     const parsed = WebSourcedProvenance.parse({ ...validWebSourced, whitelist_match: false });
     expect(parsed.whitelist_match).toBe(false);
+  });
+
+  it('requires a non-empty extract (F2 — deterministic grounding anchor)', () => {
+    const { extract: _drop, ...rest } = validWebSourced;
+    expect(() => WebSourcedProvenance.parse(rest)).toThrow();
+    expect(() => WebSourcedProvenance.parse({ ...validWebSourced, extract: '' })).toThrow();
   });
 });
 

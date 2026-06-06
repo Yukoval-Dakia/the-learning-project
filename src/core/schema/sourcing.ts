@@ -49,9 +49,12 @@ export const SourcedQuestion = z.object({
   // passage the prompt + reference were restructured from). Folded into
   // metadata.web_sourced.extract so source_verify's source_consistency check can run a
   // DETERMINISTIC prompt↔source overlap WITHOUT refetching the network (mirrors the
-  // quiz_gen source_pack snippet → quiz_verify maxNgramOverlap precedent). Optional:
-  // absent → the verify gate keeps structural-only consistency (no overlap signal).
-  extract: z.string().min(1).optional(),
+  // quiz_gen source_pack snippet → quiz_verify maxNgramOverlap precedent). REQUIRED
+  // (F2, PR #313): without an extract the declared source_url has no deterministic
+  // anchor and a fabricated URL would promote to tier 2 unchecked — source_verify
+  // fails any web_sourced row lacking a non-empty extract, so the producer must supply
+  // it (aligned with WebSourcedProvenance.extract being required).
+  extract: z.string().min(1),
 });
 export type SourcedQuestionT = z.infer<typeof SourcedQuestion>;
 

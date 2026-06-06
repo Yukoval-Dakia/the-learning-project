@@ -374,7 +374,9 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
           // Persist the agent's extracted source passage so source_verify can run a
           // DETERMINISTIC prompt↔source overlap without refetching the network (§2.1
           // contract; mirrors quiz_gen source_pack snippet → quiz_verify overlap).
-          ...(q.extract ? { extract: q.extract } : {}),
+          // REQUIRED (F2): SourcedQuestion.extract is non-optional, so this is always
+          // present — source_verify fails any web_sourced row missing it.
+          extract: q.extract,
         };
 
         await tx.insert(question).values({
