@@ -267,4 +267,90 @@ describe('tencent_ocr_extract handler', () => {
       handler([{ id: 'boss-job-4', data: { sessionId: 'never-existed' } } as never]),
     ).rejects.toThrow(/session never-existed not found/);
   });
+
+  // YUK-227 S3 Slice A — VLM path writes real page_index in page_spans.
+
+  it('VLM path: question_block page_spans carries real page_index from VLM tree', async () => {
+    const { sessionId, sourceDocId, assetId } = await seedSessionWithAsset();
+    const pageImage = await makeTestImage();
+    const r2 = makeR2WithImage(pageImage);
+
+    const submitFn = vi.fn(async () => 'tencent-job-pspan');
+    const pollFn = vi.fn(async () => clozeFixture as never);
+
+    // VLM stub returns a question with page_index=0 (single page doc).
+    const runStructureFn: typeof import('@/server/ingestion/structure').runStructureTask =
+      async () => ({
+        questions: [
+          {
+            id: 'vlm-q-pspan',
+            role: 'standalone' as const,
+            prompt_text: 'VLM question page 0',
+            source: 'vlm_structure' as const,
+            page_index: 0,
+          },
+        ],
+        layout_quality: 'structured' as const,
+        warnings: [],
+      });
+
+    const handler = buildTencentOcrHandler({ db, r2, submitFn, pollFn, runStructureFn });
+    await handler([{ id: 'boss-job-pspan', data: { sessionId } } as never]);
+
+    const blocks = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.ingestion_session_id, sessionId));
+    expect(blocks.length).toBeGreaterThanOrEqual(1);
+    // YUK-227 S3 Slice A: page_spans must carry the VLM-reported page_index (0),
+    // not a hardcoded placeholder. bbox remains full-page (ADR-0002).
+    const span = blocks[0].page_spans[0];
+    expect(span).toBeDefined();
+    expect(span?.page_index).toBe(0); // real page_index from VLM tree
+    expect(span?.bbox).toEqual({ x: 0, y: 0, width: 1, height: 1 }); // full-page bbox (ADR-0002)
+
+    await cleanup(sessionId, sourceDocId, assetId);
+    const cost = await db.select().from(cost_ledger);
+    const ours = cost.find((c) => c.pgboss_job_id === 'boss-job-pspan');
+    if (ours) await db.delete(cost_ledger).where(eq(cost_ledger.id, ours.id));
+  });
+
+  it('VLM fallback path: page_spans uses question page_index (0) as fallback, no regression', async () => {
+    const { sessionId, sourceDocId, assetId } = await seedSessionWithAsset();
+    const r2 = makeR2WithImage(await makeTestImage());
+
+    const submitFn = vi.fn(async () => 'tencent-job-fb-pspan');
+    const pollFn = vi.fn(async () => clozeFixture as never);
+    // VLM down → Tencent structure used. Tencent questions carry page_index from
+    // the parser (page_index=0 for first page). page_spans should reflect that.
+    const runStructureFn = (async () => {
+      throw new StructureTaskError('provider unavailable');
+    }) as typeof import('@/server/ingestion/structure').runStructureTask;
+
+    const handler = buildTencentOcrHandler({ db, r2, submitFn, pollFn, runStructureFn });
+    await handler([{ id: 'boss-job-fb-pspan', data: { sessionId } } as never]);
+
+    const blocks = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.ingestion_session_id, sessionId));
+    expect(blocks.length).toBeGreaterThanOrEqual(1);
+    // Tencent fallback: page_spans[0].page_index comes from the Tencent-parsed
+    // question's page_index (0 for first page). The bbox is full-page (ADR-0002).
+    const span = blocks[0].page_spans[0];
+    expect(span).toBeDefined();
+    expect(span?.page_index).toBe(0); // Tencent parser stamps page 0 on first page
+    expect(span?.bbox).toEqual({ x: 0, y: 0, width: 1, height: 1 });
+    // Tencent fallback warning was surfaced.
+    const session = await db
+      .select()
+      .from(learning_session)
+      .where(eq(learning_session.id, sessionId));
+    expect(session[0].warnings.some((w: string) => w.includes('fell back to Tencent'))).toBe(true);
+
+    await cleanup(sessionId, sourceDocId, assetId);
+    const cost = await db.select().from(cost_ledger);
+    const ours = cost.find((c) => c.pgboss_job_id === 'boss-job-fb-pspan');
+    if (ours) await db.delete(cost_ledger).where(eq(cost_ledger.id, ours.id));
+  });
 });

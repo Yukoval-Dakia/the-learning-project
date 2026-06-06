@@ -196,6 +196,10 @@ export async function runAutoEnrollForSession(
         id: b.id,
         structured: b.structured,
         layout_quality: b.layout_quality,
+        // YUK-227 S3 Slice A (F4): pass page_spans so projectBlock can include
+        // real page_index for VLM-path sessions. Tencent-path blocks carry
+        // placeholder page_index=0 which triggers all-placeholder degradation.
+        page_spans: b.page_spans,
       })),
       runTaskFn: params.runBlockAssemblyFn,
       ctx: params.ctx ?? { db: params.db },

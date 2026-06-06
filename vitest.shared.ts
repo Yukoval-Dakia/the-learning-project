@@ -75,6 +75,10 @@ export const fastTestInclude = [
   // runTaskFn, no live DB / AI / R2. (sibling tencent_ocr_extract handler test
   // hits Postgres → db partition.)
   'src/server/ingestion/structure.test.ts',
+  // YUK-227 S3 Slice A (F4): block-assembly spatial projection unit tests — pure
+  // functions (isAllPlaceholderPageIndex / projectBlock). DB-backed integration
+  // tests remain in block-assembly.test.ts (db partition).
+  'src/server/ingestion/block-assembly.unit.test.ts',
   // T-OC slice A1 (YUK-145): the MistakeEnrollTask invoker is a pure DI unit —
   // injected runTaskFn, no live DB / AI. (sibling auto-enroll.test.ts hits
   // Postgres → db partition.)

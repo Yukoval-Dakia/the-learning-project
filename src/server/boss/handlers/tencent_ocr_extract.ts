@@ -7,7 +7,7 @@ import type { Db } from '@/db/client';
 import { learning_session, source_asset } from '@/db/schema';
 import { writeCostLedger } from '@/server/ai/log';
 import { type PreAttachFigure, cropAndUploadFigures } from '@/server/ingestion/crop';
-import { assignFigures } from '@/server/ingestion/figure_attach';
+import { assignFigures, assignFiguresFromVlm } from '@/server/ingestion/figure_attach';
 // T-OC slice 2 (YUK-145, OC-1/OC-2): VLM StructureTask owns the structure tree;
 // Tencent structure is demoted to a text hint. See
 // docs/superpowers/plans/2026-05-30-yuk145-toc-slice2-lane.md.
@@ -182,15 +182,30 @@ async function processOneOcrJob(
     //     / unparseable / empty), fall back to the per-page concatenated Tencent
     //     structure so extraction never hard-fails on a VLM outage (regression
     //     safety — lane plan §5).
+    //
+    //     YUK-227 S3 Slice A: pass preFigures so the VLM can self-report
+    //     figure↔question assignments (figure_ids on StructureNode → figureAssignments
+    //     on StructureResult). The VLM receives only sequence index + page_index;
+    //     image bytes are already in pageImages. On VLM failure the fallback path
+    //     carries no figureAssignments and assignFiguresFromVlm degrades to the
+    //     geometric heuristic (zero regression on the Tencent fallback path).
     const tencentHintMd = renderTencentHint(tencentPages);
     const tencentFallbackQuestions = tencentPages.flatMap((p) => p.questions);
 
+    // Build the minimal preFigures descriptor for the VLM prompt.
+    const preFiguresMeta = allPreFigures.map((f, i) => ({
+      index: i,
+      page_index: f.source_page_index,
+    }));
+
     let structure: StructureResult;
+    let usedVlmPath = true;
     try {
       structure = await runStructure({
         pageImages,
         tencentHintMd,
         pageCount: assetIds.length,
+        preFigures: preFiguresMeta.length > 0 ? preFiguresMeta : undefined,
         ctx: { db: deps.db, r2: deps.r2 },
       });
     } catch (err) {
@@ -207,24 +222,46 @@ async function processOneOcrJob(
         layout_quality: tencentLayout,
         warnings: [],
       };
+      usedVlmPath = false;
     }
     warnings.push(...structure.warnings);
 
-    // 11. Assign figures heuristically against the structure tree (slice 2b →
-    //     VLM matching). assignFigures needs ≥1 question; structure guarantees it.
+    // 11. Assign figures to questions.
+    //
+    //     YUK-227 S3 Slice A:
+    //     - VLM path: assignFiguresFromVlm — VLM assignments take priority;
+    //       any figure the VLM did not cover falls back to the geometric heuristic
+    //       (no figure is ever dropped — regression safety).
+    //     - Tencent fallback path: assignFigures geometric heuristic (unchanged).
     const figureRefs: FigureRefT[] =
-      allPreFigures.length > 0 ? assignFigures(allPreFigures, structure.questions) : [];
+      allPreFigures.length > 0
+        ? usedVlmPath
+          ? assignFiguresFromVlm(allPreFigures, structure.figureAssignments, structure.questions)
+          : assignFigures(allPreFigures, structure.questions)
+        : [];
 
     // 12. applyExtractionResult —— one question_block per top-level structured
     //     question. A cross-page stem is ONE block spanning its pages.
+    //
+    //     YUK-227 S3 Slice A: page_spans now carry a real page_index on the VLM
+    //     path (using the question's page_index from the VLM tree). bbox remains
+    //     full-page (ADR-0002: VLM does not give pixel bbox; crop still uses
+    //     Tencent bbox). When page_index is absent (null/undefined on the node),
+    //     we fall back to page 0 — consistent with the previous placeholder.
+    //     Tencent fallback questions may carry page_index from the parser; the
+    //     same logic applies safely.
     const blocks = structure.questions.map((q) => ({
       structured: q,
       figures: figureRefs,
-      // The VLM tree carries no per-question bbox (figure↔question matching +
-      // precise page spans are slice 2b — see lane plan §DEFERRED), so each
-      // block spans the whole document with a full-page span placeholder. The
-      // import route reads `structured` for content, not page_spans geometry.
-      page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' }],
+      page_spans: [
+        {
+          // Use the VLM-reported page_index when available; page 0 as fallback
+          // (matches previous placeholder behaviour — no regression on Tencent path).
+          page_index: q.page_index ?? 0,
+          bbox: { x: 0, y: 0, width: 1, height: 1 },
+          role: 'prompt',
+        },
+      ],
       source_asset_ids: assetIds,
       image_refs: assetIds,
     }));
