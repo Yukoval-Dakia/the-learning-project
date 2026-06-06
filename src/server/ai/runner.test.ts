@@ -210,6 +210,134 @@ describe('runTask (Claude Agent SDK adapter)', () => {
   });
 });
 
+// YUK-225 (S2 slice 4) — spike-invariant regression guards.
+//
+// Two protected invariants surfaced by the YUK-217 spike must never silently
+// regress (independent-review blocker F1). Both are exercised through the
+// captured SDK options + the populated isolated config dir, since
+// buildQueryOptions / populateIsolatedSkills are module-private.
+//
+// Sources:
+//   - .omc/research/2026-06-05-yuk217-spike-report.md §3 (接线参数) + §5 (失败模式)
+//   - docs/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §5.2
+//     「SPIKE 修正注记」(2026-06-05)
+describe('runTask — YUK-217 spike invariants (slice 4 skills wiring)', () => {
+  beforeEach(async () => {
+    await resetDb();
+    mockSdk.messages = [];
+    mockSdk.capturedOptions = undefined;
+    mockSdk.capturedPrompt = undefined;
+    process.env.XIAOMI_API_KEY = 'sk-test-key';
+  });
+
+  // (a) OMITTED invariant: settingSources must NEVER appear on Options.
+  // spike report §5(1): passing `settingSources: []` (SDK isolation mode)
+  // disables the CONFIG_DIR/skills auto-load (CLEAN-PRESEED 案 L1/L2 双 NO),
+  // making the populated skills invisible. The correct form is to omit the
+  // key entirely — guard that the runner never sets it on any path.
+  it('never sets settingSources on Options (OMITTED invariant)', async () => {
+    mockSdk.messages = [successResult('ok')];
+
+    await runTask(
+      'NoteGenerateTask',
+      { test: 'payload' },
+      { db: testDb(), r2: memR2(), skills: ['quiz-gen-translation'] },
+    );
+
+    const opts = mockSdk.capturedOptions as Record<string, unknown>;
+    expect('settingSources' in opts).toBe(false);
+  });
+
+  // (b) Zero-impact red line: a task with no ctx.skills must produce Options
+  // WITHOUT a `skills` key (current behaviour — 降级链 falls back to
+  // promptFragments). plan §5.2「SPIKE 修正注记」: only pass `skills` when
+  // ctx.skills is non-empty.
+  it('omits skills key when ctx has no skills (zero behaviour change)', async () => {
+    mockSdk.messages = [successResult('ok')];
+
+    await runTask('AttributionTask', { test: 'payload' }, { db: testDb(), r2: memR2() });
+
+    const opts = mockSdk.capturedOptions as Record<string, unknown>;
+    expect('skills' in opts).toBe(false);
+  });
+
+  // Also guard the empty-array degrade path: ctx.skills=[] is still "no skills".
+  it('omits skills key when ctx.skills is an empty array', async () => {
+    mockSdk.messages = [successResult('ok')];
+
+    await runTask(
+      'AttributionTask',
+      { test: 'payload' },
+      { db: testDb(), r2: memR2(), skills: [] },
+    );
+
+    const opts = mockSdk.capturedOptions as Record<string, unknown>;
+    expect('skills' in opts).toBe(false);
+  });
+
+  // (c) Whitelist passthrough: ctx.skills threads verbatim onto Options.skills.
+  it('passes ctx.skills verbatim onto Options.skills (context filter whitelist)', async () => {
+    mockSdk.messages = [successResult('ok')];
+
+    await runTask(
+      'NoteGenerateTask',
+      { test: 'payload' },
+      { db: testDb(), r2: memR2(), skills: ['quiz-gen-translation'] },
+    );
+
+    const opts = mockSdk.capturedOptions as { skills?: string[] };
+    expect(opts.skills).toEqual(['quiz-gen-translation']);
+  });
+
+  // (d) Isolated config dir is populated: after a run, CLAUDE_CONFIG_DIR/skills/
+  // contains the subject skills mirrored from src/subjects/<id>/skills/.
+  // spike report §3(1): populate ALL subject skills once, whitelist keys which
+  // the model sees. Verified against the real on-disk subject skill names.
+  it('populates isolated CONFIG_DIR/skills with subject skills', async () => {
+    const { existsSync, readdirSync } = await import('node:fs');
+    const { join } = await import('node:path');
+
+    mockSdk.messages = [successResult('ok')];
+    await runTask('AttributionTask', { test: 'payload' }, { db: testDb(), r2: memR2() });
+
+    const opts = mockSdk.capturedOptions as { env: Record<string, string> };
+    const skillsDir = join(opts.env.CLAUDE_CONFIG_DIR, 'skills');
+    expect(existsSync(skillsDir)).toBe(true);
+
+    const populated = readdirSync(skillsDir);
+    // Subject skills are flattened by SKILL.md name (dir name) into skills/.
+    expect(populated).toContain('quiz-gen-translation');
+    expect(populated).toContain('quiz-gen-reading-comprehension');
+    expect(populated).toContain('quiz-gen-calculation');
+    // SKILL.md is mirrored into each skill dir.
+    expect(existsSync(join(skillsDir, 'quiz-gen-translation', 'SKILL.md'))).toBe(true);
+  });
+
+  // populateIsolatedSkills idempotency: CLAUDE_CONFIG_DIR is a process-level
+  // memoised singleton (isolatedConfigDir), so repeated runs reuse the same dir
+  // without re-populating, duplicating, or throwing. spike report §3(1) +
+  // §5(3): once-filled singleton keyed by the skills whitelist.
+  it('reuses the same populated config dir across runs (idempotent singleton)', async () => {
+    const { existsSync, readdirSync } = await import('node:fs');
+    const { join } = await import('node:path');
+
+    mockSdk.messages = [successResult('ok')];
+    await runTask('AttributionTask', { a: 1 }, { db: testDb(), r2: memR2() });
+    const dir1 = (mockSdk.capturedOptions as { env: Record<string, string> }).env.CLAUDE_CONFIG_DIR;
+    const skills1 = readdirSync(join(dir1, 'skills')).sort();
+
+    mockSdk.messages = [successResult('ok')];
+    await runTask('NoteGenerateTask', { b: 2 }, { db: testDb(), r2: memR2() });
+    const dir2 = (mockSdk.capturedOptions as { env: Record<string, string> }).env.CLAUDE_CONFIG_DIR;
+    const skills2 = readdirSync(join(dir2, 'skills')).sort();
+
+    // Same singleton dir; skills subtree unchanged (no re-populate / no dupes).
+    expect(dir2).toBe(dir1);
+    expect(skills2).toEqual(skills1);
+    expect(existsSync(join(dir2, 'skills', 'quiz-gen-translation', 'SKILL.md'))).toBe(true);
+  });
+});
+
 describe('streamTask middleware + cost', () => {
   beforeEach(async () => {
     await resetDb();
