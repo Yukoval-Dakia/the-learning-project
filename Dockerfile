@@ -99,10 +99,11 @@ COPY --from=builder --chown=nextjs:nodejs /app/drizzle ./drizzle
 # tree relative to process.cwd() (= /app for `node server.js` / `node worker.cjs`) and
 # walks src/subjects/<id>/skills/, so we land the skills subtrees at that exact path.
 # Minimal copy: ONLY the skills/ subtrees (not profile.ts / fixtures / other source);
-# subjects without a skills/ dir (e.g. physics) are skipped by the runner's per-subject
-# existsSync guard, so they need not be present.
+# subjects without a skills/ dir are skipped by the runner's per-subject existsSync
+# guard, so they need not be present. All three note subjects now have skills dirs.
 COPY --from=builder --chown=nextjs:nodejs /app/src/subjects/math/skills ./src/subjects/math/skills
 COPY --from=builder --chown=nextjs:nodejs /app/src/subjects/wenyan/skills ./src/subjects/wenyan/skills
+COPY --from=builder --chown=nextjs:nodejs /app/src/subjects/physics/skills ./src/subjects/physics/skills
 
 # sharp is a native module used by the tencent_ocr_extract handler in the
 # worker process and by /api/assets/* in the app process. Next standalone
