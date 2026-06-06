@@ -98,6 +98,11 @@ export const fastTestInclude = [
   'src/server/ingestion/tencent_mark_parser.test.ts',
   'src/server/ingestion/vision.test.ts',
   'src/server/judge/**/*.test.ts',
+  // YUK-239 (STB-5) — pure env-read guard for the background-job enqueue seam
+  // (shouldEnqueueBackgroundJobs). No DB / pg-boss touched (vi.stubEnv only).
+  // Lives at src/server/runtime-env.ts (NOT under src/server/boss/) precisely so
+  // it stays out of the partition auditor's DB_TAINTED_DIRS.
+  'src/server/runtime-env.test.ts',
   // YUK-216 S2 slice 1 — pure (no-DB) verify-gate framework + solve-check unit.
   // runSolveCheck takes an injected runTaskFn (mocks BOTH the SolutionGenerate
   // solver and the SemanticJudge open-question compare), and `db` is a `{}` stub
@@ -188,6 +193,11 @@ export const fastTestInclude = [
   // the route; it only validates + enqueues (no @/db/client import), so it has
   // no live-Postgres dependency → unit partition (search-grounded QuizGen wave).
   'app/api/questions/quiz-gen/route.test.ts',
+  // YUK-234 (SEC-4) — pure Zod-parse unit for the import request-body bounds
+  // (per-array .max() ceilings). schema.ts has no DB / R2 / AI import; the
+  // route's DB-backed behavior stays in import/route.test.ts (db partition).
+  // `*` matches the literal `[id]` dynamic segment (mirrors the revert glob).
+  'app/api/ingestion/*/import/schema.test.ts',
   'tests/core/**/*.test.ts',
   'tests/schema/**/*.test.ts',
   'tests/subjects/**/*.test.ts',

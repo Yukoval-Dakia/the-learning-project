@@ -5,13 +5,15 @@
 // non-empty (Math MVP constraint). Routes by question.kind to steps@1 / semantic@1
 // via the orchestrator's JudgeInvoker, writes an attempt event, transitions the
 // session to judged, reveals the worked solution, and enrolls a mistake on a low
-// score. On failure, enqueues attribution_followup (VITEST-gated, getStartedBoss).
+// score. On failure, enqueues attribution_followup (gated by the shared
+// shouldEnqueueBackgroundJobs(), getStartedBoss).
 import { z } from 'zod';
 
 import { db } from '@/db/client';
 import { getStartedBoss } from '@/server/boss/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { SolveError, submitSolveAttempt } from '@/server/orchestrator/solve';
+import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 
 export const runtime = 'nodejs';
 
@@ -44,10 +46,11 @@ export async function POST(
       expectedQuestionId: id,
     });
 
-    // Enqueue attribution after the response path commits (failure only).
-    // VITEST guard mirrors /api/mistakes + /api/embedded-check/attempt. Uses
-    // getStartedBoss (YUK-192), never createBoss.
-    if (result.mistake_id !== undefined && !process.env.VITEST) {
+    // Enqueue attribution after the response path commits (failure only). Gated
+    // by the shared shouldEnqueueBackgroundJobs() (YUK-239), mirroring
+    // /api/mistakes + /api/embedded-check/attempt. Uses getStartedBoss
+    // (YUK-192), never createBoss.
+    if (result.mistake_id !== undefined && shouldEnqueueBackgroundJobs()) {
       try {
         const boss = await getStartedBoss();
         await boss.send('attribution_followup', { attempt_event_id: result.attempt_event_id });
