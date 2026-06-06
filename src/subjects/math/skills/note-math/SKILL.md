@@ -1,5 +1,5 @@
 ---
-name: note
+name: note-math
 description: 数学学习笔记规范包 —— 合格 atomic / long / hub note 的结构要求、各 semantic_kind 内容标准、质检判据。NoteGenerateTask / NoteVerifyTask / NoteRefineTask 共用同一份规范。
 ---
 
