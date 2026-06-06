@@ -124,10 +124,11 @@ export function assignFiguresFromVlm(
   // Build a lookup: figure_index → assignment, applying three filters:
   //  1. HIGH confidence only (F1): low-confidence → geometric fallback.
   //  2. Valid target question id (P3): hallucinated id → geometric fallback.
-  //  3. No conflict (R2-2): if the same figure_index appears more than once
-  //     across any nodes, the whole group is discarded → geometric fallback.
-  //     Conflicts are logged via console.warn.
-  const seenIndices = new Set<number>();
+  //  3. No conflict (R2-2, refined in bot round-3): a repeated figure_index is
+  //     only a conflict when it maps to a DIFFERENT question id — the VLM
+  //     redundantly repeating the same (figure, question) pair is harmless and
+  //     keeps the assignment. Diverging claims discard the whole group →
+  //     geometric fallback. Conflicts are logged via console.warn.
   const conflictIndices = new Set<number>();
   const assignmentByIndex = new Map<number, FigureAssignment>();
 
@@ -136,11 +137,14 @@ export function assignFiguresFromVlm(
       // Low confidence or invalid target — skip silently (will fall to geometric).
       continue;
     }
-    if (seenIndices.has(a.figure_index)) {
-      // Duplicate figure_index → conflict. Mark for discard and warn.
-      conflictIndices.add(a.figure_index);
-    } else {
-      seenIndices.add(a.figure_index);
+    const existing = assignmentByIndex.get(a.figure_index);
+    if (existing) {
+      if (existing.attached_to_question_id !== a.attached_to_question_id) {
+        // Same figure claimed for different questions → real conflict.
+        conflictIndices.add(a.figure_index);
+      }
+      // Same target → harmless duplicate; keep the existing mapping.
+    } else if (!conflictIndices.has(a.figure_index)) {
       assignmentByIndex.set(a.figure_index, a);
     }
   }
