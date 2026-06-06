@@ -122,7 +122,11 @@ jobs:
           script: |
             const fs = require('fs');
 
-            const marker = '<!-- ocr-codex-review -->';
+            // Per-run marker (run id embedded) — each review round posts a NEW
+            // comment so rounds stay traceable on the PR timeline (owner decision
+            // 2026-06-06; the old stable marker caused in-place upserts that erased
+            // earlier rounds). The artifact remains the per-run machine record.
+            const marker = `<!-- ocr-codex-review run=${context.runId} -->`;
             const raw = fs.readFileSync('ocr-review.json', 'utf8');
             const result = JSON.parse(raw);
             const summary = result.summary || {};
@@ -138,6 +142,7 @@ jobs:
               marker,
               '## OCR review',
               '',
+              `Reviewed commit: \`${(context.payload.pull_request.head.sha || '').slice(0, 8)}\``,
               `Status: \`${result.status || 'unknown'}\``,
               `Files reviewed: \`${summary.files_reviewed ?? 0}\``,
               `Comments: \`${summary.comments ?? comments.length}\``,
@@ -178,28 +183,9 @@ jobs:
             const body = lines.join('\n').trim();
             const { owner, repo } = context.repo;
             const issue_number = context.payload.pull_request.number;
-            const { data: existingComments } = await github.rest.issues.listComments({
+            await github.rest.issues.createComment({
               owner,
               repo,
               issue_number,
-              per_page: 100,
+              body,
             });
-            const existing = existingComments.find((comment) =>
-              comment.user?.type === 'Bot' && comment.body?.includes(marker)
-            );
-
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner,
-                repo,
-                comment_id: existing.id,
-                body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner,
-                repo,
-                issue_number,
-                body,
-              });
-            }
