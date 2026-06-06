@@ -166,3 +166,35 @@ export function deriveSourceTier(q: SourceTierInput): {
   // any non-ingestion row without higher-tier provenance).
   return { tier: 4, name: 'generated' };
 }
+
+// ---------- 合约五：tier + OF-2 selection comparator ----------
+//
+// The single selection-order comparator every "需要知识点 X 的题" consumer reuses
+// (review-plan-tools tier-preference order + sourcing-sequence existing-pool sort).
+// Two keys, in order:
+//   1. source tier ascending (1 authentic → 4 generated; missing tier treated as 4).
+//   2. OF-2 within-tier demotion (plan §12): whitelist_match === false sorts BEHIND
+//      true | null. ONLY false is demoted — an unknown (null) match is NOT penalised.
+// Stable: callers feed pre-ordered input (e.g. created_at / failure-first) and rely
+// on this returning 0 for equal (tier, demotion) pairs so the prior order survives.
+export interface SourceTierSortItem {
+  // 1 authentic → 4 generated; null = unknown/absent (treated as 4 = lowest). Accepts a
+  // bare number so read-model projections (zod number) feed in without a cast.
+  tier: number | null;
+  // metadata.web_sourced.whitelist_match (only meaningful for tier 2). null = unknown.
+  whitelistMatch: boolean | null;
+}
+
+export function compareBySourceTierThenWhitelist(
+  a: SourceTierSortItem,
+  b: SourceTierSortItem,
+): number {
+  const at = a.tier ?? 4;
+  const bt = b.tier ?? 4;
+  if (at !== bt) return at - bt;
+  // OF-2: within the same tier, off-whitelist (false) sorts after on-whitelist /
+  // unknown (true | null). Only false is demoted.
+  const ad = a.whitelistMatch === false ? 1 : 0;
+  const bd = b.whitelistMatch === false ? 1 : 0;
+  return ad - bd;
+}

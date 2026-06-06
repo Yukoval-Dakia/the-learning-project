@@ -10,6 +10,7 @@
 
 import { ToolState, type ToolStateSectionT } from '@/core/schema/business';
 import { ReviewSessionProposal } from '@/core/schema/coach';
+import { compareBySourceTierThenWhitelist } from '@/core/schema/provenance';
 import { artifact, knowledge, knowledge_mastery, question } from '@/db/schema';
 import { getLatestCoachPlan } from '@/server/today/coach-plan';
 import { createId } from '@paralleldrive/cuid2';
@@ -363,14 +364,18 @@ async function executeSelectReviewQuestionCandidates(
       const bf = b.provenance.endsWith('never_reviewed_failure') ? 0 : 1;
       if (af !== bf) return af - bf;
     }
-    const at = a.source_tier ?? 4;
-    const bt = b.source_tier ?? 4;
-    if (at !== bt) return at - bt;
-    // OF-2: within the same tier, off-whitelist (false) sorts after on-whitelist
-    // / unknown (true | null). Only false is demoted.
-    const ad = whitelistMatchByQid.get(a.question_id) === false ? 1 : 0;
-    const bd = whitelistMatchByQid.get(b.question_id) === false ? 1 : 0;
-    return ad - bd;
+    // Shared §合约五 comparator: tier asc, then OF-2 within-tier demotion. Same
+    // single comparator the sourcing-sequence existing-pool sort reuses.
+    return compareBySourceTierThenWhitelist(
+      {
+        tier: a.source_tier ?? null,
+        whitelistMatch: whitelistMatchByQid.get(a.question_id) ?? null,
+      },
+      {
+        tier: b.source_tier ?? null,
+        whitelistMatch: whitelistMatchByQid.get(b.question_id) ?? null,
+      },
+    );
   });
 
   return {
