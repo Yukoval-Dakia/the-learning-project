@@ -239,7 +239,12 @@ export function isAllPlaceholderPageIndex(blocks: BlockAssemblySourceBlock[]): b
  * all-placeholder), page_index is omitted → pure semantic reasoning (no change
  * from before, zero regression).
  */
-function projectBlock(
+/**
+ * YUK-227 S3 Slice A (P2-1 export): exported for direct unit testing so tests
+ * exercise the real projection logic rather than reimplementing it.
+ * Internal callers (runBlockAssemblyForSession) use this same function.
+ */
+export function projectBlock(
   block: BlockAssemblySourceBlock,
   includeSpatial: boolean,
 ): BlockAssemblyInputBlock {

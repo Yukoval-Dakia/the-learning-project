@@ -181,6 +181,11 @@ function nodeToStructured(
   if (node.answers && node.answers.length > 0) out.answers = node.answers;
   if (node.analysis) out.analysis = node.analysis;
   if (subs && subs.length > 0) out.sub_questions = subs;
+  // YUK-227 S3 Slice A (P1 fix): copy VLM page_index to the output so
+  // q.page_index in the handler is non-null on the VLM path and
+  // isAllPlaceholderPageIndex can distinguish VLM (real values) from
+  // Tencent fallback (all page 0 via ??0 placeholder).
+  if (node.page_index != null) out.page_index = node.page_index;
 
   // YUK-227 S3 Slice A: record figure_ids → question_id assignments while
   // traversing the tree so the caller can build figureAssignments.
