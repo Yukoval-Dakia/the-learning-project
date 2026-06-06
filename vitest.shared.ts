@@ -128,6 +128,11 @@ export const fastTestInclude = [
   // gate-behavior + RB-7 regression tests (rubric-validator.test.ts) hit live
   // Postgres → db partition.
   'src/server/knowledge/rubric-validator.unit.test.ts',
+  // YUK-236 [STB-2] — pure (no-DB) coverage for the loadTreeSnapshot OOM-guard
+  // truncation warn. Imports only ./tree (value-imports @/db/schema pure table
+  // objects + drizzle-orm; @/db/client is type-only). The `.limit(5000)` query
+  // bound + parent-chain semantics stay in tree.test.ts (db partition).
+  'src/server/knowledge/tree.unit.test.ts',
   // P5.4-L2 / YUK-174 — pure (no-DB) adaptive-bias decision helpers
   // (computeGateBump / relation parse / findFeedbackCell). The DB-touching
   // getProposalFeedbackDigest is covered by adaptive-bias.test.ts (DB partition).
