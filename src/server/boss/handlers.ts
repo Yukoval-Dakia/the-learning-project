@@ -84,16 +84,42 @@ function jobQueueOpts(queueName: string, expireInSeconds: number) {
 }
 
 /**
+ * Create a queue AND reconcile its config if it already exists.
+ *
+ * pg-boss `createQueue` is `INSERT ... ON CONFLICT DO NOTHING` (plans.js
+ * `create_queue` plpgsql) — on an upgrade where the queue was already created by
+ * an older worker, it leaves the *old* expire/retention/dead-letter untouched.
+ * That silently no-ops the YUK-237 stability tuning on every existing prod DB
+ * (the only DBs that matter for a long-running NAS worker). `updateQueue` runs
+ * `UPDATE ${schema}.queue SET expire_seconds/retention_seconds/dead_letter ...
+ * WHERE name = $1` (plans.js `updateQueue`), so calling it right after
+ * createQueue forces the live config onto both brand-new and pre-existing
+ * queues. On a fresh queue updateQueue is a harmless self-update; on a missing
+ * queue it is a no-op UPDATE (0 rows) — but we always createQueue first, so the
+ * row exists. Keeping the SAME opts object for both calls keeps them in lockstep.
+ */
+async function createOrUpdateQueue(
+  boss: PgBoss,
+  name: string,
+  opts: { expireInSeconds: number; retentionSeconds: number; deadLetter?: string },
+): Promise<void> {
+  await boss.createQueue(name, opts);
+  await boss.updateQueue(name, opts);
+}
+
+/**
  * Create an LLM/agent producer queue together with its dead-letter queue.
  *
  * Order matters: the DLQ must exist before the main queue references it as
  * `deadLetter`. createQueue is idempotent on name, so re-running registration is
- * safe. The DLQ itself uses FAST opts (7-day retention, 1h expire) — it only
- * holds inert failed payloads, never runs a worker.
+ * safe; createOrUpdateQueue additionally reconciles config onto an existing
+ * queue (see its docblock — required so YUK-237 tuning lands on upgraded prod
+ * DBs, not just fresh ones). The DLQ itself uses FAST opts (7-day retention, 1h
+ * expire) — it only holds inert failed payloads, never runs a worker.
  */
 async function createJobQueue(boss: PgBoss, name: string, expireInSeconds: number): Promise<void> {
-  await boss.createQueue(`${name}_dlq`, FAST_QUEUE_OPTS);
-  await boss.createQueue(name, jobQueueOpts(name, expireInSeconds));
+  await createOrUpdateQueue(boss, `${name}_dlq`, FAST_QUEUE_OPTS);
+  await createOrUpdateQueue(boss, name, jobQueueOpts(name, expireInSeconds));
 }
 
 /**
@@ -110,13 +136,13 @@ async function createJobQueue(boss: PgBoss, name: string, expireInSeconds: numbe
  */
 export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   // Step 4: echo golden E2E queue (FAST — trivial round-trip)
-  await boss.createQueue('echo', FAST_QUEUE_OPTS);
+  await createOrUpdateQueue(boss, 'echo', FAST_QUEUE_OPTS);
   await boss.work('echo', { pollingIntervalSeconds: 0.5, batchSize: 1 }, buildEchoHandler(db));
 
   // Step 5: nightly cron tasks
   await createJobQueue(boss, 'knowledge_propose_nightly', EXPIRE_LLM);
   await boss.work('knowledge_propose_nightly', buildKnowledgePropoNightlyHandler(db));
-  await boss.createQueue('prune_job_events', FAST_QUEUE_OPTS); // FAST — bulk DELETE housekeeping, re-runs next cron
+  await createOrUpdateQueue(boss, 'prune_job_events', FAST_QUEUE_OPTS); // FAST — bulk DELETE housekeeping, re-runs next cron
   await boss.work('prune_job_events', buildPruneJobEventsHandler(db));
   await boss.schedule('knowledge_propose_nightly', '0 2 * * *', {}, { tz: 'Asia/Shanghai' });
   await boss.schedule('prune_job_events', '0 4 * * *', {}, { tz: 'Asia/Shanghai' });
@@ -226,21 +252,21 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
 
   // ADR-0013: abandon review sessions stuck in 'started' >6h (sendBeacon
   // fallback when normal close didn't fire). BJT 04:15 after prune_job_events.
-  await boss.createQueue('prune_orphan_review_sessions', FAST_QUEUE_OPTS); // FAST — cheap SELECT + per-row transition
+  await createOrUpdateQueue(boss, 'prune_orphan_review_sessions', FAST_QUEUE_OPTS); // FAST — cheap SELECT + per-row transition
   await boss.work('prune_orphan_review_sessions', buildPruneOrphanReviewSessionsHandler(db));
   await boss.schedule('prune_orphan_review_sessions', '15 4 * * *', {}, { tz: 'Asia/Shanghai' });
 
   // YUK-14 (docs/design/2026-05-24-teaching-idle-state-machine.md): promote
   // active conversation sessions to 'idle' after 5min of no user input.
   // Runs every minute; cheap SELECT + per-row single-owner transition.
-  await boss.createQueue('promote_conversation_idle', FAST_QUEUE_OPTS); // FAST — every-minute cheap SELECT
+  await createOrUpdateQueue(boss, 'promote_conversation_idle', FAST_QUEUE_OPTS); // FAST — every-minute cheap SELECT
   await boss.work('promote_conversation_idle', buildPromoteConversationIdleHandler(db));
   await boss.schedule('promote_conversation_idle', '* * * * *', {}, { tz: 'Asia/Shanghai' });
 
   // YUK-14: abandon conversation sessions stuck in 'active'|'idle' >6h
   // (sendBeacon fallback). BJT 04:25, offset 10min from review prune to
   // avoid lock contention on learning_session.
-  await boss.createQueue('prune_orphan_conversation_sessions', FAST_QUEUE_OPTS); // FAST — cheap SELECT + per-row transition
+  await createOrUpdateQueue(boss, 'prune_orphan_conversation_sessions', FAST_QUEUE_OPTS); // FAST — cheap SELECT + per-row transition
   await boss.work(
     'prune_orphan_conversation_sessions',
     buildPruneOrphanConversationSessionsHandler(db),

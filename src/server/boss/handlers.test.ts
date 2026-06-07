@@ -7,6 +7,7 @@ describe('registerHandlers', () => {
   it('registers and schedules knowledge_maintenance_nightly with expiry + DLQ (YUK-237)', async () => {
     const boss = {
       createQueue: vi.fn(async () => undefined),
+      updateQueue: vi.fn(async () => undefined),
       work: vi.fn(async () => undefined),
       schedule: vi.fn(async () => undefined),
     } as unknown as PgBoss;
@@ -15,6 +16,15 @@ describe('registerHandlers', () => {
 
     // YUK-237: AGENT-tier queue — explicit 2h expire, 7-day retention, dead-letter.
     expect(boss.createQueue).toHaveBeenCalledWith('knowledge_maintenance_nightly', {
+      expireInSeconds: 7_200,
+      retentionSeconds: 604_800,
+      deadLetter: 'knowledge_maintenance_nightly_dlq',
+    });
+    // YUK-237 (CODEX-2 round-2): createQueue is ON CONFLICT DO NOTHING, so an
+    // already-existing queue keeps stale config on upgrade. We reconcile via
+    // updateQueue right after, with the SAME opts, so the tuning lands on
+    // pre-existing prod queues too.
+    expect(boss.updateQueue).toHaveBeenCalledWith('knowledge_maintenance_nightly', {
       expireInSeconds: 7_200,
       retentionSeconds: 604_800,
       deadLetter: 'knowledge_maintenance_nightly_dlq',
@@ -44,8 +54,10 @@ describe('registerHandlers', () => {
   // than queue-by-queue.
   it('sets expireInSeconds >= 3600 and retentionSeconds 7d on every queue (YUK-237)', async () => {
     const createQueue = vi.fn((_name: string, _opts?: unknown) => Promise.resolve(undefined));
+    const updateQueue = vi.fn((_name: string, _opts?: unknown) => Promise.resolve(undefined));
     const boss = {
       createQueue,
+      updateQueue,
       work: vi.fn(async () => undefined),
       schedule: vi.fn(async () => undefined),
     } as unknown as PgBoss;
@@ -76,6 +88,25 @@ describe('registerHandlers', () => {
       expect(created).toContain(parent);
       expect(created.indexOf(dlq)).toBeLessThan(created.indexOf(parent));
     }
+
+    // YUK-237 (CODEX-2 round-2): every owned queue is also reconciled via
+    // updateQueue with the SAME opts (createQueue is ON CONFLICT DO NOTHING, so
+    // an already-existing queue would otherwise keep stale config on upgrade).
+    const updatedCalls = updateQueue.mock.calls.filter(
+      ([name]) => !(name as string).startsWith('memory_'),
+    );
+    const updated = updatedCalls.map((c) => c[0] as string);
+    for (const name of created) {
+      expect(updated, `queue ${name} must be reconciled via updateQueue`).toContain(name);
+    }
+    // updateQueue opts mirror createQueue opts (same object reference path).
+    for (const [name, opts] of updatedCalls) {
+      const o = opts as { expireInSeconds?: number; retentionSeconds?: number };
+      expect(o.expireInSeconds, `updateQueue ${name} expireInSeconds`).toBeGreaterThanOrEqual(
+        3_600,
+      );
+      expect(o.retentionSeconds, `updateQueue ${name} retentionSeconds`).toBe(604_800);
+    }
   });
 
   // YUK-203 U4 / D5 — review_plan is chain-triggered (no schedule) and its
@@ -83,9 +114,10 @@ describe('registerHandlers', () => {
   // buildCoachDailyHandler chains the coach_daily → review_plan send.
   it('registers review_plan (no schedule) before coach_daily', async () => {
     const createQueue = vi.fn((_name: string, ..._rest: unknown[]) => Promise.resolve(undefined));
+    const updateQueue = vi.fn((_name: string, ..._rest: unknown[]) => Promise.resolve(undefined));
     const work = vi.fn((_name: string, ..._rest: unknown[]) => Promise.resolve(undefined));
     const schedule = vi.fn((_name: string, ..._rest: unknown[]) => Promise.resolve(undefined));
-    const boss = { createQueue, work, schedule } as unknown as PgBoss;
+    const boss = { createQueue, updateQueue, work, schedule } as unknown as PgBoss;
 
     await registerHandlers(boss, {} as Db);
 
