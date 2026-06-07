@@ -20,6 +20,10 @@ export const allTestInclude = [
 export const fastTestInclude = [
   'middleware.test.ts',
   'scripts/**/*.test.ts',
+  // YUK-263 — pure (no-DB) unit for the globalThis pool-cache HMR guard in
+  // src/db/client.ts. `postgres` is vi.mock'd and the only @/db/client import is
+  // a dynamic `await import()`, so no live Postgres is touched → unit partition.
+  'src/db/client.test.ts',
   'src/__tests__/**/*.test.ts',
   'src/ai/**/*.test.ts',
   'src/core/**/*.test.ts',
