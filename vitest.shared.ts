@@ -65,6 +65,11 @@ export const fastTestInclude = [
   'src/server/http/**/*.test.ts',
   'src/server/ingestion/crop.test.ts',
   'src/server/ingestion/figure_attach.test.ts',
+  // YUK-250 — pure PDFium page renderer unit. Imports only pdf-render.ts +
+  // sharp + @hyzyla/pdfium (WASM, no DB/R2/AI). Fixtures are static PDF bytes.
+  'src/server/ingestion/pdf-render.test.ts',
+  // YUK-250 — encrypted-PDF error mapping; fully mocks @hyzyla/pdfium + sharp.
+  'src/server/ingestion/pdf-render-encryption.test.ts',
   // YUK-214 (Strategy D · S1) — pure (no-DB) ingest→practice paper builder.
   // buildIngestionPaperToolState imports only @/core/schema/business (Zod);
   // @/db/* is type-only / pure table objects at this surface. The DB writer
