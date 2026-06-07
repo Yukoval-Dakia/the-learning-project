@@ -8,6 +8,15 @@ export const resolveConfig = {
   alias: { '@': path.resolve(__dirname, 'src') },
 };
 
+// YUK-279 — single source of truth for the JSX transform both vitest configs
+// share. tsconfig has `jsx: "preserve"` (Next transforms JSX at build), so vitest
+// must transform JSX itself via esbuild's automatic runtime; otherwise component
+// tests crash with `React is not defined`. Both the unit and db configs import
+// this so the transform can never drift between the two partitions.
+export const sharedEsbuild = {
+  jsx: 'automatic',
+} as const;
+
 // YUK-279 — every `.test.ts` AND `.test.tsx` glob must appear here. allTestInclude
 // is the *universe* of test files: the db config includes it directly, and the
 // audit walker treats anything matching it as "in some partition". A `.test.tsx`
