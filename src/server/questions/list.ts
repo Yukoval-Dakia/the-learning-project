@@ -19,7 +19,7 @@
 // OOM guard, NOT a business limit — it only bites when the tier/family in-memory
 // path must fetch the full WHERE-hit set (it cannot SQL-paginate, see A1b).
 
-import { type SQL, and, asc, eq, sql } from 'drizzle-orm';
+import { type SQL, and, asc, desc, eq, sql } from 'drizzle-orm';
 
 import {
   type SourceTier,
@@ -262,6 +262,22 @@ export async function listQuestions(
   }
 
   const filters = buildSqlFilters(params);
+
+  // Plain default path (no tier filter, no tier sort, no family aggregation):
+  // created_at is a real column, so this path MUST SQL-paginate (ORDER BY
+  // created_at DESC + LIMIT/OFFSET + a separate COUNT) instead of reusing the
+  // OOM-capped in-memory candidate fetch. The cap only exists for paths that
+  // CANNOT SQL-paginate (tier filter/sort, family aggregation — they need the
+  // full WHERE-hit set in memory, see A1b). Routing the default list through it
+  // would, once the WHERE-hit set exceeds CANDIDATE_CAP, return "the newest page
+  // of the OLDEST 2000 rows" and misreport total as 2000 (plan §risk-table:
+  // "default sort_by falls back to the SQL-pageable created_at path").
+  const tierFiltered = params.sourceTier !== undefined && params.sourceTier.length > 0;
+  const tierSorted = params.sortBy === 'source_tier';
+  if (!params.groupByFamily && !tierFiltered && !tierSorted) {
+    return flatListSqlPaginated(db, filters, params, computedAtSec);
+  }
+
   const { rows, truncated } = await fetchCandidates(db, filters);
   const derived = rows.map(deriveCandidate);
 
@@ -269,6 +285,42 @@ export async function listQuestions(
     return aggregateFamilies(derived, params, truncated, computedAtSec);
   }
   return flatList(derived, params, truncated, computedAtSec);
+}
+
+// ── A1a: plain default list — SQL-paginated created_at DESC (no in-memory cap) ──
+// The tier is still a DERIVED projection (deriveSourceTier per returned row), but
+// because no tier filter/sort is requested we never need the full WHERE-hit set:
+// SQL does ORDER BY created_at DESC + LIMIT/OFFSET and a separate COUNT for total.
+// `truncated` is always false here — there is no OOM guard on this path.
+async function flatListSqlPaginated(
+  db: Db,
+  filters: SQL[],
+  params: ListQuestionsParams,
+  computedAtSec: number,
+): Promise<ListQuestionsResult> {
+  const where = filters.length > 0 ? and(...filters) : undefined;
+
+  const rows = (await db
+    .select(CANDIDATE_COLUMNS)
+    .from(question)
+    // Newest-first default; id is the stable tiebreaker on equal created_at.
+    .orderBy(desc(question.created_at), desc(question.id))
+    .where(where)
+    .limit(params.limit)
+    .offset(params.offset)) as CandidateRow[];
+
+  const [{ count }] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(question)
+    .where(where);
+
+  return {
+    items: rows.map((row) => toListItem(deriveCandidate(row))),
+    families: null,
+    total: count,
+    truncated: false,
+    computed_at_sec: computedAtSec,
+  };
 }
 
 // ── A1a/A1b: flat list (with optional tier filter + tier/created_at sort) ──────
