@@ -4,6 +4,7 @@ import { type DrizzleTransactionLike, type Job, fromDrizzle } from 'pg-boss';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { BRIEF_REFRESH_BUDGET } from '@/server/ai/tools/budgets';
+import { isQueueCreateRace } from '@/server/boss/client';
 import {
   listActiveSubjectsSinceRefresh,
   loadSubjectBriefEvents,
@@ -40,6 +41,30 @@ type BossLike = {
   schedule(name: string, cron: string, data: object, options: object): Promise<unknown>;
   send(name: string, data: object, options?: object): Promise<string | null>;
 };
+
+/**
+ * Create a memory queue, tolerating the YUK-259 concurrent-create race.
+ *
+ * The memory_* queues are registered here (not via handlers.ts's
+ * createOrUpdateQueue), so they need the same 23505 guard: when the app's
+ * in-process boss and the worker register at once — or `next dev` HMR
+ * re-evaluates this module on every recompile — pg-boss's createQueue INSERT can
+ * race past its own ON CONFLICT and raise `queue_pkey` `already exists`. That
+ * means the queue already exists (the desired end state), so swallow it. Unlike
+ * handlers.ts there is no per-queue config to reconcile here (memory queue
+ * expire/retention tuning is tracked separately), so a benign race is a pure
+ * no-op. Any other error propagates.
+ */
+async function safeCreateQueue(boss: BossLike, name: string): Promise<void> {
+  try {
+    await boss.createQueue?.(name);
+  } catch (err) {
+    if (!isQueueCreateRace(err)) throw err;
+    console.warn(
+      `[memory] createQueue('${name}') hit a concurrent create race (23505 queue_pkey) — queue already exists, continuing (YUK-259)`,
+    );
+  }
+}
 
 type ProjectDrizzleTx = {
   execute(query: unknown): Promise<unknown>;
@@ -381,31 +406,31 @@ export async function registerMemoryHandlers(
   // (scripts/worker.ts) — the only boot path that actually runs the cron — so
   // the operator still gets the signal and tests stay quiet.
 
-  await boss.createQueue?.(MEMORY_EVENT_INGEST_QUEUE);
+  await safeCreateQueue(boss, MEMORY_EVENT_INGEST_QUEUE);
   await boss.work(
     MEMORY_EVENT_INGEST_QUEUE,
     { pollingIntervalSeconds: 2, batchSize: 1 },
     buildMemoryEventIngestHandler(db, boss, { memoryClient: deps.memoryClient }),
   );
 
-  await boss.createQueue?.(MEMORY_BRIEF_REGEN_QUEUE);
+  await safeCreateQueue(boss, MEMORY_BRIEF_REGEN_QUEUE);
   await boss.work(
     MEMORY_BRIEF_REGEN_QUEUE,
     { pollingIntervalSeconds: 2, batchSize: 1 },
     buildMemoryBriefRegenHandler(db, { memoryClient: deps.memoryClient, generateBrief }),
   );
 
-  await boss.createQueue?.(MEMORY_BRIEF_SWEEP_QUEUE);
+  await safeCreateQueue(boss, MEMORY_BRIEF_SWEEP_QUEUE);
   await boss.work(MEMORY_BRIEF_SWEEP_QUEUE, buildMemoryBriefSweepHandler(db, boss));
   await boss.schedule(MEMORY_BRIEF_SWEEP_QUEUE, '0 3 * * *', {}, { tz: 'Asia/Shanghai' });
 
   // ADR-0021 outbox: per-minute poller drains pending ingest rows; hourly
   // recovery sweep catches anything missed (worker outage, batch overflow).
-  await boss.createQueue?.(MEMORY_INGEST_OUTBOX_POLL_QUEUE);
+  await safeCreateQueue(boss, MEMORY_INGEST_OUTBOX_POLL_QUEUE);
   await boss.work(MEMORY_INGEST_OUTBOX_POLL_QUEUE, buildMemoryIngestOutboxPollHandler(db, boss));
   await boss.schedule(MEMORY_INGEST_OUTBOX_POLL_QUEUE, '* * * * *', {}, { tz: 'UTC' });
 
-  await boss.createQueue?.(MEMORY_INGEST_OUTBOX_RECOVER_QUEUE);
+  await safeCreateQueue(boss, MEMORY_INGEST_OUTBOX_RECOVER_QUEUE);
   await boss.work(
     MEMORY_INGEST_OUTBOX_RECOVER_QUEUE,
     buildMemoryIngestOutboxRecoverHandler(db, boss),

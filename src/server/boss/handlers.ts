@@ -1,4 +1,5 @@
 import type { Db } from '@/db/client';
+import { isQueueCreateRace } from '@/server/boss/client';
 import { buildBriefGenerator } from '@/server/memory/brief-writer';
 import { registerMemoryHandlers } from '@/server/memory/triggers';
 import { getR2 } from '@/server/r2';
@@ -97,13 +98,33 @@ function jobQueueOpts(queueName: string, expireInSeconds: number) {
  * queues. On a fresh queue updateQueue is a harmless self-update; on a missing
  * queue it is a no-op UPDATE (0 rows) — but we always createQueue first, so the
  * row exists. Keeping the SAME opts object for both calls keeps them in lockstep.
+ *
+ * YUK-259: concurrency-safe. When the app's in-process boss (instrumentation,
+ * getStartedBoss) and the worker both register/start against the same DB during
+ * a cold start, pg-boss's queue INSERT can race past its own ON CONFLICT and
+ * raise a 23505 `queue_pkey` violation (observed repeatedly in the test env —
+ * worker crashed in registration with `Key (name)=(...) already exists`). A
+ * 23505 here means the queue already exists, which is the desired end state, so
+ * we swallow it and STILL run `updateQueue` — the reconcile that lands the
+ * YUK-237 config onto the (now confirmed-existing) row. #329 semantics are
+ * preserved: an already-existing queue still gets the new config. Any other
+ * error is re-thrown.
  */
 async function createOrUpdateQueue(
   boss: PgBoss,
   name: string,
   opts: { expireInSeconds: number; retentionSeconds: number; deadLetter?: string },
 ): Promise<void> {
-  await boss.createQueue(name, opts);
+  try {
+    await boss.createQueue(name, opts);
+  } catch (err) {
+    if (!isQueueCreateRace(err)) throw err;
+    // Benign create race — the queue row exists; fall through to updateQueue so
+    // the YUK-237 config still gets reconciled onto it.
+    console.warn(
+      `[boss] createQueue('${name}') hit a concurrent create race (23505 queue_pkey) — queue already exists, reconciling config (YUK-259)`,
+    );
+  }
   await boss.updateQueue(name, opts);
 }
 

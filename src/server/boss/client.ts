@@ -13,6 +13,34 @@ import { PgBoss } from 'pg-boss';
 //   - expireInSeconds（per-job timeout）
 //   - newJobCheckIntervalSeconds（per-worker poll interval；测试用低值，生产用默认 2s）
 
+// Postgres unique-violation SQLSTATE. pg-boss talks to Postgres via
+// node-postgres (`pg.Pool`, pg-boss/dist/db.js), so a duplicate-key surfaces as
+// a raw `pg` error with `.code === '23505'` directly on the thrown object.
+const PG_UNIQUE_VIOLATION = '23505';
+
+/**
+ * True when `err` is a benign pg-boss queue create race — a Postgres 23505
+ * unique_violation on the queue primary key (`queue_pkey`, the only unique
+ * constraint on `pgboss.queue`).
+ *
+ * YUK-259: when the app's in-process boss (instrumentation / getStartedBoss) and
+ * the worker register/start against the same DB at once, pg-boss's `create_queue`
+ * INSERT can race past its own `ON CONFLICT DO NOTHING` and raise
+ * `Key (name)=(<queue>) already exists`. This includes pg-boss's INTERNAL
+ * `__pgboss__send-it` queue created by the timekeeper at start, whose failure
+ * surfaces on the boss `error` event (not through our createOrUpdateQueue). A
+ * 23505 here means the queue already exists — the desired end state — so callers
+ * treat it as benign. `constraint` may be absent on wrapped/older errors; any
+ * 23505 reaching a queue-create path means the row already exists, so be lenient.
+ */
+export function isQueueCreateRace(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const e = err as { code?: unknown; constraint?: unknown; cause?: { code?: unknown } };
+  const code = e.code ?? e.cause?.code;
+  if (code !== PG_UNIQUE_VIOLATION) return false;
+  return e.constraint === undefined || e.constraint === 'queue_pkey';
+}
+
 let bossInstance: PgBoss | null = null;
 let startPromise: Promise<PgBoss> | null = null;
 
