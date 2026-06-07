@@ -3,8 +3,16 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
+import postgres from 'postgres';
 
 let container: StartedPostgreSqlContainer | undefined;
+
+// YUK-252 — db-test parallelisation budget.
+// vitest.db.config.ts runs `pool: 'forks'` with maxWorkers: 4. Each worker
+// connects to its own cloned database (test_fork_1..4) created below via
+// `CREATE DATABASE … TEMPLATE`. Keep this in lock-step with that config: if
+// maxWorkers changes, change DB_FORK_COUNT too.
+const DB_FORK_COUNT = 4;
 
 // testcontainers reads DOCKER_HOST or falls back to /var/run/docker.sock. On
 // macOS with OrbStack the socket lives at ~/.orbstack/run/docker.sock and
@@ -24,12 +32,13 @@ function ensureDockerHost() {
 
 export async function setup() {
   ensureDockerHost();
-  // Bump max_connections: default Postgres allows 100; with `pool: 'forks'` +
-  // `singleFork: true`, all 100+ test files share one fork but accumulate
-  // pg-boss + drizzle connections across boss instance recycles. With 100
-  // we hit "sorry, too many clients already" once 8-10 files have cycled a
-  // boss instance. 500 leaves comfortable headroom without measurable cost
-  // on a single-developer testcontainer.
+  // Bump max_connections: default Postgres allows 100. YUK-252 runs the db
+  // partition across 4 forks (vitest maxWorkers: 4), each connecting to its own
+  // cloned database; per fork ~16-20 connections accumulate as pg-boss + drizzle
+  // pools recycle (boss caps at 2, drizzle test pool at 4, plus boss schema
+  // churn). 4 × ~20 ≈ 80 concurrent — still well under 500. 500 leaves
+  // comfortable headroom without measurable cost on a single-developer
+  // testcontainer. (Previously this guarded a single accumulating fork.)
   container = await new PostgreSqlContainer('pgvector/pgvector:pg16')
     .withCommand(['postgres', '-c', 'max_connections=500'])
     .start();
@@ -53,6 +62,44 @@ export async function setup() {
   });
   if (result.status !== 0) {
     throw new Error(`drizzle-kit migrate failed (exit ${result.status}) against test container`);
+  }
+
+  // YUK-252 — clone the freshly-migrated container database into N per-fork
+  // databases so the db partition can run with `pool: 'forks'` (maxWorkers: 4)
+  // without test files racing on shared rows. Each fork connects to its own
+  // `test_fork_<VITEST_POOL_ID>` (wired in tests/setup.db-fork.ts).
+  //
+  // Why CREATE DATABASE … TEMPLATE: it physically copies the template at the
+  // filesystem level (milliseconds), so we migrate exactly once (above) and
+  // every fork inherits the identical schema + view + GIN index for free.
+  //
+  // Two hard constraints this code respects:
+  //  1. We must connect to a *different* database than the template — Postgres
+  //     refuses CREATE DATABASE while the template has any active session. The
+  //     container's default db is `test`, so we connect to the always-present
+  //     maintenance db `postgres` to issue the clones.
+  //  2. The clones are created *sequentially*. Concurrent CREATE … TEMPLATE
+  //     against the same template contends on a template lock and can fail;
+  //     serial creation is cheap (filesystem copy) and avoids that entirely.
+  //
+  // The migrate step above ran in a `spawnSync` child that has already exited,
+  // so the template (`test`) has no lingering connections, and globalSetup runs
+  // in the main process *before* any worker fork — nothing else is connected.
+  const adminUrl = new URL(uri);
+  const templateDb = adminUrl.pathname.replace(/^\//, '') || 'test';
+  adminUrl.pathname = '/postgres';
+  const admin = postgres(adminUrl.toString(), { max: 1 });
+  try {
+    for (let i = 1; i <= DB_FORK_COUNT; i++) {
+      const forkDb = `test_fork_${i}`;
+      // Drop-then-create makes the setup idempotent across re-runs that reuse a
+      // long-lived container (e.g. local watch sessions); FORCE evicts any stale
+      // sessions left over from a previous run.
+      await admin.unsafe(`DROP DATABASE IF EXISTS "${forkDb}" WITH (FORCE)`);
+      await admin.unsafe(`CREATE DATABASE "${forkDb}" TEMPLATE "${templateDb}"`);
+    }
+  } finally {
+    await admin.end({ timeout: 5 });
   }
 }
 

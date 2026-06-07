@@ -21,14 +21,27 @@ export default defineConfig({
     environment: 'node',
     globals: false,
     globalSetup: isListCommand ? [] : ['./tests/global-setup.ts'],
+    // YUK-252 — per-fork db wiring. Runs inside each worker BEFORE its test
+    // files import, rewriting DATABASE_URL/TEST_DATABASE_URL to this fork's
+    // cloned database (test_fork_<VITEST_POOL_ID>). Skipped for `list` since no
+    // container/forks exist then. See tests/setup.db-fork.ts (no `@/` imports).
+    setupFiles: isListCommand ? [] : ['./tests/setup.db-fork.ts'],
     testTimeout: 30_000,
     hookTimeout: 60_000,
     pool: 'forks',
-    // vitest 4 flattened poolOptions.forks.singleFork → top-level maxWorkers.
-    // maxWorkers: 1 keeps a single fork so the shared Postgres testcontainer
-    // (started once in tests/global-setup.ts) is reused across files instead of
-    // each file spinning its own DB. (vitest 4 migration: pool config.)
-    maxWorkers: 1,
+    // YUK-252 — template-database parallelisation. The single Postgres
+    // testcontainer (started once in tests/global-setup.ts) is migrated once,
+    // then cloned into test_fork_1..4 via `CREATE DATABASE … TEMPLATE`. Each of
+    // the 4 forks connects to its own clone (wired in tests/setup.db-fork.ts),
+    // so files run ~4-way parallel without racing on shared rows. Within a
+    // single fork, files still share one db and run sequentially, so the
+    // existing hermetic contract holds: every db test resets state in
+    // beforeEach (resetDb) and must not assume cross-file state.
+    //
+    // To change parallelism, keep three numbers in lock-step: maxWorkers here,
+    // DB_FORK_COUNT in tests/global-setup.ts, and MAX_FORKS in
+    // tests/setup.db-fork.ts.
+    maxWorkers: 4,
   },
   resolve: resolveConfig,
 });
