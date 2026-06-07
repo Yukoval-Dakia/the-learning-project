@@ -204,7 +204,11 @@ export function VisionTab({ mode }: { mode: Mode }) {
   const startMutation = useMutation({
     mutationFn: async (selectedFiles: File[]) => {
       let ids: string[];
-      const pdf = selectedFiles.length === 1 && isPdf(selectedFiles[0]);
+      // PDF expansion is a vision_paper-only entrypoint: only that mode's accept
+      // attr admits application/pdf. Bind the branch to mode explicitly so a
+      // future reuse of this mutation under vision_single can't silently route a
+      // PDF through expandPdf.
+      const pdf = mode === 'vision_paper' && selectedFiles.length === 1 && isPdf(selectedFiles[0]);
       if (pdf) {
         // PDF path: one file → server renders to N page images, returns their
         // asset ids. Reuses the same /api/ingestion + extract flow afterwards.
@@ -232,6 +236,10 @@ export function VisionTab({ mode }: { mode: Mode }) {
       setPhase('extracting');
     },
     onError: (err) => {
+      // Clear any stale page count: if expandPdf succeeded but a later step
+      // (session create / extract) failed, pdfPageCount would otherwise linger
+      // and flash an outdated "N 页" in the error / retry state.
+      setPdfPageCount(null);
       setErrorMessage(formatError(err));
       setPhase('error');
     },
@@ -1014,7 +1022,11 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
 }
 
 function isPdf(file: File): boolean {
-  return file.type === 'application/pdf';
+  // file.type can be '' for drag-and-drop / some OS file pickers even for a
+  // genuine PDF, so fall back to the extension. The server still validates the
+  // %PDF magic bytes (pdf-render.ts hasPdfMagic), so a misnamed non-PDF is caught
+  // there with a loud 400 — this only widens which files reach that check.
+  return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
 }
 
 function phaseLabel(phase: Phase, sseStatus: string): string {

@@ -39,7 +39,7 @@ Do **not** silently bundle LibreOffice into the app container. Surface this to t
 
 **Client flow after B:**
 
-```
+```text
 VisionTab (vision_paper mode)
   ├─ user picks 1 PDF
   ├─ POST /api/ingestion/pdf  (multipart, field 'file')  → { asset_ids, page_count }

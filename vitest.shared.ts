@@ -70,6 +70,9 @@ export const fastTestInclude = [
   'src/server/ingestion/pdf-render.test.ts',
   // YUK-250 — encrypted-PDF error mapping; fully mocks @hyzyla/pdfium + sharp.
   'src/server/ingestion/pdf-render-encryption.test.ts',
+  // YUK-250 bot-review F1 — pure sha256Hex unit (crypto.subtle only, no DB/R2).
+  // Guards content-addressing against byteOffset/byteLength view bugs.
+  'src/server/ingestion/persist-image-asset.unit.test.ts',
   // YUK-214 (Strategy D · S1) — pure (no-DB) ingest→practice paper builder.
   // buildIngestionPaperToolState imports only @/core/schema/business (Zod);
   // @/db/* is type-only / pure table objects at this surface. The DB writer

@@ -32,11 +32,26 @@ export async function POST(req: Request): Promise<Response> {
     if (!(file instanceof File)) {
       throw new ApiError('validation_error', 'file is required', 400);
     }
-    if (file.type !== 'application/pdf') {
+    // Accept the canonical application/pdf, plus an empty type when the filename
+    // ends in .pdf — browsers send '' for drag-and-drop / some OS pickers even
+    // for genuine PDFs (mirrors the client isPdf fallback). This is not the
+    // security gate: renderPdfToPngPages validates the %PDF magic bytes and 400s
+    // a misnamed non-PDF, so a wrong-extension file is still rejected loudly.
+    const isPdfMime =
+      file.type === 'application/pdf' ||
+      (file.type === '' && file.name.toLowerCase().endsWith('.pdf'));
+    if (!isPdfMime) {
       throw new ApiError('validation_error', `unsupported mime_type: ${file.type}`, 400);
     }
-    if (file.size <= 0 || file.size > MAX_PDF_UPLOAD_BYTES) {
-      throw new ApiError('validation_error', `PDF 超过 ${MAX_PDF_UPLOAD_BYTES} 上限`, 400);
+    if (file.size <= 0) {
+      throw new ApiError('validation_error', 'PDF 文件为空', 400);
+    }
+    if (file.size > MAX_PDF_UPLOAD_BYTES) {
+      throw new ApiError(
+        'validation_error',
+        `PDF 超过 ${MAX_PDF_UPLOAD_BYTES / 1_000_000} MB 上限`,
+        400,
+      );
     }
 
     const pdfBytes = new Uint8Array(await file.arrayBuffer());
