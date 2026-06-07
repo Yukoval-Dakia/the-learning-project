@@ -206,6 +206,108 @@ describe('runQuizSkill (U6 quiz skill)', () => {
     expect(rows).toHaveLength(0);
   });
 
+  // YUK-275 — the free-text 求卷 pool-filter dimensions are forwarded verbatim into
+  // runSourcingSequence (default null when omitted, so the chip path is unchanged).
+  it('forwards difficultyMin / unit to runSourcingSequence', async () => {
+    const knowledgeId = await seedKnowledge('kn_quiz_dims');
+    const q1 = await seedQuestion(knowledgeId);
+
+    let capturedParams: Record<string, unknown> | undefined;
+    const runSourcingSequenceFn = vi.fn(async (params: unknown) => {
+      capturedParams = params as Record<string, unknown>;
+      return seqFixture({ existing: [hit(q1)] });
+    });
+
+    await runQuizSkill(
+      {
+        db,
+        sessionId: SESSION_ID,
+        knowledgeId,
+        userMessage: '选两篇高难度阅读',
+        count: 2,
+        difficultyMin: 4,
+        unit: '篇',
+      },
+      { runSourcingSequenceFn },
+    );
+
+    expect(capturedParams).toMatchObject({ difficultyMin: 4, unit: '篇', count: 2 });
+  });
+
+  it('omits difficultyMin / unit when not passed (chip path unchanged)', async () => {
+    const knowledgeId = await seedKnowledge('kn_quiz_nodim');
+    const q1 = await seedQuestion(knowledgeId);
+
+    let capturedParams: Record<string, unknown> | undefined;
+    const runSourcingSequenceFn = vi.fn(async (params: unknown) => {
+      capturedParams = params as Record<string, unknown>;
+      return seqFixture({ existing: [hit(q1)] });
+    });
+
+    await runQuizSkill(
+      { db, sessionId: SESSION_ID, knowledgeId, userMessage: '给我出套题' },
+      { runSourcingSequenceFn },
+    );
+
+    // Neither key is present (undefined → not forwarded), so runSourcingSequence's own
+    // `?? null` default takes over and the pool query is byte-for-byte unchanged.
+    expect(capturedParams).not.toHaveProperty('difficultyMin');
+    expect(capturedParams).not.toHaveProperty('unit');
+  });
+
+  // YUK-275 — end-to-end: with the REAL runSourcingSequence, difficultyMin filters the
+  // built paper down to only the on-target-difficulty question.
+  it('difficultyMin end-to-end: the built paper only contains questions at or above the floor', async () => {
+    const knowledgeId = await seedKnowledge('kn_quiz_e2e');
+    const now = new Date();
+    // One d3 question (below floor) + one d5 question (at/above floor).
+    const lowId = createId();
+    const highId = createId();
+    await db.insert(question).values({
+      id: lowId,
+      kind: 'reading',
+      prompt_md: 'easy',
+      reference_md: 'r',
+      knowledge_ids: [knowledgeId],
+      difficulty: 3,
+      source: 'manual',
+      created_at: now,
+      updated_at: now,
+    });
+    await db.insert(question).values({
+      id: highId,
+      kind: 'reading',
+      prompt_md: 'hard',
+      reference_md: 'r',
+      knowledge_ids: [knowledgeId],
+      difficulty: 5,
+      source: 'manual',
+      created_at: now,
+      updated_at: now,
+    });
+
+    // No runSourcingSequenceFn injection → exercises the real pool query. tavily is
+    // unconfigured in tests (degrades to closed_book), which only affects the BACKGROUND
+    // enqueue, not the step-1 pool we assert on.
+    const result = await runQuizSkill({
+      db,
+      sessionId: SESSION_ID,
+      knowledgeId,
+      userMessage: '给我来一道高难度阅读',
+      count: 1,
+      difficultyMin: 4,
+    });
+
+    expect(result.status).toBe('ok');
+    const [row] = await db
+      .select()
+      .from(artifact)
+      .where(eq(artifact.id, result.artifact_id as string));
+    const parsed = ToolState.parse(row.tool_state);
+    // Only the d5 question cleared the floor; the d3 question is excluded.
+    expect(parsed.question_ids).toEqual([highId]);
+  });
+
   it('every assignment has primary_knowledge_id derived from the question knowledge_ids', async () => {
     const k1 = await seedKnowledge('kn_primary', '主知识点');
     const k2 = await seedKnowledge('kn_secondary', '次知识点');

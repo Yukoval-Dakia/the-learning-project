@@ -64,6 +64,15 @@ export interface RunQuizSkillParams {
   kind?: string | null;
   /** Subject domain → resolves the profile route preference. Optional. */
   domain?: string | null;
+  /**
+   * YUK-275 — free-text 求卷 pool-filter dimensions, forwarded verbatim to
+   * runSourcingSequence (step-1 only). Default null = byte-for-byte unchanged for the
+   * chip / skill_context callers that don't pass them.
+   *   difficultyMin: only count questions whose difficulty >= n.
+   *   unit='篇': only count composite parent questions (篇 = a multi-part 阅读 paper).
+   */
+  difficultyMin?: number | null;
+  unit?: '题' | '篇' | null;
 }
 
 export interface RunQuizSkillDeps {
@@ -209,6 +218,10 @@ export async function runQuizSkill(
     count,
     kind,
     ...(params.domain !== undefined ? { domain: params.domain } : {}),
+    // YUK-275 — forward the free-text 求卷 pool-filter dimensions (default null when the
+    // caller omits them → unchanged for chip / skill_context callers).
+    ...(params.difficultyMin !== undefined ? { difficultyMin: params.difficultyMin } : {}),
+    ...(params.unit !== undefined ? { unit: params.unit } : {}),
   });
 
   // Degrade: the node is missing/archived → nothing was enqueued, nothing to build.
