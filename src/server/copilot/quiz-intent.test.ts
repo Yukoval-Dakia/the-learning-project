@@ -230,4 +230,74 @@ describe('resolveQuizIntent (四态)', () => {
 
     expect(res).toEqual({ status: 'parse_failed' });
   });
+
+  // ── CODEX-1: kind 归一到 canonical (drop 不认的自由文本，否则零池) ─────────────────
+  // resolved.kind feeds kindsMatch() (pool filter) + the background production pin.
+  // kindsMatch normalizes via normalizeToCanonicalKind, which returns null for any value
+  // outside the canonical QuestionKind enum / SubjectQuestionKind skill词表 — so an
+  // un-normalized Chinese value like '古诗阅读' would make EVERY pooled row mismatch and
+  // mis-pin the enqueue. resolveQuizIntent must normalize at resolve time, dropping
+  // unrecognized values to null (= no kind filter / un-pinned production), and folding
+  // a profile/skill key to its canonical persisted kind.
+
+  it('kind: an unrecognized Chinese free-text kind is dropped to null (no zeroed pool)', async () => {
+    const runTaskFn = runTaskReturning({
+      is_quiz_request: true,
+      knowledge_id: 'k_poetry',
+      count: 2,
+      difficulty_min: null,
+      unit: null,
+      kind: '古诗阅读', // not in canonical QuestionKind nor SubjectQuestionKind
+    });
+
+    const res = await resolveQuizIntent(
+      { db, userMessage: '选两道古诗阅读给我', runTaskFn },
+      { loadTreeSnapshotFn },
+    );
+
+    expect(res).toEqual({
+      status: 'resolved',
+      knowledgeId: 'k_poetry',
+      count: 2,
+      difficultyMin: null,
+      unit: null,
+      kind: null,
+    });
+  });
+
+  it('kind: a profile/skill key (reading_comprehension) folds to its canonical kind (reading)', async () => {
+    const runTaskFn = runTaskReturning({
+      is_quiz_request: true,
+      knowledge_id: 'k_poetry',
+      count: 3,
+      difficulty_min: null,
+      unit: null,
+      kind: 'reading_comprehension',
+    });
+
+    const res = await resolveQuizIntent(
+      { db, userMessage: '来三道阅读题', runTaskFn },
+      { loadTreeSnapshotFn },
+    );
+
+    expect(res).toMatchObject({ status: 'resolved', kind: 'reading' });
+  });
+
+  it('kind: a canonical kind (choice) passes through unchanged', async () => {
+    const runTaskFn = runTaskReturning({
+      is_quiz_request: true,
+      knowledge_id: 'k_poetry',
+      count: 2,
+      difficulty_min: null,
+      unit: null,
+      kind: 'choice',
+    });
+
+    const res = await resolveQuizIntent(
+      { db, userMessage: '来两道选择题', runTaskFn },
+      { loadTreeSnapshotFn },
+    );
+
+    expect(res).toMatchObject({ status: 'resolved', kind: 'choice' });
+  });
 });
