@@ -42,6 +42,7 @@ import { useQuery } from '@tanstack/react-query';
 import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { type ReplayTurn, replayToMessages } from './replay';
+import { isOneShotSkill } from './skill-lifecycle';
 
 interface DreamingPreviewRow {
   proposal_id: string;
@@ -206,6 +207,14 @@ export function CopilotDock() {
   const pathname = usePathname();
   const pathnameRef = useRef(pathname);
   pathnameRef.current = pathname;
+  // YUK-272 (C3) — the in-scope knowledge node id, when one exists. The quiz chip
+  // needs a real knowledge id to send a meaningful quiz request (ref.id is a
+  // knowledge node id per the quiz-skill contract). Sourced from the active skill
+  // context when it points at a knowledge entity (set by the open-with-context
+  // signal / replay restore). When null, the quiz chip is disabled rather than
+  // sending an invalid ref. State (not a ref) so the chip's disabled/tooltip
+  // re-renders when the in-scope entity changes.
+  const [focusedKnowledgeId, setFocusedKnowledgeId] = useState<string | null>(null);
   // AF S4 / YUK-203 U6 — the active skill context (teaching/solve). When set, the
   // next turn(s) route to the skill (single-session model, §4.2). Held in a ref
   // so the composer's `send` reads the live value without re-creating `send`.
@@ -221,6 +230,9 @@ export function CopilotDock() {
   // so that re-opening the Dock after closing does not resume a stale skill.
   const closeDrawer = useCallback(() => {
     activeSkillRef.current = null;
+    // YUK-272 (C3) — also drop the quiz-chip's in-scope knowledge entity so a
+    // re-open does not offer a quiz for a stale knowledge node.
+    setFocusedKnowledgeId(null);
     closeDrawerDwell();
   }, [closeDrawerDwell]);
   // Holds the last user_message so the error-state "重试" button can resend it.
@@ -271,6 +283,17 @@ export function CopilotDock() {
             activeSkillRef.current = m.skill_context;
           }
           break; // found the latest skill turn — done either way
+        }
+        // YUK-272 (C3) — independently surface the latest in-scope knowledge entity
+        // (from any replayed skill_context with a knowledge ref) so the quiz chip
+        // has a real knowledge id after a page refresh. Quiz turns carry no
+        // skill_turn, so the restore loop above skips them — this scan does not.
+        for (let i = replayed.length - 1; i >= 0; i--) {
+          const sc = replayed[i].skill_context;
+          if (sc?.ref.kind === 'knowledge') {
+            setFocusedKnowledgeId(sc.ref.id);
+            break;
+          }
         }
       } catch {
         // Replay is best-effort — stay on the in-memory list.
@@ -383,6 +406,16 @@ export function CopilotDock() {
       if (res2.skill_turn?.kind === 'end') {
         activeSkillRef.current = null;
       }
+      // YUK-272 (C3) / YUK-213 F2 — one-shot-stuck minimal fix. quiz + solve return
+      // NO terminal skill_turn, so the `end`-turn clear above never fires for them
+      // and the stale skill_context would re-send on every follow-up. Clear it after
+      // a SUCCESSFUL one-shot send (a failed send keeps the context so 重试 reuses
+      // it). The server-side skill_turn redesign is the real fix (YUK-213); this is
+      // the Dock-only guard. If YUK-213 later makes solve multi-turn, the server will
+      // emit a non-`end` skill_turn and this rule must be revisited.
+      if (skillContext && isOneShotSkill(skillContext.skill)) {
+        activeSkillRef.current = null;
+      }
       const finalized: ChatMessage = {
         id: aiId,
         role: 'ai',
@@ -424,6 +457,21 @@ export function CopilotDock() {
     const last = lastUserMessageRef.current;
     if (last) void send(last);
   }, [send]);
+
+  // YUK-272 (C3) — quiz quick-chip. Seeds a quiz skill turn for the in-scope
+  // knowledge node, then sends through the normal `send` path. The quiz ref id MUST
+  // be a real knowledge node id (quiz-skill contract), so the chip is disabled when
+  // no knowledge is in scope (focusedKnowledgeId === null) rather than fabricating
+  // an invalid ref. After the (one-shot) quiz send, `send` clears activeSkillRef
+  // via isOneShotSkill so follow-up free-form messages don't keep re-sending it.
+  const sendQuiz = useCallback(() => {
+    if (!focusedKnowledgeId) return;
+    activeSkillRef.current = {
+      skill: 'quiz',
+      ref: { kind: 'knowledge', id: focusedKnowledgeId },
+    };
+    void send('出题');
+  }, [focusedKnowledgeId, send]);
 
   // AF S4 / YUK-203 U6 — corrective accept-chip writer. A corrective chip click
   // on an ask_check turn posts an AcceptSuggestionChip to the accept-chip
@@ -479,6 +527,11 @@ export function CopilotDock() {
     if (openRequest.seq === lastHandledSeqRef.current) return;
     lastHandledSeqRef.current = openRequest.seq;
     activeSkillRef.current = openRequest.skill_context;
+    // YUK-272 (C3) — if the open-with-context signal carried a knowledge entity,
+    // expose it as the quiz-chip's in-scope knowledge id.
+    if (openRequest.skill_context?.ref.kind === 'knowledge') {
+      setFocusedKnowledgeId(openRequest.skill_context.ref.id);
+    }
     openDrawer();
     const prefill = openRequest.prefill;
     clearRequest();
@@ -544,6 +597,19 @@ export function CopilotDock() {
             {chip}
           </button>
         ))}
+        {/* YUK-272 (C3) — quiz quick-chip. Disabled (with a tooltip) when no
+            knowledge node is in scope, since the quiz ref MUST be a real knowledge
+            id. Reuses the .chip class — no new visual system. */}
+        <button
+          type="button"
+          className="chip"
+          data-testid="copilot-quiz-chip"
+          disabled={sending || !focusedKnowledgeId}
+          title={focusedKnowledgeId ? '为当前知识点出一套练习' : '先选一个知识点'}
+          onClick={sendQuiz}
+        >
+          出题
+        </button>
       </div>
       <div className="composer">
         <textarea

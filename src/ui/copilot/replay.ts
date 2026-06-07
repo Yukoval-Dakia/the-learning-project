@@ -36,7 +36,13 @@ export interface ReplaySkillTurn {
 // request. CopilotDock restores activeSkillRef from this field on replay so
 // composer answers after a page refresh still route to the teaching/solve skill.
 export interface ReplaySkillContext {
-  skill: 'teaching' | 'solve';
+  // YUK-272 (C3) — widened to include 'quiz' so a persisted quiz reply
+  // (chat.ts writes skill_context:{skill:'quiz'}) round-trips through replay
+  // without an `as` cast. Type-only; replayToMessages forwards the field
+  // untouched. Because C3 clears activeSkillRef immediately for one-shot quiz, the
+  // replay-restore effect never restores quiz context (a quiz turn carries no
+  // skill_turn, so CopilotDock's restore guard skips it).
+  skill: 'teaching' | 'solve' | 'quiz';
   ref: { kind: string; id: string };
 }
 

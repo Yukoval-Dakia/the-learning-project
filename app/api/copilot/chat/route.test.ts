@@ -1,40 +1,35 @@
-// YUK-266 (C1) — wire-level SSE framing smoke for POST /api/copilot/chat.
+// YUK-266 (C1) — wire-level SSE framing + reply-row landing for POST
+// /api/copilot/chat.
 //
-// db partition: the route imports `@/db/client` (a real DB surface), so this file
-// is correctly classified into the db partition (NOT fastTestInclude). We mock the
-// chat service (`runCopilotChatStreaming`) so the SDK never runs — the unit
-// chat.test.ts already proves the service contract; this test proves ONLY the
-// byte-level SSE framing the Dock parses (a `delta` line then a `reply` line whose
-// JSON parses to a CopilotChatResult), plus the Zod-parse error fallback.
+// db partition: imports tests/helpers/db (real Postgres testcontainer). We mock
+// ONLY the AI runner seam (streamTaskCollecting) so the SDK subprocess never
+// spawns; the REAL runCopilotChatStreaming runs against the fork DB, so this test
+// proves both the byte-level SSE framing the Dock parses (a `delta` line then a
+// `reply` line whose JSON parses to a CopilotChatResult) AND that exactly one
+// experimental:copilot_reply event row lands (the S3a persistence contract). The
+// unit chat.test.ts covers the service routing; this is the wire-level smoke.
 
+import { event } from '@/db/schema';
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 
-const chatMocks = vi.hoisted(() => ({
-  // Default: stream one delta, resolve a full result.
-  impl: async (
-    _db: unknown,
-    _req: unknown,
-    onDelta: (t: string) => void,
-  ): Promise<Record<string, unknown>> => {
-    onDelta('OK');
-    return {
-      task_run_id: 'task_real',
-      reply: 'OK',
-      surface: 'copilot',
-      triggered_by: 'chat',
-      session_id: 'ls_route',
-      reply_event_id: 'copilot_reply_route',
-    };
-  },
-}));
-
-vi.mock('@/server/copilot/chat', async () => {
-  const actual =
-    await vi.importActual<typeof import('@/server/copilot/chat')>('@/server/copilot/chat');
+// Mock the runner's streaming primitive: stream one delta, resolve a clean result.
+// No SDK subprocess; everything else in runCopilotChatStreaming hits the real DB.
+vi.mock('@/server/ai/runner', async () => {
+  const actual = await vi.importActual<typeof import('@/server/ai/runner')>('@/server/ai/runner');
   return {
     ...actual,
-    runCopilotChatStreaming: vi.fn((db: unknown, req: unknown, onDelta: (t: string) => void) =>
-      chatMocks.impl(db, req, onDelta),
+    streamTaskCollecting: vi.fn(
+      async (_kind: string, _input: unknown, _ctx: unknown, onDelta: (t: string) => void) => {
+        onDelta('OK');
+        return {
+          task_run_id: 'task_route_real',
+          text: 'OK',
+          finishReason: 'stop',
+          usage: { inputTokens: 1, outputTokens: 2 },
+        };
+      },
     ),
   };
 });
@@ -49,11 +44,9 @@ function postRequest(body: unknown): Request {
   });
 }
 
-async function readSse(
-  res: Response,
-): Promise<{ raw: string; frames: Array<{ event: string; data: string }> }> {
+async function readSse(res: Response): Promise<Array<{ event: string; data: string }>> {
   const raw = await res.text();
-  const frames = raw
+  return raw
     .split('\n\n')
     .filter((f) => f.trim().length > 0)
     .map((f) => {
@@ -65,32 +58,21 @@ async function readSse(
       }
       return { event, data: data.join('\n') };
     });
-  return { raw, frames };
 }
 
-describe('POST /api/copilot/chat — SSE framing (C1)', () => {
-  beforeEach(() => {
-    chatMocks.impl = async (_db, _req, onDelta) => {
-      onDelta('OK');
-      return {
-        task_run_id: 'task_real',
-        reply: 'OK',
-        surface: 'copilot',
-        triggered_by: 'chat',
-        session_id: 'ls_route',
-        reply_event_id: 'copilot_reply_route',
-      };
-    };
+describe('POST /api/copilot/chat — SSE framing + reply row (C1)', () => {
+  beforeEach(async () => {
+    await resetDb();
   });
 
-  it('streams a delta frame then a terminal reply frame carrying the CopilotChatResult', async () => {
+  it('streams a delta frame then a terminal reply frame and lands one copilot_reply row', async () => {
     const res = await POST(postRequest({ user_message: '你好', triggered_by: 'chat' }));
 
     expect(res.headers.get('content-type')).toContain('text/event-stream');
     expect(res.headers.get('cache-control')).toContain('no-transform');
 
-    const { frames } = await readSse(res);
-    // First a delta, then the terminal reply.
+    const frames = await readSse(res);
+    // First a delta, then a terminal reply carrying the CopilotChatResult.
     expect(frames[0]?.event).toBe('delta');
     expect(JSON.parse(frames[0]?.data ?? '{}')).toEqual({ text: 'OK' });
 
@@ -99,21 +81,23 @@ describe('POST /api/copilot/chat — SSE framing (C1)', () => {
     const parsed = JSON.parse(replyFrame?.data ?? '{}') as {
       reply?: string;
       reply_event_id?: string;
+      session_id?: string;
     };
     expect(parsed.reply).toBe('OK');
-    expect(parsed.reply_event_id).toBe('copilot_reply_route');
-  });
+    expect(parsed.reply_event_id).toMatch(/^copilot_reply_/);
 
-  it('emits a terminal reply frame with an error when the service throws (last-resort guard)', async () => {
-    chatMocks.impl = async () => {
-      throw new Error('envelope resolve failed');
-    };
-    const res = await POST(postRequest({ user_message: '你好', triggered_by: 'chat' }));
-    const { frames } = await readSse(res);
-    const replyFrame = frames.find((f) => f.event === 'reply');
-    expect(replyFrame).toBeDefined();
-    const parsed = JSON.parse(replyFrame?.data ?? '{}') as { error?: string };
-    expect(parsed.error).toContain('envelope resolve failed');
+    // Exactly one copilot_reply event row landed, carrying the streamed text +
+    // the real task_run_id from the (mocked) runner.
+    const db = testDb();
+    const replyRows = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:copilot_reply'));
+    expect(replyRows).toHaveLength(1);
+    const payload = replyRows[0]?.payload as { reply_md?: string; task_run_id?: string };
+    expect(payload.reply_md).toBe('OK');
+    expect(payload.task_run_id).toBe('task_route_real');
+    expect(replyRows[0]?.task_run_id).toBe('task_route_real');
   });
 
   it('returns a non-streamed JSON error for a malformed body (Zod parse before stream)', async () => {
