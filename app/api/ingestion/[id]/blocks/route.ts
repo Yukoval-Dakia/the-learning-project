@@ -21,13 +21,23 @@
 //     imported_question_id: string | null,
 //     imported_attempt_event_id: string | null,
 //     auto_enroll_observation: {
-//       event_id, route, confidence, threshold, reasoning, suggested_knowledge_ids, observed_at
+//       event_id, outcome, mode, route, confidence, threshold, reasoning,
+//       suggested_knowledge_ids, observed_at,
+//       // mistake_draft is a tolerant projection of the judge's MistakeEnrollOutput
+//       // (auto-enroll.ts:303 writes the raw output under payload.mistake_draft).
+//       // Source field is `wrong_answer` (mistake_enroll.ts:39), NOT `outcome`.
+//       mistake_draft: {
+//         wrong_answer: 'failure' | 'partial' | 'success' | 'unanswered' | null,
+//         difficulty: number | null,
+//         cause: { primary_category, analysis_md } | null,
+//       } | null,
 //     } | null,
 //     created_at: number, // unix sec
 //   }
 
 import { and, asc, eq, inArray } from 'drizzle-orm';
 
+import { MistakeEnrollOutcome } from '@/core/schema/mistake_enroll';
 import { db } from '@/db/client';
 import { event, question_block } from '@/db/schema';
 import { errorResponse } from '@/server/http/errors';
@@ -119,8 +129,55 @@ function toAutoEnrollObservation(row: {
     threshold: numberOrNull(payload.threshold),
     reasoning: stringOrNull(payload.reasoning),
     suggested_knowledge_ids: stringArray(payload.suggested_knowledge_ids),
+    mistake_draft: toMistakeDraft(payload.mistake_draft),
     observed_at: row.created_at.toISOString(),
   };
+}
+
+// Tolerant projection of payload.mistake_draft (the judge's raw MistakeEnrollOutput,
+// written at auto-enroll.ts:303). We deliberately do NOT safeParse the full
+// MistakeEnrollOutput schema and null-on-any-mismatch — a strict parse would reject
+// a historical/legacy event that predates a field and silently drop a draft that is
+// "valid enough" for prefill. Instead we project only the fields slice-3 prefill
+// needs and guard each defensively, so a partial event keeps its present fields
+// (absent ones fall to null / today's defaults downstream).
+// Derive the accepted set from the canonical MistakeEnrollOutcome enum so a future
+// added outcome can never be silently projected to null by a stale hand-kept list
+// (ocr-1: compile-time sync with mistake_enroll.ts). z.enum exposes `.options`.
+const WRONG_ANSWER_VALUES = MistakeEnrollOutcome.options;
+type WrongAnswer = (typeof WRONG_ANSWER_VALUES)[number];
+
+function toMistakeDraft(value: unknown): {
+  wrong_answer: WrongAnswer | null;
+  difficulty: number | null;
+  cause: { primary_category: string | null; analysis_md: string | null } | null;
+} | null {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) return null;
+  const draft = value as Record<string, unknown>;
+  return {
+    wrong_answer: wrongAnswerOrNull(draft.wrong_answer),
+    difficulty: numberOrNull(draft.difficulty),
+    cause: toMistakeDraftCause(draft.cause),
+  };
+}
+
+function toMistakeDraftCause(
+  value: unknown,
+): { primary_category: string | null; analysis_md: string | null } | null {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) return null;
+  const cause = value as Record<string, unknown>;
+  // analysis_md is the human-readable cause text the judge produced; slice-3
+  // prefill maps it to cause_notes (NOT a nonexistent cause.user_notes).
+  return {
+    primary_category: stringOrNull(cause.primary_category),
+    analysis_md: stringOrNull(cause.analysis_md),
+  };
+}
+
+function wrongAnswerOrNull(value: unknown): WrongAnswer | null {
+  return typeof value === 'string' && (WRONG_ANSWER_VALUES as readonly string[]).includes(value)
+    ? (value as WrongAnswer)
+    : null;
 }
 
 function stringOrNull(value: unknown): string | null {
