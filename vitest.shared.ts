@@ -210,6 +210,15 @@ export const fastTestInclude = [
   'src/subjects/serialize.test.ts',
   'src/ui/**/*.test.ts',
   'src/ui/**/*.test.tsx',
+  // YUK-271 — inbox block_merge card unit. It is a `.test.tsx` outside src/ui/,
+  // so neither the db config's `app/**/*.test.ts` glob (extension mismatch) nor
+  // the `src/ui/**/*.test.tsx` glob (dir mismatch) would ever collect it; without
+  // this explicit entry it falls into NEITHER partition and silently never runs.
+  // It renderToString's the exported BlockMergeProposalCard only (the default page
+  // component with its @tanstack/react-query + next/navigation deps is never
+  // instantiated), so no @/db/client / postgres / drizzle / PgBoss is touched →
+  // unit partition.
+  'app/(app)/inbox/inbox.test.tsx',
   'app/api/ai/*/route.test.ts',
   // Health route test mocks @/db/client before importing the route, so it has no
   // live-Postgres dependency and belongs in the no-Docker unit partition (YUK-134).
