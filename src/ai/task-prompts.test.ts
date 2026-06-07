@@ -287,6 +287,32 @@ describe('getTaskSystemPrompt', () => {
     }
   });
 
+  it('builds a QuizIntentParseTask prompt with the candidate-id + is_quiz_request contract', () => {
+    const wenyan = getTaskSystemPrompt('QuizIntentParseTask');
+    const math = getTaskSystemPrompt('QuizIntentParseTask', resolveSubjectProfile('math'));
+
+    // Subject voice flows in via displayName.
+    expect(wenyan).toContain('文言文');
+    expect(math).toContain('数学');
+
+    for (const prompt of [wenyan, math]) {
+      // The is_quiz_request 逃生舱 is the load-bearing instruction (CRITIC FIX P1):
+      // the model must first decide whether the message is really a quiz request.
+      expect(prompt).toContain('is_quiz_request');
+      // Candidate-list contract: choose only from knowledge_candidates, never invent.
+      expect(prompt).toContain('knowledge_candidates');
+      expect(prompt).toContain('knowledge_id');
+      // The four parsed dimensions.
+      expect(prompt).toContain('count');
+      expect(prompt).toContain('difficulty_min');
+      expect(prompt).toContain('unit');
+      // null discipline (unsure → null, not a guess).
+      expect(prompt).toContain('null');
+      // strict JSON, no leakage of subject-only kinds.
+      expect(prompt).toContain('QuizIntent');
+    }
+  });
+
   it('builds a QuizVerifyTask prompt with the three §5 checks + two-axis output', () => {
     const wenyan = getTaskSystemPrompt('QuizVerifyTask');
     const math = getTaskSystemPrompt('QuizVerifyTask', resolveSubjectProfile('math'));

@@ -182,6 +182,33 @@ describe('QuizVerifyTask registry entry', () => {
   });
 });
 
+describe('QuizIntentParseTask registry entry', () => {
+  // YUK-275 (free-text 求卷 C 形态) — single structured-output parse task, registered
+  //照 GoalScopeTask 范式. The budget/tool-call flags are part of the slice contract:
+  // maxIterations 1 (in the budget sub-object, NOT a top-level field), needsToolCall
+  // false, allowedTools [] (no Copilot tool surface — U6 防循环 red line).
+  it('is registered as a single-shot text parse task usable by runTask', () => {
+    expect(tasks.QuizIntentParseTask.kind).toBe('QuizIntentParseTask');
+    expect(tasks.QuizIntentParseTask.needsToolCall).toBe(false);
+    expect(tasks.QuizIntentParseTask.isMultimodal).toBe(false);
+    expect(tasks.QuizIntentParseTask.allowedTools).toEqual([]);
+    // CRITIC FIX P1 — maxIterations lives in budget, not a top-level field.
+    expect(tasks.QuizIntentParseTask.budget.maxIterations).toBe(1);
+    expect(tasks.QuizIntentParseTask.budget.timeout).toBe(60_000);
+    // invocation defaults to 'auto' (called from the free-text 求卷 route, not a manual
+    // rescue); the entry omits the optional field.
+    expect((tasks.QuizIntentParseTask as TaskDef).invocation).toBeUndefined();
+  });
+
+  it('uses the mimo-v2.5-pro default with mimo-v2.5 fallback', () => {
+    expect(tasks.QuizIntentParseTask.defaultProvider).toBe('xiaomi');
+    expect(tasks.QuizIntentParseTask.defaultModel).toBe('mimo-v2.5-pro');
+    expect(tasks.QuizIntentParseTask.fallbackChain).toEqual([
+      { provider: 'xiaomi', model: 'mimo-v2.5' },
+    ]);
+  });
+});
+
 // YUK-267 (C2) — pin the CopilotTask conversation-memory + ambient clauses so the
 // history-preference prompt edit cannot silently regress.
 describe('CopilotTask.systemPrompt — C2 memory + ambient clauses', () => {

@@ -545,6 +545,29 @@ export const tasks = {
     systemPrompt:
       '你是学习目标规划助手。用户给一个模糊的学习目标标题，你看知识网格快照（节点 + 掌握度 + mesh 边），推断这个目标覆盖哪些知识节点 + 一个粗略的学习顺序，输出严格 JSON。不要发明网格里没有的节点 id。',
   },
+  // YUK-275 — free-text 求卷意图解析器 (C 形态). Single structured-output call (no
+  // tool loop),照 GoalScopeTask 范式: budget.maxIterations 1, needsToolCall false,
+  // allowedTools []. Input = { user_message, knowledge_candidates:[{id,name,
+  // effective_domain}] }; output = QuizIntentSchema (is_quiz_request + knowledge_id
+  // 选自候选列表 + count / difficulty_min / unit / kind). The parse result is consumed
+  // by chat.ts (free-text 求卷 routing) — it NEVER joins COPILOT_TOOLS / conversation_
+  // history (U6 防循环 red line). Runtime renders the prompt via getTaskSystemPrompt;
+  // this string is the type-required fallback only (real builder in task-prompts.ts).
+  QuizIntentParseTask: {
+    kind: 'QuizIntentParseTask',
+    description:
+      'YUK-275 (free-text 求卷 C 形态) — parse a natural-language quiz request into a structured intent. Input = { user_message, knowledge_candidates:[{id,name,effective_domain}] }. Output = { is_quiz_request, knowledge_id (chosen from the candidate list, hallucinated ids filtered code-side), count, difficulty_min, unit(题|篇), kind }. Single structured-output call (no tool loop), mimo-v2.5-pro text. is_quiz_request=false is the parse-side 逃生舱 when 粗筛 误伤 a non-quiz message.',
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
+    needsToolCall: false,
+    isMultimodal: false,
+    allowedTools: [],
+    // Runtime renders via getTaskSystemPrompt(task, profile); this string is the
+    // type-required fallback only (the builder lives in task-prompts.ts).
+    systemPrompt: '(see getTaskSystemPrompt(task, profile) - fallback not for runtime)',
+  },
   MemoryBriefTask: {
     kind: 'MemoryBriefTask',
     description:
