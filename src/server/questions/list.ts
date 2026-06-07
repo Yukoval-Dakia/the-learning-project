@@ -66,6 +66,13 @@ export type QuestionListSortBy = 'created_at' | 'source_tier';
 export interface ListQuestionsParams {
   // 任一匹配 → OR of `knowledge_ids @> [id]` (复用 sourcing-sequence:114 容器写法).
   knowledgeIds?: string[];
+  // YUK-288 subject 派生轴: a question's subject is DERIVED via
+  // knowledge_ids → knowledge.(effective)domain → resolveSubjectProfile.id, never
+  // a question column. The route resolves `subject` to its knowledge-id set
+  // (resolveSubjectKnowledgeIds) and passes it here as `subjectKnowledgeIds`; the
+  // list ANDs an OR-of-containment over that set with the other axes. An empty
+  // set means the subject labels no questions → empty result (not unfiltered).
+  subjectKnowledgeIds?: string[];
   source?: string;
   kind?: string; // canonical persisted form; list is an exact axis (no kindsMatch normalisation).
   difficulty?: number; // 1-5
@@ -93,6 +100,11 @@ export interface QuestionListItem {
   knowledge_ids: string[];
   root_question_id: string | null;
   variant_depth: number;
+  // YUK-288 gap A — composite linkage. Top-level list rows always have
+  // parent_question_id === null (parts are excluded); the field is surfaced so a
+  // future composite-aware view (and the detail parts loader) read the same shape.
+  parent_question_id: string | null;
+  part_index: number | null;
   draft_status: string | null;
   created_at_sec: number; // unix seconds — matches全仓 API 时间形 (learning-items/timeline).
 }
@@ -130,6 +142,8 @@ const CANDIDATE_COLUMNS = {
   knowledge_ids: question.knowledge_ids,
   root_question_id: question.root_question_id,
   variant_depth: question.variant_depth,
+  parent_question_id: question.parent_question_id,
+  part_index: question.part_index,
   draft_status: question.draft_status,
   created_at: question.created_at,
 } as const;
@@ -145,6 +159,8 @@ type CandidateRow = {
   knowledge_ids: string[];
   root_question_id: string | null;
   variant_depth: number;
+  parent_question_id: string | null;
+  part_index: number | null;
   draft_status: string | null;
   created_at: Date;
 };
@@ -158,18 +174,42 @@ interface DerivedCandidate {
   whitelistMatch: boolean | null;
 }
 
+// OR of `knowledge_ids @> [id]` over a set of ids — the established containment
+// pattern (note-page:262 / sourcing-sequence:114). A `?|` operator is
+// intentionally avoided (drizzle has no first-class helper and it bypasses
+// jsonb_path_ops). Shared by the explicit knowledge axis and the derived subject
+// axis so the two read identically.
+function knowledgeContainmentOr(ids: string[]): SQL {
+  const containers = ids.map(
+    (id) => sql`${question.knowledge_ids} @> ${JSON.stringify([id])}::jsonb`,
+  );
+  return sql`(${sql.join(containers, sql` OR `)})`;
+}
+
 function buildSqlFilters(params: ListQuestionsParams): SQL[] {
   const filters: SQL[] = [];
 
   if (params.knowledgeIds && params.knowledgeIds.length > 0) {
-    // OR of `@>` per id — reuses the established containment pattern
-    // (note-page:262 / sourcing-sequence:114). A `?|` operator is intentionally
-    // avoided (drizzle has no first-class helper and it bypasses jsonb_path_ops).
-    const containers = params.knowledgeIds.map(
-      (id) => sql`${question.knowledge_ids} @> ${JSON.stringify([id])}::jsonb`,
-    );
-    filters.push(sql`(${sql.join(containers, sql` OR `)})`);
+    filters.push(knowledgeContainmentOr(params.knowledgeIds));
   }
+  // YUK-288 subject 派生轴 — ANDed with the explicit knowledge axis (a question
+  // must match both). An empty subjectKnowledgeIds (subject labels no questions)
+  // forces an empty result via `false`, NOT an unfiltered list. We only branch on
+  // `!== undefined` so "subject filter requested but resolves to nothing" stays
+  // distinguishable from "no subject filter".
+  if (params.subjectKnowledgeIds !== undefined) {
+    filters.push(
+      params.subjectKnowledgeIds.length > 0
+        ? knowledgeContainmentOr(params.subjectKnowledgeIds)
+        : sql`false`,
+    );
+  }
+  // Composite top-level default (YUK-288 gap A): `question_part` rows are the
+  // inner小题 of a composite parent (parts.ts write path) — they are reachable via
+  // the parent's detail `parts[]`, NOT as standalone list rows. The list excludes
+  // them so a composite大题 shows once. (Variant members are NOT excluded — they
+  // are first-class questions; family aggregation handles their grouping.)
+  filters.push(sql`(${question.parent_question_id} IS NULL)`);
   if (params.source !== undefined) filters.push(eq(question.source, params.source));
   if (params.kind !== undefined) filters.push(eq(question.kind, params.kind));
   if (params.difficulty !== undefined) filters.push(eq(question.difficulty, params.difficulty));
@@ -197,6 +237,8 @@ function toListItem(c: DerivedCandidate): QuestionListItem {
     knowledge_ids: row.knowledge_ids ?? [],
     root_question_id: row.root_question_id,
     variant_depth: row.variant_depth,
+    parent_question_id: row.parent_question_id,
+    part_index: row.part_index,
     draft_status: row.draft_status,
     created_at_sec: Math.floor(row.created_at.getTime() / 1000),
   };

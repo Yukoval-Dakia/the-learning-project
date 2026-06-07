@@ -18,7 +18,7 @@
 //   - timestamps are unix seconds (`*_sec`) — matches the sibling timeline route
 //     (app/api/questions/[id]/timeline/route.ts) and the rest of /api/*.
 
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
 import { type SourceTier, type SourceTierName, deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
@@ -57,6 +57,22 @@ export interface QuestionDetailFamily {
   root_question_id: string;
   members: QuestionDetailFamilyMember[];
   variant_count: number;
+}
+
+// YUK-288 gap A — composite小题. A part is a `question` row tagged
+// `kind='question_part'` linked via `parent_question_id` and ordered by
+// `part_index` (parts.ts write path). The detail of a composite PARENT carries
+// its ordered parts; a part's own detail carries `parent_question_id` so the UI
+// can render the 面包屑 back to the parent. phase-1 data currently has zero
+// composite questions, so `parts` is `[]` for every existing question — the field
+// exists so the reader is ready when composite ingestion lands (no schema change).
+export interface QuestionDetailPart {
+  id: string;
+  kind: string;
+  part_index: number;
+  prompt_md: string;
+  difficulty: number;
+  draft_status: string | null;
 }
 
 export interface QuestionDetailPerKnowledge {
@@ -117,6 +133,13 @@ export interface QuestionDetail {
   variant_depth: number;
   root_question_id: string | null;
   parent_variant_id: string | null;
+  // YUK-288 gap A — composite linkage. `parent_question_id` is set when THIS
+  // question is itself a part (→ UI renders the parent 面包屑); `part_index` orders
+  // it within the parent. `parts` is the ordered小题 list when THIS question is a
+  // composite parent (empty otherwise — incl. all phase-1 data today).
+  parent_question_id: string | null;
+  part_index: number | null;
+  parts: QuestionDetailPart[];
   draft_status: string | null;
   knowledge_ids: string[];
   labels: QuestionDetailLabel[];
@@ -188,6 +211,9 @@ export async function loadQuestionDetail(
     variant_count: familyRows.length,
   };
 
+  // 4b. composite小题 (YUK-288 gap A) — ordered parts when this is a parent.
+  const parts = await loadParts(db, questionId);
+
   // 5. per-knowledge FSRS / mastery / decay (聚合 knowledge_ids — R-P4-5/§7).
   const scheduling = await loadScheduling(db, questionId, knowledgeIds, nameById);
 
@@ -215,6 +241,9 @@ export async function loadQuestionDetail(
     variant_depth: q.variant_depth,
     root_question_id: q.root_question_id ?? null,
     parent_variant_id: q.parent_variant_id ?? null,
+    parent_question_id: q.parent_question_id ?? null,
+    part_index: q.part_index ?? null,
+    parts,
     draft_status: q.draft_status ?? null,
     knowledge_ids: knowledgeIds,
     labels,
@@ -309,6 +338,37 @@ async function loadScheduling(
     aggregate_decay_bucket: aggregate,
     legacy_question_fsrs: null,
   };
+}
+
+// ── YUK-288 gap A: composite小题 — ordered parts under a parent ────────────────
+// Parts are `question` rows tagged kind='question_part' (parts.ts write path),
+// linked by parent_question_id and ordered by part_index. Mirrors the
+// loadFamilyMembers / paper-detail.ts:247-263 select-and-order precedent. Drafts
+// are NOT excluded (the detail view shows drafts — same as the parent row).
+async function loadParts(db: Db, parentId: string): Promise<QuestionDetailPart[]> {
+  const rows = await db
+    .select({
+      id: question.id,
+      kind: question.kind,
+      part_index: question.part_index,
+      prompt_md: question.prompt_md,
+      difficulty: question.difficulty,
+      draft_status: question.draft_status,
+    })
+    .from(question)
+    .where(eq(question.parent_question_id, parentId))
+    .orderBy(asc(question.part_index), asc(question.created_at), asc(question.id));
+
+  return rows.map((r) => ({
+    id: r.id,
+    kind: r.kind,
+    // part_index is nullable in schema but always set by the parts.ts writer; fall
+    // back to 0 so the projection type stays non-null for the UI.
+    part_index: r.part_index ?? 0,
+    prompt_md: r.prompt_md,
+    difficulty: r.difficulty,
+    draft_status: r.draft_status ?? null,
+  }));
 }
 
 // ── A1e (2): 题级 backlink — tool_state.question_ids container query ────────────

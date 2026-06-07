@@ -28,9 +28,12 @@ async function seedQuestion(opts: {
   id?: string;
   kind?: string;
   source?: string;
+  prompt_md?: string;
   knowledge_ids?: string[];
   variant_depth?: number;
   root_question_id?: string | null;
+  parent_question_id?: string | null;
+  part_index?: number | null;
   metadata?: Record<string, unknown> | null;
   draft_status?: string | null;
   created_at?: Date;
@@ -42,13 +45,15 @@ async function seedQuestion(opts: {
     .values({
       id,
       kind: opts.kind ?? 'reading',
-      prompt_md: 'p'.repeat(10),
+      prompt_md: opts.prompt_md ?? 'p'.repeat(10),
       reference_md: 'ref',
       knowledge_ids: opts.knowledge_ids ?? [],
       difficulty: 3,
       source: opts.source ?? 'manual',
       variant_depth: opts.variant_depth ?? 0,
       root_question_id: opts.root_question_id ?? null,
+      parent_question_id: opts.parent_question_id ?? null,
+      part_index: opts.part_index ?? null,
       draft_status: opts.draft_status ?? null,
       metadata: (opts.metadata ?? null) as never,
       created_at: at,
@@ -277,5 +282,54 @@ describe('loadQuestionDetail', () => {
     const res = await loadQuestionDetail(testDb(), qid);
     expect(res?.draft_status).toBe('draft');
     expect(res?.id).toBe(qid);
+  });
+
+  it('returns ordered composite parts for a parent (YUK-288 gap A)', async () => {
+    const parent = await seedQuestion({ knowledge_ids: [], kind: 'reading' });
+    // seed parts out of part_index order so we assert the ORDER BY part_index.
+    await seedQuestion({
+      parent_question_id: parent,
+      part_index: 1,
+      kind: 'short',
+      prompt_md: 'part two',
+      draft_status: 'draft',
+    });
+    await seedQuestion({
+      parent_question_id: parent,
+      part_index: 0,
+      kind: 'mcq',
+      prompt_md: 'part one',
+    });
+
+    const res = await loadQuestionDetail(testDb(), parent);
+    expect(res?.parts.map((p) => p.part_index)).toEqual([0, 1]);
+    expect(res?.parts.map((p) => p.prompt_md)).toEqual(['part one', 'part two']);
+    expect(res?.parts[0].kind).toBe('mcq');
+    // drafts are NOT excluded from the parts list (detail shows drafts).
+    expect(res?.parts[1].draft_status).toBe('draft');
+    // the parent itself is top-level (no parent linkage).
+    expect(res?.parent_question_id).toBeNull();
+    expect(res?.part_index).toBeNull();
+  });
+
+  it('carries parent_question_id on a part so the UI can render the breadcrumb', async () => {
+    const parent = await seedQuestion({ knowledge_ids: [] });
+    const part = await seedQuestion({
+      parent_question_id: parent,
+      part_index: 0,
+      kind: 'mcq',
+    });
+
+    const res = await loadQuestionDetail(testDb(), part);
+    expect(res?.parent_question_id).toBe(parent);
+    expect(res?.part_index).toBe(0);
+    // a leaf part has no parts of its own.
+    expect(res?.parts).toEqual([]);
+  });
+
+  it('returns empty parts for an ordinary (non-composite) question', async () => {
+    const qid = await seedQuestion({ knowledge_ids: [] });
+    const res = await loadQuestionDetail(testDb(), qid);
+    expect(res?.parts).toEqual([]);
   });
 });

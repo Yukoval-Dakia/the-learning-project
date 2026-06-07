@@ -12,6 +12,7 @@ import { z } from 'zod';
 
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
+import { resolveSubjectKnowledgeIds } from '@/server/knowledge/domain';
 import { type QuestionListSortBy, listQuestions } from '@/server/questions/list';
 
 export const runtime = 'nodejs';
@@ -24,6 +25,9 @@ const SourceTierSchema = z.coerce.number().int().min(1).max(4);
 const ListQuerySchema = z
   .object({
     knowledge_id: z.array(z.string().min(1)).default([]),
+    // YUK-288 subject 派生轴 — a subject profile id (e.g. 'wenyan'); resolved to a
+    // knowledge-id set server-side (never a question column).
+    subject: z.string().min(1).optional(),
     source: z.string().min(1).optional(),
     kind: z.string().min(1).optional(),
     difficulty: z.coerce.number().int().min(1).max(5).optional(),
@@ -59,6 +63,7 @@ export async function GET(req: Request): Promise<Response> {
 
     const parsed = ListQuerySchema.safeParse({
       knowledge_id: sp.getAll('knowledge_id'),
+      subject: sp.get('subject') ?? undefined,
       source: sp.get('source') ?? undefined,
       kind: sp.get('kind') ?? undefined,
       difficulty: sp.get('difficulty') ?? undefined,
@@ -83,8 +88,15 @@ export async function GET(req: Request): Promise<Response> {
     const limit = Math.min(Math.max(Number.isNaN(q.limit) ? DEFAULT_LIMIT : q.limit, 1), MAX_LIMIT);
     const offset = Math.max(q.offset, 0);
 
+    // YUK-288 subject 派生轴: resolve the subject profile id to its knowledge-id
+    // set BEFORE the list query so the list ANDs an OR-of-containment over it.
+    // undefined → no subject filter; [] → subject labels no questions → empty list.
+    const subjectKnowledgeIds =
+      q.subject !== undefined ? await resolveSubjectKnowledgeIds(db, q.subject) : undefined;
+
     const result = await listQuestions(db, {
       knowledgeIds: q.knowledge_id.length > 0 ? q.knowledge_id : undefined,
+      subjectKnowledgeIds,
       source: q.source,
       kind: q.kind,
       difficulty: q.difficulty,
