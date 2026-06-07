@@ -984,13 +984,24 @@ async function proposeLearningItemCompletionExecute(
     return { status: 'skipped:duplicate_pending', learning_item_id: input.learning_item_id };
   }
 
+  // YUK-270 — on the Copilot conversational surface the caller is a real agent
+  // actor; thread it (and the causal event) through so the proposal records the
+  // triggering actor + causal link instead of the maintenance-batch default
+  // (mirrors the defer/archive executors below).
+  const actorRef =
+    ctx.callerActor?.kind === 'agent' && ctx.callerActor.ref
+      ? ctx.callerActor.ref
+      : 'learning_item_maintenance';
+
   const proposalId = await writeCompletionProposal(ctx.db, {
+    actor_ref: actorRef,
     learning_item_id: input.learning_item_id,
     triggering_signals: input.triggering_signals,
     evidence_refs: evidenceRefsFromEventIds(input.evidence_event_ids ?? []),
     evidence_json: { evidence_event_ids: input.evidence_event_ids ?? [] },
     reason_md: input.reasoning,
     task_run_id: ctx.taskRunId,
+    caused_by_event_id: ctx.causedByEventId ?? null,
   });
   return { status: 'proposed', proposal_id: proposalId, learning_item_id: input.learning_item_id };
 }
@@ -1050,7 +1061,14 @@ async function proposeLearningItemRelearnExecute(
     (item.completed_at
       ? Math.max(0, Math.floor((Date.now() - item.completed_at.getTime()) / 86_400_000))
       : 0);
+  // YUK-270 — thread the conversational caller actor + causal event (see the
+  // completion executor) so user-triggered relearn proposals attribute correctly.
+  const actorRef =
+    ctx.callerActor?.kind === 'agent' && ctx.callerActor.ref
+      ? ctx.callerActor.ref
+      : 'learning_item_maintenance';
   const proposalId = await writeRelearnProposal(ctx.db, {
+    actor_ref: actorRef,
     learning_item_id: input.learning_item_id,
     current_mastery: currentMastery,
     peak_mastery: peakMastery,
@@ -1058,6 +1076,7 @@ async function proposeLearningItemRelearnExecute(
     evidence_refs: evidenceRefsFromEventIds(input.evidence_event_ids ?? []),
     reason_md: input.reasoning,
     task_run_id: ctx.taskRunId,
+    caused_by_event_id: ctx.causedByEventId ?? null,
   });
   return { status: 'proposed', proposal_id: proposalId, learning_item_id: input.learning_item_id };
 }
