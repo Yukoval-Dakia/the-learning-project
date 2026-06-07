@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { MAX_PDF_PAGES } from '@/core/limits';
 import { IngestionEntrypoint } from '@/core/schema/business';
 import { db } from '@/db/client';
 import { event, learning_session, question_block, source_asset } from '@/db/schema';
@@ -137,9 +138,14 @@ function clampLimit(raw: string | null): number {
   return Math.min(MAX_LIMIT, Math.max(MIN_LIMIT, parsed));
 }
 
+// asset_ids upper bound is the PDF page cap (single source of truth in
+// @/core/limits): a 15-page PDF expands to 15 image assets, so this must admit
+// exactly that many. Importing the const keeps the two caps provably equal
+// (YUK-250). The downstream pipeline is length-driven (tencent_ocr_extract loops
+// assetIds.length; page_index scales), so raising the ceiling is safe.
 const Body = z.object({
   entrypoint: IngestionEntrypoint,
-  asset_ids: z.array(z.string().min(1)).min(1).max(5),
+  asset_ids: z.array(z.string().min(1)).min(1).max(MAX_PDF_PAGES),
 });
 
 /**
