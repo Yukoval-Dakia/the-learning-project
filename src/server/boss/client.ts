@@ -86,7 +86,32 @@ export function createBoss(): PgBoss {
 export async function getStartedBoss(): Promise<PgBoss> {
   if (!startPromise) {
     const boss = createBoss();
-    startPromise = boss.start().then(() => boss);
+    startPromise = boss
+      .start()
+      .then(() => boss)
+      .catch((err) => {
+        // YUK-259: pg-boss's own `boss.start()` directly awaits the timekeeper
+        // creating its internal `__pgboss__send-it` queue (pg-boss index.js
+        // start → timekeeper.start → manager.createQueue, an `INSERT ... ON
+        // CONFLICT DO NOTHING` that can still race-raise 23505 `queue_pkey`).
+        // During a cold start where this app process and the worker race to
+        // start against the same DB, that benign race rejects the start()
+        // promise — and because we cache it, every later getStartedBoss() caller
+        // would re-reject (a request-time 500) until the process restarts. A
+        // 23505 here means SEND_IT already exists and the db is already opened
+        // (pg-boss opens it before the timekeeper runs), so `send()`/`schedule()`
+        // work; swallow it and resolve to the usable boss. Any other failure is a
+        // real start error: re-throw it, but clear the cached promise first so a
+        // later call can retry instead of being permanently poisoned.
+        if (isQueueCreateRace(err)) {
+          console.warn(
+            '[boss] getStartedBoss(): boss.start() hit pg-boss internal SEND_IT queue create race (23505 queue_pkey) — benign, queue already exists, continuing (YUK-259)',
+          );
+          return boss;
+        }
+        startPromise = null;
+        throw err;
+      });
   }
   return startPromise;
 }
