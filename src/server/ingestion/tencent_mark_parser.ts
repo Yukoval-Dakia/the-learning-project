@@ -1,6 +1,12 @@
 import type { BBoxT, StructuredQuestionT } from '@/core/schema/structured_question';
 import { createId } from '@paralleldrive/cuid2';
 
+// DUAL-ENGINE (YUK-253): GLM-OCR is the default extraction engine; this
+// Tencent parser is RETAINED PERMANENTLY as the `EXTRACT_OCR_ENGINE='tencent'`
+// switchable engine — owner decision 2026-06-07: 腾讯支持长期保留，不删。
+// No removal planned. Dual engines also enable same-page A/B quality
+// comparison and per-scenario switching (规范试卷场景可切回腾讯切题/解析).
+
 /**
  * Parser for Tencent QuestionMarkAgent DONE response → 系统内 StructuredQuestion 树。
  *
@@ -159,11 +165,13 @@ type AnswerInfoRaw = {
 type MarkInfoNode = {
   MarkItemTitle?: string;
   QuestionPositions?: number[];
-  QuestionImagePositions?: number[][];
+  QuestionImagePositions?: QuestionImagePositionRaw[];
   AnswerInfos?: AnswerInfoRaw[];
   MarkInfos?: MarkInfoNode[];
   RightAnswer?: string;
 };
+
+type QuestionImagePositionRaw = number[] | { Position?: number[] };
 
 type MarkAgentRawResponse = {
   JobStatus?: string;
@@ -293,13 +301,15 @@ function nodeToLeaf(
 }
 
 function collectFigures(
-  positions: number[][] | undefined,
+  positions: QuestionImagePositionRaw[] | undefined,
   pageMeta: PageMeta,
   out: ParsedFigureBox[],
   pageIndex: number,
 ): void {
   if (!positions || positions.length === 0) return;
-  for (const flat of positions) {
+  for (const raw of positions) {
+    const flat = Array.isArray(raw) ? raw : raw.Position;
+    if (!flat) continue;
     if (flat.length !== 8) continue;
     out.push({
       bbox: flat8ToBBox(flat, pageMeta.pageWidth, pageMeta.pageHeight),

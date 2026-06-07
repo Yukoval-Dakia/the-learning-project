@@ -17,7 +17,8 @@ credential groups gate the real path; everything else has a working default.
 
 | Group | Vars | Used by | Source |
 |-------|------|---------|--------|
-| **OCR (Tencent)** | `TENCENT_SECRET_ID`, `TENCENT_SECRET_KEY` (+ optional `TENCENT_OCR_REGION`, default `ap-shanghai`) | Deterministic structured extraction — `SubmitQuestionMarkAgentJob` / `DescribeQuestionMarkAgentJob` (`src/server/ingestion/tencent_mark.ts:15`). Extraction is a deterministic API, **not** an LLM (ADR-0002). | Tencent Cloud console |
+| **OCR (GLM-OCR, DEFAULT)** | `ZHIPU_API_KEY` (+ optional `EXTRACT_OCR_ENGINE`, default `glm`) | Default character-level text + layout extraction — `layout_parsing` (`src/server/ingestion/glm_ocr.ts`). Lives in `.env`. Billable: 0.2 元/M tokens, logged to `cost_ledger` (provider `glm`). **Required on the default path** — a missing key fails every extraction `failed_permanent` (YUK-253). | open.bigmodel.cn console |
+| **OCR (Tencent, ROLLBACK)** | `TENCENT_SECRET_ID`, `TENCENT_SECRET_KEY` (+ optional `TENCENT_OCR_REGION`, default `ap-shanghai`) | Retained rollback engine behind `EXTRACT_OCR_ENGINE='tencent'` (YUK-253). `SubmitQuestionMarkAgentJob` / `DescribeQuestionMarkAgentJob` (`src/server/ingestion/tencent_mark.ts`). Extraction is a deterministic API, **not** an LLM (ADR-0002). Keep set during the GLM bake-in window. | Tencent Cloud console |
 | **VLM (xiaomi/mimo)** | `XIAOMI_API_KEY` (+ optional `MIMO_VISION_BASE_URL`, `MIMO_VISION_MODEL`) | Vision **rescue** (explicit, paid, user-authorized — `src/server/ingestion/vision.ts`) + every AI task (tagging, judge, brief, dreaming, coach). | xiaomi/mimo console |
 | **Blob (Cloudflare R2)** | `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | Original uploads + auto-cropped figures (`src/server/r2.ts:50`). | Cloudflare R2 |
 
@@ -34,12 +35,16 @@ Also relevant but **not** blocking ingestion:
 > These are the owner's external accounts — they cannot be provisioned from the
 > repo. Keep the secrets out of git; they live only in the worker `.env` (§3).
 
-- **Tencent OCR** — in the Tencent Cloud console, create a CAM API key
+- **GLM-OCR (default)** — in the Zhipu open-platform console (open.bigmodel.cn),
+  create an API key on an account with GLM-OCR (`layout_parsing`) enabled. Put it
+  in `ZHIPU_API_KEY`. Leave `EXTRACT_OCR_ENGINE` unset (defaults to `glm`); set it
+  to `tencent` only to roll back to the Tencent engine during the bake-in window.
+- **Tencent OCR (rollback)** — in the Tencent Cloud console, create a CAM API key
   (`SecretId` / `SecretKey`) on an account with OCR (文字识别) enabled, and make
   sure the 试题批改 / QuestionMarkAgent capability is available in your region.
   Put the pair in `TENCENT_SECRET_ID` / `TENCENT_SECRET_KEY`. Leave
   `TENCENT_OCR_REGION` unless your account is provisioned elsewhere than
-  `ap-shanghai`.
+  `ap-shanghai`. Only consulted when `EXTRACT_OCR_ENGINE=tencent`.
 - **Cloudflare R2** — create an R2 bucket, then an R2 **S3 API token** (Access
   Key ID + Secret). `R2_ENDPOINT` is `https://<account-id>.r2.cloudflarestorage.com`
   (substitute your real account id — a leftover `<account-id>` placeholder is

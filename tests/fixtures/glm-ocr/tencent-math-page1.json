@@ -1,0 +1,81 @@
+{
+  "Angle": 0,
+  "ErrorCode": "",
+  "ErrorMessage": "",
+  "JobStatus": "DONE",
+  "MarkInfos": [
+    {
+      "AnswerInfos": [
+        {
+          "AnswerAnalysis": "利用复数模的性质：对于复数$z_1,z_2$，有$\\left|\\dfrac{z_1}{z_2}\\right|=\\dfrac{|z_1|}{|z_2|}$，本题中分子$|1|=1$，分母$|1+\\mathrm{i}|=\\sqrt{1^2+1^2}=\\sqrt{2}$，因此$|z|=\\dfrac{|1|}{|1+\\mathrm{i}|}=\\dfrac{1}{\\sqrt{2}}=\\dfrac{\\sqrt{2}}{2}$。",
+          "HandwriteInfo": "",
+          "HandwriteInfoPositions": [410, 604, 438, 604, 438, 641, 410, 641],
+          "IsCorrect": false,
+          "KnowledgePoints": [],
+          "RightAnswer": ""
+        }
+      ],
+      "MarkInfos": [],
+      "MarkItemTitle": "设 $z=\\dfrac{1}{1+\\mathrm{i}}$，则 $|z|=$（  ）",
+      "QuestionImagePositions": [],
+      "QuestionPositions": [109, 571, 944, 571, 944, 747, 109, 747],
+      "RightAnswer": ""
+    },
+    {
+      "AnswerInfos": [
+        {
+          "AnswerAnalysis": "由题可知，直线$a$不平行于平面$\\alpha$，且$a \not\\subset \\alpha$，因此直线$a$与平面$\\alpha$相交，即$a$与平面$\\alpha$有一个公共点。对选项逐一分析：\n1. 选项A：平面$\\alpha$内过交点的直线与直线$a$相交，不是异面直线，因此A错误；\n2. 选项B：若平面$\\alpha$内存在与$a$平行的直线，则可推出$a$平行于平面$\\alpha$，与已知条件矛盾，因此平面$\\alpha$内不存在与$a$平行的直线，B正确；\n3. 选项C：若平面$\\alpha$内存在与$a$平行的直线，则可推出$a\\parallel\\alpha$，与已知矛盾，因此C错误；\n4. 选项D：平面$\\alpha$内与过交点的直线平行的直线，都与$a$异面，不相交，因此D错误。",
+          "HandwriteInfo": "",
+          "HandwriteInfoPositions": [688, 805, 734, 805, 734, 842, 688, 842],
+          "IsCorrect": false,
+          "KnowledgePoints": [],
+          "RightAnswer": ""
+        }
+      ],
+      "MarkInfos": [],
+      "MarkItemTitle": "已知直线$a$不平行于平面$\\alpha$，且$a \not\\subset \\alpha$，则下列结论成立的是（  ）",
+      "QuestionImagePositions": [],
+      "QuestionPositions": [111, 795, 959, 795, 959, 922, 111, 922],
+      "RightAnswer": ""
+    },
+    {
+      "AnswerInfos": [
+        {
+          "AnswerAnalysis": "两个向量能作为平面向量的基底的条件是两个向量不共线，对于两个二维向量$\\vec{a}=(x_1,y_1)$，$\\vec{b}=(x_2,y_2)$，若共线则满足$x_1y_2 - x_2y_1 = 0$。逐一计算选项：\nA选项：计算$(-1)\\times2 - 1\\times2 = -2-2=-4\\neq0$，两向量不共线，可以作为基底；\nB选项：计算$1\\times4 - 2\\times2 = 4-4=0$，两向量共线，不可以作为基底；\nC选项：计算$2\\times3 - 1\\times4 = 6-4=2\\neq0$，两向量不共线，可以作为基底；\nD选项：计算$1\\times0 - (-1)\\times3 = 0+3=3\\neq0$，两向量不共线，可以作为基底。因此不可以作为基底的是选项B。",
+          "HandwriteInfo": "",
+          "HandwriteInfoPositions": [560, 955, 603, 955, 603, 994, 560, 994],
+          "IsCorrect": false,
+          "KnowledgePoints": [],
+          "RightAnswer": ""
+        }
+      ],
+      "MarkInfos": [],
+      "MarkItemTitle": "在下列各组向量中，不可以作为基底的是（ ）$\n\nA. \\ \\vec{e}_1 =(-1,2),\\ \\vec{e}_2 =(1,2) \n\nB. \\ \\vec{e}_1 =(1,2),\\ \\vec{e}_2 =(2,4) \n\nC. \\ \\vec{e}_1 =(2,4),\\ \\vec{e}_2 =(1,3) \n\nD. \\ \\vec{e}_1 =(1,3),\\ \\vec{e}_2 =(-1,0)$",
+      "QuestionImagePositions": [],
+      "QuestionPositions": [106, 955, 886, 955, 886, 1153, 106, 1153],
+      "RightAnswer": ""
+    },
+    {
+      "AnswerInfos": [],
+      "MarkInfos": [
+        {
+          "AnswerInfos": [],
+          "MarkInfos": [],
+          "MarkItemTitle": "4. 如图，在梯形$ABCD$中，$oxed{\\overset{}{AD}}=\\dfrac{1}{2}oxed{\\overset{}{BC}}$，$E$，$F$分别为$AD$，$BC$的中点，$G$为线段$BF$的四等分点（靠近点$F$），记$\\overset{}{AB}=a$，$\\overset{}{DC}=b$，则（ ）",
+          "QuestionImagePositions": [],
+          "QuestionPositions": [113, 1180, 1116, 1180, 1116, 1540, 113, 1540],
+          "RightAnswer": ""
+        }
+      ],
+      "MarkItemTitle": "4. 如图，在梯形$ABCD$中，$oxed{\\overset{}{AD}}=\\dfrac{1}{2}oxed{\\overset{}{BC}}$，$E$，$F$分别为$AD$，$BC$的中点，$G$为线段$BF$的四等分点（靠近点$F$），记$\\overset{}{AB}=a$，$\\overset{}{DC}=b$，则（ ）",
+      "QuestionImagePositions": [
+        {
+          "Position": [122, 1392, 381, 1392, 381, 1544, 122, 1544]
+        }
+      ],
+      "QuestionPositions": [],
+      "RightAnswer": ""
+    }
+  ],
+  "RequestId": "393908b8-e404-4812-82c4-30108c01e890"
+}
