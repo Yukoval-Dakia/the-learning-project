@@ -100,7 +100,7 @@ that's gone once you leave the vision tab). To review what AI observed/enrolled 
 to see recent ingestion sessions and pick one. Hence a list endpoint.
 
 ### Query params
-```
+```text
 GET /api/ingestion?limit=20&with_observations=1
 ```
 - `limit` — int, default 20, clamp 1..100. Keyset/offset pagination is overkill for a single-user tool with low
