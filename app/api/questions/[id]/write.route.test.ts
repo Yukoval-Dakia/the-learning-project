@@ -95,7 +95,7 @@ async function seedQuestionFsrs(questionId: string): Promise<void> {
       id: `f_q_${questionId}`,
       subject_kind: 'question',
       subject_id: questionId,
-      state: mkFsrsState() as never,
+      state: mkFsrsState() as unknown as (typeof material_fsrs_state.$inferInsert)['state'],
       due_at: NOW,
       updated_at: NOW,
     });
@@ -112,7 +112,7 @@ async function seedPaperRef(questionId: string): Promise<void> {
       intent_source: 'quiz_gen',
       source: 'ai_generated',
       tool_kind: 'quiz',
-      tool_state: { question_ids: [questionId] } as never,
+      tool_state: { question_ids: [questionId] } as (typeof artifact.$inferInsert)['tool_state'],
       generation_status: 'ready',
       created_at: NOW,
       updated_at: NOW,
@@ -244,6 +244,52 @@ describe('PATCH /api/questions/[id]', () => {
     const res = await PATCH(mkPatchReq(id, { version: 0 }), { params: Promise.resolve({ id }) });
     expect(res.status).toBe(400);
   });
+
+  it('no-ops (no version bump, no event) when the patch matches the current row', async () => {
+    const id = await seedQuestion({});
+    // Resubmit the seeded values verbatim — nothing actually changed.
+    const res = await PATCH(
+      mkPatchReq(id, { version: 0, prompt_md: 'original prompt', reference_md: 'original ref' }),
+      { params: Promise.resolve({ id }) },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; noop: boolean; version: number };
+    expect(body.ok).toBe(true);
+    expect(body.noop).toBe(true);
+    expect(body.version).toBe(0); // unchanged — no phantom bump
+
+    const row = await loadRow(id);
+    expect(row?.version).toBe(0);
+
+    // No audit event was fabricated for the no-op.
+    const evs = await testDb()
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'experimental:question_edit'), eq(event.subject_id, id)));
+    expect(evs).toHaveLength(0);
+  });
+
+  it('only records genuinely-changed fields in before/after (mixed patch)', async () => {
+    const id = await seedQuestion({});
+    // prompt_md changes; reference_md is resubmitted unchanged.
+    await PATCH(
+      mkPatchReq(id, { version: 0, prompt_md: 'new prompt', reference_md: 'original ref' }),
+      { params: Promise.resolve({ id }) },
+    );
+    const evs = await testDb()
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'experimental:question_edit'), eq(event.subject_id, id)));
+    expect(evs).toHaveLength(1);
+    const payload = evs[0]?.payload as {
+      before: Record<string, unknown>;
+      after: Record<string, unknown>;
+    };
+    expect(payload.after).toHaveProperty('prompt_md', 'new prompt');
+    // Unchanged reference_md must NOT leak into the diff.
+    expect(payload.after).not.toHaveProperty('reference_md');
+    expect(payload.before).not.toHaveProperty('reference_md');
+  });
 });
 
 describe('DELETE /api/questions/[id]', () => {
@@ -345,12 +391,24 @@ describe('DELETE /api/questions/[id]', () => {
     expect((await loadRow(otherPart))?.draft_status).toBe('active');
   });
 
-  it('400s when version query param is missing', async () => {
+  it('400s when version query param is missing on a CONFIRMED delete', async () => {
     const id = await seedQuestion({});
     const res = await DELETE(mkDeleteReq(id, '?confirm=true'), {
       params: Promise.resolve({ id }),
     });
     expect(res.status).toBe(400);
+  });
+
+  it('returns the 409 confirm gate even when version is absent (unconfirmed)', async () => {
+    // The first unconfirmed DELETE must surface the association warning so the UI
+    // can render the confirm dialog — it must NOT 400 on the missing version.
+    const id = await seedQuestion({});
+    await seedAttempt(id, 'failure');
+    const res = await DELETE(mkDeleteReq(id, ''), { params: Promise.resolve({ id }) });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string; has_associations: boolean };
+    expect(body.error).toBe('confirm_required');
+    expect(body.has_associations).toBe(true);
   });
 
   it('404s on a missing question with confirm', async () => {
