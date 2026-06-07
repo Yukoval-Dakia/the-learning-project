@@ -12,8 +12,15 @@ if (!databaseUrl) {
   );
 }
 
-// Singleton client. In Next dev, the standalone app container, and the worker
-// process, this module is cached per Node process; postgres-js handles pooling.
+// Singleton client. In the standalone app container and the worker process,
+// this module is cached per Node process; postgres-js handles pooling.
+// In `next dev`, HMR re-evaluates this module on every recompile — without a
+// globalThis cache each re-evaluation calls postgres() again and leaks a fresh
+// pool that nobody end()s (observed 2026-06-07: 97/100 Postgres connections
+// idle after ~207 recompiles, starving every API route into 3–11s stalls).
+// Cache the pool on globalThis outside production so it survives module reloads;
+// production (standalone container / worker) has no HMR, so the module cache
+// alone suffices and we never write to globalThis there — behaviour unchanged.
 // Disable SSL for local/test connections (localhost or 127.0.0.1) so testcontainers
 // and local dev containers work without a TLS certificate. Also honour an
 // explicit `sslmode=disable` in the URL — the option object otherwise wins over
@@ -21,10 +28,18 @@ if (!databaseUrl) {
 // `postgres:5432`.
 const isLocalConnection = /localhost|127\.0\.0\.1/.test(databaseUrl);
 const hasSslDisable = /[?&]sslmode=disable\b/.test(databaseUrl);
-const queryClient = postgres(databaseUrl, {
-  ssl: isLocalConnection || hasSslDisable ? false : 'require',
-  max: 10, // pool size per app/worker process
-});
+const globalForDb = globalThis as typeof globalThis & {
+  __loomQueryClient?: ReturnType<typeof postgres>;
+};
+const queryClient =
+  globalForDb.__loomQueryClient ??
+  postgres(databaseUrl, {
+    ssl: isLocalConnection || hasSslDisable ? false : 'require',
+    max: 10, // pool size per app/worker process
+  });
+if (process.env.NODE_ENV !== 'production') {
+  globalForDb.__loomQueryClient = queryClient;
+}
 
 export const db = drizzle(queryClient, { schema });
 export type Db = typeof db;
