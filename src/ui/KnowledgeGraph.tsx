@@ -828,6 +828,21 @@ export function KnowledgeGraph({
     });
     cyRef.current = cy;
 
+    // Initial-fit zoom cap (owner 2026-06-07 「点太大了」): with few visible
+    // nodes the layout's `fit: true` zooms far past 1:1, so the 24-64px circles
+    // (design-brief v2.1 §半径∝mistake_count, which stays untouched) render
+    // huge. Cap the AUTOMATIC fit at 1.0 — manual wheel zoom keeps maxZoom 4.
+    // Runs both synchronously (layout may finish within the constructor) and on
+    // layoutstop (fcose may settle async); the clamp is idempotent.
+    const clampInitialZoom = () => {
+      if (cy.zoom() > 1) {
+        cy.zoom(1);
+        cy.center();
+      }
+    };
+    cy.one('layoutstop', clampInitialZoom);
+    clampInitialZoom();
+
     cy.on('tap', 'node', (event) => {
       const id = event.target.id();
       if (id) {
