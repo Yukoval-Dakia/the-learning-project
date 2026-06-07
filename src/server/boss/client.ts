@@ -41,11 +41,19 @@ export function isQueueCreateRace(err: unknown): boolean {
   return e.constraint === undefined || e.constraint === 'queue_pkey';
 }
 
-let bossInstance: PgBoss | null = null;
-let startPromise: Promise<PgBoss> | null = null;
+// next dev HMR re-evaluates this module on recompile; module-level singletons
+// reset each time, leaking a started PgBoss (timers + pool) per recompile.
+// Cache on globalThis outside production, mirroring src/db/client.ts (YUK-274
+// hot-patch; formal PR pending). Production has no HMR — plain object suffices.
+type BossState = { instance: PgBoss | null; startPromise: Promise<PgBoss> | null };
+const globalForBoss = globalThis as typeof globalThis & { __loomBossState?: BossState };
+const bossState: BossState =
+  process.env.NODE_ENV !== 'production'
+    ? (globalForBoss.__loomBossState ??= { instance: null, startPromise: null })
+    : { instance: null, startPromise: null };
 
 export function createBoss(): PgBoss {
-  if (bossInstance) return bossInstance;
+  if (bossState.instance) return bossState.instance;
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
     throw new Error('DATABASE_URL is required to create PgBoss instance');
@@ -59,12 +67,12 @@ export function createBoss(): PgBoss {
   // boss/client.test when run with the full suite. Production (worker /
   // route processes) keeps the library default.
   const isVitest = !!process.env.VITEST;
-  bossInstance = new PgBoss({
+  bossState.instance = new PgBoss({
     connectionString,
     schema: 'pgboss',
     ...(isVitest ? { max: 2 } : {}),
   });
-  return bossInstance;
+  return bossState.instance;
 }
 
 /**
@@ -84,9 +92,9 @@ export function createBoss(): PgBoss {
  * pg-boss is "started" here.
  */
 export async function getStartedBoss(): Promise<PgBoss> {
-  if (!startPromise) {
+  if (!bossState.startPromise) {
     const boss = createBoss();
-    startPromise = boss
+    bossState.startPromise = boss
       .start()
       .then(() => boss)
       .catch((err) => {
@@ -109,11 +117,11 @@ export async function getStartedBoss(): Promise<PgBoss> {
           );
           return boss;
         }
-        startPromise = null;
+        bossState.startPromise = null;
         throw err;
       });
   }
-  return startPromise;
+  return bossState.startPromise;
 }
 
 /**
@@ -124,6 +132,6 @@ export async function getStartedBoss(): Promise<PgBoss> {
  * DATABASE_URL points at a fresh testcontainer.
  */
 export function _resetBossForTests(): void {
-  bossInstance = null;
-  startPromise = null;
+  bossState.instance = null;
+  bossState.startPromise = null;
 }
