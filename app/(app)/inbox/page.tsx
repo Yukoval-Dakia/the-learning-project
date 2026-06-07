@@ -19,6 +19,10 @@ interface KnowledgeNode {
 }
 
 type ProposalStatus = 'pending' | 'accepted' | 'dismissed' | 'stale';
+// YUK-271 — keep this union aligned with `aiProposalKinds`
+// (src/core/schema/proposal.ts). It previously omitted `defer` / `goal_scope` /
+// `block_merge` / `image_candidate`, so those kinds rendered their raw string as
+// the card title (kindLabel `?? kind` fallback) and fell to the `neutral` tone.
 type ProposalKind =
   | 'knowledge_node'
   | 'knowledge_edge'
@@ -28,10 +32,14 @@ type ProposalKind =
   | 'variant_question'
   | 'completion'
   | 'relearn'
+  | 'defer'
   | 'record_links'
   | 'record_promotion'
   | 'archive'
-  | 'judge_retraction';
+  | 'judge_retraction'
+  | 'goal_scope'
+  | 'block_merge'
+  | 'image_candidate';
 
 interface ProposalTarget {
   subject_kind: string;
@@ -130,10 +138,14 @@ const KIND_LABELS: Record<ProposalKind, string> = {
   variant_question: '变式题',
   completion: '完成状态',
   relearn: '重学安排',
+  defer: '延后',
   record_links: '记录链接',
   record_promotion: '记录升级',
   archive: '归档',
   judge_retraction: '判题撤回',
+  goal_scope: '目标范围',
+  block_merge: '题块合并',
+  image_candidate: '图片来源',
 };
 
 export default function InboxPage() {
@@ -657,6 +669,10 @@ function kindLabel(kind: ProposalKind): string {
 function kindTone(kind: ProposalKind): 'info' | 'good' | 'hard' | 'coral' | 'neutral' {
   switch (kind) {
     case 'knowledge_node':
+    // YUK-271 — block_merge is a review-class proposal; tint it `info` (the same
+    // bucket today/page assigns the merge-review surface) rather than the neutral
+    // default the missing case fell through to.
+    case 'block_merge':
       return 'info';
     case 'knowledge_edge':
     case 'knowledge_mutation':
