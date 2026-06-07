@@ -17,7 +17,7 @@
 //     question_no — sits above the editable prompt textarea.
 
 import { ApiAuthError, ApiError, apiJson } from '@/ui/lib/api';
-import { expandPdf, uploadAsset, useAssetUrl } from '@/ui/lib/assets';
+import { expandDocx, expandPdf, uploadAsset, useAssetUrl } from '@/ui/lib/assets';
 import { type AutoEnrollObservation, seedBlockForm } from '@/ui/lib/auto-enroll';
 import { causeOptionsForSelectedKnowledge } from '@/ui/lib/cause-options';
 import { useIngestionSSE } from '@/ui/lib/sse';
@@ -213,6 +213,21 @@ export function VisionTab({ mode }: { mode: Mode }) {
   const startMutation = useMutation({
     mutationFn: async (selectedFiles: File[]) => {
       let ids: string[];
+      // DOCX ingestion is a vision_paper-only entrypoint (only that mode's accept
+      // admits .docx). The docx endpoint is SELF-CONTAINED — it classifies the
+      // file, builds the session server-side, and returns the session id — so
+      // this branch SKIPS the shared creating + POST /api/ingestion + extract
+      // steps and returns the session id straight away.
+      const docx =
+        mode === 'vision_paper' && selectedFiles.length === 1 && isDocx(selectedFiles[0]);
+      if (docx) {
+        setPhase('expanding'); // reuse the expanding phase (label shows 转换 DOCX…)
+        const ingested = await expandDocx(selectedFiles[0]);
+        setPdfPageCount(ingested.page_count);
+        // Server已建 session + blocks (text line) / enqueued extract (visual line);
+        // go straight to extracting and listen for the SSE terminal.
+        return ingested.session_id;
+      }
       // PDF expansion is a vision_paper-only entrypoint: only that mode's accept
       // attr admits application/pdf. Bind the branch to mode explicitly so a
       // future reuse of this mutation under vision_single can't silently route a
@@ -361,6 +376,7 @@ export function VisionTab({ mode }: { mode: Mode }) {
     if (!list || list.length === 0) return;
     const all = Array.from(list);
     const pdfs = all.filter(isPdf);
+    const docxs = all.filter(isDocx);
     setPdfPageCount(null);
     if (pdfs.length > 0) {
       // PDF is a single-file pick that expands server-side. Reject a mixed
@@ -368,6 +384,21 @@ export function VisionTab({ mode }: { mode: Mode }) {
       if (all.length > 1) {
         setFiles([]);
         setErrorMessage('PDF 请单独上传（不要和图片或其它 PDF 混选）');
+        return;
+      }
+      setFiles([all[0]]);
+      setErrorMessage(null);
+      return;
+    }
+    if (docxs.length > 0) {
+      // DOCX, like PDF, is a single-file server-side pick (the docx dispatch
+      // requires selectedFiles.length === 1). Reject a mixed DOCX + image / multi
+      // -DOCX selection inline (coderabbit-d) — otherwise the .docx would fall
+      // through to the image upload path and be POSTed as a plain image asset,
+      // with the file-list UI misleadingly showing only files[0].
+      if (all.length > 1) {
+        setFiles([]);
+        setErrorMessage('DOCX 请单独上传（不要和图片或其它文件混选）');
         return;
       }
       setFiles([all[0]]);
@@ -421,7 +452,7 @@ export function VisionTab({ mode }: { mode: Mode }) {
             type="file"
             accept={
               mode === 'vision_paper'
-                ? 'image/png,image/jpeg,image/webp,application/pdf'
+                ? 'image/png,image/jpeg,image/webp,application/pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document'
                 : 'image/png,image/jpeg,image/webp'
             }
             multiple={mode === 'vision_paper'}
@@ -438,7 +469,9 @@ export function VisionTab({ mode }: { mode: Mode }) {
               <span className="dropzone-title">
                 {isPdf(files[0])
                   ? '已选 1 个 PDF · 点击重选'
-                  : `已选 ${files.length} 张 · 点击重选`}
+                  : isDocx(files[0])
+                    ? '已选 1 个 DOCX · 点击重选'
+                    : `已选 ${files.length} 张 · 点击重选`}
               </span>
             ) : (
               <span className="dropzone-title">
@@ -448,17 +481,24 @@ export function VisionTab({ mode }: { mode: Mode }) {
             <span className="hint">
               {mode === 'vision_single'
                 ? '单题直接走 Vision；不经 Tencent Mark Agent'
-                : 'JPEG / PNG / WebP · 单次最多 5 页 · 或上传 1 个 PDF（≤15 页）· 抽取进度走 SSE'}
+                : 'JPEG / PNG / WebP · 单次最多 5 页 · 或上传 1 个 PDF（≤15 页）/ DOCX（≤20MB）· 抽取进度走 SSE'}
             </span>
           </button>
           {files.length > 0 && (
             <ul className="record-file-list">
-              {/* A picked PDF is one row — it expands to N page images
+              {/* A picked PDF / DOCX is one row — it expands to N page images
                   server-side, so we don't pre-list N image rows. */}
               {isPdf(files[0]) ? (
                 <li key={files[0].name}>
                   <span>
                     {files[0].name} · PDF{pdfPageCount != null ? ` · ${pdfPageCount} 页` : ''}
+                  </span>
+                  <span className="meta">{(files[0].size / 1024).toFixed(1)} KB</span>
+                </li>
+              ) : isDocx(files[0]) ? (
+                <li key={files[0].name}>
+                  <span>
+                    {files[0].name} · DOCX{pdfPageCount != null ? ` · ${pdfPageCount} 页` : ''}
                   </span>
                   <span className="meta">{(files[0].size / 1024).toFixed(1)} KB</span>
                 </li>
@@ -490,7 +530,10 @@ export function VisionTab({ mode }: { mode: Mode }) {
         phase === 'extracting') && (
         <div>
           <p style={{ ...mutedStyle, marginTop: 0 }}>
-            {phase === 'expanding' && '展开 PDF…（渲染每一页为图片）'}
+            {phase === 'expanding' &&
+              (files[0] && isDocx(files[0])
+                ? '转换 DOCX…（解析题目 + 渲染存证页图）'
+                : '展开 PDF…（渲染每一页为图片）')}
             {phase === 'uploading' && `上传 ${files.length} 张图到 R2 …`}
             {phase === 'creating' &&
               (pdfPageCount != null
@@ -1048,6 +1091,16 @@ function isPdf(file: File): boolean {
   // %PDF magic bytes (pdf-render.ts hasPdfMagic), so a misnamed non-PDF is caught
   // there with a loud 400 — this only widens which files reach that check.
   return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+}
+
+function isDocx(file: File): boolean {
+  // Mirror isPdf: file.type may be '' for drag-and-drop, so fall back to the
+  // .docx extension. The server (classifyDocx) validates the zip / OOXML parts
+  // and 400s a misnamed non-docx, so this only widens which files reach there.
+  return (
+    file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+    file.name.toLowerCase().endsWith('.docx')
+  );
 }
 
 function phaseLabel(phase: Phase, sseStatus: string): string {

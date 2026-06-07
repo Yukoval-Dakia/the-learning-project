@@ -45,6 +45,25 @@ export async function expandPdf(file: File): Promise<ExpandedPdf> {
   return (await res.json()) as ExpandedPdf;
 }
 
+// YUK-258 — DOCX ingestion. POST /api/ingestion/docx is SELF-CONTAINED: it
+// classifies the .docx (text vs visual line), builds the session server-side
+// (text line lands blocks directly in 'extracted'; visual line enqueues
+// tencent_ocr_extract), and returns the session id. Unlike expandPdf (which only
+// expands assets and leaves session-create to the caller), the caller here does
+// NOT then POST /api/ingestion — the session already exists.
+export interface DocxIngested {
+  session_id: string;
+  line: 'text' | 'visual';
+  page_count: number;
+}
+
+export async function expandDocx(file: File): Promise<DocxIngested> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await apiFetch('/api/ingestion/docx', { method: 'POST', body: form });
+  return (await res.json()) as DocxIngested;
+}
+
 // In-memory cache so the same asset id rendered in multiple BlockEditors
 // shares one fetch + one object URL.
 const urlCache = new Map<string, string>();

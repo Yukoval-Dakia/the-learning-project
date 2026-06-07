@@ -136,7 +136,10 @@ export const IngestionSessionStatus = z.enum([
   'failed',
 ]);
 
-export const IngestionEntrypoint = z.enum(['vision_single', 'vision_paper']);
+// YUK-258: 'docx' entrypoint. The VISUAL line reuses initiateUpload+enqueueExtraction
+// with this entrypoint (page images feed tencent_ocr_extract); the TEXT line uses
+// the dedicated docx-ingestion owner and never reaches initiateUpload.
+export const IngestionEntrypoint = z.enum(['vision_single', 'vision_paper', 'docx']);
 
 // T-OC A2 (YUK-164, D1=C): `auto_enrolled` is a terminal-but-revertible state
 // distinct from human `imported` — set by the WorkflowJudge enroll path
