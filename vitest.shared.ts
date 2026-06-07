@@ -24,6 +24,12 @@ export const fastTestInclude = [
   // src/db/client.ts. `postgres` is vi.mock'd and the only @/db/client import is
   // a dynamic `await import()`, so no live Postgres is touched → unit partition.
   'src/db/client.test.ts',
+  // YUK-274 — pure (no-DB) unit for the globalThis singleton-cache HMR guard in
+  // src/server/boss/client.ts. `pg-boss` is vi.mock'd and the only ./client
+  // import is a dynamic `await import()`, so no live Postgres is touched → unit
+  // partition. The live-DB round-trip + SEND_IT race tests stay in the sibling
+  // client.test.ts (db partition).
+  'src/server/boss/client.globalthis.test.ts',
   'src/__tests__/**/*.test.ts',
   'src/ai/**/*.test.ts',
   'src/core/**/*.test.ts',

@@ -78,7 +78,10 @@ describe('DomainTool allowlist policy', () => {
 
   it('keeps Copilot narrower than Maintenance for structural and mistake actions', () => {
     expect(DOMAIN_TOOL_ALLOWLISTS.copilot).toContain('propose_knowledge_edge');
-    expect(DOMAIN_TOOL_ALLOWLISTS.copilot).not.toContain('propose_knowledge_mutation');
+    // YUK-270 (owner 2026-06-07) — Copilot now ALSO carries propose_knowledge_mutation
+    // (tree-shape reshaping). It still stays narrower than the chip surface for the
+    // user-suggested mistake actions below (attribute_mistake / propose_variant).
+    expect(DOMAIN_TOOL_ALLOWLISTS.copilot).toContain('propose_knowledge_mutation');
     expect(DOMAIN_TOOL_ALLOWLISTS.copilot).not.toContain('attribute_mistake');
     expect(DOMAIN_TOOL_ALLOWLISTS.copilot).not.toContain('propose_variant');
 
@@ -95,6 +98,11 @@ describe('DomainTool allowlist policy', () => {
   // INSERT tool, no teaching/solve-specific tool, no memory grant beyond the
   // copilot surface's pre-existing search_memory_facts. Lock the exact set.
   it('U6: the skill merge adds NO new tool to the Copilot surface (R5/R6)', () => {
+    // NOTE: the Copilot surface grew in YUK-270 (owner 2026-06-07) — 3 readers +
+    // knowledge_mutation + the learning_item lifecycle quartet. That was a
+    // deliberate owner-decided surface expansion, NOT the U6 skill merge. The U6
+    // red line still holds: the teaching/solve skill merge itself adds no tool.
+    // This assertion now locks the post-YUK-270 exact set.
     expect(DOMAIN_TOOL_ALLOWLISTS.copilot).toEqual([
       'query_memory_brief',
       'get_subject_graph_overview',
@@ -106,7 +114,17 @@ describe('DomainTool allowlist policy', () => {
       'query_mistakes',
       'get_attempt_context',
       'get_review_due',
+      // YUK-270 readers
+      'get_learning_item_context',
+      'expand_knowledge_subgraph',
+      'find_knowledge_paths',
       'propose_knowledge_edge',
+      // YUK-270 write proposals
+      'propose_knowledge_mutation',
+      'propose_learning_item_completion',
+      'propose_learning_item_relearn',
+      'propose_learning_item_defer',
+      'propose_learning_item_archive',
       'search_memory_facts',
     ]);
     // The ask_check INSERT (materializeAskCheckQuestion) is a service path, never

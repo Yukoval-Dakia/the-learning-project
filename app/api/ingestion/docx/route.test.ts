@@ -108,8 +108,14 @@ describe('POST /api/ingestion/docx', () => {
     expect(sessions).toHaveLength(1);
     expect(sessions[0].status).toBe('extracted');
     expect(sessions[0].entrypoint).toBe('docx');
-    // Evidence page images pinned (2 from the real PDF).
-    expect(sessions[0].source_asset_ids).toHaveLength(2);
+    // Evidence page images (2 from the real PDF) + the fixture's 1 embedded
+    // inline image, union'd into source_asset_ids by initiateDocxTextUpload
+    // (src/server/session/docx-ingestion.ts — embedded-image asset ids MUST be
+    // in the session's source_asset_ids or import rejects the blocks'
+    // image_refs; evidence pages stay first so page_index keeps mapping to the
+    // leading evidence assets). Assertion was written pre-union (#336 bot-fix
+    // round) and only surfaced on the merged combination — gates ran per-PR.
+    expect(sessions[0].source_asset_ids).toHaveLength(3);
 
     // Blocks: 2 questions from the yuwen fixture, all draft + structured.
     const blocks = await db
@@ -151,8 +157,15 @@ describe('POST /api/ingestion/docx', () => {
     expect(domainEvents[0].actor_ref).toBe('docx_text');
     expect(domainEvents[0].outcome).toBe('success');
 
-    // boss NOT touched on the text line.
-    expect(bossSend).not.toHaveBeenCalled();
+    // Text line enqueues NO extraction job (blocks come from pandoc, not OCR) —
+    // but it DOES fan out the observe-only auto_enroll job post-commit
+    // (docx-ingestion.ts Codex-3: same AI-prefill/auto-enroll observe path as
+    // the visual/PDF/image entrypoints). Assert exactly that one send and that
+    // no tencent_ocr_extract sneaks in.
+    expect(bossSend).toHaveBeenCalledTimes(1);
+    expect(bossSend).toHaveBeenCalledWith('auto_enroll', {
+      sessionId: body.session_id,
+    });
   });
 
   it('visual line: mathtype docx → queued session + tencent_ocr_extract enqueued', async () => {
