@@ -112,6 +112,35 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     expect(captured.signal.aborted).toBe(true);
   });
 
+  it('records failure (not success) when the stream ends without a terminal result message', async () => {
+    // Assistant deltas arrive but the SDK stream ends WITHOUT a result message and
+    // WITHOUT throwing. The collecting variant must NOT record this as success
+    // (which would corrupt the cost ledger + run audit); it falls into the
+    // graceful-degrade path: status:'failure' / finishReason:'error' / partial:true.
+    mockSdk.messages = [assistant('orphan chunk')];
+    const deltas: string[] = [];
+
+    const result = await streamTaskCollecting('AttributionTask', { q: 'x' }, { db: fakeDb }, (t) =>
+      deltas.push(t),
+    );
+
+    expect(deltas).toEqual(['orphan chunk']);
+    expect(result.text).toBe('orphan chunk');
+    expect(result.partial).toBe(true);
+    expect(result.finishReason).toBe('error');
+    expect(result.error).toContain('without a terminal result');
+
+    // The finished row must be recorded as a failure — never success.
+    const { writeAiTaskRunFinished, writeCostLedger } = await import('@/server/ai/log');
+    expect(writeAiTaskRunFinished).toHaveBeenCalledTimes(1);
+    expect((writeAiTaskRunFinished as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]).toMatchObject({
+      status: 'failure',
+      finish_reason: 'error',
+    });
+    // No terminal result ⇒ no cost ledger write (success-only side effect).
+    expect(writeCostLedger).not.toHaveBeenCalled();
+  });
+
   it('degrades gracefully: resolves partial text when the SDK throws mid-stream', async () => {
     // Yield one delta, then throw before the result message.
     mockSdk.messages = [assistant('partial chunk'), resultMsg];

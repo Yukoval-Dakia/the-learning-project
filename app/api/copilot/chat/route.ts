@@ -53,12 +53,20 @@ export async function POST(req: Request): Promise<Response> {
         // runCopilotChatStreaming degrades internally and resolves rather than
         // throwing; this catch is the last-resort guard (e.g. the conversation
         // envelope resolve threw before any reply could be built). Emit a terminal
-        // `reply` event carrying the error so the Dock shows its error affordance.
-        controller.enqueue(
-          encodeSse('reply', {
-            error: err instanceof Error ? err.message : String(err),
-          }),
-        );
+        // `reply` event so the Dock shows its error affordance.
+        //
+        // YUK-266 — match errorResponse's sanitization contract (src/server/http/
+        // errors.ts): unhandled errors can carry DB/internal detail, so log the
+        // real message + stack server-side and emit a FIXED generic string to the
+        // client instead of raw err.message.
+        const message = err instanceof Error ? err.message : String(err);
+        const stack = err instanceof Error ? err.stack : undefined;
+        console.error('[copilot/chat] unhandled streaming error', {
+          message,
+          stack,
+          timestamp: new Date().toISOString(),
+        });
+        controller.enqueue(encodeSse('reply', { error: 'Internal Server Error' }));
       } finally {
         controller.close();
       }

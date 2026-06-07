@@ -862,6 +862,15 @@ export async function streamTaskCollecting(
   let cost_usd: number | undefined;
   let stopReason = 'unknown';
   let resultText = '';
+  // YUK-266 — guard the "no terminal result" hole. The sibling streamTask writes
+  // the cost ledger + finished(success) row INSIDE the result-success branch, so it
+  // never records success without a terminal msg.type==='result'. This collecting
+  // variant writes those after the loop, so if the SDK stream ends WITHOUT a
+  // terminal result and without throwing, an incomplete run would otherwise be
+  // recorded as success (corrupting the cost ledger + run audit). Track whether a
+  // terminal success was actually seen; if not, throw so we fall into the existing
+  // graceful-degrade catch that records status:'failure'/finish_reason:'error'.
+  let sawTerminalResult = false;
 
   try {
     const actualInput = ctx.middleware?.beforeRun
@@ -931,6 +940,7 @@ export async function streamTaskCollecting(
           };
           cost_usd = msg.total_cost_usd;
           stopReason = msg.stop_reason ?? 'stop';
+          sawTerminalResult = true;
         } else {
           const apiStatus =
             'api_error_status' in msg && msg.api_error_status
@@ -940,6 +950,14 @@ export async function streamTaskCollecting(
         }
         break;
       }
+    }
+
+    // YUK-266 — the stream ended without a terminal success result (and without
+    // throwing). Do NOT record success: throw so the graceful-degrade catch below
+    // writes status:'failure'/finish_reason:'error' and resolves partial text. This
+    // keeps the cost ledger + run audit honest, matching streamTask's invariant.
+    if (!sawTerminalResult) {
+      throw new Error(`[${kind}] Agent SDK stream ended without a terminal result message`);
     }
 
     try {

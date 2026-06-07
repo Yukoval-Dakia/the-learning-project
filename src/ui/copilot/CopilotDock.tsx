@@ -466,6 +466,14 @@ export function CopilotDock() {
   // via isOneShotSkill so follow-up free-form messages don't keep re-sending it.
   const sendQuiz = useCallback(() => {
     if (!focusedKnowledgeId) return;
+    // YUK-266 — single-flight guard. On the first SSE delta `send` flips `sending`
+    // false (to re-open the composer for the live reply) while `sendingRef.current`
+    // stays true until the turn settles. In that window the quiz chip re-enables;
+    // without this guard a click would mutate activeSkillRef to {skill:'quiz',…}
+    // and then `send('出题')` would early-return on its own sendingRef guard — the
+    // quiz turn is dropped BUT activeSkillRef is left polluted, mis-routing the
+    // user's NEXT free-form message as a quiz turn. No-op while a send is in flight.
+    if (sendingRef.current) return;
     activeSkillRef.current = {
       skill: 'quiz',
       ref: { kind: 'knowledge', id: focusedKnowledgeId },
@@ -528,9 +536,15 @@ export function CopilotDock() {
     lastHandledSeqRef.current = openRequest.seq;
     activeSkillRef.current = openRequest.skill_context;
     // YUK-272 (C3) — if the open-with-context signal carried a knowledge entity,
-    // expose it as the quiz-chip's in-scope knowledge id.
+    // expose it as the quiz-chip's in-scope knowledge id. YUK-266 — else CLEAR it:
+    // without this, opening the Dock with a non-knowledge context (e.g. a learning
+    // item) after a prior knowledge open would leave the stale knowledge id, so the
+    // quiz chip stays enabled and would generate a quiz for a no-longer-in-scope
+    // knowledge node.
     if (openRequest.skill_context?.ref.kind === 'knowledge') {
       setFocusedKnowledgeId(openRequest.skill_context.ref.id);
+    } else {
+      setFocusedKnowledgeId(null);
     }
     openDrawer();
     const prefill = openRequest.prefill;

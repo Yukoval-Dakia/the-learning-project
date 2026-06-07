@@ -1073,14 +1073,14 @@ describe('runCopilotChatStreaming (C1 — SSE streaming entrypoint)', () => {
     expect(result.error).toBe('sdk blew up mid-stream');
   });
 
-  it('defaults to streamTaskCollecting when no streamAgentTaskFn is injected (free-form path uses it, not runAgentTask)', async () => {
+  it('bypasses runAgentTask when streamAgentTaskFn is injected on the streaming path', async () => {
     const db = {} as never;
     const buildMcpServerFn = vi.fn(() => ({ name: 'fake-loom' }) as never);
-    // No streamAgentTaskFn injected → the default streamTaskCollecting would run
-    // the real SDK, which we don't want in a unit test. Instead assert the
-    // non-stream runAgentTaskFn is NEVER consulted on the streaming entrypoint by
-    // injecting a throwing one and a stub stream fn together is covered above; here
-    // we only assert the runAgentTask seam is bypassed when a stream fn IS given.
+    // The streaming entrypoint must consult streamAgentTaskFn, NOT the non-stream
+    // runAgentTaskFn. Inject a throwing runAgentTaskFn alongside a stub stream fn and
+    // assert the runAgentTask seam is bypassed when a stream fn IS given. (The real
+    // default — streamTaskCollecting when no stream fn is injected — runs the live
+    // SDK and is covered by runner.stream-collect.test.ts, not here.)
     const runAgentTaskFn = vi.fn(async () => {
       throw new Error('runAgentTask must not run on the streaming path');
     });
