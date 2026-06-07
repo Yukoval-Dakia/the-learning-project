@@ -64,4 +64,39 @@ describe('classifyDocx', () => {
     const bytes = zipSync({ 'word/document.xml': enc.encode(doc) });
     expect(classifyDocx(bytes)).toBe('visual');
   });
+
+  // codex-5 / coderabbit-C — selective inflation: only word/document*.xml is
+  // decompressed. A large non-document entry must NOT block classification (it is
+  // never inflated by the filter).
+  it('classifies despite a large irrelevant archive entry (entry is not inflated)', async () => {
+    const { zipSync } = await import('fflate');
+    const enc = new TextEncoder();
+    const doc = '<?xml version="1.0"?><w:document xmlns:w="x">plain text paper</w:document>';
+    // A 60MB highly-compressible blob in a non-doc part — would balloon the heap
+    // if inflated, but the filter skips it so classification stays text.
+    const bigMedia = new Uint8Array(60_000_000); // all zeros → compresses tiny
+    const bytes = zipSync({
+      'word/document.xml': enc.encode(doc),
+      'word/media/huge.bin': bigMedia,
+    });
+    expect(classifyDocx(bytes)).toBe('text');
+  });
+
+  // Zip-bomb guard: a document.xml whose DECOMPRESSED size blows past the ceiling
+  // is rejected with a 400 before fflate inflates it.
+  it('rejects a document.xml that decompresses past the ceiling → 400', async () => {
+    const { zipSync } = await import('fflate');
+    // 60MB of zeros compresses to a tiny zip but reports originalSize 60MB,
+    // exceeding MAX_DECOMPRESSED_PART_BYTES (50MB).
+    const huge = new Uint8Array(60_000_000);
+    const bytes = zipSync({ 'word/document.xml': huge });
+    try {
+      classifyDocx(bytes);
+      expect.unreachable('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError);
+      expect((err as ApiError).status).toBe(400);
+      expect((err as ApiError).message).toMatch(/解压后过大/);
+    }
+  });
 });

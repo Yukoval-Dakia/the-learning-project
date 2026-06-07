@@ -1,4 +1,4 @@
-import { unzipSync } from 'fflate';
+import { type UnzipFileInfo, unzipSync } from 'fflate';
 
 import { ApiError } from '@/server/http/errors';
 
@@ -29,6 +29,16 @@ const MATHTYPE_PROGID_PREFIX = 'ProgID="Equation';
 // producers split content across document2.xml — count both if present.
 const DOC_XML_PARTS = ['word/document.xml', 'word/document2.xml'];
 
+// Codex-5 / CodeRabbit-C — classification only needs the document body XML, but
+// unzipSync without a filter inflates EVERY archive entry into memory. A ≤20MB
+// .docx with a high-ratio payload (e.g. a deeply-compressed media blob) would
+// then balloon the request worker's heap before any converter timeout. We pass
+// a filter so only DOC_XML_PARTS are inflated, and reject any single body part
+// whose DECOMPRESSED size exceeds this ceiling (a real document.xml for an exam
+// is a few MB at most; 50MB is a generous zip-bomb guard that never trips on a
+// legitimate paper).
+const MAX_DECOMPRESSED_PART_BYTES = 50_000_000;
+
 function decodeXml(bytes: Uint8Array): string {
   return new TextDecoder('utf-8').decode(bytes);
 }
@@ -41,10 +51,30 @@ function decodeXml(bytes: Uint8Array): string {
  * that into a loud 400 rather than guessing a line.
  */
 export function classifyDocx(docxBytes: Uint8Array): DocxLine {
+  const docXmlParts = new Set<string>(DOC_XML_PARTS);
   let entries: Record<string, Uint8Array>;
   try {
-    entries = unzipSync(docxBytes);
-  } catch {
+    // Only inflate the document body XML part(s); the filter runs per-entry
+    // BEFORE inflation, so the archive's media/styles/etc. are never
+    // decompressed. Reject a body part whose decompressed size is implausibly
+    // large (zip-bomb guard) before fflate inflates it.
+    entries = unzipSync(docxBytes, {
+      filter: (file: UnzipFileInfo) => {
+        if (!docXmlParts.has(file.name)) return false;
+        if (file.originalSize > MAX_DECOMPRESSED_PART_BYTES) {
+          throw new ApiError(
+            'validation_error',
+            '无法解析 DOCX（word/document.xml 解压后过大，可能是异常文件）',
+            400,
+          );
+        }
+        return true;
+      },
+    });
+  } catch (err) {
+    // Re-throw our own zip-bomb 400 unchanged; map any fflate parse failure to
+    // the generic corrupt-docx 400.
+    if (err instanceof ApiError) throw err;
     throw new ApiError('validation_error', '无法解析 DOCX（文件可能损坏或不是有效 .docx）', 400);
   }
 

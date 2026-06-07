@@ -376,6 +376,7 @@ export function VisionTab({ mode }: { mode: Mode }) {
     if (!list || list.length === 0) return;
     const all = Array.from(list);
     const pdfs = all.filter(isPdf);
+    const docxs = all.filter(isDocx);
     setPdfPageCount(null);
     if (pdfs.length > 0) {
       // PDF is a single-file pick that expands server-side. Reject a mixed
@@ -383,6 +384,21 @@ export function VisionTab({ mode }: { mode: Mode }) {
       if (all.length > 1) {
         setFiles([]);
         setErrorMessage('PDF 请单独上传（不要和图片或其它 PDF 混选）');
+        return;
+      }
+      setFiles([all[0]]);
+      setErrorMessage(null);
+      return;
+    }
+    if (docxs.length > 0) {
+      // DOCX, like PDF, is a single-file server-side pick (the docx dispatch
+      // requires selectedFiles.length === 1). Reject a mixed DOCX + image / multi
+      // -DOCX selection inline (coderabbit-d) — otherwise the .docx would fall
+      // through to the image upload path and be POSTed as a plain image asset,
+      // with the file-list UI misleadingly showing only files[0].
+      if (all.length > 1) {
+        setFiles([]);
+        setErrorMessage('DOCX 请单独上传（不要和图片或其它文件混选）');
         return;
       }
       setFiles([all[0]]);

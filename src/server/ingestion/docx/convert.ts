@@ -127,8 +127,12 @@ function runProcess(cmd: string, args: string[], opts?: { cwd?: string }): Promi
   });
 }
 
-// File mode honouring umask (project rule: never hardcode 0o644).
-const FILE_MODE = 0o666 & ~process.umask(process.umask());
+// File mode honouring umask (project rule: never hardcode 0o644). Read the umask
+// once into a local instead of the read-via-setter idiom
+// (process.umask(process.umask())), which momentarily mutates process-global
+// state (coderabbit-e).
+const CURRENT_UMASK = process.umask();
+const FILE_MODE = 0o666 & ~CURRENT_UMASK;
 
 async function withTmpDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   const dir = await fs.mkdtemp(join(tmpdir(), 'yuk258-docx-'));

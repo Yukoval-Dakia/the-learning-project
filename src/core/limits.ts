@@ -21,3 +21,10 @@ export const MAX_DOCX_PAGES = MAX_PDF_PAGES;
 // XML + compressed media — even a media-heavy exam stays well under this. Route
 // validates before any conversion spawn.
 export const MAX_DOCX_UPLOAD_BYTES = 20_000_000;
+
+// Per-image byte cap, single source of truth (YUK-250 limits pattern). Enforced
+// by the generic asset upload route (app/api/assets/route.ts) and the DOCX
+// embedded-media persist path (app/api/ingestion/docx/route.ts) so an image
+// embedded inside an under-cap .docx can't create a source_asset that diverges
+// from the limit every other image path honours (codex-4).
+export const MAX_IMAGE_UPLOAD_BYTES = 8_000_000;

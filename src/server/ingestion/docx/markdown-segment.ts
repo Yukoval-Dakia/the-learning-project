@@ -89,7 +89,11 @@ function extractImagePath(line: string): string | null {
 // pandoc references media as `media/imageN.png`, `./media/imageN.png`, or an
 // absolute tmp path depending on --extract-media. Normalize to the trailing
 // `media/<name>` form the manifest + persist stage key on.
-function normalizeMediaPath(raw: string): string {
+//
+// Exported so the route's pathToAssetId map keys go through the SAME
+// normalization as segmentMarkdown's imagePaths lookup (coderabbit-b): the two
+// sides must agree regardless of what raw path form a future converter emits.
+export function normalizeMediaPath(raw: string): string {
   const idx = raw.lastIndexOf('media/');
   return idx >= 0 ? raw.slice(idx) : raw;
 }

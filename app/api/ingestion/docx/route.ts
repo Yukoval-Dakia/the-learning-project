@@ -1,9 +1,9 @@
-import { MAX_DOCX_UPLOAD_BYTES } from '@/core/limits';
+import { MAX_DOCX_UPLOAD_BYTES, MAX_IMAGE_UPLOAD_BYTES } from '@/core/limits';
 import { db } from '@/db/client';
 import { getStartedBoss } from '@/server/boss/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { getDocxConverter } from '@/server/ingestion/docx/convert';
-import { segmentMarkdown } from '@/server/ingestion/docx/markdown-segment';
+import { normalizeMediaPath, segmentMarkdown } from '@/server/ingestion/docx/markdown-segment';
 import { persistDocxPageEvidence } from '@/server/ingestion/docx/persist-page-evidence';
 import { classifyDocx } from '@/server/ingestion/docx/route-classify';
 import { persistImageAsset } from '@/server/ingestion/persist-image-asset';
@@ -98,12 +98,26 @@ export async function POST(req: Request): Promise<Response> {
       throw new ApiError('validation_error', 'DOCX 未能切出任何题', 400);
     }
 
-    // Persist embedded images → asset ids, keyed by their relative media path so
-    // each block's imagePaths can be swapped for asset_ids.
+    // Persist embedded images → asset ids, keyed by their NORMALIZED relative
+    // media path (coderabbit-b: segmentMarkdown looks these up via
+    // normalizeMediaPath, so the map key must use the same normalization or refs
+    // silently drop when a converter emits './media/…' or an absolute path).
     const pathToAssetId = new Map<string, string>();
     for (const m of media) {
+      // codex-4 — enforce the same per-image byte cap the generic asset route
+      // applies (MAX_IMAGE_UPLOAD_BYTES). A .docx under the 20MB cap can embed a
+      // single oversized image (e.g. uncompressed BMP); skip it rather than
+      // create an oversized source_asset that diverges from every other image
+      // path's limit. The block's prompt/options still import — only the
+      // oversized decorative figure is dropped.
+      if (m.bytes.byteLength > MAX_IMAGE_UPLOAD_BYTES) {
+        console.warn(
+          `[docx] skipping embedded image ${m.path}: ${m.bytes.byteLength} bytes exceeds ${MAX_IMAGE_UPLOAD_BYTES} cap`,
+        );
+        continue;
+      }
       const row = await persistImageAsset(db, r2, { bytes: m.bytes, mime: mimeForMedia(m.path) });
-      pathToAssetId.set(m.path, row.id);
+      pathToAssetId.set(normalizeMediaPath(m.path), row.id);
     }
 
     // Evidence page images (原图同步存储不变式 — text line也存证).
