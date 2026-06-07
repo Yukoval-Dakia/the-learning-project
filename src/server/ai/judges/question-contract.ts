@@ -127,7 +127,11 @@ export function buildLocalJudgeQuestion(
   if (route === 'unit_dimension') {
     return { metadata: q.metadata ?? null, prompt_md: q.prompt_md };
   }
-  return { reference: q.reference_md ?? '' };
+  // YUK-260: the exact judge needs choices_md to resolve letter-form answers
+  // ("A" / "BC") against option text. It was dropped here, so choice questions
+  // whose reference stored the option text (or letter) never matched the
+  // letter (or text) the UI submitted.
+  return { reference: q.reference_md ?? '', choices_md: q.choices_md ?? [] };
 }
 
 export function semanticInput(
