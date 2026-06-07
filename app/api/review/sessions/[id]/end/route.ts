@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { db } from '@/db/client';
 import { getStartedBoss } from '@/server/boss/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
+import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { Review } from '@/server/session';
 
 export const runtime = 'nodejs';
@@ -59,11 +60,12 @@ export async function POST(
       // is down the session still closes successfully and summary stays null
       // (the /learning-sessions/[id] UI shows a stub in that case).
       //
-      // Skip in vitest — the singleton boss instance + per-route invocation
-      // bloats the testcontainer's connection pool past max_connections,
-      // tipping over src/server/boss/client.test.ts. The summary handler is
-      // covered by its own unit test (src/server/session/summary.test.ts).
-      if (!process.env.VITEST) {
+      // Skipped in tests via the shared shouldEnqueueBackgroundJobs() (YUK-239)
+      // — the singleton boss instance + per-route invocation bloats the
+      // testcontainer's connection pool past max_connections, tipping over
+      // src/server/boss/client.test.ts. The summary handler is covered by its
+      // own unit test (src/server/session/summary.test.ts).
+      if (shouldEnqueueBackgroundJobs()) {
         try {
           const boss = await getStartedBoss();
           await boss.send('session_summary', { session_id: id });

@@ -103,7 +103,7 @@ Question (统一题库，single source of truth)
 
 ### 5.1 Task 注册
 
-> **Canonical source**: `src/ai/registry.ts` + `docs/adr/0004-pattern-c-two-type-agent-architecture.md` §"Task 现状"。本节为同步快照（2026-05-24）。
+> **Canonical source**: `src/ai/registry.ts` + `docs/adr/0004-pattern-c-two-type-agent-architecture.md` §"Task 现状"。本节为同步快照（2026-06-06）。**这是主要 task 的人读概览，不是完整清单**——精确数量与字段以 `src/ai/registry.ts` 的 `tasks` 对象为权威（当前 35 个 task）。
 
 **当前 registry**（runner + registry 都通；实际触发看 route / pg-boss handler）：
 
@@ -127,8 +127,25 @@ Question (统一题库，single source of truth)
 | `UnitDimensionFallback` | mimo-v2.5-pro | judge router (unit_dimension fallback, YUK-36) | 否 | — | natural-language unit / dimension parse when mathjs cannot |
 | `StepsJudgeTask` | mimo-v2.5 | judge router (steps@1 partial credit) | 否 | 输入 | vision-aware math derivation step judging |
 | `VariantVerifyTask` | mimo-v2.5-pro | pg-boss `variant_verify` (YUK-17 / ADR-0018) | 否 | — | second-pass content alignment for accepted mistake variant; verdict='fail' → mistake_variant.status='broken' |
+| `MultimodalDirectJudgeTask` | mimo-v2.5 | judge router (multimodal_direct route, YUK-201) | 否 | 输入 | holistic vision-aware answer judging（无 step-rubric 的带图题）|
+| `StructureTask` | mimo-v2.5 | OCR extraction job（tencent_ocr_extract handler, YUK-145 OC-1/2） | 否 | 输入 | N 页图 + OCR hint → 规范结构树 |
+| `TaggingTask` | mimo-v2.5 | auto-enroll server path (YUK-145 OC-4) | 否 | — | 题面 + 网格 → knowledge_id 建议 + confidence |
+| `BlockAssemblyTask` | mimo-v2.5 | auto-enroll server pass (YUK-202) | 否 | — | 相邻 draft block 合并候选（propose-only）|
+| `MistakeEnrollTask` | mimo-v2.5-pro | auto-enroll observe path (YUK-145 OC-5) | 否 | — | 录入题错题元数据草稿（observe-only）|
+| `NoteRefineTask` | mimo-v2.5-pro | pg-boss `note_refine` (T-88 P4-A) | 否 | — | Living Note refine → NotePatch ops |
+| `SolutionGenerateTask` | mimo-v2.5-pro | solve orchestrator lazy-gen (YUK-193) | 否 | — | bare question → reference + worked solution |
+| `GoalScopeTask` | mimo-v2.5-pro | `/api/goals` scope 提议 (YUK-143 / ADR-0024) | 否 | — | goal → scope_knowledge_ids + sequence_hint proposal |
+| `MemoryBriefTask` | mimo-v2.5-pro | nightly brief sweep (YUK-185 / ADR-0017) | 否 | — | per-scope 3-window memory brief（带 evidence ids）|
+| `ProfileCriticTask` | mimo-v2.5-pro | compile CLI `--critic` (YUK-203 U7) | 否 | — | draft SubjectProfile 评审 + patch 建议（proposal-only）|
+| `ReviewPlanTask` | mimo-v2.5-pro | coach_daily chain (YUK-203 U4/D5) | 是 | — | tactical review_plan（4-tool surface, tool_quiz artifact）|
+| `DreamingTask` | mimo-v2.5-pro | pg-boss nightly (Foundation D) | 是 | — | 夜间学习信号 → inbox proposals（DomainTools）|
+| `CoachTask` | mimo-v2.5-pro | pg-boss `coach_daily` / `coach_weekly` (T-D6) | 是 | — | TodayPlan JSON（propose_* 写 inbox）|
+| `CopilotTask` | mimo-v2.5-pro | `/api/chat`（AF S4 / YUK-203） | 是 | — | 唯一面向用户的对话式学习助手 |
+| `QuizGenTask` | mimo-v2.5-pro | pg-boss `quiz_gen` (T-SQ) | 是 | — | search-grounded 原创题（Tavily + domain MCP）|
+| `QuizVerifyTask` | mimo-v2.5-pro | pg-boss `quiz_verify` (T-SQ Q5) | 否 | — | closed-book 出题校验（fact/copy_safety/knowledge-hit）|
+| `SourcingTask` | mimo-v2.5-pro | pg-boss `sourcing` (YUK-216 S2) | 是 | — | web-sourced 题（draft, tier 2）+ source_verify chain |
 
-**与旧 ADR 版本差异**：原计划的 `EnrichMistakeTask` 已拆分为 `AttributionTask`（归因）+ `KnowledgeProposeTask`（知识点提议）。VisionExtract* 在 ADR-0002 修订（2026-05-11）中改为 manual rescue tool，不参与自动 cascade。`DreamingTask` / `MaintenanceProposeTask` / `BlockAssemblyTask` 作为 lane 级编排概念保留，但当前 registry 以更具体的 task 和 pg-boss handler 承载。
+**与旧 ADR 版本差异**：原计划的 `EnrichMistakeTask` 已拆分为 `AttributionTask`（归因）+ `KnowledgeProposeTask`（知识点提议）。VisionExtract* 在 ADR-0002 修订（2026-05-11）中改为 manual rescue tool，不参与自动 cascade。`DreamingTask` / `CoachTask` / `BlockAssemblyTask` 早期作为 lane 级编排概念保留，现已落地为 registry 中的具体 task + 对应 pg-boss handler（见上表）。
 
 **命名约定**：Task 一律 `PascalCase + 'Task'` 后缀；破坏性操作（删题、合并节点）走 Proposal/Suggestion 流程而非直接 tool（per ADR-0004）。
 

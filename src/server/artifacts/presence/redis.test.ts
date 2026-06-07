@@ -4,7 +4,7 @@
 // reject, plus a vi.mock'd persistNoteRefineApply so no live DB / Redis is
 // touched. Asserts each method degrades to its safe default instead of throwing.
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RedisPresenceStore } from './redis';
 import type { EnqueueOrApplyInput, RecordHeartbeatInput } from './types';
@@ -45,6 +45,15 @@ describe('RedisPresenceStore — fail-safe degradation on Redis failure (YUK-171
       artifact_version: 1,
     });
     warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  // vitest 4: the per-test `vi.spyOn(console, 'warn')` is no longer implicitly
+  // restored between tests (vitest 2 cleaned it up under the hood), so without an
+  // explicit restore each new spy wraps the previous one and `warn` call counts
+  // accumulate across tests (1 → 3 → 4 → 5). Restore after every test so each
+  // assertion sees only its own single warn. (restoreMocks default stays false.)
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   function store() {

@@ -18,6 +18,7 @@
 
 import { ApiAuthError, ApiError, apiJson } from '@/ui/lib/api';
 import { expandPdf, uploadAsset, useAssetUrl } from '@/ui/lib/assets';
+import { type AutoEnrollObservation, seedBlockForm } from '@/ui/lib/auto-enroll';
 import { causeOptionsForSelectedKnowledge } from '@/ui/lib/cause-options';
 import { useIngestionSSE } from '@/ui/lib/sse';
 import { formatRelTime } from '@/ui/lib/utils';
@@ -80,7 +81,7 @@ interface StructuredNode {
   sub_questions?: StructuredNode[];
 }
 
-interface BlockRow {
+export interface BlockRow {
   id: string;
   ingestion_session_id: string;
   source_asset_ids: string[];
@@ -96,8 +97,14 @@ interface BlockRow {
   image_refs: string[];
   layout_quality: 'structured' | 'partial' | 'text_only';
   extraction_confidence: number;
-  status: 'draft' | 'imported' | 'ignored';
+  // 4-state question_block union (business.ts:145). `auto_enrolled` only appears
+  // once WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED is ON; observe-only prod stays draft.
+  status: 'draft' | 'imported' | 'ignored' | 'auto_enrolled';
   knowledge_hint: string | null;
+  // YUK-164 OC-5: per-block AI auto-enroll observation surfaced by the blocks
+  // route. Drives the AI prefill (seedBlockForm) + the "AI 预填" badge. `null`
+  // when the judge wrote no observation for this block.
+  auto_enroll_observation: AutoEnrollObservation | null;
   created_at: number;
 }
 
@@ -178,15 +185,17 @@ export function VisionTab({ mode }: { mode: Mode }) {
       for (const b of rows) {
         if (seededBlockIdsRef.current.has(b.id)) continue;
         seededBlockIdsRef.current.add(b.id);
+        // OCR-derived text fields come straight off the block; the AI-prefillable
+        // fields (knowledge_ids / cause_primary / cause_notes / question_kind /
+        // difficulty) come from seedBlockForm, which maps b.auto_enroll_observation
+        // when present and falls back to today's defaults otherwise. knowledge_ids
+        // + cause_primary are seeded together so the self-heal effect below
+        // (cause_primary ∉ causeOptions → clear) admits a valid seeded cause.
         next[b.id] = {
+          ...seedBlockForm(b),
           prompt_md: b.extracted_prompt_md ?? '',
           reference_md: b.reference_md ?? '',
           wrong_answer_md: b.wrong_answer_md ?? '',
-          knowledge_ids: [],
-          cause_primary: '',
-          cause_notes: '',
-          question_kind: 'short_answer',
-          difficulty: 3,
           ignored: false,
         };
       }
@@ -570,7 +579,10 @@ export function VisionTab({ mode }: { mode: Mode }) {
   );
 }
 
-interface BlockEditorProps {
+// Exported for the static-HTML test (VisionTab.test.tsx) — BlockEditor renders
+// the "AI 预填，可改" badge from primary.auto_enroll_observation and is
+// renderToString-safe (its useState/useMemo/useEffect only need initial render).
+export interface BlockEditorProps {
   primary: BlockRow;
   followers: BlockRow[];
   primaryIndex: number;
@@ -584,7 +596,7 @@ interface BlockEditorProps {
   rescuing: boolean;
 }
 
-function BlockEditor({
+export function BlockEditor({
   primary,
   followers,
   primaryIndex,
@@ -644,6 +656,15 @@ function BlockEditor({
         <Badge tone="neutral">conf {(primary.extraction_confidence * 100).toFixed(0)}%</Badge>
         <span style={metaStyle}>{formatRelTime(new Date(primary.created_at * 1000))}</span>
         {followers.length > 0 && <Badge tone="info">merged · {followers.length + 1} blocks</Badge>}
+        {/* YUK-164 OC-5: AI prefill marker. info-blue tone = AI actor (round2a
+            §1.3); the literal "AI 预填，可改" text is the non-color cue. Present
+            only when the judge produced an observation for this block. */}
+        {primary.auto_enroll_observation && (
+          <Badge tone="info">
+            <Icon name="spark" size={12} />
+            AI 预填，可改
+          </Badge>
+        )}
         <span style={{ flex: 1 }} />
         {canMergeIntoPrev && (
           <Button

@@ -28,6 +28,7 @@ import {
   dismissAiProposal,
   retractAiProposal,
 } from './actions';
+import type { ImageCandidateAcceptDeps } from './image-candidate-accept';
 import { writeAiProposal } from './writer';
 
 const KNOWLEDGE_BASE = {
@@ -1753,18 +1754,32 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
     const fetchImageBytesFn =
       overrides.fetchImageBytesFn ??
       vi.fn(async () => ({ bytes: new Uint8Array([1, 2, 3, 4]), mimeType: 'image/png' }));
+    // vitest 4 widened `vi.fn()` to `Mock<Procedure | Constructable>` (it now also
+    // carries a `new` signature), so a bare mock no longer narrows to the plain
+    // function shapes on ImageCandidateAcceptDeps. Cast each seam mock to its
+    // interface field type when wiring `deps` — the mocks are structurally valid
+    // callables, so this only pins the static type; runtime behavior is unchanged.
+    // (The returned top-level mocks stay `Mock` so tests can still assert on them.)
+    const deps: ImageCandidateAcceptDeps = {
+      runTaskFn: runTaskFn as unknown as ImageCandidateAcceptDeps['runTaskFn'],
+      enqueueSourceVerify:
+        enqueueSourceVerify as unknown as ImageCandidateAcceptDeps['enqueueSourceVerify'],
+      r2: r2 as never,
+      fetchImageBytesFn:
+        fetchImageBytesFn as unknown as ImageCandidateAcceptDeps['fetchImageBytesFn'],
+      ...(overrides.writeCostLedgerFn
+        ? {
+            writeCostLedgerFn:
+              overrides.writeCostLedgerFn as unknown as ImageCandidateAcceptDeps['writeCostLedgerFn'],
+          }
+        : {}),
+    };
     return {
       runTaskFn,
       enqueueSourceVerify,
       r2,
       fetchImageBytesFn,
-      deps: {
-        runTaskFn,
-        enqueueSourceVerify,
-        r2: r2 as never,
-        fetchImageBytesFn,
-        ...(overrides.writeCostLedgerFn ? { writeCostLedgerFn: overrides.writeCostLedgerFn } : {}),
-      },
+      deps,
     };
   }
 

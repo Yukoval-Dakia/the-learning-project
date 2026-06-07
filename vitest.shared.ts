@@ -24,6 +24,12 @@ export const fastTestInclude = [
   'src/ai/**/*.test.ts',
   'src/core/**/*.test.ts',
   'src/server/ai/judges/**/*.test.ts',
+  // YUK-238 / YUK-240 — streamTask client-disconnect abort + stuck-run warn.
+  // Pure no-DB unit: @anthropic-ai/claude-agent-sdk and @/server/ai/log are
+  // vi.mock'd and `db` is an untouched stub, so no live Postgres is needed.
+  // (The sibling runner.test.ts stays in the db partition because it drives the
+  // real ai/log writers against a container.)
+  'src/server/ai/stream-cancel.test.ts',
   'src/server/ai/tools/registry.test.ts',
   'src/server/ai/tools/allowlists.test.ts',
   'src/server/ai/tools/mcp-bridge.test.ts',
@@ -100,6 +106,11 @@ export const fastTestInclude = [
   'src/server/ingestion/tencent_mark_parser.test.ts',
   'src/server/ingestion/vision.test.ts',
   'src/server/judge/**/*.test.ts',
+  // YUK-239 (STB-5) — pure env-read guard for the background-job enqueue seam
+  // (shouldEnqueueBackgroundJobs). No DB / pg-boss touched (vi.stubEnv only).
+  // Lives at src/server/runtime-env.ts (NOT under src/server/boss/) precisely so
+  // it stays out of the partition auditor's DB_TAINTED_DIRS.
+  'src/server/runtime-env.test.ts',
   // YUK-216 S2 slice 1 — pure (no-DB) verify-gate framework + solve-check unit.
   // runSolveCheck takes an injected runTaskFn (mocks BOTH the SolutionGenerate
   // solver and the SemanticJudge open-question compare), and `db` is a `{}` stub
@@ -125,6 +136,11 @@ export const fastTestInclude = [
   // gate-behavior + RB-7 regression tests (rubric-validator.test.ts) hit live
   // Postgres → db partition.
   'src/server/knowledge/rubric-validator.unit.test.ts',
+  // YUK-236 [STB-2] — pure (no-DB) coverage for the loadTreeSnapshot OOM-guard
+  // truncation warn. Imports only ./tree (value-imports @/db/schema pure table
+  // objects + drizzle-orm; @/db/client is type-only). The `.limit(5000)` query
+  // bound + parent-chain semantics stay in tree.test.ts (db partition).
+  'src/server/knowledge/tree.unit.test.ts',
   // P5.4-L2 / YUK-174 — pure (no-DB) adaptive-bias decision helpers
   // (computeGateBump / relation parse / findFeedbackCell). The DB-touching
   // getProposalFeedbackDigest is covered by adaptive-bias.test.ts (DB partition).
@@ -190,11 +206,18 @@ export const fastTestInclude = [
   // the route; it only validates + enqueues (no @/db/client import), so it has
   // no live-Postgres dependency → unit partition (search-grounded QuizGen wave).
   'app/api/questions/quiz-gen/route.test.ts',
+  // YUK-234 (SEC-4) — pure Zod-parse unit for the import request-body bounds
+  // (per-array .max() ceilings). schema.ts has no DB / R2 / AI import; the
+  // route's DB-backed behavior stays in import/route.test.ts (db partition).
+  // `*` matches the literal `[id]` dynamic segment (mirrors the revert glob).
+  'app/api/ingestion/*/import/schema.test.ts',
   'tests/core/**/*.test.ts',
   'tests/schema/**/*.test.ts',
   'tests/subjects/**/*.test.ts',
   'tests/integration/judge-gap-audit.test.ts',
   'tests/integration/session-single-owner.test.ts',
+  // Audit 2026-06-06 G8-docs — pure-fs doc invariants (YUK-242/243/244), no DB/AI.
+  'tests/integration/audit-docs-invariant.test.ts',
   'tests/integration/step12-docs-invariant.test.ts',
   'tests/integration/step9-invariant-audit.test.ts',
 ];

@@ -1,6 +1,7 @@
 import type { Db } from '@/db/client';
 import { getStartedBoss } from '@/server/boss/client';
 import type { NoteRefineTriggerKind } from '@/server/boss/handlers/note-refine';
+import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 
 export const NOTE_REFINE_TRIGGER_DEBOUNCE_MS = 60 * 60_000;
 
@@ -67,7 +68,10 @@ export async function enqueueNoteRefineTrigger(input: {
     return { status: 'skipped:debounced', artifact_id: input.artifactId, kind: input.kind };
   }
 
-  if (!input.bossSend && process.env.VITEST) {
+  // Same hazard class as YUK-239 (STB-5): a bare VITEST key would silently skip
+  // real enqueues if prod ever set it. Route through the central guard (NODE_ENV
+  // === 'test' OR VITEST) — injected bossSend (test fakes) still bypasses the skip.
+  if (!input.bossSend && !shouldEnqueueBackgroundJobs()) {
     return { status: 'skipped:test_env', artifact_id: input.artifactId, kind: input.kind };
   }
 
