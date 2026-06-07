@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   COACH_CONTEXT_BUDGET,
   COPILOT_CONTEXT_BUDGET,
+  COPILOT_HISTORY_BUDGET,
   DREAMING_CONTEXT_BUDGET,
   KNOWLEDGE_EXCERPT_MAX,
   MISTAKE_PROMPT_SNIPPET_MAX,
@@ -64,6 +65,16 @@ describe('context budgets — locked constants', () => {
       maxRubricGatesPerCell: 3,
       maxChars: 180,
       maxSerializedChars: 1200,
+    });
+  });
+
+  // YUK-267 (C2) — lock the conversation-history caps so a later edit can't silently
+  // change the 防循环 ④ double-truncation budget.
+  it('COPILOT_HISTORY_BUDGET matches the C2 spec numbers (8 / 800 / 4000)', () => {
+    expect(COPILOT_HISTORY_BUDGET).toEqual({
+      maxTurns: 8,
+      perTurnChars: 800,
+      totalChars: 4000,
     });
   });
 
