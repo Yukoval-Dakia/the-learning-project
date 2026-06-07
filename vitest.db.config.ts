@@ -5,6 +5,7 @@ import {
   fastTestInclude,
   migrationSmokeInclude,
   resolveConfig,
+  sharedEsbuild,
   sharedExclude,
 } from './vitest.shared';
 
@@ -16,15 +17,13 @@ if (isListCommand) {
 }
 
 export default defineConfig({
-  // YUK-279 — JSX transform parity with vitest.unit.config.ts. Once allTestInclude
-  // collects `.test.tsx`, any component test NOT on the unit allowlist falls
-  // through to this db partition. tsconfig has `jsx: "preserve"` (Next transforms
-  // JSX at build), so without esbuild's automatic runtime here a db-partition
-  // `.test.tsx` crashes with `React is not defined`. Mirror the unit config so a
-  // routed `.tsx` actually runs instead of swapping one silent failure for another.
-  esbuild: {
-    jsx: 'automatic',
-  },
+  // YUK-279 — JSX transform parity with vitest.unit.config.ts via the shared
+  // sharedEsbuild const. Once allTestInclude collects `.test.tsx`, any component
+  // test NOT on the unit allowlist falls through to this db partition. tsconfig has
+  // `jsx: "preserve"` (Next transforms JSX at build), so without esbuild's automatic
+  // runtime here a db-partition `.test.tsx` crashes with `React is not defined`.
+  // Importing the same const both configs use means the transform can never drift.
+  esbuild: sharedEsbuild,
   test: {
     include: allTestInclude,
     exclude: [...sharedExclude, ...fastTestInclude, ...migrationSmokeInclude],
