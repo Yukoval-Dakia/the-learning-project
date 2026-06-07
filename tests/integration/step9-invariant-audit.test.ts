@@ -213,6 +213,12 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
     //     createIngestionPaper packs an imported ingestion session's questions
     //     into an `ingestion_paper` tool_quiz artifact (ingest→practice
     //     bridge). Single INSERT, idempotent by source_ref=sessionId.
+    //   - YUK-262 `src/server/copilot/skills/quiz-skill.ts`: the Copilot quiz
+    //     skill assembles a runnable `tool_quiz` paper from the existing S2 pool
+    //     and persists it so "给我出套题" lands in /practice/[id] instead of an
+    //     inline text-spray. Single INSERT in one transaction (intent_source
+    //     reuses quiz_gen; attrs.origin='copilot_quiz_skill' disambiguates).
+    //     Mirrors the make-paper / write_review_plan single-owner separation.
     // Anything else writing `artifact` should still be reviewed.
     const hits = await findWriteHits('artifact', { roots: SCAN_RUNTIME_ROOTS });
     const ALLOWED = [
@@ -234,6 +240,11 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
       // artifact (the ingest→practice bridge). Single INSERT, idempotent
       // by source_ref=sessionId; the make-paper route's only write.
       'src/server/ingestion/make-paper.ts',
+      // YUK-262 — the Copilot quiz skill assembles a runnable tool_quiz paper
+      // from the existing S2 pool and persists it so "给我出套题" lands in
+      // /practice/[id] instead of an inline text-spray. Single INSERT in one
+      // transaction; the quiz skill's ONLY write.
+      'src/server/copilot/skills/quiz-skill.ts',
     ];
     const unexpected = hits.filter((h) => !ALLOWED.includes(h.split(path.sep).join('/')));
     expect(
