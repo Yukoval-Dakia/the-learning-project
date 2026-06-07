@@ -5,10 +5,23 @@
 // envelope ({ items, families, total, truncated, computed_at_sec }).
 
 import { newId } from '@/core/ids';
-import { question } from '@/db/schema';
+import { knowledge, question } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { GET } from './route';
+
+async function seedKnowledge(id: string, domain: string): Promise<string> {
+  await testDb()
+    .insert(knowledge)
+    .values({
+      id,
+      name: `node ${id}`,
+      domain,
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+  return id;
+}
 
 async function seedQuestion(opts: {
   id?: string;
@@ -122,6 +135,27 @@ describe('GET /api/questions', () => {
     const body = (await res.json()) as ListBody;
     expect(body.families).not.toBeNull();
     expect(body.total).toBe(2);
+  });
+
+  it('filters by subject query param (derived knowledge join)', async () => {
+    const wenyanK = await seedKnowledge(newId(), 'wenyan');
+    const mathK = await seedKnowledge(newId(), 'math');
+    const qWenyan = await seedQuestion({ knowledge_ids: [wenyanK] });
+    await seedQuestion({ knowledge_ids: [mathK] });
+
+    const res = await GET(mkReq('?subject=wenyan'));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as ListBody;
+    expect(body.total).toBe(1);
+    expect(body.items.map((i) => i.id)).toEqual([qWenyan]);
+  });
+
+  it('returns empty for a subject that labels no questions', async () => {
+    await seedQuestion({ knowledge_ids: [await seedKnowledge(newId(), 'wenyan')] });
+    const res = await GET(mkReq('?subject=does-not-exist'));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as ListBody;
+    expect(body.total).toBe(0);
   });
 
   it('rejects invalid difficulty with 400', async () => {
