@@ -3,11 +3,15 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  answerMdToSelection,
+  deriveMultiSelect,
   indexToLetter,
+  isNormalizedLabel,
   isReferenceChoice,
   keyToIndex,
   letterToIndex,
   parseSelection,
+  selectionToAnswerMd,
   serializeSelection,
   toggleChoice,
   toggleMulti,
@@ -96,6 +100,70 @@ describe('toggleChoice (entry point)', () => {
   });
 });
 
+describe('selectionToAnswerMd (submit-time letter → option text expansion)', () => {
+  const choices = ['苏轼', '苏洵', '苏辙', '欧阳修'];
+  it('expands a single letter to its option text (grading fix)', () => {
+    expect(selectionToAnswerMd('B', choices)).toBe('苏洵');
+    expect(selectionToAnswerMd('A', choices)).toBe('苏轼');
+  });
+  it('expands multi letters to newline-joined option texts in ascending order', () => {
+    expect(selectionToAnswerMd('BC', choices)).toBe('苏洵\n苏辙');
+    expect(selectionToAnswerMd('CB', choices)).toBe('苏洵\n苏辙'); // normalized order
+  });
+  it('empty / unparseable selection → empty string', () => {
+    expect(selectionToAnswerMd('', choices)).toBe('');
+    expect(selectionToAnswerMd(null, choices)).toBe('');
+  });
+});
+
+describe('isNormalizedLabel (label vs option-text disambiguation)', () => {
+  it('true for pure label strings (after NFKC + separator strip)', () => {
+    expect(isNormalizedLabel('A')).toBe(true);
+    expect(isNormalizedLabel('BC')).toBe(true);
+    expect(isNormalizedLabel('b、c')).toBe(true);
+  });
+  it('false for CJK option text and Latin-bearing option text', () => {
+    expect(isNormalizedLabel('苏洵')).toBe(false);
+    expect(isNormalizedLabel('a + b')).toBe(false); // math expression, not a label
+    expect(isNormalizedLabel('apple1')).toBe(false); // contains a digit
+  });
+  it('false for empty / nullish', () => {
+    expect(isNormalizedLabel('')).toBe(false);
+    expect(isNormalizedLabel(null)).toBe(false);
+  });
+});
+
+describe('answerMdToSelection (submitted option text → letter string)', () => {
+  const choices = ['苏轼', '苏洵', '苏辙', '欧阳修'];
+  it('maps single submitted option text back to its letter', () => {
+    expect(answerMdToSelection('苏洵', choices)).toBe('B');
+  });
+  it('maps multi-line submitted option text back to ascending letters', () => {
+    expect(answerMdToSelection('苏洵\n苏辙', choices)).toBe('BC');
+  });
+  it('falls back to label parsing for legacy letter-string answers', () => {
+    expect(answerMdToSelection('B', choices)).toBe('B');
+  });
+  it('returns empty when nothing matches', () => {
+    expect(answerMdToSelection('王安石', choices)).toBe('');
+    expect(answerMdToSelection('', choices)).toBe('');
+  });
+});
+
+describe('deriveMultiSelect (no canonical single/multi flag at face level)', () => {
+  const choices = ['甲', '乙', '丙', '丁'];
+  it('single-select when reference is absent (answering mode)', () => {
+    expect(deriveMultiSelect(null, choices)).toBe(false);
+  });
+  it('single-select for a single-letter / single-text reference', () => {
+    expect(deriveMultiSelect('B', choices)).toBe(false);
+    expect(deriveMultiSelect('乙', choices)).toBe(false);
+  });
+  it('multi-select when a label reference resolves to 2+ options', () => {
+    expect(deriveMultiSelect('BC', choices)).toBe(true);
+  });
+});
+
 describe('isReferenceChoice (feedback correctness)', () => {
   const choices = ['宾语前置', '定语后置', '状语后置', '判断句'];
   it('matches via letter-string reference', () => {
@@ -109,6 +177,13 @@ describe('isReferenceChoice (feedback correctness)', () => {
   it('matches via option-text reference (exact judge stores option text)', () => {
     expect(isReferenceChoice('宾语前置', 0, choices[0], 4)).toBe(true);
     expect(isReferenceChoice('宾语前置', 1, choices[1], 4)).toBe(false);
+  });
+  it('does NOT mis-parse Latin-bearing option-text references as labels', () => {
+    // math/English subjects: reference is option text containing A-Z. Old code
+    // ran parseSelection first and the letter branch wrongly won.
+    const mathChoices = ['a + b', 'a - b', 'a * b', 'a / b'];
+    expect(isReferenceChoice('a + b', 0, mathChoices[0], 4)).toBe(true);
+    expect(isReferenceChoice('a + b', 1, mathChoices[1], 4)).toBe(false);
   });
   it('returns false for empty reference', () => {
     expect(isReferenceChoice(null, 0, choices[0], 4)).toBe(false);

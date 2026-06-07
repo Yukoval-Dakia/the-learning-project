@@ -26,6 +26,11 @@
 
 import type { PaperDetailResult, PaperDetailSlot } from '@/server/review/paper-detail';
 import { PracticeChoiceOptions } from '@/ui/components/PracticeChoiceOptions';
+import {
+  answerMdToSelection,
+  deriveMultiSelect,
+  selectionToAnswerMd,
+} from '@/ui/components/practice-choice-logic';
 import { apiJson, getInternalToken } from '@/ui/lib/api';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
@@ -315,6 +320,14 @@ export default function PracticeAnswerPage() {
     Record<string, { question_id: string; part_ref: string | null; content_md: string }>
   >({});
 
+  // Per-slot monotonic sequence for immediate choice-draft POSTs. Rapid clicks
+  // (A then B) fire two un-debounced POSTs whose responses can land out of order;
+  // each flush stamps the latest seq for its slot and only honours its own
+  // .then()/.catch() if it is still the latest (stale responses are ignored), so a
+  // late-landing earlier POST can't clobber UI state or drop the newer draft's
+  // unload-retry. (codex/CodeRabbit/OCR round: flushChoiceDraft ordering guard.)
+  const choiceFlushSeq = useRef<Record<string, number>>({});
+
   // Flush all pending draft autosaves using keepalive fetch (survives unload).
   // Called from both the unmount cleanup and the pagehide handler.
   //
@@ -416,6 +429,11 @@ export default function PracticeAnswerPage() {
     clearTimeout(autosaveTimers.current[key]);
     delete autosaveTimers.current[key];
     if (!sessionId) return;
+    // Stamp this flush so a later click's POST always wins regardless of which
+    // response lands first. Stale completions below are ignored.
+    const seq = (choiceFlushSeq.current[key] ?? 0) + 1;
+    choiceFlushSeq.current[key] = seq;
+    const isLatest = () => choiceFlushSeq.current[key] === seq;
     void apiJson(`/api/practice/${artifactId}/answer`, {
       method: 'POST',
       body: JSON.stringify({
@@ -426,13 +444,19 @@ export default function PracticeAnswerPage() {
       }),
     })
       .then(() => {
+        if (!isLatest()) return; // a newer click superseded this one — ignore.
         setSlotStates((prev) => ({
           ...prev,
           [key]: { ...prev[key], autosavePending: false, autosaveFailed: false },
         }));
-        delete pendingDrafts.current[key];
+        // Only drop the unload-retry entry if it still holds the value WE saved;
+        // a newer click may have re-seeded pendingDrafts with a different draft.
+        if (pendingDrafts.current[key]?.content_md === value) {
+          delete pendingDrafts.current[key];
+        }
       })
       .catch(() => {
+        if (!isLatest()) return; // stale failure for a superseded click — ignore.
         // Keep pendingDrafts[key] (set by scheduleAutosave) so the unload flush retries.
         setSlotStates((prev) => ({
           ...prev,
@@ -509,7 +533,14 @@ export default function PracticeAnswerPage() {
       [key]: { ...prev[key], autosavePending: false },
     }));
     const answer = slotStates[key]?.answer ?? '';
-    submitM.mutate({ slot, answerMd: answer });
+    // YUK-261 grading fix: choice slots stage a letter string ('B') in the draft,
+    // but the exact judge does a plain normalized string compare against the
+    // reference_md, which stores the option TEXT ('苏洵'). Expand the staged letters
+    // to the matching option text(s) before submitting so a correct click grades
+    // correct. Non-choice slots (no choices_md) submit the raw answer unchanged.
+    const choices = slot.question.choices_md;
+    const answerMd = choices && choices.length > 0 ? selectionToAnswerMd(answer, choices) : answer;
+    submitM.mutate({ slot, answerMd });
   }
 
   function handleNext() {
@@ -747,26 +778,46 @@ export default function PracticeAnswerPage() {
                         writes the normalized letter string to the autosave draft
                         channel (click-to-stage, no 500ms debounce); SUBMIT stays on
                         the explicit 提交 button below (owner ruling: 点选 ≠ 提交). */}
-                    {slot.question.choices_md && slot.question.choices_md.length > 0 && (
-                      <PracticeChoiceOptions
-                        choices={slot.question.choices_md}
-                        value={localState.answer}
-                        multiSelect={slot.question.kind === 'multiple_choice'}
-                        disabled={isReadOnly}
-                        feedback={isSubmitted || (isReadOnly && !!slot.slot_state.submission)}
-                        reference={
+                    {slot.question.choices_md &&
+                      slot.question.choices_md.length > 0 &&
+                      (() => {
+                        const choices = slot.question.choices_md;
+                        const choiceReference =
                           slot.slot_state.submission && 'reference_md' in slot.slot_state.submission
                             ? slot.slot_state.submission.reference_md
-                            : null
-                        }
-                        // Click-to-stage: same autosave channel as the textarea, but
-                        // immediate (no debounce) since a click is a discrete choice.
-                        onSelect={(contentMd) => {
-                          handleAnswerChange(slot, contentMd);
-                          flushChoiceDraft(slot, contentMd);
-                        }}
-                      />
-                    )}
+                            : null;
+                        const choiceFeedback =
+                          isSubmitted || (isReadOnly && !!slot.slot_state.submission);
+                        // In feedback / read-only mode the frozen answer lives in
+                        // submission.answer_md (option TEXT after the submit-time
+                        // expansion), and draft is usually null — derive the lit cards
+                        // from the submission, not the (empty) draft. While answering,
+                        // the staged letter-string draft is the source of truth.
+                        const submittedAnswerMd = slot.slot_state.submission?.answer_md ?? null;
+                        const choiceValue =
+                          choiceFeedback && submittedAnswerMd
+                            ? answerMdToSelection(submittedAnswerMd, choices)
+                            : localState.answer;
+                        return (
+                          <PracticeChoiceOptions
+                            choices={choices}
+                            value={choiceValue}
+                            // Persisted question.kind is canonical 'choice' (single/multi
+                            // collapsed by question-kind.ts) — derive multi-select from the
+                            // reference shape instead of the never-true 'multiple_choice'.
+                            multiSelect={deriveMultiSelect(choiceReference, choices)}
+                            disabled={isReadOnly}
+                            feedback={choiceFeedback}
+                            reference={choiceReference}
+                            // Click-to-stage: same autosave channel as the textarea, but
+                            // immediate (no debounce) since a click is a discrete choice.
+                            onSelect={(contentMd) => {
+                              handleAnswerChange(slot, contentMd);
+                              flushChoiceDraft(slot, contentMd);
+                            }}
+                          />
+                        );
+                      })()}
 
                     {/* answering phase — active, not yet submitted, session not completed */}
                     {!isReadOnly && isActive && phase === 'answering' && !isSubmitted && (
