@@ -8,13 +8,29 @@ export const resolveConfig = {
   alias: { '@': path.resolve(__dirname, 'src') },
 };
 
+// YUK-279 — every `.test.ts` AND `.test.tsx` glob must appear here. allTestInclude
+// is the *universe* of test files: the db config includes it directly, and the
+// audit walker treats anything matching it as "in some partition". A `.test.tsx`
+// file that matches NO entry here lands in NEITHER vitest config (db excludes
+// fastTestInclude, but a file the db config never `include`d is simply never
+// collected) and is invisible to the auditor → a silent green non-run. The `.tsx`
+// globs below are deliberately as broad as the `.ts` ones so component tests can
+// never fall through; fastTestInclude (the unit allowlist) still decides which of
+// them run no-DB, and any `.tsx` not on that allowlist falls through to the db
+// partition exactly like a `.test.ts` would.
 export const allTestInclude = [
   '*.test.ts',
+  '*.test.tsx',
   'src/**/*.test.ts',
+  'src/**/*.test.tsx',
   'app/**/*.test.ts',
+  'app/**/*.test.tsx',
   'workers/src/**/*.test.ts',
+  'workers/src/**/*.test.tsx',
   'tests/**/*.test.ts',
+  'tests/**/*.test.tsx',
   'scripts/**/*.test.ts',
+  'scripts/**/*.test.tsx',
 ];
 
 export const fastTestInclude = [
