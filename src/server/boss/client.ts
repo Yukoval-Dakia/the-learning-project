@@ -41,11 +41,30 @@ export function isQueueCreateRace(err: unknown): boolean {
   return e.constraint === undefined || e.constraint === 'queue_pkey';
 }
 
-let bossInstance: PgBoss | null = null;
-let startPromise: Promise<PgBoss> | null = null;
+// next dev HMR re-evaluates this module on every recompile; module-level
+// singletons (`let bossInstance` / `let startPromise`) reset each time, so the
+// previously started PgBoss — its timekeeper timers AND its `pg.Pool` — is
+// orphaned with nothing left to `stop()` it. Observed 2026-06-07: a single
+// recompile rebuilds the boss and grows the pgboss DB connection count 2→4,
+// climbing with every reload until Postgres runs out of clients. Cache the
+// instance + start promise on globalThis outside production so they survive
+// module reloads, mirroring src/db/client.ts's pool cache (YUK-263 / PR #339).
+// Production (standalone container / worker) has no HMR, so the per-process
+// module cache alone suffices and we never write to globalThis there —
+// behaviour unchanged. The PR #340 getStartedBoss catch semantics are preserved
+// below, only retargeted to clear bossState.startPromise. (YUK-274)
+type BossState = { instance: PgBoss | null; startPromise: Promise<PgBoss> | null };
+const globalForBoss = globalThis as typeof globalThis & { __loomBossState?: BossState };
+const bossState: BossState = globalForBoss.__loomBossState ?? {
+  instance: null,
+  startPromise: null,
+};
+if (process.env.NODE_ENV !== 'production') {
+  globalForBoss.__loomBossState = bossState;
+}
 
 export function createBoss(): PgBoss {
-  if (bossInstance) return bossInstance;
+  if (bossState.instance) return bossState.instance;
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
     throw new Error('DATABASE_URL is required to create PgBoss instance');
@@ -59,12 +78,12 @@ export function createBoss(): PgBoss {
   // boss/client.test when run with the full suite. Production (worker /
   // route processes) keeps the library default.
   const isVitest = !!process.env.VITEST;
-  bossInstance = new PgBoss({
+  bossState.instance = new PgBoss({
     connectionString,
     schema: 'pgboss',
     ...(isVitest ? { max: 2 } : {}),
   });
-  return bossInstance;
+  return bossState.instance;
 }
 
 /**
@@ -84,9 +103,9 @@ export function createBoss(): PgBoss {
  * pg-boss is "started" here.
  */
 export async function getStartedBoss(): Promise<PgBoss> {
-  if (!startPromise) {
+  if (!bossState.startPromise) {
     const boss = createBoss();
-    startPromise = boss
+    bossState.startPromise = boss
       .start()
       .then(() => boss)
       .catch((err) => {
@@ -109,11 +128,11 @@ export async function getStartedBoss(): Promise<PgBoss> {
           );
           return boss;
         }
-        startPromise = null;
+        bossState.startPromise = null;
         throw err;
       });
   }
-  return startPromise;
+  return bossState.startPromise;
 }
 
 /**
@@ -124,6 +143,6 @@ export async function getStartedBoss(): Promise<PgBoss> {
  * DATABASE_URL points at a fresh testcontainer.
  */
 export function _resetBossForTests(): void {
-  bossInstance = null;
-  startPromise = null;
+  bossState.instance = null;
+  bossState.startPromise = null;
 }

@@ -105,7 +105,28 @@ const COPILOT_TOOLS = [
   'query_mistakes',
   'get_attempt_context',
   'get_review_due',
+  // YUK-270 (owner 2026-06-07) — Copilot tool-surface expansion. Three readers
+  // give the conversational agent learning-item lifecycle context + deeper
+  // knowledge-graph traversal (subgraph expand + path finding) so it can ground
+  // a lifecycle / structural suggestion before proposing one.
+  'get_learning_item_context',
+  'expand_knowledge_subgraph',
+  'find_knowledge_paths',
   'propose_knowledge_edge',
+  // YUK-270 — five write PROPOSALS (propose-only, never a direct write). Lets
+  // Copilot act on what the user says in-conversation: knowledge_mutation for
+  // tree reshaping (reparent/merge/split/archive/propose_new) vs the existing
+  // knowledge_edge for relation links; and the learning_item lifecycle quartet
+  // (complete / relearn / defer / archive) when the user explicitly says they
+  // are done / want to relearn / want to push it back / want it gone. This is an
+  // owner-decided surface expansion — NOT related to the U6 "skills add no tool"
+  // red line (that locked the teaching/solve skill merge; this is a deliberate
+  // grant). It does NOT touch the question draft-edit tools or write_review_plan.
+  'propose_knowledge_mutation',
+  'propose_learning_item_completion',
+  'propose_learning_item_relearn',
+  'propose_learning_item_defer',
+  'propose_learning_item_archive',
   // YUK-203 U4 / L-memtool (D7②) — Mem0 fact retrieval.
   'search_memory_facts',
 ] as const satisfies readonly DomainToolName[];
