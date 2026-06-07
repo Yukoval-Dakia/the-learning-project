@@ -17,6 +17,17 @@ describe('kindMeta', () => {
     expect(kindMeta('translation').icon).toBe('book');
   });
 
+  it('folds subject/skill-level kinds to canonical before mapping', () => {
+    // The readers return the RAW persisted kind; subject datasets persist the
+    // profile/skill vocabulary (single_choice / reading_comprehension / …) which
+    // must show the same 中文 as their canonical fold, NOT the 题目 fallback.
+    expect(kindMeta('single_choice').label).toBe('单选');
+    expect(kindMeta('multiple_choice').label).toBe('单选');
+    expect(kindMeta('reading_comprehension').label).toBe('阅读理解');
+    expect(kindMeta('calculation').label).toBe('计算');
+    expect(kindMeta('proof').label).toBe('推导');
+  });
+
   it('falls back for unknown kinds (enum grows zero-DDL)', () => {
     expect(kindMeta('some_future_kind')).toEqual({ label: '题目', icon: 'quiz' });
   });
