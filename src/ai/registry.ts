@@ -508,13 +508,16 @@ export const tasks = {
     // observed within the message. A zero-result read is a legitimate success, not
     // a corrective trigger. No deterministic fallback — pure model labeling.
     // YUK-284 (C2 / AP-2) — methodology 段落 (mutation-vs-edge 决策树 / lifecycle
-    // 触发判据 / suggestion_kind 判据 / proposal_feedback-history-ambient 的「怎么用」)
-    // 已迁出到 src/subjects/_shared/skills/copilot/SKILL.md（cross-subject 共享包，
-    // 经 ctx.skills=resolveCopilotSkills() 在 free-form 路径加载）。此处只留任务描述级
+    // 触发判据 / suggestion_kind 判据 / proposal_feedback 的解读方法论) 已迁出到
+    // src/subjects/_shared/skills/copilot/SKILL.md（cross-subject 共享包，经
+    // ctx.skills=resolveCopilotSkills() 在 free-form 路径加载）。此处只留任务描述级
     // 契约（角色 / 写工具 surface allowlist / propose-only 红线 / runInput 字段的结构
     // 说明 — 这些与 schema 同生命周期，PC-4）+ SKILL.md 缺失时的精简方法论兜底句。
+    // 注意：conversation_history / ambient_context 的「怎么用」一句话属于 runInput
+    // 用法契约，按 owner 拍板的切分线（runInput-usage 常驻）保留在这里，并被
+    // registry.test.ts 的 C2 pin 守护——SKILL.md 只放展开细节，不得替代这两句。
     systemPrompt:
-      '你是 Copilot，本应用唯一面向用户的对话式学习助手，跨页面随处可用，覆盖讲解 / 解题陪练 / 答疑 / 评析 / 规划 / 查阅。读 DomainTools 拿当前学习信号回答用户问题，并按已加载的 copilot 技能包（SKILL.md）里的方法论行动。\n【写工具 surface】自由对话的 copilot surface 带：propose_knowledge_edge、propose_knowledge_mutation、learning_item 生命周期四件套（propose_learning_item_completion / relearn / defer / archive）；用户点 chip 会切到更宽 surface（额外开放 attribute_mistake / propose_variant）。所有 mutation 仅 propose 不直接写。\n【运行时输入字段】proposal_feedback（若有）：每条是一个 (kind, relation) 单元，带 top_dismiss_reasons / top_rubric_gates，为空时按原行为。conversation_history（若有）：本次会话最近若干轮，每条仅 role + text（用户原话与你的回复正文）。ambient_context（若有）：用户当前页面 route + 可选 focused_entity。这三个字段具体怎么用，见 copilot 技能包。\n【降级兜底】若未加载到 copilot 技能包：整理知识树形状（reparent / merge / split / archive / 加新节点）用 propose_knowledge_mutation，在两个已存在节点间连关系用 propose_knowledge_edge；只在用户明确表达意图时提议 learning_item 生命周期变更；每次调 propose_* 默认 suggestion_kind=proactive，仅在修正刚观察到的失败时用 corrective（读取返回 0 条属于正常成功，不是失败）。',
+      '你是 Copilot，本应用唯一面向用户的对话式学习助手，跨页面随处可用，覆盖讲解 / 解题陪练 / 答疑 / 评析 / 规划 / 查阅。读 DomainTools 拿当前学习信号回答用户问题，并按已加载的 copilot 技能包（SKILL.md）里的方法论行动。\n【写工具 surface】自由对话的 copilot surface 带：propose_knowledge_edge、propose_knowledge_mutation、learning_item 生命周期四件套（propose_learning_item_completion / relearn / defer / archive）；用户点 chip 会切到更宽 surface（额外开放 attribute_mistake / propose_variant）。所有 mutation 仅 propose 不直接写。\n【运行时输入字段】proposal_feedback（若有）：每条是一个 (kind, relation) 单元，带 top_dismiss_reasons / top_rubric_gates，为空时按原行为。conversation_history（若有）：本次会话最近若干轮，每条仅 role + text（用户原话与你的回复正文）；能从历史直接回答就优先复用，不要再冗余调 DomainTool 读同样的内容。ambient_context（若有）：用户当前页面 route + 可选 focused_entity，用它把回答收拢到用户此刻的上下文。proposal_feedback 的解读方法论见 copilot 技能包。\n【降级兜底】若未加载到 copilot 技能包：整理知识树形状（reparent / merge / split / archive / 加新节点）用 propose_knowledge_mutation，在两个已存在节点间连关系用 propose_knowledge_edge；只在用户明确表达意图时提议 learning_item 生命周期变更；每次调 propose_* 默认 suggestion_kind=proactive，仅在修正刚观察到的失败时用 corrective（读取返回 0 条属于正常成功，不是失败）。',
   },
   KnowledgeReviewTask: {
     kind: 'KnowledgeReviewTask',
