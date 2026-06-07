@@ -103,11 +103,11 @@ async function processOneOcrJob(
   const poll = deps.pollFn ?? pollUntilDone;
   const runStructure = deps.runStructureFn ?? runStructureTask;
 
-  // YUK-253: engine selection. GLM-OCR is the default; 'tencent' is the retained
-  // rollback engine behind the EXTRACT_OCR_ENGINE flag. A `deps.engine` override
-  // lets handler tests pin the path without touching process.env.
-  // PHASE-DEFERRED: the 'tencent' branch + flag retire after the GLM bake-in
-  // window — see the YUK-253 follow-up "Remove retained Tencent engine".
+  // YUK-253: engine selection. GLM-OCR is the default; 'tencent' is the
+  // PERMANENTLY retained switchable engine behind the EXTRACT_OCR_ENGINE flag
+  // (owner decision 2026-06-07: dual engines for good — no removal planned;
+  // enables same-page A/B comparison + per-scenario switching). A `deps.engine`
+  // override lets handler tests pin the path without touching process.env.
   const engine: 'glm' | 'tencent' =
     deps.engine ?? (process.env.EXTRACT_OCR_ENGINE === 'tencent' ? 'tencent' : 'glm');
 

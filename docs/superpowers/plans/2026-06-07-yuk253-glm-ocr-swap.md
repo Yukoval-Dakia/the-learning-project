@@ -60,8 +60,8 @@ comments on all retained-tencent / placeholder code; **tests never hit the live 
 | `docs/deploy/real-ingestion-provisioning.md` | Add GLM-OCR credential row (`ZHIPU_API_KEY`, used-by `glm_ocr.ts`, lives in `.env`) + note `EXTRACT_OCR_ENGINE` default. |
 | `vitest.shared.ts` | Add `glm_ocr.test.ts` + `glm_ocr_parser.test.ts` to `fastTestInclude` (unit partition — both are pure / fetch-mocked, no DB import). |
 
-### DO NOT TOUCH (retain one version-period, phase-deferred)
-- `src/server/ingestion/tencent_mark.ts`, `tencent_mark_parser.ts`, `tencent_mark_errors.ts` — kept verbatim as the `'tencent'` fallback engine behind the flag. Add a 1-line phase-deferred banner at top of each: removal trigger = "EXTRACT_OCR_ENGINE flag retired after GLM bake-in; see YUK-253 follow-up".
+### DO NOT TOUCH (permanent dual-engine retention — owner 2026-06-07 拍板，不删)
+- `src/server/ingestion/tencent_mark.ts`, `tencent_mark_parser.ts`, `tencent_mark_errors.ts` — kept verbatim as the `'tencent'` fallback engine behind the flag. Each carries a DUAL-ENGINE banner: permanently retained switchable engine (owner 2026-06-07), no removal planned.
 - `tencent_mark.test.ts`, `tencent_mark_parser.test.ts` — kept (still exercise the retained tencent path).
 - `src/server/boss/handlers.ts` — queue registration line unchanged (queue name frozen). The factory call may gain the new GLM dep injected the same lazy way as `r2`, but the `boss.work('tencent_ocr_extract', …)` string is **frozen**.
 - `src/server/ingestion/structure.ts` (`renderTencentHint`, `runStructureTask`, `StructureResult`) — VLM layer is provider-agnostic; reused as-is. The GLM hint is rendered through the **same** `renderTencentHint`-shaped path (see §3).

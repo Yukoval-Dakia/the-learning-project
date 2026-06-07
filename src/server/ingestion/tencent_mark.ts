@@ -1,11 +1,11 @@
 import { RetryableError } from '@/core/schema/structured_question';
 import { ocr } from 'tencentcloud-sdk-nodejs-ocr';
 
-// PHASE-DEFERRED (YUK-253): GLM-OCR is now the default extraction engine. This
-// Tencent client is RETAINED for one version-period as the
-// `EXTRACT_OCR_ENGINE='tencent'` rollback path. Removal trigger: the
-// EXTRACT_OCR_ENGINE flag is retired after the GLM bake-in window — see the
-// YUK-253 follow-up "Remove retained Tencent engine".
+// DUAL-ENGINE (YUK-253): GLM-OCR is the default extraction engine; this
+// Tencent client is RETAINED PERMANENTLY as the `EXTRACT_OCR_ENGINE='tencent'`
+// switchable engine — owner decision 2026-06-07: 腾讯支持长期保留，不删。
+// No removal planned. Dual engines also enable same-page A/B quality
+// comparison and per-scenario switching (规范试卷场景可切回腾讯切题/解析).
 //
 // Tencent OCR v20181119 API. Mark Agent endpoint 支持完形填空 / 阅读理解嵌套布局
 // + 手写答案 bbox + 内置判分 evidence。见 ADR-0002 2026-05-11 修订。
