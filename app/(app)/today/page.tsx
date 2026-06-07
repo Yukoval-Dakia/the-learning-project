@@ -1,6 +1,8 @@
 'use client';
 
 import type { AiProposalKindT } from '@/core/schema/proposal';
+import { AgentNotesBoard } from '@/ui/agent-notes/AgentNotesBoard';
+import type { AgentNotesResponse } from '@/ui/agent-notes/types';
 import { apiJson } from '@/ui/lib/api';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomBadge } from '@/ui/primitives/LoomBadge';
@@ -120,6 +122,13 @@ export default function TodayPage() {
   const aiChangesQ = useQuery({
     queryKey: ['today-ai-changes'],
     queryFn: () => apiJson<{ rows: AiChangeRow[] }>('/api/today/ai-changes'),
+    refetchInterval: 60_000,
+  });
+  // Read-only "AI 观察" board (YUK-294). limit=20 (default) so the block's count
+  // and "还有 N 条" reflect the full recent set while the feed caps at 3.
+  const agentNotesQ = useQuery({
+    queryKey: ['agent-notes', 'compact'],
+    queryFn: () => apiJson<AgentNotesResponse>('/api/agents/notes?limit=20'),
     refetchInterval: 60_000,
   });
 
@@ -340,6 +349,14 @@ export default function TodayPage() {
           />
         </div>
       </div>
+
+      <AgentNotesBoard
+        notes={agentNotesQ.data?.rows ?? []}
+        status={agentNotesQ.isLoading ? 'loading' : agentNotesQ.error ? 'error' : 'ok'}
+        now={now}
+        onRetry={() => agentNotesQ.refetch()}
+        onNavigate={(route) => router.push(route)}
+      />
 
       {/*
         WeekHeat「本周编织」section OMITTED — pre-flight
