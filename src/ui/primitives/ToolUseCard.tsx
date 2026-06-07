@@ -185,13 +185,9 @@ function ArgsBlock({ args }: { args: Record<string, unknown> }) {
 
   const valueClass = (v: unknown) =>
     typeof v === 'number' ? 'is-num' : typeof v === 'string' ? 'is-str' : '';
-  const raw = `{\n${keys
-    .map((k) => {
-      const v = args[k];
-      const val = typeof v === 'string' ? `"${v}"` : String(v);
-      return `  "${k}": ${val}`;
-    })
-    .join(',\n')}\n}`;
+  // Valid JSON for the "raw json" view — handles nested objects/arrays and
+  // escapes strings (quotes / backslashes / newlines) that hand-assembly broke.
+  const raw = JSON.stringify(args, null, 2);
 
   return (
     <div className="tuc-args" data-testid="tool-use-args">
@@ -342,6 +338,10 @@ export function ToolUseCard({
     args !== undefined ||
     result !== undefined ||
     meta !== undefined ||
+    tone !== undefined ||
+    icon !== undefined ||
+    actionHint !== undefined ||
+    resolvedProp != null ||
     (actions !== undefined && actions.length > 0);
 
   // State-specific result content (rich mode only).
@@ -354,8 +354,9 @@ export function ToolUseCard({
       case 'failed':
         return errorView ?? null;
       default:
-        // done / awaiting-approval / undefined → structured result
-        return result ?? null;
+        // done / awaiting-approval / undefined → structured result, falling
+        // back to the legacy `body` (header contract) when no `result` given.
+        return result ?? body ?? null;
     }
   }
 

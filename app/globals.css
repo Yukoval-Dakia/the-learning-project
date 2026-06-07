@@ -8359,6 +8359,16 @@ button.seg-sm {
 }
 
 /* ── header ── */
+/* base header (legacy folded + rich both): flex row so `.tuc-head-end`
+   ml-auto right-aligns the cost chip + expand toggle. Rich layers padding/
+   background/gap on top via the `.is-rich` rule that follows. */
+.tuc-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
 .tool-use-card.is-rich .tuc-head {
   display: flex;
   align-items: center;
@@ -8999,6 +9009,7 @@ button.seg-sm {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .spin,
   .tool-use-card.is-rich .tuc-skel-ln,
   .tool-use-card.is-rich .r-stream .cursor {
     animation: none;
