@@ -39,6 +39,7 @@ import { ContextBudgetTracker } from '@/server/ai/tools/context-throttle';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
 // AF S4 / YUK-203 U6 — Copilot skills (behavior packs). A skill_context turn
 // routes to these at the service layer instead of the free-form CopilotTask loop.
+import { type QuizSkillResult, runQuizSkill } from '@/server/copilot/skills/quiz-skill';
 import { type SolveSkillResult, runSolveSkill } from '@/server/copilot/skills/solve-skill';
 import { type TeachingSkillResult, runTeachingSkill } from '@/server/copilot/skills/teaching-skill';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
@@ -76,7 +77,10 @@ export type CopilotChatTriggerKind = (typeof COPILOT_CHAT_TRIGGER_KINDS)[number]
 // discriminator and the `ref` shape are deliberately minimal so the migration is
 // additive. The `ref` shape `{ kind, id }` mirrors `leave_agent_note`'s ref
 // vocabulary (AF §4 `refs: Array<{kind, id}>`) for consistency.
-export const COPILOT_SKILL_KINDS = ['teaching', 'solve'] as const;
+// YUK-262 — `quiz` added as the third skill (a behavior pack, NOT a tool surface —
+// R5: skill ≠ surface). The quiz skill composes runSourcingSequence + a tool_quiz
+// INSERT at the SERVICE layer; it adds NO tools to COPILOT_TOOLS.
+export const COPILOT_SKILL_KINDS = ['teaching', 'solve', 'quiz'] as const;
 export type CopilotSkillKind = (typeof COPILOT_SKILL_KINDS)[number];
 
 export const CopilotSkillContext = z.object({
@@ -191,6 +195,9 @@ export interface CopilotChatDeps {
   // the {}-stub db is never touched). Default to the real skill modules.
   runTeachingSkillFn?: typeof runTeachingSkill;
   runSolveSkillFn?: typeof runSolveSkill;
+  // YUK-262 — swappable quiz-skill runner (the db test injects a fixture so the
+  // {}-stub db is never touched). Defaults to the real runQuizSkill module.
+  runQuizSkillFn?: typeof runQuizSkill;
   // PR #305 review comment #1 — swappable for unit tests (stub tx has no .select).
   materializeAskCheckFn?: typeof materializeAskCheckQuestion;
   now?: () => Date;
@@ -270,6 +277,7 @@ export async function runCopilotChat(
     deps.findOrCreateConversationFn ?? Conversation.findOrCreateCopilotConversation;
   const runTeachingSkillFn = deps.runTeachingSkillFn ?? runTeachingSkill;
   const runSolveSkillFn = deps.runSolveSkillFn ?? runSolveSkill;
+  const runQuizSkillFn = deps.runQuizSkillFn ?? runQuizSkill;
   const materializeAskCheck = deps.materializeAskCheckFn ?? materializeAskCheckQuestion;
 
   const surface = selectSurface(req.triggered_by);
@@ -442,7 +450,7 @@ export async function runCopilotChat(
         suggested_next: skillResult.suggested_next,
         ...(materializedQuestion ? { structured_question: materializedQuestion } : {}),
       };
-    } else {
+    } else if (req.skill_context.skill === 'solve') {
       // hintIndex 故意不传（恒为首问 hint）：U6 MVP 只做 hint-only solve skill，
       // buildSolveHintInput 的递进分支（hintIndex>0 合成追问）经此入口是死代码。
       // 接续上下文见 plan §11（cut-over 时机）：若要递进，需按 session 内既往
@@ -470,6 +478,51 @@ export async function runCopilotChat(
           session_id: sessionId,
           reply_md: replyMd,
           // PR #305 review comment #3: real task_run_id from TeachingTurnTask.
+          task_run_id: realTaskRunId,
+          in_reply_to_event_id: causedByEventId ?? null,
+          // PR round-2 (CR 3360614441): persist skill_context so replay can
+          // restore the skill card (Dock chip renderer + replayToMessages use it).
+          skill_context: req.skill_context,
+        },
+        caused_by_event_id: causedByEventId ?? null,
+        task_run_id: realTaskRunId,
+        created_at: replyAt,
+      });
+    } else {
+      // YUK-262 — quiz skill. Pure SERVICE orchestration: source the existing pool
+      // → assemble + persist a tool_quiz artifact → reply with a /practice/<id>
+      // link (or an explicit degradation notice; NEVER a text-sprayed quiz). There
+      // is NO LLM run on this path (unlike teaching/solve, which call
+      // TeachingTurnTask), so the skill mints no model task_run_id. We reuse the
+      // pre-generated synthetic `taskRunId` (minted at :277) as the reply-event /
+      // cost-ledger run id so the copilot_user_ask → copilot_reply evidence chain
+      // stays uniform with teaching/solve. The quiz reply is one-shot: it carries
+      // NO turn_kind and NO skill_turn (the /practice link rides in reply_md, which
+      // the Dock already renders — zero new UI/replay plumbing).
+      const skillResult: QuizSkillResult = await runQuizSkillFn({
+        db,
+        sessionId,
+        knowledgeId: req.skill_context.ref.id,
+        userMessage: req.user_message,
+      });
+      replyMd = skillResult.text_md;
+      realTaskRunId = taskRunId;
+
+      const replyAt = new Date(now.getTime() + 1);
+      await write(db, {
+        id: replyEventId,
+        session_id: sessionId,
+        actor_kind: 'agent',
+        actor_ref: actorRef,
+        action: REPLY_EVENT_ACTION,
+        subject_kind: 'query',
+        subject_id: replyEventId,
+        outcome: null,
+        payload: {
+          surface: 'copilot',
+          session_id: sessionId,
+          reply_md: replyMd,
+          // Synthetic run id (no LLM run on the quiz path — see block comment above).
           task_run_id: realTaskRunId,
           in_reply_to_event_id: causedByEventId ?? null,
           // PR round-2 (CR 3360614441): persist skill_context so replay can

@@ -802,6 +802,106 @@ describe('runCopilotChat — skill routing (U6)', () => {
     expect(replyPayload.task_run_id).toBe('task_solve_real');
   });
 
+  it('quiz skill: builds a paper, returns a reply with a /practice link, NO skill_turn', async () => {
+    // YUK-262 — the quiz skill is pure service orchestration (no LLM run). The
+    // chat layer writes one reply event with the synthetic task_run_id and NO
+    // turn_kind / skill_turn (the /practice link rides in reply_md).
+    const db = {} as never;
+    const writeEventFn = vi.fn(
+      async (_db: unknown, input: unknown) => (input as { id: string }).id,
+    );
+    const runQuizSkillFn = vi.fn(async () => ({
+      text_md: '已为你组好一套练习（共 3 道）。点这里开始练习：[去练习](/practice/art_x)',
+      artifact_id: 'art_x',
+      question_count: 3,
+      status: 'ok' as const,
+    }));
+    const runAgentTaskFn = vi.fn(async () => {
+      throw new Error('CopilotTask must not run on a skill turn');
+    });
+    const buildMcpServerFn = vi.fn(() => ({ name: 'fake-loom' }) as never);
+
+    const result = await runCopilotChat(
+      db,
+      {
+        user_message: '给我出套题',
+        triggered_by: 'chat',
+        skill_context: { skill: 'quiz', ref: { kind: 'knowledge', id: 'kn_x' } },
+      },
+      { ...baseDeps, writeEventFn, runQuizSkillFn, runAgentTaskFn, buildMcpServerFn },
+    );
+
+    // Surface stays 'copilot' (R5: skill ≠ surface), free-form loop never ran.
+    expect(result.surface).toBe('copilot');
+    expect(result.reply).toContain('/practice/art_x');
+    expect(result.skill_turn).toBeUndefined();
+    expect(runAgentTaskFn).not.toHaveBeenCalled();
+    // The skill ran against the resolved Copilot session id + the knowledge ref.
+    expect(runQuizSkillFn).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'ls_copilot', knowledgeId: 'kn_x' }),
+    );
+
+    // One reply event (user ask + reply = 2 writeEvent calls; quiz needs no tx).
+    expect(writeEventFn).toHaveBeenCalledTimes(2);
+    const replyCall = writeEventFn.mock.calls[1]?.[1] as {
+      action?: string;
+      task_run_id?: string;
+      payload?: {
+        turn_kind?: string;
+        reply_md?: string;
+        task_run_id?: string;
+        skill_turn?: unknown;
+        skill_context?: unknown;
+      };
+    };
+    expect(replyCall?.action).toBe('experimental:copilot_reply');
+    // Synthetic run id (no LLM run): result + event + payload all agree.
+    expect(result.task_run_id).toBe(replyCall?.task_run_id);
+    expect(replyCall?.payload?.task_run_id).toBe(result.task_run_id);
+    // No turn_kind / skill_turn on a quiz reply.
+    expect(replyCall?.payload?.turn_kind).toBeUndefined();
+    expect(replyCall?.payload?.skill_turn).toBeUndefined();
+    // skill_context persisted for replay.
+    expect(replyCall?.payload?.skill_context).toMatchObject({
+      skill: 'quiz',
+      ref: { kind: 'knowledge', id: 'kn_x' },
+    });
+  });
+
+  it('quiz skill degraded: returns the degradation text, NO link, NO free-form fallback', async () => {
+    const db = {} as never;
+    const writeEventFn = vi.fn(
+      async (_db: unknown, input: unknown) => (input as { id: string }).id,
+    );
+    const runQuizSkillFn = vi.fn(async () => ({
+      text_md: '题库里暂时没有现成的题。我已经在后台按三条线生成新题，稍后再来。',
+      question_count: 0,
+      status: 'degraded' as const,
+      degrade_reason: 'pool_empty' as const,
+    }));
+    const runAgentTaskFn = vi.fn(async () => {
+      throw new Error('CopilotTask must not run on a skill turn');
+    });
+    const buildMcpServerFn = vi.fn(() => ({ name: 'fake-loom' }) as never);
+
+    const result = await runCopilotChat(
+      db,
+      {
+        user_message: '给我出套题',
+        triggered_by: 'chat',
+        skill_context: { skill: 'quiz', ref: { kind: 'knowledge', id: 'kn_empty' } },
+      },
+      { ...baseDeps, writeEventFn, runQuizSkillFn, runAgentTaskFn, buildMcpServerFn },
+    );
+
+    expect(result.surface).toBe('copilot');
+    expect(result.reply).toContain('后台');
+    expect(result.reply).not.toContain('/practice/');
+    expect(result.skill_turn).toBeUndefined();
+    // The free-form quiz text-spray path is never reached.
+    expect(runAgentTaskFn).not.toHaveBeenCalled();
+  });
+
   it('no skill_context: unchanged free-form CopilotTask path (no skill_turn)', async () => {
     const db = {} as never;
     const writeEventFn = vi.fn(async (_db, input) => input.id);
