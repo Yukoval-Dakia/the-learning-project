@@ -31,6 +31,12 @@ type KnowledgeRow = {
   name: string;
   domain: string | null;
   parent_id: string | null;
+  // YUK-270 — per-node optimistic-concurrency version. Surfaced on the Copilot
+  // graph readers so the agent can pass expected_version / expected_versions to
+  // propose_knowledge_mutation (reparent/merge/split/archive); accept hard-fails
+  // the stale-version guard (knowledge/proposals.ts) on any mismatch, so omitting
+  // or guessing it makes the structural-mutation surface unusable.
+  version: number;
 };
 
 type EdgeRow = {
@@ -54,6 +60,7 @@ async function loadKnowledgeRows(db: Db, subjectId?: string): Promise<KnowledgeR
       name: knowledge.name,
       domain: knowledge.domain,
       parent_id: knowledge.parent_id,
+      version: knowledge.version,
     })
     .from(knowledge)
     .where(isNull(knowledge.archived_at));
@@ -366,6 +373,9 @@ const QueryKnowledgeOutputSchema = z.object({
       path: z.array(z.string()),
       children_count: z.number().int(),
       edge_count: z.number().int(),
+      // YUK-270 — per-node optimistic-concurrency version. Pass this back as
+      // expected_version / expected_versions on propose_knowledge_mutation.
+      version: z.number().int(),
       stats: z
         .object({
           recent_failure_count_30d: z.number().int(),
@@ -482,6 +492,7 @@ async function executeQueryKnowledge(
         path: pathFor(row.id, byId),
         children_count: childCount(row.id, rows),
         edge_count: edgeCount(row.id, allEdges),
+        version: row.version,
         ...(included.includes('stats')
           ? {
               stats: {
@@ -520,13 +531,23 @@ const ExpandInputSchema = z.object({
 });
 
 const ExpandOutputSchema = z.object({
-  center: z.object({ id: z.string(), name: z.string(), path: z.array(z.string()) }).nullable(),
+  center: z
+    .object({
+      id: z.string(),
+      name: z.string(),
+      path: z.array(z.string()),
+      version: z.number().int(),
+    })
+    .nullable(),
   nodes: z.array(
     z.object({
       id: z.string(),
       name: z.string(),
       path: z.array(z.string()),
       role: z.enum(['ancestor', 'child', 'neighbor', 'center']),
+      // YUK-270 — per-node version for propose_knowledge_mutation. merge/split
+      // need every involved node's expected_versions, so expose it on each node.
+      version: z.number().int(),
     }),
   ),
   edges: z.array(
@@ -612,10 +633,21 @@ async function executeExpand(ctx: ToolContext, raw: ExpandInput): Promise<Expand
     : new Map();
 
   return ExpandOutputSchema.parse({
-    center: { id: center.id, name: center.name, path: pathFor(center.id, byId) },
+    center: {
+      id: center.id,
+      name: center.name,
+      path: pathFor(center.id, byId),
+      version: center.version,
+    },
     nodes: selectedIds.map((id) => {
       const row = byId.get(id) as KnowledgeRow;
-      return { id, name: row.name, path: pathFor(id, byId), role: selected.get(id) ?? 'neighbor' };
+      return {
+        id,
+        name: row.name,
+        path: pathFor(id, byId),
+        role: selected.get(id) ?? 'neighbor',
+        version: row.version,
+      };
     }),
     edges: allEdges
       .filter(
