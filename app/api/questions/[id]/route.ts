@@ -26,10 +26,13 @@ const MAX_TIMELINE_LIMIT = 50;
 
 function parseTimelineLimit(raw: string | null): number {
   if (raw === null || raw === '') return DEFAULT_TIMELINE_LIMIT;
-  const parsed = Number.parseInt(raw, 10);
-  if (Number.isNaN(parsed) || parsed <= 0) {
+  // Strict positive-integer match — Number.parseInt is too lenient and would
+  // accept partial-numeric input ('10abc' → 10, '1.5' → 1). Require the WHOLE
+  // string to be a positive integer before parsing.
+  if (!/^[1-9]\d*$/.test(raw)) {
     throw new ApiError('validation_error', `invalid timeline_limit '${raw}'`, 400);
   }
+  const parsed = Number.parseInt(raw, 10);
   return Math.min(parsed, MAX_TIMELINE_LIMIT);
 }
 

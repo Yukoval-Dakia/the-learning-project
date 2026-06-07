@@ -65,4 +65,18 @@ describe('GET /api/questions/[id]', () => {
     });
     expect(res.status).toBe(400);
   });
+
+  it('rejects partial-numeric timeline_limit with 400 (parseInt leniency)', async () => {
+    // P3 regression (coderabbit-route-34-timeline-limit-parseint): Number.parseInt
+    // accepts '10abc' → 10 and '1.5' → 1; the strict /^[1-9]\d*$/ guard must reject
+    // both rather than silently coercing.
+    const id = newId();
+    await seedQuestion(id);
+    for (const raw of ['10abc', '1.5', '0', '-1', ' 10']) {
+      const res = await GET(mkReq(id, `?timeline_limit=${encodeURIComponent(raw)}`), {
+        params: Promise.resolve({ id }),
+      });
+      expect(res.status).toBe(400);
+    }
+  });
 });

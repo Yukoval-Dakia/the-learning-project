@@ -321,28 +321,31 @@ async function loadBacklinks(db: Db, questionId: string): Promise<QuestionDetail
       tool_kind: artifact.tool_kind,
       intent_source: artifact.intent_source,
       generation_status: artifact.generation_status,
-      archived_at: artifact.archived_at,
       created_at: artifact.created_at,
     })
     .from(artifact)
-    .where(sql`${artifact.tool_state}->'question_ids' @> ${JSON.stringify([questionId])}::jsonb`)
+    // Drop archived (mirror note-page XC-5 archived drop) at the SQL layer so
+    // archived rows never participate in the DB sort/transfer. We do NOT drop
+    // non-ready artifacts — question-bank management wants to see ALL references
+    // including draft/in-flight papers, so generation_status is surfaced and the
+    // UI decides (plan §A1e).
+    .where(
+      and(
+        sql`${artifact.tool_state}->'question_ids' @> ${JSON.stringify([questionId])}::jsonb`,
+        isNull(artifact.archived_at),
+      ),
+    )
     .orderBy(desc(artifact.created_at));
 
-  // Read-time filter: drop archived (mirror note-page XC-5 archived drop). We do
-  // NOT drop non-ready artifacts — question-bank management wants to see ALL
-  // references including draft/in-flight papers, so generation_status is surfaced
-  // and the UI decides (plan §A1e).
-  return rows
-    .filter((r) => r.archived_at == null)
-    .map((r) => ({
-      artifact_id: r.id,
-      type: r.type,
-      title: r.title,
-      tool_kind: r.tool_kind ?? null,
-      intent_source: r.intent_source,
-      generation_status: r.generation_status,
-      created_at_sec: Math.floor(r.created_at.getTime() / 1000),
-    }));
+  return rows.map((r) => ({
+    artifact_id: r.id,
+    type: r.type,
+    title: r.title,
+    tool_kind: r.tool_kind ?? null,
+    intent_source: r.intent_source,
+    generation_status: r.generation_status,
+    created_at_sec: Math.floor(r.created_at.getTime() / 1000),
+  }));
 }
 
 function groupByIntentSource(
