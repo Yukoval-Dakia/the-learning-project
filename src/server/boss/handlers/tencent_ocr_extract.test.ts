@@ -289,6 +289,33 @@ describe('tencent_ocr_extract handler (GLM default engine)', () => {
     if (ours) await db.delete(cost_ledger).where(eq(cost_ledger.id, ours.id));
   });
 
+  it('GLM path preserves per-page parser warnings before aggregate warnings', async () => {
+    const { sessionId, sourceDocId, assetIds } = await seedSessionWithAssets(2);
+    const r2 = makeR2WithImage(await makeTestImage());
+
+    const glmOcrFn = vi
+      .fn()
+      .mockResolvedValueOnce(makeGlmResponse({ text: '   ' }))
+      .mockResolvedValueOnce(makeGlmResponse({ text: 'second page text' })) as GlmOcrFn;
+    const runStructureFn = makeVlmStub();
+
+    const handler = buildTencentOcrHandler({ db, r2, glmOcrFn, runStructureFn });
+    await handler([{ id: 'boss-job-glm-warnings', data: { sessionId } } as never]);
+
+    const session = await db
+      .select()
+      .from(learning_session)
+      .where(eq(learning_session.id, sessionId));
+    expect(session[0].warnings).toContain('GLM returned no text blocks on any page');
+    expect(session[0].warnings).toContain('GLM: at least one page has only image/empty blocks');
+
+    const cost = await db.select().from(cost_ledger);
+    const ours = cost.find((c) => c.pgboss_job_id === 'boss-job-glm-warnings');
+
+    await cleanup(sessionId, sourceDocId, assetIds);
+    if (ours) await db.delete(cost_ledger).where(eq(cost_ledger.id, ours.id));
+  });
+
   it('GLM VLM-fail → page-level GLM fallback questions + cost_ledger still written', async () => {
     const { sessionId, sourceDocId, assetId } = await seedSessionWithAsset();
     const r2 = makeR2WithImage(await makeTestImage());

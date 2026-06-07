@@ -184,6 +184,7 @@ async function processOneOcrJob(
       questions: ReturnType<typeof parseMarkAgentResponse>['questions'];
     }> = [];
     const glmPages: ReturnType<typeof parseGlmLayoutResponse>['pages'] = [];
+    const glmParseWarnings: string[] = [];
     let allPreFigures: PreAttachFigure[] = [];
     // Worst-of layout_quality across pages, used only by the OCR fallback path
     // (the VLM emits its own layout_quality on the happy path).
@@ -226,6 +227,7 @@ async function processOneOcrJob(
         // Parse this single page; stamp the handler's pageIndex (the response is
         // one page so layout_details has a single outer entry).
         const parsed = parseGlmLayoutResponse(glmResp, pageIndex);
+        glmParseWarnings.push(...parsed.warnings);
         const page = parsed.pages[0];
         if (page) {
           glmPages.push(page);
@@ -264,6 +266,7 @@ async function processOneOcrJob(
     if (engine === 'glm') {
       const glmLayout = deriveGlmLayoutQuality(glmPages);
       ocrLayout = glmLayout.layout_quality;
+      warnings.push(...glmParseWarnings);
       warnings.push(...glmLayout.warnings);
     }
 
