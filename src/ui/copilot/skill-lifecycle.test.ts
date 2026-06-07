@@ -6,9 +6,14 @@ import { describe, expect, it } from 'vitest';
 import { ONE_SHOT_SKILLS, isOneShotSkill } from './skill-lifecycle';
 
 describe('isOneShotSkill (YUK-272 / YUK-213 F2)', () => {
-  it('treats quiz + solve as one-shot (they return no terminal skill_turn)', () => {
+  it('treats quiz as one-shot (it returns no terminal skill_turn)', () => {
     expect(isOneShotSkill('quiz')).toBe(true);
-    expect(isOneShotSkill('solve')).toBe(true);
+  });
+
+  // YUK-284 (C3) — solve is no longer one-shot config: it has no UI seed, so
+  // activeSkillRef never becomes {skill:'solve'}. It was removed from ONE_SHOT_SKILLS.
+  it('does NOT treat solve as one-shot (no UI seed → dead config removed)', () => {
+    expect(isOneShotSkill('solve')).toBe(false);
   });
 
   it('does NOT treat teaching as one-shot (it clears on its own end turn)', () => {
@@ -20,7 +25,7 @@ describe('isOneShotSkill (YUK-272 / YUK-213 F2)', () => {
     expect(isOneShotSkill('nonsense')).toBe(false);
   });
 
-  it('ONE_SHOT_SKILLS is exactly { quiz, solve }', () => {
-    expect([...ONE_SHOT_SKILLS].sort()).toEqual(['quiz', 'solve']);
+  it('ONE_SHOT_SKILLS is exactly { quiz }', () => {
+    expect([...ONE_SHOT_SKILLS].sort()).toEqual(['quiz']);
   });
 });

@@ -42,6 +42,12 @@ export interface ReplaySkillContext {
   // untouched. Because C3 clears activeSkillRef immediately for one-shot quiz, the
   // replay-restore effect never restores quiz context (a quiz turn carries no
   // skill_turn, so CopilotDock's restore guard skips it).
+  //
+  // YUK-284 (C3) — 'solve' is KEPT in the union for backward compatibility: solve was
+  // extracted from the skill_context protocol (chat.ts no longer routes it), but a
+  // persisted-old solve reply may still carry skill_context:{skill:'solve'} and must
+  // round-trip through replay without a cast. A solve reply carries no skill_turn, so
+  // (like quiz) CopilotDock's restore guard never restores solve context.
   skill: 'teaching' | 'solve' | 'quiz';
   ref: { kind: string; id: string };
 }
