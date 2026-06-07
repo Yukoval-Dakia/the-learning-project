@@ -6,16 +6,18 @@
 //   • summary  — /api/today/copilot-summary (Coach + Dreaming digest), preserved
 //                verbatim. The route stays Today-scoped (the data genuinely IS
 //                today's), so the "今日摘要"-style copy in this slot is correct.
-//   • chat     — message list + real request to the existing, NON-STREAMING POST
-//                /api/copilot/chat (returns one final reply). On open, the list
-//                is prefilled from GET /api/copilot/turns (replay-last-N) so the
-//                conversation is continuous across drawer reopens / reloads.
+//   • chat     — message list + real request to the streaming POST
+//                /api/copilot/chat (YUK-266 C1: SSE delta events then a terminal
+//                reply event). On open, the list is prefilled from GET
+//                /api/copilot/turns (replay-last-N) so the conversation is
+//                continuous across drawer reopens / reloads.
 //   • footer   — quick-chips + composer (Enter to send, Shift+Enter newline).
 //
 // Contract notes (see docs/design/2026-06-04-redraw-composer-preflight.md +
 // docs/design/2026-06-04-l-copilot-preflight.md):
-//   • The endpoint is non-streaming (Response.json) — we render a real
-//     "thinking" in-flight bubble, then the final reply. No fake typewriter.
+//   • The endpoint streams over SSE (YUK-266 C1) — a "thinking" bubble covers the
+//     pre-first-byte gap, then deltas render incrementally into a live bubble with
+//     a typing caret, and the terminal reply event is the authoritative text.
 //   • The route does NOT return tool-call details (RunTaskResult is text-only),
 //     so tool-use cards are phase-deferred (no mock fixtures in production).
 //   • Turn persistence + replay-last-N is AF Slice 3a. Rolling summary is S3b
@@ -28,7 +30,7 @@
 'use client';
 
 import type { CopilotSkillContextT } from '@/server/copilot/chat';
-import { ApiError, apiJson } from '@/ui/lib/api';
+import { ApiError, apiFetch, apiJson } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { useCopilotDwell, useCopilotOpenSignal } from '@/ui/lib/use-copilot-dwell';
 import { Btn } from '@/ui/primitives/Btn';
@@ -89,6 +91,10 @@ interface CopilotChatResponse {
   user_ask_event_id?: string;
   // AF S4 / YUK-203 U6 — additive optional structured-turn carrier.
   skill_turn?: SkillTurn;
+  // YUK-266 (C1) — set only when the SSE stream errored mid-flight but partial
+  // text was still persisted (graceful degrade). The Dock keeps the partial reply
+  // and surfaces its existing error affordance.
+  error?: string;
 }
 
 // GET /api/copilot/turns response shape — see src/server/copilot/turns.ts.
@@ -111,6 +117,9 @@ interface ChatMessage {
   session_id?: string;
   reply_event_id?: string;
   skill_context?: CopilotSkillContextT;
+  // YUK-266 (C1) — true while SSE deltas are still flowing into this AI message;
+  // drives the typing caret affordance. Cleared on the terminal `reply` event.
+  streaming?: boolean;
 }
 
 // Quick-chips are user-readable prompts; they send via triggered_by:'chat'
@@ -123,6 +132,56 @@ const REPLAY_LIMIT = 20;
 
 function nextId(): string {
   return `m_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// YUK-266 (C1) — one parsed SSE event from the chat stream.
+interface SseEvent {
+  event: string;
+  data: string;
+}
+
+// YUK-266 (C1) — parse an SSE response body, yielding {event, data} per frame.
+// Frames are separated by a blank line (\n\n); each frame's `event:` / `data:`
+// lines are accumulated. Tolerant of \r\n and missing trailing newline. The
+// terminal frame may lack a trailing blank line, so we flush a pending frame at
+// end-of-stream.
+async function* parseSseStream(body: ReadableStream<Uint8Array>): AsyncGenerator<SseEvent> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  function* drainComplete(): Generator<SseEvent> {
+    let sep = buffer.indexOf('\n\n');
+    while (sep !== -1) {
+      const frame = buffer.slice(0, sep);
+      buffer = buffer.slice(sep + 2);
+      const parsed = parseFrame(frame);
+      if (parsed) yield parsed;
+      sep = buffer.indexOf('\n\n');
+    }
+  }
+  function parseFrame(frame: string): SseEvent | null {
+    let event = 'message';
+    const dataLines: string[] = [];
+    for (const rawLine of frame.split('\n')) {
+      const line = rawLine.replace(/\r$/, '');
+      if (line.startsWith('event:')) event = line.slice(6).trim();
+      else if (line.startsWith('data:')) dataLines.push(line.slice(5).replace(/^ /, ''));
+    }
+    if (dataLines.length === 0) return null;
+    return { event, data: dataLines.join('\n') };
+  }
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    buffer = buffer.replace(/\r\n/g, '\n');
+    yield* drainComplete();
+  }
+  buffer += decoder.decode();
+  buffer = buffer.replace(/\r\n/g, '\n');
+  yield* drainComplete();
+  const tail = parseFrame(buffer);
+  if (tail) yield tail;
 }
 
 export function CopilotDock() {
@@ -236,8 +295,14 @@ export function CopilotDock() {
     // teaching/solve skill (additive optional body field; absent → unchanged
     // free-form chat). The Copilot session id is unchanged (single-session, §4.2).
     const skillContext = activeSkillRef.current;
+    // YUK-266 (C1) — the AI message id is minted up-front so the incremental SSE
+    // deltas can target the SAME message as it grows; the terminal `reply` event
+    // then overwrites its text with the authoritative reply + attaches the
+    // structured fields.
+    const aiId = nextId();
+    let aiCreated = false;
     try {
-      const res = await apiJson<CopilotChatResponse>('/api/copilot/chat', {
+      const res = await apiFetch('/api/copilot/chat', {
         method: 'POST',
         body: JSON.stringify({
           user_message: text,
@@ -245,27 +310,85 @@ export function CopilotDock() {
           ...(skillContext ? { skill_context: skillContext } : {}),
         }),
       });
+      const body = res.body;
+      // Graceful degrade (red line): no streamable body → read the whole thing
+      // and treat it as a single terminal reply. The terminal `reply` event is the
+      // source of truth, so even zero deltas render correctly.
+      let finalReply: CopilotChatResponse | null = null;
+      if (!body) {
+        finalReply = (await res.json()) as CopilotChatResponse;
+      } else {
+        for await (const evt of parseSseStream(body)) {
+          if (evt.event === 'delta') {
+            let chunk = '';
+            try {
+              chunk = (JSON.parse(evt.data) as { text?: string }).text ?? '';
+            } catch {
+              chunk = '';
+            }
+            if (!chunk) continue;
+            // First delta swaps the "thinking" bubble for a live streaming AI
+            // message; subsequent deltas grow its text.
+            if (!aiCreated) {
+              aiCreated = true;
+              setSending(false);
+              setMessages((prev) => [
+                ...prev,
+                { id: aiId, role: 'ai', text: chunk, streaming: true },
+              ]);
+            } else {
+              setMessages((prev) =>
+                prev.map((m) => (m.id === aiId ? { ...m, text: m.text + chunk } : m)),
+              );
+            }
+          } else if (evt.event === 'reply') {
+            try {
+              finalReply = JSON.parse(evt.data) as CopilotChatResponse;
+            } catch {
+              finalReply = null;
+            }
+          }
+        }
+      }
+
+      if (!finalReply || typeof finalReply.reply !== 'string') {
+        // No usable terminal payload — degrade to the error affordance. If a
+        // partial bubble was created, drop it so we don't strand a half message.
+        if (aiCreated) setMessages((prev) => prev.filter((m) => m.id !== aiId));
+        setError(finalReply?.error ?? '请求失败');
+        return;
+      }
+
+      const res2 = finalReply;
       // AF S4 / YUK-203 U6 — clear the active skill on end turn so subsequent
       // free-form messages are not re-routed to the stale skill context.
-      if (res.skill_turn?.kind === 'end') {
+      if (res2.skill_turn?.kind === 'end') {
         activeSkillRef.current = null;
       }
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: nextId(),
-          role: 'ai',
-          text: res.reply,
-          skill_turn: res.skill_turn,
-          session_id: res.session_id,
-          reply_event_id: res.reply_event_id,
-          // Store the originating skill_context on the message so the replay
-          // path can reconstruct activeSkillRef on next open without waiting
-          // for the turns API to echo it back.
-          skill_context: skillContext ?? undefined,
-        },
-      ]);
+      const finalized: ChatMessage = {
+        id: aiId,
+        role: 'ai',
+        // The terminal reply is authoritative (reconciles any delta drift).
+        text: res2.reply,
+        skill_turn: res2.skill_turn,
+        session_id: res2.session_id,
+        reply_event_id: res2.reply_event_id,
+        // Store the originating skill_context on the message so the replay
+        // path can reconstruct activeSkillRef on next open without waiting
+        // for the turns API to echo it back.
+        skill_context: skillContext ?? undefined,
+        streaming: false,
+      };
+      setMessages((prev) =>
+        aiCreated ? prev.map((m) => (m.id === aiId ? finalized : m)) : [...prev, finalized],
+      );
+      // YUK-266 (C1) — a partial-degrade reply still rendered (text persisted);
+      // surface the error affordance alongside it so the user knows it was cut.
+      if (res2.error) setError(res2.error);
     } catch (err) {
+      // Network / stream error mid-flight. Drop any partial bubble and show the
+      // existing 重试 affordance — the turn was best-effort.
+      if (aiCreated) setMessages((prev) => prev.filter((m) => m.id !== aiId));
       const message =
         err instanceof ApiError
           ? `请求失败（${err.status}）`
@@ -459,7 +582,11 @@ export function CopilotDock() {
               </p>
             ) : null}
             {messages.map((m) => (
-              <div key={m.id} className={`msg msg-${m.role}`} data-testid={`copilot-msg-${m.role}`}>
+              <div
+                key={m.id}
+                className={`msg msg-${m.role}${m.streaming ? ' is-streaming' : ''}`}
+                data-testid={`copilot-msg-${m.role}`}
+              >
                 <div className="msg-avatar">
                   {m.role === 'ai' ? <LoomIcon name="sparkle" size={14} /> : '知'}
                 </div>
@@ -471,6 +598,19 @@ export function CopilotDock() {
                       replies have no subject-profile context so latex gating
                       is deliberately off (matches free-form path intention). */}
                   <MathMarkdown className="msg-text">{m.text}</MathMarkdown>
+                  {/* YUK-266 (C1) — typing caret while SSE deltas flow into this
+                      message. A NEW testid distinct from copilot-thinking (which
+                      only covers the pre-first-byte gap). Reuses the Dock chat
+                      tokens — no new visual system. */}
+                  {m.streaming ? (
+                    <span
+                      className="chat-caret"
+                      data-testid="copilot-msg-streaming"
+                      aria-hidden="true"
+                    >
+                      ▍
+                    </span>
+                  ) : null}
                   {/* AF S4 / YUK-203 U6 — teaching skill turn carrier. explain is
                       already covered by msg-text above; ask_check renders the
                       materialized question + a corrective accept-chip; end shows a

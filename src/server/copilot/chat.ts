@@ -27,7 +27,12 @@ import {
   TAVILY_MCP_SERVER_NAME,
   buildTavilyMcpServer,
 } from '@/server/ai/mcp/tavily';
-import { type RunTaskResult, runAgentTask } from '@/server/ai/runner';
+import {
+  type RunTaskResult,
+  type StreamCollectResult,
+  runAgentTask,
+  streamTaskCollecting,
+} from '@/server/ai/runner';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
   type DomainToolSurface,
@@ -138,6 +143,12 @@ export interface CopilotChatResult {
   // only when a teaching skill ran an ask_check/explain/end turn; absent for
   // free-form chat replies so existing consumers are unaffected.
   skill_turn?: CopilotSkillTurn;
+  // YUK-266 (C1) — additive optional partial-degrade signal. Set ONLY by the
+  // streaming entrypoint when the SDK stream errored mid-flight but some text was
+  // still collected and persisted (graceful degrade — the turn is never lost). The
+  // non-streaming path never sets it, so existing consumers are unaffected; the
+  // Dock surfaces its existing error affordance alongside the partial reply.
+  error?: string;
 }
 
 const CHIP_TRIGGER_EVENT_ACTION = 'experimental:copilot_chip_trigger';
@@ -160,6 +171,22 @@ type RunAgentTaskFn = (
     allowedTools?: string[];
   },
 ) => Promise<RunTaskResult>;
+// YUK-266 (C1) — swappable streaming agent runner. Streams text deltas to
+// `onDelta` then resolves the full StreamCollectResult (text + task_run_id + the
+// optional partial/error degrade flags). Defaults to streamTaskCollecting; unit
+// tests inject a vi.fn that calls onDelta then resolves a fixture so the {}-stub
+// db is never touched. Mirrors RunAgentTaskFn's ctx shape + adds the onDelta arg.
+type StreamAgentTaskFn = (
+  kind: string,
+  input: unknown,
+  ctx: {
+    db: Db;
+    mcpServers?: Record<string, SdkMcpServer | McpHttpServerConfig>;
+    allowedTools?: string[];
+    signal?: AbortSignal;
+  },
+  onDelta: (text: string) => void,
+) => Promise<StreamCollectResult>;
 type BuildMcpServerFn = typeof buildMcpServerFromRegistry;
 // YUK-198 — swappable Tavily MCP builder. Defaults to the env-gated
 // buildTavilyMcpServer; unit tests inject a fixture (or null) instead of
@@ -180,6 +207,10 @@ type LoadProposalFeedbackFn = (db: Db) => Promise<ProposalFeedbackCell[]>;
 
 export interface CopilotChatDeps {
   runAgentTaskFn?: RunAgentTaskFn;
+  // YUK-266 (C1) — defaults to streamTaskCollecting. Used ONLY by
+  // runCopilotChatStreaming's free-form path; runCopilotChat (non-streaming)
+  // ignores it. Unit tests inject a vi.fn so the {}-stub db is never touched.
+  streamAgentTaskFn?: StreamAgentTaskFn;
   buildMcpServerFn?: BuildMcpServerFn;
   // YUK-198 — defaults to buildTavilyMcpServer (reads TAVILY_API_KEY). Returns
   // null when unconfigured → Tavily is not registered and no extra allowedTools
@@ -260,13 +291,25 @@ function selectActorRef(triggeredBy: CopilotChatTriggerKind): string {
   return triggeredBy === 'chip' ? 'agent:copilot_chip' : 'agent:copilot';
 }
 
-export async function runCopilotChat(
+// YUK-266 (C1) — streaming options threaded through the shared chat impl. When
+// present, the free-form path streams text deltas via `onDelta` (through
+// streamAgentTaskFn) and the skill path pushes ONE delta (the full deterministic
+// reply) so the transport stays uniform. `signal` is the request AbortSignal for
+// client-disconnect teardown. Absent → the unchanged non-streaming behaviour.
+interface CopilotStreamOptions {
+  onDelta: (text: string) => void;
+  signal?: AbortSignal;
+}
+
+async function runCopilotChatImpl(
   db: Db,
   req: CopilotChatRequestT,
-  deps: CopilotChatDeps = {},
+  deps: CopilotChatDeps,
+  streaming: CopilotStreamOptions | undefined,
 ): Promise<CopilotChatResult> {
   const now = deps.now?.() ?? new Date();
   const run = deps.runAgentTaskFn ?? runAgentTask;
+  const streamRun = deps.streamAgentTaskFn ?? streamTaskCollecting;
   const buildMcpServer = deps.buildMcpServerFn ?? buildMcpServerFromRegistry;
   const buildTavily = deps.buildTavilyMcpServerFn ?? buildTavilyMcpServer;
   const write = deps.writeEventFn ?? writeEvent;
@@ -561,6 +604,12 @@ export async function runCopilotChat(
       throw new Error(`Unhandled copilot skill kind: ${req.skill_context.skill}`);
     }
 
+    // YUK-266 (C1) — skill turns are deterministic / single-shot (no token loop),
+    // so when streaming we emit ONE delta carrying the full reply, then the caller
+    // emits the terminal `reply` event. This keeps one transport code path across
+    // free-form and skill turns.
+    if (streaming) streaming.onDelta(replyMd);
+
     return {
       // PR #305 review comment #3: expose the real task_run_id (not the pre-generated
       // placeholder) so cost-tracing links the API response to the actual LLM run.
@@ -651,23 +700,41 @@ export async function runCopilotChat(
     ...(tavilyCfg ? TAVILY_MCP_ALLOWED_TOOLS : []),
   ];
 
-  const result = await run(
-    'CopilotTask',
-    {
-      surface,
-      triggered_by: req.triggered_by,
-      user_message: req.user_message,
-      ...(req.chip_kind ? { chip_kind: req.chip_kind } : {}),
-      // Edge-scoped, char-bounded reason digest. Serialized verbatim into the
-      // prompt by promptFromInput (runner.ts JSON.stringify) — no new plumbing.
-      proposal_feedback: proposalFeedback,
-    },
-    {
-      db,
-      mcpServers,
-      allowedTools,
-    },
-  );
+  const runInput = {
+    surface,
+    triggered_by: req.triggered_by,
+    user_message: req.user_message,
+    ...(req.chip_kind ? { chip_kind: req.chip_kind } : {}),
+    // Edge-scoped, char-bounded reason digest. Serialized verbatim into the
+    // prompt by promptFromInput (runner.ts JSON.stringify) — no new plumbing.
+    proposal_feedback: proposalFeedback,
+  };
+
+  // YUK-266 (C1) — the free-form path runs the CopilotTask token loop. When
+  // streaming, route through streamAgentTaskFn (streamTaskCollecting) so text
+  // deltas reach the client as they are produced, then collect the full text +
+  // real task_run_id; the reply-event persistence below is byte-identical to the
+  // non-stream path (S3a contract). When NOT streaming, the unchanged
+  // runAgentTask path returns one final result. The streaming runner degrades
+  // gracefully (resolves a partial result on SDK error) rather than throwing.
+  let replyText: string;
+  let replyRunId: string;
+  let streamError: string | undefined;
+  if (streaming) {
+    const streamResult = await streamRun(
+      'CopilotTask',
+      runInput,
+      { db, mcpServers, allowedTools, signal: streaming.signal },
+      streaming.onDelta,
+    );
+    replyText = streamResult.text;
+    replyRunId = streamResult.task_run_id;
+    if (streamResult.partial) streamError = streamResult.error;
+  } else {
+    const result = await run('CopilotTask', runInput, { db, mcpServers, allowedTools });
+    replyText = result.text;
+    replyRunId = result.task_run_id;
+  }
 
   // AF S3a / YUK-203 U3 — persist the reply turn so the drawer can replay-last-N.
   // The reply chains to the user ask/chip event (causedByEventId) so the turn
@@ -696,22 +763,54 @@ export async function runCopilotChat(
     payload: {
       surface: 'copilot',
       session_id: sessionId,
-      reply_md: result.text,
-      task_run_id: result.task_run_id,
+      reply_md: replyText,
+      task_run_id: replyRunId,
       in_reply_to_event_id: causedByEventId ?? null,
     },
     caused_by_event_id: causedByEventId ?? null,
-    task_run_id: result.task_run_id,
+    task_run_id: replyRunId,
     created_at: replyAt,
   });
 
   return {
-    task_run_id: result.task_run_id,
-    reply: result.text,
+    task_run_id: replyRunId,
+    reply: replyText,
     surface,
     triggered_by: req.triggered_by,
     session_id: sessionId,
     reply_event_id: replyEventId,
     ...(userAskEventId ? { user_ask_event_id: userAskEventId } : {}),
+    // YUK-266 (C1) — surface the partial-degrade note only when the stream errored
+    // mid-flight (additive optional; absent on the non-stream + clean-stream paths).
+    ...(streamError ? { error: streamError } : {}),
   };
+}
+
+// Non-streaming entrypoint — unchanged public contract. Existing unit tests + any
+// non-stream caller keep working byte-for-byte; the shared impl runs with no
+// streaming options so the free-form path uses runAgentTask and emits no deltas.
+export async function runCopilotChat(
+  db: Db,
+  req: CopilotChatRequestT,
+  deps: CopilotChatDeps = {},
+): Promise<CopilotChatResult> {
+  return runCopilotChatImpl(db, req, deps, undefined);
+}
+
+// YUK-266 (C1) — streaming entrypoint. Identical turn-persistence contract to
+// runCopilotChat (the SAME single experimental:copilot_reply event is written with
+// the full text + real task_run_id), but text deltas are streamed to `onDelta` as
+// they are produced and the resolved CopilotChatResult is the terminal payload the
+// route emits as the `reply` SSE event. Streaming failure degrades gracefully:
+// whatever text was collected is still persisted + returned (with an `error` note),
+// so a turn is never lost. `signal` (req.signal) tears the SDK run down on client
+// disconnect.
+export async function runCopilotChatStreaming(
+  db: Db,
+  req: CopilotChatRequestT,
+  onDelta: (text: string) => void,
+  deps: CopilotChatDeps = {},
+  signal?: AbortSignal,
+): Promise<CopilotChatResult> {
+  return runCopilotChatImpl(db, req, deps, { onDelta, signal });
 }
