@@ -112,16 +112,21 @@ export function AutoEnrolledPanel() {
   }, [knowledgeQ.data]);
 
   const revertM = useMutation({
-    mutationFn: (blockId: string) =>
-      apiJson(`/api/ingestion/${selectedSessionId}/revert`, {
+    // sessionId rides along as a mutate VARIABLE (not closure-captured) so a revert
+    // that is in-flight while the user switches sessions still targets the session
+    // it was fired against — both the POST URL and the cache key it invalidates
+    // (ocr-3: closure over selectedSessionId could invalidate/POST the wrong session
+    // for the in-flight window).
+    mutationFn: ({ blockId, sessionId }: { blockId: string; sessionId: string }) =>
+      apiJson(`/api/ingestion/${sessionId}/revert`, {
         method: 'POST',
         body: JSON.stringify({ block_id: blockId }),
       }),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       setConfirmingBlockId(null);
       // Refetch (not optimistic) — revert touches multiple tables; the block flips
       // to draft, its observation row stays but loses the revert affordance.
-      qc.invalidateQueries({ queryKey: ['ingestion-blocks', selectedSessionId] });
+      qc.invalidateQueries({ queryKey: ['ingestion-blocks', variables.sessionId] });
       qc.invalidateQueries({ queryKey: ['ingestion-sessions'] });
     },
   });
@@ -173,6 +178,9 @@ export function AutoEnrolledPanel() {
           onSelect={(id) => {
             setSelectedSessionId(id);
             setConfirmingBlockId(null);
+            // Clear any stale revert error so switching sessions doesn't surface the
+            // previous row's failure on the next revert (crabbit-revert-error-reset).
+            revertM.reset();
           }}
         />
       )}
@@ -197,9 +205,22 @@ export function AutoEnrolledPanel() {
           confirmingBlockId={confirmingBlockId}
           reverting={revertM.isPending}
           revertErrorText={revertM.isError ? formatLoadError(revertM.error) : null}
-          onRevertClick={(blockId) => setConfirmingBlockId(blockId)}
-          onRevertConfirm={(blockId) => revertM.mutate(blockId)}
-          onRevertCancel={() => setConfirmingBlockId(null)}
+          onRevertClick={(blockId) => {
+            setConfirmingBlockId(blockId);
+            // New confirm target → drop any prior row's revert error
+            // (crabbit-revert-error-reset).
+            revertM.reset();
+          }}
+          onRevertConfirm={(blockId) => {
+            if (!selectedSessionId) return;
+            revertM.mutate({ blockId, sessionId: selectedSessionId });
+          }}
+          onRevertCancel={() => {
+            setConfirmingBlockId(null);
+            // Cancelling clears the error so re-opening the row starts clean
+            // (crabbit-revert-error-reset).
+            revertM.reset();
+          }}
         />
       </Stateful>
     </div>
@@ -398,6 +419,9 @@ function SessionPicker({ sessions, selectedId, onSelect }: SessionPickerProps) {
             type="button"
             key={s.id}
             onClick={() => onSelect(s.id)}
+            // Expose the selected state to screen readers (ocr-9) — the coral
+            // styling is the only sighted cue otherwise.
+            aria-pressed={active}
             style={sessionChipStyle(active)}
             // session-list auto_enrolled_count MAY drive only this picker badge —
             // never the banner or per-row affordance (lane plan §3 P2-3).
@@ -497,7 +521,8 @@ const chipRowStyle: React.CSSProperties = {
 const knowledgePillStyle: React.CSSProperties = {
   fontFamily: 'var(--font-mono)',
   fontSize: 'var(--fs-meta)',
-  padding: '4px 8px',
+  // 4px/8px land exactly on the grid → use the tokens (ocr-4).
+  padding: 'var(--s-1) var(--s-2)',
   borderRadius: 'var(--r-pill)',
   border: '1px solid var(--line-soft)',
   background: 'var(--paper-sunk)',
@@ -557,6 +582,9 @@ const sessionChipStyle = (active: boolean): React.CSSProperties => ({
   gap: 'var(--s-1)',
   fontFamily: 'var(--font-mono)',
   fontSize: 'var(--fs-meta)',
+  // 6px/10px are deliberately off the 4pt grid: the spacing scale jumps 4→8→12
+  // with no 6/10 token (app/globals.css --s-*), and a chip padded to --s-2/--s-3
+  // (8/12) reads visually too tall for a mono pill. Kept as raw px (ocr-5).
   padding: '6px 10px',
   borderRadius: 'var(--r-pill)',
   border: `1px solid ${active ? 'var(--coral)' : 'var(--line)'}`,
@@ -568,6 +596,10 @@ const sessionChipStyle = (active: boolean): React.CSSProperties => ({
 });
 
 const pickerCountStyle: React.CSSProperties = {
+  // Count badge intentionally smaller than --fs-meta (13px): there is no <13px
+  // type token (app/globals.css smallest is --fs-meta), and the badge must read as
+  // subordinate to the chip label. 10px font + 6px inline padding are raw px by
+  // design — no matching token exists (ocr-4/5).
   fontSize: '10px',
   padding: '0 6px',
   borderRadius: 'var(--r-pill)',

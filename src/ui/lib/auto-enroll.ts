@@ -167,9 +167,13 @@ export function seedBlockForm(block: {
         : '',
     cause_notes: typeof cause?.analysis_md === 'string' ? cause.analysis_md : '',
     question_kind: DEFAULT_SEED.question_kind,
+    // Clamp to the import contract's 1..5 (import route Zod: int().min(1).max(5)).
+    // The judge's difficulty has no upstream guarantee of being in range, and an
+    // out-of-range seed would sit in the form and 400 on submit (range slider won't
+    // re-clamp unless dragged). Round first so a float seed lands on an int.
     difficulty:
       typeof draft?.difficulty === 'number' && Number.isFinite(draft.difficulty)
-        ? draft.difficulty
+        ? Math.min(5, Math.max(1, Math.round(draft.difficulty)))
         : DEFAULT_SEED.difficulty,
   };
 }

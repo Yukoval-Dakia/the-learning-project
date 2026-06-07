@@ -37,6 +37,7 @@
 
 import { and, asc, eq, inArray } from 'drizzle-orm';
 
+import { MistakeEnrollOutcome } from '@/core/schema/mistake_enroll';
 import { db } from '@/db/client';
 import { event, question_block } from '@/db/schema';
 import { errorResponse } from '@/server/http/errors';
@@ -140,7 +141,10 @@ function toAutoEnrollObservation(row: {
 // "valid enough" for prefill. Instead we project only the fields slice-3 prefill
 // needs and guard each defensively, so a partial event keeps its present fields
 // (absent ones fall to null / today's defaults downstream).
-const WRONG_ANSWER_VALUES = ['failure', 'partial', 'success', 'unanswered'] as const;
+// Derive the accepted set from the canonical MistakeEnrollOutcome enum so a future
+// added outcome can never be silently projected to null by a stale hand-kept list
+// (ocr-1: compile-time sync with mistake_enroll.ts). z.enum exposes `.options`.
+const WRONG_ANSWER_VALUES = MistakeEnrollOutcome.options;
 type WrongAnswer = (typeof WRONG_ANSWER_VALUES)[number];
 
 function toMistakeDraft(value: unknown): {

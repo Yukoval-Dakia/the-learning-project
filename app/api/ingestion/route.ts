@@ -41,7 +41,12 @@ export async function GET(req: Request): Promise<Response> {
     const url = new URL(req.url);
     const limit = clampLimit(url.searchParams.get('limit'));
 
-    // 1) latest ingestion sessions (newest first, capped at limit).
+    // 1) latest ingestion sessions that have ≥1 block (newest first, capped at
+    //    limit). The "has a block" predicate is pushed into SQL as an EXISTS
+    //    subquery BEFORE orderBy+limit so block-less sessions never consume a
+    //    limit slot and crowd out an older-but-valid session (codex/CodeRabbit:
+    //    in-memory post-filter could drop valid rows). NB: no learning_session
+    //    .block_count column exists — the predicate is an EXISTS over question_block.
     const sessions = await db
       .select({
         id: learning_session.id,
@@ -51,7 +56,12 @@ export async function GET(req: Request): Promise<Response> {
         created_at: learning_session.created_at,
       })
       .from(learning_session)
-      .where(eq(learning_session.type, 'ingestion'))
+      .where(
+        and(
+          eq(learning_session.type, 'ingestion'),
+          sql`exists (select 1 from ${question_block} where ${question_block.ingestion_session_id} = ${learning_session.id})`,
+        ),
+      )
       .orderBy(desc(learning_session.created_at))
       .limit(limit);
 
@@ -95,26 +105,25 @@ export async function GET(req: Request): Promise<Response> {
     const blockBySid = new Map(blockAgg.map((b) => [b.sid, b]));
     const obsBySid = new Map(obsAgg.map((o) => [o.sid, o.obs]));
 
-    const rows = sessions
-      .map((s) => {
-        const agg = blockBySid.get(s.id);
-        const block_count = Number(agg?.total ?? 0);
-        return {
-          id: s.id,
-          entrypoint: s.entrypoint,
-          status: s.status,
-          source_asset_ids: s.source_asset_ids,
-          observation_count: Number(obsBySid.get(s.id) ?? 0),
-          auto_enrolled_count: Number(agg?.enrolled ?? 0),
-          block_count,
-          // unix sec — mirror blocks/route.ts:96 convention.
-          created_at: Math.floor(s.created_at.getTime() / 1000),
-        };
-      })
-      // Focus the list on sessions that actually have blocks. Do NOT filter on
-      // observation_count — a freshly-extracted session with 0 observations is a
-      // valid pick whose observe-empty state we want to surface.
-      .filter((r) => r.block_count > 0);
+    // The "has ≥1 block" filter is already applied in SQL (EXISTS in step 1), so
+    // every session here has blocks — no in-memory block_count>0 post-filter (which
+    // would drop valid older rows already squeezed out of the limit). We do NOT
+    // filter on observation_count: a freshly-extracted session with 0 observations
+    // is a valid pick whose observe-empty state we want to surface.
+    const rows = sessions.map((s) => {
+      const agg = blockBySid.get(s.id);
+      return {
+        id: s.id,
+        entrypoint: s.entrypoint,
+        status: s.status,
+        source_asset_ids: s.source_asset_ids,
+        observation_count: Number(obsBySid.get(s.id) ?? 0),
+        auto_enrolled_count: Number(agg?.enrolled ?? 0),
+        block_count: Number(agg?.total ?? 0),
+        // unix sec — mirror blocks/route.ts:96 convention.
+        created_at: Math.floor(s.created_at.getTime() / 1000),
+      };
+    });
 
     return Response.json({ rows });
   } catch (err) {

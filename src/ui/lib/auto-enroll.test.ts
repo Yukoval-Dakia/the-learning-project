@@ -81,14 +81,14 @@ describe('seedBlockForm', () => {
   });
 
   it('seeds knowledge_ids from suggested_knowledge_ids', () => {
-    const seed = seedBlockForm({
-      auto_enroll_observation: obs({ suggested_knowledge_ids: ['k1', 'k2'] }),
-    });
+    // Keep a handle on the SAME source observation so the copy-semantics assertion
+    // below compares against the actual input array, not a second fresh array (which
+    // would make `not.toBe` vacuously true) — crabbit-nit-test-array-copy.
+    const source = obs({ suggested_knowledge_ids: ['k1', 'k2'] });
+    const seed = seedBlockForm({ auto_enroll_observation: source });
     expect(seed.knowledge_ids).toEqual(['k1', 'k2']);
     // returns a copy, not the source array reference
-    expect(seed.knowledge_ids).not.toBe(
-      obs({ suggested_knowledge_ids: ['k1', 'k2'] }).suggested_knowledge_ids,
-    );
+    expect(seed.knowledge_ids).not.toBe(source.suggested_knowledge_ids);
   });
 
   it('seeds difficulty + cause from mistake_draft', () => {
