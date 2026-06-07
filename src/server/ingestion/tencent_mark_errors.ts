@@ -1,5 +1,11 @@
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 
+// PHASE-DEFERRED (YUK-253): GLM-OCR is now the default extraction engine and
+// throws typed Retryable/Permanent errors directly, so this Tencent SDK error
+// mapper is only reached on the retained `EXTRACT_OCR_ENGINE='tencent'` rollback
+// path. Removal trigger: the EXTRACT_OCR_ENGINE flag is retired after the GLM
+// bake-in window — see the YUK-253 follow-up "Remove retained Tencent engine".
+
 /**
  * Tencent Cloud SDK 异常分类 —— 决定 pg-boss 是否 retry。
  *

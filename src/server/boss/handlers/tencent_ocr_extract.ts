@@ -11,6 +11,12 @@ import { assignFigures, assignFiguresFromVlm } from '@/server/ingestion/figure_a
 // T-OC slice 2 (YUK-145, OC-1/OC-2): VLM StructureTask owns the structure tree;
 // Tencent structure is demoted to a text hint. See
 // docs/superpowers/plans/2026-05-30-yuk145-toc-slice2-lane.md.
+import { runGlmLayoutParsing } from '@/server/ingestion/glm_ocr';
+import {
+  buildGlmFallbackQuestions,
+  parseGlmLayoutResponse,
+  renderGlmHint,
+} from '@/server/ingestion/glm_ocr_parser';
 import {
   type StructureResult,
   StructureTaskError,
@@ -52,9 +58,23 @@ const TASK_KIND = 'tencent_ocr_extract';
 export type TencentOcrDeps = {
   db: Db;
   r2: R2Client;
-  /** Test override: skip real Tencent SDK calls. */
+  /**
+   * YUK-253: default GLM-OCR engine call. Test override lets handler tests stub
+   * the GLM HTTP call without hitting the live API. Defaults to the production
+   * `runGlmLayoutParsing`.
+   */
+  glmOcrFn?: typeof runGlmLayoutParsing;
+  /**
+   * Test override: skip real Tencent SDK calls. PHASE-DEFERRED — kept for the
+   * retained `EXTRACT_OCR_ENGINE='tencent'` fallback path (see engine resolution).
+   */
   submitFn?: typeof submitOcrJob;
   pollFn?: typeof pollUntilDone;
+  /**
+   * YUK-253: explicit engine override for tests (bypasses the EXTRACT_OCR_ENGINE
+   * env read). 'glm' (default) | 'tencent' (retained fallback).
+   */
+  engine?: 'glm' | 'tencent';
   /**
    * Test override for the VLM StructureTask (OC-1/OC-2). Mirrors submitFn/pollFn:
    * lets handler tests stub the VLM without a real multimodal LLM call. Defaults
@@ -78,9 +98,18 @@ async function processOneOcrJob(
   sessionId: string,
   bossJobId: string,
 ): Promise<void> {
+  const glmOcr = deps.glmOcrFn ?? runGlmLayoutParsing;
   const submit = deps.submitFn ?? submitOcrJob;
   const poll = deps.pollFn ?? pollUntilDone;
   const runStructure = deps.runStructureFn ?? runStructureTask;
+
+  // YUK-253: engine selection. GLM-OCR is the default; 'tencent' is the retained
+  // rollback engine behind the EXTRACT_OCR_ENGINE flag. A `deps.engine` override
+  // lets handler tests pin the path without touching process.env.
+  // PHASE-DEFERRED: the 'tencent' branch + flag retire after the GLM bake-in
+  // window — see the YUK-253 follow-up "Remove retained Tencent engine".
+  const engine: 'glm' | 'tencent' =
+    deps.engine ?? (process.env.EXTRACT_OCR_ENGINE === 'tencent' ? 'tencent' : 'glm');
 
   // 1. Load session + ALL assets. T-OC slice 2 (OC-2): the VLM sees every page
   //    so it can assemble 跨页大题 — no longer single-page (`[0]`). Read from
@@ -101,6 +130,7 @@ async function processOneOcrJob(
       sessionId,
       bossJobId,
       new PermanentError(`session ${sessionId} has no source_asset_ids`),
+      engine,
     );
     return; // already failed, don't rethrow
   }
@@ -114,6 +144,7 @@ async function processOneOcrJob(
         sessionId,
         bossJobId,
         new PermanentError(`source_asset ${id} not found`),
+        engine,
       );
       return;
     }
@@ -127,20 +158,30 @@ async function processOneOcrJob(
     const sourceDocumentId = session.source_document_id ?? '';
     const warnings: string[] = [];
 
-    // 3-9. Per-page: download → dims → Tencent OCR → parse → crop figures.
-    //      Tencent stays the character-level text OCR + figure-bbox source; its
-    //      STRUCTURE output is demoted to a hint (OC-1). Figures are still
-    //      cropped per page and attached via `assignFigures` (slice 2b will
-    //      replace that heuristic with VLM matching — see lane plan §DEFERRED).
+    // 3-9. Per-page: download → dims → OCR (GLM default / Tencent fallback) →
+    //      parse → crop figures. The OCR engine stays the character-level text +
+    //      figure-bbox source; its STRUCTURE output is demoted to a hint (OC-1).
+    //      Figures are still cropped per page and attached via `assignFigures`
+    //      (slice 2b will replace that heuristic with VLM matching — lane §DEFERRED).
+    //
+    //      YUK-253: both engine branches converge on engine-agnostic accumulators
+    //      (`ocrHintMd`, `ocrFallbackQuestions`, `ocrLayout`) so the VLM layer and
+    //      fallback below are unchanged.
     const pageImages: Array<{ data: string; mediaType: string }> = [];
+    // Tencent path: per-page demoted structure → hint. GLM path: per-page markdown.
     const tencentPages: Array<{
       page_index: number;
       questions: ReturnType<typeof parseMarkAgentResponse>['questions'];
     }> = [];
+    const glmPages: ReturnType<typeof parseGlmLayoutResponse>['pages'] = [];
     let allPreFigures: PreAttachFigure[] = [];
-    // Worst-of layout_quality across pages, used only by the Tencent fallback
-    // path (the VLM emits its own layout_quality on the happy path).
-    let tencentLayout: LayoutQuality = 'structured';
+    // Worst-of layout_quality across pages, used only by the OCR fallback path
+    // (the VLM emits its own layout_quality on the happy path).
+    let ocrLayout: LayoutQuality = 'structured';
+    // YUK-253: GLM is the FIRST billable OCR point (xiaomi/Tencent report no
+    // cost; GLM does). Accumulate usage across pages for the success ledger row.
+    let glmPromptTokens = 0;
+    let glmCompletionTokens = 0;
 
     for (let pageIndex = 0; pageIndex < assetIds.length; pageIndex++) {
       const assetId = assetIds[pageIndex];
@@ -162,41 +203,65 @@ async function processOneOcrJob(
         throw new PermanentError('sharp could not determine page image dimensions');
       }
 
+      const pageBase64 = pageBuffer.toString('base64');
       pageImages.push({
-        data: pageBuffer.toString('base64'),
+        data: pageBase64,
         mediaType: asset.mime_type,
       });
 
-      const tencentJobId = await submit({ ImageBase64: pageBuffer.toString('base64') });
-      const ocrResp: DescribeResponse = await poll(tencentJobId);
-      if (ocrResp.JobStatus === 'FAIL') {
-        throw new RetryableError(
-          `Tencent OCR job ${tencentJobId} FAIL: ${ocrResp.JobErrorMsg ?? 'unknown'}`,
-        );
+      // figureBoxes from whichever engine ran this page.
+      let figureBoxes: import('@/core/schema/structured_question').BBoxT[] = [];
+
+      if (engine === 'glm') {
+        // GLM layout_parsing is synchronous (single call, no submit+poll).
+        const glmResp = await glmOcr({ imageBase64: pageBase64, mediaType: asset.mime_type });
+        glmPromptTokens += glmResp.usage?.prompt_tokens ?? 0;
+        glmCompletionTokens += glmResp.usage?.completion_tokens ?? 0;
+        // Parse this single page; stamp the handler's pageIndex (the response is
+        // one page so layout_details has a single outer entry).
+        const parsed = parseGlmLayoutResponse(glmResp, pageIndex);
+        const page = parsed.pages[0];
+        if (page) {
+          glmPages.push(page);
+          figureBoxes = page.figures.map((f) => f.bbox);
+        }
+        warnings.push(...parsed.warnings);
+        if (parsed.layout_quality !== 'structured' && ocrLayout === 'structured') {
+          ocrLayout = parsed.layout_quality;
+        }
+      } else {
+        // PHASE-DEFERRED (YUK-253): retained Tencent engine behind the flag.
+        const tencentJobId = await submit({ ImageBase64: pageBase64 });
+        const ocrResp: DescribeResponse = await poll(tencentJobId);
+        if (ocrResp.JobStatus === 'FAIL') {
+          throw new RetryableError(
+            `Tencent OCR job ${tencentJobId} FAIL: ${ocrResp.JobErrorMsg ?? 'unknown'}`,
+          );
+        }
+        const parsed = parseMarkAgentResponse(ocrResp, { pageWidth, pageHeight, pageIndex });
+        tencentPages.push({ page_index: pageIndex, questions: parsed.questions });
+        warnings.push(...parsed.warnings);
+        if (parsed.layout_quality !== 'structured' && ocrLayout === 'structured') {
+          ocrLayout = parsed.layout_quality;
+        }
+        figureBoxes = parsed.figures.map((f) => f.bbox);
       }
 
-      const parsed = parseMarkAgentResponse(ocrResp, { pageWidth, pageHeight, pageIndex });
-      tencentPages.push({ page_index: pageIndex, questions: parsed.questions });
-      warnings.push(...parsed.warnings);
-      if (parsed.layout_quality !== 'structured' && tencentLayout === 'structured') {
-        tencentLayout = parsed.layout_quality;
-      }
-
-      if (parsed.figures.length > 0) {
+      if (figureBoxes.length > 0) {
         const preFigures = await cropAndUploadFigures({
           pageImage: pageBuffer,
           pageAssetId: assetId,
           pageIndex,
-          figureBoxes: parsed.figures.map((f) => f.bbox),
+          figureBoxes,
           r2: deps.r2,
         });
         allPreFigures = allPreFigures.concat(preFigures);
       }
     }
 
-    // 10. VLM StructureTask (OC-2): all page images + the demoted Tencent text
-    //     hint → normalized cross-page structure tree. On failure (provider down
-    //     / unparseable / empty), fall back to the per-page concatenated Tencent
+    // 10. VLM StructureTask (OC-2): all page images + the demoted OCR text hint →
+    //     normalized cross-page structure tree. On failure (provider down /
+    //     unparseable / empty), fall back to the per-page concatenated OCR
     //     structure so extraction never hard-fails on a VLM outage (regression
     //     safety — lane plan §5).
     //
@@ -205,9 +270,24 @@ async function processOneOcrJob(
     //     on StructureResult). The VLM receives only sequence index + page_index;
     //     image bytes are already in pageImages. On VLM failure the fallback path
     //     carries no figureAssignments and assignFiguresFromVlm degrades to the
-    //     geometric heuristic (zero regression on the Tencent fallback path).
-    const tencentHintMd = renderTencentHint(tencentPages);
-    const tencentFallbackQuestions = tencentPages.flatMap((p) => p.questions);
+    //     geometric heuristic (zero regression on the OCR fallback path).
+    //
+    //     YUK-253: hint + fallback questions are computed per engine, then the VLM
+    //     call below is engine-agnostic (runStructure only sees a string hint).
+    let ocrHintMd: string;
+    let ocrFallbackQuestions: ReturnType<typeof parseMarkAgentResponse>['questions'];
+    if (engine === 'glm') {
+      ocrHintMd = renderGlmHint(glmPages);
+      const fb = buildGlmFallbackQuestions({
+        pages: glmPages,
+        layout_quality: ocrLayout,
+        warnings: [],
+      });
+      ocrFallbackQuestions = fb.questions;
+    } else {
+      ocrHintMd = renderTencentHint(tencentPages);
+      ocrFallbackQuestions = tencentPages.flatMap((p) => p.questions);
+    }
 
     // Build the minimal preFigures descriptor for the VLM prompt.
     //
@@ -227,23 +307,29 @@ async function processOneOcrJob(
     try {
       structure = await runStructure({
         pageImages,
-        tencentHintMd,
+        tencentHintMd: ocrHintMd,
         pageCount: assetIds.length,
         preFigures: preFiguresMeta.length > 0 ? preFiguresMeta : undefined,
         ctx: { db: deps.db, r2: deps.r2 },
       });
     } catch (err) {
       if (!(err instanceof StructureTaskError)) throw err;
-      if (tencentFallbackQuestions.length === 0) {
-        // VLM failed AND Tencent produced no structure → genuinely empty.
+      if (ocrFallbackQuestions.length === 0) {
+        // VLM failed AND the OCR engine produced no structure → genuinely empty.
         throw new PermanentError(
-          `StructureTask failed and Tencent produced 0 questions: ${err.message}`,
+          `StructureTask failed and OCR produced 0 questions: ${err.message}`,
         );
       }
-      warnings.push(`StructureTask unavailable (${err.message}); fell back to Tencent structure`);
+      // YUK-253: name the engine the fallback degraded to. The GLM fallback is
+      // page-level standalone (no sub-split); the Tencent fallback is its parsed
+      // per-page tree. Both keep the "fell back to <engine>" warning shape.
+      const engineLabel = engine === 'glm' ? 'GLM' : 'Tencent';
+      warnings.push(
+        `StructureTask unavailable (${err.message}); fell back to ${engineLabel} structure`,
+      );
       structure = {
-        questions: tencentFallbackQuestions,
-        layout_quality: tencentLayout,
+        questions: ocrFallbackQuestions,
+        layout_quality: ocrLayout,
         warnings: [],
       };
       usedVlmPath = false;
@@ -331,17 +417,39 @@ async function processOneOcrJob(
       }),
     );
 
-    // 11. cost_ledger success
-    await writeCostLedger(deps.db, {
-      task_kind: TASK_KIND,
-      provider: 'tencent',
-      model: 'QuestionMarkAgent',
-      cost: 0,
-      tokens_in: 0,
-      tokens_out: 0,
-      outcome: 'success',
-      pgboss_job_id: bossJobId,
-    });
+    // 11. cost_ledger success.
+    //     YUK-253: GLM is the first billable OCR point. Tencent/xiaomi report no
+    //     cost, but GLM does: 0.2 元/M tokens (input = output price). cost is in
+    //     RMB 元 here (historically cost_ledger.cost carried USD for AI tasks, but
+    //     OCR always wrote 0 so the unit was never load-bearing). A single
+    //     currency column carrying mixed USD/RMB is tracked as a follow-up issue
+    //     (no schema column added this lane — audit:schema).
+    if (engine === 'glm') {
+      const totalTokens = glmPromptTokens + glmCompletionTokens;
+      await writeCostLedger(deps.db, {
+        task_kind: TASK_KIND,
+        provider: 'glm',
+        model: 'glm-ocr',
+        // cost in RMB 元 — GLM OCR 0.2元/M tokens (input=output).
+        cost: (totalTokens / 1_000_000) * 0.2,
+        tokens_in: glmPromptTokens,
+        tokens_out: glmCompletionTokens,
+        outcome: 'success',
+        pgboss_job_id: bossJobId,
+      });
+    } else {
+      // PHASE-DEFERRED (YUK-253): retained Tencent path bills 0 (no token report).
+      await writeCostLedger(deps.db, {
+        task_kind: TASK_KIND,
+        provider: 'tencent',
+        model: 'QuestionMarkAgent',
+        cost: 0,
+        tokens_in: 0,
+        tokens_out: 0,
+        outcome: 'success',
+        pgboss_job_id: bossJobId,
+      });
+    }
 
     // Strategy D Slice B (YUK-190): fan out to the observe-only auto-enroll job.
     // Inline getStartedBoss() producer (worker process already has boss started
@@ -359,7 +467,7 @@ async function processOneOcrJob(
       console.error('[tencent_ocr_extract] failed to enqueue auto_enroll', err);
     }
   } catch (err) {
-    await markFailedAndLogCost(deps, sessionId, bossJobId, err);
+    await markFailedAndLogCost(deps, sessionId, bossJobId, err, engine);
     throw err; // rethrow so pg-boss retries (Retryable) or archives (Permanent)
   }
 }
@@ -369,7 +477,10 @@ async function markFailedAndLogCost(
   sessionId: string,
   bossJobId: string,
   err: unknown,
+  engine: 'glm' | 'tencent' = 'glm',
 ): Promise<void> {
+  // GLM client throws typed Retryable/Permanent errors, so mapTencentError is
+  // only reached for legacy Tencent-path SDK errors (unchanged classification).
   const mapped =
     err instanceof RetryableError || err instanceof PermanentError ? err : mapTencentError(err);
   const outcome = mapped instanceof RetryableError ? 'failed_retryable' : 'failed_permanent';
@@ -385,10 +496,12 @@ async function markFailedAndLogCost(
   }
 
   try {
+    // YUK-253: cost 0 on failure (no completed billable run); provider/model
+    // labelled by the active engine.
     await writeCostLedger(deps.db, {
       task_kind: TASK_KIND,
-      provider: 'tencent',
-      model: 'QuestionMarkAgent',
+      provider: engine === 'glm' ? 'glm' : 'tencent',
+      model: engine === 'glm' ? 'glm-ocr' : 'QuestionMarkAgent',
       cost: 0,
       tokens_in: 0,
       tokens_out: 0,

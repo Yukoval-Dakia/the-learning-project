@@ -1,6 +1,12 @@
 import type { BBoxT, StructuredQuestionT } from '@/core/schema/structured_question';
 import { createId } from '@paralleldrive/cuid2';
 
+// PHASE-DEFERRED (YUK-253): GLM-OCR is now the default extraction engine. This
+// Tencent parser is RETAINED for one version-period as the
+// `EXTRACT_OCR_ENGINE='tencent'` rollback path. Removal trigger: the
+// EXTRACT_OCR_ENGINE flag is retired after the GLM bake-in window — see the
+// YUK-253 follow-up "Remove retained Tencent engine".
+
 /**
  * Parser for Tencent QuestionMarkAgent DONE response → 系统内 StructuredQuestion 树。
  *
