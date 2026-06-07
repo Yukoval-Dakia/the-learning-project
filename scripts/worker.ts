@@ -74,7 +74,29 @@ async function main() {
     console.error('[worker] pg-boss error event', err);
   });
 
-  await boss.start();
+  // YUK-259: the boss `error` listener above only covers pg-boss's RECURRING
+  // background loops (timekeeper onCron / cacheClockSkew at timekeeper.js:105/129,
+  // which wrap their bodies in try/catch and re-emit on `error`). It does NOT
+  // cover the one-shot queue create the timekeeper runs INSIDE start():
+  // index.js start() → timekeeper.start() (timekeeper.js:57) directly awaits
+  // `manager.createQueue('__pgboss__send-it')`, whose `INSERT ... ON CONFLICT DO
+  // NOTHING` (plans.js create_queue) can still race-raise 23505 `queue_pkey`
+  // under the same cold-start contention this PR fixes for the explicit queues.
+  // That rejection propagates out of the awaited start() — not through the
+  // EventEmitter — so without this guard it would fall through to main().catch
+  // → process.exit(1), reopening the supervised-restart loop YUK-259 set out to
+  // close. A 23505 here means SEND_IT already exists (the desired end state) and
+  // the db is already opened (index.js opens it before timekeeper.start), so the
+  // boss is usable; swallow + continue. Anything else is a real boot failure and
+  // re-throws to main().catch.
+  try {
+    await boss.start();
+  } catch (err) {
+    if (!isQueueCreateRace(err)) throw err;
+    console.warn(
+      '[worker] boss.start() hit pg-boss internal SEND_IT queue create race (23505 queue_pkey) — benign, queue already exists, continuing (YUK-259)',
+    );
+  }
   await registerHandlers(boss, db);
   installShutdownHandler(boss);
   console.log('[worker] running, handlers registered');
