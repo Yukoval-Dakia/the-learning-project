@@ -39,7 +39,11 @@ import {
   resolveDomainToolNames,
   resolveMcpAllowedTools,
 } from '@/server/ai/tools/allowlists';
-import { PROPOSAL_FEEDBACK_BUDGET, resolveContextBudget } from '@/server/ai/tools/budgets';
+import {
+  COPILOT_HISTORY_BUDGET,
+  PROPOSAL_FEEDBACK_BUDGET,
+  resolveContextBudget,
+} from '@/server/ai/tools/budgets';
 import { ContextBudgetTracker } from '@/server/ai/tools/context-throttle';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
 // AF S4 / YUK-203 U6 — Copilot skills (behavior packs). A skill_context turn
@@ -47,6 +51,10 @@ import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools
 import { type QuizSkillResult, runQuizSkill } from '@/server/copilot/skills/quiz-skill';
 import { type SolveSkillResult, runSolveSkill } from '@/server/copilot/skills/solve-skill';
 import { type TeachingSkillResult, runTeachingSkill } from '@/server/copilot/skills/teaching-skill';
+// YUK-267 (C2) — the SAME session-scoped turn reader the drawer replay uses. The
+// free-form run input reuses it to assemble conversation_history (防循环 ①: history
+// = persisted ask原文 + reply正文 only). NO new schema, NO new read source.
+import { type CopilotTurn, getRecentCopilotTurns } from '@/server/copilot/turns';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
 // P5.4-L2 / YUK-174 (Facet A, §3.3) — feed the per-(kind, relation) accept-
 // learned reason digest into the Copilot run input, EDGE-scoped (Copilot
@@ -108,6 +116,21 @@ export const CopilotChatRequest = z.object({
   // AF S4 / YUK-203 U6 — optional skill selector. Absent → unchanged free-form
   // Copilot behavior. Present → routes to the teaching/solve skill (§4.4).
   skill_context: CopilotSkillContext.optional(),
+  // YUK-267 (C2) — optional ambient context: where the user currently is. Rides
+  // ONLY on the per-run input (防循环 ②: never written to any turn payload, never
+  // replayed). `route` is the Dock's current page path; `focused_entity` is the
+  // in-scope entity (e.g. the active knowledge node), when one exists.
+  ambient_context: z
+    .object({
+      route: z.string().min(1).max(200),
+      focused_entity: z
+        .object({
+          kind: z.string().min(1).max(40),
+          id: z.string().min(1).max(120),
+        })
+        .optional(),
+    })
+    .optional(),
 });
 
 export type CopilotChatRequestT = z.infer<typeof CopilotChatRequest>;
@@ -204,6 +227,11 @@ type FindOrCreateConversationFn = (
 // P5.4-L2 / YUK-174 (Facet A) — swappable feedback-digest reader (unit tests
 // inject a fixture / [] since db is a stub). Defaults to getProposalFeedbackDigest.
 type LoadProposalFeedbackFn = (db: Db) => Promise<ProposalFeedbackCell[]>;
+// YUK-267 (C2) — swappable conversation-history reader. Defaults to
+// getRecentCopilotTurns (the SAME reader the drawer replay uses). Unit tests
+// inject a fixture so the {}-stub db is never touched. Session-scoped by
+// construction (turns.ts filters by the current reusable conversation).
+type LoadHistoryFn = typeof getRecentCopilotTurns;
 
 export interface CopilotChatDeps {
   runAgentTaskFn?: RunAgentTaskFn;
@@ -220,6 +248,9 @@ export interface CopilotChatDeps {
   // P5.4-L2 / YUK-174 — defaults to getProposalFeedbackDigest. The unit test
   // injects [] so the {}-stub db is never queried (cold-start no-op).
   loadProposalFeedbackFn?: LoadProposalFeedbackFn;
+  // YUK-267 (C2) — defaults to getRecentCopilotTurns. The unit test injects a
+  // fixture so the {}-stub db is never touched. A read failure degrades to [].
+  loadHistoryFn?: LoadHistoryFn;
   // AF S3a / YUK-203 U3 — defaults to Conversation.findOrCreateCopilotConversation.
   findOrCreateConversationFn?: FindOrCreateConversationFn;
   // AF S4 / YUK-203 U6 — swappable skill runners (unit tests inject fixtures so
@@ -283,6 +314,43 @@ function scopeCopilotProposalFeedback(
   return scoped;
 }
 
+// YUK-267 (C2) — the minimal history shape carried in the run input. ONLY role +
+// text (the persisted ask原文 / reply正文); everything else from the turn row is
+// EXPLICITLY dropped (防循环 ①/⑤).
+export interface CopilotHistoryTurn {
+  role: 'user' | 'ai';
+  text: string;
+}
+
+// YUK-267 (C2) — assemble the bounded, history-only conversation_history from the
+// session-scoped turn reader. 防循环 invariants enforced here:
+//   ① each entry is {role, text} ONLY — NO skill_turn / skill_context / session_id
+//      / reply_event_id / event_id / at, and certainly NO prior-run assembly
+//      artifact (conversation_history / proposal_feedback / ambient_context). The
+//      reader only exposes role+text (turns.ts), so this map is the structural
+//      guarantee (防循环 ⑤ test feeds a polluted row and asserts {role,text} only).
+//   ④ DOUBLE truncation — per-turn char cap, then whole-array char cap dropping the
+//      OLDEST turns first until the serialized array fits (recency matters most).
+// `turns` arrive oldest→newest (the reader reverses to chronological). We keep the
+// newest maxTurns, per-turn truncate, then oldest-first whole-array truncate.
+function assembleConversationHistory(
+  turns: CopilotTurn[],
+  budget: typeof COPILOT_HISTORY_BUDGET,
+): CopilotHistoryTurn[] {
+  // Keep the newest `maxTurns` (turns are oldest→newest, so tail-slice).
+  const recent = turns.slice(-budget.maxTurns);
+  // 防循环 ① — strip to {role, text} ONLY, then per-turn truncate (防循环 ④).
+  const mapped: CopilotHistoryTurn[] = recent.map((t) => ({
+    role: t.role,
+    text: t.text.length > budget.perTurnChars ? t.text.slice(0, budget.perTurnChars) : t.text,
+  }));
+  // 防循环 ④ — whole-array cap: drop OLDEST (front) until the serialized array fits.
+  while (mapped.length > 0 && JSON.stringify(mapped).length > budget.totalChars) {
+    mapped.shift();
+  }
+  return mapped;
+}
+
 function selectSurface(triggeredBy: CopilotChatTriggerKind): DomainToolSurface {
   return triggeredBy === 'chip' ? 'copilot_user_suggested_mistake_action' : 'copilot';
 }
@@ -316,6 +384,7 @@ async function runCopilotChatImpl(
   const loadFeedback =
     deps.loadProposalFeedbackFn ??
     ((db: Db) => getProposalFeedbackDigest(db, PROPOSAL_FEEDBACK_BUDGET));
+  const loadHistory = deps.loadHistoryFn ?? getRecentCopilotTurns;
   const findOrCreateConversation =
     deps.findOrCreateConversationFn ?? Conversation.findOrCreateCopilotConversation;
   const runTeachingSkillFn = deps.runTeachingSkillFn ?? runTeachingSkill;
@@ -339,6 +408,27 @@ async function runCopilotChatImpl(
   // actor_kind='user') see Copilot user activity instead of idling on started_at.
   // Both chat + chip turns belong to the same Copilot conversation.
   const { sessionId } = await findOrCreateConversation(db, { now });
+
+  // YUK-267 (C2) — read conversation_history BEFORE writing the current ask event
+  // so the just-asked message is STRUCTURALLY excluded from its own history (no
+  // double-count). Free-form path only — skill turns short-circuit below and never
+  // build the run input. Additive-input red line: a read failure degrades to [] and
+  // never crashes the chat (same pattern as the feedback digest). 防循环 ① is the
+  // {role,text}-only map in assembleConversationHistory.
+  let conversationHistory: CopilotHistoryTurn[] = [];
+  if (!req.skill_context) {
+    try {
+      const rawTurns = await loadHistory(db, { limit: COPILOT_HISTORY_BUDGET.maxTurns, now });
+      conversationHistory = assembleConversationHistory(rawTurns, COPILOT_HISTORY_BUDGET);
+    } catch (err) {
+      conversationHistory = [];
+      console.error('[runCopilotChat] loadHistory failed; degrading to []', {
+        task_run_id: taskRunId,
+        surface,
+        err,
+      });
+    }
+  }
 
   // ──────────────────────────────────────────────────────────────────────
   // T-D3/C event-write contract.
@@ -708,6 +798,14 @@ async function runCopilotChatImpl(
     // Edge-scoped, char-bounded reason digest. Serialized verbatim into the
     // prompt by promptFromInput (runner.ts JSON.stringify) — no new plumbing.
     proposal_feedback: proposalFeedback,
+    // YUK-267 (C2) — bounded, history-only conversation context (防循环 ①/④/⑤).
+    // [{role,text}], oldest→newest, double-truncated. The current ask is excluded
+    // (read before the ask write). Serialized verbatim by promptFromInput.
+    conversation_history: conversationHistory,
+    // YUK-267 (C2) — ambient context for THIS message only (防循环 ②). Present only
+    // when the request carried it; NEVER written to any turn payload, so it is not
+    // replayed. Forwarded verbatim.
+    ...(req.ambient_context ? { ambient_context: req.ambient_context } : {}),
   };
 
   // YUK-266 (C1) — the free-form path runs the CopilotTask token loop. When

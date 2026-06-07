@@ -181,3 +181,21 @@ describe('QuizVerifyTask registry entry', () => {
     ]);
   });
 });
+
+// YUK-267 (C2) — pin the CopilotTask conversation-memory + ambient clauses so the
+// history-preference prompt edit cannot silently regress.
+describe('CopilotTask.systemPrompt — C2 memory + ambient clauses', () => {
+  it('primes the model to prefer conversation_history over a redundant DomainTool read', () => {
+    const p = tasks.CopilotTask.systemPrompt;
+    expect(p).toContain('conversation_history');
+    // The history-preference instruction keyword (Chinese copy may evolve, but the
+    // field name + the "prefer history / avoid redundant tool read" intent stays).
+    expect(p).toMatch(/优先复用|history-preference/);
+  });
+
+  it('explains ambient_context (current route + focused_entity)', () => {
+    const p = tasks.CopilotTask.systemPrompt;
+    expect(p).toContain('ambient_context');
+    expect(p).toContain('focused_entity');
+  });
+});

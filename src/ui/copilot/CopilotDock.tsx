@@ -39,6 +39,7 @@ import { CopilotDrawer } from '@/ui/primitives/CopilotDrawer';
 import { LoomBadge } from '@/ui/primitives/LoomBadge';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { useQuery } from '@tanstack/react-query';
+import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { type ReplayTurn, replayToMessages } from './replay';
 
@@ -197,6 +198,14 @@ export function CopilotDock() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [input, setInput] = useState('');
+  // YUK-267 (C2) — the current page route, sent as ambient_context.route so the
+  // agent can scope its answer to where the user is. Held in a ref + synced each
+  // render so `send` stays stable (its deps are []), matching the activeSkillRef
+  // pattern. usePathname is the established client-component route source in this
+  // repo (MobileTabBar / AppSidebar).
+  const pathname = usePathname();
+  const pathnameRef = useRef(pathname);
+  pathnameRef.current = pathname;
   // AF S4 / YUK-203 U6 — the active skill context (teaching/solve). When set, the
   // next turn(s) route to the skill (single-session model, §4.2). Held in a ref
   // so the composer's `send` reads the live value without re-creating `send`.
@@ -302,12 +311,21 @@ export function CopilotDock() {
     const aiId = nextId();
     let aiCreated = false;
     try {
+      // YUK-267 (C2) — ambient_context: the current route + (when a skill is
+      // active) the focused entity. route is always present; focused_entity is the
+      // active skill ref. Server treats it as current-message-only (防循环 ②).
+      const route = pathnameRef.current;
+      const focusedEntity = skillContext?.ref;
+      const ambientContext = route
+        ? { route, ...(focusedEntity ? { focused_entity: focusedEntity } : {}) }
+        : undefined;
       const res = await apiFetch('/api/copilot/chat', {
         method: 'POST',
         body: JSON.stringify({
           user_message: text,
           triggered_by: 'chat',
           ...(skillContext ? { skill_context: skillContext } : {}),
+          ...(ambientContext ? { ambient_context: ambientContext } : {}),
         }),
       });
       const body = res.body;
