@@ -31,6 +31,7 @@ import {
   type RunTaskResult,
   type StreamCollectResult,
   runAgentTask,
+  runTask,
   streamTaskCollecting,
 } from '@/server/ai/runner';
 import {
@@ -46,6 +47,14 @@ import {
 } from '@/server/ai/tools/budgets';
 import { ContextBudgetTracker } from '@/server/ai/tools/context-throttle';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
+// YUK-275 — free-text 求卷 (C 形态): zero-LLM 粗筛 + one-LLM 参数解析, routed to the
+// existing quiz execution out-port. NO new tool on COPILOT_TOOLS (U6 防循环 red line).
+import {
+  QUIZ_INTENT_MISSING_KNOWLEDGE_REPLY,
+  QUIZ_INTENT_PARSE_FAILED_REPLY,
+  detectQuizIntent,
+  resolveQuizIntent,
+} from '@/server/copilot/quiz-intent';
 // AF S4 / YUK-203 U6 — Copilot skills (behavior packs). A skill_context turn
 // routes to these at the service layer instead of the free-form CopilotTask loop.
 import { type QuizSkillResult, runQuizSkill } from '@/server/copilot/skills/quiz-skill';
@@ -260,6 +269,11 @@ export interface CopilotChatDeps {
   // YUK-262 — swappable quiz-skill runner (the db test injects a fixture so the
   // {}-stub db is never touched). Defaults to the real runQuizSkill module.
   runQuizSkillFn?: typeof runQuizSkill;
+  // YUK-275 — free-text 求卷 routing seams (the unit test injects fixtures so the
+  // {}-stub db is never touched). detectQuizIntentFn is the零-LLM 粗筛; resolveQuizIntentFn
+  // is the one-LLM 参数解析. Default to the real quiz-intent module.
+  detectQuizIntentFn?: typeof detectQuizIntent;
+  resolveQuizIntentFn?: typeof resolveQuizIntent;
   // PR #305 review comment #1 — swappable for unit tests (stub tx has no .select).
   materializeAskCheckFn?: typeof materializeAskCheckQuestion;
   now?: () => Date;
@@ -390,6 +404,9 @@ async function runCopilotChatImpl(
   const runTeachingSkillFn = deps.runTeachingSkillFn ?? runTeachingSkill;
   const runSolveSkillFn = deps.runSolveSkillFn ?? runSolveSkill;
   const runQuizSkillFn = deps.runQuizSkillFn ?? runQuizSkill;
+  // YUK-275 — free-text 求卷 routing seams.
+  const detectQuizIntentFn = deps.detectQuizIntentFn ?? detectQuizIntent;
+  const resolveQuizIntentFn = deps.resolveQuizIntentFn ?? resolveQuizIntent;
   const materializeAskCheck = deps.materializeAskCheckFn ?? materializeAskCheckQuestion;
 
   const surface = selectSurface(req.triggered_by);
@@ -485,6 +502,164 @@ async function runCopilotChatImpl(
       created_at: now,
     });
     causedByEventId = chipEventId;
+  }
+
+  // §D5 / YUK-275 — the SINGLE quiz reply out-port, shared by the skill_context path
+  // (chip-seeded skill:'quiz') and the free-text intercept below. Runs runQuizSkillFn
+  // (pure SERVICE orchestration, NO LLM run), writes ONE copilot_reply event reusing the
+  // synthetic `taskRunId` (no model run on the quiz path → the user_ask→reply evidence
+  // chain stays uniform with teaching/solve; the parse LLM's task_run_id is evidence-only
+  // and never reaches the reply chain — 防循环 red line), emits ONE streaming delta, and
+  // returns the terminal CopilotChatResult. `skillContextForReplay` is persisted so replay
+  // can restore the skill card (Dock chip renderer). difficultyMin/unit/kind are the
+  // free-text 扩参 (null for the chip path → byte-for-byte the pre-YUK-275 behaviour).
+  async function emitQuizReply(args: {
+    knowledgeId: string;
+    count?: number | null;
+    difficultyMin?: number | null;
+    unit?: '题' | '篇' | null;
+    kind?: string | null;
+    skillContextForReplay: CopilotSkillContextT;
+  }): Promise<CopilotChatResult> {
+    const replyEventId = `copilot_reply_${createId()}`;
+    const skillResult: QuizSkillResult = await runQuizSkillFn({
+      db,
+      sessionId,
+      knowledgeId: args.knowledgeId,
+      userMessage: req.user_message,
+      ...(args.count != null ? { count: args.count } : {}),
+      ...(args.difficultyMin != null ? { difficultyMin: args.difficultyMin } : {}),
+      ...(args.unit != null ? { unit: args.unit } : {}),
+      ...(args.kind != null ? { kind: args.kind } : {}),
+    });
+    const replyMd = skillResult.text_md;
+    // Synthetic run id (no LLM run on the quiz execution path — see block comment above).
+    const realTaskRunId = taskRunId;
+
+    const replyAt = new Date(now.getTime() + 1);
+    await write(db, {
+      id: replyEventId,
+      session_id: sessionId,
+      actor_kind: 'agent',
+      actor_ref: actorRef,
+      action: REPLY_EVENT_ACTION,
+      subject_kind: 'query',
+      subject_id: replyEventId,
+      outcome: null,
+      payload: {
+        surface: 'copilot',
+        session_id: sessionId,
+        reply_md: replyMd,
+        task_run_id: realTaskRunId,
+        in_reply_to_event_id: causedByEventId ?? null,
+        // Persist skill_context so replay can restore the skill card (Dock chip renderer
+        // + replayToMessages use it). For the free-text path this is a synthesized
+        // {skill:'quiz', ref:{kind:'knowledge', id}} so the seeded + free-text paths are
+        // replay-identical.
+        skill_context: args.skillContextForReplay,
+      },
+      caused_by_event_id: causedByEventId ?? null,
+      task_run_id: realTaskRunId,
+      created_at: replyAt,
+    });
+
+    // YUK-266 (C1) — quiz replies are deterministic / single-shot (no token loop), so
+    // when streaming we emit ONE delta carrying the full reply (aligns with the既有 skill
+    // path at the shared :701 behaviour), then return the terminal `reply` event.
+    if (streaming) streaming.onDelta(replyMd);
+
+    return {
+      task_run_id: realTaskRunId,
+      reply: replyMd,
+      // Force surface 'copilot' to match the persisted reply payload (CodeRabbit F3).
+      surface: 'copilot',
+      triggered_by: req.triggered_by,
+      session_id: sessionId,
+      reply_event_id: replyEventId,
+      ...(userAskEventId ? { user_ask_event_id: userAskEventId } : {}),
+    };
+  }
+
+  // §D5 / YUK-275 — emit a deterministic 追问 reply (no LLM) when the free-text 求卷 was
+  // a 求卷 intent but could not be resolved into a knowledge node (missing_knowledge /
+  // parse_failed). 绝不 text-spray a quiz, 绝不 回落 free-form. Reuses the same reply-event
+  // write + streaming-delta contract as emitQuizReply (no skill_context — there is no
+  // skill card to replay).
+  async function emitQuizClarifyReply(replyMd: string): Promise<CopilotChatResult> {
+    const replyEventId = `copilot_reply_${createId()}`;
+    const realTaskRunId = taskRunId;
+    const replyAt = new Date(now.getTime() + 1);
+    await write(db, {
+      id: replyEventId,
+      session_id: sessionId,
+      actor_kind: 'agent',
+      actor_ref: actorRef,
+      action: REPLY_EVENT_ACTION,
+      subject_kind: 'query',
+      subject_id: replyEventId,
+      outcome: null,
+      payload: {
+        surface: 'copilot',
+        session_id: sessionId,
+        reply_md: replyMd,
+        task_run_id: realTaskRunId,
+        in_reply_to_event_id: causedByEventId ?? null,
+      },
+      caused_by_event_id: causedByEventId ?? null,
+      task_run_id: realTaskRunId,
+      created_at: replyAt,
+    });
+    if (streaming) streaming.onDelta(replyMd);
+    return {
+      task_run_id: realTaskRunId,
+      reply: replyMd,
+      surface: 'copilot',
+      triggered_by: req.triggered_by,
+      session_id: sessionId,
+      reply_event_id: replyEventId,
+      ...(userAskEventId ? { user_ask_event_id: userAskEventId } : {}),
+    };
+  }
+
+  // §D1/§D2/§D5 / YUK-275 — free-text 求卷 intercept. Only typed chat turns WITHOUT a
+  // skill_context are eligible (the chip path carries skill_context:{skill:'quiz'} and is
+  // handled by the既有 skill branch below — the `!req.skill_context` guard避让 it, no
+  // double-routing). 粗筛 (零 LLM) gates the parse tax; on a miss we fall through to the
+  // free-form CopilotTask path byte-for-byte. On a hit, ONE small parse call decides the
+  // four-state route (resolved → quiz; not_quiz → 回落 free-form; missing_knowledge /
+  // parse_failed → deterministic 追问).
+  if (req.triggered_by === 'chat' && !req.skill_context && detectQuizIntentFn(req.user_message)) {
+    const resolved = await resolveQuizIntentFn({
+      db,
+      userMessage: req.user_message,
+      // runTask is the structured text runner. resolveQuizIntent's TaskTextRunFn has a
+      // `ctx: unknown` param (DI-friendly), so adapt to runTask's RunTaskCtx — the ctx we
+      // pass ({db}) is a valid RunTaskCtx. RunTaskResult is a superset of TaskTextResult
+      // ({text, task_run_id?, cost_usd?}), so the return type is compatible.
+      runTaskFn: (kind, input, ctx) => runTask(kind, input, ctx as Parameters<typeof runTask>[2]),
+      subjectProfile: undefined,
+    });
+    if (resolved.status === 'resolved') {
+      return emitQuizReply({
+        knowledgeId: resolved.knowledgeId,
+        count: resolved.count,
+        difficultyMin: resolved.difficultyMin,
+        unit: resolved.unit,
+        kind: resolved.kind,
+        skillContextForReplay: {
+          skill: 'quiz',
+          ref: { kind: 'knowledge', id: resolved.knowledgeId },
+        },
+      });
+    }
+    if (resolved.status === 'missing_knowledge') {
+      return emitQuizClarifyReply(QUIZ_INTENT_MISSING_KNOWLEDGE_REPLY);
+    }
+    if (resolved.status === 'parse_failed') {
+      return emitQuizClarifyReply(QUIZ_INTENT_PARSE_FAILED_REPLY);
+    }
+    // status:'not_quiz' — 粗筛 误伤被解析兜回; do NOT return, fall through to the既有
+    // free-form CopilotTask path (the深度兜底 so normal conversation is never hijacked).
   }
 
   // AF S4 / YUK-203 U6 (§4.4) — skill routing. A skill_context turn runs a
@@ -622,68 +797,18 @@ async function runCopilotChatImpl(
         created_at: replyAt,
       });
     } else if (req.skill_context.skill === 'quiz') {
-      // YUK-262 — quiz skill. Pure SERVICE orchestration: source the existing pool
-      // → assemble + persist a tool_quiz artifact → reply with a /practice/<id>
-      // link (or an explicit degradation notice; NEVER a text-sprayed quiz). There
-      // is NO LLM run on this path (unlike teaching/solve, which call
-      // TeachingTurnTask), so the skill mints no model task_run_id. We reuse the
-      // pre-generated synthetic `taskRunId` (minted at :277) as the reply-event /
-      // cost-ledger run id so the copilot_user_ask → copilot_reply evidence chain
-      // stays uniform with teaching/solve. The quiz reply is one-shot: it carries
-      // NO turn_kind and NO skill_turn (the /practice link rides in reply_md, which
-      // the Dock already renders — zero new UI/replay plumbing).
-      //
-      // ONE-SHOT-END (deferred → YUK-213, bot-review F2): like the solve branch,
-      // this returns no terminal `skill_turn`, so the Dock only clears
-      // activeSkillRef on `skill_turn.kind==='end'` (CopilotDock.tsx). Once a quiz
-      // context is seeded (see YUK-269) every follow-up message would keep
-      // re-sending skill_context:{skill:'quiz'}. One-shot-skill turn semantics
-      // (emit a terminal skill_turn, or have the Dock clear on one-shot skills)
-      // are owned by YUK-213 and should be resolved together with the seeding
-      // design — pre-existing for solve, currently unreachable for quiz.
-      //
-      // SEEDING GAP (deferred → YUK-269, bot-review F1): this branch only fires
-      // when a `skill_context:{skill:'quiz'}` already arrives. No UI/server path
-      // currently SEEDS it (the sole openCopilotWith call seeds 'teaching'), and
-      // the route does NO intent classification — both deliberately OUT of this
-      // lane's plan (§2.1/§4: "no Dock change", "NOT LLM classification"). So a
-      // bare natural-language quiz request still falls through to the free-form
-      // CopilotTask path. Wiring a producer (quiz chip / composer intent) is
-      // tracked in YUK-269; until then YUK-262 is NOT end-to-end (PR #342 trailer
-      // is `Refs YUK-262`, not `Closes`).
-      const skillResult: QuizSkillResult = await runQuizSkillFn({
-        db,
-        sessionId,
+      // YUK-262 / YUK-275 — chip-seeded quiz skill. Pure SERVICE orchestration: source the
+      // existing pool → assemble + persist a tool_quiz artifact → reply with a
+      // /practice/<id> link (or an explicit degradation notice; NEVER a text-sprayed quiz).
+      // There is NO LLM run on this execution path. §D5: the reply-event write +
+      // synthetic-run-id reuse + skill_context persistence are now shared with the
+      // free-text path via emitQuizReply (DRY); the chip path passes the既有
+      // skill_context verbatim for replay and no free-text 扩参 (difficultyMin/unit/kind
+      // null → byte-for-byte the pre-YUK-275 behaviour). One-shot-end (YUK-213) + the
+      // former seeding gap (YUK-269 chip + YUK-275 free-text) context is unchanged.
+      return emitQuizReply({
         knowledgeId: req.skill_context.ref.id,
-        userMessage: req.user_message,
-      });
-      replyMd = skillResult.text_md;
-      realTaskRunId = taskRunId;
-
-      const replyAt = new Date(now.getTime() + 1);
-      await write(db, {
-        id: replyEventId,
-        session_id: sessionId,
-        actor_kind: 'agent',
-        actor_ref: actorRef,
-        action: REPLY_EVENT_ACTION,
-        subject_kind: 'query',
-        subject_id: replyEventId,
-        outcome: null,
-        payload: {
-          surface: 'copilot',
-          session_id: sessionId,
-          reply_md: replyMd,
-          // Synthetic run id (no LLM run on the quiz path — see block comment above).
-          task_run_id: realTaskRunId,
-          in_reply_to_event_id: causedByEventId ?? null,
-          // PR round-2 (CR 3360614441): persist skill_context so replay can
-          // restore the skill card (Dock chip renderer + replayToMessages use it).
-          skill_context: req.skill_context,
-        },
-        caused_by_event_id: causedByEventId ?? null,
-        task_run_id: realTaskRunId,
-        created_at: replyAt,
+        skillContextForReplay: req.skill_context,
       });
     } else {
       // PR #342 bot-review (OCR/Codex F4): exhaustive guard. `skill` is
