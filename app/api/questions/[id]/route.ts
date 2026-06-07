@@ -46,7 +46,7 @@ const PatchBody = z
     version: z.number().int().min(0),
     prompt_md: z.string().min(1).optional(),
     reference_md: z.string().nullable().optional(),
-    choices_md: z.array(z.string()).nullable().optional(),
+    choices_md: z.array(z.string().min(1)).nullable().optional(),
     difficulty: z.number().int().min(1).max(5).optional(),
     knowledge_ids: z.array(z.string().min(1)).optional(),
     kind: QuestionKind.optional(),
@@ -131,7 +131,10 @@ export async function PATCH(req: Request, { params }: RouteParams): Promise<Resp
       throw new ApiError('validation_error', 'no editable fields provided', 400);
     }
 
-    // Validate knowledge_ids exist (non-archived) before touching the row.
+    // Validate knowledge_ids exist (non-archived) for a friendly early 400.
+    // An empty array is a deliberate "clear all knowledge associations" — valid
+    // and skipped here. editQuestion re-validates inside its transaction to close
+    // the TOCTOU window (a node archived between this check and the commit).
     if (patch.knowledge_ids && patch.knowledge_ids.length > 0) {
       const check = await assertKnowledgeIdsExist(db, patch.knowledge_ids);
       if (!check.ok) {
@@ -147,11 +150,25 @@ export async function PATCH(req: Request, { params }: RouteParams): Promise<Resp
     if (result.status === 'not_found') {
       throw new ApiError('not_found', `question ${id} not found`, 404);
     }
+    if (result.status === 'knowledge_invalid') {
+      throw new ApiError(
+        'validation_error',
+        `unknown knowledge_ids: ${(result.missing_knowledge_ids ?? []).join(', ')}`,
+        400,
+      );
+    }
     if (result.status === 'conflict') {
       throw new ApiError('conflict', `question ${id} concurrently modified`, 409);
     }
 
-    return Response.json({ ok: true, version: result.version, event_id: result.event_id });
+    // `noop` (patch matched the current row) returns ok with the unchanged
+    // version and no event_id — the client can treat it as a successful save.
+    return Response.json({
+      ok: true,
+      noop: result.status === 'noop',
+      version: result.version,
+      event_id: result.event_id,
+    });
   } catch (err) {
     return errorResponse(err);
   }
@@ -174,21 +191,13 @@ export async function DELETE(req: Request, { params }: RouteParams): Promise<Res
     const url = new URL(req.url);
     const confirm = url.searchParams.get('confirm') === 'true';
 
-    // `version` is required for optimistic locking on the destructive write.
-    const versionRaw = url.searchParams.get('version');
-    if (!versionRaw || !/^\d+$/.test(versionRaw)) {
-      throw new ApiError(
-        'validation_error',
-        'version query param required (non-negative integer)',
-        400,
-      );
-    }
-    const version = Number.parseInt(versionRaw, 10);
-
     const counts = await countQuestionAssociations(db, id);
 
     if (!confirm) {
-      // Confirmation gate. 409 with the per-association counts for the UI warning.
+      // Confirmation gate runs BEFORE version validation: the first (unconfirmed)
+      // DELETE must always return the 409 association warning the UI needs, even
+      // if the caller hasn't supplied ?version yet. version is only required for
+      // the confirmed destructive write below.
       return Response.json(
         {
           error: 'confirm_required',
@@ -199,6 +208,19 @@ export async function DELETE(req: Request, { params }: RouteParams): Promise<Res
         { status: 409 },
       );
     }
+
+    // `version` is required for optimistic locking on the confirmed write.
+    // Strict integer match (Number.parseInt is too lenient: '5abc' → 5). 0 is a
+    // valid version (a freshly-created question), so allow a bare '0'.
+    const versionRaw = url.searchParams.get('version');
+    if (!versionRaw || !/^(0|[1-9]\d*)$/.test(versionRaw)) {
+      throw new ApiError(
+        'validation_error',
+        'version query param required (non-negative integer)',
+        400,
+      );
+    }
+    const version = Number.parseInt(versionRaw, 10);
 
     const result = await archiveQuestion(db, id, version, 'self');
     if (result.status === 'not_found') {
