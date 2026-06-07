@@ -104,6 +104,12 @@ export const fastTestInclude = [
   'src/server/ingestion/workflow-judge-config.test.ts',
   'src/server/ingestion/tencent_mark.test.ts',
   'src/server/ingestion/tencent_mark_parser.test.ts',
+  // YUK-253 — GLM-OCR engine swap. Both pure no-DB units: the client test mocks
+  // global `fetch`, the parser test is pure (real fixtures). No @/db/client /
+  // postgres / drizzle / PgBoss import → unit partition. The handler test
+  // (tencent_ocr_extract.test.ts) hits live Postgres → db partition.
+  'src/server/ingestion/glm_ocr.test.ts',
+  'src/server/ingestion/glm_ocr_parser.test.ts',
   'src/server/ingestion/vision.test.ts',
   'src/server/judge/**/*.test.ts',
   // YUK-239 (STB-5) — pure env-read guard for the background-job enqueue seam
