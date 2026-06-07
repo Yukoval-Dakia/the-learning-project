@@ -70,6 +70,16 @@ export const fastTestInclude = [
   'src/server/export/**/*.test.ts',
   'src/server/http/**/*.test.ts',
   'src/server/ingestion/crop.test.ts',
+  // YUK-258 — DOCX ingestion units. All three are pure no-DB: route-classify is
+  // zip-parse only (fflate), markdown-segment is pure string→struct, convert
+  // exercises the seam via an injected mock (NO real spawn / docker). The route
+  // db test (app/api/ingestion/docx/route.test.ts) hits live Postgres → db
+  // partition (NOT listed here). fastTestInclude is an explicit per-file allowlist
+  // with no ingestion/** glob, so these must be enumerated or the db config's
+  // src/**/*.test.ts glob would sweep them into the testcontainer partition.
+  'src/server/ingestion/docx/route-classify.test.ts',
+  'src/server/ingestion/docx/markdown-segment.test.ts',
+  'src/server/ingestion/docx/convert.test.ts',
   'src/server/ingestion/figure_attach.test.ts',
   // YUK-250 — pure PDFium page renderer unit. Imports only pdf-render.ts +
   // sharp + @hyzyla/pdfium (WASM, no DB/R2/AI). Fixtures are static PDF bytes.

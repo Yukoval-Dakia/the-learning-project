@@ -563,7 +563,9 @@ export async function commitImport(tx: Db | Tx, sessionId: string): Promise<void
 
 export type InitiateUploadParams = {
   assetIds: string[];
-  entrypoint: 'vision_single' | 'vision_paper';
+  // YUK-258: 'docx' — the visual line feeds docx page images through this same
+  // upload+extract path (text line uses the dedicated docx-ingestion owner).
+  entrypoint: 'vision_single' | 'vision_paper' | 'docx';
 };
 
 /**
