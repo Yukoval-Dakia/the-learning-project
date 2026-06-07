@@ -7,6 +7,7 @@
 // fallback rather than throwing (the enums grow zero-DDL; a新 source value must
 // still render).
 
+import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 import type { LoomBadgeTone } from '@/ui/primitives/LoomBadge';
 import type { LoomIconName } from '@/ui/primitives/LoomIcon';
 
@@ -46,7 +47,15 @@ const KIND_META: Record<string, KindMeta> = {
 const KIND_FALLBACK: KindMeta = { label: '题目', icon: 'quiz' };
 
 export function kindMeta(kind: string): KindMeta {
-  return KIND_META[kind] ?? KIND_FALLBACK;
+  // The list/detail readers return the RAW persisted `kind`, which for subject
+  // datasets is the profile/skill vocabulary (single_choice / reading_comprehension
+  // / calculation …) rather than canonical QuestionKind (choice / reading /
+  // computation …). Fold to canonical first via the single authoritative seam
+  // (src/subjects/question-kind.ts) so subject rows show 单选 / 阅读理解 instead of
+  // the 题目 fallback. A canonical value passes through unchanged; a genuinely
+  // unknown value (neither vocabulary) stays on the fallback.
+  const canonical = normalizeToCanonicalKind(kind) ?? kind;
+  return KIND_META[canonical] ?? KIND_FALLBACK;
 }
 
 // canonical QuestionSource → 中文 + tone. The list's 来源 axis filters on the real
