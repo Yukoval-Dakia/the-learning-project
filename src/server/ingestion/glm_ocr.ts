@@ -86,6 +86,33 @@ function readGlmErrorMessage(body: GlmErrorBody | null): string {
   return body?.error?.message ?? body?.message ?? '';
 }
 
+function validateGlmLayoutResponse(parsed: GlmLayoutResponse): void {
+  if (!Array.isArray(parsed.layout_details)) {
+    throw new PermanentError('GLM returned no layout_details');
+  }
+  for (const [pageIndex, blocks] of parsed.layout_details.entries()) {
+    if (!Array.isArray(blocks)) {
+      throw new PermanentError(`GLM layout_details[${pageIndex}] is not an array`);
+    }
+    for (const [blockIndex, block] of blocks.entries()) {
+      if (typeof block.label !== 'string') {
+        throw new PermanentError(
+          `GLM block [page ${pageIndex} idx ${blockIndex}] missing string label`,
+        );
+      }
+      if (
+        !Array.isArray(block.bbox_2d) ||
+        block.bbox_2d.length !== 4 ||
+        !block.bbox_2d.every((value) => typeof value === 'number' && Number.isFinite(value))
+      ) {
+        throw new PermanentError(
+          `GLM block [page ${pageIndex} idx ${blockIndex}] has invalid bbox_2d`,
+        );
+      }
+    }
+  }
+}
+
 /**
  * Normalize a GLM failure into the typed Retryable/Permanent errors the handler
  * already classifies (so `markFailedAndLogCost` keeps working unchanged — it
@@ -190,8 +217,6 @@ export async function runGlmLayoutParsing(params: GlmOcrParams): Promise<GlmLayo
   }
 
   const parsed = json as GlmLayoutResponse;
-  if (!Array.isArray(parsed.layout_details)) {
-    throw new PermanentError('GLM returned no layout_details');
-  }
+  validateGlmLayoutResponse(parsed);
   return parsed;
 }

@@ -111,16 +111,18 @@ async function seedSessionWithAsset(): Promise<{
   sessionId: string;
   sourceDocId: string;
   assetId: string;
+  assetIds: string[];
 }> {
   const sourceDocId = createId();
   const sessionId = createId();
-  const assetId = createId();
+  const assetIds = [createId()];
+  const assetId = assetIds[0];
   const now = new Date();
 
   await db.insert(source_document).values({
     id: sourceDocId,
     title: null,
-    source_asset_ids: [assetId],
+    source_asset_ids: assetIds,
     body_md: null,
     provenance: {},
     created_at: now,
@@ -156,15 +158,72 @@ async function seedSessionWithAsset(): Promise<{
     version: 0,
   });
 
-  return { sessionId, sourceDocId, assetId };
+  return { sessionId, sourceDocId, assetId, assetIds };
 }
 
-async function cleanup(sessionId: string, sourceDocId: string, assetId: string) {
+async function seedSessionWithAssets(assetCount: number): Promise<{
+  sessionId: string;
+  sourceDocId: string;
+  assetIds: string[];
+}> {
+  const sourceDocId = createId();
+  const sessionId = createId();
+  const assetIds = Array.from({ length: assetCount }, () => createId());
+  const now = new Date();
+
+  await db.insert(source_document).values({
+    id: sourceDocId,
+    title: null,
+    source_asset_ids: assetIds,
+    body_md: null,
+    provenance: {},
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  });
+
+  await db.insert(source_asset).values(
+    assetIds.map((assetId, index) => ({
+      id: assetId,
+      kind: 'image' as const,
+      storage_key: `test-key-${assetId}`,
+      mime_type: 'image/png',
+      byte_size: 1000,
+      sha256: `fake-${index}`,
+      width: 500,
+      height: 700,
+      provenance: {},
+      created_at: now,
+    })),
+  );
+
+  await db.insert(learning_session).values({
+    id: sessionId,
+    type: 'ingestion',
+    source_document_id: sourceDocId,
+    source_asset_ids: assetIds,
+    status: 'queued',
+    entrypoint: 'vision_single',
+    error_message: null,
+    warnings: [],
+    started_at: now,
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  });
+
+  return { sessionId, sourceDocId, assetIds };
+}
+
+async function cleanup(sessionId: string, sourceDocId: string, assetId: string | string[]) {
+  const assetIds = Array.isArray(assetId) ? assetId : [assetId];
   await db.delete(event).where(eq(event.session_id, sessionId));
   await db.delete(job_events).where(eq(job_events.business_id, sessionId));
   await db.delete(question_block).where(eq(question_block.ingestion_session_id, sessionId));
   await db.delete(learning_session).where(eq(learning_session.id, sessionId));
-  await db.delete(source_asset).where(eq(source_asset.id, assetId));
+  for (const id of assetIds) {
+    await db.delete(source_asset).where(eq(source_asset.id, id));
+  }
   await db.delete(source_document).where(eq(source_document.id, sourceDocId));
 }
 
@@ -268,6 +327,37 @@ describe('tencent_ocr_extract handler (GLM default engine)', () => {
     if (ours) await db.delete(cost_ledger).where(eq(cost_ledger.id, ours.id));
   });
 
+  it('GLM VLM-fail on multiple pages preserves fallback page_spans page_index', async () => {
+    const { sessionId, sourceDocId, assetIds } = await seedSessionWithAssets(2);
+    const r2 = makeR2WithImage(await makeTestImage());
+
+    const glmOcrFn = vi
+      .fn()
+      .mockResolvedValueOnce(makeGlmResponse({ text: 'fallback page zero' }))
+      .mockResolvedValueOnce(makeGlmResponse({ text: 'fallback page one' })) as unknown as GlmOcrFn;
+    const runStructureFn = (async () => {
+      throw new StructureTaskError('provider unavailable');
+    }) as RunStructureFn;
+
+    const handler = buildTencentOcrHandler({ db, r2, glmOcrFn, runStructureFn });
+    await handler([{ id: 'boss-job-fb-pages', data: { sessionId } } as never]);
+
+    const blocks = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.ingestion_session_id, sessionId));
+    const pageByPrompt = new Map(
+      blocks.map((block) => [block.structured?.prompt_text, block.page_spans[0]?.page_index]),
+    );
+    expect(pageByPrompt.get('fallback page zero')).toBe(0);
+    expect(pageByPrompt.get('fallback page one')).toBe(1);
+
+    await cleanup(sessionId, sourceDocId, assetIds);
+    const cost = await db.select().from(cost_ledger);
+    const ours = cost.find((c) => c.pgboss_job_id === 'boss-job-fb-pages');
+    if (ours) await db.delete(cost_ledger).where(eq(cost_ledger.id, ours.id));
+  });
+
   it('GLM client throws Permanent → markExtractionFailed + failed_permanent (provider glm)', async () => {
     const { sessionId, sourceDocId, assetId } = await seedSessionWithAsset();
     const r2 = makeR2WithImage(await makeTestImage());
@@ -294,6 +384,38 @@ describe('tencent_ocr_extract handler (GLM default engine)', () => {
     expect(ours?.cost).toBe(0);
 
     await cleanup(sessionId, sourceDocId, assetId);
+    if (ours) await db.delete(cost_ledger).where(eq(cost_ledger.id, ours.id));
+  });
+
+  it('GLM failure after a successful page records already-consumed tokens', async () => {
+    const { sessionId, sourceDocId, assetIds } = await seedSessionWithAssets(2);
+    const r2 = makeR2WithImage(await makeTestImage());
+
+    const glmOcrFn = vi
+      .fn()
+      .mockResolvedValueOnce(makeGlmResponse({ promptTokens: 3000, completionTokens: 700 }))
+      .mockRejectedValueOnce(new PermanentError('second page failed')) as unknown as GlmOcrFn;
+
+    const handler = buildTencentOcrHandler({ db, r2, glmOcrFn });
+    await expect(
+      handler([{ id: 'boss-job-page2-fail', data: { sessionId } } as never]),
+    ).rejects.toThrow(/second page failed/);
+
+    const session = await db
+      .select()
+      .from(learning_session)
+      .where(eq(learning_session.id, sessionId));
+    expect(session[0].status).toBe('failed');
+
+    const cost = await db.select().from(cost_ledger);
+    const ours = cost.find((c) => c.pgboss_job_id === 'boss-job-page2-fail');
+    expect(ours?.outcome).toBe('failed_permanent');
+    expect(ours?.provider).toBe('glm');
+    expect(ours?.tokens_in).toBe(3000);
+    expect(ours?.tokens_out).toBe(700);
+    expect(ours?.cost).toBeCloseTo(((3000 + 700) / 1_000_000) * 0.2, 10);
+
+    await cleanup(sessionId, sourceDocId, assetIds);
     if (ours) await db.delete(cost_ledger).where(eq(cost_ledger.id, ours.id));
   });
 

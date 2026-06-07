@@ -79,17 +79,17 @@ describe('parseGlmLayoutResponse — math-page1 (real fixture)', () => {
     expect(page.hintMarkdown).toContain('frac');
   });
 
-  it('maps the 2 image blocks (idx 0/9, no content key) to figures without throwing', () => {
+  it('skips header_image and maps only true image blocks to figures without throwing', () => {
     const page = result.pages[0];
-    // CRITIC-ADDED (g): image blocks omit `content` entirely; they must be
-    // routed to figures and skipped in the hint join with no undefined/throw.
-    expect(page.figures.length).toBe(2);
+    // image blocks omit `content`; header_image is decorative and must not enter
+    // the figure pipeline.
+    expect(page.figures.length).toBe(1);
     expect(page.hintMarkdown).not.toContain('undefined');
-    // header_image (idx 0) bbox [108,91,373,135] normalized against 1241x1754.
+    // true image (idx 9) bbox [130,1396,374,1545] normalized against 1241x1754.
     const fig0 = page.figures[0];
     expect(fig0.source_page_index).toBe(0);
-    expect(fig0.bbox.x).toBeCloseTo(108 / 1241);
-    expect(fig0.bbox.y).toBeCloseTo(91 / 1754);
+    expect(fig0.bbox.x).toBeCloseTo(130 / 1241);
+    expect(fig0.bbox.y).toBeCloseTo(1396 / 1754);
   });
 
   it('reports layout_quality structured (page has text blocks)', () => {
@@ -105,9 +105,9 @@ describe('parseGlmLayoutResponse — yuwen-8page (real multi-page fixture)', () 
     expect(result.pages.map((p) => p.page_index)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
   });
 
-  it('routes all 8 image blocks (no content key) to figures, none throw', () => {
+  it('skips header_image blocks and routes only true image blocks to figures', () => {
     const totalFigures = result.pages.reduce((n, p) => n + p.figures.length, 0);
-    expect(totalFigures).toBe(8);
+    expect(totalFigures).toBe(1);
     for (const p of result.pages) {
       expect(p.hintMarkdown).not.toContain('undefined');
     }
@@ -168,6 +168,49 @@ describe('parseGlmLayoutResponse — layout_quality heuristics (synthetic)', () 
       usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
     };
     const result = parseGlmLayoutResponse(resp);
+    expect(result.layout_quality).toBe('text_only');
+  });
+
+  it('filters trim-empty text content before computing page text coverage', () => {
+    const resp: GlmLayoutResponse = {
+      id: 'x',
+      request_id: 'x',
+      data_info: {
+        num_pages: 2,
+        pages: [
+          { width: 100, height: 100 },
+          { width: 100, height: 100 },
+        ],
+      },
+      layout_details: [
+        page([
+          {
+            index: 0,
+            label: 'text',
+            native_label: 'paragraph',
+            bbox_2d: [0, 0, 10, 10],
+            content: 'hi',
+            width: 100,
+            height: 100,
+          },
+        ]),
+        page([
+          {
+            index: 0,
+            label: 'text',
+            native_label: 'paragraph',
+            bbox_2d: [0, 0, 10, 10],
+            content: '   ',
+            width: 100,
+            height: 100,
+          },
+        ]),
+      ],
+      md_results: '',
+      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+    };
+    const result = parseGlmLayoutResponse(resp);
+    expect(result.pages[1].blocks).toHaveLength(0);
     expect(result.layout_quality).toBe('text_only');
   });
 

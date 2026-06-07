@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import tencentMathPage1 from '../../../tests/fixtures/glm-ocr/tencent-math-page1.json';
 import clozeFixture from '../../../tests/fixtures/tencent_mark_agent_cloze_sample.json';
 import {
   flat8ToBBox,
@@ -108,5 +109,15 @@ describe('parseMarkAgentResponse (cloze fixture)', () => {
   it('emits no figures when QuestionImagePositions is empty', () => {
     const result = parseMarkAgentResponse(clozeFixture, { pageWidth: 1500, pageHeight: 2000 });
     expect(result.figures).toEqual([]);
+  });
+
+  it('accepts Tencent figure positions in { Position: number[] } object form', () => {
+    const result = parseMarkAgentResponse(tencentMathPage1, { pageWidth: 1241, pageHeight: 1754 });
+    expect(result.figures).toHaveLength(1);
+    expect(result.figures[0].source_page_index).toBe(0);
+    expect(result.figures[0].bbox.x).toBeCloseTo(122 / 1241);
+    expect(result.figures[0].bbox.y).toBeCloseTo(1392 / 1754);
+    expect(result.figures[0].bbox.width).toBeCloseTo((381 - 122) / 1241);
+    expect(result.figures[0].bbox.height).toBeCloseTo((1544 - 1392) / 1754);
   });
 });

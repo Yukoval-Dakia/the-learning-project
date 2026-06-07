@@ -99,7 +99,29 @@ function isTextBlockWithContent(
 ): block is GlmLayoutBlock & { content: string } {
   // Image-label blocks omit `content` entirely (verified against both real
   // fixtures). Filter to text blocks that actually carry markdown.
-  return block.label !== 'image' && typeof block.content === 'string';
+  return (
+    block.label !== 'image' && typeof block.content === 'string' && block.content.trim() !== ''
+  );
+}
+
+export function deriveGlmLayoutQuality(pages: GlmParsedPage[]): {
+  layout_quality: LayoutQuality;
+  warnings: string[];
+} {
+  const pagesWithText = pages.filter((p) => p.blocks.length > 0).length;
+  if (pages.length === 0 || pagesWithText === 0) {
+    return {
+      layout_quality: 'partial',
+      warnings: ['GLM returned no text blocks on any page'],
+    };
+  }
+  if (pagesWithText < pages.length) {
+    return {
+      layout_quality: 'text_only',
+      warnings: ['GLM: at least one page has only image/empty blocks'],
+    };
+  }
+  return { layout_quality: 'structured', warnings: [] };
 }
 
 /**
@@ -130,7 +152,10 @@ export function parseGlmLayoutResponse(resp: GlmLayoutResponse, pageIndexBase = 
     for (const block of sorted) {
       const bbox = glmBBox(block.bbox_2d, pageWidth, pageHeight);
       if (block.label === 'image') {
-        // image-label blocks (native_label header_image / image) → figures.
+        if (block.native_label === 'header_image') {
+          continue;
+        }
+        // image-label blocks (native_label image) → figures.
         figures.push({ bbox, source_page_index: pageIndex });
         continue;
       }
@@ -153,17 +178,10 @@ export function parseGlmLayoutResponse(resp: GlmLayoutResponse, pageIndexBase = 
   //   'structured' if every page has ≥1 text block,
   //   'text_only'  if any page yielded only image/empty blocks,
   //   'partial'    otherwise (no page has text at all).
-  let quality: LayoutQuality = 'structured';
-  const pagesWithText = pages.filter((p) => p.blocks.length > 0).length;
-  if (pages.length === 0 || pagesWithText === 0) {
-    quality = 'partial';
-    warnings.push('GLM returned no text blocks on any page');
-  } else if (pagesWithText < pages.length) {
-    quality = 'text_only';
-    warnings.push('GLM: at least one page has only image/empty blocks');
-  }
+  const quality = deriveGlmLayoutQuality(pages);
+  warnings.push(...quality.warnings);
 
-  return { pages, layout_quality: quality, warnings };
+  return { pages, layout_quality: quality.layout_quality, warnings };
 }
 
 /**

@@ -148,4 +148,26 @@ describe('runGlmLayoutParsing', () => {
       runGlmLayoutParsing({ imageBase64: 'QUJD', mediaType: 'image/png' }),
     ).rejects.toThrow(/no layout_details/);
   });
+
+  it('throws PermanentError when a GLM block has an invalid bbox_2d', async () => {
+    const invalid = {
+      ...mathPage1,
+      layout_details: [[{ ...mathPage1.layout_details[0][0], bbox_2d: [1, 2, Number.NaN, 4] }]],
+    };
+    mockFetchOnce({ json: () => invalid });
+    await expect(
+      runGlmLayoutParsing({ imageBase64: 'QUJD', mediaType: 'image/png' }),
+    ).rejects.toThrow(/invalid bbox_2d/);
+  });
+
+  it('throws PermanentError when a GLM block is missing a string label', async () => {
+    const invalid = {
+      ...mathPage1,
+      layout_details: [[{ ...mathPage1.layout_details[0][0], label: undefined }]],
+    };
+    mockFetchOnce({ json: () => invalid });
+    await expect(
+      runGlmLayoutParsing({ imageBase64: 'QUJD', mediaType: 'image/png' }),
+    ).rejects.toThrow(/missing string label/);
+  });
 });

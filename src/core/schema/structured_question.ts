@@ -105,7 +105,7 @@ export type StructuredQuestionT = {
   page_index?: number;
   sub_questions?: StructuredQuestionT[];
   extraction_evidence?: z.infer<typeof ExtractionEvidence>;
-  source?: 'tencent_ocr' | 'glm_ocr' | 'vision_rescue' | 'vlm_structure' | 'manual' | 'agent_edit';
+  source?: z.infer<typeof StructuredQuestionSource>;
   last_modified_by?: string;
   /**
    * Advisory question-type hint (YUK-195, design note §4.3). Written by the

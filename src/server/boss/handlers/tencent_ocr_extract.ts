@@ -14,6 +14,7 @@ import { assignFigures, assignFiguresFromVlm } from '@/server/ingestion/figure_a
 import { runGlmLayoutParsing } from '@/server/ingestion/glm_ocr';
 import {
   buildGlmFallbackQuestions,
+  deriveGlmLayoutQuality,
   parseGlmLayoutResponse,
   renderGlmHint,
 } from '@/server/ingestion/glm_ocr_parser';
@@ -54,6 +55,10 @@ function bboxCenterPosition(bbox: { x: number; y: number; width: number; height:
 export type TencentOcrJobData = { sessionId: string };
 
 const TASK_KIND = 'tencent_ocr_extract';
+
+function calculateGlmOcrCost(promptTokens: number, completionTokens: number): number {
+  return ((promptTokens + completionTokens) / 1_000_000) * 0.2;
+}
 
 export type TencentOcrDeps = {
   db: Db;
@@ -154,6 +159,11 @@ async function processOneOcrJob(
   // 2. markExtractionStarted
   await deps.db.transaction((tx) => Ingestion.markExtractionStarted(tx, sessionId));
 
+  // YUK-253: GLM bills per synchronous layout_parsing request. Keep counters
+  // outside the try so a later page/crop/VLM failure can still log consumed usage.
+  let glmPromptTokens = 0;
+  let glmCompletionTokens = 0;
+
   try {
     const sourceDocumentId = session.source_document_id ?? '';
     const warnings: string[] = [];
@@ -178,10 +188,6 @@ async function processOneOcrJob(
     // Worst-of layout_quality across pages, used only by the OCR fallback path
     // (the VLM emits its own layout_quality on the happy path).
     let ocrLayout: LayoutQuality = 'structured';
-    // YUK-253: GLM is the FIRST billable OCR point (xiaomi/Tencent report no
-    // cost; GLM does). Accumulate usage across pages for the success ledger row.
-    let glmPromptTokens = 0;
-    let glmCompletionTokens = 0;
 
     for (let pageIndex = 0; pageIndex < assetIds.length; pageIndex++) {
       const assetId = assetIds[pageIndex];
@@ -225,10 +231,6 @@ async function processOneOcrJob(
           glmPages.push(page);
           figureBoxes = page.figures.map((f) => f.bbox);
         }
-        warnings.push(...parsed.warnings);
-        if (parsed.layout_quality !== 'structured' && ocrLayout === 'structured') {
-          ocrLayout = parsed.layout_quality;
-        }
       } else {
         // PHASE-DEFERRED (YUK-253): retained Tencent engine behind the flag.
         const tencentJobId = await submit({ ImageBase64: pageBase64 });
@@ -257,6 +259,12 @@ async function processOneOcrJob(
         });
         allPreFigures = allPreFigures.concat(preFigures);
       }
+    }
+
+    if (engine === 'glm') {
+      const glmLayout = deriveGlmLayoutQuality(glmPages);
+      ocrLayout = glmLayout.layout_quality;
+      warnings.push(...glmLayout.warnings);
     }
 
     // 10. VLM StructureTask (OC-2): all page images + the demoted OCR text hint →
@@ -360,19 +368,23 @@ async function processOneOcrJob(
     //     question. A cross-page stem is ONE block spanning its pages.
     //
     //     YUK-227 S3 Slice A: page_spans carry a real page_index on the VLM path
-    //     only. bbox remains full-page (ADR-0002). Two paths:
+    //     and the GLM fallback path. bbox remains full-page (ADR-0002). Three paths:
     //
     //     VLM path (usedVlmPath=true): q.page_index is now non-null because
     //     nodeToStructured copies node.page_index (P1 fix). Use q.page_index ?? 0
     //     as fallback for any node the VLM omitted page_index on.
     //
-    //     Tencent fallback path (usedVlmPath=false): tencent_mark_parser stamps
-    //     real page_index on parsed questions (parser.ts:230,289). We must NOT
-    //     use that value here — plan §2 step 4 says "腾讯回落路径保持 placeholder".
-    //     Keeping page_spans at page_index=0 ensures isAllPlaceholderPageIndex
-    //     returns true for these sessions, so block-assembly stays semantic-only
-    //     (correct behaviour — Tencent structure is already per-page, no cross-page
-    //     merge signal needed). If this is ever relaxed, revise §2 step 4 first.
+    //     GLM fallback path (usedVlmPath=false, engine='glm'): GLM fallback
+    //     questions are one standalone question per page and carry real page_index.
+    //     Preserve it so multi-page VLM outages still preview on the correct page.
+    //
+    //     Tencent fallback path (usedVlmPath=false, engine='tencent'):
+    //     tencent_mark_parser stamps real page_index on parsed questions
+    //     (parser.ts:230,289), but plan §2 step 4 says "腾讯回落路径保持
+    //     placeholder". Keeping page_spans at page_index=0 ensures
+    //     isAllPlaceholderPageIndex returns true for these sessions, so
+    //     block-assembly stays semantic-only. If this is ever relaxed, revise
+    //     §2 step 4 first.
     //
     //     YUK-227 S3 Slice A (F3): clamp VLM page_index to [0, pageCount-1].
     //     The VLM may hallucinate out-of-range page indices (e.g. page_index=3 on
@@ -380,10 +392,15 @@ async function processOneOcrJob(
     //     placeholder 0 and log a warning so the anomaly is visible in server logs.
     const pageCount = assetIds.length;
     const blocks = structure.questions.map((q) => {
-      let rawPageIndex = usedVlmPath ? (q.page_index ?? 0) : 0;
-      if (usedVlmPath && rawPageIndex >= pageCount) {
+      const useQuestionPageIndex = usedVlmPath || engine === 'glm';
+      const pageIndexSource = usedVlmPath ? 'VLM' : 'GLM fallback';
+      let rawPageIndex = useQuestionPageIndex ? (q.page_index ?? 0) : 0;
+      if (
+        useQuestionPageIndex &&
+        (!Number.isInteger(rawPageIndex) || rawPageIndex < 0 || rawPageIndex >= pageCount)
+      ) {
         console.warn(
-          `[tencent_ocr_extract] VLM returned out-of-range page_index=${rawPageIndex} ` +
+          `[tencent_ocr_extract] ${pageIndexSource} returned out-of-range page_index=${rawPageIndex} ` +
             `(pageCount=${pageCount}) for question id=${q.id ?? '?'}; clamping to 0`,
         );
         rawPageIndex = 0;
@@ -425,13 +442,12 @@ async function processOneOcrJob(
     //     currency column carrying mixed USD/RMB is tracked as a follow-up issue
     //     (no schema column added this lane — audit:schema).
     if (engine === 'glm') {
-      const totalTokens = glmPromptTokens + glmCompletionTokens;
       await writeCostLedger(deps.db, {
         task_kind: TASK_KIND,
         provider: 'glm',
         model: 'glm-ocr',
         // cost in RMB 元 — GLM OCR 0.2元/M tokens (input=output).
-        cost: (totalTokens / 1_000_000) * 0.2,
+        cost: calculateGlmOcrCost(glmPromptTokens, glmCompletionTokens),
         tokens_in: glmPromptTokens,
         tokens_out: glmCompletionTokens,
         outcome: 'success',
@@ -467,7 +483,10 @@ async function processOneOcrJob(
       console.error('[tencent_ocr_extract] failed to enqueue auto_enroll', err);
     }
   } catch (err) {
-    await markFailedAndLogCost(deps, sessionId, bossJobId, err, engine);
+    await markFailedAndLogCost(deps, sessionId, bossJobId, err, engine, {
+      promptTokens: glmPromptTokens,
+      completionTokens: glmCompletionTokens,
+    });
     throw err; // rethrow so pg-boss retries (Retryable) or archives (Permanent)
   }
 }
@@ -478,6 +497,10 @@ async function markFailedAndLogCost(
   bossJobId: string,
   err: unknown,
   engine: 'glm' | 'tencent' = 'glm',
+  glmUsage: { promptTokens: number; completionTokens: number } = {
+    promptTokens: 0,
+    completionTokens: 0,
+  },
 ): Promise<void> {
   // GLM client throws typed Retryable/Permanent errors, so mapTencentError is
   // only reached for legacy Tencent-path SDK errors (unchanged classification).
@@ -496,15 +519,15 @@ async function markFailedAndLogCost(
   }
 
   try {
-    // YUK-253: cost 0 on failure (no completed billable run); provider/model
-    // labelled by the active engine.
+    const tokensIn = engine === 'glm' ? glmUsage.promptTokens : 0;
+    const tokensOut = engine === 'glm' ? glmUsage.completionTokens : 0;
     await writeCostLedger(deps.db, {
       task_kind: TASK_KIND,
       provider: engine === 'glm' ? 'glm' : 'tencent',
       model: engine === 'glm' ? 'glm-ocr' : 'QuestionMarkAgent',
-      cost: 0,
-      tokens_in: 0,
-      tokens_out: 0,
+      cost: engine === 'glm' ? calculateGlmOcrCost(tokensIn, tokensOut) : 0,
+      tokens_in: tokensIn,
+      tokens_out: tokensOut,
       outcome,
       pgboss_job_id: bossJobId,
     });

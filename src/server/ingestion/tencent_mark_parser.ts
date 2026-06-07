@@ -165,11 +165,13 @@ type AnswerInfoRaw = {
 type MarkInfoNode = {
   MarkItemTitle?: string;
   QuestionPositions?: number[];
-  QuestionImagePositions?: number[][];
+  QuestionImagePositions?: QuestionImagePositionRaw[];
   AnswerInfos?: AnswerInfoRaw[];
   MarkInfos?: MarkInfoNode[];
   RightAnswer?: string;
 };
+
+type QuestionImagePositionRaw = number[] | { Position?: number[] };
 
 type MarkAgentRawResponse = {
   JobStatus?: string;
@@ -299,13 +301,15 @@ function nodeToLeaf(
 }
 
 function collectFigures(
-  positions: number[][] | undefined,
+  positions: QuestionImagePositionRaw[] | undefined,
   pageMeta: PageMeta,
   out: ParsedFigureBox[],
   pageIndex: number,
 ): void {
   if (!positions || positions.length === 0) return;
-  for (const flat of positions) {
+  for (const raw of positions) {
+    const flat = Array.isArray(raw) ? raw : raw.Position;
+    if (!flat) continue;
     if (flat.length !== 8) continue;
     out.push({
       bbox: flat8ToBBox(flat, pageMeta.pageWidth, pageMeta.pageHeight),
