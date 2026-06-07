@@ -4,7 +4,7 @@ import { TAVILY_MCP_ALLOWED_TOOLS, buildTavilyMcpServer } from '@/server/ai/mcp/
 import { resolveDomainToolNames, resolveMcpAllowedTools } from '@/server/ai/tools/allowlists';
 import { PROPOSAL_FEEDBACK_BUDGET } from '@/server/ai/tools/budgets';
 import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
-import { runCopilotChat, runCopilotChatStreaming } from './chat';
+import { CopilotChatRequest, runCopilotChat, runCopilotChatStreaming } from './chat';
 
 describe('runCopilotChat (two-surface routing)', () => {
   it('chat path uses copilot allowlist and writes experimental:copilot_user_ask', async () => {
@@ -759,18 +759,21 @@ describe('runCopilotChat — skill routing (U6)', () => {
     expect(result.skill_turn?.suggested_next).toBe('continue');
   });
 
-  it('solve skill: returns a hint reply with NO turn_kind and NO skill_turn', async () => {
+  // T-C3-3 (YUK-284) — solve was extracted from the skill_context protocol. A
+  // skill_context:{skill:'solve'} (a persisted-old / anomalous value — no live UI
+  // seeds it) now 降级 to the free-form CopilotTask path: it does NOT throw and does
+  // NOT call any solve runner; it falls through to CopilotTask.
+  it('solve skill_context: 降级 to free-form CopilotTask (no throw, no solve routing)', async () => {
     const db = {} as never;
     const writeEventFn = vi.fn(
       async (_db: unknown, input: unknown) => (input as { id: string }).id,
     );
-    const runSolveSkillFn = vi.fn(async () => ({
-      text_md: '先想想边界条件。',
-      task_run_id: 'task_solve_real',
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_freeform',
+      text: 'FREEFORM',
+      finishReason: 'stop' as const,
+      usage: { inputTokens: 1, outputTokens: 2 },
     }));
-    const runAgentTaskFn = vi.fn(async () => {
-      throw new Error('CopilotTask must not run on a skill turn');
-    });
     const buildMcpServerFn = vi.fn(() => ({ name: 'fake-loom' }) as never);
 
     const result = await runCopilotChat(
@@ -780,26 +783,14 @@ describe('runCopilotChat — skill routing (U6)', () => {
         triggered_by: 'chat',
         skill_context: { skill: 'solve', ref: { kind: 'question', id: 'q_solve' } },
       },
-      { ...baseDeps, writeEventFn, runSolveSkillFn, runAgentTaskFn, buildMcpServerFn },
+      { ...baseDeps, writeEventFn, runAgentTaskFn, buildMcpServerFn },
     );
 
+    // 降级 reached the free-form CopilotTask loop (no crash, no solve routing).
     expect(result.surface).toBe('copilot');
-    expect(result.reply).toBe('先想想边界条件。');
+    expect(result.reply).toBe('FREEFORM');
     expect(result.skill_turn).toBeUndefined();
-    // PR #305 review comment #3: real task_run_id propagated.
-    expect(result.task_run_id).toBe('task_solve_real');
-    expect(runSolveSkillFn).toHaveBeenCalledWith(
-      expect.objectContaining({ questionId: 'q_solve' }),
-    );
-    expect(runAgentTaskFn).not.toHaveBeenCalled();
-    // A solve hint reply carries NO turn_kind (only teaching turns anchor chips).
-    const replyEventInput = writeEventFn.mock.calls[1]?.[1] as {
-      payload?: { turn_kind?: string; task_run_id?: string };
-    };
-    const replyPayload = replyEventInput?.payload ?? {};
-    expect(replyPayload.turn_kind).toBeUndefined();
-    // PR #305 review comment #3: payload.task_run_id = real run id.
-    expect(replyPayload.task_run_id).toBe('task_solve_real');
+    expect(runAgentTaskFn).toHaveBeenCalledTimes(1);
   });
 
   it('quiz skill: builds a paper, returns a reply with a /practice link, NO skill_turn', async () => {
@@ -1396,6 +1387,33 @@ describe('runCopilotChat — copilot skill wiring (C2 / YUK-284)', () => {
     expect(runAgentTaskFn).not.toHaveBeenCalled();
     expect(runQuizSkillFn).toHaveBeenCalledTimes(1);
     expect(quizParams).not.toHaveProperty('skills');
+  });
+});
+
+// T-C3-7 (YUK-284) — wire-enum backward compat. CopilotChatRequest.parse must still
+// accept skill_context.skill ∈ {teaching, solve, quiz} so chip quiz (#348) keeps
+// working and persisted-old solve replies still parse. CopilotChatRequest is exported
+// by chat.ts → pure schema parse, zero DB (unit; NOT route.test.ts which is DB).
+describe('CopilotChatRequest wire enum (C3 / YUK-284)', () => {
+  it('accepts skill_context.skill = teaching | solve | quiz (向后兼容)', () => {
+    for (const skill of ['teaching', 'solve', 'quiz'] as const) {
+      const parsed = CopilotChatRequest.parse({
+        user_message: 'x',
+        triggered_by: 'chat',
+        skill_context: { skill, ref: { kind: 'knowledge', id: 'k1' } },
+      });
+      expect(parsed.skill_context?.skill).toBe(skill);
+    }
+  });
+
+  it('rejects an unknown skill_context.skill value', () => {
+    expect(() =>
+      CopilotChatRequest.parse({
+        user_message: 'x',
+        triggered_by: 'chat',
+        skill_context: { skill: 'bogus', ref: { kind: 'knowledge', id: 'k1' } },
+      }),
+    ).toThrow();
   });
 });
 
