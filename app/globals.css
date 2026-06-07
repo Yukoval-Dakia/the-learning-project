@@ -10159,3 +10159,12 @@ button.seg-sm {
 .practice-loom .practice-choice-mark--is-wrong {
   color: var(--again);
 }
+/* In feedback mode a selected card also carries a tone class; the letter badge
+   must follow the tone (good/again) instead of staying coral from .is-selected.
+   Higher specificity (.is-selected.is-correct) overrides the coral label rule. */
+.practice-loom .practice-choice-btn.is-selected.is-correct .practice-choice-label {
+  color: var(--good);
+}
+.practice-loom .practice-choice-btn.is-selected.is-wrong .practice-choice-label {
+  color: var(--again);
+}

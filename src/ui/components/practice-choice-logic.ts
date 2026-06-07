@@ -3,12 +3,18 @@
 // 把「当前已选 letter 串 + 用户点了某个选项」算成「新的 letter 串」拆成纯函数，
 // 方便单测覆盖三类语义：单选切换/取消、多选 toggle、letter 串规范化。
 //
-// content_md 写入规范（与 src/core/capability/judges/exact.ts 的 choice-aware
-// exact judge 双向兼容，YUK-260 / PR #337）：
+// content_md 暂存规范（AUTOSAVE 草稿，*不是*提交答案）：
 //   - 单个 letter：'A'（大写）
 //   - 多选：升序拼接、无分隔符、去重，例如 {C,B} → 'BC'
-// exact judge 解析 letter 串时做 `toUpperCase().replace(/[\s,，、和与]/g,'')` 再
-// `charCodeAt-65`、去重、升序，所以本层产出的「升序大写裸串」是它的子集，零后端改动即兼容。
+// 这个 letter 串只用于「点选暂存 + 选项卡回显」（parseSelection 解析它点亮卡片）。
+//
+// ⚠️ SUBMIT 契约（grading 真相，bot-review round 修正）：本分支的 exact judge
+// （src/core/capability/judges/exact.ts）做的是**纯 normalize 后整串相等比较**，
+// 没有任何 letter→选项原文展开；而现存所有选择题 fixture 的 reference_md 存的是
+// **选项原文**（src/subjects/wenyan/fixtures/data.json：'苏洵' / '何陋之有' …，
+// index.test.ts:62 断言 choices.toContain(reference_md)）。因此点选暂存的裸 letter 串
+// （'B'）若原样提交会和 '苏洵' normalize 后不等 → 正确答案被判错。
+// → 提交前必须用 selectionToAnswerMd() 把 letter 串展开成对应选项原文再发给 judge。
 //
 // 选项 index ↔ letter：index 0 → 'A'，index 1 → 'B'，…（charCodeAt 65='A'）。
 
@@ -53,6 +59,121 @@ export function serializeSelection(indices: number[]): string {
     .sort((a, b) => a - b)
     .map(indexToLetter)
     .join('');
+}
+
+/**
+ * 提交前展开：把暂存的 letter 串（'A' / 'BC'）展开成对应**选项原文**，供 exact judge
+ * 整串比较（reference_md 存的是选项原文，见本文件头部 SUBMIT 契约说明）。
+ *   - 单选：返回该选项原文（e.g. 'B' + ['苏轼','苏洵',…] → '苏洵'）。
+ *   - 多选：按升序逐行拼接各选项原文（'\n' 分隔）。多选 reference 形态目前无 fixture，
+ *     judge 整串比较需两侧同序同分隔——这是 best-effort，单选才是已验证的 grading 真相路径。
+ *   - 空选 / 解析不出任何 index → 返回 ''（提交空答案，由上层 judge 走 unsupported / incorrect）。
+ *
+ * 注意：本函数只在**提交**那一刻调用；点选暂存（content_md autosave）始终保留 letter 串。
+ *
+ * @param raw      暂存的 letter 串
+ * @param choices  选项原文列表（question.choices_md）
+ */
+export function selectionToAnswerMd(raw: string | null | undefined, choices: string[]): string {
+  const indices = parseSelection(raw, choices.length);
+  if (indices.length === 0) return '';
+  return indices.map((i) => choices[i]).join('\n');
+}
+
+/**
+ * 从可得信号派生「是否多选」（bot-review round 修正：旧实现用 `kind === 'multiple_choice'`
+ * 恒为 false——持久 question.kind 已被 question-kind.ts 折叠成 canonical 'choice'，
+ * single_choice / multiple_choice 不再可区分，PaperQuestionFace 也不带多选 flag）。
+ *
+ * 数据模型在 face 层无法区分单/多选，故采用「有 reference 时按 reference 形态推断，
+ * 否则保守单选」：
+ *   - reference 是纯 label 串且解析出 ≥2 个 index（如 'BC'）→ 多选。
+ *   - reference 是选项原文且在 choices 里命中 ≥2 项（理论上少见，防御性覆盖）→ 多选。
+ *   - 其它（无 reference / 单一正确项）→ 单选。
+ * 现存 fixture 全为 single_choice（reference 命中 1 项），因此默认单选对所有真实数据正确；
+ * 多选 reference 出现时（未来）也能在反馈/只读态正确点亮多张卡。answering 态无 reference
+ * 时回退单选——这是 face 层信息缺失下的安全默认。
+ *
+ * @param reference  question.reference_md（可空；answering 态通常为 null）
+ * @param choices    选项原文列表
+ */
+export function deriveMultiSelect(
+  reference: string | null | undefined,
+  choices: string[],
+): boolean {
+  if (!reference) return false;
+  if (isNormalizedLabel(reference, choices.length)) {
+    return parseSelection(reference, choices.length).length >= 2;
+  }
+  const norm = (s: string) => s.normalize('NFKC').trim().toLowerCase();
+  const ref = norm(reference);
+  // 选项原文 reference 一般只对应单一选项；这里仅在罕见的「reference 文本恰好匹配多张卡」
+  // 时才升级为多选，绝大多数走单选默认。
+  return choices.filter((c) => norm(c) === ref).length >= 2;
+}
+
+/**
+ * 反演：把**已提交答案**（submission.answer_md）映射回规范化 letter 串，供选项卡回显
+ * （bot-review round 修正：feedback / 只读态原先用 draft 回显，但提交冻结值在
+ * submission.answer_md，draft 多为 null，导致卡片全不点亮）。
+ *
+ * 提交答案经 selectionToAnswerMd 展开后是选项原文（单选一项 / 多选 '\n' 分行）；本函数把
+ * 每行原文 NFKC+trim+lower 后与 choices 匹配回 index，再 serialize 成 letter 串。
+ *   - 命中 → 返回升序 letter 串（'B' / 'BC'）。
+ *   - 全不命中（历史脏数据 / 答案就是 letter 串）→ 回退：若入参本身是 label 串原样返回，
+ *     否则返回 ''（不点亮，交由文本反馈兜底）。
+ *
+ * @param answerMd  已提交答案（选项原文，可能多行）
+ * @param choices   选项原文列表
+ */
+export function answerMdToSelection(
+  answerMd: string | null | undefined,
+  choices: string[],
+): string {
+  if (!answerMd) return '';
+  const norm = (s: string) => s.normalize('NFKC').trim().toLowerCase();
+  const byText = new Map<string, number>();
+  choices.forEach((c, i) => byText.set(norm(c), i));
+  const indices: number[] = [];
+  for (const line of answerMd.split('\n')) {
+    const idx = byText.get(norm(line));
+    if (idx !== undefined) indices.push(idx);
+  }
+  if (indices.length > 0) return serializeSelection(indices);
+  // 选项原文全不命中：可能是历史上直接存 letter 串的答案 → 若是范围内 label 串原样保留。
+  return isNormalizedLabel(answerMd, choices.length)
+    ? serializeSelection(parseSelection(answerMd, choices.length))
+    : '';
+}
+
+/**
+ * 一个串是否为「规范化的纯 label 串」——去掉 exact-judge 同款脏字符后，**全部**字符都是
+ * A-Z 字母（NFKC + 去分隔符后）；传入 `count` 时还要求每个字母都落在 `[A, A+count)`
+ * 范围内（即都是该题的合法选项 letter）。用来在 isReferenceChoice 里区分「reference 是
+ * letter 串」还是「reference 是含 Latin 字母的选项原文（数学 'a + b'、英文单词）」。
+ *
+ * 收紧 count 这层（bot-review round）：英文学科选项原文如 'apple'（4 选项题）会含越界字母
+ * （P/P/L/E > D），此时不当成 label，回落到选项原文比对，避免被误拆成 letter。
+ * 空串返回 false。
+ *
+ * @param raw   待判定的串
+ * @param count 选项总数；省略 / ≤0 时只做纯字母检查（不做范围约束）。
+ */
+export function isNormalizedLabel(raw: string | null | undefined, count?: number): boolean {
+  if (!raw) return false;
+  const cleaned = raw
+    .normalize('NFKC')
+    .toUpperCase()
+    .replace(/[\s,，、和与]/g, '');
+  if (cleaned.length === 0) return false;
+  if (!/^[A-Z]+$/.test(cleaned)) return false;
+  if (count === undefined || count <= 0) return true;
+  // 每个字母都必须是该题合法选项 letter（在范围内）。
+  for (const ch of cleaned) {
+    const idx = letterToIndex(ch);
+    if (idx < 0 || idx >= count) return false;
+  }
+  return true;
 }
 
 /**
@@ -101,9 +222,11 @@ export function toggleChoice(
 
 /**
  * 反馈阶段：判断某个选项是否属于「参考答案」。reference_md 可能存 letter 串（'A'/'BC'）
- * 或选项原文（exact judge 两种都认）。本层只处理 letter-串与原文两种最常见形态：
- *   - reference 解析出非空 index 集合 → 用该集合判定
- *   - 否则尝试把 reference 整体当作某个选项原文匹配
+ * 或选项原文（现存 fixture 全是选项原文）。两种形态的消歧（bot-review round 修正）：
+ *   - reference 是**纯 label 串**（NFKC + 去分隔符后全为 A-Z）→ 当 letter 串解析，用 index 集合判定。
+ *   - 否则（含 CJK，或含 Latin 字母的选项原文如数学 'a + b' / 英文单词）→ 当选项原文整串比对。
+ * 旧实现先 parseSelection(reference)，只要 reference 含任意 A-Z 就走 letter 分支，会让
+ * 数学 / 英文学科的选项原文被错当 label，反馈标错卡片——故改为先判 isNormalizedLabel。
  * 解析不出就返回 false（不显示对错指示，交由上层降级）。
  */
 export function isReferenceChoice(
@@ -113,9 +236,12 @@ export function isReferenceChoice(
   count: number,
 ): boolean {
   if (!reference) return false;
-  const refIndices = parseSelection(reference, count);
-  if (refIndices.length > 0) return refIndices.includes(optionIndex);
-  // reference 不是 letter 串 → 当作选项原文比对（NFKC + trim + lower）。
+  // 只有「纯 label 串（且全在选项范围内）」才按 letter 解析，避免含 Latin 字母的选项原文被误判为 label。
+  if (isNormalizedLabel(reference, count)) {
+    const refIndices = parseSelection(reference, count);
+    if (refIndices.length > 0) return refIndices.includes(optionIndex);
+  }
+  // reference 不是 label 串 → 当作选项原文比对（NFKC + trim + lower）。
   const norm = (s: string) => s.normalize('NFKC').trim().toLowerCase();
   return norm(reference) === norm(optionText);
 }
