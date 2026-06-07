@@ -145,3 +145,124 @@ describe('registerHandlers', () => {
     expect(reviewPlanIdx).toBeLessThan(coachDailyIdx);
   });
 });
+
+// YUK-259 — createOrUpdateQueue concurrency safety. In a cold start the app's
+// in-process boss (instrumentation) and the worker both register queues against
+// the same DB; pg-boss's create_queue INSERT can race past its own ON CONFLICT
+// and raise a 23505 `queue_pkey` violation, which previously crashed the worker
+// mid-registration. The fix swallows that benign race and STILL reconciles the
+// queue config via updateQueue (#329 semantics preserved).
+describe('registerHandlers — concurrent create race (YUK-259)', () => {
+  // Mimic the raw node-postgres error pg-boss raises (pg.Pool → `.code`/`.detail`
+  // /`.constraint` live directly on the thrown object — no Drizzle wrapper).
+  function pgDuplicateQueueError(queueName: string): Error {
+    const err = new Error(`duplicate key value violates unique constraint "queue_pkey"`);
+    Object.assign(err, {
+      code: '23505',
+      constraint: 'queue_pkey',
+      schema: 'pgboss',
+      table: 'queue',
+      detail: `Key (name)=(${queueName}) already exists.`,
+    });
+    return err;
+  }
+
+  it('does NOT throw when createQueue raises 23505 queue_pkey, and still reconciles via updateQueue', async () => {
+    // createQueue rejects with the duplicate-key race for EVERY queue, as if a
+    // second process already inserted every row. Registration must still resolve.
+    const createQueue = vi.fn((name: string) => Promise.reject(pgDuplicateQueueError(name)));
+    const updateQueue = vi.fn((_name: string, ..._rest: unknown[]) => Promise.resolve(undefined));
+    const work = vi.fn((_name: string, ..._rest: unknown[]) => Promise.resolve(undefined));
+    const schedule = vi.fn((_name: string, ..._rest: unknown[]) => Promise.resolve(undefined));
+    const boss = { createQueue, updateQueue, work, schedule } as unknown as PgBoss;
+
+    // The whole point of the fix: this must not reject.
+    await expect(registerHandlers(boss, {} as Db)).resolves.toBeUndefined();
+
+    // Despite every createQueue failing with the benign race, updateQueue still
+    // runs for each owned queue so the YUK-237 config lands on the existing rows.
+    const reconciled = updateQueue.mock.calls
+      .map((c) => c[0] as string)
+      .filter((n) => !n.startsWith('memory_'));
+    expect(reconciled).toContain('knowledge_maintenance_nightly');
+    expect(reconciled).toContain('review_plan');
+    // A representative DLQ is reconciled too (created via createJobQueue).
+    expect(reconciled).toContain('review_plan_dlq');
+    // Work + schedule wiring is unaffected by the create race.
+    expect(work).toHaveBeenCalledWith(
+      'review_plan',
+      { pollingIntervalSeconds: 2, batchSize: 1 },
+      expect.any(Function),
+    );
+  });
+
+  it('re-throws a non-23505 createQueue error (does not swallow real failures)', async () => {
+    const fatal = new Error('connection terminated unexpectedly');
+    Object.assign(fatal, { code: '08006' }); // connection_failure, NOT a create race
+    const createQueue = vi.fn(() => Promise.reject(fatal));
+    const updateQueue = vi.fn(() => Promise.resolve(undefined));
+    const work = vi.fn(() => Promise.resolve(undefined));
+    const schedule = vi.fn(() => Promise.resolve(undefined));
+    const boss = { createQueue, updateQueue, work, schedule } as unknown as PgBoss;
+
+    await expect(registerHandlers(boss, {} as Db)).rejects.toThrow(
+      'connection terminated unexpectedly',
+    );
+  });
+
+  it('two concurrent registrations both resolve (trigger ①+② — app-boss + worker cold start / warm race)', async () => {
+    // Shared, serialized queue store so the second registration sees the first's
+    // rows as already-existing → its createQueue rejects with the 23505 race,
+    // exactly like two processes hitting one DB. Both registrations must resolve.
+    const existing = new Set<string>();
+    const makeBoss = () => {
+      const createQueue = vi.fn(async (name: string) => {
+        if (existing.has(name)) throw pgDuplicateQueueError(name);
+        existing.add(name);
+        return undefined;
+      });
+      const updateQueue = vi.fn(async () => undefined);
+      const work = vi.fn(async () => undefined);
+      const schedule = vi.fn(async () => undefined);
+      return { createQueue, updateQueue, work, schedule } as unknown as PgBoss;
+    };
+
+    const results = await Promise.allSettled([
+      registerHandlers(makeBoss(), {} as Db),
+      registerHandlers(makeBoss(), {} as Db),
+    ]);
+    expect(results.every((r) => r.status === 'fulfilled')).toBe(true);
+  });
+
+  it('repeated same-process registration is idempotent (trigger ③ — next dev HMR re-evaluates the boss module)', async () => {
+    // `next dev` HMR re-evaluates the instrumentation/boss module on every
+    // recompile, so the SAME in-app boss re-runs createOrUpdateQueue for every
+    // queue (owner observed 156× queue_pkey 23505 across 207 recompiles). After
+    // the first registration the rows exist, so subsequent createQueue calls in
+    // the SAME process raise the benign 23505 — registration must stay
+    // idempotent (resolve, not throw) and keep reconciling config via
+    // updateQueue. This asserts in-process idempotency, not just cross-process
+    // safety.
+    const existing = new Set<string>();
+    const createQueue = vi.fn(async (name: string, ..._rest: unknown[]) => {
+      if (existing.has(name)) throw pgDuplicateQueueError(name);
+      existing.add(name);
+      return undefined;
+    });
+    const updateQueue = vi.fn((_name: string, ..._rest: unknown[]) => Promise.resolve(undefined));
+    const work = vi.fn((_name: string, ..._rest: unknown[]) => Promise.resolve(undefined));
+    const schedule = vi.fn((_name: string, ..._rest: unknown[]) => Promise.resolve(undefined));
+    const boss = { createQueue, updateQueue, work, schedule } as unknown as PgBoss;
+
+    // First registration seeds the rows; the next two simulate HMR recompiles
+    // re-running registration against the now-warm queue table.
+    await expect(registerHandlers(boss, {} as Db)).resolves.toBeUndefined();
+    await expect(registerHandlers(boss, {} as Db)).resolves.toBeUndefined();
+    await expect(registerHandlers(boss, {} as Db)).resolves.toBeUndefined();
+
+    // updateQueue keeps running on every pass so config stays reconciled even
+    // when createQueue is a no-op/raise on the warm table.
+    const reconciled = updateQueue.mock.calls.map((c) => c[0] as string);
+    expect(reconciled).toContain('review_plan');
+  });
+});
