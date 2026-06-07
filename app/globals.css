@@ -8308,6 +8308,704 @@ button.seg-sm {
 }
 
 /* ============================================================
+   COPILOT tool_use CARD — full anatomy (S1, 2026-06-07)
+   Ported from docs/design/2026-06-07-copilot-tool-use-cards/tool-use.css
+   ("Copilot tool_use 卡片"). Recreates the prototype's visual output using
+   the repo token layer; scoped under `.tool-use-card` (the className the
+   ToolUseCard primitive sets). The legacy folded-summary card stays plain —
+   anatomy styles only attach via `.tool-use-card.is-rich`.
+
+   Known traps carried from chat3.md (do NOT regress):
+     • no fragile fade-in on result / resolved-line (could stick at opacity 0).
+       Only spinner / skeleton / stream-cursor animate, all gated by
+       prefers-reduced-motion.
+     • caused_by sits on its own right-aligned footer line.
+   ============================================================ */
+
+/* rich mode reflows the Card base into edge-to-edge anatomy bands: drop the
+   Card padding/gap so header/args/result/ribbon/actions own their own padding. */
+.tool-use-card.is-rich {
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+  box-shadow: var(--shadow-1);
+  transition: box-shadow var(--dur-base) var(--ease-out), opacity var(--dur-base) var(--ease-out);
+}
+.tool-use-card.is-rich.is-resolved {
+  opacity: 0.62;
+}
+.tool-use-card.is-rich.is-dismissed {
+  opacity: 0.42;
+}
+
+/* tone tints for proposal-bearing cards */
+.tool-use-card.is-rich.tone-coral {
+  border-color: var(--coral-line);
+}
+.tool-use-card.is-rich.tone-coral .tuc-head {
+  background: var(--coral-soft);
+}
+.tool-use-card.is-rich.tone-info {
+  border-color: var(--info-line);
+}
+.tool-use-card.is-rich.tone-info .tuc-head {
+  background: var(--info-soft);
+}
+.tool-use-card.is-rich.tone-good {
+  border-color: var(--good-line);
+}
+.tool-use-card.is-rich.tone-good .tuc-head {
+  background: var(--good-soft);
+}
+
+/* ── header ── */
+.tool-use-card.is-rich .tuc-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-3) var(--s-3) var(--s-4);
+  background: var(--paper-sunk);
+  border-bottom: 1px solid var(--line);
+}
+.tool-use-card.is-rich .tuc-head-ico {
+  display: flex;
+  flex: none;
+  color: var(--coral);
+}
+.tool-use-card.is-rich.tone-info .tuc-head-ico {
+  color: var(--info);
+}
+.tool-use-card.is-rich.tone-good .tuc-head-ico {
+  color: var(--good);
+}
+.tool-use-card.is-rich .tuc-name {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+.tool-use-card.is-rich .tuc-summary {
+  font-size: var(--fs-meta);
+}
+.tool-use-card.is-rich .tuc-actor {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-4);
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--paper-raised);
+}
+.tool-use-card.is-rich .tuc-head-end {
+  margin-left: auto;
+}
+
+/* status pill */
+.tuc-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 9px 3px 7px;
+  border-radius: var(--r-pill);
+  white-space: nowrap;
+}
+.tuc-pill.is-running {
+  background: var(--paper-tint);
+  color: var(--ink-4);
+}
+.tuc-pill.is-done {
+  background: var(--good-soft);
+  color: var(--good-ink);
+}
+.tuc-pill.is-empty {
+  background: var(--paper-tint);
+  color: var(--ink-4);
+}
+.tuc-pill.is-failed {
+  background: var(--again-soft);
+  color: var(--again-ink);
+}
+.tuc-pill.is-waiting {
+  background: var(--coral-soft);
+  color: var(--coral-ink);
+}
+
+/* ── args / signature block ── */
+.tool-use-card.is-rich .tuc-args {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  padding: var(--s-3) var(--s-4);
+  background: color-mix(in srgb, var(--paper-sunk) 55%, var(--paper-raised));
+  border-bottom: 1px solid var(--line-soft);
+  line-height: var(--lh-snug);
+}
+.tool-use-card.is-rich .tuc-args-sig {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  color: var(--ink-3);
+}
+.tool-use-card.is-rich .tuc-args-label {
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+  font-size: 11px;
+}
+.tool-use-card.is-rich .tuc-args-toggle {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--ink-4);
+  border: 0;
+  background: none;
+  padding: 2px 4px;
+  border-radius: var(--r-1);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.tool-use-card.is-rich .tuc-args-toggle:hover {
+  color: var(--coral);
+  background: var(--paper-raised);
+}
+.tool-use-card.is-rich .tuc-args-toggle .ico {
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.tool-use-card.is-rich .tuc-args-toggle.is-open .ico {
+  transform: rotate(90deg);
+}
+.tool-use-card.is-rich .tuc-args-list {
+  margin-top: var(--s-2);
+  display: grid;
+  gap: 3px;
+}
+.tool-use-card.is-rich .tuc-args-row {
+  display: flex;
+  gap: var(--s-2);
+}
+.tool-use-card.is-rich .tuc-args-k {
+  color: var(--ink-4);
+  min-width: 88px;
+  flex: none;
+}
+.tool-use-card.is-rich .tuc-args-v {
+  color: var(--info);
+  min-width: 0;
+  word-break: break-word;
+}
+.tool-use-card.is-rich .tuc-args-v.is-str {
+  color: var(--good-ink);
+}
+.tool-use-card.is-rich .tuc-args-v.is-num {
+  color: var(--coral-hover);
+}
+.tool-use-card.is-rich .tuc-args-raw {
+  margin: var(--s-2) 0 0;
+  padding: var(--s-3);
+  border-radius: var(--r-2);
+  background: var(--ink);
+  color: #e9e6dc;
+  font-size: 11.5px;
+  line-height: 1.55;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+/* ── result block ── */
+.tool-use-card.is-rich .tuc-result {
+  padding: var(--s-4);
+}
+.tool-use-card.is-rich .tuc-result .result-lead {
+  font-size: var(--fs-body);
+  color: var(--ink-2);
+  line-height: var(--lh-prose);
+  margin: 0 0 var(--s-3);
+}
+.tool-use-card.is-rich .tuc-result .result-lead:last-child {
+  margin-bottom: 0;
+}
+.tool-use-card.is-rich .tuc-result .result-lead b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* node / row list result */
+.tool-use-card.is-rich .r-list {
+  display: grid;
+  gap: var(--s-2);
+}
+.tool-use-card.is-rich .r-node {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--paper);
+}
+.tool-use-card.is-rich .r-node .nico {
+  color: var(--info);
+  flex: none;
+  display: flex;
+}
+.tool-use-card.is-rich .r-node .nbody {
+  min-width: 0;
+  flex: 1;
+}
+.tool-use-card.is-rich .r-node .nlabel {
+  font-size: var(--fs-caption);
+  color: var(--ink);
+  font-weight: 500;
+}
+.tool-use-card.is-rich .r-node .nmeta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-4);
+  margin-top: 1px;
+}
+.tool-use-card.is-rich .r-node .nscore {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  flex: none;
+}
+
+/* mistake / attribution result */
+.tool-use-card.is-rich .r-mistake {
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  overflow: hidden;
+}
+.tool-use-card.is-rich .r-mistake + .r-mistake {
+  margin-top: var(--s-2);
+}
+.tool-use-card.is-rich .r-mistake .mq {
+  padding: var(--s-3);
+  font-size: var(--fs-caption);
+  color: var(--ink);
+  border-bottom: 1px solid var(--line-soft);
+}
+.tool-use-card.is-rich .r-mistake .mq .wenyan {
+  font-family: var(--font-wenyan);
+}
+.tool-use-card.is-rich .r-mistake .chain {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  padding: var(--s-2) var(--s-3);
+  background: var(--info-soft);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--info-ink);
+}
+.tool-use-card.is-rich .r-mistake .chain .ev {
+  padding: 1px 6px;
+  background: var(--paper-raised);
+  border-radius: var(--r-1);
+  color: var(--ink-3);
+}
+.tool-use-card.is-rich .r-mistake .chain .arrow {
+  color: var(--ink-4);
+}
+.tool-use-card.is-rich .r-mistake .chain .cause {
+  color: var(--info-ink);
+  font-weight: 500;
+}
+
+/* variant cards result */
+.tool-use-card.is-rich .r-variant {
+  border: 1px solid var(--coral-line);
+  border-radius: var(--r-2);
+  background: var(--coral-soft);
+  padding: var(--s-3);
+}
+.tool-use-card.is-rich .r-variant + .r-variant {
+  margin-top: var(--s-2);
+}
+.tool-use-card.is-rich .r-variant .vtop {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: 6px;
+}
+.tool-use-card.is-rich .r-variant .vtag {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--coral-ink);
+}
+.tool-use-card.is-rich .r-variant .vnew {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--paper);
+  background: var(--coral);
+  padding: 1px 6px;
+  border-radius: var(--r-pill);
+  margin-left: auto;
+}
+.tool-use-card.is-rich .r-variant .vq {
+  font-family: var(--font-wenyan);
+  font-size: var(--fs-body);
+  color: var(--ink);
+  line-height: var(--lh-snug);
+}
+.tool-use-card.is-rich .r-variant .va {
+  font-size: var(--fs-meta);
+  color: var(--coral-ink);
+  margin-top: 4px;
+}
+
+/* prose explanation result */
+.tool-use-card.is-rich .r-explain {
+  border-left: 2px solid var(--info);
+  padding-left: var(--s-3);
+}
+.tool-use-card.is-rich .r-explain p {
+  margin: 0 0 var(--s-2);
+  font-size: var(--fs-caption);
+  color: var(--ink-2);
+  line-height: var(--lh-prose);
+}
+.tool-use-card.is-rich .r-explain p:last-child {
+  margin-bottom: 0;
+}
+.tool-use-card.is-rich .r-explain .wy {
+  font-family: var(--font-wenyan);
+  color: var(--ink);
+}
+
+/* schedule result */
+.tool-use-card.is-rich .r-sched {
+  display: flex;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+}
+.tool-use-card.is-rich .r-sched .cell {
+  flex: 1;
+  min-width: 90px;
+  padding: var(--s-3);
+  background: var(--good-soft);
+  border: 1px solid var(--good-line);
+  border-radius: var(--r-2);
+}
+.tool-use-card.is-rich .r-sched .cell .lbl {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--good-ink);
+  letter-spacing: var(--ls-wide);
+  opacity: 0.8;
+}
+.tool-use-card.is-rich .r-sched .cell .big {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h3);
+  color: var(--good-ink);
+  line-height: 1.2;
+  margin-top: 2px;
+}
+.tool-use-card.is-rich .r-sched .cell .big .u {
+  font-size: var(--fs-meta);
+  font-family: var(--font-sans);
+  color: var(--good);
+  margin-left: 2px;
+}
+
+/* edge / relation result */
+.tool-use-card.is-rich .r-edge {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  justify-content: center;
+  padding: var(--s-3);
+  background: var(--info-soft);
+  border-radius: var(--r-2);
+  flex-wrap: wrap;
+}
+.tool-use-card.is-rich .r-edge .enode {
+  font-size: var(--fs-caption);
+  color: var(--ink);
+  font-weight: 500;
+  background: var(--paper-raised);
+  border: 1px solid var(--info-line);
+  padding: 4px 10px;
+  border-radius: var(--r-pill);
+}
+.tool-use-card.is-rich .r-edge .rel {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--info-ink);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.tool-use-card.is-rich .r-edge .rel .glyph {
+  font-size: 18px;
+  line-height: 1;
+  color: var(--info);
+}
+
+/* note diff result */
+.tool-use-card.is-rich .r-diff {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  overflow: hidden;
+}
+.tool-use-card.is-rich .r-diff .dl {
+  padding: 2px var(--s-3);
+}
+.tool-use-card.is-rich .r-diff .dl.add {
+  background: var(--good-soft);
+  color: var(--good-ink);
+}
+.tool-use-card.is-rich .r-diff .dl.add::before {
+  content: "+ ";
+  opacity: 0.6;
+}
+.tool-use-card.is-rich .r-diff .dl.ctx {
+  color: var(--ink-4);
+}
+.tool-use-card.is-rich .r-diff .dl.ctx::before {
+  content: "  ";
+}
+
+/* ocr extract / stream result */
+.tool-use-card.is-rich .r-ocr {
+  display: grid;
+  gap: 6px;
+}
+.tool-use-card.is-rich .r-ocr .oitem {
+  display: flex;
+  gap: var(--s-2);
+  align-items: baseline;
+  font-size: var(--fs-caption);
+  color: var(--ink-2);
+}
+.tool-use-card.is-rich .r-ocr .oitem .oi {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-4);
+  flex: none;
+}
+.tool-use-card.is-rich .r-ocr .oitem .ot {
+  font-family: var(--font-wenyan);
+}
+.tool-use-card.is-rich .r-stream {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-3);
+  line-height: var(--lh-snug);
+}
+.tool-use-card.is-rich .r-stream .cursor {
+  display: inline-block;
+  width: 7px;
+  height: 14px;
+  background: var(--coral);
+  vertical-align: -2px;
+  margin-left: 1px;
+  animation: tuc-blink 1s steps(2) infinite;
+}
+@keyframes tuc-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* skeleton (running result) */
+.tool-use-card.is-rich .tuc-skel {
+  display: grid;
+  gap: var(--s-2);
+}
+.tool-use-card.is-rich .tuc-skel-ln {
+  height: 12px;
+  border-radius: var(--r-1);
+  background: linear-gradient(
+    90deg,
+    var(--paper-sunk) 25%,
+    var(--paper-tint) 50%,
+    var(--paper-sunk) 75%
+  );
+  background-size: 200% 100%;
+  animation: tuc-shimmer 1.3s linear infinite;
+}
+@keyframes tuc-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* empty result */
+.tool-use-card.is-rich .r-empty {
+  text-align: center;
+  padding: var(--s-4) var(--s-3);
+  color: var(--ink-3);
+}
+.tool-use-card.is-rich .r-empty .ei {
+  color: var(--ink-5);
+  margin-bottom: var(--s-2);
+  display: inline-flex;
+}
+.tool-use-card.is-rich .r-empty .et {
+  font-size: var(--fs-caption);
+  color: var(--ink-2);
+}
+.tool-use-card.is-rich .r-empty .es {
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  margin-top: 2px;
+}
+
+/* error result */
+.tool-use-card.is-rich .r-error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  padding: var(--s-3);
+  background: var(--again-soft);
+  border: 1px solid var(--again-line);
+  border-radius: var(--r-2);
+}
+.tool-use-card.is-rich .r-error .eic {
+  color: var(--again);
+  flex: none;
+  display: flex;
+}
+.tool-use-card.is-rich .r-error .etxt {
+  font-size: var(--fs-caption);
+  color: var(--again-ink);
+  line-height: var(--lh-snug);
+}
+.tool-use-card.is-rich .r-error .ecode {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--again);
+  opacity: 0.8;
+  margin-top: 2px;
+}
+
+/* ── meta ribbon ── */
+.tool-use-card.is-rich .tuc-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+  padding: var(--s-2) var(--s-4);
+  border-top: 1px solid var(--line-soft);
+  background: var(--paper);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-4);
+}
+.tool-use-card.is-rich .tuc-meta-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+.tool-use-card.is-rich .tuc-meta-dot {
+  color: var(--line-strong);
+}
+.tool-use-card.is-rich .tuc-meta-model {
+  color: var(--ink-3);
+}
+.tool-use-card.is-rich .tuc-meta-cost {
+  color: var(--coral-hover);
+}
+.tool-use-card.is-rich .tuc-meta-cost.is-free {
+  color: var(--good);
+}
+.tool-use-card.is-rich .tuc-meta-caused {
+  flex-basis: 100%;
+  text-align: right;
+  margin: 0;
+  color: var(--ink-5);
+}
+.tool-use-card.is-rich .tuc-meta-caused b {
+  color: var(--ink-4);
+  font-weight: 400;
+}
+
+/* confidence meter */
+.tuc-conf {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.tuc-conf-bar {
+  width: 38px;
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: var(--line);
+  overflow: hidden;
+}
+.tuc-conf-bar i {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: var(--good);
+}
+.tuc-conf-bar i.mid {
+  background: var(--hard);
+}
+.tuc-conf-bar i.low {
+  background: var(--again);
+}
+.tuc-conf-pct {
+  color: var(--ink-3);
+}
+
+/* ── action row (approval) ── */
+.tool-use-card.is-rich .tuc-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  padding: var(--s-3) var(--s-4);
+  border-top: 1px solid var(--line);
+  background: var(--paper-sunk);
+}
+.tool-use-card.is-rich .tuc-actions-hint {
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  margin-right: auto;
+}
+
+/* resolved line (instant, no fade — chat3.md trap) */
+.tool-use-card.is-rich .tuc-resolved {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+  border-top: 1px solid var(--line);
+  background: var(--good-soft);
+  font-size: var(--fs-caption);
+  color: var(--good-ink);
+}
+.tool-use-card.is-rich .tuc-resolved.is-dismissed {
+  background: var(--paper-sunk);
+  color: var(--ink-4);
+}
+.tool-use-card.is-rich .tuc-resolved-ev {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-use-card.is-rich .tuc-skel-ln,
+  .tool-use-card.is-rich .r-stream .cursor {
+    animation: none;
+  }
+}
+
+/* ============================================================
    LOOM MISTAKES LAYER — Wave 2 (YUK-169)
    /mistakes (错题本) card + chrome classes ported additively from
    loom-prototype @ f85aca6d (screen-mistakes.jsx MistakeCard).
