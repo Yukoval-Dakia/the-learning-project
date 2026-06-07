@@ -11,7 +11,7 @@
 // `pgboss.*` schema 自动建出。
 
 import { db } from '@/db/client';
-import { createBoss } from '@/server/boss/client';
+import { createBoss, isQueueCreateRace } from '@/server/boss/client';
 import { registerHandlers } from '@/server/boss/handlers';
 import { installShutdownHandler } from '@/server/boss/shutdown';
 
@@ -50,6 +50,30 @@ async function main() {
   }
 
   const boss = createBoss();
+
+  // YUK-259: pg-boss is an EventEmitter; it emits `error` for failures raised by
+  // its INTERNAL background loops (timekeeper / supervise / maintenance) — e.g.
+  // the timekeeper creating its `__pgboss__send-it` queue at start. With NO
+  // `error` listener, Node's EventEmitter rethrows an emitted `error`, which the
+  // process-level uncaughtException handler above turns into exit(1). During a
+  // cold start where the app's in-process boss and this worker race to create
+  // the same queues, that internal create can raise a benign 23505 `queue_pkey`
+  // (`Key (name)=(__pgboss__send-it) already exists`) — which used to crash the
+  // worker (the queue already exists; restarting "fixed" it). Swallow that
+  // benign race here and log everything else loudly. We do NOT exit on a logged
+  // error: a transient supervise-loop hiccup shouldn't kill a worker that is
+  // otherwise draining the queue; genuine fatal faults still surface via the
+  // unhandledRejection / uncaughtException guards above.
+  boss.on('error', (err) => {
+    if (isQueueCreateRace(err)) {
+      console.warn(
+        '[worker] pg-boss internal queue create race (23505 queue_pkey) — benign, queue already exists (YUK-259)',
+      );
+      return;
+    }
+    console.error('[worker] pg-boss error event', err);
+  });
+
   await boss.start();
   await registerHandlers(boss, db);
   installShutdownHandler(boss);
