@@ -1,0 +1,102 @@
+{
+  "created": 1780809068,
+  "data_info": { "num_pages": 1, "pages": [{ "height": 1754, "width": 1241 }] },
+  "id": "2026060713110721c102e892434899",
+  "layout_details": [
+    [
+      {
+        "bbox_2d": [108, 91, 373, 135],
+        "height": 1754,
+        "index": 0,
+        "label": "image",
+        "native_label": "header_image",
+        "width": 1241
+      },
+      {
+        "bbox_2d": [312, 179, 926, 219],
+        "content": "<div align=\"center\">\n\n# 2025学年第二学期高一基础知识调测试卷\n\n</div>",
+        "height": 1754,
+        "index": 1,
+        "label": "text",
+        "native_label": "doc_title",
+        "width": 1241
+      },
+      {
+        "bbox_2d": [548, 267, 690, 308],
+        "content": "<div align=\"center\">\n\n# 数学试题\n\n</div>",
+        "height": 1754,
+        "index": 2,
+        "label": "text",
+        "native_label": "doc_title",
+        "width": 1241
+      },
+      {
+        "bbox_2d": [1055, 346, 1132, 373],
+        "content": "2026. 5",
+        "height": 1754,
+        "index": 3,
+        "label": "text",
+        "native_label": "text",
+        "width": 1241
+      },
+      {
+        "bbox_2d": [106, 408, 1129, 537],
+        "content": "## 一、选择题（本大题共5小题，每小题4分，共20分。在每小题给出的四个选项中，只有一项是符合题目要求的）",
+        "height": 1754,
+        "index": 4,
+        "label": "text",
+        "native_label": "paragraph_title",
+        "width": 1241
+      },
+      {
+        "bbox_2d": [104, 574, 948, 751],
+        "content": "1. 设 $ z=\\frac{1}{1+\\mathrm{i}} $ ，则 $ |z|= $ （    ）\n\nA. 2 B. $ \\sqrt{2} $ C. 1 D. $ \\frac{\\sqrt{2}}{2} $",
+        "height": 1754,
+        "index": 5,
+        "label": "text",
+        "native_label": "text",
+        "width": 1241
+      },
+      {
+        "bbox_2d": [105, 796, 963, 924],
+        "content": "2. 已知直线 a不平行于平面 $ \\alpha $ ，且 $ a\\neq\\alpha $ ，则下列结论成立的是（    ）\n\nA. 平面 $ \\alpha $内的所有直线与 a是异面直线 B. 平面 $ \\alpha $内不存在与 a平行的直线\n\nC. 平面 $ \\alpha $内存在唯一一条直线与 a平行 D. 平面 $ \\alpha $内的所有直线与 a都相交",
+        "height": 1754,
+        "index": 6,
+        "label": "text",
+        "native_label": "text",
+        "width": 1241
+      },
+      {
+        "bbox_2d": [106, 952, 884, 1150],
+        "content": "3. 在下列各组向量中，不可以作为基底的是（    ）\n\nA. $ e_{1}^{\\uparrow}=(-1,2), $ $ e_{2}^{\\uparrow}=(1,2) $\n\nB. $ e_{1}^{\\uparrow}=(1,2), $ $ e_{2}^{\\uparrow}=(2,4) $\n\nC. $ e_{1}^{\\uparrow}=(2,4), $ $ e_{2}^{\\uparrow}=(1,3) $\n\nD. $ e_{1}^{\\uparrow}=(1,3), $ $ e_{2}^{\\uparrow}=(-1,0) $",
+        "height": 1754,
+        "index": 7,
+        "label": "text",
+        "native_label": "text",
+        "width": 1241
+      },
+      {
+        "bbox_2d": [105, 1181, 1115, 1367],
+        "content": "4. 如图，在梯形ABCD中， $ A D=\\frac{1}{2} B C $ ，E，F分别为AD，BC的中点，G为线段BF的四等分点 （靠近点F），记 $ A B=a $ ， $ D C=b $ ，则（    ）",
+        "height": 1754,
+        "index": 8,
+        "label": "text",
+        "native_label": "text",
+        "width": 1241
+      },
+      {
+        "bbox_2d": [130, 1396, 374, 1545],
+        "height": 1754,
+        "index": 9,
+        "label": "image",
+        "native_label": "image",
+        "width": 1241
+      }
+    ]
+  ],
+  "layout_visualization": [],
+  "md_results": "![](page=0,bbox=[108, 91, 373, 135])\n\n<div align=\"center\">\n\n# 2025学年第二学期高一基础知识调测试卷\n\n</div>\n\n<div align=\"center\">\n\n# 数学试题\n\n</div>\n\n2026. 5\n\n## 一、选择题（本大题共5小题，每小题4分，共20分。在每小题给出的四个选项中，只有一项是符合题目要求的）\n\n1. 设 $ z=\\frac{1}{1+\\mathrm{i}} $ ，则 $ |z|= $ （    ）\n\nA. 2 B. $ \\sqrt{2} $ C. 1 D. $ \\frac{\\sqrt{2}}{2} $\n\n2. 已知直线 a不平行于平面 $ \\alpha $ ，且 $ a\\neq\\alpha $ ，则下列结论成立的是（    ）\n\nA. 平面 $ \\alpha $内的所有直线与 a是异面直线 B. 平面 $ \\alpha $内不存在与 a平行的直线\n\nC. 平面 $ \\alpha $内存在唯一一条直线与 a平行 D. 平面 $ \\alpha $内的所有直线与 a都相交\n\n3. 在下列各组向量中，不可以作为基底的是（    ）\n\nA. $ e_{1}^{\\uparrow}=(-1,2), $ $ e_{2}^{\\uparrow}=(1,2) $\n\nB. $ e_{1}^{\\uparrow}=(1,2), $ $ e_{2}^{\\uparrow}=(2,4) $\n\nC. $ e_{1}^{\\uparrow}=(2,4), $ $ e_{2}^{\\uparrow}=(1,3) $\n\nD. $ e_{1}^{\\uparrow}=(1,3), $ $ e_{2}^{\\uparrow}=(-1,0) $\n\n4. 如图，在梯形ABCD中， $ A D=\\frac{1}{2} B C $ ，E，F分别为AD，BC的中点，G为线段BF的四等分点 （靠近点F），记 $ A B=a $ ， $ D C=b $ ，则（    ）\n\n![](page=0,bbox=[130, 1396, 374, 1545])",
+  "model": "glm-ocr",
+  "request_id": "2026060713110721c102e892434899",
+  "usage": { "completion_tokens": 440, "prompt_tokens": 1128, "total_tokens": 1568 }
+}
