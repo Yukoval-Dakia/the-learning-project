@@ -1,5 +1,11 @@
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 
+// DUAL-ENGINE (YUK-253): GLM-OCR is the default extraction engine; this
+// Tencent error model is RETAINED PERMANENTLY as the `EXTRACT_OCR_ENGINE='tencent'`
+// switchable engine — owner decision 2026-06-07: 腾讯支持长期保留，不删。
+// No removal planned. Dual engines also enable same-page A/B quality
+// comparison and per-scenario switching (规范试卷场景可切回腾讯切题/解析).
+
 /**
  * Tencent Cloud SDK 异常分类 —— 决定 pg-boss 是否 retry。
  *
