@@ -94,8 +94,24 @@ describe('POST /api/ingestion', () => {
     expect(res.status).toBe(400);
   });
 
-  it('asset_ids over max (6) → 400', async () => {
-    const res = await POST(postBody({ asset_ids: ['a', 'b', 'c', 'd', 'e', 'f'] }));
+  // YUK-250 — the asset_ids cap rose 5 → 15 to admit a fully-expanded 15-page
+  // PDF. 15 is accepted (real rows so it reaches session create); 16 is rejected
+  // by Zod before any DB work. This locks the .max(MAX_PDF_PAGES) change.
+  it('asset_ids at cap (15) → accepted', async () => {
+    const db = testDb();
+    const ids: string[] = [];
+    for (let i = 0; i < 15; i++) {
+      const id = `cap_${i}`;
+      await insertAsset(db, id, `sk_cap_${i}`);
+      ids.push(id);
+    }
+    const res = await POST(postBody({ asset_ids: ids }));
+    expect(res.status).toBe(200);
+  });
+
+  it('asset_ids over cap (16) → 400 before DB', async () => {
+    const ids = Array.from({ length: 16 }, (_, i) => `over_${i}`);
+    const res = await POST(postBody({ asset_ids: ids }));
     expect(res.status).toBe(400);
   });
 
