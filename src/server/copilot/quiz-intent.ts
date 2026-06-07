@@ -25,6 +25,7 @@ import type { Db } from '@/db/client';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { type KnowledgeNode, loadTreeSnapshot } from '@/server/knowledge/tree';
 import type { SubjectProfile } from '@/subjects/profile';
+import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 
 // ── Stage 1: 粗筛 (零 LLM) ──────────────────────────────────────────────────────
 
@@ -191,13 +192,24 @@ export async function resolveQuizIntent(
       return { status: 'missing_knowledge' };
     }
 
+    // CODEX-1 fix — `kind` is a free-text hint from the parse prompt (题型 hint，如
+    // reading / choice). A value outside the canonical/skill 词表 (e.g. a Chinese
+    // 选择题/古诗阅读) would make kindsMatch() return false for EVERY pooled row AND
+    // mismatch the pin forwarded to background quiz_gen/sourcing, silently zeroing the
+    // pool. Mirror the knowledge_id 二次校验: normalize to canonical here, drop to null
+    // when unrecognized so the unrecognized value degrades to「无题型过滤」(whole pool +
+    // un-pinned production) instead of「永远空集」. Keep the *canonical* value so the one
+    // downstream mapping (kindsMatch / questionKindToSkillKind / enqueue pin) is fed a
+    // word it understands.
+    const kind = parsed.kind === null ? null : normalizeToCanonicalKind(parsed.kind);
+
     return {
       status: 'resolved',
       knowledgeId: parsed.knowledge_id,
       count: parsed.count,
       difficultyMin: parsed.difficulty_min,
       unit: parsed.unit,
-      kind: parsed.kind,
+      kind,
     };
   } catch (err) {
     // Propagate the failure signal (NOT a silent free-form fallback) so the caller §5
