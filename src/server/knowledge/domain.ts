@@ -1,6 +1,6 @@
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
-import { resolveSubjectProfile } from '@/subjects/profile';
+import { resolveKnownSubjectId } from '@/subjects/profile';
 import { eq, isNull } from 'drizzle-orm';
 
 const MAX_DEPTH = 32; // 防 cycle
@@ -86,10 +86,18 @@ export async function resolveSubjectKnowledgeIds(db: Db, subject: string): Promi
   const matched: string[] = [];
   for (const row of rows) {
     const domain = effectiveDomain(row.id);
-    // Canonical bridge: a raw domain string maps to a subject profile id via the
-    // alias table (resolveSubjectProfile), so a `?subject=wenyan` tab matches any
-    // node whose domain aliases to that profile — never a bare string equality.
-    if (resolveSubjectProfile(domain).id === subject) matched.push(row.id);
+    // Canonical bridge: a raw domain string maps to a subject id via the alias
+    // table, so a `?subject=wenyan` tab matches any node whose domain ALIASES to
+    // that profile (classical_chinese → wenyan) — alias-aware where the bare-
+    // equality precedent (tagging.ts:122) is not.
+    //
+    // YUK-288 over-match fix: we use resolveKnownSubjectId (NOT resolveSubjectProfile),
+    // which returns null for a null effective domain OR an unrecognised string
+    // instead of falling back to the DEFAULT profile (wenyan). Without this, every
+    // untagged-up-the-whole-chain node and every unknown-domain node resolved to
+    // 'wenyan' and was swept into `?subject=wenyan`, conflating "genuinely wenyan"
+    // with "untagged / unknown-domain". A null result matches no subject.
+    if (resolveKnownSubjectId(domain) === subject) matched.push(row.id);
   }
   return matched;
 }

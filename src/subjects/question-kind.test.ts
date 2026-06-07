@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  canonicalKindToPersistedForms,
   kindsMatch,
   normalizeToCanonicalKind,
   questionKindToSkillKind,
@@ -79,6 +80,52 @@ describe('questionKindToSkillKind (canonical → representative skill key)', () 
     expect(questionKindToSkillKind('true_false')).toBe('true_false');
     expect(questionKindToSkillKind('fill_blank')).toBe('fill_blank');
     expect(questionKindToSkillKind('essay')).toBe('essay');
+  });
+});
+
+describe('canonicalKindToPersistedForms (YUK-288 题型 filter expansion)', () => {
+  it('expands a canonical kind to canonical + every profile vocab folding to it', () => {
+    // choice ← single_choice, multiple_choice (seed/fixture rows store single_choice).
+    expect(new Set(canonicalKindToPersistedForms('choice'))).toEqual(
+      new Set(['choice', 'single_choice', 'multiple_choice']),
+    );
+    // computation ← calculation, word_problem.
+    expect(new Set(canonicalKindToPersistedForms('computation'))).toEqual(
+      new Set(['computation', 'calculation', 'word_problem']),
+    );
+    // reading ← reading_comprehension.
+    expect(new Set(canonicalKindToPersistedForms('reading'))).toEqual(
+      new Set(['reading', 'reading_comprehension']),
+    );
+    // derivation ← proof.
+    expect(new Set(canonicalKindToPersistedForms('derivation'))).toEqual(
+      new Set(['derivation', 'proof']),
+    );
+  });
+
+  it('returns only the canonical itself for kinds with no profile vocab', () => {
+    // true_false / fill_blank / essay / translation / short_answer have no extra
+    // folding profile key (translation/short_answer map 1:1; the rest are
+    // canonical-only). The set always includes the canonical value at minimum.
+    expect(canonicalKindToPersistedForms('true_false')).toEqual(['true_false']);
+    expect(canonicalKindToPersistedForms('fill_blank')).toEqual(['fill_blank']);
+    expect(canonicalKindToPersistedForms('essay')).toEqual(['essay']);
+    expect(new Set(canonicalKindToPersistedForms('translation'))).toEqual(new Set(['translation']));
+    expect(new Set(canonicalKindToPersistedForms('short_answer'))).toEqual(
+      new Set(['short_answer']),
+    );
+  });
+
+  it('accepts a profile key (normalizes first) and still expands the canonical family', () => {
+    // A caller passing single_choice gets the full choice family, not just itself.
+    expect(new Set(canonicalKindToPersistedForms('single_choice'))).toEqual(
+      new Set(['choice', 'single_choice', 'multiple_choice']),
+    );
+  });
+
+  it('degenerates to an exact single-element set for an unknown kind', () => {
+    // Unknown → no normalisation → exact match on the raw value (no over-broadening).
+    expect(canonicalKindToPersistedForms('nonsense')).toEqual(['nonsense']);
   });
 });
 

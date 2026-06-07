@@ -148,6 +148,46 @@ describe('listQuestions', () => {
       expect(new Set(res.items.map((i) => i.id))).toEqual(new Set([a, b]));
     });
 
+    it('kind axis matches subject-vocabulary rows via canonical normalisation (YUK-288)', async () => {
+      // Seed/fixture write paths persist profile vocabulary (single_choice /
+      // reading_comprehension / calculation), NOT canonical, violating the
+      // business.ts canonical-is-truth invariant. The UI filter sends canonical
+      // (choice / reading / computation). An exact eq(kind, 'choice') matched zero
+      // single_choice rows — the empty-list bug. The reader now expands canonical
+      // to all persisted forms (IN ...), so it hits both vocabularies.
+      const canonicalChoice = await seedQuestion({ kind: 'choice' });
+      const profileSingleChoice = await seedQuestion({ kind: 'single_choice' });
+      const profileMultiChoice = await seedQuestion({ kind: 'multiple_choice' });
+      // distractor of a different family must NOT match.
+      await seedQuestion({ kind: 'reading' });
+
+      const byChoice = await listQuestions(testDb(), { kind: 'choice', limit: 50, offset: 0 });
+      expect(new Set(byChoice.items.map((i) => i.id))).toEqual(
+        new Set([canonicalChoice, profileSingleChoice, profileMultiChoice]),
+      );
+
+      // computation ← calculation / word_problem (math/physics fixtures store these).
+      const canonicalComp = await seedQuestion({ kind: 'computation' });
+      const profileCalc = await seedQuestion({ kind: 'calculation' });
+      const byComputation = await listQuestions(testDb(), {
+        kind: 'computation',
+        limit: 50,
+        offset: 0,
+      });
+      expect(new Set(byComputation.items.map((i) => i.id))).toEqual(
+        new Set([canonicalComp, profileCalc]),
+      );
+
+      // reading ← reading_comprehension (wenyan fixtures store reading_comprehension).
+      const profileReadingComp = await seedQuestion({ kind: 'reading_comprehension' });
+      const byReading = await listQuestions(testDb(), { kind: 'reading', limit: 50, offset: 0 });
+      // the earlier canonical 'reading' distractor + the reading_comprehension row.
+      expect(byReading.items.map((i) => i.id)).toContain(profileReadingComp);
+      expect(
+        byReading.items.every((i) => i.kind === 'reading' || i.kind === 'reading_comprehension'),
+      ).toBe(true);
+    });
+
     it('filters by visual_complexity only when provided (nullable axis)', async () => {
       await seedQuestion({ visual_complexity: 'high' });
       await seedQuestion({ visual_complexity: null });
@@ -401,6 +441,42 @@ describe('listQuestions', () => {
         new Set([qWenyanDirect, qWenyanInherited]),
       );
       expect(res.items.map((i) => i.id)).not.toContain(qMath);
+    });
+
+    it('does NOT sweep domainless or unknown-domain nodes into the default subject (YUK-288 over-match)', async () => {
+      // The over-match: resolveSubjectProfile(null|unknown) falls back to the
+      // DEFAULT profile (wenyan), so a node whose whole parent chain is untagged
+      // OR whose domain is an unregistered string resolved to 'wenyan' and got
+      // swept into ?subject=wenyan. resolveKnownSubjectId returns null for both,
+      // so they match no subject.
+      const wenyanRoot = await seedKnowledge(newId(), { domain: 'wenyan' });
+      // a node with NO domain anywhere up its chain (root has null domain).
+      const untaggedRoot = await seedKnowledge(newId(), { domain: null });
+      const untaggedChild = await seedKnowledge(newId(), { parent_id: untaggedRoot });
+      // a node whose domain is a non-null string the registry does not know.
+      const unknownDomain = await seedKnowledge(newId(), { domain: 'chemistry' });
+      // a node whose domain is a KNOWN alias of wenyan — must still match.
+      const aliasNode = await seedKnowledge(newId(), { domain: 'classical_chinese' });
+
+      const wenyanIds = await resolveSubjectKnowledgeIds(testDb(), 'wenyan');
+      // genuinely-wenyan + its alias only; untagged / unknown excluded.
+      expect(new Set(wenyanIds)).toEqual(new Set([wenyanRoot, aliasNode]));
+      expect(wenyanIds).not.toContain(untaggedRoot);
+      expect(wenyanIds).not.toContain(untaggedChild);
+      expect(wenyanIds).not.toContain(unknownDomain);
+
+      // and the questions on those untagged/unknown nodes are NOT in ?subject=wenyan.
+      const qWenyan = await seedQuestion({ knowledge_ids: [wenyanRoot] });
+      const qAlias = await seedQuestion({ knowledge_ids: [aliasNode] });
+      await seedQuestion({ knowledge_ids: [untaggedChild] });
+      await seedQuestion({ knowledge_ids: [unknownDomain] });
+
+      const res = await listQuestions(testDb(), {
+        subjectKnowledgeIds: await resolveSubjectKnowledgeIds(testDb(), 'wenyan'),
+        limit: 50,
+        offset: 0,
+      });
+      expect(new Set(res.items.map((i) => i.id))).toEqual(new Set([qWenyan, qAlias]));
     });
 
     it('returns empty when the subject set is empty (subject labels no questions)', async () => {

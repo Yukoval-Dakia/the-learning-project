@@ -19,7 +19,7 @@
 // OOM guard, NOT a business limit — it only bites when the tier/family in-memory
 // path must fetch the full WHERE-hit set (it cannot SQL-paginate, see A1b).
 
-import { type SQL, and, asc, desc, eq, sql } from 'drizzle-orm';
+import { type SQL, and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 
 import {
   type SourceTier,
@@ -29,6 +29,7 @@ import {
 } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
+import { canonicalKindToPersistedForms } from '@/subjects/question-kind';
 
 // Truncation threshold for list-item `prompt_md` (detail page serves the full
 // text). Keeps the list payload bounded on long prompts. A trailing ellipsis
@@ -74,7 +75,16 @@ export interface ListQuestionsParams {
   // set means the subject labels no questions → empty result (not unfiltered).
   subjectKnowledgeIds?: string[];
   source?: string;
-  kind?: string; // canonical persisted form; list is an exact axis (no kindsMatch normalisation).
+  // YUK-288 题型 filter: the UI sends a CANONICAL QuestionKind (choice / reading /
+  // computation …, from KIND_OPTIONS). Persisted `question.kind` is NOT always
+  // canonical — seed/fixture write paths (subjects/{math,physics,wenyan}/fixtures)
+  // store profile vocabulary (single_choice / reading_comprehension / calculation),
+  // violating the business.ts canonical-is-truth invariant. So an exact
+  // eq(kind, 'choice') matched ZERO seeded single_choice rows (the empty-list bug).
+  // We expand the requested canonical to ALL persisted forms that normalise to it
+  // (canonicalKindToPersistedForms) and SQL `IN (...)` over the set — still a pure
+  // SQL axis (no in-memory degradation), symmetric with meta.ts's display-side fold.
+  kind?: string;
   difficulty?: number; // 1-5
   visualComplexity?: string; // nullable column: only filters when a value is passed.
   // A1b grounding axis (in-memory derive only — never SQL).
@@ -211,7 +221,12 @@ function buildSqlFilters(params: ListQuestionsParams): SQL[] {
   // are first-class questions; family aggregation handles their grouping.)
   filters.push(sql`(${question.parent_question_id} IS NULL)`);
   if (params.source !== undefined) filters.push(eq(question.source, params.source));
-  if (params.kind !== undefined) filters.push(eq(question.kind, params.kind));
+  if (params.kind !== undefined) {
+    // Match every persisted form normalising to the requested canonical (see the
+    // `kind` field comment) — canonical-only rows AND subject-vocab rows. A
+    // single-element set degenerates to an exact match.
+    filters.push(inArray(question.kind, canonicalKindToPersistedForms(params.kind)));
+  }
   if (params.difficulty !== undefined) filters.push(eq(question.difficulty, params.difficulty));
   if (params.visualComplexity !== undefined) {
     filters.push(eq(question.visual_complexity, params.visualComplexity));

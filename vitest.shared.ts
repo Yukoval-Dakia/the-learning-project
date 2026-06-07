@@ -188,6 +188,9 @@ export const fastTestInclude = [
   'src/subjects/note-skills.test.ts',
   'src/subjects/question-kind.test.ts',
   'src/subjects/profile-schema.thin-section.test.ts',
+  // YUK-288 — resolveKnownSubjectId (pure, no-DB): genuine alias/id hit vs the
+  // default-profile over-match fix for the derived ?subject= axis.
+  'src/subjects/resolve-known-subject-id.test.ts',
   // Pure (no-DB) set-algebra unit for hub mesh curation (YUK-95 P5 Lane-C). The
   // sibling DB handler test (boss/handlers/hub_auto_sync_nightly) stays in the
   // db partition because it hits live Postgres.
