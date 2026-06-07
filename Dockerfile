@@ -69,6 +69,24 @@ ENV NODE_ENV=production
 RUN apt-get update && apt-get install -y --no-install-recommends libvips && \
     rm -rf /var/lib/apt/lists/*
 
+# YUK-258 — DOCX ingestion converters. Separate RUN (not merged with libvips) so
+# this fat apt layer caches independently. Three binaries:
+#   - pandoc (~63MB): text-line docx→gfm markdown.
+#   - libreoffice-core + libreoffice-writer (~half the full libreoffice meta-pkg;
+#     Writer alone handles docx→PDF): both lines render evidence page images, and
+#     the visual line's main extract path.
+#   - fonts-noto-cjk (~100MB): HARD dependency — without CJK fonts LibreOffice
+#     renders 豆腐块 (tofu boxes) and the evidence page images have no readable text.
+# The converter seam (src/server/ingestion/docx/convert.ts) probes `which pandoc`
+# / `which soffice` and spawns these directly in prod; the docker-run fallback is
+# local-dev only.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      pandoc \
+      libreoffice-core \
+      libreoffice-writer \
+      fonts-noto-cjk && \
+    rm -rf /var/lib/apt/lists/*
+
 # Create non-root user
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs

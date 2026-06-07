@@ -1,3 +1,4 @@
+import { MAX_IMAGE_UPLOAD_BYTES } from '@/core/limits';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { persistImageAsset } from '@/server/ingestion/persist-image-asset';
@@ -5,7 +6,9 @@ import { getR2 } from '@/server/r2';
 
 export const runtime = 'nodejs';
 
-const MAX_UPLOAD_BYTES = 8_000_000;
+// Single-source the per-image cap (src/core/limits.ts) so the DOCX embedded-media
+// path enforces the identical limit (codex-4 / YUK-250 limits pattern).
+const MAX_UPLOAD_BYTES = MAX_IMAGE_UPLOAD_BYTES;
 const ALLOWED_MIME = new Set(['image/png', 'image/jpeg', 'image/webp']);
 
 export async function POST(req: Request): Promise<Response> {
