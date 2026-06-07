@@ -4,15 +4,13 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import postgres from 'postgres';
+import { DB_FORK_COUNT, dbForkDatabaseName } from './db-fork-constants';
 
 let container: StartedPostgreSqlContainer | undefined;
 
 // YUK-252 — db-test parallelisation budget.
-// vitest.db.config.ts runs `pool: 'forks'` with maxWorkers: 4. Each worker
-// connects to its own cloned database (test_fork_1..4) created below via
-// `CREATE DATABASE … TEMPLATE`. Keep this in lock-step with that config: if
-// maxWorkers changes, change DB_FORK_COUNT too.
-const DB_FORK_COUNT = 4;
+// vitest.db.config.ts consumes DB_FORK_COUNT as maxWorkers. Each worker connects
+// to its own cloned database created below via `CREATE DATABASE … TEMPLATE`.
 
 // testcontainers reads DOCKER_HOST or falls back to /var/run/docker.sock. On
 // macOS with OrbStack the socket lives at ~/.orbstack/run/docker.sock and
@@ -33,10 +31,10 @@ function ensureDockerHost() {
 export async function setup() {
   ensureDockerHost();
   // Bump max_connections: default Postgres allows 100. YUK-252 runs the db
-  // partition across 4 forks (vitest maxWorkers: 4), each connecting to its own
-  // cloned database; per fork ~16-20 connections accumulate as pg-boss + drizzle
-  // pools recycle (boss caps at 2, drizzle test pool at 4, plus boss schema
-  // churn). 4 × ~20 ≈ 80 concurrent — still well under 500. 500 leaves
+  // partition across DB_FORK_COUNT forks, each connecting to its own cloned
+  // database; per fork ~16-20 connections accumulate as pg-boss + drizzle pools
+  // recycle (boss caps at 2, drizzle test pool at 4, plus boss schema churn).
+  // The current budget still stays well under 500. 500 leaves
   // comfortable headroom without measurable cost on a single-developer
   // testcontainer. (Previously this guarded a single accumulating fork.)
   container = await new PostgreSqlContainer('pgvector/pgvector:pg16')
@@ -65,9 +63,9 @@ export async function setup() {
   }
 
   // YUK-252 — clone the freshly-migrated container database into N per-fork
-  // databases so the db partition can run with `pool: 'forks'` (maxWorkers: 4)
-  // without test files racing on shared rows. Each fork connects to its own
-  // `test_fork_<VITEST_POOL_ID>` (wired in tests/setup.db-fork.ts).
+  // databases so the db partition can run with `pool: 'forks'` without test
+  // files racing on shared rows. Each fork connects to its own cloned database
+  // name derived from VITEST_POOL_ID (wired in tests/setup.db-fork.ts).
   //
   // Why CREATE DATABASE … TEMPLATE: it physically copies the template at the
   // filesystem level (milliseconds), so we migrate exactly once (above) and
@@ -91,10 +89,13 @@ export async function setup() {
   const admin = postgres(adminUrl.toString(), { max: 1 });
   try {
     for (let i = 1; i <= DB_FORK_COUNT; i++) {
-      const forkDb = `test_fork_${i}`;
+      const forkDb = dbForkDatabaseName(i);
       // Drop-then-create makes the setup idempotent across re-runs that reuse a
       // long-lived container (e.g. local watch sessions); FORCE evicts any stale
       // sessions left over from a previous run.
+      //
+      // postgres.js cannot parameterize DDL identifiers. forkDb/templateDb are
+      // internal safe identifiers from the shared fork constants + container URL.
       await admin.unsafe(`DROP DATABASE IF EXISTS "${forkDb}" WITH (FORCE)`);
       await admin.unsafe(`CREATE DATABASE "${forkDb}" TEMPLATE "${templateDb}"`);
     }

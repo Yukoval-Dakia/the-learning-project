@@ -11,16 +11,16 @@
 // │ transitively imports `@/db/client`). Doing so would open a Postgres        │
 // │ connection against the *un-rewritten* DATABASE_URL (the shared template    │
 // │ `test` db), defeating the isolation and re-breaking parallel safety.       │
-// │ Keep this file dependency-free: pure env mutation, nothing else.           │
+// │ Only pure relative constants are allowed before the env rewrite.           │
 // └──────────────────────────────────────────────────────────────────────────┘
 //
-// globalSetup (tests/global-setup.ts) already created test_fork_1..N as
-// TEMPLATE clones of the migrated container db and exported TEST_DATABASE_URL /
-// DATABASE_URL pointing at the *template*. Here we swap the pathname to this
-// fork's database. Idempotent: re-running (vitest may re-invoke setupFiles when
-// a worker is reused) is a pure reassignment to the same value.
+// globalSetup (tests/global-setup.ts) already created one fork database per
+// worker as a TEMPLATE clone of the migrated container db and exported
+// TEST_DATABASE_URL / DATABASE_URL pointing at the *template*. Here we swap the
+// pathname to this fork's database. Idempotent: re-running (vitest may re-invoke
+// setupFiles when a worker is reused) is a pure reassignment to the same value.
 
-const MAX_FORKS = 4;
+import { DB_FORK_COUNT, dbForkDatabaseName } from './db-fork-constants';
 
 const poolIdRaw = process.env.VITEST_POOL_ID;
 if (!poolIdRaw) {
@@ -33,9 +33,9 @@ if (!poolIdRaw) {
 }
 
 const poolId = Number(poolIdRaw);
-if (!Number.isInteger(poolId) || poolId < 1 || poolId > MAX_FORKS) {
+if (!Number.isInteger(poolId) || poolId < 1 || poolId > DB_FORK_COUNT) {
   throw new Error(
-    `tests/setup.db-fork.ts: VITEST_POOL_ID="${poolIdRaw}" is out of range (expected 1..${MAX_FORKS}). This must match DB_FORK_COUNT in tests/global-setup.ts and maxWorkers in vitest.db.config.ts — they create exactly ${MAX_FORKS} cloned databases. If you raised maxWorkers, raise DB_FORK_COUNT and MAX_FORKS to match.`,
+    `tests/setup.db-fork.ts: VITEST_POOL_ID="${poolIdRaw}" is out of range (expected 1..${DB_FORK_COUNT}). Update DB_FORK_COUNT in tests/db-fork-constants.ts if the db test parallelism changes.`,
   );
 }
 
@@ -48,7 +48,7 @@ if (!baseUrl) {
 }
 
 const forkUrl = new URL(baseUrl);
-forkUrl.pathname = `/test_fork_${poolId}`;
+forkUrl.pathname = `/${dbForkDatabaseName(poolId)}`;
 const forkUrlStr = forkUrl.toString();
 
 // Rewrite both env vars so every downstream reader lands on this fork's db:
