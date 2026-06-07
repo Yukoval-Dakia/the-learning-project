@@ -284,12 +284,22 @@ describe('GET /api/review/due', () => {
     expect(body.rows[0].fsrs_state).not.toBeNull();
   });
 
-  it('rotates away from the last reviewed question for a due knowledge state when another variant exists', async () => {
+  // YUK-282 / ADR-0030 — by-kind variant-rotation probe (end-to-end through the
+  // route). An application-kind (short_answer) knowledge point whose last review
+  // was the family ROOT rotates to the next member of the root_question_id family
+  // (the variant), not an unrelated question. The fine-grained selection paths are
+  // covered in src/server/review/variant-rotation.test.ts; this guards the wire.
+  it('rotates within the variant family for an application-kind due knowledge state', async () => {
     const now = new Date();
     const pastIso = new Date(now.getTime() - 2 * 86400 * 1000).toISOString();
 
-    await seedQuestion('q_last_variant', { knowledge_ids: ['k_rotate'] });
-    await seedQuestion('q_next_variant', { knowledge_ids: ['k_rotate'] });
+    // Real variant family: root (depth 0) + variant (depth 1, root_question_id=root).
+    await seedQuestion('q_root', { knowledge_ids: ['k_rotate'] });
+    await seedQuestion('q_variant', {
+      knowledge_ids: ['k_rotate'],
+      variant_depth: 1,
+      root_question_id: 'q_root',
+    });
     await testDb()
       .insert(event)
       .values({
@@ -299,7 +309,7 @@ describe('GET /api/review/due', () => {
         actor_ref: 'self',
         action: 'review',
         subject_kind: 'question',
-        subject_id: 'q_last_variant',
+        subject_id: 'q_root',
         outcome: 'success',
         payload: {
           fsrs_rating: 'good',
@@ -323,7 +333,52 @@ describe('GET /api/review/due', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { rows: Array<{ question_id: string }> };
 
-    expect(body.rows.map((row) => row.question_id)).toEqual(['q_next_variant']);
+    expect(body.rows.map((row) => row.question_id)).toEqual(['q_variant']);
+  });
+
+  // ADR-0030 §2 — a recall-kind (fill_blank) knowledge point repeats the SAME
+  // question (no rotation), even when another fill_blank for the same knowledge
+  // exists. This is the recall/application divergence at the wire level.
+  it('repeats the same question for a recall-kind due knowledge state', async () => {
+    const now = new Date();
+    const pastIso = new Date(now.getTime() - 2 * 86400 * 1000).toISOString();
+
+    await seedQuestion('q_recall_last', { kind: 'fill_blank', knowledge_ids: ['k_recall'] });
+    await seedQuestion('q_recall_other', { kind: 'fill_blank', knowledge_ids: ['k_recall'] });
+    await testDb()
+      .insert(event)
+      .values({
+        id: 'evt_review_k_recall',
+        session_id: null,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'review',
+        subject_kind: 'question',
+        subject_id: 'q_recall_last',
+        outcome: 'success',
+        payload: {
+          fsrs_rating: 'good',
+          fsrs_state_after: makeFsrsState({ due: pastIso }),
+          referenced_knowledge_ids: ['k_recall'],
+        },
+        caused_by_event_id: null,
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: new Date(now.getTime() - 86400 * 1000),
+      });
+    await seedFsrsState({
+      question_id: 'k_recall',
+      due_at: new Date(pastIso),
+      state: makeFsrsState({ due: pastIso }),
+      subject_kind: 'knowledge',
+      last_review_event_id: 'evt_review_k_recall',
+    });
+
+    const res = await getReview();
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { rows: Array<{ question_id: string }> };
+
+    expect(body.rows.map((row) => row.question_id)).toEqual(['q_recall_last']);
   });
 
   // Codex (PR #295) — never-reviewed slice must honor knowledge-level

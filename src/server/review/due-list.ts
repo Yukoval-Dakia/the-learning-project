@@ -18,7 +18,7 @@
 import { type ActivityRefT, questionRef } from '@/core/schema/activity';
 import type { CauseCategoryT } from '@/core/schema/event/blocks';
 import { type Db, db } from '@/db/client';
-import { event, material_fsrs_state, question } from '@/db/schema';
+import { material_fsrs_state, question } from '@/db/schema';
 import { effectiveCauseCategoryForFailureAttempt } from '@/server/events/cause-policy';
 import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
 // YUK-167 / ADR-0025 — North-Star W10 review soft-bias. Active goals supply a
@@ -35,6 +35,12 @@ import { errorResponse } from '@/server/http/errors';
 // so the brief-refresh layer shares the SAME canonical bridge.
 import { batchResolveSubjectIds } from '@/server/knowledge/subject-resolution';
 import type { EffectiveTruth } from '@/server/review/effective-truth';
+// YUK-282 / ADR-0030 — by-kind variant-rotation probe selection. Replaces the
+// inline single-question-avoidance ORDER BY (ADR-0028 seam) with a routed pick:
+// recall kinds repeat the original question, application kinds rotate the
+// root_question_id variant family. Extracted to its own module so the
+// deterministic selection core is独立可测; due-list stays thin orchestration.
+import { pickProbeForKnowledge } from '@/server/review/variant-rotation';
 import { and, eq, inArray, isNull, lte, ne, or, sql } from 'drizzle-orm';
 
 // YUK-167 / ADR-0025 — swappable active-goals reader so DB tests inject goal
@@ -185,73 +191,6 @@ type ScheduledDueRow = {
   metadata?: Record<string, unknown> | null;
 };
 
-async function lastReviewedQuestionIdForEvent(
-  dbHandle: Db,
-  lastReviewEventId: string | null,
-): Promise<string | null> {
-  if (!lastReviewEventId) return null;
-  const rows = await dbHandle
-    .select({ subject_id: event.subject_id })
-    .from(event)
-    .where(eq(event.id, lastReviewEventId))
-    .limit(1);
-  return rows[0]?.subject_id ?? null;
-}
-
-async function pickQuestionForKnowledge(
-  dbHandle: Db,
-  input: {
-    knowledgeId: string;
-    lastReviewEventId: string | null;
-    usedQuestionIds: Set<string>;
-  },
-): Promise<Omit<
-  ScheduledDueRow,
-  'state' | 'due_at' | 'fsrs_subject_kind' | 'fsrs_subject_id'
-> | null> {
-  const lastQuestionId = await lastReviewedQuestionIdForEvent(dbHandle, input.lastReviewEventId);
-  const rows = (await dbHandle.execute(sql<{
-    id: string;
-    prompt_md: string;
-    reference_md: string | null;
-    knowledge_ids: string[];
-    created_at: Date;
-    source: string;
-    metadata: Record<string, unknown> | null;
-  }>`
-    SELECT id, prompt_md, reference_md, knowledge_ids, created_at, source, metadata
-    FROM question
-    WHERE knowledge_ids @> ${JSON.stringify([input.knowledgeId])}::jsonb
-      AND (draft_status IS NULL OR draft_status <> 'draft')
-    ORDER BY
-      CASE WHEN ${lastQuestionId}::text IS NOT NULL AND id = ${lastQuestionId} THEN 1 ELSE 0 END,
-      created_at ASC,
-      id ASC
-    LIMIT 20
-  `)) as unknown as Array<{
-    id: string;
-    prompt_md: string;
-    reference_md: string | null;
-    knowledge_ids: string[];
-    created_at: Date;
-    source: string;
-    metadata: Record<string, unknown> | null;
-  }>;
-
-  const chosen = rows.find((row) => !input.usedQuestionIds.has(row.id));
-  if (!chosen) return null;
-  input.usedQuestionIds.add(chosen.id);
-  return {
-    question_id: chosen.id,
-    prompt_md: chosen.prompt_md,
-    reference_md: chosen.reference_md,
-    knowledge_ids: chosen.knowledge_ids ?? [],
-    created_at: chosen.created_at,
-    source: chosen.source,
-    metadata: chosen.metadata,
-  };
-}
-
 export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): Promise<Response> {
   try {
     const listGoals = deps.listActiveGoalsFn ?? listActiveGoals;
@@ -313,7 +252,11 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
 
     const dueRows: ScheduledDueRow[] = [];
     for (const stateRow of knowledgeStateRows) {
-      const selected = await pickQuestionForKnowledge(db, {
+      // YUK-282 / ADR-0030 — by-kind variant-rotation probe (recall repeat vs
+      // application family rotation). Returns the same projection the old inline
+      // pickQuestionForKnowledge did (question_id + source/metadata for tier
+      // derivation); mutates usedDueQuestionIds for cross-knowledge dedup.
+      const selected = await pickProbeForKnowledge(db, {
         knowledgeId: stateRow.knowledge_id,
         lastReviewEventId: stateRow.last_review_event_id ?? null,
         usedQuestionIds: usedDueQuestionIds,
