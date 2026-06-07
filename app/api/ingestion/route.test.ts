@@ -211,7 +211,7 @@ async function getSessions(query = ''): Promise<Response> {
   return GET(new Request(`http://localhost/api/ingestion${query}`, { method: 'GET' }));
 }
 
-type SessionRow = {
+interface SessionRow {
   id: string;
   entrypoint: string | null;
   status: string;
@@ -220,7 +220,7 @@ type SessionRow = {
   auto_enrolled_count: number;
   block_count: number;
   created_at: number;
-};
+}
 
 describe('GET /api/ingestion', () => {
   beforeEach(async () => {
@@ -247,6 +247,30 @@ describe('GET /api/ingestion', () => {
     const res = await getSessions();
     const body = (await res.json()) as { rows: SessionRow[] };
     expect(body.rows.map((r) => r.id)).toEqual(['new', 'old']);
+  });
+
+  it('newest block-less sessions do not crowd an older with-block session out of the limit', async () => {
+    // Regression for codex/CodeRabbit: an in-memory `block_count>0` post-filter ran
+    // AFTER orderBy+limit, so when the newest `limit` sessions were mostly block-less
+    // they consumed the slots and a valid older session was silently dropped. The
+    // ≥1-block predicate is now pushed into SQL (EXISTS) BEFORE orderBy+limit.
+    // Seed: one OLD session WITH a block, then `limit` NEWER sessions WITHOUT blocks.
+    await seedIngestionSession({ id: 'old_valid', created_at: new Date('2026-05-01T00:00:00Z') });
+    await seedBlock({ id: 'old_valid_b', session_id: 'old_valid' });
+    for (let i = 0; i < 20; i++) {
+      // strictly newer than old_valid, no block each
+      await seedIngestionSession({
+        id: `newer_empty_${i}`,
+        created_at: new Date(`2026-05-${String(i + 2).padStart(2, '0')}T00:00:00Z`),
+      });
+    }
+
+    // default limit = 20, exactly the count of newer block-less sessions.
+    const res = await getSessions();
+    const body = (await res.json()) as { rows: SessionRow[] };
+    // Only the with-block session surfaces; the 20 block-less newer ones are
+    // filtered in SQL and never squeeze it out.
+    expect(body.rows.map((r) => r.id)).toEqual(['old_valid']);
   });
 
   it('limit clamps to 1..100 (limit=0 → 1, limit=999 → 100)', async () => {
