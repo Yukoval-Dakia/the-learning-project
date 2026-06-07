@@ -17,7 +17,7 @@
 //     question_no — sits above the editable prompt textarea.
 
 import { ApiAuthError, ApiError, apiJson } from '@/ui/lib/api';
-import { uploadAsset, useAssetUrl } from '@/ui/lib/assets';
+import { expandPdf, uploadAsset, useAssetUrl } from '@/ui/lib/assets';
 import { causeOptionsForSelectedKnowledge } from '@/ui/lib/cause-options';
 import { useIngestionSSE } from '@/ui/lib/sse';
 import { formatRelTime } from '@/ui/lib/utils';
@@ -31,7 +31,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 type Mode = 'vision_single' | 'vision_paper';
 
-type Phase = 'idle' | 'uploading' | 'creating' | 'extracting' | 'reviewing' | 'importing' | 'error';
+type Phase =
+  | 'idle'
+  | 'expanding'
+  | 'uploading'
+  | 'creating'
+  | 'extracting'
+  | 'reviewing'
+  | 'importing'
+  | 'error';
 
 type QuestionKindId =
   | 'choice'
@@ -119,6 +127,10 @@ export function VisionTab({ mode }: { mode: Mode }) {
 
   const [phase, setPhase] = useState<Phase>('idle');
   const [files, setFiles] = useState<File[]>([]);
+  // When the single picked file is a PDF (vision_paper only), it expands
+  // server-side to N page images; pdfPageCount is the count returned by
+  // /api/ingestion/pdf, used for the "展开 PDF（N 页）" labels.
+  const [pdfPageCount, setPdfPageCount] = useState<number | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [blockForms, setBlockForms] = useState<Record<string, BlockFormState>>({});
@@ -191,9 +203,20 @@ export function VisionTab({ mode }: { mode: Mode }) {
 
   const startMutation = useMutation({
     mutationFn: async (selectedFiles: File[]) => {
-      setPhase('uploading');
-      const assets = await Promise.all(selectedFiles.map((f) => uploadAsset(f)));
-      const ids = assets.map((a) => a.id);
+      let ids: string[];
+      const pdf = selectedFiles.length === 1 && isPdf(selectedFiles[0]);
+      if (pdf) {
+        // PDF path: one file → server renders to N page images, returns their
+        // asset ids. Reuses the same /api/ingestion + extract flow afterwards.
+        setPhase('expanding');
+        const expanded = await expandPdf(selectedFiles[0]);
+        setPdfPageCount(expanded.page_count);
+        ids = expanded.asset_ids;
+      } else {
+        setPhase('uploading');
+        const assets = await Promise.all(selectedFiles.map((f) => uploadAsset(f)));
+        ids = assets.map((a) => a.id);
+      }
       setPhase('creating');
       const session = await apiJson<{
         session: { id: string };
@@ -319,7 +342,23 @@ export function VisionTab({ mode }: { mode: Mode }) {
 
   const onPickFiles = (list: FileList | null) => {
     if (!list || list.length === 0) return;
-    const picked = Array.from(list).slice(0, maxFiles);
+    const all = Array.from(list);
+    const pdfs = all.filter(isPdf);
+    setPdfPageCount(null);
+    if (pdfs.length > 0) {
+      // PDF is a single-file pick that expands server-side. Reject a mixed
+      // PDF + image selection (and multiple PDFs) with a clear inline error.
+      if (all.length > 1) {
+        setFiles([]);
+        setErrorMessage('PDF 请单独上传（不要和图片或其它 PDF 混选）');
+        return;
+      }
+      setFiles([all[0]]);
+      setErrorMessage(null);
+      return;
+    }
+    // Image path: the maxFiles cap applies only to the multi-image pick.
+    const picked = all.slice(0, maxFiles);
     setFiles(picked);
     setErrorMessage(null);
   };
@@ -327,6 +366,7 @@ export function VisionTab({ mode }: { mode: Mode }) {
   const reset = () => {
     setPhase('idle');
     setFiles([]);
+    setPdfPageCount(null);
     setSessionId(null);
     setBlockForms({});
     setBucketByBlockId({});
@@ -362,7 +402,11 @@ export function VisionTab({ mode }: { mode: Mode }) {
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/png,image/jpeg,image/webp"
+            accept={
+              mode === 'vision_paper'
+                ? 'image/png,image/jpeg,image/webp,application/pdf'
+                : 'image/png,image/jpeg,image/webp'
+            }
             multiple={mode === 'vision_paper'}
             style={{ display: 'none' }}
             onChange={(e) => onPickFiles(e.target.files)}
@@ -374,7 +418,11 @@ export function VisionTab({ mode }: { mode: Mode }) {
           >
             <Icon name={mode === 'vision_single' ? 'camera' : 'upload'} size={32} />
             {files.length > 0 ? (
-              <span className="dropzone-title">已选 {files.length} 张 · 点击重选</span>
+              <span className="dropzone-title">
+                {isPdf(files[0])
+                  ? '已选 1 个 PDF · 点击重选'
+                  : `已选 ${files.length} 张 · 点击重选`}
+              </span>
             ) : (
               <span className="dropzone-title">
                 {mode === 'vision_single' ? '拍一题就好' : '拖照片到此处 · 或点这里上传'}
@@ -383,17 +431,28 @@ export function VisionTab({ mode }: { mode: Mode }) {
             <span className="hint">
               {mode === 'vision_single'
                 ? '单题直接走 Vision；不经 Tencent Mark Agent'
-                : 'JPEG / PNG / WebP · 单次最多 5 页 · 抽取进度走 SSE'}
+                : 'JPEG / PNG / WebP · 单次最多 5 页 · 或上传 1 个 PDF（≤15 页）· 抽取进度走 SSE'}
             </span>
           </button>
           {files.length > 0 && (
             <ul className="record-file-list">
-              {files.map((f) => (
-                <li key={f.name}>
-                  <span>{f.name}</span>
-                  <span className="meta">{(f.size / 1024).toFixed(1)} KB</span>
+              {/* A picked PDF is one row — it expands to N page images
+                  server-side, so we don't pre-list N image rows. */}
+              {isPdf(files[0]) ? (
+                <li key={files[0].name}>
+                  <span>
+                    {files[0].name} · PDF{pdfPageCount != null ? ` · ${pdfPageCount} 页` : ''}
+                  </span>
+                  <span className="meta">{(files[0].size / 1024).toFixed(1)} KB</span>
                 </li>
-              ))}
+              ) : (
+                files.map((f) => (
+                  <li key={f.name}>
+                    <span>{f.name}</span>
+                    <span className="meta">{(f.size / 1024).toFixed(1)} KB</span>
+                  </li>
+                ))
+              )}
             </ul>
           )}
           {errorMessage && <p style={errorStyle}>{errorMessage}</p>}
@@ -408,11 +467,18 @@ export function VisionTab({ mode }: { mode: Mode }) {
         </>
       )}
 
-      {(phase === 'uploading' || phase === 'creating' || phase === 'extracting') && (
+      {(phase === 'expanding' ||
+        phase === 'uploading' ||
+        phase === 'creating' ||
+        phase === 'extracting') && (
         <div>
           <p style={{ ...mutedStyle, marginTop: 0 }}>
+            {phase === 'expanding' && '展开 PDF…（渲染每一页为图片）'}
             {phase === 'uploading' && `上传 ${files.length} 张图到 R2 …`}
-            {phase === 'creating' && '创建 ingestion session…'}
+            {phase === 'creating' &&
+              (pdfPageCount != null
+                ? `已展开 ${pdfPageCount} 页 · 创建 ingestion session…`
+                : '创建 ingestion session…')}
             {phase === 'extracting' && '触发抽取，等待 worker 推进度…'}
           </p>
           <SSETimeline events={sse.events} status={sse.status} />
@@ -947,10 +1013,16 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
   return <span style={fieldLabelStyle}>{children}</span>;
 }
 
+function isPdf(file: File): boolean {
+  return file.type === 'application/pdf';
+}
+
 function phaseLabel(phase: Phase, sseStatus: string): string {
   switch (phase) {
     case 'idle':
       return '待上传';
+    case 'expanding':
+      return '展开 PDF 中';
     case 'uploading':
       return '上传中';
     case 'creating':
