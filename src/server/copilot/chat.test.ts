@@ -929,6 +929,319 @@ describe('runCopilotChat — skill routing (U6)', () => {
   });
 });
 
+// YUK-275 — free-text 求卷 routing. A bare natural-language quiz request (no
+// skill_context) is gated by detectQuizIntentFn (零 LLM 粗筛) then resolveQuizIntentFn
+// (one structured-output parse) into four states. All fixtures are injected so the
+// {}-stub db is never touched (pure DI unit).
+describe('runCopilotChat — free-text quiz routing (YUK-275)', () => {
+  const baseDeps = {
+    findOrCreateConversationFn: async () => ({ sessionId: 'ls_copilot', created: false }),
+    loadProposalFeedbackFn: async () => [],
+    now: () => new Date('2026-06-07T00:00:00.000Z'),
+  };
+
+  function makeDeps(over: Record<string, unknown>) {
+    const writeEventFn = vi.fn(async (_db: unknown, input: { id: string }) => input.id);
+    const buildMcpServerFn = vi.fn(() => ({ name: 'fake-loom' }) as never);
+    return {
+      writeEventFn,
+      buildMcpServerFn,
+      deps: { ...baseDeps, writeEventFn, buildMcpServerFn, ...over },
+    };
+  }
+
+  it('粗筛 hit + resolved → runs quiz skill (with difficultyMin/unit), writes 1 reply, no free-form', async () => {
+    const db = {} as never;
+    const runQuizSkillFn = vi.fn(async () => ({
+      text_md: '已为你组好一套练习（共 2 道）。点这里开始练习：[去练习](/practice/art_ft)',
+      artifact_id: 'art_ft',
+      question_count: 2,
+      status: 'ok' as const,
+    }));
+    const resolveQuizIntentFn = vi.fn(async () => ({
+      status: 'resolved' as const,
+      knowledgeId: 'kn_poetry',
+      count: 2,
+      difficultyMin: 4,
+      unit: '篇' as const,
+      kind: null,
+    }));
+    const detectQuizIntentFn = vi.fn(() => true);
+    const runAgentTaskFn = vi.fn(async () => {
+      throw new Error('CopilotTask must not run on a resolved free-text quiz turn');
+    });
+    const { writeEventFn, deps } = makeDeps({
+      runQuizSkillFn,
+      resolveQuizIntentFn,
+      detectQuizIntentFn,
+      runAgentTaskFn,
+    });
+
+    const result = await runCopilotChat(
+      db,
+      { user_message: '选两篇高难度古诗词阅读给我', triggered_by: 'chat' },
+      deps,
+    );
+
+    expect(result.surface).toBe('copilot');
+    expect(result.reply).toContain('/practice/art_ft');
+    // The free-form CopilotTask loop never ran.
+    expect(runAgentTaskFn).not.toHaveBeenCalled();
+    // The two free-text dimensions were threaded into the quiz skill call.
+    expect(runQuizSkillFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'ls_copilot',
+        knowledgeId: 'kn_poetry',
+        count: 2,
+        difficultyMin: 4,
+        unit: '篇',
+      }),
+    );
+    // Two events (user ask + reply); the reply persists a synthesized quiz skill_context.
+    expect(writeEventFn).toHaveBeenCalledTimes(2);
+    const replyCall = writeEventFn.mock.calls[1]?.[1] as {
+      action?: string;
+      payload?: { skill_context?: unknown };
+    };
+    expect(replyCall?.action).toBe('experimental:copilot_reply');
+    expect(replyCall?.payload?.skill_context).toMatchObject({
+      skill: 'quiz',
+      ref: { kind: 'knowledge', id: 'kn_poetry' },
+    });
+  });
+
+  it('粗筛 miss → free-form CopilotTask, never calls resolveQuizIntentFn / runQuizSkillFn', async () => {
+    const db = {} as never;
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_freeform',
+      text: 'FREEFORM',
+      finishReason: 'stop' as const,
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    const resolveQuizIntentFn = vi.fn(async () => {
+      throw new Error('resolveQuizIntent must not run when 粗筛 misses');
+    });
+    const runQuizSkillFn = vi.fn(async () => {
+      throw new Error('runQuizSkill must not run when 粗筛 misses');
+    });
+    const detectQuizIntentFn = vi.fn(() => false);
+    const { deps } = makeDeps({
+      runAgentTaskFn,
+      resolveQuizIntentFn,
+      runQuizSkillFn,
+      detectQuizIntentFn,
+    });
+
+    const result = await runCopilotChat(
+      db,
+      { user_message: '随便聊聊', triggered_by: 'chat' },
+      deps,
+    );
+
+    expect(result.reply).toBe('FREEFORM');
+    expect(runAgentTaskFn).toHaveBeenCalledTimes(1);
+    expect(resolveQuizIntentFn).not.toHaveBeenCalled();
+    expect(runQuizSkillFn).not.toHaveBeenCalled();
+  });
+
+  it('粗筛 hit + missing_knowledge → deterministic 追问 reply, no quiz, no free-form', async () => {
+    const db = {} as never;
+    const resolveQuizIntentFn = vi.fn(async () => ({ status: 'missing_knowledge' as const }));
+    const runQuizSkillFn = vi.fn(async () => {
+      throw new Error('runQuizSkill must not run when knowledge is missing');
+    });
+    const runAgentTaskFn = vi.fn(async () => {
+      throw new Error('free-form must not run when knowledge is missing');
+    });
+    const { deps } = makeDeps({
+      resolveQuizIntentFn,
+      runQuizSkillFn,
+      runAgentTaskFn,
+      detectQuizIntentFn: () => true,
+    });
+
+    const result = await runCopilotChat(
+      db,
+      { user_message: '给我出三道题', triggered_by: 'chat' },
+      deps,
+    );
+
+    expect(result.surface).toBe('copilot');
+    // The §5 missing-knowledge 追问 copy (no /practice link, no text-spray).
+    expect(result.reply).toContain('哪个知识点');
+    expect(result.reply).not.toContain('/practice/');
+    expect(runQuizSkillFn).not.toHaveBeenCalled();
+    expect(runAgentTaskFn).not.toHaveBeenCalled();
+  });
+
+  it('粗筛 hit + parse_failed → deterministic 追问 reply, no quiz, no free-form', async () => {
+    const db = {} as never;
+    const resolveQuizIntentFn = vi.fn(async () => ({ status: 'parse_failed' as const }));
+    const runQuizSkillFn = vi.fn(async () => {
+      throw new Error('runQuizSkill must not run on parse_failed');
+    });
+    const runAgentTaskFn = vi.fn(async () => {
+      throw new Error('free-form must not run on parse_failed');
+    });
+    const { deps } = makeDeps({
+      resolveQuizIntentFn,
+      runQuizSkillFn,
+      runAgentTaskFn,
+      detectQuizIntentFn: () => true,
+    });
+
+    const result = await runCopilotChat(
+      db,
+      { user_message: '给我出几道题', triggered_by: 'chat' },
+      deps,
+    );
+
+    expect(result.surface).toBe('copilot');
+    expect(result.reply).toContain('换个说法');
+    expect(result.reply).not.toContain('/practice/');
+    expect(runQuizSkillFn).not.toHaveBeenCalled();
+    expect(runAgentTaskFn).not.toHaveBeenCalled();
+  });
+
+  it('粗筛 hit + not_quiz → 回落 free-form CopilotTask (纵深兜底), no quiz, no 追问', async () => {
+    const db = {} as never;
+    const resolveQuizIntentFn = vi.fn(async () => ({ status: 'not_quiz' as const }));
+    const runQuizSkillFn = vi.fn(async () => {
+      throw new Error('runQuizSkill must not run on not_quiz');
+    });
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_freeform',
+      text: 'FREEFORM',
+      finishReason: 'stop' as const,
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    const { writeEventFn, deps } = makeDeps({
+      resolveQuizIntentFn,
+      runQuizSkillFn,
+      runAgentTaskFn,
+      detectQuizIntentFn: () => true,
+    });
+
+    const result = await runCopilotChat(
+      db,
+      { user_message: '来帮我看看这套题怎么做', triggered_by: 'chat' },
+      deps,
+    );
+
+    // 粗筛 误伤被解析兜回 free-form: the free-form CopilotTask ran, no quiz, no 追问.
+    expect(result.reply).toBe('FREEFORM');
+    expect(runAgentTaskFn).toHaveBeenCalledTimes(1);
+    expect(runQuizSkillFn).not.toHaveBeenCalled();
+    // Reply event is the free-form reply (no synthesized quiz skill_context).
+    const replyCall = writeEventFn.mock.calls[1]?.[1] as { payload?: { skill_context?: unknown } };
+    expect(replyCall?.payload?.skill_context).toBeUndefined();
+  });
+
+  it('chip skill_context:{skill:quiz} still routes the既有 skill branch (intercept avoids it)', async () => {
+    const db = {} as never;
+    const runQuizSkillFn = vi.fn(async () => ({
+      text_md: '已为你组好一套练习：[去练习](/practice/art_chip)',
+      artifact_id: 'art_chip',
+      question_count: 3,
+      status: 'ok' as const,
+    }));
+    // The free-text intercept must NOT fire when skill_context is present, so neither
+    // detect nor resolve should be consulted.
+    const detectQuizIntentFn = vi.fn(() => true);
+    const resolveQuizIntentFn = vi.fn(async () => {
+      throw new Error('resolveQuizIntent must not run when skill_context is present');
+    });
+    const { deps } = makeDeps({ runQuizSkillFn, detectQuizIntentFn, resolveQuizIntentFn });
+
+    const result = await runCopilotChat(
+      db,
+      {
+        user_message: '给我出套题',
+        triggered_by: 'chat',
+        skill_context: { skill: 'quiz', ref: { kind: 'knowledge', id: 'kn_chip' } },
+      },
+      deps,
+    );
+
+    expect(result.reply).toContain('/practice/art_chip');
+    // The intercept was bypassed by the !skill_context guard.
+    expect(detectQuizIntentFn).not.toHaveBeenCalled();
+    expect(resolveQuizIntentFn).not.toHaveBeenCalled();
+    // The既有 chip branch ran the skill against the chip's knowledge ref.
+    expect(runQuizSkillFn).toHaveBeenCalledWith(
+      expect.objectContaining({ knowledgeId: 'kn_chip' }),
+    );
+  });
+
+  it('streaming: resolved free-text quiz emits ONE delta; not_quiz routes the stream token loop', async () => {
+    const db = {} as never;
+    // (a) resolved → ONE delta, streamAgentTaskFn never runs.
+    const runQuizSkillFn = vi.fn(async () => ({
+      text_md: '已为你组好一套练习：[去练习](/practice/art_s)',
+      artifact_id: 'art_s',
+      question_count: 1,
+      status: 'ok' as const,
+    }));
+    const streamAgentTaskFn = vi.fn(async () => {
+      throw new Error('streamAgentTask must not run on a resolved free-text quiz');
+    });
+    const deltasA: string[] = [];
+    const { deps: depsA } = makeDeps({
+      runQuizSkillFn,
+      streamAgentTaskFn,
+      detectQuizIntentFn: () => true,
+      resolveQuizIntentFn: async () => ({
+        status: 'resolved' as const,
+        knowledgeId: 'kn_s',
+        count: null,
+        difficultyMin: null,
+        unit: null,
+        kind: null,
+      }),
+    });
+    const resA = await runCopilotChatStreaming(
+      db,
+      { user_message: '给我来一道题', triggered_by: 'chat' },
+      (t) => deltasA.push(t),
+      depsA,
+    );
+    expect(deltasA).toEqual(['已为你组好一套练习：[去练习](/practice/art_s)']);
+    expect(streamAgentTaskFn).not.toHaveBeenCalled();
+    expect(resA.surface).toBe('copilot');
+
+    // (b) not_quiz → the既有 free-form stream token loop runs.
+    const streamAgentTaskFnB = vi.fn(
+      async (_k: string, _i: unknown, _c: unknown, onDelta: (t: string) => void) => {
+        onDelta('FREE');
+        return {
+          text: 'FREE',
+          task_run_id: 'task_stream_freeform',
+          partial: false,
+          error: undefined,
+        };
+      },
+    );
+    const deltasB: string[] = [];
+    const { deps: depsB } = makeDeps({
+      streamAgentTaskFn: streamAgentTaskFnB,
+      detectQuizIntentFn: () => true,
+      resolveQuizIntentFn: async () => ({ status: 'not_quiz' as const }),
+      runQuizSkillFn: async () => {
+        throw new Error('quiz must not run on not_quiz stream');
+      },
+    });
+    const resB = await runCopilotChatStreaming(
+      db,
+      { user_message: '来看看这道题怎么做', triggered_by: 'chat' },
+      (t) => deltasB.push(t),
+      depsB,
+    );
+    expect(streamAgentTaskFnB).toHaveBeenCalledTimes(1);
+    expect(resB.reply).toBe('FREE');
+    expect(deltasB).toEqual(['FREE']);
+  });
+});
+
 // YUK-266 (C1) — runCopilotChatStreaming streams text deltas then resolves the
 // terminal CopilotChatResult. The turn-persistence contract is byte-identical to
 // the non-stream path: the SAME single experimental:copilot_reply event is written
