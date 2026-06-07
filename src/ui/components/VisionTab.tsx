@@ -108,7 +108,7 @@ export interface BlockRow {
   created_at: number;
 }
 
-interface BlockFormState {
+export interface BlockFormState {
   prompt_md: string;
   reference_md: string;
   wrong_answer_md: string;
@@ -139,6 +139,14 @@ export function VisionTab({ mode }: { mode: Mode }) {
   // /api/ingestion/pdf, used for the "展开 PDF（N 页）" labels.
   const [pdfPageCount, setPdfPageCount] = useState<number | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  // YUK-277: the ingestion "line" for the current run. Only the DOCX text line
+  // produces blocks SYNCHRONOUSLY (pandoc segmentation, no pg-boss VLM extract
+  // job), so its session is already in `extracted` with both job events committed
+  // before the client even opens the SSE. For that line the "抽取进度 / SSE ·
+  // 等待事件…/closed" framing is misleading — there is no async extraction to
+  // watch. `null` for every visual/async line (image / PDF / visual-DOCX), where
+  // the SSE timeline IS the right affordance.
+  const [ingestionLine, setIngestionLine] = useState<'text' | 'visual' | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [blockForms, setBlockForms] = useState<Record<string, BlockFormState>>({});
   // bucketByBlockId[blockId] = primary block id of the merge bucket. Initially
@@ -184,20 +192,17 @@ export function VisionTab({ mode }: { mode: Mode }) {
       const next = { ...prev };
       for (const b of rows) {
         if (seededBlockIdsRef.current.has(b.id)) continue;
+        // YUK-277: build the per-block form via the resilient seeder, which
+        // degrades a malformed auto_enroll_observation to the default seed rather
+        // than letting a throw abort the WHOLE updater. Mark the ref AFTER the
+        // block successfully seeds — the previous order (mark-then-seed) meant a
+        // single throwing block left every block up to it marked-but-unseeded,
+        // and React discarded the partial updater, so the entire batch stayed
+        // permanently form-missing (and the import below then threw on every
+        // block). buildBlockForm never throws, so per-block try/catch is no longer
+        // needed, but the post-success ordering is the durable guard.
+        next[b.id] = buildBlockForm(b);
         seededBlockIdsRef.current.add(b.id);
-        // OCR-derived text fields come straight off the block; the AI-prefillable
-        // fields (knowledge_ids / cause_primary / cause_notes / question_kind /
-        // difficulty) come from seedBlockForm, which maps b.auto_enroll_observation
-        // when present and falls back to today's defaults otherwise. knowledge_ids
-        // + cause_primary are seeded together so the self-heal effect below
-        // (cause_primary ∉ causeOptions → clear) admits a valid seeded cause.
-        next[b.id] = {
-          ...seedBlockForm(b),
-          prompt_md: b.extracted_prompt_md ?? '',
-          reference_md: b.reference_md ?? '',
-          wrong_answer_md: b.wrong_answer_md ?? '',
-          ignored: false,
-        };
       }
       return next;
     });
@@ -212,6 +217,10 @@ export function VisionTab({ mode }: { mode: Mode }) {
 
   const startMutation = useMutation({
     mutationFn: async (selectedFiles: File[]) => {
+      // YUK-277: reset the line for each run; only the DOCX branch below sets it
+      // to 'text'. A re-upload after a prior text-line run must not inherit the
+      // stale 'text' line for a now-visual/image run.
+      setIngestionLine(null);
       let ids: string[];
       // DOCX ingestion is a vision_paper-only entrypoint (only that mode's accept
       // admits .docx). The docx endpoint is SELF-CONTAINED — it classifies the
@@ -224,6 +233,10 @@ export function VisionTab({ mode }: { mode: Mode }) {
         setPhase('expanding'); // reuse the expanding phase (label shows 转换 DOCX…)
         const ingested = await expandDocx(selectedFiles[0]);
         setPdfPageCount(ingested.page_count);
+        // YUK-277: record the line so the SSE panel can drop the misleading
+        // "抽取进度" framing for the synchronous text line. The visual line still
+        // enqueues a real VLM extract job, so it keeps the SSE timeline.
+        setIngestionLine(ingested.line);
         // Server已建 session + blocks (text line) / enqueued extract (visual line);
         // go straight to extracting and listen for the SSE terminal.
         return ingested.session_id;
@@ -304,8 +317,16 @@ export function VisionTab({ mode }: { mode: Mode }) {
       const importable = groups
         .filter((g) => !blockForms[g.primary.id]?.ignored)
         .map((g) => {
-          const f = blockForms[g.primary.id];
-          if (!f) throw new Error(`block ${g.primary.id} form missing`);
+          // YUK-277: form-missing blocks used to throw `form missing` and abort
+          // the ENTIRE batch import (the owner's 17-block text-line wipeout). The
+          // seeding effect now never leaves a block unseeded, but if a form is
+          // still missing here (race between blocks refetch and seed, or a future
+          // regression), build the default form on the fly from the block row
+          // instead of throwing — the block keeps OCR text + editable defaults and
+          // imports alongside the rest. The empty-prompt / empty-wrong-answer
+          // guards below still apply, so a genuinely empty block surfaces a
+          // specific per-block message rather than a generic batch crash.
+          const f = blockForms[g.primary.id] ?? buildBlockForm(g.primary);
           if (!f.prompt_md.trim()) throw new Error(`block ${g.primary.id}: 题面不能空`);
           if (!f.wrong_answer_md.trim()) throw new Error(`block ${g.primary.id}: 错答不能空`);
           if (f.knowledge_ids.length === 0)
@@ -416,6 +437,7 @@ export function VisionTab({ mode }: { mode: Mode }) {
     setFiles([]);
     setPdfPageCount(null);
     setSessionId(null);
+    setIngestionLine(null);
     setBlockForms({});
     setBucketByBlockId({});
     seededBlockIdsRef.current = new Set();
@@ -539,16 +561,31 @@ export function VisionTab({ mode }: { mode: Mode }) {
               (pdfPageCount != null
                 ? `已展开 ${pdfPageCount} 页 · 创建 ingestion session…`
                 : '创建 ingestion session…')}
-            {phase === 'extracting' && '触发抽取，等待 worker 推进度…'}
+            {phase === 'extracting' &&
+              (ingestionLine === 'text'
+                ? '文本直抽（pandoc 切题，无需 worker）…'
+                : '触发抽取，等待 worker 推进度…')}
           </p>
-          <SSETimeline events={sse.events} status={sse.status} />
+          {/* YUK-277: the text line has no async extraction job — its blocks are
+              already produced. Show a direct-completion summary instead of the
+              "SSE · 等待事件…/closed" timeline, which misleads the user into
+              thinking something is still running / stuck. */}
+          {ingestionLine === 'text' ? (
+            <TextLineCompletePanel events={sse.events} blockCount={blocks.length} />
+          ) : (
+            <SSETimeline events={sse.events} status={sse.status} />
+          )}
           {sse.error && <p style={errorStyle}>{sse.error.message}</p>}
         </div>
       )}
 
       {phase === 'reviewing' && (
         <div>
-          <SSETimeline events={sse.events} status="closed" />
+          {ingestionLine === 'text' ? (
+            <TextLineCompletePanel events={sse.events} blockCount={blocks.length} />
+          ) : (
+            <SSETimeline events={sse.events} status="closed" />
+          )}
           {blocksQ.isLoading && <p style={mutedStyle}>加载块…</p>}
           {blocksQ.isError && <p style={errorStyle}>加载块失败：{formatError(blocksQ.error)}</p>}
           {blocksQ.isSuccess && blocks.length === 0 && (
@@ -1018,6 +1055,49 @@ function LayoutQualityBadge({ q }: { q: 'structured' | 'partial' | 'text_only' }
   return <Badge tone="hard">text_only</Badge>;
 }
 
+// YUK-277: the text line (DOCX → pandoc segmentation) produces blocks
+// synchronously — the session is already `extracted` with `extraction_completed`
+// committed before the client opens the SSE, and there is no worker job to watch.
+// Rendering the SSETimeline ("抽取进度 · SSE · 等待事件…/closed") there misleads the
+// user into thinking extraction is pending or stalled. This panel states the
+// truth: text直抽完成, with the block count. Block count prefers the loaded blocks
+// query; falls back to the extraction_completed event payload before the blocks
+// query resolves so the count is never a placeholder.
+// Exported for VisionTab.test.tsx — asserts the text-line path renders the
+// "文本直抽完成 · N 块" summary instead of the misleading SSE timeline.
+export function TextLineCompletePanel({
+  events,
+  blockCount,
+}: {
+  events: { event_id: number; event_type: string; payload: Record<string, unknown> }[];
+  blockCount: number;
+}) {
+  const completed = events.find((e) => e.event_type === 'ingestion.extraction_completed');
+  const eventCount =
+    completed && typeof completed.payload.block_count === 'number'
+      ? completed.payload.block_count
+      : null;
+  const count = blockCount > 0 ? blockCount : (eventCount ?? 0);
+  return (
+    <section className="sse-feed">
+      <div className="head">
+        <h4>文本直抽</h4>
+        <span className="conn">
+          <Icon name="spark" size={12} />
+          已完成 · {count} 块
+        </span>
+      </div>
+      <div className="sse-rows">
+        <div className="sse-row success">
+          <span className="t">✓</span>
+          <span className="msg">文本直抽完成（pandoc 切题，无 OCR / VLM 抽取）· {count} 块</span>
+          <code>direct</code>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function SSETimeline({
   events,
   status,
@@ -1129,6 +1209,63 @@ function formatError(err: unknown): string {
   if (err instanceof ApiError) return `${err.code ?? 'error'}: ${err.message}`;
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+// YUK-277: the default seeded form when a block carries no usable AI observation
+// (or seedBlockForm degrades it). Mirrors auto-enroll.ts DEFAULT_SEED + the
+// non-AI form fields; kept local so the prompt/reference/wrong_answer fields can
+// be filled from the block row in buildBlockForm below.
+const DEFAULT_BLOCK_FORM: BlockFormState = {
+  prompt_md: '',
+  reference_md: '',
+  wrong_answer_md: '',
+  knowledge_ids: [],
+  cause_primary: '',
+  cause_notes: '',
+  question_kind: 'short_answer',
+  difficulty: 3,
+  ignored: false,
+};
+
+// YUK-277: resilient form builder shared by the seeding effect AND the import
+// fallback. OCR-derived text fields come straight off the block; the AI-prefillable
+// fields come from seedBlockForm, which maps b.auto_enroll_observation when present
+// and falls back to today's defaults otherwise. seedBlockForm is written
+// defensively (every observation field is `?.`-guarded and the route projects a
+// well-shaped observation), but a future wire-shape regression or a malformed
+// observation (e.g. a non-iterable suggested_knowledge_ids) could still throw on
+// the spread. Catch it, degrade to the default seed, and console.error with the
+// block id so a bad block downgrades to an editable default form instead of
+// poisoning the whole batch (the owner's 17-block text-line import wipeout).
+// Exported for VisionTab.test.tsx — the seeding-resilience + import-fallback
+// invariant (a malformed / observation-less block always yields a usable default
+// form and never throws) is unit-tested directly on this pure builder.
+export function buildBlockForm(b: BlockRow): BlockFormState {
+  // knowledge_ids + cause_primary are seeded together so the BlockEditor self-heal
+  // effect (cause_primary ∉ causeOptions → clear) admits a valid seeded cause.
+  let seeded: ReturnType<typeof seedBlockForm>;
+  try {
+    seeded = seedBlockForm(b);
+  } catch (err) {
+    console.error(
+      `[VisionTab] seedBlockForm threw for block ${b.id}; falling back to default form`,
+      err,
+    );
+    seeded = {
+      knowledge_ids: DEFAULT_BLOCK_FORM.knowledge_ids,
+      cause_primary: DEFAULT_BLOCK_FORM.cause_primary,
+      cause_notes: DEFAULT_BLOCK_FORM.cause_notes,
+      question_kind: DEFAULT_BLOCK_FORM.question_kind,
+      difficulty: DEFAULT_BLOCK_FORM.difficulty,
+    };
+  }
+  return {
+    ...seeded,
+    prompt_md: b.extracted_prompt_md ?? '',
+    reference_md: b.reference_md ?? '',
+    wrong_answer_md: b.wrong_answer_md ?? '',
+    ignored: false,
+  };
 }
 
 const metaStyle: React.CSSProperties = {
