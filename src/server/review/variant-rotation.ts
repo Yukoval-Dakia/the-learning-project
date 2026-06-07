@@ -21,7 +21,7 @@
 import type { QuestionKindT } from '@/core/schema/judge-routing';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
-import { and, eq, isNull, ne, or, sql } from 'drizzle-orm';
+import { and, eq, isNull, ne, notInArray, or, sql } from 'drizzle-orm';
 
 // ADR-0030 §1 — by-kind routing class.
 export type RotationClass = 'recall' | 'application';
@@ -155,6 +155,14 @@ async function readQuestion(dbHandle: Db, questionId: string): Promise<QuestionR
 
 // K 下首个未用 non-draft 题, created_at ASC, id ASC — the shared fallback序 used by
 // both branches (matches the pre-ADR-0030 fallback ordering exactly).
+//
+// The used-id exclusion is pushed into the WHERE (notInArray) instead of a JS
+// post-filter so the DB returns the first *available* row directly: a `.limit(N)`
+// page + in-memory `.find(unused)` would silently drop a knowledge point whose
+// first N rows are all already used this page even though available questions
+// exist past position N (CodeRabbit F1). `notInArray(col, [])` is safe in this
+// drizzle version — it lowers to `true`, so the never-used-anything case still
+// returns the genuine first non-draft row.
 async function firstForKnowledge(
   dbHandle: Db,
   knowledgeId: string,
@@ -163,10 +171,12 @@ async function firstForKnowledge(
   const rows = (await dbHandle
     .select(QUESTION_PROJECTION)
     .from(question)
-    .where(and(knowledgeContains(knowledgeId), notDraft))
+    .where(
+      and(knowledgeContains(knowledgeId), notDraft, notInArray(question.id, [...usedQuestionIds])),
+    )
     .orderBy(question.created_at, question.id)
-    .limit(20)) as QuestionRow[];
-  const chosen = rows.find((row) => !usedQuestionIds.has(row.id));
+    .limit(1)) as QuestionRow[];
+  const chosen = rows[0];
   if (!chosen) return null;
   usedQuestionIds.add(chosen.id);
   return toProbe(chosen);
