@@ -70,6 +70,14 @@ export async function loadTreeSnapshot(db: Db): Promise<KnowledgeNode[]> {
     .from(knowledge)
     .leftJoin(knowledge_mastery, eq(knowledge_mastery.knowledge_id, knowledge.id))
     .where(isNull(knowledge.archived_at))
+    // Deterministic order BEFORE the cap (CODEX-3): a bare LIMIT with no ORDER BY
+    // lets Postgres return an arbitrary 5000-row subset, so two callers on the
+    // same data could see different rows — and a truncated subset could drop a
+    // parent node, silently mis-computing a child's effective_domain. Ordering by
+    // a stable key makes the truncated subset reproducible. (Root cause — the
+    // load-all approach itself — is the YUK-236 CTE rewrite; this just makes the
+    // interim cap deterministic.)
+    .orderBy(knowledge.id)
     // Bound the load-all snapshot so a runaway graph can't OOM the heap. See the
     // LOAD_TREE_SNAPSHOT_LIMIT docblock for the phase-deferred CTE follow-up.
     .limit(LOAD_TREE_SNAPSHOT_LIMIT);
