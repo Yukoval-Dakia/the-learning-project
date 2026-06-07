@@ -58,7 +58,10 @@ import {
 // AF S4 / YUK-203 U6 — Copilot skills (behavior packs). A skill_context turn
 // routes to these at the service layer instead of the free-form CopilotTask loop.
 import { type QuizSkillResult, runQuizSkill } from '@/server/copilot/skills/quiz-skill';
-import { type SolveSkillResult, runSolveSkill } from '@/server/copilot/skills/solve-skill';
+// YUK-284 (C3) — solve-skill is no longer imported here: it was extracted from the
+// skill_context protocol (chat.ts no longer routes solve). runSolveSkill stays an
+// independent service in src/server/copilot/skills/solve-skill.ts for a future
+// 题目页 inline入口.
 import { type TeachingSkillResult, runTeachingSkill } from '@/server/copilot/skills/teaching-skill';
 // YUK-267 (C2) — the SAME session-scoped turn reader the drawer replay uses. The
 // free-form run input reuses it to assemble conversation_history (防循环 ①: history
@@ -111,14 +114,27 @@ export type CopilotChatTriggerKind = (typeof COPILOT_CHAT_TRIGGER_KINDS)[number]
 // discriminator and the `ref` shape are deliberately minimal so the migration is
 // additive. The `ref` shape `{ kind, id }` mirrors `leave_agent_note`'s ref
 // vocabulary (AF §4 `refs: Array<{kind, id}>`) for consistency.
-// YUK-262 — `quiz` added as the third behavior pack (NOT a tool surface —
-// R5: skill ≠ surface). The quiz pack composes runSourcingSequence + a tool_quiz
-// INSERT at the SERVICE layer; it adds NO tools to COPILOT_TOOLS.
-export const COPILOT_BEHAVIOR_PACK_KINDS = ['teaching', 'solve', 'quiz'] as const;
+// YUK-262 — `quiz` added as a third value (was a behavior pack pre-C3).
+//
+// YUK-284 (C3) — TWO kinds-集合, semantically layered:
+//   • COPILOT_SKILL_CONTEXT_KINDS — the WIRE layer: every skill_context.skill value
+//     the route may still receive. Stays ['teaching','solve','quiz'] for backward
+//     compat: chip quiz still seeds skill_context:{skill:'quiz'} (#348), and a
+//     persisted-old solve reply (#solve) must still parse on replay. Used by the
+//     z.enum below so CopilotChatRequest.parse never rejects these wire values.
+//   • COPILOT_BEHAVIOR_PACK_KINDS — the BEHAVIOR-PACK layer: the kinds that are真
+//     LLM/service behavior packs dispatched in chat.ts. C3 收敛为 ['teaching'] only —
+//     quiz is intercepted as a service-action (emitQuizReply) BEFORE dispatch, and
+//     solve was extracted to an independent service (chat.ts no longer routes it).
+export const COPILOT_SKILL_CONTEXT_KINDS = ['teaching', 'solve', 'quiz'] as const;
+export type CopilotSkillContextKind = (typeof COPILOT_SKILL_CONTEXT_KINDS)[number];
+export const COPILOT_BEHAVIOR_PACK_KINDS = ['teaching'] as const;
 export type CopilotBehaviorPackKind = (typeof COPILOT_BEHAVIOR_PACK_KINDS)[number];
 
 export const CopilotSkillContext = z.object({
-  skill: z.enum(COPILOT_BEHAVIOR_PACK_KINDS),
+  // Wire-wide enum (向后兼容 chip quiz + 旧 solve replay); the SERVER classifies which
+  // value is a behavior pack vs a service-action vs a降级-fallthrough.
+  skill: z.enum(COPILOT_SKILL_CONTEXT_KINDS),
   ref: z.object({
     kind: z.string().min(1).max(40),
     id: z.string().min(1).max(120),
@@ -285,8 +301,8 @@ export interface CopilotChatDeps {
   findOrCreateConversationFn?: FindOrCreateConversationFn;
   // AF S4 / YUK-203 U6 — swappable skill runners (unit tests inject fixtures so
   // the {}-stub db is never touched). Default to the real skill modules.
+  // YUK-284 (C3) — runSolveSkillFn seam removed: chat.ts no longer routes solve.
   runTeachingSkillFn?: typeof runTeachingSkill;
-  runSolveSkillFn?: typeof runSolveSkill;
   // YUK-262 — swappable quiz-skill runner (the db test injects a fixture so the
   // {}-stub db is never touched). Defaults to the real runQuizSkill module.
   runQuizSkillFn?: typeof runQuizSkill;
@@ -427,7 +443,7 @@ async function runCopilotChatImpl(
   const findOrCreateConversation =
     deps.findOrCreateConversationFn ?? Conversation.findOrCreateCopilotConversation;
   const runTeachingSkillFn = deps.runTeachingSkillFn ?? runTeachingSkill;
-  const runSolveSkillFn = deps.runSolveSkillFn ?? runSolveSkill;
+  // YUK-284 (C3) — runSolveSkillFn default removed: chat.ts no longer dispatches solve.
   const runQuizSkillFn = deps.runQuizSkillFn ?? runQuizSkill;
   // YUK-275 — free-text 求卷 routing seams.
   const detectQuizIntentFn = deps.detectQuizIntentFn ?? detectQuizIntent;
@@ -771,65 +787,12 @@ async function runCopilotChatImpl(
     };
   }
 
-  // YUK-284 (C1) — solve behavior pack as a self-contained handler that RETURNS its
-  // own terminal CopilotChatResult. Logic moved verbatim from the former
-  // `if (skill_context.skill==='solve')` branch: one reply-event write, real
-  // task_run_id, skill_context persisted for replay, NO turn_kind / NO skill_turn.
-  // skillContext is the narrowed (non-undefined) req.skill_context from dispatch.
-  async function runSolveBehaviorPack(
-    skillContext: CopilotSkillContextT,
-  ): Promise<CopilotChatResult> {
-    const replyEventId = `copilot_reply_${createId()}`;
-    // hintIndex 故意不传（恒为首问 hint）：U6 MVP 只做 hint-only solve pack，
-    // buildSolveHintInput 的递进分支（hintIndex>0 合成追问）经此入口是死代码。
-    // 接续上下文见 plan §11（cut-over 时机）：若要递进，需按 session 内既往
-    // solve turn 计数派生 hintIndex（review LOW note，intentional-by-record）。
-    const skillResult: SolveSkillResult = await runSolveSkillFn({
-      db,
-      questionId: skillContext.ref.id,
-    });
-    const replyMd = skillResult.text_md;
-    // PR #305 review comment #3: use the real task_run_id from the skill runner.
-    const realTaskRunId = skillResult.task_run_id;
-
-    const replyAt = new Date(now.getTime() + 1);
-    await write(db, {
-      id: replyEventId,
-      session_id: sessionId,
-      actor_kind: 'agent',
-      actor_ref: actorRef,
-      action: REPLY_EVENT_ACTION,
-      subject_kind: 'query',
-      subject_id: replyEventId,
-      outcome: null,
-      payload: {
-        surface: 'copilot',
-        session_id: sessionId,
-        reply_md: replyMd,
-        // PR #305 review comment #3: real task_run_id from TeachingTurnTask.
-        task_run_id: realTaskRunId,
-        in_reply_to_event_id: causedByEventId ?? null,
-        // PR round-2 (CR 3360614441): persist skill_context so replay can
-        // restore the skill card (Dock chip renderer + replayToMessages use it).
-        skill_context: skillContext,
-      },
-      caused_by_event_id: causedByEventId ?? null,
-      task_run_id: realTaskRunId,
-      created_at: replyAt,
-    });
-
-    if (streaming) streaming.onDelta(replyMd);
-
-    return {
-      task_run_id: realTaskRunId,
-      reply: replyMd,
-      surface: 'copilot',
-      triggered_by: req.triggered_by,
-      session_id: sessionId,
-      reply_event_id: replyEventId,
-      ...(userAskEventId ? { user_ask_event_id: userAskEventId } : {}),
-    };
-  }
+  // YUK-284 (C3) — the former runSolveBehaviorPack handler is removed. solve is no
+  // longer a chat-routed behavior pack: it was a dead入口 (no UI seed ever produced
+  // skill_context:{skill:'solve'}). runSolveSkill remains an independent service
+  // (src/server/copilot/skills/solve-skill.ts) for a future题目页 inline入口; chat.ts
+  // no longer dispatches to it. A persisted-old / anomalous skill:'solve' falls
+  // through to the free-form CopilotTask path (see the dispatch降级 below).
 
   // §D1/§D2/§D5 / YUK-275 — free-text 求卷 intercept. Only typed chat turns WITHOUT a
   // skill_context are eligible (the chip path carries skill_context:{skill:'quiz'} and is
@@ -872,45 +835,58 @@ async function runCopilotChatImpl(
     // free-form CopilotTask path (the深度兜底 so normal conversation is never hijacked).
   }
 
-  // AF S4 / YUK-203 U6 (§4.4) — skill routing. A skill_context turn runs a
-  // teaching/solve behavior pack at the SERVICE layer instead of the free-form
-  // CopilotTask tool loop. The surface stays 'copilot' (R5: skill ≠ surface — the
-  // budget tracker / mcp / tool allowlist below are NOT constructed on this path),
-  // and the TeachingTurnTask call inside the skill is a service call, so it draws
-  // down NO tool budget (OQ5). The skill turn lives entirely on this single
-  // Copilot session (Cross-统合 single-session).
-  // YUK-284 (C1) — behavior-pack dispatch as a Record lookup table instead of an
-  // if/else-if/else-throw chain. Each handler is a closure capturing the locals
-  // already in scope (db/req/write/now/streaming/...) and RETURNS its own terminal
-  // CopilotChatResult — there is NO block-tail shared return reading half-assigned
-  // locals. Exhaustiveness is enforced by `Record<CopilotBehaviorPackKind, …>` at
-  // COMPILE time: adding a 4th kind to COPILOT_BEHAVIOR_PACK_KINDS makes the Record
-  // a missing-key error (earlier + safer than the former runtime throw, which is
-  // why no runtime else-throw is needed here).
+  // AF S4 / YUK-203 U6 (§4.4) — skill_context routing. A skill_context turn runs a
+  // teaching behavior pack at the SERVICE layer instead of the free-form CopilotTask
+  // tool loop. The surface stays 'copilot' (R5: skill ≠ surface — the budget tracker
+  // / mcp / tool allowlist below are NOT constructed on the teaching path), and the
+  // TeachingTurnTask call inside the pack is a service call, so it draws down NO tool
+  // budget (OQ5). The turn lives entirely on this single Copilot session.
+  //
+  // YUK-284 (C3) — the dispatch is三层 ordered (each branch self-returns or falls
+  // through; there is NO block-tail shared return reading half-assigned locals):
+  //   1. quiz → service-action early-intercept (emitQuizReply); NOT a behavior pack.
+  //   2. teaching → the only真 behavior pack; self-returning early-return.
+  //   3. solve / 未知 kind → 显式降级 warn + fall through to the free-form path.
+  // YUK-284 (C3) — quiz is a SERVICE ACTION, not a behavior pack: a chip-seeded
+  // skill_context.skill==='quiz' is intercepted HERE (before any behavior-pack
+  // dispatch) and shares the emitQuizReply service out-port with the free-text
+  // entry (GZ-1 正名). The wire shape stays skill_context:{skill:'quiz'} (Dock seed
+  // + replay persistence unchanged → 零破坏), only the server-side classification
+  // moves from「behavior-pack 查表分支」to「early service-action intercept」.
+  // §D5: reply-event write + synthetic-run-id reuse + skill_context persistence are
+  // shared with the free-text path via emitQuizReply (DRY); the chip path passes the
+  // 既有 skill_context verbatim for replay and no free-text 扩参 (difficultyMin/unit/
+  // kind null → byte-for-byte the pre-YUK-275 behaviour).
+  if (req.skill_context?.skill === 'quiz') {
+    return emitQuizReply({
+      knowledgeId: req.skill_context.ref.id,
+      skillContextForReplay: req.skill_context, // wire 不变，replay 零破坏
+    });
+  }
+
+  // YUK-284 (C3) — teaching is the only真 behavior pack left. Early-return its own
+  // terminal result (the pack handler self-returns; there is NO block-tail shared
+  // return). solve was extracted to an independent service (runSolveSkill, no chat
+  // routing) and the chip/free-text quiz are handled above, so any other
+  // skill_context.skill value (solve from a chip that no longer exists, or a
+  // persisted-old-solve replay) does NOT enter here — it falls through to the
+  // free-form CopilotTask path below.
+  if (req.skill_context?.skill === 'teaching') {
+    return runTeachingBehaviorPack(req.skill_context);
+  }
+
+  // YUK-284 (C3) — solve / 未知 kind 显式降级: no behavior-pack handler, so log and
+  // fall through to the free-form CopilotTask path (R5 单用户自托管下宁可降级不崩;
+  // 旧 solve 请求/replay 不会让会话崩溃). Reaching here means skill_context is present
+  // but is neither quiz nor teaching. 控制流红线: this MUST continue down to the
+  // free-form path (NOT execute a block-tail shared return reading未赋值局部) — that
+  // is why C1 made each pack handler self-return and removed the shared block-tail
+  // return entirely.
   if (req.skill_context) {
-    // Narrow once so the handlers below take a non-undefined skillContext
-    // (avoids non-null assertions — biome noNonNullAssertion).
-    const skillContext = req.skill_context;
-    const behaviorPackHandlers: Record<CopilotBehaviorPackKind, () => Promise<CopilotChatResult>> =
-      {
-        teaching: () => runTeachingBehaviorPack(skillContext),
-        solve: () => runSolveBehaviorPack(skillContext),
-        // YUK-262 / YUK-275 — chip-seeded quiz pack. Pure SERVICE orchestration: source
-        // the existing pool → assemble + persist a tool_quiz artifact → reply with a
-        // /practice/<id> link (or an explicit degradation notice; NEVER a text-sprayed
-        // quiz). There is NO LLM run on this execution path. §D5: the reply-event write +
-        // synthetic-run-id reuse + skill_context persistence are shared with the free-text
-        // path via emitQuizReply (DRY); the chip path passes the既有 skill_context verbatim
-        // for replay and no free-text 扩参 (difficultyMin/unit/kind null → byte-for-byte the
-        // pre-YUK-275 behaviour). One-shot-end (YUK-213) + the former seeding gap
-        // (YUK-269 chip + YUK-275 free-text) context is unchanged.
-        quiz: () =>
-          emitQuizReply({
-            knowledgeId: skillContext.ref.id,
-            skillContextForReplay: skillContext,
-          }),
-      };
-    return behaviorPackHandlers[skillContext.skill]();
+    console.warn('[copilot] no behavior pack handler; falling through to free-form', {
+      skill: req.skill_context.skill,
+      task_run_id: taskRunId,
+    });
   }
 
   // P5.1 / YUK-143 — per-message context-budget throttle. One tracker lives for

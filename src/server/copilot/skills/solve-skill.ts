@@ -1,6 +1,15 @@
-// AF S4 / YUK-203 U6 (OQ6, R4/R7 — Cross-统合 §4.3) — the Copilot solve skill.
+// YUK-284 (C3) — independent single-shot 解题提示 service (脱离 copilot 展示形式).
 //
-// Provides the escalating-hint behavior inside a Copilot turn. It does NOT reuse
+// 正名 (was: "the Copilot solve skill" / 行为包). As of C3, solve is NO longer a
+// chat-routed behavior pack: chat.ts removed the skill_context:{skill:'solve'} branch
+// because solve had NO UI seed (a dead入口). This module stays as a standalone service
+// — runSolveSkill(params) keeps its signature ({db, questionId, hintIndex?} →
+// SolveSkillResult) so a FUTURE 题目页 inline「给点提示」入口 can call it directly. That
+// UI 触发点 is OUT OF SCOPE this wave (本期只做服务端摘出); see YUK-284 plan §9.
+//
+// AF S4 / YUK-203 U6 (OQ6, R4/R7 — Cross-统合 §4.3) — solve service behavior.
+//
+// Provides the escalating-hint behavior. It does NOT reuse
 // planSolveHint (tutor-session-bound: takes a sessionId, calls Tutor.getTutorQuestionId,
 // gates on status==='active') — that would force a live tutor session into the
 // Copilot path (R3/R7 violation). Instead it calls TeachingTurnTask DIRECTLY via
