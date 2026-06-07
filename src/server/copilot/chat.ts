@@ -488,7 +488,7 @@ export async function runCopilotChat(
         task_run_id: realTaskRunId,
         created_at: replyAt,
       });
-    } else {
+    } else if (req.skill_context.skill === 'quiz') {
       // YUK-262 — quiz skill. Pure SERVICE orchestration: source the existing pool
       // → assemble + persist a tool_quiz artifact → reply with a /practice/<id>
       // link (or an explicit degradation notice; NEVER a text-sprayed quiz). There
@@ -499,6 +499,25 @@ export async function runCopilotChat(
       // stays uniform with teaching/solve. The quiz reply is one-shot: it carries
       // NO turn_kind and NO skill_turn (the /practice link rides in reply_md, which
       // the Dock already renders — zero new UI/replay plumbing).
+      //
+      // ONE-SHOT-END (deferred → YUK-213, bot-review F2): like the solve branch,
+      // this returns no terminal `skill_turn`, so the Dock only clears
+      // activeSkillRef on `skill_turn.kind==='end'` (CopilotDock.tsx). Once a quiz
+      // context is seeded (see YUK-269) every follow-up message would keep
+      // re-sending skill_context:{skill:'quiz'}. One-shot-skill turn semantics
+      // (emit a terminal skill_turn, or have the Dock clear on one-shot skills)
+      // are owned by YUK-213 and should be resolved together with the seeding
+      // design — pre-existing for solve, currently unreachable for quiz.
+      //
+      // SEEDING GAP (deferred → YUK-269, bot-review F1): this branch only fires
+      // when a `skill_context:{skill:'quiz'}` already arrives. No UI/server path
+      // currently SEEDS it (the sole openCopilotWith call seeds 'teaching'), and
+      // the route does NO intent classification — both deliberately OUT of this
+      // lane's plan (§2.1/§4: "no Dock change", "NOT LLM classification"). So a
+      // bare natural-language quiz request still falls through to the free-form
+      // CopilotTask path. Wiring a producer (quiz chip / composer intent) is
+      // tracked in YUK-269; until then YUK-262 is NOT end-to-end (PR #342 trailer
+      // is `Refs YUK-262`, not `Closes`).
       const skillResult: QuizSkillResult = await runQuizSkillFn({
         db,
         sessionId,
@@ -533,6 +552,13 @@ export async function runCopilotChat(
         task_run_id: realTaskRunId,
         created_at: replyAt,
       });
+    } else {
+      // PR #342 bot-review (OCR/Codex F4): exhaustive guard. `skill` is
+      // z.enum(COPILOT_SKILL_KINDS) (validated at the route boundary), so the
+      // three branches above are exhaustive today and this `else` is unreachable
+      // at runtime. It exists so that a FUTURE 4th skill kind fails loudly here
+      // in dev instead of silently mis-routing into the quiz path.
+      throw new Error(`Unhandled copilot skill kind: ${req.skill_context.skill}`);
     }
 
     return {
@@ -540,7 +566,13 @@ export async function runCopilotChat(
       // placeholder) so cost-tracing links the API response to the actual LLM run.
       task_run_id: realTaskRunId,
       reply: replyMd,
-      surface,
+      // PR #342 bot-review (CodeRabbit F3): force the skill-turn surface to
+      // 'copilot' so the API response matches the persisted reply-event payload
+      // (which hard-codes surface:'copilot'). The `surface` variable is
+      // triggered_by-derived and becomes 'copilot_user_suggested_mistake_action'
+      // on a chip turn — returning it here would fork the API/replay-audit
+      // contract for any chip+skill_context turn.
+      surface: 'copilot',
       triggered_by: req.triggered_by,
       session_id: sessionId,
       reply_event_id: replyEventId,
