@@ -170,6 +170,32 @@ describe('listQuestions', () => {
       expect(page2.items.map((i) => i.id)).toEqual([ids[2], ids[1]]);
     });
 
+    it('default path SQL-paginates newest-first (no in-memory ASC-cap truncation)', async () => {
+      // P2 regression (codex-list-224-default-truncation): the plain default
+      // created_at list must SQL ORDER BY created_at DESC + LIMIT/OFFSET, NOT
+      // fetch the OOM-capped ASC candidate set and reverse it. Insert rows in a
+      // non-chronological order so a fetch-ASC-then-reverse impl that pages over a
+      // truncated prefix could not produce the true newest page. We assert the
+      // newest page, an OFFSET page, accurate total, and truncated=false.
+      const base = new Date('2026-05-01T00:00:00Z').getTime();
+      // creation order: day 2, day 0, day 5, day 1, day 4, day 3 (shuffled).
+      const order = [2, 0, 5, 1, 4, 3];
+      const byDay = new Map<number, string>();
+      for (const day of order) {
+        byDay.set(day, await seedQuestion({ created_at: new Date(base + day * DAY) }));
+      }
+
+      const page1 = await listQuestions(testDb(), { limit: 2, offset: 0 });
+      expect(page1.total).toBe(6);
+      expect(page1.truncated).toBe(false);
+      // newest-first: day 5, day 4.
+      expect(page1.items.map((i) => i.id)).toEqual([byDay.get(5), byDay.get(4)]);
+
+      const page2 = await listQuestions(testDb(), { limit: 2, offset: 2 });
+      // next window: day 3, day 2.
+      expect(page2.items.map((i) => i.id)).toEqual([byDay.get(3), byDay.get(2)]);
+    });
+
     it('returns empty items + total 0 for no matches', async () => {
       const res = await listQuestions(testDb(), { source: 'nope', limit: 50, offset: 0 });
       expect(res.total).toBe(0);
