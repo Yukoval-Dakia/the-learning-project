@@ -39,10 +39,10 @@ export const NAV: NavEntry[] = [
   { section: '整理' },
   { id: 'inbox', label: '收件箱', icon: 'inbox' },
   { id: 'mistakes', label: '错题', icon: 'mistakes' },
-  // 题库 (questions) — 入口暂缺：/questions 路由尚未落地（codex 的 off-plan 实现
-  // 已 park）。题库是 target-domain-model decision #4 计划内的 surface，待其专门
-  // 的 redraw slice 落地时把这条 NavItem 加回（TITLES/ROUTE_MAP/PATH_ACTIVE 已就位）。
-  // 现在不挂链接，避免点击 404。
+  // 题库 (questions) — YUK-288 S1 已落地 /questions 列表 + 详情（只读侧）。位置按
+  // 设计稿「错题与练习附近」落在「错题」后、「学习项」前（TITLES/ROUTE_MAP/
+  // PATH_ACTIVE 早已就位）。
+  { id: 'questions', label: '题库', icon: 'quiz' },
   { id: 'items', label: '学习项', icon: 'items' },
   { id: 'knowledge', label: '知识', icon: 'knowledge' },
 ];
