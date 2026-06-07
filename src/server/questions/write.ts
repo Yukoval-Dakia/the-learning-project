@@ -39,6 +39,7 @@ import { and, eq, isNull, ne, or, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { artifact, event, material_fsrs_state, question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
+import { assertKnowledgeIdsExist } from '@/server/knowledge/validate';
 
 export const QUESTION_PART_KIND = 'question_part' as const;
 
@@ -79,43 +80,43 @@ export async function countQuestionAssociations(
   db: Db,
   questionId: string,
 ): Promise<QuestionAssociationCounts> {
-  const [attemptRow] = await db
-    .select({ n: sql<number>`count(*)::int` })
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'attempt'),
-        eq(event.subject_kind, 'question'),
-        eq(event.subject_id, questionId),
+  // The four counts are independent reads — run them concurrently.
+  const [[attemptRow], [mistakeRow], [fsrsRow], [paperRow]] = await Promise.all([
+    db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'attempt'),
+          eq(event.subject_kind, 'question'),
+          eq(event.subject_id, questionId),
+        ),
       ),
-    );
-
-  const [mistakeRow] = await db
-    .select({ n: sql<number>`count(*)::int` })
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'attempt'),
-        eq(event.subject_kind, 'question'),
-        eq(event.subject_id, questionId),
-        eq(event.outcome, 'failure'),
+    db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'attempt'),
+          eq(event.subject_kind, 'question'),
+          eq(event.subject_id, questionId),
+          eq(event.outcome, 'failure'),
+        ),
       ),
-    );
-
-  const [fsrsRow] = await db
-    .select({ n: sql<number>`count(*)::int` })
-    .from(material_fsrs_state)
-    .where(
-      and(
-        eq(material_fsrs_state.subject_kind, 'question'),
-        eq(material_fsrs_state.subject_id, questionId),
+    db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(material_fsrs_state)
+      .where(
+        and(
+          eq(material_fsrs_state.subject_kind, 'question'),
+          eq(material_fsrs_state.subject_id, questionId),
+        ),
       ),
-    );
-
-  const [paperRow] = await db
-    .select({ n: sql<number>`count(*)::int` })
-    .from(artifact)
-    .where(sql`${artifact.tool_state}->'question_ids' @> ${JSON.stringify([questionId])}::jsonb`);
+    db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(artifact)
+      .where(sql`${artifact.tool_state}->'question_ids' @> ${JSON.stringify([questionId])}::jsonb`),
+  ]);
 
   return {
     attempts: attemptRow?.n ?? 0,
@@ -146,9 +147,24 @@ export interface QuestionEditPatch {
 }
 
 export interface QuestionEditResult {
-  status: 'updated' | 'conflict' | 'not_found';
+  // `noop` = patch contained no real change vs the current row (no version bump,
+  // no audit event); `knowledge_invalid` = a knowledge_id was missing/archived
+  // (re-validated inside the tx to close the TOCTOU window).
+  status: 'updated' | 'noop' | 'conflict' | 'not_found' | 'knowledge_invalid';
   event_id?: string;
   version?: number;
+  missing_knowledge_ids?: string[];
+}
+
+// Deep-equality for the edit diff — primitives via Object.is, arrays element-wise
+// (knowledge_ids / choices_md). Keeps unchanged fields out of before/after so a
+// full-form save doesn't fabricate audit entries or bump the version.
+function patchValueEqual(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
+  }
+  return false;
 }
 
 /**
@@ -167,10 +183,25 @@ export async function editQuestion(
     const row = rows[0];
     if (!row) return { status: 'not_found' };
 
+    // Re-validate knowledge_ids inside the SAME transaction the update commits in.
+    // The route does a pre-check for a friendly early 400, but doing it here too
+    // closes the TOCTOU window where a knowledge node is archived between the
+    // pre-check and the write. An empty array is a deliberate "clear all" and is
+    // a no-op for validation.
+    if (patch.knowledge_ids && patch.knowledge_ids.length > 0) {
+      // `tx as Db`: the helper only reads, and a tx satisfies the query surface
+      // (same cast as src/server/knowledge/rubric-validator.ts:443).
+      const check = await assertKnowledgeIdsExist(tx as unknown as Db, patch.knowledge_ids);
+      if (!check.ok) return { status: 'knowledge_invalid', missing_knowledge_ids: check.missing };
+    }
+
     // Build the SET map + the before/after diff for the event payload. Only
-    // include fields the caller actually sent (undefined = leave unchanged).
+    // include fields the caller actually CHANGED — `track` skips both undefined
+    // (not submitted) and unchanged values so a full-form save doesn't fabricate
+    // audit entries or bump the version on a no-op (which would also inflate
+    // optimistic-lock 409s for honest concurrent edits).
     const now = new Date();
-    const setValues: Partial<typeof question.$inferInsert> = { updated_at: now };
+    const setValues: Partial<typeof question.$inferInsert> = {};
     const before: Record<string, unknown> = {};
     const after: Record<string, unknown> = {};
 
@@ -181,6 +212,7 @@ export async function editQuestion(
     ) => {
       if (patch[key] === undefined) return;
       const next = patch[key];
+      if (patchValueEqual(prev, next)) return;
       // biome-ignore lint/suspicious/noExplicitAny: dynamic column assignment over a validated patch.
       (setValues as any)[column] = next;
       before[column as string] = prev;
@@ -195,9 +227,17 @@ export async function editQuestion(
     track('kind', 'kind', row.kind);
     track('draft_status', 'draft_status', row.draft_status);
 
+    // No real change: return the current version untouched, no event, no bump.
+    // We still honour the optimistic-lock contract — a stale version on a no-op
+    // is reported as a conflict so the caller refreshes.
+    if (Object.keys(after).length === 0) {
+      if (row.version !== expectedVersion) return { status: 'conflict' };
+      return { status: 'noop', version: row.version };
+    }
+
     const updated = await tx
       .update(question)
-      .set({ ...setValues, version: row.version + 1 })
+      .set({ ...setValues, updated_at: now, version: row.version + 1 })
       .where(and(eq(question.id, questionId), eq(question.version, expectedVersion)))
       .returning({ version: question.version });
     if (updated.length === 0) return { status: 'conflict' };
