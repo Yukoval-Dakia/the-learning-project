@@ -141,6 +141,7 @@ Question (统一题库，single source of truth)
 | `DreamingTask` | mimo-v2.5-pro | pg-boss nightly (Foundation D) | 是 | — | 夜间学习信号 → inbox proposals（DomainTools）|
 | `CoachTask` | mimo-v2.5-pro | pg-boss `coach_daily` / `coach_weekly` (T-D6) | 是 | — | TodayPlan JSON（propose_* 写 inbox）|
 | `CopilotTask` | mimo-v2.5-pro | `/api/chat`（AF S4 / YUK-203） | 是 | — | 唯一面向用户的对话式学习助手 |
+| `QuizIntentParseTask` | mimo-v2.5-pro | copilot 自由文本求卷粗筛命中后（YUK-275） | 否 | — | 自然语言求卷 → 结构化意图（单次 structured output，无工具循环）|
 | `QuizGenTask` | mimo-v2.5-pro | pg-boss `quiz_gen` (T-SQ) | 是 | — | search-grounded 原创题（Tavily + domain MCP）|
 | `QuizVerifyTask` | mimo-v2.5-pro | pg-boss `quiz_verify` (T-SQ Q5) | 否 | — | closed-book 出题校验（fact/copy_safety/knowledge-hit）|
 | `SourcingTask` | mimo-v2.5-pro | pg-boss `sourcing` (YUK-216 S2) | 是 | — | web-sourced 题（draft, tier 2）+ source_verify chain |
