@@ -1,7 +1,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import sharp from 'sharp';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PermanentError } from '@/core/schema/structured_question';
 import { db } from '@/db/client';
@@ -19,6 +19,7 @@ import type { StructureResult, runStructureTask } from '@/server/ingestion/struc
 import { StructureTaskError } from '@/server/ingestion/structure';
 import type { R2Client } from '@/server/r2';
 import clozeFixture from '../../../../tests/fixtures/tencent_mark_agent_cloze_sample.json';
+import { resetDb } from '../../../../tests/helpers/db';
 import { buildTencentOcrHandler } from './tencent_ocr_extract';
 
 type GlmOcrFn = typeof runGlmLayoutParsing;
@@ -245,6 +246,10 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
+beforeEach(async () => {
+  await resetDb();
+});
+
 describe('tencent_ocr_extract handler (GLM default engine)', () => {
   it('GLM happy path: queued → extracted with VLM-owned block + GLM cost_ledger', async () => {
     const { sessionId, sourceDocId, assetId } = await seedSessionWithAsset();
@@ -300,20 +305,27 @@ describe('tencent_ocr_extract handler (GLM default engine)', () => {
     const runStructureFn = makeVlmStub();
 
     const handler = buildTencentOcrHandler({ db, r2, glmOcrFn, runStructureFn });
-    await handler([{ id: 'boss-job-glm-warnings', data: { sessionId } } as never]);
+    let costLedgerId: string | null = null;
+    try {
+      await handler([{ id: 'boss-job-glm-warnings', data: { sessionId } } as never]);
 
-    const session = await db
-      .select()
-      .from(learning_session)
-      .where(eq(learning_session.id, sessionId));
-    expect(session[0].warnings).toContain('GLM returned no text blocks on any page');
-    expect(session[0].warnings).toContain('GLM: at least one page has only image/empty blocks');
+      const session = await db
+        .select()
+        .from(learning_session)
+        .where(eq(learning_session.id, sessionId));
+      const warnings = session[0].warnings;
+      const perPageIdx = warnings.indexOf('GLM returned no text blocks on any page');
+      const aggregateIdx = warnings.indexOf('GLM: at least one page has only image/empty blocks');
+      expect(perPageIdx).toBeGreaterThanOrEqual(0);
+      expect(aggregateIdx).toBeGreaterThan(perPageIdx);
 
-    const cost = await db.select().from(cost_ledger);
-    const ours = cost.find((c) => c.pgboss_job_id === 'boss-job-glm-warnings');
-
-    await cleanup(sessionId, sourceDocId, assetIds);
-    if (ours) await db.delete(cost_ledger).where(eq(cost_ledger.id, ours.id));
+      const cost = await db.select().from(cost_ledger);
+      const ours = cost.find((c) => c.pgboss_job_id === 'boss-job-glm-warnings');
+      costLedgerId = ours?.id ?? null;
+    } finally {
+      await cleanup(sessionId, sourceDocId, assetIds);
+      if (costLedgerId) await db.delete(cost_ledger).where(eq(cost_ledger.id, costLedgerId));
+    }
   });
 
   it('GLM VLM-fail → page-level GLM fallback questions + cost_ledger still written', async () => {
