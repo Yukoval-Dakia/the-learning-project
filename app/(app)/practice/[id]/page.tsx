@@ -25,6 +25,7 @@
 //   - pause/resume via /api/review/sessions/[id]/{pause,resume}
 
 import type { PaperDetailResult, PaperDetailSlot } from '@/server/review/paper-detail';
+import { PracticeChoiceOptions } from '@/ui/components/PracticeChoiceOptions';
 import { apiJson, getInternalToken } from '@/ui/lib/api';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
@@ -404,6 +405,42 @@ export default function PracticeAnswerPage() {
     scheduleAutosave(slot, value);
   }
 
+  // YUK-261: click-to-stage for choice options. A click is a discrete choice, so
+  // persist the draft immediately (no 500ms debounce) rather than waiting like the
+  // free-text textarea. Cancels any pending debounced timer for the slot first so
+  // the two paths don't race. Still the AUTOSAVE channel — never the submit path
+  // (owner ruling: 点选 ≠ 提交). On failure the retry-on-unload path still applies
+  // via pendingDrafts (set by scheduleAutosave above before this fires).
+  function flushChoiceDraft(slot: PaperDetailSlot, value: string) {
+    const key = slotKey(slot);
+    clearTimeout(autosaveTimers.current[key]);
+    delete autosaveTimers.current[key];
+    if (!sessionId) return;
+    void apiJson(`/api/practice/${artifactId}/answer`, {
+      method: 'POST',
+      body: JSON.stringify({
+        session_id: sessionId,
+        question_id: slot.question_id,
+        part_ref: slot.part_ref ?? null,
+        content_md: value,
+      }),
+    })
+      .then(() => {
+        setSlotStates((prev) => ({
+          ...prev,
+          [key]: { ...prev[key], autosavePending: false, autosaveFailed: false },
+        }));
+        delete pendingDrafts.current[key];
+      })
+      .catch(() => {
+        // Keep pendingDrafts[key] (set by scheduleAutosave) so the unload flush retries.
+        setSlotStates((prev) => ({
+          ...prev,
+          [key]: { ...prev[key], autosavePending: false, autosaveFailed: true },
+        }));
+      });
+  }
+
   // ── per-slot submit ────────────────────────────────────────────────────────
   const submitM = useMutation({
     mutationFn: async ({ slot, answerMd }: { slot: PaperDetailSlot; answerMd: string }) => {
@@ -705,28 +742,30 @@ export default function PracticeAnswerPage() {
                       {slot.question.prompt_md || '（题面加载中）'}
                     </div>
 
-                    {/* choice options — rendered for both active and read-only views */}
+                    {/* choice options (YUK-261) — clickable option cards for both
+                        active answering and read-only / feedback review. Click only
+                        writes the normalized letter string to the autosave draft
+                        channel (click-to-stage, no 500ms debounce); SUBMIT stays on
+                        the explicit 提交 button below (owner ruling: 点选 ≠ 提交). */}
                     {slot.question.choices_md && slot.question.choices_md.length > 0 && (
-                      <ol className="practice-choices">
-                        {slot.question.choices_md.map((choice, ci) => {
-                          const label = String.fromCharCode(65 + ci); // A, B, C, D…
-                          return (
-                            <li key={label} className="practice-choice-item">
-                              <button
-                                type="button"
-                                className="practice-choice-btn"
-                                disabled={isReadOnly || isSubmitted}
-                                onClick={() =>
-                                  !isReadOnly && !isSubmitted && handleAnswerChange(slot, label)
-                                }
-                              >
-                                <span className="practice-choice-label">{label}</span>
-                                <span className="wenyan">{choice}</span>
-                              </button>
-                            </li>
-                          );
-                        })}
-                      </ol>
+                      <PracticeChoiceOptions
+                        choices={slot.question.choices_md}
+                        value={localState.answer}
+                        multiSelect={slot.question.kind === 'multiple_choice'}
+                        disabled={isReadOnly}
+                        feedback={isSubmitted || (isReadOnly && !!slot.slot_state.submission)}
+                        reference={
+                          slot.slot_state.submission && 'reference_md' in slot.slot_state.submission
+                            ? slot.slot_state.submission.reference_md
+                            : null
+                        }
+                        // Click-to-stage: same autosave channel as the textarea, but
+                        // immediate (no debounce) since a click is a discrete choice.
+                        onSelect={(contentMd) => {
+                          handleAnswerChange(slot, contentMd);
+                          flushChoiceDraft(slot, contentMd);
+                        }}
+                      />
                     )}
 
                     {/* answering phase — active, not yet submitted, session not completed */}
