@@ -127,6 +127,28 @@ export class SubjectRegistry {
     return this.profiles.get(resolvedId) ?? fallback;
   }
 
+  /**
+   * Resolve a domain to its canonical subject id ONLY when the domain is a
+   * GENUINE alias/id hit — returns `null` for a null/empty domain OR an
+   * unrecognised string. Unlike `resolve()`, this never falls back to the default
+   * subject, so callers can tell "genuinely wenyan" apart from "untagged /
+   * unknown-domain" (YUK-288: the derived `?subject=` axis must NOT sweep
+   * domainless or unknown-domain nodes into the default subject). Alias-aware
+   * (classical_chinese → wenyan) where the bare-equality precedent
+   * (tagging.ts:122) is not.
+   */
+  resolveKnownSubjectId(domain?: string | null): SubjectId | null {
+    if (!domain) return null;
+    const key = normalizeSubjectKey(domain);
+    if (key.length === 0) return null;
+    // A known alias maps to its id; a bare profile id is registered as a self
+    // alias (register() does `this.aliases.set(id, id)`), so this single lookup
+    // covers both. A miss means the domain is unrecognised → null (no fallback).
+    const resolvedId = this.aliases.get(key);
+    if (resolvedId === undefined) return null;
+    return this.profiles.has(resolvedId) ? resolvedId : null;
+  }
+
   get(id: SubjectId): SubjectProfile | undefined {
     return this.profiles.get(normalizeSubjectKey(id));
   }
@@ -150,6 +172,15 @@ export const defaultSubjectProfile = defaultRegistry.resolve();
 
 export function resolveSubjectProfile(domain?: string | null): SubjectProfile {
   return defaultRegistry.resolve(domain);
+}
+
+/**
+ * Resolve a domain to its canonical subject id ONLY on a genuine alias/id hit;
+ * `null` for a null/unknown domain (no default-subject fallback). See
+ * `SubjectRegistry.resolveKnownSubjectId`.
+ */
+export function resolveKnownSubjectId(domain?: string | null): SubjectId | null {
+  return defaultRegistry.resolveKnownSubjectId(domain);
 }
 
 export function getDefaultSubjectRegistry(): SubjectRegistry {
