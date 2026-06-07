@@ -88,10 +88,16 @@ import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 export const COPILOT_CHAT_TRIGGER_KINDS = ['chat', 'chip'] as const;
 export type CopilotChatTriggerKind = (typeof COPILOT_CHAT_TRIGGER_KINDS)[number];
 
-// AF S4 / YUK-203 U6 — the surface-merge skill selector. A `skill_context`
+// AF S4 / YUK-203 U6 — the surface-merge behavior-pack selector. A `skill_context`
 // turn routes runCopilotChat to a teaching/solve behavior pack (a prompt/context
-// pack, NEVER a different tool surface — R5: skill ≠ surface). The skills compose
-// TeachingTurnTask at the SERVICE layer; they do not add tools to COPILOT_TOOLS.
+// pack, NEVER a different tool surface — R5: skill ≠ surface). The behavior packs
+// compose TeachingTurnTask at the SERVICE layer; they do not add tools to COPILOT_TOOLS.
+//
+// YUK-284 (C1) — naming de-overload: these kinds name SERVICE-layer behavior packs
+// (TS orchestration), NOT knowledge-layer Agent Skills (SKILL.md). The `skill`
+// JSON field name on the wire envelope is intentionally KEPT (the Dock + replay
+// persistence depend on it); only the kinds-集合 constant/type identifiers are
+// renamed to stop using "skill" for the service编排.
 //
 // FORWARD-COMPAT NOTE: `skill_context` is the U6-temporary seed of AF S2b's
 // `CurrentUserContext.active_ref` (agent-framework-design §1.4). When S2b lands
@@ -99,14 +105,14 @@ export type CopilotChatTriggerKind = (typeof COPILOT_CHAT_TRIGGER_KINDS)[number]
 // discriminator and the `ref` shape are deliberately minimal so the migration is
 // additive. The `ref` shape `{ kind, id }` mirrors `leave_agent_note`'s ref
 // vocabulary (AF §4 `refs: Array<{kind, id}>`) for consistency.
-// YUK-262 — `quiz` added as the third skill (a behavior pack, NOT a tool surface —
-// R5: skill ≠ surface). The quiz skill composes runSourcingSequence + a tool_quiz
+// YUK-262 — `quiz` added as the third behavior pack (NOT a tool surface —
+// R5: skill ≠ surface). The quiz pack composes runSourcingSequence + a tool_quiz
 // INSERT at the SERVICE layer; it adds NO tools to COPILOT_TOOLS.
-export const COPILOT_SKILL_KINDS = ['teaching', 'solve', 'quiz'] as const;
-export type CopilotSkillKind = (typeof COPILOT_SKILL_KINDS)[number];
+export const COPILOT_BEHAVIOR_PACK_KINDS = ['teaching', 'solve', 'quiz'] as const;
+export type CopilotBehaviorPackKind = (typeof COPILOT_BEHAVIOR_PACK_KINDS)[number];
 
 export const CopilotSkillContext = z.object({
-  skill: z.enum(COPILOT_SKILL_KINDS),
+  skill: z.enum(COPILOT_BEHAVIOR_PACK_KINDS),
   ref: z.object({
     kind: z.string().min(1).max(40),
     id: z.string().min(1).max(120),
@@ -621,6 +627,185 @@ async function runCopilotChatImpl(
     };
   }
 
+  // YUK-284 (C1) — teaching behavior pack as a self-contained handler that RETURNS
+  // its own terminal CopilotChatResult (no block-tail shared return). Logic moved
+  // verbatim from the former `if (skill_context.skill==='teaching')` branch: the
+  // reply-event write + ask_check materialization stay inside ONE db.transaction
+  // (PR #305 #1 atomicity), turn_kind + skill_turn + skill_context persistence are
+  // byte-for-byte unchanged. The surface stays 'copilot' (R5: skill ≠ surface — the
+  // budget tracker / mcp / tool allowlist below are NOT constructed on this path),
+  // and the TeachingTurnTask call inside the pack is a service call (OQ5).
+  // skillContext is the narrowed (non-undefined) req.skill_context passed by the
+  // dispatch table under `if (req.skill_context)`.
+  async function runTeachingBehaviorPack(
+    skillContext: CopilotSkillContextT,
+  ): Promise<CopilotChatResult> {
+    // Pre-generate the reply event id so ask_check materialization (which needs
+    // it as source_ref) and the reply event write can share the same tx (PR #305
+    // review comment #1: prevents dangling question row on reply-write failure).
+    const replyEventId = `copilot_reply_${createId()}`;
+    const skillResult: TeachingSkillResult = await runTeachingSkillFn({
+      db,
+      sessionId,
+      learningItemId: skillContext.ref.id,
+      userMessage: req.user_message,
+    });
+    const replyMd = skillResult.text_md;
+    // PR #305 review comment #3: use the real task_run_id from the skill runner.
+    const realTaskRunId = skillResult.task_run_id;
+    // Carry the teaching turn kind onto the copilot_reply payload so the
+    // accept-chip resolver can anchor a corrective chip on THIS event (R1 pairing,
+    // load-bearing — §4.2). Free-form replies and solve hints carry no turn_kind.
+    const turnKind: 'explain' | 'ask_check' | 'end' = skillResult.kind;
+
+    // PR #305 review comment #1 (atomicity): materialize the ask_check question
+    // INSIDE the reply-event write transaction — both or neither persist.
+    const replyAt = new Date(now.getTime() + 1);
+    const materializedQuestion = await db.transaction(async (tx: Tx) => {
+      let mat: MaterializedAskCheckQuestion | undefined;
+      if (skillResult.pendingQuestion) {
+        mat = await materializeAskCheck(tx, {
+          ...skillResult.pendingQuestion,
+          sourceRef: replyEventId,
+        });
+      }
+      await write(tx, {
+        id: replyEventId,
+        session_id: sessionId,
+        actor_kind: 'agent',
+        actor_ref: actorRef,
+        action: REPLY_EVENT_ACTION,
+        subject_kind: 'query',
+        subject_id: replyEventId,
+        outcome: null,
+        payload: {
+          surface: 'copilot',
+          session_id: sessionId,
+          reply_md: replyMd,
+          // PR #305 review comment #3: real task_run_id from TeachingTurnTask.
+          task_run_id: realTaskRunId,
+          in_reply_to_event_id: causedByEventId ?? null,
+          // AF S4 — corrective-chip anchor key (only for teaching turns).
+          turn_kind: turnKind,
+          // PR #305 review comment #2: persist skill_turn so replay can surface
+          // it without re-running the LLM (ask_check carries structured_question).
+          ...(mat
+            ? {
+                skill_turn: {
+                  kind: skillResult.kind,
+                  suggested_next: skillResult.suggested_next,
+                  structured_question: mat,
+                },
+              }
+            : {
+                skill_turn: {
+                  kind: skillResult.kind,
+                  suggested_next: skillResult.suggested_next,
+                },
+              }),
+          // PR round-2 (CR 3360614441): persist skill_context so replay can
+          // restore the skill card (Dock chip renderer + replayToMessages use it).
+          skill_context: skillContext,
+        },
+        caused_by_event_id: causedByEventId ?? null,
+        task_run_id: realTaskRunId,
+        created_at: replyAt,
+      });
+      return mat;
+    });
+
+    const skillTurn: CopilotSkillTurn = {
+      kind: skillResult.kind,
+      suggested_next: skillResult.suggested_next,
+      ...(materializedQuestion ? { structured_question: materializedQuestion } : {}),
+    };
+
+    // YUK-266 (C1) — skill turns are deterministic / single-shot (no token loop),
+    // so when streaming we emit ONE delta carrying the full reply, then the caller
+    // emits the terminal `reply` event. This keeps one transport code path across
+    // free-form and skill turns.
+    if (streaming) streaming.onDelta(replyMd);
+
+    return {
+      // PR #305 review comment #3: expose the real task_run_id (not the pre-generated
+      // placeholder) so cost-tracing links the API response to the actual LLM run.
+      task_run_id: realTaskRunId,
+      reply: replyMd,
+      // PR #342 bot-review (CodeRabbit F3): force the skill-turn surface to
+      // 'copilot' so the API response matches the persisted reply-event payload
+      // (which hard-codes surface:'copilot'). The `surface` variable is
+      // triggered_by-derived and becomes 'copilot_user_suggested_mistake_action'
+      // on a chip turn — returning it here would fork the API/replay-audit
+      // contract for any chip+skill_context turn.
+      surface: 'copilot',
+      triggered_by: req.triggered_by,
+      session_id: sessionId,
+      reply_event_id: replyEventId,
+      ...(userAskEventId ? { user_ask_event_id: userAskEventId } : {}),
+      skill_turn: skillTurn,
+    };
+  }
+
+  // YUK-284 (C1) — solve behavior pack as a self-contained handler that RETURNS its
+  // own terminal CopilotChatResult. Logic moved verbatim from the former
+  // `if (skill_context.skill==='solve')` branch: one reply-event write, real
+  // task_run_id, skill_context persisted for replay, NO turn_kind / NO skill_turn.
+  // skillContext is the narrowed (non-undefined) req.skill_context from dispatch.
+  async function runSolveBehaviorPack(
+    skillContext: CopilotSkillContextT,
+  ): Promise<CopilotChatResult> {
+    const replyEventId = `copilot_reply_${createId()}`;
+    // hintIndex 故意不传（恒为首问 hint）：U6 MVP 只做 hint-only solve pack，
+    // buildSolveHintInput 的递进分支（hintIndex>0 合成追问）经此入口是死代码。
+    // 接续上下文见 plan §11（cut-over 时机）：若要递进，需按 session 内既往
+    // solve turn 计数派生 hintIndex（review LOW note，intentional-by-record）。
+    const skillResult: SolveSkillResult = await runSolveSkillFn({
+      db,
+      questionId: skillContext.ref.id,
+    });
+    const replyMd = skillResult.text_md;
+    // PR #305 review comment #3: use the real task_run_id from the skill runner.
+    const realTaskRunId = skillResult.task_run_id;
+
+    const replyAt = new Date(now.getTime() + 1);
+    await write(db, {
+      id: replyEventId,
+      session_id: sessionId,
+      actor_kind: 'agent',
+      actor_ref: actorRef,
+      action: REPLY_EVENT_ACTION,
+      subject_kind: 'query',
+      subject_id: replyEventId,
+      outcome: null,
+      payload: {
+        surface: 'copilot',
+        session_id: sessionId,
+        reply_md: replyMd,
+        // PR #305 review comment #3: real task_run_id from TeachingTurnTask.
+        task_run_id: realTaskRunId,
+        in_reply_to_event_id: causedByEventId ?? null,
+        // PR round-2 (CR 3360614441): persist skill_context so replay can
+        // restore the skill card (Dock chip renderer + replayToMessages use it).
+        skill_context: skillContext,
+      },
+      caused_by_event_id: causedByEventId ?? null,
+      task_run_id: realTaskRunId,
+      created_at: replyAt,
+    });
+
+    if (streaming) streaming.onDelta(replyMd);
+
+    return {
+      task_run_id: realTaskRunId,
+      reply: replyMd,
+      surface: 'copilot',
+      triggered_by: req.triggered_by,
+      session_id: sessionId,
+      reply_event_id: replyEventId,
+      ...(userAskEventId ? { user_ask_event_id: userAskEventId } : {}),
+    };
+  }
+
   // §D1/§D2/§D5 / YUK-275 — free-text 求卷 intercept. Only typed chat turns WITHOUT a
   // skill_context are eligible (the chip path carries skill_context:{skill:'quiz'} and is
   // handled by the既有 skill branch below — the `!req.skill_context` guard避让 it, no
@@ -669,180 +854,38 @@ async function runCopilotChatImpl(
   // and the TeachingTurnTask call inside the skill is a service call, so it draws
   // down NO tool budget (OQ5). The skill turn lives entirely on this single
   // Copilot session (Cross-统合 single-session).
+  // YUK-284 (C1) — behavior-pack dispatch as a Record lookup table instead of an
+  // if/else-if/else-throw chain. Each handler is a closure capturing the locals
+  // already in scope (db/req/write/now/streaming/...) and RETURNS its own terminal
+  // CopilotChatResult — there is NO block-tail shared return reading half-assigned
+  // locals. Exhaustiveness is enforced by `Record<CopilotBehaviorPackKind, …>` at
+  // COMPILE time: adding a 4th kind to COPILOT_BEHAVIOR_PACK_KINDS makes the Record
+  // a missing-key error (earlier + safer than the former runtime throw, which is
+  // why no runtime else-throw is needed here).
   if (req.skill_context) {
-    // Pre-generate the reply event id so ask_check materialization (which needs
-    // it as source_ref) and the reply event write can share the same tx (PR #305
-    // review comment #1: prevents dangling question row on reply-write failure).
-    const replyEventId = `copilot_reply_${createId()}`;
-    let replyMd: string;
-    let realTaskRunId: string;
-    // Carry the teaching turn kind onto the copilot_reply payload so the
-    // accept-chip resolver can anchor a corrective chip on THIS event (R1 pairing,
-    // load-bearing — §4.2). Free-form replies and solve hints carry no turn_kind.
-    let turnKind: 'explain' | 'ask_check' | 'end' | undefined;
-    let skillTurn: CopilotSkillTurn | undefined;
-    let materializedQuestion: MaterializedAskCheckQuestion | undefined;
-
-    if (req.skill_context.skill === 'teaching') {
-      const skillResult: TeachingSkillResult = await runTeachingSkillFn({
-        db,
-        sessionId,
-        learningItemId: req.skill_context.ref.id,
-        userMessage: req.user_message,
-      });
-      replyMd = skillResult.text_md;
-      // PR #305 review comment #3: use the real task_run_id from the skill runner.
-      realTaskRunId = skillResult.task_run_id;
-      turnKind = skillResult.kind;
-
-      // PR #305 review comment #1 (atomicity): materialize the ask_check question
-      // INSIDE the reply-event write transaction — both or neither persist.
-      const replyAt = new Date(now.getTime() + 1);
-      materializedQuestion = await db.transaction(async (tx: Tx) => {
-        let mat: MaterializedAskCheckQuestion | undefined;
-        if (skillResult.pendingQuestion) {
-          mat = await materializeAskCheck(tx, {
-            ...skillResult.pendingQuestion,
-            sourceRef: replyEventId,
-          });
-        }
-        await write(tx, {
-          id: replyEventId,
-          session_id: sessionId,
-          actor_kind: 'agent',
-          actor_ref: actorRef,
-          action: REPLY_EVENT_ACTION,
-          subject_kind: 'query',
-          subject_id: replyEventId,
-          outcome: null,
-          payload: {
-            surface: 'copilot',
-            session_id: sessionId,
-            reply_md: replyMd,
-            // PR #305 review comment #3: real task_run_id from TeachingTurnTask.
-            task_run_id: realTaskRunId,
-            in_reply_to_event_id: causedByEventId ?? null,
-            // AF S4 — corrective-chip anchor key (only for teaching turns).
-            ...(turnKind ? { turn_kind: turnKind } : {}),
-            // PR #305 review comment #2: persist skill_turn so replay can surface
-            // it without re-running the LLM (ask_check carries structured_question).
-            ...(mat
-              ? {
-                  skill_turn: {
-                    kind: skillResult.kind,
-                    suggested_next: skillResult.suggested_next,
-                    structured_question: mat,
-                  },
-                }
-              : turnKind
-                ? {
-                    skill_turn: {
-                      kind: skillResult.kind,
-                      suggested_next: skillResult.suggested_next,
-                    },
-                  }
-                : {}),
-            // PR round-2 (CR 3360614441): persist skill_context so replay can
-            // restore the skill card (Dock chip renderer + replayToMessages use it).
-            skill_context: req.skill_context,
-          },
-          caused_by_event_id: causedByEventId ?? null,
-          task_run_id: realTaskRunId,
-          created_at: replyAt,
-        });
-        return mat;
-      });
-
-      skillTurn = {
-        kind: skillResult.kind,
-        suggested_next: skillResult.suggested_next,
-        ...(materializedQuestion ? { structured_question: materializedQuestion } : {}),
+    // Narrow once so the handlers below take a non-undefined skillContext
+    // (avoids non-null assertions — biome noNonNullAssertion).
+    const skillContext = req.skill_context;
+    const behaviorPackHandlers: Record<CopilotBehaviorPackKind, () => Promise<CopilotChatResult>> =
+      {
+        teaching: () => runTeachingBehaviorPack(skillContext),
+        solve: () => runSolveBehaviorPack(skillContext),
+        // YUK-262 / YUK-275 — chip-seeded quiz pack. Pure SERVICE orchestration: source
+        // the existing pool → assemble + persist a tool_quiz artifact → reply with a
+        // /practice/<id> link (or an explicit degradation notice; NEVER a text-sprayed
+        // quiz). There is NO LLM run on this execution path. §D5: the reply-event write +
+        // synthetic-run-id reuse + skill_context persistence are shared with the free-text
+        // path via emitQuizReply (DRY); the chip path passes the既有 skill_context verbatim
+        // for replay and no free-text 扩参 (difficultyMin/unit/kind null → byte-for-byte the
+        // pre-YUK-275 behaviour). One-shot-end (YUK-213) + the former seeding gap
+        // (YUK-269 chip + YUK-275 free-text) context is unchanged.
+        quiz: () =>
+          emitQuizReply({
+            knowledgeId: skillContext.ref.id,
+            skillContextForReplay: skillContext,
+          }),
       };
-    } else if (req.skill_context.skill === 'solve') {
-      // hintIndex 故意不传（恒为首问 hint）：U6 MVP 只做 hint-only solve skill，
-      // buildSolveHintInput 的递进分支（hintIndex>0 合成追问）经此入口是死代码。
-      // 接续上下文见 plan §11（cut-over 时机）：若要递进，需按 session 内既往
-      // solve turn 计数派生 hintIndex（review LOW note，intentional-by-record）。
-      const skillResult: SolveSkillResult = await runSolveSkillFn({
-        db,
-        questionId: req.skill_context.ref.id,
-      });
-      replyMd = skillResult.text_md;
-      // PR #305 review comment #3: use the real task_run_id from the skill runner.
-      realTaskRunId = skillResult.task_run_id;
-
-      const replyAt = new Date(now.getTime() + 1);
-      await write(db, {
-        id: replyEventId,
-        session_id: sessionId,
-        actor_kind: 'agent',
-        actor_ref: actorRef,
-        action: REPLY_EVENT_ACTION,
-        subject_kind: 'query',
-        subject_id: replyEventId,
-        outcome: null,
-        payload: {
-          surface: 'copilot',
-          session_id: sessionId,
-          reply_md: replyMd,
-          // PR #305 review comment #3: real task_run_id from TeachingTurnTask.
-          task_run_id: realTaskRunId,
-          in_reply_to_event_id: causedByEventId ?? null,
-          // PR round-2 (CR 3360614441): persist skill_context so replay can
-          // restore the skill card (Dock chip renderer + replayToMessages use it).
-          skill_context: req.skill_context,
-        },
-        caused_by_event_id: causedByEventId ?? null,
-        task_run_id: realTaskRunId,
-        created_at: replyAt,
-      });
-    } else if (req.skill_context.skill === 'quiz') {
-      // YUK-262 / YUK-275 — chip-seeded quiz skill. Pure SERVICE orchestration: source the
-      // existing pool → assemble + persist a tool_quiz artifact → reply with a
-      // /practice/<id> link (or an explicit degradation notice; NEVER a text-sprayed quiz).
-      // There is NO LLM run on this execution path. §D5: the reply-event write +
-      // synthetic-run-id reuse + skill_context persistence are now shared with the
-      // free-text path via emitQuizReply (DRY); the chip path passes the既有
-      // skill_context verbatim for replay and no free-text 扩参 (difficultyMin/unit/kind
-      // null → byte-for-byte the pre-YUK-275 behaviour). One-shot-end (YUK-213) + the
-      // former seeding gap (YUK-269 chip + YUK-275 free-text) context is unchanged.
-      return emitQuizReply({
-        knowledgeId: req.skill_context.ref.id,
-        skillContextForReplay: req.skill_context,
-      });
-    } else {
-      // PR #342 bot-review (OCR/Codex F4): exhaustive guard. `skill` is
-      // z.enum(COPILOT_SKILL_KINDS) (validated at the route boundary), so the
-      // three branches above are exhaustive today and this `else` is unreachable
-      // at runtime. It exists so that a FUTURE 4th skill kind fails loudly here
-      // in dev instead of silently mis-routing into the quiz path.
-      throw new Error(`Unhandled copilot skill kind: ${req.skill_context.skill}`);
-    }
-
-    // YUK-266 (C1) — skill turns are deterministic / single-shot (no token loop),
-    // so when streaming we emit ONE delta carrying the full reply, then the caller
-    // emits the terminal `reply` event. This keeps one transport code path across
-    // free-form and skill turns.
-    if (streaming) streaming.onDelta(replyMd);
-
-    return {
-      // PR #305 review comment #3: expose the real task_run_id (not the pre-generated
-      // placeholder) so cost-tracing links the API response to the actual LLM run.
-      task_run_id: realTaskRunId,
-      reply: replyMd,
-      // PR #342 bot-review (CodeRabbit F3): force the skill-turn surface to
-      // 'copilot' so the API response matches the persisted reply-event payload
-      // (which hard-codes surface:'copilot'). The `surface` variable is
-      // triggered_by-derived and becomes 'copilot_user_suggested_mistake_action'
-      // on a chip turn — returning it here would fork the API/replay-audit
-      // contract for any chip+skill_context turn.
-      surface: 'copilot',
-      triggered_by: req.triggered_by,
-      session_id: sessionId,
-      reply_event_id: replyEventId,
-      ...(userAskEventId ? { user_ask_event_id: userAskEventId } : {}),
-      ...(skillTurn ? { skill_turn: skillTurn } : {}),
-    };
+    return behaviorPackHandlers[skillContext.skill]();
   }
 
   // P5.1 / YUK-143 — per-message context-budget throttle. One tracker lives for
