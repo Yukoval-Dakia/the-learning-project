@@ -333,6 +333,35 @@ describe('pickProbeForKnowledge', () => {
     expect(chosen?.question_id).toBe('q_dedup_root');
   });
 
+  // §3.7b — F1 regression (CodeRabbit): a knowledge point with >20 non-draft
+  // questions whose first 20 (created_at ASC, id ASC) are all already used this
+  // page must still surface the first AVAILABLE question past position 20. The
+  // pre-fix `.limit(20)` page + in-memory `.find(unused)` returned null here and
+  // silently dropped the knowledge point despite available questions existing.
+  it('firstForKnowledge: surfaces an available question past the first 20 used (F1)', async () => {
+    // Seed 25 stand-alone non-draft questions for k_big in deterministic order.
+    // id zero-padded so id-ASC matches the seed/created_at order.
+    const ids: string[] = [];
+    for (let i = 0; i < 25; i += 1) {
+      const id = `q_big_${String(i).padStart(2, '0')}`;
+      ids.push(id);
+      await seedQuestion(id, { kind: 'short_answer', knowledge_ids: ['k_big'] });
+    }
+    // Mark the first 20 as already used by earlier knowledge points this page.
+    const used = new Set<string>(ids.slice(0, 20));
+
+    // never-reviewed → application default → firstForKnowledge(k_big, used).
+    const chosen = await pick({
+      knowledgeId: 'k_big',
+      lastReviewEventId: null,
+      usedQuestionIds: used,
+    });
+    // Must be the first un-used one (position 21), not null.
+    expect(chosen?.question_id).toBe('q_big_20');
+    // And it gets added to the used set (cross-knowledge dedup contract).
+    expect(used.has('q_big_20')).toBe(true);
+  });
+
   // §3.8 — determinism: identical input → identical output across runs.
   it('is deterministic: same input yields same output', async () => {
     await seedQuestion('q_det_root', {
