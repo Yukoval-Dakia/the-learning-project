@@ -92,7 +92,8 @@ text-spraying a quiz**.
   drive sourcing (sourcing keys off `knowledgeId`, the structured ref).
 
 ### 2.2 Service composition (the body)
-```
+
+```text
 runQuizSkill({ db, sessionId, knowledgeId, userMessage, count?, kind?, domain? }, deps)
   1. seq = runSourcingSequenceFn({ db, knowledgeId, trigger:'manual', count, kind, domain })
         // DI seam: deps.runSourcingSequenceFn defaults to runSourcingSequence
@@ -130,12 +131,14 @@ runQuizSkill({ db, sessionId, knowledgeId, userMessage, count?, kind?, domain? }
   as the two sibling shapes (deferred consolidation note → §9 follow-up).
 
 ### 2.4 Degradation paths (explicit, never silent text-spray)
+
 | condition | result.kind/reason | artifact | reply text |
 |---|---|---|---|
 | node missing/archived (`knowledgeNodeMissing`) | `degraded`, `knowledge_not_found` | none | "没找到这个知识点，换一个再试" |
 | pool empty (`existing.length===0`) | `degraded`, `pool_empty` | none | "题库暂时没有现成题，已在后台按 外检索/素材生成/闭卷 三线生成，稍后再来" |
 | pool short (`0 < existing.length < count`) | `ok`, partial | built (n<count) | link + "先给你 n 道，其余在后台补" |
 | pool ok (`existing.length>=count`) | `ok` | built | link + short framing |
+
 - The degraded branches return a structured result the chat.ts layer renders as plain reply text;
   **the free-form `CopilotTask` loop is never invoked** (early-return preserved). This is the whole
   point: the user gets an honest "couldn't" instead of a hallucinated paper.
