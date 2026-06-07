@@ -486,3 +486,56 @@ describe('YUK-201: resolveQuestionJudgeRoute — multimodal_direct routing + reg
     ).toBe('unit_dimension');
   });
 });
+
+describe('YUK-260: exact route forwards choices_md so letter↔text resolve', () => {
+  const optionTextRef: JudgeQuestionRow = {
+    id: 'q-choice',
+    kind: 'choice',
+    prompt_md: '下列哪项是宾语前置？',
+    // reference stored as OPTION TEXT (the owner-observed broken case)
+    reference_md: '宾语前置',
+    rubric_json: null,
+    choices_md: ['宾语前置', '主谓倒装', '定语后置', '状语后置'],
+    judge_kind_override: null,
+  };
+
+  it('letter answer "A" against option-text reference → correct', async () => {
+    const r = await judgeAnswer({
+      db: mockDb,
+      question: optionTextRef,
+      answer_md: 'A',
+      subjectProfile: wenyanProfile,
+    });
+    expect(r.route).toBe('exact');
+    expect(r.result.coarse_outcome).toBe('correct');
+    expect(r.result.score).toBe(1);
+  });
+
+  it('wrong letter "B" against option-text reference → incorrect', async () => {
+    const r = await judgeAnswer({
+      db: mockDb,
+      question: optionTextRef,
+      answer_md: 'B',
+      subjectProfile: wenyanProfile,
+    });
+    expect(r.route).toBe('exact');
+    expect(r.result.coarse_outcome).toBe('incorrect');
+    expect(r.result.score).toBe(0);
+  });
+
+  it('multi-select reference "BC" matches out-of-order "C、B"', async () => {
+    const multi: JudgeQuestionRow = {
+      ...optionTextRef,
+      reference_md: 'BC',
+      choices_md: ['甲', '乙', '丙', '丁'],
+    };
+    const r = await judgeAnswer({
+      db: mockDb,
+      question: multi,
+      answer_md: 'C、B',
+      subjectProfile: wenyanProfile,
+    });
+    expect(r.route).toBe('exact');
+    expect(r.result.coarse_outcome).toBe('correct');
+  });
+});
