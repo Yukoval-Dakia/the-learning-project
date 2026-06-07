@@ -20,7 +20,29 @@ export async function uploadAsset(file: File): Promise<UploadedAsset> {
   const form = new FormData();
   form.append('file', file);
   const res = await apiFetch('/api/assets', { method: 'POST', body: form });
-  return (await res.json()) as UploadedAsset;
+  // /api/assets returns `{ asset: row }` (route.ts), so unwrap `.asset` — the
+  // previous flat cast left every `.id` undefined, which broke POST
+  // /api/ingestion (asset_ids: [undefined]). Pre-existing prod bug fixed under
+  // YUK-250; regression-tested in assets.test.ts.
+  const body = (await res.json()) as { asset: UploadedAsset };
+  return body.asset;
+}
+
+export interface ExpandedPdf {
+  asset_ids: string[];
+  page_count: number;
+}
+
+// Single-PDF → N page-image assets. POST /api/ingestion/pdf renders the PDF
+// server-side and persists one content-addressed image asset per page,
+// returning a FLAT `{ asset_ids, page_count }` shape (NOT wrapped in `{asset}` —
+// do not conflate with uploadAsset). The caller feeds asset_ids straight into
+// POST /api/ingestion, identical to the photo path.
+export async function expandPdf(file: File): Promise<ExpandedPdf> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await apiFetch('/api/ingestion/pdf', { method: 'POST', body: form });
+  return (await res.json()) as ExpandedPdf;
 }
 
 // In-memory cache so the same asset id rendered in multiple BlockEditors

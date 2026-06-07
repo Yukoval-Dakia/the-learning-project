@@ -1,21 +1,12 @@
-import { createId } from '@paralleldrive/cuid2';
-
 import { db } from '@/db/client';
-import { source_asset } from '@/db/schema';
 import { ApiError, errorResponse } from '@/server/http/errors';
+import { persistImageAsset } from '@/server/ingestion/persist-image-asset';
 import { getR2 } from '@/server/r2';
 
 export const runtime = 'nodejs';
 
 const MAX_UPLOAD_BYTES = 8_000_000;
 const ALLOWED_MIME = new Set(['image/png', 'image/jpeg', 'image/webp']);
-
-async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const hash = await crypto.subtle.digest('SHA-256', bytes.buffer as ArrayBuffer);
-  return Array.from(new Uint8Array(hash))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-}
 
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -32,25 +23,7 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     const bytes = new Uint8Array(await file.arrayBuffer());
-    const sha = await sha256Hex(bytes);
-    const storageKey = `assets/${sha}`;
-    const r2 = getR2();
-    await r2.put(storageKey, bytes, file.type);
-
-    const id = createId();
-    const now = new Date();
-    const [row] = await db
-      .insert(source_asset)
-      .values({
-        id,
-        kind: 'image',
-        storage_key: storageKey,
-        mime_type: file.type,
-        byte_size: bytes.byteLength,
-        sha256: sha,
-        created_at: now,
-      })
-      .returning();
+    const row = await persistImageAsset(db, getR2(), { bytes, mime: file.type });
 
     return Response.json({ asset: row }, { status: 201 });
   } catch (err) {
