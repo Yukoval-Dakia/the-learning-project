@@ -83,6 +83,12 @@ import {
   type MaterializedAskCheckQuestion,
   materializeAskCheckQuestion,
 } from '@/server/teaching/materialize-ask-check';
+// YUK-284 (C2) — cross-subject Copilot dialogue-methodology Agent Skill resolver.
+// resolveCopilotSkills() returns ['copilot'] when the shared SKILL.md exists, else
+// undefined (降级链: free-form ctx omits skills → runner skills ?? [] → systemPrompt
+// 散文兜底). Only the free-form CopilotTask token loop loads it; the behavior-pack
+// (teaching/solve/quiz) service-call paths do NOT.
+import { resolveCopilotSkills } from '@/subjects/copilot-skills';
 import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 
 export const COPILOT_CHAT_TRIGGER_KINDS = ['chat', 'chip'] as const;
@@ -207,6 +213,12 @@ type RunAgentTaskFn = (
     // is the SDK's Options['mcpServers'].
     mcpServers?: Record<string, SdkMcpServer | McpHttpServerConfig>;
     allowedTools?: string[];
+    // YUK-284 (C2) — Agent Skill whitelist forwarded to the runner (ctx.skills,
+    // runner.ts:120). Present on the free-form CopilotTask path so the dialogue
+    // methodology SKILL.md loads. The underlying RunTaskCtx already declares
+    // skills?: string[]; this alias just exposes it so passing skills here does
+    // NOT trip the TS excess-property check.
+    skills?: string[];
   },
 ) => Promise<RunTaskResult>;
 // YUK-266 (C1) — swappable streaming agent runner. Streams text deltas to
@@ -222,6 +234,9 @@ type StreamAgentTaskFn = (
     mcpServers?: Record<string, SdkMcpServer | McpHttpServerConfig>;
     allowedTools?: string[];
     signal?: AbortSignal;
+    // YUK-284 (C2) — see RunAgentTaskFn.ctx.skills. Same forward to the streaming
+    // runner so the free-form streaming path loads the copilot SKILL.md too.
+    skills?: string[];
   },
   onDelta: (text: string) => void,
 ) => Promise<StreamCollectResult>;
@@ -282,6 +297,10 @@ export interface CopilotChatDeps {
   resolveQuizIntentFn?: typeof resolveQuizIntent;
   // PR #305 review comment #1 — swappable for unit tests (stub tx has no .select).
   materializeAskCheckFn?: typeof materializeAskCheckQuestion;
+  // YUK-284 (C2) — swappable Copilot skill resolver. Defaults to resolveCopilotSkills
+  // (reads <cwd>/src/subjects/_shared/skills/copilot/SKILL.md). Unit tests inject
+  // () => ['copilot'] (命中) or () => undefined (降级) so they don't depend on disk.
+  resolveCopilotSkillsFn?: typeof resolveCopilotSkills;
   now?: () => Date;
 }
 
@@ -414,6 +433,12 @@ async function runCopilotChatImpl(
   const detectQuizIntentFn = deps.detectQuizIntentFn ?? detectQuizIntent;
   const resolveQuizIntentFn = deps.resolveQuizIntentFn ?? resolveQuizIntent;
   const materializeAskCheck = deps.materializeAskCheckFn ?? materializeAskCheckQuestion;
+  // YUK-284 (C2) — resolve the Copilot skill whitelist ONCE (one existsSync), reused
+  // by both the streaming and non-streaming free-form ctx below. undefined when the
+  // shared SKILL.md is absent → free-form ctx omits skills (spread-when-present) →
+  // byte-for-byte the pre-C2 ctx shape. The behavior-pack paths never touch this.
+  const resolveSkills = deps.resolveCopilotSkillsFn ?? resolveCopilotSkills;
+  const copilotSkills = resolveSkills();
 
   const surface = selectSurface(req.triggered_by);
   const actorRef = selectActorRef(req.triggered_by);
@@ -990,14 +1015,29 @@ async function runCopilotChatImpl(
     const streamResult = await streamRun(
       'CopilotTask',
       runInput,
-      { db, mcpServers, allowedTools, signal: streaming.signal },
+      {
+        db,
+        mcpServers,
+        allowedTools,
+        signal: streaming.signal,
+        // YUK-284 (C2) — spread-when-present: when the copilot SKILL.md is absent
+        // (copilotSkills === undefined) the ctx omits `skills` entirely, byte-for-byte
+        // the pre-C2 shape (runner ctx.skills ?? [] unchanged → no regression).
+        ...(copilotSkills ? { skills: copilotSkills } : {}),
+      },
       streaming.onDelta,
     );
     replyText = streamResult.text;
     replyRunId = streamResult.task_run_id;
     if (streamResult.partial) streamError = streamResult.error;
   } else {
-    const result = await run('CopilotTask', runInput, { db, mcpServers, allowedTools });
+    const result = await run('CopilotTask', runInput, {
+      db,
+      mcpServers,
+      allowedTools,
+      // YUK-284 (C2) — see streaming branch above (spread-when-present).
+      ...(copilotSkills ? { skills: copilotSkills } : {}),
+    });
     replyText = result.text;
     replyRunId = result.task_run_id;
   }

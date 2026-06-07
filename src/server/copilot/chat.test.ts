@@ -1242,6 +1242,163 @@ describe('runCopilotChat — free-text quiz routing (YUK-275)', () => {
   });
 });
 
+// YUK-284 (C2) — the free-form CopilotTask path forwards ctx.skills =
+// resolveCopilotSkills() so the dialogue-methodology SKILL.md loads. The resolver
+// is injected (resolveCopilotSkillsFn) so the test never touches disk; the
+// behavior-pack (teaching/solve/quiz) service-call paths must NOT receive skills.
+describe('runCopilotChat — copilot skill wiring (C2 / YUK-284)', () => {
+  const baseDeps = {
+    findOrCreateConversationFn: async () => ({ sessionId: 'ls_copilot', created: false }),
+    loadProposalFeedbackFn: async () => [],
+    now: () => new Date('2026-06-08T00:00:00.000Z'),
+  };
+
+  // T-C2-4 — non-streaming free-form ctx carries skills:['copilot'].
+  it('non-streaming free-form: ctx carries skills:[copilot] when the resolver hits', async () => {
+    const db = {} as never;
+    const writeEventFn = vi.fn(async (_db: unknown, input: { id: string }) => input.id);
+    let capturedCtx: unknown;
+    const runAgentTaskFn = vi.fn(async (_kind: string, _input: unknown, ctx: unknown) => {
+      capturedCtx = ctx;
+      return {
+        task_run_id: 'task_freeform',
+        text: 'REPLY',
+        finishReason: 'stop' as const,
+        usage: { inputTokens: 1, outputTokens: 2 },
+      };
+    });
+    const buildMcpServerFn = vi.fn(() => ({ name: 'fake-loom' }) as never);
+
+    await runCopilotChat(
+      db,
+      { user_message: '解释一下「之」', triggered_by: 'chat' },
+      {
+        ...baseDeps,
+        writeEventFn,
+        runAgentTaskFn,
+        buildMcpServerFn,
+        resolveCopilotSkillsFn: () => ['copilot'],
+      },
+    );
+
+    expect(capturedCtx).toMatchObject({ skills: ['copilot'] });
+  });
+
+  // T-C2-5 — streaming free-form ctx ALSO carries skills:['copilot'] (审查标注的唯一
+  // 差异点：流式分支独立断言，证明 stream/non-stream 两路 skills 加载一致).
+  it('streaming free-form: ctx carries skills:[copilot] (stream/non-stream parity)', async () => {
+    const db = {} as never;
+    const writeEventFn = vi.fn(async (_db: unknown, input: { id: string }) => input.id);
+    let streamCtx: unknown;
+    const streamAgentTaskFn = vi.fn(
+      async (_kind: string, _input: unknown, ctx: unknown, onDelta: (t: string) => void) => {
+        streamCtx = ctx;
+        onDelta('OK');
+        return {
+          task_run_id: 'task_stream_real',
+          text: 'OK',
+          finishReason: 'stop' as const,
+          usage: { inputTokens: 1, outputTokens: 2 },
+        };
+      },
+    );
+    const buildMcpServerFn = vi.fn(() => ({ name: 'fake-loom' }) as never);
+
+    await runCopilotChatStreaming(
+      db,
+      { user_message: '解释一下「之」', triggered_by: 'chat' },
+      () => {},
+      {
+        ...baseDeps,
+        writeEventFn,
+        streamAgentTaskFn,
+        buildMcpServerFn,
+        resolveCopilotSkillsFn: () => ['copilot'],
+      },
+    );
+
+    expect(streamCtx).toMatchObject({ skills: ['copilot'] });
+  });
+
+  // T-C2-6 — resolver miss (SKILL.md absent) → ctx OMITS skills entirely (零回归:
+  // spread-when-present keeps the ctx shape byte-for-byte the pre-C2 shape).
+  it('resolver miss: free-form ctx omits the skills field entirely (零回归)', async () => {
+    const db = {} as never;
+    const writeEventFn = vi.fn(async (_db: unknown, input: { id: string }) => input.id);
+    let capturedCtx: unknown;
+    const runAgentTaskFn = vi.fn(async (_kind: string, _input: unknown, ctx: unknown) => {
+      capturedCtx = ctx;
+      return {
+        task_run_id: 'task_freeform',
+        text: 'REPLY',
+        finishReason: 'stop' as const,
+        usage: { inputTokens: 1, outputTokens: 2 },
+      };
+    });
+    const buildMcpServerFn = vi.fn(() => ({ name: 'fake-loom' }) as never);
+
+    await runCopilotChat(
+      db,
+      { user_message: '随便聊聊', triggered_by: 'chat' },
+      {
+        ...baseDeps,
+        writeEventFn,
+        runAgentTaskFn,
+        buildMcpServerFn,
+        resolveCopilotSkillsFn: () => undefined,
+      },
+    );
+
+    expect(capturedCtx).not.toHaveProperty('skills');
+  });
+
+  // T-C2-7 — the behavior-pack (quiz) service-call path does NOT resolve copilot
+  // skills (service call composes its own task-prompt; it never reads copilot SKILL.md).
+  it('behavior-pack path: never calls resolveCopilotSkillsFn', async () => {
+    const db = {} as never;
+    const writeEventFn = vi.fn(async (_db: unknown, input: { id: string }) => input.id);
+    let quizParams: unknown;
+    const runQuizSkillFn = vi.fn(async (params: unknown) => {
+      quizParams = params;
+      return {
+        text_md: '已为你组好一套练习：[去练习](/practice/art_x)',
+        artifact_id: 'art_x',
+        question_count: 3,
+        status: 'ok' as const,
+      };
+    });
+    const runAgentTaskFn = vi.fn(async () => {
+      throw new Error('CopilotTask must not run on a behavior-pack turn');
+    });
+    const buildMcpServerFn = vi.fn(() => ({ name: 'fake-loom' }) as never);
+    const resolveCopilotSkillsFn = vi.fn(() => ['copilot'] as string[]);
+
+    await runCopilotChat(
+      db,
+      {
+        user_message: '给我出套题',
+        triggered_by: 'chat',
+        skill_context: { skill: 'quiz', ref: { kind: 'knowledge', id: 'kn_x' } },
+      },
+      {
+        ...baseDeps,
+        writeEventFn,
+        runQuizSkillFn,
+        runAgentTaskFn,
+        buildMcpServerFn,
+        resolveCopilotSkillsFn,
+      },
+    );
+
+    // The free-form CopilotTask loop never ran, and although the resolver is called
+    // once eagerly (single existsSync), the result is NEVER threaded into a
+    // behavior-pack service call — runQuizSkillFn receives no skills.
+    expect(runAgentTaskFn).not.toHaveBeenCalled();
+    expect(runQuizSkillFn).toHaveBeenCalledTimes(1);
+    expect(quizParams).not.toHaveProperty('skills');
+  });
+});
+
 // YUK-266 (C1) — runCopilotChatStreaming streams text deltas then resolves the
 // terminal CopilotChatResult. The turn-persistence contract is byte-identical to
 // the non-stream path: the SAME single experimental:copilot_reply event is written
