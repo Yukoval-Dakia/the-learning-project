@@ -4,10 +4,28 @@
 // tier filter/sort (NO SQL source_tier), and A1c variant families.
 
 import { newId } from '@/core/ids';
-import { question } from '@/db/schema';
+import { knowledge, question } from '@/db/schema';
+import { resolveSubjectKnowledgeIds } from '@/server/knowledge/domain';
 import { listQuestions } from '@/server/questions/list';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
+
+async function seedKnowledge(
+  id: string,
+  opts: { domain?: string | null; parent_id?: string | null } = {},
+): Promise<string> {
+  await testDb()
+    .insert(knowledge)
+    .values({
+      id,
+      name: `node ${id}`,
+      domain: opts.domain ?? null,
+      parent_id: opts.parent_id ?? null,
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+  return id;
+}
 
 interface SeedQuestionOpts {
   id?: string;
@@ -20,6 +38,8 @@ interface SeedQuestionOpts {
   draft_status?: string | null;
   variant_depth?: number;
   root_question_id?: string | null;
+  parent_question_id?: string | null;
+  part_index?: number | null;
   metadata?: Record<string, unknown> | null;
   created_at?: Date;
 }
@@ -41,6 +61,8 @@ async function seedQuestion(opts: SeedQuestionOpts = {}): Promise<string> {
       draft_status: opts.draft_status ?? null,
       variant_depth: opts.variant_depth ?? 0,
       root_question_id: opts.root_question_id ?? null,
+      parent_question_id: opts.parent_question_id ?? null,
+      part_index: opts.part_index ?? null,
       metadata: (opts.metadata ?? null) as never,
       created_at: now,
       updated_at: now,
@@ -328,6 +350,86 @@ describe('listQuestions', () => {
       const res = await listQuestions(testDb(), { expandRoot: root, limit: 50, offset: 0 });
       expect(res.families).toBeNull();
       expect(res.items.map((i) => i.id)).toEqual([root, v1, v2]);
+    });
+  });
+
+  describe('YUK-288 gap A — composite part rows excluded from top-level list', () => {
+    it('excludes kind=question_part rows (parent_question_id set) from the list', async () => {
+      const parent = await seedQuestion({ kind: 'reading' });
+      // two parts under the parent — must NOT appear as standalone list rows.
+      await seedQuestion({
+        kind: 'question_part',
+        parent_question_id: parent,
+        part_index: 0,
+      });
+      await seedQuestion({
+        kind: 'question_part',
+        parent_question_id: parent,
+        part_index: 1,
+      });
+
+      const res = await listQuestions(testDb(), { limit: 50, offset: 0 });
+      expect(res.total).toBe(1);
+      expect(res.items.map((i) => i.id)).toEqual([parent]);
+      // the surfaced row is a top-level parent (null linkage).
+      expect(res.items[0].parent_question_id).toBeNull();
+      expect(res.items[0].part_index).toBeNull();
+    });
+  });
+
+  describe('YUK-288 gap B — subject 派生轴 (knowledge effective-domain join)', () => {
+    it('filters to questions whose knowledge resolves to the subject', async () => {
+      // wenyan root + a child that inherits the domain; a math root in another subject.
+      const wenyanRoot = await seedKnowledge(newId(), { domain: 'wenyan' });
+      const wenyanChild = await seedKnowledge(newId(), { parent_id: wenyanRoot });
+      const mathRoot = await seedKnowledge(newId(), { domain: 'math' });
+
+      const qWenyanDirect = await seedQuestion({ knowledge_ids: [wenyanRoot] });
+      const qWenyanInherited = await seedQuestion({ knowledge_ids: [wenyanChild] });
+      const qMath = await seedQuestion({ knowledge_ids: [mathRoot] });
+
+      const wenyanIds = await resolveSubjectKnowledgeIds(testDb(), 'wenyan');
+      // both the wenyan root and its (domain-inheriting) child resolve to wenyan.
+      expect(new Set(wenyanIds)).toEqual(new Set([wenyanRoot, wenyanChild]));
+
+      const res = await listQuestions(testDb(), {
+        subjectKnowledgeIds: wenyanIds,
+        limit: 50,
+        offset: 0,
+      });
+      expect(new Set(res.items.map((i) => i.id))).toEqual(
+        new Set([qWenyanDirect, qWenyanInherited]),
+      );
+      expect(res.items.map((i) => i.id)).not.toContain(qMath);
+    });
+
+    it('returns empty when the subject set is empty (subject labels no questions)', async () => {
+      await seedQuestion({ knowledge_ids: [newId()] });
+      // empty subjectKnowledgeIds → forced empty, NOT an unfiltered list.
+      const res = await listQuestions(testDb(), {
+        subjectKnowledgeIds: [],
+        limit: 50,
+        offset: 0,
+      });
+      expect(res.total).toBe(0);
+      expect(res.items).toEqual([]);
+    });
+
+    it('intersects the subject axis with an explicit knowledge axis', async () => {
+      const wenyanA = await seedKnowledge(newId(), { domain: 'wenyan' });
+      const wenyanB = await seedKnowledge(newId(), { domain: 'wenyan' });
+      const qA = await seedQuestion({ knowledge_ids: [wenyanA] });
+      await seedQuestion({ knowledge_ids: [wenyanB] });
+
+      const wenyanIds = await resolveSubjectKnowledgeIds(testDb(), 'wenyan');
+      const res = await listQuestions(testDb(), {
+        subjectKnowledgeIds: wenyanIds,
+        knowledgeIds: [wenyanA],
+        limit: 50,
+        offset: 0,
+      });
+      // subject = wenyan (both) ∩ explicit knowledge = wenyanA → only qA.
+      expect(res.items.map((i) => i.id)).toEqual([qA]);
     });
   });
 });

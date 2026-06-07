@@ -1,6 +1,7 @@
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { resolveSubjectProfile } from '@/subjects/profile';
+import { eq, isNull } from 'drizzle-orm';
 
 const MAX_DEPTH = 32; // 防 cycle
 
@@ -34,4 +35,61 @@ export async function getEffectiveDomain(db: Db, nodeId: string): Promise<string
     curId = row.parent_id;
   }
   throw new Error(`getEffectiveDomain max depth ${MAX_DEPTH} exceeded for ${nodeId}`);
+}
+
+/**
+ * Forward map: subject profile id → the set of active knowledge node ids whose
+ * effective domain resolves to that subject. This is the derived-axis primitive
+ * behind `GET /api/questions?subject=` (YUK-288): a question's subject is a
+ * DERIVED join through `question.knowledge_ids → knowledge.(effective)domain →
+ * resolveSubjectProfile.id`, never a column on `question` (subject 模型终版第 2 条
+ * / YUK-249).
+ *
+ * Resolution mirrors the canonical bridge (`getEffectiveDomain →
+ * resolveSubjectProfile.id`) used by `batchResolveSubjectIds` and the review
+ * scheduler, and the in-memory effective-domain walk in
+ * `ingestion/tagging.ts:loadGridNodes` (same algorithm, lifted here as the
+ * shared forward mapping rather than re-inlining it). One pass over the active
+ * knowledge tree (single user, hundreds of nodes), so no N+1 per-node walk.
+ *
+ * Returns the matching node ids. An empty result means the subject currently
+ * labels no questions; the caller (list reader) turns that into an empty list,
+ * not a 404.
+ */
+export async function resolveSubjectKnowledgeIds(db: Db, subject: string): Promise<string[]> {
+  const rows = await db
+    .select({
+      id: knowledge.id,
+      domain: knowledge.domain,
+      parent_id: knowledge.parent_id,
+    })
+    .from(knowledge)
+    .where(isNull(knowledge.archived_at));
+
+  const byId = new Map(rows.map((row) => [row.id, row]));
+
+  // In-memory effective-domain walk (mirrors tagging.ts:112 / resolveEffectiveDomain):
+  // climb parent_id until a non-null domain, stopping on cycles. An archived
+  // ancestor is already absent from `byId`, so the walk stops at it and yields
+  // null — matching the archived-ancestor cutoff elsewhere (Codex #193 / YUK-161).
+  const effectiveDomain = (id: string): string | null => {
+    let current = byId.get(id);
+    const seen = new Set<string>();
+    while (current && !seen.has(current.id)) {
+      seen.add(current.id);
+      if (current.domain) return current.domain;
+      current = current.parent_id ? byId.get(current.parent_id) : undefined;
+    }
+    return null;
+  };
+
+  const matched: string[] = [];
+  for (const row of rows) {
+    const domain = effectiveDomain(row.id);
+    // Canonical bridge: a raw domain string maps to a subject profile id via the
+    // alias table (resolveSubjectProfile), so a `?subject=wenyan` tab matches any
+    // node whose domain aliases to that profile — never a bare string equality.
+    if (resolveSubjectProfile(domain).id === subject) matched.push(row.id);
+  }
+  return matched;
 }
