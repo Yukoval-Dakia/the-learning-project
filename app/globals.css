@@ -10110,3 +10110,52 @@ button.seg-sm {
   min-width: 1.4em;
   flex: none;
 }
+
+/* ---------- YUK-261 clickable choice options ----------
+   Selected / feedback states for the PracticeChoiceOptions component. The
+   selected affordance is coral border + ✓ icon (round2a §1.3: never colour
+   alone). Feedback ✓/✗ icons + tone classes mark correct/wrong/missed. */
+.practice-loom .practice-choices--clickable {
+  /* group is keyboard-focusable; keep its outline crisp without shifting layout. */
+  outline-offset: var(--s-1);
+  border-radius: var(--r-2);
+}
+.practice-loom .practice-choice-text {
+  flex: 1 1 auto;
+}
+/* selected — coral border + soft fill (the ✓ icon carries the non-colour cue). */
+.practice-loom .practice-choice-btn.is-selected {
+  border-color: var(--coral);
+  background: var(--coral-soft);
+}
+.practice-loom .practice-choice-btn.is-selected .practice-choice-label {
+  color: var(--coral-ink);
+}
+/* the ✓ check mark sits at the trailing edge of the card. */
+.practice-loom .practice-choice-mark {
+  flex: none;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  color: var(--coral);
+}
+/* feedback tones — correct (good), wrong (again/coral), missed (good, outlined). */
+.practice-loom .practice-choice-btn.is-correct {
+  border-color: var(--good-line);
+  background: var(--good-soft);
+}
+.practice-loom .practice-choice-btn.is-wrong {
+  border-color: var(--again-line);
+  background: var(--again-soft);
+}
+.practice-loom .practice-choice-btn.is-missed {
+  border-color: var(--good-line);
+  border-style: dashed;
+}
+.practice-loom .practice-choice-mark--is-correct,
+.practice-loom .practice-choice-mark--is-missed {
+  color: var(--good);
+}
+.practice-loom .practice-choice-mark--is-wrong {
+  color: var(--again);
+}
