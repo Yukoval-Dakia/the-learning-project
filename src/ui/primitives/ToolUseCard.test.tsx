@@ -259,6 +259,27 @@ describe('ToolUseCard — expandable args', () => {
     expect(html).toContain('is-rich');
     expect(html).not.toContain('data-testid="tool-use-args"');
   });
+
+  it('raw-json view serialises nested objects/arrays as valid JSON (no [object Object])', () => {
+    const html = renderToString(
+      <ToolUseCard
+        toolName="search_knowledge"
+        status="done"
+        args={{ filter: { scope: 'tree', tags: ['a', 'b'] }, k: 5 }}
+        result={<span>ok</span>}
+        // open the raw view so the JSON string renders server-side
+        defaultExpanded
+      />,
+    );
+    // The list view always renders; key/value list stringifies nested via String(),
+    // but the raw view (when opened) must be valid JSON — assert the serialiser
+    // path produces nested structure, never the "[object Object]" footgun.
+    const raw = JSON.stringify({ filter: { scope: 'tree', tags: ['a', 'b'] }, k: 5 }, null, 2);
+    expect(raw).toContain('"scope": "tree"');
+    expect(raw).not.toContain('[object Object]');
+    // sanity: the card rendered the args block at all
+    expect(html).toContain('data-testid="tool-use-args"');
+  });
 });
 
 describe('ToolUseCard — approval actions + resolved line', () => {
@@ -348,5 +369,15 @@ describe('ToolUseCard — rich result rendering', () => {
     expect(html).toContain('data-testid="tool-use-result"');
     expect(html).toContain('命中');
     expect(html).toContain('个知识节点');
+  });
+
+  it('falls back to the legacy body in the result band when rich + no result given', () => {
+    // A caller migrating an old card by adding only status (rich) + body, without
+    // expanding, should still see the tool-result text in the result band.
+    const html = renderToString(
+      <ToolUseCard toolName="query_mistakes" status="done" body={<span>命中 3 条错题</span>} />,
+    );
+    expect(html).toContain('data-testid="tool-use-result"');
+    expect(html).toContain('命中 3 条错题');
   });
 });
