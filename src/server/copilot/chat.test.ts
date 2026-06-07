@@ -4,7 +4,7 @@ import { TAVILY_MCP_ALLOWED_TOOLS, buildTavilyMcpServer } from '@/server/ai/mcp/
 import { resolveDomainToolNames, resolveMcpAllowedTools } from '@/server/ai/tools/allowlists';
 import { PROPOSAL_FEEDBACK_BUDGET } from '@/server/ai/tools/budgets';
 import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
-import { runCopilotChat } from './chat';
+import { runCopilotChat, runCopilotChatStreaming } from './chat';
 
 describe('runCopilotChat (two-surface routing)', () => {
   it('chat path uses copilot allowlist and writes experimental:copilot_user_ask', async () => {
@@ -926,5 +926,506 @@ describe('runCopilotChat — skill routing (U6)', () => {
     expect(result.skill_turn).toBeUndefined();
     expect(runAgentTaskFn).toHaveBeenCalledTimes(1);
     expect(runTeachingSkillFn).not.toHaveBeenCalled();
+  });
+});
+
+// YUK-266 (C1) — runCopilotChatStreaming streams text deltas then resolves the
+// terminal CopilotChatResult. The turn-persistence contract is byte-identical to
+// the non-stream path: the SAME single experimental:copilot_reply event is written
+// with the full text + the real task_run_id. Streaming failure degrades gracefully.
+describe('runCopilotChatStreaming (C1 — SSE streaming entrypoint)', () => {
+  const baseDeps = {
+    findOrCreateConversationFn: async () => ({ sessionId: 'ls_stream', created: false }),
+    loadProposalFeedbackFn: async () => [],
+    now: () => new Date('2026-06-07T00:00:00.000Z'),
+  };
+
+  it('free-form: streams via streamAgentTaskFn, persists the same two events, returns the non-stream result', async () => {
+    const db = {} as never;
+    const buildMcpServerFn = vi.fn(() => ({ name: 'fake-loom' }) as never);
+    // The non-stream runner must NOT be used on the streaming path.
+    const runAgentTaskFn = vi.fn(async () => {
+      throw new Error('runAgentTask must not run on the streaming path');
+    });
+    const streamAgentTaskFn = vi.fn(
+      async (_kind: string, _input: unknown, _ctx: unknown, onDelta: (t: string) => void) => {
+        onDelta('OK');
+        return {
+          task_run_id: 'task_stream_real',
+          text: 'OK',
+          finishReason: 'stop' as const,
+          usage: { inputTokens: 1, outputTokens: 2 },
+        };
+      },
+    );
+    const writeEventFn = vi.fn(async (_db: unknown, input: { id: string }) => input.id);
+    const deltas: string[] = [];
+
+    const result = await runCopilotChatStreaming(
+      db,
+      { user_message: '解释一下「之」', triggered_by: 'chat' },
+      (t) => deltas.push(t),
+      { ...baseDeps, buildMcpServerFn, runAgentTaskFn, streamAgentTaskFn, writeEventFn },
+    );
+
+    // onDelta fired with the chunk; the free-form token loop ran via the stream seam.
+    expect(deltas).toEqual(['OK']);
+    expect(runAgentTaskFn).not.toHaveBeenCalled();
+    expect(streamAgentTaskFn).toHaveBeenCalledTimes(1);
+
+    // Result equals what the non-stream path would return — real task_run_id + reply.
+    expect(result.task_run_id).toBe('task_stream_real');
+    expect(result.reply).toBe('OK');
+    expect(result.session_id).toBe('ls_stream');
+    expect(result.reply_event_id).toMatch(/^copilot_reply_/);
+    expect(result.error).toBeUndefined();
+
+    // Persistence contract: TWO events (ask + reply); the reply carries reply_md:'OK'
+    // and the REAL task_run_id — byte-identical to the non-stream path.
+    expect(writeEventFn).toHaveBeenCalledTimes(2);
+    const askCall = writeEventFn.mock.calls[0]?.[1] as { action?: string };
+    expect(askCall?.action).toBe('experimental:copilot_user_ask');
+    const replyCall = writeEventFn.mock.calls[1]?.[1] as {
+      action?: string;
+      task_run_id?: string;
+      payload?: { reply_md?: string; task_run_id?: string };
+    };
+    expect(replyCall?.action).toBe('experimental:copilot_reply');
+    expect(replyCall?.task_run_id).toBe('task_stream_real');
+    expect(replyCall?.payload?.reply_md).toBe('OK');
+    expect(replyCall?.payload?.task_run_id).toBe('task_stream_real');
+  });
+
+  it('skill turn: emits ONE delta (the full reply) then resolves the skill result', async () => {
+    const db = {} as never;
+    const writeEventFn = vi.fn(async (_db: unknown, input: { id: string }) => input.id);
+    const runQuizSkillFn = vi.fn(async () => ({
+      text_md: '已为你组好一套练习：[去练习](/practice/art_q)',
+      artifact_id: 'art_q',
+      question_count: 3,
+      status: 'ok' as const,
+    }));
+    // The free-form stream runner must NOT run on a skill turn.
+    const streamAgentTaskFn = vi.fn(async () => {
+      throw new Error('streamAgentTask must not run on a skill turn');
+    });
+    const buildMcpServerFn = vi.fn(() => ({ name: 'fake-loom' }) as never);
+    const deltas: string[] = [];
+
+    const result = await runCopilotChatStreaming(
+      db,
+      {
+        user_message: '出套题',
+        triggered_by: 'chat',
+        skill_context: { skill: 'quiz', ref: { kind: 'knowledge', id: 'kn_x' } },
+      },
+      (t) => deltas.push(t),
+      { ...baseDeps, writeEventFn, runQuizSkillFn, streamAgentTaskFn, buildMcpServerFn },
+    );
+
+    // Exactly one delta carrying the full deterministic skill reply.
+    expect(deltas).toEqual(['已为你组好一套练习：[去练习](/practice/art_q)']);
+    expect(streamAgentTaskFn).not.toHaveBeenCalled();
+    expect(result.reply).toContain('/practice/art_q');
+    expect(result.surface).toBe('copilot');
+  });
+
+  it('degrade: a mid-stream throw still persists the collected text + returns an error note', async () => {
+    const db = {} as never;
+    const buildMcpServerFn = vi.fn(() => ({ name: 'fake-loom' }) as never);
+    // streamTaskCollecting resolves a partial result (it does NOT throw) on SDK
+    // error — model that here: onDelta fires then a partial result is returned.
+    const streamAgentTaskFn = vi.fn(
+      async (_kind: string, _input: unknown, _ctx: unknown, onDelta: (t: string) => void) => {
+        onDelta('partial');
+        return {
+          task_run_id: 'task_stream_partial',
+          text: 'partial',
+          finishReason: 'error' as const,
+          usage: { inputTokens: 0, outputTokens: 0 },
+          partial: true,
+          error: 'sdk blew up mid-stream',
+        };
+      },
+    );
+    const writeEventFn = vi.fn(async (_db: unknown, input: { id: string }) => input.id);
+    const deltas: string[] = [];
+
+    const result = await runCopilotChatStreaming(
+      db,
+      { user_message: '随便聊聊', triggered_by: 'chat' },
+      (t) => deltas.push(t),
+      { ...baseDeps, buildMcpServerFn, streamAgentTaskFn, writeEventFn },
+    );
+
+    expect(deltas).toEqual(['partial']);
+    // The reply event is STILL written with the partial text + real run id.
+    expect(writeEventFn).toHaveBeenCalledTimes(2);
+    const replyCall = writeEventFn.mock.calls[1]?.[1] as {
+      action?: string;
+      payload?: { reply_md?: string; task_run_id?: string };
+    };
+    expect(replyCall?.action).toBe('experimental:copilot_reply');
+    expect(replyCall?.payload?.reply_md).toBe('partial');
+    expect(replyCall?.payload?.task_run_id).toBe('task_stream_partial');
+    // The result carries the error note (graceful degrade — turn never lost).
+    expect(result.reply).toBe('partial');
+    expect(result.error).toBe('sdk blew up mid-stream');
+  });
+
+  it('bypasses runAgentTask when streamAgentTaskFn is injected on the streaming path', async () => {
+    const db = {} as never;
+    const buildMcpServerFn = vi.fn(() => ({ name: 'fake-loom' }) as never);
+    // The streaming entrypoint must consult streamAgentTaskFn, NOT the non-stream
+    // runAgentTaskFn. Inject a throwing runAgentTaskFn alongside a stub stream fn and
+    // assert the runAgentTask seam is bypassed when a stream fn IS given. (The real
+    // default — streamTaskCollecting when no stream fn is injected — runs the live
+    // SDK and is covered by runner.stream-collect.test.ts, not here.)
+    const runAgentTaskFn = vi.fn(async () => {
+      throw new Error('runAgentTask must not run on the streaming path');
+    });
+    const streamAgentTaskFn = vi.fn(
+      async (_k: string, _i: unknown, _c: unknown, onDelta: (t: string) => void) => {
+        onDelta('hi');
+        return {
+          task_run_id: 'task_x',
+          text: 'hi',
+          finishReason: 'stop' as const,
+          usage: { inputTokens: 1, outputTokens: 1 },
+        };
+      },
+    );
+    const writeEventFn = vi.fn(async (_db: unknown, input: { id: string }) => input.id);
+
+    await runCopilotChatStreaming(db, { user_message: '嗨', triggered_by: 'chat' }, () => {}, {
+      ...baseDeps,
+      buildMcpServerFn,
+      runAgentTaskFn,
+      streamAgentTaskFn,
+      writeEventFn,
+    });
+
+    expect(runAgentTaskFn).not.toHaveBeenCalled();
+    expect(streamAgentTaskFn).toHaveBeenCalledTimes(1);
+  });
+});
+
+// YUK-267 (C2) — conversation memory + ambient context. The free-form CopilotTask
+// run input gains conversation_history (last N session-scoped turns, {role,text}
+// only, double-truncated) + ambient_context (current-message-only). 防循环 invariants
+// are unit-tested. All deps injected → stays in fastTestInclude.
+describe('runCopilotChat — conversation memory + ambient (C2)', () => {
+  const baseDeps = {
+    findOrCreateConversationFn: async () => ({ sessionId: 'ls_mem', created: false }),
+    loadProposalFeedbackFn: async () => [],
+    now: () => new Date('2026-06-07T00:00:00.000Z'),
+  };
+
+  // A CopilotTurn-shaped fixture (the reader exposes role+text; extra keys here
+  // simulate a polluted source row for the 防循环 ⑤ test).
+  const mkTurn = (role: 'user' | 'ai', text: string, extra: Record<string, unknown> = {}) =>
+    ({
+      role,
+      text,
+      at: '2026-06-06T00:00:00.000Z',
+      event_id: `e_${text.slice(0, 4)}`,
+      ...extra,
+    }) as never;
+
+  function captureRunInput(runAgentTaskFn: ReturnType<typeof vi.fn>) {
+    return (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[1] as {
+      conversation_history: Array<Record<string, unknown>>;
+      ambient_context?: unknown;
+      proposal_feedback: unknown[];
+    };
+  }
+
+  it('history: assembles ≤maxTurns {role,text}-only entries (scoping + 防循环 ①)', async () => {
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 't',
+      text: 'OK',
+      finishReason: 'stop' as const,
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    const writeEventFn = vi.fn(async (_db: unknown, input: { id: string }) => input.id);
+    // 12 turns (> maxTurns=8). The reader returns oldest→newest.
+    const turns = Array.from({ length: 12 }, (_, i) =>
+      mkTurn(i % 2 === 0 ? 'user' : 'ai', `turn ${i}`),
+    );
+
+    await runCopilotChat(
+      {} as never,
+      { user_message: '继续', triggered_by: 'chat' },
+      {
+        ...baseDeps,
+        runAgentTaskFn,
+        writeEventFn,
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        loadHistoryFn: async () => turns,
+      },
+    );
+
+    const input = captureRunInput(runAgentTaskFn);
+    expect(input.conversation_history.length).toBeLessThanOrEqual(8);
+    for (const entry of input.conversation_history) {
+      // {role, text} ONLY — no leaked turn-row keys.
+      expect(Object.keys(entry).sort()).toEqual(['role', 'text']);
+    }
+    // Newest kept (tail-slice): the last entry is the newest turn.
+    expect(input.conversation_history.at(-1)).toEqual({ role: 'ai', text: 'turn 11' });
+  });
+
+  it('防循环 ⑤: a polluted source row contributes {role,text} ONLY — no assembly artifact leaks', async () => {
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 't',
+      text: 'OK',
+      finishReason: 'stop' as const,
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    const writeEventFn = vi.fn(async (_db: unknown, input: { id: string }) => input.id);
+    // Simulate a turn whose source row ALSO carried injection artifacts (a prior
+    // run's conversation_history echo / proposal_feedback / ambient_context /
+    // skill_context). None of these may reach THIS run's conversation_history.
+    const polluted = mkTurn('ai', 'a reply body', {
+      conversation_history: [{ role: 'user', text: 'NESTED' }],
+      proposal_feedback: [{ kind: 'knowledge_edge' }],
+      ambient_context: { route: '/secret' },
+      skill_context: { skill: 'quiz', ref: { kind: 'knowledge', id: 'x' } },
+      skill_turn: { kind: 'ask_check' },
+    });
+
+    await runCopilotChat(
+      {} as never,
+      { user_message: '继续', triggered_by: 'chat' },
+      {
+        ...baseDeps,
+        runAgentTaskFn,
+        writeEventFn,
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        loadHistoryFn: async () => [polluted],
+      },
+    );
+
+    const input = captureRunInput(runAgentTaskFn);
+    expect(input.conversation_history).toEqual([{ role: 'ai', text: 'a reply body' }]);
+    const serialized = JSON.stringify(input.conversation_history);
+    expect(serialized).not.toContain('NESTED');
+    expect(serialized).not.toContain('proposal_feedback');
+    expect(serialized).not.toContain('ambient_context');
+    expect(serialized).not.toContain('skill_context');
+    expect(serialized).not.toContain('skill_turn');
+  });
+
+  it('防循环 ④: double truncation — per-turn cap + oldest dropped on total overflow', async () => {
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 't',
+      text: 'OK',
+      finishReason: 'stop' as const,
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    const writeEventFn = vi.fn(async (_db: unknown, input: { id: string }) => input.id);
+    // Per-turn: one >800-char turn → truncated to 800. Total: enough big turns that
+    // the serialized array exceeds 4000 → oldest dropped until it fits.
+    const big = 'x'.repeat(1000);
+    const turns = Array.from({ length: 8 }, (_, i) => mkTurn('user', `${i}-${big}`));
+
+    await runCopilotChat(
+      {} as never,
+      { user_message: '继续', triggered_by: 'chat' },
+      {
+        ...baseDeps,
+        runAgentTaskFn,
+        writeEventFn,
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        loadHistoryFn: async () => turns,
+      },
+    );
+
+    const input = captureRunInput(runAgentTaskFn);
+    // Per-turn truncation: no entry text exceeds 800 chars.
+    for (const entry of input.conversation_history) {
+      expect((entry.text as string).length).toBeLessThanOrEqual(800);
+    }
+    // Whole-array bound: serialized history fits the total cap.
+    expect(JSON.stringify(input.conversation_history).length).toBeLessThanOrEqual(4000);
+    // Oldest dropped first: the surviving entries are the NEWEST ones (highest idx).
+    const firstSurviving = input.conversation_history[0]?.text as string;
+    expect(firstSurviving.startsWith('0-')).toBe(false);
+  });
+
+  it('防循环 ②: ambient_context rides the run input but is NEVER written to any turn payload', async () => {
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 't',
+      text: 'OK',
+      finishReason: 'stop' as const,
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    const writeEventFn = vi.fn(async (_db: unknown, input: { id: string }) => input.id);
+
+    await runCopilotChat(
+      {} as never,
+      {
+        user_message: '我在哪',
+        triggered_by: 'chat',
+        ambient_context: {
+          route: '/knowledge/k1',
+          focused_entity: { kind: 'knowledge', id: 'k1' },
+        },
+      },
+      {
+        ...baseDeps,
+        runAgentTaskFn,
+        writeEventFn,
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        loadHistoryFn: async () => [],
+      },
+    );
+
+    // Run input DOES carry ambient_context.
+    const input = captureRunInput(runAgentTaskFn);
+    expect(input.ambient_context).toEqual({
+      route: '/knowledge/k1',
+      focused_entity: { kind: 'knowledge', id: 'k1' },
+    });
+    // NEITHER the ask event NOR the reply event payload contains ambient_context.
+    const askPayload = (writeEventFn.mock.calls[0]?.[1] as { payload?: unknown })?.payload;
+    const replyPayload = (writeEventFn.mock.calls[1]?.[1] as { payload?: unknown })?.payload;
+    expect(JSON.stringify(askPayload)).not.toContain('ambient_context');
+    expect(JSON.stringify(replyPayload)).not.toContain('ambient_context');
+    expect(JSON.stringify(askPayload)).not.toContain('/knowledge/k1');
+    expect(JSON.stringify(replyPayload)).not.toContain('/knowledge/k1');
+  });
+
+  it('防循环 ③: proposal_feedback is read fresh per message and is NOT mixed into history', async () => {
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 't',
+      text: 'OK',
+      finishReason: 'stop' as const,
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    const writeEventFn = vi.fn(async (_db: unknown, input: { id: string }) => input.id);
+    const loadProposalFeedbackFn = vi.fn(async () => [
+      {
+        kind: 'knowledge_edge' as const,
+        relation: 'related_to',
+        accept_count: 1,
+        dismiss_count: 1,
+        total: 2,
+        acceptance_rate: 0.5,
+        top_dismiss_reasons: ['FEEDBACK_MARKER'],
+        top_rubric_gates: [],
+      },
+    ]);
+
+    await runCopilotChat(
+      {} as never,
+      { user_message: '连边', triggered_by: 'chat' },
+      {
+        ...baseDeps,
+        runAgentTaskFn,
+        writeEventFn,
+        loadProposalFeedbackFn,
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        loadHistoryFn: async () => [mkTurn('user', 'earlier ask')],
+      },
+    );
+
+    expect(loadProposalFeedbackFn).toHaveBeenCalledTimes(1);
+    const input = captureRunInput(runAgentTaskFn);
+    // proposal_feedback is its OWN field, not folded into conversation_history.
+    expect(JSON.stringify(input.conversation_history)).not.toContain('FEEDBACK_MARKER');
+    expect(JSON.stringify(input.proposal_feedback)).toContain('FEEDBACK_MARKER');
+  });
+
+  it('degrade: a loadHistory failure yields conversation_history:[] and the chat still replies', async () => {
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 't',
+      text: 'STILL_OK',
+      finishReason: 'stop' as const,
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    const writeEventFn = vi.fn(async (_db: unknown, input: { id: string }) => input.id);
+
+    const result = await runCopilotChat(
+      {} as never,
+      { user_message: '继续', triggered_by: 'chat' },
+      {
+        ...baseDeps,
+        runAgentTaskFn,
+        writeEventFn,
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        loadHistoryFn: async () => {
+          throw new Error('history read blew up');
+        },
+      },
+    );
+
+    expect(result.reply).toBe('STILL_OK');
+    const input = captureRunInput(runAgentTaskFn);
+    expect(input.conversation_history).toEqual([]);
+  });
+
+  it('history is read BEFORE the ask write (current ask is structurally excluded)', async () => {
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 't',
+      text: 'OK',
+      finishReason: 'stop' as const,
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    const writeEventFn = vi.fn(async (_db: unknown, input: { id: string }) => input.id);
+    const loadHistoryFn = vi.fn(async () => [mkTurn('user', 'prior turn')]);
+    let historyReadBeforeAnyWrite = false;
+    loadHistoryFn.mockImplementation(async () => {
+      historyReadBeforeAnyWrite = writeEventFn.mock.calls.length === 0;
+      return [mkTurn('user', 'prior turn')];
+    });
+
+    await runCopilotChat(
+      {} as never,
+      { user_message: 'THE_CURRENT_ASK', triggered_by: 'chat' },
+      {
+        ...baseDeps,
+        runAgentTaskFn,
+        writeEventFn,
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        loadHistoryFn,
+      },
+    );
+
+    // The history read happened before the ask event was written.
+    expect(historyReadBeforeAnyWrite).toBe(true);
+    // And the current ask is not in the assembled history (it wasn't in the fixture).
+    const input = captureRunInput(runAgentTaskFn);
+    expect(JSON.stringify(input.conversation_history)).not.toContain('THE_CURRENT_ASK');
+  });
+
+  it('skill turns do NOT assemble conversation_history (reader not consulted)', async () => {
+    const writeEventFn = vi.fn(async (_db: unknown, input: { id: string }) => input.id);
+    const loadHistoryFn = vi.fn(async () => [mkTurn('user', 'x')]);
+    const runQuizSkillFn = vi.fn(async () => ({
+      text_md: '[去练习](/practice/a)',
+      artifact_id: 'a',
+      question_count: 1,
+      status: 'ok' as const,
+    }));
+
+    await runCopilotChat(
+      {} as never,
+      {
+        user_message: '出题',
+        triggered_by: 'chat',
+        skill_context: { skill: 'quiz', ref: { kind: 'knowledge', id: 'k' } },
+      },
+      {
+        ...baseDeps,
+        writeEventFn,
+        runQuizSkillFn,
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        loadHistoryFn,
+      },
+    );
+
+    // The skill path short-circuits before history assembly.
+    expect(loadHistoryFn).not.toHaveBeenCalled();
   });
 });

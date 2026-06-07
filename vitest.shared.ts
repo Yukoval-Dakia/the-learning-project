@@ -40,6 +40,10 @@ export const fastTestInclude = [
   // (The sibling runner.test.ts stays in the db partition because it drives the
   // real ai/log writers against a container.)
   'src/server/ai/stream-cancel.test.ts',
+  // YUK-266 (C1) — streamTaskCollecting collecting-stream unit. Same justification
+  // as stream-cancel: @anthropic-ai/claude-agent-sdk + @/server/ai/log are vi.mock'd
+  // and `db` is an untouched stub, so no live Postgres is needed.
+  'src/server/ai/runner.stream-collect.test.ts',
   'src/server/ai/tools/registry.test.ts',
   'src/server/ai/tools/allowlists.test.ts',
   'src/server/ai/tools/mcp-bridge.test.ts',
