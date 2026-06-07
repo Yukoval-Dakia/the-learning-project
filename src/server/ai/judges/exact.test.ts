@@ -82,3 +82,61 @@ describe('judgeExact — choice-aware judging (YUK-260)', () => {
     expect(r.score).toBe(0);
   });
 });
+
+describe('judgeExact — bot-review hardening parity (YUK-260)', () => {
+  // C1: option text is pure Latin letters — letter-string parse must not shadow
+  // the option-text equality. Mirrors the V2 capability judge.
+  it('C1 True/False options: letter answer "A" matches reference "True"', () => {
+    const choices_md = ['True', 'False'];
+    expect(judgeExact({ reference: 'True', choices_md }, { content: 'A' }).verdict).toBe('correct');
+    expect(judgeExact({ reference: 'True', choices_md }, { content: 'B' }).verdict).toBe(
+      'incorrect',
+    );
+    expect(judgeExact({ reference: 'A', choices_md }, { content: 'True' }).verdict).toBe('correct');
+    expect(judgeExact({ reference: 'True', choices_md }, { content: 'E' }).verdict).toBe(
+      'incorrect',
+    );
+  });
+
+  // C2: reading-comprehension reference_md is "正确项字母 + 依据" ("C。…"); choices
+  // may carry a label prefix ("A. …"). A bare-letter answer must match.
+  it('C2 reading-comprehension: answer "C" matches reference "C。原文依据…"', () => {
+    const choices_md = [
+      'A. 修八尺有余　　修：长，这里指身高',
+      'B. 朝服衣冠　　　服：穿戴',
+      'C. 窥镜　　　　　窥：偷看',
+      'D. 忌不自信　　　信：相信',
+    ];
+    const reference = 'C。「窥镜」的「窥」此处是「照（镜子）」之意，并非「偷看」。';
+    expect(judgeExact({ reference, choices_md }, { content: 'C' }).verdict).toBe('correct');
+    expect(judgeExact({ reference, choices_md }, { content: 'A' }).verdict).toBe('incorrect');
+    expect(
+      judgeExact({ reference, choices_md }, { content: 'C. 窥镜　　　　　窥：偷看' }).verdict,
+    ).toBe('correct');
+  });
+
+  // C3: DB / JudgeQuestionRow shape forwards choices_md: null for non-choice
+  // questions. Must normalise to plain text equality, not crash.
+  it('C3 choices_md: null → plain text equality', () => {
+    expect(
+      judgeExact({ reference: '宾语前置', choices_md: null }, { content: '宾语前置' }).verdict,
+    ).toBe('correct');
+    expect(
+      judgeExact({ reference: '宾语前置', choices_md: null }, { content: '主谓倒装' }).verdict,
+    ).toBe('incorrect');
+    expect(judgeExact({ reference: '宾语前置', choices_md: null }, { content: 'A' }).verdict).toBe(
+      'incorrect',
+    );
+  });
+
+  // OCR-1 parity: evidence records match_type + resolved indices.
+  it('evidence_json carries match_type + resolved choice indices', () => {
+    const choices_md = ['宾语前置', '主谓倒装', '定语后置', '状语后置'];
+    const r = judgeExact({ reference: '宾语前置', choices_md }, { content: 'A' });
+    expect(r.evidence_json.match_type).toBe('choice_index');
+    expect(r.evidence_json.answer_choice_indices).toEqual([0]);
+    expect(r.evidence_json.reference_choice_indices).toEqual([0]);
+    const plain = judgeExact({ reference: '宾语前置' }, { content: '宾语前置' });
+    expect(plain.evidence_json.match_type).toBe('text');
+  });
+});
