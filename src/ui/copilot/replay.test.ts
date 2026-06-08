@@ -51,4 +51,29 @@ describe('replayToMessages', () => {
   it('returns [] for an empty turns array (cold start → no prefill)', () => {
     expect(replayToMessages([])).toEqual([]);
   });
+
+  // YUK-272 (C3) — a persisted quiz reply carries skill_context:{skill:'quiz'}.
+  // After widening ReplaySkillContext.skill to include 'quiz', it round-trips
+  // through replayToMessages without a cast (type-level + runtime forward).
+  it('forwards a quiz skill_context through replay without a cast', () => {
+    const out = replayToMessages([
+      turn({
+        role: 'ai',
+        text: '[去练习](/practice/art_x)',
+        event_id: 'reply_quiz',
+        skill_context: { skill: 'quiz', ref: { kind: 'knowledge', id: 'k1' } },
+      }),
+    ]);
+    expect(out).toEqual([
+      {
+        id: 'reply_quiz',
+        role: 'ai',
+        text: '[去练习](/practice/art_x)',
+        skill_turn: undefined,
+        session_id: undefined,
+        reply_event_id: undefined,
+        skill_context: { skill: 'quiz', ref: { kind: 'knowledge', id: 'k1' } },
+      },
+    ]);
+  });
 });

@@ -199,6 +199,31 @@ export const PROPOSAL_FEEDBACK_BUDGET: ProposalFeedbackBudget = {
   maxSerializedChars: 1200, // Copilot whole-digest read cap (~5 fully-populated edge cells); P1 fix
 };
 
+// ── YUK-267 (C2) Copilot conversation-history budget ────────────────────────
+//
+// The free-form CopilotTask run input carries `conversation_history` (the last N
+// session-scoped turns) so the agent reuses what it already knows rather than
+// re-reading via a DomainTool. Bounded by DOUBLE truncation (防循环 ④): a per-turn
+// char cap is applied to each turn's text, then a whole-array char cap drops the
+// OLDEST turns first until the serialized history fits. Kept here alongside
+// PROPOSAL_FEEDBACK_BUDGET so all Copilot input-budget tunables live in one place
+// and are unit-testable in isolation.
+export interface CopilotHistoryBudget {
+  /** Max turns surfaced to the run input (newest-first kept). */
+  maxTurns: number;
+  /** PER-TURN char cap applied to each turn's text before assembly. */
+  perTurnChars: number;
+  /** WHOLE-ARRAY char cap; oldest turns dropped first until the serialized
+   *  conversation_history fits. */
+  totalChars: number;
+}
+
+export const COPILOT_HISTORY_BUDGET: CopilotHistoryBudget = {
+  maxTurns: 8, // last 8 session-scoped turns (ask原文 + reply正文 only)
+  perTurnChars: 800, // per-turn truncation (防循环 ④)
+  totalChars: 4000, // whole-history truncation, oldest dropped first (防循环 ④)
+};
+
 // ── P5.4-L2 gate-bias config (AB-3, §5 Q1) ──────────────────────────────────
 //
 // Single-source threshold + cold-start guard for `computeGateBump`. The

@@ -110,3 +110,32 @@ export function questionKindToSkillKind(persistedKind: string): SubjectQuestionK
 export function skillKindToQuestionKind(skillKind: SubjectQuestionKind): string {
   return SKILL_TO_CANONICAL[skillKind] ?? (skillKind as string);
 }
+
+/**
+ * 给定一个 canonical `QuestionKind`，返回**所有归一到它的持久 kind 形态**：canonical 自身
+ * + 每个折叠到它的 SubjectQuestionKind（choice → [choice, single_choice, multiple_choice]；
+ * computation → [computation, calculation, word_problem]；reading → [reading,
+ * reading_comprehension]；derivation → [derivation, proof]）。
+ *
+ * 为什么需要这个：`business.ts` 声明 canonical = 落库真值，但 seed / fixture 写路径
+ * （subjects/{math,physics,wenyan}/fixtures）历史上直接落 profile 词表
+ * （single_choice / reading_comprehension / calculation），违反了该不变量。所以一个按
+ * canonical `kind` 过滤的读路径若用 `eq(question.kind, 'choice')` 会漏掉所有
+ * `single_choice` 行（YUK-288 题型 filter 空集 bug）。读侧用本函数把请求的 canonical 展开
+ * 成 `IN (...)` 集合，命中两套词表落库的行；展示侧已由 `normalizeToCanonicalKind`
+ * （meta.ts）反向归一，两侧对称。
+ *
+ * 入参若不是合法 canonical QuestionKind（如已是 profile key 或未知串）→ 先归一；归一不到
+ * 则原样返回单元素集合（调用方据此仍做精确匹配，不放大）。
+ */
+export function canonicalKindToPersistedForms(kind: string): string[] {
+  const canonical = normalizeToCanonicalKind(kind);
+  if (canonical === null) return [kind];
+  const forms = new Set<string>([canonical]);
+  for (const [skillKind, mapped] of Object.entries(SKILL_TO_CANONICAL) as Array<
+    [SubjectQuestionKind, QuestionKindT]
+  >) {
+    if (mapped === canonical) forms.add(skillKind);
+  }
+  return [...forms];
+}

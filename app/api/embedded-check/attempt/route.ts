@@ -9,7 +9,8 @@
 //   - Each call creates a new event row + (on failure) a new learning_record row.
 //     No de-dup; UI shows latest verdict per question from event history.
 //   - attribution_followup enqueue happens AFTER the DB transaction, not inside it.
-//   - VITEST guard on boss.send mirrors /api/mistakes/route.ts:213.
+//   - boss.send is gated by the shared shouldEnqueueBackgroundJobs() (YUK-239),
+//     same posture as /api/mistakes.
 
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
@@ -24,6 +25,7 @@ import { ApiError, errorResponse } from '@/server/http/errors';
 import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
 import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject-profile';
 import { createLearningRecord } from '@/server/records/queries';
+import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 
 export const runtime = 'nodejs';
 
@@ -166,10 +168,10 @@ export async function POST(req: Request): Promise<Response> {
       }
     });
 
-    // Enqueue attribution after the transaction commits.
-    // VITEST guard: mirrors /api/mistakes/route.ts:210-217 to prevent boss state
-    // accumulation in the test suite.
-    if (outcome === 'failure' && !process.env.VITEST) {
+    // Enqueue attribution after the transaction commits. Gated by the shared
+    // shouldEnqueueBackgroundJobs() (YUK-239), mirroring /api/mistakes, to
+    // prevent boss state accumulation in the test suite.
+    if (outcome === 'failure' && shouldEnqueueBackgroundJobs()) {
       try {
         const boss = await getStartedBoss();
         await boss.send('attribution_followup', { attempt_event_id: attemptEventId });

@@ -8308,6 +8308,715 @@ button.seg-sm {
 }
 
 /* ============================================================
+   COPILOT tool_use CARD — full anatomy (S1, 2026-06-07)
+   Ported from docs/design/2026-06-07-copilot-tool-use-cards/tool-use.css
+   ("Copilot tool_use 卡片"). Recreates the prototype's visual output using
+   the repo token layer; scoped under `.tool-use-card` (the className the
+   ToolUseCard primitive sets). The legacy folded-summary card stays plain —
+   anatomy styles only attach via `.tool-use-card.is-rich`.
+
+   Known traps carried from chat3.md (do NOT regress):
+     • no fragile fade-in on result / resolved-line (could stick at opacity 0).
+       Only spinner / skeleton / stream-cursor animate, all gated by
+       prefers-reduced-motion.
+     • caused_by sits on its own right-aligned footer line.
+   ============================================================ */
+
+/* rich mode reflows the Card base into edge-to-edge anatomy bands: drop the
+   Card padding/gap so header/args/result/ribbon/actions own their own padding. */
+.tool-use-card.is-rich {
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+  box-shadow: var(--shadow-1);
+  transition: box-shadow var(--dur-base) var(--ease-out), opacity var(--dur-base) var(--ease-out);
+}
+.tool-use-card.is-rich.is-resolved {
+  opacity: 0.62;
+}
+.tool-use-card.is-rich.is-dismissed {
+  opacity: 0.42;
+}
+
+/* tone tints for proposal-bearing cards */
+.tool-use-card.is-rich.tone-coral {
+  border-color: var(--coral-line);
+}
+.tool-use-card.is-rich.tone-coral .tuc-head {
+  background: var(--coral-soft);
+}
+.tool-use-card.is-rich.tone-info {
+  border-color: var(--info-line);
+}
+.tool-use-card.is-rich.tone-info .tuc-head {
+  background: var(--info-soft);
+}
+.tool-use-card.is-rich.tone-good {
+  border-color: var(--good-line);
+}
+.tool-use-card.is-rich.tone-good .tuc-head {
+  background: var(--good-soft);
+}
+
+/* ── header ── */
+/* base header (legacy folded + rich both): flex row so `.tuc-head-end`
+   ml-auto right-aligns the cost chip + expand toggle. Rich layers padding/
+   background/gap on top via the `.is-rich` rule that follows. */
+.tuc-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.tool-use-card.is-rich .tuc-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-3) var(--s-3) var(--s-4);
+  background: var(--paper-sunk);
+  border-bottom: 1px solid var(--line);
+}
+.tool-use-card.is-rich .tuc-head-ico {
+  display: flex;
+  flex: none;
+  color: var(--coral);
+}
+.tool-use-card.is-rich.tone-info .tuc-head-ico {
+  color: var(--info);
+}
+.tool-use-card.is-rich.tone-good .tuc-head-ico {
+  color: var(--good);
+}
+.tool-use-card.is-rich .tuc-name {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+.tool-use-card.is-rich .tuc-summary {
+  font-size: var(--fs-meta);
+}
+.tool-use-card.is-rich .tuc-actor {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-4);
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--paper-raised);
+}
+.tool-use-card.is-rich .tuc-head-end {
+  margin-left: auto;
+}
+
+/* status pill */
+.tuc-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 9px 3px 7px;
+  border-radius: var(--r-pill);
+  white-space: nowrap;
+}
+.tuc-pill.is-running {
+  background: var(--paper-tint);
+  color: var(--ink-4);
+}
+.tuc-pill.is-done {
+  background: var(--good-soft);
+  color: var(--good-ink);
+}
+.tuc-pill.is-empty {
+  background: var(--paper-tint);
+  color: var(--ink-4);
+}
+.tuc-pill.is-failed {
+  background: var(--again-soft);
+  color: var(--again-ink);
+}
+.tuc-pill.is-waiting {
+  background: var(--coral-soft);
+  color: var(--coral-ink);
+}
+
+/* ── args / signature block ── */
+.tool-use-card.is-rich .tuc-args {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  padding: var(--s-3) var(--s-4);
+  background: color-mix(in srgb, var(--paper-sunk) 55%, var(--paper-raised));
+  border-bottom: 1px solid var(--line-soft);
+  line-height: var(--lh-snug);
+}
+.tool-use-card.is-rich .tuc-args-sig {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  color: var(--ink-3);
+}
+.tool-use-card.is-rich .tuc-args-label {
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+  font-size: 11px;
+}
+.tool-use-card.is-rich .tuc-args-toggle {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--ink-4);
+  border: 0;
+  background: none;
+  padding: 2px 4px;
+  border-radius: var(--r-1);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.tool-use-card.is-rich .tuc-args-toggle:hover {
+  color: var(--coral);
+  background: var(--paper-raised);
+}
+.tool-use-card.is-rich .tuc-args-toggle .ico {
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.tool-use-card.is-rich .tuc-args-toggle.is-open .ico {
+  transform: rotate(90deg);
+}
+.tool-use-card.is-rich .tuc-args-list {
+  margin-top: var(--s-2);
+  display: grid;
+  gap: 3px;
+}
+.tool-use-card.is-rich .tuc-args-row {
+  display: flex;
+  gap: var(--s-2);
+}
+.tool-use-card.is-rich .tuc-args-k {
+  color: var(--ink-4);
+  min-width: 88px;
+  flex: none;
+}
+.tool-use-card.is-rich .tuc-args-v {
+  color: var(--info);
+  min-width: 0;
+  word-break: break-word;
+}
+.tool-use-card.is-rich .tuc-args-v.is-str {
+  color: var(--good-ink);
+}
+.tool-use-card.is-rich .tuc-args-v.is-num {
+  color: var(--coral-hover);
+}
+.tool-use-card.is-rich .tuc-args-raw {
+  margin: var(--s-2) 0 0;
+  padding: var(--s-3);
+  border-radius: var(--r-2);
+  background: var(--ink);
+  color: #e9e6dc;
+  font-size: 11.5px;
+  line-height: 1.55;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+/* ── result block ── */
+.tool-use-card.is-rich .tuc-result {
+  padding: var(--s-4);
+}
+.tool-use-card.is-rich .tuc-result .result-lead {
+  font-size: var(--fs-body);
+  color: var(--ink-2);
+  line-height: var(--lh-prose);
+  margin: 0 0 var(--s-3);
+}
+.tool-use-card.is-rich .tuc-result .result-lead:last-child {
+  margin-bottom: 0;
+}
+.tool-use-card.is-rich .tuc-result .result-lead b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* node / row list result */
+.tool-use-card.is-rich .r-list {
+  display: grid;
+  gap: var(--s-2);
+}
+.tool-use-card.is-rich .r-node {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--paper);
+}
+.tool-use-card.is-rich .r-node .nico {
+  color: var(--info);
+  flex: none;
+  display: flex;
+}
+.tool-use-card.is-rich .r-node .nbody {
+  min-width: 0;
+  flex: 1;
+}
+.tool-use-card.is-rich .r-node .nlabel {
+  font-size: var(--fs-caption);
+  color: var(--ink);
+  font-weight: 500;
+}
+.tool-use-card.is-rich .r-node .nmeta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-4);
+  margin-top: 1px;
+}
+.tool-use-card.is-rich .r-node .nscore {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  flex: none;
+}
+
+/* mistake / attribution result */
+.tool-use-card.is-rich .r-mistake {
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  overflow: hidden;
+}
+.tool-use-card.is-rich .r-mistake + .r-mistake {
+  margin-top: var(--s-2);
+}
+.tool-use-card.is-rich .r-mistake .mq {
+  padding: var(--s-3);
+  font-size: var(--fs-caption);
+  color: var(--ink);
+  border-bottom: 1px solid var(--line-soft);
+}
+.tool-use-card.is-rich .r-mistake .mq .wenyan {
+  font-family: var(--font-wenyan);
+}
+.tool-use-card.is-rich .r-mistake .chain {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  padding: var(--s-2) var(--s-3);
+  background: var(--info-soft);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--info-ink);
+}
+.tool-use-card.is-rich .r-mistake .chain .ev {
+  padding: 1px 6px;
+  background: var(--paper-raised);
+  border-radius: var(--r-1);
+  color: var(--ink-3);
+}
+.tool-use-card.is-rich .r-mistake .chain .arrow {
+  color: var(--ink-4);
+}
+.tool-use-card.is-rich .r-mistake .chain .cause {
+  color: var(--info-ink);
+  font-weight: 500;
+}
+
+/* variant cards result */
+.tool-use-card.is-rich .r-variant {
+  border: 1px solid var(--coral-line);
+  border-radius: var(--r-2);
+  background: var(--coral-soft);
+  padding: var(--s-3);
+}
+.tool-use-card.is-rich .r-variant + .r-variant {
+  margin-top: var(--s-2);
+}
+.tool-use-card.is-rich .r-variant .vtop {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: 6px;
+}
+.tool-use-card.is-rich .r-variant .vtag {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--coral-ink);
+}
+.tool-use-card.is-rich .r-variant .vnew {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--paper);
+  background: var(--coral);
+  padding: 1px 6px;
+  border-radius: var(--r-pill);
+  margin-left: auto;
+}
+.tool-use-card.is-rich .r-variant .vq {
+  font-family: var(--font-wenyan);
+  font-size: var(--fs-body);
+  color: var(--ink);
+  line-height: var(--lh-snug);
+}
+.tool-use-card.is-rich .r-variant .va {
+  font-size: var(--fs-meta);
+  color: var(--coral-ink);
+  margin-top: 4px;
+}
+
+/* prose explanation result */
+.tool-use-card.is-rich .r-explain {
+  border-left: 2px solid var(--info);
+  padding-left: var(--s-3);
+}
+.tool-use-card.is-rich .r-explain p {
+  margin: 0 0 var(--s-2);
+  font-size: var(--fs-caption);
+  color: var(--ink-2);
+  line-height: var(--lh-prose);
+}
+.tool-use-card.is-rich .r-explain p:last-child {
+  margin-bottom: 0;
+}
+.tool-use-card.is-rich .r-explain .wy {
+  font-family: var(--font-wenyan);
+  color: var(--ink);
+}
+
+/* schedule result */
+.tool-use-card.is-rich .r-sched {
+  display: flex;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+}
+.tool-use-card.is-rich .r-sched .cell {
+  flex: 1;
+  min-width: 90px;
+  padding: var(--s-3);
+  background: var(--good-soft);
+  border: 1px solid var(--good-line);
+  border-radius: var(--r-2);
+}
+.tool-use-card.is-rich .r-sched .cell .lbl {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--good-ink);
+  letter-spacing: var(--ls-wide);
+  opacity: 0.8;
+}
+.tool-use-card.is-rich .r-sched .cell .big {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h3);
+  color: var(--good-ink);
+  line-height: 1.2;
+  margin-top: 2px;
+}
+.tool-use-card.is-rich .r-sched .cell .big .u {
+  font-size: var(--fs-meta);
+  font-family: var(--font-sans);
+  color: var(--good);
+  margin-left: 2px;
+}
+
+/* edge / relation result */
+.tool-use-card.is-rich .r-edge {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  justify-content: center;
+  padding: var(--s-3);
+  background: var(--info-soft);
+  border-radius: var(--r-2);
+  flex-wrap: wrap;
+}
+.tool-use-card.is-rich .r-edge .enode {
+  font-size: var(--fs-caption);
+  color: var(--ink);
+  font-weight: 500;
+  background: var(--paper-raised);
+  border: 1px solid var(--info-line);
+  padding: 4px 10px;
+  border-radius: var(--r-pill);
+}
+.tool-use-card.is-rich .r-edge .rel {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--info-ink);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.tool-use-card.is-rich .r-edge .rel .glyph {
+  font-size: 18px;
+  line-height: 1;
+  color: var(--info);
+}
+
+/* note diff result */
+.tool-use-card.is-rich .r-diff {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  overflow: hidden;
+}
+.tool-use-card.is-rich .r-diff .dl {
+  padding: 2px var(--s-3);
+}
+.tool-use-card.is-rich .r-diff .dl.add {
+  background: var(--good-soft);
+  color: var(--good-ink);
+}
+.tool-use-card.is-rich .r-diff .dl.add::before {
+  content: "+ ";
+  opacity: 0.6;
+}
+.tool-use-card.is-rich .r-diff .dl.ctx {
+  color: var(--ink-4);
+}
+.tool-use-card.is-rich .r-diff .dl.ctx::before {
+  content: "  ";
+}
+
+/* ocr extract / stream result */
+.tool-use-card.is-rich .r-ocr {
+  display: grid;
+  gap: 6px;
+}
+.tool-use-card.is-rich .r-ocr .oitem {
+  display: flex;
+  gap: var(--s-2);
+  align-items: baseline;
+  font-size: var(--fs-caption);
+  color: var(--ink-2);
+}
+.tool-use-card.is-rich .r-ocr .oitem .oi {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-4);
+  flex: none;
+}
+.tool-use-card.is-rich .r-ocr .oitem .ot {
+  font-family: var(--font-wenyan);
+}
+.tool-use-card.is-rich .r-stream {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-3);
+  line-height: var(--lh-snug);
+}
+.tool-use-card.is-rich .r-stream .cursor {
+  display: inline-block;
+  width: 7px;
+  height: 14px;
+  background: var(--coral);
+  vertical-align: -2px;
+  margin-left: 1px;
+  animation: tuc-blink 1s steps(2) infinite;
+}
+@keyframes tuc-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* skeleton (running result) */
+.tool-use-card.is-rich .tuc-skel {
+  display: grid;
+  gap: var(--s-2);
+}
+.tool-use-card.is-rich .tuc-skel-ln {
+  height: 12px;
+  border-radius: var(--r-1);
+  background: linear-gradient(
+    90deg,
+    var(--paper-sunk) 25%,
+    var(--paper-tint) 50%,
+    var(--paper-sunk) 75%
+  );
+  background-size: 200% 100%;
+  animation: tuc-shimmer 1.3s linear infinite;
+}
+@keyframes tuc-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* empty result */
+.tool-use-card.is-rich .r-empty {
+  text-align: center;
+  padding: var(--s-4) var(--s-3);
+  color: var(--ink-3);
+}
+.tool-use-card.is-rich .r-empty .ei {
+  color: var(--ink-5);
+  margin-bottom: var(--s-2);
+  display: inline-flex;
+}
+.tool-use-card.is-rich .r-empty .et {
+  font-size: var(--fs-caption);
+  color: var(--ink-2);
+}
+.tool-use-card.is-rich .r-empty .es {
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  margin-top: 2px;
+}
+
+/* error result */
+.tool-use-card.is-rich .r-error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  padding: var(--s-3);
+  background: var(--again-soft);
+  border: 1px solid var(--again-line);
+  border-radius: var(--r-2);
+}
+.tool-use-card.is-rich .r-error .eic {
+  color: var(--again);
+  flex: none;
+  display: flex;
+}
+.tool-use-card.is-rich .r-error .etxt {
+  font-size: var(--fs-caption);
+  color: var(--again-ink);
+  line-height: var(--lh-snug);
+}
+.tool-use-card.is-rich .r-error .ecode {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--again);
+  opacity: 0.8;
+  margin-top: 2px;
+}
+
+/* ── meta ribbon ── */
+.tool-use-card.is-rich .tuc-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+  padding: var(--s-2) var(--s-4);
+  border-top: 1px solid var(--line-soft);
+  background: var(--paper);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-4);
+}
+.tool-use-card.is-rich .tuc-meta-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+.tool-use-card.is-rich .tuc-meta-dot {
+  color: var(--line-strong);
+}
+.tool-use-card.is-rich .tuc-meta-model {
+  color: var(--ink-3);
+}
+.tool-use-card.is-rich .tuc-meta-cost {
+  color: var(--coral-hover);
+}
+.tool-use-card.is-rich .tuc-meta-cost.is-free {
+  color: var(--good);
+}
+.tool-use-card.is-rich .tuc-meta-caused {
+  flex-basis: 100%;
+  text-align: right;
+  margin: 0;
+  color: var(--ink-5);
+}
+.tool-use-card.is-rich .tuc-meta-caused b {
+  color: var(--ink-4);
+  font-weight: 400;
+}
+
+/* confidence meter */
+.tuc-conf {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.tuc-conf-bar {
+  width: 38px;
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: var(--line);
+  overflow: hidden;
+}
+.tuc-conf-bar i {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: var(--good);
+}
+.tuc-conf-bar i.mid {
+  background: var(--hard);
+}
+.tuc-conf-bar i.low {
+  background: var(--again);
+}
+.tuc-conf-pct {
+  color: var(--ink-3);
+}
+
+/* ── action row (approval) ── */
+.tool-use-card.is-rich .tuc-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  padding: var(--s-3) var(--s-4);
+  border-top: 1px solid var(--line);
+  background: var(--paper-sunk);
+}
+.tool-use-card.is-rich .tuc-actions-hint {
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  margin-right: auto;
+}
+
+/* resolved line (instant, no fade — chat3.md trap) */
+.tool-use-card.is-rich .tuc-resolved {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+  border-top: 1px solid var(--line);
+  background: var(--good-soft);
+  font-size: var(--fs-caption);
+  color: var(--good-ink);
+}
+.tool-use-card.is-rich .tuc-resolved.is-dismissed {
+  background: var(--paper-sunk);
+  color: var(--ink-4);
+}
+.tool-use-card.is-rich .tuc-resolved-ev {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin,
+  .tool-use-card.is-rich .tuc-skel-ln,
+  .tool-use-card.is-rich .r-stream .cursor {
+    animation: none;
+  }
+}
+
+/* ============================================================
    LOOM MISTAKES LAYER — Wave 2 (YUK-169)
    /mistakes (错题本) card + chrome classes ported additively from
    loom-prototype @ f85aca6d (screen-mistakes.jsx MistakeCard).
@@ -10111,6 +10820,997 @@ button.seg-sm {
   flex: none;
 }
 
+/* ---------- YUK-261 clickable choice options ----------
+   Selected / feedback states for the PracticeChoiceOptions component. The
+   selected affordance is coral border + ✓ icon (round2a §1.3: never colour
+   alone). Feedback ✓/✗ icons + tone classes mark correct/wrong/missed. */
+.practice-loom .practice-choices--clickable {
+  /* group is keyboard-focusable; keep its outline crisp without shifting layout. */
+  outline-offset: var(--s-1);
+  border-radius: var(--r-2);
+}
+.practice-loom .practice-choice-text {
+  flex: 1 1 auto;
+}
+/* selected — coral border + soft fill (the ✓ icon carries the non-colour cue). */
+.practice-loom .practice-choice-btn.is-selected {
+  border-color: var(--coral);
+  background: var(--coral-soft);
+}
+.practice-loom .practice-choice-btn.is-selected .practice-choice-label {
+  color: var(--coral-ink);
+}
+/* the ✓ check mark sits at the trailing edge of the card. */
+.practice-loom .practice-choice-mark {
+  flex: none;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  color: var(--coral);
+}
+/* feedback tones — correct (good), wrong (again/coral), missed (good, outlined). */
+.practice-loom .practice-choice-btn.is-correct {
+  border-color: var(--good-line);
+  background: var(--good-soft);
+}
+.practice-loom .practice-choice-btn.is-wrong {
+  border-color: var(--again-line);
+  background: var(--again-soft);
+}
+.practice-loom .practice-choice-btn.is-missed {
+  border-color: var(--good-line);
+  border-style: dashed;
+}
+.practice-loom .practice-choice-mark--is-correct,
+.practice-loom .practice-choice-mark--is-missed {
+  color: var(--good);
+}
+.practice-loom .practice-choice-mark--is-wrong {
+  color: var(--again);
+}
+/* In feedback mode a selected card also carries a tone class; the letter badge
+   must follow the tone (good/again) instead of staying coral from .is-selected.
+   Higher specificity (.is-selected.is-correct) overrides the coral label rule. */
+.practice-loom .practice-choice-btn.is-selected.is-correct .practice-choice-label {
+  color: var(--good);
+}
+.practice-loom .practice-choice-btn.is-selected.is-wrong .practice-choice-label {
+  color: var(--again);
+}
+
+/* ============================================================
+   YUK-288 题库 UI (question bank) — list + detail.
+   Ported from docs/design/2026-06-08-question-bank-ui/questions.css.
+   List/detail chrome scoped under .questions-loom so the qb-/qd-
+   namespace can't collide with legacy globals; generic helpers
+   (.q-md, .btn-danger) stay global. Uses repo tokens only — the
+   mock's tokens.css is NOT in the runtime (plan §5).
+   ============================================================ */
+
+/* ── toolbar: search + sort ───────────────────────────────── */
+.questions-loom .qb-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--s-3);
+}
+.questions-loom .qb-search {
+  flex: 1;
+  min-width: 220px;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  background: var(--paper-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-3);
+  padding: 0 var(--s-3);
+  color: var(--ink-4);
+  transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast)
+    var(--ease-out);
+}
+.questions-loom .qb-search:focus-within {
+  border-color: var(--coral-line);
+  box-shadow: var(--shadow-focus);
+}
+.questions-loom .qb-search input {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  color: var(--ink);
+  padding: 10px 0;
+  outline: none;
+}
+.questions-loom .qb-search input::placeholder {
+  color: var(--ink-5);
+}
+.questions-loom .qb-search-clear {
+  border: 0;
+  background: transparent;
+  color: var(--ink-4);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  padding: 2px;
+  border-radius: var(--r-1);
+}
+.questions-loom .qb-search-clear:hover {
+  color: var(--ink);
+  background: var(--paper-sunk);
+}
+.questions-loom .qb-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.questions-loom .qb-sort-l {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+}
+.questions-loom .qb-seg {
+  display: inline-flex;
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  padding: 2px;
+}
+.questions-loom .qb-seg button {
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  font-family: var(--font-sans);
+  font-size: var(--fs-caption);
+  padding: 5px 11px;
+  border-radius: var(--r-1);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.questions-loom .qb-seg button:hover {
+  color: var(--ink);
+}
+.questions-loom .qb-seg button.on {
+  background: var(--paper-raised);
+  color: var(--coral-ink);
+  box-shadow: var(--shadow-1);
+}
+.questions-loom .qb-seg .qb-dir {
+  font-family: var(--font-mono);
+  opacity: 0.7;
+}
+
+/* ── status / subject tabs ────────────────────────────────── */
+.questions-loom .qb-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: var(--s-3);
+  flex-wrap: wrap;
+}
+.questions-loom .qb-subject-tabs {
+  margin-top: calc(-1 * var(--s-2));
+}
+.questions-loom .qb-tab {
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  padding: 9px 14px;
+  cursor: pointer;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border-radius: var(--r-2) var(--r-2) 0 0;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.questions-loom .qb-tab:hover {
+  color: var(--ink);
+  background: var(--paper-sunk);
+}
+.questions-loom .qb-tab.on {
+  color: var(--coral-ink);
+}
+.questions-loom .qb-tab.on::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: -1px;
+  height: 2px;
+  background: var(--coral);
+  border-radius: 2px;
+}
+.questions-loom .qb-tab-n {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-4);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  padding: 0 7px;
+}
+.questions-loom .qb-tab.on .qb-tab-n {
+  color: var(--coral-ink);
+  background: var(--coral-soft);
+  border-color: var(--coral-line);
+}
+
+/* ── filter bar ───────────────────────────────────────────── */
+.questions-loom .qb-filterbar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3) var(--s-4);
+  flex-wrap: wrap;
+  padding: var(--s-3) var(--s-4);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  margin-bottom: var(--s-3);
+}
+.questions-loom .qf2 {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.questions-loom .qf2-l {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+}
+.questions-loom .qf2 select {
+  font-family: var(--font-sans);
+  font-size: var(--fs-caption);
+  color: var(--ink);
+  background: var(--paper-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-2);
+  padding: 6px 28px 6px 10px;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23B6B3A8' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+}
+.questions-loom .qf2 select:hover {
+  border-color: var(--ink-5);
+}
+.questions-loom .qf2-diff {
+  display: inline-flex;
+  gap: 3px;
+}
+.questions-loom .qf2-pip {
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--line-strong);
+  background: var(--paper-raised);
+  border-radius: var(--r-1);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.questions-loom .qf2-pip:hover {
+  border-color: var(--coral-line);
+}
+.questions-loom .qf2-pip.on {
+  background: var(--coral);
+  border-color: var(--coral);
+  color: #fff;
+}
+.questions-loom .qf2-reset {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  border: 1px solid var(--coral-line);
+  background: var(--coral-soft);
+  color: var(--coral-ink);
+  border-radius: var(--r-2);
+  padding: 6px 12px;
+  font-size: var(--fs-caption);
+  cursor: pointer;
+}
+.questions-loom .qf2-reset:hover {
+  background: var(--coral-line);
+}
+
+.questions-loom .qb-klabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: var(--s-4);
+}
+.questions-loom .qb-klabel-l {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+  margin-right: 2px;
+}
+.questions-loom .kchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  color: var(--ink-3);
+  border-radius: var(--r-pill);
+  padding: 3px 10px;
+  font-size: var(--fs-meta);
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.questions-loom .kchip:hover {
+  border-color: var(--coral-line);
+  color: var(--coral-ink);
+}
+.questions-loom .kchip.on {
+  background: var(--coral-soft);
+  border-color: var(--coral-line);
+  color: var(--coral-ink);
+  font-weight: 500;
+}
+
+/* ── question rows ────────────────────────────────────────── */
+.questions-loom .qb-list {
+  display: flex;
+  flex-direction: column;
+}
+.questions-loom .qb-row {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 184px;
+  gap: var(--s-3) var(--s-4);
+  align-items: start;
+  padding: var(--s-4);
+  border-bottom: 1px solid var(--line-soft);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+  text-decoration: none;
+  color: inherit;
+}
+.questions-loom .qb-row:last-child {
+  border-bottom: 0;
+}
+.questions-loom .qb-row:hover {
+  background: var(--paper-sunk);
+}
+.questions-loom .qb-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding-top: 1px;
+}
+.questions-loom .qb-glyph {
+  font-size: 14px;
+  line-height: 1;
+  color: var(--coral);
+}
+.questions-loom .qb-glyph.is-variant {
+  color: var(--info);
+}
+.questions-loom .qb-glyph.is-part {
+  color: var(--ink-4);
+  font-size: 12px;
+}
+.questions-loom .qb-main {
+  min-width: 0;
+}
+.questions-loom .qb-stem {
+  font-size: var(--fs-body);
+  color: var(--ink);
+  line-height: var(--lh-snug);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.questions-loom .qb-stem .q-md p {
+  margin: 0;
+}
+.questions-loom .qb-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.questions-loom .qb-ktag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--ink-3);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  padding: 1px 7px;
+}
+.questions-loom .qb-row:hover .qb-ktag {
+  background: var(--paper-raised);
+}
+.questions-loom .qb-ktag .ico {
+  color: var(--ink-5);
+}
+.questions-loom .qb-ind {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: var(--r-pill);
+  border: 1px solid transparent;
+}
+.questions-loom .qb-ind.tone-good {
+  color: var(--good-ink);
+  background: var(--good-soft);
+  border-color: var(--good-line);
+}
+.questions-loom .qb-ind.tone-info {
+  color: var(--info-ink);
+  background: var(--info-soft);
+  border-color: var(--info-line, var(--info));
+}
+.questions-loom .qb-ind.tone-neutral {
+  color: var(--ink-3);
+  background: var(--paper-sunk);
+  border-color: var(--line);
+}
+.questions-loom .qb-ind.tone-coral {
+  color: var(--coral-ink);
+  background: var(--coral-soft);
+  border-color: var(--coral-line);
+}
+.questions-loom .qb-aside {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 7px;
+  white-space: nowrap;
+}
+.questions-loom .qb-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-meta);
+  color: var(--ink-2);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  padding: 3px 10px;
+}
+.questions-loom .qb-kind .ico {
+  color: var(--ink-4);
+}
+.questions-loom .qb-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.questions-loom .qb-source.tone-coral {
+  color: var(--coral-ink);
+}
+.questions-loom .qb-source.tone-info {
+  color: var(--info-ink);
+}
+.questions-loom .qb-source.tone-neutral {
+  color: var(--ink-4);
+}
+.questions-loom .qb-diff {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.questions-loom .qb-diff-pips {
+  display: inline-flex;
+  gap: 2px;
+}
+.questions-loom .qb-pip {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--paper-sunk);
+  border: 1px solid var(--line-strong);
+}
+.questions-loom .qb-pip.on.tone-good {
+  background: var(--good);
+  border-color: var(--good);
+}
+.questions-loom .qb-pip.on.tone-hard {
+  background: var(--hard);
+  border-color: var(--hard);
+}
+.questions-loom .qb-pip.on.tone-again {
+  background: var(--again);
+  border-color: var(--again);
+}
+.questions-loom .qb-diff-l {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-4);
+}
+.questions-loom .qb-time {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-5);
+}
+.questions-loom .qb-draftdot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--hard);
+  display: inline-block;
+}
+.questions-loom .qb-count {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  margin-top: var(--s-3);
+}
+.questions-loom .qb-count .meta {
+  color: var(--ink-4);
+}
+.questions-loom .qb-ribbon {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  padding: 2px;
+  margin-bottom: var(--s-4);
+  box-shadow: var(--shadow-1);
+}
+.questions-loom .qb-stat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--s-3) var(--s-4);
+  border-right: 1px solid var(--line-soft);
+}
+.questions-loom .qb-stat:last-child {
+  border-right: 0;
+}
+.questions-loom .qb-stat-n {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h3);
+  color: var(--ink);
+  line-height: 1;
+}
+.questions-loom .qb-stat-n .u {
+  font-family: var(--font-sans);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  margin-left: 3px;
+}
+.questions-loom .qb-stat-l {
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
+.questions-loom .qb-stat.accent .qb-stat-n {
+  color: var(--coral);
+}
+
+@media (max-width: 760px) {
+  .questions-loom .qb-row {
+    grid-template-columns: 26px minmax(0, 1fr);
+  }
+  .questions-loom .qb-aside {
+    grid-column: 2;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 8px;
+    margin-top: 2px;
+  }
+  .questions-loom .qb-ribbon {
+    flex-wrap: wrap;
+  }
+  .questions-loom .qb-stat {
+    flex: 1 1 40%;
+  }
+}
+
+/* ── 题库 detail (#questions/[id]) ─────────────────────────── */
+.questions-loom .kd-main {
+  min-width: 0;
+}
+.questions-loom .qd-head-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+.questions-loom .qd-sec {
+  margin-bottom: var(--s-5);
+}
+.questions-loom .qd-sec-h {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  letter-spacing: var(--ls-wide);
+  color: var(--ink-4);
+  margin-bottom: var(--s-3);
+}
+.questions-loom .qd-sec-h .ico {
+  color: var(--ink-5);
+}
+.questions-loom .qd-preview {
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  padding: var(--s-4) var(--s-5);
+}
+.questions-loom .qd-preview-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: var(--ls-wide);
+  color: var(--ink-5);
+  margin-bottom: var(--s-2);
+}
+.questions-loom .qd-passage {
+  background: var(--paper-tint, var(--paper-sunk));
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--coral-line);
+  border-radius: var(--r-3);
+  padding: var(--s-4) var(--s-5);
+}
+
+/* options (read-only) */
+.questions-loom .qd-opts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.questions-loom .qd-opt {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--paper-raised);
+}
+.questions-loom .qd-opt-key {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  color: var(--ink-3);
+  background: var(--paper-sunk);
+}
+.questions-loom .qd-opt-text {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  color: var(--ink);
+}
+.questions-loom .qd-opt-text .q-md p {
+  margin: 0;
+}
+
+/* figure placeholder */
+.questions-loom .qd-figure {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  background: var(--paper-sunk);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-3);
+  padding: var(--s-4);
+  color: var(--ink-4);
+}
+.questions-loom .qd-figure-ico {
+  width: 56px;
+  height: 56px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-2);
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  color: var(--ink-5);
+}
+.questions-loom .qd-figure-cap {
+  font-size: var(--fs-caption);
+  color: var(--ink-3);
+}
+.questions-loom .qd-figure-sub {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-5);
+  margin-top: 2px;
+}
+
+/* answer card */
+.questions-loom .qd-answer {
+  background: var(--good-soft);
+  border: 1px solid var(--good-line);
+  border-radius: var(--r-3);
+  padding: var(--s-4) var(--s-5);
+}
+.questions-loom .qd-answer .q-md {
+  color: var(--good-ink);
+  font-size: var(--fs-body);
+  line-height: var(--lh-prose);
+}
+.questions-loom .qd-answer .q-md .katex {
+  color: var(--ink);
+}
+
+/* subquestions / breadcrumb (qd-sub used both as link rows) */
+.questions-loom .qd-subs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.questions-loom .qd-sub {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  border-radius: var(--r-2);
+  padding: var(--s-3) var(--s-4);
+  cursor: pointer;
+  text-decoration: none;
+  color: inherit;
+  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast)
+    var(--ease-out);
+}
+.questions-loom .qd-sub:hover {
+  border-color: var(--coral-line);
+  background: var(--paper-sunk);
+}
+.questions-loom .qd-sub-idx {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  border-radius: 50%;
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  color: var(--ink-3);
+}
+.questions-loom .qd-sub-body {
+  flex: 1;
+  min-width: 0;
+}
+.questions-loom .qd-sub-stem {
+  font-size: var(--fs-caption);
+  color: var(--ink);
+  overflow: hidden;
+}
+.questions-loom .qd-sub-stem .q-md p {
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.questions-loom .qd-sub-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+/* variant family */
+.questions-loom .qd-fam-node {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-2) 0;
+}
+.questions-loom .qd-fam-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--coral);
+  background: var(--paper-raised);
+  flex: none;
+}
+.questions-loom .qd-fam-node.variant .qd-fam-dot {
+  border-color: var(--info);
+  width: 8px;
+  height: 8px;
+}
+.questions-loom .qd-fam-node.variant {
+  padding-left: var(--s-5);
+}
+.questions-loom .qd-fam-link {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: none;
+}
+.questions-loom .qd-fam-link:hover .qd-fam-t {
+  color: var(--coral-ink);
+}
+.questions-loom .qd-fam-t {
+  font-size: var(--fs-caption);
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.questions-loom .qd-fam-node.is-current .qd-fam-t {
+  font-weight: 600;
+  color: var(--ink);
+}
+.questions-loom .qd-fam-cur {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--coral-ink);
+  background: var(--coral-soft);
+  border: 1px solid var(--coral-line);
+  border-radius: var(--r-pill);
+  padding: 0 6px;
+  flex: none;
+}
+
+/* side rail props */
+.questions-loom .qd-prop {
+  padding: var(--s-3) 0;
+  border-top: 1px solid var(--line-soft);
+}
+.questions-loom .qd-prop:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+.questions-loom .qd-prop-l {
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.questions-loom .qd-chipset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.questions-loom .qd-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--coral-line);
+  background: var(--coral-soft);
+  color: var(--coral-ink);
+  border-radius: var(--r-pill);
+  padding: 3px 10px;
+  font-size: var(--fs-caption);
+  cursor: pointer;
+  text-decoration: none;
+}
+.questions-loom .qd-prop-val {
+  font-size: var(--fs-body);
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.questions-loom .qd-prop-val .ico {
+  color: var(--ink-4);
+}
+.questions-loom .qd-prop-time {
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  color: var(--ink-2);
+}
+
+/* association state */
+.questions-loom .qd-assoc {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-2);
+}
+.questions-loom .qd-assoc-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--paper-sunk);
+}
+.questions-loom .qd-assoc-n {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h4);
+  color: var(--ink);
+  line-height: 1;
+}
+.questions-loom .qd-assoc-n.hot {
+  color: var(--coral);
+}
+.questions-loom .qd-assoc-n.tone-good {
+  color: var(--good);
+}
+.questions-loom .qd-assoc-n.tone-hard {
+  color: var(--hard);
+}
+.questions-loom .qd-assoc-n.tone-again {
+  color: var(--again);
+}
+.questions-loom .qd-assoc-n.tone-neutral {
+  color: var(--ink-3);
+}
+.questions-loom .qd-assoc-l {
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
+.questions-loom .qd-paperlist {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: var(--s-2);
+}
+.questions-loom .qd-paperrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-caption);
+  color: var(--ink-2);
+}
+.questions-loom .qd-paperrow .ico {
+  color: var(--ink-4);
+}
+.questions-loom .qd-danger {
+  border-color: var(--again-line);
+}
+.questions-loom .qd-danger .qd-prop-l {
+  color: var(--again-ink);
+}
+.questions-loom .qd-side .card + .card {
+  margin-top: var(--s-3);
+}
+
+/* disabled controls keep the design shape but read as inert (S1 只读, YUK-281). */
+.questions-loom .btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* ============================================================
    YUK-294 AgentNotes (.an-*) — "AI 观察" agent-to-agent notes.
      • AgentNotesBoard — compact read-only block on /today.
@@ -10301,9 +12001,9 @@ button.seg-sm {
 }
 @media (prefers-reduced-motion: no-preference) {
   .an-scope .an-feed {
-    animation: anFeedIn var(--dur-base) var(--ease-out) both;
+    animation: an-feed-in var(--dur-base) var(--ease-out) both;
   }
-  @keyframes anFeedIn {
+  @keyframes an-feed-in {
     from {
       opacity: 0;
       transform: translateY(-4px);

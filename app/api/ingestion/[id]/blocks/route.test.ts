@@ -215,4 +215,160 @@ describe('GET /api/ingestion/[id]/blocks', () => {
       suggested_knowledge_ids: ['k1', 'k2'],
     });
   });
+
+  it('surfaces mistake_draft under the pinned keys when the payload carries it', async () => {
+    await seedSession('sess1');
+    await seedBlock({ id: 'b1', session_id: 'sess1' });
+    await testDb()
+      .insert(event)
+      .values({
+        id: 'evt_observe_b1',
+        session_id: null,
+        actor_kind: 'agent',
+        actor_ref: 'workflow_judge',
+        action: 'experimental:auto_enroll_observed',
+        subject_kind: 'question_block',
+        subject_id: 'b1',
+        outcome: 'failure',
+        payload: {
+          mode: 'observe',
+          route: 'review',
+          confidence: 0.8,
+          threshold: 0.85,
+          suggested_knowledge_ids: ['k1'],
+          // raw MistakeEnrollOutput as written by auto-enroll.ts:303 — extra
+          // fields (question_type/overall_confidence/reasoning) must be ignored.
+          mistake_draft: {
+            wrong_answer: 'failure',
+            question_type: 'short_answer',
+            difficulty: 4,
+            cause: {
+              primary_category: 'concept_gap',
+              secondary_categories: [],
+              analysis_md: 'student confused X with Y',
+              confidence: 0.7,
+            },
+            overall_confidence: 0.8,
+            reasoning: 'graded',
+          },
+        },
+        caused_by_event_id: null,
+        affected_scopes: [],
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: new Date('2026-05-16T12:01:00Z'),
+        ingest_at: new Date('2026-05-16T12:01:00Z'),
+      });
+
+    const res = await getBlocks('sess1');
+    const body = (await res.json()) as {
+      rows: Array<{
+        auto_enroll_observation: {
+          mistake_draft: {
+            wrong_answer: string | null;
+            difficulty: number | null;
+            cause: { primary_category: string | null; analysis_md: string | null } | null;
+          } | null;
+        } | null;
+      }>;
+    };
+    // EXACT pinned key set: wrong_answer (NOT outcome), difficulty, cause:{primary_category,analysis_md}.
+    expect(body.rows[0].auto_enroll_observation?.mistake_draft).toEqual({
+      wrong_answer: 'failure',
+      difficulty: 4,
+      cause: {
+        primary_category: 'concept_gap',
+        analysis_md: 'student confused X with Y',
+      },
+    });
+  });
+
+  it('mistake_draft is null when the observe payload omits it', async () => {
+    await seedSession('sess1');
+    await seedBlock({ id: 'b1', session_id: 'sess1' });
+    await testDb()
+      .insert(event)
+      .values({
+        id: 'evt_observe_b1',
+        session_id: null,
+        actor_kind: 'agent',
+        actor_ref: 'workflow_judge',
+        action: 'experimental:auto_enroll_observed',
+        subject_kind: 'question_block',
+        subject_id: 'b1',
+        outcome: 'success',
+        payload: {
+          mode: 'observe',
+          route: 'auto',
+          confidence: 0.95,
+          threshold: 0.85,
+          suggested_knowledge_ids: [],
+        },
+        caused_by_event_id: null,
+        affected_scopes: [],
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: new Date('2026-05-16T12:01:00Z'),
+        ingest_at: new Date('2026-05-16T12:01:00Z'),
+      });
+
+    const res = await getBlocks('sess1');
+    const body = (await res.json()) as {
+      rows: Array<{ auto_enroll_observation: { mistake_draft: unknown } | null }>;
+    };
+    expect(body.rows[0].auto_enroll_observation?.mistake_draft).toBeNull();
+  });
+
+  it('tolerant projection keeps present mistake_draft fields and nulls the absent ones', async () => {
+    await seedSession('sess1');
+    await seedBlock({ id: 'b1', session_id: 'sess1' });
+    await testDb()
+      .insert(event)
+      .values({
+        id: 'evt_observe_b1',
+        session_id: null,
+        actor_kind: 'agent',
+        actor_ref: 'workflow_judge',
+        action: 'experimental:auto_enroll_observed',
+        subject_kind: 'question_block',
+        subject_id: 'b1',
+        outcome: 'partial',
+        payload: {
+          mode: 'observe',
+          route: 'review',
+          confidence: 0.7,
+          threshold: 0.85,
+          suggested_knowledge_ids: [],
+          // legacy/partial draft: missing difficulty + no cause object.
+          mistake_draft: {
+            wrong_answer: 'partial',
+          },
+        },
+        caused_by_event_id: null,
+        affected_scopes: [],
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: new Date('2026-05-16T12:01:00Z'),
+        ingest_at: new Date('2026-05-16T12:01:00Z'),
+      });
+
+    const res = await getBlocks('sess1');
+    const body = (await res.json()) as {
+      rows: Array<{
+        auto_enroll_observation: {
+          mistake_draft: {
+            wrong_answer: string | null;
+            difficulty: number | null;
+            cause: unknown;
+          } | null;
+        } | null;
+      }>;
+    };
+    // The whole draft is NOT dropped — present field survives, absent ones null.
+    expect(body.rows[0].auto_enroll_observation?.mistake_draft).toEqual({
+      wrong_answer: 'partial',
+      difficulty: null,
+      cause: null,
+    });
+  });
 });

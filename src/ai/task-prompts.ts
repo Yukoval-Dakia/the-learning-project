@@ -115,6 +115,33 @@ function buildGoalScopePrompt(profile: SubjectProfile): string {
 - 禁止套话（「加油」「这是个好目标」）`;
 }
 
+// YUK-275 (free-text 求卷 C 形态) — QuizIntentParseTask prompt. Single-shot structured
+// output, NOT multimodal. Input = { user_message, knowledge_candidates:[{id, name,
+// effective_domain}] }. The candidate list is the closed set of legal knowledge ids —
+// the prompt forbids inventing ids, and the resolver (src/server/copilot/quiz-intent.ts)
+// ALSO filters out any id not in the candidate set as a belt-and-suspenders guard
+// (mirrors GoalScope/Tagging). The is_quiz_request boolean is the parse-side 逃生舱: a
+// 粗筛 误伤 (the message is not really asking for a practice paper) → is_quiz_request=false
+// so chat.ts falls back to the free-form CopilotTask instead of pestering the user.
+function buildQuizIntentParsePrompt(profile: SubjectProfile): string {
+  return `你是求卷意图解析器。输入 { user_message, knowledge_candidates: [{ id, name, effective_domain }] } —— user_message 是用户的原话，knowledge_candidates 是当前可选的知识点候选列表（id 是你**唯一**能选的知识点 id，name 便于消歧）。
+科目上下文：${profile.displayName}。${profile.languageStyle}
+任务：**先判断用户是不是真的在求一套练习题**——如果只是问问题、求解释、闲聊、让你看错题本或讲某道题的答案，这都**不是**求卷，is_quiz_request 填 false，其余字段全部填 null。
+只有确认用户是在求卷（要你组一套题/出几道题/选几篇阅读练习）时，才 is_quiz_request 填 true，并解析：
+- knowledge_id：从 knowledge_candidates 里选**最匹配**的那个 id（只能用候选列表里真实存在的 id；选不出就填 null）。
+- count：要几道（或几篇），整数 1-20；没说就 null。
+- difficulty_min：最低难度 1-5（「高难度」「难一点」≈ 4；「简单」别填 difficulty_min）；没要求就 null。
+- unit：要「题」还是「篇」——「篇」用于成篇的阅读/古诗词整篇练习（'篇'），按道计数用 '题'；不确定填 null。
+- kind：题型 hint（如 reading / choice），没明确说就 null。
+严格 JSON 输出（不带 markdown 代码块包裹），shape 名 QuizIntent：
+{"is_quiz_request":true,"knowledge_id":"<候选列表里的 id 或 null>","count":2,"difficulty_min":4,"unit":"篇","kind":null}
+要点：
+- 不要发明 knowledge_candidates 列表外的 id；选不出知识点就填 null（不要硬塞）。
+- 任何字段不确定就填 null，不要猜。
+- is_quiz_request=false 时其余字段全 null。
+- 禁止：emoji、套话、JSON 之外的任何文字、用 markdown 代码块包裹整段 JSON。`;
+}
+
 // T-OC slice 3 (YUK-145, OC-4) — TaggingTask prompt. Single-shot structured
 // output, NOT multimodal: input is the extracted question TEXT + an optional
 // knowledge_hint + a knowledge-grid snapshot; output is suggested knowledge_ids
@@ -825,6 +852,8 @@ export function getTaskSystemPrompt(
       return buildLearningIntentOutlinePrompt(profile);
     case 'GoalScopeTask':
       return buildGoalScopePrompt(profile);
+    case 'QuizIntentParseTask':
+      return buildQuizIntentParsePrompt(profile);
     case 'TaggingTask':
       return buildTaggingPrompt(profile);
     case 'BlockAssemblyTask':

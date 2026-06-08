@@ -72,6 +72,10 @@ export const QuestionOption = z.object({
 
 export const StructuredQuestionSource = z.enum([
   'tencent_ocr',
+  // YUK-253: GLM-OCR replaces Tencent as the default OCR engine. Stamped on
+  // GLM-fallback questions (VLM-down path); the VLM path keeps 'vlm_structure'.
+  // Zod enum only — NOT a DB column (no audit:schema impact).
+  'glm_ocr',
   'vision_rescue',
   // T-OC slice 2 (YUK-145, OC-1/OC-2): VLM StructureTask owns the normalized
   // structure tree; Tencent structure is demoted to a text hint. See
@@ -79,6 +83,11 @@ export const StructuredQuestionSource = z.enum([
   'vlm_structure',
   'manual',
   'agent_edit',
+  // YUK-258: DOCX text-line ingestion. Stamped on blocks segmented from pandoc
+  // gfm markdown (语文/纯文本卷, zero MathType). Zod enum only — NOT a DB column
+  // (no audit:schema impact). Added at the enum TAIL to minimise the merge面 with
+  // #333 (yuk-253-glm-ocr-swap) which inserts 'glm_ocr' mid-enum.
+  'docx_text',
 ]);
 
 // 用 z.lazy 实现递归类型。先声明类型，再赋值，再 type infer。
@@ -101,7 +110,7 @@ export type StructuredQuestionT = {
   page_index?: number;
   sub_questions?: StructuredQuestionT[];
   extraction_evidence?: z.infer<typeof ExtractionEvidence>;
-  source?: 'tencent_ocr' | 'vision_rescue' | 'vlm_structure' | 'manual' | 'agent_edit';
+  source?: z.infer<typeof StructuredQuestionSource>;
   last_modified_by?: string;
   /**
    * Advisory question-type hint (YUK-195, design note §4.3). Written by the

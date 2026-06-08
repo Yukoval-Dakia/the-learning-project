@@ -124,6 +124,16 @@ export type RunAgentTaskCtx = RunTaskCtx;
 export type StreamTaskCtx = RunTaskCtx & {
   /** Reserved for back-compat with the old Vercel AI SDK shape; ignored. */
   tools?: Record<string, unknown>;
+  /**
+   * YUK-238 [STB-4]: the request's AbortSignal (`req.signal`). When the client
+   * disconnects mid-stream, wiring this into the SDK's abortController tears the
+   * in-flight agent run down instead of letting it burn the model budget to
+   * completion. Optional so non-HTTP callers (tests, background jobs) can omit
+   * it; the ReadableStream `cancel` callback is the second, transport-level
+   * trigger that also aborts. Threading a real signal from a route is the
+   * follow-up — see YUK-238 note where the route calls streamReviewTask.
+   */
+  signal?: AbortSignal;
 };
 
 export interface MultimodalTaskInput {
@@ -556,6 +566,18 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
   const abortController = new AbortController();
   const timer = setTimeout(() => abortController.abort(), def.budget.timeout);
 
+  // YUK-238 [STB-4]: connect the request signal so a client disconnect aborts
+  // the SDK run. If the caller threads `req.signal` (see StreamTaskCtx.signal),
+  // its abort (already-aborted or future) propagates to the shared
+  // abortController that buildQueryOptions hands to the SDK below.
+  if (ctx.signal) {
+    if (ctx.signal.aborted) {
+      abortController.abort();
+    } else {
+      ctx.signal.addEventListener('abort', () => abortController.abort(), { once: true });
+    }
+  }
+
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const encoder = new TextEncoder();
@@ -666,6 +688,20 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
                   kind,
                   err,
                 });
+                // YUK-240 [STB-6]: the finish-write failed, so this ai_task_runs
+                // row stays at status='running' forever (the run actually
+                // succeeded). Emit a scannable structured event so a future
+                // sweeper / dashboard can reconcile stuck rows. We deliberately
+                // do NOT retry the DB write here — when the DB is the thing
+                // failing, retrying the same write just compounds the outage.
+                // Observability-only fix; a real reconcile job is the follow-up.
+                console.warn('[streamTask] task_run_stuck_in_running', {
+                  event: 'task_run_stuck_in_running',
+                  task_run_id: taskRunId,
+                  kind,
+                  intended_status: 'success',
+                  err: err instanceof Error ? err.message : String(err),
+                });
               }
             }
             break;
@@ -711,12 +747,35 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
             kind,
             err: finishErr,
           });
+          // YUK-240 [STB-6]: the run already errored AND the failure-status
+          // finish-write itself failed, so this ai_task_runs row is now stuck at
+          // status='running' with no terminal record. Emit the same scannable
+          // structured event the success path uses so a reconcile sweeper can
+          // find it. No retry — see the success-path note: retrying a DB write
+          // during a DB outage just amplifies it. Observability-only.
+          console.warn('[streamTask] task_run_stuck_in_running', {
+            event: 'task_run_stuck_in_running',
+            task_run_id: taskRunId,
+            kind,
+            intended_status: 'failure',
+            err: finishErr instanceof Error ? finishErr.message : String(finishErr),
+          });
         }
         controller.enqueue(new TextEncoder().encode(`\n\n${message}\n`));
       } finally {
         clearTimeout(timer);
         controller.close();
       }
+    },
+    // YUK-238 [STB-4]: transport-level disconnect hook. When the consumer of the
+    // response body cancels the stream (client drops the connection / aborts the
+    // fetch), the runtime invokes cancel(); abort the SDK run and clear the
+    // budget timer so the agent loop stops instead of running to completion in
+    // the background. This is the belt to StreamTaskCtx.signal's suspenders —
+    // either trigger aborts the same shared abortController.
+    cancel() {
+      clearTimeout(timer);
+      abortController.abort();
     },
   });
 
@@ -735,4 +794,272 @@ function extractAssistantText(msg: SDKAssistantMessage): string {
     if (block.type === 'text' && typeof block.text === 'string') out += block.text;
   }
   return out;
+}
+
+// ============================================================================
+// streamTaskCollecting — YUK-266 (C1). A collecting variant of streamTask:
+// streams text deltas to an `onDelta(chunk)` callback (one call per
+// assistant-message text chunk — the same honest per-model-turn granularity
+// streamTask uses, since buildQueryOptions does NOT set includePartialMessages),
+// then RESOLVES the full RunTaskResult (text + task_run_id + usage + cost). Unlike
+// streamTask (which returns a text-only Response and discards the final metadata),
+// the Copilot S3a turn-persistence contract needs the full reply text AND the real
+// task_run_id to persist the experimental:copilot_reply event — so this entrypoint
+// hands both back to the caller while still streaming.
+//
+// Bookkeeping (writeAiTaskRunStarted / tool-call-log / writeCostLedger /
+// writeAiTaskRunFinished) + signal/timer abort wiring mirror streamTask. The loop
+// is intentionally self-contained (NOT factored out of streamTask's body): that
+// body is tightly coupled to its ReadableStream controller (it enqueues encoded
+// bytes mid-loop and writes an error marker to the controller on catch), so sharing
+// it would either leak the controller into this Promise path or risk the
+// stream-cancel.test.ts guards on streamTask's exact behaviour. Keeping streamTask
+// byte-identical is the safer atomic move.
+// TODO(YUK-266 consolidation): once a second collecting caller appears, extract a
+// shared `runAgentStreaming(kind, input, ctx, onDelta): Promise<RunTaskResult>` that
+// streamTask wraps in a ReadableStream and this fn returns directly.
+//
+// GRACEFUL DEGRADE (red line): if the SDK stream throws AFTER some text was
+// collected, this still resolves with the collected text + a `partial: true` flag
+// (mirroring streamTask's catch that appends an error marker but still finishes), so
+// the caller can persist whatever was produced and a turn is never lost.
+export interface StreamCollectResult extends RunTaskResult {
+  /** Set when the stream errored mid-flight; `text` is whatever was collected. */
+  partial?: boolean;
+  /** Present on a partial result — the underlying error message. */
+  error?: string;
+}
+
+export async function streamTaskCollecting(
+  kind: string,
+  input: unknown,
+  ctx: StreamTaskCtx,
+  onDelta: (text: string) => void,
+): Promise<StreamCollectResult> {
+  if (!isKnownTask(kind)) {
+    throw new Error(`Unknown task kind: ${kind}`);
+  }
+  const def = tasks[kind];
+  const taskRunId = createId();
+  const resolved = resolveTaskProvider(kind, ctx.override);
+  let stepStartTime = Date.now();
+  let iteration = 0;
+
+  const abortController = new AbortController();
+  const timer = setTimeout(() => abortController.abort(), def.budget.timeout);
+
+  // YUK-238 [STB-4] parity — thread the request signal so a client disconnect
+  // aborts the SDK run, same as streamTask.
+  if (ctx.signal) {
+    if (ctx.signal.aborted) {
+      abortController.abort();
+    } else {
+      ctx.signal.addEventListener('abort', () => abortController.abort(), { once: true });
+    }
+  }
+
+  let usage = { inputTokens: 0, outputTokens: 0 };
+  let cost_usd: number | undefined;
+  let stopReason = 'unknown';
+  let resultText = '';
+  // YUK-266 — guard the "no terminal result" hole. The sibling streamTask writes
+  // the cost ledger + finished(success) row INSIDE the result-success branch, so it
+  // never records success without a terminal msg.type==='result'. This collecting
+  // variant writes those after the loop, so if the SDK stream ends WITHOUT a
+  // terminal result and without throwing, an incomplete run would otherwise be
+  // recorded as success (corrupting the cost ledger + run audit). Track whether a
+  // terminal success was actually seen; if not, throw so we fall into the existing
+  // graceful-degrade catch that records status:'failure'/finish_reason:'error'.
+  let sawTerminalResult = false;
+
+  try {
+    const actualInput = ctx.middleware?.beforeRun
+      ? await ctx.middleware.beforeRun(kind, input, ctx)
+      : input;
+    try {
+      await writeAiTaskRunStarted(ctx.db, {
+        id: taskRunId,
+        task_kind: kind,
+        provider: resolved.provider,
+        model: resolved.model,
+        input_hash: inputHash(actualInput),
+        started_at: new Date(),
+      });
+    } catch (err) {
+      console.error('[streamTaskCollecting] writeAiTaskRunStarted failed', {
+        task_run_id: taskRunId,
+        kind,
+        err,
+      });
+    }
+
+    const q = sdkQuery({
+      prompt: promptFromInput(actualInput),
+      options: buildQueryOptions(kind, ctx, abortController),
+    });
+    for await (const msg of q as AsyncIterable<SDKMessage>) {
+      if (msg.type === 'assistant') {
+        const text = extractAssistantText(msg);
+        if (text) {
+          onDelta(text);
+          resultText += text;
+        }
+        iteration += 1;
+        const stepLatencyMs = Date.now() - stepStartTime;
+        const blocks = (msg.message.content ?? []) as ContentBlock[];
+        for (const block of blocks) {
+          if (block.type === 'tool_use') {
+            try {
+              await writeToolCallLog(ctx.db, {
+                task_run_id: taskRunId,
+                task_kind: kind,
+                tool_name: block.name,
+                input_json: (block.input ?? {}) as Record<string, unknown>,
+                output_json: {},
+                iteration,
+                latency_ms: stepLatencyMs,
+                cost: 0,
+              });
+            } catch (err) {
+              console.error('[streamTaskCollecting] writeToolCallLog failed', {
+                task_run_id: taskRunId,
+                kind,
+                tool: block.name,
+                err,
+              });
+            }
+          }
+        }
+        stepStartTime = Date.now();
+      } else if (msg.type === 'result') {
+        if (msg.subtype === 'success') {
+          const u = msg.usage;
+          usage = {
+            inputTokens: (u?.input_tokens ?? 0) + (u?.cache_read_input_tokens ?? 0),
+            outputTokens: u?.output_tokens ?? 0,
+          };
+          cost_usd = msg.total_cost_usd;
+          stopReason = msg.stop_reason ?? 'stop';
+          sawTerminalResult = true;
+        } else {
+          const apiStatus =
+            'api_error_status' in msg && msg.api_error_status
+              ? ` http=${msg.api_error_status}`
+              : '';
+          throw new Error(`[${kind}] Agent SDK errored: subtype=${msg.subtype}${apiStatus}`);
+        }
+        break;
+      }
+    }
+
+    // YUK-266 — the stream ended without a terminal success result (and without
+    // throwing). Do NOT record success: throw so the graceful-degrade catch below
+    // writes status:'failure'/finish_reason:'error' and resolves partial text. This
+    // keeps the cost ledger + run audit honest, matching streamTask's invariant.
+    if (!sawTerminalResult) {
+      throw new Error(`[${kind}] Agent SDK stream ended without a terminal result message`);
+    }
+
+    try {
+      await writeCostLedger(ctx.db, {
+        task_run_id: taskRunId,
+        task_kind: kind,
+        provider: resolved.provider,
+        model: resolved.model,
+        // USD float; see runTask comment.
+        cost: cost_usd ?? 0,
+        tokens_in: usage.inputTokens,
+        tokens_out: usage.outputTokens,
+      });
+    } catch (err) {
+      console.error('[streamTaskCollecting] writeCostLedger failed', {
+        task_run_id: taskRunId,
+        kind,
+        err,
+      });
+    }
+    try {
+      await writeAiTaskRunFinished(ctx.db, {
+        id: taskRunId,
+        status: 'success',
+        finish_reason: stopReason,
+        usage,
+        cost_usd,
+      });
+    } catch (err) {
+      console.error('[streamTaskCollecting] writeAiTaskRunFinished success failed', {
+        task_run_id: taskRunId,
+        kind,
+        err,
+      });
+      console.warn('[streamTaskCollecting] task_run_stuck_in_running', {
+        event: 'task_run_stuck_in_running',
+        task_run_id: taskRunId,
+        kind,
+        intended_status: 'success',
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    const result: StreamCollectResult = {
+      task_run_id: taskRunId,
+      text: resultText,
+      finishReason: stopReason,
+      usage,
+      cost_usd,
+    };
+
+    if (ctx.middleware?.afterRun) {
+      try {
+        await ctx.middleware.afterRun(kind, result, ctx);
+      } catch (err) {
+        console.error('[streamTaskCollecting] afterRun middleware failed', {
+          task_run_id: taskRunId,
+          kind,
+          err,
+        });
+      }
+    }
+
+    return result;
+  } catch (err) {
+    // GRACEFUL DEGRADE — the run errored. Record the failure terminal status,
+    // then RESOLVE (do not re-throw) with whatever text was collected so the
+    // caller can still persist the turn. Mirrors streamTask's catch, which keeps
+    // streaming a marker rather than tearing the body down.
+    try {
+      await writeAiTaskRunFinished(ctx.db, {
+        id: taskRunId,
+        status: 'failure',
+        finish_reason: 'error',
+        usage,
+        cost_usd,
+        error_message: err instanceof Error ? err.message : String(err),
+      });
+    } catch (finishErr) {
+      console.error('[streamTaskCollecting] writeAiTaskRunFinished failure failed', {
+        task_run_id: taskRunId,
+        kind,
+        err: finishErr,
+      });
+      console.warn('[streamTaskCollecting] task_run_stuck_in_running', {
+        event: 'task_run_stuck_in_running',
+        task_run_id: taskRunId,
+        kind,
+        intended_status: 'failure',
+        err: finishErr instanceof Error ? finishErr.message : String(finishErr),
+      });
+    }
+    return {
+      task_run_id: taskRunId,
+      text: resultText,
+      finishReason: 'error',
+      usage,
+      cost_usd,
+      partial: true,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  } finally {
+    clearTimeout(timer);
+  }
 }

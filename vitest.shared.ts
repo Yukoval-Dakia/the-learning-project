@@ -8,22 +8,67 @@ export const resolveConfig = {
   alias: { '@': path.resolve(__dirname, 'src') },
 };
 
+// YUK-279 — single source of truth for the JSX transform both vitest configs
+// share. tsconfig has `jsx: "preserve"` (Next transforms JSX at build), so vitest
+// must transform JSX itself via esbuild's automatic runtime; otherwise component
+// tests crash with `React is not defined`. Both the unit and db configs import
+// this so the transform can never drift between the two partitions.
+export const sharedEsbuild = {
+  jsx: 'automatic',
+} as const;
+
+// YUK-279 — every `.test.ts` AND `.test.tsx` glob must appear here. allTestInclude
+// is the *universe* of test files: the db config includes it directly, and the
+// audit walker treats anything matching it as "in some partition". A `.test.tsx`
+// file that matches NO entry here lands in NEITHER vitest config (db excludes
+// fastTestInclude, but a file the db config never `include`d is simply never
+// collected) and is invisible to the auditor → a silent green non-run. The `.tsx`
+// globs below are deliberately as broad as the `.ts` ones so component tests can
+// never fall through; fastTestInclude (the unit allowlist) still decides which of
+// them run no-DB, and any `.tsx` not on that allowlist falls through to the db
+// partition exactly like a `.test.ts` would.
 export const allTestInclude = [
   '*.test.ts',
+  '*.test.tsx',
   'src/**/*.test.ts',
+  'src/**/*.test.tsx',
   'app/**/*.test.ts',
+  'app/**/*.test.tsx',
   'workers/src/**/*.test.ts',
+  'workers/src/**/*.test.tsx',
   'tests/**/*.test.ts',
+  'tests/**/*.test.tsx',
   'scripts/**/*.test.ts',
+  'scripts/**/*.test.tsx',
 ];
 
 export const fastTestInclude = [
   'middleware.test.ts',
   'scripts/**/*.test.ts',
+  // YUK-263 — pure (no-DB) unit for the globalThis pool-cache HMR guard in
+  // src/db/client.ts. `postgres` is vi.mock'd and the only @/db/client import is
+  // a dynamic `await import()`, so no live Postgres is touched → unit partition.
+  'src/db/client.test.ts',
+  // YUK-274 — pure (no-DB) unit for the globalThis singleton-cache HMR guard in
+  // src/server/boss/client.ts. `pg-boss` is vi.mock'd and the only ./client
+  // import is a dynamic `await import()`, so no live Postgres is touched → unit
+  // partition. The live-DB round-trip + SEND_IT race tests stay in the sibling
+  // client.test.ts (db partition).
+  'src/server/boss/client.globalthis.test.ts',
   'src/__tests__/**/*.test.ts',
   'src/ai/**/*.test.ts',
   'src/core/**/*.test.ts',
   'src/server/ai/judges/**/*.test.ts',
+  // YUK-238 / YUK-240 — streamTask client-disconnect abort + stuck-run warn.
+  // Pure no-DB unit: @anthropic-ai/claude-agent-sdk and @/server/ai/log are
+  // vi.mock'd and `db` is an untouched stub, so no live Postgres is needed.
+  // (The sibling runner.test.ts stays in the db partition because it drives the
+  // real ai/log writers against a container.)
+  'src/server/ai/stream-cancel.test.ts',
+  // YUK-266 (C1) — streamTaskCollecting collecting-stream unit. Same justification
+  // as stream-cancel: @anthropic-ai/claude-agent-sdk + @/server/ai/log are vi.mock'd
+  // and `db` is an untouched stub, so no live Postgres is needed.
+  'src/server/ai/runner.stream-collect.test.ts',
   'src/server/ai/tools/registry.test.ts',
   'src/server/ai/tools/allowlists.test.ts',
   'src/server/ai/tools/mcp-bridge.test.ts',
@@ -60,11 +105,35 @@ export const fastTestInclude = [
   // drizzle-orm (query builder) load at runtime — same safe surface the
   // sibling mcp-bridge / allowlists unit tests already exercise. (YUK-97 P7)
   'src/server/copilot/chat.test.ts',
+  // YUK-275 — pure DI unit for the free-text 求卷 粗筛 + 参数解析器. runTaskFn is an
+  // injected vi.fn, db is a {}-stub, and loadTreeSnapshotFn is stubbed, so no live
+  // Postgres / knowledge tree is touched. The only file-level import is
+  // @/server/copilot/quiz-intent (not in DB_TAINTED_DIRS) → unit partition; without
+  // this entry the db config's src/**/*.test.ts glob would sweep it into testcontainer.
+  'src/server/copilot/quiz-intent.test.ts',
   'src/server/events/cause-policy.test.ts',
   'src/server/export/**/*.test.ts',
   'src/server/http/**/*.test.ts',
   'src/server/ingestion/crop.test.ts',
+  // YUK-258 — DOCX ingestion units. All three are pure no-DB: route-classify is
+  // zip-parse only (fflate), markdown-segment is pure string→struct, convert
+  // exercises the seam via an injected mock (NO real spawn / docker). The route
+  // db test (app/api/ingestion/docx/route.test.ts) hits live Postgres → db
+  // partition (NOT listed here). fastTestInclude is an explicit per-file allowlist
+  // with no ingestion/** glob, so these must be enumerated or the db config's
+  // src/**/*.test.ts glob would sweep them into the testcontainer partition.
+  'src/server/ingestion/docx/route-classify.test.ts',
+  'src/server/ingestion/docx/markdown-segment.test.ts',
+  'src/server/ingestion/docx/convert.test.ts',
   'src/server/ingestion/figure_attach.test.ts',
+  // YUK-250 — pure PDFium page renderer unit. Imports only pdf-render.ts +
+  // sharp + @hyzyla/pdfium (WASM, no DB/R2/AI). Fixtures are static PDF bytes.
+  'src/server/ingestion/pdf-render.test.ts',
+  // YUK-250 — encrypted-PDF error mapping; fully mocks @hyzyla/pdfium + sharp.
+  'src/server/ingestion/pdf-render-encryption.test.ts',
+  // YUK-250 bot-review F1 — pure sha256Hex unit (crypto.subtle only, no DB/R2).
+  // Guards content-addressing against byteOffset/byteLength view bugs.
+  'src/server/ingestion/persist-image-asset.unit.test.ts',
   // YUK-214 (Strategy D · S1) — pure (no-DB) ingest→practice paper builder.
   // buildIngestionPaperToolState imports only @/core/schema/business (Zod);
   // @/db/* is type-only / pure table objects at this surface. The DB writer
@@ -90,8 +159,19 @@ export const fastTestInclude = [
   'src/server/ingestion/workflow-judge-config.test.ts',
   'src/server/ingestion/tencent_mark.test.ts',
   'src/server/ingestion/tencent_mark_parser.test.ts',
+  // YUK-253 — GLM-OCR engine swap. Both pure no-DB units: the client test mocks
+  // global `fetch`, the parser test is pure (real fixtures). No @/db/client /
+  // postgres / drizzle / PgBoss import → unit partition. The handler test
+  // (tencent_ocr_extract.test.ts) hits live Postgres → db partition.
+  'src/server/ingestion/glm_ocr.test.ts',
+  'src/server/ingestion/glm_ocr_parser.test.ts',
   'src/server/ingestion/vision.test.ts',
   'src/server/judge/**/*.test.ts',
+  // YUK-239 (STB-5) — pure env-read guard for the background-job enqueue seam
+  // (shouldEnqueueBackgroundJobs). No DB / pg-boss touched (vi.stubEnv only).
+  // Lives at src/server/runtime-env.ts (NOT under src/server/boss/) precisely so
+  // it stays out of the partition auditor's DB_TAINTED_DIRS.
+  'src/server/runtime-env.test.ts',
   // YUK-216 S2 slice 1 — pure (no-DB) verify-gate framework + solve-check unit.
   // runSolveCheck takes an injected runTaskFn (mocks BOTH the SolutionGenerate
   // solver and the SemanticJudge open-question compare), and `db` is a `{}` stub
@@ -106,8 +186,16 @@ export const fastTestInclude = [
   // YUK-228 (S3 Slice B) — pure (no-DB) note skill resolver (fs fixture root),
   // live SoT discovery, and double-sided cloze防御 (note vs quiz-gen-* prefix).
   'src/subjects/note-skills.test.ts',
+  // YUK-284 (C2) — pure (no-DB) Copilot dialogue-methodology skill resolver
+  // (fs fixture root + live SoT discovery). Cross-subject shared pack under
+  // _shared/skills/copilot. MUST be listed here: the unit partition is an explicit
+  // allowlist, not an import sniff (漏列 → vitest.unit.config.ts silent 0-collect).
+  'src/subjects/copilot-skills.test.ts',
   'src/subjects/question-kind.test.ts',
   'src/subjects/profile-schema.thin-section.test.ts',
+  // YUK-288 — resolveKnownSubjectId (pure, no-DB): genuine alias/id hit vs the
+  // default-profile over-match fix for the derived ?subject= axis.
+  'src/subjects/resolve-known-subject-id.test.ts',
   // Pure (no-DB) set-algebra unit for hub mesh curation (YUK-95 P5 Lane-C). The
   // sibling DB handler test (boss/handlers/hub_auto_sync_nightly) stays in the
   // db partition because it hits live Postgres.
@@ -117,6 +205,11 @@ export const fastTestInclude = [
   // gate-behavior + RB-7 regression tests (rubric-validator.test.ts) hit live
   // Postgres → db partition.
   'src/server/knowledge/rubric-validator.unit.test.ts',
+  // YUK-236 [STB-2] — pure (no-DB) coverage for the loadTreeSnapshot OOM-guard
+  // truncation warn. Imports only ./tree (value-imports @/db/schema pure table
+  // objects + drizzle-orm; @/db/client is type-only). The `.limit(5000)` query
+  // bound + parent-chain semantics stay in tree.test.ts (db partition).
+  'src/server/knowledge/tree.unit.test.ts',
   // P5.4-L2 / YUK-174 — pure (no-DB) adaptive-bias decision helpers
   // (computeGateBump / relation parse / findFeedbackCell). The DB-touching
   // getProposalFeedbackDigest is covered by adaptive-bias.test.ts (DB partition).
@@ -166,6 +259,15 @@ export const fastTestInclude = [
   'src/subjects/serialize.test.ts',
   'src/ui/**/*.test.ts',
   'src/ui/**/*.test.tsx',
+  // YUK-271 — inbox block_merge card unit. It is a `.test.tsx` outside src/ui/,
+  // so neither the db config's `app/**/*.test.ts` glob (extension mismatch) nor
+  // the `src/ui/**/*.test.tsx` glob (dir mismatch) would ever collect it; without
+  // this explicit entry it falls into NEITHER partition and silently never runs.
+  // It renderToString's the exported BlockMergeProposalCard only (the default page
+  // component with its @tanstack/react-query + next/navigation deps is never
+  // instantiated), so no @/db/client / postgres / drizzle / PgBoss is touched →
+  // unit partition.
+  'app/(app)/inbox/inbox.test.tsx',
   'app/api/ai/*/route.test.ts',
   // Health route test mocks @/db/client before importing the route, so it has no
   // live-Postgres dependency and belongs in the no-Docker unit partition (YUK-134).
@@ -182,11 +284,18 @@ export const fastTestInclude = [
   // the route; it only validates + enqueues (no @/db/client import), so it has
   // no live-Postgres dependency → unit partition (search-grounded QuizGen wave).
   'app/api/questions/quiz-gen/route.test.ts',
+  // YUK-234 (SEC-4) — pure Zod-parse unit for the import request-body bounds
+  // (per-array .max() ceilings). schema.ts has no DB / R2 / AI import; the
+  // route's DB-backed behavior stays in import/route.test.ts (db partition).
+  // `*` matches the literal `[id]` dynamic segment (mirrors the revert glob).
+  'app/api/ingestion/*/import/schema.test.ts',
   'tests/core/**/*.test.ts',
   'tests/schema/**/*.test.ts',
   'tests/subjects/**/*.test.ts',
   'tests/integration/judge-gap-audit.test.ts',
   'tests/integration/session-single-owner.test.ts',
+  // Audit 2026-06-06 G8-docs — pure-fs doc invariants (YUK-242/243/244), no DB/AI.
+  'tests/integration/audit-docs-invariant.test.ts',
   'tests/integration/step12-docs-invariant.test.ts',
   'tests/integration/step9-invariant-audit.test.ts',
 ];

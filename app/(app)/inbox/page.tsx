@@ -10,96 +10,32 @@ import { PageHeader } from '@/ui/primitives/PageHeader';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import type { ReactNode } from 'react';
+import { type ReactNode, useState } from 'react';
+// YUK-271 — shared inbox presentational types + leaf helpers + the block_merge
+// card live in ./proposal-shared (a non-route module) because Next rejects
+// arbitrary named exports from page.tsx; this keeps the testable surface
+// importable while page.tsx exposes only the default page component.
+import {
+  BlockMergeProposalCard,
+  EvidenceRefChip,
+  type KnowledgeEdgeProposalPayload,
+  type KnowledgeNodeProposalPayload,
+  type ProposalInboxRow,
+  type ProposalKind,
+  ProposalStatusRow,
+  type RelationType,
+  isBlockMergeProposal,
+  isBlockMergeStale,
+  kindLabel,
+  kindTone,
+  proposalMeta,
+  targetLabel,
+} from './proposal-shared';
 
 interface KnowledgeNode {
   id: string;
   name: string;
   parent_id: string | null;
-}
-
-type ProposalStatus = 'pending' | 'accepted' | 'dismissed' | 'stale';
-type ProposalKind =
-  | 'knowledge_node'
-  | 'knowledge_edge'
-  | 'knowledge_mutation'
-  | 'learning_item'
-  | 'note_update'
-  | 'variant_question'
-  | 'completion'
-  | 'relearn'
-  | 'record_links'
-  | 'record_promotion'
-  | 'archive'
-  | 'judge_retraction';
-
-interface ProposalTarget {
-  subject_kind: string;
-  subject_id: string | null;
-}
-
-interface ProposalEvidenceRef {
-  kind: 'event' | 'question' | 'knowledge' | 'artifact' | 'record';
-  id: string;
-}
-
-type RelationType =
-  | 'prerequisite'
-  | 'related_to'
-  | 'contrasts_with'
-  | 'applied_in'
-  | 'derived_from'
-  | `experimental:${string}`;
-
-interface BaseProposalPayload {
-  kind: ProposalKind;
-  target: ProposalTarget;
-  reason_md: string;
-  evidence_refs: ProposalEvidenceRef[];
-  proposed_change: Record<string, unknown>;
-  rollback_plan?: unknown;
-  cooldown_key?: string;
-}
-
-interface KnowledgeNodeProposalPayload extends BaseProposalPayload {
-  kind: 'knowledge_node';
-  target: { subject_kind: 'knowledge'; subject_id: string | null };
-  proposed_change: {
-    mutation: 'propose_new';
-    name: string;
-    parent_id: string;
-  };
-}
-
-interface KnowledgeEdgeProposalPayload extends BaseProposalPayload {
-  kind: 'knowledge_edge';
-  target: { subject_kind: 'knowledge_edge'; subject_id: string | null };
-  proposed_change: {
-    from_knowledge_id: string;
-    to_knowledge_id: string;
-    relation_type: RelationType;
-    weight: number;
-  };
-}
-
-type ProposalPayload =
-  | KnowledgeNodeProposalPayload
-  | KnowledgeEdgeProposalPayload
-  | BaseProposalPayload;
-
-interface ProposalInboxRow {
-  id: string;
-  kind: ProposalKind;
-  target: ProposalTarget;
-  payload: ProposalPayload;
-  status: ProposalStatus;
-  proposed_at: string;
-  decided_at: string | null;
-  actor_ref: string;
-  task_run_id: string | null;
-  cost_micro_usd: number | null;
-  source_action: string;
-  source_subject_kind: string;
 }
 
 type EdgeDecision = 'accept' | 'reverse' | 'change_type';
@@ -121,21 +57,6 @@ const RELATION_TYPES: Record<
 
 const RELATION_ORDER = Object.keys(RELATION_TYPES) as RelationType[];
 
-const KIND_LABELS: Record<ProposalKind, string> = {
-  knowledge_node: '新知识节点',
-  knowledge_edge: '知识关系',
-  knowledge_mutation: '知识结构调整',
-  learning_item: '学习项',
-  note_update: '笔记更新',
-  variant_question: '变式题',
-  completion: '完成状态',
-  relearn: '重学安排',
-  record_links: '记录链接',
-  record_promotion: '记录升级',
-  archive: '归档',
-  judge_retraction: '判题撤回',
-};
-
 export default function InboxPage() {
   const queryClient = useQueryClient();
   // YUK-15 — `?evidence_record=<id>` filters the inbox to proposals citing
@@ -143,6 +64,12 @@ export default function InboxPage() {
   // 提议" navigation.
   const searchParams = useSearchParams();
   const evidenceRecordFilter = searchParams?.get('evidence_record') ?? null;
+
+  // YUK-271 — transient notice for a block_merge accept that came back `stale`
+  // (the merge target left draft before accept, so mergeQuestions soft-rejected
+  // and no rate event was written). The proposal stays in the pending list after
+  // refresh, so without this the card silently reappears with no feedback.
+  const [acceptNotice, setAcceptNotice] = useState<string | null>(null);
 
   const knowledgeQ = useQuery({
     queryKey: ['inbox', 'knowledge'],
@@ -177,7 +104,19 @@ export default function InboxPage() {
           ...(new_relation_type ? { new_relation_type } : {}),
         }),
       }),
-    onSuccess: refreshInbox,
+    onSuccess: async (data) => {
+      // YUK-271 — a stale block_merge accept wrote no rate event; surface why so
+      // the still-pending card isn't silently re-rendered. idempotent / written
+      // results clear the notice and just refresh (the accepted card drops out).
+      if (isBlockMergeStale(data)) {
+        setAcceptNotice(
+          `该题块合并提议已失效（题块状态已变更：${data.skip_reason ?? 'unknown'}），已跳过。`,
+        );
+      } else {
+        setAcceptNotice(null);
+      }
+      await refreshInbox();
+    },
   });
 
   const dismissMutation = useMutation({
@@ -237,6 +176,22 @@ export default function InboxPage() {
         写入的 proposal
       </div>
 
+      {acceptNotice && (
+        <Card>
+          <p className="inbox-meta-line" data-testid="inbox-accept-notice">
+            {acceptNotice}
+            <button
+              type="button"
+              className="inbox-inline-link"
+              style={{ marginLeft: 8 }}
+              onClick={() => setAcceptNotice(null)}
+            >
+              知道了
+            </button>
+          </p>
+        </Card>
+      )}
+
       {evidenceRecordFilter && (
         <Card>
           <p className="inbox-meta-line">
@@ -269,7 +224,7 @@ export default function InboxPage() {
           title="待审提议"
           count={pendingTotal}
           empty="没有待审提议。"
-          note="按 proposal kind 分组；当前 node / edge 可直接接受，其他 kind 先支持忽略与撤回。"
+          note="按 proposal kind 分组；当前 node / edge / 题块合并 可直接接受，其他 kind 先支持忽略与撤回。"
         >
           <div className="proposal-kind-list">
             {proposalGroups.map((group) => (
@@ -301,6 +256,21 @@ export default function InboxPage() {
                           key={row.id}
                           proposal={row}
                           nodesById={nodesById}
+                          pending={mutating}
+                          onAccept={() => acceptMutation.mutate({ id: row.id })}
+                          onDismiss={() => dismissMutation.mutate({ id: row.id })}
+                          onRetract={() => retractMutation.mutate({ id: row.id })}
+                        />
+                      );
+                    }
+                    if (isBlockMergeProposal(row)) {
+                      // YUK-271 — block_merge accept needs no decision/relation
+                      // input: a bare { id } drives acceptBlockMergeProposal
+                      // (ensureAcceptOnly accepts an undefined decision).
+                      return (
+                        <BlockMergeProposalCard
+                          key={row.id}
+                          proposal={row}
                           pending={mutating}
                           onAccept={() => acceptMutation.mutate({ id: row.id })}
                           onDismiss={() => dismissMutation.mutate({ id: row.id })}
@@ -557,44 +527,6 @@ function GenericProposalCard({
   );
 }
 
-// YUK-15 — clickable backlinks for evidence_refs. `event` jumps to the
-// event-chain detail page (existing route). `record` jumps to the record
-// list focused on the cited id. `question` is currently uninked — there's
-// no per-question detail route yet (Linear follow-up if/when one lands).
-function EvidenceRefChip({ ref }: { ref: ProposalEvidenceRef }) {
-  const label = `${ref.kind}:${ref.id.slice(0, 8)}…`;
-  const key = `${ref.kind}:${ref.id}`;
-  if (ref.kind === 'event') {
-    return (
-      <Link href={`/events/${ref.id}`} key={key}>
-        {label}
-      </Link>
-    );
-  }
-  if (ref.kind === 'record') {
-    return (
-      <Link href={`/record?focus=${encodeURIComponent(ref.id)}`} key={key}>
-        {label}
-      </Link>
-    );
-  }
-  return <span key={key}>{label}</span>;
-}
-
-function ProposalStatusRow({ proposal }: { proposal: ProposalInboxRow }) {
-  return (
-    <div className="proposal-status-row">
-      <span>{proposal.source_action}</span>
-      <span>{proposal.source_subject_kind}</span>
-      <span>{targetLabel(proposal.target)}</span>
-      {proposal.task_run_id && <span>{proposal.task_run_id.slice(0, 12)}</span>}
-      {typeof proposal.cost_micro_usd === 'number' && proposal.cost_micro_usd > 0 && (
-        <span>${(proposal.cost_micro_usd / 1_000_000).toFixed(4)}</span>
-      )}
-    </div>
-  );
-}
-
 function groupByKind(
   rows: ProposalInboxRow[],
 ): Array<{ kind: ProposalKind; rows: ProposalInboxRow[] }> {
@@ -636,45 +568,4 @@ function relationMeta(type: RelationType | undefined) {
 function nodeName(nodesById: Map<string, KnowledgeNode>, id: string | null | undefined): string {
   if (!id) return 'unknown';
   return nodesById.get(id)?.name ?? id;
-}
-
-function proposalMeta(proposal: ProposalInboxRow): string {
-  const parts = [
-    proposal.actor_ref,
-    proposal.task_run_id ? proposal.task_run_id.slice(0, 12) : null,
-    typeof proposal.cost_micro_usd === 'number' && proposal.cost_micro_usd > 0
-      ? `$${(proposal.cost_micro_usd / 1_000_000).toFixed(4)}`
-      : null,
-    formatRelTime(proposal.proposed_at),
-  ].filter(Boolean);
-  return parts.join(' · ');
-}
-
-function kindLabel(kind: ProposalKind): string {
-  return KIND_LABELS[kind] ?? kind;
-}
-
-function kindTone(kind: ProposalKind): 'info' | 'good' | 'hard' | 'coral' | 'neutral' {
-  switch (kind) {
-    case 'knowledge_node':
-      return 'info';
-    case 'knowledge_edge':
-    case 'knowledge_mutation':
-      return 'coral';
-    case 'learning_item':
-    case 'completion':
-    case 'record_links':
-    case 'record_promotion':
-      return 'good';
-    case 'judge_retraction':
-      return 'hard';
-    case 'variant_question':
-      return 'coral';
-    default:
-      return 'neutral';
-  }
-}
-
-function targetLabel(target: ProposalTarget): string {
-  return target.subject_id ? `${target.subject_kind}:${target.subject_id}` : target.subject_kind;
 }

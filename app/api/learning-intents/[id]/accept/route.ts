@@ -8,6 +8,7 @@ import { db } from '@/db/client';
 import { getStartedBoss } from '@/server/boss/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { LearningIntentError, acceptLearningIntent } from '@/server/orchestrator/learning_intent';
+import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 
 export const runtime = 'nodejs';
 
@@ -31,11 +32,12 @@ export async function POST(_req: Request, { params }: RouteParams): Promise<Resp
       throw err;
     }
 
-    // Enqueue async note_generate jobs (one per generated note artifact). VITEST-gated
-    // so test suite doesn't accumulate pg-boss state (same posture as
-    // session_summary enqueue in /api/review/sessions/[id]/end).
+    // Enqueue async note_generate jobs (one per generated note artifact). Gated
+    // by the shared shouldEnqueueBackgroundJobs() (YUK-239) so the test suite
+    // doesn't accumulate pg-boss state (same posture as session_summary enqueue
+    // in /api/review/sessions/[id]/end).
     let enqueued = 0;
-    if (!process.env.VITEST) {
+    if (shouldEnqueueBackgroundJobs()) {
       try {
         const boss = await getStartedBoss();
         for (const artifactId of [...result.atomic_artifact_ids, ...result.long_artifact_ids]) {

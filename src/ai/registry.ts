@@ -507,8 +507,17 @@ export const tasks = {
     // next-step suggestion, corrective ONLY when the proposal repairs a failure
     // observed within the message. A zero-result read is a legitimate success, not
     // a corrective trigger. No deterministic fallback — pure model labeling.
+    // YUK-284 (C2 / AP-2) — methodology 段落 (mutation-vs-edge 决策树 / lifecycle
+    // 触发判据 / suggestion_kind 判据 / proposal_feedback 的解读方法论) 已迁出到
+    // src/subjects/_shared/skills/copilot/SKILL.md（cross-subject 共享包，经
+    // ctx.skills=resolveCopilotSkills() 在 free-form 路径加载）。此处只留任务描述级
+    // 契约（角色 / 写工具 surface allowlist / propose-only 红线 / runInput 字段的结构
+    // 说明 — 这些与 schema 同生命周期，PC-4）+ SKILL.md 缺失时的精简方法论兜底句。
+    // 注意：conversation_history / ambient_context 的「怎么用」一句话属于 runInput
+    // 用法契约，按 owner 拍板的切分线（runInput-usage 常驻）保留在这里，并被
+    // registry.test.ts 的 C2 pin 守护——SKILL.md 只放展开细节，不得替代这两句。
     systemPrompt:
-      '你是 Copilot，本应用唯一面向用户的对话式学习助手，跨页面随处可用，覆盖讲解 / 解题陪练 / 答疑 / 评析 / 规划 / 查阅。读 DomainTools 拿当前学习信号，回答用户问题。自由对话的 copilot surface 已带 propose_knowledge_edge 写工具，你可以在对话中直接提议 knowledge_edge；用户主动点 chip 会切到更宽的写工具 surface（额外开放 attribute_mistake / propose_variant）去执行那次具体 mutation。所有 mutation 仅 propose 不直接写。当输入里有 proposal_feedback 时，每条是一个 (kind, relation) 单元，带 top_dismiss_reasons（用户为何 dismiss）和 top_rubric_gates（rubric 为何拒绝）——把它当作该 relation 的具体失败模式，提议 knowledge_edge 时避免重蹈；纯加性，绝不压制信号驱动的提议（ND-5）。proposal_feedback 为空时按原行为处理。每次调 propose_* 工具时设置可选的 suggestion_kind 参数：提议下一步动作（基于成功读取）用 proactive（默认值，可省略）；只有当这条提议是在修正你自己刚观察到的一次失败时才用 corrective。读取返回 0 条结果属于正常成功（你查了但没找到），不是失败，不要因为上游读取为空就把提议标成 corrective——只有真正修复观察到的失败才是 corrective。',
+      '你是 Copilot，本应用唯一面向用户的对话式学习助手，跨页面随处可用，覆盖讲解 / 解题陪练 / 答疑 / 评析 / 规划 / 查阅。读 DomainTools 拿当前学习信号回答用户问题，并按已加载的 copilot 技能包（SKILL.md）里的方法论行动。\n【写工具 surface】自由对话的 copilot surface 带：propose_knowledge_edge、propose_knowledge_mutation、learning_item 生命周期四件套（propose_learning_item_completion / relearn / defer / archive）；用户点 chip 会切到更宽 surface（额外开放 attribute_mistake / propose_variant）。所有 mutation 仅 propose 不直接写。\n【运行时输入字段】proposal_feedback（若有）：每条是一个 (kind, relation) 单元，带 top_dismiss_reasons / top_rubric_gates，为空时按原行为。conversation_history（若有）：本次会话最近若干轮，每条仅 role + text（用户原话与你的回复正文）；能从历史直接回答就优先复用，不要再冗余调 DomainTool 读同样的内容。ambient_context（若有）：用户当前页面 route + 可选 focused_entity，用它把回答收拢到用户此刻的上下文。proposal_feedback 的解读方法论见 copilot 技能包。\n【降级兜底】若未加载到 copilot 技能包：整理知识树形状（reparent / merge / split / archive / 加新节点）用 propose_knowledge_mutation，在两个已存在节点间连关系用 propose_knowledge_edge；只在用户明确表达意图时提议 learning_item 生命周期变更；每次调 propose_* 默认 suggestion_kind=proactive，仅在修正刚观察到的失败时用 corrective（读取返回 0 条属于正常成功，不是失败）。',
   },
   KnowledgeReviewTask: {
     kind: 'KnowledgeReviewTask',
@@ -544,6 +553,29 @@ export const tasks = {
     allowedTools: [],
     systemPrompt:
       '你是学习目标规划助手。用户给一个模糊的学习目标标题，你看知识网格快照（节点 + 掌握度 + mesh 边），推断这个目标覆盖哪些知识节点 + 一个粗略的学习顺序，输出严格 JSON。不要发明网格里没有的节点 id。',
+  },
+  // YUK-275 — free-text 求卷意图解析器 (C 形态). Single structured-output call (no
+  // tool loop),照 GoalScopeTask 范式: budget.maxIterations 1, needsToolCall false,
+  // allowedTools []. Input = { user_message, knowledge_candidates:[{id,name,
+  // effective_domain}] }; output = QuizIntentSchema (is_quiz_request + knowledge_id
+  // 选自候选列表 + count / difficulty_min / unit / kind). The parse result is consumed
+  // by chat.ts (free-text 求卷 routing) — it NEVER joins COPILOT_TOOLS / conversation_
+  // history (U6 防循环 red line). Runtime renders the prompt via getTaskSystemPrompt;
+  // this string is the type-required fallback only (real builder in task-prompts.ts).
+  QuizIntentParseTask: {
+    kind: 'QuizIntentParseTask',
+    description:
+      'YUK-275 (free-text 求卷 C 形态) — parse a natural-language quiz request into a structured intent. Input = { user_message, knowledge_candidates:[{id,name,effective_domain}] }. Output = { is_quiz_request, knowledge_id (chosen from the candidate list, hallucinated ids filtered code-side), count, difficulty_min, unit(题|篇), kind }. Single structured-output call (no tool loop), mimo-v2.5-pro text. is_quiz_request=false is the parse-side 逃生舱 when 粗筛 误伤 a non-quiz message.',
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
+    needsToolCall: false,
+    isMultimodal: false,
+    allowedTools: [],
+    // Runtime renders via getTaskSystemPrompt(task, profile); this string is the
+    // type-required fallback only (the builder lives in task-prompts.ts).
+    systemPrompt: '(see getTaskSystemPrompt(task, profile) - fallback not for runtime)',
   },
   MemoryBriefTask: {
     kind: 'MemoryBriefTask',

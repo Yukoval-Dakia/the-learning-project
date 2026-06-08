@@ -41,7 +41,8 @@ Historical docs and audits may still mention the old Vite/Workers/Hono/D1 stack.
 ## Commands
 
 ```bash
-pnpm dev              # Next dev server
+pnpm dev:local        # 推荐本地入口（compose Postgres :5433 为真相源；scripts/dev-local.ts 注入 DATABASE_URL + 端口）
+pnpm dev              # 备选：裸 next dev（需自带 DATABASE_URL / 端口）
 pnpm build            # next build
 pnpm typecheck        # tsc --noEmit
 pnpm lint             # biome check .
@@ -77,7 +78,7 @@ Development loop:
 
 Single test: `pnpm vitest run --config vitest.unit.config.ts path/to/file.test.ts -t 'name'` for no-DB tests, or `pnpm vitest run --config vitest.db.config.ts path/to/file.test.ts -t 'name'` for DB/API tests.
 
-DB tests use a real Postgres via `@testcontainers/postgresql` — Docker must be running. `tests/global-setup.ts` auto-detects OrbStack / Docker Desktop socket on macOS and runs `pnpm db:migrate` against the container before DB tests. Vitest DB config is configured with `pool: 'forks'` + `singleFork: true` so the container is shared across files; do not parallelise DB tests in a way that assumes isolated databases.
+DB tests use a real Postgres via `@testcontainers/postgresql` — Docker must be running. `tests/global-setup.ts` auto-detects OrbStack / Docker Desktop socket on macOS, runs `pnpm db:migrate` against the container once, then clones the migrated database into one `test_fork_<N>` database per configured worker via `CREATE DATABASE … TEMPLATE` (YUK-252). Vitest DB config runs `pool: 'forks'` with `maxWorkers` sourced from `tests/db-fork-constants.ts`; `tests/setup.db-fork.ts` (a `setupFiles` entry) rewrites `DATABASE_URL`/`TEST_DATABASE_URL` per worker to `test_fork_<VITEST_POOL_ID>`, so each fork gets its own cloned database and files run in parallel. Within a single fork, files still share one database and run sequentially — the hermetic contract is unchanged: every DB test must reset state in `beforeEach` (`resetDb()`) and must not assume cross-file state or execution order. To change DB test parallelism or the fork database prefix, update `tests/db-fork-constants.ts`.
 
 Do not put tests that import `tests/helpers/db`, `@/db/client`, `postgres`, `drizzle`, or live `PgBoss` into the unit config. Route tests may be unit tests only when DB/R2/AI dependencies are mocked before importing the route module.
 

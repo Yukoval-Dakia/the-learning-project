@@ -1,13 +1,11 @@
 import { defineConfig } from 'vitest/config';
-import { fastTestInclude, resolveConfig, sharedExclude } from './vitest.shared';
+import { fastTestInclude, resolveConfig, sharedEsbuild, sharedExclude } from './vitest.shared';
 
 export default defineConfig({
-  // tsconfig has `jsx: "preserve"` (Next handles JSX in build). Vitest needs to
-  // transform JSX itself for component tests — use esbuild's automatic runtime
-  // so test files don't need `import React`.
-  esbuild: {
-    jsx: 'automatic',
-  },
+  // JSX transform shared with vitest.db.config.ts via sharedEsbuild — tsconfig has
+  // `jsx: "preserve"` (Next handles JSX in build), so vitest transforms JSX itself
+  // via esbuild's automatic runtime; test files don't need `import React`.
+  esbuild: sharedEsbuild,
   test: {
     include: fastTestInclude,
     exclude: sharedExclude,

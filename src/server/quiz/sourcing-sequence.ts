@@ -91,6 +91,13 @@ async function queryExistingPool(
   // `reading` rows and `calculation` matches `computation` — no vocabulary
   // mismatch silently dropping hits. null kind → no filter (whole active pool).
   kind: string | null,
+  // YUK-275 — free-text 求卷扩两个维度过滤:
+  //   difficultyMin: only count questions whose difficulty >= n (null → no filter).
+  //   unit='篇' : only count COMPOSITE parent questions (a parent that itself is not a
+  //     part AND has ≥1 child part). 'unit'='题'/null → no composite filter (whole pool).
+  // Both default to null on every existing caller (5b 调用方字节级不变).
+  difficultyMin: number | null,
+  unit: '题' | '篇' | null,
 ): Promise<ExistingPoolHit[]> {
   // F2 (PR #318 round-1): tier is a DERIVED (metadata-driven) value, not a column, so
   // it cannot be expressed in SQL ORDER BY. The previous code截断 to limit×4 in SQL
@@ -106,6 +113,9 @@ async function queryExistingPool(
       id: question.id,
       source: question.source,
       kind: question.kind,
+      // YUK-275 — projected so the difficulty WHERE predicate (and any future
+      // tool_state留痕) reads a real column rather than undefined.
+      difficulty: question.difficulty,
       metadata: question.metadata,
     })
     .from(question)
@@ -114,6 +124,19 @@ async function queryExistingPool(
         sql`${question.knowledge_ids} @> ${JSON.stringify([knowledgeId])}::jsonb`,
         // Drafts never enter the pool (mirror context-readers:797 / due-list Gate-B).
         sql`(${question.draft_status} IS NULL OR ${question.draft_status} <> 'draft')`,
+        // YUK-275 — difficulty floor (difficulty is integer NOT NULL default 3, CHECK
+        // 1-5 — schema.ts:163/198). null → omit the predicate (字节级不变).
+        ...(difficultyMin !== null ? [sql`${question.difficulty} >= ${difficultyMin}`] : []),
+        // YUK-275 — unit='篇' → composite parent: the row itself is not a part
+        // (parent_question_id IS NULL) AND it HAS ≥1 child part (a question_part row
+        // referencing it). 'question_part' is the part kind (parts.ts:32). '题'/null →
+        // omit (字节级不变).
+        ...(unit === '篇'
+          ? [
+              isNull(question.parent_question_id),
+              sql`EXISTS (SELECT 1 FROM ${question} AS c WHERE c.parent_question_id = ${question.id})`,
+            ]
+          : []),
       ),
     )
     .orderBy(asc(question.created_at), asc(question.id));
@@ -367,6 +390,12 @@ export interface SourcingSequenceParams {
   count?: number;
   // 题型 hint for the profile route preference (§3.2 per-题型偏好). Optional.
   kind?: string | null;
+  // YUK-275 — free-text 求卷扩两个池查询维度. Both filter step-1 (existing pool) only;
+  // they do NOT influence the background production route. Default null = 字节级不变.
+  //   difficultyMin: only count questions whose difficulty >= n.
+  //   unit='篇': only count composite parent questions (篇 = a multi-part 阅读 paper).
+  difficultyMin?: number | null;
+  unit?: '题' | '篇' | null;
   // Subject domain → resolves the profile (route preference + future whitelist).
   // When absent, resolveSubjectProfile falls back to the default subject.
   domain?: string | null;
@@ -410,6 +439,9 @@ export async function runSourcingSequence(
   const trigger = params.trigger ?? 'knowledge';
   const refId = params.refId ?? knowledgeId;
   const kind = params.kind ?? null;
+  // YUK-275 — the two free-text 求卷 pool-filter dimensions; default null (字节级不变).
+  const difficultyMin = params.difficultyMin ?? null;
+  const unit = params.unit ?? null;
   const enqueue = params.enqueueSequenceJob ?? defaultEnqueueSequenceJob;
   const isTavilyAvailable = params.tavilyAvailable ?? defaultTavilyAvailable;
 
@@ -429,8 +461,9 @@ export async function runSourcingSequence(
     };
   }
 
-  // Step 1 — synchronous existing-pool query (high tier first), kind-filtered (A2).
-  const existing = await queryExistingPool(db, knowledgeId, count, kind);
+  // Step 1 — synchronous existing-pool query (high tier first), kind-filtered (A2),
+  // plus the YUK-275 difficulty-floor + 篇=composite-parent filters (default null = no-op).
+  const existing = await queryExistingPool(db, knowledgeId, count, kind, difficultyMin, unit);
   if (existing.length >= count) {
     return { existing, satisfiedFromPool: true, enqueued: [], needs: [] };
   }

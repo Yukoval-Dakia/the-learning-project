@@ -57,6 +57,10 @@ async function seedQuestion(opts: {
   draft?: boolean;
   source?: string;
   kind?: string;
+  // YUK-275 — explicit difficulty (default 3) + composition link, for the
+  // difficulty-floor and 篇=composite-parent pool-filter tests.
+  difficulty?: number;
+  parentQuestionId?: string;
   metadata?: Record<string, unknown>;
 }) {
   const now = new Date();
@@ -69,10 +73,13 @@ async function seedQuestion(opts: {
     choices_md: null,
     judge_kind_override: 'semantic',
     knowledge_ids: [opts.knowledgeId],
-    difficulty: 3,
+    difficulty: opts.difficulty ?? 3,
     source: opts.source ?? 'test',
     source_ref: opts.knowledgeId,
     draft_status: opts.draft ? 'draft' : null,
+    // YUK-275 — a child part references its parent here (a part is a question row
+    // tagged kind='question_part', linked via parent_question_id — schema.ts:180).
+    parent_question_id: opts.parentQuestionId ?? null,
     created_by: { by: 'ai', task_kind: 'QuizGenTask', task_run_id: 'tr' } as never,
     metadata: (opts.metadata ?? {}) as never,
     created_at: now,
@@ -644,5 +651,111 @@ describe('runSourcingSequence', () => {
     for (const n of res.needs) {
       expect(n.reason).not.toContain('Tavily unavailable');
     }
+  });
+
+  // YUK-275 — free-text 求卷 extends step-1 (existing pool) with two optional filters:
+  //   difficultyMin (difficulty >= n) and unit='篇' (composite parent questions only).
+  // Default null on both = byte-for-byte unchanged (the regression cases above already
+  // exercise the null path; these pin the new filters).
+  describe('difficulty_min / unit=篇 pool filters (YUK-275)', () => {
+    it('difficulty_min only counts questions at or above the floor', async () => {
+      await resetDb();
+      await seedKnowledge('k1');
+      await seedQuestion({ id: 'd3', knowledgeId: 'k1', difficulty: 3 });
+      await seedQuestion({ id: 'd5', knowledgeId: 'k1', difficulty: 5 });
+
+      const { fn } = collectingEnqueue();
+      const res = await runSourcingSequence({
+        db,
+        knowledgeId: 'k1',
+        count: 5, // force "insufficient" so all matching hits come back
+        difficultyMin: 4,
+        enqueueSequenceJob: fn,
+        tavilyAvailable: TAVILY_UP,
+      });
+
+      // Only the d5 row clears the difficulty>=4 floor; the d3 row is excluded.
+      expect(res.existing.map((h) => h.question_id)).toEqual(['d5']);
+    });
+
+    it("unit='篇' (kind=null) only counts composite parents and does not kind-filter them out", async () => {
+      await resetDb();
+      await seedKnowledge('k1');
+      // A composite parent (kind 'reading') with two child parts + one atomic question.
+      await seedQuestion({ id: 'parent', knowledgeId: 'k1', kind: 'reading' });
+      await seedQuestion({
+        id: 'part1',
+        knowledgeId: 'k1',
+        kind: 'question_part',
+        parentQuestionId: 'parent',
+      });
+      await seedQuestion({
+        id: 'part2',
+        knowledgeId: 'k1',
+        kind: 'question_part',
+        parentQuestionId: 'parent',
+      });
+      await seedQuestion({ id: 'atomic', knowledgeId: 'k1', kind: 'short_answer' });
+
+      const { fn } = collectingEnqueue();
+      const res = await runSourcingSequence({
+        db,
+        knowledgeId: 'k1',
+        count: 5, // force insufficient so all matching hits come back
+        unit: '篇',
+        // kind=null: the parent's own kind ('reading') must NOT be filtered out by the
+        // in-memory kindsMatch step (CRITIC FIX P1 — 篇 + null kind no-op interaction).
+        enqueueSequenceJob: fn,
+        tavilyAvailable: TAVILY_UP,
+      });
+
+      // Only the composite parent counts: the child parts (they ARE parts, not parents)
+      // and the atomic question (no child parts) are excluded.
+      expect(res.existing.map((h) => h.question_id)).toEqual(['parent']);
+    });
+
+    it("unit='篇' with zero composite inventory returns an empty pool (drives upper degrade)", async () => {
+      await resetDb();
+      await seedKnowledge('k1');
+      // Only atomic questions — no composite parent exists.
+      await seedQuestion({ id: 'a1', knowledgeId: 'k1' });
+      await seedQuestion({ id: 'a2', knowledgeId: 'k1' });
+
+      const { fn } = collectingEnqueue();
+      const res = await runSourcingSequence({
+        db,
+        knowledgeId: 'k1',
+        count: 3,
+        unit: '篇',
+        enqueueSequenceJob: fn,
+        tavilyAvailable: TAVILY_UP,
+      });
+
+      expect(res.existing).toEqual([]);
+      expect(res.satisfiedFromPool).toBe(false);
+    });
+
+    it('both filters null → identical to the pre-YUK-275 behavior (regression)', async () => {
+      await resetDb();
+      await seedKnowledge('k1');
+      await seedQuestion({ id: 'q1', knowledgeId: 'k1', difficulty: 1 });
+      await seedQuestion({ id: 'q2', knowledgeId: 'k1', difficulty: 5 });
+      await seedQuestion({ id: 'q3', knowledgeId: 'k1', difficulty: 3 });
+
+      const { fn, calls } = collectingEnqueue();
+      const res = await runSourcingSequence({
+        db,
+        knowledgeId: 'k1',
+        count: 3,
+        // difficultyMin / unit omitted → both null.
+        enqueueSequenceJob: fn,
+        tavilyAvailable: TAVILY_UP,
+      });
+
+      // All three atomic questions count (no floor, no 篇 filter) → satisfied from pool.
+      expect(res.satisfiedFromPool).toBe(true);
+      expect(res.existing).toHaveLength(3);
+      expect(calls).toHaveLength(0);
+    });
   });
 });

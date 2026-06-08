@@ -17,7 +17,8 @@
 //     question_no — sits above the editable prompt textarea.
 
 import { ApiAuthError, ApiError, apiJson } from '@/ui/lib/api';
-import { uploadAsset, useAssetUrl } from '@/ui/lib/assets';
+import { expandDocx, expandPdf, uploadAsset, useAssetUrl } from '@/ui/lib/assets';
+import { type AutoEnrollObservation, seedBlockForm } from '@/ui/lib/auto-enroll';
 import { causeOptionsForSelectedKnowledge } from '@/ui/lib/cause-options';
 import { useIngestionSSE } from '@/ui/lib/sse';
 import { formatRelTime } from '@/ui/lib/utils';
@@ -31,7 +32,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 type Mode = 'vision_single' | 'vision_paper';
 
-type Phase = 'idle' | 'uploading' | 'creating' | 'extracting' | 'reviewing' | 'importing' | 'error';
+type Phase =
+  | 'idle'
+  | 'expanding'
+  | 'uploading'
+  | 'creating'
+  | 'extracting'
+  | 'reviewing'
+  | 'importing'
+  | 'error';
 
 type QuestionKindId =
   | 'choice'
@@ -72,7 +81,7 @@ interface StructuredNode {
   sub_questions?: StructuredNode[];
 }
 
-interface BlockRow {
+export interface BlockRow {
   id: string;
   ingestion_session_id: string;
   source_asset_ids: string[];
@@ -88,12 +97,18 @@ interface BlockRow {
   image_refs: string[];
   layout_quality: 'structured' | 'partial' | 'text_only';
   extraction_confidence: number;
-  status: 'draft' | 'imported' | 'ignored';
+  // 4-state question_block union (business.ts:145). `auto_enrolled` only appears
+  // once WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED is ON; observe-only prod stays draft.
+  status: 'draft' | 'imported' | 'ignored' | 'auto_enrolled';
   knowledge_hint: string | null;
+  // YUK-164 OC-5: per-block AI auto-enroll observation surfaced by the blocks
+  // route. Drives the AI prefill (seedBlockForm) + the "AI 预填" badge. `null`
+  // when the judge wrote no observation for this block.
+  auto_enroll_observation: AutoEnrollObservation | null;
   created_at: number;
 }
 
-interface BlockFormState {
+export interface BlockFormState {
   prompt_md: string;
   reference_md: string;
   wrong_answer_md: string;
@@ -119,7 +134,19 @@ export function VisionTab({ mode }: { mode: Mode }) {
 
   const [phase, setPhase] = useState<Phase>('idle');
   const [files, setFiles] = useState<File[]>([]);
+  // When the single picked file is a PDF (vision_paper only), it expands
+  // server-side to N page images; pdfPageCount is the count returned by
+  // /api/ingestion/pdf, used for the "展开 PDF（N 页）" labels.
+  const [pdfPageCount, setPdfPageCount] = useState<number | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  // YUK-277: the ingestion "line" for the current run. Only the DOCX text line
+  // produces blocks SYNCHRONOUSLY (pandoc segmentation, no pg-boss VLM extract
+  // job), so its session is already in `extracted` with both job events committed
+  // before the client even opens the SSE. For that line the "抽取进度 / SSE ·
+  // 等待事件…/closed" framing is misleading — there is no async extraction to
+  // watch. `null` for every visual/async line (image / PDF / visual-DOCX), where
+  // the SSE timeline IS the right affordance.
+  const [ingestionLine, setIngestionLine] = useState<'text' | 'visual' | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [blockForms, setBlockForms] = useState<Record<string, BlockFormState>>({});
   // bucketByBlockId[blockId] = primary block id of the merge bucket. Initially
@@ -165,18 +192,17 @@ export function VisionTab({ mode }: { mode: Mode }) {
       const next = { ...prev };
       for (const b of rows) {
         if (seededBlockIdsRef.current.has(b.id)) continue;
+        // YUK-277: build the per-block form via the resilient seeder, which
+        // degrades a malformed auto_enroll_observation to the default seed rather
+        // than letting a throw abort the WHOLE updater. Mark the ref AFTER the
+        // block successfully seeds — the previous order (mark-then-seed) meant a
+        // single throwing block left every block up to it marked-but-unseeded,
+        // and React discarded the partial updater, so the entire batch stayed
+        // permanently form-missing (and the import below then threw on every
+        // block). buildBlockForm never throws, so per-block try/catch is no longer
+        // needed, but the post-success ordering is the durable guard.
+        next[b.id] = buildBlockForm(b);
         seededBlockIdsRef.current.add(b.id);
-        next[b.id] = {
-          prompt_md: b.extracted_prompt_md ?? '',
-          reference_md: b.reference_md ?? '',
-          wrong_answer_md: b.wrong_answer_md ?? '',
-          knowledge_ids: [],
-          cause_primary: '',
-          cause_notes: '',
-          question_kind: 'short_answer',
-          difficulty: 3,
-          ignored: false,
-        };
       }
       return next;
     });
@@ -191,9 +217,47 @@ export function VisionTab({ mode }: { mode: Mode }) {
 
   const startMutation = useMutation({
     mutationFn: async (selectedFiles: File[]) => {
-      setPhase('uploading');
-      const assets = await Promise.all(selectedFiles.map((f) => uploadAsset(f)));
-      const ids = assets.map((a) => a.id);
+      // YUK-277: reset the line for each run; only the DOCX branch below sets it
+      // to 'text'. A re-upload after a prior text-line run must not inherit the
+      // stale 'text' line for a now-visual/image run.
+      setIngestionLine(null);
+      let ids: string[];
+      // DOCX ingestion is a vision_paper-only entrypoint (only that mode's accept
+      // admits .docx). The docx endpoint is SELF-CONTAINED — it classifies the
+      // file, builds the session server-side, and returns the session id — so
+      // this branch SKIPS the shared creating + POST /api/ingestion + extract
+      // steps and returns the session id straight away.
+      const docx =
+        mode === 'vision_paper' && selectedFiles.length === 1 && isDocx(selectedFiles[0]);
+      if (docx) {
+        setPhase('expanding'); // reuse the expanding phase (label shows 转换 DOCX…)
+        const ingested = await expandDocx(selectedFiles[0]);
+        setPdfPageCount(ingested.page_count);
+        // YUK-277: record the line so the SSE panel can drop the misleading
+        // "抽取进度" framing for the synchronous text line. The visual line still
+        // enqueues a real VLM extract job, so it keeps the SSE timeline.
+        setIngestionLine(ingested.line);
+        // Server已建 session + blocks (text line) / enqueued extract (visual line);
+        // go straight to extracting and listen for the SSE terminal.
+        return ingested.session_id;
+      }
+      // PDF expansion is a vision_paper-only entrypoint: only that mode's accept
+      // attr admits application/pdf. Bind the branch to mode explicitly so a
+      // future reuse of this mutation under vision_single can't silently route a
+      // PDF through expandPdf.
+      const pdf = mode === 'vision_paper' && selectedFiles.length === 1 && isPdf(selectedFiles[0]);
+      if (pdf) {
+        // PDF path: one file → server renders to N page images, returns their
+        // asset ids. Reuses the same /api/ingestion + extract flow afterwards.
+        setPhase('expanding');
+        const expanded = await expandPdf(selectedFiles[0]);
+        setPdfPageCount(expanded.page_count);
+        ids = expanded.asset_ids;
+      } else {
+        setPhase('uploading');
+        const assets = await Promise.all(selectedFiles.map((f) => uploadAsset(f)));
+        ids = assets.map((a) => a.id);
+      }
       setPhase('creating');
       const session = await apiJson<{
         session: { id: string };
@@ -209,6 +273,10 @@ export function VisionTab({ mode }: { mode: Mode }) {
       setPhase('extracting');
     },
     onError: (err) => {
+      // Clear any stale page count: if expandPdf succeeded but a later step
+      // (session create / extract) failed, pdfPageCount would otherwise linger
+      // and flash an outdated "N 页" in the error / retry state.
+      setPdfPageCount(null);
       setErrorMessage(formatError(err));
       setPhase('error');
     },
@@ -249,8 +317,16 @@ export function VisionTab({ mode }: { mode: Mode }) {
       const importable = groups
         .filter((g) => !blockForms[g.primary.id]?.ignored)
         .map((g) => {
-          const f = blockForms[g.primary.id];
-          if (!f) throw new Error(`block ${g.primary.id} form missing`);
+          // YUK-277: form-missing blocks used to throw `form missing` and abort
+          // the ENTIRE batch import (the owner's 17-block text-line wipeout). The
+          // seeding effect now never leaves a block unseeded, but if a form is
+          // still missing here (race between blocks refetch and seed, or a future
+          // regression), build the default form on the fly from the block row
+          // instead of throwing — the block keeps OCR text + editable defaults and
+          // imports alongside the rest. The empty-prompt / empty-wrong-answer
+          // guards below still apply, so a genuinely empty block surfaces a
+          // specific per-block message rather than a generic batch crash.
+          const f = blockForms[g.primary.id] ?? buildBlockForm(g.primary);
           if (!f.prompt_md.trim()) throw new Error(`block ${g.primary.id}: 题面不能空`);
           if (!f.wrong_answer_md.trim()) throw new Error(`block ${g.primary.id}: 错答不能空`);
           if (f.knowledge_ids.length === 0)
@@ -319,7 +395,39 @@ export function VisionTab({ mode }: { mode: Mode }) {
 
   const onPickFiles = (list: FileList | null) => {
     if (!list || list.length === 0) return;
-    const picked = Array.from(list).slice(0, maxFiles);
+    const all = Array.from(list);
+    const pdfs = all.filter(isPdf);
+    const docxs = all.filter(isDocx);
+    setPdfPageCount(null);
+    if (pdfs.length > 0) {
+      // PDF is a single-file pick that expands server-side. Reject a mixed
+      // PDF + image selection (and multiple PDFs) with a clear inline error.
+      if (all.length > 1) {
+        setFiles([]);
+        setErrorMessage('PDF 请单独上传（不要和图片或其它 PDF 混选）');
+        return;
+      }
+      setFiles([all[0]]);
+      setErrorMessage(null);
+      return;
+    }
+    if (docxs.length > 0) {
+      // DOCX, like PDF, is a single-file server-side pick (the docx dispatch
+      // requires selectedFiles.length === 1). Reject a mixed DOCX + image / multi
+      // -DOCX selection inline (coderabbit-d) — otherwise the .docx would fall
+      // through to the image upload path and be POSTed as a plain image asset,
+      // with the file-list UI misleadingly showing only files[0].
+      if (all.length > 1) {
+        setFiles([]);
+        setErrorMessage('DOCX 请单独上传（不要和图片或其它文件混选）');
+        return;
+      }
+      setFiles([all[0]]);
+      setErrorMessage(null);
+      return;
+    }
+    // Image path: the maxFiles cap applies only to the multi-image pick.
+    const picked = all.slice(0, maxFiles);
     setFiles(picked);
     setErrorMessage(null);
   };
@@ -327,7 +435,9 @@ export function VisionTab({ mode }: { mode: Mode }) {
   const reset = () => {
     setPhase('idle');
     setFiles([]);
+    setPdfPageCount(null);
     setSessionId(null);
+    setIngestionLine(null);
     setBlockForms({});
     setBucketByBlockId({});
     seededBlockIdsRef.current = new Set();
@@ -362,7 +472,11 @@ export function VisionTab({ mode }: { mode: Mode }) {
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/png,image/jpeg,image/webp"
+            accept={
+              mode === 'vision_paper'
+                ? 'image/png,image/jpeg,image/webp,application/pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+                : 'image/png,image/jpeg,image/webp'
+            }
             multiple={mode === 'vision_paper'}
             style={{ display: 'none' }}
             onChange={(e) => onPickFiles(e.target.files)}
@@ -374,7 +488,13 @@ export function VisionTab({ mode }: { mode: Mode }) {
           >
             <Icon name={mode === 'vision_single' ? 'camera' : 'upload'} size={32} />
             {files.length > 0 ? (
-              <span className="dropzone-title">已选 {files.length} 张 · 点击重选</span>
+              <span className="dropzone-title">
+                {isPdf(files[0])
+                  ? '已选 1 个 PDF · 点击重选'
+                  : isDocx(files[0])
+                    ? '已选 1 个 DOCX · 点击重选'
+                    : `已选 ${files.length} 张 · 点击重选`}
+              </span>
             ) : (
               <span className="dropzone-title">
                 {mode === 'vision_single' ? '拍一题就好' : '拖照片到此处 · 或点这里上传'}
@@ -383,17 +503,35 @@ export function VisionTab({ mode }: { mode: Mode }) {
             <span className="hint">
               {mode === 'vision_single'
                 ? '单题直接走 Vision；不经 Tencent Mark Agent'
-                : 'JPEG / PNG / WebP · 单次最多 5 页 · 抽取进度走 SSE'}
+                : 'JPEG / PNG / WebP · 单次最多 5 页 · 或上传 1 个 PDF（≤15 页）/ DOCX（≤20MB）· 抽取进度走 SSE'}
             </span>
           </button>
           {files.length > 0 && (
             <ul className="record-file-list">
-              {files.map((f) => (
-                <li key={f.name}>
-                  <span>{f.name}</span>
-                  <span className="meta">{(f.size / 1024).toFixed(1)} KB</span>
+              {/* A picked PDF / DOCX is one row — it expands to N page images
+                  server-side, so we don't pre-list N image rows. */}
+              {isPdf(files[0]) ? (
+                <li key={files[0].name}>
+                  <span>
+                    {files[0].name} · PDF{pdfPageCount != null ? ` · ${pdfPageCount} 页` : ''}
+                  </span>
+                  <span className="meta">{(files[0].size / 1024).toFixed(1)} KB</span>
                 </li>
-              ))}
+              ) : isDocx(files[0]) ? (
+                <li key={files[0].name}>
+                  <span>
+                    {files[0].name} · DOCX{pdfPageCount != null ? ` · ${pdfPageCount} 页` : ''}
+                  </span>
+                  <span className="meta">{(files[0].size / 1024).toFixed(1)} KB</span>
+                </li>
+              ) : (
+                files.map((f) => (
+                  <li key={f.name}>
+                    <span>{f.name}</span>
+                    <span className="meta">{(f.size / 1024).toFixed(1)} KB</span>
+                  </li>
+                ))
+              )}
             </ul>
           )}
           {errorMessage && <p style={errorStyle}>{errorMessage}</p>}
@@ -408,21 +546,46 @@ export function VisionTab({ mode }: { mode: Mode }) {
         </>
       )}
 
-      {(phase === 'uploading' || phase === 'creating' || phase === 'extracting') && (
+      {(phase === 'expanding' ||
+        phase === 'uploading' ||
+        phase === 'creating' ||
+        phase === 'extracting') && (
         <div>
           <p style={{ ...mutedStyle, marginTop: 0 }}>
+            {phase === 'expanding' &&
+              (files[0] && isDocx(files[0])
+                ? '转换 DOCX…（解析题目 + 渲染存证页图）'
+                : '展开 PDF…（渲染每一页为图片）')}
             {phase === 'uploading' && `上传 ${files.length} 张图到 R2 …`}
-            {phase === 'creating' && '创建 ingestion session…'}
-            {phase === 'extracting' && '触发抽取，等待 worker 推进度…'}
+            {phase === 'creating' &&
+              (pdfPageCount != null
+                ? `已展开 ${pdfPageCount} 页 · 创建 ingestion session…`
+                : '创建 ingestion session…')}
+            {phase === 'extracting' &&
+              (ingestionLine === 'text'
+                ? '文本直抽（pandoc 切题，无需 worker）…'
+                : '触发抽取，等待 worker 推进度…')}
           </p>
-          <SSETimeline events={sse.events} status={sse.status} />
+          {/* YUK-277: the text line has no async extraction job — its blocks are
+              already produced. Show a direct-completion summary instead of the
+              "SSE · 等待事件…/closed" timeline, which misleads the user into
+              thinking something is still running / stuck. */}
+          {ingestionLine === 'text' ? (
+            <TextLineCompletePanel events={sse.events} blockCount={blocks.length} />
+          ) : (
+            <SSETimeline events={sse.events} status={sse.status} />
+          )}
           {sse.error && <p style={errorStyle}>{sse.error.message}</p>}
         </div>
       )}
 
       {phase === 'reviewing' && (
         <div>
-          <SSETimeline events={sse.events} status="closed" />
+          {ingestionLine === 'text' ? (
+            <TextLineCompletePanel events={sse.events} blockCount={blocks.length} />
+          ) : (
+            <SSETimeline events={sse.events} status="closed" />
+          )}
           {blocksQ.isLoading && <p style={mutedStyle}>加载块…</p>}
           {blocksQ.isError && <p style={errorStyle}>加载块失败：{formatError(blocksQ.error)}</p>}
           {blocksQ.isSuccess && blocks.length === 0 && (
@@ -496,7 +659,10 @@ export function VisionTab({ mode }: { mode: Mode }) {
   );
 }
 
-interface BlockEditorProps {
+// Exported for the static-HTML test (VisionTab.test.tsx) — BlockEditor renders
+// the "AI 预填，可改" badge from primary.auto_enroll_observation and is
+// renderToString-safe (its useState/useMemo/useEffect only need initial render).
+export interface BlockEditorProps {
   primary: BlockRow;
   followers: BlockRow[];
   primaryIndex: number;
@@ -510,7 +676,7 @@ interface BlockEditorProps {
   rescuing: boolean;
 }
 
-function BlockEditor({
+export function BlockEditor({
   primary,
   followers,
   primaryIndex,
@@ -570,6 +736,15 @@ function BlockEditor({
         <Badge tone="neutral">conf {(primary.extraction_confidence * 100).toFixed(0)}%</Badge>
         <span style={metaStyle}>{formatRelTime(new Date(primary.created_at * 1000))}</span>
         {followers.length > 0 && <Badge tone="info">merged · {followers.length + 1} blocks</Badge>}
+        {/* YUK-164 OC-5: AI prefill marker. info-blue tone = AI actor (round2a
+            §1.3); the literal "AI 预填，可改" text is the non-color cue. Present
+            only when the judge produced an observation for this block. */}
+        {primary.auto_enroll_observation && (
+          <Badge tone="info">
+            <Icon name="spark" size={12} />
+            AI 预填，可改
+          </Badge>
+        )}
         <span style={{ flex: 1 }} />
         {canMergeIntoPrev && (
           <Button
@@ -880,6 +1055,49 @@ function LayoutQualityBadge({ q }: { q: 'structured' | 'partial' | 'text_only' }
   return <Badge tone="hard">text_only</Badge>;
 }
 
+// YUK-277: the text line (DOCX → pandoc segmentation) produces blocks
+// synchronously — the session is already `extracted` with `extraction_completed`
+// committed before the client opens the SSE, and there is no worker job to watch.
+// Rendering the SSETimeline ("抽取进度 · SSE · 等待事件…/closed") there misleads the
+// user into thinking extraction is pending or stalled. This panel states the
+// truth: text直抽完成, with the block count. Block count prefers the loaded blocks
+// query; falls back to the extraction_completed event payload before the blocks
+// query resolves so the count is never a placeholder.
+// Exported for VisionTab.test.tsx — asserts the text-line path renders the
+// "文本直抽完成 · N 块" summary instead of the misleading SSE timeline.
+export function TextLineCompletePanel({
+  events,
+  blockCount,
+}: {
+  events: { event_id: number; event_type: string; payload: Record<string, unknown> }[];
+  blockCount: number;
+}) {
+  const completed = events.find((e) => e.event_type === 'ingestion.extraction_completed');
+  const eventCount =
+    completed && typeof completed.payload.block_count === 'number'
+      ? completed.payload.block_count
+      : null;
+  const count = blockCount > 0 ? blockCount : (eventCount ?? 0);
+  return (
+    <section className="sse-feed">
+      <div className="head">
+        <h4>文本直抽</h4>
+        <span className="conn">
+          <Icon name="spark" size={12} />
+          已完成 · {count} 块
+        </span>
+      </div>
+      <div className="sse-rows">
+        <div className="sse-row success">
+          <span className="t">✓</span>
+          <span className="msg">文本直抽完成（pandoc 切题，无 OCR / VLM 抽取）· {count} 块</span>
+          <code>direct</code>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function SSETimeline({
   events,
   status,
@@ -947,10 +1165,30 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
   return <span style={fieldLabelStyle}>{children}</span>;
 }
 
+function isPdf(file: File): boolean {
+  // file.type can be '' for drag-and-drop / some OS file pickers even for a
+  // genuine PDF, so fall back to the extension. The server still validates the
+  // %PDF magic bytes (pdf-render.ts hasPdfMagic), so a misnamed non-PDF is caught
+  // there with a loud 400 — this only widens which files reach that check.
+  return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+}
+
+function isDocx(file: File): boolean {
+  // Mirror isPdf: file.type may be '' for drag-and-drop, so fall back to the
+  // .docx extension. The server (classifyDocx) validates the zip / OOXML parts
+  // and 400s a misnamed non-docx, so this only widens which files reach there.
+  return (
+    file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+    file.name.toLowerCase().endsWith('.docx')
+  );
+}
+
 function phaseLabel(phase: Phase, sseStatus: string): string {
   switch (phase) {
     case 'idle':
       return '待上传';
+    case 'expanding':
+      return '展开 PDF 中';
     case 'uploading':
       return '上传中';
     case 'creating':
@@ -971,6 +1209,63 @@ function formatError(err: unknown): string {
   if (err instanceof ApiError) return `${err.code ?? 'error'}: ${err.message}`;
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+// YUK-277: the default seeded form when a block carries no usable AI observation
+// (or seedBlockForm degrades it). Mirrors auto-enroll.ts DEFAULT_SEED + the
+// non-AI form fields; kept local so the prompt/reference/wrong_answer fields can
+// be filled from the block row in buildBlockForm below.
+const DEFAULT_BLOCK_FORM: BlockFormState = {
+  prompt_md: '',
+  reference_md: '',
+  wrong_answer_md: '',
+  knowledge_ids: [],
+  cause_primary: '',
+  cause_notes: '',
+  question_kind: 'short_answer',
+  difficulty: 3,
+  ignored: false,
+};
+
+// YUK-277: resilient form builder shared by the seeding effect AND the import
+// fallback. OCR-derived text fields come straight off the block; the AI-prefillable
+// fields come from seedBlockForm, which maps b.auto_enroll_observation when present
+// and falls back to today's defaults otherwise. seedBlockForm is written
+// defensively (every observation field is `?.`-guarded and the route projects a
+// well-shaped observation), but a future wire-shape regression or a malformed
+// observation (e.g. a non-iterable suggested_knowledge_ids) could still throw on
+// the spread. Catch it, degrade to the default seed, and console.error with the
+// block id so a bad block downgrades to an editable default form instead of
+// poisoning the whole batch (the owner's 17-block text-line import wipeout).
+// Exported for VisionTab.test.tsx — the seeding-resilience + import-fallback
+// invariant (a malformed / observation-less block always yields a usable default
+// form and never throws) is unit-tested directly on this pure builder.
+export function buildBlockForm(b: BlockRow): BlockFormState {
+  // knowledge_ids + cause_primary are seeded together so the BlockEditor self-heal
+  // effect (cause_primary ∉ causeOptions → clear) admits a valid seeded cause.
+  let seeded: ReturnType<typeof seedBlockForm>;
+  try {
+    seeded = seedBlockForm(b);
+  } catch (err) {
+    console.error(
+      `[VisionTab] seedBlockForm threw for block ${b.id}; falling back to default form`,
+      err,
+    );
+    seeded = {
+      knowledge_ids: DEFAULT_BLOCK_FORM.knowledge_ids,
+      cause_primary: DEFAULT_BLOCK_FORM.cause_primary,
+      cause_notes: DEFAULT_BLOCK_FORM.cause_notes,
+      question_kind: DEFAULT_BLOCK_FORM.question_kind,
+      difficulty: DEFAULT_BLOCK_FORM.difficulty,
+    };
+  }
+  return {
+    ...seeded,
+    prompt_md: b.extracted_prompt_md ?? '',
+    reference_md: b.reference_md ?? '',
+    wrong_answer_md: b.wrong_answer_md ?? '',
+    ignored: false,
+  };
 }
 
 const metaStyle: React.CSSProperties = {
