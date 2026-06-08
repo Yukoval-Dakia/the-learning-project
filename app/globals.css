@@ -3794,7 +3794,7 @@ ol {
      the design's wenyan serif). MiSans first, then the project sans stack as
      fallback (MiSans is not yet bundled as a webfont — see note in the tree
      .know-title rule). Matches .know-title so both knowledge views read the same. */
-  font-family: "MiSans", var(--font-sans);
+  font-family: MiSans, var(--font-sans);
   /* white halo so labels read over edges/discs */
   paint-order: stroke;
   stroke: var(--paper);
@@ -7699,7 +7699,7 @@ button.seg-sm {
      MiSans first then the sans stack; note MiSans is not yet bundled as a webfont, so
      it only renders where installed — falls back to Noto Sans SC / PingFang SC
      otherwise (still sans-serif). Bundle a MiSans woff2 to guarantee it in prod. */
-  font-family: "MiSans", var(--font-sans);
+  font-family: MiSans, var(--font-sans);
   font-weight: 500;
 }
 .knowledge-loom .know-end {
