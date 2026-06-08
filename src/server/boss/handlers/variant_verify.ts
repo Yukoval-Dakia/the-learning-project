@@ -91,7 +91,9 @@ function parseVariantVerifyOutput(text: string): VariantVerificationResultT {
   const parsed = VariantVerificationResult.safeParse(json);
   if (!parsed.success) {
     throw new Error(
-      `parseVariantVerifyOutput: schema invalid: ${parsed.error.issues.map((i) => i.message).join('; ')}`,
+      `parseVariantVerifyOutput: schema invalid: ${parsed.error.issues
+        .map((i) => `${i.path.join('.')}: ${i.message}`)
+        .join('; ')}`,
     );
   }
   return parsed.data;
@@ -113,12 +115,16 @@ function parseVariantVerifyOutput(text: string): VariantVerificationResultT {
  *       parseVariantVerifyOutput fallback (约束③ — defensive layer kept).
  */
 export function parseVariantVerifyResult(result: TaskTextResult): VariantVerificationResultT {
-  if (result.structured_output !== undefined) {
+  // Exclude null as well as undefined: `structured_output?: unknown` includes
+  // null, and an endpoint emitting the key as null would otherwise reach
+  // safeParse(null) → a guaranteed throw → pg-boss retry. Treat null like
+  // "absent" so it takes the char-scan text fallback instead.
+  if (result.structured_output !== undefined && result.structured_output !== null) {
     const parsed = VariantVerificationResult.safeParse(result.structured_output);
     if (!parsed.success) {
       throw new Error(
         `parseVariantVerifyResult: structured_output schema invalid: ${parsed.error.issues
-          .map((i) => i.message)
+          .map((i) => `${i.path.join('.')}: ${i.message}`)
           .join('; ')}`,
       );
     }

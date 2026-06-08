@@ -62,6 +62,14 @@ describe('parseVariantVerifyResult — YUK-299 three-state dispatch', () => {
     expect(parsed.failure_reasons).toEqual([]);
   });
 
+  it("(A''') treats a null structured_output as absent → char-scan fallback", () => {
+    // `structured_output?: unknown` includes null; a null value must NOT reach
+    // safeParse (it would throw → needless pg-boss retry). It takes the text path.
+    const text = `noise ${JSON.stringify(VALID_STRUCTURED)} noise`;
+    const parsed = parseVariantVerifyResult(asResult({ structured_output: null, text }));
+    expect(parsed.verdict).toBe('pass');
+  });
+
   it('(B) falls back to the char-scan parse when structured_output is undefined', () => {
     const text = `prefix noise ${JSON.stringify(VALID_STRUCTURED)} trailing noise`;
     const parsed = parseVariantVerifyResult(asResult({ text }));
