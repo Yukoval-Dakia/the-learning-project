@@ -24,69 +24,71 @@ function fixtureRoot(layout: Record<string, string[]>): string {
 }
 
 describe('resolveQuizGenSkills (per (subject, kind))', () => {
-  it('returns the hyphenated skill dir name when a pack exists', () => {
+  it('returns the hyphenated skill dir name when a pack exists', async () => {
     const root = fixtureRoot({ wenyan: ['quiz-gen-translation'] });
-    expect(resolveQuizGenSkills('wenyan', 'translation', root)).toEqual(['quiz-gen-translation']);
+    expect(await resolveQuizGenSkills('wenyan', 'translation', root)).toEqual([
+      'quiz-gen-translation',
+    ]);
   });
 
-  it('translates underscore kind to hyphen dir (reading_comprehension)', () => {
+  it('translates underscore kind to hyphen dir (reading_comprehension)', async () => {
     const root = fixtureRoot({ wenyan: ['quiz-gen-reading-comprehension'] });
-    expect(resolveQuizGenSkills('wenyan', 'reading_comprehension', root)).toEqual([
+    expect(await resolveQuizGenSkills('wenyan', 'reading_comprehension', root)).toEqual([
       'quiz-gen-reading-comprehension',
     ]);
   });
 
-  it('降级链: returns undefined when the pack dir is absent (unauthored kind)', () => {
+  it('降级链: returns undefined when the pack dir is absent (unauthored kind)', async () => {
     const root = fixtureRoot({ wenyan: ['quiz-gen-translation'] });
-    expect(resolveQuizGenSkills('wenyan', 'reading_comprehension', root)).toBeUndefined();
+    expect(await resolveQuizGenSkills('wenyan', 'reading_comprehension', root)).toBeUndefined();
   });
 
-  it('降级链: returns undefined for a kind with no skill-key mapping', () => {
+  it('降级链: returns undefined for a kind with no skill-key mapping', async () => {
     const root = fixtureRoot({ math: ['quiz-gen-calculation'] });
     // single_choice has no entry in QUIZ_GEN_SKILL_KIND_KEYS
-    expect(resolveQuizGenSkills('math', 'single_choice', root)).toBeUndefined();
+    expect(await resolveQuizGenSkills('math', 'single_choice', root)).toBeUndefined();
   });
 
-  it('降级链: returns undefined when SKILL.md is missing even if dir exists', () => {
+  it('降级链: returns undefined when SKILL.md is missing even if dir exists', async () => {
     const root = mkdtempSync(join(tmpdir(), 'qgskills-'));
     mkdirSync(join(root, 'wenyan', 'skills', 'quiz-gen-translation'), { recursive: true });
     // no SKILL.md written
-    expect(resolveQuizGenSkills('wenyan', 'translation', root)).toBeUndefined();
+    expect(await resolveQuizGenSkills('wenyan', 'translation', root)).toBeUndefined();
   });
 });
 
 describe('resolveQuizGenSkillsForSubject (all packs)', () => {
-  it('returns every quiz-gen pack the subject authored', () => {
+  it('returns every quiz-gen pack the subject authored', async () => {
     const root = fixtureRoot({
       wenyan: ['quiz-gen-translation', 'quiz-gen-reading-comprehension'],
     });
-    const result = resolveQuizGenSkillsForSubject('wenyan', root);
+    const result = await resolveQuizGenSkillsForSubject('wenyan', root);
     expect(result).toEqual(
       expect.arrayContaining(['quiz-gen-translation', 'quiz-gen-reading-comprehension']),
     );
     expect(result).toHaveLength(2);
   });
 
-  it('ignores non quiz-gen dirs', () => {
+  it('ignores non quiz-gen dirs', async () => {
     const root = fixtureRoot({ wenyan: ['quiz-gen-translation', 'some-other-skill'] });
-    expect(resolveQuizGenSkillsForSubject('wenyan', root)).toEqual(['quiz-gen-translation']);
+    expect(await resolveQuizGenSkillsForSubject('wenyan', root)).toEqual(['quiz-gen-translation']);
   });
 
-  it('降级链: returns undefined when the subject has no skills dir', () => {
+  it('降级链: returns undefined when the subject has no skills dir', async () => {
     const root = mkdtempSync(join(tmpdir(), 'qgskills-'));
-    expect(resolveQuizGenSkillsForSubject('physics', root)).toBeUndefined();
+    expect(await resolveQuizGenSkillsForSubject('physics', root)).toBeUndefined();
   });
 });
 
 describe('the shipped first-batch skills resolve against the live SoT', () => {
   // Uses the default skillsRoot (<cwd>/src/subjects) — verifies the actual
   // authored packs are discoverable, guarding the directory naming convention.
-  it('wenyan translation + reading_comprehension + math calculation are live', () => {
-    expect(resolveQuizGenSkills('wenyan', 'translation')).toEqual(['quiz-gen-translation']);
-    expect(resolveQuizGenSkills('wenyan', 'reading_comprehension')).toEqual([
+  it('wenyan translation + reading_comprehension + math calculation are live', async () => {
+    expect(await resolveQuizGenSkills('wenyan', 'translation')).toEqual(['quiz-gen-translation']);
+    expect(await resolveQuizGenSkills('wenyan', 'reading_comprehension')).toEqual([
       'quiz-gen-reading-comprehension',
     ]);
-    expect(resolveQuizGenSkills('math', 'calculation')).toEqual(['quiz-gen-calculation']);
+    expect(await resolveQuizGenSkills('math', 'calculation')).toEqual(['quiz-gen-calculation']);
   });
 
   // PR #319 F3 — the persisted question.kind for math calculation questions is
@@ -94,10 +96,12 @@ describe('the shipped first-batch skills resolve against the live SoT', () => {
   // quiz_verify hands the PERSISTED kind to resolveQuizGenSkills, it must still resolve
   // to quiz-gen-calculation via the normalization map; otherwise the verifier loads no
   // math skill and kind_conformance silently degrades.
-  it('resolves the persisted kind (computation) to quiz-gen-calculation', () => {
+  it('resolves the persisted kind (computation) to quiz-gen-calculation', async () => {
     // `as never` mirrors the quiz_verify call site casting a persisted QuestionKind
     // string into the SubjectQuestionKind param; the normalizer accepts it.
-    expect(resolveQuizGenSkills('math', 'computation' as never)).toEqual(['quiz-gen-calculation']);
+    expect(await resolveQuizGenSkills('math', 'computation' as never)).toEqual([
+      'quiz-gen-calculation',
+    ]);
   });
 });
 

@@ -289,7 +289,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
   // exists for (subject, kind) → no skills option → current behaviour.
   const kindConformanceChecked = tierChecks.includes('kind_conformance');
   const verifySkills = kindConformanceChecked
-    ? resolveQuizGenSkills(subjectProfile.id, row.kind as SubjectQuestionKind)
+    ? await resolveQuizGenSkills(subjectProfile.id, row.kind as SubjectQuestionKind)
     : undefined;
 
   let taskResult: TaskTextResult | null = null;
