@@ -4,6 +4,8 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  LAYOUT_HEIGHT,
+  LAYOUT_WIDTH,
   type LayoutEdge,
   type LayoutNode,
   RADIAL_THRESHOLD,
@@ -15,6 +17,30 @@ import {
 
 function n(id: string, parent_id: string | null = null): LayoutNode {
   return { id, parent_id };
+}
+
+// Property assertion shared by every fcose path: after the bbox-normalise step
+// (which compensates for headless `fit:true` being a no-op) every coordinate
+// must be finite AND land inside the logical viewBox the SVG layer renders into.
+// If normalise regressed, fcose's raw centred coordinates would fall outside
+// [0,LAYOUT_WIDTH]×[0,LAYOUT_HEIGHT] (the original "clump in the corner" bug).
+function expectInViewBox(pos: ReturnType<typeof fcoseHeadless>): void {
+  for (const [id, p] of pos) {
+    expect(Number.isFinite(p.x), `${id}.x finite`).toBe(true);
+    expect(Number.isFinite(p.y), `${id}.y finite`).toBe(true);
+    expect(p.x, `${id}.x ≥ 0`).toBeGreaterThanOrEqual(0);
+    expect(p.x, `${id}.x ≤ LAYOUT_WIDTH`).toBeLessThanOrEqual(LAYOUT_WIDTH);
+    expect(p.y, `${id}.y ≥ 0`).toBeGreaterThanOrEqual(0);
+    expect(p.y, `${id}.y ≤ LAYOUT_HEIGHT`).toBeLessThanOrEqual(LAYOUT_HEIGHT);
+  }
+}
+
+// Count of distinct rounded values along an axis. fcose is randomised, so we
+// assert the *property* that the graph is a 2-D web (≥2 distinct y) rather than
+// a horizontal row (all y equal — the radial-by-depth-for-everything bug owner
+// caught). Rounding absorbs sub-pixel float noise.
+function distinctAxis(pos: ReturnType<typeof fcoseHeadless>, axis: 'x' | 'y'): number {
+  return new Set([...pos.values()].map((p) => Math.round(p[axis]))).size;
 }
 
 describe('computeDepths', () => {
@@ -98,6 +124,35 @@ describe('fcoseHeadless (large-graph branch)', () => {
     }
   });
 
+  it('normalises every node inside the logical viewBox (no corner clump)', () => {
+    const { nodes, edges } = bigGraph(40);
+    expectInViewBox(fcoseHeadless(nodes, edges));
+  });
+
+  it('lays out a 2-D web — nodes spread on both axes, not a single row', () => {
+    const { nodes, edges } = bigGraph(40);
+    const pos = fcoseHeadless(nodes, edges);
+    // A horizontal row (the bug) collapses every node onto one y. A web spreads
+    // them: require ≥2 distinct y AND ≥2 distinct x so it is genuinely 2-D.
+    expect(distinctAxis(pos, 'y')).toBeGreaterThanOrEqual(2);
+    expect(distinctAxis(pos, 'x')).toBeGreaterThanOrEqual(2);
+  });
+
+  it('derives tree edges from parent_id — flat-depth data still spreads as a web', () => {
+    // Root + N same-depth leaves, NO mesh edges. Under the old radial-by-depth
+    // path this collapsed into one horizontal line (all leaves share depth 1).
+    // fcose only avoids that because fcoseHeadless synthesises tree edges from
+    // parent_id; with those edges the star spreads radially around the root.
+    const nodes = [n('root'), ...Array.from({ length: 9 }, (_, i) => n(`leaf${i}`, 'root'))];
+    const pos = fcoseHeadless(nodes, []);
+    expect(pos.size).toBe(nodes.length);
+    expectInViewBox(pos);
+    // The defining proof the tree edges entered the solver: a parent-linked star
+    // is NOT collinear (a row would be a single y). ≥3 distinct y on a 10-node
+    // star is only reachable if the parent_id-derived edges drove placement.
+    expect(distinctAxis(pos, 'y')).toBeGreaterThanOrEqual(3);
+  });
+
   it('skips dangling edges without throwing', () => {
     const nodes = [n('a'), n('b')];
     const edges: LayoutEdge[] = [{ from_knowledge_id: 'a', to_knowledge_id: 'ghost' }];
@@ -121,17 +176,24 @@ describe('computeLayout (branch selection)', () => {
     expect([...viaCompute.entries()]).toEqual([...viaRadial.entries()]);
   });
 
-  it('switches to fcose above the threshold (finite coords for all nodes)', () => {
-    const count = RADIAL_THRESHOLD + 5;
-    const nodes = Array.from({ length: count }, (_, i) => n(`k${i}`, i === 0 ? null : `k${i - 1}`));
+  it('switches to fcose above the threshold (in-box, spread, all nodes)', () => {
+    // A BRANCHING tree (2 children per node), not a path. A pure chain has no
+    // 2-D structure, so a force solver may legitimately lay it out near-straight;
+    // a branching tree (what real knowledge graphs are, and what the row bug was
+    // about) forces a genuine web. count chosen above RADIAL_THRESHOLD so the
+    // fcose branch is exercised.
+    const count = RADIAL_THRESHOLD + 7;
+    const nodes = Array.from({ length: count }, (_, i) =>
+      n(`k${i}`, i === 0 ? null : `k${Math.floor((i - 1) / 2)}`),
+    );
     const edges: LayoutEdge[] = nodes
       .filter((node) => node.parent_id)
       .map((node) => ({ from_knowledge_id: node.parent_id as string, to_knowledge_id: node.id }));
     const pos = computeLayout(nodes, edges);
     expect(pos.size).toBe(count);
-    for (const p of pos.values()) {
-      expect(Number.isFinite(p.x)).toBe(true);
-      expect(Number.isFinite(p.y)).toBe(true);
-    }
+    // Finite + inside the viewBox (normalise) + genuinely 2-D (not a row).
+    expectInViewBox(pos);
+    expect(distinctAxis(pos, 'y')).toBeGreaterThanOrEqual(2);
+    expect(distinctAxis(pos, 'x')).toBeGreaterThanOrEqual(2);
   });
 });

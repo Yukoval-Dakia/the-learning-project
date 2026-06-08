@@ -43,11 +43,14 @@ export type LayoutMap = Map<string, Point>;
 export const LAYOUT_WIDTH = 1000;
 export const LAYOUT_HEIGHT = 560;
 
-// At/under this node count we use the deterministic radial-by-depth layout (covers
-// the 7-9 node mock + synthetic seed). Above it, fcose headless keeps same-depth
-// rows from collapsing into an overlapping line (the radial x-formula degrades at
-// scale — see plan §2.2).
-export const RADIAL_THRESHOLD = 12;
+// Only TRIVIAL graphs (≤ this) use the deterministic radial layout — fcose
+// degenerates on 1-3 nodes (NaN / collinear). Everything else goes through fcose
+// force-directed so the MESH (typed edges + tree skeleton) actually drives node
+// placement and the graph reads as a web, not a depth-stacked row. The earlier
+// radial-by-depth-for-small-graphs choice (YUK-297 v1) ignored mesh edges entirely
+// and collapsed flat-depth data (root + N same-depth leaves) into a single ugly
+// horizontal line — the bug owner caught. Force layout fixes it at any size.
+export const RADIAL_THRESHOLD = 3;
 
 // Register fcose exactly once per module load (idempotent for our usage). Guarded
 // so repeated computeLayout calls don't re-register. cytoscape.use throws if the
@@ -124,16 +127,30 @@ export function radialByDepth(nodes: LayoutNode[]): LayoutMap {
 export function fcoseHeadless(nodes: LayoutNode[], edges: LayoutEdge[]): LayoutMap {
   ensureFcose();
   const nodeIds = new Set(nodes.map((n) => n.id));
+  // Feed fcose the FULL connectivity so the force solver lays out a web:
+  //   • tree skeleton (parent_id) — the structural backbone, derived here since
+  //     production doesn't store explicit tree edges; and
+  //   • mesh typed edges (related/applied/prerequisite/derived/contrasts).
+  // Without the tree edges fcose only saw the sparse mesh and left most nodes
+  // unconnected → a near-linear smear. With both, nodes spread by their real
+  // relationships and the graph reads as a mesh (the fix for the YUK-297 v1 bug).
+  const treeEdges = nodes
+    .filter((n) => n.parent_id != null && nodeIds.has(n.parent_id))
+    .map((n, i) => ({
+      group: 'edges' as const,
+      data: { id: `t${i}`, source: n.parent_id as string, target: n.id },
+    }));
   const cy = cytoscape({
     headless: true,
     elements: [
       ...nodes.map((n) => ({ group: 'nodes' as const, data: { id: n.id } })),
+      ...treeEdges,
       ...edges
         .filter((e) => nodeIds.has(e.from_knowledge_id) && nodeIds.has(e.to_knowledge_id))
         .map((e, i) => ({
           group: 'edges' as const,
           data: {
-            id: `l${i}`,
+            id: `m${i}`,
             source: e.from_knowledge_id,
             target: e.to_knowledge_id,
           },
@@ -143,27 +160,55 @@ export function fcoseHeadless(nodes: LayoutNode[], edges: LayoutEdge[]): LayoutM
 
   // fcose layout options carry extension-specific keys not present in
   // cytoscape's BaseLayoutOptions; typed via the cytoscape-fcose module shim.
+  // idealEdgeLength + nodeRepulsion tuned so a small (7-12 node) graph spreads
+  // into a readable web rather than clumping; gravity keeps it centred.
   const layoutOptions: FcoseLayoutOptions = {
     name: 'fcose',
-    quality: 'default',
+    quality: 'proof',
     randomize: true,
     animate: false,
     fit: true,
-    padding: 40,
-    nodeSeparation: 80,
+    padding: 50,
+    nodeSeparation: 120,
+    idealEdgeLength: 130,
+    nodeRepulsion: 9000,
+    gravity: 0.25,
   };
 
   try {
     cy.layout(layoutOptions).run();
 
-    const pos: LayoutMap = new Map();
+    // fcose returns CENTRED coordinates (origin ~0,0, any scale) — `fit:true`
+    // is a viewport op that does nothing headless. Normalise the raw bbox into
+    // the logical viewBox (LAYOUT_WIDTH × LAYOUT_HEIGHT) with padding so the SVG
+    // layer (which renders at that viewBox, same as radialByDepth) shows the
+    // whole web filling the canvas instead of a clump in one corner.
+    const raw: Array<[string, Point]> = [];
     for (const n of cy.nodes()) {
       const p = n.position();
-      // Guard against a degenerate NaN from an empty/single-node layout — fall
-      // back to the canvas centre so the SVG never renders a node at NaN.
-      const x = Number.isFinite(p.x) ? p.x : LAYOUT_WIDTH / 2;
-      const y = Number.isFinite(p.y) ? p.y : LAYOUT_HEIGHT / 2;
-      pos.set(n.id(), { x, y });
+      raw.push([n.id(), { x: Number.isFinite(p.x) ? p.x : 0, y: Number.isFinite(p.y) ? p.y : 0 }]);
+    }
+    if (raw.length === 0) return new Map();
+
+    const xs = raw.map(([, p]) => p.x);
+    const ys = raw.map(([, p]) => p.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    const PAD = 80;
+    const spanX = maxX - minX || 1;
+    const spanY = maxY - minY || 1;
+    // uniform scale (preserve aspect) to fit inside the padded viewBox
+    const scale = Math.min((LAYOUT_WIDTH - 2 * PAD) / spanX, (LAYOUT_HEIGHT - 2 * PAD) / spanY);
+    const drawnW = spanX * scale;
+    const drawnH = spanY * scale;
+    const offsetX = (LAYOUT_WIDTH - drawnW) / 2;
+    const offsetY = (LAYOUT_HEIGHT - drawnH) / 2;
+
+    const pos: LayoutMap = new Map();
+    for (const [id, p] of raw) {
+      pos.set(id, { x: offsetX + (p.x - minX) * scale, y: offsetY + (p.y - minY) * scale });
     }
     return pos;
   } finally {
