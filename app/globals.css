@@ -3666,6 +3666,18 @@ ol {
 .kg-svg {
   display: block;
 }
+/* Focus-mode camera: the pan/zoom <g> animates ONLY for focus-fit / unfocus /
+   reset moves (.is-animating, mirrors production's cy.animate({ fit }, 280ms)).
+   Direct manipulation (drag-pan, wheel/button zoom) leaves the class off so the
+   camera tracks input instantly. */
+.kg-camera.is-animating {
+  transition: transform 280ms var(--ease-out);
+}
+@media (prefers-reduced-motion: reduce) {
+  .kg-camera.is-animating {
+    transition: none;
+  }
+}
 
 /* dynamic-import loading fallback (page.tsx) — still uses .kg-canvas-loading. */
 .kg-canvas-loading {
