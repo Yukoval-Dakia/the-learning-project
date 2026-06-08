@@ -760,7 +760,19 @@ export function KnowledgeGraph({
             aria-label="缩小"
             onClick={() => zoom(-0.1)}
           >
-            <Icon name="minus" size={15} />
+            {/* The Icon registry has no `minus`; render the zoom-out glyph as a
+                lucide-weight inline minus so it always paints. */}
+            <svg width={15} height={15} viewBox="0 0 24 24" aria-hidden="true">
+              <line
+                x1="5"
+                y1="12"
+                x2="19"
+                y2="12"
+                stroke="currentColor"
+                strokeWidth={1.75}
+                strokeLinecap="round"
+              />
+            </svg>
           </button>
           <span className="kg-zoom-pct mono">{Math.round(view.k * 100)}%</span>
           <button
