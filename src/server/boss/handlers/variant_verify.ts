@@ -22,7 +22,13 @@ import type { Job } from 'pg-boss';
 import { VariantVerificationResult, type VariantVerificationResultT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { event, knowledge, mistake_variant, question } from '@/db/schema';
-import { type TaskTextRunFn, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
+import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
+import {
+  type TaskTextResult,
+  type TaskTextRunFn,
+  aiAgentRef,
+  costUsdToMicroUsd,
+} from '@/server/ai/provenance';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 import { getFailureAttemptById, writeEvent } from '@/server/events/queries';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -89,6 +95,36 @@ function parseVariantVerifyOutput(text: string): VariantVerificationResultT {
     );
   }
   return parsed.data;
+}
+
+/**
+ * YUK-299 — three-state dispatch over a runTask result for VariantVerifyTask.
+ * Exported so the unit test can feed constructed results directly (no runner/DB).
+ *
+ *   (A) result.structured_output present (endpoint honoured outputFormat) →
+ *       Zod second-pass via VariantVerificationResult.safeParse. The Zod pass is
+ *       NOT optional (约束⑥): outputFormat only guarantees JSON shape, not the
+ *       app-level business constraints (failure_reasons[].length<=500, maxItems
+ *       <=10, enums). A shape-valid-but-constraint-violating payload throws here
+ *       so pg-boss re-runs the job — same outcome as the text-fallback path.
+ *       safeParse also re-applies the .default([]) for an omitted failure_reasons.
+ *   (B) result.structured_output undefined (outputFormat unset / endpoint
+ *       unsupported / model fell back to text) → the existing char-scan
+ *       parseVariantVerifyOutput fallback (约束③ — defensive layer kept).
+ */
+export function parseVariantVerifyResult(result: TaskTextResult): VariantVerificationResultT {
+  if (result.structured_output !== undefined) {
+    const parsed = VariantVerificationResult.safeParse(result.structured_output);
+    if (!parsed.success) {
+      throw new Error(
+        `parseVariantVerifyResult: structured_output schema invalid: ${parsed.error.issues
+          .map((i) => i.message)
+          .join('; ')}`,
+      );
+    }
+    return parsed.data;
+  }
+  return parseVariantVerifyOutput(result.text);
 }
 
 /**
@@ -217,8 +253,16 @@ export async function runVariantVerify(
     },
   };
 
-  const result = await runTaskFn('VariantVerifyTask', input, { db, subjectProfile });
-  const parsed = parseVariantVerifyOutput(result.text);
+  // YUK-299 — pilot: ask the SDK to constrain the model to the verification
+  // schema. The endpoint may ignore outputFormat (mimo); parseVariantVerifyResult
+  // falls back to the char-scan path when structured_output is absent, so this is
+  // a zero-loss opt-in. The Zod second-pass still enforces business constraints.
+  const result = await runTaskFn('VariantVerifyTask', input, {
+    db,
+    subjectProfile,
+    outputFormat: zodToJsonSchemaOutputFormat(VariantVerificationResult),
+  });
+  const parsed = parseVariantVerifyResult(result);
 
   const now = new Date();
   const verifyEventId = createId();
