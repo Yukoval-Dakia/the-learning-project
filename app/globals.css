@@ -104,9 +104,15 @@
   --radius-pill: 999px;
 
   /* ── Shadows · soft & warm, never crisp ────────────────── */
-  --shadow-1: 0 1px 0 rgba(60, 50, 30, 0.04), 0 1px 2px rgba(60, 50, 30, 0.04);
-  --shadow-2: 0 1px 0 rgba(60, 50, 30, 0.04), 0 4px 14px -4px rgba(60, 50, 30, 0.08);
-  --shadow-3: 0 2px 0 rgba(60, 50, 30, 0.04), 0 12px 32px -8px rgba(60, 50, 30, 0.12);
+  /* YUK-297 R1: three-layer warm ambient elevation (was two flat layers with a
+     0 1px 0 hard line). Reads as a card resting ON paper, not an outline. Light
+     + dark blocks below must stay in sync — see also the [data-theme="dark"] +
+     prefers-dark blocks. */
+  --shadow-1: 0 0.5px 1px rgba(60, 50, 30, 0.04), 0 1px 2px rgba(60, 50, 30, 0.035);
+  --shadow-2: 0 1px 2px rgba(60, 50, 30, 0.04), 0 5px 14px -4px rgba(60, 50, 30, 0.08), 0 14px 30px
+    -12px rgba(60, 50, 30, 0.07);
+  --shadow-3: 0 2px 4px rgba(60, 50, 30, 0.05), 0 14px 30px -10px rgba(60, 50, 30, 0.12), 0 38px
+    64px -20px rgba(60, 50, 30, 0.16);
   --shadow-focus: 0 0 0 3px rgba(217, 119, 87, 0.22);
   --shadow-inset: inset 0 1px 0 rgba(60, 50, 30, 0.04);
 
@@ -222,9 +228,12 @@
   --r-4: 12px;
   --r-pill: 999px;
 
-  --shadow-1: 0 1px 0 rgba(60, 50, 30, 0.04), 0 1px 2px rgba(60, 50, 30, 0.04);
-  --shadow-2: 0 1px 0 rgba(60, 50, 30, 0.04), 0 4px 14px -4px rgba(60, 50, 30, 0.08);
-  --shadow-3: 0 2px 0 rgba(60, 50, 30, 0.04), 0 12px 32px -8px rgba(60, 50, 30, 0.12);
+  /* YUK-297 R1 — synced with @theme light block above. */
+  --shadow-1: 0 0.5px 1px rgba(60, 50, 30, 0.04), 0 1px 2px rgba(60, 50, 30, 0.035);
+  --shadow-2: 0 1px 2px rgba(60, 50, 30, 0.04), 0 5px 14px -4px rgba(60, 50, 30, 0.08), 0 14px 30px
+    -12px rgba(60, 50, 30, 0.07);
+  --shadow-3: 0 2px 4px rgba(60, 50, 30, 0.05), 0 14px 30px -10px rgba(60, 50, 30, 0.12), 0 38px
+    64px -20px rgba(60, 50, 30, 0.16);
   --shadow-focus: 0 0 0 3px rgba(217, 119, 87, 0.22);
   --shadow-inset: inset 0 1px 0 rgba(60, 50, 30, 0.04);
 
@@ -327,9 +336,12 @@
     --contrasts-line: #4f3a5c;
     --contrasts-ink: #d9bce4;
 
-    --shadow-1: 0 1px 0 rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.4);
-    --shadow-2: 0 1px 0 rgba(0, 0, 0, 0.4), 0 4px 14px -4px rgba(0, 0, 0, 0.55);
-    --shadow-3: 0 2px 0 rgba(0, 0, 0, 0.4), 0 12px 32px -8px rgba(0, 0, 0, 0.7);
+    /* YUK-297 R1 — three-layer dark elevation, synced with [data-theme="dark"]. */
+    --shadow-1: 0 0.5px 1px rgba(0, 0, 0, 0.22), 0 1px 2px rgba(0, 0, 0, 0.2);
+    --shadow-2: 0 1px 2px rgba(0, 0, 0, 0.24), 0 6px 16px -4px rgba(0, 0, 0, 0.42), 0 16px 34px
+      -12px rgba(0, 0, 0, 0.34);
+    --shadow-3: 0 2px 4px rgba(0, 0, 0, 0.26), 0 16px 34px -10px rgba(0, 0, 0, 0.5), 0 40px 70px
+      -20px rgba(0, 0, 0, 0.55);
     --shadow-focus: 0 0 0 3px rgba(232, 149, 114, 0.32);
     --shadow-inset: inset 0 1px 0 rgba(255, 245, 225, 0.04);
 
@@ -386,9 +398,12 @@
   --contrasts-line: #4f3a5c;
   --contrasts-ink: #d9bce4;
 
-  --shadow-1: 0 1px 0 rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-2: 0 1px 0 rgba(0, 0, 0, 0.4), 0 4px 14px -4px rgba(0, 0, 0, 0.55);
-  --shadow-3: 0 2px 0 rgba(0, 0, 0, 0.4), 0 12px 32px -8px rgba(0, 0, 0, 0.7);
+  /* YUK-297 R1 — three-layer dark elevation, synced with prefers-dark block. */
+  --shadow-1: 0 0.5px 1px rgba(0, 0, 0, 0.22), 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-2: 0 1px 2px rgba(0, 0, 0, 0.24), 0 6px 16px -4px rgba(0, 0, 0, 0.42), 0 16px 34px -12px
+    rgba(0, 0, 0, 0.34);
+  --shadow-3: 0 2px 4px rgba(0, 0, 0, 0.26), 0 16px 34px -10px rgba(0, 0, 0, 0.5), 0 40px 70px -20px
+    rgba(0, 0, 0, 0.55);
   --shadow-focus: 0 0 0 3px rgba(232, 149, 114, 0.32);
   --shadow-inset: inset 0 1px 0 rgba(255, 245, 225, 0.04);
 
@@ -5282,7 +5297,31 @@ progress {
   mix-blend-mode: screen;
 }
 
+/* YUK-297 R6: the btn-primary coral glow is hard-coded rgba(169,63,38) and does
+   NOT follow the --coral token (dark coral = #e89572). On the dark paper that
+   base/hover/active opacity over-exposes, so dial each layer down one notch.
+   Mirrored in the @media(prefers-color-scheme: dark) block below for system
+   follow — keep the two in sync. */
+:root[data-theme="dark"] .btn-primary {
+  box-shadow: 0 1px 2px rgba(169, 63, 38, 0.16), 0 2px 8px -2px rgba(169, 63, 38, 0.14);
+}
+:root[data-theme="dark"] .btn-primary:hover {
+  box-shadow: 0 1px 2px rgba(169, 63, 38, 0.2), 0 4px 14px -3px rgba(169, 63, 38, 0.18);
+}
+:root[data-theme="dark"] .btn-primary:active {
+  box-shadow: 0 1px 2px rgba(169, 63, 38, 0.16);
+}
+
 @media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .btn-primary {
+    box-shadow: 0 1px 2px rgba(169, 63, 38, 0.16), 0 2px 8px -2px rgba(169, 63, 38, 0.14);
+  }
+  :root:not([data-theme="light"]) .btn-primary:hover {
+    box-shadow: 0 1px 2px rgba(169, 63, 38, 0.2), 0 4px 14px -3px rgba(169, 63, 38, 0.18);
+  }
+  :root:not([data-theme="light"]) .btn-primary:active {
+    box-shadow: 0 1px 2px rgba(169, 63, 38, 0.16);
+  }
   :root:not([data-theme="light"]) .app-shell::before {
     background: linear-gradient(180deg, rgba(255, 245, 225, 0.035) 0%, transparent 32%),
       repeating-linear-gradient(
@@ -5355,7 +5394,8 @@ progress {
   display: flex;
   flex-direction: column;
   background: var(--paper-sunk);
-  border-right: 1px solid var(--line);
+  /* YUK-297 refine: calmer rail hairline (was --line). */
+  border-right: 1px solid var(--line-soft);
   padding: var(--s-5) var(--s-4);
   z-index: 30;
   transition: background var(--dur-slow) var(--ease-soft);
@@ -5454,6 +5494,25 @@ progress {
   background: var(--coral-soft);
   color: var(--coral-ink);
   font-weight: 500;
+}
+/* YUK-297 R5: a precise coral tick on the active nav row for hierarchy.
+   .nav-item is position:relative (above) with no overflow:hidden, so the
+   left:-2px tick reads cleanly against the rail. Collapsed-rail variant pulls
+   it inboard + shorter. */
+.nav-item.is-active::before {
+  content: "";
+  position: absolute;
+  left: -2px;
+  top: 50%;
+  width: 3px;
+  height: 17px;
+  transform: translateY(-50%);
+  border-radius: var(--r-pill);
+  background: var(--coral);
+}
+.rail-collapsed .nav-item.is-active::before {
+  left: 2px;
+  height: 14px;
 }
 .nav-item.is-active .ico {
   color: var(--coral);
@@ -5573,10 +5632,12 @@ progress {
   align-items: center;
   gap: var(--s-4);
   padding: var(--s-3) var(--s-6);
-  background: color-mix(in srgb, var(--paper) 84%, transparent);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border-bottom: 1px solid var(--line);
+  /* YUK-297 R4: crisper topbar — more translucent, deeper saturated blur, and a
+     calmer hairline (--line-soft) so the chrome recedes against the paper. */
+  background: color-mix(in srgb, var(--paper) 78%, transparent);
+  backdrop-filter: blur(16px) saturate(1.4);
+  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  border-bottom: 1px solid var(--line-soft);
 }
 .crumbs {
   display: flex;
@@ -5626,6 +5687,14 @@ progress {
   flex: none;
   white-space: nowrap;
   overflow: hidden;
+  /* YUK-297 refine: searchbox reacts to hover (kept height 34px — production
+     chrome density, not the design's 36px). */
+  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast)
+    var(--ease-out);
+}
+.searchbox:hover {
+  border-color: var(--line-strong);
+  background: var(--paper-raised);
 }
 .searchbox > span {
   flex: 1;
@@ -5692,13 +5761,18 @@ progress {
 .btn-primary {
   background: var(--coral);
   color: #fff;
-  box-shadow: var(--shadow-1);
+  /* YUK-297 R6: soft coral lift so the primary action carries its own warm
+     elevation (hard-coded coral rgba — does NOT track the --coral token, so the
+     dark-theme blocks below dial the opacity down to avoid an over-bright glow). */
+  box-shadow: 0 1px 2px rgba(169, 63, 38, 0.22), 0 2px 8px -2px rgba(169, 63, 38, 0.2);
 }
 .btn-primary:hover {
   background: var(--coral-hover);
+  box-shadow: 0 1px 2px rgba(169, 63, 38, 0.26), 0 4px 14px -3px rgba(169, 63, 38, 0.26);
 }
 .btn-primary:active {
   background: var(--coral-press);
+  box-shadow: 0 1px 2px rgba(169, 63, 38, 0.24);
 }
 .btn-secondary {
   background: var(--paper-raised);
@@ -5871,7 +5945,8 @@ button.seg-sm {
    ============================================================ */
 .card {
   background: var(--paper-raised);
-  border: 1px solid var(--line);
+  /* YUK-297 refine: cards float on a softer hairline (was --line). */
+  border: 1px solid var(--line-soft);
   border-radius: var(--r-3);
   box-shadow: var(--shadow-1);
   transition: box-shadow var(--dur-base) var(--ease-out), border-color var(--dur-base)
@@ -5887,9 +5962,11 @@ button.seg-sm {
   cursor: pointer;
 }
 .card-hover:hover {
+  /* YUK-297 R2: lift a touch more (was -2px) with the deeper shadow-2 so the
+     card reads as floating with intent. */
   box-shadow: var(--shadow-2);
-  border-color: var(--line-strong);
-  transform: translateY(-2px);
+  border-color: var(--line);
+  transform: translateY(-3px);
 }
 .card-sunk {
   background: var(--paper-sunk);
@@ -7582,7 +7659,9 @@ button.seg-sm {
   font-family: var(--font-mono);
   font-size: var(--fs-meta);
   color: var(--ink-4);
-  letter-spacing: var(--ls-wide);
+  /* YUK-297 refine: a hair more tracking (0.06em, was --ls-wide 0.04em) reads
+     as engraved, not typed. */
+  letter-spacing: 0.06em;
   margin-bottom: var(--s-2);
   display: block;
 }
@@ -7605,14 +7684,18 @@ button.seg-sm {
 .today-loom .loom-hero {
   position: relative;
   overflow: hidden;
-  background: linear-gradient(135deg, var(--paper-raised), var(--paper-sunk));
+  /* YUK-297 R3: flat warm paper (the system has no gradients) + a whisper of
+     top-edge light via shadow-inset for dimension. */
+  background: var(--paper-raised);
+  box-shadow: var(--shadow-1), var(--shadow-inset);
 }
 .today-loom .hero-weave {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  opacity: 0.9;
+  /* YUK-297 R3: quieter weave so the flat-paper hero reads calmer. */
+  opacity: 0.8;
   pointer-events: none;
 }
 .today-loom .hero-weave .wv {
@@ -7688,8 +7771,21 @@ button.seg-sm {
   font-family: var(--font-serif);
   font-size: var(--fs-display);
   font-weight: 500;
-  letter-spacing: var(--ls-tight);
+  /* YUK-297 R7: optical tightening (was --ls-tight ≈ -0.015em) so big serif
+     figures read as set type, not raw digits. */
+  letter-spacing: -0.02em;
   line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+/* YUK-297 R7: same numeral tightening for the other large figures in the today
+   surface. .item-stat .s-n / .mistake-count .mc-n from the design refine pass
+   are NOT added here — those selectors don't exist in the production TSX (grep-
+   confirmed); they remain forward-looking until those surfaces ship. */
+.today-loom .hero-title,
+.today-loom .prop-summary-n,
+.today-loom .cost-amt,
+.ring .ring-val {
+  letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
 }
 .today-loom .kpi .kpi-val .unit {
@@ -7724,7 +7820,8 @@ button.seg-sm {
   display: flex;
   align-items: center;
   gap: var(--s-3);
-  margin: var(--s-10) 0 var(--s-4);
+  /* YUK-297 R8: a touch tighter section rhythm (was --s-10 top). */
+  margin: var(--s-8) 0 var(--s-4);
 }
 .today-loom .section-label h2 {
   font-family: var(--font-serif);
@@ -7735,12 +7832,16 @@ button.seg-sm {
 .today-loom .section-label .rule {
   flex: 1;
   height: 1px;
-  background: var(--line);
+  /* YUK-297 R8: softer hairline divider. */
+  background: var(--line-soft);
 }
 .today-loom .section-label .count {
   font-family: var(--font-mono);
   font-size: var(--fs-meta);
   color: var(--ink-4);
+  /* YUK-297 R8: the count must never wrap into a column (the "3 / 缕" bug). */
+  flex: none;
+  white-space: nowrap;
 }
 
 /* ---- Threads (screens.css L22-34 + L204) ----
@@ -7920,7 +8021,8 @@ button.seg-sm {
   align-items: center;
   gap: var(--s-4);
   padding: var(--s-4) var(--s-5);
-  border-bottom: 1px solid var(--line);
+  /* YUK-297 R9: softer hairline divider (structural borders stay --line). */
+  border-bottom: 1px solid var(--line-soft);
   transition: background var(--dur-fast) var(--ease-out);
 }
 .today-loom .strip:last-child {
