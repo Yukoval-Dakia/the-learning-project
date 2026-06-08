@@ -196,7 +196,7 @@ export async function runNoteRefine(params: RunNoteRefineParams): Promise<RunNot
   const taskResult = await runTaskFn('NoteRefineTask', input, {
     db,
     subjectProfile,
-    skills: resolveNoteSkill(subjectProfile.id),
+    skills: await resolveNoteSkill(subjectProfile.id),
   });
   const { patch } = parseNoteRefineOutput(taskResult.text);
   const summary = summarizeNotePatch(patch);
