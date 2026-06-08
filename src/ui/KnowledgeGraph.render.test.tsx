@@ -93,6 +93,31 @@ describe('KnowledgeGraph SVG render — nodes', () => {
     expect(html).toContain(`stroke-dashoffset="${circ}"`);
   });
 
+  it('disc-内 pct integer shown for confident bands, rounded like MasteryBadge', () => {
+    // 0.624 → 62 (matches MasteryBadge Math.round(mastery*100)).
+    const html = render({
+      nodes: [node({ id: 'a', mastery: 0.624, evidence_count: 5 })],
+      edges: [],
+    });
+    expect(html).toContain('class="kg-node-pct mono"');
+    expect(html).toMatch(/class="kg-node-pct mono"[^>]*>62</);
+  });
+
+  it('disc-内 pct omitted for untrained / insufficient (aligns with MasteryBadge)', () => {
+    // untrained (n=0) and insufficient (n<3) surface NO number in MasteryBadge,
+    // so the disc must render no kg-node-pct text either.
+    const untrained = render({
+      nodes: [node({ id: 'a', mastery: null, evidence_count: 0 })],
+      edges: [],
+    });
+    expect(untrained).not.toContain('kg-node-pct');
+    const insufficient = render({
+      nodes: [node({ id: 'a', mastery: 0.5, evidence_count: 2 })],
+      edges: [],
+    });
+    expect(insufficient).not.toContain('kg-node-pct');
+  });
+
   it('radius follows mistake_count (∝ mistakes)', () => {
     const mistakes = new Map<string, number>([['a', 3]]);
     const html = render({
