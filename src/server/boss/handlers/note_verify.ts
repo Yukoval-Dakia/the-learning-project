@@ -238,7 +238,7 @@ export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNot
     const result = await runTaskFn('NoteVerifyTask', input, {
       db,
       subjectProfile,
-      skills: resolveNoteSkill(subjectProfile.id),
+      skills: await resolveNoteSkill(subjectProfile.id),
     });
     const parsed = parseVerificationOutput(result.text);
     const status = await persistNoteVerificationResult({

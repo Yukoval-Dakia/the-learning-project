@@ -22,7 +22,7 @@
 // 测试矩阵要求双向断言：resolveNoteSkill 不返回 quiz-gen-*，
 // resolveQuizGenSkillsForSubject 不返回 note-*。
 
-import { existsSync } from 'node:fs';
+import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 
 /**
@@ -34,12 +34,16 @@ import { join } from 'node:path';
  * skillsRoot defaults to <cwd>/src/subjects (the live SoT). Tests inject a
  * fixture root so the resolver works without touching the real on-disk tree.
  */
-export function resolveNoteSkill(
+export async function resolveNoteSkill(
   subjectId: string,
   skillsRoot: string = join(process.cwd(), 'src', 'subjects'),
-): string[] | undefined {
+): Promise<string[] | undefined> {
   const noteSkillDir = `note-${subjectId}`;
   const skillFile = join(skillsRoot, subjectId, 'skills', noteSkillDir, 'SKILL.md');
-  if (!existsSync(skillFile)) return undefined;
+  try {
+    await access(skillFile);
+  } catch {
+    return undefined;
+  }
   return [noteSkillDir];
 }
