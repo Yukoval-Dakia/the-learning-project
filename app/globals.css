@@ -11810,3 +11810,576 @@ button.seg-sm {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* ============================================================
+   YUK-294 AgentNotes (.an-*) — "AI 观察" agent-to-agent notes.
+     • AgentNotesBoard — compact read-only block on /today.
+     • /agent-notes — the full-screen drill-in.
+   Deliberately quieter than the inbox proposal cards: a SUNK
+   dashed panel holding a log-feed, NO action buttons —
+   "AI 间的自言自语", not "等你决策的提案". All scoped under
+   .an-scope (Today block wrapper + full-screen page root) so
+   the rules never leak; signal-chip tones are re-declared here
+   because globals' .tone-chip-* only scope under .today-loom.
+   ============================================================ */
+
+/* ── signal chip tones (re-declared — globals scope these only
+      under .today-loom; the full-screen page is not .today-loom) ── */
+.an-scope .an-sig.tone-chip-info {
+  color: var(--info-ink);
+  background: var(--info-soft);
+  border-color: var(--info-line);
+}
+.an-scope .an-sig.tone-chip-coral {
+  color: var(--coral-ink);
+  background: var(--coral-soft);
+  border-color: var(--coral-line);
+}
+.an-scope .an-sig.tone-chip-good {
+  color: var(--good-ink);
+  background: var(--good-soft);
+  border-color: var(--good-line);
+}
+.an-scope .an-sig.tone-chip-hard {
+  color: var(--hard-ink);
+  background: var(--hard-soft);
+  border-color: var(--hard-line);
+}
+.an-scope .an-sig.tone-chip-neutral {
+  color: var(--ink-3);
+  background: var(--paper-sunk);
+  border-color: var(--line);
+}
+
+/* filter-bar dot tones */
+.an-scope .an-fdot.tone-dot-hard {
+  background: var(--hard);
+}
+.an-scope .an-fdot.tone-dot-info {
+  background: var(--info);
+}
+.an-scope .an-fdot.tone-dot-good {
+  background: var(--good);
+}
+.an-scope .an-fdot.tone-dot-coral {
+  background: var(--coral);
+}
+.an-scope .an-fdot.tone-dot-neutral {
+  background: var(--ink-4);
+}
+
+/* ── board shell (Today compact block) ── */
+.an-scope .an-board {
+  background: var(--paper-sunk);
+  box-shadow: none;
+  border-style: dashed;
+}
+.an-scope .an-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.an-scope .an-board.is-open .an-head {
+  margin-bottom: var(--s-3);
+}
+.an-scope .an-head-toggle {
+  appearance: none;
+  -webkit-appearance: none;
+  background: none;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-width: 0;
+  padding: 0;
+}
+.an-scope .an-head .card-icon {
+  background: var(--paper-raised);
+}
+.an-scope .an-head-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.an-scope .an-sub {
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
+.an-scope .an-head-spacer {
+  flex: 1;
+}
+
+/* entry → full-screen view */
+.an-scope .an-open-full {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  appearance: none;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  padding: 5px 12px;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--fs-meta);
+  color: var(--coral-ink);
+  transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast)
+    var(--ease-out);
+}
+.an-scope .an-open-full:hover {
+  background: var(--coral-soft);
+  border-color: var(--coral-line);
+}
+.an-scope .an-open-full .ico {
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.an-scope .an-open-full:hover .ico {
+  transform: translateX(2px);
+}
+
+.an-scope .an-chev-btn {
+  appearance: none;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-2);
+  color: var(--ink-4);
+}
+.an-scope .an-chev-btn:hover {
+  background: var(--paper-raised);
+}
+.an-scope .an-chev {
+  transition: transform var(--dur-base) var(--ease-out);
+}
+.an-scope .an-board.is-open .an-chev {
+  transform: rotate(180deg);
+}
+
+/* ── collapsed peek (one quiet line) ── */
+.an-scope .an-peek {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  width: 100%;
+  margin-top: var(--s-2);
+  padding-top: var(--s-3);
+  border: 0;
+  border-top: 1px dashed var(--line);
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  font-size: var(--fs-caption);
+  color: var(--ink-3);
+}
+.an-scope .an-peek .an-peek-txt {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.an-scope .an-peek .meta {
+  flex: none;
+}
+
+/* ── feed ── */
+.an-scope .an-feed {
+  display: flex;
+  flex-direction: column;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .an-scope .an-feed {
+    animation: an-feed-in var(--dur-base) var(--ease-out) both;
+  }
+  @keyframes an-feed-in {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+}
+
+.an-scope .an-note {
+  display: flex;
+  gap: var(--s-3);
+  padding: var(--s-3) 0;
+}
+
+/* left rail — avatar over a connecting thread */
+.an-scope .an-rail {
+  position: relative;
+  width: 30px;
+  flex: none;
+  display: flex;
+  justify-content: center;
+}
+.an-scope .an-rail::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--line);
+  transform: translateX(-0.5px);
+}
+.an-scope .an-note:first-child .an-rail::before {
+  top: 15px;
+}
+.an-scope .an-note:last-child .an-rail::before {
+  bottom: calc(100% - 15px);
+}
+.an-scope .an-note:only-child .an-rail::before {
+  display: none;
+}
+
+.an-scope .an-avatar {
+  position: relative;
+  z-index: 1;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--r-2);
+  display: grid;
+  place-items: center;
+  flex: none;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  color: var(--ink-3);
+}
+.an-scope .an-avatar.tone-hard {
+  background: var(--hard-soft);
+  border-color: var(--hard-line);
+  color: var(--hard-ink);
+}
+.an-scope .an-avatar.tone-info {
+  background: var(--info-soft);
+  border-color: var(--info-line);
+  color: var(--info-ink);
+}
+.an-scope .an-avatar.tone-good {
+  background: var(--good-soft);
+  border-color: var(--good-line);
+  color: var(--good-ink);
+}
+.an-scope .an-avatar.tone-coral {
+  background: var(--coral-soft);
+  border-color: var(--coral-line);
+  color: var(--coral-ink);
+}
+/* tone-neutral falls through to the base .an-avatar surface */
+
+/* unread dot punched out against the surface (sunk board vs raised card).
+   The board's sunk surface needs a --paper-sunk ring; the full-screen page's
+   raised cards need a --paper-raised ring — default to raised, override on the
+   sunk board. */
+.an-scope .an-note[data-unread="1"] .an-avatar::after {
+  content: "";
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--coral);
+  border: 2px solid var(--paper-raised);
+}
+.an-scope .an-board .an-note[data-unread="1"] .an-avatar::after {
+  border-color: var(--paper-sunk);
+}
+
+.an-scope .an-main {
+  min-width: 0;
+  flex: 1;
+}
+
+/* routing line: source → target(s) · signal chip */
+.an-scope .an-route {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.an-scope .an-ag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-meta);
+  white-space: nowrap;
+}
+.an-scope .an-ag .ico {
+  color: var(--ink-4);
+}
+.an-scope .an-from {
+  color: var(--ink);
+  font-weight: 500;
+}
+.an-scope .an-from .ico {
+  color: var(--ink-3);
+}
+.an-scope .an-flow {
+  color: var(--ink-4);
+  flex: none;
+}
+.an-scope .an-to {
+  color: var(--ink-3);
+}
+.an-scope .an-to-sep {
+  color: var(--ink-5);
+}
+.an-scope .an-sig {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  flex: none;
+}
+.an-scope .an-new {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  line-height: 1;
+  letter-spacing: var(--ls-wide);
+  color: var(--coral-ink);
+  background: var(--coral-soft);
+  border: 1px solid var(--coral-line);
+  border-radius: var(--r-pill);
+  padding: 2px 6px;
+  flex: none;
+}
+
+/* body — light markdown (**bold**, `code`) */
+.an-scope .an-body {
+  font-size: var(--fs-caption);
+  line-height: var(--lh-prose);
+  color: var(--ink-2);
+  margin-top: 4px;
+}
+.an-scope .an-body .an-body-b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.an-scope .an-code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-2);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  padding: 0 4px;
+}
+
+/* meta row — confidence · time · evidence · ttl */
+.an-scope .an-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
+.an-scope .an-meta > * {
+  flex: none;
+  white-space: nowrap;
+}
+.an-scope .an-conf {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.an-scope .an-conf .ico {
+  color: var(--ink-4);
+}
+.an-scope .an-evi {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  background: transparent;
+  color: var(--info-ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  padding: 2px 5px;
+  margin: -2px -1px;
+  border-radius: var(--r-1);
+  cursor: pointer;
+}
+.an-scope .an-evi:hover {
+  background: var(--info-soft);
+  text-decoration: underline;
+}
+.an-scope .an-evi-static {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ink-4);
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+}
+.an-scope .an-ttl {
+  color: var(--ink-5);
+}
+.an-scope .an-expire {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-sans);
+  color: var(--hard-ink);
+  background: var(--hard-soft);
+  border: 1px solid var(--hard-line);
+  border-radius: var(--r-pill);
+  padding: 1px 8px;
+}
+
+/* footer — local "全部已读" only (no backend write) */
+.an-scope .an-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s-3);
+  margin-top: var(--s-3);
+  padding-top: var(--s-3);
+  border-top: 1px dashed var(--line);
+  flex-wrap: wrap;
+}
+.an-scope .an-foot .meta {
+  margin-right: auto;
+}
+.an-scope .an-foot-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  appearance: none;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--fs-meta);
+  color: var(--coral-ink);
+  padding: 2px 4px;
+  border-radius: var(--r-1);
+  white-space: nowrap;
+}
+.an-scope .an-foot-link:hover {
+  text-decoration: underline;
+}
+
+/* empty — a single faint line, no card chrome (must not occupy 版面) */
+.an-scope.an-empty,
+.an-scope .an-empty {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-4);
+  font-size: var(--fs-caption);
+  padding: var(--s-2) 0 var(--s-1);
+}
+.an-scope.an-empty .ico,
+.an-scope .an-empty .ico {
+  color: var(--ink-5);
+}
+
+/* ── full-screen page (/agent-notes) overview + filter bar ── */
+.an-scope .an-overview {
+  margin-bottom: var(--s-2);
+}
+.an-scope .an-ov-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-4);
+  flex-wrap: wrap;
+  margin-bottom: var(--s-4);
+}
+.an-scope .an-ov-stat {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-3);
+}
+.an-scope .an-ov-n {
+  font-size: var(--fs-h1);
+  line-height: 1;
+  color: var(--coral);
+}
+.an-scope .an-ov-lab {
+  font-size: var(--fs-body);
+  color: var(--ink-2);
+}
+.an-scope .an-filterbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+.an-scope .an-fchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  appearance: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--paper-raised);
+  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast)
+    var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.an-scope .an-fchip b {
+  font-family: var(--font-mono);
+  color: var(--ink-4);
+}
+.an-scope .an-fchip:hover {
+  border-color: var(--line-strong);
+  color: var(--ink-2);
+}
+.an-scope .an-fchip.is-on {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
+}
+.an-scope .an-fchip.is-on b {
+  color: var(--paper);
+  opacity: 0.7;
+}
+.an-scope .an-fdot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+
+/* ── responsive ── */
+@media (max-width: 560px) {
+  .an-scope .an-sig {
+    margin-left: 0;
+  }
+  .an-scope .an-rail {
+    width: 26px;
+  }
+  .an-scope .an-avatar {
+    width: 26px;
+    height: 26px;
+  }
+}

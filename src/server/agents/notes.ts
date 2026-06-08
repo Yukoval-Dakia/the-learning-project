@@ -75,6 +75,12 @@ export interface AgentNote {
   signal_kind: string;
   confidence?: number;
   expires_at?: string;
+  // Chain link to the event that triggered the observation (mirrors the
+  // writeAgentNote `caused_by_event_id` input). Sourced from the EVENT COLUMN
+  // event.caused_by_event_id — NOT the payload. The agent-notes board uses it as
+  // the evidence fallback when refs[] is empty (YUK-294); readAgentNotes readers
+  // benefit too. Optional — a note may have no triggering event.
+  caused_by_event_id?: string;
 }
 
 /**
@@ -120,7 +126,52 @@ export interface ReadAgentNotesOpts {
   limit?: number;
 }
 
+export interface ReadAllAgentNotesOpts {
+  now: Date;
+  limit?: number;
+}
+
 const DEFAULT_AGENT_NOTES_LIMIT = 20;
+
+// Minimal row shape needed to project an AgentNote. Both readAgentNotes and
+// readAllAgentNotes pass full event rows; this captures only the fields used.
+type AgentNoteEventRow = {
+  id: string;
+  created_at: Date;
+  actor_ref: string;
+  caused_by_event_id: string | null;
+  payload: unknown;
+};
+
+// Project one experimental:agent_note event row to an AgentNote. caused_by_event_id
+// comes from the EVENT COLUMN (not the payload) — it is the evidence-fallback
+// chain link the agent-notes board relies on when refs[] is empty (YUK-294).
+function rowToAgentNote(row: AgentNoteEventRow): AgentNote {
+  const p = (row.payload ?? {}) as {
+    target_agents?: AgentNoteTarget[];
+    refs?: AgentNoteRef[];
+    summary_md?: string;
+    signal_kind?: string;
+    confidence?: number;
+    expires_at?: string;
+    source_task_kind?: string;
+    source_task_run_id?: string;
+  };
+  const note: AgentNote = {
+    id: row.id,
+    created_at: row.created_at,
+    target_agents: p.target_agents ?? [],
+    source_task_kind: p.source_task_kind ?? row.actor_ref,
+    refs: p.refs ?? [],
+    summary_md: p.summary_md ?? '',
+    signal_kind: p.signal_kind ?? 'unknown',
+  };
+  if (p.source_task_run_id !== undefined) note.source_task_run_id = p.source_task_run_id;
+  if (p.confidence !== undefined) note.confidence = p.confidence;
+  if (p.expires_at !== undefined) note.expires_at = p.expires_at;
+  if (row.caused_by_event_id) note.caused_by_event_id = row.caused_by_event_id;
+  return note;
+}
 
 /**
  * Read recent un-expired agent notes addressed to `for_agent`, newest first.
@@ -156,29 +207,42 @@ export async function readAgentNotes(db: DbLike, opts: ReadAgentNotesOpts): Prom
     .orderBy(desc(event.created_at), desc(event.id))
     .limit(limit);
 
-  return rows.map((row) => {
-    const p = row.payload as {
-      target_agents?: AgentNoteTarget[];
-      refs?: AgentNoteRef[];
-      summary_md?: string;
-      signal_kind?: string;
-      confidence?: number;
-      expires_at?: string;
-      source_task_kind?: string;
-      source_task_run_id?: string;
-    };
-    const note: AgentNote = {
-      id: row.id,
-      created_at: row.created_at,
-      target_agents: p.target_agents ?? [],
-      source_task_kind: p.source_task_kind ?? row.actor_ref,
-      refs: p.refs ?? [],
-      summary_md: p.summary_md ?? '',
-      signal_kind: p.signal_kind ?? 'unknown',
-    };
-    if (p.source_task_run_id !== undefined) note.source_task_run_id = p.source_task_run_id;
-    if (p.confidence !== undefined) note.confidence = p.confidence;
-    if (p.expires_at !== undefined) note.expires_at = p.expires_at;
-    return note;
-  });
+  return rows.map(rowToAgentNote);
+}
+
+/**
+ * Read recent un-expired agent notes addressed to ANY agent, newest first.
+ *
+ * The unfiltered variant of readAgentNotes for the read-only "AI 观察" board
+ * (YUK-294): the user spectates every cross-agent observation, so there is no
+ * for_agent containment predicate. Everything else matches readAgentNotes —
+ * same action + subject_kind, same un-expired filter, same newest-first order
+ * and limit clamp — so the board never surfaces stale hints.
+ *
+ * Still HINTS, not facts: the board is a read-only spectator surface with no
+ * accept/dismiss; it never writes back.
+ */
+export async function readAllAgentNotes(
+  db: DbLike,
+  opts: ReadAllAgentNotesOpts,
+): Promise<AgentNote[]> {
+  const limit = opts.limit ?? DEFAULT_AGENT_NOTES_LIMIT;
+  if (limit <= 0) return [];
+  const nowIso = opts.now.toISOString();
+
+  const rows = await db
+    .select()
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:agent_note'),
+        eq(event.subject_kind, 'query'),
+        // Un-expired only: no expires_at OR expires_at strictly in the future.
+        sql`(NOT (${event.payload} ? 'expires_at') OR (${event.payload}->>'expires_at') > ${nowIso})`,
+      ),
+    )
+    .orderBy(desc(event.created_at), desc(event.id))
+    .limit(limit);
+
+  return rows.map(rowToAgentNote);
 }
