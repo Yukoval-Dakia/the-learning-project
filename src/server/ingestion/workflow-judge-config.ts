@@ -16,9 +16,12 @@
  * This is the **INVERSE** of the WAVE6_TRIGGER_*_ENABLED convention in
  * `src/server/artifacts/note-refine-triggers.ts`, which defaults ON. Auto-enroll
  * writes durable learning data on the user's behalf (events + records), so per
- * OC-5 evidence-first conservative rollout it must default OFF and stay OFF until
- * the "AI auto-enrolled N items" review surface exists (DEFERRED to slice 3b —
- * see lane plan §DEFERRED) and the user explicitly opts in.
+ * OC-5 evidence-first conservative rollout it DEFAULTS OFF (a clone-safety
+ * guarantee — nothing auto-enrolls unless the env var is set EXPLICITLY to
+ * 'true'). Both OC-5 gates are now satisfied — the "AI auto-enrolled N items"
+ * review surface shipped (PR #328: the /record auto_enrolled review tab +
+ * revert) and the owner opted in (YUK-164 #4, 2026-06-08) — so it may be enabled
+ * per environment as needed. The code default stays OFF regardless.
  */
 
 /** Env var that gates the auto-enroll path. Default OFF (see file header). */
