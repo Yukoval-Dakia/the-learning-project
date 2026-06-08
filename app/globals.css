@@ -3777,6 +3777,16 @@ ol {
   /* animated mastery arc growth */
   transition: stroke-dashoffset 1s var(--ease-out);
 }
+/* disc-内 掌握度整数 — mirrors design .mesh-node-pct (12px / 700). design fills
+   --ink on its lighter tone discs; production band fills (--hard/--info/--good)
+   are saturated, so the digit is white (--paper) for contrast on all three.
+   Only weak/learning/mastered bands render it (see KnowledgeGraph pctLabel). */
+.kg-node-pct {
+  fill: var(--paper);
+  font-size: 12px;
+  font-weight: 700;
+  pointer-events: none;
+}
 .kg-node-label {
   fill: var(--ink-2);
   font-size: 13px;
