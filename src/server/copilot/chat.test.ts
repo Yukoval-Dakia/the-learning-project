@@ -1268,7 +1268,7 @@ describe('runCopilotChat — copilot skill wiring (C2 / YUK-284)', () => {
         writeEventFn,
         runAgentTaskFn,
         buildMcpServerFn,
-        resolveCopilotSkillsFn: () => ['copilot'],
+        resolveCopilotSkillsFn: async () => ['copilot'],
       },
     );
 
@@ -1304,7 +1304,7 @@ describe('runCopilotChat — copilot skill wiring (C2 / YUK-284)', () => {
         writeEventFn,
         streamAgentTaskFn,
         buildMcpServerFn,
-        resolveCopilotSkillsFn: () => ['copilot'],
+        resolveCopilotSkillsFn: async () => ['copilot'],
       },
     );
 
@@ -1336,7 +1336,7 @@ describe('runCopilotChat — copilot skill wiring (C2 / YUK-284)', () => {
         writeEventFn,
         runAgentTaskFn,
         buildMcpServerFn,
-        resolveCopilotSkillsFn: () => undefined,
+        resolveCopilotSkillsFn: async () => undefined,
       },
     );
 
@@ -1362,7 +1362,7 @@ describe('runCopilotChat — copilot skill wiring (C2 / YUK-284)', () => {
       throw new Error('CopilotTask must not run on a behavior-pack turn');
     });
     const buildMcpServerFn = vi.fn(() => ({ name: 'fake-loom' }) as never);
-    const resolveCopilotSkillsFn = vi.fn(() => ['copilot'] as string[]);
+    const resolveCopilotSkillsFn = vi.fn(async () => ['copilot'] as string[]);
 
     await runCopilotChat(
       db,
@@ -1382,7 +1382,7 @@ describe('runCopilotChat — copilot skill wiring (C2 / YUK-284)', () => {
     );
 
     // The free-form CopilotTask loop never ran, and although the resolver is called
-    // once eagerly (single existsSync), the result is NEVER threaded into a
+    // once eagerly (single fs.access), the result is NEVER threaded into a
     // behavior-pack service call — runQuizSkillFn receives no skills.
     expect(runAgentTaskFn).not.toHaveBeenCalled();
     expect(runQuizSkillFn).toHaveBeenCalledTimes(1);
