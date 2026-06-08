@@ -625,8 +625,9 @@ export function KnowledgeGraph({
     if (!focusId || !visibleNodeIds.has(focusId)) return null;
     const hood = new Set<string>([focusId]);
     for (const n of visibleNodes) {
+      // outer guard already proved n.parent_id is non-null, so add it directly.
       if (n.parent_id && (n.parent_id === focusId || n.id === focusId)) {
-        if (n.parent_id) hood.add(n.parent_id);
+        hood.add(n.parent_id);
         hood.add(n.id);
       }
     }
@@ -634,8 +635,15 @@ export function KnowledgeGraph({
       if (e.from_knowledge_id === focusId) hood.add(e.to_knowledge_id);
       if (e.to_knowledge_id === focusId) hood.add(e.from_knowledge_id);
     }
+    // Proposed edges count too — mirrors the cytoscape closedNeighborhood() this
+    // replaced, so focusing a node keeps its AI-proposed links (and their far
+    // endpoint) lit instead of fading them out.
+    for (const p of visibleProposals) {
+      if (p.from_knowledge_id === focusId) hood.add(p.to_knowledge_id);
+      if (p.to_knowledge_id === focusId) hood.add(p.from_knowledge_id);
+    }
     return hood;
-  }, [focusId, visibleNodeIds, visibleNodes, visibleEdges]);
+  }, [focusId, visibleNodeIds, visibleNodes, visibleEdges, visibleProposals]);
 
   // Shaky prerequisites of the focused node: prerequisite mesh edges pointing INTO
   // focus (to == focus) whose SOURCE is weakish. Reserved --again ring.
@@ -892,7 +900,12 @@ export function KnowledgeGraph({
   // tree back to the 2-level default (drill all the way back out).
   const onStageClick = useCallback(
     (e: React.MouseEvent) => {
-      if (e.target === e.currentTarget) {
+      // Blank-canvas click = the stage <div> OR the <svg> root (the svg fills the
+      // div, so empty-area clicks land on the svg, not the div — checking only the
+      // div meant this reset almost never fired). Node / proposed-edge clicks
+      // stopPropagation; mesh edges/labels target deeper SVG elements, so this
+      // still resets only on a genuine empty-canvas click.
+      if (e.target === e.currentTarget || e.target instanceof SVGSVGElement) {
         setFocusId(null);
         setActiveProposal(null);
         setExpandedIds(new Set(rootIds));
@@ -1057,17 +1070,27 @@ export function KnowledgeGraph({
           >
             <title>知识关系图</title>
             <defs>
-              <marker
-                id={arrowId}
-                viewBox="0 0 10 10"
-                refX="9"
-                refY="5"
-                markerWidth="7"
-                markerHeight="7"
-                orient="auto-start-reverse"
-              >
-                <path d="M0 0 L10 5 L0 10 z" fill="context-stroke" />
-              </marker>
+              {/* One arrow marker per arrowed relation, each with an explicit
+                  fill = the relation's design token. SVG2 `fill="context-stroke"`
+                  (inherit the edge's stroke) is Firefox-only — Chrome/Safari fall
+                  back to black, breaking the directed-relation color contract — so
+                  we bind the color per relation instead of one shared marker. */}
+              {Object.entries(RELATION_VISUAL)
+                .filter(([, v]) => v.arrow)
+                .map(([rel, v]) => (
+                  <marker
+                    key={rel}
+                    id={`${arrowId}-${rel}`}
+                    viewBox="0 0 10 10"
+                    refX="9"
+                    refY="5"
+                    markerWidth="7"
+                    markerHeight="7"
+                    orient="auto-start-reverse"
+                  >
+                    <path d="M0 0 L10 5 L0 10 z" fill={`var(${v.token})`} />
+                  </marker>
+                ))}
               <filter id={shadowId} x="-40%" y="-40%" width="180%" height="180%">
                 <feDropShadow dx="0" dy="2" stdDeviation="3" floodColor="rgba(60,50,30,0.18)" />
               </filter>
@@ -1120,7 +1143,7 @@ export function KnowledgeGraph({
                       stroke={color}
                       strokeWidth={e.width}
                       strokeDasharray={dash}
-                      markerEnd={showArrow ? `url(#${arrowId})` : undefined}
+                      markerEnd={showArrow ? `url(#${arrowId}-${e.relation})` : undefined}
                     />
                     {e.kind === 'mesh' && (
                       <text x={curve.apex.x} y={curve.apex.y - 4} className="kg-edge-label mono">
@@ -1201,7 +1224,7 @@ export function KnowledgeGraph({
                     <text y={4} textAnchor="middle" className="kg-node-pct mono">
                       {n.pctLabel}
                     </text>
-                    <text y={r4(n.r)} textAnchor="middle" className="kg-node-label">
+                    <text y={nodeLabelY(n.r)} textAnchor="middle" className="kg-node-label">
                       {n.name}
                     </text>
                     {/* Hidden-children badge. Expandable → coral "+N" drill affordance;
@@ -1308,7 +1331,7 @@ export function KnowledgeGraph({
         </span>
         <span className="kg-legend-note">
           圆 = 节点 · 填色 = 掌握度（绿 / 琥珀 / 红）· 大圆 = 有子节点 · 珊瑚光晕 = 有逾期复习 ·
-          点虚线 = AI 提议（点击接受 / 忽略）· 点节点聚焦 · 拖拽 / 滚轮缩放
+          点虚线 = AI 提议（点击接受 / 忽略）· 点节点聚焦 · 拖拽 / 双指滚动 = 平移 · 捏合 = 缩放
         </span>
       </div>
     </section>
@@ -1316,7 +1339,7 @@ export function KnowledgeGraph({
 }
 
 // Node label vertical offset below the disc (mirror design `y={r + 18}`).
-function r4(r: number): number {
+function nodeLabelY(r: number): number {
   return r + 18;
 }
 
