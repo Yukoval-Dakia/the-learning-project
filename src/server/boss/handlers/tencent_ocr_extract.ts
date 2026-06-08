@@ -6,7 +6,10 @@ import type { FigureRefT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { learning_session, source_asset } from '@/db/schema';
 import { writeCostLedger } from '@/server/ai/log';
-import { writeExtractionProgress } from '@/server/events/ingestion-progress';
+import {
+  type IngestionExtractionProgressPayloadT,
+  writeExtractionProgress,
+} from '@/server/events/ingestion-progress';
 import { type PreAttachFigure, cropAndUploadFigures } from '@/server/ingestion/crop';
 import { assignFigures, assignFiguresFromVlm } from '@/server/ingestion/figure_attach';
 // T-OC slice 2 (YUK-145, OC-1/OC-2): VLM StructureTask owns the structure tree;
@@ -97,6 +100,25 @@ export function buildTencentOcrHandler(
       await processOneOcrJob(deps, job.data.sessionId, job.id);
     }
   };
+}
+
+/**
+ * Emit one extraction-progress event under the deliberate swallow-and-log
+ * discipline: a progress emit must NEVER fail an otherwise-succeeding run, so a
+ * write error is caught + logged here, never propagated. Centralised so every
+ * emit site shares the exact behaviour (and any future emit point inherits it).
+ */
+async function emitProgressSafely(
+  db: Db,
+  sessionId: string,
+  payload: IngestionExtractionProgressPayloadT,
+  logContext: Record<string, unknown> = {},
+): Promise<void> {
+  try {
+    await writeExtractionProgress(db, sessionId, payload);
+  } catch (err) {
+    console.error('[tencent_ocr_extract] progress emit failed', { sessionId, ...logContext, err });
+  }
 }
 
 async function processOneOcrJob(
@@ -265,21 +287,14 @@ async function processOneOcrJob(
 
       // Bug A (fix-docx-ingestion): emit incremental OCR progress per page so the
       // /record SSE UI shows movement instead of a frozen "extracting…". Written on
-      // deps.db (NOT inside a tx) so pg_notify fires live; a progress-emit failure
-      // is swallowed + logged — it must never fail an otherwise-succeeding run.
-      try {
-        await writeExtractionProgress(deps.db, sessionId, {
-          done: pageIndex + 1,
-          total: assetIds.length,
-          stage: 'ocr',
-        });
-      } catch (err) {
-        console.error('[tencent_ocr_extract] OCR progress emit failed', {
-          sessionId,
-          pageIndex,
-          err,
-        });
-      }
+      // deps.db (NOT inside a tx) so pg_notify fires live; emitProgressSafely owns
+      // the swallow-and-log so an emit failure never sinks an otherwise-good run.
+      await emitProgressSafely(
+        deps.db,
+        sessionId,
+        { done: pageIndex + 1, total: assetIds.length, stage: 'ocr' },
+        { stage: 'ocr', pageIndex },
+      );
     }
 
     if (engine === 'glm') {
@@ -292,15 +307,12 @@ async function processOneOcrJob(
     // Bug A: all OCR pages done → about to enter the single, slow VLM StructureTask.
     // Emit a final 'structure' progress (bar full, label flips to 结构化中) so the UI
     // doesn't stall silently through the VLM call. Same swallow-and-log discipline.
-    try {
-      await writeExtractionProgress(deps.db, sessionId, {
-        done: assetIds.length,
-        total: assetIds.length,
-        stage: 'structure',
-      });
-    } catch (err) {
-      console.error('[tencent_ocr_extract] structure progress emit failed', { sessionId, err });
-    }
+    await emitProgressSafely(
+      deps.db,
+      sessionId,
+      { done: assetIds.length, total: assetIds.length, stage: 'structure' },
+      { stage: 'structure' },
+    );
 
     // 10. VLM StructureTask (OC-2): all page images + the demoted OCR text hint →
     //     normalized cross-page structure tree. On failure (provider down /
