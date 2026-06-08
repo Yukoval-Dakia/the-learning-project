@@ -6,6 +6,7 @@ import {
   computeDepths,
   computeLayout,
 } from '@/ui/knowledge-graph/layout';
+import { type MasteryTone, masteryTone } from '@/ui/knowledge-graph/mastery-tone';
 import { Icon } from '@/ui/primitives/Icon';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 
@@ -118,22 +119,13 @@ export function isWeakish(
   return band === 'weak' || band === 'untrained' || band === 'insufficient';
 }
 
-// design 3-tone (screen-knowledge.jsx L83): mastery → good / hard / again. The
-// disc fill + arc + track read this directly (owner 2026-06-08「全抄 design」),
-// replacing the 5-band diagnostic palette as the NODE COLOR. Thresholds align to
-// the MasteryBand cutoffs (0.7 / 0.4) so disc color, the 掌握度 filter, and the
-// legend all agree. NULL mastery (never practiced) → 0 → 'again': the design has
-// no untrained/insufficient tone, and that grey "证据不足" encoding was
-// intentionally dropped as the node color (the evidence gate still drives the
-// FILTER + isWeakish, just not the disc fill).
-export type MasteryTone = 'good' | 'hard' | 'again';
-
-export function masteryTone(mastery: number | null | undefined): MasteryTone {
-  const m = mastery ?? 0;
-  if (m >= 0.7) return 'good';
-  if (m >= 0.4) return 'hard';
-  return 'again';
-}
+// design 3-tone (screen-knowledge.jsx L83): mastery → good / hard / again, read by the
+// disc fill + arc + track (owner 2026-06-08「全抄 design」). The function + its 0.7 / 0.4
+// thresholds live in the dep-free `knowledge-graph/mastery-tone` leaf so the tree-row
+// MasteryRing can share them WITHOUT importing this cytoscape-bearing module (the page
+// dynamic()-imports KnowledgeGraph to keep cytoscape out of the initial bundle).
+// Re-exported here so existing `@/ui/KnowledgeGraph` importers (tests) are unaffected.
+export { type MasteryTone, masteryTone };
 
 // design node radius (screen-knowledge.jsx L84): hub = 24, leaf = 18. A node is a
 // "hub" if it is some other node's parent. Replaces the radius-∝-mistake_count
