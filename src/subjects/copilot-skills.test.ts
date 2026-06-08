@@ -36,35 +36,35 @@ function fixtureRoot(layout: Record<string, string[]>): string {
 }
 
 describe('resolveCopilotSkills — resolver discovery', () => {
-  it("returns ['copilot'] when _shared/skills/copilot/SKILL.md exists", () => {
+  it("returns ['copilot'] when _shared/skills/copilot/SKILL.md exists", async () => {
     const root = fixtureRoot({ [COPILOT_SHARED_SUBJECT_DIR]: [COPILOT_SKILL_NAME] });
-    expect(resolveCopilotSkills(root)).toEqual(['copilot']);
+    expect(await resolveCopilotSkills(root)).toEqual(['copilot']);
   });
 });
 
 describe('resolveCopilotSkills — 降级链', () => {
-  it('returns undefined when _shared has no skills dir', () => {
+  it('returns undefined when _shared has no skills dir', async () => {
     const root = mkdtempSync(join(tmpdir(), 'copilotskills-'));
-    expect(resolveCopilotSkills(root)).toBeUndefined();
+    expect(await resolveCopilotSkills(root)).toBeUndefined();
   });
 
-  it('returns undefined when copilot/ dir exists but SKILL.md is missing', () => {
+  it('returns undefined when copilot/ dir exists but SKILL.md is missing', async () => {
     const root = mkdtempSync(join(tmpdir(), 'copilotskills-'));
     mkdirSync(join(root, COPILOT_SHARED_SUBJECT_DIR, 'skills', COPILOT_SKILL_NAME), {
       recursive: true,
     });
     // no SKILL.md written
-    expect(resolveCopilotSkills(root)).toBeUndefined();
+    expect(await resolveCopilotSkills(root)).toBeUndefined();
   });
 });
 
 describe('resolveCopilotSkills — 不误捞 (缝隙防御)', () => {
-  it('returns only [copilot], never note-* / quiz-gen-* even when both coexist', () => {
+  it('returns only [copilot], never note-* / quiz-gen-* even when both coexist', async () => {
     const root = fixtureRoot({
       [COPILOT_SHARED_SUBJECT_DIR]: [COPILOT_SKILL_NAME],
       wenyan: ['note-wenyan', 'quiz-gen-translation'],
     });
-    const result = resolveCopilotSkills(root);
+    const result = await resolveCopilotSkills(root);
     expect(result).toEqual(['copilot']);
     expect(result?.some((n) => n.startsWith('note-'))).toBe(false);
     expect(result?.some((n) => n.startsWith('quiz-gen-'))).toBe(false);
@@ -75,8 +75,8 @@ describe('live SoT — shipped copilot SKILL.md resolves against the real tree',
   // Uses the default skillsRoot (<cwd>/src/subjects) — verifies the authored
   // shared copilot pack is discoverable and has the correct frontmatter name.
 
-  it("copilot skill is live and resolves to ['copilot']", () => {
-    expect(resolveCopilotSkills()).toEqual(['copilot']);
+  it("copilot skill is live and resolves to ['copilot']", async () => {
+    expect(await resolveCopilotSkills()).toEqual(['copilot']);
   });
 
   it("SKILL.md frontmatter name === 'copilot'", () => {

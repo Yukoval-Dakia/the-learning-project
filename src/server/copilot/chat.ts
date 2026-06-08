@@ -449,12 +449,12 @@ async function runCopilotChatImpl(
   const detectQuizIntentFn = deps.detectQuizIntentFn ?? detectQuizIntent;
   const resolveQuizIntentFn = deps.resolveQuizIntentFn ?? resolveQuizIntent;
   const materializeAskCheck = deps.materializeAskCheckFn ?? materializeAskCheckQuestion;
-  // YUK-284 (C2) — resolve the Copilot skill whitelist ONCE (one existsSync), reused
+  // YUK-284 (C2) — resolve the Copilot skill whitelist ONCE (one fs.access), reused
   // by both the streaming and non-streaming free-form ctx below. undefined when the
   // shared SKILL.md is absent → free-form ctx omits skills (spread-when-present) →
   // byte-for-byte the pre-C2 ctx shape. The behavior-pack paths never touch this.
   const resolveSkills = deps.resolveCopilotSkillsFn ?? resolveCopilotSkills;
-  const copilotSkills = resolveSkills();
+  const copilotSkills = await resolveSkills();
 
   const surface = selectSurface(req.triggered_by);
   const actorRef = selectActorRef(req.triggered_by);
