@@ -13,7 +13,7 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import { readAgentNotes, writeAgentNote } from './notes';
+import { readAgentNotes, readAllAgentNotes, writeAgentNote } from './notes';
 
 describe('writeAgentNote', () => {
   beforeEach(async () => {
@@ -181,5 +181,113 @@ describe('readAgentNotes', () => {
       signal_kind: 'question_pool_gap',
     });
     expect(await readAgentNotes(db, { for_agent: 'coach', now: new Date(), limit: 0 })).toEqual([]);
+  });
+});
+
+describe('readAllAgentNotes', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('returns notes addressed to ANY agent (no for_agent containment)', async () => {
+    const db = testDb();
+    await writeAgentNote(db, {
+      target_agents: ['coach'],
+      source_task_kind: 'quiz_verify',
+      refs: [],
+      summary_md: 'for coach',
+      signal_kind: 'question_pool_gap',
+    });
+    await writeAgentNote(db, {
+      target_agents: ['dreaming', 'maintenance'],
+      source_task_kind: 'attribution',
+      refs: [],
+      summary_md: 'for dreaming+maintenance',
+      signal_kind: 'pattern_hint',
+    });
+
+    const all = await readAllAgentNotes(db, { now: new Date() });
+    expect(all.map((n) => n.summary_md).sort()).toEqual(['for coach', 'for dreaming+maintenance']);
+  });
+
+  it('filters out expired notes and keeps non-expiring + future-expiry ones', async () => {
+    const db = testDb();
+    const now = new Date('2026-06-04T12:00:00.000Z');
+
+    await writeAgentNote(db, {
+      target_agents: ['coach'],
+      source_task_kind: 'quiz_verify',
+      refs: [],
+      summary_md: 'expired',
+      signal_kind: 'question_pool_gap',
+      expires_at: new Date(now.getTime() - 3_600_000).toISOString(),
+    });
+    await writeAgentNote(db, {
+      target_agents: ['dreaming'],
+      source_task_kind: 'attribution',
+      refs: [],
+      summary_md: 'fresh',
+      signal_kind: 'pattern_hint',
+      expires_at: new Date(now.getTime() + 3_600_000).toISOString(),
+    });
+    await writeAgentNote(db, {
+      target_agents: ['maintenance'],
+      source_task_kind: 'quiz_verify',
+      refs: [],
+      summary_md: 'forever',
+      signal_kind: 'quality',
+    });
+
+    const notes = await readAllAgentNotes(db, { now });
+    expect(notes.map((n) => n.summary_md).sort()).toEqual(['forever', 'fresh']);
+  });
+
+  it('orders newest-first and respects limit', async () => {
+    const db = testDb();
+    for (const summary of ['first', 'second', 'third']) {
+      await writeAgentNote(db, {
+        target_agents: ['coach'],
+        source_task_kind: 'quiz_verify',
+        refs: [],
+        summary_md: summary,
+        signal_kind: 'question_pool_gap',
+      });
+    }
+
+    const limited = await readAllAgentNotes(db, { now: new Date(), limit: 2 });
+    expect(limited).toHaveLength(2);
+    // newest-first: 'third' was written last.
+    expect(limited[0].summary_md).toBe('third');
+  });
+
+  it('returns [] for a non-positive limit', async () => {
+    const db = testDb();
+    await writeAgentNote(db, {
+      target_agents: ['coach'],
+      source_task_kind: 'quiz_verify',
+      refs: [],
+      summary_md: 'x',
+      signal_kind: 'question_pool_gap',
+    });
+    expect(await readAllAgentNotes(db, { now: new Date(), limit: 0 })).toEqual([]);
+  });
+
+  it('passes caused_by_event_id through from the event column (evidence fallback)', async () => {
+    const db = testDb();
+    // A note with empty refs but a caused_by_event_id chain link — the board
+    // falls back to this column when refs[] is empty, so it must survive the read.
+    await writeAgentNote(db, {
+      target_agents: ['dreaming'],
+      source_task_kind: 'quiz_verify',
+      refs: [],
+      summary_md: 'pool gap, no refs',
+      signal_kind: 'question_pool_gap',
+      caused_by_event_id: 'evt_trigger_1',
+    });
+
+    const all = await readAllAgentNotes(db, { now: new Date() });
+    expect(all).toHaveLength(1);
+    expect(all[0].refs).toEqual([]);
+    expect(all[0].caused_by_event_id).toBe('evt_trigger_1');
   });
 });

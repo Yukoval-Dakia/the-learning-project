@@ -28,6 +28,9 @@ const ICONS = {
   close: '<path d="M18 6 6 18M6 6l12 12"/>',
   arrow: '<path d="M5 12h14"/><path d="m13 6 6 6-6 6"/>',
   arrowL: '<path d="M19 12H5"/><path d="m11 18-6-6 6-6"/>',
+  // YUK-294 — chevron for the AgentNotes board collapse toggle (rotated 180°
+  // when open via CSS .an-chev). feather chevron-down, stroke-only.
+  chevronDown: '<path d="m6 9 6 6 6-6"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   check: '<path d="m4 12 5 5L20 6"/>',
   checkCircle: '<circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.5 2.5L16 9"/>',
