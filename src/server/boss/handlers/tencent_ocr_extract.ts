@@ -6,6 +6,7 @@ import type { FigureRefT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { learning_session, source_asset } from '@/db/schema';
 import { writeCostLedger } from '@/server/ai/log';
+import { writeExtractionProgress } from '@/server/events/ingestion-progress';
 import { type PreAttachFigure, cropAndUploadFigures } from '@/server/ingestion/crop';
 import { assignFigures, assignFiguresFromVlm } from '@/server/ingestion/figure_attach';
 // T-OC slice 2 (YUK-145, OC-1/OC-2): VLM StructureTask owns the structure tree;
@@ -261,6 +262,24 @@ async function processOneOcrJob(
         });
         allPreFigures = allPreFigures.concat(preFigures);
       }
+
+      // Bug A (fix-docx-ingestion): emit incremental OCR progress per page so the
+      // /record SSE UI shows movement instead of a frozen "extracting…". Written on
+      // deps.db (NOT inside a tx) so pg_notify fires live; a progress-emit failure
+      // is swallowed + logged — it must never fail an otherwise-succeeding run.
+      try {
+        await writeExtractionProgress(deps.db, sessionId, {
+          done: pageIndex + 1,
+          total: assetIds.length,
+          stage: 'ocr',
+        });
+      } catch (err) {
+        console.error('[tencent_ocr_extract] OCR progress emit failed', {
+          sessionId,
+          pageIndex,
+          err,
+        });
+      }
     }
 
     if (engine === 'glm') {
@@ -268,6 +287,19 @@ async function processOneOcrJob(
       ocrLayout = glmLayout.layout_quality;
       warnings.push(...glmParseWarnings);
       warnings.push(...glmLayout.warnings);
+    }
+
+    // Bug A: all OCR pages done → about to enter the single, slow VLM StructureTask.
+    // Emit a final 'structure' progress (bar full, label flips to 结构化中) so the UI
+    // doesn't stall silently through the VLM call. Same swallow-and-log discipline.
+    try {
+      await writeExtractionProgress(deps.db, sessionId, {
+        done: assetIds.length,
+        total: assetIds.length,
+        stage: 'structure',
+      });
+    } catch (err) {
+      console.error('[tencent_ocr_extract] structure progress emit failed', { sessionId, err });
     }
 
     // 10. VLM StructureTask (OC-2): all page images + the demoted OCR text hint →

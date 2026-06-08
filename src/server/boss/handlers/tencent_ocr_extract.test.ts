@@ -328,6 +328,43 @@ describe('tencent_ocr_extract handler (GLM default engine)', () => {
     }
   });
 
+  it('emits incremental extraction_progress job_events per page + a final structure event (Bug A)', async () => {
+    const { sessionId, sourceDocId, assetIds } = await seedSessionWithAssets(2);
+    const r2 = makeR2WithImage(await makeTestImage());
+    const glmOcrFn = vi.fn().mockResolvedValue(makeGlmResponse({})) as GlmOcrFn;
+    const runStructureFn = makeVlmStub();
+
+    const handler = buildTencentOcrHandler({ db, r2, glmOcrFn, runStructureFn });
+    let costLedgerId: string | null = null;
+    try {
+      await handler([{ id: 'boss-job-progress', data: { sessionId } } as never]);
+
+      const jobEvents = await db
+        .select()
+        .from(job_events)
+        .where(eq(job_events.business_id, sessionId))
+        .orderBy(job_events.id);
+      const progress = jobEvents.filter((e) => e.event_type === 'ingestion.extraction_progress');
+      const ocr = progress.filter((e) => (e.payload as { stage?: string }).stage === 'ocr');
+      const structure = progress.filter(
+        (e) => (e.payload as { stage?: string }).stage === 'structure',
+      );
+      // One OCR progress per page (done 1..N over total=2), then one full-width
+      // structure event right before the single slow VLM StructureTask.
+      expect(ocr.map((e) => (e.payload as { done: number }).done)).toEqual([1, 2]);
+      expect(ocr.every((e) => (e.payload as { total: number }).total === 2)).toBe(true);
+      expect(structure).toHaveLength(1);
+      expect((structure[0]?.payload as { done: number }).done).toBe(2);
+      expect((structure[0]?.payload as { total: number }).total).toBe(2);
+
+      const cost = await db.select().from(cost_ledger);
+      costLedgerId = cost.find((c) => c.pgboss_job_id === 'boss-job-progress')?.id ?? null;
+    } finally {
+      await cleanup(sessionId, sourceDocId, assetIds);
+      if (costLedgerId) await db.delete(cost_ledger).where(eq(cost_ledger.id, costLedgerId));
+    }
+  });
+
   it('GLM VLM-fail → page-level GLM fallback questions + cost_ledger still written', async () => {
     const { sessionId, sourceDocId, assetId } = await seedSessionWithAsset();
     const r2 = makeR2WithImage(await makeTestImage());
