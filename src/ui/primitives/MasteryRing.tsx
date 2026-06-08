@@ -1,11 +1,15 @@
 // MasteryRing — small tone-coloured mastery dial (track + arc + pct), ported from
 // the Loom prototype's MasteryRing (screen-knowledge.jsx L11-22). Used in the
 // knowledge TREE rows so they read mastery the SAME way as the graph nodes
-// (disc/arc + design 3-tone). Tone is derived by KnowledgeGraph.masteryTone (the
-// single source of the 0.7 / 0.4 thresholds) so the tree and graph never disagree.
-// NULL mastery (never practiced) → 0 → 'again', matching the graph.
+// (disc/arc + design 3-tone). Tone is derived by the shared `masteryTone` (the single
+// source of the 0.7 / 0.4 thresholds) so the tree and graph never disagree. NULL
+// mastery (never practiced) → 0 → 'again', matching the graph.
+//
+// Imported from the dep-free knowledge-graph/mastery-tone leaf (NOT from KnowledgeGraph)
+// so this synchronously-rendered primitive doesn't drag cytoscape — which the knowledge
+// page code-splits via dynamic() — into the initial bundle.
 
-import { masteryTone } from '@/ui/KnowledgeGraph';
+import { masteryTone } from '@/ui/knowledge-graph/mastery-tone';
 
 interface MasteryRingProps {
   /** 0-1 mastery (knowledge_mastery view); null / undefined = never practiced → 0. */
