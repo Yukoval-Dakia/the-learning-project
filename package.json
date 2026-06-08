@@ -82,6 +82,7 @@
     "tencentcloud-sdk-nodejs-ocr": "^4.1.243",
     "ts-fsrs": "^5.4.1",
     "zod": "^3.25.0",
+    "zod-to-json-schema": "^3.25.2",
     "zustand": "^5.0.14"
   },
   "devDependencies": {

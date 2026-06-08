@@ -33,6 +33,7 @@ import type { Db } from '@/db/client';
 import type { SubjectProfile } from '@/subjects/profile';
 import {
   type Options,
+  type OutputFormat,
   type SDKAssistantMessage,
   type SDKMessage,
   type SDKUserMessage,
@@ -61,6 +62,13 @@ export interface RunTaskResult {
   /** Total cost in USD, as reported by the agent SDK. 0 when running
    *  against an endpoint that doesn't surface cost (xiaomi mimo). */
   cost_usd?: number;
+  /**
+   * YUK-299 seam: the structured product the SDK fills in when `ctx.outputFormat`
+   * is set AND the endpoint supports it. undefined ⇒ outputFormat not set /
+   * endpoint unsupported / model fell back to text — the caller must run the
+   * text-fallback parse. Pure passthrough; runner never interprets it.
+   */
+  structured_output?: unknown;
 }
 
 export interface TaskMiddleware {
@@ -118,6 +126,15 @@ export interface RunTaskCtx {
    * passing settingSources:[] disables the CONFIG_DIR/skills auto-load.
    */
   skills?: string[];
+  /**
+   * YUK-299 seam: Agent SDK `outputFormat` passthrough. OMITTED (the default)
+   * ⇒ buildQueryOptions does NOT write the key ⇒ the Options object is
+   * byte-identical to pre-seam (zero regression). Only a handler migrated to
+   * structured output sets it (value produced by zodToJsonSchemaOutputFormat()
+   * in ./output-format). streamTask does NOT read it — see §2.3 of the plan;
+   * stream + one-shot json_schema output are deferred to a follow-up YUK.
+   */
+  outputFormat?: OutputFormat;
 }
 
 export type RunAgentTaskCtx = RunTaskCtx;
@@ -354,7 +371,7 @@ function buildQueryOptions(
   const def = tasks[kind];
   const resolved = resolveTaskProvider(kind, ctx.override);
   const allowedTools = ctx.allowedTools ?? def.allowedTools;
-  return {
+  const options: Options = {
     model: resolved.model,
     systemPrompt: getTaskSystemPrompt(kind, ctx.subjectProfile),
     abortController,
@@ -389,6 +406,15 @@ function buildQueryOptions(
     // spike's settingSources=OMITTED conclusion is unchanged).
     skills: ctx.skills ?? [],
   };
+  // YUK-299 seam: outputFormat passthrough. Default ctx.outputFormat is undefined
+  // ⇒ the key is NOT written ⇒ the Options object is byte-identical to pre-seam
+  // for every un-migrated task (general chat / teaching / quiz / judges / all
+  // stream callers never set it) — the zero-regression contract (约束①). Only a
+  // handler that explicitly threads ctx.outputFormat opts into structured output.
+  if (ctx.outputFormat !== undefined) {
+    options.outputFormat = ctx.outputFormat;
+  }
+  return options;
 }
 
 // ============================================================================
@@ -432,6 +458,9 @@ export async function runTask(
   let usage = { inputTokens: 0, outputTokens: 0 };
   let cost_usd: number | undefined;
   let stopReason = 'unknown';
+  // YUK-299 seam: the SDK fills this on the success result when ctx.outputFormat
+  // was set AND the endpoint honoured it; otherwise it stays undefined.
+  let structuredOutput: unknown;
 
   try {
     const q = sdkQuery({
@@ -449,7 +478,21 @@ export async function runTask(
           };
           cost_usd = msg.total_cost_usd;
           stopReason = msg.stop_reason ?? 'stop';
+          // YUK-299: present when outputFormat is set + endpoint supports it;
+          // undefined when unsupported / not enabled (msg is already narrowed to
+          // SDKResultSuccess here, where structured_output?: unknown lives —
+          // sdk.d.ts:3579 — so no cast is needed).
+          structuredOutput = msg.structured_output;
         } else {
+          // YUK-299: SDK structured-output retries exhausted lands here (its
+          // SDKResultError subtype, sdk.d.ts:3540) along with every other
+          // non-success subtype. The throw behaviour (+ failure 留痕) is
+          // unchanged; we only add a distinguishable warn for monitoring.
+          if (msg.subtype === 'error_max_structured_output_retries') {
+            console.warn(`[${kind}] structured-output retries exhausted`, {
+              task_run_id: taskRunId,
+            });
+          }
           const apiStatus =
             'api_error_status' in msg && msg.api_error_status
               ? ` http=${msg.api_error_status}`
@@ -504,6 +547,8 @@ export async function runTask(
     finishReason: stopReason,
     usage,
     cost_usd,
+    // YUK-299: undefined for every un-migrated caller (transparent passthrough).
+    structured_output: structuredOutput,
   };
 
   try {
