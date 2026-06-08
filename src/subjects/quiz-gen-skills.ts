@@ -14,7 +14,7 @@
 // missing pack degrades gracefully rather than pointing the SDK at a name with no
 // SKILL.md (which the SDK would just hide — but we keep the contract explicit).
 
-import { existsSync, readdirSync } from 'node:fs';
+import { access, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { SubjectQuestionKind } from './profile-schema';
 
@@ -58,15 +58,19 @@ function skillDirName(kind: SubjectQuestionKind): string | null {
  * root. The SoT directory is the discovery anchor: a (subject, kind) whose skill
  * pack has not been authored yet resolves to undefined, NOT to a dead name.
  */
-export function resolveQuizGenSkills(
+export async function resolveQuizGenSkills(
   subjectId: string,
   kind: SubjectQuestionKind,
   skillsRoot: string = join(process.cwd(), 'src', 'subjects'),
-): string[] | undefined {
+): Promise<string[] | undefined> {
   const dirName = skillDirName(kind);
   if (!dirName) return undefined;
   const skillDir = join(skillsRoot, subjectId, 'skills', dirName);
-  if (!existsSync(join(skillDir, 'SKILL.md'))) return undefined;
+  try {
+    await access(join(skillDir, 'SKILL.md'));
+  } catch {
+    return undefined;
+  }
   // The SKILL.md `name` frontmatter == directory name (authored that way), and
   // the SDK matches `Options.skills` against that name. So the directory name is
   // the whitelist key.
@@ -82,18 +86,29 @@ export function resolveQuizGenSkills(
  * Returns undefined when the subject has no quiz-gen skill dir (降级: no skills
  * option). skillsRoot defaults to the live SoT; tests inject a fixture root.
  */
-export function resolveQuizGenSkillsForSubject(
+export async function resolveQuizGenSkillsForSubject(
   subjectId: string,
   skillsRoot: string = join(process.cwd(), 'src', 'subjects'),
-): string[] | undefined {
+): Promise<string[] | undefined> {
   const subjectSkillsDir = join(skillsRoot, subjectId, 'skills');
-  if (!existsSync(subjectSkillsDir)) return undefined;
   let names: string[];
   try {
-    names = readdirSync(subjectSkillsDir, { withFileTypes: true })
+    // A missing skills dir throws ENOENT here (replaces the prior existsSync guard);
+    // the catch degrades to undefined, same contract.
+    const candidates = (await readdir(subjectSkillsDir, { withFileTypes: true }))
       .filter((d) => d.isDirectory() && d.name.startsWith('quiz-gen-'))
-      .filter((d) => existsSync(join(subjectSkillsDir, d.name, 'SKILL.md')))
       .map((d) => d.name);
+    // existsSync inside the filter predicate would be an async-in-sync bug; check
+    // every candidate's SKILL.md concurrently, then keep the ones that resolved.
+    const hasSkillFile = await Promise.all(
+      candidates.map((name) =>
+        access(join(subjectSkillsDir, name, 'SKILL.md')).then(
+          () => true,
+          () => false,
+        ),
+      ),
+    );
+    names = candidates.filter((_, i) => hasSkillFile[i]);
   } catch {
     return undefined;
   }
