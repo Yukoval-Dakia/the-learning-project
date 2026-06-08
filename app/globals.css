@@ -3644,21 +3644,210 @@ ol {
   overflow: hidden;
 }
 
-/* cytoscape renders into an absolutely-positioned <canvas>, so the container
-   needs explicit dimensions. Height preserves the prior SVG stage (520px). */
-.kg-canvas {
+/* YUK-297 — the graph is now a hand-owned SVG layer (cytoscape is a headless
+   layout solver only). The stage is the pan/zoom surface: a dot-grid paper field
+   the <svg> draws into, grab/grabbing cursor, clipped + non-selectable. */
+.kg-svg-stage {
+  position: relative;
   display: block;
   width: 100%;
-  height: 520px;
+  height: 560px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  overflow: hidden;
+  cursor: grab;
+  user-select: none;
+  background: radial-gradient(circle at 1px 1px, var(--line-soft) 1px, transparent 0) 0 0 / 26px
+    26px, var(--paper-sunk);
+}
+.kg-svg-stage:active {
+  cursor: grabbing;
+}
+.kg-svg {
+  display: block;
 }
 
+/* dynamic-import loading fallback (page.tsx) — still uses .kg-canvas-loading. */
 .kg-canvas-loading {
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 100%;
+  height: 560px;
   font-family: var(--font-mono);
   font-size: 13px;
   color: var(--ink-4);
+}
+
+/* ── Mesh nodes (design screens-2b.css ④) ──────────────────────────────────── */
+/* Each node is a focusable <g> that fades in on mount (error-staggered via an
+   inline animationDelay). Hover scales the disc; keyboard focus rings it coral. */
+.kg-node {
+  cursor: pointer;
+  outline: none;
+  animation: kg-node-fade 0.4s var(--ease-out) both;
+}
+@keyframes kg-node-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+/* focus-mode fade: nodes/edges outside the focused 1-hop neighborhood recede. */
+.kg-node.is-faded,
+.kg-edge.is-faded {
+  opacity: 0.12;
+}
+.kg-node-disc {
+  stroke: var(--line-strong);
+  stroke-width: 1.5;
+  transition: transform var(--dur-fast) var(--ease-out);
+  /* fill comes from the band-* class below (mastery diagnostic) */
+  fill: var(--ink-5);
+}
+.kg-node:hover .kg-node-disc {
+  transform: scale(1.1);
+}
+.kg-node:focus-visible .kg-node-disc {
+  stroke: var(--coral);
+  stroke-width: 3;
+}
+/* ── Mastery-band diagnostic fills (production bands, NOT the design 3-tone) ─── */
+.kg-node.band-weak .kg-node-disc {
+  fill: var(--hard);
+}
+.kg-node.band-learning .kg-node-disc {
+  fill: var(--info);
+}
+.kg-node.band-mastered .kg-node-disc {
+  fill: var(--good);
+}
+.kg-node.band-untrained .kg-node-disc {
+  fill: var(--ink-5);
+}
+/* low-evidence (1-2): faint --ink-5 at reduced opacity — "unproven, some
+   evidence", distinct from solid untrained + every confident band. */
+.kg-node.band-insufficient .kg-node-disc {
+  fill: var(--ink-5);
+  fill-opacity: 0.4;
+}
+/* selected / focus-root: coral ring (own border layer, co-exists with band fill). */
+.kg-node.is-selected .kg-node-disc,
+.kg-node.is-focus-root .kg-node-disc {
+  stroke: var(--coral);
+  stroke-width: 3;
+}
+/* shaky prerequisite: deep --again alarm DOUBLE ring (reserved token so it never
+   collides with the weak-band amber fill). Emulated with two concentric strokes. */
+.kg-node.is-shaky .kg-node-disc {
+  stroke: var(--again);
+  stroke-width: 4;
+  paint-order: stroke;
+  stroke-dasharray: none;
+}
+/* coral due halo — its own layer behind the disc, so a weak amber node with a
+   shaky --again ring can ALSO show the overdue coral glow without collision. */
+.kg-node-halo {
+  fill: var(--coral);
+  opacity: 0.28;
+}
+.kg-node.is-faded .kg-node-halo {
+  opacity: 0.05;
+}
+.kg-node-track {
+  stroke: var(--paper-raised);
+  stroke-width: 3.5;
+  opacity: 0.9;
+}
+.kg-node-arc {
+  /* animated mastery arc growth */
+  transition: stroke-dashoffset 1s var(--ease-out);
+}
+.kg-node-label {
+  fill: var(--ink-2);
+  font-size: 13px;
+  /* white halo so labels read over edges/discs */
+  paint-order: stroke;
+  stroke: var(--paper);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+}
+
+/* ── Mesh / tree / proposed edges ──────────────────────────────────────────── */
+.kg-edge-line {
+  fill: none;
+}
+.kg-edge-tree .kg-edge-line {
+  /* tree skeleton底色 — receded, mesh always paints over it (DOM order). */
+  opacity: 0.45;
+}
+.kg-edge-mesh .kg-edge-line {
+  opacity: 0.72;
+}
+.kg-edge-proposed .kg-edge-line {
+  /* AI suggestion — dotted (set inline via dasharray) + fainter than mesh. */
+  opacity: 0.5;
+}
+.kg-edge-label {
+  fill: var(--ink-4);
+  font-size: 11px;
+}
+/* invisible fat hit-area so thin proposed edges are clickable. */
+.kg-edge-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  cursor: pointer;
+}
+
+/* ── Zoom controls pill (design mesh-controls) ─────────────────────────────── */
+.kg-zoom-controls {
+  position: absolute;
+  top: var(--s-3);
+  right: var(--s-3);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  box-shadow: var(--shadow-2);
+}
+.kg-zoom-btn {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.kg-zoom-btn:hover {
+  background: var(--paper-sunk);
+  color: var(--ink);
+}
+.kg-zoom-btn:active {
+  background: var(--coral-soft);
+  color: var(--coral-ink);
+}
+.kg-zoom-pct {
+  font-size: 12px;
+  color: var(--ink-3);
+  min-width: 40px;
+  text-align: center;
+}
+.kg-zoom-div {
+  width: 1px;
+  align-self: stretch;
+  margin: 4px 2px;
+  background: var(--line);
 }
 
 .kg-legend {
@@ -3831,9 +4020,9 @@ ol {
   border-top: 2px dotted var(--info);
 }
 
-/* Positioning context for the inline proposal action popover — cytoscape's
-   <canvas> sits inside, so the popover (absolute, anchored at the edge's rendered
-   midpoint in container px) overlays the graph. */
+/* Positioning context for the inline proposal action popover + the zoom-controls
+   pill — the SVG stage sits inside, so the popover (absolute, anchored at the
+   edge midpoint in container px) overlays the graph. */
 .kg-canvas-wrap {
   position: relative;
 }
