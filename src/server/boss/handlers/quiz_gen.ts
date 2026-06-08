@@ -443,16 +443,21 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
   // 轨 2: retrieve a few already-pooled同题型 examples (high-tier first) and fold a
   //       few-shot block into the prompt. Best-effort: a retrieval failure must not
   //       block generation, so we log + continue with no block (降级).
-  const subjectSkills = resolveQuizGenSkillsForSubject(subjectProfile.id);
+  const subjectSkills = await resolveQuizGenSkillsForSubject(subjectProfile.id);
 
   let fewShotBlock = '';
   if (resolved.knowledgeIds.length > 0) {
     // QuizGen runs emit mixed kinds; retrieve few-shot across the subject's
     // skill-backed kinds (translation / reading_comprehension / calculation …)
     // and merge a small set so each kind the model writes has an exemplar.
-    const skillBackedKinds = (subjectProfile.questionKinds ?? []).filter(
-      (k) => resolveQuizGenSkills(subjectProfile.id, k) !== undefined,
+    // resolveQuizGenSkills is async now; a sync Array.filter predicate would see a
+    // Promise (always !== undefined) and mark every kind skill-backed. Pre-compute
+    // the resolved values concurrently, then filter on the resolved array.
+    const allKinds = subjectProfile.questionKinds ?? [];
+    const skillResolved = await Promise.all(
+      allKinds.map((k) => resolveQuizGenSkills(subjectProfile.id, k)),
     );
+    const skillBackedKinds = allKinds.filter((_, i) => skillResolved[i] !== undefined);
     const collected: FewShotExample[] = [];
     for (const k of skillBackedKinds) {
       try {
