@@ -25,17 +25,24 @@ export const INGESTION_EXTRACTION_PROGRESS = 'ingestion.extraction_progress' as 
 // src/server/session/ingestion.ts SESSION_TABLE).
 const SESSION_TABLE = 'ingestion_session' as const;
 
-export const IngestionExtractionProgressPayload = z.object({
-  /** 1-based count of pages/blocks processed so far. */
-  done: z.number().int().nonnegative(),
-  /** Total pages/blocks this run will process. */
-  total: z.number().int().positive(),
-  /**
-   * Coarse phase label so the UI can word the progress line
-   * (e.g. "OCR 第 N / M 页"). Optional — absent on legacy/forward paths.
-   */
-  stage: z.enum(['ocr', 'structure']).optional(),
-});
+export const IngestionExtractionProgressPayload = z
+  .object({
+    /** 1-based count of pages/blocks processed so far. */
+    done: z.number().int().nonnegative(),
+    /** Total pages/blocks this run will process. */
+    total: z.number().int().positive(),
+    /**
+     * Coarse phase label so the UI can word the progress line
+     * (e.g. "OCR 第 N / M 页"). Optional — absent on legacy/forward paths.
+     */
+    stage: z.enum(['ocr', 'structure']).optional(),
+  })
+  // Cross-field guard: this schema is the exported SSE contract, so reject an
+  // out-of-range done that would make the client compute a >100% bar width.
+  .refine((v) => v.done <= v.total, {
+    message: 'done must not exceed total',
+    path: ['done'],
+  });
 export type IngestionExtractionProgressPayloadT = z.infer<
   typeof IngestionExtractionProgressPayload
 >;

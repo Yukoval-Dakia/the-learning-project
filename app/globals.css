@@ -12407,14 +12407,26 @@ button.seg-sm {
 }
 .ingest-progress-fill.is-indeterminate {
   width: 40%;
+  /* Animate transform (compositor-only) instead of margin-left, which would
+     reflow the track every frame. translateX(-100%) parks the 40%-wide block just
+     off the left edge; translateX(250%) (250% × 40% = one track width) sweeps it
+     fully off the right — same travel the old margin-left -40%→100% gave. */
+  will-change: transform;
   animation: ingest-progress-slide 1.1s var(--ease-out) infinite;
 }
 @keyframes ingest-progress-slide {
   from {
-    margin-left: -40%;
+    transform: translateX(-100%);
   }
   to {
-    margin-left: 100%;
+    transform: translateX(250%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Hold the bar static (a left-anchored 40% sliver) rather than sweeping it. */
+  .ingest-progress-fill.is-indeterminate {
+    animation: none;
+    transform: none;
   }
 }
 .ingest-progress-label {
