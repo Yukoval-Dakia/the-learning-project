@@ -12735,3 +12735,41 @@ button.seg-sm {
     height: 26px;
   }
 }
+
+/* ── DOCX / visual ingestion progress (Bug A, fix-docx-ingestion) ─────────────
+   Determinate per-page OCR progress shown on /record while the async extract job
+   runs, replacing the frozen "extracting…". `.is-indeterminate` is the brief
+   "等待 worker…" pre-first-event state. */
+.ingest-progress {
+  /* <output> is inline by default; make it a block so the track/label stack. */
+  display: block;
+  margin-bottom: var(--s-2);
+}
+.ingest-progress-track {
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--line);
+  overflow: hidden;
+}
+.ingest-progress-fill {
+  height: 100%;
+  background: var(--coral);
+  border-radius: var(--r-pill);
+  transition: width 240ms var(--ease-out);
+}
+.ingest-progress-fill.is-indeterminate {
+  width: 40%;
+  animation: ingest-progress-slide 1.1s var(--ease-out) infinite;
+}
+@keyframes ingest-progress-slide {
+  from {
+    margin-left: -40%;
+  }
+  to {
+    margin-left: 100%;
+  }
+}
+.ingest-progress-label {
+  display: block;
+  margin-top: var(--s-1);
+}

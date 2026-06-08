@@ -20,6 +20,11 @@ import { ApiAuthError, ApiError, apiJson } from '@/ui/lib/api';
 import { expandDocx, expandPdf, uploadAsset, useAssetUrl } from '@/ui/lib/assets';
 import { type AutoEnrollObservation, seedBlockForm } from '@/ui/lib/auto-enroll';
 import { causeOptionsForSelectedKnowledge } from '@/ui/lib/cause-options';
+import {
+  type ProgressEvent,
+  derivePhaseFromEvents,
+  latestProgress,
+} from '@/ui/lib/ingestion-phase';
 import { useIngestionSSE } from '@/ui/lib/sse';
 import { formatRelTime } from '@/ui/lib/utils';
 import { Badge } from '@/ui/primitives/Badge';
@@ -27,7 +32,7 @@ import { Button } from '@/ui/primitives/Button';
 import { Card } from '@/ui/primitives/Card';
 import { Icon } from '@/ui/primitives/Icon';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 type Mode = 'vision_single' | 'vision_paper';
@@ -126,13 +131,58 @@ const SSE_TERMINAL: Record<string, true> = {
   'ingestion.imported': true,
 };
 
+/**
+ * Bug A (fix-docx-ingestion): determinate extraction progress for the visual line.
+ * Reads the latest `ingestion.extraction_progress` SSE event (via latestProgress).
+ * Before the first event lands it shows an indeterminate "等待 worker…" line; during
+ * OCR it shows "OCR N / M" with a determinate fill; the final `structure` event flips
+ * the label to 结构化中 at full width while the single slow VLM StructureTask runs.
+ * Exported for unit coverage (ExtractionProgressBar.test.tsx).
+ */
+export function ExtractionProgressBar({ events }: { events: ProgressEvent[] }) {
+  const p = latestProgress(events);
+  if (!p) {
+    return (
+      <output className="ingest-progress" aria-live="polite">
+        <div className="ingest-progress-track">
+          <div className="ingest-progress-fill is-indeterminate" />
+        </div>
+        <span className="ingest-progress-label meta">等待 worker…</span>
+      </output>
+    );
+  }
+  const pct = p.total > 0 ? Math.round((p.done / p.total) * 100) : 0;
+  const width = p.stage === 'structure' ? 100 : pct;
+  return (
+    <output className="ingest-progress" aria-live="polite">
+      <div className="ingest-progress-track">
+        <div className="ingest-progress-fill" style={{ width: `${width}%` }} />
+      </div>
+      <span className="ingest-progress-label meta">
+        {p.stage === 'structure' ? (
+          <>
+            结构化中 · <span className="mono">{p.done}</span> 页
+          </>
+        ) : (
+          <>
+            OCR <span className="mono">{p.done}</span> / <span className="mono">{p.total}</span>
+          </>
+        )}
+      </span>
+    </output>
+  );
+}
+
 export function VisionTab({ mode }: { mode: Mode }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const maxFiles = mode === 'vision_single' ? 1 : 5;
 
   const [phase, setPhase] = useState<Phase>('idle');
+  // Bug B (fix-docx-ingestion): true while recovering an in-flight run from the URL.
+  const [recovering, setRecovering] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   // When the single picked file is a PDF (vision_paper only), it expands
   // server-side to N page images; pdfPageCount is the count returned by
@@ -173,6 +223,28 @@ export function VisionTab({ mode }: { mode: Mode }) {
     }
     setPhase('reviewing');
   }, [phase, sse.events]);
+
+  // Bug B: on mount, recover an in-flight ingestion from the URL (?ingest=<id>).
+  // Seeding sessionId + phase='extracting' re-opens the SSE stream, which REPLAYS
+  // the full event history (Last-Event-ID); the resolve effect below derives the
+  // real phase from that history. This survives tab switches / page leaves that
+  // unmount VisionTab while the background job keeps running.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only recovery — runs once.
+  useEffect(() => {
+    const ingest = searchParams.get('ingest');
+    if (ingest) {
+      setSessionId(ingest);
+      setPhase('extracting');
+      setRecovering(true);
+    }
+  }, []);
+
+  // Once the replayed history lands, derive the recovered phase + stop recovering.
+  useEffect(() => {
+    if (!recovering || sse.events.length === 0) return;
+    setPhase(derivePhaseFromEvents(sse.events));
+    setRecovering(false);
+  }, [recovering, sse.events]);
 
   const blocksQ = useQuery<{ rows: BlockRow[] }>({
     queryKey: ['ingestion-blocks', sessionId],
@@ -271,6 +343,12 @@ export function VisionTab({ mode }: { mode: Mode }) {
     onSuccess: (id) => {
       setSessionId(id);
       setPhase('extracting');
+      // Bug B: persist the active session in the URL so a tab-switch / page-leave
+      // can recover it (the mount effect reads ?ingest=). scroll:false keeps the
+      // viewport put.
+      const sp = new URLSearchParams(searchParams.toString());
+      sp.set('ingest', id);
+      router.replace(`?${sp.toString()}`, { scroll: false });
     },
     onError: (err) => {
       // Clear any stale page count: if expandPdf succeeded but a later step
@@ -438,10 +516,17 @@ export function VisionTab({ mode }: { mode: Mode }) {
     setPdfPageCount(null);
     setSessionId(null);
     setIngestionLine(null);
+    setRecovering(false);
     setBlockForms({});
     setBucketByBlockId({});
     seededBlockIdsRef.current = new Set();
     setErrorMessage(null);
+    // Bug B: drop the recovery param so a reset run doesn't re-recover the old id.
+    const sp = new URLSearchParams(searchParams.toString());
+    if (sp.has('ingest')) {
+      sp.delete('ingest');
+      router.replace(sp.toString() ? `?${sp.toString()}` : '?', { scroll: false });
+    }
   };
 
   const blocks = blocksQ.data?.rows ?? [];
@@ -566,6 +651,12 @@ export function VisionTab({ mode }: { mode: Mode }) {
                 ? '文本直抽（pandoc 切题，无需 worker）…'
                 : '触发抽取，等待 worker 推进度…')}
           </p>
+          {/* Bug A: determinate per-page progress for the visual line (the text line
+              is synchronous — no async job — so it shows the direct-completion panel
+              below instead). */}
+          {phase === 'extracting' && ingestionLine !== 'text' && (
+            <ExtractionProgressBar events={sse.events} />
+          )}
           {/* YUK-277: the text line has no async extraction job — its blocks are
               already produced. Show a direct-completion summary instead of the
               "SSE · 等待事件…/closed" timeline, which misleads the user into
