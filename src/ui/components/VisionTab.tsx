@@ -232,7 +232,11 @@ export function VisionTab({ mode }: { mode: Mode }) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only recovery — runs once.
   useEffect(() => {
     const ingest = searchParams.get('ingest');
-    if (ingest) {
+    // Validate the param shape before trusting it as a session id — it is
+    // interpolated into /api/ingestion/${id}/{events,blocks}. Session ids are
+    // cuids ([0-9a-z…]); reject anything else so a junk ?ingest= can't open a
+    // doomed stream (and pairs with the SSE-error exit in the resolve effect).
+    if (ingest && /^[a-zA-Z0-9_-]+$/.test(ingest)) {
       setSessionId(ingest);
       setPhase('extracting');
       setRecovering(true);
@@ -241,10 +245,20 @@ export function VisionTab({ mode }: { mode: Mode }) {
 
   // Once the replayed history lands, derive the recovered phase + stop recovering.
   useEffect(() => {
-    if (!recovering || sse.events.length === 0) return;
+    if (!recovering) return;
+    // SSE failed to connect (bad/stale ?ingest id, network, or server error):
+    // without this branch recovery would wait on events that never arrive and
+    // hang forever on "extracting…". Surface the error and leave recovering.
+    if (sse.status === 'error') {
+      setErrorMessage(sse.error?.message ?? '恢复进行中的录入失败：连接异常');
+      setPhase('error');
+      setRecovering(false);
+      return;
+    }
+    if (sse.events.length === 0) return;
     setPhase(derivePhaseFromEvents(sse.events));
     setRecovering(false);
-  }, [recovering, sse.events]);
+  }, [recovering, sse.events, sse.status, sse.error]);
 
   const blocksQ = useQuery<{ rows: BlockRow[] }>({
     queryKey: ['ingestion-blocks', sessionId],
