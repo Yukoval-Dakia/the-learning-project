@@ -9,6 +9,7 @@ import { ErrorState } from '@/ui/primitives/ErrorState';
 import { IconBtn } from '@/ui/primitives/IconBtn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
+import { MasteryRing } from '@/ui/primitives/MasteryRing';
 import { Ring } from '@/ui/primitives/Ring';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful } from '@/ui/primitives/Stateful';
@@ -541,12 +542,6 @@ export default function KnowledgePage() {
             {flattened.map((node) => {
               const nodeMistakes = mistakeCounts.get(node.id) ?? 0;
               const meshCount = edgeCountByNode.get(node.id) ?? 0;
-              // Mastery evidence-guard (pre-flight §4 / mirrors MasteryBadge):
-              // a ring % is misleading below 3 evidence, so render a muted
-              // neutral indicator instead of a colored ring; 0 evidence is the
-              // untrained state. Only ≥3 evidence shows the real Ring.
-              const masteryPct = Math.round((node.mastery ?? 0) * 100);
-              const lowEvidence = node.evidence_count < 3;
               return (
                 <button
                   key={node.id}
@@ -562,42 +557,12 @@ export default function KnowledgePage() {
                   onClick={() => setSelectedId(node.id)}
                 >
                   {node.depth > 0 && <span className="know-twig">└</span>}
-                  {lowEvidence ? (
-                    <span
-                      className="mastery mastery-low-evidence"
-                      title={
-                        node.evidence_count === 0
-                          ? 'evidence_count=0 · 尚无 attempt / review event'
-                          : `evidence_count<3 · 暂不展示稳定掌握度 · n=${node.evidence_count}`
-                      }
-                      style={{ flex: 'none' }}
-                    >
-                      <LoomIcon name="target" size={12} />
-                      {node.evidence_count === 0 ? '未练习' : `n=${node.evidence_count}`}
-                    </span>
-                  ) : (
-                    // Ring primitive is fixed 84px; scale the wrapper to ~30px
-                    // to fit the compact tree row (loom MasteryRing size=30).
-                    <span
-                      style={{
-                        flex: 'none',
-                        width: 30,
-                        height: 30,
-                        display: 'inline-flex',
-                      }}
-                    >
-                      <span
-                        style={{
-                          transform: 'scale(0.357)',
-                          transformOrigin: 'top left',
-                        }}
-                      >
-                        <Ring percent={masteryPct} />
-                      </span>
-                    </span>
-                  )}
-                  <span className="know-title wenyan">{node.name}</span>
-                  <span className="chip chip-k mono">{node.id.slice(0, 8)}</span>
+                  {/* design MasteryRing (3-tone) — the SAME mastery read as the graph
+                      node (disc/arc + 0.7/0.4 tone). Replaces the old scaled generic
+                      Ring + low-evidence pill (owner 2026-06-08「对齐 design」: drop the
+                      evidence gate, always show the ring; NULL → 0 → again). */}
+                  <MasteryRing mastery={node.mastery} size={30} />
+                  <span className="know-title">{node.name}</span>
                   <div className="know-end">
                     <span className="meta mono">{node.evidence_count} ev</span>
                     {nodeMistakes > 0 && <Badge tone="again">{nodeMistakes} 错</Badge>}
@@ -622,7 +587,6 @@ export default function KnowledgePage() {
           edges={activeEdges}
           selectedId={selectedId}
           onNodeClick={setSelectedId}
-          mistakeCounts={mistakeCounts}
           dueCounts={dueCounts}
           proposals={graphProposals}
           onProposalDecision={handleGraphProposalDecision}

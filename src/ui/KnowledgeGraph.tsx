@@ -1,6 +1,11 @@
 'use client';
 
-import { type LayoutMap, type Point, computeLayout } from '@/ui/knowledge-graph/layout';
+import {
+  type LayoutMap,
+  type Point,
+  computeDepths,
+  computeLayout,
+} from '@/ui/knowledge-graph/layout';
 import { Icon } from '@/ui/primitives/Icon';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 
@@ -72,13 +77,9 @@ export function relationVisualKey(relationType: string): string {
 // it can carry its own label + filter behavior.
 export type MasteryBand = 'weak' | 'learning' | 'mastered' | 'untrained' | 'insufficient';
 
-const MASTERY_BAND_TOKEN: Record<MasteryBand, string> = {
-  weak: '--hard', // amber — derivable shaky area
-  learning: '--info', // steel blue — neutral mid
-  mastered: '--good', // green — solid
-  untrained: '--ink-5', // faint neutral — never practiced (evidence_count == 0)
-  insufficient: '--ink-5', // faint neutral — unproven (1-2 evidence pieces)
-};
+// NOTE: the node DISC color no longer comes from MasteryBand — it uses the design
+// 3-tone (masteryTone) per owner「全抄 design」. MasteryBand still drives the 掌握度
+// FILTER + isWeakish (evidence-gated diagnostic), so the type + label map stay.
 
 // Band from the full mastery record (mirrors MasteryBadge). evidence_count is
 // the gate: 0 → untrained, <3 → insufficient (regardless of the 0.5 sentinel),
@@ -117,11 +118,50 @@ export function isWeakish(
   return band === 'weak' || band === 'untrained' || band === 'insufficient';
 }
 
-// PRESERVE the prior node radius rule: 12 + min(20, mistakeCount*4). The radius
-// is the graph's mistake-count diagnostic encoding (design-brief v2.1 §半径∝
-// mistake_count) — kept over the design mock's fixed hub/leaf radii.
-export function nodeRadius(mistakeCount: number): number {
-  return 12 + Math.min(20, mistakeCount * 4);
+// design 3-tone (screen-knowledge.jsx L83): mastery → good / hard / again. The
+// disc fill + arc + track read this directly (owner 2026-06-08「全抄 design」),
+// replacing the 5-band diagnostic palette as the NODE COLOR. Thresholds align to
+// the MasteryBand cutoffs (0.7 / 0.4) so disc color, the 掌握度 filter, and the
+// legend all agree. NULL mastery (never practiced) → 0 → 'again': the design has
+// no untrained/insufficient tone, and that grey "证据不足" encoding was
+// intentionally dropped as the node color (the evidence gate still drives the
+// FILTER + isWeakish, just not the disc fill).
+export type MasteryTone = 'good' | 'hard' | 'again';
+
+export function masteryTone(mastery: number | null | undefined): MasteryTone {
+  const m = mastery ?? 0;
+  if (m >= 0.7) return 'good';
+  if (m >= 0.4) return 'hard';
+  return 'again';
+}
+
+// design node radius (screen-knowledge.jsx L84): hub = 24, leaf = 18. A node is a
+// "hub" if it is some other node's parent. Replaces the radius-∝-mistake_count
+// encoding (owner「全抄 design」: clean uniform discs over the diagnostic sizing).
+export const HUB_RADIUS = 24;
+export const LEAF_RADIUS = 18;
+
+// Legend labels for the 3 design tones (reuse the mastery vocabulary).
+export const TONE_LABEL: Record<MasteryTone, string> = {
+  good: '已掌握',
+  hard: '学习中',
+  again: '薄弱',
+};
+
+// A node at the 2nd level or deeper (depth >= 1, i.e. not a top-level root) with
+// MORE than this many children is NOT expanded inline (owner 2026-06-08): dumping
+// 40+ siblings deep in the tree floods the canvas even with progressive disclosure.
+// Such a node focuses + opens the drawer (browse its children there) instead of
+// expanding in the graph. Top-level roots (depth 0) are exempt — their breadth is
+// the overview the disclosure default is meant to show.
+export const MAX_INLINE_EXPAND_CHILDREN = 40;
+
+// A node is expandable inline iff it has children AND is either a top-level root or
+// has a manageable number of children. Centralised so the tap handler + the badge
+// affordance + tests all agree.
+export function isInlineExpandable(depth: number, childCount: number): boolean {
+  if (childCount <= 0) return false;
+  return depth < 1 || childCount <= MAX_INLINE_EXPAND_CHILDREN;
 }
 
 export interface KnowledgeGraphNode {
@@ -176,8 +216,6 @@ export interface KnowledgeGraphProps {
   edges: KnowledgeGraphEdge[];
   selectedId: string | null;
   onNodeClick: (id: string) => void;
-  /** mistake_count per node id — drives node radius (∝ mistakes). */
-  mistakeCounts: Map<string, number>;
   /**
    * Per-node review-due counts (overdue / due_soon). Nodes with overdue > 0 get
    * the coral due halo + are the target of the "今天该复习" quick filter. Empty
@@ -376,7 +414,6 @@ export function KnowledgeGraph({
   edges,
   selectedId,
   onNodeClick,
-  mistakeCounts,
   dueCounts,
   proposals,
   onProposalDecision,
@@ -462,9 +499,68 @@ export function KnowledgeGraph({
     y: number;
   } | null>(null);
 
-  const visibleNodes = useMemo(
+  // Progressive disclosure (YUK-297): the universe is the filtered set; we only
+  // SHOW the disclosed subset — roots + the children of every EXPANDED node — so
+  // each view stays sparse and the tidy-tree layout always breathes. Drilling in =
+  // tap a node → expand it (reveal its children) + focus it. Default = roots
+  // expanded → exactly 2 levels (root + direct children).
+  const universeNodes = useMemo(
     () => nodes.filter((n) => passesFilter(n, filter, due)),
     [nodes, filter, due],
+  );
+  const universeIds = useMemo(() => new Set(universeNodes.map((n) => n.id)), [universeNodes]);
+  const childrenByParent = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const n of universeNodes) {
+      if (n.parent_id != null && universeIds.has(n.parent_id)) {
+        const arr = m.get(n.parent_id) ?? [];
+        arr.push(n.id);
+        m.set(n.parent_id, arr);
+      }
+    }
+    return m;
+  }, [universeNodes, universeIds]);
+  // Depth within the (filtered) universe — drives the deep+wide inline-expand cap.
+  const depthByNode = useMemo(() => computeDepths(universeNodes), [universeNodes]);
+  const rootIds = useMemo(
+    () =>
+      universeNodes
+        .filter((n) => n.parent_id == null || !universeIds.has(n.parent_id))
+        .map((n) => n.id),
+    [universeNodes, universeIds],
+  );
+
+  // Expanded set drives disclosure. Initialised to the roots so the 2-level default
+  // is correct on the FIRST render (incl. SSR / renderToString, where effects don't
+  // run) — no empty-then-expand flash. The effect below re-defaults to the roots
+  // only when the universe (filter / data) actually changes.
+  const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => new Set(rootIds));
+  const rootKey = useMemo(() => [...rootIds].sort().join('|'), [rootIds]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: rootKey is the stable change-trigger for rootIds; depending on rootIds (a fresh array each render) would reset expansion every render.
+  useEffect(() => {
+    setExpandedIds(new Set(rootIds));
+    setFocusId(null);
+  }, [rootKey]);
+
+  const disclosedIds = useMemo(() => {
+    const out = new Set<string>(rootIds);
+    const queue = [...rootIds];
+    while (queue.length > 0) {
+      const id = queue.shift() as string;
+      if (!expandedIds.has(id)) continue;
+      for (const c of childrenByParent.get(id) ?? []) {
+        if (!out.has(c)) {
+          out.add(c);
+          queue.push(c);
+        }
+      }
+    }
+    return out;
+  }, [rootIds, childrenByParent, expandedIds]);
+
+  const visibleNodes = useMemo(
+    () => universeNodes.filter((n) => disclosedIds.has(n.id)),
+    [universeNodes, disclosedIds],
   );
   const visibleNodeIds = useMemo(() => new Set(visibleNodes.map((n) => n.id)), [visibleNodes]);
   const visibleEdges = useMemo(
@@ -501,11 +597,20 @@ export function KnowledgeGraph({
     return m;
   }, [nodes]);
 
-  const counts = useMemo(() => {
-    const acc = { weak: 0, learning: 0, mastered: 0, untrained: 0, insufficient: 0 };
-    for (const n of visibleNodes) acc[masteryBand(n.mastery, n.evidence_count)]++;
+  // Legend tallies by the design 3-tone (good/hard/again), matching the disc fill.
+  const toneCounts = useMemo(() => {
+    const acc: Record<MasteryTone, number> = { good: 0, hard: 0, again: 0 };
+    for (const n of visibleNodes) acc[masteryTone(n.mastery)]++;
     return acc;
   }, [visibleNodes]);
+
+  // hub vs leaf radius (design hub=24 / leaf=18): a node is a hub if it parents
+  // another node. Structural over the full node set, not the filtered view.
+  const hubIds = useMemo(() => {
+    const s = new Set<string>();
+    for (const n of nodes) if (n.parent_id) s.add(n.parent_id);
+    return s;
+  }, [nodes]);
 
   const nameById = useMemo(() => {
     const m = new Map<string, string>();
@@ -611,31 +716,26 @@ export function KnowledgeGraph({
       .map((n, i) => {
         const p = layout.get(n.id);
         if (!p) return null;
-        const r = nodeRadius(mistakeCounts.get(n.id) ?? 0);
-        const band = masteryBand(n.mastery, n.evidence_count);
+        const r = hubIds.has(n.id) ? HUB_RADIUS : LEAF_RADIUS;
+        const tone = masteryTone(n.mastery);
         const overdue = due.get(n.id)?.overdue ?? 0;
+        // mastery arc progress + disc-内 integer: NULL mastery → 0 (never
+        // practiced). design (mesh-node-pct) ALWAYS shows the digit.
+        const masteryPct = Math.max(0, Math.min(1, n.mastery ?? 0));
         return {
           id: n.id,
           name: n.name,
           point: p,
           r,
-          band,
-          // mastery arc progress: NULL mastery → 0 (never-practiced).
-          masteryPct: Math.max(0, Math.min(1, n.mastery ?? 0)),
-          // disc-内 integer (design mesh-node-pct). Mirror MasteryBadge EXACTLY:
-          // only bands that surface a number there (evidence_count >= 3, i.e.
-          // weak/learning/mastered) show a digit. untrained (n=0) / insufficient
-          // (n<3) intentionally render no number — matching "未练习" / "证据不足".
-          pctLabel:
-            band === 'untrained' || band === 'insufficient'
-              ? null
-              : Math.round(Math.max(0, Math.min(1, n.mastery ?? 0)) * 100),
+          tone,
+          masteryPct,
+          pctLabel: Math.round(masteryPct * 100),
           overdue,
           fadeDelayMs: Math.min(i * FADE_DELAY_STEP_MS, FADE_DELAY_CAP_MS),
         };
       })
       .filter((x): x is NonNullable<typeof x> => x !== null);
-  }, [visibleNodes, layout, mistakeCounts, due]);
+  }, [visibleNodes, layout, hubIds, due]);
 
   // position + radius lookup for the focus-mode camera fit (below).
   const renderedNodeById = useMemo(() => {
@@ -704,31 +804,60 @@ export function KnowledgeGraph({
   const onUp = useCallback(() => {
     dragRef.current = null;
   }, []);
-  const zoom = useCallback((delta: number) => {
-    setActiveProposal(null);
-    setView((v) => ({
-      ...v,
-      k: Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Number((v.k + delta).toFixed(2)))),
-    }));
-  }, []);
-  const onWheel = useCallback(
-    (e: React.WheelEvent) => {
+  // Wheel handling via a NON-PASSIVE native listener so preventDefault works (React
+  // registers onWheel as passive → it can't stop the page from scrolling, which
+  // would let a two-finger pan scroll the whole page). Plain wheel-zoom is BANNED
+  // (owner 2026-06-08); a trackpad PINCH arrives as wheel+ctrlKey → zoom; a plain
+  // wheel / two-finger scroll → PAN. Drag-pan (mouse) still works via onMouse*.
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el) return;
+    const onWheelNative = (e: WheelEvent) => {
       e.preventDefault();
-      zoom(e.deltaY > 0 ? -0.1 : 0.1);
-    },
-    [zoom],
-  );
+      setActiveProposal(null);
+      if (e.ctrlKey) {
+        setView((v) => ({
+          ...v,
+          k: Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Number((v.k - e.deltaY * 0.01).toFixed(2)))),
+        }));
+      } else {
+        setView((v) => ({ ...v, x: v.x - e.deltaX, y: v.y - e.deltaY }));
+      }
+    };
+    el.addEventListener('wheel', onWheelNative, { passive: false });
+    return () => el.removeEventListener('wheel', onWheelNative);
+  }, []);
   const resetView = useCallback(() => {
     setActiveProposal(null);
     setView({ x: 0, y: 0, k: 1 });
   }, []);
 
-  // ── Node tap → drawer + focus (preserved Slice 1a). ────────────────────────
-  const handleNodeTap = useCallback((id: string) => {
-    setActiveProposal(null);
-    onNodeClickRef.current(id);
-    setFocusId(id);
-  }, []);
+  // ── Node tap → drill-down (expand/collapse) + focus + drawer. ──────────────
+  // A node with hidden children EXPANDS (reveal them, animated); re-tapping an
+  // expanded node COLLAPSES its subtree. Leaves just focus + open the drawer. The
+  // focus + expand together drive the camera fit and the fade of other branches.
+  const handleNodeTap = useCallback(
+    (id: string) => {
+      setActiveProposal(null);
+      onNodeClickRef.current(id);
+      setFocusId(id);
+      const childCount = childrenByParent.get(id)?.length ?? 0;
+      if (childCount === 0) return; // leaf → just focus + drawer
+      const depth = depthByNode.get(id) ?? 0;
+      setExpandedIds((prev) => {
+        const isExpanded = prev.has(id);
+        // A deep + wide node (depth ≥ 1, > 40 children) does NOT expand inline — it
+        // floods the canvas; the drawer (opened above) is where you browse it.
+        // Collapse is always allowed (so a node never gets stuck open).
+        if (!isExpanded && !isInlineExpandable(depth, childCount)) return prev;
+        const next = new Set(prev);
+        if (isExpanded) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+    },
+    [childrenByParent, depthByNode],
+  );
 
   // ── Proposed-edge tap → inline accept/dismiss at the edge midpoint. ────────
   const handleProposedTap = useCallback(
@@ -759,13 +888,18 @@ export function KnowledgeGraph({
     [view, visibleProposals, nameById],
   );
 
-  // Tapping empty canvas exits focus + closes the inline action.
-  const onStageClick = useCallback((e: React.MouseEvent) => {
-    if (e.target === e.currentTarget) {
-      setFocusId(null);
-      setActiveProposal(null);
-    }
-  }, []);
+  // Tapping empty canvas exits focus, closes the inline action, and collapses the
+  // tree back to the 2-level default (drill all the way back out).
+  const onStageClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (e.target === e.currentTarget) {
+        setFocusId(null);
+        setActiveProposal(null);
+        setExpandedIds(new Set(rootIds));
+      }
+    },
+    [rootIds],
+  );
 
   const showWeak = useCallback(() => {
     setFilter((f) => ({ ...f, mastery: 'weak', dueOnly: false }));
@@ -775,7 +909,10 @@ export function KnowledgeGraph({
     setFilter((f) => ({ ...f, dueOnly: !f.dueOnly, domain: f.dueOnly ? f.domain : null }));
     setFocusId(null);
   }, []);
-  const exitFocus = useCallback(() => setFocusId(null), []);
+  const exitFocus = useCallback(() => {
+    setFocusId(null);
+    setExpandedIds(new Set(rootIds));
+  }, [rootIds]);
 
   const decideActiveProposal = useCallback(
     (decision: 'accept' | 'dismiss') => {
@@ -870,45 +1007,17 @@ export function KnowledgeGraph({
       )}
 
       <div className="kg-canvas-wrap">
-        {/* Zoom controls pill (design mesh-controls). */}
-        <div className="kg-zoom-controls" aria-label="缩放控制">
-          <button
-            type="button"
-            className="kg-zoom-btn"
-            title="缩小"
-            aria-label="缩小"
-            onClick={() => zoom(-0.1)}
-          >
-            {/* The Icon registry has no `minus`; render the zoom-out glyph as a
-                lucide-weight inline minus so it always paints. */}
-            <svg width={15} height={15} viewBox="0 0 24 24" aria-hidden="true">
-              <line
-                x1="5"
-                y1="12"
-                x2="19"
-                y2="12"
-                stroke="currentColor"
-                strokeWidth={1.75}
-                strokeLinecap="round"
-              />
-            </svg>
-          </button>
+        {/* Camera controls pill. Manual +/− zoom is removed (owner 2026-06-08):
+            zoom is by trackpad pinch, pan by two-finger scroll / drag. The only
+            button is 复位 — reset to the fitted default view. The % is live feedback. */}
+        <div className="kg-zoom-controls" aria-label="视图控制">
           <span className="kg-zoom-pct mono">{Math.round(view.k * 100)}%</span>
-          <button
-            type="button"
-            className="kg-zoom-btn"
-            title="放大"
-            aria-label="放大"
-            onClick={() => zoom(0.1)}
-          >
-            <Icon name="plus" size={15} />
-          </button>
           <span className="kg-zoom-div" />
           <button
             type="button"
             className="kg-zoom-btn"
-            title="复位"
-            aria-label="复位"
+            title="复位视图"
+            aria-label="复位视图"
             onClick={resetView}
           >
             <Icon name="refresh" size={15} />
@@ -929,7 +1038,6 @@ export function KnowledgeGraph({
           onMouseMove={onMove}
           onMouseUp={onUp}
           onMouseLeave={onUp}
-          onWheel={onWheel}
           onClick={onStageClick}
           onKeyDown={(ev) => {
             if (ev.key === 'Escape') {
@@ -973,10 +1081,6 @@ export function KnowledgeGraph({
                 const visual = RELATION_VISUAL[e.relation];
                 const color =
                   e.kind === 'tree' ? 'var(--ink-5)' : `var(${visual?.token ?? '--ink-4'})`;
-                const mid: Point = {
-                  x: (e.from.x + e.to.x) / 2,
-                  y: (e.from.y + e.to.y) / 2,
-                };
                 const dash =
                   e.kind === 'tree'
                     ? '3 5'
@@ -987,6 +1091,7 @@ export function KnowledgeGraph({
                         : undefined;
                 const showArrow = e.kind === 'mesh' && visual?.arrow;
                 const faded = isEdgeFaded(e);
+                const curve = curvedEdge(e.from, e.to, e.kind);
                 return (
                   <g
                     key={e.id}
@@ -1001,7 +1106,7 @@ export function KnowledgeGraph({
                     {e.kind === 'proposed' && (
                       // biome-ignore lint/a11y/useKeyWithClickEvents: SVG edge pointer affordance; keyboard parity lives in the drawer EdgeProposalCard.
                       <path
-                        d={`M${e.from.x} ${e.from.y} L${e.to.x} ${e.to.y}`}
+                        d={curve.d}
                         className="kg-edge-hit"
                         onClick={(ev) => {
                           ev.stopPropagation();
@@ -1010,7 +1115,7 @@ export function KnowledgeGraph({
                       />
                     )}
                     <path
-                      d={`M${e.from.x} ${e.from.y} L${e.to.x} ${e.to.y}`}
+                      d={curve.d}
                       className="kg-edge-line"
                       stroke={color}
                       strokeWidth={e.width}
@@ -1018,7 +1123,7 @@ export function KnowledgeGraph({
                       markerEnd={showArrow ? `url(#${arrowId})` : undefined}
                     />
                     {e.kind === 'mesh' && (
-                      <text x={mid.x} y={mid.y - 4} className="kg-edge-label mono">
+                      <text x={curve.apex.x} y={curve.apex.y - 4} className="kg-edge-label mono">
                         {RELATION_GLYPH[e.relation]} {RELATION_LABEL[e.relation] ?? e.relation}
                       </text>
                     )}
@@ -1031,18 +1136,38 @@ export function KnowledgeGraph({
                 const selected = n.id === selectedId;
                 const shaky = shakyPrereqIds.has(n.id);
                 const faded = isFaded(n.id);
+                const childCount = childrenByParent.get(n.id)?.length ?? 0;
+                const depth = depthByNode.get(n.id) ?? 0;
+                const expandable = isInlineExpandable(depth, childCount);
+                const isExpanded = childCount > 0 && expandedIds.has(n.id);
+                const hiddenKids = childCount > 0 && !isExpanded ? childCount : 0;
+                // capped = has hidden children but is too deep + wide to expand inline
+                // (>40 children below the top level) — browse it in the drawer instead.
+                const capped = hiddenKids > 0 && !expandable;
                 return (
                   <g
                     key={n.id}
-                    transform={`translate(${n.point.x} ${n.point.y})`}
-                    className={`kg-node band-${n.band}${selected ? ' is-selected' : ''}${
+                    className={`kg-node tone-${n.tone}${selected ? ' is-selected' : ''}${
                       shaky ? ' is-shaky' : ''
                     }${focusId === n.id ? ' is-focus-root' : ''}${faded ? ' is-faded' : ''}`}
-                    style={{ animationDelay: `${n.fadeDelayMs}ms` }}
+                    // Position via CSS transform (not the SVG attribute) so a re-layout
+                    // on drill-down EASES to the new spot (transition on .kg-node) instead
+                    // of jumping; newly-revealed children still fade in via kg-node-fade.
+                    style={{
+                      transform: `translate(${n.point.x}px, ${n.point.y}px)`,
+                      animationDelay: `${n.fadeDelayMs}ms`,
+                    }}
                     tabIndex={0}
                     // biome-ignore lint/a11y/useSemanticElements: SVG <g> cannot be a <button>; role=button + tabIndex + onKeyDown is the correct ARIA for a focusable graph node.
                     role="button"
-                    aria-label={`${n.name}`}
+                    aria-label={
+                      hiddenKids === 0
+                        ? n.name
+                        : capped
+                          ? `${n.name}，含 ${childCount} 个子节点，过多，在详情中查看`
+                          : `${n.name}，含 ${hiddenKids} 个子节点，可展开`
+                    }
+                    aria-expanded={childCount > 0 && expandable ? isExpanded : undefined}
                     onClick={(ev) => {
                       ev.stopPropagation();
                       handleNodeTap(n.id);
@@ -1056,7 +1181,7 @@ export function KnowledgeGraph({
                   >
                     {/* Coral due halo (overdue > 0) — its own layer behind the disc. */}
                     {n.overdue > 0 && <circle r={n.r + 6} className="kg-node-halo" />}
-                    {/* Filled disc (band fill via class) with drop shadow. */}
+                    {/* Filled disc (tone fill via class) with drop shadow. */}
                     <circle r={n.r} className="kg-node-disc" filter={`url(#${shadowId})`} />
                     {/* Full track ring under the arc. */}
                     <circle r={n.r} fill="none" className="kg-node-track" />
@@ -1065,23 +1190,43 @@ export function KnowledgeGraph({
                       r={n.r}
                       fill="none"
                       className="kg-node-arc"
+                      stroke={`var(--${n.tone})`}
                       strokeWidth={3.5}
                       strokeLinecap="round"
                       strokeDasharray={circ}
                       strokeDashoffset={circ * (1 - n.masteryPct)}
                       transform="rotate(-90)"
                     />
-                    {/* disc-内 掌握度整数 (design mesh-node-pct). Only present for
-                        bands MasteryBadge numbers (weak/learning/mastered); null
-                        for untrained/insufficient to stay aligned with the badge. */}
-                    {n.pctLabel !== null && (
-                      <text y={4} textAnchor="middle" className="kg-node-pct mono">
-                        {n.pctLabel}
-                      </text>
-                    )}
+                    {/* disc-内 掌握度整数 (design mesh-node-pct) — always shown. */}
+                    <text y={4} textAnchor="middle" className="kg-node-pct mono">
+                      {n.pctLabel}
+                    </text>
                     <text y={r4(n.r)} textAnchor="middle" className="kg-node-label">
                       {n.name}
                     </text>
+                    {/* Hidden-children badge. Expandable → coral "+N" drill affordance;
+                        capped (deep + >40) → muted grey count, signalling "too many to
+                        expand here, browse in the drawer". The count is in the node's
+                        aria-label, so the badge is purely visual (no aria-hidden — that's
+                        disallowed on the focusable node group). */}
+                    {hiddenKids > 0 && (
+                      <g className={`kg-node-badge${capped ? ' is-capped' : ''}`}>
+                        <circle
+                          cx={n.r * 0.72}
+                          cy={-n.r * 0.72}
+                          r={10}
+                          className="kg-node-badge-bg"
+                        />
+                        <text
+                          x={n.r * 0.72}
+                          y={-n.r * 0.72 + 3.5}
+                          textAnchor="middle"
+                          className="kg-node-badge-t mono"
+                        >
+                          {capped ? (hiddenKids > 99 ? '99+' : hiddenKids) : `+${hiddenKids}`}
+                        </text>
+                      </g>
+                    )}
                   </g>
                 );
               })}
@@ -1127,17 +1272,11 @@ export function KnowledgeGraph({
 
       <div className="kg-legend">
         <span className="kg-legend-section">掌握度</span>
-        {(['weak', 'learning', 'mastered', 'insufficient', 'untrained'] as const).map((band) => (
-          <span className="item" key={band}>
-            <span
-              className="swatch dot"
-              style={{
-                background: `var(${MASTERY_BAND_TOKEN[band]})`,
-                ...(band === 'insufficient' ? { opacity: 0.4 } : {}),
-              }}
-            />
+        {(['good', 'hard', 'again'] as const).map((tone) => (
+          <span className="item" key={tone}>
+            <span className="swatch dot" style={{ background: `var(--${tone})` }} />
             <span>
-              {MASTERY_BAND_LABEL[band]} {counts[band]}
+              {TONE_LABEL[tone]} {toneCounts[tone]}
             </span>
           </span>
         ))}
@@ -1168,8 +1307,8 @@ export function KnowledgeGraph({
           <span>提议关系 {visibleProposals.length}</span>
         </span>
         <span className="kg-legend-note">
-          圆 = 节点 · 填色 ∝ 掌握度 · 半径 ∝ mistake_count · 珊瑚光晕 = 有逾期复习 · 点虚线 = AI
-          提议（点击接受 / 忽略）· 点节点聚焦 · 拖拽 / 滚轮缩放
+          圆 = 节点 · 填色 = 掌握度（绿 / 琥珀 / 红）· 大圆 = 有子节点 · 珊瑚光晕 = 有逾期复习 ·
+          点虚线 = AI 提议（点击接受 / 忽略）· 点节点聚焦 · 拖拽 / 滚轮缩放
         </span>
       </div>
     </section>
@@ -1179,6 +1318,32 @@ export function KnowledgeGraph({
 // Node label vertical offset below the disc (mirror design `y={r + 18}`).
 function r4(r: number): number {
   return r + 18;
+}
+
+// Quadratic-bezier edge path with a perpendicular bow so near-parallel / same-row
+// edges separate visually instead of stacking into one muddy line (the straight-
+// line "边分不开" fix — YUK-297). Tree edges bow gently; mesh edges bow proportional
+// to length so long cross-branch links arc clearly across open space. The end
+// marker auto-orients to the curve tangent, so arrowheads need no extra math.
+// Returns the path `d` plus the on-curve apex (the label anchor).
+function curvedEdge(
+  from: Point,
+  to: Point,
+  kind: RenderedEdge['kind'],
+): { d: string; apex: Point } {
+  const mx = (from.x + to.x) / 2;
+  const my = (from.y + to.y) / 2;
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const bow = kind === 'tree' ? 16 : Math.min(72, len * 0.22);
+  const cx = mx + (-dy / len) * bow;
+  const cy = my + (dx / len) * bow;
+  // apex of a quadratic bezier at t=0.5 is the midpoint of (chord-mid, control).
+  return {
+    d: `M${from.x} ${from.y} Q${cx} ${cy} ${to.x} ${to.y}`,
+    apex: { x: (mx + cx) / 2, y: (my + cy) / 2 },
+  };
 }
 
 export default KnowledgeGraph;

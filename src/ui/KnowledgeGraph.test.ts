@@ -9,7 +9,7 @@
 //   Slice 1b + Fix B — masteryBand / passesFilter / isWeakish / distinctDomains
 //     band thresholds incl. the insufficient band, boundary values
 //     0.4 / 0.7 / null / the 0.5 low-evidence sentinel, and filter composition.
-//   nodeRadius — radius ∝ mistake_count.
+//   masteryTone — mastery → design 3-tone (good/hard/again), the disc fill + arc.
 //   relationVisualKey / RELATION_VISUAL — the relation visual contract
 //     (unknown/experimental → related_to fallback).
 
@@ -20,9 +20,10 @@ import {
   type NodeDueSummary,
   RELATION_VISUAL,
   distinctDomains,
+  isInlineExpandable,
   isWeakish,
   masteryBand,
-  nodeRadius,
+  masteryTone,
   passesFilter,
   relationVisualKey,
 } from './KnowledgeGraph';
@@ -148,12 +149,19 @@ describe('passesFilter (composition)', () => {
   });
 });
 
-describe('nodeRadius', () => {
-  it('12 + min(20, mistakeCount*4)', () => {
-    expect(nodeRadius(0)).toBe(12);
-    expect(nodeRadius(1)).toBe(16);
-    expect(nodeRadius(5)).toBe(32); // 12 + min(20, 20)
-    expect(nodeRadius(100)).toBe(32); // capped at +20
+describe('masteryTone (design 3-tone — disc fill / arc color)', () => {
+  it('mastery → good (>=0.7) / hard (>=0.4) / again (<0.4)', () => {
+    expect(masteryTone(0.9)).toBe('good');
+    expect(masteryTone(0.7)).toBe('good'); // 0.7 boundary inclusive of good
+    expect(masteryTone(0.69)).toBe('hard');
+    expect(masteryTone(0.4)).toBe('hard'); // 0.4 boundary inclusive of hard
+    expect(masteryTone(0.39)).toBe('again');
+    expect(masteryTone(0)).toBe('again');
+  });
+
+  it('null / undefined mastery → again (never practiced collapses to 0)', () => {
+    expect(masteryTone(null)).toBe('again');
+    expect(masteryTone(undefined)).toBe('again');
   });
 });
 
@@ -177,5 +185,24 @@ describe('relationVisualKey + RELATION_VISUAL contract', () => {
     expect(relationVisualKey('applied_in')).toBe('applied_in');
     expect(relationVisualKey('experimental:co_occurs')).toBe('related_to');
     expect(relationVisualKey('totally_unknown')).toBe('related_to');
+  });
+});
+
+describe('isInlineExpandable (deep + wide cap — owner 2026-06-08)', () => {
+  it('no children → never expandable', () => {
+    expect(isInlineExpandable(0, 0)).toBe(false);
+    expect(isInlineExpandable(3, 0)).toBe(false);
+  });
+
+  it('a top-level root (depth 0) is expandable at any width', () => {
+    expect(isInlineExpandable(0, 5)).toBe(true);
+    expect(isInlineExpandable(0, 200)).toBe(true);
+  });
+
+  it('a 2nd-level-or-deeper node is capped above 40 children', () => {
+    expect(isInlineExpandable(1, 40)).toBe(true); // 40 is OK
+    expect(isInlineExpandable(1, 41)).toBe(false); // 41 floods → not inline
+    expect(isInlineExpandable(2, 41)).toBe(false);
+    expect(isInlineExpandable(5, 9999)).toBe(false);
   });
 });
