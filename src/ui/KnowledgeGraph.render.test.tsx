@@ -3,7 +3,7 @@
 // the app/(app)/inbox/inbox.test.tsx precedent) we statically render the component
 // with react-dom/server's renderToString and assert the emitted SVG markup. This
 // covers the visual contract that the old buildElements/buildStylesheet tests
-// guarded — band fills, mastery-arc geometry, the 5 typed-edge token/dash/arrow
+// guarded — design 3-tone fills, mastery-arc geometry, the 5 typed-edge token/dash/arrow
 // mapping (production RELATION_VISUAL, NOT the design mock tones), tree/mesh/
 // proposed z-order via DOM order, the due halo, and unique marker/filter defs.
 //
@@ -15,13 +15,14 @@
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import {
+  HUB_RADIUS,
   type KnowledgeEdgeProposal,
   KnowledgeGraph,
   type KnowledgeGraphEdge,
   type KnowledgeGraphNode,
+  LEAF_RADIUS,
   type NodeDueSummary,
   fitViewToNeighborhood,
-  nodeRadius,
   svgPointToContainerPx,
 } from './KnowledgeGraph';
 
@@ -39,22 +40,13 @@ function edge(
   return { relation_type: 'related_to', weight: 1, ...partial };
 }
 
-const NO_MISTAKES = new Map<string, number>();
-
 function render(
   props: Partial<Parameters<typeof KnowledgeGraph>[0]> & {
     nodes: KnowledgeGraphNode[];
     edges: KnowledgeGraphEdge[];
   },
 ): string {
-  return renderToString(
-    <KnowledgeGraph
-      selectedId={null}
-      onNodeClick={() => {}}
-      mistakeCounts={NO_MISTAKES}
-      {...props}
-    />,
-  );
+  return renderToString(<KnowledgeGraph selectedId={null} onNodeClick={() => {}} {...props} />);
 }
 
 describe('KnowledgeGraph SVG render — nodes', () => {
@@ -64,12 +56,13 @@ describe('KnowledgeGraph SVG render — nodes', () => {
     node({ id: 'lonely', mastery: 0.5, evidence_count: 1 }),
   ];
 
-  it('renders one node <g> per node with its mastery-band class', () => {
+  it('renders one node <g> per node with its design 3-tone class', () => {
     const html = render({ nodes, edges: [] });
-    // mastered (root), weak (child), insufficient (lonely, 1 evidence).
-    expect(html).toContain('band-mastered');
-    expect(html).toContain('band-weak');
-    expect(html).toContain('band-insufficient');
+    // good (root 0.8), again (child 0.3), hard (lonely 0.5) — tone is by mastery
+    // only now (evidence no longer gates the disc color, owner「全抄 design」).
+    expect(html).toContain('tone-good');
+    expect(html).toContain('tone-again');
+    expect(html).toContain('tone-hard');
     // three kg-node groups.
     const count = (html.match(/class="kg-node /g) ?? []).length;
     expect(count).toBe(3);
@@ -77,7 +70,7 @@ describe('KnowledgeGraph SVG render — nodes', () => {
 
   it('arc dashoffset encodes mastery (circ * (1 - mastery))', () => {
     const html = render({ nodes: [node({ id: 'a', mastery: 0.5, evidence_count: 5 })], edges: [] });
-    const r = nodeRadius(0);
+    const r = LEAF_RADIUS; // single leaf node (no children)
     const circ = 2 * Math.PI * r;
     const expected = circ * (1 - 0.5);
     // stroke-dashoffset is rendered on the arc circle.
@@ -89,7 +82,7 @@ describe('KnowledgeGraph SVG render — nodes', () => {
       nodes: [node({ id: 'a', mastery: null, evidence_count: 0 })],
       edges: [],
     });
-    const circ = 2 * Math.PI * nodeRadius(0);
+    const circ = 2 * Math.PI * LEAF_RADIUS;
     expect(html).toContain(`stroke-dashoffset="${circ}"`);
   });
 
@@ -103,30 +96,29 @@ describe('KnowledgeGraph SVG render — nodes', () => {
     expect(html).toMatch(/class="kg-node-pct mono"[^>]*>62</);
   });
 
-  it('disc-内 pct omitted for untrained / insufficient (aligns with MasteryBadge)', () => {
-    // untrained (n=0) and insufficient (n<3) surface NO number in MasteryBadge,
-    // so the disc must render no kg-node-pct text either.
+  it('disc-内 pct ALWAYS shown incl. never-practiced (null → 0) — design paints the digit', () => {
+    // owner「全抄 design」: the prototype always shows the mastery integer. NULL
+    // mastery (never practiced) collapses to 0; low-evidence shows its rounded %.
     const untrained = render({
       nodes: [node({ id: 'a', mastery: null, evidence_count: 0 })],
       edges: [],
     });
-    expect(untrained).not.toContain('kg-node-pct');
-    const insufficient = render({
+    expect(untrained).toMatch(/class="kg-node-pct mono"[^>]*>0</);
+    const lowEvidence = render({
       nodes: [node({ id: 'a', mastery: 0.5, evidence_count: 2 })],
       edges: [],
     });
-    expect(insufficient).not.toContain('kg-node-pct');
+    expect(lowEvidence).toMatch(/class="kg-node-pct mono"[^>]*>50</);
   });
 
-  it('radius follows mistake_count (∝ mistakes)', () => {
-    const mistakes = new Map<string, number>([['a', 3]]);
+  it('radius is hub (24) for a parent, leaf (18) for a childless node (design hub/leaf)', () => {
     const html = render({
-      nodes: [node({ id: 'a', mastery: 0.5, evidence_count: 5 })],
+      nodes: [node({ id: 'p', parent_id: null }), node({ id: 'c', parent_id: 'p' })],
       edges: [],
-      mistakeCounts: mistakes,
     });
-    // nodeRadius(3) = 12 + 12 = 24 → disc r="24".
-    expect(html).toContain('r="24"');
+    // 'p' parents 'c' → hub r=24; 'c' has no children → leaf r=18.
+    expect(html).toContain(`r="${HUB_RADIUS}"`);
+    expect(html).toContain(`r="${LEAF_RADIUS}"`);
   });
 
   it('overdue node gets a coral due halo circle', () => {
@@ -360,5 +352,78 @@ describe('fitViewToNeighborhood (focus camera fit)', () => {
     // centre of bbox = (1000, 500) must map to viewBox centre after scale.
     expect(v.x).toBeCloseTo(500 - v.k * 1000, 5);
     expect(v.y).toBeCloseTo(280 - v.k * 500, 5);
+  });
+});
+
+describe('KnowledgeGraph — progressive disclosure + curved edges (YUK-297)', () => {
+  it('default view discloses only 2 levels — a depth-2 grandchild is hidden', () => {
+    const html = render({
+      nodes: [
+        node({ id: 'root' }),
+        node({ id: 'child', parent_id: 'root' }),
+        node({ id: 'grand', parent_id: 'child' }),
+      ],
+      edges: [],
+    });
+    expect(html).toMatch(/class="kg-node-label">root</);
+    expect(html).toMatch(/class="kg-node-label">child</);
+    // grandchild is collapsed away by default (only root + direct children show).
+    expect(html).not.toMatch(/class="kg-node-label">grand</);
+  });
+
+  it('a node with hidden children shows a "+N" badge and aria-expanded=false', () => {
+    const html = render({
+      nodes: [
+        node({ id: 'root' }),
+        node({ id: 'child', parent_id: 'root' }),
+        node({ id: 'g1', parent_id: 'child' }),
+        node({ id: 'g2', parent_id: 'child' }),
+      ],
+      edges: [],
+    });
+    expect(html).toContain('kg-node-badge');
+    // "child" has 2 hidden grandchildren → expandable "+2" badge.
+    expect(html).toMatch(/kg-node-badge-t mono">\+2</);
+    expect(html).not.toContain('is-capped');
+    expect(html).toContain('aria-expanded="false"');
+  });
+
+  it('a deep node with >40 children is capped — grey badge, count only, not inline-expandable', () => {
+    const grandkids = Array.from({ length: 41 }, (_, i) =>
+      node({ id: `g${i}`, parent_id: 'child' }),
+    );
+    const html = render({
+      nodes: [node({ id: 'root' }), node({ id: 'child', parent_id: 'root' }), ...grandkids],
+      edges: [],
+    });
+    // child is depth 1 with 41 hidden children → capped: muted badge, no "+", and the
+    // node is NOT marked aria-expandable (it opens the drawer instead of expanding).
+    expect(html).toContain('kg-node-badge is-capped');
+    expect(html).toMatch(/kg-node-badge-t mono">41</);
+    expect(html).toContain('过多，在详情中查看');
+  });
+
+  it('a 2nd-level node with exactly 40 children still gets a normal "+N" expand badge', () => {
+    const kids = Array.from({ length: 40 }, (_, i) => node({ id: `k${i}`, parent_id: 'child' }));
+    const html = render({
+      nodes: [node({ id: 'root' }), node({ id: 'child', parent_id: 'root' }), ...kids],
+      edges: [],
+    });
+    expect(html).not.toContain('is-capped');
+    expect(html).toMatch(/kg-node-badge-t mono">\+40</);
+  });
+
+  it('renders edges as quadratic-bezier curves (Q), not straight L lines', () => {
+    const html = render({
+      nodes: [node({ id: 'a' }), node({ id: 'b', parent_id: 'a' })],
+      edges: [],
+    });
+    // the tree edge a→b is a bowed bezier: its path d carries a Q command.
+    expect(html).toMatch(/<path d="M[^"]*Q[^"]*"/);
+  });
+
+  it('positions a node via a CSS transform so re-layout eases (not the SVG attribute)', () => {
+    const html = render({ nodes: [node({ id: 'solo' })], edges: [] });
+    expect(html).toMatch(/style="transform:translate\(/);
   });
 });

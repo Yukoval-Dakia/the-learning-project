@@ -2,20 +2,19 @@
 // from rendering. Used by KnowledgeGraph's SVG layer (the SVG <g> per node reads
 // the {x,y} this returns); it never touches the DOM at module scope.
 //
-// Two branches (see docs/superpowers/plans/2026-06-08-yuk297-visual-refinement.md
-// §2.2 + the layout_decision field):
-//   • small graphs (node count ≤ RADIAL_THRESHOLD) → deterministic radial-by-depth,
-//     the design prototype's exact formula (screen-knowledge.jsx L29-37). Closest
-//     to the Loom mock, snapshot-testable, no cytoscape spin-up.
-//   • larger graphs → cytoscape + fcose run HEADLESS: we build a throwaway cy
-//     instance with { headless: true }, run the fcose layout, read each node's
-//     position into a Map, and destroy the instance. cytoscape contributes ONLY
-//     coordinates here — all rendering is our own SVG. This is the path that was
-//     already battle-tested at ~200-node scale in this codebase.
+// Two branches:
+//   • the normal path → deterministic `tidyTree` (children clustered under parent,
+//     depth rows). Progressive disclosure (YUK-297) keeps the disclosed/visible set
+//     small + sparse, so a tidy tree reads clean and is stable across reloads
+//     (no random seed). No cytoscape spin-up.
+//   • a WIDE disclosed set (one expanded node with many siblings, > FORCE_THRESHOLD)
+//     → cytoscape + fcose run HEADLESS: a throwaway { headless:true } cy instance,
+//     run fcose, read positions, destroy. This spreads a large sibling fan RADIALLY
+//     instead of cramming it into one tidy row. cytoscape contributes ONLY
+//     coordinates; all rendering is our own SVG.
 //
-// The radial branch keeps the design's coordinate system (viewBox 0 0 1000 560),
-// so a 7-9 node graph lands pixel-faithful to the prototype. fcose output is then
-// re-fit into the same logical box by the SVG layer's initial-fit clamp.
+// Both branches emit coords in the design viewBox (0 0 1000 560); the SVG layer +
+// camera fit re-frame from there.
 
 import cytoscape from 'cytoscape';
 import fcose, { type FcoseLayoutOptions } from 'cytoscape-fcose';
@@ -43,14 +42,12 @@ export type LayoutMap = Map<string, Point>;
 export const LAYOUT_WIDTH = 1000;
 export const LAYOUT_HEIGHT = 560;
 
-// Only TRIVIAL graphs (≤ this) use the deterministic radial layout — fcose
-// degenerates on 1-3 nodes (NaN / collinear). Everything else goes through fcose
-// force-directed so the MESH (typed edges + tree skeleton) actually drives node
-// placement and the graph reads as a web, not a depth-stacked row. The earlier
-// radial-by-depth-for-small-graphs choice (YUK-297 v1) ignored mesh edges entirely
-// and collapsed flat-depth data (root + N same-depth leaves) into a single ugly
-// horizontal line — the bug owner caught. Force layout fixes it at any size.
-export const RADIAL_THRESHOLD = 3;
+// tidyTree is the default; above this many VISIBLE nodes computeLayout switches to
+// fcose. Progressive disclosure normally keeps the set well under this, but one
+// expanded node can still have many children — a wide sibling fan that a tidy row
+// would cram. fcose spreads such a fan radially instead. Tuned generous so the
+// common case (a handful of children) always stays on the clean deterministic path.
+export const FORCE_THRESHOLD = 60;
 
 // Register fcose exactly once per module load (idempotent for our usage). Guarded
 // so repeated computeLayout calls don't re-register. cytoscape.use throws if the
@@ -90,33 +87,6 @@ export function computeDepths(nodes: LayoutNode[]): Map<string, number> {
   const out = new Map<string, number>();
   for (const n of nodes) out.set(n.id, depthOf(n.id, new Set()));
   return out;
-}
-
-/**
- * Design prototype's deterministic radial-by-depth layout
- * (screen-knowledge.jsx L29-37). Rows are stacked by depth; within a row, nodes
- * spread evenly across a fixed horizontal band, with odd rows offset for a woven
- * look. Deterministic → snapshot-testable.
- */
-export function radialByDepth(nodes: LayoutNode[]): LayoutMap {
-  const depths = computeDepths(nodes);
-  const byDepth = new Map<number, LayoutNode[]>();
-  for (const n of nodes) {
-    const d = depths.get(n.id) ?? 0;
-    const row = byDepth.get(d) ?? [];
-    row.push(n);
-    byDepth.set(d, row);
-  }
-
-  const pos: LayoutMap = new Map();
-  for (const [d, row] of byDepth) {
-    const y = 90 + d * 115;
-    const span = 760 / Math.max(1, row.length);
-    row.forEach((n, i) => {
-      pos.set(n.id, { x: 130 + i * span + (d % 2) * 60, y });
-    });
-  }
-  return pos;
 }
 
 /**
@@ -217,11 +187,83 @@ export function fcoseHeadless(nodes: LayoutNode[], edges: LayoutEdge[]): LayoutM
 }
 
 /**
- * Entry point. Branches on node count: small → deterministic radial-by-depth,
- * large → fcose headless. Always returns a finite {x,y} for every node id.
+ * Deterministic tidy tree (Reingold–Tilford style): children are clustered UNDER
+ * their parent, each depth is a row, leaves are spaced evenly left-to-right and a
+ * parent sits centred over its children. This is THE layout for the progressive-
+ * disclosure view (YUK-297) — only the disclosed/visible nodes are ever passed in,
+ * so the set is always small and sparse, and a tidy tree reads far cleaner than a
+ * full-width depth band (the "7-siblings-cramped-in-a-row" problem owner caught).
+ *
+ * Raw slot/depth coords are normalised into the logical viewBox (LAYOUT_WIDTH ×
+ * LAYOUT_HEIGHT) with padding so any disclosed set fills the canvas. Multiple roots
+ * (e.g. several domains, or a focus subtree whose parent is hidden) lay out left to
+ * right sharing one slot cursor. Pure tree layout — mesh edges don't affect node
+ * placement (they render as curves over these positions).
+ */
+export function tidyTree(nodes: LayoutNode[]): LayoutMap {
+  if (nodes.length === 0) return new Map();
+  const ids = new Set(nodes.map((n) => n.id));
+  const childrenOf = new Map<string, string[]>();
+  for (const n of nodes) {
+    if (n.parent_id != null && ids.has(n.parent_id)) {
+      const arr = childrenOf.get(n.parent_id) ?? [];
+      arr.push(n.id);
+      childrenOf.set(n.parent_id, arr);
+    }
+  }
+  const depths = computeDepths(nodes);
+  // roots within this set = nodes whose parent isn't present.
+  const roots = nodes.filter((n) => n.parent_id == null || !ids.has(n.parent_id)).map((n) => n.id);
+  const slot = new Map<string, number>();
+  let cursor = 0;
+  const assign = (id: string, seen: Set<string>): number => {
+    if (seen.has(id)) return cursor++; // cycle guard
+    seen.add(id);
+    const ch = childrenOf.get(id) ?? [];
+    if (ch.length === 0) {
+      const x = cursor++;
+      slot.set(id, x);
+      return x;
+    }
+    const xs = ch.map((c) => assign(c, seen));
+    const x = (xs[0] + xs[xs.length - 1]) / 2;
+    slot.set(id, x);
+    return x;
+  };
+  for (const r of roots) assign(r, new Set());
+  // any node missed (orphaned by a cycle) gets a trailing slot.
+  for (const n of nodes) if (!slot.has(n.id)) slot.set(n.id, cursor++);
+
+  let maxDepth = 0;
+  for (const n of nodes) maxDepth = Math.max(maxDepth, depths.get(n.id) ?? 0);
+  const slots = [...slot.values()];
+  const minX = Math.min(...slots);
+  const maxX = Math.max(...slots);
+  const spanX = maxX - minX || 1;
+  const PAD_X = 120;
+  const PAD_Y = 90;
+  const rowGap = maxDepth > 0 ? (LAYOUT_HEIGHT - 2 * PAD_Y) / maxDepth : 0;
+  const colScale = (LAYOUT_WIDTH - 2 * PAD_X) / spanX;
+
+  const pos: LayoutMap = new Map();
+  for (const n of nodes) {
+    const sx = slot.get(n.id) ?? 0;
+    const d = depths.get(n.id) ?? 0;
+    const x = maxX === minX ? LAYOUT_WIDTH / 2 : PAD_X + (sx - minX) * colScale;
+    const y = maxDepth === 0 ? LAYOUT_HEIGHT / 2 : PAD_Y + d * rowGap;
+    pos.set(n.id, { x, y });
+  }
+  return pos;
+}
+
+/**
+ * Entry point. Disclosed/visible sets are small (progressive disclosure), so the
+ * deterministic tidy tree is the default; fcose headless is a never-normally-hit
+ * safety valve for a pathologically large set (e.g. disclosure disabled). Always
+ * returns a finite {x,y} for every node id.
  */
 export function computeLayout(nodes: LayoutNode[], edges: LayoutEdge[]): LayoutMap {
   if (nodes.length === 0) return new Map();
-  if (nodes.length <= RADIAL_THRESHOLD) return radialByDepth(nodes);
-  return fcoseHeadless(nodes, edges);
+  if (nodes.length > FORCE_THRESHOLD) return fcoseHeadless(nodes, edges);
+  return tidyTree(nodes);
 }
