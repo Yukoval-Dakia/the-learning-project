@@ -4,15 +4,15 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  FORCE_THRESHOLD,
   LAYOUT_HEIGHT,
   LAYOUT_WIDTH,
   type LayoutEdge,
   type LayoutNode,
-  RADIAL_THRESHOLD,
   computeDepths,
   computeLayout,
   fcoseHeadless,
-  radialByDepth,
+  tidyTree,
 } from './layout';
 
 function n(id: string, parent_id: string | null = null): LayoutNode {
@@ -64,35 +64,46 @@ describe('computeDepths', () => {
   });
 });
 
-describe('radialByDepth (design prototype formula)', () => {
-  it('matches the design x/y formula for the first node of each depth row', () => {
-    // depth 0 row, single node → y = 90, x = 130 + 0 + (0%2)*60 = 130.
-    const pos = radialByDepth([n('root')]);
-    expect(pos.get('root')).toEqual({ x: 130, y: 90 });
+describe('tidyTree (deterministic — children clustered under parent, depth rows)', () => {
+  it('a single node centres in the logical box', () => {
+    expect(tidyTree([n('a')]).get('a')).toEqual({ x: LAYOUT_WIDTH / 2, y: LAYOUT_HEIGHT / 2 });
   });
 
-  it('stacks rows by depth (y = 90 + depth*115) and offsets odd rows', () => {
-    const pos = radialByDepth([n('a'), n('b', 'a'), n('c', 'b')]);
-    // depth 0 → y 90, x 130
-    expect(pos.get('a')).toEqual({ x: 130, y: 90 });
-    // depth 1 (odd) → y 205, x 130 + 0 + 60 = 190
-    expect(pos.get('b')).toEqual({ x: 190, y: 205 });
-    // depth 2 (even) → y 320, x 130
-    expect(pos.get('c')).toEqual({ x: 130, y: 320 });
+  it('stacks depth as rows (deeper = larger y) and centres a parent over its children', () => {
+    const pos = tidyTree([n('r'), n('a', 'r'), n('b', 'r')]);
+    const r = pos.get('r');
+    const a = pos.get('a');
+    const b = pos.get('b');
+    if (!r || !a || !b) throw new Error('missing position');
+    expect(a.y).toBeGreaterThan(r.y); // children sit in a deeper row than the parent
+    expect(b.y).toBeCloseTo(a.y, 5); // same depth → same row
+    expect(r.x).toBeCloseTo((a.x + b.x) / 2, 5); // parent centred over its children
+    expect(a.x).toBeLessThan(b.x); // leaves keep left-to-right slot order
   });
 
-  it('spreads same-depth nodes evenly across the 760px band', () => {
-    // two roots at depth 0 → span = 760/2 = 380. i=0 → 130, i=1 → 510.
-    const pos = radialByDepth([n('a'), n('b')]);
-    expect(pos.get('a')).toEqual({ x: 130, y: 90 });
-    expect(pos.get('b')).toEqual({ x: 510, y: 90 });
-  });
-
-  it('returns a finite point for every node, no NaN', () => {
-    const nodes = [n('a'), n('b', 'a'), n('c', 'a'), n('d', 'b')];
-    const pos = radialByDepth(nodes);
+  it('every coordinate is finite and inside the padded viewBox', () => {
+    const nodes = [n('r'), n('a', 'r'), n('b', 'r'), n('c', 'a'), n('d', 'a')];
+    const pos = tidyTree(nodes);
     expect(pos.size).toBe(nodes.length);
-    for (const p of pos.values()) {
+    for (const [, p] of pos) {
+      expect(Number.isFinite(p.x)).toBe(true);
+      expect(Number.isFinite(p.y)).toBe(true);
+      expect(p.x).toBeGreaterThanOrEqual(0);
+      expect(p.x).toBeLessThanOrEqual(LAYOUT_WIDTH);
+      expect(p.y).toBeGreaterThanOrEqual(0);
+      expect(p.y).toBeLessThanOrEqual(LAYOUT_HEIGHT);
+    }
+  });
+
+  it('is deterministic — identical input yields identical output', () => {
+    const nodes = [n('r'), n('a', 'r'), n('b', 'r'), n('c', 'b')];
+    expect([...tidyTree(nodes).entries()]).toEqual([...tidyTree(nodes).entries()]);
+  });
+
+  it('terminates on a parent cycle without infinite recursion', () => {
+    const pos = tidyTree([n('a', 'b'), n('b', 'a')]);
+    expect(pos.size).toBe(2);
+    for (const [, p] of pos) {
       expect(Number.isFinite(p.x)).toBe(true);
       expect(Number.isFinite(p.y)).toBe(true);
     }
@@ -166,23 +177,22 @@ describe('computeLayout (branch selection)', () => {
     expect(computeLayout([], []).size).toBe(0);
   });
 
-  it('uses the deterministic radial layout at/under the threshold', () => {
-    const nodes = Array.from({ length: RADIAL_THRESHOLD }, (_, i) =>
+  it('uses the deterministic tidy tree at/under the threshold', () => {
+    const nodes = Array.from({ length: FORCE_THRESHOLD }, (_, i) =>
       n(`k${i}`, i === 0 ? null : 'k0'),
     );
     const viaCompute = computeLayout(nodes, []);
-    const viaRadial = radialByDepth(nodes);
-    // Identical → confirms the radial branch was taken (fcose is randomized).
-    expect([...viaCompute.entries()]).toEqual([...viaRadial.entries()]);
+    const viaTidy = tidyTree(nodes);
+    // Identical → confirms the tidy-tree branch was taken (fcose is randomized).
+    expect([...viaCompute.entries()]).toEqual([...viaTidy.entries()]);
   });
 
   it('switches to fcose above the threshold (in-box, spread, all nodes)', () => {
     // A BRANCHING tree (2 children per node), not a path. A pure chain has no
     // 2-D structure, so a force solver may legitimately lay it out near-straight;
-    // a branching tree (what real knowledge graphs are, and what the row bug was
-    // about) forces a genuine web. count chosen above RADIAL_THRESHOLD so the
-    // fcose branch is exercised.
-    const count = RADIAL_THRESHOLD + 7;
+    // a branching tree (what real knowledge graphs are) forces a genuine web. Count
+    // chosen above FORCE_THRESHOLD so the wide-set fcose branch is exercised.
+    const count = FORCE_THRESHOLD + 7;
     const nodes = Array.from({ length: count }, (_, i) =>
       n(`k${i}`, i === 0 ? null : `k${Math.floor((i - 1) / 2)}`),
     );

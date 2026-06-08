@@ -3697,11 +3697,18 @@ ol {
 .kg-node {
   cursor: pointer;
   outline: none;
+  /* mount: newly-revealed children fade in (staggered via inline animationDelay).
+     drill-down re-layout: position is an inline CSS transform, so existing nodes
+     EASE to their new spot here instead of jumping; opacity eases the focus fade. */
   animation: kg-node-fade 0.4s var(--ease-out) both;
+  transition: transform 420ms var(--ease-out), opacity 260ms var(--ease-out);
 }
 @keyframes kg-node-fade {
   from {
     opacity: 0;
+    /* a gentle pop so revealed children read as "emerging" (scale is on the inner
+       disc layer below — the node <g> itself only animates opacity, so it never
+       fights the inline translate transform that positions it). */
   }
   to {
     opacity: 1;
@@ -3716,7 +3723,7 @@ ol {
   stroke: var(--line-strong);
   stroke-width: 1.5;
   transition: transform var(--dur-fast) var(--ease-out);
-  /* fill comes from the band-* class below (mastery diagnostic) */
+  /* fill + stroke come from the tone-* class below (design 3-tone) */
   fill: var(--ink-5);
 }
 .kg-node:hover .kg-node-disc {
@@ -3726,24 +3733,18 @@ ol {
   stroke: var(--coral);
   stroke-width: 3;
 }
-/* ── Mastery-band diagnostic fills (production bands, NOT the design 3-tone) ─── */
-.kg-node.band-weak .kg-node-disc {
-  fill: var(--hard);
+/* ── design 3-tone disc fills (screens-2b.css .mesh-disc.tone-*) ─────────────── */
+.kg-node.tone-good .kg-node-disc {
+  fill: var(--good-soft);
+  stroke: var(--good-line);
 }
-.kg-node.band-learning .kg-node-disc {
-  fill: var(--info);
+.kg-node.tone-hard .kg-node-disc {
+  fill: var(--hard-soft);
+  stroke: var(--hard-line);
 }
-.kg-node.band-mastered .kg-node-disc {
-  fill: var(--good);
-}
-.kg-node.band-untrained .kg-node-disc {
-  fill: var(--ink-5);
-}
-/* low-evidence (1-2): faint --ink-5 at reduced opacity — "unproven, some
-   evidence", distinct from solid untrained + every confident band. */
-.kg-node.band-insufficient .kg-node-disc {
-  fill: var(--ink-5);
-  fill-opacity: 0.4;
+.kg-node.tone-again .kg-node-disc {
+  fill: var(--again-soft);
+  stroke: var(--again-line);
 }
 /* selected / focus-root: coral ring (own border layer, co-exists with band fill). */
 .kg-node.is-selected .kg-node-disc,
@@ -3777,12 +3778,11 @@ ol {
   /* animated mastery arc growth */
   transition: stroke-dashoffset 1s var(--ease-out);
 }
-/* disc-内 掌握度整数 — mirrors design .mesh-node-pct (12px / 700). design fills
-   --ink on its lighter tone discs; production band fills (--hard/--info/--good)
-   are saturated, so the digit is white (--paper) for contrast on all three.
-   Only weak/learning/mastered bands render it (see KnowledgeGraph pctLabel). */
+/* disc-内 掌握度整数 — mirrors design .mesh-node-pct (12px / 700, fill --ink). The
+   disc now uses the design soft tone fills (light), so the digit is dark --ink for
+   contrast, exactly like the prototype. Always rendered (see pctLabel). */
 .kg-node-pct {
-  fill: var(--paper);
+  fill: var(--ink);
   font-size: 12px;
   font-weight: 700;
   pointer-events: none;
@@ -3790,11 +3790,36 @@ ol {
 .kg-node-label {
   fill: var(--ink-2);
   font-size: 13px;
+  /* MiSans sans-serif — owner 2026-06-08 wants the knowledge labels in MiSans (NOT
+     the design's wenyan serif). MiSans first, then the project sans stack as
+     fallback (MiSans is not yet bundled as a webfont — see note in the tree
+     .know-title rule). Matches .know-title so both knowledge views read the same. */
+  font-family: "MiSans", var(--font-sans);
   /* white halo so labels read over edges/discs */
   paint-order: stroke;
   stroke: var(--paper);
   stroke-width: 4px;
   stroke-linejoin: round;
+}
+/* "+N" collapse badge — affordance that a node has hidden children to drill into.
+   pointer-events off so a tap falls through to the node <g> (which toggles expand). */
+.kg-node-badge {
+  pointer-events: none;
+}
+.kg-node-badge-bg {
+  fill: var(--coral);
+  stroke: var(--paper);
+  stroke-width: 1.5;
+}
+/* capped: a deep node with > 40 children — muted grey, NOT a coral drill target
+   (it opens in the drawer instead of expanding inline). */
+.kg-node-badge.is-capped .kg-node-badge-bg {
+  fill: var(--ink-4);
+}
+.kg-node-badge-t {
+  fill: #fff;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 /* ── Mesh / tree / proposed edges ──────────────────────────────────────────── */
@@ -7563,12 +7588,22 @@ button.seg-sm {
    .badge(+tones), .quiet-empty, and the Stateful / EmptyState /
    SkLines layers (.empty* / .sk*).
 
-   SKIPPED: .mastery-ring / .mastery-ring-t (loom prototype's SVG
-   ring). The page uses the slice-1/2 Ring primitive for mastery, so
-   no second ring style is introduced; .know-node's own gap handles
-   the spacing the screens-2b.css L65-66 .know-node .mastery-ring
-   tweak would have provided.
+   PORTED 2026-06-08: .mastery-ring / .mastery-ring-t (loom screens-2b.css
+   L16-17, L66). The tree row now uses the design MasteryRing primitive
+   (src/ui/primitives/MasteryRing) so its mastery dial matches the graph
+   node's disc/arc + 3-tone, replacing the old transform-scaled 84px Ring.
    ============================================================ */
+.mastery-ring {
+  flex: none;
+}
+.mastery-ring-t {
+  font-size: 11px;
+  fill: var(--ink-2);
+  font-weight: 600;
+}
+.know-node .mastery-ring {
+  margin-right: 2px;
+}
 
 /* ---- page-head chrome (loom.css §App shell L167-172) ----
    Scoped under .knowledge-loom to avoid colliding with the legacy
@@ -7660,7 +7695,11 @@ button.seg-sm {
   font-family: var(--font-mono);
 }
 .knowledge-loom .know-title {
-  font-family: var(--font-wenyan);
+  /* MiSans sans-serif (owner 2026-06-08 「用 misans」, NOT the design wenyan serif).
+     MiSans first then the sans stack; note MiSans is not yet bundled as a webfont, so
+     it only renders where installed — falls back to Noto Sans SC / PingFang SC
+     otherwise (still sans-serif). Bundle a MiSans woff2 to guarantee it in prod. */
+  font-family: "MiSans", var(--font-sans);
   font-weight: 500;
 }
 .knowledge-loom .know-end {
