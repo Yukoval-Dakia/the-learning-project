@@ -1,27 +1,16 @@
 'use client';
 
+import { type LayoutMap, type Point, computeLayout } from '@/ui/knowledge-graph/layout';
 import { Icon } from '@/ui/primitives/Icon';
-import cytoscape, { type Core, type ElementDefinition, type StylesheetJson } from 'cytoscape';
-import fcose, { type FcoseLayoutOptions } from 'cytoscape-fcose';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-
-// Register the fcose force-directed layout exactly once per module load. This
-// runs at import time, but the module is only imported on the client (the page
-// pulls KnowledgeGraph in via next/dynamic ssr:false), so it never executes
-// during SSR/prerender. cytoscape.use() is idempotent-safe for our usage.
-let fcoseRegistered = false;
-function ensureFcose() {
-  if (!fcoseRegistered) {
-    cytoscape.use(fcose);
-    fcoseRegistered = true;
-  }
-}
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 
 // Relation-type visual contract — see docs/design/loom-design-v2.1/README.md
 // "Mesh 视觉决策" table and docs/design/2026-05-15-design-brief-v2.1.md §2.3.b.
-// `tone` keys map to design-token CSS variable *names* (resolved to concrete
-// hexes at mount via getComputedStyle, because cytoscape needs literal colors,
-// not var()). `arrow` toggles a target-arrow; `dashed` toggles line-style.
+// `token` keys are design-token CSS variable *names*. With the SVG rewrite these
+// are referenced directly as `var(--x)` on the stroke (cytoscape needed literal
+// hexes; SVG does not), so dark mode follows the theme for free — no token
+// re-read / MutationObserver. `arrow` toggles a target-arrow; `dashed` toggles a
+// dashed line-style.
 type RelationVisual = { token: string; arrow: boolean; dashed: boolean };
 
 export const RELATION_VISUAL: Record<string, RelationVisual> = {
@@ -34,12 +23,9 @@ export const RELATION_VISUAL: Record<string, RelationVisual> = {
 
 // Chinese relation labels (mirror app/(app)/knowledge/page.tsx RELATION_TYPES)
 // for the Slice 3 inline proposal action so the on-graph popover reads the
-// proposed relation in the same words as the drawer's EdgeProposalCard. Note the
-// label is keyed off the cytoscape element's `relation` data, which is the
-// visualKey — buildProposedEdgeElements collapses unknown / experimental types
-// to the related_to visual, so they surface here as the related_to label ("相关"),
-// NOT the raw experimental:* relation_type. (The fallback below only kicks in for
-// a known-but-unlabeled visual key.)
+// proposed relation in the same words as the drawer's EdgeProposalCard. The
+// label is keyed off the visualKey — unknown / experimental types collapse to
+// the related_to visual, so they surface here as "相关".
 export const RELATION_LABEL: Record<string, string> = {
   prerequisite: '前置',
   related_to: '相关',
@@ -47,6 +33,25 @@ export const RELATION_LABEL: Record<string, string> = {
   applied_in: '应用于',
   derived_from: '派生自',
 };
+
+// Non-color glyph cue per relation (design screen-knowledge.jsx REL_CUE). Fused
+// with RELATION_VISUAL (color / dash / arrow) + RELATION_LABEL (zh) so the mesh
+// edges + legend read the relation KIND by shape AND glyph, not color alone. We
+// keep the PRODUCTION color/dash/arrow (RELATION_VISUAL) and only borrow the
+// glyph — the design mock's tones (good/hard amber etc.) are intentionally NOT
+// used (issue YUK-297 §⑤ token correction).
+const RELATION_GLYPH: Record<string, string> = {
+  prerequisite: '→',
+  applied_in: '↦',
+  derived_from: '↳',
+  contrasts_with: '⇆',
+  related_to: '—',
+};
+
+/** Resolve an arbitrary relation_type to its visual key (unknown → related_to). */
+export function relationVisualKey(relationType: string): string {
+  return RELATION_VISUAL[relationType] ? relationType : 'related_to';
+}
 
 // ── Mastery bands (Slice 1b 诊断 overlay) ────────────────────────────────────
 // Bands mirror src/ui/primitives/MasteryBadge.tsx EXACTLY, evidence_count first:
@@ -112,54 +117,9 @@ export function isWeakish(
   return band === 'weak' || band === 'untrained' || band === 'insufficient';
 }
 
-// Tokens the cytoscape stylesheet needs as concrete values. Read once per
-// (re)mount + on theme change, so dark mode resolves correctly.
-export const TOKEN_NAMES = [
-  '--coral',
-  '--coral-soft',
-  '--info',
-  '--ink-2',
-  '--ink-4',
-  '--ink-5',
-  '--contrasts',
-  '--line-strong',
-  '--paper-raised',
-  '--font-sans',
-  // mastery-band fills
-  '--hard',
-  '--good',
-  // prerequisite-weakness ring
-  '--again',
-] as const;
-
-// ── Due indicator encoding choice (Slice 2; YUK-142) ─────────────────────────
-// Three signals can land on one node: (1) mastery band = node FILL color, (2)
-// shaky-prerequisite = a deep `--again` DOUBLE BORDER ring, (3) overdue review =
-// THIS coral UNDERLAY halo. We deliberately pick cytoscape's `underlay` (an
-// ellipse drawn BEHIND the node, bleeding past its edge via underlay-padding)
-// rather than another border or a fill tint, because:
-//   • border slot is already taken by select / focus-root / shaky-prereq rings;
-//   • background-color is already the mastery-band fill;
-//   • an underlay coral glow sits in its own visual layer, so a weak-band amber
-//     node with a shaky-prereq `--again` ring can ALSO show the coral due halo
-//     without any of the three encodings overwriting another.
-// Coral = the project's "needs action now" accent (matches the "看我哪里弱"
-// diagnose chip + node:selected ring hue), so "今天该复习" reads as urgent but
-// is distinguishable from the alarm-red `--again` prereq ring by layer (halo vs
-// border), style (soft glow vs hard double stroke), and saturation.
-
-export type TokenMap = Record<(typeof TOKEN_NAMES)[number], string>;
-
-function readTokens(): TokenMap {
-  const cs = getComputedStyle(document.documentElement);
-  const out = {} as TokenMap;
-  for (const name of TOKEN_NAMES) {
-    out[name] = cs.getPropertyValue(name).trim();
-  }
-  return out;
-}
-
-// PRESERVE the prior node radius rule: 12 + min(20, mistakeCount*4).
+// PRESERVE the prior node radius rule: 12 + min(20, mistakeCount*4). The radius
+// is the graph's mistake-count diagnostic encoding (design-brief v2.1 §半径∝
+// mistake_count) — kept over the design mock's fixed hub/leaf radii.
 export function nodeRadius(mistakeCount: number): number {
   return 12 + Math.min(20, mistakeCount * 4);
 }
@@ -226,11 +186,10 @@ export interface KnowledgeGraphProps {
   dueCounts?: Map<string, NodeDueSummary>;
   /**
    * Pending AI edge proposals (Slice 3 — "AI 画布"). Rendered as distinct dotted
-   * `kind: 'proposed'` edges between their endpoints when BOTH endpoints are
-   * visible under the current filter/focus. Tapping one surfaces an inline
-   * accept / dismiss that calls onProposalDecision (the SAME decision endpoint
-   * the drawer's EdgeProposalCard uses). Must be a stable/memoized ref from the
-   * page (see activeEdges memo) so it doesn't churn the cytoscape rebuild effect.
+   * proposed edges between their endpoints when BOTH endpoints are visible under
+   * the current filter/focus. Tapping one surfaces an inline accept / dismiss
+   * that calls onProposalDecision (the SAME decision endpoint the drawer's
+   * EdgeProposalCard uses). Should be a stable/memoized ref from the page.
    */
   proposals?: KnowledgeEdgeProposal[];
   /**
@@ -240,332 +199,6 @@ export interface KnowledgeGraphProps {
    * wires for the drawer, so the round-trip + query invalidation is shared.
    */
   onProposalDecision?: (proposalId: string, decision: 'accept' | 'dismiss') => void;
-}
-
-// fcose layout options carry extension-specific keys not present in
-// cytoscape's BaseLayoutOptions; typed via the fcose module declaration.
-const FCOSE_LAYOUT: FcoseLayoutOptions = {
-  name: 'fcose',
-  quality: 'default',
-  randomize: true,
-  animate: false,
-  fit: true,
-  padding: 40,
-  nodeSeparation: 80,
-};
-
-export function buildElements(
-  nodes: KnowledgeGraphNode[],
-  edges: KnowledgeGraphEdge[],
-  mistakeCounts: Map<string, number>,
-  dueCounts: Map<string, NodeDueSummary>,
-): ElementDefinition[] {
-  const nodeIds = new Set(nodes.map((n) => n.id));
-  const elements: ElementDefinition[] = [];
-
-  for (const node of nodes) {
-    const r = nodeRadius(mistakeCounts.get(node.id) ?? 0);
-    const band = masteryBand(node.mastery, node.evidence_count);
-    const due = dueCounts.get(node.id);
-    const overdue = due?.overdue ?? 0;
-    elements.push({
-      group: 'nodes',
-      // `band` drives the diagnostic fill via a stylesheet data-selector.
-      // `mistakes` lets the "看我哪里弱" filter rank high-mistake nodes too.
-      // `overdue` drives the coral due-halo (overdue > 0) via the `.kg-due`
-      // class (added below) — kept as data too so the "今天该复习" filter reads
-      // it without re-deriving from the map.
-      data: {
-        id: node.id,
-        label: node.name,
-        diameter: r * 2,
-        band,
-        mistakes: mistakeCounts.get(node.id) ?? 0,
-        overdue,
-        due_soon: due?.due_soon ?? 0,
-      },
-      ...(overdue > 0 ? { classes: 'kg-due' } : {}),
-    });
-  }
-
-  // Tree edges (parent_id) — the receded skeleton底色. Rendered with low
-  // z-index so mesh edges paint on top ("mesh 是主角，tree 是底色").
-  for (const node of nodes) {
-    if (node.parent_id && nodeIds.has(node.parent_id)) {
-      elements.push({
-        group: 'edges',
-        data: {
-          id: `tree-${node.id}`,
-          source: node.parent_id,
-          target: node.id,
-          kind: 'tree',
-        },
-      });
-    }
-  }
-
-  // Mesh edges, keyed by relation_type. Unknown / experimental relation types
-  // fall back to the neutral related_to visual (matches the prior edgeColor
-  // default of --ink-4) but stay above tree edges.
-  for (const edge of edges) {
-    if (!nodeIds.has(edge.from_knowledge_id) || !nodeIds.has(edge.to_knowledge_id)) continue;
-    const visualKey = RELATION_VISUAL[edge.relation_type] ? edge.relation_type : 'related_to';
-    elements.push({
-      group: 'edges',
-      data: {
-        id: edge.id,
-        source: edge.from_knowledge_id,
-        target: edge.to_knowledge_id,
-        kind: 'mesh',
-        relation: visualKey,
-        // PRESERVE prior stroke width: 1 + weight * 1.5.
-        width: 1 + edge.weight * 1.5,
-      },
-    });
-  }
-
-  return elements;
-}
-
-// Slice 3 ("AI 画布") — map pending edge proposals to distinct `kind: 'proposed'`
-// cytoscape edges. A proposal only renders when BOTH endpoints are visible under
-// the current filter/focus (visibleNodeIds), mirroring the mesh-edge dangling
-// guard; otherwise it would float to a node that isn't on screen. Element ids are
-// prefixed `proposed-<key>` so they never collide with real edge ids (which are
-// the raw knowledge_edge id) or tree ids (`tree-<node>`). `relation` carries the
-// proposed relation_type so the stylesheet can tint the dotted line with that
-// relation's color; unknown/experimental types fall back to related_to like mesh.
-// `proposalId` rides on the element so the tap handler can call the decision
-// endpoint without re-deriving it. z-index sits at/just above the mesh layer so
-// the proposal reads as "a connection being suggested over the mesh" but its
-// dotted + reduced-opacity + AI-marked styling keeps it from being mistaken for a
-// committed mesh edge.
-export function buildProposedEdgeElements(
-  proposals: KnowledgeEdgeProposal[],
-  visibleNodeIds: Set<string>,
-): ElementDefinition[] {
-  const elements: ElementDefinition[] = [];
-  for (const p of proposals) {
-    if (!visibleNodeIds.has(p.from_knowledge_id) || !visibleNodeIds.has(p.to_knowledge_id)) {
-      continue;
-    }
-    const visualKey = RELATION_VISUAL[p.relation_type] ? p.relation_type : 'related_to';
-    elements.push({
-      group: 'edges',
-      data: {
-        id: `proposed-${p.key}`,
-        source: p.from_knowledge_id,
-        target: p.to_knowledge_id,
-        kind: 'proposed',
-        relation: visualKey,
-        proposalId: p.id,
-      },
-      classes: 'kg-proposed',
-    });
-  }
-  return elements;
-}
-
-export function buildStylesheet(t: TokenMap): StylesheetJson {
-  const sheet: StylesheetJson = [
-    {
-      // Base node — fill now comes from the mastery band (see band selectors
-      // below), so the default fill is the neutral untrained color.
-      selector: 'node',
-      style: {
-        'background-color': t['--ink-5'],
-        'border-color': t['--line-strong'],
-        'border-width': 1,
-        width: 'data(diameter)',
-        height: 'data(diameter)',
-        label: 'data(label)',
-        color: t['--ink-2'],
-        'font-family': t['--font-sans'] || 'sans-serif',
-        'font-size': 12,
-        'text-valign': 'bottom',
-        'text-halign': 'center',
-        'text-margin-y': 4,
-        'z-index': 10,
-      },
-    },
-    // ── Mastery-band diagnostic fills ──────────────────────────────────────
-    {
-      selector: 'node[band = "weak"]',
-      style: { 'background-color': t['--hard'] },
-    },
-    {
-      selector: 'node[band = "learning"]',
-      style: { 'background-color': t['--info'] },
-    },
-    {
-      selector: 'node[band = "mastered"]',
-      style: { 'background-color': t['--good'] },
-    },
-    {
-      selector: 'node[band = "untrained"]',
-      style: { 'background-color': t['--ink-5'] },
-    },
-    {
-      // Low-evidence (1-2 pieces): faint --ink-5 like untrained, but at reduced
-      // background-opacity so it reads as "unproven, some evidence" — distinct
-      // from the solid untrained fill AND from every confident band. Mirrors
-      // MasteryBadge's separate "证据不足" state instead of painting these as a
-      // confident "学习中".
-      selector: 'node[band = "insufficient"]',
-      style: { 'background-color': t['--ink-5'], 'background-opacity': 0.4 },
-    },
-    {
-      selector: 'node:selected',
-      style: {
-        'border-color': t['--coral'],
-        'border-width': 3,
-        'z-index': 30,
-      },
-    },
-    // ── Focus mode ─────────────────────────────────────────────────────────
-    // `.kg-faded` fades everything outside the focused node's neighborhood;
-    // `.kg-focus-root` highlights the focused node itself.
-    {
-      selector: '.kg-faded',
-      style: { opacity: 0.12 },
-    },
-    {
-      selector: 'node.kg-focus-root',
-      style: {
-        'border-color': t['--coral'],
-        'border-width': 3,
-        'z-index': 40,
-      },
-    },
-    // ── Prerequisite-weakness ring ─────────────────────────────────────────
-    // A shaky prerequisite (a prerequisite-edge SOURCE whose mastery is
-    // null/<0.4) of the focused node gets a deep --again alarm ring. Reserved
-    // token so it never collides with the weak-band amber fill.
-    {
-      selector: 'node.kg-shaky-prereq',
-      style: {
-        'border-color': t['--again'],
-        'border-width': 4,
-        'border-style': 'double',
-        'z-index': 35,
-      },
-    },
-    // ── Review-due halo (Slice 2) ──────────────────────────────────────────
-    // Nodes with overdue review items (overdue > 0) get a coral UNDERLAY halo
-    // that bleeds past the node edge. underlay-opacity is set directly (not via
-    // :active) so the halo is always-on. Distinct LAYER from the mastery fill
-    // (background-color) and the shaky-prereq border ring, so all three signals
-    // can co-exist on one node without overwriting each other.
-    {
-      selector: 'node.kg-due',
-      style: {
-        'underlay-color': t['--coral'],
-        'underlay-opacity': 0.28,
-        'underlay-padding': 7,
-        'underlay-shape': 'ellipse',
-      },
-    },
-    // When a due node is also filtered/faded, fade its halo with it.
-    {
-      selector: 'node.kg-due.kg-faded',
-      style: { 'underlay-opacity': 0.05 },
-    },
-    // Tree edges: --ink-5, dashed [3 5], NO arrow, visually receded (low
-    // opacity), lowest z-index so mesh always paints over them. z-index-compare
-    // 'manual' makes cytoscape honor edge-vs-edge z-index ordering (the default
-    // 'auto' would ignore it) — this is the "mesh 是主角，tree 是底色" invariant.
-    {
-      selector: 'edge[kind = "tree"]',
-      style: {
-        width: 1,
-        'line-color': t['--ink-5'],
-        'line-style': 'dashed',
-        'line-dash-pattern': [3, 5],
-        'curve-style': 'bezier',
-        opacity: 0.45,
-        'z-index-compare': 'manual',
-        'z-index': 1,
-      },
-    },
-    // Mesh edges: shared base — above tree edges, native bezier curve, the
-    // weight-driven width carried in data.
-    {
-      selector: 'edge[kind = "mesh"]',
-      style: {
-        width: 'data(width)',
-        'curve-style': 'bezier',
-        opacity: 0.72,
-        'z-index-compare': 'manual',
-        'z-index': 5,
-      },
-    },
-    // ── Proposed (AI-suggested) edges (Slice 3 — "AI 画布") ──────────────────
-    // An AI edge proposal surfaced ON the graph. It must read as "AI suggests
-    // this connection", NOT as a committed mesh edge, so it differs from mesh on
-    // THREE axes: (1) always DOTTED (line-style dotted, distinct from tree's
-    // dashed and from solid mesh), (2) reduced opacity (0.5 — fainter than
-    // mesh's 0.72, "tentative"), (3) an --info AI-tone target-arrow source/target
-    // marker. The per-relation block below tints the dotted line with the
-    // proposed relation's own color so the user still reads what KIND of relation
-    // is being proposed. z-index 6 sits just above mesh so a proposal between two
-    // already-meshed nodes is still visible, but the dotted/faint styling keeps
-    // mesh-over-tree legibility intact (proposed edges are visually subordinate
-    // to solid mesh despite the +1 z so they never look "more real").
-    {
-      selector: 'edge[kind = "proposed"]',
-      style: {
-        width: 2,
-        'curve-style': 'bezier',
-        'line-style': 'dotted',
-        opacity: 0.5,
-        // --info is the project's AI-attributed tone (matches the "AI · 关系"
-        // mini-badge + EdgeProposalCard tone-info). Source-arrow dot marks the
-        // edge as a suggestion emanating from the AI, not a directed mesh edge.
-        'source-arrow-shape': 'diamond',
-        'source-arrow-color': t['--info'],
-        'target-arrow-shape': 'triangle',
-        'z-index-compare': 'manual',
-        'z-index': 6,
-      },
-    },
-    // Hovered/active proposed edge: lift opacity so the inline-action affordance
-    // reads as interactive (the tap handler surfaces accept/dismiss).
-    {
-      selector: 'edge[kind = "proposed"]:active',
-      style: { opacity: 0.85, width: 3 },
-    },
-  ];
-
-  // Per-relation color / line-style / arrow, resolved from tokens.
-  for (const [relation, visual] of Object.entries(RELATION_VISUAL)) {
-    const color = t[visual.token as (typeof TOKEN_NAMES)[number]];
-    sheet.push({
-      selector: `edge[kind = "mesh"][relation = "${relation}"]`,
-      style: {
-        'line-color': color,
-        'line-style': visual.dashed ? 'dashed' : 'solid',
-        ...(visual.arrow
-          ? { 'target-arrow-shape': 'triangle', 'target-arrow-color': color }
-          : { 'target-arrow-shape': 'none' }),
-      },
-    });
-    // Proposed-edge per-relation tint: same relation color so the user reads the
-    // proposed KIND, but the dotted line-style + reduced opacity (from the
-    // edge[kind="proposed"] base above) keep it visually "tentative/AI". The
-    // target arrow takes the relation color; the source --info diamond stays as
-    // the AI marker. Line-style is NOT overridden here — it inherits dotted from
-    // the base block so even a normally-dashed relation (related_to) reads as
-    // dotted-proposed, not dashed-tree-like.
-    sheet.push({
-      selector: `edge[kind = "proposed"][relation = "${relation}"]`,
-      style: {
-        'line-color': color,
-        'target-arrow-color': color,
-      },
-    });
-  }
-
-  return sheet;
 }
 
 // ── Filter model (client-only; derived from already-loaded node data) ────────
@@ -583,6 +216,10 @@ export interface FilterState {
 export function distinctDomains(nodes: KnowledgeGraphNode[]): string[] {
   const seen = new Set<string>();
   for (const n of nodes) {
+    // YUK-249 derived-axis seam: subject is a VIEW derived from effective_domain
+    // (effective_domain ?? domain), never a stored column. The domain chips +
+    // this dedupe are the派生轴 consumer; a future subject rename flows through
+    // effective_domain automatically. Do not add a subject column here.
     const d = n.effective_domain ?? n.domain;
     if (d) seen.add(d);
   }
@@ -608,18 +245,71 @@ export function passesFilter(
   return band === 'mastered'; // 'mastered'
 }
 
+// ── SVG render geometry ──────────────────────────────────────────────────────
+// The layout solver positions nodes inside a 1000x560 logical box (design viewBox).
+const VIEW_BOX_W = 1000;
+const VIEW_BOX_H = 560;
+const ZOOM_MIN = 0.5;
+const ZOOM_MAX = 2;
+// animationDelay cap so a large graph's last node doesn't wait seconds to fade in.
+const FADE_DELAY_STEP_MS = 50;
+const FADE_DELAY_CAP_MS = 800;
+
+interface ViewTransform {
+  x: number;
+  y: number;
+  k: number;
+}
+
+/** A rendered mesh/tree/proposed edge in SVG terms. */
+interface RenderedEdge {
+  id: string;
+  kind: 'tree' | 'mesh' | 'proposed';
+  from: Point;
+  to: Point;
+  /** endpoint node ids — used by focus-mode edge fading. */
+  fromId: string;
+  toId: string;
+  relation: string;
+  width: number;
+  proposalId?: string;
+}
+
 /**
- * Cytoscape-backed knowledge graph as a "诊断 + 局部聚焦" instrument
- * (Wave 7 T-KG Slice 1b; locked direction D1 in
- * docs/superpowers/plans/2026-05-29-wave7-ready-to-launch.md — default is NOT
- * the full hairball: filter by domain / mastery band + focus subgraph, with the
- * weak area visually highlighted).
+ * Convert an SVG-space point (the layout's logical coords) to container pixels,
+ * applying the pan/zoom view AND the viewBox→container scale. Used to anchor the
+ * inline proposal popover at an edge midpoint (replaces cytoscape's
+ * renderedMidpoint()). `stage` is the rendered stage size in px.
+ */
+export function svgPointToContainerPx(
+  p: Point,
+  view: ViewTransform,
+  stage: { width: number; height: number },
+): { x: number; y: number } {
+  const scaleX = stage.width / VIEW_BOX_W;
+  const scaleY = stage.height / VIEW_BOX_H;
+  // viewBox maps logical → stage px uniformly via preserveAspectRatio meet; we
+  // approximate with axis scales (stage matches aspect closely). The <g> applies
+  // translate(view.x view.y) scale(view.k) in logical units BEFORE the viewBox
+  // scale, so compose: logical → (pan/zoom) → (viewBox scale) → px.
+  const lx = p.x * view.k + view.x;
+  const ly = p.y * view.k + view.y;
+  return { x: lx * scaleX, y: ly * scaleY };
+}
+
+/**
+ * Knowledge graph as a "诊断 + 局部聚焦" instrument (Wave 7 T-KG Slice 1b;
+ * locked direction D1). Rendered as a hand-owned SVG layer (YUK-297) — cytoscape
+ * is now a build-time headless layout solver only (see layout.ts), so the design
+ * MeshGraph visual language (node disc/track/mastery-arc, error-staggered
+ * fade-in, animated arc, 5 typed edges, pan/zoom) renders with native CSS
+ * @keyframes / transitions that a <canvas> renderer could never fire.
  *
- * Slice 1a behaviors preserved: relation visual contract, mesh-over-tree,
- * node size ∝ mistakes, tap → drawer, dark-mode token re-read, native
- * pan/zoom/drag. cytoscape touches window/document, so it is initialised
- * strictly inside useEffect (client-only) and torn down on unmount; the page
- * additionally loads this primitive via next/dynamic ssr:false.
+ * Slice 1a behaviors preserved: relation visual contract, mesh-over-tree, node
+ * size ∝ mistakes, tap → drawer + focus, dark-mode (CSS var() follows theme for
+ * free), pan/zoom/drag. Slice 1b/2/3 preserved: mastery-band fill + evidence
+ * gate + 0.5 sentinel, shaky-prereq ring, due halo, filters, on-graph proposed
+ * edges + inline accept/dismiss.
  */
 export function KnowledgeGraph({
   nodes,
@@ -631,24 +321,24 @@ export function KnowledgeGraph({
   proposals,
   onProposalDecision,
 }: KnowledgeGraphProps) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const cyRef = useRef<Core | null>(null);
-  // Latest onNodeClick without forcing the graph to re-init when the parent
-  // re-renders with a new function identity.
+  // Unique def ids so the <marker>/<filter> never collide across remounts.
+  const defsId = useId();
+  const arrowId = `kg-arrow-${defsId}`;
+  const shadowId = `kg-shadow-${defsId}`;
+
+  const stageRef = useRef<HTMLDivElement | null>(null);
+
+  // Latest callbacks without forcing re-renders to thread through identity.
   const onNodeClickRef = useRef(onNodeClick);
   onNodeClickRef.current = onNodeClick;
-  // Same latest-ref trick for the proposal decision callback so the build effect
-  // doesn't re-init cytoscape when the parent passes a fresh function identity.
   const onProposalDecisionRef = useRef(onProposalDecision);
   onProposalDecisionRef.current = onProposalDecision;
 
-  // Stable empty fallback so the build effect's dependency identity is steady
-  // when the summary endpoint is unavailable.
+  // Stable empty fallbacks so memo identities stay steady when endpoints are
+  // unavailable.
   const due = useMemo(() => dueCounts ?? new Map<string, NodeDueSummary>(), [dueCounts]);
-  // Same stable-empty pattern for proposals — when the page passes nothing
-  // (proposals endpoint unavailable / no pending), keep a steady [] reference so
-  // the build effect's deps don't churn.
   const allProposals = useMemo(() => proposals ?? ([] as KnowledgeEdgeProposal[]), [proposals]);
+
   const totalOverdueNodes = useMemo(() => {
     let n = 0;
     for (const v of due.values()) if (v.overdue > 0) n += 1;
@@ -657,18 +347,15 @@ export function KnowledgeGraph({
 
   const domains = useMemo(() => distinctDomains(nodes), [nodes]);
 
-  // Default view (NOT the full hairball, per D1): if there is more than one
-  // domain, default to the first domain alphabetically; with a single (or zero)
-  // domain there is no hairball to avoid, so show all. Mastery filter defaults
-  // to "all" but weak nodes are always visually emphasized by their band fill.
+  // Default view (NOT the full hairball, per D1): more than one domain → default
+  // to the first domain alphabetically; single/zero domain → show all.
   const [filter, setFilter] = useState<FilterState>(() => ({
     domain: domains.length > 1 ? domains[0] : null,
     mastery: 'all',
     dueOnly: false,
   }));
 
-  // If the domain set changes (new data load) and the current domain filter is
-  // no longer valid, re-default it rather than showing an empty canvas.
+  // Re-default the domain filter if the domain set changes and it's now invalid.
   useEffect(() => {
     setFilter((f) => {
       if (f.domain !== null && !domains.includes(f.domain)) {
@@ -678,9 +365,16 @@ export function KnowledgeGraph({
     });
   }, [domains]);
 
-  // Slice 3 inline action: which proposed edge is "open" for accept/dismiss, and
-  // where to anchor the floating action over the canvas (rendered midpoint of the
-  // edge, in container px). Cleared on decision, empty-canvas tap, or rebuild.
+  // Pan/zoom view (design screen-knowledge.jsx L39-45). We own this — cytoscape
+  // touches nothing the user interacts with.
+  const [view, setView] = useState<ViewTransform>({ x: 0, y: 0, k: 1 });
+  const dragRef = useRef<{ px: number; py: number; x: number; y: number } | null>(null);
+
+  // focusId is the spatial complement to selectedId (the drawer). Tapping a node
+  // does both.
+  const [focusId, setFocusId] = useState<string | null>(null);
+
+  // Slice 3 inline action: which proposed edge is "open", anchored in container px.
   const [activeProposal, setActiveProposal] = useState<{
     proposalId: string;
     relation: string;
@@ -689,15 +383,6 @@ export function KnowledgeGraph({
     x: number;
     y: number;
   } | null>(null);
-
-  // focusId is the spatial complement to selectedId (the drawer). Tapping a
-  // node does both. A node can be focused without the drawer (e.g. restored)
-  // but in practice they move together via onNodeClick.
-  const [focusId, setFocusId] = useState<string | null>(null);
-  // Latest focusId without re-running the build effect just to re-read it
-  // (the build effect reapplies the focus overlay onto fresh elements).
-  const focusIdRef = useRef(focusId);
-  focusIdRef.current = focusId;
 
   const visibleNodes = useMemo(
     () => nodes.filter((n) => passesFilter(n, filter, due)),
@@ -711,9 +396,6 @@ export function KnowledgeGraph({
       ),
     [edges, visibleNodeIds],
   );
-  // Proposals whose BOTH endpoints survive the current filter/focus — only these
-  // become proposed edges (buildProposedEdgeElements applies the same guard, but
-  // computing the visible set here drives the build-effect deps + the legend).
   const visibleProposals = useMemo(
     () =>
       allProposals.filter(
@@ -722,9 +404,16 @@ export function KnowledgeGraph({
     [allProposals, visibleNodeIds],
   );
 
-  // mastery + evidence lookup for prerequisite-weakness derivation. evidence is
-  // carried so isWeakish() can treat a low-evidence prerequisite as shaky too
-  // (Fix B), matching the band logic used for fills.
+  // Layout: solve coordinates ONCE per visible-graph change (not on pan/zoom — a
+  // pan only mutates `view`). cytoscape spins up headless in computeLayout and is
+  // destroyed before this returns, so nothing persists.
+  const layout: LayoutMap = useMemo(
+    () => computeLayout(visibleNodes, visibleEdges),
+    [visibleNodes, visibleEdges],
+  );
+
+  // mastery + evidence lookup for prerequisite-weakness derivation (Fix B: a
+  // low-evidence prerequisite is shaky too).
   const bandInputById = useMemo(() => {
     const m = new Map<
       string,
@@ -740,237 +429,235 @@ export function KnowledgeGraph({
     return acc;
   }, [visibleNodes]);
 
-  // Node-name lookup for the inline proposal popover (id → display name).
   const nameById = useMemo(() => {
     const m = new Map<string, string>();
     for (const n of nodes) m.set(n.id, n.name);
     return m;
   }, [nodes]);
 
-  // proposalId → its endpoints/relation, so the tap handler can label the inline
-  // action without re-scanning the proposals array on every tap.
-  const proposalMetaById = useMemo(() => {
-    const m = new Map<string, { from: string; to: string; relation: string }>();
-    for (const p of allProposals) {
-      m.set(p.id, {
-        from: p.from_knowledge_id,
-        to: p.to_knowledge_id,
-        relation: p.relation_type,
+  // Focus neighborhood (closed 1-hop): the focused node + every node directly
+  // connected by a tree or mesh edge. Nodes outside fade; this drives the overlay
+  // classes (replaces cytoscape closedNeighborhood()).
+  const focusNeighborhood = useMemo(() => {
+    if (!focusId || !visibleNodeIds.has(focusId)) return null;
+    const hood = new Set<string>([focusId]);
+    for (const n of visibleNodes) {
+      if (n.parent_id && (n.parent_id === focusId || n.id === focusId)) {
+        if (n.parent_id) hood.add(n.parent_id);
+        hood.add(n.id);
+      }
+    }
+    for (const e of visibleEdges) {
+      if (e.from_knowledge_id === focusId) hood.add(e.to_knowledge_id);
+      if (e.to_knowledge_id === focusId) hood.add(e.from_knowledge_id);
+    }
+    return hood;
+  }, [focusId, visibleNodeIds, visibleNodes, visibleEdges]);
+
+  // Shaky prerequisites of the focused node: prerequisite mesh edges pointing INTO
+  // focus (to == focus) whose SOURCE is weakish. Reserved --again ring.
+  const shakyPrereqIds = useMemo(() => {
+    const out = new Set<string>();
+    if (!focusId) return out;
+    for (const e of visibleEdges) {
+      if (e.to_knowledge_id !== focusId) continue;
+      if (relationVisualKey(e.relation_type) !== 'prerequisite') continue;
+      const input = bandInputById.get(e.from_knowledge_id);
+      if (isWeakish(input?.mastery, input?.evidence)) out.add(e.from_knowledge_id);
+    }
+    return out;
+  }, [focusId, visibleEdges, bandInputById]);
+
+  // Build the rendered edge list (tree skeleton底色 first, then mesh, then
+  // proposed — DOM order = z order, so later paints on top). Dangling endpoints
+  // are skipped via the layout map (only positioned nodes have coords).
+  const renderedEdges = useMemo<RenderedEdge[]>(() => {
+    const out: RenderedEdge[] = [];
+    // Tree edges (parent_id skeleton).
+    for (const n of visibleNodes) {
+      if (!n.parent_id) continue;
+      const from = layout.get(n.parent_id);
+      const to = layout.get(n.id);
+      if (!from || !to) continue;
+      out.push({
+        id: `tree-${n.id}`,
+        kind: 'tree',
+        from,
+        to,
+        fromId: n.parent_id,
+        toId: n.id,
+        relation: 'tree',
+        width: 1,
       });
     }
-    return m;
-  }, [allProposals]);
-
-  // ── Focus mode + prerequisite-weakness overlay ──────────────────────────
-  // When a node is focused: reveal its closed 1-hop neighborhood, fade
-  // everything else, fit the viewport to it, and ring its shaky prerequisites.
-  // All derived from the cytoscape graph + the node mastery map — zero new
-  // backend. Shared so it can be (re)applied both on focus change AND right
-  // after a graph rebuild (a rebuild drops the focus classes). `id` is passed
-  // explicitly so the latest bandInputById is closed over without staleness.
-  const applyFocus = useCallback(
-    (id: string | null) => {
-      const cy = cyRef.current;
-      if (!cy) return;
-      cy.batch(() => {
-        cy.elements().removeClass('kg-faded kg-focus-root kg-shaky-prereq');
-        if (!id) return;
-        const root = cy.getElementById(id);
-        if (root.empty()) return;
-
-        const hood = root.closedNeighborhood();
-        cy.elements().difference(hood).addClass('kg-faded');
-        root.addClass('kg-focus-root');
-
-        // Shaky prerequisites: prerequisite mesh edges pointing INTO the focused
-        // node (to == focus); their SOURCE is the prerequisite. Flag those that
-        // are weakish (weak / never-practiced / low-evidence). cytoscape edge
-        // direction = source→target, and we built prerequisite edges as from→to,
-        // so incomers carries them.
-        const prereqEdges = root.incomers('edge[kind = "mesh"][relation = "prerequisite"]');
-        for (const src of prereqEdges.sources().toArray()) {
-          const input = bandInputById.get(src.id());
-          if (isWeakish(input?.mastery, input?.evidence)) src.addClass('kg-shaky-prereq');
-        }
+    // Mesh edges.
+    for (const e of visibleEdges) {
+      const from = layout.get(e.from_knowledge_id);
+      const to = layout.get(e.to_knowledge_id);
+      if (!from || !to) continue;
+      out.push({
+        id: e.id,
+        kind: 'mesh',
+        from,
+        to,
+        fromId: e.from_knowledge_id,
+        toId: e.to_knowledge_id,
+        relation: relationVisualKey(e.relation_type),
+        // PRESERVE prior stroke width: 1 + weight * 1.5.
+        width: 1 + e.weight * 1.5,
       });
-      if (id) {
-        const root = cy.getElementById(id);
-        if (root.nonempty()) {
-          cy.animate({ fit: { eles: root.closedNeighborhood(), padding: 60 } }, { duration: 280 });
-        }
-      }
+    }
+    // Proposed edges (AI suggestions).
+    for (const p of visibleProposals) {
+      const from = layout.get(p.from_knowledge_id);
+      const to = layout.get(p.to_knowledge_id);
+      if (!from || !to) continue;
+      out.push({
+        id: `proposed-${p.key}`,
+        kind: 'proposed',
+        from,
+        to,
+        fromId: p.from_knowledge_id,
+        toId: p.to_knowledge_id,
+        relation: relationVisualKey(p.relation_type),
+        width: 2,
+        proposalId: p.id,
+      });
+    }
+    return out;
+  }, [visibleNodes, visibleEdges, visibleProposals, layout]);
+
+  // Rendered node descriptors (position + radius + band + halo flag).
+  const renderedNodes = useMemo(() => {
+    return visibleNodes
+      .map((n, i) => {
+        const p = layout.get(n.id);
+        if (!p) return null;
+        const r = nodeRadius(mistakeCounts.get(n.id) ?? 0);
+        const band = masteryBand(n.mastery, n.evidence_count);
+        const overdue = due.get(n.id)?.overdue ?? 0;
+        return {
+          id: n.id,
+          name: n.name,
+          point: p,
+          r,
+          band,
+          // mastery arc progress: NULL mastery → 0 (never-practiced).
+          masteryPct: Math.max(0, Math.min(1, n.mastery ?? 0)),
+          overdue,
+          fadeDelayMs: Math.min(i * FADE_DELAY_STEP_MS, FADE_DELAY_CAP_MS),
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
+  }, [visibleNodes, layout, mistakeCounts, due]);
+
+  // ── Initial fit: when the visible set changes (layout recomputed), clamp zoom
+  // ≤ 1 (owner 2026-06-07「点太大了」) and drop any stale inline action. The layout
+  // already centres roughly in the 1000x560 box, so the default identity view
+  // fits; we only clamp k. `layout` is intentionally a CHANGE TRIGGER (the effect
+  // doesn't read it, but must re-fire once per data change) — Biome flags it as
+  // removable because it's unread, but removing it would only fit on first mount.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `layout` is a change-trigger, not a read — keep it so the fit re-runs per data change.
+  useEffect(() => {
+    setView((v) => (v.k > 1 ? { ...v, k: 1 } : v));
+    setActiveProposal(null);
+  }, [layout]);
+
+  // If the focused node is filtered out, exit focus.
+  useEffect(() => {
+    if (focusId && !visibleNodeIds.has(focusId)) setFocusId(null);
+  }, [visibleNodeIds, focusId]);
+
+  // ── Pan / zoom handlers (design screen-knowledge.jsx) ──────────────────────
+  const onDown = useCallback(
+    (e: React.MouseEvent) => {
+      dragRef.current = { px: e.clientX, py: e.clientY, x: view.x, y: view.y };
     },
-    [bandInputById],
+    [view.x, view.y],
+  );
+  const onMove = useCallback((e: React.MouseEvent) => {
+    const d = dragRef.current;
+    if (!d) return;
+    // Panning moves edges under any open inline action — close it (Slice 3).
+    setActiveProposal(null);
+    setView((v) => ({ ...v, x: d.x + (e.clientX - d.px), y: d.y + (e.clientY - d.py) }));
+  }, []);
+  const onUp = useCallback(() => {
+    dragRef.current = null;
+  }, []);
+  const zoom = useCallback((delta: number) => {
+    setActiveProposal(null);
+    setView((v) => ({
+      ...v,
+      k: Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Number((v.k + delta).toFixed(2)))),
+    }));
+  }, []);
+  const onWheel = useCallback(
+    (e: React.WheelEvent) => {
+      e.preventDefault();
+      zoom(e.deltaY > 0 ? -0.1 : 0.1);
+    },
+    [zoom],
+  );
+  const resetView = useCallback(() => {
+    setActiveProposal(null);
+    setView({ x: 0, y: 0, k: 1 });
+  }, []);
+
+  // ── Node tap → drawer + focus (preserved Slice 1a). ────────────────────────
+  const handleNodeTap = useCallback((id: string) => {
+    setActiveProposal(null);
+    onNodeClickRef.current(id);
+    setFocusId(id);
+  }, []);
+
+  // ── Proposed-edge tap → inline accept/dismiss at the edge midpoint. ────────
+  const handleProposedTap = useCallback(
+    (edge: RenderedEdge) => {
+      if (!edge.proposalId) return;
+      const stage = stageRef.current;
+      const mid: Point = {
+        x: (edge.from.x + edge.to.x) / 2,
+        y: (edge.from.y + edge.to.y) / 2,
+      };
+      const px = stage
+        ? svgPointToContainerPx(mid, view, {
+            width: stage.clientWidth,
+            height: stage.clientHeight,
+          })
+        : { x: 0, y: 0 };
+      // Resolve endpoint names from the proposal (source/target order).
+      const meta = visibleProposals.find((p) => p.id === edge.proposalId);
+      setActiveProposal({
+        proposalId: edge.proposalId,
+        relation: edge.relation,
+        fromName: meta ? (nameById.get(meta.from_knowledge_id) ?? meta.from_knowledge_id) : '',
+        toName: meta ? (nameById.get(meta.to_knowledge_id) ?? meta.to_knowledge_id) : '',
+        x: px.x,
+        y: px.y,
+      });
+    },
+    [view, visibleProposals, nameById],
   );
 
-  // Init / rebuild cytoscape when the *visible* graph data changes. Tokens are
-  // read here (client-only) and fed as concrete colors.
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    ensureFcose();
-    const tokens = readTokens();
-    const cy = cytoscape({
-      container,
-      elements: [
-        ...buildElements(visibleNodes, visibleEdges, mistakeCounts, due),
-        // Slice 3: proposed edges layered onto the same scene. They reference the
-        // node ids built above; buildProposedEdgeElements already guards on the
-        // visible set so every endpoint exists as a node element.
-        ...buildProposedEdgeElements(visibleProposals, visibleNodeIds),
-      ],
-      style: buildStylesheet(tokens),
-      layout: FCOSE_LAYOUT,
-      minZoom: 0.1,
-      maxZoom: 4,
-      wheelSensitivity: 0.2,
-    });
-    cyRef.current = cy;
-
-    // Initial-fit zoom cap (owner 2026-06-07 「点太大了」): with few visible
-    // nodes the layout's `fit: true` zooms far past 1:1, so the 24-64px circles
-    // (design-brief v2.1 §半径∝mistake_count, which stays untouched) render
-    // huge. Cap the AUTOMATIC fit at 1.0 — manual wheel zoom keeps maxZoom 4.
-    // Runs both synchronously (layout may finish within the constructor) and on
-    // layoutstop (fcose may settle async); the clamp is idempotent.
-    const clampInitialZoom = () => {
-      if (cy.zoom() > 1) {
-        cy.zoom(1);
-        cy.center();
-      }
-    };
-    cy.one('layoutstop', clampInitialZoom);
-    clampInitialZoom();
-
-    cy.on('tap', 'node', (event) => {
-      const id = event.target.id();
-      if (id) {
-        // Tap = open drawer (preserved Slice 1a behavior) AND enter focus mode.
-        // A node tap also dismisses any open inline proposal action.
-        setActiveProposal(null);
-        onNodeClickRef.current(id);
-        setFocusId(id);
-      }
-    });
-    // Slice 3: tapping a proposed edge opens the inline accept/dismiss action
-    // anchored at the edge's rendered midpoint (container px). We DON'T open the
-    // drawer here — the inline action is the on-graph affordance.
-    cy.on('tap', 'edge[kind = "proposed"]', (event) => {
-      const edge = event.target;
-      const proposalId = edge.data('proposalId') as string | undefined;
-      const relation = (edge.data('relation') as string | undefined) ?? 'related_to';
-      if (!proposalId) return;
-      const meta = proposalMetaById.get(proposalId);
-      const mid = edge.renderedMidpoint();
-      setActiveProposal({
-        proposalId,
-        relation,
-        fromName: meta ? (nameById.get(meta.from) ?? meta.from) : edge.source().id(),
-        toName: meta ? (nameById.get(meta.to) ?? meta.to) : edge.target().id(),
-        x: mid.x,
-        y: mid.y,
-      });
-    });
-    // Tapping empty canvas exits focus AND closes the inline proposal action
-    // (but leaves the drawer to the page).
-    cy.on('tap', (event) => {
-      if (event.target === cy) {
-        setFocusId(null);
-        setActiveProposal(null);
-      }
-    });
-    // Pan/zoom moves the edge under any open inline action — close it rather than
-    // leave the popover stranded at a stale position.
-    cy.on('pan zoom', () => setActiveProposal(null));
-
-    // Re-read tokens + restyle on theme change so dark mode resolves. Watches
-    // the <html data-theme> attribute (explicit toggle) and the OS dark-mode
-    // media query (system follow).
-    const restyle = () => {
-      if (!cyRef.current) return;
-      cyRef.current.style(buildStylesheet(readTokens()));
-    };
-    const attrObserver = new MutationObserver(restyle);
-    attrObserver.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ['data-theme'],
-    });
-    const media = window.matchMedia('(prefers-color-scheme: dark)');
-    media.addEventListener('change', restyle);
-
-    // Reapply the focus overlay onto the freshly-built elements (rebuild drops
-    // the prior focus classes). Selection is reflected by its own effect below.
-    applyFocus(focusIdRef.current);
-
-    // A rebuild destroys the prior cy instance, so any open inline proposal
-    // action points at a stale edge — close it.
-    setActiveProposal(null);
-
-    return () => {
-      attrObserver.disconnect();
-      media.removeEventListener('change', restyle);
-      cy.destroy();
-      cyRef.current = null;
-    };
-  }, [
-    visibleNodes,
-    visibleEdges,
-    visibleProposals,
-    visibleNodeIds,
-    mistakeCounts,
-    due,
-    applyFocus,
-    proposalMetaById,
-    nameById,
-  ]);
-
-  // Reflect selection without rebuilding the graph.
-  useEffect(() => {
-    const cy = cyRef.current;
-    if (!cy) return;
-    cy.batch(() => {
-      cy.nodes().unselect();
-      if (selectedId) {
-        const node = cy.getElementById(selectedId);
-        if (node.nonempty()) node.select();
-      }
-    });
-  }, [selectedId]);
-
-  // Live focus changes (without a rebuild).
-  useEffect(() => {
-    applyFocus(focusId);
-  }, [focusId, applyFocus]);
-
-  // If the focused node is filtered out, exit focus rather than leave a stale
-  // ring on a node that is no longer rendered.
-  useEffect(() => {
-    if (focusId && !visibleNodeIds.has(focusId)) {
+  // Tapping empty canvas exits focus + closes the inline action.
+  const onStageClick = useCallback((e: React.MouseEvent) => {
+    if (e.target === e.currentTarget) {
       setFocusId(null);
+      setActiveProposal(null);
     }
-  }, [visibleNodeIds, focusId]);
+  }, []);
 
   const showWeak = useCallback(() => {
     setFilter((f) => ({ ...f, mastery: 'weak', dueOnly: false }));
     setFocusId(null);
   }, []);
-
-  // "今天该复习" quick filter: toggle the overdue-only restriction across all
-  // domains so the user can step straight into the actionable review set.
   const toggleDue = useCallback(() => {
     setFilter((f) => ({ ...f, dueOnly: !f.dueOnly, domain: f.dueOnly ? f.domain : null }));
     setFocusId(null);
   }, []);
-
   const exitFocus = useCallback(() => setFocusId(null), []);
 
-  // Slice 3 inline decision: reuse the page's decision callback (the SAME handler
-  // the drawer's EdgeProposalCard wires through edgeProposalDecision → POST
-  // /api/knowledge/edges/proposals/[id]). We optimistically close the popover; the
-  // page's onSuccess invalidation refetches edges + proposals, so an accepted
-  // proposal disappears from `proposals` and reappears as a real mesh edge on the
-  // next render, and a dismissed one just disappears.
   const decideActiveProposal = useCallback(
     (decision: 'accept' | 'dismiss') => {
       if (!activeProposal) return;
@@ -984,6 +671,20 @@ export function KnowledgeGraph({
   const activeRelationLabel = activeProposal
     ? (RELATION_LABEL[activeProposal.relation] ?? activeProposal.relation)
     : null;
+
+  // Whether a node / edge is faded by focus mode.
+  const isFaded = useCallback(
+    (id: string) => focusNeighborhood !== null && !focusNeighborhood.has(id),
+    [focusNeighborhood],
+  );
+  const isEdgeFaded = useCallback(
+    (e: RenderedEdge) => {
+      if (focusNeighborhood === null) return false;
+      // an edge is in-focus only if BOTH endpoints are in the neighborhood.
+      return !(focusNeighborhood.has(e.fromId) && focusNeighborhood.has(e.toId));
+    },
+    [focusNeighborhood],
+  );
 
   return (
     <section className="kg-stage" aria-label="知识关系图">
@@ -1050,12 +751,205 @@ export function KnowledgeGraph({
       )}
 
       <div className="kg-canvas-wrap">
-        <div ref={containerRef} className="kg-canvas" role="img" aria-label="知识关系图" />
+        {/* Zoom controls pill (design mesh-controls). */}
+        <div className="kg-zoom-controls" aria-label="缩放控制">
+          <button
+            type="button"
+            className="kg-zoom-btn"
+            title="缩小"
+            aria-label="缩小"
+            onClick={() => zoom(-0.1)}
+          >
+            <Icon name="minus" size={15} />
+          </button>
+          <span className="kg-zoom-pct mono">{Math.round(view.k * 100)}%</span>
+          <button
+            type="button"
+            className="kg-zoom-btn"
+            title="放大"
+            aria-label="放大"
+            onClick={() => zoom(0.1)}
+          >
+            <Icon name="plus" size={15} />
+          </button>
+          <span className="kg-zoom-div" />
+          <button
+            type="button"
+            className="kg-zoom-btn"
+            title="复位"
+            aria-label="复位"
+            onClick={resetView}
+          >
+            <Icon name="refresh" size={15} />
+          </button>
+        </div>
+
+        {/* The stage is the pan/zoom camera surface (drag + wheel + click-empty-to-
+            exit-focus). The real interactive affordances are the focusable node
+            groups + the focus-bar "返回全图" button (keyboard path to exit focus); the
+            stage's own onClick is a pointer convenience, with Escape as the keyboard
+            equivalent. */}
+        <div
+          ref={stageRef}
+          className="kg-svg-stage"
+          role="application"
+          aria-label="知识关系图，可平移缩放"
+          onMouseDown={onDown}
+          onMouseMove={onMove}
+          onMouseUp={onUp}
+          onMouseLeave={onUp}
+          onWheel={onWheel}
+          onClick={onStageClick}
+          onKeyDown={(ev) => {
+            if (ev.key === 'Escape') {
+              setFocusId(null);
+              setActiveProposal(null);
+            }
+          }}
+        >
+          <svg
+            className="kg-svg"
+            width="100%"
+            height="100%"
+            viewBox={`0 0 ${VIEW_BOX_W} ${VIEW_BOX_H}`}
+            preserveAspectRatio="xMidYMid meet"
+            role="img"
+            aria-label="知识关系图"
+          >
+            <title>知识关系图</title>
+            <defs>
+              <marker
+                id={arrowId}
+                viewBox="0 0 10 10"
+                refX="9"
+                refY="5"
+                markerWidth="7"
+                markerHeight="7"
+                orient="auto-start-reverse"
+              >
+                <path d="M0 0 L10 5 L0 10 z" fill="context-stroke" />
+              </marker>
+              <filter id={shadowId} x="-40%" y="-40%" width="180%" height="180%">
+                <feDropShadow dx="0" dy="2" stdDeviation="3" floodColor="rgba(60,50,30,0.18)" />
+              </filter>
+            </defs>
+            <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
+              {/* Edges first (tree底色 → mesh → proposed), then nodes on top. */}
+              {renderedEdges.map((e) => {
+                const visual = RELATION_VISUAL[e.relation];
+                const color =
+                  e.kind === 'tree' ? 'var(--ink-5)' : `var(${visual?.token ?? '--ink-4'})`;
+                const mid: Point = {
+                  x: (e.from.x + e.to.x) / 2,
+                  y: (e.from.y + e.to.y) / 2,
+                };
+                const dash =
+                  e.kind === 'tree'
+                    ? '3 5'
+                    : e.kind === 'proposed'
+                      ? '2 4'
+                      : visual?.dashed
+                        ? '5 4'
+                        : undefined;
+                const showArrow = e.kind === 'mesh' && visual?.arrow;
+                const faded = isEdgeFaded(e);
+                return (
+                  <g
+                    key={e.id}
+                    className={`kg-edge kg-edge-${e.kind} rel-${e.relation}${
+                      faded ? ' is-faded' : ''
+                    }`}
+                  >
+                    {/* Invisible fat hit-area so thin proposed edges are clickable.
+                        Pointer affordance only — the keyboard path to accept/dismiss
+                        a proposal is the drawer's EdgeProposalCard (same decision
+                        endpoint), so a focusable SVG edge is intentionally omitted. */}
+                    {e.kind === 'proposed' && (
+                      // biome-ignore lint/a11y/useKeyWithClickEvents: SVG edge pointer affordance; keyboard parity lives in the drawer EdgeProposalCard.
+                      <path
+                        d={`M${e.from.x} ${e.from.y} L${e.to.x} ${e.to.y}`}
+                        className="kg-edge-hit"
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          handleProposedTap(e);
+                        }}
+                      />
+                    )}
+                    <path
+                      d={`M${e.from.x} ${e.from.y} L${e.to.x} ${e.to.y}`}
+                      className="kg-edge-line"
+                      stroke={color}
+                      strokeWidth={e.width}
+                      strokeDasharray={dash}
+                      markerEnd={showArrow ? `url(#${arrowId})` : undefined}
+                    />
+                    {e.kind === 'mesh' && (
+                      <text x={mid.x} y={mid.y - 4} className="kg-edge-label mono">
+                        {RELATION_GLYPH[e.relation]} {RELATION_LABEL[e.relation] ?? e.relation}
+                      </text>
+                    )}
+                  </g>
+                );
+              })}
+
+              {renderedNodes.map((n) => {
+                const circ = 2 * Math.PI * n.r;
+                const selected = n.id === selectedId;
+                const shaky = shakyPrereqIds.has(n.id);
+                const faded = isFaded(n.id);
+                return (
+                  <g
+                    key={n.id}
+                    transform={`translate(${n.point.x} ${n.point.y})`}
+                    className={`kg-node band-${n.band}${selected ? ' is-selected' : ''}${
+                      shaky ? ' is-shaky' : ''
+                    }${focusId === n.id ? ' is-focus-root' : ''}${faded ? ' is-faded' : ''}`}
+                    style={{ animationDelay: `${n.fadeDelayMs}ms` }}
+                    tabIndex={0}
+                    // biome-ignore lint/a11y/useSemanticElements: SVG <g> cannot be a <button>; role=button + tabIndex + onKeyDown is the correct ARIA for a focusable graph node.
+                    role="button"
+                    aria-label={`${n.name}`}
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      handleNodeTap(n.id);
+                    }}
+                    onKeyDown={(ev) => {
+                      if (ev.key === 'Enter' || ev.key === ' ') {
+                        ev.preventDefault();
+                        handleNodeTap(n.id);
+                      }
+                    }}
+                  >
+                    {/* Coral due halo (overdue > 0) — its own layer behind the disc. */}
+                    {n.overdue > 0 && <circle r={n.r + 6} className="kg-node-halo" />}
+                    {/* Filled disc (band fill via class) with drop shadow. */}
+                    <circle r={n.r} className="kg-node-disc" filter={`url(#${shadowId})`} />
+                    {/* Full track ring under the arc. */}
+                    <circle r={n.r} fill="none" className="kg-node-track" />
+                    {/* Mastery arc on top — animated stroke-dashoffset. */}
+                    <circle
+                      r={n.r}
+                      fill="none"
+                      className="kg-node-arc"
+                      strokeWidth={3.5}
+                      strokeLinecap="round"
+                      strokeDasharray={circ}
+                      strokeDashoffset={circ * (1 - n.masteryPct)}
+                      transform="rotate(-90)"
+                    />
+                    <text y={r4(n.r)} textAnchor="middle" className="kg-node-label">
+                      {n.name}
+                    </text>
+                  </g>
+                );
+              })}
+            </g>
+          </svg>
+        </div>
+
         {activeProposal && (
-          // Slice 3 inline action — minimal accept/dismiss anchored at the
-          // proposed edge's rendered midpoint. translate(-50%, …) centers it on
-          // the edge; the negative Y lifts it above the line. 改方向/改关系 stay
-          // in the drawer (Slice 3 scope), so only accept/dismiss are inline.
+          // Slice 3 inline action — accept/dismiss anchored at the proposed edge's
+          // midpoint (container px). 改方向/改关系 stay in the drawer.
           <fieldset
             className="kg-proposal-action"
             style={{ left: activeProposal.x, top: activeProposal.y }}
@@ -1095,8 +989,6 @@ export function KnowledgeGraph({
           <span className="item" key={band}>
             <span
               className="swatch dot"
-              // insufficient shares --ink-5 with untrained but at reduced opacity
-              // (matches its node fill), so the legend reads them as distinct.
               style={{
                 background: `var(${MASTERY_BAND_TOKEN[band]})`,
                 ...(band === 'insufficient' ? { opacity: 0.4 } : {}),
@@ -1123,13 +1015,13 @@ export function KnowledgeGraph({
               className={`swatch${visual.dashed ? ' dashed' : ''}`}
               style={{ borderTopColor: `var(${visual.token})` }}
             />
-            <span>{relation}</span>
+            <span>
+              {RELATION_GLYPH[relation]} {relation}
+            </span>
           </span>
         ))}
         <span className="kg-legend-section">AI</span>
         <span className="item">
-          {/* Dotted --info swatch = proposed (AI-suggested) edge; count = visible
-              pending proposals under the current filter/focus. */}
           <span className="swatch proposed" />
           <span>提议关系 {visibleProposals.length}</span>
         </span>
@@ -1140,6 +1032,11 @@ export function KnowledgeGraph({
       </div>
     </section>
   );
+}
+
+// Node label vertical offset below the disc (mirror design `y={r + 18}`).
+function r4(r: number): number {
+  return r + 18;
 }
 
 export default KnowledgeGraph;
