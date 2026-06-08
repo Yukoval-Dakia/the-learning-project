@@ -622,6 +622,14 @@ export function KnowledgeGraph({
           band,
           // mastery arc progress: NULL mastery → 0 (never-practiced).
           masteryPct: Math.max(0, Math.min(1, n.mastery ?? 0)),
+          // disc-内 integer (design mesh-node-pct). Mirror MasteryBadge EXACTLY:
+          // only bands that surface a number there (evidence_count >= 3, i.e.
+          // weak/learning/mastered) show a digit. untrained (n=0) / insufficient
+          // (n<3) intentionally render no number — matching "未练习" / "证据不足".
+          pctLabel:
+            band === 'untrained' || band === 'insufficient'
+              ? null
+              : Math.round(Math.max(0, Math.min(1, n.mastery ?? 0)) * 100),
           overdue,
           fadeDelayMs: Math.min(i * FADE_DELAY_STEP_MS, FADE_DELAY_CAP_MS),
         };
@@ -1063,6 +1071,14 @@ export function KnowledgeGraph({
                       strokeDashoffset={circ * (1 - n.masteryPct)}
                       transform="rotate(-90)"
                     />
+                    {/* disc-内 掌握度整数 (design mesh-node-pct). Only present for
+                        bands MasteryBadge numbers (weak/learning/mastered); null
+                        for untrained/insufficient to stay aligned with the badge. */}
+                    {n.pctLabel !== null && (
+                      <text y={4} textAnchor="middle" className="kg-node-pct mono">
+                        {n.pctLabel}
+                      </text>
+                    )}
                     <text y={r4(n.r)} textAnchor="middle" className="kg-node-label">
                       {n.name}
                     </text>
