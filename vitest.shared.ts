@@ -69,6 +69,16 @@ export const fastTestInclude = [
   // as stream-cancel: @anthropic-ai/claude-agent-sdk + @/server/ai/log are vi.mock'd
   // and `db` is an untouched stub, so no live Postgres is needed.
   'src/server/ai/runner.stream-collect.test.ts',
+  // YUK-299 — runner outputFormat seam: zero-regression + structured_output
+  // three-state read. Same justification as stream-cancel: @anthropic-ai/
+  // claude-agent-sdk + @/server/ai/log are vi.mock'd and `db` is an untouched stub
+  // → no live Postgres. src/server/ai/** has no unit glob, so this MUST be listed
+  // or the db config's src/**/*.test.ts glob would sweep it into the container.
+  'src/server/ai/runner.seam.test.ts',
+  // YUK-299 — Zod→outputFormat adapter unit. Pure no-DB: imports only
+  // ./output-format (→ zod-to-json-schema, pure JS) + @/core/schema/business (Zod).
+  // Same enumeration requirement as above (no src/server/ai/** unit glob).
+  'src/server/ai/output-format.test.ts',
   'src/server/ai/tools/registry.test.ts',
   'src/server/ai/tools/allowlists.test.ts',
   'src/server/ai/tools/mcp-bridge.test.ts',
