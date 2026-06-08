@@ -55,7 +55,14 @@ export const FORCE_THRESHOLD = 60;
 let fcoseRegistered = false;
 function ensureFcose(): void {
   if (!fcoseRegistered) {
-    cytoscape.use(fcose);
+    try {
+      cytoscape.use(fcose);
+    } catch {
+      // Already registered — e.g. an HMR reload re-ran this module (resetting
+      // fcoseRegistered to false) while cytoscape's core kept the extension.
+      // cytoscape.use throws on a duplicate register in some versions; swallow
+      // it and proceed so the layout module survives hot reloads.
+    }
     fcoseRegistered = true;
   }
 }
@@ -105,10 +112,14 @@ export function fcoseHeadless(nodes: LayoutNode[], edges: LayoutEdge[]): LayoutM
   // unconnected → a near-linear smear. With both, nodes spread by their real
   // relationships and the graph reads as a mesh (the fix for the YUK-297 v1 bug).
   const treeEdges = nodes
-    .filter((n) => n.parent_id != null && nodeIds.has(n.parent_id))
+    // Type predicate narrows parent_id to string in the map below, so no cast /
+    // non-null assertion is needed (the runtime guard and the type agree).
+    .filter((n): n is LayoutNode & { parent_id: string } => {
+      return n.parent_id != null && nodeIds.has(n.parent_id);
+    })
     .map((n, i) => ({
       group: 'edges' as const,
-      data: { id: `t${i}`, source: n.parent_id as string, target: n.id },
+      data: { id: `t${i}`, source: n.parent_id, target: n.id },
     }));
   const cy = cytoscape({
     headless: true,
@@ -130,8 +141,14 @@ export function fcoseHeadless(nodes: LayoutNode[], edges: LayoutEdge[]): LayoutM
 
   // fcose layout options carry extension-specific keys not present in
   // cytoscape's BaseLayoutOptions; typed via the cytoscape-fcose module shim.
-  // idealEdgeLength + nodeRepulsion tuned so a small (7-12 node) graph spreads
-  // into a readable web rather than clumping; gravity keeps it centred.
+  // idealEdgeLength + nodeRepulsion tuned so a wide sibling fan (this branch only
+  // runs above FORCE_THRESHOLD) spreads into a readable web rather than clumping;
+  // gravity keeps it centred. randomize:true is REQUIRED: we build the cy
+  // instance headless with no seed positions, so fcose needs its own spectral
+  // draft to start from — randomize:false would begin every node at the origin
+  // and degenerate. The trade-off is this (rarely-hit) branch is NOT deterministic
+  // across reloads, unlike the default tidyTree path. Acceptable for a >60-node
+  // safety valve, where exact reload-stability isn't a concern.
   const layoutOptions: FcoseLayoutOptions = {
     name: 'fcose',
     quality: 'proof',
@@ -217,7 +234,9 @@ export function tidyTree(nodes: LayoutNode[]): LayoutMap {
   const slot = new Map<string, number>();
   let cursor = 0;
   const assign = (id: string, seen: Set<string>): number => {
-    if (seen.has(id)) return cursor++; // cycle guard
+    // cycle guard — return the cursor WITHOUT consuming a slot (we never
+    // slot.set this id here; the trailing fallback below gives it a real slot).
+    if (seen.has(id)) return cursor;
     seen.add(id);
     const ch = childrenOf.get(id) ?? [];
     if (ch.length === 0) {
@@ -264,6 +283,16 @@ export function tidyTree(nodes: LayoutNode[]): LayoutMap {
  */
 export function computeLayout(nodes: LayoutNode[], edges: LayoutEdge[]): LayoutMap {
   if (nodes.length === 0) return new Map();
-  if (nodes.length > FORCE_THRESHOLD) return fcoseHeadless(nodes, edges);
+  if (nodes.length > FORCE_THRESHOLD) {
+    try {
+      return fcoseHeadless(nodes, edges);
+    } catch {
+      // fcose can throw (extension load failure, degenerate elements). This runs
+      // inside a useMemo in KnowledgeGraph with no ErrorBoundary above it, so an
+      // uncaught throw would white-screen the whole graph. Degrade to the
+      // deterministic tidy tree — cramped for a huge set, but it always renders.
+      return tidyTree(nodes);
+    }
+  }
   return tidyTree(nodes);
 }
