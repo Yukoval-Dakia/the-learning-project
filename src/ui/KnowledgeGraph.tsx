@@ -254,6 +254,9 @@ const ZOOM_MAX = 2;
 // animationDelay cap so a large graph's last node doesn't wait seconds to fade in.
 const FADE_DELAY_STEP_MS = 50;
 const FADE_DELAY_CAP_MS = 800;
+// Focus-fit camera move duration — mirrors production cy.animate({ fit }, 280ms).
+// Must stay in sync with the .kg-camera CSS transition in globals.css.
+const CAMERA_FIT_MS = 280;
 
 interface ViewTransform {
   x: number;
@@ -277,24 +280,81 @@ interface RenderedEdge {
 
 /**
  * Convert an SVG-space point (the layout's logical coords) to container pixels,
- * applying the pan/zoom view AND the viewBox→container scale. Used to anchor the
+ * applying the pan/zoom view AND the viewBox→container mapping. Used to anchor the
  * inline proposal popover at an edge midpoint (replaces cytoscape's
  * renderedMidpoint()). `stage` is the rendered stage size in px.
+ *
+ * The <svg> uses preserveAspectRatio="xMidYMid meet", so the viewBox is scaled
+ * UNIFORMLY by s = min(stageW/vbW, stageH/vbH) and letterbox-centred — NOT by
+ * independent per-axis scales. Anchoring off independent axis scales drifts
+ * horizontally (or vertically) whenever the rendered stage aspect ≠ vbW:vbH, e.g.
+ * the production `.kg-svg-stage { width:100%; height:560px }` whose width tracks
+ * the parent column. So we reproduce the meet transform exactly: pan/zoom the
+ * point in logical units, then apply the uniform scale + letterbox offset.
  */
 export function svgPointToContainerPx(
   p: Point,
   view: ViewTransform,
   stage: { width: number; height: number },
 ): { x: number; y: number } {
-  const scaleX = stage.width / VIEW_BOX_W;
-  const scaleY = stage.height / VIEW_BOX_H;
-  // viewBox maps logical → stage px uniformly via preserveAspectRatio meet; we
-  // approximate with axis scales (stage matches aspect closely). The <g> applies
-  // translate(view.x view.y) scale(view.k) in logical units BEFORE the viewBox
-  // scale, so compose: logical → (pan/zoom) → (viewBox scale) → px.
+  // The <g> applies translate(view.x view.y) scale(view.k) in logical units
+  // BEFORE the viewBox mapping: logical → (pan/zoom) → (viewBox meet) → px.
   const lx = p.x * view.k + view.x;
   const ly = p.y * view.k + view.y;
-  return { x: lx * scaleX, y: ly * scaleY };
+  // meet → uniform scale + centred letterbox.
+  const s = Math.min(stage.width / VIEW_BOX_W, stage.height / VIEW_BOX_H);
+  const offsetX = (stage.width - VIEW_BOX_W * s) / 2;
+  const offsetY = (stage.height - VIEW_BOX_H * s) / 2;
+  return { x: offsetX + lx * s, y: offsetY + ly * s };
+}
+
+/** A positioned, sized node for camera-fit bbox math. */
+interface FitPoint {
+  point: Point;
+  r: number;
+}
+
+// Focus-mode camera fit padding (logical units) — mirrors production's
+// cy.animate({ fit: { padding: 60 } }).
+const FOCUS_FIT_PADDING = 60;
+
+/**
+ * Compute the pan/zoom `view` that frames a focus neighborhood, restoring the
+ * zoom-into-neighborhood affordance the cytoscape version had via
+ * `cy.animate({ fit: { eles: closedNeighborhood, padding: 60 } })`. The SVG
+ * version only faded non-neighbors; this re-adds the camera move.
+ *
+ * Returns a ViewTransform applied as translate(x y) scale(k) in the same logical
+ * space as the layout. k is clamped to [ZOOM_MIN, 1] — never zoom PAST 1:1 (owner
+ * 2026-06-07「点太大了」), so a tiny 1-2 node neighborhood doesn't balloon. With an
+ * empty/zero-extent set we fall back to the identity-ish reset view.
+ */
+export function fitViewToNeighborhood(points: FitPoint[]): ViewTransform {
+  if (points.length === 0) return { x: 0, y: 0, k: 1 };
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  for (const { point, r } of points) {
+    minX = Math.min(minX, point.x - r);
+    minY = Math.min(minY, point.y - r);
+    maxX = Math.max(maxX, point.x + r);
+    maxY = Math.max(maxY, point.y + r);
+  }
+  const bw = maxX - minX + FOCUS_FIT_PADDING * 2;
+  const bh = maxY - minY + FOCUS_FIT_PADDING * 2;
+  // Scale so the padded bbox fits the logical viewBox; clamp into [ZOOM_MIN, 1].
+  const fit = Math.min(VIEW_BOX_W / bw, VIEW_BOX_H / bh);
+  const k = Math.min(1, Math.max(ZOOM_MIN, Number(fit.toFixed(2))));
+  // Centre the bbox: after scale(k), the neighborhood centre (cx,cy) must land at
+  // the viewBox centre, so translate = viewBoxCentre − k*centre.
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  return {
+    x: VIEW_BOX_W / 2 - k * cx,
+    y: VIEW_BOX_H / 2 - k * cy,
+    k,
+  };
 }
 
 /**
@@ -369,6 +429,24 @@ export function KnowledgeGraph({
   // touches nothing the user interacts with.
   const [view, setView] = useState<ViewTransform>({ x: 0, y: 0, k: 1 });
   const dragRef = useRef<{ px: number; py: number; x: number; y: number } | null>(null);
+  // The camera <g> animates ONLY for focus-fit and focus→unfocus moves — direct
+  // manipulation (drag-pan, wheel/button zoom, the 复位 reset button) stays instant
+  // so it tracks input. `cameraAnimating` gates the CSS transition; it's pulsed
+  // true around a focus move and auto-cleared after the 280ms transition.
+  const [cameraAnimating, setCameraAnimating] = useState(false);
+  const cameraTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const animateCamera = useCallback((next: ViewTransform) => {
+    setCameraAnimating(true);
+    setView(next);
+    if (cameraTimerRef.current) clearTimeout(cameraTimerRef.current);
+    cameraTimerRef.current = setTimeout(() => setCameraAnimating(false), CAMERA_FIT_MS);
+  }, []);
+  useEffect(
+    () => () => {
+      if (cameraTimerRef.current) clearTimeout(cameraTimerRef.current);
+    },
+    [],
+  );
 
   // focusId is the spatial complement to selectedId (the drawer). Tapping a node
   // does both.
@@ -550,6 +628,39 @@ export function KnowledgeGraph({
       })
       .filter((x): x is NonNullable<typeof x> => x !== null);
   }, [visibleNodes, layout, mistakeCounts, due]);
+
+  // position + radius lookup for the focus-mode camera fit (below).
+  const renderedNodeById = useMemo(() => {
+    const m = new Map<string, { point: Point; r: number }>();
+    for (const n of renderedNodes) m.set(n.id, { point: n.point, r: n.r });
+    return m;
+  }, [renderedNodes]);
+
+  // ── Focus camera fit: when a focus neighborhood is set, move the camera to
+  // frame it (mirrors production's cy.animate({ fit: { eles: closedNeighborhood,
+  // padding: 60 } }, 280ms) — the SVG rewrite previously only FADED non-neighbors
+  // and never zoomed in). The set→null edge returns to the reset view; we track
+  // the prior state with a ref so a data refresh while UNFOCUSED doesn't clobber a
+  // user's manual pan/zoom. The 280ms animation is the CSS transition on the
+  // camera <g> (.kg-camera).
+  const wasFocusedRef = useRef(false);
+  useEffect(() => {
+    if (focusNeighborhood === null) {
+      // Only snap back on the focus→unfocus transition, not on every unfocused
+      // data refresh (manual pan/zoom must survive a refresh).
+      if (wasFocusedRef.current) animateCamera({ x: 0, y: 0, k: 1 });
+      wasFocusedRef.current = false;
+      return;
+    }
+    wasFocusedRef.current = true;
+    const points: { point: Point; r: number }[] = [];
+    for (const id of focusNeighborhood) {
+      const rn = renderedNodeById.get(id);
+      if (rn) points.push(rn);
+    }
+    if (points.length === 0) return;
+    animateCamera(fitViewToNeighborhood(points));
+  }, [focusNeighborhood, renderedNodeById, animateCamera]);
 
   // ── Initial fit: when the visible set changes (layout recomputed), clamp zoom
   // ≤ 1 (owner 2026-06-07「点太大了」) and drop any stale inline action. The layout
@@ -845,7 +956,10 @@ export function KnowledgeGraph({
                 <feDropShadow dx="0" dy="2" stdDeviation="3" floodColor="rgba(60,50,30,0.18)" />
               </filter>
             </defs>
-            <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
+            <g
+              className={`kg-camera${cameraAnimating ? ' is-animating' : ''}`}
+              transform={`translate(${view.x} ${view.y}) scale(${view.k})`}
+            >
               {/* Edges first (tree底色 → mesh → proposed), then nodes on top. */}
               {renderedEdges.map((e) => {
                 const visual = RELATION_VISUAL[e.relation];

@@ -20,6 +20,7 @@ import {
   type KnowledgeGraphEdge,
   type KnowledgeGraphNode,
   type NodeDueSummary,
+  fitViewToNeighborhood,
   nodeRadius,
   svgPointToContainerPx,
 } from './KnowledgeGraph';
@@ -266,7 +267,8 @@ describe('svgPointToContainerPx', () => {
   });
 
   it('applies pan + zoom before the viewBox scale', () => {
-    // k=2, pan (100,50); stage half-size → scale 0.5 each axis.
+    // k=2, pan (100,50); stage half-size (matched aspect) → uniform scale 0.5,
+    // zero letterbox.
     const px = svgPointToContainerPx(
       { x: 100, y: 100 },
       { x: 100, y: 50, k: 2 },
@@ -274,5 +276,64 @@ describe('svgPointToContainerPx', () => {
     );
     // logical: 100*2 + 100 = 300 ; 100*2 + 50 = 250. px: *0.5 → 150 ; *0.5 → 125.
     expect(px).toEqual({ x: 150, y: 125 });
+  });
+
+  it('letterboxes under a non-1000:560 stage aspect (preserveAspectRatio meet)', () => {
+    // Wider-than-viewBox stage: meet scales by min(1200/1000, 560/560)=1.0 and
+    // centres horizontally → offsetX = (1200 - 1000)/2 = 100. A NON-centre point
+    // must pick up that offset; the old independent-axis approximation (scaleX=1.2)
+    // would drift it left.
+    const px = svgPointToContainerPx(
+      { x: 250, y: 280 },
+      { x: 0, y: 0, k: 1 },
+      { width: 1200, height: 560 },
+    );
+    // correct: offsetX + 250*1 = 100 + 250 = 350 (old buggy: 250*1.2 = 300).
+    expect(px).toEqual({ x: 350, y: 280 });
+  });
+
+  it('letterboxes vertically when the stage is taller than the viewBox aspect', () => {
+    // Taller stage: meet scales by min(1000/1000, 840/560)=1.0, centres vertically
+    // → offsetY = (840 - 560)/2 = 140.
+    const px = svgPointToContainerPx(
+      { x: 500, y: 100 },
+      { x: 0, y: 0, k: 1 },
+      { width: 1000, height: 840 },
+    );
+    expect(px).toEqual({ x: 500, y: 240 }); // 140 + 100*1
+  });
+});
+
+describe('fitViewToNeighborhood (focus camera fit)', () => {
+  it('empty neighborhood → reset (identity) view', () => {
+    expect(fitViewToNeighborhood([])).toEqual({ x: 0, y: 0, k: 1 });
+  });
+
+  it('centres the padded bbox at the viewBox centre and never zooms past 1:1', () => {
+    // A tight 2-node cluster near the top-left. The padded bbox is much smaller
+    // than the viewBox, so the raw fit scale would exceed 1 — it must clamp to 1
+    // (owner「点太大了」), and translate so the cluster centre lands at (500,280).
+    const v = fitViewToNeighborhood([
+      { point: { x: 200, y: 150 }, r: 18 },
+      { point: { x: 260, y: 190 }, r: 18 },
+    ]);
+    expect(v.k).toBe(1);
+    // cluster centre = ((182..278)/2 etc.) → bbox x [182,278], y [132,208];
+    // centre = (230, 170). translate = viewBoxCentre − k*centre.
+    expect(v.x).toBeCloseTo(500 - 230, 5);
+    expect(v.y).toBeCloseTo(280 - 170, 5);
+  });
+
+  it('zooms OUT (k < 1) for a neighborhood larger than the viewBox', () => {
+    // A spread that, padded, overflows 1000×560 → fit scale < 1, clamped ≥ 0.5.
+    const v = fitViewToNeighborhood([
+      { point: { x: 0, y: 0 }, r: 20 },
+      { point: { x: 2000, y: 1000 }, r: 20 },
+    ]);
+    expect(v.k).toBeLessThan(1);
+    expect(v.k).toBeGreaterThanOrEqual(0.5);
+    // centre of bbox = (1000, 500) must map to viewBox centre after scale.
+    expect(v.x).toBeCloseTo(500 - v.k * 1000, 5);
+    expect(v.y).toBeCloseTo(280 - v.k * 500, 5);
   });
 });
