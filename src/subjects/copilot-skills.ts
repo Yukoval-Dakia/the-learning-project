@@ -15,7 +15,7 @@
 //
 // 见 docs/superpowers/plans/2026-06-08-yuk284-debt-wave.md §2 OPEN-Q1 (单份共享裁决).
 
-import { existsSync } from 'node:fs';
+import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 
 // _shared 是落位约定（非注册 subject — SubjectRegistry 是 profile.ts 的显式 import
@@ -35,9 +35,9 @@ export const COPILOT_SKILL_NAME = 'copilot';
  * skillsRoot defaults to <cwd>/src/subjects (the live SoT). Tests inject a fixture
  * root so the resolver works without touching the real on-disk tree.
  */
-export function resolveCopilotSkills(
+export async function resolveCopilotSkills(
   skillsRoot: string = join(process.cwd(), 'src', 'subjects'),
-): string[] | undefined {
+): Promise<string[] | undefined> {
   const skillFile = join(
     skillsRoot,
     COPILOT_SHARED_SUBJECT_DIR,
@@ -45,6 +45,10 @@ export function resolveCopilotSkills(
     COPILOT_SKILL_NAME,
     'SKILL.md',
   );
-  if (!existsSync(skillFile)) return undefined;
+  try {
+    await access(skillFile);
+  } catch {
+    return undefined;
+  }
   return [COPILOT_SKILL_NAME];
 }
