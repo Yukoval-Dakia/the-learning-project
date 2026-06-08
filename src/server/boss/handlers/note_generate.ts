@@ -194,7 +194,7 @@ export async function runNoteGenerate(
     const result = await runTaskFn('NoteGenerateTask', input, {
       db,
       subjectProfile,
-      skills: resolveNoteSkill(subjectProfile.id),
+      skills: await resolveNoteSkill(subjectProfile.id),
     });
     const parsed = parseNoteGenerateOutput(result.text);
 

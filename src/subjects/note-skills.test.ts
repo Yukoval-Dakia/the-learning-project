@@ -32,52 +32,52 @@ function fixtureRoot(layout: Record<string, string[]>): string {
 }
 
 describe('resolveNoteSkill — resolver discovery', () => {
-  it("returns ['note-wenyan'] when note-wenyan/SKILL.md exists for the subject", () => {
+  it("returns ['note-wenyan'] when note-wenyan/SKILL.md exists for the subject", async () => {
     const root = fixtureRoot({ wenyan: ['note-wenyan'] });
-    expect(resolveNoteSkill('wenyan', root)).toEqual(['note-wenyan']);
+    expect(await resolveNoteSkill('wenyan', root)).toEqual(['note-wenyan']);
   });
 
-  it('works for math subject', () => {
+  it('works for math subject', async () => {
     const root = fixtureRoot({ math: ['note-math'] });
-    expect(resolveNoteSkill('math', root)).toEqual(['note-math']);
+    expect(await resolveNoteSkill('math', root)).toEqual(['note-math']);
   });
 
-  it('works for physics subject', () => {
+  it('works for physics subject', async () => {
     const root = fixtureRoot({ physics: ['note-physics'] });
-    expect(resolveNoteSkill('physics', root)).toEqual(['note-physics']);
+    expect(await resolveNoteSkill('physics', root)).toEqual(['note-physics']);
   });
 });
 
 describe('resolveNoteSkill — 降级链', () => {
-  it('returns undefined when the subject has no skills dir', () => {
+  it('returns undefined when the subject has no skills dir', async () => {
     const root = mkdtempSync(join(tmpdir(), 'noteskills-'));
-    expect(resolveNoteSkill('unknown_subject', root)).toBeUndefined();
+    expect(await resolveNoteSkill('unknown_subject', root)).toBeUndefined();
   });
 
-  it('returns undefined when note-wenyan/ dir exists but SKILL.md is missing', () => {
+  it('returns undefined when note-wenyan/ dir exists but SKILL.md is missing', async () => {
     const root = mkdtempSync(join(tmpdir(), 'noteskills-'));
     mkdirSync(join(root, 'wenyan', 'skills', 'note-wenyan'), { recursive: true });
     // no SKILL.md written
-    expect(resolveNoteSkill('wenyan', root)).toBeUndefined();
+    expect(await resolveNoteSkill('wenyan', root)).toBeUndefined();
   });
 
-  it('returns undefined for a subject that only has quiz-gen skills (no note)', () => {
+  it('returns undefined for a subject that only has quiz-gen skills (no note)', async () => {
     const root = fixtureRoot({ wenyan: ['quiz-gen-translation'] });
-    expect(resolveNoteSkill('wenyan', root)).toBeUndefined();
+    expect(await resolveNoteSkill('wenyan', root)).toBeUndefined();
   });
 });
 
 describe('resolveNoteSkill — 缝隙防御 (S2 第二教训)', () => {
-  it('resolveNoteSkill does not return quiz-gen-* names', () => {
+  it('resolveNoteSkill does not return quiz-gen-* names', async () => {
     const root = fixtureRoot({ wenyan: ['note-wenyan', 'quiz-gen-translation'] });
-    const result = resolveNoteSkill('wenyan', root);
+    const result = await resolveNoteSkill('wenyan', root);
     expect(result).toEqual(['note-wenyan']);
     expect(result?.some((n) => n.startsWith('quiz-gen-'))).toBe(false);
   });
 
-  it('resolveQuizGenSkillsForSubject does not return note-*', () => {
+  it('resolveQuizGenSkillsForSubject does not return note-*', async () => {
     const root = fixtureRoot({ wenyan: ['note-wenyan', 'quiz-gen-translation'] });
-    const result = resolveQuizGenSkillsForSubject('wenyan', root);
+    const result = await resolveQuizGenSkillsForSubject('wenyan', root);
     expect(result).toEqual(['quiz-gen-translation']);
     expect(result?.some((n) => n.startsWith('note-'))).toBe(false);
   });
@@ -87,16 +87,16 @@ describe('live SoT — shipped SKILL.md files resolve against the real tree', ()
   // Uses the default skillsRoot (<cwd>/src/subjects) — verifies the three authored
   // note packs are discoverable and have the correct frontmatter name.
 
-  it('wenyan note skill is live and name === note-wenyan', () => {
-    expect(resolveNoteSkill('wenyan')).toEqual(['note-wenyan']);
+  it('wenyan note skill is live and name === note-wenyan', async () => {
+    expect(await resolveNoteSkill('wenyan')).toEqual(['note-wenyan']);
   });
 
-  it('math note skill is live and name === note-math', () => {
-    expect(resolveNoteSkill('math')).toEqual(['note-math']);
+  it('math note skill is live and name === note-math', async () => {
+    expect(await resolveNoteSkill('math')).toEqual(['note-math']);
   });
 
-  it('physics note skill is live and name === note-physics', () => {
-    expect(resolveNoteSkill('physics')).toEqual(['note-physics']);
+  it('physics note skill is live and name === note-physics', async () => {
+    expect(await resolveNoteSkill('physics')).toEqual(['note-physics']);
   });
 
   it('SKILL.md frontmatter name === note-<subject> for all three subjects', () => {
