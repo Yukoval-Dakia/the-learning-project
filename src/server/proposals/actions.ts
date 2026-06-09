@@ -21,6 +21,9 @@ import {
 } from '@/db/schema';
 import { persistNoteRefineApply } from '@/server/artifacts/note-refine-apply';
 import { writeEvent } from '@/server/events/queries';
+// ADR-0031 / YUK-304 (lane B) — question_draft accept promotes draft→active +
+// FSRS-enrolls (决定5). Same enroll-if-absent primitives quiz_verify uses.
+import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 // YUK-143 / ADR-0024 — North-Star goal_scope accept materializer.
 import { type GoalScopeAcceptResult, acceptGoalScopeProposal } from '@/server/goals/accept';
 import { ApiError } from '@/server/http/errors';
@@ -39,6 +42,7 @@ import {
   markRecordsActioned,
   rollbackRecordsActioned,
 } from '@/server/records/record_processing';
+import { initialFsrsState } from '@/server/review/fsrs';
 // YUK-227 S3 Slice C (ADR-0002) — image_candidate accept is the SINGLE VLM 抽图 trigger
 // (download → asset → VisionExtractTask → SourcedQuestion → source_verify). No auto path.
 import {
@@ -94,13 +98,22 @@ export type AcceptAiProposalResult =
   | RecordPromotionAcceptResult
   | GoalScopeAcceptResult
   | BlockMergeAcceptResult
-  | ImageCandidateAcceptResult;
+  | ImageCandidateAcceptResult
+  | QuestionDraftAcceptResult;
 
 export interface VariantQuestionAcceptResult {
   kind: 'variant_question';
   rate_event_id: string;
   question_id: string;
   mistake_variant_id: string;
+  idempotent?: boolean;
+}
+
+// ADR-0031 / YUK-304 (lane B) — copilot-authored draft question accept.
+export interface QuestionDraftAcceptResult {
+  kind: 'question_draft';
+  rate_event_id: string;
+  question_id: string;
   idempotent?: boolean;
 }
 
@@ -625,6 +638,10 @@ async function dispatchAccept(
       ensureAcceptOnly('image_candidate', opts);
       return await acceptImageCandidateProposal(db, proposalId, proposal, opts.imageCandidateDeps);
     }
+    case 'question_draft':
+      // ADR-0031 / YUK-304 (lane B) — promote the copilot-authored draft to
+      // active + FSRS-enroll (决定5: accept = promotion; the row already exists).
+      return await acceptQuestionDraftProposal(db, proposalId, proposal, opts);
     default:
       throw new ApiError(
         'unsupported_proposal_kind',
@@ -1775,6 +1792,131 @@ async function acceptVariantQuestionProposal(
     question_id: newQuestionId,
     mistake_variant_id: mv.id,
   };
+}
+
+/**
+ * ADR-0031 / YUK-304 (lane B) — question_draft accept. The draft question row
+ * was INSERTed at propose time (runQuestionAuthor, same tx as the proposal —
+ * 决定4); accept PROMOTES it: draft_status='draft' → 'active' + per-knowledge
+ * FSRS enroll-if-absent (copied from the quiz_verify promotion path, the one
+ * other place a draft enters the pool) + the rate event, all in one
+ * transaction. Idempotency keys on caused_by_event_id = proposalId
+ * (existingAcceptRate), like every sibling accept handler.
+ *
+ * Dismiss flows through the generic dismiss path (writeGenericRateEvent): the
+ * draft row stays inert (draft_status='draft', never pooled / FSRS'd).
+ * phase-deferred: dismissed-draft cleanup/archival is NOT implemented — orphan
+ * draft rows accumulate harmlessly (invisible everywhere drafts are excluded).
+ * Revisit with the YUK-304 follow-up batch; context: ADR-0031 决定5 + this
+ * handler.
+ */
+async function acceptQuestionDraftProposal(
+  db: Db,
+  proposalId: string,
+  proposal: ProposalInboxRow,
+  opts: AcceptAiProposalOpts,
+): Promise<QuestionDraftAcceptResult> {
+  ensureAcceptOnly('question_draft', opts);
+  const change = asPlainRecord(proposal.payload.proposed_change);
+  const questionId = requiredString(change.question_id, 'question_id', proposalId);
+
+  // Already-accepted idempotency: a rate event exists (409s on a non-accept
+  // decision inside existingAcceptRate).
+  const existingRate = await existingAcceptRate(db, proposalId);
+  if (existingRate) {
+    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+    const existing = (
+      await db.select().from(question).where(eq(question.id, questionId)).limit(1)
+    )[0];
+    if (!existing || existing.draft_status === 'draft') {
+      // Rate was written but the promotion did not complete — surface explicitly
+      // rather than silently fixing up (variant_question precedent).
+      throw new ApiError(
+        'inconsistent_state',
+        `proposal ${proposalId} has an accept rate event but question ${questionId} is ${existing ? 'still draft' : 'missing'}; retract + retry`,
+        500,
+      );
+    }
+    return {
+      kind: 'question_draft',
+      rate_event_id: existingRate.id,
+      question_id: questionId,
+      idempotent: true,
+    };
+  }
+
+  const row = (await db.select().from(question).where(eq(question.id, questionId)).limit(1))[0];
+  if (!row) {
+    throw new ApiError('not_found', `question ${questionId} not found`, 404);
+  }
+  if (row.draft_status !== 'draft') {
+    throw new ApiError(
+      'conflict',
+      `question ${questionId} is in draft_status ${row.draft_status ?? 'null'}, expected 'draft'`,
+      409,
+    );
+  }
+
+  const now = new Date();
+  const rateEventId = newId();
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(question)
+      .set({ draft_status: 'active', updated_at: now })
+      .where(eq(question.id, questionId));
+
+    // FSRS enroll — copied from quiz_verify.ts (YUK-203 P3): per-knowledge
+    // enroll-if-absent so a node with an existing review schedule is never
+    // reset; question-level fallback when the row carries no knowledge ids.
+    const initial = initialFsrsState(now);
+    const fsrsSubjectIds = Array.from(new Set(row.knowledge_ids ?? []));
+    if (fsrsSubjectIds.length > 0) {
+      for (const knowledgeId of fsrsSubjectIds) {
+        const existing = await getFsrsState(tx, 'knowledge', knowledgeId);
+        if (existing) continue;
+        await upsertFsrsState(tx, {
+          subject_kind: 'knowledge',
+          subject_id: knowledgeId,
+          state: initial.state,
+          due_at: initial.dueAt,
+          last_review_event_id: rateEventId,
+        });
+      }
+    } else {
+      const existing = await getFsrsState(tx, 'question', questionId);
+      if (!existing) {
+        await upsertFsrsState(tx, {
+          subject_kind: 'question',
+          subject_id: questionId,
+          state: initial.state,
+          due_at: initial.dueAt,
+          last_review_event_id: rateEventId,
+        });
+      }
+    }
+
+    await writeEvent(tx, {
+      id: rateEventId,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'event',
+      subject_id: proposalId,
+      outcome: 'success',
+      payload: {
+        rating: 'accept',
+        ...(opts.user_note ? { user_note: opts.user_note } : {}),
+        materialized_question_id: questionId,
+      },
+      caused_by_event_id: proposalId,
+      created_at: now,
+    });
+  });
+
+  await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+
+  return { kind: 'question_draft', rate_event_id: rateEventId, question_id: questionId };
 }
 
 async function writeGenericRateEvent(

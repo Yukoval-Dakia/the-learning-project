@@ -24,6 +24,11 @@ export const READ_TOOLS = [
   // YUK-203 U4 / L-memtool — Mem0 fact-layer retrieval (D7②). Granted only to
   // coach / dreaming / copilot below; NOT to review_plan / evaluator surfaces.
   'search_memory_facts',
+  // ADR-0032 D9 / YUK-304 (lane B) — 题池查询 (wraps the YUK-280 listQuestions
+  // reader; drafts included by default for duplicate-avoidance). Granted to the
+  // copilot surfaces ONLY for now — widening maintenance is A2 territory, so the
+  // MAINTENANCE_READ_TOOLS chokepoint below filters it back out.
+  'query_questions',
 ] as const;
 
 export const PROPOSE_WRITE_TOOLS = [
@@ -39,10 +44,11 @@ export const PROPOSE_WRITE_TOOLS = [
   'propose_record_links',
   'propose_record_promotion',
   // ADR-0032 D8 — unified question-authoring front door. Routes by seed mode to
-  // the variant (runVariantGen) and record→question propose paths; the
-  // knowledge|material seed is a typed lane-B stub. MUST stay positioned right
-  // after propose_record_promotion to keep the CORE_TOOLS bootstrap order (and the
-  // listTools() inventory assertion in allowlists.test.ts) aligned.
+  // the variant (runVariantGen) / record→question propose paths and (ADR-0031
+  // lane B) the knowledge|material draft-question generation. MUST stay
+  // positioned right after propose_record_promotion to keep the CORE_TOOLS
+  // bootstrap order (and the listTools() inventory assertion in
+  // allowlists.test.ts) aligned.
   'author_question',
   // YUK-195 — agent-callable question structure-edit write tools. Operate on the
   // pre-import draft layer (question_block.structured + figures); only the
@@ -53,6 +59,12 @@ export const PROPOSE_WRITE_TOOLS = [
   'split_stem',
   'merge_questions',
   'reassign_figure',
+  // ADR-0031 / RP-2 (YUK-304 lane B) — copilot 组卷 write: assembles authored
+  // (draft-allowed — opposite precondition from write_review_plan) + existing
+  // questions into a runnable tool_quiz paper. Granted to the copilot surfaces
+  // only. TAIL position mirrors the bootstrap CORE_TOOLS order (after
+  // reassignFigureTool) — the listTools() inventory assertion depends on it.
+  'write_quiz',
 ] as const;
 
 // YUK-203 U4 / D5 / CO §6.1 — the 4 tools exclusive to the ReviewPlanTask
@@ -140,10 +152,20 @@ const COPILOT_TOOLS = [
   // tools stay OFF copilot base (they remain on `copilot_user_suggested_mistake_action`,
   // the chip surface) — author_question is a distinct tool name, so the existing
   // copilot red-lines (no `propose_variant`, no `attribute_mistake`) still hold.
-  // The knowledge|material seed is a typed lane-B stub (returns not_implemented).
+  // The knowledge|material seed (ADR-0031 lane B) generates a draft question +
+  // question_draft proposal — the copilot 出题 primitive.
   'author_question',
   // YUK-203 U4 / L-memtool (D7②) — Mem0 fact retrieval.
   'search_memory_facts',
+  // ADR-0031 决定1/D5 + ADR-0032 D9 (YUK-304 lane B) — the quiz C→A reverse-U6
+  // grant: the copilot IS the quiz orchestrator now (the C-form detectQuizIntent
+  // / resolveQuizIntent / quiz-skill pre-dispatch is retired), so it carries the
+  // 题池查询 read (duplicate-avoidance before authoring) and the 组卷 write
+  // (assemble authored drafts + pool questions into a runnable paper). The old
+  // U6 "skills add no tool" red line locked the teaching/solve BEHAVIOR-PACK
+  // merge; this is the deliberate ADR-0031 surface change, not a violation.
+  'query_questions',
+  'write_quiz',
 ] as const satisfies readonly DomainToolName[];
 
 const DREAMING_TOOLS = [
@@ -195,9 +217,13 @@ const COACH_TOOLS = [
 // now lives in READ_TOOLS (granted to coach/dreaming/copilot), so the wide
 // Maintenance read base must filter it back out rather than spreading READ_TOOLS
 // wholesale. This is the single chokepoint keeping Maintenance memory-free.
+//
+// YUK-304 (lane B, scope discipline) — `query_questions` is ALSO filtered out:
+// ADR-0032 D9 grants it to the copilot surfaces only; widening maintenance is
+// A2 territory, not this lane's call.
 const MAINTENANCE_READ_TOOLS = READ_TOOLS.filter(
-  (name): name is Exclude<ReadDomainToolName, 'search_memory_facts'> =>
-    name !== 'search_memory_facts',
+  (name): name is Exclude<ReadDomainToolName, 'search_memory_facts' | 'query_questions'> =>
+    name !== 'search_memory_facts' && name !== 'query_questions',
 );
 
 const MAINTENANCE_TOOLS = [

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { QuestionKind } from './business';
 import { RelationTypeSchema } from './event/blocks';
 import { SuggestionKind, type SuggestionKindT } from './event/known';
 
@@ -38,6 +39,16 @@ export const aiProposalKinds = [
   // proposalWhere); accept is dispatched in src/server/proposals/actions.ts. See
   // docs/superpowers/plans/2026-06-06-yuk227-s3-image-reachability.md §2 Slice C + §4.
   'image_candidate',
+  // ADR-0031 / YUK-304 (quiz C→A, lane B) — copilot-authored draft question. The
+  // author_question knowledge|material seed INSERTs the question row with
+  // draft_status='draft' (non-destructive: invisible to pool / review / FSRS —
+  // same Option-B gate as QuizGen drafts) and writes THIS proposal in the same
+  // transaction. Accept (acceptQuestionDraftProposal in
+  // src/server/proposals/actions.ts) PROMOTES draft→active + FSRS-enrolls
+  // (决定5: accept = promotion, not insert). Flows through the existing
+  // experimental:proposal event/inbox path (writeAiProposal default +
+  // proposalWhere); no writer/inbox change.
+  'question_draft',
 ] as const;
 
 export const AiProposalKind = z.enum(aiProposalKinds);
@@ -188,6 +199,26 @@ export const ImageCandidateProposalChange = z.object({
 });
 export type ImageCandidateProposalChangeT = z.infer<typeof ImageCandidateProposalChange>;
 
+// ADR-0031 / YUK-304 (lane B) — question_draft proposed_change. `question_id` is
+// the ALREADY-INSERTED draft row (written in the same tx as this proposal by
+// runQuestionAuthor — see src/server/ai/question-author.ts); the rest is a
+// display/audit snapshot so the inbox card can render without a question join.
+// Accept reads `question_id` and promotes draft→active + FSRS-enrolls.
+export const QuestionDraftProposalChange = z.object({
+  question_id: z.string().min(1),
+  kind: QuestionKind,
+  difficulty: z.number().int().min(1).max(5),
+  knowledge_ids: z.array(z.string().min(1)),
+  seed_mode: z.enum(['knowledge', 'material']),
+  // Short prompt excerpt for the inbox card (display-only; the question row is
+  // the source of truth).
+  prompt_preview: z.string().optional(),
+  // material seed provenance (display/audit only — the material body itself is
+  // NOT carried here; it fed the generation prompt and is not persisted).
+  material_url: z.string().optional(),
+});
+export type QuestionDraftProposalChangeT = z.infer<typeof QuestionDraftProposalChange>;
+
 export const AiProposalPayload = z.discriminatedUnion('kind', [
   BaseProposal.extend({
     kind: z.literal('knowledge_node'),
@@ -265,6 +296,14 @@ export const AiProposalPayload = z.discriminatedUnion('kind', [
     kind: z.literal('image_candidate'),
     target: ProposalTarget.extend({ subject_kind: z.literal('source_asset') }),
     proposed_change: ImageCandidateProposalChange,
+  }),
+  // ADR-0031 / YUK-304 (lane B) — copilot-authored draft question. target is the
+  // already-inserted draft question row (subject_id = question id, known at
+  // propose time — contrast image_candidate whose asset is minted on accept).
+  BaseProposal.extend({
+    kind: z.literal('question_draft'),
+    target: ProposalTarget.extend({ subject_kind: z.literal('question') }),
+    proposed_change: QuestionDraftProposalChange,
   }),
 ]);
 export type AiProposalPayloadT = z.infer<typeof AiProposalPayload>;

@@ -2334,3 +2334,167 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
     expect(meta.single_source_grounding).toBe(true);
   });
 });
+
+// ADR-0031 / YUK-304 (lane B) — question_draft accept: promote draft→active +
+// FSRS enroll-if-absent + rate event, idempotent on caused_by_event_id.
+describe('question_draft accept (ADR-0031 lane B)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  async function seedDraftQuestion(opts: { knowledgeIds?: string[]; id?: string } = {}) {
+    const db = testDb();
+    const id = opts.id ?? 'q_draft_1';
+    const knowledgeIds = opts.knowledgeIds ?? ['k_draft'];
+    if (knowledgeIds.length > 0) await seedKnowledge(knowledgeIds);
+    const now = new Date();
+    await db.insert(question).values({
+      id,
+      kind: 'short_answer',
+      prompt_md: '解释「之」的用法。',
+      reference_md: '代词。',
+      knowledge_ids: knowledgeIds,
+      difficulty: 3,
+      source: 'copilot_authored',
+      draft_status: 'draft',
+      created_at: now,
+      updated_at: now,
+    });
+    return id;
+  }
+
+  async function seedQuestionDraftProposal(proposalId: string, questionId: string) {
+    await writeAiProposal(testDb(), {
+      id: proposalId,
+      actor_ref: 'agent:copilot',
+      payload: {
+        kind: 'question_draft',
+        target: { subject_kind: 'question', subject_id: questionId },
+        reason_md: 'copilot 拟题（seed=knowledge）',
+        evidence_refs: [],
+        proposed_change: {
+          question_id: questionId,
+          kind: 'short_answer',
+          difficulty: 3,
+          knowledge_ids: ['k_draft'],
+          seed_mode: 'knowledge',
+        },
+      },
+    });
+  }
+
+  it('fresh accept promotes draft→active, FSRS-enrolls each knowledge id, writes the rate event', async () => {
+    const db = testDb();
+    const questionId = await seedDraftQuestion();
+    await seedQuestionDraftProposal('qd_p1', questionId);
+
+    const result = await acceptAiProposal(db, 'qd_p1', { user_note: 'ok' });
+    expect(result.kind).toBe('question_draft');
+    if (result.kind !== 'question_draft') throw new Error('unreachable');
+    expect(result.question_id).toBe(questionId);
+    expect(result.idempotent).toBeUndefined();
+
+    const [row] = await db.select().from(question).where(eq(question.id, questionId));
+    expect(row.draft_status).toBe('active');
+
+    // Per-knowledge FSRS card materialized (enroll-if-absent).
+    const { getFsrsState } = await import('@/server/fsrs/state');
+    const state = await getFsrsState(db, 'knowledge', 'k_draft');
+    expect(state).toBeTruthy();
+    expect(state?.last_review_event_id).toBe(result.rate_event_id);
+
+    // Rate event chained to the proposal.
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'qd_p1')));
+    expect(rateRows).toHaveLength(1);
+    expect(
+      (rateRows[0].payload as { materialized_question_id?: string }).materialized_question_id,
+    ).toBe(questionId);
+  });
+
+  it('does NOT reset FSRS for an already-enrolled knowledge node', async () => {
+    const db = testDb();
+    const questionId = await seedDraftQuestion();
+    await seedQuestionDraftProposal('qd_p2', questionId);
+
+    const { getFsrsState, upsertFsrsState } = await import('@/server/fsrs/state');
+    const { initialFsrsState } = await import('@/server/review/fsrs');
+    const preexisting = initialFsrsState(new Date('2026-01-01T00:00:00.000Z'));
+    await upsertFsrsState(db, {
+      subject_kind: 'knowledge',
+      subject_id: 'k_draft',
+      state: preexisting.state,
+      due_at: preexisting.dueAt,
+      last_review_event_id: 'ev_prior_review',
+    });
+
+    await acceptAiProposal(db, 'qd_p2');
+    const after = await getFsrsState(db, 'knowledge', 'k_draft');
+    // Untouched: the prior schedule (incl. its review anchor) survives.
+    expect(after?.last_review_event_id).toBe('ev_prior_review');
+  });
+
+  it('falls back to question-level FSRS when the row has no knowledge_ids', async () => {
+    const db = testDb();
+    const questionId = await seedDraftQuestion({ knowledgeIds: [], id: 'q_draft_nolabel' });
+    await seedQuestionDraftProposal('qd_p3', questionId);
+
+    await acceptAiProposal(db, 'qd_p3');
+    const { getFsrsState } = await import('@/server/fsrs/state');
+    expect(await getFsrsState(db, 'question', questionId)).toBeTruthy();
+  });
+
+  it('double-accept is idempotent (no second rate event, no FSRS churn)', async () => {
+    const db = testDb();
+    const questionId = await seedDraftQuestion();
+    await seedQuestionDraftProposal('qd_p4', questionId);
+
+    const first = await acceptAiProposal(db, 'qd_p4');
+    const again = await acceptAiProposal(db, 'qd_p4');
+    expect(again.kind).toBe('question_draft');
+    if (again.kind !== 'question_draft' || first.kind !== 'question_draft') {
+      throw new Error('unreachable');
+    }
+    expect(again.idempotent).toBe(true);
+    expect(again.rate_event_id).toBe(first.rate_event_id);
+
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'qd_p4')));
+    expect(rateRows).toHaveLength(1);
+  });
+
+  it('dismiss-then-accept 409s and the draft stays inert', async () => {
+    const db = testDb();
+    const questionId = await seedDraftQuestion();
+    await seedQuestionDraftProposal('qd_p5', questionId);
+
+    const dismissed = await dismissAiProposal(db, 'qd_p5');
+    expect(dismissed.kind).toBe('dismissed');
+    await expect(acceptAiProposal(db, 'qd_p5')).rejects.toMatchObject({ status: 409 });
+
+    const [row] = await db.select().from(question).where(eq(question.id, questionId));
+    // The dismissed draft stays draft (never pooled / FSRS'd).
+    expect(row.draft_status).toBe('draft');
+    const { getFsrsState } = await import('@/server/fsrs/state');
+    expect(await getFsrsState(db, 'knowledge', 'k_draft')).toBeNull();
+  });
+
+  it('404s on a missing question row and 409s on a non-draft row', async () => {
+    const db = testDb();
+    await seedKnowledge(['k_draft']);
+    await seedQuestionDraftProposal('qd_p6', 'q_gone');
+    await expect(acceptAiProposal(db, 'qd_p6')).rejects.toMatchObject({ status: 404 });
+
+    const questionId = await seedDraftQuestion({ id: 'q_already_active', knowledgeIds: [] });
+    await testDb()
+      .update(question)
+      .set({ draft_status: 'active' })
+      .where(eq(question.id, questionId));
+    await seedQuestionDraftProposal('qd_p7', questionId);
+    await expect(acceptAiProposal(db, 'qd_p7')).rejects.toMatchObject({ status: 409 });
+  });
+});

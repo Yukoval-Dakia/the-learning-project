@@ -155,6 +155,22 @@ describe('AiProposalPayload', () => {
           knowledge_ids: ['k1'],
         },
       },
+      // ADR-0031 / YUK-304 (lane B) — copilot-authored draft question; the
+      // question row already exists (draft_status='draft') when this proposal
+      // is written, so question_id is known at propose time.
+      question_draft: {
+        ...base,
+        kind: 'question_draft',
+        target: { subject_kind: 'question', subject_id: 'question_draft_1' },
+        proposed_change: {
+          question_id: 'question_draft_1',
+          kind: 'short_answer',
+          difficulty: 3,
+          knowledge_ids: ['k1'],
+          seed_mode: 'knowledge',
+          prompt_preview: '解释「之」在句中的作用',
+        },
+      },
     } as const;
 
     expect(Object.keys(samples).sort()).toEqual([...aiProposalKinds].sort());
@@ -278,6 +294,76 @@ describe('AiProposalPayload', () => {
       }),
     ).toThrow();
   });
+
+  // ADR-0031 / YUK-304 (lane B) — question_draft round-trip + rejection shapes.
+  it('accepts a valid question_draft proposal (knowledge + material seeds)', () => {
+    const parsed = parseAiProposalPayload({
+      ...base,
+      kind: 'question_draft',
+      target: { subject_kind: 'question', subject_id: 'q_draft_1' },
+      proposed_change: {
+        question_id: 'q_draft_1',
+        kind: 'reading',
+        difficulty: 4,
+        knowledge_ids: ['k1', 'k2'],
+        seed_mode: 'material',
+        prompt_preview: '阅读下面的文段，回答问题。',
+        material_url: 'https://example.edu/passage',
+      },
+    });
+    expect(parsed.kind).toBe('question_draft');
+    if (parsed.kind === 'question_draft') {
+      expect(parsed.proposed_change.question_id).toBe('q_draft_1');
+      expect(parsed.proposed_change.seed_mode).toBe('material');
+      expect(parsed.proposed_change.knowledge_ids).toEqual(['k1', 'k2']);
+    }
+  });
+
+  it('rejects a question_draft proposal missing question_id / with a bogus kind or seed_mode', () => {
+    const change = {
+      question_id: 'q_draft_1',
+      kind: 'short_answer',
+      difficulty: 3,
+      knowledge_ids: ['k1'],
+      seed_mode: 'knowledge',
+    };
+    const target = { subject_kind: 'question', subject_id: 'q_draft_1' };
+    expect(() =>
+      parseAiProposalPayload({
+        ...base,
+        kind: 'question_draft',
+        target,
+        proposed_change: { ...change, question_id: undefined },
+      }),
+    ).toThrow();
+    expect(() =>
+      parseAiProposalPayload({
+        ...base,
+        kind: 'question_draft',
+        target,
+        proposed_change: { ...change, kind: 'made_up_kind' },
+      }),
+    ).toThrow();
+    expect(() =>
+      parseAiProposalPayload({
+        ...base,
+        kind: 'question_draft',
+        target,
+        // seed_mode is the knowledge|material pair only — variant/record route
+        // through their own existing kinds, never question_draft.
+        proposed_change: { ...change, seed_mode: 'variant' },
+      }),
+    ).toThrow();
+    expect(() =>
+      parseAiProposalPayload({
+        ...base,
+        kind: 'question_draft',
+        // wrong target.subject_kind
+        target: { subject_kind: 'record', subject_id: 'q_draft_1' },
+        proposed_change: change,
+      }),
+    ).toThrow();
+  });
 });
 
 // P5.6 / YUK-178 — suggestion_kind discriminator (AC-2 schema scope, ND-SK-1).
@@ -387,6 +473,17 @@ describe('suggestion_kind (P5.6 / YUK-178)', () => {
           summary_md: '图片型源',
         },
       },
+      question_draft: {
+        kind: 'question_draft',
+        target: { subject_kind: 'question', subject_id: 'q1' },
+        proposed_change: {
+          question_id: 'q1',
+          kind: 'short_answer',
+          difficulty: 3,
+          knowledge_ids: ['k1'],
+          seed_mode: 'knowledge',
+        },
+      },
     };
     // Audit-coverage guard (AC-2): the sample map covers every AiProposalKind, so
     // a future kind addition that forgets the optional-field check is caught.
@@ -460,6 +557,10 @@ describe('suggestion_kind (P5.6 / YUK-178)', () => {
       // YUK-227 S3 Slice C — image_candidate is a proactive source-expansion proposal
       // (the agent surfaces a reachable image-type source); it is not corrective.
       image_candidate: false,
+      // ADR-0031 / YUK-304 (lane B) — question_draft is a proactive authoring
+      // proposal (user asked for a quiz; the draft grows the bank), not a repair
+      // of an observed failure.
+      question_draft: false,
     };
     // Every kind classified; exactly one structurally-corrective kind.
     expect(Object.keys(correctivePossibleByKind).sort()).toEqual([...aiProposalKinds].sort());

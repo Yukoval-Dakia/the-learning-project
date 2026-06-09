@@ -35,7 +35,12 @@ export type ProposalKind =
   | 'judge_retraction'
   | 'goal_scope'
   | 'block_merge'
-  | 'image_candidate';
+  | 'image_candidate'
+  // ADR-0031 / YUK-304 (lane B) — copilot-authored draft question (accept
+  // promotes draft→active + FSRS-enrolls). NOTE: this union is hand-maintained;
+  // adding a kind to aiProposalKinds does NOT typecheck-force an entry here —
+  // without it the card renders the raw kind string + neutral tone.
+  | 'question_draft';
 
 export interface ProposalTarget {
   subject_kind: string;
@@ -140,6 +145,8 @@ const KIND_LABELS: Record<ProposalKind, string> = {
   goal_scope: '目标范围',
   block_merge: '题块合并',
   image_candidate: '图片来源',
+  // ADR-0031 / YUK-304 (lane B) — copilot 拟题草稿.
+  question_draft: 'AI 拟题',
 };
 
 export function kindLabel(kind: ProposalKind): string {
@@ -161,6 +168,9 @@ export function kindTone(kind: ProposalKind): 'info' | 'good' | 'hard' | 'coral'
     case 'completion':
     case 'record_links':
     case 'record_promotion':
+    // ADR-0031 / YUK-304 (lane B) — accepting a question_draft grows the bank
+    // (a constructive/“good” action, same bucket as record_promotion).
+    case 'question_draft':
       return 'good';
     case 'judge_retraction':
       return 'hard';
