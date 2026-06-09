@@ -1,0 +1,2163 @@
+[
+  {
+    "path": "/api/_/backfill/knowledge_propose",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "手动触发 knowledge_propose_nightly 补跑，无请求体",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": null,
+        "notes": "需要 x-internal-token header；同步执行，返回 handler result JSON"
+      }
+    ]
+  },
+  {
+    "path": "/api/_/export",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "导出数据库 + 可选 R2 资产为 ZIP 压缩包",
+        "query": [
+          {
+            "name": "include_assets",
+            "required": false,
+            "example": "1"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "响应 content-type: application/zip，attachment 下载；include_assets=1 时打包 R2 资产"
+      }
+    ]
+  },
+  {
+    "path": "/api/_/import",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "上传 ZIP 备份档案，wipe-and-reload 恢复数据库",
+        "query": [
+          {
+            "name": "confirm",
+            "required": true,
+            "example": "wipe-and-reload"
+          }
+        ],
+        "contentType": "application/octet-stream",
+        "bodyExample": null,
+        "notes": "请求体为原始 ZIP 二进制（application/octet-stream）；confirm 参数值必须精确为 wipe-and-reload，否则返回 400。破坏性：会清库重载"
+      }
+    ]
+  },
+  {
+    "path": "/api/_/logs/cost",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "按时间桶聚合 cost_ledger，支持 day/week/month 粒度",
+        "query": [
+          {
+            "name": "range",
+            "required": false,
+            "example": "day"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "range 允许值：day（默认）、week、month；返回最多 200 行，按桶倒序"
+      }
+    ]
+  },
+  {
+    "path": "/api/_/logs/jobs",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "列出所有 pg-boss job 的聚合视图（attempt 数、总 cost、最新 outcome）",
+        "query": [
+          {
+            "name": "limit",
+            "required": false,
+            "example": "20"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "limit 上限 100，默认 20；只含 pgboss_job_id 非 NULL 的 cost_ledger 行"
+      }
+    ]
+  },
+  {
+    "path": "/api/_/logs/jobs/:id",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "查询单个 pg-boss job 的全部 attempts 及关联 tool_call_log",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": ":id 为 pgboss_job_id；job 不存在返回 404"
+      }
+    ]
+  },
+  {
+    "path": "/api/_/logs/tool_calls",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "查询 tool_call_log，按 occurred_at 倒序",
+        "query": [
+          {
+            "name": "limit",
+            "required": false,
+            "example": "50"
+          },
+          {
+            "name": "task_kind",
+            "required": false,
+            "example": "VariantVerifyTask"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "limit 默认 50，上限 200；task_kind 可选过滤"
+      }
+    ]
+  },
+  {
+    "path": "/api/_/seed",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "从 wenyan curriculum.json 幂等播种知识图谱节点",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": null,
+        "notes": "无请求体；幂等 INSERT——已存在节点不动"
+      }
+    ]
+  },
+  {
+    "path": "/api/_/seed/math",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "幂等播种数学 fixture 题目（choice/fill_blank/derivation）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": null,
+        "notes": "无请求体；幂等——已存在 fixture_ref 的跳过；会确保 knowledge 节点 k-math-seed-root 存在"
+      }
+    ]
+  },
+  {
+    "path": "/api/_/tools/:name",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "调试端点：按名称执行一个已注册 DomainTool，记录 tool_call_log",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "input": {},
+          "taskRunId": "optional-cuid",
+          "callerActor": {
+            "kind": "agent",
+            "ref": "debug:_/tools"
+          }
+        },
+        "notes": ":name 为已注册工具名；input 字段由各工具自身 Zod inputSchema 校验，空对象为最小合法值；tool 不存在返回 404；body 可完全省略"
+      }
+    ]
+  },
+  {
+    "path": "/api/admin/cost",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "查询过去 N 天的 AI 调用成本聚合",
+        "query": [
+          {
+            "name": "days",
+            "required": false,
+            "example": "30"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "days 默认 30；返回 getAdminCost 聚合结果"
+      }
+    ]
+  },
+  {
+    "path": "/api/admin/failures",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "获取 AI 任务失败集群列表",
+        "query": [
+          {
+            "name": "limit",
+            "required": false,
+            "example": "200"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "limit 默认 200，最大 200；返回 {clusters, limit}"
+      }
+    ]
+  },
+  {
+    "path": "/api/admin/runs",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "分页列出 AI task runs，支持 status / task_kind 过滤",
+        "query": [
+          {
+            "name": "limit",
+            "required": false,
+            "example": "50"
+          },
+          {
+            "name": "status",
+            "required": false,
+            "example": "failure"
+          },
+          {
+            "name": "task_kind",
+            "required": false,
+            "example": "VariantVerifyTask"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "status 允许值：running、success、failure；limit 默认 50"
+      }
+    ]
+  },
+  {
+    "path": "/api/admin/runs/:id",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "获取单个 AI task run 的详细时间线",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": ":id 为 task_run_id；不存在返回 404"
+      }
+    ]
+  },
+  {
+    "path": "/api/agents/notes",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "读取全部未过期的跨 agent 观察笔记（AI 观察板只读接口）",
+        "query": [
+          {
+            "name": "limit",
+            "required": false,
+            "example": "50"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "limit 正整数 max 200；响应 { rows: [...] }"
+      }
+    ]
+  },
+  {
+    "path": "/api/ai/:task",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "运行指定 AI task；仅 ReviewIntentTask 可直接调用，其他需通过 domain route",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "input": {}
+        },
+        "notes": "路径参数 :task 为 tasks 注册表中的 key。直接可调的 task：ReviewIntentTask。其余合法 task 值（但会被路由拒绝返回 400）：AttributionTask、VisionExtractTask、StructureTask、MistakeEnrollTask、KnowledgeProposeTask、SessionSummaryTask、NoteGenerateTask、SemanticJudgeTask、TeachingTurnTask、CoachTask、CopilotTask、QuizGenTask 等。body.input 内容随 task 而异。所有 /api/* 需 header x-internal-token。有全局滑动窗口速率限制（429）"
+      }
+    ]
+  },
+  {
+    "path": "/api/artifacts/:id/ai-changes",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "列出 artifact 上最近 50 条 AI 自动改写事件（note-refine apply）",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "响应 { artifact_id, rows: [...] }"
+      }
+    ]
+  },
+  {
+    "path": "/api/artifacts/:id/ai-changes/:eventId/undo",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "撤销某条 AI 改写事件（note-refine apply undo）",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "无请求体；eventId 须属于该 artifact 改写历史（否则 404）"
+      }
+    ]
+  },
+  {
+    "path": "/api/artifacts/:id/backlinks",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "获取指向该 artifact 的所有入链（cross_link 类型），含来源片段",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "仅返回来源未归档且 ready 的入链；每行含 from_* + snippet（max 120）"
+      }
+    ]
+  },
+  {
+    "path": "/api/artifacts/:id/body-blocks",
+    "methods": [
+      {
+        "method": "PATCH",
+        "summary": "以乐观锁替换 artifact 整体 body_blocks",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "artifact_version": 3,
+          "body_blocks": [
+            {
+              "id": "blk_1",
+              "type": "paragraph",
+              "content": "内容"
+            }
+          ]
+        },
+        "notes": "artifact_version 乐观锁；body_blocks 需符合 ArtifactBodyBlocks schema；版本冲突 409"
+      }
+    ]
+  },
+  {
+    "path": "/api/artifacts/:id/correct",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "获取 artifact 的 correction 状态（whole + 各 block）",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "响应 { artifact_id, whole, blocks }"
+      },
+      {
+        "method": "POST",
+        "summary": "写入一条 CorrectArtifactEvent（retract/supersede/mark_wrong/restore）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "correction_kind": "mark_wrong",
+          "reason_md": "内容有误",
+          "block_id": "blk_1"
+        },
+        "notes": "correction_kind 枚举：supersede|retract|mark_wrong|restore；supersede 须带 replacement_artifact_id；block_id 可选；reason_md 1..2000；响应 { correction_event_id }"
+      }
+    ]
+  },
+  {
+    "path": "/api/artifacts/:id/sections/:sectionId",
+    "methods": [
+      {
+        "method": "PATCH",
+        "summary": "以乐观锁更新 artifact 中某个 section 的 body markdown",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "artifact_version": 2,
+          "section_version": 1,
+          "body_md": "更新后的 Markdown 内容"
+        },
+        "notes": "artifact_version 与 section_version 均乐观锁；body_md 最长 50000；版本冲突 409"
+      }
+    ]
+  },
+  {
+    "path": "/api/artifacts/search",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "按标题子串搜索 artifact（供跨链接 picker 使用）",
+        "query": [
+          {
+            "name": "q",
+            "required": true,
+            "example": "数学"
+          },
+          {
+            "name": "exclude",
+            "required": false,
+            "example": "artifact_abc"
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "example": "10"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "q 最长 200；只返回 archived_at=null 且 generation_status=ready；limit 默认 10 max 25；响应 { rows: [{id,title,type}] }"
+      }
+    ]
+  },
+  {
+    "path": "/api/assets",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "上传单张图片资产（PNG/JPEG/WebP）到 R2，返回 asset row",
+        "query": [],
+        "contentType": "multipart/form-data",
+        "bodyExample": null,
+        "formFields": ["file"],
+        "notes": "file 字段须是 image/png、image/jpeg 或 image/webp；大小 1..MAX_IMAGE_UPLOAD_BYTES（默认 8 MB）；响应 201 { asset: {...} }"
+      }
+    ]
+  },
+  {
+    "path": "/api/assets/:id",
+    "methods": [
+      {
+        "method": "DELETE",
+        "summary": "从 R2 和数据库删除指定 asset",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "无请求体；asset 不存在返回 404"
+      }
+    ]
+  },
+  {
+    "path": "/api/assets/:id/content",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "从 R2 流式返回原始图片字节，供浏览器渲染",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "响应 Content-Type 为资产实际 mime_type，Cache-Control: private, max-age=60"
+      }
+    ]
+  },
+  {
+    "path": "/api/coach/today-plan",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "获取最新 Coach 今日计划（TodayPlan full）+ 最新周度 reflection",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "只读；响应为 TodayPlan JSON（含 daily + weekly reflection）"
+      }
+    ]
+  },
+  {
+    "path": "/api/copilot/chat",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "向 Copilot 发送一条用户消息，响应为 SSE 流（text/event-stream）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "user_message": "帮我讲解之字主谓间用法",
+          "triggered_by": "chat",
+          "chip_kind": null,
+          "skill_context": null,
+          "ambient_context": {
+            "route": "/today",
+            "focused_entity": {
+              "kind": "knowledge_node",
+              "id": "k_abc123"
+            }
+          }
+        },
+        "notes": "SSE 流式。triggered_by 枚举：chat|chip。响应事件：event: delta（data {text}）逐块；event: reply（data CopilotChatResult）终止。Zod 失败时返回普通 JSON 错误。需 x-internal-token"
+      }
+    ]
+  },
+  {
+    "path": "/api/copilot/turns",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "获取最近 N 条 Copilot 对话轮次（ask/chip + reply 对），oldest→newest",
+        "query": [
+          {
+            "name": "limit",
+            "required": false,
+            "example": "20"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "limit 正整数，省略用服务端默认；响应 { turns: [...] }"
+      }
+    ]
+  },
+  {
+    "path": "/api/cost/today",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "返回今日（BJT 午夜起）的花费汇总，用于 /today cost ribbon",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "按 BJT（UTC+8）午夜划窗口；返回 {window, today:{spend,tokens_in,tokens_out,ledger_rows,tool_calls,by_task}}"
+      }
+    ]
+  },
+  {
+    "path": "/api/echo",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "创建 EchoJob 并入 pg-boss 队列，返回 businessId 供客户端开 SSE 监听",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "input": "hello world"
+        },
+        "notes": "input 非空字符串；响应 { businessId, jobId }；用 businessId 开 GET /api/echo/:id/events SSE 监听"
+      }
+    ]
+  },
+  {
+    "path": "/api/echo/:id/events",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "SSE 长连接，推送指定 EchoJob 的状态事件（支持断线重连 replay）",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "SSE 流式。:id 为 businessId；支持 Last-Event-ID header 断线重连；连接持续到客户端断开"
+      }
+    ]
+  },
+  {
+    "path": "/api/editing-session/blur",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "用户离焦（blur）时将 artifact 标记为 idle 并触发 flush",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "artifact_id": "art_abc123"
+        },
+        "notes": "artifact_id 非空字符串；响应为 flush 结果"
+      }
+    ]
+  },
+  {
+    "path": "/api/editing-session/heartbeat",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "记录 artifact 编辑心跳；status=editing 时同时入队 dwell note-refine 任务",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "artifact_id": "art_abc123",
+          "status": "editing"
+        },
+        "notes": "status 枚举：editing|idle；editing 时额外入队后台精炼；响应 { ok: true }"
+      }
+    ]
+  },
+  {
+    "path": "/api/embedded-check/attempt",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "提交内联检查题答案，判题并（失败时）记录 mistake + 入队 attribution_followup，不写 FSRS",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "question_id": "q_abc123",
+          "answer_md": "答案文本",
+          "latency_ms": 3000
+        },
+        "notes": "question.source 须为 embedded 或 teaching_check；answer_md 最大 2000；latency_ms 可选 0-3600000；响应含 outcome + judge + attempt_event_id + (mistake_id)"
+      }
+    ]
+  },
+  {
+    "path": "/api/events",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "原始事件日志过滤列表（AND 组合所有过滤条件）",
+        "query": [
+          {
+            "name": "action",
+            "required": false,
+            "example": "attempt"
+          },
+          {
+            "name": "subject_kind",
+            "required": false,
+            "example": "question"
+          },
+          {
+            "name": "subject_id",
+            "required": false,
+            "example": "q_abc123"
+          },
+          {
+            "name": "actor_kind",
+            "required": false,
+            "example": "user"
+          },
+          {
+            "name": "actor_ref",
+            "required": false,
+            "example": "self"
+          },
+          {
+            "name": "outcome",
+            "required": false,
+            "example": "failure"
+          },
+          {
+            "name": "since",
+            "required": false,
+            "example": "2026-01-01T00:00:00Z"
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "example": "50"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "所有参数可选；since 须 ISO-8601；返回 {rows:[...]}"
+      }
+    ]
+  },
+  {
+    "path": "/api/events/:id",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "返回单个事件及其 caused_by 链（前向+后向各一跳）和 correction_status",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "404 when event id 不存在；含 event + correction_status + chain"
+      }
+    ]
+  },
+  {
+    "path": "/api/events/:id/correct",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "为目标事件写入 correct 事件（标记 supersede/retract/mark_wrong/restore）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "correction_kind": "retract",
+          "reason_md": "判题有误",
+          "affected_refs": [
+            {
+              "kind": "question",
+              "id": "q_abc123"
+            }
+          ]
+        },
+        "notes": "correction_kind 枚举：supersede|retract|mark_wrong|restore；supersede 须带 replacement_event_id，其余 kind 不得携带；affected_refs 最少 1 项；ActivityRef.kind 枚举：question|question_part|record|recall_prompt|practice_log|project_milestone|open_inquiry"
+      }
+    ]
+  },
+  {
+    "path": "/api/events/:id/rate",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "对目标事件打 accept/dismiss/rollback 评级",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "rating": "accept",
+          "user_note": "认可这个建议"
+        },
+        "notes": "rating 枚举：accept|dismiss|rollback；user_note 可选 max 2000；同一事件已有不同 rating 返回 409；相同 rating 幂等；不能 rate 一个 rate 事件"
+      }
+    ]
+  },
+  {
+    "path": "/api/health",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "服务健康探针，同步检测 DB 连接",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "无需 x-internal-token（中间件豁免）；db_ok=false 时返回 HTTP 503；ok 字段始终为 true"
+      }
+    ]
+  },
+  {
+    "path": "/api/hubs/:id/dismiss-link",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "从 hub 的 AutoLinksContainer 中压制（dismiss）一条系统维护的 auto-link",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "suppressed_artifact_id": "artifact_xyz789",
+          "relation": "subtopic"
+        },
+        "notes": "relation 可选，枚举：subtopic|prerequisite|derived_from|contrasts_with；suppressed_artifact_id 不能等于 hub id；操作幂等；单事务原子"
+      }
+    ]
+  },
+  {
+    "path": "/api/ingestion",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "列出最近的 ingestion sessions（有至少 1 个 block），最新优先",
+        "query": [
+          {
+            "name": "limit",
+            "required": false,
+            "example": "20"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "limit 默认 20，范围 1..100；返回 { rows: [...] }，每行含 block_count / observation_count / auto_enrolled_count"
+      },
+      {
+        "method": "POST",
+        "summary": "创建 ingestion session（status=uploaded），不触发抽取",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "entrypoint": "vision_paper",
+          "asset_ids": ["asset_abc123", "asset_def456"]
+        },
+        "notes": "entrypoint 枚举：vision_single|vision_paper|docx；asset_ids 1..MAX_PDF_PAGES 个已存在 asset id；响应 { session: {...} }"
+      }
+    ]
+  },
+  {
+    "path": "/api/ingestion/:id/blocks",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "获取某 ingestion session 下所有 question_block 行，含 auto_enroll_observation",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "按 created_at asc；每行含 status（draft/imported/ignored/auto_enrolled）和可选 auto_enroll_observation"
+      }
+    ]
+  },
+  {
+    "path": "/api/ingestion/:id/events",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "SSE 流：订阅 ingestion session 的实时进度事件，支持断线重放",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "SSE 流式；支持 Last-Event-ID 驱动 replay；每条事件 id: <N>\\ndata: {event_id,event_type,payload}"
+      }
+    ]
+  },
+  {
+    "path": "/api/ingestion/:id/extract",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "将 ingestion session 推进到 queued 状态并投递 tencent_ocr_extract job",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "无请求体；session 须处于 uploaded 或 failed；响应 { businessId, jobId }；之后监听 GET /api/ingestion/:id/events"
+      }
+    ]
+  },
+  {
+    "path": "/api/ingestion/:id/import",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "批量导入 question_block 为 question+attempt/record 行，session 推进到 imported",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "blocks": [
+            {
+              "block_id": "block_abc",
+              "source_block_ids": ["block_abc"],
+              "page_spans": [
+                {
+                  "page_index": 0,
+                  "bbox": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 100,
+                    "height": 100
+                  },
+                  "role": "question_area"
+                }
+              ],
+              "image_refs": ["asset_abc123"],
+              "final_prompt_md": "题目 Markdown",
+              "final_reference_md": "参考答案",
+              "final_wrong_answer_md": "错误作答",
+              "outcome": "failure",
+              "knowledge_ids": ["know_xyz"],
+              "cause": {
+                "primary_category": "conceptual_error",
+                "user_notes": null
+              },
+              "difficulty": 3,
+              "question_kind": "choice"
+            }
+          ]
+        },
+        "notes": "outcome 枚举：failure|success|partial|unanswered；question_kind 枚举：choice|true_false|fill_blank|short_answer|essay|computation|reading|translation|derivation；cause 可为 null；响应 { question_ids, mistake_ids, record_ids }"
+      }
+    ]
+  },
+  {
+    "path": "/api/ingestion/:id/make-paper",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "将 imported session 的题目打包成 tool_quiz paper artifact",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "question_ids": ["q_abc", "q_def"]
+        },
+        "notes": "question_ids 可省略（省略=全量；显式空数组 400）；不允许重复 id；session 须 imported；响应 { artifact_id }"
+      }
+    ]
+  },
+  {
+    "path": "/api/ingestion/:id/rescue",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "对单个 block 手动触发 Vision Tier 2/3 救援，同步返回重新提取的结构化内容",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "block_id": "block_abc",
+          "page": 0,
+          "tier": 2,
+          "strategy": "extract"
+        },
+        "notes": "tier 只能 2 或 3；strategy 枚举：extract|restructure_cloze|restructure_compound（可选）；响应 { structured: {...} }；同步阻塞 haiku~5s/sonnet~15s"
+      }
+    ]
+  },
+  {
+    "path": "/api/ingestion/:id/revert",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "将 auto_enrolled block 回退为 draft，撤销 WorkflowJudge 自动注册",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "block_id": "block_abc",
+          "reason_md": "回退原因（可选）"
+        },
+        "notes": "block 须 auto_enrolled；reason_md 最长 2000 可选；写 CorrectEvent(retract)+归档 record+清除 imported 链接"
+      }
+    ]
+  },
+  {
+    "path": "/api/ingestion/docx",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "一步式 DOCX 上传：自动分类 text/visual 两路，构建完整 ingestion session",
+        "query": [],
+        "contentType": "multipart/form-data",
+        "bodyExample": null,
+        "formFields": ["file"],
+        "notes": "file 为 .docx；大小 1..MAX_DOCX_UPLOAD_BYTES；响应 201 { session_id, line, page_count }；此接口自建 session，勿再调 POST /api/ingestion"
+      }
+    ]
+  },
+  {
+    "path": "/api/ingestion/pdf",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "上传 PDF，同步渲染为 N 张 PNG page 图片，返回 asset_ids",
+        "query": [],
+        "contentType": "multipart/form-data",
+        "bodyExample": null,
+        "formFields": ["file"],
+        "notes": "file 为 application/pdf；大小 1..30 MB；最多 15 页；同步阻塞；响应 201 { asset_ids, page_count }；asset_ids 可直接传给 POST /api/ingestion"
+      }
+    ]
+  },
+  {
+    "path": "/api/knowledge",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "返回知识树快照（所有节点行）",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": ""
+      }
+    ]
+  },
+  {
+    "path": "/api/knowledge/:id",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "返回单个知识节点页面（元数据、掌握度、邻居、body_blocks、反链、活动时间线）",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "404 when id unknown or archived"
+      }
+    ]
+  },
+  {
+    "path": "/api/knowledge/edges",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "列出知识边，支持 from/to/relation_type 过滤",
+        "query": [
+          {
+            "name": "from",
+            "required": false,
+            "example": "kn_abc123"
+          },
+          {
+            "name": "to",
+            "required": false,
+            "example": "kn_def456"
+          },
+          {
+            "name": "relation_type",
+            "required": false,
+            "example": "prerequisite"
+          },
+          {
+            "name": "include_archived",
+            "required": false,
+            "example": "true"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": ""
+      },
+      {
+        "method": "POST",
+        "summary": "创建一条知识边",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "from_knowledge_id": "kn_abc123",
+          "to_knowledge_id": "kn_def456",
+          "relation_type": "prerequisite",
+          "weight": 0.8,
+          "reasoning": "A is required before B"
+        },
+        "notes": "201 { id }；409 on duplicate UNIQUE(from,to,relation_type)；relation_type 合法值：prerequisite|related_to|contrasts_with|applied_in|derived_from 或 experimental: 开头字符串"
+      }
+    ]
+  },
+  {
+    "path": "/api/knowledge/edges/proposals/:id",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "对一条知识边提案做出决策（accept/reverse/change_type/dismiss）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "decision": "accept",
+          "user_note": "looks correct"
+        },
+        "notes": "id 是 action=propose 且 subject_kind=knowledge_edge 的 event.id；change_type 时须传 new_relation_type；200 { rate_event_id, generate_event_id|null, edge_id|null }；幂等重提返回 idempotent:true；409 冲突"
+      }
+    ]
+  },
+  {
+    "path": "/api/knowledge/proposals",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "列出旧版知识提案（legacy wire shape）",
+        "query": [
+          {
+            "name": "status",
+            "required": false,
+            "example": "pending"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "status 默认 pending"
+      }
+    ]
+  },
+  {
+    "path": "/api/knowledge/proposals/:id",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "对旧版知识提案做 accept 或 reject 决策",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "decision": "accept"
+        },
+        "notes": "decision 只能 accept 或 reject；reject 内部调用 dismissProposal；409 not_pending/stale；404 not found"
+      }
+    ]
+  },
+  {
+    "path": "/api/knowledge/review",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "触发 KnowledgeReviewTask AI 流任务",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "SSE 流式响应；经 Claude Agent SDK 发往 xiaomi/mimo；无请求 body"
+      }
+    ]
+  },
+  {
+    "path": "/api/knowledge/review-due-summary",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "返回每个知识节点的 FSRS 到期概要（overdue/due_soon）",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "响应：{ now, due_soon_window_hours: 24, summary: { [knowledge_id]: { overdue, due_soon } } }"
+      }
+    ]
+  },
+  {
+    "path": "/api/learning-intents",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "声明学习意图，规划该 topic 节点下的学习提案",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "topic": "文言文虚词"
+        },
+        "notes": "topic 1-120 字符；422 when topic_not_found / topic_no_children；成功返回 proposal 对象"
+      }
+    ]
+  },
+  {
+    "path": "/api/learning-intents/:id/accept",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "接受学习意图提案，物化 LearningItem 层级 + artifact stubs + 入队 note_generate 作业",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "id 为 POST /api/learning-intents 返回的 event id；无请求 body；404 proposal_not_found；409 proposal_already_rated；响应含 enqueued_note_generate_jobs 计数"
+      }
+    ]
+  },
+  {
+    "path": "/api/learning-items",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "列出 learning items，默认排除 archived 和 dismissed，可按 status 过滤",
+        "query": [
+          {
+            "name": "status",
+            "required": false,
+            "example": "in_progress"
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "example": "50"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "status 枚举：pending|in_progress|done|dismissed|resting|archived；limit 默认 50 上限 200；无 status 时自动过滤 archived+dismissed"
+      },
+      {
+        "method": "POST",
+        "summary": "创建一个 manual 类型的 learning item",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "title": "掌握虚词「而」的用法",
+          "content": "需要区分转折、顺承、修饰三种用法",
+          "knowledge_ids": ["kid_abc123"],
+          "parent_learning_item_id": null
+        },
+        "notes": "title 1-200 必填；content 最多 10000 默认空；knowledge_ids 默认 []；parent_learning_item_id 可选；source 固定 manual，status 固定 pending"
+      }
+    ]
+  },
+  {
+    "path": "/api/learning-items/:id",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "获取单个 learning item 详情，含父节点面包屑、子节点列表、primary artifact 及 embedded questions",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "响应含 parent（1 hop）、children、subject_profile、primary_artifact（含 sections + embedded_questions）"
+      },
+      {
+        "method": "PATCH",
+        "summary": "更新 learning item 字段或状态，带乐观锁",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "version": 0,
+          "status": "in_progress",
+          "title": "掌握虚词「而」的用法",
+          "content": "更新内容",
+          "knowledge_ids": ["kid_abc123"],
+          "parent_learning_item_id": null
+        },
+        "notes": "version 必填（版本不匹配 409）；status 转换须符合状态机（非法 400）；user_notes 仅在转 done 时允许；parent=null 清空父节点，省略=不变；圈检测最多 100 跳"
+      },
+      {
+        "method": "DELETE",
+        "summary": "软删除（归档）一个 learning item，带乐观锁",
+        "query": [
+          {
+            "name": "version",
+            "required": true,
+            "example": "0"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "无 body，version 通过 query param 传入；已归档 404；version 不匹配 409"
+      }
+    ]
+  },
+  {
+    "path": "/api/learning-sessions",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "列出 learning sessions，可按 type / status 过滤，附带 review 统计",
+        "query": [
+          {
+            "name": "type",
+            "required": false,
+            "example": "review"
+          },
+          {
+            "name": "status",
+            "required": false,
+            "example": "ended"
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "example": "6"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "type 枚举：ingestion|review|tutor|explore|create|conversation；limit 默认 6 上限 50；含 reviewed_count、rating_counts、knowledge_touched"
+      }
+    ]
+  },
+  {
+    "path": "/api/learning-sessions/:id",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "获取单个 learning session 详情，含所有关联 events 及 review events 的 question prompt",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "events 按 created_at 升序；subject_kind=question 的事件 join question.prompt_md + reference_md"
+      }
+    ]
+  },
+  {
+    "path": "/api/mistakes",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "录入一条错题：创建 question + attempt event + learning_record，异步触发 AI 提议",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "prompt_md": "下列句子中「而」字的用法是？",
+          "reference_md": "《劝学》原文片段",
+          "wrong_answer_md": "我认为是转折用法",
+          "knowledge_ids": ["kid_abc123"],
+          "cause": {
+            "primary_category": "misunderstanding",
+            "user_notes": "混淆了顺承与转折"
+          },
+          "difficulty": 3,
+          "question_kind": "short_answer",
+          "prompt_image_refs": [],
+          "wrong_answer_image_refs": []
+        },
+        "notes": "knowledge_ids 至少 1 个且须存在未归档；cause 可为 null（null 时异步触发 attribution job）；CauseCategory 匹配 /^[a-z][a-z0-9_]*$/；question_kind 枚举见 import；image_refs 须已上传 asset id；响应含 question_id、mistake_id、record_id"
+      },
+      {
+        "method": "GET",
+        "summary": "查询错题列表（event-stream 投影），支持时间过滤和 question 过滤",
+        "query": [
+          {
+            "name": "limit",
+            "required": false,
+            "example": "50"
+          },
+          {
+            "name": "since",
+            "required": false,
+            "example": "2026-01-01T00:00:00Z"
+          },
+          {
+            "name": "question_id",
+            "required": false,
+            "example": "qid_abc123"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "limit 默认 50 上限 200；since 为 ISO-8601；投影 shape：id/question_id/prompt_md/wrong_answer_md/knowledge_ids/cause/created_at"
+      }
+    ]
+  },
+  {
+    "path": "/api/mistakes/recent",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "获取最近 N 条错题（legacy 端点，与 GET /api/mistakes 同投影 shape）",
+        "query": [
+          {
+            "name": "limit",
+            "required": false,
+            "example": "20"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "limit 默认 20 上限 100；cause.user_notes 固定返回 null（back-compat）"
+      }
+    ]
+  },
+  {
+    "path": "/api/notes/:id",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "获取一个 note artifact 的完整详情页数据（blocks + labels + verification + 版本历史 + backlinks + related learning_items + embedded questions）",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "artifact type 须为 note_hub/note_atomic/note_long；不存在/已归档/非 note 类型均 404"
+      }
+    ]
+  },
+  {
+    "path": "/api/practice",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "获取今日/历史 practice paper 列表（含 review session 联结和对/错/生成衍生字段）",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": ""
+      },
+      {
+        "method": "POST",
+        "summary": "为指定 artifact 创建（或复用已有）review session，返回 session_id",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "artifact_id": "art_abc123"
+        },
+        "notes": "artifact 须为 type=tool_quiz、ready、intent_source 在 [review_plan,quiz_gen,embedded_check,ingestion_paper]；已有 started/paused session 时幂等返回"
+      }
+    ]
+  },
+  {
+    "path": "/api/practice/:id",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "返回一份 paper artifact 的完整答题页 payload（paper meta + 章节 + slot 题面 + 草稿 + 提交状态）",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "id 为 paper artifact id；score/outcome 在 visible_to_user=false 且 session 未 completed 时服务端屏蔽"
+      }
+    ]
+  },
+  {
+    "path": "/api/practice/:id/answer",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "自动保存 paper 答题草稿（按 slot upsert）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "session_id": "ses_abc123",
+          "question_id": "q_abc123",
+          "part_ref": null,
+          "input_kind": "text",
+          "content_md": "我的答案",
+          "image_refs": []
+        },
+        "notes": "input_kind 枚举：text|option|image|voice；part_ref 可省略或 null"
+      }
+    ]
+  },
+  {
+    "path": "/api/practice/:id/submit",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "提交 paper 一个 slot 的答案，服务端判题并写入 attempt + judge 事件 + FSRS upsert",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "session_id": "ses_abc123",
+          "question_id": "q_abc123",
+          "part_ref": null,
+          "answer_md": "我的最终答案",
+          "image_refs": []
+        },
+        "notes": "visible_to_user=false 时响应不含 coarse_outcome/score；与 /api/review/submit 独立"
+      }
+    ]
+  },
+  {
+    "path": "/api/proposals",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "列出提案收件箱（分页，支持 status/limit/cursor）",
+        "query": [
+          {
+            "name": "status",
+            "required": false,
+            "example": "pending"
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "example": "50"
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "example": "evt_xyz789"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "status：pending|accepted|dismissed|stale|rubric_rejected；limit 默认 200 上限 500；返回分页 page 对象"
+      }
+    ]
+  },
+  {
+    "path": "/api/proposals/:id/accept",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "接受 AI 提案，支持 accept/reverse/change_type 三种模式",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "decision": "accept",
+          "user_note": "approved"
+        },
+        "notes": "decision 可省略（=accept）；change_type 须传 new_relation_type；relation_type 枚举同 /api/knowledge/edges POST"
+      }
+    ]
+  },
+  {
+    "path": "/api/proposals/:id/dismiss",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "驳回 AI 提案",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "user_note": "not relevant"
+        },
+        "notes": "user_note 可选 max 2000；body 为空 {} 也合法"
+      }
+    ]
+  },
+  {
+    "path": "/api/proposals/:id/retract",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "撤回 AI 提案",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "reason_md": "superseded by newer proposal",
+          "affected_refs": [
+            {
+              "kind": "question",
+              "id": "q_abc123"
+            }
+          ]
+        },
+        "notes": "reason_md 可选 trim 后 1-2000；affected_refs 可选至少 1 项 { kind, id }；body 为空 {} 也合法"
+      }
+    ]
+  },
+  {
+    "path": "/api/question-blocks/:id/figures/:asset_id",
+    "methods": [
+      {
+        "method": "PATCH",
+        "summary": "将 question_block 中指定图片重新归属到 structured 树目标节点",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "attached_to_index": "0.1"
+        },
+        "notes": "attached_to_index 须存在于 question_block.structured 树；actorRef 固定 user"
+      }
+    ]
+  },
+  {
+    "path": "/api/questions",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "多轴题库列表（knowledge_id/subject/source/kind/difficulty/visual_complexity/source_tier/family 过滤）",
+        "query": [
+          {
+            "name": "knowledge_id",
+            "required": false,
+            "example": "kn_abc123"
+          },
+          {
+            "name": "subject",
+            "required": false,
+            "example": "wenyan"
+          },
+          {
+            "name": "source",
+            "required": false,
+            "example": "manual"
+          },
+          {
+            "name": "kind",
+            "required": false,
+            "example": "short_answer"
+          },
+          {
+            "name": "difficulty",
+            "required": false,
+            "example": "3"
+          },
+          {
+            "name": "visual_complexity",
+            "required": false,
+            "example": "low"
+          },
+          {
+            "name": "source_tier",
+            "required": false,
+            "example": "1"
+          },
+          {
+            "name": "sort_by",
+            "required": false,
+            "example": "source_tier"
+          },
+          {
+            "name": "group_by_family",
+            "required": false,
+            "example": "true"
+          },
+          {
+            "name": "expand_root",
+            "required": false,
+            "example": "q_root123"
+          },
+          {
+            "name": "include_drafts",
+            "required": false,
+            "example": "false"
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "example": "50"
+          },
+          {
+            "name": "offset",
+            "required": false,
+            "example": "0"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "knowledge_id/source_tier 可多值；group_by_family 与 expand_root 互斥；expand_root 不能与 source_tier/sort_by 同用；limit 上限 200；sort_by 枚举：created_at|source_tier"
+      }
+    ]
+  },
+  {
+    "path": "/api/questions/:id",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "单题详情聚合（题行 + source_tier + labels + 变体家族 + per-knowledge FSRS/decay + 反向链接 + timeline）",
+        "query": [
+          {
+            "name": "timeline_limit",
+            "required": false,
+            "example": "10"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "timeline_limit 默认 10 上限 50"
+      },
+      {
+        "method": "PATCH",
+        "summary": "编辑题库可编辑字段（prompt/reference/choices/difficulty/knowledge_ids/kind/draft_status）；bloodline 字段一律 400",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "version": 0,
+          "prompt_md": "新题目文本",
+          "reference_md": "参考答案",
+          "choices_md": ["A", "B", "C", "D"],
+          "difficulty": 3,
+          "knowledge_ids": ["kn_abc"],
+          "kind": "short_answer",
+          "draft_status": "active"
+        },
+        "notes": "version 乐观锁；至少提供一个可编辑字段；bloodline 字段被拒；kind 枚举见 import；draft_status 枚举：draft|active"
+      },
+      {
+        "method": "DELETE",
+        "summary": "软归档题目两步：不带 confirm 返回 409+关联计数；?confirm=true&version=N 执行软归档",
+        "query": [
+          {
+            "name": "confirm",
+            "required": false,
+            "example": "true"
+          },
+          {
+            "name": "version",
+            "required": false,
+            "example": "0"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "不带 confirm=true 始终 409；confirm=true 时 version 必填；软归档=设回 draft"
+      }
+    ]
+  },
+  {
+    "path": "/api/questions/:id/solve",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "开启解题 session（lazy 生成参考解答），返回 session_id + generated 标志",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "regenerate": false
+        },
+        "notes": "body 可完全省略；regenerate=true 强制重新生成参考解答"
+      }
+    ]
+  },
+  {
+    "path": "/api/questions/:id/solve/:sid/hint",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "在活跃 solve session 中请求第 hint_index 级 Socratic 提示",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "hint_index": 0
+        },
+        "notes": "hint_index 0-20 默认 0；body 可省略；session 已结束 409；LLM 解析失败 502"
+      }
+    ]
+  },
+  {
+    "path": "/api/questions/:id/solve/:sid/submit",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "提交解题答案（文本步骤或手写图片），判题，失败时记录 mistake 并入队 attribution_followup",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "student_text_steps": ["设 x = ...", "代入得 ..."],
+          "student_final_answer_text": "x = 5",
+          "student_image_refs": []
+        },
+        "notes": "三字段均可选但至少一个非空；响应含 attempt_event_id + judge + revealed_solution_md + (mistake_id)"
+      }
+    ]
+  },
+  {
+    "path": "/api/questions/:id/timeline",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "返回该题最近的 attempt + review 历史事件列表",
+        "query": [
+          {
+            "name": "limit",
+            "required": false,
+            "example": "10"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "limit 默认 10 上限 50；时间戳为 unix 秒"
+      }
+    ]
+  },
+  {
+    "path": "/api/questions/quiz-gen",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "触发 quiz_gen 后台任务（默认）或统一找题次序 sequence 模式，返回 202",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "trigger": "knowledge",
+          "ref_id": "kn_abc123",
+          "count": 3,
+          "sequence": false,
+          "knowledge_id": "kn_abc123",
+          "kind": "short_answer",
+          "domain": "wenyan"
+        },
+        "notes": "trigger 枚举：knowledge|learning_item|manual；count 1-10 默认 3；sequence=true 须提供 knowledge_id 或 trigger=knowledge；非 sequence 返回 {enqueued,job_id}；sequence 返回 {mode,satisfied_from_pool,existing,enqueued,needs}"
+      }
+    ]
+  },
+  {
+    "path": "/api/records",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "列出 learning records，支持多维过滤",
+        "query": [
+          {
+            "name": "kind",
+            "required": false,
+            "example": "mistake"
+          },
+          {
+            "name": "knowledge_id",
+            "required": false,
+            "example": "kid_abc123"
+          },
+          {
+            "name": "question_id",
+            "required": false,
+            "example": "qid_abc123"
+          },
+          {
+            "name": "attempt_event_id",
+            "required": false,
+            "example": "evt_abc123"
+          },
+          {
+            "name": "activity_kind",
+            "required": false,
+            "example": "attempt"
+          },
+          {
+            "name": "processing_status",
+            "required": false,
+            "example": "raw"
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "example": "50"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "kind 支持重复 key 多值；枚举：mistake|worked_example|open_question|insight|reflection|observation|resource_note；activity_kind 枚举：attempt|review|read|ask|annotate|import|conversation|plan；processing_status 枚举：raw|linked|actioned|archived；limit 默认 50 上限 200；每行附 proposal_count"
+      },
+      {
+        "method": "POST",
+        "summary": "创建一条 learning record",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "kind": "insight",
+          "content_md": "「而」字顺承用法在《劝学》中出现 12 次",
+          "source": "manual",
+          "capture_mode": "text",
+          "activity_kind": "read",
+          "processing_status": "raw",
+          "title": null,
+          "origin_event_id": null,
+          "knowledge_ids": ["kid_abc123"],
+          "question_id": null,
+          "attempt_event_id": null,
+          "learning_item_id": null,
+          "artifact_id": null,
+          "source_document_id": null,
+          "asset_refs": [],
+          "payload": {}
+        },
+        "notes": "source 枚举：manual|ocr|import|conversation|agent；capture_mode 枚举：text|image|paper|voice|url|mixed；origin_event_id 为 null 时自动创建 capture event；content_md 最多 20000"
+      }
+    ]
+  },
+  {
+    "path": "/api/records/:id",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "获取单个 learning record 详情，附 proposal_count",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "响应含 proposal_count"
+      },
+      {
+        "method": "PATCH",
+        "summary": "更新 learning record 字段，带乐观锁",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "version": 0,
+          "title": "更新后的标题",
+          "content_md": "更新后内容",
+          "knowledge_ids": ["kid_abc123"],
+          "processing_status": "linked",
+          "payload": {}
+        },
+        "notes": "version 必填（乐观锁）；所有字段可选；content_md 最多 20000"
+      },
+      {
+        "method": "DELETE",
+        "summary": "软删除（归档）一条 learning record",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "无 body，无 version，不经乐观锁；响应 {ok:true}"
+      }
+    ]
+  },
+  {
+    "path": "/api/review/advice",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "预提交判题顾问：运行 judge 返回 suggested_rating 和评分建议，不写任何事件或 FSRS",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "activity_ref": {
+            "kind": "question",
+            "id": "q_abc123"
+          },
+          "response_md": "我的回答"
+        },
+        "notes": "activity_ref / question_id / mistake_id 三选一；response_md 须非空；返回 judge 结果 + advice"
+      }
+    ]
+  },
+  {
+    "path": "/api/review/appeal",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "对 judge 事件提交申诉（写 appeal_request 事件 + retraction proposal），不触发重判",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "judge_event_id": "evt_abc123",
+          "reason_md": "判题有误，原因是..."
+        },
+        "notes": "judge_event_id 须指向 action=judge 事件；reason_md 可选 max 2000；响应含 appeal_event_id"
+      }
+    ]
+  },
+  {
+    "path": "/api/review/due",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "获取当前到期复习队列（FSRS 排序 + goal soft-bias 重排）",
+        "query": [
+          {
+            "name": "limit",
+            "required": false,
+            "example": "20"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "limit 默认 20 范围 1-200；返回 {rows:[...]}"
+      }
+    ]
+  },
+  {
+    "path": "/api/review/plan",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "复习编排器：返回优先级队列 + LLM session_intent（best-effort）",
+        "query": [
+          {
+            "name": "limit",
+            "required": false,
+            "example": "20"
+          },
+          {
+            "name": "intent",
+            "required": false,
+            "example": "skip"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "intent=skip 跳过 LLM session_intent 生成（轻量 poll）；LLM 失败时 session_intent=null 仍 200"
+      }
+    ]
+  },
+  {
+    "path": "/api/review/sessions",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "在 /review 页面 mount 时 eager create 一个新 review session",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "无需 body；返回 {session_id}"
+      }
+    ]
+  },
+  {
+    "path": "/api/review/sessions/:id/end",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "结束或放弃 review session；completed 时异步入队 session_summary job",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "status": "completed"
+        },
+        "notes": "status 枚举：completed|abandoned 默认 completed；sendBeacon 友好"
+      }
+    ]
+  },
+  {
+    "path": "/api/review/sessions/:id/pause",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "将 started 的 review session 暂停为 paused",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "无需 body；sendBeacon 友好；返回 {ok:true,status:'paused'}"
+      }
+    ]
+  },
+  {
+    "path": "/api/review/sessions/:id/reopen",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "将 abandoned 的 review session 重新置为 started",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "无需 body；返回 {ok:true,status:'started'}"
+      }
+    ]
+  },
+  {
+    "path": "/api/review/sessions/:id/resume",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "将 paused 的 review session 恢复为 started",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "无需 body；返回 {ok:true,status:'started'}"
+      }
+    ]
+  },
+  {
+    "path": "/api/review/submit",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "提交一次复习评分（写 review 事件 + upsert FSRS），支持 auto_rate 自动判题",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "activity_ref": {
+            "kind": "question",
+            "id": "q_abc123"
+          },
+          "rating": "good",
+          "response_md": "我的答案",
+          "latency_ms": 5000,
+          "session_id": "ses_abc123",
+          "referenced_knowledge_ids": ["kn_abc"],
+          "answer_image_refs": [],
+          "auto_rate": false
+        },
+        "notes": "activity_ref/question_id/mistake_id 三选一；rating 枚举：again|hard|good；auto_rate=true 时 response_md 或 answer_image_refs 须非空，judge unsupported 时 422"
+      }
+    ]
+  },
+  {
+    "path": "/api/review/weekly",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "滑动窗口周报：每日趋势 + FSRS 评级分布 + 高频薄弱知识点 + 原因分布 + AI 成本汇总",
+        "query": [
+          {
+            "name": "days",
+            "required": false,
+            "example": "7"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "days 默认 7 最大 90；UTC 日边界；含 window + totals + ratings + daily + top_causes + top_knowledge"
+      }
+    ]
+  },
+  {
+    "path": "/api/study-log",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "已废弃，返回 410 Gone",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "replacement: /api/records"
+      },
+      {
+        "method": "POST",
+        "summary": "已废弃，返回 410 Gone",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "replacement: /api/records"
+      }
+    ]
+  },
+  {
+    "path": "/api/study-log/:id",
+    "methods": [
+      {
+        "method": "DELETE",
+        "summary": "已废弃，返回 410 Gone",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "replacement: /api/records"
+      }
+    ]
+  },
+  {
+    "path": "/api/teaching-sessions",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "创建 conversation session 并同步执行首次 agent teaching turn，返回 session_id + initial_message",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "learning_item_id": "li_abc123"
+        },
+        "notes": "learning_item_id 须存在（max 64）；同步执行首次 LLM teaching turn；LLM 失败时 session 仍创建；响应含 session_id + initial_message + suggested_next"
+      }
+    ]
+  },
+  {
+    "path": "/api/teaching-sessions/:id",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "返回 conversation session 元数据 + 有序消息列表 + active_question_id + attempt_counts",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "session.type 须为 conversation；消息按 created_at 升序"
+      }
+    ]
+  },
+  {
+    "path": "/api/teaching-sessions/:id/accept-chip",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "记录用户点击 suggestion chip（写 accept_suggestion 事件），可选触发 proposal accept",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "suggestion_kind": "proactive",
+          "chip_label": "继续讲解",
+          "source_event_id": null,
+          "target_tool": null,
+          "target_args": null,
+          "proposal_id": null
+        },
+        "notes": "suggestion_kind 枚举：proactive|corrective；source_event_id 省略时自动解析；proposal_id 有值时先 acceptAiProposal；session 须 active"
+      }
+    ]
+  },
+  {
+    "path": "/api/teaching-sessions/:id/end",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "结束或放弃 conversation session",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "status": "ended"
+        },
+        "notes": "status 枚举：ended|abandoned 默认 ended；sendBeacon 友好"
+      }
+    ]
+  },
+  {
+    "path": "/api/teaching-sessions/:id/turn",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "发送用户消息并获取 agent teaching reply；idle session 自动 resume",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "text_md": "我不理解这个概念"
+        },
+        "notes": "text_md 1-2000；idle session 自动 resume（was_idle:true）；ask_check turn 时响应含 inline 题对象；LLM 失败 502"
+      }
+    ]
+  },
+  {
+    "path": "/api/today/ai-changes",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "列出近 24 小时内的 note-refine apply 变更记录",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "响应：{ window_hours: 24, rows: [...] }，最多 25 条"
+      },
+      {
+        "method": "POST",
+        "summary": "撤销一批 note-refine apply 事件（undo）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "event_ids": ["evt_abc123", "evt_def456"]
+        },
+        "notes": "event_ids 数组 min 1 max 25，每条非空字符串；响应 { results: [...] }"
+      }
+    ]
+  },
+  {
+    "path": "/api/today/copilot-summary",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "获取 Copilot Drawer 摘要槽数据（Coach scan + Dreaming preview + 待审提案数）",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "响应为 CopilotSummary JSON"
+      }
+    ]
+  },
+  {
+    "path": "/api/today/proposals",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "获取今日提案 KPI 数据",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "响应为 proposal KPI JSON"
+      }
+    ]
+  }
+]

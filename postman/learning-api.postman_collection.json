@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "c1d2e3f4-a5b6-47c8-9d0e-1f2a3b4c5d6e",
     "name": "learning-api",
-    "description": "The Learning Project — Next.js App Router backend (app/api/**).\n\nAuth: every /api/* request needs header `x-internal-token` (collection-level API-key auth → `{{internalToken}}`), except `/api/health`.\n\nBase URL: `{{baseUrl}}` (default http://localhost:3001 — the fresh `pnpm dev:local` port, NOT the :3000 container).\n\nPath vars and request bodies use placeholder example values — replace `REPLACE_*` and example IDs with real ones before sending mutating requests.\n\nRun headlessly: `pnpm api:smoke [folder]`. Regenerate via /tmp generator (see postman/README.md).",
+    "description": "The Learning Project — Next.js App Router backend (app/api/**).\n\nAuth: every /api/* request needs header `x-internal-token` (collection-level API-key auth → `{{internalToken}}`), except `/api/health`.\n\nBase URL: `{{baseUrl}}` (default http://localhost:3001 — the fresh `pnpm dev:local` port, NOT the :3000 container).\n\nPath vars and request bodies use placeholder example values — replace `REPLACE_*` and example IDs with real ones before sending mutating requests.\n\nGenerated from postman/api-endpoints.json by `pnpm gen:postman` — do not hand-edit. Run headlessly: `pnpm api:smoke [folder]`.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
