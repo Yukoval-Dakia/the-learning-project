@@ -228,3 +228,36 @@ describe('CopilotTask.systemPrompt — C2 memory + ambient clauses', () => {
     expect(p).toContain('focused_entity');
   });
 });
+
+// YUK-307 — pin the CopilotTask 【呈现提名】(primary_view) envelope clause. The
+// chat.ts streaming tail-filter and extractPrimaryView's last-marker-wins
+// semantics both depend on the marker being the reply's LAST output, so the
+// 末尾/最后 placement wording is load-bearing, not copy.
+describe('CopilotTask.systemPrompt — primary_view nomination clause (YUK-307)', () => {
+  it('pins the marker syntax and the end-of-reply placement', () => {
+    const p = tasks.CopilotTask.systemPrompt;
+    expect(p).toContain('<!--primary_view:');
+    // Placement contract: end of reply, the very last output.
+    expect(p).toMatch(/末尾/);
+    expect(p).toMatch(/最后一个输出/);
+  });
+
+  it('pins the three ruled sources and the default-no-hero criterion', () => {
+    const p = tasks.CopilotTask.systemPrompt;
+    expect(p).toContain('tool_result');
+    expect(p).toContain('ephemeral_html');
+    // 缺省 → 无 hero（design doc §2.3 RULED）+ 纯答疑/纯过程不提名的判据句.
+    expect(p).toMatch(/缺省即无 hero/);
+    expect(p).toMatch(/纯答疑/);
+  });
+
+  it('pins the ephemeral_html size bound (mirrors EPHEMERAL_HTML_REF_MAX_CHARS)', () => {
+    // C1 review LOW fix — over-cap ephemeral_html fails the zod parse and the
+    // HTML (which lives only inside the marker) is stripped with it, so the
+    // model must be told the bound up front. Literal mirrors
+    // EPHEMERAL_HTML_REF_MAX_CHARS in src/server/copilot/turns.ts (32_000);
+    // change them together.
+    const p = tasks.CopilotTask.systemPrompt;
+    expect(p).toMatch(/32000 字符/);
+  });
+});
