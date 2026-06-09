@@ -8,7 +8,8 @@ you confirm here, codify back into a route test.
 
 | File | What |
 |---|---|
-| `learning-api.postman_collection.json` | All `app/api/**` endpoints, one folder per top-level segment. Collection-level API-key auth injects `x-internal-token: {{internalToken}}`; `/api/health` overrides to no-auth. Generated — see *Regenerating*. |
+| `api-endpoints.json` | **Source of truth.** Hand-maintained per-route specs (path, methods, query, body, notes). Edit this when a route changes. |
+| `learning-api.postman_collection.json` | **Generated** from `api-endpoints.json` by `pnpm gen:postman` — do not hand-edit. One folder per top-level segment; collection-level API-key auth injects `x-internal-token: {{internalToken}}`; `/api/health` overrides to no-auth. |
 | `learning-local.postman_environment.json` | `baseUrl` + `internalToken` (ships **empty** — the secret is never committed). |
 
 ## Using it
@@ -50,10 +51,22 @@ zero install footprint (first run fetches it into the pnpm store).
 
 ## Regenerating
 
-The collection is generated from per-route specs, not hand-edited. When routes
-change, re-extract and regenerate rather than editing the JSON by hand. The
-throwaway generator (`/tmp/gen-collection.mjs`) reads endpoint-spec JSON files
-from `/tmp/api-groups/*.json` (shape: `[{path, methods:[{method, summary, query,
-contentType, bodyExample, formFields, notes}]}]`) and writes the collection. To
-add or fix one endpoint by hand, edit the JSON directly and keep it valid
-(`node -e "require('./postman/learning-api.postman_collection.json')"`).
+The collection is **generated**, never hand-edited. To add or change an endpoint:
+
+1. Edit `postman/api-endpoints.json` (the source). One entry per route:
+   ```jsonc
+   { "path": "/api/knowledge/:id",
+     "methods": [
+       { "method": "GET", "summary": "...", "query": [{ "name": "limit", "required": false, "example": "20" }],
+         "contentType": "application/json", "bodyExample": { ... }, "formFields": null, "notes": "..." }
+     ] }
+   ```
+   `:param` marks a path variable. `contentType: "multipart/form-data"` (or any
+   `formFields`) produces a form-data body; `bodyExample` produces a raw JSON body.
+2. Run `pnpm gen:postman`. It rewrites the collection and Biome-formats it —
+   running it twice is a no-op (idempotent).
+
+`scripts/gen-postman.ts` is the generator. The `api-endpoints.json` specs were
+originally extracted by reading every `app/api/**/route.ts` (method, Zod body
+schema, query params); keep them in sync the same way when routes change — the
+CLAUDE.md convention reminds you to.
