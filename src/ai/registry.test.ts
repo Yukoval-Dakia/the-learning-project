@@ -245,6 +245,7 @@ describe('CopilotTask.systemPrompt — primary_view nomination clause (YUK-307)'
   it('pins the three ruled sources and the default-no-hero criterion', () => {
     const p = tasks.CopilotTask.systemPrompt;
     expect(p).toContain('tool_result');
+    expect(p).toContain('artifact');
     expect(p).toContain('ephemeral_html');
     // 缺省 → 无 hero（design doc §2.3 RULED）+ 纯答疑/纯过程不提名的判据句.
     expect(p).toMatch(/缺省即无 hero/);
