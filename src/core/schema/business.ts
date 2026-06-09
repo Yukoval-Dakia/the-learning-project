@@ -47,6 +47,11 @@ export const QuestionSource = z.enum([
   // metadata.web_sourced (see src/core/schema/provenance.ts WebSourcedProvenance).
   // docs/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §2.1.
   'web_sourced',
+  // ADR-0031 / YUK-304 (quiz C→A, lane B) — copilot-authored draft question
+  // (author_question seed_mode='knowledge'|'material' → QuestionAuthorTask →
+  // question_draft proposal; accept promotes draft→active). Zero-DDL Zod-enum
+  // addition (same手法 as 'quiz_gen'/'web_sourced'; question.source is text).
+  'copilot_authored',
 ]);
 
 export const MistakeSource = z.enum([

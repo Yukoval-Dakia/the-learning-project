@@ -8,7 +8,7 @@
 // write is `write_review_plan`, which emits a `tool_quiz` paper artifact using
 // the EXISTING flat ToolState shape (ToolStateT v2 is U5 scope — D3 §4-①).
 
-import { ToolState, type ToolStateSectionT } from '@/core/schema/business';
+import type { ToolStateSectionT } from '@/core/schema/business';
 import { ReviewSessionProposal } from '@/core/schema/coach';
 import { compareBySourceTierThenWhitelist } from '@/core/schema/provenance';
 import { artifact, knowledge, knowledge_mastery, question } from '@/db/schema';
@@ -17,6 +17,8 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { executeGetReviewDue } from './context-readers';
+// ADR-0032 RP-2 (YUK-304 lane B) — shared tool_quiz artifact writer core.
+import { writeToolQuizArtifact } from './tool-quiz-core';
 import type { DomainTool, ToolContext } from './types';
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -794,47 +796,42 @@ async function executeWriteReviewPlan(
     }
 
     // U5 (YUK-203, §4.3/§4.8) — ToolStateT v2: promote `sections[]` to the TOP
-    // level of tool_state (parsed through the ToolState Zod barrier — jsonb is
-    // opaque to audit:schema, so the barrier is the load-bearing guard, RL4),
-    // while RETAINING the session_meta copy for the U4-era read shim
-    // (readPaperSections). No data loss; the U4 guarantee held.
-    const toolState = ToolState.parse({
-      question_ids: questionIds,
-      sections: toToolStateSections(plan),
-      session_meta: {
-        mode,
-        subject_ids: subjectIds,
-        labels: plan.labels,
-        rationale: plan.rationale,
-        sections: plan.sections,
-        guardrail_checks: plan.guardrail_checks,
-        needs: plan.needs,
-        tool_context_task_run_id: ctx.taskRunId,
-      },
-    });
-    await tx.insert(artifact).values({
-      id: artifactId,
-      type: 'tool_quiz',
+    // level of tool_state, while RETAINING the session_meta copy for the U4-era
+    // read shim (readPaperSections). No data loss; the U4 guarantee held.
+    //
+    // ADR-0032 RP-2 (YUK-304 lane B) — the artifact INSERT (and the RL4
+    // ToolState Zod barrier, still pre-insert inside this tx) is DELEGATED to
+    // the shared writeToolQuizArtifact core, with byte-identical column values;
+    // everything semantic (validation, advisory-lock idempotency above, title /
+    // attrs / intent_source / tool_kind) stays here. write_quiz is the sibling
+    // wrapper sharing the core.
+    await writeToolQuizArtifact(tx, {
+      artifactId,
       title: plan.labels.paper_kind ? `复习卷 · ${plan.labels.paper_kind}` : '复习卷',
-      parent_artifact_id: null,
-      knowledge_ids: knowledgeIds,
-      intent_source: 'review_plan',
-      source: 'ai_generated',
-      source_ref: null,
-      body_blocks: null,
+      knowledgeIds,
+      intentSource: 'review_plan',
+      toolKind: 'review_plan',
+      toolState: {
+        question_ids: questionIds,
+        sections: toToolStateSections(plan),
+        session_meta: {
+          mode,
+          subject_ids: subjectIds,
+          labels: plan.labels,
+          rationale: plan.rationale,
+          sections: plan.sections,
+          guardrail_checks: plan.guardrail_checks,
+          needs: plan.needs,
+          tool_context_task_run_id: ctx.taskRunId,
+        },
+      },
       attrs: {
         mode,
         subject_ids: subjectIds,
         intent_tags: plan.labels.intent_tags,
-      } as never,
-      tool_kind: 'review_plan',
-      tool_state: toolState as never,
-      generation_status: 'ready',
-      verification_status: 'not_required',
-      history: [],
-      created_at: now,
-      updated_at: now,
-      version: 0,
+      },
+      sourceRef: null,
+      now,
     });
   });
 

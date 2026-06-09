@@ -728,6 +728,12 @@ const KIND_TO_GROUP: Record<AiProposalKindT, keyof ProposalGroups> = {
   archive: 'learning',
   note_update: 'content',
   variant_question: 'content',
+  // ADR-0031 / YUK-304 (lane B) — question_draft proposals (copilot-authored
+  // draft questions awaiting accept → question row materialization) bucket
+  // under 'content' like their sibling variant_question. The dedicated inbox
+  // row lives in app/(app)/inbox/proposal-shared.tsx; this entry only keeps
+  // the exhaustive Record in sync with the server-side aiProposalKinds enum.
+  question_draft: 'content',
   judge_retraction: 'review',
   // YUK-143 / ADR-0024 — North-Star goal_scope proposals bucket under
   // 'learning' for the W9 breakdown count. The dedicated /today goal card +

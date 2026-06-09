@@ -182,28 +182,30 @@ describe('QuizVerifyTask registry entry', () => {
   });
 });
 
-describe('QuizIntentParseTask registry entry', () => {
-  // YUK-275 (free-text 求卷 C 形态) — single structured-output parse task, registered
-  //照 GoalScopeTask 范式. The budget/tool-call flags are part of the slice contract:
-  // maxIterations 1 (in the budget sub-object, NOT a top-level field), needsToolCall
-  // false, allowedTools [] (no Copilot tool surface — U6 防循环 red line).
-  it('is registered as a single-shot text parse task usable by runTask', () => {
-    expect(tasks.QuizIntentParseTask.kind).toBe('QuizIntentParseTask');
-    expect(tasks.QuizIntentParseTask.needsToolCall).toBe(false);
-    expect(tasks.QuizIntentParseTask.isMultimodal).toBe(false);
-    expect(tasks.QuizIntentParseTask.allowedTools).toEqual([]);
-    // CRITIC FIX P1 — maxIterations lives in budget, not a top-level field.
-    expect(tasks.QuizIntentParseTask.budget.maxIterations).toBe(1);
-    expect(tasks.QuizIntentParseTask.budget.timeout).toBe(60_000);
-    // invocation defaults to 'auto' (called from the free-text 求卷 route, not a manual
-    // rescue); the entry omits the optional field.
-    expect((tasks.QuizIntentParseTask as TaskDef).invocation).toBeUndefined();
+// ADR-0031 / YUK-304 (lane B) — the QuizIntentParseTask describe is deleted with
+// the task itself (the YUK-275 C-form free-text 求卷 parser is retired).
+
+describe('QuestionAuthorTask registry entry', () => {
+  // ADR-0031 / YUK-304 (quiz C→A lane B) — single-shot draft-question author,
+  // registered 照 GoalScopeTask 范式. 决定6 contract pins: maxIterations 1 (NOT
+  // the QuizGenTask 8-iteration agent budget), needsToolCall false, allowedTools
+  // [] (no Tavily, no domain tools — the copilot orchestrates).
+  it('is registered as a single-shot structured author usable by runTask', () => {
+    expect(tasks.QuestionAuthorTask.kind).toBe('QuestionAuthorTask');
+    expect(tasks.QuestionAuthorTask.needsToolCall).toBe(false);
+    expect(tasks.QuestionAuthorTask.isMultimodal).toBe(false);
+    expect(tasks.QuestionAuthorTask.allowedTools).toEqual([]);
+    expect(tasks.QuestionAuthorTask.budget.maxIterations).toBe(1);
+    expect(tasks.QuestionAuthorTask.budget.timeout).toBe(90_000);
+    // invocation defaults to 'auto' (called from the author_question DomainTool,
+    // not a manual rescue); the entry omits the optional field.
+    expect((tasks.QuestionAuthorTask as TaskDef).invocation).toBeUndefined();
   });
 
   it('uses the mimo-v2.5-pro default with mimo-v2.5 fallback', () => {
-    expect(tasks.QuizIntentParseTask.defaultProvider).toBe('xiaomi');
-    expect(tasks.QuizIntentParseTask.defaultModel).toBe('mimo-v2.5-pro');
-    expect(tasks.QuizIntentParseTask.fallbackChain).toEqual([
+    expect(tasks.QuestionAuthorTask.defaultProvider).toBe('xiaomi');
+    expect(tasks.QuestionAuthorTask.defaultModel).toBe('mimo-v2.5-pro');
+    expect(tasks.QuestionAuthorTask.fallbackChain).toEqual([
       { provider: 'xiaomi', model: 'mimo-v2.5' },
     ]);
   });

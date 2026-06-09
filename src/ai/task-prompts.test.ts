@@ -287,29 +287,38 @@ describe('getTaskSystemPrompt', () => {
     }
   });
 
-  it('builds a QuizIntentParseTask prompt with the candidate-id + is_quiz_request contract', () => {
-    const wenyan = getTaskSystemPrompt('QuizIntentParseTask');
-    const math = getTaskSystemPrompt('QuizIntentParseTask', resolveSubjectProfile('math'));
+  // ADR-0031 / YUK-304 (lane B) — the QuizIntentParseTask prompt test is deleted
+  // with the task (C-form retired); QuestionAuthorTask below is its replacement
+  // generation-side coverage.
+
+  it('builds a QuestionAuthorTask prompt with the one-question + structured-tree contract', () => {
+    const wenyan = getTaskSystemPrompt('QuestionAuthorTask');
+    const math = getTaskSystemPrompt('QuestionAuthorTask', resolveSubjectProfile('math'));
 
     // Subject voice flows in via displayName.
     expect(wenyan).toContain('文言文');
     expect(math).toContain('数学');
 
     for (const prompt of [wenyan, math]) {
-      // The is_quiz_request 逃生舱 is the load-bearing instruction (CRITIC FIX P1):
-      // the model must first decide whether the message is really a quiz request.
-      expect(prompt).toContain('is_quiz_request');
-      // Candidate-list contract: choose only from knowledge_candidates, never invent.
-      expect(prompt).toContain('knowledge_candidates');
-      expect(prompt).toContain('knowledge_id');
-      // The four parsed dimensions.
-      expect(prompt).toContain('count');
-      expect(prompt).toContain('difficulty_min');
-      expect(prompt).toContain('unit');
-      // null discipline (unsure → null, not a guess).
-      expect(prompt).toContain('null');
-      // strict JSON, no leakage of subject-only kinds.
-      expect(prompt).toContain('QuizIntent');
+      // Output shape name + the Axis-A tree contract (stem+sub vs standalone).
+      expect(prompt).toContain('QuestionAuthorDraft');
+      expect(prompt).toContain('structured');
+      expect(prompt).toContain('sub_questions');
+      expect(prompt).toContain('standalone');
+      expect(prompt).toContain('stem');
+      // Closed-set knowledge ids (knowledge_context) — never invent.
+      expect(prompt).toContain('knowledge_context');
+      expect(prompt).toContain('knowledge_ids');
+      expect(prompt).toContain('禁止发明');
+      // material seed: the pasted body is the grounding anchor.
+      expect(prompt).toContain('material');
+      expect(prompt).toContain('body_md');
+      // Exactly ONE question per call (决定6: copilot orchestrates, not the task).
+      expect(prompt).toContain('一道');
+      // canonical kinds, no subject-only leakage.
+      expect(prompt).toMatch(/\bchoice\b/);
+      expect(prompt).not.toMatch(/\bsingle_choice\b/);
+      expect(prompt).not.toMatch(/\bword_problem\b/);
     }
   });
 

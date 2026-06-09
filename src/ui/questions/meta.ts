@@ -74,6 +74,8 @@ const SOURCE_META: Record<string, SourceMeta> = {
   quiz_gen: { label: 'AI 组卷', icon: 'sparkle', tone: 'coral' },
   web_sourced: { label: '网络题源', icon: 'link', tone: 'info' },
   synthetic_seed: { label: '种子数据', icon: 'layers', tone: 'neutral' },
+  // ADR-0031 / YUK-304 (lane B) — copilot 对话内拟题 (author_question knowledge|material seed).
+  copilot_authored: { label: 'Copilot 拟题', icon: 'sparkle', tone: 'coral' },
 };
 
 const SOURCE_FALLBACK: SourceMeta = { label: '其它来源', icon: 'layers', tone: 'neutral' };

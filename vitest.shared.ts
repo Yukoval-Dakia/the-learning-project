@@ -115,12 +115,6 @@ export const fastTestInclude = [
   // drizzle-orm (query builder) load at runtime — same safe surface the
   // sibling mcp-bridge / allowlists unit tests already exercise. (YUK-97 P7)
   'src/server/copilot/chat.test.ts',
-  // YUK-275 — pure DI unit for the free-text 求卷 粗筛 + 参数解析器. runTaskFn is an
-  // injected vi.fn, db is a {}-stub, and loadTreeSnapshotFn is stubbed, so no live
-  // Postgres / knowledge tree is touched. The only file-level import is
-  // @/server/copilot/quiz-intent (not in DB_TAINTED_DIRS) → unit partition; without
-  // this entry the db config's src/**/*.test.ts glob would sweep it into testcontainer.
-  'src/server/copilot/quiz-intent.test.ts',
   'src/server/events/cause-policy.test.ts',
   'src/server/export/**/*.test.ts',
   'src/server/http/**/*.test.ts',

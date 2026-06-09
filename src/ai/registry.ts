@@ -554,29 +554,8 @@ export const tasks = {
     systemPrompt:
       '你是学习目标规划助手。用户给一个模糊的学习目标标题，你看知识网格快照（节点 + 掌握度 + mesh 边），推断这个目标覆盖哪些知识节点 + 一个粗略的学习顺序，输出严格 JSON。不要发明网格里没有的节点 id。',
   },
-  // YUK-275 — free-text 求卷意图解析器 (C 形态). Single structured-output call (no
-  // tool loop),照 GoalScopeTask 范式: budget.maxIterations 1, needsToolCall false,
-  // allowedTools []. Input = { user_message, knowledge_candidates:[{id,name,
-  // effective_domain}] }; output = QuizIntentSchema (is_quiz_request + knowledge_id
-  // 选自候选列表 + count / difficulty_min / unit / kind). The parse result is consumed
-  // by chat.ts (free-text 求卷 routing) — it NEVER joins COPILOT_TOOLS / conversation_
-  // history (U6 防循环 red line). Runtime renders the prompt via getTaskSystemPrompt;
-  // this string is the type-required fallback only (real builder in task-prompts.ts).
-  QuizIntentParseTask: {
-    kind: 'QuizIntentParseTask',
-    description:
-      'YUK-275 (free-text 求卷 C 形态) — parse a natural-language quiz request into a structured intent. Input = { user_message, knowledge_candidates:[{id,name,effective_domain}] }. Output = { is_quiz_request, knowledge_id (chosen from the candidate list, hallucinated ids filtered code-side), count, difficulty_min, unit(题|篇), kind }. Single structured-output call (no tool loop), mimo-v2.5-pro text. is_quiz_request=false is the parse-side 逃生舱 when 粗筛 误伤 a non-quiz message.',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
-    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
-    needsToolCall: false,
-    isMultimodal: false,
-    allowedTools: [],
-    // Runtime renders via getTaskSystemPrompt(task, profile); this string is the
-    // type-required fallback only (the builder lives in task-prompts.ts).
-    systemPrompt: '(see getTaskSystemPrompt(task, profile) - fallback not for runtime)',
-  },
+  // ADR-0031 / YUK-304 (lane B) — QuizIntentParseTask (the YUK-275 free-text 求卷
+  // C-form parser) is RETIRED with the chat.ts pre-dispatch: 判断+编排权交回模型.
   MemoryBriefTask: {
     kind: 'MemoryBriefTask',
     description:
@@ -671,6 +650,29 @@ export const tasks = {
     allowedTools: [],
     // Runtime renders via getTaskSystemPrompt(task, profile); this string is the
     // type-required fallback only (new tasks add a builder in task-prompts.ts).
+    systemPrompt: '(see getTaskSystemPrompt(task, profile) - fallback not for runtime)',
+  },
+  // ADR-0031 / YUK-304 (quiz C→A lane B) — single-shot draft-question author
+  // behind the author_question knowledge|material seed. 决定6 forbids this path
+  // touching the QuizGenTask agent loop (8-iteration Tavily agent, 120s): the
+  // copilot itself is the orchestrator and calls author_question once per
+  // question, so each call is ONE structured-output text run (GoalScopeTask
+  // 范式: maxIterations 1, needsToolCall false, allowedTools []).
+  QuestionAuthorTask: {
+    kind: 'QuestionAuthorTask',
+    description:
+      'ADR-0031 / YUK-304 (quiz C→A lane B) — author ONE original draft question seeded by knowledge nodes and/or pasted material. Input = { seed_mode, knowledge_context:[{id,name}], requested_kind?, requested_difficulty?, material:{body_md,title?}? }. Output = strict JSON QuestionAuthorDraft: kind + difficulty + knowledge_ids (echo of seed, re-validated code-side) + a StructuredQuestion tree (材料/阅读 kinds emit stem+sub_questions[]; others a standalone node) + optional choices/judge/rubric. prompt_md/reference_md are DERIVED from the tree at persist time. Single structured-output call (no tool loop, no Tavily — 决定6), mimo-v2.5-pro text. Writes land as draft_status=draft + a question_draft proposal (决定5 proposal-only).',
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
+    // 90s: one question (possibly a 材料 tree) is heavier than the QuizIntent
+    // parse but far lighter than the QuizGen agent loop.
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 90_000 },
+    needsToolCall: false,
+    isMultimodal: false,
+    allowedTools: [],
+    // Runtime renders via getTaskSystemPrompt(task, profile); this string is the
+    // type-required fallback only (the builder lives in task-prompts.ts).
     systemPrompt: '(see getTaskSystemPrompt(task, profile) - fallback not for runtime)',
   },
   SourcingTask: {
