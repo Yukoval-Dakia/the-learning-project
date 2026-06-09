@@ -28,6 +28,8 @@ describe('DomainTool allowlist policy', () => {
       'propose_learning_item_archive',
       'propose_record_links',
       'propose_record_promotion',
+      // ADR-0032 D8 — unified author_question front door.
+      'author_question',
       // YUK-195 — question structure-edit write tools (draft layer).
       'update_prompt',
       'add_option',
@@ -125,6 +127,8 @@ describe('DomainTool allowlist policy', () => {
       'propose_learning_item_relearn',
       'propose_learning_item_defer',
       'propose_learning_item_archive',
+      // ADR-0032 D8 — unified author_question front door on copilot base.
+      'author_question',
       'search_memory_facts',
     ]);
     // The ask_check INSERT (materializeAskCheckQuestion) is a service path, never
@@ -197,6 +201,28 @@ describe('DomainTool allowlist policy', () => {
     expect(DOMAIN_TOOL_ALLOWLISTS.knowledge_review).not.toContain('search_memory_facts');
     expect(DOMAIN_TOOL_ALLOWLISTS.maintenance).not.toContain('search_memory_facts');
     expect(DOMAIN_TOOL_ALLOWLISTS.ingestion_block_edit).not.toContain('search_memory_facts');
+  });
+
+  // ADR-0032 D8 — the unified author_question front door. It is granted on the
+  // copilot base (D2:35 / D7:100 documented intent) and is a PROPOSE_WRITE tool.
+  // Adding it does NOT relax the existing copilot red-lines: the raw
+  // propose_variant / attribute_mistake tools stay OFF copilot base (the variant
+  // capability now reaches copilot via author_question, which is D8's intent).
+  it('grants author_question on copilot base without relaxing the raw mistake-tool red-lines (ADR-0032 D8)', () => {
+    expect(PROPOSE_WRITE_TOOLS).toContain('author_question');
+    expect(DOMAIN_TOOL_ALLOWLISTS.copilot).toContain('author_question');
+    // Inherited by the chip surface via the [...copilot, ...] spread.
+    expect(DOMAIN_TOOL_ALLOWLISTS.copilot_user_suggested_mistake_action).toContain(
+      'author_question',
+    );
+    // RED LINE preserved: the raw mistake-authoring tools are still NOT on copilot
+    // base — only the chip surface carries them. author_question is a distinct name.
+    expect(DOMAIN_TOOL_ALLOWLISTS.copilot).not.toContain('propose_variant');
+    expect(DOMAIN_TOOL_ALLOWLISTS.copilot).not.toContain('attribute_mistake');
+    // author_question is NOT a planner / question-edit / knowledge-review tool.
+    expect(DOMAIN_TOOL_ALLOWLISTS.review_plan).not.toContain('author_question');
+    expect(DOMAIN_TOOL_ALLOWLISTS.ingestion_block_edit).not.toContain('author_question');
+    expect(DOMAIN_TOOL_ALLOWLISTS.knowledge_review).not.toContain('author_question');
   });
 
   it('renders MCP allowedTools names for the selected server', () => {

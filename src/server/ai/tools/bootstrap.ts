@@ -23,6 +23,7 @@ import {
 } from './knowledge-readers';
 import {
   attributeMistakeTool,
+  authorQuestionTool,
   proposeKnowledgeEdgeTool,
   proposeKnowledgeMutationTool,
   proposeLearningItemArchiveTool,
@@ -81,6 +82,9 @@ const CORE_TOOLS: ReadonlyArray<DomainTool<unknown, unknown>> = [
   proposeLearningItemArchiveTool as DomainTool<unknown, unknown>,
   proposeRecordLinksTool as DomainTool<unknown, unknown>,
   proposeRecordPromotionTool as DomainTool<unknown, unknown>,
+  // ADR-0032 D8 — unified author_question front door (variant|record seeds live;
+  // knowledge|material seed is a typed lane-B stub).
+  authorQuestionTool as DomainTool<unknown, unknown>,
   // YUK-195 — agent-callable question structure-edit write tools (draft layer).
   updatePromptTool as DomainTool<unknown, unknown>,
   addOptionTool as DomainTool<unknown, unknown>,
