@@ -39,6 +39,9 @@ describe('DomainTool allowlist policy', () => {
       'reassign_figure',
       // ADR-0031 / RP-2 (YUK-304 lane B) — copilot 组卷 write (draft-allowed).
       'write_quiz',
+      // ADR-0033 D6 (YUK-306 lane D) — interactive artifact authoring pair.
+      'author_artifact',
+      'update_artifact',
     ]);
   });
 
@@ -136,6 +139,10 @@ describe('DomainTool allowlist policy', () => {
       // orchestrates 出题/组卷 itself, so it reads the 题池 and writes the paper.
       'query_questions',
       'write_quiz',
+      // ADR-0033 D6 (YUK-306 lane D) — the copilot authors + iterates
+      // interactive artifacts itself (Claude Artifacts pattern).
+      'author_artifact',
+      'update_artifact',
     ]);
     // The ask_check INSERT (materializeAskCheckQuestion) is a service path, never
     // a DomainTool — it is not in COPILOT_TOOLS (R2).
@@ -243,6 +250,26 @@ describe('DomainTool allowlist policy', () => {
     expect(READ_TOOLS).toContain('query_questions');
     expect(PROPOSE_WRITE_TOOLS).toContain('write_quiz');
     for (const tool of ['query_questions', 'write_quiz'] as const) {
+      expect(DOMAIN_TOOL_ALLOWLISTS.copilot).toContain(tool);
+      expect(DOMAIN_TOOL_ALLOWLISTS.copilot_user_suggested_mistake_action).toContain(tool);
+      expect(DOMAIN_TOOL_ALLOWLISTS.maintenance).not.toContain(tool);
+      expect(DOMAIN_TOOL_ALLOWLISTS.review_plan).not.toContain(tool);
+      expect(DOMAIN_TOOL_ALLOWLISTS.knowledge_review).not.toContain(tool);
+      expect(DOMAIN_TOOL_ALLOWLISTS.ingestion_block_edit).not.toContain(tool);
+      expect(DOMAIN_TOOL_ALLOWLISTS.dreaming).not.toContain(tool);
+      expect(DOMAIN_TOOL_ALLOWLISTS.coach).not.toContain(tool);
+    }
+  });
+
+  // ADR-0033 D6 (YUK-306 lane D) — interactive artifact authoring stays a
+  // copilot capability (the chip surface inherits via the [...copilot, ...]
+  // spread). Every other surface — notably maintenance / review_plan /
+  // ingestion_block_edit — must NOT gain the pair: authoring interactive
+  // content is the conversational agent's job, not an operator/planner one.
+  it('grants author_artifact + update_artifact to the copilot surfaces only (ADR-0033 lane D)', () => {
+    expect(PROPOSE_WRITE_TOOLS).toContain('author_artifact');
+    expect(PROPOSE_WRITE_TOOLS).toContain('update_artifact');
+    for (const tool of ['author_artifact', 'update_artifact'] as const) {
       expect(DOMAIN_TOOL_ALLOWLISTS.copilot).toContain(tool);
       expect(DOMAIN_TOOL_ALLOWLISTS.copilot_user_suggested_mistake_action).toContain(tool);
       expect(DOMAIN_TOOL_ALLOWLISTS.maintenance).not.toContain(tool);

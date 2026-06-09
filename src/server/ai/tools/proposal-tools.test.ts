@@ -299,11 +299,17 @@ describe('Wave 3 proposal/action DomainTools', () => {
     ).toEqual([
       'add_option',
       'attribute_mistake',
+      // ADR-0033 D6 (YUK-306 lane D) — interactive artifact create (copilot-
+      // written HTML → versioned type='interactive' artifact).
+      'author_artifact',
       // YUK-195 — question structure-edit write tools (draft layer).
       'merge_questions',
       'reassign_figure',
       'set_question_type',
       'split_stem',
+      // ADR-0033 D6 (YUK-306 lane D) — interactive artifact iterate (full-html
+      // replace, version bump + history append).
+      'update_artifact',
       'update_prompt',
       // ADR-0031 / RP-2 (YUK-304 lane B) — copilot 组卷 write (draft-allowed,
       // opposite precondition from write_review_plan).

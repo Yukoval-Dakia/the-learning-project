@@ -244,6 +244,11 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
       // artifact (the ingest→practice bridge). Single INSERT, idempotent
       // by source_ref=sessionId; the make-paper route's only write.
       'src/server/ingestion/make-paper.ts',
+      // ADR-0033 D6 / YUK-306 (lane D) — author_artifact INSERT + update_artifact
+      // version-bump UPDATE for type='interactive' rows (opaque to the note
+      // block-tree mesh, body_blocks=null; the render-side sandbox owns
+      // security, the backend stores attrs.html opaquely).
+      'src/server/ai/tools/author-artifact.ts',
     ];
     const unexpected = hits.filter((h) => !ALLOWED.includes(h.split(path.sep).join('/')));
     expect(

@@ -65,6 +65,14 @@ export const PROPOSE_WRITE_TOOLS = [
   // only. TAIL position mirrors the bootstrap CORE_TOOLS order (after
   // reassignFigureTool) — the listTools() inventory assertion depends on it.
   'write_quiz',
+  // ADR-0033 D6 (YUK-306, lane D) — interactive artifact authoring: the copilot
+  // writes the HTML itself in-conversation (Claude Artifacts pattern) and
+  // persists it as a versioned type='interactive' artifact (author = create v0,
+  // update = full-html replace + version bump). Granted to the copilot surfaces
+  // only. TAIL position mirrors the bootstrap CORE_TOOLS order (after
+  // writeQuizTool) — the listTools() inventory assertion depends on it.
+  'author_artifact',
+  'update_artifact',
 ] as const;
 
 // YUK-203 U4 / D5 / CO §6.1 — the 4 tools exclusive to the ReviewPlanTask
@@ -166,6 +174,12 @@ const COPILOT_TOOLS = [
   // merge; this is the deliberate ADR-0031 surface change, not a violation.
   'query_questions',
   'write_quiz',
+  // ADR-0033 D6 (YUK-306, lane D) — interactive 学习 artifact authoring pair.
+  // effect='write' (单用户、路由守 scope、非破坏性创建 — D6 explicit); the chip
+  // surface inherits via the [...COPILOT_TOOLS, …] spread below. No other
+  // surface gets them.
+  'author_artifact',
+  'update_artifact',
 ] as const satisfies readonly DomainToolName[];
 
 const DREAMING_TOOLS = [
