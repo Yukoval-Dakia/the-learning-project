@@ -134,6 +134,10 @@ export const Artifact = g.ArtifactSelectGenerated.extend({
   // a tool_quiz built from a session's imported questions (ingest→practice
   // bridge §2.3). Pure additive enum, no migration (intent_source/tool_kind are
   // text columns).
+  // ADR-0033 D6 (YUK-306) — `author_artifact` is the interactive-artifact
+  // provenance (copilot-authored via the author_artifact DomainTool; tool_kind
+  // mirrors it). Pure additive enum, no migration. NOT a paper provenance —
+  // practice gates (practice-read.ts / /api/practice) must keep rejecting it.
   intent_source: z.enum([
     'learning_intent',
     'declared',
@@ -143,13 +147,23 @@ export const Artifact = g.ArtifactSelectGenerated.extend({
     'quiz_gen',
     'embedded_check',
     'ingestion_paper',
+    'author_artifact',
   ]),
   body_blocks: b.ArtifactBodyBlocks.nullable(),
   knowledge_ids: z.array(z.string()),
   attrs: z.record(z.unknown()),
   tool_state: b.ToolState.nullable(),
+  // ADR-0033 D6 (YUK-306) — 'author_artifact' mirrors the intent_source above
+  // for type='interactive' rows. Pure additive enum (text column, no DDL).
   tool_kind: z
-    .enum(['quiz', 'review_plan', 'quiz_gen', 'embedded_check', 'ingestion_paper'])
+    .enum([
+      'quiz',
+      'review_plan',
+      'quiz_gen',
+      'embedded_check',
+      'ingestion_paper',
+      'author_artifact',
+    ])
     .nullable(),
   generation_status: b.ArtifactGenerationStatus,
   verification_status: b.ArtifactVerificationStatus,

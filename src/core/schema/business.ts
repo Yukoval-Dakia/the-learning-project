@@ -111,7 +111,19 @@ export const LearningRecordProcessingStatus = z.enum(['raw', 'linked', 'actioned
 
 export const MemoryBriefScopeKey = z.string().regex(/^(global|subject:[a-zA-Z0-9_-]+)$/);
 
-export const ArtifactType = z.enum(['note_hub', 'note_atomic', 'note_long', 'tool_quiz']);
+// ADR-0033 D1 (YUK-306) — 'interactive': agent-generated interactive content
+// (Claude Artifacts pattern). Semantic kind; format lives in attrs (html for
+// now). Self-contained + OPAQUE to the note block-tree mesh — body_blocks stays
+// null (tool_quiz precedent), no cross_link/embedded_check participation.
+// Reference, not practice: no FSRS / tool_state. Pure additive enum, no DDL
+// (artifact.type is a text column).
+export const ArtifactType = z.enum([
+  'note_hub',
+  'note_atomic',
+  'note_long',
+  'tool_quiz',
+  'interactive',
+]);
 export const ArtifactGenerationStatus = z.enum(['pending', 'ready', 'failed']);
 export type ArtifactGenerationStatusT = z.infer<typeof ArtifactGenerationStatus>;
 
@@ -353,6 +365,32 @@ export const ToolState = z.object({
   sections: z.array(ToolStateSection).optional(),
 });
 export type ToolStateT = z.infer<typeof ToolState>;
+
+// ADR-0033 D2/D6 (YUK-306) — the html size cap enforced at the author_artifact /
+// update_artifact tool input boundary. Generous: a self-contained interactive
+// page (inline CSS + JS) the copilot writes in one tool call; hard limit only
+// guards against pathological inputs, not normal heavy use (护栏两层语义).
+export const INTERACTIVE_HTML_MAX_CHARS = 500_000;
+
+// ADR-0033 D2 (YUK-306) — interactive artifact payload, stored in artifact.attrs
+// (existing jsonb column; NO new column, audit:schema untouched). Like ToolState
+// (RL4 above), the jsonb is opaque to audit:schema — this Zod parse at every
+// write point is the load-bearing barrier. Opaque to the note block-tree mesh:
+// body_blocks stays null (tool_quiz precedent), the HTML source lives here.
+// Deliberately NO HTML sanitizer/linter: the render-side sandbox owns security
+// (ADR-0033 D4) — the backend stores the source opaquely.
+export const InteractiveArtifactAttrs = z
+  .object({
+    // ADR-0033 D1: semantic kind 'interactive', format=html for now.
+    // Future formats widen this literal into an enum.
+    format: z.literal('html'),
+    // Size cap is enforced at the tool input boundary (INTERACTIVE_HTML_MAX_CHARS).
+    html: z.string().min(1),
+    summary: z.string().max(500).optional(),
+    origin: z.string().optional(), // 'copilot_author_artifact'
+  })
+  .catchall(z.unknown());
+export type InteractiveArtifactAttrsT = z.infer<typeof InteractiveArtifactAttrs>;
 
 // AgentRef: a uniform "who did this" stamp on question.created_by /
 // judgment.judged_by / artifact.generated_by. Catchall allows callers to add

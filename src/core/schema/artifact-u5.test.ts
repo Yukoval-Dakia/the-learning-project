@@ -58,6 +58,23 @@ describe('Artifact enum widen (§4.1)', () => {
     expect(r.success).toBe(true);
   });
 
+  // ADR-0033 D6 (YUK-306) — interactive artifact provenance. Additive enum:
+  // a copilot-authored type='interactive' row (attrs payload, no tool_state,
+  // body_blocks null) must Artifact.parse, while unknown values stay rejected.
+  it('parses an interactive row with intent_source/tool_kind = author_artifact (ADR-0033)', () => {
+    const r = Artifact.safeParse(
+      artifactRow({
+        type: 'interactive',
+        intent_source: 'author_artifact',
+        tool_kind: 'author_artifact',
+        // Reference, not practice — interactive rows carry no quiz tool_state.
+        tool_state: null,
+        attrs: { format: 'html', html: '<html></html>', origin: 'copilot_author_artifact' },
+      }),
+    );
+    expect(r.success).toBe(true);
+  });
+
   it('still parses a legacy tool_kind=quiz row (back-compat)', () => {
     const r = Artifact.safeParse(artifactRow({ intent_source: 'declared', tool_kind: 'quiz' }));
     expect(r.success).toBe(true);
