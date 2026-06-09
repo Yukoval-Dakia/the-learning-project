@@ -163,14 +163,14 @@ Standard triage labels are used. See `docs/agents/triage-labels.md`.
 
 Single-context layout with CONTEXT.md and docs/adr/ at repo root. See `docs/agents/domain.md`.
 
-### Codebase search (auggie)
+### Codebase search (serena + claude-context)
 
-User-level MCP server `auggie`（`~/.claude.json` 顶层 `mcpServers`，命令 `auggie --mcp`）提供 `mcp__auggie__codebase-retrieval` —— 跨文件语义检索，召回质量优于 grep。SessionStart hook (`.claude/hooks/auggie-preload.sh`) 会注入提示让 agent 用 ToolSearch 把 schema 拉进主工具列表。
+2026-06-06 起由两个 user-level MCP（`~/.claude.json` 顶层 `mcpServers`）承担，SessionStart hook (`.claude/hooks/code-search-preload.sh`) 注入分工提示：
 
-使用准则：
-- 跨文件 / 不知道目标文件在哪 / 想了解某 feature 整体实现 → 优先 `mcp__auggie__codebase-retrieval`。
-- 已知确切符号 / 已知文件 / 想列举所有引用 → 仍用 `grep` 或 `Read`，不要走 auggie。
-- 工具默认 deferred，第一次用前先 `ToolSearch({ query: "select:mcp__auggie__codebase-retrieval" })` 加载 schema。
+- **符号精确侧 → serena**：`find_symbol`（按名定位）、`find_referencing_symbols`（列举全部引用，带 snippet）、`get_symbols_overview`（文件结构）。已知符号名 / 列举引用 / 理解文件结构时优先于 grep。首次使用先调 `mcp__serena__initial_instructions`；返回行号是 0-based。
+- **语义召回侧 → claude-context**：`mcp__claude-context__search_code` 自然语言跨文件检索（VoyageAI voyage-code-3 + Zilliz Milvus）。「不知道在哪 / 某 feature 整体在哪实现 / grep 找不到的二次验证」时用。
+- **已知坑**：`get_indexing_status` 会在索引仍在写入时提前报「completed」——此时检索静默返回无关结果。结果明显偏靶时，查 `~/.context/mcp-codebase-snapshot.json` 的 `totalChunks`（本仓库健康值 ~13k；若 ≈ 文件数说明切块没完成）再重试。
+- grep 仍用于字面字符串枚举；grep 找不到不要断言「不存在」，先 claude-context 二次验证（SQL / migration / view 只有语义检索能命中）。工具默认 deferred，先 ToolSearch 加载 schema。
 
 ## Known Limitations
 
