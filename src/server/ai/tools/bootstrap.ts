@@ -6,6 +6,8 @@
 // is skipped, so re-imports across Next.js HMR cycles don't trip the
 // registerTool duplicate guard.
 
+// ADR-0033 D6 / YUK-306 (lane D) — interactive artifact authoring pair.
+import { authorArtifactTool, updateArtifactTool } from './author-artifact';
 import {
   getLearningItemContextTool,
   getQuestionContextTool,
@@ -101,6 +103,10 @@ const CORE_TOOLS: ReadonlyArray<DomainTool<unknown, unknown>> = [
   // ADR-0031 / RP-2 (YUK-304 lane B) — PROPOSE_WRITE_TOOLS tail; order mirrors
   // allowlists.ts (the listTools() inventory assertion depends on it).
   writeQuizTool as DomainTool<unknown, unknown>,
+  // ADR-0033 D6 / YUK-306 (lane D) — interactive artifact authoring pair;
+  // PROPOSE_WRITE_TOOLS tail, order mirrors allowlists.ts.
+  authorArtifactTool as DomainTool<unknown, unknown>,
+  updateArtifactTool as DomainTool<unknown, unknown>,
   // YUK-203 U4 — ReviewPlanTask planner surface (4 tools, no memory).
   readCoachBriefTool as DomainTool<unknown, unknown>,
   getReviewKnowledgeSnapshotTool as DomainTool<unknown, unknown>,

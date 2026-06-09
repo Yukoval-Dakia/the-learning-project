@@ -91,6 +91,18 @@ describe('GET /api/artifacts/search', () => {
     expect(rows.map((r) => r.id)).toEqual(['live']);
   });
 
+  // ADR-0033 D1 (YUK-306) — interactive artifacts are OPAQUE to the note
+  // block-tree mesh: the cross_link picker must never offer one as a target
+  // (a link would write it INTO the mesh via the block_refs write-through).
+  it('excludes type=interactive artifacts from cross-link targets (ADR-0033)', async () => {
+    await seedArtifact('note', '元素周期表 笔记', 'note_atomic');
+    await seedArtifact('quiz', '元素周期表 练习', 'tool_quiz');
+    await seedArtifact('interactive', '元素周期表 互动', 'interactive');
+
+    const rows = await readRows(await GET(searchReq('q=元素周期表')));
+    expect(rows.map((r) => r.id).sort()).toEqual(['note', 'quiz']);
+  });
+
   it('returns empty rows when nothing matches', async () => {
     await seedArtifact('a1', '论语·学而');
     const rows = await readRows(await GET(searchReq('q=不存在的标题')));
