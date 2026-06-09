@@ -305,6 +305,9 @@ describe('Wave 3 proposal/action DomainTools', () => {
       'set_question_type',
       'split_stem',
       'update_prompt',
+      // ADR-0031 / RP-2 (YUK-304 lane B) — copilot 组卷 write (draft-allowed,
+      // opposite precondition from write_review_plan).
+      'write_quiz',
       // YUK-203 U4 — ReviewPlanTask's single mutation (paper tool_quiz artifact).
       'write_review_plan',
     ]);

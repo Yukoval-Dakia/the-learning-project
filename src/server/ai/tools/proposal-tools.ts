@@ -25,6 +25,9 @@ import {
 } from '@/db/schema';
 import { writeToolCallLog } from '@/server/ai/log';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
+// ADR-0031 / YUK-304 (lane B) — the knowledge|material seed core (draft question
+// + question_draft proposal in one tx).
+import { runQuestionAuthor } from '@/server/ai/question-author';
 import { runVariantGen } from '@/server/boss/handlers/variant_gen';
 import { getFailureAttemptById, getJudgeForAttempt } from '@/server/events/queries';
 import { runAttributionAndWriteJudgeEvent } from '@/server/knowledge/attribute';
@@ -1287,8 +1290,12 @@ export const proposeRecordPromotionTool: DomainTool<
 // seeding mode:
 //   - seed_mode='variant'           = the existing propose_variant / runVariantGen path
 //   - seed_mode='record'            = the existing record_promotion → question path
-//   - seed_mode='knowledge'|'material' = the ADR-0031 lane B seam (quiz C→A); A1
-//                                        ships a TYPED STUB only — no quiz gen here.
+//   - seed_mode='knowledge'|'material' = ADR-0031 lane B (quiz C→A, YUK-304):
+//                                        generate ONE original draft question via
+//                                        the single-shot QuestionAuthorTask
+//                                        (runQuestionAuthor) — draft row +
+//                                        question_draft proposal in one tx;
+//                                        accept promotes draft→active + FSRS.
 //
 // Minimal-risk unification boundary (grounded in the actual code):
 //   * The variant seed DELEGATES to `runVariantGen` UNCHANGED — every hard guard
@@ -1325,8 +1332,10 @@ type AuthorQuestionSeed =
       suggestion_kind?: z.infer<typeof SuggestionKind>;
     }
   | {
-      // LANE B SEAM (ADR-0031 / quiz C→A). Parsed + typed here, NOT implemented in
-      // A1. Lane B decides the real shape + its own proposal kind / accept path.
+      // ADR-0031 lane B (quiz C→A, YUK-304) — implemented: delegates to
+      // runQuestionAuthor (src/server/ai/question-author.ts), which owns the
+      // proposal kind (question_draft) + the accept path
+      // (acceptQuestionDraftProposal in src/server/proposals/actions.ts).
       seed_mode: 'knowledge' | 'material';
       knowledge_ids: string[];
       requested_kind?: string;
@@ -1354,12 +1363,13 @@ const AuthorQuestionInputSchema = z.object({
   reasoning: z.string().min(1).max(2000).optional(),
   draft: z.unknown().optional(),
   suggestion_kind: SuggestionKind.optional(),
-  // knowledge | material seed (lane B stub — primitive fields only, no quiz_gen
-  // import so lane B owns the real shape)
+  // knowledge | material seed (ADR-0031 lane B). material_body_md is bounded to
+  // keep the single-shot QuestionAuthorTask prompt budget sane (20k chars ≈ a
+  // long reading passage; longer pastes should be split by the model upstream).
   knowledge_ids: z.array(z.string().min(1)).min(1).optional(),
   requested_kind: z.string().min(1).optional(),
   difficulty: z.number().int().min(1).max(5).optional(),
-  material_body_md: z.string().min(1).optional(),
+  material_body_md: z.string().min(1).max(20_000).optional(),
   material_url: z.string().url().optional(),
   material_title: z.string().min(1).optional(),
 });
@@ -1389,6 +1399,13 @@ function validateAuthorQuestionInput(input: z.infer<typeof AuthorQuestionInputSc
           `author_question seed_mode '${input.seed_mode}' requires non-empty knowledge_ids`,
         );
       }
+      // material seed REQUIRES the pasted body: QuestionAuthorTask is a
+      // single-shot structured call with NO fetch tool (决定6 — no Tavily), so a
+      // URL-only seed would hallucinate the passage. material_url /
+      // material_title are provenance-only metadata.
+      if (input.seed_mode === 'material' && !input.material_body_md) {
+        throw new Error("author_question seed_mode 'material' requires material_body_md");
+      }
       break;
   }
 }
@@ -1398,7 +1415,9 @@ const AuthorQuestionOutputSchema = z.object({
     // shared
     'proposed',
     'failed',
-    'skipped:not_implemented', // knowledge|material stub (lane B)
+    // knowledge|material seed (ADR-0031 lane B): every seed knowledge id is
+    // unknown / archived.
+    'skipped:knowledge_not_found',
     // variant passthrough (verbatim from RunVariantGenResult, names remapped to
     // match the propose_variant tool's external vocabulary)
     'skipped:attempt_not_found',
@@ -1421,6 +1440,11 @@ const AuthorQuestionOutputSchema = z.object({
   // Always [] today (no variant_question row exists pre-accept); surfaced for
   // forward-compat with the legacy propose_variant output and lane B.
   variant_question_ids: z.array(z.string()),
+  // ADR-0031 lane B (ADDITIVE) — set ONLY by the knowledge|material seed: the
+  // draft question row id(s) inserted at propose time, so the copilot can feed
+  // the SAME id into write_quiz in the SAME turn (draft-allowed, RP-2).
+  // variant/record seeds never set it — their contracts are untouched.
+  question_ids: z.array(z.string()).optional(),
   reasoning_summary: z.string().optional(),
 });
 
@@ -1578,19 +1602,51 @@ export async function authorQuestion(
       };
     }
     case 'knowledge':
-    case 'material':
-      // LANE B SEAM (ADR-0031 / quiz C→A). Parsed + typed, gen NOT implemented in
-      // A1. Writes ZERO proposal rows. When lane B lands the quiz-gen path it will
-      // decide its own proposal kind + accept handler here.
+    case 'material': {
+      // ADR-0031 lane B (quiz C→A, YUK-304) — DELEGATE to runQuestionAuthor:
+      // ONE single-shot QuestionAuthorTask call (决定6 — NOT the QuizGenTask
+      // agent loop) → draft question row + question_draft proposal in one tx
+      // (决定4/决定5 proposal-only; accept promotes draft→active + FSRS).
+      // causedByEventId IS threaded here (like the record seed): the proposal's
+      // causality anchors on the triggering chat/tool event.
+      const result = await runQuestionAuthor(
+        {
+          seed_mode: seed.seed_mode,
+          knowledge_ids: seed.knowledge_ids,
+          ...(seed.requested_kind ? { requested_kind: seed.requested_kind } : {}),
+          ...(seed.difficulty !== undefined ? { difficulty: seed.difficulty } : {}),
+          ...(seed.material_body_md ? { material_body_md: seed.material_body_md } : {}),
+          ...(seed.material_url ? { material_url: seed.material_url } : {}),
+          ...(seed.material_title ? { material_title: seed.material_title } : {}),
+        },
+        {
+          db: deps.db,
+          actorRef: deps.actorRef,
+          taskRunId: deps.taskRunId,
+          ...(deps.causedByEventId ? { causedByEventId: deps.causedByEventId } : {}),
+          runTaskFn: deps.runTaskFn ?? defaultRunTaskFn,
+        },
+      );
+      if (result.status !== 'proposed') {
+        return {
+          status: result.status,
+          seed_mode: seed.seed_mode,
+          proposal_ids: [],
+          mistake_variant_ids: [],
+          variant_question_ids: [],
+        };
+      }
       return {
-        status: 'skipped:not_implemented',
+        status: 'proposed',
         seed_mode: seed.seed_mode,
-        proposal_ids: [],
+        proposal_ids: [result.proposalId],
         mistake_variant_ids: [],
         variant_question_ids: [],
-        reasoning_summary:
-          'knowledge|material seed reserved for ADR-0031 lane B (quiz C→A); not implemented in A1',
+        // The draft row id — feedable into write_quiz in the SAME turn (RP-2).
+        question_ids: [result.questionId],
+        reasoning_summary: `question_draft ${result.proposalId}`,
       };
+    }
   }
 }
 
@@ -1623,7 +1679,7 @@ async function authorQuestionExecute(
 export const authorQuestionTool: DomainTool<AuthorQuestionInput, AuthorQuestionOutput> = {
   name: 'author_question',
   description:
-    'Author one question proposal via a seeding mode (ADR-0032 D8). seed_mode="variant" generates a targeted variant for a failure attempt (reuses runVariantGen guards); seed_mode="record" promotes a LearningRecord into a question draft; seed_mode="knowledge"|"material" is reserved for future knowledge/material-seeded generation and is not yet implemented. Writes a proposal only; the accept path owns materialization.',
+    'Author one question proposal via a seeding mode (ADR-0032 D8). seed_mode="variant" generates a targeted variant for a failure attempt (reuses runVariantGen guards); seed_mode="record" promotes a LearningRecord into a question draft; seed_mode="knowledge"|"material" generates ONE original draft question seeded by knowledge_ids (and, for "material", a pasted material_body_md — 材料 stem + sub_questions tree supported), inserts it as draft_status="draft", and writes a question_draft proposal whose accept promotes it to active + FSRS. The returned question_ids may be assembled into a paper via write_quiz in the same turn (drafts allowed). Proposal-only: the user accepts in the inbox; no draft ever enters the review pool without accept.',
   effect: 'propose',
   inputSchema: AuthorQuestionInputSchema,
   outputSchema: AuthorQuestionOutputSchema,

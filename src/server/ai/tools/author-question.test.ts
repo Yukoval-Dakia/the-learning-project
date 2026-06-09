@@ -9,7 +9,7 @@
 //
 // DB-config test: imports runVariantGen / writeAiProposal / acceptAiProposal /
 // @/db, seeds a real Postgres testcontainer.
-import { event, learning_record, mistake_variant, question } from '@/db/schema';
+import { knowledge, learning_record, mistake_variant, question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { acceptAiProposal } from '@/server/proposals/actions';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
@@ -319,31 +319,100 @@ describe('author_question — record seed (record → question via record_promot
   });
 });
 
-describe('author_question — knowledge|material seed (lane B stub)', () => {
+describe('author_question — knowledge|material seed (ADR-0031 lane B)', () => {
   beforeEach(async () => {
     await resetDb();
     mockRunner.runTask.mockReset();
   });
 
-  it.each(['knowledge', 'material'] as const)(
-    'returns not_implemented and writes ZERO proposals for seed_mode=%s',
-    async (seedMode) => {
-      const db = testDb();
-      const before = await db.select().from(event);
-      const result = await authorQuestion(
-        { seed_mode: seedMode, knowledge_ids: ['k_zhi'] },
-        deps(),
-      );
-      expect(result.status).toBe('skipped:not_implemented');
-      expect(result.seed_mode).toBe(seedMode);
-      expect(result.proposal_ids).toEqual([]);
-      const after = await db.select().from(event);
-      expect(after).toHaveLength(before.length);
-      const rows = await listProposalInboxRows(db, { status: 'pending' });
-      expect(rows).toHaveLength(0);
-      expect(mockRunner.runTask).not.toHaveBeenCalled();
-    },
-  );
+  async function seedKnowledgeNode(id = 'k_zhi'): Promise<void> {
+    await testDb().insert(knowledge).values({
+      id,
+      name: '之的用法',
+      domain: 'wenyan',
+      created_at: BASE,
+      updated_at: BASE,
+    });
+  }
+
+  function mockAuthorModelOnce(): void {
+    mockRunner.runTask.mockResolvedValueOnce({
+      task_run_id: 'tr_author_model',
+      text: JSON.stringify({
+        kind: 'short_answer',
+        difficulty: 3,
+        knowledge_ids: ['k_zhi'],
+        structured: {
+          id: 'llm_x',
+          role: 'standalone',
+          prompt_text: '解释「之」在「学而时习之」中的用法。',
+          answers: ['代词。'],
+          analysis: '承前指代。',
+        },
+      }),
+      cost_usd: 0,
+    });
+  }
+
+  it('knowledge seed: proposes a question_draft, returns the draft question id', async () => {
+    const db = testDb();
+    await seedKnowledgeNode();
+    mockAuthorModelOnce();
+
+    const result = await authorQuestion(
+      { seed_mode: 'knowledge', knowledge_ids: ['k_zhi'] },
+      deps(),
+    );
+    expect(result.status).toBe('proposed');
+    expect(result.seed_mode).toBe('knowledge');
+    expect(result.proposal_ids).toHaveLength(1);
+    // ADDITIVE lane-B field: the draft row id (feedable into write_quiz).
+    expect(result.question_ids).toHaveLength(1);
+    expect(result.mistake_variant_ids).toEqual([]);
+    expect(result.variant_question_ids).toEqual([]);
+    expect(mockRunner.runTask).toHaveBeenCalledWith(
+      'QuestionAuthorTask',
+      expect.anything(),
+      expect.anything(),
+    );
+
+    const rows = await listProposalInboxRows(db, { status: 'pending' });
+    expect(rows.map((row) => row.kind)).toEqual(['question_draft']);
+    expect(rows[0].payload.proposed_change).toMatchObject({
+      question_id: result.question_ids?.[0],
+      seed_mode: 'knowledge',
+    });
+    const questions = await db.select().from(question);
+    expect(questions.map((q) => q.id)).toContain(result.question_ids?.[0]);
+    expect(questions.find((q) => q.id === result.question_ids?.[0])?.draft_status).toBe('draft');
+  });
+
+  it('material seed: rides the pasted body to the model + stamps provenance', async () => {
+    await seedKnowledgeNode();
+    mockAuthorModelOnce();
+    const result = await authorQuestion(
+      {
+        seed_mode: 'material',
+        knowledge_ids: ['k_zhi'],
+        material_body_md: '学而时习之，不亦说乎。',
+        material_url: 'https://example.edu/lunyu',
+      },
+      deps(),
+    );
+    expect(result.status).toBe('proposed');
+    const input = mockRunner.runTask.mock.calls[0][1] as { material?: { body_md?: string } };
+    expect(input.material?.body_md).toBe('学而时习之，不亦说乎。');
+  });
+
+  it('soft-skips knowledge_not_found without an LLM call', async () => {
+    const result = await authorQuestion(
+      { seed_mode: 'knowledge', knowledge_ids: ['k_nope'] },
+      deps(),
+    );
+    expect(result.status).toBe('skipped:knowledge_not_found');
+    expect(result.proposal_ids).toEqual([]);
+    expect(mockRunner.runTask).not.toHaveBeenCalled();
+  });
 });
 
 describe('author_question DomainTool — contract + input validation', () => {
@@ -379,6 +448,20 @@ describe('author_question DomainTool — contract + input validation', () => {
 
   it('rejects an unknown seed_mode at the schema boundary', () => {
     expect(() => authorQuestionTool.inputSchema.parse({ seed_mode: 'bogus' })).toThrow();
+  });
+
+  it("execute returns status:failed for a material seed without material_body_md (URL-only can't ground)", async () => {
+    // critic #5: QuestionAuthorTask is single-shot with NO fetch tool — a
+    // URL-only material seed would hallucinate the passage, so the cross-field
+    // validation rejects it before any LLM call.
+    const result = await authorQuestionTool.execute(ctx(), {
+      seed_mode: 'material',
+      knowledge_ids: ['k_zhi'],
+      material_url: 'https://example.edu/only-url',
+    });
+    expect(result.status).toBe('failed');
+    expect(result.reasoning_summary).toContain('material_body_md');
+    expect(mockRunner.runTask).not.toHaveBeenCalled();
   });
 
   it('execute returns status:failed when a per-mode required field is missing', async () => {

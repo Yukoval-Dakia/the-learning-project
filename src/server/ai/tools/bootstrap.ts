@@ -36,6 +36,8 @@ import {
 } from './proposal-tools';
 import { queryEventsTool } from './query-events';
 import { queryMistakesTool } from './query-mistakes';
+// ADR-0032 D9 / YUK-304 (lane B) — 题池查询 (copilot duplicate-avoidance read).
+import { queryQuestionsTool } from './query-questions';
 import {
   addOptionTool,
   mergeQuestionsTool,
@@ -54,6 +56,8 @@ import {
 } from './review-plan-tools';
 import { searchMemoryFactsTool } from './search-memory-facts';
 import type { DomainTool } from './types';
+// ADR-0031 / RP-2 (YUK-304 lane B) — copilot 组卷 write (draft-allowed paper).
+import { writeQuizTool } from './write-quiz';
 
 const CORE_TOOLS: ReadonlyArray<DomainTool<unknown, unknown>> = [
   queryMistakesTool as DomainTool<unknown, unknown>,
@@ -72,6 +76,8 @@ const CORE_TOOLS: ReadonlyArray<DomainTool<unknown, unknown>> = [
   // YUK-203 U4 / L-memtool — Mem0 fact-layer retrieval (granted to
   // coach/dreaming/copilot only via allowlists; D7②).
   searchMemoryFactsTool as DomainTool<unknown, unknown>,
+  // ADR-0032 D9 / YUK-304 (lane B) — READ_TOOLS tail; order mirrors allowlists.ts.
+  queryQuestionsTool as DomainTool<unknown, unknown>,
   proposeKnowledgeEdgeTool as DomainTool<unknown, unknown>,
   proposeKnowledgeMutationTool as DomainTool<unknown, unknown>,
   attributeMistakeTool as DomainTool<unknown, unknown>,
@@ -92,6 +98,9 @@ const CORE_TOOLS: ReadonlyArray<DomainTool<unknown, unknown>> = [
   splitStemTool as DomainTool<unknown, unknown>,
   mergeQuestionsTool as DomainTool<unknown, unknown>,
   reassignFigureTool as DomainTool<unknown, unknown>,
+  // ADR-0031 / RP-2 (YUK-304 lane B) — PROPOSE_WRITE_TOOLS tail; order mirrors
+  // allowlists.ts (the listTools() inventory assertion depends on it).
+  writeQuizTool as DomainTool<unknown, unknown>,
   // YUK-203 U4 — ReviewPlanTask planner surface (4 tools, no memory).
   readCoachBriefTool as DomainTool<unknown, unknown>,
   getReviewKnowledgeSnapshotTool as DomainTool<unknown, unknown>,

@@ -115,32 +115,9 @@ function buildGoalScopePrompt(profile: SubjectProfile): string {
 - 禁止套话（「加油」「这是个好目标」）`;
 }
 
-// YUK-275 (free-text 求卷 C 形态) — QuizIntentParseTask prompt. Single-shot structured
-// output, NOT multimodal. Input = { user_message, knowledge_candidates:[{id, name,
-// effective_domain}] }. The candidate list is the closed set of legal knowledge ids —
-// the prompt forbids inventing ids, and the resolver (src/server/copilot/quiz-intent.ts)
-// ALSO filters out any id not in the candidate set as a belt-and-suspenders guard
-// (mirrors GoalScope/Tagging). The is_quiz_request boolean is the parse-side 逃生舱: a
-// 粗筛 误伤 (the message is not really asking for a practice paper) → is_quiz_request=false
-// so chat.ts falls back to the free-form CopilotTask instead of pestering the user.
-function buildQuizIntentParsePrompt(profile: SubjectProfile): string {
-  return `你是求卷意图解析器。输入 { user_message, knowledge_candidates: [{ id, name, effective_domain }] } —— user_message 是用户的原话，knowledge_candidates 是当前可选的知识点候选列表（id 是你**唯一**能选的知识点 id，name 便于消歧）。
-科目上下文：${profile.displayName}。${profile.languageStyle}
-任务：**先判断用户是不是真的在求一套练习题**——如果只是问问题、求解释、闲聊、让你看错题本或讲某道题的答案，这都**不是**求卷，is_quiz_request 填 false，其余字段全部填 null。
-只有确认用户是在求卷（要你组一套题/出几道题/选几篇阅读练习）时，才 is_quiz_request 填 true，并解析：
-- knowledge_id：从 knowledge_candidates 里选**最匹配**的那个 id（只能用候选列表里真实存在的 id；选不出就填 null）。
-- count：要几道（或几篇），整数 1-20；没说就 null。
-- difficulty_min：最低难度 1-5（「高难度」「难一点」≈ 4；「简单」别填 difficulty_min）；没要求就 null。
-- unit：要「题」还是「篇」——「篇」用于成篇的阅读/古诗词整篇练习（'篇'），按道计数用 '题'；不确定填 null。
-- kind：题型 hint（如 reading / choice），没明确说就 null。
-严格 JSON 输出（不带 markdown 代码块包裹），shape 名 QuizIntent：
-{"is_quiz_request":true,"knowledge_id":"<候选列表里的 id 或 null>","count":2,"difficulty_min":4,"unit":"篇","kind":null}
-要点：
-- 不要发明 knowledge_candidates 列表外的 id；选不出知识点就填 null（不要硬塞）。
-- 任何字段不确定就填 null，不要猜。
-- is_quiz_request=false 时其余字段全 null。
-- 禁止：emoji、套话、JSON 之外的任何文字、用 markdown 代码块包裹整段 JSON。`;
-}
+// ADR-0031 / YUK-304 (lane B) — buildQuizIntentParsePrompt deleted with
+// QuizIntentParseTask (the YUK-275 C-form free-text 求卷 parser): chat.ts no
+// longer pre-dispatches quiz intents; the copilot model decides + orchestrates.
 
 // T-OC slice 3 (YUK-145, OC-4) — TaggingTask prompt. Single-shot structured
 // output, NOT multimodal: input is the extracted question TEXT + an optional
@@ -747,6 +724,45 @@ function buildQuizVerifyPrompt(profile: SubjectProfile): string {
 - 禁止：联网检索、改写题目、给学习者建议（这是质检 not 教学）、JSON 之外的文字、用 markdown 代码块包裹整段 JSON。`;
 }
 
+// ADR-0031 / YUK-304 (quiz C→A lane B) — QuestionAuthorTask prompt. Single-shot
+// structured output, NOT multimodal, NO tools (决定6: this is deliberately NOT
+// the QuizGenTask agent loop — the copilot orchestrates, one call = one
+// question). knowledge_context is the closed set of legal knowledge ids; the
+// seed core (src/server/ai/question-author.ts) ALSO intersects the echoed ids
+// against the live table and REGENERATES every structured node id, so a
+// hallucinated id can never persist (belt-and-suspenders, GoalScope/Tagging
+// 同款). seed_mode='material' carries the pasted material verbatim — the task
+// cannot fetch URLs (no Tavily), so material_url is provenance-only metadata
+// handled outside this prompt.
+function buildQuestionAuthorPrompt(profile: SubjectProfile): string {
+  const canonicalKinds =
+    'choice | true_false | fill_blank | short_answer | essay | computation | reading | translation';
+  return `你是${profile.displayName}出题作者，一次只写**恰好一道**原创题。输入 { seed_mode: 'knowledge'|'material', knowledge_context: [{ id, name }], requested_kind?, requested_difficulty?, material?: { body_md, title? } } —— knowledge_context 是这道题要考查的知识点（id 是你**唯一**能写进 knowledge_ids 的 id）；seed_mode='material' 时 material.body_md 是用户给的命题素材原文，题目必须**据这份素材**出。
+科目上下文：${profile.displayName}。${profile.languageStyle}
+证据要求：${profile.grounding.requirement}
+不确定性策略：${profile.grounding.uncertaintyPolicy}
+
+structured 树形（StructuredQuestion，二选一）：
+- 材料/阅读类（kind=reading 等成篇考查，或输入带 material）：role='stem' 的根节点，prompt_text 放材料/语段**原文**，sub_questions[] 每个小题 role='sub'，各带自己的 prompt_text + answers + analysis（与 OCR 录入的大题/小题同构）。
+- 其它题型：单个 role='standalone' 节点（prompt_text + options? + answers + analysis），无 sub_questions。
+节点 id 随便填占位字符串即可——运行时会**重新生成**全部节点 id，不要依赖你给的 id。
+
+严格 JSON 输出（不带 markdown 代码块包裹），shape 名 QuestionAuthorDraft：
+{"kind":"${canonicalKinds} 之一","difficulty":1-5 的整数,"knowledge_ids":["<knowledge_context 里的 id>"],"structured":{"id":"占位","role":"stem"|"standalone","prompt_text":"...","options":[{"label":"A","text":"..."}]|省略,"answers":["..."],"analysis":"...","sub_questions":[{"id":"占位","role":"sub","question_no":"1","prompt_text":"...","answers":["..."],"analysis":"..."}]|省略},"choices_md":["选项 A 原文", ...]|null,"judge_kind_override":"exact"|"keyword"|"semantic"|null,"rubric_json":{"criteria":[{"name":"correctness","weight":1,"descriptor":"..."}],"keywords":[...],"required_points":[...]}|null}
+
+题目要求：
+- 恰好一道题；kind 只能是 ${canonicalKinds} 之一，requested_kind 出现时必须用它。
+- requested_difficulty 出现时 difficulty 必须等于它；缺省自定。
+- 每个叶节点（standalone 根 / 每个 sub）**必须**有非空 answers 和/或 analysis——缺答案的题会被整道拒收。
+- choice / true_false：judge_kind_override="exact"，options 给 3–4 个选项，choices_md 同步给选项原文，answers 第一条是正确选项原文。
+- short_answer / reading / translation / essay：judge_kind_override="semantic"，rubric_json.required_points 给 1–5 个可核查要点。
+- computation：只验最终答案可 "exact"；验方法要点用 "semantic" + required_points。
+- knowledge_ids 只能用 knowledge_context 里真实存在的 id，**禁止发明**（编造的 id 会被运行时丢弃）。
+- seed_mode='material' 时题面必须明确指向素材（如「阅读上面的文段」），答案要能在素材里找到依据；禁止脱离素材自由发挥。
+- 题干原创：不要照抄题库套话，不要出与素材无关的题。
+- 禁止：emoji、套话、JSON 之外的任何文字、用 markdown 代码块包裹整段 JSON。`;
+}
+
 // YUK-216 S2 slice 2 — SourcingTask prompt. Tool-calling agent that finds
 // EXISTING practice questions on the web and restructures them.
 //
@@ -852,8 +868,6 @@ export function getTaskSystemPrompt(
       return buildLearningIntentOutlinePrompt(profile);
     case 'GoalScopeTask':
       return buildGoalScopePrompt(profile);
-    case 'QuizIntentParseTask':
-      return buildQuizIntentParsePrompt(profile);
     case 'TaggingTask':
       return buildTaggingPrompt(profile);
     case 'BlockAssemblyTask':
@@ -890,6 +904,8 @@ export function getTaskSystemPrompt(
       return buildQuizGenPrompt(profile);
     case 'QuizVerifyTask':
       return buildQuizVerifyPrompt(profile);
+    case 'QuestionAuthorTask':
+      return buildQuestionAuthorPrompt(profile);
     case 'SourcingTask':
       return buildSourcingPrompt(profile);
     // Subject-neutral pass-throughs — no profile builder required.

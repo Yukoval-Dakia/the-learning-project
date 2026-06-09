@@ -322,6 +322,8 @@ describe('Foundation D M2 read tools', () => {
       'query_knowledge',
       'query_memory_brief',
       'query_mistakes',
+      // ADR-0032 D9 / YUK-304 — questions catalog reader (wraps the YUK-280 list reader).
+      'query_questions',
       'query_records',
       'read_coach_brief',
       'search_memory_facts',

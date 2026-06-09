@@ -37,6 +37,8 @@ describe('DomainTool allowlist policy', () => {
       'split_stem',
       'merge_questions',
       'reassign_figure',
+      // ADR-0031 / RP-2 (YUK-304 lane B) — copilot 组卷 write (draft-allowed).
+      'write_quiz',
     ]);
   });
 
@@ -130,6 +132,10 @@ describe('DomainTool allowlist policy', () => {
       // ADR-0032 D8 — unified author_question front door on copilot base.
       'author_question',
       'search_memory_facts',
+      // ADR-0031 决定1/D5 + ADR-0032 D9 (YUK-304 lane B) — quiz C→A: the copilot
+      // orchestrates 出题/组卷 itself, so it reads the 题池 and writes the paper.
+      'query_questions',
+      'write_quiz',
     ]);
     // The ask_check INSERT (materializeAskCheckQuestion) is a service path, never
     // a DomainTool — it is not in COPILOT_TOOLS (R2).
@@ -148,7 +154,9 @@ describe('DomainTool allowlist policy', () => {
     expect(DOMAIN_TOOL_ALLOWLISTS.maintenance).toEqual([
       // YUK-203 U4 / D7③ — Maintenance is an operator surface and must NOT read
       // memory facts, so its read base is READ_TOOLS minus `search_memory_facts`.
-      ...READ_TOOLS.filter((name) => name !== 'search_memory_facts'),
+      // YUK-304 (lane B) — minus `query_questions` too (copilot-only grant;
+      // widening maintenance is A2 territory). Mirrors the production chokepoint.
+      ...READ_TOOLS.filter((name) => name !== 'search_memory_facts' && name !== 'query_questions'),
       'propose_knowledge_edge',
       'propose_knowledge_mutation',
       'propose_learning_item_completion',
@@ -223,6 +231,27 @@ describe('DomainTool allowlist policy', () => {
     expect(DOMAIN_TOOL_ALLOWLISTS.review_plan).not.toContain('author_question');
     expect(DOMAIN_TOOL_ALLOWLISTS.ingestion_block_edit).not.toContain('author_question');
     expect(DOMAIN_TOOL_ALLOWLISTS.knowledge_review).not.toContain('author_question');
+  });
+
+  // ADR-0031 / ADR-0032 D9 (YUK-304 lane B) — the quiz C→A surface grants.
+  // query_questions + write_quiz belong to the copilot surfaces ONLY (the chip
+  // surface inherits via the [...copilot, ...] spread); every other surface —
+  // notably maintenance / review_plan — must NOT gain them (scope discipline:
+  // widening is A2 territory; review_plan keeps its own write_review_plan with
+  // the OPPOSITE draft precondition).
+  it('grants query_questions + write_quiz to the copilot surfaces only (ADR-0031 lane B)', () => {
+    expect(READ_TOOLS).toContain('query_questions');
+    expect(PROPOSE_WRITE_TOOLS).toContain('write_quiz');
+    for (const tool of ['query_questions', 'write_quiz'] as const) {
+      expect(DOMAIN_TOOL_ALLOWLISTS.copilot).toContain(tool);
+      expect(DOMAIN_TOOL_ALLOWLISTS.copilot_user_suggested_mistake_action).toContain(tool);
+      expect(DOMAIN_TOOL_ALLOWLISTS.maintenance).not.toContain(tool);
+      expect(DOMAIN_TOOL_ALLOWLISTS.review_plan).not.toContain(tool);
+      expect(DOMAIN_TOOL_ALLOWLISTS.knowledge_review).not.toContain(tool);
+      expect(DOMAIN_TOOL_ALLOWLISTS.ingestion_block_edit).not.toContain(tool);
+      expect(DOMAIN_TOOL_ALLOWLISTS.dreaming).not.toContain(tool);
+      expect(DOMAIN_TOOL_ALLOWLISTS.coach).not.toContain(tool);
+    }
   });
 
   it('renders MCP allowedTools names for the selected server', () => {
