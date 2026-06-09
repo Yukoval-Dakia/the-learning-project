@@ -128,12 +128,16 @@ export async function runQuestionAuthor(
   // Subject profile via the first valid node's EFFECTIVE domain (科目是视角:
   // child nodes usually carry domain=null and inherit from an ancestor, so the
   // raw column would mis-resolve to the default profile; getEffectiveDomain is
-  // the derivation owner). The profile only shapes the prompt VOICE, so a
-  // degenerate tree (root with null domain — invariant violation in legacy /
-  // fixture data) degrades to the default profile instead of failing the run.
+  // the derivation owner). "First" follows the SEED's original order — `nodes`
+  // row order is DB-arbitrary (no ORDER BY), which would make the prompt voice
+  // nondeterministic for mixed-subject seeds (review LOW). The profile only
+  // shapes the prompt VOICE, so a degenerate tree (root with null domain —
+  // invariant violation in legacy / fixture data) degrades to the default
+  // profile instead of failing the run.
+  const firstValidId = wanted.find((id) => validIdSet.has(id)) ?? validIds[0];
   let effectiveDomain: string | null = null;
   try {
-    effectiveDomain = await getEffectiveDomain(db, validIds[0]);
+    effectiveDomain = await getEffectiveDomain(db, firstValidId);
   } catch {
     effectiveDomain = null;
   }
