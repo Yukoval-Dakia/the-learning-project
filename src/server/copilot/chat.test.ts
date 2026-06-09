@@ -1893,10 +1893,10 @@ describe('runCopilotChat — primary_view nomination (YUK-307)', () => {
 
   it('T5b: ephemeral_html payload containing `-->` parses via the greedy tail pass; zero residue (PR #375 MEDIUM-1)', () => {
     const html = '<div><!-- inner comment --><b>周期表</b></div>';
-    const out = extractPrimaryView(
-      `正文。\n<!--primary_view:{"source":"ephemeral_html","ref":"${html.replace(/"/g, '\\"')}"}-->`,
-      { taskRunId: 't' },
-    );
+    // JSON.stringify builds the payload — correct escaping by construction
+    // (a hand-rolled quote-replace trips CodeQL js/incomplete-sanitization).
+    const payload = JSON.stringify({ source: 'ephemeral_html', ref: html });
+    const out = extractPrimaryView(`正文。\n<!--primary_view:${payload}-->`, { taskRunId: 't' });
     // The greedy tail match swallows the inner `-->` — nomination SUCCEEDS
     // (was: lenient-absent under the lazy-only parser)…
     expect(out.primaryView).toEqual({ source: 'ephemeral_html', ref: html });
