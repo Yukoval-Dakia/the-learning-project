@@ -280,6 +280,8 @@ describe('Wave 3 proposal/action DomainTools', () => {
         .map((tool) => tool.name)
         .sort(),
     ).toEqual([
+      // ADR-0032 D8 — unified author_question front door (effect='propose').
+      'author_question',
       'propose_knowledge_edge',
       'propose_knowledge_mutation',
       'propose_learning_item_archive',
