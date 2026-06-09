@@ -162,6 +162,11 @@ function replyPrimaryView(payload: Record<string, unknown>): CopilotPrimaryView 
     if (!ref || typeof ref !== 'object') return undefined;
     const r = ref as Record<string, unknown>;
     if (typeof r.kind !== 'string' || typeof r.id !== 'string') return undefined;
+    // Mirror the emission-side PrimaryViewRefSchema bounds (chat.ts) so the
+    // replay narrower can't drift looser than what chat.ts will ever write
+    // (PR #375 review LOW-1).
+    if (r.kind.length === 0 || r.kind.length > 40) return undefined;
+    if (r.id.length === 0 || r.id.length > 120) return undefined;
     return { source, ref: { kind: r.kind, id: r.id } };
   }
   if (source === 'ephemeral_html') {

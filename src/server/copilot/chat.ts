@@ -231,9 +231,10 @@ export const PrimaryViewSchema = z.discriminatedUnion('source', [
   z.object({
     source: z.literal('ephemeral_html'),
     // The ref string IS the inline HTML body (bounded; see turns.ts phase-deferred
-    // note). KNOWN EDGE: an HTML payload containing `-->` breaks the comment
-    // framing → the marker fails to parse → lenient absent + warn. Acceptable
-    // under the lenient contract.
+    // note). An HTML payload containing `-->` is handled by the tail-anchored
+    // GREEDY pass in extractPrimaryView (PR #375 review MEDIUM-1) — it swallows
+    // inner `-->` for the end-of-reply marker; only a non-tail marker with an
+    // embedded `-->` still mis-frames → lenient absent + warn.
     ref: z.string().min(1).max(EPHEMERAL_HTML_REF_MAX_CHARS),
   }),
 ]);
@@ -258,21 +259,64 @@ export function extractPrimaryView(
   let primaryView: CopilotPrimaryView | undefined;
   let sawMarker = false;
   let sawMalformed = false;
-  const stripped = text.replace(PRIMARY_VIEW_MARKER_RE, (_match, jsonText: string) => {
-    sawMarker = true;
+
+  const tryParse = (jsonText: string): CopilotPrimaryView | undefined => {
     try {
       const parsed = PrimaryViewSchema.safeParse(JSON.parse(jsonText));
-      if (parsed.success) {
-        // replace() visits matches in document order → the last valid one wins.
-        primaryView = parsed.data;
-      } else {
-        sawMalformed = true;
-      }
+      if (parsed.success) return parsed.data;
     } catch {
-      sawMalformed = true;
+      // fall through to the malformed flag below
     }
+    sawMalformed = true;
+    return undefined;
+  };
+
+  // Pass 1 — tail-anchored GREEDY parse of the LAST marker (PR #375 review
+  // MEDIUM-1). The prompt pins the marker as the reply's last output, so for
+  // that final marker a greedy match to the trailing `-->` at EOF safely
+  // swallows `-->` sequences INSIDE the payload (e.g. HTML comments in an
+  // ephemeral_html body) that would mis-frame the lazy regex — and removing
+  // the whole region guarantees no payload residue leaks into reply_md.
+  // Anchored at lastIndexOf (NOT a bare greedy regex): a greedy match from an
+  // EARLIER marker would swallow the prose between two markers.
+  let working = text;
+  const lastStart = working.lastIndexOf(PRIMARY_VIEW_MARKER_START);
+  if (lastStart !== -1) {
+    const tail = working.slice(lastStart).match(/^<!--primary_view:([\s\S]*)-->\s*$/);
+    if (tail) {
+      sawMarker = true;
+      primaryView = tryParse(tail[1] as string);
+      working = working.slice(0, lastStart);
+    }
+  }
+
+  // Pass 2 — lazy GLOBAL strip of any earlier occurrences. Among these the last
+  // valid one wins only when the tail marker was absent/invalid, preserving
+  // overall last-VALID-wins in document order.
+  const earlier: CopilotPrimaryView[] = [];
+  const stripped = working.replace(PRIMARY_VIEW_MARKER_RE, (_match, jsonText: string) => {
+    sawMarker = true;
+    const parsed = tryParse(jsonText);
+    if (parsed) earlier.push(parsed);
     return '';
   });
+  if (!primaryView && earlier.length > 0) {
+    primaryView = earlier[earlier.length - 1];
+  }
+
+  // Pass 3 — unterminated-marker guard (PR #375 review MEDIUM-2). A marker with
+  // no closing `-->` matches neither pass; concrete trigger: the YUK-266 stream
+  // partial-degrade persists text aborted MID-marker. Truncate from the last
+  // surviving start-token — mirrors the live tail-filter, which also suppresses
+  // from the token onward, so the visible stream and the persisted reply agree.
+  let cleaned = stripped;
+  const dangling = cleaned.lastIndexOf(PRIMARY_VIEW_MARKER_START);
+  if (dangling !== -1) {
+    sawMarker = true;
+    sawMalformed = true;
+    cleaned = cleaned.slice(0, dangling);
+  }
+
   if (sawMalformed) {
     console.warn('[runCopilotChat] malformed primary_view marker; treating as absent', {
       task_run_id: opts.taskRunId,
@@ -280,7 +324,7 @@ export function extractPrimaryView(
   }
   // Tidy the tail left by stripping an end-of-reply marker; untouched when no
   // marker was present (byte-compat with the pre-YUK-307 reply).
-  const cleaned = sawMarker ? stripped.trimEnd() : stripped;
+  cleaned = sawMarker ? cleaned.trimEnd() : cleaned;
   return primaryView ? { text: cleaned, primaryView } : { text: cleaned };
 }
 
