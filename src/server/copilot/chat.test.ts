@@ -4,7 +4,12 @@ import { TAVILY_MCP_ALLOWED_TOOLS, buildTavilyMcpServer } from '@/server/ai/mcp/
 import { resolveDomainToolNames, resolveMcpAllowedTools } from '@/server/ai/tools/allowlists';
 import { PROPOSAL_FEEDBACK_BUDGET } from '@/server/ai/tools/budgets';
 import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
-import { CopilotChatRequest, runCopilotChat, runCopilotChatStreaming } from './chat';
+import {
+  CopilotChatRequest,
+  extractPrimaryView,
+  runCopilotChat,
+  runCopilotChatStreaming,
+} from './chat';
 
 describe('runCopilotChat (two-surface routing)', () => {
   it('chat path uses copilot allowlist and writes experimental:copilot_user_ask', async () => {
@@ -1744,5 +1749,407 @@ describe('runCopilotChat — conversation memory + ambient (C2)', () => {
 
     // The teaching path short-circuits before history assembly.
     expect(loadHistoryFn).not.toHaveBeenCalled();
+  });
+});
+
+// YUK-307 (C1 — presentation layer §2.3) — primary_view hero nomination. The
+// model appends an HTML-comment marker as its reply's LAST output; chat.ts
+// parses + strips it at the single JSON/streaming convergence point, persists
+// it as an ADDITIVE reply-payload field, and returns it on CopilotChatResult.
+// Lenient by contract: a malformed marker degrades to absent and never fails
+// the turn. 防循环 红线: the field is reply METADATA and must never re-enter
+// prompt assembly (T8a/T8b below).
+describe('runCopilotChat — primary_view nomination (YUK-307)', () => {
+  const baseDeps = {
+    findOrCreateConversationFn: async () => ({ sessionId: 'ls_pv', created: false }),
+    loadProposalFeedbackFn: async () => [],
+    loadHistoryFn: async () => [],
+    now: () => new Date('2026-06-10T00:00:00.000Z'),
+  };
+  const VALID_MARKER =
+    '<!--primary_view:{"source":"artifact","ref":{"kind":"question","id":"q_abc"}}-->';
+  const mkBuild = () => vi.fn(() => ({ name: 'fake-loom' }) as never);
+  const mkRunFn = (text: string) =>
+    vi.fn(async () => ({
+      task_run_id: 'task_pv',
+      text,
+      finishReason: 'stop' as const,
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+  const mkWrite = () => vi.fn(async (_db: unknown, input: { id: string }) => input.id);
+
+  it('T1: a valid artifact marker → result + persisted payload carry primary_view; reply_md is cleaned', async () => {
+    const runAgentTaskFn = mkRunFn(`这是你的题。\n${VALID_MARKER}`);
+    const writeEventFn = mkWrite();
+
+    const result = await runCopilotChat(
+      {} as never,
+      { user_message: '出一道题', triggered_by: 'chat' },
+      { ...baseDeps, runAgentTaskFn, writeEventFn, buildMcpServerFn: mkBuild() },
+    );
+
+    expect(result.primary_view).toEqual({
+      source: 'artifact',
+      ref: { kind: 'question', id: 'q_abc' },
+    });
+    // The marker is an instruction, not content — stripped from the API reply…
+    expect(result.reply).toBe('这是你的题。');
+    expect(result.reply).not.toContain('<!--');
+    // …and from the persisted reply_md; the nomination rides as a payload sibling.
+    const replyCall = writeEventFn.mock.calls[1]?.[1] as {
+      payload?: { reply_md?: string; primary_view?: unknown };
+    };
+    expect(replyCall?.payload?.reply_md).toBe('这是你的题。');
+    expect(replyCall?.payload?.primary_view).toEqual({
+      source: 'artifact',
+      ref: { kind: 'question', id: 'q_abc' },
+    });
+  });
+
+  it('T2: malformed marker JSON → absent, marker still stripped, turn succeeds, warn logged', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const runAgentTaskFn = mkRunFn('回答正文\n<!--primary_view:{not json}-->');
+    const writeEventFn = mkWrite();
+
+    const result = await runCopilotChat(
+      {} as never,
+      { user_message: '随便', triggered_by: 'chat' },
+      { ...baseDeps, runAgentTaskFn, writeEventFn, buildMcpServerFn: mkBuild() },
+    );
+
+    expect(result.reply).toBe('回答正文');
+    expect('primary_view' in result).toBe(false);
+    const replyCall = writeEventFn.mock.calls[1]?.[1] as { payload?: Record<string, unknown> };
+    expect(replyCall?.payload?.reply_md).toBe('回答正文');
+    expect(replyCall?.payload).not.toHaveProperty('primary_view');
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('malformed primary_view marker'),
+      expect.objectContaining({ task_run_id: 'task_pv' }),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it('T3: lenient validation — bad source / ref shape / over-cap ephemeral_html → absent + stripped', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const badMarkers = [
+      '<!--primary_view:{"source":"bogus","ref":{"kind":"a","id":"b"}}-->',
+      '<!--primary_view:{"source":"artifact","ref":"not-an-object"}-->',
+      '<!--primary_view:{"source":"tool_result","ref":{"kind":"","id":"x"}}-->',
+      `<!--primary_view:{"source":"ephemeral_html","ref":"${'x'.repeat(32_001)}"}-->`,
+    ];
+    for (const marker of badMarkers) {
+      const out = extractPrimaryView(`body\n${marker}`, { taskRunId: 't' });
+      expect(out.primaryView).toBeUndefined();
+      expect(out.text).toBe('body');
+    }
+    expect(warnSpy).toHaveBeenCalledTimes(badMarkers.length);
+    warnSpy.mockRestore();
+  });
+
+  it('parses the tool_result + ephemeral_html sources too (all three ruled variants)', () => {
+    const tr = extractPrimaryView(
+      'x\n<!--primary_view:{"source":"tool_result","ref":{"kind":"tool_call","id":"tc_1"}}-->',
+      { taskRunId: 't' },
+    );
+    expect(tr.primaryView).toEqual({
+      source: 'tool_result',
+      ref: { kind: 'tool_call', id: 'tc_1' },
+    });
+    const eh = extractPrimaryView(
+      'x\n<!--primary_view:{"source":"ephemeral_html","ref":"<div>hi</div>"}-->',
+      { taskRunId: 't' },
+    );
+    expect(eh.primaryView).toEqual({ source: 'ephemeral_html', ref: '<div>hi</div>' });
+  });
+
+  it('T4: no marker → result and payload have NO primary_view key (byte-compat pin)', async () => {
+    const runAgentTaskFn = mkRunFn('普通回答，无提名。');
+    const writeEventFn = mkWrite();
+
+    const result = await runCopilotChat(
+      {} as never,
+      { user_message: '答疑', triggered_by: 'chat' },
+      { ...baseDeps, runAgentTaskFn, writeEventFn, buildMcpServerFn: mkBuild() },
+    );
+
+    expect(result.reply).toBe('普通回答，无提名。');
+    expect('primary_view' in result).toBe(false);
+    const replyCall = writeEventFn.mock.calls[1]?.[1] as { payload?: Record<string, unknown> };
+    expect(Object.keys(replyCall?.payload ?? {})).not.toContain('primary_view');
+  });
+
+  it('T5: multiple markers → the LAST valid one wins; ALL occurrences stripped', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const first =
+      '<!--primary_view:{"source":"artifact","ref":{"kind":"question","id":"q_first"}}-->';
+    const bad = '<!--primary_view:{nope}-->';
+    const last = '<!--primary_view:{"source":"artifact","ref":{"kind":"quiz","id":"qz_last"}}-->';
+    const out = extractPrimaryView(`a ${first} b ${bad} c\n${last}`, { taskRunId: 't' });
+    expect(out.primaryView).toEqual({ source: 'artifact', ref: { kind: 'quiz', id: 'qz_last' } });
+    expect(out.text).toBe('a  b  c');
+    expect(out.text).not.toContain('primary_view');
+    warnSpy.mockRestore();
+  });
+
+  it('T6: streaming — terminal result carries primary_view + cleaned reply; persisted payload matches non-stream', async () => {
+    const fullText = `这是你的题。\n${VALID_MARKER}`;
+    const streamAgentTaskFn = vi.fn(
+      async (_k: string, _i: unknown, _c: unknown, onDelta: (t: string) => void) => {
+        onDelta(fullText);
+        return {
+          task_run_id: 'task_pv',
+          text: fullText,
+          finishReason: 'stop' as const,
+          usage: { inputTokens: 1, outputTokens: 2 },
+        };
+      },
+    );
+    const writeEventFnStream = mkWrite();
+    const deltas: string[] = [];
+
+    const result = await runCopilotChatStreaming(
+      {} as never,
+      { user_message: '出一道题', triggered_by: 'chat' },
+      (t) => deltas.push(t),
+      {
+        ...baseDeps,
+        streamAgentTaskFn,
+        writeEventFn: writeEventFnStream,
+        buildMcpServerFn: mkBuild(),
+      },
+    );
+
+    expect(result.primary_view).toEqual({
+      source: 'artifact',
+      ref: { kind: 'question', id: 'q_abc' },
+    });
+    expect(result.reply).toBe('这是你的题。');
+    // The live deltas never carried the marker (server-side tail-filter).
+    expect(deltas.join('')).toBe('这是你的题。\n');
+
+    // Persisted payload is identical to the non-stream path for the same text
+    // (modulo in_reply_to_event_id, which embeds the per-run ask event cuid).
+    const writeEventFnJson = mkWrite();
+    await runCopilotChat(
+      {} as never,
+      { user_message: '出一道题', triggered_by: 'chat' },
+      {
+        ...baseDeps,
+        runAgentTaskFn: mkRunFn(fullText),
+        writeEventFn: writeEventFnJson,
+        buildMcpServerFn: mkBuild(),
+      },
+    );
+    const streamPayload = (writeEventFnStream.mock.calls[1]?.[1] as { payload?: unknown })
+      ?.payload as Record<string, unknown>;
+    const jsonPayload = (writeEventFnJson.mock.calls[1]?.[1] as { payload?: unknown })
+      ?.payload as Record<string, unknown>;
+    const { in_reply_to_event_id: _s, ...streamRest } = streamPayload;
+    const { in_reply_to_event_id: _j, ...jsonRest } = jsonPayload;
+    expect(streamRest).toEqual(jsonRest);
+  });
+
+  it('tail-filter (a): a marker split across deltas never reaches onDelta', async () => {
+    const parts = [
+      '回答正文',
+      '<!--primary_',
+      'view:{"source":"artifact","ref":{"kind":"question","id":"q1"}}-->',
+    ];
+    const fullText = parts.join('');
+    const streamAgentTaskFn = vi.fn(
+      async (_k: string, _i: unknown, _c: unknown, onDelta: (t: string) => void) => {
+        for (const p of parts) onDelta(p);
+        return {
+          task_run_id: 'task_split',
+          text: fullText,
+          finishReason: 'stop' as const,
+          usage: { inputTokens: 1, outputTokens: 2 },
+        };
+      },
+    );
+    const deltas: string[] = [];
+
+    const result = await runCopilotChatStreaming(
+      {} as never,
+      { user_message: '出题', triggered_by: 'chat' },
+      (t) => deltas.push(t),
+      { ...baseDeps, streamAgentTaskFn, writeEventFn: mkWrite(), buildMcpServerFn: mkBuild() },
+    );
+
+    expect(deltas.join('')).toBe('回答正文');
+    expect(deltas.join('')).not.toContain('<!--');
+    expect(result.primary_view).toEqual({
+      source: 'artifact',
+      ref: { kind: 'question', id: 'q1' },
+    });
+    expect(result.reply).toBe('回答正文');
+  });
+
+  it('tail-filter (b): clean text passes through byte-identical', async () => {
+    const parts = ['你好', '，这是', '普通回复。'];
+    const streamAgentTaskFn = vi.fn(
+      async (_k: string, _i: unknown, _c: unknown, onDelta: (t: string) => void) => {
+        for (const p of parts) onDelta(p);
+        return {
+          task_run_id: 'task_clean',
+          text: parts.join(''),
+          finishReason: 'stop' as const,
+          usage: { inputTokens: 1, outputTokens: 2 },
+        };
+      },
+    );
+    const deltas: string[] = [];
+
+    await runCopilotChatStreaming(
+      {} as never,
+      { user_message: '聊聊', triggered_by: 'chat' },
+      (t) => deltas.push(t),
+      { ...baseDeps, streamAgentTaskFn, writeEventFn: mkWrite(), buildMcpServerFn: mkBuild() },
+    );
+
+    expect(deltas).toEqual(parts);
+  });
+
+  it('tail-filter (c): a prefix lookalike that never completes is reconciled by the terminal reply', async () => {
+    const fullText = '结尾是<!--pri';
+    const streamAgentTaskFn = vi.fn(
+      async (_k: string, _i: unknown, _c: unknown, onDelta: (t: string) => void) => {
+        onDelta(fullText);
+        return {
+          task_run_id: 'task_lookalike',
+          text: fullText,
+          finishReason: 'stop' as const,
+          usage: { inputTokens: 1, outputTokens: 2 },
+        };
+      },
+    );
+    const deltas: string[] = [];
+
+    const result = await runCopilotChatStreaming(
+      {} as never,
+      { user_message: '聊聊', triggered_by: 'chat' },
+      (t) => deltas.push(t),
+      { ...baseDeps, streamAgentTaskFn, writeEventFn: mkWrite(), buildMcpServerFn: mkBuild() },
+    );
+
+    // The ambiguous tail is held back from the live stream (a bounded under-emit)…
+    expect(deltas.join('')).toBe('结尾是');
+    // …and the authoritative terminal reply restores the FULL text: no complete
+    // marker means extractPrimaryView leaves the text untouched (no trim, no field).
+    expect(result.reply).toBe('结尾是<!--pri');
+    expect('primary_view' in result).toBe(false);
+  });
+
+  it('T7: teaching behavior-pack turn never carries primary_view (deterministic service reply)', async () => {
+    const db = {
+      transaction: vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => cb({})),
+    } as never;
+    const writeEventFn = mkWrite();
+    const runTeachingSkillFn = vi.fn(async () => ({
+      text_md: '讲解。',
+      kind: 'explain' as const,
+      suggested_next: 'continue' as const,
+      task_run_id: 'task_teach_pv',
+    }));
+
+    const result = await runCopilotChat(
+      db,
+      {
+        user_message: '讲讲',
+        triggered_by: 'chat',
+        skill_context: { skill: 'teaching', ref: { kind: 'learning_item', id: 'li_pv' } },
+      },
+      { ...baseDeps, writeEventFn, runTeachingSkillFn, buildMcpServerFn: mkBuild() },
+    );
+
+    expect('primary_view' in result).toBe(false);
+    const replyCall = writeEventFn.mock.calls[1]?.[1] as { payload?: Record<string, unknown> };
+    expect(JSON.stringify(replyCall?.payload)).not.toContain('primary_view');
+  });
+
+  it('T8a 防循环: a polluted history row carrying primary_view never leaks into the run input', async () => {
+    const runAgentTaskFn = mkRunFn('OK');
+    const polluted = {
+      role: 'ai' as const,
+      text: 'a prior reply body',
+      at: '2026-06-09T00:00:00.000Z',
+      event_id: 'e_pv',
+      primary_view: { source: 'artifact', ref: { kind: 'question', id: 'SENTINEL_PV_q' } },
+    } as never;
+
+    await runCopilotChat(
+      {} as never,
+      { user_message: '继续', triggered_by: 'chat' },
+      {
+        ...baseDeps,
+        runAgentTaskFn,
+        writeEventFn: mkWrite(),
+        buildMcpServerFn: mkBuild(),
+        loadHistoryFn: async () => [polluted],
+      },
+    );
+
+    const input = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[1] as {
+      conversation_history: Array<Record<string, unknown>>;
+    };
+    // {role, text} ONLY — the structural strip keeps primary_view out of the prompt.
+    expect(input.conversation_history).toEqual([{ role: 'ai', text: 'a prior reply body' }]);
+    const serialized = JSON.stringify(input.conversation_history);
+    expect(serialized).not.toContain('SENTINEL_PV_q');
+    expect(serialized).not.toContain('primary_view');
+  });
+
+  it('T8b 防循环回灌: a marker-bearing reply, persisted then replayed as history, re-enters NO marker syntax', async () => {
+    // Turn 1: the model emits a marker; chat.ts strips it from reply_md and
+    // persists the nomination as a payload sibling.
+    const writeEventFn1 = mkWrite();
+    await runCopilotChat(
+      {} as never,
+      { user_message: '出题', triggered_by: 'chat' },
+      {
+        ...baseDeps,
+        runAgentTaskFn: mkRunFn(`这是你的题。\n${VALID_MARKER}`),
+        writeEventFn: writeEventFn1,
+        buildMcpServerFn: mkBuild(),
+      },
+    );
+    const persisted = (
+      writeEventFn1.mock.calls[1]?.[1] as {
+        payload?: { reply_md?: string; primary_view?: unknown };
+      }
+    )?.payload;
+    expect(persisted?.primary_view).toBeDefined();
+
+    // Turn 2: feed the persisted turn back exactly as getRecentCopilotTurns
+    // surfaces it (text = the CLEANED reply_md; primary_view as a sibling field).
+    const replayedTurn = {
+      role: 'ai' as const,
+      text: persisted?.reply_md ?? '',
+      at: '2026-06-10T00:00:01.000Z',
+      event_id: 'e_replayed',
+      primary_view: persisted?.primary_view,
+    } as never;
+    const runAgentTaskFn2 = mkRunFn('OK');
+    await runCopilotChat(
+      {} as never,
+      { user_message: '再来一题', triggered_by: 'chat' },
+      {
+        ...baseDeps,
+        runAgentTaskFn: runAgentTaskFn2,
+        writeEventFn: mkWrite(),
+        buildMcpServerFn: mkBuild(),
+        loadHistoryFn: async () => [replayedTurn],
+      },
+    );
+
+    const input2 = (runAgentTaskFn2.mock.calls[0] as unknown as unknown[])[1] as {
+      conversation_history: Array<Record<string, unknown>>;
+    };
+    const serialized = JSON.stringify(input2.conversation_history);
+    // Neither the marker syntax nor the field name survives into the prompt path.
+    expect(serialized).not.toContain('<!--');
+    expect(serialized).not.toContain('primary_view');
+    // The reply BODY does flow as ordinary history text (that is the C2 contract).
+    expect(serialized).toContain('这是你的题。');
   });
 });

@@ -150,6 +150,42 @@ async function writeReplyWithSkillTurn(
   return id;
 }
 
+// YUK-307 — seed a copilot_reply that carries a primary_view in the payload
+// (simulates what chat.ts persists for a hero-nominating free-form reply).
+// `primaryView` is deliberately unknown-typed so malformed shapes can be seeded.
+async function writeReplyWithPrimaryView(
+  text: string,
+  sessionId: string,
+  inReplyTo: string,
+  at: Date,
+  primaryView: unknown,
+): Promise<string> {
+  const id = `copilot_reply_${createId()}`;
+  writtenEventIds.push(id);
+  await writeEvent(db, {
+    id,
+    session_id: sessionId,
+    actor_kind: 'agent',
+    actor_ref: 'agent:copilot',
+    action: 'experimental:copilot_reply',
+    subject_kind: 'query',
+    subject_id: id,
+    outcome: null,
+    payload: {
+      surface: 'copilot',
+      session_id: sessionId,
+      reply_md: text,
+      task_run_id: 'task_pv',
+      in_reply_to_event_id: inReplyTo,
+      primary_view: primaryView,
+    },
+    caused_by_event_id: inReplyTo,
+    task_run_id: 'task_pv',
+    created_at: at,
+  });
+  return id;
+}
+
 describe('getRecentCopilotTurns', () => {
   it('returns ask+reply pairs oldest→newest with role/text/at/event_id', async () => {
     // Seed a real live Copilot session so the reader can resolve it; events are
@@ -341,6 +377,78 @@ describe('getRecentCopilotTurns', () => {
     // User turns never carry skill_context.
     const userTurn = turns.find((t) => t.event_id === askId);
     expect(userTurn?.skill_context).toBeUndefined();
+  });
+
+  // YUK-307 (S3a additive) — primary_view persisted on the reply payload
+  // round-trips through the reader for all three RULED source shapes
+  // (presentation layer §2.3), so Dock replay can restore the hero nomination.
+  it('replay surfaces primary_view for all three ruled source shapes', async () => {
+    const now = new Date();
+    const sessionId = await createLiveCopilotSession(now);
+    const t0 = new Date('2026-06-08T10:00:00.000Z');
+    const askId = await writeAsk('出一道题', sessionId, t0);
+    const shapes = [
+      { source: 'tool_result', ref: { kind: 'tool_call', id: 'tc_1' } },
+      { source: 'artifact', ref: { kind: 'question', id: 'q_1' } },
+      { source: 'ephemeral_html', ref: '<div>互动元素周期表</div>' },
+    ];
+    const replyIds: string[] = [];
+    for (const [i, pv] of shapes.entries()) {
+      replyIds.push(
+        await writeReplyWithPrimaryView(
+          `回复 ${i}`,
+          sessionId,
+          askId,
+          new Date(t0.getTime() + 1000 * (i + 1)),
+          pv,
+        ),
+      );
+    }
+
+    const turns = await getRecentCopilotTurns(db, { now });
+    for (const [i, pv] of shapes.entries()) {
+      const aiTurn = turns.find((t) => t.event_id === replyIds[i]);
+      expect(aiTurn?.primary_view).toEqual(pv);
+      expect(aiTurn?.text).toBe(`回复 ${i}`);
+    }
+    // User turns never carry primary_view; plain replies (writeReply) don't either.
+    const userTurn = turns.find((t) => t.event_id === askId);
+    expect(userTurn?.primary_view).toBeUndefined();
+  });
+
+  // YUK-307 — a malformed persisted primary_view is dropped (field omitted, the
+  // hand-rolled narrower mirrors replySkillContext) while the turn itself still
+  // returns with its text: replay is best-effort prefill, never the SoT.
+  it('replay omits a malformed primary_view but still returns the turn', async () => {
+    const now = new Date();
+    const sessionId = await createLiveCopilotSession(now);
+    const t0 = new Date('2026-06-08T11:00:00.000Z');
+    const askId = await writeAsk('坏形状', sessionId, t0);
+    const badShapes: unknown[] = [
+      { source: 'bogus', ref: { kind: 'x', id: 'y' } },
+      { source: 'artifact', ref: 42 },
+      { source: 'ephemeral_html', ref: { kind: 'not-a-string', id: 'z' } },
+      'not-an-object',
+    ];
+    const replyIds: string[] = [];
+    for (const [i, pv] of badShapes.entries()) {
+      replyIds.push(
+        await writeReplyWithPrimaryView(
+          `坏形状回复 ${i}`,
+          sessionId,
+          askId,
+          new Date(t0.getTime() + 1000 * (i + 1)),
+          pv,
+        ),
+      );
+    }
+
+    const turns = await getRecentCopilotTurns(db, { now });
+    for (const [i] of badShapes.entries()) {
+      const aiTurn = turns.find((t) => t.event_id === replyIds[i]);
+      expect(aiTurn?.text).toBe(`坏形状回复 ${i}`);
+      expect(aiTurn?.primary_view).toBeUndefined();
+    }
   });
 });
 

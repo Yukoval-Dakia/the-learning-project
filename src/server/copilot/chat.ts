@@ -61,7 +61,15 @@ import { type TeachingSkillResult, runTeachingSkill } from '@/server/copilot/ski
 // YUK-267 (C2) — the SAME session-scoped turn reader the drawer replay uses. The
 // free-form run input reuses it to assemble conversation_history (防循环 ①: history
 // = persisted ask原文 + reply正文 only). NO new schema, NO new read source.
-import { type CopilotTurn, getRecentCopilotTurns } from '@/server/copilot/turns';
+// YUK-307 — CopilotPrimaryView (+ the ephemeral_html cap) lives in turns.ts (the
+// payload-shape home; same direction as CopilotTurnSkillTurn — chat.ts → turns.ts,
+// never back). The zod parse schema lives HERE at the extraction point.
+import {
+  type CopilotPrimaryView,
+  type CopilotTurn,
+  EPHEMERAL_HTML_REF_MAX_CHARS,
+  getRecentCopilotTurns,
+} from '@/server/copilot/turns';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
 // P5.4-L2 / YUK-174 (Facet A, §3.3) — feed the per-(kind, relation) accept-
 // learned reason digest into the Copilot run input, EDGE-scoped (Copilot
@@ -185,6 +193,137 @@ export interface CopilotSkillTurn {
   suggested_next?: 'continue' | 'end';
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// YUK-307 — primary_view hero nomination (presentation layer §2.3, RULED).
+//
+// The copilot MODEL nominates the hero deliverable of a turn by appending an
+// HTML-comment marker as the LAST output of its reply (prompt contract in
+// registry.ts CopilotTask.systemPrompt):
+//
+//   <!--primary_view:{"source":"artifact","ref":{"kind":"question","id":"q_x"}}-->
+//
+// Why a reply-tail marker and not...
+//   • a DomainTool — design doc §2.3 verbatim: 「不是 DomainTool——呈现不是
+//     domain mutation」.
+//   • SDK outputFormat — the 2026-06-08 structured-output audit rules CopilotTask
+//     plain-text-ok / 保持现状; forcing whole-reply JSON would destroy the
+//     YUK-266 streaming prose deltas, and mimo-endpoint honor is unproven (the
+//     dual-path fallback in src/server/boss/handlers/variant_verify.ts ~:102-125
+//     exists precisely because of that).
+// The marker is parsed + STRIPPED server-side at the single reply convergence
+// point (extractPrimaryView below), so reply_md / the API reply / replayed
+// history NEVER contain it. Validation is lenient: a missing / garbled marker
+// degrades to "no hero" (absent field) and never fails the turn.
+//
+// YUK-267 红线 — primary_view is REPLY METADATA (a fact about the reply), so
+// persisting it on the copilot_reply payload is fine; it must never re-enter the
+// prompt-assembly path. It cannot: assembleConversationHistory strips every turn
+// to {role, text} (防循环 ①, structural), and the marker text itself is removed
+// from reply_md BEFORE persistence (text channel clean). 防循环专项 tests pin both.
+
+const PrimaryViewRefSchema = z.object({
+  kind: z.string().min(1).max(40),
+  id: z.string().min(1).max(120),
+});
+export const PrimaryViewSchema = z.discriminatedUnion('source', [
+  z.object({ source: z.literal('tool_result'), ref: PrimaryViewRefSchema }),
+  z.object({ source: z.literal('artifact'), ref: PrimaryViewRefSchema }),
+  z.object({
+    source: z.literal('ephemeral_html'),
+    // The ref string IS the inline HTML body (bounded; see turns.ts phase-deferred
+    // note). KNOWN EDGE: an HTML payload containing `-->` breaks the comment
+    // framing → the marker fails to parse → lenient absent + warn. Acceptable
+    // under the lenient contract.
+    ref: z.string().min(1).max(EPHEMERAL_HTML_REF_MAX_CHARS),
+  }),
+]);
+
+// The marker-start token. Doubles as the streaming tail-filter trigger: the
+// prompt instructs the model to emit the marker on its own line as the LAST
+// output, so suppressing the live stream from this token onward loses nothing.
+export const PRIMARY_VIEW_MARKER_START = '<!--primary_view';
+const PRIMARY_VIEW_MARKER_RE = /<!--primary_view:([\s\S]*?)-->/g;
+
+/**
+ * YUK-307 — parse + strip the primary_view marker from a collected reply text.
+ * Runs ONCE at the JSON/streaming convergence point. Last VALID marker wins;
+ * every marker occurrence is stripped regardless of validity (the marker is an
+ * instruction, not content). Lenient: malformed JSON / shape → absent + one
+ * console.warn; the turn never fails on this field.
+ */
+export function extractPrimaryView(
+  text: string,
+  opts: { taskRunId: string },
+): { text: string; primaryView?: CopilotPrimaryView } {
+  let primaryView: CopilotPrimaryView | undefined;
+  let sawMarker = false;
+  let sawMalformed = false;
+  const stripped = text.replace(PRIMARY_VIEW_MARKER_RE, (_match, jsonText: string) => {
+    sawMarker = true;
+    try {
+      const parsed = PrimaryViewSchema.safeParse(JSON.parse(jsonText));
+      if (parsed.success) {
+        // replace() visits matches in document order → the last valid one wins.
+        primaryView = parsed.data;
+      } else {
+        sawMalformed = true;
+      }
+    } catch {
+      sawMalformed = true;
+    }
+    return '';
+  });
+  if (sawMalformed) {
+    console.warn('[runCopilotChat] malformed primary_view marker; treating as absent', {
+      task_run_id: opts.taskRunId,
+    });
+  }
+  // Tidy the tail left by stripping an end-of-reply marker; untouched when no
+  // marker was present (byte-compat with the pre-YUK-307 reply).
+  const cleaned = sawMarker ? stripped.trimEnd() : stripped;
+  return primaryView ? { text: cleaned, primaryView } : { text: cleaned };
+}
+
+// YUK-307 — bounded streaming tail-filter. react-markdown v9 (MathMarkdown, no
+// rehype-raw) renders raw HTML as VISIBLE escaped text — the marker is NOT
+// invisible in the live bubble — so deltas must be filtered server-side: from
+// the first occurrence of the marker-start token onward, nothing is emitted
+// (the prompt pins the marker as the reply's LAST output). A delta ending in a
+// partial prefix of the token holds back at most token.length-1 chars until the
+// next delta proves/disproves the marker. Worst case (a prose lookalike at the
+// very end of the stream) under-emits a few trailing chars — the terminal
+// `reply` SSE event is authoritative and reconciles (CopilotDock already
+// overwrites the live text with the cleaned terminal reply).
+function wrapDeltaSuppressingMarker(onDelta: (text: string) => void): (text: string) => void {
+  let held = '';
+  let suppressed = false;
+  return (chunk: string) => {
+    if (suppressed) return;
+    const combined = held + chunk;
+    const markerAt = combined.indexOf(PRIMARY_VIEW_MARKER_START);
+    if (markerAt !== -1) {
+      suppressed = true;
+      held = '';
+      const before = combined.slice(0, markerAt);
+      if (before.length > 0) onDelta(before);
+      return;
+    }
+    // Hold back the longest suffix of `combined` that is a proper prefix of the
+    // token (the marker may be split across deltas).
+    let holdLen = 0;
+    const maxHold = Math.min(combined.length, PRIMARY_VIEW_MARKER_START.length - 1);
+    for (let len = maxHold; len > 0; len -= 1) {
+      if (combined.endsWith(PRIMARY_VIEW_MARKER_START.slice(0, len))) {
+        holdLen = len;
+        break;
+      }
+    }
+    held = holdLen > 0 ? combined.slice(combined.length - holdLen) : '';
+    const emit = holdLen > 0 ? combined.slice(0, combined.length - holdLen) : combined;
+    if (emit.length > 0) onDelta(emit);
+  };
+}
+
 export interface CopilotChatResult {
   task_run_id: string;
   reply: string;
@@ -206,6 +345,12 @@ export interface CopilotChatResult {
   // non-streaming path never sets it, so existing consumers are unaffected; the
   // Dock surfaces its existing error affordance alongside the partial reply.
   error?: string;
+  // YUK-307 — additive optional hero nomination (§2.3). Set when the model's
+  // reply carried a valid primary_view marker (free-form path only; the teaching
+  // behavior pack is deterministic and never nominates). Rides the terminal
+  // `reply` SSE event in streaming mode and the JSON result in non-streaming
+  // mode — both modes carry it on the final reply envelope. Absent → no hero.
+  primary_view?: CopilotPrimaryView;
 }
 
 const CHIP_TRIGGER_EVENT_ACTION = 'experimental:copilot_chip_trigger';
@@ -628,6 +773,8 @@ async function runCopilotChatImpl(
           // PR round-2 (CR 3360614441): persist skill_context so replay can
           // restore the skill card (Dock chip renderer + replayToMessages use it).
           skill_context: skillContext,
+          // YUK-307 — NO primary_view here, ever: the teaching pack is a
+          // deterministic service reply (no model emission to nominate from).
         },
         caused_by_event_id: causedByEventId ?? null,
         task_run_id: realTaskRunId,
@@ -836,7 +983,10 @@ async function runCopilotChatImpl(
         // the pre-C2 shape (runner ctx.skills ?? [] unchanged → no regression).
         ...(copilotSkills ? { skills: copilotSkills } : {}),
       },
-      streaming.onDelta,
+      // YUK-307 — suppress the primary_view marker from live deltas (react-markdown
+      // renders raw HTML comments as visible escaped text). The terminal `reply`
+      // event carries the cleaned full text and reconciles any held-back tail.
+      wrapDeltaSuppressingMarker(streaming.onDelta),
     );
     replyText = streamResult.text;
     replyRunId = streamResult.task_run_id;
@@ -852,6 +1002,15 @@ async function runCopilotChatImpl(
     replyText = result.text;
     replyRunId = result.task_run_id;
   }
+
+  // YUK-307 — single convergence point for BOTH the JSON and streaming paths:
+  // parse + strip the primary_view marker ONCE from the collected reply. From
+  // here on, ONLY cleanedReply is used (persisted reply_md / returned reply /
+  // — via persistence — any future replayed history), so the marker text never
+  // survives the turn (YUK-267 text-channel guarantee).
+  const { text: cleanedReply, primaryView } = extractPrimaryView(replyText, {
+    taskRunId: replyRunId,
+  });
 
   // AF S3a / YUK-203 U3 — persist the reply turn so the drawer can replay-last-N.
   // The reply chains to the user ask/chip event (causedByEventId) so the turn
@@ -880,9 +1039,15 @@ async function runCopilotChatImpl(
     payload: {
       surface: 'copilot',
       session_id: sessionId,
-      reply_md: replyText,
+      reply_md: cleanedReply,
       task_run_id: replyRunId,
       in_reply_to_event_id: causedByEventId ?? null,
+      // YUK-307 (S3a additive) — persist the hero nomination so Dock replay can
+      // restore it (turns.ts replyPrimaryView → CopilotTurn.primary_view). Reply
+      // METADATA only: the {role,text} strip in assembleConversationHistory keeps
+      // it structurally out of every future prompt (YUK-267 红线). Conditional
+      // spread — absent nomination leaves the payload byte-identical to pre-YUK-307.
+      ...(primaryView ? { primary_view: primaryView } : {}),
     },
     caused_by_event_id: causedByEventId ?? null,
     task_run_id: replyRunId,
@@ -891,7 +1056,7 @@ async function runCopilotChatImpl(
 
   return {
     task_run_id: replyRunId,
-    reply: replyText,
+    reply: cleanedReply,
     surface,
     triggered_by: req.triggered_by,
     session_id: sessionId,
@@ -900,6 +1065,10 @@ async function runCopilotChatImpl(
     // YUK-266 (C1) — surface the partial-degrade note only when the stream errored
     // mid-flight (additive optional; absent on the non-stream + clean-stream paths).
     ...(streamError ? { error: streamError } : {}),
+    // YUK-307 — additive optional hero nomination (see CopilotChatResult). The
+    // route's terminal `reply` SSE event passes the whole result through, so the
+    // streaming mode carries it with zero route changes.
+    ...(primaryView ? { primary_view: primaryView } : {}),
   };
 }
 
