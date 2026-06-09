@@ -1,0 +1,3480 @@
+{
+  "info": {
+    "_postman_id": "c1d2e3f4-a5b6-47c8-9d0e-1f2a3b4c5d6e",
+    "name": "learning-api",
+    "description": "The Learning Project — Next.js App Router backend (app/api/**).\n\nAuth: every /api/* request needs header `x-internal-token` (collection-level API-key auth → `{{internalToken}}`), except `/api/health`.\n\nBase URL: `{{baseUrl}}` (default http://localhost:3001 — the fresh `pnpm dev:local` port, NOT the :3000 container).\n\nPath vars and request bodies use placeholder example values — replace `REPLACE_*` and example IDs with real ones before sending mutating requests.\n\nRun headlessly: `pnpm api:smoke [folder]`. Regenerate via /tmp generator (see postman/README.md).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      {
+        "key": "key",
+        "value": "x-internal-token",
+        "type": "string"
+      },
+      {
+        "key": "value",
+        "value": "{{internalToken}}",
+        "type": "string"
+      },
+      {
+        "key": "in",
+        "value": "header",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3001",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "_ admin/dev utils",
+      "item": [
+        {
+          "name": "GET /api/_/export",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/_/export",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "_", "export"],
+              "query": [
+                {
+                  "key": "include_assets",
+                  "value": "1",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "导出数据库 + 可选 R2 资产为 ZIP 压缩包\n\n**Query:**\n- `include_assets` (optional) e.g. `1`\n\n**Notes:** 响应 content-type: application/zip，attachment 下载；include_assets=1 时打包 R2 资产"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/_/logs/cost",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/_/logs/cost",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "_", "logs", "cost"],
+              "query": [
+                {
+                  "key": "range",
+                  "value": "day",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "按时间桶聚合 cost_ledger，支持 day/week/month 粒度\n\n**Query:**\n- `range` (optional) e.g. `day`\n\n**Notes:** range 允许值：day（默认）、week、month；返回最多 200 行，按桶倒序"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/_/logs/jobs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/_/logs/jobs",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "_", "logs", "jobs"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "列出所有 pg-boss job 的聚合视图（attempt 数、总 cost、最新 outcome）\n\n**Query:**\n- `limit` (optional) e.g. `20`\n\n**Notes:** limit 上限 100，默认 20；只含 pgboss_job_id 非 NULL 的 cost_ledger 行"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/_/logs/jobs/:id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/_/logs/jobs/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "_", "logs", "jobs", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "查询单个 pg-boss job 的全部 attempts 及关联 tool_call_log\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** :id 为 pgboss_job_id；job 不存在返回 404"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/_/logs/tool_calls",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/_/logs/tool_calls",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "_", "logs", "tool_calls"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "task_kind",
+                  "value": "VariantVerifyTask",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "查询 tool_call_log，按 occurred_at 倒序\n\n**Query:**\n- `limit` (optional) e.g. `50`\n- `task_kind` (optional) e.g. `VariantVerifyTask`\n\n**Notes:** limit 默认 50，上限 200；task_kind 可选过滤"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/_/backfill/knowledge_propose",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/_/backfill/knowledge_propose",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "_", "backfill", "knowledge_propose"]
+            },
+            "description": "手动触发 knowledge_propose_nightly 补跑，无请求体\n\n**Notes:** 需要 x-internal-token header；同步执行，返回 handler result JSON"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/_/import",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/octet-stream"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/_/import",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "_", "import"],
+              "query": [
+                {
+                  "key": "confirm",
+                  "value": "wipe-and-reload",
+                  "disabled": false,
+                  "description": "required"
+                }
+              ]
+            },
+            "description": "上传 ZIP 备份档案，wipe-and-reload 恢复数据库\n\n**Query:**\n- `confirm` (required) e.g. `wipe-and-reload`\n\n**Notes:** 请求体为原始 ZIP 二进制（application/octet-stream）；confirm 参数值必须精确为 wipe-and-reload，否则返回 400。破坏性：会清库重载",
+            "body": {
+              "mode": "file",
+              "file": {
+                "src": ""
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/_/seed",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/_/seed",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "_", "seed"]
+            },
+            "description": "从 wenyan curriculum.json 幂等播种知识图谱节点\n\n**Notes:** 无请求体；幂等 INSERT——已存在节点不动"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/_/seed/math",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/_/seed/math",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "_", "seed", "math"]
+            },
+            "description": "幂等播种数学 fixture 题目（choice/fill_blank/derivation）\n\n**Notes:** 无请求体；幂等——已存在 fixture_ref 的跳过；会确保 knowledge 节点 k-math-seed-root 存在"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/_/tools/:name",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/_/tools/:name",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "_", "tools", ":name"],
+              "variable": [
+                {
+                  "key": "name",
+                  "value": "REPLACE_name"
+                }
+              ]
+            },
+            "description": "调试端点：按名称执行一个已注册 DomainTool，记录 tool_call_log\n\n**Path vars:** `:name` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** :name 为已注册工具名；input 字段由各工具自身 Zod inputSchema 校验，空对象为最小合法值；tool 不存在返回 404；body 可完全省略",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"input\": {},\n  \"taskRunId\": \"optional-cuid\",\n  \"callerActor\": {\n    \"kind\": \"agent\",\n    \"ref\": \"debug:_/tools\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "admin",
+      "item": [
+        {
+          "name": "GET /api/admin/cost",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/cost",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "cost"],
+              "query": [
+                {
+                  "key": "days",
+                  "value": "30",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "查询过去 N 天的 AI 调用成本聚合\n\n**Query:**\n- `days` (optional) e.g. `30`\n\n**Notes:** days 默认 30；返回 getAdminCost 聚合结果"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/admin/failures",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/failures",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "failures"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "200",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "获取 AI 任务失败集群列表\n\n**Query:**\n- `limit` (optional) e.g. `200`\n\n**Notes:** limit 默认 200，最大 200；返回 {clusters, limit}"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/admin/runs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/runs",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "runs"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "status",
+                  "value": "failure",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "task_kind",
+                  "value": "VariantVerifyTask",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "分页列出 AI task runs，支持 status / task_kind 过滤\n\n**Query:**\n- `limit` (optional) e.g. `50`\n- `status` (optional) e.g. `failure`\n- `task_kind` (optional) e.g. `VariantVerifyTask`\n\n**Notes:** status 允许值：running、success、failure；limit 默认 50"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/admin/runs/:id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/runs/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "runs", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "获取单个 AI task run 的详细时间线\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** :id 为 task_run_id；不存在返回 404"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "agents",
+      "item": [
+        {
+          "name": "GET /api/agents/notes",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/agents/notes",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "agents", "notes"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "读取全部未过期的跨 agent 观察笔记（AI 观察板只读接口）\n\n**Query:**\n- `limit` (optional) e.g. `50`\n\n**Notes:** limit 正整数 max 200；响应 { rows: [...] }"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "ai",
+      "item": [
+        {
+          "name": "POST /api/ai/:task",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/ai/:task",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ai", ":task"],
+              "variable": [
+                {
+                  "key": "task",
+                  "value": "REPLACE_task"
+                }
+              ]
+            },
+            "description": "运行指定 AI task；仅 ReviewIntentTask 可直接调用，其他需通过 domain route\n\n**Path vars:** `:task` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 路径参数 :task 为 tasks 注册表中的 key。直接可调的 task：ReviewIntentTask。其余合法 task 值（但会被路由拒绝返回 400）：AttributionTask、VisionExtractTask、StructureTask、MistakeEnrollTask、KnowledgeProposeTask、SessionSummaryTask、NoteGenerateTask、SemanticJudgeTask、TeachingTurnTask、CoachTask、CopilotTask、QuizGenTask 等。body.input 内容随 task 而异。所有 /api/* 需 header x-internal-token。有全局滑动窗口速率限制（429）",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"input\": {}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "artifacts",
+      "item": [
+        {
+          "name": "GET /api/artifacts/:id/ai-changes",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/artifacts/:id/ai-changes",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "artifacts", ":id", "ai-changes"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "列出 artifact 上最近 50 条 AI 自动改写事件（note-refine apply）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 响应 { artifact_id, rows: [...] }"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/artifacts/:id/backlinks",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/artifacts/:id/backlinks",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "artifacts", ":id", "backlinks"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "获取指向该 artifact 的所有入链（cross_link 类型），含来源片段\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 仅返回来源未归档且 ready 的入链；每行含 from_* + snippet（max 120）"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/artifacts/:id/correct",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/artifacts/:id/correct",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "artifacts", ":id", "correct"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "获取 artifact 的 correction 状态（whole + 各 block）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 响应 { artifact_id, whole, blocks }"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/artifacts/search",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/artifacts/search",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "artifacts", "search"],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "数学",
+                  "disabled": false,
+                  "description": "required"
+                },
+                {
+                  "key": "exclude",
+                  "value": "artifact_abc",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "limit",
+                  "value": "10",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "按标题子串搜索 artifact（供跨链接 picker 使用）\n\n**Query:**\n- `q` (required) e.g. `数学`\n- `exclude` (optional) e.g. `artifact_abc`\n- `limit` (optional) e.g. `10`\n\n**Notes:** q 最长 200；只返回 archived_at=null 且 generation_status=ready；limit 默认 10 max 25；响应 { rows: [{id,title,type}] }"
+          },
+          "response": []
+        },
+        {
+          "name": "PATCH /api/artifacts/:id/body-blocks",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/artifacts/:id/body-blocks",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "artifacts", ":id", "body-blocks"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "以乐观锁替换 artifact 整体 body_blocks\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** artifact_version 乐观锁；body_blocks 需符合 ArtifactBodyBlocks schema；版本冲突 409",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"artifact_version\": 3,\n  \"body_blocks\": [\n    {\n      \"id\": \"blk_1\",\n      \"type\": \"paragraph\",\n      \"content\": \"内容\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "PATCH /api/artifacts/:id/sections/:sectionId",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/artifacts/:id/sections/:sectionId",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "artifacts", ":id", "sections", ":sectionId"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                },
+                {
+                  "key": "sectionId",
+                  "value": "REPLACE_sectionId"
+                }
+              ]
+            },
+            "description": "以乐观锁更新 artifact 中某个 section 的 body markdown\n\n**Path vars:** `:id`, `:sectionId` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** artifact_version 与 section_version 均乐观锁；body_md 最长 50000；版本冲突 409",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"artifact_version\": 2,\n  \"section_version\": 1,\n  \"body_md\": \"更新后的 Markdown 内容\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/artifacts/:id/ai-changes/:eventId/undo",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/artifacts/:id/ai-changes/:eventId/undo",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "artifacts", ":id", "ai-changes", ":eventId", "undo"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                },
+                {
+                  "key": "eventId",
+                  "value": "REPLACE_eventId"
+                }
+              ]
+            },
+            "description": "撤销某条 AI 改写事件（note-refine apply undo）\n\n**Path vars:** `:id`, `:eventId` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 无请求体；eventId 须属于该 artifact 改写历史（否则 404）"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/artifacts/:id/correct",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/artifacts/:id/correct",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "artifacts", ":id", "correct"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "写入一条 CorrectArtifactEvent（retract/supersede/mark_wrong/restore）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** correction_kind 枚举：supersede|retract|mark_wrong|restore；supersede 须带 replacement_artifact_id；block_id 可选；reason_md 1..2000；响应 { correction_event_id }",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"correction_kind\": \"mark_wrong\",\n  \"reason_md\": \"内容有误\",\n  \"block_id\": \"blk_1\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "assets",
+      "item": [
+        {
+          "name": "DELETE /api/assets/:id",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/assets/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "assets", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "从 R2 和数据库删除指定 asset\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 无请求体；asset 不存在返回 404"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/assets/:id/content",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/assets/:id/content",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "assets", ":id", "content"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "从 R2 流式返回原始图片字节，供浏览器渲染\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 响应 Content-Type 为资产实际 mime_type，Cache-Control: private, max-age=60"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/assets",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/assets",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "assets"]
+            },
+            "description": "上传单张图片资产（PNG/JPEG/WebP）到 R2，返回 asset row\n\n**Notes:** file 字段须是 image/png、image/jpeg 或 image/webp；大小 1..MAX_IMAGE_UPLOAD_BYTES（默认 8 MB）；响应 201 { asset: {...} }",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "coach",
+      "item": [
+        {
+          "name": "GET /api/coach/today-plan",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/coach/today-plan",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "coach", "today-plan"]
+            },
+            "description": "获取最新 Coach 今日计划（TodayPlan full）+ 最新周度 reflection\n\n**Notes:** 只读；响应为 TodayPlan JSON（含 daily + weekly reflection）"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "copilot",
+      "item": [
+        {
+          "name": "GET /api/copilot/turns",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/copilot/turns",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "copilot", "turns"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "获取最近 N 条 Copilot 对话轮次（ask/chip + reply 对），oldest→newest\n\n**Query:**\n- `limit` (optional) e.g. `20`\n\n**Notes:** limit 正整数，省略用服务端默认；响应 { turns: [...] }"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/copilot/chat",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/copilot/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "copilot", "chat"]
+            },
+            "description": "向 Copilot 发送一条用户消息，响应为 SSE 流（text/event-stream）\n\n**Notes:** SSE 流式。triggered_by 枚举：chat|chip。响应事件：event: delta（data {text}）逐块；event: reply（data CopilotChatResult）终止。Zod 失败时返回普通 JSON 错误。需 x-internal-token",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_message\": \"帮我讲解之字主谓间用法\",\n  \"triggered_by\": \"chat\",\n  \"chip_kind\": null,\n  \"skill_context\": null,\n  \"ambient_context\": {\n    \"route\": \"/today\",\n    \"focused_entity\": {\n      \"kind\": \"knowledge_node\",\n      \"id\": \"k_abc123\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "cost",
+      "item": [
+        {
+          "name": "GET /api/cost/today",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/cost/today",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "cost", "today"]
+            },
+            "description": "返回今日（BJT 午夜起）的花费汇总，用于 /today cost ribbon\n\n**Notes:** 按 BJT（UTC+8）午夜划窗口；返回 {window, today:{spend,tokens_in,tokens_out,ledger_rows,tool_calls,by_task}}"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "echo",
+      "item": [
+        {
+          "name": "GET /api/echo/:id/events",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/echo/:id/events",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "echo", ":id", "events"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "SSE 长连接，推送指定 EchoJob 的状态事件（支持断线重连 replay）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** SSE 流式。:id 为 businessId；支持 Last-Event-ID header 断线重连；连接持续到客户端断开"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/echo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/echo",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "echo"]
+            },
+            "description": "创建 EchoJob 并入 pg-boss 队列，返回 businessId 供客户端开 SSE 监听\n\n**Notes:** input 非空字符串；响应 { businessId, jobId }；用 businessId 开 GET /api/echo/:id/events SSE 监听",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"input\": \"hello world\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "editing-session",
+      "item": [
+        {
+          "name": "POST /api/editing-session/blur",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/editing-session/blur",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "editing-session", "blur"]
+            },
+            "description": "用户离焦（blur）时将 artifact 标记为 idle 并触发 flush\n\n**Notes:** artifact_id 非空字符串；响应为 flush 结果",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"artifact_id\": \"art_abc123\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/editing-session/heartbeat",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/editing-session/heartbeat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "editing-session", "heartbeat"]
+            },
+            "description": "记录 artifact 编辑心跳；status=editing 时同时入队 dwell note-refine 任务\n\n**Notes:** status 枚举：editing|idle；editing 时额外入队后台精炼；响应 { ok: true }",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"artifact_id\": \"art_abc123\",\n  \"status\": \"editing\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "embedded-check",
+      "item": [
+        {
+          "name": "POST /api/embedded-check/attempt",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/embedded-check/attempt",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "embedded-check", "attempt"]
+            },
+            "description": "提交内联检查题答案，判题并（失败时）记录 mistake + 入队 attribution_followup，不写 FSRS\n\n**Notes:** question.source 须为 embedded 或 teaching_check；answer_md 最大 2000；latency_ms 可选 0-3600000；响应含 outcome + judge + attempt_event_id + (mistake_id)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question_id\": \"q_abc123\",\n  \"answer_md\": \"答案文本\",\n  \"latency_ms\": 3000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "events",
+      "item": [
+        {
+          "name": "GET /api/events",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/events",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "events"],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "attempt",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "subject_kind",
+                  "value": "question",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "subject_id",
+                  "value": "q_abc123",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "actor_kind",
+                  "value": "user",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "actor_ref",
+                  "value": "self",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "outcome",
+                  "value": "failure",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "since",
+                  "value": "2026-01-01T00:00:00Z",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "原始事件日志过滤列表（AND 组合所有过滤条件）\n\n**Query:**\n- `action` (optional) e.g. `attempt`\n- `subject_kind` (optional) e.g. `question`\n- `subject_id` (optional) e.g. `q_abc123`\n- `actor_kind` (optional) e.g. `user`\n- `actor_ref` (optional) e.g. `self`\n- `outcome` (optional) e.g. `failure`\n- `since` (optional) e.g. `2026-01-01T00:00:00Z`\n- `limit` (optional) e.g. `50`\n\n**Notes:** 所有参数可选；since 须 ISO-8601；返回 {rows:[...]}"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/events/:id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/events/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "events", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "返回单个事件及其 caused_by 链（前向+后向各一跳）和 correction_status\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 404 when event id 不存在；含 event + correction_status + chain"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/events/:id/correct",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/events/:id/correct",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "events", ":id", "correct"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "为目标事件写入 correct 事件（标记 supersede/retract/mark_wrong/restore）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** correction_kind 枚举：supersede|retract|mark_wrong|restore；supersede 须带 replacement_event_id，其余 kind 不得携带；affected_refs 最少 1 项；ActivityRef.kind 枚举：question|question_part|record|recall_prompt|practice_log|project_milestone|open_inquiry",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"correction_kind\": \"retract\",\n  \"reason_md\": \"判题有误\",\n  \"affected_refs\": [\n    {\n      \"kind\": \"question\",\n      \"id\": \"q_abc123\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/events/:id/rate",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/events/:id/rate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "events", ":id", "rate"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "对目标事件打 accept/dismiss/rollback 评级\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** rating 枚举：accept|dismiss|rollback；user_note 可选 max 2000；同一事件已有不同 rating 返回 409；相同 rating 幂等；不能 rate 一个 rate 事件",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rating\": \"accept\",\n  \"user_note\": \"认可这个建议\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "health",
+      "item": [
+        {
+          "name": "GET /api/health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "health"]
+            },
+            "description": "服务健康探针，同步检测 DB 连接\n\n**Notes:** 无需 x-internal-token（中间件豁免）；db_ok=false 时返回 HTTP 503；ok 字段始终为 true",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "hubs",
+      "item": [
+        {
+          "name": "POST /api/hubs/:id/dismiss-link",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/hubs/:id/dismiss-link",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "hubs", ":id", "dismiss-link"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "从 hub 的 AutoLinksContainer 中压制（dismiss）一条系统维护的 auto-link\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** relation 可选，枚举：subtopic|prerequisite|derived_from|contrasts_with；suppressed_artifact_id 不能等于 hub id；操作幂等；单事务原子",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"suppressed_artifact_id\": \"artifact_xyz789\",\n  \"relation\": \"subtopic\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "ingestion",
+      "item": [
+        {
+          "name": "GET /api/ingestion",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/ingestion",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ingestion"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "列出最近的 ingestion sessions（有至少 1 个 block），最新优先\n\n**Query:**\n- `limit` (optional) e.g. `20`\n\n**Notes:** limit 默认 20，范围 1..100；返回 { rows: [...] }，每行含 block_count / observation_count / auto_enrolled_count"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/ingestion/:id/blocks",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/ingestion/:id/blocks",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ingestion", ":id", "blocks"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "获取某 ingestion session 下所有 question_block 行，含 auto_enroll_observation\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 按 created_at asc；每行含 status（draft/imported/ignored/auto_enrolled）和可选 auto_enroll_observation"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/ingestion/:id/events",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/ingestion/:id/events",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ingestion", ":id", "events"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "SSE 流：订阅 ingestion session 的实时进度事件，支持断线重放\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** SSE 流式；支持 Last-Event-ID 驱动 replay；每条事件 id: <N>\\ndata: {event_id,event_type,payload}"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/ingestion",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/ingestion",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ingestion"]
+            },
+            "description": "创建 ingestion session（status=uploaded），不触发抽取\n\n**Notes:** entrypoint 枚举：vision_single|vision_paper|docx；asset_ids 1..MAX_PDF_PAGES 个已存在 asset id；响应 { session: {...} }",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"entrypoint\": \"vision_paper\",\n  \"asset_ids\": [\n    \"asset_abc123\",\n    \"asset_def456\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/ingestion/:id/extract",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/ingestion/:id/extract",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ingestion", ":id", "extract"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "将 ingestion session 推进到 queued 状态并投递 tencent_ocr_extract job\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 无请求体；session 须处于 uploaded 或 failed；响应 { businessId, jobId }；之后监听 GET /api/ingestion/:id/events"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/ingestion/:id/import",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/ingestion/:id/import",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ingestion", ":id", "import"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "批量导入 question_block 为 question+attempt/record 行，session 推进到 imported\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** outcome 枚举：failure|success|partial|unanswered；question_kind 枚举：choice|true_false|fill_blank|short_answer|essay|computation|reading|translation|derivation；cause 可为 null；响应 { question_ids, mistake_ids, record_ids }",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"blocks\": [\n    {\n      \"block_id\": \"block_abc\",\n      \"source_block_ids\": [\n        \"block_abc\"\n      ],\n      \"page_spans\": [\n        {\n          \"page_index\": 0,\n          \"bbox\": {\n            \"x\": 0,\n            \"y\": 0,\n            \"width\": 100,\n            \"height\": 100\n          },\n          \"role\": \"question_area\"\n        }\n      ],\n      \"image_refs\": [\n        \"asset_abc123\"\n      ],\n      \"final_prompt_md\": \"题目 Markdown\",\n      \"final_reference_md\": \"参考答案\",\n      \"final_wrong_answer_md\": \"错误作答\",\n      \"outcome\": \"failure\",\n      \"knowledge_ids\": [\n        \"know_xyz\"\n      ],\n      \"cause\": {\n        \"primary_category\": \"conceptual_error\",\n        \"user_notes\": null\n      },\n      \"difficulty\": 3,\n      \"question_kind\": \"choice\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/ingestion/:id/make-paper",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/ingestion/:id/make-paper",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ingestion", ":id", "make-paper"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "将 imported session 的题目打包成 tool_quiz paper artifact\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** question_ids 可省略（省略=全量；显式空数组 400）；不允许重复 id；session 须 imported；响应 { artifact_id }",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question_ids\": [\n    \"q_abc\",\n    \"q_def\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/ingestion/:id/rescue",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/ingestion/:id/rescue",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ingestion", ":id", "rescue"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "对单个 block 手动触发 Vision Tier 2/3 救援，同步返回重新提取的结构化内容\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** tier 只能 2 或 3；strategy 枚举：extract|restructure_cloze|restructure_compound（可选）；响应 { structured: {...} }；同步阻塞 haiku~5s/sonnet~15s",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"block_id\": \"block_abc\",\n  \"page\": 0,\n  \"tier\": 2,\n  \"strategy\": \"extract\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/ingestion/:id/revert",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/ingestion/:id/revert",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ingestion", ":id", "revert"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "将 auto_enrolled block 回退为 draft，撤销 WorkflowJudge 自动注册\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** block 须 auto_enrolled；reason_md 最长 2000 可选；写 CorrectEvent(retract)+归档 record+清除 imported 链接",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"block_id\": \"block_abc\",\n  \"reason_md\": \"回退原因（可选）\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/ingestion/docx",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/ingestion/docx",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ingestion", "docx"]
+            },
+            "description": "一步式 DOCX 上传：自动分类 text/visual 两路，构建完整 ingestion session\n\n**Notes:** file 为 .docx；大小 1..MAX_DOCX_UPLOAD_BYTES；响应 201 { session_id, line, page_count }；此接口自建 session，勿再调 POST /api/ingestion",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/ingestion/pdf",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/ingestion/pdf",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ingestion", "pdf"]
+            },
+            "description": "上传 PDF，同步渲染为 N 张 PNG page 图片，返回 asset_ids\n\n**Notes:** file 为 application/pdf；大小 1..30 MB；最多 15 页；同步阻塞；响应 201 { asset_ids, page_count }；asset_ids 可直接传给 POST /api/ingestion",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "knowledge",
+      "item": [
+        {
+          "name": "GET /api/knowledge",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/knowledge",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "knowledge"]
+            },
+            "description": "返回知识树快照（所有节点行）"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/knowledge/:id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/knowledge/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "knowledge", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "返回单个知识节点页面（元数据、掌握度、邻居、body_blocks、反链、活动时间线）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 404 when id unknown or archived"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/knowledge/edges",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/knowledge/edges",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "knowledge", "edges"],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "kn_abc123",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "to",
+                  "value": "kn_def456",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "relation_type",
+                  "value": "prerequisite",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "include_archived",
+                  "value": "true",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "列出知识边，支持 from/to/relation_type 过滤\n\n**Query:**\n- `from` (optional) e.g. `kn_abc123`\n- `to` (optional) e.g. `kn_def456`\n- `relation_type` (optional) e.g. `prerequisite`\n- `include_archived` (optional) e.g. `true`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/knowledge/proposals",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/knowledge/proposals",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "knowledge", "proposals"],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "pending",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "列出旧版知识提案（legacy wire shape）\n\n**Query:**\n- `status` (optional) e.g. `pending`\n\n**Notes:** status 默认 pending"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/knowledge/review-due-summary",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/knowledge/review-due-summary",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "knowledge", "review-due-summary"]
+            },
+            "description": "返回每个知识节点的 FSRS 到期概要（overdue/due_soon）\n\n**Notes:** 响应：{ now, due_soon_window_hours: 24, summary: { [knowledge_id]: { overdue, due_soon } } }"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/knowledge/edges",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/knowledge/edges",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "knowledge", "edges"]
+            },
+            "description": "创建一条知识边\n\n**Notes:** 201 { id }；409 on duplicate UNIQUE(from,to,relation_type)；relation_type 合法值：prerequisite|related_to|contrasts_with|applied_in|derived_from 或 experimental: 开头字符串",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"from_knowledge_id\": \"kn_abc123\",\n  \"to_knowledge_id\": \"kn_def456\",\n  \"relation_type\": \"prerequisite\",\n  \"weight\": 0.8,\n  \"reasoning\": \"A is required before B\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/knowledge/edges/proposals/:id",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/knowledge/edges/proposals/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "knowledge", "edges", "proposals", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "对一条知识边提案做出决策（accept/reverse/change_type/dismiss）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** id 是 action=propose 且 subject_kind=knowledge_edge 的 event.id；change_type 时须传 new_relation_type；200 { rate_event_id, generate_event_id|null, edge_id|null }；幂等重提返回 idempotent:true；409 冲突",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"accept\",\n  \"user_note\": \"looks correct\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/knowledge/proposals/:id",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/knowledge/proposals/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "knowledge", "proposals", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "对旧版知识提案做 accept 或 reject 决策\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** decision 只能 accept 或 reject；reject 内部调用 dismissProposal；409 not_pending/stale；404 not found",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"accept\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/knowledge/review",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/knowledge/review",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "knowledge", "review"]
+            },
+            "description": "触发 KnowledgeReviewTask AI 流任务\n\n**Notes:** SSE 流式响应；经 Claude Agent SDK 发往 xiaomi/mimo；无请求 body"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "learning-intents",
+      "item": [
+        {
+          "name": "POST /api/learning-intents",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/learning-intents",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "learning-intents"]
+            },
+            "description": "声明学习意图，规划该 topic 节点下的学习提案\n\n**Notes:** topic 1-120 字符；422 when topic_not_found / topic_no_children；成功返回 proposal 对象",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"topic\": \"文言文虚词\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/learning-intents/:id/accept",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/learning-intents/:id/accept",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "learning-intents", ":id", "accept"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "接受学习意图提案，物化 LearningItem 层级 + artifact stubs + 入队 note_generate 作业\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** id 为 POST /api/learning-intents 返回的 event id；无请求 body；404 proposal_not_found；409 proposal_already_rated；响应含 enqueued_note_generate_jobs 计数"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "learning-items",
+      "item": [
+        {
+          "name": "DELETE /api/learning-items/:id",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/learning-items/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "learning-items", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ],
+              "query": [
+                {
+                  "key": "version",
+                  "value": "0",
+                  "disabled": false,
+                  "description": "required"
+                }
+              ]
+            },
+            "description": "软删除（归档）一个 learning item，带乐观锁\n\n**Query:**\n- `version` (required) e.g. `0`\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 无 body，version 通过 query param 传入；已归档 404；version 不匹配 409"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/learning-items",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/learning-items",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "learning-items"],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "in_progress",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "列出 learning items，默认排除 archived 和 dismissed，可按 status 过滤\n\n**Query:**\n- `status` (optional) e.g. `in_progress`\n- `limit` (optional) e.g. `50`\n\n**Notes:** status 枚举：pending|in_progress|done|dismissed|resting|archived；limit 默认 50 上限 200；无 status 时自动过滤 archived+dismissed"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/learning-items/:id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/learning-items/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "learning-items", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "获取单个 learning item 详情，含父节点面包屑、子节点列表、primary artifact 及 embedded questions\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 响应含 parent（1 hop）、children、subject_profile、primary_artifact（含 sections + embedded_questions）"
+          },
+          "response": []
+        },
+        {
+          "name": "PATCH /api/learning-items/:id",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/learning-items/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "learning-items", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "更新 learning item 字段或状态，带乐观锁\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** version 必填（版本不匹配 409）；status 转换须符合状态机（非法 400）；user_notes 仅在转 done 时允许；parent=null 清空父节点，省略=不变；圈检测最多 100 跳",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"version\": 0,\n  \"status\": \"in_progress\",\n  \"title\": \"掌握虚词「而」的用法\",\n  \"content\": \"更新内容\",\n  \"knowledge_ids\": [\n    \"kid_abc123\"\n  ],\n  \"parent_learning_item_id\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/learning-items",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/learning-items",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "learning-items"]
+            },
+            "description": "创建一个 manual 类型的 learning item\n\n**Notes:** title 1-200 必填；content 最多 10000 默认空；knowledge_ids 默认 []；parent_learning_item_id 可选；source 固定 manual，status 固定 pending",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"掌握虚词「而」的用法\",\n  \"content\": \"需要区分转折、顺承、修饰三种用法\",\n  \"knowledge_ids\": [\n    \"kid_abc123\"\n  ],\n  \"parent_learning_item_id\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "learning-sessions",
+      "item": [
+        {
+          "name": "GET /api/learning-sessions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/learning-sessions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "learning-sessions"],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "review",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "status",
+                  "value": "ended",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "limit",
+                  "value": "6",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "列出 learning sessions，可按 type / status 过滤，附带 review 统计\n\n**Query:**\n- `type` (optional) e.g. `review`\n- `status` (optional) e.g. `ended`\n- `limit` (optional) e.g. `6`\n\n**Notes:** type 枚举：ingestion|review|tutor|explore|create|conversation；limit 默认 6 上限 50；含 reviewed_count、rating_counts、knowledge_touched"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/learning-sessions/:id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/learning-sessions/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "learning-sessions", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "获取单个 learning session 详情，含所有关联 events 及 review events 的 question prompt\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** events 按 created_at 升序；subject_kind=question 的事件 join question.prompt_md + reference_md"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "mistakes",
+      "item": [
+        {
+          "name": "GET /api/mistakes",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mistakes",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "mistakes"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "since",
+                  "value": "2026-01-01T00:00:00Z",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "question_id",
+                  "value": "qid_abc123",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "查询错题列表（event-stream 投影），支持时间过滤和 question 过滤\n\n**Query:**\n- `limit` (optional) e.g. `50`\n- `since` (optional) e.g. `2026-01-01T00:00:00Z`\n- `question_id` (optional) e.g. `qid_abc123`\n\n**Notes:** limit 默认 50 上限 200；since 为 ISO-8601；投影 shape：id/question_id/prompt_md/wrong_answer_md/knowledge_ids/cause/created_at"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/mistakes/recent",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mistakes/recent",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "mistakes", "recent"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "获取最近 N 条错题（legacy 端点，与 GET /api/mistakes 同投影 shape）\n\n**Query:**\n- `limit` (optional) e.g. `20`\n\n**Notes:** limit 默认 20 上限 100；cause.user_notes 固定返回 null（back-compat）"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/mistakes",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/mistakes",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "mistakes"]
+            },
+            "description": "录入一条错题：创建 question + attempt event + learning_record，异步触发 AI 提议\n\n**Notes:** knowledge_ids 至少 1 个且须存在未归档；cause 可为 null（null 时异步触发 attribution job）；CauseCategory 匹配 /^[a-z][a-z0-9_]*$/；question_kind 枚举见 import；image_refs 须已上传 asset id；响应含 question_id、mistake_id、record_id",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"prompt_md\": \"下列句子中「而」字的用法是？\",\n  \"reference_md\": \"《劝学》原文片段\",\n  \"wrong_answer_md\": \"我认为是转折用法\",\n  \"knowledge_ids\": [\n    \"kid_abc123\"\n  ],\n  \"cause\": {\n    \"primary_category\": \"misunderstanding\",\n    \"user_notes\": \"混淆了顺承与转折\"\n  },\n  \"difficulty\": 3,\n  \"question_kind\": \"short_answer\",\n  \"prompt_image_refs\": [],\n  \"wrong_answer_image_refs\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "notes",
+      "item": [
+        {
+          "name": "GET /api/notes/:id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/notes/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "notes", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "获取一个 note artifact 的完整详情页数据（blocks + labels + verification + 版本历史 + backlinks + related learning_items + embedded questions）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** artifact type 须为 note_hub/note_atomic/note_long；不存在/已归档/非 note 类型均 404"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "practice",
+      "item": [
+        {
+          "name": "GET /api/practice",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/practice",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "practice"]
+            },
+            "description": "获取今日/历史 practice paper 列表（含 review session 联结和对/错/生成衍生字段）"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/practice/:id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/practice/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "practice", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "返回一份 paper artifact 的完整答题页 payload（paper meta + 章节 + slot 题面 + 草稿 + 提交状态）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** id 为 paper artifact id；score/outcome 在 visible_to_user=false 且 session 未 completed 时服务端屏蔽"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/practice",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/practice",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "practice"]
+            },
+            "description": "为指定 artifact 创建（或复用已有）review session，返回 session_id\n\n**Notes:** artifact 须为 type=tool_quiz、ready、intent_source 在 [review_plan,quiz_gen,embedded_check,ingestion_paper]；已有 started/paused session 时幂等返回",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"artifact_id\": \"art_abc123\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/practice/:id/answer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/practice/:id/answer",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "practice", ":id", "answer"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "自动保存 paper 答题草稿（按 slot upsert）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** input_kind 枚举：text|option|image|voice；part_ref 可省略或 null",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"ses_abc123\",\n  \"question_id\": \"q_abc123\",\n  \"part_ref\": null,\n  \"input_kind\": \"text\",\n  \"content_md\": \"我的答案\",\n  \"image_refs\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/practice/:id/submit",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/practice/:id/submit",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "practice", ":id", "submit"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "提交 paper 一个 slot 的答案，服务端判题并写入 attempt + judge 事件 + FSRS upsert\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** visible_to_user=false 时响应不含 coarse_outcome/score；与 /api/review/submit 独立",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"ses_abc123\",\n  \"question_id\": \"q_abc123\",\n  \"part_ref\": null,\n  \"answer_md\": \"我的最终答案\",\n  \"image_refs\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "proposals",
+      "item": [
+        {
+          "name": "GET /api/proposals",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/proposals",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "proposals"],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "pending",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "cursor",
+                  "value": "evt_xyz789",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "列出提案收件箱（分页，支持 status/limit/cursor）\n\n**Query:**\n- `status` (optional) e.g. `pending`\n- `limit` (optional) e.g. `50`\n- `cursor` (optional) e.g. `evt_xyz789`\n\n**Notes:** status：pending|accepted|dismissed|stale|rubric_rejected；limit 默认 200 上限 500；返回分页 page 对象"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/proposals/:id/accept",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/proposals/:id/accept",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "proposals", ":id", "accept"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "接受 AI 提案，支持 accept/reverse/change_type 三种模式\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** decision 可省略（=accept）；change_type 须传 new_relation_type；relation_type 枚举同 /api/knowledge/edges POST",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"accept\",\n  \"user_note\": \"approved\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/proposals/:id/dismiss",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/proposals/:id/dismiss",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "proposals", ":id", "dismiss"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "驳回 AI 提案\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** user_note 可选 max 2000；body 为空 {} 也合法",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_note\": \"not relevant\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/proposals/:id/retract",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/proposals/:id/retract",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "proposals", ":id", "retract"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "撤回 AI 提案\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** reason_md 可选 trim 后 1-2000；affected_refs 可选至少 1 项 { kind, id }；body 为空 {} 也合法",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason_md\": \"superseded by newer proposal\",\n  \"affected_refs\": [\n    {\n      \"kind\": \"question\",\n      \"id\": \"q_abc123\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "question-blocks",
+      "item": [
+        {
+          "name": "PATCH /api/question-blocks/:id/figures/:asset_id",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/question-blocks/:id/figures/:asset_id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "question-blocks", ":id", "figures", ":asset_id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                },
+                {
+                  "key": "asset_id",
+                  "value": "REPLACE_asset_id"
+                }
+              ]
+            },
+            "description": "将 question_block 中指定图片重新归属到 structured 树目标节点\n\n**Path vars:** `:id`, `:asset_id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** attached_to_index 须存在于 question_block.structured 树；actorRef 固定 user",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"attached_to_index\": \"0.1\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "questions",
+      "item": [
+        {
+          "name": "DELETE /api/questions/:id",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/questions/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "questions", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ],
+              "query": [
+                {
+                  "key": "confirm",
+                  "value": "true",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "version",
+                  "value": "0",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "软归档题目两步：不带 confirm 返回 409+关联计数；?confirm=true&version=N 执行软归档\n\n**Query:**\n- `confirm` (optional) e.g. `true`\n- `version` (optional) e.g. `0`\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 不带 confirm=true 始终 409；confirm=true 时 version 必填；软归档=设回 draft"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/questions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/questions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "questions"],
+              "query": [
+                {
+                  "key": "knowledge_id",
+                  "value": "kn_abc123",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "subject",
+                  "value": "wenyan",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "source",
+                  "value": "manual",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "kind",
+                  "value": "short_answer",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "difficulty",
+                  "value": "3",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "visual_complexity",
+                  "value": "low",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "source_tier",
+                  "value": "1",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "sort_by",
+                  "value": "source_tier",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "group_by_family",
+                  "value": "true",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "expand_root",
+                  "value": "q_root123",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "include_drafts",
+                  "value": "false",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "offset",
+                  "value": "0",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "多轴题库列表（knowledge_id/subject/source/kind/difficulty/visual_complexity/source_tier/family 过滤）\n\n**Query:**\n- `knowledge_id` (optional) e.g. `kn_abc123`\n- `subject` (optional) e.g. `wenyan`\n- `source` (optional) e.g. `manual`\n- `kind` (optional) e.g. `short_answer`\n- `difficulty` (optional) e.g. `3`\n- `visual_complexity` (optional) e.g. `low`\n- `source_tier` (optional) e.g. `1`\n- `sort_by` (optional) e.g. `source_tier`\n- `group_by_family` (optional) e.g. `true`\n- `expand_root` (optional) e.g. `q_root123`\n- `include_drafts` (optional) e.g. `false`\n- `limit` (optional) e.g. `50`\n- `offset` (optional) e.g. `0`\n\n**Notes:** knowledge_id/source_tier 可多值；group_by_family 与 expand_root 互斥；expand_root 不能与 source_tier/sort_by 同用；limit 上限 200；sort_by 枚举：created_at|source_tier"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/questions/:id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/questions/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "questions", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ],
+              "query": [
+                {
+                  "key": "timeline_limit",
+                  "value": "10",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "单题详情聚合（题行 + source_tier + labels + 变体家族 + per-knowledge FSRS/decay + 反向链接 + timeline）\n\n**Query:**\n- `timeline_limit` (optional) e.g. `10`\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** timeline_limit 默认 10 上限 50"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/questions/:id/timeline",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/questions/:id/timeline",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "questions", ":id", "timeline"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "10",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "返回该题最近的 attempt + review 历史事件列表\n\n**Query:**\n- `limit` (optional) e.g. `10`\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** limit 默认 10 上限 50；时间戳为 unix 秒"
+          },
+          "response": []
+        },
+        {
+          "name": "PATCH /api/questions/:id",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/questions/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "questions", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "编辑题库可编辑字段（prompt/reference/choices/difficulty/knowledge_ids/kind/draft_status）；bloodline 字段一律 400\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** version 乐观锁；至少提供一个可编辑字段；bloodline 字段被拒；kind 枚举见 import；draft_status 枚举：draft|active",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"version\": 0,\n  \"prompt_md\": \"新题目文本\",\n  \"reference_md\": \"参考答案\",\n  \"choices_md\": [\n    \"A\",\n    \"B\",\n    \"C\",\n    \"D\"\n  ],\n  \"difficulty\": 3,\n  \"knowledge_ids\": [\n    \"kn_abc\"\n  ],\n  \"kind\": \"short_answer\",\n  \"draft_status\": \"active\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/questions/:id/solve",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/questions/:id/solve",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "questions", ":id", "solve"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "开启解题 session（lazy 生成参考解答），返回 session_id + generated 标志\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** body 可完全省略；regenerate=true 强制重新生成参考解答",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"regenerate\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/questions/:id/solve/:sid/hint",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/questions/:id/solve/:sid/hint",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "questions", ":id", "solve", ":sid", "hint"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                },
+                {
+                  "key": "sid",
+                  "value": "REPLACE_sid"
+                }
+              ]
+            },
+            "description": "在活跃 solve session 中请求第 hint_index 级 Socratic 提示\n\n**Path vars:** `:id`, `:sid` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** hint_index 0-20 默认 0；body 可省略；session 已结束 409；LLM 解析失败 502",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"hint_index\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/questions/:id/solve/:sid/submit",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/questions/:id/solve/:sid/submit",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "questions", ":id", "solve", ":sid", "submit"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                },
+                {
+                  "key": "sid",
+                  "value": "REPLACE_sid"
+                }
+              ]
+            },
+            "description": "提交解题答案（文本步骤或手写图片），判题，失败时记录 mistake 并入队 attribution_followup\n\n**Path vars:** `:id`, `:sid` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 三字段均可选但至少一个非空；响应含 attempt_event_id + judge + revealed_solution_md + (mistake_id)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"student_text_steps\": [\n    \"设 x = ...\",\n    \"代入得 ...\"\n  ],\n  \"student_final_answer_text\": \"x = 5\",\n  \"student_image_refs\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/questions/quiz-gen",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/questions/quiz-gen",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "questions", "quiz-gen"]
+            },
+            "description": "触发 quiz_gen 后台任务（默认）或统一找题次序 sequence 模式，返回 202\n\n**Notes:** trigger 枚举：knowledge|learning_item|manual；count 1-10 默认 3；sequence=true 须提供 knowledge_id 或 trigger=knowledge；非 sequence 返回 {enqueued,job_id}；sequence 返回 {mode,satisfied_from_pool,existing,enqueued,needs}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"trigger\": \"knowledge\",\n  \"ref_id\": \"kn_abc123\",\n  \"count\": 3,\n  \"sequence\": false,\n  \"knowledge_id\": \"kn_abc123\",\n  \"kind\": \"short_answer\",\n  \"domain\": \"wenyan\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "records",
+      "item": [
+        {
+          "name": "DELETE /api/records/:id",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/records/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "records", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "软删除（归档）一条 learning record\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 无 body，无 version，不经乐观锁；响应 {ok:true}"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/records",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/records",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "records"],
+              "query": [
+                {
+                  "key": "kind",
+                  "value": "mistake",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "knowledge_id",
+                  "value": "kid_abc123",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "question_id",
+                  "value": "qid_abc123",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "attempt_event_id",
+                  "value": "evt_abc123",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "activity_kind",
+                  "value": "attempt",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "processing_status",
+                  "value": "raw",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "列出 learning records，支持多维过滤\n\n**Query:**\n- `kind` (optional) e.g. `mistake`\n- `knowledge_id` (optional) e.g. `kid_abc123`\n- `question_id` (optional) e.g. `qid_abc123`\n- `attempt_event_id` (optional) e.g. `evt_abc123`\n- `activity_kind` (optional) e.g. `attempt`\n- `processing_status` (optional) e.g. `raw`\n- `limit` (optional) e.g. `50`\n\n**Notes:** kind 支持重复 key 多值；枚举：mistake|worked_example|open_question|insight|reflection|observation|resource_note；activity_kind 枚举：attempt|review|read|ask|annotate|import|conversation|plan；processing_status 枚举：raw|linked|actioned|archived；limit 默认 50 上限 200；每行附 proposal_count"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/records/:id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/records/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "records", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "获取单个 learning record 详情，附 proposal_count\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 响应含 proposal_count"
+          },
+          "response": []
+        },
+        {
+          "name": "PATCH /api/records/:id",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/records/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "records", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "更新 learning record 字段，带乐观锁\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** version 必填（乐观锁）；所有字段可选；content_md 最多 20000",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"version\": 0,\n  \"title\": \"更新后的标题\",\n  \"content_md\": \"更新后内容\",\n  \"knowledge_ids\": [\n    \"kid_abc123\"\n  ],\n  \"processing_status\": \"linked\",\n  \"payload\": {}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/records",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/records",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "records"]
+            },
+            "description": "创建一条 learning record\n\n**Notes:** source 枚举：manual|ocr|import|conversation|agent；capture_mode 枚举：text|image|paper|voice|url|mixed；origin_event_id 为 null 时自动创建 capture event；content_md 最多 20000",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"kind\": \"insight\",\n  \"content_md\": \"「而」字顺承用法在《劝学》中出现 12 次\",\n  \"source\": \"manual\",\n  \"capture_mode\": \"text\",\n  \"activity_kind\": \"read\",\n  \"processing_status\": \"raw\",\n  \"title\": null,\n  \"origin_event_id\": null,\n  \"knowledge_ids\": [\n    \"kid_abc123\"\n  ],\n  \"question_id\": null,\n  \"attempt_event_id\": null,\n  \"learning_item_id\": null,\n  \"artifact_id\": null,\n  \"source_document_id\": null,\n  \"asset_refs\": [],\n  \"payload\": {}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "review",
+      "item": [
+        {
+          "name": "GET /api/review/due",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/review/due",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "review", "due"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "获取当前到期复习队列（FSRS 排序 + goal soft-bias 重排）\n\n**Query:**\n- `limit` (optional) e.g. `20`\n\n**Notes:** limit 默认 20 范围 1-200；返回 {rows:[...]}"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/review/plan",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/review/plan",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "review", "plan"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "intent",
+                  "value": "skip",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "复习编排器：返回优先级队列 + LLM session_intent（best-effort）\n\n**Query:**\n- `limit` (optional) e.g. `20`\n- `intent` (optional) e.g. `skip`\n\n**Notes:** intent=skip 跳过 LLM session_intent 生成（轻量 poll）；LLM 失败时 session_intent=null 仍 200"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/review/weekly",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/review/weekly",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "review", "weekly"],
+              "query": [
+                {
+                  "key": "days",
+                  "value": "7",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "滑动窗口周报：每日趋势 + FSRS 评级分布 + 高频薄弱知识点 + 原因分布 + AI 成本汇总\n\n**Query:**\n- `days` (optional) e.g. `7`\n\n**Notes:** days 默认 7 最大 90；UTC 日边界；含 window + totals + ratings + daily + top_causes + top_knowledge"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/review/advice",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/review/advice",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "review", "advice"]
+            },
+            "description": "预提交判题顾问：运行 judge 返回 suggested_rating 和评分建议，不写任何事件或 FSRS\n\n**Notes:** activity_ref / question_id / mistake_id 三选一；response_md 须非空；返回 judge 结果 + advice",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"activity_ref\": {\n    \"kind\": \"question\",\n    \"id\": \"q_abc123\"\n  },\n  \"response_md\": \"我的回答\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/review/appeal",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/review/appeal",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "review", "appeal"]
+            },
+            "description": "对 judge 事件提交申诉（写 appeal_request 事件 + retraction proposal），不触发重判\n\n**Notes:** judge_event_id 须指向 action=judge 事件；reason_md 可选 max 2000；响应含 appeal_event_id",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"judge_event_id\": \"evt_abc123\",\n  \"reason_md\": \"判题有误，原因是...\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/review/sessions",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/review/sessions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "review", "sessions"]
+            },
+            "description": "在 /review 页面 mount 时 eager create 一个新 review session\n\n**Notes:** 无需 body；返回 {session_id}"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/review/sessions/:id/end",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/review/sessions/:id/end",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "review", "sessions", ":id", "end"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "结束或放弃 review session；completed 时异步入队 session_summary job\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** status 枚举：completed|abandoned 默认 completed；sendBeacon 友好",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"completed\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/review/sessions/:id/pause",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/review/sessions/:id/pause",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "review", "sessions", ":id", "pause"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "将 started 的 review session 暂停为 paused\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 无需 body；sendBeacon 友好；返回 {ok:true,status:'paused'}"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/review/sessions/:id/reopen",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/review/sessions/:id/reopen",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "review", "sessions", ":id", "reopen"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "将 abandoned 的 review session 重新置为 started\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 无需 body；返回 {ok:true,status:'started'}"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/review/sessions/:id/resume",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/review/sessions/:id/resume",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "review", "sessions", ":id", "resume"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "将 paused 的 review session 恢复为 started\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 无需 body；返回 {ok:true,status:'started'}"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/review/submit",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/review/submit",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "review", "submit"]
+            },
+            "description": "提交一次复习评分（写 review 事件 + upsert FSRS），支持 auto_rate 自动判题\n\n**Notes:** activity_ref/question_id/mistake_id 三选一；rating 枚举：again|hard|good；auto_rate=true 时 response_md 或 answer_image_refs 须非空，judge unsupported 时 422",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"activity_ref\": {\n    \"kind\": \"question\",\n    \"id\": \"q_abc123\"\n  },\n  \"rating\": \"good\",\n  \"response_md\": \"我的答案\",\n  \"latency_ms\": 5000,\n  \"session_id\": \"ses_abc123\",\n  \"referenced_knowledge_ids\": [\n    \"kn_abc\"\n  ],\n  \"answer_image_refs\": [],\n  \"auto_rate\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "study-log",
+      "item": [
+        {
+          "name": "DELETE /api/study-log/:id",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/study-log/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "study-log", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "已废弃，返回 410 Gone\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** replacement: /api/records"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/study-log",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/study-log",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "study-log"]
+            },
+            "description": "已废弃，返回 410 Gone\n\n**Notes:** replacement: /api/records"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/study-log",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/study-log",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "study-log"]
+            },
+            "description": "已废弃，返回 410 Gone\n\n**Notes:** replacement: /api/records"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "teaching-sessions",
+      "item": [
+        {
+          "name": "GET /api/teaching-sessions/:id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/teaching-sessions/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "teaching-sessions", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "返回 conversation session 元数据 + 有序消息列表 + active_question_id + attempt_counts\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** session.type 须为 conversation；消息按 created_at 升序"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/teaching-sessions",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/teaching-sessions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "teaching-sessions"]
+            },
+            "description": "创建 conversation session 并同步执行首次 agent teaching turn，返回 session_id + initial_message\n\n**Notes:** learning_item_id 须存在（max 64）；同步执行首次 LLM teaching turn；LLM 失败时 session 仍创建；响应含 session_id + initial_message + suggested_next",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"learning_item_id\": \"li_abc123\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/teaching-sessions/:id/accept-chip",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/teaching-sessions/:id/accept-chip",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "teaching-sessions", ":id", "accept-chip"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "记录用户点击 suggestion chip（写 accept_suggestion 事件），可选触发 proposal accept\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** suggestion_kind 枚举：proactive|corrective；source_event_id 省略时自动解析；proposal_id 有值时先 acceptAiProposal；session 须 active",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"suggestion_kind\": \"proactive\",\n  \"chip_label\": \"继续讲解\",\n  \"source_event_id\": null,\n  \"target_tool\": null,\n  \"target_args\": null,\n  \"proposal_id\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/teaching-sessions/:id/end",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/teaching-sessions/:id/end",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "teaching-sessions", ":id", "end"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "结束或放弃 conversation session\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** status 枚举：ended|abandoned 默认 ended；sendBeacon 友好",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"ended\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/teaching-sessions/:id/turn",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/teaching-sessions/:id/turn",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "teaching-sessions", ":id", "turn"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "发送用户消息并获取 agent teaching reply；idle session 自动 resume\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** text_md 1-2000；idle session 自动 resume（was_idle:true）；ask_check turn 时响应含 inline 题对象；LLM 失败 502",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text_md\": \"我不理解这个概念\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "today",
+      "item": [
+        {
+          "name": "GET /api/today/ai-changes",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/today/ai-changes",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "today", "ai-changes"]
+            },
+            "description": "列出近 24 小时内的 note-refine apply 变更记录\n\n**Notes:** 响应：{ window_hours: 24, rows: [...] }，最多 25 条"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/today/copilot-summary",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/today/copilot-summary",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "today", "copilot-summary"]
+            },
+            "description": "获取 Copilot Drawer 摘要槽数据（Coach scan + Dreaming preview + 待审提案数）\n\n**Notes:** 响应为 CopilotSummary JSON"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/today/proposals",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/today/proposals",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "today", "proposals"]
+            },
+            "description": "获取今日提案 KPI 数据\n\n**Notes:** 响应为 proposal KPI JSON"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/today/ai-changes",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/today/ai-changes",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "today", "ai-changes"]
+            },
+            "description": "撤销一批 note-refine apply 事件（undo）\n\n**Notes:** event_ids 数组 min 1 max 25，每条非空字符串；响应 { results: [...] }",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event_ids\": [\n    \"evt_abc123\",\n    \"evt_def456\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
