@@ -1492,6 +1492,10 @@ export async function authorQuestion(
   switch (seed.seed_mode) {
     case 'variant': {
       // DELEGATE to runVariantGen UNCHANGED — all variant guards live there.
+      // `deps.causedByEventId` is intentionally NOT forwarded here: runVariantGen
+      // owns the variant proposal's provenance (writeVariantQuestionProposal
+      // derives causality from the attempt event). Only the `record` seed below
+      // threads causedByEventId — the asymmetry is by design, not a miss.
       const result = await runVariantGen({
         db: deps.db,
         attemptEventId: seed.attempt_event_id,
