@@ -76,4 +76,32 @@ describe('replayToMessages', () => {
       },
     ]);
   });
+
+  // YUK-307 — primary_view (the agent's hero nomination, presentation layer
+  // §2.3) is a pure passthrough: forwarded untouched on AI turns that carry it,
+  // absent otherwise. replayToMessages does NOT interpret it — rendering policy
+  // belongs to the separate UI slice.
+  it('forwards primary_view through replay and leaves it absent otherwise', () => {
+    const out = replayToMessages([
+      turn({
+        role: 'ai',
+        text: '这是你的题。',
+        event_id: 'reply_pv',
+        primary_view: { source: 'artifact', ref: { kind: 'question', id: 'q_1' } },
+      }),
+      turn({
+        role: 'ai',
+        text: '<div>互动内容</div>',
+        event_id: 'reply_pv_html',
+        primary_view: { source: 'ephemeral_html', ref: '<div>互动内容</div>' },
+      }),
+      turn({ role: 'ai', text: '普通回复', event_id: 'reply_plain' }),
+    ]);
+    expect(out[0]?.primary_view).toEqual({
+      source: 'artifact',
+      ref: { kind: 'question', id: 'q_1' },
+    });
+    expect(out[1]?.primary_view).toEqual({ source: 'ephemeral_html', ref: '<div>互动内容</div>' });
+    expect(out[2]?.primary_view).toBeUndefined();
+  });
 });

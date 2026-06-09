@@ -52,6 +52,16 @@ export interface ReplaySkillContext {
   ref: { kind: string; id: string };
 }
 
+// YUK-307 — the agent-nominated hero deliverable persisted on a reply turn
+// (presentation layer §2.3). Mirrors CopilotPrimaryView (src/server/copilot/
+// turns.ts), declared inline so replay.ts stays self-contained (same precedent
+// as ReplaySkillTurn / ReplaySkillContext above). replayToMessages forwards it
+// untouched; RENDERING the nomination (hero card density / Dock policy) is the
+// separate UI slice — nothing here interprets the field.
+export type ReplayPrimaryView =
+  | { source: 'tool_result' | 'artifact'; ref: { kind: string; id: string } }
+  | { source: 'ephemeral_html'; ref: string };
+
 export interface ReplayTurn {
   role: ReplayTurnRole;
   text: string;
@@ -63,6 +73,8 @@ export interface ReplayTurn {
   reply_event_id?: string;
   // AF S4 / YUK-203 U6 (round-2) — the skill_context that produced this turn.
   skill_context?: ReplaySkillContext;
+  // YUK-307 — present on AI turns whose reply nominated a hero deliverable.
+  primary_view?: ReplayPrimaryView;
 }
 
 export interface ReplayChatMessage {
@@ -77,6 +89,9 @@ export interface ReplayChatMessage {
   // AF S4 / YUK-203 U6 (round-2) — forwarded so CopilotDock can restore
   // activeSkillRef from the last non-end skill turn on replay.
   skill_context?: ReplaySkillContext;
+  // YUK-307 — forwarded so the (future) UI slice can restore the hero
+  // nomination on replay; pure passthrough, zero rendering here.
+  primary_view?: ReplayPrimaryView;
 }
 
 /**
@@ -99,6 +114,10 @@ export function replayToMessages(turns: ReplayTurn[]): ReplayChatMessage[] {
       session_id: t.session_id,
       reply_event_id: t.reply_event_id,
       skill_context: t.skill_context,
+      // YUK-307 — field copy only (skill_turn precedent): without it the
+      // nomination dies at this boundary and the UI slice would have to reopen
+      // backend files. NOT a rendering change.
+      primary_view: t.primary_view,
     });
   }
   return out;
