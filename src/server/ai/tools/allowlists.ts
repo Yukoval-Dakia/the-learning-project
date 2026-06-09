@@ -38,6 +38,12 @@ export const PROPOSE_WRITE_TOOLS = [
   'propose_learning_item_archive',
   'propose_record_links',
   'propose_record_promotion',
+  // ADR-0032 D8 — unified question-authoring front door. Routes by seed mode to
+  // the variant (runVariantGen) and record→question propose paths; the
+  // knowledge|material seed is a typed lane-B stub. MUST stay positioned right
+  // after propose_record_promotion to keep the CORE_TOOLS bootstrap order (and the
+  // listTools() inventory assertion in allowlists.test.ts) aligned.
+  'author_question',
   // YUK-195 — agent-callable question structure-edit write tools. Operate on the
   // pre-import draft layer (question_block.structured + figures); only the
   // `ingestion_block_edit` surface below grants them.
@@ -127,6 +133,15 @@ const COPILOT_TOOLS = [
   'propose_learning_item_relearn',
   'propose_learning_item_defer',
   'propose_learning_item_archive',
+  // ADR-0032 D8 — unified author_question front door on the copilot base surface.
+  // This is the documented D8 intent (ADR-0032 D2:35 / D7:100): copilot may author
+  // a variant (seed=variant) or promote a record → question (seed=record) directly
+  // in-conversation, via this ONE tool. The raw `propose_variant` / `attribute_mistake`
+  // tools stay OFF copilot base (they remain on `copilot_user_suggested_mistake_action`,
+  // the chip surface) — author_question is a distinct tool name, so the existing
+  // copilot red-lines (no `propose_variant`, no `attribute_mistake`) still hold.
+  // The knowledge|material seed is a typed lane-B stub (returns not_implemented).
+  'author_question',
   // YUK-203 U4 / L-memtool (D7②) — Mem0 fact retrieval.
   'search_memory_facts',
 ] as const satisfies readonly DomainToolName[];
