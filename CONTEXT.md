@@ -63,3 +63,10 @@
 - **复习**（FSRS 到期重做）= `events WHERE action='review'`；FSRS 状态投影到 `material_fsrs_state`
 - **梦境流 / 维护流**（Dreaming / Maintenance）= `events WHERE actor_kind IN ('agent','cron')` 夜间批量产出
 - **学习项（learning_item）**—— **保留** TODO / Goal 语义，与 event 解耦（用户 / AI 声明的学习意图 ≠ 发生过的事件）
+
+## AI 能力组织（skill / behavior pack）
+
+> 2026-06-08 grill 裁决：「skill」一词此前被过载（审计 AP-4），就地收归单一含义。
+
+- **技能包（skill / SKILL.md）**：可移植的**领域方法论指令包**，位于 `src/subjects/<id>/skills/<name>/SKILL.md`，frontmatter 含 `name` + `description`（description 是模型加载的触发钩子），正文是领域知识/规范（出题、笔记、质检标准等）。经 `ctx.skills` 白名单喂进 Claude Agent SDK，由对应 Task 按需加载。**「skill」在本项目只指这一样东西**——它是「把方法论交给模型按需加载」的知识，**不是**代码路由，**不是**在服务层用 enum 静态分流。现有 6 个：`note-{math,physics,wenyan}`、`quiz-gen-{calculation,reading-comprehension,translation}`，被 NoteGenerate/Verify/Refine 与 QuizGen/QuizVerify/Sourcing 共用。一个对应推论：题型规范（如「文言文阅读 = 原文 + 一组小题」）已住在技能包里，是**真相**；若生成产物没遵循，病灶在落库管线（schema / handler）而非知识层。
+- **行为包（behavior pack，≠ skill）**：`src/server/copilot/skills/{teaching,solve}-skill.ts` 与 `COPILOT_SKILL_KINDS` enum 是**服务层 TS 编排**（组一个 `TeachingTurnTask` 调用、绕开 CopilotTask 自由 loop），曾被冠以「skill」之名（AP-4 术语过载）。**它们不是技能包，停止用 skill 指代。** 一个「模式」本质上拆成三样、各有归处：**方法论 → 技能包**、**确定性副作用 → loop 内工具/effect**、**能力范围 → tool allowlist**；没有第四样需要独立代码路。目标形态：teaching/solve 两个 behavior pack 最终**消解**，不保留为独立构造（迁移路径见 `.omc/research/copilot-implementation-audit-2026-06-07.md` AP-1~AP-4 / Step 0~3）。
