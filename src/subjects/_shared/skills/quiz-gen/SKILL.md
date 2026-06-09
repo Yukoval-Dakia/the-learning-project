@@ -15,6 +15,7 @@ description: Copilot 出题/组卷方法论 — 用户求卷/求题/要练习时
 
 - `query_questions({ knowledge_id: [...] })`——草稿默认**包含**（`include_drafts: true`），因为你前几轮拟的题还在等用户 accept，漏看就会重复出题。
 - 已有合适的题（题型/难度匹配、未重复考查同一个点）→ 直接复用它的 `id` 进组卷，不要重新生成。
+- **草稿复用红线**：只复用 `source` 为 `copilot_authored` 的草稿（你前几轮拟、等 accept 的题）。其它来源的草稿行（`quiz_gen` / `web_sourced` / OCR 导入等）多是**没通过验证或还没验证**的隔离区内容——不要进卷；要用就用对应的 active 题。
 - 用 `kind` / `difficulty` / `source` 维度收窄；`subject` 维度按学科扫全科。
 
 ### ② 逐题起草（author_question，seed_mode='knowledge' | 'material'）
