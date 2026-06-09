@@ -1891,6 +1891,33 @@ describe('runCopilotChat — primary_view nomination (YUK-307)', () => {
     warnSpy.mockRestore();
   });
 
+  it('T5b: ephemeral_html payload containing `-->` parses via the greedy tail pass; zero residue (PR #375 MEDIUM-1)', () => {
+    const html = '<div><!-- inner comment --><b>周期表</b></div>';
+    const out = extractPrimaryView(
+      `正文。\n<!--primary_view:{"source":"ephemeral_html","ref":"${html.replace(/"/g, '\\"')}"}-->`,
+      { taskRunId: 't' },
+    );
+    // The greedy tail match swallows the inner `-->` — nomination SUCCEEDS
+    // (was: lenient-absent under the lazy-only parser)…
+    expect(out.primaryView).toEqual({ source: 'ephemeral_html', ref: html });
+    // …and the whole marker region is removed: no payload residue in reply_md.
+    expect(out.text).toBe('正文。');
+    expect(out.text).not.toContain('primary_view');
+    expect(out.text).not.toContain('ephemeral_html');
+  });
+
+  it('T5c: unterminated marker (stream aborted mid-marker) → truncated + warn, nothing leaks (PR #375 MEDIUM-2)', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const out = extractPrimaryView('正文先到。\n<!--primary_view:{"source":"artifa', {
+      taskRunId: 't',
+    });
+    expect(out.primaryView).toBeUndefined();
+    expect(out.text).toBe('正文先到。');
+    expect(out.text).not.toContain('<!--');
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    warnSpy.mockRestore();
+  });
+
   it('T6: streaming — terminal result carries primary_view + cleaned reply; persisted payload matches non-stream', async () => {
     const fullText = `这是你的题。\n${VALID_MARKER}`;
     const streamAgentTaskFn = vi.fn(
