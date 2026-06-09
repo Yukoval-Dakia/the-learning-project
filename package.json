@@ -24,6 +24,7 @@
     "test:migration": "vitest run --config vitest.migration.config.ts",
     "smoke:local": "tsx scripts/smoke-local.ts",
     "api:smoke": "tsx scripts/api-smoke.ts",
+    "gen:postman": "tsx scripts/gen-postman.ts",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "db:migrate": "drizzle-kit migrate",
