@@ -3,7 +3,7 @@
 //
 // This module is pure (no IO, no heavy deps) so it can be imported by both the
 // renderer (src/server/ingestion/pdf-render.ts) and the ingestion route Zod
-// (app/api/ingestion/route.ts) without dragging the PDFium WASM renderer into
+// (src/capabilities/ingestion/api/sessions.ts) without dragging the PDFium WASM renderer into
 // the ingestion route's bundle graph.
 
 // A PDF expands to at most this many page images. Each page is sent base64 to
@@ -23,8 +23,8 @@ export const MAX_DOCX_PAGES = MAX_PDF_PAGES;
 export const MAX_DOCX_UPLOAD_BYTES = 20_000_000;
 
 // Per-image byte cap, single source of truth (YUK-250 limits pattern). Enforced
-// by the generic asset upload route (app/api/assets/route.ts) and the DOCX
-// embedded-media persist path (app/api/ingestion/docx/route.ts) so an image
+// by the generic asset upload route (src/capabilities/ingestion/api/assets.ts) and the DOCX
+// embedded-media persist path (src/capabilities/ingestion/api/docx.ts) so an image
 // embedded inside an under-cap .docx can't create a source_asset that diverges
 // from the limit every other image path honours (codex-4).
 export const MAX_IMAGE_UPLOAD_BYTES = 8_000_000;

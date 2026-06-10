@@ -8,13 +8,13 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { idHasMatch } from '@/capabilities/ingestion/server/block-structured-edit';
 import {
   StructuredQuestion,
   type StructuredQuestionT,
   structuredToPromptMarkdown,
 } from '@/core/schema/structured_question';
 import { job_events, question_block } from '@/db/schema';
-import { idHasMatch } from '@/capabilities/ingestion/server/block-structured-edit';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { __resetBootstrapForTests, registerCoreTools } from './bootstrap';
 import {

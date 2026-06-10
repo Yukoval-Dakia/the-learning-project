@@ -18,7 +18,6 @@
 
 import { z } from 'zod';
 
-import { QuestionKind } from '@/core/schema/business';
 import {
   addOption,
   mergeQuestions,
@@ -27,6 +26,7 @@ import {
   splitStem,
   updatePrompt,
 } from '@/capabilities/ingestion/server/block-structured-edit';
+import { QuestionKind } from '@/core/schema/business';
 import type { DomainTool, ToolContext } from './types';
 
 // ---------------------------------------------------------------------------
