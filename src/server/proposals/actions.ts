@@ -1,6 +1,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 
+import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
 import { newId } from '@/core/ids';
 import type { ActivityRefT } from '@/core/schema/activity';
 import type { RelationTypeSchemaT } from '@/core/schema/event/blocks';
@@ -42,7 +43,6 @@ import {
   markRecordsActioned,
   rollbackRecordsActioned,
 } from '@/server/records/record_processing';
-import { initialFsrsState } from '@/server/review/fsrs';
 // YUK-227 S3 Slice C (ADR-0002) — image_candidate accept is the SINGLE VLM 抽图 trigger
 // (download → asset → VisionExtractTask → SourcedQuestion → source_verify). No auto path.
 import {

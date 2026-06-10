@@ -1,5 +1,5 @@
+import type { EffectiveTruth } from '@/capabilities/practice/server/effective-truth';
 import type { CauseCategoryT } from '@/core/schema/event/blocks';
-import type { EffectiveTruth } from '@/server/review/effective-truth';
 import type { FailureAttempt } from './queries';
 
 export type EffectiveFailureCause =
