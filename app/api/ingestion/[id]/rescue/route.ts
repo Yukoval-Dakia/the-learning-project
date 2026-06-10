@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { runRescue } from '@/server/ingestion/rescue';
+import { runRescue } from '@/capabilities/ingestion/server/rescue';
 import { getR2 } from '@/server/r2';
 
 export const runtime = 'nodejs';

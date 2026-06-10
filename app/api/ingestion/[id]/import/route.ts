@@ -27,7 +27,7 @@ import { ApiError, errorResponse } from '@/server/http/errors';
 // T-OC slice 1 (YUK-145, OC-3): generalized capture — outcome is a signal,
 // routed by enrollCapturedBlock instead of the old hardcoded
 // attempt(outcome='failure') + learning_record(kind='mistake'). See ADR-0024.
-import { enrollCapturedBlock } from '@/server/ingestion/enroll';
+import { enrollCapturedBlock } from '@/capabilities/ingestion/server/enroll';
 import { runProposeAndWrite } from '@/server/knowledge/propose';
 import {
   assertCauseAllowedForSubjectProfile,

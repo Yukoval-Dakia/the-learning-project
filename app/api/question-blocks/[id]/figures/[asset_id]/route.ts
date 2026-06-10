@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { reassignFigure } from '@/server/ingestion/block-structured-edit';
+import { reassignFigure } from '@/capabilities/ingestion/server/block-structured-edit';
 
 export const runtime = 'nodejs';
 

@@ -209,7 +209,7 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
     //     `attrs.suppressed_block_refs` (no version bump) alongside the paired
     //     suppress event + the immediate-removal `note_refine_apply`, all atomic
     //     in one transaction. The route only validates input + opens the tx.
-    //   - YUK-214 (Strategy D S1) `src/server/ingestion/make-paper.ts`:
+    //   - YUK-214 (Strategy D S1) `src/capabilities/ingestion/server/make-paper.ts`:
     //     createIngestionPaper packs an imported ingestion session's questions
     //     into an `ingestion_paper` tool_quiz artifact (ingest→practice
     //     bridge). Single INSERT, idempotent by source_ref=sessionId.
@@ -243,7 +243,7 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
       // ingestion session's questions into an `ingestion_paper` tool_quiz
       // artifact (the ingest→practice bridge). Single INSERT, idempotent
       // by source_ref=sessionId; the make-paper route's only write.
-      'src/server/ingestion/make-paper.ts',
+      'src/capabilities/ingestion/server/make-paper.ts',
       // ADR-0033 D6 / YUK-306 (lane D) — author_artifact INSERT + update_artifact
       // version-bump UPDATE for type='interactive' rows (opaque to the note
       // block-tree mesh, body_blocks=null; the render-side sandbox owns

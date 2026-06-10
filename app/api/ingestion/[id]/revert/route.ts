@@ -9,7 +9,7 @@ import { z } from 'zod';
 
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { revertAutoEnrolledBlock } from '@/server/ingestion/revert-auto-enroll';
+import { revertAutoEnrolledBlock } from '@/capabilities/ingestion/server/revert-auto-enroll';
 
 export const runtime = 'nodejs';
 
