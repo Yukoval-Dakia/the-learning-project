@@ -9,9 +9,9 @@
 // provider env) is missing OR the call throws, the queue still returns with
 // session_intent=null and the route stays 200.
 
+import { planReviewSession } from '@/capabilities/practice/server/review-session';
 import { db } from '@/db/client';
 import { errorResponse } from '@/server/http/errors';
-import { planReviewSession } from '@/server/orchestrator/review';
 
 export const runtime = 'nodejs';
 

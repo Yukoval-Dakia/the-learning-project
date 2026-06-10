@@ -5,9 +5,9 @@
 // return the minimal next step WITHOUT revealing the full solution (spec §3.2).
 import { z } from 'zod';
 
+import { SolveError, planSolveHint } from '@/capabilities/practice/server/solve-session';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { SolveError, planSolveHint } from '@/server/orchestrator/solve';
 
 export const runtime = 'nodejs';
 
