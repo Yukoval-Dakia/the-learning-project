@@ -160,6 +160,17 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   await createOrUpdateQueue(boss, 'echo', FAST_QUEUE_OPTS);
   await boss.work('echo', { pollingIntervalSeconds: 0.5, batchSize: 1 }, buildEchoHandler(db));
 
+  // M2 (YUK-316, D15) — 申诉自动重判。appeal API 投递（singletonKey=appeal
+  // event id）；handler 本体在 practice capability 包（kernel jobs 契约 M4 立，
+  // 此处沿用旧 registry 挂载——与 ingestion jobs 同一过渡模式，M1-T3）。
+  await createJobQueue(boss, 'rejudge', EXPIRE_LLM);
+  await boss.work('rejudge', { pollingIntervalSeconds: 1, batchSize: 1 }, async (jobs) => {
+    const { handleRejudge } = await import('@/capabilities/practice/jobs/rejudge');
+    for (const job of jobs) {
+      await handleRejudge(db, job.data as { appeal_event_id: string });
+    }
+  });
+
   // Step 5: nightly cron tasks
   await createJobQueue(boss, 'knowledge_propose_nightly', EXPIRE_LLM);
   await boss.work('knowledge_propose_nightly', buildKnowledgePropoNightlyHandler(db));

@@ -524,6 +524,46 @@ async function persistSubmit(
       cost_micro_usd: null,
       created_at: now,
     });
+    // M2 (YUK-316, D15) — 散题判分同时写独立 judge event（镜像 paper-submit 的
+    // 形态：actor=agent、subject=本次 review event、cause 为 attribution 占位）。
+    // 这把散题判定纳入统一 judge 事件链：申诉重判（rejudge job）写新 judge event
+    // 即可经 newest-wins（D6）盖掉本判定。review event 内嵌的 payload.judge 保留
+    // ——既有读路径不变，这里只是补出可 supersede 的判定锚点。
+    // gate 用 judgeTelemetry：只有服务端 invoker 真跑的权威判分才立锚点——
+    // client-supplied judge_result_v2 没有服务端权威性（其 capability_ref.id 也
+    // 不受 JudgeKind enum 约束，直接写会炸 JudgeOnEvent 校验）。
+    if (judgeResult !== null && judgeRoute !== null && judgeTelemetry !== null) {
+      await writeEvent(tx, {
+        id: newId(),
+        session_id: body.session_id ?? null,
+        actor_kind: 'agent',
+        actor_ref: 'review_judge',
+        action: 'judge',
+        subject_kind: 'event',
+        subject_id: eventId,
+        outcome: 'success',
+        payload: {
+          cause: {
+            primary_category: 'other',
+            secondary_categories: [],
+            analysis_md: '<review-submit, attribution deferred>',
+            confidence: judgeResult.confidence,
+          },
+          referenced_knowledge_ids: referencedKnowledgeIds,
+          profile_version: judgeResult.capability_ref.version,
+          capability_ref: judgeResult.capability_ref,
+          judge_route: judgeRoute,
+          coarse_outcome: judgeResult.coarse_outcome,
+          ...(judgeResult.score != null ? { score: judgeResult.score } : {}),
+          feedback_md: judgeResult.feedback_md,
+          attribution_pending: true,
+        },
+        caused_by_event_id: eventId,
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: now,
+      });
+    }
     for (const update of fsrsUpdates) {
       await upsertFsrsState(tx, {
         subject_kind: update.subject_kind,
