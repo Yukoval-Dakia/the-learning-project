@@ -1,0 +1,119 @@
+/* ============================================================
+   Loom · premium refinement layer  (additive, loads last)
+   ------------------------------------------------------------
+   Polish over the mature base system: softer layered elevation,
+   crisper chrome, sharper numerals, a more confident rhythm.
+   No new hues — warm paper + single coral preserved throughout.
+
+   GATED behind [data-refine="on"] (set on <html> by the Tweaks
+   toggle "视觉精修 Refined") so the whole pass can be compared
+   against the original with one switch.
+   ============================================================ */
+
+/* ── 1 · Elevation — soft warm ambient + tight contact ──────
+   The single biggest "premium" lever: depth that reads as a
+   card resting ON the paper, not an outline drawn over it. */
+[data-refine="on"] {
+  --shadow-1:
+    0 0.5px 1px  rgba(60, 50, 30, .04),
+    0 1px   2px  rgba(60, 50, 30, .035);
+  --shadow-2:
+    0 1px   2px  rgba(60, 50, 30, .04),
+    0 5px   14px -4px rgba(60, 50, 30, .08),
+    0 14px  30px -12px rgba(60, 50, 30, .07);
+  --shadow-3:
+    0 2px   4px  rgba(60, 50, 30, .05),
+    0 14px  30px -10px rgba(60, 50, 30, .12),
+    0 38px  64px -20px rgba(60, 50, 30, .16);
+}
+[data-refine="on"][data-theme="dark"] {
+  --shadow-1: 0 0.5px 1px rgba(0,0,0,.22), 0 1px 2px rgba(0,0,0,.20);
+  --shadow-2: 0 1px 2px rgba(0,0,0,.24), 0 6px 16px -4px rgba(0,0,0,.42), 0 16px 34px -12px rgba(0,0,0,.34);
+  --shadow-3: 0 2px 4px rgba(0,0,0,.26), 0 16px 34px -10px rgba(0,0,0,.50), 0 40px 70px -20px rgba(0,0,0,.55);
+}
+
+/* ── 2 · Cards float on a softer hairline, lift with intent ── */
+[data-refine="on"] .card {
+  border-color: var(--line-soft);
+  box-shadow: var(--shadow-1);
+}
+[data-refine="on"] .card-hover:hover {
+  border-color: var(--line);
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-2);
+}
+/* recessed cards stay quiet, no faux-lift */
+[data-refine="on"] .card-sunk { box-shadow: none; }
+
+/* ── 3 · Hero — flat warm paper (no gradient, per the system),
+   with a whisper of top-edge light for dimension ──────────── */
+[data-refine="on"] .loom-hero {
+  background: var(--paper-raised);
+  box-shadow: var(--shadow-1), var(--shadow-inset);
+}
+[data-refine="on"] .loom-hero .hero-weave { opacity: .8; }
+
+/* ── 4 · Chrome — crisper topbar, calmer hairline ──────────── */
+[data-refine="on"] .topbar {
+  background: color-mix(in srgb, var(--paper) 78%, transparent);
+  backdrop-filter: blur(16px) saturate(1.4);
+  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  border-bottom-color: var(--line-soft);
+}
+[data-refine="on"] .sidebar { border-right-color: var(--line-soft); }
+[data-refine="on"] .searchbox {
+  height: 36px;
+  transition: border-color var(--dur-fast) var(--ease-out),
+              background var(--dur-fast) var(--ease-out);
+}
+[data-refine="on"] .searchbox:hover { border-color: var(--line-strong); background: var(--paper-raised); }
+
+/* active nav: quieter fill, a precise coral tick for hierarchy */
+[data-refine="on"] .nav-item.is-active::before {
+  content: "";
+  position: absolute;
+  left: -2px; top: 50%;
+  width: 3px; height: 17px;
+  transform: translateY(-50%);
+  border-radius: var(--r-pill);
+  background: var(--coral);
+}
+[data-refine="on"] .rail-collapsed .nav-item.is-active::before { left: 2px; height: 14px; }
+
+/* ── 5 · Primary action carries a soft coral lift ──────────── */
+[data-refine="on"] .btn-primary {
+  box-shadow: 0 1px 2px rgba(169, 63, 38, .22),
+              0 2px 8px -2px rgba(169, 63, 38, .20);
+}
+[data-refine="on"] .btn-primary:hover {
+  box-shadow: 0 1px 2px rgba(169, 63, 38, .26),
+              0 4px 14px -3px rgba(169, 63, 38, .26);
+}
+[data-refine="on"] .btn-primary:active { box-shadow: 0 1px 2px rgba(169, 63, 38, .24); }
+
+/* ── 6 · Numerals — optical tightening so big figures read as
+   set type, not raw digits (tabular kept for alignment) ───── */
+[data-refine="on"] :is(.kpi-val, .prop-summary-n, .cost-amt, .ring-val,
+  .item-stat .s-n, .mistake-count .mc-n, .hero-title) {
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 7 · Rhythm — a touch more confident / efficient ───────── */
+[data-refine="on"] .section-label { margin: var(--s-8) 0 var(--s-4); }
+[data-refine="on"] .section-label h2 { letter-spacing: var(--ls-tight); }
+[data-refine="on"] .section-label .rule { background: var(--line-soft); }
+/* the section count must never wrap into a column (3 / 缕 bug) */
+[data-refine="on"] .section-label .count { flex: none; white-space: nowrap; }
+
+/* eyebrows: a hair more tracking reads as engraved, not typed */
+[data-refine="on"] .eyebrow { letter-spacing: 0.06em; }
+
+/* ── 8 · Hairline dividers softer; structural borders kept ─── */
+[data-refine="on"] .strip { border-bottom-color: var(--line-soft); }
+[data-refine="on"] .know-node { border-bottom-color: var(--line-soft); }
+[data-refine="on"] .tl-row { border-bottom-color: var(--line-soft); }
+
+/* ── 9 · Inputs / composer pick up the same soft hairline ──── */
+[data-refine="on"] .field-input { border-color: var(--line); }
+[data-refine="on"] .composer { box-shadow: var(--shadow-1); }
