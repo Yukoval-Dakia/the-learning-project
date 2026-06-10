@@ -10,7 +10,7 @@
 //
 // session.type is always 'review' (RL1). No `type='paper'` string here.
 
-import type { PracticePaperItem } from '@/server/review/practice-read';
+import type { PracticePaperItem } from '@/capabilities/practice/server/practice-read';
 import { apiJson } from '@/ui/lib/api';
 import { PaperCard } from '@/ui/practice/PaperCard';
 import { PracticeEmptyToday } from '@/ui/practice/PracticeEmptyToday';

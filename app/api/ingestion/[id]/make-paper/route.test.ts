@@ -14,6 +14,8 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { submitPaperSlot } from '@/capabilities/practice/server/paper-submit';
+import { getPracticeList } from '@/capabilities/practice/server/practice-read';
 import {
   artifact,
   event,
@@ -23,8 +25,6 @@ import {
   source_document,
 } from '@/db/schema';
 import { getFsrsState } from '@/server/fsrs/state';
-import { submitPaperSlot } from '@/server/review/paper-submit';
-import { getPracticeList } from '@/server/review/practice-read';
 import { Review } from '@/server/session';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { POST } from './route';

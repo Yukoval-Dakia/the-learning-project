@@ -27,7 +27,7 @@ import * as invokerModule from '@/server/judge/invoker';
 import { Review } from '@/server/session';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { autosaveAnswerDraft, countAnsweredSlots, freezeAnswerDraft } from './answer-draft';
 import { getPaperDetail } from './paper-detail';
 import { submitPaperSlot } from './paper-submit';
