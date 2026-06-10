@@ -7,7 +7,7 @@
 // (§4.10 critic #4; matches data-practice.jsx:PRACTICE_SRC and
 //  PracticeSource type in src/server/review/practice-read.ts).
 
-import type { PracticePaperItem } from '@/server/review/practice-read';
+import type { PracticePaperItem } from '@/capabilities/practice/server/practice-read';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';

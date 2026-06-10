@@ -3,6 +3,7 @@
 // M0 仅 /agent-notes 一条 surface；后续 surface 随各 M 在此登记。
 import AgentNotesPage from '@/capabilities/agent-notes/ui/page';
 import RecordPage from '@/capabilities/ingestion/ui/RecordPage';
+import PracticeFacePage from '@/capabilities/practice/ui/PracticeFacePage';
 import {
   Outlet,
   createRootRoute,
@@ -62,7 +63,33 @@ const recordRoute = createRoute({
   component: RecordRoute,
 });
 
-const routeTree = rootRoute.addChildren([indexRoute, agentNotesRoute, recordRoute]);
+// M2-T6 (YUK-316) — 练习面。query 协议同 RecordRoute：?view=shelf 切卷架，
+// setQuery 是 replace 语义（视图切换不进 history 栈）。
+function PracticeRoute() {
+  const router = useRouter();
+  return (
+    <PracticeFacePage
+      navigate={(to) => router.history.push(to)}
+      getQuery={(key) => new URLSearchParams(window.location.search).get(key)}
+      setQuery={(key, value) => {
+        const sp = new URLSearchParams(window.location.search);
+        if (value === null) sp.delete(key);
+        else sp.set(key, value);
+        router.history.replace(
+          `${window.location.pathname}${sp.toString() ? `?${sp.toString()}` : ''}`,
+        );
+      }}
+    />
+  );
+}
+
+const practiceRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/practice',
+  component: PracticeRoute,
+});
+
+const routeTree = rootRoute.addChildren([indexRoute, agentNotesRoute, recordRoute, practiceRoute]);
 
 export const router = createRouter({ routeTree });
 
