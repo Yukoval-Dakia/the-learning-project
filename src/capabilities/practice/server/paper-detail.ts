@@ -71,6 +71,11 @@ export interface PaperSlotState {
         visible_to_user: true;
         outcome: string;
         score: number | null;
+        /**
+         * M2 (YUK-316) — 判分反馈（复盘核心）。同 outcome/score 的可见性门控；
+         * 历史 judge event（feedback 未入 payload 时代）为 null。
+         */
+        feedback_md: string | null;
         /** The user's frozen answer text (echoed back unconditionally). */
         answer_md: string;
         /** Image refs attached to the frozen answer row. */
@@ -548,7 +553,12 @@ export async function getPaperDetail(
       if (frozenRow) {
         const judgeRow = frozenRow.event_id ? judgeMap.get(frozenRow.event_id) : null;
         const judgePayload = judgeRow?.payload as
-          | { visible_to_user?: boolean; coarse_outcome?: string; score?: number }
+          | {
+              visible_to_user?: boolean;
+              coarse_outcome?: string;
+              score?: number;
+              feedback_md?: string;
+            }
           | null
           | undefined;
         const visibleToUser = judgePayload?.visible_to_user;
@@ -575,6 +585,9 @@ export async function getPaperDetail(
             visible_to_user: true,
             outcome: unjudged ? 'unsupported' : (judgePayload?.coarse_outcome ?? 'unknown'),
             score: (judgePayload?.score as number | null | undefined) ?? null,
+            // M2 (YUK-316) — 复盘读路径透出判分反馈（同 outcome/score 的可见性门控；
+            // 旧 judge event 没写 feedback_md 时为 null，前端按缺省处理）。
+            feedback_md: (judgePayload?.feedback_md as string | null | undefined) ?? null,
             answer_md: answerMd,
             answer_image_refs: answerImageRefs,
             reference_md: refMd,

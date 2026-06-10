@@ -547,6 +547,9 @@ export async function submitPaperSlot(
           // broken — three stamps above are unchanged; these are new fields.
           coarse_outcome: coarseOutcome,
           ...(judgeResult.score != null ? { score: judgeResult.score } : {}),
+          // M2 (YUK-316) — 判分反馈入 payload：复盘读路径（paper-detail）透出它，
+          // 设计稿复盘逐题的「AI 反馈」即此（与散题 submit 的 judge event 对齐）。
+          feedback_md: judgeResult.feedback_md,
           // Round-4 fix #4: signal to the attribution pipeline that this judge is
           // a placeholder ('other' cause, attribution deferred). The skip guard in
           // runAttributionAndWriteJudgeEvent checks !attribution_pending — it will
