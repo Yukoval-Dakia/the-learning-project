@@ -5,10 +5,11 @@
 // 运行时插件总线；组合根见 src/capabilities/index.ts（静态、类型检查）。
 
 /**
- * 无参 Web 标准 handler。M0 (YUK-313) 仅支持 (req)=>Response 形态；
- * param 路由（[id]）的 handler 适配等 M1 第一个实例出现时再扩（第二实例原则）。
+ * Web 标准 handler。M1 (YUK-314) 起带路径参数：server 组合根（server/app.ts）
+ * 把 Hono 的 c.req.param() 透传为第二实参；无参路由的 handler 忽略它即可
+ *（M0 的 (req)=>Response 形态天然兼容——JS 多余实参无害，TS 参数双变兼容）。
  */
-export type RouteHandler = (req: Request) => Promise<Response>;
+export type RouteHandler = (req: Request, params: Record<string, string>) => Promise<Response>;
 
 export interface ApiRouteDecl {
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
