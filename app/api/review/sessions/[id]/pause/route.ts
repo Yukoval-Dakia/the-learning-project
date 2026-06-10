@@ -1,22 +1,13 @@
-// YUK-57 — POST /api/review/sessions/[id]/pause moves a started review
-// session to paused. Mirrors end/route.ts body-parsing so it stays
-// sendBeacon-friendly (text/plain Blob body works just like JSON).
-
-import { db } from '@/db/client';
-import { errorResponse } from '@/server/http/errors';
-import { Review } from '@/server/session';
+// 外壳挂载 — handler 本体在 practice capability 包（M2 上 Hono，YUK-316）。
+// param 路由 shim：Next ctx.params (Promise) 解包为 kernel RouteHandler v2 的
+// params Record。双栈期保留至 M2-T7 拆除。
+import { POST as handler } from '@/capabilities/practice/api/session-pause';
 
 export const runtime = 'nodejs';
 
 export async function POST(
-  _req: Request,
-  { params }: { params: Promise<{ id: string }> },
+  req: Request,
+  ctx: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  try {
-    const { id } = await params;
-    await Review.pauseReviewSession(db, id);
-    return Response.json({ ok: true, status: 'paused' });
-  } catch (err) {
-    return errorResponse(err);
-  }
+  return handler(req, await ctx.params);
 }

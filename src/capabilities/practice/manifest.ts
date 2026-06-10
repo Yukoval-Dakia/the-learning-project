@@ -3,28 +3,104 @@ import { defineCapability } from '@/kernel/manifest';
 export const practiceCapability = defineCapability({
   name: 'practice',
   description:
-    '练习消费侧：FSRS 传感器、判分评级、卷（paper）机制与会话编排。P2c 将加入流编排器与卷架；P2a 仅等价承载迁入模块。',
+    '练习消费侧：FSRS 传感器、判分评级、卷（paper）机制与会话编排。M2 加入流编排器与卷架（YUK-316）。',
   api: {
+    // M2-T1 (YUK-316)：18 条路由全部带 load 懒加载 thunk（M1 配方）。[id]/[sid]
+    // 段由 server/app.ts 的 toHonoPath 转 :id/:sid 并把捕获参数透传 handler。
+    // 注：/api/practice/[id]/answer 实际是 POST（P2a 声明误写 PUT，壳与包从来是 POST）。
     routes: [
-      { method: 'POST', path: '/api/review/submit' },
-      { method: 'GET', path: '/api/review/due' },
-      { method: 'POST', path: '/api/review/advice' },
-      { method: 'GET', path: '/api/review/weekly' },
-      { method: 'POST', path: '/api/review/appeal' },
-      { method: 'GET', path: '/api/review/plan' },
-      { method: 'POST', path: '/api/review/sessions' },
-      { method: 'POST', path: '/api/review/sessions/[id]/pause' },
-      { method: 'POST', path: '/api/review/sessions/[id]/resume' },
-      { method: 'POST', path: '/api/review/sessions/[id]/end' },
-      { method: 'POST', path: '/api/review/sessions/[id]/reopen' },
-      { method: 'GET', path: '/api/practice' },
-      { method: 'GET', path: '/api/practice/[id]' },
-      { method: 'POST', path: '/api/practice/[id]/submit' },
-      { method: 'PUT', path: '/api/practice/[id]/answer' },
-      { method: 'POST', path: '/api/questions/[id]/solve' },
-      { method: 'POST', path: '/api/questions/[id]/solve/[sid]/submit' },
-      { method: 'POST', path: '/api/questions/[id]/solve/[sid]/hint' },
+      {
+        method: 'POST',
+        path: '/api/review/submit',
+        load: () => import('./api/submit').then((m) => m.POST),
+      },
+      {
+        method: 'GET',
+        path: '/api/review/due',
+        load: () => import('./api/due').then((m) => m.GET),
+      },
+      {
+        method: 'POST',
+        path: '/api/review/advice',
+        load: () => import('./api/advice').then((m) => m.POST),
+      },
+      {
+        method: 'GET',
+        path: '/api/review/weekly',
+        load: () => import('./api/weekly').then((m) => m.GET),
+      },
+      {
+        method: 'POST',
+        path: '/api/review/appeal',
+        load: () => import('./api/appeal').then((m) => m.POST),
+      },
+      {
+        method: 'GET',
+        path: '/api/review/plan',
+        load: () => import('./api/plan').then((m) => m.GET),
+      },
+      {
+        method: 'POST',
+        path: '/api/review/sessions',
+        load: () => import('./api/sessions').then((m) => m.POST),
+      },
+      {
+        method: 'POST',
+        path: '/api/review/sessions/[id]/pause',
+        load: () => import('./api/session-pause').then((m) => m.POST),
+      },
+      {
+        method: 'POST',
+        path: '/api/review/sessions/[id]/resume',
+        load: () => import('./api/session-resume').then((m) => m.POST),
+      },
+      {
+        method: 'POST',
+        path: '/api/review/sessions/[id]/end',
+        load: () => import('./api/session-end').then((m) => m.POST),
+      },
+      {
+        method: 'POST',
+        path: '/api/review/sessions/[id]/reopen',
+        load: () => import('./api/session-reopen').then((m) => m.POST),
+      },
+      {
+        method: 'GET',
+        path: '/api/practice',
+        load: () => import('./api/papers-list').then((m) => m.GET),
+      },
+      {
+        method: 'GET',
+        path: '/api/practice/[id]',
+        load: () => import('./api/paper-detail-route').then((m) => m.GET),
+      },
+      {
+        method: 'POST',
+        path: '/api/practice/[id]/submit',
+        load: () => import('./api/paper-submit-route').then((m) => m.POST),
+      },
+      {
+        method: 'POST',
+        path: '/api/practice/[id]/answer',
+        load: () => import('./api/paper-answer-route').then((m) => m.POST),
+      },
+      {
+        method: 'POST',
+        path: '/api/questions/[id]/solve',
+        load: () => import('./api/solve-start').then((m) => m.POST),
+      },
+      {
+        method: 'POST',
+        path: '/api/questions/[id]/solve/[sid]/submit',
+        load: () => import('./api/solve-submit').then((m) => m.POST),
+      },
+      {
+        method: 'POST',
+        path: '/api/questions/[id]/solve/[sid]/hint',
+        load: () => import('./api/solve-hint').then((m) => m.POST),
+      },
     ],
   },
-  ui: { pages: [{ route: '/review' }, { route: '/practice' }, { route: '/practice/[id]' }] },
+  // M2-T6 将把旧 /review、/practice 页重生为单一练习面 /practice（流+卷架）。
+  ui: { pages: [{ route: '/practice' }] },
 });

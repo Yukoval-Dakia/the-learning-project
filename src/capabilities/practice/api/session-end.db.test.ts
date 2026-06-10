@@ -24,8 +24,8 @@ function beaconReq(id: string, body: string) {
   });
 }
 
-async function paramsFor(id: string) {
-  return Promise.resolve({ id });
+function paramsFor(id: string): Record<string, string> {
+  return { id };
 }
 
 describe('POST /api/review/sessions/[id]/end', () => {
@@ -35,7 +35,7 @@ describe('POST /api/review/sessions/[id]/end', () => {
 
   it('completes a started session by default', async () => {
     const { sessionId } = await Review.startReviewSession(testDb());
-    const res = await POST(jsonReq(sessionId, {}), { params: paramsFor(sessionId) });
+    const res = await POST(jsonReq(sessionId, {}), paramsFor(sessionId));
     expect(res.status).toBe(200);
 
     const db = testDb();
@@ -46,9 +46,7 @@ describe('POST /api/review/sessions/[id]/end', () => {
 
   it('abandons when status=abandoned', async () => {
     const { sessionId } = await Review.startReviewSession(testDb());
-    const res = await POST(jsonReq(sessionId, { status: 'abandoned' }), {
-      params: paramsFor(sessionId),
-    });
+    const res = await POST(jsonReq(sessionId, { status: 'abandoned' }), paramsFor(sessionId));
     expect(res.status).toBe(200);
 
     const db = testDb();
@@ -58,7 +56,7 @@ describe('POST /api/review/sessions/[id]/end', () => {
 
   it('treats sendBeacon (text/plain) without parseable body as completed', async () => {
     const { sessionId } = await Review.startReviewSession(testDb());
-    const res = await POST(beaconReq(sessionId, ''), { params: paramsFor(sessionId) });
+    const res = await POST(beaconReq(sessionId, ''), paramsFor(sessionId));
     expect(res.status).toBe(200);
 
     const db = testDb();
@@ -68,9 +66,10 @@ describe('POST /api/review/sessions/[id]/end', () => {
 
   it('treats sendBeacon text/plain with JSON body as parsed', async () => {
     const { sessionId } = await Review.startReviewSession(testDb());
-    const res = await POST(beaconReq(sessionId, JSON.stringify({ status: 'abandoned' })), {
-      params: paramsFor(sessionId),
-    });
+    const res = await POST(
+      beaconReq(sessionId, JSON.stringify({ status: 'abandoned' })),
+      paramsFor(sessionId),
+    );
     expect(res.status).toBe(200);
     const db = testDb();
     const rows = await db.select().from(learning_session).where(eq(learning_session.id, sessionId));
@@ -78,17 +77,13 @@ describe('POST /api/review/sessions/[id]/end', () => {
   });
 
   it('returns 404 for nonexistent session id', async () => {
-    const res = await POST(jsonReq('no_such_session', {}), {
-      params: paramsFor('no_such_session'),
-    });
+    const res = await POST(jsonReq('no_such_session', {}), paramsFor('no_such_session'));
     expect(res.status).toBe(404);
   });
 
   it('rejects invalid status enum', async () => {
     const { sessionId } = await Review.startReviewSession(testDb());
-    const res = await POST(jsonReq(sessionId, { status: 'mystery' }), {
-      params: paramsFor(sessionId),
-    });
+    const res = await POST(jsonReq(sessionId, { status: 'mystery' }), paramsFor(sessionId));
     expect(res.status).toBe(400);
   });
 });

@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { learning_session, question } from '@/db/schema';
-import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 vi.mock('@/server/ai/runner', () => ({
   runTask: vi.fn(async () => ({
@@ -49,11 +49,9 @@ describe('POST /api/questions/[id]/solve', () => {
   });
 
   it('starts a tutor session and lazily generates a reference solution', async () => {
-    const { POST } = await import('./route');
+    const { POST } = await import('./solve-start');
     const id = await seedBareQuestion();
-    const res = await POST(new Request('http://t/x', { method: 'POST' }), {
-      params: Promise.resolve({ id }),
-    });
+    const res = await POST(new Request('http://t/x', { method: 'POST' }), { id });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { session_id: string; generated: boolean };
     expect(body.session_id).toBeTruthy();
@@ -66,10 +64,8 @@ describe('POST /api/questions/[id]/solve', () => {
   });
 
   it('404s for an unknown question', async () => {
-    const { POST } = await import('./route');
-    const res = await POST(new Request('http://t/x', { method: 'POST' }), {
-      params: Promise.resolve({ id: 'nope' }),
-    });
+    const { POST } = await import('./solve-start');
+    const res = await POST(new Request('http://t/x', { method: 'POST' }), { id: 'nope' });
     expect(res.status).toBe(404);
   });
 });

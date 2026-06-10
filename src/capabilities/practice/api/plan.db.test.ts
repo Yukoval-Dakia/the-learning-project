@@ -3,7 +3,7 @@ import { writeEvent } from '@/server/events/queries';
 import { createId } from '@paralleldrive/cuid2';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { GET } from './route';
+import { GET } from './plan';
 
 function req(qs = '') {
   return new Request(`http://localhost/api/review/plan${qs}`, { method: 'GET' });

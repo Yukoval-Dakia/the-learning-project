@@ -17,12 +17,9 @@ const AutosaveBody = z.object({
   image_refs: z.array(z.string()).default([]),
 });
 
-export async function POST(
-  req: Request,
-  { params }: { params: Promise<{ id: string }> },
-): Promise<Response> {
+export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
   try {
-    const { id: paperArtifactId } = await params;
+    const { id: paperArtifactId } = params;
     const raw = await req.json().catch(() => null);
     const parsed = AutosaveBody.safeParse(raw);
     if (!parsed.success) {
