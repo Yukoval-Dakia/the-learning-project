@@ -26,11 +26,15 @@
 
 import { eq } from 'drizzle-orm';
 
+import {
+  SolveError,
+  buildSolveHintInput,
+  parseHintTurn,
+} from '@/capabilities/practice/server/solve-session';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
 import { type RunTaskResult, runAgentTask } from '@/server/ai/runner';
 import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject-profile';
-import { SolveError, buildSolveHintInput, parseHintTurn } from '@/server/orchestrator/solve';
 
 type RunAgentTaskFn = (
   kind: string,

@@ -5,9 +5,9 @@
 // status='active'). Returns { session_id, generated }.
 import { z } from 'zod';
 
+import { SolveError, startSolveSession } from '@/capabilities/practice/server/solve-session';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { SolveError, startSolveSession } from '@/server/orchestrator/solve';
 
 export const runtime = 'nodejs';
 
