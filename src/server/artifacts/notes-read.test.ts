@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { artifact, knowledge } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import { notesForItem, notesForKnowledge } from './notes-read';
+import { interactiveForKnowledge, notesForItem, notesForKnowledge } from './notes-read';
 
 const A_BASE = {
   intent_source: 'test',
@@ -36,7 +36,7 @@ async function seedKnowledge(id: string): Promise<void> {
 
 async function seedNote(
   id: string,
-  type: 'note_atomic' | 'note_hub' | 'note_long' | 'tool_quiz',
+  type: 'note_atomic' | 'note_hub' | 'note_long' | 'tool_quiz' | 'interactive',
   knowledgeIds: string[],
   opts: { archived?: boolean; createdAt?: Date } = {},
 ): Promise<void> {
@@ -72,10 +72,13 @@ describe('notesForKnowledge', () => {
     expect(notes.map((n) => n.type)).toEqual(['note_atomic', 'note_hub', 'note_long']);
   });
 
-  it('excludes tool_quiz, archived notes, and notes not labeled with the node', async () => {
+  it('excludes tool_quiz, interactive, archived notes, and notes not labeled with the node', async () => {
     await seedKnowledge('k1');
     await seedNote('atomic1', 'note_atomic', ['k1']);
     await seedNote('quiz1', 'tool_quiz', ['k1']); // excluded: a quiz artifact, not a note
+    // excluded: interactive is NOT a note (ADR-0033 D5 anti-leak regression —
+    // it must only surface via interactiveForKnowledge).
+    await seedNote('inter1', 'interactive', ['k1']);
     await seedNote('archived1', 'note_atomic', ['k1'], { archived: true }); // excluded
     await seedNote('other', 'note_atomic', ['k2']); // excluded: different node label
 
@@ -101,6 +104,39 @@ describe('notesForKnowledge', () => {
   it('returns [] for a node with no labeled notes', async () => {
     await seedKnowledge('k1');
     expect(await notesForKnowledge(testDb(), 'k1')).toEqual([]);
+  });
+});
+
+// ADR-0033 D5 — the parallel interactive read. Kept separate from NOTE_TYPES on
+// purpose: notesForKnowledge/notesForItem must never admit interactive rows.
+describe('interactiveForKnowledge', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('returns labeled non-archived interactive artifacts, newest first', async () => {
+    await seedKnowledge('k1');
+    await seedNote('old', 'interactive', ['k1'], {
+      createdAt: new Date('2026-05-10T00:00:00.000Z'),
+    });
+    await seedNote('new', 'interactive', ['k1'], {
+      createdAt: new Date('2026-05-20T00:00:00.000Z'),
+    });
+
+    const rows = await interactiveForKnowledge(testDb(), 'k1');
+    expect(rows.map((r) => r.id)).toEqual(['new', 'old']);
+    expect(rows.every((r) => r.type === 'interactive')).toBe(true);
+  });
+
+  it('excludes archived, unlabeled, and note-type artifacts', async () => {
+    await seedKnowledge('k1');
+    await seedNote('inter1', 'interactive', ['k1']);
+    await seedNote('arch', 'interactive', ['k1'], { archived: true }); // excluded
+    await seedNote('other', 'interactive', ['k2']); // excluded: different node label
+    await seedNote('atomic1', 'note_atomic', ['k1']); // excluded: a note, not interactive
+
+    const rows = await interactiveForKnowledge(testDb(), 'k1');
+    expect(rows.map((r) => r.id)).toEqual(['inter1']);
   });
 });
 

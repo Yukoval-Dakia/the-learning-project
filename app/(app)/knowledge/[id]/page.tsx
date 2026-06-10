@@ -89,6 +89,9 @@ interface KnowledgeNodePage {
   // ADR-0027: full labeled note set (atomic/hub/long). `primary_atomic` stays the
   // inline 节点简介; `notes` powers the multi-note list (deduped against primary).
   notes: NoteSummary[];
+  // ADR-0033 D5: interactive artifacts labeled with this node — separate from
+  // `notes` (the ADR-0027 note contract) on purpose.
+  interactive_artifacts: NoteSummary[];
   backlinks: Backlink[];
   timeline: TimelineEntry[];
 }
@@ -149,13 +152,25 @@ const NOTE_KIND_META: Record<
     tagLabel: 'note_long',
     groupLabel: 'long 长文',
   },
+  // ADR-0033 D5 — interactive artifact rows reuse the note-row chrome. No
+  // dedicated glyph in the Loom vocabulary; `bolt` reads as "runs / live".
+  interactive: {
+    icon: 'bolt',
+    tagClass: 'note-kind-interactive',
+    tagLabel: 'interactive',
+    groupLabel: '互动内容',
+  },
 };
 
 // Backlink source-type → group label + icon. Backend only emits note_* and
-// tool_quiz (pre-flight §4): render only the groups with data.
+// tool_quiz (pre-flight §4): render only the groups with data. `interactive`
+// is a defensive entry for the widened artifact enum (ADR-0033): interactive
+// artifacts have body_blocks=null → no cross_link sources → the group is
+// always empty today and never renders (only groups with data render).
 const BACKLINK_GROUP_META: Record<string, { icon: LoomIconName; label: string }> = {
   note: { icon: 'doc', label: '笔记' },
   tool_quiz: { icon: 'quiz', label: '测验' },
+  interactive: { icon: 'bolt', label: '互动' },
 };
 
 function isVerified(status: string): boolean {
@@ -252,7 +267,8 @@ export default function KnowledgeDetailPage({
   const atomicOthers = node.notes.filter((n) => n.type === 'note_atomic' && n.id !== primaryId);
   const hubNotes = node.notes.filter((n) => n.type === 'note_hub');
   const longNotes = node.notes.filter((n) => n.type === 'note_long');
-  const hasAnyNote = Boolean(node.primary_atomic) || node.notes.length > 0;
+  const hasAnyNote =
+    Boolean(node.primary_atomic) || node.notes.length > 0 || node.interactive_artifacts.length > 0;
   const noteGroups: Array<[string, NoteSummary[]]> = [
     ['note_atomic', atomicOthers],
     ['note_hub', hubNotes],
@@ -268,13 +284,17 @@ export default function KnowledgeDetailPage({
   }
 
   // Backlinks grouped: note_atomic/hub/long → 笔记; tool_quiz → 测验 (pre-flight §4).
+  // `interactive` is a defensive group (ADR-0033): body_blocks=null → no
+  // cross_link sources → always empty today; only groups with data render.
   const noteBacklinks = node.backlinks.filter((b) => b.from_type.startsWith('note_'));
   const quizBacklinks = node.backlinks.filter((b) => b.from_type === 'tool_quiz');
-  const backlinkGroups: Array<['note' | 'tool_quiz', Backlink[]]> = [
+  const interactiveBacklinks = node.backlinks.filter((b) => b.from_type === 'interactive');
+  const backlinkGroups: Array<['note' | 'tool_quiz' | 'interactive', Backlink[]]> = [
     ['note', noteBacklinks],
     ['tool_quiz', quizBacklinks],
+    ['interactive', interactiveBacklinks],
   ];
-  const hasAnyBacklink = noteBacklinks.length > 0 || quizBacklinks.length > 0;
+  const hasAnyBacklink = backlinkGroups.some(([, arr]) => arr.length > 0);
 
   // Mastery guard — reuse MasteryBadge semantics (evidence_count thresholds): a
   // ring % is misleading below 3 evidence, so render a label instead. (pre-flight §6.)
@@ -390,6 +410,34 @@ export default function KnowledgeDetailPage({
                     </div>
                   );
                 })}
+
+              {/* interactive artifacts (ADR-0033 D5) — same row chrome as the note
+                  groups but a separate data source (interactive is NOT a note).
+                  No VerifyBadge: verification is a note mechanism — interactive is
+                  always verification_status='not_required', which VerifyBadge
+                  would mis-render as 草稿. */}
+              {node.interactive_artifacts.length > 0 && (
+                <div className="kd-note-group">
+                  <div className="kd-note-group-h">
+                    <span className={`note-kind-tag ${NOTE_KIND_META.interactive.tagClass}`}>
+                      {NOTE_KIND_META.interactive.tagLabel}
+                    </span>
+                    {NOTE_KIND_META.interactive.groupLabel} · {node.interactive_artifacts.length}
+                  </div>
+                  {node.interactive_artifacts.map((nt) => (
+                    <Link
+                      key={nt.id}
+                      href={`/notes/${nt.id}?${noteFrom}`}
+                      className="note-link-row"
+                    >
+                      <LoomIcon name={NOTE_KIND_META.interactive.icon} size={15} />
+                      <span className="note-link-title">{nt.title}</span>
+                      <span className="meta">{formatRelTime(new Date(nt.updated_at))}</span>
+                      <LoomIcon name="arrow" size={13} className="thread-arrow" />
+                    </Link>
+                  ))}
+                </div>
+              )}
             </>
           )}
 
