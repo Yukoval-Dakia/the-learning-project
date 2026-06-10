@@ -22,6 +22,10 @@ export default defineConfig({
       '/api/assets': 'http://localhost:8787',
       '/api/agents': 'http://localhost:8787',
       '/api/health': 'http://localhost:8787',
+      // M2-T6 (YUK-316)：练习/复习链已迁 Hono。/api/questions/*（题面读 + solve
+      // 链）整体留旧栈——GET 题面仍由旧 Next 服务，solve 旧壳是同 handler 的 shim。
+      '/api/review': 'http://localhost:8787',
+      '/api/practice': 'http://localhost:8787',
       '/api': process.env.RW_OLD_STACK ?? 'http://localhost:3000',
     },
   },

@@ -34,7 +34,7 @@ import { z } from 'zod';
 
 import { newId } from '@/core/ids';
 import { ActivityRef } from '@/core/schema/activity';
-import { FsrsRating } from '@/core/schema/business';
+import { FsrsRating, JudgeKind as JudgeKindZ } from '@/core/schema/business';
 import { JudgeResultV2, type JudgeResultV2T } from '@/core/schema/capability';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
@@ -296,6 +296,8 @@ async function judgeSubmit({ body, questionId, q }: ValidatedSubmit): Promise<Ju
 
 interface PersistedSubmit {
   eventId: string;
+  /** M2 (YUK-316)：独立 judge 锚点 event id——流 UI 的「不服判」入口需要它。 */
+  judgeEventId: string | null;
   outcome: 'success' | 'failure';
   fsrsSubjectKind: FsrsSubjectKind;
   fsrsSubjectIds: string[];
@@ -361,6 +363,8 @@ async function persistSubmit(
   // upsert even when the projection row does not exist yet.
   const outcome: 'success' | 'failure' = finalRating === 'again' ? 'failure' : 'success';
   const eventId = newId();
+  // M2 (YUK-316)：判定锚点 event id（事务内条件写入，响应层回传给「不服判」）。
+  let judgeEventId: string | null = null;
   let primaryResult: ReturnType<typeof scheduleReview>;
   let primaryFsrsStateAfter: PersistedSubmit['finalFsrsStateAfter'];
 
@@ -529,12 +533,15 @@ async function persistSubmit(
     // 这把散题判定纳入统一 judge 事件链：申诉重判（rejudge job）写新 judge event
     // 即可经 newest-wins（D6）盖掉本判定。review event 内嵌的 payload.judge 保留
     // ——既有读路径不变，这里只是补出可 supersede 的判定锚点。
-    // gate 用 judgeTelemetry：只有服务端 invoker 真跑的权威判分才立锚点——
-    // client-supplied judge_result_v2 没有服务端权威性（其 capability_ref.id 也
-    // 不受 JudgeKind enum 约束，直接写会炸 JudgeOnEvent 校验）。
-    if (judgeResult !== null && judgeRoute !== null && judgeTelemetry !== null) {
+    // gate：锚点只在 judge_route 是合法 JudgeKind 时写——服务端 invoker 路径
+    // 天然满足；supplied judge_result_v2 路径中，「advice 预览 → submit 复用」
+    // 的两段式（流 UI 的散题数据流）回传的 capability_ref.id 就是真实 route，
+    // 同样合法可立锚点；任意第三方 supplied id 不在 enum 内则跳过（直接写会
+    // 炸 JudgeOnEvent 校验，且无权威性）。
+    if (judgeResult !== null && judgeRoute !== null && JudgeKindZ.safeParse(judgeRoute).success) {
+      judgeEventId = newId();
       await writeEvent(tx, {
-        id: newId(),
+        id: judgeEventId,
         session_id: body.session_id ?? null,
         actor_kind: 'agent',
         actor_ref: 'review_judge',
@@ -590,7 +597,15 @@ async function persistSubmit(
     });
   }
 
-  return { eventId, outcome, fsrsSubjectKind, fsrsSubjectIds, finalResult, finalFsrsStateAfter };
+  return {
+    eventId,
+    judgeEventId,
+    outcome,
+    fsrsSubjectKind,
+    fsrsSubjectIds,
+    finalResult,
+    finalFsrsStateAfter,
+  };
 }
 
 // ============================================================================
@@ -626,6 +641,8 @@ export async function POST(req: Request): Promise<Response> {
             capability_ref: judgeResult.capability_ref,
             suggested_rating: suggestedRating,
             auto_rated: body.auto_rate,
+            // M2 (YUK-316) — 申诉锚点 id（流 UI「不服判」直接对它发 appeal）。
+            judge_event_id: persisted.judgeEventId,
             ...(judgeTelemetry !== null ? { telemetry: judgeTelemetry } : {}),
           }
         : null;

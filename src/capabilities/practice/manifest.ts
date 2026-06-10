@@ -70,6 +70,13 @@ export const practiceCapability = defineCapability({
         load: () => import('./api/papers-list').then((m) => m.GET),
       },
       {
+        // 开卷：start a review session bound to a paper artifact（M2-T6 补登：
+        // handler 随 P2a 已迁入 papers-list.ts，manifest 此前漏了 POST 条目）。
+        method: 'POST',
+        path: '/api/practice',
+        load: () => import('./api/papers-list').then((m) => m.POST),
+      },
+      {
         // M2 流编排器（YUK-316）。静态段 'stream' 在 Hono 中优先于 :id 匹配。
         method: 'GET',
         path: '/api/practice/stream',
