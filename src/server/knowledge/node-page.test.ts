@@ -229,6 +229,19 @@ describe('loadKnowledgeNodePage', () => {
     expect(page?.primary_atomic?.id).toBe('a1');
   });
 
+  // ADR-0033 D5 — interactive artifacts surface in their own field and must
+  // never leak into `notes` (the ADR-0027 note contract).
+  it('lists labeled interactive artifacts in `interactive_artifacts`, not in `notes`', async () => {
+    const db = testDb();
+    await seedKnowledge('k1', { name: '虚词' });
+    await seedSourceArtifact('h1', 'k1', 'note_hub');
+    await seedSourceArtifact('i1', 'k1', 'interactive');
+    const page = await loadKnowledgeNodePage(db, 'k1');
+    expect(page?.interactive_artifacts.map((n) => n.id)).toEqual(['i1']);
+    expect(page?.interactive_artifacts[0]?.type).toBe('interactive');
+    expect(page?.notes.map((n) => n.id)).toEqual(['h1']);
+  });
+
   it('resolves parent name', async () => {
     const db = testDb();
     await seedKnowledge('kp', { name: '文言文' });

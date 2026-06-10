@@ -6931,6 +6931,28 @@ button.seg-sm {
   background: var(--paper-sunk);
 }
 
+/* ── interactive artifact sandbox frame (ADR-0033 D4) ──────────
+   Bounded-height shell for the sandboxed iframe: fixed default height +
+   native CSS resize affordance (precedent: the other resize: vertical
+   surfaces in this file), zero-JS by design — no postMessage height
+   protocol. Container chrome mirrors .note-edit-shell tokens. */
+.note-interactive-shell {
+  height: 480px;
+  min-height: 240px;
+  max-height: 85vh;
+  resize: vertical;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  background: var(--paper-sunk);
+}
+.note-interactive-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
 /* ── context rail ─────────────────────────────────────────── */
 .note-context {
   display: flex;
@@ -7406,6 +7428,13 @@ button.seg-sm {
   background: var(--paper-sunk);
   color: var(--ink-3);
   border-color: var(--line-strong);
+}
+/* interactive artifact tag (ADR-0033 D5) — good family: coral/info/paper-sunk
+   are taken by atomic/hub/long above. */
+.note-kind-interactive {
+  background: var(--good-soft);
+  color: var(--good-ink);
+  border-color: var(--good-line);
 }
 
 /* ---- primary note (p5.css L71-76) ---- */

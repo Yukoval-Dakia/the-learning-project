@@ -73,6 +73,36 @@ async function seedNote(
     });
 }
 
+// ADR-0033 — interactive artifact row, mirroring the author_artifact tool's
+// insert shape (author-artifact.ts): attrs jsonb payload, body_blocks null,
+// generation_status ready, verification not_required (defaults via A_BASE /
+// schema). `attrs` is overridable to seed a malformed payload.
+async function seedInteractive(id: string, knowledgeIds: string[], attrs?: unknown): Promise<void> {
+  const now = new Date();
+  await testDb()
+    .insert(artifact)
+    .values({
+      id,
+      type: 'interactive',
+      title: `interactive-${id}`,
+      knowledge_ids: knowledgeIds,
+      body_blocks: null,
+      attrs: (attrs ?? {
+        format: 'html',
+        html: '<!doctype html><html><body><p>hi</p></body></html>',
+        origin: 'copilot_author_artifact',
+      }) as never,
+      generation_status: 'ready',
+      verification_status: 'not_required',
+      history: [] as never,
+      version: 0,
+      archived_at: null,
+      created_at: now,
+      updated_at: now,
+      ...A_BASE,
+    });
+}
+
 async function seedLearningItem(
   id: string,
   opts: {
@@ -124,6 +154,40 @@ describe('loadNotePage', () => {
 
     await seedNote('quiz', 'tool_quiz', []);
     expect(await loadNotePage(db, 'quiz')).toBeNull();
+  });
+
+  // ADR-0033 D5 — /notes/[id] doubles as the interactive artifact reader shell.
+  it('loads an interactive artifact: html payload, null body, empty note machinery', async () => {
+    const db = testDb();
+    await seedKnowledge('k1', '之');
+    const html = '<!doctype html><html><body><p>hi</p></body></html>';
+    await seedInteractive('i1', ['k1'], { format: 'html', html });
+
+    const page = await loadNotePage(db, 'i1');
+    expect(page).not.toBeNull();
+    expect(page?.type).toBe('interactive');
+    expect(page?.interactive).toEqual({ html }); // attrs.html verbatim
+    expect(page?.body_blocks).toBeNull();
+    expect(page?.sections).toEqual([]);
+    expect(page?.embedded_questions).toEqual([]);
+    expect(page?.labels).toEqual([{ id: 'k1', name: '之' }]);
+    expect(page?.verification_status).toBe('not_required');
+  });
+
+  it('degrades to interactive=null on malformed attrs (page still loads)', async () => {
+    const db = testDb();
+    await seedInteractive('bad', [], {}); // fails InteractiveArtifactAttrs
+
+    const page = await loadNotePage(db, 'bad');
+    expect(page).not.toBeNull(); // chrome (title/version) still renders — not a 404
+    expect(page?.interactive).toBeNull();
+  });
+
+  it('keeps interactive=null for note types', async () => {
+    const db = testDb();
+    await seedNote('n1', 'note_atomic', []);
+    const page = await loadNotePage(db, 'n1');
+    expect(page?.interactive).toBeNull();
   });
 
   it('aggregates labels, sections, subject profile, version, and history', async () => {
