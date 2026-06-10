@@ -1,5 +1,3 @@
-'use client';
-
 // "AI 观察" full-screen drill-in (YUK-294) — the 二级 view reached from the Today
 // AgentNotesBoard's 看全部 entry. Same drill-in pattern as /events: full content
 // area, breadcrumb back, NO new global nav item.
@@ -7,6 +5,9 @@
 // Read-only spectator surface: agents leave observation signals for each other;
 // the user only reads. Zero accept/dismiss — the only stateful interaction is the
 // local "已读" toggle (shared localStorage with the Today block).
+//
+// M0 (YUK-313, REV 2)：去 next/navigation——capability ui 不 import 路由库，
+// 导航以 `navigate` prop 由 web 壳（web/src/router.tsx）注入，页面保持框架无关。
 
 import { apiJson } from '@/ui/lib/api';
 import { Btn } from '@/ui/primitives/Btn';
@@ -17,7 +18,6 @@ import { SectionLabel } from '@/ui/primitives/SectionLabel';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
 import { useQuery } from '@tanstack/react-query';
-import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { AgentNoteCard } from './AgentNoteCard';
 import { dayGroupOf } from './derive';
@@ -25,8 +25,7 @@ import { SIGNAL_META, signalMeta } from './meta';
 import type { AgentNotesResponse, BoardAgentNote } from './types';
 import { useAgentReads } from './useAgentReads';
 
-export default function AgentNotesPage() {
-  const router = useRouter();
+export default function AgentNotesPage({ navigate }: { navigate: (to: string) => void }) {
   const now = new Date();
   const [filter, setFilter] = useState<string>('all');
   const { isUnread, markAllRead, unreadCount } = useAgentReads(now);
@@ -73,7 +72,7 @@ export default function AgentNotesPage() {
 
   return (
     <main className="page view agentnotes-loom an-scope">
-      <button type="button" className="back-link" onClick={() => router.push('/today')}>
+      <button type="button" className="back-link" onClick={() => navigate('/today')}>
         <LoomIcon name="arrowL" size={14} />
         今日
       </button>
@@ -156,7 +155,7 @@ export default function AgentNotesPage() {
                     note={n}
                     unread={isUnread(n)}
                     now={now}
-                    onNavigate={(route) => router.push(route)}
+                    onNavigate={(route) => navigate(route)}
                   />
                 ))}
               </div>
