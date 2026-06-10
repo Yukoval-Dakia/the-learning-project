@@ -1,7 +1,8 @@
 import { db } from '@/db/client';
 import { event } from '@/db/schema';
+import { getStartedBoss } from '@/server/boss/client';
 import { writeEvent } from '@/server/events/queries';
-import { writeJudgeRetractionProposal } from '@/server/proposals/producers';
+import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
@@ -9,17 +10,17 @@ import { z } from 'zod';
 const AppealRequestSchema = z.object({
   /** The judge event being appealed (must exist + action='judge'). */
   judge_event_id: z.string().min(1),
-  /** Optional learner-provided note. */
+  /** Learner-provided objection. D15: 申诉 = 请 AI 带用户理由重判。 */
   reason_md: z.string().max(2000).optional(),
 });
 
 /**
- * M2.3 (2026-05-22): Appeal flow stub.
+ * M2 (YUK-316, D15) — 申诉自动重判链入口。
  *
- * Writes an `experimental:appeal_request` event chained off the judge event
- * (caused_by_event_id). DOES NOT trigger a rejudge — spec §3 M2 #8 explicitly
- * defers actual rejudge to M3+. The event records the user's intent; downstream
- * dreaming / review jobs may consume it.
+ * 旧 M2.3 stub 写 appeal_request event 后产出 judge-retraction proposal（人审）。
+ * D15 裁决：判分属软判断层 → 申诉直接触发异步重判（pg-boss `rejudge` job），
+ * 重判结果直接生效（correction event 留痕，无 proposal）。appeal_request event
+ * 照旧写入（它是 rejudge 的幂等键与 caused_by 锚点）。
  *
  * Auth: middleware enforces `x-internal-token` on all `/api/*` except /health.
  */
@@ -44,9 +45,7 @@ export async function POST(req: Request) {
     return Response.json({ error: 'evidence_ref_must_be_judge_event' }, { status: 422 });
   }
 
-  // ADR-0005 single-owner: all event inserts go through writeEvent
-  // (which calls parseEvent() against the experimental:* schema and
-  // throws on shape mismatch).
+  // ADR-0005 single-owner: all event inserts go through writeEvent.
   const appealEventId = await writeEvent(db, {
     id: createId(),
     session_id: judgeEvent.session_id,
@@ -60,11 +59,13 @@ export async function POST(req: Request) {
     caused_by_event_id: judge_event_id,
   });
 
-  await writeJudgeRetractionProposal(db, {
-    judge_event_id,
-    appeal_event_id: appealEventId,
-    reason_md: reason_md?.trim() || '用户申诉该判题结果，需要撤回或重判。',
-  });
+  // 异步重判（不阻塞流——设计稿「重判中 · 不阻塞，先继续」）。singletonKey =
+  // appeal event id：同一申诉只跑一次。测试环境（shouldEnqueueBackgroundJobs
+  // false）只写事件，由测试直接调 handler。
+  if (shouldEnqueueBackgroundJobs()) {
+    const boss = await getStartedBoss();
+    await boss.send('rejudge', { appeal_event_id: appealEventId }, { singletonKey: appealEventId });
+  }
 
   return Response.json({ appeal_event_id: appealEventId });
 }

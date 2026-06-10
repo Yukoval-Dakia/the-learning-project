@@ -432,6 +432,12 @@ async function assertJudgeRetractionEvidenceRefs(
   }
 }
 
+/**
+ * @deprecated M2 (YUK-316, D15)：appeal 不再产 judge_retraction proposal——申诉
+ * 直接走异步 rejudge job（correction 留痕、结果直接生效）。本函数已无生产调用方；
+ * kind/schema/applier 随 M4 提议生命周期契约整体清理（历史 proposal 行仍引用该 kind，
+ * 读路径在那之前保留）。
+ */
 export async function writeJudgeRetractionProposal(
   db: DbLike,
   input: WriteJudgeRetractionProposalInput,

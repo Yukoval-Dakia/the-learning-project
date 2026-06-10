@@ -79,6 +79,11 @@ export interface JudgeAnswerParams {
   student_image_refs?: string[];
   subjectProfile: SubjectProfile;
   runTaskFn?: (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
+  /**
+   * M2 申诉重判（YUK-316, D15）：用户对先前判定的异议上下文。仅 semantic 路由
+   * 消费（rejudge 走 judge_kind_override='semantic' 强制语义复核）；其它路由忽略。
+   */
+  appeal_context?: { prior_outcome: string; user_reason_md: string };
 }
 
 export interface JudgeAnswerResult {
@@ -229,6 +234,8 @@ export async function runSemanticJudge(params: JudgeAnswerParams): Promise<Judge
       {
         question: semanticInput(params.question, params.subjectProfile),
         answer: { content: params.answer_md },
+        // M2 申诉重判（YUK-316）：system prompt 指示模型复核用户异议。
+        ...(params.appeal_context ? { appeal: params.appeal_context } : {}),
       },
       {
         db: params.db,
