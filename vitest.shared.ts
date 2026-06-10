@@ -8,16 +8,20 @@ export const resolveConfig = {
   alias: { '@': path.resolve(__dirname, 'src') },
 };
 
-// ⚠️ vite 钉 ^7（YUK-315）：vite 8 换 Rolldown 引擎后本 `esbuild` 配置项失效，
-// JSX 不再被转换（tsconfig jsx:preserve → 24 个 .tsx 测试文件 parse 失败，
-// 2026-06-10 实测）。升 vite 8 需把这套 esbuild JSX 方案整体迁到 oxc 配置体系
-//（连带 @vitejs/plugin-react 回 ^6），见 YUK-315；在那之前别动 vite major。
-//
 // YUK-279 — single source of truth for the JSX transform both vitest configs
 // share. tsconfig has `jsx: "preserve"` (Next transforms JSX at build), so vitest
 // must transform JSX itself via esbuild's automatic runtime; otherwise component
 // tests crash with `React is not defined`. Both the unit and db configs import
 // this so the transform can never drift between the two partitions.
+// YUK-315 (2026-06-10) — vite 8 起 JS 转换引擎为 Rolldown/Oxc：`esbuild` 配置项在
+// vitest 链路下不再生效（tsconfig jsx:preserve 的 JSX 无人转换 → .tsx 测试 parse
+// 失败），等价物为 oxc.jsx（runtime automatic，同语义）。legacy 单 config
+//（vitest.config.ts，pnpm test:legacy）如需 .tsx 同样换 oxc。
+export const sharedOxc = {
+  jsx: { runtime: 'automatic' },
+} as const;
+
+// DEPRECATED (YUK-315)：vite 7 时代的 esbuild 形态，仅留作历史参照；新 config 用 sharedOxc。
 export const sharedEsbuild = {
   jsx: 'automatic',
 } as const;
