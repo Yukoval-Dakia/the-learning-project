@@ -1,0 +1,74 @@
+/* ============================================================
+   Loom · ⌘K command palette
+   ============================================================ */
+/* the topbar searchbox is now a real <button> — neutralize UA styles */
+button.searchbox { font: inherit; font-size: var(--fs-caption); cursor: pointer; text-align: left; transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out); }
+button.searchbox:hover { border-color: var(--line-strong); background: var(--paper-raised); }
+button.searchbox:focus-visible { border-color: var(--coral-line); box-shadow: var(--shadow-focus); outline: none; }
+
+.cmdk-scrim {
+  position: fixed; inset: 0; z-index: 90;
+  background: color-mix(in srgb, var(--ink) 18%, transparent);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 12vh var(--s-4) var(--s-4);
+  animation: cmdk-fade var(--dur-fast) var(--ease-out) both;
+}
+@keyframes cmdk-fade { from { opacity: 0; } to { opacity: 1; } }
+
+.cmdk {
+  width: 100%; max-width: 560px;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-4);
+  box-shadow: var(--shadow-3);
+  overflow: hidden;
+  display: flex; flex-direction: column;
+  max-height: min(420px, 70vh);
+  animation: cmdk-rise var(--dur-base) var(--ease-out) both;
+}
+@keyframes cmdk-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .cmdk, .cmdk-scrim { animation: none; } }
+
+.cmdk-head {
+  display: flex; align-items: center; gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-4);
+}
+.cmdk-head input {
+  flex: 1; min-width: 0; border: 0; background: transparent; outline: none;
+  font-family: var(--font-sans); font-size: var(--fs-body); color: var(--ink);
+}
+.cmdk-head input::placeholder { color: var(--ink-5); }
+.cmdk-head kbd {
+  font-family: var(--font-mono); font-size: 11px; color: var(--ink-4);
+  background: var(--paper-sunk); border: 1px solid var(--line);
+  border-radius: var(--r-1); padding: 2px 6px;
+}
+
+.cmdk-list { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s-2); }
+.cmdk-group {
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: var(--ls-wide);
+  color: var(--ink-4); padding: var(--s-3) var(--s-3) var(--s-1);
+}
+.cmdk-row {
+  display: flex; align-items: center; gap: var(--s-3);
+  width: 100%; text-align: left; border: 0; background: transparent;
+  padding: var(--s-2) var(--s-3); border-radius: var(--r-2);
+  color: var(--ink-2); cursor: pointer;
+}
+.cmdk-row.on { background: var(--coral-soft); color: var(--coral-ink); }
+.cmdk-ic { color: var(--ink-4); flex: none; display: grid; place-items: center; }
+.cmdk-row.on .cmdk-ic { color: var(--coral); }
+.cmdk-title { flex: 1; min-width: 0; font-size: var(--fs-caption); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmdk-meta { flex: none; font-size: 11px; color: var(--ink-4); }
+.cmdk-row.on .cmdk-meta { color: var(--coral-ink); }
+.cmdk-go { flex: none; opacity: 0; }
+.cmdk-row.on .cmdk-go { opacity: 1; }
+.cmdk-empty { color: var(--ink-4); font-size: var(--fs-caption); padding: var(--s-6) var(--s-4); text-align: center; }
+
+.cmdk-foot {
+  font-size: 11px; color: var(--ink-4); letter-spacing: var(--ls-wide);
+  padding: var(--s-2) var(--s-4);
+  border-top: 1px solid var(--line); background: var(--paper-sunk);
+}
