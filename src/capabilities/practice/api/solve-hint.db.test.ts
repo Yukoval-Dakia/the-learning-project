@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { question } from '@/db/schema';
 import { Tutor } from '@/server/session';
-import { resetDb, testDb } from '../../../../../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 vi.mock('@/server/ai/runner', () => ({
   runTask: vi.fn(async () => ({
@@ -26,7 +26,7 @@ describe('POST /api/questions/[id]/solve/[sid]/hint', () => {
   });
 
   it('returns a hint for an active session', async () => {
-    const { POST } = await import('./route');
+    const { POST } = await import('./solve-hint');
     const id = createId();
     const now = new Date();
     await db.insert(question).values({
@@ -53,7 +53,7 @@ describe('POST /api/questions/[id]/solve/[sid]/hint', () => {
 
     const res = await POST(
       new Request('http://t/x', { method: 'POST', body: JSON.stringify({ hint_index: 0 }) }),
-      { params: Promise.resolve({ id, sid: sessionId }) },
+      { id, sid: sessionId },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { text_md: string };

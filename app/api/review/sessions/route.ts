@@ -1,16 +1,3 @@
-// ADR-0013 — eager create review session on /review page mount.
-
-import { db } from '@/db/client';
-import { errorResponse } from '@/server/http/errors';
-import { Review } from '@/server/session';
-
+// 外壳挂载 — handler 本体在 practice capability 包（M2 上 Hono，YUK-316）。双栈期保留至 M2-T7 拆除。
 export const runtime = 'nodejs';
-
-export async function POST(): Promise<Response> {
-  try {
-    const { sessionId } = await Review.startReviewSession(db);
-    return Response.json({ session_id: sessionId });
-  } catch (err) {
-    return errorResponse(err);
-  }
-}
+export { POST } from '@/capabilities/practice/api/sessions';

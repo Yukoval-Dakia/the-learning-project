@@ -1,39 +1,13 @@
-// YUK-193 — POST /api/questions/[id]/solve
-//
-// Start a solve session on a question. If rubric_json.reference_solution is
-// missing, lazily generate it (spec §3.2). Creates learning_session(type='tutor',
-// status='active'). Returns { session_id, generated }.
-import { z } from 'zod';
-
-import { SolveError, startSolveSession } from '@/capabilities/practice/server/solve-session';
-import { db } from '@/db/client';
-import { ApiError, errorResponse } from '@/server/http/errors';
+// 外壳挂载 — handler 本体在 practice capability 包（M2 上 Hono，YUK-316）。
+// param 路由 shim：Next ctx.params (Promise) 解包为 kernel RouteHandler v2 的
+// params Record。双栈期保留至 M2-T7 拆除。
+import { POST as handler } from '@/capabilities/practice/api/solve-start';
 
 export const runtime = 'nodejs';
-
-const Body = z.object({ regenerate: z.boolean().optional() }).nullable();
 
 export async function POST(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  try {
-    const { id } = await ctx.params;
-    const raw = await req.json().catch(() => null);
-    const parsed = Body.safeParse(raw);
-    const regenerate = parsed.success && parsed.data ? parsed.data.regenerate : undefined;
-
-    const result = await startSolveSession({ db, questionId: id, regenerate });
-
-    return Response.json({
-      session_id: result.sessionId,
-      generated: result.generated,
-      generation_error: result.generationError,
-    });
-  } catch (err) {
-    if (err instanceof SolveError && err.code === 'question_not_found') {
-      return errorResponse(new ApiError('not_found', err.message, 404));
-    }
-    return errorResponse(err);
-  }
+  return handler(req, await ctx.params);
 }

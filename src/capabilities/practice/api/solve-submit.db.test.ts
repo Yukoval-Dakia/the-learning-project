@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { learning_record, learning_session, question } from '@/db/schema';
 import { Tutor } from '@/server/session';
-import { resetDb, testDb } from '../../../../../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 vi.mock('@/server/judge/invoker', () => ({
   createDefaultJudgeInvoker: () => ({
@@ -67,7 +67,7 @@ describe('POST /api/questions/[id]/solve/[sid]/submit', () => {
   });
 
   it('typed submit → judged, reveals solution, enrolls mistake on low score', async () => {
-    const { POST } = await import('./route');
+    const { POST } = await import('./solve-submit');
     const { id, sessionId } = await seedAndStart();
 
     const res = await POST(
@@ -75,7 +75,7 @@ describe('POST /api/questions/[id]/solve/[sid]/submit', () => {
         method: 'POST',
         body: JSON.stringify({ student_final_answer_text: 'wrong' }),
       }),
-      { params: Promise.resolve({ id, sid: sessionId }) },
+      { id, sid: sessionId },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -97,11 +97,11 @@ describe('POST /api/questions/[id]/solve/[sid]/submit', () => {
   });
 
   it('400 on an all-empty submission', async () => {
-    const { POST } = await import('./route');
+    const { POST } = await import('./solve-submit');
     const { id, sessionId } = await seedAndStart();
     const res = await POST(
       new Request('http://t/x', { method: 'POST', body: JSON.stringify({}) }),
-      { params: Promise.resolve({ id, sid: sessionId }) },
+      { id, sid: sessionId },
     );
     expect(res.status).toBe(400);
   });

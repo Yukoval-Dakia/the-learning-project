@@ -12,12 +12,9 @@ import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { getPaperDetail } from '../server/paper-detail';
 
-export async function GET(
-  _req: Request,
-  { params }: { params: Promise<{ id: string }> },
-): Promise<Response> {
+export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
-    const { id: paperArtifactId } = await params;
+    const { id: paperArtifactId } = params;
     const result = await getPaperDetail(db, paperArtifactId);
     if (!result) {
       throw new ApiError('not_found', `paper artifact ${paperArtifactId} not found`, 404);
