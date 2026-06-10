@@ -5,10 +5,13 @@
 // root_question_id family rotation, plus every fallback / dedup / boundary path
 // from ADR-0030 §2/§3 and plan §3.
 
+import {
+  pickProbeForKnowledge,
+  rotationClassForKind,
+} from '@/capabilities/practice/server/variant-rotation';
 import { event, question } from '@/db/schema';
-import { pickProbeForKnowledge, rotationClassForKind } from '@/server/review/variant-rotation';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 const BASE = {
   reference_md: null as string | null,

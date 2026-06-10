@@ -11,9 +11,9 @@
 //
 // One aggregation call — no N+1 per-slot fetch (Q8 principle).
 
+import { getPaperDetail } from '@/capabilities/practice/server/paper-detail';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { getPaperDetail } from '@/server/review/paper-detail';
 
 export const runtime = 'nodejs';
 

@@ -7,10 +7,10 @@
 //   2. The GET /api/practice aggregation (§4.10 Q8/Q9): paper artifact + its
 //      linked review session + derived pos / right-wrong / gen / source.
 
+import { readPaperSections } from '@/capabilities/practice/server/paper-sections';
 import { Artifact } from '@/core/schema/index';
 import type { Db } from '@/db/client';
 import { artifact, knowledge, learning_session } from '@/db/schema';
-import { readPaperSections } from '@/server/review/paper-sections';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 
 // ────────────────────────────────────────────────────────────────────────────

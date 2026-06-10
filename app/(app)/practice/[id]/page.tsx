@@ -24,7 +24,10 @@
 //   - pagehide → sendBeacon completed (unless paused)
 //   - pause/resume via /api/review/sessions/[id]/{pause,resume}
 
-import type { PaperDetailResult, PaperDetailSlot } from '@/server/review/paper-detail';
+import type {
+  PaperDetailResult,
+  PaperDetailSlot,
+} from '@/capabilities/practice/server/paper-detail';
 import { PracticeChoiceOptions } from '@/ui/components/PracticeChoiceOptions';
 import {
   answerMdToSelection,

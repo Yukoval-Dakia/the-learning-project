@@ -29,6 +29,7 @@
 // `*.db.test.ts` under tests/** lands in the db partition (allTestInclude minus
 // fastTestInclude); it imports the testDb helper, so it must NOT be a unit test.
 
+import { handleReviewDue } from '@/capabilities/practice/server/due-list';
 import { material_fsrs_state } from '@/db/schema';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/server/ai/tools/budgets';
@@ -45,7 +46,6 @@ import { buildBriefGenerator } from '@/server/memory/brief-writer';
 import { acceptAiProposal } from '@/server/proposals/actions';
 import { resolveEdgeGateBump } from '@/server/proposals/adaptive-bias';
 import { getProposalAcceptanceRates } from '@/server/proposals/signals';
-import { handleReviewDue } from '@/server/review/due-list';
 import { and, eq, sql } from 'drizzle-orm';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {

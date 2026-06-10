@@ -10,10 +10,10 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 
+import { getPracticeList } from '@/capabilities/practice/server/practice-read';
 import { db } from '@/db/client';
 import { artifact, learning_session } from '@/db/schema';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { getPracticeList } from '@/server/review/practice-read';
 import { Review } from '@/server/session';
 
 export const runtime = 'nodejs';

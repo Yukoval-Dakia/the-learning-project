@@ -9,12 +9,12 @@
 
 import { z } from 'zod';
 
+import { resolveSlotAssignment } from '@/capabilities/practice/server/paper-sections';
+import { submitPaperSlot } from '@/capabilities/practice/server/paper-submit';
 import { Artifact } from '@/core/schema/index';
 import { db } from '@/db/client';
 import { artifact } from '@/db/schema';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { resolveSlotAssignment } from '@/server/review/paper-sections';
-import { submitPaperSlot } from '@/server/review/paper-submit';
 import { eq } from 'drizzle-orm';
 
 export const runtime = 'nodejs';
