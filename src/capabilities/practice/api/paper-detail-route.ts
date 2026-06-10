@@ -1,5 +1,5 @@
 // U5 (YUK-203, §4.10 Q8-addendum) — GET /api/practice/[id]: full answering-page
-// payload for one paper artifact.（P2a 迁入包，外壳 app/api/practice/[id]/route.ts 挂载。）
+// payload for one paper artifact.（P2a 迁入包；M2-T7 起仅由 Hono manifest 挂载。）
 //
 // Returns: paper meta + ordered sections + per-slot question face + live draft
 // (for answer restoration on page reload) + submission state with SERVER-gated
