@@ -1,8 +1,8 @@
 'use client';
 
+import { AgentNotesBoard } from '@/capabilities/agent-notes/ui/AgentNotesBoard';
+import type { AgentNotesResponse } from '@/capabilities/agent-notes/ui/types';
 import type { AiProposalKindT } from '@/core/schema/proposal';
-import { AgentNotesBoard } from '@/ui/agent-notes/AgentNotesBoard';
-import type { AgentNotesResponse } from '@/ui/agent-notes/types';
 import { apiJson } from '@/ui/lib/api';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomBadge } from '@/ui/primitives/LoomBadge';
