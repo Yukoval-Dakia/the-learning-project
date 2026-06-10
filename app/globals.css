@@ -8645,6 +8645,47 @@ button.seg-sm {
   font-style: italic;
 }
 
+/* YUK-307 (presentation layer §2.5) — the agent's per-reply hero nomination,
+   below the reply text. Tokens-only, mirrors .skill-turn-check (no new visual
+   system). Two shapes: a reference card (.copilot-hero-ref — artifact /
+   tool_result) and an inline sandboxed artifact (the .copilot-hero wrapper
+   reuses D's .note-interactive-shell, Dock-scoped to a shorter default height
+   so the drawer is not dominated; still resizable). */
+.copilot-loom .copilot-hero {
+  margin-top: 6px;
+}
+.copilot-loom .copilot-hero .note-interactive-shell {
+  height: 320px;
+}
+.copilot-loom .copilot-hero-ref {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 10px 14px;
+  background: var(--paper-sunk);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-3);
+  color: var(--ink);
+  text-decoration: none;
+}
+.copilot-loom a.copilot-hero-ref:hover {
+  border-color: var(--line);
+}
+.copilot-loom .copilot-hero-label {
+  flex: 1;
+  font-weight: 600;
+  font-size: 13.5px;
+  word-break: break-word;
+}
+.copilot-loom .copilot-hero-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
 /* footer: quick-chips + composer */
 .copilot-loom .chat-chips {
   display: flex;

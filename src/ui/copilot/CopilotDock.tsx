@@ -41,7 +41,8 @@ import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { useQuery } from '@tanstack/react-query';
 import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { type ReplayTurn, replayToMessages } from './replay';
+import { CopilotHeroCard } from './CopilotHeroCard';
+import { type ReplayPrimaryView, type ReplayTurn, replayToMessages } from './replay';
 import { isOneShotSkill } from './skill-lifecycle';
 
 interface DreamingPreviewRow {
@@ -97,6 +98,10 @@ interface CopilotChatResponse {
   // text was still persisted (graceful degrade). The Dock keeps the partial reply
   // and surfaces its existing error affordance.
   error?: string;
+  // YUK-307 (presentation layer §2.3) — the agent's per-reply hero nomination,
+  // carried verbatim on the terminal `reply` SSE event (chat.ts sets
+  // CopilotChatResult.primary_view). Absent = no hero (the common case).
+  primary_view?: ReplayPrimaryView;
 }
 
 // GET /api/copilot/turns response shape — see src/server/copilot/turns.ts.
@@ -122,6 +127,10 @@ interface ChatMessage {
   // YUK-266 (C1) — true while SSE deltas are still flowing into this AI message;
   // drives the typing caret affordance. Cleared on the terminal `reply` event.
   streaming?: boolean;
+  // YUK-307 (presentation layer §2.5) — the agent's hero nomination for this AI
+  // turn, rendered below the reply text by CopilotHeroCard. Forwarded from the
+  // terminal reply event (live) or replayToMessages (reopen). Absent = no hero.
+  primary_view?: ReplayPrimaryView;
 }
 
 // Quick-chips are user-readable prompts; they send via triggered_by:'chat'
@@ -429,6 +438,9 @@ export function CopilotDock() {
         // for the turns API to echo it back.
         skill_context: skillContext ?? undefined,
         streaming: false,
+        // YUK-307 — the hero nomination from the terminal reply event (chat.ts
+        // CopilotChatResult.primary_view). Undefined ⇒ no hero rendered.
+        primary_view: res2.primary_view,
       };
       setMessages((prev) =>
         aiCreated ? prev.map((m) => (m.id === aiId ? finalized : m)) : [...prev, finalized],
@@ -758,6 +770,13 @@ export function CopilotDock() {
                     <div className="skill-turn-end" data-testid="copilot-skill-end">
                       本轮教学已结束，继续提问将回到自由对话。
                     </div>
+                  ) : null}
+                  {/* YUK-307 (presentation layer §2.5) — the agent's hero
+                      nomination for this turn, below the reply text. Only AI
+                      turns carry one; absent ⇒ nothing rendered (the common
+                      case). T5 ribbon dosage: no technical ribbon on a hero. */}
+                  {m.role === 'ai' && m.primary_view ? (
+                    <CopilotHeroCard primaryView={m.primary_view} />
                   ) : null}
                 </div>
               </div>
