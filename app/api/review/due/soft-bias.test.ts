@@ -13,12 +13,12 @@
 //
 // DB test (testDb): NOT in fastTestInclude → runs in the vitest db config.
 
+import { handleReviewDue } from '@/capabilities/practice/server/due-list';
 // handleReviewDue is the deps-injectable handler behind the GET route. It lives
-// in @/server/review/due-list, not the route module, because Next's generated
+// in @/capabilities/practice/server/due-list, not the route module, because Next's generated
 // route-type validator rejects any non-handler export from route.ts (YUK-67).
 import { event, goal, material_fsrs_state, question } from '@/db/schema';
 import type { ActiveGoal } from '@/server/goals/queries';
-import { handleReviewDue } from '@/server/review/due-list';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 

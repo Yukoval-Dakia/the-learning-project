@@ -17,11 +17,14 @@
 // the slot response carries { submitted: true, feedback_buffered: true } — the
 // score/outcome/feedback_md are NOT sent to the client.
 
+import { readPaperSections } from '@/capabilities/practice/server/paper-sections';
+import {
+  isJudgementVisibleToUser,
+  resolveKnowledgeNames,
+} from '@/capabilities/practice/server/practice-read';
 import { Artifact } from '@/core/schema/index';
 import type { Db } from '@/db/client';
 import { answer, artifact, event, learning_session, question } from '@/db/schema';
-import { readPaperSections } from '@/server/review/paper-sections';
-import { isJudgementVisibleToUser, resolveKnowledgeNames } from '@/server/review/practice-read';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 
 // ────────────────────────────────────────────────────────────────────────────

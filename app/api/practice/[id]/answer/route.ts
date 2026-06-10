@@ -4,9 +4,9 @@
 
 import { z } from 'zod';
 
+import { autosaveAnswerDraft } from '@/capabilities/practice/server/answer-draft';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { autosaveAnswerDraft } from '@/server/review/answer-draft';
 
 export const runtime = 'nodejs';
 
