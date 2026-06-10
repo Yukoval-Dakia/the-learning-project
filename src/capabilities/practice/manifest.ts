@@ -70,6 +70,22 @@ export const practiceCapability = defineCapability({
         load: () => import('./api/papers-list').then((m) => m.GET),
       },
       {
+        // M2 流编排器（YUK-316）。静态段 'stream' 在 Hono 中优先于 :id 匹配。
+        method: 'GET',
+        path: '/api/practice/stream',
+        load: () => import('./api/stream').then((m) => m.GET),
+      },
+      {
+        method: 'POST',
+        path: '/api/practice/stream/recompose',
+        load: () => import('./api/stream').then((m) => m.POST),
+      },
+      {
+        method: 'PATCH',
+        path: '/api/practice/stream/items/[id]',
+        load: () => import('./api/stream').then((m) => m.PATCH),
+      },
+      {
         method: 'GET',
         path: '/api/practice/[id]',
         load: () => import('./api/paper-detail-route').then((m) => m.GET),

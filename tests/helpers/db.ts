@@ -34,6 +34,8 @@ const ALL_TABLES = [
   'artifact',
   'learning_item',
   'mistake_variant',
+  // M2 (YUK-316) — 练习流日程表。
+  'practice_stream_item',
   // YUK-143 / ADR-0024 — North-Star goal entity.
   'goal',
   'question_block',
