@@ -11,8 +11,8 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { buildSolveHintInput } from '@/capabilities/practice/server/solve-session';
 import { event, learning_session, question } from '@/db/schema';
-import { buildSolveHintInput } from '@/server/orchestrator/solve';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { runSolveSkill } from './solve-skill';
 

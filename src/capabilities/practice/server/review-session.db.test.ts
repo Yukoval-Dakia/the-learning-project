@@ -4,8 +4,8 @@ import { event, knowledge, material_fsrs_state, question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetDb, testDb } from '../../../tests/helpers/db';
-import { planReviewSession } from './review';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { planReviewSession } from './review-session';
 
 async function seedQuestion(id: string, prompt = `q ${id}`, knowledgeIds: string[] = []) {
   const db = testDb();

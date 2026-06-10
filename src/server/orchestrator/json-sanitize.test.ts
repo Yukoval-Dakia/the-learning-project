@@ -112,7 +112,7 @@ describe('parseTurnOutput — control-char resilience', () => {
 // ---------------------------------------------------------------------------
 // Integration: parseHintTurn picks up the sanitizer on bad control chars
 // ---------------------------------------------------------------------------
-import { SolveError, parseHintTurn } from './solve';
+import { SolveError, parseHintTurn } from '@/capabilities/practice/server/solve-session';
 
 describe('parseHintTurn — control-char resilience', () => {
   it('parses a hint turn that contains a bare newline in text_md', () => {

@@ -9,10 +9,10 @@
 // shouldEnqueueBackgroundJobs(), getStartedBoss).
 import { z } from 'zod';
 
+import { SolveError, submitSolveAttempt } from '@/capabilities/practice/server/solve-session';
 import { db } from '@/db/client';
 import { getStartedBoss } from '@/server/boss/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { SolveError, submitSolveAttempt } from '@/server/orchestrator/solve';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 
 export const runtime = 'nodejs';

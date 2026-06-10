@@ -5,8 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { event, learning_record, learning_session, question } from '@/db/schema';
 import type { JudgeInvokerOutput } from '@/server/judge/invoker';
 import { Tutor } from '@/server/session';
-import { resetDb, testDb } from '../../../tests/helpers/db';
-import { planSolveHint, startSolveSession, submitSolveAttempt } from './solve';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { planSolveHint, startSolveSession, submitSolveAttempt } from './solve-session';
 
 const db = testDb();
 
