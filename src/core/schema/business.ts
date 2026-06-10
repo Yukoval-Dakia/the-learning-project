@@ -351,7 +351,8 @@ export const ToolStateSection = z.object({
   // The U5 paper submit handler treats EXACTLY 'judge_now_show_later' as the
   // visible_to_user:false trigger (judge runs now, feedback buffered until the
   // paper completes); every other value (incl. the default 'immediate' / unset)
-  // → immediate-visible. See app/api/practice/.../submit handler (§4.6 critic #5).
+  // → immediate-visible. See src/capabilities/practice/server/paper-submit.ts
+  // (§4.6 critic #5).
   feedback_policy: z.string(),
   adaptation_policy: z.string(),
   assignments: z.array(ToolStateAssignment),
