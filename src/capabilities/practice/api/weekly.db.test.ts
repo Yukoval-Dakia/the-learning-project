@@ -1,7 +1,7 @@
 import { event } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { GET } from './route';
+import { GET } from './weekly';
 
 async function seedFailureWithCauses(opts: {
   attemptId: string;
