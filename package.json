@@ -44,7 +44,7 @@
     "compose:build": "docker compose build",
     "db:dump": "docker compose exec postgres pg_dump -U ${POSTGRES_USER:-loom} ${POSTGRES_DB:-loom} > /tmp/loom-$(date +%Y%m%d-%H%M%S).sql",
     "db:restore": "docker compose exec -T postgres psql -U ${POSTGRES_USER:-loom} ${POSTGRES_DB:-loom}",
-    "rw:api": "tsx watch server/index.ts",
+    "rw:api": "RW_WORKER=1 tsx watch server/index.ts",
     "rw:web": "vite --config web/vite.config.ts",
     "rw:web:build": "vite build --config web/vite.config.ts"
   },
