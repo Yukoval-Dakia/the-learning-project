@@ -128,7 +128,7 @@ describe('practice stream API', () => {
     const seeded = (await (await GET(getReq())).json()) as { items: Array<{ id: string }> };
     const itemId = seeded.items[0].id;
     const patch = (status: string) =>
-      PATCH(new Request(`http://t/x`, { method: 'PATCH', body: JSON.stringify({ status }) }), {
+      PATCH(new Request('http://t/x', { method: 'PATCH', body: JSON.stringify({ status }) }), {
         id: itemId,
       });
     expect((await patch('skipped')).status).toBe(200);

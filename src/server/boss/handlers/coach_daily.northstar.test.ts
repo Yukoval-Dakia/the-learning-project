@@ -12,11 +12,11 @@
 //
 // DB test (testDb): NOT in fastTestInclude → runs in the vitest db config.
 
+import { GET as getDue } from '@/capabilities/practice/api/due';
 import { event, goal, material_fsrs_state, question } from '@/db/schema';
 import { runCoach } from '@/server/boss/handlers/coach_daily';
 import type { ActiveGoal } from '@/server/goals/queries';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { GET as getDue } from '@/capabilities/practice/api/due';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 const NOW = new Date('2026-05-30T12:00:00.000Z');
