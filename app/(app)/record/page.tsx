@@ -1,7 +1,7 @@
 'use client';
 
 import { AutoEnrolledPanel } from '@/ui/components/AutoEnrolledPanel';
-import { VisionTab } from '@/ui/components/VisionTab';
+import { VisionTab, type VisionTabRouting } from '@/ui/components/VisionTab';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
 import { causeOptionsForSelectedKnowledge } from '@/ui/lib/cause-options';
 import { Badge } from '@/ui/primitives/Badge';
@@ -98,8 +98,29 @@ const MODE_TABS = [
   { id: 'auto_enrolled' as ModeTab, label: 'AI 录入' },
 ];
 
+// M1-T6 (YUK-314)：VisionTab 的路由耦合改为注入（不再 import next/navigation），
+// 本旧页（双栈期保留，T7 拆除）传 Next 实现；新 Vite SPA 壳传 TanStack 实现。
+function useNextVisionRouting(): VisionTabRouting {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  return useMemo(
+    () => ({
+      navigate: (to) => router.push(to),
+      getQuery: (key) => searchParams.get(key),
+      setQuery: (key, value) => {
+        const sp = new URLSearchParams(searchParams.toString());
+        if (value === null) sp.delete(key);
+        else sp.set(key, value);
+        router.replace(sp.toString() ? `?${sp.toString()}` : '?', { scroll: false });
+      },
+    }),
+    [router, searchParams],
+  );
+}
+
 export default function RecordPage() {
   const [mode, setMode] = useState<ModeTab>('context');
+  const routing = useNextVisionRouting();
 
   return (
     <main className="page wide record-page">
@@ -118,8 +139,8 @@ export default function RecordPage() {
       <div className="record-tab-body">
         {mode === 'context' && <RecordContextPanel />}
         {mode === 'manual' && <ManualForm />}
-        {mode === 'vision_single' && <VisionTab mode="vision_single" />}
-        {mode === 'vision_paper' && <VisionTab mode="vision_paper" />}
+        {mode === 'vision_single' && <VisionTab mode="vision_single" routing={routing} />}
+        {mode === 'vision_paper' && <VisionTab mode="vision_paper" routing={routing} />}
         {mode === 'auto_enrolled' && <AutoEnrolledPanel />}
       </div>
     </main>

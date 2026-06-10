@@ -84,4 +84,6 @@ export const ingestionCapability = defineCapability({
       },
     ],
   },
+  // M1-T6：录入面（学习记录 mode 按 D11 不迁）。
+  ui: { pages: [{ route: '/record' }] },
 });

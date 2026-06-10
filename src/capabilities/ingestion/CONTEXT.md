@@ -8,7 +8,10 @@
   pdf-render/docx/ 双线/glm_ocr/tencent_mark/vision/workflow-judge/make-paper 等，
   测试同居命名即分区）
 - jobs/ — tencent_ocr_extract / auto_enroll（M1-T3 迁入；旧 worker registry 仍挂载它们）
-- api/ — 13 条 route body（M1-T4 迁入并经 manifest 挂 Hono）
-- ui/ — 录入面（M1-T6 按应然口径重建于 web/，学习记录 mode 不迁）
+- api/ — 13 个 route 文件 / 14 条 method+path（M1-T4 迁入；manifest load thunk 经
+  server/app.ts 挂 Hono；旧 Next 壳 shim 双栈期保留至 T7）
+- ui/ — RecordPage（M1-T6；学习记录 mode 按 D11 不迁；路由 props 注入，
+  web/src/router.tsx 挂 /record；/api/mistakes、/api/knowledge 等未迁路由
+  dev 下经 vite proxy 兜底旧栈）
 - 迁移期豁免：仍 import 遗留 @/server/r2、@/server/events、@/server/ai/*、@/db/*。
 - AGENTS.md 为采伐前历史文档随簇保留。
