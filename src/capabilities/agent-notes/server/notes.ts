@@ -33,7 +33,7 @@ import { createId } from '@paralleldrive/cuid2';
 
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { emitEvent } from '@/kernel/events';
 import { and, desc, eq, sql } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
@@ -94,7 +94,7 @@ export interface AgentNote {
  */
 export async function writeAgentNote(db: DbLike, input: WriteAgentNoteInput): Promise<string> {
   const noteId = `agent_note_${createId()}`;
-  await writeEvent(db, {
+  await emitEvent(db, {
     id: noteId,
     actor_kind: 'agent',
     actor_ref: input.source_task_kind,

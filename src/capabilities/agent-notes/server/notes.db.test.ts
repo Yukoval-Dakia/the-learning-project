@@ -12,7 +12,7 @@ import { event } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { readAgentNotes, readAllAgentNotes, writeAgentNote } from './notes';
 
 describe('writeAgentNote', () => {

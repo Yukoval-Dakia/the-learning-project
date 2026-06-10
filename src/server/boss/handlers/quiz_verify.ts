@@ -34,6 +34,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, ne } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
+import { writeAgentNote } from '@/capabilities/agent-notes/server/notes';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import {
   QuizGenMetadata,
@@ -44,7 +45,6 @@ import {
 } from '@/core/schema/quiz_gen';
 import type { Db } from '@/db/client';
 import { event, knowledge, question, source_document } from '@/db/schema';
-import { writeAgentNote } from '@/server/agents/notes';
 import { type TaskTextResult, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { writeEvent } from '@/server/events/queries';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
