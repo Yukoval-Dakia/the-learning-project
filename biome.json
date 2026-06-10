@@ -12,6 +12,9 @@
       "docs/design/2026-06-07-copilot-tool-use-cards",
       "docs/design/2026-06-08-question-bank-ui",
       "getting-started-with-browserbase",
+      "docling-docx-parse-output",
+      ".factory",
+      ".pnpm-store",
       ".claude",
       ".omc",
       ".omx",
@@ -36,12 +39,22 @@
     "enabled": true,
     "rules": {
       "recommended": true,
-      "style": { "useImportType": "warn" },
-      "suspicious": { "noExplicitAny": "warn" }
+      "style": {
+        "useImportType": "warn"
+      },
+      "suspicious": {
+        "noExplicitAny": "warn"
+      }
     }
   },
   "javascript": {
-    "formatter": { "quoteStyle": "single", "semicolons": "always", "trailingCommas": "all" }
+    "formatter": {
+      "quoteStyle": "single",
+      "semicolons": "always",
+      "trailingCommas": "all"
+    }
   },
-  "organizeImports": { "enabled": true }
+  "organizeImports": {
+    "enabled": true
+  }
 }
