@@ -14,9 +14,9 @@ import {
   source_asset,
   source_document,
 } from '@/db/schema';
-import type { GlmLayoutResponse, runGlmLayoutParsing } from '@/server/ingestion/glm_ocr';
-import type { StructureResult, runStructureTask } from '@/server/ingestion/structure';
-import { StructureTaskError } from '@/server/ingestion/structure';
+import type { GlmLayoutResponse, runGlmLayoutParsing } from '@/capabilities/ingestion/server/glm_ocr';
+import type { StructureResult, runStructureTask } from '@/capabilities/ingestion/server/structure';
+import { StructureTaskError } from '@/capabilities/ingestion/server/structure';
 import type { R2Client } from '@/server/r2';
 import clozeFixture from '../../../../tests/fixtures/tencent_mark_agent_cloze_sample.json';
 import { resetDb } from '../../../../tests/helpers/db';

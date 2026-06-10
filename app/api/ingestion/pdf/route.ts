@@ -1,7 +1,7 @@
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { renderPdfToPngPages } from '@/server/ingestion/pdf-render';
-import { persistImageAsset } from '@/server/ingestion/persist-image-asset';
+import { renderPdfToPngPages } from '@/capabilities/ingestion/server/pdf-render';
+import { persistImageAsset } from '@/capabilities/ingestion/server/persist-image-asset';
 import { getR2 } from '@/server/r2';
 
 export const runtime = 'nodejs';

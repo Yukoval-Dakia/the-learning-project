@@ -26,7 +26,7 @@ import {
   setQuestionType,
   splitStem,
   updatePrompt,
-} from '@/server/ingestion/block-structured-edit';
+} from '@/capabilities/ingestion/server/block-structured-edit';
 import type { DomainTool, ToolContext } from './types';
 
 // ---------------------------------------------------------------------------

@@ -32,34 +32,34 @@ import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, sql } from 'drizzle-orm';
 
+import {
+  type BlockAssemblyRunTaskFn,
+  runBlockAssemblyForSession,
+} from '@/capabilities/ingestion/server/block-assembly';
+import { enrollCapturedBlock } from '@/capabilities/ingestion/server/enroll';
+import {
+  MistakeEnrollTaskError,
+  type RunMistakeEnrollTaskParams,
+  runMistakeEnrollTask,
+} from '@/capabilities/ingestion/server/mistake_enroll';
+import {
+  type RunTaggingTaskParams,
+  TaggingTaskError,
+  runTaggingTask,
+} from '@/capabilities/ingestion/server/tagging';
+import { runWorkflowJudge } from '@/capabilities/ingestion/server/workflow-judge';
+import {
+  type FlagEnv,
+  autoEnrollEnabled,
+  autoEnrollThreshold,
+  observeEnabled,
+} from '@/capabilities/ingestion/server/workflow-judge-config';
 import type { MistakeEnrollOutputT } from '@/core/schema/mistake_enroll';
 import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
 import type { TaggingOutputT } from '@/core/schema/tagging';
 import type { Db } from '@/db/client';
 import { learning_session, question, question_block } from '@/db/schema';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
-import {
-  type BlockAssemblyRunTaskFn,
-  runBlockAssemblyForSession,
-} from '@/server/ingestion/block-assembly';
-import { enrollCapturedBlock } from '@/server/ingestion/enroll';
-import {
-  MistakeEnrollTaskError,
-  type RunMistakeEnrollTaskParams,
-  runMistakeEnrollTask,
-} from '@/server/ingestion/mistake_enroll';
-import {
-  type RunTaggingTaskParams,
-  TaggingTaskError,
-  runTaggingTask,
-} from '@/server/ingestion/tagging';
-import { runWorkflowJudge } from '@/server/ingestion/workflow-judge';
-import {
-  type FlagEnv,
-  autoEnrollEnabled,
-  autoEnrollThreshold,
-  observeEnabled,
-} from '@/server/ingestion/workflow-judge-config';
 import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject-profile';
 
 export type AutoEnrollSkipReason = 'flag_off' | 'session_not_found' | 'wrong_status';

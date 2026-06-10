@@ -13,7 +13,7 @@ import { MAX_PDF_PAGES, renderPdfToPngPages } from './pdf-render';
 // fastTestInclude alongside crop.test.ts).
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const FIX = join(__dirname, '../../../tests/fixtures/pdf');
+const FIX = join(__dirname, '../../../../tests/fixtures/pdf');
 
 function fixture(name: string): Uint8Array {
   const buf = readFileSync(join(FIX, name));

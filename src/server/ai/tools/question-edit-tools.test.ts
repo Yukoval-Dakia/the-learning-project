@@ -14,7 +14,7 @@ import {
   structuredToPromptMarkdown,
 } from '@/core/schema/structured_question';
 import { job_events, question_block } from '@/db/schema';
-import { idHasMatch } from '@/server/ingestion/block-structured-edit';
+import { idHasMatch } from '@/capabilities/ingestion/server/block-structured-edit';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { __resetBootstrapForTests, registerCoreTools } from './bootstrap';
 import {

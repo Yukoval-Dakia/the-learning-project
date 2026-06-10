@@ -10,31 +10,31 @@ import {
   type IngestionExtractionProgressPayloadT,
   writeExtractionProgress,
 } from '@/server/events/ingestion-progress';
-import { type PreAttachFigure, cropAndUploadFigures } from '@/server/ingestion/crop';
-import { assignFigures, assignFiguresFromVlm } from '@/server/ingestion/figure_attach';
+import { type PreAttachFigure, cropAndUploadFigures } from '@/capabilities/ingestion/server/crop';
+import { assignFigures, assignFiguresFromVlm } from '@/capabilities/ingestion/server/figure_attach';
 // T-OC slice 2 (YUK-145, OC-1/OC-2): VLM StructureTask owns the structure tree;
 // Tencent structure is demoted to a text hint. See
 // docs/superpowers/plans/2026-05-30-yuk145-toc-slice2-lane.md.
-import { runGlmLayoutParsing } from '@/server/ingestion/glm_ocr';
+import { runGlmLayoutParsing } from '@/capabilities/ingestion/server/glm_ocr';
 import {
   buildGlmFallbackQuestions,
   deriveGlmLayoutQuality,
   parseGlmLayoutResponse,
   renderGlmHint,
-} from '@/server/ingestion/glm_ocr_parser';
+} from '@/capabilities/ingestion/server/glm_ocr_parser';
 import {
   type StructureResult,
   StructureTaskError,
   renderTencentHint,
   runStructureTask,
-} from '@/server/ingestion/structure';
+} from '@/capabilities/ingestion/server/structure';
 import {
   type DescribeResponse,
   pollUntilDone,
   submitOcrJob,
-} from '@/server/ingestion/tencent_mark';
-import { mapTencentError } from '@/server/ingestion/tencent_mark_errors';
-import { type LayoutQuality, parseMarkAgentResponse } from '@/server/ingestion/tencent_mark_parser';
+} from '@/capabilities/ingestion/server/tencent_mark';
+import { mapTencentError } from '@/capabilities/ingestion/server/tencent_mark_errors';
+import { type LayoutQuality, parseMarkAgentResponse } from '@/capabilities/ingestion/server/tencent_mark_parser';
 import type { R2Client } from '@/server/r2';
 import { Ingestion } from '@/server/session';
 import { and, eq } from 'drizzle-orm';

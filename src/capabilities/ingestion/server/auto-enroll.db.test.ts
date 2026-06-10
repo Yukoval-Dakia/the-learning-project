@@ -23,7 +23,7 @@ import {
   question_block,
 } from '@/db/schema';
 import type { WriteEventInput } from '@/server/events/queries';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { observeEventId, runAutoEnrollForSession } from './auto-enroll';
 import { MistakeEnrollTaskError, type RunMistakeEnrollTaskParams } from './mistake_enroll';
 import { TaggingTaskError } from './tagging';
@@ -549,7 +549,7 @@ describe('runAutoEnrollForSession', () => {
     const spy = vi
       .spyOn(autoEnrollModule, 'runAutoEnrollForSession')
       .mockRejectedValueOnce(new Error('db connection lost'));
-    const { buildAutoEnrollHandler } = await import('../boss/handlers/auto_enroll');
+    const { buildAutoEnrollHandler } = await import('@/server/boss/handlers/auto_enroll');
     const handler = buildAutoEnrollHandler(db);
     await expect(handler([{ id: 'job-1', data: { sessionId } } as never])).rejects.toThrow(
       'db connection lost',
@@ -621,7 +621,7 @@ describe('runAutoEnrollForSession', () => {
     let realWritten = 0;
     const writeEventFn = async (innerDb: Db, input: WriteEventInput): Promise<string> => {
       if (input.subject_id === block1) throw new Error('audit write failed');
-      const { writeEvent } = await import('../events/queries');
+      const { writeEvent } = await import('@/server/events/queries');
       realWritten += 1;
       return writeEvent(innerDb, input);
     };

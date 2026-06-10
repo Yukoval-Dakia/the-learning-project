@@ -30,7 +30,7 @@ import { type GoalScopeAcceptResult, acceptGoalScopeProposal } from '@/server/go
 import { ApiError } from '@/server/http/errors';
 // YUK-202 / BlockAssembly path-B (design 2026-06-02 §4) — accept reuses the
 // verified YUK-195 `mergeQuestions` primitive; no auto-merge path is added.
-import { mergeQuestions } from '@/server/ingestion/block-structured-edit';
+import { mergeQuestions } from '@/capabilities/ingestion/server/block-structured-edit';
 import { acceptProposal, dismissProposal } from '@/server/knowledge/proposals';
 import {
   type LearningIntentMaterializeResult,

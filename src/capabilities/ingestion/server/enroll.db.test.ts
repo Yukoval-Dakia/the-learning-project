@@ -15,7 +15,7 @@ import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { event, knowledge, learning_record, question } from '@/db/schema';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { type EnrollOutcome, enrollCapturedBlock } from './enroll';
 
 async function seedQuestion(db: ReturnType<typeof testDb>, knowledgeId: string): Promise<string> {

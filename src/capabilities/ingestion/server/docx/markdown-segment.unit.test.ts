@@ -11,7 +11,7 @@ import { normalizeMathDelimiters, segmentMarkdown } from './markdown-segment';
 // itself never runs pandoc.
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const FIX = join(__dirname, '../../../../tests/fixtures/docx');
+const FIX = join(__dirname, '../../../../../tests/fixtures/docx');
 
 function md(name: string): string {
   return readFileSync(join(FIX, name), 'utf-8');
