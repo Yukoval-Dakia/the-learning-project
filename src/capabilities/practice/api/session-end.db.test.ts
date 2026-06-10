@@ -4,8 +4,8 @@ import { learning_session } from '@/db/schema';
 import { Review } from '@/server/session';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { resetDb, testDb } from '../../../../../../tests/helpers/db';
-import { POST } from './route';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { POST } from './session-end';
 
 function jsonReq(id: string, body: unknown) {
   return new Request(`http://localhost/api/review/sessions/${id}/end`, {

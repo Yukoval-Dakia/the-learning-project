@@ -12,7 +12,7 @@ import { resetDb, testDb } from '../../../../tests/helpers/db';
 // helper also adds the paired learning_record(kind='mistake') mirror that
 // every other test in the repo creates alongside failure attempts.
 import { seedAttempt, seedUserCause } from '../../../../tests/helpers/event-seed';
-import { POST } from './route';
+import { POST } from './advice';
 
 const QUESTION_BASE = {
   kind: 'short_answer' as const,
