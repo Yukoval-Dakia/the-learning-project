@@ -8,7 +8,7 @@
 import { event, material_fsrs_state, question } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { GET } from './route';
+import { GET } from './due';
 
 const QUESTION_BASE = {
   kind: 'short_answer' as const,

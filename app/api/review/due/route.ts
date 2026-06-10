@@ -1,18 +1,3 @@
-// Phase 1c.1 Step 9.B — `/api/review/due` over `material_fsrs_state`.
-//
-// Next App Router route modules may ONLY export route handlers (GET/POST/...)
-// plus recognized config (runtime/dynamic/...). The actual handler logic —
-// including the YUK-167 goal soft-bias re-rank and its deps-injectable seam —
-// lives in @/capabilities/practice/server/due-list so it can be unit/DB-tested without the
-// route module growing extra exports that `next build` rejects (YUK-67).
-//
-// Wire contract preserved: { rows: [{ id, question_id, prompt_md, reference_md,
-// knowledge_ids, cause, fsrs_state, created_at }] }.
-
-import { handleReviewDue } from '@/capabilities/practice/server/due-list';
-
+// 外壳挂载 — handler 本体在 practice capability 包（M2 上 Hono，YUK-316）。双栈期保留至 M2-T7 拆除。
 export const runtime = 'nodejs';
-
-export async function GET(req: Request): Promise<Response> {
-  return handleReviewDue(req);
-}
+export { GET } from '@/capabilities/practice/api/due';

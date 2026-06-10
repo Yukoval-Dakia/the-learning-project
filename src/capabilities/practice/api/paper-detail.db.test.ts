@@ -108,11 +108,8 @@ async function seedKnowledge(id: string, name: string) {
   await db.insert(knowledge).values({ id, name, created_at: now, updated_at: now });
 }
 
-function makeRequest(artifactId: string): [Request, { params: Promise<{ id: string }> }] {
-  return [
-    new Request(`http://localhost/api/practice/${artifactId}`),
-    { params: Promise.resolve({ id: artifactId }) },
-  ];
+function makeRequest(artifactId: string): [Request, Record<string, string>] {
+  return [new Request(`http://localhost/api/practice/${artifactId}`), { id: artifactId }];
 }
 
 describe('GET /api/practice/[id]', () => {

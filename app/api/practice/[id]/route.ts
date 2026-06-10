@@ -1,3 +1,13 @@
-// 外壳挂载 — handler 本体在 practice capability 包（架构重设计 P2a，YUK-312）。
+// 外壳挂载 — handler 本体在 practice capability 包（M2 上 Hono，YUK-316）。
+// param 路由 shim：Next ctx.params (Promise) 解包为 kernel RouteHandler v2 的
+// params Record。双栈期保留至 M2-T7 拆除。
+import { GET as handler } from '@/capabilities/practice/api/paper-detail-route';
+
 export const runtime = 'nodejs';
-export { GET } from '@/capabilities/practice/api/paper-detail-route';
+
+export async function GET(
+  req: Request,
+  ctx: { params: Promise<{ id: string }> },
+): Promise<Response> {
+  return handler(req, await ctx.params);
+}

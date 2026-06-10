@@ -143,7 +143,7 @@ describe('GET /api/practice', () => {
         question_id: 'q1',
         content_md: 'true',
       }),
-      { params: Promise.resolve({ id: 'p1' }) },
+      { id: 'p1' },
     );
     expect(ansRes.status).toBe(200);
 
@@ -154,7 +154,7 @@ describe('GET /api/practice', () => {
         question_id: 'q1',
         answer_md: 'true',
       }),
-      { params: Promise.resolve({ id: 'p1' }) },
+      { id: 'p1' },
     );
     expect(subRes.status).toBe(200);
     const sub = (await subRes.json()) as {
@@ -294,7 +294,7 @@ describe('GET /api/practice', () => {
         question_id: 'q1',
         answer_md: 'true',
       }),
-      { params: Promise.resolve({ id: 'p_buffered' }) },
+      { id: 'p_buffered' },
     );
     expect(subRes.status).toBe(200);
     const body = (await subRes.json()) as Record<string, unknown>;
@@ -317,7 +317,7 @@ describe('GET /api/practice', () => {
         question_id: 'q_not_in_plan',
         answer_md: 'x',
       }),
-      { params: Promise.resolve({ id: 'p1' }) },
+      { id: 'p1' },
     );
     expect(subRes.status).toBe(400);
   });
@@ -336,7 +336,7 @@ describe('GET /api/practice', () => {
         question_id: 'q1',
         answer_md: 'true',
       }),
-      { params: Promise.resolve({ id: 'p1' }) },
+      { id: 'p1' },
     );
     const sub = (await subRes.json()) as { attempt_event_id: string };
 
@@ -406,7 +406,7 @@ describe('GET /api/practice', () => {
         question_id: 'q1',
         answer_md: 'true',
       }),
-      { params: Promise.resolve({ id: 'p_flat' }) },
+      { id: 'p_flat' },
     );
     expect(subRes.status).toBe(200);
     const body = (await subRes.json()) as { coarse_outcome: string; visible_to_user: boolean };
@@ -575,7 +575,7 @@ describe('GET /api/practice', () => {
         question_id: 'q1',
         answer_md: 'true',
       }),
-      { params: Promise.resolve({ id: 'p_buffered_r6' }) },
+      { id: 'p_buffered_r6' },
     );
     expect(subRes.status).toBe(200);
     const sub = (await subRes.json()) as { visible_to_user: boolean };

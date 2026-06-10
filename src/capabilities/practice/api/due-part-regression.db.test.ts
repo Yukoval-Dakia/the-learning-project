@@ -13,7 +13,7 @@ import { event, material_fsrs_state, question } from '@/db/schema';
 import { createQuestionPart } from '@/server/questions/parts';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { GET } from './route';
+import { GET } from './due';
 
 const NOW = new Date();
 const PAST_ISO = new Date(NOW.getTime() - 2 * 86400 * 1000).toISOString();

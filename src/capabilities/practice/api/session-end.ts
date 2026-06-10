@@ -45,12 +45,9 @@ async function parseBody(req: Request): Promise<z.infer<typeof EndBody>> {
   return { status: 'completed' };
 }
 
-export async function POST(
-  req: Request,
-  { params }: { params: Promise<{ id: string }> },
-): Promise<Response> {
+export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
   try {
-    const { id } = await params;
+    const { id } = params;
     const body = await parseBody(req);
     if (body.status === 'completed') {
       await Review.completeReviewSession(db, id);

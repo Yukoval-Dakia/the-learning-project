@@ -4,7 +4,7 @@ import { and, eq } from 'drizzle-orm';
 import { NextRequest } from 'next/server';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { POST } from './route';
+import { POST } from './appeal';
 
 async function seedJudgeEvent(): Promise<string> {
   const id = createId();
