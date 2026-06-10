@@ -4,8 +4,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { db } from '@/db/client';
 import { event, learning_session, source_document } from '@/db/schema';
-import { startTestWorker } from '../../../../../tests/helpers/worker';
-import { POST as extractRoute } from './route';
+import { startTestWorker } from '../../../../tests/helpers/worker';
+import { POST as extractRoute } from './extract';
 
 describe('POST /api/ingestion/[id]/extract', () => {
   let teardown: (() => Promise<void>) | undefined;
@@ -47,7 +47,7 @@ describe('POST /api/ingestion/[id]/extract', () => {
     });
 
     const resp = await extractRoute(new Request('http://t/x', { method: 'POST' }), {
-      params: Promise.resolve({ id: sessionId }),
+      id: sessionId,
     });
     expect(resp.status).toBe(200);
     const body = (await resp.json()) as { businessId: string; jobId: string };
@@ -90,7 +90,7 @@ describe('POST /api/ingestion/[id]/extract', () => {
     });
 
     const resp = await extractRoute(new Request('http://t/x', { method: 'POST' }), {
-      params: Promise.resolve({ id: sessionId }),
+      id: sessionId,
     });
     expect(resp.status).toBe(409);
 
@@ -101,7 +101,7 @@ describe('POST /api/ingestion/[id]/extract', () => {
 
   it('missing session returns 404', async () => {
     const resp = await extractRoute(new Request('http://t/x', { method: 'POST' }), {
-      params: Promise.resolve({ id: 'never-existed' }),
+      id: 'never-existed',
     });
     expect(resp.status).toBe(404);
   });

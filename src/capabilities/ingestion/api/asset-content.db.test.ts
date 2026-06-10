@@ -2,7 +2,7 @@
 
 import { source_asset } from '@/db/schema';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 // Stub R2 BEFORE importing the route (the route resolves getR2 at module load
 // time via a singleton, but the singleton itself is lazy — first call wins).
@@ -20,7 +20,7 @@ vi.mock('@/server/r2', () => ({
   }),
 }));
 
-const { GET } = await import('./route');
+const { GET } = await import('./asset-content');
 
 async function seedAsset(
   id: string,
@@ -40,9 +40,7 @@ async function seedAsset(
 }
 
 async function fetchContent(id: string): Promise<Response> {
-  return GET(new Request(`http://localhost/api/assets/${id}/content`, { method: 'GET' }), {
-    params: Promise.resolve({ id }),
-  });
+  return GET(new Request(`http://localhost/api/assets/${id}/content`, { method: 'GET' }), { id });
 }
 
 describe('GET /api/assets/[id]/content', () => {

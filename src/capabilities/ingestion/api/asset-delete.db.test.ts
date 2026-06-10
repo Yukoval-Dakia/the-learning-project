@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { memR2 } from '../../../../tests/helpers/r2';
-import { DELETE } from './route';
+import { DELETE } from './asset-delete';
 
 // Inject in-memory R2 for all tests
 const r2 = memR2();
@@ -16,8 +16,8 @@ function deleteRequest(id: string) {
   return new Request(`http://localhost/api/assets/${id}`, { method: 'DELETE' });
 }
 
-function makeParams(id: string): { params: Promise<{ id: string }> } {
-  return { params: Promise.resolve({ id }) };
+function makeParams(id: string): Record<string, string> {
+  return { id };
 }
 
 async function seedAsset(overrides: Partial<typeof source_asset.$inferInsert> = {}) {
@@ -70,7 +70,7 @@ describe('DELETE /api/assets/[id]', () => {
 
   it('round-trip: POST then DELETE — row and R2 object both gone', async () => {
     // Import POST handler lazily to share same mocked r2 module
-    const { POST } = await import('../route');
+    const { POST } = await import('./assets');
 
     const fd = new FormData();
     fd.set(

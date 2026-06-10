@@ -53,8 +53,11 @@ docs/preflight/*-vision-rejudge.json
 # pnpm package store cache (machine-local, ~866 MB; never commit)
 .pnpm-store/
 
-# Local agent/tool state dirs (opencode, omo, ocx) — machine-local, never commit
+# Local agent/tool state dirs (opencode, omo, omc, ocx) — machine-local, never
+# commit; no leading slash so a nested .omc/ (hook-created inside src/) is
+# caught too
 .ocx/
+.omc/
 .omo/
 .opencode/
 

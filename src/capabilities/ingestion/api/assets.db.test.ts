@@ -1,9 +1,9 @@
 import { source_asset } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetDb, testDb } from '../../../tests/helpers/db';
-import { memR2 } from '../../../tests/helpers/r2';
-import { POST } from './route';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { memR2 } from '../../../../tests/helpers/r2';
+import { POST } from './assets';
 
 // Inject in-memory R2 for all tests
 const r2 = memR2();

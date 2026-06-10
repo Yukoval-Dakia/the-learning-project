@@ -2,8 +2,8 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { event, job_events, learning_session, question_block, source_asset } from '@/db/schema';
 import { setDocxConverterForTests } from '@/capabilities/ingestion/server/docx/convert';
+import { event, job_events, learning_session, question_block, source_asset } from '@/db/schema';
 import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -27,7 +27,7 @@ vi.mock('@/server/boss/client', () => ({
 }));
 
 // Import the route AFTER the mocks so it picks up memR2 + the mocked boss.
-import { POST } from './route';
+import { POST } from './docx';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DOCX_FIX = join(__dirname, '../../../../tests/fixtures/docx');

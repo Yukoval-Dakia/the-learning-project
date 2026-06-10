@@ -205,7 +205,7 @@ export async function createIngestionPaper(
     // The order key lives on `question_block`: every imported question persists
     // `metadata.question_block_id` (import/route.ts:407,421), and the block list's
     // canonical display order is `ORDER BY question_block.created_at` (the /blocks
-    // read path, app/api/ingestion/[id]/blocks/route.ts:65 — the read the user's
+    // read path, src/capabilities/ingestion/api/blocks.ts:65 — the read the user's
     // on-screen paper order comes from). We join question → question_block on that
     // id and order by (question_block.created_at, question_block.id, question.id) —
     // the same primary key /blocks uses — so the paper's slot sequence equals the
