@@ -7,7 +7,7 @@ import { inArray } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { memR2 } from '../../../../tests/helpers/r2';
-import { POST } from './route';
+import { POST } from './pdf';
 
 // db partition — imports tests/helpers/db + memR2 (R2 mocked, but real Postgres
 // for the source_asset rows). Mirrors app/api/assets/route.test.ts.

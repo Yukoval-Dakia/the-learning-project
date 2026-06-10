@@ -13,8 +13,8 @@ import {
   source_asset,
   source_document,
 } from '@/db/schema';
-import { resetDb, testDb } from '../../../tests/helpers/db';
-import { GET, POST } from './route';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { GET, POST } from './sessions';
 
 async function insertAsset(db: ReturnType<typeof testDb>, id: string, storageKey: string) {
   await db.insert(source_asset).values({

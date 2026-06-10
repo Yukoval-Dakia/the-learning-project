@@ -26,8 +26,8 @@ import {
 } from '@/db/schema';
 import { getFsrsState } from '@/server/fsrs/state';
 import { Review } from '@/server/session';
-import { resetDb, testDb } from '../../../../../tests/helpers/db';
-import { POST } from './route';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { POST } from './make-paper';
 
 async function seedKnowledge(id: string) {
   const db = testDb();
@@ -104,7 +104,7 @@ function post(sessionId: string, body: unknown) {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
-  return POST(req, { params: Promise.resolve({ id: sessionId }) });
+  return POST(req, { id: sessionId });
 }
 
 describe('POST /api/ingestion/[id]/make-paper (YUK-214)', () => {
@@ -151,7 +151,7 @@ describe('POST /api/ingestion/[id]/make-paper (YUK-214)', () => {
       headers: { 'content-type': 'application/json' },
       body: '{ "question_ids": ', // truncated → not valid JSON
     });
-    const res = await POST(req, { params: Promise.resolve({ id: 'sess_malformed' }) });
+    const res = await POST(req, { id: 'sess_malformed' });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe('invalid_json');
@@ -177,7 +177,7 @@ describe('POST /api/ingestion/[id]/make-paper (YUK-214)', () => {
       headers: { 'content-type': 'application/json' },
       // no body at all
     });
-    const res = await POST(req, { params: Promise.resolve({ id: 'sess_empty_body' }) });
+    const res = await POST(req, { id: 'sess_empty_body' });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { artifact_id: string };
     expect(body.artifact_id).toMatch(/^ingestion_paper_/);

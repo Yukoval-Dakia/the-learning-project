@@ -9,7 +9,7 @@
  * ============================================================================
  *
  * With the flag at its default, NOTHING auto-enrolls — every captured block
- * routes to the EXISTING human review flow (app/api/ingestion/[id]/import), so
+ * routes to the EXISTING human review flow (src/capabilities/ingestion/api/import.ts), so
  * production behaviour is byte-equivalent to today. Auto-enroll only activates
  * when the env var is set EXPLICITLY to the string 'true' (case-insensitive).
  *

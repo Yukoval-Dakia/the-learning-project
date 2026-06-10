@@ -5,8 +5,8 @@
 
 import { event, learning_session, question_block } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { resetDb, testDb } from '../../../../../tests/helpers/db';
-import { GET } from './route';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { GET } from './blocks';
 
 async function seedSession(id: string): Promise<void> {
   const db = testDb();
@@ -72,7 +72,7 @@ async function seedBlock(opts: {
 
 async function getBlocks(sessionId: string): Promise<Response> {
   return GET(new Request(`http://localhost/api/ingestion/${sessionId}/blocks`, { method: 'GET' }), {
-    params: Promise.resolve({ id: sessionId }),
+    id: sessionId,
   });
 }
 
