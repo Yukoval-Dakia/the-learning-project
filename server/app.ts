@@ -32,7 +32,8 @@ export function buildHonoApp(capabilities: CapabilityManifest[]): Hono {
       let cached: Promise<RouteHandler> | undefined;
       app.on(route.method, toHonoPath(route.path), async (c) => {
         cached ??= load();
-        return (await cached)(c.req.raw);
+        // M1 (YUK-314)：路径参数透传——Hono 的 :id 捕获以 Record 形式交给 handler。
+        return (await cached)(c.req.raw, c.req.param());
       });
     }
   }
