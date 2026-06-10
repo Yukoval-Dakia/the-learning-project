@@ -40,6 +40,10 @@ export const allTestInclude = [
   'tests/**/*.test.tsx',
   'scripts/**/*.test.ts',
   'scripts/**/*.test.tsx',
+  // M0 (YUK-313) — 新栈两棵树（Hono server / Vite SPA）进测试宇宙。
+  'server/**/*.test.ts',
+  'web/**/*.test.ts',
+  'web/**/*.test.tsx',
 ];
 
 export const fastTestInclude = [
@@ -50,6 +54,9 @@ export const fastTestInclude = [
   // *.unit.test.ts 若未 mock 就 import DB，审计直接报错。
   'src/kernel/**/*.unit.test.ts',
   'src/capabilities/**/*.unit.test.ts',
+  // M0 (YUK-313) — server/web 树同享命名约定分区。
+  'server/**/*.unit.test.ts',
+  'web/**/*.unit.test.ts',
   'middleware.test.ts',
   'scripts/**/*.test.ts',
   // YUK-263 — pure (no-DB) unit for the globalThis pool-cache HMR guard in
