@@ -22,7 +22,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 // YUK-101 (iter2 fix F12) — shared seeders from tests/helpers/event-seed.
 import { seedAttempt, seedUserCause } from '../../../../tests/helpers/event-seed';
-import { POST } from './route';
+import { POST } from './submit';
 
 vi.mock('@/server/ai/runner', () => ({
   runTask: vi.fn(),
