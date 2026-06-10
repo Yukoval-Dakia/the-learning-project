@@ -8,10 +8,10 @@ import { newId } from '@/core/ids';
 import { artifact, event, knowledge, question } from '@/db/schema';
 import { sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { resetDb, testDb } from '../../../tests/helpers/db';
-import { POST as answerPost } from './[id]/answer/route';
-import { POST as submitPost } from './[id]/submit/route';
-import { GET, POST } from './route';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { POST as answerPost } from './paper-answer-route';
+import { POST as submitPost } from './paper-submit-route';
+import { GET, POST } from './papers-list';
 
 async function seedQuestion(id: string, reference: string) {
   const db = testDb();

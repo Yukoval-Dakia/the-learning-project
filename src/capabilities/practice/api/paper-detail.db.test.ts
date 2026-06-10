@@ -23,7 +23,7 @@ import { Review } from '@/server/session';
 import { sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { GET } from './route';
+import { GET } from './paper-detail-route';
 
 async function seedQuestion(id: string, reference: string, kind = 'true_false') {
   const db = testDb();
