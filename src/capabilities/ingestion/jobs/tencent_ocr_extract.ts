@@ -1,15 +1,6 @@
 import type { Job } from 'pg-boss';
 import sharp from 'sharp';
 
-import { PermanentError, RetryableError } from '@/core/schema/structured_question';
-import type { FigureRefT } from '@/core/schema/structured_question';
-import type { Db } from '@/db/client';
-import { learning_session, source_asset } from '@/db/schema';
-import { writeCostLedger } from '@/server/ai/log';
-import {
-  type IngestionExtractionProgressPayloadT,
-  writeExtractionProgress,
-} from '@/server/events/ingestion-progress';
 import { type PreAttachFigure, cropAndUploadFigures } from '@/capabilities/ingestion/server/crop';
 import { assignFigures, assignFiguresFromVlm } from '@/capabilities/ingestion/server/figure_attach';
 // T-OC slice 2 (YUK-145, OC-1/OC-2): VLM StructureTask owns the structure tree;
@@ -34,7 +25,19 @@ import {
   submitOcrJob,
 } from '@/capabilities/ingestion/server/tencent_mark';
 import { mapTencentError } from '@/capabilities/ingestion/server/tencent_mark_errors';
-import { type LayoutQuality, parseMarkAgentResponse } from '@/capabilities/ingestion/server/tencent_mark_parser';
+import {
+  type LayoutQuality,
+  parseMarkAgentResponse,
+} from '@/capabilities/ingestion/server/tencent_mark_parser';
+import { PermanentError, RetryableError } from '@/core/schema/structured_question';
+import type { FigureRefT } from '@/core/schema/structured_question';
+import type { Db } from '@/db/client';
+import { learning_session, source_asset } from '@/db/schema';
+import { writeCostLedger } from '@/server/ai/log';
+import {
+  type IngestionExtractionProgressPayloadT,
+  writeExtractionProgress,
+} from '@/server/events/ingestion-progress';
 import type { R2Client } from '@/server/r2';
 import { Ingestion } from '@/server/session';
 import { and, eq } from 'drizzle-orm';
