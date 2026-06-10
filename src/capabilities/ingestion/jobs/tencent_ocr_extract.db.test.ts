@@ -3,6 +3,12 @@ import { eq } from 'drizzle-orm';
 import sharp from 'sharp';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type {
+  GlmLayoutResponse,
+  runGlmLayoutParsing,
+} from '@/capabilities/ingestion/server/glm_ocr';
+import type { StructureResult, runStructureTask } from '@/capabilities/ingestion/server/structure';
+import { StructureTaskError } from '@/capabilities/ingestion/server/structure';
 import { PermanentError } from '@/core/schema/structured_question';
 import { db } from '@/db/client';
 import {
@@ -14,9 +20,6 @@ import {
   source_asset,
   source_document,
 } from '@/db/schema';
-import type { GlmLayoutResponse, runGlmLayoutParsing } from '@/capabilities/ingestion/server/glm_ocr';
-import type { StructureResult, runStructureTask } from '@/capabilities/ingestion/server/structure';
-import { StructureTaskError } from '@/capabilities/ingestion/server/structure';
 import type { R2Client } from '@/server/r2';
 import clozeFixture from '../../../../tests/fixtures/tencent_mark_agent_cloze_sample.json';
 import { resetDb } from '../../../../tests/helpers/db';

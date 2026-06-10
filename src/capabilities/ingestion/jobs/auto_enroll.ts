@@ -17,8 +17,8 @@
 
 import type { Job } from 'pg-boss';
 
-import type { Db } from '@/db/client';
 import { runAutoEnrollForSession } from '@/capabilities/ingestion/server/auto-enroll';
+import type { Db } from '@/db/client';
 
 export interface AutoEnrollJobData {
   sessionId: string;

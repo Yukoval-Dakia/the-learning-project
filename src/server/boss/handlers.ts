@@ -1,3 +1,5 @@
+import { buildAutoEnrollHandler } from '@/capabilities/ingestion/jobs/auto_enroll';
+import { buildTencentOcrHandler } from '@/capabilities/ingestion/jobs/tencent_ocr_extract';
 import type { Db } from '@/db/client';
 import { isQueueCreateRace } from '@/server/boss/client';
 import { buildBriefGenerator } from '@/server/memory/brief-writer';
@@ -5,7 +7,6 @@ import { registerMemoryHandlers } from '@/server/memory/triggers';
 import { getR2 } from '@/server/r2';
 import type { PgBoss } from 'pg-boss';
 import { buildAttributionFollowupHandler } from './handlers/attribution_followup';
-import { buildAutoEnrollHandler } from './handlers/auto_enroll';
 import { buildCoachDailyHandler } from './handlers/coach_daily';
 import { buildCoachWeeklyHandler } from './handlers/coach_weekly';
 import { buildDreamingNightlyHandler } from './handlers/dreaming_nightly';
@@ -29,7 +30,6 @@ import { buildReviewPlanHandler } from './handlers/review_plan';
 import { buildSessionSummaryHandler } from './handlers/session_summary';
 import { buildSourceVerifyHandler } from './handlers/source_verify';
 import { buildSourcingHandler } from './handlers/sourcing';
-import { buildTencentOcrHandler } from './handlers/tencent_ocr_extract';
 import { buildVariantGenHandler } from './handlers/variant_gen';
 import { buildVariantVerifyHandler } from './handlers/variant_verify';
 

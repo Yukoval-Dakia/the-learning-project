@@ -549,7 +549,7 @@ describe('runAutoEnrollForSession', () => {
     const spy = vi
       .spyOn(autoEnrollModule, 'runAutoEnrollForSession')
       .mockRejectedValueOnce(new Error('db connection lost'));
-    const { buildAutoEnrollHandler } = await import('@/server/boss/handlers/auto_enroll');
+    const { buildAutoEnrollHandler } = await import('@/capabilities/ingestion/jobs/auto_enroll');
     const handler = buildAutoEnrollHandler(db);
     await expect(handler([{ id: 'job-1', data: { sessionId } } as never])).rejects.toThrow(
       'db connection lost',
