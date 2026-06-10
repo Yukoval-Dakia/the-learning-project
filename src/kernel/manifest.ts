@@ -4,9 +4,22 @@
 // 实例原则，spec 反框架护栏）。manifest 是声明元数据 + 组合期校验，不是
 // 运行时插件总线；组合根见 src/capabilities/index.ts（静态、类型检查）。
 
+/**
+ * 无参 Web 标准 handler。M0 (YUK-313) 仅支持 (req)=>Response 形态；
+ * param 路由（[id]）的 handler 适配等 M1 第一个实例出现时再扩（第二实例原则）。
+ */
+export type RouteHandler = (req: Request) => Promise<Response>;
+
 export interface ApiRouteDecl {
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   path: string; // 形如 '/api/agents/notes'
+  /**
+   * 懒加载 handler 引用（M0，REV 2 D19）：声明为 thunk 保证 manifest 维持纯元数据——
+   * composition.unit.test 导入 manifest 时不会拉进 @/db/client 等运行时依赖，
+   * unit 分区不被污染；server 组合根（server/app.ts）挂载时才解析。
+   * 无 load 的 route 是纯归属元数据（如 practice 的待迁路由），不被挂载。
+   */
+  load?: () => Promise<RouteHandler>;
 }
 
 export interface UiPageDecl {

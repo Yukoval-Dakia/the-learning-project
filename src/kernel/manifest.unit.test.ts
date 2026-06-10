@@ -37,6 +37,25 @@ describe('validateComposition', () => {
     ).toThrow(/declared by both 'a' and 'b'/);
   });
 
+  it('accepts a route declaration carrying a lazy handler ref', () => {
+    expect(() =>
+      validateComposition([
+        base({
+          name: 'a',
+          api: {
+            routes: [
+              {
+                method: 'GET',
+                path: '/api/a',
+                load: async () => async () => Response.json({ ok: true }),
+              },
+            ],
+          },
+        }),
+      ]),
+    ).not.toThrow();
+  });
+
   it('rejects one method+path declared by two capabilities', () => {
     expect(() =>
       validateComposition([
