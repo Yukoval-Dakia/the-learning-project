@@ -4,5 +4,6 @@
 // 反框架护栏：静态数组、类型检查、无动态加载。
 import type { CapabilityManifest } from '@/kernel/manifest';
 import { agentNotesCapability } from './agent-notes/manifest';
+import { practiceCapability } from './practice/manifest';
 
-export const capabilities: CapabilityManifest[] = [agentNotesCapability];
+export const capabilities: CapabilityManifest[] = [agentNotesCapability, practiceCapability];
