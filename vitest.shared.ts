@@ -241,18 +241,8 @@ export const fastTestInclude = [
   'src/server/memory/scope_tagger.test.ts',
   'src/server/memory/triggers.test.ts',
   'src/server/r2.test.ts',
-  'src/server/review/activity-ref.test.ts',
-  'src/server/review/fsrs.test.ts',
-  'src/server/review/rating-advisor.test.ts',
-  // U5 (YUK-203) — pure (no-DB) shim: readPaperSections + resolveSlotAssignment
-  // import only @/core/schema/business (Zod). The end-to-end DB driver
-  // (paper-cycle.test.ts) hits live Postgres → falls through to the DB partition.
-  'src/server/review/paper-sections.test.ts',
-  // YUK-214 (Strategy D · S1) — pure (no-DB) source-mapping unit. Imports only
-  // @/server/review/practice-read; @/db/client is type-only and @/db/schema is
-  // pure table objects (no connection), same safe surface as paper-sections.
-  // The DB-touching getPracticeList is covered by the db-partition tests.
-  'src/server/review/practice-read.unit.test.ts',
+  // P2a (YUK-312) — review 域 5 条 unit 条目已随模块迁入 src/capabilities/practice/，
+  // 由约定 glob（src/capabilities/**/*.unit.test.ts）自动接管，无需再登记。
   // YUK-203 U6 — pure (no-DB) state-machine JSON sanitizer + parseTurnOutput /
   // parseHintTurn control-char resilience tests. Imports only ./json-sanitize,
   // ./teaching, ./solve — no live DB / AI touches.
