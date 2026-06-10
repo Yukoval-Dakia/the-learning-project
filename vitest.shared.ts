@@ -43,6 +43,13 @@ export const allTestInclude = [
 ];
 
 export const fastTestInclude = [
+  // ARCH-P1 (YUK-311) — 新 kernel/capabilities 树的约定式快分区：
+  // *.unit.test.ts 按【命名约定】跑 no-DB 车道，零逐文件登记；*.db.test.ts
+  // 落到 db 分区（匹配 allTestInclude 的 src/**/*.test.ts，又被下面这两个
+  // glob 排除出 fast）。audit:partition 的 P0 检查照常生效：约定树里
+  // *.unit.test.ts 若未 mock 就 import DB，审计直接报错。
+  'src/kernel/**/*.unit.test.ts',
+  'src/capabilities/**/*.unit.test.ts',
   'middleware.test.ts',
   'scripts/**/*.test.ts',
   // YUK-263 — pure (no-DB) unit for the globalThis pool-cache HMR guard in
