@@ -45,7 +45,7 @@ import { writeCostLedger } from '@/server/ai/log';
 import { aiAgentRef } from '@/server/ai/provenance';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError } from '@/server/http/errors';
-import { runVisionExtract } from '@/server/ingestion/vision';
+import { runVisionExtract } from '@/capabilities/ingestion/server/vision';
 import { type R2Client, getR2 } from '@/server/r2';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 import type { ProposalInboxRow } from './inbox';

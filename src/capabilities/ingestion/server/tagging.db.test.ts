@@ -8,7 +8,7 @@ import type { TaggingInputT } from '@/core/schema/tagging';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { knowledge, knowledge_edge } from '@/db/schema';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { TaggingTaskError, buildTaggingGrid, runTaggingTask } from './tagging';
 
 async function seedKnowledge(db: ReturnType<typeof testDb>): Promise<void> {

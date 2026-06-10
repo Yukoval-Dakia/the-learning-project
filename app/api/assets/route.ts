@@ -1,7 +1,7 @@
 import { MAX_IMAGE_UPLOAD_BYTES } from '@/core/limits';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { persistImageAsset } from '@/server/ingestion/persist-image-asset';
+import { persistImageAsset } from '@/capabilities/ingestion/server/persist-image-asset';
 import { getR2 } from '@/server/r2';
 
 export const runtime = 'nodejs';

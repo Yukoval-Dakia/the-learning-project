@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // in src/server/ingestion/revert-auto-enroll.test.ts.
 vi.mock('@/db/client', () => ({ db: {} }));
 const revertAutoEnrolledBlock = vi.fn();
-vi.mock('@/server/ingestion/revert-auto-enroll', () => ({
+vi.mock('@/capabilities/ingestion/server/revert-auto-enroll', () => ({
   revertAutoEnrolledBlock: (...args: unknown[]) => revertAutoEnrolledBlock(...args),
 }));
 

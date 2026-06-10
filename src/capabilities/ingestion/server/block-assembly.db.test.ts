@@ -19,7 +19,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import { learning_session, question, question_block } from '@/db/schema';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { runAutoEnrollForSession } from './auto-enroll';
 import {
   type BlockAssemblyRunTaskFn,

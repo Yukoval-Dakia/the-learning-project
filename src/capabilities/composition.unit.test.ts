@@ -14,4 +14,8 @@ describe('composition root', () => {
   it('includes the practice capability', () => {
     expect(capabilities.map((c) => c.name)).toContain('practice');
   });
+
+  it('includes the ingestion capability', () => {
+    expect(capabilities.map((c) => c.name)).toContain('ingestion');
+  });
 });

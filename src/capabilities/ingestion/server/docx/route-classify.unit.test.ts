@@ -12,7 +12,7 @@ import { classifyDocx } from './route-classify';
 // classify is zip-parse + ProgID substring count only.
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const FIX = join(__dirname, '../../../../tests/fixtures/docx');
+const FIX = join(__dirname, '../../../../../tests/fixtures/docx');
 
 function docxBytes(name: string): Uint8Array {
   const buf = readFileSync(join(FIX, name));

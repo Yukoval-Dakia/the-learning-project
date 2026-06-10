@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import tencentMathPage1 from '../../../tests/fixtures/glm-ocr/tencent-math-page1.json';
-import clozeFixture from '../../../tests/fixtures/tencent_mark_agent_cloze_sample.json';
+import tencentMathPage1 from '../../../../tests/fixtures/glm-ocr/tencent-math-page1.json';
+import clozeFixture from '../../../../tests/fixtures/tencent_mark_agent_cloze_sample.json';
 import {
   flat8ToBBox,
   parseMarkAgentResponse,

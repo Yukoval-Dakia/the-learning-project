@@ -15,7 +15,7 @@ import { z } from 'zod';
 import { db } from '@/db/client';
 import { learning_session } from '@/db/schema';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { createIngestionPaper } from '@/server/ingestion/make-paper';
+import { createIngestionPaper } from '@/capabilities/ingestion/server/make-paper';
 
 export const runtime = 'nodejs';
 

@@ -12,7 +12,7 @@ import {
   question,
   question_block,
 } from '@/db/schema';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { runAutoEnrollForSession } from './auto-enroll';
 import { revertAutoEnrolledBlock } from './revert-auto-enroll';
 

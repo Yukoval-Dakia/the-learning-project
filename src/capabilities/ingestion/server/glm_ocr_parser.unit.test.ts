@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import mathPage1 from '../../../tests/fixtures/glm-ocr/math-page1.json';
-import yuwen8page from '../../../tests/fixtures/glm-ocr/yuwen-8page.json';
+import mathPage1 from '../../../../tests/fixtures/glm-ocr/math-page1.json';
+import yuwen8page from '../../../../tests/fixtures/glm-ocr/yuwen-8page.json';
 import type { GlmLayoutResponse } from './glm_ocr';
 import {
   bboxUnion,

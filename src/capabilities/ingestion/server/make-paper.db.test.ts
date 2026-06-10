@@ -16,7 +16,7 @@ import {
   question_block,
   source_document,
 } from '@/db/schema';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { createIngestionPaper } from './make-paper';
 
 async function seedKnowledge(id: string) {

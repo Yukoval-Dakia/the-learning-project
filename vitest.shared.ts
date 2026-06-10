@@ -64,6 +64,7 @@ export const fastTestInclude = [
   'src/kernel/**/*.unit.test.ts',
   'src/capabilities/**/*.unit.test.ts',
   // M0 (YUK-313) — server/web 树同享命名约定分区。
+  // M1 (YUK-314) — ingestion 19 条 allowlist 条目已随簇迁入 capabilities，由约定 glob 接管。
   'server/**/*.unit.test.ts',
   'web/**/*.unit.test.ts',
   'middleware.test.ts',
@@ -141,7 +142,6 @@ export const fastTestInclude = [
   'src/server/events/cause-policy.test.ts',
   'src/server/export/**/*.test.ts',
   'src/server/http/**/*.test.ts',
-  'src/server/ingestion/crop.test.ts',
   // YUK-258 — DOCX ingestion units. All three are pure no-DB: route-classify is
   // zip-parse only (fflate), markdown-segment is pure string→struct, convert
   // exercises the seam via an injected mock (NO real spawn / docker). The route
@@ -149,50 +149,32 @@ export const fastTestInclude = [
   // partition (NOT listed here). fastTestInclude is an explicit per-file allowlist
   // with no ingestion/** glob, so these must be enumerated or the db config's
   // src/**/*.test.ts glob would sweep them into the testcontainer partition.
-  'src/server/ingestion/docx/route-classify.test.ts',
-  'src/server/ingestion/docx/markdown-segment.test.ts',
-  'src/server/ingestion/docx/convert.test.ts',
-  'src/server/ingestion/figure_attach.test.ts',
   // YUK-250 — pure PDFium page renderer unit. Imports only pdf-render.ts +
   // sharp + @hyzyla/pdfium (WASM, no DB/R2/AI). Fixtures are static PDF bytes.
-  'src/server/ingestion/pdf-render.test.ts',
   // YUK-250 — encrypted-PDF error mapping; fully mocks @hyzyla/pdfium + sharp.
-  'src/server/ingestion/pdf-render-encryption.test.ts',
   // YUK-250 bot-review F1 — pure sha256Hex unit (crypto.subtle only, no DB/R2).
   // Guards content-addressing against byteOffset/byteLength view bugs.
-  'src/server/ingestion/persist-image-asset.unit.test.ts',
   // YUK-214 (Strategy D · S1) — pure (no-DB) ingest→practice paper builder.
   // buildIngestionPaperToolState imports only @/core/schema/business (Zod);
   // @/db/* is type-only / pure table objects at this surface. The DB writer
   // (createIngestionPaper) + idempotency are covered by make-paper.db.test.ts
   // (db partition).
-  'src/server/ingestion/make-paper.unit.test.ts',
   // T-OC slice 2 (YUK-145): VLM StructureTask runner. Pure DI unit — injected
   // runTaskFn, no live DB / AI / R2. (sibling tencent_ocr_extract handler test
   // hits Postgres → db partition.)
-  'src/server/ingestion/structure.test.ts',
   // YUK-227 S3 Slice A (F4): block-assembly spatial projection unit tests — pure
   // functions (isAllPlaceholderPageIndex / projectBlock). DB-backed integration
   // tests remain in block-assembly.test.ts (db partition).
-  'src/server/ingestion/block-assembly.unit.test.ts',
   // T-OC slice A1 (YUK-145): the MistakeEnrollTask invoker is a pure DI unit —
   // injected runTaskFn, no live DB / AI. (sibling auto-enroll.test.ts hits
   // Postgres → db partition.)
-  'src/server/ingestion/mistake_enroll.test.ts',
   // T-OC slice 3 (YUK-145): the deterministic WorkflowJudge aggregator + the
   // auto-enroll flag config readers are pure (no DB / no LLM). The sibling
   // tagging.test.ts + auto-enroll.test.ts hit live Postgres → db partition.
-  'src/server/ingestion/workflow-judge.test.ts',
-  'src/server/ingestion/workflow-judge-config.test.ts',
-  'src/server/ingestion/tencent_mark.test.ts',
-  'src/server/ingestion/tencent_mark_parser.test.ts',
   // YUK-253 — GLM-OCR engine swap. Both pure no-DB units: the client test mocks
   // global `fetch`, the parser test is pure (real fixtures). No @/db/client /
   // postgres / drizzle / PgBoss import → unit partition. The handler test
   // (tencent_ocr_extract.test.ts) hits live Postgres → db partition.
-  'src/server/ingestion/glm_ocr.test.ts',
-  'src/server/ingestion/glm_ocr_parser.test.ts',
-  'src/server/ingestion/vision.test.ts',
   'src/server/judge/**/*.test.ts',
   // YUK-239 (STB-5) — pure env-read guard for the background-job enqueue seam
   // (shouldEnqueueBackgroundJobs). No DB / pg-boss touched (vi.stubEnv only).

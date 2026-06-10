@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
-import mathPage1 from '../../../tests/fixtures/glm-ocr/math-page1.json';
+import mathPage1 from '../../../../tests/fixtures/glm-ocr/math-page1.json';
 import { type GlmLayoutResponse, runGlmLayoutParsing } from './glm_ocr';
 
 // YUK-253 — GLM-OCR layout_parsing client. Pure no-DB unit: global `fetch` is
