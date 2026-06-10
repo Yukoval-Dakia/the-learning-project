@@ -4,8 +4,8 @@
 
 import { z } from 'zod';
 
+import { readAllAgentNotes } from '@/capabilities/agent-notes/server/notes';
 import { db } from '@/db/client';
-import { readAllAgentNotes } from '@/server/agents/notes';
 import { ApiError, errorResponse } from '@/server/http/errors';
 
 export const runtime = 'nodejs';

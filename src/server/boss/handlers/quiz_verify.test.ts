@@ -13,9 +13,9 @@
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { readAgentNotes } from '@/capabilities/agent-notes/server/notes';
 import type { QuizGenMetadataT } from '@/core/schema/quiz_gen';
 import { event, knowledge, material_fsrs_state, question, source_document } from '@/db/schema';
-import { readAgentNotes } from '@/server/agents/notes';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   COPY_SAFETY_TOO_CLOSE_THRESHOLD,
