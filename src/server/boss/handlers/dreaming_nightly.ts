@@ -1,8 +1,8 @@
 import { createId } from '@paralleldrive/cuid2';
 import type { Job } from 'pg-boss';
 
+import { type AgentNote, readAgentNotes } from '@/capabilities/agent-notes/server/notes';
 import type { Db } from '@/db/client';
-import { type AgentNote, readAgentNotes } from '@/server/agents/notes';
 import { type RunTaskResult, runAgentTask } from '@/server/ai/runner';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,

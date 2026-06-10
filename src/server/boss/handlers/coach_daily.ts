@@ -7,13 +7,13 @@
 import { createId } from '@paralleldrive/cuid2';
 import type { Job } from 'pg-boss';
 
-import { type TodayPlanT, parseTodayPlan } from '@/core/schema/coach';
-import type { Db } from '@/db/client';
 // codex #3356884494 — Coach consumes the out-of-band agent-note HINT channel
 // (for_agent='coach'). quiz_verify leaves question_pool_gap notes targeting
 // 'coach', but nothing read them until now (the only live readers were Dreaming /
 // KnowledgeReview). Mirrors dreaming_nightly.ts: hints, not facts; additive only.
-import { type AgentNote, readAgentNotes } from '@/server/agents/notes';
+import { type AgentNote, readAgentNotes } from '@/capabilities/agent-notes/server/notes';
+import { type TodayPlanT, parseTodayPlan } from '@/core/schema/coach';
+import type { Db } from '@/db/client';
 import { type RunTaskResult, runAgentTask } from '@/server/ai/runner';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,

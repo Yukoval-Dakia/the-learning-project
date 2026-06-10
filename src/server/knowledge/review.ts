@@ -20,12 +20,12 @@
 // SDK-resolved name so the agent runner doesn't strip the tool from the
 // catalog before the model sees it.
 
+import { readAgentNotes } from '@/capabilities/agent-notes/server/notes';
 import { newId } from '@/core/ids';
 import type { KnowledgeEdgeProposalChangeT } from '@/core/schema/proposal';
 import { parseAiProposalPayload } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, proposal_signals } from '@/db/schema';
-import { readAgentNotes } from '@/server/agents/notes';
 import { streamTask } from '@/server/ai/runner';
 import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/server/ai/tools/budgets';
 import { getCorrectionStatuses } from '@/server/events/corrections';
