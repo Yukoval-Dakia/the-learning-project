@@ -22,10 +22,12 @@ export default defineConfig({
       '/api/assets': 'http://localhost:8787',
       '/api/agents': 'http://localhost:8787',
       '/api/health': 'http://localhost:8787',
-      // M2-T6 (YUK-316)：练习/复习链已迁 Hono。/api/questions/*（题面读 + solve
-      // 链）整体留旧栈——GET 题面仍由旧 Next 服务，solve 旧壳是同 handler 的 shim。
+      // M2 (YUK-316)：练习/复习链已迁 Hono；T7 拆除旧壳后 solve 链也切新栈
+      //（正则 key——questions CRUD（题面读/列表）属 quiz 域，D16 出 M2 范围，
+      // 留旧栈至 M5 收口）。
       '/api/review': 'http://localhost:8787',
       '/api/practice': 'http://localhost:8787',
+      '^/api/questions/.*/solve': 'http://localhost:8787',
       '/api': process.env.RW_OLD_STACK ?? 'http://localhost:3000',
     },
   },

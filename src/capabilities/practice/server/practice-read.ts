@@ -147,7 +147,7 @@ export async function getPracticeList(db: Db): Promise<PracticeListResult> {
   // 1) Paper artifacts (the widened intent_source provenances).
   //    YUK-214 (Strategy D · S1) — `ingestion_paper` is the fourth source
   //    (ingest→practice bridge); must stay in lock-step with the start-session
-  //    whitelist at app/api/practice/route.ts (§Step 1).
+  //    whitelist in src/capabilities/practice/api/papers-list.ts (§Step 1).
   const paperRows = await db
     .select()
     .from(artifact)
