@@ -26,16 +26,16 @@
 //   - writeEvent(db, eventObj) — single INSERT path; calls parseEvent() before INSERT;
 //     idempotent via PK conflict do-nothing.
 
+import {
+  type EffectiveTruth,
+  activeEffectiveTruth,
+  getEffectiveTruths,
+} from '@/capabilities/practice/server/effective-truth';
 import { type EventT, parseEvent } from '@/core/schema/event';
 import type { CauseCategoryT, CauseSchemaT, FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { computeAffectedScopes } from '@/server/memory/scope_tagger';
-import {
-  type EffectiveTruth,
-  activeEffectiveTruth,
-  getEffectiveTruths,
-} from '@/server/review/effective-truth';
 import { and, desc, eq, gte, inArray, ne, sql } from 'drizzle-orm';
 import {
   type CorrectionStatus,

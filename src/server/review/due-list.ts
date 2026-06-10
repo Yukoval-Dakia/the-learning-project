@@ -15,6 +15,7 @@
 // Wire contract preserved: { rows: [{ id, question_id, prompt_md, reference_md,
 // knowledge_ids, cause, fsrs_state, created_at }] }.
 
+import type { EffectiveTruth } from '@/capabilities/practice/server/effective-truth';
 import { type ActivityRefT, questionRef } from '@/core/schema/activity';
 import type { CauseCategoryT } from '@/core/schema/event/blocks';
 import { type Db, db } from '@/db/client';
@@ -34,7 +35,6 @@ import { errorResponse } from '@/server/http/errors';
 // parent-chain walk. Extracted to `@/server/knowledge/subject-resolution` (P5.2)
 // so the brief-refresh layer shares the SAME canonical bridge.
 import { batchResolveSubjectIds } from '@/server/knowledge/subject-resolution';
-import type { EffectiveTruth } from '@/server/review/effective-truth';
 // YUK-282 / ADR-0030 — by-kind variant-rotation probe selection. Replaces the
 // inline single-question-avoidance ORDER BY (ADR-0028 seam) with a routed pick:
 // recall kinds repeat the original question, application kinds rotate the

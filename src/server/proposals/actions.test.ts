@@ -2420,7 +2420,7 @@ describe('question_draft accept (ADR-0031 lane B)', () => {
     await seedQuestionDraftProposal('qd_p2', questionId);
 
     const { getFsrsState, upsertFsrsState } = await import('@/server/fsrs/state');
-    const { initialFsrsState } = await import('@/server/review/fsrs');
+    const { initialFsrsState } = await import('@/capabilities/practice/server/fsrs');
     const preexisting = initialFsrsState(new Date('2026-01-01T00:00:00.000Z'));
     await upsertFsrsState(db, {
       subject_kind: 'knowledge',

@@ -26,6 +26,12 @@
 
 import { z } from 'zod';
 
+import { normalizeReviewSubmitActivityRef } from '@/capabilities/practice/server/activity-ref';
+import { resolveAdviceCauseForQuestion } from '@/capabilities/practice/server/cause-context';
+import { activeEffectiveTruth } from '@/capabilities/practice/server/effective-truth';
+import { scheduleReview } from '@/capabilities/practice/server/fsrs';
+import { ratingFromCoarseOutcome } from '@/capabilities/practice/server/judge-rating';
+import { judgeResultToRatingAdvice } from '@/capabilities/practice/server/rating-advisor';
 import { newId } from '@/core/ids';
 import { ActivityRef } from '@/core/schema/activity';
 import { FsrsRating } from '@/core/schema/business';
@@ -42,12 +48,6 @@ import {
   resolveQuestionJudgeRoute,
 } from '@/server/judge/route-resolve';
 import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject-profile';
-import { normalizeReviewSubmitActivityRef } from '@/server/review/activity-ref';
-import { resolveAdviceCauseForQuestion } from '@/server/review/cause-context';
-import { activeEffectiveTruth } from '@/server/review/effective-truth';
-import { scheduleReview } from '@/server/review/fsrs';
-import { ratingFromCoarseOutcome } from '@/server/review/judge-rating';
-import { judgeResultToRatingAdvice } from '@/server/review/rating-advisor';
 import { eq, sql } from 'drizzle-orm';
 
 export const runtime = 'nodejs';

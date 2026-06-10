@@ -6,9 +6,9 @@
 // behavior at the helper layer so the advice + submit routes don't drift.
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 // YUK-101 (iter2 fix F12) — shared seeders.
-import { seedAttempt, seedUserCause } from '../../../tests/helpers/event-seed';
+import { seedAttempt, seedUserCause } from '../../../../tests/helpers/event-seed';
 import { ADVICE_CAUSE_SCAN_LIMIT, resolveAdviceCauseForQuestion } from './cause-context';
 
 describe('resolveAdviceCauseForQuestion', () => {

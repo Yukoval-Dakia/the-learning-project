@@ -37,6 +37,7 @@
 // Scripts load `.env`, NOT `.env.local`.
 import './load-env';
 
+import { scheduleReview } from '@/capabilities/practice/server/fsrs';
 import { CauseSchema } from '@/core/schema/cause';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import type { AiProposalPayloadInputT } from '@/core/schema/proposal';
@@ -61,7 +62,6 @@ import {
   recordProposalDecisionSignal,
 } from '@/server/proposals/signals';
 import { writeAiProposal } from '@/server/proposals/writer';
-import { scheduleReview } from '@/server/review/fsrs';
 import { loadWenyanFixtures } from '@/subjects/wenyan/fixtures';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 

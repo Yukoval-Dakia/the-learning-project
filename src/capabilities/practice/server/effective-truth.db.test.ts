@@ -1,12 +1,12 @@
+import { emitEvent } from '@/kernel/events';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { resetDb, testDb } from '../../../tests/helpers/db';
-import { writeEvent } from '../events/queries';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { getEffectiveTruth } from './effective-truth';
 
 const BASE_TIME = new Date('2026-05-23T00:00:00Z');
 
 async function seedAttempt(id: string, createdAt = BASE_TIME): Promise<void> {
-  await writeEvent(testDb(), {
+  await emitEvent(testDb(), {
     id,
     actor_kind: 'user',
     actor_ref: 'self',
@@ -30,7 +30,7 @@ async function seedCorrection(opts: {
   replacement_event_id?: string;
   created_at?: Date;
 }): Promise<void> {
-  await writeEvent(testDb(), {
+  await emitEvent(testDb(), {
     id: opts.id,
     actor_kind: 'user',
     actor_ref: 'self',

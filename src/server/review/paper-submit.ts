@@ -19,6 +19,8 @@
 // fallback (NOT a CauseSchema widening — critic #1) passed through
 // validateCauseAgainstProfile; a later attribution agent supersedes it.
 
+import { scheduleReview } from '@/capabilities/practice/server/fsrs';
+import { ratingFromCoarseOutcome } from '@/capabilities/practice/server/judge-rating';
 import { newId } from '@/core/ids';
 import { validateCauseAgainstProfile } from '@/core/schema/cause';
 import { db as defaultDb } from '@/db/client';
@@ -33,8 +35,6 @@ import {
   resolveQuestionJudgeRoute,
 } from '@/server/judge/route-resolve';
 import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject-profile';
-import { scheduleReview } from '@/server/review/fsrs';
-import { ratingFromCoarseOutcome } from '@/server/review/judge-rating';
 import { and, desc, eq, isNull, not, sql } from 'drizzle-orm';
 import { assertSessionMutable, freezeAnswerDraft } from './answer-draft';
 
