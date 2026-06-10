@@ -38,7 +38,9 @@ describe('POST /api/review/appeal', () => {
     await resetDb();
   });
 
-  it('writes appeal_request event and judge_retraction proposal chained to judge event', async () => {
+  // M2 (YUK-316, D15)：申诉不再产 proposal——判分属软判断层，appeal 直接触发
+  // 异步 rejudge job（测试环境不入队，链路由 rejudge.db.test.ts E2E 覆盖）。
+  it('writes appeal_request event chained to judge event — and NO proposal (D15)', async () => {
     const judgeEventId = await seedJudgeEvent();
     const res = await POST(makeReq({ judge_event_id: judgeEventId, reason_md: '我觉得对' }));
     expect(res.status).toBe(200);
@@ -56,16 +58,11 @@ describe('POST /api/review/appeal', () => {
     expect(appealEvt.actor_kind).toBe('user');
     expect((appealEvt.payload as { reason_md: string }).reason_md).toBe('我觉得对');
 
-    const [proposalEvt] = await testDb()
+    const proposals = await testDb()
       .select()
       .from(event)
       .where(and(eq(event.action, 'experimental:proposal'), eq(event.actor_ref, 'appeal')));
-    expect(proposalEvt).toBeDefined();
-    if (!proposalEvt) throw new Error('expected judge_retraction proposal event');
-    expect(proposalEvt.subject_kind).toBe('event');
-    expect(proposalEvt.subject_id).toBe(judgeEventId);
-    const aiProposal = (proposalEvt.payload as { ai_proposal?: { kind?: string } }).ai_proposal;
-    expect(aiProposal?.kind).toBe('judge_retraction');
+    expect(proposals).toHaveLength(0);
   });
 
   it('returns 404 when judge_event_id not found', async () => {

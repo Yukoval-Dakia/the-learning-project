@@ -345,6 +345,9 @@ function buildSemanticJudgePrompt(profile: SubjectProfile): string {
 - 只判断 answer 是否满足题面和 rubric，不做错因归因
 - required_points 是主要证据；matched_points / missing_points 必须来自这些要点或等价表述
 - reference_md 是参考答案，不要求逐字相同
+- 若输入含 appeal 字段（M2 申诉重判，YUK-316）：用户对此前判定（appeal.prior_outcome）提出异议，
+  appeal.user_reason_md 是其理由。认真复核该理由——它可能指出等价表述或判分遗漏；但不要因为
+  用户申诉就迁就：理由不成立时维持原判，feedback_md 里直接回应用户的理由
 - ${profile.grounding.uncertaintyPolicy}
 严格 JSON 输出（不带 markdown 代码块包裹）：
 {"score":0.0-1.0,"coarse_outcome":"correct"|"partial"|"incorrect","confidence":0.0-1.0,"feedback_md":"给学习者的简短反馈","evidence_json":{"matched_points":["..."],"missing_points":["..."],"notes":"可选说明"}}
