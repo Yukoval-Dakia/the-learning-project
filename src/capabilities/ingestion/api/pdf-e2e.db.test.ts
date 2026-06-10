@@ -23,10 +23,10 @@ vi.mock('@/server/r2', () => ({
   createR2Client: () => r2,
 }));
 
-import { GET as getAssetContent } from '../../assets/[id]/content/route';
+import { GET as getAssetContent } from './asset-content';
+import { POST as expandPdf } from './pdf';
 // Import the route handlers AFTER the R2 mock so each picks up memR2.
-import { POST as createSession } from '../route';
-import { POST as expandPdf } from './route';
+import { POST as createSession } from './sessions';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIX = join(__dirname, '../../../../tests/fixtures/pdf');
@@ -98,9 +98,7 @@ describe('PDF ingest seam — expand → session → resolvable image assets', (
     for (const id of asset_ids) {
       const contentRes = await getAssetContent(
         new Request(`http://localhost/api/assets/${id}/content`),
-        {
-          params: Promise.resolve({ id }),
-        },
+        { id },
       );
       expect(contentRes.status).toBe(200);
       expect(contentRes.headers.get('Content-Type')).toBe('image/png');

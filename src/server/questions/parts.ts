@@ -11,7 +11,7 @@
  * This module is the INSERT write path for `question.parent_question_id` and
  * `question.part_index` (so `pnpm audit:schema` sees a real write path — no
  * allowlist entry needed). It mirrors how questions are created inline in the
- * ingestion owners (`app/api/ingestion/[id]/import/route.ts`,
+ * ingestion owners (`src/capabilities/ingestion/api/import.ts`,
  * `src/server/ingestion/auto-enroll.ts`): `created_by` stays NULL by design —
  * provenance is carried by `metadata` + the event log, per ADR-0006 v2.
  *

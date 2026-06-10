@@ -30,7 +30,7 @@ type CauseCategoryId = string;
 //
 // This is the FROZEN wire shape the panel + prefill build against. `mistake_draft`
 // is surfaced by slice 1's extension to `toAutoEnrollObservation`
-// (app/api/ingestion/[id]/blocks/route.ts). The pinned key names below match the
+// (src/capabilities/ingestion/api/blocks.ts). The pinned key names below match the
 // source schemas verbatim (lane plan §4): `wrong_answer` (NOT `outcome`), and the
 // cause subset is `{ primary_category, analysis_md }` (CauseSchema has no
 // `user_notes`). Fields the route cannot resolve come back `null`.

@@ -6,7 +6,7 @@
 // A question's "source tier" is a 4-level trust ranking driven by PROVENANCE,
 // not by a bare reading of the `question.source` column. The source column holds
 // an INGESTION ENTRYPOINT (e.g. 'vision_paper' / 'vision_single' — see
-// app/api/ingestion/[id]/import/route.ts:416 writing `sessionEntrypoint`), which
+// src/capabilities/ingestion/api/import.ts writing `sessionEntrypoint`), which
 // carries NO tier semantics on its own. So tier 1 (authentic) is keyed off the
 // presence of an ingestion provenance marker in metadata, never off `source`.
 //

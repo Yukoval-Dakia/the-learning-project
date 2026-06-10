@@ -21,8 +21,8 @@ import {
   source_asset,
   source_document,
 } from '@/db/schema';
-import { resetDb, testDb } from '../../../../../tests/helpers/db';
-import { memR2 } from '../../../../../tests/helpers/r2';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { memR2 } from '../../../../tests/helpers/r2';
 
 const r2 = memR2();
 vi.mock('@/server/r2', () => ({
@@ -55,7 +55,7 @@ vi.mock('@/server/knowledge/tree', () => ({
   loadTreeSnapshot: vi.fn(async () => []),
 }));
 
-import { POST } from './route';
+import { POST } from './import';
 
 // ---- helpers ----
 
@@ -193,7 +193,7 @@ function postReq(sessionId: string, body: unknown) {
 }
 
 async function post(sessionId: string, body: unknown) {
-  return POST(postReq(sessionId, body), { params: Promise.resolve({ id: sessionId }) });
+  return POST(postReq(sessionId, body), { id: sessionId });
 }
 
 describe('POST /api/ingestion/[id]/import', () => {

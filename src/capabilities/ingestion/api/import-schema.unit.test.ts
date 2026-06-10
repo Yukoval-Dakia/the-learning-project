@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { ImportBody, type ImportBodyInput } from './schema';
+import { ImportBody, type ImportBodyInput } from './import-schema';
 
 function validBlock(overrides: Partial<ImportBodyInput['blocks'][number]> = {}) {
   return {

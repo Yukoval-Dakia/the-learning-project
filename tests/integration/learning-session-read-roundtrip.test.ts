@@ -75,10 +75,8 @@ describe('learning_session read-path roundtrip (post-Step-5 callers)', () => {
 
   it('POST /api/ingestion/[id]/extract reads learning_session(type=ingestion) and transitions uploaded → queued', async () => {
     const { sessionId } = await seedSession({ status: 'uploaded' });
-    const { POST } = await import('@/../app/api/ingestion/[id]/extract/route');
-    const resp = await POST(new Request('http://t/x', { method: 'POST' }), {
-      params: Promise.resolve({ id: sessionId }),
-    });
+    const { POST } = await import('@/capabilities/ingestion/api/extract');
+    const resp = await POST(new Request('http://t/x', { method: 'POST' }), { id: sessionId });
     expect(resp.status).toBe(200);
     const body = (await resp.json()) as { businessId: string; jobId: string };
     expect(body.businessId).toBe(sessionId);
@@ -92,10 +90,8 @@ describe('learning_session read-path roundtrip (post-Step-5 callers)', () => {
     // table is gone now. The 404 path remains exercised by simply pointing at
     // a non-existent id.
     const unknownId = createId();
-    const { POST } = await import('@/../app/api/ingestion/[id]/extract/route');
-    const resp = await POST(new Request('http://t/x', { method: 'POST' }), {
-      params: Promise.resolve({ id: unknownId }),
-    });
+    const { POST } = await import('@/capabilities/ingestion/api/extract');
+    const resp = await POST(new Request('http://t/x', { method: 'POST' }), { id: unknownId });
     expect(resp.status).toBe(404);
   });
 
@@ -116,10 +112,8 @@ describe('learning_session read-path roundtrip (post-Step-5 callers)', () => {
       updated_at: now,
       version: 0,
     });
-    const { POST } = await import('@/../app/api/ingestion/[id]/extract/route');
-    const resp = await POST(new Request('http://t/x', { method: 'POST' }), {
-      params: Promise.resolve({ id }),
-    });
+    const { POST } = await import('@/capabilities/ingestion/api/extract');
+    const resp = await POST(new Request('http://t/x', { method: 'POST' }), { id });
     expect(resp.status).toBe(404);
   });
 });

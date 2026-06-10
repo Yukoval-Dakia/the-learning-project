@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Unit test: mock the DB client + the server primitive so the route is exercised
 // in isolation (HTTP shape + status mapping). The primitive itself is DB-tested
-// in src/server/ingestion/revert-auto-enroll.test.ts.
+// in src/capabilities/ingestion/server/revert-auto-enroll.db.test.ts.
 vi.mock('@/db/client', () => ({ db: {} }));
 const revertAutoEnrolledBlock = vi.fn();
 vi.mock('@/capabilities/ingestion/server/revert-auto-enroll', () => ({
@@ -10,9 +10,9 @@ vi.mock('@/capabilities/ingestion/server/revert-auto-enroll', () => ({
 }));
 
 import { ApiError } from '@/server/http/errors';
-import { POST } from './route';
+import { POST } from './revert';
 
-const ctx = { params: Promise.resolve({ id: 'sess_1' }) };
+const ctx = { id: 'sess_1' };
 
 function req(body: unknown): Request {
   return new Request('http://t/api/ingestion/sess_1/revert', {
