@@ -809,3 +809,44 @@ export const knowledge_mastery = pgView('knowledge_mastery', {
   last_evidence_at: timestamp('last_evidence_at', { withTimezone: true }),
   last_active_at: timestamp('last_active_at', { withTimezone: true }).notNull(),
 }).existing();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M2 练习流（YUK-316，总 spec REV 2 §4-M2 / P2 spec §2.1）。
+//
+// 「AI 维护的日程」载体：流要支持白天动态插拔（点播插入、composer_live 增补、
+// 做完推进），且用户中途离开回来流必须还在原状——所以物化而非纯派生。与事件
+// 不变量不冲突：**作答事实仍只写 event**，stream_item 只是日程行；status 由
+// 作答动作驱动推进（前端 submit 成功后 PATCH）。
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const practice_stream_item = pgTable(
+  'practice_stream_item',
+  {
+    id: text('id').primaryKey(),
+    // 流按天组织（YYYY-MM-DD；本地日由 API 层裁定后落库）
+    date: text('date').notNull(),
+    position: integer('position').notNull(),
+    item_kind: text('item_kind').$type<'question' | 'paper'>().notNull(),
+    // question.id 或 paper artifact id（软引用，沿用项目惯例）
+    ref_id: text('ref_id').notNull(),
+    source: text('source')
+      .$type<'decay' | 'variant' | 'new_check' | 'paper' | 'on_demand' | 'import'>()
+      .notNull(),
+    status: text('status')
+      .$type<'pending' | 'in_progress' | 'done' | 'skipped'>()
+      .notNull()
+      .default('pending'),
+    // AI 排入理由（第一人称 provenance 素材）。M2 为模板生成；M4 夜链 AI 化。
+    reasoning: text('reasoning').notNull(),
+    added_by: text('added_by')
+      .$type<'composer_nightly' | 'composer_live' | 'copilot' | 'user'>()
+      .notNull(),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('practice_stream_date_idx').on(t.date, t.position),
+    // 同日同 ref 不重复排入（点播/增补的幂等护栏）
+    uniqueIndex('practice_stream_date_ref_unique').on(t.date, t.ref_id),
+  ],
+);
