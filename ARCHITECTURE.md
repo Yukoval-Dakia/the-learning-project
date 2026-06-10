@@ -1,8 +1,16 @@
 # ARCHITECTURE — 装进脑子的那张图
 
-> 架构重设计进行中（spec：docs/superpowers/specs/2026-06-10-architecture-redesign-design.md）。
-> 本文件 + `src/capabilities/index.ts`（组合根 = 迁移进度表）是新形状的导航起点；
-> 未迁部分仍按 CLAUDE.md「Layering」一节阅读。
+> **REV 2（D17-D20）**：架构**重写**进行中——原仓拆旧建新（绿地组装 + 采石场），不保旧行为等价。
+> spec：docs/superpowers/specs/2026-06-10-architecture-redesign-design.md（REV 2 横幅 + §4 M0-M5 建造顺序）。
+> 新形状导航起点 = 本文件 + `src/capabilities/index.ts`（组合根）+ `server/`（Hono 入口）+ `web/`（Vite SPA）。
+> 旧树（app/、src/server、src/ai、src/ui）是**只读采石场**：按里程碑采伐入包，对应旧 surface 验收后拆除；
+> 未采伐部分须持续 typecheck + test 绿（旧测试 = 资产 spec）。
+
+## 新栈两棵树（M0 起）
+
+- `server/` — Hono API 入口：token gate、health、**manifest→组合根真实挂载**（带 `load` thunk 的路由声明被循环 `app.on()`，零壳文件）。dev：`pnpm rw:api`（:8787）。
+- `web/` — Vite SPA（TanStack Router + TanStack Query + Tailwind v4，样式暂 import 旧 globals.css）。dev：`pnpm rw:web`（:5173，/api 代理到 :8787）。
+- 规则：**capability ui 不 import 路由库**——导航以 `(to: string) => void` prop 由 web 壳注入（web/src/router.tsx）。
 
 ## 内核（src/kernel/）— 六契约
 
