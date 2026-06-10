@@ -10,7 +10,7 @@ import { memR2 } from '../../../../tests/helpers/r2';
 import { POST } from './pdf';
 
 // db partition — imports tests/helpers/db + memR2 (R2 mocked, but real Postgres
-// for the source_asset rows). Mirrors app/api/assets/route.test.ts.
+// for the source_asset rows). Mirrors src/capabilities/ingestion/api/assets.db.test.ts.
 const r2 = memR2();
 vi.mock('@/server/r2', () => ({
   getR2: () => r2,

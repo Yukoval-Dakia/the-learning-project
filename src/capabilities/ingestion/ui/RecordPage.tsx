@@ -1,8 +1,8 @@
 // M1-T6 (YUK-314) — 新栈录入面（Vite SPA 壳挂 /record）。
-// 从 app/(app)/record/page.tsx 采伐：学习记录 mode（RecordContextPanel）按 D11
-// 不迁（学习记录已删，错题是标记不是通道）；manual / 拍单题 / 拍试卷 / AI 录入
-// 四 tab 保持旧行为。路由耦合走 props 注入（壳层规则，见 web/src/router.tsx）。
-// 旧 Next record 页双栈期保留，T7 拆除。
+// 采伐自旧 Next record 页（app/(app)/record/page.tsx，T7 已拆除）：学习记录
+// mode（RecordContextPanel）按 D11 不迁（学习记录已删，错题是标记不是通道）；
+// manual / 拍单题 / 拍试卷 / AI 录入四 tab 保持旧行为。路由耦合走 props 注入
+//（壳层规则，见 web/src/router.tsx）。
 
 import { AutoEnrolledPanel } from '@/ui/components/AutoEnrolledPanel';
 import { VisionTab, type VisionTabRouting } from '@/ui/components/VisionTab';

@@ -34,7 +34,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 
 // ---------------------------------------------------------------------------
-// Wire shapes (reads only — see app/api/ingestion route + blocks route)
+// Wire shapes (reads only — see ingestion capability api/sessions.ts + api/blocks.ts)
 // ---------------------------------------------------------------------------
 
 interface IngestionSessionRow {

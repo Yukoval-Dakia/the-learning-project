@@ -1,8 +1,8 @@
 import { z } from 'zod';
 
+import { reassignFigure } from '@/capabilities/ingestion/server/block-structured-edit';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { reassignFigure } from '@/capabilities/ingestion/server/block-structured-edit';
 
 export const runtime = 'nodejs';
 
