@@ -16,6 +16,7 @@ import type {
   ArtifactHistoryEntryT,
   NoteVerificationResultT,
 } from '@/core/schema/business';
+import { InteractiveArtifactAttrs } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, knowledge, learning_item, question } from '@/db/schema';
 import {
@@ -31,6 +32,11 @@ import { type SlimSubjectProfile, toSlimSubjectProfile } from '@/subjects/profil
 
 const CROSS_LINK_REF_KIND = 'cross_link';
 const NOTE_TYPES = ['note_atomic', 'note_hub', 'note_long'] as const;
+// ADR-0033 D5 — /notes/[id] doubles as the interactive artifact's reader shell:
+// 'interactive' is readable by this page, but it is NOT a note type (NOTE_TYPES
+// stays narrow so note-only machinery — editing / embedded-check / cross-link —
+// never perceives it).
+const READER_TYPES = [...NOTE_TYPES, 'interactive'] as const;
 const RELATED_ITEMS_LIMIT = 30;
 
 export type NotePageSection = ReturnType<typeof bodyBlocksToNoteSections>[number];
@@ -66,7 +72,7 @@ export interface NotePageRelatedItem {
 
 export interface NotePage {
   id: string;
-  // note_atomic | note_hub | note_long
+  // note_atomic | note_hub | note_long | interactive
   type: string;
   title: string;
   knowledge_ids: string[];
@@ -79,6 +85,11 @@ export interface NotePage {
   verification_summary: NoteVerificationResultT | null;
   embedded_check_status: string;
   embedded_questions: NotePageEmbeddedQuestion[];
+  // ADR-0033 — non-null only when type='interactive' (attrs.html feeds the
+  // sandboxed renderer); note types are always null; an interactive row whose
+  // attrs fails schema validation is also null (the page renders a degraded
+  // notice instead of 404ing the whole artifact).
+  interactive: { html: string } | null;
   subject_profile: SlimSubjectProfile;
   version: number;
   history: ArtifactHistoryEntryT[];
@@ -91,12 +102,16 @@ export interface NotePage {
 
 /**
  * Aggregate every read the /notes/[id] NoteReader page needs into one server
- * call. Returns null when the note doesn't exist, is archived, or is not a note
- * type (tool_quiz / other artifact kinds are not NoteReader pages) so the route
- * can 404 instead of rendering an empty shell.
+ * call. Returns null when the artifact doesn't exist, is archived, or is not a
+ * READER_TYPES kind (tool_quiz / other artifact kinds are not NoteReader pages)
+ * so the route can 404 instead of rendering an empty shell. READER_TYPES =
+ * note types + 'interactive' (ADR-0033 D5): the interactive artifact reuses
+ * this page as its reader shell, but stays invisible to note-only machinery —
+ * its body_blocks is null, so sections/embedded-check resolve to empty and the
+ * client never mounts the editor for it.
  */
 export async function loadNotePage(db: Db, noteId: string): Promise<NotePage | null> {
-  // 1. the note artifact (non-archived, note type only).
+  // 1. the artifact (non-archived, reader types only).
   const rows = await db
     .select({
       id: artifact.id,
@@ -104,6 +119,7 @@ export async function loadNotePage(db: Db, noteId: string): Promise<NotePage | n
       title: artifact.title,
       knowledge_ids: artifact.knowledge_ids,
       body_blocks: artifact.body_blocks,
+      attrs: artifact.attrs,
       generation_status: artifact.generation_status,
       verification_status: artifact.verification_status,
       verification_summary: artifact.verification_summary,
@@ -118,7 +134,7 @@ export async function loadNotePage(db: Db, noteId: string): Promise<NotePage | n
     .limit(1);
   const note = rows[0];
   if (!note) return null;
-  if (!(NOTE_TYPES as readonly string[]).includes(note.type)) return null;
+  if (!(READER_TYPES as readonly string[]).includes(note.type)) return null;
 
   const knowledgeIds = note.knowledge_ids ?? [];
 
@@ -167,6 +183,16 @@ export async function loadNotePage(db: Db, noteId: string): Promise<NotePage | n
   const related = await loadRelatedLearningItems(db, noteId, knowledgeIds);
   const profile = await resolveSubjectProfileForKnowledgeIds(db, knowledgeIds);
 
+  // 6. interactive payload (ADR-0033) — only for type='interactive'. attrs is
+  // opaque jsonb; this safeParse is the read-side schema barrier. On failure the
+  // page still loads (title/labels/version chrome) with interactive=null so the
+  // client can render a degraded notice instead of a 404.
+  let interactive: NotePage['interactive'] = null;
+  if (note.type === 'interactive') {
+    const parsed = InteractiveArtifactAttrs.safeParse(note.attrs);
+    if (parsed.success) interactive = { html: parsed.data.html };
+  }
+
   return {
     id: note.id,
     type: note.type,
@@ -180,6 +206,7 @@ export async function loadNotePage(db: Db, noteId: string): Promise<NotePage | n
     verification_summary: note.verification_summary,
     embedded_check_status: note.embedded_check_status,
     embedded_questions: embeddedQuestions,
+    interactive,
     subject_profile: toSlimSubjectProfile(profile),
     version: note.version,
     history: note.history ?? [],

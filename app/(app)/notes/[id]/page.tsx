@@ -9,6 +9,7 @@ import type {
   ArtifactSection,
   EmbeddedCheckQuestion,
 } from '@/ui/components/ArtifactSections';
+import { InteractiveArtifactRenderer } from '@/ui/components/InteractiveArtifactRenderer';
 import { NoteRenderer, VerificationBadge } from '@/ui/components/NoteRenderer';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
 import { deriveNoteActorView } from '@/ui/lib/note-actor';
@@ -89,6 +90,9 @@ interface NotePageData {
   verification_summary: NoteVerificationSummary | null;
   embedded_check_status: ArtifactEmbeddedCheckStatus;
   embedded_questions: EmbeddedCheckQuestion[];
+  // ADR-0033 — non-null only when type='interactive' (attrs.html for the
+  // sandboxed renderer); null for note types and for invalid interactive attrs.
+  interactive: { html: string } | null;
   subject_profile: SlimSubjectProfile;
   version: number;
   history: HistoryEntry[];
@@ -109,6 +113,7 @@ const NOTE_TYPE_LABEL: Record<string, string> = {
   note_atomic: 'Atomic note',
   note_hub: 'Hub note',
   note_long: 'Long note',
+  interactive: 'Interactive',
 };
 
 const KIND_LABEL: Record<string, string> = {
@@ -293,10 +298,15 @@ export default function NoteReaderPage() {
 
   const entryLabel = entryText(entry, note);
   const entryCount = note.labels.length + note.related_learning_items.length;
+  // ADR-0033 D5 — interactive artifacts reuse this page as a reader shell only:
+  // the block-tree machinery (editor / outline / autosave / cross-link) is a
+  // note mechanism and never mounts for them (body_blocks is null).
+  const isInteractive = note.type === 'interactive';
   // A ready note is editable even with an empty body — ArtifactBlockTree accepts
   // a null bodyBlocks (it coerces to an empty doc) so the user can author the
   // first block instead of being stuck on a read-only "暂无正文" dead end.
-  const canEdit = note.generation_status === 'ready';
+  // Interactive artifacts are never editable here (html artifact, not blocks).
+  const canEdit = note.generation_status === 'ready' && !isInteractive;
   // note.history arrives JSON-serialized (at: ISO string); deriveNoteActorView
   // is runtime-safe for both Date and string `at` and casts the loose wire shape
   // to the schema type at the boundary.
@@ -376,10 +386,13 @@ export default function NoteReaderPage() {
             </span>
           </div>
         )}
-        <div className="note-prop-row">
-          <span className="meta">块数</span>
-          <span className="mono tnum">{outline.length}</span>
-        </div>
+        {/* 块数 is a block-tree stat — always 0 for interactive (misleading). */}
+        {!isInteractive && (
+          <div className="note-prop-row">
+            <span className="meta">块数</span>
+            <span className="mono tnum">{outline.length}</span>
+          </div>
+        )}
       </div>
 
       {/* 被这些 knowledge 标签命中 */}
@@ -538,42 +551,48 @@ export default function NoteReaderPage() {
         </Link>
         <span className="meta mono note-id-pill">/notes/{note.id}</span>
         <div className="topbar-spacer" />
-        <IconBtn
-          icon="panelLeft"
-          size={16}
-          className="note-rail-toggle"
-          title="大纲"
-          aria-label="切换大纲"
-          aria-expanded={outlineOpen}
-          aria-controls="note-outline-drawer"
-          onClick={() => setOutlineOpen((o) => !o)}
-        />
-        <div
-          className="seg-row note-mode"
-          role="tablist"
-          aria-label="笔记模式"
-          style={{ margin: 0 }}
-        >
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === 'read'}
-            className={`seg seg-sm${mode === 'read' ? ' is-on' : ''}`}
-            onClick={() => setMode('read')}
+        {/* 大纲 + 阅读/编辑 are block-tree mechanisms — hidden for interactive
+            (ADR-0033 D5: reader shell only, the editor never mounts). */}
+        {!isInteractive && (
+          <IconBtn
+            icon="panelLeft"
+            size={16}
+            className="note-rail-toggle"
+            title="大纲"
+            aria-label="切换大纲"
+            aria-expanded={outlineOpen}
+            aria-controls="note-outline-drawer"
+            onClick={() => setOutlineOpen((o) => !o)}
+          />
+        )}
+        {!isInteractive && (
+          <div
+            className="seg-row note-mode"
+            role="tablist"
+            aria-label="笔记模式"
+            style={{ margin: 0 }}
           >
-            <LoomIcon name="eye" size={14} /> 阅读
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === 'edit'}
-            className={`seg seg-sm${mode === 'edit' ? ' is-on' : ''}`}
-            onClick={() => setMode('edit')}
-            disabled={!canEdit}
-          >
-            <LoomIcon name="pencil" size={14} /> 编辑
-          </button>
-        </div>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'read'}
+              className={`seg seg-sm${mode === 'read' ? ' is-on' : ''}`}
+              onClick={() => setMode('read')}
+            >
+              <LoomIcon name="eye" size={14} /> 阅读
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'edit'}
+              className={`seg seg-sm${mode === 'edit' ? ' is-on' : ''}`}
+              onClick={() => setMode('edit')}
+              disabled={!canEdit}
+            >
+              <LoomIcon name="pencil" size={14} /> 编辑
+            </button>
+          </div>
+        )}
         <IconBtn
           icon="panelRight"
           size={16}
@@ -587,7 +606,7 @@ export default function NoteReaderPage() {
       </div>
 
       <div className="note-reader-grid">
-        <div className="note-rail-left">{Outline}</div>
+        <div className="note-rail-left">{!isInteractive && Outline}</div>
 
         <main className="note-doc-col">
           {/* one-note-many-entries banner */}
@@ -607,7 +626,8 @@ export default function NoteReaderPage() {
           {/* in-page title (NOT inside a card) */}
           <header className="note-doc-head">
             <div className="note-doc-eyebrow mono">
-              NOTE · {note.id} · {note.labels.map((l) => l.id).join(' / ') || 'labels[]'}
+              {isInteractive ? 'INTERACTIVE' : 'NOTE'} · {note.id} ·{' '}
+              {note.labels.map((l) => l.id).join(' / ') || 'labels[]'}
             </div>
             <h1 className="note-doc-title serif">{note.title}</h1>
             <div className="note-doc-meta">
@@ -665,7 +685,15 @@ export default function NoteReaderPage() {
             <div className="note-reader-status">generation_status: {note.generation_status}</div>
           )}
 
-          {mode === 'read' ? (
+          {isInteractive ? (
+            // ADR-0033 D5 — interactive branch wins over `mode`: the sandboxed
+            // renderer is the entire body, the block-tree editor never mounts.
+            note.interactive ? (
+              <InteractiveArtifactRenderer html={note.interactive.html} title={note.title} />
+            ) : (
+              <p className="note-reader-muted">互动内容不可用（payload 校验失败）。</p>
+            )
+          ) : mode === 'read' ? (
             note.body_blocks ? (
               <BlockTreeRenderer
                 bodyBlocks={note.body_blocks}
@@ -712,8 +740,8 @@ export default function NoteReaderPage() {
         <div className="note-rail-right">{Context}</div>
       </div>
 
-      {/* mobile drawers */}
-      {outlineOpen && (
+      {/* mobile drawers — outline is a block-tree mechanism, absent for interactive */}
+      {!isInteractive && outlineOpen && (
         <button
           type="button"
           className="scrim open"
@@ -721,19 +749,21 @@ export default function NoteReaderPage() {
           onClick={() => setOutlineOpen(false)}
         />
       )}
-      <div
-        ref={outlineDrawerRef}
-        id="note-outline-drawer"
-        // biome-ignore lint/a11y/useSemanticElements: CSS-class-driven drawer (.open
-        // toggle + custom useFocusTrap), not a native <dialog>; role="dialog" +
-        // aria-modal is the correct ARIA for this modal pattern.
-        role="dialog"
-        aria-modal="true"
-        aria-label="笔记大纲"
-        className={`note-mobile-drawer left${outlineOpen ? ' open' : ''}`}
-      >
-        {Outline}
-      </div>
+      {!isInteractive && (
+        <div
+          ref={outlineDrawerRef}
+          id="note-outline-drawer"
+          // biome-ignore lint/a11y/useSemanticElements: CSS-class-driven drawer (.open
+          // toggle + custom useFocusTrap), not a native <dialog>; role="dialog" +
+          // aria-modal is the correct ARIA for this modal pattern.
+          role="dialog"
+          aria-modal="true"
+          aria-label="笔记大纲"
+          className={`note-mobile-drawer left${outlineOpen ? ' open' : ''}`}
+        >
+          {Outline}
+        </div>
+      )}
       {ctxOpen && (
         <button
           type="button"

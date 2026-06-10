@@ -22,7 +22,8 @@ const NOTE_TYPES = ['note_atomic', 'note_hub', 'note_long'] as const;
 
 export interface NoteSummary {
   id: string;
-  // note_atomic | note_hub | note_long
+  // note_atomic | note_hub | note_long — or 'interactive' when produced by
+  // interactiveForKnowledge (ADR-0033 D5; same summary shape, distinct read path).
   type: string;
   title: string;
   // all knowledge labels on this note (the caller highlights the focal one).
@@ -86,6 +87,33 @@ export async function notesForKnowledge(db: DbLike, knowledgeId: string): Promis
       ),
     )
     .orderBy(NOTE_TYPE_ORDER, desc(artifact.created_at));
+  return rows.map(toNoteSummary);
+}
+
+/**
+ * ADR-0033 D5 — non-archived interactive artifacts labeled with `knowledgeId`
+ * (newest first), powering the /knowledge/[id] "互动内容" listing. Deliberately a
+ * PARALLEL query to notesForKnowledge rather than a widened NOTE_TYPES:
+ * NOTE_TYPES also gates the note-only read paths (notesForItem's primary
+ * resolution + label-material overlap) and must NOT admit 'interactive' —
+ * interactive artifacts are opaque to all note machinery (body_blocks null,
+ * no verification / embedded-check / cross-link).
+ */
+export async function interactiveForKnowledge(
+  db: DbLike,
+  knowledgeId: string,
+): Promise<NoteSummary[]> {
+  const rows = await db
+    .select(NOTE_SUMMARY_COLUMNS)
+    .from(artifact)
+    .where(
+      and(
+        eq(artifact.type, 'interactive'),
+        isNull(artifact.archived_at),
+        sql`${artifact.knowledge_ids} @> ${JSON.stringify([knowledgeId])}::jsonb`,
+      ),
+    )
+    .orderBy(desc(artifact.created_at));
   return rows.map(toNoteSummary);
 }
 

@@ -27,7 +27,11 @@ import {
   resolveOwningLearningItemIds,
 } from '@/server/artifacts/block-refs';
 import { bodyBlocksToNoteSections } from '@/server/artifacts/body-blocks';
-import { type NoteSummary, notesForKnowledge } from '@/server/artifacts/notes-read';
+import {
+  type NoteSummary,
+  interactiveForKnowledge,
+  notesForKnowledge,
+} from '@/server/artifacts/notes-read';
 import { getArtifactCorrectionStates } from '@/server/events/artifact-corrections';
 import { listKnowledgeEdges } from '@/server/knowledge/edges';
 import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject-profile';
@@ -111,6 +115,10 @@ export interface KnowledgeNodePage {
   // `primary_atomic` stays as the inline-rendered 节点简介 (newest atomic); `notes`
   // is the full labeled set for the "带当前 knowledge_id 标签的笔记列表" (0/1/many).
   notes: NoteSummary[];
+  // ADR-0033 D5: interactive artifacts labeled with this node. A separate field,
+  // NOT mixed into `notes` — `notes` is the ADR-0027 note contract (the page
+  // groups it by note type); interactive is opaque to note machinery.
+  interactive_artifacts: NoteSummary[];
   backlinks: NodePageBacklink[];
   backlinks_by_type: BacklinksByArtifactType<NodePageBacklink>;
   timeline: NodePageTimelineEntry[];
@@ -352,6 +360,10 @@ export async function loadKnowledgeNodePage(
   // Superset of `primary_atomic`; powers the multi-note list on /knowledge/[id].
   const notes = await notesForKnowledge(db, knowledgeId);
 
+  // 3c. interactive artifacts labeled with this node (ADR-0033 D5) — parallel
+  // read, kept out of `notes` (note contract) on purpose.
+  const interactiveArtifacts = await interactiveForKnowledge(db, knowledgeId);
+
   const profile = await resolveSubjectProfileForKnowledgeIds(db, [knowledgeId]);
 
   return {
@@ -369,6 +381,7 @@ export async function loadKnowledgeNodePage(
     mesh_neighbors: meshNeighbors,
     primary_atomic: primaryAtomic,
     notes,
+    interactive_artifacts: interactiveArtifacts,
     backlinks,
     backlinks_by_type: groupBacklinksByArtifactType(backlinks),
     timeline,

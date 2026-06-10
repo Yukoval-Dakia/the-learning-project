@@ -569,6 +569,10 @@ const BACKLINK_TYPE_LABELS: Record<string, string> = {
   note_atomic: '原子',
   note_hub: 'Hub',
   tool_quiz: '测验',
+  // Defensive (ADR-0033): interactive artifacts carry no cross_link sources
+  // (body_blocks=null), so this is unreachable today — kept for the widened
+  // artifact enum. backlinkTypeTone falls through to neutral, which is right.
+  interactive: '互动',
 };
 
 function backlinkTypeLabel(type: string): string {
