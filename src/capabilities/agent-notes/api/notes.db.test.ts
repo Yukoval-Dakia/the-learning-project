@@ -1,9 +1,9 @@
 // GET /api/agents/notes — unfiltered agent-notes feed (YUK-294, read-only board).
 
-import { writeAgentNote } from '@/capabilities/agent-notes/server/notes';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { GET } from './route';
+import { writeAgentNote } from '../server/notes';
+import { GET } from './notes';
 
 async function getNotes(qs = ''): Promise<Response> {
   return GET(
