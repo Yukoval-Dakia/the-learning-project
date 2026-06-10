@@ -35,6 +35,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, sql } from 'drizzle-orm';
 
+import { runVisionExtract } from '@/capabilities/ingestion/server/vision';
 import { newId } from '@/core/ids';
 import { defaultJudgeKindForQuestion } from '@/core/schema/judge-routing';
 import type { ImageCandidateProposalChangeT } from '@/core/schema/proposal';
@@ -45,7 +46,6 @@ import { writeCostLedger } from '@/server/ai/log';
 import { aiAgentRef } from '@/server/ai/provenance';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError } from '@/server/http/errors';
-import { runVisionExtract } from '@/capabilities/ingestion/server/vision';
 import { type R2Client, getR2 } from '@/server/r2';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 import type { ProposalInboxRow } from './inbox';

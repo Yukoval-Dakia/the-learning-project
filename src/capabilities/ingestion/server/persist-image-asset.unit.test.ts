@@ -6,8 +6,8 @@ import { sha256Hex } from './persist-image-asset';
 
 // Pure unit (no DB/R2): sha256Hex only touches crypto.subtle. Lives in the unit
 // partition (enumerated in vitest.shared.ts fastTestInclude). The DB-backed
-// persistImageAsset row write is covered by app/api/ingestion/pdf/route.test.ts
-// + app/api/assets/route.test.ts (db partition).
+// persistImageAsset row write is covered by src/capabilities/ingestion/api/pdf.db.test.ts
+// + src/capabilities/ingestion/api/assets.db.test.ts (db partition).
 
 function nodeSha256Hex(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');

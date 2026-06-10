@@ -1,6 +1,9 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 
+// YUK-202 / BlockAssembly path-B (design 2026-06-02 §4) — accept reuses the
+// verified YUK-195 `mergeQuestions` primitive; no auto-merge path is added.
+import { mergeQuestions } from '@/capabilities/ingestion/server/block-structured-edit';
 import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
 import { newId } from '@/core/ids';
 import type { ActivityRefT } from '@/core/schema/activity';
@@ -28,9 +31,6 @@ import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 // YUK-143 / ADR-0024 — North-Star goal_scope accept materializer.
 import { type GoalScopeAcceptResult, acceptGoalScopeProposal } from '@/server/goals/accept';
 import { ApiError } from '@/server/http/errors';
-// YUK-202 / BlockAssembly path-B (design 2026-06-02 §4) — accept reuses the
-// verified YUK-195 `mergeQuestions` primitive; no auto-merge path is added.
-import { mergeQuestions } from '@/capabilities/ingestion/server/block-structured-edit';
 import { acceptProposal, dismissProposal } from '@/server/knowledge/proposals';
 import {
   type LearningIntentMaterializeResult,

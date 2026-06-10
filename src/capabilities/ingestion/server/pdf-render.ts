@@ -5,7 +5,7 @@ import { MAX_PDF_PAGES } from '@/core/limits';
 import { ApiError } from '@/server/http/errors';
 
 // PDF → page-image renderer (YUK-250). Server-only; imported by the route
-// handler app/api/ingestion/pdf/route.ts, NOT by the pg-boss worker graph
+// handler src/capabilities/ingestion/api/pdf.ts, NOT by the pg-boss worker graph
 // (scripts/worker.ts imports only @/db/client + @/server/boss/*). Keep it that
 // way so build:worker stays untouched.
 //
