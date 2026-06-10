@@ -35,6 +35,7 @@ import { and, eq, ne } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
 import { writeAgentNote } from '@/capabilities/agent-notes/server/notes';
+import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import {
   QuizGenMetadata,
@@ -49,7 +50,6 @@ import { type TaskTextResult, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/
 import { writeEvent } from '@/server/events/queries';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { checksForTier } from '@/server/quiz/verify-framework';
-import { initialFsrsState } from '@/server/review/fsrs';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectQuestionKind } from '@/subjects/profile-schema';
 import { resolveQuizGenSkills } from '@/subjects/quiz-gen-skills';

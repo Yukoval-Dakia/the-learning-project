@@ -23,6 +23,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
+import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import { WebSourcedProvenance } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
@@ -37,7 +38,6 @@ import {
   checksForTier,
   runSolveCheck,
 } from '@/server/quiz/verify-framework';
-import { initialFsrsState } from '@/server/review/fsrs';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { maxNgramOverlap } from './quiz_verify';
 

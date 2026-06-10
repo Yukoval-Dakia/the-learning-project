@@ -1,8 +1,8 @@
+import { getEffectiveTruths } from '@/capabilities/practice/server/effective-truth';
 import { db } from '@/db/client';
 import { learning_item } from '@/db/schema';
 import { errorResponse } from '@/server/http/errors';
 import { assertKnowledgeIdsExist } from '@/server/knowledge/validate';
-import { getEffectiveTruths } from '@/server/review/effective-truth';
 import { createId } from '@paralleldrive/cuid2';
 import { and, asc, desc, eq, isNull, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';

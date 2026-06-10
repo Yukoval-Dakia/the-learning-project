@@ -1,5 +1,5 @@
+import { activeEffectiveTruth } from '@/capabilities/practice/server/effective-truth';
 import { describe, expect, it } from 'vitest';
-import { activeEffectiveTruth } from '../review/effective-truth';
 import {
   effectiveCauseCategoryForFailureAttempt,
   effectiveCauseForFailureAttempt,

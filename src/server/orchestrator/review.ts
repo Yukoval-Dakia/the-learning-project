@@ -12,13 +12,13 @@
 // projection all happen via the existing /api/review/submit path; this module
 // is purely the planner.
 
+import type { EffectiveTruth } from '@/capabilities/practice/server/effective-truth';
 import { type ActivityRefT, questionRef } from '@/core/schema/activity';
 import { getCauseLabel, getCausePriority } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { knowledge, material_fsrs_state, question } from '@/db/schema';
 import { effectiveCauseCategoryForFailureAttempt } from '@/server/events/cause-policy';
 import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
-import type { EffectiveTruth } from '@/server/review/effective-truth';
 import {
   type SlimSubjectProfile,
   type SubjectProfile,
