@@ -32,8 +32,21 @@ import { Button } from '@/ui/primitives/Button';
 import { Card } from '@/ui/primitives/Card';
 import { Icon } from '@/ui/primitives/Icon';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
+
+/**
+ * M1-T6 (YUK-314)：路由耦合从组件里抽出 —— VisionTab 不再 import next/navigation，
+ * 由调用方注入实现：旧 Next record 页传 useRouter/useSearchParams 适配（双栈期，
+ * T7 拆除），新 Vite SPA 壳（web/src/router.tsx）传 TanStack history 适配。
+ */
+export interface VisionTabRouting {
+  /** SPA 跳转（import 成功 → /mistakes）。 */
+  navigate: (to: string) => void;
+  /** 读当前 URL query（?ingest= 进行中会话恢复）。 */
+  getQuery: (key: string) => string | null;
+  /** replace 语义写/删 query（value=null 删除；不滚动、不新增 history 条目）。 */
+  setQuery: (key: string, value: string | null) => void;
+}
 
 type Mode = 'vision_single' | 'vision_paper';
 
@@ -173,9 +186,7 @@ export function ExtractionProgressBar({ events }: { events: ProgressEvent[] }) {
   );
 }
 
-export function VisionTab({ mode }: { mode: Mode }) {
-  const router = useRouter();
-  const searchParams = useSearchParams();
+export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRouting }) {
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const maxFiles = mode === 'vision_single' ? 1 : 5;
@@ -231,7 +242,7 @@ export function VisionTab({ mode }: { mode: Mode }) {
   // unmount VisionTab while the background job keeps running.
   // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only recovery — runs once.
   useEffect(() => {
-    const ingest = searchParams.get('ingest');
+    const ingest = routing.getQuery('ingest');
     // Validate the param shape before trusting it as a session id — it is
     // interpolated into /api/ingestion/${id}/{events,blocks}. Session ids are
     // cuids ([0-9a-z…]); reject anything else so a junk ?ingest= can't open a
@@ -358,11 +369,8 @@ export function VisionTab({ mode }: { mode: Mode }) {
       setSessionId(id);
       setPhase('extracting');
       // Bug B: persist the active session in the URL so a tab-switch / page-leave
-      // can recover it (the mount effect reads ?ingest=). scroll:false keeps the
-      // viewport put.
-      const sp = new URLSearchParams(searchParams.toString());
-      sp.set('ingest', id);
-      router.replace(`?${sp.toString()}`, { scroll: false });
+      // can recover it (the mount effect reads ?ingest=).
+      routing.setQuery('ingest', id);
     },
     onError: (err) => {
       // Clear any stale page count: if expandPdf succeeded but a later step
@@ -462,7 +470,7 @@ export function VisionTab({ mode }: { mode: Mode }) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['mistakes'] });
-      router.push('/mistakes');
+      routing.navigate('/mistakes');
     },
     onError: (err) => setErrorMessage(formatError(err)),
   });
@@ -536,11 +544,7 @@ export function VisionTab({ mode }: { mode: Mode }) {
     seededBlockIdsRef.current = new Set();
     setErrorMessage(null);
     // Bug B: drop the recovery param so a reset run doesn't re-recover the old id.
-    const sp = new URLSearchParams(searchParams.toString());
-    if (sp.has('ingest')) {
-      sp.delete('ingest');
-      router.replace(sp.toString() ? `?${sp.toString()}` : '?', { scroll: false });
-    }
+    routing.setQuery('ingest', null);
   };
 
   const blocks = blocksQ.data?.rows ?? [];

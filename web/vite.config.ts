@@ -13,7 +13,17 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    proxy: { '/api': 'http://localhost:8787' },
+    // M1-T6 (YUK-314) 双栈分流：已迁到 Hono 的前缀走新栈(:8787)；其余 /api 兜底
+    // 到旧 Next dev——manual tab 的 /api/mistakes、知识点选择的 /api/knowledge 等
+    // 未迁路由仍由旧栈服务，随 M2+ 各域迁包逐条收编。旧栈端口坑：OrbStack 容器
+    // 可能占着 :3000（next dev 会跳 :3001），必要时用 RW_OLD_STACK 覆盖。
+    proxy: {
+      '/api/ingestion': 'http://localhost:8787',
+      '/api/assets': 'http://localhost:8787',
+      '/api/agents': 'http://localhost:8787',
+      '/api/health': 'http://localhost:8787',
+      '/api': process.env.RW_OLD_STACK ?? 'http://localhost:3000',
+    },
   },
   build: { outDir: 'dist' },
 });
