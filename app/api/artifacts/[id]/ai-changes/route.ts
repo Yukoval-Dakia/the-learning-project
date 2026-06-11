@@ -1,22 +1,13 @@
-import { db } from '@/db/client';
-import { listNoteRefineChanges } from '@/capabilities/notes/server/note-refine-apply';
-import { ApiError, errorResponse } from '@/server/http/errors';
+// 外壳挂载 — handler 本体在 notes capability 包（M3 上 Hono，YUK-317）。
+// param 路由 shim：Next ctx.params (Promise) 解包为 kernel RouteHandler v2 的
+// params Record。双栈期保留至 M3-T8 拆除。
+import { GET as GETHandler } from '@/capabilities/notes/api/ai-changes';
 
 export const runtime = 'nodejs';
 
-interface RouteParams {
-  params: Promise<{ id: string }>;
-}
-
-export async function GET(_req: Request, { params }: RouteParams): Promise<Response> {
-  try {
-    const { id: artifactId } = await params;
-    if (!artifactId) {
-      throw new ApiError('validation_error', 'artifact id is required', 400);
-    }
-    const rows = await listNoteRefineChanges(db, { artifactId, limit: 50 });
-    return Response.json({ artifact_id: artifactId, rows });
-  } catch (err) {
-    return errorResponse(err);
-  }
+export async function GET(
+  req: Request,
+  ctx: { params: Promise<Record<string, string>> },
+): Promise<Response> {
+  return GETHandler(req, await ctx.params);
 }

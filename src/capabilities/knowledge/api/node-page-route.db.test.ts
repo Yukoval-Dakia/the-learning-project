@@ -6,7 +6,7 @@
 import { artifact, knowledge } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { GET } from './route';
+import { GET } from './node-page-route';
 
 const K_BASE = {
   domain: 'wenyan' as const,
@@ -25,9 +25,7 @@ const A_BASE = {
 };
 
 async function getNode(id: string): Promise<Response> {
-  return GET(new Request(`http://localhost/api/knowledge/${id}`), {
-    params: Promise.resolve({ id }),
-  });
+  return GET(new Request(`http://localhost/api/knowledge/${id}`), { id });
 }
 
 describe('GET /api/knowledge/[id]', () => {

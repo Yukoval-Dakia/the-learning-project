@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { artifact } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { GET } from './route';
+import { GET } from './artifacts-search';
 
 const NOW = new Date('2026-05-29T00:00:00.000Z');
 

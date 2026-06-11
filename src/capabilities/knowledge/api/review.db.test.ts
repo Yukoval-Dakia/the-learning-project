@@ -1,7 +1,7 @@
 import { knowledge } from '@/db/schema';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { POST } from './route';
+import { POST } from './review';
 
 // Mock streamReviewTask to avoid real LLM calls
 vi.mock('@/capabilities/knowledge/server/review', () => ({

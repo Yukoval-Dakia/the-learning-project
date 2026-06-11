@@ -7,8 +7,8 @@ import { event, knowledge, knowledge_edge } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { resetDb, testDb } from '../../../../../../tests/helpers/db';
-import { POST } from './route';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { POST } from './edge-proposal-decide';
 
 const KNOWLEDGE_BASE = {
   domain: 'wenyan',
@@ -74,7 +74,7 @@ async function decide(proposeId: string, body: unknown): Promise<Response> {
       body: JSON.stringify(body),
       headers: { 'content-type': 'application/json' },
     }),
-    { params: Promise.resolve({ id: proposeId }) },
+    { id: proposeId },
   );
 }
 

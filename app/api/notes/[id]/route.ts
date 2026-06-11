@@ -1,38 +1,13 @@
-// YUK-203 P1 (ADR-0027) — GET /api/notes/[id]: the canonical NoteReader read.
-//
-// A note(artifact) is a first-class knowledge-labeled entity (ADR-0027); this is
-// its single-fetch read aggregator (blocks + labels + verification + version
-// history + backlinks + related learning_items + embedded questions). Auth is
-// enforced upstream by middleware (x-internal-token); the handler mirrors the
-// sibling artifact routes' shape (zod params, 404 on missing, errorResponse).
-
-import { z } from 'zod';
-
-import { db } from '@/db/client';
-import { loadNotePage } from '@/capabilities/notes/server/note-page';
-import { ApiError, errorResponse } from '@/server/http/errors';
+// 外壳挂载 — handler 本体在 notes capability 包（M3 上 Hono，YUK-317）。
+// param 路由 shim：Next ctx.params (Promise) 解包为 kernel RouteHandler v2 的
+// params Record。双栈期保留至 M3-T8 拆除。
+import { GET as GETHandler } from '@/capabilities/notes/api/note-page-route';
 
 export const runtime = 'nodejs';
 
-const ParamsSchema = z.object({ id: z.string().trim().min(1) });
-
-interface RouteParams {
-  params: Promise<{ id: string }>;
-}
-
-export async function GET(_req: Request, { params }: RouteParams): Promise<Response> {
-  try {
-    const parsed = ParamsSchema.safeParse(await params);
-    if (!parsed.success) {
-      throw new ApiError('validation_error', 'note id is required', 400);
-    }
-    const page = await loadNotePage(db, parsed.data.id);
-    if (!page) {
-      // Missing, archived, or not a note type → 404 (never a 200 empty shell).
-      throw new ApiError('not_found', `note ${parsed.data.id} not found`, 404);
-    }
-    return Response.json(page);
-  } catch (err) {
-    return errorResponse(err);
-  }
+export async function GET(
+  req: Request,
+  ctx: { params: Promise<Record<string, string>> },
+): Promise<Response> {
+  return GETHandler(req, await ctx.params);
 }

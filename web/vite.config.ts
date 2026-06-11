@@ -28,6 +28,12 @@ export default defineConfig({
       '/api/review': 'http://localhost:8787',
       '/api/practice': 'http://localhost:8787',
       '^/api/questions/.*/solve': 'http://localhost:8787',
+      // M3-T4 (YUK-317)：知识/笔记链已迁 Hono。/api/editing-session（⚖️ 争议行）
+      // 与 /api/embedded-check（D6 墓碑）留旧栈 catch-all。
+      '/api/knowledge': 'http://localhost:8787',
+      '/api/notes': 'http://localhost:8787',
+      '/api/artifacts': 'http://localhost:8787',
+      '/api/hubs': 'http://localhost:8787',
       '/api': process.env.RW_OLD_STACK ?? 'http://localhost:3000',
     },
   },
