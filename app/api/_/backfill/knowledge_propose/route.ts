@@ -1,5 +1,5 @@
 import { db } from '@/db/client';
-import { runKnowledgeProposeNightly } from '@/server/boss/handlers/knowledge_propose_nightly';
+import { runKnowledgeProposeNightly } from '@/capabilities/knowledge/jobs/knowledge_propose_nightly';
 import { errorResponse } from '@/server/http/errors';
 
 export const runtime = 'nodejs';

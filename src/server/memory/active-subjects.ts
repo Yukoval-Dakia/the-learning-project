@@ -14,12 +14,12 @@
 // ~0 rows for an active subject → empty brief → re-generated empty every night.
 // Instead we resolve each qualifying event's knowledge ids → subject via the
 // SAME canonical bridge the review scheduler uses (BR-4,
-// `@/server/knowledge/subject-resolution`).
+// `@/capabilities/knowledge/server/subject-resolution`).
 
 import type { Db } from '@/db/client';
 import { event, learning_record, memory_brief_note } from '@/db/schema';
 import { BRIEF_REFRESH_BUDGET } from '@/server/ai/tools/budgets';
-import { batchResolveSubjectIds } from '@/server/knowledge/subject-resolution';
+import { batchResolveSubjectIds } from '@/capabilities/knowledge/server/subject-resolution';
 import { and, eq, gt, inArray, like, sql } from 'drizzle-orm';
 import type { BriefEvent } from './brief';
 

@@ -17,7 +17,7 @@ import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { type SubjectProfile, defaultSubjectProfile } from '@/subjects/profile';
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { getJudgeForAttempt, writeEvent } from '../events/queries';
+import { getJudgeForAttempt, writeEvent } from '@/server/events/queries';
 import { writeRetryableAiFailureLedger } from './ai_failure_log';
 
 // Lane B `CauseSchema` uses `analysis_md`. Step 7 cut over: the AttributionTask

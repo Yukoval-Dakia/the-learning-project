@@ -12,7 +12,7 @@ import { z } from 'zod';
 
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { resolveSubjectKnowledgeIds } from '@/server/knowledge/domain';
+import { resolveSubjectKnowledgeIds } from '@/capabilities/knowledge/server/domain';
 import { type QuestionListSortBy, listQuestions } from '@/server/questions/list';
 
 export const runtime = 'nodejs';

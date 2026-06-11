@@ -19,7 +19,7 @@ import { z } from 'zod';
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { createKnowledgeEdge, listKnowledgeEdges } from '@/server/knowledge/edges';
+import { createKnowledgeEdge, listKnowledgeEdges } from '@/capabilities/knowledge/server/edges';
 
 export const runtime = 'nodejs';
 

@@ -3,7 +3,7 @@
 import { knowledge, knowledge_edge } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { createKnowledgeEdge, getKnowledgeEdgeById, listKnowledgeEdges } from './edges';
 
 const KNOWLEDGE_BASE = {

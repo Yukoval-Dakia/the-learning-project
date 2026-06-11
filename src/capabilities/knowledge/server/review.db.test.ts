@@ -20,7 +20,7 @@ import { event, knowledge } from '@/db/schema';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 // Mock the SDK so streamReviewTask doesn't spawn the `claude` binary.
 const mockAgentSdk = vi.hoisted(() => ({

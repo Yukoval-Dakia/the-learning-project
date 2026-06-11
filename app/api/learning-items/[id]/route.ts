@@ -3,8 +3,8 @@ import { db } from '@/db/client';
 import { artifact, completion_evidence, learning_item, question } from '@/db/schema';
 import { bodyBlocksToNoteSections } from '@/capabilities/notes/server/body-blocks';
 import { errorResponse } from '@/server/http/errors';
-import { getEffectiveDomain } from '@/server/knowledge/domain';
-import { assertKnowledgeIdsExist } from '@/server/knowledge/validate';
+import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
+import { assertKnowledgeIdsExist } from '@/capabilities/knowledge/server/validate';
 import {
   type SlimSubjectProfile,
   resolveSubjectProfile,

@@ -5,10 +5,10 @@
 // backlinks read-time filter (XC-5), timeline, and not-found path.
 
 import { artifact, artifact_block_ref, event, knowledge, learning_item } from '@/db/schema';
-import { createKnowledgeEdge } from '@/server/knowledge/edges';
+import { createKnowledgeEdge } from '@/capabilities/knowledge/server/edges';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { loadKnowledgeNodePage } from './node-page';
 
 const K_BASE = {

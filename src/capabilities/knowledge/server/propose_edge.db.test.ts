@@ -4,10 +4,10 @@ import { tasks } from '@/ai/registry';
 import { cost_ledger, event, knowledge, knowledge_edge, question } from '@/db/schema';
 import { RECENT_FAILURE_WINDOW_MS } from '@/server/ai/tools/knowledge-readers';
 import { type FailureAttempt, getFailureAttempts, writeEvent } from '@/server/events/queries';
-import { RUBRIC_EVIDENCE_WINDOW_DAYS } from '@/server/knowledge/rubric-validator';
+import { RUBRIC_EVIDENCE_WINDOW_DAYS } from '@/capabilities/knowledge/server/rubric-validator';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { parseEdgeProposeOutput, runEdgeProposeAndWrite } from './propose_edge';
 
 describe('KnowledgeEdgeProposeTask system prompt', () => {

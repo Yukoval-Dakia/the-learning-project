@@ -2,7 +2,7 @@
 
 import { event, knowledge, mistake_variant, question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
-import { runAttributionAndWriteJudgeEvent } from '@/server/knowledge/attribute';
+import { runAttributionAndWriteJudgeEvent } from '@/capabilities/knowledge/server/attribute';
 import { writeVariantQuestionProposal } from '@/server/proposals/producers';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { createId } from '@paralleldrive/cuid2';

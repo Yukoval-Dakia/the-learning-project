@@ -28,11 +28,11 @@ import { knowledge, learning_session, question, question_block } from '@/db/sche
 import { runTask } from '@/server/ai/runner';
 import { getStartedBoss } from '@/server/boss/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { runProposeAndWrite } from '@/server/knowledge/propose';
+import { runProposeAndWrite } from '@/capabilities/knowledge/server/propose';
 import {
   assertCauseAllowedForSubjectProfile,
   resolveSubjectProfileForKnowledgeIds,
-} from '@/server/knowledge/subject-profile';
+} from '@/capabilities/knowledge/server/subject-profile';
 import { getR2 } from '@/server/r2';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { Ingestion } from '@/server/session';

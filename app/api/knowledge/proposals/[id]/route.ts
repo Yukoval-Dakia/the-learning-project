@@ -1,6 +1,6 @@
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { acceptProposal, dismissProposal } from '@/server/knowledge/proposals';
+import { acceptProposal, dismissProposal } from '@/capabilities/knowledge/server/proposals';
 
 export const runtime = 'nodejs';
 

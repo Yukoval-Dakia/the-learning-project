@@ -2,7 +2,7 @@ import { cost_ledger, event, question } from '@/db/schema';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { parseAttributionOutput, runAttributionAndWriteJudgeEvent } from './attribute';
 
 describe('parseAttributionOutput', () => {

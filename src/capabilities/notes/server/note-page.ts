@@ -27,7 +27,7 @@ import {
 } from '@/capabilities/notes/server/block-refs';
 import { bodyBlocksToNoteSections } from '@/capabilities/notes/server/body-blocks';
 import { getArtifactCorrectionStates } from '@/server/events/artifact-corrections';
-import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject-profile';
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 import { type SlimSubjectProfile, toSlimSubjectProfile } from '@/subjects/profile';
 
 const CROSS_LINK_REF_KIND = 'cross_link';

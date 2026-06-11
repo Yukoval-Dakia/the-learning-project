@@ -15,7 +15,7 @@ import {
   question_block,
   source_asset,
 } from '@/db/schema';
-import { writeKnowledgeProposeEvent } from '@/server/knowledge/proposals';
+import { writeKnowledgeProposeEvent } from '@/capabilities/knowledge/server/proposals';
 import { planLearningIntent } from '@/server/orchestrator/learning_intent';
 import { writeVariantQuestionProposal } from '@/server/proposals/producers';
 import { createId } from '@paralleldrive/cuid2';

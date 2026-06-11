@@ -27,8 +27,8 @@ import {
   effectiveCauseForFailureAttempt,
 } from '@/server/events/cause-policy';
 import { type FailureAttempt, getFailureAttemptById } from '@/server/events/queries';
-import { getEffectiveDomain } from '@/server/knowledge/domain';
-import { assertKnowledgeIdsExist } from '@/server/knowledge/validate';
+import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
+import { assertKnowledgeIdsExist } from '@/capabilities/knowledge/server/validate';
 // P5.4-L2 / YUK-174 — OPTIONAL adaptive gate input (Facet B). Type-only import:
 // the validator stays PURE (it does NOT run adaptive-bias.ts at runtime — the
 // import erases). The gate-bump decision + its audit metadata are COMPUTED by
