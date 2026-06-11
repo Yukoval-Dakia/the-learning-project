@@ -1,49 +1,13 @@
-import { db } from '@/db/client';
-import { ApiError, errorResponse } from '@/server/http/errors';
-import { acceptProposal, dismissProposal } from '@/capabilities/knowledge/server/proposals';
+// 外壳挂载 — handler 本体在 knowledge capability 包（M3 上 Hono，YUK-317）。
+// param 路由 shim：Next ctx.params (Promise) 解包为 kernel RouteHandler v2 的
+// params Record。双栈期保留至 M3-T8 拆除。
+import { POST as POSTHandler } from '@/capabilities/knowledge/api/proposal-decide';
 
 export const runtime = 'nodejs';
 
 export async function POST(
   req: Request,
-  { params }: { params: Promise<{ id: string }> },
+  ctx: { params: Promise<Record<string, string>> },
 ): Promise<Response> {
-  try {
-    const { id } = await params;
-    const body = (await req.json().catch(() => ({}))) as { decision?: string };
-
-    if (body.decision !== 'accept' && body.decision !== 'reject') {
-      throw new ApiError('invalid_decision', 'decision must be accept or reject', 400);
-    }
-
-    if (body.decision === 'accept') {
-      const result = await acceptProposal(db, id);
-      return Response.json(result);
-    }
-
-    // reject
-    await dismissProposal(db, id);
-    return Response.json({ kind: 'dismissed' });
-  } catch (err) {
-    if (err instanceof ApiError) {
-      return errorResponse(err);
-    }
-    const msg = (err as Error).message;
-    if (/PR A.*propose_new/i.test(msg)) {
-      return Response.json({ error: 'unsupported_mutation', message: msg }, { status: 400 });
-    }
-    if (/^unknown_mutation/i.test(msg)) {
-      return Response.json({ error: 'unknown_mutation', message: msg }, { status: 400 });
-    }
-    if (/not.*pending/i.test(msg)) {
-      return Response.json({ error: 'not_pending', message: msg }, { status: 409 });
-    }
-    if (/not found/i.test(msg)) {
-      return Response.json({ error: 'not_found' }, { status: 404 });
-    }
-    if (/^stale/i.test(msg)) {
-      return Response.json({ error: 'stale', message: msg }, { status: 409 });
-    }
-    return errorResponse(err);
-  }
+  return POSTHandler(req, await ctx.params);
 }

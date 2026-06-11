@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { newId } from '@/core/ids';
 import { artifact, artifact_block_ref, learning_item } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
-import { resetDb, testDb } from '../../../../../tests/helpers/db';
-import { GET } from './route';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { GET } from './backlinks';
 
 const NOW = new Date('2026-05-29T00:00:00.000Z');
 
@@ -159,9 +159,7 @@ describe('GET /api/artifacts/[id]/backlinks', () => {
     });
     await seedRef({ from: 'src', fromBlock: 'cl1', to: 'target' });
 
-    const res = await GET(backlinksReq('target'), {
-      params: Promise.resolve({ id: 'target' }),
-    });
+    const res = await GET(backlinksReq('target'), { id: 'target' });
     expect(res.status).toBe(200);
 
     const rows = await readRows(res);
@@ -199,7 +197,7 @@ describe('GET /api/artifacts/[id]/backlinks', () => {
     await seedRef({ from: 'ready_src', fromBlock: 'cl_r', to: 'target' });
 
     const rows = await readRows(
-      await GET(backlinksReq('target'), { params: Promise.resolve({ id: 'target' }) }),
+      await GET(backlinksReq('target'), { id: 'target' }),
     );
     expect(rows.map((r) => r.from_artifact_id)).toEqual(['ready_src']);
   });
@@ -217,7 +215,7 @@ describe('GET /api/artifacts/[id]/backlinks', () => {
     await seedRetract('src', 'cl_gone');
 
     const rows = await readRows(
-      await GET(backlinksReq('target'), { params: Promise.resolve({ id: 'target' }) }),
+      await GET(backlinksReq('target'), { id: 'target' }),
     );
     expect(rows.map((r) => r.from_block_id)).toEqual(['cl_keep']);
   });
@@ -233,7 +231,7 @@ describe('GET /api/artifacts/[id]/backlinks', () => {
     await seedRetract('src'); // whole-artifact retract (no block_id)
 
     const rows = await readRows(
-      await GET(backlinksReq('target'), { params: Promise.resolve({ id: 'target' }) }),
+      await GET(backlinksReq('target'), { id: 'target' }),
     );
     expect(rows).toEqual([]);
   });
@@ -248,7 +246,7 @@ describe('GET /api/artifacts/[id]/backlinks', () => {
     await seedRef({ from: 'src', fromBlock: 'q1', to: 'target', refKind: 'embedded_check' });
 
     const rows = await readRows(
-      await GET(backlinksReq('target'), { params: Promise.resolve({ id: 'target' }) }),
+      await GET(backlinksReq('target'), { id: 'target' }),
     );
     expect(rows).toEqual([]);
   });
@@ -256,7 +254,7 @@ describe('GET /api/artifacts/[id]/backlinks', () => {
   it('returns empty rows when there are no inbound refs', async () => {
     await seedArtifact({ id: 'target', title: '目标笔记' });
     const rows = await readRows(
-      await GET(backlinksReq('target'), { params: Promise.resolve({ id: 'target' }) }),
+      await GET(backlinksReq('target'), { id: 'target' }),
     );
     expect(rows).toEqual([]);
   });
@@ -273,7 +271,7 @@ describe('GET /api/artifacts/[id]/backlinks', () => {
     await seedLearningItem({ id: 'li_src', primaryArtifactId: 'src' });
 
     const rows = await readRows(
-      await GET(backlinksReq('target'), { params: Promise.resolve({ id: 'target' }) }),
+      await GET(backlinksReq('target'), { id: 'target' }),
     );
     expect(rows).toHaveLength(1);
     // The link target must be the learning_item id, NOT the artifact id (which 404s).
@@ -292,7 +290,7 @@ describe('GET /api/artifacts/[id]/backlinks', () => {
     // No learning_item points at `src`.
 
     const rows = await readRows(
-      await GET(backlinksReq('target'), { params: Promise.resolve({ id: 'target' }) }),
+      await GET(backlinksReq('target'), { id: 'target' }),
     );
     expect(rows).toHaveLength(1);
     expect(rows[0].from_learning_item_id).toBeNull();
@@ -309,16 +307,14 @@ describe('GET /api/artifacts/[id]/backlinks', () => {
     await seedLearningItem({ id: 'li_src', primaryArtifactId: 'src', archived_at: NOW });
 
     const rows = await readRows(
-      await GET(backlinksReq('target'), { params: Promise.resolve({ id: 'target' }) }),
+      await GET(backlinksReq('target'), { id: 'target' }),
     );
     expect(rows).toHaveLength(1);
     expect(rows[0].from_learning_item_id).toBeNull();
   });
 
   it('returns 404 when the target artifact does not exist (mirrors the correct route)', async () => {
-    const res = await GET(backlinksReq('does_not_exist'), {
-      params: Promise.resolve({ id: 'does_not_exist' }),
-    });
+    const res = await GET(backlinksReq('does_not_exist'), { id: 'does_not_exist' });
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error?: string };
     expect(body.error).toBe('not_found');

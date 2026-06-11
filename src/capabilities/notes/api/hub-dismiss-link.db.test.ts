@@ -5,8 +5,8 @@ import { db } from '@/db/client';
 import { artifact, event, knowledge } from '@/db/schema';
 import { persistHubLinkDismiss } from '@/capabilities/notes/server/hub-dismiss';
 import { runHubAutoSyncNightly } from '@/capabilities/notes/jobs/hub_auto_sync_nightly';
-import { resetDb, testDb } from '../../../../../tests/helpers/db';
-import { POST } from './route';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { POST } from './hub-dismiss-link';
 
 const NOW = new Date('2026-05-29T00:00:00.000Z');
 
@@ -157,9 +157,7 @@ describe('POST /api/hubs/[id]/dismiss-link', () => {
       body_blocks: hubDoc('atomic1'),
     });
 
-    const res = await POST(dismissReq('hub1', { suppressed_artifact_id: 'atomic1' }), {
-      params: Promise.resolve({ id: 'hub1' }),
-    });
+    const res = await POST(dismissReq('hub1', { suppressed_artifact_id: 'atomic1' }), { id: 'hub1' });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { removed: boolean; suppress_event_id: string };
     expect(body.removed).toBe(true);
@@ -193,12 +191,8 @@ describe('POST /api/hubs/[id]/dismiss-link', () => {
       body_blocks: hubDoc('atomic1'),
     });
 
-    await POST(dismissReq('hub1', { suppressed_artifact_id: 'atomic1' }), {
-      params: Promise.resolve({ id: 'hub1' }),
-    });
-    const res2 = await POST(dismissReq('hub1', { suppressed_artifact_id: 'atomic1' }), {
-      params: Promise.resolve({ id: 'hub1' }),
-    });
+    await POST(dismissReq('hub1', { suppressed_artifact_id: 'atomic1' }), { id: 'hub1' });
+    const res2 = await POST(dismissReq('hub1', { suppressed_artifact_id: 'atomic1' }), { id: 'hub1' });
     expect(res2.status).toBe(200);
     const body2 = (await res2.json()) as { removed: boolean };
     // Second dismiss: child already gone → no second body_blocks mutation.
@@ -224,9 +218,7 @@ describe('POST /api/hubs/[id]/dismiss-link', () => {
     });
 
     // Dismiss it.
-    await POST(dismissReq('hub1', { suppressed_artifact_id: 'atomic1' }), {
-      params: Promise.resolve({ id: 'hub1' }),
-    });
+    await POST(dismissReq('hub1', { suppressed_artifact_id: 'atomic1' }), { id: 'hub1' });
 
     // Sanity: removed from the container.
     expect(autoLinkArtifactIds((await loadHub('hub1')).body_blocks)).toEqual([]);
@@ -239,24 +231,18 @@ describe('POST /api/hubs/[id]/dismiss-link', () => {
 
   it('rejects dismiss on a non-hub artifact', async () => {
     await seedArtifact({ id: 'atomic1', title: '原子' });
-    const res = await POST(dismissReq('atomic1', { suppressed_artifact_id: 'x' }), {
-      params: Promise.resolve({ id: 'atomic1' }),
-    });
+    const res = await POST(dismissReq('atomic1', { suppressed_artifact_id: 'x' }), { id: 'atomic1' });
     expect(res.status).toBe(400);
   });
 
   it('404s for an unknown hub', async () => {
-    const res = await POST(dismissReq('missing', { suppressed_artifact_id: 'x' }), {
-      params: Promise.resolve({ id: 'missing' }),
-    });
+    const res = await POST(dismissReq('missing', { suppressed_artifact_id: 'x' }), { id: 'missing' });
     expect(res.status).toBe(404);
   });
 
   it('rejects a missing suppressed_artifact_id', async () => {
     await seedArtifact({ id: 'hub1', title: 'Hub', type: 'note_hub', body_blocks: hubDoc('a') });
-    const res = await POST(dismissReq('hub1', {}), {
-      params: Promise.resolve({ id: 'hub1' }),
-    });
+    const res = await POST(dismissReq('hub1', {}), { id: 'hub1' });
     expect(res.status).toBe(400);
   });
 
@@ -316,12 +302,8 @@ describe('POST /api/hubs/[id]/dismiss-link', () => {
       body_blocks: hubDocWithLinks('atomic1', 'atomic2'),
     });
 
-    await POST(dismissReq('hub1', { suppressed_artifact_id: 'atomic1' }), {
-      params: Promise.resolve({ id: 'hub1' }),
-    });
-    await POST(dismissReq('hub1', { suppressed_artifact_id: 'atomic2' }), {
-      params: Promise.resolve({ id: 'hub1' }),
-    });
+    await POST(dismissReq('hub1', { suppressed_artifact_id: 'atomic1' }), { id: 'hub1' });
+    await POST(dismissReq('hub1', { suppressed_artifact_id: 'atomic2' }), { id: 'hub1' });
 
     const hub = await loadHub('hub1');
     const ids = (

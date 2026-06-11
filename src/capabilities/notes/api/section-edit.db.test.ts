@@ -2,9 +2,9 @@ import { artifact, event, learning_item } from '@/db/schema';
 import { bodyBlocksToNoteSections, noteSectionsToBodyBlocks } from '@/capabilities/notes/server/body-blocks';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { resetDb, testDb } from '../../../../../../tests/helpers/db';
-import { GET as getLearningItem } from '../../../../learning-items/[id]/route';
-import { PATCH } from './route';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { GET as getLearningItem } from '../../../../app/api/learning-items/[id]/route';
+import { PATCH } from './section-edit';
 
 const NOTE_SECTIONS = [
   {
@@ -102,7 +102,7 @@ describe('PATCH /api/artifacts/[id]/sections/[sectionId]', () => {
         section_version: 1,
         body_md: '新定义\n\n- 第一条',
       }),
-      { params: Promise.resolve({ id: 'a1', sectionId: 's1' }) },
+      { id: 'a1', sectionId: 's1' },
     );
 
     expect(res.status).toBe(200);
@@ -118,6 +118,7 @@ describe('PATCH /api/artifacts/[id]/sections/[sectionId]', () => {
       section: { id: 's1', body_md: '新定义\n\n- 第一条', version: 2 },
     });
 
+    // learning-items 是未迁的 Next 壳（M3 出范围），仍按 Next ctx 形态调用。
     const reload = await getLearningItem(new Request('http://localhost/api/learning-items/li1'), {
       params: Promise.resolve({ id: 'li1' }),
     });
@@ -151,7 +152,7 @@ describe('PATCH /api/artifacts/[id]/sections/[sectionId]', () => {
         section_version: 1,
         body_md: 'stale',
       }),
-      { params: Promise.resolve({ id: 'a1', sectionId: 's1' }) },
+      { id: 'a1', sectionId: 's1' },
     );
 
     expect(res.status).toBe(409);

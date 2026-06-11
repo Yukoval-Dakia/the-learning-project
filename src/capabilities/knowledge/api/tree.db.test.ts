@@ -1,7 +1,7 @@
 import { knowledge } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { resetDb, testDb } from '../../../tests/helpers/db';
-import { GET } from './route';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { GET } from './tree';
 
 const KNOWLEDGE_BASE = {
   merged_from: [] as string[],

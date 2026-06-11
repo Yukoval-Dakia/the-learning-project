@@ -2,8 +2,8 @@ import { artifact, event } from '@/db/schema';
 import { noteSectionsToBodyBlocks } from '@/capabilities/notes/server/body-blocks';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { resetDb, testDb } from '../../../../../tests/helpers/db';
-import { PATCH } from './route';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { PATCH } from './body-blocks-route';
 
 const NOTE_SECTIONS = [
   {
@@ -79,7 +79,7 @@ describe('PATCH /api/artifacts/[id]/body-blocks', () => {
         artifact_version: 0,
         body_blocks: next,
       }),
-      { params: Promise.resolve({ id: 'a1' }) },
+      { id: 'a1' },
     );
 
     expect(res.status).toBe(200);
@@ -106,7 +106,7 @@ describe('PATCH /api/artifacts/[id]/body-blocks', () => {
         artifact_version: 99,
         body_blocks: { type: 'doc', content: [] },
       }),
-      { params: Promise.resolve({ id: 'a1' }) },
+      { id: 'a1' },
     );
 
     expect(res.status).toBe(409);

@@ -6,7 +6,7 @@
 import { artifact, knowledge } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { GET } from './route';
+import { GET } from './note-page-route';
 
 const A_BASE = {
   intent_source: 'test',
@@ -16,9 +16,7 @@ const A_BASE = {
 };
 
 async function getNote(id: string): Promise<Response> {
-  return GET(new Request(`http://localhost/api/notes/${id}`), {
-    params: Promise.resolve({ id }),
-  });
+  return GET(new Request(`http://localhost/api/notes/${id}`), { id });
 }
 
 describe('GET /api/notes/[id]', () => {
