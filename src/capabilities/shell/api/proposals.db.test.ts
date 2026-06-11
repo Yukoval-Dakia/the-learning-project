@@ -252,6 +252,36 @@ describe('POST /api/proposals/[id]/retract (shell)', () => {
       reason_md: '判断有误',
     });
   });
+
+  // C1 红线：retract 是 L3 correction，对 pending 提议同样放行（实现注释
+  // 「regardless of where the row was in its lifecycle」，actions.ts retract
+  // 路径不走 assertPending）——钉住该语义，防止后人加状态校验静默收窄。
+  it('retracts a still-pending proposal (L3 correction is status-independent)', async () => {
+    await seedKnowledge(['k1', 'k2']);
+    await seedEdgeProposal('edge_p1', 'k1', 'k2');
+
+    const res = await retractProposal(
+      postJson('http://test/api/proposals/edge_p1/retract', { reason_md: 'pending 直接撤回' }),
+      { id: 'edge_p1' },
+    );
+    expect(res.status).toBe(200);
+
+    const db = testDb();
+    const correctionRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'correct'), eq(event.subject_id, 'edge_p1')));
+    expect(correctionRows).toHaveLength(1);
+    expect(correctionRows[0].payload).toMatchObject({ correction_kind: 'retract' });
+  });
+
+  it('returns 404 for a missing proposal id', async () => {
+    const res = await retractProposal(
+      postJson('http://test/api/proposals/nope/retract', { reason_md: 'x' }),
+      { id: 'nope' },
+    );
+    expect(res.status).toBe(404);
+  });
 });
 
 describe('knowledge UI 换源等价 (Critic m1, YUK-318)', () => {
