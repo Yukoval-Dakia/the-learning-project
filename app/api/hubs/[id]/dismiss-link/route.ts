@@ -22,7 +22,7 @@
 import { z } from 'zod';
 
 import { db } from '@/db/client';
-import { persistHubLinkDismiss } from '@/server/artifacts/hub-dismiss';
+import { persistHubLinkDismiss } from '@/capabilities/notes/server/hub-dismiss';
 import { ApiError, errorResponse } from '@/server/http/errors';
 
 export const runtime = 'nodejs';

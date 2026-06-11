@@ -1,14 +1,14 @@
 import type { Db } from '@/db/client';
 import { getStartedBoss } from '@/server/boss/client';
-import type { NoteRefineTriggerKind } from '@/server/boss/handlers/note-refine';
+import type { NoteRefineTriggerKind } from '@/capabilities/notes/jobs/note-refine';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 
 export const NOTE_REFINE_TRIGGER_DEBOUNCE_MS = 60 * 60_000;
 
+// M3 (YUK-317, D6)：error_rate 信号已删（内嵌自测链路裁撤）。
 const FLAG_BY_KIND: Record<NoteRefineTriggerKind, string> = {
   mark_wrong: 'WAVE6_TRIGGER_MARK_WRONG_ENABLED',
   mastery_change: 'WAVE6_TRIGGER_MASTERY_ENABLED',
-  error_rate: 'WAVE6_TRIGGER_CHECK_ERROR_RATE_ENABLED',
   dwell: 'WAVE6_TRIGGER_DWELL_ENABLED',
   dreaming: 'WAVE6_TRIGGER_DREAMING_ENABLED',
 };
@@ -129,22 +129,6 @@ export const enqueueDwellNoteRefine = (input: {
     ...input,
     kind: 'dwell',
     contextMd: 'User is dwelling in the editor; consider whether a small clarity patch would help.',
-  });
-
-export const enqueueErrorRateNoteRefine = (input: {
-  db?: Db;
-  artifactId: string;
-  questionId?: string;
-  triggerEventId?: string;
-  bossSend?: BossSend;
-}) =>
-  enqueueNoteRefineTrigger({
-    ...input,
-    kind: 'error_rate',
-    contextMd: input.questionId
-      ? `Embedded check failure for question ${input.questionId}; check error rate crossed the v0 trigger.`
-      : 'Embedded check failure rate crossed the v0 trigger.',
-    evidenceIds: input.triggerEventId ? [input.triggerEventId] : [],
   });
 
 export const enqueueMasteryNoteRefine = (input: {

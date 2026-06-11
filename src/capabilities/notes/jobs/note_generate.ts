@@ -17,8 +17,8 @@ import { ArtifactBodyBlocks, NoteSection } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
 import { type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
-import { syncBlockRefsForArtifact } from '@/server/artifacts/block-refs';
-import { bodyBlocksToNoteSections, noteSectionsToBodyBlocks } from '@/server/artifacts/body-blocks';
+import { syncBlockRefsForArtifact } from '@/capabilities/notes/server/block-refs';
+import { bodyBlocksToNoteSections, noteSectionsToBodyBlocks } from '@/capabilities/notes/server/body-blocks';
 import { resolveNoteSkill } from '@/subjects/note-skills';
 import { resolveSubjectProfile } from '@/subjects/profile';
 

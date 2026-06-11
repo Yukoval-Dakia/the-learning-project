@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { ArtifactBodyBlocks } from '@/core/schema/business';
 import { db } from '@/db/client';
-import { editArtifactBodyBlocks } from '@/server/artifacts/body-blocks-edit';
+import { editArtifactBodyBlocks } from '@/capabilities/notes/server/body-blocks-edit';
 import { ApiError, errorResponse } from '@/server/http/errors';
 
 export const runtime = 'nodejs';

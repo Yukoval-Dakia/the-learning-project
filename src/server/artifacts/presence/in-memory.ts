@@ -1,5 +1,5 @@
-import { persistNoteRefineApply } from '@/server/artifacts/note-refine-apply';
-import type { PersistNoteRefineApplyResult } from '@/server/artifacts/note-refine-apply';
+import { persistNoteRefineApply } from '@/capabilities/notes/server/note-refine-apply';
+import type { PersistNoteRefineApplyResult } from '@/capabilities/notes/server/note-refine-apply';
 
 import {
   EDITING_FORCE_APPLY_TIMEOUT_MS,

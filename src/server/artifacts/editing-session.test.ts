@@ -16,7 +16,7 @@ const persistNoteRefineApply = vi.fn(async (args: { artifactId: string }) => ({
   artifact_id: args.artifactId,
 }));
 
-vi.mock('@/server/artifacts/note-refine-apply', () => ({
+vi.mock('@/capabilities/notes/server/note-refine-apply', () => ({
   persistNoteRefineApply: (args: { artifactId: string }) => persistNoteRefineApply(args),
 }));
 

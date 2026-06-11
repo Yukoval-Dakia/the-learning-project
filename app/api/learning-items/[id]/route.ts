@@ -1,7 +1,7 @@
 import { getEffectiveTruth } from '@/capabilities/practice/server/effective-truth';
 import { db } from '@/db/client';
 import { artifact, completion_evidence, learning_item, question } from '@/db/schema';
-import { bodyBlocksToNoteSections } from '@/server/artifacts/body-blocks';
+import { bodyBlocksToNoteSections } from '@/capabilities/notes/server/body-blocks';
 import { errorResponse } from '@/server/http/errors';
 import { getEffectiveDomain } from '@/server/knowledge/domain';
 import { assertKnowledgeIdsExist } from '@/server/knowledge/validate';

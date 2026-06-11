@@ -26,19 +26,16 @@ import { NotePatch, type NotePatchT, summarizeNotePatch } from '@/core/schema/no
 import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
-import { bodyBlocksToBlockSummaries } from '@/server/artifacts/body-blocks';
+import { bodyBlocksToBlockSummaries } from '@/capabilities/notes/server/body-blocks';
 import { enqueueOrApplyNoteRefinePatch } from '@/server/artifacts/editing-session';
-import { decideNoteRefineMode } from '@/server/artifacts/note-refine-policy';
-import { writeNoteRefineProposal } from '@/server/artifacts/note-refine-proposals';
+import { decideNoteRefineMode } from '@/capabilities/notes/server/note-refine-policy';
+import { writeNoteRefineProposal } from '@/capabilities/notes/server/note-refine-proposals';
 import { resolveNoteSkill } from '@/subjects/note-skills';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
-export type NoteRefineTriggerKind =
-  | 'mark_wrong'
-  | 'mastery_change'
-  | 'error_rate'
-  | 'dwell'
-  | 'dreaming';
+// M3 (YUK-317, D6)：error_rate kind 已删——内嵌自测全链路裁撤后该信号源死亡；
+// 流作答信号 = mastery_change（practice submit persist 接入）。
+export type NoteRefineTriggerKind = 'mark_wrong' | 'mastery_change' | 'dwell' | 'dreaming';
 
 export interface NoteRefineJobData {
   artifact_id: string;

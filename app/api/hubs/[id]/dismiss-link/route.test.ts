@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { db } from '@/db/client';
 import { artifact, event, knowledge } from '@/db/schema';
-import { persistHubLinkDismiss } from '@/server/artifacts/hub-dismiss';
-import { runHubAutoSyncNightly } from '@/server/boss/handlers/hub_auto_sync_nightly';
+import { persistHubLinkDismiss } from '@/capabilities/notes/server/hub-dismiss';
+import { runHubAutoSyncNightly } from '@/capabilities/notes/jobs/hub_auto_sync_nightly';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { POST } from './route';
 

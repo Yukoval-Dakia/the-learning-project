@@ -21,7 +21,7 @@ import { type NotePatchT, countNewBlocks, summarizeNotePatch } from '@/core/sche
 import type { Db, Tx } from '@/db/client';
 import { artifact, event } from '@/db/schema';
 import { type TaskTextResult, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
-import { syncBlockRefsForArtifact } from '@/server/artifacts/block-refs';
+import { syncBlockRefsForArtifact } from '@/capabilities/notes/server/block-refs';
 import { writeEvent } from '@/server/events/queries';
 
 type DbLike = Db | Tx;

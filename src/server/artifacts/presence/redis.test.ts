@@ -12,7 +12,7 @@ import type { EnqueueOrApplyInput, RecordHeartbeatInput } from './types';
 // The Redis store's only DB side effect. Mock it so the apply path resolves
 // without a live Postgres connection and we can assert it WAS called on degrade.
 const persistNoteRefineApplyMock = vi.fn();
-vi.mock('@/server/artifacts/note-refine-apply', () => ({
+vi.mock('@/capabilities/notes/server/note-refine-apply', () => ({
   persistNoteRefineApply: (...args: unknown[]) => persistNoteRefineApplyMock(...args),
 }));
 

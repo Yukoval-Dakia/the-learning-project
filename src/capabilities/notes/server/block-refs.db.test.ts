@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { NotePatchT } from '@/core/schema/note-patch';
 import { artifact, artifact_block_ref, event, learning_item } from '@/db/schema';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   listBacklinks,
   resolveOwningLearningItemIds,

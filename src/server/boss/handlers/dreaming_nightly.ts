@@ -17,7 +17,7 @@ import {
 // per-(kind, relation) digest (see the getProposalFeedbackDigest import below).
 import { DREAMING_CONTEXT_BUDGET, PROPOSAL_FEEDBACK_BUDGET } from '@/server/ai/tools/budgets';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
-import { enqueueDreamingNoteRefine } from '@/server/artifacts/note-refine-triggers';
+import { enqueueDreamingNoteRefine } from '@/capabilities/notes/server/note-refine-triggers';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
 // YUK-143 / ADR-0025 — North-Star: feed active goals into the Dreaming input so
 // it can BIAS proposals toward weak/under-covered knowledge in their scope.
