@@ -9,7 +9,7 @@ import { Btn } from '@/ui/primitives/Btn';
 import { IconBtn } from '@/ui/primitives/IconBtn';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import './note-reader.css';
 
 import { NoteBlockView, blockOutlineLabel } from './NoteBlocks';
@@ -41,11 +41,16 @@ export default function NoteReaderPage({
   const note = noteQ.data;
   const blocks = note?.body_blocks?.content ?? [];
 
-  // 进入编辑态时从服务端快照拉草稿；切回阅读丢弃未保存改动。
-  useEffect(() => {
-    if (mode === 'edit' && note) setDraft(note.body_blocks?.content ?? []);
-    if (mode === 'read') setDraft(null);
-  }, [mode, note]);
+  // 草稿只在进入编辑态时快照一次（见编辑 tab onClick）——不能依赖 note 对象：
+  // query refetch（窗口聚焦/重连）会换引用，若挂 effect 会把未保存编辑静默覆盖。
+  // 切换笔记 id 时复位为阅读态并丢弃草稿——render 期 adjust（React 官方
+  // "adjusting state when a prop changes" 模式），避免 effect 迟一帧闪旧草稿。
+  const [shownId, setShownId] = useState(id);
+  if (shownId !== id) {
+    setShownId(id);
+    setMode('read');
+    setDraft(null);
+  }
 
   const say = (text: string) => {
     setToast(text);
@@ -62,6 +67,7 @@ export default function NoteReaderPage({
       void qc.invalidateQueries({ queryKey: ['note-page', id] });
       void qc.invalidateQueries({ queryKey: ['note-ai-changes', id] });
       setMode('read');
+      setDraft(null);
       say('已保存——版本推进，refine 痕迹照常累积。');
     },
     onError: (e) => {
@@ -129,7 +135,11 @@ export default function NoteReaderPage({
             role="tab"
             aria-selected={mode === 'read'}
             className={mode === 'read' ? 'on' : ''}
-            onClick={() => setMode('read')}
+            onClick={() => {
+              // 切回阅读丢弃未保存改动（与保存成功路径一致）。
+              setMode('read');
+              setDraft(null);
+            }}
           >
             <LoomIcon name="eye" size={14} />
             阅读
@@ -139,7 +149,11 @@ export default function NoteReaderPage({
             role="tab"
             aria-selected={mode === 'edit'}
             className={mode === 'edit' ? 'on' : ''}
-            onClick={() => setMode('edit')}
+            onClick={() => {
+              // 进入编辑态时一次性快照服务端块；已在编辑中则保持现有草稿。
+              setDraft((d) => d ?? note.body_blocks?.content ?? []);
+              setMode('edit');
+            }}
           >
             <LoomIcon name="pencil" size={14} />
             编辑
