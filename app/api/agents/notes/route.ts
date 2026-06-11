@@ -1,3 +1,3 @@
-// 外壳挂载 — handler 本体在 agent-notes capability 包（架构重设计 P1 打样，YUK-311）。
+// 外壳挂载 — handler 本体在 agency capability 包（P1 打样 YUK-311；M4 改名 agency，YUK-319）。
 export const runtime = 'nodejs';
-export { GET } from '@/capabilities/agent-notes/api/notes';
+export { GET } from '@/capabilities/agency/api/notes';

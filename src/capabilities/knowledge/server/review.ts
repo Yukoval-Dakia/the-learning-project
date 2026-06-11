@@ -20,7 +20,7 @@
 // SDK-resolved name so the agent runner doesn't strip the tool from the
 // catalog before the model sees it.
 
-import { readAgentNotes } from '@/capabilities/agent-notes/server/notes';
+import { readAgentNotes } from '@/capabilities/agency/server/notes';
 import { validateProposalQuality } from '@/capabilities/knowledge/server/rubric-validator';
 import { newId } from '@/core/ids';
 import type { KnowledgeEdgeProposalChangeT } from '@/core/schema/proposal';

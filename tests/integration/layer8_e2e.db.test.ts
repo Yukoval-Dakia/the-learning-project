@@ -29,17 +29,17 @@
 // `*.db.test.ts` under tests/** lands in the db partition (allTestInclude minus
 // fastTestInclude); it imports the testDb helper, so it must NOT be a unit test.
 
+import { runCoach } from '@/capabilities/agency/jobs/coach_daily';
+import { runDreamingNightly } from '@/capabilities/agency/jobs/dreaming_nightly';
+import { runGoalScopeProposeNightly } from '@/capabilities/agency/jobs/goal_scope_propose_nightly';
+import type { ActiveGoal } from '@/capabilities/agency/server/goals/queries';
+import { listActiveGoals } from '@/capabilities/agency/server/goals/queries';
 import { handleReviewDue } from '@/capabilities/practice/server/due-list';
 import { material_fsrs_state } from '@/db/schema';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/server/ai/tools/budgets';
 import { executeMemoryBrief } from '@/server/ai/tools/context-readers';
 import type { ToolContext } from '@/server/ai/tools/types';
-import { runCoach } from '@/server/boss/handlers/coach_daily';
-import { runDreamingNightly } from '@/server/boss/handlers/dreaming_nightly';
-import { runGoalScopeProposeNightly } from '@/server/boss/handlers/goal_scope_propose_nightly';
-import type { ActiveGoal } from '@/server/goals/queries';
-import { listActiveGoals } from '@/server/goals/queries';
 import { listActiveSubjectsSinceRefresh } from '@/server/memory/active-subjects';
 import { regenerateMemoryBrief } from '@/server/memory/brief';
 import { buildBriefGenerator } from '@/server/memory/brief-writer';

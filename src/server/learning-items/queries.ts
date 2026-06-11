@@ -1,6 +1,6 @@
 // YUK-203 U4 / D11① — active learning-item reader for the Coach brief.
 //
-// Models src/server/goals/queries.ts:listActiveGoals. Returns the pinned /
+// Models src/capabilities/agency/server/goals/queries.ts:listActiveGoals. Returns the pinned /
 // in_progress learning items so the coach_daily handler can feed their
 // `knowledge_ids` into the Coach input as ATTENTION PRESSURE only (D11① /
 // CO §7.1:723-726) — never as scheduling / bookkeeping state. ADR-0012: this is

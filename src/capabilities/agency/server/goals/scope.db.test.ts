@@ -10,7 +10,7 @@ import { acceptAiProposal, dismissAiProposal, retractAiProposal } from '@/server
 import { getProposalInboxRow, listProposalInboxRows } from '@/server/proposals/inbox';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { listActiveGoals } from './queries';
 import { parseGoalScopeOutput, runGoalScopeAndWrite } from './scope';
 

@@ -1,6 +1,11 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 
+// YUK-143 / ADR-0024 — North-Star goal_scope accept materializer.
+import {
+  type GoalScopeAcceptResult,
+  acceptGoalScopeProposal,
+} from '@/capabilities/agency/server/goals/accept';
 // YUK-202 / BlockAssembly path-B (design 2026-06-02 §4) — accept reuses the
 // verified YUK-195 `mergeQuestions` primitive; no auto-merge path is added.
 import { mergeQuestions } from '@/capabilities/ingestion/server/block-structured-edit';
@@ -29,8 +34,6 @@ import { writeEvent } from '@/server/events/queries';
 // ADR-0031 / YUK-304 (lane B) — question_draft accept promotes draft→active +
 // FSRS-enrolls (决定5). Same enroll-if-absent primitives quiz_verify uses.
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
-// YUK-143 / ADR-0024 — North-Star goal_scope accept materializer.
-import { type GoalScopeAcceptResult, acceptGoalScopeProposal } from '@/server/goals/accept';
 import { ApiError } from '@/server/http/errors';
 import {
   type LearningIntentMaterializeResult,

@@ -1,17 +1,21 @@
 // Wave 5 / T-D6/B — coach_daily pg-boss handler.
 //
-// Mirrors src/server/boss/handlers/dreaming_nightly.ts. Builds the COACH
+// Mirrors sibling ./dreaming_nightly.ts. Builds the COACH
 // allowlist MCP bridge, runs `CoachTask`, and writes trigger + scan events
 // (`experimental:trigger_coach_scan` / `experimental:coach_scan`).
 
 import { createId } from '@paralleldrive/cuid2';
 import type { Job } from 'pg-boss';
 
+// YUK-143 / ADR-0025 — North-Star: feed active goals into the Coach input so it
+// can add a goal-oriented strand. Purely ADDITIVE (ND-5): the FSRS-due / review
+// backbone and other capture tasks are untouched; goals only add direction.
+import { type ActiveGoal, listActiveGoals } from '@/capabilities/agency/server/goals/queries';
 // codex #3356884494 — Coach consumes the out-of-band agent-note HINT channel
 // (for_agent='coach'). quiz_verify leaves question_pool_gap notes targeting
 // 'coach', but nothing read them until now (the only live readers were Dreaming /
 // KnowledgeReview). Mirrors dreaming_nightly.ts: hints, not facts; additive only.
-import { type AgentNote, readAgentNotes } from '@/capabilities/agent-notes/server/notes';
+import { type AgentNote, readAgentNotes } from '@/capabilities/agency/server/notes';
 import { type TodayPlanT, parseTodayPlan } from '@/core/schema/coach';
 import type { Db } from '@/db/client';
 import { type RunTaskResult, runAgentTask } from '@/server/ai/runner';
@@ -27,10 +31,6 @@ import {
 import { COACH_CONTEXT_BUDGET, PROPOSAL_FEEDBACK_BUDGET } from '@/server/ai/tools/budgets';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
-// YUK-143 / ADR-0025 — North-Star: feed active goals into the Coach input so it
-// can add a goal-oriented strand. Purely ADDITIVE (ND-5): the FSRS-due / review
-// backbone and other capture tasks are untouched; goals only add direction.
-import { type ActiveGoal, listActiveGoals } from '@/server/goals/queries';
 // YUK-203 U4 / D11① — feed active/pinned learning items' knowledge_ids into the
 // Coach input as ATTENTION PRESSURE only (CO §7.1:723-726). Purely additive
 // (ND-5): never carries scheduling/bookkeeping, never touches the FSRS-due
@@ -480,7 +480,7 @@ export function buildCoachDailyHandler(
       const enqueue =
         enqueueReviewPlanFn ??
         (async (payload) => {
-          const { getStartedBoss } = await import('../client');
+          const { getStartedBoss } = await import('@/server/boss/client');
           const boss = await getStartedBoss();
           await boss.send('review_plan', payload);
         });
