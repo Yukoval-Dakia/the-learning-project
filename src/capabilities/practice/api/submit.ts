@@ -40,6 +40,7 @@ import { db } from '@/db/client';
 import { question } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { enqueueMasteryNoteRefine } from '@/capabilities/notes/server/note-refine-triggers';
+import { notesForKnowledge } from '@/capabilities/notes/server/notes-read';
 import { writeEvent } from '@/server/events/queries';
 import { type FsrsSubjectKind, getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
@@ -588,13 +589,25 @@ async function persistSubmit(
   // biome-ignore lint/style/noNonNullAssertion: assigned inside the txn
   const finalFsrsStateAfter = primaryFsrsStateAfter!;
 
-  if (outcome === 'success' && q.source_ref) {
-    await enqueueMasteryNoteRefine({
-      db,
-      artifactId: q.source_ref,
-      questionId,
-      triggerEventId: eventId,
-    });
+  // M3 (YUK-317)：Living Note 流作答信号。旧形态只对带 source_ref 的笔记
+  // 衍生题触发——流内普通题（manual/ingestion）作答是死线。新触发器按
+  // question.knowledge_ids 派生 labeled notes（D6 后 error_rate 的替代信号源），
+  // source_ref 直指来源笔记的旧线保留；triggers 层 1h debounce 防风暴。
+  if (outcome === 'success') {
+    const targetArtifactIds = new Set<string>();
+    if (q.source_ref) targetArtifactIds.add(q.source_ref);
+    for (const kid of q.knowledge_ids) {
+      const labeled = await notesForKnowledge(db, kid);
+      for (const note of labeled) targetArtifactIds.add(note.id);
+    }
+    for (const artifactId of targetArtifactIds) {
+      await enqueueMasteryNoteRefine({
+        db,
+        artifactId,
+        questionId,
+        triggerEventId: eventId,
+      });
+    }
   }
 
   return {
