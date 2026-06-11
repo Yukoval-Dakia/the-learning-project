@@ -7,13 +7,13 @@ import { resetDb, testDb } from '../../../tests/helpers/db';
 import { GET, POST } from './route';
 
 // Mock the AI background tasks so tests don't call Anthropic
-vi.mock('@/server/knowledge/propose', () => ({
+vi.mock('@/capabilities/knowledge/server/propose', () => ({
   runProposeAndWrite: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock('@/server/knowledge/attribute', () => ({
+vi.mock('@/capabilities/knowledge/server/attribute', () => ({
   runAttributionAndWriteJudgeEvent: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock('@/server/knowledge/tree', () => ({
+vi.mock('@/capabilities/knowledge/server/tree', () => ({
   loadTreeSnapshot: vi.fn().mockResolvedValue([
     {
       id: 'k1',
@@ -228,8 +228,8 @@ describe('POST /api/mistakes', () => {
   });
 
   it('queues both propose + attribution when cause is null', async () => {
-    const { runProposeAndWrite } = await import('@/server/knowledge/propose');
-    const { runAttributionAndWriteJudgeEvent } = await import('@/server/knowledge/attribute');
+    const { runProposeAndWrite } = await import('@/capabilities/knowledge/server/propose');
+    const { runAttributionAndWriteJudgeEvent } = await import('@/capabilities/knowledge/server/attribute');
     vi.mocked(runProposeAndWrite).mockClear();
     vi.mocked(runAttributionAndWriteJudgeEvent).mockClear();
 
@@ -239,7 +239,7 @@ describe('POST /api/mistakes', () => {
   });
 
   it('passes the selected knowledge subject profile to KnowledgeProposeTask', async () => {
-    const { runProposeAndWrite } = await import('@/server/knowledge/propose');
+    const { runProposeAndWrite } = await import('@/capabilities/knowledge/server/propose');
     vi.mocked(runProposeAndWrite).mockClear();
     const db = testDb();
     const { eq } = await import('drizzle-orm');
@@ -256,7 +256,7 @@ describe('POST /api/mistakes', () => {
   });
 
   it('queues only propose when cause is provided manually', async () => {
-    const { runAttributionAndWriteJudgeEvent } = await import('@/server/knowledge/attribute');
+    const { runAttributionAndWriteJudgeEvent } = await import('@/capabilities/knowledge/server/attribute');
     vi.mocked(runAttributionAndWriteJudgeEvent).mockClear();
 
     const res = await postMistake(

@@ -15,7 +15,7 @@
 // bucket rather than being dropped.
 
 import type { Db } from '@/db/client';
-import { getEffectiveDomain } from '@/server/knowledge/domain';
+import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 // T-CS / YUK-168 — batch-resolve each row's learning-subject id from its first

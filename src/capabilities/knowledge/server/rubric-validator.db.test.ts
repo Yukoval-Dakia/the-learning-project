@@ -8,7 +8,7 @@ import { parseAiProposalPayload } from '@/core/schema/proposal';
 import { knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   RUBRIC_EVIDENCE_WINDOW_DAYS,
   type RubricGate,

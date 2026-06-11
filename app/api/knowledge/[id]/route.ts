@@ -13,7 +13,7 @@ import { z } from 'zod';
 
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { loadKnowledgeNodePage } from '@/server/knowledge/node-page';
+import { loadKnowledgeNodePage } from '@/capabilities/knowledge/server/node-page';
 
 export const runtime = 'nodejs';
 

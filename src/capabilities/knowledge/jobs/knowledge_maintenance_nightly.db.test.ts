@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { db } from '@/db/client';
 import { knowledge, proposal_signals } from '@/db/schema';
-import { type WriteProposalResult, runWriteProposal } from '@/server/knowledge/review';
+import { type WriteProposalResult, runWriteProposal } from '@/capabilities/knowledge/server/review';
 import { dismissAiProposal } from '@/server/proposals/actions';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { eq } from 'drizzle-orm';

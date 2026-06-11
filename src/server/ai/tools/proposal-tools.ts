@@ -30,13 +30,13 @@ import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { runQuestionAuthor } from '@/server/ai/question-author';
 import { runVariantGen } from '@/server/boss/handlers/variant_gen';
 import { getFailureAttemptById, getJudgeForAttempt } from '@/server/events/queries';
-import { runAttributionAndWriteJudgeEvent } from '@/server/knowledge/attribute';
-import { getEffectiveDomain } from '@/server/knowledge/domain';
+import { runAttributionAndWriteJudgeEvent } from '@/capabilities/knowledge/server/attribute';
+import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
 import {
   type KnowledgeMutationPayload,
   writeKnowledgeProposeEvent,
-} from '@/server/knowledge/proposals';
-import { type RubricVerdict, validateProposalQuality } from '@/server/knowledge/rubric-validator';
+} from '@/capabilities/knowledge/server/proposals';
+import { type RubricVerdict, validateProposalQuality } from '@/capabilities/knowledge/server/rubric-validator';
 // P5.4-L2 / YUK-174 (Facet B) — resolve the per-(kind, relation) gate-bump for
 // this edge and pass it as the OPTIONAL adaptive input to the L1 validator. The
 // digest read is bounded; cold-start / below-threshold returns a no-op bump.

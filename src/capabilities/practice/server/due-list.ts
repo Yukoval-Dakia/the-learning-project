@@ -38,9 +38,9 @@ import { errorResponse } from '@/server/http/errors';
 // so one busy subject can't dominate the page. batchResolveSubjectIds walks
 // knowledge_ids → parent chain → domain → SubjectProfile (default fallback for
 // orphan ids, YUK-56), memoised across the pool to avoid an N+1 on the
-// parent-chain walk. Extracted to `@/server/knowledge/subject-resolution` (P5.2)
+// parent-chain walk. Extracted to `@/capabilities/knowledge/server/subject-resolution` (P5.2)
 // so the brief-refresh layer shares the SAME canonical bridge.
-import { batchResolveSubjectIds } from '@/server/knowledge/subject-resolution';
+import { batchResolveSubjectIds } from '@/capabilities/knowledge/server/subject-resolution';
 import { and, eq, inArray, isNull, lte, ne, or, sql } from 'drizzle-orm';
 
 // YUK-167 / ADR-0025 — swappable active-goals reader so DB tests inject goal

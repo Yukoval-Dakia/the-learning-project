@@ -18,7 +18,7 @@ import {
 } from '@/server/ai/solution-generate';
 import { writeEvent } from '@/server/events/queries';
 import { type JudgeInvokerOutput, createDefaultJudgeInvoker } from '@/server/judge/invoker';
-import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject-profile';
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 import { sanitizeJsonStringLiterals } from '@/server/orchestrator/json-sanitize';
 import { createLearningRecord } from '@/server/records/queries';
 import { Tutor } from '@/server/session';

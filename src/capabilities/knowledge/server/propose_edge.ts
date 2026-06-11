@@ -14,7 +14,7 @@ import { event, knowledge_edge } from '@/db/schema';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 import type { FailureAttempt } from '@/server/events/queries';
-import { validateProposalQuality } from '@/server/knowledge/rubric-validator';
+import { validateProposalQuality } from '@/capabilities/knowledge/server/rubric-validator';
 import { writeAiProposal } from '@/server/proposals/writer';
 import type { SubjectProfile } from '@/subjects/profile';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';

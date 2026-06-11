@@ -50,7 +50,7 @@
 // `from` is the atomic's node. We key the rule on `to ∈ hub` and surface the
 // atomic at the `from` endpoint. (Documented in the Lane-C finish report.)
 
-import type { KnowledgeNode } from '@/server/knowledge/tree';
+import type { KnowledgeNode } from '@/capabilities/knowledge/server/tree';
 
 // Relation provenance attached to each curated atomic. Drives the Lane-D chip:
 //   subtopic → "via 子主题", prerequisite → "via prerequisite",

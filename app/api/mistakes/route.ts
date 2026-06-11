@@ -9,11 +9,11 @@ import { runTask } from '@/server/ai/runner';
 import { getStartedBoss } from '@/server/boss/client';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { runProposeAndWrite } from '@/server/knowledge/propose';
+import { runProposeAndWrite } from '@/capabilities/knowledge/server/propose';
 import {
   assertCauseAllowedForSubjectProfile,
   resolveSubjectProfileForKnowledgeIds,
-} from '@/server/knowledge/subject-profile';
+} from '@/capabilities/knowledge/server/subject-profile';
 import { listMistakeProjectionRows } from '@/server/records/mistakes';
 import { createLearningRecord } from '@/server/records/queries';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';

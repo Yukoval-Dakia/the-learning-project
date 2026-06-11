@@ -5,7 +5,7 @@
 
 import { newId } from '@/core/ids';
 import { knowledge, question } from '@/db/schema';
-import { resolveSubjectKnowledgeIds } from '@/server/knowledge/domain';
+import { resolveSubjectKnowledgeIds } from '@/capabilities/knowledge/server/domain';
 import { listQuestions } from '@/server/questions/list';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';

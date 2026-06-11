@@ -10,7 +10,7 @@
 import { newId } from '@/core/ids';
 import { event, knowledge, learning_record, memory_brief_note } from '@/db/schema';
 import { BRIEF_REFRESH_BUDGET } from '@/server/ai/tools/budgets';
-import { batchResolveSubjectIds } from '@/server/knowledge/subject-resolution';
+import { batchResolveSubjectIds } from '@/capabilities/knowledge/server/subject-resolution';
 import { eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';

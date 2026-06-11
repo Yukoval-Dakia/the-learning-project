@@ -34,7 +34,7 @@ import {
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
 import { type RunTaskResult, runAgentTask } from '@/server/ai/runner';
-import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject-profile';
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 
 type RunAgentTaskFn = (
   kind: string,
