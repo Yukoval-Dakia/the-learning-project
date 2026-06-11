@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-import { db } from '@/db/client';
 import { editArtifactSection } from '@/capabilities/notes/server/sections';
+import { db } from '@/db/client';
 import { errorResponse } from '@/server/http/errors';
 
 const PatchBody = z.object({
@@ -10,8 +10,7 @@ const PatchBody = z.object({
   body_md: z.string().max(50_000),
 });
 
-
-export async function PATCH(req: Request, params: Record<string, string>,): Promise<Response> {
+export async function PATCH(req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const { id, sectionId } = params;
     const raw = await req.json().catch(() => null);

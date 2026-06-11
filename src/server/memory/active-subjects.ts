@@ -16,10 +16,10 @@
 // SAME canonical bridge the review scheduler uses (BR-4,
 // `@/capabilities/knowledge/server/subject-resolution`).
 
+import { batchResolveSubjectIds } from '@/capabilities/knowledge/server/subject-resolution';
 import type { Db } from '@/db/client';
 import { event, learning_record, memory_brief_note } from '@/db/schema';
 import { BRIEF_REFRESH_BUDGET } from '@/server/ai/tools/budgets';
-import { batchResolveSubjectIds } from '@/capabilities/knowledge/server/subject-resolution';
 import { and, eq, gt, inArray, like, sql } from 'drizzle-orm';
 import type { BriefEvent } from './brief';
 

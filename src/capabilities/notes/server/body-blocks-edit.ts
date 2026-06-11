@@ -1,11 +1,11 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 
+import { syncBlockRefsForArtifact } from '@/capabilities/notes/server/block-refs';
 import { ArtifactBodyBlocks } from '@/core/schema/business';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact } from '@/db/schema';
-import { syncBlockRefsForArtifact } from '@/capabilities/notes/server/block-refs';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError } from '@/server/http/errors';
 

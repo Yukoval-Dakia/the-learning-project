@@ -1,6 +1,6 @@
+import type { NoteRefineTriggerKind } from '@/capabilities/notes/jobs/note-refine';
 import type { Db } from '@/db/client';
 import { getStartedBoss } from '@/server/boss/client';
-import type { NoteRefineTriggerKind } from '@/capabilities/notes/jobs/note-refine';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 
 export const NOTE_REFINE_TRIGGER_DEBOUNCE_MS = 60 * 60_000;

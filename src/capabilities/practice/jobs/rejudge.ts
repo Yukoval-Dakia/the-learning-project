@@ -11,12 +11,12 @@
 // 上调」推回反馈卡，用户确认评级走既有 submit/rate 单一入口；全历史重投影属
 // 投影引擎契约（总 spec 按第二实例原则推迟）。
 
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { type JudgeAnswerResult, judgeAnswer } from '@/server/ai/judges/question-contract';
 import { writeEvent } from '@/server/events/queries';
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 import { and, eq } from 'drizzle-orm';
 
 export interface RejudgeJobInput {

@@ -20,11 +20,14 @@
 
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
+import {
+  type MasteryDecayBucket,
+  masteryDecayBucket,
+} from '@/capabilities/knowledge/server/node-page';
 import { type SourceTier, type SourceTierName, deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
 import { artifact, knowledge, knowledge_mastery, material_fsrs_state, question } from '@/db/schema';
 import { type QuestionTimelineEntry, getQuestionTimeline } from '@/server/events/queries';
-import { type MasteryDecayBucket, masteryDecayBucket } from '@/capabilities/knowledge/server/node-page';
 import { loadFamilyMembers } from '@/server/questions/list';
 
 const DEFAULT_TIMELINE_LIMIT = 10;

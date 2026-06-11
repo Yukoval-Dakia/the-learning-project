@@ -13,6 +13,7 @@
 
 import { z } from 'zod';
 
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 import { normalizeReviewSubmitActivityRef } from '@/capabilities/practice/server/activity-ref';
 import { resolveAdviceCauseForQuestion } from '@/capabilities/practice/server/cause-context';
 import { ratingFromCoarseOutcome } from '@/capabilities/practice/server/judge-rating';
@@ -22,7 +23,6 @@ import { db } from '@/db/client';
 import { question } from '@/db/schema';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 import { eq } from 'drizzle-orm';
 
 const AdviceBody = z.object({

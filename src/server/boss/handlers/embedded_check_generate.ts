@@ -12,6 +12,11 @@ import { and, eq, inArray } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { z } from 'zod';
 
+import {
+  bodyBlocksToBlockSummaries,
+  bodyBlocksToNoteSections,
+  setNoteSectionEmbeddedCheckArtifactRef,
+} from '@/capabilities/notes/server/body-blocks';
 import { JudgeKind, QuestionKind, Rubric } from '@/core/schema/business';
 import {
   PROSE_KINDS,
@@ -26,11 +31,6 @@ import {
   aiAgentRef,
   costUsdToMicroUsd,
 } from '@/server/ai/provenance';
-import {
-  bodyBlocksToBlockSummaries,
-  bodyBlocksToNoteSections,
-  setNoteSectionEmbeddedCheckArtifactRef,
-} from '@/capabilities/notes/server/body-blocks';
 import { writeEvent } from '@/server/events/queries';
 import { resolveSubjectProfile } from '@/subjects/profile';
 

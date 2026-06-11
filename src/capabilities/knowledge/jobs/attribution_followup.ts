@@ -18,11 +18,11 @@
 import { eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
+import { runAttributionAndWriteJudgeEvent } from '@/capabilities/knowledge/server/attribute';
+import { loadTreeSnapshot } from '@/capabilities/knowledge/server/tree';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
-import { runAttributionAndWriteJudgeEvent } from '@/capabilities/knowledge/server/attribute';
-import { loadTreeSnapshot } from '@/capabilities/knowledge/server/tree';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 export interface AttributionFollowupJobData {

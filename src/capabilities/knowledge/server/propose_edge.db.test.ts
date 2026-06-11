@@ -1,10 +1,10 @@
 // Phase 2 Dreaming — knowledge_edge nightly propose tests.
 
 import { tasks } from '@/ai/registry';
+import { RUBRIC_EVIDENCE_WINDOW_DAYS } from '@/capabilities/knowledge/server/rubric-validator';
 import { cost_ledger, event, knowledge, knowledge_edge, question } from '@/db/schema';
 import { RECENT_FAILURE_WINDOW_MS } from '@/server/ai/tools/knowledge-readers';
 import { type FailureAttempt, getFailureAttempts, writeEvent } from '@/server/events/queries';
-import { RUBRIC_EVIDENCE_WINDOW_DAYS } from '@/capabilities/knowledge/server/rubric-validator';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';

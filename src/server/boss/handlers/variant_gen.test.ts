@@ -1,8 +1,8 @@
 // Task #17 — variant_gen handler tests.
 
+import { runAttributionAndWriteJudgeEvent } from '@/capabilities/knowledge/server/attribute';
 import { event, knowledge, mistake_variant, question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
-import { runAttributionAndWriteJudgeEvent } from '@/capabilities/knowledge/server/attribute';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
@@ -579,7 +579,9 @@ describe('runAttributionFollowup → enqueueVariantGen wiring', () => {
   });
 
   it('invokes enqueueVariantGen with the attempt id after a successful run', async () => {
-    const { runAttributionFollowup } = await import('@/capabilities/knowledge/jobs/attribution_followup');
+    const { runAttributionFollowup } = await import(
+      '@/capabilities/knowledge/jobs/attribution_followup'
+    );
     const db = testDb();
     await seedKnowledge();
     await seedQuestion({ id: 'q1' });
@@ -620,7 +622,9 @@ describe('runAttributionFollowup → enqueueVariantGen wiring', () => {
   });
 
   it('does not invoke enqueueVariantGen when attempt is skipped', async () => {
-    const { runAttributionFollowup } = await import('@/capabilities/knowledge/jobs/attribution_followup');
+    const { runAttributionFollowup } = await import(
+      '@/capabilities/knowledge/jobs/attribution_followup'
+    );
     const enqueueVariantGen = vi.fn(async () => {});
     const runTaskFn = vi.fn();
 
@@ -635,7 +639,9 @@ describe('runAttributionFollowup → enqueueVariantGen wiring', () => {
   });
 
   it('swallows enqueue errors (attribution result still succeeds)', async () => {
-    const { runAttributionFollowup } = await import('@/capabilities/knowledge/jobs/attribution_followup');
+    const { runAttributionFollowup } = await import(
+      '@/capabilities/knowledge/jobs/attribution_followup'
+    );
     const db = testDb();
     await seedKnowledge();
     await seedQuestion({ id: 'q1' });

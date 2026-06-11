@@ -4,10 +4,9 @@
 // runtime + provider routing now live in streamReviewTask, which calls
 // streamTask → Claude Agent SDK → xiaomi/mimo per Provider Manager.
 
+import { streamReviewTask } from '@/capabilities/knowledge/server/review';
 import { db } from '@/db/client';
 import { errorResponse } from '@/server/http/errors';
-import { streamReviewTask } from '@/capabilities/knowledge/server/review';
-
 
 export async function POST(): Promise<Response> {
   try {

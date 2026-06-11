@@ -21,6 +21,7 @@
 // catalog before the model sees it.
 
 import { readAgentNotes } from '@/capabilities/agent-notes/server/notes';
+import { validateProposalQuality } from '@/capabilities/knowledge/server/rubric-validator';
 import { newId } from '@/core/ids';
 import type { KnowledgeEdgeProposalChangeT } from '@/core/schema/proposal';
 import { parseAiProposalPayload } from '@/core/schema/proposal';
@@ -28,8 +29,9 @@ import type { Db, Tx } from '@/db/client';
 import { event, knowledge, proposal_signals } from '@/db/schema';
 import { streamTask } from '@/server/ai/runner';
 import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/server/ai/tools/budgets';
+import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 import { getCorrectionStatuses } from '@/server/events/corrections';
-import { validateProposalQuality } from '@/capabilities/knowledge/server/rubric-validator';
+import { getFailureAttempts } from '@/server/events/queries';
 // P5.4-L2 / YUK-174 (Facet B) — resolve the per-(kind, relation) gate-bump for
 // the legacy MCP edge path (always actor 'dreaming' → isAgent: true). Bounded
 // digest read; cold-start / below-threshold → no-op bump.
@@ -41,8 +43,6 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
-import { getFailureAttempts } from '@/server/events/queries';
 import { type KnowledgeMutationPayload, writeKnowledgeProposeEvent } from './proposals';
 
 const RECENT_MISTAKES_LIMIT = 100;

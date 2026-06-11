@@ -15,10 +15,10 @@
 
 import { z } from 'zod';
 
+import { assertKnowledgeIdsExist } from '@/capabilities/knowledge/server/validate';
 import { QuestionKind } from '@/core/schema/business';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { assertKnowledgeIdsExist } from '@/capabilities/knowledge/server/validate';
 import { loadQuestionDetail } from '@/server/questions/detail';
 import {
   BLOODLINE_FIELDS,

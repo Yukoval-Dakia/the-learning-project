@@ -2,10 +2,13 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import type { z } from 'zod';
 
+import {
+  bodyBlocksToNoteSections,
+  replaceNoteSectionBody,
+} from '@/capabilities/notes/server/body-blocks';
 import { ArtifactBodyBlocks, type NoteSection } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact } from '@/db/schema';
-import { bodyBlocksToNoteSections, replaceNoteSectionBody } from '@/capabilities/notes/server/body-blocks';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError } from '@/server/http/errors';
 

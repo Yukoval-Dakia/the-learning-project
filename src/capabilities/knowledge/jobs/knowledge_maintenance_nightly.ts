@@ -4,8 +4,8 @@
 // queue runs the broader tool-calling KnowledgeReviewTask after them, so it can
 // propose tree maintenance mutations while still writing only inbox proposals.
 
-import type { Db } from '@/db/client';
 import { streamReviewTask } from '@/capabilities/knowledge/server/review';
+import type { Db } from '@/db/client';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import type { Job } from 'pg-boss';
 

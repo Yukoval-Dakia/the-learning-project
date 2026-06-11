@@ -1,8 +1,8 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { artifact, event, knowledge } from '@/db/schema';
 import { noteSectionsToBodyBlocks } from '@/capabilities/notes/server/body-blocks';
+import { artifact, event, knowledge } from '@/db/schema';
 import {
   markArtifactIdleAndFlush,
   recordEditingHeartbeat,

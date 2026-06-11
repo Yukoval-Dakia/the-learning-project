@@ -21,8 +21,8 @@
 
 import { z } from 'zod';
 
-import { db } from '@/db/client';
 import { persistHubLinkDismiss } from '@/capabilities/notes/server/hub-dismiss';
+import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 
 const ParamsSchema = z.object({ id: z.string().trim().min(1) });
@@ -34,7 +34,7 @@ const BodySchema = z
   })
   .strict();
 
-export async function POST(req: Request, params: Record<string, string>,): Promise<Response> {
+export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const parsedParams = ParamsSchema.safeParse(params);
     if (!parsedParams.success) {

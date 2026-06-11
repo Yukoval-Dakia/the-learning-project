@@ -1,8 +1,8 @@
 import { z } from 'zod';
 
+import { enqueueDwellNoteRefine } from '@/capabilities/notes/server/note-refine-triggers';
 import { db } from '@/db/client';
 import { recordEditingHeartbeat } from '@/server/artifacts/editing-session';
-import { enqueueDwellNoteRefine } from '@/capabilities/notes/server/note-refine-triggers';
 import { ApiError, errorResponse } from '@/server/http/errors';
 
 export const runtime = 'nodejs';

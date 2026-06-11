@@ -36,10 +36,10 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, isNull, ne, or, sql } from 'drizzle-orm';
 
+import { assertKnowledgeIdsExist } from '@/capabilities/knowledge/server/validate';
 import type { Db } from '@/db/client';
 import { artifact, event, material_fsrs_state, question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
-import { assertKnowledgeIdsExist } from '@/capabilities/knowledge/server/validate';
 
 export const QUESTION_PART_KIND = 'question_part' as const;
 

@@ -33,8 +33,7 @@ const DecisionBody = z.object({
   user_note: z.string().max(2000).optional(),
 });
 
-
-export async function POST(req: Request, params: Record<string, string>,): Promise<Response> {
+export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const { id: proposeEventId } = params;
     const raw = await req.json().catch(() => null);

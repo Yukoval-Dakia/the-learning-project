@@ -1,10 +1,10 @@
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { runHubAutoSyncNightly } from '@/capabilities/notes/jobs/hub_auto_sync_nightly';
+import { persistHubLinkDismiss } from '@/capabilities/notes/server/hub-dismiss';
 import { db } from '@/db/client';
 import { artifact, event, knowledge } from '@/db/schema';
-import { persistHubLinkDismiss } from '@/capabilities/notes/server/hub-dismiss';
-import { runHubAutoSyncNightly } from '@/capabilities/notes/jobs/hub_auto_sync_nightly';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST } from './hub-dismiss-link';
 
@@ -157,7 +157,9 @@ describe('POST /api/hubs/[id]/dismiss-link', () => {
       body_blocks: hubDoc('atomic1'),
     });
 
-    const res = await POST(dismissReq('hub1', { suppressed_artifact_id: 'atomic1' }), { id: 'hub1' });
+    const res = await POST(dismissReq('hub1', { suppressed_artifact_id: 'atomic1' }), {
+      id: 'hub1',
+    });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { removed: boolean; suppress_event_id: string };
     expect(body.removed).toBe(true);
@@ -192,7 +194,9 @@ describe('POST /api/hubs/[id]/dismiss-link', () => {
     });
 
     await POST(dismissReq('hub1', { suppressed_artifact_id: 'atomic1' }), { id: 'hub1' });
-    const res2 = await POST(dismissReq('hub1', { suppressed_artifact_id: 'atomic1' }), { id: 'hub1' });
+    const res2 = await POST(dismissReq('hub1', { suppressed_artifact_id: 'atomic1' }), {
+      id: 'hub1',
+    });
     expect(res2.status).toBe(200);
     const body2 = (await res2.json()) as { removed: boolean };
     // Second dismiss: child already gone → no second body_blocks mutation.
@@ -231,12 +235,16 @@ describe('POST /api/hubs/[id]/dismiss-link', () => {
 
   it('rejects dismiss on a non-hub artifact', async () => {
     await seedArtifact({ id: 'atomic1', title: '原子' });
-    const res = await POST(dismissReq('atomic1', { suppressed_artifact_id: 'x' }), { id: 'atomic1' });
+    const res = await POST(dismissReq('atomic1', { suppressed_artifact_id: 'x' }), {
+      id: 'atomic1',
+    });
     expect(res.status).toBe(400);
   });
 
   it('404s for an unknown hub', async () => {
-    const res = await POST(dismissReq('missing', { suppressed_artifact_id: 'x' }), { id: 'missing' });
+    const res = await POST(dismissReq('missing', { suppressed_artifact_id: 'x' }), {
+      id: 'missing',
+    });
     expect(res.status).toBe(404);
   });
 

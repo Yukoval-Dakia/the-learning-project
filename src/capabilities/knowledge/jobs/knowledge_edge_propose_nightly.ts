@@ -6,10 +6,13 @@
 
 import type { Job } from 'pg-boss';
 
+import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
+import {
+  type RunTaskFn,
+  runEdgeProposeAndWrite,
+} from '@/capabilities/knowledge/server/propose_edge';
 import type { Db } from '@/db/client';
 import { getFailureAttempts } from '@/server/events/queries';
-import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
-import { type RunTaskFn, runEdgeProposeAndWrite } from '@/capabilities/knowledge/server/propose_edge';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 type DepsOverride = {

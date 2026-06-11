@@ -14,10 +14,10 @@
 // — the agent runtime is the Claude CLI subprocess. We call the dispatcher
 // runWriteProposal directly to assert DB shape.
 
-import { parseEvent } from '@/core/schema/event';
-import { event, knowledge, question } from '@/db/schema';
 import { runAttributionAndWriteJudgeEvent } from '@/capabilities/knowledge/server/attribute';
 import { runWriteProposal } from '@/capabilities/knowledge/server/review';
+import { parseEvent } from '@/core/schema/event';
+import { event, knowledge, question } from '@/db/schema';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../helpers/db';

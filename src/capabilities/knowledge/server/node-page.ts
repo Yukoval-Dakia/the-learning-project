@@ -17,9 +17,8 @@
 
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
-import type { ArtifactBodyBlocksT } from '@/core/schema/business';
-import type { Db } from '@/db/client';
-import { artifact, event, knowledge, knowledge_mastery, question } from '@/db/schema';
+import { listKnowledgeEdges } from '@/capabilities/knowledge/server/edges';
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 import {
   type BacklinksByArtifactType,
   groupBacklinksByArtifactType,
@@ -32,9 +31,10 @@ import {
   interactiveForKnowledge,
   notesForKnowledge,
 } from '@/capabilities/notes/server/notes-read';
+import type { ArtifactBodyBlocksT } from '@/core/schema/business';
+import type { Db } from '@/db/client';
+import { artifact, event, knowledge, knowledge_mastery, question } from '@/db/schema';
 import { getArtifactCorrectionStates } from '@/server/events/artifact-corrections';
-import { listKnowledgeEdges } from '@/capabilities/knowledge/server/edges';
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 import { type SlimSubjectProfile, toSlimSubjectProfile } from '@/subjects/profile';
 
 const CROSS_LINK_REF_KIND = 'cross_link';

@@ -14,8 +14,8 @@
 // refreshes the default subject's brief / joins the default subject's review
 // bucket rather than being dropped.
 
-import type { Db } from '@/db/client';
 import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
+import type { Db } from '@/db/client';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 // T-CS / YUK-168 — batch-resolve each row's learning-subject id from its first

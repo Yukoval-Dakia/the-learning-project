@@ -4,13 +4,13 @@
 // Copilot / Dreaming callers receive bounded, named context instead of raw SQL
 // row dumps.
 
-import type { Db } from '@/db/client';
-import { event, knowledge, knowledge_edge, knowledge_mastery } from '@/db/schema';
 // P5.4 §5-Q5 / YUK-175 — single source of truth for the recent-failure /
 // evidence window. Reusing the rubric validator's constant keeps the readers'
 // "recent failure" window aligned with the rubric's §4.2 evidence window (no
 // import cycle: rubric-validator does not import this module).
 import { RUBRIC_EVIDENCE_WINDOW_DAYS } from '@/capabilities/knowledge/server/rubric-validator';
+import type { Db } from '@/db/client';
+import { event, knowledge, knowledge_edge, knowledge_mastery } from '@/db/schema';
 import { and, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 // P5.1 / YUK-143 — excerpt cap + courtesy defaults sourced from the single

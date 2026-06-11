@@ -23,6 +23,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, inArray, isNull } from 'drizzle-orm';
 
+import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
 import {
   QuestionAuthorDraft,
   type QuestionAuthorDraftT,
@@ -31,7 +32,6 @@ import {
 import type { Db } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
 import { type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
-import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
