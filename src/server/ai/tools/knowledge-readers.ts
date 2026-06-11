@@ -10,7 +10,7 @@ import { event, knowledge, knowledge_edge, knowledge_mastery } from '@/db/schema
 // evidence window. Reusing the rubric validator's constant keeps the readers'
 // "recent failure" window aligned with the rubric's §4.2 evidence window (no
 // import cycle: rubric-validator does not import this module).
-import { RUBRIC_EVIDENCE_WINDOW_DAYS } from '@/server/knowledge/rubric-validator';
+import { RUBRIC_EVIDENCE_WINDOW_DAYS } from '@/capabilities/knowledge/server/rubric-validator';
 import { and, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 // P5.1 / YUK-143 — excerpt cap + courtesy defaults sourced from the single

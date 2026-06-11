@@ -4,7 +4,7 @@ import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST } from './route';
 
 // Mock streamReviewTask to avoid real LLM calls
-vi.mock('@/server/knowledge/review', () => ({
+vi.mock('@/capabilities/knowledge/server/review', () => ({
   streamReviewTask: vi.fn().mockResolvedValue(new Response('ok', { status: 200 })),
 }));
 
@@ -30,7 +30,7 @@ describe('POST /api/knowledge/review', () => {
   });
 
   it('calls streamReviewTask and returns its response', async () => {
-    const { streamReviewTask } = await import('@/server/knowledge/review');
+    const { streamReviewTask } = await import('@/capabilities/knowledge/server/review');
     vi.mocked(streamReviewTask).mockResolvedValueOnce(new Response('streamed', { status: 200 }));
 
     const res = await postReview();

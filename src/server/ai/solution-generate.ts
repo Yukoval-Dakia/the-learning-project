@@ -17,7 +17,7 @@ import { Rubric } from '@/core/schema/business';
 import { SolutionGenerateOutput } from '@/core/schema/solution';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
-import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject-profile';
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 
 // `RubricT` is not exported from business.ts (it's a private alias inside
 // db/schema.ts). Derive the type locally from the single-source-of-truth Rubric

@@ -1,6 +1,6 @@
 import { db } from '@/db/client';
 import { errorResponse } from '@/server/http/errors';
-import { loadTreeSnapshot } from '@/server/knowledge/tree';
+import { loadTreeSnapshot } from '@/capabilities/knowledge/server/tree';
 
 export const runtime = 'nodejs';
 

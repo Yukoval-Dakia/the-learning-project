@@ -10,8 +10,8 @@ import type { Job } from 'pg-boss';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
 import { getFailureAttempts } from '@/server/events/queries';
-import { getEffectiveDomain } from '@/server/knowledge/domain';
-import { type RunTaskFn, runProposeAndWrite } from '@/server/knowledge/propose';
+import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
+import { type RunTaskFn, runProposeAndWrite } from '@/capabilities/knowledge/server/propose';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 type DepsOverride = {

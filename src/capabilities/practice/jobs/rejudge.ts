@@ -16,7 +16,7 @@ import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { type JudgeAnswerResult, judgeAnswer } from '@/server/ai/judges/question-contract';
 import { writeEvent } from '@/server/events/queries';
-import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject-profile';
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 import { and, eq } from 'drizzle-orm';
 
 export interface RejudgeJobInput {

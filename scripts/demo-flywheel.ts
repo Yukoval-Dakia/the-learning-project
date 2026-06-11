@@ -22,7 +22,7 @@ import { executeMemoryBrief } from '@/server/ai/tools/context-readers';
 import { runCoach } from '@/server/boss/handlers/coach_daily';
 import { runDreamingNightly } from '@/server/boss/handlers/dreaming_nightly';
 import { runGoalScopeProposeNightly } from '@/server/boss/handlers/goal_scope_propose_nightly';
-import { runKnowledgeEdgeProposeNightly } from '@/server/boss/handlers/knowledge_edge_propose_nightly';
+import { runKnowledgeEdgeProposeNightly } from '@/capabilities/knowledge/jobs/knowledge_edge_propose_nightly';
 import { listActiveGoals } from '@/server/goals/queries';
 import { loadSubjectBriefEvents } from '@/server/memory/active-subjects';
 import { regenerateMemoryBrief } from '@/server/memory/brief';

@@ -5,7 +5,7 @@
 // propose tree maintenance mutations while still writing only inbox proposals.
 
 import type { Db } from '@/db/client';
-import { streamReviewTask } from '@/server/knowledge/review';
+import { streamReviewTask } from '@/capabilities/knowledge/server/review';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import type { Job } from 'pg-boss';
 

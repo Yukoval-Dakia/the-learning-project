@@ -51,10 +51,10 @@ import {
   question,
 } from '@/db/schema';
 import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/server/ai/tools/budgets';
-import { runKnowledgeEdgeProposeNightly } from '@/server/boss/handlers/knowledge_edge_propose_nightly';
+import { runKnowledgeEdgeProposeNightly } from '@/capabilities/knowledge/jobs/knowledge_edge_propose_nightly';
 import { writeEvent } from '@/server/events/queries';
 import { upsertFsrsState } from '@/server/fsrs/state';
-import type { RubricGate } from '@/server/knowledge/rubric-validator';
+import type { RubricGate } from '@/capabilities/knowledge/server/rubric-validator';
 import { listActiveSubjectsSinceRefresh } from '@/server/memory/active-subjects';
 import { resolveEdgeGateBump } from '@/server/proposals/adaptive-bias';
 import {

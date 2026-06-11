@@ -5,7 +5,7 @@
 // Aggregates everything the question-bank detail view needs into one server call,
 // mirroring loadNotePage's structure (null → 404). Reuses (never re-implements):
 //   - deriveSourceTier            (@/core/schema/provenance)
-//   - masteryDecayBucket          (@/server/knowledge/node-page)
+//   - masteryDecayBucket          (@/capabilities/knowledge/server/node-page)
 //   - getQuestionTimeline         (@/server/events/queries)
 //   - loadFamilyMembers           (@/server/questions/list)
 //
@@ -24,7 +24,7 @@ import { type SourceTier, type SourceTierName, deriveSourceTier } from '@/core/s
 import type { Db } from '@/db/client';
 import { artifact, knowledge, knowledge_mastery, material_fsrs_state, question } from '@/db/schema';
 import { type QuestionTimelineEntry, getQuestionTimeline } from '@/server/events/queries';
-import { type MasteryDecayBucket, masteryDecayBucket } from '@/server/knowledge/node-page';
+import { type MasteryDecayBucket, masteryDecayBucket } from '@/capabilities/knowledge/server/node-page';
 import { loadFamilyMembers } from '@/server/questions/list';
 
 const DEFAULT_TIMELINE_LIMIT = 10;

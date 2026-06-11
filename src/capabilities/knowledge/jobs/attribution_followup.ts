@@ -21,8 +21,8 @@ import type { Job } from 'pg-boss';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
-import { runAttributionAndWriteJudgeEvent } from '@/server/knowledge/attribute';
-import { loadTreeSnapshot } from '@/server/knowledge/tree';
+import { runAttributionAndWriteJudgeEvent } from '@/capabilities/knowledge/server/attribute';
+import { loadTreeSnapshot } from '@/capabilities/knowledge/server/tree';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 export interface AttributionFollowupJobData {

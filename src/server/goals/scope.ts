@@ -14,8 +14,8 @@ import { z } from 'zod';
 import type { Db } from '@/db/client';
 import { knowledge_edge } from '@/db/schema';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
-import { writeRetryableAiFailureLedger } from '@/server/knowledge/ai_failure_log';
-import { loadTreeSnapshot } from '@/server/knowledge/tree';
+import { writeRetryableAiFailureLedger } from '@/capabilities/knowledge/server/ai_failure_log';
+import { loadTreeSnapshot } from '@/capabilities/knowledge/server/tree';
 import { writeAiProposal } from '@/server/proposals/writer';
 import type { SubjectProfile } from '@/subjects/profile';
 

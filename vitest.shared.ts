@@ -201,20 +201,9 @@ export const fastTestInclude = [
   // YUK-288 — resolveKnownSubjectId (pure, no-DB): genuine alias/id hit vs the
   // default-profile over-match fix for the derived ?subject= axis.
   'src/subjects/resolve-known-subject-id.test.ts',
-  // Pure (no-DB) set-algebra unit for hub mesh curation (YUK-95 P5 Lane-C). The
-  // sibling DB handler test (boss/handlers/hub_auto_sync_nightly) stays in the
-  // db partition because it hits live Postgres.
-  'src/server/knowledge/hub-mesh.test.ts',
-  // P5.4 / YUK-143 — pure (no-DB) stable-contract unit for the proposal rubric
-  // validator (evidence-window const + RubricVerdict / gate set). The
-  // gate-behavior + RB-7 regression tests (rubric-validator.test.ts) hit live
-  // Postgres → db partition.
-  'src/server/knowledge/rubric-validator.unit.test.ts',
-  // YUK-236 [STB-2] — pure (no-DB) coverage for the loadTreeSnapshot OOM-guard
-  // truncation warn. Imports only ./tree (value-imports @/db/schema pure table
-  // objects + drizzle-orm; @/db/client is type-only). The `.limit(5000)` query
-  // bound + parent-chain semantics stay in tree.test.ts (db partition).
-  'src/server/knowledge/tree.unit.test.ts',
+  // M3 (YUK-317) — hub-mesh / rubric-validator.unit / tree.unit 三条 knowledge
+  // unit 条目已随域迁入 src/capabilities/knowledge/（统一 *.unit.test.ts 命名），
+  // 由约定 glob 接管。
   // P5.4-L2 / YUK-174 — pure (no-DB) adaptive-bias decision helpers
   // (computeGateBump / relation parse / findFeedbackCell). The DB-touching
   // getProposalFeedbackDigest is covered by adaptive-bias.test.ts (DB partition).

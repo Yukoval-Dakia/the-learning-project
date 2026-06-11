@@ -11,7 +11,7 @@
  */
 import { db } from '@/db/client';
 import { errorResponse } from '@/server/http/errors';
-import { seedKnowledge } from '@/server/knowledge/seed';
+import { seedKnowledge } from '@/capabilities/knowledge/server/seed';
 
 export async function POST(_req: Request) {
   try {

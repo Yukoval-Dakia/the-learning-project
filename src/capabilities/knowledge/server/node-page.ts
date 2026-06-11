@@ -33,8 +33,8 @@ import {
   notesForKnowledge,
 } from '@/capabilities/notes/server/notes-read';
 import { getArtifactCorrectionStates } from '@/server/events/artifact-corrections';
-import { listKnowledgeEdges } from '@/server/knowledge/edges';
-import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject-profile';
+import { listKnowledgeEdges } from '@/capabilities/knowledge/server/edges';
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 import { type SlimSubjectProfile, toSlimSubjectProfile } from '@/subjects/profile';
 
 const CROSS_LINK_REF_KIND = 'cross_link';

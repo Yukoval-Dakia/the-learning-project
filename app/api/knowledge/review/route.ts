@@ -6,7 +6,7 @@
 
 import { db } from '@/db/client';
 import { errorResponse } from '@/server/http/errors';
-import { streamReviewTask } from '@/server/knowledge/review';
+import { streamReviewTask } from '@/capabilities/knowledge/server/review';
 
 export const runtime = 'nodejs';
 

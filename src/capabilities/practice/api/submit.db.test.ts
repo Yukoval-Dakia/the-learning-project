@@ -15,7 +15,7 @@ import { runTask } from '@/server/ai/runner';
 // YUK-215 — spy on the judge invoker to assert handwriting-photo refs are
 // threaded through (student_image_refs).
 import * as invokerModule from '@/server/judge/invoker';
-import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject-profile';
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -32,8 +32,8 @@ vi.mock('@/server/ai/runner', () => ({
 // '2.0.0' profile. importOriginal keeps the default behaviour (real registry
 // profiles) for every other test in this file; only the D6 e2e test overrides
 // the return with mockResolvedValueOnce.
-vi.mock('@/server/knowledge/subject-profile', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/server/knowledge/subject-profile')>();
+vi.mock('@/capabilities/knowledge/server/subject-profile', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/capabilities/knowledge/server/subject-profile')>();
   return {
     ...actual,
     resolveSubjectProfileForKnowledgeIds: vi.fn(actual.resolveSubjectProfileForKnowledgeIds),

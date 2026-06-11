@@ -1,6 +1,6 @@
 import { knowledge } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { getEffectiveDomain } from './domain';
 
 describe('getEffectiveDomain', () => {

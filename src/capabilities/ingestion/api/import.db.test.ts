@@ -3,7 +3,7 @@
  *
  * Strategy:
  * - Use testDb() / resetDb() for actual Postgres integration
- * - Mock @/server/knowledge/propose and attribute to avoid real AI calls
+ * - Mock @/capabilities/knowledge/server/propose and attribute to avoid real AI calls
  * - Mock @/server/ai/runner
  */
 
@@ -40,18 +40,18 @@ vi.mock('@/server/ai/runner', () => ({
 }));
 
 const mockRunProposeAndWrite = vi.fn(async () => {});
-vi.mock('@/server/knowledge/propose', () => ({
+vi.mock('@/capabilities/knowledge/server/propose', () => ({
   runProposeAndWrite: (...args: unknown[]) => mockRunProposeAndWrite(...(args as [])),
 }));
 
 const mockRunAttributionAndWriteJudgeEvent = vi.fn(async () => {});
-vi.mock('@/server/knowledge/attribute', () => ({
+vi.mock('@/capabilities/knowledge/server/attribute', () => ({
   runAttributionAndWriteJudgeEvent: (...args: unknown[]) =>
     mockRunAttributionAndWriteJudgeEvent(...(args as [])),
   parseAttributionOutput: vi.fn(),
 }));
 
-vi.mock('@/server/knowledge/tree', () => ({
+vi.mock('@/capabilities/knowledge/server/tree', () => ({
   loadTreeSnapshot: vi.fn(async () => []),
 }));
 

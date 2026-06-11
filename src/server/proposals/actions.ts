@@ -31,7 +31,7 @@ import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 // YUK-143 / ADR-0024 — North-Star goal_scope accept materializer.
 import { type GoalScopeAcceptResult, acceptGoalScopeProposal } from '@/server/goals/accept';
 import { ApiError } from '@/server/http/errors';
-import { acceptProposal, dismissProposal } from '@/server/knowledge/proposals';
+import { acceptProposal, dismissProposal } from '@/capabilities/knowledge/server/proposals';
 import {
   type LearningIntentMaterializeResult,
   acceptLearningIntent,
