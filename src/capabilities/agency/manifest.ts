@@ -52,7 +52,19 @@ export const agencyCapability = defineCapability({
       },
     ],
   },
-  // proposals.kinds 归属声明在 T4（提议生命周期契约真身）补齐——learning_item /
-  // completion / relearn / defer / goal_scope，见 plan Task 4。
+  // M4-T4 (YUK-319)：proposal kind 归属声明。learning_item / completion /
+  // relearn 的 accept applier 真身在 ./server/proposal-appliers；goal_scope
+  // 的在 ./server/goals/accept（YUK-143，早于 T4 已是包内委托形态）；defer 有
+  // producer 但无 accept applier——accept 走 dispatch 壳 default throw
+  // （unsupported_proposal_kind，YUK-44 收口），归属声明与 applier 存在性解耦。
+  proposals: {
+    kinds: [
+      { kind: 'learning_item' },
+      { kind: 'completion' },
+      { kind: 'relearn' },
+      { kind: 'goal_scope' },
+      { kind: 'defer' },
+    ],
+  },
   ui: { pages: [{ route: '/agent-notes' }], todayBlocks: ['agent-notes-board'] },
 });
