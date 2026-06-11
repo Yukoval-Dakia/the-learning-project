@@ -7,6 +7,7 @@
 // 不复用 KnowledgeReviewTask 的 streaming + tool-calling 路径 —— ReviewTask 是
 // 交互式 12 iter 设计，nightly cron 用单次结构化输出更便宜可控。
 
+import { validateProposalQuality } from '@/capabilities/knowledge/server/rubric-validator';
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
 import { parseAiProposalPayload } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
@@ -14,7 +15,6 @@ import { event, knowledge_edge } from '@/db/schema';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 import type { FailureAttempt } from '@/server/events/queries';
-import { validateProposalQuality } from '@/capabilities/knowledge/server/rubric-validator';
 import { writeAiProposal } from '@/server/proposals/writer';
 import type { SubjectProfile } from '@/subjects/profile';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';

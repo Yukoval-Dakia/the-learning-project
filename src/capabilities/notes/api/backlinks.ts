@@ -26,10 +26,13 @@
 import { eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 
+import {
+  listBacklinks,
+  resolveOwningLearningItemIds,
+} from '@/capabilities/notes/server/block-refs';
+import { extractCrossLinkSnippet } from '@/capabilities/notes/server/body-blocks';
 import { db } from '@/db/client';
 import { artifact } from '@/db/schema';
-import { listBacklinks, resolveOwningLearningItemIds } from '@/capabilities/notes/server/block-refs';
-import { extractCrossLinkSnippet } from '@/capabilities/notes/server/body-blocks';
 import { getArtifactCorrectionStates } from '@/server/events/artifact-corrections';
 import { ApiError, errorResponse } from '@/server/http/errors';
 
@@ -51,7 +54,7 @@ export interface BacklinkPanelRow {
   snippet: string | null;
 }
 
-export async function GET(_req: Request, params: Record<string, string>,): Promise<Response> {
+export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const parsedParams = ParamsSchema.safeParse(params);
     if (!parsedParams.success) {

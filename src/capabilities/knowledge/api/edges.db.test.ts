@@ -1,5 +1,5 @@
-import { knowledge } from '@/db/schema';
 import { createKnowledgeEdge } from '@/capabilities/knowledge/server/edges';
+import { knowledge } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET, POST } from './edges';

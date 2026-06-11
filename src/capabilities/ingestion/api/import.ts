@@ -22,17 +22,17 @@ import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 // routed by enrollCapturedBlock instead of the old hardcoded
 // attempt(outcome='failure') + learning_record(kind='mistake'). See ADR-0024.
 import { enrollCapturedBlock } from '@/capabilities/ingestion/server/enroll';
+import { runProposeAndWrite } from '@/capabilities/knowledge/server/propose';
+import {
+  assertCauseAllowedForSubjectProfile,
+  resolveSubjectProfileForKnowledgeIds,
+} from '@/capabilities/knowledge/server/subject-profile';
 import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
 import { db } from '@/db/client';
 import { knowledge, learning_session, question, question_block } from '@/db/schema';
 import { runTask } from '@/server/ai/runner';
 import { getStartedBoss } from '@/server/boss/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { runProposeAndWrite } from '@/capabilities/knowledge/server/propose';
-import {
-  assertCauseAllowedForSubjectProfile,
-  resolveSubjectProfileForKnowledgeIds,
-} from '@/capabilities/knowledge/server/subject-profile';
 import { getR2 } from '@/server/r2';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { Ingestion } from '@/server/session';

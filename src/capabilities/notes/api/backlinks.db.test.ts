@@ -196,9 +196,7 @@ describe('GET /api/artifacts/[id]/backlinks', () => {
     await seedRef({ from: 'pending_src', fromBlock: 'cl_p', to: 'target' });
     await seedRef({ from: 'ready_src', fromBlock: 'cl_r', to: 'target' });
 
-    const rows = await readRows(
-      await GET(backlinksReq('target'), { id: 'target' }),
-    );
+    const rows = await readRows(await GET(backlinksReq('target'), { id: 'target' }));
     expect(rows.map((r) => r.from_artifact_id)).toEqual(['ready_src']);
   });
 
@@ -214,9 +212,7 @@ describe('GET /api/artifacts/[id]/backlinks', () => {
     await seedRef({ from: 'src', fromBlock: 'cl_gone', to: 'target' });
     await seedRetract('src', 'cl_gone');
 
-    const rows = await readRows(
-      await GET(backlinksReq('target'), { id: 'target' }),
-    );
+    const rows = await readRows(await GET(backlinksReq('target'), { id: 'target' }));
     expect(rows.map((r) => r.from_block_id)).toEqual(['cl_keep']);
   });
 
@@ -230,9 +226,7 @@ describe('GET /api/artifacts/[id]/backlinks', () => {
     await seedRef({ from: 'src', fromBlock: 'cl1', to: 'target' });
     await seedRetract('src'); // whole-artifact retract (no block_id)
 
-    const rows = await readRows(
-      await GET(backlinksReq('target'), { id: 'target' }),
-    );
+    const rows = await readRows(await GET(backlinksReq('target'), { id: 'target' }));
     expect(rows).toEqual([]);
   });
 
@@ -245,17 +239,13 @@ describe('GET /api/artifacts/[id]/backlinks', () => {
     });
     await seedRef({ from: 'src', fromBlock: 'q1', to: 'target', refKind: 'embedded_check' });
 
-    const rows = await readRows(
-      await GET(backlinksReq('target'), { id: 'target' }),
-    );
+    const rows = await readRows(await GET(backlinksReq('target'), { id: 'target' }));
     expect(rows).toEqual([]);
   });
 
   it('returns empty rows when there are no inbound refs', async () => {
     await seedArtifact({ id: 'target', title: '目标笔记' });
-    const rows = await readRows(
-      await GET(backlinksReq('target'), { id: 'target' }),
-    );
+    const rows = await readRows(await GET(backlinksReq('target'), { id: 'target' }));
     expect(rows).toEqual([]);
   });
 
@@ -270,9 +260,7 @@ describe('GET /api/artifacts/[id]/backlinks', () => {
     // Owning learning_item whose primary_artifact_id is the SOURCE artifact id.
     await seedLearningItem({ id: 'li_src', primaryArtifactId: 'src' });
 
-    const rows = await readRows(
-      await GET(backlinksReq('target'), { id: 'target' }),
-    );
+    const rows = await readRows(await GET(backlinksReq('target'), { id: 'target' }));
     expect(rows).toHaveLength(1);
     // The link target must be the learning_item id, NOT the artifact id (which 404s).
     expect(rows[0].from_learning_item_id).toBe('li_src');
@@ -289,9 +277,7 @@ describe('GET /api/artifacts/[id]/backlinks', () => {
     await seedRef({ from: 'src', fromBlock: 'cl1', to: 'target' });
     // No learning_item points at `src`.
 
-    const rows = await readRows(
-      await GET(backlinksReq('target'), { id: 'target' }),
-    );
+    const rows = await readRows(await GET(backlinksReq('target'), { id: 'target' }));
     expect(rows).toHaveLength(1);
     expect(rows[0].from_learning_item_id).toBeNull();
   });
@@ -306,9 +292,7 @@ describe('GET /api/artifacts/[id]/backlinks', () => {
     await seedRef({ from: 'src', fromBlock: 'cl1', to: 'target' });
     await seedLearningItem({ id: 'li_src', primaryArtifactId: 'src', archived_at: NOW });
 
-    const rows = await readRows(
-      await GET(backlinksReq('target'), { id: 'target' }),
-    );
+    const rows = await readRows(await GET(backlinksReq('target'), { id: 'target' }));
     expect(rows).toHaveLength(1);
     expect(rows[0].from_learning_item_id).toBeNull();
   });

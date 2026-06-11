@@ -1,5 +1,5 @@
-import { artifact } from '@/db/schema';
 import { noteSectionsToBodyBlocks } from '@/capabilities/notes/server/body-blocks';
+import { artifact } from '@/db/schema';
 import { getArtifactCorrectionState } from '@/server/events/artifact-corrections';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -77,7 +77,9 @@ async function postCorrect(artifactId: string, body: unknown): Promise<Response>
 }
 
 async function getCorrect(artifactId: string): Promise<Response> {
-  return GET(new Request(`http://localhost/api/artifacts/${artifactId}/correct`), { id: artifactId });
+  return GET(new Request(`http://localhost/api/artifacts/${artifactId}/correct`), {
+    id: artifactId,
+  });
 }
 
 describe('POST /api/artifacts/[id]/correct', () => {

@@ -34,7 +34,6 @@ import { material_fsrs_state } from '@/db/schema';
 import { errorResponse } from '@/server/http/errors';
 import { sql } from 'drizzle-orm';
 
-
 // Window for the "due soon" band: cards becoming due within the next day. Kept
 // as a single boundary (not 24-48h) so overdue and due_soon partition the due
 // horizon cleanly with no gap/overlap. Documented in the response so the client

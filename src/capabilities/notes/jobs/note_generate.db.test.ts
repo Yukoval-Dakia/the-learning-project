@@ -1,5 +1,5 @@
-import { artifact, knowledge } from '@/db/schema';
 import { bodyBlocksToNoteSections } from '@/capabilities/notes/server/body-blocks';
+import { artifact, knowledge } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';

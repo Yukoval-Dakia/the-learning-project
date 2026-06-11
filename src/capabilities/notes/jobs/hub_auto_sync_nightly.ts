@@ -36,11 +36,6 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
-import { ArtifactBodyBlocks } from '@/core/schema/business';
-import type { NotePatchT } from '@/core/schema/note-patch';
-import type { Db } from '@/db/client';
-import { artifact } from '@/db/schema';
-import { persistNoteRefineApply } from '@/capabilities/notes/server/note-refine-apply';
 import { listKnowledgeEdges } from '@/capabilities/knowledge/server/edges';
 import {
   type CuratedAtomic,
@@ -49,6 +44,11 @@ import {
   resolveHubMeshAtomics,
 } from '@/capabilities/knowledge/server/hub-mesh';
 import { type KnowledgeNode, loadTreeSnapshot } from '@/capabilities/knowledge/server/tree';
+import { persistNoteRefineApply } from '@/capabilities/notes/server/note-refine-apply';
+import { ArtifactBodyBlocks } from '@/core/schema/business';
+import type { NotePatchT } from '@/core/schema/note-patch';
+import type { Db } from '@/db/client';
+import { artifact } from '@/db/schema';
 
 const HUB_TYPE = 'note_hub';
 const ATOMIC_TYPE = 'note_atomic';

@@ -8,16 +8,16 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
-import { NoteVerificationResult, type NoteVerificationResultT } from '@/core/schema/business';
-import type { Db } from '@/db/client';
-import { artifact, knowledge } from '@/db/schema';
-import { type TaskTextRunFn, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
-import type { TaskTextResult } from '@/server/ai/provenance';
 import {
   bodyBlocksHaveSemanticKinds,
   bodyBlocksToBlockSummaries,
   bodyBlocksToNoteSections,
 } from '@/capabilities/notes/server/body-blocks';
+import { NoteVerificationResult, type NoteVerificationResultT } from '@/core/schema/business';
+import type { Db } from '@/db/client';
+import { artifact, knowledge } from '@/db/schema';
+import { type TaskTextRunFn, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
+import type { TaskTextResult } from '@/server/ai/provenance';
 import { writeEvent } from '@/server/events/queries';
 import { writeNoteUpdateProposal } from '@/server/proposals/producers';
 import { resolveNoteSkill } from '@/subjects/note-skills';

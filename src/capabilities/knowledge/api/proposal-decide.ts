@@ -1,11 +1,8 @@
+import { acceptProposal, dismissProposal } from '@/capabilities/knowledge/server/proposals';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { acceptProposal, dismissProposal } from '@/capabilities/knowledge/server/proposals';
 
-export async function POST(
-  req: Request,
-  params: Record<string, string>,
-): Promise<Response> {
+export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const { id } = params;
     const body = (await req.json().catch(() => ({}))) as { decision?: string };

@@ -1,15 +1,15 @@
+import { bodyBlocksContainId } from '@/capabilities/notes/server/body-blocks';
+import { enqueueMarkWrongNoteRefine } from '@/capabilities/notes/server/note-refine-triggers';
 import { newId } from '@/core/ids';
 import { CorrectArtifactEvent } from '@/core/schema/event';
 import { db } from '@/db/client';
 import { artifact } from '@/db/schema';
-import { bodyBlocksContainId } from '@/capabilities/notes/server/body-blocks';
-import { enqueueMarkWrongNoteRefine } from '@/capabilities/notes/server/note-refine-triggers';
 import { getArtifactCorrectionState } from '@/server/events/artifact-corrections';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { eq } from 'drizzle-orm';
 
-export async function GET(_req: Request, params: Record<string, string>,): Promise<Response> {
+export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const { id: artifactId } = params;
     if (!artifactId) {
@@ -37,7 +37,7 @@ export async function GET(_req: Request, params: Record<string, string>,): Promi
   }
 }
 
-export async function POST(req: Request, params: Record<string, string>,): Promise<Response> {
+export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const { id: artifactId } = params;
     if (!artifactId) {

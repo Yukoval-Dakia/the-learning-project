@@ -1,3 +1,4 @@
+import { writeKnowledgeProposeEvent } from '@/capabilities/knowledge/server/proposals';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import {
   ai_task_runs,
@@ -15,7 +16,6 @@ import {
   question_block,
   source_asset,
 } from '@/db/schema';
-import { writeKnowledgeProposeEvent } from '@/capabilities/knowledge/server/proposals';
 import { planLearningIntent } from '@/server/orchestrator/learning_intent';
 import { writeVariantQuestionProposal } from '@/server/proposals/producers';
 import { createId } from '@paralleldrive/cuid2';

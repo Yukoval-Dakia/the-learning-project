@@ -1,8 +1,8 @@
-import { db } from '@/db/client';
 import { listNoteRefineChanges } from '@/capabilities/notes/server/note-refine-apply';
+import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 
-export async function GET(_req: Request, params: Record<string, string>,): Promise<Response> {
+export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const { id: artifactId } = params;
     if (!artifactId) {

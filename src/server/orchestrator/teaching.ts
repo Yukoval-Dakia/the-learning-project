@@ -13,10 +13,10 @@
 import { asc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 
+import { bodyBlocksToNoteSections } from '@/capabilities/notes/server/body-blocks';
 import { JudgeKind, QuestionKind, Rubric } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, event, knowledge, learning_item } from '@/db/schema';
-import { bodyBlocksToNoteSections } from '@/capabilities/notes/server/body-blocks';
 import { sanitizeJsonStringLiterals } from '@/server/orchestrator/json-sanitize';
 import { resolveSubjectProfile } from '@/subjects/profile';
 

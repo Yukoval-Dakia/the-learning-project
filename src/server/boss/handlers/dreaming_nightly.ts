@@ -2,6 +2,7 @@ import { createId } from '@paralleldrive/cuid2';
 import type { Job } from 'pg-boss';
 
 import { type AgentNote, readAgentNotes } from '@/capabilities/agent-notes/server/notes';
+import { enqueueDreamingNoteRefine } from '@/capabilities/notes/server/note-refine-triggers';
 import type { Db } from '@/db/client';
 import { type RunTaskResult, runAgentTask } from '@/server/ai/runner';
 import {
@@ -17,7 +18,6 @@ import {
 // per-(kind, relation) digest (see the getProposalFeedbackDigest import below).
 import { DREAMING_CONTEXT_BUDGET, PROPOSAL_FEEDBACK_BUDGET } from '@/server/ai/tools/budgets';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
-import { enqueueDreamingNoteRefine } from '@/capabilities/notes/server/note-refine-triggers';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
 // YUK-143 / ADR-0025 — North-Star: feed active goals into the Dreaming input so
 // it can BIAS proposals toward weak/under-covered knowledge in their scope.

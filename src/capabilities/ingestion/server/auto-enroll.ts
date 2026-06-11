@@ -54,13 +54,13 @@ import {
   autoEnrollThreshold,
   observeEnabled,
 } from '@/capabilities/ingestion/server/workflow-judge-config';
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 import type { MistakeEnrollOutputT } from '@/core/schema/mistake_enroll';
 import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
 import type { TaggingOutputT } from '@/core/schema/tagging';
 import type { Db } from '@/db/client';
 import { learning_session, question, question_block } from '@/db/schema';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 
 export type AutoEnrollSkipReason = 'flag_off' | 'session_not_found' | 'wrong_status';
 

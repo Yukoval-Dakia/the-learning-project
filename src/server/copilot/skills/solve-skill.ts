@@ -26,6 +26,7 @@
 
 import { eq } from 'drizzle-orm';
 
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 import {
   SolveError,
   buildSolveHintInput,
@@ -34,7 +35,6 @@ import {
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
 import { type RunTaskResult, runAgentTask } from '@/server/ai/runner';
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 
 type RunAgentTaskFn = (
   kind: string,

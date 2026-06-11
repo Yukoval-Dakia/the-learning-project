@@ -5,6 +5,16 @@
 // proposal tools write inbox-visible proposal events, while attribute_mistake
 // delegates to the AttributionTask writer that appends a judge event.
 
+import { runAttributionAndWriteJudgeEvent } from '@/capabilities/knowledge/server/attribute';
+import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
+import {
+  type KnowledgeMutationPayload,
+  writeKnowledgeProposeEvent,
+} from '@/capabilities/knowledge/server/proposals';
+import {
+  type RubricVerdict,
+  validateProposalQuality,
+} from '@/capabilities/knowledge/server/rubric-validator';
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
 // P5.6 / YUK-178 — the proactive/corrective discriminator the model can label
 // explicitly via the propose-tool input arg (§4.1/§4.2).
@@ -30,13 +40,6 @@ import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { runQuestionAuthor } from '@/server/ai/question-author';
 import { runVariantGen } from '@/server/boss/handlers/variant_gen';
 import { getFailureAttemptById, getJudgeForAttempt } from '@/server/events/queries';
-import { runAttributionAndWriteJudgeEvent } from '@/capabilities/knowledge/server/attribute';
-import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
-import {
-  type KnowledgeMutationPayload,
-  writeKnowledgeProposeEvent,
-} from '@/capabilities/knowledge/server/proposals';
-import { type RubricVerdict, validateProposalQuality } from '@/capabilities/knowledge/server/rubric-validator';
 // P5.4-L2 / YUK-174 (Facet B) — resolve the per-(kind, relation) gate-bump for
 // this edge and pass it as the OPTIONAL adaptive input to the L1 validator. The
 // digest read is bounded; cold-start / below-threshold returns a no-op bump.

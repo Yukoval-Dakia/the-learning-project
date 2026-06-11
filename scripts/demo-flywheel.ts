@@ -17,12 +17,12 @@
 // loopback DATABASE_URL wins; @/db/client then targets loom_demo.
 import './load-env';
 
+import { runKnowledgeEdgeProposeNightly } from '@/capabilities/knowledge/jobs/knowledge_edge_propose_nightly';
 import { db } from '@/db/client';
 import { executeMemoryBrief } from '@/server/ai/tools/context-readers';
 import { runCoach } from '@/server/boss/handlers/coach_daily';
 import { runDreamingNightly } from '@/server/boss/handlers/dreaming_nightly';
 import { runGoalScopeProposeNightly } from '@/server/boss/handlers/goal_scope_propose_nightly';
-import { runKnowledgeEdgeProposeNightly } from '@/capabilities/knowledge/jobs/knowledge_edge_propose_nightly';
 import { listActiveGoals } from '@/server/goals/queries';
 import { loadSubjectBriefEvents } from '@/server/memory/active-subjects';
 import { regenerateMemoryBrief } from '@/server/memory/brief';

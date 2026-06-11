@@ -2,6 +2,11 @@ import { createId } from '@paralleldrive/cuid2';
 import { after } from 'next/server';
 import { z } from 'zod';
 
+import { runProposeAndWrite } from '@/capabilities/knowledge/server/propose';
+import {
+  assertCauseAllowedForSubjectProfile,
+  resolveSubjectProfileForKnowledgeIds,
+} from '@/capabilities/knowledge/server/subject-profile';
 import { type Cause, CauseCategory, QuestionKind } from '@/core/schema/business';
 import { db } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
@@ -9,11 +14,6 @@ import { runTask } from '@/server/ai/runner';
 import { getStartedBoss } from '@/server/boss/client';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { runProposeAndWrite } from '@/capabilities/knowledge/server/propose';
-import {
-  assertCauseAllowedForSubjectProfile,
-  resolveSubjectProfileForKnowledgeIds,
-} from '@/capabilities/knowledge/server/subject-profile';
 import { listMistakeProjectionRows } from '@/server/records/mistakes';
 import { createLearningRecord } from '@/server/records/queries';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';

@@ -14,7 +14,6 @@ import { db } from '@/db/client';
 import { artifact } from '@/db/schema';
 import { ApiError, errorResponse } from '@/server/http/errors';
 
-
 const QuerySchema = z.object({
   q: z.string().trim().min(1).max(200),
   exclude: z.string().trim().min(1).optional(),
