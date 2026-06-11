@@ -3,6 +3,8 @@
 // M0 仅 /agent-notes 一条 surface；后续 surface 随各 M 在此登记。
 import AgentNotesPage from '@/capabilities/agent-notes/ui/page';
 import RecordPage from '@/capabilities/ingestion/ui/RecordPage';
+import KnowledgeDetailPage from '@/capabilities/knowledge/ui/KnowledgeDetailPage';
+import KnowledgePage from '@/capabilities/knowledge/ui/KnowledgePage';
 import PracticeFacePage from '@/capabilities/practice/ui/PracticeFacePage';
 import {
   Outlet,
@@ -89,7 +91,38 @@ const practiceRoute = createRoute({
   component: PracticeRoute,
 });
 
-const routeTree = rootRoute.addChildren([indexRoute, agentNotesRoute, recordRoute, practiceRoute]);
+// M3-T6 (YUK-317) — 知识面：图谱页 + 节点详情页。
+function KnowledgeIndexRoute() {
+  const router = useRouter();
+  return <KnowledgePage navigate={(to) => router.history.push(to)} />;
+}
+
+const knowledgeRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/knowledge',
+  component: KnowledgeIndexRoute,
+});
+
+function KnowledgeDetailRouteC() {
+  const router = useRouter();
+  const { id } = knowledgeDetailRoute.useParams();
+  return <KnowledgeDetailPage id={id} navigate={(to) => router.history.push(to)} />;
+}
+
+const knowledgeDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/knowledge/$id',
+  component: KnowledgeDetailRouteC,
+});
+
+const routeTree = rootRoute.addChildren([
+  indexRoute,
+  agentNotesRoute,
+  recordRoute,
+  practiceRoute,
+  knowledgeRoute,
+  knowledgeDetailRoute,
+]);
 
 export const router = createRouter({ routeTree });
 

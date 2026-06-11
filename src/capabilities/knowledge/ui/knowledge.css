@@ -1,0 +1,66 @@
+/* M3 知识面（YUK-317）— globals.css 缺口补充。
+   词汇主体（know-node/kd-grid/rel-row/mesh-disc/drawer-sec/verify-badge 等）
+   已在 app/globals.css（round-2b 同源落地）；此处只补图谱 SVG 容器与文字。 */
+
+.mesh-canvas {
+  display: block;
+  width: 100%;
+  height: clamp(420px, 62vh, 640px);
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+}
+
+.mesh-edge-glyph {
+  font-size: 11px;
+  fill: var(--ink-4);
+  user-select: none;
+}
+
+/* mesh-disc 3-tone（设计稿 screens-2b.css L50-59；globals 同概念在旧
+   .kg-node-disc 命名下，新渲染层按设计稿词汇落地） */
+.mesh-disc {
+  stroke: var(--line-strong);
+  stroke-width: 1.5;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.mesh-disc.tone-good {
+  fill: var(--good-soft);
+  stroke: var(--good-line);
+}
+.mesh-disc.tone-hard {
+  fill: var(--hard-soft);
+  stroke: var(--hard-line);
+}
+.mesh-disc.tone-again {
+  fill: var(--again-soft);
+  stroke: var(--again-line);
+}
+.mesh-disc.tone-none {
+  fill: var(--paper-sunk);
+}
+
+.mesh-node-pct {
+  fill: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+  user-select: none;
+}
+
+.mesh-node-label {
+  fill: var(--ink-2);
+  font-size: 13px;
+  paint-order: stroke;
+  stroke: var(--paper);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+  user-select: none;
+}
+
+.mesh-node:hover .mesh-disc {
+  transform: scale(1.1);
+}
+.mesh-node:focus-visible .mesh-disc {
+  stroke: var(--coral);
+  stroke-width: 3;
+}
