@@ -1,0 +1,135 @@
+// M4-T6 (YUK-319/YUK-318)：收件箱 ui 数据层——统一 /api/proposals 的 wire
+// 类型、kind 元数据（17 kind 全量）与决策 callers。
+// 设计基准 docs/design/loom-refresh/project/data.jsx（KIND_META / REL_LABEL）：
+// 设计稿只列 12 kind；defer / archive / judge_retraction / image_candidate /
+// question_draft 5 个按同一 tone 语系补全（hard=节奏类、neutral=归档、
+// coral=内容生成类），icon 取自 LoomIcon 既有名。
+
+import { apiJson } from '@/ui/lib/api';
+
+// ── kind 元数据（agency meta.ts 同形态：fallback-safe，绝不 throw） ──
+export interface KindMeta {
+  label: string;
+  icon: string;
+  tone: 'info' | 'coral' | 'good' | 'hard' | 'neutral';
+}
+
+export const KIND_META: Record<string, KindMeta> = {
+  knowledge_node: { label: '知识节点', icon: 'knowledge', tone: 'info' },
+  knowledge_edge: { label: '知识关系', icon: 'link', tone: 'info' },
+  knowledge_mutation: { label: '知识变更', icon: 'refresh', tone: 'info' },
+  learning_item: { label: '学习项', icon: 'items', tone: 'coral' },
+  note_update: { label: '笔记更新', icon: 'pencil', tone: 'coral' },
+  variant_question: { label: '变体题', icon: 'layers', tone: 'coral' },
+  record_promotion: { label: '记录升格', icon: 'record', tone: 'good' },
+  record_links: { label: '记录关联', icon: 'link', tone: 'good' },
+  completion: { label: '完成判定', icon: 'checkCircle', tone: 'good' },
+  relearn: { label: '重学建议', icon: 'review', tone: 'hard' },
+  goal_scope: { label: '目标范围', icon: 'target', tone: 'hard' },
+  block_merge: { label: '块合并', icon: 'merge', tone: 'hard' },
+  defer: { label: '延后安排', icon: 'clock', tone: 'hard' },
+  archive: { label: '归档建议', icon: 'archive', tone: 'neutral' },
+  judge_retraction: { label: '判定撤回', icon: 'undo', tone: 'coral' },
+  image_candidate: { label: '图题候选', icon: 'image', tone: 'coral' },
+  question_draft: { label: '题目草稿', icon: 'quiz', tone: 'coral' },
+};
+
+export function kindMeta(kind: string): KindMeta {
+  return KIND_META[kind] ?? { label: kind, icon: 'inbox', tone: 'neutral' };
+}
+
+// 关系类型白话（设计稿 REL_LABEL 原文）。
+export const REL_LABEL: Record<string, string> = {
+  prerequisite: '前置 prerequisite',
+  related_to: '相关 related_to',
+  contrasts_with: '对比 contrasts_with',
+  applied_in: '应用 applied_in',
+  derived_from: '派生 derived_from',
+};
+
+// ── wire 类型（server ProposalInboxRow 的 JSON 投影；Date → ISO string） ──
+export interface ProposalEvidenceRefWire {
+  kind: 'event' | 'question' | 'knowledge' | 'artifact' | 'record';
+  id: string;
+}
+
+// payload 是 AiProposalPayload 的 UI 投影：各 kind 的 proposed_change 形态
+// 不同，这里只钉 UI 实际消费的公共字段，其余经 index signature 透传。
+export interface ProposalPayloadWire {
+  kind: string;
+  reason_md: string;
+  evidence_refs: ProposalEvidenceRefWire[];
+  confidence?: number;
+  proposed_change?: {
+    from_knowledge_id?: string;
+    to_knowledge_id?: string;
+    relation_type?: string;
+    weight?: number;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
+export interface ProposalInboxRow {
+  id: string;
+  kind: string;
+  target: { subject_kind: string; subject_id: string | null };
+  payload: ProposalPayloadWire;
+  status: string;
+  proposed_at: string;
+  decided_at: string | null;
+  actor_ref: string;
+  task_run_id: string | null;
+  cost_micro_usd: number | null;
+  source_action: string;
+  source_subject_kind: string;
+  signals: Record<string, unknown> | null;
+}
+
+export const listProposals = () =>
+  apiJson<{ rows: ProposalInboxRow[]; next_cursor: string | null }>(
+    '/api/proposals?status=pending',
+  );
+
+export type ProposalDecision = 'accept' | 'reverse' | 'change_type' | 'dismiss';
+
+export const decideProposal = (
+  id: string,
+  decision: ProposalDecision,
+  opts: { newRelationType?: string; userNote?: string } = {},
+) =>
+  apiJson(`/api/proposals/${encodeURIComponent(id)}/decide`, {
+    method: 'POST',
+    body: JSON.stringify({
+      decision,
+      ...(opts.newRelationType ? { new_relation_type: opts.newRelationType } : {}),
+      ...(opts.userNote ? { user_note: opts.userNote } : {}),
+    }),
+  });
+
+export const retractProposal = (id: string) =>
+  apiJson(`/api/proposals/${encodeURIComponent(id)}/retract`, { method: 'POST' });
+
+// ── evidence 白话（设计稿 evidenceReadable 的真 wire 适配） ─────────
+// 真 ProposalEvidenceRef 无策展 label，按 kind 给白话来源说明；knowledge /
+// artifact 有 SPA 详情页可导航，其余 kind（event/question/record）的详情页
+// 未迁 SPA，route=null 渲为纯文本。M5 错题本/事件链收编后补导航。
+export function evidenceReadable(ref: ProposalEvidenceRefWire): {
+  text: string;
+  route: string | null;
+} {
+  switch (ref.kind) {
+    case 'event':
+      return { text: '源自一次 AI 判定事件', route: null };
+    case 'question':
+      return { text: '源自一道题目', route: null };
+    case 'knowledge':
+      return { text: '源自一个知识点', route: `/knowledge/${ref.id}` };
+    case 'artifact':
+      return { text: '源自一篇笔记', route: `/notes/${ref.id}` };
+    case 'record':
+      return { text: '源自一条学习记录', route: null };
+    default:
+      return { text: '来源记录', route: null };
+  }
+}

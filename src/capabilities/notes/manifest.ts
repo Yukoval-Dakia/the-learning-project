@@ -107,4 +107,9 @@ export const notesCapability = defineCapability({
   proposals: {
     kinds: [{ kind: 'note_update' }],
   },
+  // M4-T6 (YUK-319)：工作台「AI 改动 · 近 24h」块归属 notes 域（数据源
+  // /api/artifacts/ai-changes/recent + per-event undo 链）。
+  ui: {
+    todayBlocks: ['ai-changes-strip'],
+  },
 });
