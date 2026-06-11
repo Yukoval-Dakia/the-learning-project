@@ -49,10 +49,6 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
   const [view, setView] = useState<'tree' | 'graph'>('tree');
   const [picked, setPicked] = useState<KnowledgeTreeNode | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  // 已决（accept/reverse/dismiss）的提议 event id：后端 decide 只追加 chained
-  // event，原始 propose event 仍会被 /api/events 返回——refetch 后须页内过滤，
-  // 否则已决行复显且可重复点击。
-  const [decided, setDecided] = useState<ReadonlySet<string>>(new Set());
 
   const treeQ = useQuery({ queryKey: ['knowledge-tree'], queryFn: getTree });
   const edgesQ = useQuery({ queryKey: ['knowledge-edges'], queryFn: getEdges });
@@ -63,14 +59,9 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
 
   const nodes = useMemo(() => treeQ.data?.rows ?? [], [treeQ.data]);
   const edges = useMemo(() => edgesQ.data?.rows ?? [], [edgesQ.data]);
-  // ProposeKnowledgeEdge 注册 schema：outcome ∈ success|partial（known.ts §9）。
-  const edgeProposals = useMemo(
-    () =>
-      (edgePropsQ.data?.rows ?? []).filter(
-        (r) => (r.outcome === 'success' || r.outcome === 'partial') && !decided.has(r.id),
-      ),
-    [edgePropsQ.data, decided],
-  );
+  // M4-T5 (YUK-318)：服务端已按 kind=knowledge_edge&status=pending 过滤——
+  // 已决提议不复返，旧的客户端 decided 集合 + outcome 过滤随换源删除。
+  const edgeProposals = edgePropsQ.data?.rows ?? [];
   const ordered = useMemo(() => dfsOrder(nodes), [nodes]);
 
   const placeholder = (text: string) => {
@@ -222,7 +213,6 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
         edgeProposals={edgeProposals}
         open={!!picked}
         onClose={() => setPicked(null)}
-        onDecided={(eventId) => setDecided((prev) => new Set(prev).add(eventId))}
         go={navigate}
       />
 

@@ -34,6 +34,10 @@ export default defineConfig({
       '/api/notes': 'http://localhost:8787',
       '/api/artifacts': 'http://localhost:8787',
       '/api/hubs': 'http://localhost:8787',
+      // M4-T5 (YUK-319/YUK-318)：统一收件箱 + 工作台聚合已落 Hono。
+      // /api/today 不收编——copilot-summary 留旧栈 catch-all 至 M5。
+      '/api/proposals': 'http://localhost:8787',
+      '/api/workbench': 'http://localhost:8787',
       '/api': process.env.RW_OLD_STACK ?? 'http://localhost:3000',
     },
   },
