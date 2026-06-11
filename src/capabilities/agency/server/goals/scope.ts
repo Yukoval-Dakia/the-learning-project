@@ -11,6 +11,8 @@
 import { newId } from '@/core/ids';
 import { z } from 'zod';
 
+// M5 seam（YUK-319 T2 记录）：跨包深 import knowledge 内部模块——M5 收紧包边界时
+// 应换走 knowledge 包对外导出面；M4 等价平移期原样保留。
 import { writeRetryableAiFailureLedger } from '@/capabilities/knowledge/server/ai_failure_log';
 import { loadTreeSnapshot } from '@/capabilities/knowledge/server/tree';
 import type { Db } from '@/db/client';

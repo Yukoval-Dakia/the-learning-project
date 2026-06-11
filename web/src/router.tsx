@@ -1,7 +1,7 @@
 // M0 (YUK-313) — SPA 路由表。规则（记入 ARCHITECTURE）：capability ui 不 import
 // 路由库；导航以 (to: string) => void prop 注入——路由耦合只存在于本壳层。
 // M0 仅 /agent-notes 一条 surface；后续 surface 随各 M 在此登记。
-import AgentNotesPage from '@/capabilities/agent-notes/ui/page';
+import AgentNotesPage from '@/capabilities/agency/ui/page';
 import RecordPage from '@/capabilities/ingestion/ui/RecordPage';
 import KnowledgeDetailPage from '@/capabilities/knowledge/ui/KnowledgeDetailPage';
 import KnowledgePage from '@/capabilities/knowledge/ui/KnowledgePage';

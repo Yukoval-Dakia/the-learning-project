@@ -14,8 +14,8 @@ describe('composition root', () => {
     expect(() => validateComposition(capabilities)).not.toThrow();
   });
 
-  it('includes the agent-notes pilot capability', () => {
-    expect(capabilities.map((c) => c.name)).toContain('agent-notes');
+  it('includes the agency capability', () => {
+    expect(capabilities.map((c) => c.name)).toContain('agency');
   });
 
   it('includes the practice capability', () => {

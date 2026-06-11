@@ -34,7 +34,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, ne } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
-import { writeAgentNote } from '@/capabilities/agent-notes/server/notes';
+import { writeAgentNote } from '@/capabilities/agency/server/notes';
 import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import {

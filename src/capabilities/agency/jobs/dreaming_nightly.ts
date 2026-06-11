@@ -1,7 +1,12 @@
 import { createId } from '@paralleldrive/cuid2';
 import type { Job } from 'pg-boss';
 
-import { type AgentNote, readAgentNotes } from '@/capabilities/agent-notes/server/notes';
+// YUK-143 / ADR-0025 — North-Star: feed active goals into the Dreaming input so
+// it can BIAS proposals toward weak/under-covered knowledge in their scope.
+// Purely ADDITIVE (ND-5): Dreaming still only PROPOSES via the inbox and never
+// reads the FSRS-due queue or mutates review state; goals only add direction.
+import { type ActiveGoal, listActiveGoals } from '@/capabilities/agency/server/goals/queries';
+import { type AgentNote, readAgentNotes } from '@/capabilities/agency/server/notes';
 import { enqueueDreamingNoteRefine } from '@/capabilities/notes/server/note-refine-triggers';
 import type { Db } from '@/db/client';
 import { type RunTaskResult, runAgentTask } from '@/server/ai/runner';
@@ -19,11 +24,6 @@ import {
 import { DREAMING_CONTEXT_BUDGET, PROPOSAL_FEEDBACK_BUDGET } from '@/server/ai/tools/budgets';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
-// YUK-143 / ADR-0025 — North-Star: feed active goals into the Dreaming input so
-// it can BIAS proposals toward weak/under-covered knowledge in their scope.
-// Purely ADDITIVE (ND-5): Dreaming still only PROPOSES via the inbox and never
-// reads the FSRS-due queue or mutates review state; goals only add direction.
-import { type ActiveGoal, listActiveGoals } from '@/server/goals/queries';
 import {
   type ProposalFeedbackCell,
   getProposalFeedbackDigest,

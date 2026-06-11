@@ -6,14 +6,14 @@ import {
   resolveMcpAllowedTools,
 } from '@/server/ai/tools/allowlists';
 import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
+import type { ProposalFeedbackCell } from '@/server/proposals/adaptive-bias';
 import {
   COACH_DAILY_OBJECTIVE,
   COACH_MAX_PROPOSALS,
   buildCoachDailyHandler,
   parseCoachOutputSafely,
   runCoach,
-} from '@/server/boss/handlers/coach_daily';
-import type { ProposalFeedbackCell } from '@/server/proposals/adaptive-bias';
+} from './coach_daily';
 
 const VALID_TODAY_PLAN = {
   daily_focus: '今天先把上周的「之、其、于」复盘做完',
