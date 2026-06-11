@@ -5,8 +5,8 @@ import {
   type Point,
   computeDepths,
   computeLayout,
-} from '@/ui/knowledge-graph/layout';
-import { type MasteryTone, masteryTone } from '@/ui/knowledge-graph/mastery-tone';
+} from '@/capabilities/knowledge/ui/layout';
+import { type MasteryTone, masteryTone } from '@/capabilities/knowledge/ui/mastery-tone';
 import { Icon } from '@/ui/primitives/Icon';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 
