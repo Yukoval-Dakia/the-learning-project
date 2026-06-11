@@ -115,6 +115,7 @@ export function NodeDrawer({
   edgeProposals,
   open,
   onClose,
+  onDecided,
   go,
 }: {
   node: KnowledgeTreeNode | null;
@@ -123,6 +124,9 @@ export function NodeDrawer({
   edgeProposals: EdgeProposalEvent[];
   open: boolean;
   onClose: () => void;
+  // 决定成功后上报 propose event id——宿主据此过滤复显（decide 不消灭原始
+  // propose event，refetch 会带回来）。
+  onDecided: (eventId: string) => void;
   go: (to: string) => void;
 }) {
   const qc = useQueryClient();
@@ -283,6 +287,7 @@ export function NodeDrawer({
                   nameOf={(kid) => nodes.find((n) => n.id === kid)?.name ?? kid ?? '?'}
                   onDecide={async (decision) => {
                     await decideEdgeProposal(p.id, decision);
+                    onDecided(p.id);
                     void qc.invalidateQueries({ queryKey: ['knowledge-edges'] });
                     void qc.invalidateQueries({ queryKey: ['knowledge-edge-proposals'] });
                   }}

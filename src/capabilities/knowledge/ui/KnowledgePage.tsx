@@ -49,6 +49,10 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
   const [view, setView] = useState<'tree' | 'graph'>('tree');
   const [picked, setPicked] = useState<KnowledgeTreeNode | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  // 已决（accept/reverse/dismiss）的提议 event id：后端 decide 只追加 chained
+  // event，原始 propose event 仍会被 /api/events 返回——refetch 后须页内过滤，
+  // 否则已决行复显且可重复点击。
+  const [decided, setDecided] = useState<ReadonlySet<string>>(new Set());
 
   const treeQ = useQuery({ queryKey: ['knowledge-tree'], queryFn: getTree });
   const edgesQ = useQuery({ queryKey: ['knowledge-edges'], queryFn: getEdges });
@@ -63,9 +67,9 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
   const edgeProposals = useMemo(
     () =>
       (edgePropsQ.data?.rows ?? []).filter(
-        (r) => r.outcome === 'success' || r.outcome === 'partial',
+        (r) => (r.outcome === 'success' || r.outcome === 'partial') && !decided.has(r.id),
       ),
-    [edgePropsQ.data],
+    [edgePropsQ.data, decided],
   );
   const ordered = useMemo(() => dfsOrder(nodes), [nodes]);
 
@@ -218,6 +222,7 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
         edgeProposals={edgeProposals}
         open={!!picked}
         onClose={() => setPicked(null)}
+        onDecided={(eventId) => setDecided((prev) => new Set(prev).add(eventId))}
         go={navigate}
       />
 

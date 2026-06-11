@@ -27,7 +27,7 @@ export function blockText(b: BodyBlock): string {
 }
 
 export function blockOutlineLabel(b: BodyBlock): string {
-  if (b.type === 'crossLinkBlock') return b.attrs?.label ?? '交叉链';
+  if (b.type === 'crossLinkBlock') return b.attrs?.title ?? '交叉链';
   if (b.type === 'questionRefBlock') return b.attrs?.prompt_preview?.slice(0, 16) ?? '题目引用';
   const t = blockText(b);
   return t.slice(0, 18) || '（空块）';
@@ -68,15 +68,13 @@ export function NoteBlockView({
   onOpenQuestion?: (questionId: string) => void;
 }) {
   if (block.type === 'crossLinkBlock') {
-    const target = block.attrs?.target;
+    // ADR-0022 canonical flat attrs：{ id, artifact_id, block_id?, title? }
+    //（服务端 block-refs 索引器同源）——勿读嵌套 target。
+    const targetId = block.attrs?.artifact_id;
     return (
-      <button
-        type="button"
-        className="xlink mono"
-        onClick={() => target && onLink?.(target.artifact_id)}
-      >
+      <button type="button" className="xlink mono" onClick={() => targetId && onLink?.(targetId)}>
         <LoomIcon name="link" size={11} />
-        {block.attrs?.label ?? target?.artifact_id ?? '交叉链'}
+        {block.attrs?.title ?? targetId ?? '交叉链'}
       </button>
     );
   }

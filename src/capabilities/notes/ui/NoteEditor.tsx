@@ -140,6 +140,74 @@ export function NoteEditor({
     [Exclude<SemanticKind, 'check'>, string]
   >;
 
+  // 斜杠菜单 + 两个 picker，按插入锚点 i 渲染（insertAt 在 i 之后插入）。
+  // 空笔记走 i = -1（插到开头），由列表外的独立 .nb-wrap 宿主渲染。
+  const slashMenus = (i: number) => (
+    <>
+      {slashAt === i && picker === 'none' && (
+        <div className="slash-menu fade-key">
+          <div className="slash-head meta">插入块</div>
+          {SLASH_KINDS.map(([kind, label]) => (
+            <button
+              type="button"
+              key={kind}
+              className="slash-item"
+              onClick={() => insertAt(i, makeSemanticBlock(kind))}
+            >
+              <LoomIcon name="doc" size={15} />
+              <span>{label}</span>
+              <span className="mono slash-key">/{kind}</span>
+            </button>
+          ))}
+          <button type="button" className="slash-item" onClick={() => setPicker('xlink')}>
+            <LoomIcon name="link" size={15} />
+            <span>交叉链</span>
+            <span className="mono slash-key">@artifact</span>
+          </button>
+          <button type="button" className="slash-item" onClick={() => setPicker('question')}>
+            <LoomIcon name="quiz" size={15} />
+            <span>引用题目</span>
+            <span className="mono slash-key">@question</span>
+          </button>
+          {/* D6：quiz 内嵌测验块型已裁撤，不提供插入入口。 */}
+          <div className="slash-foot meta">
+            <LoomIcon name="link" size={11} /> 引用是纯链接——作答永远发生在练习面
+          </div>
+        </div>
+      )}
+      {slashAt === i && picker === 'xlink' && (
+        <ArtifactPicker
+          excludeId={noteId}
+          onClose={() => setPicker('none')}
+          onPick={(a) =>
+            insertAt(i, {
+              type: 'crossLinkBlock',
+              // ADR-0022 canonical flat attrs（服务端 block-refs 索引器按
+              // attrs.artifact_id 写 backlink）——勿嵌套 target。
+              attrs: { id: newBlockId(), artifact_id: a.id, title: a.title },
+            })
+          }
+        />
+      )}
+      {slashAt === i && picker === 'question' && (
+        <QuestionPicker
+          knowledgeIds={labels.map((l) => l.id)}
+          onClose={() => setPicker('none')}
+          onPick={(q) =>
+            insertAt(i, {
+              type: 'questionRefBlock',
+              attrs: {
+                id: newBlockId(),
+                question_id: q.id,
+                prompt_preview: q.prompt_md.slice(0, 120),
+              },
+            })
+          }
+        />
+      )}
+    </>
+  );
+
   return (
     <div className="note-editor">
       {blocks.map((b, i) => {
@@ -212,77 +280,21 @@ export function NoteEditor({
                 </div>
               )}
             </div>
-            {slashAt === i && picker === 'none' && (
-              <div className="slash-menu fade-key">
-                <div className="slash-head meta">插入块</div>
-                {SLASH_KINDS.map(([kind, label]) => (
-                  <button
-                    type="button"
-                    key={kind}
-                    className="slash-item"
-                    onClick={() => insertAt(i, makeSemanticBlock(kind))}
-                  >
-                    <LoomIcon name="doc" size={15} />
-                    <span>{label}</span>
-                    <span className="mono slash-key">/{kind}</span>
-                  </button>
-                ))}
-                <button type="button" className="slash-item" onClick={() => setPicker('xlink')}>
-                  <LoomIcon name="link" size={15} />
-                  <span>交叉链</span>
-                  <span className="mono slash-key">@artifact</span>
-                </button>
-                <button type="button" className="slash-item" onClick={() => setPicker('question')}>
-                  <LoomIcon name="quiz" size={15} />
-                  <span>引用题目</span>
-                  <span className="mono slash-key">@question</span>
-                </button>
-                {/* D6：quiz 内嵌测验块型已裁撤，不提供插入入口。 */}
-                <div className="slash-foot meta">
-                  <LoomIcon name="link" size={11} /> 引用是纯链接——作答永远发生在练习面
-                </div>
-              </div>
-            )}
-            {slashAt === i && picker === 'xlink' && (
-              <ArtifactPicker
-                excludeId={noteId}
-                onClose={() => setPicker('none')}
-                onPick={(a) =>
-                  insertAt(i, {
-                    type: 'crossLinkBlock',
-                    attrs: {
-                      id: newBlockId(),
-                      target: { artifact_id: a.id, kind: a.type },
-                      label: a.title,
-                    },
-                  })
-                }
-              />
-            )}
-            {slashAt === i && picker === 'question' && (
-              <QuestionPicker
-                knowledgeIds={labels.map((l) => l.id)}
-                onClose={() => setPicker('none')}
-                onPick={(q) =>
-                  insertAt(i, {
-                    type: 'questionRefBlock',
-                    attrs: {
-                      id: newBlockId(),
-                      question_id: q.id,
-                      prompt_preview: q.prompt_md.slice(0, 120),
-                    },
-                  })
-                }
-              />
-            )}
+            {slashMenus(i)}
           </div>
         );
       })}
+      {/* 空笔记没有块宿主——独立 .nb-wrap 给斜杠菜单提供定位锚，插入走 i=-1（开头）。 */}
+      {blocks.length === 0 && <div className="nb-wrap">{slashMenus(-1)}</div>}
       <Btn
         size="sm"
         variant="ghost"
         icon="plus"
-        onClick={() => setSlashAt(blocks.length - 1)}
+        onClick={() => {
+          // 锚到最后一块之后；空列表为 -1（上方独立宿主渲染菜单）。
+          setSlashAt(slashAt === blocks.length - 1 ? null : blocks.length - 1);
+          setPicker('none');
+        }}
         style={{ marginTop: 'var(--s-2)' }}
       >
         添加块
