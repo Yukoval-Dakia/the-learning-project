@@ -84,6 +84,13 @@ export const ingestionCapability = defineCapability({
       },
     ],
   },
+  // M4-T4 (YUK-319)：proposal kind 归属声明。block_merge 的 accept applier 真身
+  // 在 ./server/proposal-appliers（YUK-202 path-B，等价平移自 dispatch 壳）；
+  // image_candidate 的在 ./server/image-candidate-accept（YUK-227 S3 Slice C，
+  // 整文件随包迁入）。壳层 actions.ts 的 accept case 只路由到本包。
+  proposals: {
+    kinds: [{ kind: 'block_merge' }, { kind: 'image_candidate' }],
+  },
   // M1-T6：录入面（学习记录 mode 按 D11 不迁）。
   ui: { pages: [{ route: '/record' }] },
 });
