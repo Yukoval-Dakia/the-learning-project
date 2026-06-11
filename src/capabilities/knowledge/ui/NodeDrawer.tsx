@@ -14,7 +14,7 @@ import { useRef, useState } from 'react';
 
 import { REL_CUE } from './MeshGraph';
 import {
-  type EdgeProposalEvent,
+  type EdgeProposalInboxRow,
   type KnowledgeEdgeRow,
   type KnowledgeTreeNode,
   createEdge,
@@ -36,13 +36,13 @@ function EdgeProposalRow({
   nameOf,
   onDecide,
 }: {
-  e: EdgeProposalEvent;
+  e: EdgeProposalInboxRow;
   nameOf: (id: string | undefined) => string;
   onDecide: (decision: 'accept' | 'reverse' | 'change_type' | 'dismiss') => Promise<void>;
 }) {
   const [done, setDone] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const rel = e.payload.relation_type ?? 'related_to';
+  const rel = e.payload.proposed_change.relation_type ?? 'related_to';
   const cue = REL_CUE[rel] ?? REL_CUE.related_to;
   const act = (decision: 'accept' | 'reverse' | 'change_type' | 'dismiss', label: string) => {
     setBusy(true);
@@ -67,11 +67,12 @@ function EdgeProposalRow({
           {cue.label}
         </span>
         <span className="wenyan">
-          {nameOf(e.payload.from_knowledge_id)} → {nameOf(e.payload.to_knowledge_id)}
+          {nameOf(e.payload.proposed_change.from_knowledge_id)} →{' '}
+          {nameOf(e.payload.proposed_change.to_knowledge_id)}
         </span>
-        {e.payload.weight != null && (
+        {e.payload.proposed_change.weight != null && (
           <span className="meta mono" style={{ marginLeft: 'auto' }}>
-            {Math.round(e.payload.weight * 100)}%
+            {Math.round(e.payload.proposed_change.weight * 100)}%
           </span>
         )}
       </div>
@@ -115,18 +116,14 @@ export function NodeDrawer({
   edgeProposals,
   open,
   onClose,
-  onDecided,
   go,
 }: {
   node: KnowledgeTreeNode | null;
   nodes: KnowledgeTreeNode[];
   edges: KnowledgeEdgeRow[];
-  edgeProposals: EdgeProposalEvent[];
+  edgeProposals: EdgeProposalInboxRow[];
   open: boolean;
   onClose: () => void;
-  // 决定成功后上报 propose event id——宿主据此过滤复显（decide 不消灭原始
-  // propose event，refetch 会带回来）。
-  onDecided: (eventId: string) => void;
   go: (to: string) => void;
 }) {
   const qc = useQueryClient();
@@ -159,7 +156,9 @@ export function NodeDrawer({
       (n) => n.id === (e.from_knowledge_id === node.id ? e.to_knowledge_id : e.from_knowledge_id),
     );
   const props = edgeProposals.filter(
-    (p) => p.payload.from_knowledge_id === node.id || p.payload.to_knowledge_id === node.id,
+    (p) =>
+      p.payload.proposed_change.from_knowledge_id === node.id ||
+      p.payload.proposed_change.to_knowledge_id === node.id,
   );
   const cue = decayCue(node.mastery);
   const pct = node.mastery == null ? 0 : Math.round(node.mastery * 100);
@@ -287,7 +286,8 @@ export function NodeDrawer({
                   nameOf={(kid) => nodes.find((n) => n.id === kid)?.name ?? kid ?? '?'}
                   onDecide={async (decision) => {
                     await decideEdgeProposal(p.id, decision);
-                    onDecided(p.id);
+                    // M4-T5 (YUK-318)：服务端 pending 过滤生效——invalidate 后
+                    // 已决行自然退出，无需向宿主上报 decided 集合。
                     void qc.invalidateQueries({ queryKey: ['knowledge-edges'] });
                     void qc.invalidateQueries({ queryKey: ['knowledge-edge-proposals'] });
                   }}

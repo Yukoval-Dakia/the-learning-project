@@ -3,7 +3,7 @@ import { defineCapability } from '@/kernel/manifest';
 // M3-T1 (YUK-317)：notes 包骨架。routes 在 T4（API 上 Hono）逐条填充——
 // 9 条：notes/[id] GET + artifacts/[id]/{body-blocks,sections/[sectionId],
 // backlinks,correct,ai-changes,ai-changes/[eventId]/undo} + artifacts/search
-// + hubs/[id]/dismiss-link。
+// + hubs/[id]/dismiss-link。M4-T5 (YUK-319) 增 1 条：artifacts/ai-changes/recent。
 export const notesCapability = defineCapability({
   name: 'notes',
   description:
@@ -24,6 +24,13 @@ export const notesCapability = defineCapability({
         method: 'GET',
         path: '/api/artifacts/search',
         load: () => import('./api/artifacts-search').then((m) => m.GET),
+      },
+      {
+        // M4-T5 (YUK-319)：近 24h 全局 AI 改动条（旧 app/api/today/ai-changes
+        // GET 等价平移；批量 undo POST 不平移，撤销走下方 per-event undo 链）。
+        method: 'GET',
+        path: '/api/artifacts/ai-changes/recent',
+        load: () => import('./api/ai-changes-recent').then((m) => m.GET),
       },
       {
         method: 'PATCH',
