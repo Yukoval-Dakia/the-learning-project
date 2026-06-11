@@ -140,6 +140,14 @@ export const practiceCapability = defineCapability({
       { name: 'rejudge', queue: 'llm' },
     ],
   },
+  // M4-T4 (YUK-319)：proposal kind 归属声明。variant_question / question_draft
+  // 的 accept applier 真身在 ./server/proposal-appliers；judge_retraction 有
+  // producer（@/server/proposals/producers）但无 accept applier——accept 走
+  // dispatch 壳 default throw（unsupported_proposal_kind，YUK-44 收口），归属
+  // 声明与 applier 存在性解耦。
+  proposals: {
+    kinds: [{ kind: 'variant_question' }, { kind: 'question_draft' }, { kind: 'judge_retraction' }],
+  },
   // M2-T6 将把旧 /review、/practice 页重生为单一练习面 /practice（流+卷架）。
   ui: { pages: [{ route: '/practice' }] },
 });
